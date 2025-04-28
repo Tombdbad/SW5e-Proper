@@ -1,131 +1,153 @@
+// Backgrounds data for SW5E
 export interface Background {
   id: string;
   name: string;
   summary: string;
-  skillProficiencies: string[];
+  description: string;
   feature: string;
+  featureDescription: string;
+  skillProficiencies: string[];
+  toolProficiencies: string[];
+  languages: number;
+  equipment: string[];
   suggestedCharacteristics: string[];
 }
 
 export const backgrounds: Background[] = [
   {
-    id: "acolyte",
-    name: "Acolyte",
-    summary: "You have spent your life in devotion to a Force tradition or religious organization.",
-    skillProficiencies: ["Insight", "Lore"],
-    feature: "Spiritual Guidance: You can find a place of worship where you and your allies can rest, and may receive free healing and care.",
+    id: "ace-pilot",
+    name: "Ace Pilot",
+    summary: "You excel at operating starships and vehicles of all kinds.",
+    description: "You've spent your life behind the controls of starships or vehicles. Whether military trained or self-taught, you're known for pulling off maneuvers others wouldn't attempt.",
+    feature: "Well-Connected Mechanic",
+    featureDescription: "You know mechanics and shipyards across the galaxy. When in need of repairs or modifications, you can find favorable prices and faster service.",
+    skillProficiencies: ["Piloting", "Technology"],
+    toolProficiencies: ["Astrogation tools", "One gaming set of your choice"],
+    languages: 0,
+    equipment: ["Flight suit", "Starship toolkit", "Datapad with starship schematics", "Pouch with 50 credits"],
     suggestedCharacteristics: [
-      "I seek to preserve ancient knowledge and traditions.",
-      "I believe in a greater purpose guiding the galaxy.",
-      "I am tolerant of other faiths and respect the devotion of others."
+      "I always push the engines beyond their limits",
+      "I believe there's no problem that can't be solved with the right ship",
+      "I never fly without my lucky charm"
     ]
   },
   {
-    id: "bounty_hunter",
+    id: "bounty-hunter",
     name: "Bounty Hunter",
-    summary: "You are a professional tracker who hunts targets for credits across the galaxy.",
+    summary: "You track and capture targets for payment across the galaxy.",
+    description: "You make your living tracking down and capturing or eliminating targets for credits. You might be a guild member or a lone operator out for yourself.",
+    feature: "Hunter's Intuition",
+    featureDescription: "You can quickly gather information about your target from the criminal underworld and have contacts who provide leads on potential bounties.",
     skillProficiencies: ["Investigation", "Survival"],
-    feature: "Bounty Board: You have contacts who can provide information about potential bounties and targets.",
+    toolProficiencies: ["Slicing kit", "Tracking devices"],
+    languages: 1,
+    equipment: ["Set of binders", "Holographic wanted poster collection", "Bounty puck", "Pouch with 75 credits"],
     suggestedCharacteristics: [
-      "I always get my target, no matter how long it takes.",
-      "I've seen too much cruelty to believe in mercy.",
-      "I honor my contracts to the letter."
+      "I always get my target, no matter how long it takes",
+      "I have a personal code about who I'll hunt and who I won't",
+      "Credits are all that matter in this business"
+    ]
+  },
+  {
+    id: "diplomat",
+    name: "Diplomat",
+    summary: "You represent governments or organizations in official negotiations.",
+    description: "You've been trained in the delicate art of negotiation, representing planetary systems or major organizations. You understand politics and protocols across cultures.",
+    feature: "Diplomatic Immunity",
+    featureDescription: "Your credentials can gain you access to restricted areas and potentially exempt you from minor legal troubles across many systems.",
+    skillProficiencies: ["Deception", "Persuasion"],
+    toolProficiencies: ["One musical instrument", "Calligrapher's supplies"],
+    languages: 2,
+    equipment: ["Fine clothes", "Diplomatic credentials", "Encrypted comlink", "Pouch with 100 credits"],
+    suggestedCharacteristics: [
+      "I always seek a peaceful solution first",
+      "I can find common ground between the most bitter enemies",
+      "I carefully analyze every word and gesture of those I interact with"
+    ]
+  },
+  {
+    id: "force-adept",
+    name: "Force Adept",
+    summary: "You were raised with knowledge of the Force outside traditional Jedi or Sith teachings.",
+    description: "Raised in a tradition that acknowledges the Force by another name or method, you learned to sense and use its power without formal training from major orders.",
+    feature: "Force Sensitive",
+    featureDescription: "You can sense disturbances in the Force and can sometimes receive visions or insights others cannot perceive.",
+    skillProficiencies: ["Insight", "Lore"],
+    toolProficiencies: ["Herbalism kit"],
+    languages: 1,
+    equipment: ["Mystical trinket or talisman", "Loose-fitting robes", "Holoprojector with ancient teachings", "Pouch with 25 credits"],
+    suggestedCharacteristics: [
+      "I sense things before they happen",
+      "I believe all living things are connected through the Force",
+      "I speak in mystical terms that confuse others"
     ]
   },
   {
     id: "criminal",
     name: "Criminal",
-    summary: "You have a history of breaking the law and living outside society's rules.",
+    summary: "You've made your living through illegal activities.",
+    description: "You've been involved in illegal operations for most of your life. Whether as a smuggler, slicer, or enforcer, you know how the criminal underworld operates.",
+    feature: "Criminal Contact",
+    featureDescription: "You have a reliable contact who acts as a connection to a network of criminals. You know how to get messages to and from this contact.",
     skillProficiencies: ["Deception", "Stealth"],
-    feature: "Criminal Contact: You have a reliable contact who acts as your connection to a criminal network.",
+    toolProficiencies: ["Gaming set", "Thieves' tools"],
+    languages: 0,
+    equipment: ["Crowbar or holdout blaster", "Dark clothing with hood", "Stolen identity chip", "Pouch with 50 credits"],
     suggestedCharacteristics: [
-      "I always have a plan for when things go wrong.",
-      "I am suspicious of strangers, especially authority figures.",
-      "I believe everyone has a price, and everyone can be bought."
+      "I always have an escape plan ready",
+      "I trust no one but myself",
+      "I'm always looking for the next big score"
     ]
   },
   {
-    id: "entertainer",
-    name: "Entertainer",
-    summary: "You thrive in front of an audience, entertaining crowds across the galaxy.",
-    skillProficiencies: ["Acrobatics", "Performance"],
-    feature: "Popular Performer: You can find a place to perform and earn a modest living, or even get free accommodation in return for performing.",
-    suggestedCharacteristics: [
-      "I love the spotlight and seize any opportunity to perform.",
-      "I've seen the galaxy through my travels and performances.",
-      "I use humor to defuse tense situations."
-    ]
-  },
-  {
-    id: "force_adept",
-    name: "Force Adept",
-    summary: "You were raised in a Force tradition outside mainstream Jedi or Sith teachings.",
-    skillProficiencies: ["Insight", "Nature"],
-    feature: "Force Sensitivity: You can sense the Force and have had some basic training in its use.",
-    suggestedCharacteristics: [
-      "I believe the Force connects all living things in the galaxy.",
-      "I meditate daily to maintain my connection to the Force.",
-      "I seek to understand the deeper mysteries of the Force."
-    ]
-  },
-  {
-    id: "military_specialist",
-    name: "Military Specialist",
-    summary: "You served in a military organization, learning discipline and combat tactics.",
+    id: "soldier",
+    name: "Soldier",
+    summary: "You served in a military or mercenary company.",
+    description: "You've spent years in military service, whether for a planetary defense force, a galactic power, or a mercenary company. You're trained in tactics and survival.",
+    feature: "Military Rank",
+    featureDescription: "You hold a military rank from your previous service. Soldiers and veterans of that organization still recognize your authority and influence.",
     skillProficiencies: ["Athletics", "Intimidation"],
-    feature: "Military Rank: You still hold your rank from your military service, and soldiers still recognize your authority.",
+    toolProficiencies: ["Land vehicles", "One gaming set"],
+    languages: 0,
+    equipment: ["Insignia of rank", "Trophy from a battle", "Set of common clothes", "Pouch with 75 credits"],
     suggestedCharacteristics: [
-      "I follow orders without question, even when uncomfortable.",
-      "I protect those under my command at all costs.",
-      "I believe in a strict chain of command and clear objectives."
+      "I'm always at attention and follow orders without question",
+      "I protect those who cannot protect themselves",
+      "I've seen too much combat, and it sometimes haunts me"
     ]
   },
   {
     id: "noble",
     name: "Noble",
-    summary: "You were born into wealth and privilege, raised in the upper echelons of society.",
+    summary: "You were born into wealth and privilege.",
+    description: "You come from a family with wealth, power, and far-reaching connections. You might be a scion of an ancient house or newly elevated to prominence.",
+    feature: "Position of Privilege",
+    featureDescription: "Your family name and connections can secure you audiences with powerful figures and entry into high society across many systems.",
     skillProficiencies: ["History", "Persuasion"],
-    feature: "Privileged Upbringing: Your family name grants you access to high society and influential circles.",
+    toolProficiencies: ["One musical instrument", "One gaming set"],
+    languages: 1,
+    equipment: ["Fine clothes", "Family signet ring", "Scroll of family history", "Purse with 150 credits"],
     suggestedCharacteristics: [
-      "I speak elegantly and expect to be heard.",
-      "I believe my noble lineage sets me apart from common people.",
-      "I feel responsible for the well-being of those beneath my station."
+      "My family legacy must be preserved at all costs",
+      "I take great pains to always look my best and follow the latest fashions",
+      "I believe the common folk must see in me the best of what nobility has to offer"
     ]
   },
   {
-    id: "pilot",
-    name: "Pilot",
-    summary: "You've spent your life navigating the stars and mastering various spacecraft.",
-    skillProficiencies: ["Mechanics", "Piloting"],
-    feature: "Ship Savvy: You can acquire temporary transport for your group more easily than others.",
+    id: "outsider",
+    name: "Outsider",
+    summary: "You come from a remote world with limited connection to galactic society.",
+    description: "You were raised on a world that has little contact with the greater galaxy. Your home might be primitive, isolationist, or simply overlooked.",
+    feature: "Uncanny Resourcefulness",
+    featureDescription: "You can improvise tools and find creative solutions to problems using minimal resources, drawing on your experience from your isolated upbringing.",
+    skillProficiencies: ["Nature", "Survival"],
+    toolProficiencies: ["Artisan's tools", "Herbalism kit"],
+    languages: 0,
+    equipment: ["Staff or spear", "Hunting trap", "Token from your homeworld", "Pouch with 35 credits"],
     suggestedCharacteristics: [
-      "I feel more at home in a cockpit than anywhere else.",
-      "I judge people by how they treat their ships.",
-      "I've been in tight spots before and know how to escape seemingly impossible situations."
-    ]
-  },
-  {
-    id: "scholar",
-    name: "Scholar",
-    summary: "You've dedicated your life to learning and have studied extensively in various fields.",
-    skillProficiencies: ["Science", "Technology"],
-    feature: "Academic Connection: You have access to libraries and academic institutions across the galaxy.",
-    suggestedCharacteristics: [
-      "I use complex words and concepts when simple ones would suffice.",
-      "I value knowledge above all else.",
-      "I believe every problem has a logical solution if approached correctly."
-    ]
-  },
-  {
-    id: "smuggler",
-    name: "Smuggler",
-    summary: "You've made your living transporting illegal or regulated goods across the galaxy.",
-    skillProficiencies: ["Deception", "Piloting"],
-    feature: "Underworld Connections: You know how to find buyers and sellers for hard-to-obtain items.",
-    suggestedCharacteristics: [
-      "I trust my ship more than I trust most people.",
-      "I'm always looking for the most profitable opportunity.",
-      "I have a knack for finding hidden compartments and secret routes."
+      "I find technology fascinating and am always examining new devices",
+      "I misunderstand social customs and often make faux pas",
+      "I believe my people's ways are ultimately superior to those of the wider galaxy"
     ]
   }
 ];

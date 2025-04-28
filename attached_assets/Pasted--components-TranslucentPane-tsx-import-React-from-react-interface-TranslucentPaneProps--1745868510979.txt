@@ -1,0 +1,145 @@
+// components/TranslucentPane.tsx
+import React from 'react';
+
+interface TranslucentPaneProps {
+  children: React.ReactNode;
+  className?: string;
+}
+
+const TranslucentPane: React.FC<TranslucentPaneProps> = ({ children, className = '' }) => {
+  return (
+    <div className={`bg-gray-900 bg-opacity-60 backdrop-filter backdrop-blur-md ${className}`}>
+      {children}
+    </div>
+  );
+};
+
+export default TranslucentPane;
+
+// components/ProgressBar.tsx
+import React from 'react';
+
+interface ProgressBarProps {
+  totalSteps: number;
+  currentStep: number;
+}
+
+const ProgressBar: React.FC<ProgressBarProps> = ({ totalSteps, currentStep }) => {
+  const progress = (currentStep / totalSteps) * 100;
+  
+  return (
+    <div className="w-full mb-6">
+      <div className="flex justify-between mb-1 text-xs">
+        <span>{currentStep} of {totalSteps}</span>
+        <span>{Math.round(progress)}%</span>
+      </div>
+      <div className="w-full bg-gray-700 rounded-full h-2.5">
+        <div 
+          className="bg-yellow-500 h-2.5 rounded-full transition-all duration-300"
+          style={{ width: `${progress}%` }}
+        ></div>
+      </div>
+    </div>
+  );
+};
+
+export default ProgressBar;
+
+// components/LoreTooltip.tsx
+import React, { useState } from 'react';
+import { InfoCircle } from 'lucide-react';
+
+interface LoreTooltipProps {
+  title: string;
+  content: string;
+  position?: 'top' | 'right' | 'bottom' | 'left';
+}
+
+const LoreTooltip: React.FC<LoreTooltipProps> = ({ 
+  title, 
+  content,
+  position = 'top'
+}) => {
+  const [isVisible, setIsVisible] = useState(false);
+  
+  const positionClasses = {
+    top: 'bottom-full left-1/2 transform -translate-x-1/2 mb-2',
+    right: 'left-full top-1/2 transform -translate-y-1/2 ml-2',
+    bottom: 'top-full left-1/2 transform -translate-x-1/2 mt-2',
+    left: 'right-full top-1/2 transform -translate-y-1/2 mr-2'
+  };
+  
+  return (
+    <div className="inline-block relative">
+      <button
+        type="button"
+        className="inline-flex items-center text-blue-400 hover:text-blue-300 focus:outline-none"
+        onMouseEnter={() => setIsVisible(true)}
+        onMouseLeave={() => setIsVisible(false)}
+        onClick={() => setIsVisible(!isVisible)}
+      >
+        <InfoCircle size={16} />
+      </button>
+      
+      {isVisible && (
+        <div 
+          className={`absolute z-10 w-64 p-3 text-sm bg-gray-900 bg-opacity-95 border border-gray-700 rounded-md text-gray-100 ${positionClasses[position]}`}
+        >
+          <h4 className="font-bold text-yellow-400 mb-1">{title}</h4>
+          <p>{content}</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default LoreTooltip;
+
+// components/ForceAlignmentVisual.tsx
+import React from 'react';
+
+interface ForceAlignmentVisualProps {
+  light: number;
+  dark: number;
+}
+
+const ForceAlignmentVisual: React.FC<ForceAlignmentVisualProps> = ({ light, dark }) => {
+  return (
+    <div className="p-4 bg-gray-900 bg-opacity-70 rounded-lg">
+      <h3 className="text-center mb-2 font-bold">Force Alignment</h3>
+      <div className="flex items-center justify-center mb-2">
+        <div className="relative w-40 h-40">
+          {/* Circular visualization */}
+          <svg viewBox="0 0 100 100" className="w-full h-full">
+            {/* Light side */}
+            <path
+              d={`M 50,50 L 50,0 A 50,50 0 ${light > 50 ? 1 : 0},1 ${
+                50 + 50 * Math.sin((light / 100) * Math.PI * 2)
+              },${50 - 50 * Math.cos((light / 100) * Math.PI * 2)} Z`}
+              fill="#81e6d9"
+              fillOpacity="0.7"
+            />
+            {/* Dark side */}
+            <path
+              d={`M 50,50 L ${
+                50 + 50 * Math.sin((light / 100) * Math.PI * 2)
+              },${
+                50 - 50 * Math.cos((light / 100) * Math.PI * 2)
+              } A 50,50 0 ${light < 50 ? 1 : 0},1 50,0 Z`}
+              fill="#9b2c2c"
+              fillOpacity="0.7"
+            />
+            {/* Center circle */}
+            <circle cx="50" cy="50" r="10" fill="#f6e05e" />
+          </svg>
+        </div>
+      </div>
+      <div className="flex justify-between text-sm">
+        <div className="text-blue-300">Light: {light}%</div>
+        <div className="text-red-500">Dark: {dark}%</div>
+      </div>
+    </div>
+  );
+};
+
+export default ForceAlignmentVisual;

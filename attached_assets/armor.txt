@@ -1,0 +1,86 @@
+# SW5E Armor, Components, and Upgrades
+
+## Armor Types
+
+### Light Armor
+| Armor | Cost | Armor Class (AC) | Strength | Stealth | Weight |
+|-------|------|------------------|----------|---------|--------|
+| Mesh Armor | 45 cr | 11 + Dex modifier | — | — | 8 lb. |
+| Flight Suit | 75 cr | 12 + Dex modifier | — | — | 10 lb. |
+| Fiber Armor | 115 cr | 12 + Dex modifier | — | — | 12 lb. |
+| Padded Flight Suit | 175 cr | 13 + Dex modifier | — | — | 13 lb. |
+| Combat Jumpsuit | 225 cr | 13 + Dex modifier | — | — | 15 lb. |
+
+### Medium Armor
+| Armor | Cost | Armor Class (AC) | Strength | Stealth | Weight |
+|-------|------|------------------|----------|---------|--------|
+| Composite Armor | 175 cr | 13 + Dex modifier (max 2) | — | Disadvantage | 20 lb. |
+| Blast Vest and Helmet | 250 cr | 14 + Dex modifier (max 2) | — | Disadvantage | 22 lb. |
+| Ceramic Plating | 350 cr | 14 + Dex modifier (max 2) | — | Disadvantage | 30 lb. |
+| Padded Armor | 550 cr | 15 + Dex modifier (max 2) | — | Disadvantage | 35 lb. |
+| Duelist Armor | 750 cr | 15 + Dex modifier (max 2) | — | Disadvantage | 40 lb. |
+
+### Heavy Armor
+| Armor | Cost | Armor Class (AC) | Strength | Stealth | Weight |
+|-------|------|------------------|----------|---------|--------|
+| Battle Armor | 700 cr | 15 | Str 13 | Disadvantage | 45 lb. |
+| Assault Armor | 1,500 cr | 16 | Str 15 | Disadvantage | 50 lb. |
+| Heavy Battle Armor | 3,000 cr | 17 | Str 15 | Disadvantage | 55 lb. |
+| Powered Battle Armor | 8,000 cr | 18 | Str 17 | Disadvantage | 60 lb. |
+| Heavy Powered Battle Armor | 12,000 cr | 19 | Str 17 | Disadvantage | 70 lb. |
+
+### Shields
+| Shield | Cost | Armor Class (AC) | Weight |
+|--------|------|------------------|--------|
+| Shield Generator | 350 cr | +1 | 5 lb. |
+| Combat Shield | 750 cr | +2 | 8 lb. |
+| Heavy Shield | 1,500 cr | +3 | 12 lb. |
+
+## Armor Components
+
+### Basic Components
+| Component | Cost | Weight | Description |
+|-----------|------|--------|-------------|
+| Utility Belt | 75 cr | 2 lb. | Provides 6 small pouches for carrying items |
+| Climate Control | 150 cr | 3 lb. | Environmental protection from extreme temperatures |
+| Magnetic Boots | 200 cr | 4 lb. | Allows movement in zero-G environments |
+| HUD Display | 350 cr | 1 lb. | Provides tactical information and targeting assistance |
+| Duraplast Plating | 400 cr | 5 lb. | Adds +1 AC but increases weight by 5 lbs |
+
+### Advanced Components
+| Component | Cost | Weight | Description |
+|-----------|------|--------|-------------|
+| Inertial Dampeners | 850 cr | 3 lb. | Reduce falling damage by half |
+| Neural Interface | 1,200 cr | 1 lb. | Connect to compatible devices mentally |
+| Shield Capacitor | 1,500 cr | 4 lb. | Add 10 temporary hit points when activated (1/long rest) |
+| Stealth Field Generator | 2,500 cr | 6 lb. | Advantage on Stealth checks for 10 minutes (1/long rest) |
+| Energy Dispersal System | 3,000 cr | 5 lb. | Resistance to energy damage for 1 minute (1/long rest) |
+
+## Armor Upgrades
+
+### Basic Upgrades
+| Upgrade | Cost | Description |
+|---------|------|-------------|
+| Enhanced Padding | 300 cr | +1 to AC for light armor |
+| Reinforced Joints | 450 cr | Increase carrying capacity by 100 lbs |
+| Environmental Seal | 500 cr | Allows breathing in vacuum or toxic environments for 1 hour |
+| Impact Absorbers | 600 cr | Reduce bludgeoning damage by 2 |
+| Sensor Package | 750 cr | +2 to Perception checks involving sight or hearing |
+
+### Advanced Upgrades
+| Upgrade | Cost | Description |
+|---------|------|-------------|
+| Cortosis Weave | 2,000 cr | Lightsaber attacks against wearer do not have advantage |
+| Reactive Plating | 2,500 cr | Reaction to reduce damage from one attack by 1d8 (3/day) |
+| Jump Servos | 3,000 cr | Double jumping distance and reduce falling damage by half |
+| Energy Shield | 4,000 cr | Generate 15 temporary hit points (2/long rest) |
+| Beskar Alloy | 8,000 cr | Resistance to energy weapon damage |
+
+### Specialized Upgrades
+| Upgrade | Cost | Description |
+|---------|------|-------------|
+| Jetpack | 3,500 cr | 60 ft flying speed for 1 minute (1/short rest) |
+| Cloaking Device | 5,000 cr | Invisibility for 1 minute (1/long rest) |
+| Auto-Medikit | 6,000 cr | Automatically stabilize when dropped to 0 HP (1/long rest) |
+| Micro-Repulsors | 7,500 cr | Hover up to 5 feet above ground for 10 minutes (1/long rest) |
+| Neural Combat Interface | 10,000 cr | +1 to attack rolls with integrated weapon systems |

@@ -1,0 +1,260 @@
+// client/src/components/campaigns/CampaignGenerator.js
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import axios from 'axios';
+
+const CampaignGenerator = () => {
+  const { id } = useParams(); // Campaign ID
+  const navigate = useNavigate();
+  
+  const [campaign, setCampaign] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [generating, setGenerating] = useState(false);
+  const [editableContent, setEditableContent] = useState({
+    objectives: [],
+    quests: []
+  });
+  
+  // Fetch campaign data
+  useEffect(() => {
+    const fetchCampaign = async () => {
+      try {
+        const response = await axios.get(`/api/campaigns/${id}`);
+        setCampaign(response.data);
+        
+        // Initialize editable content with existing data
+        if (response.data.objectives || response.data.quests) {
+          setEditableContent({
+            objectives: response.data.objectives || [],
+            quests: response.data.quests || []
+          });
+        }
+        
+        setLoading(false);
+      } catch (err) {
+        console.error('Error fetching campaign:', err);
+        setError('Failed to load campaign data');
+        setLoading(false);
+      }
+    };
+    
+    fetchCampaign();
+  }, [id]);
+  
+  // Generate campaign content
+  const generateCampaign = async () => {
+    setGenerating(true);
+    
+    try {
+      const response = await axios.post(`/api/campaigns/${id}/generate`);
+      setCampaign(response.data);
+      
+      // Update editable content with generated data
+      setEditableContent({
+        objectives: response.data.objectives || [],
+        quests: response.data.quests || []
+      });
+      
+      setGenerating(false);
+      alert('Campaign content generated successfully!');
+    } catch (err) {
+      console.error('Error generating campaign:', err);
+      setError('Failed to generate campaign content');
+      setGenerating(false);
+    }
+  };
+  
+  // Handle editable content changes
+  const handleObjectiveChange = (index, field, value) => {
+    const updatedObjectives = [...editableContent.objectives];
+    updatedObjectives[index] = {
+      ...updatedObjectives[index],
+      [field]: value
+    };
+    
+    setEditableContent({
+      ...editableContent,
+      objectives: updatedObjectives
+    });
+  };
+  
+  const handleQuestChange = (index, field, value) => {
+    const updatedQuests = [...editableContent.quests];
+    updatedQuests[index] = {
+      ...updatedQuests[index],
+      [field]: value
+    };
+    
+    setEditableContent({
+      ...editableContent,
+      quests: updatedQuests
+    });
+  };
+  
+  // Add new objective
+  const addObjective = (tier) => {
+    const newObjective = {
+      title: `New Objective ${editableContent.objectives.length + 1}`,
+      description: 'Description goes here',
+      tier: tier,
+      completed: false
+    };
+    
+    setEditableContent({
+      ...editableContent,
+      objectives: [...editableContent.objectives, newObjective]
+    });
+  };
+  
+  // Add new quest
+  const addQuest = (isMainQuest) => {
+    const newQuest = {
+      title: `New ${isMainQuest ? 'Main' : 'Side'} Quest`,
+      description: 'Description goes here',
+      isMainQuest: isMainQuest,
+      status: 'available',
+      steps: [
+        { description: 'First step', completed: false }
+      ]
+    };
+    
+    setEditableContent({
+      ...editableContent,
+      quests: [...editableContent.quests, newQuest]
+    });
+  };
+  
+  // Save editable content to database
+  const saveContent = async () => {
+    try {
+      await axios.put(`/api/campaigns/${id}`, {
+        objectives: editableContent.objectives,
+        quests: editableContent.quests
+      });
+      
+      alert('Campaign content saved successfully!');
+    } catch (err) {
+      console.error('Error saving campaign content:', err);
+      alert('Failed to save campaign content');
+    }
+  };
+  
+  // Export campaign for LLM format
+  const exportForLLM = () => {
+    if (!campaign) return;
+    
+    // Build campaign report for external LLM
+    const report = buildCampaignReport(campaign, editableContent);
+    
+    // Store report in local storage for use in gameplay component
+    localStorage.setItem(`campaign_report_${id}`, report);
+    
+    // Navigate to gameplay
+    navigate(`/campaigns/${id}/play`);
+  };
+  
+  // Build formatted campaign report for LLM
+  const buildCampaignReport = (campaign, content) => {
+    let report = `# STAR WARS 5E CAMPAIGN: ${campaign.title}\n\n`;
+    
+    // Add setting information
+    report += `## SETTING\n`;
+    report += `Era: ${campaign.setting.era || 'Unspecified'}\n`;
+    if (campaign.setting.backstory) {
+      report += `${campaign.setting.backstory}\n`;
+    }
+    report += '\n';
+    
+    // Add character information
+    report += `## PLAYER CHARACTERS\n`;
+    if (campaign.characters && campaign.characters.length > 0) {
+      campaign.characters.forEach(char => {
+        report += `### ${char.name}\n`;
+        report += `Level ${char.level} ${char.species} ${char.class}\n`;
+        report += `Alignment: ${char.alignment || 'Unspecified'}\n`;
+        report += `Background: ${char.background || 'Unspecified'}\n`;
+        report += `STR: ${char.attributes.strength}, DEX: ${char.attributes.dexterity}, `;
+        report += `CON: ${char.attributes.constitution}, INT: ${char.attributes.intelligence}, `;
+        report += `WIS: ${char.attributes.wisdom}, CHA: ${char.attributes.charisma}\n\n`;
+      });
+    } else {
+      report += `No characters defined yet.\n\n`;
+    }
+    
+    // Add objectives categorized by tier
+    report += `## CAMPAIGN OBJECTIVES\n`;
+    const primaryObjectives = content.objectives.filter(o => o.tier === 1);
+    const secondaryObjectives = content.objectives.filter(o => o.tier === 2);
+    const tertiaryObjectives = content.objectives.filter(o => o.tier === 3);
+    
+    report += `### Primary Objectives\n`;
+    if (primaryObjectives.length > 0) {
+      primaryObjectives.forEach(obj => {
+        report += `- ${obj.title}: ${obj.description}\n`;
+      });
+    } else {
+      report += `No primary objectives defined yet.\n`;
+    }
+    report += '\n';
+    
+    report += `### Secondary Objectives\n`;
+    if (secondaryObjectives.length > 0) {
+      secondaryObjectives.forEach(obj => {
+        report += `- ${obj.title}: ${obj.description}\n`;
+      });
+    } else {
+      report += `No secondary objectives defined yet.\n`;
+    }
+    report += '\n';
+    
+    // Add main and side quests
+    report += `## QUESTS\n`;
+    const mainQuests = content.quests.filter(q => q.isMainQuest);
+    const sideQuests = content.quests.filter(q => !q.isMainQuest);
+    
+    report += `### Main Quests\n`;
+    if (mainQuests.length > 0) {
+      mainQuests.forEach(quest => {
+        report += `#### ${quest.title}\n`;
+        report += `${quest.description}\n`;
+        if (quest.steps && quest.steps.length > 0) {
+          report += `Steps:\n`;
+          quest.steps.forEach(step => {
+            report += `- ${step.description}\n`;
+          });
+        }
+        report += '\n';
+      });
+    } else {
+      report += `No main quests defined yet.\n`;
+    }
+    report += '\n';
+    
+    report += `### Side Quests\n`;
+    if (sideQuests.length > 0) {
+      sideQuests.forEach(quest => {
+        report += `#### ${quest.title}\n`;
+        report += `${quest.description}\n`;
+        if (quest.steps && quest.steps.length > 0) {
+          report += `Steps:\n`;
+          quest.steps.forEach(step => {
+            report += `- ${step.description}\n`;
+          });
+        }
+        report += '\n';
+      });
+    } else {
+      report += `No side quests defined yet.\n`;
+    }
+    
+    // Add starting location
+    if (campaign.galaxyMap && campaign.galaxyMap.currentPosition) {
+      report += `## STARTING LOCATION\n`;
+      report += `${campaign.galaxyMap.currentPosition.name}\n`;
+      if (campaign.galaxyMap.currentPosition.description) {
+        report += `${campaign.galaxyMap.currentPosition.description}\n`;
+      }
+    }
+    
+    //

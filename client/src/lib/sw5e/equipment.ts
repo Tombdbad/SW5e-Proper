@@ -1,13 +1,16 @@
+// Equipment data for SW5E
 export interface Equipment {
   id: string;
   name: string;
-  category: string;
-  price: number;
+  category: "Weapon" | "Armor" | "Ammunition" | "Adventuring Gear" | "Tool";
   description: string;
-  damage?: string;
-  properties?: string[];
-  armorClass?: number;
+  price: number;
   weight?: number;
+  properties?: string[];
+  damage?: string;
+  armorClass?: string;
+  strRequirement?: number;
+  stealthDisadvantage?: boolean;
 }
 
 export const equipment: Equipment[] = [
@@ -16,205 +19,242 @@ export const equipment: Equipment[] = [
     id: "blaster-pistol",
     name: "Blaster Pistol",
     category: "Weapon",
-    price: 400,
-    description: "Standard ranged weapon used throughout the galaxy.",
-    damage: "1d6 energy",
-    properties: ["Light", "Range (60/240)"]
+    description: "Standard sidearm throughout the galaxy. Effective at short to medium range.",
+    price: 450,
+    weight: 2,
+    properties: ["Range (80/320)", "Reload (15 shots)", "Power Cell"],
+    damage: "1d6 energy"
   },
   {
     id: "blaster-rifle",
     name: "Blaster Rifle",
     category: "Weapon",
+    description: "Long-range energy weapon favored by soldiers and hunters.",
     price: 900,
-    description: "Powerful ranged weapon with increased range and damage.",
-    damage: "1d8 energy",
-    properties: ["Two-handed", "Range (150/600)"]
+    weight: 9,
+    properties: ["Range (150/600)", "Reload (20 shots)", "Two-handed", "Power Cell"],
+    damage: "1d8 energy"
+  },
+  {
+    id: "heavy-blaster-rifle",
+    name: "Heavy Blaster Rifle",
+    category: "Weapon",
+    description: "Military-grade blaster with enhanced power and range.",
+    price: 1800,
+    weight: 14,
+    properties: ["Range (200/800)", "Reload (10 shots)", "Two-handed", "Heavy", "Power Cell"],
+    damage: "1d10 energy"
   },
   {
     id: "vibroblade",
     name: "Vibroblade",
     category: "Weapon",
-    price: 250,
-    description: "Melee weapon with ultrasonic vibrations for enhanced cutting power.",
-    damage: "1d6 kinetic",
-    properties: ["Finesse", "Light"]
+    description: "Standard vibrating blade that can slice through most materials.",
+    price: 100,
+    weight: 1,
+    properties: ["Finesse", "Light", "Power Cell"],
+    damage: "1d4 kinetic"
+  },
+  {
+    id: "vibroknife",
+    name: "Vibroknife",
+    category: "Weapon",
+    description: "Compact vibrating knife that can be easily concealed.",
+    price: 75,
+    weight: 0.5,
+    properties: ["Finesse", "Light", "Power Cell", "Thrown (20/60)"],
+    damage: "1d4 kinetic"
+  },
+  {
+    id: "vibrorapier",
+    name: "Vibrorapier",
+    category: "Weapon",
+    description: "Elegant vibrating blade favored by duelists.",
+    price: 350,
+    weight: 2,
+    properties: ["Finesse", "Power Cell"],
+    damage: "1d8 kinetic"
   },
   {
     id: "vibroaxe",
     name: "Vibroaxe",
     category: "Weapon",
+    description: "Heavy vibrating axe that can cleave through armor.",
     price: 350,
-    description: "Heavy melee weapon with devastating cutting power.",
-    damage: "1d12 kinetic",
-    properties: ["Heavy", "Two-handed"]
+    weight: 7,
+    properties: ["Heavy", "Two-handed", "Power Cell"],
+    damage: "1d12 kinetic"
+  },
+  {
+    id: "vibroglaive",
+    name: "Vibroglaive",
+    category: "Weapon",
+    description: "Vibrating polearm with extended reach.",
+    price: 300,
+    weight: 6,
+    properties: ["Heavy", "Reach", "Two-handed", "Power Cell"],
+    damage: "1d10 kinetic"
   },
   {
     id: "lightsaber",
     name: "Lightsaber",
     category: "Weapon",
-    price: 5000,
-    description: "Ancient weapon of Force users, capable of cutting through almost anything.",
-    damage: "2d8 energy",
-    properties: ["Finesse", "Versatile (2d10)"]
+    description: "Ancient weapon of Force traditions, capable of cutting through almost anything.",
+    price: 3000,
+    weight: 1,
+    properties: ["Finesse", "Luminous", "Kyber Crystal"],
+    damage: "2d8 energy"
   },
   {
-    id: "thermal-detonator",
-    name: "Thermal Detonator",
+    id: "doubleblade-lightsaber",
+    name: "Double-bladed Lightsaber",
     category: "Weapon",
-    price: 750,
-    description: "Powerful grenade that causes massive damage in a small area.",
-    damage: "8d6 energy",
-    properties: ["Thrown (20/60)", "Area Effect (10-foot radius)"]
+    description: "Specialized lightsaber with blades on both ends.",
+    price: 4500,
+    weight: 1.5,
+    properties: ["Finesse", "Luminous", "Kyber Crystal", "Two-handed", "Special"],
+    damage: "2d6 energy"
+  },
+  
+  // Ammunition
+  {
+    id: "power-cell",
+    name: "Power Cell (Standard)",
+    category: "Ammunition",
+    description: "Standard power cell for blasters and energy weapons.",
+    price: 40,
+    weight: 0.2
   },
   {
-    id: "blaster-power-pack",
-    name: "Blaster Power Pack",
+    id: "enhanced-power-cell",
+    name: "Power Cell (Enhanced)",
     category: "Ammunition",
-    price: 50,
-    description: "Standard power pack for blaster weapons. Provides 50 shots."
+    description: "Enhanced power cell that provides more shots before recharging.",
+    price: 120,
+    weight: 0.3
   },
   
   // Armor
   {
-    id: "combat-suit",
-    name: "Combat Suit",
+    id: "light-combat-suit",
+    name: "Light Combat Suit",
     category: "Armor",
-    price: 500,
-    description: "Flexible armor designed for mobility while providing decent protection.",
-    armorClass: 12
+    description: "Flexible armor that offers basic protection without restricting movement.",
+    price: 450,
+    weight: 8,
+    armorClass: "11 + Dex modifier"
   },
   {
-    id: "tactical-armor",
-    name: "Tactical Armor",
+    id: "medium-combat-armor",
+    name: "Medium Combat Armor",
     category: "Armor",
-    price: 1500,
-    description: "Military-grade armor with enhanced protection for vital areas.",
-    armorClass: 14
+    description: "Standard combat armor with reinforced plates.",
+    price: 750,
+    weight: 20,
+    armorClass: "14 + Dex modifier (max 2)"
   },
   {
     id: "heavy-battle-armor",
     name: "Heavy Battle Armor",
     category: "Armor",
-    price: 3000,
-    description: "Full-body armor providing excellent protection at the cost of mobility.",
-    armorClass: 16
+    description: "Fully encasing armor with advanced protection systems.",
+    price: 1500,
+    weight: 35,
+    armorClass: "17",
+    strRequirement: 15,
+    stealthDisadvantage: true
   },
   {
-    id: "reflective-shield",
-    name: "Reflective Shield",
+    id: "personal-shield",
+    name: "Personal Shield Generator",
     category: "Armor",
+    description: "Wearable energy shield that absorbs damage.",
     price: 2000,
-    description: "Energy shield that offers protection against blaster fire.",
-    armorClass: 13
-  },
-  {
-    id: "stealth-suit",
-    name: "Stealth Suit",
-    category: "Armor",
-    price: 1800,
-    description: "Light armor with sound-dampening technology for covert operations.",
-    armorClass: 11
+    weight: 3,
+    armorClass: "+2 bonus"
   },
   
   // Adventuring Gear
   {
-    id: "comlink",
-    name: "Comlink",
-    category: "Adventuring Gear",
-    price: 150,
-    description: "Communication device for short to medium-range transmissions."
-  },
-  {
     id: "medpac",
     name: "Medpac",
     category: "Adventuring Gear",
-    price: 200,
-    description: "Medical kit containing supplies for treating injuries and stabilizing patients."
+    description: "First aid kit containing bacta and other medical supplies.",
+    price: 50,
+    weight: 1
   },
   {
-    id: "breath-mask",
-    name: "Breath Mask",
+    id: "comlink",
+    name: "Comlink",
     category: "Adventuring Gear",
-    price: 350,
-    description: "Provides breathable air in hostile environments for up to 6 hours."
-  },
-  {
-    id: "electrobinoculars",
-    name: "Electrobinoculars",
-    category: "Adventuring Gear",
-    price: 250,
-    description: "Enhanced vision device with zoom, night vision, and data overlay capabilities."
-  },
-  {
-    id: "holoprojector",
-    name: "Holoprojector",
-    category: "Adventuring Gear",
-    price: 400,
-    description: "Device capable of recording and projecting three-dimensional images and messages."
-  },
-  {
-    id: "fusion-lantern",
-    name: "Fusion Lantern",
-    category: "Adventuring Gear",
-    price: 100,
-    description: "Long-lasting light source powered by a fusion cell."
-  },
-  {
-    id: "grappling-hook",
-    name: "Grappling Hook",
-    category: "Adventuring Gear",
-    price: 80,
-    description: "Mechanical device used for climbing and crossing gaps."
-  },
-  {
-    id: "utility-belt",
-    name: "Utility Belt",
-    category: "Adventuring Gear",
-    price: 150,
-    description: "Belt with multiple pouches for carrying small items and equipment."
+    description: "Standard communication device with encrypted channel options.",
+    price: 40,
+    weight: 0.1
   },
   {
     id: "datapad",
     name: "Datapad",
     category: "Adventuring Gear",
-    price: 300,
-    description: "Portable computer for data storage, communication, and information access."
+    description: "Handheld computer for storing and accessing information.",
+    price: 150,
+    weight: 0.5
+  },
+  {
+    id: "macrobinoculars",
+    name: "Macrobinoculars",
+    category: "Adventuring Gear",
+    description: "Advanced optics with zoom, recording, and analysis capabilities.",
+    price: 200,
+    weight: 1
+  },
+  {
+    id: "breath-mask",
+    name: "Breath Mask",
+    category: "Adventuring Gear",
+    description: "Filtration mask for breathing in hostile atmospheres.",
+    price: 120,
+    weight: 0.5
+  },
+  {
+    id: "holoprojector",
+    name: "Holoprojector",
+    category: "Adventuring Gear",
+    description: "Device capable of projecting three-dimensional images and recordings.",
+    price: 100,
+    weight: 0.5
+  },
+  {
+    id: "glow-rod",
+    name: "Glow Rod",
+    category: "Adventuring Gear",
+    description: "Handheld illumination device with adjustable brightness.",
+    price: 10,
+    weight: 0.5
   },
   
   // Tools
   {
+    id: "tech-kit",
+    name: "Tech Kit",
+    category: "Tool",
+    description: "Set of tools for repairing and modifying electronic devices.",
+    price: 125,
+    weight: 5
+  },
+  {
     id: "security-kit",
     name: "Security Kit",
     category: "Tool",
-    price: 500,
-    description: "Set of tools for bypassing security systems and locks."
+    description: "Tools for bypassing electronic and mechanical locks.",
+    price: 150,
+    weight: 3
   },
   {
-    id: "mechanics-toolkit",
-    name: "Mechanic's Toolkit",
+    id: "astrogation-tools",
+    name: "Astrogation Tools",
     category: "Tool",
-    price: 400,
-    description: "Collection of tools for repairing and maintaining mechanical devices."
-  },
-  {
-    id: "slicer-kit",
-    name: "Slicer Kit",
-    category: "Tool",
-    price: 600,
-    description: "Specialized tools for hacking and bypassing computer systems."
-  },
-  {
-    id: "medical-kit",
-    name: "Medical Kit",
-    category: "Tool",
-    price: 450,
-    description: "Advanced medical tools for performing surgeries and treating serious injuries."
-  },
-  {
-    id: "engineers-tools",
-    name: "Engineer's Tools",
-    category: "Tool",
-    price: 550,
-    description: "Comprehensive toolkit for engineering work and structural analysis."
+    description: "Specialized tools for calculating hyperspace jumps and navigation.",
+    price: 200,
+    weight: 2
   }
 ];

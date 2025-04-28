@@ -1,0 +1,51 @@
+Star System Name	Galactic Location	Notable Planets	Controlling Factions (SW5e Context)	SW5e Relevance/Lore Notes (Snippet IDs)	Moons	Noteworthy Settlements
+Alderaan	Core Worlds	Alderaan	Rebel Alliance (pre-destruction), Empire (briefly)	Mentioned in "Dawn of Defiance" , Peaceful culture , Destroyed by Death Star	None (numerous minor celestial bodies)	Aldera (capital), Krennel
+Tatooine	Outer Rim	Tatooine	Hutt Cartel, Galactic Empire (limited)	Featured in "Escape from Mos Shuuta" and "Secrets of Tatooine" , Jabba's Palace , Mos Eisley	Two: Ghomrassen, Chenini	Mos Eisley, Mos Espa, Anchorhead
+Coruscant	Core Worlds	Coruscant	Galactic Republic, Galactic Empire	Mentioned as potential setting , Jedi Temple , Black Sun territory , Ecumenopolis	Four: Lunae, Centax-1, Centax-2, Centax-3	Coruscant City (entire planet)
+Naboo	Mid Rim	Naboo	Galactic Republic, Separatists, Galactic Empire	Home of Padmé and Palpatine , diverse environments , supported the Empire	Three: Onoam, Veruna, Rori	Theed (capital), Kaadara, Otoh Gunga
+Kashyyyk	Mid Rim/Outer Rim Border	Kashyyyk	Galactic Republic, Separatists, Galactic Empire	Wookiee homeworld , giant trees, dangerous wildlife , mentioned in Jedi Survivor context	Unknown (numerous)	Kachirho, Rwookrrorro
+Hoth	Outer Rim	Hoth	Rebel Alliance, Galactic Empire	Site of Echo Base , icy planet	None	Echo Base (abandoned)
+Bespin	Outer Rim	Bespin	Neutral (initially), Galactic Empire, Rebel Alliance	Tibanna gas mining , Cloud City , criminals and gamblers	None	Cloud City
+Endor	Outer Rim	Endor (forest moon)	Galactic Empire, Rebel Alliance, Ewoks	Ewok homeworld , crucial battle , tree villages	None (moon of a gas giant)	Bright Tree Village (Ewok)
+Yavin	Outer Rim	Yavin Prime, Yavin 4	Rebel Alliance, Galactic Empire	Rebel base on Yavin 4 , Massassi temples	Three: Yavin 1, Yavin 2, Yavin 3	Rebel Base (Yavin 4)
+Dagobah	Outer Rim	Dagobah	Neutral, Yoda	Yoda's exile , strong in the Force , swampy world	None	Yoda's hut
+Mustafar	Outer Rim	Mustafar	Separatists, Galactic Empire	Volcanic planet, Anakin became Vader	Two: Jestefad, Sonara	Mining facilities (various)
+Mygeeto	Outer Rim	Mygeeto	Galactic Republic, Separatists, Galactic Empire	Ice caves	Unknown	Mining outposts (various)
+Felucia	Outer Rim	Felucia	Galactic Republic, Separatists, Galactic Empire	Fungal jungles , "Dawn of Defiance" , Kway Teow	Unknown	Jiguuna, Har Gau
+Cato Neimoidia	Outer Rim	Cato Neimoidia	Trade Federation, Separatists, Galactic Empire	Cities on bridges , "Dawn of Defiance" , Trade Federation	Unknown	Brimm (capital), platforms (various)
+Brentaal	Core Worlds	Brentaal IV	Galactic Republic, Galactic Empire	"Dawn of Defiance" start , space station	Several	Brentaal City, orbital station
+Nar Shaddaa	Hutt Space	Nar Shaddaa	Hutt Cartel, Smuggler's Guild	Smuggler's Moon , Vertical City , hive of scum and villainy	None (moon of Nal Hutta)	Vertical City (entire moon)
+Nal Hutta	Hutt Space	Nal Hutta	Hutt Cartel, Eidola Pirates	Hutt homeworld, swampy and polluted	One: Nar Shaddaa	Jabba's Palace (various locations)
+Toydaria	Hutt Space	Toydaria	Tresario Star Kingdom, Hutt Cartel influence	Toydarian homeworld, within Hutt Space	Unknown	Toydaria City (capital)
+Kessel	Outer Rim	Kessel	Hutt Cartel, Galactic Empire	Spice mines, Kessel Run	None (asteroid belt)	Spice mines (various)
+Mandalore	Outer Rim	Mandalore	Mandalorians, Galactic Empire	Mandalorian homeworld , Beskar , Mandalorian lore	One: Concordia	Keldabe (capital), Sundari
+Concord Dawn	Outer Rim	Concord Dawn	Mandalorians	Mandalorian Protectors	Unknown	Various settlements/strongholds
+Ryloth	Outer Rim	Ryloth	Separatists, Galactic Republic, Galactic Empire	Twi'lek homeworld , slavery , "Long Arm of the Hutt"	None	Lessu (capital), Nabat
+Ilum	Unknown Regions (near Core)	Ilum	Jedi Order, Separatists, Galactic Empire	Kyber crystals , Jedi temple , "Ilum Inquisition"	None	Jedi Temple (destroyed)
+Mon Cala (Dac)	Outer Rim	Mon Cala	Mon Calamari, Galactic Empire	Mon Calamari homeworld , advanced culture, shipbuilding	None	Cala City (capital), Coral City
+Corellia	Core Worlds	Corellia	Galactic Republic, Galactic Empire	Shipyards, skilled pilots , Han Solo's homeworld (in some lore)	Several	Coronet City (capital), Tyrena
+Kamino	Outer Rim	Kamino	Kaminoans, Galactic Republic, Galactic Empire	Cloning facilities , water planet	None	Tipoca City (capital)
+Geonosis	Outer Rim	Geonosis	Separatists, Galactic Empire	First battle of Clone Wars, droid factories	Numerous (asteroid belt)	Poggle the Lesser's Hive, droid foundries
+Utapau	Outer Rim	Utapau	Separatists, Galactic Republic	Obi-Wan vs. Grievous, sinkhole cities	Unknown	Pau City, Utapau City (Ingi's Hold)
+Crait	Outer Rim	Crait	Resistance	Salt surface, red crystal , Resistance base	None	Resistance base
+Jakku	Outer Rim	Jakku	Various factions post-Empire	Desert planet, Niima Outpost , battle remnants	Unknown	Niima Outpost, Plaintive Handlers
+Lothal	Outer Rim	Lothal	Galactic Empire, Rebel Alliance	Ezra Bridger's homeworld , Jedi Temple	None	Capital City, Lothal Central City
+Dathomir	Outer Rim	Dathomir	Nightsisters	Dark side planet , Nightsisters , underground temple	None	Nightsister Strongholds (various)
+Korriban (Moraband)	Outer Rim (Stygian Caldera)	Korriban	Ancient Sith, Sith Empire	Sith homeworld , Sith tombs	Unknown	Sith tombs and temples (various)
+Malachor V	Outer Rim	Malachor V	Ancient Sith	Sith battle site , dark side scarred	Unknown	Sith Citadel (ruins)
+Rakata Prime	Unknown Regions	Rakata Prime	Rakatan Infinite Empire	Infinite Empire capital , ancient technology	Numerous	The Infinite Empire (ruins)
+Tython	Deep Core	Tython	Je'daii Order, Galactic Republic	Je'daii homeworld, early Jedi Temple	Unknown	Je'daii Temple (ruins)
+Ossus	Deep Core	Ossus	Jedi Order	Jedi library and academy , devastated by Sith	Unknown	Jedi Library (ruins)
+Christophsis	Outer Rim	Christophsis	Galactic Republic, Separatists	Clone Wars battles, crystal structures	None	Christophsis City (various sectors)
+Saleucami	Outer Rim	Saleucami	Galactic Republic, Separatists	Republic base (Clone Wars)	Unknown	Republic base (abandoned)
+Raxus Prime	Outer Rim	Raxus Prime	Neutral, Separatist holdouts	Junkyard planet , scavengers	Unknown	Scrapyards and settlements (various)
+Umbara	Outer Rim	Umbara	Separatists, Galactic Republic	Rich in doonium , dark side presence, Umbarans	Unknown	Umbaran cities (various)
+Polis Massa	Outer Rim	Polis Massa (asteroid field)	Neutral	Medical facility , Padmé's birth place	None (asteroid field)	Medical station
+Kijimi	Outer Rim	Kijimi	First Order	Thieves' Quarter , cold and mountainous	Unknown	Thieves' Quarter
+Exegol	Unknown Regions	Exegol	Sith Eternal	Sith world, Sith Citadel , dark side nexus	Unknown	Sith Citadel
+Ajan Kloss	Outer Rim	Ajan Kloss	Resistance	Resistance base	Unknown	Resistance base
+Nevarro	Outer Rim	Nevarro	Bounty Hunters' Guild, Galactic Empire, New Republic	Bounty Hunters' Guild , volcanic	Unknown	Nevarro City, cantina
+Pasaana	Outer Rim	Pasaana	Aki-Aki, First Order	Aki-Aki festival , desert	Unknown	Aki-Aki village
+Cantonica	Outer Rim	Cantonica (Canto Bight)	Wealthy elite	Casino city, rich and powerful	None	Canto Bight
+Vjun	Outer Rim	Vjun	Sith	Dark side presence , Sidious's retreat	Unknown	Citadel Vjun
+Dantooine	Outer Rim	Dantooine	Galactic Republic, Rebel Alliance	Peaceful plains, Jedi Enclave	Unknown	Khoonda, Jedi Enclave (ruins)

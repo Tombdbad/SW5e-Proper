@@ -4,12 +4,12 @@ import { motion } from 'framer-motion';
 import { useForm, FormProvider } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { SpeciesSelection } from '../components/CharacterCreation/SpeciesSelection';
-import { ClassSelection } from '../components/CharacterCreation/ClassSelection';
-import { AbilityScores } from '../components/CharacterCreation/AbilityScores';
-import { BackgroundSelection } from '../components/CharacterCreation/BackgroundSelection';
-import { EquipmentSelection } from '../components/CharacterCreation/EquipmentSelection';
-import { TranslucentPane } from '../components/ui/TranslucentPane';
+import SpeciesSelection from '../components/CharacterCreation/SpeciesSelection';
+import ClassSelection from '../components/CharacterCreation/ClassSelection';
+import AbilityScores from '../components/CharacterCreation/AbilityScores';
+import BackgroundSelection from '../components/CharacterCreation/BackgroundSelection';
+import EquipmentSelection from '../components/CharacterCreation/EquipmentSelection';
+import TranslucentPane from '../components/ui/TranslucentPane';
 
 const characterSchema = z.object({
   name: z.string().min(2, { message: "Character name must be at least 2 characters" }),
@@ -75,11 +75,11 @@ export default function CharacterCreation() {
   };
 
   const tabs = [
-    { name: 'Species', component: <SpeciesSelection /> },
-    { name: 'Class', component: <ClassSelection /> },
-    { name: 'Abilities', component: <AbilityScores /> },
-    { name: 'Background', component: <BackgroundSelection /> },
-    { name: 'Equipment', component: <EquipmentSelection /> },
+    { name: 'Species', component: <SpeciesSelection form={methods} /> },
+    { name: 'Class', component: <ClassSelection form={methods} /> },
+    { name: 'Abilities', component: <AbilityScores form={methods} /> },
+    { name: 'Background', component: <BackgroundSelection form={methods} /> },
+    { name: 'Equipment', component: <EquipmentSelection form={methods} /> },
   ];
 
   return (

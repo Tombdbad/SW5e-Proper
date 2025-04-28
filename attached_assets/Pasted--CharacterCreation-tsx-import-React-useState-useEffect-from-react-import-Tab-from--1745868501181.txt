@@ -1,0 +1,266 @@
+// CharacterCreation.tsx
+import React, { useState, useEffect } from 'react';
+import { Tab } from '@headlessui/react';
+import { motion } from 'framer-motion';
+import { useForm, FormProvider } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+
+// Components
+import BasicInfo from './components/BasicInfo';
+import SpeciesSelection from './components/SpeciesSelection';
+import ClassSelection from './components/ClassSelection';
+import ArchetypeSelection from './components/ArchetypeSelection';
+import AbilityScores from './components/AbilityScores';
+import PowersSelection from './components/PowersSelection';
+import BackgroundSelection from './components/BackgroundSelection';
+import EquipmentSelection from './components/EquipmentSelection';
+import CharacterPreview from './components/CharacterPreview';
+import ForceAlignmentVisual from './components/ForceAlignmentVisual';
+import TranslucentPane from './components/TranslucentPane';
+import ProgressBar from './components/ProgressBar';
+import LoreTooltip from './components/LoreTooltip';
+
+// Validation schema
+const characterSchema = z.object({
+  name: z.string().min(2, { message: "Character name must be at least 2 characters" }),
+  alignment: z.string().min(1, { message: "Please select an alignment" }),
+  startingLocation: z.string().min(1, { message: "Please select a starting location" }),
+  backstory: z.string().optional(),
+  species: z.string().min(1, { message: "Please select a species" }),
+  class: z.string().min(1, { message: "Please select a class" }),
+  archetype: z.string().min(1, { message: "Please select an archetype" }),
+  abilities: z.object({
+    strength: z.number().min(3).max(18),
+    dexterity: z.number().min(3).max(18),
+    constitution: z.number().min(3).max(18),
+    intelligence: z.number().min(3).max(18),
+    wisdom: z.number().min(3).max(18),
+    charisma: z.number().min(3).max(18),
+  }),
+  skills: z.array(z.string()),
+  powers: z.array(z.string()),
+  background: z.string().min(1, { message: "Please select a background" }),
+  equipment: z.array(z.string()),
+  credits: z.number().min(0),
+});
+
+type CharacterData = z.infer<typeof characterSchema>;
+
+const CharacterCreation: React.FC = () => {
+  const [currentTab, setCurrentTab] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [forceAlignment, setForceAlignment] = useState({ light: 50, dark: 50 });
+  
+  const methods = useForm<CharacterData>({
+    resolver: zodResolver(characterSchema),
+    defaultValues: {
+      name: '',
+      alignment: '',
+      startingLocation: '',
+      backstory: '',
+      species: '',
+      class: '',
+      archetype: '',
+      abilities: {
+        strength: 10,
+        dexterity: 10,
+        constitution: 10,
+        intelligence: 10,
+        wisdom: 10,
+        charisma: 10,
+      },
+      skills: [],
+      powers: [],
+      background: '',
+      equipment: [],
+      credits: 500,
+    }
+  });
+
+  const { handleSubmit, watch, formState } = methods;
+  const { errors, isValid } = formState;
+  const watchedValues = watch();
+
+  // Update force alignment based on choices
+  useEffect(() => {
+    // This would calculate light vs dark alignment based on various selections
+    const calculateForceAlignment = () => {
+      let light = 50;
+      let dark = 50;
+      
+      // Example factors that influence alignment
+      const alignment = watchedValues.alignment;
+      if (alignment.includes('Light')) light += 20;
+      if (alignment.includes('Dark')) dark += 20;
+      
+      // Class influence
+      if (watchedValues.class === 'Jedi Guardian') light += 10;
+      if (watchedValues.class === 'Sith Warrior') dark += 10;
+      
+      // Powers influence
+      const darkPowers = ['Force Lightning', 'Force Choke', 'Dark Rage'];
+      const lightPowers = ['Force Heal', 'Battle Meditation', 'Force Valor'];
+      
+      watchedValues.powers.forEach(power => {
+        if (darkPowers.includes(power)) dark += 5;
+        if (lightPowers.includes(power)) light += 5;
+      });
+      
+      // Normalize values
+      const total = light + dark;
+      light = Math.round((light / total) * 100);
+      dark = 100 - light;
+      
+      return { light, dark };
+    };
+    
+    setForceAlignment(calculateForceAlignment());
+  }, [watchedValues]);
+
+  const onSubmit = (data: CharacterData) => {
+    setIsSubmitting(true);
+    
+    // Simulate API call or data processing
+    setTimeout(() => {
+      console.log('Character created:', data);
+      setIsSubmitting(false);
+      alert('Character created successfully!');
+    }, 1500);
+  };
+
+  const tabs = [
+    { name: 'Basics', component: <BasicInfo /> },
+    { name: 'Species', component: <SpeciesSelection /> },
+    { name: 'Class', component: <ClassSelection /> },
+    { name: 'Archetype', component: <ArchetypeSelection /> },
+    { name: 'Abilities', component: <AbilityScores /> },
+    { name: 'Powers', component: <PowersSelection /> },
+    { name: 'Background', component: <BackgroundSelection /> },
+    { name: 'Equipment', component: <EquipmentSelection /> },
+  ];
+
+  const nextTab = () => {
+    if (currentTab < tabs.length - 1) {
+      setCurrentTab(currentTab + 1);
+    }
+  };
+
+  const prevTab = () => {
+    if (currentTab > 0) {
+      setCurrentTab(currentTab - 1);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-black bg-opacity-30 text-yellow-400" 
+         style={{ backgroundImage: 'url(/assets/space-bg.jpg)', backgroundSize: 'cover', backgroundPosition: 'center' }}>
+      <FormProvider {...methods}>
+        <form onSubmit={handleSubmit(onSubmit)} className="w-full max-w-6xl">
+          <TranslucentPane className="p-6 rounded-lg backdrop-blur-md border border-yellow-500 border-opacity-30">
+            <div className="flex justify-between items-center mb-8">
+              <h1 className="text-3xl sm:text-4xl font-bold text-yellow-400">
+                Star Wars: Character Creation
+              </h1>
+              <div className="hidden md:block">
+                <ForceAlignmentVisual light={forceAlignment.light} dark={forceAlignment.dark} />
+              </div>
+            </div>
+            
+            <div className="flex flex-col md:flex-row gap-6">
+              {/* Left side: Character preview and force alignment */}
+              <div className="md:w-1/3">
+                <TranslucentPane className="mb-4 p-4 rounded-lg backdrop-blur-md">
+                  <CharacterPreview character={watchedValues} />
+                </TranslucentPane>
+                <div className="md:hidden mb-4">
+                  <ForceAlignmentVisual light={forceAlignment.light} dark={forceAlignment.dark} />
+                </div>
+              </div>
+              
+              {/* Right side: Form tabs */}
+              <div className="md:w-2/3">
+                <ProgressBar totalSteps={tabs.length} currentStep={currentTab + 1} />
+                
+                <Tab.Group selectedIndex={currentTab} onChange={setCurrentTab}>
+                  <Tab.List className="flex flex-wrap space-x-1 space-y-1 bg-gray-800 bg-opacity-50 p-1 rounded-lg">
+                    {tabs.map((tab) => (
+                      <Tab
+                        key={tab.name}
+                        className={({ selected }) =>
+                          `px-3 py-2 text-sm font-medium rounded-md focus:outline-none ${
+                            selected
+                              ? 'bg-yellow-600 text-white'
+                              : 'text-yellow-400 hover:bg-gray-700 hover:text-yellow-300'
+                          }`
+                        }
+                      >
+                        {tab.name}
+                      </Tab>
+                    ))}
+                  </Tab.List>
+                  <Tab.Panels className="mt-4">
+                    {tabs.map((tab, idx) => (
+                      <Tab.Panel key={idx}>
+                        <motion.div
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3 }}
+                        >
+                          <TranslucentPane className="p-4 rounded-lg backdrop-blur-md">
+                            {tab.component}
+                          </TranslucentPane>
+                        </motion.div>
+                      </Tab.Panel>
+                    ))}
+                  </Tab.Panels>
+                </Tab.Group>
+                
+                <div className="mt-6 flex justify-between">
+                  <button
+                    type="button"
+                    onClick={prevTab}
+                    disabled={currentTab === 0}
+                    className={`px-4 py-2 rounded-md ${
+                      currentTab === 0
+                        ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                        : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    }`}
+                  >
+                    Previous
+                  </button>
+                  
+                  {currentTab === tabs.length - 1 ? (
+                    <button
+                      type="submit"
+                      disabled={!isValid || isSubmitting}
+                      className={`px-4 py-2 rounded-md ${
+                        !isValid || isSubmitting
+                          ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                          : 'bg-green-600 hover:bg-green-700 text-white'
+                      }`}
+                    >
+                      {isSubmitting ? 'Creating...' : 'Create Character'}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={nextTab}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md"
+                    >
+                      Next
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </TranslucentPane>
+        </form>
+      </FormProvider>
+    </div>
+  );
+};
+
+export default CharacterCreation;

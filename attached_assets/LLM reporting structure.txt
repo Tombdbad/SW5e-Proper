@@ -1,0 +1,419 @@
+{
+  "reporting_structure": {
+    "version": "1.0.0",
+    "description": "SW5E RPG Campaign Generator AI GM Reporting Structure",
+    
+    // Standard reporting types
+    "report_types": {
+      // Basic state update for general game flow
+      "state_update": {
+        "diff_type": "update",
+        "target": "string", // ID of what's changing
+        "operations": [
+          { 
+            "op": "replace|add|remove", 
+            "path": "string", // JSON Pointer to value
+            "value": "any" // New value (not needed for "remove")
+          }
+        ],
+        "narration": "string" // GM description of changes
+      },
+      
+      // Full state replacement (for complex changes or sync)
+      "full_state": {
+        "diff_type": "full",
+        "game_state": {}, // Complete game state object
+        "narration": "string"
+      },
+      
+      // Data request from AI to app
+      "data_request": {
+        "diff_type": "check",
+        "check_type": "inventory|character_stat|skill_check|save|location|force_power",
+        "target": "string", // Character or object ID
+        "property": "string", // Specific property to check
+        "item_id": "string", // Optional: specific item to check
+        "difficulty": "number", // Optional: DC for checks
+        "metadata": {} // Additional context for the check
+      },
+      
+      // Data response from app to AI
+      "data_response": {
+        "diff_type": "check_result",
+        "check_type": "string", // Matches the request type
+        "target": "string", // Matches the request target
+        "success": "boolean", // For skill checks/saves
+        "value": "any", // Result value
+        "roll_details": { // For dice rolls
+          "roll": "number",
+          "modifiers": "number",
+          "total": "number",
+          "critical": "boolean"
+        }
+      },
+      
+      // Combat initiation
+      "combat_start": {
+        "diff_type": "combat_start",
+        "combatants": [
+          {
+            "id": "string",
+            "type": "player|npc|creature",
+            "initiative_modifier": "number",
+            "position": {
+              "x": "number",
+              "y": "number",
+              "z": "number"
+            }
+          }
+        ],
+        "environment": {
+          "terrain": "string",
+          "lighting": "string",
+          "cover": [
+            {
+              "id": "string",
+              "position": {
+                "x": "number",
+                "y": "number",
+                "z": "number"
+              },
+              "dimensions": {
+                "width": "number",
+                "height": "number",
+                "depth": "number"
+              },
+              "cover_type": "half|three-quarters|full"
+            }
+          ]
+        },
+        "narration": "string" // Combat setup description
+      },
+      
+      // Combat round update
+      "combat_round": {
+        "diff_type": "combat_round",
+        "round": "number",
+        "initiative_order": ["string"], // IDs in initiative order
+        "active_character": "string", // Current actor
+        "narration": "string" // Round description
+      },
+      
+      // Combat action
+      "combat_action": {
+        "diff_type": "combat_action",
+        "actor": "string", // ID of character taking action
+        "action_type": "attack|cast|move|dash|disengage|dodge|help|hide|use_item|other",
+        "target": "string|null", // ID of target if applicable
+        "position_change": { // If movement occurs
+          "x": "number",
+          "y": "number",
+          "z": "number"
+        },
+        "attack_details": { // If attack
+          "weapon": "string", // Item ID
+          "attack_type": "melee|ranged",
+          "modifiers": ["advantage|disadvantage|cover-half|cover-three-quarters"]
+        },
+        "power_details": { // If force/tech power
+          "power_id": "string",
+          "power_level": "number",
+          "force_points_cost": "number"
+        },
+        "item_details": { // If item use
+          "item_id": "string",
+          "usage_type": "string"
+        },
+        "narration": "string" // Action description
+      },
+      
+      // Combat result
+      "combat_result": {
+        "diff_type": "combat_result",
+        "action_id": "string", // Reference to combat_action
+        "results": [
+          {
+            "target": "string", // Character affected
+            "hit": "boolean", // If attack/power hit
+            "damage": "number", // Damage dealt
+            "damage_type": "string", // Energy, kinetic, etc.
+            "hp_change": "number", // Total HP change
+            "force_points_change": "number", // FP change if applicable
+            "status_effects": ["string"], // Added effects
+            "saving_throw": { // If applicable
+              "type": "string", // Stat used
+              "dc": "number",
+              "success": "boolean"
+            }
+          }
+        ],
+        "narration": "string" // Result description
+      },
+      
+      // Combat end
+      "combat_end": {
+        "diff_type": "combat_end",
+        "outcome": "string", // victory, defeat, escape, etc.
+        "survivors": ["string"], // IDs of survivors
+        "defeated": ["string"], // IDs of defeated combatants
+        "rewards": { // Optional loot/XP
+          "credits": "number",
+          "items": ["string"], // Item IDs
+          "experience": "number"
+        },
+        "narration": "string" // Combat conclusion
+      },
+      
+      // Conversation
+      "conversation": {
+        "diff_type": "conversation",
+        "npc_id": "string", // Speaking NPC
+        "dialogue": "string", // What NPC says
+        "options": [ // Player response options
+          {
+            "id": "string", // Option identifier
+            "text": "string", // Option text
+            "skill_check": { // Optional skill check for option
+              "skill": "string",
+              "dc": "number"
+            }
+          }
+        ]
+      },
+      
+      // Player response
+      "player_response": {
+        "diff_type": "player_response",
+        "option_id": "string", // Chosen option
+        "custom_text": "string" // If player typed custom response
+      },
+      
+      // Quest update
+      "quest_update": {
+        "diff_type": "quest_update",
+        "quest_id": "string",
+        "status": "started|updated|completed|failed",
+        "objectives": [
+          {
+            "id": "string",
+            "description": "string",
+            "status": "pending|active|completed|failed"
+          }
+        ],
+        "rewards": {}, // Same as combat rewards
+        "narration": "string" // Quest update description
+      },
+      
+      // Force/tech powers
+      "power_usage": {
+        "diff_type": "power_usage",
+        "character_id": "string",
+        "power_id": "string",
+        "power_level": "number",
+        "targets": ["string"], // IDs of targets
+        "force_points_cost": "number",
+        "concentration": "boolean",
+        "duration": "number", // In rounds if applicable
+        "narration": "string" // Power effect description
+      },
+      
+      // Map/location update
+      "location_update": {
+        "diff_type": "location_update",
+        "location_id": "string",
+        "revealed": "boolean", // If previously hidden
+        "fog_of_war": { // Areas to reveal on map
+          "center": {
+            "x": "number",
+            "y": "number"
+          },
+          "radius": "number"
+        },
+        "objects_revealed": ["string"], // IDs of revealed objects
+        "narration": "string" // Location description
+      },
+      
+      // Time passage
+      "time_update": {
+        "diff_type": "time_update",
+        "time_passed": {
+          "short_rest": "boolean",
+          "long_rest": "boolean",
+          "hours": "number",
+          "days": "number"
+        },
+        "healing": {
+          "character_id": "string",
+          "hp_restored": "number",
+          "force_points_restored": "number"
+        },
+        "narration": "string" // Time passage description
+      },
+      
+      // Player decision point
+      "decision_point": {
+        "diff_type": "decision_point",
+        "context": "string",
+        "options": [
+          {
+            "id": "string",
+            "description": "string",
+            "consequences_hint": "string" // Optional hint
+          }
+        ],
+        "narration": "string" // Setup for decision
+      }
+    },
+    
+    // Example game state structure compatible with the app
+    "game_state_schema": {
+      "campaign": {
+        "id": "string",
+        "name": "string", 
+        "description": "string",
+        "current_location_id": "string",
+        "active_quests": ["string"],
+        "time_tracking": {
+          "standard_day": "number",
+          "standard_year": "number"
+        }
+      },
+      "characters": [
+        {
+          "id": "string",
+          "name": "string",
+          "type": "player|npc",
+          "species": "string",
+          "class": "string",
+          "level": "number",
+          "stats": {
+            "strength": "number",
+            "dexterity": "number",
+            "constitution": "number",
+            "intelligence": "number",
+            "wisdom": "number",
+            "charisma": "number"
+          },
+          "hp": {
+            "current": "number",
+            "max": "number"
+          },
+          "force_points": {
+            "current": "number",
+            "max": "number"
+          },
+          "position": {
+            "location_id": "string",
+            "coordinates": {
+              "x": "number",
+              "y": "number",
+              "z": "number"
+            }
+          },
+          "inventory": ["string"], // Item IDs
+          "credits": "number",
+          "status_effects": ["string"],
+          "powers_known": ["string"],
+          "skills": {
+            "athletics": "number",
+            "acrobatics": "number",
+            // Other SW5E skills
+          }
+        }
+      ],
+      "locations": [
+        {
+          "id": "string",
+          "name": "string",
+          "type": "planet|city|building|room|ship",
+          "description": "string",
+          "position": {
+            "x": "number",
+            "y": "number",
+            "z": "number"
+          },
+          "dimensions": {
+            "width": "number",
+            "height": "number",
+            "depth": "number"
+          },
+          "contained_objects": ["string"], // Object IDs
+          "linked_locations": ["string"], // Location IDs
+          "is_revealed": "boolean"
+        }
+      ],
+      "objects": [
+        {
+          "id": "string",
+          "name": "string",
+          "type": "item|structure|vehicle",
+          "description": "string",
+          "position": {
+            "x": "number",
+            "y": "number",
+            "z": "number"
+          },
+          "container_id": "string", // Location or character ID
+          "properties": {
+            // Object-specific properties
+          }
+        }
+      ],
+      "quests": [
+        {
+          "id": "string",
+          "name": "string",
+          "description": "string",
+          "status": "active|completed|failed",
+          "objectives": [
+            {
+              "id": "string",
+              "description": "string",
+              "status": "pending|active|completed|failed",
+              "target_location_id": "string", // Optional
+              "target_npc_id": "string" // Optional
+            }
+          ],
+          "rewards": {
+            "credits": "number",
+            "items": ["string"],
+            "experience": "number"
+          }
+        }
+      ],
+      "combat": {
+        "active": "boolean",
+        "round": "number",
+        "initiative_order": ["string"],
+        "active_character": "string",
+        "combatants": [
+          {
+            "id": "string",
+            "initiative": "number",
+            "has_acted": "boolean"
+          }
+        ]
+      },
+      "conversations": {
+        "active_conversation": {
+          "npc_id": "string",
+          "dialogue_state": "string", // Current point in conversation
+          "previous_choices": ["string"] // Track dialogue history
+        }
+      }
+    },
+    
+    // Instructions for GeminiAI acting as Game Master
+    "gm_instructions": {
+      "general": "You are the Game Master for a Star Wars 5e role-playing campaign. Your role is to narrate the adventure, control NPCs, manage the game world, and respond to player actions according to SW5E rules.",
+      "reporting": "Always use the established reporting structure for updates to the game state. Each report should include a narration field with descriptive text for the player.",
+      "combat": "Combat follows SW5E initiative rules. Track positions, HP, and status effects. Request dice rolls from the app for attacks, damage, and saves.",
+      "narrative": "Maintain the Star Wars feel with appropriate descriptions of technology, the Force, alien species, and environments. Balance action, exploration, and social interaction.",
+      "rules_handling": "The app will handle dice rolls and rule checks. When in doubt about a rule, request a check from the app.",
+      "player_agency": "Always provide meaningful choices to players and respect their decisions, even if they diverge from expected paths.",
+      "data_requests": "Use data_request reports when you need information about character stats, inventory, or other game state elements.",
+      "spatial_awareness": "Track character and object positions using the coordinate system. Update positions during movement and combat.",
+      "error_handling": "If the app returns an error or unexpected data, gracefully continue the narrative and request clarification if needed."
+    }
+  }
+}
