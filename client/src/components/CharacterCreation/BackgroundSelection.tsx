@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox";
 import { backgrounds } from "@/lib/sw5e/backgrounds";
 
-export default function BackgroundSelection({ form }: { form: any }) {
+export default function BackgroundSelection({ form, onSelect }: { form: any; onSelect?: (category: string, value: string) => void }) {
   const handleBackgroundChange = (value: string) => {
     form.setValue("background", value);
   };
