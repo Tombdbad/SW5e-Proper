@@ -1,0 +1,188 @@
+// Add to client/src/components/Map/SystemMap/OrbitalPath.tsx
+// or relevant orbital component
+
+import { useRef, useMemo } from 'react';
+import { useFrame } from '@react-three/fiber';
+import * as THREE from 'three';
+
+interface OrbitalPathProps {
+  radius: number;
+  color?: string;
+  planetType?: string;
+  animated?: boolean;
+  eccentricity?: number;
+  rotationAngle?: number;
+}
+
+export const EnhancedOrbitalPath: React.FC<OrbitalPathProps> = ({
+  radius,
+  color = '#3a3a3a',
+  planetType = 'terrestrial',
+  animated = true,
+  eccentricity = 0,
+  rotationAngle = 0
+}) => {
+  const pathRef = useRef<THREE.Line>(null);
+  const particlesRef = useRef<THREE.Points>(null);
+  
+  // Adjust color based on planet type
+  const orbitColor = useMemo(() => {
+    const baseColor = new THREE.Color(color);
+    
+    switch (planetType) {
+      case 'gas-giant':
+        return baseColor.lerp(new THREE.Color('#5a3a7a'), 0.3);
+      case 'ice-planet':
+        return baseColor.lerp(new THREE.Color('#3a7a9a'), 0.3);
+      case 'desert':
+        return baseColor.lerp(new THREE.Color('#aa8833'), 0.3);
+      case 'volcanic':
+        return baseColor.lerp(new THREE.Color('#aa3333'), 0.3);
+      default:
+        return baseColor;
+    }
+  }, [color, planetType]);
+  
+  // Create orbit path shape
+  const orbitShape = useMemo(() => {
+    const shape = new THREE.EllipseCurve(
+      0, 0,                     // Center x, y
+      radius, radius * (1 - eccentricity), // xRadius, yRadius
+      0, 2 * Math.PI,           // startAngle, endAngle
+      false,                    // clockwise
+      rotationAngle             // rotation
+    );
+    
+    // Get points along the orbit
+    const points = shape.getPoints(128).map(point => new THREE.Vector3(point.x, point.y, 0));
+    return new THREE.BufferGeometry().setFromPoints(points);
+  }, [radius, eccentricity, rotationAngle]);
+  
+  // Create particles for the animated orbit
+  const orbitParticles = useMemo(() => {
+    if (!animated) return null;
+    
+    // Use more points for the particles
+    const shape = new THREE.EllipseCurve(
+      0, 0,
+      radius, radius * (1 - eccentricity),
+      0, 2 * Math.PI,
+      false,
+      rotationAngle
+    );
+    
+    // Create 200 particles along the orbit
+    const particleCount = 200;
+    const particles = shape.getPoints(particleCount);
+    
+    // Add randomness to particle positions for a more natural look
+    const positions = new Float32Array(particleCount * 3);
+    const sizes = new Float32Array(particleCount);
+    
+    particles.forEach((particle, i) => {
+      // Position
+      positions[i * 3] = particle.x;
+      positions[i * 3 + 1] = particle.y;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 0.05; // Slight z-variation
+      
+      // Size - vary the particle sizes
+      sizes[i] = Math.random() * 0.5 + 0.5;
+    });
+    
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    
+    return geometry;
+  }, [radius, animated, eccentricity, rotationAngle]);
+  
+  // Animate the particles
+  useFrame(({ clock }) => {
+    if (animated && particlesRef.current) {
+      const time = clock.getElapsedTime();
+      const positions = particlesRef.current.geometry.attributes.position;
+      
+      // Make particles move along the orbit at different speeds
+      for (let i = 0; i < positions.count; i++) {
+        const speed = 0.2 + (i % 5) * 0.02; // Different speeds for particles
+        const offset = time * speed + i * 0.01;
+        
+        // Calculate new position on the elliptical orbit
+        const angle = (offset % 1) * Math.PI * 2;
+        const x = Math.cos(angle) * radius * Math.cos(rotationAngle) - 
+                  Math.sin(angle) * radius * (1 - eccentricity) * Math.sin(rotationAngle);
+        const y = Math.cos(angle) * radius * Math.sin(rotationAngle) + 
+                  Math.sin(angle) * radius * (1 - eccentricity) * Math.cos(rotationAngle);
+        
+        positions.setXY(i, x, y);
+      }
+      
+      positions.needsUpdate = true;
+    }
+  });
+  
+  // Orbit path shader material for the line
+  const orbitMaterial = useMemo(() => {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        color: { value: new THREE.Color(orbitColor) },
+        dashScale: { value: 5 },
+        dashSize: { value: 0.15 },
+        dashOffset: { value: 0 }
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 color;
+        uniform float dashScale;
+        uniform float dashSize;
+        uniform float dashOffset;
+        varying vec2 vUv;
+        
+        void main() {
+          float pattern = fract((vUv.x * dashScale) + dashOffset);
+          float alpha = step(pattern, dashSize);
+          gl_FragColor = vec4(color, alpha * 0.5);
+        }
+      `,
+      transparent: true,
+      blending: THREE.AdditiveBlending
+    });
+  }, [orbitColor]);
+  
+  // Update dash animation
+  useFrame(({ clock }) => {
+    if (pathRef.current) {
+      const uniforms = (pathRef.current.material as THREE.ShaderMaterial).uniforms;
+      uniforms.dashOffset.value = clock.getElapsedTime() * 0.1;
+    }
+  });
+  
+  return (
+    <group>
+      {/* Main orbit path */}
+      <line ref={pathRef} geometry={orbitShape}>
+        <primitive object={orbitMaterial} attach="material" />
+      </line>
+      
+      {/* Particles moving along the orbit */}
+      {animated && orbitParticles && (
+        <points ref={particlesRef} geometry={orbitParticles}>
+          <pointsMaterial 
+            size={0.03} 
+            color={orbitColor} 
+            transparent={true} 
+            opacity={0.7} 
+            blending={THREE.AdditiveBlending} 
+            depthWrite={false}
+          />
+        </points>
+      )}
+    </group>
+  );
+};
