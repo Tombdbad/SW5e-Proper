@@ -2,6 +2,7 @@ import { Routes, Route } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { Toaster } from "sonner";
 import { useAudio } from "./lib/stores/useAudio";
+import StarfieldBackground from "./components/ui/StarfieldBackground";
 import Home from "./pages/Home";
 import CharacterCreation from "./pages/CharacterCreation";
 import CharacterManagement from "./pages/CharacterManagement";
@@ -33,11 +34,15 @@ function App() {
   }, [setBackgroundMusic, setHitSound, setSuccessSound]);
 
   if (!loaded) {
-    return <div className="flex items-center justify-center h-screen">Loading...</div>;
+    return (
+      <div className="flex items-center justify-center h-screen bg-black text-white">
+        Loading...
+      </div>
+    );
   }
 
   return (
-    <>
+    <StarfieldBackground starCount={300} speed={0.3} starColor="#FFFFDD">
       <Toaster position="top-right" richColors />
       <Routes>
         <Route path="/" element={<Home />} />
@@ -47,7 +52,7 @@ function App() {
         <Route path="/game/:campaignId" element={<GameBoard />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
-    </>
+    </StarfieldBackground>
   );
 }
 
