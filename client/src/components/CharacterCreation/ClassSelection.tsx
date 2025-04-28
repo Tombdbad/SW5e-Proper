@@ -37,7 +37,7 @@ export default function ClassSelection({ form }: { form: any }) {
                       htmlFor={classOption.id}
                       className="cursor-pointer"
                     >
-                      <Card className="border-2 hover:border-yellow-400 peer-data-[state=checked]:border-yellow-400 transition-all">
+                      <Card className="border-2 hover:border-yellow-400 peer-data-[state=checked]:border-yellow-400 peer-data-[state=checked]:bg-yellow-50 transition-all">
                         <CardHeader>
                           <CardTitle>{classOption.name}</CardTitle>
                           <CardDescription>

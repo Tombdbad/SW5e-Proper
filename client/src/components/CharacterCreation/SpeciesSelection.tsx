@@ -53,7 +53,7 @@ export default function SpeciesSelection({ form }: { form: any }) {
                       htmlFor={speciesOption.id}
                       className="cursor-pointer"
                     >
-                      <Card className="border-2 hover:border-yellow-400 peer-data-[state=checked]:border-yellow-400 transition-all">
+                      <Card className="border-2 hover:border-yellow-400 peer-data-[state=checked]:border-yellow-400 peer-data-[state=checked]:bg-yellow-50 transition-all">
                         <CardHeader>
                           <CardTitle>{speciesOption.name}</CardTitle>
                           <CardDescription>
