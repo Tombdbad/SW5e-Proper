@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox";
 import { classes } from "@/lib/sw5e/classes";
 
-export default function ClassSelection({ form }: { form: any }) {
+export default function ClassSelection({ form, onSelect }: { form: any; onSelect?: (category: string, value: string) => void }) {
   const handleClassChange = (value: string) => {
     form.setValue("class", value);
   };
@@ -83,7 +83,7 @@ export default function ClassSelection({ form }: { form: any }) {
                             onClick={() => {
                               handleClassChange(classOption.id);
                               form.setValue("class", classOption.id);
-                              handleOptionSelect("class", classOption.id);
+                              onSelect?.("class", classOption.id);
                             }}
                             className={`w-full px-4 py-2 text-sm font-semibold rounded-md ${
                               form.watch("class") === classOption.id 
