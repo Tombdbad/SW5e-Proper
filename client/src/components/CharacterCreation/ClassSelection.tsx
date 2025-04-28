@@ -21,7 +21,7 @@ export default function ClassSelection({ form }: { form: any }) {
             <FormControl>
               <RadioGroup
                 onValueChange={handleClassChange}
-                defaultValue={field.value}
+                value={field.value}
                 className="grid grid-cols-1 md:grid-cols-2 gap-4"
               >
                 {classes.map((classOption) => (
