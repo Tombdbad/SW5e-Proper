@@ -57,13 +57,13 @@ export default function ClassSelection({ form }: { form: any }) {
                           </div>
                           <div className="mb-4">
                             <span className="font-semibold">Primary Ability: </span>
-                            {classOption.primaryAbility}
+                            {classOption.primaryAbility.join(", ")}
                           </div>
                           
                           <div>
                             <span className="font-semibold">Class Skills:</span>
                             <div className="grid grid-cols-2 mt-1">
-                              {classOption.skills.map((skill) => (
+                              {classOption.skillChoices.map((skill) => (
                                 <div key={skill} className="flex items-center space-x-2">
                                   <Checkbox id={`${classOption.id}-${skill}`} />
                                   <label
