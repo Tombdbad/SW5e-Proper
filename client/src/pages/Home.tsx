@@ -141,6 +141,40 @@ export default function Home() {
             )}
           </section>
         </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-12">
+          <TranslucentPane className="p-6" opacity="medium">
+            <h3 className="text-xl font-bold mb-3 text-cyan-400">Galactic Map</h3>
+            <p className="mb-4 text-gray-300">
+              Explore the Star Wars galaxy with an interactive 3D map of systems and planets.
+            </p>
+            <Link to="/map/galaxy">
+              <Button className="w-full bg-cyan-600 hover:bg-cyan-700">
+                Open Galaxy Map
+              </Button>
+            </Link>
+          </TranslucentPane>
+          
+          <TranslucentPane className="p-6" opacity="medium">
+            <h3 className="text-xl font-bold mb-3 text-yellow-400">Dice Roller</h3>
+            <p className="mb-4 text-gray-300">
+              Use the built-in dice roller for your skill checks and combat rolls.
+            </p>
+            <Button className="w-full" variant="outline" disabled>
+              Coming Soon
+            </Button>
+          </TranslucentPane>
+          
+          <TranslucentPane className="p-6" opacity="medium">
+            <h3 className="text-xl font-bold mb-3 text-red-400">Rulebook</h3>
+            <p className="mb-4 text-gray-300">
+              Access the SW5E rulebook for reference during your game sessions.
+            </p>
+            <Button className="w-full" variant="outline" disabled>
+              Coming Soon
+            </Button>
+          </TranslucentPane>
+        </div>
       </div>
     </div>
   );
