@@ -2,7 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
-import { insertCharacterSchema, characters, campaigns, insertCampaignSchema, debriefs, insertDebriefSchema } from "@shared/schema";
+// Import from compatibility schema until migration is run
+import { insertCharacterSchema, characters, campaigns, insertCampaignSchema, debriefs, insertDebriefSchema } from "@shared/compatSchema";
 import { ZodError } from "zod";
 import { formatError } from "./utils";
 
