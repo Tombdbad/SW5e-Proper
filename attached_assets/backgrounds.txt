@@ -1,0 +1,42 @@
+Background	Skill Proficiencies	Tool Proficiencies	Equipment	Feature
+Bounty Hunter	Athletics, Investigation	One type of gaming set, one vehicle (landspeeder)	A set of reinforced flightsuit and helmet, a blaster pistol, binders, a holoprojector, 150 credits	Target Acquired
+Criminal	Deception, Stealth	One type of gaming set, thieves' tools	A datapad, a set of dark common clothes with a hood, a disguise kit, a set of thieves' tools, 15 credits	Criminal Contact
+Entertainer	Acrobatics, Performance	Disguise kit, one type of musical instrument	A musical instrument, the favor of an admirer (a commoner), a costume, 15 credits	By Popular Demand
+Jedi Initiate	Insight, Persuasion	One type of artisan's tools, lightsaber kit	A lightsaber hilt, a set of traveler's clothes, a datapad containing Jedi teachings, 5 credits	Force-Sensitive
+Noble	History, Persuasion	One type of gaming set, one vehicle (airspeeder)	A set of fine clothes, a signet ring, a datapad, a holoprojector, a bottle of fine synthale, 25 credits	Position of Privilege
+Scholar	Investigation, Lore (choose one)	None	A scholar's pack (includes a datapad, ink, a quill, parchment, a small knife, and a reference text on the chosen lore), 10 credits	Researcher
+Smuggler	Athletics, Deception	One type of vehicle (starship), thieves' tools	A blaster pistol, a small knife, a set of dark common clothes, a holoprojector, a pouch containing 20 credits	Streetwise
+Soldier	Athletics, Intimidation	One type of gaming set, one vehicle (ground)	An insignia of rank, a trophy taken from a fallen enemy, a set of bone armor, a blaster rifle, 10 credits	Military Rank
+Background	Skill Proficiencies	Tool Proficiencies	Equipment	Feature
+Addict	Deception, Persuasion	One gaming set, brewer's or spicer's kit	A chance cube set, a sabaac deck, 2 days of field rations, a flask or pouch with your addiction, common clothes, a bedroll, 25 credits	Addicted
+Archaeologist	Investigation, Lore (History)	None	A scholar's pack, a set of traveler's clothes, a trowel, a brush, a small notebook, charcoal rubbings of ancient script, 10 credits	Historical Knowledge
+Blackguard	Intimidation, Religion	One type of gaming set	A set of dark robes, a vial of poison, a holy symbol (desecrated), a set of common clothes, 15 credits	Dread Presence
+Clone Trooper	Athletics, Survival	One type of vehicle (ground)	A set of clone trooper armor, a blaster rifle, a vibroknife, a mess kit, 2 energy rations, a datapad with mission briefings, 10 credits	Unit Tactics
+Ex-Cultist	Insight, Persuasion	None	A set of common clothes, a blanket, a pouch containing strange trinkets, a scroll of cryptic text, 5 credits	Former Devotee
+Far Traveler	Insight, Perception	One type of musical instrument	A musical instrument, a set of traveler's clothes, a blanket, a collection of strange souvenirs, a pouch containing 5 credits	All Eyes on You
+Holonet Technician	Investigation, Technology	Tinker's tools	A set of durable work clothes, a datapad loaded with schematics, a set of tinker's tools, a small commlink, 15 credits	Network Knowledge
+Urchin	Stealth, Sleight of Hand	Thieves' tools	A small knife, a map of the local area, a pet (rat, lizard, or similar non-combat creature), a token to remember your parents by, a set of common clothes, 10 credits	City Secrets
+Beast Rider	Animal Handling, Survival	One type of vehicle (animal)	A riding saddle, bit and bridle, a set of traveler's clothes, a hunting trap, a pouch of animal treats, 10 credits	Bonded Mount
+Cultist	Deception, Religion	None	A set of dark robes, a hidden pouch containing 15 credits, a blanket, a simple weapon, a holy symbol (representing your dark faith)	Dark Devotion
+Enterprising Merchant	Insight, Persuasion	One type of vehicle (light freighter)	A set of fine clothes, a datapad with trade contacts, a ledger, a pouch containing 50 credits	Well-Connected
+Gladiator	Acrobatics, Performance	One type of gaming set	A costume, a prop weapon (inoffensive), a set of traveler's clothes, a pouch containing 15 credits	Fan Favorite
+Investigator	Insight, Investigation	None	A set of common clothes, a magnifying glass, a set of manacles, a datapad with note-taking software, 25 credits	Keen Eye for Detail
+Pirate	Athletics, Intimidation	One type of vehicle (water)	A belaying pin (club), a set of rough common clothes, a waterskin, 10 credits	Intimidating Presence
+Politician	Deception, Persuasion	None	A set of fine clothes, a datapad with encoded messages, a signet ring, a pouch containing 25 credits	Bureaucratic Connections
+Technician	Investigation, Technology	Tinker's tools	A set of durable work clothes, a datapad loaded with schematics, a set of tinker's tools, a small multi-tool, 15 credits	Technical Aptitude
+Colonist	Medicine, Survival	One type of artisan's tools	A set of common clothes, a blanket, a mess kit, a waterskin, five days of rations, a shovel, 10 credits	Settler's Ingenuity
+Cyber-Technician	Medicine, Technology	Cybertech tools	A set of durable work clothes, cybertech tools, a datapad with diagnostic software, a basic cybernetic component, 15 credits	Cybernetic Expertise
+Entertainer (Spaceport)	Deception, Performance	One type of musical instrument	A musical instrument, a set of flashy common clothes, a pouch of glitterdust, 15 credits	Spaceport Swagger
+Force Adept	Insight, Lore (choose one)	One type of artisan's tools	A simple weapon, a set of traveler's clothes, a component pouch, a datapad with basic Force exercises, 5 credits	Minor Force Sensitivity
+Investigative Reporter	Insight, Investigation	None	A datapad with recording software, a portable recorder, a set of common clothes, a press pass, 10 credits	Nose for Trouble
+Laborer	Athletics, Constitution	One type of artisan's tools	A set of sturdy work clothes, a mess kit, a simple tool relevant to your labor, 5 credits	Hard Worker
+Pilot (Freighter)	Athletics, Piloting (Space)	One type of gaming set, one vehicle (light freighter)	A set of flight suit, a pair of goggles, a small tool kit, a datapad with navigation charts, 25 credits	Smooth Landing
+Wastelander	Medicine, Survival	One type of improvised weapon	A set of scavenged clothing, a makeshift weapon, a waterskin, a pouch of scavenged parts, 5 credits	Scavenging Expertise
+Corporate Agent	Deception, Persuasion	One type of gaming set	A set of smart business clothes, a datapad with encrypted files, a commlink, a corporate access badge, 30 credits	Company Connections
+Droid Rights Activist	Insight, Persuasion	Tinker's tools	A set of common clothes, a datapad loaded with manifestos, a small toolkit, protest signs, 10 credits	Empathy for Synthetics
+Entertainer (Holographic)	Technology, Performance	Tinker's tools, holographic projector	A holographic projector, a set of vibrant performance attire, a datapad with pre-loaded performances, 15 credits	Captivating Performance
+Force Sensitive Exile	Insight, Stealth	None	A simple weapon, a set of worn traveler's clothes, a small pouch of crystals, a hidden datapad with forbidden knowledge, 5 credits	Hidden Potential
+Gunslinger	Acrobatics, Intimidation	One type of firearm	A blaster pistol, a holster, a set of durable traveler's clothes, 20 credits	Quick Draw
+Medical Technician	Medicine, Technology	Medpacs	A set of medical scrubs, a medpac, a datapad with medical databases, 15 credits	Field Medic
+Salvager	Investigation, Survival	One type of vehicle (junked)	A set of rugged work clothes, a multi-tool, a grappling hook, a bag for collecting scrap, 10 credits	Resourceful Scavenger
+Tribal Warrior	Athletics, Survival	One type of primitive weapon	A set of tribal clothing, a primitive weapon, a pouch of dried rations, a token of your tribe, 5 credits	Natural Tracker
