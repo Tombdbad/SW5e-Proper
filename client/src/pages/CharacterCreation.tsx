@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Tab } from '@headlessui/react';
 import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import { useForm, FormProvider } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
