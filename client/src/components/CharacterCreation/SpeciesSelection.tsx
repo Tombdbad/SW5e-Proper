@@ -5,6 +5,7 @@ import { species } from "@/lib/sw5e/species";
 
 export default function SpeciesSelection({ form }: { form: any }) {
   const handleSpeciesChange = (value: string) => {
+    console.log('Species change triggered:', value);
     form.setValue("species", value);
     
     // Find the species data
@@ -51,7 +52,8 @@ export default function SpeciesSelection({ form }: { form: any }) {
                     </FormControl>
                     <FormLabel
                       htmlFor={speciesOption.id}
-                      className="cursor-pointer"
+                      className="cursor-pointer block w-full"
+                      onClick={() => handleSpeciesChange(speciesOption.id)}
                     >
                       <Card className="border-2 hover:border-yellow-400 peer-data-[state=checked]:border-yellow-400 peer-data-[state=checked]:bg-yellow-50 transition-all">
                         <CardHeader>

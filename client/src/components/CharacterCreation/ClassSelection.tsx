@@ -31,6 +31,8 @@ export default function ClassSelection({ form }: { form: any }) {
                         value={classOption.id}
                         id={classOption.id}
                         className="peer sr-only"
+                        aria-label={classOption.name}
+                        onClick={() => console.log('Radio clicked:', classOption.id)}
                       />
                     </FormControl>
                     <FormLabel
