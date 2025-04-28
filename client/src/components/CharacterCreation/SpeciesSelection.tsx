@@ -97,7 +97,7 @@ export default function SpeciesSelection({ form, onSelect }: SpeciesSelectionPro
                         <div className="space-y-2 text-sm">
                           <div>
                             <span className="font-semibold text-yellow-400">Ability Adjustments:</span>{' '}
-                            {Object.entries(speciesOption.abilityScoreIncrease)
+                            {Object.entries(speciesOption.abilityScoreAdjustments)
                               .map(([ability, bonus]) => (
                                 `${ability} ${bonus >= 0 ? '+' : ''}${bonus}`
                               ))
