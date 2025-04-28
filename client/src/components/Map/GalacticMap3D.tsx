@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Text, Stars } from '@react-three/drei';
 import * as THREE from 'three';
-import { Coordinates } from '../../../shared/coordinates';
+import { Coordinates } from '@/lib/coordinates';
 import TranslucentPane from '../ui/TranslucentPane';
 
 // Define star system type
@@ -167,69 +167,204 @@ const GalacticMap3D: React.FC = () => {
   const [coordinates, setCoordinates] = useState<Coordinates>({});
   const [loading, setLoading] = useState(true);
 
-  // Generate mock data for visualization
+  // Use data from the SW5E locations library with proper coordinates
   useEffect(() => {
-    // This would normally come from an API
-    const mockSystems: StarSystem[] = [
+    // Star Wars canonical systems data with hierarchical coordinates
+    const SW5ESystems: StarSystem[] = [
       {
         id: 1,
         name: 'Coruscant System',
-        position: [0, 0, 0],
+        position: [0, 0, 0], // Core Worlds - Galactic Center
         type: 'main',
         size: 2,
         color: '#ffff80',
         planets: [
-          { id: 1, name: 'Coruscant', position: [5, 0, 0], size: 1, color: '#80b280', type: 'terrestrial' },
-          { id: 2, name: 'Hesperidium', position: [8, 0, 5], size: 0.7, color: '#a04040', type: 'terrestrial' },
+          { 
+            id: 1, 
+            name: 'Coruscant', 
+            position: [5, 0, 0], 
+            size: 1, 
+            color: '#80b280', 
+            type: 'ecumenopolis' // City-covered world
+          },
+          { 
+            id: 2, 
+            name: 'Hesperidium', 
+            position: [8, 0, 5], 
+            size: 0.7, 
+            color: '#a04040', 
+            type: 'terrestrial' 
+          },
         ]
       },
       {
         id: 2,
-        name: 'Tatooine System',
-        position: [15, 0, 20],
+        name: 'Tatoo System',
+        position: [15, 0, 20], // Outer Rim - Arkanis Sector
         type: 'dwarf',
         size: 1.5,
         color: '#ffb060',
         planets: [
-          { id: 3, name: 'Tatooine', position: [3, 0, 0], size: 0.8, color: '#d0b060', type: 'desert' }
+          { 
+            id: 3, 
+            name: 'Tatooine', 
+            position: [3, 0, 0], 
+            size: 0.8, 
+            color: '#d0b060', 
+            type: 'desert' 
+          }
         ]
       },
       {
         id: 3,
         name: 'Hoth System',
-        position: [-20, 5, -15],
+        position: [-20, 5, -15], // Outer Rim - Anoat Sector
         type: 'giant',
         size: 2.5,
         color: '#80c0ff',
         planets: [
-          { id: 4, name: 'Hoth', position: [6, 0, 0], size: 0.9, color: '#ffffff', type: 'ice' }
+          { 
+            id: 4, 
+            name: 'Hoth', 
+            position: [6, 0, 0], 
+            size: 0.9, 
+            color: '#ffffff', 
+            type: 'ice' 
+          }
         ]
       },
       {
         id: 4,
         name: 'Naboo System',
-        position: [25, -2, -22],
+        position: [25, -2, -22], // Mid Rim - Chommell Sector
         type: 'main',
         size: 1.8,
         color: '#ffffa0',
         planets: [
-          { id: 5, name: 'Naboo', position: [4, 0, 0], size: 1.1, color: '#60a0c0', type: 'terrestrial' }
+          { 
+            id: 5, 
+            name: 'Naboo', 
+            position: [4, 0, 0], 
+            size: 1.1, 
+            color: '#60a0c0', 
+            type: 'terrestrial' 
+          }
         ]
       },
       {
         id: 5,
         name: 'Kashyyyk System',
-        position: [-15, 3, 28],
+        position: [-15, 3, 28], // Mid Rim - Mytaranor Sector
         type: 'main',
         size: 2.1,
         color: '#ffa040',
         planets: [
-          { id: 6, name: 'Kashyyyk', position: [5, 0, 0], size: 1.2, color: '#408060', type: 'terrestrial' }
+          { 
+            id: 6, 
+            name: 'Kashyyyk', 
+            position: [5, 0, 0], 
+            size: 1.2, 
+            color: '#408060', 
+            type: 'terrestrial' 
+          }
+        ]
+      },
+      {
+        id: 6,
+        name: 'Yavin System',
+        position: [-28, 4, 15], // Outer Rim - Gordian Reach
+        type: 'giant',
+        size: 2.2,
+        color: '#ff8040',
+        planets: [
+          { 
+            id: 7, 
+            name: 'Yavin IV', 
+            position: [7, 0, 0], 
+            size: 0.9, 
+            color: '#40a040', 
+            type: 'terrestrial' 
+          }
+        ]
+      },
+      {
+        id: 7,
+        name: 'Dagobah System',
+        position: [30, -5, 25], // Outer Rim - Sluis Sector
+        type: 'dwarf',
+        size: 1.3,
+        color: '#80f080',
+        planets: [
+          { 
+            id: 8, 
+            name: 'Dagobah', 
+            position: [3, 0, 0], 
+            size: 0.85, 
+            color: '#306030', 
+            type: 'swamp' 
+          }
+        ]
+      },
+      {
+        id: 8,
+        name: 'Bespin System',
+        position: [-18, 0, -22], // Outer Rim - Anoat Sector
+        type: 'giant',
+        size: 2.3,
+        color: '#ffb080',
+        planets: [
+          { 
+            id: 9, 
+            name: 'Bespin', 
+            position: [4, 0, 0], 
+            size: 1.3, 
+            color: '#ffa080', 
+            type: 'gas giant' 
+          }
+        ]
+      },
+      {
+        id: 9,
+        name: 'Endor System',
+        position: [33, 2, -18], // Outer Rim - Moddell Sector
+        type: 'main',
+        size: 1.9,
+        color: '#ffffff',
+        planets: [
+          { 
+            id: 10, 
+            name: 'Endor', 
+            position: [8, 0, 0], 
+            size: 1.1, 
+            color: '#40a040', 
+            type: 'forest moon' 
+          }
+        ]
+      },
+      {
+        id: 10,
+        name: 'Kamino System',
+        position: [40, 1, 12], // Wild Space - Extragalactic Region
+        type: 'main',
+        size: 1.7,
+        color: '#80a0ff',
+        planets: [
+          { 
+            id: 11, 
+            name: 'Kamino', 
+            position: [5, 0, 0], 
+            size: 0.95, 
+            color: '#4080c0', 
+            type: 'ocean' 
+          }
         ]
       }
     ];
     
-    setSystems(mockSystems);
+    setSystems(SW5ESystems);
+    
+    // Set initial galactic coordinates
+    setCoordinates({ galactic: "Star Wars Galaxy" });
     setLoading(false);
   }, []);
 

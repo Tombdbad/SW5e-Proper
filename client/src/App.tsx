@@ -8,6 +8,7 @@ import CharacterCreation from "./pages/CharacterCreation";
 import CharacterManagement from "./pages/CharacterManagement";
 import CampaignView from "./pages/CampaignView";
 import GameBoard from "./pages/GameBoard";
+import GalacticMapView from "./pages/GalacticMapView";
 import NotFound from "./pages/not-found";
 
 function App() {
@@ -50,6 +51,7 @@ function App() {
         <Route path="/character/manage/:id" element={<CharacterManagement />} />
         <Route path="/campaign/:id" element={<CampaignView />} />
         <Route path="/game/:campaignId" element={<GameBoard />} />
+        <Route path="/map/galaxy" element={<GalacticMapView />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </StarfieldBackground>
