@@ -247,3 +247,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   return httpServer;
 }
+import express from 'express';
+import { createCharacter, getCharacter, updateCharacter, createCampaign, getCampaign, updateCampaign } from './db';
+
+const router = express.Router();
+
+// Character routes
+router.post('/characters', async (req, res) => {
+  try {
+    const character = await createCharacter(req.body);
+    res.json(character[0]);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to create character" });
+  }
+});
+
+router.get('/characters/:id', async (req, res) => {
+  try {
+    const character = await getCharacter(parseInt(req.params.id));
+    if (!character.length) return res.status(404).json({ message: "Character not found" });
+    res.json(character[0]);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch character" });
+  }
+});
+
+router.put('/characters/:id', async (req, res) => {
+  try {
+    const character = await updateCharacter(parseInt(req.params.id), req.body);
+    res.json(character[0]);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to update character" });
+  }
+});
+
+// Campaign routes
+router.post('/campaigns', async (req, res) => {
+  try {
+    const campaign = await createCampaign(req.body);
+    res.json(campaign[0]);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to create campaign" });
+  }
+});
+
+router.get('/campaigns/:id', async (req, res) => {
+  try {
+    const campaign = await getCampaign(parseInt(req.params.id));
+    if (!campaign.length) return res.status(404).json({ message: "Campaign not found" });
+    res.json(campaign[0]);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch campaign" });
+  }
+});
+
+router.put('/campaigns/:id', async (req, res) => {
+  try {
+    const campaign = await updateCampaign(parseInt(req.params.id), req.body);
+    res.json(campaign[0]);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to update campaign" });
+  }
+});
+
+export default router;
