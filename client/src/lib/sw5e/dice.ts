@@ -1,0 +1,145 @@
+/**
+ * Roll a die with the specified number of sides.
+ * 
+ * @param quantity The number of dice to roll
+ * @param sides The number of sides on each die
+ * @returns The sum of all dice rolled
+ */
+export function rollDice(quantity: number, sides: number): number {
+  let total = 0;
+  for (let i = 0; i < quantity; i++) {
+    total += Math.floor(Math.random() * sides) + 1;
+  }
+  return total;
+}
+
+/**
+ * Roll a die with advantage (roll twice, take the higher result).
+ * 
+ * @param sides The number of sides on the die
+ * @returns The higher result of two dice rolls
+ */
+export function rollWithAdvantage(sides: number): number {
+  const roll1 = rollDice(1, sides);
+  const roll2 = rollDice(1, sides);
+  return Math.max(roll1, roll2);
+}
+
+/**
+ * Roll a die with disadvantage (roll twice, take the lower result).
+ * 
+ * @param sides The number of sides on the die
+ * @returns The lower result of two dice rolls
+ */
+export function rollWithDisadvantage(sides: number): number {
+  const roll1 = rollDice(1, sides);
+  const roll2 = rollDice(1, sides);
+  return Math.min(roll1, roll2);
+}
+
+/**
+ * Roll an ability check with the given modifier.
+ * 
+ * @param modifier The bonus to add to the roll
+ * @param advantage Whether to roll with advantage, disadvantage, or neither
+ * @returns The result of the roll
+ */
+export function rollAbilityCheck(
+  modifier: number,
+  advantage: "advantage" | "disadvantage" | "normal" = "normal"
+): number {
+  let baseRoll: number;
+  
+  if (advantage === "advantage") {
+    baseRoll = rollWithAdvantage(20);
+  } else if (advantage === "disadvantage") {
+    baseRoll = rollWithDisadvantage(20);
+  } else {
+    baseRoll = rollDice(1, 20);
+  }
+  
+  return baseRoll + modifier;
+}
+
+/**
+ * Roll initiative for combat.
+ * 
+ * @param dexModifier The dexterity modifier to add to the roll
+ * @param advantage Whether to roll with advantage
+ * @returns The initiative value
+ */
+export function rollInitiative(
+  dexModifier: number,
+  advantage: boolean = false
+): number {
+  if (advantage) {
+    return rollWithAdvantage(20) + dexModifier;
+  }
+  return rollDice(1, 20) + dexModifier;
+}
+
+/**
+ * Roll damage for an attack.
+ * 
+ * @param diceCount Number of dice to roll
+ * @param diceSides Number of sides on each die
+ * @param modifier Bonus damage to add
+ * @param critical Whether this is a critical hit (doubles dice)
+ * @returns The total damage
+ */
+export function rollDamage(
+  diceCount: number,
+  diceSides: number,
+  modifier: number = 0,
+  critical: boolean = false
+): number {
+  // Critical hits roll dice twice
+  const effectiveDiceCount = critical ? diceCount * 2 : diceCount;
+  
+  return rollDice(effectiveDiceCount, diceSides) + modifier;
+}
+
+/**
+ * Roll a saving throw.
+ * 
+ * @param modifier The bonus to add to the roll
+ * @param advantage Whether to roll with advantage, disadvantage, or neither
+ * @param dcValue The difficulty class to beat
+ * @returns Whether the save succeeded
+ */
+export function rollSavingThrow(
+  modifier: number,
+  advantage: "advantage" | "disadvantage" | "normal" = "normal",
+  dcValue: number
+): boolean {
+  const rollResult = rollAbilityCheck(modifier, advantage);
+  return rollResult >= dcValue;
+}
+
+/**
+ * Generate ability scores for a character using the 4d6 drop lowest method.
+ * 
+ * @returns An array of 6 ability scores
+ */
+export function generateAbilityScores(): number[] {
+  const scores: number[] = [];
+  
+  for (let i = 0; i < 6; i++) {
+    // Roll 4d6
+    const rolls = [
+      rollDice(1, 6),
+      rollDice(1, 6),
+      rollDice(1, 6),
+      rollDice(1, 6)
+    ];
+    
+    // Sort and drop the lowest value
+    rolls.sort((a, b) => a - b);
+    
+    // Sum the highest 3 values
+    const score = rolls[1] + rolls[2] + rolls[3];
+    scores.push(score);
+  }
+  
+  return scores;
+}
