@@ -1,0 +1,81 @@
+// models/Campaign.js
+const mongoose = require('mongoose');
+
+const ObjectiveSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  description: { type: String, required: true },
+  tier: { type: Number, required: true }, // 1-primary, 2-secondary, etc.
+  completed: { type: Boolean, default: false },
+  parent: { type: mongoose.Schema.Types.ObjectId, ref: 'Objective' }, // For linking subordinate objectives
+  relatedLocations: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Location' }],
+  relatedNPCs: [{ type: mongoose.Schema.Types.ObjectId, ref: 'NPC' }]
+});
+
+const QuestSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  description: { type: String, required: true },
+  isMainQuest: { type: Boolean, required: true },
+  status: { type: String, enum: ['active', 'completed', 'failed', 'available'], default: 'available' },
+  objective: { type: mongoose.Schema.Types.ObjectId, ref: 'Objective' },
+  steps: [{
+    description: String,
+    completed: { type: Boolean, default: false }
+  }],
+  rewards: {
+    credits: Number,
+    items: [String],
+    xp: Number
+  },
+  relatedLocations: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Location' }],
+  relatedNPCs: [{ type: mongoose.Schema.Types.ObjectId, ref: 'NPC' }]
+});
+
+const SessionLogSchema = new mongoose.Schema({
+  date: { type: Date, default: Date.now },
+  summary: String,
+  detail: String,
+  importantDecisions: [String],
+  charactersPresent: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Character' }],
+  locations: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Location' }],
+  npcsEncountered: [{ type: mongoose.Schema.Types.ObjectId, ref: 'NPC' }]
+});
+
+const CampaignSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  description: { type: String },
+  setting: {
+    era: String, // Old Republic, Empire Era, New Republic, etc.
+    startingLocation: { type: mongoose.Schema.Types.ObjectId, ref: 'Location' },
+    backstory: String
+  },
+  characters: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Character' }],
+  objectives: [ObjectiveSchema],
+  quests: [QuestSchema],
+  sessionLogs: [SessionLogSchema],
+  galaxyMap: {
+    knownLocations: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Location' }],
+    currentPosition: { type: mongoose.Schema.Types.ObjectId, ref: 'Location' }
+  },
+  currentGameState: {
+    inCombat: { type: Boolean, default: false },
+    currentInitiative: [{ 
+      entity: String, // Character name or NPC ID
+      initiative: Number,
+      isPlayer: Boolean
+    }],
+    timeElapsed: {
+      days: { type: Number, default: 0 },
+      hours: { type: Number, default: 0 }
+    }
+  },
+  llmContext: {
+    lastContextSummary: String,
+    keySummaryPoints: [String],
+    lastUpdated: { type: Date }
+  },
+  created: { type: Date, default: Date.now },
+  lastPlayed: { type: Date },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+});
+
+module.exports = mongoose.model('Campaign', CampaignSchema);
