@@ -40,31 +40,18 @@ export default function CharacterCreationForm({ form }: { form: any }) {
   // Get the selected class to determine which power types to show
   const selectedClass = form.watch("class");
   
-  // Update power visibility based on class
+  // Update power visibility based on class and other factors
   useEffect(() => {
     if (selectedClass) {
-      // Force-using classes
-      if (["consular", "guardian", "sentinel"].includes(selectedClass)) {
-        setShowForcePowers(true);
-        setShowTechPowers(false);
-      } 
-      // Tech-using classes
-      else if (["engineer", "scholar", "scout"].includes(selectedClass)) {
-        setShowForcePowers(false);
-        setShowTechPowers(true);
-      }
-      // Mixed classes
-      else if (["operative"].includes(selectedClass)) {
-        setShowForcePowers(true);
-        setShowTechPowers(true);
-      }
-      // Non-power classes
-      else {
-        setShowForcePowers(false);
-        setShowTechPowers(false);
-      }
+      const alignment = form.watch("alignment");
+      const isForceUser = ["consular", "guardian", "sentinel"].includes(selectedClass);
+      const isTechUser = ["engineer", "scholar", "scout"].includes(selectedClass);
+      const isMixed = ["operative"].includes(selectedClass);
+      
+      setShowForcePowers((isForceUser || isMixed) && alignment);
+      setShowTechPowers(isTechUser || isMixed);
     }
-  }, [selectedClass]);
+  }, [selectedClass, form.watch("alignment")]);
 
   return (
     <div className="space-y-6">
