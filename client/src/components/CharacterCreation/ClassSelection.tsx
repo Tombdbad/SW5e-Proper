@@ -77,6 +77,15 @@ export default function ClassSelection({ form }: { form: any }) {
                             </div>
                           </div>
                         </CardContent>
+                        <div className="p-4 pt-0">
+                          <button
+                            type="button"
+                            onClick={() => handleClassChange(classOption.id)}
+                            className="w-full px-4 py-2 text-sm font-semibold rounded-md bg-yellow-600 hover:bg-yellow-700 text-white transition-colors"
+                          >
+                            Select {classOption.name}
+                          </button>
+                        </div>
                       </Card>
                     </FormLabel>
                   </FormItem>

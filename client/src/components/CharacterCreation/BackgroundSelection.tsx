@@ -64,6 +64,15 @@ export default function BackgroundSelection({ form }: { form: any }) {
                             </ul>
                           </div>
                         </CardContent>
+                        <div className="p-4 pt-0">
+                          <button
+                            type="button"
+                            onClick={() => handleBackgroundChange(backgroundOption.id)}
+                            className="w-full px-4 py-2 text-sm font-semibold rounded-md bg-yellow-600 hover:bg-yellow-700 text-white transition-colors"
+                          >
+                            Select {backgroundOption.name}
+                          </button>
+                        </div>
                       </Card>
                     </FormLabel>
                   </FormItem>

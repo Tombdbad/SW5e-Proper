@@ -81,6 +81,15 @@ export default function SpeciesSelection({ form }: { form: any }) {
                             {speciesOption.speed} ft.
                           </div>
                         </CardContent>
+                        <div className="p-4 pt-0">
+                          <button
+                            type="button"
+                            onClick={() => handleSpeciesChange(speciesOption.id)}
+                            className="w-full px-4 py-2 text-sm font-semibold rounded-md bg-yellow-600 hover:bg-yellow-700 text-white transition-colors"
+                          >
+                            Select {speciesOption.name}
+                          </button>
+                        </div>
                       </Card>
                     </FormLabel>
                   </FormItem>
