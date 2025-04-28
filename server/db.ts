@@ -1,14 +1,8 @@
-import { drizzle } from "drizzle-orm/neon-serverless";
-import { neon } from "@neondatabase/serverless";
+// server/db.ts
+import { drizzle } from "drizzle-orm/neon-http"; // <-- not neon-serverless
+import { neon } from "@neondatabase/serverless"; // still use this
 import * as schema from "../shared/schema";
 
-// Check for environment variable
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL environment variable is required");
-}
+const sql = neon(process.env.DATABASE_URL!);
 
-// Configure the SQL client with Neon
-const sql = neon(process.env.DATABASE_URL);
-
-// Create the database instance with Drizzle
 export const db = drizzle(sql, { schema });
