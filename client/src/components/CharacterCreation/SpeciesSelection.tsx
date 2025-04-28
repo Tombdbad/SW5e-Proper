@@ -34,9 +34,9 @@ export default function SpeciesSelection({ form, onSelect }: SpeciesSelectionPro
     // Update Zustand store
     updateCharacter({ species: speciesId });
 
-    // Apply species ability score adjustments
+    // If this affects other stats (like ability scores), update those too
     const selectedSpecies = species.find(s => s.id === speciesId);
-    if (selectedSpecies?.abilityScoreIncrease) {
+    if (selectedSpecies?.abilityScoreAdjustments) {
       const currentScores = form.getValues("abilityScores") || {};
       const newScores = { ...currentScores };
 
@@ -46,7 +46,7 @@ export default function SpeciesSelection({ form, onSelect }: SpeciesSelectionPro
       });
 
       // Apply new adjustments
-      Object.entries(selectedSpecies.abilityScoreIncrease).forEach(([ability, bonus]) => {
+      Object.entries(selectedSpecies.abilityScoreAdjustments).forEach(([ability, bonus]) => {
         const abilityKey = ability.toLowerCase();
         if (abilityKey !== 'any' && newScores[abilityKey]) {
           newScores[abilityKey] += bonus;
