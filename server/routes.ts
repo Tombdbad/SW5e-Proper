@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
+import { eq } from "drizzle-orm";
 // Import from compatibility schema until migration is run
 import { insertCharacterSchema, characters, campaigns, insertCampaignSchema, debriefs, insertDebriefSchema } from "@shared/compatSchema";
 import { ZodError } from "zod";
@@ -24,7 +25,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/characters/:id", async (req, res) => {
     try {
       const characterId = parseInt(req.params.id);
-      const character = await db.select().from(characters).where({ id: characterId }).limit(1);
+      const character = await db.select().from(characters).where(eq(characters.id, characterId)).limit(1);
       
       if (!character || character.length === 0) {
         return res.status(404).json({ message: "Character not found" });
@@ -74,7 +75,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update character in database
       const result = await db.update(characters)
         .set({ ...characterData, updatedAt: new Date() })
-        .where({ id: characterId })
+        .where(eq(characters.id, characterId))
         .returning();
       
       if (!result || result.length === 0) {
@@ -107,7 +108,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/campaigns/:id", async (req, res) => {
     try {
       const campaignId = parseInt(req.params.id);
-      const campaign = await db.select().from(campaigns).where({ id: campaignId }).limit(1);
+      const campaign = await db.select().from(campaigns).where(eq(campaigns.id, campaignId)).limit(1);
       
       if (!campaign || campaign.length === 0) {
         return res.status(404).json({ message: "Campaign not found" });
@@ -157,7 +158,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update campaign in database
       const result = await db.update(campaigns)
         .set({ ...campaignData, updatedAt: new Date() })
-        .where({ id: campaignId })
+        .where(eq(campaigns.id, campaignId))
         .returning();
       
       if (!result || result.length === 0) {
@@ -179,7 +180,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/campaigns/:id/locations", async (req, res) => {
     try {
       const campaignId = parseInt(req.params.id);
-      const campaign = await db.select().from(campaigns).where({ id: campaignId }).limit(1);
+      const campaign = await db.select().from(campaigns).where(eq(campaigns.id, campaignId)).limit(1);
       
       if (!campaign || campaign.length === 0) {
         return res.status(404).json({ message: "Campaign not found" });
@@ -230,7 +231,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Update debrief with LLM response
       const result = await db.update(debriefs)
         .set({ response })
-        .where({ id: debriefId })
+        .where(eq(debriefs.id, debriefId))
         .returning();
       
       if (!result || result.length === 0) {
