@@ -3,7 +3,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { species } from "@/lib/sw5e/species";
 
-export default function SpeciesSelection({ form }: { form: any }) {
+export default function SpeciesSelection({ form, onSelect }: { form: any; onSelect?: (category: string, value: string) => void }) {
   const handleSpeciesChange = (value: string) => {
     console.log('Species change triggered:', value);
     form.setValue("species", value);
@@ -87,7 +87,7 @@ export default function SpeciesSelection({ form }: { form: any }) {
                             onClick={() => {
                               handleSpeciesChange(speciesOption.id);
                               form.setValue("species", speciesOption.id);
-                              handleOptionSelect("species", speciesOption.id);
+                              onSelect?.("species", speciesOption.id);
                             }}
                             className={`w-full px-4 py-2 text-sm font-semibold rounded-md ${
                               form.watch("species") === speciesOption.id 
