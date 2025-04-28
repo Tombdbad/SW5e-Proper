@@ -21,6 +21,30 @@ import ArchetypeSelection from "./ArchetypeSelection";
 
 export default function CharacterCreationForm({ form }: { form: any }) {
   const [activeTab, setActiveTab] = useState("basic");
+  const [selectedOptions, setSelectedOptions] = useState({
+    species: '',
+    class: '',
+    background: '',
+    archetype: '',
+    feats: [],
+    forcePowers: [],
+    techPowers: [],
+    equipment: []
+  });
+
+  const handleOptionSelect = (category: string, value: string | string[]) => {
+    setSelectedOptions(prev => ({
+      ...prev,
+      [category]: value
+    }));
+    
+    // Progress to next tab after selection
+    const tabOrder = ["basic", "abilities", "features", "equipment"];
+    const currentIndex = tabOrder.indexOf(activeTab);
+    if (currentIndex < tabOrder.length - 1) {
+      setActiveTab(tabOrder[currentIndex + 1]);
+    }
+  };
   const [characterLevel, setCharacterLevel] = useState(1);
   const [showForcePowers, setShowForcePowers] = useState(false);
   const [showTechPowers, setShowTechPowers] = useState(false);

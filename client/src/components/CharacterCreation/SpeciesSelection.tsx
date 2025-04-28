@@ -84,10 +84,18 @@ export default function SpeciesSelection({ form }: { form: any }) {
                         <div className="p-4 pt-0">
                           <button
                             type="button"
-                            onClick={() => handleSpeciesChange(speciesOption.id)}
-                            className="w-full px-4 py-2 text-sm font-semibold rounded-md bg-yellow-600 hover:bg-yellow-700 text-white transition-colors"
+                            onClick={() => {
+                              handleSpeciesChange(speciesOption.id);
+                              form.setValue("species", speciesOption.id);
+                              handleOptionSelect("species", speciesOption.id);
+                            }}
+                            className={`w-full px-4 py-2 text-sm font-semibold rounded-md ${
+                              form.watch("species") === speciesOption.id 
+                                ? "bg-green-600 hover:bg-green-700" 
+                                : "bg-yellow-600 hover:bg-yellow-700"
+                            } text-white transition-colors`}
                           >
-                            Select {speciesOption.name}
+                            {form.watch("species") === speciesOption.id ? "Selected" : `Select ${speciesOption.name}`}
                           </button>
                         </div>
                       </Card>

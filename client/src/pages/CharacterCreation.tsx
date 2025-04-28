@@ -57,6 +57,8 @@ export default function CharacterCreation() {
   const { handleSubmit, formState } = methods;
   const { errors, isValid } = formState;
 
+  const navigate = useNavigate();
+  
   const onSubmit = async (data: CharacterData) => {
     setIsSubmitting(true);
     try {
@@ -66,7 +68,10 @@ export default function CharacterCreation() {
         body: JSON.stringify(data),
       });
       if (!response.ok) throw new Error('Failed to create character');
-      // Handle success
+      const character = await response.json();
+      
+      // Navigate to campaign creator with new character
+      navigate(`/campaign/create?characterId=${character.id}`);
     } catch (error) {
       console.error('Error creating character:', error);
     } finally {
