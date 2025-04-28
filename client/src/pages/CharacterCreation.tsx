@@ -1,38 +1,21 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { z } from "zod";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
-import { toast } from "sonner";
-import { Form } from "@/components/ui/form";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import CharacterCreationForm from "@/components/CharacterCreation/CharacterCreationForm";
-import SpeciesSelection from "@/components/CharacterCreation/SpeciesSelection";
-import ClassSelection from "@/components/CharacterCreation/ClassSelection";
-import AbilityScores from "@/components/CharacterCreation/AbilityScores";
-import BackgroundSelection from "@/components/CharacterCreation/BackgroundSelection";
-import EquipmentSelection from "@/components/CharacterCreation/EquipmentSelection";
-import { apiRequest } from "@/lib/queryClient";
-import { useCharacter } from "@/lib/stores/useCharacter";
+import React, { useState, useEffect } from 'react';
+import { Tab } from '@headlessui/react';
+import { motion } from 'framer-motion';
+import { useForm, FormProvider } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { SpeciesSelection } from '../components/CharacterCreation/SpeciesSelection';
+import { ClassSelection } from '../components/CharacterCreation/ClassSelection';
+import { AbilityScores } from '../components/CharacterCreation/AbilityScores';
+import { BackgroundSelection } from '../components/CharacterCreation/BackgroundSelection';
+import { EquipmentSelection } from '../components/CharacterCreation/EquipmentSelection';
+import { TranslucentPane } from '../components/ui/TranslucentPane';
 
-// Define the form schema for character creation
-const characterFormSchema = z.object({
-  name: z.string().min(2, {
-    message: "Character name must be at least 2 characters.",
-  }),
-  species: z.string().min(1, { message: "Please select a species." }),
-  class: z.string().min(1, { message: "Please select a class." }),
-  background: z.string().min(1, { message: "Please select a background." }),
-  alignment: z.string().min(1, { message: "Please select an alignment." }),
-  level: z.number().min(1).default(1),
-  archetype: z.string().optional(),
-  feats: z.array(z.string()).default([]),
-  techPowers: z.array(z.string()).default([]),
-  forcePowers: z.array(z.string()).default([]),
-  maneuvers: z.array(z.string()).default([]),
-  abilityScores: z.object({
+const characterSchema = z.object({
+  name: z.string().min(2, { message: "Character name must be at least 2 characters" }),
+  species: z.string().min(1, { message: "Please select a species" }),
+  class: z.string().min(1, { message: "Please select a class" }),
+  abilities: z.object({
     strength: z.number().min(3).max(18),
     dexterity: z.number().min(3).max(18),
     constitution: z.number().min(3).max(18),
@@ -40,36 +23,24 @@ const characterFormSchema = z.object({
     wisdom: z.number().min(3).max(18),
     charisma: z.number().min(3).max(18),
   }),
+  background: z.string().min(1, { message: "Please select a background" }),
   equipment: z.array(z.string()),
-  backstory: z.string().optional(),
-  startingLocation: z.string().min(1, { message: "Please select a starting location." }),
-  skillProficiencies: z.array(z.string()).default([]),
-  savingThrowProficiencies: z.array(z.string()).default([]),
-  maxHp: z.number().default(0),
-  currentHp: z.number().default(0),
-  maxForcePoints: z.number().default(0),
-  currentForcePoints: z.number().default(0),
-  armorClass: z.number().default(10),
-  speed: z.number().default(30),
+  credits: z.number().min(0),
 });
 
-type CharacterFormValues = z.infer<typeof characterFormSchema>;
+type CharacterData = z.infer<typeof characterSchema>;
 
 export default function CharacterCreation() {
-  const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState("basic");
-  const { initializeCharacter } = useCharacter();
+  const [currentTab, setCurrentTab] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const form = useForm<CharacterFormValues>({
-    resolver: zodResolver(characterFormSchema),
+  const methods = useForm<CharacterData>({
+    resolver: zodResolver(characterSchema),
     defaultValues: {
-      name: "",
-      species: "",
-      class: "",
-      background: "",
-      alignment: "",
-      level: 1,
-      abilityScores: {
+      name: '',
+      species: '',
+      class: '',
+      abilities: {
         strength: 10,
         dexterity: 10,
         constitution: 10,
@@ -77,135 +48,113 @@ export default function CharacterCreation() {
         wisdom: 10,
         charisma: 10,
       },
+      background: '',
       equipment: [],
-      backstory: "",
-      startingLocation: "",
-    },
+      credits: 500,
+    }
   });
 
-  async function onSubmit(data: CharacterFormValues) {
+  const { handleSubmit, formState } = methods;
+  const { errors, isValid } = formState;
+
+  const onSubmit = async (data: CharacterData) => {
+    setIsSubmitting(true);
     try {
-      toast.info("Creating your character...");
-      
-      const response = await apiRequest("POST", "/api/characters", data);
-      const character = await response.json();
-      
-      // Store the character in state
-      initializeCharacter(character);
-      
-      toast.success("Character created successfully!");
-      navigate(`/character/manage/${character.id}`);
+      const response = await fetch('/api/characters', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) throw new Error('Failed to create character');
+      // Handle success
     } catch (error) {
-      console.error("Error creating character:", error);
-      toast.error("Failed to create character. Please try again.");
-    }
-  }
-
-  const goToNextTab = () => {
-    switch (activeTab) {
-      case "basic":
-        setActiveTab("species");
-        break;
-      case "species":
-        setActiveTab("class");
-        break;
-      case "class":
-        setActiveTab("abilities");
-        break;
-      case "abilities":
-        setActiveTab("background");
-        break;
-      case "background":
-        setActiveTab("equipment");
-        break;
-      case "equipment":
-        form.handleSubmit(onSubmit)();
-        break;
+      console.error('Error creating character:', error);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const goToPrevTab = () => {
-    switch (activeTab) {
-      case "species":
-        setActiveTab("basic");
-        break;
-      case "class":
-        setActiveTab("species");
-        break;
-      case "abilities":
-        setActiveTab("class");
-        break;
-      case "background":
-        setActiveTab("abilities");
-        break;
-      case "equipment":
-        setActiveTab("background");
-        break;
-    }
-  };
+  const tabs = [
+    { name: 'Species', component: <SpeciesSelection /> },
+    { name: 'Class', component: <ClassSelection /> },
+    { name: 'Abilities', component: <AbilityScores /> },
+    { name: 'Background', component: <BackgroundSelection /> },
+    { name: 'Equipment', component: <EquipmentSelection /> },
+  ];
 
   return (
-    <div className="min-h-screen bg-gray-900 p-6 overflow-y-auto">
-      <Card className="max-w-4xl mx-auto bg-gray-800 text-white mb-6">
-        <CardHeader>
-          <CardTitle className="text-2xl text-center text-yellow-400">
-            Create Your Character
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-              <Tabs value={activeTab} onValueChange={setActiveTab}>
-                <TabsList className="grid grid-cols-4 lg:grid-cols-8 mb-8">
-                  <TabsTrigger value="basic">Basics</TabsTrigger>
-                  <TabsTrigger value="species">Species</TabsTrigger>
-                  <TabsTrigger value="class">Class</TabsTrigger>
-                  <TabsTrigger value="archetype">Archetype</TabsTrigger>
-                  <TabsTrigger value="abilities">Abilities</TabsTrigger>
-                  <TabsTrigger value="powers">Powers</TabsTrigger>
-                  <TabsTrigger value="background">Background</TabsTrigger>
-                  <TabsTrigger value="equipment">Equipment</TabsTrigger>
-                </TabsList>
-                <TabsContent value="basic">
-                  <CharacterCreationForm form={form} />
-                </TabsContent>
-                <TabsContent value="species">
-                  <SpeciesSelection form={form} />
-                </TabsContent>
-                <TabsContent value="class">
-                  <ClassSelection form={form} />
-                </TabsContent>
-                <TabsContent value="abilities">
-                  <AbilityScores form={form} />
-                </TabsContent>
-                <TabsContent value="background">
-                  <BackgroundSelection form={form} />
-                </TabsContent>
-                <TabsContent value="equipment">
-                  <EquipmentSelection form={form} />
-                </TabsContent>
-              </Tabs>
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-black bg-opacity-30">
+      <FormProvider {...methods}>
+        <form onSubmit={handleSubmit(onSubmit)} className="w-full max-w-6xl">
+          <TranslucentPane className="p-6">
+            <h1 className="text-3xl font-bold text-yellow-400 mb-8">Character Creation</h1>
 
-              <div className="flex justify-between mt-6">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={goToPrevTab}
-                  disabled={activeTab === "basic"}
+            <Tab.Group selectedIndex={currentTab} onChange={setCurrentTab}>
+              <Tab.List className="flex space-x-1 bg-gray-800 bg-opacity-50 p-1 rounded-lg">
+                {tabs.map((tab) => (
+                  <Tab
+                    key={tab.name}
+                    className={({ selected }) =>
+                      `px-3 py-2 text-sm font-medium rounded-md focus:outline-none ${
+                        selected
+                          ? 'bg-yellow-600 text-white'
+                          : 'text-yellow-400 hover:bg-gray-700'
+                      }`
+                    }
+                  >
+                    {tab.name}
+                  </Tab>
+                ))}
+              </Tab.List>
+
+              <Tab.Panels className="mt-4">
+                {tabs.map((tab, idx) => (
+                  <Tab.Panel key={idx}>
+                    <motion.div
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.3 }}
+                    >
+                      <TranslucentPane className="p-4">
+                        {tab.component}
+                      </TranslucentPane>
+                    </motion.div>
+                  </Tab.Panel>
+                ))}
+              </Tab.Panels>
+            </Tab.Group>
+
+            <div className="mt-6 flex justify-between">
+              <button
+                type="button"
+                onClick={() => setCurrentTab(Math.max(0, currentTab - 1))}
+                disabled={currentTab === 0}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md disabled:bg-gray-600 disabled:text-gray-400"
+              >
+                Previous
+              </button>
+
+              {currentTab === tabs.length - 1 ? (
+                <button
+                  type="submit"
+                  disabled={!isValid || isSubmitting}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md disabled:bg-gray-600 disabled:text-gray-400"
                 >
-                  Previous
-                </Button>
-                <Button
+                  {isSubmitting ? 'Creating...' : 'Create Character'}
+                </button>
+              ) : (
+                <button
                   type="button"
-                  onClick={goToNextTab}
+                  onClick={() => setCurrentTab(Math.min(tabs.length - 1, currentTab + 1))}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md"
                 >
-                  {activeTab === "equipment" ? "Create Character" : "Next"}
-                </Button>
-              </div>
-            </form>
-          </Form>
-        </CardContent>
-      </Card>
+                  Next
+                </button>
+              )}
+            </div>
+          </TranslucentPane>
+        </form>
+      </FormProvider>
     </div>
   );
 }
