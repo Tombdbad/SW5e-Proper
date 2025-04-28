@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -21,72 +21,34 @@ import ArchetypeSelection from "./ArchetypeSelection";
 
 export default function CharacterCreationForm({ form }: { form: any }) {
   const [activeTab, setActiveTab] = useState("basic");
-  const [selectedOptions, setSelectedOptions] = useState({
-    species: '',
-    class: '',
-    background: '',
-    archetype: '',
-    feats: [],
-    forcePowers: [],
-    techPowers: [],
-    equipment: []
-  });
-
-  const handleOptionSelect = (category: string, value: string | string[]) => {
-    setSelectedOptions(prev => ({
-      ...prev,
-      [category]: value
-    }));
-    
-    // Progress to next tab after selection
-    const tabOrder = ["basic", "abilities", "features", "equipment"];
-    const currentIndex = tabOrder.indexOf(activeTab);
-    if (currentIndex < tabOrder.length - 1) {
-      setActiveTab(tabOrder[currentIndex + 1]);
-    }
-  };
   const [characterLevel, setCharacterLevel] = useState(1);
   const [showForcePowers, setShowForcePowers] = useState(false);
   const [showTechPowers, setShowTechPowers] = useState(false);
-  
+
   const alignments = [
-    "Lawful Light",
-    "Neutral Light",
-    "Chaotic Light",
-    "Lawful Balanced",
-    "Neutral Balanced",
-    "Chaotic Balanced",
-    "Lawful Dark",
-    "Neutral Dark",
-    "Chaotic Dark",
+    "Lawful Light", "Neutral Light", "Chaotic Light",
+    "Lawful Balanced", "Neutral Balanced", "Chaotic Balanced",
+    "Lawful Dark", "Neutral Dark", "Chaotic Dark",
   ];
 
   // Get the selected class to determine which power types to show
   const selectedClass = form.watch("class");
-  
-  // Update power visibility based on class and other factors
-  useEffect(() => {
-    if (selectedClass) {
-      const alignment = form.watch("alignment");
-      const isForceUser = ["consular", "guardian", "sentinel"].includes(selectedClass);
-      const isTechUser = ["engineer", "scholar", "scout"].includes(selectedClass);
-      const isMixed = ["operative"].includes(selectedClass);
-      
-      setShowForcePowers((isForceUser || isMixed) && alignment);
-      setShowTechPowers(isTechUser || isMixed);
-    }
-  }, [selectedClass, form.watch("alignment")]);
+
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+  };
 
   return (
     <div className="space-y-6">
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid grid-cols-4 mb-6">
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+        <TabsList className="grid grid-cols-5 mb-6">
           <TabsTrigger value="basic">Basic Info</TabsTrigger>
-          <TabsTrigger value="abilities">Abilities & Skills</TabsTrigger>
-          <TabsTrigger value="features">Features & Powers</TabsTrigger>
+          <TabsTrigger value="abilities">Abilities</TabsTrigger>
+          <TabsTrigger value="background">Background</TabsTrigger>
+          <TabsTrigger value="features">Features</TabsTrigger>
           <TabsTrigger value="equipment">Equipment</TabsTrigger>
         </TabsList>
-        
+
         <TabsContent value="basic" className="space-y-6">
           <TranslucentPane className="p-6">
             <div className="grid grid-cols-1 gap-6">
@@ -103,20 +65,20 @@ export default function CharacterCreationForm({ form }: { form: any }) {
                   </FormItem>
                 )}
               />
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+              <div className="grid grid-cols-2 gap-6">
                 <FormField
                   control={form.control}
                   name="level"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Character Level</FormLabel>
-                      <Select 
+                      <FormLabel>Level</FormLabel>
+                      <Select
                         onValueChange={(value) => {
                           field.onChange(parseInt(value));
                           setCharacterLevel(parseInt(value));
-                        }} 
-                        defaultValue={field.value?.toString() || "1"}
+                        }}
+                        defaultValue={field.value?.toString()}
                       >
                         <FormControl>
                           <SelectTrigger>
@@ -131,10 +93,6 @@ export default function CharacterCreationForm({ form }: { form: any }) {
                           ))}
                         </SelectContent>
                       </Select>
-                      <FormDescription>
-                        Your character's experience level.
-                      </FormDescription>
-                      <FormMessage />
                     </FormItem>
                   )}
                 />
@@ -148,7 +106,7 @@ export default function CharacterCreationForm({ form }: { form: any }) {
                       <Select onValueChange={field.onChange} defaultValue={field.value}>
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue placeholder="Select an alignment" />
+                            <SelectValue placeholder="Select alignment" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
@@ -159,119 +117,100 @@ export default function CharacterCreationForm({ form }: { form: any }) {
                           ))}
                         </SelectContent>
                       </Select>
-                      <FormDescription>
-                        Your character's ethical and moral outlook.
-                      </FormDescription>
-                      <FormMessage />
                     </FormItem>
                   )}
                 />
               </div>
-              
-              <SpeciesSelection form={form} />
-              
+
+              <SpeciesSelection form={form} onSelect={() => handleTabChange("abilities")} />
               <Separator />
-              
-              <ClassSelection form={form} />
-              
-              <Separator />
-              
-              <BackgroundSelection form={form} />
-              
-              <Separator />
-              
+              <ClassSelection form={form} onSelect={() => handleTabChange("abilities")} />
+            </div>
+          </TranslucentPane>
+        </TabsContent>
+
+        <TabsContent value="abilities" className="space-y-6">
+          <TranslucentPane className="p-6">
+            <AbilityScores form={form} />
+          </TranslucentPane>
+        </TabsContent>
+
+        <TabsContent value="background" className="space-y-6">
+          <TranslucentPane className="p-6">
+            <BackgroundSelection form={form} onSelect={() => handleTabChange("features")} />
+            <Separator className="my-6" />
+            <div className="space-y-4">
               <FormField
                 control={form.control}
-                name="startingLocation"
+                name="bonds"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Starting Location</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select a star system" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {starSystems.map((system) => (
-                          <SelectItem key={system.id} value={system.id}>
-                            {system.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormDescription>
-                      Where your character's journey will begin.
-                    </FormDescription>
-                    <FormMessage />
+                    <FormLabel>Bonds</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        placeholder="What connects your character to people, places, or ideals?"
+                        className="min-h-[100px]"
+                        {...field}
+                      />
+                    </FormControl>
                   </FormItem>
                 )}
               />
 
               <FormField
                 control={form.control}
-                name="backstory"
+                name="motivations"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Character Backstory</FormLabel>
+                    <FormLabel>Motivations</FormLabel>
                     <FormControl>
-                      <Textarea 
-                        placeholder="Describe your character's history and motivations..." 
-                        className="h-32"
-                        {...field} 
+                      <Textarea
+                        placeholder="What drives your character to adventure?"
+                        className="min-h-[100px]"
+                        {...field}
                       />
                     </FormControl>
-                    <FormDescription>
-                      Provide details about your character's past, motivations, and goals.
-                    </FormDescription>
-                    <FormMessage />
                   </FormItem>
                 )}
               />
             </div>
           </TranslucentPane>
         </TabsContent>
-        
-        <TabsContent value="abilities" className="space-y-6">
-          <TranslucentPane className="p-6">
-            <AbilityScores form={form} />
-          </TranslucentPane>
-        </TabsContent>
-        
+
         <TabsContent value="features" className="space-y-6">
           <TranslucentPane className="p-6">
-            <ArchetypeSelection 
-              form={form} 
-              characterClass={selectedClass || ''} 
-              characterLevel={characterLevel} 
+            <ArchetypeSelection
+              form={form}
+              characterClass={selectedClass || ''}
+              characterLevel={characterLevel}
             />
-            
+
             <Separator className="my-6" />
-            
-            <FeatsSelection 
-              form={form} 
+
+            <FeatsSelection
+              form={form}
               availableFeats={Math.floor(characterLevel / 4) + 1}
               characterClass={selectedClass || ''}
             />
-            
+
             {showForcePowers && (
               <>
                 <Separator className="my-6" />
-                <ForcePowersSelection 
-                  form={form} 
+                <ForcePowersSelection
+                  form={form}
                   availablePowers={characterLevel + 1}
                   maxPowerLevel={Math.min(5, Math.ceil(characterLevel / 4))}
-                  alignment={form.watch("alignment")?.includes("Light") ? "Light" : 
+                  alignment={form.watch("alignment")?.includes("Light") ? "Light" :
                             form.watch("alignment")?.includes("Dark") ? "Dark" : "Neutral"}
                 />
               </>
             )}
-            
+
             {showTechPowers && (
               <>
                 <Separator className="my-6" />
-                <TechPowersSelection 
-                  form={form} 
+                <TechPowersSelection
+                  form={form}
                   availablePowers={characterLevel + 1}
                   maxPowerLevel={Math.min(5, Math.ceil(characterLevel / 4))}
                 />
@@ -279,7 +218,7 @@ export default function CharacterCreationForm({ form }: { form: any }) {
             )}
           </TranslucentPane>
         </TabsContent>
-        
+
         <TabsContent value="equipment" className="space-y-6">
           <TranslucentPane className="p-6">
             <EquipmentSelection form={form} />
