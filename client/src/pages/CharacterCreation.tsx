@@ -27,6 +27,11 @@ const characterFormSchema = z.object({
   background: z.string().min(1, { message: "Please select a background." }),
   alignment: z.string().min(1, { message: "Please select an alignment." }),
   level: z.number().min(1).default(1),
+  archetype: z.string().optional(),
+  feats: z.array(z.string()).default([]),
+  techPowers: z.array(z.string()).default([]),
+  forcePowers: z.array(z.string()).default([]),
+  maneuvers: z.array(z.string()).default([]),
   abilityScores: z.object({
     strength: z.number().min(3).max(18),
     dexterity: z.number().min(3).max(18),
@@ -38,6 +43,14 @@ const characterFormSchema = z.object({
   equipment: z.array(z.string()),
   backstory: z.string().optional(),
   startingLocation: z.string().min(1, { message: "Please select a starting location." }),
+  skillProficiencies: z.array(z.string()).default([]),
+  savingThrowProficiencies: z.array(z.string()).default([]),
+  maxHp: z.number().default(0),
+  currentHp: z.number().default(0),
+  maxForcePoints: z.number().default(0),
+  currentForcePoints: z.number().default(0),
+  armorClass: z.number().default(10),
+  speed: z.number().default(30),
 });
 
 type CharacterFormValues = z.infer<typeof characterFormSchema>;
@@ -132,8 +145,8 @@ export default function CharacterCreation() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 p-6">
-      <Card className="max-w-4xl mx-auto bg-gray-800 text-white">
+    <div className="min-h-screen bg-gray-900 p-6 overflow-y-auto">
+      <Card className="max-w-4xl mx-auto bg-gray-800 text-white mb-6">
         <CardHeader>
           <CardTitle className="text-2xl text-center text-yellow-400">
             Create Your Character
@@ -143,11 +156,13 @@ export default function CharacterCreation() {
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
               <Tabs value={activeTab} onValueChange={setActiveTab}>
-                <TabsList className="grid grid-cols-6 mb-8">
+                <TabsList className="grid grid-cols-4 lg:grid-cols-8 mb-8">
                   <TabsTrigger value="basic">Basics</TabsTrigger>
                   <TabsTrigger value="species">Species</TabsTrigger>
                   <TabsTrigger value="class">Class</TabsTrigger>
+                  <TabsTrigger value="archetype">Archetype</TabsTrigger>
                   <TabsTrigger value="abilities">Abilities</TabsTrigger>
+                  <TabsTrigger value="powers">Powers</TabsTrigger>
                   <TabsTrigger value="background">Background</TabsTrigger>
                   <TabsTrigger value="equipment">Equipment</TabsTrigger>
                 </TabsList>
