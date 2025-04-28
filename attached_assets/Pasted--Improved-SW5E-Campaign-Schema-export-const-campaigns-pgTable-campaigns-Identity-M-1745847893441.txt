@@ -1,0 +1,57 @@
+// Improved SW5E Campaign Schema
+export const campaigns = pgTable("campaigns", {
+  // Identity & Meta
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  
+  // Basic Campaign Info
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  setting: json("setting").notNull(), // { era, backstory, themes, tone }
+  
+  // Characters & Players
+  characters: json("characters").notNull(), // Array of character IDs or references
+  playerCharacters: json("player_characters"), // [ { characterId, playerId, active } ]
+  
+  // Campaign Structure
+  objectives: json("objectives"), // [ { title, description, status, completionCriteria, rewards } ]
+  quests: json("quests").notNull(), // [ { title, description, status, location, npcGiver, rewards, linkedObjectives, deadline } ]
+  arcs: json("arcs"), // [ { title, description, quests, status } ] - For story arc tracking
+  factions: json("factions"), // [ { name, description, disposition, members, territories, goals } ]
+  
+  // World Elements
+  npcs: json("npcs").notNull(), // [ { name, species, role, location, disposition, notes, stats } ]
+  locations: json("locations").notNull(), // [ { name, description, type, coordinates, connections, pointsOfInterest } ]
+  planets: json("planets"), // [ { name, description, climate, terrain, controllingFaction, knownLocations } ]
+  
+  // Navigation & Current State
+  startingLocation: text("starting_location").notNull(),
+  currentLocation: text("current_location"),
+  galaxyMap: json("galaxy_map"), // { knownLocations, exploredSectors, currentPosition }
+  
+  // Time & Progress Tracking
+  timeElapsed: json("time_elapsed"), // { days, hours, minutes }
+  inGameCalendar: json("in_game_calendar"), // For tracking in-game dates and events
+  currentGameState: json("current_game_state"), // { inCombat, currentInitiative: [ { entity, initiative, isPlayer } ] }
+  
+  // Session Management
+  sessionLogs: json("session_logs"), // [ { date, summary, participants, locations, keyEvents, decisions } ]
+  upcomingSessionNotes: json("upcoming_session_notes"), // Planning for the next session
+  
+  // Miscellaneous
+  notes: text("notes"),
+  secrets: json("secrets"), // DM-only information
+  encounters: json("encounters"), // [ { title, description, location, enemies, difficulty, rewards, triggered } ]
+  treasures: json("treasures"), // [ { type, description, value, location, found } ]
+  
+  // LLM Integration
+  llmContext: json("llm_context"), // { lastContextSummary, keySummaryPoints, lastUpdated }
+  aiDirection: json("ai_direction"), // Overall direction for the AI to follow for this campaign
+  
+  // SW5E Specific
+  forcePresence: json("force_presence"), // { lightSideInfluence, darkSideInfluence, significantForceEvents }
+  starships: json("starships"), // [ { name, class, stats, crew, location, status } ]
+  specialRules: json("special_rules"), // House rules or campaign-specific mechanics
+});

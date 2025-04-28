@@ -1,0 +1,91 @@
+Affect Mind	At-will	Universal	1 action	30 feet	Up to 1 minute	PHB
+Affliction	2nd	Dark	1 action	30 feet	Up to 1 minute	PHB
+Armor of Abeloth	1st	Dark	1 action	Self	1 hour	PHB
+Aura of Purity	4th	Light	1 action	Self (30-foot radius)	Up to 10 minutes	PHB
+Aura of Vigor	3rd	Light	1 action	Self (30-foot radius)	Up to 1 minute	PHB
+Battle Insight	At-will	Universal	1 action	30 feet	Up to 1 round	PHB
+Battle Meditation	2nd	Universal	1 action	Self (5-foot radius)	Up to 1 minute	PHB
+Beast Trick	1st	Light	1 action	30 feet	24 hours	PHB
+Bestow Curse	3rd	Dark	1 action	Touch	Up to 1 minute	PHB
+Breath Control	1st	Universal	1 action	Self	10 minutes	PHB
+Burst	At-will	Universal	1 action	Self (5-foot sphere)	-	PHB
+Call Lightning	3rd	Light	1 action	120 feet	Up to 10 minutes	PHB
+Calm Emotions	2nd	Light	1 action	60 feet	Up to 1 minute	PHB
+Choke	3rd	Dark	1 action	60 feet	Instantaneous	PHB
+Cloud Mind	1st	Light	1 action	90 feet	1 minute	PHB
+Coerce Mind	2nd	Universal	1 action	30 feet	Up to 8 hours	PHB
+Comprehend Speech	1st	Universal	1 action	Self	1 hour	PHB
+Concealment	1st	Universal	1 action	Self	1 hour	PHB
+Control Weather	5th	Universal	10 minutes	Self (5-mile radius)	Up to 8 hours	PHB
+Danger Sense	1st	Universal	1 reaction	Self	-	PHB
+Dark Side Surge	5th	Dark	1 action	Self	1 minute	PHB
+Deadly Sight	4th	Dark	1 action	60 feet	Concentration, up to 1 minute	PHB
+Death Field	5th	Dark	1 action	Self (30-foot radius)	1 round	PHB
+Detect Alignment	1st	Universal	1 action	Self	Up to 10 minutes	PHB
+Detect Thoughts	2nd	Universal	1 action	Self (30-foot radius)	Up to 1 minute	PHB
+Displacement	3rd	Universal	1 action	Self	Up to 1 minute	PHB
+Distant Vision	2nd	Universal	1 action	Touch	1 hour	PHB
+Drain Life	1st	Dark	1 action	30 feet	Instantaneous	PHB
+дымка Force Illusion	2nd	Universal	1 action	30 feet	Up to 1 minute	PHB
+Force Body	1st	Universal	1 bonus action	Self	Up to 1 minute	PHB
+Force Burst	1st	Universal	1 action	60 feet	Instantaneous	PHB
+Force Heal	2nd	Light	1 action	Touch	-	PHB
+Force Lightning	3rd	Dark	1 action	120 feet	Instantaneous	PHB
+Force Push/Pull	1st	Universal	1 action	30 feet	Instantaneous	PHB
+Force Sense	At-will	Universal	1 action	Self	Up to 1 minute	PHB
+Force Shield	1st	Universal	1 reaction	Self	Up to 1 minute	PHB
+Force Speed	2nd	Universal	1 bonus action	Self	Up to 1 minute	PHB
+Force Stun	1st	Universal	1 action	30 feet	Up to 1 minute	PHB
+Force Throw	2nd	Universal	1 action	30 feet	Instantaneous	PHB
+Foresee	4th	Universal	1 action	Self	Up to 8 hours	PHB
+Friendship	1st	Light	1 action	30 feet	24 hours	PHB
+Greater Telekinesis	5th	Universal	1 action	60 feet	Concentration, up to 10 minutes	PHB
+Guiding Light	1st	Light	1 bonus action	30 feet	1 round	PHB
+Harm	6th	Dark	1 action	60 feet	Instantaneous	PHB
+Heroism	1st	Light	1 action	30 feet	Up to 1 minute	PHB
+Hunter's Sense	1st	Universal	1 action	Self	Up to 1 minute	PHB
+Illusory Image	1st	Universal	1 action	15 feet	Up to 1 minute	PHB
+Inflict Pain	1st	Dark	1 action	Touch	Up to 1 minute	PHB
+Inspire Courage	1st	Light	1 action	Self (30-foot radius)	Up to 1 minute	PHB
+Kinetic Pillar	4th	Universal	1 action	60 feet	Concentration, up to 1 minute	PHB
+Kinetic Shield	3rd	Universal	1 reaction	Self	Up to 1 minute	PHB
+Kinetic Smash	3rd	Universal	1 action	30 feet	Instantaneous	PHB
+Knight Speed	4th	Universal	1 bonus action	Self	Up to 1 minute	PHB
+Life Drain	3rd	Dark	1 action	30 feet	Instantaneous	PHB
+Living Force	5th	Light	1 action	Touch	-	PHB
+Malignancy	4th	Dark	1 action	60 feet	Up to 1 minute	PHB
+Mass Affliction	5th	Dark	1 action	30 feet	Up to 1 minute	PHB
+Mass Suggestion	4th	Universal	1 action	60 feet	Up to 24 hours	PHB
+Mental Barrier	2nd	Universal	1 reaction	Self	1 round	PHB
+Mind Link	1st	Universal	1 action	30 feet	Up to 1 hour	PHB
+Mind Probe	3rd	Universal	1 action	60 feet	Concentration, up to 1 minute	PHB
+Mislead	3rd	Universal	1 action	Self	Concentration, up to 1 minute	PHB
+Morichro	5th	Dark	1 action	Touch	Instantaneous	PHB
+Move Object	1st	Universal	1 action	30 feet	Concentration, up to 1 minute	PHB
+Protection from Energy	3rd	Light	1 action	Touch	Up to 1 hour	PHB
+Psychic Scream	7th	Dark	1 action	90 feet	Instantaneous	PHB
+Recall	2nd	Universal	1 action	Touch	-	PHB
+Regenerate	7th	Light	1 action	Touch	Up to 1 hour	PHB
+Remove Curse	3rd	Light	1 action	Touch	-	PHB
+Resistance	At-will	Universal	1 action	Touch	Up to 1 minute	PHB
+Restore Senses	4th	Light	1 action	Touch	-	PHB
+Saber Ward	1st	Universal	1 reaction	Self	1 round	PHB
+Sense Emotion	1st	Universal	1 action	30 feet	Up to 1 minute	PHB
+Sever Force	6th	Dark	1 action	60 feet	Instantaneous	PHB
+Shatterpoint	3rd	Universal	1 bonus action	30 feet	Concentration, up to 1 round	PHB
+Shield	1st	Universal	1 reaction	Self	1 round	PHB
+Silence	2nd	Universal	1 action	60 feet	Concentration, up to 10 minutes	PHB
+Slow	3rd	Dark	1 action	60 feet	Up to 1 minute	PHB
+Soothe	1st	Light	1 action	Touch	-	PHB
+Stasis	5th	Universal	1 action	60 feet	Concentration, up to 1 minute	PHB
+Suggestion	2nd	Universal	1 action	30 feet	Up to 8 hours	PHB
+Telekinesis	5th	Universal	1 action	60 feet	Concentration, up to 10 minutes	PHB
+Telepathic Bond	5th	Universal	1 action	30 feet	24 hours	PHB
+Thought Shield	4th	Universal	1 action	Self	Up to 10 minutes	PHB
+Tranquility	2nd	Light	1 action	Self (30-foot radius)	Up to 1 minute	PHB
+Transfer Force	4th	Universal	1 action	Touch	Instantaneous	PHB
+Truth Sense	2nd	Light	1 action	Self	Up to 10 minutes	PHB
+Valor	2nd	Light	1 action	Self (30-foot radius)	Up to 1 minute	PHB
+Visions	3rd	Universal	1 minute	Self	-	PHB
+Wall of Light	5th	Light	1 action	60 feet	Concentration, up to 10 minutes	PHB
+Wound	1st	Dark	1 action	30 feet	Instantaneous	PHB

@@ -1,0 +1,1427 @@
+        # SW5E Campaign Manager Implementation Guide
+
+## Data Models
+
+### Character Schema Implementation
+```javascript
+const CharacterSchema = new mongoose.Schema({
+  name: { type: String, required: true, trim: true },
+  player: { type: String, trim: true },
+  species: { type: String, required: true },
+  characterClass: { type: String, required: true },
+  level: { type: Number, required: true, min: 1, max: 20, default: 1 },
+  attributes: {
+    strength: { type: Number, required: true, min: 1, max: 30, default: 10 },
+    dexterity: { type: Number, required: true, min: 1, max: 30, default: 10 },
+    constitution: { type: Number, required: true, min: 1, max: 30, default: 10 },
+    intelligence: { type: Number, required: true, min: 1, max: 30, default: 10 },
+    wisdom: { type: Number, required: true, min: 1, max: 30, default: 10 },
+    charisma: { type: Number, required: true, min: 1, max: 30, default: 10 }
+  },
+  hitPoints: {
+    current: { type: Number, default: function() { return this.hitPoints.max; } },
+    max: { type: Number, required: true, default: 0 },
+    temporary: { type: Number, default: 0 }
+  },
+  forcePoints: {
+    current: { type: Number, default: function() { return this.forcePoints.max; } },
+    max: { type: Number, default: 0 }
+  },
+  techPoints: {
+    current: { type: Number, default: function() { return this.techPoints.max; } },
+    max: { type: Number, default: 0 }
+  },
+  armorClass: { type: Number, default: 10 },
+  speed: { type: Number, default: 30 },
+  skills: [{
+    name: { type: String, required: true },
+    proficient: { type: Boolean, default: false },
+    expertise: { type: Boolean, default: false },
+    bonus: { type: Number, default: 0 }
+  }],
+  inventory: [{
+    name: { type: String, required: true },
+    quantity: { type: Number, default: 1 },
+    weight: { type: Number, default: 0 },
+    description: { type: String }
+  }],
+  credits: { type: Number, default: 0 },
+  forcePowers: [{
+    name: { type: String, required: true },
+    level: { type: Number, required: true, min: 0, max: 9 },
+    description: { type: String },
+    castingTime: { type: String },
+    range: { type: String },
+    duration: { type: String },
+    effect: { type: String }
+  }],
+  techPowers: [{
+    name: { type: String, required: true },
+    level: { type: Number, required: true, min: 0, max: 9 },
+    description: { type: String },
+    castingTime: { type: String },
+    range: { type: String },
+    duration: { type: String },
+    effect: { type: String }
+  }],
+  background: { type: String },
+  alignment: { type: String },
+  experience: { type: Number, default: 0 },
+  notes: [{ 
+    title: { type: String },
+    content: { type: String },
+    date: { type: Date, default: Date.now }
+  }],
+  conditions: [{ 
+    name: { type: String },
+    duration: { type: Number }, // in rounds
+    effect: { type: String }
+  }]
+});
+```
+
+### Campaign Schema Implementation
+```javascript
+const CampaignSchema = new mongoose.Schema({
+  name: { type: String, required: true, trim: true },
+  description: { type: String },
+  gamemaster: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  players: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  characters: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Character' }],
+  npcs: [{
+    name: { type: String, required: true },
+    description: { type: String },
+    stats: { type: mongoose.Schema.Types.Mixed },
+    notes: { type: String }
+  }],
+  locations: [{
+    name: { type: String, required: true },
+    description: { type: String },
+    coordinates: {
+      x: { type: Number },
+      y: { type: Number }
+    },
+    notes: { type: String }
+  }],
+  sessions: [{
+    date: { type: Date },
+    summary: { type: String },
+    experience: { type: Number, default: 0 }
+  }],
+  notes: [{
+    title: { type: String },
+    content: { type: String },
+    date: { type: Date, default: Date.now }
+  }],
+  combat: {
+    active: { type: Boolean, default: false },
+    round: { type: Number, default: 1 },
+    initiative: [{
+      entityId: { type: String, required: true }, // Character ID or NPC identifier
+      entityType: { type: String, enum: ['character', 'npc'], required: true },
+      name: { type: String, required: true },
+      initiative: { type: Number, required: true },
+      hasGone: { type: Boolean, default: false }
+    }]
+  },
+  factions: [{
+    name: { type: String, required: true },
+    description: { type: String },
+    reputation: { type: Number, default: 0 }, // -100 to 100 scale
+    notes: { type: String },
+    interactions: [{
+      date: { type: Date, default: Date.now },
+      description: { type: String },
+      reputationChange: { type: Number, default: 0 }
+    }]
+  }],
+  ambiance: {
+    music: {
+      url: { type: String },
+      volume: { type: Number, default: 50 },
+      isPlaying: { type: Boolean, default: false }
+    },
+    soundEffects: [{
+      name: { type: String },
+      url: { type: String },
+      volume: { type: Number, default: 50 }
+    }],
+    backgroundImage: { type: String }
+  },
+  calendar: {
+    current: {
+      day: { type: Number, default: 1 },
+      month: { type: Number, default: 1 },
+      year: { type: Number, default: 0 }
+    },
+    events: [{
+      title: { type: String, required: true },
+      description: { type: String },
+      day: { type: Number, required: true },
+      month: { type: Number, required: true },
+      year: { type: Number, required: true },
+      completed: { type: Boolean, default: false }
+    }]
+  }
+});
+```
+
+## API Routes
+
+### Combat Routes Implementation
+```javascript
+const express = require('express');
+const router = express.Router();
+const Campaign = require('../models/Campaign');
+
+// Get current combat state for a campaign
+router.get('/:campaignId/combat', async (req, res) => {
+  try {
+    const campaign = await Campaign.findById(req.params.campaignId);
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    res.json(campaign.combat);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Start combat / Initialize new combat
+router.post('/:campaignId/combat/start', async (req, res) => {
+  try {
+    const campaign = await Campaign.findById(req.params.campaignId);
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    // Initialize combat with provided entities
+    campaign.combat.active = true;
+    campaign.combat.round = 1;
+    campaign.combat.initiative = req.body.entities.map(entity => ({
+      entityId: entity.id,
+      entityType: entity.type,
+      name: entity.name,
+      initiative: entity.initiative,
+      hasGone: false
+    })).sort((a, b) => b.initiative - a.initiative);
+    
+    await campaign.save();
+    res.json(campaign.combat);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Add entity to combat
+router.post('/:campaignId/combat/add', async (req, res) => {
+  try {
+    const campaign = await Campaign.findById(req.params.campaignId);
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    const newEntity = {
+      entityId: req.body.id,
+      entityType: req.body.type,
+      name: req.body.name,
+      initiative: req.body.initiative,
+      hasGone: false
+    };
+    
+    // Insert entity at correct initiative position
+    let inserted = false;
+    for (let i = 0; i < campaign.combat.initiative.length; i++) {
+      if (campaign.combat.initiative[i].initiative < newEntity.initiative) {
+        campaign.combat.initiative.splice(i, 0, newEntity);
+        inserted = true;
+        break;
+      }
+    }
+    
+    if (!inserted) {
+      campaign.combat.initiative.push(newEntity);
+    }
+    
+    await campaign.save();
+    res.json(campaign.combat);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Update entity initiative
+router.put('/:campaignId/combat/initiative/:entityId', async (req, res) => {
+  try {
+    const campaign = await Campaign.findById(req.params.campaignId);
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    // Remove entity from current position
+    const entityIndex = campaign.combat.initiative.findIndex(
+      e => e.entityId === req.params.entityId
+    );
+    
+    if (entityIndex === -1) {
+      return res.status(404).json({ message: 'Entity not found in combat' });
+    }
+    
+    const entity = campaign.combat.initiative[entityIndex];
+    campaign.combat.initiative.splice(entityIndex, 1);
+    
+    // Update initiative value
+    entity.initiative = req.body.initiative;
+    
+    // Re-insert at correct position
+    let inserted = false;
+    for (let i = 0; i < campaign.combat.initiative.length; i++) {
+      if (campaign.combat.initiative[i].initiative < entity.initiative) {
+        campaign.combat.initiative.splice(i, 0, entity);
+        inserted = true;
+        break;
+      }
+    }
+    
+    if (!inserted) {
+      campaign.combat.initiative.push(entity);
+    }
+    
+    await campaign.save();
+    res.json(campaign.combat);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Next turn in combat
+router.post('/:campaignId/combat/next', async (req, res) => {
+  try {
+    const campaign = await Campaign.findById(req.params.campaignId);
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    if (!campaign.combat.active || campaign.combat.initiative.length === 0) {
+      return res.status(400).json({ message: 'No active combat' });
+    }
+    
+    // Find the current entity
+    const currentIndex = campaign.combat.initiative.findIndex(e => !e.hasGone);
+    
+    if (currentIndex !== -1) {
+      // Mark current entity as gone
+      campaign.combat.initiative[currentIndex].hasGone = true;
+    }
+    
+    // Check if we need to start a new round
+    const allGone = campaign.combat.initiative.every(e => e.hasGone);
+    
+    if (allGone) {
+      // Start new round
+      campaign.combat.round += 1;
+      campaign.combat.initiative.forEach(e => e.hasGone = false);
+    }
+    
+    await campaign.save();
+    res.json(campaign.combat);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// End combat
+router.post('/:campaignId/combat/end', async (req, res) => {
+  try {
+    const campaign = await Campaign.findById(req.params.campaignId);
+    if (!campaign) {
+      return res.status(404).json({ message: 'Campaign not found' });
+    }
+    
+    campaign.combat.active = false;
+    campaign.combat.round = 1;
+    campaign.combat.initiative = [];
+    
+    await campaign.save();
+    res.json(campaign.combat);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+module.exports = router;
+```
+
+## Frontend Components
+
+### Tech Power Component
+```jsx
+import React, { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
+import apiService from '../../services/apiService';
+import './TechPowerComponent.css';
+
+const TechPowerComponent = ({ character, onUpdate }) => {
+  const [techPowers, setTechPowers] = useState([]);
+  const [availableTechPowers, setAvailableTechPowers] = useState([]);
+  const [currentPoints, setCurrentPoints] = useState(character?.techPoints?.current || 0);
+  const [maxPoints, setMaxPoints] = useState(character?.techPoints?.max || 0);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedLevel, setSelectedLevel] = useState('all');
+  const [showAddPower, setShowAddPower] = useState(false);
+  const { campaignId } = useParams();
+
+  useEffect(() => {
+    if (character) {
+      setTechPowers(character.techPowers || []);
+      setCurrentPoints(character.techPoints?.current || 0);
+      setMaxPoints(character.techPoints?.max || 0);
+      
+      // Fetch available tech powers from database
+      apiService.getTechPowers()
+        .then(response => {
+          setAvailableTechPowers(response.data);
+        })
+        .catch(error => {
+          console.error('Error fetching tech powers:', error);
+        });
+    }
+  }, [character]);
+
+  const handleUseTechPower = (power) => {
+    // Calculate cost based on power level (simplified for example)
+    const cost = power.level === 0 ? 0 : power.level;
+    
+    if (currentPoints < cost) {
+      alert('Not enough tech points!');
+      return;
+    }
+    
+    const newPoints = currentPoints - cost;
+    setCurrentPoints(newPoints);
+    
+    // Update character in database
+    apiService.updateCharacter(campaignId, character._id, {
+      'techPoints.current': newPoints
+    })
+      .then(() => {
+        if (onUpdate) onUpdate();
+      })
+      .catch(error => {
+        console.error('Error updating tech points:', error);
+        setCurrentPoints(currentPoints); // Revert on error
+      });
+      
+    // Log usage in game history
+    apiService.logGameEvent(campaignId, {
+      type: 'tech_power_used',
+      character: character._id,
+      powerName: power.name,
+      powerLevel: power.level,
+      pointsRemaining: newPoints
+    }).catch(error => {
+      console.error('Error logging tech power usage:', error);
+    });
+  };
+
+  const handleRestorePoints = (amount) => {
+    const newPoints = Math.min(currentPoints + amount, maxPoints);
+    setCurrentPoints(newPoints);
+    
+    // Update character in database
+    apiService.updateCharacter(campaignId, character._id, {
+      'techPoints.current': newPoints
+    })
+      .then(() => {
+        if (onUpdate) onUpdate();
+      })
+      .catch(error => {
+        console.error('Error updating tech points:', error);
+        setCurrentPoints(currentPoints); // Revert on error
+      });
+  };
+
+  const handleAddTechPower = (power) => {
+    const updatedPowers = [...techPowers, power];
+    setTechPowers(updatedPowers);
+    
+    // Update character in database
+    apiService.updateCharacter(campaignId, character._id, {
+      techPowers: updatedPowers
+    })
+      .then(() => {
+        if (onUpdate) onUpdate();
+        setShowAddPower(false);
+      })
+      .catch(error => {
+        console.error('Error adding tech power:', error);
+        setTechPowers(techPowers); // Revert on error
+      });
+  };
+
+  const handleRemoveTechPower = (powerIndex) => {
+    const updatedPowers = techPowers.filter((_, index) => index !== powerIndex);
+    setTechPowers(updatedPowers);
+    
+    // Update character in database
+    apiService.updateCharacter(campaignId, character._id, {
+      techPowers: updatedPowers
+    })
+      .then(() => {
+        if (onUpdate) onUpdate();
+      })
+      .catch(error => {
+        console.error('Error removing tech power:', error);
+        setTechPowers(techPowers); // Revert on error
+      });
+  };
+
+  // Filter available powers based on search and level filter
+  const filteredAvailablePowers = availableTechPowers.filter(power => {
+    const matchesSearch = power.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesLevel = selectedLevel === 'all' || power.level === parseInt(selectedLevel);
+    return matchesSearch && matchesLevel;
+  });
+
+  if (!character) return <div>No character selected</div>;
+
+  return (
+    <div className="tech-powers-container">
+      <div className="tech-points-tracker">
+        <h3>Tech Points</h3>
+        <div className="points-display">
+          <span>{currentPoints}</span> / <span>{maxPoints}</span>
+        </div>
+        <div className="points-controls">
+          <button onClick={() => handleRestorePoints(1)}>+1</button>
+          <button onClick={() => handleRestorePoints(5)}>+5</button>
+          <button onClick={() => setCurrentPoints(maxPoints)}>Full Rest</button>
+        </div>
+      </div>
+      
+      <div className="tech-powers-list">
+        <div className="list-header">
+          <h3>Known Tech Powers</h3>
+          <button onClick={() => setShowAddPower(!showAddPower)}>
+            {showAddPower ? 'Cancel' : 'Add Power'}
+          </button>
+        </div>
+        
+        {techPowers.length === 0 ? (
+          <p>No tech powers known.</p>
+        ) : (
+          <ul>
+            {techPowers.map((power, index) => (
+              <li key={index} className="power-item">
+                <div className="power-header">
+                  <h4>{power.name}</h4>
+                  <span className="power-level">Level {power.level}</span>
+                </div>
+                <p className="power-description">{power.description}</p>
+                <div className="power-details">
+                  <span><strong>Casting Time:</strong> {power.castingTime}</span>
+                  <span><strong>Range:</strong> {power.range}</span>
+                  <span><strong>Duration:</strong> {power.duration}</span>
+                </div>
+                <div className="power-actions">
+                  <button 
+                    className="use-power-btn"
+                    onClick={() => handleUseTechPower(power)}
+                    disabled={power.level > 0 && currentPoints < power.level}
+                  >
+                    Use Power ({power.level > 0 ? power.level : 'Cantrip'})
+                  </button>
+                  <button 
+                    className="remove-power-btn"
+                    onClick={() => handleRemoveTechPower(index)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      
+      {showAddPower && (
+        <div className="add-power-section">
+          <h3>Add Tech Power</h3>
+          <div className="power-filters">
+            <input
+              type="text"
+              placeholder="Search powers..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+            <select 
+              value={selectedLevel}
+              onChange={(e) => setSelectedLevel(e.target.value)}
+            >
+              <option value="all">All Levels</option>
+              <option value="0">Cantrips</option>
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(level => (
+                <option key={level} value={level}>Level {level}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="available-powers-list">
+            {filteredAvailablePowers.length === 0 ? (
+              <p>No powers match your criteria.</p>
+            ) : (
+              <ul>
+                {filteredAvailablePowers.map((power, index) => (
+                  <li key={index} className="available-power-item">
+                    <div className="power-header">
+                      <h4>{power.name}</h4>
+                      <span className="power-level">Level {power.level}</span>
+                    </div>
+                    <p className="power-description">{power.description}</p>
+                    <button onClick={() => handleAddTechPower(power)}>Add Power</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default TechPowerComponent;
+```
+
+### API Service Implementation
+```javascript
+import axios from 'axios';
+
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000/api';
+
+const apiService = {
+  // Authentication
+  login: (credentials) => axios.post(`${API_BASE_URL}/auth/login`, credentials),
+  register: (userData) => axios.post(`${API_BASE_URL}/auth/register`, userData),
+  logout: () => axios.post(`${API_BASE_URL}/auth/logout`),
+
+  // User
+  getCurrentUser: () => axios.get(`${API_BASE_URL}/users/current`),
+  updateUser: (userId, userData) => axios.put(`${API_BASE_URL}/users/${userId}`, userData),
+
+  // Campaign
+  getCampaigns: () => axios.get(`${API_BASE_URL}/campaigns`),
+  getCampaign: (campaignId) => axios.get(`${API_BASE_URL}/campaigns/${campaignId}`),
+  createCampaign: (campaignData) => axios.post(`${API_BASE_URL}/campaigns`, campaignData),
+  updateCampaign: (campaignId, campaignData) => axios.put(`${API_BASE_URL}/campaigns/${campaignId}`, campaignData),
+  deleteCampaign: (campaignId) => axios.delete(`${API_BASE_URL}/campaigns/${campaignId}`),
+
+  // Characters
+  getCharacters: (campaignId) => axios.get(`${API_BASE_URL}/campaigns/${campaignId}/characters`),
+  getCharacter: (campaignId, characterId) => axios.get(`${API_BASE_URL}/campaigns/${campaignId}/characters/${characterId}`),
+  createCharacter: (campaignId, characterData) => axios.post(`${API_BASE_URL}/campaigns/${campaignId}/characters`, characterData),
+  updateCharacter: (campaignId, characterId, characterData) => axios.put(`${API_BASE_URL}/campaigns/${campaignId}/characters/${characterId}`, characterData),
+  deleteCharacter: (campaignId, characterId) => axios.delete(`${API_BASE_URL}/campaigns/${campaignId}/characters/${characterId}`),
+
+  // Combat
+  getCombatState: (campaignId) => axios.get(`${API_BASE_URL}/campaigns/${campaignId}/combat`),
+  startCombat: (campaignId, entities) => axios.post(`${API_BASE_URL}/campaigns/${campaignId}/combat/start`, { entities }),
+  addCombatEntity: (campaignId, entityData) => axios.post(`${API_BASE_URL}/campaigns/${campaignId}/combat/add`, entityData),
+  updateInitiative: (campaignId, entityId, initiative) => axios.put(`${API_BASE_URL}/campaigns/${campaignId}/combat/initiative/${entityId}`, { initiative }),
+  nextTurn: (campaignId) => axios.post(`${API_BASE_URL}/campaigns/${campaignId}/combat/next`),
+  endCombat: (campaignId) => axios.post(`${API_BASE_URL}/campaigns/${campaignId}/combat/end`),
+
+  // Factions
+  getFactions: (campaignId) => axios.get(`${API_BASE_URL}/campaigns/${campaignId}/factions`),
+  createFaction: (campaignId, factionData) => axios.post(`${API_BASE_URL}/campaigns/${campaignId}/factions`, factionData),
+  updateFaction: (campaignId, factionId, factionData) => axios.put(`${API_BASE_URL}/campaigns/${campaignId}/factions/${factionId}`, factionData),
+  deleteFaction: (campaignId, factionId) => axios.delete(`${API_BASE_URL}/campaigns/${campaignId}/factions/${factionId}`),
+  recordFactionInteraction: (campaignId, factionId, interactionData) => axios.post(`${API_BASE_URL}/campaigns/${campaignId}/factions/${factionId}/interactions`, interactionData),
+
+  // Tech Powers
+  getTechPowers: () => axios.get(`${API_BASE_URL}/tech-powers`),
+  getTechPower: (powerId) => axios.get(`${API_BASE_URL}/tech-powers/${powerId}`),
+  createTechPower: (powerData) => axios.post(`${API_BASE_URL}/tech-powers`, powerData),
+  updateTechPower: (powerId, powerData) => axios.put(`${API_BASE_URL}/tech-powers/${powerId}`, powerData),
+  deleteTechPower: (powerId) => axios.delete(`${API_BASE_URL}/tech-powers/${powerId}`),
+
+  // Force Powers
+  getForcePowers: () => axios.get(`${API_BASE_URL}/force-powers`),
+  getForcePower: (powerId) => axios.get(`${API_BASE_URL}/force-powers/${powerId}`),
+  createForcePower: (powerData) => axios.post(`${API_BASE_URL}/force-powers`, powerData),
+  updateForcePower: (powerId, powerData) => axios.put(`${API_BASE_URL}/force-powers/${powerId}`, powerData),
+  deleteForcePower: (powerId) => axios.delete(`${API_BASE_URL}/force-powers/${powerId}`),
+
+  // Ambiance
+  getAmbianceSettings: (campaignId) => axios.get(`${API_BASE_URL}/campaigns/${campaignId}/ambiance`),
+  updateAmbianceSettings: (campaignId, settings) => axios.put(`${API_BASE_URL}/campaigns/${campaignId}/ambiance`, settings),
+  playMusic: (campaignId, musicUrl) => axios.post(`${API_BASE_URL}/campaigns/${campaignId}/ambiance/music/play`, { url: musicUrl }),
+  stopMusic: (campaignId) => axios.post(`${API_BASE_URL}/campaigns/${campaignId}/ambiance/music/stop`),
+  playSoundEffect: (campaignId, effectData) => axios.post(`${API_BASE_URL}/campaigns/${campaignId}/ambiance/sound-effect`, effectData),
+
+  // Game Events & Logging
+  logGameEvent: (campaignId, eventData) => axios.post(`${API_BASE_URL}/campaigns/${campaignId}/events`, eventData),
+  getGameLog: (campaignId) => axios.get(`${API_BASE_URL}/campaigns/${campaignId}/events`),
+
+  // LLM Helper - Not making direct API calls to LLMs but storing context for user reference
+  saveGeneratedContext: (campaignId, contextData) => axios.post(`${API_BASE_URL}/campaigns/${campaignId}/llm-contexts`, contextData),
+  getGeneratedContexts: (campaignId) => axios.get(`${API_BASE_URL}/campaigns/${campaignId}/llm-contexts`),
+};
+
+// Request interceptor to add auth token
+apiService.setupInterceptors = (getToken) => {
+  axios.interceptors.request.use(
+    (config) => {
+      const token = getToken();
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+      return config;
+    },
+    (error) => Promise.reject(error)
+  );
+
+  // Response interceptor for error handling
+  axios.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      if (error.response && error.response.status === 401) {
+        // Handle unauthorized access
+        localStorage.removeItem('token');
+        window.location.href = '/login';
+      }
+      return Promise.reject(error);
+    }
+  );
+};
+
+export default apiService;
+```
+
+### Initiative Tracker Component
+```jsx
+import React, { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
+import apiService from '../../services/apiService';
+import './InitiativeTracker.css';
+
+const InitiativeTracker = ({ characters = [], npcs = [], onCombatEnd }) => {
+  const { campaignId } = useParams();
+  const [combatState, setCombatState] = useState({
+    active: false,
+    round: 1,
+    initiative: []
+  });
+  const [newEntities, setNewEntities] = useState([]);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newEntityName, setNewEntityName] = useState('');
+  const [newEntityInitiative, setNewEntityInitiative] = useState('');
+
+  useEffect(() => {
+    if (campaignId) {
+      fetchCombatState();
+    }
+  }, [campaignId]);
+
+  const fetchCombatState = async () => {
+    try {
+      const response = await apiService.getCombatState(campaignId);
+      setCombatState(response.data);
+    } catch (error) {
+      console.error('Error fetching combat state:', error);
+    }
+  };
+
+  const handleStartCombat = async () => {
+    try {
+      // Prepare characters for initiative
+      const characterEntities = characters.map(char => ({
+        id: char._id,
+        type: 'character',
+        name: char.name,
+        initiative: Math.floor(Math.random() * 20) + 1 + Math.floor((char.attributes.dexterity - 10) / 2)
+      }));
+      
+      // Prepare NPCs for initiative
+      const npcEntities = npcs.map((npc, index) => ({
+        id: `npc-${index}`,
+        type: 'npc',
+        name: npc.name,
+        initiative: Math.floor(Math.random() * 20) + 1 + Math.floor((npc.stats?.dexterity || 10 - 10) / 2)
+      }));
+      
+      // Combine all entities
+      const allEntities = [...characterEntities, ...npcEntities];
+      
+      // Start combat with these entities
+      const response = await apiService.startCombat(campaignId, allEntities);
+      setCombatState(response.data);
+    } catch (error) {
+      console.error('Error starting combat:', error);
+    }
+  };
+
+  const handleNextTurn = async () => {
+    try {
+      const response = await apiService.nextTurn(campaignId);
+      setCombatState(response.data);
+    } catch (error) {
+      console.error('Error advancing turn:', error);
+    }
+  };
+
+  const handleEndCombat = async () => {
+    try {
+      await apiService.endCombat(campaignId);
+      setCombatState({
+        active: false,
+        round: 1,
+        initiative: []
+      });
+      if (onCombatEnd) onCombatEnd();
+    } catch (error) {
+      console.error('Error ending combat:', error);
+    }
+  };
+
+  const handleAddEntity = async () => {
+    if (!newEntityName || !newEntityInitiative) {
+      alert('Please enter both name and initiative');
+      return;
+    }
+    
+    try {
+      const entityData = {
+        id: `manual-${Date.now()}`,
+        type: 'npc',
+        name: newEntityName,
+        initiative: parseInt(newEntityInitiative, 10)
+      };
+      
+      const response = await apiService.addCombatEntity(campaignId, entityData);
+      setCombatState(response.data);
+      setNewEntityName('');
+      setNewEntityInitiative('');
+      setShowAddForm(false);
+    } catch (error) {
+      console.error('Error adding entity to combat:', error);
+    }
+  };
+
+  const handleUpdateInitiative = async (entityId, newInitiative) => {
+    try {
+      const response = await apiService.updateInitiative(
+        campaignId, 
+        entityId, 
+        parseInt(newInitiative, 10)
+      );
+      setCombatState(response.data);
+    } catch (error) {
+      console.error('Error updating initiative:', error);
+    }
+  };
+
+  const getCurrentTurnEntity = () => {
+    if (!combatState.active) return null;
+    return combatState.initiative.find(entity => !entity.hasGone);
+  };
+
+  const currentEntity = getCurrentTurnEntity();
+
+  return (
+    <div className="initiative-tracker">
+      <div className="tracker-header">
+        <h2>Combat Tracker</h2>
+        {!combatState.active ? (
+          <button className="start-combat-btn" onClick={handleStartCombat}>
+            Start Combat
+          </button>
+        ) : (
+          <div className="combat-controls">
+            <div className="round-display">Round: {combatState.round}</div>
+            <button className="next-turn-btn" onClick={handleNextTurn}>
+              Next Turn
+            </button>
+            <button className="end-combat-btn" onClick={handleEndCombat}>
+              End Combat
+            </button>
+          </div>
+        )}
+      </div>
+      
+      {combatState.active && (
+        <>
+          <div className="initiative-list">
+            {combatState.initiative.length === 0 ? (
+              <p>No entities in combat</p>
+            ) : (
+              <ul>
+                {combatState.initiative.map((entity, index) => (
+                  <li 
+                    key={entity.entityId} 
+                    className={`
+                      initiative-item 
+                      ${entity === currentEntity ? 'current-turn' : ''} 
+                      ${entity.hasGone ? 'has-gone' : ''}
+                    `}
+                  >
+                    <div className="initiative-value">
+                      <input 
+                        type="number" 
+                        value={entity.initiative}
+                        onChange={(e) => handleUpdateInitiative(entity.entityId, e.target.value)}
+                      />
+                    </div>
+                    <div className="entity-name">
+                      {entity.name}
+                      <span className="entity-type">
+                        {entity.entityType === 'character' ? 'PC' : 'NPC'}
+                      </span>
+                    </div>
+                    <div className="turn-status">
+                      {entity === currentEntity ? (
+                        <span className="current-marker">Current</span>
+                      ) : entity.hasGone ? (
+                        <span className="done-marker">Done</span>
+                      ) : (
+                        <span className="waiting-marker">Waiting</span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          
+          <div className="add-entity-section">
+            {showAddForm ? (
+              <div className="add-entity-form">
+                <input
+                  type="text"
+                  placeholder="Entity Name"
+                  value={newEntityName}
+                  onChange={(e) => setNewEntityName(e.target.value)}
+                />
+                <input
+                  type="number"
+                  placeholder="Initiative"
+                  value={newEntityInitiative}
+                  onChange={(e) => setNewEntityInitiative(e.target.value)}
+                />
+                <div className="form-actions">
+                  <button onClick={handleAddEntity}>Add</button>
+                  <button onClick={() => setShowAddForm(false)}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <button 
+                className="add-entity-btn"
+                onClick={() => setShowAddForm(true)}
+              >
+                Add Entity
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+export default InitiativeTracker;
+Faction Reputation Tracker Component
+jsximport React, { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
+import apiService from '../../services/apiService';
+import './FactionReputationTracker.css';
+
+const FactionReputationTracker = ({ onFactionUpdate }) => {
+  const { campaignId } = useParams();
+  const [factions, setFactions] = useState([]);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newFaction, setNewFaction] = useState({
+    name: '',
+    description: '',
+    reputation: 0
+  });
+  const [selectedFaction, setSelectedFaction] = useState(null);
+  const [newInteraction, setNewInteraction] = useState({
+    description: '',
+    reputationChange: 0
+  });
+  const [showInteractionForm, setShowInteractionForm] = useState(false);
+
+  useEffect(() => {
+    if (campaignId) {
+      fetchFactions();
+    }
+  }, [campaignId]);
+
+  const fetchFactions = async () => {
+    try {
+      const response = await apiService.getFactions(campaignId);
+      setFactions(response.data);
+    } catch (error) {
+      console.error('Error fetching factions:', error);
+    }
+  };
+
+  const handleAddFaction = async () => {
+    if (!newFaction.name) {
+      alert('Faction name is required');
+      return;
+    }
+    
+    try {
+      await apiService.createFaction(campaignId, newFaction);
+      fetchFactions();
+      setNewFaction({
+        name: '',
+        description: '',
+        reputation: 0
+      });
+      setShowAddForm(false);
+      if (onFactionUpdate) onFactionUpdate();
+    } catch (error) {
+      console.error('Error adding faction:', error);
+    }
+  };
+
+  const handleReputationChange = async (factionId, newReputation) => {
+    try {
+      await apiService.updateFaction(campaignId, factionId, {
+        reputation: newReputation
+      });
+      fetchFactions();
+      if (onFactionUpdate) onFactionUpdate();
+    } catch (error) {
+      console.error('Error updating faction reputation:', error);
+    }
+  };
+
+  const handleDeleteFaction = async (factionId) => {
+    if (!window.confirm('Are you sure you want to delete this faction?')) {
+      return;
+    }
+    
+    try {
+      await apiService.deleteFaction(campaignId, factionId);
+      fetchFactions();
+      if (selectedFaction && selectedFaction._id === factionId) {
+        setSelectedFaction(null);
+      }
+      if (onFactionUpdate) onFactionUpdate();
+    } catch (error) {
+      console.error('Error deleting faction:', error);
+    }
+  };
+
+  const handleAddInteraction = async () => {
+    if (!selectedFaction || !newInteraction.description) {
+      alert('Please select a faction and enter an interaction description');
+      return;
+    }
+    
+    try {
+      await apiService.recordFactionInteraction(
+        campaignId,
+        selectedFaction._id,
+        newInteraction
+      );
+      fetchFactions();
+      setNewInteraction({
+        description: '',
+        reputationChange: 0
+      });
+      setShowInteractionForm(false);
+      
+      // Update selected faction with new data
+      const updatedFactions = await apiService.getFactions(campaignId);
+      const updatedFaction = updatedFactions.data.find(f => f._id === selectedFaction._id);
+      if (updatedFaction) {
+        setSelectedFaction(updatedFaction);
+      }
+      
+      if (onFactionUpdate) onFactionUpdate();
+    } catch (error) {
+      console.error('Error adding faction interaction:', error);
+    }
+  };
+
+  const getReputationLabel = (reputation) => {
+    if (reputation >= 90) return 'Revered';
+    if (reputation >= 70) return 'Exalted';
+    if (reputation >= 50) return 'Friendly';
+    if (reputation >= 20) return 'Neutral';
+    if (reputation >= 0) return 'Cautious';
+    if (reputation >= -30) return 'Unfriendly';
+    if (reputation >= -60) return 'Hostile';
+    return 'Hated';
+  };
+
+  const getReputationColor = (reputation) => {
+    if (reputation >= 70) return '#4CAF50'; // Green
+    if (reputation >= 20) return '#8BC34A'; // Light Green
+    if (reputation >= 0) return '#FFC107'; // Yellow
+    if (reputation >= -30) return '#FF9800'; // Orange
+    if (reputation >= -60) return '#F44336'; // Red
+    return '#B71C1C'; // Dark Red
+  };
+
+  return (
+    <div className="faction-reputation-tracker">
+      <div className="faction-header">
+        <h2>Faction Reputation</h2>
+        <button 
+          className="add-faction-btn"
+          onClick={() => setShowAddForm(!showAddForm)}
+        >
+          {showAddForm ? 'Cancel' : 'Add Faction'}
+        </button>
+      </div>
+      
+      {showAddForm && (
+        <div className="add-faction-form">
+          <h3>Add New Faction</h3>
+          <div className="form-group">
+            <label>Name:</label>
+            <input
+              type="text"
+              value={newFaction.name}
+              onChange={(e) => setNewFaction({...newFaction, name: e.target.value})}
+              placeholder="Faction Name"
+            />
+          </div>
+          <div className="form-group">
+            <label>Description:</label>
+            <textarea
+              value={newFaction.description}
+              onChange={(e) => setNewFaction({...newFaction, description: e.target.value})}
+              placeholder="Faction Description"
+            />
+          </div>
+          <div className="form-group">
+            <label>Initial Reputation (-100 to 100):</label>
+            <input
+              type="number"
+              min="-100"
+              max="100"
+              value={newFaction.reputation}
+              onChange={(e) => setNewFaction({...newFaction, reputation: parseInt(e.target.value, 10)})}
+            />
+          </div>
+          <button className="submit-btn" onClick={handleAddFaction}>Add Faction</button>
+        </div>
+      )}
+      
+      <div className="factions-container">
+        <div className="factions-list">
+          {factions.length === 0 ? (
+            <p>No factions added yet.</p>
+          ) : (
+            <ul>
+              {factions.map(faction => (
+                <li 
+                  key={faction._id} 
+                  className={`faction-item ${selectedFaction && selectedFaction._id === faction._id ? 'selected' : ''}`}
+                  onClick={() => setSelectedFaction(faction)}
+                >
+                  <div className="faction-item-header">
+                    <h3>{faction.name}</h3>
+                    <div 
+                      className="reputation-indicator" 
+                      style={{backgroundColor: getReputationColor(faction.reputation)}}
+                    >
+                      {faction.reputation} - {getReputationLabel(faction.reputation)}
+                    </div>
+                  </div>
+                  <div className="faction-item-controls">
+                    <button onClick={(e) => {
+                      e.stopPropagation();
+                      handleReputationChange(faction._id, Math.min(100, faction.reputation + 5));
+                    }}>+5</button>
+                    <button onClick={(e) => {
+                      e.stopPropagation();
+                      handleReputationChange(faction._id, Math.max(-100, faction.reputation - 5));
+                    }}>-5</button>
+                    <button onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteFaction(faction._id);
+                    }}>Delete</button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        
+        {selectedFaction && (
+          <div className="faction-details">
+            <h3>{selectedFaction.name}</h3>
+            <div className="reputation-bar">
+              <div 
+                className="reputation-value" 
+                style={{
+                  width: `${Math.abs(selectedFaction.reputation)}%`,
+                  backgroundColor: getReputationColor(selectedFaction.reputation),
+                  marginLeft: selectedFaction.reputation >= 0 ? '50%' : `${50 - Math.abs(selectedFaction.reputation/2)}%`
+                }}
+              ></div>
+              <div className="reputation-marker"></div>
+              <div className="reputation-labels">
+                <span>Hostile</span>
+                <span>Neutral</span>
+                <span>Friendly</span>
+              </div>
+            </div>
+            <p className="faction-description">{selectedFaction.description}</p>
+            
+            <div className="interaction-header">
+              <h4>Faction Interactions</h4>
+              <button 
+                onClick={() => setShowInteractionForm(!showInteractionForm)}
+              >
+                {showInteractionForm ? 'Cancel' : 'Add Interaction'}
+              </button>
+            </div>
+            
+            {showInteractionForm && (
+              <div className="interaction-form">
+                <div className="form-group">
+                  <label>Description:</label>
+                  <textarea
+                    value={newInteraction.description}
+                    onChange={(e) => setNewInteraction({...newInteraction, description: e.target.value})}
+                    placeholder="What happened in this interaction?"
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Reputation Change:</label>
+                  <input
+                    type="number"
+                    min="-100"
+                    max="100"
+                    value={newInteraction.reputationChange}
+                    onChange={(e) => setNewInteraction({...newInteraction, reputationChange: parseInt(e.target.value, 10)})}
+                  />
+                </div>
+                <button onClick={handleAddInteraction}>Save Interaction</button>
+              </div>
+            )}
+            
+            <div className="interaction-history">
+              {selectedFaction.interactions && selectedFaction.interactions.length > 0 ? (
+                <ul>
+                  {selectedFaction.interactions.map((interaction, index) => (
+                    <li key={index} className="interaction-item">
+                      <div className="interaction-date">
+                        {new Date(interaction.date).toLocaleDateString()}
+                      </div>
+                      <div className="interaction-description">
+                        {interaction.description}
+                      </div>
+                      <div className={`interaction-change ${interaction.reputationChange > 0 ? 'positive' : interaction.reputationChange < 0 ? 'negative' : ''}`}>
+                        {interaction.reputationChange > 0 ? '+' : ''}{interaction.reputationChange}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>No interactions recorded yet.</p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default FactionReputationTracker;
+Complete Redux Store Implementation
+javascript// store/index.js
+import { configureStore } from '@reduxjs/toolkit';
+import campaignReducer from './slices/campaignSlice';
+import characterReducer from './slices/characterSlice';
+import combatReducer from './slices/combatSlice';
+import factionReducer from './slices/factionSlice';
+import authReducer from './slices/authSlice';
+import uiReducer from './slices/uiSlice';
+
+export const store = configureStore({
+  reducer: {
+    campaigns: campaignReducer,
+    characters: characterReducer,
+    combat: combatReducer,
+    factions: factionReducer,
+    auth: authReducer,
+    ui: uiReducer
+  },
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware({
+      serializableCheck: {
+        // Ignore these action types
+        ignoredActions: ['characters/setCharacterImage'],
+        // Ignore these field paths in all actions
+        ignoredActionPaths: ['payload.file'],
+        // Ignore these paths in the state
+        ignoredPaths: ['characters.characterImages']
+      },
+    }),
+});
+
+export default store;
+javascript// store/slices/combatSlice.js
+import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import apiService from '../../services/apiService';
+
+export const fetchCombatState = createAsyncThunk(
+  'combat/fetchCombatState',
+  async (campaignId) => {
+    const response = await apiService.getCombatState(campaignId);
+    return response.data;
+  }
+);
+
+export const startCombat = createAsyncThunk(
+  'combat/startCombat',
+  async ({ campaignId, entities }) => {
+    const response = await apiService.startCombat(campaignId, entities);
+    return response.data;
+  }
+);
+
+export const endCombat = createAsyncThunk(
+  'combat/endCombat',
+  async (campaignId) => {
+    const response = await apiService.endCombat(campaignId);
+    return response.data;
+  }
+);
+
+export const nextTurn = createAsyncThunk(
+  'combat/nextTurn',
+  async (campaignId) => {
+    const response = await apiService.nextTurn(campaignId);
+    return response.data;
+  }
+);
+
+export const addCombatEntity = createAsyncThunk(
+  'combat/addCombatEntity',
+  async ({ campaignId, entityData }) => {
+    const response = await apiService.addCombatEntity(campaignId, entityData);
+    return response.data;
+  }
+);
+
+export const updateInitiative = createAsyncThunk(
+  'combat/updateInitiative',
+  async ({ campaignId, entityId, initiative }) => {
+    const response = await apiService.updateInitiative(campaignId, entityId, initiative);
+    return response.data;
+  }
+);
+
+const combatSlice = createSlice({
+  name: 'combat',
+  initialState: {
+    active: false,
+    round: 1,
+    initiative: [],
+    currentEntityIndex: null,
+    loading: false,
+    error: null,
+  },
+  reducers: {
+    clearCombat: (state) => {
+      state.active = false;
+      state.round = 1;
+      state.initiative = [];
+      state.currentEntityIndex = null;
+    },
+  },
+  extraReducers: (builder) => {
+    builder
+      // Fetch combat state
+      .addCase(fetchCombatState.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(fetchCombatState.fulfilled, (state, action) => {
+        state.loading = false;
+        state.active = action.payload.active;
+        state.round = action.payload.round;
+        state.initiative = action.payload.initiative;
+        state.currentEntityIndex = action.payload.initiative.findIndex(e => !e.hasGone);
+      })
+      .addCase(fetchCombatState.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.error.message;
+      })
+      
+      // Start combat
+      .addCase(startCombat.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(startCombat.fulfilled, (state, action) => {
+        state.loading = false;
+        state.active = action.payload.active;
+        state.round = action.payload.round;
+        state.initiative = action.payload.initiative;
+        state.currentEntityIndex = 0;
+      })
+      .addCase(startCombat.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.error.message;
+      })
+      
+      // End combat
+      .addCase(endCombat.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(endCombat.fulfilled, (state, action) => {
+        state.loading = false;
+        state.active = false;
+        state.round = 1;
+        state.initiative = [];
+        state.currentEntityIndex = null;
+      })
+      .addCase(endCombat.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.error.message;
+      })
+      
+      // Next turn
+      .addCase(nextTurn.pending, (state) => {
+        state.loading = true;
+      })
+      .addCase(nextTurn.fulfilled, (state, action) => {
+        state.loading = false;
+        state.round = action.payload.round;
+        state.initiative = action.payload.initiative;
+        state.currentEntityIndex = action.payload.initiative.findIndex(e => !e.hasGone);
+      })
+      .addCase(nextTurn.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.error.message;
+      })
+      
+      // Add combat entity
+      .addCase(addCombatEntity.fulfilled, (state, action) => {
+        state.loading = false;
+        state.initiative = action.payload.initiative;
+        state.currentEntityIndex = action.payload.initiative.findIndex(e => !e.hasGone);
+      })
+      
+      // Update initiative
+      .addCase(updateInitiative.fulfilled, (state, action) => {
+        state.loading = false;
+        state.initiative = action.payload.initiative;
+        state.currentEntityIndex = action.payload.initiative.findIndex(e => !e.hasGone);
+      });
+  },
+});
+
+export const { clearCombat } = combatSlice.actions;
+export default combatSlice.reducer;
