@@ -1,0 +1,1748 @@
+/**
+ * SW5e Combat System
+ * 
+ * A comprehensive implementation of tactical initiative, ship combat,
+ * and vehicle combat for Star Wars 5e.
+ */
+
+// ===============================
+// Core Dice Rolling Functions
+// ===============================
+
+/**
+ * Rolls a dice with the specified number of sides.
+ * 
+ * @param sides The number of sides on the die
+ * @returns A random number between 1 and sides
+ */
+function rollDie(sides: number): number {
+  return Math.floor(Math.random() * sides) + 1;
+
+// ===============================
+// Mixed Combat System
+// ===============================
+
+/**
+ * Enum for different types of combatants.
+ */
+enum CombatantType {
+  CHARACTER = "character",
+  STARSHIP = "starship",
+  VEHICLE = "vehicle"
+}
+
+/**
+ * Type for unified targeting in mixed combat.
+ */
+type CombatTarget = {
+  id: string;
+  type: CombatantType;
+  armorClass: number;
+  name: string;
+}
+
+/**
+ * Manager for mixed combat scenarios (characters, starships, and vehicles).
+ */
+class MixedCombatManager {
+  private combatTracker: CombatTracker;
+  private starshipManager: StarshipCombatManager;
+  private vehicleManager: VehicleCombatManager;
+  
+  constructor() {
+    this.combatTracker = new CombatTracker();
+    this.starshipManager = new StarshipCombatManager(this.combatTracker);
+    this.vehicleManager = new VehicleCombatManager(this.combatTracker);
+  }
+  
+  /**
+   * Adds a character to combat.
+   * 
+   * @param character The character data
+   * @returns The combatant ID
+   */
+  addCharacter(character: { 
+    name: string;
+    dexModifier: number;
+    advantage?: boolean;
+  }): string {
+    const combatant = this.combatTracker.addCombatant(character);
+    return combatant.id;
+  }
+  
+  /**
+   * Adds a group of characters to combat.
+   * 
+   * @param groupName The name of the group
+   * @param characters Array of characters
+   * @returns The group ID
+   */
+  addCharacterGroup(
+    groupName: string,
+    characters: { 
+      name: string;
+      dexModifier: number;
+      advantage?: boolean;
+    }[]
+  ): string | null {
+    // Add each character to the combat tracker
+    const characterIds = characters.map(c => {
+      const combatant = this.combatTracker.addCombatant(c);
+      return combatant.id;
+    });
+    
+    // Create a group with these characters
+    const group = this.combatTracker.createGroup(groupName, characterIds);
+    return group ? group.id : null;
+  }
+  
+  /**
+   * Adds a starship to combat.
+   * 
+   * @param shipData The starship data
+   * @returns The ship ID
+   */
+  addStarship(shipData: Omit<Starship, "id" | "isInCombat">): string {
+    const ship = this.starshipManager.addShip(shipData);
+    return ship.id;
+  }
+  
+  /**
+   * Adds a vehicle to combat.
+   * 
+   * @param vehicleData The vehicle data
+   * @returns The vehicle ID
+   */
+  addVehicle(vehicleData: Omit<Vehicle, "id" | "isInCombat">): string {
+    const vehicle = this.vehicleManager.addVehicle(vehicleData);
+    return vehicle.id;
+  }
+  
+  /**
+   * Starts combat by rolling initiative for all combatants.
+   */
+  startCombat(): void {
+    // Roll initiative for all characters and groups
+    this.combatTracker.rollAllInitiative();
+    
+    // Roll initiative for all ships
+    this.starshipManager.getAllShips().forEach(ship => {
+      this.starshipManager.rollShipInitiative(ship.id);
+    });
+    
+    // Roll initiative for all vehicles
+    this.vehicleManager.getAllVehicles().forEach(vehicle => {
+      this.vehicleManager.rollVehicleInitiative(vehicle.id);
+    });
+    
+    // Sort initiative order
+    this.combatTracker.sortInitiative();
+  }
+  
+  /**
+   * Gets the current active combatant.
+   * 
+   * @returns The current active combatant or group
+   */
+  getCurrentActive(): Combatant | CombatantGroup | null {
+    return this.combatTracker.getCurrentActive();
+  }
+  
+  /**
+   * Moves to the next turn in initiative order.
+   * 
+   * @returns The new active combatant or group
+   */
+  nextTurn(): Combatant | CombatantGroup | null {
+    const active = this.combatTracker.nextTurn();
+    
+    // Handle start-of-turn effects for starships
+    this.starshipManager.getAllShips().forEach(ship => {
+      // If this ship is active, regenerate shields
+      if ('id' in active && active.id === ship.id) {
+        this.starshipManager.regenerateShields(ship.id);
+      }
+    });
+    
+    return active;
+  }
+  
+  /**
+   * Performs a character ability check.
+   * 
+   * @param characterId The ID of the character
+   * @param abilityModifier The ability modifier for the check
+   * @param difficultyClass The DC of the check
+   * @param advantage Whether the roll has advantage or disadvantage
+   * @returns Whether the check succeeded
+   */
+  rollCharacterAbilityCheck(
+    characterId: string,
+    abilityModifier: number,
+    difficultyClass: number,
+    advantage: "advantage" | "disadvantage" | "normal" = "normal"
+  ): boolean {
+    const roll = rollAbilityCheck(abilityModifier, advantage);
+    return roll >= difficultyClass;
+  }
+  
+  /**
+   * Performs a starship action.
+   * 
+   * @param shipId The ID of the ship
+   * @param action The action to perform
+   * @param actionParams Additional parameters for the action
+   * @returns The result of the action
+   */
+  performStarshipAction(
+    shipId: string,
+    action: StarshipAction,
+    actionParams: any = {}
+  ): any {
+    return this.starshipManager.performShipAction(shipId, action, actionParams);
+  }
+  
+  /**
+   * Performs a vehicle action.
+   * 
+   * @param vehicleId The ID of the vehicle
+   * @param action The action to perform
+   * @param actionParams Additional parameters for the action
+   * @returns The result of the action
+   */
+  performVehicleAction(
+    vehicleId: string,
+    action: VehicleAction,
+    actionParams: any = {}
+  ): any {
+    return this.vehicleManager.performVehicleAction(vehicleId, action, actionParams);
+  }
+  
+  /**
+   * Gets the initiative order.
+   * 
+   * @returns The current initiative order
+   */
+  getInitiativeOrder(): (Combatant | CombatantGroup)[] {
+    return this.combatTracker.getInitiativeOrder();
+  }
+  
+  /**
+   * Gets all possible targets in combat.
+   * 
+   * @returns Array of valid targets
+   */
+  getAllTargets(): CombatTarget[] {
+    const targets: CombatTarget[] = [];
+    
+    // Add ships as targets
+    this.starshipManager.getAllShips().forEach(ship => {
+      if (ship.isInCombat) {
+        targets.push({
+          id: ship.id,
+          type: CombatantType.STARSHIP,
+          armorClass: ship.armorClass,
+          name: ship.name
+        });
+      }
+    });
+    
+    // Add vehicles as targets
+    this.vehicleManager.getAllVehicles().forEach(vehicle => {
+      if (vehicle.isInCombat) {
+        targets.push({
+          id: vehicle.id,
+          type: CombatantType.VEHICLE,
+          armorClass: vehicle.armorClass,
+          name: vehicle.name
+        });
+      }
+    });
+    
+    // Character targets would be added here
+    // (Requires implementing a character system)
+    
+    return targets;
+  }
+  
+  /**
+   * Gets the combat summary.
+   * 
+   * @returns Object describing the current combat state
+   */
+  getCombatSummary(): {
+    characters: number;
+    ships: number;
+    vehicles: number;
+    totalCombatants: number;
+    currentActive: string;
+  } {
+    const summary = this.combatTracker.getCombatSummary();
+    
+    return {
+      characters: summary.individualCount,
+      ships: this.starshipManager.getAllShips().length,
+      vehicles: this.vehicleManager.getAllVehicles().length,
+      totalCombatants: summary.totalCombatants,
+      currentActive: summary.currentActive
+    };
+  }
+}
+
+// ===============================
+// Example Usage & Testing
+// ===============================
+
+/**
+ * Runs a test combat scenario to demonstrate functionality.
+ */
+function runCombatTest(): void {
+  console.log("=== Starting SW5e Combat System Test ===");
+  
+  // Create a mixed combat manager
+  const combatManager = new MixedCombatManager();
+  
+  // Add a group of characters
+  const rebelGroupId = combatManager.addCharacterGroup("Rebel Squad", [
+    { name: "Luke Skywalker", dexModifier: 3, advantage: true },
+    { name: "Han Solo", dexModifier: 4 },
+    { name: "Princess Leia", dexModifier: 2 }
+  ]);
+  
+  // Add individual character
+  const vaderCharacterId = combatManager.addCharacter({
+    name: "Darth Vader",
+    dexModifier: 2
+  });
+  
+  // Add a starship
+  const xWingId = combatManager.addStarship({
+    name: "X-Wing",
+    tier: 2,
+    size: "small",
+    shipType: "Fighter",
+    armorClass: 15,
+    hullPoints: {
+      max: 60,
+      current: 60
+    },
+    shields: {
+      max: 30,
+      current: 30,
+      regen: 5
+    },
+    crew: {
+      pilot: { modifier: 4, name: "Wedge Antilles" },
+      captain: { modifier: 2 },
+      gunner: { modifier: 3 },
+      engineer: { modifier: 1 },
+      sensor: { modifier: 2 }
+    },
+    speed: 12,
+    maneuverability: 3,
+    weapons: [
+      {
+        name: "Laser Cannons",
+        diceCount: 2,
+        diceSides: 6,
+        range: { normal: 8, maximum: 24 },
+        category: "primary"
+      },
+      {
+        name: "Proton Torpedoes",
+        diceCount: 3,
+        diceSides: 8,
+        range: { normal: 6, maximum: 18 },
+        category: "secondary",
+        properties: ["explosive"]
+      }
+    ],
+    conditions: [],
+    isInCombat: true,
+    initiativeModifier: 1
+  });
+  
+  // Add a TIE Fighter
+  const tieFighterId = combatManager.addStarship({
+    name: "TIE Fighter",
+    tier: 1,
+    size: "small",
+    shipType: "Fighter",
+    armorClass: 14,
+    hullPoints: {
+      max: 40,
+      current: 40
+    },
+    shields: {
+      max: 0,
+      current: 0,
+      regen: 0
+    },
+    crew: {
+      pilot: { modifier: 3, name: "Imperial Pilot" },
+      captain: { modifier: 0 },
+      gunner: { modifier: 2 },
+      engineer: { modifier: 0 },
+      sensor: { modifier: 1 }
+    },
+    speed: 16,
+    maneuverability: 4,
+    weapons: [
+      {
+        name: "Laser Cannons",
+        diceCount: 2,
+        diceSides: 4,
+        range: { normal: 6, maximum: 18 },
+        category: "primary"
+      }
+    ],
+    conditions: [],
+    isInCombat: true,
+    initiativeModifier: 2
+  });
+  
+  // Add a vehicle
+  const speederBikeId = combatManager.addVehicle({
+    name: "74-Z Speeder Bike",
+    vehicleType: "Speeder",
+    size: "medium",
+    armorClass: 13,
+    hitPoints: {
+      max: 35,
+      current: 35
+    },
+    crew: {
+      driver: { modifier: 3, name: "Scout Trooper" },
+      gunner: { modifier: 2, name: "Scout Trooper" }
+    },
+    speed: 20,
+    handling: 4,
+    weapons: [
+      {
+        name: "Blaster Cannon",
+        diceCount: 1,
+        diceSides: 8,
+        range: { normal: 5, maximum: 15 }
+      }
+    ],
+    conditions: []
+  });
+  
+  // Start combat
+  console.log("Rolling initiative for all combatants...");
+  combatManager.startCombat();
+  
+  // Display initiative order
+  console.log("\nInitiative Order:");
+  const initiativeOrder = combatManager.getInitiativeOrder();
+  initiativeOrder.forEach((combatant, index) => {
+    if ('members' in combatant) {
+      // It's a group
+      console.log(`${index + 1}. Group: ${combatant.name} (Initiative: ${combatant.initiative})`);
+      combatant.members.forEach(m => {
+        console.log(`   - ${m.name}`);
+      });
+    } else {
+      // It's an individual
+      console.log(`${index + 1}. ${combatant.name} (Initiative: ${combatant.initiative})`);
+    }
+  });
+  
+  // Run 3 rounds of simulated combat
+  console.log("\n=== Beginning Combat Simulation ===");
+  
+  for (let round = 1; round <= 3; round++) {
+    console.log(`\n--- Round ${round} ---`);
+    
+    let turnCount = 0;
+    let currentActive = combatManager.getCurrentActive();
+    
+    while (currentActive && turnCount < initiativeOrder.length) {
+      turnCount++;
+      
+      if ('members' in currentActive) {
+        // Group action
+        console.log(`Group ${currentActive.name}'s turn`);
+        
+        // Simulated group action
+        if (currentActive.name === "Rebel Squad") {
+          console.log("- Rebels coordinate their attack");
+        }
+      } else {
+        // Individual action
+        console.log(`${currentActive.name}'s turn`);
+        
+        // Simulated ship actions
+        if (currentActive.name === "X-Wing") {
+          console.log("- X-Wing attacks TIE Fighter");
+          
+          const attackResult = combatManager.performStarshipAction(
+            xWingId, 
+            StarshipAction.FIRE_WEAPON, 
+            { 
+              targetId: tieFighterId,
+              weaponName: "Laser Cannons",
+              advantage: "normal"
+            }
+          );
+          
+          if (attackResult?.hit) {
+            console.log(`  HIT! Damage: ${attackResult.damage}`);
+          } else {
+            console.log("  MISS!");
+          }
+        } else if (currentActive.name === "TIE Fighter") {
+          console.log("- TIE Fighter performs evasive maneuvers");
+          
+          const evasiveResult = combatManager.performStarshipAction(
+            tieFighterId,
+            StarshipAction.EVASIVE_MANEUVERS
+          );
+          
+          if (evasiveResult?.success) {
+            console.log(`  Success! New AC: ${evasiveResult.newAC}`);
+          } else {
+            console.log("  Failed to evade!");
+          }
+        } else if (currentActive.name === "74-Z Speeder Bike") {
+          console.log("- Speeder Bike attacks using blaster cannon");
+          
+          // Example target AC for demonstration
+          const targetAC = 15;
+          
+          const attackResult = combatManager.performVehicleAction(
+            speederBikeId,
+            VehicleAction.FIRE_WEAPON,
+            {
+              targetId: "character-1", // Placeholder ID
+              weaponName: "Blaster Cannon",
+              targetAc: targetAC,
+              advantage: "normal"
+            }
+          );
+          
+          if (attackResult?.hit) {
+            console.log(`  HIT! Damage: ${attackResult.damage}`);
+          } else {
+            console.log("  MISS!");
+          }
+        }
+      }
+      
+      // Move to next combatant
+      currentActive = combatManager.nextTurn();
+    }
+    
+    // Display combat status at end of round
+    const targets = combatManager.getAllTargets();
+    console.log("\nEnd of Round Status:");
+    targets.forEach(target => {
+      console.log(`- ${target.name} (${target.type}): AC ${target.armorClass}`);
+    });
+  }
+  
+  console.log("\n=== Combat Test Complete ===");
+}
+
+// Uncomment to run the test
+// runCombatTest();
+
+export {
+  // Core functions
+  rollDie,
+  rollDice,
+  rollAbilityCheck,
+  rollInitiative,
+  
+  // Tactical initiative
+  CombatTracker,
+  
+  // Starship combat
+  StarshipCombatManager,
+  StarshipAction,
+  
+  // Vehicle combat
+  VehicleCombatManager,
+  VehicleAction,
+  
+  // Mixed combat
+  MixedCombatManager,
+  CombatantType,
+  
+  // Types
+  Combatant,
+  CombatantGroup,
+  Starship,
+  Vehicle,
+  StarshipWeapon,
+  VehicleWeapon,
+  CombatTarget
+};
+}
+
+/**
+ * Rolls multiple dice and sums the results.
+ * 
+ * @param count The number of dice to roll
+ * @param sides The number of sides on each die
+ * @returns The sum of all dice rolled
+ */
+function rollDice(count: number, sides: number): number {
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    total += rollDie(sides);
+  }
+  return total;
+}
+
+/**
+ * Rolls a d20 for an ability check, attack roll, or saving throw.
+ * 
+ * @param modifier The ability modifier to add to the roll
+ * @param advantage Whether the roll has advantage, disadvantage, or is normal
+ * @returns The result of the roll plus the modifier
+ */
+function rollAbilityCheck(
+  modifier: number,
+  advantage: "advantage" | "disadvantage" | "normal" = "normal"
+): number {
+  let roll: number;
+  
+  if (advantage === "normal") {
+    roll = rollDie(20);
+  } else if (advantage === "advantage") {
+    const roll1 = rollDie(20);
+    const roll2 = rollDie(20);
+    roll = Math.max(roll1, roll2);
+  } else { // disadvantage
+    const roll1 = rollDie(20);
+    const roll2 = rollDie(20);
+    roll = Math.min(roll1, roll2);
+  }
+  
+  return roll + modifier;
+}
+
+/**
+ * Rolls initiative for a creature.
+ * 
+ * @param dexModifier The dexterity modifier
+ * @param advantage Whether to roll with advantage
+ * @returns The initiative value
+ */
+function rollInitiative(
+  dexModifier: number,
+  advantage: boolean = false
+): number {
+  return rollAbilityCheck(dexModifier, advantage ? "advantage" : "normal");
+}
+
+// ===============================
+// Tactical Initiative System
+// ===============================
+
+/**
+ * Represents a combatant in the initiative order.
+ */
+interface Combatant {
+  id: string;
+  name: string;
+  dexModifier: number;
+  advantage?: boolean;
+  initiative?: number;
+  groupId?: string;
+}
+
+/**
+ * Represents a group of combatants acting together.
+ */
+interface CombatantGroup {
+  id: string;
+  name: string;
+  members: Combatant[];
+  initiative?: number;
+  isActive: boolean;
+}
+
+/**
+ * Combat tracker to manage combatants, groups, and turn order.
+ */
+class CombatTracker {
+  private combatants: Map<string, Combatant> = new Map();
+  private groups: Map<string, CombatantGroup> = new Map();
+  private initiativeOrder: (Combatant | CombatantGroup)[] = [];
+  private currentInitiativeIndex: number = -1;
+  
+  /**
+   * Adds a combatant to the tracker.
+   * 
+   * @param combatant The combatant to add
+   * @returns The added combatant
+   */
+  addCombatant(combatant: Omit<Combatant, "id">): Combatant {
+    const id = `combatant-${this.combatants.size + 1}`;
+    const newCombatant: Combatant = { ...combatant, id };
+    this.combatants.set(id, newCombatant);
+    return newCombatant;
+  }
+  
+  /**
+   * Creates a new group with the given combatants.
+   * 
+   * @param name The name of the group
+   * @param memberIds The IDs of combatants to include in the group
+   * @returns The created group
+   */
+  createGroup(name: string, memberIds: string[]): CombatantGroup | null {
+    const members = memberIds
+      .map(id => this.combatants.get(id))
+      .filter((c): c is Combatant => c !== undefined);
+      
+    if (members.length === 0) {
+      console.warn(`Cannot create empty group "${name}"`);
+      return null;
+    }
+    
+    const id = `group-${this.groups.size + 1}`;
+    const group: CombatantGroup = {
+      id,
+      name,
+      members,
+      isActive: true
+    };
+    
+    // Assign combatants to this group
+    members.forEach(member => {
+      this.combatants.set(member.id, {
+        ...member,
+        groupId: id
+      });
+    });
+    
+    this.groups.set(id, group);
+    return group;
+  }
+  
+  /**
+   * Rolls initiative for an individual combatant.
+   * 
+   * @param combatantId The ID of the combatant
+   * @returns The initiative value or null if combatant not found
+   */
+  rollIndividualInitiative(combatantId: string): number | null {
+    const combatant = this.combatants.get(combatantId);
+    if (!combatant) {
+      console.warn(`Combatant with ID "${combatantId}" not found`);
+      return null;
+    }
+    
+    const initiative = rollInitiative(combatant.dexModifier, combatant.advantage);
+    this.combatants.set(combatantId, {
+      ...combatant,
+      initiative
+    });
+    
+    return initiative;
+  }
+  
+  /**
+   * Rolls tactical initiative for a group of combatants.
+   * 
+   * @param groupId The ID of the group
+   * @returns The initiative value for the group or null if group not found
+   */
+  rollTacticalInitiative(groupId: string): number | null {
+    const group = this.groups.get(groupId);
+    if (!group) {
+      console.warn(`Group with ID "${groupId}" not found`);
+      return null;
+    }
+    
+    // Roll initiative for each member
+    const memberInitiatives = group.members.map(member => {
+      const initiative = rollInitiative(member.dexModifier, member.advantage);
+      
+      // Update the member's initiative in the combatants map
+      this.combatants.set(member.id, {
+        ...member,
+        initiative
+      });
+      
+      return initiative;
+    });
+    
+    // Group initiative is the lowest roll
+    const groupInitiative = Math.min(...memberInitiatives);
+    this.groups.set(groupId, {
+      ...group,
+      initiative: groupInitiative
+    });
+    
+    return groupInitiative;
+  }
+  
+  /**
+   * Rolls initiative for all combatants and groups.
+   */
+  rollAllInitiative(): void {
+    // Roll for individual combatants (not in groups)
+    for (const [id, combatant] of this.combatants.entries()) {
+      if (!combatant.groupId) {
+        this.rollIndividualInitiative(id);
+      }
+    }
+    
+    // Roll for groups
+    for (const id of this.groups.keys()) {
+      this.rollTacticalInitiative(id);
+    }
+    
+    this.sortInitiative();
+  }
+  
+  /**
+   * Sorts combatants and groups by initiative in descending order.
+   */
+  sortInitiative(): void {
+    // Get individual combatants (not in groups)
+    const individuals = Array.from(this.combatants.values())
+      .filter(c => !c.groupId && c.initiative !== undefined);
+      
+    // Get groups with initiative
+    const groups = Array.from(this.groups.values())
+      .filter(g => g.initiative !== undefined && g.isActive);
+      
+    // Combine and sort by initiative (highest first)
+    this.initiativeOrder = [...individuals, ...groups].sort((a, b) => {
+      const initiativeA = a.initiative || 0;
+      const initiativeB = b.initiative || 0;
+      
+      if (initiativeA === initiativeB) {
+        // In case of tie, higher dexterity modifier goes first
+        const dexA = 'dexModifier' in a ? a.dexModifier : 
+          Math.max(...a.members.map(m => m.dexModifier));
+        const dexB = 'dexModifier' in b ? b.dexModifier : 
+          Math.max(...b.members.map(m => m.dexModifier));
+        return dexB - dexA;
+      }
+      
+      return initiativeB - initiativeA;
+    });
+    
+    this.currentInitiativeIndex = this.initiativeOrder.length > 0 ? 0 : -1;
+  }
+  
+  /**
+   * Gets the current active combatant or group.
+   * 
+   * @returns The current active combatant or group
+   */
+  getCurrentActive(): Combatant | CombatantGroup | null {
+    if (this.currentInitiativeIndex === -1 || this.initiativeOrder.length === 0) {
+      return null;
+    }
+    
+    return this.initiativeOrder[this.currentInitiativeIndex];
+  }
+  
+  /**
+   * Advances to the next combatant or group in the initiative order.
+   * 
+   * @returns The new active combatant or group
+   */
+  nextTurn(): Combatant | CombatantGroup | null {
+    if (this.initiativeOrder.length === 0) {
+      return null;
+    }
+    
+    this.currentInitiativeIndex = (this.currentInitiativeIndex + 1) % this.initiativeOrder.length;
+    return this.getCurrentActive();
+  }
+  
+  /**
+   * Starts a new round of combat, resetting to the top of the initiative order.
+   */
+  startNewRound(): void {
+    // Reset to the top of the initiative order
+    this.currentInitiativeIndex = this.initiativeOrder.length > 0 ? 0 : -1;
+  }
+  
+  /**
+   * Gets the full initiative order.
+   * 
+   * @returns The sorted initiative order
+   */
+  getInitiativeOrder(): (Combatant | CombatantGroup)[] {
+    return [...this.initiativeOrder];
+  }
+  
+  /**
+   * Removes a combatant from the tracker.
+   * 
+   * @param combatantId The ID of the combatant to remove
+   */
+  removeCombatant(combatantId: string): void {
+    const combatant = this.combatants.get(combatantId);
+    if (!combatant) {
+      console.warn(`Cannot remove: combatant with ID "${combatantId}" not found`);
+      return;
+    }
+    
+    // If combatant is in a group, update the group
+    if (combatant.groupId) {
+      const group = this.groups.get(combatant.groupId);
+      if (group) {
+        // Remove combatant from group
+        const updatedMembers = group.members.filter(m => m.id !== combatantId);
+        
+        if (updatedMembers.length === 0) {
+          // Delete group if it becomes empty
+          this.groups.delete(combatant.groupId);
+          
+          // Remove group from initiative order
+          this.initiativeOrder = this.initiativeOrder.filter(entry => 
+            !('members' in entry) || entry.id !== combatant.groupId
+          );
+        } else {
+          // Update group with remaining members
+          this.groups.set(combatant.groupId, {
+            ...group,
+            members: updatedMembers
+          });
+        }
+      }
+    } else {
+      // Remove individual combatant from initiative order
+      this.initiativeOrder = this.initiativeOrder.filter(entry => 
+        ('members' in entry) || entry.id !== combatantId
+      );
+    }
+    
+    // Remove combatant from map
+    this.combatants.delete(combatantId);
+    
+    // Adjust current initiative index if needed
+    if (this.currentInitiativeIndex >= this.initiativeOrder.length) {
+      this.currentInitiativeIndex = this.initiativeOrder.length > 0 ? 0 : -1;
+    }
+  }
+  
+  /**
+   * Gets a summary of the current combat state.
+   * 
+   * @returns An object describing the current combat state
+   */
+  getCombatSummary(): {
+    individualCount: number;
+    groupCount: number;
+    totalCombatants: number;
+    round: number;
+    currentActive: string;
+  } {
+    const individualCount = Array.from(this.combatants.values())
+      .filter(c => !c.groupId).length;
+      
+    const groupCount = this.groups.size;
+    const totalCombatants = this.combatants.size;
+    const currentActive = this.getCurrentActive();
+    const currentName = currentActive ? 
+      ('members' in currentActive ? currentActive.name : currentActive.name) : 
+      "None";
+      
+    return {
+      individualCount,
+      groupCount,
+      totalCombatants,
+      round: Math.floor(this.currentInitiativeIndex / this.initiativeOrder.length) + 1,
+      currentActive: currentName
+    };
+  }
+}
+
+// ===============================
+// Starship Combat System
+// ===============================
+
+/**
+ * Represents a specific weapon system on a starship.
+ */
+interface StarshipWeapon {
+  name: string;
+  diceCount: number;
+  diceSides: number;
+  range: {
+    normal: number;  // in space units
+    maximum: number; // in space units
+  };
+  category: "primary" | "secondary" | "tertiary";
+  properties?: string[]; // e.g., "ionizing", "auto-fire", etc.
+}
+
+/**
+ * Represents a starship with relevant statistics.
+ */
+interface Starship {
+  id: string;
+  name: string;
+  tier: number;
+  size: "tiny" | "small" | "medium" | "large" | "huge" | "gargantuan" | "colossal";
+  shipType: string;  // e.g., "Fighter", "Freighter", "Cruiser"
+  
+  // Core statistics
+  armorClass: number;
+  hullPoints: {
+    max: number;
+    current: number;
+  };
+  shields: {
+    max: number;
+    current: number;
+    regen: number;
+  };
+  
+  // Crew roles and modifiers
+  crew: {
+    pilot: {
+      modifier: number;
+      name?: string;
+    };
+    captain: {
+      modifier: number;
+      name?: string;
+    };
+    gunner: {
+      modifier: number;
+      name?: string;
+    };
+    engineer: {
+      modifier: number;
+      name?: string;
+    };
+    sensor: {
+      modifier: number;
+      name?: string;
+    };
+  };
+  
+  // Movement
+  speed: number;
+  maneuverability: number;
+  
+  // Weapons
+  weapons: StarshipWeapon[];
+  
+  // Status effects
+  conditions: string[];
+  
+  // Combat state
+  isInCombat: boolean;
+  initiativeModifier: number;
+  initiative?: number;
+}
+
+/**
+ * Starship combat actions.
+ */
+enum StarshipAction {
+  // Pilot actions
+  EVASIVE_MANEUVERS = "Evasive Maneuvers",
+  HARD_TURN = "Hard Turn",
+  BARREL_ROLL = "Barrel Roll",
+  AFTERBURN = "Afterburn",
+  
+  // Captain actions
+  COORDINATE = "Coordinate",
+  BATTLE_STATIONS = "Battle Stations",
+  FULL_POWER = "Full Power",
+  
+  // Gunner actions
+  FIRE_WEAPON = "Fire Weapon",
+  CONCENTRATED_FIRE = "Concentrated Fire",
+  
+  // Engineer actions
+  DAMAGE_CONTROL = "Damage Control",
+  POWER_TRANSFER = "Power Transfer",
+  
+  // Sensor actions
+  SCAN = "Scan",
+  JAM_SENSORS = "Jam Sensors",
+  
+  // General actions
+  MOVE = "Move"
+}
+
+/**
+ * Class to manage starship combat.
+ */
+class StarshipCombatManager {
+  private ships: Map<string, Starship> = new Map();
+  private combatTracker: CombatTracker;
+  
+  constructor(combatTracker: CombatTracker) {
+    this.combatTracker = combatTracker;
+  }
+  
+  /**
+   * Adds a starship to the combat.
+   * 
+   * @param shipData The starship data
+   * @returns The added ship
+   */
+  addShip(shipData: Omit<Starship, "id" | "isInCombat">): Starship {
+    const id = `ship-${this.ships.size + 1}`;
+    const ship: Starship = {
+      ...shipData,
+      id,
+      isInCombat: true
+    };
+    
+    this.ships.set(id, ship);
+    
+    // Add ship as a combatant to the tracker
+    this.combatTracker.addCombatant({
+      name: ship.name,
+      dexModifier: ship.initiativeModifier,
+      advantage: false
+    });
+    
+    return ship;
+  }
+  
+  /**
+   * Rolls initiative for a starship.
+   * 
+   * @param shipId The ID of the ship to roll for
+   * @returns The initiative value
+   */
+  rollShipInitiative(shipId: string): number | null {
+    const ship = this.ships.get(shipId);
+    if (!ship) {
+      console.warn(`Ship with ID "${shipId}" not found`);
+      return null;
+    }
+    
+    // Roll initiative using the pilot's modifier + ship's bonus
+    const initiative = rollInitiative(ship.crew.pilot.modifier + ship.initiativeModifier);
+    
+    // Update ship initiative
+    this.ships.set(shipId, {
+      ...ship,
+      initiative
+    });
+    
+    return initiative;
+  }
+  
+  /**
+   * Performs a pilot check for a starship.
+   * 
+   * @param shipId The ID of the ship
+   * @param difficultyClass The DC of the check
+   * @param advantage Whether the roll has advantage or disadvantage
+   * @returns Whether the check succeeded
+   */
+  rollPilotCheck(
+    shipId: string,
+    difficultyClass: number,
+    advantage: "advantage" | "disadvantage" | "normal" = "normal"
+  ): boolean | null {
+    const ship = this.ships.get(shipId);
+    if (!ship) {
+      console.warn(`Ship with ID "${shipId}" not found`);
+      return null;
+    }
+    
+    const rollResult = rollAbilityCheck(ship.crew.pilot.modifier, advantage);
+    return rollResult >= difficultyClass;
+  }
+  
+  /**
+   * Performs a ship weapon attack.
+   * 
+   * @param attackerShipId The ID of the attacking ship
+   * @param weaponName The name of the weapon being used
+   * @param targetShipId The ID of the target ship
+   * @param advantage Whether the attack has advantage or disadvantage
+   * @returns Object containing hit result and damage dealt
+   */
+  performShipAttack(
+    attackerShipId: string,
+    weaponName: string,
+    targetShipId: string,
+    advantage: "advantage" | "disadvantage" | "normal" = "normal"
+  ): { hit: boolean; damage?: number } | null {
+    const attacker = this.ships.get(attackerShipId);
+    const target = this.ships.get(targetShipId);
+    
+    if (!attacker) {
+      console.warn(`Attacking ship with ID "${attackerShipId}" not found`);
+      return null;
+    }
+    
+    if (!target) {
+      console.warn(`Target ship with ID "${targetShipId}" not found`);
+      return null;
+    }
+    
+    // Find the weapon
+    const weapon = attacker.weapons.find(w => w.name === weaponName);
+    if (!weapon) {
+      console.warn(`Weapon "${weaponName}" not found on ship "${attacker.name}"`);
+      return null;
+    }
+    
+    // Roll attack using gunner's modifier
+    const attackRoll = rollAbilityCheck(attacker.crew.gunner.modifier, advantage);
+    const hit = attackRoll >= target.armorClass;
+    
+    if (!hit) {
+      return { hit: false };
+    }
+    
+    // Roll damage
+    const damage = rollDice(weapon.diceCount, weapon.diceSides);
+    
+    // Apply damage to target
+    this.applyShipDamage(targetShipId, damage);
+    
+    return { hit: true, damage };
+  }
+  
+  /**
+   * Applies damage to a ship.
+   * 
+   * @param shipId The ID of the ship taking damage
+   * @param damage The amount of damage to apply
+   * @returns The updated ship with damage applied
+   */
+  applyShipDamage(shipId: string, damage: number): Starship | null {
+    const ship = this.ships.get(shipId);
+    if (!ship) {
+      console.warn(`Ship with ID "${shipId}" not found`);
+      return null;
+    }
+    
+    // Apply damage to shields first
+    let remainingDamage = damage;
+    let shieldDamage = Math.min(ship.shields.current, remainingDamage);
+    
+    const updatedShields = ship.shields.current - shieldDamage;
+    remainingDamage -= shieldDamage;
+    
+    // If shields are depleted, apply remaining damage to hull
+    let updatedHull = ship.hullPoints.current;
+    if (remainingDamage > 0) {
+      updatedHull = Math.max(0, updatedHull - remainingDamage);
+    }
+    
+    // Update ship
+    const updatedShip: Starship = {
+      ...ship,
+      shields: {
+        ...ship.shields,
+        current: updatedShields
+      },
+      hullPoints: {
+        ...ship.hullPoints,
+        current: updatedHull
+      }
+    };
+    
+    // Check if ship is destroyed
+    if (updatedHull <= 0) {
+      updatedShip.isInCombat = false;
+      updatedShip.conditions.push("Disabled");
+      
+      // TODO: Handle ship destruction (remove from combat, trigger effects, etc.)
+    }
+    
+    this.ships.set(shipId, updatedShip);
+    return updatedShip;
+  }
+  
+  /**
+   * Regenerates shields at the start of a ship's turn.
+   * 
+   * @param shipId The ID of the ship
+   * @returns The updated shield value
+   */
+  regenerateShields(shipId: string): number | null {
+    const ship = this.ships.get(shipId);
+    if (!ship) {
+      console.warn(`Ship with ID "${shipId}" not found`);
+      return null;
+    }
+    
+    // Only regenerate if shields aren't at max and ship is in combat
+    if (ship.shields.current >= ship.shields.max || !ship.isInCombat) {
+      return ship.shields.current;
+    }
+    
+    const regeneratedShields = Math.min(
+      ship.shields.max,
+      ship.shields.current + ship.shields.regen
+    );
+    
+    // Update ship
+    this.ships.set(shipId, {
+      ...ship,
+      shields: {
+        ...ship.shields,
+        current: regeneratedShields
+      }
+    });
+    
+    return regeneratedShields;
+  }
+  
+  /**
+   * Performs the specified starship action.
+   * 
+   * @param shipId The ID of the ship performing the action
+   * @param action The action to perform
+   * @param actionParams Additional parameters for the action
+   * @returns The result of the action
+   */
+  performShipAction(
+    shipId: string,
+    action: StarshipAction,
+    actionParams: any = {}
+  ): any {
+    const ship = this.ships.get(shipId);
+    if (!ship) {
+      console.warn(`Ship with ID "${shipId}" not found`);
+      return null;
+    }
+    
+    switch (action) {
+      case StarshipAction.EVASIVE_MANEUVERS: {
+        // Example implementation: Roll pilot check against DC 15
+        const success = this.rollPilotCheck(shipId, 15);
+        if (success) {
+          // Grant temporary +2 AC until next turn
+          this.ships.set(shipId, {
+            ...ship,
+            armorClass: ship.armorClass + 2,
+            conditions: [...ship.conditions, "Evasive"]
+          });
+          return { success, newAC: ship.armorClass + 2 };
+        }
+        return { success };
+      }
+      
+      case StarshipAction.FIRE_WEAPON: {
+        const { targetId, weaponName, advantage } = actionParams;
+        return this.performShipAttack(shipId, weaponName, targetId, advantage);
+      }
+      
+      case StarshipAction.DAMAGE_CONTROL: {
+        // Example: Engineer can restore some hull points
+        const engineerModifier = ship.crew.engineer.modifier;
+        const repairAmount = rollDice(1, 8) + engineerModifier;
+        
+        const updatedHull = Math.min(
+          ship.hullPoints.max,
+          ship.hullPoints.current + repairAmount
+        );
+        
+        this.ships.set(shipId, {
+          ...ship,
+          hullPoints: {
+            ...ship.hullPoints,
+            current: updatedHull
+          }
+        });
+        
+        return { 
+          repaired: repairAmount,
+          currentHull: updatedHull
+        };
+      }
+      
+      // Implement other actions...
+      
+      default:
+        console.warn(`Action "${action}" not implemented`);
+        return null;
+    }
+  }
+  
+  /**
+   * Gets a ship by ID.
+   * 
+   * @param shipId The ID of the ship
+   * @returns The ship or null if not found
+   */
+  getShip(shipId: string): Starship | null {
+    return this.ships.get(shipId) || null;
+  }
+  
+  /**
+   * Gets all ships in combat.
+   * 
+   * @returns An array of all ships
+   */
+  getAllShips(): Starship[] {
+    return Array.from(this.ships.values());
+  }
+}
+
+// ===============================
+// Vehicle Combat System
+// ===============================
+
+/**
+ * Represents a specific weapon system on a ground vehicle.
+ */
+interface VehicleWeapon {
+  name: string;
+  diceCount: number;
+  diceSides: number;
+  range: {
+    normal: number;  // in ground units
+    maximum: number; // in ground units
+  };
+  properties?: string[]; // e.g., "explosive", "rapid-fire", etc.
+}
+
+/**
+ * Represents a ground vehicle with relevant statistics.
+ */
+interface Vehicle {
+  id: string;
+  name: string;
+  vehicleType: string;  // e.g., "Speeder", "Walker", "Tank"
+  size: "tiny" | "small" | "medium" | "large" | "huge" | "gargantuan";
+  
+  // Core statistics
+  armorClass: number;
+  hitPoints: {
+    max: number;
+    current: number;
+  };
+  
+  // Crew roles and modifiers
+  crew: {
+    driver: {
+      modifier: number;
+      name?: string;
+    };
+    gunner?: {
+      modifier: number;
+      name?: string;
+    };
+  };
+  
+  // Movement
+  speed: number;
+  handling: number;
+  
+  // Weapons
+  weapons: VehicleWeapon[];
+  
+  // Status
+  conditions: string[];
+  
+  // Combat state
+  isInCombat: boolean;
+  initiative?: number;
+}
+
+/**
+ * Vehicle actions.
+ */
+enum VehicleAction {
+  // Driver actions
+  EVASIVE_DRIVING = "Evasive Driving",
+  HARD_BRAKE = "Hard Brake",
+  DRIFT = "Drift",
+  
+  // Gunner actions
+  FIRE_WEAPON = "Fire Weapon",
+  AIMED_SHOT = "Aimed Shot",
+  
+  // General actions
+  MOVE = "Move",
+  RAM = "Ram"
+}
+
+/**
+ * Manager for ground vehicle combat.
+ */
+class VehicleCombatManager {
+  private vehicles: Map<string, Vehicle> = new Map();
+  private combatTracker: CombatTracker;
+  
+  constructor(combatTracker: CombatTracker) {
+    this.combatTracker = combatTracker;
+  }
+  
+  /**
+   * Adds a vehicle to combat.
+   * 
+   * @param vehicleData The vehicle data
+   * @returns The added vehicle
+   */
+  addVehicle(vehicleData: Omit<Vehicle, "id" | "isInCombat">): Vehicle {
+    const id = `vehicle-${this.vehicles.size + 1}`;
+    const vehicle: Vehicle = {
+      ...vehicleData,
+      id,
+      isInCombat: true
+    };
+    
+    this.vehicles.set(id, vehicle);
+    
+    // Add vehicle as a combatant to the tracker
+    this.combatTracker.addCombatant({
+      name: vehicle.name,
+      dexModifier: vehicle.crew.driver.modifier,
+      advantage: false
+    });
+    
+    return vehicle;
+  }
+  
+  /**
+   * Rolls initiative for a vehicle.
+   * 
+   * @param vehicleId The ID of the vehicle
+   * @returns The initiative value
+   */
+  rollVehicleInitiative(vehicleId: string): number | null {
+    const vehicle = this.vehicles.get(vehicleId);
+    if (!vehicle) {
+      console.warn(`Vehicle with ID "${vehicleId}" not found`);
+      return null;
+    }
+    
+    // Roll initiative using the driver's modifier
+    const initiative = rollInitiative(vehicle.crew.driver.modifier);
+    
+    // Update vehicle initiative
+    this.vehicles.set(vehicleId, {
+      ...vehicle,
+      initiative
+    });
+    
+    return initiative;
+  }
+  
+  /**
+   * Performs a driver check for a vehicle.
+   * 
+   * @param vehicleId The ID of the vehicle
+   * @param difficultyClass The DC of the check
+   * @param advantage Whether the roll has advantage or disadvantage
+   * @returns Whether the check succeeded
+   */
+  rollDriverCheck(
+    vehicleId: string,
+    difficultyClass: number,
+    advantage: "advantage" | "disadvantage" | "normal" = "normal"
+  ): boolean | null {
+    const vehicle = this.vehicles.get(vehicleId);
+    if (!vehicle) {
+      console.warn(`Vehicle with ID "${vehicleId}" not found`);
+      return null;
+    }
+    
+    const rollResult = rollAbilityCheck(vehicle.crew.driver.modifier, advantage);
+    return rollResult >= difficultyClass;
+  }
+  
+  /**
+   * Performs a vehicle weapon attack.
+   * 
+   * @param attackerVehicleId The ID of the attacking vehicle
+   * @param weaponName The name of the weapon being used
+   * @param targetId The ID of the target (can be vehicle or character)
+   * @param targetAc The target's armor class
+   * @param advantage Whether the attack has advantage or disadvantage
+   * @returns Object containing hit result and damage dealt
+   */
+  performVehicleAttack(
+    attackerVehicleId: string,
+    weaponName: string,
+    targetId: string,
+    targetAc: number,
+    advantage: "advantage" | "disadvantage" | "normal" = "normal"
+  ): { hit: boolean; damage?: number } | null {
+    const attacker = this.vehicles.get(attackerVehicleId);
+    
+    if (!attacker) {
+      console.warn(`Attacking vehicle with ID "${attackerVehicleId}" not found`);
+      return null;
+    }
+    
+    // Make sure vehicle has a gunner
+    if (!attacker.crew.gunner) {
+      console.warn(`Vehicle "${attacker.name}" doesn't have a gunner`);
+      return null;
+    }
+    
+    // Find the weapon
+    const weapon = attacker.weapons.find(w => w.name === weaponName);
+    if (!weapon) {
+      console.warn(`Weapon "${weaponName}" not found on vehicle "${attacker.name}"`);
+      return null;
+    }
+    
+    // Roll attack using gunner's modifier
+    const attackRoll = rollAbilityCheck(attacker.crew.gunner.modifier, advantage);
+    const hit = attackRoll >= targetAc;
+    
+    if (!hit) {
+      return { hit: false };
+    }
+    
+    // Roll damage
+    const damage = rollDice(weapon.diceCount, weapon.diceSides);
+    
+    // Apply damage to target if it's another vehicle
+    const targetVehicle = this.vehicles.get(targetId);
+    if (targetVehicle) {
+      this.applyVehicleDamage(targetId, damage);
+    }
+    
+    return { hit: true, damage };
+  }
+  
+  /**
+   * Applies damage to a vehicle.
+   * 
+   * @param vehicleId The ID of the vehicle taking damage
+   * @param damage The amount of damage to apply
+   * @returns The updated vehicle with damage applied
+   */
+  applyVehicleDamage(vehicleId: string, damage: number): Vehicle | null {
+    const vehicle = this.vehicles.get(vehicleId);
+    if (!vehicle) {
+      console.warn(`Vehicle with ID "${vehicleId}" not found`);
+      return null;
+    }
+    
+    // Apply damage to hit points
+    const updatedHp = Math.max(0, vehicle.hitPoints.current - damage);
+    
+    // Update vehicle
+    const updatedVehicle: Vehicle = {
+      ...vehicle,
+      hitPoints: {
+        ...vehicle.hitPoints,
+        current: updatedHp
+      }
+    };
+    
+    // Check if vehicle is disabled
+    if (updatedHp <= 0) {
+      updatedVehicle.isInCombat = false;
+      updatedVehicle.conditions.push("Disabled");
+      
+      // TODO: Handle vehicle destruction effects
+    }
+    
+    this.vehicles.set(vehicleId, updatedVehicle);
+    return updatedVehicle;
+  }
+  
+  /**
+   * Performs the specified vehicle action.
+   * 
+   * @param vehicleId The ID of the vehicle performing the action
+   * @param action The action to perform
+   * @param actionParams Additional parameters for the action
+   * @returns The result of the action
+   */
+  performVehicleAction(
+    vehicleId: string,
+    action: VehicleAction,
+    actionParams: any = {}
+  ): any {
+    const vehicle = this.vehicles.get(vehicleId);
+    if (!vehicle) {
+      console.warn(`Vehicle with ID "${vehicleId}" not found`);
+      return null;
+    }
+    
+    switch (action) {
+      case VehicleAction.EVASIVE_DRIVING: {
+        // Example implementation: Roll driver check against DC 15
+        const success = this.rollDriverCheck(vehicleId, 15);
+        if (success) {
+          // Grant temporary +2 AC until next turn
+          this.vehicles.set(vehicleId, {
+            ...vehicle,
+            armorClass: vehicle.armorClass + 2,
+            conditions: [...vehicle.conditions, "Evasive"]
+          });
+          return { success, newAC: vehicle.armorClass + 2 };
+        }
+        return { success };
+      }
+      
+      case VehicleAction.FIRE_WEAPON: {
+        const { targetId, weaponName, targetAc, advantage } = actionParams;
+        return this.performVehicleAttack(vehicleId, weaponName, targetId, targetAc, advantage);
+      }
+      
+      case VehicleAction.RAM: {
+        const { targetId, targetAc } = actionParams;
+        
+        // Roll driver check to ram
+        const driverCheck = this.rollDriverCheck(vehicleId, 12);
+        if (!driverCheck) {
+          return { success: false, message: "Failed to control vehicle during ram" };
+        }
+        
+        // Calculate ram damage based on vehicle size
+        const sizeDamageMap: { [key: string]: number } = {
+          tiny: 1,
+          small: 2,
+          medium: 3,
+          large: 4,
+          huge: 6,
+          gargantuan: 8
+        };
+        
+        const baseDice = sizeDamageMap[vehicle.size] || 2;
+        const ramDamage = rollDice(baseDice, 6);
+        
+        // Vehicle also takes half damage
+        this.applyVehicleDamage(vehicleId, Math.floor(ramDamage / 2));
+        
+        return {
+          success: true,
+          damage: ramDamage,
+          selfDamage: Math.floor(ramDamage / 2),
+          currentHp: this.vehicles.get(vehicleId)?.hitPoints.current
+        };
+      }
+      
+      // Implement other actions...
+      
+      default:
+        console.warn(`Action "${action}" not implemented`);
+        return null;
+    }
+  }
+  
+  /**
+   * Gets a vehicle by ID.
+   * 
+   * @param vehicleId The ID of the vehicle
+   * @returns The vehicle or null if not found
+   */
+  getVehicle(vehicleId: string): Vehicle | null {
+    return this.vehicles.get(vehicleId) || null;
+  }
+  
+  /**
+   * Gets all vehicles in combat.
+   * 
+   * @returns An array of all vehicles
+   */
+  getAllVehicles(): Vehicle[] {
+    return Array.from(this.vehicles.values());
+  }
+}
