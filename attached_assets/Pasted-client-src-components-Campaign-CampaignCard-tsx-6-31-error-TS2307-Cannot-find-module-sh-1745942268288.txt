@@ -1,0 +1,426 @@
+client/src/components/Campaign/CampaignCard.tsx:6:31 - error TS2307: Cannot find module '../../../shared/schema' or its corresponding type declarations.
+
+6 import type { Campaign } from '../../../shared/schema';
+                                ~~~~~~~~~~~~~~~~~~~~~~~~
+
+client/src/components/Campaign/CampaignCreator.tsx:81:37 - error TS2559: Type 'string[]' has no properties in common with type 'InvalidateQueryFilters'.
+
+81       queryClient.invalidateQueries(['campaigns']);
+                                       ~~~~~~~~~~~~~
+
+client/src/components/CharacterCreation/AbilityScores.tsx:53:57 - error TS2345: Argument of type 'number' is not assignable to parameter of type 'boolean'.
+
+53     const isAssigned = Object.values(assigned).includes(score);
+                                                           ~~~~~
+
+client/src/components/CharacterCreation/BasicInfo.tsx:4:25 - error TS2307: Cannot find module './LoreTooltip' or its corresponding type declarations.
+
+4 import LoreTooltip from './LoreTooltip';
+                          ~~~~~~~~~~~~~~~
+
+client/src/components/CharacterCreation/CharacterCreationForm.tsx:22:31 - error TS2307: Cannot find module '@/types/CharacterData' or its corresponding type declarations.
+
+22 import { CharacterData } from "@/types/CharacterData"; // Assuming this type exists
+                                 ~~~~~~~~~~~~~~~~~~~~~~~
+
+client/src/components/CharacterCreation/CharacterCreationForm.tsx:87:19 - error TS2740: Type 'UseFormRegisterReturn<string>' is missing the following properties from type 'Control<FieldValues, any, FieldValues>': _subjects, _removeUnmounted, _names, _state, and 23 more.
+
+87                   control={register("name")}
+                     ~~~~~~~
+
+  node_modules/react-hook-form/dist/types/controller.d.ts:24:5
+    24     control?: Control<TFieldValues, any, TTransformedValues>;
+           ~~~~~~~
+    The expected type comes from property 'control' which is declared here on type 'IntrinsicAttributes & { render: ({ field, fieldState, formState, }: { field: ControllerRenderProps<FieldValues, "name">; fieldState: ControllerFieldState; formState: UseFormStateReturn<...>; }) => ReactElement<...>; } & UseControllerProps<...>'
+
+client/src/components/CharacterCreation/CharacterCreationForm.tsx:102:21 - error TS2740: Type 'UseFormRegisterReturn<string>' is missing the following properties from type 'Control<FieldValues, any, FieldValues>': _subjects, _removeUnmounted, _names, _state, and 23 more.
+
+102                     control={register("level", { valueAsNumber: true })}
+                        ~~~~~~~
+
+  node_modules/react-hook-form/dist/types/controller.d.ts:24:5
+    24     control?: Control<TFieldValues, any, TTransformedValues>;
+           ~~~~~~~
+    The expected type comes from property 'control' which is declared here on type 'IntrinsicAttributes & { render: ({ field, fieldState, formState, }: { field: ControllerRenderProps<FieldValues, "level">; fieldState: ControllerFieldState; formState: UseFormStateReturn<...>; }) => ReactElement<...>; } & UseControllerProps<...>'
+
+client/src/components/CharacterCreation/CharacterCreationForm.tsx:132:21 - error TS2740: Type 'UseFormRegisterReturn<string>' is missing the following properties from type 'Control<FieldValues, any, FieldValues>': _subjects, _removeUnmounted, _names, _state, and 23 more.
+
+132                     control={register("alignment")}
+                        ~~~~~~~
+
+  node_modules/react-hook-form/dist/types/controller.d.ts:24:5
+    24     control?: Control<TFieldValues, any, TTransformedValues>;
+           ~~~~~~~
+    The expected type comes from property 'control' which is declared here on type 'IntrinsicAttributes & { render: ({ field, fieldState, formState, }: { field: ControllerRenderProps<FieldValues, "alignment">; fieldState: ControllerFieldState; formState: UseFormStateReturn<...>; }) => ReactElement<...>; } & UseControllerProps<...>'
+
+client/src/components/CharacterCreation/CharacterCreationForm.tsx:175:19 - error TS2740: Type 'UseFormRegisterReturn<string>' is missing the following properties from type 'Control<FieldValues, any, FieldValues>': _subjects, _removeUnmounted, _names, _state, and 23 more.
+
+175                   control={register("bonds")}
+                      ~~~~~~~
+
+  node_modules/react-hook-form/dist/types/controller.d.ts:24:5
+    24     control?: Control<TFieldValues, any, TTransformedValues>;
+           ~~~~~~~
+    The expected type comes from property 'control' which is declared here on type 'IntrinsicAttributes & { render: ({ field, fieldState, formState, }: { field: ControllerRenderProps<FieldValues, "bonds">; fieldState: ControllerFieldState; formState: UseFormStateReturn<...>; }) => ReactElement<...>; } & UseControllerProps<...>'
+
+client/src/components/CharacterCreation/CharacterCreationForm.tsx:192:19 - error TS2740: Type 'UseFormRegisterReturn<string>' is missing the following properties from type 'Control<FieldValues, any, FieldValues>': _subjects, _removeUnmounted, _names, _state, and 23 more.
+
+192                   control={register("motivations")}
+                      ~~~~~~~
+
+  node_modules/react-hook-form/dist/types/controller.d.ts:24:5
+    24     control?: Control<TFieldValues, any, TTransformedValues>;
+           ~~~~~~~
+    The expected type comes from property 'control' which is declared here on type 'IntrinsicAttributes & { render: ({ field, fieldState, formState, }: { field: ControllerRenderProps<FieldValues, "motivations">; fieldState: ControllerFieldState; formState: UseFormStateReturn<...>; }) => ReactElement<...>; } & UseControllerProps<...>'
+
+client/src/components/CharacterCreation/ForcePowersSelection.tsx:45:29 - error TS7006: Parameter 'p' implicitly has an 'any' type.
+
+45     if (selectedPowers.some(p => p.id === power.id)) return;
+                               ~
+
+client/src/components/CharacterCreation/ForcePowersSelection.tsx:50:56 - error TS7006: Parameter 'p' implicitly has an 'any' type.
+
+50     form.setValue('forcePowers', selectedPowers.filter(p => p.id !== powerId));
+                                                          ~
+
+client/src/components/CharacterCreation/SpeciesSelection.tsx:39:26 - error TS2339: Property 'abilityScoreAdjustments' does not exist on type 'Species'.
+
+39     if (selectedSpecies?.abilityScoreAdjustments) {
+                            ~~~~~~~~~~~~~~~~~~~~~~~
+
+client/src/components/CharacterCreation/SpeciesSelection.tsx:49:38 - error TS2339: Property 'abilityScoreAdjustments' does not exist on type 'Species'.
+
+49       Object.entries(selectedSpecies.abilityScoreAdjustments).forEach(([ability, bonus]) => {
+                                        ~~~~~~~~~~~~~~~~~~~~~~~
+
+client/src/components/CharacterCreation/SpeciesSelection.tsx:112:29 - error TS2322: Type '{ walk: number; swim?: number | undefined; climb?: number | undefined; fly?: number | undefined; glide?: number | undefined; slither?: number | undefined; leap?: number | undefined; }' is not assignable to type 'ReactNode'.
+
+112                             {speciesOption.speed} ft.
+                                ~~~~~~~~~~~~~~~~~~~~~
+
+client/src/components/CharacterManagement/CharacterSheet.tsx:152:60 - error TS2322: Type 'unknown' is not assignable to type 'ReactNode'.
+
+152                   <div className="text-2xl font-bold mb-1">{score}</div>
+                                                               ~~~~~~~
+
+  node_modules/@types/react/index.d.ts:2385:9
+    2385         children?: ReactNode | undefined;
+                 ~~~~~~~~
+    The expected type comes from property 'children' which is declared here on type 'DetailedHTMLProps<HTMLAttributes<HTMLDivElement>, HTMLDivElement>'
+
+client/src/components/Combat/CombatTracker.tsx:251:70 - error TS2345: Argument of type 'string | number' is not assignable to parameter of type 'SetStateAction<number | null>'.
+  Type 'string' is not assignable to type 'SetStateAction<number | null>'.
+
+251                     onClick={() => isPlayerTurn && setSelectedTarget(enemy.id)}
+                                                                         ~~~~~~~~
+
+client/src/components/Combat/CombatTracker.tsx:269:27 - error TS2322: Type '{ value: number; className: string; indicatorClassName: string; }' is not assignable to type 'IntrinsicAttributes & Omit<ProgressProps & RefAttributes<HTMLDivElement>, "ref"> & RefAttributes<HTMLDivElement>'.
+  Property 'indicatorClassName' does not exist on type 'IntrinsicAttributes & Omit<ProgressProps & RefAttributes<HTMLDivElement>, "ref"> & RefAttributes<HTMLDivElement>'.
+
+269                           indicatorClassName="bg-red-600"
+                              ~~~~~~~~~~~~~~~~~~
+
+client/src/components/Map/GalacticMap3D.tsx:158:17 - error TS2322: Type 'RefObject<Points<BufferGeometry<NormalBufferAttributes>, Material | Material[], Object3DEventMap>>' is not assignable to type 'Ref<Group<Object3DEventMap>> | undefined'.
+  Type 'RefObject<Points<BufferGeometry<NormalBufferAttributes>, Material | Material[], Object3DEventMap>>' is not assignable to type 'RefObject<Group<Object3DEventMap>>'.
+    Property 'isGroup' is missing in type 'Points<BufferGeometry<NormalBufferAttributes>, Material | Material[], Object3DEventMap>' but required in type 'Group<Object3DEventMap>'.
+
+158   return <group ref={dustRef} />;
+                    ~~~
+
+  node_modules/@types/three/src/objects/Group.d.ts:36:14
+    36     readonly isGroup: true;
+                    ~~~~~~~
+    'isGroup' is declared here.
+  node_modules/@react-three/fiber/dist/declarations/src/three-types.d.ts:34:5
+    34     ref?: React.Ref<T>;
+           ~~~
+    The expected type comes from property 'ref' which is declared here on type 'GroupProps'
+
+client/src/components/Map/SystemMap/OrbitalPath.tsx:44:11 - error TS2322: Type 'RefObject<Mesh<BufferGeometry<NormalBufferAttributes>, Material | Material[], Object3DEventMap>>' is not assignable to type 'LegacyRef<SVGLineElement> | undefined'.
+  Type 'RefObject<Mesh<BufferGeometry<NormalBufferAttributes>, Material | Material[], Object3DEventMap>>' is not assignable to type 'RefObject<SVGLineElement>'.
+    Type 'Mesh<BufferGeometry<NormalBufferAttributes>, Material | Material[], Object3DEventMap>' is missing the following properties from type 'SVGLineElement': x1, x2, y1, y2, and 282 more.
+
+44     <line ref={ref}>
+             ~~~
+
+  node_modules/@types/react/index.d.ts:303:9
+    303         ref?: LegacyRef<T> | undefined;
+                ~~~
+    The expected type comes from property 'ref' which is declared here on type 'SVGLineElementAttributes<SVGLineElement>'
+
+client/src/components/ui/interface.tsx:6:26 - error TS2307: Cannot find module '../game/Confetti' or its corresponding type declarations.
+
+6 import { Confetti } from "../game/Confetti";
+                           ~~~~~~~~~~~~~~~~~~
+
+client/src/components/ui/interface.tsx:10:44 - error TS2339: Property 'restart' does not exist on type 'GameState'.
+
+10   const restart = useGame((state) => state.restart);
+                                              ~~~~~~~
+
+client/src/components/ui/interface.tsx:16:9 - error TS2367: This comparison appears to be unintentional because the types 'GamePhase' and '"ready"' have no overlap.
+
+16     if (phase === "ready") {
+           ~~~~~~~~~~~~~~~~~
+
+client/src/components/ui/interface.tsx:18:33 - error TS2339: Property 'blur' does not exist on type 'Element'.
+
+18         document.activeElement?.blur(); // Remove focus from any button
+                                   ~~~~
+
+client/src/components/ui/interface.tsx:54:8 - error TS2367: This comparison appears to be unintentional because the types 'GamePhase' and '"ended"' have no overlap.
+
+54       {phase === "ended" && (
+          ~~~~~~~~~~~~~~~~~
+
+client/src/lib/llm/campaignGenerator.ts:39:7 - error TS2322: Type '{ id: string; title: string; description: string; status: string; objectives: { description: string; completed: boolean; }[]; reward: { credits: number; items: string[]; experience: number; }; }[]' is not assignable to type 'Quest[]'.
+  Type '{ id: string; title: string; description: string; status: string; objectives: { description: string; completed: boolean; }[]; reward: { credits: number; items: string[]; experience: number; }; }' is not assignable to type 'Quest'.
+    Types of property 'status' are incompatible.
+      Type 'string' is not assignable to type '"inactive" | "active" | "completed"'.
+
+39       quests,
+         ~~~~~~
+
+  client/src/lib/stores/useCampaign.ts:53:3
+    53   quests: Quest[];
+         ~~~~~~
+    The expected type comes from property 'quests' which is declared here on type 'Campaign'
+
+client/src/lib/sw5e/species.ts:194:7 - error TS2561: Object literal may only specify known properties, but 'Strength' does not exist in type '{ strength?: number | undefined; dexterity?: number | undefined; constitution?: number | undefined; intelligence?: number | undefined; wisdom?: number | undefined; charisma?: number | undefined; any?: number | undefined; }'. Did you mean to write 'strength'?
+
+194       Strength: 1,
+          ~~~~~~~~
+
+  client/src/lib/sw5e/species.ts:7:3
+    7   abilityScoreIncrease: {
+        ~~~~~~~~~~~~~~~~~~~~
+    The expected type comes from property 'abilityScoreIncrease' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:214:7 - error TS2561: Object literal may only specify known properties, but 'Dexterity' does not exist in type '{ strength?: number | undefined; dexterity?: number | undefined; constitution?: number | undefined; intelligence?: number | undefined; wisdom?: number | undefined; charisma?: number | undefined; any?: number | undefined; }'. Did you mean to write 'dexterity'?
+
+214       Dexterity: 2,
+          ~~~~~~~~~
+
+  client/src/lib/sw5e/species.ts:7:3
+    7   abilityScoreIncrease: {
+        ~~~~~~~~~~~~~~~~~~~~
+    The expected type comes from property 'abilityScoreIncrease' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:234:7 - error TS2561: Object literal may only specify known properties, but 'Strength' does not exist in type '{ strength?: number | undefined; dexterity?: number | undefined; constitution?: number | undefined; intelligence?: number | undefined; wisdom?: number | undefined; charisma?: number | undefined; any?: number | undefined; }'. Did you mean to write 'strength'?
+
+234       Strength: 2,
+          ~~~~~~~~
+
+  client/src/lib/sw5e/species.ts:7:3
+    7   abilityScoreIncrease: {
+        ~~~~~~~~~~~~~~~~~~~~
+    The expected type comes from property 'abilityScoreIncrease' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:255:7 - error TS2561: Object literal may only specify known properties, but 'Constitution' does not exist in type '{ strength?: number | undefined; dexterity?: number | undefined; constitution?: number | undefined; intelligence?: number | undefined; wisdom?: number | undefined; charisma?: number | undefined; any?: number | undefined; }'. Did you mean to write 'constitution'?
+
+255       Constitution: 2,
+          ~~~~~~~~~~~~
+
+  client/src/lib/sw5e/species.ts:7:3
+    7   abilityScoreIncrease: {
+        ~~~~~~~~~~~~~~~~~~~~
+    The expected type comes from property 'abilityScoreIncrease' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:276:7 - error TS2561: Object literal may only specify known properties, but 'Dexterity' does not exist in type '{ strength?: number | undefined; dexterity?: number | undefined; constitution?: number | undefined; intelligence?: number | undefined; wisdom?: number | undefined; charisma?: number | undefined; any?: number | undefined; }'. Did you mean to write 'dexterity'?
+
+276       Dexterity: 1,
+          ~~~~~~~~~
+
+  client/src/lib/sw5e/species.ts:7:3
+    7   abilityScoreIncrease: {
+        ~~~~~~~~~~~~~~~~~~~~
+    The expected type comes from property 'abilityScoreIncrease' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:299:7 - error TS2561: Object literal may only specify known properties, but 'Wisdom' does not exist in type '{ strength?: number | undefined; dexterity?: number | undefined; constitution?: number | undefined; intelligence?: number | undefined; wisdom?: number | undefined; charisma?: number | undefined; any?: number | undefined; }'. Did you mean to write 'wisdom'?
+
+299       Wisdom: 2,
+          ~~~~~~
+
+  client/src/lib/sw5e/species.ts:7:3
+    7   abilityScoreIncrease: {
+        ~~~~~~~~~~~~~~~~~~~~
+    The expected type comes from property 'abilityScoreIncrease' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:321:7 - error TS2561: Object literal may only specify known properties, but 'Dexterity' does not exist in type '{ strength?: number | undefined; dexterity?: number | undefined; constitution?: number | undefined; intelligence?: number | undefined; wisdom?: number | undefined; charisma?: number | undefined; any?: number | undefined; }'. Did you mean to write 'dexterity'?
+
+321       Dexterity: 2,
+          ~~~~~~~~~
+
+  client/src/lib/sw5e/species.ts:7:3
+    7   abilityScoreIncrease: {
+        ~~~~~~~~~~~~~~~~~~~~
+    The expected type comes from property 'abilityScoreIncrease' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:342:7 - error TS2561: Object literal may only specify known properties, but 'Strength' does not exist in type '{ strength?: number | undefined; dexterity?: number | undefined; constitution?: number | undefined; intelligence?: number | undefined; wisdom?: number | undefined; charisma?: number | undefined; any?: number | undefined; }'. Did you mean to write 'strength'?
+
+342       Strength: 2,
+          ~~~~~~~~
+
+  client/src/lib/sw5e/species.ts:7:3
+    7   abilityScoreIncrease: {
+        ~~~~~~~~~~~~~~~~~~~~
+    The expected type comes from property 'abilityScoreIncrease' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:2034:7 - error TS2322: Type '"Normal (Force Sense)"' is not assignable to type '"Superior Darkvision" | "Normal" | "Darkvision"'.
+
+2034       type: "Normal (Force Sense)",
+           ~~~~
+
+  client/src/lib/sw5e/species.ts:27:5
+    27     type: "Normal" | "Darkvision" | "Superior Darkvision";
+           ~~~~
+    The expected type comes from property 'type' which is declared here on type '{ type: "Superior Darkvision" | "Normal" | "Darkvision"; range?: number | undefined; }'
+
+client/src/lib/sw5e/species.ts:2137:5 - error TS2322: Type '"Tall, Thin"' is not assignable to type '"Small" | "Medium" | "Large"'.
+
+2137     size: "Tall, Thin",
+         ~~~~
+
+  client/src/lib/sw5e/species.ts:16:3
+    16   size: "Small" | "Medium" | "Large";
+         ~~~~
+    The expected type comes from property 'size' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:2355:5 - error TS2322: Type '"Tall, Thin"' is not assignable to type '"Small" | "Medium" | "Large"'.
+
+2355     size: "Tall, Thin",
+         ~~~~
+
+  client/src/lib/sw5e/species.ts:16:3
+    16   size: "Small" | "Medium" | "Large";
+         ~~~~
+    The expected type comes from property 'size' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:2382:5 - error TS2322: Type '"Tall"' is not assignable to type '"Small" | "Medium" | "Large"'.
+
+2382     size: "Tall",
+         ~~~~
+
+  client/src/lib/sw5e/species.ts:16:3
+    16   size: "Small" | "Medium" | "Large";
+         ~~~~
+    The expected type comes from property 'size' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:2417:7 - error TS2353: Object literal may only specify known properties, and '"any one"' does not exist in type '{ strength?: number | undefined; dexterity?: number | undefined; constitution?: number | undefined; intelligence?: number | undefined; wisdom?: number | undefined; charisma?: number | undefined; any?: number | undefined; }'.
+
+2417       "any one": 1,
+           ~~~~~~~~~
+
+  client/src/lib/sw5e/species.ts:7:3
+    7   abilityScoreIncrease: {
+        ~~~~~~~~~~~~~~~~~~~~
+    The expected type comes from property 'abilityScoreIncrease' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:2548:7 - error TS2353: Object literal may only specify known properties, and '"strength or dexterity"' does not exist in type '{ strength?: number | undefined; dexterity?: number | undefined; constitution?: number | undefined; intelligence?: number | undefined; wisdom?: number | undefined; charisma?: number | undefined; any?: number | undefined; }'.
+
+2548       "strength or dexterity": 1,
+           ~~~~~~~~~~~~~~~~~~~~~~~
+
+  client/src/lib/sw5e/species.ts:7:3
+    7   abilityScoreIncrease: {
+        ~~~~~~~~~~~~~~~~~~~~
+    The expected type comes from property 'abilityScoreIncrease' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:2612:7 - error TS2353: Object literal may only specify known properties, and '"strength or dexterity"' does not exist in type '{ strength?: number | undefined; dexterity?: number | undefined; constitution?: number | undefined; intelligence?: number | undefined; wisdom?: number | undefined; charisma?: number | undefined; any?: number | undefined; }'.
+
+2612       "strength or dexterity": 1,
+           ~~~~~~~~~~~~~~~~~~~~~~~
+
+  client/src/lib/sw5e/species.ts:7:3
+    7   abilityScoreIncrease: {
+        ~~~~~~~~~~~~~~~~~~~~
+    The expected type comes from property 'abilityScoreIncrease' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:2680:7 - error TS2353: Object literal may only specify known properties, and '"any one"' does not exist in type '{ strength?: number | undefined; dexterity?: number | undefined; constitution?: number | undefined; intelligence?: number | undefined; wisdom?: number | undefined; charisma?: number | undefined; any?: number | undefined; }'.
+
+2680       "any one": 1,
+           ~~~~~~~~~
+
+  client/src/lib/sw5e/species.ts:7:3
+    7   abilityScoreIncrease: {
+        ~~~~~~~~~~~~~~~~~~~~
+    The expected type comes from property 'abilityScoreIncrease' which is declared here on type 'Species'
+
+client/src/lib/sw5e/species.ts:2854:7 - error TS2353: Object literal may only specify known properties, and '"any two"' does not exist in type '{ strength?: number | undefined; dexterity?: number | undefined; constitution?: number | undefined; intelligence?: number | undefined; wisdom?: number | undefined; charisma?: number | undefined; any?: number | undefined; }'.
+
+2854       "any two": 1,
+           ~~~~~~~~~
+
+  client/src/lib/sw5e/species.ts:7:3
+    7   abilityScoreIncrease: {
+        ~~~~~~~~~~~~~~~~~~~~
+    The expected type comes from property 'abilityScoreIncrease' which is declared here on type 'Species'
+
+client/src/pages/CampaignView.tsx:41:19 - error TS2345: Argument of type '{}' is not assignable to parameter of type 'Campaign'.
+  Type '{}' is missing the following properties from type 'Campaign': id, name, description, characterId, and 4 more.
+
+41       setCampaign(data);
+                     ~~~~
+
+client/src/pages/CharacterManagement.tsx:45:20 - error TS2345: Argument of type '{}' is not assignable to parameter of type 'Character'.
+  Type '{}' is missing the following properties from type 'Character': id, name, species, class, and 16 more.
+
+45       setCharacter(data);
+                      ~~~~
+
+client/src/pages/GameBoard.tsx:47:20 - error TS2345: Argument of type '{}' is not assignable to parameter of type 'Campaign'.
+  Type '{}' is missing the following properties from type 'Campaign': id, name, description, characterId, and 4 more.
+
+47       loadCampaign(data);
+                      ~~~~
+
+client/src/pages/GameBoard.tsx:50:16 - error TS2339: Property 'startingLocation' does not exist on type '{}'.
+
+50       if (data.startingLocation) {
+                  ~~~~~~~~~~~~~~~~
+
+client/src/pages/GameBoard.tsx:51:33 - error TS2339: Property 'startingLocation' does not exist on type '{}'.
+
+51         setCurrentLocation(data.startingLocation);
+                                   ~~~~~~~~~~~~~~~~
+
+client/src/pages/GameBoard.tsx:75:31 - error TS2345: Argument of type '{ id: number; name: string; hp: number; maxHp: number; initiative: number; }[]' is not assignable to parameter of type 'Omit<Combatant, "isPlayer">[]'.
+  Property 'armorClass' is missing in type '{ id: number; name: string; hp: number; maxHp: number; initiative: number; }' but required in type 'Omit<Combatant, "isPlayer">'.
+
+75     initiateCombat(character, enemies);
+                                 ~~~~~~~
+
+  client/src/lib/stores/useCombat.ts:11:3
+    11   armorClass: number;
+         ~~~~~~~~~~
+    'armorClass' is declared here.
+
+server/vite.ts:42:5 - error TS2322: Type '{ middlewareMode: boolean; hmr: { server: Server<typeof IncomingMessage, typeof ServerResponse>; }; allowedHosts: boolean; }' is not assignable to type 'ServerOptions'.
+  Types of property 'allowedHosts' are incompatible.
+    Type 'boolean' is not assignable to type 'true | string[] | undefined'.
+
+42     server: serverOptions,
+       ~~~~~~
+
+
+Found 50 errors in 18 files.
+
+Errors  Files
+     1  client/src/components/Campaign/CampaignCard.tsx:6
+     1  client/src/components/Campaign/CampaignCreator.tsx:81
+     1  client/src/components/CharacterCreation/AbilityScores.tsx:53
+     1  client/src/components/CharacterCreation/BasicInfo.tsx:4
+     6  client/src/components/CharacterCreation/CharacterCreationForm.tsx:22
+     2  client/src/components/CharacterCreation/ForcePowersSelection.tsx:45
+     3  client/src/components/CharacterCreation/SpeciesSelection.tsx:39
+     1  client/src/components/CharacterManagement/CharacterSheet.tsx:152
+     2  client/src/components/Combat/CombatTracker.tsx:251
+     1  client/src/components/Map/GalacticMap3D.tsx:158
+     1  client/src/components/Map/SystemMap/OrbitalPath.tsx:44
+     5  client/src/components/ui/interface.tsx:6
+     1  client/src/lib/llm/campaignGenerator.ts:39
+    17  client/src/lib/sw5e/species.ts:194
+     1  client/src/pages/CampaignView.tsx:41
+     1  client/src/pages/CharacterManagement.tsx:45
+     4  client/src/pages/GameBoard.tsx:47
+     1  server/vite.ts:42
