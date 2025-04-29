@@ -4,7 +4,7 @@ import { rollDice } from "@/lib/sw5e/dice";
 import {
   StarshipCombatManager,
   VehicleCombatManager,
-} from "@/lib/sw5e/combatManagers";
+} from "../sw5e/combatmanagers";
 
 const shipManager = new StarshipCombatManager();
 const vehicleManager = new VehicleCombatManager();
