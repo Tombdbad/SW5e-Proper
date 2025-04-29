@@ -1,0 +1,75 @@
+I have a Star Wars 5e (SW5e) content library and React/Next.js-based character sheet app. Please scan all relevant files and generate a comprehensive **developer-friendly content report** for integration. This report should be structured to support dynamic loading and reuse within the app's React components and state management (Zustand, etc.).
+
+### Include the following categories in detail:
+
+## Force Powers
+- `name`
+- `level`
+- `castingTime`
+- `range`
+- `duration`
+- `description`
+- `alignment` (Light/Dark/Universal)
+- `actionType` (Action, Bonus, Reaction, etc.)
+
+## Tech Powers
+- Same fields as Force Powers, plus:
+- `overchargeEffects` (optional structured bonuses when cast at higher levels)
+- `techClassTags` (classes that can use the tech power)
+
+## Classes
+- `name`
+- `hitDie`
+- `primaryAbilities`
+- `savingThrowProficiencies`
+- `skillProficiencies`
+- `armorProficiencies`
+- `weaponProficiencies`
+- `features` (list of `{ level, name, description }`)
+- `powerCasting` (if class is Force/Tech caster: casting type, save DC calc, power point table)
+
+## Species
+- `name`
+- `abilityScoreBonuses`
+- `traits` (with name + description)
+- `languages`
+
+## Backgrounds
+- `name`
+- `skills`
+- `tools`
+- `languages`
+- `equipment`
+- `feature` (name + description)
+
+## Feats & Talents
+- `name`
+- `prerequisites`
+- `effects` (bonuses, new mechanics, etc.)
+- `description`
+
+## Weapons & Equipment
+- `name`
+- `type` (weapon, armor, gear, tool)
+- `category` (e.g., blaster, melee, light armor)
+- `damage` (dice, type)
+- `properties` (array)
+- `weight`
+- `description`
+- `cost`
+
+## Other Mechanics
+- Force/Tech Point rules per class
+- Power level scaling tables
+- Long rest/short rest rules
+- Combat actions list (with mechanics)
+- Resource recovery rules
+- Exhaustion, Conditions, Death saves
+
+---
+
+### Additional Info:
+- Output should be valid **JSON or structured Markdown**, suitable for loading into a Next.js app or serialized into a database.
+- Nest the content appropriately and preserve relationships (e.g., Class ⟶ Features, Tech Power ⟶ Overcharge).
+- If possible, include file paths for traceability (e.g., where each power or feature was defined).
+- This content will be consumed by a React component system using TypeScript interfaces like `ForcePower`, `TechPower`, `Character`, etc., and stored in a centralized state via Zustand.

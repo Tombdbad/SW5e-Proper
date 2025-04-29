@@ -596,7 +596,11 @@
                       </Card>
                     </TabsContent>
 
-                    {/* Combat Tab */}
+                    {/* import { parseCharacterData } from './lib/sw5e/parser';
+import { generateObjectives } from './lib/sw5e/objectiveGenerator';
+
+const parsedData = parseCharacterData(character);
+const objectives = generateObjectives(character);Combat Tab */}
                     <TabsContent value="combat" className="space-y-6">
                       <Card className="bg-gray-700">
                         <CardHeader>
