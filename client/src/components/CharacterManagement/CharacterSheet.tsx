@@ -1,4 +1,4 @@
-                        import { useState } from "react";
+import { useState } from "react";
                         import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
                         import { Input } from "@/components/ui/input";
                         import { Textarea } from "@/components/ui/textarea";
@@ -35,7 +35,7 @@
                           maxForcePoints: number;
                           currentForcePoints: number;
                           armorClass: number;
-                          speed: number;
+                          speed: number | {walk: number, swim?: number};
                           backstory?: string;
                           startingLocation?: string;
                           notes?: string;
@@ -298,7 +298,12 @@
                                     <span className="text-gray-400">Force Points:</span> {character.currentForcePoints}/{character.maxForcePoints}
                                   </div>
                                   <div>
-                                    <span className="text-gray-400">Speed:</span> {character.speed}
+                                    <span className="text-gray-400">Speed:</span> 
+                                    {character.speed && typeof character.speed === 'object' 
+                                      ? Object.entries(character.speed)
+                                          .map(([type, value]) => `${type}: ${value}`)
+                                          .join(', ')
+                                      : character.speed}
                                   </div>
                                 </div>
                               </div>
@@ -463,7 +468,13 @@
 
                                               <div className="bg-gray-800 p-3 rounded-lg text-center">
                                                 <div className="uppercase text-xs mb-1">Speed</div>
-                                                <div className="text-2xl font-bold">{character.speed || 30}</div>
+                                                <div className="text-2xl font-bold">
+                                                  {character.speed && typeof character.speed === 'object' 
+                                                    ? Object.entries(character.speed)
+                                                        .map(([type, value]) => `${type}: ${value}`)
+                                                        .join(', ')
+                                                    : character.speed}
+                                                </div>
                                               </div>
                                             </div>
 
@@ -765,7 +776,7 @@
                                               </div>
                                             </div>
                                           ))}
-                                        </div>
+        </div>
                                       ) : (
                                         <div className="text-center p-4 text-gray-400">
                                           No force powers added. Add force powers to your character to see them here.
