@@ -1,0 +1,67 @@
+# App Architecture Analysis Request for Character Creator Integration
+
+## Objective
+I need a comprehensive analysis of my application's architecture and database structure to integrate a new "character creator" feature that will work seamlessly with the existing codebase and data model.
+
+## Essential Information to Provide
+
+### 1. Overall Application Structure
+- Identify the main directories and their purposes
+- Detail the application's entry points
+- Explain the application's runtime configuration
+- Describe the overall architectural pattern (MVC, microservices, etc.)
+- List key application dependencies and libraries
+
+### 2. Database Structure
+- Provide a complete schema of all existing tables and their relationships
+- Identify primary/foreign key relationships
+- Detail all columns, data types, and constraints
+- Explain any existing database indexes or optimization strategies
+- Map out how data flows through the application
+
+### 3. Relevant Data Models
+- Identify any existing models related to users, characters, or game entities
+- Explain how these models are structured and interconnected
+- Detail validation rules applied to these models
+- Describe how these models interact with the database
+
+### 4. Authentication System
+- Explain how users are authenticated
+- Detail how user sessions are managed
+- Describe permission and role systems
+- Explain how character ownership would be associated with users
+
+### 5. Frontend Architecture
+- Identify UI frameworks or libraries used
+- Explain component structure and state management
+- Detail existing UI patterns for forms and data visualization
+- Describe routing and navigation systems
+
+### 6. Backend API Structure
+- Map out existing API endpoints and their purposes
+- Detail request/response formats and conventions
+- Explain error handling strategies
+- Describe any API versioning or documentation systems
+
+### 7. Development Workflow
+- Explain how new features are normally integrated
+- Describe testing frameworks and practices
+- Detail any CI/CD processes
+- Explain environment management (development, staging, production)
+
+## Format Requirements
+- Present a comprehensive technical analysis formatted for easy reference
+- Include code snippets of critical implementation patterns
+- Provide visual diagrams of database relationships where helpful
+- Organize information hierarchically with clear section headers
+- Focus on providing factual details rather than opinions or suggestions
+
+## Additional Context
+The "character creator" feature will need to allow users to:
+1. Create new character profiles
+2. Customize character attributes and appearances
+3. Save characters to the database
+4. Associate characters with user accounts
+5. Retrieve and edit existing characters
+
+Please analyze the codebase thoroughly so I can understand how to integrate this new feature while maintaining consistency with existing patterns and optimizing performance with your current database structure.
