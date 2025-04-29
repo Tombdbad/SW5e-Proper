@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { Campaign } from '../../../shared/schema';
 import { motion } from 'framer-motion';
-import { starSystems } from '@/lib/sw5e/locations';
+import { starSystems } from '@/lib/sw5e/starSystems';
 
 // Map for translating era values to human-readable text
 const eraMap: Record<string, string> = {

@@ -23,7 +23,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import TranslucentPane from '@/components/ui/TranslucentPane';
-import { starSystems } from '@/lib/sw5e/locations';
+import { starSystems } from '@/lib/sw5e/starSystems';
+import { npcs } from '@/lib/sw5e/npcs';
+import { factions } from '@/lib/sw5e/locations';
+import { monsters } from '@/lib/sw5e/monsters';
 import { queryClient } from '@/lib/queryClient';
 import { motion } from 'framer-motion';
 

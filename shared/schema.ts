@@ -216,6 +216,10 @@ export const campaigns = pgTable("campaigns", {
   // SW5E Specific
   forcePresence: json("force_presence"), // { lightSideInfluence, darkSideInfluence, significantForceEvents }
   starships: json("starships"), // [ { name, class, stats, crew, location, status } ]
+  techLevel: json("tech_level"), // Technology level and availability
+  factionInfluence: json("faction_influence"), // [ { factionId, influence, territory } ]
+  planetaryConditions: json("planetary_conditions"), // Environmental and atmospheric conditions
+  availableResources: json("available_resources"), // Resources and trade goods
   specialRules: json("special_rules"), // House rules or campaign-specific mechanics
 });
 

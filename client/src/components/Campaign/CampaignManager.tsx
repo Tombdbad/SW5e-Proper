@@ -17,7 +17,12 @@ import { toast } from "sonner";
 import { useMap } from "@/lib/stores/useMap";
 import { useCampaign } from "@/lib/stores/useCampaign";
 import { npcs } from "@/lib/sw5e/npcs";
-import { starSystems, planets } from "@/lib/sw5e/locations";
+import { starSystems } from "@/lib/sw5e/starSystems";
+import { planets } from "@/lib/sw5e/locations";
+import { monsters } from "@/lib/sw5e/monsters";
+import { items } from "@/lib/sw5e/items";
+import { vehicles } from "@/lib/sw5e/vehicles";
+import { starships } from "@/lib/sw5e/starships";
 import TranslucentPane from "@/components/ui/TranslucentPane";
 
 interface CampaignManagerProps {
