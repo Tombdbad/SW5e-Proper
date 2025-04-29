@@ -253,5 +253,127 @@ export const species: Species[] = [
     languages: ["Galactic Basic", "Advozse"],
     source: "UCSC",
     commonClasses: ["Scholar", "Consular"]
+  },
+  {
+    id: "aleena",
+    name: "Aleena",
+    summary: "Small, agile humanoids known for their acrobatic abilities",
+    description: "Known for their exceptional agility and grace. Their culture often values physical dexterity and performance.",
+    abilityScoreIncrease: {
+      dexterity: 2,
+      charisma: 1
+    },
+    size: "Small",
+    speed: {
+      walk: 35
+    },
+    vision: {
+      type: "Normal"
+    },
+    traits: [
+      {
+        name: "Aleena Agility",
+        description: "You have advantage on Acrobatics checks."
+      },
+      {
+        name: "Natural Acrobat",
+        description: "You gain proficiency in the Acrobatics skill."
+      }
+    ],
+    languages: ["Galactic Basic", "Aleena"],
+    source: "UCSC",
+    commonClasses: ["Operative", "Scout"]
+  },
+  {
+    id: "anomid",
+    name: "Anomid",
+    summary: "Quiet and thoughtful humanoids with unique communication methods",
+    description: "Quiet and thoughtful, relying on subtle communication. Often found in roles requiring patience and observation.",
+    abilityScoreIncrease: {
+      intelligence: 2,
+      wisdom: 1
+    },
+    size: "Medium",
+    speed: {
+      walk: 30
+    },
+    vision: {
+      type: "Normal"
+    },
+    traits: [
+      {
+        name: "Anomid Communication",
+        description: "You can communicate subtly with other Anomids through facial plate expressions."
+      },
+      {
+        name: "Mental Resistance",
+        description: "You have advantage on saving throws against being charmed."
+      }
+    ],
+    languages: ["Galactic Basic", "Anomid"],
+    source: "UCSC",
+    commonClasses: ["Scholar", "Sentinel"]
+  },
+  {
+    id: "arcona",
+    name: "Arcona",
+    summary: "Amphibious humanoids with thick protective hides",
+    description: "Robust and adapted to aquatic environments. Often possess a straightforward and practical nature.",
+    abilityScoreIncrease: {
+      strength: 2,
+      constitution: 1
+    },
+    size: "Medium",
+    speed: {
+      walk: 30,
+      swim: 30
+    },
+    vision: {
+      type: "Normal"
+    },
+    traits: [
+      {
+        name: "Amphibious",
+        description: "You can breathe both air and water."
+      },
+      {
+        name: "Thick Hide",
+        description: "Your thick hide grants you a +1 bonus to your AC."
+      }
+    ],
+    languages: ["Galactic Basic", "Arconese"],
+    source: "UCSC",
+    commonClasses: ["Warrior", "Guardian"]
+  },
+  {
+    id: "ardennian",
+    name: "Ardennian",
+    summary: "Small, agile climbers with enhanced senses",
+    description: "Agile and resourceful, with a strong sense of smell. Their small size and climbing ability often make them adept at navigating tight spaces.",
+    abilityScoreIncrease: {
+      dexterity: 2,
+      intelligence: 1
+    },
+    size: "Small",
+    speed: {
+      walk: 25,
+      climb: 25
+    },
+    vision: {
+      type: "Normal"
+    },
+    traits: [
+      {
+        name: "Keen Smell",
+        description: "You have advantage on Perception checks that rely on smell."
+      },
+      {
+        name: "Natural Climber",
+        description: "You have a climbing speed equal to your walking speed."
+      }
+    ],
+    languages: ["Galactic Basic", "Ardennian"],
+    source: "UCSC",
+    commonClasses: ["Scout", "Operative"]
   }
 ];
