@@ -8,7 +8,14 @@ import { Separator } from "@/components/ui/separator";
 import TranslucentPane from "@/components/ui/TranslucentPane";
 
 // Import SW5E data and components
-import { starSystems } from "@/lib/sw5e/locations";
+import { species } from "@/lib/sw5e/species";
+import { classes } from "@/lib/sw5e/classes";
+import { backgrounds } from "@/lib/sw5e/backgrounds";
+import { conditions } from "@/lib/sw5e/conditions";
+import { skills } from "@/lib/sw5e/skills";
+import { forcePowers } from "@/lib/sw5e/forcePowers";
+import { techPowers } from "@/lib/sw5e/techPowers";
+import { feats } from "@/lib/sw5e/feats";
 import SpeciesSelection from "./SpeciesSelection";
 import ClassSelection from "./ClassSelection";
 import AbilityScores from "./AbilityScores";

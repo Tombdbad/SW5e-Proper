@@ -4,15 +4,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox";
 import { classes } from "@/lib/sw5e/classes";
 
-export default function ClassSelection({ form, onSelect }: { form: any; onSelect?: (category: string, value: string) => void }) {
+export default function ClassSelection({ form, onSelect }: { form: any; onSelect?: (category: string, value: any) => void }) {
   const handleClassChange = (value: string) => {
     form.setValue("class", value);
+    const selectedClass = classes.find(cls => cls.id === value);
+    onSelect?.("class", selectedClass);
   };
 
   return (
     <div className="space-y-6">
       <div className="text-lg font-medium">Choose your character's class:</div>
-      
+
       <FormField
         control={form.control}
         name="class"
@@ -59,7 +61,7 @@ export default function ClassSelection({ form, onSelect }: { form: any; onSelect
                             <span className="font-semibold">Primary Ability: </span>
                             {classOption.primaryAbility.join(", ")}
                           </div>
-                          
+
                           <div>
                             <span className="font-semibold">Class Skills:</span>
                             <div className="grid grid-cols-2 mt-1">

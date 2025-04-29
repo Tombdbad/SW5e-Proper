@@ -1,4 +1,3 @@
-
 import { useEffect } from 'react';
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -66,7 +65,7 @@ export default function SpeciesSelection({ form, onSelect }: SpeciesSelectionPro
   return (
     <div className="space-y-6">
       <div className="text-lg font-medium text-yellow-400">Choose your character's species:</div>
-      
+
       <FormField
         control={form.control}
         name="species"
@@ -92,7 +91,7 @@ export default function SpeciesSelection({ form, onSelect }: SpeciesSelectionPro
                         <CardTitle>{speciesOption.name}</CardTitle>
                         <CardDescription>{speciesOption.description}</CardDescription>
                       </CardHeader>
-                      
+
                       <CardContent>
                         <div className="space-y-2 text-sm">
                           <div>
