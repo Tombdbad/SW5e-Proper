@@ -108,7 +108,9 @@ export default function SpeciesSelection({ form, onSelect }: SpeciesSelectionPro
                           </div>
                           <div>
                             <span className="font-semibold text-yellow-400">Speed:</span>{' '}
-                            {speciesOption.speed} ft.
+                            {Object.entries(speciesOption.speed)
+                              .map(([type, value]) => `${type} ${value} ft.`)
+                              .join(', ')}
                           </div>
                         </div>
                       </CardContent>
