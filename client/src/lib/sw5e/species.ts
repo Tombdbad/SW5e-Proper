@@ -19,6 +19,9 @@ export interface Species {
     swim?: number;
     climb?: number;
     fly?: number;
+    glide?: number;
+    slither?: number;
+    leap?: number;
   };
   vision: {
     type: "Normal" | "Darkvision" | "Superior Darkvision";
@@ -34,6 +37,142 @@ export interface Species {
 }
 
 export const species: Species[] = [
+  {
+    id: "abyssin",
+    name: "Abyssin",
+    summary: "Tough and resilient humanoids with exceptional survival instincts",
+    description: "Known for their tough hides and resilience. Often seen as solitary and stoic individuals.",
+    abilityScoreIncrease: {
+      constitution: 2,
+      strength: 1
+    },
+    size: "Medium",
+    speed: { walk: 30 },
+    vision: {
+      type: "Darkvision",
+      range: 60
+    },
+    traits: [
+      {
+        name: "Natural Armor",
+        description: "Your tough hide grants you a +1 bonus to your AC."
+      },
+      {
+        name: "Unblinking Gaze",
+        description: "You have advantage on saving throws against being blinded."
+      }
+    ],
+    languages: ["Galactic Basic", "Abyssin"],
+    source: "UCSC",
+    commonClasses: ["Warrior", "Guardian"]
+  },
+  {
+    id: "advozse",
+    name: "Advozse",
+    summary: "Telepathic humanoids with keen intellectual abilities",
+    description: "Highly intelligent and often contemplative. Their telepathic abilities shape their communication and social interactions.",
+    abilityScoreIncrease: {
+      intelligence: 2,
+      wisdom: 1
+    },
+    size: "Medium",
+    speed: { walk: 30 },
+    vision: { type: "Normal" },
+    traits: [
+      {
+        name: "Advozse Telepathy",
+        description: "You can communicate telepathically with any creature within 30 feet that shares a language with you."
+      },
+      {
+        name: "Keen Intellect",
+        description: "You gain proficiency in the Investigation skill."
+      }
+    ],
+    languages: ["Galactic Basic", "Advozse"],
+    source: "UCSC",
+    commonClasses: ["Scholar", "Consular"]
+  },
+  {
+    id: "aleena",
+    name: "Aleena",
+    summary: "Small, agile humanoids known for their acrobatic abilities",
+    description: "Known for their exceptional agility and grace. Their culture often values physical dexterity and performance.",
+    abilityScoreIncrease: {
+      dexterity: 2,
+      charisma: 1
+    },
+    size: "Small",
+    speed: { walk: 35 },
+    vision: { type: "Normal" },
+    traits: [
+      {
+        name: "Aleena Agility",
+        description: "You have advantage on Acrobatics checks."
+      },
+      {
+        name: "Natural Acrobat",
+        description: "You gain proficiency in the Acrobatics skill."
+      }
+    ],
+    languages: ["Galactic Basic", "Aleena"],
+    source: "UCSC",
+    commonClasses: ["Operative", "Scout"]
+  },
+  {
+    id: "anomid",
+    name: "Anomid",
+    summary: "Quiet and thoughtful humanoids with unique communication methods",
+    description: "Quiet and thoughtful, relying on subtle communication. Often found in roles requiring patience and observation.",
+    abilityScoreIncrease: {
+      intelligence: 2,
+      wisdom: 1
+    },
+    size: "Medium",
+    speed: { walk: 30 },
+    vision: { type: "Normal" },
+    traits: [
+      {
+        name: "Anomid Communication",
+        description: "You can communicate subtly with other Anomids through facial plate expressions."
+      },
+      {
+        name: "Mental Resistance",
+        description: "You have advantage on saving throws against being charmed."
+      }
+    ],
+    languages: ["Galactic Basic", "Anomid"],
+    source: "UCSC",
+    commonClasses: ["Scholar", "Sentinel"]
+  },
+  {
+    id: "arcona",
+    name: "Arcona",
+    summary: "Amphibious humanoids with thick protective hides",
+    description: "Robust and adapted to aquatic environments. Often possess a straightforward and practical nature.",
+    abilityScoreIncrease: {
+      strength: 2,
+      constitution: 1
+    },
+    size: "Medium",
+    speed: {
+      walk: 30,
+      swim: 30
+    },
+    vision: { type: "Normal" },
+    traits: [
+      {
+        name: "Amphibious",
+        description: "You can breathe both air and water."
+      },
+      {
+        name: "Thick Hide",
+        description: "Your thick hide grants you a +1 bonus to your AC."
+      }
+    ],
+    languages: ["Galactic Basic", "Arconese"],
+    source: "UCSC",
+    commonClasses: ["Warrior", "Guardian"]
+  },
   {
     id: "human",
     name: "Human",
@@ -192,158 +331,6 @@ export const species: Species[] = [
     ],
     languages: ["Galactic Basic", "Dosh"],
     source: "Core Rulebook"
-  },
-  {
-    id: "abyssin",
-    name: "Abyssin",
-    summary: "Tough and resilient humanoids with exceptional survival instincts",
-    description: "Known for their tough hides and resilience. Often seen as solitary and stoic individuals.",
-    abilityScoreIncrease: {
-      constitution: 2,
-      strength: 1
-    },
-    size: "Medium",
-    speed: {
-      walk: 30
-    },
-    vision: {
-      type: "Darkvision",
-      range: 60
-    },
-    traits: [
-      {
-        name: "Natural Armor",
-        description: "Your tough hide grants you a +1 bonus to your AC."
-      },
-      {
-        name: "Unblinking Gaze",
-        description: "You have advantage on saving throws against being blinded."
-      }
-    ],
-    languages: ["Galactic Basic", "Abyssin"],
-    source: "UCSC",
-    commonClasses: ["Warrior", "Guardian"]
-  },
-  {
-    id: "advozse",
-    name: "Advozse",
-    summary: "Telepathic humanoids with keen intellectual abilities",
-    description: "Highly intelligent and often contemplative. Their telepathic abilities shape their communication and social interactions.",
-    abilityScoreIncrease: {
-      intelligence: 2,
-      wisdom: 1
-    },
-    size: "Medium",
-    speed: {
-      walk: 30
-    },
-    vision: {
-      type: "Normal"
-    },
-    traits: [
-      {
-        name: "Advozse Telepathy",
-        description: "You can communicate telepathically with any creature within 30 feet that shares a language with you."
-      },
-      {
-        name: "Keen Intellect",
-        description: "You gain proficiency in the Investigation skill."
-      }
-    ],
-    languages: ["Galactic Basic", "Advozse"],
-    source: "UCSC",
-    commonClasses: ["Scholar", "Consular"]
-  },
-  {
-    id: "aleena",
-    name: "Aleena",
-    summary: "Small, agile humanoids known for their acrobatic abilities",
-    description: "Known for their exceptional agility and grace. Their culture often values physical dexterity and performance.",
-    abilityScoreIncrease: {
-      dexterity: 2,
-      charisma: 1
-    },
-    size: "Small",
-    speed: {
-      walk: 35
-    },
-    vision: {
-      type: "Normal"
-    },
-    traits: [
-      {
-        name: "Aleena Agility",
-        description: "You have advantage on Acrobatics checks."
-      },
-      {
-        name: "Natural Acrobat",
-        description: "You gain proficiency in the Acrobatics skill."
-      }
-    ],
-    languages: ["Galactic Basic", "Aleena"],
-    source: "UCSC",
-    commonClasses: ["Operative", "Scout"]
-  },
-  {
-    id: "anomid",
-    name: "Anomid",
-    summary: "Quiet and thoughtful humanoids with unique communication methods",
-    description: "Quiet and thoughtful, relying on subtle communication. Often found in roles requiring patience and observation.",
-    abilityScoreIncrease: {
-      intelligence: 2,
-      wisdom: 1
-    },
-    size: "Medium",
-    speed: {
-      walk: 30
-    },
-    vision: {
-      type: "Normal"
-    },
-    traits: [
-      {
-        name: "Anomid Communication",
-        description: "You can communicate subtly with other Anomids through facial plate expressions."
-      },
-      {
-        name: "Mental Resistance",
-        description: "You have advantage on saving throws against being charmed."
-      }
-    ],
-    languages: ["Galactic Basic", "Anomid"],
-    source: "UCSC",
-    commonClasses: ["Scholar", "Sentinel"]
-  },
-  {
-    id: "arcona",
-    name: "Arcona",
-    summary: "Amphibious humanoids with thick protective hides",
-    description: "Robust and adapted to aquatic environments. Often possess a straightforward and practical nature.",
-    abilityScoreIncrease: {
-      strength: 2,
-      constitution: 1
-    },
-    size: "Medium",
-    speed: {
-      walk: 30,
-      swim: 30
-    },
-    vision: {
-      type: "Normal"
-    },
-    traits: [
-      {
-        name: "Amphibious",
-        description: "You can breathe both air and water."
-      },
-      {
-        name: "Thick Hide",
-        description: "Your thick hide grants you a +1 bonus to your AC."
-      }
-    ],
-    languages: ["Galactic Basic", "Arconese"],
-    source: "UCSC",
-    commonClasses: ["Warrior", "Guardian"]
   },
   {
     id: "ardennian",
