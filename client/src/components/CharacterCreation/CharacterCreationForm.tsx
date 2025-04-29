@@ -1,8 +1,21 @@
 import { useState } from "react";
-import { FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import {
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import TranslucentPane from "@/components/ui/TranslucentPane";
@@ -13,6 +26,10 @@ import { classes } from "@/lib/sw5e/classes";
 import { backgrounds } from "@/lib/sw5e/backgrounds";
 import { conditions } from "@/lib/sw5e/conditions";
 import { skills } from "@/lib/sw5e/skills";
+import { weaponProperties } from "@/lib/sw5e/weaponProperties";
+import { maneuvers } from "@/lib/sw5e/maneuvers";
+import { exploits } from "@/lib/sw5e/exploits";
+import { combatmanagers } from "@/lib/sw5e/combatmanagers";
 import { forcePowers } from "@/lib/sw5e/forcePowers";
 import { techPowers } from "@/lib/sw5e/techPowers";
 import { feats } from "@/lib/sw5e/feats";
@@ -28,7 +45,6 @@ import ArchetypeSelection from "./ArchetypeSelection";
 import { useForm } from "react-hook-form";
 import { CharacterData } from "@/types/CharacterData"; // Assuming this type exists
 
-
 export default function CharacterCreationForm() {
   const [activeTab, setActiveTab] = useState("basic");
   const [characterLevel, setCharacterLevel] = useState(1);
@@ -37,12 +53,23 @@ export default function CharacterCreationForm() {
   const [isSubmitting, setIsSubmitting] = useState(false); // Added state for submission
 
   const alignments = [
-    "Lawful Light", "Neutral Light", "Chaotic Light",
-    "Lawful Balanced", "Neutral Balanced", "Chaotic Balanced",
-    "Lawful Dark", "Neutral Dark", "Chaotic Dark",
+    "Lawful Light",
+    "Neutral Light",
+    "Chaotic Light",
+    "Lawful Balanced",
+    "Neutral Balanced",
+    "Chaotic Balanced",
+    "Lawful Dark",
+    "Neutral Dark",
+    "Chaotic Dark",
   ];
 
-  const { register, handleSubmit, watch, formState: { errors } } = useForm<CharacterData>(); //Added react-hook-form
+  const {
+    register,
+    handleSubmit,
+    watch,
+    formState: { errors },
+  } = useForm<CharacterData>(); //Added react-hook-form
 
   // Get the selected class to determine which power types to show
   const selectedClass = watch("class");
@@ -54,21 +81,21 @@ export default function CharacterCreationForm() {
   const onSubmit = async (data: CharacterData) => {
     setIsSubmitting(true);
     try {
-      console.log('Submitting character data:', data);
-      const response = await fetch('/api/characters', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      console.log("Submitting character data:", data);
+      const response = await fetch("/api/characters", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
       if (!response.ok) {
-        console.error('Failed to create character:', await response.text());
-        throw new Error('Failed to create character');
+        console.error("Failed to create character:", await response.text());
+        throw new Error("Failed to create character");
       }
       const character = await response.json();
-      console.log('Character created successfully:', character);
+      console.log("Character created successfully:", character);
       // Handle successful submission, e.g., redirect
     } catch (error) {
-      console.error('Error submitting character:', error);
+      console.error("Error submitting character:", error);
       // Handle submission error, e.g., display error message
     } finally {
       setIsSubmitting(false);
@@ -76,9 +103,15 @@ export default function CharacterCreationForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)}> {/* Added form submission */}
+    <form onSubmit={handleSubmit(onSubmit)}>
+      {" "}
+      {/* Added form submission */}
       <div className="space-y-6">
-        <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+        <Tabs
+          value={activeTab}
+          onValueChange={handleTabChange}
+          className="w-full"
+        >
           <TabsList className="grid grid-cols-5 mb-6">
             <TabsTrigger value="basic">Basic Info</TabsTrigger>
             <TabsTrigger value="abilities">Abilities</TabsTrigger>
@@ -125,7 +158,10 @@ export default function CharacterCreationForm() {
                           </FormControl>
                           <SelectContent>
                             {Array.from({ length: 20 }, (_, i) => (
-                              <SelectItem key={i + 1} value={(i + 1).toString()}>
+                              <SelectItem
+                                key={i + 1}
+                                value={(i + 1).toString()}
+                              >
                                 Level {i + 1}
                               </SelectItem>
                             ))}
@@ -141,7 +177,10 @@ export default function CharacterCreationForm() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Alignment</FormLabel>
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <Select
+                          onValueChange={field.onChange}
+                          defaultValue={field.value}
+                        >
                           <FormControl>
                             <SelectTrigger>
                               <SelectValue placeholder="Select alignment" />
@@ -160,9 +199,15 @@ export default function CharacterCreationForm() {
                   />
                 </div>
 
-                <SpeciesSelection form={register} onSelect={() => handleTabChange("abilities")} />
+                <SpeciesSelection
+                  form={register}
+                  onSelect={() => handleTabChange("abilities")}
+                />
                 <Separator />
-                <ClassSelection form={register} onSelect={() => handleTabChange("abilities")} />
+                <ClassSelection
+                  form={register}
+                  onSelect={() => handleTabChange("abilities")}
+                />
               </div>
             </TranslucentPane>
           </TabsContent>
@@ -175,7 +220,10 @@ export default function CharacterCreationForm() {
 
           <TabsContent value="background" className="space-y-6">
             <TranslucentPane className="p-6">
-              <BackgroundSelection form={register} onSelect={() => handleTabChange("features")} />
+              <BackgroundSelection
+                form={register}
+                onSelect={() => handleTabChange("features")}
+              />
               <Separator className="my-6" />
               <div className="space-y-4">
                 <FormField
@@ -219,7 +267,7 @@ export default function CharacterCreationForm() {
             <TranslucentPane className="p-6">
               <ArchetypeSelection
                 form={register}
-                characterClass={selectedClass || ''}
+                characterClass={selectedClass || ""}
                 characterLevel={characterLevel}
               />
 
@@ -228,7 +276,7 @@ export default function CharacterCreationForm() {
               <FeatsSelection
                 form={register}
                 availableFeats={Math.floor(characterLevel / 4) + 1}
-                characterClass={selectedClass || ''}
+                characterClass={selectedClass || ""}
               />
 
               {showForcePowers && (
@@ -238,8 +286,13 @@ export default function CharacterCreationForm() {
                     form={register}
                     availablePowers={characterLevel + 1}
                     maxPowerLevel={Math.min(5, Math.ceil(characterLevel / 4))}
-                    alignment={watch("alignment")?.includes("Light") ? "Light" :
-                              watch("alignment")?.includes("Dark") ? "Dark" : "Neutral"}
+                    alignment={
+                      watch("alignment")?.includes("Light")
+                        ? "Light"
+                        : watch("alignment")?.includes("Dark")
+                          ? "Dark"
+                          : "Neutral"
+                    }
                   />
                 </>
               )}
@@ -263,8 +316,10 @@ export default function CharacterCreationForm() {
             </TranslucentPane>
           </TabsContent>
         </Tabs>
-        <button type="submit" disabled={isSubmitting}> {/* Added submit button */}
-          {isSubmitting ? 'Submitting...' : 'Submit'}
+        <button type="submit" disabled={isSubmitting}>
+          {" "}
+          {/* Added submit button */}
+          {isSubmitting ? "Submitting..." : "Submit"}
         </button>
       </div>
     </form>

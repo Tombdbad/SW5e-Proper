@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
-import { useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
+import React, { useState } from "react";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 import {
   Form,
   FormControl,
@@ -12,23 +12,23 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import TranslucentPane from '@/components/ui/TranslucentPane';
-import { starSystems } from '@/lib/sw5e/starSystems';
-import { npcs } from '@/lib/sw5e/npcs';
-import { factions } from '@/lib/sw5e/locations';
-import { monsters } from '@/lib/sw5e/monsters';
-import { queryClient } from '@/lib/queryClient';
-import { motion } from 'framer-motion';
+} from "@/components/ui/select";
+import TranslucentPane from "@/components/ui/TranslucentPane";
+import { starSystems } from "@/lib/sw5e/starSystems";
+import { npcs } from "@/lib/sw5e/npcs";
+import { factions } from "@/lib/sw5e/locations";
+import { monsters } from "@/lib/sw5e/monsters";
+import { queryClient } from "@/lib/queryClient";
+import { motion } from "framer-motion";
 
 const campaignSchema = z.object({
   name: z.string().min(2, {
@@ -46,6 +46,9 @@ const campaignSchema = z.object({
   threat: z.string({
     required_error: "Please select a primary threat.",
   }),
+  factionAlignment: z.string().optional(),
+  techLevel: z.string().optional(),
+  forcePresence: z.string().optional(),
 });
 
 type CampaignFormValues = z.infer<typeof campaignSchema>;
@@ -53,40 +56,40 @@ type CampaignFormValues = z.infer<typeof campaignSchema>;
 export default function CampaignCreator() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
-  
+
   const form = useForm<CampaignFormValues>({
     resolver: zodResolver(campaignSchema),
     defaultValues: {
-      name: '',
-      description: '',
-      era: '',
-      location: '',
-      threat: '',
+      name: "",
+      description: "",
+      era: "",
+      location: "",
+      threat: "",
     },
   });
 
   const onSubmit = async (data: CampaignFormValues) => {
     setIsSubmitting(true);
     try {
-      const response = await fetch('/api/campaigns', {
-        method: 'POST',
+      const response = await fetch("/api/campaigns", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify(data),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to create campaign');
+        throw new Error("Failed to create campaign");
       }
-      
+
       // Invalidate campaigns query to refresh list
-      queryClient.invalidateQueries(['campaigns']);
-      
+      queryClient.invalidateQueries(["campaigns"]);
+
       // Navigate to campaigns list
-      navigate('/campaigns');
+      navigate("/campaigns");
     } catch (error) {
-      console.error('Error creating campaign:', error);
+      console.error("Error creating campaign:", error);
     } finally {
       setIsSubmitting(false);
     }
@@ -101,8 +104,10 @@ export default function CampaignCreator() {
         className="w-full max-w-4xl"
       >
         <TranslucentPane className="p-6">
-          <h1 className="text-3xl font-bold text-yellow-400 mb-8">Create a New Campaign</h1>
-          
+          <h1 className="text-3xl font-bold text-yellow-400 mb-8">
+            Create a New Campaign
+          </h1>
+
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
               <FormField
@@ -112,7 +117,11 @@ export default function CampaignCreator() {
                   <FormItem>
                     <FormLabel className="text-lg">Campaign Name</FormLabel>
                     <FormControl>
-                      <Input placeholder="Enter your campaign name..." {...field} className="bg-gray-800/50" />
+                      <Input
+                        placeholder="Enter your campaign name..."
+                        {...field}
+                        className="bg-gray-800/50"
+                      />
                     </FormControl>
                     <FormDescription>
                       The name of your Star Wars campaign.
@@ -121,18 +130,20 @@ export default function CampaignCreator() {
                   </FormItem>
                 )}
               />
-              
+
               <FormField
                 control={form.control}
                 name="description"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="text-lg">Campaign Description</FormLabel>
+                    <FormLabel className="text-lg">
+                      Campaign Description
+                    </FormLabel>
                     <FormControl>
-                      <Textarea 
-                        placeholder="Describe your campaign..." 
+                      <Textarea
+                        placeholder="Describe your campaign..."
                         className="min-h-32 bg-gray-800/50"
-                        {...field} 
+                        {...field}
                       />
                     </FormControl>
                     <FormDescription>
@@ -142,7 +153,7 @@ export default function CampaignCreator() {
                   </FormItem>
                 )}
               />
-              
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <FormField
                   control={form.control}
@@ -150,18 +161,29 @@ export default function CampaignCreator() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel className="text-lg">Era</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <Select
+                        onValueChange={field.onChange}
+                        defaultValue={field.value}
+                      >
                         <FormControl>
                           <SelectTrigger className="bg-gray-800/50">
                             <SelectValue placeholder="Select an era" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="high-republic">High Republic</SelectItem>
-                          <SelectItem value="fall-republic">Fall of the Republic</SelectItem>
+                          <SelectItem value="high-republic">
+                            High Republic
+                          </SelectItem>
+                          <SelectItem value="fall-republic">
+                            Fall of the Republic
+                          </SelectItem>
                           <SelectItem value="imperial">Imperial Era</SelectItem>
-                          <SelectItem value="new-republic">New Republic</SelectItem>
-                          <SelectItem value="first-order">First Order/Resistance</SelectItem>
+                          <SelectItem value="new-republic">
+                            New Republic
+                          </SelectItem>
+                          <SelectItem value="first-order">
+                            First Order/Resistance
+                          </SelectItem>
                         </SelectContent>
                       </Select>
                       <FormDescription>
@@ -171,14 +193,19 @@ export default function CampaignCreator() {
                     </FormItem>
                   )}
                 />
-                
+
                 <FormField
                   control={form.control}
                   name="location"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-lg">Primary Location</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <FormLabel className="text-lg">
+                        Primary Location
+                      </FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        defaultValue={field.value}
+                      >
                         <FormControl>
                           <SelectTrigger className="bg-gray-800/50">
                             <SelectValue placeholder="Select a location" />
@@ -199,25 +226,36 @@ export default function CampaignCreator() {
                     </FormItem>
                   )}
                 />
-                
+
                 <FormField
                   control={form.control}
                   name="threat"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel className="text-lg">Primary Threat</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                      <Select
+                        onValueChange={field.onChange}
+                        defaultValue={field.value}
+                      >
                         <FormControl>
                           <SelectTrigger className="bg-gray-800/50">
                             <SelectValue placeholder="Select a threat" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="empire">Galactic Empire</SelectItem>
+                          <SelectItem value="empire">
+                            Galactic Empire
+                          </SelectItem>
                           <SelectItem value="sith">Sith Lords</SelectItem>
-                          <SelectItem value="criminals">Criminal Syndicates</SelectItem>
-                          <SelectItem value="separatists">Separatists</SelectItem>
-                          <SelectItem value="first-order">First Order</SelectItem>
+                          <SelectItem value="criminals">
+                            Criminal Syndicates
+                          </SelectItem>
+                          <SelectItem value="separatists">
+                            Separatists
+                          </SelectItem>
+                          <SelectItem value="first-order">
+                            First Order
+                          </SelectItem>
                           <SelectItem value="custom">Custom Threat</SelectItem>
                         </SelectContent>
                       </Select>
@@ -229,7 +267,7 @@ export default function CampaignCreator() {
                   )}
                 />
               </div>
-              
+
               <div className="flex justify-end pt-4">
                 <Button
                   type="submit"
