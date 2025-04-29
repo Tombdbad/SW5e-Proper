@@ -1,0 +1,210 @@
+    swim?: number;
+    climb?: number;
+    fly?: number;
+    glide?: number;
+    slither?: number;
+    leap?: number;
+  };
+  vision: {
+    type: "Normal" | "Darkvision" | "Superior Darkvision";
+    range?: number;
+  };
+  traits: {
+    name: string;
+    description: string;
+  }[];
+  languages: string[];
+  source: string;
+  commonClasses?: string[];
+}
+
+export const species: Species[] = [
+  {
+    id: "abyssin",
+    name: "Abyssin",
+    summary: "Tough and resilient humanoids with exceptional survival instincts",
+    description: "Known for their tough hides and resilience. Often seen as solitary and stoic individuals.",
+    abilityScoreIncrease: {
+      constitution: 2,
+      strength: 1
+    },
+    size: "Medium",
+    speed: {
+      walk: 30
+    },
+    vision: {
+      type: "Darkvision",
+      range: 60
+    },
+    traits: [
+      {
+        name: "Natural Armor",
+        description: "Your tough hide grants you a +1 bonus to your AC."
+      },
+      {
+        name: "Unblinking Gaze",
+        description: "You have advantage on saving throws against being blinded."
+      }
+    ],
+    languages: ["Galactic Basic", "Abyssin"],
+    source: "UCSC",
+    commonClasses: ["Warrior", "Guardian"]
+  },
+  {
+    id: "human",
+    name: "Human",
+    summary: "Adaptable and ambitious, humans can be found throughout the galaxy.",
+    description: "Humans are the most widespread species in the galaxy, known for their adaptability and drive. They come from diverse cultures across countless worlds.",
+    abilityScoreIncrease: {
+      Strength: 1,
+      Dexterity: 1
+    },
+    size: "Medium",
+    speed: { walk: 30 },
+    vision: { type: "Normal" },
+    traits: [
+      { name: "Versatile", description: "Versatile" },
+      { name: "Fast Learner", description: "Fast Learner" }
+    ],
+    languages: ["Galactic Basic", "One additional language of your choice"],
+    source: "Core Rulebook"
+  },
+  {
+    id: "twi-lek",
+    name: "Twi'lek",
+    summary: "Graceful humanoids with distinctive head tentacles called lekku.",
+    description: "Native to the harsh world of Ryloth, Twi'leks are known for their colorful skin and twin head-tails (lekku) that can be used for subtle communication.",
+    abilityScoreIncrease: {
+      Dexterity: 2,
+      Charisma: 1
+    },
+    size: "Medium",
+    speed: { walk: 30 },
+    vision: { type: "Normal" },
+    traits: [
+      { name: "Lekku Communication", description: "Lekku Communication" },
+      { name: "Heat Resistance", description: "Heat Resistance" }
+    ],
+    languages: ["Galactic Basic", "Twi'leki"],
+    source: "Core Rulebook"
+  },
+  {
+    id: "wookiee",
+    name: "Wookiee",
+    summary: "Tall, powerful warriors with great strength and loyalty.",
+    description: "Hailing from the forest planet Kashyyyk, Wookiees are known for their great strength, technological aptitude, and unwavering loyalty.",
+    abilityScoreIncrease: {
+      Strength: 2,
+      Constitution: 1
+    },
+    size: "Medium",
+    speed: { walk: 30 },
+    vision: { type: "Normal" },
+    traits: [
+      { name: "Natural Climber", description: "Natural Climber" },
+      { name: "Powerful Build", description: "Powerful Build" },
+      { name: "Wookiee Rage", description: "Wookiee Rage" }
+    ],
+    languages: ["Galactic Basic", "Shyriiwook"],
+    source: "Core Rulebook"
+  },
+  {
+    id: "zabrak",
+    name: "Zabrak",
+    summary: "Resilient humanoids with prominent horns and facial tattoos.",
+    description: "Known for their determination and willpower, Zabraks have distinctive horns and facial patterns that reflect their clans and personal achievements.",
+    abilityScoreIncrease: {
+      Constitution: 2,
+      Wisdom: 1
+    },
+    size: "Medium",
+    speed: { walk: 30 },
+    vision: { type: "Normal" },
+    traits: [
+      { name: "Warrior Culture", description: "Warrior Culture" },
+      { name: "Resilient", description: "Resilient" },
+      { name: "Fighting Spirit", description: "Fighting Spirit" }
+    ],
+    languages: ["Galactic Basic", "Zabraki"],
+    source: "Core Rulebook"
+  },
+  {
+    id: "bothan",
+    name: "Bothan",
+    summary: "Furred humanoids known for espionage and information gathering.",
+    description: "Bothans are known throughout the galaxy for their extensive information network and skill in espionage. Their fur ripples with their emotional state.",
+    abilityScoreIncrease: {
+      Dexterity: 1,
+      Intelligence: 1,
+      Charisma: 1
+    },
+    size: "Medium",
+    speed: { walk: 30 },
+    vision: { type: "Normal" },
+    traits: [
+      { name: "Bothan Spy Network", description: "Bothan Spy Network" },
+      { name: "Heightened Senses", description: "Heightened Senses" },
+      { name: "Cunning", description: "Cunning" }
+    ],
+    languages: ["Galactic Basic", "Bothese"],
+    source: "Core Rulebook"
+  },
+  {
+    id: "cerean",
+    name: "Cerean",
+    summary: "Humanoids with enlarged binary brains and enhanced mental abilities.",
+    description: "From the planet Cerea, these humanoids are distinguished by their elongated heads that house binary brains, allowing them to process information differently.",
+    abilityScoreIncrease: {
+      Wisdom: 2,
+      Intelligence: 1
+    },
+    size: "Medium",
+    speed: { walk: 30 },
+    vision: { type: "Normal" },
+    traits: [
+      { name: "Binary Brain", description: "Binary Brain" },
+      { name: "Force Sensitive", description: "Force Sensitive" },
+      { name: "Insightful", description: "Insightful" }
+    ],
+    languages: ["Galactic Basic", "Cerean"],
+    source: "Core Rulebook"
+  },
+  {
+    id: "togruta",
+    name: "Togruta",
+    summary: "Colorful humanoids with head-tails and hollow montrals that sense ultrasonic waves.",
+    description: "Native to Shili, Togruta have distinctive montrals and head-tails that give them heightened spatial awareness. They're naturally connected to their surroundings.",
+    abilityScoreIncrease: {
+      Dexterity: 2,
+      Wisdom: 1
+    },
+    size: "Medium",
+    speed: { walk: 30 },
+    vision: { type: "Normal" },
+    traits: [
+      { name: "Spatial Awareness", description: "Spatial Awareness" },
+      { name: "Pack Hunters", description: "Pack Hunters" },
+      { name: "Enhanced Perception", description: "Enhanced Perception" }
+    ],
+    languages: ["Galactic Basic", "Togruti"],
+    source: "Core Rulebook"
+  },
+  {
+    id: "trandoshan",
+    name: "Trandoshan",
+    summary: "Reptilian hunters with regenerative abilities and natural armor.",
+    description: "The reptilian Trandoshans are feared hunters across the galaxy, with tough scaled skin and the ability to regenerate lost limbs over time.",
+    abilityScoreIncrease: {
+      Strength: 2,
+      Constitution: 1
+    },
+    size: "Medium",
+    speed: { walk: 30 },
+    vision: { type: "Normal" },
+    traits: [
+      { name: "Natural Armor", description: "Natural Armor" },
+      { name: "Limb Regeneration", description: "Limb Regeneration" },
+      { name: "Hunter's Instinct", description: "Hunter's Instinct" }
+    ],
+    languages: ["Galactic Basic", "Dosh"],
+    source: "Core Rulebook"
