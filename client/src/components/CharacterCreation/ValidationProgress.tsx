@@ -1,5 +1,5 @@
 import React from "react";
-import { CheckCircle, Circle, AlertCircle } from "lucide-react";
+import { CheckCircle, Circle, AlertCircle, Info } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import TranslucentPane from "@/components/ui/TranslucentPane";
