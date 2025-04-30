@@ -63,6 +63,7 @@ function generateCampaignDescription(character: Character, system: any): string 
     const motivations = narrativeAnalysis.motivations;
 
     // Use narrative themes if available, otherwise fall back to class-based themes
+  const themes = {
     berserker: ["survival", "revenge", "tribal conflict"],
     consular: ["diplomacy", "force mysteries", "ancient knowledge"],
     engineer: ["technology", "innovation", "corporate espionage"],

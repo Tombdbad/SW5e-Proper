@@ -1,0 +1,180 @@
+# Prompt for SW5E Character Creator: Game Mechanics Implementation
+
+## Project Context
+I'm developing a Star Wars 5th Edition (SW5E) character creator application built with:
+- React + TypeScript + Vite frontend
+- Express + Node.js backend
+- PostgreSQL with Drizzle ORM for data
+- Zustand for state management
+- React Hook Form + Zod for form handling
+- Currently have basic game mechanics in `client/src/lib/sw5e/rules.ts`
+
+## Current Implementation
+We have implemented basic SW5E data structures in:
+- `client/src/lib/sw5e/abilities.ts` - Ability scores system
+- `client/src/lib/sw5e/archetypes.ts` - Class archetype definitions
+- `client/src/lib/sw5e/backgrounds.ts` - Character background options
+- `client/src/lib/sw5e/classes.ts` - Core class definitions
+- `client/src/lib/sw5e/species.ts` - Species/race definitions
+- `client/src/lib/sw5e/skills.ts` - Skill system
+- `client/src/lib/sw5e/feats.ts` - Character feats
+
+## Request
+Please enhance our SW5E mechanics implementation with:
+
+1. **Character Stat Calculations**:
+   - Create utility functions for calculating:
+     - Force/tech points based on class, level, and ability scores
+     - HP calculation with species and class considerations
+     - Proficiency bonus that scales with level
+     - Saving throw modifiers based on class proficiencies
+     - Skill proficiency calculations
+     - Carrying capacity based on strength and size
+     - Initiative modifier
+
+2. **Feature Selection & Prerequisites**:
+   - Implement logic for:
+     - Species trait selection where choices are available
+     - Class feature selection at different levels
+     - Handling prerequisites for multiclassing
+     - Feat prerequisite validation
+     - Power selection with level restrictions
+
+3. **Equipment Management**:
+   - Create systems for:
+     - Starting equipment selection based on class/background
+     - Equipment modification and customization
+     - Weapon property calculations (damage, range, etc.)
+     - Armor class calculation based on armor type and ability modifiers
+     - Credit management for purchasing equipment
+
+4. **Level Progression**:
+   - Implement:
+     - Experience point tracking
+     - Level-up capabilities
+     - Ability score improvements at appropriate levels
+     - Adding new class features on level-up
+     - Power slot and point recalculation
+
+## Technical Requirements
+
+### Function Structure
+Follow this pattern for calculation functions:
+```typescript
+export const calculateForcePoints = (
+  character: Character,
+  characterClass: Class,
+  level: number,
+  abilityScores: AbilityScores
+): number => {
+  // Implementation logic here
+  return forcePoints;
+};
+```
+
+### TypeScript Types (Example from our codebase)
+```typescript
+export interface Character {
+  id?: string;
+  userId: string;
+  name: string;
+  speciesId: string;
+  backgroundId: string;
+  classes: CharacterClass[];
+  abilityScores: AbilityScores;
+  hitPoints: number;
+  temporaryHitPoints: number;
+  credits: number;
+  // Other properties...
+}
+
+export interface CharacterClass {
+  classId: string;
+  level: number;
+  archetypeId?: string;
+  hitDieResults?: number[];
+}
+
+export interface AbilityScores {
+  strength: number;
+  dexterity: number;
+  constitution: number;
+  intelligence: number;
+  wisdom: number;
+  charisma: number;
+}
+```
+
+### SW5E-Specific Rules
+Implement these critical SW5E rule calculations:
+
+1. **Ability Score Modifiers**:
+```typescript
+export const getAbilityModifier = (score: number): number => {
+  return Math.floor((score - 10) / 2);
+};
+```
+
+2. **Proficiency Bonus**:
+```typescript
+export const getProficiencyBonus = (level: number): number => {
+  return Math.ceil(1 + (level / 4));
+};
+```
+
+3. **Force/Tech Points Example**:
+```typescript
+export const calculatePowerPoints = (
+  isPowerCaster: boolean,
+  casterLevel: number,
+  abilityModifier: number
+): number => {
+  if (!isPowerCaster) return 0;
+  return Math.max(1, casterLevel + abilityModifier);
+};
+```
+
+4. **Hit Points Calculation**:
+```typescript
+export const calculateHitPoints = (
+  constitution: number,
+  classes: CharacterClass[],
+  classData: Record<string, Class>
+): number => {
+  // First level uses maximum hit die value
+  // Additional levels roll or take average
+  // Apply constitution modifier to each level
+};
+```
+
+5. **Feature Selection**:
+- Reference `client/src/lib/sw5e/classes.ts` and `archetypes.ts` for available features
+- Implement selection validation against prerequisites
+- Handle option selection for features with choices
+
+### Integration with Existing State
+Ensure compatibility with our Zustand store structure:
+```typescript
+export const useCharacter = create<CharacterStore>((set, get) => ({
+  character: initialCharacter,
+  // Actions to update character state
+  updateAbilityScores: (abilityScores: AbilityScores) => {
+    set(state => ({
+      character: {
+        ...state.character,
+        abilityScores
+      }
+    }));
+  },
+  // Additional actions...
+}));
+```
+
+## Deliverables
+1. Comprehensive utility functions in `client/src/lib/sw5e/calculations.ts`
+2. Feature selection logic in `client/src/lib/sw5e/features.ts`
+3. Equipment management utilities in `client/src/lib/sw5e/equipment.ts`
+4. Level progression system in `client/src/lib/sw5e/progression.ts`
+5. Integration methods with existing Zustand stores
+
+Ensure all code is well-typed with TypeScript and includes comprehensive documentation of the SW5E-specific rules being implemented. Include unit tests for critical calculation functions.
