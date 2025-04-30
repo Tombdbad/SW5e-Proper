@@ -33,7 +33,6 @@ async function syncCampaignData(campaignId: string, data: any) {
 }
 import { npcs } from "@/lib/sw5e/npcs";
 import { starSystems } from "@/lib/sw5e/starSystems";
-import { starSystems } from "@/lib/sw5e/starSystems";
 import { planets } from "@/lib/sw5e/locations";
 import { monsters } from "@/lib/sw5e/monsters";
 import { items } from "@/lib/sw5e/items";
