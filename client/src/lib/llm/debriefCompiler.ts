@@ -203,9 +203,68 @@ export async function processLLMResponse(
  * Parses and validates an LLM response
  */
 function parseResponse(rawResponse: any): any {
-  // This would contain logic to validate and transform the LLM response
-  // For now, we'll just return the raw response
-  return rawResponse;
+  function parseResponse(rawResponse: any): any {
+    try {
+      const parsedData =
+        typeof rawResponse === "string" ? JSON.parse(rawResponse) : rawResponse;
+
+      // Distribute data to appropriate systems
+      if (parsedData.locations) {
+        updateMapLocations(parsedData.locations);
+      }
+
+      if (parsedData.character) {
+        updateCharacterState(parsedData.character);
+      }
+
+      if (parsedData.objectives) {
+        updateCampaignObjectives(parsedData.objectives);
+      }
+
+      if (parsedData.npcs) {
+        updateNPCRegistry(parsedData.npcs);
+      }
+
+      return parsedData;
+    } catch (error) {
+      console.error("Error parsing LLM response:", error);
+      throw new Error("Failed to parse LLM response");
+    }
+  }
+
+  async function updateMapLocations(locations: any[]) {
+    const { addLocation, setCurrentLocation } = useMap.getState();
+    for (const location of locations) {
+      await addLocation(location);
+    }
+  }
+
+  async function updateCharacterState(characterData: any) {
+    const { updateCharacter } = useCharacter.getState();
+    await updateCharacter(characterData);
+  }
+
+  async function updateCampaignObjectives(objectives: any[]) {
+    const { addQuest, updateQuest } = useCampaign.getState();
+    for (const objective of objectives) {
+      if (objective.id) {
+        await updateQuest(objective.id, objective);
+      } else {
+        await addQuest(objective);
+      }
+    }
+  }
+
+  async function updateNPCRegistry(npcs: any[]) {
+    const { addNpc, updateNpc } = useCampaign.getState();
+    for (const npc of npcs) {
+      if (npc.id) {
+        await updateNpc(npc.id, npc);
+      } else {
+        await addNpc(npc);
+      }
+    }
+  }
 }
 
 /**
