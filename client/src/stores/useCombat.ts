@@ -92,7 +92,7 @@ export const useCombat = create<CombatState>((set, get) => ({
     }));
     return id;
   },
-
+  
   removeCombatant: (id) => set((state) => {
     const combatants = state.combatants.filter((c) => c.id !== id);
 
