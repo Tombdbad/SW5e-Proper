@@ -134,12 +134,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error creating character:", error);
 
       if (error instanceof ZodError) {
-        return res
-          .status(400)
-          .json({
-            message: "Invalid character data",
-            errors: formatError(error),
-          });
+        return res.status(400).json({
+          message: "Invalid character data",
+          errors: formatError(error),
+        });
       }
 
       res.status(500).json({ message: "Failed to create character" });
@@ -169,12 +167,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error updating character:", error);
 
       if (error instanceof ZodError) {
-        return res
-          .status(400)
-          .json({
-            message: "Invalid character data",
-            errors: formatError(error),
-          });
+        return res.status(400).json({
+          message: "Invalid character data",
+          errors: formatError(error),
+        });
       }
 
       res.status(500).json({ message: "Failed to update character" });
@@ -237,9 +233,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to fetch campaigns" });
     }
   });
-      res.status(500).json({ message: "Failed to fetch campaigns" });
-    }
-  });
 
   app.get("/api/campaigns/:id", async (req, res) => {
     try {
@@ -281,12 +274,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error creating campaign:", error);
 
       if (error instanceof ZodError) {
-        return res
-          .status(400)
-          .json({
-            message: "Invalid campaign data",
-            errors: formatError(error),
-          });
+        return res.status(400).json({
+          message: "Invalid campaign data",
+          errors: formatError(error),
+        });
       }
 
       res.status(500).json({ message: "Failed to create campaign" });
@@ -316,12 +307,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error updating campaign:", error);
 
       if (error instanceof ZodError) {
-        return res
-          .status(400)
-          .json({
-            message: "Invalid campaign data",
-            errors: formatError(error),
-          });
+        return res.status(400).json({
+          message: "Invalid campaign data",
+          errors: formatError(error),
+        });
       }
 
       res.status(500).json({ message: "Failed to update campaign" });
@@ -367,12 +356,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error creating debrief:", error);
 
       if (error instanceof ZodError) {
-        return res
-          .status(400)
-          .json({
-            message: "Invalid debrief data",
-            errors: formatError(error),
-          });
+        return res.status(400).json({
+          message: "Invalid debrief data",
+          errors: formatError(error),
+        });
       }
 
       res.status(500).json({ message: "Failed to create debrief" });
