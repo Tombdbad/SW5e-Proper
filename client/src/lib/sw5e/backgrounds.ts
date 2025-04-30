@@ -1,3 +1,17 @@
+
+// Export for UI usage
+export const BACKGROUNDS = [
+  { id: "force-adept", name: "Force Adept" },
+  { id: "criminal", name: "Criminal" },
+  { id: "soldier", name: "Soldier" },
+  { id: "noble", name: "Noble" },
+  { id: "scholar", name: "Scholar" },
+  { id: "jedi", name: "Jedi" },
+  { id: "sith", name: "Sith" },
+  { id: "pilot", name: "Pilot" },
+  { id: "merchant", name: "Merchant" }
+];
+
 // Backgrounds data for SW5E
 export interface Background {
   id: string;

@@ -308,3 +308,11 @@ export function getSubspeciesBySpeciesId(speciesId: string): Subspecies[] {
   const speciesData = getSpeciesById(speciesId);
   return speciesData?.subspecies || [];
 }
+
+// Export named constant for use in UI
+export const SPECIES = species.map(s => ({
+  id: s.id,
+  name: s.name,
+  summary: s.summary,
+  abilityScoreIncrease: s.abilityScoreIncrease
+}));

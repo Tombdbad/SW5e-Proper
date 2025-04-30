@@ -1,3 +1,13 @@
+
+// Export for UI usage
+export const FORCE_POWERS = [
+  { id: "force_push", name: "Force Push", alignment: "universal" },
+  { id: "force_lightning", name: "Force Lightning", alignment: "dark" },
+  { id: "mind_trick", name: "Mind Trick", alignment: "light" },
+  { id: "force_heal", name: "Force Heal", alignment: "light" },
+  { id: "force_choke", name: "Force Choke", alignment: "dark" }
+];
+
 // Force Powers data for SW5E
 export interface ForcePower {
   id: string;

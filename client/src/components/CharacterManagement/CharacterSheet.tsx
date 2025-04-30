@@ -1,3 +1,14 @@
+
+// Add CharacterPreview export
+export const CharacterPreview = ({ character }: { character: any }) => {
+  return (
+    <div className="character-preview">
+      <h3>{character.name}</h3>
+      <p>Level {character.level} {character.species} {character.class}</p>
+    </div>
+  );
+};
+
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";

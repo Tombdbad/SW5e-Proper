@@ -11,3 +11,17 @@ const setLocalStorage = (key: string, value: any): void =>
   window.localStorage.setItem(key, JSON.stringify(value));
 
 export { getLocalStorage, setLocalStorage };
+
+// Added apiRequest function
+export const apiRequest = async (url: string, options?: RequestInit): Promise<Response> => {
+    try{
+        const response = await fetch(url, options);
+        if (!response.ok){
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response;
+    } catch (error){
+        console.error('Error fetching data:', error);
+        throw error;
+    }
+}

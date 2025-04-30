@@ -1,3 +1,17 @@
+
+// Export for UI usage
+export const CLASSES = [
+  { id: "berserker", name: "Berserker" },
+  { id: "consular", name: "Consular" },
+  { id: "engineer", name: "Engineer" },
+  { id: "fighter", name: "Fighter" },
+  { id: "guardian", name: "Guardian" },
+  { id: "monk", name: "Monk" },
+  { id: "operative", name: "Operative" },
+  { id: "scholar", name: "Scholar" },
+  { id: "sentinel", name: "Sentinel" }
+];
+
 // Classes data for SW5E
 export interface SW5EClass {
   id: string;

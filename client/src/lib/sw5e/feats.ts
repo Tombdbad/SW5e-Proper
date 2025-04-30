@@ -1,3 +1,13 @@
+
+// Export for UI usage
+export const FEATS = [
+  { id: "advanced_targeting", name: "Advanced Targeting" },
+  { id: "force_sensitive", name: "Force Sensitive" },
+  { id: "tech_specialist", name: "Tech Specialist" },
+  { id: "weapon_master", name: "Weapon Master" },
+  { id: "defensive_duelist", name: "Defensive Duelist" }
+];
+
 // Feats data for SW5E
 export interface Feat {
   id: string;

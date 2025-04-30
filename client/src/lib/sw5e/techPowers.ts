@@ -1,3 +1,13 @@
+
+// Export for UI usage
+export const TECH_POWERS = [
+  { id: "overcharge", name: "Overcharge" },
+  { id: "shield_boost", name: "Shield Boost" },
+  { id: "remote_slice", name: "Remote Slice" },
+  { id: "tactical_scan", name: "Tactical Scan" },
+  { id: "combat_stim", name: "Combat Stim" }
+];
+
 // Tech Powers data for SW5E
 export interface TechPower {
   id: string;

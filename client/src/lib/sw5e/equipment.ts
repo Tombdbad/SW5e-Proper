@@ -1,3 +1,16 @@
+
+// Export for UI usage
+export const EQUIPMENT = [
+  { id: "blaster_pistol", name: "Blaster Pistol", type: "weapon" },
+  { id: "blaster_rifle", name: "Blaster Rifle", type: "weapon" },
+  { id: "vibroblade", name: "Vibroblade", type: "weapon" },
+  { id: "light_armor", name: "Light Armor", type: "armor" },
+  { id: "medium_armor", name: "Medium Armor", type: "armor" },
+  { id: "heavy_armor", name: "Heavy Armor", type: "armor" },
+  { id: "medpac", name: "Medpac", type: "item" },
+  { id: "datapad", name: "Datapad", type: "item" }
+];
+
 // Equipment data for SW5E
 export interface Equipment {
   id: string;
