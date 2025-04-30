@@ -1,6 +1,7 @@
 // Add CharacterPreview export
 export const CharacterPreview = ({
   character,
+  form,
   abilities,
   calculateModifier,
 }: {
@@ -9,7 +10,7 @@ export const CharacterPreview = ({
   abilities?: any;
   calculateModifier?: (score: number) => number;
 }) => {
-  if (!character && form) {
+  if (!character && form && typeof form.getValues === "function") {
     // If using with react-hook-form
     const formValues = form.getValues();
     return (
