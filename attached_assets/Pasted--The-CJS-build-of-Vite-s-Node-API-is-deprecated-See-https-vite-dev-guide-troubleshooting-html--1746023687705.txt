@@ -1,0 +1,30 @@
+
+
+The CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.
+2:21:30 PM [express] serving on port 5000
+Browserslist: browsers data (caniuse-lite) is 6 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+2:21:35 PM [express] GET /api/characters 304 in 132ms :: []
+2:21:35 PM [express] GET /api/campaigns 304 in 109ms :: []
+2:21:36 PM [express] GET /api/characters 304 in 33ms :: []
+2:21:36 PM [express] GET /api/campaigns 304 in 42ms :: []
+2:34:18 PM [vite] page reload src/components/CharacterCreation/CharacterCreationForm.tsx
+2:34:18 PM [vite] hmr update /src/components/CharacterCreation/SpeciesSelection.tsx, /src/index.css?v=hyufzx6YML8NZ8Ujr8n
+2:34:18 PM [vite] hmr update /src/components/CharacterCreation/ClassSelection.tsx, /src/index.css?v=hyufzx6YML8NZ8Ujr8n
+
+2:34:19 PM [vite] hmr update /src/components/CharacterCreation/BackgroundSelection.tsx, /src/index.css?v=hyufzx6YML8NZ8Ujr8n
+2:34:19 PM [vite] hmr update /src/components/CharacterCreation/FeatsSelection.tsx, /src/index.css?v=hyufzx6YML8NZ8Ujr8n
+2:34:19 PM [vite] hmr update /src/components/CharacterCreation/ForcePowersSelection.tsx, /src/index.css?v=hyufzx6YML8NZ8Ujr8n
+2:34:19 PM [vite] hmr update /src/components/CharacterCreation/TechPowersSelection.tsx, /src/index.css?v=hyufzx6YML8NZ8Ujr8n
+2:34:19 PM [vite] hmr update /src/components/CharacterCreation/AbilityScores.tsx, /src/index.css?v=hyufzx6YML8NZ8Ujr8n
+2:34:20 PM [vite] hmr update /src/components/CharacterManagement/CharacterSheet.tsx, /src/index.css?v=hyufzx6YML8NZ8Ujr8n
+2:34:20 PM [vite] Pre-transform error: /home/runner/workspace/client/src/components/CharacterManagement/CharacterSheet.tsx: 'return' outside of function. (45:2)
+
+  43 | }
+  44 |
+> 45 |   return (
+     |   ^
+  46 |     <div className="character-preview p-4">
+  47 |       <h3 className="text-xl font-bold mb-2">{character.name}</h3>
+  48 |       <p>
