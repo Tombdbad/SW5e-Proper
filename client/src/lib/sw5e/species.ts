@@ -2882,27 +2882,27 @@ export const species: Species[] = [
 export interface Species {
   id: string;
   name: string;
+  summary: string;
   description: string;
   abilityScoreIncrease: {
-    ability: string;
-    value: number;
-  }[];
-  age: {
-    maturity: string;
-    lifespan: string;
+    [key: string]: number;
   };
-  alignment: string;
-  size: {
-    category: string;
-    height: string;
-    weight: string;
+  size: string;
+  speed: {
+    walk: number;
+    [key: string]?: number;
   };
-  speed: number;
-  languages: string[];
+  vision: {
+    type: string;
+    range?: number;
+  };
   traits: {
     name: string;
     description: string;
   }[];
+  languages: string[];
+  source: string;
+  commonClasses: string[];
   subspecies?: Subspecies[];
 }
 

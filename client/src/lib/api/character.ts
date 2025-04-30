@@ -7,7 +7,6 @@ export async function saveCharacterData(characterData: any) {
 export async function fetchCharacterData(characterId: string) {
   return axios.get(`/api/character/${characterId}`);
 }
-}
 
 export async function fetchSW5ESpecies() {
   return axios.get('/api/sw5e/species');

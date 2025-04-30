@@ -435,3 +435,146 @@ export class CampaignElementGenerator {
     return campaign;
   }
 }
+import { Character } from "@/lib/stores/useCharacter";
+import { Campaign } from "@/lib/stores/useCampaign";
+import { apiRequest } from "@/lib/queryClient";
+import { starSystems } from "@/lib/sw5e/starSystems";
+import { monsters } from "@/lib/sw5e/monsters";
+import { npcs } from "@/lib/sw5e/npcs";
+import { items } from "@/lib/sw5e/items";
+import { vehicles } from "@/lib/sw5e/vehicles";
+import { starships } from "@/lib/sw5e/starships";
+
+/**
+ * Campaign Element Generator for SW5E
+ * Generates campaign elements based on character profiles and input parameters
+ */
+export class CampaignElementGenerator {
+  // Generate a complete campaign with all elements
+  public static async generateCampaign(
+    title: string,
+    characters: Character[],
+    campaignType: string = "adventure"
+  ): Promise<Campaign> {
+    try {
+      // Request campaign generation from API
+      const response = await apiRequest.post("/api/campaign/generate", {
+        title,
+        characters,
+        campaignType
+      });
+      
+      return response.data;
+    } catch (error) {
+      console.error("Failed to generate campaign:", error);
+      // Return a basic campaign structure if API fails
+      return {
+        id: `campaign-${Date.now()}`,
+        name: title,
+        description: "A Star Wars adventure across the galaxy.",
+        npcs: [],
+        locations: [],
+        quests: [],
+        notes: [],
+        status: "draft"
+      };
+    }
+  }
+
+  // Generate campaign objectives based on party composition and preferences
+  public static generateObjectives(characters: Character[], difficulty: string = "medium"): string[] {
+    const objectives: string[] = [];
+    const characterClasses = characters.map(c => c.class);
+    
+    // Add class-specific objectives
+    if (characterClasses.includes("scout")) {
+      objectives.push("Explore an uncharted region of space");
+    }
+    
+    if (characterClasses.includes("consular")) {
+      objectives.push("Negotiate a peace treaty between warring factions");
+    }
+    
+    if (characterClasses.includes("guardian")) {
+      objectives.push("Protect a high-value target from assassins");
+    }
+    
+    if (characterClasses.includes("engineer")) {
+      objectives.push("Slice into a high-security Imperial database");
+    }
+    
+    // Add general objectives
+    objectives.push(
+      "Recover a stolen artifact",
+      "Infiltrate an enemy stronghold",
+      "Race against time to prevent a catastrophe"
+    );
+    
+    return objectives;
+  }
+  
+  // Generate a random location from available star systems
+  public static generateLocation() {
+    const randomSystem = starSystems[Math.floor(Math.random() * starSystems.length)];
+    
+    return {
+      name: randomSystem.name,
+      description: `A star system containing ${randomSystem.planets?.length || 0} known planets.`,
+      type: "Star System",
+      coordinates: {
+        x: Math.random() * 100 - 50,
+        y: Math.random() * 20 - 10,
+        z: Math.random() * 100 - 50
+      }
+    };
+  }
+  
+  // Generate an NPC appropriate for the campaign
+  public static generateNPC(alignment: string = "neutral") {
+    const randomNPC = npcs[Math.floor(Math.random() * npcs.length)];
+    
+    return {
+      name: randomNPC.name || "Unknown",
+      species: randomNPC.species || "Human",
+      role: randomNPC.role || "Informant",
+      description: randomNPC.description || "A mysterious figure with unknown motives."
+    };
+  }
+  
+  // Generate an encounter with appropriate challenge rating
+  public static generateEncounter(partyLevel: number, partySize: number) {
+    const challengeRating = Math.max(1, Math.floor(partyLevel * 0.75));
+    const appropriateMonsters = monsters.filter(m => m.challengeRating <= challengeRating + 2 && m.challengeRating >= challengeRating - 2);
+    
+    if (appropriateMonsters.length === 0) {
+      return {
+        title: "Ambush",
+        description: "The party is ambushed by local hostiles",
+        enemies: [{ name: "Hostile", quantity: partySize }]
+      };
+    }
+    
+    // Select 1-3 monster types for the encounter
+    const selectedMonsters = [];
+    const monsterCount = Math.floor(Math.random() * 3) + 1;
+    
+    for (let i = 0; i < monsterCount; i++) {
+      const monster = appropriateMonsters[Math.floor(Math.random() * appropriateMonsters.length)];
+      const quantity = Math.max(1, Math.floor(partySize / monsterCount));
+      
+      selectedMonsters.push({
+        name: monster.name,
+        quantity
+      });
+    }
+    
+    return {
+      title: "Combat Encounter",
+      description: "The party encounters hostile forces",
+      enemies: selectedMonsters
+    };
+  }
+}
+
+// Export default for ease of use
+export default CampaignElementGenerator;

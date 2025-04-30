@@ -5,8 +5,9 @@ import * as THREE from 'three';
 import { Coordinates } from '@/lib/coordinates';
 import TranslucentPane from '../ui/TranslucentPane';
 
-// Define star system type
-interface StarSystem {
+// Define star system type for 3D visualization
+// This is a simplified version for rendering, different from the data structure
+interface GalaxyStarSystem {
   id: number;
   name: string;
   position: [number, number, number];
@@ -16,6 +17,9 @@ interface StarSystem {
   planets?: Planet[];
   selected?: boolean;
 }
+
+// Use GalaxyStarSystem for local rendering, different from the imported starSystems
+type StarSystem = GalaxyStarSystem;
 
 // Define planet type
 interface Planet {

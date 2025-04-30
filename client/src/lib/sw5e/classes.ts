@@ -15,17 +15,16 @@ export interface SW5EClass {
   equipmentChoices: string[][];
   features: ClassFeature[];
   subclasses?: SW5EClass[];
-    archetypeLevel?: number;
-    tableData?: {
-      level: number;
-      proficiencyBonus: number;
-      features: string[];
-      specialColumn?: {
-        name: string;
-        values: string | number;
-      };
-    }[];
-  }
+  archetypeLevel?: number;
+  tableData?: {
+    level: number;
+    proficiencyBonus: number;
+    features: string[];
+    specialColumn?: {
+      name: string;
+      values: string | number;
+    };
+  }[];
 }
 
 export interface ClassFeature {
