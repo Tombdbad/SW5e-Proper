@@ -29,7 +29,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Dice } from "@/components/ui/dice";
 import { useCharacter } from "@/lib/stores/useCharacter";
-import { saveCharacterData } from "@/lib/api/character";
+import { CharacterAPI,saveCharacter } from "@/lib/api/character";
 
 async function handleCharacterUpdate(characterData: any) {
   try {
