@@ -231,12 +231,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/campaigns", async (req, res) => {
     try {
       const allCampaigns = await db.select().from(campaigns);
-  app.get("/api/campaigns", async (req, res) => {
-    try {
-      const allCampaigns = await db.select().from(campaigns);
       res.json(allCampaigns);
     } catch (error) {
       console.error("Error fetching campaigns:", error);
+      res.status(500).json({ error: "Failed to fetch campaigns" });
+    }
+  });
       res.status(500).json({ message: "Failed to fetch campaigns" });
     }
   });

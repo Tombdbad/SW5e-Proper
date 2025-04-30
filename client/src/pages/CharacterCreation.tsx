@@ -43,7 +43,7 @@ import FeatsSelection from "../components/CharacterCreation/FeatsSelection";
 import ForcePowersSelection from"../components/CharacterCreation/ForcePowersSelection";
 import TechPowersSelection from "../components/CharacterCreation/TechPowersSelection";
 import CharacterDetails from "../components/CharacterCreation/CharacterDetails";
-import CharacterPreview from "../components/CharacterCreation/CharacterPreview";
+import { CharacterPreview } from "../components/CharacterManagement/CharacterSheet";
 import TranslucentPane from "../components/ui/TranslucentPane";
 import Alert from "../components/ui/Alert";
 
