@@ -48,52 +48,9 @@ import { CharacterPreview } from "../components/CharacterManagement/CharacterShe
 import TranslucentPane from "../components/ui/TranslucentPane";
 import Alert from "../components/ui/Alert";
 
-// Define the character schema with Zod
-const characterSchema = z.object({
-  // Basic Details
-  name: z
-    .string()
-    .min(2, { message: "Character name must be at least 2 characters" }),
-  alignment: z.string().min(1, { message: "Please select an alignment" }),
-  gender: z.string().optional(),
-  age: z.number().optional(),
-  height: z.string().optional(),
-  weight: z.string().optional(),
-  description: z.string().optional(),
-
-  // Core Character Options
-  species: z.string().min(1, { message: "Please select a species" }),
-  speciesVariant: z.string().optional(),
-  class: z.string().min(1, { message: "Please select a class" }),
-  archetype: z.string().optional(), // Subclass
-  level: z.number().min(1).max(20).default(1),
-  background: z.string().min(1, { message: "Please select a background" }),
-
-  // Abilities
-  abilities: z.object({
-    strength: z.number().min(3).max(18),
-    dexterity: z.number().min(3).max(18),
-    constitution: z.number().min(3).max(18),
-    intelligence: z.number().min(3).max(18),
-    wisdom: z.number().min(3).max(18),
-    charisma: z.number().min(3).max(18),
-  }),
-
-  // Skills and Proficiencies
-  skillProficiencies: z.array(z.string()),
-  toolProficiencies: z.array(z.string()),
-  languages: z.array(z.string()),
-
-  // Combat Stats
-  hitPoints: z.number().min(1),
-  armorClass: z.number().min(1),
-  initiative: z.number(),
-  speed: z.number().min(0),
-  proficiencyBonus: z.number().min(0),
-
-  // Equipment and Resources
-  equipment: z.array(z.string()),
-  credits: z.number().min(0),
+// Import the unified character schema
+import { characterSchema } from "@shared/unifiedSchema";
+// Use imported character schema from unified schema
 
   // Powers and Abilities
   feats: z.array(z.string()).default([]),

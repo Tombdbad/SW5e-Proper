@@ -11,3 +11,23 @@
     }
   ]
 }
+{
+  "version": "5",
+  "dialect": "pg",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": "1685573344000",
+      "tag": "0000_optimal_pestilence",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": "1704067200000",
+      "tag": "0001_unified_schema",
+      "breakpoints": true
+    }
+  ]
+}

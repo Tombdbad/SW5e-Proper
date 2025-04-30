@@ -1,28 +1,33 @@
-import { drizzle } from 'drizzle-orm/neon-serverless';
-import { neon } from '@neondatabase/serverless';
-import { migrate } from 'drizzle-orm/neon-serverless/migrator';
-import * as schema from './shared/schema';
 
-// Database migration script
-async function runMigration() {
-  if (!process.env.DATABASE_URL) {
-    throw new Error('DATABASE_URL is required for migration');
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
+import postgres from "postgres";
+import path from "path";
+
+// Database configuration
+const databaseUrl = process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:5432/sw5e";
+
+// Initialize Postgres client
+const migrationClient = postgres(databaseUrl, { max: 1 });
+
+// Apply migrations
+async function main() {
+  try {
+    console.log("Starting database migrations...");
+    
+    const db = drizzle(migrationClient);
+    
+    // Run migrations
+    await migrate(db, { migrationsFolder: path.join(process.cwd(), "migrations") });
+    
+    console.log("Migrations completed successfully");
+  } catch (error) {
+    console.error("Migration failed:", error);
+    process.exit(1);
+  } finally {
+    // Close connection
+    await migrationClient.end();
   }
-
-  console.log('Starting database migration...');
-  
-  const sql = neon(process.env.DATABASE_URL);
-  const db = drizzle(sql, { schema });
-
-  // Run migrations
-  console.log('Running migrations...');
-  await migrate(db, { migrationsFolder: './migrations' });
-  
-  console.log('Migration completed successfully!');
-  process.exit(0);
 }
 
-runMigration().catch((error) => {
-  console.error('Migration failed:', error);
-  process.exit(1);
-});
+main();

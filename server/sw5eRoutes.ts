@@ -10,7 +10,7 @@ import {
   equipment,
   feats,
   characters,
-} from "../../shared/schema";
+} from "../../shared/unifiedSchema";
 import { authenticateUser } from "../middleware/auth";
 import { handleValidationErrors } from "../middleware/validation";
 

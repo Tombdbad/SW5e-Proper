@@ -3,15 +3,15 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
-// Import from compatibility schema until migration is run
+// Import from unified schema
 import {
-  insertCharacterSchema,
+  characterSchema as insertCharacterSchema,
   characters,
   campaigns,
   insertCampaignSchema,
   debriefs,
   insertDebriefSchema,
-} from "@shared/compatSchema";
+} from "@shared/unifiedSchema";
 import { ZodError } from "zod";
 import { formatError } from "./utils";
 import * as SW5EData from "./sw5eData";
