@@ -82,8 +82,13 @@ function generateCampaignDescription(character: Character, system: any): string 
  */
 function generateNpcs(character: Character) {
   // Generate mentor based on character class
-  const mentorSpecies = ["Human", "Twilek", "Zabrak", "Moncalamari"][Math.floor(Math.random() * 4)];
-  const mentor = {
+    async function generateNpcs(character: Character) {
+      const { data: speciesData } = await axios.get('/api/sw5e/species');
+      const { data: backgroundsData } = await axios.get('/api/sw5e/backgrounds');
+
+      // Generate mentor based on character class
+      const mentorSpecies = speciesData.find(s => s.traits.some(t => t.name === "Force Sensitive"));
+      const mentor = {
     id: `npc-${Date.now()}-1`,
     name: generateName(),
     species: mentorSpecies,

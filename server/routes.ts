@@ -62,6 +62,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: "Failed to fetch equipment data" });
     }
   });
+
+  app.get("/api/sw5e/npcs/:type", async (req, res) => {
+    try {
+      const npcs = await SW5EData.getNPCsByType(req.params.type);
+      res.json(npcs);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch NPCs" });
+    }
+  });
+
+  app.post("/api/sw5e/npcs/generate", async (req, res) => {
+    try {
+      const { speciesId, backgroundId } = req.body;
+      const npcStats = await SW5EData.generateNPCStats(speciesId, backgroundId);
+      res.json(npcStats);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to generate NPC stats" });
+    }
+  });
   // All routes are prefixed with /api
 
   // Character endpoints

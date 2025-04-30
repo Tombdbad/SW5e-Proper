@@ -27,3 +27,28 @@ export async function getPowersByType(type: string) {
 export async function getAllEquipment() {
   return db.select().from(equipment);
 }
+
+export async function getNPCsByType(type: string) {
+  return db.select().from(npcs).where(eq(npcs.type, type));
+}
+
+export async function generateNPCStats(
+  speciesId: string,
+  backgroundId: string,
+) {
+  const speciesData = await db
+    .select()
+    .from(species)
+    .where(eq(species.id, speciesId))
+    .limit(1);
+  const backgroundData = await db
+    .select()
+    .from(backgrounds)
+    .where(eq(backgrounds.id, backgroundId))
+    .limit(1);
+
+  return {
+    species: speciesData[0],
+    background: backgroundData[0],
+  };
+}
