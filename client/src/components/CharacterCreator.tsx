@@ -1,4 +1,3 @@
-
 import { FC } from 'react';
 import { Tab } from '@headlessui/react';
 import { FormProvider } from 'react-hook-form';
@@ -14,9 +13,14 @@ import AbilityScoresStep from './CharacterCreation/AbilityScores';
               // Import navigation components
               import StepNavigation from './CharacterCreator/StepNavigation';
               import ValidationProgress from './CharacterCreator/ValidationProgress';
+              // Placeholder imports for advanced features
+              import CharacterTemplates from './CharacterCreator/CharacterTemplates';
+              import GuidedCharacterCreation from './CharacterCreator/GuidedCharacterCreation';
+              import CharacterVersioning from './CharacterCreator/CharacterVersioning';
+              import SaveControls from './CharacterCreator/SaveControls'; // Added for saving
 
               const CharacterCreator: FC = () => {
-                const { form, onSubmit } = useCharacterForm();
+                const { form, onSubmit, isDirty, saveCharacter } = useCharacterForm(); // Added isDirty and saveCharacter
                 const { currentStep, setCurrentStep, completedSteps } = useCharacterStore();
 
                 const steps = [
@@ -24,6 +28,10 @@ import AbilityScoresStep from './CharacterCreation/AbilityScores';
                   { id: 1, name: 'Species', component: SpeciesSelectionStep },
                   { id: 2, name: 'Class', component: ClassSelectionStep },
                   { id: 3, name: 'Abilities', component: AbilityScoresStep },
+                  { id: 4, name: 'Templates', component: CharacterTemplates }, // Added Template Step
+                  { id: 5, name: 'Guided Creation', component: GuidedCharacterCreation }, // Added Guided Creation Step
+                  { id: 6, name: 'Versioning', component: CharacterVersioning }, // Added Versioning Step
+
                 ];
 
                 return (
@@ -72,3 +80,30 @@ import AbilityScoresStep from './CharacterCreation/AbilityScores';
                                 type="button"
                                 className="px-4 py-2 bg-gray-600 text-white rounded-md disabled:opacity-50"
                                 onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
+                                disabled={currentStep === 0}
+                              >
+                                Previous
+                              </button>
+
+                              <div className="space-x-2">
+                                <SaveControls onSave={saveCharacter} isDirty={isDirty} />
+
+                                <button
+                                  type="button"
+                                  className="px-4 py-2 bg-blue-600 text-white rounded-md disabled:opacity-50"
+                                  onClick={() => setCurrentStep(Math.min(steps.length - 1, currentStep + 1))}
+                                  disabled={currentStep === steps.length - 1 || !completedSteps[currentStep]}
+                                >
+                                  Next
+                                </button>
+                              </div>
+                            </div>
+                          </form>
+                        </FormProvider>
+                      </div>
+                    </div>
+                  </div>
+                );
+              };
+
+              export default CharacterCreator;
