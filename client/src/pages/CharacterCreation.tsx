@@ -2,9 +2,11 @@ import React, { useState, useEffect } from "react";
 import { Tab } from "@headlessui/react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { useForm, FormProvider } from "react-hook-form";
+import { useForm, FormProvider, FormField, FormItem, FormLabel } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, ScrollArea } from "@nextui-org/react";
+import { Button } from "@nextui-org/react";
 
 // Import SW5E data and utilities
 import { SPECIES } from "../lib/sw5e/species";
@@ -57,7 +59,7 @@ import { CharacterAPI } from "../lib/api/character";
 // Use the imported character schema from unified schema
 const characterSchema = CharacterSchema.extend({
   // Character-specific features
-
+  multiclass: z.array(z.object({ class: z.string(), level: z.number().min(1) })).default([]),
   traits: z
     .array(
       z.object({
@@ -79,6 +81,8 @@ export default function CharacterCreation() {
   const [currentTab, setCurrentTab] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isAddingMulticlass, setIsAddingMulticlass] = useState(false);
+  const [validationSteps, setValidationSteps] = useState<any[]>([]);
 
   // Form setup with validation
   const methods = useForm<CharacterData>({
@@ -117,10 +121,11 @@ export default function CharacterCreation() {
       maxPowerLevel: 0,
       traits: [],
       experiencePoints: 0,
+      multiclass: [],
     },
   });
 
-  const { handleSubmit, formState, watch, setValue, reset } = methods;
+  const { handleSubmit, formState, watch, setValue, control } = methods;
   const { errors, isValid, isDirty } = formState;
 
   // Watch for changes to calculate derived stats
@@ -285,12 +290,12 @@ export default function CharacterCreation() {
 
       // Validate character data using our new validation service
       const validationResult = await CharacterAPI.validateCharacter(characterData);
-      
+
       if (!validationResult.valid) {
         // Show validation errors
         const errorMessage = validationResult.errors
-          .map(err => err.message)
-          .join(', ');
+          .map((err) => err.message)
+          .join(", ");
         throw new Error(errorMessage);
       }
 

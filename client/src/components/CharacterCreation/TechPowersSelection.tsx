@@ -1,211 +1,225 @@
 
 import React, { useState, useEffect } from "react";
 import { useFormContext } from "react-hook-form";
-import { calculateModifier } from "../../lib/sw5e/rules";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Separator } from "@/components/ui/separator";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from "@/components/ui/select";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Alert } from "../ui/alert";
 
 interface TechPowersSelectionProps {
   form: any;
-  techPowers: any[];
+  powers: any[];
   maxPowerLevel: number;
-  castingAbility: string;
+  maxPowerPoints: number;
 }
 
-export default function TechPowersSelection({
-  form,
-  techPowers,
+export default function TechPowersSelection({ 
+  form, 
+  powers,
   maxPowerLevel,
-  castingAbility,
+  maxPowerPoints
 }: TechPowersSelectionProps) {
-  const { watch, setValue } = form;
-  const abilities = watch("abilities");
-  const selectedTechPowers = watch("techPowers") || [];
-  const level = watch("level") || 1;
+  const { control, setValue, watch, getValues } = form;
+  const [filter, setFilter] = useState("");
+  const [powerLevel, setPowerLevel] = useState<number | string>("all");
+  const [category, setCategory] = useState<string>("all");
+  const [selectedPowers, setSelectedPowers] = useState<string[]>(watch("techPowers") || []);
+  const [pointsUsed, setPointsUsed] = useState(0);
   
-  const [filteredPowers, setFilteredPowers] = useState<any[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [filterLevel, setFilterLevel] = useState<number | "all">("all");
-  const [filterCategory, setFilterCategory] = useState<string>("all");
-  const [maxSelections, setMaxSelections] = useState(0);
-
-  // Calculate casting ability modifier
-  const abilityModifier = castingAbility ? 
-    calculateModifier(abilities?.[castingAbility.toLowerCase()] || 10) : 0;
-
-  // Calculate max powers known based on class level and ability modifier
+  // Calculate points used whenever selected powers change
   useEffect(() => {
-    // Simplified calculation - customize based on your SW5E rules
-    const maxPowers = level + abilityModifier;
-    setMaxSelections(Math.max(1, maxPowers));
-  }, [level, abilityModifier]);
-
-  // Filter powers based on search and filters
+    let totalPoints = 0;
+    selectedPowers.forEach(powerId => {
+      const power = powers.find(p => p.id === powerId);
+      if (power) {
+        totalPoints += power.cost || power.level || 0;
+      }
+    });
+    setPointsUsed(totalPoints);
+  }, [selectedPowers, powers]);
+  
+  // Initialize from form values
   useEffect(() => {
-    let filtered = techPowers;
-    
+    const formPowers = watch("techPowers") || [];
+    setSelectedPowers(formPowers);
+  }, [watch]);
+  
+  // Filter powers based on user selections
+  const filteredPowers = powers.filter(power => {
     // Filter by search term
-    if (searchTerm) {
-      filtered = filtered.filter(power => 
-        power.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        power.description.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-    }
+    const matchesSearch = power.name.toLowerCase().includes(filter.toLowerCase()) ||
+                         power.description.toLowerCase().includes(filter.toLowerCase());
     
     // Filter by power level
-    if (filterLevel !== "all") {
-      filtered = filtered.filter(power => power.level === filterLevel);
-    }
+    const matchesLevel = powerLevel === "all" || power.level === Number(powerLevel);
     
     // Filter by category
-    if (filterCategory !== "all") {
-      filtered = filtered.filter(power => power.category === filterCategory);
+    const matchesCategory = category === "all" || power.category === category;
+    
+    // Filter by max power level available to character
+    const isInRange = power.level <= maxPowerLevel;
+    
+    return matchesSearch && matchesLevel && matchesCategory && isInRange;
+  });
+  
+  // Group powers by level for display
+  const powersByLevel: { [key: number]: any[] } = {};
+  filteredPowers.forEach(power => {
+    if (!powersByLevel[power.level]) {
+      powersByLevel[power.level] = [];
     }
+    powersByLevel[power.level].push(power);
+  });
+  
+  // Handle power selection/deselection
+  const togglePower = (powerId: string) => {
+    let updated: string[];
     
-    // Filter by max power level based on character level
-    filtered = filtered.filter(power => power.level <= maxPowerLevel);
-    
-    setFilteredPowers(filtered);
-  }, [searchTerm, filterLevel, filterCategory, techPowers, maxPowerLevel]);
-
-  // Get unique categories
-  const categories = Array.from(new Set(techPowers.map(power => power.category))).sort();
-
-  // Handle power selection
-  const togglePower = (power: any) => {
-    const isSelected = selectedTechPowers.some((p: any) => p.id === power.id);
-    
-    if (isSelected) {
-      // Remove power
-      setValue(
-        "techPowers",
-        selectedTechPowers.filter((p: any) => p.id !== power.id)
-      );
+    if (selectedPowers.includes(powerId)) {
+      // Deselect power
+      updated = selectedPowers.filter(id => id !== powerId);
     } else {
-      // Check if max powers selected
-      if (selectedTechPowers.length >= maxSelections) {
-        alert(`You can only select up to ${maxSelections} Tech powers at level ${level}.`);
+      // Check if adding would exceed available points
+      const power = powers.find(p => p.id === powerId);
+      const newTotal = pointsUsed + (power?.cost || power?.level || 0);
+      
+      if (newTotal > maxPowerPoints) {
+        alert("You don't have enough power points to select this power.");
         return;
       }
       
-      // Add power
-      setValue("techPowers", [...selectedTechPowers, power]);
+      // Select power
+      updated = [...selectedPowers, powerId];
     }
+    
+    setSelectedPowers(updated);
+    setValue("techPowers", updated);
   };
-
+  
+  // Get unique categories for filter
+  const categories = Array.from(new Set(powers.map(p => p.category))).filter(Boolean);
+  
+  // Sort levels for display
+  const sortedLevels = Object.keys(powersByLevel)
+    .map(Number)
+    .sort((a, b) => a - b);
+  
   return (
     <div className="space-y-4">
-      <div className="bg-gray-800 bg-opacity-50 p-4 rounded-md">
-        <div className="text-yellow-200 mb-2">
-          <span className="font-bold">Tech Powers Known:</span> {selectedTechPowers.length}/{maxSelections}
-        </div>
-        <div className="text-yellow-200 mb-2">
-          <span className="font-bold">Max Power Level:</span> {maxPowerLevel}
-        </div>
-        <div className="text-yellow-200">
-          <span className="font-bold">Casting Ability:</span> {castingAbility} (Modifier: {abilityModifier >= 0 ? '+' : ''}{abilityModifier})
-        </div>
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-semibold text-yellow-400">Tech Powers</h3>
+        <Badge variant="outline" className="bg-blue-900/30">
+          Points: {pointsUsed} / {maxPowerPoints}
+        </Badge>
       </div>
-
-      <div className="flex flex-col md:flex-row gap-4">
-        {/* Search and filters */}
-        <div className="w-full md:w-1/3 space-y-3">
-          <input
-            type="text"
-            placeholder="Search Tech powers..."
-            className="w-full bg-gray-800 bg-opacity-70 text-white p-2 rounded-md border border-gray-700 focus:border-yellow-400 focus:outline-none"
-            onChange={(e) => setSearchTerm(e.target.value)}
+      
+      <div className="flex flex-col sm:flex-row gap-4 mb-4">
+        <div className="flex-1">
+          <Input
+            placeholder="Search powers..."
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="w-full"
           />
-          
-          <div>
-            <label className="block text-yellow-200 mb-1">Power Level</label>
-            <select
-              className="w-full bg-gray-800 bg-opacity-70 text-white p-2 rounded-md border border-gray-700 focus:border-yellow-400 focus:outline-none"
-              onChange={(e) => setFilterLevel(e.target.value === "all" ? "all" : parseInt(e.target.value))}
-              value={filterLevel}
-            >
-              <option value="all">All Levels</option>
-              {[...Array(maxPowerLevel)].map((_, i) => (
-                <option key={i} value={i + 1}>
-                  Level {i + 1}
-                </option>
-              ))}
-            </select>
-          </div>
-          
-          <div>
-            <label className="block text-yellow-200 mb-1">Category</label>
-            <select
-              className="w-full bg-gray-800 bg-opacity-70 text-white p-2 rounded-md border border-gray-700 focus:border-yellow-400 focus:outline-none"
-              onChange={(e) => setFilterCategory(e.target.value)}
-              value={filterCategory}
-            >
-              <option value="all">All Categories</option>
-              {categories.map(category => (
-                <option key={category} value={category}>
-                  {category}
-                </option>
-              ))}
-            </select>
-          </div>
-          
-          {/* Selected Powers List */}
-          <div className="mt-4">
-            <h3 className="text-lg font-semibold text-yellow-400 mb-2">Selected Powers:</h3>
-            {selectedTechPowers.length === 0 ? (
-              <p className="text-gray-400 italic">No Tech powers selected</p>
-            ) : (
-              <ul className="space-y-1">
-                {selectedTechPowers.map((power: any) => (
-                  <li key={power.id} className="flex justify-between items-center bg-gray-700 bg-opacity-50 p-2 rounded">
-                    <span className="text-white">
-                      {power.name} <span className="text-xs text-gray-400">(Level {power.level})</span>
-                    </span>
-                    <button
-                      type="button"
-                      className="text-red-400 hover:text-red-300 focus:outline-none"
-                      onClick={() => togglePower(power)}
-                    >
-                      Remove
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
         </div>
-        
-        {/* Powers list */}
-        <div className="w-full md:w-2/3">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-96 overflow-y-auto p-2">
-            {filteredPowers.length === 0 ? (
-              <p className="text-gray-400 italic col-span-2 text-center">No Tech powers match your filters</p>
-            ) : (
-              filteredPowers.map((power) => {
-                const isSelected = selectedTechPowers.some((p: any) => p.id === power.id);
-                return (
-                  <div
-                    key={power.id}
-                    className={`border rounded-md p-3 cursor-pointer transition-colors ${
-                      isSelected
-                        ? "border-yellow-400 bg-yellow-900 bg-opacity-30"
-                        : "border-gray-700 bg-gray-800 bg-opacity-50 hover:bg-gray-700"
-                    }`}
-                    onClick={() => togglePower(power)}
-                  >
-                    <div className="flex justify-between items-start">
-                      <h4 className="text-yellow-400 font-medium">{power.name}</h4>
-                      <span className="text-xs px-2 py-1 rounded-full bg-blue-900 text-blue-200">
-                        {power.category || "Tech"}
-                      </span>
-                    </div>
-                    <div className="text-gray-400 text-sm mb-2">Level {power.level}</div>
-                    <p className="text-gray-300 text-sm line-clamp-3">{power.description}</p>
-                  </div>
-                );
-              })
-            )}
-          </div>
+        <div className="flex gap-2">
+          <Select value={String(powerLevel)} onValueChange={setPowerLevel}>
+            <SelectTrigger className="w-[120px]">
+              <SelectValue placeholder="Level" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Levels</SelectItem>
+              {[...Array(maxPowerLevel || 5)].map((_, i) => (
+                <SelectItem key={i} value={String(i + 1)}>
+                  Level {i + 1}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          
+          <Select value={category} onValueChange={setCategory}>
+            <SelectTrigger className="w-[120px]">
+              <SelectValue placeholder="Category" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              {categories.map(cat => (
+                <SelectItem key={cat} value={cat}>
+                  {cat}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
+      
+      {filteredPowers.length === 0 ? (
+        <Alert>No Tech powers match your filters.</Alert>
+      ) : (
+        <ScrollArea className="h-[400px] pr-4">
+          {sortedLevels.map(level => (
+            <div key={level} className="mb-6">
+              <h4 className="text-md font-medium mb-2">Level {level}</h4>
+              <Separator className="mb-2" />
+              
+              <div className="space-y-3">
+                {powersByLevel[level].map(power => (
+                  <div 
+                    key={power.id} 
+                    className={`
+                      p-3 rounded-md transition-colors
+                      ${selectedPowers.includes(power.id) 
+                        ? 'bg-blue-900/20 border border-blue-500/40' 
+                        : 'bg-gray-800/30 hover:bg-gray-700/30 border border-gray-700/40'}
+                    `}
+                  >
+                    <div className="flex items-start">
+                      <Checkbox
+                        id={`tech-power-${power.id}`}
+                        checked={selectedPowers.includes(power.id)}
+                        onCheckedChange={() => togglePower(power.id)}
+                        className="mt-1"
+                      />
+                      <div className="ml-3 flex-1">
+                        <div className="flex justify-between">
+                          <Label
+                            htmlFor={`tech-power-${power.id}`}
+                            className="text-sm font-medium cursor-pointer"
+                          >
+                            {power.name}
+                          </Label>
+                          <div className="flex space-x-2">
+                            <Badge variant="outline" className="text-xs">
+                              {power.category || "General"}
+                            </Badge>
+                            <Badge variant="outline" className="text-xs">
+                              {power.cost || power.level} Points
+                            </Badge>
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1">
+                          {power.description}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </ScrollArea>
+      )}
     </div>
   );
 }
