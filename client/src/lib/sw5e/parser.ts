@@ -103,3 +103,65 @@ function generateSuggestedEnemies(character: Character): string[] {
 
   return enemies;
 }
+
+import { Character } from "../stores/useCharacter";
+import { Campaign } from "../stores/useCampaign";
+
+interface ParsedGameState {
+  characterState: any;
+  campaignState: any;
+  objectives: any[];
+  locationUpdates: any[];
+}
+
+export function parseGameState(
+  character: Character,
+  campaign: Campaign,
+  debrief: any,
+): ParsedGameState {
+  // Parse character updates
+  const characterState = {
+    inventory: character.equipment,
+    stats: {
+      currentHp: character.currentHp,
+      temporaryHp: character.temporaryHp,
+      currentForcePoints: character.currentForcePoints,
+    },
+    experience: character.experience,
+    level: character.level,
+  };
+
+  // Parse campaign updates
+  const campaignState = {
+    currentLocation: campaign.currentLocation,
+    activeQuests: campaign.quests.filter((q) => q.status === "active"),
+    completedQuests: campaign.quests.filter((q) => q.status === "completed"),
+    npcRelations: {},
+  };
+
+  // Parse objectives
+  const objectives = debrief.objectives || [];
+
+  // Parse location updates
+  const locationUpdates = debrief.locations || [];
+
+  return {
+    characterState,
+    campaignState,
+    objectives,
+    locationUpdates,
+  };
+}
+
+export function formatDebriefReport(parsedState: ParsedGameState): string {
+  return JSON.stringify(
+    {
+      character: parsedState.characterState,
+      campaign: parsedState.campaignState,
+      objectives: parsedState.objectives,
+      locations: parsedState.locationUpdates,
+    },
+    null,
+    2,
+  );
+}
