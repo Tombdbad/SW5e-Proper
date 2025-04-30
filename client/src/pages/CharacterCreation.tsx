@@ -40,6 +40,7 @@ import BackgroundSelection from "../components/CharacterCreation/BackgroundSelec
 import EquipmentSelection from "../components/CharacterCreation/EquipmentSelection";
 import SkillsSelection from "../components/CharacterCreation/SkillsSelection";
 import FeatsSelection from "../components/CharacterCreation/FeatsSelection";
+import PowersSelection from "../components/CharacterCreation/PowersSelection";
 import ForcePowersSelection from"../components/CharacterCreation/ForcePowersSelection";
 import TechPowersSelection from "../components/CharacterCreation/TechPowersSelection";
 import CharacterDetails from "../components/CharacterCreation/CharacterDetails";
