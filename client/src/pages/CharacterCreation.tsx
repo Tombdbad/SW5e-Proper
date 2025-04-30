@@ -67,7 +67,7 @@ import Alert from "../components/ui/Alert";
     .default([]),
 
   // Meta info
-  experiencePoints: z.number().min(0).default(0),
+  experiencePoints, z.number().min(0).default(0);
 });
 
 export type CharacterData = z.infer<typeof characterSchema>;
