@@ -1,99 +1,105 @@
-import { FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { backgrounds } from "@/lib/sw5e/backgrounds";
 
-export default function BackgroundSelection({ form, onSelect }: { form: any; onSelect?: (category: string, value: string) => void }) {
-  const handleBackgroundChange = (value: string) => {
-    form.setValue("background", value);
-  };
+import React from "react";
+import { useFormContext } from "react-hook-form";
+import {
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { backgrounds, BACKGROUNDS } from "@/lib/sw5e/backgrounds";
+
+interface BackgroundSelectionProps {
+  onSelect: () => void;
+}
+
+export default function BackgroundSelection({ onSelect }: BackgroundSelectionProps) {
+  const { control, watch } = useFormContext();
+  const selectedBackground = watch("background");
+
+  const backgroundInfo = backgrounds.find(b => b.id === selectedBackground);
 
   return (
     <div className="space-y-6">
-      <div className="text-lg font-medium">Choose your character's background:</div>
-      
       <FormField
-        control={form.control}
+        control={control}
         name="background"
         render={({ field }) => (
-          <FormItem className="space-y-3">
+          <FormItem>
+            <FormLabel>Background</FormLabel>
             <FormControl>
-              <RadioGroup
-                onValueChange={handleBackgroundChange}
+              <Select
+                onValueChange={field.onChange}
                 value={field.value}
-                className="grid grid-cols-1 md:grid-cols-2 gap-4"
               >
-                {backgrounds.map((backgroundOption) => (
-                  <FormItem key={backgroundOption.id}>
-                    <FormControl>
-                      <RadioGroupItem
-                        value={backgroundOption.id}
-                        id={backgroundOption.id}
-                        className="peer sr-only"
-                      />
-                    </FormControl>
-                    <FormLabel
-                      htmlFor={backgroundOption.id}
-                      className="cursor-pointer"
-                    >
-                      <Card className="border-2 hover:border-yellow-400 peer-data-[state=checked]:border-yellow-400 peer-data-[state=checked]:bg-yellow-50 transition-all cursor-pointer" onClick={() => handleBackgroundChange(backgroundOption.id)}>
-                        <CardHeader>
-                          <CardTitle>{backgroundOption.name}</CardTitle>
-                          <CardDescription>
-                            {backgroundOption.summary}
-                          </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                          <div className="mb-2">
-                            <span className="font-semibold">Feature: </span>
-                            {backgroundOption.feature}
-                          </div>
-                          
-                          <div className="mb-4">
-                            <span className="font-semibold">Skill Proficiencies: </span>
-                            {backgroundOption.skillProficiencies.join(", ")}
-                          </div>
-                          
-                          <div>
-                            <span className="font-semibold">Suggested Characteristics:</span>
-                            <ul className="list-disc list-inside mt-1 text-sm">
-                              {backgroundOption.suggestedCharacteristics.map((trait, index) => (
-                                <li key={index}>{trait}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        </CardContent>
-                        <div className="p-4 pt-0">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              handleBackgroundChange(backgroundOption.id);
-                              form.setValue("background", backgroundOption.id);
-                              onSelect?.("background", backgroundOption.id);
-                            }}
-                            className={`w-full px-4 py-2 text-sm font-semibold rounded-md ${
-                              form.watch("background") === backgroundOption.id
-                                ? "bg-yellow-700 text-white"
-                                : "bg-yellow-600 hover:bg-yellow-700 text-white"
-                            } transition-colors`}
-                          >
-                            Select {backgroundOption.name}
-                          </button>
-                        </div>
-                      </Card>
-                    </FormLabel>
-                  </FormItem>
-                ))}
-              </RadioGroup>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select background" />
+                </SelectTrigger>
+                <SelectContent>
+                  <ScrollArea className="h-72">
+                    {BACKGROUNDS.map((background) => (
+                      <SelectItem key={background.id} value={background.id}>
+                        {background.name}
+                      </SelectItem>
+                    ))}
+                  </ScrollArea>
+                </SelectContent>
+              </Select>
             </FormControl>
-            <FormDescription>
-              Your character's background represents their life before adventuring.
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
       />
+
+      {backgroundInfo && (
+        <div className="bg-gray-800 bg-opacity-50 rounded-md p-4">
+          <h3 className="text-lg font-semibold text-yellow-400 mb-2">{backgroundInfo.name}</h3>
+          <p className="text-gray-300 mb-2">{backgroundInfo.summary}</p>
+          
+          <div className="mt-4">
+            <h4 className="text-yellow-400 text-sm font-medium mb-1">Feature: {backgroundInfo.feature}</h4>
+            <p className="text-sm text-gray-300">{backgroundInfo.featureDescription}</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            <div>
+              <h4 className="text-yellow-400 text-sm font-medium mb-1">Skill Proficiencies</h4>
+              <ul className="list-disc pl-5 text-sm">
+                {backgroundInfo.skillProficiencies.map((skill, index) => (
+                  <li key={index}>{skill}</li>
+                ))}
+              </ul>
+            </div>
+            
+            <div>
+              <h4 className="text-yellow-400 text-sm font-medium mb-1">Tool Proficiencies</h4>
+              <ul className="list-disc pl-5 text-sm">
+                {backgroundInfo.toolProficiencies.length > 0 ? (
+                  backgroundInfo.toolProficiencies.map((tool, index) => (
+                    <li key={index}>{tool}</li>
+                  ))
+                ) : (
+                  <li>None</li>
+                )}
+              </ul>
+            </div>
+          </div>
+          
+          <Button onClick={onSelect} className="mt-4">
+            Continue
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

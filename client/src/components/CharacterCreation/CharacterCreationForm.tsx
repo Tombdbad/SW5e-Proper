@@ -26,9 +26,15 @@ import TranslucentPane from "@/components/ui/TranslucentPane";
 import { useCharacter } from "@/lib/stores/useCharacter";
 
 // Import SW5E data and components
-import { species } from "@/lib/sw5e/species";
-import { classes } from "@/lib/sw5e/classes";
-import { backgrounds } from "@/lib/sw5e/backgrounds";
+import { species, getSpeciesById } from "@/lib/sw5e/species";
+import { CLASSES } from "@/lib/sw5e/classes";
+import { backgrounds, BACKGROUNDS } from "@/lib/sw5e/backgrounds";
+import { FORCE_POWERS } from "@/lib/sw5e/forcePowers";
+import { TECH_POWERS } from "@/lib/sw5e/techPowers";
+import { FEATS } from "@/lib/sw5e/feats";
+import { abilities } from "@/lib/sw5e/abilities";
+import { calculateModifier } from "@/lib/sw5e/rules";
+import { ALIGNMENTS, SKILLS } from "@/lib/sw5e/constants";
 import SpeciesSelection from "./SpeciesSelection";
 import ClassSelection from "./ClassSelection";
 import AbilityScores from "./AbilityScores";
@@ -78,17 +84,7 @@ export default function CharacterCreationForm() {
   
   const { character, updateCharacter } = useCharacter();
 
-  const alignments = [
-    "Lawful Light",
-    "Neutral Light",
-    "Chaotic Light",
-    "Lawful Balanced",
-    "Neutral Balanced",
-    "Chaotic Balanced",
-    "Lawful Dark",
-    "Neutral Dark",
-    "Chaotic Dark",
-  ];
+  const alignments = ALIGNMENTS;
 
   const methods = useForm<CharacterData>({
     resolver: zodResolver(characterSchema),
