@@ -100,7 +100,7 @@ export default function PowersSelection({
     return (
       <div className="space-y-4">
         <Alert>
-          <InfoCircle className="h-4 w-4 mr-2" />
+          <Info className="h-4 w-4 mr-2" />
           Your character class does not have access to Force or Tech powers.
         </Alert>
         <p className="text-gray-400">
