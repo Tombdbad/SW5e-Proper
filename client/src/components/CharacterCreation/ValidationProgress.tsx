@@ -1,113 +1,106 @@
-import React from "react";
-import { CheckCircle, Circle, AlertCircle, Info } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import TranslucentPane from "@/components/ui/TranslucentPane";
 
-export interface ValidationStep {
-  id: string;
-  label: string;
-  isRequired: boolean;
-  isComplete: boolean;
-  isError?: boolean;
-  errorMessage?: string;
-}
+import { useMemo } from "react";
+import { Character } from "@/lib/stores/useCharacter";
+import { Progress } from "@/components/ui/progress";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { CheckCircle, AlertCircle, AlertTriangle } from "lucide-react";
 
 interface ValidationProgressProps {
-  steps: ValidationStep[];
-  currentTabIndex: number;
-  onTabChange: (index: number) => void;
+  character: any;
 }
 
-export default function ValidationProgress({
-  steps,
-  currentTabIndex,
-  onTabChange,
-}: ValidationProgressProps) {
-  // Calculate overall progress
-  const requiredSteps = steps.filter(step => step.isRequired);
-  const completedRequiredSteps = requiredSteps.filter(step => step.isComplete);
-  const progressPercentage = requiredSteps.length > 0 
-    ? Math.round((completedRequiredSteps.length / requiredSteps.length) * 100) 
-    : 100;
+export function ValidationProgress({ character }: ValidationProgressProps) {
+  // Calculate completion percentage based on required fields
+  const { completionPercentage, validationSteps } = useMemo(() => {
+    const steps = [
+      {
+        name: "Basic Info",
+        isComplete: !!character.name,
+        isRequired: true,
+        message: character.name ? "Character has a name" : "Name is required"
+      },
+      {
+        name: "Species",
+        isComplete: !!character.species,
+        isRequired: true,
+        message: character.species ? "Species selected" : "Species selection required"
+      },
+      {
+        name: "Class",
+        isComplete: !!character.class,
+        isRequired: true,
+        message: character.class ? "Class selected" : "Class selection required"
+      },
+      {
+        name: "Ability Scores",
+        isComplete: character.abilityScores && 
+          Object.values(character.abilityScores).every((score: any) => score > 0),
+        isRequired: true,
+        message: character.abilityScores && 
+          Object.values(character.abilityScores).every((score: any) => score > 0) ? 
+          "Ability scores assigned" : "Ability scores need to be assigned"
+      },
+      {
+        name: "Background",
+        isComplete: !!character.background,
+        isRequired: false,
+        message: character.background ? "Background selected" : "Background is optional but recommended"
+      },
+      {
+        name: "Character Details",
+        isComplete: !!(character.bonds || character.motivations),
+        isRequired: false,
+        message: character.bonds || character.motivations ? 
+          "Character details provided" : "Adding personal details enhances your character"
+      }
+    ];
 
-  const isComplete = requiredSteps.length === completedRequiredSteps.length;
-  const hasErrors = steps.some(step => step.isError);
+    // Calculate percentage based on required steps
+    const requiredSteps = steps.filter(step => step.isRequired);
+    const completedRequiredSteps = requiredSteps.filter(step => step.isComplete);
+    const percentage = Math.round((completedRequiredSteps.length / requiredSteps.length) * 100);
+
+    return {
+      completionPercentage: percentage,
+      validationSteps: steps
+    };
+  }, [character]);
+
+  // Determine overall validation status
+  const readyToSave = completionPercentage === 100;
 
   return (
-    <TranslucentPane className="p-4">
-      <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-semibold text-yellow-400">Character Creation Progress</h3>
-        <Badge 
-          variant={isComplete ? "default" : "outline"}
-          className={
-            isComplete 
-              ? "bg-green-900/40 text-green-100" 
-              : hasErrors 
-                ? "bg-red-900/40 text-red-100" 
-                : "bg-blue-900/40 text-blue-100"
-          }
-        >
-          {isComplete 
-            ? "Complete" 
-            : hasErrors 
-              ? "Has Issues" 
-              : `${progressPercentage}% Complete`}
-        </Badge>
-      </div>
-
-      <div className="w-full bg-gray-800 h-2 rounded-full mb-4 overflow-hidden">
-        <div 
-          className={`h-full rounded-full ${
-            isComplete 
-              ? "bg-green-500" 
-              : hasErrors 
-                ? "bg-yellow-500" 
-                : "bg-blue-500"
-          }`}
-          style={{ width: `${progressPercentage}%` }}
-        />
-      </div>
+    <div className="space-y-4">
+      <h3 className="text-lg font-semibold text-yellow-400">Character Completion</h3>
 
       <div className="space-y-2">
-        {steps.map((step, index) => (
-          <div 
-            key={step.id}
-            className={`
-              flex items-center p-2 rounded-md cursor-pointer transition-colors
-              ${index === currentTabIndex ? "bg-gray-700/50" : "hover:bg-gray-800/50"}
-            `}
-            onClick={() => onTabChange(index)}
-          >
-            <div className="mr-3">
+        <Progress value={completionPercentage} className="h-2" />
+        <p className="text-sm text-center">
+          {completionPercentage}% Complete
+          {readyToSave && " - Ready to save!"}
+        </p>
+      </div>
+
+      <div className="space-y-2 max-h-40 overflow-y-auto pr-2">
+        {validationSteps.map((step, index) => (
+          <Alert key={index} variant={step.isComplete ? "default" : step.isRequired ? "destructive" : "warning"} 
+                className="py-2 text-sm">
+            <div className="flex items-center">
               {step.isComplete ? (
-                <CheckCircle className="h-5 w-5 text-green-500" />
-              ) : step.isError ? (
-                <AlertCircle className="h-5 w-5 text-red-500" />
+                <CheckCircle className="h-4 w-4 mr-2" />
+              ) : step.isRequired ? (
+                <AlertCircle className="h-4 w-4 mr-2" />
               ) : (
-                <Circle className="h-5 w-5 text-gray-500" />
+                <AlertTriangle className="h-4 w-4 mr-2" />
               )}
-            </div>
-
-            <div className="flex-1">
-              <div className="flex justify-between items-center">
-                <span className={step.isComplete ? "text-white" : "text-gray-400"}>
-                  {step.label}
-                </span>
-                {step.isRequired && (
-                  <Badge variant="outline" className="text-xs bg-gray-800/50">
-                    Required
-                  </Badge>
-                )}
+              <div>
+                <AlertTitle className="text-xs">{step.name}</AlertTitle>
+                <AlertDescription className="text-xs">{step.message}</AlertDescription>
               </div>
-
-              {step.isError && step.errorMessage && (
-                <p className="text-xs text-red-400 mt-1">{step.errorMessage}</p>
-              )}
             </div>
-          </div>
+          </Alert>
         ))}
       </div>
-    </TranslucentPane>
+    </div>
   );
 }
