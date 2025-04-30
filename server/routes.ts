@@ -162,7 +162,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Star Systems and Locations endpoints
+  app.get("/api/star-systems", async (req, res) => {
+    try {
+      const allSystems = await db.select().from(starSystems);
+      res.json(allSystems);
+    } catch (error) {
+      console.error("Error fetching star systems:", error);
+      res.status(500).json({ message: "Failed to fetch star systems" });
+    }
+  });
+
+  app.get("/api/star-systems/:id", async (req, res) => {
+    try {
+      const systemId = req.params.id;
+      const system = await db
+        .select()
+        .from(starSystems)
+        .where(eq(starSystems.id, systemId))
+        .limit(1);
+
+      if (!system || system.length === 0) {
+        return res.status(404).json({ message: "Star system not found" });
+      }
+
+      res.json(system[0]);
+    } catch (error) {
+      console.error("Error fetching star system:", error);
+      res.status(500).json({ message: "Failed to fetch star system" });
+    }
+  });
+
+  app.get("/api/star-systems/:id/locations", async (req, res) => {
+    try {
+      const systemId = req.params.id;
+      const locations = await db
+        .select()
+        .from(planets)
+        .where(eq(planets.starSystem, systemId));
+
+      res.json(locations);
+    } catch (error) {
+      console.error("Error fetching system locations:", error);
+      res.status(500).json({ message: "Failed to fetch system locations" });
+    }
+  });
+
   // Campaign endpoints
+  app.get("/api/campaigns", async (req, res) => {
+    try {
+      const allCampaigns = await db.select().from(campaigns);
   app.get("/api/campaigns", async (req, res) => {
     try {
       const allCampaigns = await db.select().from(campaigns);

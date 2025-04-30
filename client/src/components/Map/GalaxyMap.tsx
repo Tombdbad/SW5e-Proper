@@ -10,20 +10,34 @@ export default function GalaxyMap() {
   const [hoveredSystem, setHoveredSystem] = useState<string | null>(null);
   const galaxyRef = useRef<THREE.Group>(null);
   const { camera } = useThree();
-  
+
   // Set initial camera position
+  const [systems, setSystems] = useState([]);
+
   useEffect(() => {
     camera.position.set(0, 100, 100);
     camera.lookAt(0, 0, 0);
+
+    // Fetch star systems data
+    async function loadStarSystems() {
+      try {
+        const data = await fetchStarSystems();
+        setSystems(data);
+      } catch (error) {
+        console.error("Failed to load star systems:", error);
+      }
+    }
+
+    loadStarSystems();
   }, [camera]);
-  
+
   // Galaxy rotation
   useFrame((_, delta) => {
     if (galaxyRef.current) {
       galaxyRef.current.rotation.y += delta * 0.05;
     }
   });
-  
+
   // Handle system selection
   const handleSystemClick = (systemId: string) => {
     selectStarSystem(systemId);
@@ -36,7 +50,7 @@ export default function GalaxyMap() {
         <planeGeometry args={[500, 500]} />
         <meshBasicMaterial color="#000020" />
       </mesh>
-      
+
       {/* Galaxy dust */}
       <points>
         <bufferGeometry>
@@ -49,7 +63,7 @@ export default function GalaxyMap() {
         </bufferGeometry>
         <pointsMaterial size={0.5} color="#8080ff" sizeAttenuation />
       </points>
-      
+
       {/* Galaxy arms */}
       <group ref={galaxyRef}>
         {generateGalaxyArms(4, 100).map((arm, index) => (
@@ -65,7 +79,7 @@ export default function GalaxyMap() {
             <lineBasicMaterial color="#404080" opacity={0.5} transparent />
           </line>
         ))}
-        
+
         {/* Star systems */}
         {starSystems.map((system) => (
           <group key={system.id} position={[system.x, system.y, system.z]}>
@@ -75,13 +89,31 @@ export default function GalaxyMap() {
               onPointerOut={() => setHoveredSystem(null)}
             >
               <sphereGeometry args={[1, 16, 16]} />
-              <meshStandardMaterial 
-                color={selectedStarSystem === system.id ? "#ffff00" : hoveredSystem === system.id ? "#ffaa00" : getStarColor(system.type)} 
-                emissive={selectedStarSystem === system.id ? "#ffff00" : hoveredSystem === system.id ? "#ffaa00" : getStarColor(system.type)}
-                emissiveIntensity={selectedStarSystem === system.id ? 2 : hoveredSystem === system.id ? 1.5 : 1}
+              <meshStandardMaterial
+                color={
+                  selectedStarSystem === system.id
+                    ? "#ffff00"
+                    : hoveredSystem === system.id
+                      ? "#ffaa00"
+                      : getStarColor(system.type)
+                }
+                emissive={
+                  selectedStarSystem === system.id
+                    ? "#ffff00"
+                    : hoveredSystem === system.id
+                      ? "#ffaa00"
+                      : getStarColor(system.type)
+                }
+                emissiveIntensity={
+                  selectedStarSystem === system.id
+                    ? 2
+                    : hoveredSystem === system.id
+                      ? 1.5
+                      : 1
+                }
               />
             </mesh>
-            
+
             {/* System label */}
             <Text
               position={[0, 2, 0]}
@@ -97,16 +129,16 @@ export default function GalaxyMap() {
           </group>
         ))}
       </group>
-      
+
       {/* Controls */}
-      <OrbitControls 
+      <OrbitControls
         enableZoom={true}
         enablePan={true}
         enableRotate={true}
         minDistance={20}
         maxDistance={200}
       />
-      
+
       {/* Lighting */}
       <ambientLight intensity={0.4} />
       <pointLight position={[0, 0, 0]} intensity={1} color="#ffffff" />
@@ -117,54 +149,62 @@ export default function GalaxyMap() {
 // Generate galaxy dust particles
 function generateGalaxyDust() {
   const positions = new Float32Array(2000 * 3);
-  
+
   for (let i = 0; i < positions.length; i += 3) {
     const r = 70 * Math.random();
     const theta = 2 * Math.PI * Math.random();
-    
+
     positions[i] = r * Math.cos(theta);
     positions[i + 1] = (Math.random() - 0.5) * 10;
     positions[i + 2] = r * Math.sin(theta);
   }
-  
+
   return positions;
 }
 
 // Generate galaxy spiral arms
 function generateGalaxyArms(arms: number, pointsPerArm: number) {
   const armPoints: number[][] = [];
-  
+
   for (let a = 0; a < arms; a++) {
     const arm: number[] = [];
     const armAngle = (a / arms) * 2 * Math.PI;
-    
+
     for (let i = 0; i < pointsPerArm; i++) {
       const r = 5 + i * 0.5;
-      const theta = armAngle + (i / 30);
-      
+      const theta = armAngle + i / 30;
+
       arm.push(
         r * Math.cos(theta),
         (Math.random() - 0.5) * 2,
-        r * Math.sin(theta)
+        r * Math.sin(theta),
       );
     }
-    
+
     armPoints.push(arm);
   }
-  
+
   return armPoints;
 }
 
 // Get color based on star type
 function getStarColor(type: string) {
   switch (type) {
-    case "O": return "#9bb0ff"; // Blue
-    case "B": return "#aabfff"; // Blue-white
-    case "A": return "#cad7ff"; // White
-    case "F": return "#f8f7ff"; // Yellow-white
-    case "G": return "#fff4ea"; // Yellow
-    case "K": return "#ffd2a1"; // Orange
-    case "M": return "#ffcc6f"; // Red
-    default: return "#ffffff"; // White
+    case "O":
+      return "#9bb0ff"; // Blue
+    case "B":
+      return "#aabfff"; // Blue-white
+    case "A":
+      return "#cad7ff"; // White
+    case "F":
+      return "#f8f7ff"; // Yellow-white
+    case "G":
+      return "#fff4ea"; // Yellow
+    case "K":
+      return "#ffd2a1"; // Orange
+    case "M":
+      return "#ffcc6f"; // Red
+    default:
+      return "#ffffff"; // White
   }
 }
