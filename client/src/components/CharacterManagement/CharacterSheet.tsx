@@ -955,8 +955,9 @@ export default function CharacterSheet({
                 <div className="space-y-4">
                   {character.forcePowers.map((power, index) => (
                     <div key={index} className="p-3 bg-gray-800 rounded-lg">
-                      <div className="flex justify-between items-center mb-2">
-                        <h3 className="font-bold text-lg">{power.name}</h3>
+                        <div key={index} className="p-3 bg-gray-800 rounded-lg
+                          <div>className="flex justify-between items-center mb-2">
+                            <h3 className="font-bold text-lg">{power.name}</h3>
                         <Badge variant="outline">Level {power.level}</Badge>
                       </div>
                       <div className="grid grid-cols-2 gap-2 text-sm mb-2">
