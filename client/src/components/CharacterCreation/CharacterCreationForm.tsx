@@ -24,6 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import TranslucentPane from "@/components/ui/TranslucentPane";
 import { useCharacter } from "@/lib/stores/useCharacter";
+import { ValidationProgress } from "./ValidationProgress";
 
 // Import SW5E data and components
 import { species, getSpeciesById } from "@/lib/sw5e/species";
@@ -125,6 +126,20 @@ export default function CharacterCreationForm() {
       setCharacterLevel(selectedLevel);
     }
   }, [selectedLevel]);
+  
+  // Auto-save character draft every 30 seconds
+  useEffect(() => {
+    const formValues = methods.getValues();
+    const saveInterval = setInterval(() => {
+      const currentValues = methods.getValues();
+      if (currentValues.name) { // Only save if at least a name exists
+        localStorage.setItem('characterDraft', JSON.stringify(currentValues));
+        console.log('Draft saved automatically');
+      }
+    }, 30000);
+    
+    return () => clearInterval(saveInterval);
+  }, [methods]);
 
   // Effect to determine power types based on class
   useEffect(() => {
@@ -139,6 +154,30 @@ export default function CharacterCreationForm() {
     setActiveTab(tab);
   };
 
+  // Load draft function
+  const loadDraft = () => {
+    try {
+      const savedDraft = localStorage.getItem('characterDraft');
+      if (savedDraft) {
+        const draftData = JSON.parse(savedDraft);
+        methods.reset(draftData);
+        console.log('Draft loaded successfully');
+      }
+    } catch (error) {
+      console.error('Error loading draft:', error);
+    }
+  };
+  
+  // Check for existing draft on mount
+  useEffect(() => {
+    if (localStorage.getItem('characterDraft')) {
+      // Show notification or prompt user to load draft
+      if (window.confirm('You have a saved character draft. Would you like to load it?')) {
+        loadDraft();
+      }
+    }
+  }, []);
+  
   const onSubmit = async (data: CharacterData) => {
     setIsSubmitting(true);
     try {
@@ -377,15 +416,43 @@ export default function CharacterCreationForm() {
             <TranslucentPane className="p-6">
               <h2 className="text-lg font-medium text-yellow-400 mb-4">Character Preview</h2>
               <CharacterPreview abilities={abilityScores} />
+              <div className="mt-6 border-t pt-4 border-gray-700">
+                <ValidationProgress character={methods.getValues()} />
+              </div>
             </TranslucentPane>
             
-            <Button 
-              type="submit" 
-              className="w-full" 
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? "Submitting..." : "Save Character"}
-            </Button>
+            <div className="space-y-3">
+              <Button 
+                type="submit" 
+                className="w-full" 
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? "Submitting..." : "Save Character"}
+              </Button>
+              
+              <div className="grid grid-cols-2 gap-2">
+                <Button 
+                  type="button" 
+                  variant="outline"
+                  className="w-full" 
+                  onClick={() => {
+                    const data = methods.getValues();
+                    localStorage.setItem('characterDraft', JSON.stringify(data));
+                    alert('Character draft saved!');
+                  }}
+                >
+                  Save Draft
+                </Button>
+                <Button 
+                  type="button" 
+                  variant="outline"
+                  className="w-full" 
+                  onClick={loadDraft}
+                >
+                  Load Draft
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       </form>

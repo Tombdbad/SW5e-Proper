@@ -1,22 +1,22 @@
 import { calculateModifier } from "@/lib/sw5e/rules";
 
-    // CharacterPreview component
-    export const CharacterPreview = ({ character }: { character?: any }) => {
-      if (!character) {
-        return (
-          <div className="character-preview p-4">
-            <p>No character data available</p>
-          </div>
-        );
-      }
+// CharacterPreview component
+export const CharacterPreview = ({ character }: { character?: any }) => {
+  if (!character) {
+    return (
+      <div className="character-preview p-4">
+        <p>No character data available</p>
+      </div>
+    );
+  }
 
-      return (
-        <div className="character-preview p-4">
-          <h3 className="text-xl font-bold mb-2">{character.name || "New Character"}</h3>
-          <p>
-            Level {character.level || 1} {character.species || "Unknown"} {character.class || "Unknown"}
-          </p>
-        </div>
+  return (
+    <div className="character-preview p-4">
+      <h3 className="text-xl font-bold mb-2">{character.name || "New Character"}</h3>
+      <p>
+        Level {character.level || 1} {character.species || "Unknown"} {character.class || "Unknown"}
+      </p>
+    </div>
   );
 };
 
@@ -952,7 +952,7 @@ export default function CharacterSheet({
             </CardHeader>
             <CardContent>
               {character.forcePowers && character.forcePowers.length > 0 ? (
-                <div className="space-y-4">
+                <div className="space-y4">
                   {character.forcePowers.map((power, index) => (
                     <div key={index} className="p-3 bg-gray-800 rounded-lg">
                       <div className="flex justify-between items-center mb-2">

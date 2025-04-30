@@ -9,6 +9,8 @@ import {
 } from "@/components/ui/form";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Info as InfoIcon } from "lucide-react";
 import { FORCE_POWERS } from "@/lib/sw5e/forcePowers";
 
 interface ForcePowersSelectionProps {
@@ -70,11 +72,38 @@ export default function ForcePowersSelection({
                           htmlFor={power.id}
                           className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                         >
-                          {power.name} 
+                          {power.name}
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <div className="ml-2 cursor-help">
+                                  <InfoIcon className="h-4 w-4 text-yellow-400/60" />
+                                </div>
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-md">
+                                <div className="space-y-2">
+                                  <div className="font-medium">{power.name}</div>
+                                  <div className="text-xs">
+                                    <span className="text-yellow-300">Level:</span> {power.powerLevel}
+                                  </div>
+                                  <div className="text-xs">
+                                    <span className="text-yellow-300">Casting Time:</span> {power.castingPeriod}
+                                  </div>
+                                  <div className="text-xs">
+                                    <span className="text-yellow-300">Range:</span> {power.range}
+                                  </div>
+                                  <div className="text-xs">
+                                    <span className="text-yellow-300">Duration:</span> {power.duration}
+                                  </div>
+                                  <div className="text-xs mt-2">{power.description}</div>
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                           <span className={`ml-2 text-xs ${
-                            power.alignment === "light" ? "text-blue-400" : 
-                            power.alignment === "dark" ? "text-red-400" : 
-                            "text-yellow-400"
+                            power.alignment === "light" ? "text-blue-400" :
+                              power.alignment === "dark" ? "text-red-400" :
+                                "text-yellow-400"
                           }`}>
                             ({power.alignment})
                           </span>

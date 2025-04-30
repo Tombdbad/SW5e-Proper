@@ -56,6 +56,13 @@ export default function ClassSelection({ onSelect }: ClassSelectionProps) {
               </Select>
             </FormControl>
             <FormMessage />
+            {field.value && (
+              <div className="mt-4 p-3 bg-black bg-opacity-30 rounded border border-yellow-500/20 text-sm">
+                {CLASSES.find(c => c.id === field.value)?.description || (
+                  <span className="text-yellow-300/50 italic">Select a class to view its description</span>
+                )}
+              </div>
+            )}
           </FormItem>
         )}
       />
