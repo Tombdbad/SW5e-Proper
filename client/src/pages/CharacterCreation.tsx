@@ -41,7 +41,7 @@ import EquipmentSelection from "../components/CharacterCreation/EquipmentSelecti
 import SkillsSelection from "../components/CharacterCreation/SkillsSelection";
 import FeatsSelection from "../components/CharacterCreation/FeatsSelection";
 import PowersSelection from "../components/CharacterCreation/PowersSelection";
-import ForcePowersSelection from"../components/CharacterCreation/ForcePowersSelection";
+import ForcePowersSelection from "../components/CharacterCreation/ForcePowersSelection";
 import TechPowersSelection from "../components/CharacterCreation/TechPowersSelection";
 import CharacterDetails from "../components/CharacterCreation/CharacterDetails";
 import { CharacterPreview } from "../components/CharacterManagement/CharacterSheet";
@@ -49,12 +49,12 @@ import TranslucentPane from "../components/ui/TranslucentPane";
 import Alert from "../components/ui/Alert";
 
 // Import the unified character schema
-    import { CharacterSchema } from "@shared/unifiedSchema";
+import { CharacterSchema } from "@shared/unifiedSchema";
 
-    // Use the imported character schema from unified schema
-    const characterSchema = CharacterSchema;
+// Use the imported character schema from unified schema
+const characterSchema = CharacterSchema.extend({
+  // Character-specific features
 
-      // Character-specific features
   traits: z
     .array(
       z.object({
@@ -382,10 +382,7 @@ export default function CharacterCreation() {
     {
       name: "Preview",
       component: (
-        <CharacterPreview
-          form={methods}
-          abilities={watch("abilities")}
-        />
+        <CharacterPreview form={methods} abilities={watch("abilities")} />
       ),
     },
   ];
