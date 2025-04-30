@@ -52,10 +52,17 @@ export async function generateCampaignFromCharacter(character: Character): Promi
  * Generates a campaign description based on character and system.
  */
 function generateCampaignDescription(character: Character, system: any): string {
-  const era = ["Age of Republic", "Age of Rebellion", "New Republic Era"][Math.floor(Math.random() * 3)];
-  
-  const themes: Record<string, string[]> = {
-    // Themes by class
+  const era = ["Age of Republic", "Age of Rebellion", "New Republic Era"]
+
+    // Process character narrative using our NLP system
+    const { processCharacterNarrative } = require("@/lib/sw5e/characterLanguageProcessor");
+    const narrativeAnalysis = processCharacterNarrative(character);
+
+    // Extract themes and motivations from the character's narrative
+    const narrativeThemes = narrativeAnalysis.mainThemes;
+    const motivations = narrativeAnalysis.motivations;
+
+    // Use narrative themes if available, otherwise fall back to class-based themes
     berserker: ["survival", "revenge", "tribal conflict"],
     consular: ["diplomacy", "force mysteries", "ancient knowledge"],
     engineer: ["technology", "innovation", "corporate espionage"],
@@ -67,15 +74,33 @@ function generateCampaignDescription(character: Character, system: any): string 
     sentinel: ["investigation", "balance", "force corruption"]
   };
   
-  const characterThemes = themes[character.class] || ["adventure", "discovery", "conflict"];
+  const characterThemes = narrativeThemes.length > 0 ? narrativeThemes : (themes[character.class] || ["adventure", "discovery", "conflict"]);
   const mainTheme = characterThemes[Math.floor(Math.random() * characterThemes.length)];
   
-  // Generate the description
-  return `In the ${era}, a tale of ${mainTheme} unfolds in the ${system.region}. 
-  ${character.name}, a ${character.species} ${character.class}, begins their journey in the ${system.name} 
+  // Extract any locations mentioned in the character's narrative
+  const importantLocations = narrativeAnalysis.entities.locations;
+  const locationTie = importantLocations.length > 0 ? 
+    `with connections to ${importantLocations[0]}` : 
+    `in the ${system.region}`;
+  
+  // Extract character personality for more personalized description
+  const personalityTraits = narrativeAnalysis.personality.traits;
+  const personalityDescription = personalityTraits.length > 0 ? 
+    `Known for being ${personalityTraits.slice(0, 2).join(' and ')}, ` : 
+    '';
+  
+  // Include plot hook if available
+  const plotHook = narrativeAnalysis.plotHooks.length > 0 ? 
+    `\n${narrativeAnalysis.plotHooks[0]}` : 
+    '';
+  
+  // Generate the description using narrative elements
+  return `In the ${era}, a tale of ${mainTheme} unfolds ${locationTie}. 
+  ${character.name}, a ${character.species} ${character.class}, ${personalityDescription}begins their journey in the ${system.name} 
   where galactic events will soon test their resolve and skills. 
   ${character.backstory ? `Drawing on their past as ${character.backstory.substring(0, 50)}...` : ""}
-  The future of this corner of the galaxy may well depend on their actions.`;
+  ${motivations.length > 0 ? `Driven by ${motivations[0]}, ` : ""}the future of this corner of the galaxy may well depend on their actions.
+  ${plotHook}`;
 }
 
 /**

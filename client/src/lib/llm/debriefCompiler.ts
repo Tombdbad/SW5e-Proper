@@ -67,6 +67,25 @@ export async function createDebrief(
   // Generate a unique session ID
   const sessionId = `session-${Date.now()}`;
 
+  // Process character narrative elements if available
+  let characterNarrativeProfile = {};
+  if (mergedOptions.includeCharacterDetails && (character.backstory || character.notes || character.bonds)) {
+    const { processCharacterNarrative } = require("@/lib/sw5e/characterLanguageProcessor");
+    const narrativeAnalysis = processCharacterNarrative(character);
+
+    characterNarrativeProfile = {
+      themes: narrativeAnalysis.mainThemes,
+      motivations: narrativeAnalysis.motivations,
+      personality: {
+        traits: narrativeAnalysis.personality.traits,
+        values: narrativeAnalysis.personality.values,
+        fears: narrativeAnalysis.personality.fears
+      },
+      relationships: narrativeAnalysis.relationshipHints,
+      plotSuggestions: narrativeAnalysis.plotHooks
+    };
+  }
+
   // Build character data based on options
   const characterData = mergedOptions.includeCharacterDetails
     ? {
@@ -84,6 +103,8 @@ export async function createDebrief(
         maxForcePoints: character.maxForcePoints,
         skillProficiencies: character.skillProficiencies,
         backstory: character.backstory,
+      // Include processed narrative elements
+      narrativeProfile: characterNarrativeProfile
       }
     : { id: character.id, name: character.name };
 
