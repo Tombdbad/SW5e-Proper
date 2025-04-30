@@ -1,0 +1,332 @@
+# campaign_generator.py
+import random
+from character_parser import CharacterProfileParser
+
+class CampaignElementGenerator:
+    def __init__(self):
+        self.parser = CharacterProfileParser()
+        
+        # Template dictionaries for different campaign elements
+        self.objective_templates = {
+            "combat_style": {
+                "aggressive": [
+                    "Assault on {target} stronghold in {location}",
+                    "Eliminate {target} commander at {location}",
+                    "Capture {target} outpost in {location}"
+                ],
+                "defensive": [
+                    "Protect {target} from incoming attack in {location}",
+                    "Establish defensive position at {location}",
+                    "Rescue {target} captured in {location}"
+                ],
+                "stealthy": [
+                    "Infiltrate {target} base in {location}",
+                    "Spy on {target} operations in {location}",
+                    "Sabotage {target} systems in {location}"
+                ],
+                "balanced": [
+                    "Investigate {target} activity in {location}",
+                    "Negotiate with {target} representative in {location}",
+                    "Gather intelligence on {target} in {location}"
+                ]
+            },
+            "force_alignment": {
+                "light": [
+                    "Recover ancient Jedi artifact from {location}",
+                    "Rescue Force-sensitive children from {target}",
+                    "Defend peaceful settlement from {target} raiders"
+                ],
+                "dark": [
+                    "Seize powerful dark side relic in {location}",
+                    "Eliminate rival {target} force user",
+                    "Subjugate resistant {location} population"
+                ],
+                "neutral": [
+                    "Retrieve valuable technology from {location}",
+                    "Establish trade route through {location}",
+                    "Mediate conflict between factions in {location}"
+                ]
+            }
+        }
+        
+        # Similar template structures for side quests, NPCs, etc.
+        self.side_quest_templates = {
+            "motivation": {
+                "revenge": [
+                    "Track down the {target} responsible for your past trauma",
+                    "Find evidence against {target} who wronged you",
+                    "Confront {target} lieutenant in {location}"
+                ],
+                "discovery": [
+                    "Explore ancient ruins in {location}",
+                    "Decipher mysterious signal from {location}",
+                    "Research {target} technology in hidden laboratory"
+                ],
+                "wealth": [
+                    "Retrieve valuable cargo from crashed ship in {location}",
+                    "Locate hidden {target} treasure cache",
+                    "Win high-stakes game of sabacc in {location} cantina"
+                ],
+                "justice": [
+                    "Free enslaved workers from {target} mining operation",
+                    "Expose {target} corruption in {location}",
+                    "Return stolen artifacts to {location} inhabitants"
+                ],
+                "power": [
+                    "Claim abandoned {target} weapons cache in {location}",
+                    "Recruit force-sensitive potential ally in {location}",
+                    "Challenge local warlord for control of {location}"
+                ]
+            }
+        }
+        
+        # Location templates based on environment types
+        self.location_templates = {
+            "class": {
+                "scout": ["Dense jungle", "Uncharted wilderness", "Dangerous frontier"],
+                "soldier": ["Military compound", "Battlefield", "Training facility"],
+                "scholar": ["Ancient temple", "Library archives", "Research facility"],
+                "engineer": ["Shipyard", "Industrial complex", "Droid factory"],
+                "guardian": ["Sacred site", "Civilian settlement", "Diplomatic compound"],
+                "sentinel": ["Urban center", "Criminal district", "Underworld den"],
+                "consular": ["Diplomatic embassy", "Meditation retreat", "Council chambers"]
+            }
+        }
+        
+        # NPC templates based on character relationships
+        self.npc_templates = {
+            "force_alignment": {
+                "light": ["Jedi mentor", "Republic officer", "Local resistance leader"],
+                "dark": ["Sith apprentice", "Imperial agent", "Crime lord"],
+                "neutral": ["Mercenary captain", "Information broker", "Merchant"]
+            }
+        }
+        
+        # Faction templates
+        self.factions = {
+            "light": ["Jedi Order", "Republic", "Rebel Alliance", "Resistance"],
+            "dark": ["Sith Empire", "First Order", "Trade Federation", "Black Sun"],
+            "neutral": ["Hutt Cartel", "Bounty Hunter Guild", "Mining Guild", "Banking Clan"]
+        }
+        
+        # Monster templates based on environment and level
+        self.monster_templates = {
+            "level": {
+                "low": ["Pirates", "Wild beasts", "Battle droids"],
+                "medium": ["Elite guards", "Local predators", "Bounty hunters"],
+                "high": ["Dark Jedi", "Deadly creatures", "Elite specialists"]
+            }
+        }
+        
+        # Item templates based on character class and level
+        self.item_templates = {
+            "class": {
+                "scout": ["Stealth field generator", "Long-range communicator", "Survival kit"],
+                "soldier": ["Custom blaster rifle", "Heavy armor", "Combat stimulants"],
+                "scholar": ["Ancient holocron", "Decryption device", "Force artifact"],
+                "engineer": ["Droid companion", "Multi-tool", "Shield generator"],
+                "guardian": ["Defensive shield", "Ceremonial armor", "Medical supplies"],
+                "sentinel": ["Stealth suit", "Security slicer", "Disguise kit"],
+                "consular": ["Force focus crystal", "Diplomatic credentials", "Meditation aid"]
+            }
+        }
+        
+    def _get_level_category(self, level):
+        """Convert numerical level to category"""
+        level = int(level)
+        if level <= 5:
+            return "low"
+        elif level <= 10:
+            return "medium"
+        else:
+            return "high"
+    
+    def _select_faction(self, force_alignment):
+        """Select an appropriate faction based on force alignment"""
+        return random.choice(self.factions.get(force_alignment, self.factions["neutral"]))
+    
+    def _fill_template(self, template, substitutions):
+        """Fill in a template with the given substitutions"""
+        result = template
+        for key, value in substitutions.items():
+            result = result.replace("{" + key + "}", value)
+        return result
+    
+    def generate_primary_objective(self, char_profile):
+        """Generate a primary objective based on character profile"""
+        themes = self.parser.analyze_profile(char_profile)
+        
+        # Select a template based on combat style
+        combat_style = themes.get("combat_style", "balanced")
+        template = random.choice(self.objective_templates["combat_style"][combat_style])
+        
+        # Select a target faction opposite to character's alignment
+        target_alignment = {"light": "dark", "dark": "light", "neutral": random.choice(["light", "dark"])}
+        faction = self._select_faction(target_alignment.get(themes.get("force_alignment", "neutral")))
+        
+        # Select a location based on character class
+        char_class = themes.get("class", random.choice(list(self.location_templates["class"].keys())))
+        location_type = random.choice(self.location_templates["class"].get(char_class, 
+                                      self.location_templates["class"]["soldier"]))
+        
+        # Fill template
+        substitutions = {
+            "target": faction,
+            "location": location_type
+        }
+        
+        return {
+            "title": self._fill_template(template, substitutions),
+            "target": faction,
+            "location": location_type,
+            "combat_style": combat_style,
+            "force_alignment": themes.get("force_alignment", "neutral")
+        }
+    
+    def generate_side_quest(self, char_profile, primary_objective):
+        """Generate a side quest related to the primary objective"""
+        themes = self.parser.analyze_profile(char_profile)
+        
+        # Select template based on character motivation
+        motivation = themes.get("motivation", "discovery")
+        template = random.choice(self.side_quest_templates["motivation"][motivation])
+        
+        # Reuse the target and location from primary objective for continuity
+        target = primary_objective["target"]
+        location = primary_objective["location"]
+        
+        # Fill template
+        substitutions = {
+            "target": target,
+            "location": location
+        }
+        
+        return {
+            "title": self._fill_template(template, substitutions),
+            "target": target,
+            "location": location,
+            "motivation": motivation
+        }
+    
+    def generate_npcs(self, char_profile, primary_objective, count=3):
+        """Generate NPCs related to the mission"""
+        themes = self.parser.analyze_profile(char_profile)
+        force_alignment = themes.get("force_alignment", "neutral")
+        
+        npcs = []
+        for _ in range(count):
+            # Select NPC type based on alignment
+            npc_type = random.choice(self.npc_templates["force_alignment"][force_alignment])
+            
+            # Generate a simple NPC
+            npc = {
+                "type": npc_type,
+                "faction": primary_objective["target"],
+                "location": primary_objective["location"]
+            }
+            npcs.append(npc)
+        
+        return npcs
+    
+    def generate_monsters(self, char_profile, primary_objective, count=2):
+        """Generate monsters appropriate for the mission"""
+        themes = self.parser.analyze_profile(char_profile)
+        level_category = self._get_level_category(themes.get("level", 1))
+        
+        monsters = []
+        for _ in range(count):
+            # Select monster type based on level
+            monster_type = random.choice(self.monster_templates["level"][level_category])
+            
+            # Generate a simple monster entry
+            monster = {
+                "type": monster_type,
+                "location": primary_objective["location"],
+                "difficulty": level_category
+            }
+            monsters.append(monster)
+        
+        return monsters
+    
+    def generate_items(self, char_profile, count=2):
+        """Generate items appropriate for the character"""
+        themes = self.parser.analyze_profile(char_profile)
+        char_class = themes.get("class", "soldier")
+        
+        items = []
+        for _ in range(count):
+            # Select item type based on class
+            if char_class in self.item_templates["class"]:
+                item_type = random.choice(self.item_templates["class"][char_class])
+            else:
+                # Default to random item if class not found
+                random_class = random.choice(list(self.item_templates["class"].keys()))
+                item_type = random.choice(self.item_templates["class"][random_class])
+            
+            # Generate a simple item
+            item = {
+                "name": item_type,
+                "rarity": self._get_level_category(themes.get("level", 1))
+            }
+            items.append(item)
+        
+        return items
+    
+    def generate_location(self, primary_objective):
+        """Generate a detailed location based on the primary objective"""
+        location_type = primary_objective["location"]
+        target = primary_objective["target"]
+        
+        # Generate location details
+        details = {
+            "name": f"{target} {location_type}",
+            "environment": location_type,
+            "points_of_interest": [
+                f"Main {target} facility",
+                f"Nearby settlement",
+                f"Natural landmark"
+            ],
+            "security_level": random.choice(["Low", "Medium", "High"])
+        }
+        
+        return details
+    
+    def generate_full_campaign(self, char_profile):
+        """Generate a complete campaign based on character profile"""
+        # Start with primary objective (Tier 1)
+        primary = self.generate_primary_objective(char_profile)
+        
+        # Generate secondary objectives (Tier 2)
+        secondary_objectives = [
+            self.generate_side_quest(char_profile, primary) for _ in range(2)
+        ]
+        
+        # Generate side quests (Tier 3)
+        side_quests = [
+            self.generate_side_quest(char_profile, primary) for _ in range(3)
+        ]
+        
+        # Generate location details (Tier 4)
+        location = self.generate_location(primary)
+        
+        # Generate NPCs (Tier 5)
+        npcs = self.generate_npcs(char_profile, primary, count=4)
+        
+        # Generate items (Tier 6)
+        items = self.generate_items(char_profile, count=5)
+        
+        # Generate monsters
+        monsters = self.generate_monsters(char_profile, primary, count=3)
+        
+        # Compile complete campaign
+        campaign = {
+            "primary_objective": primary,
+            "secondary_objectives": secondary_objectives,
+            "side_quests": side_quests,
+            "location": location,
+            "npcs": npcs,
+            "monsters": monsters,
+            "items": items
+        }
+        
+        return campaign
