@@ -1,10 +1,43 @@
-
 // Add CharacterPreview export
-export const CharacterPreview = ({ character }: { character: any }) => {
+export const CharacterPreview = ({
+  character,
+  abilities,
+  calculateModifier,
+}: {
+  character?: any;
+  form?: any;
+  abilities?: any;
+  calculateModifier?: (score: number) => number;
+}) => {
+  if (!character && form) {
+    // If using with react-hook-form
+    const formValues = form.getValues();
+    return (
+      <div className="character-preview">
+        <h3>{formValues.name || "New Character"}</h3>
+        <p>
+          Level {formValues.level || 1} {formValues.species || "Unknown"}{" "}
+          {formValues.class || "Unknown"}
+        </p>
+      </div>
+    );
+  }
+
+  if (!character) {
+    return (
+      <div className="character-preview">
+        <h3>Character Preview</h3>
+        <p>No character data available</p>
+      </div>
+    );
+  }
+
   return (
     <div className="character-preview">
       <h3>{character.name}</h3>
-      <p>Level {character.level} {character.species} {character.class}</p>
+      <p>
+        Level {character.level} {character.species} {character.class}
+      </p>
     </div>
   );
 };
