@@ -433,7 +433,6 @@ export default function CharacterCreation() {
         <CharacterPreview
           form={methods}
           abilities={watch("abilities")}
-          calculateModifier={calculateModifier}
         />
       ),
     },

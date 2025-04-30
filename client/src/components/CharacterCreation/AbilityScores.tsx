@@ -4,8 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dice } from "@/components/ui/dice";
 import { rollDice } from "@/lib/sw5e/dice";
+import { calculateModifier } from "@/lib/sw5e/rules";
 
-export default function AbilityScores({ form }: { form: any }) {
+export default function AbilityScores({ form, maxPoints }: { form: any, maxPoints?: number }) {
   const [rollResults, setRollResults] = useState<number[][]>([]);
   const [totalResults, setTotalResults] = useState<number[]>([]);
   const [assigned, setAssigned] = useState<Record<string, boolean>>({});
