@@ -9,6 +9,8 @@
     import TranslucentPane from "@/components/ui/TranslucentPane";
     import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
     import { ScrollArea } from "@/components/ui/scroll-area";
+    import { forcePowers } from "@/lib/sw5e/forcePowers" 
+    import { techPowers } from "@/lib/sw5e/techPowers";
 
     export default function PowersSelection() {
       const { watch, setValue, getValues } = useFormContext();
@@ -72,8 +74,8 @@
   }
 
   return (
-    <ScrollArea className="h-[70vh] pr-2">
-      <div className="space-y-4">
+        <ScrollArea className="h-[75vh] pr-2 overflow-y-auto">
+          <div className="space-y-4">
         <div className="flex justify-between items-center">
           <h2 className="text-xl font-bold text-yellow-400">Power Selection</h2>
           <div className="flex space-x-2">
@@ -108,6 +110,8 @@
             <TranslucentPane>
               {hasForceCasting && (
                 <ForcePowersSelection 
+                  form={useFormContext()}
+                  powers={forcePowers}
                   maxPowerLevel={maxPowerLevel}
                   maxPowerPoints={maxPowerPoints}
                   alignment={watch("alignment") || "Neutral"}
@@ -120,6 +124,8 @@
             <TranslucentPane>
               {hasTechCasting && (
                 <TechPowersSelection 
+                  form={useFormContext()}
+                  powers={techPowers}
                   maxPowerLevel={maxPowerLevel}
                   maxPowerPoints={maxPowerPoints}
                 />
