@@ -1,0 +1,273 @@
+// components/CharacterSheet.tsx
+import { FC } from 'react';
+import { useCharacterStore } from '../store/useCharacterStore';
+
+const AbilityScoreDisplay: FC<{ 
+  ability: string, 
+  score: number, 
+  modifier: number 
+}> = ({ ability, score, modifier }) => {
+  return (
+    <div className="text-center p-2 border rounded-md">
+      <div className="text-xs uppercase font-bold text-gray-500">{ability}</div>
+      <div className="text-xl font-bold">{score}</div>
+      <div className="text-sm">{modifier >= 0 ? `+${modifier}` : modifier}</div>
+    </div>
+  );
+};
+
+const CharacterSheet: FC = () => {
+  const { character } = useCharacterStore();
+  
+  // Calculate ability modifiers
+  const getAbilityModifier = (score: number) => Math.floor((score - 10) / 2);
+  
+  // Get skills with proficiency
+  const getProficientSkills = () => {
+    return Object.entries(character.skills)
+      .filter(([_, isProficient]) => isProficient)
+      .map(([skill]) => skill);
+  };
+  
+  const proficientSkills = getProficientSkills();
+  
+  return (
+    <div className="character-sheet p-6 bg-white rounded-lg shadow">
+      <div className="flex justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold">{character.name}</h1>
+          <div className="text-gray-600">
+            Level {character.level} {character.species.name} {character.class.name}
+            {character.background && ` (${character.background.name})`}
+          </div>
+        </div>
+        
+        <div className="text-right">
+          <div className="font-bold">Experience Points</div>
+          <div>{character.experience}</div>
+        </div>
+      </div>
+      
+      {/* Ability Scores */}
+      <div className="mb-6">
+        <h2 className="text-lg font-bold mb-2">Ability Scores</h2>
+        <div className="grid grid-cols-6 gap-2">
+          <AbilityScoreDisplay 
+            ability="STR" 
+            score={character.abilityScores.strength} 
+            modifier={getAbilityModifier(character.abilityScores.strength)} 
+          />
+          <AbilityScoreDisplay 
+            ability="DEX" 
+            score={character.abilityScores.dexterity} 
+            modifier={getAbilityModifier(character.abilityScores.dexterity)} 
+          />
+          <AbilityScoreDisplay 
+            ability="CON" 
+            score={character.abilityScores.constitution} 
+            modifier={getAbilityModifier(character.abilityScores.constitution)} 
+          />
+          <AbilityScoreDisplay 
+            ability="INT" 
+            score={character.abilityScores.intelligence} 
+            modifier={getAbilityModifier(character.abilityScores.intelligence)} 
+          />
+          <AbilityScoreDisplay 
+            ability="WIS" 
+            score={character.abilityScores.wisdom} 
+            modifier={getAbilityModifier(character.abilityScores.wisdom)} 
+          />
+          <AbilityScoreDisplay 
+            ability="CHA" 
+            score={character.abilityScores.charisma} 
+            modifier={getAbilityModifier(character.abilityScores.charisma)} 
+          />
+        </div>
+      </div>
+      
+      {/* Combat Stats */}
+      <div className="mb-6">
+        <h2 className="text-lg font-bold mb-2">Combat</h2>
+        <div className="grid grid-cols-4 gap-4">
+          <div className="text-center p-3 border rounded-md">
+            <div className="text-xs uppercase font-bold text-gray-500">Armor Class</div>
+            <div className="text-xl font-bold">{character.armorClass}</div>
+          </div>
+          <div className="text-center p-3 border rounded-md">
+            <div className="text-xs uppercase font-bold text-gray-500">Initiative</div>
+            <div className="text-xl font-bold">
+              {character.initiative >= 0 ? `+${character.initiative}` : character.initiative}
+            </div>
+          </div>
+          <div className="text-center p-3 border rounded-md">
+            <div className="text-xs uppercase font-bold text-gray-500">Speed</div>
+            <div className="text-xl font-bold">{character.speed} ft.</div>
+          </div>
+          <div className="text-center p-3 border rounded-md">
+            <div className="text-xs uppercase font-bold text-gray-500">Hit Points</div>
+            <div className="text-xl font-bold">
+              {character.hitPoints.current}/{character.hitPoints.maximum}
+            </div>
+            {character.hitPoints.temporary > 0 && (
+              <div className="text-sm text-green-600">+{character.hitPoints.temporary} temp</div>
+            )}
+          </div>
+        </div>
+      </div>
+      
+      {/* Proficiencies */}
+      <div className="mb-6">
+        <h2 className="text-lg font-bold mb-2">Proficiencies</h2>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <h3 className="font-bold text-sm mb-1">Skills</h3>
+            {proficientSkills.length > 0 ? (
+              <div className="text-sm">
+                {proficientSkills.map((skill) => (
+                  <span key={skill} className="inline-block mr-2 mb-1 px-2 py-1 bg-gray-100 rounded">
+                    {skill}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500">No proficient skills</div>
+            )}
+          </div>
+          <div>
+            <h3 className="font-bold text-sm mb-1">Languages</h3>
+            {character.languages.length > 0 ? (
+              <div className="text-sm">
+                {character.languages.map((language) => (
+                  <span key={language} className="inline-block mr-2 mb-1 px-2 py-1 bg-gray-100 rounded">
+                    {language}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-gray-500">No languages</div>
+            )}
+          </div>
+        </div>
+      </div>
+      
+      {/* Powers */}
+      <div className="mb-6">
+        <h2 className="text-lg font-bold mb-2">Powers</h2>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <h3 className="font-bold text-sm mb-1">Force Powers</h3>
+            {character.powers.force.length > 0 ? (
+              <ul className="text-sm list-disc pl-4">
+                {character.powers.force.map((power) => (
+                  <li key={power.id}>
+                    {power.name} <span className="text-gray-500">(Level {power.level})</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-sm text-gray-500">No force powers</div>
+            )}
+          </div>
+          <div>
+            <h3 className="font-bold text-sm mb-1">Tech Powers</h3>
+            {character.powers.tech.length > 0 ? (
+              <ul className="text-sm list-disc pl-4">
+                {character.powers.tech.map((power) => (
+                  <li key={power.id}>
+                    {power.name} <span className="text-gray-500">(Level {power.level})</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-sm text-gray-500">No tech powers</div>
+            )}
+          </div>
+        </div>
+      </div>
+      
+      {/* Equipment */}
+      <div className="mb-6">
+        <h2 className="text-lg font-bold mb-2">Equipment</h2>
+        {character.equipment.length > 0 ? (
+          <div className="border rounded-md overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-2 text-left">Item</th>
+                  <th className="px-4 py-2 text-center">Qty</th>
+                  <th className="px-4 py-2 text-center">Weight</th>
+                  <th className="px-4 py-2 text-center">Equipped</th>
+                </tr>
+              </thead>
+              <tbody>
+                {character.equipment.map((item) => (
+                  <tr key={item.id} className="border-t">
+                    <td className="px-4 py-2">{item.name}</td>
+                    <td className="px-4 py-2 text-center">{item.quantity}</td>
+                    <td className="px-4 py-2 text-center">{item.weight} lbs.</td>
+                    <td className="px-4 py-2 text-center">
+                      {item.equipped ? (
+                        <span className="text-green-600">Yes</span>
+                      ) : (
+                        <span className="text-gray-400">No</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-gray-50">
+                <tr>
+                  <td colSpan={2} className="px-4 py-2 text-right font-bold">Credits:</td>
+                  <td colSpan={2} className="px-4 py-2">{character.credits}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        ) : (
+          <div className="text-sm text-gray-500">No equipment</div>
+        )}
+      </div>
+      
+      {/* Character Details */}
+      {(character.personality || character.ideals || character.bonds || character.flaws || character.backstory) && (
+        <div className="mb-6">
+          <h2 className="text-lg font-bold mb-2">Character Details</h2>
+          <div className="grid grid-cols-2 gap-4">
+            {character.personality && (
+              <div>
+                <h3 className="font-bold text-sm mb-1">Personality</h3>
+                <p className="text-sm">{character.personality}</p>
+              </div>
+            )}
+            {character.ideals && (
+              <div>
+                <h3 className="font-bold text-sm mb-1">Ideals</h3>
+                <p className="text-sm">{character.ideals}</p>
+              </div>
+            )}
+            {character.bonds && (
+              <div>
+                <h3 className="font-bold text-sm mb-1">Bonds</h3>
+                <p className="text-sm">{character.bonds}</p>
+              </div>
+            )}
+            {character.flaws && (
+              <div>
+                <h3 className="font-bold text-sm mb-1">Flaws</h3>
+                <p className="text-sm">{character.flaws}</p>
+              </div>
+            )}
+          </div>
+          {character.backstory && (
+            <div className="mt-4">
+              <h3 className="font-bold text-sm mb-1">Backstory</h3>
+              <p className="text-sm whitespace-pre-line">{character.backstory}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default CharacterSheet;
