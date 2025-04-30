@@ -57,3 +57,65 @@ export const StepNavigation: React.FC<StepNavigationProps> = ({
     </div>
   );
 };
+import { FC } from 'react';
+import { CheckCircleIcon } from '@heroicons/react/24/solid';
+
+interface Step {
+  id: number;
+  name: string;
+  component: FC;
+}
+
+interface StepNavigationProps {
+  steps: Step[];
+  currentStep: number;
+  completedSteps: Record<number, boolean>;
+  onStepChange: (step: number) => void;
+}
+
+const StepNavigation: FC<StepNavigationProps> = ({ 
+  steps, 
+  currentStep, 
+  completedSteps, 
+  onStepChange 
+}) => {
+  return (
+    <nav className="step-navigation">
+      <ul className="space-y-1">
+        {steps.map((step) => {
+          const isComplete = completedSteps[step.id] === true;
+          const isActive = currentStep === step.id;
+
+          return (
+            <li key={step.id}>
+              <button
+                className={`w-full flex items-center px-3 py-2 text-left rounded-md transition-colors
+                  ${isActive 
+                    ? 'bg-blue-100 text-blue-700' 
+                    : isComplete 
+                      ? 'text-green-700 hover:bg-gray-100' 
+                      : 'text-gray-600 hover:bg-gray-100'}`}
+                onClick={() => onStepChange(step.id)}
+              >
+                <span className="mr-2 flex-shrink-0 w-6 h-6 flex items-center justify-center">
+                  {isComplete ? (
+                    <CheckCircleIcon className="w-5 h-5 text-green-500" />
+                  ) : (
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs
+                      ${isActive ? 'bg-blue-600 text-white' : 'bg-gray-300 text-gray-600'}`}>
+                      {step.id + 1}
+                    </span>
+                  )}
+                </span>
+                <span className="flex-grow">{step.name}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+};
+
+export default StepNavigation;
+

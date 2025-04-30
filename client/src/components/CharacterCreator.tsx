@@ -11,50 +11,64 @@ import SpeciesSelectionStep from './CharacterCreation/SpeciesSelection';
 import ClassSelectionStep from './CharacterCreation/ClassSelection';
 import AbilityScoresStep from './CharacterCreation/AbilityScores';
 
-const CharacterCreator: FC = () => {
-  const { form, onSubmit } = useCharacterForm();
-  const { currentStep, setCurrentStep, completedSteps } = useCharacterStore();
+              // Import navigation components
+              import StepNavigation from './CharacterCreator/StepNavigation';
+              import ValidationProgress from './CharacterCreator/ValidationProgress';
 
-  const steps = [
-    { name: 'Basic Info', component: BasicInfoStep },
-    { name: 'Species', component: SpeciesSelectionStep },
-    { name: 'Class', component: ClassSelectionStep },
-    { name: 'Abilities', component: AbilityScoresStep },
-  ];
+              const CharacterCreator: FC = () => {
+                const { form, onSubmit } = useCharacterForm();
+                const { currentStep, setCurrentStep, completedSteps } = useCharacterStore();
 
-  return (
-    <div className="character-creator p-4">
-      <h1 className="text-2xl font-bold mb-6">Create Your Character</h1>
+                const steps = [
+                  { id: 0, name: 'Basic Info', component: BasicInfoStep },
+                  { id: 1, name: 'Species', component: SpeciesSelectionStep },
+                  { id: 2, name: 'Class', component: ClassSelectionStep },
+                  { id: 3, name: 'Abilities', component: AbilityScoresStep },
+                ];
 
-      <FormProvider {...form}>
-        <form onSubmit={onSubmit}>
-          <Tab.Group selectedIndex={currentStep} onChange={setCurrentStep}>
-            <Tab.List className="flex space-x-1 bg-blue-900/20 p-1 rounded-lg">
-              {steps.map((step, index) => (
-                <Tab
-                  key={index}
-                  className={({ selected }) =>
-                    `tab-item w-full py-2 text-sm font-medium rounded-md
-                    ${selected ? 'bg-blue-600 text-white' : 'text-blue-100 hover:bg-blue-800/30 hover:text-white'}
-                    ${completedSteps[index] ? 'ring-2 ring-green-500' : ''}`
-                  }
-                >
-                  {step.name}
-                </Tab>
-              ))}
-            </Tab.List>
+                return (
+                  <div className="character-creator p-4">
+                    <h1 className="text-2xl font-bold mb-6">Create Your Character</h1>
 
-            <Tab.Panels className="mt-4">
-              {steps.map((step, index) => (
-                <Tab.Panel key={index} className="bg-gray-800 p-4 rounded-lg">
-                  <step.component />
-                </Tab.Panel>
-              ))}
-            </Tab.Panels>
-          </Tab.Group>
+                    <div className="grid grid-cols-4 gap-6">
+                      <div className="col-span-1">
+                        <StepNavigation 
+                          steps={steps}
+                          currentStep={currentStep}
+                          completedSteps={completedSteps}
+                          onStepChange={setCurrentStep}
+                        />
 
-          <div className="flex justify-between mt-6">
-            <button
-              type="button"
-              className="px-4 py-2 bg-gray-600 text-white rounded-md disabled:opacity-50"
-              onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
+                        <div className="mt-6">
+                          <ValidationProgress 
+                            steps={steps}
+                            currentStep={currentStep}
+                            completedSteps={completedSteps}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="col-span-3">
+                        <FormProvider {...form}>
+                          <form onSubmit={onSubmit}>
+                            <Tab.Group selectedIndex={currentStep} onChange={setCurrentStep}>
+                              <Tab.List className="hidden">
+                                {steps.map((step) => (
+                                  <Tab key={step.id}>{step.name}</Tab>
+                                ))}
+                              </Tab.List>
+
+                              <Tab.Panels>
+                                {steps.map((step) => (
+                                  <Tab.Panel key={step.id} className="bg-gray-800 p-4 rounded-lg">
+                                    <step.component />
+                                  </Tab.Panel>
+                                ))}
+                              </Tab.Panels>
+                            </Tab.Group>
+
+                            <div className="flex justify-between mt-6">
+                              <button
+                                type="button"
+                                className="px-4 py-2 bg-gray-600 text-white rounded-md disabled:opacity-50"
+                                onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
