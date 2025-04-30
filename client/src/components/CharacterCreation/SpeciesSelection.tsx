@@ -20,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { species, getSpeciesById } from "@/lib/sw5e/species";
+// Ensure species list is fully imported
 
 interface SpeciesSelectionProps {
   onSelect: () => void;
@@ -46,29 +47,52 @@ export default function SpeciesSelection({ onSelect }: SpeciesSelectionProps) {
           <FormItem>
             <FormLabel>Species</FormLabel>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <FormControl>
-                  <Select
-                    onValueChange={(value) => {
-                      field.onChange(value);
-                      handleSpeciesSelect(value);
-                    }}
-                    value={field.value}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select species" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <ScrollArea className="h-72">
-                        {species.map((speciesOption) => (
-                          <SelectItem key={speciesOption.id} value={speciesOption.id}>
-                            {speciesOption.name}
-                          </SelectItem>
-                        ))}
-                      </ScrollArea>
-                    </SelectContent>
-                  </Select>
-                </FormControl>
+                  <div>
+                    <FormControl>
+                      <div className="space-y-2">
+                        <Select
+                          onValueChange={(value) => {
+                            field.onChange(value);
+                            handleSpeciesSelect(value);
+                          }}
+                          value={field.value}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select species" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <input 
+                              className="px-3 py-2 w-full border-b border-gray-600 mb-2 bg-gray-800 text-white"
+                              placeholder="Search species..."
+                              onChange={(e) => {
+                                // This adds a search feature but would need state management
+                                const searchField = e.target;
+                                const allOptions = searchField.parentElement?.querySelectorAll('[data-species-option]');
+                                allOptions?.forEach(option => {
+                                  const text = option.textContent?.toLowerCase() || '';
+                                  const matchesSearch = text.includes(e.target.value.toLowerCase());
+                                  (option as HTMLElement).style.display = matchesSearch ? 'block' : 'none';
+                                });
+                              }}
+                            />
+                            <ScrollArea className="h-72">
+                              {species.map((speciesOption) => (
+                                <SelectItem 
+                                  key={speciesOption.id} 
+                                  value={speciesOption.id}
+                                  data-species-option="true"
+                                >
+                                  {speciesOption.name}
+                                </SelectItem>
+                              ))}
+                            </ScrollArea>
+                          </SelectContent>
+                        </Select>
+                        <div className="text-xs text-gray-400">
+                          {species.length} species available
+                        </div>
+                      </div>
+                    </FormControl>
                 <FormMessage />
               </div>
 

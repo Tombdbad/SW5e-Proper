@@ -66,7 +66,7 @@ import AbilityScoresStep from './CharacterCreation/AbilityScores';
                                 ))}
                               </Tab.List>
 
-                              <Tab.Panels>
+                              <Tab.Panels className="max-h-[70vh] overflow-y-auto">
                                 {steps.map((step) => (
                                   <Tab.Panel key={step.id} className="bg-gray-800 p-4 rounded-lg">
                                     <step.component />

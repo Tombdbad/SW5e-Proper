@@ -10,30 +10,50 @@ import { equipment } from "@/lib/sw5e/equipment";
 export default function EquipmentSelection({ form }: { form: any }) {
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
   const [credits, setCredits] = useState(1000); // Default starting credits
-  
-  const handleItemToggle = (itemId: string, price: number, checked: boolean) => {
-    if (checked) {
-      // Add item if enough credits
-      if (credits >= price) {
-        setSelectedItems([...selectedItems, itemId]);
-        setCredits(credits - price);
-        
-        // Update form value
-        const currentEquipment = form.getValues("equipment") || [];
-        form.setValue("equipment", [...currentEquipment, itemId]);
+
+    // Effect to load existing equipment when component mounts
+    useEffect(() => {
+      const savedEquipment = form.getValues("equipment") || [];
+      if (savedEquipment.length > 0) {
+        // Load saved items
+        setSelectedItems(savedEquipment);
+
+        // Calculate remaining credits
+        let spentCredits = 0;
+        savedEquipment.forEach(itemId => {
+          const item = equipment.find(i => i.id === itemId);
+          if (item) {
+            spentCredits += item.price;
+          }
+        });
+
+        setCredits(1000 - spentCredits);
       }
-    } else {
-      // Remove item and refund credits
-      const item = equipment.find(i => i.id === itemId);
-      if (item) {
-        setSelectedItems(selectedItems.filter(id => id !== itemId));
-        setCredits(credits + item.price);
-        
-        // Update form value
-        const currentEquipment = form.getValues("equipment") || [];
-        form.setValue("equipment", currentEquipment.filter((id: string) => id !== itemId));
+    }, []);
+
+    const handleItemToggle = (itemId: string, price: number, checked: boolean) => {
+      if (checked) {
+        // Add item if enough credits
+        if (credits >= price) {
+          const newSelectedItems = [...selectedItems, itemId];
+          setSelectedItems(newSelectedItems);
+          setCredits(credits - price);
+
+          // Update form value
+          form.setValue("equipment", newSelectedItems);
+        }
+      } else {
+        // Remove item and refund credits
+        const item = equipment.find(i => i.id === itemId);
+        if (item) {
+          const newSelectedItems = selectedItems.filter(id => id !== itemId);
+          setSelectedItems(newSelectedItems);
+          setCredits(credits + item.price);
+
+          // Update form value
+          form.setValue("equipment", newSelectedItems);
+        }
       }
-    }
   };
   
   // Filter equipment by categories

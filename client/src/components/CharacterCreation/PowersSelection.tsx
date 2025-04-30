@@ -1,101 +1,59 @@
-
 import React, { useState, useEffect } from "react";
 import { useFormContext, useWatch } from "react-hook-form";
 import ForcePowersSelection from "./ForcePowersSelection";
 import TechPowersSelection from "./TechPowersSelection";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CLASSES } from "@/lib/sw5e/classes";
-import { Alert } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { Info } from "lucide-react";
-import TranslucentPane from "@/components/ui/TranslucentPane";
+  import { Alert } from "@/components/ui/alert";
+  import { Badge } from "@/components/ui/badge";
+  import { Info } from "lucide-react";
+  import TranslucentPane from "@/components/ui/TranslucentPane";
 
-interface PowersSelectionProps {
-  form: any;
-  forcePowers: any[];
-  techPowers: any[];
-  getSelectedClass: () => any;
-}
 
-export default function PowersSelection({
-  form,
-  forcePowers,
-  techPowers,
-  getSelectedClass,
-}: PowersSelectionProps) {
-  const { control, setValue, getValues } = form;
-  const selectedClass = useWatch({
-    control,
-    name: "class",
-  });
-  const selectedMulticlass = useWatch({
-    control,
-    name: "multiclass",
-  });
-  
-  const [activeTab, setActiveTab] = useState<string>("force");
-  const [hasForceCasting, setHasForceCasting] = useState<boolean>(false);
-  const [hasTechCasting, setHasTechCasting] = useState<boolean>(false);
-  const [maxPowerLevel, setMaxPowerLevel] = useState<number>(0);
-  const [maxPowerPoints, setMaxPowerPoints] = useState<number>(0);
-  
-  // Effect to determine what power types the character can use based on class
-  useEffect(() => {
-    let canUseForcePowers = false;
-    let canUseTechPowers = false;
-    let powerLevel = 0;
-    let powerPoints = 0;
-    
-    // Check main class
-    const mainClass = CLASSES.find(c => c.id === selectedClass);
-    if (mainClass?.spellcasting) {
-      if (mainClass.spellcasting.type === "Force") {
+  export default function PowersSelection() {
+    const { watch, setValue } = useFormContext();
+    const selectedClass = watch("class");
+    const characterLevel = watch("level") || 1;
+
+    const [activeTab, setActiveTab] = useState<string>("force");
+    const [hasForceCasting, setHasForceCasting] = useState<boolean>(false);
+    const [hasTechCasting, setHasTechCasting] = useState<boolean>(false);
+    const [maxPowerLevel, setMaxPowerLevel] = useState<number>(0);
+    const [maxPowerPoints, setMaxPowerPoints] = useState<number>(0);
+
+    // Effect to determine what power types the character can use based on class
+    useEffect(() => {
+      let canUseForcePowers = false;
+      let canUseTechPowers = false;
+      let powerLevel = Math.min(5, Math.ceil(characterLevel / 4));
+      let powerPoints = characterLevel + 1;
+
+      // These are examples - update with your actual class data
+      const forceClasses = ["consular", "guardian", "sentinel"];
+      const techClasses = ["engineer", "scholar", "scout"];
+
+      // Check if the selected class can use Force powers
+      if (forceClasses.includes(selectedClass)) {
         canUseForcePowers = true;
-        powerLevel = Math.max(powerLevel, mainClass.spellcasting.maxLevel || 0);
-        powerPoints += mainClass.spellcasting.points || 0;
-      } else if (mainClass.spellcasting.type === "Tech") {
+      }
+
+      // Check if the selected class can use Tech powers
+      if (techClasses.includes(selectedClass)) {
         canUseTechPowers = true;
-        powerLevel = Math.max(powerLevel, mainClass.spellcasting.maxLevel || 0);
-        powerPoints += mainClass.spellcasting.points || 0;
       }
-    }
-    
-    // Check multiclass if any
-    if (selectedMulticlass && selectedMulticlass.length > 0) {
-      for (const multiClass of selectedMulticlass) {
-        const secondaryClass = CLASSES.find(c => c.id === multiClass.class);
-        if (secondaryClass?.spellcasting) {
-          if (secondaryClass.spellcasting.type === "Force") {
-            canUseForcePowers = true;
-            powerLevel = Math.max(powerLevel, secondaryClass.spellcasting.maxLevel || 0);
-            powerPoints += secondaryClass.spellcasting.points || 0;
-          } else if (secondaryClass.spellcasting.type === "Tech") {
-            canUseTechPowers = true;
-            powerLevel = Math.max(powerLevel, secondaryClass.spellcasting.maxLevel || 0);
-            powerPoints += secondaryClass.spellcasting.points || 0;
-          }
-        }
+
+      setHasForceCasting(canUseForcePowers);
+      setHasTechCasting(canUseTechPowers);
+      setMaxPowerLevel(powerLevel);
+      setMaxPowerPoints(powerPoints);
+
+      // Set initial active tab based on class capabilities
+      if (canUseForcePowers && !canUseTechPowers) {
+        setActiveTab("force");
+      } else if (canUseTechPowers && !canUseForcePowers) {
+        setActiveTab("tech");
       }
-    }
-    
-    setHasForceCasting(canUseForcePowers);
-    setHasTechCasting(canUseTechPowers);
-    setMaxPowerLevel(powerLevel);
-    setMaxPowerPoints(powerPoints);
-    
-    // Set initial active tab based on class capabilities
-    if (canUseForcePowers && !canUseTechPowers) {
-      setActiveTab("force");
-    } else if (canUseTechPowers && !canUseForcePowers) {
-      setActiveTab("tech");
-    }
-    
-    // Update form values
-    setValue("maxPowerLevel", powerLevel);
-    setValue("powerPoints", powerPoints);
-  }, [selectedClass, selectedMulticlass, setValue]);
-  
-  // If character can't use any powers, show message
+    }, [selectedClass, characterLevel]);
+
+    // If character can't use any powers, show message
   if (!hasForceCasting && !hasTechCasting) {
     return (
       <div className="space-y-4">
@@ -110,7 +68,7 @@ export default function PowersSelection({
       </div>
     );
   }
-  
+
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
@@ -124,7 +82,7 @@ export default function PowersSelection({
           </Badge>
         </div>
       </div>
-      
+
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger 
@@ -142,26 +100,27 @@ export default function PowersSelection({
             Tech Powers
           </TabsTrigger>
         </TabsList>
-        
+
         <TabsContent value="force">
           <TranslucentPane>
-            <ForcePowersSelection 
-              form={form} 
-              powers={forcePowers} 
-              maxPowerLevel={maxPowerLevel}
-              maxPowerPoints={maxPowerPoints}
-            />
+            {hasForceCasting && (
+              <ForcePowersSelection 
+                maxPowerLevel={maxPowerLevel}
+                availablePowers={maxPowerPoints}
+                alignment={watch("alignment") || "Neutral"}
+              />
+            )}
           </TranslucentPane>
         </TabsContent>
-        
+
         <TabsContent value="tech">
           <TranslucentPane>
-            <TechPowersSelection 
-              form={form} 
-              powers={techPowers}
-              maxPowerLevel={maxPowerLevel}
-              maxPowerPoints={maxPowerPoints}
-            />
+            {hasTechCasting && (
+              <TechPowersSelection 
+                maxPowerLevel={maxPowerLevel}
+                availablePowers={maxPowerPoints}
+              />
+            )}
           </TranslucentPane>
         </TabsContent>
       </Tabs>
