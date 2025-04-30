@@ -1,0 +1,48 @@
+2:13:49 PM [express] serving on port 5000
+Error:   Failed to scan for dependencies from entries:
+  /home/runner/workspace/client/index.html
+
+  ✘ [ERROR] Expected "finally" but found "function"
+
+    client/src/lib/llm/campaignGenerator.ts:144:0:
+      144 │ function generateLocations(system: any) {
+          │ ~~~~~~~~
+          ╵ finally
+
+
+✘ [ERROR] Multiple exports with the same name "species"
+
+    client/src/lib/sw5e/species.ts:2923:13:
+      2923 │ export const species: Species[] = [
+           ╵              ~~~~~~~
+
+  The name "species" was originally exported here:
+
+    client/src/lib/sw5e/species.ts:39:13:
+      39 │ export const species: Species[] = [
+         ╵              ~~~~~~~
+
+
+✘ [ERROR] The symbol "species" has already been declared
+
+    client/src/lib/sw5e/species.ts:2923:13:
+      2923 │ export const species: Species[] = [
+           ╵              ~~~~~~~
+
+  The symbol "species" was originally declared here:
+
+    client/src/lib/sw5e/species.ts:39:13:
+      39 │ export const species: Species[] = [
+         ╵              ~~~~~~~
+
+
+    at failureErrorWithLog (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:1472:15)
+    at /home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:945:25
+    at runOnEndCallbacks (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:1315:45)
+    at buildResponseToResult (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:943:7)
+    at /home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:955:9
+    at new Promise (<anonymous>)
+    at requestCallbacks.on-end (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:954:54)
+    at handleRequest (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:647:17)
+    at handleIncomingPacket (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:672:7)
+    at Socket.readFromStdout (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:600:7)
