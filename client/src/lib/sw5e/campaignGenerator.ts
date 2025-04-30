@@ -435,6 +435,7 @@ export class CampaignElementGenerator {
     return campaign;
   }
 }
+
 import { Character } from "@/lib/stores/useCharacter";
 import { Campaign } from "@/lib/stores/useCampaign";
 import { apiRequest } from "@/lib/queryClient";
@@ -444,12 +445,13 @@ import { npcs } from "@/lib/sw5e/npcs";
 import { items } from "@/lib/sw5e/items";
 import { vehicles } from "@/lib/sw5e/vehicles";
 import { starships } from "@/lib/sw5e/starships";
+import axios from "axios";
 
 /**
  * Campaign Element Generator for SW5E
  * Generates campaign elements based on character profiles and input parameters
  */
-export class CampaignElementGenerator {
+export class SimpleCampaignGenerator {
   // Generate a complete campaign with all elements
   public static async generateCampaign(
     title: string,
@@ -458,7 +460,7 @@ export class CampaignElementGenerator {
   ): Promise<Campaign> {
     try {
       // Request campaign generation from API
-      const response = await apiRequest.post("/api/campaign/generate", {
+      const response = await apiRequest("POST", "/api/campaign/generate", {
         title,
         characters,
         campaignType
@@ -577,4 +579,4 @@ export class CampaignElementGenerator {
 }
 
 // Export default for ease of use
-export default CampaignElementGenerator;
+export default SimpleCampaignGenerator;

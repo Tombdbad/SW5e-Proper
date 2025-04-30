@@ -1,16 +1,27 @@
+
 /**
  * Roll a die with the specified number of sides.
  * 
  * @param quantity The number of dice to roll
  * @param sides The number of sides on each die
- * @returns The sum of all dice rolled
+ * @returns An array of the individual results
  */
-export function rollDice(quantity: number, sides: number): number {
-  let total = 0;
+export function rollDice(quantity: number, sides: number): number[] {
+  const results: number[] = [];
   for (let i = 0; i < quantity; i++) {
-    total += Math.floor(Math.random() * sides) + 1;
+    results.push(Math.floor(Math.random() * sides) + 1);
   }
-  return total;
+  return results;
+}
+
+/**
+ * Sum the results of dice rolls
+ * 
+ * @param results Array of dice roll results
+ * @returns Sum of all dice
+ */
+export function sumDiceResults(results: number[]): number {
+  return results.reduce((sum, roll) => sum + roll, 0);
 }
 
 /**
@@ -20,8 +31,8 @@ export function rollDice(quantity: number, sides: number): number {
  * @returns The higher result of two dice rolls
  */
 export function rollWithAdvantage(sides: number): number {
-  const roll1 = rollDice(1, sides);
-  const roll2 = rollDice(1, sides);
+  const roll1 = sumDiceResults(rollDice(1, sides));
+  const roll2 = sumDiceResults(rollDice(1, sides));
   return Math.max(roll1, roll2);
 }
 
@@ -32,8 +43,8 @@ export function rollWithAdvantage(sides: number): number {
  * @returns The lower result of two dice rolls
  */
 export function rollWithDisadvantage(sides: number): number {
-  const roll1 = rollDice(1, sides);
-  const roll2 = rollDice(1, sides);
+  const roll1 = sumDiceResults(rollDice(1, sides));
+  const roll2 = sumDiceResults(rollDice(1, sides));
   return Math.min(roll1, roll2);
 }
 
@@ -55,7 +66,7 @@ export function rollAbilityCheck(
   } else if (advantage === "disadvantage") {
     baseRoll = rollWithDisadvantage(20);
   } else {
-    baseRoll = rollDice(1, 20);
+    baseRoll = sumDiceResults(rollDice(1, 20));
   }
   
   return baseRoll + modifier;
@@ -75,7 +86,7 @@ export function rollInitiative(
   if (advantage) {
     return rollWithAdvantage(20) + dexModifier;
   }
-  return rollDice(1, 20) + dexModifier;
+  return sumDiceResults(rollDice(1, 20)) + dexModifier;
 }
 
 /**
@@ -96,7 +107,7 @@ export function rollDamage(
   // Critical hits roll dice twice
   const effectiveDiceCount = critical ? diceCount * 2 : diceCount;
   
-  return rollDice(effectiveDiceCount, diceSides) + modifier;
+  return sumDiceResults(rollDice(effectiveDiceCount, diceSides)) + modifier;
 }
 
 /**
@@ -126,12 +137,7 @@ export function generateAbilityScores(): number[] {
   
   for (let i = 0; i < 6; i++) {
     // Roll 4d6
-    const rolls = [
-      rollDice(1, 6),
-      rollDice(1, 6),
-      rollDice(1, 6),
-      rollDice(1, 6)
-    ];
+    const rolls = rollDice(4, 6);
     
     // Sort and drop the lowest value
     rolls.sort((a, b) => a - b);
@@ -143,25 +149,9 @@ export function generateAbilityScores(): number[] {
   
   return scores;
 }
-/**
- * Roll dice with the specified number of sides
- * @param quantity Number of dice to roll
- * @param sides Number of sides on each die
- * @returns Array of roll results
- */
-export function rollDice(quantity: number, sides: number): number[] {
-  const results: number[] = [];
-  
-  for (let i = 0; i < quantity; i++) {
-    // Generate a random number between 1 and the number of sides
-    results.push(Math.floor(Math.random() * sides) + 1);
-  }
-  
-  return results;
-}
 
 /**
- * Roll dice and return the sum
+ * Roll dice and return results according to standard dice notation
  * @param diceNotation Dice notation (e.g., "2d6+3")
  * @returns Object containing the total and individual roll results
  */
@@ -185,7 +175,7 @@ export function rollDiceNotation(diceNotation: string): { total: number; rolls: 
   const rolls = rollDice(quantity, sides);
   
   // Calculate the total
-  const total = rolls.reduce((sum, roll) => sum + roll, 0) + modifier;
+  const total = sumDiceResults(rolls) + modifier;
   
   return {
     total,
