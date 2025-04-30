@@ -1,3 +1,4 @@
+
 import { Character } from "@/lib/stores/useCharacter";
 import { Campaign } from "@/lib/stores/useCampaign";
 import { apiRequest } from "@/lib/queryClient";
@@ -20,7 +21,7 @@ export async function generateCampaignFromCharacter(character: Character): Promi
     const startingSystem = starSystems.find(s => s.id === startingSystemId) || starSystems[0];
     
     // Generate NPCs based on character background and class
-    const npcs = generateNpcs(character);
+    const npcs = await generateNpcs(character);
     
     // Generate locations based on starting system
     const locations = generateLocations(startingSystem);
@@ -82,60 +83,61 @@ function generateCampaignDescription(character: Character, system: any): string 
  */
 async function generateNpcs(character: Character) {
   try {
-    const { data: speciesData } = await axios.get('/api/sw5e/species');
-    const { data: backgroundsData } = await axios.get('/api/sw5e/backgrounds');
-
+    // Simplified version without external API calls
     // Generate mentor based on character class
-    const mentorSpecies = speciesData.find(s => s.traits.some(t => t.name === "Force Sensitive"));
     const mentor = {
-    id: `npc-${Date.now()}-1`,
-    name: generateName(),
-    species: mentorSpecies,
-    role: "Mentor",
-    description: `A wise and experienced ${character.class} who sees potential in ${character.name}.`
-  };
-  
-  // Generate ally
-  const allySpecies = ["Human", "Wookiee", "Twilek", "Bothan"][Math.floor(Math.random() * 4)];
-  const ally = {
-    id: `npc-${Date.now()}-2`,
-    name: generateName(),
-    species: allySpecies,
-    role: "Ally",
-    description: `A loyal friend with complementary skills who joins ${character.name} on their journey.`
-  };
-  
-  // Generate rival
-  const rivalSpecies = ["Human", "Trandoshan", "Zabrak", "Twilek"][Math.floor(Math.random() * 4)];
-  const rival = {
-    id: `npc-${Date.now()}-3`,
-    name: generateName(),
-    species: rivalSpecies,
-    role: "Rival",
-    description: `A competent ${character.class} who sees ${character.name} as competition.`
-  };
-  
-  // Generate villain
-  const villainSpecies = ["Human", "Zabrak", "Chiss", "Trandoshan"][Math.floor(Math.random() * 4)];
-  const villain = {
-    id: `npc-${Date.now()}-4`,
-    name: generateName(),
-    species: villainSpecies,
-    role: "Villain",
-    description: "A formidable adversary with dangerous plans that threaten the region."
-  };
-  
-  // Generate contact
-  const contactSpecies = ["Human", "Rodian", "Twilek", "Bothan"][Math.floor(Math.random() * 4)];
-  const contact = {
-    id: `npc-${Date.now()}-5`,
-    name: generateName(),
-    species: contactSpecies,
-    role: "Contact",
-    description: "An information broker with connections throughout the sector."
-  };
-  
-  return [mentor, ally, rival, villain, contact];
+      id: `npc-${Date.now()}-1`,
+      name: generateName(),
+      species: "Human",
+      role: "Mentor",
+      description: `A wise and experienced ${character.class} who sees potential in ${character.name}.`
+    };
+    
+    // Generate ally
+    const allySpecies = ["Human", "Wookiee", "Twilek", "Bothan"][Math.floor(Math.random() * 4)];
+    const ally = {
+      id: `npc-${Date.now()}-2`,
+      name: generateName(),
+      species: allySpecies,
+      role: "Ally",
+      description: `A loyal friend with complementary skills who joins ${character.name} on their journey.`
+    };
+    
+    // Generate rival
+    const rivalSpecies = ["Human", "Trandoshan", "Zabrak", "Twilek"][Math.floor(Math.random() * 4)];
+    const rival = {
+      id: `npc-${Date.now()}-3`,
+      name: generateName(),
+      species: rivalSpecies,
+      role: "Rival",
+      description: `A competent ${character.class} who sees ${character.name} as competition.`
+    };
+    
+    // Generate villain
+    const villainSpecies = ["Human", "Zabrak", "Chiss", "Trandoshan"][Math.floor(Math.random() * 4)];
+    const villain = {
+      id: `npc-${Date.now()}-4`,
+      name: generateName(),
+      species: villainSpecies,
+      role: "Villain",
+      description: "A formidable adversary with dangerous plans that threaten the region."
+    };
+    
+    // Generate contact
+    const contactSpecies = ["Human", "Rodian", "Twilek", "Bothan"][Math.floor(Math.random() * 4)];
+    const contact = {
+      id: `npc-${Date.now()}-5`,
+      name: generateName(),
+      species: contactSpecies,
+      role: "Contact",
+      description: "An information broker with connections throughout the sector."
+    };
+    
+    return [mentor, ally, rival, villain, contact];
+  } catch (error) {
+    console.error("Error generating NPCs:", error);
+    return [];
+  }
 }
 
 /**

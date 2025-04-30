@@ -1,5 +1,10 @@
 
 import { CharacterProfile, CharacterProfileParser, CharacterThemes } from './characterProfileParser';
+import { Character } from "@/lib/stores/useCharacter";
+import { Campaign } from "@/lib/stores/useCampaign";
+import { apiRequest } from "@/lib/queryClient";
+import { starSystems } from "@/lib/sw5e/starSystems";
+import axios from "axios";
 
 export interface CampaignElementTemplates {
   objectiveTemplates: {
@@ -436,17 +441,6 @@ export class CampaignElementGenerator {
   }
 }
 
-import { Character } from "@/lib/stores/useCharacter";
-import { Campaign } from "@/lib/stores/useCampaign";
-import { apiRequest } from "@/lib/queryClient";
-import { starSystems } from "@/lib/sw5e/starSystems";
-import { monsters } from "@/lib/sw5e/monsters";
-import { npcs } from "@/lib/sw5e/npcs";
-import { items } from "@/lib/sw5e/items";
-import { vehicles } from "@/lib/sw5e/vehicles";
-import { starships } from "@/lib/sw5e/starships";
-import axios from "axios";
-
 /**
  * Campaign Element Generator for SW5E
  * Generates campaign elements based on character profiles and input parameters
@@ -533,49 +527,48 @@ export class SimpleCampaignGenerator {
   
   // Generate an NPC appropriate for the campaign
   public static generateNPC(alignment: string = "neutral") {
-    const randomNPC = npcs[Math.floor(Math.random() * npcs.length)];
-    
+    // Return a randomly generated NPC
     return {
-      name: randomNPC.name || "Unknown",
-      species: randomNPC.species || "Human",
-      role: randomNPC.role || "Informant",
-      description: randomNPC.description || "A mysterious figure with unknown motives."
+      name: generateName(),
+      species: ["Human", "Twi'lek", "Wookiee", "Rodian"][Math.floor(Math.random() * 4)],
+      role: ["Informant", "Ally", "Enemy", "Merchant"][Math.floor(Math.random() * 4)],
+      description: "A mysterious figure with unknown motives."
     };
   }
   
   // Generate an encounter with appropriate challenge rating
   public static generateEncounter(partyLevel: number, partySize: number) {
     const challengeRating = Math.max(1, Math.floor(partyLevel * 0.75));
-    const appropriateMonsters = monsters.filter(m => m.challengeRating <= challengeRating + 2 && m.challengeRating >= challengeRating - 2);
-    
-    if (appropriateMonsters.length === 0) {
-      return {
-        title: "Ambush",
-        description: "The party is ambushed by local hostiles",
-        enemies: [{ name: "Hostile", quantity: partySize }]
-      };
-    }
-    
-    // Select 1-3 monster types for the encounter
-    const selectedMonsters = [];
-    const monsterCount = Math.floor(Math.random() * 3) + 1;
-    
-    for (let i = 0; i < monsterCount; i++) {
-      const monster = appropriateMonsters[Math.floor(Math.random() * appropriateMonsters.length)];
-      const quantity = Math.max(1, Math.floor(partySize / monsterCount));
-      
-      selectedMonsters.push({
-        name: monster.name,
-        quantity
-      });
-    }
     
     return {
       title: "Combat Encounter",
       description: "The party encounters hostile forces",
-      enemies: selectedMonsters
+      enemies: [
+        {
+          name: ["Stormtroopers", "Pirates", "Bounty Hunters", "Droids"][Math.floor(Math.random() * 4)],
+          quantity: Math.max(1, Math.floor(partySize / 2))
+        }
+      ]
     };
   }
+}
+
+// Helper function to generate a random name
+function generateName(): string {
+  const firstNames = [
+    "Jace", "Kira", "Mara", "Tycho", "Liana", "Dax", "Vex", "Zara", 
+    "Bren", "Nyra", "Kaiden", "Senn", "Rook", "Lyn", "Cassian", "Juno"
+  ];
+  
+  const lastNames = [
+    "Antilles", "Vos", "Syndulla", "Kryze", "Bane", "Vizla", "Rook", 
+    "Fenn", "Cobb", "Valen", "Solus", "Wren", "Onyo", "Kestis", "Qel-Droma"
+  ];
+  
+  const first = firstNames[Math.floor(Math.random() * firstNames.length)];
+  const last = lastNames[Math.floor(Math.random() * lastNames.length)];
+  
+  return `${first} ${last}`;
 }
 
 // Export default for ease of use
