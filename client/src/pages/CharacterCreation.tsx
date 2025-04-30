@@ -518,7 +518,7 @@ export default function CharacterCreation() {
               {currentTab === tabs.length - 1 ? (
                 <button
                   type="submit"
-                  disabled={!isValid || isSubmitting}
+                  disabled={isSubmitting}
                   className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md disabled:bg-gray-600 disabled:text-gray-400"
                 >
                   {isSubmitting ? "Creating..." : "Create Character"}
