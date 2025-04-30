@@ -33,6 +33,9 @@ export default function TechPowersSelection({
     }
   };
 
+  // Use the imported tech powers directly from the SW5E library
+  const techPowers = TECH_POWERS;
+
   return (
     <div className="space-y-6">
       <div>

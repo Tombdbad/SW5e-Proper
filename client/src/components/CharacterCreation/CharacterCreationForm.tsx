@@ -183,13 +183,42 @@ export default function CharacterCreationForm() {
     try {
       console.log("Submitting character data:", data);
       
-      // Update the character in Zustand store
-      updateCharacter(data);
+      // Get the selected class data
+      const selectedClass = CLASSES.find(c => c.id === data.class);
+      if (!selectedClass) {
+        throw new Error("Invalid class selection");
+      }
       
+      // Calculate derived values for the character
+      const conModifier = calculateModifier(data.abilityScores.constitution);
+      const dexModifier = calculateModifier(data.abilityScores.dexterity);
+      
+      // Calculate HP based on class hit die and constitution
+      const baseHp = selectedClass.hitDie;
+      const maxHp = baseHp + conModifier;
+      
+      // Calculate armor class (10 + DEX modifier as default)
+      const armorClass = 10 + dexModifier;
+      
+      // Add the calculated values to the character data
+      const characterData = {
+        ...data,
+        hitPoints: {
+          current: maxHp,
+          maximum: maxHp
+        },
+        armorClass: armorClass,
+        proficiencyBonus: 2, // Level 1 proficiency bonus is always 2
+      };
+      
+      // Update the character in Zustand store
+      updateCharacter(characterData);
+      
+      // Submit to API
       const response = await fetch("/api/characters", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify(characterData),
       });
       
       if (!response.ok) {
@@ -199,6 +228,9 @@ export default function CharacterCreationForm() {
       
       const character = await response.json();
       console.log("Character created successfully:", character);
+      
+      // Navigate to character view page
+      navigate(`/characters/${character.id}`);
     } catch (error) {
       console.error("Error submitting character:", error);
     } finally {
@@ -425,7 +457,7 @@ export default function CharacterCreationForm() {
               <Button 
                 type="submit" 
                 className="w-full" 
-                disabled={isSubmitting}
+                disabled={isSubmitting || !methods.formState.isValid || !methods.getValues().name || !methods.getValues().species || !methods.getValues().class}
               >
                 {isSubmitting ? "Submitting..." : "Save Character"}
               </Button>

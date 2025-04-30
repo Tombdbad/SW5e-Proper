@@ -27,7 +27,10 @@ export default function ForcePowersSelection({
   const { control, watch, setValue } = useFormContext();
   const selectedPowers = watch("forcePowers") || [];
 
-  const filteredPowers = FORCE_POWERS.filter(power => {
+  // Use the imported force powers directly from the SW5E library
+  const forcePowers = FORCE_POWERS;
+
+  const filteredPowers = forcePowers.filter(power => {
     if (alignment === "Light" && power.alignment === "dark") return false;
     if (alignment === "Dark" && power.alignment === "light") return false;
     return true;
