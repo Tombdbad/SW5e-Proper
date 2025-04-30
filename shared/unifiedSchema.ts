@@ -1,3 +1,4 @@
+import { z } from 'zod'; // Make sure to import zod or the appropriate library
 export const MulticlassSchema = z.object({
   class: z.string(),
   level: z.number().min(1).max(19),
