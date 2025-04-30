@@ -1,181 +1,130 @@
-import { useEffect, useState } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, Play, Save } from "lucide-react";
-import CampaignManager from "@/components/Campaign/CampaignManager";
-import { useCampaign } from "@/lib/stores/useCampaign";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiRequest } from '../lib/utils'; // Assuming this import is correct based on context
+import CampaignGenerator from '../components/Campaign/CampaignGenerator';
+import CampaignManager from '../components/Campaign/CampaignManager';
+import TranslucentPane from '../components/ui/TranslucentPane';
 
 export default function CampaignView() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { campaign, setCampaign } = useCampaign();
+  const queryClient = useQueryClient();
+  const [showGenerator, setShowGenerator] = useState(false);
 
-  // Fetch campaign data
-  const { data, isLoading, error } = useQuery({
+  // Fetch campaign
+  const { data: campaign, isLoading: campaignLoading } = useQuery({
     queryKey: [`/api/campaigns/${id}`],
-    enabled: !!id,
+    queryFn: async () => {
+      if (!id) return null;
+      const res = await apiRequest('GET', `/api/campaigns/${id}`);
+      return await res.json();
+    },
+    enabled: !!id
   });
 
-  // Update campaign mutation
-  const updateCampaign = useMutation({
-    mutationFn: async (updatedData: any) => {
-      return apiRequest("PUT", `/api/campaigns/${id}`, updatedData);
+  // Fetch character
+  const { data: character, isLoading: characterLoading } = useQuery({
+    queryKey: ['/api/characters'],
+    queryFn: async () => {
+      const res = await apiRequest('GET', '/api/characters');
+      const characters = await res.json();
+      return characters.find((c: any) => campaign && c.id === campaign.characterId) || null;
     },
-    onSuccess: () => {
-      toast.success("Campaign updated successfully");
-      queryClient.invalidateQueries({ queryKey: [`/api/campaigns/${id}`] });
-    },
-    onError: (error) => {
-      toast.error(`Update failed: ${error.message}`);
-    },
+    enabled: !!campaign
   });
 
-  // Set campaign data when loaded
-  useEffect(() => {
-    if (data && !isLoading) {
-      setCampaign(data);
+  // Save campaign mutation
+  const saveCampaign = useMutation({
+    mutationFn: async (campaignData: any) => {
+      if (id) {
+        // Update existing campaign
+        return apiRequest('PUT', `/api/campaigns/${id}`, campaignData);
+      } else {
+        // Create new campaign
+        return apiRequest('POST', '/api/campaigns', campaignData);
+      }
+    },
+    onSuccess: async (response) => {
+      const data = await response.json();
+      queryClient.invalidateQueries({ queryKey: [`/api/campaigns/${data.id}`] });
+      queryClient.invalidateQueries({ queryKey: ['/api/campaigns'] });
+      navigate(`/campaign/${data.id}`);
     }
-  }, [data, isLoading, setCampaign]);
+  });
 
-  // Save campaign changes
-  const handleSaveChanges = () => {
-    if (!campaign) return;
-    updateCampaign.mutate(campaign);
+  const handleSaveCampaign = (campaignData: any) => {
+    saveCampaign.mutate(campaignData);
   };
 
-  // Start the game
-  const handleStartGame = () => {
-    if (!campaign) return;
-    navigate(`/game/${campaign.id}`);
-  };
+  // Show generator if no campaign exists or we're in 'create' mode
+  useEffect(() => {
+    if (id === 'create' || !campaign) {
+      setShowGenerator(true);
+    }
+  }, [id, campaign]);
 
-  if (isLoading) {
+  if (!id && !campaign) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-900">
-        <Loader2 className="h-8 w-8 animate-spin text-yellow-400" />
+      <div className="min-h-screen p-6">
+        <TranslucentPane className="p-6 text-center">
+          <h2 className="text-2xl font-bold text-yellow-400 mb-4">Select a Campaign</h2>
+          <p className="text-gray-300 mb-4">
+            Select an existing campaign or create a new one.
+          </p>
+          <button
+            onClick={() => navigate('/campaign/create')}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          >
+            Create New Campaign
+          </button>
+        </TranslucentPane>
       </div>
     );
   }
 
-  if (error || !campaign) {
+  if (campaignLoading || (characterLoading && !showGenerator)) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen bg-gray-900 text-white">
-        <div className="text-xl mb-4">Failed to load campaign</div>
-        <Link to="/">
-          <Button>Return to Home</Button>
-        </Link>
+      <div className="min-h-screen p-6">
+        <TranslucentPane className="p-6 text-center">
+          <h2 className="text-2xl font-bold text-yellow-400 mb-4">Loading...</h2>
+        </TranslucentPane>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 p-6 text-white">
-      <div className="max-w-7xl mx-auto">
-        <header className="flex justify-between items-center mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-yellow-400">{campaign.name}</h1>
-            <p className="text-gray-300">{campaign.description}</p>
-          </div>
-          <div className="flex gap-4">
-            <Button
-              variant="outline"
-              className="border-yellow-400 text-yellow-400"
-              onClick={handleSaveChanges}
-              disabled={updateCampaign.isPending}
+    <div className="min-h-screen p-6">
+      {showGenerator ? (
+        character ? (
+          <CampaignGenerator 
+            character={character} 
+            onSave={handleSaveCampaign} 
+          />
+        ) : (
+          <TranslucentPane className="p-6 text-center">
+            <h2 className="text-2xl font-bold text-yellow-400 mb-4">Select a Character</h2>
+            <p className="text-gray-300 mb-4">
+              You need to select a character before creating a campaign.
+            </p>
+            <button
+              onClick={() => navigate('/character/create')}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
             >
-              {updateCampaign.isPending ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4 mr-2" />
-              )}
-              Save Changes
-            </Button>
-            <Button onClick={handleStartGame}>
-              <Play className="h-4 w-4 mr-2" />
-              Play Campaign
-            </Button>
-          </div>
-        </header>
-
-        <Card className="bg-gray-800 border-gray-700">
-          <CardContent className="p-6">
-            <Tabs defaultValue="overview">
-              <TabsList className="mb-6">
-                <TabsTrigger value="overview">Overview</TabsTrigger>
-                <TabsTrigger value="npcs">NPCs</TabsTrigger>
-                <TabsTrigger value="locations">Locations</TabsTrigger>
-                <TabsTrigger value="quests">Quests</TabsTrigger>
-              </TabsList>
-              
-              <TabsContent value="overview">
-                <CampaignManager campaign={campaign} />
-              </TabsContent>
-              
-              <TabsContent value="npcs">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {campaign.npcs?.map((npc, index) => (
-                    <Card key={index} className="bg-gray-700">
-                      <CardHeader>
-                        <CardTitle className="text-lg">{npc.name}</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <p><strong>Species:</strong> {npc.species}</p>
-                        <p><strong>Role:</strong> {npc.role}</p>
-                        <p className="mt-2">{npc.description}</p>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              </TabsContent>
-              
-              <TabsContent value="locations">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {campaign.locations?.map((location, index) => (
-                    <Card key={index} className="bg-gray-700">
-                      <CardHeader>
-                        <CardTitle className="text-lg">{location.name}</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <p><strong>Type:</strong> {location.type}</p>
-                        <p className="mt-2">{location.description}</p>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              </TabsContent>
-              
-              <TabsContent value="quests">
-                <div className="grid grid-cols-1 gap-4">
-                  {campaign.quests?.map((quest, index) => (
-                    <Card key={index} className="bg-gray-700">
-                      <CardHeader>
-                        <CardTitle className="text-lg">{quest.title}</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <p><strong>Status:</strong> {quest.status}</p>
-                        <p className="mt-2">{quest.description}</p>
-                        <div className="mt-4">
-                          <h4 className="font-semibold mb-2">Objectives:</h4>
-                          <ul className="list-disc list-inside">
-                            {quest.objectives.map((objective, idx) => (
-                              <li key={idx}>{objective.description} ({objective.completed ? 'Completed' : 'Pending'})</li>
-                            ))}
-                          </ul>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
-      </div>
+              Create Character
+            </button>
+          </TranslucentPane>
+        )
+      ) : (
+        campaign && (
+          <CampaignManager 
+            campaign={campaign} 
+            character={character}
+            onSave={handleSaveCampaign}
+            onGenerateContent={() => setShowGenerator(true)}
+          />
+        )
+      )}
     </div>
   );
 }

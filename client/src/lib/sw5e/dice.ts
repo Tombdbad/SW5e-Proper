@@ -143,3 +143,53 @@ export function generateAbilityScores(): number[] {
   
   return scores;
 }
+/**
+ * Roll dice with the specified number of sides
+ * @param quantity Number of dice to roll
+ * @param sides Number of sides on each die
+ * @returns Array of roll results
+ */
+export function rollDice(quantity: number, sides: number): number[] {
+  const results: number[] = [];
+  
+  for (let i = 0; i < quantity; i++) {
+    // Generate a random number between 1 and the number of sides
+    results.push(Math.floor(Math.random() * sides) + 1);
+  }
+  
+  return results;
+}
+
+/**
+ * Roll dice and return the sum
+ * @param diceNotation Dice notation (e.g., "2d6+3")
+ * @returns Object containing the total and individual roll results
+ */
+export function rollDiceNotation(diceNotation: string): { total: number; rolls: number[]; modifier: number } {
+  // Parse the dice notation
+  const regex = /(\d+)d(\d+)(?:([+-])(\d+))?/;
+  const match = diceNotation.match(regex);
+  
+  if (!match) {
+    throw new Error(`Invalid dice notation: ${diceNotation}`);
+  }
+  
+  const quantity = parseInt(match[1]);
+  const sides = parseInt(match[2]);
+  const hasModifier = match[3] !== undefined;
+  const modifierType = hasModifier ? match[3] : '+';
+  const modifierValue = hasModifier ? parseInt(match[4]) : 0;
+  const modifier = modifierType === '+' ? modifierValue : -modifierValue;
+  
+  // Roll the dice
+  const rolls = rollDice(quantity, sides);
+  
+  // Calculate the total
+  const total = rolls.reduce((sum, roll) => sum + roll, 0) + modifier;
+  
+  return {
+    total,
+    rolls,
+    modifier
+  };
+}

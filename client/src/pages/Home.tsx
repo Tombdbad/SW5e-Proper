@@ -6,10 +6,11 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import TranslucentPane from "@/components/ui/TranslucentPane";
 import { Character, Campaign } from "../../../shared/schema";
+import DiceRoller from "@/components/ui/DiceRoller"; // Added import for DiceRoller
 
 export default function Home() {
   const [showIntro, setShowIntro] = useState(true);
-  
+
   // Fetch existing characters
   const { data: characters = [], isLoading: charactersLoading } = useQuery<Character[]>({
     queryKey: ["/api/characters"],
@@ -18,7 +19,7 @@ export default function Home() {
       return await res.json();
     },
   });
-  
+
   // Fetch existing campaigns
   const { data: campaigns = [], isLoading: campaignsLoading } = useQuery<Campaign[]>({
     queryKey: ["/api/campaigns"],
@@ -27,16 +28,16 @@ export default function Home() {
       return await res.json();
     },
   });
-  
+
   // Hide intro after 3 seconds
   useEffect(() => {
     const timer = setTimeout(() => {
       setShowIntro(false);
     }, 3000);
-    
+
     return () => clearTimeout(timer);
   }, []);
-  
+
   if (showIntro) {
     return (
       <div className="flex flex-col items-center justify-center h-screen text-white">
@@ -46,7 +47,7 @@ export default function Home() {
       </div>
     );
   }
-  
+
   return (
     <div className="min-h-screen p-6">
       <div className="max-w-7xl mx-auto">
@@ -59,13 +60,13 @@ export default function Home() {
           <h1 className="text-5xl font-bold text-yellow-400 mb-4">SW5E RPG Simulator</h1>
           <p className="text-xl text-gray-300">Forge your destiny in the galaxy far, far away</p>
         </TranslucentPane>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-12">
           <section>
             <TranslucentPane variant="accent" opacity="medium" className="mb-6">
               <h2 className="text-2xl font-semibold text-yellow-300">Your Characters</h2>
             </TranslucentPane>
-            
+
             {charactersLoading ? (
               <TranslucentPane className="text-center p-4">
                 Loading characters...
@@ -104,12 +105,12 @@ export default function Home() {
               </Link>
             </div>
           </section>
-          
+
           <section>
             <TranslucentPane variant="accent" opacity="medium" className="mb-6">
               <h2 className="text-2xl font-semibold text-yellow-300">Your Campaigns</h2>
             </TranslucentPane>
-            
+
             {campaignsLoading ? (
               <TranslucentPane className="text-center p-4">
                 Loading campaigns...
@@ -141,7 +142,7 @@ export default function Home() {
             )}
           </section>
         </div>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-12">
           <TranslucentPane className="p-6" opacity="medium">
             <h3 className="text-xl font-bold mb-3 text-cyan-400">Galactic Map</h3>
@@ -154,17 +155,15 @@ export default function Home() {
               </Button>
             </Link>
           </TranslucentPane>
-          
+
           <TranslucentPane className="p-6" opacity="medium">
             <h3 className="text-xl font-bold mb-3 text-yellow-400">Dice Roller</h3>
             <p className="mb-4 text-gray-300">
               Use the built-in dice roller for your skill checks and combat rolls.
             </p>
-            <Button className="w-full" variant="outline" disabled>
-              Coming Soon
-            </Button>
+            <DiceRoller /> {/* Added DiceRoller component */}
           </TranslucentPane>
-          
+
           <TranslucentPane className="p-6" opacity="medium">
             <h3 className="text-xl font-bold mb-3 text-red-400">Rulebook</h3>
             <p className="mb-4 text-gray-300">
