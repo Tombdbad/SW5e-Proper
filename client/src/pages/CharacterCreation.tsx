@@ -49,17 +49,12 @@ import TranslucentPane from "../components/ui/TranslucentPane";
 import Alert from "../components/ui/Alert";
 
 // Import the unified character schema
-import { characterSchema } from "@shared/unifiedSchema";
-// Use imported character schema from unified schema
+    import { CharacterSchema } from "@shared/unifiedSchema";
 
-  // Powers and Abilities
-  feats: z.array(z.string()).default([]),
-  forcePowers: z.array(z.string()).default([]),
-  techPowers: z.array(z.string()).default([]),
-  powerPoints: z.number().min(0).default(0),
-  maxPowerLevel: z.number().min(0).max(9).default(0),
+    // Use the imported character schema from unified schema
+    const characterSchema = CharacterSchema;
 
-  // Character-specific features
+      // Character-specific features
   traits: z
     .array(
       z.object({
