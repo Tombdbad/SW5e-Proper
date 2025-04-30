@@ -89,6 +89,9 @@ export interface Character {
   }>;
 }
 
+import { Character, emptyCharacter } from '@shared/unifiedSchema';
+import { AbilityScores } from '@shared/unifiedSchema';
+
 interface CharacterState {
   character: Character | null;
   characters: Character[];
