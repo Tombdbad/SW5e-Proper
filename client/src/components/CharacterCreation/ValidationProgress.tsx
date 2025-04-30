@@ -20,11 +20,13 @@ export function ValidationProgress({ character }: ValidationProgressProps) {
     { name: "Character Name", valid: !!character.name, required: true },
     { name: "Species", valid: !!character.species, required: true },
     { name: "Class", valid: !!character.class, required: true },
-    { name: "Ability Scores", valid: Object.values(character.abilityScores || {}).every(v => v >= 3), required: true },
+    // More lenient ability score validation
+    { name: "Ability Scores", valid: character.abilityScores ? Object.values(character.abilityScores).length > 0 : false, required: true },
     { name: "Background", valid: !!character.background, required: false },
     { name: "Equipment", valid: true, required: false }, // Equipment shouldn't block creation
     { name: "Feats", valid: true, required: false },     // Feats shouldn't block creation at level 1
     { name: "Powers", valid: true, required: false },    // Powers shouldn't block creation at level 1
+    { name: "Skills", valid: true, required: false },    // Skills shouldn't block creation either
   ];
   
   const requiredItems = validationItems.filter(item => item.required);
