@@ -1,0 +1,163 @@
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { 
+  useSpecies, 
+  useClasses, 
+  useBackgrounds, 
+  useCreateCharacter,
+  prefetchCharacterCreationData,
+  Species,
+  Class,
+  Background
+} from '../lib/api/sw5eApi';
+import { processApiError, ErrorType } from '../lib/api/errorUtils';
+
+// Basic character creation form
+const CharacterCreationForm: React.FC = () => {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  
+  // Prefetch data for character creation
+  useEffect(() => {
+    prefetchCharacterCreationData(queryClient);
+  }, [queryClient]);
+  
+  // Fetch data for dropdowns
+  const { 
+    data: species, 
+    isLoading: isLoadingSpecies,
+    error: speciesError 
+  } = useSpecies();
+  
+  const { 
+    data: classes, 
+    isLoading: isLoadingClasses, 
+    error: classesError 
+  } = useClasses();
+  
+  const { 
+    data: backgrounds, 
+    isLoading: isLoadingBackgrounds,
+    error: backgroundsError 
+  } = useBackgrounds();
+  
+  // Create character mutation
+  const { 
+    mutate: createCharacter, 
+    isLoading: isCreating, 
+    error: createError 
+  } = useCreateCharacter({
+    // Redirect to character page on success
+    onSuccess: (data) => {
+      navigate(`/characters/${data.id}`);
+    }
+  });
+  
+  // Form state
+  const [form, setForm] = useState({
+    name: '',
+    species: '',
+    class: '',
+    level: 1,
+    background: '',
+    alignment: 'Neutral',
+    abilities: {
+      strength: 10,
+      dexterity: 10,
+      constitution: 10,
+      intelligence: 10,
+      wisdom: 10,
+      charisma: 10
+    },
+    hitPoints: {
+      current: 0,
+      maximum: 0
+    },
+    biography: '',
+    appearance: ''
+  });
+  
+  // Field errors
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  
+  // Process any API errors
+  useEffect(() => {
+    if (createError) {
+      const processedError = processApiError(createError);
+      
+      if (processedError.type === ErrorType.VALIDATION && processedError.fieldErrors) {
+        setErrors(processedError.fieldErrors);
+      }
+    }
+  }, [createError]);
+  
+  // Update form state
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
+    
+    // Handle nested fields like abilities.strength
+    if (name.includes('.')) {
+      const [parent, child] = name.split('.');
+      setForm((prev) => ({
+        ...prev,
+        [parent]: {
+          ...prev[parent as keyof typeof prev],
+          [child]: parent === 'abilities' ? Number(value) : value
+        }
+      }));
+    } else {
+      setForm((prev) => ({
+        ...prev,
+        [name]: name === 'level' ? Number(value) : value
+      }));
+    }
+    
+    // Clear error for this field
+    if (errors[name]) {
+      setErrors((prev) => {
+        const newErrors = { ...prev };
+        delete newErrors[name];
+        return newErrors;
+      });
+    }
+  };
+  
+  // Handle species change to update ability scores
+  const handleSpeciesChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const speciesId = e.target.value;
+    setForm((prev) => ({ ...prev, species: speciesId }));
+    
+    // Find selected species
+    const selectedSpecies = species?.find(s => s.id === speciesId);
+    
+    // Update ability scores based on species bonuses
+    if (selectedSpecies?.abilityScoreIncrease) {
+      setForm((prev) => ({
+        ...prev,
+        abilities: {
+          strength: prev.abilities.strength + (selectedSpecies.abilityScoreIncrease.strength || 0),
+          dexterity: prev.abilities.dexterity + (selectedSpecies.abilityScoreIncrease.dexterity || 0),
+          constitution: prev.abilities.constitution + (selectedSpecies.abilityScoreIncrease.constitution || 0),
+          intelligence: prev.abilities.intelligence + (selectedSpecies.abilityScoreIncrease.intelligence || 0),
+          wisdom: prev.abilities.wisdom + (selectedSpecies.abilityScoreIncrease.wisdom || 0),
+          charisma: prev.abilities.charisma + (selectedSpecies.abilityScoreIncrease.charisma || 0)
+        }
+      }));
+    }
+  };
+  
+  // Handle class change to update hit points
+  const handleClassChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const classId = e.target.value;
+    setForm((prev) => ({ ...prev, class: classId }));
+    
+    // Find selected class
+    const selectedClass = classes?.find(c => c.id === classId);
+    
+    // Update hit points based on class hit die
+    if (selectedClass?.hitDie) {
+      const conModifier = Math.floor((form.abilities.constitution - 10) / 2);
+      const maxHitPoints = selectedClass.hitDie + conModifier;
+      
+      setForm((prev) =>
