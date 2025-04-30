@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { apiRequest } from "@/lib/queryClient";
 import axios from "axios";
+import { starSystems } from "@/lib/sw5e/starSystems";
 
 async function fetchStarSystems() {
   const response = await axios.get("/api/star-systems");
