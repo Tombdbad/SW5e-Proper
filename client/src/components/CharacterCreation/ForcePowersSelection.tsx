@@ -18,10 +18,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert } from "../ui/alert";
 
 interface ForcePowersSelectionProps {
-  form: any;
-  powers: any[];
   maxPowerLevel: number;
   maxPowerPoints: number;
+  alignment: string;
 }
 
 export default function ForcePowersSelection({ 
