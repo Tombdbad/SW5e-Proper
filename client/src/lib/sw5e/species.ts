@@ -2878,3 +2878,572 @@ export const species: Species[] = [
     commonClasses: ["Any"],
   },
 ];
+// Species data for SW5E
+export interface Species {
+  id: string;
+  name: string;
+  description: string;
+  abilityScoreIncrease: {
+    ability: string;
+    value: number;
+  }[];
+  age: {
+    maturity: string;
+    lifespan: string;
+  };
+  alignment: string;
+  size: {
+    category: string;
+    height: string;
+    weight: string;
+  };
+  speed: number;
+  languages: string[];
+  traits: {
+    name: string;
+    description: string;
+  }[];
+  subspecies?: Subspecies[];
+}
+
+export interface Subspecies {
+  id: string;
+  name: string;
+  description: string;
+  abilityScoreIncrease: {
+    ability: string;
+    value: number;
+  }[];
+  traits: {
+    name: string;
+    description: string;
+  }[];
+}
+
+export const species: Species[] = [
+  {
+    id: "human",
+    name: "Human",
+    description:
+      "Humans are the most numerous and politically dominant species in the galaxy, with countless variations and cultures spread across countless worlds. They are known for their adaptability, ambition, and diversity.",
+    abilityScoreIncrease: [{ ability: "All", value: 1 }],
+    age: {
+      maturity: "18 years",
+      lifespan: "85 years",
+    },
+    alignment:
+      "Humans tend toward no particular alignment. The best and the worst are found among them.",
+    size: {
+      category: "Medium",
+      height: "5 to 6.5 feet tall",
+      weight: "125 to 250 pounds",
+    },
+    speed: 30,
+    languages: ["Basic", "One additional language of your choice"],
+    traits: [
+      {
+        name: "Versatile",
+        description: "You gain proficiency in one skill of your choice.",
+      },
+      {
+        name: "Feat",
+        description: "You gain one feat of your choice.",
+      },
+    ],
+    subspecies: [
+      {
+        id: "corellian",
+        name: "Corellian",
+        description:
+          "Corellians are known throughout the galaxy for their wanderlust and love of adventure, often becoming pilots, explorers, and smugglers.",
+        abilityScoreIncrease: [
+          { ability: "Dexterity", value: 2 },
+          { ability: "Charisma", value: 1 },
+        ],
+        traits: [
+          {
+            name: "Pilot's Luck",
+            description:
+              "When you roll a 1 on an attack roll, ability check, or saving throw, you can reroll the die and must use the new roll. Once you use this feature, you can't use it again until you finish a short or long rest.",
+          },
+          {
+            name: "Scoundrel's Wit",
+            description:
+              "You gain proficiency in the Persuasion or Deception skill.",
+          },
+        ],
+      },
+      {
+        id: "mandalorian",
+        name: "Mandalorian",
+        description:
+          "Mandalorians are a cultural group defined by their distinctive armor and warrior traditions rather than a single species, though many are humans.",
+        abilityScoreIncrease: [
+          { ability: "Strength", value: 2 },
+          { ability: "Constitution", value: 1 },
+        ],
+        traits: [
+          {
+            name: "Warrior Culture",
+            description:
+              "You gain proficiency with medium armor and martial weapons.",
+          },
+          {
+            name: "Resol'nare",
+            description:
+              "You have advantage on saving throws against being frightened.",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "twi-lek",
+    name: "Twi'lek",
+    description:
+      "Twi'leks are a humanoid species with colorful skin and a pair of long, brain-filled appendages protruding from their heads called lekku, or head-tails. They hail from the hot and harsh planet Ryloth.",
+    abilityScoreIncrease: [
+      { ability: "Charisma", value: 2 },
+      { ability: "Dexterity", value: 1 },
+    ],
+    age: {
+      maturity: "16 years",
+      lifespan: "80 years",
+    },
+    alignment:
+      "Twi'leks tend towards the practical and adaptable, often leaning neutral, though they span all alignments.",
+    size: {
+      category: "Medium",
+      height: "5 to 6.5 feet tall",
+      weight: "120 to 220 pounds",
+    },
+    speed: 30,
+    languages: ["Basic", "Ryl"],
+    traits: [
+      {
+        name: "Darkvision",
+        description:
+          "You can see in dim light within 60 feet of you as if it were bright light, and in darkness as if it were dim light. You can't discern color in darkness, only shades of gray.",
+      },
+      {
+        name: "Lekku Communication",
+        description:
+          "You can communicate simple ideas to other Twi'leks using subtle lekku movements, provided they can see your lekku. This is not a language and cannot communicate complex ideas.",
+      },
+      {
+        name: "Cunning",
+        description: "You gain proficiency in the Deception skill.",
+      },
+    ],
+    subspecies: [
+      {
+        id: "rutian",
+        name: "Rutian Twi'lek",
+        description:
+          "Blue-skinned Twi'leks known for their quick reflexes and agility.",
+        abilityScoreIncrease: [
+          { ability: "Dexterity", value: 2 },
+          { ability: "Charisma", value: 1 },
+        ],
+        traits: [
+          {
+            name: "Nimble",
+            description:
+              "You can use your reaction to halve the damage from a weapon attack that you can see.",
+          },
+        ],
+      },
+      {
+        id: "lethan",
+        name: "Lethan Twi'lek",
+        description:
+          "Rare red-skinned Twi'leks often considered especially attractive or striking.",
+        abilityScoreIncrease: [
+          { ability: "Charisma", value: 2 },
+          { ability: "Wisdom", value: 1 },
+        ],
+        traits: [
+          {
+            name: "Captivating Presence",
+            description:
+              "You gain proficiency in your choice of Persuasion or Performance. When you make a check with the chosen skill, you can add twice your proficiency bonus.",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "wookiee",
+    name: "Wookiee",
+    description:
+      "Wookiees are a species of tall, hairy humanoids from the forest planet of Kashyyyk. They are known for their great strength, loyalty, and distinctive howling language.",
+    abilityScoreIncrease: [
+      { ability: "Strength", value: 2 },
+      { ability: "Constitution", value: 1 },
+    ],
+    age: {
+      maturity: "18 years",
+      lifespan: "400 years",
+    },
+    alignment:
+      "Wookiees are typically good-aligned, valuing honor, loyalty, and justice.",
+    size: {
+      category: "Medium",
+      height: "7 to 8 feet tall",
+      weight: "300 to 400 pounds",
+    },
+    speed: 30,
+    languages: ["Basic (understand only)", "Shyriiwook"],
+    traits: [
+      {
+        name: "Powerful Build",
+        description:
+          "You count as one size larger when determining your carrying capacity and the weight you can push, drag, or lift.",
+      },
+      {
+        name: "Natural Climber",
+        description: "You have a climbing speed of 30 feet.",
+      },
+      {
+        name: "Wookiee Rage",
+        description:
+          "When you take damage from a creature within 5 feet of you, you can use your reaction to make an unarmed strike against that creature. This strike deals 1d4 + your Strength modifier as kinetic damage. You can use this trait a number of times equal to your Constitution modifier (minimum of once), and you regain all expended uses when you finish a long rest.",
+      },
+      {
+        name: "Natural Weapons",
+        description:
+          "Your claws are natural weapons, which you can use to make unarmed strikes. If you hit with them, you deal kinetic damage equal to 1d4 + your Strength modifier, instead of the bludgeoning damage normal for an unarmed strike.",
+      },
+    ],
+  },
+  {
+    id: "zabrak",
+    name: "Zabrak",
+    description:
+      "Zabraks are near-humans distinguished by their vestigial horns atop their heads and their distinctive facial tattoos. Known for their resilience and independence, they hail from either Iridonia or Dathomir.",
+    abilityScoreIncrease: [
+      { ability: "Constitution", value: 2 },
+      { ability: "Wisdom", value: 1 },
+    ],
+    age: {
+      maturity: "16 years",
+      lifespan: "90 years",
+    },
+    alignment:
+      "Zabraks tend toward neutrality, valuing independence and self-reliance above all else.",
+    size: {
+      category: "Medium",
+      height: "5.5 to 6.5 feet tall",
+      weight: "140 to 240 pounds",
+    },
+    speed: 30,
+    languages: ["Basic", "Zabraki"],
+    traits: [
+      {
+        name: "Desert Survivor",
+        description:
+          "You have advantage on Constitution saving throws against exhaustion caused by extreme heat or lack of water.",
+      },
+      {
+        name: "Fearless",
+        description:
+          "You have advantage on saving throws against being frightened.",
+      },
+      {
+        name: "Warrior's Resolve",
+        description:
+          "When you are reduced to 0 hit points but not killed outright, you can drop to 1 hit point instead. You can't use this feature again until you finish a long rest.",
+      },
+    ],
+    subspecies: [
+      {
+        id: "iridonian",
+        name: "Iridonian Zabrak",
+        description:
+          "Hailing from the harsh planet of Iridonia, these Zabraks are known for their strategic thinking and tactical abilities.",
+        abilityScoreIncrease: [
+          { ability: "Constitution", value: 2 },
+          { ability: "Intelligence", value: 1 },
+        ],
+        traits: [
+          {
+            name: "Tactical Mind",
+            description:
+              "You gain proficiency in your choice of the History or Investigation skill.",
+          },
+        ],
+      },
+      {
+        id: "dathomirian",
+        name: "Dathomirian Zabrak",
+        description:
+          "These Zabraks have ties to the mysterious Nightsisters of Dathomir and often exhibit a natural affinity for the Force.",
+        abilityScoreIncrease: [
+          { ability: "Constitution", value: 2 },
+          { ability: "Charisma", value: 1 },
+        ],
+        traits: [
+          {
+            name: "Nightsister Legacy",
+            description:
+              "You know one tech or force power of your choice from the consular power list. Wisdom or Charisma is your forcecasting ability for this power (your choice).",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "togruta",
+    name: "Togruta",
+    description:
+      "Togruta are a humanoid species from the planet Shili, characterized by their colorful skin patterns, large montrals (hollow horns) and head-tails, which give them a heightened spatial awareness.",
+    abilityScoreIncrease: [
+      { ability: "Wisdom", value: 2 },
+      { ability: "Dexterity", value: 1 },
+    ],
+    age: {
+      maturity: "16 years",
+      lifespan: "82 years",
+    },
+    alignment:
+      "Togruta tend toward the light side and neutral alignments, valuing community and harmony.",
+    size: {
+      category: "Medium",
+      height: "5.5 to 6.5 feet tall",
+      weight: "130 to 200 pounds",
+    },
+    speed: 30,
+    languages: ["Basic", "Togruti"],
+    traits: [
+      {
+        name: "Montral Sense",
+        description:
+          "You have advantage on Wisdom (Perception) checks that rely on hearing or spatial awareness. Additionally, you have blindsight to a range of 10 feet.",
+      },
+      {
+        name: "Pack Instincts",
+        description:
+          "When an ally within 5 feet of you hits a creature with an attack, you can use your reaction to make a melee attack against that creature.",
+      },
+      {
+        name: "Enhanced Senses",
+        description: "You are proficient in the Perception skill.",
+      },
+    ],
+  },
+  {
+    id: "trandoshan",
+    name: "Trandoshan",
+    description:
+      "Trandoshans are a reptilian species from the planet Trandosha, known for their regenerative abilities, physical strength, and cultural reverence for hunting.",
+    abilityScoreIncrease: [
+      { ability: "Strength", value: 2 },
+      { ability: "Constitution", value: 1 },
+    ],
+    age: {
+      maturity: "15 years",
+      lifespan: "70 years",
+    },
+    alignment:
+      "Trandoshans often tend toward neutral or dark side alignments, though exceptions exist.",
+    size: {
+      category: "Medium",
+      height: "6 to 7 feet tall",
+      weight: "180 to 320 pounds",
+    },
+    speed: 30,
+    languages: ["Basic", "Dosh"],
+    traits: [
+      {
+        name: "Natural Armor",
+        description:
+          "Your scaly hide provides natural protection. When you aren't wearing armor, your AC is 13 + your Dexterity modifier. You can use your natural armor to determine your AC if the armor you wear would leave you with a lower AC. A shield's benefits apply as normal while you use your natural armor.",
+      },
+      {
+        name: "Limb Regeneration",
+        description:
+          "When you take a long rest, you regain additional hit points equal to your level. If you lose a limb, you can regenerate it over the course of 1d4 + 1 weeks.",
+      },
+      {
+        name: "Hunter's Instincts",
+        description:
+          "You gain proficiency in the Survival skill and with the Perception skill specifically for tracking prey.",
+      },
+      {
+        name: "Natural Weapons",
+        description:
+          "Your claws and bite are natural weapons, which you can use to make unarmed strikes. If you hit with them, you deal kinetic damage equal to 1d4 + your Strength modifier, instead of the bludgeoning damage normal for an unarmed strike.",
+      },
+    ],
+  },
+  {
+    id: "mon-calamari",
+    name: "Mon Calamari",
+    description:
+      "Mon Calamari are an amphibious species from the aquatic world of Mon Cala. They are known for their brilliant minds, engineering skill, and strong sense of justice.",
+    abilityScoreIncrease: [
+      { ability: "Intelligence", value: 2 },
+      { ability: "Wisdom", value: 1 },
+    ],
+    age: {
+      maturity: "18 years",
+      lifespan: "100 years",
+    },
+    alignment:
+      "Mon Calamari tend strongly toward light side alignments, valuing justice and peace.",
+    size: {
+      category: "Medium",
+      height: "5.5 to 6.5 feet tall",
+      weight: "150 to 250 pounds",
+    },
+    speed: 30,
+    languages: ["Basic", "Mon Calamarian"],
+    traits: [
+      {
+        name: "Amphibious",
+        description: "You can breathe air and water.",
+      },
+      {
+        name: "Swimmer",
+        description: "You have a swimming speed of 30 feet.",
+      },
+      {
+        name: "Engineer's Mind",
+        description:
+          "You gain proficiency with one type of artisan's tools of your choice.",
+      },
+      {
+        name: "Aquatic Adaptation",
+        description:
+          "You have advantage on Strength and Constitution checks made to swim. Additionally, you can see clearly underwater up to 60 feet.",
+      },
+    ],
+  },
+  {
+    id: "droid",
+    name: "Droid",
+    description:
+      "Droids are mechanical beings with varying degrees of artificial intelligence. They come in many forms and are designed for specific functions, from simple labor to complex protocol duties.",
+    abilityScoreIncrease: [
+      { ability: "Constitution", value: 2 },
+      { ability: "Intelligence", value: 1 },
+    ],
+    age: {
+      maturity: "Immediate upon activation",
+      lifespan: "Potentially unlimited with maintenance",
+    },
+    alignment:
+      "Droids tend toward lawful alignments due to their programming, though some develop more complex personalities over time.",
+    size: {
+      category: "Medium",
+      height: "Varies by model",
+      weight: "Varies by model",
+    },
+    speed: 30,
+    languages: ["Basic", "Binary"],
+    traits: [
+      {
+        name: "Constructed Resilience",
+        description:
+          "You are immune to disease. You don't need to eat, drink, or breathe. You don't need to sleep and don't suffer the effects of exhaustion due to lack of rest, and can recharge during a short rest.",
+      },
+      {
+        name: "Inorganic",
+        description:
+          "You are resistant to poison damage and have advantage on saving throws against being poisoned. You are vulnerable to ion damage.",
+      },
+      {
+        name: "Sentry's Rest",
+        description:
+          "When you take a long rest, you must spend at least six hours in an inactive, motionless state, rather than sleeping. In this state, you appear inert, but it doesn't render you unconscious, and you can see and hear as normal.",
+      },
+      {
+        name: "Programmed Training",
+        description:
+          "You gain proficiency in two skills of your choice, representing your primary programming functions.",
+      },
+    ],
+    subspecies: [
+      {
+        id: "protocol-droid",
+        name: "Protocol Droid",
+        description:
+          "Designed for translation, etiquette, and diplomatic functions, protocol droids excel at social interaction and linguistic analysis.",
+        abilityScoreIncrease: [
+          { ability: "Intelligence", value: 2 },
+          { ability: "Charisma", value: 1 },
+        ],
+        traits: [
+          {
+            name: "Multilingual",
+            description:
+              "You can speak, read, and write three additional languages of your choice.",
+          },
+          {
+            name: "Diplomatic Programming",
+            description:
+              "You gain proficiency in the Persuasion and History skills.",
+          },
+        ],
+      },
+      {
+        id: "astromech-droid",
+        name: "Astromech Droid",
+        description:
+          "Specialized in starship maintenance, navigation, and technical support, astromech droids are highly valued for their utility.",
+        abilityScoreIncrease: [
+          { ability: "Intelligence", value: 2 },
+          { ability: "Dexterity", value: 1 },
+        ],
+        traits: [
+          {
+            name: "Technical Expertise",
+            description:
+              "You gain proficiency with technology tools and the Technology skill.",
+          },
+          {
+            name: "Mechanical Aptitude",
+            description:
+              "You can cast the mending tech power once per short rest without expending tech points.",
+          },
+        ],
+      },
+      {
+        id: "battle-droid",
+        name: "Battle Droid",
+        description:
+          "Designed for combat operations, battle droids prioritize tactical analysis and weapons proficiency.",
+        abilityScoreIncrease: [
+          { ability: "Strength", value: 2 },
+          { ability: "Constitution", value: 1 },
+        ],
+        traits: [
+          {
+            name: "Combat Programming",
+            description:
+              "You gain proficiency with blaster rifles and martial weapons.",
+          },
+          {
+            name: "Tactical Analysis",
+            description:
+              "You can use your reaction to grant an ally you can see within 30 feet of you advantage on their next attack roll. You can use this feature a number of times equal to your Intelligence modifier (minimum of once), and you regain all expended uses when you finish a long rest.",
+          },
+        ],
+      },
+    ],
+  },
+];
+
+// Helper functions
+export function getSpeciesById(id: string): Species | undefined {
+  return species.find((s) => s.id === id);
+}
+
+export function getSpeciesNames(): { id: string; name: string }[] {
+  return species.map((s) => ({ id: s.id, name: s.name }));
+}
+
+export function getSubspeciesBySpeciesId(speciesId: string): Subspecies[] {
+  const speciesData = getSpeciesById(speciesId);
+  return speciesData?.subspecies || [];
+}
