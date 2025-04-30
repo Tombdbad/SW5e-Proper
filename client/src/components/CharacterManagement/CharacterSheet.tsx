@@ -3,41 +3,36 @@ import { calculateModifier } from "@/lib/sw5e/rules";
 // Add CharacterPreview export
 export const CharacterPreview = ({
   character,
-  form,
   abilities,
 }: {
   character?: any;
-  form?: any;
   abilities?: any;
 }) => {
-  if (!character && form && typeof form.getValues === "function") {
-    // If using with react-hook-form
-    const formValues = form.getValues();
-    
-    return (
-      <div className="character-preview p-4">
-        <h3 className="text-xl font-bold mb-2">{formValues.name || "New Character"}</h3>
-        <p className="mb-4">
-          Level {formValues.level || 1} {formValues.species || "Unknown"}{" "}
-          {formValues.class || "Unknown"}
-        </p>
-        
-        {abilities && (
-          <div className="grid grid-cols-3 gap-4 mt-4">
-            {Object.entries(abilities).map(([abilityName, score]) => (
-              <div key={abilityName} className="bg-gray-800 p-3 rounded-lg text-center">
-                <div className="uppercase text-xs mb-1">{abilityName}</div>
-                <div className="text-xl font-bold">{score}</div>
-                <div className="text-sm text-yellow-400">
-                  {score ? (calculateModifier(score as number) >= 0 ? "+" : "") + calculateModifier(score as number) : ""}
-                </div>
+  const formValues = character || {};
+  
+  return (
+    <div className="character-preview p-4">
+      <h3 className="text-xl font-bold mb-2">{formValues.name || "New Character"}</h3>
+      <p className="mb-4">
+        Level {formValues.level || 1} {formValues.species || "Unknown"}{" "}
+        {formValues.class || "Unknown"}
+      </p>
+      
+      {abilities && (
+        <div className="grid grid-cols-3 gap-4 mt-4">
+          {Object.entries(abilities).map(([abilityName, score]) => (
+            <div key={abilityName} className="bg-gray-800 p-3 rounded-lg text-center">
+              <div className="uppercase text-xs mb-1">{abilityName}</div>
+              <div className="text-xl font-bold">{score}</div>
+              <div className="text-sm text-yellow-400">
+                {score ? (calculateModifier(score as number) >= 0 ? "+" : "") + calculateModifier(score as number) : ""}
               </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   if (!character) {
     return (

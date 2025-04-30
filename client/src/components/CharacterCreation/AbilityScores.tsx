@@ -1,151 +1,170 @@
-import { useState } from "react";
-import { FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Button } from "@/components/ui/button";
+import { useState, useEffect } from "react";
+import { useFormContext } from "react-hook-form";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dice } from "@/components/ui/dice";
-import { rollDice } from "@/lib/sw5e/dice";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { calculateModifier } from "@/lib/sw5e/rules";
+import { useCharacter } from "@/lib/stores/useCharacter";
 
-export default function AbilityScores({ form, maxPoints }: { form: any, maxPoints?: number }) {
-  const [rollResults, setRollResults] = useState<number[][]>([]);
-  const [totalResults, setTotalResults] = useState<number[]>([]);
-  const [assigned, setAssigned] = useState<Record<string, boolean>>({});
+export default function AbilityScores({ pointsRemaining = 27 }: { pointsRemaining?: number } = {}) {
+  const { getValues, setValue } = useFormContext();
+  const updateCharacter = useCharacter(state => state.updateCharacter);
 
-  const abilities = [
-    { id: "strength", name: "Strength", description: "Physical power and athleticism" },
-    { id: "dexterity", name: "Dexterity", description: "Agility, reflexes, and balance" },
-    { id: "constitution", name: "Constitution", description: "Endurance, stamina, and health" },
-    { id: "intelligence", name: "Intelligence", description: "Knowledge, reasoning, and memory" },
-    { id: "wisdom", name: "Wisdom", description: "Perception, intuition, and insight" },
-    { id: "charisma", name: "Charisma", description: "Force of personality and persuasion" },
-  ];
+  const [abilities, setAbilities] = useState({
+    strength: 10,
+    dexterity: 10,
+    constitution: 10,
+    intelligence: 10,
+    wisdom: 10,
+    charisma: 10,
+  });
+  const [points, setPoints] = useState(pointsRemaining);
+  const [method, setMethod] = useState<'standard' | 'pointbuy'>('standard');
 
-  const rollAbilityScores = () => {
-    // Roll 4d6, drop lowest for each ability
-    const rolls: number[][] = [];
-    const totals: number[] = [];
-    
-    for (let i = 0; i < 6; i++) {
-      const roll = [
-        rollDice(1, 6),
-        rollDice(1, 6),
-        rollDice(1, 6),
-        rollDice(1, 6),
-      ];
-      
-      // Sort and drop the lowest value
-      roll.sort((a, b) => a - b);
-      const rolledValues = roll.slice(1);
-      
-      // Calculate total
-      const total = rolledValues.reduce((sum, val) => sum + val, 0);
-      
-      rolls.push(roll);
-      totals.push(total);
+  // Initialize from form if available
+  useEffect(() => {
+    const currentAbilities = getValues("abilityScores");
+    if (currentAbilities && Object.keys(currentAbilities).length) {
+      setAbilities(currentAbilities);
     }
-    
-    setRollResults(rolls);
-    setTotalResults(totals);
-    setAssigned({});
+  }, [getValues]);
+
+  // Calculate point cost
+  const getPointCost = (score: number): number => {
+    if (score <= 13) return score - 8;
+    if (score === 14) return 7;
+    if (score === 15) return 9;
+    return 0; // should not happen
   };
-  
-  const assignAbilityScore = (abilityId: string, score: number) => {
-    // Check if this score is already assigned
-    const isAssigned = Object.values(assigned).includes(score);
-    if (isAssigned) return;
-    
-    // Assign the score to the ability
-    form.setValue(`abilityScores.${abilityId}`, score);
-    
-    // Mark this score as assigned
-    setAssigned(prev => ({
+
+  // Sync form with state
+  useEffect(() => {
+    setValue("abilityScores", abilities, {
+      shouldValidate: true,
+      shouldDirty: true,
+    });
+
+    // Update the character store
+    updateCharacter({ abilityScores: abilities });
+  }, [abilities, setValue, updateCharacter]);
+
+  const handleScoreChange = (ability: string, newValue: string) => {
+    const value = parseInt(newValue);
+    if (isNaN(value) || value < 8 || value > 15) return;
+
+    if (method === 'pointbuy') {
+      // Calculate point difference
+      const oldValue = abilities[ability as keyof typeof abilities];
+      const oldCost = getPointCost(oldValue);
+      const newCost = getPointCost(value);
+      const pointDiff = newCost - oldCost;
+
+      if (points - pointDiff < 0) return; // Not enough points
+
+      setPoints(prev => prev - pointDiff);
+    }
+
+    setAbilities(prev => ({
       ...prev,
-      [score]: true,
+      [ability]: value
     }));
+  };
+
+  const renderAbilityModifier = (score: number) => {
+    const modifier = calculateModifier(score);
+    return `${modifier >= 0 ? '+' : ''}${modifier}`;
+  };
+
+  const handleMethodChange = (newMethod: 'standard' | 'pointbuy') => {
+    setMethod(newMethod);
+    if (newMethod === 'pointbuy') {
+      // Reset to default point buy values
+      setAbilities({
+        strength: 8,
+        dexterity: 8,
+        constitution: 8,
+        intelligence: 8,
+        wisdom: 8,
+        charisma: 8,
+      });
+      setPoints(pointsRemaining);
+    } else {
+      // Reset to standard array
+      setAbilities({
+        strength: 10,
+        dexterity: 10,
+        constitution: 10,
+        intelligence: 10,
+        wisdom: 10,
+        charisma: 10,
+      });
+    }
   };
 
   return (
     <div className="space-y-6">
-      <div className="text-lg font-medium">Determine your character's ability scores:</div>
-      
-      <div className="grid grid-cols-1 gap-6">
-        <div className="flex justify-center mb-4">
-          <Button onClick={rollAbilityScores}>
-            Roll 4d6 (drop lowest) for Each Ability
+      <div className="flex justify-between items-center">
+        <h2 className="text-xl font-bold text-yellow-400">Ability Scores</h2>
+        <div className="flex space-x-2">
+          <Button 
+            variant={method === 'standard' ? "default" : "outline"} 
+            onClick={() => handleMethodChange('standard')}
+          >
+            Standard Array
+          </Button>
+          <Button 
+            variant={method === 'pointbuy' ? "default" : "outline"} 
+            onClick={() => handleMethodChange('pointbuy')}
+          >
+            Point Buy
           </Button>
         </div>
-        
-        {totalResults.length > 0 && (
-          <Card className="bg-gray-700">
+      </div>
+
+      {method === 'pointbuy' && (
+        <div className="text-center text-yellow-400 font-medium">
+          Points Remaining: {points}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        {Object.entries(abilities).map(([ability, score]) => (
+          <Card key={ability} className="bg-gray-800 border-gray-700">
             <CardContent className="p-4">
-              <div className="text-center mb-4">
-                <div className="font-semibold mb-2">Your Rolls:</div>
-                <div className="flex flex-wrap justify-center gap-4">
-                  {totalResults.map((total, index) => (
-                    <div key={index} className="text-lg font-mono bg-gray-600 px-3 py-1 rounded">
-                      {total}
-                      <div className="text-xs text-gray-400">
-                        {rollResults[index].map((die, i) => (
-                          <span key={i} className={i === 0 ? "line-through" : ""}>
-                            {die}{i < 3 ? "+" : ""}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="text-sm text-gray-400 mt-2">
-                  (Lowest die in each roll is crossed out)
+              <Label htmlFor={ability} className="text-yellow-400 uppercase text-sm block mb-2">
+                {ability}
+              </Label>
+              <div className="flex items-center space-x-2">
+                <Input
+                  id={ability}
+                  type="number"
+                  min={8}
+                  max={15}
+                  value={score}
+                  onChange={(e) => handleScoreChange(ability, e.target.value)}
+                  className="w-16 text-center bg-gray-700 border-gray-600"
+                />
+                <div className="text-lg font-bold text-white">
+                  {renderAbilityModifier(score)}
                 </div>
               </div>
             </CardContent>
           </Card>
-        )}
+        ))}
+      </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {abilities.map((ability) => (
-            <FormField
-              key={ability.id}
-              control={form.control}
-              name={`abilityScores.${ability.id}`}
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-lg">{ability.name}</FormLabel>
-                  <div className="flex items-center gap-4">
-                    <div className="w-16 h-16 flex items-center justify-center bg-gray-700 text-2xl font-bold rounded-lg">
-                      {field.value}
-                    </div>
-                    <div className="flex-1">
-                      <FormDescription>{ability.description}</FormDescription>
-                      
-                      {totalResults.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mt-2">
-                          {totalResults.map((total, index) => (
-                            <Button
-                              key={index}
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={assigned[total]}
-                              onClick={() => assignAbilityScore(ability.id, total)}
-                            >
-                              {total}
-                            </Button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          ))}
-        </div>
-        
-        <div className="mt-6">
-          <Dice size={64} />
-        </div>
+      <div className="text-sm text-gray-400">
+        {method === 'pointbuy' ? (
+          <p>
+            Using point buy, you can customize your ability scores. Each score starts at 8, and you have 27 points to spend.
+            Scores up to 13 cost 1 point per increase. A score of 14 costs 7 points, and 15 costs 9 points.
+          </p>
+        ) : (
+          <p>
+            Using standard array, your scores are set to recommended defaults. You can adjust them as needed.
+          </p>
+        )}
       </div>
     </div>
   );

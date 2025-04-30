@@ -1,31 +1,32 @@
 import { useEffect } from 'react';
+import { useFormContext } from 'react-hook-form';
 import { FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { species } from "@/lib/sw5e/species";
 import { useCharacter } from "@/lib/stores/useCharacter";
 
 interface SpeciesSelectionProps {
-  form: any; // Replace with your form type
-  onSelect?: (category: string, value: string) => void;
+  onSelect?: () => void;
 }
 
-export default function SpeciesSelection({ form, onSelect }: SpeciesSelectionProps) {
+export default function SpeciesSelection({ onSelect }: SpeciesSelectionProps) {
+  const { control, setValue, getValues } = useFormContext();
   const character = useCharacter(state => state.character);
   const updateCharacter = useCharacter(state => state.updateCharacter);
 
   // Initialize form with stored species on mount
   useEffect(() => {
-    if (character?.species && !form.getValues("species")) {
-      form.setValue("species", character.species, { 
+    if (character?.species && !getValues("species")) {
+      setValue("species", character.species, { 
         shouldValidate: true,
         shouldDirty: true 
       });
     }
-  }, [character, form]);
+  }, [character, setValue, getValues]);
 
   const handleSpeciesChange = (speciesId: string) => {
     // Update form
-    form.setValue("species", speciesId, {
+    setValue("species", speciesId, {
       shouldValidate: true,
       shouldDirty: true
     });
@@ -36,7 +37,7 @@ export default function SpeciesSelection({ form, onSelect }: SpeciesSelectionPro
     // If this affects other stats (like ability scores), update those too
     const selectedSpecies = species.find(s => s.id === speciesId);
     if (selectedSpecies?.abilityScoreAdjustments) {
-      const currentScores = form.getValues("abilityScores") || {};
+      const currentScores = getValues("abilityScores") || {};
       const newScores = { ...currentScores };
 
       // Reset previous adjustments first
@@ -52,14 +53,14 @@ export default function SpeciesSelection({ form, onSelect }: SpeciesSelectionPro
         }
       });
 
-      form.setValue("abilityScores", newScores, {
+      setValue("abilityScores", newScores, {
         shouldValidate: true,
         shouldDirty: true
       });
     }
 
     // Notify parent if needed
-    onSelect?.("species", speciesId);
+    if (onSelect) onSelect();
   };
 
   return (
@@ -67,7 +68,7 @@ export default function SpeciesSelection({ form, onSelect }: SpeciesSelectionPro
       <div className="text-lg font-medium text-yellow-400">Choose your character's species:</div>
 
       <FormField
-        control={form.control}
+        control={control}
         name="species"
         render={({ field }) => (
           <FormItem className="space-y-3">
