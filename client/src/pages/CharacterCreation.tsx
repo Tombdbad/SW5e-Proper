@@ -51,6 +51,9 @@ import Alert from "../components/ui/Alert";
 // Import the unified character schema
 import { CharacterSchema } from "@shared/unifiedSchema";
 
+// Import Character API service
+import { CharacterAPI } from "../lib/api/character";
+
 // Use the imported character schema from unified schema
 const characterSchema = CharacterSchema.extend({
   // Character-specific features
@@ -273,23 +276,26 @@ export default function CharacterCreation() {
         conMod,
       );
 
-      // Submit the character
-      const response = await fetch("/api/characters", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...data,
-          hitPoints,
-          proficiencyBonus: calculateProficiencyBonus(data.level),
-        }),
-      });
+      // Prepare final character data
+      const characterData = {
+        ...data,
+        hitPoints,
+        proficiencyBonus: calculateProficiencyBonus(data.level),
+      };
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || "Failed to create character");
+      // Validate character data using our new validation service
+      const validationResult = await CharacterAPI.validateCharacter(characterData);
+      
+      if (!validationResult.valid) {
+        // Show validation errors
+        const errorMessage = validationResult.errors
+          .map(err => err.message)
+          .join(', ');
+        throw new Error(errorMessage);
       }
 
-      const character = await response.json();
+      // Submit the character
+      const character = await CharacterAPI.saveCharacter(characterData);
 
       // Navigate to campaign creator with new character or character sheet
       navigate(`/campaign/create?characterId=${character.id}`);

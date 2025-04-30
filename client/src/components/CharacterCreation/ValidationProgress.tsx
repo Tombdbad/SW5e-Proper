@@ -1,14 +1,16 @@
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Progress } from "../ui/progress";
 import { Tooltip } from "../ui/tooltip";
 import { TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
-import { CheckCircle, XCircle } from "lucide-react";
+import { CheckCircle, XCircle, AlertCircle, InfoIcon } from "lucide-react";
+import { CharacterAPI, ValidationResult } from "@/lib/api/character";
 
 interface ValidationItem {
   name: string;
   valid: boolean;
   required: boolean;
+  message?: string;
 }
 
 interface ValidationProgressProps {
@@ -16,18 +18,57 @@ interface ValidationProgressProps {
 }
 
 export function ValidationProgress({ character }: ValidationProgressProps) {
-  const validationItems: ValidationItem[] = [
-    { name: "Character Name", valid: !!character.name, required: true },
-    { name: "Species", valid: !!character.species, required: true },
-    { name: "Class", valid: !!character.class, required: true },
-    // More lenient ability score validation
-    { name: "Ability Scores", valid: character.abilityScores ? Object.values(character.abilityScores).length > 0 : false, required: true },
-    { name: "Background", valid: !!character.background, required: false },
-    { name: "Equipment", valid: true, required: false }, // Equipment shouldn't block creation
-    { name: "Feats", valid: true, required: false },     // Feats shouldn't block creation at level 1
-    { name: "Powers", valid: true, required: false },    // Powers shouldn't block creation at level 1
-    { name: "Skills", valid: true, required: false },    // Skills shouldn't block creation either
-  ];
+  const [validationItems, setValidationItems] = useState<ValidationItem[]>([]);
+  const [isValidating, setIsValidating] = useState(false);
+  const [fullValidationResult, setFullValidationResult] = useState<ValidationResult | null>(null);
+
+  // Perform validation when character changes
+  useEffect(() => {
+    const validateCharacter = async () => {
+      setIsValidating(true);
+      try {
+        // Basic validation checks - these are always done
+        const basicItems: ValidationItem[] = [
+          { name: "Character Name", valid: !!character.name, required: true },
+          { name: "Species", valid: !!character.species, required: true },
+          { name: "Class", valid: !!character.class, required: true },
+          { name: "Ability Scores", valid: character.abilities ? Object.values(character.abilities).length > 0 : false, required: true },
+          { name: "Background", valid: !!character.background, required: false },
+          { name: "Equipment", valid: true, required: false },
+          { name: "Feats", valid: true, required: false },
+          { name: "Powers", valid: true, required: false },
+          { name: "Skills", valid: character.skillProficiencies?.length > 0, required: true },
+        ];
+        
+        setValidationItems(basicItems);
+        
+        // Only run full validation if we have the basic required fields
+        if (character.name && character.species && character.class && character.abilities) {
+          const validationResult = await CharacterAPI.validateCharacter(character);
+          setFullValidationResult(validationResult);
+          
+          // If there are class-specific or build-specific validation issues,
+          // add them to our validation items
+          if (!validationResult.valid) {
+            const additionalValidationItems = validationResult.errors.map(error => ({
+              name: `${error.field.charAt(0).toUpperCase() + error.field.slice(1)}`,
+              valid: false,
+              required: true,
+              message: error.message
+            }));
+            
+            setValidationItems([...basicItems, ...additionalValidationItems]);
+          }
+        }
+      } catch (error) {
+        console.error("Validation error:", error);
+      } finally {
+        setIsValidating(false);
+      }
+    };
+    
+    validateCharacter();
+  }, [character]);
   
   const requiredItems = validationItems.filter(item => item.required);
   const optionalItems = validationItems.filter(item => !item.required);
@@ -43,7 +84,10 @@ export function ValidationProgress({ character }: ValidationProgressProps) {
   
   return (
     <div className="space-y-2">
-      <h3 className="text-sm font-medium">Character Progress</h3>
+      <h3 className="text-sm font-medium flex items-center justify-between">
+        <span>Character Progress</span>
+        {isValidating && <span className="text-xs text-muted-foreground">Validating...</span>}
+      </h3>
       
       <div className="space-y-1">
         <div className="flex justify-between text-xs">
@@ -73,22 +117,47 @@ export function ValidationProgress({ character }: ValidationProgressProps) {
               )}
             </div>
           </TooltipTrigger>
-          <TooltipContent>
+          <TooltipContent className="w-80">
             <div className="space-y-1 p-2">
               <p className="font-medium text-sm">Completion Status:</p>
               <ul className="text-xs space-y-1">
                 {validationItems.map((item, index) => (
-                  <li key={index} className="flex items-center">
-                    {item.valid ? (
-                      <CheckCircle className="h-3 w-3 text-green-500 mr-2" />
-                    ) : (
-                      <XCircle className="h-3 w-3 text-red-500 mr-2" />
-                    )}
-                    <span>{item.name}</span>
-                    {item.required && <span className="text-red-400 ml-1">*</span>}
+                  <li key={index} className="flex items-start">
+                    <span className="mr-2 mt-0.5">
+                      {item.valid ? (
+                        <CheckCircle className="h-3 w-3 text-green-500" />
+                      ) : (
+                        item.message ? 
+                        <AlertCircle className="h-3 w-3 text-amber-500" /> :
+                        <XCircle className="h-3 w-3 text-red-500" />
+                      )}
+                    </span>
+                    <div>
+                      <span>{item.name}</span>
+                      {item.required && <span className="text-red-400 ml-1">*</span>}
+                      {item.message && (
+                        <div className="text-amber-500 mt-0.5">{item.message}</div>
+                      )}
+                    </div>
                   </li>
                 ))}
               </ul>
+              
+              {fullValidationResult && !fullValidationResult.valid && (
+                <div className="mt-2 pt-2 border-t border-border">
+                  <div className="flex items-center text-amber-500">
+                    <InfoIcon className="h-3 w-3 mr-1" />
+                    <span className="text-xs font-medium">Build Recommendations:</span>
+                  </div>
+                  <ul className="text-xs mt-1 space-y-1">
+                    {fullValidationResult.errors.map((error, index) => (
+                      <li key={index} className="text-muted-foreground">
+                        {error.message}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </TooltipContent>
         </Tooltip>
