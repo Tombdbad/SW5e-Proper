@@ -1,0 +1,76 @@
+Error:   Failed to scan for dependencies from entries:
+  /home/runner/workspace/client/index.html
+
+  ✘ [ERROR] No matching export in "client/src/lib/utils.ts" for import "apiRequest"
+
+    client/src/pages/CampaignView.tsx:4:9:
+      4 │ import { apiRequest } from '../lib/utils'; // Assuming this import ...
+        ╵          ~~~~~~~~~~
+
+
+✘ [ERROR] No matching export in "client/src/lib/sw5e/species.ts" for import "SPECIES"
+
+    client/src/pages/CharacterCreation.tsx:10:9:
+      10 │ import { SPECIES } from "../lib/sw5e/species";
+         ╵          ~~~~~~~
+
+
+✘ [ERROR] No matching export in "client/src/lib/sw5e/classes.ts" for import "CLASSES"
+
+    client/src/pages/CharacterCreation.tsx:11:9:
+      11 │ import { CLASSES } from "../lib/sw5e/classes";
+         ╵          ~~~~~~~
+
+
+✘ [ERROR] No matching export in "client/src/lib/sw5e/backgrounds.ts" for import "BACKGROUNDS"
+
+    client/src/pages/CharacterCreation.tsx:12:9:
+      12 │ import { BACKGROUNDS } from "../lib/sw5e/backgrounds";
+         ╵          ~~~~~~~~~~~
+
+
+✘ [ERROR] No matching export in "client/src/lib/sw5e/feats.ts" for import "FEATS"
+
+    client/src/pages/CharacterCreation.tsx:13:9:
+      13 │ import { FEATS } from "../lib/sw5e/feats";
+         ╵          ~~~~~
+
+
+✘ [ERROR] No matching export in "client/src/lib/sw5e/equipment.ts" for import "EQUIPMENT"
+
+    client/src/pages/CharacterCreation.tsx:14:9:
+      14 │ import { EQUIPMENT } from "../lib/sw5e/equipment";
+         ╵          ~~~~~~~~~
+
+
+✘ [ERROR] No matching export in "client/src/lib/sw5e/forcePowers.ts" for import "FORCE_POWERS"
+
+    client/src/pages/CharacterCreation.tsx:15:9:
+      15 │ import { FORCE_POWERS } from "../lib/sw5e/forcePowers";
+         ╵          ~~~~~~~~~~~~
+
+
+✘ [ERROR] No matching export in "client/src/lib/sw5e/techPowers.ts" for import "TECH_POWERS"
+
+    client/src/pages/CharacterCreation.tsx:16:9:
+      16 │ import { TECH_POWERS } from "../lib/sw5e/techPowers";
+         ╵          ~~~~~~~~~~~
+
+
+✘ [ERROR] No matching export in "client/src/components/CharacterManagement/CharacterSheet.tsx" for import "CharacterPreview"
+
+    client/src/pages/CharacterCreation.tsx:46:9:
+      46 │ import { CharacterPreview } from "../components/CharacterManagemen...
+         ╵          ~~~~~~~~~~~~~~~~
+
+
+    at failureErrorWithLog (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:1472:15)
+    at /home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:945:25
+    at runOnEndCallbacks (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:1315:45)
+    at buildResponseToResult (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:943:7)
+    at /home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:955:9
+    at new Promise (<anonymous>)
+    at requestCallbacks.on-end (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:954:54)
+    at handleRequest (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:647:17)
+    at handleIncomingPacket (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:672:7)
+    at Socket.readFromStdout (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:600:7)
