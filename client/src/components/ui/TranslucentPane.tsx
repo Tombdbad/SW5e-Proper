@@ -12,7 +12,6 @@ interface TranslucentPaneProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 export const TranslucentPane: React.FC<TranslucentPaneProps> = ({
-const TranslucentPane: React.FC<TranslucentPaneProps> = ({
   children,
   className,
   blurStrength = 'md',
