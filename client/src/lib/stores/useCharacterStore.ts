@@ -156,8 +156,34 @@ const initialDerivedState: DerivedCharacterState = {
   maxPowerLevel: 0,
 };
 
-// Create a custom storage with error handling and versioning
+// Create a custom storage with error handling, versioning and multi-tab sync
 const createCustomStorage = () => {
+  // Check if BroadcastChannel is available for multi-tab sync
+  const syncChannel = typeof BroadcastChannel !== 'undefined' 
+    ? new BroadcastChannel('sw5e-character-sync')
+    : null;
+    
+  // Listen for changes from other tabs if channel exists
+  if (syncChannel) {
+    syncChannel.onmessage = (event) => {
+      const { action, key, value, source } = event.data;
+      
+      // Only process messages from other tabs
+      if (source !== 'current-tab') {
+        console.info('[Storage] Received sync from another tab:', action);
+        
+        // Dispatch an event for the store to handle
+        if (action === 'update') {
+          window.dispatchEvent(
+            new CustomEvent('sw5e-storage-update', { 
+              detail: { key, value } 
+            })
+          );
+        }
+      }
+    };
+  }
+
   return {
     getItem: (name: string) => {
       try {
@@ -170,7 +196,24 @@ const createCustomStorage = () => {
     },
     setItem: (name: string, value: unknown) => {
       try {
-        localStorage.setItem(name, JSON.stringify(value));
+        // Add version metadata to storage
+        const valueWithMeta = {
+          data: value,
+          version: Date.now(),
+          lastUpdated: new Date().toISOString()
+        };
+        
+        localStorage.setItem(name, JSON.stringify(valueWithMeta));
+        
+        // Notify other tabs if channel exists
+        if (syncChannel) {
+          syncChannel.postMessage({
+            action: 'update',
+            key: name,
+            value: valueWithMeta,
+            source: 'current-tab'
+          });
+        }
       } catch (error) {
         console.error('Error saving to storage:', error);
       }
@@ -178,6 +221,15 @@ const createCustomStorage = () => {
     removeItem: (name: string) => {
       try {
         localStorage.removeItem(name);
+        
+        // Notify other tabs if channel exists
+        if (syncChannel) {
+          syncChannel.postMessage({
+            action: 'remove',
+            key: name,
+            source: 'current-tab'
+          });
+        }
       } catch (error) {
         console.error('Error removing from storage:', error);
       }
@@ -899,7 +951,16 @@ const useCharacterStore = create<CharacterState>()(
             
             try {
               const character = characters[id];
-              return JSON.stringify(character);
+              
+              // Create an export schema with metadata for versioning
+              const exportData = {
+                schemaVersion: "1.0",
+                exportDate: new Date().toISOString(),
+                character: character,
+                applicationName: "SW5E Character Creator"
+              };
+              
+              return JSON.stringify(exportData, null, 2);
             } catch (error) {
               console.error('Error exporting character:', error);
               set(state => { state.error = 'Failed to export character'; });
@@ -909,19 +970,34 @@ const useCharacterStore = create<CharacterState>()(
           
           importCharacter: (characterJson) => {
             try {
-              const character = JSON.parse(characterJson) as Character;
+              // Define schema for character exports
+              const importSchema = z.object({
+                schemaVersion: z.string().optional(),
+                exportDate: z.string().optional(),
+                applicationName: z.string().optional(),
+                character: CharacterSchema
+              }).or(CharacterSchema);
               
-              // Validate imported character
-              if (!validateCharacter(character)) {
-                set(state => { state.error = 'Invalid character data in import'; });
-                return '';
+              // Parse and validate the imported JSON
+              const parsedData = JSON.parse(characterJson);
+              
+              let character: Character;
+              
+              // Handle both direct character objects and wrapped exports
+              if (parsedData.character) {
+                // This is a wrapped export with metadata
+                const validatedImport = importSchema.parse(parsedData);
+                character = validatedImport.character as Character;
+              } else {
+                // This is a direct character object
+                character = CharacterSchema.parse(parsedData) as Character;
               }
               
               // Generate a new ID for the import to avoid collisions
               const id = uuidv4();
               character.id = id;
               character.updatedAt = new Date().toISOString();
-              character.version += 1;
+              character.version = (character.version || 0) + 1;
               
               set(state => {
                 // Add to history if tracking is enabled
@@ -938,7 +1014,22 @@ const useCharacterStore = create<CharacterState>()(
               return id;
             } catch (error) {
               console.error('Error importing character:', error);
-              set(state => { state.error = 'Failed to import character'; });
+              
+              // Provide more specific error messages for validation failures
+              if (error instanceof z.ZodError) {
+                const errorMessage = error.errors.map(e => 
+                  `${e.path.join('.')}: ${e.message}`
+                ).join(', ');
+                
+                set(state => { 
+                  state.error = `Invalid character data: ${errorMessage}`; 
+                });
+              } else {
+                set(state => { 
+                  state.error = 'Failed to import character: Invalid data format'; 
+                });
+              }
+              
               return '';
             }
           },

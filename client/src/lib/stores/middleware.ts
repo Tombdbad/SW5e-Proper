@@ -165,36 +165,90 @@ function findDifferences(prev: any, next: any, isPrev: boolean): any {
 }
 
 /**
- * Middleware that tracks performance metrics for state updates
+ * Enhanced performance monitoring middleware with detailed metrics and tracking
  */
 export const performanceMonitor = <T extends object>(
   f: StateCreator<T>,
   options?: { 
     enabled?: boolean; 
     thresholdMs?: number;
+    trackHistory?: boolean;
+    maxHistorySize?: number;
+    consoleOutput?: boolean;
   }
 ) => {
   const config = {
     enabled: process.env.NODE_ENV === 'development',
     thresholdMs: 10, // Log operations that take longer than this threshold
+    trackHistory: true, // Keep a history of update metrics
+    maxHistorySize: 50, // Maximum number of updates to keep in history
+    consoleOutput: true, // Whether to output to console
     ...options,
   };
+  
+  // Keep track of update metrics
+  const updateMetrics: {
+    timestamp: number;
+    action: string;
+    duration: number;
+    stateSize: number;
+  }[] = [];
+  
+  // Expose metrics API globally for debugging
+  if (typeof window !== 'undefined' && config.enabled) {
+    (window as any).__SW5E_PERFORMANCE__ = {
+      getMetrics: () => updateMetrics,
+      clearMetrics: () => updateMetrics.splice(0, updateMetrics.length),
+      setThreshold: (ms: number) => { config.thresholdMs = ms; }
+    };
+    console.info('Performance monitoring enabled. Access with window.__SW5E_PERFORMANCE__');
+  }
   
   return (set: any, get: any, store: any) => {
     const monitoredSet = (...args: any) => {
       if (!config.enabled) return set(...args);
       
-      const label = `State update ${store.name || ''}`;
+      // Get action name if available
+      const action = typeof args[0] === 'function' 
+        ? args[0].name || 'anonymous' 
+        : 'setState';
+      
+      const label = `State update ${store.name || ''}: ${action}`;
       const startTime = performance.now();
       
+      // Execute the state update
       const result = set(...args);
       
       const endTime = performance.now();
       const duration = endTime - startTime;
       
-      if (duration > config.thresholdMs) {
+      // Estimate state size
+      const currentState = get();
+      const stateSize = JSON.stringify(currentState).length;
+      
+      // Track metrics if history tracking is enabled
+      if (config.trackHistory) {
+        updateMetrics.push({
+          timestamp: Date.now(),
+          action,
+          duration,
+          stateSize
+        });
+        
+        // Keep history within size limit
+        if (updateMetrics.length > config.maxHistorySize) {
+          updateMetrics.shift();
+        }
+      }
+      
+      // Output to console if threshold exceeded
+      if (duration > config.thresholdMs && config.consoleOutput) {
         console.warn(`⚠️ Slow state update detected in ${store.name || 'store'}: ${duration.toFixed(2)}ms`);
+        console.log(`Action: ${action}, State size: ${(stateSize / 1024).toFixed(2)} KB`);
+        console.groupCollapsed('Update Details');
         console.log('Arguments:', ...args);
+        console.log('Current state:', currentState);
+        console.groupEnd();
       }
       
       return result;
@@ -202,6 +256,58 @@ export const performanceMonitor = <T extends object>(
     
     return f(monitoredSet, get, store);
   };
+};
+
+/**
+ * Component rendering performance tracker
+ * Usage: wrap your component with withPerformanceTracking(YourComponent)
+ */
+export const withPerformanceTracking = <P extends object>(
+  Component: React.ComponentType<P>,
+  options?: {
+    name?: string;
+    enabled?: boolean;
+    trackProps?: boolean;
+    trackRenders?: boolean;
+  }
+) => {
+  const config = {
+    name: Component.displayName || Component.name || 'UnnamedComponent',
+    enabled: process.env.NODE_ENV === 'development',
+    trackProps: true,
+    trackRenders: true,
+    ...options
+  };
+  
+  if (!config.enabled) {
+    return Component;
+  }
+  
+  return React.memo((props: P) => {
+    const renderCount = React.useRef(0);
+    const lastRenderTime = React.useRef(performance.now());
+    
+    React.useEffect(() => {
+      renderCount.current++;
+      const renderTime = performance.now() - lastRenderTime.current;
+      
+      if (config.trackRenders) {
+        console.log(
+          `[Performance] ${config.name} rendered (#${renderCount.current}) in ${renderTime.toFixed(2)}ms`
+        );
+      }
+      
+      return () => {
+        lastRenderTime.current = performance.now();
+      };
+    });
+    
+    if (config.trackProps) {
+      console.log(`[Performance] ${config.name} props:`, props);
+    }
+    
+    return <Component {...props} />;
+  });
 };
 
 /**
