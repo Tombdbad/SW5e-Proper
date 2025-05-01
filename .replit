@@ -14,7 +14,7 @@ localPort = 5000
 externalPort = 80
 
 [workflows]
-runButton = "Start Game (Latest)"
+runButton = "Start Game (Fixed)"
 
 [[workflows.workflow]]
 name = "Project"

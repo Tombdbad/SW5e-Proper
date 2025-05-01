@@ -1,219 +1,201 @@
-import { Character } from "../stores/useCharacter";
+        import { useCharacter } from '@/lib/stores/useCharacter';
+        import { useCampaign } from '@/lib/stores/useCampaign';
+        import { useMap } from '@/lib/stores/useMap';
+        import { processMapDataFromLLM } from '@/lib/map/mapUpdateHandler';
+        import { createDebrief, processLLMResponse } from '@/lib/llm/debriefCompiler';
+        import { rules } from '@/lib/sw5e/rules';
+        import { Character } from "../stores/useCharacter";
+        import { Campaign } from "../stores/useCampaign";
 
-  import { Campaign } from "../stores/useCampaign";
-  import { createDebrief, processLLMResponse } from "./debriefCompiler";
-  import { npcs } from "../sw5e/npcs";
+        // NPC classification types 
+        const NPC_CLASSIFICATIONS = {
+          MINOR: "minor",
+          KEY_MINOR: "keyMinor",
+          KEY: "key",
+          COMPANION: "companion"
+        };
 
-  // NPC classification types 
-  const NPC_CLASSIFICATIONS = {
-    MINOR: "minor",
-    KEY_MINOR: "keyMinor",
-    KEY: "key",
-    COMPANION: "companion"
-  };
+        /**
+         * Generates a report for the Game Master (human or LLM) based on current game state
+         */
+        export async function generateGameMasterReport(options = {}): Promise<string> {
+          const { character } = useCharacter.getState();
+          const { campaign } = useCampaign.getState();
+          const { currentLocation } = useMap.getState();
 
-  export async function generateGameReport(
-    character: Character,
-    campaign: Campaign,
-  ): Promise<string> {
-      // Process character narrative to extract themes, motivations, etc.
-      const { processCharacterNarrative } = require("@/lib/sw5e/characterLanguageProcessor");
-      const narrativeAnalysis = processCharacterNarrative(character);
-
-      // Get rules data that LLM might need
-      const rules = {
-        abilityScores: {
-          description: "Ability scores range from 3-20 for most characters. Modifiers are (score-10)/2 rounded down.",
-          modifiers: "STR affects melee attacks, athletics. DEX affects ranged attacks, AC, initiative. CON affects HP. etc."
-        },
-        combatRules: {
-          attackRolls: "d20 + ability modifier + proficiency (if proficient)",
-          damage: "Weapon damage + ability modifier",
-          actionEconomy: "Characters get 1 action, 1 bonus action, 1 reaction, and movement per turn"
-        },
-        skillChecks: {
-          description: "d20 + ability modifier + proficiency (if proficient)",
-          difficultyClasses: {
-            veryEasy: 5,
-            easy: 10,
-            medium: 15,
-            hard: 20,
-            veryHard: 25,
-            nearlyImpossible: 30
+          if (!character) {
+            throw new Error("No active character found");
           }
-        },
-        npcManagement: {
-          classifications: {
-            minor: "Background NPCs with minimal details - names, basic description",
-            keyMinor: "NPCs who become relevant to the story but aren't central - add personality, goals",
-            key: "Important NPCs central to plots - full details including abilities and motivations",
-            companion: "NPCs who join the party - full character sheet including combat abilities"
+
+          if (!campaign) {
+            throw new Error("No active campaign found");
+          }
+
+          // Compile character information
+          const characterInfo = {
+            name: character.name,
+            species: character.species?.name || "Unknown",
+            class: character.class?.name || "Unknown",
+            level: character.level || 1,
+            currentHp: character.currentHp || character.maxHp || 0,
+            maxHp: character.maxHp || 0,
+            currentForcePoints: character.currentForcePoints || 0,
+            maxForcePoints: character.maxForcePoints || 0,
+            abilities: {
+              strength: character.abilities?.strength || 10,
+              dexterity: character.abilities?.dexterity || 10,
+              constitution: character.abilities?.constitution || 10,
+              intelligence: character.abilities?.intelligence || 10,
+              wisdom: character.abilities?.wisdom || 10,
+              charisma: character.abilities?.charisma || 10
+            },
+            skills: character.skills || {},
+            equipment: character.equipment || [],
+            credits: character.credits || 0
+          };
+
+          // Compile campaign information
+          const campaignInfo = {
+            name: campaign.name,
+            currentQuest: campaign.currentQuest || "No active quest",
+            objectives: campaign.objectives || [],
+            npcs: campaign.npcs || [],
+            locations: campaign.locations || []
+          };
+
+          // Compile location information if available
+          const locationInfo = currentLocation ? {
+            name: currentLocation.name,
+            description: currentLocation.description,
+            terrain: currentLocation.mapData?.terrain || "Unknown",
+            features: currentLocation.mapData?.features || [],
+            entities: currentLocation.mapData?.entities || []
+          } : null;
+
+          // Generate the report in a format optimized for the LLM
+          const report = `
+        # STAR WARS 5E GAME MASTER REPORT
+
+        ## CAMPAIGN: ${campaignInfo.name}
+        Current Quest: ${campaignInfo.currentQuest}
+
+        ## CHARACTER: ${characterInfo.name}
+        Species: ${characterInfo.species}
+        Class: ${characterInfo.class}
+        Level: ${characterInfo.level}
+        HP: ${characterInfo.currentHp}/${characterInfo.maxHp}
+        Force Points: ${characterInfo.currentForcePoints}/${characterInfo.maxForcePoints}
+
+        ### Abilities
+        STR: ${characterInfo.abilities.strength} | DEX: ${characterInfo.abilities.dexterity} | CON: ${characterInfo.abilities.constitution}
+        INT: ${characterInfo.abilities.intelligence} | WIS: ${characterInfo.abilities.wisdom} | CHA: ${characterInfo.abilities.charisma}
+
+        ### Equipment
+        ${characterInfo.equipment.map(item => `- ${item.name}`).join('\n')}
+        Credits: ${characterInfo.credits}
+
+        ${locationInfo ? `
+        ## CURRENT LOCATION: ${locationInfo.name}
+        ${locationInfo.description}
+        Terrain: ${locationInfo.terrain}
+
+        ### Features
+        ${locationInfo.features.map(feature => `- ${feature.type} at (${feature.position.x}, ${feature.position.y}, ${feature.position.z})`).join('\n')}
+
+        ### Entities
+        ${locationInfo.entities.map(entity => `- ${entity.type}${entity.name ? ': ' + entity.name : ''} at (${entity.position.x}, ${entity.position.y}, ${entity.position.z})`).join('\n')}
+        ` : ''}
+
+        ## OBJECTIVES
+        ${campaignInfo.objectives.map(objective => `- ${objective.completed ? '[COMPLETED]' : '[ACTIVE]'} ${objective.description}`).join('\n')}
+
+        ## NPCS
+        ${campaignInfo.npcs.map(npc => `- ${npc.name}: ${npc.description}`).join('\n')}
+
+        ## GAME MASTER INSTRUCTIONS
+
+        Please respond with:
+        1. A narrative update describing what happens next in the adventure
+        2. Any combat encounters, puzzles, or social interactions
+        3. Map or location updates if the player moves to a new area
+
+        After your narrative, include structured data for the system using this marker:
+        ---SYSTEM_DATA_FOLLOWS---
+
+        Follow with a valid JSON object containing any of the following sections:
+        - "character": Character state updates (HP, XP, Force Points, etc.)
+        - "locations": Map data and features
+        - "objectives": New or updated quest objectives
+        - "npcs": New or updated NPCs
+        - "combatState": Combat state updates if in combat
+
+        SYSTEM REFERENCE DATA:
+        ${JSON.stringify({
+          version: "1.0",
+          system: "Star Wars 5e",
+          availableData: {
+            character: characterInfo,
+            campaign: campaignInfo,
+            location: locationInfo
           },
-          progression: "NPCs can progress through classifications as player interactions increase",
-          dataRequirements: {
-            minor: ["name", "description", "location"],
-            keyMinor: ["name", "description", "location", "personality", "goals"],
-            key: ["name", "description", "location", "personality", "goals", "abilities", "motivations", "backstory"],
-            companion: ["Complete character data including combat stats"]
-          }
+          dataRequest: {
+            description: "You can request specific SW5e data by including 'SW5E_DATA_REQUEST' in your response with the category",
+            availableCategories: [
+              "species", "classes", "archetypes", "backgrounds", 
+              "forcePowers", "techPowers", "feats", "equipment", 
+              "npcs", "monsters", "vehicles", "starships"
+            ],
+            exampleRequest: "SW5E_DATA_REQUEST: npcs.imperial-inquisitor"
+          },
+          // Rules reference for LLM to use
+          rulesReference: rules,
+          instructions: `
+          As the Game Master for this Star Wars 5e campaign, you will provide TWO distinct responses:
+
+          1. A NARRATIVE response (creative, engaging Star Wars story)
+          2. A SYSTEM DATA response (structured JSON for the game engine)
+
+          Use ASCII maps when helpful using this format:
+          [TYPE:Name](x:0,y:0,z:0) to denote entities, e.g. [NPC:Stormtrooper](x:5,y:0,z:0)
+
+          When describing locations, include atmosphere, lighting, and terrain.
+          For NPCs, include motivations, appearance, and potential interactions.
+          For combat, include tactical descriptions and environmental factors.
+          `
+        }, null, 2)}
+        `;
+
+          return report;
         }
-      };
-    const report = {
-    character: {
-      name: character.name,
-      class: character.class,
-      level: character.level,
-      abilities: character.abilityScores,
-      equipment: character.equipment,
-      status: {
-        hp: character.currentHp,
-        forcePoints: character.currentForcePoints,
-      },
-      // Include narrative elements for more personalized responses
-      narrativeElements: {
-        themes: narrativeAnalysis.mainThemes,
-        motivations: narrativeAnalysis.motivations,
-        personality: {
-          dominantTraits: narrativeAnalysis.personality.traits.slice(0, 3),
-          coreValues: narrativeAnalysis.personality.values.slice(0, 3),
-          fears: narrativeAnalysis.personality.fears.slice(0, 2)
-        },
-        plotHooks: narrativeAnalysis.plotHooks
-      }
-    },
-    campaign: {
-      currentLocation: campaign.currentLocation,
-      activeQuests: campaign.quests.filter((q) => q.status === "active"),
-      nearbyNPCs: campaign.npcs.filter(
-        (npc) => npc.locationId === campaign.currentLocation,
-      ),
-    },
-      // Add available SW5e data reference
-      sw5eReference: {
-        description: "You can request specific SW5e data by including 'SW5E_DATA_REQUEST' in your response with the category",
-        availableCategories: [
-          "species", "classes", "archetypes", "backgrounds", 
-          "forcePowers", "techPowers", "feats", "equipment", 
-          "npcs", "monsters", "vehicles", "starships"
-        ],
-        exampleRequest: "SW5E_DATA_REQUEST: npcs.imperial-inquisitor"
-      },
-      // Rules reference for LLM to use
-      rulesReference: rules,
-      instructions: `
-      As the Game Master for this Star Wars 5e campaign, you will provide TWO distinct responses:
 
-      1. NARRATIVE RESPONSE: A descriptive, immersive scene that engages the player
-         - Describe the current location vividly
-         - Portray NPCs with personality that resonates with ${character.name}'s themes (${narrativeAnalysis.mainThemes.join(', ')})
-         - Present interactive opportunities aligned with their motivations (${narrativeAnalysis.motivations.join(', ')})
-         - Frame objectives to engage the character's values
-         - Use Star Wars appropriate tone and terminology
+        /**
+         * Processes a Game Master response from an LLM to update game state
+         */
+        export async function processGameMasterResponse(response: string): Promise<void> {
+          try {
+            // Split the response into narrative and system data parts
+            const parts = response.split('---SYSTEM_DATA_FOLLOWS---');
 
-      2. SYSTEM_DATA: A structured JSON report for the application to process:
-         {
-           "locations": [
-             {
-               "id": "location-id", // Use existing ID if updating, omit for new
-               "name": "Location Name",
-               "description": "Description",
-               "coordinates": {"x": 0, "y": 0, "z": 0},
-               "features": [{"type": "feature-type", "position": {"x": 0, "y": 0, "z": 0}}]
-             }
-           ],
-           "npcs": [
-             {
-               "id": "npc-id", // Use existing ID if updating, omit for new
-               "name": "NPC Name",
-               "description": "Description",
-               "locationId": "location-id",
-               "classification": "${NPC_CLASSIFICATIONS.MINOR}", // minor, keyMinor, key, companion
-               "personality": {}, // Add when promoted to keyMinor or higher
-               "abilities": {}, // Add when promoted to key or higher
-               "stats": {} // Full stats when promoted to companion
-             }
-           ],
-           "objectives": [
-             {
-               "id": "objective-id", // Use existing ID if updating, omit for new
-               "title": "Objective Title",
-               "description": "Description",
-               "status": "active",
-               "rewards": []
-             }
-           ],
-           "character": {
-             // Only include character state that changes
-             "currentHp": 50,
-             "currentForcePoints": 5
-           }
-         }
+            if (parts.length > 1) {
+              const narrative = parts[0].trim();
+              const systemDataRaw = parts[1].trim();
 
-      FOR NPC PROGRESSION:
-      - Track player interactions with NPCs
-      - When a player interacts meaningfully with a minor NPC, promote to keyMinor and add personality
-      - When a keyMinor NPC becomes integral to the story, promote to key and add abilities
-      - When a key NPC joins the party, promote to companion and add full stats
+              // Extract JSON from the system data part
+              const systemData = extractJSONFromText(systemDataRaw);
 
-      You can request SW5e reference data by including 'SW5E_DATA_REQUEST: category.name' in your response.
-      Always separate your responses with the marker: "---SYSTEM_DATA_FOLLOWS---"
-      `,
-    };
+              if (!systemData) {
+                throw new Error("No valid system data found in GM response");
+              }
 
-  return JSON.stringify(report, null, 2);
-}
+              console.log("Extracted system data:", systemData);
 
-export async function processGameMasterResponse(
-  response: string,
-): Promise<void> {
-  try {
-    // Split the response into narrative and system data parts
-    const [narrativeResponse, systemDataText] = response.split("---SYSTEM_DATA_FOLLOWS---");
+              // Process map data if present
+              if (systemData.locations) {
+                processMapDataFromLLM(systemData);
+              }
 
-    // Handle any SW5e data requests
-    const dataRequestMatch = narrativeResponse.match(/SW5E_DATA_REQUEST:\s*([a-zA-Z0-9.-]+)/);
-    if (dataRequestMatch && dataRequestMatch[1]) {
-      await handleSW5eDataRequest(dataRequestMatch[1]);
-    }
-
-
-      locations: {
-        description: "When describing a location, include these fields for map rendering:",
-        fields: {
-          id: "Unique ID for the location - use existing ID when updating",
-          name: "Location name",
-          description: "Full description",
-          coordinates: "3D space coordinates as {x,y,z}",
-          terrain: "Main terrain type (urban, forest, desert, etc.)",
-          features: [
-            {
-              type: "Feature type (building, rock, water, vegetation, etc.)",
-              position: "Position as {x,y,z}",
-              scale: "Size scalar (default 1.0)",
-              properties: "Any additional properties"
-            }
-          ],
-          atmosphere: "Atmospheric conditions",
-          weather: "Current weather",
-          lighting: "Current lighting conditions"
-        },
-        example: {
-          id: "location-123",
-          name: "Abandoned Imperial Outpost",
-          terrain: "desert",
-          features: [
-            { type: "building", position: {x: 0, y: 0, z: 0}, scale: 1.5 },
-            { type: "debris", position: {x: 10, y: 0, z: 5} }
-          ]
-        }
-      }
-
-    // Process system data if present
-    if (systemDataText && systemDataText.trim()) {
-      // Extract JSON content from the response
-      const systemData = extractJsonFromText(systemDataText);
-
-      const debrief = await createDebrief(
+              // Create a debrief record and process the response
+              const debrief = await createDebrief(
         useCharacter.getState().character!,
         useCampaign.getState().campaign!,
         { includeGameState: true },
@@ -232,98 +214,79 @@ export async function processGameMasterResponse(
  * Extract JSON from text that might contain non-JSON content
  * Uses a more robust approach to find the most complete JSON object
  */
-function extractJsonFromText(text: string): string {
+function extractJSONFromText(text: string): any {
   try {
-    // First attempt: Find text between system data marker and end of text
-    const markerSplit = text.split("---SYSTEM_DATA_FOLLOWS---");
-    if (markerSplit.length > 1) {
-      const potentialJson = markerSplit[1].trim();
+    // First try direct parsing
+    return JSON.parse(text);
+  } catch (e) {
+    // If direct parsing fails, try to extract JSON object
+    const jsonRegex = /(\{[\s\S]*\})/; // Match anything between { and }
+    const match = text.match(jsonRegex);
 
-            // Try to find a complete JSON object
-            const bracketRegex = /(\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}))*\})/g;
-            const matches = [...potentialJson.matchAll(bracketRegex)];
-
-            // Get the longest match (most likely the complete object)
-            if (matches.length > 0) {
-              const longestMatch = matches.reduce((longest, match) => 
-                match[0].length > longest[0].length ? match : longest
-              );
-
-              // Verify it's valid JSON
-              const jsonCandidate = longestMatch[0];
-              JSON.parse(jsonCandidate); // This will throw if invalid
-              return jsonCandidate;
-            }
-          }
-
-          // Fallback: Look for JSON object pattern in the entire text
-          const bracketRegex = /(\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}))*\})/g;
-          const matches = [...text.matchAll(bracketRegex)];
-
-          if (matches.length > 0) {
-            // Get the longest match (most likely the complete object)
-            const longestMatch = matches.reduce((longest, match) => 
-              match[0].length > longest[0].length ? match : longest
-            );
-
-            // Verify it's valid JSON
-            const jsonCandidate = longestMatch[0];
-            JSON.parse(jsonCandidate); // This will throw if invalid
-            return jsonCandidate;
-          }
-
-          // If no valid JSON found, return empty object
-          return "{}";
-        } catch (error) {
-          console.error("Error extracting JSON from text:", error);
-          return "{}";
-        }
+    if (match && match[0]) {
+      try {
+        return JSON.parse(match[0]);
+      } catch (err) {
+        console.error("Error parsing extracted JSON:", err);
+        return null;
       }
+    }
 
-      /**
-       * Handle requests for SW5e data
-       */
-      async function handleSW5eDataRequest(requestPath: string): Promise<any> {
-        try {
-          const [category, id] = requestPath.split('.');
+    return null;
+  }
+}
 
-          // Import the appropriate module based on category
-          const module = await import(/* @vite-ignore */ `@/lib/sw5e/${category}`);
+export async function upgradeNpcClassification(
+  npcId: string, 
+  newClassification: string,
+  additionalData: any = {}
+): Promise<void> {
+  try {
+    const { campaign, updateNpc } = useCampaign.getState();
 
-          if (id) {
-            // Return specific item
-            return module[category].find((item: any) => item.id === id);
-          } else {
-            // Return the whole category
-            return module[category];
-          }
-        } catch (error) {
-          console.error("Error handling SW5e data request:", error);
-          return null;
-        }
-      }
+    if (!campaign) return;
 
-      export async function upgradeNpcClassification(
-        npcId: string, 
-        newClassification: string,
-        additionalData: any = {}
-      ): Promise<void> {
-        try {
-          const { campaign, updateNpc } = useCampaign.getState();
+    const npc = campaign.npcs.find(n => n.id === npcId);
+    if (!npc) return;
 
-          if (!campaign) return;
+    // Update the NPC classification and add additional data
+    await updateNpc(npcId, {
+      ...npc,
+      classification: newClassification,
+      ...additionalData
+    });
 
-          const npc = campaign.npcs.find(n => n.id === npcId);
-          if (!npc) return;
+  } catch (error) {
+    console.error("Error upgrading NPC classification:", error);
+  }
+}
 
-          // Update the NPC classification and add additional data
-          await updateNpc(npcId, {
-            ...npc,
-            classification: newClassification,
-            ...additionalData
-          });
+/**
+ * Handle requests for SW5e data
+ */
+async function handleSW5eDataRequest(requestPath: string): Promise<any> {
+  try {
+    const [category, id] = requestPath.split('.');
 
-        } catch (error) {
-          console.error("Error upgrading NPC classification:", error);
-        }
-      }
+    // Import the appropriate module based on category
+    const module = await import(/* @vite-ignore */ `@/lib/sw5e/${category}`);
+
+    if (id) {
+      // Return specific item
+      return module[category].find((item: any) => item.id === id);
+    } else {
+      // Return the whole category
+      return module[category];
+    }
+  } catch (error) {
+    console.error("Error handling SW5e data request:", error);
+    return null;
+  }
+}
+
+export default {
+  generateGameMasterReport,
+  processGameMasterResponse,
+  upgradeNpcClassification,
+  handleSW5eDataRequest
+};
