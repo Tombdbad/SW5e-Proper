@@ -3,28 +3,6 @@
 import React, { useState, useEffect } from 'react';
 import { processGameMasterResponse } from '@/lib/llm/reportHandler';
 
-const handleProcess = async (reportId, llmResponse, setIsProcessing, setProcessSuccess, onOpenChange) => {
-    if (!reportId || !llmResponse) return;
-
-    setIsProcessing(true);
-    try {
-      // Process the entire response - the processing function will split narrative/system parts
-      await processGameMasterResponse(llmResponse);
-      setProcessSuccess(true);
-      setTimeout(() => {
-        onOpenChange(false);
-      }, 1500);
-    } catch (error) {
-      console.error("Error processing response:", error);
-    } finally {
-      setIsProcessing(false);
-    }
-};
-
-  // The helper functions parseLLMResponse, updateNPCState, and findNPC are removed
-  // as we now use the imported processGameMasterResponse from reportHandler
-
-
 interface GMReportDialogProps {
   open?: boolean;
   reportId?: string;
@@ -35,28 +13,48 @@ interface GMReportDialogProps {
 const GMReportDialog: React.FC<GMReportDialogProps> = ({
   open,
   reportId,
-  reportContent: llmResponse,
+  reportContent,
   onOpenChange
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processSuccess, setProcessSuccess] = useState(false);
 
-  useEffect(() => {
-    if (reportId && llmResponse) {
-      handleProcess(reportId, llmResponse, setIsProcessing, setProcessSuccess, onOpenChange);
+  const handleProcess = async () => {
+    if (!reportId || !reportContent) return;
+
+    setIsProcessing(true);
+    try {
+      // Process the entire response - the processing function will split narrative/system parts
+      await processGameMasterResponse(reportContent);
+      setProcessSuccess(true);
+      setTimeout(() => {
+        onOpenChange(false);
+      }, 1500);
+    } catch (error) {
+      console.error("Error processing response:", error);
+    } finally {
+      setIsProcessing(false);
     }
-  }, [reportId, llmResponse, onOpenChange]);
+  };
+
+  useEffect(() => {
+    if (open && reportId && reportContent) {
+      // Optionally auto-process when dialog opens with content
+      // Remove this if you prefer manual processing
+      // handleProcess();
+    }
+  }, [open, reportId, reportContent]);
 
   return (
     <div>
       {/* Dialog content */}
       {isProcessing && <div>Processing report...</div>}
       {processSuccess && <div>Report processed successfully!</div>}
-      {!isProcessing && !processSuccess && llmResponse && (
+      {!isProcessing && !processSuccess && reportContent && (
         <div>
           <h3>Game Master Report</h3>
-          <div>{llmResponse}</div>
-          <button onClick={() => handleProcess(reportId, llmResponse, setIsProcessing, setProcessSuccess, onOpenChange)}>
+          <div>{reportContent}</div>
+          <button onClick={handleProcess}>
             Process Report
           </button>
         </div>

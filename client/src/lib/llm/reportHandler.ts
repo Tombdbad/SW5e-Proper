@@ -198,16 +198,46 @@ export async function processGameMasterResponse(
 
 /**
  * Extract JSON from text that might contain non-JSON content
+ * Uses a more robust approach to find the most complete JSON object
  */
 function extractJsonFromText(text: string): string {
   try {
-    // Look for JSON object pattern
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const jsonString = jsonMatch[0];
-      // Validate it's valid JSON
-      JSON.parse(jsonString);
-      return jsonString;
+    // First attempt: Find text between system data marker and end of text
+    const markerSplit = text.split("---SYSTEM_DATA_FOLLOWS---");
+    if (markerSplit.length > 1) {
+      const potentialJson = markerSplit[1].trim();
+      
+      // Try to find a complete JSON object
+      const bracketRegex = /(\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}))*\})/g;
+      const matches = [...potentialJson.matchAll(bracketRegex)];
+      
+      // Get the longest match (most likely the complete object)
+      if (matches.length > 0) {
+        const longestMatch = matches.reduce((longest, match) => 
+          match[0].length > longest[0].length ? match : longest
+        );
+        
+        // Verify it's valid JSON
+        const jsonCandidate = longestMatch[0];
+        JSON.parse(jsonCandidate); // This will throw if invalid
+        return jsonCandidate;
+      }
+    }
+    
+    // Fallback: Look for JSON object pattern in the entire text
+    const bracketRegex = /(\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}))*\})/g;
+    const matches = [...text.matchAll(bracketRegex)];
+    
+    if (matches.length > 0) {
+      // Get the longest match (most likely the complete object)
+      const longestMatch = matches.reduce((longest, match) => 
+        match[0].length > longest[0].length ? match : longest
+      );
+      
+      // Verify it's valid JSON
+      const jsonCandidate = longestMatch[0];
+      JSON.parse(jsonCandidate); // This will throw if invalid
+      return jsonCandidate;
     }
 
     // If no valid JSON found, return empty object

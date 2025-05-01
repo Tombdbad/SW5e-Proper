@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,6 +6,7 @@ import { useCharacter } from "@/lib/stores/useCharacter";
 import { useCampaign } from "@/lib/stores/useCampaign";
 import GMReportDialog from "./GMReportDialog";
 import TranslucentPane from "@/components/ui/TranslucentPane";
+import LLMResponseParser from './LLMResponseParser'; // Added import for LLMResponseParser
 
 export const GMReportManager: React.FC = () => {
   const [dialogOpen, setDialogOpen] = useState(false);

@@ -34,6 +34,57 @@ export function parseCoordinateString(coordString: string): Coordinates {
   return coords;
 }
 
+// ASCII map coordinate pattern like (x:10,y:5,z:-3)
+const asciiCoordPattern = /\(x:(-?\d+),y:(-?\d+),z:(-?\d+)\)/;
+
+/**
+ * Parse coordinates from ASCII map notation that LLMs might generate
+ * Example: "(x:10,y:5,z:-3)"
+ */
+export function parseAsciiMapCoordinates(coordString: string): { x: number, y: number, z: number } | null {
+  const match = coordString.match(asciiCoordPattern);
+  if (!match) return null;
+  
+  return {
+    x: parseInt(match[1], 10),
+    y: parseInt(match[2], 10),
+    z: parseInt(match[3], 10)
+  };
+}
+
+/**
+ * Extract coordinates from a block of text containing ASCII map data
+ * Returns an array of coordinates with their associated entity types
+ */
+export function extractCoordinatesFromAsciiMap(text: string): Array<{ 
+  type: string, 
+  coords: { x: number, y: number, z: number },
+  name?: string,
+  description?: string
+}> {
+  const results = [];
+  // Match patterns like: [NPC:Stormtrooper](x:10,y:0,z:5)
+  // or [LOCATION:Command Center](x:-5,y:0,z:12)
+  const entityPattern = /\[([A-Z_]+)(?::([^\]]+))?\]\(x:(-?\d+),y:(-?\d+),z:(-?\d+)\)/g;
+  
+  let match;
+  while ((match = entityPattern.exec(text)) !== null) {
+    const [fullMatch, type, name, x, y, z] = match;
+    
+    results.push({
+      type: type.toLowerCase(),
+      name: name || undefined,
+      coords: {
+        x: parseInt(x, 10),
+        y: parseInt(y, 10),
+        z: parseInt(z, 10)
+      }
+    });
+  }
+  
+  return results;
+}
+
 export function formatCoordinateString(coords: Coordinates): string {
   let result = coords.galactic || '';
   

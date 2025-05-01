@@ -32,3 +32,43 @@ export const apiRequest = async (
         throw error;
     }
 };
+/**
+ * Copy text to clipboard with fallback for browser compatibility
+ */
+export const copyToClipboard = async (text: string): Promise<boolean> => {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } else {
+      // Fallback for older browsers
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return successful;
+    }
+  } catch (error) {
+    console.error('Failed to copy text to clipboard', error);
+    return false;
+  }
+};
+
+/**
+ * Read text from clipboard with permissions check
+ */
+export const readFromClipboard = async (): Promise<string | null> => {
+  try {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      return await navigator.clipboard.readText();
+    }
+    return null;
+  } catch (error) {
+    console.error('Failed to read from clipboard - permissions may be required', error);
+    return null;
+  }
+};
