@@ -80,10 +80,10 @@ task = "shell.exec"
 args = "npm run dev"
 
 [[workflows.workflow]]
-name = "Run Schema Migrations"
+name = "Safe Migration"
 author = 41786543
 mode = "sequential"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "tsx migrations.ts"
+args = "tsx scripts/migrate-with-verification.ts"
