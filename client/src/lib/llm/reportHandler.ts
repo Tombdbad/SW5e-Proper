@@ -176,6 +176,38 @@ export async function processGameMasterResponse(
       await handleSW5eDataRequest(dataRequestMatch[1]);
     }
 
+
+      locations: {
+        description: "When describing a location, include these fields for map rendering:",
+        fields: {
+          id: "Unique ID for the location - use existing ID when updating",
+          name: "Location name",
+          description: "Full description",
+          coordinates: "3D space coordinates as {x,y,z}",
+          terrain: "Main terrain type (urban, forest, desert, etc.)",
+          features: [
+            {
+              type: "Feature type (building, rock, water, vegetation, etc.)",
+              position: "Position as {x,y,z}",
+              scale: "Size scalar (default 1.0)",
+              properties: "Any additional properties"
+            }
+          ],
+          atmosphere: "Atmospheric conditions",
+          weather: "Current weather",
+          lighting: "Current lighting conditions"
+        },
+        example: {
+          id: "location-123",
+          name: "Abandoned Imperial Outpost",
+          terrain: "desert",
+          features: [
+            { type: "building", position: {x: 0, y: 0, z: 0}, scale: 1.5 },
+            { type: "debris", position: {x: 10, y: 0, z: 5} }
+          ]
+        }
+      },
+
     // Process system data if present
     if (systemDataText && systemDataText.trim()) {
       // Extract JSON content from the response
