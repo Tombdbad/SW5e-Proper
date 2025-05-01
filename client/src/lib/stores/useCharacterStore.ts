@@ -47,6 +47,14 @@ export interface Character {
     maximum: number;
     temporary: number;
   };
+  personality: {
+    traits: string[];
+    ideals: string[];
+    bonds: string[];
+    flaws: string[];
+    appearance: string;
+    backstory: string;
+  };
   notes: string;
   backstory: string;
   classes: Array<{
@@ -100,9 +108,10 @@ export interface CharacterState {
     updateCharacter: (id: string, updates: Partial<Character>) => void;
     deleteCharacter: (id: string) => void;
     setActiveCharacter: (id: string) => void;
-    
+
     // Character modifications
     updateAbilityScore: (ability: keyof Character['abilityScores'], value: number) => void;
+    updatePersonality: (id: string, personalityData: Partial<Character['personality']>) => void;
     addPower: (power: Character['powers'][0]) => void;
     removePower: (powerId: string) => void;
     addEquipment: (item: Character['equipment'][0]) => void;
@@ -395,6 +404,14 @@ const getDefaultCharacter = (): Partial<Character> => ({
     current: 0,
     maximum: 0,
     temporary: 0,
+  },
+  personality: {
+    traits: [],
+    ideals: [],
+    bonds: [],
+    flaws: [],
+    appearance: "",
+    backstory: ""
   },
   notes: "",
   backstory: "",
@@ -713,9 +730,52 @@ const useCharacterStore = create<CharacterState>()(
                 
                 character.updatedAt = new Date().toISOString();
                 character.version += 1;
-              }
-              
-              state.error = null;
+                  }
+
+                  state.error = null;
+                });
+              },
+
+              updatePersonality: (id, personalityData) => {
+                const { characters } = get();
+
+                if (!characters[id]) {
+                  set(state => { state.error = `Character with ID ${id} not found`; });
+                  return;
+                }
+
+                set(state => {
+                  // Add to history if tracking is enabled
+                  if (state.history.tracking) {
+                    state.history.past.push({ ...state.characters });
+                    state.history.future = [];
+                  }
+
+                  // Update the character's personality
+                  const character = state.characters[id];
+                  const currentPersonality = character.personality || {
+                    traits: [],
+                    ideals: [],
+                    bonds: [],
+                    flaws: [],
+                    appearance: '',
+                    backstory: ''
+                  };
+
+                  character.personality = {
+                    ...currentPersonality,
+                    ...personalityData
+                  };
+
+                  // If backstory is provided in personality data, update the character's backstory as well
+                  if (personalityData.backstory) {
+                    character.backstory = personalityData.backstory;
+                  }
+
+                  character.updatedAt = new Date().toISOString();
+                  character.version += 1;
+
+                  state.error = null;
             });
           },
           

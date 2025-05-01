@@ -7,7 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, ScrollArea } from "@nextui-org/react";
 import { Button } from "@nextui-org/react";
-
+import PersonalityTraitForm from "../components/CharacterCreation/PersonalityTraitForm";
 // Import SW5E data and utilities
 import { SPECIES } from "../lib/sw5e/species";
 import { CLASSES } from "../lib/sw5e/classes";
@@ -71,6 +71,16 @@ const characterSchema = CharacterSchema.extend({
     )
     .default([]),
 
+  // Personality features
+  personality: z.object({
+    traits: z.array(z.string()).default([]),
+    ideals: z.array(z.string()).default([]),
+    bonds: z.array(z.string()).default([]),
+    flaws: z.array(z.string()).default([]),
+    appearance: z.string().optional(),
+    backstory: z.string().optional(),
+  }).optional(),
+
   // Meta info
   experiencePoints: z.number().min(0).default(0),
 });
@@ -122,6 +132,14 @@ export default function CharacterCreation() {
       traits: [],
       experiencePoints: 0,
       multiclass: [],
+      personality: {
+        traits: [],
+        ideals: [],
+        bonds: [],
+        flaws: [],
+        appearance: "",
+        backstory: ""
+      },
     },
   });
 
@@ -302,6 +320,9 @@ export default function CharacterCreation() {
       // Submit the character
       const character = await CharacterAPI.saveCharacter(characterData);
 
+      // Set the persisted character ID for the personality form
+      setPersistedCharacterId(character.id);
+
       // Navigate to campaign creator with new character or character sheet
       navigate(`/campaign/create?characterId=${character.id}`);
     } catch (error) {
@@ -313,6 +334,25 @@ export default function CharacterCreation() {
       setIsSubmitting(false);
     }
   };
+
+  // Persist the temporary character ID when the form has enough data
+  useEffect(() => {
+    const currentData = methods.getValues();
+    const hasBasicInfo = currentData.name && currentData.species && currentData.class;
+
+    if (hasBasicInfo && !persistedCharacterId) {
+      // Create a temporary character ID for tracking
+      const tempId = "temp-" + Date.now().toString();
+      setPersistedCharacterId(tempId);
+
+      // Save basic data to the store
+      // This would normally be done through your character store's createCharacter action
+      // For now, we're just setting the ID for the personality form
+    }
+  }, [methods.watch('name'), methods.watch('species'), methods.watch('class')]);
+
+  const [showPersonalityForm, setShowPersonalityForm] = useState(false);
+  const [persistedCharacterId, setPersistedCharacterId] = useState<string | null>(null);
 
   // Define tabs for the character creation process
   const tabs = [

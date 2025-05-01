@@ -29,7 +29,7 @@ export const CharacterCreatorMain: FC = () => {
             onClick={() => navigate('/character-creation')}
             className="h-24 flex flex-col"
           >
-            <span className="text-lg">Form-Based</span>
+            <span className="text-lg">Comprehensive</span>
             <span className="text-xs mt-1">Complete form sections in any order</span>
           </Button>
 
@@ -39,13 +39,14 @@ export const CharacterCreatorMain: FC = () => {
             onClick={() => navigate('/character-creator')}
             className="h-24 flex flex-col"
           >
-            <span className="text-lg">Step-by-Step</span>
-            <span className="text-xs mt-1">Guided creation with validation</span>
+            <span className="text-lg">Simplified</span>
+            <span className="text-xs mt-1">Guided step-by-step creation</span>
           </Button>
         </div>
 
         <p className="text-sm text-center text-gray-400">
           Both methods create fully compatible character sheets.
+          <br />The Comprehensive flow offers more customization, while the Simplified flow is easier to follow.
         </p>
       </TranslucentPane>
     </div>
