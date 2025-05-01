@@ -60,7 +60,8 @@ function App() {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </StarfieldBackground>
-    </PerformanceMonitor> {/* Added PerformanceMonitor */}
+    </PerformanceMonitor> 
+    {/* Added PerformanceMonitor */}
   );
 }
 
