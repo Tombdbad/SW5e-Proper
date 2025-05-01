@@ -1,6 +1,9 @@
-// Assuming necessary imports are already present
 
-const handleProcess = async () => {
+// Assuming necessary imports are already present
+import React, { useState, useEffect } from 'react';
+import { processGameMasterResponse } from '@/lib/llm/reportHandler';
+
+const handleProcess = async (reportId, llmResponse, setIsProcessing, setProcessSuccess, onOpenChange) => {
     if (!reportId || !llmResponse) return;
 
     setIsProcessing(true);
@@ -16,7 +19,7 @@ const handleProcess = async () => {
     } finally {
       setIsProcessing(false);
     }
-  };
+};
 
 // New function to process the LLM's response, separating narrative and system updates
 const processGameMasterResponse = async (llmResponse) => {
@@ -28,8 +31,7 @@ const processGameMasterResponse = async (llmResponse) => {
   // Example: Update NPC state based on system report (requires further implementation details)
   updateNPCState(systemReport);
   // Update UI/game state with narrativeReport
-
-}
+};
 
 // Helper function to parse the LLM response into narrative and system parts.
 const parseLLMResponse = (llmResponse) => {
@@ -39,7 +41,7 @@ const parseLLMResponse = (llmResponse) => {
   const narrative = llmResponse.substring(0, llmResponse.indexOf("SYSTEM_UPDATE:"));
   const system = llmResponse.substring(llmResponse.indexOf("SYSTEM_UPDATE:") + "SYSTEM_UPDATE:".length);
   return {narrative, system};
-}
+};
 
 const updateNPCState = (systemReport) => {
   //  This is a placeholder; replace with actual logic to update NPC state based on the system report.
@@ -55,28 +57,50 @@ const updateNPCState = (systemReport) => {
   } catch (error) {
     console.error("Error updating NPC state:", error);
   }
-}
+};
 
 const findNPC = (npcId) =>{
     //Implementation to find the NPC based on ID
     //Example:
     return {id: npcId, state: 'minor'};
+};
+
+interface GMReportDialogProps {
+  open?: boolean;
+  reportId?: string;
+  reportContent?: string;
+  onOpenChange: (open: boolean) => void;
 }
 
-
-
-const GMReportDialog: React.FC<{}> = ({reportId, llmResponse, onOpenChange, setIsProcessing, setProcessSuccess}) => {
+const GMReportDialog: React.FC<GMReportDialogProps> = ({
+  open,
+  reportId,
+  reportContent: llmResponse,
+  onOpenChange
+}) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processSuccess, setProcessSuccess] = useState(false);
 
   useEffect(() => {
-    handleProcess();
-  }, [reportId, llmResponse]);
-
+    if (reportId && llmResponse) {
+      handleProcess(reportId, llmResponse, setIsProcessing, setProcessSuccess, onOpenChange);
+    }
+  }, [reportId, llmResponse, onOpenChange]);
 
   return (
     <div>
-      {/* ... Dialog content ... */}
+      {/* Dialog content */}
+      {isProcessing && <div>Processing report...</div>}
+      {processSuccess && <div>Report processed successfully!</div>}
+      {!isProcessing && !processSuccess && llmResponse && (
+        <div>
+          <h3>Game Master Report</h3>
+          <div>{llmResponse}</div>
+          <button onClick={() => handleProcess(reportId, llmResponse, setIsProcessing, setProcessSuccess, onOpenChange)}>
+            Process Report
+          </button>
+        </div>
+      )}
     </div>
   );
 };
