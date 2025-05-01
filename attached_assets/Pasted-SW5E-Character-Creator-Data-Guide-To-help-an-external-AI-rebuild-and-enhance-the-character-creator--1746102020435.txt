@@ -1,0 +1,82 @@
+SW5E Character Creator Data Guide
+To help an external AI rebuild and enhance the character creator UI, I'll provide a comprehensive overview of the key components, data structures, and functionality. This will include data schema, component relationships, and essential functionality patterns.
+
+1. Core Data Structures
+Character Schema
+The character data structure is defined in useCharacterStore.ts and schema.ts and includes:
+
+Basic info (name, species, class, level)
+Ability scores (strength, dexterity, constitution, intelligence, wisdom, charisma)
+Skills and proficiencies
+Powers (force and tech)
+Equipment
+Character stats (HP, AC, etc.)
+Background info
+Class, Species and Background Data
+These are defined in the /lib/sw5e/ directory and provide the game data needed for character creation:
+
+SW5E classes with features, proficiencies, and archetypes
+Species with traits and stat bonuses
+Backgrounds with features and proficiencies
+2. State Management
+The app uses Zustand for state management with these key stores:
+
+useCharacterStore: Manages character data, derived stats, and history
+useCampaign: Manages campaign data
+useMap: Handles map and location data
+useDice: Manages dice-rolling functionality
+3. Form System
+The character creation process relies on the following:
+
+useCharacterForm: Custom hook for form state tied to the character store
+Schema-based validation with Zod
+Multi-step form process for guided creation
+4. Character Creation Process
+The character creation workflow follows these steps:
+
+Basic Info
+Species Selection
+Class Selection
+Ability Scores
+Background
+Powers
+Feats
+Equipment
+5. UI Components and Features
+Key UI components include:
+
+Form fields with validation
+Tab navigation between steps
+Real-time stat calculations
+Preview capabilities
+Save/load functionality
+6. Data Processing Logic
+The system includes:
+
+Rules for calculating derived stats based on selections
+Class-specific power availability
+Equipment restrictions based on proficiencies
+Automatic stat adjustments based on species
+7. Integration Points
+The system interfaces with:
+
+Campaign data
+LLM-based game master
+Map visualization
+Combat system
+8. Persistence System
+Character data is:
+
+Stored locally using Zustand persistence
+Synced across tabs
+Versioned for compatibility
+Exportable/importable as JSON
+9. Enhancement Opportunities
+Areas where an AI could enhance functionality:
+
+Improved validation and error handling
+Better guidance for new players
+Class-specific feature recommendations
+Balancing suggestions
+Character optimization insights
+Storyline integration
