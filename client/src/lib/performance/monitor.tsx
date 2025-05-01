@@ -556,8 +556,8 @@ export function useComponentPerformance(componentName: string) {
   };
 }
 
-// Export the monitor component as default, not named exports to avoid Fast Refresh issues
-const exports = {
+// Export components individually for better Fast Refresh compatibility
+export {
   PerformanceMonitor,
   usePerformance,
   withPerformanceTracking,
@@ -565,4 +565,13 @@ const exports = {
   useComponentPerformance
 };
 
-export default exports;
+// Export a default object for backward compatibility
+const performanceTools = {
+  PerformanceMonitor,
+  usePerformance,
+  withPerformanceTracking,
+  PerformanceMetricsDisplay,
+  useComponentPerformance
+};
+
+export default performanceTools;

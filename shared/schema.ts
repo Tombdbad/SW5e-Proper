@@ -31,7 +31,7 @@ export const characters = pgTable("characters", {
   name: text("name").notNull(),
   species: text("species").notNull(),
   class: text("class").notNull(),
-  subclass: text("subclass"),
+  subclass: text("subclass"), // Already correctly defined as text
   level: integer("level").notNull().default(1),
   background: text("background").notNull(),
   alignment: text("alignment").notNull(),

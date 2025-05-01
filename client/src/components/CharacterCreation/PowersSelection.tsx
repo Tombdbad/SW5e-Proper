@@ -20,8 +20,12 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
   // Watch values from the form
   const characterClass = useCharacterFormWatch(form, 'class');
   const characterLevel = useCharacterFormWatch(form, 'level');
-  const selectedForcePowers = useCharacterFormWatch(form, 'forcePowers') || [];
-  const selectedTechPowers = useCharacterFormWatch(form, 'techPowers') || [];
+  const watchedForcePowers = useCharacterFormWatch(form, 'forcePowers');
+  const watchedTechPowers = useCharacterFormWatch(form, 'techPowers');
+  
+  // Ensure we always have arrays for powers
+  const selectedForcePowers = Array.isArray(watchedForcePowers) ? watchedForcePowers : [];
+  const selectedTechPowers = Array.isArray(watchedTechPowers) ? watchedTechPowers : [];
   
   // Local state
   const [availableForcePowers, setAvailableForcePowers] = useState<ForcePower[]>([]);
@@ -299,15 +303,13 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
                           </div>
                         ))}
                       </div>
-                    )}
-                  />
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <p className="text-lg">Your class doesn't have access to force powers.</p>
-                </div>
-              )}
-            </Tab.Panel>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-lg">Your class doesn't have access to force powers.</p>
+                    </div>
+                  )}
+                </Tab.Panel>
             
             {/* Tech Powers Panel */}
             <Tab.Panel>
@@ -355,15 +357,13 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
                           </div>
                         ))}
                       </div>
-                    )}
-                  />
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <p className="text-lg">Your class doesn't have access to tech powers.</p>
-                </div>
-              )}
-            </Tab.Panel>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-lg">Your class doesn't have access to tech powers.</p>
+                    </div>
+                  )}
+                </Tab.Panel>
           </Tab.Panels>
         </Tab.Group>
       </TranslucentPane>
