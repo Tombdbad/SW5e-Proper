@@ -3,7 +3,7 @@
         import { useMap } from '@/lib/stores/useMap';
         import { processMapDataFromLLM } from '@/lib/map/mapUpdateHandler';
         import { createDebrief, processLLMResponse } from '@/lib/llm/debriefCompiler';
-        import { rules } from '@/lib/sw5e/rules';
+import * as rules from '@/lib/sw5e/rules';
         import { Character } from "../stores/useCharacter";
         import { Campaign } from "../stores/useCampaign";
 
