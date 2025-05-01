@@ -1,0 +1,163 @@
+
+> tsx server/index.ts
+
+The `fetchConnectionCache` option is deprecated (now always `true`)
+The CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.
+Database connected successfully
+7:39:39 PM [express] serving on port 5000
+Column may not exist, error: column "setting" does not exist
+Column may not exist, error: column "subclass" does not exist
+Additional error after removing subclass: column "proficiency_bonus" does not exist
+Error fetching characters: NeonDbError: column "subclass" does not exist
+    at execute (/home/runner/workspace/node_modules/@neondatabase/serverless/index.js:1559:55)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async NeonHttpPreparedQuery.execute (/home/runner/workspace/node_modules/src/neon-http/session.ts:68:18)
+    at async <anonymous> (/home/runner/workspace/server/routes.ts:99:31) {
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: 'Perhaps you meant to reference the column "characters.class".',
+  position: '81',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3723',
+  routine: 'errorMissingColumn',
+  sourceError: undefined
+}
+7:39:47 PM [express] GET /api/characters 500 in 155ms :: {"message":"Failed to fetch characters","de…
+Additional error after removing setting: column "player_characters" does not exist
+Error fetching campaigns: NeonDbError: column "setting" does not exist
+    at execute (/home/runner/workspace/node_modules/@neondatabase/serverless/index.js:1559:55)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async NeonHttpPreparedQuery.execute (/home/runner/workspace/node_modules/src/neon-http/session.ts:68:18)
+    at async <anonymous> (/home/runner/workspace/server/routes.ts:316:30) {
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3716',
+  routine: 'errorMissingColumn',
+  sourceError: undefined
+}
+7:39:47 PM [express] GET /api/campaigns 500 in 203ms :: {"message":"Failed to fetch campaigns","deta…
+Column may not exist, error: column "setting" does not exist
+Column may not exist, error: column "subclass" does not exist
+Additional error after removing subclass: column "proficiency_bonus" does not exist
+Error fetching characters: NeonDbError: column "subclass" does not exist
+    at execute (/home/runner/workspace/node_modules/@neondatabase/serverless/index.js:1559:55)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async NeonHttpPreparedQuery.execute (/home/runner/workspace/node_modules/src/neon-http/session.ts:68:18)
+    at async <anonymous> (/home/runner/workspace/server/routes.ts:99:31) {
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: 'Perhaps you meant to reference the column "characters.class".',
+  position: '81',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3723',
+  routine: 'errorMissingColumn',
+  sourceError: undefined
+}
+7:39:47 PM [express] GET /api/characters 500 in 74ms :: {"message":"Failed to fetch characters","det…
+Additional error after removing setting: column "player_characters" does not exist
+Error fetching campaigns: NeonDbError: column "setting" does not exist
+    at execute (/home/runner/workspace/node_modules/@neondatabase/serverless/index.js:1559:55)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async NeonHttpPreparedQuery.execute (/home/runner/workspace/node_modules/src/neon-http/session.ts:68:18)
+    at async <anonymous> (/home/runner/workspace/server/routes.ts:316:30) {
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3716',
+  routine: 'errorMissingColumn',
+  sourceError: undefined
+}
+7:39:47 PM [express] GET /api/campaigns 500 in 86ms :: {"message":"Failed to fetch campaigns","detai…
+Column may not exist, error: column "subclass" does not exist
+Additional error after removing subclass: column "proficiency_bonus" does not exist
+Error fetching characters: NeonDbError: column "subclass" does not exist
+    at execute (/home/runner/workspace/node_modules/@neondatabase/serverless/index.js:1559:55)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async NeonHttpPreparedQuery.execute (/home/runner/workspace/node_modules/src/neon-http/session.ts:68:18)
+    at async <anonymous> (/home/runner/workspace/server/routes.ts:99:31) {
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: 'Perhaps you meant to reference the column "characters.class".',
+  position: '81',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3723',
+  routine: 'errorMissingColumn',
+  sourceError: undefined
+}
+7:39:47 PM [express] GET /api/characters 500 in 75ms :: {"message":"Failed to fetch characters","det…
+Column may not exist, error: column "subclass" does not exist
+Additional error after removing subclass: column "proficiency_bonus" does not exist
+Error fetching characters: NeonDbError: column "subclass" does not exist
+    at execute (/home/runner/workspace/node_modules/@neondatabase/serverless/index.js:1559:55)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async NeonHttpPreparedQuery.execute (/home/runner/workspace/node_modules/src/neon-http/session.ts:68:18)
+    at async <anonymous> (/home/runner/workspace/server/routes.ts:99:31) {
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: 'Perhaps you meant to reference the column "characters.class".',
+  position: '81',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3723',
+  routine: 'errorMissingColumn',
+  sourceError: undefined
+}
+7:39:48 PM [express] GET /api/characters 500 in 76ms :: {"message":"Failed to fetch characters","det…
