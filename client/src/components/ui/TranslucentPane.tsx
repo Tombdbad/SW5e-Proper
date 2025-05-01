@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { cn } from '@/lib/utils';
 
@@ -10,6 +11,7 @@ interface TranslucentPaneProps extends React.HTMLAttributes<HTMLDivElement> {
   bordered?: boolean;
 }
 
+export const TranslucentPane: React.FC<TranslucentPaneProps> = ({
 const TranslucentPane: React.FC<TranslucentPaneProps> = ({
   children,
   className,

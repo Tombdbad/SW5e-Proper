@@ -1,5 +1,7 @@
+
 import { validateCharacter } from "./characterValidation";
 import type { CharacterData } from "../../pages/CharacterCreation";
+import { Character } from "@shared/unifiedSchema";
 
 // Character API service
 export const CharacterAPI = {
@@ -124,3 +126,10 @@ export const CharacterAPI = {
     }
   }
 };
+
+// Export these functions to match the imports in useCharacter.ts
+export const createCharacter = (character: Character) => CharacterAPI.saveCharacter(character);
+export const updateCharacter = (id: string, updates: Partial<Character>) => CharacterAPI.updateCharacter(id, updates);
+export const deleteCharacter = (id: string) => CharacterAPI.deleteCharacter(id);
+export const getCharacter = (id: string) => CharacterAPI.getCharacter(id);
+export const getCharacters = () => CharacterAPI.getCharacters();

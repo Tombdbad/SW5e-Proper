@@ -7,11 +7,17 @@ import { forcePowers } from './forcePowers';
 import { techPowers } from './techPowers';
 import { equipment } from './equipment';
 import { feats } from './feats';
-import { rules, getAbilityModifier, calculateProficiencyBonus } from './rules';
+import { getAbilityModifier, calculateProficiencyBonus } from './rules';
 import { skills } from './skills';
 import { maneuvers } from './maneuvers';
 import { fightingStyles } from './fightingStyles';
 import { archetypes } from './archetypes';
+
+// Create rules object based on imported functions
+const rules = {
+  getAbilityModifier,
+  calculateProficiencyBonus
+};
 
 /**
  * Central provider for all SW5E data
@@ -55,6 +61,9 @@ export const SW5E = {
   // Rules
   rules
 };
+
+// Export rules to match the import in other files
+export { rules };
 
 // Export default for easy import
 export default SW5E;
