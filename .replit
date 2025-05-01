@@ -14,7 +14,7 @@ localPort = 5000
 externalPort = 80
 
 [workflows]
-runButton = "Start Game (Fixed)"
+runButton = "Start Game (Updated)"
 
 [[workflows.workflow]]
 name = "Project"
@@ -72,6 +72,15 @@ args = "npm run dev"
 
 [[workflows.workflow]]
 name = "Start Game (Latest)"
+author = 41786543
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "npm run dev"
+
+[[workflows.workflow]]
+name = "Start Game (Updated)"
 author = 41786543
 mode = "sequential"
 

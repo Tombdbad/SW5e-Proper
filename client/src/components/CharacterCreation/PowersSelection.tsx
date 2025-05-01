@@ -4,7 +4,7 @@ import { Tab } from '@headlessui/react';
 import { TranslucentPane } from '@/components/ui/TranslucentPane';
 import { Controller, useFormContext } from 'react-hook-form';
 import { ForcePower, TechPower } from '@shared/unifiedSchema';
-import { useToast } from '@/components/ui/toast';
+import { useToast } from '@/components/ui/use-toast';
 import SW5E from '@/lib/sw5e/dataProvider';
 import { useCharacterFormWatch } from '@/hooks/useCharacterForm';
 import { Character } from '@shared/unifiedSchema';
