@@ -64,4 +64,21 @@ const findNPC = (npcId) =>{
 }
 
 
-// ... rest of the code (assuming other functions like reportId, llmResponse, setIsProcessing, setProcessSuccess, onOpenChange etc. are defined elsewhere)
+
+const GMReportDialog: React.FC<{}> = ({reportId, llmResponse, onOpenChange, setIsProcessing, setProcessSuccess}) => {
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processSuccess, setProcessSuccess] = useState(false);
+
+  useEffect(() => {
+    handleProcess();
+  }, [reportId, llmResponse]);
+
+
+  return (
+    <div>
+      {/* ... Dialog content ... */}
+    </div>
+  );
+};
+
+export default GMReportDialog;
