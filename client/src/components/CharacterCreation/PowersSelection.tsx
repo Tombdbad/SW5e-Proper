@@ -103,7 +103,7 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ showPreview = false }
     );
   }
 
-  // Mock power data - this would ideally come from a real data source
+  // Always call useQuery to maintain consistent hook calls across renders
   const { data: powers, isLoading } = useQuery({
     queryKey: ['powers'],
     queryFn: async () => {
@@ -115,26 +115,28 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ showPreview = false }
         ...techPowers.map(p => ({ ...p, type: 'tech' })),
       ];
     },
+    // Still use enabled to conditionally fetch data
     enabled: hasForceCasting || hasTechCasting,
   });
 
+  // Use an empty array as fallback when powers is undefined
+  const availablePowers = powers || [];
+
   // Filter powers based on current selections
-  const filteredPowers = powers
-    ? powers.filter((power: any) => {
-        // Filter by type tab
-        const typeMatch = activeTab === 'all' || power.type === activeTab;
+  const filteredPowers = availablePowers.filter((power: any) => {
+    // Filter by type tab
+    const typeMatch = activeTab === 'all' || power.type === activeTab;
 
-        // Filter by search
-        const searchMatch = !filter || 
-          power.name.toLowerCase().includes(filter.toLowerCase()) || 
-          (power.description && power.description.toLowerCase().includes(filter.toLowerCase()));
+    // Filter by search
+    const searchMatch = !filter || 
+      power.name.toLowerCase().includes(filter.toLowerCase()) || 
+      (power.description && power.description.toLowerCase().includes(filter.toLowerCase()));
 
-        // Filter by level
-        const levelMatch = levelFilter === null || power.level === levelFilter;
+    // Filter by level
+    const levelMatch = levelFilter === null || power.level === levelFilter;
 
-        return typeMatch && searchMatch && levelMatch;
-      })
-    : [];
+    return typeMatch && searchMatch && levelMatch;
+  });
 
   // Handle power selection
   const togglePowerSelection = (power: any) => {
