@@ -7,7 +7,7 @@ import { z } from 'zod';
 /**
  * Creates a validation middleware that ensures state changes conform to a Zod schema
  */
-export const withValidation = <T extends object, CustomState extends T = T, CustomActions = {}>(
+  export const withValidation = <T extends object, CustomState extends T = CustomState, CustomActions = {}>(
   schema: z.ZodType<T>,
   config?: {
     onError?: (error: z.ZodError, newState: T, prevState: T) => void;

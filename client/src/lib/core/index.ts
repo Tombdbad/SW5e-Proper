@@ -30,14 +30,7 @@ export {
   createStoreWithSelectors 
 } from '../stores/selectors';
 
-// Re-export performance monitoring
-export { 
-  PerformanceMonitor,
-  usePerformance,
-  withPerformanceTracking,
-  PerformanceMetricsDisplay,
-  useComponentPerformance
-} from '../performance/monitor';
+// Performance monitoring has been removed
 
 // This file will be expanded as more core functionality is moved
 // from other parts of the codebase into the new structure

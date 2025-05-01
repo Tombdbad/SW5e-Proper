@@ -1,0 +1,69 @@
+
+> tsx server/index.ts
+
+The `fetchConnectionCache` option is deprecated (now always `true`)
+The CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.
+Database connected successfully
+6:31:18 PM [express] serving on port 5000
+Error:   Failed to scan for dependencies from entries:
+  /home/runner/workspace/client/index.html
+
+  ✘ [ERROR] No matching export in "client/src/components/ui/TranslucentPane.tsx" for import "TranslucentPane"
+
+    client/src/components/CharacterCreation/PowersSelection.tsx:4:9:
+      4 │ import { TranslucentPane } from '@/components/ui/TranslucentPane';
+        ╵          ~~~~~~~~~~~~~~~
+
+
+✘ [ERROR] No matching export in "client/src/lib/api/character.ts" for import "createCharacter"
+
+    client/src/lib/stores/useCharacter.ts:13:2:
+      13 │   createCharacter,
+         ╵   ~~~~~~~~~~~~~~~
+
+
+✘ [ERROR] No matching export in "client/src/lib/api/character.ts" for import "updateCharacter"
+
+    client/src/lib/stores/useCharacter.ts:14:2:
+      14 │   updateCharacter,
+         ╵   ~~~~~~~~~~~~~~~
+
+
+✘ [ERROR] No matching export in "client/src/lib/api/character.ts" for import "deleteCharacter"
+
+    client/src/lib/stores/useCharacter.ts:15:2:
+      15 │   deleteCharacter,
+         ╵   ~~~~~~~~~~~~~~~
+
+
+✘ [ERROR] No matching export in "client/src/lib/api/character.ts" for import "getCharacter"
+
+    client/src/lib/stores/useCharacter.ts:16:2:
+      16 │   getCharacter,
+         ╵   ~~~~~~~~~~~~
+
+
+✘ [ERROR] No matching export in "client/src/lib/api/character.ts" for import "getCharacters"
+
+    client/src/lib/stores/useCharacter.ts:17:2:
+      17 │   getCharacters,
+         ╵   ~~~~~~~~~~~~~
+
+
+✘ [ERROR] No matching export in "client/src/lib/sw5e/rules.ts" for import "rules"
+
+    client/src/lib/sw5e/dataProvider.ts:10:9:
+      10 │ import { rules, getAbilityModifier, calculateProficiencyBonus } fr...
+         ╵          ~~~~~
+
+
+    at failureErrorWithLog (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:1472:15)
+    at /home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:945:25
+    at runOnEndCallbacks (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:1315:45)
+    at buildResponseToResult (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:943:7)
+    at /home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:955:9
+    at new Promise (<anonymous>)
+    at requestCallbacks.on-end (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:954:54)
+    at handleRequest (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:647:17)
+    at handleIncomingPacket (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:672:7)
+    at Socket.readFromStdout (/home/runner/workspace/node_modules/vite/node_modules/esbuild/lib/main.js:600:7)
