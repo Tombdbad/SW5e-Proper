@@ -41,7 +41,7 @@ export default function SkillsSelection({
     // Group skills by ability
     const groupedSkills = allSkills.reduce((acc, skill) => {
       // Ensure ability exists and is properly formatted
-      if (!skill.ability) {
+        if (!skill || !skill.ability) {
         console.warn("Skill missing ability attribute:", skill);
         return acc;
       }
@@ -163,14 +163,14 @@ export default function SkillsSelection({
             <div key={ability} className="bg-gray-800 bg-opacity-30 p-4 rounded-md">
               <h3 className="text-xl font-semibold text-yellow-400 mb-3">{ability} Skills</h3>
               <ul className="space-y-2">
-                {skills.map(skill => {
+              {skills && skills.length > 0 && skills.map((skill, index) => {
                   const isClassSkill = classSkillOptions.includes(skill.id);
                   const isBackgroundSkill = backgroundSkills.includes(skill.id);
                   const isSelected = selectedSkills.includes(skill.id);
                   
                   return (
                     <li 
-                      key={`skill-${skill.id}`}
+                      key={`skill-${skill.id || skill.name || index}`}
                       className={`
                         flex items-center p-2 rounded-md transition-colors
                         ${isClassSkill ? "cursor-pointer" : "opacity-50 cursor-not-allowed"}
