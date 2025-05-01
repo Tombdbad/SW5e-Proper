@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/form";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { calculateModifier } from "@/lib/sw5e/rules";
+import { getAbilityModifier } from "@/lib/sw5e/rules";
 import { abilities } from "@/lib/sw5e/abilities";
 
 export default function AbilityScores() {
@@ -117,7 +117,7 @@ export default function AbilityScores() {
                 <FormLabel className="flex justify-between">
                   <span>{ability.name}</span>
                   <span className="text-yellow-400">
-                    {field.value ? `+${calculateModifier(field.value)}` : "+0"}
+                    {field.value ? `+${getAbilityModifier(field.value)}` : "+0"}
                   </span>
                 </FormLabel>
                 <div className="flex items-center space-x-2">
