@@ -50,7 +50,10 @@ export const calculateModifier = getAbilityModifier;
 
   // Calculate proficiency bonus based on character level
   export const getProficiencyBonus = (level: number): number => {
-        // Proficiency bonus starts at +2 for level 1 and 
+
+  // Alias for getProficiencyBonus for backward compatibility
+  export const calculateProficiencyBonus = getProficiencyBonus;
+          // Proficiency bonus starts at +2 for level 1 and 
     return Math.floor((level - 1) / 4) + 2;
 };
   // Calculate total character level from all classes
