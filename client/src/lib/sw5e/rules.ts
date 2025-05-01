@@ -115,16 +115,27 @@ export const calculateTechPoints = (
 };
 
 // Calculate maximum hit points based on class, level, constitution, and species
-export const calculateHitPoints = (
-  character: Character,
-  characterClasses: { class: Class; level: number }[],
-  abilityScores: AbilityScores,
-  species: Species,
-  hitDiceResults?: number[][]
-): number => {
-  const constitutionModifier = getAbilityModifier(abilityScores.constitution);
-  let totalHP = 0;
-  
+  export const calculateHitPoints = (
+    character: Character,
+    characterClasses: { class: Class; level: number }[] | undefined,
+    abilityScores: AbilityScores,
+    species: Species,
+    hitDiceResults?: number[][]
+  ): number => {
+    const constitutionModifier = getAbilityModifier(abilityScores.constitution);
+    let totalHP = 0;
+
+    // Process each class the character has levels in
+    if (!characterClasses || characterClasses.length === 0) {
+      // Default calculation if no classes are provided
+      return Math.max(1, 8 + constitutionModifier); // Use default hit die of 8
+    }
+
+  if (!characterClasses || characterClasses.length === 0) {
+    // Default calculation if no classes are provided
+    return Math.max(1, 8 + constitutionModifier); // Use default hit die of 8
+  }
+
   // Process each class the character has levels in
   characterClasses.forEach((classInfo, classIndex) => {
     const { class: charClass, level } = classInfo;
