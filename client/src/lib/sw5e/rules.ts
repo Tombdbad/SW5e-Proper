@@ -41,10 +41,11 @@ export const getAbilityModifier = (score: number): number => {
   return Math.floor((score - 10) / 2);
 };
 
+// Alias for getAbilityModifier for backward compatibility
+export const calculateModifier = getAbilityModifier;
+
 // Calculate proficiency bonus based on character level
 export const getProficiencyBonus = (level: number): number => {
-  return Math.floor((level - 1) / 4) + 2;
-};
 
 // Calculate total character level from all classes
 export const getCharacterLevel = (classes: CharacterClass[]): number => {
