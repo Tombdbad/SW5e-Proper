@@ -14,6 +14,7 @@ import { useCharacter } from "@/lib/stores/useCharacter";
 import { useCampaign } from "@/lib/stores/useCampaign";
 import { useCombat } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
+import GMReportManager from "@/components/Campaign/GMReportManager";
 
 // Define control keys for the game
 const controls = [
@@ -63,8 +64,7 @@ export default function GameBoard() {
     setShowSidebar(!showSidebar);
   };
 
-    // Import GM Report Manager
-  import GMReportManager from "@/components/Campaign/GMReportManager";
+  // GM Report Manager is imported at the top
 
   // Start combat (test)
   const startTestCombat = () => {
