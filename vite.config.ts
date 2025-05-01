@@ -18,6 +18,7 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "client", "src"),
       "@shared": path.resolve(__dirname, "shared"),
+      "immer": "immer" //Added alias for immer
     },
   },
   root: path.resolve(__dirname, "client"),

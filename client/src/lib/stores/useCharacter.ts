@@ -2,6 +2,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { persist } from "zustand/middleware";
+import { produce } from "immer"; // Make sure we use immer directly too
 import { devtools } from "zustand/middleware";
 import { z } from "zod";
 import { createJSONStorage } from "zustand/middleware";
