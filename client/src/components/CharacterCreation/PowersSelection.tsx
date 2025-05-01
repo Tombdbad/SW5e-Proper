@@ -107,24 +107,35 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ showPreview = false }
   const { data: powers, isLoading } = useQuery({
     queryKey: ['powers'],
     queryFn: async () => {
-      // In a real implementation, this would fetch from your data source
-      return [
-        // Mock force powers
-        ...forcePowers.map(p => ({ ...p, type: 'force' })),
-        // Mock tech powers
-        ...techPowers.map(p => ({ ...p, type: 'tech' })),
-      ];
-    },
-    // Still use enabled to conditionally fetch data
-    enabled: hasForceCasting || hasTechCasting,
-  });
+        // Fetching from API endpoints would look like this:
+        // const [forcePowersData, techPowersData] = await Promise.all([
+        //   fetch('/api/sw5e/powers/force').then(res => res.json()),
+        //   fetch('/api/sw5e/powers/tech').then(res => res.json())
+        // ]);
+        // return [...forcePowersData, ...techPowersData];
 
-  // Use an empty array as fallback when powers is undefined
-  const availablePowers = powers || [];
+        // For now, use the imported mock data to ensure it works
+        return [
+          // Mock force powers
+          ...forcePowers.map(p => ({ ...p, type: 'force', id: p.id || `force-${p.name}` })),
+          // Mock tech powers
+          ...techPowers.map(p => ({ ...p, type: 'tech', id: p.id || `tech-${p.name}` })),
+        ];
+      },
+      // We'll always execute the query but use the data conditionally
+      enabled: true,
+    });
 
-  // Filter powers based on current selections
-  const filteredPowers = availablePowers.filter((power: any) => {
-    // Filter by type tab
+    // Filter powers based on character class capabilities
+    const eligiblePowers = (powers || []).filter(power => {
+      if (!hasForceCasting && power.type === 'force') return false;
+      if (!hasTechCasting && power.type === 'tech') return false;
+      return true;
+    });
+
+    // Filter powers based on current selections
+    const filteredPowers = eligiblePowers.filter((power: any) => {
+      // Filter by type tab
     const typeMatch = activeTab === 'all' || power.type === activeTab;
 
     // Filter by search
