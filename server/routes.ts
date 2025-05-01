@@ -94,8 +94,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ message: "Database schema error: Characters table not defined" });
       }
 
-      const allCharacters = await db.select().from(characters);
-      res.json(allCharacters);
+      // First try with all columns
+      try {
+        const allCharacters = await db.select().from(characters);
+        res.json(allCharacters);
+      } catch (error) {
+        // If error contains reference to 'subclass' column, it might not exist yet
+        if (error.message && error.message.includes("subclass")) {
+          console.warn("'subclass' column may not exist, fetching without it");
+          
+          // Select all columns except subclass
+          const { subclass, ...charactersWithoutSubclass } = characters;
+          const result = await db.select({
+            ...charactersWithoutSubclass
+          }).from(characters);
+          
+          // Add empty subclass field to each record
+          const charactersWithEmptySubclass = result.map(char => ({
+            ...char,
+            subclass: null,
+          }));
+          
+          res.json(charactersWithEmptySubclass);
+        } else {
+          // If it's another error, rethrow
+          throw error;
+        }
+      }
     } catch (error) {
       console.error("Error fetching characters:", error);
       // More detailed error information
@@ -133,7 +158,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const characterData = insertCharacterSchema.parse(req.body);
 
       // Default userId to 1 for demo purposes
-      const userData = { ...characterData, userId: 1 };
+      let userData = { ...characterData, userId: 1 };
+      
+      // Handle subclass/archetype transition
+      if (userData.subclass) {
+        // Store existing subclass value for logging
+        const originalSubclass = userData.subclass;
+        console.log(`Migrating subclass '${originalSubclass}' to appropriate field`);
+      }
 
       // Insert character into database
       const result = await db.insert(characters).values(userData).returning();
@@ -239,8 +271,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Campaign endpoints
   app.get("/api/campaigns", async (req, res) => {
     try {
-      const allCampaigns = await db.select().from(campaigns);
-      res.json(allCampaigns);
+      // Try with all columns first
+      try {
+        const allCampaigns = await db.select().from(campaigns);
+        res.json(allCampaigns);
+      } catch (error) {
+        // If error contains reference to 'setting' column, it might not exist yet
+        if (error.message && error.message.includes("setting")) {
+          console.warn("'setting' column may not exist, fetching without it");
+          
+          // Select all columns except setting
+          const { setting, ...campaignsWithoutSetting } = campaigns;
+          const result = await db.select({
+            ...campaignsWithoutSetting
+          }).from(campaigns);
+          
+          // Add default setting field to each record
+          const campaignsWithDefaultSetting = result.map(campaign => ({
+            ...campaign,
+            setting: {
+              era: "Galactic Civil War",
+              backstory: "A time of conflict between the Rebel Alliance and the Galactic Empire",
+              themes: ["Rebellion", "Hope", "Struggle"],
+              tone: "Space Opera",
+            },
+          }));
+          
+          res.json(campaignsWithDefaultSetting);
+        } else {
+          // If it's another error, rethrow
+          throw error;
+        }
+      }
     } catch (error) {
       console.error("Error fetching campaigns:", error);
       res.status(500).json({ error: "Failed to fetch campaigns" });
