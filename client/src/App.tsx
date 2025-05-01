@@ -10,6 +10,7 @@ import CampaignView from "./pages/CampaignView";
 import GameBoard from "./pages/GameBoard";
 import GalacticMapView from "./pages/GalacticMapView";
 import NotFound from "./pages/not-found";
+import LoadingDemo from "./pages/LoadingDemo"; // Added import
 
 function App() {
   const [loaded, setLoaded] = useState(false);
@@ -52,6 +53,7 @@ function App() {
         <Route path="/campaign/:id" element={<CampaignView />} />
         <Route path="/game/:campaignId" element={<GameBoard />} />
         <Route path="/map/galaxy" element={<GalacticMapView />} />
+        <Route path="/loading-demo" element={<LoadingDemo />} /> {/* Added route */}
         <Route path="*" element={<NotFound />} />
       </Routes>
     </StarfieldBackground>

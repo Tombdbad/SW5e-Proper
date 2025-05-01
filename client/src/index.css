@@ -2,6 +2,40 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer utilities {
+  /* Loading animations for Star Wars themed components */
+  @keyframes scan {
+    0% {
+      transform: translateY(-100%);
+    }
+    100% {
+      transform: translateY(100%);
+    }
+  }
+  
+  .animate-scan {
+    animation: scan 2s ease-in-out infinite;
+  }
+  
+  /* Hologram flicker effect */
+  @keyframes flicker {
+    0%, 100% { opacity: 1; }
+    10% { opacity: 0.8; }
+    20% { opacity: 0.9; }
+    30% { opacity: 0.7; }
+    40% { opacity: 1; }
+    50% { opacity: 0.9; }
+    60% { opacity: 1; }
+    70% { opacity: 0.8; }
+    80% { opacity: 1; }
+    90% { opacity: 0.9; }
+  }
+  
+  .animate-flicker {
+    animation: flicker 2s ease-in-out infinite;
+  }
+}
+
 @layer base {
   :root {
     --background: 240 10% 3.9%;
