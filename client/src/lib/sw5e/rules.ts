@@ -550,3 +550,13 @@ export const calculateMaxPowerPoints = (
   return Math.max(1, basePoints);
 };
 
+// Calculate maximum power level available based on character level
+export const calculateMaxPowerLevel = (level: number): number => {
+  if (level < 3) return 1;
+  if (level < 5) return 2;
+  if (level < 7) return 3;
+  if (level < 9) return 4;
+  return 5;
+};
+
+
