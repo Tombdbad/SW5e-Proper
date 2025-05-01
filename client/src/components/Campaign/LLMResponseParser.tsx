@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { processGameMasterResponse } from '@/lib/llm/reportHandler';
-import { extractCoordinatesFromAsciiMap } from '../../../shared/coordinates';
+import { extractCoordinatesFromAsciiMap } from '@/lib/coordinates';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
