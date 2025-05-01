@@ -1,4 +1,3 @@
-
 import { AbilityType } from './abilities';
 import { Class } from './classes';
 import { Species } from './species';
@@ -36,9 +35,72 @@ export type CharacterClass = {
   hitDieResults?: number[];
 };
 
-// Calculate ability modifier from ability score
+// Ability score modifier calculation
 export const getAbilityModifier = (score: number): number => {
   return Math.floor((score - 10) / 2);
+};
+
+// Calculate proficiency bonus based on character level
+export const calculateProficiencyBonus = (level: number): number => {
+  return Math.ceil(1 + (level / 4));
+};
+
+// Calculate force points based on character class and wisdom modifier
+export const calculateForcePoints = (
+  character: any, 
+  classFeatures: { forceUser: boolean }, 
+  level: number,
+  abilityScores: any
+): number => {
+  if (!classFeatures.forceUser) return 0;
+
+  const wisdomModifier = getAbilityModifier(abilityScores.wisdom);
+  return level + wisdomModifier;
+};
+
+// Calculate tech points based on character class and intelligence modifier
+export const calculateTechPoints = (
+  character: any, 
+  classFeatures: { techUser: boolean }, 
+  level: number,
+  abilityScores: any
+): number => {
+  if (!classFeatures.techUser) return 0;
+
+  const intelligenceModifier = getAbilityModifier(abilityScores.intelligence);
+  return level + intelligenceModifier;
+};
+
+// Calculate maximum force/tech power level based on character level
+export const calculateMaxPowerLevel = (level: number): number => {
+  return Math.min(5, Math.ceil(level / 4));
+};
+
+// Check if a character meets the prerequisites for a power
+export const meetsPowerPrerequisites = (character: any, power: any): boolean => {
+  if (!power.prerequisites) return true;
+
+  return !power.prerequisites.some((prereq: string) => {
+    if (prereq.startsWith('Level ')) {
+      const requiredLevel = parseInt(prereq.split(' ')[1]);
+      return character.level < requiredLevel;
+    }
+    // Add more prerequisite checks as needed
+    return false;
+  });
+};
+
+// Point buy system constants
+export const MAX_POINT_BUY_POINTS = 27;
+export const ABILITY_SCORE_COSTS = {
+  8: 0,
+  9: 1,
+  10: 2,
+  11: 3,
+  12: 4,
+  13: 5,
+  14: 7,
+  15: 9
 };
 
 // Aliases for getAbilityModifier for backward compatibility
@@ -46,17 +108,9 @@ export const calculateModifier = getAbilityModifier;
 export const getAbilityModifiers = getAbilityModifier; // Add plural version for compatibility
 
   // Define MAX_POINT_BUY_POINTS for ability score point-buy system
-export const MAX_POINT_BUY_POINTS = 27;
 
-// Calculate proficiency bonus based on character level
-export const getProficiencyBonus = (level: number): number => {
-  // Proficiency bonus starts at +2 for level 1 and 
-  return Math.floor((level - 1) / 4) + 2;
-};
 
-// Alias for getProficiencyBonus for backward compatibility
-export const calculateProficiencyBonus = getProficiencyBonus;
-  // Calculate total character level from all classes
+// Calculate total character level from all classes
 export const getCharacterLevel = (classes: CharacterClass[]): number => {
   return classes.reduce((total, characterClass) => total + characterClass.level, 0);
 };
@@ -64,55 +118,6 @@ export const getCharacterLevel = (classes: CharacterClass[]): number => {
 // Alias for getCharacterLevel
 export const calculateCharacterLevel = getCharacterLevel;
 
-// Calculate force points based on class, level, and ability scores
-export const calculateForcePoints = (
-  character: Character,
-  characterClass: Class,
-  level: number,
-  abilityScores: AbilityScores
-): number => {
-  // Check if the class uses the Force
-  if (!characterClass.forceUser) {
-    return 0;
-  }
-
-  // Determine which ability score to use for Force casting
-  let forceCastingAbility: keyof AbilityScores = 'wisdom';
-  if (characterClass.forceCastingAbility) {
-    forceCastingAbility = characterClass.forceCastingAbility as keyof AbilityScores;
-  }
-
-  // Calculate force points based on level and ability modifier
-  const abilityModifier = getAbilityModifier(abilityScores[forceCastingAbility]);
-  const forcePoints = Math.max(1, characterClass.level + abilityModifier);
-
-  return forcePoints;
-};
-
-// Calculate tech points based on class, level, and ability scores
-export const calculateTechPoints = (
-  character: Character,
-  characterClass: Class,
-  level: number,
-  abilityScores: AbilityScores
-): number => {
-  // Check if the class uses tech
-  if (!characterClass.techUser) {
-    return 0;
-  }
-
-  // Determine which ability score to use for Tech casting
-  let techCastingAbility: keyof AbilityScores = 'intelligence';
-  if (characterClass.techCastingAbility) {
-    techCastingAbility = characterClass.techCastingAbility as keyof AbilityScores;
-  }
-
-  // Calculate tech points based on level and ability modifier
-  const abilityModifier = getAbilityModifier(abilityScores[techCastingAbility]);
-  const techPoints = Math.max(1, characterClass.level + abilityModifier);
-
-  return techPoints;
-};
 
 // Calculate maximum hit points based on class, level, constitution, and species
   export const calculateHitPoints = (
@@ -139,11 +144,11 @@ export const calculateTechPoints = (
   // Process each class the character has levels in
   characterClasses.forEach((classInfo, classIndex) => {
     const { class: charClass, level } = classInfo;
-    
+
     // For first level in first class, maximum hit points are granted
     if (classIndex === 0) {
       totalHP += charClass.hitDie + constitutionModifier;
-      
+
       // For remaining levels, either use provided hit dice results or average
       if (level > 1) {
         for (let i = 1; i < level; i++) {
@@ -167,12 +172,12 @@ export const calculateTechPoints = (
       }
     }
   });
-  
+
   // Apply any species-specific HP bonuses
   if (species.hpBonus) {
     totalHP += species.hpBonus;
   }
-  
+
   return totalHP;
 };
 
@@ -185,13 +190,13 @@ export const calculateSkillModifier = (
   hasExpertise: boolean
 ): number => {
   const abilityModifier = getAbilityModifier(abilityScores[skill.ability as keyof AbilityScores]);
-  
+
   if (hasExpertise) {
     return abilityModifier + (proficiencyBonus * 2);
   } else if (isProficient) {
     return abilityModifier + proficiencyBonus;
   }
-  
+
   return abilityModifier;
 };
 
@@ -203,11 +208,11 @@ export const calculateSavingThrowModifier = (
   isProficient: boolean
 ): number => {
   const abilityModifier = getAbilityModifier(abilityScores[ability]);
-  
+
   if (isProficient) {
     return abilityModifier + proficiencyBonus;
   }
-  
+
   return abilityModifier;
 };
 
@@ -226,7 +231,7 @@ export const calculateCarryingCapacity = (
 ): { normal: number; heavy: number; maximum: number } => {
   // Base carrying capacity is strength score × 15
   let baseCapacity = abilityScores.strength * 15;
-  
+
   // Adjust for size
   const sizeMultipliers = {
     tiny: 0.5,
@@ -236,10 +241,10 @@ export const calculateCarryingCapacity = (
     huge: 4,
     gargantuan: 8
   };
-  
+
   const sizeMultiplier = sizeMultipliers[species.size.toLowerCase() as keyof typeof sizeMultipliers] || 1;
   baseCapacity *= sizeMultiplier;
-  
+
   return {
     normal: baseCapacity,
     heavy: baseCapacity * 2,
@@ -256,13 +261,13 @@ export const calculatePassivePerception = (
 ): number => {
   const wisdomModifier = getAbilityModifier(abilityScores.wisdom);
   let bonus = 0;
-  
+
   if (hasExpertise) {
     bonus = proficiencyBonus * 2;
   } else if (isProficient) {
     bonus = proficiencyBonus;
   }
-  
+
   return 10 + wisdomModifier + bonus;
 };
 
@@ -274,12 +279,12 @@ export const calculateArmorClass = (
   armorBonus: number = 0
 ): number => {
   const dexModifier = getAbilityModifier(abilityScores.dexterity);
-  
+
   // No armor (unarmored defense)
   if (!armorType) {
     return 10 + dexModifier + armorBonus;
   }
-  
+
   // Different armor types
   switch (armorType.toLowerCase()) {
     case 'light armor':
@@ -291,7 +296,7 @@ export const calculateArmorClass = (
     default:
       return 10 + dexModifier + armorBonus;
   }
-  
+
   // Add shield bonus if applicable
   if (shield) {
     return (10 + dexModifier + armorBonus) + 2;
@@ -306,13 +311,13 @@ export const checkMulticlassPrerequisites = (
   if (!targetClass.multiclassPrerequisites) {
     return true;
   }
-  
+
   for (const [ability, minScore] of Object.entries(targetClass.multiclassPrerequisites)) {
     if (abilityScores[ability as keyof AbilityScores] < minScore) {
       return false;
     }
   }
-  
+
   return true;
 };
 
@@ -326,7 +331,7 @@ export const calculatePowerSlots = (
   if (!characterClass.forceUser && !characterClass.techUser) {
     return {};
   }
-  
+
   // Slot table indexed by level and slot level
   const fullCasterTable = {
     1: { 1: 2, 2: 0, 3: 0, 4: 0, 5: 0 },
@@ -350,7 +355,7 @@ export const calculatePowerSlots = (
     19: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 3 },
     20: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 3 }
   };
-  
+
   const halfCasterTable = {
     1: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
     2: { 1: 2, 2: 0, 3: 0, 4: 0, 5: 0 },
@@ -373,7 +378,7 @@ export const calculatePowerSlots = (
     19: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 },
     20: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 }
   };
-  
+
   const thirdCasterTable = {
     1: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
     2: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
@@ -396,10 +401,10 @@ export const calculatePowerSlots = (
     19: { 1: 4, 2: 3, 3: 3, 4: 1, 5: 0 },
     20: { 1: 4, 2: 3, 3: 3, 4: 1, 5: 0 }
   };
-  
+
   // Choose the appropriate table based on class casting type
   let powerTable;
-  
+
   if (characterClass.spellcastingType === 'full') {
     powerTable = fullCasterTable;
   } else if (characterClass.spellcastingType === 'half') {
@@ -407,10 +412,10 @@ export const calculatePowerSlots = (
   } else {
     powerTable = thirdCasterTable;
   }
-  
+
   // Cap at level 20
   const cappedLevel = Math.min(level, 20);
-  
+
   return powerTable[cappedLevel];
 };
 
@@ -423,17 +428,17 @@ export const calculateExperienceForLevel = (level: number): number => {
 
   if (level < 1) return 0;
   if (level > 20) return experienceTable[19];
-  
+
   return experienceTable[level - 1];
 };
 
 // Calculate experience needed for next level
 export const experienceToNextLevel = (currentLevel: number): number => {
   if (currentLevel >= 20) return 0; // Already max level
-  
+
   const currentLevelXP = calculateExperienceForLevel(currentLevel);
   const nextLevelXP = calculateExperienceForLevel(currentLevel + 1);
-  
+
   return nextLevelXP - currentLevelXP;
 };
 
@@ -449,7 +454,7 @@ export const hasWeaponProficiency = (
       return true;
     }
   }
-  
+
   return false;
 };
 
@@ -465,7 +470,7 @@ export const hasArmorProficiency = (
       return true;
     }
   }
-  
+
   return false;
 };
 
@@ -475,17 +480,17 @@ export const getStartingEquipment = (
   background: Background
 ): string[] => {
   const equipment: string[] = [];
-  
+
   // Add class starting equipment
   if (characterClass.startingEquipment) {
     equipment.push(...characterClass.startingEquipment);
   }
-  
+
   // Add background equipment
   if (background.equipment) {
     equipment.push(...background.equipment);
   }
-  
+
   return equipment;
 };
 
@@ -497,7 +502,7 @@ export const calculateStartingCredits = (
 ): number => {
   // Base credits from background
   let credits = background.startingCredits || 0;
-  
+
   // Add class-based credits (either rolled or average)
   if (rollResult) {
     credits += rollResult;
@@ -505,37 +510,16 @@ export const calculateStartingCredits = (
     // Use average class starting credits
     const dieType = characterClass.startingCreditsDie || 4;
     const dieCount = characterClass.startingCreditsMultiplier || 3;
-    
+
     // Average roll is (dieType + 1) / 2
     const averageRoll = (dieType + 1) / 2;
     credits += Math.floor(averageRoll * dieCount) * 10;
   }
-  
+
   return credits;
 };
 
 // Utility function to check power prerequisites
-export const meetsPowerPrerequisites = (
-  character: Character,
-  powerLevel: number,
-  requiredClass?: string,
-  minimumClassLevel?: number
-): boolean => {
-  // Check if character has the required class at the minimum level
-  if (requiredClass && minimumClassLevel) {
-    const characterClass = character.classes.find(c => c.classId === requiredClass);
-    if (!characterClass || characterClass.level < minimumClassLevel) {
-      return false;
-    }
-  }
-  
-  // Check if character level is sufficient for power level
-  const characterLevel = getCharacterLevel(character.classes);
-  const requiredLevel = powerLevel * 2 - 1; // Level 1 power = level 1, level 2 power = level 3, etc.
-  
-  return characterLevel >= requiredLevel;
-};
-
 
 // Calculate maximum power points available based on character level and casting ability
 export const calculateMaxPowerPoints = (
@@ -566,14 +550,3 @@ export const calculateMaxPowerPoints = (
   // Default to full caster calculation
   return Math.max(1, basePoints);
 };
-
-// Calculate maximum power level available based on character level
-export const calculateMaxPowerLevel = (level: number): number => {
-  if (level < 3) return 1;
-  if (level < 5) return 2;
-  if (level < 7) return 3;
-  if (level < 9) return 4;
-  return 5;
-};
-
-
