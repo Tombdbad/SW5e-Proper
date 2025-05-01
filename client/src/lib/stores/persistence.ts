@@ -1,456 +1,451 @@
+import { openDB, DBSchema, IDBPDatabase } from 'idb';
+import { StateStorage } from 'zustand/middleware';
 
-/**
- * Advanced persistence implementation for character data
- * Supports both localStorage and IndexedDB
- */
-
-import { openDB, IDBPDatabase } from 'idb';
-
-// Database configuration
-const DB_NAME = 'sw5e-character-db';
-const DB_VERSION = 1;
-const CHARACTERS_STORE = 'characters';
-const METADATA_STORE = 'metadata';
-
-interface StorageAdapter {
-  getItem: (key: string) => Promise<any>;
-  setItem: (key: string, value: any) => Promise<void>;
-  removeItem: (key: string) => Promise<void>;
-  clear: () => Promise<void>;
+// Define our database schema
+interface SW5EDatabase extends DBSchema {
+  characters: {
+    key: string;
+    value: any;
+  };
+  campaigns: {
+    key: string;
+    value: any;
+  };
+  gameState: {
+    key: string;
+    value: any;
+  };
+  combatState: {
+    key: string;
+    value: any;
+  };
+  syncLog: {
+    key: string;
+    value: {
+      id: string;
+      timestamp: number;
+      operation: 'create' | 'update' | 'delete';
+      entityType: 'character' | 'campaign';
+      entityId: string;
+      data: any;
+      synced: boolean;
+    };
+  };
 }
 
-// Factory function to create storage adapters
-export const createStorage = (preferIndexedDB = true): StorageAdapter => {
-  // Feature detection
-  const hasIndexedDB = typeof indexedDB !== 'undefined';
-  const hasLocalStorage = typeof localStorage !== 'undefined';
-  
-  // Determine which storage to use based on preferences and availability
-  if (preferIndexedDB && hasIndexedDB) {
-    return createIndexedDBStorage();
-  } else if (hasLocalStorage) {
-    return createLocalStorage();
-  } else {
-    return createMemoryStorage();
-  }
+// Database version
+const DB_VERSION = 1;
+const DB_NAME = 'sw5e-app-storage';
+
+// Create and initialize the database
+const initDB = async (): Promise<IDBPDatabase<SW5EDatabase>> => {
+  return openDB<SW5EDatabase>(DB_NAME, DB_VERSION, {
+    upgrade(db) {
+      // Characters store
+      if (!db.objectStoreNames.contains('characters')) {
+        db.createObjectStore('characters');
+      }
+
+      // Campaigns store
+      if (!db.objectStoreNames.contains('campaigns')) {
+        db.createObjectStore('campaigns');
+      }
+
+      // Game state store
+      if (!db.objectStoreNames.contains('gameState')) {
+        db.createObjectStore('gameState');
+      }
+
+      // Combat state store
+      if (!db.objectStoreNames.contains('combatState')) {
+        db.createObjectStore('combatState');
+      }
+
+      // Sync log store with index
+      if (!db.objectStoreNames.contains('syncLog')) {
+        const syncStore = db.createObjectStore('syncLog', { keyPath: 'id' });
+        syncStore.createIndex('by_synced', 'synced');
+        syncStore.createIndex('by_entity', ['entityType', 'entityId']);
+      }
+    },
+  });
 };
 
-// LocalStorage adapter
-const createLocalStorage = (): StorageAdapter => {
-  return {
-    getItem: async (key: string) => {
-      try {
-        const value = localStorage.getItem(key);
-        return value ? JSON.parse(value) : null;
-      } catch (error) {
-        console.error('Error retrieving from localStorage:', error);
-        return null;
+// Initialize database connection
+let dbPromise = initDB();
+
+// Create a storage object for Zustand persist middleware that uses IndexedDB
+export const idbStorage: StateStorage = {
+  getItem: async (name: string): Promise<string | null> => {
+    try {
+      const db = await dbPromise;
+      const [type, key] = name.split(':');
+
+      // Handle different store types
+      if (type && key) {
+        switch (type) {
+          case 'character':
+            return JSON.stringify(await db.get('characters', key));
+          case 'campaign':
+            return JSON.stringify(await db.get('campaigns', key));
+          case 'gameState':
+            return JSON.stringify(await db.get('gameState', key));
+          case 'combatState':
+            return JSON.stringify(await db.get('combatState', key));
+          default:
+            return JSON.stringify(await db.get(type as any, key));
+        }
       }
-    },
-    
-    setItem: async (key: string, value: any) => {
-      try {
-        localStorage.setItem(key, JSON.stringify(value));
-      } catch (error) {
-        console.error('Error saving to localStorage:', error);
-        throw error;
+
+      // Full store retrieval (for Zustand persist)
+      return JSON.stringify(await db.get('gameState', name));
+    } catch (error) {
+      console.error('Error retrieving from IndexedDB:', error);
+      return null;
+    }
+  },
+
+  setItem: async (name: string, value: string): Promise<void> => {
+    try {
+      const db = await dbPromise;
+      const [type, key] = name.split(':');
+      const parsedValue = JSON.parse(value);
+
+      // Handle different store types
+      if (type && key) {
+        switch (type) {
+          case 'character':
+            await db.put('characters', parsedValue, key);
+            // Log sync operation
+            await db.add('syncLog', {
+              id: `${Date.now()}-${key}`,
+              timestamp: Date.now(),
+              operation: 'update',
+              entityType: 'character',
+              entityId: key,
+              data: parsedValue,
+              synced: false,
+            });
+            break;
+          case 'campaign':
+            await db.put('campaigns', parsedValue, key);
+            // Log sync operation
+            await db.add('syncLog', {
+              id: `${Date.now()}-${key}`,
+              timestamp: Date.now(),
+              operation: 'update',
+              entityType: 'campaign',
+              entityId: key,
+              data: parsedValue,
+              synced: false,
+            });
+            break;
+          case 'gameState':
+            await db.put('gameState', parsedValue, key);
+            break;
+          case 'combatState':
+            await db.put('combatState', parsedValue, key);
+            break;
+          default:
+            await db.put(type as any, parsedValue, key);
+        }
+      } else {
+        // Full store storage (for Zustand persist)
+        await db.put('gameState', parsedValue, name);
       }
-    },
-    
-    removeItem: async (key: string) => {
-      try {
-        localStorage.removeItem(key);
-      } catch (error) {
-        console.error('Error removing from localStorage:', error);
-        throw error;
+    } catch (error) {
+      console.error('Error storing in IndexedDB:', error);
+    }
+  },
+
+  removeItem: async (name: string): Promise<void> => {
+    try {
+      const db = await dbPromise;
+      const [type, key] = name.split(':');
+
+      // Handle different store types
+      if (type && key) {
+        switch (type) {
+          case 'character':
+            await db.delete('characters', key);
+            // Log sync operation
+            await db.add('syncLog', {
+              id: `${Date.now()}-${key}`,
+              timestamp: Date.now(),
+              operation: 'delete',
+              entityType: 'character',
+              entityId: key,
+              data: null,
+              synced: false,
+            });
+            break;
+          case 'campaign':
+            await db.delete('campaigns', key);
+            // Log sync operation
+            await db.add('syncLog', {
+              id: `${Date.now()}-${key}`,
+              timestamp: Date.now(),
+              operation: 'delete',
+              entityType: 'campaign',
+              entityId: key,
+              data: null,
+              synced: false,
+            });
+            break;
+          case 'gameState':
+            await db.delete('gameState', key);
+            break;
+          case 'combatState':
+            await db.delete('combatState', key);
+            break;
+          default:
+            await db.delete(type as any, key);
+        }
+      } else {
+        // Full store removal
+        await db.delete('gameState', name);
       }
-    },
-    
-    clear: async () => {
-      try {
-        localStorage.clear();
-      } catch (error) {
-        console.error('Error clearing localStorage:', error);
-        throw error;
-      }
-    },
-  };
+    } catch (error) {
+      console.error('Error removing from IndexedDB:', error);
+    }
+  },
 };
 
-// IndexedDB adapter
-const createIndexedDBStorage = (): StorageAdapter => {
-  let db: IDBPDatabase | null = null;
-  
-  const getDatabase = async (): Promise<IDBPDatabase> => {
-    if (db) return db;
-    
-    db = await openDB(DB_NAME, DB_VERSION, {
-      upgrade(database) {
-        // Create character store with id as key path
-        if (!database.objectStoreNames.contains(CHARACTERS_STORE)) {
-          const characterStore = database.createObjectStore(CHARACTERS_STORE, {
-            keyPath: 'id',
-          });
-          characterStore.createIndex('updatedAt', 'updatedAt');
-        }
-        
-        // Create metadata store for app settings
-        if (!database.objectStoreNames.contains(METADATA_STORE)) {
-          database.createObjectStore(METADATA_STORE, {
-            keyPath: 'key',
-          });
-        }
-      },
-    });
-    
-    return db;
-  };
-  
-  return {
-    getItem: async (key: string) => {
-      try {
-        const database = await getDatabase();
-        
-        if (key === 'sw5e-character-storage') {
-          // Get all characters for the main store
-          const characters = await database.getAll(CHARACTERS_STORE);
-          const activeCharacterId = await database.get(METADATA_STORE, 'activeCharacterId');
-          
-          // Convert array of characters to an object map
-          const charactersMap = characters.reduce((map, character) => {
-            map[character.id] = character;
-            return map;
-          }, {} as Record<string, any>);
-          
-          return {
-            characters: charactersMap,
-            activeCharacterId: activeCharacterId ? activeCharacterId.value : null,
-          };
-        } else {
-          // Handle other keys (e.g., metadata)
-          const result = await database.get(METADATA_STORE, key);
-          return result ? result.value : null;
-        }
-      } catch (error) {
-        console.error('Error retrieving from IndexedDB:', error);
-        return null;
-      }
-    },
-    
-    setItem: async (key: string, value: any) => {
-      try {
-        const database = await getDatabase();
-        
-        if (key === 'sw5e-character-storage') {
-          // Store each character separately
-          const { characters, activeCharacterId } = value;
-          
-          const tx = database.transaction([CHARACTERS_STORE, METADATA_STORE], 'readwrite');
-          
-          // Store active character ID
-          await tx.objectStore(METADATA_STORE).put({
-            key: 'activeCharacterId',
-            value: activeCharacterId,
-          });
-          
-          // Store each character
-          const characterPromises = Object.values(characters).map((character: any) => 
-            tx.objectStore(CHARACTERS_STORE).put(character)
-          );
-          
-          await Promise.all([...characterPromises, tx.done]);
-        } else {
-          // Handle other keys
-          await database.put(METADATA_STORE, { key, value });
-        }
-      } catch (error) {
-        console.error('Error saving to IndexedDB:', error);
-        throw error;
-      }
-    },
-    
-    removeItem: async (key: string) => {
-      try {
-        const database = await getDatabase();
-        
-        if (key === 'sw5e-character-storage') {
-          // Clear all characters and metadata
-          const tx = database.transaction([CHARACTERS_STORE, METADATA_STORE], 'readwrite');
-          await tx.objectStore(CHARACTERS_STORE).clear();
-          await tx.objectStore(METADATA_STORE).delete('activeCharacterId');
-          await tx.done;
-        } else {
-          // Handle other keys
-          await database.delete(METADATA_STORE, key);
-        }
-      } catch (error) {
-        console.error('Error removing from IndexedDB:', error);
-        throw error;
-      }
-    },
-    
-    clear: async () => {
-      try {
-        const database = await getDatabase();
-        const tx = database.transaction([CHARACTERS_STORE, METADATA_STORE], 'readwrite');
-        await tx.objectStore(CHARACTERS_STORE).clear();
-        await tx.objectStore(METADATA_STORE).clear();
-        await tx.done;
-      } catch (error) {
-        console.error('Error clearing IndexedDB:', error);
-        throw error;
-      }
-    },
-  };
-};
+// Export additional utility functions for sync management
+export const syncUtils = {
+  // Get all pending sync operations
+  getPendingSyncOperations: async () => {
+    const db = await dbPromise;
+    return db.getAllFromIndex('syncLog', 'by_synced', false);
+  },
 
-// In-memory storage adapter (fallback)
-const createMemoryStorage = (): StorageAdapter => {
-  const storage = new Map<string, any>();
-  
-  return {
-    getItem: async (key: string) => {
-      return storage.get(key) || null;
-    },
-    
-    setItem: async (key: string, value: any) => {
-      storage.set(key, value);
-    },
-    
-    removeItem: async (key: string) => {
-      storage.delete(key);
-    },
-    
-    clear: async () => {
-      storage.clear();
-    },
-  };
-};
+  // Mark operation as synced
+  markAsSynced: async (id: string) => {
+    const db = await dbPromise;
+    const operation = await db.get('syncLog', id);
+    if (operation) {
+      operation.synced = true;
+      await db.put('syncLog', operation);
+    }
+  },
 
-// Multi-tab synchronization helper
-export const createSyncedStorage = (baseStorage = createStorage()): StorageAdapter => {
-  const broadcastChannel = typeof BroadcastChannel !== 'undefined' 
-    ? new BroadcastChannel('sw5e-storage-sync')
-    : null;
-  
-  // Listen for changes from other tabs
-  if (broadcastChannel) {
-    broadcastChannel.onmessage = (event) => {
-      const { action, key, value } = event.data;
-      
-      // Dispatch a custom event for the store to handle
-      window.dispatchEvent(
-        new CustomEvent('sw5e-storage-update', {
-          detail: { action, key, value },
-        })
-      );
+  // Batch sync multiple operations
+  batchSync: async (operations: string[]) => {
+    const db = await dbPromise;
+    const tx = db.transaction('syncLog', 'readwrite');
+
+    for (const id of operations) {
+      const operation = await tx.store.get(id);
+      if (operation) {
+        operation.synced = true;
+        await tx.store.put(operation);
+      }
+    }
+
+    await tx.done;
+  },
+
+  // Get entity sync history
+  getEntitySyncHistory: async (entityType: 'character' | 'campaign', entityId: string) => {
+    const db = await dbPromise;
+    return db.getAllFromIndex('syncLog', 'by_entity', [entityType, entityId]);
+  },
+
+  // Clear sync history older than a certain date
+  clearOldSyncHistory: async (olderThan: Date) => {
+    const db = await dbPromise;
+    const tx = db.transaction('syncLog', 'readwrite');
+    const timestamp = olderThan.getTime();
+
+    // Use a cursor to efficiently scan and delete
+    let cursor = await tx.store.openCursor();
+
+    while (cursor) {
+      if (cursor.value.timestamp < timestamp && cursor.value.synced) {
+        await cursor.delete();
+      }
+      cursor = await cursor.continue();
+    }
+
+    await tx.done;
+  },
+
+  // Export all data
+  exportAllData: async () => {
+    const db = await dbPromise;
+
+    const characters = await db.getAll('characters');
+    const campaigns = await db.getAll('campaigns');
+    const gameState = await db.getAll('gameState');
+
+    return {
+      characters,
+      campaigns,
+      gameState,
+      exportDate: new Date().toISOString(),
+      version: DB_VERSION,
     };
-  }
-  
-  return {
-    getItem: async (key: string) => {
-      return baseStorage.getItem(key);
-    },
-    
-    setItem: async (key: string, value: any) => {
-      await baseStorage.setItem(key, value);
-      
-      // Notify other tabs
-      if (broadcastChannel) {
-        broadcastChannel.postMessage({
-          action: 'setItem',
-          key,
-          value,
-        });
-      }
-    },
-    
-    removeItem: async (key: string) => {
-      await baseStorage.removeItem(key);
-      
-      // Notify other tabs
-      if (broadcastChannel) {
-        broadcastChannel.postMessage({
-          action: 'removeItem',
-          key,
-        });
-      }
-    },
-    
-    clear: async () => {
-      await baseStorage.clear();
-      
-      // Notify other tabs
-      if (broadcastChannel) {
-        broadcastChannel.postMessage({
-          action: 'clear',
-        });
-      }
-    },
-  };
-};
+  },
 
-// Character versioning and conflict resolution
-export const createVersionedStorage = (baseStorage = createStorage()): StorageAdapter => {
-  return {
-    getItem: async (key: string) => {
-      return baseStorage.getItem(key);
-    },
-    
-    setItem: async (key: string, value: any) => {
-      // For the character store, handle versioning
-      if (key === 'sw5e-character-storage') {
-        // Get the current stored value
-        const storedValue = await baseStorage.getItem(key);
-        
-        if (storedValue) {
-          const { characters: storedCharacters } = storedValue;
-          const { characters: newCharacters } = value;
-          
-          // Check for conflicts
-          const mergedCharacters = { ...newCharacters };
-          
-          for (const id in newCharacters) {
-            const newChar = newCharacters[id];
-            const storedChar = storedCharacters[id];
-            
-            // If a conflict is detected (same ID but different versions)
-            if (storedChar && storedChar.version !== newChar.version) {
-              // Determine which is newer
-              const storedDate = new Date(storedChar.updatedAt).getTime();
-              const newDate = new Date(newChar.updatedAt).getTime();
-              
-              if (storedDate > newDate) {
-                // The stored version is newer, keep it
-                mergedCharacters[id] = storedChar;
-                console.warn(`Conflict resolved: Used stored version of character ${id}`);
-              } else {
-                // The new version is newer, keep it (already in mergedCharacters)
-                console.warn(`Conflict resolved: Used new version of character ${id}`);
-              }
-            }
+  // Import data
+  importData: async (data: any) => {
+    if (!data || !data.version) {
+      throw new Error('Invalid import data format');
+    }
+
+    const db = await dbPromise;
+    const tx = db.transaction(['characters', 'campaigns', 'gameState'], 'readwrite');
+
+    // Import characters
+    if (data.characters && Array.isArray(data.characters)) {
+      for (const [key, character] of Object.entries(data.characters)) {
+        await tx.objectStore('characters').put(character, key);
+      }
+    }
+
+    // Import campaigns
+    if (data.campaigns && Array.isArray(data.campaigns)) {
+      for (const [key, campaign] of Object.entries(data.campaigns)) {
+        await tx.objectStore('campaigns').put(campaign, key);
+      }
+    }
+
+    // Import game state
+    if (data.gameState && Array.isArray(data.gameState)) {
+      for (const [key, state] of Object.entries(data.gameState)) {
+        await tx.objectStore('gameState').put(state, key);
+      }
+    }
+
+    await tx.done;
+    return true;
+  },
+
+  // Check for conflicts when importing
+  checkImportConflicts: async (data: any) => {
+    if (!data || !data.characters) {
+      return { hasConflicts: false, conflicts: [] };
+    }
+
+    const db = await dbPromise;
+    const conflicts = [];
+
+    // Check character conflicts
+    if (data.characters) {
+      for (const [key, importedChar] of Object.entries(data.characters)) {
+        const existingChar = await db.get('characters', key);
+        if (existingChar) {
+          // Compare versions or timestamps
+          const importVer = importedChar.version || 0;
+          const existingVer = existingChar.version || 0;
+
+          if (importVer !== existingVer) {
+            conflicts.push({
+              type: 'character',
+              id: key,
+              importedVersion: importVer,
+              existingVersion: existingVer,
+            });
           }
-          
-          // Save merged characters
-          await baseStorage.setItem(key, {
-            ...value,
-            characters: mergedCharacters,
-          });
-          
-          return;
         }
       }
-      
-      // For other keys or if no conflicts, just store the value
-      await baseStorage.setItem(key, value);
-    },
-    
-    removeItem: async (key: string) => {
-      await baseStorage.removeItem(key);
-    },
-    
-    clear: async () => {
-      await baseStorage.clear();
-    },
-  };
+    }
+
+    // Similar checks for campaigns if needed
+
+    return {
+      hasConflicts: conflicts.length > 0,
+      conflicts,
+    };
+  },
+
+  // Resolve a conflict by choosing one version
+  resolveConflict: async (type: 'character' | 'campaign', id: string, keepImported: boolean, importedData: any) => {
+    const db = await dbPromise;
+
+    if (keepImported) {
+      // Use the imported version
+      await db.put(type === 'character' ? 'characters' : 'campaigns', importedData, id);
+    }
+    // Otherwise keep existing (do nothing)
+
+    return true;
+  },
+
+  // Handle multiple browser tabs
+  registerTabSyncListener: (onExternalChange: (key: string, newValue: any) => void) => {
+    // Listen for storage events from other tabs
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key && e.key.startsWith('sw5e-')) {
+        try {
+          const newValue = e.newValue ? JSON.parse(e.newValue) : null;
+          onExternalChange(e.key, newValue);
+        } catch (error) {
+          console.error('Error handling external storage change:', error);
+        }
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+
+    // Return a function to remove the listener
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  },
 };
 
-// Export a combined storage solution
-export const createCustomStorage = () => {
-  const baseStorage = createStorage(true); // Prefer IndexedDB
-  const syncedStorage = createSyncedStorage(baseStorage);
-  return createVersionedStorage(syncedStorage);
-};
+// Export for direct database access in advanced scenarios
+export const getDB = () => dbPromise;
 
-// Helper for export/import with version migration
+
+// Adapted export/import functions for the new database
 export const exportCharacters = async (characterIds?: string[]): Promise<string> => {
-  const storage = createStorage();
-  const data = await storage.getItem('sw5e-character-storage');
-  
-  if (!data || !data.characters) {
-    throw new Error('No characters found to export');
-  }
-  
-  // Filter characters if specific IDs are provided
-  const characters = characterIds
-    ? Object.fromEntries(
-        Object.entries(data.characters).filter(([id]) => 
-          characterIds.includes(id)
-        )
-      )
-    : data.characters;
-  
+  const db = await dbPromise;
+  const characters = await db.getAll('characters');
+
+  //Filter characters if specific IDs are provided
+  const filteredCharacters = characterIds ? characters.filter(char => characterIds.includes(char.id)) : characters;
+
   return JSON.stringify({
-    characters,
+    characters: filteredCharacters,
     version: 1,
     exportDate: new Date().toISOString(),
   });
 };
 
-export const importCharacters = async (
-  jsonData: string,
-  options: {
-    replaceAll?: boolean;
-    handleConflicts?: 'keep' | 'replace' | 'rename';
-  } = {}
-): Promise<string[]> => {
+export const importCharacters = async (jsonData: string, options: { replaceAll?: boolean; handleConflicts?: 'keep' | 'replace' | 'rename'; } = {}): Promise<string[]> => {
   const { replaceAll = false, handleConflicts = 'rename' } = options;
-  
+
   try {
     const importedData = JSON.parse(jsonData);
-    const storage = createStorage();
-    const currentData = await storage.getItem('sw5e-character-storage') || { characters: {} };
-    
-    // Validate the imported data
-    if (!importedData.characters || typeof importedData.characters !== 'object') {
-      throw new Error('Invalid character data in import');
-    }
-    
-    // Handle the import
+    const db = await dbPromise;
+    const tx = db.transaction('characters', 'readwrite');
+    const importedIds: string[] = [];
+
     if (replaceAll) {
-      // Replace all characters
-      await storage.setItem('sw5e-character-storage', {
-        ...currentData,
-        characters: importedData.characters,
-      });
-      
-      return Object.keys(importedData.characters);
-    } else {
-      // Merge with existing characters
-      const mergedCharacters = { ...currentData.characters };
-      const importedIds: string[] = [];
-      
-      for (const [id, character] of Object.entries<any>(importedData.characters)) {
-        if (mergedCharacters[id] && handleConflicts !== 'replace') {
-          if (handleConflicts === 'keep') {
-            // Skip this character
-            continue;
-          } else if (handleConflicts === 'rename') {
-            // Create a new ID and rename the character
-            const newId = `${id}-${Date.now()}`;
-            mergedCharacters[newId] = {
-              ...character,
-              id: newId,
-              name: `${character.name} (Imported)`,
-              updatedAt: new Date().toISOString(),
-            };
-            importedIds.push(newId);
-          }
-        } else {
-          // Add or replace the character
-          mergedCharacters[id] = character;
-          importedIds.push(id);
-        }
-      }
-      
-      // Save the merged data
-      await storage.setItem('sw5e-character-storage', {
-        ...currentData,
-        characters: mergedCharacters,
-      });
-      
-      return importedIds;
+      await tx.store.clear();
     }
+
+    for (const character of importedData.characters) {
+      const existingChar = await tx.store.get(character.id);
+      if (existingChar && handleConflicts !== 'replace') {
+        if (handleConflicts === 'keep') {
+          continue;
+        } else {
+          const newId = `${character.id}-${Date.now()}`;
+          character.id = newId;
+          character.name = `${character.name} (Imported)`;
+          character.updatedAt = new Date().toISOString();
+          importedIds.push(newId);
+        }
+      } else {
+        importedIds.push(character.id);
+      }
+      await tx.store.put(character);
+    }
+    await tx.done;
+    return importedIds;
   } catch (error) {
     console.error('Error importing characters:', error);
     throw error;

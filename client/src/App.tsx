@@ -11,6 +11,8 @@ import GameBoard from "./pages/GameBoard";
 import GalacticMapView from "./pages/GalacticMapView";
 import NotFound from "./pages/not-found";
 import LoadingDemo from "./pages/LoadingDemo"; // Added import
+import { PerformanceMonitor } from './lib/performance/monitor'; // Added import
+
 
 function App() {
   const [loaded, setLoaded] = useState(false);
@@ -44,19 +46,21 @@ function App() {
   }
 
   return (
-    <StarfieldBackground starCount={300} speed={0.3} starColor="#FFFFDD">
-      <Toaster position="top-right" richColors />
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/character/create" element={<CharacterCreation />} />
-        <Route path="/character/manage/:id" element={<CharacterManagement />} />
-        <Route path="/campaign/:id" element={<CampaignView />} />
-        <Route path="/game/:campaignId" element={<GameBoard />} />
-        <Route path="/map/galaxy" element={<GalacticMapView />} />
-        <Route path="/loading-demo" element={<LoadingDemo />} /> {/* Added route */}
-        <Route path="*" element={<NotFound />} />
-      </Routes>
-    </StarfieldBackground>
+    <PerformanceMonitor> {/* Added PerformanceMonitor */}
+      <StarfieldBackground starCount={300} speed={0.3} starColor="#FFFFDD">
+        <Toaster position="top-right" richColors />
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/character/create" element={<CharacterCreation />} />
+          <Route path="/character/manage/:id" element={<CharacterManagement />} />
+          <Route path="/campaign/:id" element={<CampaignView />} />
+          <Route path="/game/:campaignId" element={<GameBoard />} />
+          <Route path="/map/galaxy" element={<GalacticMapView />} />
+          <Route path="/loading-demo" element={<LoadingDemo />} /> {/* Added route */}
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </StarfieldBackground>
+    </PerformanceMonitor> {/* Added PerformanceMonitor */}
   );
 }
 

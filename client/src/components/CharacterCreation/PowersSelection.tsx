@@ -1,223 +1,255 @@
-import React, { useState, useEffect } from 'react';
-import TranslucentPane from '../ui/TranslucentPane';
+
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useCharacter } from '../../lib/stores/useCharacter';
 import { Tab } from '@headlessui/react';
-import { FORCE_POWERS } from '@/lib/sw5e/forcePowers';
-import { TECH_POWERS } from '@/lib/sw5e/techPowers';
+import TranslucentPane from '../ui/TranslucentPane';
+import { Button } from '../ui/button';
+import { motion } from 'framer-motion';
+import { useForm, Controller } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
 
-function classNames(...classes: string[]) {
-  return classes.filter(Boolean).join(' ');
-}
+// Define schema for power selection
+const PowerSelectionSchema = z.object({
+  forcePowers: z.array(z.string()).optional(),
+  techPowers: z.array(z.string()).optional(),
+});
 
-interface PowersSelectionProps {
-  form: any;
-  getSelectedClass: () => any;
-}
+type PowerSelectionData = z.infer<typeof PowerSelectionSchema>;
 
-export default function PowersSelection({ form, getSelectedClass }: PowersSelectionProps) {
-  const { watch, setValue } = form;
-  const selectedClass = getSelectedClass();
+// Mock data until we have the real data
+const MOCK_FORCE_POWERS = [
+  { id: "fp1", name: "Force Push", level: 1, description: "Push a target away using the Force" },
+  { id: "fp2", name: "Force Pull", level: 1, description: "Pull a target toward you using the Force" },
+  { id: "fp3", name: "Force Lightning", level: 3, description: "Channel lightning from your fingertips" },
+  { id: "fp4", name: "Mind Trick", level: 2, description: "Influence the weak-minded" },
+  { id: "fp5", name: "Force Healing", level: 2, description: "Use the Force to heal wounds" },
+  { id: "fp6", name: "Force Choke", level: 3, description: "Choke a target using the Force" },
+];
 
-  const selectedPowers = watch('powers') || [];
+const MOCK_TECH_POWERS = [
+  { id: "tp1", name: "Energy Shield", level: 1, description: "Create a protective energy shield" },
+  { id: "tp2", name: "Overload Systems", level: 2, description: "Overload electronic systems causing damage" },
+  { id: "tp3", name: "Holographic Disguise", level: 2, description: "Create a holographic disguise" },
+  { id: "tp4", name: "Sonic Dampening", level: 1, description: "Dampen sound in an area" },
+  { id: "tp5", name: "Targeting Sync", level: 1, description: "Enhance targeting systems" },
+];
 
-  const isForceUser = selectedClass?.powerType === 'force';
-  const isTechUser = selectedClass?.powerType === 'tech';
-
-  const [selectedForce, setSelectedForce] = useState<string[]>([]);
-  const [selectedTech, setSelectedTech] = useState<string[]>([]);
-
-  // Initialize selected powers from form data
-  useEffect(() => {
-    const forcePowers = selectedPowers
-      .filter((p: any) => p.type === 'force')
-      .map((p: any) => p.id);
-
-    const techPowers = selectedPowers
-      .filter((p: any) => p.type === 'tech')
-      .map((p: any) => p.id);
-
-    setSelectedForce(forcePowers);
-    setSelectedTech(techPowers);
-  }, [selectedPowers]);
-
-  // Group powers by level
-  const groupByLevel = (powers: any[]) => {
-    return powers.reduce((acc: any, power: any) => {
-      const level = power.level;
-      if (!acc[level]) acc[level] = [];
-      acc[level].push(power);
-      return acc;
-    }, {});
-  };
-
-  const forcePowersByLevel = groupByLevel(FORCE_POWERS);
-  const techPowersByLevel = groupByLevel(TECH_POWERS);
-
-  // Handle power selection
-  const togglePower = (powerId: string, powerType: 'force' | 'tech') => {
-    const powerList = powerType === 'force' ? selectedForce : selectedTech;
-    const setPowerList = powerType === 'force' ? setSelectedForce : setSelectedTech;
-
-    if (powerList.includes(powerId)) {
-      setPowerList(powerList.filter(id => id !== powerId));
-    } else {
-      // Check max powers logic here
-      setPowerList([...powerList, powerId]);
+export default function PowersSelection() {
+  const { character } = useCharacter();
+  const { actions } = useCharacter();
+  
+  // Store selected powers locally to avoid re-renders
+  const [selectedForcePowers, setSelectedForcePowers] = useState<string[]>([]);
+  const [selectedTechPowers, setSelectedTechPowers] = useState<string[]>([]);
+  
+  // Set up form with react-hook-form
+  const { control, handleSubmit, setValue, watch } = useForm<PowerSelectionData>({
+    resolver: zodResolver(PowerSelectionSchema),
+    defaultValues: {
+      forcePowers: [],
+      techPowers: [],
     }
-
-    // Update the form values
-    const updatedPowers = [
-      ...selectedPowers.filter((p: any) => p.type !== powerType),
-      ...getPowersFromSelected(powerType)
-    ];
-
-    setValue('powers', updatedPowers);
-  };
-
-  // Convert selected power IDs to actual power objects
-  const getPowersFromSelected = (powerType: 'force' | 'tech') => {
-    const selectedIds = powerType === 'force' ? selectedForce : selectedTech;
-    const powersList = powerType === 'force' ? FORCE_POWERS : TECH_POWERS;
-
-    return selectedIds.map(id => {
-      const power = powersList.find(p => p.id === id);
-      if (!power) return null;
-
-      return {
-        id,
-        name: power.name,
-        type: powerType,
-        level: power.level,
-        description: power.description
-      };
-    }).filter(Boolean);
-  };
-
-  // If not a power user, show a message
-  if (!isForceUser && !isTechUser) {
-    return (
-      <div className="text-center p-6">
-        <p className="text-yellow-400 text-lg">Your class does not use Force or Tech powers.</p>
-      </div>
-    );
-  }
-
+  });
+  
+  // Initialize form with character data only once on mount
+  useEffect(() => {
+    if (character) {
+      // Extract power IDs from character data
+      const forcePowerIds = character.forcePowers?.map(power => power.id) || [];
+      const techPowerIds = character.techPowers?.map(power => power.id) || [];
+      
+      setValue('forcePowers', forcePowerIds);
+      setValue('techPowers', techPowerIds);
+      
+      // Initialize local state
+      setSelectedForcePowers(forcePowerIds);
+      setSelectedTechPowers(techPowerIds);
+    }
+  }, [character?.id]); // Only update when character ID changes
+  
+  // Determine available powers based on character
+  const availablePowers = useMemo(() => {
+    // Default to mock data
+    let forcePowers = MOCK_FORCE_POWERS;
+    let techPowers = MOCK_TECH_POWERS;
+    
+    // Filter by character level, class, etc.
+    if (character) {
+      const characterLevel = character.level || 1;
+      
+      // Filter powers by level
+      forcePowers = MOCK_FORCE_POWERS.filter(power => power.level <= Math.ceil(characterLevel / 2));
+      techPowers = MOCK_TECH_POWERS.filter(power => power.level <= Math.ceil(characterLevel / 2));
+      
+      // Further filter based on class if needed
+      if (character.class === 'engineer' || character.class === 'scholar') {
+        // These classes focus on tech powers
+        techPowers = [...techPowers]; // Keep all tech powers
+        forcePowers = forcePowers.filter(power => power.level <= 1); // Limit force powers
+      } else if (character.class === 'consular' || character.class === 'guardian' || character.class === 'sentinel') {
+        // These classes focus on force powers
+        forcePowers = [...forcePowers]; // Keep all force powers
+        techPowers = techPowers.filter(power => power.level <= 1); // Limit tech powers
+      }
+    }
+    
+    return { forcePowers, techPowers };
+  }, [character?.level, character?.class]);
+  
+  // Handle saving powers to character
+  const savePowers = useCallback((data: PowerSelectionData) => {
+    if (!character?.id) return;
+    
+    // Find complete power objects from selected IDs
+    const selectedForce = (data.forcePowers || []).map(id => 
+      availablePowers.forcePowers.find(power => power.id === id)
+    ).filter(Boolean);
+    
+    const selectedTech = (data.techPowers || []).map(id => 
+      availablePowers.techPowers.find(power => power.id === id)
+    ).filter(Boolean);
+    
+    // Update character
+    const updates = {
+      forcePowers: selectedForce,
+      techPowers: selectedTech,
+    };
+    
+    actions.updateCharacter(character.id, updates);
+  }, [character?.id, availablePowers, actions]);
+  
+  // Toggle power selection
+  const togglePower = useCallback((type: 'force' | 'tech', powerId: string) => {
+    if (type === 'force') {
+      setSelectedForcePowers(prev => {
+        if (prev.includes(powerId)) {
+          const newSelection = prev.filter(id => id !== powerId);
+          setValue('forcePowers', newSelection);
+          return newSelection;
+        } else {
+          const newSelection = [...prev, powerId];
+          setValue('forcePowers', newSelection);
+          return newSelection;
+        }
+      });
+    } else {
+      setSelectedTechPowers(prev => {
+        if (prev.includes(powerId)) {
+          const newSelection = prev.filter(id => id !== powerId);
+          setValue('techPowers', newSelection);
+          return newSelection;
+        } else {
+          const newSelection = [...prev, powerId];
+          setValue('techPowers', newSelection);
+          return newSelection;
+        }
+      });
+    }
+  }, [setValue]);
+  
+  // Watch for form value changes
+  const watchedForcePowers = watch('forcePowers');
+  const watchedTechPowers = watch('techPowers');
+  
   return (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-yellow-400 mb-4">Power Selection</h2>
-
-      <TranslucentPane className="p-4">
-        <Tab.Group>
-          <Tab.List className="flex space-x-1 rounded-xl bg-gray-800 p-1">
-            {isForceUser && (
-              <Tab
-                className={({ selected }) =>
-                  classNames(
-                    'w-full rounded-lg py-2.5 text-sm font-medium leading-5',
-                    'ring-white ring-opacity-60 ring-offset-2 ring-offset-blue-400 focus:outline-none',
-                    selected
-                      ? 'bg-blue-900 text-white shadow'
-                      : 'text-gray-400 hover:bg-gray-700 hover:text-white'
-                  )
-                }
-              >
+    <div className="p-4">
+      <TranslucentPane className="p-6">
+        <h2 className="text-2xl font-bold text-yellow-400 mb-4">Select Powers</h2>
+        
+        <form onSubmit={handleSubmit(savePowers)}>
+          <Tab.Group>
+            <Tab.List className="flex space-x-1 rounded-xl bg-blue-900/20 p-1 mb-4">
+              <Tab className={({ selected }) =>
+                `w-full rounded-lg py-2.5 text-sm font-medium leading-5 
+                ${selected 
+                  ? 'bg-yellow-600 text-white shadow' 
+                  : 'text-blue-100 hover:bg-white/[0.12] hover:text-white'}`
+              }>
                 Force Powers
               </Tab>
-            )}
-            {isTechUser && (
-              <Tab
-                className={({ selected }) =>
-                  classNames(
-                    'w-full rounded-lg py-2.5 text-sm font-medium leading-5',
-                    'ring-white ring-opacity-60 ring-offset-2 ring-offset-blue-400 focus:outline-none',
-                    selected
-                      ? 'bg-green-900 text-white shadow'
-                      : 'text-gray-400 hover:bg-gray-700 hover:text-white'
-                  )
-                }
-              >
+              <Tab className={({ selected }) =>
+                `w-full rounded-lg py-2.5 text-sm font-medium leading-5 
+                ${selected 
+                  ? 'bg-yellow-600 text-white shadow' 
+                  : 'text-blue-100 hover:bg-white/[0.12] hover:text-white'}`
+              }>
                 Tech Powers
               </Tab>
-            )}
-          </Tab.List>
-          <Tab.Panels className="mt-2">
-            {isForceUser && (
-              <Tab.Panel className="rounded-xl bg-gray-900 bg-opacity-50 p-3">
-                <div className="space-y-4">
-                  {Object.entries(forcePowersByLevel).map(([level, powers]) => (
-                    <div key={`force-${level}`} className="bg-gray-800 bg-opacity-70 rounded-lg p-4">
-                      <h3 className="text-yellow-400 font-semibold text-lg border-b border-gray-700 pb-2 mb-3">
-                        Level {level} Force Powers
-                      </h3>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {(powers as any[]).map((power) => (
-                          <div
-                            key={`force-power-${power.id}`}
-                            className={`p-2 rounded cursor-pointer ${
-                              selectedForce.includes(power.id)
-                                ? 'bg-blue-900 bg-opacity-50'
-                                : 'hover:bg-gray-700'
+            </Tab.List>
+            
+            <Tab.Panels>
+              {/* Force Powers Panel */}
+              <Tab.Panel>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Controller
+                    name="forcePowers"
+                    control={control}
+                    render={({ field }) => (
+                      <>
+                        {availablePowers.forcePowers.map(power => (
+                          <motion.div
+                            key={power.id}
+                            whileHover={{ scale: 1.02 }}
+                            className={`p-3 rounded-lg cursor-pointer ${
+                              selectedForcePowers.includes(power.id)
+                                ? 'bg-blue-800 border border-yellow-400'
+                                : 'bg-gray-800 hover:bg-gray-700'
                             }`}
-                            onClick={() => togglePower(power.id, 'force')}
+                            onClick={() => togglePower('force', power.id)}
                           >
-                            <div className="flex items-center">
-                              <div
-                                className={`w-4 h-4 border rounded mr-2 ${
-                                  selectedForce.includes(power.id)
-                                    ? 'bg-blue-500 border-blue-600'
-                                    : 'border-gray-500'
-                                }`}
-                              />
-                              <span className="font-medium">{power.name}</span>
-                            </div>
-                            <p className="text-xs text-gray-400 mt-1">{power.shortDescription}</p>
-                          </div>
+                            <h3 className="text-lg font-semibold">{power.name}</h3>
+                            <div className="text-xs text-gray-400">Level {power.level}</div>
+                            <p className="text-sm mt-1">{power.description}</p>
+                          </motion.div>
                         ))}
-                      </div>
-                    </div>
-                  ))}
+                      </>
+                    )}
+                  />
                 </div>
               </Tab.Panel>
-            )}
-            {isTechUser && (
-              <Tab.Panel className="rounded-xl bg-gray-900 bg-opacity-50 p-3">
-                <div className="space-y-4">
-                  {Object.entries(techPowersByLevel).map(([level, powers]) => (
-                    <div key={`tech-${level}`} className="bg-gray-800 bg-opacity-70 rounded-lg p-4">
-                      <h3 className="text-yellow-400 font-semibold text-lg border-b border-gray-700 pb-2 mb-3">
-                        Level {level} Tech Powers
-                      </h3>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {(powers as any[]).map((power) => (
-                          <div
-                            key={`tech-power-${power.id}`}
-                            className={`p-2 rounded cursor-pointer ${
-                              selectedTech.includes(power.id)
-                                ? 'bg-green-900 bg-opacity-50'
-                                : 'hover:bg-gray-700'
+              
+              {/* Tech Powers Panel */}
+              <Tab.Panel>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Controller
+                    name="techPowers"
+                    control={control}
+                    render={({ field }) => (
+                      <>
+                        {availablePowers.techPowers.map(power => (
+                          <motion.div
+                            key={power.id}
+                            whileHover={{ scale: 1.02 }}
+                            className={`p-3 rounded-lg cursor-pointer ${
+                              selectedTechPowers.includes(power.id)
+                                ? 'bg-blue-800 border border-yellow-400'
+                                : 'bg-gray-800 hover:bg-gray-700'
                             }`}
-                            onClick={() => togglePower(power.id, 'tech')}
+                            onClick={() => togglePower('tech', power.id)}
                           >
-                            <div className="flex items-center">
-                              <div
-                                className={`w-4 h-4 border rounded mr-2 ${
-                                  selectedTech.includes(power.id)
-                                    ? 'bg-green-500 border-green-600'
-                                    : 'border-gray-500'
-                                }`}
-                              />
-                              <span className="font-medium">{power.name}</span>
-                            </div>
-                            <p className="text-xs text-gray-400 mt-1">{power.shortDescription}</p>
-                          </div>
+                            <h3 className="text-lg font-semibold">{power.name}</h3>
+                            <div className="text-xs text-gray-400">Level {power.level}</div>
+                            <p className="text-sm mt-1">{power.description}</p>
+                          </motion.div>
                         ))}
-                      </div>
-                    </div>
-                  ))}
+                      </>
+                    )}
+                  />
                 </div>
               </Tab.Panel>
-            )}
-          </Tab.Panels>
-        </Tab.Group>
+            </Tab.Panels>
+          </Tab.Group>
+          
+          <div className="mt-6 flex justify-end">
+            <Button 
+              type="submit" 
+              className="bg-yellow-600 hover:bg-yellow-700 text-white"
+            >
+              Save Powers
+            </Button>
+          </div>
+        </form>
       </TranslucentPane>
     </div>
   );

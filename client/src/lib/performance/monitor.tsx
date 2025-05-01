@@ -1,311 +1,186 @@
+import React, { useEffect, useState, useRef, PropsWithChildren } from 'react';
+import { useCharacter } from '../stores/useCharacter';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { useCharacterStore } from '../stores/useCharacterStore';
-
-interface PerformanceEntry {
-  component: string;
+// Types of performance metrics we track
+type PerformanceMetric = {
+  componentName: string;
   renderTime: number;
-  timestamp: number;
+  updateCount: number;
+  lastUpdated: number;
+};
+
+// Global metrics store
+const metrics: Record<string, PerformanceMetric> = {};
+
+// Function to record metrics
+export function recordMetric(componentName: string, renderTime: number) {
+  if (!metrics[componentName]) {
+    metrics[componentName] = {
+      componentName,
+      renderTime,
+      updateCount: 1,
+      lastUpdated: Date.now()
+    };
+  } else {
+    metrics[componentName].renderTime = 
+      (metrics[componentName].renderTime * metrics[componentName].updateCount + renderTime) / 
+      (metrics[componentName].updateCount + 1);
+    metrics[componentName].updateCount += 1;
+    metrics[componentName].lastUpdated = Date.now();
+  }
 }
 
-interface StoreUpdateEntry {
-  action: string;
-  duration: number;
-  timestamp: number;
-  stateSize: number;
+// Hook to measure component render time
+export function useRenderMetrics(componentName: string) {
+  const startTimeRef = useRef(performance.now());
+
+  useEffect(() => {
+    const renderTime = performance.now() - startTimeRef.current;
+    recordMetric(componentName, renderTime);
+
+    return () => {
+      startTimeRef.current = performance.now();
+    };
+  });
 }
 
-// Global performance tracking
-const renderTimings: PerformanceEntry[] = [];
-const storeUpdates: StoreUpdateEntry[] = [];
-
-// Maximum number of entries to keep
-const MAX_ENTRIES = 100;
-
-/**
- * HOC to track component render performance
- */
+// Higher-order component to measure performance
 export function withPerformanceTracking<P extends object>(
   Component: React.ComponentType<P>,
-  options: { name?: string; trackProps?: boolean } = {}
+  componentName: string = Component.displayName || Component.name || 'UnknownComponent'
 ) {
-  const componentName = options.name || Component.displayName || Component.name || 'Component';
-  
-  // Return a new component that tracks renders
-  const TrackedComponent = (props: P) => {
-    const renderStartTime = useRef(performance.now());
-    
-    useEffect(() => {
-      const renderTime = performance.now() - renderStartTime.current;
-      
-      // Add to tracking
-      renderTimings.push({
-        component: componentName,
-        renderTime,
-        timestamp: Date.now()
-      });
-      
-      // Keep array size in check
-      if (renderTimings.length > MAX_ENTRIES) {
-        renderTimings.shift();
-      }
-      
-      // Log if tracking props
-      if (options.trackProps) {
-        console.log(`[Performance] ${componentName} rendered in ${renderTime.toFixed(2)}ms with props:`, props);
-      }
-      
-      // Reset for next render
-      renderStartTime.current = performance.now();
-    });
-    
+  return function WithPerformanceTracking(props: P) {
+    useRenderMetrics(componentName);
     return <Component {...props} />;
   };
-  
-  TrackedComponent.displayName = `Tracked(${componentName})`;
-  return TrackedComponent;
 }
 
-/**
- * Hook to add performance tracking to any component
- */
-export function useTrackRenders(componentName: string) {
-  const renderCount = useRef(0);
-  const lastRenderTime = useRef(performance.now());
-  
-  useEffect(() => {
-    const renderTime = performance.now() - lastRenderTime.current;
-    renderCount.current++;
-    
-    renderTimings.push({
-      component: componentName,
-      renderTime,
-      timestamp: Date.now()
-    });
-    
-    // Keep array size in check
-    if (renderTimings.length > MAX_ENTRIES) {
-      renderTimings.shift();
-    }
-    
-    // Reset for next render
-    lastRenderTime.current = performance.now();
-    
-    return () => {
-      // Component unmount logic if needed
-    };
-  });
-  
-  return renderCount.current;
-}
+// Component to display performance metrics in development
+export function PerformanceDebugger() {
+  const [show, setShow] = useState(false);
+  const [data, setData] = useState<PerformanceMetric[]>([]);
 
-/**
- * Component to display performance metrics in the UI
- */
-export function PerformanceMonitor() {
-  const [isOpen, setIsOpen] = useState(false);
-  const [metrics, setMetrics] = useState({
-    renders: renderTimings,
-    storeUpdates: storeUpdates,
-  });
-  
-  // Update metrics periodically
-  useEffect(() => {
-    const intervalId = setInterval(() => {
-      setMetrics({
-        renders: [...renderTimings],
-        storeUpdates: [...storeUpdates]
-      });
-    }, 1000);
-    
-    return () => clearInterval(intervalId);
-  }, []);
-  
-  // Add keyboard shortcut to toggle
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+Shift+P to toggle
       if (e.ctrlKey && e.shiftKey && e.key === 'P') {
-        setIsOpen(prev => !prev);
+        setShow(prev => !prev);
       }
     };
-    
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
-  
-  if (!isOpen) {
-    return (
-      <button 
-        onClick={() => setIsOpen(true)}
-        className="fixed bottom-2 right-2 bg-red-600 text-white text-xs px-2 py-1 rounded opacity-50 hover:opacity-100"
-      >
-        Monitor
-      </button>
-    );
-  }
-  
-  // Render metrics UI
+
+  useEffect(() => {
+    if (show) {
+      const timer = setInterval(() => {
+        setData(Object.values(metrics).sort((a, b) => b.renderTime - a.renderTime));
+      }, 1000);
+
+      return () => clearInterval(timer);
+    }
+  }, [show]);
+
+  if (!show) return null;
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-80 text-white overflow-auto z-50">
-      <div className="p-4">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-bold">Performance Monitor</h2>
-          <button 
-            onClick={() => setIsOpen(false)}
-            className="bg-red-600 text-white px-3 py-1 rounded"
-          >
-            Close
-          </button>
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="border border-gray-700 rounded p-4">
-            <h3 className="text-lg font-semibold mb-2">Component Renders</h3>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-700">
-                  <th className="text-left py-2">Component</th>
-                  <th className="text-right py-2">Render Time</th>
-                  <th className="text-right py-2">When</th>
-                </tr>
-              </thead>
-              <tbody>
-                {metrics.renders
-                  .sort((a, b) => b.renderTime - a.renderTime)
-                  .slice(0, 10)
-                  .map((entry, i) => (
-                    <tr key={i} className="border-b border-gray-800">
-                      <td className="py-1">{entry.component}</td>
-                      <td className="text-right py-1">
-                        <span className={entry.renderTime > 16 ? "text-red-400" : "text-green-400"}>
-                          {entry.renderTime.toFixed(2)}ms
-                        </span>
-                      </td>
-                      <td className="text-right py-1 text-gray-400">
-                        {new Date(entry.timestamp).toLocaleTimeString()}
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-          
-          <div className="border border-gray-700 rounded p-4">
-            <h3 className="text-lg font-semibold mb-2">Store Updates</h3>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-700">
-                  <th className="text-left py-2">Action</th>
-                  <th className="text-right py-2">Duration</th>
-                  <th className="text-right py-2">State Size</th>
-                </tr>
-              </thead>
-              <tbody>
-                {metrics.storeUpdates
-                  .sort((a, b) => b.timestamp - a.timestamp)
-                  .slice(0, 10)
-                  .map((entry, i) => (
-                    <tr key={i} className="border-b border-gray-800">
-                      <td className="py-1">{entry.action}</td>
-                      <td className="text-right py-1">
-                        <span className={entry.duration > 10 ? "text-red-400" : "text-green-400"}>
-                          {entry.duration.toFixed(2)}ms
-                        </span>
-                      </td>
-                      <td className="text-right py-1">
-                        {(entry.stateSize / 1024).toFixed(2)} KB
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-        
-        <div className="mt-4 border border-gray-700 rounded p-4">
-          <h3 className="text-lg font-semibold mb-2">Actions</h3>
-          <div className="flex space-x-2">
-            <button 
-              onClick={() => {
-                renderTimings.length = 0;
-                storeUpdates.length = 0;
-                setMetrics({ renders: [], storeUpdates: [] });
-              }}
-              className="bg-red-600 text-white px-3 py-1 rounded"
-            >
-              Clear Metrics
-            </button>
-            
-            <button 
-              onClick={() => console.table(renderTimings)}
-              className="bg-blue-600 text-white px-3 py-1 rounded"
-            >
-              Log Render Data
-            </button>
-            
-            <button 
-              onClick={() => console.table(storeUpdates)}
-              className="bg-blue-600 text-white px-3 py-1 rounded"
-            >
-              Log Store Updates
-            </button>
-          </div>
-        </div>
+    <div 
+      className="fixed bottom-0 right-0 bg-black/90 text-white p-4 z-50 max-h-96 overflow-auto" 
+      style={{ maxWidth: '50vw' }}
+    >
+      <div className="flex justify-between mb-2">
+        <h3 className="font-bold">Performance Metrics</h3>
+        <button onClick={() => setShow(false)} className="text-gray-400 hover:text-white">
+          Close
+        </button>
       </div>
+
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-gray-600">
+            <th className="text-left py-1">Component</th>
+            <th className="text-right py-1">Render Time (ms)</th>
+            <th className="text-right py-1">Updates</th>
+            <th className="text-right py-1">Last Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((metric) => (
+            <tr key={metric.componentName} className="border-b border-gray-800">
+              <td className="py-1">{metric.componentName}</td>
+              <td className={`text-right py-1 ${metric.renderTime > 16 ? 'text-red-400' : 'text-green-400'}`}>
+                {metric.renderTime.toFixed(2)}
+              </td>
+              <td className="text-right py-1">{metric.updateCount}</td>
+              <td className="text-right py-1">{new Date(metric.lastUpdated).toLocaleTimeString()}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {data.length === 0 && <p className="text-gray-400 mt-2">No metrics collected yet</p>}
     </div>
   );
 }
 
-/**
- * Track store updates
- * Add this to your Zustand store to track updates
- */
-export const trackStoreUpdates = (set: any, get: any, api: any) => (next: any) => (
-  fn: any,
-  ...args: any[]
-) => {
-  const actionName = typeof fn === 'function' ? fn.name || 'anonymous' : 'setState';
-  const startTime = performance.now();
-  
-  // Call the original update function
-  const result = next(fn, ...args);
-  
-  const endTime = performance.now();
-  const duration = endTime - startTime;
-  
-  // Get state size
-  const stateSize = JSON.stringify(get()).length;
-  
-  // Record the update
-  storeUpdates.push({
-    action: actionName,
-    duration,
-    timestamp: Date.now(),
-    stateSize
-  });
-  
-  // Keep array size in check
-  if (storeUpdates.length > MAX_ENTRIES) {
-    storeUpdates.shift();
-  }
-  
-  // Log slow updates
-  if (duration > 10) {
-    console.warn(`[Store Performance] Slow update: ${actionName} took ${duration.toFixed(2)}ms`);
-  }
-  
-  return result;
+// Store performance tracker component
+type StoreTrackerProps = {
+  storeName: string;
 };
 
-// Export globally for debugging in console
-if (typeof window !== 'undefined') {
-  (window as any).__SW5E_PERFORMANCE__ = {
-    getRenderMetrics: () => [...renderTimings],
-    getStoreUpdates: () => [...storeUpdates],
-    clearMetrics: () => {
-      renderTimings.length = 0;
-      storeUpdates.length = 0;
+export function StorePerformanceTracker({ storeName }: StoreTrackerProps) {
+  const [metrics, setMetrics] = useState({
+    updateCount: 0,
+    lastUpdateTime: 0,
+    averageUpdateTime: 0,
+    totalUpdateTime: 0,
+  });
+
+  useEffect(() => {
+    // Create a proxy around the store to track updates
+    if (storeName === 'character') {
+      const origSet = useCharacter.setState;
+
+      useCharacter.setState = (fn: any, replace?: boolean) => {
+        const start = performance.now();
+        const result = origSet(fn, replace);
+        const end = performance.now();
+        const updateTime = end - start;
+
+        setMetrics(prev => ({
+          updateCount: prev.updateCount + 1,
+          lastUpdateTime: updateTime,
+          totalUpdateTime: prev.totalUpdateTime + updateTime,
+          averageUpdateTime: (prev.totalUpdateTime + updateTime) / (prev.updateCount + 1)
+        }));
+
+        return result;
+      };
+
+      return () => {
+        useCharacter.setState = origSet;
+      };
     }
-  };
+  }, [storeName]);
+
+  return null; // This is just a tracker, doesn't render anything
 }
+
+// Application wrapper with performance tracking
+export function PerformanceMonitor({ children }: PropsWithChildren<{}>) {
+  const isDevMode = process.env.NODE_ENV === 'development';
+
+  if (!isDevMode) {
+    return <>{children}</>;
+  }
+
+  return (
+    <>
+      {children}
+      <PerformanceDebugger />
+      <StorePerformanceTracker storeName="character" />
+    </>
+  );
+}
+
+export default PerformanceMonitor;

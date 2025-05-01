@@ -3,15 +3,17 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
-// Import from unified schema
+// Import from schema
 import {
-  characterSchema as insertCharacterSchema,
   characters,
   campaigns,
-  insertCampaignSchema,
   debriefs,
+} from "../shared/schema";
+import {
+  insertCharacterSchema,
+  insertCampaignSchema,
   insertDebriefSchema,
-} from "@shared/unifiedSchema";
+} from "../shared/unifiedSchema";
 import { ZodError } from "zod";
 import { formatError } from "./utils";
 import * as SW5EData from "./sw5eData";
