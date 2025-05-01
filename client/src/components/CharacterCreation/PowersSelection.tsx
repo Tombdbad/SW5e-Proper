@@ -104,6 +104,7 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ showPreview = false }
   }
 
   // Always call useQuery to maintain consistent hook calls across renders
+  // Making sure this hook is always called with the same parameters
   const { data: powers, isLoading } = useQuery({
     queryKey: ['powers'],
     queryFn: async () => {
@@ -127,7 +128,8 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ showPreview = false }
     });
 
     // Filter powers based on character class capabilities
-    const eligiblePowers = (powers || []).filter(power => {
+    // Using the result from useQuery which is now guaranteed to be an array
+    const eligiblePowers = powers.filter(power => {
       if (!hasForceCasting && power.type === 'force') return false;
       if (!hasTechCasting && power.type === 'tech') return false;
       return true;
@@ -136,18 +138,18 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ showPreview = false }
     // Filter powers based on current selections
     const filteredPowers = eligiblePowers.filter((power: any) => {
       // Filter by type tab
-    const typeMatch = activeTab === 'all' || power.type === activeTab;
+      const typeMatch = activeTab === 'all' || power.type === activeTab;
 
-    // Filter by search
-    const searchMatch = !filter || 
-      power.name.toLowerCase().includes(filter.toLowerCase()) || 
-      (power.description && power.description.toLowerCase().includes(filter.toLowerCase()));
+      // Filter by search
+      const searchMatch = !filter || 
+        power.name.toLowerCase().includes(filter.toLowerCase()) || 
+        (power.description && power.description.toLowerCase().includes(filter.toLowerCase()));
 
-    // Filter by level
-    const levelMatch = levelFilter === null || power.level === levelFilter;
+      // Filter by level
+      const levelMatch = levelFilter === null || power.level === levelFilter;
 
-    return typeMatch && searchMatch && levelMatch;
-  });
+      return typeMatch && searchMatch && levelMatch;
+    });
 
   // Handle power selection
   const togglePowerSelection = (power: any) => {
