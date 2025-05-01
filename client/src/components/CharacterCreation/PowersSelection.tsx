@@ -16,7 +16,7 @@ import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useQuery } from '@tanstack/react-query';
-import { calculateForcePoints, calculateTechPoints, meetsPowerPrerequisites } from '@/lib/sw5e/rules';
+import { calculateForcePoints, calculateTechPoints, meetsPowerPrerequisites, getAbilityModifier } from '@/lib/sw5e/rules';
 
 interface PowersSelectionProps {
   showPreview?: boolean;
