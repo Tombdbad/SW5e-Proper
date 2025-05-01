@@ -556,4 +556,13 @@ export function useComponentPerformance(componentName: string) {
   };
 }
 
-export default PerformanceMonitor;
+// Export the monitor component as default, not named exports to avoid Fast Refresh issues
+const exports = {
+  PerformanceMonitor,
+  usePerformance,
+  withPerformanceTracking,
+  PerformanceMetricsDisplay,
+  useComponentPerformance
+};
+
+export default exports;

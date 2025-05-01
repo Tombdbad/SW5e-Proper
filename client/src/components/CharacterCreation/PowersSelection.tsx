@@ -258,43 +258,38 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
             <Tab.Panel>
               {maxForcePowersCount > 0 ? (
                 <div>
-                  <Controller
-                    name="forcePowers"
-                    control={form.control}
-                    defaultValue={[]}
-                    render={() => (
-                      <div className="space-y-6">
-                        {forceLevels.map(level => (
-                          <div key={`force-level-${level}`} className="mb-6">
-                            <h3 className="text-lg font-semibold mb-2 force-light">
-                              Level {level} {level === 0 ? 'Tricks' : 'Powers'}
-                            </h3>
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              {getFilteredForcePowers(level).map(power => (
-                                <div 
-                                  key={power.id}
-                                  className={`border rounded-md p-3 cursor-pointer transition-colors ${
-                                    isPowerSelected(power.id, 'force')
-                                      ? 'border-blue-500 bg-blue-500/20'
-                                      : 'border-gray-600 hover:border-blue-400'
-                                  }`}
-                                  onClick={() => handleForcePowerSelect(power)}
-                                >
-                                  <div className="flex justify-between items-start">
-                                    <div className="force-light font-semibold">{power.name}</div>
-                                    <div className="text-sm opacity-70">
-                                      {power.castingTime || 'Action'}
-                                    </div>
-                                  </div>
-                                  <div className="text-sm mt-1">{power.description.substring(0, 100)}...</div>
-                                  <div className="flex text-xs mt-2 space-x-2 opacity-75">
-                                    <span>Range: {power.range || 'Self'}</span>
-                                    <span>Duration: {power.duration || 'Instantaneous'}</span>
-                                  </div>
+                  <div className="space-y-6">
+                    {forceLevels.map(level => (
+                      <div key={`force-level-${level}`} className="mb-6">
+                        <h3 className="text-lg font-semibold mb-2 force-light">
+                          Level {level} {level === 0 ? 'Tricks' : 'Powers'}
+                        </h3>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {getFilteredForcePowers(level).map(power => (
+                            <div 
+                              key={power.id}
+                              className={`border rounded-md p-3 cursor-pointer transition-colors ${
+                                Array.isArray(selectedForcePowers) && selectedForcePowers.some(p => p.id === power.id)
+                                  ? 'border-blue-500 bg-blue-500/20'
+                                  : 'border-gray-600 hover:border-blue-400'
+                              }`}
+                              onClick={() => handleForcePowerSelect(power)}
+                            >
+                              <div className="flex justify-between items-start">
+                                <div className="force-light font-semibold">{power.name}</div>
+                                <div className="text-sm opacity-70">
+                                  {power.castingTime || 'Action'}
                                 </div>
-                              ))}
+                              </div>
+                              <div className="text-sm mt-1">{power.description.substring(0, 100)}...</div>
+                              <div className="flex text-xs mt-2 space-x-2 opacity-75">
+                                <span>Range: {power.range || 'Self'}</span>
+                                <span>Duration: {power.duration || 'Instantaneous'}</span>
+                              </div>
                             </div>
+                          ))}
+                        </div>
                             
                             {getFilteredForcePowers(level).length === 0 && (
                               <p className="text-sm text-gray-400">
@@ -318,44 +313,39 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
             <Tab.Panel>
               {maxTechPowersCount > 0 ? (
                 <div>
-                  <Controller
-                    name="techPowers"
-                    control={form.control}
-                    defaultValue={[]}
-                    render={() => (
-                      <div className="space-y-6">
-                        {techLevels.map(level => (
-                          <div key={`tech-level-${level}`} className="mb-6">
-                            <h3 className="text-lg font-semibold mb-2 tech">
-                              Level {level} {level === 0 ? 'Programs' : 'Powers'}
-                            </h3>
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              {getFilteredTechPowers(level).map(power => (
-                                <div 
-                                  key={power.id}
-                                  className={`border rounded-md p-3 cursor-pointer transition-colors ${
-                                    isPowerSelected(power.id, 'tech')
-                                      ? 'border-amber-500 bg-amber-500/20'
-                                      : 'border-gray-600 hover:border-amber-400'
-                                  }`}
-                                  onClick={() => handleTechPowerSelect(power)}
-                                >
-                                  <div className="flex justify-between items-start">
-                                    <div className="tech font-semibold">{power.name}</div>
-                                    <div className="text-sm opacity-70">
-                                      {power.castingTime || 'Action'}
-                                    </div>
-                                  </div>
-                                  <div className="text-sm mt-1">{power.description.substring(0, 100)}...</div>
-                                  <div className="flex text-xs mt-2 space-x-2 opacity-75">
-                                    <span>Range: {power.range || 'Self'}</span>
-                                    <span>Duration: {power.duration || 'Instantaneous'}</span>
-                                    <span>Type: {power.techType}</span>
-                                  </div>
+                  <div className="space-y-6">
+                    {techLevels.map(level => (
+                      <div key={`tech-level-${level}`} className="mb-6">
+                        <h3 className="text-lg font-semibold mb-2 tech">
+                          Level {level} {level === 0 ? 'Programs' : 'Powers'}
+                        </h3>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {getFilteredTechPowers(level).map(power => (
+                            <div 
+                              key={power.id}
+                              className={`border rounded-md p-3 cursor-pointer transition-colors ${
+                                Array.isArray(selectedTechPowers) && selectedTechPowers.some(p => p.id === power.id)
+                                  ? 'border-amber-500 bg-amber-500/20'
+                                  : 'border-gray-600 hover:border-amber-400'
+                              }`}
+                              onClick={() => handleTechPowerSelect(power)}
+                            >
+                              <div className="flex justify-between items-start">
+                                <div className="tech font-semibold">{power.name}</div>
+                                <div className="text-sm opacity-70">
+                                  {power.castingTime || 'Action'}
                                 </div>
-                              ))}
+                              </div>
+                              <div className="text-sm mt-1">{power.description.substring(0, 100)}...</div>
+                              <div className="flex text-xs mt-2 space-x-2 opacity-75">
+                                <span>Range: {power.range || 'Self'}</span>
+                                <span>Duration: {power.duration || 'Instantaneous'}</span>
+                                <span>Type: {power.techType}</span>
+                              </div>
                             </div>
+                          ))}
+                        </div>
                             
                             {getFilteredTechPowers(level).length === 0 && (
                               <p className="text-sm text-gray-400">
