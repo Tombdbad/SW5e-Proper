@@ -48,7 +48,7 @@ export const calculateModifier = getAbilityModifier;
 export const getProficiencyBonus = (level: number): number => {
       // Proficiency bonus starts at +2 for level 1 and increases by 1 every 4 levels
     return Math.floor((level - 1) / 4) + 2;
-  
+};
   // Calculate total character level from all classes
 export const getCharacterLevel = (classes: CharacterClass[]): number => {
   return classes.reduce((total, characterClass) => total + characterClass.level, 0);
