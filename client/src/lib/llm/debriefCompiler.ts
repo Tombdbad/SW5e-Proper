@@ -174,34 +174,46 @@ export async function createDebrief(
   }
 
   try {
-    // Send the debrief to the server
-    const response = await apiRequest("POST", "/api/debriefs", {
-      campaignId: campaign.id,
-      sessionId,
-      content: debriefData,
-    });
+        // Instead of sending to an API, we format the debrief for manual copying
+        const formattedDebrief = JSON.stringify(debriefData, null, 2);
 
-    const result = await response.json();
+        // Store the debrief locally in the database for reference
+        const response = await apiRequest("POST", "/api/debriefs", {
+          campaignId: campaign.id,
+          sessionId,
+          content: debriefData,
+        });
 
-    return {
-      id: result.id,
-      response: null, // No response yet, needs to be fetched later
-    };
-  } catch (error) {
-    console.error("Error creating debrief:", error);
-    throw new Error("Failed to create debrief for LLM processing");
-  }
-}
+        const result = await response.json();
 
-/**
- * Processes a response from an external LLM and formats it for use in the application
- */
-export async function processLLMResponse(
-  debriefId: string,
-  rawResponse: any,
-): Promise<any> {
-  try {
-    // Parse and validate the LLM response
+        // Display the debrief for the user to copy
+        // This would typically trigger a UI component to show the text
+        window.dispatchEvent(new CustomEvent('show-gm-report', { 
+          detail: { 
+            id: result.id,
+            content: formattedDebrief 
+          }
+        }));
+
+        return {
+          id: result.id,
+          response: null, // No response yet, user will paste it later
+        };
+      } catch (error) {
+        console.error("Error creating debrief:", error);
+        throw new Error("Failed to create debrief for manual LLM processing");
+      }
+    }
+
+    /**
+     * Processes a manually pasted response from an external LLM and formats it for use in the application
+     */
+    export async function processLLMResponse(
+      debriefId: string,
+      rawResponse: string,
+    ): Promise<any> {
+      try {
+        // Parse and validate the LLM response
     const processedResponse = parseResponse(rawResponse);
 
     // Update the debrief with the response
@@ -216,7 +228,7 @@ export async function processLLMResponse(
     return processedResponse;
   } catch (error) {
     console.error("Error processing LLM response:", error);
-    throw new Error("Failed to process LLM response");
+    throw new Error("Failed to process manual LLM response");
   }
 }
 

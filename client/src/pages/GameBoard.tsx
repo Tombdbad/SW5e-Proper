@@ -63,6 +63,9 @@ export default function GameBoard() {
     setShowSidebar(!showSidebar);
   };
 
+    // Import GM Report Manager
+  import GMReportManager from "@/components/Campaign/GMReportManager";
+
   // Start combat (test)
   const startTestCombat = () => {
     if (!character) return;
@@ -195,11 +198,12 @@ export default function GameBoard() {
               <p className="text-sm text-gray-400">{currentLocation?.description || ""}</p>
             </div>
 
-            <Tabs defaultValue="quests">
-              <TabsList className="grid grid-cols-2 mb-4">
-                <TabsTrigger value="quests">Quests</TabsTrigger>
-                <TabsTrigger value="inventory">Inventory</TabsTrigger>
-              </TabsList>
+              <Tabs defaultValue="quests">
+                <TabsList className="grid grid-cols-3 mb-4">
+                  <TabsTrigger value="quests">Quests</TabsTrigger>
+                  <TabsTrigger value="inventory">Inventory</TabsTrigger>
+                  <TabsTrigger value="gm">GM Interface</TabsTrigger>
+                </TabsList>
               
               <TabsContent value="quests">
                 <h3 className="font-semibold mb-2">Active Quests</h3>
@@ -221,10 +225,14 @@ export default function GameBoard() {
                       <span>{item}</span>
                     </div>
                   ))}
-                </div>
-              </TabsContent>
-            </Tabs>
-          </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="gm">
+            <GMReportManager />
+          </TabsContent>
+        </Tabs>
+      </div>
         )}
 
         {/* Combat UI */}
