@@ -1,0 +1,148 @@
+The `fetchConnectionCache` option is deprecated (now always `true`)
+The CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.
+Database connected successfully
+6:46:52 PM [express] serving on port 5000
+Error fetching campaigns: NeonDbError: column "setting" does not exist
+    at execute (/home/runner/workspace/node_modules/@neondatabase/serverless/index.js:1559:55)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async NeonHttpPreparedQuery.execute (/home/runner/workspace/node_modules/src/neon-http/session.ts:68:18)
+    at async <anonymous> (/home/runner/workspace/server/routes.ts:242:28) {
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3716',
+  routine: 'errorMissingColumn',
+  sourceError: undefined
+}
+6:47:04 PM [express] GET /api/campaigns 500 in 147ms :: {"error":"Failed to fetch campaigns"}
+Error fetching characters: NeonDbError: column "subclass" does not exist
+    at execute (/home/runner/workspace/node_modules/@neondatabase/serverless/index.js:1559:55)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async NeonHttpPreparedQuery.execute (/home/runner/workspace/node_modules/src/neon-http/session.ts:68:18)
+    at async <anonymous> (/home/runner/workspace/server/routes.ts:97:29) {
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: 'Perhaps you meant to reference the column "characters.class".',
+  position: '81',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3723',
+  routine: 'errorMissingColumn',
+  sourceError: undefined
+}
+6:47:04 PM [express] GET /api/characters 500 in 141ms :: {"message":"Failed to fetch characters","de…
+Error fetching campaigns: NeonDbError: column "setting" does not exist
+    at execute (/home/runner/workspace/node_modules/@neondatabase/serverless/index.js:1559:55)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async NeonHttpPreparedQuery.execute (/home/runner/workspace/node_modules/src/neon-http/session.ts:68:18)
+    at async <anonymous> (/home/runner/workspace/server/routes.ts:242:28) {
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: undefined,
+  position: '76',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3716',
+  routine: 'errorMissingColumn',
+  sourceError: undefined
+}
+6:47:04 PM [express] GET /api/campaigns 500 in 106ms :: {"error":"Failed to fetch campaigns"}
+Error fetching characters: NeonDbError: column "subclass" does not exist
+    at execute (/home/runner/workspace/node_modules/@neondatabase/serverless/index.js:1559:55)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async NeonHttpPreparedQuery.execute (/home/runner/workspace/node_modules/src/neon-http/session.ts:68:18)
+    at async <anonymous> (/home/runner/workspace/server/routes.ts:97:29) {
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: 'Perhaps you meant to reference the column "characters.class".',
+  position: '81',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3723',
+  routine: 'errorMissingColumn',
+  sourceError: undefined
+}
+6:47:04 PM [express] GET /api/characters 500 in 165ms :: {"message":"Failed to fetch characters","de…
+Error fetching characters: NeonDbError: column "subclass" does not exist
+    at execute (/home/runner/workspace/node_modules/@neondatabase/serverless/index.js:1559:55)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async NeonHttpPreparedQuery.execute (/home/runner/workspace/node_modules/src/neon-http/session.ts:68:18)
+    at async <anonymous> (/home/runner/workspace/server/routes.ts:97:29) {
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: 'Perhaps you meant to reference the column "characters.class".',
+  position: '81',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3723',
+  routine: 'errorMissingColumn',
+  sourceError: undefined
+}
+6:47:04 PM [express] GET /api/characters 500 in 44ms :: {"message":"Failed to fetch characters","det…
+Error fetching characters: NeonDbError: column "subclass" does not exist
+    at execute (/home/runner/workspace/node_modules/@neondatabase/serverless/index.js:1559:55)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async NeonHttpPreparedQuery.execute (/home/runner/workspace/node_modules/src/neon-http/session.ts:68:18)
+    at async <anonymous> (/home/runner/workspace/server/routes.ts:97:29) {
+  severity: 'ERROR',
+  code: '42703',
+  detail: undefined,
+  hint: 'Perhaps you meant to reference the column "characters.class".',
+  position: '81',
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: undefined,
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'parse_relation.c',
+  line: '3723',
+  routine: 'errorMissingColumn',
+  sourceError: undefined
+}
+6:47:04 PM [express] GET /api/characters 500 in 41ms :: {"message":"Failed to fetch characters","det…
