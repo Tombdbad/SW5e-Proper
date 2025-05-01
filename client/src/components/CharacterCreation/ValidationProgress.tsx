@@ -1,6 +1,6 @@
 import React from 'react';
 import { CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/solid';
-import { getAbilityModifier, getProficiencyBonus } from '../../lib/sw5e/rules';
+import { getAbilityModifier, calculateProficiencyBonus } from '../../lib/sw5e/rules';
 
 interface Step {
   id: number;
