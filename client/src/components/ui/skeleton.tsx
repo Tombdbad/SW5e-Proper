@@ -1,18 +1,3 @@
-import { cn } from "@/lib/utils"
-
-function Skeleton({
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLDivElement>) {
-  return (
-    <div
-      className={cn("animate-pulse rounded-md bg-primary/10", className)}
-      {...props}
-    />
-  )
-}
-
-export { Skeleton }
 import React from "react";
 import { cn } from "@/lib/utils";
 
@@ -30,18 +15,18 @@ export function Skeleton({
   ...props 
 }: SkeletonProps) {
   const baseClasses = "animate-pulse bg-gray-700/40 rounded";
-  
+
   const variantClasses = {
     text: "h-4 w-full",
     circle: "rounded-full aspect-square",
     rect: "rounded-md"
   };
-  
+
   const styles: React.CSSProperties = {
     width: width || undefined,
     height: height || undefined
   };
-  
+
   return (
     <div 
       className={cn(baseClasses, variantClasses[variant], className)}
@@ -50,3 +35,5 @@ export function Skeleton({
     />
   );
 }
+
+export function { Skeleton };
