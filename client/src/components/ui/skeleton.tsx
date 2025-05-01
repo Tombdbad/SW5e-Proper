@@ -36,4 +36,4 @@ export function Skeleton({
   );
 }
 
-export function { Skeleton };
+export { Skeleton };
