@@ -1,156 +1,132 @@
-import { useMemo } from "react";
-import { Progress } from "@/components/ui/progress";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { CheckCircle, AlertCircle, AlertTriangle } from "lucide-react";
+import React from 'react';
+import { CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/solid';
+import { getAbilityModifier, getProficiencyBonus } from '../../lib/sw5e/rules';
+
+interface Step {
+  id: number;
+  name: string;
+  component: React.FC;
+}
 
 interface ValidationProgressProps {
-  // Support both direct character data and step-based validation
-  character?: any;
-  steps?: any[];
-  currentStep?: number;
-  completedSteps?: Record<number, boolean>;
+  steps: Step[];
+  currentStep: number;
+  completedSteps: Record<number, boolean>;
 }
 
-export function ValidationProgress({ 
-  character, 
-  steps, 
-  currentStep, 
-  completedSteps 
-}: ValidationProgressProps) {
-  // Character-based validation logic
-  const { completionPercentage, validationSteps } = useMemo(() => {
-    // If using character-based validation
-    if (character) {
-      const steps = [
-        {
-          name: "Basic Info",
-          isComplete: !!character.name,
-          isRequired: true,
-          message: character.name ? "Character has a name" : "Name is required"
-        },
-        {
-          name: "Species",
-          isComplete: !!character.species,
-          isRequired: true,
-          message: character.species ? "Species selected" : "Species selection required"
-        },
-        {
-          name: "Class",
-          isComplete: !!character.class,
-          isRequired: true,
-          message: character.class ? "Class selected" : "Class selection required"
-        },
-        {
-          name: "Ability Scores",
-          isComplete: character.abilityScores && 
-            Object.values(character.abilityScores).every((score: any) => score > 0),
-          isRequired: true,
-          message: character.abilityScores && 
-            Object.values(character.abilityScores).every((score: any) => score > 0) ? 
-            "Ability scores assigned" : "Ability scores need to be assigned"
-        },
-        {
-          name: "Background",
-          isComplete: !!character.background,
-          isRequired: false,
-          message: character.background ? "Background selected" : "Background is optional but recommended"
-        },
-        {
-          name: "Character Details",
-          isComplete: !!(character.bonds || character.motivations),
-          isRequired: false,
-          message: character.bonds || character.motivations ? 
-            "Character details provided" : "Adding personal details enhances your character"
-        }
-      ];
+export const ValidationProgress: React.FC<ValidationProgressProps> = ({
+  steps,
+  currentStep,
+  completedSteps,
+}) => {
+  const calculateProgress = (): number => {
+    const completedCount = Object.values(completedSteps).filter(Boolean).length;
+    return (completedCount / steps.length) * 100;
+  };
 
-      // Calculate percentage based on required steps
-      const requiredSteps = steps.filter(step => step.isRequired);
-      const completedRequiredSteps = requiredSteps.filter(step => step.isComplete);
-      const percentage = Math.round((completedRequiredSteps.length / requiredSteps.length) * 100);
-
-      return {
-        completionPercentage: percentage,
-        validationSteps: steps
-      };
-    } 
-    // If using step-based validation
-    else if (steps && completedSteps) {
-      const totalSteps = steps.length;
-      const completedCount = Object.values(completedSteps).filter(Boolean).length;
-      const percentage = totalSteps > 0 
-        ? Math.round((completedCount / totalSteps) * 100) 
-        : 0;
-
-      const stepValidations = steps.map((step, index) => ({
-        name: step.name,
-        isComplete: !!completedSteps[index],
-        isRequired: true,
-        message: completedSteps[index] 
-          ? `${step.name} is complete` 
-          : `${step.name} needs to be completed`
-      }));
-
-      return {
-        completionPercentage: percentage,
-        validationSteps: stepValidations
-      };
-    }
-
-    // Default empty state
-    return {
-      completionPercentage: 0,
-      validationSteps: []
-    };
-  }, [character, steps, completedSteps]);
-
-  // Display appropriate UI based on validation mode
   return (
     <div className="space-y-4">
-      <h3 className="text-lg font-semibold text-yellow-400">Character Completion</h3>
-
-      <div className="space-y-2">
-        <Progress value={completionPercentage} className="h-2" />
-        <p className="text-sm text-center">
-          {completionPercentage}% Complete
-          {completionPercentage === 100 && " - Ready to save!"}
-        </p>
+      <h3 className="text-lg font-semibold text-yellow-400">Character Progress</h3>
+      <div className="w-full bg-gray-700 h-2 rounded-full overflow-hidden">
+        <div
+          className="bg-green-500 h-full transition-all duration-300 ease-in-out"
+          style={{ width: `${calculateProgress()}%` }}
+        ></div>
       </div>
 
-      {/* Current step indicator for step-based validation */}
-      {steps && currentStep !== undefined && (
-        <div className="mt-2 text-sm text-gray-600">
-          {completedSteps && completedSteps[currentStep] ? (
-            <span className="text-green-600">✓ Current step is complete</span>
-          ) : (
-            <span>Complete current step to proceed</span>
-          )}
-        </div>
-      )}
+      <div className="space-y-2 mt-4">
+        {steps.map((step) => (
+          <div
+            key={step.id}
+            className={`flex items-center p-2 rounded-md ${
+              currentStep === step.id ? 'bg-gray-700 border-l-4 border-yellow-400' : ''
+            }`}
+          >
+            <span className="mr-2">
+              {completedSteps[step.id] ? (
+                <CheckCircleIcon className="h-5 w-5 text-green-500" />
+              ) : (
+                <XCircleIcon className="h-5 w-5 text-gray-500" />
+              )}
+            </span>
+            <span className={`text-sm ${completedSteps[step.id] ? 'text-green-400' : 'text-gray-400'}`}>
+              {step.name}
+            </span>
+          </div>
+        ))}
+      </div>
 
-      {/* Detailed validation steps for character-based validation */}
-      {validationSteps.length > 0 && (
-        <div className="space-y-2 max-h-40 overflow-y-auto pr-2">
-          {validationSteps.map((step, index) => (
-            <Alert key={index} variant={step.isComplete ? "default" : step.isRequired ? "destructive" : "warning"} 
-                  className="py-2 text-sm">
-              <div className="flex items-center">
-                {step.isComplete ? (
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                ) : step.isRequired ? (
-                  <AlertCircle className="h-4 w-4 mr-2" />
-                ) : (
-                  <AlertTriangle className="h-4 w-4 mr-2" />
-                )}
-                <div>
-                  <AlertTitle className="text-xs">{step.name}</AlertTitle>
-                  <AlertDescription className="text-xs">{step.message}</AlertDescription>
-                </div>
-              </div>
-            </Alert>
-          ))}
-        </div>
-      )}
+      <div className="mt-4 p-3 bg-gray-800 rounded-md border border-gray-700">
+        <h4 className="text-sm font-medium text-yellow-400 mb-2">Character Stats Preview</h4>
+        <CharacterStatsPreview />
+      </div>
     </div>
   );
-}
+};
+
+// New component to show real-time stat calculations
+const CharacterStatsPreview: React.FC = () => {
+  // In a real implementation, you would get this from your character store
+  const characterData = useCharacterPreviewData();
+
+  if (!characterData || !characterData.abilityScores) {
+    return (
+      <div className="text-gray-500 text-sm">
+        Complete ability scores to see character stats preview
+      </div>
+    );
+  }
+
+  const { abilityScores, level = 1 } = characterData;
+  const proficiencyBonus = getProficiencyBonus(level);
+
+  return (
+    <div className="space-y-2 text-sm">
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex justify-between">
+          <span className="text-gray-400">Level:</span>
+          <span className="text-white">{level}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-400">Proficiency:</span>
+          <span className="text-white">+{proficiencyBonus}</span>
+        </div>
+
+        {abilityScores && Object.entries(abilityScores).map(([ability, score]) => (
+          <div key={ability} className="flex justify-between">
+            <span className="text-gray-400">{ability.charAt(0).toUpperCase() + ability.slice(1).substring(0, 2)}:</span>
+            <span className="text-white">
+              {score} ({getAbilityModifier(score) >= 0 ? '+' : ''}{getAbilityModifier(score)})
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// Custom hook to get character preview data from store
+const useCharacterPreviewData = () => {
+  // This would connect to your character store in a real implementation
+  // For now returning mock data
+  const characterData = {
+    abilityScores: {
+      strength: 12,
+      dexterity: 14,
+      constitution: 13,
+      intelligence: 10,
+      wisdom: 16,
+      charisma: 8
+    },
+    level: 3
+  };
+
+  return characterData;
+};
+
+// Placeholder functions -  These need to be implemented based on your actual ruleset
+const getAbilityModifier = (score: number): number => Math.floor((score - 10) / 2);
+const getProficiencyBonus = (level: number): number => Math.floor((level + 3) / 4);
+
+
+export default ValidationProgress;

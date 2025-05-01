@@ -1,6 +1,8 @@
-import React from "react";
-import { Button } from "../ui/button";
-import { Eye, EyeOff } from "lucide-react";
+
+import React, { FC, useState } from 'react';
+import { Button } from '../ui/button';
+import { CheckIcon, ArrowLeftIcon, ArrowRightIcon, EyeIcon, EyeOffIcon, SaveIcon } from 'lucide-react';
+import { Tooltip } from '../ui/tooltip';
 
 interface StepNavigationProps {
   currentStep: number;
@@ -11,9 +13,11 @@ interface StepNavigationProps {
   isFirstStep: boolean;
   isLastStep: boolean;
   togglePreview: () => void;
+  isStepValid: boolean;
+  stepProgress?: number;
 }
 
-export const StepNavigation: React.FC<StepNavigationProps> = ({
+export const StepNavigation: FC<StepNavigationProps> = ({
   currentStep,
   onPrev,
   onNext,
@@ -22,100 +26,104 @@ export const StepNavigation: React.FC<StepNavigationProps> = ({
   isFirstStep,
   isLastStep,
   togglePreview,
+  isStepValid,
+  stepProgress = 100,
 }) => {
-  return (
-    <div className="flex justify-between items-center mt-6 pt-6 border-t border-gray-700">
-      <Button
-        variant="outline"
-        onClick={onPrev}
-        disabled={isFirstStep}
-        className="w-24"
-      >
-        Previous
-      </Button>
+  const [previewVisible, setPreviewVisible] = useState(false);
 
-      <div className="flex gap-2">
-        <Button variant="ghost" onClick={togglePreview} className="gap-2">
-          <Eye className="h-4 w-4" />
-          Toggle Preview
-        </Button>
+  const handleTogglePreview = () => {
+    setPreviewVisible(!previewVisible);
+    togglePreview();
+  };
+
+  return (
+    <div className="flex flex-col space-y-4 mt-6 pt-6 border-t border-gray-700">
+      {/* Step progress indicator */}
+      <div className="w-full bg-gray-800 h-1 rounded-full overflow-hidden mb-2">
+        <div 
+          className="bg-yellow-500 h-full transition-all duration-300 ease-in-out"
+          style={{ width: `${stepProgress}%` }}
+        ></div>
       </div>
 
-      {isLastStep ? (
+      <div className="flex justify-between items-center">
         <Button
-          onClick={onSubmit}
-          disabled={isSubmitting}
-          className="w-24 bg-green-600 hover:bg-green-700"
+          variant="outline"
+          onClick={onPrev}
+          disabled={isFirstStep}
+          className="w-24 flex items-center gap-1"
         >
-          {isSubmitting ? "Creating..." : "Create"}
+          <ArrowLeftIcon className="h-4 w-4" />
+          Previous
         </Button>
-      ) : (
-        <Button onClick={onNext} className="w-24">
-          Next
-        </Button>
+
+        <div className="flex gap-2">
+          <Button 
+            variant="ghost" 
+            onClick={handleTogglePreview} 
+            className="gap-2"
+            title={previewVisible ? "Hide character preview" : "Show character preview"}
+          >
+            {previewVisible ? (
+              <>
+                <EyeOffIcon className="h-4 w-4" />
+                Hide Preview
+              </>
+            ) : (
+              <>
+                <EyeIcon className="h-4 w-4" />
+                Preview
+              </>
+            )}
+          </Button>
+          
+          <Button 
+            variant="ghost"
+            className="gap-2"
+            onClick={() => {/* Save draft implementation */}}
+          >
+            <SaveIcon className="h-4 w-4" />
+            Save Draft
+          </Button>
+        </div>
+
+        {isLastStep ? (
+          <Button
+            onClick={onSubmit}
+            disabled={isSubmitting || !isStepValid}
+            className="w-24 bg-green-600 hover:bg-green-700 flex items-center gap-1"
+          >
+            {isSubmitting ? (
+              "Creating..."
+            ) : (
+              <>
+                Create
+                <CheckIcon className="h-4 w-4" />
+              </>
+            )}
+          </Button>
+        ) : (
+          <Tooltip content={!isStepValid ? "Complete this step to continue" : "Continue to next step"}>
+            <Button 
+              onClick={onNext} 
+              disabled={!isStepValid}
+              className="w-24 flex items-center gap-1"
+            >
+              Next
+              <ArrowRightIcon className="h-4 w-4" />
+            </Button>
+          </Tooltip>
+        )}
+      </div>
+
+      {!isStepValid && (
+        <div className="text-amber-400 text-sm mt-2 flex items-center">
+          <span className="mr-2">⚠️</span>
+          Complete this step before continuing
+        </div>
       )}
     </div>
   );
 };
-import { FC } from 'react';
-import { CheckCircleIcon } from '@heroicons/react/24/solid';
-
-interface Step {
-  id: number;
-  name: string;
-  component: FC;
-}
-
-interface StepNavigationProps {
-  steps: Step[];
-  currentStep: number;
-  completedSteps: Record<number, boolean>;
-  onStepChange: (step: number) => void;
-}
-
-const StepNavigation: FC<StepNavigationProps> = ({ 
-  steps, 
-  currentStep, 
-  completedSteps, 
-  onStepChange 
-}) => {
-  return (
-    <nav className="step-navigation">
-      <ul className="space-y-1">
-        {steps.map((step) => {
-          const isComplete = completedSteps[step.id] === true;
-          const isActive = currentStep === step.id;
-
-          return (
-            <li key={step.id}>
-              <button
-                className={`w-full flex items-center px-3 py-2 text-left rounded-md transition-colors
-                  ${isActive 
-                    ? 'bg-blue-100 text-blue-700' 
-                    : isComplete 
-                      ? 'text-green-700 hover:bg-gray-100' 
-                      : 'text-gray-600 hover:bg-gray-100'}`}
-                onClick={() => onStepChange(step.id)}
-              >
-                <span className="mr-2 flex-shrink-0 w-6 h-6 flex items-center justify-center">
-                  {isComplete ? (
-                    <CheckCircleIcon className="w-5 h-5 text-green-500" />
-                  ) : (
-                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs
-                      ${isActive ? 'bg-blue-600 text-white' : 'bg-gray-300 text-gray-600'}`}>
-                      {step.id + 1}
-                    </span>
-                  )}
-                </span>
-                <span className="flex-grow">{step.name}</span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </nav>
-  );
-};
 
 export default StepNavigation;
-
