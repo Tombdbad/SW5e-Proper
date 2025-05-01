@@ -1,0 +1,72 @@
+// client/src/components/CharacterCreation/PowersSelection.tsx
+import React from 'react';
+import { useCharacterCreation } from '../../contexts/CharacterCreationContext';
+import { TranslucentPane } from '../UI/TranslucentPane';
+import { PowerSelectionContent } from './PowerSelectionContent';
+
+// Assuming these types exist in the project
+interface Power {
+  id: string;
+  name: string;
+  description: string;
+  powerPointCost: number;
+  powerType: 'force' | 'tech';
+  // Other power properties...
+}
+
+interface PowersSelectionProps {
+  availableForcePowers: Power[];
+  availableTechPowers: Power[];
+  onContinue: () => void;
+  onBack: () => void;
+}
+
+export function PowersSelection({
+  availableForcePowers,
+  availableTechPowers,
+  onContinue,
+  onBack,
+}: PowersSelectionProps) {
+  const { state, dispatch } = useCharacterCreation();
+  
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onContinue();
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <div className="powers-selection-container">
+        <h2>Select Your Powers</h2>
+        <p>Available Power Points: {state.availablePowerPoints}</p>
+        
+        <div className="powers-columns">
+          <TranslucentPane title="Force Powers">
+            <PowerSelectionContent
+              availablePowers={availableForcePowers}
+              selectedPowerIds={state.selectedForcePowers}
+              onSelectPower={(powerId) => dispatch({ type: 'ADD_FORCE_POWER', powerId })}
+              onDeselectPower={(powerId) => dispatch({ type: 'REMOVE_FORCE_POWER', powerId })}
+              powerType="force"
+            />
+          </TranslucentPane>
+          
+          <TranslucentPane title="Tech Powers">
+            <PowerSelectionContent
+              availablePowers={availableTechPowers}
+              selectedPowerIds={state.selectedTechPowers}
+              onSelectPower={(powerId) => dispatch({ type: 'ADD_TECH_POWER', powerId })}
+              onDeselectPower={(powerId) => dispatch({ type: 'REMOVE_TECH_POWER', powerId })}
+              powerType="tech"
+            />
+          </TranslucentPane>
+        </div>
+        
+        <div className="navigation-buttons">
+          <button type="button" onClick={onBack}>Back</button>
+          <button type="submit">Continue</button>
+        </div>
+      </div>
+    </form>
+  );
+}

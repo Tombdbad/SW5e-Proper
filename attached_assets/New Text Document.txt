@@ -1,0 +1,63 @@
+// client/src/components/CharacterCreation/PowerSelectionContent.tsx
+import React from 'react';
+import { Checkbox } from '../UI/Checkbox';
+
+interface Power {
+  id: string;
+  name: string;
+  description: string;
+  powerPointCost: number;
+  powerType: 'force' | 'tech';
+  // Other power properties...
+}
+
+interface PowerSelectionContentProps {
+  availablePowers: Power[];
+  selectedPowerIds: string[];
+  onSelectPower: (powerId: string) => void;
+  onDeselectPower: (powerId: string) => void;
+  powerType: 'force' | 'tech';
+}
+
+export function PowerSelectionContent({
+  availablePowers,
+  selectedPowerIds,
+  onSelectPower,
+  onDeselectPower,
+  powerType,
+}: PowerSelectionContentProps) {
+  const handlePowerToggle = (power: Power, isChecked: boolean) => {
+    if (isChecked) {
+      onSelectPower(power.id);
+    } else {
+      onDeselectPower(power.id);
+    }
+  };
+
+  return (
+    <div className={`${powerType}-powers-list`}>
+      {availablePowers.length === 0 ? (
+        <p>No {powerType} powers available.</p>
+      ) : (
+        <ul>
+          {availablePowers.map((power) => (
+            <li key={power.id} className="power-item">
+              <div className="power-header">
+                <Checkbox
+                  id={`${powerType}-power-${power.id}`}
+                  checked={selectedPowerIds.includes(power.id)}
+                  onChange={(isChecked) => handlePowerToggle(power, isChecked)}
+                  label={`${power.name} (${power.powerPointCost} pts)`}
+                />
+              </div>
+              
+              <div className="power-description">
+                <p>{power.description}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}

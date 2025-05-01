@@ -1,0 +1,115 @@
+// client/src/contexts/CharacterCreationContext.tsx
+import React, { createContext, useContext, useReducer, ReactNode } from 'react';
+
+// Define types for character creation state
+interface CharacterCreationState {
+  selectedForcePowers: string[];
+  selectedTechPowers: string[];
+  availablePowerPoints: number;
+  species: string | null;
+  archetype: string | null;
+  // Add other character creation state as needed
+}
+
+// Define possible actions for the reducer
+type CharacterCreationAction =
+  | { type: 'ADD_FORCE_POWER'; powerId: string }
+  | { type: 'REMOVE_FORCE_POWER'; powerId: string }
+  | { type: 'ADD_TECH_POWER'; powerId: string }
+  | { type: 'REMOVE_TECH_POWER'; powerId: string }
+  | { type: 'SET_SPECIES'; species: string }
+  | { type: 'SET_ARCHETYPE'; archetype: string }
+  | { type: 'RESET_POWERS' }
+  | { type: 'SET_AVAILABLE_POWER_POINTS'; points: number };
+
+// Define the context type
+interface CharacterCreationContextType {
+  state: CharacterCreationState;
+  dispatch: React.Dispatch<CharacterCreationAction>;
+}
+
+// Initial state
+const initialState: CharacterCreationState = {
+  selectedForcePowers: [],
+  selectedTechPowers: [],
+  availablePowerPoints: 0,
+  species: null,
+  archetype: null,
+};
+
+// Create context with default value
+const CharacterCreationContext = createContext<CharacterCreationContextType | undefined>(undefined);
+
+// Reducer function to handle state updates
+function characterCreationReducer(
+  state: CharacterCreationState,
+  action: CharacterCreationAction
+): CharacterCreationState {
+  switch (action.type) {
+    case 'ADD_FORCE_POWER':
+      return {
+        ...state,
+        selectedForcePowers: [...state.selectedForcePowers, action.powerId],
+      };
+    case 'REMOVE_FORCE_POWER':
+      return {
+        ...state,
+        selectedForcePowers: state.selectedForcePowers.filter(id => id !== action.powerId),
+      };
+    case 'ADD_TECH_POWER':
+      return {
+        ...state,
+        selectedTechPowers: [...state.selectedTechPowers, action.powerId],
+      };
+    case 'REMOVE_TECH_POWER':
+      return {
+        ...state,
+        selectedTechPowers: state.selectedTechPowers.filter(id => id !== action.powerId),
+      };
+    case 'SET_SPECIES':
+      return {
+        ...state,
+        species: action.species,
+      };
+    case 'SET_ARCHETYPE':
+      return {
+        ...state,
+        archetype: action.archetype,
+      };
+    case 'RESET_POWERS':
+      return {
+        ...state,
+        selectedForcePowers: [],
+        selectedTechPowers: [],
+      };
+    case 'SET_AVAILABLE_POWER_POINTS':
+      return {
+        ...state,
+        availablePowerPoints: action.points,
+      };
+    default:
+      return state;
+  }
+}
+
+// Provider component
+export function CharacterCreationProvider({ children }: { children: ReactNode }) {
+  const [state, dispatch] = useReducer(characterCreationReducer, initialState);
+
+  return (
+    <CharacterCreationContext.Provider value={{ state, dispatch }}>
+      {children}
+    </CharacterCreationContext.Provider>
+  );
+}
+
+// Custom hook for consuming the context
+export function useCharacterCreation() {
+  const context = useContext(CharacterCreationContext);
+  
+  if (context === undefined) {
+    throw new Error('useCharacterCreation must be used within a CharacterCreationProvider');
+  }
+  
+  return context;
+}
