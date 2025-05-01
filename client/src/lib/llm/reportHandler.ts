@@ -1,5 +1,5 @@
+import { Character } from "../stores/useCharacter";
 
-  import { Character } from "../stores/useCharacter";
   import { Campaign } from "../stores/useCampaign";
   import { createDebrief, processLLMResponse } from "./debriefCompiler";
   import { npcs } from "../sw5e/npcs";
@@ -238,92 +238,92 @@ function extractJsonFromText(text: string): string {
     const markerSplit = text.split("---SYSTEM_DATA_FOLLOWS---");
     if (markerSplit.length > 1) {
       const potentialJson = markerSplit[1].trim();
-      
-      // Try to find a complete JSON object
-      const bracketRegex = /(\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}))*\})/g;
-      const matches = [...potentialJson.matchAll(bracketRegex)];
-      
-      // Get the longest match (most likely the complete object)
-      if (matches.length > 0) {
-        const longestMatch = matches.reduce((longest, match) => 
-          match[0].length > longest[0].length ? match : longest
-        );
-        
-        // Verify it's valid JSON
-        const jsonCandidate = longestMatch[0];
-        JSON.parse(jsonCandidate); // This will throw if invalid
-        return jsonCandidate;
+
+            // Try to find a complete JSON object
+            const bracketRegex = /(\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}))*\})/g;
+            const matches = [...potentialJson.matchAll(bracketRegex)];
+
+            // Get the longest match (most likely the complete object)
+            if (matches.length > 0) {
+              const longestMatch = matches.reduce((longest, match) => 
+                match[0].length > longest[0].length ? match : longest
+              );
+
+              // Verify it's valid JSON
+              const jsonCandidate = longestMatch[0];
+              JSON.parse(jsonCandidate); // This will throw if invalid
+              return jsonCandidate;
+            }
+          }
+
+          // Fallback: Look for JSON object pattern in the entire text
+          const bracketRegex = /(\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}))*\})/g;
+          const matches = [...text.matchAll(bracketRegex)];
+
+          if (matches.length > 0) {
+            // Get the longest match (most likely the complete object)
+            const longestMatch = matches.reduce((longest, match) => 
+              match[0].length > longest[0].length ? match : longest
+            );
+
+            // Verify it's valid JSON
+            const jsonCandidate = longestMatch[0];
+            JSON.parse(jsonCandidate); // This will throw if invalid
+            return jsonCandidate;
+          }
+
+          // If no valid JSON found, return empty object
+          return "{}";
+        } catch (error) {
+          console.error("Error extracting JSON from text:", error);
+          return "{}";
+        }
       }
-    }
-    
-    // Fallback: Look for JSON object pattern in the entire text
-    const bracketRegex = /(\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}))*\})/g;
-    const matches = [...text.matchAll(bracketRegex)];
-    
-    if (matches.length > 0) {
-      // Get the longest match (most likely the complete object)
-      const longestMatch = matches.reduce((longest, match) => 
-        match[0].length > longest[0].length ? match : longest
-      );
-      
-      // Verify it's valid JSON
-      const jsonCandidate = longestMatch[0];
-      JSON.parse(jsonCandidate); // This will throw if invalid
-      return jsonCandidate;
-    }
 
-    // If no valid JSON found, return empty object
-    return "{}";
-  } catch (error) {
-    console.error("Error extracting JSON from text:", error);
-    return "{}";
-  }
-}
+      /**
+       * Handle requests for SW5e data
+       */
+      async function handleSW5eDataRequest(requestPath: string): Promise<any> {
+        try {
+          const [category, id] = requestPath.split('.');
 
-/**
- * Handle requests for SW5e data
- */
-async function handleSW5eDataRequest(requestPath: string): Promise<any> {
-  try {
-    const [category, id] = requestPath.split('.');
+          // Import the appropriate module based on category
+          const module = await import(/* @vite-ignore */ `@/lib/sw5e/${category}`);
 
-    // Import the appropriate module based on category
-    const module = await import(/* @vite-ignore */ `@/lib/sw5e/${category}`);
+          if (id) {
+            // Return specific item
+            return module[category].find((item: any) => item.id === id);
+          } else {
+            // Return the whole category
+            return module[category];
+          }
+        } catch (error) {
+          console.error("Error handling SW5e data request:", error);
+          return null;
+        }
+      }
 
-    if (id) {
-      // Return specific item
-      return module[category].find((item: any) => item.id === id);
-    } else {
-      // Return the whole category
-      return module[category];
-    }
-  } catch (error) {
-    console.error("Error handling SW5e data request:", error);
-    return null;
-  }
-}
+      export async function upgradeNpcClassification(
+        npcId: string, 
+        newClassification: string,
+        additionalData: any = {}
+      ): Promise<void> {
+        try {
+          const { campaign, updateNpc } = useCampaign.getState();
 
-export async function upgradeNpcClassification(
-  npcId: string, 
-  newClassification: string,
-  additionalData: any = {}
-): Promise<void> {
-  try {
-    const { campaign, updateNpc } = useCampaign.getState();
+          if (!campaign) return;
 
-    if (!campaign) return;
+          const npc = campaign.npcs.find(n => n.id === npcId);
+          if (!npc) return;
 
-    const npc = campaign.npcs.find(n => n.id === npcId);
-    if (!npc) return;
+          // Update the NPC classification and add additional data
+          await updateNpc(npcId, {
+            ...npc,
+            classification: newClassification,
+            ...additionalData
+          });
 
-    // Update the NPC classification and add additional data
-    await updateNpc(npcId, {
-      ...npc,
-      classification: newClassification,
-      ...additionalData
-    });
-
-  } catch (error) {
-    console.error("Error upgrading NPC classification:", error);
-  }
-}
+        } catch (error) {
+          console.error("Error upgrading NPC classification:", error);
+        }
+      }

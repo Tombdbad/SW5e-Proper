@@ -30,36 +30,59 @@ const LLMResponseParser: React.FC<LLMResponseParserProps> = ({ onProcessed }) =>
     setError(null);
     
     try {
-      // Process the GM response to update game state
-      await processGameMasterResponse(response);
-      
-      // Extract any ASCII map data for visualization
-      const mapEntities = extractCoordinatesFromAsciiMap(response);
-      
-      if (mapEntities.length > 0) {
-        // Process map entities (optional)
-        mapEntities.forEach(entity => {
-          console.log(`Found entity: ${entity.type} at coordinates (${entity.coords.x}, ${entity.coords.y}, ${entity.coords.z})`);
-          // You could update your map visualization here
-        });
-      }
-      
-      // Set success result
-      const processResult = {
-        success: true,
-        message: 'Response processed successfully',
-        entitiesFound: mapEntities.length,
-      };
-      
-      setResult(processResult);
-      
-      if (onProcessed) {
-        onProcessed(processResult);
-      }
-      
-    } catch (err) {
-      console.error('Error processing LLM response:', err);
-      setError('Failed to process the response. Please check the format and try again.');
+        // Process the GM response to update game state and map data
+        await processGameMasterResponse(response);
+
+        // Extract any ASCII map data for visualization
+        const mapEntities = extractCoordinatesFromAsciiMap(response);
+
+        // Process map visualization details for UI feedback
+        let mapUpdateDetails = '';
+        if (mapEntities.length > 0) {
+          const entityTypes = new Map<string, number>();
+
+          mapEntities.forEach(entity => {
+            console.log(`Found entity: ${entity.type} at coordinates (${entity.coords.x}, ${entity.coords.y}, ${entity.coords.z})`);
+
+            // Count entity types for summary
+            const count = entityTypes.get(entity.type) || 0;
+            entityTypes.set(entity.type, count + 1);
+          });
+
+          // Generate summary text for UI
+          mapUpdateDetails = Array.from(entityTypes.entries())
+            .map(([type, count]) => `${count} ${type}${count > 1 ? 's' : ''}`)
+            .join(', ');
+        }
+
+        // Set success result
+        const processResult = {
+          success: true,
+          message: 'Response processed successfully',
+          entitiesFound: mapEntities.length,
+          mapUpdateDetails
+        };
+
+        setResult(processResult);
+
+        if (onProcessed) {
+          onProcessed(processResult);
+        }
+
+        // If this update includes map data, trigger a re-render of the map component
+        if (mapEntities.length > 0 || response.includes('"locations":') || response.includes('"features":')) {
+          // Force map update via store
+          const currentLocationId = useMap.getState().currentLocation?.id;
+          if (currentLocationId) {
+            // Small trick to force React to re-render the map component
+            setTimeout(() => {
+              useMap.getState().setCurrentLocation(currentLocationId);
+            }, 100);
+          }
+        }
+      } catch (err) {
+        console.error('Error processing LLM response:', err);
+        setError('Failed to process the response. Please check the format and try again.');
     } finally {
       setIsProcessing(false);
     }

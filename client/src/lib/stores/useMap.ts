@@ -122,9 +122,20 @@ export const useMap = create<MapState>((set, get) => ({
   },
 
   addLocation: (location) =>
-    set((state) => ({
-      locations: [...state.locations, location],
-    })),
+  set((state) => {
+    // Check if location already exists
+    const existingIndex = state.locations.findIndex(loc => loc.id === location.id);
+
+    if (existingIndex >= 0) {
+      // Update existing location
+      const updatedLocations = [...state.locations];
+      updatedLocations[existingIndex] = location;
+      return { locations: updatedLocations };
+    } else {
+      // Add new location
+      return { locations: [...state.locations, location] };
+    }
+  }),
 
   loadLocations: async (campaignId) => {
     set({ loading: true, error: null });
