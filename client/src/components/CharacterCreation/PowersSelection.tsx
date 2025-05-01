@@ -20,9 +20,9 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
   // Watch values from the form
   const characterClass = useCharacterFormWatch(form, 'class');
   const characterLevel = useCharacterFormWatch(form, 'level');
-  const watchedForcePowers = useCharacterFormWatch(form, 'forcePowers');
-  const watchedTechPowers = useCharacterFormWatch(form, 'techPowers');
-  
+  const watchedForcePowers = useCharacterFormWatch(form, 'forcePowers') || [];
+  const watchedTechPowers = useCharacterFormWatch(form, 'techPowers') || [];
+
   // Ensure we always have arrays for powers
   const selectedForcePowers = Array.isArray(watchedForcePowers) ? watchedForcePowers : [];
   const selectedTechPowers = Array.isArray(watchedTechPowers) ? watchedTechPowers : [];
@@ -274,7 +274,7 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
                             <div 
                               key={power.id}
                               className={`border rounded-md p-3 cursor-pointer transition-colors ${
-                                Array.isArray(selectedForcePowers) && selectedForcePowers.some(p => p.id === power.id)
+                                selectedForcePowers.some(p => p.id === power.id)
                                   ? 'border-blue-500 bg-blue-500/20'
                                   : 'border-gray-600 hover:border-blue-400'
                               }`}
@@ -327,7 +327,7 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
                             <div 
                               key={power.id}
                               className={`border rounded-md p-3 cursor-pointer transition-colors ${
-                                Array.isArray(selectedTechPowers) && selectedTechPowers.some(p => p.id === power.id)
+                                selectedTechPowers.some(p => p.id === power.id)
                                   ? 'border-amber-500 bg-amber-500/20'
                                   : 'border-gray-600 hover:border-amber-400'
                               }`}
