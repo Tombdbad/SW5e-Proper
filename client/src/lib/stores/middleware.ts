@@ -172,48 +172,7 @@ export const withHistory = <T extends object>(
     };
   };
 
-/**
- * Creates a middleware that logs performance metrics
- */
-export const withPerformanceMonitoring = <T extends object>(
-  config: {
-    logThreshold?: number; // ms
-    trackKeys?: (keyof T)[];
-  } = {}
-) =>
-  (initializer: StateCreator<T>) =>
-  (set: any, get: any, store: any) => {
-    const { logThreshold = 16, trackKeys } = config;
 
-    return initializer(
-      (partial: any, replace?: boolean) => {
-        const start = performance.now();
-
-        // Execute the update
-        set(partial, replace);
-
-        const end = performance.now();
-        const duration = end - start;
-
-        // Log slow updates
-        if (duration > logThreshold) {
-          console.warn(`State update took ${duration.toFixed(2)}ms`, {
-            partial: typeof partial === 'function' ? '(function)' : partial
-          });
-        }
-
-        // Track specific keys if needed
-        if (trackKeys && typeof partial === 'object') {
-          const trackedChanges = trackKeys.filter(key => key in partial);
-          if (trackedChanges.length > 0) {
-            console.debug('Tracked state changes:', trackedChanges);
-          }
-        }
-      },
-      get,
-      store
-    );
-  };
 
 /**
  * Helper to create a store with common middleware stack
@@ -251,7 +210,6 @@ export const withDefaultMiddleware = <T extends object, P extends string = 'pers
     let creator = immer(initializer);
     creator = withValidation(schema)(creator);
     creator = withHistory<T>()(creator) as any;
-    creator = withPerformanceMonitoring<T>()(creator);
 
     if (persistOptions) {
       creator = persist(creator, persistOptions);

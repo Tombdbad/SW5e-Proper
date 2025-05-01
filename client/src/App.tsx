@@ -8,31 +8,10 @@ import CampaignView from './pages/CampaignView';
 import GalacticMapView from './pages/GalacticMapView';
 import GameBoard from './pages/GameBoard';
 import NotFound from './pages/not-found';
-import { PerformanceMonitor, PerformanceMetricsDisplay } from './lib/performance/monitor';
 import { useCharacter } from './lib/stores/useCharacter';
 import { useCampaign } from './lib/stores/useCampaign';
 import { Toaster } from './components/ui/sonner';
-import { usePerformance } from './lib/performance/monitor';
 import LoadingDemo from './pages/LoadingDemo';
-
-// Global keyboard shortcut for performance display
-function PerformanceControls() {
-  const { isDebugEnabled, setDebugEnabled } = usePerformance();
-  
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+Shift+P to toggle performance display
-      if (e.ctrlKey && e.shiftKey && e.code === 'KeyP') {
-        setDebugEnabled(!isDebugEnabled);
-      }
-    };
-    
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isDebugEnabled, setDebugEnabled]);
-  
-  return null;
-}
 
 function App() {
   const navigate = useNavigate();
@@ -69,19 +48,8 @@ function App() {
   }, []);
   
   return (
-    <PerformanceMonitor>
       <div className="flex flex-col min-h-screen bg-background">
         <Toaster position="top-right" />
-        <PerformanceControls />
-        
-        {/* Performance metrics display will only show when debug is enabled */}
-        <PerformanceMetricsDisplay 
-          position="bottom-right"
-          showFps={true}
-          showMemory={true}
-          showRenders={true}
-          showTimings={true}
-        />
         
         {showDevTools && (
           <div className="fixed top-0 right-0 bg-black/80 text-white p-2 text-xs z-50">
@@ -117,7 +85,6 @@ function App() {
           </Routes>
         </div>
       </div>
-    </PerformanceMonitor>
   );
 }
 
