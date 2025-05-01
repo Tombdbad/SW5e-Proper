@@ -87,12 +87,12 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ showPreview = false }
     .filter((power: any) => power.type === 'tech')
     .reduce((sum: number, power: any) => sum + power.level, 0);
 
-    // Always call useQuery to maintain consistent hook calls across renders
-    // This hook must be called unconditionally before any early returns
-    const { data: powers = [], isLoading } = useQuery({
-      queryKey: ['powers'],
-    queryFn: async () => {
-        // Fetching from API endpoints would look like this:
+      // Always call useQuery to maintain consistent hook calls across renders
+      // This must be called in the same order every render, before any conditional returns
+      const { data: powers = [], isLoading } = useQuery({
+        queryKey: ['powers'],
+        queryFn: async () => {
+            // Fetching from API endpoints would look like this:
         // const [forcePowersData, techPowersData] = await Promise.all([
         //   fetch('/api/sw5e/powers/force').then(res => res.json()),
         //   fetch('/api/sw5e/powers/tech').then(res => res.json())
@@ -111,26 +111,27 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ showPreview = false }
       enabled: true,
     });
 
-      // If character can't use any powers, show message
-      // This now happens after the useQuery hook is called to maintain hook order
-      if (!hasForceCasting && !hasTechCasting) {
-        return (
-          <div className="space-y-4">
-            <Alert>
-              <Info className="h-4 w-4 mr-2" />
-              Your character class does not have access to Force or Tech powers.
-            </Alert>
-            <p className="text-gray-400">
-              Select a Force user (like Consular or Guardian) or Tech user (like Engineer or Scholar) 
-              to access powers.
-            </p>
-          </div>
-        );
-      }
+        // If character can't use any powers, show message
+        // This needs to be AFTER the useQuery hook to maintain hook order
+        if (!hasForceCasting && !hasTechCasting) {
+          return (
+            <div className="space-y-4">
+              <Alert>
+                <Info className="h-4 w-4 mr-2" />
+                Your character class does not have access to Force or Tech powers.
+              </Alert>
+              <p className="text-gray-400">
+                Select a Force user (like Consular or Guardian) or Tech user (like Engineer or Scholar) 
+                to access powers.
+              </p>
+            </div>
+          );
+        }
 
-      // Filter powers based on character class capabilities
-      // Using the result from useQuery which is now guaranteed to be an array
-      const eligiblePowers = (powers || []).filter(power => {
+        // Filter powers based on character class capabilities
+        // Using the result from useQuery which is now guaranteed to be an array
+        const eligiblePowers = (powers || []).filter(power => {
+          if (!power) return false;
         if (!hasForceCasting && power.type === 'force') return false;
       if (!hasForceCasting && power.type === 'force') return false;
       if (!hasTechCasting && power.type === 'tech') return false;

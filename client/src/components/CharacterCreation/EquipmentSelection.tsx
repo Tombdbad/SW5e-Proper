@@ -55,18 +55,18 @@ export default function EquipmentSelection({ form }: { form: any }) {
         }
       }
   };
-  
+
   // Filter equipment by categories
   const weaponsAndAmmo = equipment.filter(item => item.category === "Weapon" || item.category === "Ammunition");
   const armor = equipment.filter(item => item.category === "Armor");
   const adventuringGear = equipment.filter(item => item.category === "Adventuring Gear");
   const tools = equipment.filter(item => item.category === "Tool");
-  
+
   // Helper to check if an item is selected
   const isItemSelected = (itemId: string) => {
     return selectedItems.includes(itemId);
   };
-  
+
   // Helper to check if an item can be afforded
   const canAfford = (price: number) => {
     return credits >= price;
@@ -80,7 +80,7 @@ export default function EquipmentSelection({ form }: { form: any }) {
           Credits: {credits}
         </div>
       </div>
-      
+
       <FormField
         control={form.control}
         name="equipment"
@@ -124,9 +124,9 @@ export default function EquipmentSelection({ form }: { form: any }) {
                     ))}
                   </div>
                 </div>
-                
+
                 <Separator />
-                
+
                 <div>
                   <h3 className="text-lg font-semibold mb-2">Armor</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -156,9 +156,9 @@ export default function EquipmentSelection({ form }: { form: any }) {
                     ))}
                   </div>
                 </div>
-                
+
                 <Separator />
-                
+
                 <div>
                   <h3 className="text-lg font-semibold mb-2">Adventuring Gear</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -185,9 +185,9 @@ export default function EquipmentSelection({ form }: { form: any }) {
                     ))}
                   </div>
                 </div>
-                
+
                 <Separator />
-                
+
                 <div>
                   <h3 className="text-lg font-semibold mb-2">Tools</h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

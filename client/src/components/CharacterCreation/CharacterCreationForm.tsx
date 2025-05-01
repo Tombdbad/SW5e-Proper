@@ -190,9 +190,11 @@ export default function CharacterCreationForm() {
       }
       
       // Calculate derived values for the character
-      const conModifier = calculateModifier(data.abilityScores.constitution);
-      const dexModifier = calculateModifier(data.abilityScores.dexterity);
-      
+      // Add safety checks to prevent accessing properties of undefined
+      const abilityScores = data.abilityScores || {};
+      const conModifier = calculateModifier(abilityScores.constitution || 10);
+      const dexModifier = calculateModifier(abilityScores.dexterity || 10);
+
       // Calculate HP based on class hit die and constitution
       const baseHp = selectedClass.hitDie;
       const maxHp = baseHp + conModifier;
