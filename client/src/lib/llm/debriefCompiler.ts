@@ -236,7 +236,7 @@ export async function createDebrief(
  * Parses and validates an LLM response
  */
 function parseResponse(rawResponse: any): any {
-  function parseResponse(rawResponse: any): any {
+
     try {
       const parsedData =
         typeof rawResponse === "string" ? JSON.parse(rawResponse) : rawResponse;
@@ -527,32 +527,31 @@ function parseResponse(rawResponse: any): any {
          */
         function parseResponse(rawResponse: any): any {
           function parseResponse(rawResponse: any): any {
-            try {
-              const parsedData =
-                typeof rawResponse === "string" ? JSON.parse(rawResponse) : rawResponse;
+          try {
+            const parsedData =
+              typeof rawResponse === "string" ? JSON.parse(rawResponse) : rawResponse;
 
-              // Distribute data to appropriate systems
-              if (parsedData.locations) {
-                updateMapLocations(parsedData.locations);
-              }
-
-              if (parsedData.character) {
-                updateCharacterState(parsedData.character);
-              }
-
-              if (parsedData.objectives) {
-                updateCampaignObjectives(parsedData.objectives);
-              }
-
-              if (parsedData.npcs) {
-                updateNPCRegistry(parsedData.npcs);
-              }
-
-              return parsedData;
-            } catch (error) {
-              console.error("Error parsing LLM response:", error);
-              throw new Error("Failed to parse LLM response");
+            // Distribute data to appropriate systems
+            if (parsedData.locations) {
+              updateMapLocations(parsedData.locations);
             }
+
+            if (parsedData.character) {
+              updateCharacterState(parsedData.character);
+            }
+
+            if (parsedData.objectives) {
+              updateCampaignObjectives(parsedData.objectives);
+            }
+
+            if (parsedData.npcs) {
+              updateNPCRegistry(parsedData.npcs);
+            }
+
+            return parsedData;
+          } catch (error) {
+            console.error("Error parsing LLM response:", error);
+            throw new Error("Failed to parse LLM response");
           }
 
           async function updateMapLocations(locations: any[]) {
