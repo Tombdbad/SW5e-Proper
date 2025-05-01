@@ -41,9 +41,9 @@ export const getAbilityModifier = (score: number): number => {
   return Math.floor((score - 10) / 2);
 };
 
-// Alias for getAbilityModifier for backward compatibility
+// Aliases for getAbilityModifier for backward compatibility
 export const calculateModifier = getAbilityModifier;
-
+export const getAbilityModifiers = getAbilityModifier; // Add plural version for compatibility
 
   // Define MAX_POINT_BUY_POINTS for ability score point-buy system
 export const MAX_POINT_BUY_POINTS = 27;
@@ -60,6 +60,9 @@ export const calculateProficiencyBonus = getProficiencyBonus;
 export const getCharacterLevel = (classes: CharacterClass[]): number => {
   return classes.reduce((total, characterClass) => total + characterClass.level, 0);
 };
+
+// Alias for getCharacterLevel
+export const calculateCharacterLevel = getCharacterLevel;
 
 // Calculate force points based on class, level, and ability scores
 export const calculateForcePoints = (
