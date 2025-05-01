@@ -35,5 +35,3 @@ export function Skeleton({
     />
   );
 }
-
-export { Skeleton };
