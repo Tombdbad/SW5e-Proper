@@ -1,169 +1,240 @@
-
 import React, { useState, useEffect } from "react";
-import { useFormContext } from "react-hook-form";
-import {
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { calculateModifier } from "@/lib/sw5e/rules";
-import { abilities } from "@/lib/sw5e/abilities";
+import TranslucentPane from "../ui/TranslucentPane";
+import { getAbilityModifier } from "@/lib/sw5e/rules";
 
-export default function AbilityScores() {
-  const { control, watch, setValue } = useFormContext();
-  const abilityScores = watch("abilityScores") || {};
-  const [pointsRemaining, setPointsRemaining] = useState(27); // Standard point buy
-  const [initialScores, setInitialScores] = useState<Record<string, number>>({});
+interface AbilityScoresProps {
+  form: any;
+}
 
-  const MIN_SCORE = 8;
-  const MAX_SCORE = 15;
+export default function AbilityScores({ form }: AbilityScoresProps) {
+  const { register, watch, setValue } = form;
+  const [pointsRemaining, setPointsRemaining] = useState(27);
+  const [method, setMethod] = useState<"pointbuy" | "standard" | "manual">(
+    "pointbuy"
+  );
 
-  // Initialize scores on component mount
+  // Initialize default ability scores if they don't exist
   useEffect(() => {
-    const defaultScores = {
-      strength: 8,
-      dexterity: 8,
-      constitution: 8,
-      intelligence: 8,
-      wisdom: 8,
-      charisma: 8,
-    };
+    const currentAbilityScores = watch("abilityScores");
 
-    if (!abilityScores.strength) {
-      setValue("abilityScores", defaultScores);
-      setInitialScores(defaultScores);
-    } else {
-      setInitialScores(abilityScores);
+    // Initialize ability scores with default values if they don't exist or are incomplete
+    if (!currentAbilityScores || 
+        !currentAbilityScores.strength || 
+        !currentAbilityScores.dexterity || 
+        !currentAbilityScores.constitution || 
+        !currentAbilityScores.intelligence || 
+        !currentAbilityScores.wisdom || 
+        !currentAbilityScores.charisma) {
+
+      const defaultScores = {
+        strength: 10,
+        dexterity: 10,
+        constitution: 10,
+        intelligence: 10,
+        wisdom: 10,
+        charisma: 10
+      };
+
+      // Set default values for any missing ability scores
+      setValue("abilityScores", {
+        ...defaultScores,
+        ...currentAbilityScores
+      });
+
+      console.log("Initialized ability scores:", defaultScores);
     }
-  }, []);
+  }, [setValue, watch]);
 
-  // Calculate points used
-  useEffect(() => {
-    if (Object.keys(initialScores).length === 0) return;
-
-    let pointsUsed = 0;
-    Object.values(abilityScores).forEach((score: number) => {
-      if (score > 8) {
-        // Point costs: 9=1, 10=2, 11=3, 12=4, 13=5, 14=7, 15=9
-        if (score <= 13) {
-          pointsUsed += score - 8;
-        } else if (score === 14) {
-          pointsUsed += 7;
-        } else if (score === 15) {
-          pointsUsed += 9;
-        }
-      }
-    });
-
-    setPointsRemaining(27 - pointsUsed);
-  }, [abilityScores, initialScores]);
-
-  const handleScoreChange = (ability: string, value: number) => {
-    // Calculate point cost for the new value
-    let newValue = Math.max(MIN_SCORE, Math.min(MAX_SCORE, value));
-    
-    // Create a new ability scores object with the updated value
-    const newScores = { ...abilityScores, [ability]: newValue };
-    
-    // Calculate points that would be used with the new scores
-    let pointsUsed = 0;
-    Object.entries(newScores).forEach(([key, score]) => {
-      if (score > 8) {
-        if (score <= 13) {
-          pointsUsed += score - 8;
-        } else if (score === 14) {
-          pointsUsed += 7;
-        } else if (score === 15) {
-          pointsUsed += 9;
-        }
-      }
-    });
-    
-    // Only allow the change if there are enough points
-    if (pointsUsed <= 27) {
-      setValue(`abilityScores.${ability}`, newValue);
-    }
+  const abilityScores = watch("abilityScores") || {
+    strength: 10,
+    dexterity: 10,
+    constitution: 10,
+    intelligence: 10,
+    wisdom: 10,
+    charisma: 10
   };
 
-  const getScoreCost = (score: number): number => {
-    if (score <= 8) return 0;
-    if (score <= 13) return score - 8;
-    if (score === 14) return 7;
-    return 9; // score === 15
+  // Log ability scores to verify they are persisting
+  useEffect(() => {
+    console.log("Current ability scores:", abilityScores);
+  }, [abilityScores]);
+
+  const abilities = [
+    { key: "strength", name: "Strength" },
+    { key: "dexterity", name: "Dexterity" },
+    { key: "constitution", name: "Constitution" },
+    { key: "intelligence", name: "Intelligence" },
+    { key: "wisdom", name: "Wisdom" },
+    { key: "charisma", name: "Charisma" },
+  ];
+
+  const standardArray = [15, 14, 13, 12, 10, 8];
+
+  // Point buy costs: 8 (0), 9 (1), 10 (2), 11 (3), 12 (4), 13 (5), 14 (7), 15 (9)
+  const pointCosts = {
+    8: 0,
+    9: 1,
+    10: 2,
+    11: 3,
+    12: 4,
+    13: 5,
+    14: 7,
+    15: 9,
+  };
+
+  const handlePointBuy = (ability: string, value: number) => {
+    const oldValue = abilityScores[ability as keyof typeof abilityScores] || 8;
+    const oldCost = pointCosts[oldValue as keyof typeof pointCosts] || 0;
+    const newCost = pointCosts[value as keyof typeof pointCosts] || 0;
+
+    const pointsChange = newCost - oldCost;
+    const newPointsRemaining = pointsRemaining - pointsChange;
+
+    if (newPointsRemaining < 0 || value < 8 || value > 15) {
+      return;
+    }
+
+    setValue(`abilityScores.${ability}`, value);
+    setPointsRemaining(newPointsRemaining);
+  };
+
+  const useStandardArray = () => {
+    setMethod("standard");
+    let remainingArray = [...standardArray];
+
+    abilities.forEach((ability) => {
+      if (remainingArray.length === 0) return;
+      const value = remainingArray.shift() || 10;
+      setValue(`abilityScores.${ability.key}`, value);
+    });
+  };
+
+  const resetPointBuy = () => {
+    setMethod("pointbuy");
+    setPointsRemaining(27);
+    abilities.forEach((ability) => {
+      setValue(`abilityScores.${ability.key}`, 8);
+    });
+  };
+
+  const switchToManual = () => {
+    setMethod("manual");
   };
 
   return (
-    <div className="space-y-6">
-      <div className="mb-4">
-        <h3 className="text-lg font-medium text-yellow-400">Ability Scores</h3>
-        <p className="text-sm text-gray-400">
-          Distribute your ability scores using the point buy system.
-          You have {pointsRemaining} points remaining.
-        </p>
+    <div className="space-y-4">
+      <h2 className="text-2xl font-bold text-yellow-400">Ability Scores</h2>
+
+      <div className="flex space-x-2 mb-4">
+        <button
+          type="button"
+          onClick={resetPointBuy}
+          className={`${
+            method === "pointbuy" ? "bg-yellow-800" : "bg-gray-700"
+          } text-white px-4 py-1 rounded`}
+        >
+          Point Buy
+        </button>
+        <button
+          type="button"
+          onClick={useStandardArray}
+          className={`${
+            method === "standard" ? "bg-yellow-800" : "bg-gray-700"
+          } text-white px-4 py-1 rounded`}
+        >
+          Standard Array
+        </button>
+        <button
+          type="button"
+          onClick={switchToManual}
+          className={`${
+            method === "manual" ? "bg-yellow-800" : "bg-gray-700"
+          } text-white px-4 py-1 rounded`}
+        >
+          Manual Entry
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {abilities.map((ability) => (
-          <FormField
-            key={ability.id}
-            control={control}
-            name={`abilityScores.${ability.id}`}
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="flex justify-between">
-                  <span>{ability.name}</span>
-                  <span className="text-yellow-400">
-                    {field.value ? `+${calculateModifier(field.value)}` : "+0"}
-                  </span>
-                </FormLabel>
-                <div className="flex items-center space-x-2">
-                  <Button
+      {method === "pointbuy" && (
+        <div className="bg-gray-800 p-2 rounded">
+          <p className="text-yellow-300 text-sm font-bold">
+            Points Remaining: {pointsRemaining}
+          </p>
+        </div>
+      )}
+
+      <TranslucentPane className="grid grid-cols-2 md:grid-cols-3 gap-4 p-6">
+        {abilities.map((ability) => {
+          const score = abilityScores[ability.key as keyof typeof abilityScores] || 10;
+          const modifier = getAbilityModifier(score);
+
+          return (
+            <div
+              key={ability.key}
+              className="bg-gray-800 p-4 rounded-lg text-center"
+            >
+              <div className="text-yellow-400 mb-1">{ability.name}</div>
+
+              <div className="relative mb-2">
+                <input
+                  type="number"
+                  {...register(`abilityScores.${ability.key}`)}
+                  min={3}
+                  max={18}
+                  className="w-16 h-16 text-2xl text-center bg-gray-700 rounded-md mx-auto"
+                  disabled={method !== "manual"}
+                  value={score}
+                  onChange={(e) => {
+                    if (method === "pointbuy") {
+                      handlePointBuy(ability.key, parseInt(e.target.value));
+                    } else {
+                      setValue(
+                        `abilityScores.${ability.key}`,
+                        parseInt(e.target.value)
+                      );
+                    }
+                  }}
+                />
+              </div>
+
+              <div className="text-white">
+                Modifier: {modifier >= 0 ? "+" : ""}
+                {modifier}
+              </div>
+
+              {method === "pointbuy" && (
+                <div className="flex justify-center space-x-2 mt-2">
+                  <button
                     type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={field.value <= MIN_SCORE}
-                    onClick={() => handleScoreChange(ability.id, (field.value || 0) - 1)}
+                    onClick={() =>
+                      handlePointBuy(ability.key, Math.max(8, score - 1))
+                    }
+                    className="w-8 h-8 bg-gray-700 rounded-full"
                   >
                     -
-                  </Button>
-                  <FormControl>
-                    <Input
-                      {...field}
-                      type="number"
-                      className="text-center"
-                      min={MIN_SCORE}
-                      max={MAX_SCORE}
-                      onChange={(e) => handleScoreChange(ability.id, parseInt(e.target.value))}
-                    />
-                  </FormControl>
-                  <Button
+                  </button>
+                  <button
                     type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={
-                      field.value >= MAX_SCORE ||
-                      pointsRemaining <= 0 ||
-                      (field.value >= 13 && pointsRemaining < 2) ||
-                      (field.value === 14 && pointsRemaining < 2)
+                    onClick={() =>
+                      handlePointBuy(ability.key, Math.min(15, score + 1))
                     }
-                    onClick={() => handleScoreChange(ability.id, (field.value || 0) + 1)}
+                    className="w-8 h-8 bg-gray-700 rounded-full"
                   >
                     +
-                  </Button>
-                  <span className="text-sm text-gray-400">
-                    Cost: {getScoreCost(field.value || 0)}
-                  </span>
+                  </button>
                 </div>
-                <FormMessage />
-                <p className="text-xs text-gray-500 mt-1">{ability.description}</p>
-              </FormItem>
-            )}
-          />
-        ))}
+              )}
+            </div>
+          );
+        })}
+      </TranslucentPane>
+
+      <div className="bg-gray-800 bg-opacity-50 p-4 rounded-md">
+        <h3 className="text-yellow-400 text-lg mb-2">Ability Score Bonuses</h3>
+        <p className="text-white text-sm">
+          Racial ability score improvements will be applied automatically based
+          on your species selection.
+        </p>
       </div>
     </div>
   );

@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from "react";
 import { useFormContext } from "react-hook-form";
 import TranslucentPane from "../ui/TranslucentPane";
+import { ABILITY_NAMES } from "@/lib/sw5e/constants";
 
 interface SkillsSelectionProps {
   form: any;
@@ -18,19 +19,40 @@ export default function SkillsSelection({
   const selectedClass = getSelectedClass();
   const selectedBackground = watch("background");
   const selectedSkills = watch("skillProficiencies") || [];
-  
-  const [availableSkills, setAvailableSkills] = useState<any[]>([]);
-  const [maxSkillChoices, setMaxSkillChoices] = useState(0);
-  const [backgroundSkills, setBackgroundSkills] = useState<string[]>([]);
-  const [classSkillOptions, setClassSkillOptions] = useState<string[]>([]);
-  
-  // Group skills by ability
-  const groupedSkills = allSkills.reduce((acc, skill) => {
-    const ability = skill.ability.charAt(0).toUpperCase() + skill.ability.slice(1);
-    if (!acc[ability]) {
-      acc[ability] = [];
-    }
-    acc[ability].push(skill);
+    const abilityScores = watch("abilityScores") || {
+      strength: 10,
+      dexterity: 10,
+      constitution: 10,
+      intelligence: 10,
+      wisdom: 10,
+      charisma: 10
+    };
+
+    // Log ability scores to check if they are defined properly
+    useEffect(() => {
+      console.log("Current ability scores:", abilityScores);
+    }, [abilityScores]);
+
+    const [availableSkills, setAvailableSkills] = useState<any[]>([]);
+    const [maxSkillChoices, setMaxSkillChoices] = useState(0);
+    const [backgroundSkills, setBackgroundSkills] = useState<string[]>([]);
+    const [classSkillOptions, setClassSkillOptions] = useState<string[]>([]);
+
+    // Group skills by ability
+    const groupedSkills = allSkills.reduce((acc, skill) => {
+      // Ensure ability exists and is properly formatted
+      if (!skill.ability) {
+        console.warn("Skill missing ability attribute:", skill);
+        return acc;
+      }
+
+      const abilityKey = skill.ability.toLowerCase();
+      const abilityName = ABILITY_NAMES[abilityKey] || skill.ability.charAt(0).toUpperCase() + skill.ability.slice(1);
+
+      if (!acc[abilityName]) {
+        acc[abilityName] = [];
+      }
+      acc[abilityName].push(skill);
     return acc;
   }, {} as Record<string, any[]>);
 
@@ -72,7 +94,7 @@ export default function SkillsSelection({
       "skillProficiencies", 
       [...bgSkills, ...selectedSkills.filter(skill => !bgSkills.includes(skill))]
     );
-  }, [selectedClass, selectedBackground, allSkills, setValue]);
+  }, [selectedClass, selectedBackground, allSkills, setValue, watch]);
 
   // Handle skill selection
   const toggleSkill = (skillId: string) => {
@@ -148,7 +170,7 @@ export default function SkillsSelection({
                   
                   return (
                     <li 
-                      key={skill.id}
+                      key={`skill-${skill.id}`}
                       className={`
                         flex items-center p-2 rounded-md transition-colors
                         ${isClassSkill ? "cursor-pointer" : "opacity-50 cursor-not-allowed"}
