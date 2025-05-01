@@ -44,9 +44,13 @@ export const getAbilityModifier = (score: number): number => {
 // Alias for getAbilityModifier for backward compatibility
 export const calculateModifier = getAbilityModifier;
 
-// Calculate proficiency bonus based on character level
-export const getProficiencyBonus = (level: number): number => {
-      // Proficiency bonus starts at +2 for level 1 and increases by 1 every 4 levels
+
+  // Define MAX_POINT_BUY_POINTS for ability score point-buy system
+  export const MAX_POINT_BUY_POINTS = 27;
+
+  // Calculate proficiency bonus based on character level
+  export const getProficiencyBonus = (level: number): number => {
+        // Proficiency bonus starts at +2 for level 1 and 
     return Math.floor((level - 1) / 4) + 2;
 };
   // Calculate total character level from all classes
