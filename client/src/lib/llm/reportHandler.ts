@@ -206,7 +206,7 @@ export async function processGameMasterResponse(
             { type: "debris", position: {x: 10, y: 0, z: 5} }
           ]
         }
-      },
+      };
 
     // Process system data if present
     if (systemDataText && systemDataText.trim()) {
