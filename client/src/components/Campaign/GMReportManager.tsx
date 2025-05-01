@@ -2,7 +2,7 @@
   import React, { useState, useEffect } from "react";
   import { Button } from "@/components/ui/button";
   import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-  import { generateGameReport } from "@/lib/llm/reportHandler";
+  import { generateGameMasterReport } from "@/lib/llm/reportHandler";
   import { useCharacter } from "@/lib/stores/useCharacter";
   import { useCampaign } from "@/lib/stores/useCampaign";
   import GMReportDialog from "./GMReportDialog";
