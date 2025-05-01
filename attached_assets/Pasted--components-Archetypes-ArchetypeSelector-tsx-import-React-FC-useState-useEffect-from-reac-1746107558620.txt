@@ -1,0 +1,503 @@
+// components/Archetypes/ArchetypeSelector.tsx
+import React, { FC, useState, useEffect } from 'react';
+import { useForm, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import useCharacterStore from '../../lib/stores/useCharacterStore';
+
+// Assuming archetypes data structure exists in the codebase
+import { archetypes } from '../../lib/sw5e/archetypes';
+
+const archetypeSchema = z.object({
+  classId: z.string().min(1, "Class is required"),
+  archetypeId: z.string().min(1, "Archetype is required"),
+  level: z.number().int().min(3).max(20),
+});
+
+type ArchetypeFormData = z.infer<typeof archetypeSchema>;
+
+interface ArchetypeSelectorProps {
+  characterId: string;
+  onClose: () => void;
+  onSelect?: (archetypeId: string) => void;
+}
+
+const ArchetypeSelector: FC<ArchetypeSelectorProps> = ({ 
+  characterId, 
+  onClose,
+  onSelect 
+}) => {
+  const { 
+    character, 
+    addArchetype,
+  } = useCharacterStore(state => ({
+    character: state.characters[characterId],
+    addArchetype: state.actions.addArchetype,
+  }));
+
+  const [filteredArchetypes, setFilteredArchetypes] = useState<any[]>([]);
+  const [selectedArchetype, setSelectedArchetype] = useState<any>(null);
+
+  const { register, handleSubmit, watch, control, formState: { errors }, setValue } = useForm<ArchetypeFormData>({
+    resolver: zodResolver(archetypeSchema),
+    defaultValues: {
+      classId: character?.class?.id || '',
+      archetypeId: '',
+      level: 3, // Most archetypes are selected at level 3
+    },
+  });
+
+  const watchedClassId = watch('classId');
+
+  // Update available archetypes when class changes
+  useEffect(() => {
+    if (!watchedClassId) {
+      setFilteredArchetypes([]);
+      return;
+    }
+
+    // Filter archetypes by class
+    const classArchetypes = archetypes.filter(archetype => 
+      archetype.classId === watchedClassId
+    );
+    
+    setFilteredArchetypes(classArchetypes);
+    setValue('archetypeId', ''); // Reset selected archetype when class changes
+    setSelectedArchetype(null);
+  }, [watchedClassId, setValue]);
+
+  // Update selected archetype details when archetype changes
+  const watchedArchetypeId = watch('archetypeId');
+  useEffect(() => {
+    if (!watchedArchetypeId) {
+      setSelectedArchetype(null);
+      return;
+    }
+
+    const archetype = archetypes.find(a => a.id === watchedArchetypeId);
+    setSelectedArchetype(archetype || null);
+  }, [watchedArchetypeId]);
+
+  const onSubmit = (data: ArchetypeFormData) => {
+    addArchetype(characterId, {
+      classId: data.classId,
+      archetypeId: data.archetypeId,
+      level: data.level,
+    });
+    
+    if (onSelect) {
+      onSelect(data.archetypeId);
+    }
+    
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-900 rounded-lg border border-gray-700 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+        <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+          <h2 className="text-xl font-bold text-yellow-400">Select Archetype</h2>
+          <button 
+            className="text-gray-400 hover:text-white"
+            onClick={onClose}
+          >
+            &times;
+          </button>
+        </div>
+        
+        <form onSubmit={handleSubmit(onSubmit)} className="p-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left Column - Selection Controls */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Class
+                </label>
+                <select
+                  {...register('classId')}
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+                >
+                  <option value="">Select Class</option>
+                  {character?.classes?.map(characterClass => (
+                    <option key={characterClass.id} value={characterClass.id}>
+                      {characterClass.name}
+                    </option>
+                  )) || (
+                    <option value={character?.class?.id}>
+                      {character?.class?.name}
+                    </option>
+                  )}
+                </select>
+                {errors.classId && (
+                  <p className="text-red-500 text-xs mt-1">{errors.classId.message}</p>
+                )}
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Archetype
+                </label>
+                <select
+                  {...register('archetypeId')}
+                  disabled={!watchedClassId}
+                  className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+                >
+                  <option value="">Select Archetype</option>
+                  {filteredArchetypes.map(archetype => (
+                    <option key={archetype.id} value={archetype.id}>
+                      {archetype.name}
+                    </option>
+                  ))}
+                </select>
+                {errors.archetypeId && (
+                  <p className="text-red-500 text-xs mt-1">{errors.archetypeId.message}</p>
+                )}
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Level Obtained
+                </label>
+                <Controller
+                  name="level"
+                  control={control}
+                  render={({ field }) => (
+                    <input
+                      type="number"
+                      min={3}
+                      max={20}
+                      {...field}
+                      onChange={(e) => field.onChange(parseInt(e.target.value))}
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+                    />
+                  )}
+                />
+                {errors.level && (
+                  <p className="text-red-500 text-xs mt-1">{errors.level.message}</p>
+                )}
+              </div>
+            </div>
+            
+            {/* Right Column - Archetype Details */}
+            <div className="lg:col-span-2 bg-gray-800 p-4 rounded border border-gray-700">
+              {selectedArchetype ? (
+                <div>
+                  <h3 className="text-xl font-bold text-yellow-400 mb-3">{selectedArchetype.name}</h3>
+                  
+                  <div className="prose prose-sm prose-invert">
+                    <p className="mb-4 text-gray-300">{selectedArchetype.description}</p>
+                    
+                    <h4 className="text-lg font-semibold text-yellow-200 mt-4 mb-2">Features</h4>
+                    <ul className="space-y-3">
+                      {selectedArchetype.features?.map((feature: any) => (
+                        <li key={feature.id} className="border-b border-gray-700 pb-2">
+                          <h5 className="text-white font-medium">{feature.name} (Level {feature.level})</h5>
+                          <p className="text-gray-300 text-sm">{feature.description}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-full min-h-[300px] text-gray-500">
+                  <p>Select an archetype to view details</p>
+                </div>
+              )}
+            </div>
+          </div>
+          
+          {/* Form Actions */}
+          <div className="flex justify-end space-x-3 mt-6 pt-4 border-t border-gray-700">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-gray-300 hover:text-white transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!selectedArchetype}
+              className={`px-4 py-2 bg-blue-600 text-white rounded transition-colors ${
+                !selectedArchetype ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-700'
+              }`}
+            >
+              Choose Archetype
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default ArchetypeSelector;
+
+// components/Archetypes/ArchetypeDetails.tsx
+import React, { FC } from 'react';
+import { archetypes } from '../../lib/sw5e/archetypes';
+
+interface ArchetypeDetailsProps {
+  archetypeId: string;
+  level?: number;
+  showAllFeatures?: boolean;
+}
+
+const ArchetypeDetails: FC<ArchetypeDetailsProps> = ({ 
+  archetypeId, 
+  level = 20,
+  showAllFeatures = false 
+}) => {
+  // Find the archetype in the database
+  const archetype = archetypes.find(a => a.id === archetypeId);
+  
+  if (!archetype) {
+    return (
+      <div className="p-4 bg-gray-800 rounded border border-gray-700 text-gray-300">
+        Archetype not found.
+      </div>
+    );
+  }
+  
+  // Filter features by level if needed
+  const availableFeatures = showAllFeatures 
+    ? archetype.features
+    : archetype.features.filter(feature => feature.level <= level);
+
+  // Group features by level
+  const featuresByLevel: Record<number, typeof archetype.features> = {};
+  availableFeatures.forEach(feature => {
+    if (!featuresByLevel[feature.level]) {
+      featuresByLevel[feature.level] = [];
+    }
+    featuresByLevel[feature.level].push(feature);
+  });
+
+  // Sort levels
+  const sortedLevels = Object.keys(featuresByLevel)
+    .map(Number)
+    .sort((a, b) => a - b);
+
+  return (
+    <div className="bg-gray-800 rounded border border-gray-700 overflow-hidden">
+      <div className="bg-gray-900 p-3 border-b border-gray-700">
+        <h3 className="text-lg font-bold text-yellow-400">{archetype.name}</h3>
+        <p className="text-gray-400 text-sm">{archetype.class} Archetype</p>
+      </div>
+      
+      <div className="p-4">
+        <p className="text-gray-300 mb-4">{archetype.description}</p>
+        
+        <h4 className="text-md font-semibold text-yellow-200 border-b border-gray-700 pb-1 mb-3">
+          Archetype Features
+        </h4>
+        
+        {sortedLevels.length === 0 ? (
+          <p className="text-gray-400 italic">No features available at your current level.</p>
+        ) : (
+          <div className="space-y-4">
+            {sortedLevels.map(level => (
+              <div key={level} className="pb-3 border-b border-gray-700 last:border-0">
+                <h5 className="text-white font-medium flex items-center">
+                  <span className="w-8 h-8 flex items-center justify-center bg-gray-700 rounded-full mr-2 text-sm">
+                    {level}
+                  </span>
+                  Level {level} Features
+                </h5>
+                
+                <div className="mt-2 space-y-3">
+                  {featuresByLevel[level].map(feature => (
+                    <div key={feature.id} className="text-gray-300 pl-10">
+                      <h6 className="font-medium text-yellow-300">{feature.name}</h6>
+                      <p className="text-sm mt-1">{feature.description}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default ArchetypeDetails;
+
+// components/Archetypes/ArchetypeFeatureCard.tsx
+import React, { FC } from 'react';
+
+interface ArchetypeFeatureCardProps {
+  featureName: string;
+  featureDescription: string;
+  level: number;
+  archetypeName: string;
+}
+
+const ArchetypeFeatureCard: FC<ArchetypeFeatureCardProps> = ({
+  featureName,
+  featureDescription,
+  level,
+  archetypeName,
+}) => {
+  return (
+    <div className="bg-gray-800 rounded border border-gray-700 overflow-hidden mb-3">
+      <div className="bg-gray-900 p-2 border-b border-gray-700 flex justify-between items-center">
+        <div>
+          <h4 className="font-bold text-yellow-300">{featureName}</h4>
+          <p className="text-xs text-gray-400">{archetypeName} Feature (Level {level})</p>
+        </div>
+        <div className="bg-blue-900 text-blue-200 px-2 py-1 rounded text-xs font-bold">
+          Archetype
+        </div>
+      </div>
+      
+      <div className="p-3 text-sm text-gray-300">
+        <p>{featureDescription}</p>
+      </div>
+    </div>
+  );
+};
+
+export default ArchetypeFeatureCard;
+
+// components/Archetypes/ArchetypeBadge.tsx
+import React, { FC } from 'react';
+
+interface ArchetypeBadgeProps {
+  archetypeName: string;
+  className?: string;
+  onClick?: () => void;
+}
+
+const ArchetypeBadge: FC<ArchetypeBadgeProps> = ({ 
+  archetypeName, 
+  className = '',
+  onClick
+}) => {
+  return (
+    <div 
+      className={`inline-flex items-center bg-blue-900 text-blue-200 px-2 py-1 rounded text-xs font-semibold ${
+        onClick ? 'cursor-pointer hover:bg-blue-800' : ''
+      } ${className}`}
+      onClick={onClick}
+    >
+      <span className="mr-1">⚜</span> {archetypeName}
+    </div>
+  );
+};
+
+export default ArchetypeBadge;
+
+// components/CharacterSheet/CharacterArchetypes.tsx
+import React, { FC, useState } from 'react';
+import useCharacterStore from '../../lib/stores/useCharacterStore';
+import ArchetypeDetails from '../Archetypes/ArchetypeDetails';
+import ArchetypeSelector from '../Archetypes/ArchetypeSelector';
+import ArchetypeBadge from '../Archetypes/ArchetypeBadge';
+import { archetypes } from '../../lib/sw5e/archetypes';
+
+interface CharacterArchetypesProps {
+  characterId: string;
+}
+
+const CharacterArchetypes: FC<CharacterArchetypesProps> = ({ characterId }) => {
+  const [isAddingArchetype, setIsAddingArchetype] = useState(false);
+  const [expandedArchetype, setExpandedArchetype] = useState<string | null>(null);
+  
+  const { character } = useCharacterStore(state => ({
+    character: state.characters[characterId]
+  }));
+
+  const characterArchetypes = character?.archetypes || [];
+  
+  // Get full archetype details for each character archetype
+  const archetypeDetails = characterArchetypes.map(charArchetype => {
+    const archetype = archetypes.find(a => a.id === charArchetype.archetypeId);
+    const characterClass = character.classes?.find(c => c.id === charArchetype.classId) || character.class;
+    
+    return {
+      ...charArchetype,
+      details: archetype,
+      className: characterClass?.name || 'Unknown Class'
+    };
+  });
+
+  const toggleArchetypeDetails = (archetypeId: string) => {
+    if (expandedArchetype === archetypeId) {
+      setExpandedArchetype(null);
+    } else {
+      setExpandedArchetype(archetypeId);
+    }
+  };
+
+  return (
+    <div className="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
+      <div className="p-3 border-b border-gray-700 flex justify-between items-center">
+        <h3 className="text-lg font-bold text-yellow-400">Archetypes</h3>
+        <button
+          onClick={() => setIsAddingArchetype(true)}
+          className="px-2 py-1 bg-blue-700 hover:bg-blue-600 text-white rounded text-sm transition-colors"
+        >
+          + Add Archetype
+        </button>
+      </div>
+      
+      <div className="p-4">
+        {archetypeDetails.length === 0 ? (
+          <div className="text-center py-6 text-gray-400">
+            <p>No archetypes selected</p>
+            <p className="text-sm mt-1">Select an archetype to specialize your character's class</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {archetypeDetails.map(archetype => (
+              <div key={archetype.archetypeId} className="border-b border-gray-700 pb-3 last:border-0">
+                <div className="flex justify-between items-center mb-2">
+                  <div className="flex items-center">
+                    <h4 className="text-white font-medium mr-2">
+                      {archetype.details?.name}
+                    </h4>
+                    <span className="text-sm text-gray-400">
+                      {archetype.className}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => toggleArchetypeDetails(archetype.archetypeId)}
+                    className="text-gray-400 hover:text-white text-sm"
+                  >
+                    {expandedArchetype === archetype.archetypeId ? 'Hide Details' : 'Show Details'}
+                  </button>
+                </div>
+                
+                {expandedArchetype === archetype.archetypeId && (
+                  <div className="mt-2">
+                    <ArchetypeDetails 
+                      archetypeId={archetype.archetypeId} 
+                      level={character.level} 
+                    />
+                  </div>
+                )}
+                
+                {!expandedArchetype && (
+                  <p className="text-sm text-gray-300">
+                    {archetype.details?.description?.substring(0, 120)}...
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      
+      {isAddingArchetype && (
+        <ArchetypeSelector
+          characterId={characterId}
+          onClose={() => setIsAddingArchetype(false)}
+        />
+      )}
+    </div>
+  );
+};
+
+export default CharacterArchetypes;

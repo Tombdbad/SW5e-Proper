@@ -1,0 +1,619 @@
+// components/Companions/CompanionCreationModal.tsx
+import React, { FC } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import useCharacterStore from '../../lib/stores/useCharacterStore';
+
+const companionSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  type: z.string().min(1, "Type is required"),
+  species: z.string().min(1, "Species is required"),
+  level: z.number().int().min(1).max(20),
+  hitPoints: z.object({
+    current: z.number().int().min(1),
+    maximum: z.number().int().min(1),
+  }),
+  relationship: z.string().min(1, "Relationship is required"),
+  notes: z.string(),
+  abilityScores: z.object({
+    strength: z.number().int().min(1).max(30),
+    dexterity: z.number().int().min(1).max(30),
+    constitution: z.number().int().min(1).max(30),
+    intelligence: z.number().int().min(1).max(30),
+    wisdom: z.number().int().min(1).max(30),
+    charisma: z.number().int().min(1).max(30),
+  }),
+});
+
+type CompanionFormData = z.infer<typeof companionSchema>;
+
+const companionTypes = [
+  "Animal Companion",
+  "Droid",
+  "Hireling",
+  "Ally",
+  "Familiar",
+  "Mount",
+  "Pet",
+  "Minion",
+  "NPC Follower",
+];
+
+interface CompanionCreationModalProps {
+  characterId: string;
+  onClose: () => void;
+}
+
+const CompanionCreationModal: FC<CompanionCreationModalProps> = ({ characterId, onClose }) => {
+  const addCompanion = useCharacterStore(state => state.actions.addCompanion);
+  
+  const { register, handleSubmit, formState: { errors }, watch, setValue } = useForm<CompanionFormData>({
+    resolver: zodResolver(companionSchema),
+    defaultValues: {
+      name: '',
+      type: 'Animal Companion',
+      species: '',
+      level: 1,
+      hitPoints: {
+        current: 10,
+        maximum: 10,
+      },
+      relationship: 'Loyal companion',
+      notes: '',
+      abilityScores: {
+        strength: 10,
+        dexterity: 10,
+        constitution: 10,
+        intelligence: 6,
+        wisdom: 10,
+        charisma: 6,
+      },
+    },
+  });
+
+  const maxHP = watch('hitPoints.maximum');
+  
+  const onSubmit = (data: CompanionFormData) => {
+    addCompanion(characterId, data);
+    onClose();
+  };
+
+  // Helper function for ability score inputs
+  const AbilityScoreInput = ({ name, label }: { name: keyof CompanionFormData['abilityScores']; label: string }) => (
+    <div>
+      <label className="block text-sm font-medium text-gray-300 mb-1">
+        {label}
+      </label>
+      <input
+        type="number"
+        {...register(`abilityScores.${name}` as any, { 
+          valueAsNumber: true,
+        })}
+        min="1"
+        max="30"
+        className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+      />
+      {errors.abilityScores?.[name] && (
+        <p className="text-red-500 text-xs mt-1">{errors.abilityScores[name]?.message}</p>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-900 rounded-lg border border-gray-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+          <h2 className="text-xl font-bold text-yellow-400">Create New Companion</h2>
+          <button 
+            className="text-gray-400 hover:text-white"
+            onClick={onClose}
+          >
+            &times;
+          </button>
+        </div>
+        
+        <form onSubmit={handleSubmit(onSubmit)} className="p-4 space-y-6">
+          {/* Basic Information */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Name
+              </label>
+              <input
+                {...register('name')}
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              />
+              {errors.name && (
+                <p className="text-red-500 text-xs mt-1">{errors.name.message}</p>
+              )}
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Type
+              </label>
+              <select
+                {...register('type')}
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              >
+                {companionTypes.map(type => (
+                  <option key={type} value={type}>{type}</option>
+                ))}
+              </select>
+              {errors.type && (
+                <p className="text-red-500 text-xs mt-1">{errors.type.message}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Species and Level */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Species
+              </label>
+              <input
+                {...register('species')}
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              />
+              {errors.species && (
+                <p className="text-red-500 text-xs mt-1">{errors.species.message}</p>
+              )}
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Level
+              </label>
+              <input
+                type="number"
+                {...register('level', { valueAsNumber: true })}
+                min="1"
+                max="20"
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              />
+              {errors.level && (
+                <p className="text-red-500 text-xs mt-1">{errors.level.message}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Hit Points */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Max HP
+              </label>
+              <input
+                type="number"
+                {...register('hitPoints.maximum', { valueAsNumber: true })}
+                min="1"
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+                onChange={(e) => {
+                  const value = parseInt(e.target.value);
+                  setValue('hitPoints.maximum', value);
+                  setValue('hitPoints.current', value);
+                }}
+              />
+              {errors.hitPoints?.maximum && (
+                <p className="text-red-500 text-xs mt-1">{errors.hitPoints.maximum.message}</p>
+              )}
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Current HP
+              </label>
+              <input
+                type="number"
+                {...register('hitPoints.current', { valueAsNumber: true })}
+                min="0"
+                max={maxHP}
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              />
+              {errors.hitPoints?.current && (
+                <p className="text-red-500 text-xs mt-1">{errors.hitPoints.current.message}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Relationship */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">
+              Relationship to Character
+            </label>
+            <input
+              {...register('relationship')}
+              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              placeholder="e.g., Loyal pet, Hired help, Trusted ally"
+            />
+            {errors.relationship && (
+              <p className="text-red-500 text-xs mt-1">{errors.relationship.message}</p>
+            )}
+          </div>
+
+          {/* Ability Scores */}
+          <div>
+            <h3 className="text-md font-medium text-gray-300 mb-3">Ability Scores</h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <AbilityScoreInput name="strength" label="Strength" />
+              <AbilityScoreInput name="dexterity" label="Dexterity" />
+              <AbilityScoreInput name="constitution" label="Constitution" />
+              <AbilityScoreInput name="intelligence" label="Intelligence" />
+              <AbilityScoreInput name="wisdom" label="Wisdom" />
+              <AbilityScoreInput name="charisma" label="Charisma" />
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">
+              Notes
+            </label>
+            <textarea
+              {...register('notes')}
+              rows={4}
+              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              placeholder="Additional details about your companion..."
+            />
+          </div>
+
+          {/* Form Actions */}
+          <div className="flex justify-end space-x-3 pt-2 border-t border-gray-700">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-gray-300 hover:text-white transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+            >
+              Create Companion
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default CompanionCreationModal;
+
+// components/Companions/CompanionEditModal.tsx
+import React, { FC } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import useCharacterStore from '../../lib/stores/useCharacterStore';
+
+const companionSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  type: z.string().min(1, "Type is required"),
+  species: z.string().min(1, "Species is required"),
+  level: z.number().int().min(1).max(20),
+  hitPoints: z.object({
+    current: z.number().int().min(0),
+    maximum: z.number().int().min(1),
+  }),
+  relationship: z.string().min(1, "Relationship is required"),
+  notes: z.string(),
+  abilityScores: z.object({
+    strength: z.number().int().min(1).max(30),
+    dexterity: z.number().int().min(1).max(30),
+    constitution: z.number().int().min(1).max(30),
+    intelligence: z.number().int().min(1).max(30),
+    wisdom: z.number().int().min(1).max(30),
+    charisma: z.number().int().min(1).max(30),
+  }),
+});
+
+type CompanionFormData = z.infer<typeof companionSchema>;
+
+const companionTypes = [
+  "Animal Companion",
+  "Droid",
+  "Hireling",
+  "Ally",
+  "Familiar",
+  "Mount",
+  "Pet",
+  "Minion",
+  "NPC Follower",
+];
+
+interface CompanionEditModalProps {
+  characterId: string;
+  companion: any; // Using any here but will type-check with the form schema
+  onClose: () => void;
+}
+
+const CompanionEditModal: FC<CompanionEditModalProps> = ({ characterId, companion, onClose }) => {
+  const updateCompanion = useCharacterStore(state => state.actions.updateCompanion);
+  
+  const { register, handleSubmit, formState: { errors }, watch } = useForm<CompanionFormData>({
+    resolver: zodResolver(companionSchema),
+    defaultValues: {
+      name: companion.name,
+      type: companion.type,
+      species: companion.species,
+      level: companion.level,
+      hitPoints: {
+        current: companion.hitPoints.current,
+        maximum: companion.hitPoints.maximum,
+      },
+      relationship: companion.relationship,
+      notes: companion.notes || '',
+      abilityScores: companion.abilityScores,
+    },
+  });
+
+  const maxHP = watch('hitPoints.maximum');
+  
+  const onSubmit = (data: CompanionFormData) => {
+    updateCompanion(characterId, companion.id, data);
+    onClose();
+  };
+
+  // Helper function for ability score inputs
+  const AbilityScoreInput = ({ name, label }: { name: keyof CompanionFormData['abilityScores']; label: string }) => (
+    <div>
+      <label className="block text-sm font-medium text-gray-300 mb-1">
+        {label}
+      </label>
+      <input
+        type="number"
+        {...register(`abilityScores.${name}` as any, { 
+          valueAsNumber: true,
+        })}
+        min="1"
+        max="30"
+        className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+      />
+      {errors.abilityScores?.[name] && (
+        <p className="text-red-500 text-xs mt-1">{errors.abilityScores[name]?.message}</p>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-900 rounded-lg border border-gray-700 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+          <h2 className="text-xl font-bold text-yellow-400">Edit Companion</h2>
+          <button 
+            className="text-gray-400 hover:text-white"
+            onClick={onClose}
+          >
+            &times;
+          </button>
+        </div>
+        
+        <form onSubmit={handleSubmit(onSubmit)} className="p-4 space-y-6">
+          {/* Basic Information */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Name
+              </label>
+              <input
+                {...register('name')}
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              />
+              {errors.name && (
+                <p className="text-red-500 text-xs mt-1">{errors.name.message}</p>
+              )}
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Type
+              </label>
+              <select
+                {...register('type')}
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              >
+                {companionTypes.map(type => (
+                  <option key={type} value={type}>{type}</option>
+                ))}
+              </select>
+              {errors.type && (
+                <p className="text-red-500 text-xs mt-1">{errors.type.message}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Species and Level */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Species
+              </label>
+              <input
+                {...register('species')}
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              />
+              {errors.species && (
+                <p className="text-red-500 text-xs mt-1">{errors.species.message}</p>
+              )}
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Level
+              </label>
+              <input
+                type="number"
+                {...register('level', { valueAsNumber: true })}
+                min="1"
+                max="20"
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              />
+              {errors.level && (
+                <p className="text-red-500 text-xs mt-1">{errors.level.message}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Hit Points */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Max HP
+              </label>
+              <input
+                type="number"
+                {...register('hitPoints.maximum', { valueAsNumber: true })}
+                min="1"
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              />
+              {errors.hitPoints?.maximum && (
+                <p className="text-red-500 text-xs mt-1">{errors.hitPoints.maximum.message}</p>
+              )}
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Current HP
+              </label>
+              <input
+                type="number"
+                {...register('hitPoints.current', { valueAsNumber: true })}
+                min="0"
+                max={maxHP}
+                className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              />
+              {errors.hitPoints?.current && (
+                <p className="text-red-500 text-xs mt-1">{errors.hitPoints.current.message}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Relationship */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">
+              Relationship to Character
+            </label>
+            <input
+              {...register('relationship')}
+              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              placeholder="e.g., Loyal pet, Hired help, Trusted ally"
+            />
+            {errors.relationship && (
+              <p className="text-red-500 text-xs mt-1">{errors.relationship.message}</p>
+            )}
+          </div>
+
+          {/* Ability Scores */}
+          <div>
+            <h3 className="text-md font-medium text-gray-300 mb-3">Ability Scores</h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <AbilityScoreInput name="strength" label="Strength" />
+              <AbilityScoreInput name="dexterity" label="Dexterity" />
+              <AbilityScoreInput name="constitution" label="Constitution" />
+              <AbilityScoreInput name="intelligence" label="Intelligence" />
+              <AbilityScoreInput name="wisdom" label="Wisdom" />
+              <AbilityScoreInput name="charisma" label="Charisma" />
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">
+              Notes
+            </label>
+            <textarea
+              {...register('notes')}
+              rows={4}
+              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              placeholder="Additional details about your companion..."
+            />
+          </div>
+
+          {/* Form Actions */}
+          <div className="flex justify-end space-x-3 pt-2 border-t border-gray-700">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-gray-300 hover:text-white transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+            >
+              Save Changes
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default CompanionEditModal;
+
+// components/Companions/CompanionDeleteModal.tsx
+import React, { FC } from 'react';
+import useCharacterStore from '../../lib/stores/useCharacterStore';
+
+interface CompanionDeleteModalProps {
+  characterId: string;
+  companionId: string;
+  companionName: string;
+  onClose: () => void;
+}
+
+const CompanionDeleteModal: FC<CompanionDeleteModalProps> = ({ 
+  characterId, 
+  companionId, 
+  companionName, 
+  onClose 
+}) => {
+  const removeCompanion = useCharacterStore(state => state.actions.removeCompanion);
+  
+  const handleDelete = () => {
+    removeCompanion(characterId, companionId);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+      <div className="bg-gray-900 rounded-lg border border-gray-700 w-full max-w-md">
+        <div className="p-4 border-b border-gray-700">
+          <h2 className="text-xl font-bold text-red-400">Delete Companion</h2>
+        </div>
+        
+        <div className="p-4">
+          <p className="text-gray-300 mb-4">
+            Are you sure you want to delete <span className="text-white font-semibold">{companionName}</span>? 
+            This action cannot be undone.
+          </p>
+          
+          <div className="flex justify-end space-x-3 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-gray-300 hover:text-white transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded transition-colors"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default CompanionDeleteModal;

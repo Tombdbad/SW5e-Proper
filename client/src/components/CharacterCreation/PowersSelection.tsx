@@ -161,7 +161,7 @@ export default function PowersSelection() {
                             key={power.id}
                             whileHover={{ scale: 1.02 }}
                             className={`p-3 rounded-lg cursor-pointer ${
-                              selectedForcePowers.includes(power.id)
+                              watchedForcePowers?.includes(power.id)
                                 ? 'bg-blue-800 border border-yellow-400'
                                 : 'bg-gray-800 hover:bg-gray-700'
                             }`}
