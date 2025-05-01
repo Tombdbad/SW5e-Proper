@@ -1,0 +1,616 @@
+// lib/stores/useCharacterStore.ts
+import { create } from 'zustand';
+import { devtools, persist } from 'zustand/middleware';
+import { immer } from 'zustand/middleware/immer';
+import { v4 as uuidv4 } from 'uuid';
+import { produce } from 'immer';
+import { z } from 'zod';
+
+// Enhanced character schema with improved companions and personality traits
+export const CharacterSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1, "Name is required"),
+  species: z.string().min(1, "Species is required"),
+  class: z.string().min(1, "Class is required"),
+  level: z.number().int().min(1),
+  background: z.string().min(1, "Background is required"),
+  alignment: z.string().min(1, "Alignment is required"),
+  abilityScores: z.object({
+    strength: z.number().int(),
+    dexterity: z.number().int(),
+    constitution: z.number().int(),
+    intelligence: z.number().int(),
+    wisdom: z.number().int(),
+    charisma: z.number().int(),
+  }),
+  skills: z.record(z.string(), z.boolean()),
+  powers: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    type: z.enum(['force', 'tech']),
+    level: z.number().int(),
+    description: z.string().optional(),
+  })),
+  equipment: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    type: z.string(),
+    quantity: z.number().int(),
+  })),
+  credits: z.number().int(),
+  experience: z.number().int(),
+  hitPoints: z.object({
+    current: z.number().int(),
+    maximum: z.number().int(),
+    temporary: z.number().int(),
+  }),
+  // Enhanced personality traits
+  personalityTraits: z.array(z.string()).default([]),
+  ideals: z.array(z.string()).default([]),
+  bonds: z.array(z.string()).default([]),
+  flaws: z.array(z.string()).default([]),
+  notes: z.string().default(""),
+  backstory: z.string().default(""),
+  // Enhanced classes for multiclassing
+  classes: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    level: z.number().int(),
+    archetype: z.string().optional(),
+  })),
+  // New field for companions
+  companions: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    type: z.string(),
+    species: z.string(),
+    level: z.number().int(),
+    hitPoints: z.object({
+      current: z.number().int(),
+      maximum: z.number().int(),
+    }),
+    abilityScores: z.object({
+      strength: z.number().int(),
+      dexterity: z.number().int(),
+      constitution: z.number().int(),
+      intelligence: z.number().int(),
+      wisdom: z.number().int(),
+      charisma: z.number().int(),
+    }),
+    notes: z.string().default(""),
+    relationship: z.string().default(""),
+  })).default([]),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  version: z.number().int(),
+});
+
+// Type derived from the schema
+export type Character = z.infer<typeof CharacterSchema>;
+
+// Define history type
+type HistoryState = {
+  past: Array<Record<string, Character>>;
+  future: Array<Record<string, Character>>;
+  tracking: boolean;
+};
+
+// Character store state
+interface CharacterState {
+  characters: Record<string, Character>;
+  activeCharacterId: string | null;
+  isLoading: boolean;
+  error: string | null;
+  derived: Record<string, any> | null;
+  history: HistoryState;
+  actions: {
+    // Character management
+    createCharacter: (characterData: Partial<Character>) => string;
+    updateCharacter: (id: string, updates: Partial<Character>) => void;
+    deleteCharacter: (id: string) => void;
+    setActiveCharacter: (id: string | null) => void;
+    
+    // History/versioning
+    undo: () => void;
+    redo: () => void;
+    enableTracking: () => void;
+    disableTracking: () => void;
+    
+    // Multiclassing
+    addClassLevel: (classId: string) => void;
+    removeClassLevel: (classId: string) => void;
+    setArchetype: (classId: string, archetype: string) => void;
+    
+    // Companions
+    addCompanion: (characterId: string, companionData: Partial<Character['companions'][0]>) => string;
+    updateCompanion: (characterId: string, companionId: string, updates: Partial<Character['companions'][0]>) => void;
+    removeCompanion: (characterId: string, companionId: string) => void;
+    
+    // Export/Import
+    exportCharacter: (id: string) => string;
+    importCharacter: (characterJson: string) => string;
+    
+    // Validation
+    validateCharacter: (id: string) => boolean;
+  };
+}
+
+// Function to create a synchronizing storage for cross-tab support
+const createCustomStorage = () => {
+  const channel = typeof window !== 'undefined' ? new BroadcastChannel('sw5e-character-sync') : null;
+  
+  return {
+    getItem: (name: string) => {
+      const item = typeof window !== 'undefined' ? localStorage.getItem(name) : null;
+      return item ? Promise.resolve(item) : Promise.resolve(null);
+    },
+    setItem: (name: string, value: string) => {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(name, value);
+        // Broadcast changes to other tabs
+        channel?.postMessage({ type: 'STORAGE_UPDATED', name, value });
+      }
+      return Promise.resolve();
+    },
+    removeItem: (name: string) => {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(name);
+        // Broadcast removal to other tabs
+        channel?.postMessage({ type: 'STORAGE_REMOVED', name });
+      }
+      return Promise.resolve();
+    },
+  };
+};
+
+// Initialize the character store with improved persistence
+const useCharacterStore = create<CharacterState>()(
+  devtools(
+    persist(
+      immer((set, get) => ({
+        // Initial state
+        characters: {},
+        activeCharacterId: null,
+        isLoading: false,
+        error: null,
+        derived: null,
+        history: {
+          past: [],
+          future: [],
+          tracking: true,
+        },
+        
+        // Actions
+        actions: {
+          // Create a new character
+          createCharacter: (characterData) => {
+            const id = uuidv4();
+            const now = new Date().toISOString();
+            
+            const newCharacter: Character = {
+              id,
+              name: characterData.name || '',
+              species: characterData.species || '',
+              class: characterData.class || '',
+              level: characterData.level || 1,
+              background: characterData.background || '',
+              alignment: characterData.alignment || '',
+              abilityScores: characterData.abilityScores || {
+                strength: 10,
+                dexterity: 10,
+                constitution: 10,
+                intelligence: 10,
+                wisdom: 10,
+                charisma: 10,
+              },
+              skills: characterData.skills || {},
+              powers: characterData.powers || [],
+              equipment: characterData.equipment || [],
+              credits: characterData.credits || 0,
+              experience: characterData.experience || 0,
+              hitPoints: characterData.hitPoints || {
+                current: 10,
+                maximum: 10,
+                temporary: 0,
+              },
+              personalityTraits: characterData.personalityTraits || [],
+              ideals: characterData.ideals || [],
+              bonds: characterData.bonds || [],
+              flaws: characterData.flaws || [],
+              notes: characterData.notes || '',
+              backstory: characterData.backstory || '',
+              classes: characterData.classes || [{
+                id: uuidv4(),
+                name: characterData.class || '',
+                level: characterData.level || 1,
+                archetype: characterData.classes?.[0]?.archetype,
+              }],
+              companions: characterData.companions || [],
+              createdAt: now,
+              updatedAt: now,
+              version: 1,
+            };
+            
+            set(state => {
+              state.characters[id] = newCharacter;
+              state.activeCharacterId = id;
+            });
+            
+            return id;
+          },
+          
+          // Update a character
+          updateCharacter: (id, updates) => {
+            const { history, characters } = get();
+            const character = characters[id];
+            
+            if (!character) {
+              set(state => { state.error = `Character with ID ${id} not found`; });
+              return;
+            }
+            
+            // Add current state to history if tracking is enabled
+            if (history.tracking) {
+              set(state => {
+                state.history.past.push({ ...state.characters });
+                state.history.future = [];
+              });
+            }
+            
+            // Update the character
+            set(state => {
+              state.characters[id] = {
+                ...state.characters[id],
+                ...updates,
+                updatedAt: new Date().toISOString(),
+                version: state.characters[id].version + 1,
+              };
+            });
+          },
+          
+          // Delete a character
+          deleteCharacter: (id) => {
+            const { characters, activeCharacterId } = get();
+            
+            if (!characters[id]) {
+              set(state => { state.error = `Character with ID ${id} not found`; });
+              return;
+            }
+            
+            set(state => {
+              delete state.characters[id];
+              
+              // If deleted character was active, clear active character
+              if (activeCharacterId === id) {
+                state.activeCharacterId = null;
+              }
+            });
+          },
+          
+          // Set active character
+          setActiveCharacter: (id) => {
+            if (id !== null && !get().characters[id]) {
+              set(state => { state.error = `Character with ID ${id} not found`; });
+              return;
+            }
+            
+            set(state => { state.activeCharacterId = id; });
+          },
+          
+          // Undo last change
+          undo: () => {
+            const { history } = get();
+            
+            if (history.past.length === 0) return;
+            
+            set(state => {
+              // Save current state to future
+              state.history.future.unshift({ ...state.characters });
+              
+              // Restore previous state
+              const previousState = history.past.pop();
+              if (previousState) {
+                state.characters = previousState;
+              }
+            });
+          },
+          
+          // Redo last undone change
+          redo: () => {
+            const { history } = get();
+            
+            if (history.future.length === 0) return;
+            
+            set(state => {
+              // Save current state to past
+              state.history.past.push({ ...state.characters });
+              
+              // Restore future state
+              const nextState = history.future.shift();
+              if (nextState) {
+                state.characters = nextState;
+              }
+            });
+          },
+          
+          // Enable history tracking
+          enableTracking: () => {
+            set(state => { state.history.tracking = true; });
+          },
+          
+          // Disable history tracking
+          disableTracking: () => {
+            set(state => { state.history.tracking = false; });
+          },
+          
+          // Multiclassing: Add a class level
+          addClassLevel: (classId) => {
+            const { activeCharacterId } = get();
+            if (!activeCharacterId) return;
+            
+            set(state => {
+              const character = state.characters[activeCharacterId];
+              const classEntry = character.classes.find(c => c.id === classId);
+              
+              if (classEntry) {
+                // Increment existing class level
+                classEntry.level += 1;
+              } else {
+                // Add new class
+                character.classes.push({
+                  id: classId,
+                  name: classId, // We'd normally look up the name from the class data
+                  level: 1,
+                });
+              }
+              
+              // Update character level
+              character.level = character.classes.reduce((sum, c) => sum + c.level, 0);
+              character.updatedAt = new Date().toISOString();
+              character.version += 1;
+            });
+          },
+          
+          // Multiclassing: Remove a class level
+          removeClassLevel: (classId) => {
+            const { activeCharacterId } = get();
+            if (!activeCharacterId) return;
+            
+            set(state => {
+              const character = state.characters[activeCharacterId];
+              const classIndex = character.classes.findIndex(c => c.id === classId);
+              
+              if (classIndex !== -1) {
+                const classEntry = character.classes[classIndex];
+                
+                if (classEntry.level > 1) {
+                  // Decrement class level
+                  classEntry.level -= 1;
+                } else {
+                  // Remove the class if level would be 0
+                  character.classes.splice(classIndex, 1);
+                }
+                
+                // Update character level
+                character.level = character.classes.reduce((sum, c) => sum + c.level, 0);
+                character.updatedAt = new Date().toISOString();
+                character.version += 1;
+              }
+            });
+          },
+          
+          // Set archetype for a class
+          setArchetype: (classId, archetype) => {
+            const { activeCharacterId } = get();
+            if (!activeCharacterId) return;
+            
+            set(state => {
+              const character = state.characters[activeCharacterId];
+              const classEntry = character.classes.find(c => c.id === classId);
+              
+              if (classEntry) {
+                classEntry.archetype = archetype;
+                character.updatedAt = new Date().toISOString();
+                character.version += 1;
+              }
+            });
+          },
+          
+          // Add a companion to a character
+          addCompanion: (characterId, companionData) => {
+            const companionId = uuidv4();
+            
+            set(state => {
+              const character = state.characters[characterId];
+              
+              if (!character) {
+                state.error = `Character with ID ${characterId} not found`;
+                return;
+              }
+              
+              // Add companion to character
+              character.companions.push({
+                id: companionId,
+                name: companionData.name || 'New Companion',
+                type: companionData.type || 'Animal',
+                species: companionData.species || 'Unknown',
+                level: companionData.level || 1,
+                hitPoints: companionData.hitPoints || {
+                  current: 5,
+                  maximum: 5,
+                },
+                abilityScores: companionData.abilityScores || {
+                  strength: 10,
+                  dexterity: 10,
+                  constitution: 10,
+                  intelligence: 6,
+                  wisdom: 10,
+                  charisma: 6,
+                },
+                notes: companionData.notes || '',
+                relationship: companionData.relationship || 'Pet',
+              });
+              
+              // Update character
+              character.updatedAt = new Date().toISOString();
+              character.version += 1;
+            });
+            
+            return companionId;
+          },
+          
+          // Update a companion
+          updateCompanion: (characterId, companionId, updates) => {
+            set(state => {
+              const character = state.characters[characterId];
+              
+              if (!character) {
+                state.error = `Character with ID ${characterId} not found`;
+                return;
+              }
+              
+              const companionIndex = character.companions.findIndex(c => c.id === companionId);
+              
+              if (companionIndex === -1) {
+                state.error = `Companion with ID ${companionId} not found`;
+                return;
+              }
+              
+              // Update companion
+              character.companions[companionIndex] = {
+                ...character.companions[companionIndex],
+                ...updates,
+              };
+              
+              // Update character
+              character.updatedAt = new Date().toISOString();
+              character.version += 1;
+            });
+          },
+          
+          // Remove a companion
+          removeCompanion: (characterId, companionId) => {
+            set(state => {
+              const character = state.characters[characterId];
+              
+              if (!character) {
+                state.error = `Character with ID ${characterId} not found`;
+                return;
+              }
+              
+              const companionIndex = character.companions.findIndex(c => c.id === companionId);
+              
+              if (companionIndex === -1) {
+                state.error = `Companion with ID ${companionId} not found`;
+                return;
+              }
+              
+              // Remove companion
+              character.companions.splice(companionIndex, 1);
+              
+              // Update character
+              character.updatedAt = new Date().toISOString();
+              character.version += 1;
+            });
+          },
+          
+          // Export character as JSON
+          exportCharacter: (id) => {
+            const character = get().characters[id];
+            
+            if (!character) {
+              set(state => { state.error = `Character with ID ${id} not found`; });
+              return '';
+            }
+            
+            return JSON.stringify(character, null, 2);
+          },
+          
+          // Import character from JSON
+          importCharacter: (characterJson) => {
+            try {
+              const parsedCharacter = JSON.parse(characterJson);
+              
+              // Validate character data
+              const validationResult = CharacterSchema.safeParse(parsedCharacter);
+              
+              if (!validationResult.success) {
+                set(state => { 
+                  state.error = `Invalid character data: ${validationResult.error.message}`; 
+                });
+                return '';
+              }
+              
+              // Generate new ID to avoid conflicts
+              const id = uuidv4();
+              const now = new Date().toISOString();
+              
+              const importedCharacter: Character = {
+                ...validationResult.data,
+                id,
+                createdAt: now,
+                updatedAt: now,
+                version: 1,
+              };
+              
+              set(state => {
+                state.characters[id] = importedCharacter;
+                state.activeCharacterId = id;
+              });
+              
+              return id;
+            } catch (error) {
+              set(state => { 
+                state.error = `Failed to import character: ${error instanceof Error ? error.message : String(error)}`; 
+              });
+              return '';
+            }
+          },
+          
+          // Validate character data
+          validateCharacter: (id) => {
+            const character = get().characters[id];
+            
+            if (!character) {
+              set(state => { state.error = `Character with ID ${id} not found`; });
+              return false;
+            }
+            
+            const validationResult = CharacterSchema.safeParse(character);
+            
+            if (!validationResult.success) {
+              set(state => { 
+                state.error = `Invalid character data: ${validationResult.error.message}`; 
+              });
+              return false;
+            }
+            
+            return true;
+          },
+        },
+      })),
+      {
+        name: 'sw5e-character-storage',
+        storage: createCustomStorage(),
+        partialize: (state) => ({
+          characters: state.characters,
+          activeCharacterId: state.activeCharacterId,
+        }),
+      }
+    )
+  )
+);
+
+// Event listener for cross-tab synchronization
+if (typeof window !== 'undefined') {
+  const channel = new BroadcastChannel('sw5e-character-sync');
+  
+  channel.addEventListener('message', (event) => {
+    if (event.data.type === 'STORAGE_UPDATED') {
+      // Force rehydration of store when another tab updates
+      useCharacterStore.persist.rehydrate();
+    }
+  });
+}
+
+export default useCharacterStore;
