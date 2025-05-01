@@ -1,375 +1,468 @@
-import { useForm, FormProvider, UseFormReturn } from 'react-hook-form';
+
+import { useForm, FormProvider, UseFormReturn, useWatch, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useEffect, useState, useCallback, useMemo } from 'react';
-import { z } from 'zod';
-import { CharacterSchema, Character, useCharacter } from '../lib/stores/useCharacter';
-import { calculateModifier } from '../lib/sw5e/rules';
+import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback } from 'react';
+import { useCharacter } from '@/lib/stores/useCharacter';
+import { Character, CharacterSchema } from '@shared/unifiedSchema';
+import { useToast } from '@/components/ui/toast';
+import { usePerformance } from '@/lib/performance/monitor';
+import { v4 as uuidv4 } from 'uuid';
 
-// Schema for form validation
-const formSchema = CharacterSchema;
-type CharacterFormValues = z.infer<typeof formSchema>;
+// Define the form steps for character creation
+export type CharacterFormStep = 
+  | 'basicInfo'
+  | 'species'
+  | 'class'
+  | 'abilities'
+  | 'skills'
+  | 'equipment'
+  | 'powers'
+  | 'background'
+  | 'appearance'
+  | 'review';
 
-interface UseCharacterFormProps {
-  characterId?: string;
-  defaultValues?: Partial<CharacterFormValues>;
-  onSubmit?: (data: CharacterFormValues) => void;
+// Basic initial form values
+const defaultValues: Partial<Character> = {
+  name: '',
+  species: '',
+  class: '',
+  level: 1,
+  background: '',
+  alignment: '',
+  abilityScores: {
+    strength: 10,
+    dexterity: 10,
+    constitution: 10,
+    intelligence: 10,
+    wisdom: 10,
+    charisma: 10,
+  },
+  maxHp: 10,
+  currentHp: 10,
+  temporaryHp: 0,
+  armorClass: 10,
+  speed: 30,
+  skillProficiencies: [],
+  savingThrowProficiencies: [],
+  equipment: [],
+  credits: 1000,
+  backstory: '',
+  startingLocation: 'Unknown',
+  experience: 0,
+  forcePowers: [],
+  techPowers: [],
+  feats: [],
+  languages: [],
+  maxForcePoints: 0,
+  currentForcePoints: 0,
+  proficiencyBonus: 2,
+};
+
+export interface UseCharacterFormProps {
+  characterId?: string;  // For editing existing character
+  initialStep?: CharacterFormStep;
+  onComplete?: (character: Character) => void;
+  autoSave?: boolean;    // Whether to auto-save as draft
+  autoSaveInterval?: number;  // How often to auto-save (ms)
 }
 
-export function useCharacterForm({
+export default function useCharacterForm({
   characterId,
-  defaultValues,
-  onSubmit,
+  initialStep = 'basicInfo',
+  onComplete,
+  autoSave = true,
+  autoSaveInterval = 30000, // Default 30 seconds
 }: UseCharacterFormProps = {}) {
-  // Get character store
-  const { characters, activeCharacterId, actions } = useCharacter();
-  const activeCharacter = useCharacter.use.derived.activeCharacter();
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const { 
+    characters, 
+    addCharacter, 
+    updateCharacterData, 
+    fetchCharacter 
+  } = useCharacter();
+  const { measureOperation, measureAsyncOperation } = usePerformance('characterForm');
 
-  // Set up form with schema validation
-  const form = useForm<CharacterFormValues>({
-    resolver: zodResolver(formSchema),
-    defaultValues: defaultValues || {
-      name: '',
-      species: '',
-      class: '',
-      level: 1,
-      background: '',
-      alignment: '',
-      abilityScores: {
-        strength: 10,
-        dexterity: 10,
-        constitution: 10,
-        intelligence: 10,
-        wisdom: 10,
-        charisma: 10,
-      },
-      maxHp: 10,
-      currentHp: 10,
-      armorClass: 10,
-      speed: 30,
-      skillProficiencies: [],
-      savingThrowProficiencies: [],
-      equipment: [],
-      credits: 1000,
-      startingLocation: '',
-      experience: 0,
-    },
+  // Current step state
+  const [currentStep, setCurrentStep] = useState<CharacterFormStep>(initialStep);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [autoSaveTimestamp, setAutoSaveTimestamp] = useState<number | null>(null);
+  const [validatedSteps, setValidatedSteps] = useState<Record<CharacterFormStep, boolean>>({
+    basicInfo: false,
+    species: false,
+    class: false,
+    abilities: false,
+    skills: false,
+    equipment: false,
+    powers: false,
+    background: false,
+    appearance: false,
+    review: false,
+  });
+
+  // Initialize form with default values or existing character
+  const existingCharacter = characterId ? characters[characterId] : null;
+  
+  // Create form with Zod validation
+  const form = useForm<Character>({
+    resolver: zodResolver(CharacterSchema),
+    defaultValues: existingCharacter || defaultValues,
     mode: 'onChange',
   });
-
-  // Set form loading state
-  const [isFormLoading, setIsFormLoading] = useState(false);
-
-  // Track field dependencies for derived values
-  const [fieldDependencies, setFieldDependencies] = useState<Record<string, string[]>>({
-    maxHp: ['constitution', 'class', 'level'],
-    armorClass: ['dexterity'],
-    spellSaveDC: ['intelligence', 'wisdom', 'charisma', 'class', 'level'],
-    passivePerception: ['wisdom', 'skillProficiencies'],
-  });
-
-  // Load character data into form
+  
+  // Fetch character data if editing
   useEffect(() => {
-    // If a specific characterId is provided, use that
-    const targetId = characterId || activeCharacterId;
-    if (!targetId) return;
-
-    const character = characters[targetId];
-    if (character) {
-      setIsFormLoading(true);
-
-      // Reset form with character data
-      form.reset(character);
-
-      setIsFormLoading(false);
+    if (characterId && !existingCharacter) {
+      fetchCharacter(characterId);
     }
-  }, [characterId, activeCharacterId, characters, form.reset]);
-
-  // Calculate derived values when dependencies change
-  const calculateDerivedValues = useCallback((formValues: Partial<CharacterFormValues>) => {
-    if (!formValues.abilityScores) return {};
-
-    const updates: Partial<CharacterFormValues> = {};
-
-    // Calculate Constitution-based Max HP
-    if (formValues.level && formValues.class && formValues.abilityScores.constitution) {
-      const conModifier = calculateModifier(formValues.abilityScores.constitution);
-      let baseHp = 0;
-
-      // Different classes have different hit dice
-      switch(formValues.class) {
-        case 'fighter':
-        case 'sentinel':
-          baseHp = 10 + (formValues.level - 1) * 6; // d10 hit die
-          break;
-        case 'berserker':
-        case 'guardian':
-          baseHp = 12 + (formValues.level - 1) * 7; // d12 hit die
-          break;
-        case 'engineer':
-        case 'scout': 
-          baseHp = 8 + (formValues.level - 1) * 5; // d8 hit die
-          break;
-        default: // scholar, consular, operative
-          baseHp = 6 + (formValues.level - 1) * 4; // d6 hit die
-      }
-
-      // Add Constitution modifier for each level
-      baseHp += conModifier * formValues.level;
-
-      updates.maxHp = Math.max(1, baseHp); // Ensure at least 1 HP
-
-      // Also set current HP if it's not already set or is higher than max
-      if (!formValues.currentHp || formValues.currentHp > baseHp) {
-        updates.currentHp = baseHp;
-      }
-    }
-
-    // Calculate Dexterity-based Armor Class (10 + DEX modifier)
-    if (formValues.abilityScores.dexterity) {
-      const dexModifier = calculateModifier(formValues.abilityScores.dexterity);
-      updates.armorClass = 10 + dexModifier;
-    }
-
-    return updates;
-  }, []);
-
-  // Watch form values to update derived fields
+  }, [characterId, existingCharacter, fetchCharacter]);
+  
+  // Update form if character data changes
   useEffect(() => {
-    const subscription = form.watch((formValues, { name, type }) => {
-      // Only recalculate when a dependency field changes
-      if (!name || type !== 'change') return;
-
-      // Find fields that depend on the changed field
-      const fieldsToUpdate: string[] = [];
-      Object.entries(fieldDependencies).forEach(([field, dependencies]) => {
-        if (dependencies.some(dep => name.includes(dep))) {
-          fieldsToUpdate.push(field);
-        }
-      });
-
-      if (fieldsToUpdate.length > 0) {
-        // Calculate new values
-        const updates = calculateDerivedValues(formValues as Partial<CharacterFormValues>);
-
-        // Update form fields without triggering validation
-        Object.entries(updates).forEach(([field, value]) => {
-          if (fieldsToUpdate.includes(field)) {
-            form.setValue(field as any, value, { shouldValidate: false });
-          }
-        });
+    if (characterId && existingCharacter) {
+      form.reset(existingCharacter);
+    }
+  }, [characterId, existingCharacter, form]);
+  
+  // Set up auto-save if enabled
+  useEffect(() => {
+    if (!autoSave) return;
+    
+    const timer = setInterval(() => {
+      const formData = form.getValues();
+      const isValid = Object.keys(form.formState.errors).length === 0;
+      
+      if (isValid && form.formState.isDirty) {
+        handleAutoSave();
       }
-    });
-
-    return () => subscription.unsubscribe();
-  }, [form, fieldDependencies, calculateDerivedValues]);
-
-  // Handle form submission
-  const handleSubmit = async (data: CharacterFormValues) => {
+    }, autoSaveInterval);
+    
+    return () => clearInterval(timer);
+  }, [autoSave, autoSaveInterval, form]);
+  
+  // Auto-save current form data
+  const handleAutoSave = useCallback(async () => {
+    const formData = form.getValues();
+    
     try {
-      // Validate with schema
-      const validatedData = formSchema.parse(data);
-
-      // If we have an active character, update it
-      if (characterId || activeCharacterId) {
-        const id = characterId || activeCharacterId!;
-        await actions.updateCharacter(id, validatedData);
-      } else {
-        // Otherwise create a new character
-        await actions.createCharacter(validatedData);
+      // For new characters
+      if (!characterId) {
+        // Generate a temporary ID
+        const tempCharacter: Character = {
+          ...formData,
+          id: uuidv4(),
+          version: 1,
+          syncStatus: 'local',
+        };
+        
+        await addCharacter(tempCharacter);
+        setAutoSaveTimestamp(Date.now());
+        
+        toast({
+          title: "Draft saved",
+          description: "Your character has been saved as a draft.",
+          variant: "default",
+        });
+      } 
+      // For existing characters
+      else {
+        await updateCharacterData(characterId, formData);
+        setAutoSaveTimestamp(Date.now());
       }
-
-      // Call custom onSubmit handler if provided
-      if (onSubmit) {
-        onSubmit(validatedData);
-      }
-
-      return true;
     } catch (error) {
-      console.error('Form submission error:', error);
-      return false;
+      console.error('Auto-save failed:', error);
+      toast({
+        title: "Auto-save failed",
+        description: "Could not save your progress. Please save manually.",
+        variant: "destructive",
+      });
     }
-  };
-
-  // Set up conditional field visibility
-  const getConditionalFieldProps = useCallback((fieldName: string, condition: (formData: any) => boolean) => {
-    const formValues = form.getValues();
-    const isVisible = condition(formValues);
-
-    return {
-      className: isVisible ? '' : 'hidden',
-      'aria-hidden': !isVisible,
-      disabled: !isVisible,
-    };
-  }, [form]);
-
-  // Create multi-step form state
-  const [currentStep, setCurrentStep] = useState(0);
-  const [steps, setSteps] = useState<string[]>([
-    'basic-info',
-    'ability-scores',
-    'skills-proficiencies',
-    'equipment',
-    'powers',
-    'background',
-    'review',
-  ]);
-
-  const moveToNextStep = useCallback(() => {
-    setCurrentStep(prev => Math.min(prev + 1, steps.length - 1));
-  }, [steps.length]);
-
-  const moveToPreviousStep = useCallback(() => {
-    setCurrentStep(prev => Math.max(prev - 1, 0));
-  }, []);
-
-  const goToStep = useCallback((step: number) => {
-    setCurrentStep(Math.max(0, Math.min(step, steps.length - 1)));
-  }, [steps.length]);
-
-  // Check if step is valid before allowing navigation
-  const isStepValid = useCallback(async (step: number) => {
-    const formData = form.getValues();
-
-    // Define validations for each step
-    const stepValidations: Record<number, (data: any) => Promise<boolean>> = {
-      0: async (data) => { // Basic info
-        const basicInfoSchema = z.object({
-          name: z.string().min(1),
-          species: z.string().min(1),
-          class: z.string().min(1),
-          background: z.string().min(1),
-          alignment: z.string().min(1),
-        });
-
-        try {
-          basicInfoSchema.parse(data);
-          return true;
-        } catch (error) {
-          return false;
-        }
-      },
-      1: async (data) => { // Ability scores
-        const abilityScoresSchema = z.object({
-          abilityScores: z.object({
-            strength: z.number().min(3).max(20),
-            dexterity: z.number().min(3).max(20),
-            constitution: z.number().min(3).max(20),
-            intelligence: z.number().min(3).max(20),
-            wisdom: z.number().min(3).max(20),
-            charisma: z.number().min(3).max(20),
-          }),
-        });
-
-        try {
-          abilityScoresSchema.parse(data);
-          return true;
-        } catch (error) {
-          return false;
-        }
-      },
-      // Add validation for other steps as needed
-    };
-
-    // If we have validation for this step, run it
-    if (stepValidations[step]) {
-      return await stepValidations[step](formData);
+  }, [addCharacter, characterId, form, toast, updateCharacterData]);
+  
+  // Watch all fields for two-way binding with store
+  const formValues = useWatch({ control: form.control });
+  
+  // Update character in store if it exists and form changes
+  useEffect(() => {
+    if (characterId && form.formState.isDirty) {
+      // Debounce updates to prevent excessive store updates
+      const timer = setTimeout(() => {
+        const updates = form.getValues();
+        updateCharacterData(characterId, updates);
+      }, 500);
+      
+      return () => clearTimeout(timer);
     }
-
-    // Default to true if no validation defined
-    return true;
-  }, [form]);
-
-  // Helper to try to navigate to next step with validation
-  const tryMoveToNextStep = useCallback(async () => {
-    // Validate current step
-    const isValid = await isStepValid(currentStep);
-
-    if (isValid) {
-      moveToNextStep();
-      return true;
-    } else {
-      // Trigger form validation to show errors
-      await form.trigger();
-      return false;
-    }
-  }, [currentStep, form, isStepValid, moveToNextStep]);
-
-  // Calculate validation progress
-  const validationProgress = useMemo(() => {
-    const formData = form.getValues();
-    const errors = form.formState.errors;
-
-    // Count required fields
-    const requiredFields = [
-      'name', 'species', 'class', 'background', 'alignment',
-      'abilityScores.strength', 'abilityScores.dexterity', 'abilityScores.constitution',
-      'abilityScores.intelligence', 'abilityScores.wisdom', 'abilityScores.charisma',
-      'maxHp', 'armorClass', 'speed', 'startingLocation'
-    ];
-
-    const filledFields = requiredFields.filter(field => {
-      const fieldParts = field.split('.');
-      let value;
-
-      if (fieldParts.length === 1) {
-        value = formData[field as keyof typeof formData];
-      } else if (fieldParts.length === 2) {
-        const [obj, prop] = fieldParts;
-        value = formData[obj as keyof typeof formData]?.[prop];
+  }, [characterId, form, formValues, updateCharacterData]);
+  
+  // Validate the current step
+  const validateStep = useCallback(async (step: CharacterFormStep): Promise<boolean> => {
+    return measureAsyncOperation('validateStep', async () => {
+      let isValid = false;
+      
+      switch (step) {
+        case 'basicInfo':
+          isValid = await form.trigger(['name', 'alignment']);
+          break;
+        case 'species':
+          isValid = await form.trigger('species');
+          break;
+        case 'class':
+          isValid = await form.trigger(['class', 'level']);
+          break;
+        case 'abilities':
+          isValid = await form.trigger('abilityScores');
+          break;
+        case 'skills':
+          isValid = await form.trigger(['skillProficiencies', 'savingThrowProficiencies']);
+          break;
+        case 'equipment':
+          isValid = await form.trigger(['equipment', 'credits']);
+          break;
+        case 'powers':
+          isValid = true; // Optional, no required fields
+          break;
+        case 'background':
+          isValid = await form.trigger(['background', 'backstory']);
+          break;
+        case 'appearance':
+          isValid = true; // Optional, no required fields
+          break;
+        case 'review':
+          isValid = await form.trigger(); // Validate all fields
+          break;
+        default:
+          isValid = true;
       }
-
-      return value !== undefined && value !== null && value !== '';
+      
+      // Update validation state
+      setValidatedSteps(prev => ({
+        ...prev,
+        [step]: isValid
+      }));
+      
+      return isValid;
     });
-
-    // Calculate progress percentage
-    return Math.round((filledFields.length / requiredFields.length) * 100);
-  }, [form]);
-
+  }, [form, measureAsyncOperation]);
+  
+  // Navigate to next step if current step is valid
+  const nextStep = useCallback(async (): Promise<boolean> => {
+    const isCurrentStepValid = await validateStep(currentStep);
+    
+    if (!isCurrentStepValid) {
+      toast({
+        title: "Validation Error",
+        description: "Please complete all required fields before proceeding.",
+        variant: "destructive",
+      });
+      return false;
+    }
+    
+    const steps: CharacterFormStep[] = [
+      'basicInfo',
+      'species',
+      'class',
+      'abilities',
+      'skills',
+      'equipment',
+      'powers',
+      'background',
+      'appearance',
+      'review'
+    ];
+    
+    const currentIndex = steps.indexOf(currentStep);
+    if (currentIndex < steps.length - 1) {
+      setCurrentStep(steps[currentIndex + 1]);
+      return true;
+    }
+    
+    return false;
+  }, [currentStep, toast, validateStep]);
+  
+  // Navigate to previous step
+  const prevStep = useCallback(() => {
+    const steps: CharacterFormStep[] = [
+      'basicInfo',
+      'species',
+      'class',
+      'abilities',
+      'skills',
+      'equipment',
+      'powers',
+      'background',
+      'appearance',
+      'review'
+    ];
+    
+    const currentIndex = steps.indexOf(currentStep);
+    if (currentIndex > 0) {
+      setCurrentStep(steps[currentIndex - 1]);
+    }
+  }, [currentStep]);
+  
+  // Jump to a specific step
+  const goToStep = useCallback((step: CharacterFormStep) => {
+    setCurrentStep(step);
+  }, []);
+  
+  // Calculate progress percentage
+  const progress = useMemo(() => {
+    const steps: CharacterFormStep[] = [
+      'basicInfo',
+      'species',
+      'class',
+      'abilities',
+      'skills',
+      'equipment',
+      'powers',
+      'background',
+      'appearance',
+      'review'
+    ];
+    
+    // Count completed steps
+    const completedSteps = Object.entries(validatedSteps)
+      .filter(([_, isValid]) => isValid)
+      .length;
+    
+    return (completedSteps / steps.length) * 100;
+  }, [validatedSteps]);
+  
+  // Handle form submission
+  const handleSubmit = useCallback(async () => {
+    return measureAsyncOperation('submitForm', async () => {
+      // Final validation
+      const isValid = await form.trigger();
+      if (!isValid) {
+        toast({
+          title: "Validation Error",
+          description: "Please complete all required fields before submitting.",
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      setIsSubmitting(true);
+      
+      try {
+        const formData = form.getValues();
+        
+        // For editing existing character
+        if (characterId) {
+          await updateCharacterData(characterId, formData);
+          toast({
+            title: "Character Updated",
+            description: "Your character has been updated successfully.",
+          });
+        } 
+        // For creating new character
+        else {
+          const newCharacter: Character = {
+            ...formData,
+            id: uuidv4(),
+            version: 1,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          
+          await addCharacter(newCharacter);
+          toast({
+            title: "Character Created",
+            description: "Your character has been created successfully.",
+          });
+        }
+        
+        // Call onComplete callback if provided
+        if (onComplete) {
+          onComplete(formData);
+        } else {
+          // Navigate to character management by default
+          navigate('/characters');
+        }
+      } catch (error) {
+        console.error('Form submission error:', error);
+        toast({
+          title: "Submission Error",
+          description: "There was an error saving your character. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsSubmitting(false);
+      }
+    });
+  }, [addCharacter, characterId, form, navigate, onComplete, toast, updateCharacterData, measureAsyncOperation]);
+  
+  // Calculate if form has unsaved changes
+  const hasUnsavedChanges = useCallback(() => {
+    return form.formState.isDirty && (
+      !autoSaveTimestamp || 
+      Date.now() - autoSaveTimestamp > autoSaveInterval
+    );
+  }, [form.formState.isDirty, autoSaveTimestamp, autoSaveInterval]);
+  
+  // Provide a method to manually save
+  const saveChanges = useCallback(async () => {
+    await handleAutoSave();
+    toast({
+      title: "Changes Saved",
+      description: "Your changes have been saved.",
+    });
+  }, [handleAutoSave, toast]);
+  
+  // Utility to get computed ability modifiers for display
+  const getAbilityModifier = useCallback((abilityScore: number): number => {
+    return Math.floor((abilityScore - 10) / 2);
+  }, []);
+  
+  // Get maximum skill proficiencies based on class and background
+  const getMaxSkillProficiencies = useCallback((): number => {
+    const classData = formValues.class;
+    // This is placeholder logic - should be replaced with actual rule implementation
+    switch (classData) {
+      case 'berserker': return 2;
+      case 'consular': return 4;
+      case 'engineer': return 3;
+      case 'fighter': return 2;
+      case 'guardian': return 2;
+      case 'monk': return 2;
+      case 'operative': return 4;
+      case 'scholar': return 3;
+      case 'sentinel': return 3;
+      default: return 2;
+    }
+  }, [formValues.class]);
+  
+  // Return form context and additional utilities
   return {
     form,
-    FormProvider,
-    isLoading: isFormLoading,
-    handleSubmit: form.handleSubmit(handleSubmit),
-    getConditionalFieldProps,
-    watch: form.watch,
-    setValue: form.setValue,
-    getValues: form.getValues,
-    trigger: form.trigger,
-    formState: form.formState,
-    errors: form.formState.errors,
-    register: form.register,
-    reset: form.reset,
-    control: form.control,
-
-    // Multi-step form
     currentStep,
-    moveToNextStep: tryMoveToNextStep,
-    moveToPreviousStep,
+    nextStep,
+    prevStep,
     goToStep,
-    steps,
-    setSteps,
-    isStepValid,
-    validationProgress,
-
-    // Character data
-    character: activeCharacter,
-    characterId: characterId || activeCharacterId,
+    isSubmitting,
+    validatedSteps,
+    progress,
+    handleSubmit,
+    saveChanges,
+    hasUnsavedChanges,
+    autoSaveTimestamp,
+    getAbilityModifier,
+    getMaxSkillProficiencies,
+    isExistingCharacter: !!characterId,
+    FormProvider, // Re-export for convenience
+    Controller,   // Re-export for convenience
   };
 }
 
-// Additional hook for character form field-level validation
-export function useCharacterFieldValidation(fieldName: string) {
-  const { formState, register, watch } = useForm();
-  const fieldValue = watch(fieldName);
-  const error = formState.errors[fieldName as keyof typeof formState.errors];
-
-  return {
-    register,
-    value: fieldValue,
-    error,
-    isValid: !error,
-    isDirty: formState.dirtyFields[fieldName as keyof typeof formState.dirtyFields],
-  };
+// Helper hook for deeply watching form values in component
+export function useCharacterFormWatch<TFieldName extends keyof Character>(
+  formContext: UseFormReturn<Character>,
+  name: TFieldName
+) {
+  return useWatch({
+    control: formContext.control,
+    name,
+  });
 }
-
-export default useCharacterForm;

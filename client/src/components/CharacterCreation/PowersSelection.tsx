@@ -1,225 +1,402 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useCharacter } from '../../lib/stores/useCharacter';
+
+import React, { useState, useEffect } from 'react';
 import { Tab } from '@headlessui/react';
-import TranslucentPane from '../ui/TranslucentPane';
-import { Button } from '../ui/button';
-import { motion } from 'framer-motion';
-import { useForm, Controller } from 'react-hook-form';
-import { z } from 'zod';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { TranslucentPane } from '@/components/ui/TranslucentPane';
+import { Controller, useFormContext } from 'react-hook-form';
+import { ForcePower, TechPower } from '@shared/unifiedSchema';
+import { useToast } from '@/components/ui/toast';
+import SW5E from '@/lib/sw5e/dataProvider';
+import { useCharacterFormWatch } from '@/hooks/useCharacterForm';
+import { Character } from '@shared/unifiedSchema';
 
-// Define schema for power selection
-const PowerSelectionSchema = z.object({
-  forcePowers: z.array(z.string()).optional(),
-  techPowers: z.array(z.string()).optional(),
-});
+interface PowersSelectionProps {
+  onContinue: () => void;
+}
 
-type PowerSelectionData = z.infer<typeof PowerSelectionSchema>;
-
-// Mock data until we have the real data
-const MOCK_FORCE_POWERS = [
-  { id: "fp1", name: "Force Push", level: 1, description: "Push a target away using the Force" },
-  { id: "fp2", name: "Force Pull", level: 1, description: "Pull a target toward you using the Force" },
-  { id: "fp3", name: "Force Lightning", level: 3, description: "Channel lightning from your fingertips" },
-  { id: "fp4", name: "Mind Trick", level: 2, description: "Influence the weak-minded" },
-  { id: "fp5", name: "Force Healing", level: 2, description: "Use the Force to heal wounds" },
-  { id: "fp6", name: "Force Choke", level: 3, description: "Choke a target using the Force" },
-];
-
-const MOCK_TECH_POWERS = [
-  { id: "tp1", name: "Energy Shield", level: 1, description: "Create a protective energy shield" },
-  { id: "tp2", name: "Overload Systems", level: 2, description: "Overload electronic systems causing damage" },
-  { id: "tp3", name: "Holographic Disguise", level: 2, description: "Create a holographic disguise" },
-  { id: "tp4", name: "Sonic Dampening", level: 1, description: "Dampen sound in an area" },
-  { id: "tp5", name: "Targeting Sync", level: 1, description: "Enhance targeting systems" },
-];
-
-export default function PowersSelection() {
-  const { character } = useCharacter();
-  const { actions } = useCharacter();
-
-  // Set up form with react-hook-form
-  const { control, handleSubmit, setValue, watch } = useForm<PowerSelectionData>({
-    resolver: zodResolver(PowerSelectionSchema),
-    defaultValues: {
-      forcePowers: [],
-      techPowers: [],
-    }
-  });
-
-  // Initialize form with character data only once on mount
+const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
+  const form = useFormContext<Character>();
+  const { toast } = useToast();
+  
+  // Watch values from the form
+  const characterClass = useCharacterFormWatch(form, 'class');
+  const characterLevel = useCharacterFormWatch(form, 'level');
+  const selectedForcePowers = useCharacterFormWatch(form, 'forcePowers') || [];
+  const selectedTechPowers = useCharacterFormWatch(form, 'techPowers') || [];
+  
+  // Local state
+  const [availableForcePowers, setAvailableForcePowers] = useState<ForcePower[]>([]);
+  const [availableTechPowers, setAvailableTechPowers] = useState<TechPower[]>([]);
+  const [maxForcePowersCount, setMaxForcePowersCount] = useState(0);
+  const [maxTechPowersCount, setMaxTechPowersCount] = useState(0);
+  const [forceLevels, setForceLevels] = useState<number[]>([]);
+  const [techLevels, setTechLevels] = useState<number[]>([]);
+  
+  // Load powers based on class
   useEffect(() => {
-    if (character) {
-      // Extract power IDs from character data
-      const forcePowerIds = character.forcePowers?.map(power => power.id) || [];
-      const techPowerIds = character.techPowers?.map(power => power.id) || [];
-
-      setValue('forcePowers', forcePowerIds);
-      setValue('techPowers', techPowerIds);
-    }
-  }, [character?.id]); // Only update when character ID changes
-
-  // Determine available powers based on character
-  const availablePowers = useMemo(() => {
-    // Default to mock data
-    let forcePowers = MOCK_FORCE_POWERS;
-    let techPowers = MOCK_TECH_POWERS;
-
-    // Filter by character level, class, etc.
-    if (character) {
-      const characterLevel = character.level || 1;
-
-      // Filter powers by level
-      forcePowers = MOCK_FORCE_POWERS.filter(power => power.level <= Math.ceil(characterLevel / 2));
-      techPowers = MOCK_TECH_POWERS.filter(power => power.level <= Math.ceil(characterLevel / 2));
-
-      // Further filter based on class if needed
-      if (character.class === 'engineer' || character.class === 'scholar') {
-        // These classes focus on tech powers
-        techPowers = [...techPowers]; // Keep all tech powers
-        forcePowers = forcePowers.filter(power => power.level <= 1); // Limit force powers
-      } else if (character.class === 'consular' || character.class === 'guardian' || character.class === 'sentinel') {
-        // These classes focus on force powers
-        forcePowers = [...forcePowers]; // Keep all force powers
-        techPowers = techPowers.filter(power => power.level <= 1); // Limit tech powers
+    // Get available powers from our SW5E data provider
+    const loadPowers = async () => {
+      try {
+        // Get force powers data
+        const forcePowers = SW5E.data.forcePowers || [];
+        setAvailableForcePowers(forcePowers);
+        
+        // Get tech powers data
+        const techPowers = SW5E.data.techPowers || [];
+        setAvailableTechPowers(techPowers);
+        
+        // Extract available power levels for filtering
+        const forceLevels = [...new Set(forcePowers.map(power => power.level))].sort();
+        const techLevels = [...new Set(techPowers.map(power => power.level))].sort();
+        
+        setForceLevels(forceLevels);
+        setTechLevels(techLevels);
+      } catch (error) {
+        console.error('Error loading powers:', error);
+        toast({
+          title: "Error",
+          description: "Failed to load powers data",
+          variant: "destructive"
+        });
       }
-    }
-
-    return { forcePowers, techPowers };
-  }, [character?.level, character?.class]);
-
-  // Handle saving powers to character
-  const savePowers = useCallback((data: PowerSelectionData) => {
-    if (!character?.id) return;
-
-    // Find complete power objects from selected IDs
-    const selectedForce = (data.forcePowers || []).map(id => 
-      availablePowers.forcePowers.find(power => power.id === id)
-    ).filter(Boolean);
-
-    const selectedTech = (data.techPowers || []).map(id => 
-      availablePowers.techPowers.find(power => power.id === id)
-    ).filter(Boolean);
-
-    // Update character
-    const updates = {
-      forcePowers: selectedForce,
-      techPowers: selectedTech,
     };
-
-            actions.updateCharacter(character.id, updates);
-          }, [character?.id, availablePowers, actions]);
-
-          // Toggle power selection
-          const togglePower = useCallback((type: 'force' | 'tech', powerId: string) => {
-            setValue(type === 'force' ? 'forcePowers' : 'techPowers', prev => {
-                return prev.includes(powerId) ? prev.filter(id => id !== powerId) : [...prev, powerId];
-            });
-          }, [setValue]);
-
-          // Watch for form value changes (this is okay to keep)
-          const watchedForcePowers = watch('forcePowers');
-          const watchedTechPowers = watch('techPowers');
-
-          return (
-            <div className="p-4">
-              <TranslucentPane className="p-6">
-                <h2 className="text-2xl font-bold text-yellow-400 mb-4">Select Powers</h2>
-
-                <form onSubmit={handleSubmit(savePowers)}>
-          <Tab.Group>
-            <Tab.List className="flex space-x-1 rounded-xl bg-blue-900/20 p-1 mb-4">
-              <Tab className={({ selected }) =>
-                `w-full rounded-lg py-2.5 text-sm font-medium leading-5 
-                ${selected 
-                  ? 'bg-yellow-600 text-white shadow' 
-                  : 'text-blue-100 hover:bg-white/[0.12] hover:text-white'}`
-              }>
-                Force Powers
-              </Tab>
-              <Tab className={({ selected }) =>
-                `w-full rounded-lg py-2.5 text-sm font-medium leading-5 
-                ${selected 
-                  ? 'bg-yellow-600 text-white shadow' 
-                  : 'text-blue-100 hover:bg-white/[0.12] hover:text-white'}`
-              }>
-                Tech Powers
-              </Tab>
-            </Tab.List>
-
-            <Tab.Panels>
-              {/* Force Powers Panel */}
-              <Tab.Panel>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    
+    loadPowers();
+  }, [toast]);
+  
+  // Calculate max powers based on class and level
+  useEffect(() => {
+    const calculateMaxPowers = () => {
+      // This is simplified example logic - should be replaced with actual SW5E rules
+      let forcePowersCount = 0;
+      let techPowersCount = 0;
+      
+      switch (characterClass) {
+        case 'consular':
+          forcePowersCount = Math.floor(characterLevel / 2) + 2;
+          break;
+        case 'guardian':
+          forcePowersCount = Math.floor(characterLevel / 3) + 1;
+          break;
+        case 'sentinel':
+          forcePowersCount = Math.floor(characterLevel / 3) + 1;
+          techPowersCount = Math.floor(characterLevel / 4) + 1;
+          break;
+        case 'engineer':
+          techPowersCount = Math.floor(characterLevel / 2) + 2;
+          break;
+        case 'scholar':
+          techPowersCount = Math.floor(characterLevel / 2) + 1;
+          break;
+        default:
+          // Other classes might not have powers or have special rules
+          break;
+      }
+      
+      setMaxForcePowersCount(forcePowersCount);
+      setMaxTechPowersCount(techPowersCount);
+    };
+    
+    calculateMaxPowers();
+  }, [characterClass, characterLevel]);
+  
+  // Filter powers by level and class
+  const getFilteredForcePowers = (level: number) => {
+    return availableForcePowers.filter(power => {
+      // Filter by level
+      if (power.level !== level) return false;
+      
+      // Filter by class (simplified - should be enhanced based on actual SW5E rules)
+      switch (characterClass) {
+        case 'consular':
+          return true; // Consular can access all force powers
+        case 'guardian':
+          return true; // Guardian has access to force powers
+        case 'sentinel':
+          return true; // Sentinel has access to force powers
+        default:
+          return false;
+      }
+    });
+  };
+  
+  const getFilteredTechPowers = (level: number) => {
+    return availableTechPowers.filter(power => {
+      // Filter by level
+      if (power.level !== level) return false;
+      
+      // Filter by class (simplified - should be enhanced based on actual SW5E rules)
+      switch (characterClass) {
+        case 'engineer':
+          return true; // Engineer can access all tech powers
+        case 'scholar':
+          return true; // Scholar has access to tech powers
+        case 'sentinel':
+          return true; // Sentinel has access to limited tech powers
+        default:
+          return false;
+      }
+    });
+  };
+  
+  // Handle power selection
+  const handleForcePowerSelect = (power: ForcePower) => {
+    // Check if power is already selected
+    const isSelected = selectedForcePowers.some(p => p.id === power.id);
+    
+    if (isSelected) {
+      // Remove power
+      const updatedPowers = selectedForcePowers.filter(p => p.id !== power.id);
+      form.setValue('forcePowers', updatedPowers, { shouldValidate: true });
+    } else {
+      // Check if max powers reached
+      if (selectedForcePowers.length >= maxForcePowersCount) {
+        toast({
+          title: "Limit Reached",
+          description: `You can only select ${maxForcePowersCount} force powers`,
+          variant: "destructive"
+        });
+        return;
+      }
+      
+      // Add power
+      const updatedPowers = [...selectedForcePowers, power];
+      form.setValue('forcePowers', updatedPowers, { shouldValidate: true });
+    }
+  };
+  
+  const handleTechPowerSelect = (power: TechPower) => {
+    // Check if power is already selected
+    const isSelected = selectedTechPowers.some(p => p.id === power.id);
+    
+    if (isSelected) {
+      // Remove power
+      const updatedPowers = selectedTechPowers.filter(p => p.id !== power.id);
+      form.setValue('techPowers', updatedPowers, { shouldValidate: true });
+    } else {
+      // Check if max powers reached
+      if (selectedTechPowers.length >= maxTechPowersCount) {
+        toast({
+          title: "Limit Reached",
+          description: `You can only select ${maxTechPowersCount} tech powers`,
+          variant: "destructive"
+        });
+        return;
+      }
+      
+      // Add power
+      const updatedPowers = [...selectedTechPowers, power];
+      form.setValue('techPowers', updatedPowers, { shouldValidate: true });
+    }
+  };
+  
+  // Check if a power is selected
+  const isPowerSelected = (powerId: string, type: 'force' | 'tech') => {
+    if (type === 'force') {
+      return selectedForcePowers.some(power => power.id === powerId);
+    } else {
+      return selectedTechPowers.some(power => power.id === powerId);
+    }
+  };
+  
+  // Handle form submission
+  const handleContinue = () => {
+    // Validate current state before moving on
+    form.trigger(['forcePowers', 'techPowers']).then((isValid) => {
+      if (isValid) {
+        onContinue();
+      } else {
+        toast({
+          title: "Validation Error",
+          description: "Please make sure your power selections are valid",
+          variant: "destructive"
+        });
+      }
+    });
+  };
+  
+  return (
+    <div className="space-y-6">
+      <TranslucentPane>
+        <h2 className="text-2xl font-bold mb-4">Force & Tech Powers</h2>
+        <p className="mb-6">
+          Select the powers your character knows based on your class and level.
+        </p>
+        
+        <div className="mb-4">
+          <p className="text-sm">
+            Force powers: {selectedForcePowers.length}/{maxForcePowersCount} selected
+          </p>
+          <p className="text-sm">
+            Tech powers: {selectedTechPowers.length}/{maxTechPowersCount} selected
+          </p>
+        </div>
+        
+        <Tab.Group>
+          <Tab.List className="flex space-x-2 rounded-xl bg-blue-900/20 p-1 mb-4">
+            <Tab className={({ selected }) =>
+              `w-full rounded-lg py-2.5 text-sm font-medium leading-5 
+              ${selected 
+                ? 'bg-blue-700 text-white shadow'
+                : 'text-blue-100 hover:bg-blue-700/30 hover:text-white'}
+              `}
+            >
+              Force Powers
+            </Tab>
+            <Tab className={({ selected }) =>
+              `w-full rounded-lg py-2.5 text-sm font-medium leading-5 
+              ${selected 
+                ? 'bg-amber-600 text-white shadow'
+                : 'text-amber-100 hover:bg-amber-600/30 hover:text-white'}
+              `}
+            >
+              Tech Powers
+            </Tab>
+          </Tab.List>
+          
+          <Tab.Panels>
+            {/* Force Powers Panel */}
+            <Tab.Panel>
+              {maxForcePowersCount > 0 ? (
+                <div>
                   <Controller
                     name="forcePowers"
-                    control={control}
-                    render={({ field }) => (
-                      <>
-                        {availablePowers.forcePowers.map(power => (
-                          <motion.div
-                            key={power.id}
-                            whileHover={{ scale: 1.02 }}
-                            className={`p-3 rounded-lg cursor-pointer ${
-                              watchedForcePowers?.includes(power.id)
-                                ? 'bg-blue-800 border border-yellow-400'
-                                : 'bg-gray-800 hover:bg-gray-700'
-                            }`}
-                            onClick={() => togglePower('force', power.id)}
-                          >
-                            <h3 className="text-lg font-semibold">{power.name}</h3>
-                            <div className="text-xs text-gray-400">Level {power.level}</div>
-                            <p className="text-sm mt-1">{power.description}</p>
-                          </motion.div>
+                    control={form.control}
+                    defaultValue={[]}
+                    render={() => (
+                      <div className="space-y-6">
+                        {forceLevels.map(level => (
+                          <div key={`force-level-${level}`} className="mb-6">
+                            <h3 className="text-lg font-semibold mb-2 force-light">
+                              Level {level} {level === 0 ? 'Tricks' : 'Powers'}
+                            </h3>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {getFilteredForcePowers(level).map(power => (
+                                <div 
+                                  key={power.id}
+                                  className={`border rounded-md p-3 cursor-pointer transition-colors ${
+                                    isPowerSelected(power.id, 'force')
+                                      ? 'border-blue-500 bg-blue-500/20'
+                                      : 'border-gray-600 hover:border-blue-400'
+                                  }`}
+                                  onClick={() => handleForcePowerSelect(power)}
+                                >
+                                  <div className="flex justify-between items-start">
+                                    <div className="force-light font-semibold">{power.name}</div>
+                                    <div className="text-sm opacity-70">
+                                      {power.castingTime || 'Action'}
+                                    </div>
+                                  </div>
+                                  <div className="text-sm mt-1">{power.description.substring(0, 100)}...</div>
+                                  <div className="flex text-xs mt-2 space-x-2 opacity-75">
+                                    <span>Range: {power.range || 'Self'}</span>
+                                    <span>Duration: {power.duration || 'Instantaneous'}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                            
+                            {getFilteredForcePowers(level).length === 0 && (
+                              <p className="text-sm text-gray-400">
+                                No level {level} force powers available for your class
+                              </p>
+                            )}
+                          </div>
                         ))}
-                      </>
+                      </div>
                     )}
                   />
                 </div>
-              </Tab.Panel>
-
-              {/* Tech Powers Panel */}
-              <Tab.Panel>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-lg">Your class doesn't have access to force powers.</p>
+                </div>
+              )}
+            </Tab.Panel>
+            
+            {/* Tech Powers Panel */}
+            <Tab.Panel>
+              {maxTechPowersCount > 0 ? (
+                <div>
                   <Controller
                     name="techPowers"
-                    control={control}
-                    render={({ field }) => (
-                      <>
-                        {availablePowers.techPowers.map(power => (
-                          <motion.div
-                            key={power.id}
-                            whileHover={{ scale: 1.02 }}
-                            className={`p-3 rounded-lg cursor-pointer ${
-                              watchedTechPowers.includes(power.id)
-                                ? 'bg-blue-800 border border-yellow-400'
-                                : 'bg-gray-800 hover:bg-gray-700'
-                            }`}
-                            onClick={() => togglePower('tech', power.id)}
-                          >
-                            <h3 className="text-lg font-semibold">{power.name}</h3>
-                            <div className="text-xs text-gray-400">Level {power.level}</div>
-                            <p className="text-sm mt-1">{power.description}</p>
-                          </motion.div>
+                    control={form.control}
+                    defaultValue={[]}
+                    render={() => (
+                      <div className="space-y-6">
+                        {techLevels.map(level => (
+                          <div key={`tech-level-${level}`} className="mb-6">
+                            <h3 className="text-lg font-semibold mb-2 tech">
+                              Level {level} {level === 0 ? 'Programs' : 'Powers'}
+                            </h3>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              {getFilteredTechPowers(level).map(power => (
+                                <div 
+                                  key={power.id}
+                                  className={`border rounded-md p-3 cursor-pointer transition-colors ${
+                                    isPowerSelected(power.id, 'tech')
+                                      ? 'border-amber-500 bg-amber-500/20'
+                                      : 'border-gray-600 hover:border-amber-400'
+                                  }`}
+                                  onClick={() => handleTechPowerSelect(power)}
+                                >
+                                  <div className="flex justify-between items-start">
+                                    <div className="tech font-semibold">{power.name}</div>
+                                    <div className="text-sm opacity-70">
+                                      {power.castingTime || 'Action'}
+                                    </div>
+                                  </div>
+                                  <div className="text-sm mt-1">{power.description.substring(0, 100)}...</div>
+                                  <div className="flex text-xs mt-2 space-x-2 opacity-75">
+                                    <span>Range: {power.range || 'Self'}</span>
+                                    <span>Duration: {power.duration || 'Instantaneous'}</span>
+                                    <span>Type: {power.techType}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                            
+                            {getFilteredTechPowers(level).length === 0 && (
+                              <p className="text-sm text-gray-400">
+                                No level {level} tech powers available for your class
+                              </p>
+                            )}
+                          </div>
                         ))}
-                      </>
+                      </div>
                     )}
                   />
                 </div>
-              </Tab.Panel>
-            </Tab.Panels>
-          </Tab.Group>
-
-          <div className="mt-6 flex justify-end">
-            <Button 
-              type="submit" 
-              className="bg-yellow-600 hover:bg-yellow-700 text-white"
-            >
-              Save Powers
-            </Button>
-          </div>
-        </form>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-lg">Your class doesn't have access to tech powers.</p>
+                </div>
+              )}
+            </Tab.Panel>
+          </Tab.Panels>
+        </Tab.Group>
       </TranslucentPane>
+      
+      <div className="flex justify-between">
+        <button
+          type="button"
+          className="px-4 py-2 bg-gray-700 rounded-md hover:bg-gray-600 transition"
+          onClick={() => form.trigger(['forcePowers', 'techPowers'])}
+        >
+          Validate
+        </button>
+        
+        <button
+          type="button"
+          className="px-4 py-2 bg-blue-700 rounded-md hover:bg-blue-600 transition"
+          onClick={handleContinue}
+        >
+          Continue
+        </button>
+      </div>
     </div>
   );
-}
+};
+
+export default PowersSelection;

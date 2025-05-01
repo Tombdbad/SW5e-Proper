@@ -1,1063 +1,677 @@
+import { create } from 'zustand';
+import { immer } from 'zustand/middleware/immer';
+import { devtools } from 'zustand/middleware';
+import { v4 as uuidv4 } from 'uuid';
+import { CharacterSchema } from '@shared/unifiedSchema';
+import { z } from 'zod';
+import { withHistory, withValidation } from './middleware';
+import { createPersistOptions } from './persistence';
+import { createStoreWithSelectors } from './selectors';
+import { Character } from '@shared/unifiedSchema';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { 
+  createCharacter,
+  updateCharacter,
+  deleteCharacter,
+  getCharacter,
+  getCharacters,
+} from '@/lib/api/character';
 
-import { create } from "zustand";
-import { immer } from "zustand/middleware/immer";
-import { persist } from "zustand/middleware";
-import { produce } from "immer"; // Make sure we use immer directly too
-import { devtools } from "zustand/middleware";
-import { z } from "zod";
-import { createJSONStorage } from "zustand/middleware";
-import { idbStorage } from "../stores/persistence";
-import { createSelectors } from "../stores/selectors";
-import { validateSchema } from "../stores/middleware";
-import { calculateModifier, calculateProficiencyBonus } from "../sw5e/rules";
-import { apiRequest } from "../queryClient";
-import { produce } from "immer";
-import { v4 as uuidv4 } from "uuid";
-
-// Character schema for validation
-export const CharacterSchema = z.object({
-  id: z.string().optional(),
-  name: z.string().min(1, "Name is required"),
-  species: z.string().min(1, "Species is required"),
-  class: z.string().min(1, "Class is required"),
-  subclass: z.string().optional(),
-  level: z.number().min(1).max(20).default(1),
-  background: z.string().min(1, "Background is required"),
-  alignment: z.string().min(1, "Alignment is required"),
-  abilityScores: z.object({
-    strength: z.number().min(3).max(20),
-    dexterity: z.number().min(3).max(20),
-    constitution: z.number().min(3).max(20),
-    intelligence: z.number().min(3).max(20),
-    wisdom: z.number().min(3).max(20),
-    charisma: z.number().min(3).max(20),
-  }),
-  maxHp: z.number().min(1),
-  currentHp: z.number().min(0),
-  temporaryHp: z.number().min(0).default(0),
-  armorClass: z.number().min(1),
-  speed: z.number().min(1),
-  skillProficiencies: z.array(z.string()),
-  savingThrowProficiencies: z.array(z.string()),
-  equipment: z.array(z.string()),
-  credits: z.number().min(0).default(1000),
-  backstory: z.string().optional(),
-  notes: z.string().optional(),
-  startingLocation: z.string().min(1),
-  currentLocation: z.string().optional(),
-  experience: z.number().min(0).default(0),
-  multiclass: z.array(z.object({
-    class: z.string(),
-    level: z.number(),
-    archetype: z.string().optional(),
-  })).optional().default([]),
-  forcePowers: z.array(z.object({
-    id: z.string(),
-    name: z.string(),
-    level: z.number(),
-    description: z.string(),
-  })).optional().default([]),
-  techPowers: z.array(z.object({
-    id: z.string(),
-    name: z.string(),
-    level: z.number(),
-    description: z.string(),
-  })).optional().default([]),
-  feats: z.array(z.string()).optional().default([]),
-  weapons: z.array(z.any()).optional().default([]),
-  armor: z.any().optional(),
-  languages: z.array(z.string()).optional().default([]),
-  forceAlignment: z.string().optional(),
-  maxForcePoints: z.number().min(0).default(0),
-  currentForcePoints: z.number().min(0).default(0),
-  version: z.number().default(1),
-  lastUpdated: z.string().optional(),
-  syncStatus: z.enum(["synced", "local", "conflict"]).default("local"),
-});
-
-export type Character = z.infer<typeof CharacterSchema>;
-
+// Define state shape with TypeScript
 export interface CharacterState {
-  // Base state
+  // Normalized data structure
   characters: Record<string, Character>;
   activeCharacterId: string | null;
-  isSaving: boolean;
   isLoading: boolean;
   error: string | null;
-  
-  // History tracking for undo/redo
-  history: {
-    past: Array<Record<string, Character>>;
-    future: Array<Record<string, Character>>;
-  };
-  
-  // Derived state (calculated)
+
+  // Version tracking
+  lastSync: number | null;
+
+  // Derived state (calculated properties)
   derived: {
     activeCharacter: Character | null;
-    abilityModifiers: Record<string, number>;
-    proficiencyBonus: number;
-    savingThrows: Record<string, number>;
-    skillModifiers: Record<string, number>;
-    initiativeBonus: number;
-    passivePerception: number;
-    spellSaveDC: number;
-    spellAttackBonus: number;
-    encumbrance: number;
-    experienceToNextLevel: number;
-  };
-  
-  // Actions
-  actions: {
-    // Character CRUD
-    createCharacter: (characterData: Partial<Character>) => Promise<Character>;
-    loadCharacter: (id: string) => Promise<Character>;
-    updateCharacter: (id: string, updates: Partial<Character>) => Promise<Character>;
-    deleteCharacter: (id: string) => Promise<void>;
-    setActiveCharacter: (id: string | null) => void;
-    
-    // Ability score management
-    updateAbilityScore: (ability: string, value: number) => void;
-    
-    // Hit points and health management
-    updateHitPoints: (current: number, temp?: number) => void;
-    takeDamage: (amount: number) => void;
-    heal: (amount: number) => void;
-    
-    // Class and level management
-    addClassLevel: (classId: string) => void;
-    
-    // Equipment and inventory
-    addEquipment: (item: string) => void;
-    removeEquipment: (itemIndex: number) => void;
-    updateCredits: (amount: number) => void;
-    
-    // Powers management
-    addForcePower: (power: any) => void;
-    removeForcePower: (powerId: string) => void;
-    addTechPower: (power: any) => void;
-    removeTechPower: (powerId: string) => void;
-    
-    // History actions
-    undo: () => void;
-    redo: () => void;
-    
-    // Sync actions
-    syncCharacter: (id: string) => Promise<void>;
-    importCharacter: (characterData: Character) => void;
-    exportCharacter: (id: string) => Character;
-    
-    // Utility actions
-    resetCharacter: () => void;
-    resetError: () => void;
+    abilityModifiers: Record<string, number> | null;
+    proficiencyBonus: number | null;
+    armorClass: number | null;
+    initiative: number | null;
+    savingThrows: Record<string, number> | null;
+    skillModifiers: Record<string, number> | null;
+    maxHitPoints: number | null;
+    maxForcePoints: number | null;
+    passivePerception: number | null;
   };
 }
 
-// Create the store with middleware
-const useCharacterStoreBase = create<CharacterState>()(
+// Define actions interface
+export interface CharacterActions {
+  // Character CRUD
+  fetchCharacters: () => Promise<void>;
+  fetchCharacter: (id: string) => Promise<void>;
+  addCharacter: (character: Partial<Character>) => Promise<void>;
+  removeCharacter: (id: string) => Promise<void>;
+  updateCharacterData: (id: string, updates: Partial<Character>) => Promise<void>;
+
+  // Local state management
+  setActiveCharacter: (id: string | null) => void;
+  calculateDerivedStats: (characterId?: string) => void;
+
+  // Optimistic updates
+  optimisticAddCharacter: (character: Character) => void;
+  optimisticUpdateCharacter: (id: string, updates: Partial<Character>) => void;
+  optimisticRemoveCharacter: (id: string) => void;
+
+  // Character versioning and history
+  restoreCharacterVersion: (id: string, version: number) => Promise<void>;
+  exportCharacter: (id: string) => string;
+  importCharacter: (data: string) => Promise<void>;
+  duplicateCharacter: (id: string) => Promise<void>;
+
+  // Sync and error handling
+  setError: (error: string | null) => void;
+  syncWithServer: () => Promise<void>;
+}
+
+// Helper function to calculate ability modifiers
+const getAbilityModifier = (score: number): number => {
+  return Math.floor((score - 10) / 2);
+};
+
+// Helper function to calculate proficiency bonus
+const calculateProficiencyBonus = (level: number): number => {
+  return Math.floor((level - 1) / 4) + 2;
+};
+
+// Create the store with all middlewares
+export const useCharacter = create<CharacterState & CharacterActions>()(
   devtools(
-    persist(
-      immer(
-        (set, get) => ({
-          // Base state
-          characters: {},
-          activeCharacterId: null,
-          isSaving: false,
-          isLoading: false,
-          error: null,
-          
-          // History tracking
-          history: {
-            past: [],
-            future: [],
-          },
-          
-          // Derived state with initial values
-          derived: {
-            activeCharacter: null,
-            abilityModifiers: {
-              strength: 0,
-              dexterity: 0,
-              constitution: 0,
-              intelligence: 0,
-              wisdom: 0,
-              charisma: 0,
+    immer(
+      withHistory<CharacterState>({ limit: 50 })(
+        withValidation(
+          // Validate the main state shape (excluding derived values which are calculated)
+          z.object({
+            characters: z.record(z.string(), CharacterSchema),
+            activeCharacterId: z.string().nullable(),
+            isLoading: z.boolean(),
+            error: z.string().nullable(),
+            lastSync: z.number().nullable(),
+            derived: z.any(), // Skip validation on derived values
+            history: z.any(), // Skip validation on history
+          })
+        )(
+          (set, get) => ({
+            // Initial state
+            characters: {},
+            activeCharacterId: null,
+            isLoading: false,
+            error: null,
+            lastSync: null,
+            derived: {
+              activeCharacter: null,
+              abilityModifiers: null,
+              proficiencyBonus: null,
+              armorClass: null,
+              initiative: null,
+              savingThrows: null,
+              skillModifiers: null,
+              maxHitPoints: null,
+              maxForcePoints: null,
+              passivePerception: null,
             },
-            proficiencyBonus: 2,
-            savingThrows: {
-              strength: 0,
-              dexterity: 0,
-              constitution: 0,
-              intelligence: 0,
-              wisdom: 0,
-              charisma: 0,
-            },
-            skillModifiers: {},
-            initiativeBonus: 0,
-            passivePerception: 10,
-            spellSaveDC: 8,
-            spellAttackBonus: 0,
-            encumbrance: 0,
-            experienceToNextLevel: 300,
-          },
-          
-          // Actions
-          actions: {
-            // Character CRUD operations
-            createCharacter: async (characterData) => {
+
+            // Character CRUD
+            fetchCharacters: async () => {
+              set({ isLoading: true, error: null });
               try {
+                const response = await getCharacters();
+                const charactersRecord = response.reduce((acc, character) => {
+                  acc[character.id!] = character;
+                  return acc;
+                }, {} as Record<string, Character>);
+
                 set((state) => {
-                  state.isSaving = true;
-                  state.error = null;
-                });
-                
-                // Add a locally generated ID if none provided
-                const newCharacter: Character = {
-                  ...characterData,
-                  id: characterData.id || uuidv4(),
-                  version: 1,
-                  lastUpdated: new Date().toISOString(),
-                  syncStatus: "local",
-                } as Character;
-                
-                // Validate with schema
-                CharacterSchema.parse(newCharacter);
-                
-                // Add to store optimistically
-                set((state) => {
-                  // Save current state to history
-                  state.history.past.push({...state.characters});
-                  state.history.future = [];
-                  
-                  // Add the new character
-                  state.characters[newCharacter.id!] = newCharacter;
-                  state.activeCharacterId = newCharacter.id!;
-                  
-                  // Update derived state
-                  state.derived.activeCharacter = newCharacter;
-                });
-                
-                // Try to persist to server
-                try {
-                  const savedCharacter = await apiRequest("POST", "/api/characters", newCharacter);
-                  
-                  // Update with server data
-                  set((state) => {
-                    state.characters[savedCharacter.id] = {
-                      ...savedCharacter,
-                      syncStatus: "synced",
-                    };
-                    state.isSaving = false;
-                  });
-                  
-                  return savedCharacter;
-                } catch (error) {
-                  console.error("Error creating character:", error);
-                  // Keep local version but mark as not synced
-                  set((state) => {
-                    state.characters[newCharacter.id!].syncStatus = "local";
-                    state.isSaving = false;
-                    state.error = "Failed to save to server, changes saved locally";
-                  });
-                  
-                  return newCharacter;
-                }
-              } catch (error) {
-                console.error("Error creating character:", error);
-                set((state) => {
-                  state.isSaving = false;
-                  state.error = error instanceof Error ? error.message : "Unknown error creating character";
-                });
-                throw error;
-              }
-            },
-            
-            loadCharacter: async (id) => {
-              try {
-                set((state) => {
-                  state.isLoading = true;
-                  state.error = null;
-                });
-                
-                // Check if we have it cached locally
-                const localCharacter = get().characters[id];
-                
-                // If we have a synced version, use it immediately
-                if (localCharacter && localCharacter.syncStatus === "synced") {
-                  set((state) => {
-                    state.activeCharacterId = id;
-                    state.derived.activeCharacter = localCharacter;
-                    state.isLoading = false;
-                  });
-                  return localCharacter;
-                }
-                
-                // Otherwise fetch from server
-                const fetchedCharacter = await apiRequest("GET", `/api/characters/${id}`);
-                
-                if (fetchedCharacter) {
-                  // Handle conflict if we have local changes
-                  if (localCharacter && localCharacter.syncStatus === "local") {
-                    if (localCharacter.version >= fetchedCharacter.version) {
-                      // Local is newer, mark conflict
-                      set((state) => {
-                        state.characters[id] = {
-                          ...localCharacter,
-                          syncStatus: "conflict",
-                        };
-                        state.activeCharacterId = id;
-                        state.derived.activeCharacter = state.characters[id];
-                        state.isLoading = false;
-                      });
-                      return localCharacter;
-                    }
+                  state.characters = charactersRecord;
+                  state.isLoading = false;
+                  state.lastSync = Date.now();
+
+                  // Set active character if none is selected
+                  if (!state.activeCharacterId && Object.keys(charactersRecord).length > 0) {
+                    state.activeCharacterId = Object.keys(charactersRecord)[0];
                   }
-                  
-                  // Server version is newer or no conflict
-                  set((state) => {
-                    state.characters[id] = {
-                      ...fetchedCharacter,
-                      syncStatus: "synced",
-                    };
-                    state.activeCharacterId = id;
-                    state.derived.activeCharacter = state.characters[id];
-                    state.isLoading = false;
-                  });
-                  return fetchedCharacter;
-                } else {
-                  throw new Error("Character not found");
-                }
+
+                  // Calculate derived stats
+                  if (state.activeCharacterId) {
+                    get().calculateDerivedStats(state.activeCharacterId);
+                  }
+                });
               } catch (error) {
-                console.error("Error loading character:", error);
                 set((state) => {
                   state.isLoading = false;
-                  state.error = error instanceof Error ? error.message : "Unknown error loading character";
+                  state.error = error instanceof Error ? error.message : 'Failed to fetch characters';
                 });
-                throw error;
+                console.error('Error fetching characters:', error);
               }
             },
-            
-            updateCharacter: async (id, updates) => {
+
+            fetchCharacter: async (id) => {
+              set((state) => { state.isLoading = true; state.error = null; });
               try {
+                const character = await getCharacter(id);
                 set((state) => {
-                  state.isSaving = true;
-                  state.error = null;
+                  state.characters[id] = character;
+                  state.isLoading = false;
+
+                  // Update derived stats if this is the active character
+                  if (state.activeCharacterId === id) {
+                    get().calculateDerivedStats(id);
+                  }
                 });
-                
-                const currentCharacter = get().characters[id];
-                if (!currentCharacter) {
-                  throw new Error("Character not found");
-                }
-                
-                // Create updated character
-                const updatedCharacter = {
-                  ...currentCharacter,
-                  ...updates,
-                  version: currentCharacter.version + 1,
-                  lastUpdated: new Date().toISOString(),
-                  syncStatus: "local",
-                };
-                
-                // Validate with schema
-                CharacterSchema.parse(updatedCharacter);
-                
-                // Update locally first (optimistic update)
+              } catch (error) {
                 set((state) => {
-                  // Save current state to history
-                  state.history.past.push({...state.characters});
-                  state.history.future = [];
-                  
-                  // Update the character
+                  state.isLoading = false;
+                  state.error = error instanceof Error ? error.message : 'Failed to fetch character';
+                });
+                console.error(`Error fetching character ${id}:`, error);
+              }
+            },
+
+            addCharacter: async (characterData) => {
+              const newCharacter: Character = {
+                id: uuidv4(),
+                name: characterData.name || 'New Character',
+                species: characterData.species || '',
+                class: characterData.class || '',
+                level: characterData.level || 1,
+                background: characterData.background || '',
+                alignment: characterData.alignment || '',
+                abilityScores: characterData.abilityScores || {
+                  strength: 10,
+                  dexterity: 10,
+                  constitution: 10,
+                  intelligence: 10,
+                  wisdom: 10,
+                  charisma: 10,
+                },
+                maxHp: characterData.maxHp || 10,
+                currentHp: characterData.currentHp || 10,
+                temporaryHp: characterData.temporaryHp || 0,
+                armorClass: characterData.armorClass || 10,
+                speed: characterData.speed || 30,
+                skillProficiencies: characterData.skillProficiencies || [],
+                savingThrowProficiencies: characterData.savingThrowProficiencies || [],
+                equipment: characterData.equipment || [],
+                credits: characterData.credits || 1000,
+                backstory: characterData.backstory || '',
+                notes: characterData.notes || '',
+                startingLocation: characterData.startingLocation || 'Unknown',
+                currentLocation: characterData.currentLocation || undefined,
+                experience: characterData.experience || 0,
+                forcePowers: characterData.forcePowers || [],
+                techPowers: characterData.techPowers || [],
+                feats: characterData.feats || [],
+                languages: characterData.languages || [],
+                forceAlignment: characterData.forceAlignment || undefined,
+                maxForcePoints: characterData.maxForcePoints || 0,
+                currentForcePoints: characterData.currentForcePoints || 0,
+                proficiencyBonus: characterData.proficiencyBonus || 2,
+                initiative: characterData.initiative || 0,
+                version: 1,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                ...characterData,
+              };
+
+              // Optimistically update UI
+              get().optimisticAddCharacter(newCharacter);
+
+              try {
+                // Send to server
+                const savedCharacter = await createCharacter(newCharacter);
+
+                // Update with server response
+                set((state) => {
+                  state.characters[savedCharacter.id!] = savedCharacter;
+                  state.lastSync = Date.now();
+
+                  // Set as active if there was no active character
+                  if (state.activeCharacterId === null) {
+                    state.activeCharacterId = savedCharacter.id;
+                    get().calculateDerivedStats(savedCharacter.id);
+                  }
+                });
+              } catch (error) {
+                set((state) => {
+                  state.error = error instanceof Error ? error.message : 'Failed to save character';
+                  // Revert optimistic update if server save failed
+                  delete state.characters[newCharacter.id!];
+                });
+                console.error('Error creating character:', error);
+              }
+            },
+
+            removeCharacter: async (id) => {
+              // Store the character for potential rollback
+              const character = get().characters[id];
+              if (!character) return;
+
+              // Optimistically update UI
+              get().optimisticRemoveCharacter(id);
+
+              try {
+                // Delete on server
+                await deleteCharacter(id);
+
+                // Update timestamp
+                set((state) => {
+                  state.lastSync = Date.now();
+                });
+              } catch (error) {
+                // Revert optimistic update
+                set((state) => {
+                  state.characters[id] = character;
+                  state.error = error instanceof Error ? error.message : 'Failed to delete character';
+                });
+                console.error(`Error deleting character ${id}:`, error);
+              }
+            },
+
+            updateCharacterData: async (id, updates) => {
+              const character = get().characters[id];
+              if (!character) {
+                set((state) => {
+                  state.error = `Character with ID ${id} not found`;
+                });
+                return;
+              }
+
+              // Optimistically update UI
+              get().optimisticUpdateCharacter(id, updates);
+
+              try {
+                // Update on server
+                const updatedCharacter = await updateCharacter(id, updates);
+
+                // Update with server response
+                set((state) => {
                   state.characters[id] = updatedCharacter;
-                  
-                  // Update derived state if this is the active character
+                  state.lastSync = Date.now();
+
+                  // Recalculate derived stats if this is the active character
                   if (state.activeCharacterId === id) {
-                    state.derived.activeCharacter = updatedCharacter;
+                    get().calculateDerivedStats(id);
                   }
                 });
-                
-                // Try to persist to server
-                try {
-                  const savedCharacter = await apiRequest("PUT", `/api/characters/${id}`, updatedCharacter);
-                  
-                  // Update with server data
-                  set((state) => {
-                    state.characters[id] = {
-                      ...savedCharacter,
-                      syncStatus: "synced",
-                    };
-                    state.isSaving = false;
-                  });
-                  
-                  return savedCharacter;
-                } catch (error) {
-                  console.error("Error updating character:", error);
-                  // Keep local version but mark as not synced
-                  set((state) => {
-                    state.characters[id].syncStatus = "local";
-                    state.isSaving = false;
-                    state.error = "Failed to save to server, changes saved locally";
-                  });
-                  
-                  return updatedCharacter;
-                }
               } catch (error) {
-                console.error("Error updating character:", error);
+                // Revert optimistic update
                 set((state) => {
-                  state.isSaving = false;
-                  state.error = error instanceof Error ? error.message : "Unknown error updating character";
+                  state.characters[id] = character;
+                  state.error = error instanceof Error ? error.message : 'Failed to update character';
                 });
-                throw error;
+                console.error(`Error updating character ${id}:`, error);
               }
             },
-            
-            deleteCharacter: async (id) => {
-              try {
-                set((state) => {
-                  state.isSaving = true;
-                  state.error = null;
-                });
-                
-                // Save current state to history
-                set((state) => {
-                  state.history.past.push({...state.characters});
-                  state.history.future = [];
-                });
-                
-                // Delete locally first
-                set((state) => {
-                  // If deleting the active character, clear it
-                  if (state.activeCharacterId === id) {
-                    state.activeCharacterId = null;
-                    state.derived.activeCharacter = null;
-                  }
-                  
-                  // Delete the character
-                  delete state.characters[id];
-                });
-                
-                // Try to delete from server
-                try {
-                  await apiRequest("DELETE", `/api/characters/${id}`);
-                  set((state) => {
-                    state.isSaving = false;
-                  });
-                } catch (error) {
-                  console.error("Error deleting character from server:", error);
-                  // Since delete is not idempotent, we don't roll back
-                  // but inform the user there may be server data remaining
-                  set((state) => {
-                    state.isSaving = false;
-                    state.error = "Character deleted locally but may not be removed from the server";
-                  });
-                }
-              } catch (error) {
-                console.error("Error deleting character:", error);
-                set((state) => {
-                  state.isSaving = false;
-                  state.error = error instanceof Error ? error.message : "Unknown error deleting character";
-                });
-                throw error;
-              }
-            },
-            
+
+            // Local state management
             setActiveCharacter: (id) => {
               set((state) => {
                 state.activeCharacterId = id;
-                state.derived.activeCharacter = id ? state.characters[id] || null : null;
-                
-                // If we have an active character, recalculate derived properties
-                if (id && state.characters[id]) {
-                  const character = state.characters[id];
-                  
-                  // Calculate ability modifiers
-                  Object.keys(character.abilityScores).forEach((ability) => {
-                    const score = character.abilityScores[ability as keyof typeof character.abilityScores];
-                    state.derived.abilityModifiers[ability] = calculateModifier(score);
-                  });
-                  
-                  // Calculate proficiency bonus
-                  state.derived.proficiencyBonus = calculateProficiencyBonus(character.level);
-                  
-                  // Calculate saving throws
-                  Object.keys(character.abilityScores).forEach((ability) => {
-                    const isProficient = character.savingThrowProficiencies.includes(ability);
-                    const modifier = state.derived.abilityModifiers[ability];
-                    state.derived.savingThrows[ability] = isProficient 
-                      ? modifier + state.derived.proficiencyBonus 
-                      : modifier;
-                  });
-                  
-                  // Calculate initiative bonus (dexterity modifier)
-                  state.derived.initiativeBonus = state.derived.abilityModifiers.dexterity;
-                  
-                  // Calculate passive perception (10 + wisdom modifier + proficiency if proficient)
-                  const wisdomMod = state.derived.abilityModifiers.wisdom;
-                  const perceptionProficient = character.skillProficiencies.includes("perception");
-                  state.derived.passivePerception = 10 + wisdomMod + (perceptionProficient ? state.derived.proficiencyBonus : 0);
-                  
-                  // Spell Save DC and Spell Attack Bonus
-                  let spellcastingAbility = "wisdom"; // Default for Force users
-                  if (character.class === "engineer" || character.class === "scholar") {
-                    spellcastingAbility = "intelligence";
-                  } else if (character.class === "guardian" || character.class === "sentinel") {
-                    spellcastingAbility = "wisdom";
-                  } else if (character.class === "consular") {
-                    spellcastingAbility = "charisma";
-                  }
-                  
-                  const spellMod = state.derived.abilityModifiers[spellcastingAbility];
-                  state.derived.spellSaveDC = 8 + state.derived.proficiencyBonus + spellMod;
-                  state.derived.spellAttackBonus = state.derived.proficiencyBonus + spellMod;
-                  
-                  // Determine XP to next level based on current level
-                  const xpThresholds = [0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000, 85000, 100000, 120000, 140000, 165000, 195000, 225000, 265000, 305000, 355000];
-                  const currentLevel = character.level;
-                  if (currentLevel < 20) {
-                    state.derived.experienceToNextLevel = xpThresholds[currentLevel] - character.experience;
-                  } else {
-                    state.derived.experienceToNextLevel = 0; // Max level
-                  }
-                }
-              });
-            },
-            
-            // Ability score management
-            updateAbilityScore: (ability, value) => {
-              const activeId = get().activeCharacterId;
-              if (!activeId) return;
-              
-              set((state) => {
-                // Save current state to history
-                state.history.past.push({...state.characters});
-                state.history.future = [];
-                
-                // Update the ability score
-                const character = state.characters[activeId];
-                if (character && character.abilityScores) {
-                  character.abilityScores = {
-                    ...character.abilityScores,
-                    [ability]: value
+                if (id) {
+                  get().calculateDerivedStats(id);
+                } else {
+                  // Clear derived state if no character is active
+                  state.derived = {
+                    activeCharacter: null,
+                    abilityModifiers: null,
+                    proficiencyBonus: null,
+                    armorClass: null,
+                    initiative: null,
+                    savingThrows: null,
+                    skillModifiers: null,
+                    maxHitPoints: null,
+                    maxForcePoints: null,
+                    passivePerception: null,
                   };
-                  character.syncStatus = "local";
-                  character.lastUpdated = new Date().toISOString();
-                  
-                  // Update derived state
-                  if (state.derived.activeCharacter) {
-                    state.derived.activeCharacter = character;
-                    
-                    // Recalculate modifier
-                    state.derived.abilityModifiers[ability] = calculateModifier(value);
-                    
-                    // Recalculate saving throw
-                    const isProficient = character.savingThrowProficiencies.includes(ability);
-                    state.derived.savingThrows[ability] = isProficient 
-                      ? state.derived.abilityModifiers[ability] + state.derived.proficiencyBonus 
-                      : state.derived.abilityModifiers[ability];
-                  }
                 }
               });
             },
-            
-            // Hit point management
-            updateHitPoints: (current, temp = 0) => {
-              const activeId = get().activeCharacterId;
-              if (!activeId) return;
-              
+
+            calculateDerivedStats: (characterId) => {
+              const id = characterId || get().activeCharacterId;
+              if (!id) return;
+
+              const character = get().characters[id];
+              if (!character) return;
+
               set((state) => {
-                // Save current state to history
-                state.history.past.push({...state.characters});
-                state.history.future = [];
-                
-                // Update HP
-                const character = state.characters[activeId];
-                if (character) {
-                  character.currentHp = current;
-                  character.temporaryHp = temp;
-                  character.syncStatus = "local";
-                  character.lastUpdated = new Date().toISOString();
-                  
-                  // Update derived state
-                  if (state.derived.activeCharacter) {
-                    state.derived.activeCharacter = character;
-                  }
+                // Active character reference
+                state.derived.activeCharacter = character;
+
+                // Calculate ability modifiers
+                state.derived.abilityModifiers = {
+                  strength: getAbilityModifier(character.abilityScores.strength),
+                  dexterity: getAbilityModifier(character.abilityScores.dexterity),
+                  constitution: getAbilityModifier(character.abilityScores.constitution),
+                  intelligence: getAbilityModifier(character.abilityScores.intelligence),
+                  wisdom: getAbilityModifier(character.abilityScores.wisdom),
+                  charisma: getAbilityModifier(character.abilityScores.charisma),
+                };
+
+                // Proficiency bonus
+                state.derived.proficiencyBonus = calculateProficiencyBonus(character.level);
+
+                // Update armor class if not explicitly set (basic calculation)
+                if (!character.armorClass) {
+                  state.derived.armorClass = 10 + state.derived.abilityModifiers.dexterity;
+                } else {
+                  state.derived.armorClass = character.armorClass;
                 }
+
+                // Initiative
+                state.derived.initiative = state.derived.abilityModifiers.dexterity;
+
+                // Saving throws
+                const savingThrows: Record<string, number> = {};
+                const abilities = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
+                for (const ability of abilities) {
+                  const isProficient = character.savingThrowProficiencies.includes(ability);
+                  savingThrows[ability] = state.derived.abilityModifiers[ability as keyof typeof state.derived.abilityModifiers] + 
+                    (isProficient ? state.derived.proficiencyBonus : 0);
+                }
+                state.derived.savingThrows = savingThrows;
+
+                // Skill modifiers (simplified - would need actual skill-to-ability mappings)
+                state.derived.skillModifiers = {};
+
+                // Max HP and Force Points
+                state.derived.maxHitPoints = character.maxHp;
+                state.derived.maxForcePoints = character.maxForcePoints;
+
+                // Passive Perception (10 + perception modifier)
+                const perceptionProficient = character.skillProficiencies.includes('perception');
+                state.derived.passivePerception = 10 + 
+                  state.derived.abilityModifiers.wisdom + 
+                  (perceptionProficient ? state.derived.proficiencyBonus : 0);
               });
             },
-            
-            takeDamage: (amount) => {
-              const activeId = get().activeCharacterId;
-              if (!activeId) return;
-              
+
+            // Optimistic updates
+            optimisticAddCharacter: (character) => {
               set((state) => {
-                // Save current state to history
-                state.history.past.push({...state.characters});
-                state.history.future = [];
-                
-                // Apply damage
-                const character = state.characters[activeId];
-                if (character) {
-                  // First apply to temporary HP
-                  let remainingDamage = amount;
-                  let newTempHp = character.temporaryHp;
-                  
-                  if (newTempHp > 0) {
-                    if (newTempHp >= remainingDamage) {
-                      newTempHp -= remainingDamage;
-                      remainingDamage = 0;
-                    } else {
-                      remainingDamage -= newTempHp;
-                      newTempHp = 0;
-                    }
-                  }
-                  
-                  // Then apply to current HP
-                  let newCurrentHp = character.currentHp;
-                  if (remainingDamage > 0) {
-                    newCurrentHp = Math.max(0, newCurrentHp - remainingDamage);
-                  }
-                  
-                  // Update character
-                  character.currentHp = newCurrentHp;
-                  character.temporaryHp = newTempHp;
-                  character.syncStatus = "local";
-                  character.lastUpdated = new Date().toISOString();
-                  
-                  // Update derived state
-                  if (state.derived.activeCharacter) {
-                    state.derived.activeCharacter = character;
-                  }
-                }
+                state.characters[character.id!] = character;
               });
             },
-            
-            heal: (amount) => {
-              const activeId = get().activeCharacterId;
-              if (!activeId) return;
-              
+
+            optimisticUpdateCharacter: (id, updates) => {
               set((state) => {
-                // Save current state to history
-                state.history.past.push({...state.characters});
-                state.history.future = [];
-                
-                // Apply healing
-                const character = state.characters[activeId];
-                if (character) {
-                  character.currentHp = Math.min(character.maxHp, character.currentHp + amount);
-                  character.syncStatus = "local";
-                  character.lastUpdated = new Date().toISOString();
-                  
-                  // Update derived state
-                  if (state.derived.activeCharacter) {
-                    state.derived.activeCharacter = character;
-                  }
-                }
-              });
-            },
-            
-            // Class and level management
-            addClassLevel: (classId) => {
-              const activeId = get().activeCharacterId;
-              if (!activeId) return;
-              
-              set((state) => {
-                // Save current state to history
-                state.history.past.push({...state.characters});
-                state.history.future = [];
-                
-                // Update level
-                const character = state.characters[activeId];
-                if (character) {
-                  // Check if this is multiclassing or primary class
-                  if (character.class === classId) {
-                    // Primary class level up
-                    character.level += 1;
-                  } else {
-                    // Multiclass
-                    const existingMulticlass = character.multiclass?.find(mc => mc.class === classId);
-                    if (existingMulticlass) {
-                      // Increase existing multiclass level
-                      existingMulticlass.level += 1;
-                    } else {
-                      // Add new multiclass
-                      if (!character.multiclass) {
-                        character.multiclass = [];
-                      }
-                      character.multiclass.push({
-                        class: classId,
-                        level: 1
-                      });
-                    }
-                  }
-                  
-                  character.syncStatus = "local";
-                  character.lastUpdated = new Date().toISOString();
-                  
-                  // Recalculate proficiency bonus
-                  const totalLevel = character.level + (character.multiclass?.reduce((sum, mc) => sum + mc.level, 0) || 0);
-                  state.derived.proficiencyBonus = calculateProficiencyBonus(totalLevel);
-                  
-                  // Update derived state
-                  if (state.derived.activeCharacter) {
-                    state.derived.activeCharacter = character;
-                  }
-                }
-              });
-            },
-            
-            // Equipment management
-            addEquipment: (item) => {
-              const activeId = get().activeCharacterId;
-              if (!activeId) return;
-              
-              set((state) => {
-                // Save current state to history
-                state.history.past.push({...state.characters});
-                state.history.future = [];
-                
-                // Add equipment
-                const character = state.characters[activeId];
-                if (character) {
-                  character.equipment.push(item);
-                  character.syncStatus = "local";
-                  character.lastUpdated = new Date().toISOString();
-                  
-                  // Update derived state
-                  if (state.derived.activeCharacter) {
-                    state.derived.activeCharacter = character;
-                  }
-                }
-              });
-            },
-            
-            removeEquipment: (itemIndex) => {
-              const activeId = get().activeCharacterId;
-              if (!activeId) return;
-              
-              set((state) => {
-                // Save current state to history
-                state.history.past.push({...state.characters});
-                state.history.future = [];
-                
-                // Remove equipment
-                const character = state.characters[activeId];
-                if (character && itemIndex >= 0 && itemIndex < character.equipment.length) {
-                  character.equipment.splice(itemIndex, 1);
-                  character.syncStatus = "local";
-                  character.lastUpdated = new Date().toISOString();
-                  
-                  // Update derived state
-                  if (state.derived.activeCharacter) {
-                    state.derived.activeCharacter = character;
-                  }
-                }
-              });
-            },
-            
-            updateCredits: (amount) => {
-              const activeId = get().activeCharacterId;
-              if (!activeId) return;
-              
-              set((state) => {
-                // Save current state to history
-                state.history.past.push({...state.characters});
-                state.history.future = [];
-                
-                // Update credits
-                const character = state.characters[activeId];
-                if (character) {
-                  character.credits = Math.max(0, character.credits + amount);
-                  character.syncStatus = "local";
-                  character.lastUpdated = new Date().toISOString();
-                  
-                  // Update derived state
-                  if (state.derived.activeCharacter) {
-                    state.derived.activeCharacter = character;
-                  }
-                }
-              });
-            },
-            
-            // Powers management
-            addForcePower: (power) => {
-              const activeId = get().activeCharacterId;
-              if (!activeId) return;
-              
-              set((state) => {
-                // Save current state to history
-                state.history.past.push({...state.characters});
-                state.history.future = [];
-                
-                // Add force power
-                const character = state.characters[activeId];
-                if (character) {
-                  if (!character.forcePowers) {
-                    character.forcePowers = [];
-                  }
-                  
-                  const newPower = {
-                    ...power,
-                    id: power.id || uuidv4()
-                  };
-                  
-                  character.forcePowers.push(newPower);
-                  character.syncStatus = "local";
-                  character.lastUpdated = new Date().toISOString();
-                  
-                  // Update derived state
-                  if (state.derived.activeCharacter) {
-                    state.derived.activeCharacter = character;
-                  }
-                }
-              });
-            },
-            
-            removeForcePower: (powerId) => {
-              const activeId = get().activeCharacterId;
-              if (!activeId) return;
-              
-              set((state) => {
-                // Save current state to history
-                state.history.past.push({...state.characters});
-                state.history.future = [];
-                
-                // Remove force power
-                const character = state.characters[activeId];
-                if (character && character.forcePowers) {
-                  character.forcePowers = character.forcePowers.filter(power => power.id !== powerId);
-                  character.syncStatus = "local";
-                  character.lastUpdated = new Date().toISOString();
-                  
-                  // Update derived state
-                  if (state.derived.activeCharacter) {
-                    state.derived.activeCharacter = character;
-                  }
-                }
-              });
-            },
-            
-            addTechPower: (power) => {
-              const activeId = get().activeCharacterId;
-              if (!activeId) return;
-              
-              set((state) => {
-                // Save current state to history
-                state.history.past.push({...state.characters});
-                state.history.future = [];
-                
-                // Add tech power
-                const character = state.characters[activeId];
-                if (character) {
-                  if (!character.techPowers) {
-                    character.techPowers = [];
-                  }
-                  
-                  const newPower = {
-                    ...power,
-                    id: power.id || uuidv4()
-                  };
-                  
-                  character.techPowers.push(newPower);
-                  character.syncStatus = "local";
-                  character.lastUpdated = new Date().toISOString();
-                  
-                  // Update derived state
-                  if (state.derived.activeCharacter) {
-                    state.derived.activeCharacter = character;
-                  }
-                }
-              });
-            },
-            
-            removeTechPower: (powerId) => {
-              const activeId = get().activeCharacterId;
-              if (!activeId) return;
-              
-              set((state) => {
-                // Save current state to history
-                state.history.past.push({...state.characters});
-                state.history.future = [];
-                
-                // Remove tech power
-                const character = state.characters[activeId];
-                if (character && character.techPowers) {
-                  character.techPowers = character.techPowers.filter(power => power.id !== powerId);
-                  character.syncStatus = "local";
-                  character.lastUpdated = new Date().toISOString();
-                  
-                  // Update derived state
-                  if (state.derived.activeCharacter) {
-                    state.derived.activeCharacter = character;
-                  }
-                }
-              });
-            },
-            
-            // History actions for undo/redo
-            undo: () => {
-              const past = get().history.past;
-              
-              if (past.length === 0) return;
-              
-              set((state) => {
-                // Get the last state from history
-                const previousState = past[past.length - 1];
-                
-                // Save current state to future
-                state.history.future.unshift({...state.characters});
-                
-                // Restore previous state
-                state.characters = previousState;
-                state.history.past.pop();
-                
-                // Update active character if it exists
-                if (state.activeCharacterId) {
-                  state.derived.activeCharacter = state.characters[state.activeCharacterId] || null;
-                }
-              });
-            },
-            
-            redo: () => {
-              const future = get().history.future;
-              
-              if (future.length === 0) return;
-              
-              set((state) => {
-                // Get the next state from future
-                const nextState = future[0];
-                
-                // Save current state to history
-                state.history.past.push({...state.characters});
-                
-                // Restore next state
-                state.characters = nextState;
-                state.history.future.shift();
-                
-                // Update active character if it exists
-                if (state.activeCharacterId) {
-                  state.derived.activeCharacter = state.characters[state.activeCharacterId] || null;
-                }
-              });
-            },
-            
-            // Sync actions
-            syncCharacter: async (id) => {
-              try {
-                const character = get().characters[id];
-                if (!character) {
-                  throw new Error("Character not found");
-                }
-                
-                set((state) => {
-                  state.isSaving = true;
-                  state.error = null;
-                });
-                
-                // Push to server
-                const savedCharacter = await apiRequest("PUT", `/api/characters/${id}`, character);
-                
-                // Update with server data
-                set((state) => {
+                if (state.characters[id]) {
                   state.characters[id] = {
-                    ...savedCharacter,
-                    syncStatus: "synced",
+                    ...state.characters[id],
+                    ...updates,
+                    updatedAt: new Date().toISOString(),
+                    version: (state.characters[id].version || 1) + 1,
                   };
-                  state.isSaving = false;
-                  
-                  // Update derived state if active
+
+                  // Update derived stats if this is active character
                   if (state.activeCharacterId === id) {
-                    state.derived.activeCharacter = state.characters[id];
+                    get().calculateDerivedStats(id);
                   }
-                });
-              } catch (error) {
-                console.error("Error syncing character:", error);
-                set((state) => {
-                  state.isSaving = false;
-                  state.error = error instanceof Error ? error.message : "Unknown error syncing character";
-                });
-                throw error;
-              }
+                }
+              });
             },
-            
-            importCharacter: (characterData) => {
-              try {
-                // Validate with schema
-                const validatedCharacter = CharacterSchema.parse(characterData);
-                
-                // Ensure it has an ID
-                const id = validatedCharacter.id || uuidv4();
-                
-                set((state) => {
-                  // Save current state to history
-                  state.history.past.push({...state.characters});
-                  state.history.future = [];
-                  
-                  // Add the character
-                  state.characters[id] = {
-                    ...validatedCharacter,
-                    id,
-                    syncStatus: "local",
-                    lastUpdated: new Date().toISOString(),
-                  };
-                  
-                  // Update derived state if active
-                  if (state.activeCharacterId === id) {
-                    state.derived.activeCharacter = state.characters[id];
+
+            optimisticRemoveCharacter: (id) => {
+              set((state) => {
+                // Remove from characters list
+                delete state.characters[id];
+
+                // If this was the active character, set a new one
+                if (state.activeCharacterId === id) {
+                  const remainingIds = Object.keys(state.characters);
+                  state.activeCharacterId = remainingIds.length > 0 ? remainingIds[0] : null;
+
+                  // Update derived stats for new active character
+                  if (state.activeCharacterId) {
+                    get().calculateDerivedStats(state.activeCharacterId);
+                  } else {
+                    // Clear derived state
+                    state.derived = {
+                      activeCharacter: null,
+                      abilityModifiers: null,
+                      proficiencyBonus: null,
+                      armorClass: null,
+                      initiative: null,
+                      savingThrows: null,
+                      skillModifiers: null,
+                      maxHitPoints: null,
+                      maxForcePoints: null,
+                      passivePerception: null,
+                    };
                   }
-                });
-              } catch (error) {
-                console.error("Error importing character:", error);
-                set((state) => {
-                  state.error = error instanceof Error ? error.message : "Invalid character data";
-                });
-                throw error;
-              }
+                }
+              });
             },
-            
+
+            // Character versioning and history
+            restoreCharacterVersion: async (id, version) => {
+              // This would typically fetch a specific version from server history
+              // For now, just a placeholder to show the interface
+              set((state) => {
+                state.error = "Character version history not implemented yet";
+              });
+              return Promise.resolve();
+            },
+
             exportCharacter: (id) => {
               const character = get().characters[id];
               if (!character) {
-                throw new Error("Character not found");
+                set((state) => {
+                  state.error = `Character with ID ${id} not found`;
+                });
+                return '';
               }
-              
-              return character;
+
+              try {
+                return JSON.stringify(character, null, 2);
+              } catch (error) {
+                set((state) => {
+                  state.error = `Error exporting character: ${error instanceof Error ? error.message : 'Unknown error'}`;
+                });
+                return '';
+              }
             },
-            
-            // Utility actions
-            resetCharacter: () => {
+
+            importCharacter: async (data) => {
+              try {
+                const character = JSON.parse(data) as Character;
+
+                // Validate
+                const result = CharacterSchema.safeParse(character);
+                if (!result.success) {
+                  set((state) => {
+                    state.error = `Invalid character data: ${result.error.message}`;
+                  });
+                  return;
+                }
+
+                // Ensure it has an ID or generate one
+                const importedCharacter = {
+                  ...character,
+                  id: character.id || uuidv4(),
+                  version: 1,
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                };
+
+                // Add to store and server
+                await get().addCharacter(importedCharacter);
+              } catch (error) {
+                set((state) => {
+                  state.error = `Error importing character: ${error instanceof Error ? error.message : 'Invalid JSON data'}`;
+                });
+              }
+            },
+
+            duplicateCharacter: async (id) => {
+              const character = get().characters[id];
+              if (!character) {
+                set((state) => {
+                  state.error = `Character with ID ${id} not found`;
+                });
+                return;
+              }
+
+              // Create a duplicate with a new ID and updated name
+              const duplicate: Character = {
+                ...character,
+                id: uuidv4(),
+                name: `${character.name} (Copy)`,
+                version: 1,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              };
+
+              // Add to store and server
+              await get().addCharacter(duplicate);
+            },
+
+            // Sync and error handling
+            setError: (error) => {
               set((state) => {
-                state.activeCharacterId = null;
-                state.derived.activeCharacter = null;
-                state.error = null;
+                state.error = error;
               });
             },
-            
-            resetError: () => {
+
+            syncWithServer: async () => {
               set((state) => {
+                state.isLoading = true;
                 state.error = null;
               });
+
+              try {
+                await get().fetchCharacters();
+
+                set((state) => {
+                  state.isLoading = false;
+                  state.lastSync = Date.now();
+                });
+              } catch (error) {
+                set((state) => {
+                  state.isLoading = false;
+                  state.error = error instanceof Error ? error.message : 'Failed to sync with server';
+                });
+                console.error('Error syncing with server:', error);
+              }
             },
-          }
-        }),
-        {
-          name: "sw5e-character-storage",
-          storage: createJSONStorage(() => idbStorage),
-          partialize: (state) => ({
-            characters: state.characters,
-            activeCharacterId: state.activeCharacterId,
-          }),
-        }
+          })
+        )
       )
     )
   )
 );
 
-// Add selectors for easier state access
-export const useCharacter = createSelectors(useCharacterStoreBase);
+// Create hooks to work with this store
+export const useCharacterStore = createStoreWithSelectors(useCharacter);
 
-// For importing in other files with direct access to actions
-export const CharacterActions = {
-  ...useCharacterStoreBase.getState().actions,
-};
+// Create React Query hooks that use the store for optimistic updates
+export function useCharacterQuery(id?: string) {
+  return useQuery({
+    queryKey: ['character', id],
+    queryFn: async () => {
+      if (!id) return null;
+      return await getCharacter(id);
+    },
+    enabled: !!id,
+  });
+}
 
-// Export store for usage in middleware or plugins
-export const characterStore = useCharacterStoreBase;
+export function useCharacterListQuery() {
+  return useQuery({
+    queryKey: ['characters'],
+    queryFn: getCharacters,
+  });
+}
+
+export function useCreateCharacterMutation() {
+  const queryClient = useQueryClient();
+  const { optimisticAddCharacter } = useCharacter();
+
+  return useMutation({
+    mutationFn: createCharacter,
+    onMutate: async (newCharacter) => {
+      // Cancel any outgoing refetches
+      await queryClient.cancelQueries({ queryKey: ['characters'] });
+
+      // Optimistically update UI
+      optimisticAddCharacter(newCharacter as Character);
+
+      return { newCharacter };
+    },
+    onSuccess: (data) => {
+      // Update queries
+      queryClient.invalidateQueries({ queryKey: ['characters'] });
+      queryClient.setQueryData(['character', data.id], data);
+    },
+  });
+}
+
+export function useUpdateCharacterMutation() {
+  const queryClient = useQueryClient();
+  const { optimisticUpdateCharacter } = useCharacter();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string, data: Partial<Character> }) => 
+      updateCharacter(id, data),
+    onMutate: async ({ id, data }) => {
+      // Cancel any outgoing refetches
+      await queryClient.cancelQueries({ queryKey: ['character', id] });
+
+      // Save previous character
+      const previousCharacter = queryClient.getQueryData<Character>(['character', id]);
+
+      // Optimistically update
+      optimisticUpdateCharacter(id, data);
+
+      return { previousCharacter };
+    },
+    onSuccess: (updatedCharacter) => {
+      // Update queries
+      queryClient.invalidateQueries({ queryKey: ['characters'] });
+      queryClient.setQueryData(['character', updatedCharacter.id], updatedCharacter);
+    },
+    onError: (_, { id }, context) => {
+      // Rollback on error
+      if (context?.previousCharacter) {
+        queryClient.setQueryData(['character', id], context.previousCharacter);
+      }
+    },
+  });
+}
+
+export function useDeleteCharacterMutation() {
+  const queryClient = useQueryClient();
+  const { optimisticRemoveCharacter } = useCharacter();
+
+  return useMutation({
+    mutationFn: deleteCharacter,
+    onMutate: async (id) => {
+      // Cancel any outgoing refetches
+      await queryClient.cancelQueries({ queryKey: ['characters'] });
+      await queryClient.cancelQueries({ queryKey: ['character', id] });
+
+      // Save previous state
+      const previousCharacters = queryClient.getQueryData<Character[]>(['characters']);
+
+      // Optimistically update
+      optimisticRemoveCharacter(id);
+
+      return { previousCharacters };
+    },
+    onSuccess: (_, id) => {
+      // Update queries
+      queryClient.invalidateQueries({ queryKey: ['characters'] });
+      queryClient.removeQueries({ queryKey: ['character', id] });
+    },
+  });
+}
+
+export default useCharacter;
