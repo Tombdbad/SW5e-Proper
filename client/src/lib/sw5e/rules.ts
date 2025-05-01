@@ -520,11 +520,33 @@ export const meetsPowerPrerequisites = (
 };
 
 
-// Calculate maximum power level available based on character level
-export const calculateMaxPowerLevel = (level: number): number => {
-  if (level < 3) return 1;
-  if (level < 5) return 2;
-  if (level < 7) return 3;
-  if (level < 9) return 4;
-  return 5;
+// Calculate maximum power points available based on character level and casting ability
+export const calculateMaxPowerPoints = (
+  level: number,
+  abilityModifier: number,
+  isFull: boolean = true,
+  isHalf: boolean = false,
+  isThird: boolean = false
+): number => {
+  // Base power points are level + ability modifier
+  let basePoints = level + abilityModifier;
+
+  // Full casters get full points
+  if (isFull) {
+    return Math.max(1, basePoints);
+  }
+
+  // Half casters get half points (min 1)
+  if (isHalf) {
+    return Math.max(1, Math.floor(basePoints / 2));
+  }
+
+  // Third casters get one-third points (min 1)
+  if (isThird) {
+    return Math.max(1, Math.floor(basePoints / 3));
+  }
+
+  // Default to full caster calculation
+  return Math.max(1, basePoints);
 };
+
