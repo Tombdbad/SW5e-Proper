@@ -226,7 +226,7 @@ async function handleSW5eDataRequest(requestPath: string): Promise<any> {
     const [category, id] = requestPath.split('.');
 
     // Import the appropriate module based on category
-    const module = await import(`@/lib/sw5e/${category}`);
+    const module = await import(/* @vite-ignore */ `@/lib/sw5e/${category}`);
 
     if (id) {
       // Return specific item
