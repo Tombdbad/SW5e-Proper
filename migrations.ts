@@ -27,6 +27,11 @@ async function runMigrations() {
     const sql3 = fs.readFileSync('./migrations/0004_fix_missing_columns.sql', 'utf8');
     await db.execute(sql`${sql3}`);
 
+    // Read and execute 0005_add_proficiency_and_player_chars.sql
+    console.log("Running migration: 0005_add_proficiency_and_player_chars.sql");
+    const sql4 = fs.readFileSync('./migrations/0005_add_proficiency_and_player_chars.sql', 'utf8');
+    await db.execute(sql`${sql4}`);
+
     console.log("Migrations completed successfully!");
   } catch (error) {
     console.error("Error running migrations:", error);

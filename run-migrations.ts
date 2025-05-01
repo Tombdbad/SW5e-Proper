@@ -36,6 +36,7 @@ async function runMigrations() {
 
   try {
     await runMigration('./migrations/0004_fix_missing_columns.sql');
+    await runMigration('./migrations/0005_add_proficiency_and_player_chars.sql');
     console.log("✨ All migrations completed successfully!");
   } catch (error) {
     console.error("❌ Migration process failed:", error);

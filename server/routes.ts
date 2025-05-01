@@ -93,31 +93,71 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("Characters table not found in schema");
         return res.status(500).json({ message: "Database schema error: Characters table not defined" });
       }
-
+      
       // First try with all columns
       try {
         const allCharacters = await db.select().from(characters);
         res.json(allCharacters);
       } catch (error) {
-        // If error contains reference to 'subclass' column, it might not exist yet
-        if (error.message && error.message.includes("subclass")) {
-          console.warn("'subclass' column may not exist, fetching without it");
+        // Improved error handling for missing columns
+        if (error.message && error.message.includes("column")) {
+          console.warn(`Column may not exist, error: ${error.message}`);
+          const selectFields = { ...characters };
           
-          // Select all columns except subclass
-          const { subclass, ...charactersWithoutSubclass } = characters;
-          const result = await db.select({
-            ...charactersWithoutSubclass
-          }).from(characters);
+          // Handle missing subclass column
+          if (error.message.includes("subclass")) {
+            delete selectFields.subclass;
+            
+            try {
+              // Try again without subclass
+              const result = await db.select(selectFields).from(characters);
+              const charactersWithEmptySubclass = result.map(char => ({
+                ...char,
+                subclass: null,
+              }));
+              res.json(charactersWithEmptySubclass);
+              return;
+            } catch (innerError) {
+              // If there's still an error, it might be another column
+              console.warn(`Additional error after removing subclass: ${innerError.message}`);
+            }
+          }
           
-          // Add empty subclass field to each record
-          const charactersWithEmptySubclass = result.map(char => ({
-            ...char,
-            subclass: null,
-          }));
+          // Handle missing proficiency_bonus column
+          if (error.message.includes("proficiency_bonus")) {
+            delete selectFields.proficiency_bonus;
+            
+            try {
+              // Try again without proficiency_bonus
+              const result = await db.select(selectFields).from(characters);
+              const charactersProcessed = result.map(char => ({
+                ...char,
+                proficiency_bonus: char.level ? Math.ceil(1 + (char.level / 4)) : 2,
+              }));
+              res.json(charactersProcessed);
+              return;
+            } catch (innerError) {
+              // If there's still an error, we need to handle more columns
+              console.warn(`Additional error after removing proficiency_bonus: ${innerError.message}`);
+              
+              // Try without both columns
+              if (innerError.message.includes("subclass")) {
+                delete selectFields.subclass;
+                const result = await db.select(selectFields).from(characters);
+                const charactersFullyProcessed = result.map(char => ({
+                  ...char,
+                  proficiency_bonus: char.level ? Math.ceil(1 + (char.level / 4)) : 2,
+                  subclass: null,
+                }));
+                res.json(charactersFullyProcessed);
+                return;
+              }
+            }
+          }
           
-          res.json(charactersWithEmptySubclass);
+          // If we get here, we couldn't handle the error
+          throw error;
         } else {
-          // If it's another error, rethrow
           throw error;
         }
       }
@@ -276,36 +316,85 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const allCampaigns = await db.select().from(campaigns);
         res.json(allCampaigns);
       } catch (error) {
-        // If error contains reference to 'setting' column, it might not exist yet
-        if (error.message && error.message.includes("setting")) {
-          console.warn("'setting' column may not exist, fetching without it");
+        // Improved error handling for missing columns
+        if (error.message && error.message.includes("column")) {
+          console.warn(`Column may not exist, error: ${error.message}`);
+          const selectFields = { ...campaigns };
           
-          // Select all columns except setting
-          const { setting, ...campaignsWithoutSetting } = campaigns;
-          const result = await db.select({
-            ...campaignsWithoutSetting
-          }).from(campaigns);
+          // Handle missing setting column
+          if (error.message.includes("setting")) {
+            delete selectFields.setting;
+            
+            try {
+              // Try again without setting
+              const result = await db.select(selectFields).from(campaigns);
+              const campaignsWithDefaultSetting = result.map(campaign => ({
+                ...campaign,
+                setting: {
+                  era: "Galactic Civil War",
+                  backstory: "A time of conflict between the Rebel Alliance and the Galactic Empire",
+                  themes: ["Rebellion", "Hope", "Struggle"],
+                  tone: "Space Opera",
+                },
+              }));
+              res.json(campaignsWithDefaultSetting);
+              return;
+            } catch (innerError) {
+              // If there's still an error, it might be another column
+              console.warn(`Additional error after removing setting: ${innerError.message}`);
+            }
+          }
           
-          // Add default setting field to each record
-          const campaignsWithDefaultSetting = result.map(campaign => ({
-            ...campaign,
-            setting: {
-              era: "Galactic Civil War",
-              backstory: "A time of conflict between the Rebel Alliance and the Galactic Empire",
-              themes: ["Rebellion", "Hope", "Struggle"],
-              tone: "Space Opera",
-            },
-          }));
+          // Handle missing player_characters column
+          if (error.message.includes("player_characters")) {
+            delete selectFields.player_characters;
+            
+            try {
+              // Try again without player_characters
+              const result = await db.select(selectFields).from(campaigns);
+              const campaignsProcessed = result.map(campaign => ({
+                ...campaign,
+                player_characters: []
+              }));
+              res.json(campaignsProcessed);
+              return;
+            } catch (innerError) {
+              // If there's still an error, we need to handle more columns
+              console.warn(`Additional error after removing player_characters: ${innerError.message}`);
+              
+              // Try without both columns
+              if (innerError.message.includes("setting")) {
+                delete selectFields.setting;
+                const result = await db.select(selectFields).from(campaigns);
+                const campaignsFullyProcessed = result.map(campaign => ({
+                  ...campaign,
+                  player_characters: [],
+                  setting: {
+                    era: "Galactic Civil War",
+                    backstory: "A time of conflict between the Rebel Alliance and the Galactic Empire",
+                    themes: ["Rebellion", "Hope", "Struggle"],
+                    tone: "Space Opera",
+                  },
+                }));
+                res.json(campaignsFullyProcessed);
+                return;
+              }
+            }
+          }
           
-          res.json(campaignsWithDefaultSetting);
+          // If we get here, we couldn't handle the error
+          throw error;
         } else {
-          // If it's another error, rethrow
           throw error;
         }
       }
     } catch (error) {
       console.error("Error fetching campaigns:", error);
-      res.status(500).json({ error: "Failed to fetch campaigns" });
+      res.status(500).json({ 
+        message: "Failed to fetch campaigns", 
+        details: error.message,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined 
+      });
     }
   });
 

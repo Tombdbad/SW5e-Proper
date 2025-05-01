@@ -14,7 +14,7 @@ localPort = 5000
 externalPort = 80
 
 [workflows]
-runButton = "Start Game (With DB Fix)"
+runButton = "Start Game (Latest)"
 
 [[workflows.workflow]]
 name = "Project"
@@ -80,19 +80,10 @@ task = "shell.exec"
 args = "npm run dev"
 
 [[workflows.workflow]]
-name = "Start Game (Updated)"
+name = "Run Schema Migrations"
 author = 41786543
 mode = "sequential"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "npm run dev"
-
-[[workflows.workflow]]
-name = "Start Game (With DB Fix)"
-author = 41786543
-mode = "sequential"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "npm run dev"
+args = "tsx migrations.ts"
