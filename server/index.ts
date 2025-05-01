@@ -37,6 +37,16 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Check database connection before registering routes
+  try {
+    // Simple query to test DB connection
+    const testConnection = await db.execute(sql`SELECT 1 as test`);
+    console.log('Database connected successfully');
+  } catch (error) {
+    console.error('Database connection error:', error);
+    // Continue anyway, as we'll handle errors in individual routes
+  }
+
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

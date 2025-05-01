@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useCharacter } from '../../lib/stores/useCharacter';
 import { Tab } from '@headlessui/react';
@@ -38,11 +37,7 @@ const MOCK_TECH_POWERS = [
 export default function PowersSelection() {
   const { character } = useCharacter();
   const { actions } = useCharacter();
-  
-  // Store selected powers locally to avoid re-renders
-  const [selectedForcePowers, setSelectedForcePowers] = useState<string[]>([]);
-  const [selectedTechPowers, setSelectedTechPowers] = useState<string[]>([]);
-  
+
   // Set up form with react-hook-form
   const { control, handleSubmit, setValue, watch } = useForm<PowerSelectionData>({
     resolver: zodResolver(PowerSelectionSchema),
@@ -51,37 +46,33 @@ export default function PowersSelection() {
       techPowers: [],
     }
   });
-  
+
   // Initialize form with character data only once on mount
   useEffect(() => {
     if (character) {
       // Extract power IDs from character data
       const forcePowerIds = character.forcePowers?.map(power => power.id) || [];
       const techPowerIds = character.techPowers?.map(power => power.id) || [];
-      
+
       setValue('forcePowers', forcePowerIds);
       setValue('techPowers', techPowerIds);
-      
-      // Initialize local state
-      setSelectedForcePowers(forcePowerIds);
-      setSelectedTechPowers(techPowerIds);
     }
   }, [character?.id]); // Only update when character ID changes
-  
+
   // Determine available powers based on character
   const availablePowers = useMemo(() => {
     // Default to mock data
     let forcePowers = MOCK_FORCE_POWERS;
     let techPowers = MOCK_TECH_POWERS;
-    
+
     // Filter by character level, class, etc.
     if (character) {
       const characterLevel = character.level || 1;
-      
+
       // Filter powers by level
       forcePowers = MOCK_FORCE_POWERS.filter(power => power.level <= Math.ceil(characterLevel / 2));
       techPowers = MOCK_TECH_POWERS.filter(power => power.level <= Math.ceil(characterLevel / 2));
-      
+
       // Further filter based on class if needed
       if (character.class === 'engineer' || character.class === 'scholar') {
         // These classes focus on tech powers
@@ -93,71 +84,49 @@ export default function PowersSelection() {
         techPowers = techPowers.filter(power => power.level <= 1); // Limit tech powers
       }
     }
-    
+
     return { forcePowers, techPowers };
   }, [character?.level, character?.class]);
-  
+
   // Handle saving powers to character
   const savePowers = useCallback((data: PowerSelectionData) => {
     if (!character?.id) return;
-    
+
     // Find complete power objects from selected IDs
     const selectedForce = (data.forcePowers || []).map(id => 
       availablePowers.forcePowers.find(power => power.id === id)
     ).filter(Boolean);
-    
+
     const selectedTech = (data.techPowers || []).map(id => 
       availablePowers.techPowers.find(power => power.id === id)
     ).filter(Boolean);
-    
+
     // Update character
     const updates = {
       forcePowers: selectedForce,
       techPowers: selectedTech,
     };
-    
-    actions.updateCharacter(character.id, updates);
-  }, [character?.id, availablePowers, actions]);
-  
-  // Toggle power selection
-  const togglePower = useCallback((type: 'force' | 'tech', powerId: string) => {
-    if (type === 'force') {
-      setSelectedForcePowers(prev => {
-        if (prev.includes(powerId)) {
-          const newSelection = prev.filter(id => id !== powerId);
-          setValue('forcePowers', newSelection);
-          return newSelection;
-        } else {
-          const newSelection = [...prev, powerId];
-          setValue('forcePowers', newSelection);
-          return newSelection;
-        }
-      });
-    } else {
-      setSelectedTechPowers(prev => {
-        if (prev.includes(powerId)) {
-          const newSelection = prev.filter(id => id !== powerId);
-          setValue('techPowers', newSelection);
-          return newSelection;
-        } else {
-          const newSelection = [...prev, powerId];
-          setValue('techPowers', newSelection);
-          return newSelection;
-        }
-      });
-    }
-  }, [setValue]);
-  
-  // Watch for form value changes
-  const watchedForcePowers = watch('forcePowers');
-  const watchedTechPowers = watch('techPowers');
-  
-  return (
-    <div className="p-4">
-      <TranslucentPane className="p-6">
-        <h2 className="text-2xl font-bold text-yellow-400 mb-4">Select Powers</h2>
-        
-        <form onSubmit={handleSubmit(savePowers)}>
+
+            actions.updateCharacter(character.id, updates);
+          }, [character?.id, availablePowers, actions]);
+
+          // Toggle power selection
+          const togglePower = useCallback((type: 'force' | 'tech', powerId: string) => {
+            setValue(type === 'force' ? 'forcePowers' : 'techPowers', prev => {
+                return prev.includes(powerId) ? prev.filter(id => id !== powerId) : [...prev, powerId];
+            });
+          }, [setValue]);
+
+          // Watch for form value changes (this is okay to keep)
+          const watchedForcePowers = watch('forcePowers');
+          const watchedTechPowers = watch('techPowers');
+
+          return (
+            <div className="p-4">
+              <TranslucentPane className="p-6">
+                <h2 className="text-2xl font-bold text-yellow-400 mb-4">Select Powers</h2>
+
+                <form onSubmit={handleSubmit(savePowers)}>
           <Tab.Group>
             <Tab.List className="flex space-x-1 rounded-xl bg-blue-900/20 p-1 mb-4">
               <Tab className={({ selected }) =>
@@ -177,7 +146,7 @@ export default function PowersSelection() {
                 Tech Powers
               </Tab>
             </Tab.List>
-            
+
             <Tab.Panels>
               {/* Force Powers Panel */}
               <Tab.Panel>
@@ -208,7 +177,7 @@ export default function PowersSelection() {
                   />
                 </div>
               </Tab.Panel>
-              
+
               {/* Tech Powers Panel */}
               <Tab.Panel>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -222,7 +191,7 @@ export default function PowersSelection() {
                             key={power.id}
                             whileHover={{ scale: 1.02 }}
                             className={`p-3 rounded-lg cursor-pointer ${
-                              selectedTechPowers.includes(power.id)
+                              watchedTechPowers.includes(power.id)
                                 ? 'bg-blue-800 border border-yellow-400'
                                 : 'bg-gray-800 hover:bg-gray-700'
                             }`}
@@ -240,7 +209,7 @@ export default function PowersSelection() {
               </Tab.Panel>
             </Tab.Panels>
           </Tab.Group>
-          
+
           <div className="mt-6 flex justify-end">
             <Button 
               type="submit" 

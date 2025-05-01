@@ -88,11 +88,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Character endpoints
   app.get("/api/characters", async (req, res) => {
     try {
+      // Validate that the characters table exists in the schema
+      if (!characters) {
+        console.error("Characters table not found in schema");
+        return res.status(500).json({ message: "Database schema error: Characters table not defined" });
+      }
+
       const allCharacters = await db.select().from(characters);
       res.json(allCharacters);
     } catch (error) {
       console.error("Error fetching characters:", error);
-      res.status(500).json({ message: "Failed to fetch characters" });
+      // More detailed error information
+      res.status(500).json({ 
+        message: "Failed to fetch characters", 
+        details: error.message,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
     }
   });
 
