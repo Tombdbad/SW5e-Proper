@@ -61,7 +61,6 @@ function App() {
         </Routes>
       </StarfieldBackground>
     </PerformanceMonitor> 
-    {/* Added PerformanceMonitor */}
   );
 }
 
