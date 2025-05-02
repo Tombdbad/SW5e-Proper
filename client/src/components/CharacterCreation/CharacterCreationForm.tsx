@@ -34,17 +34,21 @@ import { FORCE_POWERS } from "@/lib/sw5e/forcePowers";
 import { TECH_POWERS } from "@/lib/sw5e/techPowers";
 import { FEATS } from "@/lib/sw5e/feats";
 import { abilities } from "@/lib/sw5e/abilities";
+import { archetypes } from "@/lib/sw5e/archetypes";
+import { EQUIPMENT } from "@/lib/sw5e/equipment";
+import { fightingStyles } from "@/lib/sw5e/fightingStyles";
+import { items } from "@/lib/sw5e/items";
 import { calculateModifier } from "@/lib/sw5e/rules";
 import { ALIGNMENTS, SKILLS } from "@/lib/sw5e/constants";
-import SpeciesSelection from "./SpeciesSelection";
+import SpeciesSelection from "./@/lib/sw5e/species";
 import ClassSelection from "./ClassSelection";
 import AbilityScores from "./AbilityScores";
 import BackgroundSelection from "./BackgroundSelection";
-import EquipmentSelection from "./EquipmentSelection";
-import FeatsSelection from "./FeatsSelection";
-import ForcePowersSelection from "./ForcePowersSelection";
-import TechPowersSelection from "./TechPowersSelection";
-import ArchetypeSelection from "./ArchetypeSelection";
+import EquipmentSelection from "@/lib/sw5e/equipment";
+import FeatsSelection from "@/lib/sw5e/feats";
+import ForcePowersSelection from "@/lib/sw5e/forcePowers;
+import TechPowersSelection from ".@/lib/sw5e/techPowers";
+import ArchetypeSelection from ".@/lib/sw5e/archetypes";
 import { CharacterPreview } from "../CharacterManagement/CharacterSheet";
 
 // Define character schema
