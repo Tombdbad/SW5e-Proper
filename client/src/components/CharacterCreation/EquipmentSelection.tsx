@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { equipment, Equipment } from '@/lib/sw5e/equipment';
 import TranslucentPane from '../ui/TranslucentPane';
@@ -5,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Badge } from '@/components/ui/badge';
+import { Tooltip } from '@/components/ui/tooltip';
 
 interface EquipmentSelectionProps {
   form: any;
@@ -24,7 +27,7 @@ export default function EquipmentSelection({ form, getSelectedClass }: Equipment
   useEffect(() => {
     const filtered = equipment.filter(item => {
       const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesCategory = selectedCategory === 'all' || item.category.toLowerCase() === selectedCategory;
+      const matchesCategory = selectedCategory === 'all' || item.category.toLowerCase() === selectedCategory.toLowerCase();
       return matchesSearch && matchesCategory;
     });
     setFilteredEquipment(filtered);
@@ -59,7 +62,7 @@ export default function EquipmentSelection({ form, getSelectedClass }: Equipment
         </div>
 
         <Tabs defaultValue="all" onValueChange={setSelectedCategory}>
-          <TabsList>
+          <TabsList className="mb-4">
             <TabsTrigger value="all">All</TabsTrigger>
             <TabsTrigger value="weapon">Weapons</TabsTrigger>
             <TabsTrigger value="armor">Armor</TabsTrigger>
@@ -68,24 +71,32 @@ export default function EquipmentSelection({ form, getSelectedClass }: Equipment
           </TabsList>
 
           <ScrollArea className="h-[500px] pr-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {filteredEquipment.map((item) => (
-                <div key={item.id} className="bg-gray-800 rounded-lg p-4 flex justify-between items-start">
-                  <div>
+                <div key={item.id} className="bg-gray-800/50 rounded-lg p-4 flex flex-col">
+                  <div className="flex justify-between items-start mb-2">
                     <h3 className="text-white font-semibold">{item.name}</h3>
-                    <p className="text-gray-400 text-sm">{item.description}</p>
-                    <div className="mt-2 flex gap-2">
-                      <span className="text-yellow-300">{item.price} credits</span>
-                      {item.weight && <span className="text-gray-400">{item.weight} kg</span>}
-                    </div>
-                    {item.properties && (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {item.properties.map((prop) => (
-                          <span key={prop} className="text-xs bg-gray-700 rounded px-2 py-1">{prop}</span>
-                        ))}
-                      </div>
-                    )}
+                    <Badge variant={item.category === 'Weapon' ? 'destructive' : 'secondary'}>
+                      {item.category}
+                    </Badge>
                   </div>
+                  <p className="text-gray-400 text-sm mb-2">{item.description}</p>
+                  <div className="flex gap-2 text-sm mb-2">
+                    <span className="text-yellow-300">{item.price} credits</span>
+                    {item.weight && <span className="text-gray-400">{item.weight} kg</span>}
+                    {item.damage && <span className="text-red-400">{item.damage}</span>}
+                  </div>
+                  {item.properties && (
+                    <div className="flex flex-wrap gap-1 mb-3">
+                      {item.properties.map((prop) => (
+                        <Tooltip key={prop} content={prop}>
+                          <Badge variant="outline" className="text-xs">
+                            {prop}
+                          </Badge>
+                        </Tooltip>
+                      ))}
+                    </div>
+                  )}
                   <Button
                     variant={characterEquipment.some((e: Equipment) => e.id === item.id) ? "destructive" : "default"}
                     onClick={() => {
@@ -96,6 +107,7 @@ export default function EquipmentSelection({ form, getSelectedClass }: Equipment
                       }
                     }}
                     disabled={!characterEquipment.some((e: Equipment) => e.id === item.id) && credits < item.price}
+                    className="mt-auto"
                   >
                     {characterEquipment.some((e: Equipment) => e.id === item.id) ? 'Remove' : 'Add'}
                   </Button>
