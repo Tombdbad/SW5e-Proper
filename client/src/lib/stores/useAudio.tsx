@@ -1,89 +1,78 @@
-import { create } from "zustand";
+import { create } from 'zustand';
+import { useCoreStore } from '../core/store';
 
 interface AudioState {
-  backgroundMusic: HTMLAudioElement | null;
-  hitSound: HTMLAudioElement | null;
-  successSound: HTMLAudioElement | null;
   isMuted: boolean;
-  
-  // Setter functions
-  setBackgroundMusic: (music: HTMLAudioElement) => void;
-  setHitSound: (sound: HTMLAudioElement) => void;
-  setSuccessSound: (sound: HTMLAudioElement) => void;
-  
-  // Control functions
+  soundVolume: number;
+  musicVolume: number;
+  currentMusic: string | null;
+  soundEffects: Map<string, HTMLAudioElement>;
   toggleMute: () => void;
-  playHit: () => void;
-  playSuccess: () => void;
-  playBackgroundMusic: () => void;
-  stopBackgroundMusic: () => void;
+  playSound: (soundId: string) => void;
+  playMusic: (musicPath: string) => void;
+  stopMusic: () => void;
+  setSoundVolume: (volume: number) => void;
+  setMusicVolume: (volume: number) => void;
 }
 
 export const useAudio = create<AudioState>((set, get) => ({
-  backgroundMusic: null,
-  hitSound: null,
-  successSound: null,
-  isMuted: true, // Start muted by default
-  
-  setBackgroundMusic: (music) => set({ backgroundMusic: music }),
-  setHitSound: (sound) => set({ hitSound: sound }),
-  setSuccessSound: (sound) => set({ successSound: sound }),
-  
-  toggleMute: () => {
-    const { isMuted, backgroundMusic } = get();
-    const newMutedState = !isMuted;
+  isMuted: false,
+  soundVolume: 0.8,
+  musicVolume: 0.5,
+  currentMusic: null,
+  soundEffects: new Map(),
+
+  toggleMute: () => set(state => ({ isMuted: !state.isMuted })),
+
+  playSound: (soundId: string) => {
+    const { soundEffects, isMuted, soundVolume } = get();
+    if (isMuted) return;
+
+    let sound = soundEffects.get(soundId);
+    if (!sound) {
+      sound = new Audio(`/sounds/${soundId}.mp3`);
+      sound.onerror = () => {
+        console.error(`Failed to load sound effect: ${soundId}`);
+      };
+      soundEffects.set(soundId, sound);
+    }
+
+    sound.volume = soundVolume;
+    sound.currentTime = 0;
+    sound.play().catch(error => {
+      console.error(`Error playing sound effect ${soundId}:`, error);
+    });
+  },
+
+  playMusic: (musicPath: string) => {
+    const { currentMusic, isMuted, musicVolume } = get();
+    if (currentMusic === musicPath) return;
+
+    const audio = new Audio(musicPath);
+    audio.loop = true;
+    audio.volume = isMuted ? 0 : musicVolume;
+    audio.onerror = () => {
+      console.error(`Failed to load music: ${musicPath}`);
+    };
     
-    set({ isMuted: newMutedState });
-    
-    // Update background music state
-    if (backgroundMusic) {
-      if (newMutedState) {
-        backgroundMusic.pause();
-      } else if (backgroundMusic.paused) {
-        backgroundMusic.play().catch(error => {
-          console.log("Background music play prevented:", error);
-        });
-      }
-    }
-    
-    console.log(`Sound ${newMutedState ? 'muted' : 'unmuted'}`);
+    const {stopMusic} = get()
+    stopMusic();
+    audio.play().catch(error => {
+      console.error(`Error playing music ${musicPath}:`, error);
+    });
+
+    set({ currentMusic: musicPath });
   },
-  
-  playHit: () => {
-    const { hitSound, isMuted } = get();
-    if (hitSound && !isMuted) {
-      const soundClone = hitSound.cloneNode() as HTMLAudioElement;
-      soundClone.volume = 0.3;
-      soundClone.play().catch(error => {
-        console.log("Hit sound play prevented:", error);
-      });
+
+  stopMusic: () => {
+    const { currentMusic } = get();
+    if (currentMusic) {
+      const audio = new Audio(currentMusic);
+      audio.pause();
+      set({ currentMusic: null });
     }
   },
-  
-  playSuccess: () => {
-    const { successSound, isMuted } = get();
-    if (successSound && !isMuted) {
-      successSound.currentTime = 0;
-      successSound.play().catch(error => {
-        console.log("Success sound play prevented:", error);
-      });
-    }
-  },
-  
-  playBackgroundMusic: () => {
-    const { backgroundMusic, isMuted } = get();
-    if (backgroundMusic && !isMuted) {
-      backgroundMusic.play().catch(error => {
-        console.log("Background music play prevented:", error);
-      });
-    }
-  },
-  
-  stopBackgroundMusic: () => {
-    const { backgroundMusic } = get();
-    if (backgroundMusic) {
-      backgroundMusic.pause();
-      backgroundMusic.currentTime = 0;
-    }
-  }
+
+  setSoundVolume: (volume: number) => set({ soundVolume: volume }),
+  setMusicVolume: (volume: number) => set({ musicVolume: volume })
 }));

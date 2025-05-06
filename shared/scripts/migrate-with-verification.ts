@@ -99,3 +99,47 @@ async function migrateWithVerification() {
 
 // Run the full migration process
 migrateWithVerification();
+import { db } from '../../server/db';
+import { characters, species, equipment } from '../../shared/schema';
+import { eq } from 'drizzle-orm';
+
+async function verifyMigration() {
+  console.log('Starting migration verification...');
+
+  // Verify character data
+  const characterResults = await db.select().from(characters);
+  console.log(`Verifying ${characterResults.length} characters...`);
+  
+  for (const char of characterResults) {
+    if (!char.name || !char.species || !char.class) {
+      console.error(`Invalid character data found: ${char.id}`);
+      throw new Error('Character validation failed');
+    }
+  }
+
+  // Verify species data
+  const speciesResults = await db.select().from(species);
+  console.log(`Verifying ${speciesResults.length} species...`);
+
+  for (const sp of speciesResults) {
+    if (!sp.name || !sp.traits || !sp.abilityScoreIncrease) {
+      console.error(`Invalid species data found: ${sp.id}`);
+      throw new Error('Species validation failed');
+    }
+  }
+
+  // Verify equipment data
+  const equipmentResults = await db.select().from(equipment);
+  console.log(`Verifying ${equipmentResults.length} equipment items...`);
+
+  for (const eq of equipmentResults) {
+    if (!eq.name || !eq.type || !eq.cost) {
+      console.error(`Invalid equipment data found: ${eq.id}`);
+      throw new Error('Equipment validation failed');
+    }
+  }
+
+  console.log('Migration verification completed successfully');
+}
+
+export default verifyMigration;
