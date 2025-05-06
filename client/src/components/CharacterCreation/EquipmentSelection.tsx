@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { equipment, Equipment } from '@/lib/sw5e/equipment';
 import TranslucentPane from '../ui/TranslucentPane';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 interface EquipmentSelectionProps {
   form: any;
@@ -12,178 +14,95 @@ interface EquipmentSelectionProps {
 export default function EquipmentSelection({ form, getSelectedClass }: EquipmentSelectionProps) {
   const { register, watch, setValue } = form;
   const selectedClass = getSelectedClass();
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filteredEquipment, setFilteredEquipment] = useState<Equipment[]>(equipment);
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
-  const equipment = watch('equipment') || [];
+  const characterEquipment = watch('equipment') || [];
   const credits = watch('credits') || 1000;
 
-  const [newItem, setNewItem] = useState('');
-  const [itemType, setItemType] = useState('weapon');
-  const [itemQuantity, setItemQuantity] = useState(1);
-
-  // Fetch starting equipment based on class
   useEffect(() => {
-    if (selectedClass && equipment.length === 0) {
-      // This would typically come from a data source
-      const startingEquipment = selectedClass.startingEquipment || [];
-      setValue('equipment', startingEquipment);
+    const filtered = equipment.filter(item => {
+      const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesCategory = selectedCategory === 'all' || item.category.toLowerCase() === selectedCategory;
+      return matchesSearch && matchesCategory;
+    });
+    setFilteredEquipment(filtered);
+  }, [searchTerm, selectedCategory]);
+
+  const addEquipment = (item: Equipment) => {
+    if (credits >= item.price) {
+      setValue('equipment', [...characterEquipment, item]);
+      setValue('credits', credits - item.price);
     }
-  }, [selectedClass, equipment.length, setValue]);
-
-  const addItem = () => {
-    if (!newItem.trim()) return;
-
-    const newEquipment = [...equipment, {
-      id: `item-${Date.now()}`,
-      name: newItem,
-      type: itemType,
-      quantity: itemQuantity
-    }];
-
-    setValue('equipment', newEquipment);
-    setNewItem('');
-    setItemQuantity(1);
   };
 
-  const removeItem = (itemId: string) => {
-    setValue('equipment', equipment.filter((item: any) => item.id !== itemId));
+  const removeEquipment = (item: Equipment) => {
+    setValue('equipment', characterEquipment.filter((e: Equipment) => e.id !== item.id));
+    setValue('credits', credits + item.price);
   };
-
-  const updateCredits = (amount: number) => {
-    setValue('credits', Math.max(0, credits + amount));
-  };
-
-  // Group equipment by type
-  const groupedEquipment = equipment.reduce((acc: any, item: any) => {
-    const type = item.type || 'miscellaneous';
-    if (!acc[type]) acc[type] = [];
-    acc[type].push(item);
-    return acc;
-  }, {});
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-yellow-400 mb-4">Equipment & Credits</h2>
+      <h2 className="text-2xl font-bold text-yellow-400 mb-4">Equipment Selection</h2>
 
       <TranslucentPane className="p-4">
-        <div className="mb-6">
-          <div className="bg-gray-700 p-3 rounded-md flex justify-between items-center mb-4">
-            <span className="text-yellow-300 font-bold">Credits: {credits}</span>
-            <div className="flex space-x-2">
-              <Button size="sm" variant="outline" onClick={() => updateCredits(-100)}>-100</Button>
-              <Button size="sm" variant="outline" onClick={() => updateCredits(-10)}>-10</Button>
-              <Button size="sm" variant="outline" onClick={() => updateCredits(10)}>+10</Button>
-              <Button size="sm" variant="outline" onClick={() => updateCredits(100)}>+100</Button>
-            </div>
-          </div>
-
-          <div className="bg-gray-800 p-3 rounded-md mb-4">
-            <h3 className="text-white font-semibold mb-2">Add New Item</h3>
-            <div className="flex flex-col space-y-2 md:flex-row md:space-y-0 md:space-x-2 mb-2">
-              <Input
-                value={newItem}
-                onChange={(e) => setNewItem(e.target.value)}
-                placeholder="Item name"
-                className="flex-grow"
-              />
-
-              <select
-                value={itemType}
-                onChange={(e) => setItemType(e.target.value)}
-                className="bg-gray-700 text-white rounded-md p-2 md:w-1/4"
-              >
-                <option value="weapon">Weapon</option>
-                <option value="armor">Armor</option>
-                <option value="gear">Gear</option>
-                <option value="consumable">Consumable</option>
-                <option value="tool">Tool</option>
-                <option value="miscellaneous">Miscellaneous</option>
-              </select>
-
-              <Input
-                type="number"
-                value={itemQuantity}
-                onChange={(e) => setItemQuantity(parseInt(e.target.value))}
-                placeholder="Qty"
-                className="md:w-20"
-                min={1}
-              />
-            </div>
-            <Button onClick={addItem} className="w-full">Add Item</Button>
-          </div>
+        <div className="flex justify-between items-center mb-4">
+          <div className="text-xl text-yellow-300">Credits: {credits}</div>
+          <Input
+            type="text"
+            placeholder="Search equipment..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-64"
+          />
         </div>
 
-        <Tabs defaultValue="all">
-          <TabsList className="mb-4">
-            <TabsTrigger value="all">All Items</TabsTrigger>
-            <TabsTrigger value="weapons">Weapons</TabsTrigger>
+        <Tabs defaultValue="all" onValueChange={setSelectedCategory}>
+          <TabsList>
+            <TabsTrigger value="all">All</TabsTrigger>
+            <TabsTrigger value="weapon">Weapons</TabsTrigger>
             <TabsTrigger value="armor">Armor</TabsTrigger>
-            <TabsTrigger value="gear">Gear</TabsTrigger>
+            <TabsTrigger value="adventuring gear">Gear</TabsTrigger>
+            <TabsTrigger value="tool">Tools</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="all">
-            <div className="bg-gray-800 bg-opacity-70 rounded-lg p-4">
-              <h3 className="text-yellow-400 font-semibold text-lg border-b border-gray-700 pb-2 mb-3">
-                All Equipment
-              </h3>
-
-              {equipment.length === 0 ? (
-                <p className="text-gray-400 text-center py-4">No equipment added yet.</p>
-              ) : (
-                <ul className="space-y-2">
-                  {equipment.map((item: any) => (
-                    <li key={`equip-${item.id}`} className="flex justify-between items-center bg-gray-700 bg-opacity-50 p-2 rounded">
-                      <div>
-                        <span className="text-white">{item.name}</span>
-                        {item.quantity > 1 && (
-                          <span className="text-gray-400 ml-2">×{item.quantity}</span>
-                        )}
-                        <span className="text-gray-400 text-xs ml-2">({item.type})</span>
+          <ScrollArea className="h-[500px] pr-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+              {filteredEquipment.map((item) => (
+                <div key={item.id} className="bg-gray-800 rounded-lg p-4 flex justify-between items-start">
+                  <div>
+                    <h3 className="text-white font-semibold">{item.name}</h3>
+                    <p className="text-gray-400 text-sm">{item.description}</p>
+                    <div className="mt-2 flex gap-2">
+                      <span className="text-yellow-300">{item.price} credits</span>
+                      {item.weight && <span className="text-gray-400">{item.weight} kg</span>}
+                    </div>
+                    {item.properties && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {item.properties.map((prop) => (
+                          <span key={prop} className="text-xs bg-gray-700 rounded px-2 py-1">{prop}</span>
+                        ))}
                       </div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => removeItem(item.id)}
-                        className="text-red-400 hover:text-red-300 hover:bg-red-950"
-                      >
-                        Remove
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
+                    )}
+                  </div>
+                  <Button
+                    variant={characterEquipment.some((e: Equipment) => e.id === item.id) ? "destructive" : "default"}
+                    onClick={() => {
+                      if (characterEquipment.some((e: Equipment) => e.id === item.id)) {
+                        removeEquipment(item);
+                      } else {
+                        addEquipment(item);
+                      }
+                    }}
+                    disabled={!characterEquipment.some((e: Equipment) => e.id === item.id) && credits < item.price}
+                  >
+                    {characterEquipment.some((e: Equipment) => e.id === item.id) ? 'Remove' : 'Add'}
+                  </Button>
+                </div>
+              ))}
             </div>
-          </TabsContent>
-
-          {Object.entries(groupedEquipment).map(([type, items]) => (
-            <TabsContent key={type} value={type}>
-              <div className="bg-gray-800 bg-opacity-70 rounded-lg p-4">
-                <h3 className="text-yellow-400 font-semibold text-lg border-b border-gray-700 pb-2 mb-3">
-                  {type.charAt(0).toUpperCase() + type.slice(1)}
-                </h3>
-
-                <ul className="space-y-2">
-                  {(items as any[]).map((item) => (
-                    <li key={`item-${item.id}`} className="flex justify-between items-center bg-gray-700 bg-opacity-50 p-2 rounded">
-                      <div>
-                        <span className="text-white">{item.name}</span>
-                        {item.quantity > 1 && (
-                          <span className="text-gray-400 ml-2">×{item.quantity}</span>
-                        )}
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => removeItem(item.id)}
-                        className="text-red-400 hover:text-red-300 hover:bg-red-950"
-                      >
-                        Remove
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </TabsContent>
-          ))}
+          </ScrollArea>
         </Tabs>
       </TranslucentPane>
     </div>

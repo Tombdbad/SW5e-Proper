@@ -388,8 +388,41 @@ const GalacticMap3D: React.FC<GalacticMap3DProps> = ({ onSelectSystem }) => {
     }
   };
 
+  const [selectedRegion, setSelectedRegion] = useState<string | null>(null);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [showTradeRoutes, setShowTradeRoutes] = useState(false);
+  const [showFactionTerritories, setShowFactionTerritories] = useState(false);
+
   return (
     <div className="w-full h-full">
+      <div className="absolute top-4 right-4 z-10 space-y-2">
+        <TranslucentPane className="p-4">
+          <div className="space-y-2">
+            <h3 className="text-lg font-semibold text-yellow-400">Map Controls</h3>
+            <div className="flex flex-col gap-2">
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={showTradeRoutes}
+                  onChange={(e) => setShowTradeRoutes(e.target.checked)}
+                  className="mr-2"
+                />
+                Show Trade Routes
+              </label>
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={showFactionTerritories}
+                  onChange={(e) => setShowFactionTerritories(e.target.checked)}
+                  className="mr-2"
+                />
+                Show Faction Territories
+              </label>
+            </div>
+          </div>
+        </TranslucentPane>
+      </div>
+
       {/* 3D Galaxy Map */}
       <div className="relative w-full h-[600px]">
         <Canvas camera={{ position: [0, 30, 50], fov: 60 }}>

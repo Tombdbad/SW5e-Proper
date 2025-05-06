@@ -12,8 +12,20 @@ export default function CombatTracker() {
     updateCombatant,
     currentTurn,
     nextTurn,
-    endCombat
+    endCombat,
+    combatType,
+    setCombatType,
+    starshipCombatants,
   } = useCombat();
+
+  const [showInitiativeDialog, setShowInitiativeDialog] = useState(false);
+  const [selectedCombatant, setSelectedCombatant] = useState<Combatant | null>(null);
+
+  const handleCombatTypeChange = (type: CombatType) => {
+    setCombatType(type);
+    // Reset combat state when switching types
+    endCombat();
+  };
 
   const [activeTab, setActiveTab] = useState<'initiative' | 'effects'>('initiative');
 

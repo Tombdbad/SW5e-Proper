@@ -9,6 +9,30 @@ import {
 const shipManager = new StarshipCombatManager();
 const vehicleManager = new VehicleCombatManager();
 
+export type CombatType = 'personal' | 'starship' | 'vehicle';
+
+export interface StarshipCombatant {
+  id: string;
+  name: string;
+  shipType: string;
+  currentSpeed: number;
+  maxSpeed: number;
+  shields: number;
+  maxShields: number;
+  hull: number;
+  maxHull: number;
+  initiative: number;
+  weapons: {
+    name: string;
+    damage: string;
+    range: string;
+  }[];
+  crew: {
+    role: string;
+    character?: Combatant;
+  }[];
+}
+
 export interface Combatant {
   id: number | string;
   name: string;
