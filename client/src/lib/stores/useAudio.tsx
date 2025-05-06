@@ -1,78 +1,54 @@
 import { create } from 'zustand';
-import { useCoreStore } from '../core/store';
+import { Howl } from 'howler';
 
 interface AudioState {
+  sounds: Record<string, Howl>;
+  backgroundMusic?: Howl;
   isMuted: boolean;
-  soundVolume: number;
-  musicVolume: number;
-  currentMusic: string | null;
-  soundEffects: Map<string, HTMLAudioElement>;
-  toggleMute: () => void;
+  volume: number;
+  initializeAudio: () => void;
   playSound: (soundId: string) => void;
-  playMusic: (musicPath: string) => void;
-  stopMusic: () => void;
-  setSoundVolume: (volume: number) => void;
-  setMusicVolume: (volume: number) => void;
+  setVolume: (volume: number) => void;
+  toggleMute: () => void;
 }
 
 export const useAudio = create<AudioState>((set, get) => ({
+  sounds: {},
   isMuted: false,
-  soundVolume: 0.8,
-  musicVolume: 0.5,
-  currentMusic: null,
-  soundEffects: new Map(),
+  volume: 0.5,
 
-  toggleMute: () => set(state => ({ isMuted: !state.isMuted })),
-
-  playSound: (soundId: string) => {
-    const { soundEffects, isMuted, soundVolume } = get();
-    if (isMuted) return;
-
-    let sound = soundEffects.get(soundId);
-    if (!sound) {
-      sound = new Audio(`/sounds/${soundId}.mp3`);
-      sound.onerror = () => {
-        console.error(`Failed to load sound effect: ${soundId}`);
-      };
-      soundEffects.set(soundId, sound);
-    }
-
-    sound.volume = soundVolume;
-    sound.currentTime = 0;
-    sound.play().catch(error => {
-      console.error(`Error playing sound effect ${soundId}:`, error);
-    });
-  },
-
-  playMusic: (musicPath: string) => {
-    const { currentMusic, isMuted, musicVolume } = get();
-    if (currentMusic === musicPath) return;
-
-    const audio = new Audio(musicPath);
-    audio.loop = true;
-    audio.volume = isMuted ? 0 : musicVolume;
-    audio.onerror = () => {
-      console.error(`Failed to load music: ${musicPath}`);
+  initializeAudio: () => {
+    const sounds = {
+      hit: new Howl({ src: ['/sounds/hit.mp3'] }),
+      success: new Howl({ src: ['/sounds/success.mp3'] }),
+      background: new Howl({ 
+        src: ['/sounds/background.mp3'],
+        loop: true,
+        volume: 0.3
+      })
     };
-    
-    const {stopMusic} = get()
-    stopMusic();
-    audio.play().catch(error => {
-      console.error(`Error playing music ${musicPath}:`, error);
-    });
-
-    set({ currentMusic: musicPath });
+    set({ sounds });
   },
 
-  stopMusic: () => {
-    const { currentMusic } = get();
-    if (currentMusic) {
-      const audio = new Audio(currentMusic);
-      audio.pause();
-      set({ currentMusic: null });
+  playSound: (soundId) => {
+    const { sounds, isMuted } = get();
+    if (!isMuted && sounds[soundId]) {
+      sounds[soundId].play();
     }
   },
 
-  setSoundVolume: (volume: number) => set({ soundVolume: volume }),
-  setMusicVolume: (volume: number) => set({ musicVolume: volume })
+  setVolume: (volume) => {
+    const { sounds } = get();
+    Object.values(sounds).forEach(sound => sound.volume(volume));
+    set({ volume });
+  },
+
+  toggleMute: () => {
+    const { isMuted, volume } = get();
+    const { sounds } = get();
+    Object.values(sounds).forEach(sound => {
+      sound.volume(isMuted ? volume : 0);
+    });
+    set({ isMuted: !isMuted });
+  }
 }));

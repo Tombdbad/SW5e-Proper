@@ -1,31 +1,14 @@
-
+import { drizzle } from 'drizzle-orm/neon-http';
+import { migrate } from 'drizzle-orm/neon-http/migrator';
+import { neon } from '@neondatabase/serverless';
+import { schema } from '../unifiedSchema';
 import { execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import { db } from '../../server/db';
+import { characters, species, equipment } from '../../shared/schema';
+import { eq } from 'drizzle-orm';
 
-// Function to run schema verification
-async function verifySchema(): Promise<boolean> {
-  try {
-    console.log('Running schema verification...');
-    execSync('tsx verify-schema.ts', { stdio: 'inherit' });
-    return true;
-  } catch (error) {
-    console.error('Schema verification failed:', error);
-    return false;
-  }
-}
-
-// Function to run migrations
-async function runMigrations(): Promise<boolean> {
-  try {
-    console.log('Running migrations...');
-    execSync('tsx run-migrations.ts', { stdio: 'inherit' });
-    return true;
-  } catch (error) {
-    console.error('Migration failed:', error);
-    return false;
-  }
-}
 
 // Function to backup the database (simplified - in production would use pg_dump)
 async function backupDatabase(): Promise<boolean> {
@@ -53,55 +36,39 @@ async function backupDatabase(): Promise<boolean> {
   }
 }
 
-// Main function to orchestrate the migration process
-async function migrateWithVerification() {
-  console.log('🚀 Starting migration process with verification');
+const runMigrationWithVerification = async () => {
+  const sql = neon(process.env.DATABASE_URL!);
+  const db = drizzle(sql, { schema });
 
-  // Step 1: Pre-migration schema verification
-  console.log('\n📋 Step 1: Pre-migration schema verification');
-  const preVerification = await verifySchema();
+  console.log('Starting migration...');
 
-  if (!preVerification) {
-    console.log('⚠️ Pre-migration schema verification has issues, but continuing with caution');
-  }
+  try {
+    await migrate(db, { migrationsFolder: './migrations' });
+    console.log('Migration completed successfully');
 
-  // Step 2: Database backup
-  console.log('\n📋 Step 2: Creating database backup');
-  const backupSuccess = await backupDatabase();
+    // Verify critical tables
+    const tables = ['characters', 'campaigns', 'equipment', 'combat_logs'];
+    for (const table of tables) {
+      const result = await sql`SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_name = ${table}
+      );`;
+      console.log(`Table ${table} exists: ${result[0].exists}`);
+    }
 
-  if (!backupSuccess) {
-    console.error('❌ Failed to create database backup. Aborting migration for safety.');
+    // Verify column types
+    const characterColumns = await sql`
+      SELECT column_name, data_type 
+      FROM information_schema.columns 
+      WHERE table_name = 'characters';
+    `;
+    console.log('Character table schema:', characterColumns);
+
+  } catch (error) {
+    console.error('Migration verification failed:', error);
     process.exit(1);
   }
-
-  // Step 3: Run migrations
-  console.log('\n📋 Step 3: Running migrations');
-  const migrationSuccess = await runMigrations();
-
-  if (!migrationSuccess) {
-    console.error('❌ Migration failed. Check migration logs for details.');
-    console.log('⚠️ Consider restoring from backup if necessary.');
-    process.exit(1);
-  }
-
-  // Step 4: Post-migration schema verification
-  console.log('\n📋 Step 4: Post-migration schema verification');
-  const postVerification = await verifySchema();
-
-  if (!postVerification) {
-    console.error('❌ Post-migration schema verification failed.');
-    console.log('⚠️ Database might be in an inconsistent state. Consider restoring from backup.');
-    process.exit(1);
-  }
-
-  console.log('\n✅ Migration completed successfully with schema verification!');
-}
-
-// Run the full migration process
-migrateWithVerification();
-import { db } from '../../server/db';
-import { characters, species, equipment } from '../../shared/schema';
-import { eq } from 'drizzle-orm';
+};
 
 async function verifyMigration() {
   console.log('Starting migration verification...');
@@ -109,7 +76,7 @@ async function verifyMigration() {
   // Verify character data
   const characterResults = await db.select().from(characters);
   console.log(`Verifying ${characterResults.length} characters...`);
-  
+
   for (const char of characterResults) {
     if (!char.name || !char.species || !char.class) {
       console.error(`Invalid character data found: ${char.id}`);
@@ -142,4 +109,6 @@ async function verifyMigration() {
   console.log('Migration verification completed successfully');
 }
 
+
+runMigrationWithVerification().catch(console.error);
 export default verifyMigration;

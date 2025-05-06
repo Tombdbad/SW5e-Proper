@@ -1,42 +1,23 @@
-
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
+import { createSelectors } from '@/lib/stores/selectors';
+import { AppState, initialState } from './types';
 
-export interface CoreState {
-  audioEnabled: boolean;
-  performanceMetrics: {
-    fps: number;
-    memory: number;
-    latency: number;
-  };
-  settings: {
-    graphicsQuality: 'low' | 'medium' | 'high';
-    soundVolume: number;
-    musicVolume: number;
-  };
-}
+const useStoreBase = create(
+  persist(
+    immer<AppState>((set) => ({
+      ...initialState,
+      setGameState: (state) => set((store) => { store.gameState = state; }),
+      setCombatState: (state) => set((store) => { store.combatState = state; }),
+      setAudioState: (state) => set((store) => { store.audioState = state; }),
+      resetState: () => set(initialState),
+    })),
+    {
+      name: 'sw5e-game-store',
+      version: 1,
+    }
+  )
+);
 
-export const createCoreStore = () => 
-  create<CoreState>()(
-    persist(
-      immer((set) => ({
-        audioEnabled: true,
-        performanceMetrics: {
-          fps: 60,
-          memory: 0,
-          latency: 0
-        },
-        settings: {
-          graphicsQuality: 'medium',
-          soundVolume: 0.8,
-          musicVolume: 0.5
-        }
-      })),
-      {
-        name: 'sw5e-core-store'
-      }
-    )
-  );
-
-export const useCoreStore = createCoreStore();
+export const useStore = createSelectors(useStoreBase);
