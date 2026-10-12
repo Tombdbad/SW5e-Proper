@@ -7,17 +7,12 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import PersonalityTraitForm from "../components/CharacterCreation/PersonalityTraitForm";
 // Import SW5E data and utilities
-import { SPECIES } from "../lib/sw5e/species";
-import { CLASSES } from "../lib/sw5e/classes";
-import { BACKGROUNDS } from "../lib/sw5e/backgrounds";
-import { FEATS } from "../lib/sw5e/feats";
+import { SPECIES, getSpeciesById } from "../lib/sw5e/species";
+import { CLASSES, classes, getClassById } from "../lib/sw5e/classes";
 import { EQUIPMENT } from "../lib/sw5e/equipment";
-import { FORCE_POWERS } from "../lib/sw5e/forcePowers";
-import { TECH_POWERS } from "../lib/sw5e/techPowers";
 import {
   SKILLS,
   LANGUAGES,
-  BACKGROUND_OPTIONS,
   ALIGNMENTS,
 } from "../lib/sw5e/constants";
 import {
@@ -28,7 +23,6 @@ import {
   calculateHitPoints,
   calculateArmorClass,
   calculateInitiative,
-  getAbilityModifiers,
   MAX_POINT_BUY_POINTS,
 } from "../lib/sw5e/rules";
 
@@ -48,42 +42,64 @@ import { CharacterPreview } from "../components/CharacterManagement/CharacterShe
 import TranslucentPane from "../components/ui/TranslucentPane";
 import Alert from "../components/ui/Alert";
 
-// Import the unified character schema
-import { CharacterSchema } from "@shared/unifiedSchema";
-
 // Import Character API service
 import { CharacterAPI } from "../lib/api/character";
 
-// Use the imported character schema from unified schema
-const characterSchema = CharacterSchema.extend({
-  // Character-specific features
-  multiclass: z.array(z.object({ class: z.string(), level: z.number().min(1) })).default([]),
-  traits: z
-    .array(
-      z.object({
-        id: z.string(),
-        name: z.string(),
-        description: z.string(),
-        source: z.string(),
-      }),
-    )
-    .default([]),
+// The form schema covers only what the form itself collects. Final stats come from deriveStats()
+// and the server validates the saved payload (insertCharacterSchema in shared/schema.ts).
+const characterSchema = z
+  .object({
+    name: z.string().trim().min(2, "Character name must be at least 2 characters"),
+    species: z.string().min(1, "Choose a species"),
+    class: z.string().min(1, "Choose a class"),
+    background: z.string().min(1, "Choose a background"),
+    alignment: z.string().min(1, "Choose an alignment"),
+    level: z.number({ invalid_type_error: "Level must be a number from 1 to 20" }).int().min(1).max(20),
+    abilityScores: z
+      .record(z.number({ invalid_type_error: "Ability scores must be numbers from 3 to 20" }).min(3).max(20))
+      .optional(),
+  })
+  .passthrough();
 
-  // Personality features
-  personality: z.object({
-    traits: z.array(z.string()).default([]),
-    ideals: z.array(z.string()).default([]),
-    bonds: z.array(z.string()).default([]),
-    flaws: z.array(z.string()).default([]),
-    appearance: z.string().optional(),
-    backstory: z.string().optional(),
-  }).optional(),
+export type CharacterData = Record<string, any>;
 
-  // Meta info
-  experiencePoints: z.number().min(0).default(0),
-});
+// SKILLS has no ids; the skills step and the class data both go by skill name
+const SKILL_OPTIONS = SKILLS.map((skill) => ({ ...skill, id: skill.name }));
 
-export type CharacterData = z.infer<typeof characterSchema>;
+// Classes with a power pool and the ability it runs on (stored as maxForcePoints)
+const POWER_ABILITY: Record<string, string> = {
+  consular: "wisdom",
+  guardian: "wisdom",
+  engineer: "intelligence",
+};
+
+// Final stats from the choices made in the form: species bonuses, class hit die, ability modifiers
+function deriveStats(data: CharacterData) {
+  const cls = getClassById(data.class);
+  const sp = getSpeciesById(data.species);
+  const level = Number(data.level) || 1;
+  const abilityScores: Record<string, number> = { ...(data.abilityScores ?? data.abilities) };
+  for (const [ability, bonus] of Object.entries(sp?.abilityScoreIncrease ?? {})) {
+    const key = ability.toLowerCase();
+    if (key in abilityScores) abilityScores[key] = Math.min(20, abilityScores[key] + bonus);
+  }
+  const mod = (ability: string) => calculateModifier(abilityScores[ability]);
+  const hitDie = cls?.hitDie ?? 8;
+  const perLevel = hitDie / 2 + 1 + mod("constitution");
+  const powerAbility = POWER_ABILITY[data.class];
+
+  return {
+    abilityScores,
+    hitPoints: Math.max(1, hitDie + mod("constitution") + (level - 1) * perLevel),
+    armorClass: 10 + mod("dexterity"),
+    initiative: mod("dexterity"),
+    speed: sp?.speed?.walk ?? 30,
+    languages: sp?.languages ?? data.languages,
+    savingThrowProficiencies: (cls?.savingThrows ?? []).map((s) => s.toLowerCase()),
+    powerPoints: powerAbility ? calculateMaxPowerPoints(level, mod(powerAbility)) : 0,
+    proficiencyBonus: calculateProficiencyBonus(level),
+  };
+}
 
 export default function CharacterCreation() {
   const [currentTab, setCurrentTab] = useState(0);
@@ -230,6 +246,11 @@ export default function CharacterCreation() {
     }
   }, [watchClass, watchLevel, watchAbilities, setValue]);
 
+  // Skill choices belong to the class
+  useEffect(() => {
+    setValue("skillProficiencies", []);
+  }, [watchClass, setValue]);
+
   // Effect to update derived stats when abilities change
   useEffect(() => {
     if (watchAbilities) {
@@ -281,28 +302,10 @@ export default function CharacterCreation() {
     setError(null);
 
     try {
-      // Ensure all derived values are calculated before submission
-      const abilities = data.abilities;
-      const abilityModifiers = getAbilityModifiers(abilities);
-
-      // Get selected class for final calculations
-      const selectedClass = CLASSES.find((c) => c.id === data.class);
-      if (!selectedClass) throw new Error("Invalid class selection");
-
-      // Final hit point calculation
-      const conMod = abilityModifiers.constitution;
-      const hitPoints = calculateHitPoints(
-        data.level,
-        selectedClass.hitDie,
-        conMod,
-      );
+      if (!getClassById(data.class)) throw new Error("Invalid class selection");
 
       // Prepare final character data
-      const characterData = {
-        ...data,
-        hitPoints,
-        proficiencyBonus: calculateProficiencyBonus(data.level),
-      };
+      const characterData = { ...data, ...deriveStats(data) };
 
       // Validate character data using our new validation service
       const validationResult = await CharacterAPI.validateCharacter(characterData);
@@ -333,6 +336,18 @@ export default function CharacterCreation() {
     }
   };
 
+  // Say what is missing instead of doing nothing when the form is incomplete
+  const onInvalid = (formErrors: any) => {
+    const messages: string[] = [];
+    const collect = (e: any) => {
+      if (!e || typeof e !== "object") return;
+      if (typeof e.message === "string") messages.push(e.message);
+      else Object.values(e).forEach(collect);
+    };
+    collect(formErrors);
+    setError(messages.length ? Array.from(new Set(messages)).join(". ") : "Please complete the earlier steps");
+  };
+
   // Persist the temporary character ID when the form has enough data
   useEffect(() => {
     const currentData = methods.getValues();
@@ -360,11 +375,11 @@ export default function CharacterCreation() {
     },
     {
       name: "Species",
-      component: <SpeciesSelection form={methods} allSpecies={SPECIES} />,
+      component: <SpeciesSelection onSelect={() => setCurrentTab(2)} />,
     },
     {
       name: "Class",
-      component: <ClassSelection form={methods} allClasses={CLASSES} />,
+      component: <ClassSelection form={methods} allClasses={classes} />,
     },
     {
       name: "Abilities",
@@ -379,11 +394,7 @@ export default function CharacterCreation() {
     {
       name: "Background",
       component: (
-        <BackgroundSelection
-          form={methods}
-          allBackgrounds={BACKGROUNDS}
-          backgroundOptions={BACKGROUND_OPTIONS}
-        />
+        <BackgroundSelection onSelect={() => setCurrentTab(5)} />
       ),
     },
     {
@@ -391,30 +402,23 @@ export default function CharacterCreation() {
       component: (
         <SkillsSelection
           form={methods}
-          allSkills={SKILLS}
-          getSelectedClass={() => CLASSES.find((c) => c.id === watch("class"))}
+          allSkills={SKILL_OPTIONS}
+          getSelectedClass={() => getClassById(watch("class"))}
         />
       ),
     },
     {
       name: "Powers",
       component: (
-        <PowersSelection
-          form={methods}
-          forcePowers={FORCE_POWERS}
-          techPowers={TECH_POWERS}
-          getSelectedClass={() => CLASSES.find((c) => c.id === watch("class"))}
-        />
+        <PowersSelection onContinue={() => setCurrentTab(7)} />
       ),
     },
     {
       name: "Feats",
       component: (
         <FeatsSelection
-          form={methods}
-          allFeats={FEATS}
-          level={watch("level")}
-          species={watch("species")}
+          availableFeats={Math.floor((Number(watch("level")) || 1) / 4)}
+          characterClass={watch("class")}
         />
       ),
     },
@@ -424,90 +428,32 @@ export default function CharacterCreation() {
         <EquipmentSelection
           form={methods}
           allEquipment={EQUIPMENT}
-          getSelectedClass={() => CLASSES.find((c) => c.id === watch("class"))}
+          getSelectedClass={() => getClassById(watch("class"))}
         />
       ),
     },
     {
       name: "Preview",
-      component: (
-        <CharacterPreview form={methods} abilities={watch("abilities")} />
-      ),
+      component: <PreviewPanel data={watch()} />,
     },
   ];
-
-  // Handler for saving character as draft
-  const handleSaveDraft = async () => {
-    try {
-      const currentFormData = methods.getValues();
-
-      const response = await fetch("/api/characters/draft", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...currentFormData,
-          isDraft: true,
-        }),
-      });
-
-      if (!response.ok) throw new Error("Failed to save draft");
-
-      // Show success message or notification
-      alert("Character draft saved successfully!");
-    } catch (error) {
-      console.error("Error saving draft:", error);
-      setError(error instanceof Error ? error.message : "Failed to save draft");
-    }
-  };
-
-  // Handler for loading a draft character
-  const handleLoadDraft = async () => {
-    try {
-      const response = await fetch("/api/characters/drafts");
-      if (!response.ok) throw new Error("Failed to fetch drafts");
-
-      const drafts = await response.json();
-
-      // For simplicity, just load the first draft
-      // In a real app, you'd show a modal to select which draft to load
-      if (drafts.length > 0) {
-        reset(drafts[0]);
-        alert("Draft loaded successfully!");
-      } else {
-        alert("No drafts found");
-      }
-    } catch (error) {
-      console.error("Error loading draft:", error);
-      setError(error instanceof Error ? error.message : "Failed to load draft");
-    }
-  };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-black bg-opacity-30">
       <FormProvider {...methods}>
-        <form onSubmit={handleSubmit(onSubmit)} className="w-full max-w-6xl">
+        <form
+          onSubmit={handleSubmit(onSubmit, onInvalid)}
+          onKeyDown={(e) => {
+            // Enter in a text field must not create the character early
+            if (e.key === "Enter" && (e.target as HTMLElement).tagName === "INPUT") e.preventDefault();
+          }}
+          className="w-full max-w-6xl"
+        >
           <TranslucentPane className="p-6">
             <div className="flex justify-between items-center mb-8">
               <h1 className="text-3xl font-bold text-yellow-400">
                 Character Creation
               </h1>
-
-              <div className="flex space-x-4">
-                <button
-                  type="button"
-                  onClick={handleSaveDraft}
-                  className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-md"
-                >
-                  Save Draft
-                </button>
-                <button
-                  type="button"
-                  onClick={handleLoadDraft}
-                  className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-md"
-                >
-                  Load Draft
-                </button>
-              </div>
             </div>
 
             {error && (
@@ -561,8 +507,11 @@ export default function CharacterCreation() {
                 Previous
               </button>
 
+              {/* Distinct keys: otherwise React turns the clicked Next button into the submit
+                  button mid-click and the form is submitted on arriving at the last step */}
               {currentTab === tabs.length - 1 ? (
                 <button
+                  key="create"
                   type="submit"
                   disabled={isSubmitting}
                   className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md disabled:bg-gray-600 disabled:text-gray-400"
@@ -571,6 +520,7 @@ export default function CharacterCreation() {
                 </button>
               ) : (
                 <button
+                  key="next"
                   type="button"
                   onClick={() =>
                     setCurrentTab(Math.min(tabs.length - 1, currentTab + 1))
@@ -584,6 +534,34 @@ export default function CharacterCreation() {
           </TranslucentPane>
         </form>
       </FormProvider>
+    </div>
+  );
+}
+
+// Last step: what will be saved
+function PreviewPanel({ data }: { data: CharacterData }) {
+  const stats = deriveStats(data);
+  const names = (xs: any) => (Array.isArray(xs) && xs.length ? xs.map((x) => x?.name ?? x).join(", ") : "None");
+
+  return (
+    <div className="space-y-4">
+      <CharacterPreview character={data} />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 px-4 text-sm">
+        <div>Hit Points: {stats.hitPoints}</div>
+        <div>Armor Class: {stats.armorClass}</div>
+        <div>Speed: {stats.speed} ft.</div>
+        <div>Power Points: {stats.powerPoints}</div>
+        {Object.entries(stats.abilityScores).map(([ability, score]) => (
+          <div key={ability} className="capitalize">
+            {ability}: {score}
+          </div>
+        ))}
+      </div>
+      <div className="px-4 text-sm space-y-1">
+        <div>Background: {data.background || "Not chosen"}</div>
+        <div>Skills: {names(data.skillProficiencies)}</div>
+        <div>Equipment: {names(data.equipment)}</div>
+      </div>
     </div>
   );
 }

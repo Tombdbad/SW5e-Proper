@@ -155,7 +155,7 @@ export default function SpeciesSelection({ onSelect }: SpeciesSelectionProps) {
             </div>
           </div>
           
-          <Button onClick={onSelect} className="mt-4">
+          <Button type="button" onClick={onSelect} className="mt-4">
             Continue
           </Button>
         </div>

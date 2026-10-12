@@ -7,7 +7,6 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import { Tooltip } from '@/components/ui/tooltip';
 
 interface EquipmentSelectionProps {
   form: any;
@@ -89,15 +88,14 @@ export default function EquipmentSelection({ form, getSelectedClass }: Equipment
                   {item.properties && (
                     <div className="flex flex-wrap gap-1 mb-3">
                       {item.properties.map((prop) => (
-                        <Tooltip key={prop} content={prop}>
-                          <Badge variant="outline" className="text-xs">
-                            {prop}
-                          </Badge>
-                        </Tooltip>
+                        <Badge key={prop} variant="outline" className="text-xs">
+                          {prop}
+                        </Badge>
                       ))}
                     </div>
                   )}
                   <Button
+                    type="button"
                     variant={characterEquipment.some((e: Equipment) => e.id === item.id) ? "destructive" : "default"}
                     onClick={() => {
                       if (characterEquipment.some((e: Equipment) => e.id === item.id)) {
