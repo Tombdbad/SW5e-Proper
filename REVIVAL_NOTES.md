@@ -74,7 +74,7 @@ Gaps in content and rules (the flow works, the game is thin):
 - lib/sw5e/combatmanagers.ts (starship and vehicle combat, unused) has the same dice bug the combat store had.
 - tsc: 424 errors (was 482), mostly in legacy files. Vite does not typecheck.
 
-## SW5e.com crosscheck (2026-10-13)
+## SW5e.com crosscheck (2026-10-12)
 How it was done: sw5e.com is a single-page app over a public API, `https://sw5eapi.azurewebsites.net/api/<name>` (data version 199, unchanged since 2023-05-06). Every dataset was downloaded and compared by script with a JSON dump of `client/src/lib/sw5e/*.ts`. Dataset names: species, class, archetype, background, feat, power, equipment, enhancedItem, monster, maneuvers, feature, fightingStyle, fightingMastery, lightsaberForm, classImprovement, multiclassImprovement, splashclassImprovement, weaponFocus, weaponSupremacy, weaponProperty, armorProperty, skills, conditions, characterAdvancement, referenceTable, starshipBaseSize, starshipDeployment, starshipEquipment, starshipModification, starshipVenture, PlayerHandbookRule, StarshipRule, WretchedHivesRule, VariantRule, ExpandedContent, dataVersion.
 
 Result in one line: the formulas copied from D&D 5e are right; almost all bundled content is invented or mis-statted, and the SW5e-specific rules (power points, powers known, background feat, alignment) are wrong.
