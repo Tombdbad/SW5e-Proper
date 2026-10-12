@@ -9,11 +9,9 @@ import {
   campaigns,
   debriefs,
   insertDebriefSchema,
-} from "../shared/schema";
-import {
   insertCharacterSchema,
   insertCampaignSchema,
-} from "../shared/unifiedSchema";
+} from "../shared/schema";
 import { ZodError } from "zod";
 import { formatError } from "./utils";
 
@@ -170,8 +168,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const characterId = parseInt(req.params.id);
 
-      // Validate the character data
-      const characterData = insertCharacterSchema.parse(req.body);
+      // Validate the character data (partial: clients send only changed fields)
+      const characterData = insertCharacterSchema.partial().parse(req.body);
 
       // Update character in database
       const result = await db
@@ -199,51 +197,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Star Systems and Locations endpoints
-  app.get("/api/star-systems", async (req, res) => {
+  // PATCH and DELETE for characters
+  app.patch("/api/characters/:id", async (req, res) => {
     try {
-      const allSystems = await db.select().from(starSystems);
-      res.json(allSystems);
-    } catch (error) {
-      console.error("Error fetching star systems:", error);
-      res.status(500).json({ message: "Failed to fetch star systems" });
-    }
-  });
-
-  app.get("/api/star-systems/:id", async (req, res) => {
-    try {
-      const systemId = req.params.id;
-      const system = await db
-        .select()
-        .from(starSystems)
-        .where(eq(starSystems.id, systemId))
-        .limit(1);
-
-      if (!system || system.length === 0) {
-        return res.status(404).json({ message: "Star system not found" });
+      const characterId = parseInt(req.params.id);
+      const characterData = insertCharacterSchema.partial().parse(req.body);
+      const result = await db
+        .update(characters)
+        .set({ ...characterData, updatedAt: new Date() })
+        .where(eq(characters.id, characterId))
+        .returning();
+      if (!result || result.length === 0) {
+        return res.status(404).json({ message: "Character not found" });
       }
-
-      res.json(system[0]);
+      res.json(result[0]);
     } catch (error) {
-      console.error("Error fetching star system:", error);
-      res.status(500).json({ message: "Failed to fetch star system" });
+      if (error instanceof ZodError) {
+        return res.status(400).json({ message: "Invalid character data", errors: formatError(error) });
+      }
+      console.error("Error updating character:", error);
+      res.status(500).json({ message: "Failed to update character" });
     }
   });
 
-  app.get("/api/star-systems/:id/locations", async (req, res) => {
+  app.delete("/api/characters/:id", async (req, res) => {
     try {
-      const systemId = req.params.id;
-      const locations = await db
-        .select()
-        .from(planets)
-        .where(eq(planets.starSystem, systemId));
-
-      res.json(locations);
+      const characterId = parseInt(req.params.id);
+      const result = await db.delete(characters).where(eq(characters.id, characterId)).returning();
+      if (!result || result.length === 0) {
+        return res.status(404).json({ message: "Character not found" });
+      }
+      res.status(204).end();
     } catch (error) {
-      console.error("Error fetching system locations:", error);
-      res.status(500).json({ message: "Failed to fetch system locations" });
+      console.error("Error deleting character:", error);
+      res.status(500).json({ message: "Failed to delete character" });
     }
   });
+
+  // /api/star-systems removed: tables never existed; the map uses local data in client/src/lib/sw5e
 
   // Campaign endpoints
   app.get("/api/campaigns", async (req, res) => {

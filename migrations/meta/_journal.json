@@ -1,32 +1,3 @@
-
-{
-  "version": "5",
-  "dialect": "postgresql",
-  "entries": [
-    {
-      "idx": 0,
-      "version": "5",
-      "when": "1746102653055",
-      "tag": "0000_optimal_pestilence",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "5",
-      "when": "1746102653056",
-      "tag": "0001_unified_schema",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "5",
-      "when": "1746130000000",
-      "tag": "0002_add_missing_columns",
-      "breakpoints": true
-    }
-  ]
-}
-
 {
   "version": "7",
   "dialect": "postgresql",
@@ -34,28 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1745844531710,
-      "tag": "0000_optimal_pestilence",
-      "breakpoints": true
-    }
-  ]
-}
-{
-  "version": "5",
-  "dialect": "pg",
-  "entries": [
-    {
-      "idx": 0,
-      "version": "5",
-      "when": "1685573344000",
-      "tag": "0000_optimal_pestilence",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "5",
-      "when": "1704067200000",
-      "tag": "0001_unified_schema",
+      "when": 1791842920192,
+      "tag": "0000_breezy_lucky_pierre",
       "breakpoints": true
     }
   ]

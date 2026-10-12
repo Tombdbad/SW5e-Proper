@@ -144,6 +144,14 @@ export const insertCharacterSchema = z.object({
   campaignId: z.number().optional(),
   forceAlignment: z.string().optional(),
   languages: z.array(z.string()).optional(),
+  forcePowers: z.array(z.any()).optional(),
+  techPowers: z.array(z.any()).optional(),
+  feats: z.array(z.any()).optional(),
+  toolProficiencies: z.array(z.string()).optional(),
+  personalityTraits: z.array(z.string()).optional(),
+  ideals: z.array(z.string()).optional(),
+  bonds: z.array(z.string()).optional(),
+  flaws: z.array(z.string()).optional(),
 });
 
 export type InsertCharacter = z.infer<typeof insertCharacterSchema>;

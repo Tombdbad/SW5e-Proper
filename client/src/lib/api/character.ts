@@ -2,6 +2,7 @@
 import { validateCharacter } from "./characterValidation";
 import type { CharacterData } from "../../pages/CharacterCreation";
 import { Character } from "@shared/unifiedSchema";
+import { toServerCharacter } from "./toServerCharacter";
 
 // Character API service
 export const CharacterAPI = {
@@ -12,7 +13,7 @@ export const CharacterAPI = {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(characterData),
+        body: JSON.stringify(toServerCharacter(characterData)),
       });
 
       if (!response.ok) {
@@ -50,7 +51,7 @@ export const CharacterAPI = {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(characterData),
+        body: JSON.stringify(toServerCharacter(characterData, true)),
       });
 
       if (!response.ok) {

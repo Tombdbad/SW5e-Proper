@@ -1,8 +1,8 @@
 import express, { type Request, Response, NextFunction } from "express";
+import "dotenv/config";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import { db } from "./db";
-import { sql } from "./db";
+import { pool, ensureDefaultUser } from "./db";
 
 const app = express();
 app.use(express.json());
@@ -42,7 +42,8 @@ app.use((req, res, next) => {
   // Check database connection before registering routes
   try {
     // Simple query to test DB connection
-    const testConnection = await sql`SELECT 1 as test`;
+    await pool.query("SELECT 1");
+    await ensureDefaultUser();
     console.log('Database connected successfully');
   } catch (error) {
     console.error('Database connection error:', error);
