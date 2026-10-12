@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from 'react';
-import { Routes, Route, useNavigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import Home from './pages/Home';
 import CharacterCreation from './pages/CharacterCreation';
 import CharacterManagement from './pages/CharacterManagement';
@@ -76,7 +76,7 @@ function App() {
             <Route path="/" element={<Home />} />
             <Route path="/characters/create" element={<CharacterCreation />} />
             <Route path="/characters/edit/:id" element={<CharacterCreation />} />
-            <Route path="/characters" element={<CharacterManagement />} />
+            <Route path="/characters" element={<Navigate to="/" replace />} />
             <Route path="/characters/:id" element={<CharacterManagement />} />
             <Route path="/campaigns" element={<CampaignView />} />
             <Route path="/campaigns/:id" element={<CampaignView />} />

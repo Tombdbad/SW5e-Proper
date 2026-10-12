@@ -1,15 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Canvas } from "@react-three/fiber";
 import { KeyboardControls } from "@react-three/drei";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import LocalMap from "@/components/Map/LocalMap";
-import CombatTracker from "@/components/Combat/CombatTracker";
+import PlayCombat from "@/components/Combat/PlayCombat";
 import { useCharacter } from "@/lib/stores/useCharacter";
 import { useCampaign } from "@/lib/stores/useCampaign";
 import { useCombat } from "@/lib/stores/useCombat";
@@ -31,9 +31,9 @@ export default function GameBoard() {
   const [showSidebar, setShowSidebar] = useState(true);
   const [activeMapTab, setActiveMapTab] = useState<"galaxy" | "local">("galaxy");
   const [showCombat, setShowCombat] = useState(false);
-  const { character } = useCharacter();
   const { campaign, loadCampaign } = useCampaign();
   const { inCombat, initiateCombat, endCombat } = useCombat();
+  const combatants = useCombat((s) => s.combatants);
   const { currentLocation, setCurrentLocation } = useMap();
 
   // Fetch campaign data
@@ -42,14 +42,44 @@ export default function GameBoard() {
     enabled: !!campaignId,
   });
 
+  // The character is the one the campaign belongs to
+  const gameCharacterId = (data as any)?.characterId as number | undefined;
+  const { data: character, isLoading: characterLoading } = useQuery<any>({
+    queryKey: ["game-character", gameCharacterId],
+    queryFn: async () => {
+      const r = await fetch(`/api/characters/${gameCharacterId}`);
+      if (!r.ok) throw new Error("Failed to load character");
+      return r.json();
+    },
+    enabled: !!gameCharacterId,
+  });
+
+  // Write the player's HP back to the database whenever combat changes it
+  const queryClient = useQueryClient();
+  const lastSavedHp = useRef<number | null>(null);
+  useEffect(() => {
+    const p = combatants.find((c) => c.isPlayer);
+    if (!p || !character) return;
+    if (lastSavedHp.current === null) lastSavedHp.current = character.currentHp;
+    if (p.hp === lastSavedHp.current) return;
+    lastSavedHp.current = p.hp;
+    fetch(`/api/characters/${character.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currentHp: p.hp }),
+    }).then(() => queryClient.invalidateQueries({ queryKey: ["game-character"] }));
+  }, [combatants, character?.id]);
+
   // Load campaign data when available
   useEffect(() => {
     if (data && !isLoading) {
       loadCampaign(data);
       
       // Set initial location if available
-      if (data.startingLocation) {
-        setCurrentLocation(data.startingLocation);
+      const startName = (data as any).currentLocation || (data as any).startingLocation;
+      const startLoc = ((data as any).locations || []).find((l: any) => l.name === startName);
+      if (startLoc) {
+        setCurrentLocation({ coordinates: { x: 0, y: 0, z: 0 }, ...startLoc });
       }
     }
   }, [data, isLoading, loadCampaign, setCurrentLocation]);
@@ -58,6 +88,28 @@ export default function GameBoard() {
   useEffect(() => {
     setShowCombat(inCombat);
   }, [inCombat]);
+
+  // Move to a campaign location and remember it
+  const moveTo = (loc: any) => {
+    setCurrentLocation({ coordinates: { x: 0, y: 0, z: 0 }, ...loc });
+    fetch(`/api/campaigns/${campaignId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currentLocation: loc.name }),
+    });
+  };
+
+  // Full rest: restore HP and Force points
+  const rest = async () => {
+    if (!character || inCombat) return;
+    await fetch(`/api/characters/${character.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ currentHp: character.maxHp, currentForcePoints: character.maxForcePoints }),
+    });
+    lastSavedHp.current = character.maxHp;
+    queryClient.invalidateQueries({ queryKey: ["game-character"] });
+  };
 
   // Toggle sidebar
   const toggleSidebar = () => {
@@ -71,14 +123,14 @@ export default function GameBoard() {
     if (!character) return;
     
     const enemies = [
-      { id: 1, name: "Stormtrooper", hp: 30, maxHp: 30, initiative: 12 },
-      { id: 2, name: "Imperial Officer", hp: 20, maxHp: 20, initiative: 14 },
+      { id: "enemy-1", name: "Stormtrooper", hp: 30, maxHp: 30, initiative: 12, armorClass: 13, attackBonus: 3 },
+      { id: "enemy-2", name: "Imperial Officer", hp: 20, maxHp: 20, initiative: 14, armorClass: 12, attackBonus: 2 },
     ];
     
     initiateCombat(character, enemies);
   };
 
-  if (isLoading) {
+  if (isLoading || characterLoading) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-900">
         <Loader2 className="h-8 w-8 animate-spin text-yellow-400" />
@@ -187,7 +239,7 @@ export default function GameBoard() {
               <div className="w-full bg-gray-700 rounded-full h-2.5">
                 <div 
                   className="bg-blue-600 h-2.5 rounded-full" 
-                  style={{ width: `${(character.currentForcePoints / character.maxForcePoints) * 100}%` }}
+                  style={{ width: `${character.maxForcePoints ? (character.currentForcePoints / character.maxForcePoints) * 100 : 0}%` }}
                 ></div>
               </div>
             </div>
@@ -196,6 +248,21 @@ export default function GameBoard() {
               <h3 className="font-semibold mb-2">Location</h3>
               <p>{currentLocation?.name || "Unknown"}</p>
               <p className="text-sm text-gray-400">{currentLocation?.description || ""}</p>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {(campaign.locations || []).map((l: any) => (
+                  <Button
+                    key={l.id}
+                    size="sm"
+                    variant={currentLocation?.id === l.id ? "default" : "outline"}
+                    onClick={() => moveTo(l)}
+                  >
+                    {l.name}
+                  </Button>
+                ))}
+              </div>
+              <Button className="mt-2" size="sm" variant="outline" onClick={rest} disabled={inCombat}>
+                Rest (restore HP)
+              </Button>
             </div>
 
               <Tabs defaultValue="quests">
@@ -236,7 +303,7 @@ export default function GameBoard() {
         )}
 
         {/* Combat UI */}
-        {showCombat && <CombatTracker />}
+        {showCombat && <PlayCombat />}
       </KeyboardControls>
     </div>
   );

@@ -376,38 +376,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/campaigns/:id", async (req, res) => {
+  const updateCampaign = async (req: any, res: any) => {
     try {
       const campaignId = parseInt(req.params.id);
-
-      // Validate the campaign data
-      const campaignData = insertCampaignSchema.parse(req.body);
-
-      // Update campaign in database
+      const campaignData = insertCampaignSchema.partial().parse(req.body);
       const result = await db
         .update(campaigns)
         .set({ ...campaignData, updatedAt: new Date() })
         .where(eq(campaigns.id, campaignId))
         .returning();
-
       if (!result || result.length === 0) {
         return res.status(404).json({ message: "Campaign not found" });
       }
-
       res.json(result[0]);
     } catch (error) {
-      console.error("Error updating campaign:", error);
-
       if (error instanceof ZodError) {
-        return res.status(400).json({
-          message: "Invalid campaign data",
-          errors: formatError(error),
-        });
+        return res.status(400).json({ message: "Invalid campaign data", errors: formatError(error) });
       }
-
+      console.error("Error updating campaign:", error);
       res.status(500).json({ message: "Failed to update campaign" });
     }
-  });
+  };
+  app.put("/api/campaigns/:id", updateCampaign);
+  app.patch("/api/campaigns/:id", updateCampaign);
 
   app.get("/api/campaigns/:id/locations", async (req, res) => {
     try {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '../lib/queryClient';
 import CampaignGenerator from '../components/Campaign/CampaignGenerator';
@@ -23,15 +23,21 @@ export default function CampaignView() {
     enabled: !!id && id !== 'create'
   });
 
-  // Fetch character
+  // Fetch character: the campaign's own, else ?characterId=, else the first one (create mode)
+  const [searchParams] = useSearchParams();
+  const paramId = searchParams.get('characterId');
+  const wantedId: number | undefined =
+    (campaign as any)?.characterId ?? (paramId ? Number(paramId) : undefined);
   const { data: character, isLoading: characterLoading } = useQuery({
-    queryKey: ['/api/characters'],
+    queryKey: ['/api/characters', 'for-campaign', wantedId ?? 'first'],
     queryFn: async () => {
       const res = await apiRequest('GET', '/api/characters');
       const characters = await res.json();
-      return characters.find((c: any) => campaign && c.id === campaign.characterId) || null;
+      return (wantedId !== undefined
+        ? characters.find((c: any) => c.id === wantedId)
+        : characters[0]) || null;
     },
-    enabled: !!campaign
+    enabled: id === 'create' || !!campaign
   });
 
   // Save campaign mutation
@@ -59,7 +65,7 @@ export default function CampaignView() {
 
   // Show generator if no campaign exists or we're in 'create' mode
   useEffect(() => {
-    if (id === 'create' || !campaign) {
+    if (id === 'create') {
       setShowGenerator(true);
     }
   }, [id, campaign]);

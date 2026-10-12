@@ -44,3 +44,9 @@ Many are in unreachable files; fix only reachable ones in Phase 2.
 1. User: grant token write access to Tombdbad/SW5e-Proper; push `revive`.
 2. User: decide storage.
 3. Phase 2: fix B6-B8 and C11-C13 per acceptance test; seed default user; drop or implement missing client endpoints; one clean drizzle migration from shared/schema.ts.
+
+## Phase 2 progress
+- 2a DONE (commit e81744b): Postgres 16 on this VM, node-postgres, DATABASE_URL in `.env` (gitignored), default user 1 seeded at startup, character PATCH/DELETE, one clean drizzle migration. Verified by curl: create 201, PATCH currentHp, value survives a server restart, delete 204. Campaign POST 201.
+- 2b (this commit): CampaignView finds the character in create mode (?characterId= or first); GameBoard loads the campaign's character by characterId (B6); location buttons + PATCH campaign.currentLocation; combat uses new PlayCombat panel (melee/ranged, enemy auto-turns), player HP PATCHed to the DB on change; Rest button; campaigns PUT/PATCH accept partial; CharacterManagement reads the query result instead of the broken store; /characters redirects to /; GalaxyMap no longer calls a missing fetch; react-query staleTime 0.
+- NOT verified in a browser: only module compile (HTTP 200) and API calls were checked. Needs a real play-through on a phone.
+- Known leftovers: duplicate stores and schemas (B8) still exist but the acceptance path no longer depends on them; Inventory tab reads `character.inventory` (empty); `equipment` is a string list; tsc still reports many errors in unreachable/legacy files.

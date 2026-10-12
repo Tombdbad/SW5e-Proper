@@ -21,8 +21,7 @@ export default function GalaxyMap() {
     // Fetch star systems data
     async function loadStarSystems() {
       try {
-        const data = await fetchStarSystems();
-        setSystems(data);
+        setSystems(starSystems as any);
       } catch (error) {
         console.error("Failed to load star systems:", error);
       }

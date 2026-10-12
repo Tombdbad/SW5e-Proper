@@ -15,7 +15,6 @@ import { useCampaign } from "@/lib/stores/useCampaign";
 export default function CharacterManagement() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { character, setCharacter } = useCharacter();
   const { generateCampaign } = useCampaign();
   const [isGeneratingCampaign, setIsGeneratingCampaign] = useState(false);
 
@@ -39,12 +38,7 @@ export default function CharacterManagement() {
     },
   });
 
-  // Set character data when loaded
-  useEffect(() => {
-    if (data && !isLoading) {
-      setCharacter(data);
-    }
-  }, [data, isLoading, setCharacter]);
+  const character: any = data;
 
   // Generate campaign
   const handleGenerateCampaign = async () => {
@@ -52,9 +46,7 @@ export default function CharacterManagement() {
     
     setIsGeneratingCampaign(true);
     try {
-      const campaign = await generateCampaign(character);
-      toast.success("Campaign generated successfully!");
-      navigate(`/campaigns/${campaign.id}`);
+      navigate(`/campaigns/create?characterId=${character.id}`);
     } catch (error) {
       console.error("Error generating campaign:", error);
       toast.error("Failed to generate campaign");
