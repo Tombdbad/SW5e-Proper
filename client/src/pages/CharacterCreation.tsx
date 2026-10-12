@@ -5,8 +5,6 @@ import { useNavigate } from "react-router-dom";
 import { useForm, FormProvider, FormField, FormItem, FormLabel } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, ScrollArea } from "@nextui-org/react";
-import { Button } from "@nextui-org/react";
 import PersonalityTraitForm from "../components/CharacterCreation/PersonalityTraitForm";
 // Import SW5E data and utilities
 import { SPECIES } from "../lib/sw5e/species";
@@ -324,7 +322,7 @@ export default function CharacterCreation() {
       setPersistedCharacterId(character.id);
 
       // Navigate to campaign creator with new character or character sheet
-      navigate(`/campaign/create?characterId=${character.id}`);
+      navigate(`/campaigns/create?characterId=${character.id}`);
     } catch (error) {
       console.error("Error creating character:", error);
       setError(

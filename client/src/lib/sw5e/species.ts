@@ -10,7 +10,7 @@ export interface Species {
   size: string;
   speed: {
     walk: number;
-    [key: string]?: number;
+    [key: string]: number;
   };
   vision: {
     type: string;

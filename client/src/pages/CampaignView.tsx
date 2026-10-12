@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiRequest } from '../lib/utils'; // Assuming this import is correct based on context
+import { apiRequest } from '../lib/queryClient';
 import CampaignGenerator from '../components/Campaign/CampaignGenerator';
 import CampaignManager from '../components/Campaign/CampaignManager';
 import TranslucentPane from '../components/ui/TranslucentPane';
@@ -20,7 +20,7 @@ export default function CampaignView() {
       const res = await apiRequest('GET', `/api/campaigns/${id}`);
       return await res.json();
     },
-    enabled: !!id
+    enabled: !!id && id !== 'create'
   });
 
   // Fetch character
@@ -49,7 +49,7 @@ export default function CampaignView() {
       const data = await response.json();
       queryClient.invalidateQueries({ queryKey: [`/api/campaigns/${data.id}`] });
       queryClient.invalidateQueries({ queryKey: ['/api/campaigns'] });
-      navigate(`/campaign/${data.id}`);
+      navigate(`/campaigns/${data.id}`);
     }
   });
 
@@ -73,7 +73,7 @@ export default function CampaignView() {
             Select an existing campaign or create a new one.
           </p>
           <button
-            onClick={() => navigate('/campaign/create')}
+            onClick={() => navigate('/campaigns/create')}
             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
           >
             Create New Campaign
@@ -108,7 +108,7 @@ export default function CampaignView() {
               You need to select a character before creating a campaign.
             </p>
             <button
-              onClick={() => navigate('/character/create')}
+              onClick={() => navigate('/characters/create')}
               className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
             >
               Create Character

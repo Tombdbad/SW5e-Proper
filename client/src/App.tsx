@@ -77,6 +77,8 @@ function App() {
             <Route path="/characters/create" element={<CharacterCreation />} />
             <Route path="/characters/edit/:id" element={<CharacterCreation />} />
             <Route path="/characters" element={<CharacterManagement />} />
+            <Route path="/characters/:id" element={<CharacterManagement />} />
+            <Route path="/campaigns" element={<CampaignView />} />
             <Route path="/campaigns/:id" element={<CampaignView />} />
             <Route path="/map" element={<GalacticMapView />} />
             <Route path="/game/:campaignId" element={<GameBoard />} />

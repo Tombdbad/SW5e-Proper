@@ -82,7 +82,7 @@ export default function Home() {
                       </p>
                     </div>
                     <div className="flex justify-end">
-                      <Link to={`/character/manage/${character.id}`}>
+                      <Link to={`/characters/${character.id}`}>
                         <Button>Manage Character</Button>
                       </Link>
                     </div>
@@ -92,13 +92,13 @@ export default function Home() {
             ) : (
               <TranslucentPane className="text-center p-6">
                 <p className="mb-4">You haven't created any characters yet.</p>
-                <Link to="/character/create">
+                <Link to="/characters/create">
                   <Button>Create Your First Character</Button>
                 </Link>
               </TranslucentPane>
             )}
             <div className="mt-6 text-center">
-              <Link to="/character/create">
+              <Link to="/characters/create">
                 <Button variant="outline" className="border-yellow-400 text-yellow-400">
                   Create New Character
                 </Button>
@@ -124,7 +124,7 @@ export default function Home() {
                       <p className="text-gray-300">{campaign.description}</p>
                     </div>
                     <div className="flex justify-between">
-                      <Link to={`/campaign/${campaign.id}`}>
+                      <Link to={`/campaigns/${campaign.id}`}>
                         <Button variant="outline">View</Button>
                       </Link>
                       <Link to={`/game/${campaign.id}`}>
@@ -149,7 +149,7 @@ export default function Home() {
             <p className="mb-4 text-gray-300">
               Explore the Star Wars galaxy with an interactive 3D map of systems and planets.
             </p>
-            <Link to="/map/galaxy">
+            <Link to="/map">
               <Button className="w-full bg-cyan-600 hover:bg-cyan-700">
                 Open Galaxy Map
               </Button>

@@ -54,7 +54,7 @@ export default function CharacterManagement() {
     try {
       const campaign = await generateCampaign(character);
       toast.success("Campaign generated successfully!");
-      navigate(`/campaign/${campaign.id}`);
+      navigate(`/campaigns/${campaign.id}`);
     } catch (error) {
       console.error("Error generating campaign:", error);
       toast.error("Failed to generate campaign");

@@ -8,81 +8,18 @@ import {
   characters,
   campaigns,
   debriefs,
+  insertDebriefSchema,
 } from "../shared/schema";
 import {
   insertCharacterSchema,
   insertCampaignSchema,
-  insertDebriefSchema,
 } from "../shared/unifiedSchema";
 import { ZodError } from "zod";
 import { formatError } from "./utils";
-import * as SW5EData from "./sw5eData";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // SW5E Data endpoints
-  app.get("/api/sw5e/species", async (req, res) => {
-    try {
-      const species = await SW5EData.getAllSpecies();
-      res.json(species);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch species data" });
-    }
-  });
+  // /api/sw5e/* removed: rules data is bundled in client/src/lib/sw5e (see REVIVAL_NOTES.md)
 
-  app.get("/api/sw5e/classes", async (req, res) => {
-    try {
-      const classes = await SW5EData.getAllClasses();
-      res.json(classes);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch classes data" });
-    }
-  });
-
-  app.get("/api/sw5e/backgrounds", async (req, res) => {
-    try {
-      const backgrounds = await SW5EData.getAllBackgrounds();
-      res.json(backgrounds);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch backgrounds data" });
-    }
-  });
-
-  app.get("/api/sw5e/powers/:type", async (req, res) => {
-    try {
-      const powers = await SW5EData.getPowersByType(req.params.type);
-      res.json(powers);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch powers data" });
-    }
-  });
-
-  app.get("/api/sw5e/equipment", async (req, res) => {
-    try {
-      const equipment = await SW5EData.getAllEquipment();
-      res.json(equipment);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch equipment data" });
-    }
-  });
-
-  app.get("/api/sw5e/npcs/:type", async (req, res) => {
-    try {
-      const npcs = await SW5EData.getNPCsByType(req.params.type);
-      res.json(npcs);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch NPCs" });
-    }
-  });
-
-  app.post("/api/sw5e/npcs/generate", async (req, res) => {
-    try {
-      const { speciesId, backgroundId } = req.body;
-      const npcStats = await SW5EData.generateNPCStats(speciesId, backgroundId);
-      res.json(npcStats);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to generate NPC stats" });
-    }
-  });
   // All routes are prefixed with /api
 
   // Character endpoints
