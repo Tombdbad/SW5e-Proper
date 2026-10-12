@@ -74,6 +74,34 @@ Gaps in content and rules (the flow works, the game is thin):
 - lib/sw5e/combatmanagers.ts (starship and vehicle combat, unused) has the same dice bug the combat store had.
 - tsc: 424 errors (was 482), mostly in legacy files. Vite does not typecheck.
 
+## SW5e.com crosscheck (2026-10-13)
+How it was done: sw5e.com is a single-page app over a public API, `https://sw5eapi.azurewebsites.net/api/<name>` (data version 199, unchanged since 2023-05-06). Every dataset was downloaded and compared by script with a JSON dump of `client/src/lib/sw5e/*.ts`. Dataset names: species, class, archetype, background, feat, power, equipment, enhancedItem, monster, maneuvers, feature, fightingStyle, fightingMastery, lightsaberForm, classImprovement, multiclassImprovement, splashclassImprovement, weaponFocus, weaponSupremacy, weaponProperty, armorProperty, skills, conditions, characterAdvancement, referenceTable, starshipBaseSize, starshipDeployment, starshipEquipment, starshipModification, starshipVenture, PlayerHandbookRule, StarshipRule, WretchedHivesRule, VariantRule, ExpandedContent, dataVersion.
+
+Result in one line: the formulas copied from D&D 5e are right; almost all bundled content is invented or mis-statted, and the SW5e-specific rules (power points, powers known, background feat, alignment) are wrong.
+
+Matches the site: ability modifier, proficiency bonus by level, XP table, point buy (27 points, same costs), standard array, HP (full hit die at level 1, average after), hit dice of all seven classes, unarmored AC 10 + Dex, Strength for melee and Dexterity for ranged, critical hits double the dice, carrying capacity Strength x 15, archetype at level 3, 15 of 16 condition names (Shocked has the wrong effects; conditions.ts is not loaded by the app).
+
+Wrong in code the app uses:
+- Saving throws: Guardian is Constitution/Charisma (code: Strength/Constitution); Scout is Strength/Dexterity (code: Dexterity/Wisdom).
+- Skills (constants.ts SKILLS): "Endurance" does not exist, "Animal Handling" is missing, Nature and Piloting are Intelligence skills (code: Wisdom, Dexterity). Class lists name History, Science, Religion, which are not SW5e skills. Consular picks 2 skills (code 3). No class skill list matches the site exactly.
+- Class proficiencies and features: mostly D&D class features under SW5e class names (Ki, Natural Explorer, Favored Enemy, Aura of Protection). Armor and weapon proficiencies differ for every class.
+- Power points (deriveStats in pages/CharacterCreation.tsx, calculateMaxPowerPoints in rules.ts): site is Consular level x 4, Sentinel x 3, Guardian x 2, plus Wisdom or Charisma modifier; Engineer level x 2 and Scout level x 1 (from level 2) plus Intelligence modifier. Code gives level + modifier and nothing to Scout.
+- Powers known at level 1 (PowersSelection.tsx): site Consular 9, Sentinel 7, Guardian 5, Engineer 6, Scout 0. Code: Consular 2, Sentinel 1 force + 1 tech, Guardian 1, Engineer 2. It gives tech powers to Scholar and Sentinel, which have none on the site.
+- Max power level: site full casters reach 9th (1st, 1st, 2nd, 2nd, 3rd ...). Code caps at 5 with ceil(level / 4). calculatePowerSlots is D&D spell slots; SW5e has no slots.
+- Species (10 of the site's 141; 5 of the 30 in the Player's Handbook): ability bonuses are wrong for Advozse, Arcona, Human, Twi'lek, Zabrak and Bothan, so deriveStats saves wrong scores for them. Human is +2 to one and +1 to two of the player's choice (or +1 to four), not +1 Strength and +1 Dexterity. Aleena speed is 25 (code 35). 20 of the 23 trait names are invented.
+- Backgrounds: every background grants a feat at level 1 and a choice of 2 skills from 4. The code grants no feat (FeatsSelection allows floor(level / 4), so 0 at level 1) and never applies background skills. Ace Pilot, Diplomat, Outsider and the picker's Scholar, Pilot, Merchant are not on the site.
+- Feats: 4 of the 13 in feats.ts exist (Alert, Force-Sensitive, Linguist, Tough) and 1 of the 5 the picker shows.
+- Powers: 9 of 13 force powers exist by name and only 2 have the right level (Force Storm is 9th level, code 5th). None of the 11 tech powers exists.
+- Equipment (equipment.ts, items.ts): 14 of 26 and 13 of 27 names exist; one price in each file matches. Blaster pistol is 175 cr (code 450 and 500), lightsaber 450 cr and 1d6 (code 3000 and 2d8), vibroblade 1d8 (code 1d4). Starting credits are a flat 500; the site uses class starting equipment or a roll such as 8d4 x 100 cr for a Fighter.
+- Alignment: site is Light, Dark or Balanced combined with Lawful, Chaotic or Neutral. The code's five options are not SW5e.
+- Combat in Play: a natural 1 does not auto-miss; the attack bonus is modifier + 2 at every level; damage is d8 melee and d6 ranged whatever weapon is carried; 0 HP is "defeated" with no death saves; Rest is a free long rest. Test Combat's Stormtrooper (30 HP, AC 13, +3) and Imperial Officer (20 HP, AC 12, +2) are not the site's Trooper (13 HP, AC 15, +5, 1d8+3) and Junior Officer (13 HP, AC 12, +3, 1d6+1), each CR 1/2.
+
+Present on the site, absent or token in code: 137 archetypes (code 13, three real names, invented features), 119 maneuvers (2, neither real), 32 fighting styles and 32 masteries (1 real name), 20 lightsaber forms (0), 46 weapon and 30 armor properties (2), 1918 enhanced items (0), 271 monsters (15 entries, none with the site's numbers), Exhaustion condition, multiclassing. Starships: the site builds a ship from size (Tiny to Gargantuan), tier, hull and shield dice, six crew deployments, 257 modifications, 104 equipment items and 67 ventures; the code has five fixed stat blocks with sizes like "Colossal" that the site does not use.
+
+Site pages with no counterpart: Tools is only a login-gated Character Creator (steps Species, Class, Ability Scores, Description, Equipment; Standard Array, Point Buy or Manual, same three methods as here). Assets is PDFs of the four rulebooks, character, deployment and starship sheets, expanded-content links, a podcast.
+
+Suggested fix, not started: generate the data files from the API with a script instead of hand-editing. The full datasets are several MB, so trim fields or serve them from the server; ask the user which books to include (Player's Handbook only, or expanded content too).
+
 ## Decisions
 - Package is ESM.
 - Storage: Postgres on this VM with node-postgres (user accepted the default).
@@ -86,5 +114,5 @@ Gaps in content and rules (the flow works, the game is thin):
 1. Phase 3 (ask first): systemd service with restart on failure and EnvironmentFile for secrets; Caddy HTTPS reverse proxy to 127.0.0.1:5000, or Tailscale-only; DuckDNS name if public; the app has NO login, so protect it (Caddy basic auth or Tailscale-only); settle the host firewall (see above) before opening 80/443 in the Oracle VCN security list, and explain exactly what; database backup (pg_dump on a timer).
 2. First session on a real phone. Fix what breaks.
 3. Phase 4 phone UI: bottom-sheet HUD, wrap the button bar, combat panel placement, tap controls, dvh, PWA manifest and icons, lazy-load three.js, 2D map fallback, prune dependencies.
-4. Game content: an encounter a level 1 character can survive and combat started from the campaign; quests that advance; the three missing classes; background skills; subclass choice.
+4. Game content and rules accuracy: see "SW5e.com crosscheck". Import real data from the sw5e API (ask the user about scope first); then an encounter a level 1 character can survive and combat started from the campaign; quests that advance; subclass choice.
 5. Phase 5: keep the manual copy-paste GM loop. Do not build an API-based GM without asking.
