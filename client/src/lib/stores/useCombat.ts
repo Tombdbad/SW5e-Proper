@@ -1,10 +1,12 @@
 import { create } from "zustand";
 import { useCharacter, Character } from "./useCharacter";
-import { rollDice } from "@/lib/sw5e/dice";
+import { rollDice, sumDiceResults } from "@/lib/sw5e/dice";
 import {
   StarshipCombatManager,
   VehicleCombatManager,
 } from "../sw5e/combatmanagers";
+
+const roll = (quantity: number, sides: number) => sumDiceResults(rollDice(quantity, sides));
 
 const shipManager = new StarshipCombatManager();
 const vehicleManager = new VehicleCombatManager();
@@ -87,7 +89,7 @@ export const useCombat = create<CombatState>((set, get) => ({
   initiateCombat: (player, enemies) => {
     // Calculate initiatives
     const dexModifier = Math.floor((player.abilityScores.dexterity - 10) / 2);
-    const playerInitiative = rollDice(1, 20) + dexModifier;
+    const playerInitiative = roll(1, 20) + dexModifier;
 
     // Create player combatant
     const playerCombatant: Combatant = {
@@ -105,7 +107,7 @@ export const useCombat = create<CombatState>((set, get) => ({
     // Add initiative to enemies
     const enemyCombatants = enemies.map((enemy) => ({
       ...enemy,
-      initiative: rollDice(1, 20) + 1, // +1 as a simple modifier
+      initiative: roll(1, 20) + 1, // +1 as a simple modifier
       isPlayer: false,
     }));
 
@@ -156,7 +158,7 @@ export const useCombat = create<CombatState>((set, get) => ({
     }),
 
   rollInitiative: (dexModifier) => {
-    const result = rollDice(1, 20) + dexModifier;
+    const result = roll(1, 20) + dexModifier;
     return result;
   },
 
@@ -173,8 +175,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       let logMessage = `${attacker.name} attacks ${target.name} `;
 
       if (isCritical) {
-        logMessage += `with a 
-critical hit for ${damageValue} damage!`;
+        logMessage += `with a critical hit for ${damageValue} damage!`;
       } else if (attackValue >= target.armorClass) {
         logMessage += `and hits for ${damageValue} damage.`;
       } else {
@@ -269,12 +270,7 @@ critical hit for ${damageValue} damage!`;
         break;
     }
 
-    // Roll damage
-    let totalDamage = 0;
-    for (let i = 0; i < diceCount; i++) {
-      totalDamage += rollDice(1, diceType);
-    }
-
-    return totalDamage + modifier;
+    // Roll damage (a hit always does at least 1)
+    return Math.max(1, roll(diceCount, diceType) + modifier);
   },
 }));

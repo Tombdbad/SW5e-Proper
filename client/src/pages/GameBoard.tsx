@@ -31,7 +31,7 @@ export default function GameBoard() {
   const [showSidebar, setShowSidebar] = useState(true);
   const [activeMapTab, setActiveMapTab] = useState<"galaxy" | "local">("galaxy");
   const [showCombat, setShowCombat] = useState(false);
-  const { campaign, loadCampaign } = useCampaign();
+  const { loadCampaign } = useCampaign();
   const { inCombat, initiateCombat, endCombat } = useCombat();
   const combatants = useCombat((s) => s.combatants);
   const { currentLocation, setCurrentLocation } = useMap();
@@ -41,6 +41,8 @@ export default function GameBoard() {
     queryKey: [`/api/campaigns/${campaignId}`],
     enabled: !!campaignId,
   });
+  // The page shows the fetched campaign; the store copy is for the GM tools
+  const campaign: any = data;
 
   // The character is the one the campaign belongs to
   const gameCharacterId = (data as any)?.characterId as number | undefined;
@@ -73,7 +75,7 @@ export default function GameBoard() {
   // Load campaign data when available
   useEffect(() => {
     if (data && !isLoading) {
-      loadCampaign(data);
+      loadCampaign(data as any);
       
       // Set initial location if available
       const startName = (data as any).currentLocation || (data as any).startingLocation;
@@ -120,7 +122,7 @@ export default function GameBoard() {
 
   // Start combat (test)
   const startTestCombat = () => {
-    if (!character) return;
+    if (!character || character.currentHp <= 0) return;
     
     const enemies = [
       { id: "enemy-1", name: "Stormtrooper", hp: 30, maxHp: 30, initiative: 12, armorClass: 13, attackBonus: 3 },
@@ -206,7 +208,7 @@ export default function GameBoard() {
                 {showSidebar ? "Hide HUD" : "Show HUD"}
               </Button>
               {!inCombat && (
-                <Button variant="destructive" onClick={startTestCombat}>
+                <Button variant="destructive" onClick={startTestCombat} disabled={character.currentHp <= 0}>
                   Test Combat
                 </Button>
               )}
@@ -275,7 +277,7 @@ export default function GameBoard() {
               <TabsContent value="quests">
                 <h3 className="font-semibold mb-2">Active Quests</h3>
                 <div className="space-y-2">
-                  {campaign.quests?.filter(q => q.status === "active").map((quest, index) => (
+                  {campaign.quests?.filter((q: any) => q.status === "active").map((quest: any, index: number) => (
                     <div key={index} className="bg-gray-700 p-2 rounded">
                       <div className="font-semibold">{quest.title}</div>
                       <div className="text-sm mt-1">{quest.description}</div>
@@ -287,7 +289,7 @@ export default function GameBoard() {
               <TabsContent value="inventory">
                 <h3 className="font-semibold mb-2">Inventory</h3>
                 <div className="space-y-1">
-                  {character.equipment?.map((item, index) => (
+                  {character.equipment?.map((item: any, index: number) => (
                     <div key={index} className="flex justify-between">
                       <span>{item}</span>
                     </div>
