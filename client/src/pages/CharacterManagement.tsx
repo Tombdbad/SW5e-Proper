@@ -17,6 +17,8 @@ export default function CharacterManagement() {
   const navigate = useNavigate();
   const { generateCampaign } = useCampaign();
   const [isGeneratingCampaign, setIsGeneratingCampaign] = useState(false);
+  // Fields changed on the sheet and not saved yet
+  const [edits, setEdits] = useState<Record<string, any>>({});
 
   // Fetch character data
   const { data, isLoading, error } = useQuery({
@@ -31,6 +33,7 @@ export default function CharacterManagement() {
     },
     onSuccess: () => {
       toast.success("Character updated successfully");
+      setEdits({});
       queryClient.invalidateQueries({ queryKey: [`/api/characters/${id}`] });
     },
     onError: (error) => {
@@ -38,7 +41,7 @@ export default function CharacterManagement() {
     },
   });
 
-  const character: any = data;
+  const character: any = data ? { ...(data as any), ...edits } : data;
 
   // Generate campaign
   const handleGenerateCampaign = async () => {
@@ -57,8 +60,8 @@ export default function CharacterManagement() {
 
   // Save character changes
   const handleSaveChanges = () => {
-    if (!character) return;
-    updateCharacter.mutate(character);
+    if (!character || Object.keys(edits).length === 0) return;
+    updateCharacter.mutate(edits);
   };
 
   if (isLoading) {
@@ -127,7 +130,10 @@ export default function CharacterManagement() {
               </TabsList>
               
               <TabsContent value="character-sheet">
-                <CharacterSheet character={character} />
+                <CharacterSheet
+                  character={character}
+                  onUpdate={(changes) => setEdits((current) => ({ ...current, ...changes }))}
+                />
               </TabsContent>
               
               <TabsContent value="inventory">

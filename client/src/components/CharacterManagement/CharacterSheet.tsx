@@ -39,11 +39,14 @@ async function handleCharacterUpdate(characterData: any) {
     toast.error("Failed to save character updates");
   }
 }
-import { rollDice } from "@/lib/sw5e/dice";
+import { rollDice as rollDiceList, sumDiceResults } from "@/lib/sw5e/dice";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
+
+// The sheet works with totals; rollDice in lib/sw5e/dice returns the individual dice
+const rollDice = (quantity: number, sides: number) => sumDiceResults(rollDiceList(quantity, sides));
 
 // Define a proper Character interface
 interface Character {
@@ -107,13 +110,15 @@ interface ForcePower {
 interface CharacterSheetProps {
   character: Character;
   isPreview?: boolean;
+  // Called with the changed fields; the page keeps them until Save Changes
+  onUpdate?: (changes: Record<string, any>) => void;
 }
 
 export default function CharacterSheet({
   character,
   isPreview = false,
+  onUpdate,
 }: CharacterSheetProps) {
-  const { updateCharacter } = useCharacter();
   const [rollResult, setRollResult] = useState<{
     type: string;
     result: number;
@@ -288,10 +293,7 @@ export default function CharacterSheet({
 
   // Update character notes
   const handleNotesChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-    updateCharacter({
-      ...character,
-      notes: event.target.value,
-    });
+    onUpdate?.({ notes: event.target.value });
   };
 
   // Update hit points
@@ -299,10 +301,7 @@ export default function CharacterSheet({
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
     const newHp = parseInt(event.target.value) || 0;
-    updateCharacter({
-      ...character,
-      currentHp: newHp,
-    });
+    onUpdate?.({ currentHp: newHp });
   };
 
   // Update force points
@@ -310,10 +309,7 @@ export default function CharacterSheet({
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
     const newFp = parseInt(event.target.value) || 0;
-    updateCharacter({
-      ...character,
-      currentForcePoints: newFp,
-    });
+    onUpdate?.({ currentForcePoints: newFp });
   };
 
   // Calculate passive perception (10 + wisdom modifier + proficiency if proficient)
