@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiRequest } from '../lib/queryClient';
 import CampaignGenerator from '../components/Campaign/CampaignGenerator';
@@ -43,7 +43,7 @@ export default function CampaignView() {
   // Save campaign mutation
   const saveCampaign = useMutation({
     mutationFn: async (campaignData: any) => {
-      if (id) {
+      if (id && id !== 'create') {
         // Update existing campaign
         return apiRequest('PUT', `/api/campaigns/${id}`, campaignData);
       } else {
@@ -55,6 +55,7 @@ export default function CampaignView() {
       const data = await response.json();
       queryClient.invalidateQueries({ queryKey: [`/api/campaigns/${data.id}`] });
       queryClient.invalidateQueries({ queryKey: ['/api/campaigns'] });
+      setShowGenerator(false);
       navigate(`/campaigns/${data.id}`);
     }
   });
@@ -63,12 +64,10 @@ export default function CampaignView() {
     saveCampaign.mutate(campaignData);
   };
 
-  // Show generator if no campaign exists or we're in 'create' mode
+  // Show the generator in 'create' mode, the saved campaign otherwise
   useEffect(() => {
-    if (id === 'create') {
-      setShowGenerator(true);
-    }
-  }, [id, campaign]);
+    setShowGenerator(id === 'create');
+  }, [id]);
 
   if (!id && !campaign) {
     return (
@@ -123,12 +122,17 @@ export default function CampaignView() {
         )
       ) : (
         campaign && (
-          <CampaignManager 
-            campaign={campaign} 
-            character={character}
-            onSave={handleSaveCampaign}
-            onGenerateContent={() => setShowGenerator(true)}
-          />
+          <>
+            <div className="flex justify-between mb-4">
+              <Link to="/" className="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-600">
+                Home
+              </Link>
+              <Link to={`/game/${campaign.id}`} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
+                Play
+              </Link>
+            </div>
+            <CampaignManager campaign={campaign} />
+          </>
         )
       )}
     </div>

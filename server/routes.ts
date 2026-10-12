@@ -227,6 +227,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!result || result.length === 0) {
         return res.status(404).json({ message: "Character not found" });
       }
+      // A campaign cannot be played without its character
+      await db.delete(campaigns).where(eq(campaigns.characterId, characterId));
       res.status(204).end();
     } catch (error) {
       console.error("Error deleting character:", error);
@@ -399,6 +401,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   };
   app.put("/api/campaigns/:id", updateCampaign);
   app.patch("/api/campaigns/:id", updateCampaign);
+
+  app.delete("/api/campaigns/:id", async (req, res) => {
+    try {
+      const campaignId = parseInt(req.params.id);
+      const result = await db.delete(campaigns).where(eq(campaigns.id, campaignId)).returning();
+      if (!result || result.length === 0) {
+        return res.status(404).json({ message: "Campaign not found" });
+      }
+      res.status(204).end();
+    } catch (error) {
+      console.error("Error deleting campaign:", error);
+      res.status(500).json({ message: "Failed to delete campaign" });
+    }
+  });
 
   app.get("/api/campaigns/:id/locations", async (req, res) => {
     try {

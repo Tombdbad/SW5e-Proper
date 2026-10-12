@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import TranslucentPane from "@/components/ui/TranslucentPane";
 import { Character, Campaign } from "../../../shared/schema";
@@ -28,6 +28,16 @@ export default function Home() {
       return await res.json();
     },
   });
+
+  // Delete a character (the server also removes its campaigns) or a campaign
+  const queryClient = useQueryClient();
+  const remove = async (kind: "characters" | "campaigns", id: number, name: string) => {
+    const what = kind === "characters" ? `${name} and their campaigns` : name;
+    if (!window.confirm(`Delete ${what}? This cannot be undone.`)) return;
+    await apiRequest("DELETE", `/api/${kind}/${id}`);
+    queryClient.invalidateQueries({ queryKey: ["/api/characters"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/campaigns"] });
+  };
 
   // Hide intro after 3 seconds
   useEffect(() => {
@@ -81,10 +91,18 @@ export default function Home() {
                         Level {character.level} {character.species} {character.class}
                       </p>
                     </div>
-                    <div className="flex justify-end">
-                      <Link to={`/characters/${character.id}`}>
-                        <Button>Manage Character</Button>
-                      </Link>
+                    <div className="flex flex-wrap justify-between gap-2">
+                      <Button variant="destructive" onClick={() => remove("characters", character.id, character.name)}>
+                        Delete
+                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Link to={`/campaigns/create?characterId=${character.id}`}>
+                          <Button variant="outline">New Campaign</Button>
+                        </Link>
+                        <Link to={`/characters/${character.id}`}>
+                          <Button>Manage Character</Button>
+                        </Link>
+                      </div>
                     </div>
                   </TranslucentPane>
                 ))}
@@ -123,13 +141,18 @@ export default function Home() {
                       <h3 className="text-xl font-bold">{campaign.name}</h3>
                       <p className="text-gray-300">{campaign.description}</p>
                     </div>
-                    <div className="flex justify-between">
-                      <Link to={`/campaigns/${campaign.id}`}>
-                        <Button variant="outline">View</Button>
-                      </Link>
-                      <Link to={`/game/${campaign.id}`}>
-                        <Button>Play</Button>
-                      </Link>
+                    <div className="flex flex-wrap justify-between gap-2">
+                      <Button variant="destructive" onClick={() => remove("campaigns", campaign.id, campaign.name)}>
+                        Delete
+                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Link to={`/campaigns/${campaign.id}`}>
+                          <Button variant="outline">View</Button>
+                        </Link>
+                        <Link to={`/game/${campaign.id}`}>
+                          <Button>Play</Button>
+                        </Link>
+                      </div>
                     </div>
                   </TranslucentPane>
                 ))}
