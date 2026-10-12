@@ -8,32 +8,12 @@ import CampaignView from './pages/CampaignView';
 import GalacticMapView from './pages/GalacticMapView';
 import GameBoard from './pages/GameBoard';
 import NotFound from './pages/not-found';
-import { useCharacter } from './lib/stores/useCharacter';
-import { useCampaign } from './lib/stores/useCampaign';
 import { Toaster } from './components/ui/sonner';
 import LoadingDemo from './pages/LoadingDemo';
 
 function App() {
   const navigate = useNavigate();
-  const { fetchCharacters } = useCharacter();
-  const { fetchCampaigns } = useCampaign();
   const [showDevTools, setShowDevTools] = useState(false);
-  
-  // Initial data loading
-  useEffect(() => {
-    const loadInitialData = async () => {
-      try {
-        await Promise.all([
-          fetchCharacters(),
-          fetchCampaigns()
-        ]);
-      } catch (error) {
-        console.error("Error loading initial data:", error);
-      }
-    };
-    
-    loadInitialData();
-  }, [fetchCharacters, fetchCampaigns]);
   
   // Toggle developer tools with Ctrl+Shift+D
   useEffect(() => {

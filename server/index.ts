@@ -71,10 +71,11 @@ app.use((req, res, next) => {
 
   // ALWAYS serve the app on port 5000
   // this serves both the API and the client
+  // Listens on loopback unless HOST is set: the app has no login (see REVIVAL_NOTES.md, Phase 3)
   const port = 5000;
   server.listen({
     port,
-    host: "0.0.0.0",
+    host: process.env.HOST || "127.0.0.1",
     reusePort: true,
   }, () => {
     log(`serving on port ${port}`);
