@@ -1,0 +1,306 @@
+{
+ "source": "https://sw5eapi.azurewebsites.net/api",
+ "dataVersion": 199,
+ "dataLastUpdated": "2023-05-06",
+ "importedAt": "2026-10-13",
+ "datasets": {
+  "species": {
+   "endpoint": "species",
+   "count": 141,
+   "bytes": 590381,
+   "bySource": {
+    "EC": 111,
+    "PHB": 30
+   }
+  },
+  "classes": {
+   "endpoint": "class",
+   "count": 10,
+   "bytes": 264948,
+   "bySource": {
+    "PHB": 10
+   }
+  },
+  "archetypes": {
+   "endpoint": "archetype",
+   "count": 137,
+   "bytes": 1366568,
+   "bySource": {
+    "PHB": 40,
+    "EC": 97
+   }
+  },
+  "backgrounds": {
+   "endpoint": "background",
+   "count": 61,
+   "bytes": 306559,
+   "bySource": {
+    "EC": 41,
+    "PHB": 20
+   }
+  },
+  "feats": {
+   "endpoint": "feat",
+   "count": 119,
+   "bytes": 79150,
+   "bySource": {
+    "PHB": 65,
+    "EC": 44,
+    "WH": 10
+   }
+  },
+  "powers": {
+   "endpoint": "power",
+   "count": 465,
+   "bytes": 428751,
+   "bySource": {
+    "PHB": 399,
+    "EC": 66
+   }
+  },
+  "equipment": {
+   "endpoint": "equipment",
+   "count": 507,
+   "bytes": 307212,
+   "bySource": {
+    "EC": 123,
+    "WH": 198,
+    "PHB": 186
+   }
+  },
+  "enhancedItems": {
+   "endpoint": "enhancedItem",
+   "count": 1918,
+   "bytes": 1685274,
+   "bySource": {
+    "WH": 1550,
+    "EC": 368
+   }
+  },
+  "monsters": {
+   "endpoint": "monster",
+   "count": 271,
+   "bytes": 1002823,
+   "bySource": {
+    "SnV": 271
+   }
+  },
+  "maneuvers": {
+   "endpoint": "maneuvers",
+   "count": 119,
+   "bytes": 50131,
+   "bySource": {
+    "PHB": 100,
+    "EC": 19
+   }
+  },
+  "fightingStyles": {
+   "endpoint": "fightingStyle",
+   "count": 32,
+   "bytes": 20036,
+   "bySource": {
+    "PHB": 32
+   }
+  },
+  "fightingMasteries": {
+   "endpoint": "fightingMastery",
+   "count": 32,
+   "bytes": 30960,
+   "bySource": {
+    "PHB": 32
+   }
+  },
+  "lightsaberForms": {
+   "endpoint": "lightsaberForm",
+   "count": 20,
+   "bytes": 7459,
+   "bySource": {
+    "PHB": 20
+   }
+  },
+  "classImprovements": {
+   "endpoint": "classImprovement",
+   "count": 10,
+   "bytes": 3641,
+   "bySource": {
+    "EC": 10
+   }
+  },
+  "multiclassImprovements": {
+   "endpoint": "multiclassImprovement",
+   "count": 10,
+   "bytes": 3439,
+   "bySource": {
+    "EC": 10
+   }
+  },
+  "splashclassImprovements": {
+   "endpoint": "splashclassImprovement",
+   "count": 10,
+   "bytes": 8925,
+   "bySource": {
+    "EC": 10
+   }
+  },
+  "weaponFocuses": {
+   "endpoint": "weaponFocus",
+   "count": 8,
+   "bytes": 6553,
+   "bySource": {
+    "WH": 8
+   }
+  },
+  "weaponSupremacies": {
+   "endpoint": "weaponSupremacy",
+   "count": 8,
+   "bytes": 11447,
+   "bySource": {
+    "WH": 8
+   }
+  },
+  "weaponProperties": {
+   "endpoint": "weaponProperty",
+   "count": 46,
+   "bytes": 18911,
+   "bySource": {
+    "None": 46
+   }
+  },
+  "armorProperties": {
+   "endpoint": "armorProperty",
+   "count": 30,
+   "bytes": 11095,
+   "bySource": {
+    "None": 30
+   }
+  },
+  "skills": {
+   "endpoint": "skills",
+   "count": 18,
+   "bytes": 2052,
+   "bySource": {
+    "None": 18
+   }
+  },
+  "conditions": {
+   "endpoint": "conditions",
+   "count": 16,
+   "bytes": 6775,
+   "bySource": {
+    "None": 16
+   }
+  },
+  "characterAdvancement": {
+   "endpoint": "characterAdvancement",
+   "count": 20,
+   "bytes": 2304,
+   "bySource": {
+    "None": 20
+   }
+  },
+  "referenceTables": {
+   "endpoint": "referenceTable",
+   "count": 33,
+   "bytes": 10179,
+   "bySource": {
+    "None": 33
+   }
+  },
+  "starshipSizes": {
+   "endpoint": "starshipBaseSize",
+   "count": 6,
+   "bytes": 85488,
+   "bySource": {
+    "SotG": 6
+   }
+  },
+  "starshipDeployments": {
+   "endpoint": "starshipDeployment",
+   "count": 6,
+   "bytes": 69871,
+   "bySource": {
+    "SotG": 6
+   }
+  },
+  "starshipEquipment": {
+   "endpoint": "starshipEquipment",
+   "count": 104,
+   "bytes": 51368,
+   "bySource": {
+    "SotG": 104
+   }
+  },
+  "starshipModifications": {
+   "endpoint": "starshipModification",
+   "count": 257,
+   "bytes": 156808,
+   "bySource": {
+    "SotG": 257
+   }
+  },
+  "starshipVentures": {
+   "endpoint": "starshipVenture",
+   "count": 67,
+   "bytes": 30702,
+   "bySource": {
+    "SotG": 67
+   }
+  },
+  "rulesPlayersHandbook": {
+   "endpoint": "PlayerHandbookRule",
+   "count": 16,
+   "bytes": 455172,
+   "bySource": {
+    "None": 16
+   }
+  },
+  "rulesStarships": {
+   "endpoint": "StarshipRule",
+   "count": 13,
+   "bytes": 265793,
+   "bySource": {
+    "None": 13
+   }
+  },
+  "rulesWretchedHives": {
+   "endpoint": "WretchedHivesRule",
+   "count": 10,
+   "bytes": 400500,
+   "bySource": {
+    "None": 10
+   }
+  },
+  "rulesVariant": {
+   "endpoint": "VariantRule",
+   "count": 40,
+   "bytes": 142103,
+   "bySource": {
+    "None": 40
+   }
+  },
+  "rulesExpandedContent": {
+   "endpoint": "ExpandedContent",
+   "count": 10,
+   "bytes": 1739458,
+   "bySource": {
+    "None": 10
+   }
+  },
+  "travel": {
+   "derivedFrom": "rulesStarships",
+   "regions": 9,
+   "bytes": 8659
+  },
+  "lookups": {
+   "derivedFrom": "rulesPlayersHandbook",
+   "languages": 27,
+   "bytes": 1013
+  }
+ },
+ "features": {
+  "fromEndpoint": "feature",
+  "total": 2723,
+  "storedWithOwner": 1153,
+  "alreadySpeciesTraits": 1570
+ }
+}

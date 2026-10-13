@@ -1,0 +1,20 @@
+[
+{"id":"acrobatics","name":"Acrobatics","baseAttribute":"Dexterity","contentType":"Lookup","contentSource":"None"},
+{"id":"animal-handling","name":"Animal Handling","baseAttribute":"Wisdom","contentType":"Lookup","contentSource":"None"},
+{"id":"athletics","name":"Athletics","baseAttribute":"Strength","contentType":"Lookup","contentSource":"None"},
+{"id":"deception","name":"Deception","baseAttribute":"Charisma","contentType":"Lookup","contentSource":"None"},
+{"id":"insight","name":"Insight","baseAttribute":"Wisdom","contentType":"Lookup","contentSource":"None"},
+{"id":"intimidation","name":"Intimidation","baseAttribute":"Charisma","contentType":"Lookup","contentSource":"None"},
+{"id":"investigation","name":"Investigation","baseAttribute":"Intelligence","contentType":"Lookup","contentSource":"None"},
+{"id":"lore","name":"Lore","baseAttribute":"Intelligence","contentType":"Lookup","contentSource":"None"},
+{"id":"medicine","name":"Medicine","baseAttribute":"Wisdom","contentType":"Lookup","contentSource":"None"},
+{"id":"nature","name":"Nature","baseAttribute":"Intelligence","contentType":"Lookup","contentSource":"None"},
+{"id":"perception","name":"Perception","baseAttribute":"Wisdom","contentType":"Lookup","contentSource":"None"},
+{"id":"performance","name":"Performance","baseAttribute":"Charisma","contentType":"Lookup","contentSource":"None"},
+{"id":"persuasion","name":"Persuasion","baseAttribute":"Charisma","contentType":"Lookup","contentSource":"None"},
+{"id":"piloting","name":"Piloting","baseAttribute":"Intelligence","contentType":"Lookup","contentSource":"None"},
+{"id":"sleight-of-hand","name":"Sleight of Hand","baseAttribute":"Dexterity","contentType":"Lookup","contentSource":"None"},
+{"id":"stealth","name":"Stealth","baseAttribute":"Dexterity","contentType":"Lookup","contentSource":"None"},
+{"id":"survival","name":"Survival","baseAttribute":"Wisdom","contentType":"Lookup","contentSource":"None"},
+{"id":"technology","name":"Technology","baseAttribute":"Intelligence","contentType":"Lookup","contentSource":"None"}
+]

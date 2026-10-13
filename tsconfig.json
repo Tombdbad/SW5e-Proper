@@ -13,6 +13,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
     "baseUrl": ".",
     "moduleResolution": "node",
     "types": ["node", "vite/client"],

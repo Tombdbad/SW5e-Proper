@@ -1,0 +1,294 @@
+{
+ "regions": [
+  "Deep Core",
+  "Core",
+  "Colonies",
+  "Inner Rim",
+  "Expansion Region",
+  "Mid Rim",
+  "Outer Rim",
+  "Wild Space",
+  "Unknown Regions"
+ ],
+ "hyperspaceHours": {
+  "Deep Core": {
+   "Deep Core": 12,
+   "Core": 18,
+   "Colonies": 24,
+   "Inner Rim": 48,
+   "Expansion Region": 72,
+   "Mid Rim": 96,
+   "Outer Rim": 120,
+   "Wild Space": 144,
+   "Unknown Regions": 168
+  },
+  "Core": {
+   "Deep Core": 24,
+   "Core": 6,
+   "Colonies": 24,
+   "Inner Rim": 36,
+   "Expansion Region": 60,
+   "Mid Rim": 84,
+   "Outer Rim": 96,
+   "Wild Space": 120,
+   "Unknown Regions": 144
+  },
+  "Colonies": {
+   "Deep Core": 48,
+   "Core": 24,
+   "Colonies": 12,
+   "Inner Rim": 24,
+   "Expansion Region": 48,
+   "Mid Rim": 72,
+   "Outer Rim": 96,
+   "Wild Space": 120,
+   "Unknown Regions": 96
+  },
+  "Inner Rim": {
+   "Deep Core": 72,
+   "Core": 36,
+   "Colonies": 24,
+   "Inner Rim": 18,
+   "Expansion Region": 24,
+   "Mid Rim": 48,
+   "Outer Rim": 72,
+   "Wild Space": 96,
+   "Unknown Regions": 72
+  },
+  "Expansion Region": {
+   "Deep Core": 96,
+   "Core": 60,
+   "Colonies": 48,
+   "Inner Rim": 24,
+   "Expansion Region": 24,
+   "Mid Rim": 24,
+   "Outer Rim": 48,
+   "Wild Space": 72,
+   "Unknown Regions": 96
+  },
+  "Mid Rim": {
+   "Deep Core": 120,
+   "Core": 84,
+   "Colonies": 72,
+   "Inner Rim": 48,
+   "Expansion Region": 24,
+   "Mid Rim": 36,
+   "Outer Rim": 24,
+   "Wild Space": 48,
+   "Unknown Regions": 72
+  },
+  "Outer Rim": {
+   "Deep Core": 144,
+   "Core": 96,
+   "Colonies": 96,
+   "Inner Rim": 72,
+   "Expansion Region": 48,
+   "Mid Rim": 24,
+   "Outer Rim": 48,
+   "Wild Space": 24,
+   "Unknown Regions": 60
+  },
+  "Wild Space": {
+   "Deep Core": 168,
+   "Core": 120,
+   "Colonies": 120,
+   "Inner Rim": 96,
+   "Expansion Region": 72,
+   "Mid Rim": 48,
+   "Outer Rim": 24,
+   "Wild Space": 12,
+   "Unknown Regions": 120
+  },
+  "Unknown Regions": {
+   "Deep Core": 192,
+   "Core": 144,
+   "Colonies": 96,
+   "Inner Rim": 72,
+   "Expansion Region": 60,
+   "Mid Rim": 72,
+   "Outer Rim": 96,
+   "Wild Space": 120,
+   "Unknown Regions": 48
+  }
+ },
+ "realspaceTravel": [
+  {
+   "distance": "Surface of planet to orbit",
+   "time": "1-5 minutes"
+  },
+  {
+   "distance": "Orbit to safe hyperspace jump distance",
+   "time": "1 minute"
+  },
+  {
+   "distance": "Orbit to planet's moon",
+   "time": "10-30 minutes"
+  },
+  {
+   "distance": "Orbit to another planet in the same system",
+   "time": "2-6 hours"
+  },
+  {
+   "distance": "Orbit to outer edge of system",
+   "time": "12-24 hours"
+  }
+ ],
+ "starshipSizes": [
+  {
+   "name": "Tiny",
+   "space": "Up to 25 ft.",
+   "stockCost": 12500,
+   "modificationSlots": 10,
+   "fuelCapacity": 5,
+   "tables": {
+    "Starship Size Stock Cost": "12,500 cr",
+    "Starship Size Construction Workforce: Min. Workforce": "3",
+    "Starship Size Construction Workforce: Max. Workforce": "18",
+    "Starship Size Upgrade Cost": "x 0.5",
+    "Starship Size Upgrade Workforce": "1",
+    "Starship Size Modification Cost": "x 0.5",
+    "Starship Size Modification Workforce": "1",
+    "Modification Capacity by Ship Size": "10",
+    "Starship Size Maximum Suites": "—",
+    "Starship Size Suite Capacity": "—",
+    "Starship Size Fuel Cost": "25 cr/unit",
+    "Starship Size Fuel Capacity": "5 units",
+    "Starship Size Food Capacity": "-",
+    "Starship Size Refitting Time": "4 hours",
+    "Size Categories": "Up to 25 ft.",
+    "Asteroids, Debris, and Enclosed Terrain: DC": "10",
+    "Asteroids, Debris, and Enclosed Terrain: Damage": "1d6"
+   }
+  },
+  {
+   "name": "Small",
+   "space": "25 to 50 ft.",
+   "stockCost": 25000,
+   "modificationSlots": 20,
+   "fuelCapacity": 10,
+   "tables": {
+    "Starship Size Stock Cost": "25,000 cr",
+    "Starship Size Construction Workforce: Min. Workforce": "5",
+    "Starship Size Construction Workforce: Max. Workforce": "30",
+    "Starship Size Upgrade Cost": "x 1",
+    "Starship Size Upgrade Workforce": "1",
+    "Starship Size Modification Cost": "x 1",
+    "Starship Size Modification Workforce": "2",
+    "Modification Capacity by Ship Size": "20",
+    "Starship Size Maximum Suites": "-1 + con. mod.",
+    "Starship Size Suite Capacity": "1",
+    "Starship Size Fuel Cost": "50 cr/unit",
+    "Starship Size Fuel Capacity": "10 units",
+    "Starship Size Food Capacity": "10 portions",
+    "Starship Size Refitting Time": "8 hours",
+    "Size Categories": "25 to 50 ft.",
+    "Asteroids, Debris, and Enclosed Terrain: DC": "14",
+    "Asteroids, Debris, and Enclosed Terrain: Damage": "2d6"
+   }
+  },
+  {
+   "name": "Medium",
+   "space": "50 to 250 ft.",
+   "stockCost": 75000,
+   "modificationSlots": 30,
+   "fuelCapacity": 30,
+   "tables": {
+    "Starship Size Stock Cost": "75,000 cr",
+    "Starship Size Construction Workforce: Min. Workforce": "10",
+    "Starship Size Construction Workforce: Max. Workforce": "60",
+    "Starship Size Upgrade Cost": "x 2",
+    "Starship Size Upgrade Workforce": "5",
+    "Starship Size Modification Cost": "x 2",
+    "Starship Size Modification Workforce": "4",
+    "Modification Capacity by Ship Size": "30",
+    "Starship Size Maximum Suites": "3 + con. mod.",
+    "Starship Size Suite Capacity": "4",
+    "Starship Size Fuel Cost": "100 cr/unit",
+    "Starship Size Fuel Capacity": "30 units",
+    "Starship Size Food Capacity": "120 portions",
+    "Starship Size Refitting Time": "1 day",
+    "Size Categories": "50 to 250 ft.",
+    "Asteroids, Debris, and Enclosed Terrain: DC": "18",
+    "Asteroids, Debris, and Enclosed Terrain: Damage": "3d6"
+   }
+  },
+  {
+   "name": "Large",
+   "space": "250 to 2,500 ft.",
+   "stockCost": 500000,
+   "modificationSlots": 50,
+   "fuelCapacity": 300,
+   "tables": {
+    "Starship Size Stock Cost": "500,000 cr",
+    "Starship Size Construction Workforce: Min. Workforce": "100",
+    "Starship Size Construction Workforce: Max. Workforce": "600",
+    "Starship Size Upgrade Cost": "x 10",
+    "Starship Size Upgrade Workforce": "50",
+    "Starship Size Modification Cost": "x 5",
+    "Starship Size Modification Workforce": "10",
+    "Modification Capacity by Ship Size": "50",
+    "Starship Size Maximum Suites": "3 + 2x con. mod.",
+    "Starship Size Suite Capacity": "400",
+    "Starship Size Fuel Cost": "1,000 cr/unit",
+    "Starship Size Fuel Capacity": "300 units",
+    "Starship Size Food Capacity": "240,000 portions",
+    "Starship Size Refitting Time": "3 days",
+    "Size Categories": "250 to 2,500 ft.",
+    "Asteroids, Debris, and Enclosed Terrain: DC": "22",
+    "Asteroids, Debris, and Enclosed Terrain: Damage": "4d6"
+   }
+  },
+  {
+   "name": "Huge",
+   "space": "2,500 to 10,000 ft.",
+   "stockCost": 100000000,
+   "modificationSlots": 60,
+   "fuelCapacity": 600,
+   "tables": {
+    "Starship Size Stock Cost": "100,000,000 cr",
+    "Starship Size Construction Workforce: Min. Workforce": "1,000",
+    "Starship Size Construction Workforce: Max. Workforce": "6,000",
+    "Starship Size Upgrade Cost": "x 100",
+    "Starship Size Upgrade Workforce": "500",
+    "Starship Size Modification Cost": "x 50",
+    "Starship Size Modification Workforce": "100",
+    "Modification Capacity by Ship Size": "60",
+    "Starship Size Maximum Suites": "6 + 3x con. mod.",
+    "Starship Size Suite Capacity": "4,000",
+    "Starship Size Fuel Cost": "10,000 cr/unit",
+    "Starship Size Fuel Capacity": "600 units",
+    "Starship Size Food Capacity": "9,600,000 portions",
+    "Starship Size Refitting Time": "1 week",
+    "Size Categories": "2,500 to 10,000 ft.",
+    "Asteroids, Debris, and Enclosed Terrain: DC": "26",
+    "Asteroids, Debris, and Enclosed Terrain: Damage": "5d6"
+   }
+  },
+  {
+   "name": "Gargantuan",
+   "space": "10,000 ft. or larger",
+   "stockCost": 1000000000,
+   "modificationSlots": 70,
+   "fuelCapacity": 1800,
+   "tables": {
+    "Starship Size Stock Cost": "1,000,000,000 cr",
+    "Starship Size Construction Workforce: Min. Workforce": "10,000",
+    "Starship Size Construction Workforce: Max. Workforce": "60,000",
+    "Starship Size Upgrade Cost": "x 1,000",
+    "Starship Size Upgrade Workforce": "5,000",
+    "Starship Size Modification Cost": "x 500",
+    "Starship Size Modification Workforce": "1,000",
+    "Modification Capacity by Ship Size": "70",
+    "Starship Size Maximum Suites": "10 + 4x con. mod.",
+    "Starship Size Suite Capacity": "40,000",
+    "Starship Size Fuel Cost": "100,000 cr/unit",
+    "Starship Size Fuel Capacity": "1,800 units",
+    "Starship Size Food Capacity": "576,000,000 portions",
+    "Starship Size Refitting Time": "1 month",
+    "Size Categories": "10,000 ft. or larger",
+    "Asteroids, Debris, and Enclosed Terrain: DC": "30",
+    "Asteroids, Debris, and Enclosed Terrain: Damage": "6d6"
+   }
+  }
+ ]
+}
