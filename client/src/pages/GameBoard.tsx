@@ -315,7 +315,7 @@ export default function GameBoard() {
     const weapons = carriedWeapons(character).sort((a, b) => Number(!!a.natural) - Number(!!b.natural) || b.attackBonus - a.attackBonus);
     const melee = weapons.find((w) => !w.ranged);
     const ranged = weapons.find((w) => w.ranged);
-    const order = { attack: 0, save: 0, heal: 1, other: 2 };
+    const order = { attack: 0, save: 0, condition: 1, heal: 1, other: 2 };
     return {
       meleeDice: melee?.dice,
       meleeWeapon: melee?.name,
@@ -350,6 +350,7 @@ export default function GameBoard() {
         armorClass: o.armorClass ?? 10,
         attackBonus: o.attack?.bonus ?? 2,
         damageDice: o.attack?.damage ?? "1d4",
+        rangedAttacker: o.attack?.ranged ?? true,
         saves: o.saves,
       })),
     );
@@ -503,6 +504,7 @@ export default function GameBoard() {
       armorClass: o.armorClass,
       attackBonus: o.attack?.bonus ?? 2,
       damageDice: o.attack?.damage ?? "1d4",
+      rangedAttacker: o.attack?.ranged ?? true,
       saves: o.saves,
     }));
     lastSavedHp.current = character.currentHp;

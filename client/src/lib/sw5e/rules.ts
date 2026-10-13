@@ -5,6 +5,7 @@ import { Species } from './species';
 import { Skill } from './skills';
 import { Background } from './backgrounds';
 import { equipment } from './equipment';
+import { conditions } from './conditions';
 
 type Class = SW5EClass & Record<string, any>;
 
@@ -389,44 +390,202 @@ export const calculateStartingCredits = (classId: string, rollResult?: number): 
 
 export interface PowerEffect {
   // attack: the caster rolls to hit; save: the target saves against the caster's DC;
-  // heal: the caster regains hit points; other: nothing the app can resolve by itself
-  kind: "attack" | "save" | "heal" | "other";
+  // heal: the caster regains hit points; condition: a condition lands without a roll;
+  // other: nothing the app can resolve by itself
+  kind: "attack" | "save" | "heal" | "condition" | "other";
   dice?: string;
   damageType?: string;
   save?: keyof AbilityScores;
   halfOnSave?: boolean;
+  // The condition the power puts on its target, for how many of the target's turns, and
+  // whether the target saves again at the end of each of them
+  conditions?: string[];
+  conditionRounds?: number;
+  repeatSave?: boolean;
+  // Only a creature with no more hit points than this roll is affected
+  hitPointPool?: string;
+  // The condition ends when its bearer attacks or casts a power, or when its bearer is hurt
+  endsOnAttack?: boolean;
+  endsOnDamage?: boolean;
+  // The condition is for the caster (or a willing creature), not for an enemy
+  onSelf?: boolean;
+  concentration?: boolean;
   summary: string;
+}
+
+// What a condition does in a fight, read from the condition's own text (conditions data)
+export interface ConditionMechanics {
+  // Cannot act on its turn
+  incapacitated: boolean;
+  // Cannot attack whoever put the condition on it
+  cantAttackSource: boolean;
+  // +1 advantage, -1 disadvantage, by the kind of attack
+  ownAttacks: { melee: number; ranged: number };
+  attacksAgainst: { melee: number; ranged: number };
+  // A hit from within 5 feet is a critical hit
+  meleeHitsCrit: boolean;
+  autoFailSaves: string[];
+  disadvantageSaves: string[];
+}
+
+const ABILITY_WORDS = "Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma";
+const mechanicsCache = new Map<string, ConditionMechanics>();
+
+export function conditionMechanics(name: string, seen: string[] = []): ConditionMechanics {
+  const key = name.toLowerCase();
+  const cached = mechanicsCache.get(key);
+  if (cached) return cached;
+  const text = conditions.find((c) => c.name.toLowerCase() === key)?.description ?? "";
+  const abilities = (pattern: RegExp) =>
+    (text.match(pattern)?.[1].match(new RegExp(ABILITY_WORDS, "g")) ?? []).map((a) => a.toLowerCase());
+  const m: ConditionMechanics = {
+    incapacitated: /can't take actions/i.test(text),
+    cantAttackSource: /can't attack the/i.test(text),
+    ownAttacks: { melee: 0, ranged: 0 },
+    attacksAgainst: { melee: 0, ranged: 0 },
+    meleeHitsCrit: /hits the creature is a critical hit if the attacker is within 5 feet/i.test(text),
+    autoFailSaves: abilities(/automatically fails ([\w ]+?) saving throws/i),
+    disadvantageSaves: abilities(/disadvantage on ([\w ]+?) saving throws/i),
+  };
+  const sign = (word: string) => (/^dis/i.test(word) ? -1 : 1);
+  // "the creature's attack rolls have disadvantage", "has disadvantage on ability checks and attack rolls"
+  const own = text.match(/creature's attack rolls have (advantage|disadvantage)/i) ?? text.match(/has (advantage|disadvantage) on (?:ability checks and )?attack rolls/i);
+  if (own) m.ownAttacks = { melee: sign(own[1]), ranged: sign(own[1]) };
+  const ownMelee = text.match(/has (advantage|disadvantage) on melee attack rolls/i);
+  if (ownMelee) m.ownAttacks.melee = sign(ownMelee[1]);
+  const against = text.match(/attack rolls against the creature have (advantage|disadvantage)/i);
+  if (against) m.attacksAgainst = { melee: sign(against[1]), ranged: sign(against[1]) };
+  // "has advantage if the attacker is within 5 feet of the creature. Otherwise, the attack roll has disadvantage"
+  const near = text.match(/attack roll against the creature has (advantage|disadvantage) if the attacker is within 5 feet[^.]*\.(?: Otherwise, the attack roll has (advantage|disadvantage))?/i);
+  if (near) m.attacksAgainst = { melee: sign(near[1]), ranged: near[2] ? sign(near[2]) : 0 };
+  // "is incapacitated (see the condition)": what that condition does applies too
+  for (const other of conditions) {
+    const otherKey = other.name.toLowerCase();
+    if (otherKey === key || seen.includes(otherKey) || !new RegExp(`creature is ${otherKey} \\(see the condition\\)`, "i").test(text)) continue;
+    const inner = conditionMechanics(other.name, [...seen, key]);
+    m.incapacitated ||= inner.incapacitated;
+  }
+  mechanicsCache.set(key, m);
+  return m;
+}
+
+// The plain-words line shown beside a condition in a fight
+export function conditionSummary(name: string): string {
+  const m = conditionMechanics(name);
+  const word = (n: number) => (n > 0 ? "advantage" : "disadvantage");
+  const both = (v: { melee: number; ranged: number }, what: string) =>
+    v.melee && v.melee === v.ranged ? [`${what} have ${word(v.melee)}`]
+      : [v.melee && `${what} in melee have ${word(v.melee)}`, v.ranged && `${what} at range have ${word(v.ranged)}`].filter(Boolean) as string[];
+  return [
+    m.incapacitated && "cannot act",
+    m.cantAttackSource && "cannot attack whoever caused it",
+    ...both(m.ownAttacks, "its attacks"),
+    ...both(m.attacksAgainst, "attacks against it"),
+    m.meleeHitsCrit && "melee hits are critical",
+    m.autoFailSaves.length && `fails ${m.autoFailSaves.join(" and ")} saves`,
+    m.disadvantageSaves.length && `disadvantage on ${m.disadvantageSaves.join(" and ")} saves`,
+  ].filter(Boolean).join("; ") || "no effect on the dice";
+}
+
+// How many rounds a duration lasts ("1 minute", "up to 1 hour", "until the end of your next turn")
+const durationRounds = (text: string): number | undefined => {
+  const span = text.match(/(\d+) (round|minute|hour)/i);
+  if (span) return Math.min(100, Number(span[1]) * ({ round: 1, minute: 10, hour: 600 } as Record<string, number>)[span[2].toLowerCase()]);
+  if (/(end|start) of (?:your|its|their) next turn/i.test(text)) return 1;
+  return undefined;
+};
+
+// The conditions a power puts on a creature: "is stunned", "or be charmed", "become frightened",
+// "is also poisoned", "falls unconscious", and with them "While poisoned in this way, the target
+// is paralyzed". Sentences that only mention a condition ("if the target is invisible", "can't be
+// knocked prone", "any effect causing a target to be charmed") are not read as imposing it.
+function powerCondition(power: { description?: string; duration?: string; concentration?: boolean }) {
+  const text = (power.description ?? "").split(/\*\*\*/)[0];
+  const names = conditions.map((c) => c.name.toLowerCase()).join("|");
+  const proper = (word: string) => conditions.find((c) => c.name.toLowerCase() === word.toLowerCase())!.name;
+  const pattern = new RegExp(`\\b(?:is|be|becomes?|falls?|knocks?|knocked)(?: a creature| it| the target)? (?:also |either |then )?(${names})\\b([^.]*)`, "i");
+  for (const sentence of text.split(/(?<=\.)\s+/)) {
+    const found = sentence.match(pattern);
+    if (!found) continue;
+    const before = sentence.slice(0, found.index);
+    if (/\b(if|while|when|unless)\b/i.test(before) && !/\bfail/i.test(before)) continue;
+    if (/(can't|cannot|can|caus\w+ [\w ]*?to|or|ignoring|already)(?: be)?\s*$/i.test(before) && !/(succeed|saving throw|save)[^,]* or\s*$/i.test(before)) continue;
+    const all = [proper(found[1])];
+    // A creature that can stand up again does so on its turn
+    const shaken = /thereby ends the condition/i.test(conditions.find((c) => c.name === all[0])!.description) && !/unable to stand/i.test(text);
+    const rounds = shaken ? 1 : durationRounds(found[2]) ?? durationRounds(power.duration ?? "") ?? 1;
+    // What else the text ties to it
+    const more = new RegExp(`(?:while ${found[1]} (?:in this way|by this power)[^.]*?\\bis|${found[1]}, becoming|${found[1]} and) (${names})\\b`, "i").exec(text);
+    if (more && !all.includes(proper(more[1]))) all.push(proper(more[1]));
+    const pool = text.match(/Roll (\d+d\d+)[;,] (?:the total is how many hit points|if the creature's remaining hit points)/i);
+    return {
+      conditions: all,
+      conditionRounds: rounds,
+      repeatSave: /(?:end|start) of each of (?:its|their|the target's|the creature's) turns[^.]*(?:saving throw|save)|repeat the saving throw/i.test(text),
+      // "The power ends for an affected creature if it takes any damage", "until ... the sleeper takes damage"
+      endsOnDamage: /\b(?:ends|until the power ends)[^.]*\btakes (?:any )?damage|takes damage[^.]*\b(?:awoken|power ends)/i.test(text),
+      // "the invisibility ends if you attack or cast a power", "ends if the target attacks"
+      endsOnAttack: /ends (?:early )?(?:on a target )?if (?:you|the target|it|the creature) attacks?\b/i.test(text),
+      concentration: !!power.concentration,
+      // "Roll 5d8": only a creature with no more hit points than the roll is affected
+      hitPointPool: pool?.[1],
+    };
+  }
+  return undefined;
 }
 
 // Points a power costs: its level + 1; at-will powers (level 0) are free
 export const powerCost = (power: { level: number }): number => (power.level > 0 ? power.level + 1 : 0);
 
-export function powerEffect(power: { level: number; description?: string }, casterLevel: number): PowerEffect {
+export function powerEffect(power: { level: number; description?: string; duration?: string; concentration?: boolean }, casterLevel: number): PowerEffect {
   const text = power.description ?? "";
   const heal = text.match(/regains? (?:a number of )?hit points equal to (\d+)d(\d+)/i);
-  const damage = text.match(/(\d+)d(\d+)(?:\s*\+\s*\d+)? (\w+) damage/i);
+  // Damage dealt when the power is cast, not what it does later ("While charmed ...", "At the end of each ...")
+  const damage = text.split(/(?<=\.)\s+/).filter((sentence) => !/^(While|At the (end|start) of each)\b/.test(sentence)).join(" ").match(/(\d+)d(\d+)(?:\s*\+\s*\d+)? (\w+) damage/i);
   // At-will powers grow at 5th, 11th and 17th level
   const steps = power.level === 0 && /5th level/.test(text) ? 1 + [5, 11, 17].filter((l) => casterLevel >= l).length : 1;
   if (heal) {
     const dice = `${Number(heal[1]) * steps}d${heal[2]}`;
     return { kind: "heal", dice, summary: `heals ${dice} + casting modifier` };
   }
-  if (!damage) return { kind: "other", summary: "effect described in its text" };
+  const imposed = powerCondition(power);
+  const lasting = imposed
+    ? `${imposed.conditions.join(" and ").toLowerCase()} for ${imposed.conditionRounds >= 100 ? "the fight" : imposed.conditionRounds === 1 ? "1 turn" : `${imposed.conditionRounds} turns`}${imposed.repeatSave ? ", save each turn" : ""}`
+    : "";
+  const saveMatch = text.match(new RegExp(`(${ABILITY_WORDS}) sav(?:ing throw|e)`));
+  const save = saveMatch?.[1].toLowerCase() as keyof AbilityScores | undefined;
+  if (!damage) {
+    if (!imposed) return { kind: "other", summary: "effect described in its text" };
+    if (save) return { kind: "save", save, ...imposed, summary: `${saveMatch![1]} save or ${lasting}` };
+    // No roll: on the caster when the text speaks of the caster or a willing creature, else on the enemy
+    const onSelf = /willing creatures?|You or a creature you touch|A creature you touch becomes|You become/.test(text);
+    // Nothing the caster would do to themselves in a fight (a trance, feigned death)
+    const harmful = imposed.conditions.some((name) => {
+      const m = conditionMechanics(name);
+      return m.incapacitated || m.ownAttacks.melee < 0 || m.attacksAgainst.melee > 0;
+    });
+    if (onSelf && harmful) return { kind: "other", summary: "effect described in its text" };
+    return {
+      kind: "condition", ...imposed, repeatSave: false, onSelf,
+      summary: `${onSelf ? "you are" : "target is"} ${lasting}${imposed.hitPointPool ? ` if it has no more than ${imposed.hitPointPool} hit points` : ""}`,
+    };
+  }
   const dice = `${Number(damage[1]) * steps}d${damage[2]}`;
   const damageType = damage[3].toLowerCase();
   if (/(ranged|melee) (force|tech) attack/i.test(text)) {
-    return { kind: "attack", dice, damageType, summary: `power attack, ${dice} ${damageType}` };
+    // A condition that comes with a hit: outright, or after the save the text asks for
+    return { kind: "attack", dice, damageType, ...imposed, save: imposed ? save : undefined, summary: `power attack, ${dice} ${damageType}${imposed ? `, and ${save ? `${saveMatch![1]} save or ` : ""}${lasting}` : ""}` };
   }
-  const save = text.match(/(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) saving throw/);
   if (save) {
-    const halfOnSave = /half as much damage on a successful/i.test(text);
+    const halfOnSave = /half as much damage on a successful|takes half damage/i.test(text);
     return {
       kind: "save",
       dice,
       damageType,
-      save: save[1].toLowerCase() as keyof AbilityScores,
+      save,
       halfOnSave,
-      summary: `${save[1]} save, ${dice} ${damageType}${halfOnSave ? " (half on a save)" : ""}`,
+      ...imposed,
+      summary: `${saveMatch![1]} save, ${dice} ${damageType}${halfOnSave ? " (half on a save)" : ""}${imposed ? `, ${lasting} on a failure` : ""}`,
     };
   }
   return { kind: "other", summary: "effect described in its text" };

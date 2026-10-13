@@ -1,13 +1,13 @@
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import TranslucentPane from "@/components/ui/TranslucentPane";
-import { useCombat } from "@/lib/stores/useCombat";
+import { useCombat, attackOdds, cannotAct, rollD20, LASTING } from "@/lib/stores/useCombat";
+import { conditionSummary } from "@/lib/sw5e/rules";
 
-const d20 = () => Math.floor(Math.random() * 20) + 1;
 const mod = (score?: number) => Math.floor(((score ?? 10) - 10) / 2);
 
 export default function PlayCombat() {
-  const { combatants, currentTurn, round, combatLog, endCombat, deathSaves, castPower, deathSave } = useCombat();
+  const { combatants, currentTurn, round, combatLog, endCombat, deathSaves, castPower, deathSave, pass } = useCombat();
   const current = combatants[currentTurn];
 
   const strike = (type: "melee" | "ranged") => {
@@ -22,15 +22,22 @@ export default function PlayCombat() {
       useCombat.getState().nextTurn();
       return;
     }
-    const roll = d20();
-    const crit = roll === 20;
+    // Conditions on either side: advantage or disadvantage, and a hit that is always critical
+    const odds = attackOdds(attacker, target, type);
+    if (odds.barred) {
+      pass(`is ${odds.barred.toLowerCase()} and cannot attack ${target.name}`);
+      return;
+    }
+    const roll = rollD20(odds.mode);
     // The player's bonus with the weapon in hand; unarmed, Strength and proficiency
     const bonus = attacker.isPlayer
       ? (type === "melee" ? attacker.meleeAttack : attacker.rangedAttack) ?? mod(attacker.abilities?.[type === "melee" ? "strength" : "dexterity"]) + (attacker.attackBonus ?? 2)
       : attacker.attackBonus ?? 3;
-    const dmg = s.damageRoll(type, crit);
     // A natural 1 misses whatever the bonus
-    s.attackRoll(target.id, roll === 1 ? 0 : roll + bonus, dmg, crit);
+    const total = roll === 1 ? 0 : roll + bonus;
+    const crit = roll === 20 || (odds.crit && total >= target.armorClass);
+    const dmg = s.damageRoll(type, crit);
+    s.attackRoll(target.id, total, dmg, crit, odds.mode ? `${odds.mode > 0 ? "advantage" : "disadvantage"}: ${odds.reasons.join(", ")}` : undefined);
     useCombat.getState().nextTurn();
   };
 
@@ -40,14 +47,17 @@ export default function PlayCombat() {
     const t = setTimeout(() => {
       // The player acts by tapping, even when down (death saving throws)
       if (current.isPlayer) return;
+      const held = cannotAct(current);
       if (current.hp <= 0) useCombat.getState().nextTurn();
-      else strike("ranged");
+      else if (held) pass(`is ${held.toLowerCase()} and cannot act`);
+      else strike(current.rangedAttacker === false ? "melee" : "ranged");
     }, 800);
     return () => clearTimeout(t);
   }, [currentTurn, round, combatants.length, current?.id]);
 
   const player = combatants.find((c) => c.isPlayer);
-  const playerTurn = !!current?.isPlayer && (player?.hp ?? 0) > 0;
+  const held = player ? cannotAct(player) : undefined;
+  const playerTurn = !!current?.isPlayer && (player?.hp ?? 0) > 0 && !held;
   const down = !!player && player.hp <= 0;
   const cast = (index: number) => {
     castPower(index);
@@ -69,17 +79,26 @@ export default function PlayCombat() {
         </div>
         <ul className="space-y-1 mb-3">
           {combatants.map((c, i) => (
-            <li
-              key={String(c.id)}
-              className={`flex justify-between text-sm ${i === currentTurn ? "text-yellow-300 font-semibold" : ""} ${c.hp <= 0 ? "opacity-50 line-through" : ""}`}
-            >
-              <span>
-                {c.name}
-                {c.isPlayer ? " (you)" : ""}
-              </span>
-              <span>
-                {c.hp}/{c.maxHp}
-              </span>
+            <li key={String(c.id)} className={`text-sm ${i === currentTurn ? "text-yellow-300 font-semibold" : ""} ${c.hp <= 0 ? "opacity-50 line-through" : ""}`}>
+              <div className="flex justify-between">
+                <span>
+                  {c.name}
+                  {c.isPlayer ? " (you)" : ""}
+                </span>
+                <span>
+                  {c.hp}/{c.maxHp}
+                </span>
+              </div>
+              {c.hp > 0 && (c.conditions?.length ?? 0) > 0 && (
+                <div className="flex flex-wrap gap-1 font-normal" data-testid="combat-conditions">
+                  {c.conditions!.map((condition) => (
+                    <span key={condition.name} className="rounded bg-purple-900/60 px-1 text-xs text-purple-100" title={conditionSummary(condition.name)}>
+                      {condition.name}
+                      {condition.rounds < LASTING ? ` ${condition.rounds}` : ""}
+                    </span>
+                  ))}
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -91,6 +110,27 @@ export default function PlayCombat() {
             Ranged
           </Button>
         </div>
+        {held && current?.isPlayer && !down && (
+          <div className="mb-3 p-2 rounded bg-purple-900/40 text-sm" data-testid="combat-held">
+            <p>You are {held.toLowerCase()} and cannot act.</p>
+            <Button size="sm" className="mt-1" onClick={() => pass(`is ${held.toLowerCase()} and cannot act`)}>
+              Pass the turn
+            </Button>
+          </div>
+        )}
+        {(() => {
+          // What the conditions in force do, in plain words
+          const inForce = Array.from(new Set(combatants.filter((c) => c.hp > 0).flatMap((c) => (c.conditions ?? []).map((x) => x.name))));
+          return inForce.length ? (
+            <div className="text-xs text-purple-200 mb-2" data-testid="condition-notes">
+              {inForce.map((name) => (
+                <div key={name}>
+                  {name}: {conditionSummary(name)}
+                </div>
+              ))}
+            </div>
+          ) : null;
+        })()}
         <div className="text-xs text-gray-400 mb-2">
           Melee: {player?.meleeWeapon ?? "unarmed"} · Ranged: {player?.rangedWeapon ?? "none"}
         </div>

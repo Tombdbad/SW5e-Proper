@@ -48,7 +48,7 @@ export interface Occupant {
   xp?: number;
   armorClass?: number;
   hitPoints?: number;
-  attack?: { name: string; bonus: number; damage: string; damageType?: string };
+  attack?: { name: string; bonus: number; damage: string; damageType?: string; ranged?: boolean };
   // Ability modifiers, for saving throws
   saves?: Record<string, number>;
   // Equipment names from the equipment data
@@ -560,7 +560,7 @@ export function statBlockOccupant(monster: Sw5eMonster, equipment: Sw5eEquipment
     xp: monster.experiencePoints,
     armorClass: monster.armorClass,
     hitPoints: monster.hitPoints,
-    attack: best ? { name: best.name, bonus: best.attackBonus ?? 0, damage: best.damageRoll!, damageType: best.damageType?.toLowerCase() } : undefined,
+    attack: best ? { name: best.name, bonus: best.attackBonus ?? 0, damage: best.damageRoll!, damageType: best.damageType?.toLowerCase(), ranged: best.attackType === "RangedWeapon" } : undefined,
     saves: Object.fromEntries(["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"].map((a) => [a, Number(monster[`${a}Modifier`]) || 0])),
     loadout: statBlockLoadout(monster, equipment),
   };
