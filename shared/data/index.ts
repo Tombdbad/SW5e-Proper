@@ -86,6 +86,7 @@ export interface Sw5eMonster extends Sw5eRecord {
     description?: string;
     attackType?: string; // MeleeWeapon, RangedWeapon, None
     attackBonus?: number;
+    range?: string; // "range 100/400 ft.", "reach 5 ft."
     damageRoll?: string;
     damageType?: string;
   }[];

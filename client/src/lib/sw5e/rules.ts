@@ -426,6 +426,8 @@ export interface ConditionMechanics {
   meleeHitsCrit: boolean;
   autoFailSaves: string[];
   disadvantageSaves: string[];
+  // What is left of its speed: 1 all of it, 0.5 half, 0 none
+  speed: number;
 }
 
 const ABILITY_WORDS = "Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma";
@@ -446,6 +448,7 @@ export function conditionMechanics(name: string, seen: string[] = []): Condition
     meleeHitsCrit: /hits the creature is a critical hit if the attacker is within 5 feet/i.test(text),
     autoFailSaves: abilities(/automatically fails ([\w ]+?) saving throws/i),
     disadvantageSaves: abilities(/disadvantage on ([\w ]+?) saving throws/i),
+    speed: /speed becomes 0|can't move/i.test(text) ? 0 : /speed is reduced by half/i.test(text) ? 0.5 : 1,
   };
   const sign = (word: string) => (/^dis/i.test(word) ? -1 : 1);
   // "the creature's attack rolls have disadvantage", "has disadvantage on ability checks and attack rolls"
@@ -478,6 +481,7 @@ export function conditionSummary(name: string): string {
       : [v.melee && `${what} in melee have ${word(v.melee)}`, v.ranged && `${what} at range have ${word(v.ranged)}`].filter(Boolean) as string[];
   return [
     m.incapacitated && "cannot act",
+    m.speed === 0 ? "cannot move" : m.speed < 1 && "half speed",
     m.cantAttackSource && "cannot attack whoever caused it",
     ...both(m.ownAttacks, "its attacks"),
     ...both(m.attacksAgainst, "attacks against it"),

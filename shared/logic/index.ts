@@ -48,7 +48,12 @@ export interface Occupant {
   xp?: number;
   armorClass?: number;
   hitPoints?: number;
-  attack?: { name: string; bonus: number; damage: string; damageType?: string; ranged?: boolean };
+  // `range` is the reach of a melee attack or the normal range of a ranged one, in feet; `long` its long range
+  attack?: { name: string; bonus: number; damage: string; damageType?: string; ranged?: boolean; range?: number; long?: number };
+  // Walking speed in feet, size and creature type, as the stat block gives them
+  speed?: number;
+  size?: string;
+  creature?: string;
   // Ability modifiers, for saving throws
   saves?: Record<string, number>;
   // Equipment names from the equipment data
@@ -555,6 +560,12 @@ function statBlockLoadout(monster: Sw5eMonster, equipment: Sw5eEquipment[]): str
   return [...found];
 }
 
+// "range 100/400 ft." or "reach 5 ft." as feet
+const attackRange = (text = ""): { range?: number; long?: number } => {
+  const found = text.match(/(\d+)(?:\/(\d+))?\s*ft/);
+  return found ? { range: Number(found[1]), ...(found[2] ? { long: Number(found[2]) } : {}) } : {};
+};
+
 // An occupant that uses a stat block: its combat figures and the gear it is shown using
 export function statBlockOccupant(monster: Sw5eMonster, equipment: Sw5eEquipment[], id: string, count = 1, role = "creature", disposition: Occupant["disposition"] = "hostile"): Occupant {
   const attacks = (monster.behaviors ?? []).filter((b) => (b.attackType === "MeleeWeapon" || b.attackType === "RangedWeapon") && b.damageRoll);
@@ -570,7 +581,10 @@ export function statBlockOccupant(monster: Sw5eMonster, equipment: Sw5eEquipment
     xp: monster.experiencePoints,
     armorClass: monster.armorClass,
     hitPoints: monster.hitPoints,
-    attack: best ? { name: best.name, bonus: best.attackBonus ?? 0, damage: best.damageRoll!, damageType: best.damageType?.toLowerCase(), ranged: best.attackType === "RangedWeapon" } : undefined,
+    attack: best ? { name: best.name, bonus: best.attackBonus ?? 0, damage: best.damageRoll!, damageType: best.damageType?.toLowerCase(), ranged: best.attackType === "RangedWeapon", ...attackRange(best.range) } : undefined,
+    speed: Number(monster.speed) || 0,
+    size: monster.size,
+    creature: String(monster.types?.[0] ?? "").toLowerCase(),
     saves: Object.fromEntries(["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"].map((a) => [a, Number(monster[`${a}Modifier`]) || 0])),
     loadout: statBlockLoadout(monster, equipment),
   };
@@ -1426,6 +1440,16 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
     furnishRoom(room, r, building.type);
     placeContents(room, r);
   }
+}
+
+// Somewhere to fight where there is no room plan (a street, the outskirts, open country): open
+// ground with scattered cover, the same for the same place every time
+export function skirmishGround(area: Area): RoomLayout {
+  const r = createRandom(Number(area.id.replace(/\D/g, "") || 1) * 104729);
+  const ground: Area = { ...area, tags: [], layout: { x: 0, y: 0, width: 13, height: 9, assets: [] } };
+  ground.layout!.assets.push({ id: `${area.id}-way`, kind: "exit", name: "Way back", x: 0, y: 4, w: 1, h: 1, side: "w" });
+  furnishRoom(ground, r, area.kind === "building" || area.kind === "room" ? area.type : "cave");
+  return ground.layout!;
 }
 
 // The rooms of a building as rectangles on its grid, for drawing the floor plan

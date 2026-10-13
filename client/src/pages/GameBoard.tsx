@@ -21,7 +21,8 @@ import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCo
 import { getStarshipSize } from "@/lib/sw5e/starships";
 import {
   exitsOf, trailOf, childrenOf, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
-  planBuilding, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, ALERT, ALERT_LEVELS,
+  planBuilding, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS,
+  type Occupant,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship,
 } from "@shared/logic";
 
@@ -388,6 +389,20 @@ export default function GameBoard() {
 
   // What the character fights with: the weapons carried (see carriedWeapons), a species' natural
   // weapon when unarmed, and the powers known with the caster's numbers for each
+  // A saved power has its name, level and text; its range, duration and concentration are looked up
+  const { data: powerRows } = useQuery<any>({
+    queryKey: ["power-facts"],
+    queryFn: () => fetch("/api/sw5e/powers?fields=name,range,duration,concentration&limit=1000").then((r) => r.json()),
+    enabled: knownPowers.length > 0,
+    staleTime: Infinity,
+  });
+  const powerFacts = (name: string) => (Array.isArray(powerRows) ? powerRows : powerRows?.items ?? []).find((p: any) => p.name === name);
+  // "60 feet" is 60, "Touch" 5, "Self" 0, "Self (15-foot cone)" 15; anything else has no limit here
+  const rangeFeet = (text = ""): number | undefined => {
+    const feet = text.match(/(\d+)[- ]f(?:ee|oo)t/i);
+    return feet ? Number(feet[1]) : /^touch/i.test(text) ? 5 : /^self/i.test(text) ? 0 : undefined;
+  };
+
   const combatKit = () => {
     // Of the weapons carried, the one with the best attack for each kind; unarmed otherwise
     const weapons = carriedWeapons(character).sort((a, b) => Number(!!a.natural) - Number(!!b.natural) || b.attackBonus - a.attackBonus);
@@ -403,17 +418,42 @@ export default function GameBoard() {
       rangedWeapon: ranged?.name,
       rangedAttack: ranged?.attackBonus,
       rangedDamage: ranged?.damageBonus,
+      reach: melee?.reach ?? 5,
+      range: ranged?.range,
+      // For the token: a lightsaber for those who use the Force
+      role: (character?.forcePowers ?? []).length ? "force" : "player",
       // Armor picked up since the sheet was last worked out counts too
       armorClass: Math.max(character.armorClass, calculateArmorClass(character.abilityScores, character.equipment ?? [])),
       powerPoints: character?.currentForcePoints ?? 0,
       powers: knownPowers
         .map((power) => {
-          const effect = powerEffect(power, level);
-          return { name: power.name as string, level: power.level as number, cost: powerCost(power), ...effect, ...castingStats(character.abilityScores, level, power) };
+          const facts = powerFacts(power.name) ?? {};
+          const effect = powerEffect({ duration: facts.duration, concentration: facts.concentration, ...power }, level);
+          return { name: power.name as string, level: power.level as number, cost: powerCost(power), range: rangeFeet(power.range ?? facts.range), ...effect, ...castingStats(character.abilityScores, level, power) };
         })
         .sort((a, b) => order[a.kind] - order[b.kind] || a.level - b.level),
     };
   };
+
+  // A hostile occupant as someone to fight: its stat block's armor, hit points, attack, speed and reach
+  const foe = (o: Occupant, id: string, name: string) => ({
+    id,
+    name,
+    hp: o.hitPoints!,
+    maxHp: o.hitPoints!,
+    initiative: 0,
+    armorClass: o.armorClass ?? 10,
+    attackBonus: o.attack?.bonus ?? 2,
+    damageDice: o.attack?.damage ?? "1d4",
+    rangedAttacker: o.attack?.ranged ?? true,
+    saves: o.saves,
+    speed: o.speed || 30,
+    reach: o.attack?.ranged ? 5 : o.attack?.range ?? 5,
+    range: o.attack?.ranged ? ([o.attack.range ?? 80, o.attack.long ?? (o.attack.range ?? 80) * 4] as [number, number]) : undefined,
+    size: o.size,
+    creature: o.creature,
+    role: o.role,
+  });
 
   // Fight the hostile creatures in this area, with their own armor, hit points and attacks
   const fight = () => {
@@ -422,25 +462,30 @@ export default function GameBoard() {
     autoFought.current = here.id;
     const surprise = alert === ALERT.unaware;
     if (!surprise && here.alert !== ALERT.attacking) setWatch(ALERT.attacking);
-    const enemies = hostiles.flatMap((o) =>
-      Array.from({ length: o.count }, (_, i) => ({
-        id: `${o.id}-${i}`,
-        name: o.count > 1 ? `${o.name} ${i + 1}` : o.name,
-        hp: o.hitPoints!,
-        maxHp: o.hitPoints!,
-        initiative: 0,
-        armorClass: o.armorClass ?? 10,
-        attackBonus: o.attack?.bonus ?? 2,
-        damageDice: o.attack?.damage ?? "1d4",
-        rangedAttacker: o.attack?.ranged ?? true,
-        saves: o.saves,
-      })),
-    );
+    // The ground: the room as planned, or open ground with what cover there is. The party
+    // stands where it came in; the enemy where the plan has them.
+    const ground = here.layout ?? skirmishGround(here);
+    const ways = ground.assets.filter((a) => a.side && a.kind !== "window");
+    const cameIn = ways.find((a) => a.to === cameFrom) ?? ways.find((a) => a.kind === "exit") ?? ways[0];
+    const enemies = hostiles.flatMap((o) => {
+      const spots = ground.assets.filter((a) => a.kind === "npc" && a.ref === o.id);
+      return Array.from({ length: o.count }, (_, i) => ({ ...foe(o, `${o.id}-${i}`, o.count > 1 ? `${o.name} ${i + 1}` : o.name), ...(spots[i] ? { x: spots[i].x, y: spots[i].y } : {}) }));
+    });
+    // Two of a kind are told apart by a letter
+    const twins = (name: string) => enemies.filter((e) => e.name === name);
+    for (const enemy of [...enemies]) {
+      const same = twins(enemy.name);
+      if (same.length > 1) same.forEach((e, i) => (e.name = `${e.name} ${String.fromCharCode(65 + i)}`));
+    }
     fightArea.current = here.id;
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
     fightBegun.current = true;
-    initiateCombat(character, enemies, combatKit(), surprise);
+    initiateCombat(
+      character, enemies, combatKit(), surprise,
+      { width: ground.width, height: ground.height, assets: ground.assets.filter((a) => a.kind !== "npc" && (a.kind !== "loot" || here.loot.some((c) => c.id === a.ref && !c.hidden))), floor: world?.areas[here.parentId ?? ""]?.type },
+      cameIn ? { x: cameIn.x, y: cameIn.y } : undefined,
+    );
   };
 
   // Once they attack, the fight begins by itself (once for each time the party walks into it)
@@ -588,18 +633,7 @@ export default function GameBoard() {
         fetch("/api/world/occupant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ statBlock }) }).then((r) => r.json()),
       ),
     );
-    const enemies = foes.map((o: any, i: number) => ({
-      id: `enemy-${i}`,
-      name: o.name,
-      hp: o.hitPoints,
-      maxHp: o.hitPoints,
-      initiative: 0,
-      armorClass: o.armorClass,
-      attackBonus: o.attack?.bonus ?? 2,
-      damageDice: o.attack?.damage ?? "1d4",
-      rangedAttacker: o.attack?.ranged ?? true,
-      saves: o.saves,
-    }));
+    const enemies = foes.map((o: Occupant, i: number) => foe(o, `enemy-${i}`, o.name));
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
     fightBegun.current = true;

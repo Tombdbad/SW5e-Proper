@@ -187,7 +187,16 @@ export interface CarriedWeapon {
   attackBonus: number;
   damageBonus: number;
   natural?: boolean;
+  // Feet: the reach of a melee weapon, or the normal and long range of a ranged or thrown one
+  reach: number;
+  range?: [number, number];
 }
+
+// "Power cell (range 50/200)", "thrown (range 20/60)" and "reach" among a weapon's properties
+const weaponReach = (properties: string[]) => {
+  const range = properties.map((p) => p.match(/range (\d+)\/(\d+)/i)).find(Boolean);
+  return { reach: properties.some((p) => /^reach/i.test(p)) ? 10 : 5, ...(range ? { range: [Number(range[1]), Number(range[2])] as [number, number] } : {}) };
+};
 
 export function carriedWeapons(character: any): CarriedWeapon[] {
   const scores = character?.abilityScores ?? {};
@@ -212,6 +221,7 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
       ability,
       proficient,
       properties: e.properties ?? [],
+      ...weaponReach(e.properties ?? []),
       attackBonus: modifier + (proficient ? proficiency : 0),
       damageBonus: modifier,
     };
@@ -227,6 +237,7 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
       ability: "strength" as const,
       proficient: true,
       properties: [],
+      reach: 5,
       attackBonus: str + proficiency,
       damageBonus: str,
       natural: true,

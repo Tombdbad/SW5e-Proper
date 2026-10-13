@@ -3,6 +3,7 @@ import { useCharacter, Character } from "./useCharacter";
 import { rollDice, sumDiceResults } from "@/lib/sw5e/dice";
 import { conditionMechanics } from "@/lib/sw5e/rules";
 import { conditions as conditionList } from "@/lib/sw5e/conditions";
+import type { RoomAsset } from "@shared/logic";
 import {
   StarshipCombatManager,
   VehicleCombatManager,
@@ -74,6 +75,18 @@ export interface Combatant {
   saves?: Record<string, number>;
   // Whether a stat block's attack is made at range (melee otherwise)
   rangedAttacker?: boolean;
+  // The square it stands on, its speed and how far it has moved this turn (feet), the reach of
+  // its melee attack and the normal and long range of its ranged one (feet)
+  x?: number;
+  y?: number;
+  speed?: number;
+  moved?: number;
+  reach?: number;
+  range?: [number, number];
+  // For the token drawn on the grid
+  size?: string;
+  creature?: string;
+  role?: string;
   // Conditions in force (what each does is read from the conditions data, see conditionMechanics)
   conditions?: ActiveCondition[];
 }
@@ -95,6 +108,136 @@ export interface ActiveCondition {
 
 export const LASTING = 100;
 
+// Where the fight is: a room's plan, or open ground. Squares are 5 feet.
+export interface Arena {
+  width: number;
+  height: number;
+  assets: RoomAsset[];
+  // What the floor is (the building's type), for drawing it
+  floor?: string;
+}
+type Square = { x: number; y: number };
+const key = (x: number, y: number) => `${x},${y}`;
+
+// Squares between two creatures: a diagonal step counts as one (Player's Handbook grid rule)
+export const squaresApart = (a: { x?: number; y?: number }, b: { x?: number; y?: number }) =>
+  Math.max(Math.abs((a.x ?? 0) - (b.x ?? 0)), Math.abs((a.y ?? 0) - (b.y ?? 0)));
+
+const covers = (asset: RoomAsset, x: number, y: number) => !asset.side && asset.x <= x && x < asset.x + asset.w && asset.y <= y && y < asset.y + asset.h;
+const solid = (arena: Arena, x: number, y: number) =>
+  x < 0 || y < 0 || x >= arena.width || y >= arena.height || arena.assets.some((a) => a.blocks && covers(a, x, y));
+
+// Feet a creature can still move this turn, as its conditions allow
+export function movementLeft(c: Combatant): number {
+  const factor = Math.min(1, ...(c.conditions ?? []).map((x) => conditionMechanics(x.name).speed));
+  return Math.max(0, Math.floor(((c.speed ?? 30) * factor) / 5) * 5 - (c.moved ?? 0));
+}
+
+// Every square a creature can walk to with the movement it has left, and the feet it costs.
+// Furniture that blocks and other creatures are walked around; no cutting corners.
+export function reachable(arena: Arena, combatants: Combatant[], mover: Combatant, limit = movementLeft(mover)): Map<string, { cost: number; from?: string }> {
+  const taken = new Set(combatants.filter((c) => c.id !== mover.id && c.hp > 0).map((c) => key(c.x ?? -1, c.y ?? -1)));
+  const open = (x: number, y: number) => !solid(arena, x, y) && !taken.has(key(x, y));
+  const start = { x: mover.x ?? 0, y: mover.y ?? 0 };
+  const found = new Map<string, { cost: number; from?: string }>([[key(start.x, start.y), { cost: 0 }]]);
+  const queue: Square[] = [start];
+  while (queue.length) {
+    const at = queue.shift()!;
+    const cost = found.get(key(at.x, at.y))!.cost + 5;
+    if (cost > limit) continue;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const x = at.x + dx;
+      const y = at.y + dy;
+      if ((!dx && !dy) || found.has(key(x, y)) || !open(x, y)) continue;
+      if (dx && dy && (solid(arena, at.x + dx, at.y) || solid(arena, at.x, at.y + dy))) continue;
+      found.set(key(x, y), { cost, from: key(at.x, at.y) });
+      queue.push({ x, y });
+    }
+  }
+  return found;
+}
+
+// Cover a target has from an attacker: what it stands behind, that is, cover on the line between
+// them and within 5 feet of the target (a ship's hull counts from anywhere on the line). One
+// thing in the way is half cover (+2 AC), more is three-quarters (+5).
+export function coverBetween(arena: Arena, from: { x?: number; y?: number }, to: { x?: number; y?: number }): { bonus: number; name: string } {
+  const [x0, y0, x1, y1] = [from.x ?? 0, from.y ?? 0, to.x ?? 0, to.y ?? 0];
+  const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
+  const inTheWay = new Set<RoomAsset>();
+  for (let i = 1; i < steps; i++) {
+    const x = Math.round(x0 + ((x1 - x0) * i) / steps);
+    const y = Math.round(y0 + ((y1 - y0) * i) / steps);
+    const beside = Math.max(Math.abs(x - x1), Math.abs(y - y1)) <= 1;
+    for (const asset of arena.assets) if (asset.cover && covers(asset, x, y) && (beside || asset.kind === "ship")) inTheWay.add(asset);
+  }
+  const names = Array.from(inTheWay).map((a) => a.name.toLowerCase()).join(", ");
+  return inTheWay.size === 0 ? { bonus: 0, name: "" } : inTheWay.size === 1 ? { bonus: 2, name: `half cover: ${names}` } : { bonus: 5, name: `three-quarters cover: ${names}` };
+}
+
+// Whether an attack can be made from where the attacker stands, and what bears on it: reach and
+// range (long range and an enemy within 5 feet give a ranged attack disadvantage), conditions,
+// and the target's cover
+export function attackPlan(arena: Arena, combatants: Combatant[], attacker: Combatant, target: Combatant, type: "melee" | "ranged") {
+  const feet = squaresApart(attacker, target) * 5;
+  const odds = attackOdds(attacker, target, type, feet <= 5);
+  const reasons = [...odds.reasons];
+  let down = odds.down;
+  let possible = true;
+  let why = "";
+  if (type === "melee") {
+    possible = feet <= (attacker.reach ?? 5);
+    if (!possible) why = `${target.name} is ${feet} ft. away`;
+  } else {
+    const [normal, long] = attacker.range ?? [80, 320];
+    possible = feet <= long;
+    if (!possible) why = `${target.name} is ${feet} ft. away, beyond ${long} ft.`;
+    if (possible && feet > normal) {
+      down = true;
+      reasons.push("long range");
+    }
+    if (combatants.some((c) => c.hp > 0 && !!c.isPlayer !== !!attacker.isPlayer && !cannotAct(c) && squaresApart(c, attacker) <= 1)) {
+      down = true;
+      reasons.push("an enemy within 5 feet");
+    }
+  }
+  const cover = feet > 5 ? coverBetween(arena, attacker, target) : { bonus: 0, name: "" };
+  // Advantage and disadvantage from any number of sources cancel to a straight roll
+  const mode = Number(odds.up) - Number(down);
+  return { possible, why, mode, crit: odds.crit, barred: odds.barred, reasons, cover, feet };
+}
+
+// The nearest free square to where a creature should stand
+function freeSquare(arena: Arena, taken: Set<string>, want: Square): Square {
+  for (let ring = 0; ring < arena.width + arena.height; ring++) {
+    for (let dy = -ring; dy <= ring; dy++) for (let dx = -ring; dx <= ring; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+      const x = want.x + dx;
+      const y = want.y + dy;
+      if (!solid(arena, x, y) && !taken.has(key(x, y))) return { x, y };
+    }
+  }
+  return want;
+}
+
+// Moves a creature towards a target until it is within the given distance, as far as its
+// movement goes. Returns where it ends up and the feet spent.
+function stepTowards(arena: Arena, combatants: Combatant[], mover: Combatant, target: Combatant, withinFeet: number): { x: number; y: number; cost: number } {
+  const here = { x: mover.x ?? 0, y: mover.y ?? 0, cost: 0 };
+  if (squaresApart(mover, target) * 5 <= withinFeet) return here;
+  // How far every square is from the target, walking round furniture
+  const field = reachable(arena, combatants.filter((c) => c.id === target.id), { ...target, id: "field" }, 10000);
+  const options = reachable(arena, combatants, mover);
+  let best = { ...here, score: Infinity };
+  options.forEach((step, k) => {
+    const [x, y] = k.split(",").map(Number);
+    const apart = squaresApart({ x, y }, target) * 5;
+    // Close enough is best, and of those the nearest to walk to; otherwise whatever gets nearest
+    const score = apart <= withinFeet ? step.cost / 1000 : 100 + (field.get(k)?.cost ?? 9999) + step.cost / 1000;
+    if (score < best.score) best = { x, y, cost: step.cost, score };
+  });
+  return best;
+}
+
 const mechanicsOf = (c: Combatant) => (c.conditions ?? []).map((condition) => ({ condition, m: conditionMechanics(condition.name) }));
 
 // The condition that keeps a creature from acting, if any
@@ -102,7 +245,7 @@ export const cannotAct = (c: Combatant): string | undefined => mechanicsOf(c).fi
 
 // How conditions on either side bear on an attack: advantage (+1) or disadvantage (-1), whether a
 // hit is a critical hit, and the condition that forbids the attack altogether
-export function attackOdds(attacker: Combatant, target: Combatant, type: "melee" | "ranged") {
+export function attackOdds(attacker: Combatant, target: Combatant, type: "melee" | "ranged", near = type === "melee") {
   const reasons: string[] = [];
   let up = false;
   let down = false;
@@ -113,13 +256,28 @@ export function attackOdds(attacker: Combatant, target: Combatant, type: "melee"
   }
   let crit = false;
   for (const { condition, m } of mechanicsOf(target)) {
-    if (m.attacksAgainst[type]) reasons.push(`${target.name} is ${condition.name.toLowerCase()}`);
-    up ||= m.attacksAgainst[type] > 0;
-    down ||= m.attacksAgainst[type] < 0;
-    crit ||= m.meleeHitsCrit && type === "melee";
+    // What a condition says of attackers within 5 feet and of those further off
+    const against = m.attacksAgainst[near ? "melee" : "ranged"];
+    if (against) reasons.push(`${target.name} is ${condition.name.toLowerCase()}`);
+    up ||= against > 0;
+    down ||= against < 0;
+    crit ||= m.meleeHitsCrit && near;
   }
   const barred = mechanicsOf(attacker).find((x) => x.m.cantAttackSource && x.condition.by === target.id)?.condition.name;
-  return { mode: Number(up) - Number(down), crit, barred, reasons };
+  return { mode: Number(up) - Number(down), up, down, crit, barred, reasons };
+}
+
+// Who an attack or power is aimed at: the enemy picked out if it still stands, else the nearest
+export function pickTarget(combatants: Combatant[], attacker: Combatant, targetId: number | string | null): Combatant | undefined {
+  const foes = combatants.filter((c) => !!c.isPlayer !== !!attacker.isPlayer && c.hp > 0);
+  return foes.find((c) => c.id === targetId) ?? [...foes].sort((a, b) => squaresApart(a, attacker) - squaresApart(b, attacker))[0];
+}
+
+// Whether a power aimed at an enemy cannot reach it from where the caster stands
+export function powerOutOfRange(combatants: Combatant[], caster: Combatant, power: CombatPower, targetId: number | string | null): boolean {
+  if (power.range === undefined || power.kind === "heal" || power.kind === "other" || power.onSelf) return false;
+  const target = pickTarget(combatants, caster, targetId);
+  return !!target && squaresApart(caster, target) * 5 > Math.max(5, power.range);
 }
 
 // A d20 with advantage or disadvantage
@@ -168,6 +326,8 @@ export interface CombatPower {
   concentration?: boolean;
   endsOnAttack?: boolean;
   endsOnDamage?: boolean;
+  // Feet: 0 the caster only, 5 touch; no figure, no limit
+  range?: number;
   summary: string;
   // The caster's numbers for this power
   modifier: number;
@@ -195,6 +355,9 @@ interface CombatState {
   deathSaves: { successes: number; failures: number };
   outcome: CombatOutcome;
   surprise: boolean;
+  // The ground the fight is on, and the enemy the player has picked out
+  arena: Arena;
+  targetId: number | string | null;
 
   // Combat actions
   initiateCombat: (
@@ -204,7 +367,15 @@ interface CombatState {
     weapons?: Partial<Combatant>,
     // The enemies never saw it coming: they do nothing in the first round
     surprise?: boolean,
+    // The room's plan and the square the player comes in at; open floor without one
+    arena?: Arena,
+    playerAt?: { x: number; y: number },
   ) => void;
+  // The creature whose turn it is walks to a square it can reach
+  moveTo: (x: number, y: number) => void;
+  // It closes with a target until within the given feet, as far as its movement goes; true when it got there
+  approach: (targetId: number | string, withinFeet: number) => boolean;
+  setTarget: (id: number | string) => void;
   endCombat: () => void;
   nextTurn: () => void;
   rollInitiative: (dexModifier: number) => number;
@@ -233,8 +404,33 @@ export const useCombat = create<CombatState>((set, get) => ({
   outcome: null,
 
   surprise: false,
+  arena: { width: 10, height: 7, assets: [] },
+  targetId: null,
 
-  initiateCombat: (player, enemies, weapons, surprise = false) => {
+  moveTo: (x, y) =>
+    set((state) => {
+      const mover = state.combatants[state.currentTurn];
+      const step = mover && reachable(state.arena, state.combatants, mover).get(key(x, y));
+      if (!mover || !step || !step.cost) return state;
+      return {
+        combatants: state.combatants.map((c) => (c.id === mover.id ? { ...c, x, y, moved: (c.moved ?? 0) + step.cost } : c)),
+        combatLog: [...state.combatLog, `${mover.name} moves ${step.cost} ft.`],
+      };
+    }),
+
+  approach: (targetId, withinFeet) => {
+    const state = get();
+    const mover = state.combatants[state.currentTurn];
+    const target = state.combatants.find((c) => c.id === targetId);
+    if (!mover || !target) return false;
+    const end = stepTowards(state.arena, state.combatants, mover, target, withinFeet);
+    if (end.cost) get().moveTo(end.x, end.y);
+    return squaresApart(end, target) * 5 <= withinFeet;
+  },
+
+  setTarget: (id) => set({ targetId: id }),
+
+  initiateCombat: (player, enemies, weapons, surprise = false, arena = { width: 10, height: 7, assets: [] }, playerAt) => {
     // Calculate initiatives
     const dexModifier = Math.floor((player.abilityScores.dexterity - 10) / 2);
     const playerInitiative = roll(1, 20) + dexModifier;
@@ -257,18 +453,28 @@ export const useCombat = create<CombatState>((set, get) => ({
       conditions: ((player as any).conditions ?? [])
         .filter((name: string) => conditionList.some((c) => c.name === name))
         .map((name: string) => ({ name, rounds: LASTING })),
+      speed: Number((player as any).speed) || 30,
       ...weapons,
     };
+    // Everyone gets a square: the player where they came in, the enemy where they stood
+    const taken = new Set<string>();
+    const stand = <T extends Combatant>(c: T, want: Square): T => {
+      const spot = freeSquare(arena, taken, want);
+      taken.add(key(spot.x, spot.y));
+      return { ...c, ...spot, moved: 0 };
+    };
+    const middle = Math.floor(arena.height / 2);
+    const placedPlayer = stand(playerCombatant, playerAt ?? { x: 0, y: middle });
 
     // Add initiative to enemies
-    const enemyCombatants = enemies.map((enemy) => ({
+    const enemyCombatants = enemies.map((enemy) => stand({
       ...enemy,
       initiative: roll(1, 20) + 1, // +1 as a simple modifier
       isPlayer: false,
-    }));
+    }, enemy.x !== undefined && enemy.y !== undefined ? { x: enemy.x, y: enemy.y } : { x: arena.width - 1, y: middle }));
 
     // Combine and sort by initiative
-    const allCombatants = [playerCombatant, ...enemyCombatants].sort(
+    const allCombatants = [placedPlayer, ...enemyCombatants].sort(
       (a, b) => b.initiative - a.initiative,
     );
     // Find index of combatant with highest initiative
@@ -279,6 +485,8 @@ export const useCombat = create<CombatState>((set, get) => ({
       currentTurn: firstTurn,
       round: 1,
       surprise,
+      arena,
+      targetId: null,
       combatLog: [surprise ? "You strike first: the enemy is surprised." : "Combat initiated! Roll for initiative!"],
       deathSaves: { successes: 0, failures: 0 },
       outcome: null,
@@ -313,6 +521,10 @@ export const useCombat = create<CombatState>((set, get) => ({
         }
         combatants[state.currentTurn] = { ...ending, conditions: kept };
       }
+
+      // The creature whose turn begins has its whole movement again
+      const next = state.currentTurn === state.combatants.length - 1 ? 0 : state.currentTurn + 1;
+      if (combatants[next]) combatants[next] = { ...combatants[next], moved: 0 };
 
       // Handle end of round
       if (state.currentTurn === state.combatants.length - 1) {
@@ -434,6 +646,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       const caster = state.combatants[state.currentTurn];
       const power = caster?.powers?.[index];
       if (!caster?.isPlayer || !power || (caster.powerPoints ?? 0) < power.cost) return state;
+      if (powerOutOfRange(state.combatants, caster, power, state.targetId)) return state;
       const log = [...state.combatLog];
       const combatants = state.combatants.map((c) => {
         // A new concentration power ends the one before it; casting gives a hidden caster away
@@ -470,7 +683,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       } else if (power.kind === "condition" && power.onSelf) {
         log.push(`${caster.name} casts ${power.name} and is ${afflict(selfIndex)}.`);
       } else if (power.kind === "attack" || power.kind === "save" || power.kind === "condition") {
-        const targetIndex = combatants.findIndex((c) => !c.isPlayer && c.hp > 0);
+        const targetIndex = combatants.indexOf(pickTarget(combatants, combatants[selfIndex], state.targetId)!);
         if (targetIndex === -1) return state;
         const target = combatants[targetIndex];
         if (power.kind === "condition") {
@@ -478,10 +691,11 @@ export const useCombat = create<CombatState>((set, get) => ({
           if (target.hp <= pool) log.push(`${caster.name} casts ${power.name}: ${target.name} is ${afflict(targetIndex)}.`);
           else log.push(`${caster.name} casts ${power.name} (${pool}), but ${target.name} has too many hit points left to be affected.`);
         } else if (power.kind === "attack") {
-          const odds = attackOdds(combatants[selfIndex], target, "ranged");
+          // A touch power is a melee attack; any other is made at range, with all that goes with it
+          const odds = attackPlan(state.arena, combatants, { ...combatants[selfIndex], reach: 5, range: [power.range ?? 1000, power.range ?? 1000] }, target, power.range === 5 ? "melee" : "ranged");
           const d = rollD20(odds.mode);
-          const note = odds.mode ? ` with ${odds.mode > 0 ? "advantage" : "disadvantage"}` : "";
-          if (d !== 1 && (d === 20 || d + power.attack >= target.armorClass)) {
+          const note = `${odds.mode ? ` with ${odds.mode > 0 ? "advantage" : "disadvantage"}` : ""}${odds.cover.bonus ? ` (${odds.cover.name})` : ""}`;
+          if (d !== 1 && (d === 20 || d + power.attack >= target.armorClass + odds.cover.bonus)) {
             const amount = rollDamage(power.dice!, d === 20);
             log.push(`${caster.name} casts ${power.name} at ${target.name}${note} and hits for ${amount} damage${d === 20 ? " (critical)" : ""}.`);
             hit(targetIndex, amount);
