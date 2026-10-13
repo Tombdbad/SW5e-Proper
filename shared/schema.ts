@@ -281,6 +281,8 @@ export const insertCampaignSchema = z.object({
   startingLocation: z.string(),
   currentLocation: z.string().optional(),
   notes: z.string().optional(),
+  // The generated world (shared/logic World): areas, the paths between them, and what is in them
+  galaxyMap: z.any().optional(),
 });
 
 export type InsertCampaign = z.infer<typeof insertCampaignSchema>;

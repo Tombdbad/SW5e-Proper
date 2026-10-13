@@ -5,7 +5,8 @@ import { setupVite, serveStatic, log } from "./vite";
 import { pool, ensureDefaultUser } from "./db";
 
 const app = express();
-app.use(express.json());
+// Generated worlds are a few hundred kB of JSON
+app.use(express.json({ limit: "8mb" }));
 app.use(express.urlencoded({ extended: false }));
 
 app.use((req, res, next) => {

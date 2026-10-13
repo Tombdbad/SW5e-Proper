@@ -14,9 +14,11 @@ import {
 } from "../shared/schema";
 import { ZodError } from "zod";
 import { formatError } from "./utils";
+import { registerSw5eRoutes } from "./sw5eRoutes";
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  // /api/sw5e/* removed: rules data is bundled in client/src/lib/sw5e (see REVIVAL_NOTES.md)
+  // Rules data (shared/data/sw5e) and world generation
+  registerSw5eRoutes(app);
 
   // All routes are prefixed with /api
 
