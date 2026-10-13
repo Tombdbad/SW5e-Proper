@@ -1,136 +1,110 @@
+import React, { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import TranslucentPane from "@/components/ui/TranslucentPane";
+import LLMResponseParser from "./LLMResponseParser";
+import ClipboardIntegration from "./ClipboardIntegration";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  generateGameMasterReport, parseGameMasterResponse, applyGameMasterResponse, recordGameMasterReport, recordGameMasterResponse,
+  type GameState, type StoryEntry,
+} from "@/lib/llm/reportHandler";
 
-  import React, { useState, useEffect } from "react";
-  import { Button } from "@/components/ui/button";
-  import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-  import { generateGameMasterReport } from "@/lib/llm/reportHandler";
-  import { useCharacter } from "@/lib/stores/useCharacter";
-  import { useCampaign } from "@/lib/stores/useCampaign";
-  import GMReportDialog from "./GMReportDialog";
-  import TranslucentPane from "@/components/ui/TranslucentPane";
-  import LLMResponseParser from './LLMResponseParser';
-  import ClipboardIntegration from './ClipboardIntegration';
-  import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-  import { Spinner } from '@/components/ui/spinner';
-  import { processGameMasterResponse } from '@/lib/llm/reportHandler';
+interface GMReportManagerProps extends GameState {
+  // Save the changed fields, as Play does for everything else
+  saveCharacter: (changes: Record<string, any>) => Promise<void> | void;
+  saveCampaign: (changes: Record<string, any>) => Promise<void> | void;
+  // No story turns in the middle of a fight
+  disabled?: boolean;
+}
 
-  export const GMReportManager: React.FC = () => {
-    const [dialogOpen, setDialogOpen] = useState(false);
-    const [currentReport, setCurrentReport] = useState<{id?: string, content?: string}>({});
-    const [activeTab, setActiveTab] = useState<string>("generate");
-    const [isGenerating, setIsGenerating] = useState(false);
-    const [llmResponse, setLlmResponse] = useState<string>('');
-    const [processingResult, setProcessingResult] = useState<any>(null);
-  const character = useCharacter(state => state.character);
-  const campaign = useCampaign(state => state.campaign);
+// The game master by copy and paste: say what you do, copy the report to an LLM (or a person),
+// paste the reply back. The story is kept with the campaign and its changes are applied to the game.
+export const GMReportManager: React.FC<GMReportManagerProps> = ({ saveCharacter, saveCampaign, disabled, ...state }) => {
+  const [activeTab, setActiveTab] = useState<string>("turn");
+  const [action, setAction] = useState("");
+  const [report, setReport] = useState("");
+  const [debriefId, setDebriefId] = useState<string | null>(null);
+  const [pasted, setPasted] = useState("");
+  const story: StoryEntry[] = Array.isArray(state.campaign?.sessionLogs) ? state.campaign.sessionLogs : [];
 
-  useEffect(() => {
-    // Listen for custom events from the debrief compiler
-    const handleShowReport = (event: CustomEvent) => {
-      const { id, content } = event.detail;
-      setCurrentReport({ id, content });
-      setDialogOpen(true);
-    };
+  const buildReport = async () => {
+    setReport(generateGameMasterReport(state, action));
+    setDebriefId(await recordGameMasterReport(state, action));
+  };
 
-    window.addEventListener('show-gm-report', handleShowReport as EventListener);
+  // A pasted reply: its story goes into the log and its changes into the saved game
+  const applyReply = async (response: string) => {
+    const parsed = parseGameMasterResponse(response);
+    if (!parsed.narrative && !parsed.data) throw new Error("The reply is empty.");
+    const { characterChanges, campaignChanges, applied } = await applyGameMasterResponse(state, parsed, action);
+    if (Object.keys(characterChanges).length) await saveCharacter(characterChanges);
+    await saveCampaign(campaignChanges);
+    recordGameMasterResponse(debriefId, parsed);
+    setAction("");
+    setReport("");
+    setDebriefId(null);
+    setPasted("");
+    setActiveTab("story");
+    return { applied, problem: parsed.problem };
+  };
 
-    return () => {
-      window.removeEventListener('show-gm-report', handleShowReport as EventListener);
-    };
-  }, []);
+  return (
+    <TranslucentPane className="px-3 py-3" data-testid="gm-interface">
+      <div className="space-y-3">
+        <h3 className="text-lg font-bold text-yellow-400">Game Master</h3>
+        <p className="text-xs text-gray-400">
+          There is no built-in game master. Copy the report to an AI chat or a friend, and paste the reply back.
+        </p>
 
-  const handleGenerateReport = async () => {
-    if (!character || !campaign) return;
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="turn">Your turn</TabsTrigger>
+            <TabsTrigger value="reply">Reply</TabsTrigger>
+            <TabsTrigger value="story">Story</TabsTrigger>
+          </TabsList>
 
-    try {
-              setIsGenerating(true);
-              const reportContent = await generateGameReport(character, campaign);
-              setCurrentReport({ content: reportContent });
-              setDialogOpen(true);
-            } catch (error) {
-              console.error("Error generating game report:", error);
-            } finally {
-              setIsGenerating(false);
-            }
-          };
+          <TabsContent value="turn" className="space-y-3 py-2">
+            <Textarea
+              aria-label="What you do"
+              placeholder="What do you do? (Ask around the cantina for work, follow the stranger...)"
+              className="min-h-20 text-sm"
+              value={action}
+              onChange={(event) => setAction(event.target.value)}
+            />
+            <Button onClick={buildReport} className="w-full bg-yellow-500 hover:bg-yellow-600 text-black" disabled={disabled}>
+              {report ? "Rebuild the report" : "Build the report"}
+            </Button>
+            {disabled && <p className="text-xs text-gray-400">Finish the fight first.</p>}
+            {report && (
+              <ClipboardIntegration
+                outboundData={report}
+                onInboundData={(text) => {
+                  setPasted(text);
+                  setActiveTab("reply");
+                }}
+                title="Copy to the game master, paste the reply"
+              />
+            )}
+          </TabsContent>
 
-          const handleLlmResponseReceived = async (response: string) => {
-            setLlmResponse(response);
+          <TabsContent value="reply" className="py-2">
+            <LLMResponseParser initialResponse={pasted} onProcess={applyReply} disabled={disabled} />
+          </TabsContent>
 
-            // Automatically switch to process tab
-            setActiveTab("process");
-
-            try {
-              await processGameMasterResponse(response);
-              setProcessingResult({
-                success: true,
-                message: "Response processed successfully"
-              });
-            } catch (error) {
-              console.error("Error processing LLM response:", error);
-              setProcessingResult({
-                success: false,
-                message: "Failed to process response. Please check format."
-              });
-            }
-          };
-
-          return (
-            <TranslucentPane className="px-5 py-4">
-              <div className="space-y-4">
-                <h3 className="text-lg font-bold text-yellow-400">Game Master Interface</h3>
-
-                <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                  <TabsList className="grid w-full grid-cols-3">
-                    <TabsTrigger value="generate">Generate Report</TabsTrigger>
-                    <TabsTrigger value="clipboard">Clipboard Tools</TabsTrigger>
-                    <TabsTrigger value="process">Process Response</TabsTrigger>
-                  </TabsList>
-
-                  <TabsContent value="generate" className="space-y-4 py-2">
-                    <p className="text-sm text-gray-300">
-                      Generate a new report for your GM to advance your campaign.
-                    </p>
-
-                    <Button 
-                      onClick={handleGenerateReport}
-                      className="w-full bg-yellow-500 hover:bg-yellow-600 text-black"
-                      disabled={!character || !campaign || isGenerating}
-                    >
-                      {isGenerating ? (
-                        <span className="flex items-center">
-                          <Spinner className="mr-2" /> Generating...
-                        </span>
-                      ) : 'Generate GM Report'}
-                    </Button>
-
-                    {currentReport.content && (
-                      <p className="text-xs text-green-400">
-                        Report generated! You can view it in the dialog or use the Clipboard Tools tab.
-                      </p>
-                    )}
-                  </TabsContent>
-
-                  <TabsContent value="clipboard" className="py-2">
-                    <ClipboardIntegration 
-                      outboundData={currentReport.content || ""}
-                      onInboundData={handleLlmResponseReceived}
-                      title="Transfer Data Between App & LLM"
-                    />
-                  </TabsContent>
-
-                  <TabsContent value="process" className="py-2">
-                    <LLMResponseParser 
-                      onProcessed={(result) => setProcessingResult(result)}
-                    />
-                  </TabsContent>
-                </Tabs>
-
-                <GMReportDialog 
-          open={dialogOpen}
-          onOpenChange={setDialogOpen}
-          reportId={currentReport.id}
-          reportContent={currentReport.content}
-        />
+          <TabsContent value="story" className="py-2 space-y-3" data-testid="gm-story">
+            {story.length === 0 && <p className="text-sm text-gray-400">Nothing has been told yet.</p>}
+            {story.slice(-10).reverse().map((entry) => (
+              <div key={entry.date} className="bg-gray-700 p-2 rounded text-sm space-y-1">
+                <div className="text-xs text-gray-400">
+                  {entry.location ?? ""} {entry.action ? `· You: ${entry.action}` : ""}
+                </div>
+                <p className="whitespace-pre-line">{entry.narrative}</p>
+                {entry.applied?.length > 0 && <p className="text-xs text-green-300">{entry.applied.join(" · ")}</p>}
+              </div>
+            ))}
+          </TabsContent>
+        </Tabs>
       </div>
     </TranslucentPane>
   );

@@ -9,6 +9,7 @@
 import { Character } from "@/lib/stores/useCharacter";
 import { Campaign } from "@/lib/stores/useCampaign";
 import { apiRequest } from "@/lib/queryClient";
+import { processCharacterNarrative } from "@/lib/sw5e/characterLanguageProcessor";
 
 interface DebriefOptions {
   includeCharacterDetails?: boolean;
@@ -70,7 +71,6 @@ export async function createDebrief(
   // Process character narrative elements if available
   let characterNarrativeProfile = {};
   if (mergedOptions.includeCharacterDetails && (character.backstory || character.notes || character.bonds)) {
-    const { processCharacterNarrative } = require("@/lib/sw5e/characterLanguageProcessor");
     const narrativeAnalysis = processCharacterNarrative(character);
 
     characterNarrativeProfile = {
@@ -165,7 +165,9 @@ export async function createDebrief(
 
   // Include game state if requested
   if (mergedOptions.includeGameState && campaign.currentLocation) {
-    const currentLocationData = campaign.locations.find(
+    // In a campaign with a generated world the current location is one of its areas
+    const area = (campaign as any).galaxyMap?.areas?.[campaign.currentLocation];
+    const currentLocationData = area ?? (campaign.locations ?? []).find(
       (loc) => loc.id === campaign.currentLocation,
     );
     if (currentLocationData) {
@@ -179,21 +181,12 @@ export async function createDebrief(
 
         // Store the debrief locally in the database for reference
         const response = await apiRequest("POST", "/api/debriefs", {
-          campaignId: campaign.id,
+          campaignId: Number(campaign.id),
           sessionId,
           content: debriefData,
         });
 
         const result = await response.json();
-
-        // Display the debrief for the user to copy
-        // This would typically trigger a UI component to show the text
-        window.dispatchEvent(new CustomEvent('show-gm-report', { 
-          detail: { 
-            id: result.id,
-            content: formattedDebrief 
-          }
-        }));
 
         return {
           id: result.id,
@@ -240,23 +233,8 @@ export async function createDebrief(
         const parsedData =
           typeof rawResponse === "string" ? JSON.parse(rawResponse) : rawResponse;
 
-        // Distribute data to appropriate systems
-        if (parsedData.locations) {
-          updateMapLocations(parsedData.locations);
-        }
-
-        if (parsedData.character) {
-          updateCharacterState(parsedData.character);
-        }
-
-        if (parsedData.objectives) {
-          updateCampaignObjectives(parsedData.objectives);
-        }
-
-        if (parsedData.npcs) {
-          updateNPCRegistry(parsedData.npcs);
-        }
-
+        // What the reply changes is applied by Play (see applyGameMasterResponse in reportHandler);
+        // the functions below, which wrote to the old in-memory stores, are no longer called
         return parsedData;
       } catch (error) {
         console.error("Error parsing LLM response:", error);

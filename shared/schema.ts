@@ -81,6 +81,8 @@ export const characters = pgTable("characters", {
   bonds: json("bonds"), // Array of bonds
   flaws: json("flaws"), // Array of flaws
   backstory: text("backstory"),
+  // How the character looks: { gender, age, height, weight, description }
+  appearance: json("appearance"),
   notes: text("notes"),
   
   // Campaign Information
@@ -138,6 +140,13 @@ export const insertCharacterSchema = z.object({
   armor: z.any().optional(),
   customItems: z.array(z.any()).optional(),
   backstory: z.string().optional(),
+  appearance: z.object({
+    gender: z.string().optional(),
+    age: z.number().optional(),
+    height: z.string().optional(),
+    weight: z.string().optional(),
+    description: z.string().optional(),
+  }).optional(),
   startingLocation: z.string().min(1),
   currentLocation: z.string().optional(),
   notes: z.string().optional(),
@@ -289,6 +298,8 @@ export const insertCampaignSchema = z.object({
   notes: z.string().optional(),
   // The generated world (shared/logic World): areas, the paths between them, and what is in them
   galaxyMap: z.any().optional(),
+  // The story told through the GM tab: [ { date, location, action, narrative, applied } ]
+  sessionLogs: z.any().optional(),
   // Ships the party owns (shared/logic Ship)
   starships: z.any().optional(),
 });

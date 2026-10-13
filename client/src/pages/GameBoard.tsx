@@ -10,8 +10,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import LocalMap from "@/components/Map/LocalMap";
 import PlayCombat from "@/components/Combat/PlayCombat";
-import { useCharacter } from "@/lib/stores/useCharacter";
-import { useCampaign } from "@/lib/stores/useCampaign";
 import { useCombat, rollDamage } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
@@ -43,7 +41,6 @@ export default function GameBoard() {
   const [showSidebar, setShowSidebar] = useState(true);
   const [activeMapTab, setActiveMapTab] = useState<"galaxy" | "local">("galaxy");
   const [showCombat, setShowCombat] = useState(false);
-  const { loadCampaign } = useCampaign();
   const { inCombat, initiateCombat, endCombat } = useCombat();
   const combatants = useCombat((s) => s.combatants);
   const { currentLocation, setCurrentLocation } = useMap();
@@ -53,7 +50,6 @@ export default function GameBoard() {
     queryKey: [`/api/campaigns/${campaignId}`],
     enabled: !!campaignId,
   });
-  // The page shows the fetched campaign; the store copy is for the GM tools
   const campaign: any = data;
 
   // The character is the one the campaign belongs to
@@ -105,8 +101,6 @@ export default function GameBoard() {
   // Load campaign data when available
   useEffect(() => {
     if (data && !isLoading) {
-      loadCampaign(data as any);
-      
       // Set initial location if available
       if (here) {
         setCurrentLocation({ id: here.id, name: here.name, type: here.type, description: here.description, coordinates: here.position });
@@ -118,22 +112,12 @@ export default function GameBoard() {
         setCurrentLocation({ coordinates: { x: 0, y: 0, z: 0 }, ...startLoc });
       }
     }
-  }, [data, isLoading, loadCampaign, setCurrentLocation, here?.id]);
+  }, [data, isLoading, setCurrentLocation, here?.id]);
 
   // Show combat UI when in combat
   useEffect(() => {
     setShowCombat(inCombat);
   }, [inCombat]);
-
-  // Move to a campaign location and remember it
-  const moveTo = (loc: any) => {
-    setCurrentLocation({ coordinates: { x: 0, y: 0, z: 0 }, ...loc });
-    fetch(`/api/campaigns/${campaignId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ currentLocation: loc.name }),
-    });
-  };
 
   // Save campaign fields; the page shows them at once
   const saveCampaign = async (changes: Record<string, any>) => {
@@ -245,6 +229,27 @@ export default function GameBoard() {
     saveCharacter({ credits: character.credits - units * price });
     saveCampaign({ starships: ships.map((s) => (s.id === ship.id ? { ...s, fuel: s.fuel + units } : s)) });
     toast.success(`${ship.name}: ${units} units of fuel for ${units * price} credits.`);
+  };
+
+  // A campaign from before the world generator gets a world of its own: the party starts at its
+  // starting place, and the quests read off the world join the ones the campaign had
+  const generateWorld = async () => {
+    setExploring(true);
+    try {
+      const response = await fetch("/api/world/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ options: { partyLevel: level } }),
+      });
+      if (!response.ok) throw new Error("The server could not generate a world");
+      const generated = await response.json();
+      await saveCampaign({ galaxyMap: generated.world, currentLocation: generated.world.startId, quests: [...quests, ...(generated.quests ?? [])] });
+      toast.success("The campaign has a world now.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setExploring(false);
+    }
   };
 
   // Pick or slice a lock: Dexterity or Intelligence, trained with a security or slicer's kit
@@ -480,8 +485,6 @@ export default function GameBoard() {
   const toggleSidebar = () => {
     setShowSidebar(!showSidebar);
   };
-
-  // GM Report Manager is imported at the top
 
   // A practice fight for campaigns without a world: a trooper and a junior officer, from their stat blocks
   const startTestCombat = async () => {
@@ -796,22 +799,16 @@ export default function GameBoard() {
                 )}
               </div>
             ) : (
-            <div className="mb-4">
+            <div className="mb-4" data-testid="play-no-world">
               <h3 className="font-semibold mb-2">Location</h3>
-              <p>{currentLocation?.name || "Unknown"}</p>
-              <p className="text-sm text-gray-400">{currentLocation?.description || ""}</p>
-              <div className="mt-2 flex flex-wrap gap-1">
-                {(campaign.locations || []).map((l: any) => (
-                  <Button
-                    key={l.id}
-                    size="sm"
-                    variant={currentLocation?.id === l.id ? "default" : "outline"}
-                    onClick={() => moveTo(l)}
-                  >
-                    {l.name}
-                  </Button>
-                ))}
-              </div>
+              <p>{currentLocation?.name || campaign.currentLocation || "Unknown"}</p>
+              <p className="text-sm text-gray-400 mt-1">
+                This campaign has no world yet, so there is nowhere to travel, nobody to meet and nothing to find.
+                Generating one adds star systems, planets, settlements and rooms with people, enemies, ships and loot, and quests to follow.
+              </p>
+              <Button size="sm" className="mt-2" onClick={generateWorld} disabled={exploring || inCombat || dead}>
+                {exploring ? "Generating..." : "Generate a world"}
+              </Button>
               <div className="mt-2">{restButtons}</div>
             </div>
             )}
@@ -867,7 +864,16 @@ export default function GameBoard() {
           </TabsContent>
 
           <TabsContent value="gm">
-            <GMReportManager />
+            <GMReportManager
+              character={character}
+              campaign={campaign}
+              world={world}
+              here={here}
+              exits={exits}
+              saveCharacter={saveCharacter}
+              saveCampaign={saveCampaign}
+              disabled={inCombat || dead}
+            />
           </TabsContent>
         </Tabs>
       </div>

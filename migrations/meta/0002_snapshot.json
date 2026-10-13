@@ -1,0 +1,1111 @@
+{
+  "id": "7d1483e0-28d5-4f4e-ba72-a15216721296",
+  "prevId": "e489e057-52a1-4ddb-9610-3c16f4a1f0e3",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.campaigns": {
+      "name": "campaigns",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "setting": {
+          "name": "setting",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "character_id": {
+          "name": "character_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "player_characters": {
+          "name": "player_characters",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "objectives": {
+          "name": "objectives",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "quests": {
+          "name": "quests",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "arcs": {
+          "name": "arcs",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "factions": {
+          "name": "factions",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "npcs": {
+          "name": "npcs",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "locations": {
+          "name": "locations",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "planets": {
+          "name": "planets",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "starting_location": {
+          "name": "starting_location",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "current_location": {
+          "name": "current_location",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "galaxy_map": {
+          "name": "galaxy_map",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "time_elapsed": {
+          "name": "time_elapsed",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "in_game_calendar": {
+          "name": "in_game_calendar",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "current_game_state": {
+          "name": "current_game_state",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "session_logs": {
+          "name": "session_logs",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "upcoming_session_notes": {
+          "name": "upcoming_session_notes",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "secrets": {
+          "name": "secrets",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "encounters": {
+          "name": "encounters",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "treasures": {
+          "name": "treasures",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "llm_context": {
+          "name": "llm_context",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ai_direction": {
+          "name": "ai_direction",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "force_presence": {
+          "name": "force_presence",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "starships": {
+          "name": "starships",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tech_level": {
+          "name": "tech_level",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "faction_influence": {
+          "name": "faction_influence",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "planetary_conditions": {
+          "name": "planetary_conditions",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "available_resources": {
+          "name": "available_resources",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "special_rules": {
+          "name": "special_rules",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "campaigns_user_id_users_id_fk": {
+          "name": "campaigns_user_id_users_id_fk",
+          "tableFrom": "campaigns",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.character_star_wars_data": {
+      "name": "character_star_wars_data",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "character_id": {
+          "name": "character_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "species": {
+          "name": "species",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "homeworld": {
+          "name": "homeworld",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "affiliation": {
+          "name": "affiliation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "force_user": {
+          "name": "force_user",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "force_powers": {
+          "name": "force_powers",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "custom_data": {
+          "name": "custom_data",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "character_star_wars_data_character_id_characters_id_fk": {
+          "name": "character_star_wars_data_character_id_characters_id_fk",
+          "tableFrom": "character_star_wars_data",
+          "tableTo": "characters",
+          "columnsFrom": [
+            "character_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.characters": {
+      "name": "characters",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "species": {
+          "name": "species",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "class": {
+          "name": "class",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subclass": {
+          "name": "subclass",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "level": {
+          "name": "level",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "background": {
+          "name": "background",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "alignment": {
+          "name": "alignment",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ability_scores": {
+          "name": "ability_scores",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "proficiency_bonus": {
+          "name": "proficiency_bonus",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 2
+        },
+        "max_hp": {
+          "name": "max_hp",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "current_hp": {
+          "name": "current_hp",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "temporary_hp": {
+          "name": "temporary_hp",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "hit_dice_used": {
+          "name": "hit_dice_used",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "armor_class": {
+          "name": "armor_class",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_force_points": {
+          "name": "max_force_points",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "current_force_points": {
+          "name": "current_force_points",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "force_powers": {
+          "name": "force_powers",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tech_powers": {
+          "name": "tech_powers",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "speed": {
+          "name": "speed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 30
+        },
+        "initiative": {
+          "name": "initiative",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "saving_throw_proficiencies": {
+          "name": "saving_throw_proficiencies",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "skill_proficiencies": {
+          "name": "skill_proficiencies",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tool_proficiencies": {
+          "name": "tool_proficiencies",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "weapon_proficiencies": {
+          "name": "weapon_proficiencies",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "armor_proficiencies": {
+          "name": "armor_proficiencies",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "languages": {
+          "name": "languages",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "credits": {
+          "name": "credits",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1000
+        },
+        "equipment": {
+          "name": "equipment",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "weapons": {
+          "name": "weapons",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "armor": {
+          "name": "armor",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "custom_items": {
+          "name": "custom_items",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "encumbrance": {
+          "name": "encumbrance",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "default": 0
+        },
+        "carrying_capacity": {
+          "name": "carrying_capacity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "personality_traits": {
+          "name": "personality_traits",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ideals": {
+          "name": "ideals",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "bonds": {
+          "name": "bonds",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "flaws": {
+          "name": "flaws",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "backstory": {
+          "name": "backstory",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "appearance": {
+          "name": "appearance",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "campaign_id": {
+          "name": "campaign_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "experience": {
+          "name": "experience",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "starting_location": {
+          "name": "starting_location",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "current_location": {
+          "name": "current_location",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "faction_reputations": {
+          "name": "faction_reputations",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "force_alignment": {
+          "name": "force_alignment",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deployments": {
+          "name": "deployments",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "modifications": {
+          "name": "modifications",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "companion_data": {
+          "name": "companion_data",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "conditions": {
+          "name": "conditions",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "exhaustion_level": {
+          "name": "exhaustion_level",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "default": 0
+        },
+        "feats": {
+          "name": "feats",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fighter_maneuvers": {
+          "name": "fighter_maneuvers",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "scholar_formulae": {
+          "name": "scholar_formulae",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "characters_user_id_users_id_fk": {
+          "name": "characters_user_id_users_id_fk",
+          "tableFrom": "characters",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.debriefs": {
+      "name": "debriefs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "campaign_id": {
+          "name": "campaign_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content": {
+          "name": "content",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "response": {
+          "name": "response",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.items": {
+      "name": "items",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "location_id": {
+          "name": "location_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "campaign_id": {
+          "name": "campaign_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "items_owner_id_characters_id_fk": {
+          "name": "items_owner_id_characters_id_fk",
+          "tableFrom": "items",
+          "tableTo": "characters",
+          "columnsFrom": [
+            "owner_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "items_location_id_locations_id_fk": {
+          "name": "items_location_id_locations_id_fk",
+          "tableFrom": "items",
+          "tableTo": "locations",
+          "columnsFrom": [
+            "location_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "items_campaign_id_campaigns_id_fk": {
+          "name": "items_campaign_id_campaigns_id_fk",
+          "tableFrom": "items",
+          "tableTo": "campaigns",
+          "columnsFrom": [
+            "campaign_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.locations": {
+      "name": "locations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "coordinate_string": {
+          "name": "coordinate_string",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "coordinate_data": {
+          "name": "coordinate_data",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "campaign_id": {
+          "name": "campaign_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "locations_campaign_id_campaigns_id_fk": {
+          "name": "locations_campaign_id_campaigns_id_fk",
+          "tableFrom": "locations",
+          "tableTo": "campaigns",
+          "columnsFrom": [
+            "campaign_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.npcs": {
+      "name": "npcs",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "species": {
+          "name": "species",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "location_id": {
+          "name": "location_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "campaign_id": {
+          "name": "campaign_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "npcs_location_id_locations_id_fk": {
+          "name": "npcs_location_id_locations_id_fk",
+          "tableFrom": "npcs",
+          "tableTo": "locations",
+          "columnsFrom": [
+            "location_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "npcs_campaign_id_campaigns_id_fk": {
+          "name": "npcs_campaign_id_campaigns_id_fk",
+          "tableFrom": "npcs",
+          "tableTo": "campaigns",
+          "columnsFrom": [
+            "campaign_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.users": {
+      "name": "users",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "username": {
+          "name": "username",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "password": {
+          "name": "password",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "users_username_unique": {
+          "name": "users_username_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "username"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

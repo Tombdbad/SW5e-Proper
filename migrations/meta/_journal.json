@@ -15,6 +15,13 @@
       "when": 1791856048123,
       "tag": "0001_smart_jocasta",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791889259797,
+      "tag": "0002_silky_ghost_rider",
+      "breakpoints": true
     }
   ]
 }
