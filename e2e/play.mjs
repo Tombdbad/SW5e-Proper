@@ -334,10 +334,18 @@ await step(ctx, "play: enemies bar the way; the fight uses their stat block and 
   const seen = [];
   let weapons = "";
   let won = false;
+  let revived = 0;
   for (let attempt = 0; attempt < 8 && !won; attempt++) {
-    if ((await getChar(charId)).currentHp <= 0) {
-      // Cannot rest with enemies about: step out the way we came is not known after a reload, so heal through the API
-      await api("PATCH", `/api/characters/${charId}`, { currentHp: (await getChar(charId)).maxHp });
+    const now = await getChar(charId);
+    if ((now.conditions ?? []).includes("Dead")) {
+      await page.getByTestId("play-dead").getByRole("button", { name: /Revive/ }).click();
+      await sleep(800);
+      if (((await getChar(charId)).conditions ?? []).includes("Dead")) throw new Error("Revive did not clear Dead");
+      revived += 1;
+    }
+    if (now.currentHp <= 1) {
+      // Cannot rest with enemies about, so heal through the API
+      await api("PATCH", `/api/characters/${charId}`, { currentHp: now.maxHp });
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 60000 });
     }
@@ -347,8 +355,10 @@ await step(ctx, "play: enemies bar the way; the fight uses their stat block and 
     for (let i = 0; i < 200; i++) {
       if (!(await page.getByText(/Combat - Round/).count())) break;
       for (const l of await page.locator("div.text-xs.text-gray-300 > div").allInnerTexts().catch(() => [])) if (!seen.includes(l)) seen.push(l);
+      const save = page.getByRole("button", { name: "Death saving throw" });
       const melee = page.getByRole("button", { name: "Melee", exact: true });
-      if ((await melee.count()) && (await melee.isEnabled().catch(() => false))) await melee.click().catch(() => {});
+      if ((await save.count()) && (await save.isEnabled().catch(() => false))) await save.click().catch(() => {});
+      else if ((await melee.count()) && (await melee.isEnabled().catch(() => false))) await melee.click().catch(() => {});
       await sleep(300);
     }
     await sleep(1200);
@@ -362,7 +372,8 @@ await step(ctx, "play: enemies bar the way; the fight uses their stat block and 
   const c = await getChar(charId);
   hpAfter = c.currentHp;
   if (!(c.experience >= 25)) throw new Error(`experience ${c.experience}`);
-  return `${weapons}; damage rolls ${dmg.join(",")}; hp now ${c.currentHp}/${c.maxHp}; experience ${c.experience}`;
+  const saves = seen.filter((l) => /^Death save/.test(l)).length;
+  return `${weapons}; damage rolls ${dmg.join(",")}; ${saves} death saves, revived ${revived} times; hp now ${c.currentHp}/${c.maxHp}; experience ${c.experience}`;
 });
 
 await step(ctx, "play: loot goes to the character, and both survive a reload", async () => {
@@ -393,18 +404,24 @@ await step(ctx, "play: travel along a path, kept after reload", async () => {
   return `took "${label}" to ${area.name} (${area.kind})`;
 });
 
-await step(ctx, "play: rest restores HP", async () => {
-  await api("PATCH", `/api/characters/${charId}`, { currentHp: 1 });
+await step(ctx, "play: a short rest spends a Hit Die, a long rest restores everything", async () => {
+  await api("PATCH", `/api/characters/${charId}`, { currentHp: 1, hitDiceUsed: 0 });
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 60000 });
-  const rest = page.getByRole("button", { name: /Rest/ });
-  if (await rest.isDisabled()) return "enemies here: resting is not allowed (skipped)";
-  await rest.click();
+  const short = page.getByRole("button", { name: "Short rest" });
+  if (await short.isDisabled()) return "enemies here: resting is not allowed (skipped)";
+  await short.click();
+  await sleep(800);
+  const rested = await getChar(charId);
+  // A Fighter's d10 + 2 Constitution heals at least 3
+  if (rested.hitDiceUsed !== 1 || rested.currentHp < 4) throw new Error(`short rest: hp ${rested.currentHp}, Hit Dice used ${rested.hitDiceUsed}`);
+  await page.getByTestId("play-hit-dice").getByText("Hit Dice 0/1").waitFor();
+  await page.getByRole("button", { name: "Long rest" }).click();
   await sleep(800);
   const c = await getChar(charId);
-  if (c.currentHp !== c.maxHp) throw new Error(`hp ${c.currentHp}/${c.maxHp}`);
+  if (c.currentHp !== c.maxHp || c.hitDiceUsed !== 0) throw new Error(`long rest: hp ${c.currentHp}/${c.maxHp}, Hit Dice used ${c.hitDiceUsed}`);
   await page.getByText(`${c.maxHp}/${c.maxHp}`).first().waitFor();
-  return `HP ${c.currentHp}/${c.maxHp}`;
+  return `short rest 1 -> ${rested.currentHp} HP for one Hit Die; long rest ${c.currentHp}/${c.maxHp} HP and the Hit Die back`;
 });
 
 await step(ctx, "play: tabs and local map do not crash", async () => {

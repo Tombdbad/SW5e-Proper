@@ -12,11 +12,13 @@ import LocalMap from "@/components/Map/LocalMap";
 import PlayCombat from "@/components/Combat/PlayCombat";
 import { useCharacter } from "@/lib/stores/useCharacter";
 import { useCampaign } from "@/lib/stores/useCampaign";
-import { useCombat } from "@/lib/stores/useCombat";
+import { useCombat, rollDamage } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
 import { findEquipmentByName } from "@/lib/sw5e/equipment";
+import { getClassById } from "@/lib/sw5e/classes";
+import { castingStats, powerCost, powerEffect } from "@/lib/sw5e/rules";
 import { exitsOf, trailOf, childrenOf, updateArea, type World, type Area, type Exit, type LootCache } from "@shared/logic";
 
 const d20 = () => Math.floor(Math.random() * 20) + 1;
@@ -62,19 +64,23 @@ export default function GameBoard() {
     enabled: !!gameCharacterId,
   });
 
-  // Write the player's HP back to the database whenever combat changes it
+  // Write the player's hit points and power points back to the database whenever combat changes them
   const queryClient = useQueryClient();
   const lastSavedHp = useRef<number | null>(null);
+  const lastSavedPoints = useRef<number | null>(null);
   useEffect(() => {
     const p = combatants.find((c) => c.isPlayer);
     if (!p || !character) return;
     if (lastSavedHp.current === null) lastSavedHp.current = character.currentHp;
-    if (p.hp === lastSavedHp.current) return;
-    lastSavedHp.current = p.hp;
+    if (lastSavedPoints.current === null) lastSavedPoints.current = character.currentForcePoints;
+    const changes: Record<string, number> = {};
+    if (p.hp !== lastSavedHp.current) changes.currentHp = lastSavedHp.current = p.hp;
+    if (p.powerPoints !== undefined && p.powerPoints !== lastSavedPoints.current) changes.currentForcePoints = lastSavedPoints.current = p.powerPoints;
+    if (!Object.keys(changes).length) return;
     fetch(`/api/characters/${character.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ currentHp: p.hp }),
+      body: JSON.stringify(changes),
     }).then(() => queryClient.invalidateQueries({ queryKey: ["game-character"] }));
   }, [combatants, character?.id]);
 
@@ -153,11 +159,16 @@ export default function GameBoard() {
   const hostiles = (here?.occupants ?? []).filter((o) => o.disposition === "hostile" && o.hitPoints);
   const exits: Exit[] = world && here ? exitsOf(world, here.id) : [];
 
-  // Walk, drive or fly along an exit
+  // Walk, drive or fly along an exit. A place nobody has been to is built on arrival.
   const travel = (exit: Exit) => {
-    if (!here) return;
+    if (!here || !world) return;
     setCameFrom(here.id);
-    saveCampaign({ currentLocation: exit.to });
+    const target = world.areas[exit.to];
+    if (childrenOf(world, target.id).length === 0 && ["planet", "settlement", "building"].includes(target.kind)) {
+      explore(target.id, { currentLocation: target.id });
+    } else {
+      saveCampaign({ currentLocation: exit.to });
+    }
   };
 
   // Pick or slice a lock: Dexterity or Intelligence, trained with a security or slicer's kit
@@ -182,17 +193,17 @@ export default function GameBoard() {
   };
 
   // Go into a place nobody has mapped yet: the server builds what is inside
-  const explore = async () => {
+  const explore = async (areaId?: string, alsoSave: Record<string, any> = {}) => {
     if (!world || !here) return;
     setExploring(true);
     try {
       const response = await fetch("/api/world/expand", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ world, areaId: here.id }),
+        body: JSON.stringify({ world, areaId: areaId ?? here.id }),
       });
       if (!response.ok) throw new Error("The server could not build this place");
-      await saveCampaign({ galaxyMap: (await response.json()).world });
+      await saveCampaign({ galaxyMap: (await response.json()).world, ...alsoSave });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {
@@ -211,16 +222,31 @@ export default function GameBoard() {
     toast.success(`Taken: ${[cache.credits && `${cache.credits} credits`, ...gained].filter(Boolean).join(", ") || "nothing"}`);
   };
 
-  // The weapons the character carries, from the equipment data: one for melee, one for ranged
-  const weapons = () => {
+  const level = Number(character?.level) || 1;
+  const klass = getClassById(character?.class ?? "");
+  const knownPowers: any[] = [...(character?.forcePowers ?? []), ...(character?.techPowers ?? [])];
+  const dead = (character?.conditions ?? []).includes("Dead");
+
+  // What the character fights with: the weapons carried (from the equipment data), a species'
+  // natural weapon when unarmed, and the powers known with the caster's numbers for each
+  const combatKit = () => {
     const owned = (character?.equipment ?? []).map((name: string) => findEquipmentByName(name)).filter((e: any) => e?.category === "Weapon" && e.damage);
     const melee = owned.find((e: any) => /vibroweapon|lightweapon/i.test(e.weaponClassification ?? ""));
     const ranged = owned.find((e: any) => /blaster/i.test(e.weaponClassification ?? ""));
+    const natural = (character?.weapons ?? []).find((w: any) => w?.natural);
+    const order = { attack: 0, save: 0, heal: 1, other: 2 };
     return {
-      meleeDice: melee?.damage.split(" ")[0],
-      meleeWeapon: melee?.name,
+      meleeDice: melee?.damage.split(" ")[0] ?? natural?.damage,
+      meleeWeapon: melee?.name ?? natural?.name,
       rangedDice: ranged?.damage.split(" ")[0],
       rangedWeapon: ranged?.name,
+      powerPoints: character?.currentForcePoints ?? 0,
+      powers: knownPowers
+        .map((power) => {
+          const effect = powerEffect(power, level);
+          return { name: power.name as string, level: power.level as number, cost: powerCost(power), ...effect, ...castingStats(character.abilityScores, level, power) };
+        })
+        .sort((a, b) => order[a.kind] - order[b.kind] || a.level - b.level),
     };
   };
 
@@ -237,39 +263,96 @@ export default function GameBoard() {
         armorClass: o.armorClass ?? 10,
         attackBonus: o.attack?.bonus ?? 2,
         damageDice: o.attack?.damage ?? "1d4",
+        saves: o.saves,
       })),
     );
     fightArea.current = here.id;
-    initiateCombat(character, enemies, weapons());
+    lastSavedHp.current = character.currentHp;
+    lastSavedPoints.current = character.currentForcePoints;
+    initiateCombat(character, enemies, combatKit());
   };
 
-  // When a fight in the world is won, the fallen leave the area and their gear stays behind
+  // How a fight ended. Won: the fallen leave the area and their gear stays behind. Stable: the
+  // character comes to hours later with 1 hit point, back where they came from. Dead: dead.
+  const outcome = useCombat((state) => state.outcome);
   useEffect(() => {
+    if (inCombat || !outcome || !character) return;
     const areaId = fightArea.current;
-    if (inCombat || !areaId || !world || !world.areas[areaId]) return;
-    const foes = combatants.filter((c) => !c.isPlayer);
     fightArea.current = null;
-    if (!foes.length || foes.some((c) => c.hp > 0)) return;
-    const area = world.areas[areaId];
-    const fallen = area.occupants.filter((o) => o.disposition === "hostile" && o.hitPoints);
-    const gear = fallen.flatMap((o) => o.loadout.map((name) => ({ name, quantity: o.count, source: "equipment" as const })));
-    const loot = gear.length ? [...area.loot, { id: `l-${Date.now().toString(36)}`, name: "Gear of the fallen", kind: "remains", credits: 0, items: gear }] : area.loot;
-    saveCampaign({ galaxyMap: updateArea(world, areaId, { occupants: area.occupants.filter((o) => !fallen.includes(o)), loot }).world });
-    const xp = fallen.reduce((sum, o) => sum + (o.xp ?? 0) * o.count, 0);
-    if (xp && character) saveCharacter({ experience: (character.experience ?? 0) + xp });
-    toast.success(`Victory${xp ? `: ${xp} XP` : ""}`);
-  }, [inCombat]);
+    if (outcome === "dead") {
+      saveCharacter({ currentHp: 0, conditions: ["Dead"] });
+      toast.error(`${character.name} has died.`);
+    } else if (outcome === "stable") {
+      lastSavedHp.current = 1;
+      saveCharacter({ currentHp: 1 });
+      if (world && cameFrom && world.areas[cameFrom]) saveCampaign({ currentLocation: cameFrom });
+      toast.info("Left for dead, you come to hours later with 1 hit point" + (cameFrom ? ", back the way you came." : "."));
+    } else if (outcome === "victory" && areaId && world?.areas[areaId]) {
+      const area = world.areas[areaId];
+      const fallen = area.occupants.filter((o) => o.disposition === "hostile" && o.hitPoints);
+      const gear = fallen.flatMap((o) => o.loadout.map((name) => ({ name, quantity: o.count, source: "equipment" as const })));
+      const loot = gear.length ? [...area.loot, { id: `l-${Date.now().toString(36)}`, name: "Gear of the fallen", kind: "remains", credits: 0, items: gear }] : area.loot;
+      saveCampaign({ galaxyMap: updateArea(world, areaId, { occupants: area.occupants.filter((o) => !fallen.includes(o)), loot }).world });
+      const xp = fallen.reduce((sum, o) => sum + (o.xp ?? 0) * o.count, 0);
+      if (xp) saveCharacter({ experience: (character.experience ?? 0) + xp });
+      toast.success(`Victory${xp ? `: ${xp} XP` : ""}`);
+    }
+  }, [inCombat, outcome]);
 
-  // Full rest: restore HP and Force points
+  // Rests, by the Player's Handbook. Short: spend a Hit Die (the class die + Constitution) to heal;
+  // tech points come back. Long: all hit points and power points, and half the Hit Dice, come back.
+  const hitDie = klass?.hitDie ?? 8;
+  const hitDiceLeft = Math.max(0, level - (character?.hitDiceUsed ?? 0));
+  const shortRest = () => {
+    if (!character || inCombat) return;
+    const changes: Record<string, number> = {};
+    const notes: string[] = [];
+    if (klass?.casterType === "Tech" && character.currentForcePoints < character.maxForcePoints) {
+      changes.currentForcePoints = character.maxForcePoints;
+      notes.push("tech points restored");
+    }
+    if (hitDiceLeft > 0 && character.currentHp < character.maxHp) {
+      const healed = Math.max(0, rollDamage(`1d${hitDie}`, false) + modifier(character.abilityScores?.constitution));
+      changes.currentHp = lastSavedHp.current = Math.min(character.maxHp, character.currentHp + healed);
+      changes.hitDiceUsed = (character.hitDiceUsed ?? 0) + 1;
+      notes.push(`a Hit Die (d${hitDie}) restores ${healed} hit points`);
+    }
+    if (Object.keys(changes).length) saveCharacter(changes);
+    toast.info(`Short rest: ${notes.join("; ") || (hitDiceLeft ? "nothing to recover" : "no Hit Dice left")}.`);
+  };
   const rest = async () => {
     if (!character || inCombat) return;
-    await fetch(`/api/characters/${character.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ currentHp: character.maxHp, currentForcePoints: character.maxForcePoints }),
-    });
+    if (character.currentHp < 1) {
+      toast.error("A long rest needs at least 1 hit point to begin with.");
+      return;
+    }
     lastSavedHp.current = character.maxHp;
-    queryClient.invalidateQueries({ queryKey: ["game-character"] });
+    lastSavedPoints.current = character.maxForcePoints;
+    await saveCharacter({
+      currentHp: character.maxHp,
+      currentForcePoints: character.maxForcePoints,
+      hitDiceUsed: Math.max(0, (character.hitDiceUsed ?? 0) - Math.max(1, Math.floor(level / 2))),
+    });
+    toast.info("Long rest: hit points and power points restored, half your Hit Dice regained.");
+  };
+
+  // House rule, not in the books: a dead character can be brought back so the campaign can go on
+  const revive = () => {
+    lastSavedHp.current = 1;
+    saveCharacter({ currentHp: 1, conditions: [] });
+    toast.info("House rule: revived with 1 hit point.");
+  };
+
+  // Healing powers can be cast outside a fight
+  const healingPowers = knownPowers.filter((power) => powerEffect(power, level).kind === "heal");
+  const castHealing = (power: any) => {
+    const cost = powerCost(power);
+    if (!character || (character.currentForcePoints ?? 0) < cost) return;
+    const healed = Math.max(1, rollDamage(powerEffect(power, level).dice!, false) + castingStats(character.abilityScores, level, power).modifier);
+    lastSavedHp.current = Math.min(character.maxHp, character.currentHp + healed);
+    lastSavedPoints.current = character.currentForcePoints - cost;
+    saveCharacter({ currentHp: lastSavedHp.current, currentForcePoints: lastSavedPoints.current });
+    toast.success(`${power.name}: ${healed} hit points regained.`);
   };
 
   // Toggle sidebar
@@ -279,17 +362,52 @@ export default function GameBoard() {
 
   // GM Report Manager is imported at the top
 
-  // Start combat (test)
-  const startTestCombat = () => {
+  // A practice fight for campaigns without a world: a trooper and a junior officer, from their stat blocks
+  const startTestCombat = async () => {
     if (!character || character.currentHp <= 0) return;
-    
-    const enemies = [
-      { id: "enemy-1", name: "Stormtrooper", hp: 30, maxHp: 30, initiative: 12, armorClass: 13, attackBonus: 3 },
-      { id: "enemy-2", name: "Imperial Officer", hp: 20, maxHp: 20, initiative: 14, armorClass: 12, attackBonus: 2 },
-    ];
-    
-    initiateCombat(character, enemies, weapons());
+    const foes = await Promise.all(
+      ["trooper", "officer-junior"].map((statBlock) =>
+        fetch("/api/world/occupant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ statBlock }) }).then((r) => r.json()),
+      ),
+    );
+    const enemies = foes.map((o: any, i: number) => ({
+      id: `enemy-${i}`,
+      name: o.name,
+      hp: o.hitPoints,
+      maxHp: o.hitPoints,
+      initiative: 0,
+      armorClass: o.armorClass,
+      attackBonus: o.attack?.bonus ?? 2,
+      damageDice: o.attack?.damage ?? "1d4",
+      saves: o.saves,
+    }));
+    lastSavedHp.current = character.currentHp;
+    lastSavedPoints.current = character.currentForcePoints;
+    initiateCombat(character, enemies, combatKit());
   };
+
+  const pointsName = klass?.casterType === "Tech" ? "Tech Points" : "Force Points";
+  const restButtons = character && (
+    <div className="flex flex-wrap gap-2" data-testid="play-rest">
+      <Button size="sm" variant="outline" onClick={shortRest} disabled={inCombat || dead || hostiles.length > 0}>
+        Short rest
+      </Button>
+      <Button size="sm" variant="outline" onClick={rest} disabled={inCombat || dead || hostiles.length > 0}>
+        Long rest
+      </Button>
+      {healingPowers.map((power) => (
+        <Button
+          key={power.name}
+          size="sm"
+          variant="outline"
+          onClick={() => castHealing(power)}
+          disabled={inCombat || dead || character.currentHp >= character.maxHp || character.currentForcePoints < powerCost(power)}
+        >
+          {power.name} ({powerCost(power)} pts)
+        </Button>
+      ))}
+    </div>
+  );
 
   if (isLoading || characterLoading) {
     return (
@@ -367,7 +485,7 @@ export default function GameBoard() {
                 {showSidebar ? "Hide HUD" : "Show HUD"}
               </Button>
               {!inCombat && !world && (
-                <Button variant="destructive" onClick={startTestCombat} disabled={character.currentHp <= 0}>
+                <Button variant="destructive" onClick={startTestCombat} disabled={character.currentHp <= 0 || dead}>
                   Test Combat
                 </Button>
               )}
@@ -392,9 +510,22 @@ export default function GameBoard() {
               </div>
             </div>
 
+            {dead && (
+              <div className="mb-4 p-2 rounded bg-red-900/50 text-sm" data-testid="play-dead">
+                <p className="font-semibold">{character.name} is dead.</p>
+                <p className="text-gray-300">By the rules this character's story is over. As a house rule you can bring them back.</p>
+                <Button size="sm" variant="outline" className="mt-1" onClick={revive}>
+                  Revive (house rule)
+                </Button>
+              </div>
+            )}
+            <p className="text-sm text-gray-300 mb-4" data-testid="play-hit-dice">
+              Level {level} · Hit Dice {hitDiceLeft}/{level} (d{hitDie}) · {character.experience ?? 0} XP
+            </p>
+
             <div className="mb-4">
               <div className="flex justify-between mb-1">
-                <span>Force Points</span>
+                <span>{pointsName}</span>
                 <span>{character.currentForcePoints}/{character.maxForcePoints}</span>
               </div>
               <div className="w-full bg-gray-700 rounded-full h-2.5">
@@ -437,7 +568,7 @@ export default function GameBoard() {
                   </ul>
                 )}
                 {hostiles.length > 0 && (
-                  <Button size="sm" variant="destructive" onClick={fight} disabled={inCombat || character.currentHp <= 0}>
+                  <Button size="sm" variant="destructive" onClick={fight} disabled={inCombat || dead || character.currentHp <= 0}>
                     Fight
                   </Button>
                 )}
@@ -449,7 +580,7 @@ export default function GameBoard() {
                       {cache.looted && <span className="text-gray-400"> (empty)</span>}
                     </span>
                     {!cache.looted && (
-                      <Button size="sm" variant="outline" onClick={() => takeLoot(cache)} disabled={inCombat || hostiles.length > 0}>
+                      <Button size="sm" variant="outline" onClick={() => takeLoot(cache)} disabled={inCombat || dead || hostiles.length > 0}>
                         {cache.locked ? `Open (DC ${cache.locked})` : "Take"}
                       </Button>
                     )}
@@ -466,7 +597,7 @@ export default function GameBoard() {
                         size="sm"
                         variant="outline"
                         className="h-auto whitespace-normal justify-start text-left"
-                        disabled={inCombat || barred}
+                        disabled={inCombat || dead || exploring || barred}
                         onClick={() => (exit.locked ? unlock(exit) : travel(exit))}
                       >
                         {exit.locked ? `Unlock (DC ${exit.locked}): ` : ""}{exit.label}{exit.via === "path" ? " to" : ""} {world.areas[exit.to].name}
@@ -480,18 +611,16 @@ export default function GameBoard() {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" onClick={search} disabled={inCombat || hostiles.length > 0}>
+                  <Button size="sm" variant="outline" onClick={search} disabled={inCombat || dead || hostiles.length > 0}>
                     Search
                   </Button>
                   {childrenOf(world, here.id).length === 0 && ["system", "planet", "settlement", "building"].includes(here.kind) && (
-                    <Button size="sm" variant="outline" onClick={explore} disabled={exploring || inCombat}>
+                    <Button size="sm" variant="outline" onClick={() => explore()} disabled={exploring || inCombat || dead}>
                       {exploring ? "Exploring..." : "Explore"}
                     </Button>
                   )}
-                  <Button size="sm" variant="outline" onClick={rest} disabled={inCombat || hostiles.length > 0}>
-                    Rest (restore HP)
-                  </Button>
                 </div>
+                {restButtons}
               </div>
             ) : (
             <div className="mb-4">
@@ -510,9 +639,7 @@ export default function GameBoard() {
                   </Button>
                 ))}
               </div>
-              <Button className="mt-2" size="sm" variant="outline" onClick={rest} disabled={inCombat}>
-                Rest (restore HP)
-              </Button>
+              <div className="mt-2">{restButtons}</div>
             </div>
             )}
 
