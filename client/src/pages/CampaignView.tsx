@@ -54,6 +54,8 @@ export default function CampaignView() {
           ...fields,
           galaxyMap: generated.world,
           currentLocation: generated.world.startId,
+          // Quests the world can keep score of replace the generator's free-text ones
+          quests: generated.quests?.length ? generated.quests : fields.quests,
         });
       }
     },

@@ -10,6 +10,13 @@ export interface StarshipSize {
   stockCost?: number;
   modificationSlots?: number;
   fuelCapacity?: number;
+  // Credits for one unit of fuel
+  fuelCost?: number;
 }
 
-export const starshipSizes: StarshipSize[] = travel.starshipSizes;
+export const starshipSizes: StarshipSize[] = travel.starshipSizes.map((size) => ({
+  ...size,
+  fuelCost: Number(String((size.tables as Record<string, string>)["Starship Size Fuel Cost"] ?? "").replace(/\D/g, "")) || undefined,
+}));
+
+export const getStarshipSize = (name: string): StarshipSize | undefined => starshipSizes.find((size) => size.name === name);

@@ -19,7 +19,11 @@ import { toast } from "sonner";
 import { findEquipmentByName } from "@/lib/sw5e/equipment";
 import { getClassById } from "@/lib/sw5e/classes";
 import { castingStats, powerCost, powerEffect } from "@/lib/sw5e/rules";
-import { exitsOf, trailOf, childrenOf, updateArea, type World, type Area, type Exit, type LootCache } from "@shared/logic";
+import { getStarshipSize } from "@/lib/sw5e/starships";
+import {
+  exitsOf, trailOf, childrenOf, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
+  type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship,
+} from "@shared/logic";
 
 const d20 = () => Math.floor(Math.random() * 20) + 1;
 const modifier = (score?: number) => Math.floor(((score ?? 10) - 10) / 2);
@@ -136,6 +140,7 @@ export default function GameBoard() {
     if (!response.ok) toast.error("Could not save the campaign");
   };
   const saveCharacter = async (changes: Record<string, any>) => {
+    queryClient.setQueryData(["game-character", gameCharacterId], (old: any) => ({ ...old, ...changes }));
     await fetch(`/api/characters/${character.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -159,16 +164,69 @@ export default function GameBoard() {
   const hostiles = (here?.occupants ?? []).filter((o) => o.disposition === "hostile" && o.hitPoints);
   const exits: Exit[] = world && here ? exitsOf(world, here.id) : [];
 
+  // The party's ships, and how a trip that needs one is made: in a ship of their own berthed
+  // here (it burns fuel), or as a passenger (the fare is a house rule, see passageFare)
+  const ships: PartyShip[] = Array.isArray(campaign?.starships) ? campaign.starships : [];
+  const passageRate = getStarshipSize("Medium")?.fuelCost ?? 100;
+  const tripBy = (exit: Exit) => {
+    const { ship, reason } = here ? shipForTrip(ships, here.id, exit) : { ship: undefined, reason: "" };
+    return { ship, reason, fare: ship ? 0 : passageFare(exit, passageRate) };
+  };
+
   // Walk, drive or fly along an exit. A place nobody has been to is built on arrival.
   const travel = (exit: Exit) => {
     if (!here || !world) return;
+    const changes: Record<string, any> = { currentLocation: exit.to };
+    if (exit.needsShip) {
+      const { ship, fare } = tripBy(exit);
+      if (ship) {
+        changes.starships = ships.map((s) => (s.id === ship.id ? { ...s, fuel: s.fuel - (exit.fuel ?? 0), areaId: exit.to } : s));
+      } else if (fare > (character.credits ?? 0)) {
+        toast.error(`Passage costs ${fare} credits and you have ${character.credits ?? 0}.`);
+        return;
+      } else if (fare) {
+        saveCharacter({ credits: character.credits - fare });
+        toast.info(`Passage paid: ${fare} credits.`);
+      }
+    }
     setCameFrom(here.id);
     const target = world.areas[exit.to];
     if (childrenOf(world, target.id).length === 0 && ["planet", "settlement", "building"].includes(target.kind)) {
-      explore(target.id, { currentLocation: target.id });
+      explore(target.id, changes);
     } else {
-      saveCampaign({ currentLocation: exit.to });
+      saveCampaign(changes);
     }
+  };
+
+  // A ship standing here becomes the party's: bought at its value, or taken as a prize when it
+  // belonged to the enemy and nobody is left to stop it. It comes fuelled.
+  const acquireShip = (ship: Ship, price: number) => {
+    if (!world || !here) return;
+    if (price > (character.credits ?? 0)) {
+      toast.error(`${ship.name} costs ${price.toLocaleString()} credits and you have ${(character.credits ?? 0).toLocaleString()}.`);
+      return;
+    }
+    if (price) saveCharacter({ credits: character.credits - price });
+    const mine: PartyShip = { ...ship, owner: character.name, fuel: getStarshipSize(ship.size)?.fuelCapacity ?? 5, areaId: berthOf(world, here.id) };
+    saveCampaign({
+      galaxyMap: updateArea(world, here.id, { ships: here.ships.filter((s) => s.id !== ship.id) }).world,
+      starships: [...ships, mine],
+    });
+    toast.success(`${ship.name} is yours${price ? ` for ${price.toLocaleString()} credits` : ""}.`);
+  };
+
+  // Fill a ship's tanks at a port, as far as the credits go
+  const refuel = (ship: PartyShip) => {
+    const size = getStarshipSize(ship.size);
+    const price = size?.fuelCost ?? passageRate;
+    const units = Math.min((size?.fuelCapacity ?? ship.fuel) - ship.fuel, Math.floor((character.credits ?? 0) / price));
+    if (units <= 0) {
+      toast.error(`Fuel is ${price} credits a unit here and you have ${character.credits ?? 0}.`);
+      return;
+    }
+    saveCharacter({ credits: character.credits - units * price });
+    saveCampaign({ starships: ships.map((s) => (s.id === ship.id ? { ...s, fuel: s.fuel + units } : s)) });
+    toast.success(`${ship.name}: ${units} units of fuel for ${units * price} credits.`);
   };
 
   // Pick or slice a lock: Dexterity or Intelligence, trained with a security or slicer's kit
@@ -299,6 +357,43 @@ export default function GameBoard() {
     }
   }, [inCombat, outcome]);
 
+  // Quests keep score of the world: objectives tick off as their targets are met, and a finished
+  // quest pays its reward
+  const quests: Quest[] = Array.isArray(campaign?.quests) ? campaign.quests : [];
+  const payQuests = (finished: Quest[]) => {
+    const credits = finished.reduce((sum, q) => sum + (q.reward?.credits ?? 0), 0);
+    const experience = finished.reduce((sum, q) => sum + (q.reward?.experience ?? 0), 0);
+    const items = finished.flatMap((q) => q.reward?.items ?? []);
+    saveCharacter({
+      ...(credits ? { credits: (character.credits ?? 0) + credits } : {}),
+      ...(experience ? { experience: (character.experience ?? 0) + experience } : {}),
+      ...(items.length ? { equipment: [...(character.equipment ?? []), ...items] } : {}),
+    });
+    for (const quest of finished) {
+      const reward = [quest.reward?.credits && `${quest.reward.credits} credits`, quest.reward?.experience && `${quest.reward.experience} XP`, ...(quest.reward?.items ?? [])].filter(Boolean);
+      toast.success(`Quest complete: ${quest.title}.${reward.length ? ` Reward: ${reward.join(", ")}.` : ""}`);
+    }
+  };
+  useEffect(() => {
+    if (!world || !hereId || !character || inCombat) return;
+    const result = advanceQuests(world, quests, hereId);
+    if (!result.changed) return;
+    saveCampaign({ quests: result.quests });
+    if (result.finished.length) payQuests(result.finished);
+  }, [world, hereId, campaign?.quests, character?.id, inCombat]);
+
+  // An objective the world cannot check (free text) is ticked by hand
+  const tickObjective = (questId: string, index: number) => {
+    const next = quests.map((quest) => {
+      if (quest.id !== questId) return quest;
+      const objectives = quest.objectives.map((o, i) => (i === index ? { ...o, completed: true } : o));
+      return { ...quest, objectives, status: objectives.every((o) => o.completed) ? ("completed" as const) : quest.status };
+    });
+    saveCampaign({ quests: next });
+    const done = next.find((quest) => quest.id === questId);
+    if (done?.status === "completed") payQuests([done]);
+  };
+
   // Rests, by the Player's Handbook. Short: spend a Hit Die (the class die + Constitution) to heal;
   // tech points come back. Long: all hit points and power points, and half the Hit Dice, come back.
   const hitDie = klass?.hitDie ?? 8;
@@ -384,6 +479,14 @@ export default function GameBoard() {
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
     initiateCombat(character, enemies, combatKit());
+  };
+
+  // How a trip that needs a ship will be made, for the exit's label
+  const tripNote = (exit: Exit) => {
+    if (!exit.needsShip) return "";
+    const { ship, reason, fare } = tripBy(exit);
+    if (ship) return `${ship.name}, ${exit.fuel} fuel`;
+    return [fare ? `passage ${fare} cr` : "by shuttle", ships.length ? reason : ""].filter(Boolean).join("; ");
   };
 
   const pointsName = klass?.casterType === "Tech" ? "Tech Points" : "Force Points";
@@ -560,11 +663,26 @@ export default function GameBoard() {
                         </span>
                       </li>
                     ))}
-                    {here.ships.map((ship) => (
-                      <li key={ship.id}>
-                        {ship.name} <span className="text-gray-400">{ship.size} {ship.role.toLowerCase()}, {ship.status}, {ship.owner}</span>
-                      </li>
-                    ))}
+                    {here.ships.map((ship) => {
+                      // The enemy's ship is a prize once nobody is left to guard it; any other is for sale
+                      const prize = ship.owner === world.antagonist;
+                      return (
+                        <li key={ship.id} data-testid="play-ship">
+                          {ship.name} <span className="text-gray-400">{ship.size} {ship.role.toLowerCase()}, {ship.status}, {ship.owner}</span>
+                          {ship.status !== "wrecked" && ship.status !== "orbiting" && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="ml-2 h-6 px-2"
+                              disabled={inCombat || dead || hostiles.length > 0}
+                              onClick={() => acquireShip(ship, prize ? 0 : ship.value)}
+                            >
+                              {prize ? "Take as a prize" : `Buy (${ship.value.toLocaleString()} cr)`}
+                            </Button>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
                 {hostiles.length > 0 && (
@@ -601,8 +719,8 @@ export default function GameBoard() {
                         onClick={() => (exit.locked ? unlock(exit) : travel(exit))}
                       >
                         {exit.locked ? `Unlock (DC ${exit.locked}): ` : ""}{exit.label}{exit.via === "path" ? " to" : ""} {world.areas[exit.to].name}
-                        {[exit.travel, exit.needsShip && "needs a ship"].filter(Boolean).length > 0 && (
-                          <span className="text-gray-400 ml-1">({[exit.travel, exit.needsShip && "needs a ship"].filter(Boolean).join(", ")})</span>
+                        {[exit.travel, tripNote(exit)].filter(Boolean).length > 0 && (
+                          <span className="text-gray-400 ml-1">({[exit.travel, tripNote(exit)].filter(Boolean).join(", ")})</span>
                         )}
                       </Button>
                     );
@@ -621,6 +739,29 @@ export default function GameBoard() {
                   )}
                 </div>
                 {restButtons}
+
+                {ships.length > 0 && (
+                  <div className="text-sm space-y-1" data-testid="play-ships">
+                    <h3 className="font-semibold">Your ships</h3>
+                    {ships.map((ship) => (
+                      <div key={ship.id} className="flex flex-wrap items-center gap-2">
+                        <span>
+                          {ship.name}{" "}
+                          <span className="text-gray-400">
+                            {ship.size} {ship.role.toLowerCase()}, fuel {ship.fuel}/{getStarshipSize(ship.size)?.fuelCapacity ?? "?"}
+                            {ship.hyperdriveClass ? `, hyperdrive class ${ship.hyperdriveClass}` : ", no hyperdrive"}
+                            {ship.areaId === here.id ? ", here" : `, at ${world.areas[ship.areaId]?.name ?? "an unknown berth"}`}
+                          </span>
+                        </span>
+                        {ship.areaId === here.id && hasPort(world, here.id) && ship.fuel < (getStarshipSize(ship.size)?.fuelCapacity ?? 0) && (
+                          <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => refuel(ship)}>
+                            Refuel ({getStarshipSize(ship.size)?.fuelCost} cr a unit)
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
             <div className="mb-4">
@@ -652,13 +793,33 @@ export default function GameBoard() {
               
               <TabsContent value="quests">
                 <h3 className="font-semibold mb-2">Active Quests</h3>
-                <div className="space-y-2">
-                  {campaign.quests?.filter((q: any) => q.status === "active").map((quest: any, index: number) => (
-                    <div key={index} className="bg-gray-700 p-2 rounded">
+                <div className="space-y-2" data-testid="play-quests">
+                  {quests.filter((q) => q.status === "active").map((quest) => (
+                    <div key={quest.id} className="bg-gray-700 p-2 rounded">
                       <div className="font-semibold">{quest.title}</div>
                       <div className="text-sm mt-1">{quest.description}</div>
+                      <ul className="text-sm mt-1 space-y-1">
+                        {(quest.objectives ?? []).map((objective, index) => (
+                          <li key={index} className={objective.completed ? "text-green-300" : ""}>
+                            {objective.completed ? "\u2713" : "\u25cb"} {objective.description}
+                            {!objective.completed && !objective.target && (
+                              <Button size="sm" variant="outline" className="ml-2 h-6 px-2" disabled={inCombat || dead} onClick={() => tickObjective(quest.id, index)}>
+                                Done
+                              </Button>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                      {quest.reward && (quest.reward.credits > 0 || quest.reward.experience > 0) && (
+                        <div className="text-xs text-gray-400 mt-1">
+                          Reward: {[quest.reward.credits > 0 && `${quest.reward.credits} credits`, quest.reward.experience > 0 && `${quest.reward.experience} XP`, ...(quest.reward.items ?? [])].filter(Boolean).join(", ")}
+                        </div>
+                      )}
                     </div>
                   ))}
+                  {quests.some((q) => q.status === "completed") && (
+                    <p className="text-sm text-green-300">Completed: {quests.filter((q) => q.status === "completed").map((q) => q.title).join("; ")}</p>
+                  )}
                 </div>
               </TabsContent>
               

@@ -1062,6 +1062,8 @@ export interface Exit {
   needsShip?: boolean;
   // Fuel units a ship burns on the way (see tripFuel)
   fuel?: number;
+  // A hyperspace jump: the ship needs a hyperdrive
+  jump?: boolean;
 }
 
 // Fuel for a trip, by Starships of the Galaxy ("Fuel Usage"): one unit for a jump to hyperspeed
@@ -1082,7 +1084,7 @@ export function exitsOf(world: World, id: string): Exit[] {
   const exits: Exit[] = [];
   for (const path of indexOf(world).paths.get(id) ?? []) {
     const to = path.from === id ? path.to : path.from;
-    exits.push({ to, via: "path", label: path.label, travel: path.travel, pathId: path.id, locked: path.locked, hidden: path.hidden, ...(path.kind === "hyperlane" || path.kind === "sublight" ? { needsShip: true, fuel: tripFuel(path.kind, path.travel) } : {}) });
+    exits.push({ to, via: "path", label: path.label, travel: path.travel, pathId: path.id, locked: path.locked, hidden: path.hidden, ...(path.kind === "hyperlane" || path.kind === "sublight" ? { needsShip: true, fuel: tripFuel(path.kind, path.travel), jump: path.kind === "hyperlane" || undefined } : {}) });
   }
   for (const child of childrenOf(world, id)) {
     if (child.gateway && ENTER[area.kind]) exits.push({ to: child.id, via: "enter", label: ENTER[area.kind]!, travel: "", ...(area.kind === "system" || area.kind === "planet" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
@@ -1092,6 +1094,47 @@ export function exitsOf(world: World, id: string): Exit[] {
     exits.push({ to: parent.id, via: "leave", label: LEAVE[area.kind]!, travel: "", ...(area.kind === "planet" || area.kind === "settlement" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
   }
   return exits;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The party's ships (saved in the campaign's `starships`). A ship stands at a berth: the settlement
+// it landed at, a planet's orbit or a system's jump point. Every trip that needs a ship burns fuel.
+// ---------------------------------------------------------------------------------------------
+
+export interface PartyShip extends Ship {
+  fuel: number;
+  // The berth it stands at
+  areaId: string;
+}
+
+// Where a ship kept somewhere in an area takes off from
+export function berthOf(world: World, areaId: string): string {
+  const trail = trailOf(world, areaId);
+  for (let i = trail.length - 1; i >= 0; i--) if (["settlement", "planet", "system"].includes(trail[i].kind)) return trail[i].id;
+  return areaId;
+}
+
+// A port sells fuel: a starport settlement, or one with somewhere for ships to put down
+export function hasPort(world: World, areaId: string): boolean {
+  const area = world.areas[areaId];
+  if (!area || area.kind !== "settlement") return false;
+  return area.tags.includes("starport") || childrenOf(world, areaId).some((b) => /spaceport|landing|docking/i.test(b.type));
+}
+
+// The party's ship that can make a trip from here, or what stops them
+export function shipForTrip(ships: PartyShip[] | undefined, hereId: string, exit: Exit): { ship?: PartyShip; reason: string } {
+  const berthed = (ships ?? []).filter((ship) => ship.areaId === hereId);
+  if (!berthed.length) return { reason: ships?.length ? "your ship is berthed elsewhere" : "you have no ship" };
+  const fitted = berthed.filter((ship) => !exit.jump || !!ship.hyperdriveClass);
+  if (!fitted.length) return { reason: "your ship has no hyperdrive" };
+  const ship = fitted.find((candidate) => candidate.fuel >= (exit.fuel ?? 0));
+  return ship ? { ship, reason: "" } : { reason: "your ship is out of fuel" };
+}
+
+// House rule: the rules data has no price for a seat on someone else's ship. A fare is the fuel the
+// trip burns at the price a Medium ship pays for it; the shuttle between surface and orbit is free.
+export function passageFare(exit: Exit, fuelCost: number): number {
+  return exit.via === "path" ? (exit.fuel ?? 1) * fuelCost : 0;
 }
 
 // ---------------------------------------------------------------------------------------------

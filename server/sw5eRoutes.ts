@@ -1,13 +1,13 @@
 // Rules data and world generation over HTTP.
 //   GET  /api/sw5e                     what was imported, and the dataset names
 //   GET  /api/sw5e/:dataset            one dataset; ?search= filters by name, ?fields=a,b trims rows, ?limit=
-//   POST /api/world/generate           { options } -> a new world
+//   POST /api/world/generate           { options } -> a new world, and quests read off it
 //   POST /api/world/expand             { world, areaId, seed? } -> the world with that area built out
 //   POST /api/world/populate           { world, areaId, seed? } -> the world with that area's contents re-rolled
 //   POST /api/world/validate           { world } -> what is wrong with it, checked against the rules data
 //   POST /api/world/occupant           { statBlock } -> that stat block as someone to place in an area
 import type { Express, Request, Response } from "express";
-import { generateWorld, expandArea, populateArea, statBlockOccupant, validateWorld, type World } from "../shared/logic";
+import { generateWorld, expandArea, populateArea, statBlockOccupant, validateWorld, worldQuests, type World } from "../shared/logic";
 import { datasetNames, getDataset, getWorldCatalog, isDataset, sw5eManifest } from "./sw5eData";
 
 const isWorld = (value: any): value is World =>
@@ -42,7 +42,11 @@ export function registerSw5eRoutes(app: Express) {
     try {
       const catalog = await getWorldCatalog();
       const world = generateWorld(req.body?.options ?? {}, catalog);
-      res.json({ world, problems: validateWorld(world, catalog) });
+      // Quest rewards are shares of what the party should earn over its current level
+      const wealth = catalog.wealthByLevel;
+      const level = Math.min(wealth.length - 1, Math.max(1, world.partyLevel));
+      const earnings = ((wealth[level] ?? 0) - (wealth[level - 1] ?? 0)) * world.partySize;
+      res.json({ world, quests: worldQuests(world, earnings), problems: validateWorld(world, catalog) });
     } catch (error) {
       console.error("Error generating world:", error);
       res.status(500).json({ message: "Failed to generate world" });
