@@ -1,15 +1,13 @@
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import TranslucentPane from "@/components/ui/TranslucentPane";
-import { useCombat, attackPlan, cannotAct, rollD20, movementLeft, reachable, pickTarget, powerOutOfRange, squaresApart, LASTING, type Combatant } from "@/lib/stores/useCombat";
+import { useCombat, attackPlan, cannotAct, rollD20, movementLeft, pickTarget, powerOutOfRange, squaresApart, LASTING } from "@/lib/stores/useCombat";
 import { conditionSummary } from "@/lib/sw5e/rules";
-import { RoomFloor } from "@/components/Map/RoomPlan";
-import { TokenArt, floorOf, tokenOf, SIDE_COLORS } from "@/components/Map/sprites";
 
 const mod = (score?: number) => Math.floor(((score ?? 10) - 10) / 2);
 
 export default function PlayCombat() {
-  const { combatants, currentTurn, round, combatLog, endCombat, deathSaves, castPower, deathSave, pass, arena, targetId, moveTo, setTarget } = useCombat();
+  const { combatants, currentTurn, round, combatLog, endCombat, deathSaves, castPower, deathSave, pass, arena, targetId, setTarget } = useCombat();
   const current = combatants[currentTurn];
 
   // An attack from where the attacker stands, with whatever weapon suits the kind of attack
@@ -78,7 +76,6 @@ export default function PlayCombat() {
   const playerTurn = !!current?.isPlayer && (player?.hp ?? 0) > 0 && !held;
   const down = !!player && player.hp <= 0;
   const target = player ? pickTarget(combatants, player, targetId) : undefined;
-  const steps = playerTurn && player ? reachable(arena, combatants, player) : new Map<string, { cost: number }>();
   const ranged = player && target && player.rangedDice ? attackPlan(arena, combatants, player, target, "ranged") : undefined;
   const melee = player && target ? attackPlan(arena, combatants, player, target, "melee") : undefined;
   const cast = (index: number) => {
@@ -90,36 +87,8 @@ export default function PlayCombat() {
     if (useCombat.getState().inCombat) useCombat.getState().nextTurn();
   };
 
-  const s = 26;
-  const tapSquare = (x: number, y: number) => {
-    const there = combatants.find((c) => c.hp > 0 && c.x === x && c.y === y);
-    if (there && !there.isPlayer) setTarget(there.id);
-    else if (playerTurn && steps.get(`${x},${y}`)?.cost) moveTo(x, y);
-  };
-  const token = (c: Combatant) => (
-    <g key={String(c.id)} transform={`translate(${(c.x ?? 0) * s + s / 2} ${(c.y ?? 0) * s + s / 2})`} data-testid={c.isPlayer ? "token-player" : "token-enemy"} style={{ transition: "transform 0.25s" }}>
-      {combatants[currentTurn]?.id === c.id && <circle r={s * 0.56} fill="none" stroke="#fde047" strokeWidth={1.5} strokeDasharray="3 3" />}
-      <TokenArt
-        kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })}
-        d={s * 0.9}
-        ring={c.isPlayer ? SIDE_COLORS.player : SIDE_COLORS.hostile}
-        label={c.name}
-        dim={c.hp <= 0}
-        large={/large|huge|gargantuan/i.test(c.size ?? "")}
-      />
-      {target?.id === c.id && c.hp > 0 && <path d={`M${-s * 0.5} ${-s * 0.3}V${-s * 0.5}H${-s * 0.3}M${s * 0.3} ${-s * 0.5}H${s * 0.5}V${-s * 0.3}M${s * 0.5} ${s * 0.3}V${s * 0.5}H${s * 0.3}M${-s * 0.3} ${s * 0.5}H${-s * 0.5}V${s * 0.3}`} stroke="#f87171" strokeWidth={2} fill="none" />}
-      {c.hp > 0 && (
-        <g transform={`translate(${-s * 0.4} ${s * 0.4})`}>
-          <rect width={s * 0.8} height={3} fill="#111" />
-          <rect width={s * 0.8 * Math.max(0, Math.min(1, c.hp / c.maxHp))} height={3} fill={c.isPlayer ? "#4ade80" : "#f87171"} />
-        </g>
-      )}
-      <title>{`${c.name} ${c.hp}/${c.maxHp}`}</title>
-    </g>
-  );
-
   return (
-    <div className="absolute left-2 top-2 z-20 w-80 max-w-[calc(100vw-1rem)] max-h-[82vh] overflow-y-auto">
+    <div className="absolute inset-x-0 bottom-0 z-20 h-[54dvh] overflow-y-auto bg-gray-900 md:inset-x-auto md:bottom-auto md:left-2 md:top-2 md:h-auto md:w-80 md:max-h-[82vh] md:bg-transparent">
       <TranslucentPane className="p-3 text-white">
         <div className="flex justify-between items-center mb-2">
           <h2 className="text-lg font-bold text-yellow-400">Combat - Round {round}</h2>
@@ -127,24 +96,6 @@ export default function PlayCombat() {
             Leave
           </Button>
         </div>
-        <svg viewBox={`-4 -4 ${arena.width * s + 8} ${arena.height * s + 8}`} className="w-full mb-2 rounded" data-testid="combat-grid">
-          <RoomFloor width={arena.width} height={arena.height} assets={arena.assets.filter((a) => a.kind !== "npc")} s={s} floor={floorOf(arena.floor)}>
-            {/* Where the player can walk this turn; a tap moves there, a tap on an enemy picks it out */}
-            {Array.from(steps.entries()).filter(([, step]) => step.cost > 0).map(([k]) => {
-              const [x, y] = k.split(",").map(Number);
-              return <rect key={k} x={x * s + 1} y={y * s + 1} width={s - 2} height={s - 2} fill="#4ade80" fillOpacity={0.16} stroke="#4ade80" strokeOpacity={0.35} strokeWidth={0.6} />;
-            })}
-            {player && target && target.hp > 0 && (
-              <line x1={(player.x ?? 0) * s + s / 2} y1={(player.y ?? 0) * s + s / 2} x2={(target.x ?? 0) * s + s / 2} y2={(target.y ?? 0) * s + s / 2} stroke={ranged?.cover.bonus ? "#fbbf24" : "#f87171"} strokeOpacity={0.5} strokeWidth={1} strokeDasharray="4 4" />
-            )}
-            {[...combatants].sort((a, b) => Number(a.hp > 0) - Number(b.hp > 0)).map(token)}
-            {Array.from({ length: arena.width * arena.height }, (_, i) => {
-              const x = i % arena.width;
-              const y = Math.floor(i / arena.width);
-              return <rect key={i} x={x * s} y={y * s} width={s} height={s} fill="transparent" onClick={() => tapSquare(x, y)} data-square={`${x},${y}`} />;
-            })}
-          </RoomFloor>
-        </svg>
         <ul className="space-y-1 mb-2">
           {combatants.map((c, i) => (
             <li key={String(c.id)} className={`text-sm ${i === currentTurn ? "text-yellow-300 font-semibold" : ""} ${c.hp <= 0 ? "opacity-50 line-through" : ""}`} onClick={() => !c.isPlayer && c.hp > 0 && setTarget(c.id)}>
@@ -192,7 +143,7 @@ export default function PlayCombat() {
         </div>
         <div className="text-xs text-gray-400 mb-2">
           Melee: {player?.meleeWeapon ?? "unarmed"} ({player?.reach ?? 5} ft.{melee && !melee.possible ? "; Melee closes in first" : ""}) · Ranged: {player?.rangedWeapon ? `${player.rangedWeapon} (${player.range?.join("/") ?? "80/320"} ft.)` : "none"}.
-          Tap a green square to move, an enemy to pick it out; an attack or power ends the turn.
+          On the map, tap a green square to move and an enemy to pick it out; an attack or power ends the turn.
         </div>
         {held && current?.isPlayer && !down && (
           <div className="mb-3 p-2 rounded bg-purple-900/40 text-sm" data-testid="combat-held">

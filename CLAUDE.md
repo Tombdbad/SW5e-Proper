@@ -15,6 +15,7 @@ Star Wars 5e RPG simulator (Express server on 127.0.0.1:5000, Vite + React clien
 - World generation, travel, quests, ships and world edits are pure functions in `shared/logic/index.ts`; anything that needs the rules data runs on the server (`server/sw5eRoutes.ts`).
 - What a character's features do and what a level gives is in `client/src/lib/sw5e/characterCalculation.ts`, read from the rules text. Do not hard-code a feature's effect by name; if the wording is regular, parse it there.
 - Where the books give no rule (passage fares, reviving a dead character), the game uses a house rule and says so on screen. Keep the list in REVIVAL_NOTES.md ("Play rules") complete, and label any new one the same way.
+- No 2D maps (the user, 2026-10-13). Places, people and things are shown on the 3D map (`client/src/components/Map/LocalMap.tsx`, see "The 3D map" in REVIVAL_NOTES.md) and are used by tapping them there; a tap picks out, a double tap opens. Do not bring back an SVG or flat plan, in the HUD or in a fight.
 - The user asked (2026-10-13, for the data import and world generator work) to extend existing files and add new ones only when strictly necessary. Keep to that unless they say otherwise.
 
 ## Running it

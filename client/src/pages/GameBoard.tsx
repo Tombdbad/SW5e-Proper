@@ -8,9 +8,9 @@ import { Card } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import GalaxyMap from "@/components/Map/GalaxyMap";
-import LocalMap from "@/components/Map/LocalMap";
+import { type MapAction } from "@/components/Map/GalaxyMap";
+import LocalMap, { FightScene, viewOf, usePartySpot } from "@/components/Map/LocalMap";
 import PlayCombat from "@/components/Combat/PlayCombat";
-import RoomPlan from "@/components/Map/RoomPlan";
 import { useCombat, rollDamage } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
@@ -20,7 +20,7 @@ import { getClassById } from "@/lib/sw5e/classes";
 import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect } from "@/lib/sw5e/rules";
 import { getStarshipSize } from "@/lib/sw5e/starships";
 import {
-  exitsOf, trailOf, childrenOf, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
+  exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
   planBuilding, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS,
   type Occupant,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship,
@@ -165,15 +165,27 @@ export default function GameBoard() {
 
   const hostiles = (here?.occupants ?? []).filter((o) => o.disposition === "hostile" && o.hitPoints);
 
-  // A building from before rooms had floor plans gets its plan the first time the party is in it
+  // A building from before rooms had floor plans gets its plan the first time the party is in
+  // it or in front of it
   const planned = useRef<string | null>(null);
+  const buildingId = here?.kind === "room" ? here.parentId : here?.kind === "building" ? here.id : null;
+  const unplanned = !!world && !!buildingId && childrenOf(world, buildingId).some((a) => a.kind === "room" && !a.layout);
   useEffect(() => {
-    if (!world || !here || here.kind !== "room" || here.layout || !here.parentId || planned.current === here.parentId) return;
-    planned.current = here.parentId;
+    if (!world || !buildingId || !unplanned || planned.current === buildingId) return;
+    planned.current = buildingId;
     const next: World = JSON.parse(JSON.stringify(world));
-    planBuilding(next, here.parentId);
+    planBuilding(next, buildingId);
     saveCampaign({ galaxyMap: next });
-  }, [here?.id, !!here?.layout]);
+  }, [buildingId, unplanned]);
+
+  // The 3D map: the place being looked at (the party's own, unless another was opened), and
+  // whatever was last picked out on it
+  const [viewId, setViewId] = useState<string | null>(null);
+  const [picked, setPicked] = useState<{ kind: "area" | "occupant" | "ship"; id: string } | null>(null);
+  useEffect(() => {
+    setViewId(null);
+    setPicked(null);
+  }, [hereId]);
 
   // The watch (house rule): how far the hostile creatures here have noticed the party. Where
   // nothing was recorded (an older save, enemies the game master added) they stand ready.
@@ -266,9 +278,10 @@ export default function GameBoard() {
     else travel(exit);
   };
 
-  // A place tapped on the local map: go there when an exit leads to it
-  const travelTo = (areaId: string) => {
-    const exit = exits.find((e) => e.to === areaId && !e.hidden);
+  // A door, a way out or a secret way walked up to on the map: go through it
+  const travelTo = (areaId: string, secret = false) => {
+    const ways = exits.filter((e) => e.to === areaId && !e.hidden);
+    const exit = ways.find((e) => !!e.secret === secret) ?? ways[0];
     if (!exit || inCombat || dead || exploring) return;
     leaveBy(exit);
   };
@@ -463,10 +476,13 @@ export default function GameBoard() {
     const surprise = alert === ALERT.unaware;
     if (!surprise && here.alert !== ALERT.attacking) setWatch(ALERT.attacking);
     // The ground: the room as planned, or open ground with what cover there is. The party
-    // stands where it came in; the enemy where the plan has them.
+    // stands where it stood on the map (else where it came in); the enemy where the plan has them.
     const ground = here.layout ?? skirmishGround(here);
     const ways = ground.assets.filter((a) => a.side && a.kind !== "window");
-    const cameIn = ways.find((a) => a.to === cameFrom) ?? ways.find((a) => a.kind === "exit") ?? ways[0];
+    const spot = usePartySpot.getState();
+    const cameIn = here.layout && spot.areaId === here.id
+      ? { x: spot.x - here.layout.x, y: spot.y - here.layout.y }
+      : ways.find((a) => a.to === cameFrom) ?? ways.find((a) => a.kind === "exit") ?? ways[0];
     const enemies = hostiles.flatMap((o) => {
       const spots = ground.assets.filter((a) => a.kind === "npc" && a.ref === o.id);
       return Array.from({ length: o.count }, (_, i) => ({ ...foe(o, `${o.id}-${i}`, o.count > 1 ? `${o.name} ${i + 1}` : o.name), ...(spots[i] ? { x: spots[i].x, y: spots[i].y } : {}) }));
@@ -483,7 +499,13 @@ export default function GameBoard() {
     fightBegun.current = true;
     initiateCombat(
       character, enemies, combatKit(), surprise,
-      { width: ground.width, height: ground.height, assets: ground.assets.filter((a) => a.kind !== "npc" && (a.kind !== "loot" || here.loot.some((c) => c.id === a.ref && !c.hidden))), floor: world?.areas[here.parentId ?? ""]?.type },
+      {
+        width: ground.width,
+        height: ground.height,
+        assets: ground.assets.filter((a) => a.kind !== "npc" && (a.kind !== "secret" || here.secretEntry?.found) && (a.kind !== "loot" || here.loot.some((c) => c.id === a.ref && !c.hidden))),
+        floor: world?.areas[here.parentId ?? ""]?.type,
+        open: !here.layout,
+      },
       cameIn ? { x: cameIn.x, y: cameIn.y } : undefined,
     );
   };
@@ -648,6 +670,179 @@ export default function GameBoard() {
     return [fare ? `passage ${fare} cr` : "by shuttle", ships.length ? reason : ""].filter(Boolean).join("; ");
   };
 
+  // Caches are out of reach while those who stopped the party, or let it pass, are watching
+  const lootWatched = hostiles.length > 0 && (allowed || alert >= ALERT.questioning);
+  const OPENS = ["system", "planet", "settlement", "building"];
+
+  // What was asked for on the 3D map
+  const act = (action: MapAction) => {
+    if (!world || !here) return;
+    if (action.type === "select") setPicked({ kind: "area", id: action.areaId });
+    else if (action.type === "open") {
+      const place = world.areas[action.areaId];
+      // A building one move away is walked to, so that its surroundings can be walked in
+      const exit = place?.kind === "building" && !trailOf(world, here.id).some((a) => a.id === place.id) ? exits.find((e) => e.to === place.id && !e.hidden && !e.needsShip && !e.locked) : undefined;
+      setPicked(null);
+      if (exit && !inCombat && !dead && !exploring) leaveBy(exit);
+      else if (place && OPENS.includes(place.kind)) setViewId(place.id);
+    } else if (action.type === "note") toast.info(action.text);
+    else if (action.type === "near") {
+      // Passive Wisdom (Perception), by the Player's Handbook: 10 + the modifier, noticed without searching
+      const room = world.areas[action.areaId];
+      const passive = 10 + modifier(character.abilityScores?.wisdom) + (skilled("perception") ? proficiency : 0);
+      if (!room?.secretEntry || room.secretEntry.found || passive < room.secretEntry.dc) return;
+      toast.success(`You notice a ${room.secretEntry.name.toLowerCase()}${room.id === here.id ? "" : ` into ${room.name}`} (passive Perception ${passive} against DC ${room.secretEntry.dc}).`);
+      saveCampaign({ galaxyMap: { ...world, areas: { ...world.areas, [room.id]: { ...room, secretEntry: { ...room.secretEntry, found: true } } } } });
+    }
+    else if (inCombat || dead || exploring) return;
+    else if (action.type === "go") travelTo(action.areaId, action.secret);
+    else if (action.type === "exit") leaveBy(action.exit);
+    else if (action.type === "occupant" || action.type === "ship") setPicked({ kind: action.type, id: action.id });
+    else if (action.type === "loot") {
+      const cache = here.loot.find((c) => c.id === action.id);
+      if (!cache) return;
+      if (cache.looted) toast.info(`${cache.name} is empty.`);
+      else if (lootWatched) toast.error("They are watching you: that cannot be taken now.");
+      else takeLoot(cache);
+    } else if (action.type === "look") {
+      // House rule: a look through a window shows who is in the room, without a check
+      const room = world.areas[action.areaId];
+      const seen = [...room.occupants.map((o) => `${o.count > 1 ? `${o.count} x ` : ""}${o.name} (${o.disposition})`), ...room.ships.map((ship) => ship.name)];
+      toast.info(`Through the window of ${room.name}: ${seen.join(", ") || "nobody"}. (House rule: looking in needs no check.)`);
+    }
+  };
+
+  // The buttons for dealing with whoever is watching: talk, threaten, fight
+  const watchButtons = character && (
+    <div className="flex flex-wrap gap-2">
+      {!allowed && (alert === ALERT.questioning || alert === ALERT.confronting) && (
+        <>
+          {alert === ALERT.questioning && (
+            <>
+              <Button size="sm" variant="outline" onClick={() => talk("deception")} disabled={inCombat || dead}>
+                Bluff
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => talk("persuasion")} disabled={inCombat || dead}>
+                Persuade
+              </Button>
+            </>
+          )}
+          <Button size="sm" variant="outline" onClick={() => talk("intimidation")} disabled={inCombat || dead}>
+            Intimidate
+          </Button>
+        </>
+      )}
+      <Button size="sm" variant="destructive" onClick={fight} disabled={inCombat || dead || character.currentHp <= 0}>
+        {alert === ALERT.unaware ? "Ambush" : "Fight"}
+      </Button>
+    </div>
+  );
+  // The enemy's ship is a prize once nobody is left to guard it; any other is for sale
+  const shipButton = (ship: Ship) =>
+    ship.status !== "wrecked" && ship.status !== "orbiting" && (
+      <Button
+        size="sm"
+        variant="outline"
+        className="ml-2 h-6 px-2"
+        disabled={inCombat || dead || hostiles.length > 0}
+        onClick={() => acquireShip(ship, ship.owner === world?.antagonist ? 0 : ship.value)}
+      >
+        {ship.owner === world?.antagonist ? "Take as a prize" : `Buy (${ship.value.toLocaleString()} cr)`}
+      </Button>
+    );
+
+  // What is being looked at, and the way down to it from the galaxy
+  const view: Area | null = world && hereId ? world.areas[viewId ?? ""] ?? world.areas[viewOf(world, hereId)] : null;
+  const viewTrail = world && view ? trailOf(world, view.id).filter((a) => a.kind !== "region") : [];
+  const onFoot = !!view && !!here && view.kind === "building" && (view.id === here.id || view.id === here.parentId);
+
+  // The card for what was picked out on the map: a place, someone, or a ship
+  const pickedCard = () => {
+    if (!picked || !world || !here || inCombat) return null;
+    const close = (
+      <Button size="sm" variant="ghost" className="h-6 px-2 float-right" onClick={() => setPicked(null)} aria-label="Close">
+        {"\u2715"}
+      </Button>
+    );
+    if (picked.kind === "area") {
+      const place = world.areas[picked.id];
+      if (!place) return null;
+      const exit = exits.find((e) => e.to === place.id && !e.hidden);
+      const barred = hostiles.length > 0 && exit?.to !== cameFrom && !allowed && alert >= ALERT.questioning;
+      const way = !exit && place.id !== here.id && !trailOf(world, here.id).some((a) => a.id === place.id) ? findPath(world, here.id, place.id) : null;
+      const unmapped = childrenOf(world, place.id).length === 0 && OPENS.includes(place.kind);
+      return (
+        <>
+          {close}
+          <p className="font-semibold">
+            {place.name} <span className="text-sm font-normal text-gray-400">({place.kind}{place.type && place.type !== place.kind ? `, ${place.type}` : ""})</span>
+          </p>
+          {place.description && <p className="text-xs text-gray-300">{place.description}</p>}
+          {trailOf(world, here.id).some((a) => a.id === place.id) && <p className="text-xs text-yellow-300">You are {place.id === here.id ? "here" : "in here"}.</p>}
+          {unmapped && <p className="text-xs text-gray-400">Nobody has mapped it yet.</p>}
+          {way && way.length > 2 && <p className="text-xs text-gray-400">Way there: {way.slice(1).map((id) => world.areas[id].name).join(" \u203a ")}</p>}
+          <div className="mt-1 flex flex-wrap gap-2">
+            {OPENS.includes(place.kind) && place.id !== view?.id && (
+              <Button size="sm" variant="outline" onClick={() => { setViewId(place.id); setPicked(null); }} data-testid="map-open">
+                Look inside
+              </Button>
+            )}
+            {exit && (
+              <Button size="sm" className="h-auto whitespace-normal text-left" disabled={inCombat || dead || exploring || barred} onClick={() => leaveBy(exit)} data-testid="map-travel">
+                {exit.locked ? `Unlock (DC ${exit.locked}): ` : ""}{exit.label}{exit.via === "path" ? " to" : ""} {place.name}
+                {[exit.travel, tripNote(exit)].filter(Boolean).length > 0 && ` (${[exit.travel, tripNote(exit)].filter(Boolean).join(", ")})`}
+              </Button>
+            )}
+            {place.id === here.id && unmapped && (
+              <Button size="sm" onClick={() => explore()} disabled={exploring || inCombat || dead}>
+                {exploring ? "Exploring..." : "Explore"}
+              </Button>
+            )}
+          </div>
+        </>
+      );
+    }
+    if (picked.kind === "occupant") {
+      const o = here.occupants.find((x) => x.id === picked.id);
+      if (!o) return null;
+      const hostile = o.disposition === "hostile" && !!o.hitPoints;
+      return (
+        <>
+          {close}
+          <p className={`font-semibold ${o.disposition === "hostile" ? "text-red-400" : o.disposition === "friendly" ? "text-green-300" : ""}`}>
+            {o.count > 1 ? `${o.count} x ` : ""}{o.name}
+          </p>
+          <p className="text-xs text-gray-300">{[o.species, o.role, o.disposition, o.cr && `CR ${o.cr}`, o.armorClass && `AC ${o.armorClass}`, o.hitPoints && `${o.hitPoints} hit points`].filter(Boolean).join(", ")}</p>
+          {o.loadout.length > 0 && <p className="text-xs text-gray-400">Carrying: {o.loadout.join(", ")}</p>}
+          {hostile ? (
+            <div className="mt-1 space-y-1">
+              <p className="text-xs">
+                <span className="font-semibold text-red-300">Watch: {allowed ? "letting you pass" : ALERT_LEVELS[alert]}.</span> {allowed ? "They let you through, and watch what you do." : WATCH_NOTE[alert]}
+              </p>
+              {watchButtons}
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400">To talk with them, say what you do on the GM Interface tab.</p>
+          )}
+        </>
+      );
+    }
+    const ship = here.ships.find((x) => x.id === picked.id);
+    if (!ship) return null;
+    return (
+      <>
+        {close}
+        <p className="font-semibold">{ship.name}</p>
+        <p className="text-xs text-gray-300">
+          {ship.size} {ship.role.toLowerCase()}, tier {ship.tier}, {ship.status}, {ship.owner}{ship.hyperdriveClass ? `, hyperdrive class ${ship.hyperdriveClass}` : ", no hyperdrive"}
+        </p>
+        {ship.equipment.length > 0 && <p className="text-xs text-gray-400">Fitted: {ship.equipment.join(", ")}</p>}
+        <div className="mt-1">{shipButton(ship)}</div>
+      </>
+    );
+  };
+  const card = pickedCard();
+
   const pointsName = klass?.casterType === "Tech" ? "Tech Points" : "Force Points";
   const restButtons = character && (
     <div className="flex flex-wrap gap-2" data-testid="play-rest">
@@ -691,9 +886,10 @@ export default function GameBoard() {
   }
 
   return (
-    <div className="h-screen w-screen bg-black overflow-hidden">
+    <div className="relative h-[100dvh] w-screen bg-black overflow-hidden">
       <KeyboardControls map={controls}>
-        {/* 3D Map Canvas */}
+        {/* The 3D map. On a phone it has the top of the screen and the HUD the rest */}
+        <div className={`absolute inset-x-0 top-0 md:h-full ${showSidebar ? "md:right-80" : ""} ${showSidebar || showCombat ? "h-[46dvh]" : "h-full"}`} data-testid="map-3d">
         <Canvas
           shadows
           camera={{
@@ -714,50 +910,81 @@ export default function GameBoard() {
           <directionalLight 
             position={[10, 10, 5]} 
             intensity={1} 
-            castShadow 
-            shadow-mapSize-width={2048} 
-            shadow-mapSize-height={2048} 
           />
           
-          {/* Maps */}
-          {activeMapTab === "galaxy" ? (
-            <GalaxyMap world={world} hereId={hereId} />
+          {/* A fight is shown on the floor it is fought on; otherwise the place being looked at */}
+          {inCombat ? (
+            <FightScene areaId={here?.layout ? here.id : null} origin={here?.layout} />
+          ) : world ? (
+            <LocalMap world={world} hereId={hereId} viewId={viewId} selectedId={picked?.kind === "area" ? picked.id : null} onAct={act} locked={dead || exploring} />
+          ) : activeMapTab === "galaxy" ? (
+            <GalaxyMap />
           ) : (
-            <LocalMap world={world} hereId={hereId} onSelect={travelTo} />
+            <LocalMap />
           )}
         </Canvas>
 
-        {/* UI Overlay */}
-        <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-10 w-max max-w-[96vw]">
-          <Card className="bg-gray-800 bg-opacity-80 text-white px-4 py-2">
-            <div className="flex flex-wrap justify-center gap-2">
-              <Button 
-                variant={activeMapTab === "galaxy" ? "default" : "outline"} 
-                onClick={() => setActiveMapTab("galaxy")}
-              >
-                Galaxy Map
-              </Button>
-              <Button 
-                variant={activeMapTab === "local" ? "default" : "outline"} 
-                onClick={() => setActiveMapTab("local")}
-              >
-                Local Map
-              </Button>
-              <Button variant="outline" onClick={toggleSidebar}>
+        {/* Where the map is looking: the way down from the galaxy, each step a tap away. Only the
+            buttons take taps; the rest of the strip lets them through to the map. */}
+        {!inCombat && (
+          <div className="pointer-events-none absolute inset-x-1 top-1 z-10">
+            <div className="flex items-center gap-1">
+              {world && view ? (
+                <div className="pointer-events-auto flex min-w-0 flex-1 items-center gap-1 overflow-x-auto" data-testid="map-trail">
+                  {viewTrail.map((area, index) => (
+                    <Button
+                      key={area.id}
+                      size="sm"
+                      variant={area.id === view.id ? "default" : "outline"}
+                      className="h-6 shrink-0 px-2 text-xs"
+                      onClick={() => { setViewId(area.id); setPicked(null); }}
+                    >
+                      {index === 0 ? "Galaxy" : area.name.replace(/ System$/, "")}
+                    </Button>
+                  ))}
+                  {view.id !== viewOf(world, here!.id) && (
+                    <Button size="sm" variant="outline" className="h-6 shrink-0 px-2 text-xs border-yellow-400 text-yellow-400" onClick={() => { setViewId(null); setPicked(null); }} data-testid="map-party">
+                      Back to the party
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <div className="pointer-events-auto flex flex-1 flex-wrap items-center gap-1">
+                  <Button size="sm" className="h-6 px-2 text-xs" variant={activeMapTab === "galaxy" ? "default" : "outline"} onClick={() => setActiveMapTab("galaxy")}>
+                    Galaxy Map
+                  </Button>
+                  <Button size="sm" className="h-6 px-2 text-xs" variant={activeMapTab === "local" ? "default" : "outline"} onClick={() => setActiveMapTab("local")}>
+                    Local Map
+                  </Button>
+                  <Button size="sm" className="h-6 px-2 text-xs" variant="destructive" onClick={startTestCombat} disabled={character.currentHp <= 0 || dead}>
+                    Test Combat
+                  </Button>
+                </div>
+              )}
+              <Button size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" onClick={toggleSidebar}>
                 {showSidebar ? "Hide HUD" : "Show HUD"}
               </Button>
-              {!inCombat && !world && (
-                <Button variant="destructive" onClick={startTestCombat} disabled={character.currentHp <= 0 || dead}>
-                  Test Combat
-                </Button>
-              )}
             </div>
+            {world && view && (
+              <p className="mt-0.5 text-[11px] leading-tight text-gray-300 drop-shadow" data-testid="map-hint">
+                {onFoot
+                  ? "Tap the ground to walk; tap a door, sign, crate, person or ship to go up to it."
+                  : `Tap a place to pick it out, double tap to ${view.kind === "settlement" ? "go to it or look at it" : "open it"}.`}
+              </p>
+            )}
+          </div>
+        )}
+
+        {card && (
+          <Card className="absolute bottom-2 left-2 z-10 w-[min(22rem,calc(100%-1rem))] bg-gray-800 bg-opacity-90 text-white p-3 text-sm" data-testid="map-card">
+            {card}
           </Card>
+        )}
         </div>
 
         {/* Character HUD */}
         {showSidebar && (
-          <div className="absolute top-0 right-0 h-screen w-80 bg-gray-800 bg-opacity-80 text-white p-4 pb-24 overflow-y-auto">
+          <div className="absolute inset-x-0 bottom-0 h-[54dvh] bg-gray-800 text-white p-4 overflow-y-auto md:inset-x-auto md:right-0 md:top-0 md:h-full md:w-80">
             <h2 className="text-xl font-bold mb-4 text-yellow-400">{character.name}</h2>
             <div className="mb-4">
               <div className="flex justify-between mb-1">
@@ -827,26 +1054,12 @@ export default function GameBoard() {
                         </span>
                       </li>
                     ))}
-                    {here.ships.map((ship) => {
-                      // The enemy's ship is a prize once nobody is left to guard it; any other is for sale
-                      const prize = ship.owner === world.antagonist;
-                      return (
-                        <li key={ship.id} data-testid="play-ship">
-                          {ship.name} <span className="text-gray-400">{ship.size} {ship.role.toLowerCase()}, {ship.status}, {ship.owner}</span>
-                          {ship.status !== "wrecked" && ship.status !== "orbiting" && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="ml-2 h-6 px-2"
-                              disabled={inCombat || dead || hostiles.length > 0}
-                              onClick={() => acquireShip(ship, prize ? 0 : ship.value)}
-                            >
-                              {prize ? "Take as a prize" : `Buy (${ship.value.toLocaleString()} cr)`}
-                            </Button>
-                          )}
-                        </li>
-                      );
-                    })}
+                    {here.ships.map((ship) => (
+                      <li key={ship.id} data-testid="play-ship">
+                        {ship.name} <span className="text-gray-400">{ship.size} {ship.role.toLowerCase()}, {ship.status}, {ship.owner}</span>
+                        {shipButton(ship)}
+                      </li>
+                    ))}
                   </ul>
                 )}
                 {hostiles.length > 0 && (
@@ -857,33 +1070,10 @@ export default function GameBoard() {
                       </span>{" "}
                       <span className="text-gray-300">{allowed ? "They let you through, and watch what you do." : WATCH_NOTE[alert]}</span>
                     </p>
-                    <div className="flex flex-wrap gap-2">
-                      {!allowed && (alert === ALERT.questioning || alert === ALERT.confronting) && (
-                        <>
-                          {alert === ALERT.questioning && (
-                            <>
-                              <Button size="sm" variant="outline" onClick={() => talk("deception")} disabled={inCombat || dead}>
-                                Bluff
-                              </Button>
-                              <Button size="sm" variant="outline" onClick={() => talk("persuasion")} disabled={inCombat || dead}>
-                                Persuade
-                              </Button>
-                            </>
-                          )}
-                          <Button size="sm" variant="outline" onClick={() => talk("intimidation")} disabled={inCombat || dead}>
-                            Intimidate
-                          </Button>
-                        </>
-                      )}
-                      <Button size="sm" variant="destructive" onClick={fight} disabled={inCombat || dead || character.currentHp <= 0}>
-                        {alert === ALERT.unaware ? "Ambush" : "Fight"}
-                      </Button>
-                    </div>
+                    {watchButtons}
                     <p className="text-xs text-gray-400">House rule: how enemies notice you is not in the books.</p>
                   </div>
                 )}
-                {here.layout && <RoomPlan world={world} here={here} onSelect={travelTo} />}
-
                 {here.loot.filter((c) => !c.hidden).map((cache) => (
                   <div key={cache.id} className="text-sm flex flex-wrap items-center gap-2" data-testid="play-loot">
                     <span>
@@ -891,7 +1081,7 @@ export default function GameBoard() {
                       {cache.looted && <span className="text-gray-400"> (empty)</span>}
                     </span>
                     {!cache.looted && (
-                      <Button size="sm" variant="outline" onClick={() => takeLoot(cache)} disabled={inCombat || dead || (hostiles.length > 0 && (allowed || alert >= ALERT.questioning))}>
+                      <Button size="sm" variant="outline" onClick={() => takeLoot(cache)} disabled={inCombat || dead || lootWatched}>
                         {cache.locked ? `Open (DC ${cache.locked})` : "Take"}
                       </Button>
                     )}

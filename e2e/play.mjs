@@ -507,17 +507,189 @@ await step(ctx, "character page: enough experience offers a level, and taking it
   return `level 2, hp ${before.maxHp} -> ${c.maxHp}; ${features.length} features listed (${features.slice(-3).map((f) => f.replace(/\s+/g, " ")).join("; ")})`;
 });
 
-await step(ctx, "play: tabs and local map do not crash", async () => {
+await step(ctx, "play: the HUD tabs do not crash", async () => {
   for (const t of ["Inventory", "GM Interface", "Quests"]) {
     await page.getByRole("tab", { name: t }).click();
     await sleep(300);
   }
-  await page.getByRole("button", { name: "Local Map" }).click();
-  await sleep(1200);
-  await page.getByRole("button", { name: "Galaxy Map" }).click();
-  await sleep(600);
   await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 3000 });
 });
+
+// The 3D map, in a campaign of its own (seed 7: the party starts in a cantina's entrance with
+// nobody hostile about). Things on the map are found through window.__map3d, which the map
+// keeps for this purpose, and tapped where they are on the screen.
+{
+  const PHONE = process.env.VIEW === "phone";
+  const poke = (x, y) => (PHONE ? page.touchscreen.tap(x, y) : page.mouse.click(x, y));
+  const at = async (key) => {
+    for (let i = 0; i < 40; i++) {
+      const p = await page.evaluate((k) => window.__map3d?.at(k) ?? null, key);
+      if (p) return p;
+      await sleep(250);
+    }
+    throw new Error("nothing on the map for " + key);
+  };
+  // Zoom out until something is on the part of the map that can be tapped
+  const inView = async (key) => {
+    const box = await page.locator("canvas").boundingBox();
+    for (let i = 0; i < 15; i++) {
+      const p = await at(key);
+      if (p.x > box.x + 10 && p.x < box.x + box.width - 10 && p.y > box.y + 50 && p.y < box.y + box.height - 10) return p;
+      await page.mouse.move(box.x + 100, box.y + box.height / 2);
+      for (let n = 0; n < 6; n++) {
+        await page.mouse.wheel(0, 400);
+        await sleep(60);
+      }
+      await sleep(500);
+    }
+    throw new Error(key + " cannot be brought into view");
+  };
+  const tap = async (key) => {
+    const p = await inView(key);
+    await poke(p.x, p.y);
+  };
+  const doubleTap = async (key) => {
+    const p = await inView(key);
+    await poke(p.x, p.y);
+    await sleep(150);
+    await poke(p.x, p.y);
+  };
+  const trail = async () => (await page.getByTestId("map-trail").getByRole("button").allInnerTexts()).filter((t) => !/party/.test(t));
+  const world = (await api("POST", "/api/world/generate", { options: { seed: 7 } })).json.world;
+  const areas = Object.values(world.areas);
+  const start = world.areas[world.startId];
+  const building = world.areas[start.parentId];
+  let mapCamp = null;
+  const where = async () => (await api("GET", `/api/campaigns/${mapCamp}`)).json;
+  const arrive = async (areaId) => {
+    for (let i = 0; i < 40 && (await where()).currentLocation !== areaId; i++) await sleep(400);
+    const now = (await where()).currentLocation;
+    if (now !== areaId) throw new Error(`the party is at ${world.areas[now]?.name ?? now}, not at ${world.areas[areaId].name}`);
+    await sleep(2000);
+  };
+  const openGame = async () => {
+    await page.goto(`${BASE}/game/${mapCamp}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 60000 });
+    await sleep(2500);
+  };
+
+  await step(ctx, "3D map: no 2D plan; a tap on the floor walks the character there", async () => {
+    const made = await api("POST", "/api/campaigns", {
+      characterId: charId, name: "E2E map " + TAG, description: "the 3D map", npcs: [], locations: [], quests: [],
+      startingLocation: "start", currentLocation: world.startId, galaxyMap: world,
+    });
+    if (made.status !== 201) throw new Error(made.text.slice(0, 200));
+    mapCamp = made.json.id;
+    await openGame();
+    if (await page.locator("[data-testid=room-plan], [data-testid=floor-plan], [data-testid=room-grid]").count()) throw new Error("the 2D room plan is still shown");
+    const l = start.layout;
+    const blocked = (x, y) => l.assets.some((a) => !a.side && (a.blocks || a.kind === "npc") && a.x <= x && x < a.x + a.w && a.y <= y && y < a.y + a.h);
+    let goal;
+    for (let y = l.height - 1; y >= 0 && !goal; y--) for (let x = l.width - 1; x >= 0 && !goal; x--) if (!blocked(x, y)) goal = { x, y };
+    const square = `sq:${l.x + goal.x},${l.y + goal.y}`;
+    const before = await at("me");
+    await tap(square);
+    await sleep(3500);
+    const [after, want] = [await at("me"), await at(square)];
+    if (Math.hypot(after.x - want.x, after.y - want.y) > 40) throw new Error(`the character is at ${JSON.stringify(after)}, not at ${JSON.stringify(want)} (was at ${JSON.stringify(before)})`);
+    return `${start.name}, ${l.width} x ${l.height} squares: walked to square ${goal.x},${goal.y}`;
+  });
+
+  await step(ctx, "3D map: a tap on the way out walks to it and goes outside; a signpost leads on", async () => {
+    await tap(`exit:${building.id}`);
+    await arrive(building.id);
+    // Out of doors the camera follows the character, so the ground slides past as they walk
+    const mark = `sq:${start.layout.x},${start.layout.y}`;
+    const [me, fixed] = [await at("me"), await at(mark)];
+    await poke(me.x - 70, me.y + 50);
+    await sleep(3000);
+    const slid = await at(mark);
+    if (Math.hypot(slid.x - fixed.x, slid.y - fixed.y) < 15) throw new Error("the character did not walk on the ground outside");
+    const street = world.paths.find((p) => p.from === building.id || p.to === building.id);
+    const next = street.from === building.id ? street.to : street.from;
+    await tap(`sign:${next}`);
+    await arrive(next);
+    return `outside ${building.name}, then by signpost to ${world.areas[next].name}`;
+  });
+
+  await step(ctx, "3D map: a secret way is found from outside and used from outside", async () => {
+    const room = areas.find((a) => a.secretEntry && a.occupants.every((o) => o.disposition !== "hostile")) ?? areas.find((a) => a.secretEntry);
+    await api("PATCH", `/api/campaigns/${mapCamp}`, { currentLocation: room.parentId });
+    await openGame();
+    for (let i = 0; i < 60 && !(await where()).galaxyMap.areas[room.id].secretEntry.found; i++) {
+      await page.getByRole("button", { name: "Search", exact: true }).click();
+      await sleep(500);
+    }
+    if (!(await where()).galaxyMap.areas[room.id].secretEntry.found) throw new Error("60 searches never found it");
+    await sleep(1500);
+    await tap(`secret:${room.id}`);
+    await arrive(room.id);
+    return `${room.secretEntry.name} into ${room.name} of ${world.areas[room.parentId].name}`;
+  });
+
+  await step(ctx, "3D map: double taps open galaxy > system > planet > settlement > building", async () => {
+    const here = (await where()).currentLocation;
+    const chain = [];
+    for (let a = world.areas[here]; a; a = world.areas[a.parentId]) chain.unshift(a);
+    const [system, planet, settlement] = ["system", "planet", "settlement"].map((kind) => chain.find((a) => a.kind === kind));
+    await page.getByTestId("map-trail").getByRole("button", { name: "Galaxy" }).click();
+    await sleep(2000);
+    const seen = [];
+    // A building the party is not at, and that no street leads to from where it is
+    const linked = world.paths.filter((p) => p.from === world.areas[here].parentId || p.to === world.areas[here].parentId).flatMap((p) => [p.from, p.to]);
+    const other = areas.find((a) => a.kind === "building" && a.parentId === settlement.id && !linked.includes(a.id));
+    for (const place of [system, planet, settlement, other]) {
+      // Headless Chromium can take longer over a frame than a double tap lasts: try again if so
+      const name = place.name.replace(/ System$/, "");
+      for (let attempt = 0; attempt < 3 && (await trail()).pop() !== name; attempt++) {
+        await doubleTap(`area:${place.id}`);
+        await sleep(2200);
+      }
+      const now = await trail();
+      if (now[now.length - 1] !== place.name.replace(/ System$/, "")) throw new Error(`a double tap on ${place.name} left the view at ${now.join(" > ")}`);
+      seen.push(now[now.length - 1]);
+    }
+    if ((await where()).currentLocation !== here) throw new Error("looking at another place moved the party");
+    await page.getByTestId("map-party").click();
+    await sleep(1500);
+    return `Galaxy > ${seen.join(" > ")}, then back to the party`;
+  });
+
+  await step(ctx, "3D map: a fight is fought on the map; a tap on a lit square moves the character", async () => {
+    const lair = areas.find((a) => a.kind === "room" && a.layout && a.occupants.some((o) => o.disposition === "hostile" && o.hitPoints));
+    const hp = (await getChar(charId)).currentHp;
+    await api("PATCH", `/api/campaigns/${mapCamp}`, { currentLocation: lair.id });
+    await openGame();
+    await page.getByRole("button", { name: /^(Fight|Ambush)$/ }).first().click();
+    await page.getByText(/Combat - Round/).waitFor();
+    if (await page.getByTestId("combat-grid").count()) throw new Error("the 2D fight grid is still shown");
+    await sleep(2500);
+    let moved = "";
+    for (let i = 0; i < 60 && !moved && (await page.getByText(/Combat - Round/).count()); i++) {
+      const end = page.getByRole("button", { name: "End turn" });
+      const save = page.getByRole("button", { name: "Death saving throw" });
+      if ((await save.count()) && (await save.isEnabled().catch(() => false))) await save.click().catch(() => {});
+      else if (await end.isEnabled().catch(() => false)) {
+        const me = await at("me");
+        // One square over, whichever way is free
+        for (const [dx, dy] of [[34, -4], [-34, 4], [0, 30], [0, -30]]) {
+          await poke(me.x + dx, me.y + dy);
+          await sleep(1000);
+          moved = (await page.locator("div.text-xs.text-gray-300 > div").allInnerTexts()).find((line) => /moves \d+ ft/.test(line) && line.startsWith(NAME)) ?? "";
+          if (moved) break;
+        }
+        if (!moved) await end.click().catch(() => {});
+      }
+      await sleep(600);
+    }
+    if (await page.getByText(/Combat - Round/).count()) await page.getByRole("button", { name: "Leave" }).click();
+    await sleep(800);
+    // Leave the character as the play-through had them
+    await api("PATCH", `/api/characters/${charId}`, { currentHp: hp, conditions: [] });
+    if (!moved) throw new Error("a tap on the map never moved the character in the fight");
+    return `${lair.name}: ${moved}`;
+  });
+}
 
 if (process.env.FORCE !== "0") {
   const consular = await create("E2E force " + TAG, "Consular", "Zabrak", { increases: [["+1 to one", ["dex"]]], forcePowers: 2 });

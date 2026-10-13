@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Canvas } from '@react-three/fiber';
 import { useQuery } from '@tanstack/react-query';
 import GalaxyMap from '@/components/Map/GalaxyMap';
-import LocalMap from '@/components/Map/LocalMap';
+import LocalMap, { viewOf } from '@/components/Map/LocalMap';
 import { childrenOf, exitsOf, trailOf, type World } from '@shared/logic';
 import GalacticMap3D from '@/components/Map/GalacticMap3D';
 import SystemMap from '@/components/Map/SystemMap';
@@ -15,16 +15,21 @@ import { formatCoordinateString } from '@/lib/coordinates';
 // Map navigation levels
 type MapLevel = 'galactic' | 'system' | 'planet';
 
-// The atlas of a campaign's generated world: the same places and paths that Play runs in. The
-// galaxy view shows its systems and hyperlanes; below a system, each layer is drawn as a schematic.
+// The atlas of a campaign's generated world: the same places and paths that Play runs in, on the
+// same 3D map. A tap picks a place out, a double tap opens it; here every room can be opened.
 function WorldAtlas({ campaign, campaigns, onPick }: { campaign: any; campaigns: any[]; onPick: (id: string) => void }) {
   const world: World = campaign.galaxyMap;
   const party = world.areas[campaign.currentLocation] ? campaign.currentLocation : world.startId;
   const [focusId, setFocusId] = useState<string>(party);
+  const [viewId, setViewId] = useState<string>(viewOf(world, party));
   const focus = world.areas[focusId] ?? world.areas[party];
   const trail = trailOf(world, focus.id);
-  const galactic = ['galaxy', 'region', 'system'].includes(focus.kind);
   const children = childrenOf(world, focus.id);
+  // Pick a place out and look at where it is: inside it, or for a room at its building
+  const show = (id: string) => {
+    setFocusId(id);
+    setViewId(viewOf(world, id));
+  };
 
   return (
     <div className="min-h-screen p-4 md:p-6 text-white" data-testid="world-atlas">
@@ -53,13 +58,13 @@ function WorldAtlas({ campaign, campaigns, onPick }: { campaign: any; campaigns:
             {trail.map((area, index) => (
               <React.Fragment key={area.id}>
                 {index > 0 && <span className="text-gray-500">{'\u203a'}</span>}
-                <Button size="sm" variant={area.id === focus.id ? 'default' : 'outline'} className="h-7 px-2" onClick={() => setFocusId(area.id)}>
+                <Button size="sm" variant={area.id === focus.id ? 'default' : 'outline'} className="h-7 px-2" onClick={() => show(area.id)}>
                   {area.name}
                 </Button>
               </React.Fragment>
             ))}
             {focus.id !== party && (
-              <Button size="sm" variant="outline" className="h-7 px-2 border-yellow-400 text-yellow-400" onClick={() => setFocusId(party)}>
+              <Button size="sm" variant="outline" className="h-7 px-2 border-yellow-400 text-yellow-400" onClick={() => show(party)}>
                 Where the party is
               </Button>
             )}
@@ -71,7 +76,18 @@ function WorldAtlas({ campaign, campaigns, onPick }: { campaign: any; campaigns:
             <Canvas camera={{ position: [0, 42, 30], fov: 75, near: 0.1, far: 1000 }}>
               <color attach="background" args={['#000000']} />
               <ambientLight intensity={0.4} />
-              {galactic ? <GalaxyMap world={world} hereId={focus.id} /> : <LocalMap world={world} hereId={focus.id} onSelect={setFocusId} />}
+              <LocalMap
+                world={world}
+                hereId={party}
+                viewId={viewId}
+                selectedId={focusId}
+                reveal
+                locked
+                onAct={(action) => {
+                  if (action.type === 'select') setFocusId(action.areaId);
+                  else if (action.type === 'open') show(action.areaId);
+                }}
+              />
             </Canvas>
           </div>
         </TranslucentPane>
@@ -94,7 +110,7 @@ function WorldAtlas({ campaign, campaigns, onPick }: { campaign: any; campaigns:
             <div className="mt-2 flex flex-wrap gap-1" data-testid="atlas-children">
               <span className="text-sm text-gray-400 mr-1">Inside:</span>
               {children.map((child) => (
-                <Button key={child.id} size="sm" variant="outline" className="h-7 px-2" onClick={() => setFocusId(child.id)}>
+                <Button key={child.id} size="sm" variant="outline" className="h-7 px-2" onClick={() => show(child.id)}>
                   {child.name}
                 </Button>
               ))}
@@ -104,7 +120,7 @@ function WorldAtlas({ campaign, campaigns, onPick }: { campaign: any; campaigns:
             <div className="mt-2 flex flex-wrap gap-1" data-testid="atlas-paths">
               <span className="text-sm text-gray-400 mr-1">Paths:</span>
               {exitsOf(world, focus.id).filter((exit) => exit.via === 'path' && !exit.hidden).map((exit) => (
-                <Button key={`${exit.pathId}-${exit.to}`} size="sm" variant="outline" className="h-auto min-h-7 px-2 whitespace-normal text-left" onClick={() => setFocusId(exit.to)}>
+                <Button key={`${exit.pathId}-${exit.to}`} size="sm" variant="outline" className="h-auto min-h-7 px-2 whitespace-normal text-left" onClick={() => show(exit.to)}>
                   {exit.label} to {world.areas[exit.to].name}{exit.travel ? ` (${exit.travel})` : ''}
                 </Button>
               ))}

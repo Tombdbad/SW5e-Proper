@@ -115,6 +115,8 @@ export interface Arena {
   assets: RoomAsset[];
   // What the floor is (the building's type), for drawing it
   floor?: string;
+  // Open ground, not a room: there are no walls round it
+  open?: boolean;
 }
 type Square = { x: number; y: number };
 const key = (x: number, y: number) => `${x},${y}`;
