@@ -9,7 +9,7 @@ import PersonalityTraitForm from "../components/CharacterCreation/PersonalityTra
 // Import SW5E data and utilities
 import { getSpeciesById, increaseChoices } from "../lib/sw5e/species";
 import { classes, getClassById } from "../lib/sw5e/classes";
-import { getBackgroundById } from "../lib/sw5e/backgrounds";
+import { getBackgroundById, backgroundLanguages, backgroundTools } from "../lib/sw5e/backgrounds";
 import { SKILLS } from "../lib/sw5e/constants";
 import {
   calculateModifier,
@@ -24,7 +24,7 @@ import { derivedStats, featAbilityOptions } from "../lib/sw5e/characterCalculati
 import SpeciesSelection from "../components/CharacterCreation/SpeciesSelection";
 import ClassSelection from "../components/CharacterCreation/ClassSelection";
 import AbilityScores from "../components/CharacterCreation/AbilityScores";
-import BackgroundSelection from "../components/CharacterCreation/BackgroundSelection";
+import BackgroundSelection, { TOOLS } from "../components/CharacterCreation/BackgroundSelection";
 import EquipmentSelection from "../components/CharacterCreation/EquipmentSelection";
 import SkillsSelection from "../components/CharacterCreation/SkillsSelection";
 import FeatsSelection from "../components/CharacterCreation/FeatsSelection";
@@ -112,6 +112,11 @@ function deriveStats(data: CharacterData) {
   const carried: string[] = (data.equipment ?? []).map((e: any) => e?.name ?? e);
   const derived = derivedStats({ species: data.species, class: data.class, level, feats: data.feats, abilityScores, equipment: carried });
   const all = (...lists: string[][]) => Array.from(new Set(lists.flat()));
+  // Languages and tools: what the species and background name, and the picks they leave open
+  const background = getBackgroundById(data.background);
+  const spoken: string[] = sp?.languages ?? ["Galactic Basic"];
+  const languagePicks = backgroundLanguages(background).choices + spoken.filter((l) => /of your choice/i.test(l)).length;
+  const tools = backgroundTools(background, TOOLS);
 
   return {
     abilityScores,
@@ -119,7 +124,8 @@ function deriveStats(data: CharacterData) {
     armorClass: derived.armorClass,
     initiative: mod("dexterity"),
     speed: (sp?.speed?.walk ?? 30) + derived.speedBonus,
-    languages: sp?.languages ?? data.languages,
+    languages: all(spoken.filter((l) => !/of your choice/i.test(l)), backgroundLanguages(background).fixed, (data.extraLanguages ?? []).slice(0, languagePicks)),
+    toolProficiencies: all(tools.fixed, (data.backgroundTools ?? []).filter((name: string) => tools.options.includes(name)).slice(0, tools.choices)),
     savingThrowProficiencies: all((cls?.savingThrows ?? []).map((s) => s.toLowerCase()), derived.effects.saves),
     skillProficiencies: all(data.skillProficiencies ?? [], data.backgroundSkills ?? [], derived.effects.skills),
     weapons: derived.naturalWeapons,
@@ -215,6 +221,8 @@ export default function CharacterCreation() {
     setValue("backgroundSkills", []);
     setValue("feats", []);
     setValue("featAbilities", {});
+    setValue("backgroundTools", []);
+    setValue("extraLanguages", []);
   }, [watchBackground, setValue]);
 
   const onSubmit = async (data: CharacterData) => {
@@ -485,6 +493,8 @@ function PreviewPanel({ data }: { data: CharacterData }) {
         <div>Background: {getBackgroundById(data.background)?.name || "Not chosen"}</div>
         <div>Saving Throws: {names(stats.savingThrowProficiencies)}</div>
         <div>Skills: {names(stats.skillProficiencies)}</div>
+        <div>Languages: {names(stats.languages)}</div>
+        <div>Tools: {names(stats.toolProficiencies)}</div>
         <div>Feats: {names(data.feats)}</div>
         {stats.weapons.length > 0 && <div>Natural weapons: {stats.weapons.map((w) => `${w.name} ${w.damage}`).join(", ")}</div>}
         <div>Equipment: {names(data.equipment)}</div>

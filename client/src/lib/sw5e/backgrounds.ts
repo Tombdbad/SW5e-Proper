@@ -47,6 +47,38 @@ function toBackground(row: any): Background {
 
 export const backgrounds: Background[] = (backgroundData as any[]).map(toBackground);
 
+// Languages a background grants: how many of the player's choice ("Two of your choice"), or the
+// one it names
+export function backgroundLanguages(background?: Background): { choices: number; fixed: string[] } {
+  const text = (background?.languages ?? "None").replace(/\.$/, "");
+  if (!text || text === "None") return { choices: 0, fixed: [] };
+  const choice = text.match(/^(\w+) of your choice/i);
+  return choice ? { choices: COUNT[choice[1].toLowerCase()] ?? 1, fixed: [] } : { choices: 0, fixed: [text] };
+}
+
+// Tools a background grants. Its text either names them ("Disguise kit, Forgery kit") or leaves a
+// choice ("One type of gaming set", "Your choice of demolitions kit, security kit, or slicer's
+// kit"): then `options` are the tools the text allows and `choices` how many to pick.
+// `tools` is the tool list from the equipment data.
+export function backgroundTools(background: Background | undefined, tools: { name: string; category: string }[]): { fixed: string[]; options: string[]; choices: number } {
+  const text = background?.toolProficiencies[0] ?? "";
+  if (!text) return { fixed: [], options: [], choices: 0 };
+  const lower = text.toLowerCase();
+  const named = tools.filter((tool) => lower.includes(tool.name.toLowerCase())).map((tool) => tool.name);
+  if (!/choice|choose|\bone\b|\btwo\b|\btype\b| or /i.test(text)) return { fixed: named.length ? named : [text], options: [], choices: 0 };
+  const kinds = [
+    ...(/gaming set/.test(lower) ? tools.filter((tool) => tool.category === "GamingSet") : []),
+    ...(/instrument/.test(lower) ? tools.filter((tool) => tool.category === "MusicalInstrument") : []),
+    ...(/artisan.s implements/.test(lower) ? tools.filter((tool) => /implements$/i.test(tool.name)) : []),
+  ].map((tool) => tool.name);
+  const options = Array.from(new Set([...named, ...kinds]));
+  return {
+    fixed: [],
+    options: options.length ? options : tools.map((tool) => tool.name),
+    choices: /\btwo\b/.test(lower) || / and |, (?:one|your)/.test(lower) ? 2 : 1,
+  };
+}
+
 // Export for UI usage
 export const BACKGROUNDS = backgrounds.map((b) => ({ id: b.id, name: b.name }));
 

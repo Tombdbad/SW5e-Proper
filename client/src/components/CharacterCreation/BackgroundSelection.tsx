@@ -17,17 +17,34 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { backgrounds, BACKGROUNDS } from "@/lib/sw5e/backgrounds";
+import { backgrounds, BACKGROUNDS, backgroundLanguages, backgroundTools } from "@/lib/sw5e/backgrounds";
+import { getSpeciesById } from "@/lib/sw5e/species";
+import { equipment } from "@/lib/sw5e/equipment";
+import { LANGUAGES } from "@/lib/sw5e/constants";
+
+// Tools, kits, gaming sets and instruments, from the equipment data, with the book's own category
+export const TOOLS = equipment.filter((e) => e.category === "Tool").map((e) => ({ name: e.name, category: e.kind }));
 
 interface BackgroundSelectionProps {
   onSelect: () => void;
 }
 
 export default function BackgroundSelection({ onSelect }: BackgroundSelectionProps) {
-  const { control, watch } = useFormContext();
+  const { control, watch, setValue } = useFormContext();
   const selectedBackground = watch("background");
 
   const backgroundInfo = backgrounds.find(b => b.id === selectedBackground);
+
+  // Tools and languages the background (and the species) leave to the player
+  const tools = backgroundTools(backgroundInfo, TOOLS);
+  const pickedTools: string[] = watch("backgroundTools") || [];
+  const speciesLanguages = getSpeciesById(watch("species"))?.languages ?? [];
+  const languageCount = backgroundLanguages(backgroundInfo).choices + speciesLanguages.filter((l) => /of your choice/i.test(l)).length;
+  const pickedLanguages: string[] = watch("extraLanguages") || [];
+  const toggle = (field: string, picked: string[], name: string, limit: number) => {
+    if (picked.includes(name)) setValue(field, picked.filter((n) => n !== name));
+    else if (picked.length < limit) setValue(field, [...picked, name]);
+  };
 
   return (
     <div className="space-y-6">
@@ -96,6 +113,52 @@ export default function BackgroundSelection({ onSelect }: BackgroundSelectionPro
               </ul>
             </div>
           </div>
+
+          {tools.choices > 0 && (
+            <div className="mt-4" data-testid="background-tools">
+              <h4 className="text-yellow-400 text-sm font-medium mb-1">
+                Choose {tools.choices === 1 ? "your tool" : `${tools.choices} tools`} ({pickedTools.length}/{tools.choices})
+              </h4>
+              <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto">
+                {tools.options.map((name) => (
+                  <Button
+                    key={name}
+                    type="button"
+                    size="sm"
+                    variant={pickedTools.includes(name) ? "default" : "outline"}
+                    className="h-7 px-2"
+                    disabled={!pickedTools.includes(name) && pickedTools.length >= tools.choices}
+                    onClick={() => toggle("backgroundTools", pickedTools, name, tools.choices)}
+                  >
+                    {name}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {languageCount > 0 && (
+            <div className="mt-4" data-testid="background-languages">
+              <h4 className="text-yellow-400 text-sm font-medium mb-1">
+                Choose {languageCount === 1 ? "a language" : `${languageCount} languages`} ({pickedLanguages.length}/{languageCount})
+              </h4>
+              <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto">
+                {LANGUAGES.filter((language) => !speciesLanguages.includes(language)).map((language) => (
+                  <Button
+                    key={language}
+                    type="button"
+                    size="sm"
+                    variant={pickedLanguages.includes(language) ? "default" : "outline"}
+                    className="h-7 px-2"
+                    disabled={!pickedLanguages.includes(language) && pickedLanguages.length >= languageCount}
+                    onClick={() => toggle("extraLanguages", pickedLanguages, language, languageCount)}
+                  >
+                    {language}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
           
           <Button type="button" onClick={onSelect} className="mt-4">
             Continue

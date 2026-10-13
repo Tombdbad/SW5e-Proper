@@ -56,11 +56,7 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
         setTechLevels(type === "Tech" ? levels : []);
       } catch (error) {
         console.error('Error loading powers:', error);
-        toast({
-          title: "Error",
-          description: "Failed to load powers data",
-          variant: "destructive"
-        });
+        toast.error("Failed to load powers data");
       }
     };
     
@@ -101,6 +97,19 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
     });
   };
   
+  // A power that builds on another needs that one chosen first
+  const missingPrerequisite = (selected: { name: string }[], power: { name: string; prerequisite?: string }) => {
+    if (!power.prerequisite || selected.some((p) => p.name.toLowerCase() === power.prerequisite!.toLowerCase())) return false;
+    toast.error(`${power.name} builds on ${power.prerequisite}: choose ${power.prerequisite} first`);
+    return true;
+  };
+  // Dropping a power drops the powers that build on it
+  const withoutPower = <P extends { id: string; name: string; prerequisite?: string }>(selected: P[], power: P): P[] => {
+    const left = selected.filter((p) => p.id !== power.id);
+    const orphan = left.find((p) => p.prerequisite?.toLowerCase() === power.name.toLowerCase());
+    return orphan ? withoutPower(left, orphan) : left;
+  };
+
   // Handle power selection
   const handleForcePowerSelect = (power: ForcePower) => {
     // Check if power is already selected
@@ -108,16 +117,13 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
     
     if (isSelected) {
       // Remove power
-      const updatedPowers = selectedForcePowers.filter(p => p.id !== power.id);
+      const updatedPowers = withoutPower(selectedForcePowers, power);
       form.setValue('forcePowers', updatedPowers, { shouldValidate: true });
     } else {
+      if (missingPrerequisite(selectedForcePowers, power)) return;
       // Check if max powers reached
       if (selectedForcePowers.length >= maxForcePowersCount) {
-        toast({
-          title: "Limit Reached",
-          description: `You can only select ${maxForcePowersCount} force powers`,
-          variant: "destructive"
-        });
+        toast.error(`You can only select ${maxForcePowersCount} force powers`);
         return;
       }
       
@@ -133,16 +139,13 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
     
     if (isSelected) {
       // Remove power
-      const updatedPowers = selectedTechPowers.filter(p => p.id !== power.id);
+      const updatedPowers = withoutPower(selectedTechPowers, power);
       form.setValue('techPowers', updatedPowers, { shouldValidate: true });
     } else {
+      if (missingPrerequisite(selectedTechPowers, power)) return;
       // Check if max powers reached
       if (selectedTechPowers.length >= maxTechPowersCount) {
-        toast({
-          title: "Limit Reached",
-          description: `You can only select ${maxTechPowersCount} tech powers`,
-          variant: "destructive"
-        });
+        toast.error(`You can only select ${maxTechPowersCount} tech powers`);
         return;
       }
       
@@ -168,11 +171,7 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
       if (isValid) {
         onContinue();
       } else {
-        toast({
-          title: "Validation Error",
-          description: "Please make sure your power selections are valid",
-          variant: "destructive"
-        });
+        toast.error("Please make sure your power selections are valid");
       }
     });
   };
@@ -249,6 +248,7 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
                               <div className="flex text-xs mt-2 space-x-2 opacity-75">
                                 <span>Range: {power.range || 'Self'}</span>
                                 <span>Duration: {power.duration || 'Instantaneous'}</span>
+                                {power.prerequisite && <span>Builds on: {power.prerequisite}</span>}
                               </div>
                             </div>
                           ))}
