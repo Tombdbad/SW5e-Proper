@@ -87,6 +87,7 @@ interface Character {
   experience?: number;
   hitDiceUsed?: number;
   conditions?: string[];
+  appearance?: { gender?: string; age?: number; height?: string; weight?: string; description?: string };
   personalityTraits?: string[];
   ideals?: string[];
   bonds?: string[];
@@ -618,6 +619,10 @@ export default function CharacterSheet({
                       />
                     </div>
 
+                    {listed("Appearance", [
+                      [character.appearance?.gender, character.appearance?.age && `${character.appearance.age} years`, character.appearance?.height, character.appearance?.weight].filter(Boolean).join(", "),
+                      character.appearance?.description,
+                    ].filter(Boolean) as string[])}
                     {listed("Personality Traits", character.personalityTraits)}
                     {listed("Ideals", character.ideals)}
                     {listed("Bonds", character.bonds)}
@@ -631,8 +636,8 @@ export default function CharacterSheet({
                     {showPersonality && (
                       <PersonalityTraitForm
                         background={getBackgroundById(character.background)}
-                        initialData={{ traits: character.personalityTraits ?? [], ideals: character.ideals ?? [], bonds: character.bonds ?? [], flaws: character.flaws ?? [], backstory: character.backstory ?? "" }}
-                        onSave={(data) => onUpdate?.({ personalityTraits: data.traits ?? [], ideals: data.ideals ?? [], bonds: data.bonds ?? [], flaws: data.flaws ?? [], backstory: data.backstory ?? "" })}
+                        initialData={{ traits: character.personalityTraits ?? [], ideals: character.ideals ?? [], bonds: character.bonds ?? [], flaws: character.flaws ?? [], backstory: character.backstory ?? "", appearance: character.appearance?.description ?? "" }}
+                        onSave={(data) => onUpdate?.({ personalityTraits: data.traits ?? [], ideals: data.ideals ?? [], bonds: data.bonds ?? [], flaws: data.flaws ?? [], backstory: data.backstory ?? "", appearance: { ...(character.appearance ?? {}), description: data.appearance ?? "" } })}
                         onClose={() => setShowPersonality(false)}
                       />
                     )}

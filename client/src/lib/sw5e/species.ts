@@ -36,6 +36,8 @@ export interface Species {
   languages: string[];
   source: string;
   homeworld?: string;
+  // What members of the species look like, as the books give it
+  appearance: { skin?: string; hair?: string; eyes?: string; distinctions?: string; height?: string; weight?: string };
   commonClasses?: string[];
   subspecies?: Subspecies[];
 }
@@ -58,6 +60,8 @@ export interface Subspecies {
 const STANDARD_TRAITS = new Set(["Ability Score Increase", "Age", "Alignment", "Size", "Speed", "Languages", "Type"]);
 
 const isChoice = (increase: AbilityIncrease) => increase.abilities.length !== 1 || /^any /i.test(increase.abilities[0]);
+
+const known = (value: any): string | undefined => (value && !/^(none|unknown|n\/a)$/i.test(String(value).trim()) ? String(value).trim() : undefined);
 
 function toSpecies(row: any): Species {
   const trait = (name: string): string => row.traits?.find((t: any) => t.name === name)?.description ?? "";
@@ -96,6 +100,14 @@ function toSpecies(row: any): Species {
     languages: spoken ? spoken.split(/,\s*(?:and\s+)?|\s+and\s+/).map((l: string) => l.trim()).filter(Boolean) : ["Galactic Basic", row.language].filter(Boolean),
     source: row.contentSource,
     homeworld: row.homeworld,
+    appearance: {
+      skin: known(row.skinColorOptions),
+      hair: known(row.hairColorOptions),
+      eyes: known(row.eyeColorOptions),
+      distinctions: known(row.distinctions),
+      height: known(row.heightAverage),
+      weight: known(row.weightAverage),
+    },
   };
 }
 

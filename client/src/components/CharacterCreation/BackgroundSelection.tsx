@@ -179,8 +179,12 @@ export default function BackgroundSelection({ onSelect }: BackgroundSelectionPro
           {showPersonality && (
             <PersonalityTraitForm
               background={backgroundInfo}
-              initialData={personality}
-              onSave={(data) => setValue("personality", data)}
+              initialData={{ ...personality, appearance: watch("description") || "" }}
+              onSave={(data) => {
+                setValue("personality", data);
+                // The same text as the Details step's description
+                setValue("description", data.appearance ?? "");
+              }}
               onClose={() => setShowPersonality(false)}
             />
           )}

@@ -44,6 +44,15 @@ export function toServerCharacter(c: any, partial = false): Record<string, any> 
   put("startingLocation", c.startingLocation, "Unknown");
   put("currentLocation", c.currentLocation || undefined);
   put("backstory", c.backstory ?? c.personality?.backstory ?? undefined);
+  // The Details step's gender, age, height, weight and description
+  const look = c.appearance ?? {
+    gender: c.gender || undefined,
+    age: Number.isFinite(c.age) ? c.age : undefined,
+    height: c.height || undefined,
+    weight: c.weight || undefined,
+    description: c.description || undefined,
+  };
+  put("appearance", Object.values(look).some((value) => value !== undefined && value !== "") ? look : undefined);
   put("notes", c.notes || undefined);
   put("forceAlignment", c.forceAlignment || undefined);
   put("personalityTraits", c.personality?.traits);

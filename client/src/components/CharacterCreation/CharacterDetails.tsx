@@ -2,6 +2,7 @@ import React from "react";
 import { useFormContext } from "react-hook-form";
 import { CharacterData } from "../../pages/CharacterCreation";
 import { ALIGNMENTS } from "../../lib/sw5e/constants";
+import { getSpeciesById } from "../../lib/sw5e/species";
 import { Label } from "../ui/label";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
@@ -22,6 +23,18 @@ const CharacterDetails: React.FC<CharacterDetailsProps> = ({ form }) => {
     register,
     formState: { errors },
   } = form;
+  const species = getSpeciesById(form.watch("species"));
+  const look = species?.appearance;
+  const typical = look
+    ? [
+        look.height && `about ${look.height}`,
+        look.weight && look.weight,
+        look.skin && `skin: ${look.skin.toLowerCase()}`,
+        look.hair && `hair: ${look.hair.toLowerCase()}`,
+        look.eyes && `eyes: ${look.eyes.toLowerCase()}`,
+        look.distinctions && look.distinctions,
+      ].filter(Boolean)
+    : [];
 
   return (
     <div className="space-y-6">
@@ -109,12 +122,18 @@ const CharacterDetails: React.FC<CharacterDetailsProps> = ({ form }) => {
         </div>
       </div>
 
+      <p className="text-sm text-gray-400" data-testid="species-look">
+        {typical.length > 0
+          ? `A typical ${species!.name}: ${typical.join("; ")}.`
+          : "Choose a species (next step) to see what its members usually look like."}
+      </p>
+
       <div>
         <Label>Character Description</Label>
         <Textarea
           {...register("description")}
           rows={4}
-          placeholder="Describe your character's appearance, personality, and background..."
+          placeholder="Describe your character's appearance..."
         />
       </div>
 

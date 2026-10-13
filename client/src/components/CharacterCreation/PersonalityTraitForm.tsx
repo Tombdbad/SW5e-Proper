@@ -10,6 +10,7 @@ const personalitySchema = z.object({
   ideals: z.array(z.string()).optional(),
   bonds: z.array(z.string()).optional(),
   flaws: z.array(z.string()).optional(),
+  appearance: z.string().optional(),
   backstory: z.string().optional(),
 });
 
@@ -133,6 +134,7 @@ const PersonalityTraitForm: FC<PersonalityTraitFormProps> = ({
       ideals: initialData.ideals || [],
       bonds: initialData.bonds || [],
       flaws: initialData.flaws || [],
+      appearance: initialData.appearance || '',
       backstory: initialData.backstory || '',
     }
   });
@@ -209,6 +211,19 @@ const PersonalityTraitForm: FC<PersonalityTraitFormProps> = ({
             values={flaws}
             max={2}
           />
+
+          {/* Appearance */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-300 mb-1">
+              Character Appearance
+            </label>
+            <textarea
+              {...register('appearance')}
+              rows={3}
+              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
+              placeholder="Describe what your character looks like..."
+            />
+          </div>
 
           {/* Backstory */}
           <div className="mb-4">
