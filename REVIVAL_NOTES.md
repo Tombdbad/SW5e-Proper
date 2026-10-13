@@ -29,17 +29,23 @@ Done in this review (each checked in headless Chromium at phone size; throwaway 
 - Class step: shows the book's Quick Build and "Creating a ..." text (`quickBuildText`, `creatingText` in the class data). This is what the legacy TemplateSystem and GuidedMode hard-coded.
 - Character page header and tab bar fit a phone; species, class and background are shown by name.
 
+- GM tab (Play, "GM Interface"), rebuilt on the game's own state; still copy and paste, no API:
+  - `lib/llm/reportHandler.ts`: `generateGameMasterReport(state, action)` writes the report from Play's character, campaign, current area and exits (with the themes and hooks `characterLanguageProcessor` reads from the backstory and personality, and the last three story turns). `parseGameMasterResponse` splits the reply at `---SYSTEM_DATA_FOLLOWS---`. `applyGameMasterResponse` returns the fields to save: hit points, credits, experience, items, conditions; the area's description and new occupants; new quests and objectives the story completed (a finished quest pays its reward). A hostile named by the GM is looked up in the stat blocks (`/api/sw5e/monsters`, `/api/world/occupant`) so that it can be fought; without a match it is a neutral stranger.
+  - The story is kept in the campaign's `sessionLogs` (added to the save schema) and shown on the Story tab. Each exchange is also recorded through `/api/debriefs` (`submitPlayerAction`, `processLLMResponse` in debriefCompiler.ts, repaired).
+  - House rule (labelled where it applies): the story cannot take the last hit point; outside a fight hit points stop at 1. "Dead" cannot be set by a reply.
+  - Play no longer uses the legacy `useCharacter` and `useCampaign` stores.
+- A campaign without a world: Play offers "Generate a world" in place of the old location list (the user's decision, 2026-10-13). The campaign's old quests are kept beside the generated ones. Test Combat stays for such campaigns.
+- Appearance: `characters.appearance` (json: gender, age, height, weight, description; migration 0002, the user's decision). Creation's Details step saves them, shows what the chosen species usually looks like (height, weight, skin, hair, eyes, distinctions from the species data), and the personality form has its appearance field back.
+
 Found and still open (in the order suggested to the user):
-1. GM tab in Play is dead end to end: GMReportManager calls `generateGameReport` (not imported) and reads `useCharacter(state => state.character)` (no such field); `lib/llm/reportHandler.ts` and `debriefCompiler.ts` read the legacy stores, the latter uses `useMap`/`useCharacter`/`useCampaign` without importing them and a `require`; results go to zustand stores Play never reads. `/api/debriefs` works and has no working caller. Rebuild on Play's own character, campaign and area, applying responses through Play's save functions; keep ClipboardIntegration and LLMResponseParser.
 2. Conditions in a fight: legacy `lib/sw5e/effectParser.ts` + `StatusEffectManager.tsx` + `EffectsPanel.tsx` parse conditions and durations from text. Port the patterns into `powerEffect` (rules.ts) and timed conditions into `lib/stores/useCombat.ts`; `lib/sw5e/conditions.ts` is the data view. Do not port the hard-coded Rage and Sneak Attack cases.
-3. `lib/sw5e/characterLanguageProcessor.ts` (themes and plot hooks from a backstory) has no working consumer; feed it into the GM report now that a backstory can be entered.
 4. World options (seed, starting planet, enemy faction, size) are only offered after Discard World; New Campaign sends only the enemy and party level. A species' `homeworld` (131 of 141 have one) could be the default starting planet.
 5. Enemy faction: `CampaignGenerator.tsx` takes it from the hard-coded list in `lib/sw5e/campaignGenerator.ts`. For a dark-side character it picks "Jedi Order", "Republic", "Rebel Alliance" or "Resistance", for which the data has no stat blocks, so `FORCES` in shared/logic fields Imperial troopers under that name. Choose from the factions shared/logic can field.
 6. Power picker: port the search, level and alignment filters of the unused Force/TechPowersSelection into PowersSelection.
 7. `CharacterExportImport.tsx` is self-contained (props only): add it to the character page.
-8. Creation's Details step collects gender, age, height, weight and description and saves none of them (no columns). Species data has height, weight, skin, hair and eye options and distinctions. Needs a column or two; ask.
 9. Weapon proficiency from species traits and feats is not read; exotic weapons are never proficient.
-10. Campaigns without a world still get the legacy Play and `/map`; offer "Generate a world" there instead (Decisions says they keep the list; the user has not been asked to change that).
+10. `/map` still shows the stock viewers when no campaign has a world.
+11. The GM reply can add people and enemies to the current area only; it cannot add places, ships or loot caches, or move the party. `GMReportDialog.tsx`, `lib/map/mapUpdateHandler.ts`, `lib/stores/useMap.ts` (beyond the current-location field) and the NPC classification code at the bottom of `debriefCompiler.ts` are no longer reached.
 Not worth porting: `CharacterVersioning` (localStorage snapshots), `lib/api/*` (second query layer), `lib/core/*`, `lib/performance`, `useAudio`/`useGame`, `combatmanagers.ts` (ship shape differs from shared/logic). Nothing has been deleted.
 
 ## Environment and ops
@@ -92,6 +98,7 @@ Where the code is: `client/src/lib/sw5e/characterCalculation.ts` (features, thei
 House rules (not from the books; each is labelled in the game where it appears):
 - Passage on someone else's ship: the fuel the trip burns at a Medium ship's fuel price (100 credits a unit); the shuttle between surface and orbit is free. The books have no fare table.
 - A dead character can be revived with 1 hit point ("Revive (house rule)"), so a solo campaign can go on.
+- A game master's reply cannot reduce hit points below 1 or kill; only a fight can.
 - Enemies leave a downed character alone instead of attacking them, since the character is alone.
 - One character flies any ship: crew sizes and deployments are not checked.
 - Enemy ships can be taken once their guards are beaten.
@@ -190,14 +197,14 @@ Done on 2026-10-13: the data files are generated from the API, expanded content 
 - The class picker offers only classes that have data (2c). Revisit when data for the other three is added.
 - Playwright is a dev dependency, pinned (2c).
 - Rules data is generated, never hand-written (2d). All ten classes are offered again now that all have data.
-- New campaigns always get a generated world; campaigns without one keep the plain location list (2e).
+- New campaigns always get a generated world; campaigns without one are offered one in Play (changed 2026-10-13; they kept a plain location list before).
 - The generator's code lives in the existing shared/logic module and the editor in the existing CampaignManager, at the user's request to extend files rather than add them. The only new files are the import script and the generated data.
 - Access is Tailscale-only (user, 2026-10-13); public HTTPS stays a possible later development. No Oracle port is opened for the game.
 - Phase 2f added no source files: `lib/sw5e/characterCalculation.ts` (an unused helper with two hard-coded experience tables) was rewritten as the module for features and levelling. New files are `deploy/*` and migration 0001.
 - Rules the books leave open are settled by the labelled house rules under "Play rules". Starting equipment follows the starting wealth variant.
 
 ## Next
-0. Work down "Found and still open" under "Live against legacy", starting with the GM tab.
+0. Work down "Found and still open" under "Live against legacy", starting with conditions in a fight.
 1. Done: Tailscale Serve is on and the phone reaches the game.
 2. Host firewall: still off and still the user's decision (see "Environment and ops"). With Tailscale no inbound port is needed for the game, so loading the saved rules (SSH only) is the safe direction; do it only with the user's go-ahead and with a second SSH session open.
 3. First session on a real phone. Fix what breaks.
