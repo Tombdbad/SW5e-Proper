@@ -176,6 +176,32 @@ export const featAbilityOptions = (name: string): string[] => {
   return offered.includes("any") ? [...ABILITIES] : offered.filter(isAbility);
 };
 
+// What stops a character from taking a feat, for the prerequisites that can be checked: a level,
+// the ability to cast powers (of a level), another feat, an ability score. Species type and size,
+// and "this or that" ability scores, are left to the player; null means nothing stands in the way.
+export function featPrerequisiteUnmet(feat: Feat, character: any): string | null {
+  const text = feat.prerequisite;
+  if (!text) return null;
+  const level = Number(character.level) || 1;
+  const klass = getClassById(character.class);
+  const needLevel = text.match(/(\d+)(?:st|nd|rd|th) level/i);
+  if (needLevel && level < Number(needLevel[1])) return `needs ${needLevel[0]}`;
+  const cast = text.match(/ability to cast (?:(\d+)(?:st|nd|rd|th)-level )?(force or tech|force|tech) powers/i);
+  if (cast) {
+    const kinds = cast[2].toLowerCase().split(" or ");
+    const can = kinds.some((kind) => klass?.casterType.toLowerCase() === kind || (kind === "force" ? character.forcePowers : character.techPowers)?.length > 0);
+    if (!can || (cast[1] && calculateMaxPowerLevel(level, klass?.id) < Number(cast[1]))) return `needs ${cast[0]}`;
+  }
+  const other = text.match(/([A-Z][\w' ]*?) feat/);
+  if (other && !(character.feats ?? []).map(featName).includes(other[1])) return `needs the ${other[1]} feat`;
+  if (!/\bor\b/i.test(text.replace(/force or tech/i, ""))) {
+    for (const m of text.matchAll(/(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) (\d+)/g)) {
+      if ((character.abilityScores?.[m[1].toLowerCase()] ?? 10) < Number(m[2])) return `needs ${m[0]}`;
+    }
+  }
+  return null;
+}
+
 // What changes in the saved numbers when the character's features change (a level, an archetype,
 // a feat). Numbers the sheet lets the player edit keep their edits: only the difference is applied.
 function featureChanges(before: any, after: any) {
@@ -294,8 +320,10 @@ export function applyLevelUp(character: any, choices: LevelUpChoices): { changes
       const feat = findFeatByName(choices.feat);
       const offered = featAbilityOptions(choices.feat);
       const ability = offered.length === 1 ? offered[0] : choices.featAbility;
+      const unmet = feat && featPrerequisiteUnmet(feat, { ...character, level: plan.level });
       if (!feat) problems.push("That feat is not in the rules data.");
       else if (feats.includes(feat.name)) problems.push(`${feat.name} is already taken.`);
+      else if (unmet) problems.push(`${feat.name} ${unmet}.`);
       else if (offered.length && !(ability && offered.includes(ability))) problems.push(`Choose the ability ${feat.name} raises.`);
       else {
         feats = [...feats, feat.name];

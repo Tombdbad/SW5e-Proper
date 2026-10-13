@@ -15,7 +15,7 @@ import { getClassById } from "@/lib/sw5e/classes";
 import { feats } from "@/lib/sw5e/feats";
 import {
   ABILITIES, applyLevelUp, archetypeOptions, calculateExperienceForNextLevel, characterFeatures, chooseArchetype,
-  featAbilityOptions, findArchetype, levelUpPlan, type LevelUpChoices,
+  featAbilityOptions, featPrerequisiteUnmet, findArchetype, levelUpPlan, type LevelUpChoices,
 } from "@/lib/sw5e/characterCalculation";
 
 const selectClass = "w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm";
@@ -125,9 +125,15 @@ function Advancement({ character, onSave, saving }: { character: any; onSave: (c
               <div className="space-y-1">
                 <select aria-label="Feat" className={selectClass} value={choices.feat ?? ""} onChange={(e) => set({ feat: e.target.value || undefined, featAbility: undefined })}>
                   <option value="">Choose a feat</option>
-                  {feats.filter((feat) => !taken.includes(feat.name)).map((feat) => (
-                    <option key={feat.id} value={feat.name}>{feat.name}{feat.prerequisite ? ` (needs: ${feat.prerequisite})` : ""}</option>
-                  ))}
+                  {feats.filter((feat) => !taken.includes(feat.name)).map((feat) => {
+                    // Prerequisites the app can check close the option; the rest are shown for the player to honour
+                    const unmet = featPrerequisiteUnmet(feat, { ...character, level: plan.level });
+                    return (
+                      <option key={feat.id} value={feat.name} disabled={!!unmet}>
+                        {feat.name}{unmet ? ` (${unmet})` : feat.prerequisite ? ` (prerequisite: ${feat.prerequisite})` : ""}
+                      </option>
+                    );
+                  })}
                 </select>
                 {featOptions.length > 1 && (
                   <select aria-label="Ability the feat raises" className={selectClass} value={choices.featAbility ?? ""} onChange={(e) => set({ featAbility: e.target.value || undefined })}>

@@ -95,14 +95,20 @@ function featIncreases(data: CharacterData): { abilities: string[]; missing?: st
 // Final stats from the choices made in the form, by the Player's Handbook: species and feat
 // increases, class hit die, saving throws and power points from the class table, armor actually
 // bought, and what the species traits, class features and feats add (see characterCalculation)
-function deriveStats(data: CharacterData) {
-  const cls = getClassById(data.class);
-  const sp = getSpeciesById(data.species);
-  const level = Number(data.level) || 1;
+// Ability scores with the species increases, before any feat (a feat's prerequisite is judged on these)
+function baseScores(data: CharacterData): Record<string, number> {
   const abilityScores: Record<string, number> = { ...(data.abilityScores ?? data.abilities) };
   for (const [ability, bonus] of Object.entries(speciesIncreases(data).bonus)) {
     if (ability in abilityScores) abilityScores[ability] = Math.min(20, abilityScores[ability] + bonus);
   }
+  return abilityScores;
+}
+
+function deriveStats(data: CharacterData) {
+  const cls = getClassById(data.class);
+  const sp = getSpeciesById(data.species);
+  const level = Number(data.level) || 1;
+  const abilityScores = baseScores(data);
   for (const ability of featIncreases(data).abilities) {
     if (ability in abilityScores) abilityScores[ability] = Math.min(20, abilityScores[ability] + 1);
   }
@@ -352,6 +358,7 @@ export default function CharacterCreation() {
           availableFeats={getBackgroundById(watch("background")) ? 1 : 0}
           characterClass={watch("class")}
           options={getBackgroundById(watch("background"))?.featOptions}
+          character={{ class: watch("class"), level: Number(watch("level")) || 1, forcePowers: watch("forcePowers"), techPowers: watch("techPowers"), abilityScores: baseScores(watch()) }}
         />
       ),
     },

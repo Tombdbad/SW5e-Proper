@@ -621,7 +621,7 @@ export default function GameBoard() {
 
         {/* Character HUD */}
         {showSidebar && (
-          <div className="absolute top-0 right-0 h-screen w-80 bg-gray-800 bg-opacity-80 text-white p-4 overflow-y-auto">
+          <div className="absolute top-0 right-0 h-screen w-80 bg-gray-800 bg-opacity-80 text-white p-4 pb-24 overflow-y-auto">
             <h2 className="text-xl font-bold mb-4 text-yellow-400">{character.name}</h2>
             <div className="mb-4">
               <div className="flex justify-between mb-1">

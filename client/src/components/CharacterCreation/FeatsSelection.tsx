@@ -11,16 +11,18 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { feats } from "@/lib/sw5e/feats";
-import { featAbilityOptions } from "@/lib/sw5e/characterCalculation";
+import { featAbilityOptions, featPrerequisiteUnmet } from "@/lib/sw5e/characterCalculation";
 
 interface FeatsSelectionProps {
   availableFeats: number;
   characterClass: string;
   // Feat names on offer (a background's feat list); all feats when left out
   options?: string[];
+  // The character so far (class, level, powers, ability scores), to judge prerequisites against
+  character?: Record<string, any>;
 }
 
-export default function FeatsSelection({ availableFeats, characterClass, options }: FeatsSelectionProps) {
+export default function FeatsSelection({ availableFeats, characterClass, options, character }: FeatsSelectionProps) {
   const { control, watch, setValue } = useFormContext();
   const selectedFeats = watch("feats") || [];
   // The ability each feat raises, where the feat offers a choice: { feat name: ability }
@@ -56,13 +58,15 @@ export default function FeatsSelection({ availableFeats, characterClass, options
             <FormItem>
               <ScrollArea className="h-72 p-1">
                 <div className="space-y-4">
-                  {offered.map((feat) => (
+                  {offered.map((feat) => {
+                    const unmet = character ? featPrerequisiteUnmet(feat, character) : null;
+                    return (
                     <div key={feat.id} className="flex items-start space-x-2">
                       <Checkbox
                         id={feat.id}
                         checked={selectedFeats.includes(feat.name)}
                         onCheckedChange={() => handleToggleFeat(feat.name)}
-                        disabled={!selectedFeats.includes(feat.name) && selectedFeats.length >= availableFeats}
+                        disabled={!selectedFeats.includes(feat.name) && (selectedFeats.length >= availableFeats || !!unmet)}
                       />
                       <div className="grid gap-1.5 leading-none">
                         <label
@@ -72,7 +76,9 @@ export default function FeatsSelection({ availableFeats, characterClass, options
                           {feat.name}
                         </label>
                         {feat.prerequisite && (
-                          <p className="text-xs text-gray-400">Prerequisite: {feat.prerequisite}</p>
+                          <p className={`text-xs ${unmet ? "text-yellow-400" : "text-gray-400"}`}>
+                            Prerequisite: {feat.prerequisite}{unmet ? " (not met)" : ""}
+                          </p>
                         )}
                         {featAbilityOptions(feat.name).length === 1 && (
                           <p className="text-xs text-gray-400 capitalize">+1 {featAbilityOptions(feat.name)[0]}</p>
@@ -96,7 +102,8 @@ export default function FeatsSelection({ availableFeats, characterClass, options
                         )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </ScrollArea>
               <FormMessage />
