@@ -316,19 +316,26 @@ export const experienceToNextLevel = (currentLevel: number): number => {
 };
 
 // Validate weapon proficiencies
+// The class's list reads "All blasters", "simple vibroweapons", "martial vibroweapons with the
+// finesse property" or "martial blasters that lack the auto, special, strength, and two-handed
+// properties"; a weapon is classed "SimpleBlaster", "MartialVibroweapon" and so on.
 export const hasWeaponProficiency = (
-  character: Character,
-  weaponType: string,
-  classes: Class[]
+  classId: string,
+  weapon: { weaponClassification?: string; properties?: string[] }
 ): boolean => {
-  // Check if any class grants proficiency with this weapon type
-  for (const characterClass of classes) {
-    if (characterClass.weaponProficiencies?.includes(weaponType)) {
-      return true;
-    }
-  }
-
-  return false;
+  const [, tier, kind] = (weapon.weaponClassification ?? "").match(/^(Simple|Martial|Exotic)(\w+)$/) ?? [];
+  if (!tier) return false;
+  const has = (weapon.properties ?? []).map((p) => p.toLowerCase().replace(/\s*(\(.*|\d.*)$/, ""));
+  const list = (getClassById(classId)?.weaponProficiencies ?? []).join(", ").toLowerCase();
+  const clauses = list.split(/,? ?(?=(?:all|simple|martial|exotic) \w+s\b)/).filter(Boolean);
+  return clauses.some((clause) => {
+    const [, which, kinds, how, named] = clause.match(/^(all|simple|martial|exotic) (\w+)s(?: (with the|that lack the) (.*) propert(?:y|ies))?/) ?? [];
+    if (kinds !== kind.toLowerCase()) return false;
+    // "All" covers simple and martial weapons; exotic ones are learned one by one
+    if (which === "all" ? tier === "Exotic" : which !== tier.toLowerCase()) return false;
+    const properties = (named ?? "").split(/,\s*|\s+and\s+/).map((p) => p.replace(/^and /, "").trim()).filter(Boolean);
+    return how === "with the" ? properties.every((p) => has.includes(p)) : !properties.some((p) => has.includes(p));
+  });
 };
 
 // Validate armor proficiencies

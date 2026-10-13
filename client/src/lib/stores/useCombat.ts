@@ -60,6 +60,11 @@ export interface Combatant {
   rangedDice?: string;
   meleeWeapon?: string;
   rangedWeapon?: string;
+  // The bonus to hit and to damage with each (ability modifier, and proficiency when proficient)
+  meleeAttack?: number;
+  rangedAttack?: number;
+  meleeDamage?: number;
+  rangedDamage?: number;
   // The player's powers, ready to cast, and the points left to cast them with
   powers?: CombatPower[];
   powerPoints?: number;
@@ -373,7 +378,8 @@ export const useCombat = create<CombatState>((set, get) => ({
     const weaponDice = attackType === "melee" ? attacker.meleeDice : attackType === "ranged" ? attacker.rangedDice : undefined;
     if (attacker.isPlayer && weaponDice && attacker.abilities) {
       const ability = attackType === "melee" ? attacker.abilities.strength : attacker.abilities.dexterity;
-      return Math.max(1, rollDamage(weaponDice, isCritical) + Math.floor((ability - 10) / 2));
+      const bonus = (attackType === "melee" ? attacker.meleeDamage : attacker.rangedDamage) ?? Math.floor((ability - 10) / 2);
+      return Math.max(1, rollDamage(weaponDice, isCritical) + bonus);
     }
     // An unarmed strike does 1 + Strength modifier
     if (attacker.isPlayer && attackType === "melee" && attacker.abilities) {

@@ -24,8 +24,9 @@ export default function PlayCombat() {
     }
     const roll = d20();
     const crit = roll === 20;
+    // The player's bonus with the weapon in hand; unarmed, Strength and proficiency
     const bonus = attacker.isPlayer
-      ? mod(attacker.abilities?.[type === "melee" ? "strength" : "dexterity"]) + (attacker.attackBonus ?? 2)
+      ? (type === "melee" ? attacker.meleeAttack : attacker.rangedAttack) ?? mod(attacker.abilities?.[type === "melee" ? "strength" : "dexterity"]) + (attacker.attackBonus ?? 2)
       : attacker.attackBonus ?? 3;
     const dmg = s.damageRoll(type, crit);
     // A natural 1 misses whatever the bonus

@@ -8,6 +8,7 @@ import {
   calculatePowersKnown,
   calculateMaxPowerLevel,
   calculateArmorClass,
+  hasWeaponProficiency,
 } from "./rules";
 import { getClassById, getClassLevelValue } from "./classes";
 import { getSpeciesById } from "./species";
@@ -168,6 +169,69 @@ export function derivedStats(character: any) {
       ? [{ name: `Unarmed strike (${effects.unarmed.source})`, type: "Natural weapon", damage: effects.unarmed.dice, damageType: effects.unarmed.damageType, ability: "strength", proficient: true, natural: true }]
       : [],
   };
+}
+
+// The weapons a character can attack with: those carried (equipment is saved by name) and a
+// species' or class's unarmed strike, each with the numbers for an attack. Blasters use Dexterity,
+// other weapons Strength, or the better of the two with the finesse property; the proficiency
+// bonus is added when the class is proficient with the weapon.
+export interface CarriedWeapon {
+  name: string;
+  type: string;
+  ranged: boolean;
+  dice: string;
+  damageType: string;
+  ability: "strength" | "dexterity";
+  proficient: boolean;
+  properties: string[];
+  attackBonus: number;
+  damageBonus: number;
+  natural?: boolean;
+}
+
+export function carriedWeapons(character: any): CarriedWeapon[] {
+  const scores = character?.abilityScores ?? {};
+  const str = getAbilityModifier(scores.strength ?? 10);
+  const dex = getAbilityModifier(scores.dexterity ?? 10);
+  const proficiency = calculateProficiencyBonus(Number(character?.level) || 1);
+  const carried: string[] = (character?.equipment ?? []).map((e: any) => String(e?.name ?? e).toLowerCase());
+  const owned = equipment.filter((e) => e.category === "Weapon" && e.damage && carried.includes(e.name.toLowerCase()));
+  const weapons: CarriedWeapon[] = owned.map((e) => {
+    const ranged = /blaster/i.test(e.weaponClassification ?? "");
+    const finesse = (e.properties ?? []).some((p) => /^finesse/i.test(p));
+    const ability = ranged || (finesse && dex > str) ? "dexterity" : "strength";
+    const modifier = ability === "dexterity" ? dex : str;
+    const proficient = hasWeaponProficiency(String(character?.class ?? ""), e);
+    const [dice, damageType = ""] = e.damage!.split(" ");
+    return {
+      name: e.name,
+      type: (e.weaponClassification ?? "Weapon").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/ (\w)/, (_, c) => ` ${c.toLowerCase()}`),
+      ranged,
+      dice,
+      damageType,
+      ability,
+      proficient,
+      properties: e.properties ?? [],
+      attackBonus: modifier + (proficient ? proficiency : 0),
+      damageBonus: modifier,
+    };
+  });
+  const natural: CarriedWeapon[] = (character?.weapons ?? [])
+    .filter((w: any) => w?.natural && w.damage)
+    .map((w: any) => ({
+      name: w.name,
+      type: w.type ?? "Natural weapon",
+      ranged: false,
+      dice: String(w.damage).split(" ")[0],
+      damageType: w.damageType ?? "kinetic",
+      ability: "strength" as const,
+      proficient: true,
+      properties: [],
+      attackBonus: str + proficiency,
+      damageBonus: str,
+      natural: true,
+    }));
+  return [...weapons, ...natural];
 }
 
 // A feat's ability increase: the abilities it offers (one of them goes up by 1)

@@ -16,7 +16,7 @@ import { useCombat, rollDamage } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
-import { findEquipmentByName } from "@/lib/sw5e/equipment";
+import { carriedWeapons } from "@/lib/sw5e/characterCalculation";
 import { getClassById } from "@/lib/sw5e/classes";
 import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect } from "@/lib/sw5e/rules";
 import { getStarshipSize } from "@/lib/sw5e/starships";
@@ -300,22 +300,26 @@ export default function GameBoard() {
 
   const level = Number(character?.level) || 1;
   const klass = getClassById(character?.class ?? "");
-  const knownPowers: any[] = [...(character?.forcePowers ?? []), ...(character?.techPowers ?? [])];
+  const knownPowers: any[] = [...(character?.forcePowers ?? []), ...(character?.techPowers ?? [])].filter((power) => power?.name);
   const dead = (character?.conditions ?? []).includes("Dead");
 
-  // What the character fights with: the weapons carried (from the equipment data), a species'
-  // natural weapon when unarmed, and the powers known with the caster's numbers for each
+  // What the character fights with: the weapons carried (see carriedWeapons), a species' natural
+  // weapon when unarmed, and the powers known with the caster's numbers for each
   const combatKit = () => {
-    const owned = (character?.equipment ?? []).map((name: string) => findEquipmentByName(name)).filter((e: any) => e?.category === "Weapon" && e.damage);
-    const melee = owned.find((e: any) => /vibroweapon|lightweapon/i.test(e.weaponClassification ?? ""));
-    const ranged = owned.find((e: any) => /blaster/i.test(e.weaponClassification ?? ""));
-    const natural = (character?.weapons ?? []).find((w: any) => w?.natural);
+    // Of the weapons carried, the one with the best attack for each kind; unarmed otherwise
+    const weapons = carriedWeapons(character).sort((a, b) => Number(!!a.natural) - Number(!!b.natural) || b.attackBonus - a.attackBonus);
+    const melee = weapons.find((w) => !w.ranged);
+    const ranged = weapons.find((w) => w.ranged);
     const order = { attack: 0, save: 0, heal: 1, other: 2 };
     return {
-      meleeDice: melee?.damage.split(" ")[0] ?? natural?.damage,
-      meleeWeapon: melee?.name ?? natural?.name,
-      rangedDice: ranged?.damage.split(" ")[0],
+      meleeDice: melee?.dice,
+      meleeWeapon: melee?.name,
+      meleeAttack: melee?.attackBonus,
+      meleeDamage: melee?.damageBonus,
+      rangedDice: ranged?.dice,
       rangedWeapon: ranged?.name,
+      rangedAttack: ranged?.attackBonus,
+      rangedDamage: ranged?.damageBonus,
       // Armor picked up since the sheet was last worked out counts too
       armorClass: Math.max(character.armorClass, calculateArmorClass(character.abilityScores, character.equipment ?? [])),
       powerPoints: character?.currentForcePoints ?? 0,
