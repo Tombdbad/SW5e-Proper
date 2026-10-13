@@ -142,6 +142,17 @@ export default function ClassSelection({ form, allClasses }: ClassSelectionProps
         <div className="bg-gray-800 bg-opacity-50 rounded-md p-4">
           <h3 className="text-lg font-semibold text-yellow-400 mb-2">{classInfo.name}</h3>
           <p className="text-gray-300 mb-4">{classInfo.summary}</p>
+          {classInfo.quickBuild && (
+            <p className="text-sm text-yellow-200 mb-2" data-testid="class-quick-build">
+              <span className="font-semibold">Quick build:</span> {classInfo.quickBuild.replace(/^You can make an? [\w ]+ quickly by following these suggestions\.\s*/i, "")}
+            </p>
+          )}
+          {classInfo.creating && (
+            <details className="mb-4">
+              <summary className="cursor-pointer text-sm text-gray-400">Creating {/^[aeiou]/i.test(classInfo.name) ? "an" : "a"} {classInfo.name.toLowerCase()}</summary>
+              <p className="text-sm text-gray-300 whitespace-pre-line mt-2">{classInfo.creating}</p>
+            </details>
+          )}
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>

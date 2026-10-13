@@ -14,6 +14,9 @@ export interface SW5EClass {
   name: string;
   summary: string;
   description: string;
+  // The book's advice for making one: the short recipe, and the questions to ask yourself
+  quickBuild: string;
+  creating: string;
   hitDie: number;
   primaryAbility: string[];
   savingThrows: string[];
@@ -43,6 +46,8 @@ function toClass(row: any): SW5EClass {
     name: row.name,
     summary: row.summary ?? "",
     description: row.flavorText ?? "",
+    quickBuild: String(row.quickBuildText ?? "").trim(),
+    creating: String(row.creatingText ?? "").trim(),
     hitDie: row.hitDiceDieType,
     primaryAbility: String(row.primaryAbility ?? "").split(/\s+or\s+|,\s*|\s+and\s+/).filter(Boolean),
     savingThrows: row.savingThrows ?? [],
