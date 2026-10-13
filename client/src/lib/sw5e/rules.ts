@@ -1,4 +1,5 @@
 import lookups from "@shared/data/sw5e/lookups.json";
+import advancement from "@shared/data/sw5e/characterAdvancement.json";
 import { SW5EClass, getClassById, getPowerProgression } from './classes';
 import { Species } from './species';
 import { Skill } from './skills';
@@ -300,15 +301,8 @@ export const checkMulticlassPrerequisites = (
 
 // Enhancement: Character advancement tracking
 export const calculateExperienceForLevel = (level: number): number => {
-  const experienceTable = [
-    0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000,
-    85000, 100000, 120000, 140000, 165000, 195000, 225000, 265000, 305000, 355000
-  ];
-
-  if (level < 1) return 0;
-  if (level > 20) return experienceTable[19];
-
-  return experienceTable[level - 1];
+  const table = (advancement as any[]).map((row) => row.experiencePoints as number);
+  return table[Math.min(table.length, Math.max(1, level)) - 1];
 };
 
 // Calculate experience needed for next level

@@ -31,6 +31,7 @@ export function toServerCharacter(c: any, partial = false): Record<string, any> 
   put("armorClass", c.armorClass || undefined, 10 + Math.floor((dex - 10) / 2));
   put("speed", c.speed, 30);
   put("equipment", names(c.equipment), []);
+  put("weapons", Array.isArray(c.weapons) ? c.weapons : undefined);
   put("skillProficiencies", names(c.skillProficiencies), []);
   put("savingThrowProficiencies", names(c.savingThrowProficiencies), []);
   put("toolProficiencies", names(c.toolProficiencies));

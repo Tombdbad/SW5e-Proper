@@ -126,6 +126,10 @@ export default function CharacterSheet({
   } | null>(null);
   const [activeTab, setActiveTab] = useState("stats");
 
+  // Skills are saved by name as printed in the rules ("Sleight of Hand")
+  const hasSkill = (name: string) =>
+    (character.skillProficiencies ?? []).some((skill: any) => String(skill).toLowerCase() === name.toLowerCase());
+
   // Calculate ability modifiers
   const getAbilityModifier = (score: number) => {
     return Math.floor((score - 10) / 2);
@@ -223,8 +227,7 @@ export default function CharacterSheet({
     const proficiencyBonus = getProficiencyBonus(character.level);
 
     // Check if character is proficient in this skill
-    const isProficient =
-      character.skillProficiencies?.includes(skill.toLowerCase()) || false;
+    const isProficient = hasSkill(skill);
     const bonus = isProficient ? modifier + proficiencyBonus : modifier;
 
     let roll1 = rollDice(1, 20);
@@ -255,7 +258,7 @@ export default function CharacterSheet({
   const rollAttack = (weapon: Weapon) => {
     const abilityScore =
       character.abilityScores[
-        weapon.ability.toLowerCase() as keyof typeof character.abilityScores
+        (weapon.ability ?? "strength").toLowerCase() as keyof typeof character.abilityScores
       ];
     const modifier = getAbilityModifier(abilityScore);
     const proficiencyBonus = getProficiencyBonus(character.level);
@@ -680,10 +683,7 @@ export default function CharacterSheet({
                     ];
                   const modifier = getAbilityModifier(abilityScore);
                   const proficiencyBonus = getProficiencyBonus(character.level);
-                  const isProficient =
-                    character.skillProficiencies?.includes(
-                      skill.name.toLowerCase(),
-                    ) || false;
+                  const isProficient = hasSkill(skill.name);
                   const skillBonus = isProficient
                     ? modifier + proficiencyBonus
                     : modifier;
@@ -775,7 +775,7 @@ export default function CharacterSheet({
                   {character.weapons.map((weapon, index) => {
                     const abilityScore =
                       character.abilityScores[
-                        weapon.ability.toLowerCase() as keyof typeof character.abilityScores
+                        (weapon.ability ?? "strength").toLowerCase() as keyof typeof character.abilityScores
                       ];
                     const modifier = getAbilityModifier(abilityScore);
                     const proficiencyBonus = getProficiencyBonus(

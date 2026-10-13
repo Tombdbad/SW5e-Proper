@@ -15,10 +15,10 @@ import {
   calculateModifier,
   calculateProficiencyBonus,
   calculatePowerPoints,
-  calculateArmorClass,
   calculateStartingCredits,
   MAX_POINT_BUY_POINTS,
 } from "../lib/sw5e/rules";
+import { derivedStats, featAbilityOptions } from "../lib/sw5e/characterCalculation";
 
 // Import Components
 import SpeciesSelection from "../components/CharacterCreation/SpeciesSelection";
@@ -77,8 +77,24 @@ function speciesIncreases(data: CharacterData): { bonus: Record<string, number>;
   return { bonus, missing };
 }
 
-// Final stats from the choices made in the form, by the Player's Handbook: species increases,
-// class hit die, saving throws and power points from the class table, armor actually bought
+// The ability each chosen feat raises by 1: the only one it names, or the one picked in the Feats
+// step (`data.featAbilities[feat name]`). `missing` names a feat still waiting for its pick.
+function featIncreases(data: CharacterData): { abilities: string[]; missing?: string } {
+  const abilities: string[] = [];
+  let missing: string | undefined;
+  for (const feat of data.feats ?? []) {
+    const name = feat?.name ?? feat;
+    const offered = featAbilityOptions(name);
+    const ability = offered.length === 1 ? offered[0] : data.featAbilities?.[name];
+    if (ability && offered.includes(ability)) abilities.push(ability);
+    else if (offered.length) missing = name;
+  }
+  return { abilities, missing };
+}
+
+// Final stats from the choices made in the form, by the Player's Handbook: species and feat
+// increases, class hit die, saving throws and power points from the class table, armor actually
+// bought, and what the species traits, class features and feats add (see characterCalculation)
 function deriveStats(data: CharacterData) {
   const cls = getClassById(data.class);
   const sp = getSpeciesById(data.species);
@@ -87,20 +103,26 @@ function deriveStats(data: CharacterData) {
   for (const [ability, bonus] of Object.entries(speciesIncreases(data).bonus)) {
     if (ability in abilityScores) abilityScores[ability] = Math.min(20, abilityScores[ability] + bonus);
   }
+  for (const ability of featIncreases(data).abilities) {
+    if (ability in abilityScores) abilityScores[ability] = Math.min(20, abilityScores[ability] + 1);
+  }
   const mod = (ability: string) => calculateModifier(abilityScores[ability]);
   const hitDie = cls?.hitDie ?? 8;
   const perLevel = hitDie / 2 + 1 + mod("constitution");
   const carried: string[] = (data.equipment ?? []).map((e: any) => e?.name ?? e);
+  const derived = derivedStats({ species: data.species, class: data.class, level, feats: data.feats, abilityScores, equipment: carried });
+  const all = (...lists: string[][]) => Array.from(new Set(lists.flat()));
 
   return {
     abilityScores,
-    hitPoints: Math.max(1, hitDie + mod("constitution") + (level - 1) * perLevel),
-    armorClass: calculateArmorClass(abilityScores as any, carried),
+    hitPoints: Math.max(1, hitDie + mod("constitution") + (level - 1) * perLevel) + derived.hitPointBonus,
+    armorClass: derived.armorClass,
     initiative: mod("dexterity"),
-    speed: sp?.speed?.walk ?? 30,
+    speed: (sp?.speed?.walk ?? 30) + derived.speedBonus,
     languages: sp?.languages ?? data.languages,
-    savingThrowProficiencies: (cls?.savingThrows ?? []).map((s) => s.toLowerCase()),
-    skillProficiencies: Array.from(new Set([...(data.skillProficiencies ?? []), ...(data.backgroundSkills ?? [])])),
+    savingThrowProficiencies: all((cls?.savingThrows ?? []).map((s) => s.toLowerCase()), derived.effects.saves),
+    skillProficiencies: all(data.skillProficiencies ?? [], data.backgroundSkills ?? [], derived.effects.skills),
+    weapons: derived.naturalWeapons,
     powerPoints: calculatePowerPoints(data.class, level, abilityScores as any),
     proficiencyBonus: calculateProficiencyBonus(level),
   };
@@ -192,6 +214,7 @@ export default function CharacterCreation() {
   useEffect(() => {
     setValue("backgroundSkills", []);
     setValue("feats", []);
+    setValue("featAbilities", {});
   }, [watchBackground, setValue]);
 
   const onSubmit = async (data: CharacterData) => {
@@ -201,6 +224,8 @@ export default function CharacterCreation() {
     try {
       if (!getClassById(data.class)) throw new Error("Invalid class selection");
       if (speciesIncreases(data).missing) throw new Error("Choose your species ability score increases (Species step)");
+      const waiting = featIncreases(data).missing;
+      if (waiting) throw new Error(`Choose the ability ${waiting} raises (Feats step)`);
 
       // Prepare final character data
       const characterData = { ...data, ...deriveStats(data) };
@@ -461,6 +486,7 @@ function PreviewPanel({ data }: { data: CharacterData }) {
         <div>Saving Throws: {names(stats.savingThrowProficiencies)}</div>
         <div>Skills: {names(stats.skillProficiencies)}</div>
         <div>Feats: {names(data.feats)}</div>
+        {stats.weapons.length > 0 && <div>Natural weapons: {stats.weapons.map((w) => `${w.name} ${w.damage}`).join(", ")}</div>}
         <div>Equipment: {names(data.equipment)}</div>
       </div>
     </div>

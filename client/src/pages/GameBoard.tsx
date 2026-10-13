@@ -18,7 +18,7 @@ import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
 import { findEquipmentByName } from "@/lib/sw5e/equipment";
 import { getClassById } from "@/lib/sw5e/classes";
-import { castingStats, powerCost, powerEffect } from "@/lib/sw5e/rules";
+import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect } from "@/lib/sw5e/rules";
 import { getStarshipSize } from "@/lib/sw5e/starships";
 import {
   exitsOf, trailOf, childrenOf, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
@@ -298,6 +298,8 @@ export default function GameBoard() {
       meleeWeapon: melee?.name ?? natural?.name,
       rangedDice: ranged?.damage.split(" ")[0],
       rangedWeapon: ranged?.name,
+      // Armor picked up since the sheet was last worked out counts too
+      armorClass: Math.max(character.armorClass, calculateArmorClass(character.abilityScores, character.equipment ?? [])),
       powerPoints: character?.currentForcePoints ?? 0,
       powers: knownPowers
         .map((power) => {
@@ -624,6 +626,11 @@ export default function GameBoard() {
             )}
             <p className="text-sm text-gray-300 mb-4" data-testid="play-hit-dice">
               Level {level} · Hit Dice {hitDiceLeft}/{level} (d{hitDie}) · {character.experience ?? 0} XP
+              {level < 20 && (character.experience ?? 0) >= calculateExperienceForLevel(level + 1) && !inCombat && (
+                <Link to={`/characters/${character.id}`} className="block text-yellow-400 underline" data-testid="play-level-up">
+                  Level up available: open the character sheet
+                </Link>
+              )}
             </p>
 
             <div className="mb-4">

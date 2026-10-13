@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { feats } from "@/lib/sw5e/feats";
+import { featAbilityOptions } from "@/lib/sw5e/characterCalculation";
 
 interface FeatsSelectionProps {
   availableFeats: number;
@@ -22,6 +23,8 @@ interface FeatsSelectionProps {
 export default function FeatsSelection({ availableFeats, characterClass, options }: FeatsSelectionProps) {
   const { control, watch, setValue } = useFormContext();
   const selectedFeats = watch("feats") || [];
+  // The ability each feat raises, where the feat offers a choice: { feat name: ability }
+  const featAbilities: Record<string, string> = watch("featAbilities") || {};
   const offered = options ? feats.filter((feat) => options.includes(feat.name)) : feats;
 
   const handleToggleFeat = (featId: string) => {
@@ -70,6 +73,26 @@ export default function FeatsSelection({ availableFeats, characterClass, options
                         </label>
                         {feat.prerequisite && (
                           <p className="text-xs text-gray-400">Prerequisite: {feat.prerequisite}</p>
+                        )}
+                        {featAbilityOptions(feat.name).length === 1 && (
+                          <p className="text-xs text-gray-400 capitalize">+1 {featAbilityOptions(feat.name)[0]}</p>
+                        )}
+                        {featAbilityOptions(feat.name).length > 1 && selectedFeats.includes(feat.name) && (
+                          <div className="flex flex-wrap items-center gap-1 text-xs" data-feat-ability={feat.name}>
+                            <span className="text-gray-400">+1 to one of:</span>
+                            {featAbilityOptions(feat.name).map((ability) => (
+                              <Button
+                                key={ability}
+                                type="button"
+                                size="sm"
+                                variant={featAbilities[feat.name] === ability ? "default" : "outline"}
+                                className="h-6 px-2 capitalize"
+                                onClick={() => setValue("featAbilities", { ...featAbilities, [feat.name]: ability })}
+                              >
+                                {ability}
+                              </Button>
+                            ))}
+                          </div>
                         )}
                       </div>
                     </div>
