@@ -1,19 +1,24 @@
 
 import React, { useState } from 'react';
-import { CampaignElementGenerator, CampaignData } from '../../lib/sw5e/campaignGenerator';
+import { CampaignElementGenerator } from '../../lib/sw5e/campaignGenerator';
 import { CharacterProfile } from '../../lib/sw5e/characterProfileParser';
 import TranslucentPane from '../ui/TranslucentPane';
 import { Character } from '../../shared/schema';
+import { trailOf, type Quest, type World } from '@shared/logic';
 
 interface CampaignGeneratorProps {
   character: Character;
   onSave: (campaignData: any) => void;
 }
 
+// What is shown and saved comes from the generated world: its places, the people and enemies
+// placed in it from the rules data, and the quests read off it. Only the choice of enemy
+// faction (the one opposed to the character's alignment) comes from the older text generator.
 export default function CampaignGenerator({ character, onSave }: CampaignGeneratorProps) {
-  const [campaign, setCampaign] = useState<CampaignData | null>(null);
+  const [draft, setDraft] = useState<{ world: World; quests: Quest[] } | null>(null);
   const [generating, setGenerating] = useState(false);
-  
+  const [error, setError] = useState<string | null>(null);
+
   const convertCharacterToProfile = (character: Character): CharacterProfile => {
     return {
       name: character.name,
@@ -24,111 +29,73 @@ export default function CampaignGenerator({ character, onSave }: CampaignGenerat
       alignment: character.alignment,
       forceAlignment: character.forceAlignment,
       abilities: character.abilityScores as any,
-      skillProficiencies: Array.isArray(character.skillProficiencies) 
-        ? character.skillProficiencies 
+      skillProficiencies: Array.isArray(character.skillProficiencies)
+        ? character.skillProficiencies
         : Object.keys(character.skillProficiencies || {})
     };
   };
-  
-  const generateCampaign = () => {
+
+  const generateCampaign = async () => {
     setGenerating(true);
-    
-    // Convert character data to the format expected by the generator
-    const profile = convertCharacterToProfile(character);
-    
-    // Use setTimeout to avoid blocking the UI
-    setTimeout(() => {
-      try {
-        const generator = new CampaignElementGenerator();
-        const newCampaign = generator.generateFullCampaign(profile);
-        setCampaign(newCampaign);
-      } catch (error) {
-        console.error("Error generating campaign:", error);
-      } finally {
-        setGenerating(false);
-      }
-    }, 100);
+    setError(null);
+    try {
+      const antagonist = new CampaignElementGenerator().generatePrimaryObjective(convertCharacterToProfile(character)).target;
+      const response = await fetch('/api/world/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ options: { antagonist, partyLevel: character.level } }),
+      });
+      if (!response.ok) throw new Error('The server could not generate a world');
+      const generated = await response.json();
+      setDraft({ world: generated.world, quests: generated.quests ?? [] });
+    } catch (error) {
+      console.error("Error generating campaign:", error);
+      setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setGenerating(false);
+    }
   };
-  
+
+  // The starting planet: where the party begins, its sites, and who was placed on it
+  const world = draft?.world;
+  const start = world ? world.areas[world.startId] : null;
+  const trail = world && start ? trailOf(world, start.id) : [];
+  const planet = trail.find((area) => area.kind === 'planet');
+  const onPlanet = world && planet ? Object.values(world.areas).filter((area) => trailOf(world, area.id).some((a) => a.id === planet.id)) : [];
+  const sites = onPlanet.filter((area) => area.kind === 'settlement');
+  const people = onPlanet.flatMap((area) => area.occupants.filter((o) => !o.statBlock && o.count === 1).map((o) => ({ ...o, where: area.name })));
+  const enemies = Array.from(new Set(onPlanet.flatMap((area) => area.occupants.filter((o) => o.disposition === 'hostile').map((o) => o.name))));
+
   const handleSave = () => {
-    if (!campaign) return;
-    
-    // Convert to format expected by API
+    if (!draft || !world || !start) return;
+
     const campaignData = {
       name: `${character.name}'s Campaign`,
-      description: campaign.primaryObjective.title,
+      description: draft.quests[0]?.title ?? `Adventure on ${planet?.name ?? start.name}`,
       characterId: character.id,
-      setting: {
-        era: "Galactic Civil War",
-        backstory: `Adventure in ${campaign.location.name}`,
-        themes: [campaign.primaryObjective.combatStyle, campaign.primaryObjective.forceAlignment],
-        tone: campaign.primaryObjective.combatStyle === "aggressive" ? "Gritty" : "Space Opera"
-      },
-      npcs: campaign.npcs.map((npc, index) => ({
-        id: `npc-${index}`,
-        name: `${npc.type} ${index + 1}`,
-        species: "Unknown",
-        role: npc.type,
-        description: `A ${npc.type} affiliated with ${npc.faction}`,
+      npcs: people.slice(0, 20).map((person) => ({
+        id: person.id,
+        name: person.name,
+        species: person.species ?? "Unknown",
+        role: person.role,
+        description: `${person.role} at ${person.where}`,
       })),
-      locations: [
-        {
-          id: "location-main",
-          name: campaign.location.name,
-          type: campaign.location.environment,
-          description: `A ${campaign.location.environment} with ${campaign.location.securityLevel} security`,
-          coordinates: { x: 0, y: 0, z: 0 }
-        },
-        ...campaign.location.pointsOfInterest.map((poi, index) => ({
-          id: `location-${index}`,
-          name: poi,
-          type: "Point of Interest",
-          description: `A notable location within ${campaign.location.name}`,
-          coordinates: { x: index * 10, y: 0, z: 0 }
-        }))
-      ],
-      quests: [
-        {
-          id: "quest-main",
-          title: campaign.primaryObjective.title,
-          description: `Main objective: ${campaign.primaryObjective.title}`,
-          status: "active",
-          objectives: [
-            { description: campaign.primaryObjective.title, completed: false }
-          ],
-          reward: {
-            credits: 1000,
-            items: campaign.items.map(item => item.name),
-            experience: 100 * character.level
-          }
-        },
-        ...campaign.secondaryObjectives.map((objective, index) => ({
-          id: `quest-${index}`,
-          title: objective.title,
-          description: objective.title,
-          status: "inactive",
-          objectives: [
-            { description: objective.title, completed: false }
-          ],
-          reward: {
-            credits: 500,
-            items: [],
-            experience: 50 * character.level
-          }
-        }))
-      ],
-      startingLocation: campaign.location.name,
-      currentLocation: campaign.location.name,
-      // For the world that is generated with the campaign: its enemy is the objective's faction
-      worldOptions: {
-        antagonist: campaign.primaryObjective.target,
-        partyLevel: character.level,
-      },
+      locations: sites.map((site) => ({
+        id: site.id,
+        name: site.name,
+        type: site.type,
+        description: site.description,
+        coordinates: site.position,
+      })),
+      quests: draft.quests,
+      startingLocation: start.name,
+      currentLocation: world.startId,
+      galaxyMap: world,
     };
-    
+
     onSave(campaignData);
   };
-  
+
   return (
     <div className="space-y-6">
       <TranslucentPane className="p-6">
@@ -142,73 +109,86 @@ export default function CampaignGenerator({ character, onSave }: CampaignGenerat
             {generating ? 'Generating...' : 'Generate Campaign'}
           </button>
         </div>
-        
+
         <p className="text-gray-300 mb-6">
-          Generate a personalized campaign based on your character's traits, abilities, and background.
-          The campaign will include objectives, locations, NPCs, and rewards tailored to your character.
+          Generate a galaxy to play in: places joined by paths, with people, enemies, ships and loot
+          placed from the rules data, and quests that the world keeps score of. Generate again for a different one.
         </p>
-        
-        {campaign && (
+        {error && <p className="text-red-400 mb-4">{error}</p>}
+
+        {draft && world && start && (
           <div className="space-y-6">
             <div>
               <h3 className="text-xl font-semibold text-yellow-400 mb-2">Primary Objective</h3>
               <TranslucentPane className="p-4">
-                <p className="text-lg">{campaign.primaryObjective.title}</p>
+                <p className="text-lg">{draft.quests[0]?.title ?? `Explore ${planet?.name ?? start.name}`}</p>
+                {draft.quests[0] && (
+                  <ul className="list-disc list-inside text-sm text-gray-300 mt-1">
+                    {draft.quests[0].objectives.map((objective, index) => (
+                      <li key={index}>{objective.description}</li>
+                    ))}
+                  </ul>
+                )}
+                <p className="text-sm text-gray-400 mt-2">Enemy: {world.antagonist}</p>
               </TranslucentPane>
             </div>
-            
+
             <div>
               <h3 className="text-xl font-semibold text-yellow-400 mb-2">Location</h3>
               <TranslucentPane className="p-4">
-                <p className="text-lg mb-1">{campaign.location.name}</p>
-                <p className="text-sm text-gray-400">Security Level: {campaign.location.securityLevel}</p>
+                <p className="text-lg mb-1">{trail.slice(2).map((area) => area.name).join(' › ')}</p>
+                {planet && <p className="text-sm text-gray-400">{planet.name}: {planet.type}{planet.description ? `. ${planet.description}` : ''}</p>}
                 <div className="mt-2">
-                  <h4 className="font-medium mb-1">Points of Interest:</h4>
+                  <h4 className="font-medium mb-1">Places on {planet?.name}:</h4>
                   <ul className="list-disc list-inside">
-                    {campaign.location.pointsOfInterest.map((poi, index) => (
-                      <li key={index} className="text-gray-300">{poi}</li>
+                    {sites.map((site) => (
+                      <li key={site.id} className="text-gray-300">{site.name} <span className="text-gray-400">({site.type})</span></li>
                     ))}
                   </ul>
                 </div>
               </TranslucentPane>
             </div>
-            
-            <div>
-              <h3 className="text-xl font-semibold text-yellow-400 mb-2">Secondary Objectives</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {campaign.secondaryObjectives.map((objective, index) => (
-                  <TranslucentPane key={index} className="p-4">
-                    <p>{objective.title}</p>
-                  </TranslucentPane>
-                ))}
+
+            {draft.quests.length > 1 && (
+              <div>
+                <h3 className="text-xl font-semibold text-yellow-400 mb-2">Secondary Objectives</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {draft.quests.slice(1).map((quest) => (
+                    <TranslucentPane key={quest.id} className="p-4">
+                      <p>{quest.title}</p>
+                      <p className="text-sm text-gray-400">{quest.description}</p>
+                    </TranslucentPane>
+                  ))}
+                </div>
               </div>
-            </div>
-            
+            )}
+
             <div>
               <h3 className="text-xl font-semibold text-yellow-400 mb-2">NPCs</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {campaign.npcs.map((npc, index) => (
-                  <TranslucentPane key={index} className="p-4">
-                    <p className="font-medium">{npc.type}</p>
-                    <p className="text-sm text-gray-400">Faction: {npc.faction}</p>
-                    <p className="text-sm text-gray-400">Location: {npc.location}</p>
+                {people.slice(0, 9).map((person) => (
+                  <TranslucentPane key={person.id} className="p-4">
+                    <p className="font-medium">{person.name}</p>
+                    <p className="text-sm text-gray-400">{[person.species, person.role].filter(Boolean).join(', ')}</p>
+                    <p className="text-sm text-gray-400">Location: {person.where}</p>
                   </TranslucentPane>
                 ))}
               </div>
+              {enemies.length > 0 && <p className="text-sm text-gray-300 mt-2">Hostile on {planet?.name}: {enemies.join(', ')}</p>}
             </div>
-            
+
             <div>
               <h3 className="text-xl font-semibold text-yellow-400 mb-2">Rewards</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {campaign.items.map((item, index) => (
-                  <TranslucentPane key={index} className="p-4">
-                    <p className="font-medium">{item.name}</p>
-                    <p className="text-sm text-gray-400">Rarity: {item.rarity}</p>
+                {draft.quests.map((quest) => (
+                  <TranslucentPane key={quest.id} className="p-4">
+                    <p className="font-medium">{quest.reward?.credits ?? 0} credits</p>
+                    <p className="text-sm text-gray-400">{quest.title}</p>
                   </TranslucentPane>
                 ))}
               </div>
             </div>
-            
+
             <div className="flex justify-end mt-6">
               <button
                 onClick={handleSave}

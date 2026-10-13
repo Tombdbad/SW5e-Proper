@@ -47,14 +47,16 @@ export default function CampaignView() {
         // Update existing campaign
         return apiRequest('PUT', `/api/campaigns/${id}`, campaignData);
       } else {
-        // Create new campaign, with a generated world to play in
+        // Create new campaign. The generator hands over the world it showed; anything else
+        // that creates a campaign gets a world generated here.
         const { worldOptions, ...fields } = campaignData;
+        if (fields.galaxyMap) return apiRequest('POST', '/api/campaigns', fields);
         const generated = await (await apiRequest('POST', '/api/world/generate', { options: worldOptions ?? {} })).json();
         return apiRequest('POST', '/api/campaigns', {
           ...fields,
           galaxyMap: generated.world,
           currentLocation: generated.world.startId,
-          // Quests the world can keep score of replace the generator's free-text ones
+          // Quests the world can keep score of replace free-text ones
           quests: generated.quests?.length ? generated.quests : fields.quests,
         });
       }
