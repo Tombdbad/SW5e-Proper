@@ -1,0 +1,9 @@
+# One database backup. Install with sw5e-backup.timer:
+# sudo cp deploy/sw5e-backup.service deploy/sw5e-backup.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now sw5e-backup.timer
+[Unit]
+Description=SW5e database backup
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/SW5e-Proper/deploy/backup.sh
