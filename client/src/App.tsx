@@ -1,6 +1,6 @@
 
 import { useState, useEffect, lazy, Suspense } from 'react';
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
 import Home from './pages/Home';
 import NotFound from './pages/not-found';
 
@@ -12,6 +12,12 @@ const GalacticMapView = lazy(() => import('./pages/GalacticMapView'));
 const GameBoard = lazy(() => import('./pages/GameBoard'));
 import { Toaster } from './components/ui/sonner';
 const LoadingDemo = lazy(() => import('./pages/LoadingDemo'));
+
+// A character is edited on its own page (the sheet, the inventory, levelling up)
+function CharacterPageRedirect() {
+  const { id } = useParams<{ id: string }>();
+  return <Navigate to={`/characters/${id}`} replace />;
+}
 
 function App() {
   const navigate = useNavigate();
@@ -58,7 +64,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/characters/create" element={<CharacterCreation />} />
-            <Route path="/characters/edit/:id" element={<CharacterCreation />} />
+            <Route path="/characters/edit/:id" element={<CharacterPageRedirect />} />
             <Route path="/characters" element={<Navigate to="/" replace />} />
             <Route path="/characters/:id" element={<CharacterManagement />} />
             <Route path="/campaigns" element={<CampaignView />} />

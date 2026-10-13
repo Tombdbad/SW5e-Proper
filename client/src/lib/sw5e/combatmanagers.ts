@@ -5,7 +5,7 @@ import type { StarshipCombatant, VehicleCombatant } from "../stores/useCombat";
 export class StarshipCombatManager {
   calculateInitiative(ship: StarshipCombatant): number {
     const pilotMod = ship.crew.pilot.modifier;
-    return rollDice(1, 20) + pilotMod;
+    return rollDice(1, 20)[0] + pilotMod;
   }
 
   handleDamage(ship: StarshipCombatant, damage: number): StarshipCombatant {
@@ -50,14 +50,14 @@ export class StarshipCombatManager {
 
   calculateAttackRoll(ship: StarshipCombatant): number {
     const gunnerMod = ship.crew.gunner.modifier;
-    return rollDice(1, 20) + gunnerMod;
+    return rollDice(1, 20)[0] + gunnerMod;
   }
 }
 
 export class VehicleCombatManager {
   calculateInitiative(vehicle: VehicleCombatant): number {
     const driverMod = vehicle.crew.driver.modifier;
-    return rollDice(1, 20) + driverMod;
+    return rollDice(1, 20)[0] + driverMod;
   }
 
   handleDamage(vehicle: VehicleCombatant, damage: number): VehicleCombatant {
@@ -72,11 +72,11 @@ export class VehicleCombatManager {
   calculateAttackRoll(vehicle: VehicleCombatant): number {
     if (!vehicle.crew.gunner) return 0;
     const gunnerMod = vehicle.crew.gunner.modifier;
-    return rollDice(1, 20) + gunnerMod;
+    return rollDice(1, 20)[0] + gunnerMod;
   }
 
   calculateEvasion(vehicle: VehicleCombatant): number {
     const driverMod = vehicle.crew.driver.modifier;
-    return rollDice(1, 20) + driverMod;
+    return rollDice(1, 20)[0] + driverMod;
   }
 }
