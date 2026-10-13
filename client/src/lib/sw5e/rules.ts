@@ -380,3 +380,69 @@ export const calculateStartingCredits = (classId: string, rollResult?: number): 
   const [dice, die, multiplier] = [Number(wealth[1]), Number(wealth[2]), Number(wealth[3])];
   return (rollResult ?? Math.floor((dice * (die + 1)) / 2)) * multiplier;
 };
+
+// ---------------------------------------------------------------------------------------------
+// Casting. Powers are stored on the character as chosen in creation (name, level, description,
+// and forceAlignment for force powers). What a power does is read from its description.
+// ---------------------------------------------------------------------------------------------
+
+export interface PowerEffect {
+  // attack: the caster rolls to hit; save: the target saves against the caster's DC;
+  // heal: the caster regains hit points; other: nothing the app can resolve by itself
+  kind: "attack" | "save" | "heal" | "other";
+  dice?: string;
+  damageType?: string;
+  save?: keyof AbilityScores;
+  halfOnSave?: boolean;
+  summary: string;
+}
+
+// Points a power costs: its level + 1; at-will powers (level 0) are free
+export const powerCost = (power: { level: number }): number => (power.level > 0 ? power.level + 1 : 0);
+
+export function powerEffect(power: { level: number; description?: string }, casterLevel: number): PowerEffect {
+  const text = power.description ?? "";
+  const heal = text.match(/regains? (?:a number of )?hit points equal to (\d+)d(\d+)/i);
+  const damage = text.match(/(\d+)d(\d+)(?:\s*\+\s*\d+)? (\w+) damage/i);
+  // At-will powers grow at 5th, 11th and 17th level
+  const steps = power.level === 0 && /5th level/.test(text) ? 1 + [5, 11, 17].filter((l) => casterLevel >= l).length : 1;
+  if (heal) {
+    const dice = `${Number(heal[1]) * steps}d${heal[2]}`;
+    return { kind: "heal", dice, summary: `heals ${dice} + casting modifier` };
+  }
+  if (!damage) return { kind: "other", summary: "effect described in its text" };
+  const dice = `${Number(damage[1]) * steps}d${damage[2]}`;
+  const damageType = damage[3].toLowerCase();
+  if (/(ranged|melee) (force|tech) attack/i.test(text)) {
+    return { kind: "attack", dice, damageType, summary: `power attack, ${dice} ${damageType}` };
+  }
+  const save = text.match(/(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) saving throw/);
+  if (save) {
+    const halfOnSave = /half as much damage on a successful/i.test(text);
+    return {
+      kind: "save",
+      dice,
+      damageType,
+      save: save[1].toLowerCase() as keyof AbilityScores,
+      halfOnSave,
+      summary: `${save[1]} save, ${dice} ${damageType}${halfOnSave ? " (half on a save)" : ""}`,
+    };
+  }
+  return { kind: "other", summary: "effect described in its text" };
+}
+
+// The caster's modifier, attack bonus and save DC for a power. Force powers use Wisdom (light),
+// Charisma (dark) or the better of the two (universal); tech powers use Intelligence.
+export function castingStats(
+  abilityScores: AbilityScores,
+  level: number,
+  power: { forceAlignment?: string },
+): { modifier: number; attack: number; dc: number } {
+  const wis = getAbilityModifier(abilityScores.wisdom);
+  const cha = getAbilityModifier(abilityScores.charisma);
+  const modifier = !("forceAlignment" in power)
+    ? getAbilityModifier(abilityScores.intelligence)
+    : power.forceAlignment === "Light" ? wis : power.forceAlignment === "Dark" ? cha : Math.max(wis, cha);
+  const proficiency = calculateProficiencyBonus(level);
+  return { modifier, attack: proficiency + modifier, dc: 8 + proficiency + modifier };
+}

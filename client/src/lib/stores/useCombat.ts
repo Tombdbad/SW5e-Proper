@@ -60,7 +60,29 @@ export interface Combatant {
   rangedDice?: string;
   meleeWeapon?: string;
   rangedWeapon?: string;
+  // The player's powers, ready to cast, and the points left to cast them with
+  powers?: CombatPower[];
+  powerPoints?: number;
+  // Ability modifiers, for saving throws against powers
+  saves?: Record<string, number>;
 }
+
+// A known power with what the app can resolve of it (see powerEffect in lib/sw5e/rules)
+export interface CombatPower {
+  name: string;
+  cost: number;
+  kind: "attack" | "save" | "heal" | "other";
+  dice?: string;
+  save?: string;
+  halfOnSave?: boolean;
+  summary: string;
+  // The caster's numbers for this power
+  modifier: number;
+  attack: number;
+  dc: number;
+}
+
+export type CombatOutcome = "victory" | "stable" | "dead" | "left" | null;
 
 // Rolls "2d6 + 1" style damage; a critical hit rolls the dice twice
 export function rollDamage(expression: string, isCritical: boolean): number {
@@ -76,12 +98,16 @@ interface CombatState {
   currentTurn: number;
   round: number;
   combatLog: string[];
+  // Death saving throws while the player is at 0 hit points, and how the fight ended
+  deathSaves: { successes: number; failures: number };
+  outcome: CombatOutcome;
 
   // Combat actions
   initiateCombat: (
     player: Character,
     enemies: Omit<Combatant, "isPlayer">[],
-    weapons?: Pick<Combatant, "meleeDice" | "rangedDice" | "meleeWeapon" | "rangedWeapon">,
+    // The player's weapons, powers and power points
+    weapons?: Partial<Combatant>,
   ) => void;
   endCombat: () => void;
   nextTurn: () => void;
@@ -93,6 +119,8 @@ interface CombatState {
     isCritical: boolean,
   ) => void;
   damageRoll: (attackType: string, isCritical: boolean) => number;
+  castPower: (index: number) => void;
+  deathSave: () => void;
 }
 
 export const useCombat = create<CombatState>((set, get) => ({
@@ -101,6 +129,8 @@ export const useCombat = create<CombatState>((set, get) => ({
   currentTurn: 0,
   round: 1,
   combatLog: [],
+  deathSaves: { successes: 0, failures: 0 },
+  outcome: null,
 
   initiateCombat: (player, enemies, weapons) => {
     // Calculate initiatives
@@ -142,6 +172,8 @@ export const useCombat = create<CombatState>((set, get) => ({
       currentTurn: firstTurn,
       round: 1,
       combatLog: ["Combat initiated! Roll for initiative!"],
+      deathSaves: { successes: 0, failures: 0 },
+      outcome: null,
     });
   },
 
@@ -152,6 +184,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       currentTurn: 0,
       round: 1,
       combatLog: [],
+      outcome: "left",
     });
   },
 
@@ -224,21 +257,25 @@ export const useCombat = create<CombatState>((set, get) => ({
                 "Victory! All enemies defeated.",
               ],
               inCombat: false,
+              outcome: "victory" as CombatOutcome,
             };
           }
 
-          // Check if player is defeated
+          // The player at 0 hit points: dead outright if the blow carried on past their
+          // hit point maximum, otherwise down and making death saving throws
           const player = updatedCombatants.find((c) => c.isPlayer);
           if (player && player.hp === 0) {
+            const massive = damageValue - target.hp >= target.maxHp;
             return {
               ...state,
               combatants: updatedCombatants,
               combatLog: [
                 ...state.combatLog,
                 logMessage,
-                "Defeat! You have been defeated.",
+                massive ? "The blow kills you outright." : "You fall unconscious and begin making death saving throws.",
               ],
-              inCombat: false,
+              deathSaves: { successes: 0, failures: 0 },
+              ...(massive ? { inCombat: false, outcome: "dead" as CombatOutcome } : {}),
             };
           }
         }
@@ -254,6 +291,73 @@ export const useCombat = create<CombatState>((set, get) => ({
         ...state,
         combatLog: [...state.combatLog, logMessage],
       };
+    }),
+
+  // Cast one of the player's powers at the first standing enemy (or on themselves, to heal)
+  castPower: (index) =>
+    set((state) => {
+      const caster = state.combatants[state.currentTurn];
+      const power = caster?.powers?.[index];
+      if (!caster?.isPlayer || !power || (caster.powerPoints ?? 0) < power.cost) return state;
+      const combatants = state.combatants.map((c) => (c.id === caster.id ? { ...c, powerPoints: (c.powerPoints ?? 0) - power.cost } : c));
+      const log = [...state.combatLog];
+      const hit = (targetIndex: number, amount: number) => {
+        combatants[targetIndex] = { ...combatants[targetIndex], hp: Math.max(0, combatants[targetIndex].hp - amount) };
+        if (combatants[targetIndex].hp === 0) log.push(`${combatants[targetIndex].name} is defeated!`);
+      };
+      if (power.kind === "heal") {
+        const amount = Math.max(1, rollDamage(power.dice!, false) + power.modifier);
+        const i = combatants.findIndex((c) => c.id === caster.id);
+        combatants[i] = { ...combatants[i], hp: Math.min(combatants[i].maxHp, combatants[i].hp + amount) };
+        log.push(`${caster.name} casts ${power.name} and regains ${amount} hit points.`);
+      } else if (power.kind === "attack" || power.kind === "save") {
+        const targetIndex = combatants.findIndex((c) => !c.isPlayer && c.hp > 0);
+        if (targetIndex === -1) return state;
+        const target = combatants[targetIndex];
+        if (power.kind === "attack") {
+          const d = roll(1, 20);
+          if (d !== 1 && (d === 20 || d + power.attack >= target.armorClass)) {
+            const amount = rollDamage(power.dice!, d === 20);
+            log.push(`${caster.name} casts ${power.name} at ${target.name} and hits for ${amount} damage${d === 20 ? " (critical)" : ""}.`);
+            hit(targetIndex, amount);
+          } else log.push(`${caster.name} casts ${power.name} at ${target.name} but misses.`);
+        } else {
+          const saved = roll(1, 20) + (target.saves?.[power.save ?? ""] ?? 0) >= power.dc;
+          const full = rollDamage(power.dice!, false);
+          const amount = saved ? (power.halfOnSave ? Math.floor(full / 2) : 0) : full;
+          log.push(`${caster.name} casts ${power.name}: ${target.name} ${saved ? "saves" : "fails the save"} and takes ${amount} damage.`);
+          if (amount > 0) hit(targetIndex, amount);
+        }
+      } else {
+        log.push(`${caster.name} casts ${power.name}. Its effect is described in its text.`);
+      }
+      const won = !combatants.some((c) => !c.isPlayer && c.hp > 0);
+      if (won) log.push("Victory! All enemies defeated.");
+      return { ...state, combatants, combatLog: log, ...(won ? { inCombat: false, outcome: "victory" as CombatOutcome } : {}) };
+    }),
+
+  // A death saving throw: 10 or more succeeds, a 1 counts twice, a 20 puts the player back up with 1 hit point
+  deathSave: () =>
+    set((state) => {
+      const player = state.combatants.find((c) => c.isPlayer);
+      if (!player || player.hp > 0) return state;
+      const d = roll(1, 20);
+      if (d === 20) {
+        return {
+          ...state,
+          combatants: state.combatants.map((c) => (c.isPlayer ? { ...c, hp: 1 } : c)),
+          deathSaves: { successes: 0, failures: 0 },
+          combatLog: [...state.combatLog, "Death save: 20! You regain 1 hit point and get back up."],
+        };
+      }
+      const saves = {
+        successes: state.deathSaves.successes + (d >= 10 ? 1 : 0),
+        failures: state.deathSaves.failures + (d === 1 ? 2 : d < 10 ? 1 : 0),
+      };
+      const line = `Death save: ${d}, ${d >= 10 ? "success" : d === 1 ? "two failures" : "failure"} (${saves.successes} of 3 successes, ${Math.min(3, saves.failures)} of 3 failures).`;
+      if (saves.failures >= 3) return { ...state, deathSaves: saves, combatLog: [...state.combatLog, line, "You die."], inCombat: false, outcome: "dead" as CombatOutcome };
+      if (saves.successes >= 3) return { ...state, deathSaves: saves, combatLog: [...state.combatLog, line, "You are stable, and left for dead."], inCombat: false, outcome: "stable" as CombatOutcome };
+      return { ...state, deathSaves: saves, combatLog: [...state.combatLog, line] };
     }),
 
   damageRoll: (attackType, isCritical) => {

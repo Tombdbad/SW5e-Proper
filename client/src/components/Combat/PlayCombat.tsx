@@ -7,7 +7,7 @@ const d20 = () => Math.floor(Math.random() * 20) + 1;
 const mod = (score?: number) => Math.floor(((score ?? 10) - 10) / 2);
 
 export default function PlayCombat() {
-  const { combatants, currentTurn, round, combatLog, endCombat } = useCombat();
+  const { combatants, currentTurn, round, combatLog, endCombat, deathSaves, castPower, deathSave } = useCombat();
   const current = combatants[currentTurn];
 
   const strike = (type: "melee" | "ranged") => {
@@ -17,7 +17,11 @@ export default function PlayCombat() {
     const target = attacker.isPlayer
       ? s.combatants.find((c) => !c.isPlayer && c.hp > 0)
       : s.combatants.find((c) => c.isPlayer && c.hp > 0);
-    if (!target) return;
+    if (!target) {
+      // Nobody left standing to attack: a downed player is left for dead
+      useCombat.getState().nextTurn();
+      return;
+    }
     const roll = d20();
     const crit = roll === 20;
     const bonus = attacker.isPlayer
@@ -33,14 +37,25 @@ export default function PlayCombat() {
   useEffect(() => {
     if (!current) return;
     const t = setTimeout(() => {
+      // The player acts by tapping, even when down (death saving throws)
+      if (current.isPlayer) return;
       if (current.hp <= 0) useCombat.getState().nextTurn();
-      else if (!current.isPlayer) strike("ranged");
+      else strike("ranged");
     }, 800);
     return () => clearTimeout(t);
   }, [currentTurn, round, combatants.length, current?.id]);
 
   const player = combatants.find((c) => c.isPlayer);
   const playerTurn = !!current?.isPlayer && (player?.hp ?? 0) > 0;
+  const down = !!player && player.hp <= 0;
+  const cast = (index: number) => {
+    castPower(index);
+    if (useCombat.getState().inCombat) useCombat.getState().nextTurn();
+  };
+  const rollDeathSave = () => {
+    deathSave();
+    if (useCombat.getState().inCombat) useCombat.getState().nextTurn();
+  };
 
   return (
     <div className="absolute left-2 top-2 z-20 w-80 max-h-[70vh] overflow-y-auto">
@@ -78,6 +93,38 @@ export default function PlayCombat() {
         <div className="text-xs text-gray-400 mb-2">
           Melee: {player?.meleeWeapon ?? "unarmed"} · Ranged: {player?.rangedWeapon ?? "none"}
         </div>
+        {down && (
+          <div className="mb-3 p-2 rounded bg-red-900/40 text-sm" data-testid="death-saves">
+            <p>
+              You are down. Successes {deathSaves.successes}/3, failures {Math.min(3, deathSaves.failures)}/3.
+            </p>
+            <Button size="sm" className="mt-1" disabled={!current?.isPlayer} onClick={rollDeathSave}>
+              Death saving throw
+            </Button>
+          </div>
+        )}
+        {!down && (player?.powers?.length ?? 0) > 0 && (
+          <div className="mb-3" data-testid="combat-powers">
+            <p className="text-xs text-gray-400 mb-1">Powers ({player?.powerPoints ?? 0} points left)</p>
+            <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
+              {player!.powers!.map((power, index) => (
+                <Button
+                  key={power.name}
+                  size="sm"
+                  variant="outline"
+                  className="h-auto whitespace-normal justify-start text-left"
+                  disabled={!playerTurn || (player?.powerPoints ?? 0) < power.cost}
+                  onClick={() => cast(index)}
+                >
+                  {power.name}
+                  <span className="text-gray-400 ml-1">
+                    ({power.cost ? `${power.cost} pts` : "at-will"}; {power.summary})
+                  </span>
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="text-xs text-gray-300 space-y-1 max-h-32 overflow-y-auto">
           {combatLog.slice(-6).map((l, i) => (
             <div key={i}>{l}</div>

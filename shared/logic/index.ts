@@ -49,6 +49,8 @@ export interface Occupant {
   armorClass?: number;
   hitPoints?: number;
   attack?: { name: string; bonus: number; damage: string; damageType?: string };
+  // Ability modifiers, for saving throws
+  saves?: Record<string, number>;
   // Equipment names from the equipment data
   loadout: string[];
 }
@@ -559,6 +561,7 @@ export function statBlockOccupant(monster: Sw5eMonster, equipment: Sw5eEquipment
     armorClass: monster.armorClass,
     hitPoints: monster.hitPoints,
     attack: best ? { name: best.name, bonus: best.attackBonus ?? 0, damage: best.damageRoll!, damageType: best.damageType?.toLowerCase() } : undefined,
+    saves: Object.fromEntries(["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"].map((a) => [a, Number(monster[`${a}Modifier`]) || 0])),
     loadout: statBlockLoadout(monster, equipment),
   };
 }
@@ -1057,6 +1060,16 @@ export interface Exit {
   locked?: number;
   hidden?: boolean;
   needsShip?: boolean;
+  // Fuel units a ship burns on the way (see tripFuel)
+  fuel?: number;
+}
+
+// Fuel for a trip, by Starships of the Galaxy ("Fuel Usage"): one unit for a jump to hyperspeed
+// and one for each day in hyperspace; one for a day in realspace or a flight through atmosphere
+export function tripFuel(kind: PathKind | "surface", travel = ""): number {
+  if (kind !== "hyperlane") return 1;
+  const hours = Number((travel.match(/(\d+(?:\.\d+)?)\s*hours?/) ?? [0, 24])[1]);
+  return 1 + Math.ceil(hours / 24);
 }
 
 const ENTER: Partial<Record<AreaKind, string>> = { system: "Fly in to", planet: "Land at", settlement: "Go to", building: "Enter" };
@@ -1069,16 +1082,130 @@ export function exitsOf(world: World, id: string): Exit[] {
   const exits: Exit[] = [];
   for (const path of indexOf(world).paths.get(id) ?? []) {
     const to = path.from === id ? path.to : path.from;
-    exits.push({ to, via: "path", label: path.label, travel: path.travel, pathId: path.id, locked: path.locked, hidden: path.hidden, needsShip: path.kind === "hyperlane" || path.kind === "sublight" });
+    exits.push({ to, via: "path", label: path.label, travel: path.travel, pathId: path.id, locked: path.locked, hidden: path.hidden, ...(path.kind === "hyperlane" || path.kind === "sublight" ? { needsShip: true, fuel: tripFuel(path.kind, path.travel) } : {}) });
   }
   for (const child of childrenOf(world, id)) {
-    if (child.gateway && ENTER[area.kind]) exits.push({ to: child.id, via: "enter", label: ENTER[area.kind]!, travel: "", needsShip: area.kind === "system" || area.kind === "planet" });
+    if (child.gateway && ENTER[area.kind]) exits.push({ to: child.id, via: "enter", label: ENTER[area.kind]!, travel: "", ...(area.kind === "system" || area.kind === "planet" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
   }
   const parent = area.parentId ? world.areas[area.parentId] : undefined;
   if (area.gateway && parent && LEAVE[area.kind]) {
-    exits.push({ to: parent.id, via: "leave", label: LEAVE[area.kind]!, travel: "", needsShip: area.kind === "planet" || area.kind === "settlement" });
+    exits.push({ to: parent.id, via: "leave", label: LEAVE[area.kind]!, travel: "", ...(area.kind === "planet" || area.kind === "settlement" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
   }
   return exits;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Quests the world can keep score of. Each objective names what completes it:
+// defeat (no hostile creatures left in the area), loot (the cache there is emptied) or reach.
+// ---------------------------------------------------------------------------------------------
+
+export interface QuestTarget {
+  kind: "defeat" | "loot" | "reach";
+  areaId: string;
+  cacheId?: string;
+}
+
+export interface Quest {
+  id: string;
+  title: string;
+  description: string;
+  status: "inactive" | "active" | "completed";
+  objectives: { description: string; completed: boolean; target?: QuestTarget }[];
+  reward?: { credits: number; items: string[]; experience: number };
+}
+
+const isHeld = (area: Area) => area.occupants.some((o) => o.disposition === "hostile" && !!o.hitPoints);
+const listNames = (names: string[]) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0] ?? "");
+
+// Three quests read off a freshly generated world: clear the most dangerous hostile site on the
+// starting planet, recover a locked or hidden cache, and reach the nearest other planet.
+// `earnings` is what the party should earn over a level (Wealth by Level); rewards are shares of it.
+export function worldQuests(world: World, earnings = 0): Quest[] {
+  const planetOf = (id: string) => trailOf(world, id).find((a) => a.kind === "planet");
+  const home = planetOf(world.startId);
+  if (!home) return [];
+  const local = Object.values(world.areas).filter((a) => a.id !== world.startId && planetOf(a.id)?.id === home.id);
+  const siteOf = (area: Area) => trailOf(world, area.id).find((a) => a.kind === "building") ?? area;
+  const pay = (share: number) => ({ credits: Math.max(50, Math.round((earnings * share) / 10) * 10), items: [], experience: 0 });
+  const quests: Quest[] = [];
+
+  const held = local.filter(isHeld);
+  const sites = Array.from(new Set(held.map((a) => siteOf(a).id))).map((id) => world.areas[id]);
+  const worst = sites.sort((a, b) => b.danger - a.danger || a.id.localeCompare(b.id))[0];
+  if (worst) {
+    const rooms = held.filter((a) => siteOf(a).id === worst.id).slice(0, 4);
+    quests.push({
+      id: "q-clear",
+      title: `Clear ${worst.name}`,
+      description: `${worst.name} on ${home.name} is in hostile hands. Deal with whoever holds it.`,
+      status: "active",
+      objectives: rooms.map((room) => ({
+        description: `Defeat the ${listNames(room.occupants.filter((o) => o.disposition === "hostile").map((o) => o.name))} at ${room.name}`,
+        completed: false,
+        target: { kind: "defeat" as const, areaId: room.id },
+      })),
+      reward: pay(0.2),
+    });
+  }
+
+  const guarded = local
+    .flatMap((area) => area.loot.filter((c) => !c.looted && (c.locked || c.hidden)).map((cache) => ({ area, cache })))
+    .sort((a, b) => Number(siteOf(a.area).id === worst?.id) - Number(siteOf(b.area).id === worst?.id) || b.cache.credits - a.cache.credits)[0];
+  if (guarded) {
+    const site = siteOf(guarded.area);
+    quests.push({
+      id: "q-recover",
+      title: `Recover the ${guarded.cache.name.toLowerCase()} from ${site.name}`,
+      description: `Something worth having is kept out of sight at ${site.name}. Find it and take it.`,
+      status: "active",
+      objectives: [
+        { description: `Reach ${guarded.area.name}`, completed: false, target: { kind: "reach", areaId: guarded.area.id } },
+        { description: `Take what is in the ${guarded.cache.name.toLowerCase()}`, completed: false, target: { kind: "loot", areaId: guarded.area.id, cacheId: guarded.cache.id } },
+      ],
+      reward: pay(0.1),
+    });
+  }
+
+  // The nearest other planet by number of moves
+  const others = Object.values(world.areas).filter((a) => a.kind === "planet" && a.id !== home.id);
+  const near = others
+    .map((planet) => ({ planet, steps: findPath(world, world.startId, planet.id)?.length ?? Infinity }))
+    .sort((a, b) => a.steps - b.steps || a.planet.id.localeCompare(b.planet.id))[0];
+  if (near && Number.isFinite(near.steps)) {
+    quests.push({
+      id: "q-voyage",
+      title: `Make the crossing to ${near.planet.name}`,
+      description: `Word of the ${world.antagonist} has to reach ${near.planet.name}. Get there by ship or by paid passage.`,
+      status: "active",
+      objectives: [{ description: `Arrive in orbit of ${near.planet.name}`, completed: false, target: { kind: "reach", areaId: near.planet.id } }],
+      reward: pay(0.1),
+    });
+  }
+  return quests;
+}
+
+function targetMet(world: World, target: QuestTarget, hereId: string): boolean {
+  const area = world.areas[target.areaId];
+  if (!area) return true;
+  if (target.kind === "defeat") return !isHeld(area);
+  if (target.kind === "loot") return area.loot.filter((c) => !target.cacheId || c.id === target.cacheId).every((c) => c.looted);
+  return trailOf(world, hereId).some((a) => a.id === area.id);
+}
+
+// Tick off the objectives the world now satisfies. `finished` lists the quests this completed.
+export function advanceQuests(world: World, quests: Quest[], hereId: string): { quests: Quest[]; finished: Quest[]; changed: boolean } {
+  const finished: Quest[] = [];
+  let changed = false;
+  const next = (quests ?? []).map((quest) => {
+    if (quest.status !== "active" || !Array.isArray(quest.objectives)) return quest;
+    const objectives = quest.objectives.map((o) => (o.completed || !o.target ? o : { ...o, completed: targetMet(world, o.target, hereId) }));
+    const done = objectives.length > 0 && objectives.every((o) => o.completed);
+    if (!done && !objectives.some((o, i) => o.completed !== quest.objectives[i].completed)) return quest;
+    changed = true;
+    if (done) finished.push(quest);
+    return { ...quest, objectives, status: done ? ("completed" as const) : quest.status };
+  });
+  return { quests: next, finished, changed };
 }
 
 // Shortest route between two areas, as the list of areas passed through (both ends included)
