@@ -13,7 +13,7 @@ Star Wars 5e RPG simulator (Express server on 127.0.0.1:5000, Vite + React clien
 - Never print or commit secrets. `.env` (DATABASE_URL) and `~/.git-credentials` (GitHub PAT) hold them.
 - Rules content (species, classes, powers, equipment, stat blocks, ...) lives only in `shared/data/sw5e/*.json`, generated from the sw5e.com API by `npm run import:sw5e`. Never edit those files by hand and never write rules content elsewhere; `client/src/lib/sw5e/*.ts` are views over them. The database stores characters, campaigns (with their generated world in `galaxyMap`) and debriefs.
 - World generation, travel and world edits are pure functions in `shared/logic/index.ts`; anything that needs the rules data runs on the server (`server/sw5eRoutes.ts`).
-- Extend existing files; add a new file only when there is no existing home for the code (the user asked for this on 2026-10-13).
+- The user asked (2026-10-13, for the data import and world generator work) to extend existing files and add new ones only when strictly necessary. Keep to that unless they say otherwise.
 
 ## Running it
 - Dev: `npm run dev` (tsx server/index.ts, Vite middleware, port 5000, no reload of server code). Needs `.env` with DATABASE_URL (loaded by dotenv).
