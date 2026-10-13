@@ -50,6 +50,7 @@ export default function PlayCombat() {
       const held = cannotAct(current);
       if (current.hp <= 0) useCombat.getState().nextTurn();
       else if (held) pass(`is ${held.toLowerCase()} and cannot act`);
+      else if (useCombat.getState().surprise && useCombat.getState().round === 1) pass("is surprised and cannot act");
       else strike(current.rangedAttacker === false ? "melee" : "ranged");
     }, 800);
     return () => clearTimeout(t);

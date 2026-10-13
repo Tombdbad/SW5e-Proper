@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import LocalMap from "@/components/Map/LocalMap";
 import PlayCombat from "@/components/Combat/PlayCombat";
+import RoomPlan from "@/components/Map/RoomPlan";
 import { useCombat, rollDamage } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
@@ -20,8 +21,18 @@ import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCo
 import { getStarshipSize } from "@/lib/sw5e/starships";
 import {
   exitsOf, trailOf, childrenOf, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
+  planBuilding, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, ALERT, ALERT_LEVELS,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship,
 } from "@shared/logic";
+
+// What each level of the watch means for the party (house rule, see shared/logic)
+const WATCH_NOTE = [
+  "They have not noticed you. You can slip past, take things or strike first, each on a Stealth check.",
+  "They heard something and are looking around. One more slip and they will find you.",
+  "They have stopped you and want to know your business. Talk your way through, go back, or fight.",
+  "Weapons are out: leave the way you came or it comes to a fight.",
+  "They attack on sight.",
+];
 
 const d20 = () => Math.floor(Math.random() * 20) + 1;
 const modifier = (score?: number) => Math.floor(((score ?? 10) - 10) / 2);
@@ -152,6 +163,49 @@ export default function GameBoard() {
   const skilled = (skill: string) => (character?.skillProficiencies ?? []).some((s: string) => s.toLowerCase() === skill);
 
   const hostiles = (here?.occupants ?? []).filter((o) => o.disposition === "hostile" && o.hitPoints);
+
+  // A building from before rooms had floor plans gets its plan the first time the party is in it
+  const planned = useRef<string | null>(null);
+  useEffect(() => {
+    if (!world || !here || here.kind !== "room" || here.layout || !here.parentId || planned.current === here.parentId) return;
+    planned.current = here.parentId;
+    const next: World = JSON.parse(JSON.stringify(world));
+    planBuilding(next, here.parentId);
+    saveCampaign({ galaxyMap: next });
+  }, [here?.id, !!here?.layout]);
+
+  // The watch (house rule): how far the hostile creatures here have noticed the party. Where
+  // nothing was recorded (an older save, enemies the game master added) they stand ready.
+  const [sneaking, setSneaking] = useState(false);
+  const alert = hostiles.length ? here?.alert ?? ALERT.confronting : ALERT.unaware;
+  const allowed = hostiles.length > 0 && !!here?.allowed;
+  const setWatch = (level: number, pass = false) => world && here && saveCampaign({ galaxyMap: setAlert(world, here.id, level, pass) });
+  const stealthRoll = () => {
+    const roll = d20();
+    const bonus = modifier(character.abilityScores?.dexterity) + (skilled("stealth") ? proficiency : 0);
+    return { roll, bonus, total: roll + bonus };
+  };
+  // Doing something under their noses: Dexterity (Stealth) against their passive Perception.
+  // A miss puts them one step further on.
+  const unseen = (what: string) => {
+    if (!world || !here) return false;
+    const dc = watchDC(world, here.id);
+    const { roll, bonus, total } = stealthRoll();
+    const made = total >= dc;
+    toast[made ? "success" : "error"](`${what} (Stealth): ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against their passive Perception ${dc}. ${made ? "Unnoticed." : "Noticed."}`);
+    if (!made) setWatch(alert + 1);
+    return made;
+  };
+  // Talking to those who stopped you: Charisma against 10 + their Wisdom + how dangerous the
+  // place is; threats work on those already facing you down, but are harder
+  const talk = (skill: "deception" | "persuasion" | "intimidation") => {
+    if (!here) return;
+    const dc = 10 + Math.max(0, ...watchersOf(here).map((o) => o.saves?.wisdom ?? 0)) + here.danger + (alert >= ALERT.confronting ? 5 : 0);
+    if (abilityCheck(skill.charAt(0).toUpperCase() + skill.slice(1), dc, ["charisma"], skilled(skill))) {
+      setWatch(ALERT.suspicious, true);
+      toast.info("They let you pass, and keep an eye on you.");
+    } else setWatch(alert + 1);
+  };
   const exits: Exit[] = world && here ? exitsOf(world, here.id) : [];
 
   // The party's ships, and how a trip that needs one is made: in a ship of their own berthed
@@ -184,20 +238,38 @@ export default function GameBoard() {
     if (childrenOf(world, target.id).length === 0 && ["system", "planet", "settlement", "building"].includes(target.kind)) {
       explore(target.id, changes);
     } else {
+      // Whoever is hostile there notices the party, or not, by how it comes in
+      if (watchersOf(target).length) {
+        const approach = exit.secret ? "secret" : sneaking ? "sneak" : "open";
+        const { roll, bonus, total } = approach === "sneak" ? stealthRoll() : { roll: 0, bonus: 0, total: 0 };
+        const level = arrivalAlert(world, target.id, approach, total);
+        changes.galaxyMap = setAlert(world, target.id, level);
+        const how = approach === "secret" ? `Through the ${target.secretEntry?.name.toLowerCase() ?? "secret way"}` : approach === "sneak" ? `Sneaking in (Stealth ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against ${watchDC(world, target.id)})` : "Walking in openly";
+        toast[level <= ALERT.suspicious ? "success" : "error"](`${how}: ${WATCH_NOTE[level]}`);
+      }
       saveCampaign(changes);
     }
+  };
+
+  // Take an exit, as the watch allows: those who have stopped the party bar every way but the
+  // way back; past those who have not, it takes a Stealth check
+  const leaveBy = (exit: Exit) => {
+    if (hostiles.length > 0 && !allowed && exit.to !== cameFrom) {
+      if (alert >= ALERT.questioning) {
+        toast.error("Enemies bar the way onward.");
+        return;
+      }
+      if (!unseen("Slipping past")) return;
+    }
+    if (exit.locked) unlock(exit);
+    else travel(exit);
   };
 
   // A place tapped on the local map: go there when an exit leads to it
   const travelTo = (areaId: string) => {
     const exit = exits.find((e) => e.to === areaId && !e.hidden);
     if (!exit || inCombat || dead || exploring) return;
-    if (hostiles.length > 0 && exit.to !== cameFrom) {
-      toast.error("Enemies bar the way onward.");
-      return;
-    }
-    if (exit.locked) unlock(exit);
-    else travel(exit);
+    leaveBy(exit);
   };
 
   // A ship standing here becomes the party's: bought at its value, or taken as a prize when it
@@ -264,13 +336,18 @@ export default function GameBoard() {
     if (!world || !here) return;
     const hiddenPaths = world.paths.filter((p) => p.hidden && (p.from === here.id || p.to === here.id));
     const hiddenLoot = here.loot.filter((c) => c.hidden);
+    // Secret ways: out of this room, or into the rooms of the building the party stands before
+    const secretRooms = [here, ...childrenOf(world, here.id)].filter((a) => a.secretEntry && !a.secretEntry.found);
     if (!abilityCheck("Search", 12 + here.danger, ["wisdom"], skilled("perception"))) return;
-    if (hiddenPaths.length + hiddenLoot.length === 0) {
+    if (hiddenPaths.length + hiddenLoot.length + secretRooms.length === 0) {
       toast.info("There is nothing hidden here.");
       return;
     }
     const next = updateArea(world, here.id, { loot: here.loot.map((c) => ({ ...c, hidden: undefined })) }).world;
-    saveCampaign({ galaxyMap: { ...next, paths: next.paths.map((p) => (hiddenPaths.some((h) => h.id === p.id) ? { ...p, hidden: undefined } : p)) } });
+    const areas = { ...next.areas };
+    for (const room of secretRooms) areas[room.id] = { ...areas[room.id], secretEntry: { ...room.secretEntry!, found: true } };
+    if (secretRooms.length) toast.success(`Found: ${secretRooms.map((room) => `a ${room.secretEntry!.name.toLowerCase()}${room.id === here.id ? "" : ` into ${room.name}`}`).join(", ")}.`);
+    saveCampaign({ galaxyMap: { ...next, areas, paths: next.paths.map((p) => (hiddenPaths.some((h) => h.id === p.id) ? { ...p, hidden: undefined } : p)) } });
   };
 
   // Go into a place nobody has mapped yet: the server builds what is inside
@@ -295,6 +372,7 @@ export default function GameBoard() {
   // Open a cache (its lock first, if it has one) and take what is in it
   const takeLoot = (cache: LootCache) => {
     if (!world || !here) return;
+    if (hostiles.length > 0 && !unseen("Taking it")) return;
     if (cache.locked && !abilityCheck("Lock", cache.locked, ["dexterity", "intelligence"], carries(/security kit|slicer's kit/i))) return;
     const gained = cache.items.flatMap((item) => Array.from({ length: item.quantity }, () => item.name));
     saveCharacter({ equipment: [...(character.equipment ?? []), ...gained], credits: (character.credits ?? 0) + cache.credits });
@@ -340,6 +418,10 @@ export default function GameBoard() {
   // Fight the hostile creatures in this area, with their own armor, hit points and attacks
   const fight = () => {
     if (!character || !here || character.currentHp <= 0) return;
+    // Those who never noticed the party lose the first round; any other fight raises the alarm
+    autoFought.current = here.id;
+    const surprise = alert === ALERT.unaware;
+    if (!surprise && here.alert !== ALERT.attacking) setWatch(ALERT.attacking);
     const enemies = hostiles.flatMap((o) =>
       Array.from({ length: o.count }, (_, i) => ({
         id: `${o.id}-${i}`,
@@ -358,8 +440,18 @@ export default function GameBoard() {
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
     fightBegun.current = true;
-    initiateCombat(character, enemies, combatKit());
+    initiateCombat(character, enemies, combatKit(), surprise);
   };
+
+  // Once they attack, the fight begins by itself (once for each time the party walks into it)
+  const autoFought = useRef<string | null>(null);
+  useEffect(() => {
+    if (autoFought.current && autoFought.current !== here?.id) autoFought.current = null;
+    if (!here || !character || alert !== ALERT.attacking || !hostiles.length || inCombat || dead || character.currentHp <= 0 || autoFought.current === here.id) return;
+    autoFought.current = here.id;
+    toast.error("They attack!");
+    fight();
+  }, [here?.id, alert, hostiles.length, !!character]);
 
   // How a fight ended. Won: the fallen leave the area and their gear stays behind. Stable: the
   // character comes to hours later with 1 hit point, back where they came from. Dead: dead.
@@ -460,7 +552,8 @@ export default function GameBoard() {
       currentForcePoints: character.maxForcePoints,
       hitDiceUsed: Math.max(0, (character.hitDiceUsed ?? 0) - Math.max(1, Math.floor(level / 2))),
     });
-    toast.info("Long rest: hit points and power points restored, half your Hit Dice regained.");
+    if (world && Object.values(world.areas).some((a) => a.alarm)) saveCampaign({ galaxyMap: clearAlarms(world) });
+    toast.info("Long rest: hit points and power points restored, half your Hit Dice regained. Alarms have died down.");
   };
 
   // House rule, not in the books: a dead character can be brought back so the campaign can go on
@@ -723,10 +816,39 @@ export default function GameBoard() {
                   </ul>
                 )}
                 {hostiles.length > 0 && (
-                  <Button size="sm" variant="destructive" onClick={fight} disabled={inCombat || dead || character.currentHp <= 0}>
-                    Fight
-                  </Button>
+                  <div className="space-y-1 rounded bg-red-950/40 p-2 text-sm" data-testid="play-watch">
+                    <p>
+                      <span className="font-semibold text-red-300">
+                        Watch: {allowed ? "letting you pass" : ALERT_LEVELS[alert]}
+                      </span>{" "}
+                      <span className="text-gray-300">{allowed ? "They let you through, and watch what you do." : WATCH_NOTE[alert]}</span>
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {!allowed && (alert === ALERT.questioning || alert === ALERT.confronting) && (
+                        <>
+                          {alert === ALERT.questioning && (
+                            <>
+                              <Button size="sm" variant="outline" onClick={() => talk("deception")} disabled={inCombat || dead}>
+                                Bluff
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={() => talk("persuasion")} disabled={inCombat || dead}>
+                                Persuade
+                              </Button>
+                            </>
+                          )}
+                          <Button size="sm" variant="outline" onClick={() => talk("intimidation")} disabled={inCombat || dead}>
+                            Intimidate
+                          </Button>
+                        </>
+                      )}
+                      <Button size="sm" variant="destructive" onClick={fight} disabled={inCombat || dead || character.currentHp <= 0}>
+                        {alert === ALERT.unaware ? "Ambush" : "Fight"}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-gray-400">House rule: how enemies notice you is not in the books.</p>
+                  </div>
                 )}
+                {here.layout && <RoomPlan world={world} here={here} onSelect={travelTo} />}
 
                 {here.loot.filter((c) => !c.hidden).map((cache) => (
                   <div key={cache.id} className="text-sm flex flex-wrap items-center gap-2" data-testid="play-loot">
@@ -735,7 +857,7 @@ export default function GameBoard() {
                       {cache.looted && <span className="text-gray-400"> (empty)</span>}
                     </span>
                     {!cache.looted && (
-                      <Button size="sm" variant="outline" onClick={() => takeLoot(cache)} disabled={inCombat || dead || hostiles.length > 0}>
+                      <Button size="sm" variant="outline" onClick={() => takeLoot(cache)} disabled={inCombat || dead || (hostiles.length > 0 && (allowed || alert >= ALERT.questioning))}>
                         {cache.locked ? `Open (DC ${cache.locked})` : "Take"}
                       </Button>
                     )}
@@ -744,8 +866,8 @@ export default function GameBoard() {
 
                 <div className="flex flex-col gap-1" data-testid="play-exits">
                   {exits.filter((exit) => !exit.hidden).map((exit) => {
-                    // Enemies bar every way but the way back
-                    const barred = hostiles.length > 0 && exit.to !== cameFrom;
+                    // Enemies who have stopped the party bar every way but the way back
+                    const barred = hostiles.length > 0 && exit.to !== cameFrom && !allowed && alert >= ALERT.questioning;
                     return (
                       <Button
                         key={`${exit.via}-${exit.to}`}
@@ -753,7 +875,7 @@ export default function GameBoard() {
                         variant="outline"
                         className="h-auto whitespace-normal justify-start text-left"
                         disabled={inCombat || dead || exploring || barred}
-                        onClick={() => (exit.locked ? unlock(exit) : travel(exit))}
+                        onClick={() => leaveBy(exit)}
                       >
                         {exit.locked ? `Unlock (DC ${exit.locked}): ` : ""}{exit.label}{exit.via === "path" ? " to" : ""} {world.areas[exit.to].name}
                         {[exit.travel, tripNote(exit)].filter(Boolean).length > 0 && (
@@ -762,7 +884,11 @@ export default function GameBoard() {
                       </Button>
                     );
                   })}
-                  {hostiles.length > 0 && <p className="text-xs text-red-400">Enemies bar the way onward.</p>}
+                  {hostiles.length > 0 && !allowed && alert >= ALERT.questioning && <p className="text-xs text-red-400">Enemies bar the way onward.</p>}
+                  <label className="flex items-center gap-2 text-sm" data-testid="play-sneak">
+                    <input type="checkbox" checked={sneaking} onChange={(e) => setSneaking(e.target.checked)} />
+                    Move quietly (Stealth against whoever is watching)
+                  </label>
                 </div>
 
                 <div className="flex flex-wrap gap-2">

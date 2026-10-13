@@ -194,6 +194,7 @@ interface CombatState {
   // Death saving throws while the player is at 0 hit points, and how the fight ended
   deathSaves: { successes: number; failures: number };
   outcome: CombatOutcome;
+  surprise: boolean;
 
   // Combat actions
   initiateCombat: (
@@ -201,6 +202,8 @@ interface CombatState {
     enemies: Omit<Combatant, "isPlayer">[],
     // The player's weapons, powers and power points
     weapons?: Partial<Combatant>,
+    // The enemies never saw it coming: they do nothing in the first round
+    surprise?: boolean,
   ) => void;
   endCombat: () => void;
   nextTurn: () => void;
@@ -229,7 +232,9 @@ export const useCombat = create<CombatState>((set, get) => ({
   deathSaves: { successes: 0, failures: 0 },
   outcome: null,
 
-  initiateCombat: (player, enemies, weapons) => {
+  surprise: false,
+
+  initiateCombat: (player, enemies, weapons, surprise = false) => {
     // Calculate initiatives
     const dexModifier = Math.floor((player.abilityScores.dexterity - 10) / 2);
     const playerInitiative = roll(1, 20) + dexModifier;
@@ -273,7 +278,8 @@ export const useCombat = create<CombatState>((set, get) => ({
       combatants: allCombatants,
       currentTurn: firstTurn,
       round: 1,
-      combatLog: ["Combat initiated! Roll for initiative!"],
+      surprise,
+      combatLog: [surprise ? "You strike first: the enemy is surprised." : "Combat initiated! Roll for initiative!"],
       deathSaves: { successes: 0, failures: 0 },
       outcome: null,
     });
