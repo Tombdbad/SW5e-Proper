@@ -72,9 +72,15 @@ export default function GameBoard() {
   const queryClient = useQueryClient();
   const lastSavedHp = useRef<number | null>(null);
   const lastSavedPoints = useRef<number | null>(null);
+  // The fight store outlives this page. A fight left over from another visit (perhaps another
+  // character's) is dropped, and only a fight begun here is written back or acted on.
+  const fightBegun = useRef(false);
+  useEffect(() => {
+    if (useCombat.getState().inCombat || useCombat.getState().combatants.length) endCombat();
+  }, []);
   useEffect(() => {
     const p = combatants.find((c) => c.isPlayer);
-    if (!p || !character) return;
+    if (!p || !character || !fightBegun.current || p.id !== character.id) return;
     if (lastSavedHp.current === null) lastSavedHp.current = character.currentHp;
     if (lastSavedPoints.current === null) lastSavedPoints.current = character.currentForcePoints;
     const changes: Record<string, number> = {};
@@ -191,11 +197,23 @@ export default function GameBoard() {
     }
     setCameFrom(here.id);
     const target = world.areas[exit.to];
-    if (childrenOf(world, target.id).length === 0 && ["planet", "settlement", "building"].includes(target.kind)) {
+    if (childrenOf(world, target.id).length === 0 && ["system", "planet", "settlement", "building"].includes(target.kind)) {
       explore(target.id, changes);
     } else {
       saveCampaign(changes);
     }
+  };
+
+  // A place tapped on the local map: go there when an exit leads to it
+  const travelTo = (areaId: string) => {
+    const exit = exits.find((e) => e.to === areaId && !e.hidden);
+    if (!exit || inCombat || dead || exploring) return;
+    if (hostiles.length > 0 && exit.to !== cameFrom) {
+      toast.error("Enemies bar the way onward.");
+      return;
+    }
+    if (exit.locked) unlock(exit);
+    else travel(exit);
   };
 
   // A ship standing here becomes the party's: bought at its value, or taken as a prize when it
@@ -329,6 +347,7 @@ export default function GameBoard() {
     fightArea.current = here.id;
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
+    fightBegun.current = true;
     initiateCombat(character, enemies, combatKit());
   };
 
@@ -336,7 +355,8 @@ export default function GameBoard() {
   // character comes to hours later with 1 hit point, back where they came from. Dead: dead.
   const outcome = useCombat((state) => state.outcome);
   useEffect(() => {
-    if (inCombat || !outcome || !character) return;
+    if (inCombat || !outcome || !character || !fightBegun.current) return;
+    fightBegun.current = false;
     const areaId = fightArea.current;
     fightArea.current = null;
     if (outcome === "dead") {
@@ -480,6 +500,7 @@ export default function GameBoard() {
     }));
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
+    fightBegun.current = true;
     initiateCombat(character, enemies, combatKit());
   };
 
@@ -566,14 +587,14 @@ export default function GameBoard() {
           {activeMapTab === "galaxy" ? (
             <GalaxyMap world={world} hereId={hereId} />
           ) : (
-            <LocalMap />
+            <LocalMap world={world} hereId={hereId} onSelect={travelTo} />
           )}
         </Canvas>
 
         {/* UI Overlay */}
-        <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-10">
+        <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-10 w-max max-w-[96vw]">
           <Card className="bg-gray-800 bg-opacity-80 text-white px-4 py-2">
-            <div className="flex space-x-4">
+            <div className="flex flex-wrap justify-center gap-2">
               <Button 
                 variant={activeMapTab === "galaxy" ? "default" : "outline"} 
                 onClick={() => setActiveMapTab("galaxy")}

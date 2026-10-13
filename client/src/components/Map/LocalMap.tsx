@@ -1,12 +1,117 @@
 import { useRef, useState, useEffect } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
-import { Text, useTexture, OrbitControls, PerspectiveCamera } from "@react-three/drei";
+import { Text, useTexture, OrbitControls, PerspectiveCamera, Billboard } from "@react-three/drei";
 import * as THREE from "three";
 import { useKeyboardControls } from "@react-three/drei";
 import { useMap } from "@/lib/stores/useMap";
+import { childrenOf, type Area, type World } from "@shared/logic";
+
+interface LocalMapProps {
+  // The campaign's generated world and the area to centre on: its layer is drawn as a schematic
+  world?: World | null;
+  hereId?: string | null;
+  // A place on the map was tapped
+  onSelect?: (areaId: string) => void;
+}
+
+const LAYER_NAME: Record<string, string> = { room: "Rooms of", building: "Streets of", settlement: "Surface of", planet: "Orbits of", system: "Systems of", region: "Regions of" };
+
+// One layer of the world: the place the party is in and the places beside it (the rooms of a
+// building, the buildings of a settlement, the sites on a planet, the planets of a system), with
+// the paths that join them. The same places and paths as the Location panel lists.
+function WorldLayer({ world, hereId, onSelect }: { world: World; hereId: string; onSelect?: (areaId: string) => void }) {
+  const { camera } = useThree();
+  const here = world.areas[hereId];
+  const places: Area[] = here.parentId ? childrenOf(world, here.parentId).filter((a) => a.kind === here.kind) : [here];
+  const ids = new Set(places.map((a) => a.id));
+  const paths = world.paths.filter((p) => ids.has(p.from) && ids.has(p.to) && !p.hidden);
+
+  // Fit the layer into about 50 units, whatever scale it was generated at
+  const xs = places.map((a) => a.position.x);
+  const zs = places.map((a) => a.position.z);
+  const centre = { x: (Math.min(...xs) + Math.max(...xs)) / 2, z: (Math.min(...zs) + Math.max(...zs)) / 2 };
+  const extent = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs), 1);
+  const scale = Math.min(6, 50 / extent);
+  const at = (a: Area): [number, number, number] => [(a.position.x - centre.x) * scale, 0, (a.position.z - centre.z) * scale];
+
+  useEffect(() => {
+    camera.position.set(0, 42, 30);
+    camera.lookAt(0, 0, 0);
+  }, [camera, hereId]);
+
+  const round = here.kind === "planet" || here.kind === "system" || here.kind === "settlement";
+  return (
+    <>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.6, 0]}>
+        <planeGeometry args={[140, 140]} />
+        <meshBasicMaterial color="#0b1220" />
+      </mesh>
+      <gridHelper args={[140, 28, "#1f2a44", "#162036"]} position={[0, -0.5, 0]} />
+
+      {paths.map((path) => (
+        <line key={path.id}>
+          <bufferGeometry>
+            <bufferAttribute
+              attach="attributes-position"
+              count={2}
+              array={new Float32Array([...at(world.areas[path.from]), ...at(world.areas[path.to])])}
+              itemSize={3}
+            />
+          </bufferGeometry>
+          <lineBasicMaterial color={path.locked ? "#ff9040" : "#60a0ff"} />
+        </line>
+      ))}
+
+      {places.map((area) => {
+        const current = area.id === hereId;
+        const hostile = area.occupants.some((o) => o.disposition === "hostile");
+        const color = current ? "#ffcc00" : hostile ? "#cc4444" : area.gateway ? "#66ccaa" : "#8899bb";
+        return (
+          <group key={area.id} position={at(area)} onClick={() => onSelect?.(area.id)}>
+            <mesh>
+              {round ? <sphereGeometry args={[1.6, 20, 20]} /> : <boxGeometry args={[3.2, 1.2, 3.2]} />}
+              <meshStandardMaterial color={color} emissive={color} emissiveIntensity={current ? 0.6 : 0.25} />
+            </mesh>
+            {current && (
+              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.4, 0]}>
+                <ringGeometry args={[2.8, 3.3, 32]} />
+                <meshBasicMaterial color="#ffcc00" transparent opacity={0.8} />
+              </mesh>
+            )}
+            {/* Names face the viewer however the map is turned */}
+            <Billboard position={[0, 3.4, 0]}>
+              <Text fontSize={1.3} color="white" anchorX="center" anchorY="middle" outlineWidth={0.08} outlineColor="#000000">
+                {area.name}
+              </Text>
+            </Billboard>
+          </group>
+        );
+      })}
+
+      {here.parentId && (
+        <Billboard position={[0, 0.5, -34]}>
+          <Text fontSize={2} color="#aabbdd" anchorX="center" anchorY="middle">
+            {`${LAYER_NAME[here.kind] ?? ""} ${world.areas[here.parentId].name}`}
+          </Text>
+        </Billboard>
+      )}
+
+      <OrbitControls enableZoom enablePan enableRotate minDistance={10} maxDistance={110} />
+      <ambientLight intensity={0.7} />
+      <directionalLight position={[10, 30, 10]} intensity={0.8} />
+    </>
+  );
+}
+
+// The local map: a schematic of the world around the party, or stock scenery for a campaign
+// that has no generated world
+export default function LocalMap({ world, hereId, onSelect }: LocalMapProps = {}) {
+  if (world && hereId && world.areas[hereId]) return <WorldLayer world={world} hereId={hereId} onSelect={onSelect} />;
+  return <Scenery />;
+}
 
 // Local map terrain and objects
-export default function LocalMap() {
+function Scenery() {
   const { currentLocation } = useMap();
   const terrainRef = useRef<THREE.Mesh>(null);
   const playerRef = useRef<THREE.Mesh>(null);
