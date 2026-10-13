@@ -1,5 +1,6 @@
 
-import React from "react";
+import React, { useState } from "react";
+import PersonalityTraitForm from "./PersonalityTraitForm";
 import { useFormContext } from "react-hook-form";
 import {
   FormControl,
@@ -41,6 +42,10 @@ export default function BackgroundSelection({ onSelect }: BackgroundSelectionPro
   const speciesLanguages = getSpeciesById(watch("species"))?.languages ?? [];
   const languageCount = backgroundLanguages(backgroundInfo).choices + speciesLanguages.filter((l) => /of your choice/i.test(l)).length;
   const pickedLanguages: string[] = watch("extraLanguages") || [];
+  // Personality traits, ideals, bonds, flaws and a backstory, with the background's tables to pick from
+  const [showPersonality, setShowPersonality] = useState(false);
+  const personality = watch("personality") || {};
+  const personalityCount = ["traits", "ideals", "bonds", "flaws"].reduce((sum, key) => sum + (personality[key]?.length ?? 0), 0);
   const toggle = (field: string, picked: string[], name: string, limit: number) => {
     if (picked.includes(name)) setValue(field, picked.filter((n) => n !== name));
     else if (picked.length < limit) setValue(field, [...picked, name]);
@@ -160,6 +165,26 @@ export default function BackgroundSelection({ onSelect }: BackgroundSelectionPro
             </div>
           )}
           
+          <div className="mt-4" data-testid="background-personality">
+            <h4 className="text-yellow-400 text-sm font-medium mb-1">Personality and backstory (optional)</h4>
+            <p className="text-sm text-gray-300 mb-2">
+              {personalityCount || personality.backstory
+                ? `${personalityCount} chosen${personality.backstory ? ", with a backstory" : ""}.`
+                : "Traits, an ideal, a bond and a flaw, from this background's tables or your own."}
+            </p>
+            <Button type="button" size="sm" variant="outline" onClick={() => setShowPersonality(true)}>
+              {personalityCount || personality.backstory ? "Edit personality" : "Choose personality"}
+            </Button>
+          </div>
+          {showPersonality && (
+            <PersonalityTraitForm
+              background={backgroundInfo}
+              initialData={personality}
+              onSave={(data) => setValue("personality", data)}
+              onClose={() => setShowPersonality(false)}
+            />
+          )}
+
           <Button type="button" onClick={onSelect} className="mt-4">
             Continue
           </Button>

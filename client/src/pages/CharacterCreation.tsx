@@ -5,7 +5,6 @@ import { useNavigate } from "react-router-dom";
 import { useForm, FormProvider, FormField, FormItem, FormLabel } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import PersonalityTraitForm from "../components/CharacterCreation/PersonalityTraitForm";
 // Import SW5E data and utilities
 import { getSpeciesById, increaseChoices } from "../lib/sw5e/species";
 import { classes, getClassById } from "../lib/sw5e/classes";
@@ -258,9 +257,6 @@ export default function CharacterCreation() {
       // Submit the character
       const character = await CharacterAPI.saveCharacter(characterData);
 
-      // Set the persisted character ID for the personality form
-      setPersistedCharacterId(character.id);
-
       // Navigate to campaign creator with new character or character sheet
       navigate(`/campaigns/create?characterId=${character.id}`);
     } catch (error) {
@@ -284,25 +280,6 @@ export default function CharacterCreation() {
     collect(formErrors);
     setError(messages.length ? Array.from(new Set(messages)).join(". ") : "Please complete the earlier steps");
   };
-
-  // Persist the temporary character ID when the form has enough data
-  useEffect(() => {
-    const currentData = methods.getValues();
-    const hasBasicInfo = currentData.name && currentData.species && currentData.class;
-
-    if (hasBasicInfo && !persistedCharacterId) {
-      // Create a temporary character ID for tracking
-      const tempId = "temp-" + Date.now().toString();
-      setPersistedCharacterId(tempId);
-
-      // Save basic data to the store
-      // This would normally be done through your character store's createCharacter action
-      // For now, we're just setting the ID for the personality form
-    }
-  }, [methods.watch('name'), methods.watch('species'), methods.watch('class')]);
-
-  const [showPersonalityForm, setShowPersonalityForm] = useState(false);
-  const [persistedCharacterId, setPersistedCharacterId] = useState<string | null>(null);
 
   // Define tabs for the character creation process
   const tabs = [

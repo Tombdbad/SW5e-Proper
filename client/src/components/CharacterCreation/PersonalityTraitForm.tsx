@@ -3,60 +3,25 @@ import React, { FC } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import useCharacterStore from '../../lib/stores/useCharacterStore';
+import type { Background } from '../../lib/sw5e/backgrounds';
 
 const personalitySchema = z.object({
   traits: z.array(z.string()).optional(),
   ideals: z.array(z.string()).optional(),
   bonds: z.array(z.string()).optional(),
   flaws: z.array(z.string()).optional(),
-  appearance: z.string().optional(),
   backstory: z.string().optional(),
 });
 
-type PersonalityFormData = z.infer<typeof personalitySchema>;
-
-// Example personality traits for guidance
-const exampleTraits = [
-  "I'm always optimistic, even in the face of overwhelming odds.",
-  "I quote (or misquote) the tenets of the Jedi Code at every opportunity.",
-  "I'm suspicious of strangers and expect the worst of them.",
-  "I speak bluntly and without tact.",
-  "I never back down from a challenge.",
-  "I find it hard to trust anyone but myself."
-];
-
-const exampleIdeals = [
-  "Peace. There is no emotion, there is peace. (Lawful)",
-  "Justice. I will use my power to bring criminals to justice. (Lawful)",
-  "Freedom. Everyone should be free to pursue their own livelihood. (Chaotic)",
-  "Balance. The Force must remain in balance. (Neutral)",
-  "Power. Knowledge and power are the path to greatness. (Dark Side)",
-  "Honor. If I dishonor myself, I dishonor my entire clan. (Any)"
-];
-
-const exampleBonds = [
-  "I have an ancient text that holds terrible secrets that must not fall into the wrong hands.",
-  "My ship is my home, and the crew are my family.",
-  "I owe a life debt to the one who saved me from certain death.",
-  "I seek to avenge the destruction of my homeworld.",
-  "I will someday get revenge on the corrupt organization that ruined my reputation.",
-  "I fight for those who cannot fight for themselves."
-];
-
-const exampleFlaws = [
-  "I have a weakness for the vices of the city, especially gambling.",
-  "I'm confident in my abilities to the point of rashness.",
-  "I secretly believe that everyone is beneath me.",
-  "I have little respect for anyone who isn't a proven warrior.",
-  "Once I pick a goal, I become obsessed with it to the detriment of everything else in my life.",
-  "The Sith/Empire/criminals who murdered my family still hunt me, and I still run from them."
-];
+export type PersonalityFormData = z.infer<typeof personalitySchema>;
 
 interface PersonalityTraitFormProps {
-  characterId: string;
   onClose: () => void;
+  // Called with what was chosen; the opener keeps or saves it
+  onSave: (data: PersonalityFormData) => void;
   initialData?: Partial<PersonalityFormData>;
+  // The character's background: its tables are offered as suggestions
+  background?: Background;
 }
 
 // Helper component for trait inputs with examples
@@ -100,7 +65,7 @@ const TraitInputSection: FC<{
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
-          placeholder={`Add a ${name}`}
+          placeholder="Or write your own"
           disabled={values.length >= max}
         />
         <button
@@ -133,15 +98,15 @@ const TraitInputSection: FC<{
       )}
 
       <div className="mt-2">
-        <p className="text-xs text-gray-500 mb-1">Examples (click to add):</p>
-        <div className="flex flex-wrap gap-1">
+        <p className="text-xs text-gray-500 mb-1">{examples.length ? 'Suggestions from your background (tap to add):' : 'Choose a background to see its suggestions.'}</p>
+        <div className="flex flex-wrap gap-1 max-h-40 overflow-y-auto">
           {examples.map((example, i) => (
             <button
               key={i}
               type="button"
               disabled={values.length >= max}
               onClick={() => useExample(example)}
-              className={`text-xs px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded ${
+              className={`text-xs text-left px-2 py-1 bg-gray-800 hover:bg-gray-700 text-gray-400 rounded ${
                 values.length >= max ? 'opacity-50 cursor-not-allowed' : 'hover:text-white'
               }`}
             >
@@ -155,11 +120,11 @@ const TraitInputSection: FC<{
 };
 
 const PersonalityTraitForm: FC<PersonalityTraitFormProps> = ({
-  characterId,
   onClose,
-  initialData = {}
+  onSave,
+  initialData = {},
+  background
 }) => {
-  const updatePersonality = useCharacterStore(state => state.actions.updatePersonality);
 
   const { register, handleSubmit, formState: { errors }, setValue, watch } = useForm<PersonalityFormData>({
     resolver: zodResolver(personalitySchema),
@@ -168,7 +133,6 @@ const PersonalityTraitForm: FC<PersonalityTraitFormProps> = ({
       ideals: initialData.ideals || [],
       bonds: initialData.bonds || [],
       flaws: initialData.flaws || [],
-      appearance: initialData.appearance || '',
       backstory: initialData.backstory || '',
     }
   });
@@ -179,7 +143,7 @@ const PersonalityTraitForm: FC<PersonalityTraitFormProps> = ({
   const flaws = watch('flaws') || [];
 
   const onSubmit = (data: PersonalityFormData) => {
-    updatePersonality(characterId, data);
+    onSave(data);
     onClose();
   };
 
@@ -196,13 +160,19 @@ const PersonalityTraitForm: FC<PersonalityTraitFormProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="p-4 space-y-6">
+        {/* Not a form element: this opens inside the creation form, which must not be submitted from here */}
+        <div className="p-4 space-y-6">
+          {background && (
+            <p className="text-sm text-gray-400">
+              {background.name}: {background.suggestedCharacteristics[0] ?? ''}
+            </p>
+          )}
           {/* Personality Traits */}
           <TraitInputSection
             label="Personality Traits"
             name="traits"
             register={register}
-            examples={exampleTraits}
+            examples={background?.personalityTraits ?? []}
             setValue={setValue}
             values={traits}
           />
@@ -212,7 +182,7 @@ const PersonalityTraitForm: FC<PersonalityTraitFormProps> = ({
             label="Ideals"
             name="ideals"
             register={register}
-            examples={exampleIdeals}
+            examples={background?.ideals ?? []}
             setValue={setValue}
             values={ideals}
             max={2}
@@ -223,7 +193,7 @@ const PersonalityTraitForm: FC<PersonalityTraitFormProps> = ({
             label="Bonds"
             name="bonds"
             register={register}
-            examples={exampleBonds}
+            examples={background?.bonds ?? []}
             setValue={setValue}
             values={bonds}
             max={2}
@@ -234,24 +204,11 @@ const PersonalityTraitForm: FC<PersonalityTraitFormProps> = ({
             label="Flaws"
             name="flaws"
             register={register}
-            examples={exampleFlaws}
+            examples={background?.flaws ?? []}
             setValue={setValue}
             values={flaws}
             max={2}
           />
-
-          {/* Appearance */}
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-300 mb-1">
-              Character Appearance
-            </label>
-            <textarea
-              {...register('appearance')}
-              rows={3}
-              className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white"
-              placeholder="Describe what your character looks like..."
-            />
-          </div>
 
           {/* Backstory */}
           <div className="mb-4">
@@ -276,14 +233,14 @@ const PersonalityTraitForm: FC<PersonalityTraitFormProps> = ({
               Cancel
             </button>
             <button
-              type="submit"
+              type="button"
+              onClick={handleSubmit(onSubmit)}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
-              disabled={false} // Add loading state if needed
             >
-              Save Character
+              Save Personality
             </button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );

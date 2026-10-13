@@ -1,4 +1,14 @@
-import { calculateModifier } from "@/lib/sw5e/rules";
+import {
+  getAbilityModifier, calculateProficiencyBonus, calculateSkillModifier, calculateSavingThrowModifier,
+  calculateInitiativeModifier, calculatePassivePerception, castingStats, powerCost, powerEffect,
+} from "@/lib/sw5e/rules";
+import { skills } from "@/lib/sw5e/skills";
+import { findEquipmentByName } from "@/lib/sw5e/equipment";
+import { getClassById } from "@/lib/sw5e/classes";
+import { getSpeciesById } from "@/lib/sw5e/species";
+import { getBackgroundById } from "@/lib/sw5e/backgrounds";
+import PersonalityTraitForm from "@/components/CharacterCreation/PersonalityTraitForm";
+import { carriedWeapons, type CarriedWeapon } from "@/lib/sw5e/characterCalculation";
 
 // CharacterPreview component
 export const CharacterPreview = ({ character }: { character?: any }) => {
@@ -26,19 +36,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { Dice } from "@/components/ui/dice";
-import { useCharacter } from "@/lib/stores/useCharacter";
-import { CharacterAPI,saveCharacter } from "@/lib/api/character";
-
-async function handleCharacterUpdate(characterData: any) {
-  try {
-    await saveCharacterData(characterData);
-    toast.success("Character updated successfully");
-  } catch (error) {
-    toast.error("Failed to save character updates");
-  }
-}
 import { rollDice as rollDiceList, sumDiceResults } from "@/lib/sw5e/dice";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -76,35 +74,34 @@ interface Character {
   notes?: string;
   savingThrowProficiencies?: string[];
   skillProficiencies?: string[];
-  weapons?: Weapon[];
-  equipment?: Equipment[];
-  forcePowers?: ForcePower[];
+  toolProficiencies?: string[];
+  languages?: string[];
+  // A species' or class's unarmed strike; carried weapons are in `equipment`
+  weapons?: any[];
+  // Saved by name, as printed in the equipment data
+  equipment?: (string | { name: string })[];
+  forcePowers?: Power[];
+  techPowers?: Power[];
   credits?: number;
   forceAlignment?: string;
+  experience?: number;
+  hitDiceUsed?: number;
+  conditions?: string[];
+  personalityTraits?: string[];
+  ideals?: string[];
+  bonds?: string[];
+  flaws?: string[];
 }
 
-interface Weapon {
-  name: string;
-  type: string;
-  damage: string;
-  properties?: string[];
-  ability: string;
-  proficient: boolean;
-}
-
-interface Equipment {
-  name: string;
-  quantity: number;
-  weight?: number;
-  description?: string;
-}
-
-interface ForcePower {
+interface Power {
   name: string;
   level: number;
-  castingTime: string;
-  range: string;
-  description: string;
+  castingTime?: string;
+  range?: string;
+  duration?: string;
+  concentration?: boolean;
+  forceAlignment?: string;
+  description?: string;
 }
 
 interface CharacterSheetProps {
@@ -125,25 +122,23 @@ export default function CharacterSheet({
     details?: string;
   } | null>(null);
   const [activeTab, setActiveTab] = useState("stats");
+  const [showPersonality, setShowPersonality] = useState(false);
 
   // Skills are saved by name as printed in the rules ("Sleight of Hand")
   const hasSkill = (name: string) =>
     (character.skillProficiencies ?? []).some((skill: any) => String(skill).toLowerCase() === name.toLowerCase());
-
-  // Calculate ability modifiers
-  const getAbilityModifier = (score: number) => {
-    return Math.floor((score - 10) / 2);
-  };
 
   // Format modifier for display (+2, -1, etc.)
   const formatModifier = (modifier: number) => {
     return modifier >= 0 ? `+${modifier}` : `${modifier}`;
   };
 
-  // Calculate proficiency bonus based on level
-  const getProficiencyBonus = (level: number) => {
-    return Math.floor((level - 1) / 4) + 2;
-  };
+  const level = Number(character.level) || 1;
+  const proficiencyBonus = calculateProficiencyBonus(level);
+  const hasSave = (ability: string) =>
+    (character.savingThrowProficiencies ?? []).some((save: any) => String(save).toLowerCase() === ability.toLowerCase());
+  const klass = getClassById(character.class);
+  const weapons = carriedWeapons(character);
 
   // Handle ability check rolls
   const rollAbilityCheck = (
@@ -183,14 +178,7 @@ export default function CharacterSheet({
     score: number,
     advantage: "none" | "advantage" | "disadvantage" = "none",
   ) => {
-    const modifier = getAbilityModifier(score);
-    const proficiencyBonus = getProficiencyBonus(character.level);
-
-    // Check if character is proficient in this saving throw
-    const isProficient =
-      character.savingThrowProficiencies?.includes(ability.toLowerCase()) ||
-      false;
-    const bonus = isProficient ? modifier + proficiencyBonus : modifier;
+    const bonus = calculateSavingThrowModifier(character.abilityScores, ability.toLowerCase() as keyof typeof character.abilityScores, proficiencyBonus, hasSave(ability));
 
     let roll1 = rollDice(1, 20);
     let roll2 = rollDice(1, 20);
@@ -223,12 +211,7 @@ export default function CharacterSheet({
     score: number,
     advantage: "none" | "advantage" | "disadvantage" = "none",
   ) => {
-    const modifier = getAbilityModifier(score);
-    const proficiencyBonus = getProficiencyBonus(character.level);
-
-    // Check if character is proficient in this skill
-    const isProficient = hasSkill(skill);
-    const bonus = isProficient ? modifier + proficiencyBonus : modifier;
+    const bonus = getAbilityModifier(score) + (hasSkill(skill) ? proficiencyBonus : 0);
 
     let roll1 = rollDice(1, 20);
     let roll2 = rollDice(1, 20);
@@ -254,44 +237,22 @@ export default function CharacterSheet({
     toast.info(`${skill} Check: ${result} (${details})`);
   };
 
-  // Roll attack
-  const rollAttack = (weapon: Weapon) => {
-    const abilityScore =
-      character.abilityScores[
-        (weapon.ability ?? "strength").toLowerCase() as keyof typeof character.abilityScores
-      ];
-    const modifier = getAbilityModifier(abilityScore);
-    const proficiencyBonus = getProficiencyBonus(character.level);
-
-    const attackBonus = weapon.proficient
-      ? modifier + proficiencyBonus
-      : modifier;
+  // Roll an attack with a carried weapon: a natural 1 misses, a natural 20 rolls the damage dice twice
+  const rollAttack = (weapon: CarriedWeapon) => {
     const attackRoll = rollDice(1, 20);
-    const attackTotal = attackRoll + attackBonus;
-
-    // Parse damage dice (e.g., "1d8+3")
-    const damageMatch = weapon.damage.match(/(\d+)d(\d+)(?:\+(\d+))?/);
-    if (!damageMatch) return;
-
-    const [_, diceCount, diceSides, bonusStr] = damageMatch;
-    const damageBonus = bonusStr ? parseInt(bonusStr) : modifier;
-
-    let damageRoll = 0;
-    for (let i = 0; i < parseInt(diceCount); i++) {
-      damageRoll += rollDice(1, parseInt(diceSides));
-    }
-
-    const damageTotal = damageRoll + damageBonus;
+    const attackTotal = attackRoll + weapon.attackBonus;
+    const [diceCount, diceSides] = weapon.dice.split("d").map(Number);
+    const critical = attackRoll === 20;
+    const damageTotal = Math.max(1, rollDice((diceCount || 1) * (critical ? 2 : 1), diceSides || 4) + weapon.damageBonus);
+    const outcome = attackRoll === 1 ? " (natural 1: a miss)" : critical ? " (natural 20: critical hit)" : "";
 
     setRollResult({
       type: `${weapon.name} Attack`,
       result: attackTotal,
-      details: `Attack: ${attackTotal} (1d20 + ${attackBonus})\nDamage: ${damageTotal} (${weapon.damage})`,
+      details: `Attack: 1d20 (${attackRoll}) ${formatModifier(weapon.attackBonus)}${outcome}\nDamage: ${damageTotal} ${weapon.damageType} (${weapon.dice} ${formatModifier(weapon.damageBonus)})`,
     });
 
-    toast.info(
-      `${weapon.name} Attack: ${attackTotal} | Damage: ${damageTotal}`,
-    );
+    toast.info(`${weapon.name} Attack: ${attackTotal}${outcome} | Damage: ${damageTotal}`);
   };
 
   // Update character notes
@@ -315,35 +276,27 @@ export default function CharacterSheet({
     onUpdate?.({ currentForcePoints: newFp });
   };
 
-  // Calculate passive perception (10 + wisdom modifier + proficiency if proficient)
-  const passivePerception =
-    10 +
-    getAbilityModifier(character.abilityScores.wisdom) +
-    (character.skillProficiencies?.includes("perception")
-      ? getProficiencyBonus(character.level)
-      : 0);
+  const passivePerception = calculatePassivePerception(character.abilityScores, proficiencyBonus, hasSkill("Perception"), false);
 
-  // Skills and their associated abilities
-  const skills = [
-    { name: "Acrobatics", ability: "Dexterity" },
-    { name: "Animal Handling", ability: "Wisdom" },
-    { name: "Athletics", ability: "Strength" },
-    { name: "Deception", ability: "Charisma" },
-    { name: "Insight", ability: "Wisdom" },
-    { name: "Intimidation", ability: "Charisma" },
-    { name: "Investigation", ability: "Intelligence" },
-    { name: "Lore", ability: "Intelligence" },
-    { name: "Medicine", ability: "Wisdom" },
-    { name: "Nature", ability: "Intelligence" },
-    { name: "Perception", ability: "Wisdom" },
-    { name: "Performance", ability: "Charisma" },
-    { name: "Persuasion", ability: "Charisma" },
-    { name: "Piloting", ability: "Dexterity" },
-    { name: "Sleight of Hand", ability: "Dexterity" },
-    { name: "Stealth", ability: "Dexterity" },
-    { name: "Survival", ability: "Wisdom" },
-    { name: "Technology", ability: "Intelligence" },
-  ];
+  // What is carried, by name, with what the equipment data says about each
+  const carried = (character.equipment ?? []).map((item: any) => String(item?.name ?? item));
+  const inventory = Array.from(new Set(carried)).map((name) => ({
+    name,
+    quantity: carried.filter((n) => n === name).length,
+    item: findEquipmentByName(name),
+  }));
+
+  // Powers known, with what each costs and the caster's numbers for it
+  const knownPowers: Power[] = [...(character.forcePowers ?? []), ...(character.techPowers ?? [])].filter((power) => power?.name);
+  const pointsName = klass?.casterType === "Tech" ? "Tech Points" : "Force Points";
+  const hitDiceLeft = Math.max(0, level - (character.hitDiceUsed ?? 0));
+  const listed = (label: string, values?: string[]) =>
+    values && values.length > 0 ? (
+      <div>
+        <Label>{label}</Label>
+        <div className="text-sm">{values.join(", ")}</div>
+      </div>
+    ) : null;
 
   // Preview mode - Condensed version of character sheet
   if (isPreview) {
@@ -391,12 +344,12 @@ export default function CharacterSheet({
         onValueChange={setActiveTab}
         className="w-full"
       >
-        <TabsList className="grid grid-cols-5 mb-4">
-          <TabsTrigger value="stats">Character</TabsTrigger>
-          <TabsTrigger value="skills">Skills</TabsTrigger>
-          <TabsTrigger value="combat">Combat</TabsTrigger>
-          <TabsTrigger value="equipment">Equipment</TabsTrigger>
-          <TabsTrigger value="force">Force Powers</TabsTrigger>
+        <TabsList className="grid grid-cols-5 mb-4 w-full">
+          {[["stats", "Character"], ["skills", "Skills"], ["combat", "Combat"], ["equipment", "Equipment"], ["force", "Powers"]].map(([value, label]) => (
+            <TabsTrigger key={value} value={value} className="px-1 text-xs sm:px-3 sm:text-sm">
+              {label}
+            </TabsTrigger>
+          ))}
         </TabsList>
 
         {/* Stats Tab */}
@@ -420,18 +373,18 @@ export default function CharacterSheet({
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <Label>Species</Label>
-                        <div>{character.species}</div>
+                        <div>{getSpeciesById(character.species)?.name ?? character.species}</div>
                       </div>
                       <div>
                         <Label>Class</Label>
-                        <div>{character.class}</div>
+                        <div>{klass?.name ?? character.class}</div>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <Label>Background</Label>
-                        <div>{character.background}</div>
+                        <div>{getBackgroundById(character.background)?.name ?? character.background}</div>
                       </div>
                       <div>
                         <Label>Alignment</Label>
@@ -443,6 +396,10 @@ export default function CharacterSheet({
                       <Label>Level</Label>
                       <div className="text-lg font-bold">{character.level}</div>
                     </div>
+
+                    {listed("Saving Throws", (character.savingThrowProficiencies ?? []).map((save: any) => String(save).replace(/^./, (c) => c.toUpperCase())))}
+                    {listed("Languages", character.languages)}
+                    {listed("Tools", character.toolProficiencies)}
                   </div>
                 </CardContent>
               </Card>
@@ -535,7 +492,7 @@ export default function CharacterSheet({
                       </div>
 
                       <div>
-                        <Label htmlFor="currentForcePoints">Force Points</Label>
+                        <Label htmlFor="currentForcePoints">{pointsName}</Label>
                         <div className="flex items-center mt-1">
                           <Input
                             id="currentForcePoints"
@@ -566,11 +523,7 @@ export default function CharacterSheet({
                       <div className="bg-gray-800 p-3 rounded-lg text-center">
                         <div className="uppercase text-xs mb-1">Initiative</div>
                         <div className="text-2xl font-bold">
-                          {formatModifier(
-                            getAbilityModifier(
-                              character.abilityScores.dexterity,
-                            ),
-                          )}
+                          {formatModifier(calculateInitiativeModifier(character.abilityScores))}
                         </div>
                       </div>
 
@@ -592,7 +545,7 @@ export default function CharacterSheet({
                         Proficiency Bonus
                       </div>
                       <div className="text-2xl font-bold">
-                        {formatModifier(getProficiencyBonus(character.level))}
+                        {formatModifier(proficiencyBonus)}
                       </div>
                     </div>
 
@@ -604,6 +557,27 @@ export default function CharacterSheet({
                         {passivePerception}
                       </div>
                     </div>
+
+                    <div className="grid grid-cols-2 gap-4" data-testid="sheet-progress">
+                      <div className="bg-gray-800 p-3 rounded-lg text-center">
+                        <div className="uppercase text-xs mb-1">Hit Dice</div>
+                        <div className="text-2xl font-bold">
+                          {hitDiceLeft}/{level}
+                          {klass && <span className="text-sm text-gray-400"> d{klass.hitDie}</span>}
+                        </div>
+                      </div>
+                      <div className="bg-gray-800 p-3 rounded-lg text-center">
+                        <div className="uppercase text-xs mb-1">Experience</div>
+                        <div className="text-2xl font-bold">{character.experience ?? 0}</div>
+                      </div>
+                    </div>
+
+                    {(character.conditions ?? []).length > 0 && (
+                      <div className="bg-red-900/40 p-3 rounded-lg text-center" data-testid="sheet-conditions">
+                        <div className="uppercase text-xs mb-1">Conditions</div>
+                        <div className="font-bold">{character.conditions!.join(", ")}</div>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -636,10 +610,32 @@ export default function CharacterSheet({
                   <div className="space-y-4">
                     <div>
                       <Label>Backstory</Label>
-                      <div className="bg-gray-800 p-3 rounded-lg mt-1 min-h-16">
-                        {character.backstory || "No backstory provided."}
-                      </div>
+                      <Textarea
+                        placeholder="Where your character comes from, and what drives them..."
+                        className="min-h-24 mt-1"
+                        value={character.backstory || ""}
+                        onChange={(event) => onUpdate?.({ backstory: event.target.value })}
+                      />
                     </div>
+
+                    {listed("Personality Traits", character.personalityTraits)}
+                    {listed("Ideals", character.ideals)}
+                    {listed("Bonds", character.bonds)}
+                    {listed("Flaws", character.flaws)}
+
+                    {onUpdate && (
+                      <Button size="sm" variant="outline" onClick={() => setShowPersonality(true)}>
+                        Edit personality
+                      </Button>
+                    )}
+                    {showPersonality && (
+                      <PersonalityTraitForm
+                        background={getBackgroundById(character.background)}
+                        initialData={{ traits: character.personalityTraits ?? [], ideals: character.ideals ?? [], bonds: character.bonds ?? [], flaws: character.flaws ?? [], backstory: character.backstory ?? "" }}
+                        onSave={(data) => onUpdate?.({ personalityTraits: data.traits ?? [], ideals: data.ideals ?? [], bonds: data.bonds ?? [], flaws: data.flaws ?? [], backstory: data.backstory ?? "" })}
+                        onClose={() => setShowPersonality(false)}
+                      />
+                    )}
 
                     <div>
                       <Label>Starting Location</Label>
@@ -677,16 +673,9 @@ export default function CharacterSheet({
             <CardContent>
               <div className="space-y-2">
                 {skills.map((skill) => {
-                  const abilityScore =
-                    character.abilityScores[
-                      skill.ability.toLowerCase() as keyof typeof character.abilityScores
-                    ];
-                  const modifier = getAbilityModifier(abilityScore);
-                  const proficiencyBonus = getProficiencyBonus(character.level);
+                  const abilityScore = character.abilityScores[skill.ability as keyof typeof character.abilityScores];
                   const isProficient = hasSkill(skill.name);
-                  const skillBonus = isProficient
-                    ? modifier + proficiencyBonus
-                    : modifier;
+                  const skillBonus = calculateSkillModifier(character.abilityScores, skill, proficiencyBonus, isProficient, false);
 
                   return (
                     <div
@@ -770,65 +759,42 @@ export default function CharacterSheet({
               <CardTitle className="text-xl">Weapons & Attacks</CardTitle>
             </CardHeader>
             <CardContent>
-              {character.weapons && character.weapons.length > 0 ? (
-                <div className="space-y-4">
-                  {character.weapons.map((weapon, index) => {
-                    const abilityScore =
-                      character.abilityScores[
-                        (weapon.ability ?? "strength").toLowerCase() as keyof typeof character.abilityScores
-                      ];
-                    const modifier = getAbilityModifier(abilityScore);
-                    const proficiencyBonus = getProficiencyBonus(
-                      character.level,
-                    );
-                    const attackBonus = weapon.proficient
-                      ? modifier + proficiencyBonus
-                      : modifier;
-
-                    return (
-                      <div key={index} className="p-3 bg-gray-800 rounded-lg">
-                        <div className="flex justify-between items-center mb-2">
-                          <h3 className="font-bold text-lg">{weapon.name}</h3>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => rollAttack(weapon)}
-                          >
-                            Roll Attack
-                          </Button>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-sm">
-                          <div>
-                            <span className="text-gray-400">Type:</span>{" "}
-                            {weapon.type}
-                          </div>
-                          <div>
-                            <span className="text-gray-400">Attack Bonus:</span>{" "}
-                            {formatModifier(attackBonus)}
-                          </div>
-                          <div>
-                            <span className="text-gray-400">Damage:</span>{" "}
-                            {weapon.damage}
-                          </div>
-                          <div>
-                            <span className="text-gray-400">Ability:</span>{" "}
-                            {weapon.ability}
-                          </div>
-                          {weapon.properties && (
-                            <div className="col-span-2">
-                              <span className="text-gray-400">Properties:</span>{" "}
-                              {weapon.properties.join(", ")}
-                            </div>
-                          )}
-                        </div>
+              {weapons.length > 0 ? (
+                <div className="space-y-4" data-testid="sheet-weapons">
+                  {weapons.map((weapon) => (
+                    <div key={weapon.name} className="p-3 bg-gray-800 rounded-lg">
+                      <div className="flex justify-between items-center mb-2">
+                        <h3 className="font-bold text-lg">{weapon.name}</h3>
+                        <Button size="sm" variant="outline" onClick={() => rollAttack(weapon)}>
+                          Roll Attack
+                        </Button>
                       </div>
-                    );
-                  })}
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <div>
+                          <span className="text-gray-400">Type:</span> {weapon.type}
+                        </div>
+                        <div>
+                          <span className="text-gray-400">Attack Bonus:</span> {formatModifier(weapon.attackBonus)}
+                          {!weapon.proficient && <span className="text-yellow-400"> (not proficient)</span>}
+                        </div>
+                        <div>
+                          <span className="text-gray-400">Damage:</span> {weapon.dice} {formatModifier(weapon.damageBonus)} {weapon.damageType}
+                        </div>
+                        <div>
+                          <span className="text-gray-400">Ability:</span> <span className="capitalize">{weapon.ability}</span>
+                        </div>
+                        {weapon.properties.length > 0 && (
+                          <div className="col-span-2">
+                            <span className="text-gray-400">Properties:</span> {weapon.properties.join(", ")}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div className="text-center p-4 text-gray-400">
-                  No weapons added. Add weapons to your character to see them
-                  here.
+                  No weapons carried. An unarmed strike deals {Math.max(1, 1 + getAbilityModifier(character.abilityScores.strength))} kinetic damage.
                 </div>
               )}
             </CardContent>
@@ -874,36 +840,28 @@ export default function CharacterSheet({
               <CardTitle className="text-xl">Inventory</CardTitle>
             </CardHeader>
             <CardContent>
-              {character.equipment && character.equipment.length > 0 ? (
-                <div className="space-y-2">
-                  {character.equipment.map((item, index) => (
-                    <div
-                      key={index}
-                      className="p-3 bg-gray-800 rounded-lg flex justify-between items-center"
-                    >
+              {inventory.length > 0 ? (
+                <div className="space-y-2" data-testid="sheet-equipment">
+                  {inventory.map(({ name, quantity, item }) => (
+                    <div key={name} className="p-3 bg-gray-800 rounded-lg flex justify-between items-center gap-2">
                       <div>
-                        <div className="font-medium">{item.name}</div>
-                        {item.description && (
-                          <div className="text-sm text-gray-400">
-                            {item.description}
-                          </div>
-                        )}
+                        <div className="font-medium">{name}</div>
+                        <div className="text-sm text-gray-400">
+                          {item
+                            ? [item.kind.replace(/([a-z])([A-Z])/g, "$1 $2"), item.damage, item.armorClass && `AC ${item.armorClass}`, ...(item.properties ?? [])].filter(Boolean).join(", ")
+                            : "Not in the equipment data"}
+                        </div>
                       </div>
-                      <div className="flex items-center space-x-4">
-                        {item.weight && (
-                          <div className="text-sm text-gray-400">
-                            {item.weight} lbs
-                          </div>
-                        )}
-                        <Badge variant="outline">Qty: {item.quantity}</Badge>
+                      <div className="flex items-center space-x-4 shrink-0">
+                        {item?.weight && <div className="text-sm text-gray-400">{item.weight} lb</div>}
+                        <Badge variant="outline">Qty: {quantity}</Badge>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
                 <div className="text-center p-4 text-gray-400">
-                  No equipment added. Add equipment to your character to see it
-                  here.
+                  Nothing carried. Add equipment on the Inventory tab.
                 </div>
               )}
             </CardContent>
@@ -926,93 +884,65 @@ export default function CharacterSheet({
           </Card>
         </TabsContent>
 
-        {/* Force Powers Tab */}
+        {/* Powers Tab: force and tech powers known */}
         <TabsContent value="force" className="space-y-6">
           <Card className="bg-gray-700">
             <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-xl">Force Powers</CardTitle>
-              {character.forceAlignment && (
-                <Badge
-                  variant="outline"
-                  className={
-                    character.forceAlignment.toLowerCase() === "light"
-                      ? "bg-blue-900/30"
-                      : character.forceAlignment.toLowerCase() === "dark"
-                        ? "bg-red-900/30"
-                        : "bg-gray-800"
-                  }
-                >
-                  {character.forceAlignment} Side
-                </Badge>
-              )}
+              <CardTitle className="text-xl">Powers</CardTitle>
+              <Badge variant="outline">
+                {pointsName}: {character.currentForcePoints}/{character.maxForcePoints}
+              </Badge>
             </CardHeader>
             <CardContent>
-              {character.forcePowers && character.forcePowers.length > 0 ? (
-                <div className="space-y4">
-                  {character.forcePowers.map((power, index) => (
-                    <div key={index} className="p-3 bg-gray-800 rounded-lg">
-                      <div className="flex justify-between items-center mb-2">
-                        <h3 className="font-bold text-lg">{power.name}</h3>
-                        <Badge variant="outline">Level {power.level}</Badge>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 text-sm mb-2">
-                        <div>
-                          <span className="text-gray-400">Casting Time:</span>{" "}
-                          {power.castingTime}
+              {knownPowers.length > 0 ? (
+                <div className="space-y-4" data-testid="sheet-powers">
+                  {knownPowers.map((power) => {
+                    const stats = castingStats(character.abilityScores, level, power);
+                    const effect = powerEffect(power, level);
+                    const cost = powerCost(power);
+                    return (
+                      <div key={power.name} className="p-3 bg-gray-800 rounded-lg">
+                        <div className="flex justify-between items-center mb-2 gap-2">
+                          <h3 className="font-bold text-lg">{power.name}</h3>
+                          <Badge variant="outline" className="shrink-0">
+                            {power.level ? `Level ${power.level}, ${cost} pts` : "At-will"}
+                          </Badge>
                         </div>
-                        <div>
-                          <span className="text-gray-400">Range:</span>{" "}
-                          {power.range}
+                        <div className="grid grid-cols-2 gap-2 text-sm mb-2">
+                          <div>
+                            <span className="text-gray-400">Type:</span>{" "}
+                            {"forceAlignment" in power ? `Force (${power.forceAlignment})` : "Tech"}
+                          </div>
+                          <div>
+                            <span className="text-gray-400">Casting Time:</span> {power.castingTime}
+                          </div>
+                          <div>
+                            <span className="text-gray-400">Range:</span> {power.range}
+                          </div>
+                          <div>
+                            <span className="text-gray-400">Duration:</span> {power.duration}
+                            {power.concentration ? " (concentration)" : ""}
+                          </div>
+                          <div className="col-span-2">
+                            <span className="text-gray-400">Your numbers:</span> attack {formatModifier(stats.attack)}, save DC {stats.dc}
+                            {effect.kind !== "other" ? `; ${effect.summary}` : ""}
+                          </div>
                         </div>
+                        <details>
+                          <summary className="cursor-pointer text-sm text-gray-400">Description</summary>
+                          <div className="text-sm mt-2 whitespace-pre-line">{power.description}</div>
+                        </details>
                       </div>
-                      <Separator className="my-2" />
-                      <div className="text-sm mt-2">{power.description}</div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="text-center p-4 text-gray-400">
-                  No force powers added. Add force powers to your character to
-                  see them here.
+                  {klass && klass.casterType === "None"
+                    ? `${klass.name}s do not learn powers from their class.`
+                    : "No powers known yet. Powers are chosen in creation and when a level grants them."}
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          <Card className="bg-gray-700">
-            <CardHeader>
-              <CardTitle className="text-xl">Force Training</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="bg-gray-800 p-4 rounded-lg">
-                  <h3 className="font-bold mb-2">Force Points</h3>
-                  <div className="flex items-center space-x-2">
-                    <div className="text-sm text-gray-400">Current:</div>
-                    <div className="text-lg font-bold">
-                      {character.currentForcePoints}/{character.maxForcePoints}
-                    </div>
-                  </div>
-                  <div className="text-sm mt-2">
-                    Force points are used to cast force powers. They recover
-                    after a long rest.
-                  </div>
-                </div>
-
-                <div className="bg-gray-800 p-4 rounded-lg">
-                  <h3 className="font-bold mb-2">Force Save DC</h3>
-                  <div className="flex items-center space-x-2">
-                    <div className="text-lg font-bold">
-                      {8 +
-                        getProficiencyBonus(character.level) +
-                        getAbilityModifier(character.abilityScores.wisdom)}
-                    </div>
-                  </div>
-                  <div className="text-sm mt-2">
-                    8 + Proficiency Bonus + Wisdom Modifier
-                  </div>
-                </div>
-              </div>
             </CardContent>
           </Card>
         </TabsContent>

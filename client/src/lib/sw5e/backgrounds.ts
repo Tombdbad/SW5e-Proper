@@ -18,6 +18,11 @@ export interface Background {
   // Every background grants one feat from this list at 1st level
   featOptions: string[];
   suggestedCharacteristics: string[];
+  // The background's tables to roll or choose from (an ideal reads "Charity. I always try to help ... (Light)")
+  personalityTraits: string[];
+  ideals: string[];
+  bonds: string[];
+  flaws: string[];
   source: string;
 }
 
@@ -41,6 +46,10 @@ function toBackground(row: any): Background {
     equipment: row.equipment ? [row.equipment] : [],
     featOptions: (row.featOptions ?? []).map((f: any) => f.name),
     suggestedCharacteristics: row.suggestedCharacteristics ? [row.suggestedCharacteristics] : [],
+    personalityTraits: (row.personalityTraitOptions ?? []).map((o: any) => o.description),
+    ideals: (row.idealOptions ?? []).map((o: any) => (o.name ? `${o.name}. ${o.description}` : o.description)),
+    bonds: (row.bondOptions ?? []).map((o: any) => o.description),
+    flaws: (row.flawOptions ?? []).map((o: any) => o.description),
     source: row.contentSource,
   };
 }
