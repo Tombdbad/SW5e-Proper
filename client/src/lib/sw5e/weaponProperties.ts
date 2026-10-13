@@ -1,3 +1,5 @@
+// Weapon properties: a view over shared/data/sw5e/weaponProperties.json (generated, see shared/data/index.ts)
+import weaponPropertyData from "@shared/data/sw5e/weaponProperties.json";
 
 export interface WeaponProperty {
   id: string;
@@ -5,15 +7,8 @@ export interface WeaponProperty {
   description: string;
 }
 
-export const weaponProperties: WeaponProperty[] = [
-  {
-    id: "burst",
-    name: "Burst",
-    description: "When you use this weapon to make a ranged attack, you can use your bonus action to make another ranged attack with this weapon against the same target."
-  },
-  {
-    id: "defensive",
-    name: "Defensive",
-    description: "While wielding this weapon, you gain a +1 bonus to your AC."
-  }
-];
+export const weaponProperties: WeaponProperty[] = (weaponPropertyData as any[]).map((row) => ({
+  id: row.id,
+  name: row.name,
+  description: String(row.content ?? "").replace(/^#+\s*.*\n/, "").trim(),
+}));

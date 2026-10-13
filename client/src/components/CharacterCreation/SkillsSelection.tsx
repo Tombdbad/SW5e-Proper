@@ -8,12 +8,15 @@ interface SkillsSelectionProps {
   form: any;
   allSkills: any[];
   getSelectedClass: () => any;
+  // The chosen background: it offers a few skills of its own to pick from
+  background?: { name: string; skillProficiencies: string[]; numSkillChoices: number };
 }
 
 export default function SkillsSelection({
   form,
   allSkills,
   getSelectedClass,
+  background,
 }: SkillsSelectionProps) {
   const { watch, setValue } = form;
   const selectedClass = getSelectedClass();
@@ -35,8 +38,19 @@ export default function SkillsSelection({
 
     const [availableSkills, setAvailableSkills] = useState<any[]>([]);
     const [maxSkillChoices, setMaxSkillChoices] = useState(0);
-    const [backgroundSkills, setBackgroundSkills] = useState<string[]>([]);
     const [classSkillOptions, setClassSkillOptions] = useState<string[]>([]);
+
+    // Skills picked from the background's list; a skill cannot be picked from both lists
+    const backgroundSkills: string[] = watch("backgroundSkills") || [];
+    const backgroundOptions = background?.skillProficiencies ?? [];
+    const maxBackgroundSkills = background?.numSkillChoices ?? 0;
+    const toggleBackgroundSkill = (skillId: string) => {
+      if (backgroundSkills.includes(skillId)) {
+        setValue("backgroundSkills", backgroundSkills.filter((id) => id !== skillId));
+      } else if (!selectedSkills.includes(skillId) && backgroundSkills.length < maxBackgroundSkills) {
+        setValue("backgroundSkills", [...backgroundSkills, skillId]);
+      }
+    };
 
     // Group skills by ability
     const groupedSkills = allSkills.reduce((acc, skill) => {
@@ -65,35 +79,8 @@ export default function SkillsSelection({
     setClassSkillOptions(classSkills);
     setMaxSkillChoices(selectedClass.numSkillChoices || 0);
 
-    // Get background skill proficiencies
-    const backgrounds = Array.isArray(watch("background")) 
-      ? watch("background") 
-      : [watch("background")];
-      
-    const bgSkills: string[] = [];
-    backgrounds.forEach(bg => {
-      // This is just a placeholder. Replace with actual background logic
-      // Check if background data has skill proficiencies
-      const backgroundData = { skillProficiencies: [] }; // Replace with actual lookup
-      if (backgroundData?.skillProficiencies) {
-        bgSkills.push(...backgroundData.skillProficiencies);
-      }
-    });
-    
-    setBackgroundSkills(bgSkills);
-    
-    // Filter skills to only include class skills that aren't already from background
-    const availableSkillsFromClass = allSkills
-      .filter(skill => classSkills.includes(skill.id))
-      .filter(skill => !bgSkills.includes(skill.id));
-    
-    setAvailableSkills(availableSkillsFromClass);
-    
-    // Auto-select background skills
-    setValue(
-      "skillProficiencies", 
-      [...bgSkills, ...selectedSkills.filter(skill => !bgSkills.includes(skill))]
-    );
+    // Class skills on offer
+    setAvailableSkills(allSkills.filter(skill => classSkills.includes(skill.id)));
   }, [selectedClass, selectedBackground, allSkills, setValue, watch]);
 
   // Handle skill selection
@@ -144,10 +131,32 @@ export default function SkillsSelection({
             Choose <span className="font-bold">{maxSkillChoices}</span> skills from the options available to the {selectedClass.name} class.
           </p>
           
-          {backgroundSkills.length > 0 && (
-            <p className="mt-2 text-yellow-200">
-              You also have proficiency in {backgroundSkills.join(", ")} from your background.
-            </p>
+          {background && maxBackgroundSkills > 0 && (
+            <div className="mt-3">
+              <p className="text-yellow-200">
+                Your {background.name} background also gives you{" "}
+                <span className="font-bold">{maxBackgroundSkills}</span> of these (
+                {backgroundSkills.length}/{maxBackgroundSkills}):
+              </p>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {backgroundOptions.map((skill) => (
+                  <button
+                    key={skill}
+                    type="button"
+                    data-background-skill={skill}
+                    onClick={() => toggleBackgroundSkill(skill)}
+                    disabled={selectedSkills.includes(skill)}
+                    className={`px-3 py-1 rounded-md border text-sm disabled:opacity-40 ${
+                      backgroundSkills.includes(skill)
+                        ? "bg-blue-600 border-blue-400 text-white"
+                        : "border-gray-500 text-gray-200"
+                    }`}
+                  >
+                    {skill}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
           
           <div className="bg-gray-800 bg-opacity-50 p-3 mt-3 rounded-md">

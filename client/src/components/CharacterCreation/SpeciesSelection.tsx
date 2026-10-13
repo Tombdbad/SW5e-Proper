@@ -19,7 +19,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { species, getSpeciesById } from "@/lib/sw5e/species";
+import { species, getSpeciesById, hasAbilityChoice, increaseChoices } from "@/lib/sw5e/species";
 // Ensure species list is fully imported
 
 interface SpeciesSelectionProps {
@@ -36,7 +36,24 @@ export default function SpeciesSelection({ onSelect }: SpeciesSelectionProps) {
     setSelectedSpeciesId(speciesId);
   };
 
-  const speciesDetails = selectedSpeciesId ? getSpeciesById(selectedSpeciesId) : null;
+  // From the form, so the details are still there when the player comes back to this step
+  const speciesDetails = selectedSpecies ? getSpeciesById(selectedSpecies) : null;
+
+  // Ability score increases: which alternative, and the picks for each increase that offers a choice
+  const optionIndex: number = Number(watch("speciesAbilityOption")) || 0;
+  const choices: string[][] = watch("speciesAbilityChoices") || [];
+  const optionSets = speciesDetails?.abilityScoreOptions ?? [];
+  const currentSet = optionSets[optionIndex] ?? [];
+  const describe = (set: { abilities: string[]; amount: number }[]) =>
+    set.map((i) => `${i.abilities.join(" or ")} +${i.amount}`).join(", ");
+  const togglePick = (increaseIndex: number, ability: string, count: number) => {
+    const next = currentSet.map((_, i) => [...(choices[i] ?? [])]);
+    const taken = next.some((picks, i) => i !== increaseIndex && picks.includes(ability));
+    const mine = next[increaseIndex];
+    if (mine.includes(ability)) next[increaseIndex] = mine.filter((a) => a !== ability);
+    else if (!taken && mine.length < count) next[increaseIndex] = [...mine, ability];
+    setValue("speciesAbilityChoices", next);
+  };
 
   return (
     <div className="space-y-6">
@@ -121,13 +138,59 @@ export default function SpeciesSelection({ onSelect }: SpeciesSelectionProps) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <h4 className="text-yellow-400 text-sm font-medium mb-1">Ability Score Increases</h4>
-              <ul className="list-disc pl-5 text-sm">
-                {Object.entries(speciesDetails.abilityScoreIncrease).map(([ability, value]) => (
-                  <li key={ability}>
-                    {ability}: +{value}
-                  </li>
-                ))}
+              {optionSets.length > 1 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {optionSets.map((set, i) => (
+                    <Button
+                      key={i}
+                      type="button"
+                      size="sm"
+                      variant={i === optionIndex ? "default" : "outline"}
+                      onClick={() => {
+                        setValue("speciesAbilityOption", i);
+                        setValue("speciesAbilityChoices", []);
+                      }}
+                    >
+                      {describe(set)}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              <ul className="list-disc pl-5 text-sm space-y-2">
+                {currentSet.map((increase, i) => {
+                  const { abilities, count } = increaseChoices(increase);
+                  if (abilities.length === 1) {
+                    return (
+                      <li key={i} className="capitalize">
+                        {abilities[0]}: +{increase.amount}
+                      </li>
+                    );
+                  }
+                  const picks = choices[i] ?? [];
+                  return (
+                    <li key={i}>
+                      +{increase.amount} to {count === 1 ? "one" : count} of your choice ({picks.length}/{count})
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {abilities.map((ability) => (
+                          <Button
+                            key={ability}
+                            type="button"
+                            size="sm"
+                            variant={picks.includes(ability) ? "default" : "outline"}
+                            className="capitalize"
+                            onClick={() => togglePick(i, ability, count)}
+                          >
+                            {ability.slice(0, 3)}
+                          </Button>
+                        ))}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
+              {hasAbilityChoice(currentSet) && (
+                <p className="text-xs text-gray-400 mt-1">Each ability can be picked once.</p>
+              )}
             </div>
             
             <div>

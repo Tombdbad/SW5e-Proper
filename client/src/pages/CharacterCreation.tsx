@@ -7,22 +7,16 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import PersonalityTraitForm from "../components/CharacterCreation/PersonalityTraitForm";
 // Import SW5E data and utilities
-import { SPECIES, getSpeciesById } from "../lib/sw5e/species";
-import { CLASSES, classes, getClassById } from "../lib/sw5e/classes";
-import { EQUIPMENT } from "../lib/sw5e/equipment";
-import {
-  SKILLS,
-  LANGUAGES,
-  ALIGNMENTS,
-} from "../lib/sw5e/constants";
+import { getSpeciesById, increaseChoices } from "../lib/sw5e/species";
+import { classes, getClassById } from "../lib/sw5e/classes";
+import { getBackgroundById } from "../lib/sw5e/backgrounds";
+import { SKILLS } from "../lib/sw5e/constants";
 import {
   calculateModifier,
   calculateProficiencyBonus,
-  calculateMaxPowerPoints,
-  calculateMaxPowerLevel,
-  calculateHitPoints,
+  calculatePowerPoints,
   calculateArmorClass,
-  calculateInitiative,
+  calculateStartingCredits,
   MAX_POINT_BUY_POINTS,
 } from "../lib/sw5e/rules";
 
@@ -66,37 +60,48 @@ export type CharacterData = Record<string, any>;
 // SKILLS has no ids; the skills step and the class data both go by skill name
 const SKILL_OPTIONS = SKILLS.map((skill) => ({ ...skill, id: skill.name }));
 
-// Classes with a power pool and the ability it runs on (stored as maxForcePoints)
-const POWER_ABILITY: Record<string, string> = {
-  consular: "wisdom",
-  guardian: "wisdom",
-  engineer: "intelligence",
-};
+// The species ability increases with the player's picks filled in, or what is still missing.
+// `data.speciesAbilityOption` is the chosen alternative, `data.speciesAbilityChoices[i]` the
+// abilities picked for increase i of that alternative.
+function speciesIncreases(data: CharacterData): { bonus: Record<string, number>; missing: boolean } {
+  const sp = getSpeciesById(data.species);
+  const set = sp?.abilityScoreOptions[Number(data.speciesAbilityOption) || 0] ?? [];
+  const bonus: Record<string, number> = {};
+  let missing = false;
+  set.forEach((increase, i) => {
+    const { abilities, count } = increaseChoices(increase);
+    const picked: string[] = abilities.length === 1 ? abilities : (data.speciesAbilityChoices?.[i] ?? []).filter((a: string) => abilities.includes(a));
+    if (picked.length !== count) missing = true;
+    for (const ability of picked) bonus[ability] = (bonus[ability] ?? 0) + increase.amount;
+  });
+  return { bonus, missing };
+}
 
-// Final stats from the choices made in the form: species bonuses, class hit die, ability modifiers
+// Final stats from the choices made in the form, by the Player's Handbook: species increases,
+// class hit die, saving throws and power points from the class table, armor actually bought
 function deriveStats(data: CharacterData) {
   const cls = getClassById(data.class);
   const sp = getSpeciesById(data.species);
   const level = Number(data.level) || 1;
   const abilityScores: Record<string, number> = { ...(data.abilityScores ?? data.abilities) };
-  for (const [ability, bonus] of Object.entries(sp?.abilityScoreIncrease ?? {})) {
-    const key = ability.toLowerCase();
-    if (key in abilityScores) abilityScores[key] = Math.min(20, abilityScores[key] + bonus);
+  for (const [ability, bonus] of Object.entries(speciesIncreases(data).bonus)) {
+    if (ability in abilityScores) abilityScores[ability] = Math.min(20, abilityScores[ability] + bonus);
   }
   const mod = (ability: string) => calculateModifier(abilityScores[ability]);
   const hitDie = cls?.hitDie ?? 8;
   const perLevel = hitDie / 2 + 1 + mod("constitution");
-  const powerAbility = POWER_ABILITY[data.class];
+  const carried: string[] = (data.equipment ?? []).map((e: any) => e?.name ?? e);
 
   return {
     abilityScores,
     hitPoints: Math.max(1, hitDie + mod("constitution") + (level - 1) * perLevel),
-    armorClass: 10 + mod("dexterity"),
+    armorClass: calculateArmorClass(abilityScores as any, carried),
     initiative: mod("dexterity"),
     speed: sp?.speed?.walk ?? 30,
     languages: sp?.languages ?? data.languages,
     savingThrowProficiencies: (cls?.savingThrows ?? []).map((s) => s.toLowerCase()),
-    powerPoints: powerAbility ? calculateMaxPowerPoints(level, mod(powerAbility)) : 0,
+    skillProficiencies: Array.from(new Set([...(data.skillProficiencies ?? []), ...(data.backgroundSkills ?? [])])),
+    powerPoints: calculatePowerPoints(data.class, level, abilityScores as any),
     proficiencyBonus: calculateProficiencyBonus(level),
   };
 }
@@ -113,7 +118,7 @@ export default function CharacterCreation() {
     resolver: zodResolver(characterSchema),
     defaultValues: {
       name: "",
-      alignment: "Neutral",
+      alignment: "Neutral Balanced",
       gender: "",
       age: 25,
       species: "",
@@ -168,134 +173,26 @@ export default function CharacterCreation() {
 
   const navigate = useNavigate();
 
-  // Effect to update traits when species changes
+  // Choices that depend on an earlier choice start over when that choice changes
   useEffect(() => {
-    if (watchSpecies) {
-      const selectedSpecies = SPECIES.find((s) => s.id === watchSpecies);
-      if (selectedSpecies) {
-        // Update traits from species
-        setValue("traits", selectedSpecies.traits || []);
-
-        // Update languages
-        setValue("languages", [
-          "Basic",
-          ...(selectedSpecies.languages?.filter((l) => l !== "Basic") || []),
-        ]);
-
-        // Update speed
-        setValue("speed", selectedSpecies.speed || 30);
-
-        // Apply ability score adjustments
-        if (selectedSpecies.abilityScoreAdjustments) {
-          const currentAbilities = { ...watchAbilities };
-          const adjustments = selectedSpecies.abilityScoreAdjustments;
-
-          Object.entries(adjustments).forEach(([ability, adjustment]) => {
-            if (
-              currentAbilities[ability as keyof typeof currentAbilities] !==
-              undefined
-            ) {
-              currentAbilities[ability as keyof typeof currentAbilities] +=
-                adjustment;
-            }
-          });
-
-          setValue("abilities", currentAbilities);
-        }
-      }
-    }
+    setValue("speciesAbilityOption", 0);
+    setValue("speciesAbilityChoices", []);
   }, [watchSpecies, setValue]);
 
-  // Effect to update class-related features
-  useEffect(() => {
-    if (watchClass) {
-      const selectedClass = CLASSES.find((c) => c.id === watchClass);
-      if (selectedClass) {
-        // Get class features for level 1
-        const levelOneFeatures = selectedClass.features?.[1] || [];
-
-        // Add class features to traits
-        setValue("traits", [...watch("traits"), ...levelOneFeatures]);
-
-        // Update hit points
-        const constitutionMod = calculateModifier(watchAbilities.constitution);
-        const hitPoints = calculateHitPoints(
-          watchLevel,
-          selectedClass.hitDie,
-          constitutionMod,
-        );
-        setValue("hitPoints", hitPoints);
-
-        // Update power points and max level if class has spellcasting
-        if (selectedClass.spellcasting) {
-          const castingAbility = selectedClass.spellcasting.ability;
-          const abilityModifier = calculateModifier(
-            watchAbilities[castingAbility as keyof typeof watchAbilities],
-          );
-
-          const powerPoints = calculateMaxPowerPoints(
-            watchLevel,
-            abilityModifier,
-          );
-          const maxPowerLevel = calculateMaxPowerLevel(watchLevel);
-
-          setValue("powerPoints", powerPoints);
-          setValue("maxPowerLevel", maxPowerLevel);
-        }
-      }
-    }
-  }, [watchClass, watchLevel, watchAbilities, setValue]);
-
-  // Skill choices belong to the class
   useEffect(() => {
     setValue("skillProficiencies", []);
+    setValue("forcePowers", []);
+    setValue("techPowers", []);
+    setValue("equipment", []);
+    // Starting wealth by class: the average of the class's roll
+    setValue("credits", calculateStartingCredits(watchClass) || 500);
   }, [watchClass, setValue]);
 
-  // Effect to update derived stats when abilities change
+  const watchBackground = watch("background");
   useEffect(() => {
-    if (watchAbilities) {
-      const dexMod = calculateModifier(watchAbilities.dexterity);
-
-      // Update AC (basic calculation, will be overridden by equipment)
-      setValue("armorClass", 10 + dexMod);
-
-      // Update initiative
-      setValue("initiative", dexMod);
-
-      // Update proficiency bonus based on level
-      setValue("proficiencyBonus", calculateProficiencyBonus(watchLevel));
-
-      // Recalculate hit points if class is selected
-      if (watchClass) {
-        const selectedClass = CLASSES.find((c) => c.id === watchClass);
-        if (selectedClass) {
-          const conMod = calculateModifier(watchAbilities.constitution);
-          const hitPoints = calculateHitPoints(
-            watchLevel,
-            selectedClass.hitDie,
-            conMod,
-          );
-          setValue("hitPoints", hitPoints);
-        }
-      }
-
-      // Recalculate power points if applicable
-      if (watchClass) {
-        const selectedClass = CLASSES.find((c) => c.id === watchClass);
-        if (selectedClass?.spellcasting) {
-          const castingAbility = selectedClass.spellcasting.ability;
-          const abilityMod = calculateModifier(
-            watchAbilities[castingAbility as keyof typeof watchAbilities],
-          );
-
-          setValue(
-            "powerPoints",
-            calculateMaxPowerPoints(watchLevel, abilityMod),
-          );
-        }
-      }
-    }
-  }, [watchAbilities, watchLevel, watchClass, setValue]);
+    setValue("backgroundSkills", []);
+    setValue("feats", []);
+  }, [watchBackground, setValue]);
 
   const onSubmit = async (data: CharacterData) => {
     setIsSubmitting(true);
@@ -303,6 +200,7 @@ export default function CharacterCreation() {
 
     try {
       if (!getClassById(data.class)) throw new Error("Invalid class selection");
+      if (speciesIncreases(data).missing) throw new Error("Choose your species ability score increases (Species step)");
 
       // Prepare final character data
       const characterData = { ...data, ...deriveStats(data) };
@@ -404,6 +302,7 @@ export default function CharacterCreation() {
           form={methods}
           allSkills={SKILL_OPTIONS}
           getSelectedClass={() => getClassById(watch("class"))}
+          background={getBackgroundById(watch("background"))}
         />
       ),
     },
@@ -417,8 +316,9 @@ export default function CharacterCreation() {
       name: "Feats",
       component: (
         <FeatsSelection
-          availableFeats={Math.floor((Number(watch("level")) || 1) / 4)}
+          availableFeats={getBackgroundById(watch("background")) ? 1 : 0}
           characterClass={watch("class")}
+          options={getBackgroundById(watch("background"))?.featOptions}
         />
       ),
     },
@@ -427,7 +327,6 @@ export default function CharacterCreation() {
       component: (
         <EquipmentSelection
           form={methods}
-          allEquipment={EQUIPMENT}
           getSelectedClass={() => getClassById(watch("class"))}
         />
       ),
@@ -558,8 +457,10 @@ function PreviewPanel({ data }: { data: CharacterData }) {
         ))}
       </div>
       <div className="px-4 text-sm space-y-1">
-        <div>Background: {data.background || "Not chosen"}</div>
-        <div>Skills: {names(data.skillProficiencies)}</div>
+        <div>Background: {getBackgroundById(data.background)?.name || "Not chosen"}</div>
+        <div>Saving Throws: {names(stats.savingThrowProficiencies)}</div>
+        <div>Skills: {names(stats.skillProficiencies)}</div>
+        <div>Feats: {names(data.feats)}</div>
         <div>Equipment: {names(data.equipment)}</div>
       </div>
     </div>

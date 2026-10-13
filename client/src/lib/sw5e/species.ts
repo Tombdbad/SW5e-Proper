@@ -1,12 +1,25 @@
-// Species data for SW5E
+// Species: a view over shared/data/sw5e/species.json (generated, see shared/data/index.ts)
+import speciesData from "@shared/data/sw5e/species.json";
+import { summarize } from "@shared/data";
+
+// One ability increase as the books give it: a named ability, a choice between the named
+// abilities, or "Any one" / "Any two" / "Any four"
+export interface AbilityIncrease {
+  abilities: string[];
+  amount: number;
+}
+
 export interface Species {
   id: string;
   name: string;
   summary: string;
   description: string;
+  // Increases that involve no choice, keyed by lowercase ability
   abilityScoreIncrease: {
     [key: string]: number;
   };
+  // Every alternative set of increases, choices included
+  abilityScoreOptions: AbilityIncrease[][];
   size: string;
   speed: {
     walk: number;
@@ -22,6 +35,7 @@ export interface Species {
   }[];
   languages: string[];
   source: string;
+  homeworld?: string;
   commonClasses?: string[];
   subspecies?: Subspecies[];
 }
@@ -40,260 +54,52 @@ export interface Subspecies {
   }[];
 }
 
-export const species: Species[] = [
-  {
-    id: "abyssin",
-    name: "Abyssin",
-    summary:
-      "Tough and resilient humanoids with exceptional survival instincts",
-    description:
-      "Known for their tough hides and resilience. Often seen as solitary and stoic individuals.",
-    abilityScoreIncrease: {
-      constitution: 2,
-      strength: 1,
-    },
-    size: "Medium",
-    speed: { walk: 30 },
-    vision: {
-      type: "Darkvision",
-      range: 60,
-    },
-    traits: [
-      {
-        name: "Natural Armor",
-        description: "Your tough hide grants you a +1 bonus to your AC.",
-      },
-      {
-        name: "Unblinking Gaze",
-        description:
-          "You have advantage on saving throws against being blinded.",
-      },
-    ],
-    languages: ["Galactic Basic", "Abyssin"],
-    source: "UCSC",
-    commonClasses: ["Warrior", "Guardian"],
-  },
-  {
-    id: "advozse",
-    name: "Advozse",
-    summary: "Telepathic humanoids with keen intellectual abilities",
-    description:
-      "Highly intelligent and often contemplative. Their telepathic abilities shape their communication and social interactions.",
-    abilityScoreIncrease: {
-      intelligence: 2,
-      wisdom: 1,
-    },
-    size: "Medium",
-    speed: { walk: 30 },
-    vision: { type: "Normal" },
-    traits: [
-      {
-        name: "Advozse Telepathy",
-        description:
-          "You can communicate telepathically with any creature within 30 feet that shares a language with you.",
-      },
-      {
-        name: "Keen Intellect",
-        description: "You gain proficiency in the Investigation skill.",
-      },
-    ],
-    languages: ["Galactic Basic", "Advozse"],
-    source: "UCSC",
-    commonClasses: ["Scholar", "Consular"],
-  },
-  {
-    id: "aleena",
-    name: "Aleena",
-    summary: "Small, agile humanoids known for their acrobatic abilities",
-    description:
-      "Known for their exceptional agility and grace. Their culture often values physical dexterity and performance.",
-    abilityScoreIncrease: {
-      dexterity: 2,
-      charisma: 1,
-    },
-    size: "Small",
-    speed: { walk: 35 },
-    vision: { type: "Normal" },
-    traits: [
-      {
-        name: "Aleena Agility",
-        description: "You have advantage on Acrobatics checks.",
-      },
-      {
-        name: "Natural Acrobat",
-        description: "You gain proficiency in the Acrobatics skill.",
-      },
-    ],
-    languages: ["Galactic Basic", "Aleena"],
-    source: "UCSC",
-    commonClasses: ["Operative", "Scout"],
-  },
-  {
-    id: "anomid",
-    name: "Anomid",
-    summary: "Quiet and thoughtful humanoids with unique communication methods",
-    description:
-      "Quiet and thoughtful, relying on subtle communication. Often found in roles requiring patience and observation.",
-    abilityScoreIncrease: {
-      intelligence: 2,
-      wisdom: 1,
-    },
-    size: "Medium",
-    speed: { walk: 30 },
-    vision: { type: "Normal" },
-    traits: [
-      {
-        name: "Anomid Communication",
-        description:
-          "You can communicate subtly with other Anomids through facial plate expressions.",
-      },
-      {
-        name: "Mental Resistance",
-        description:
-          "You have advantage on saving throws against being charmed.",
-      },
-    ],
-    languages: ["Galactic Basic", "Anomid"],
-    source: "UCSC",
-    commonClasses: ["Scholar", "Sentinel"],
-  },
-  {
-    id: "arcona",
-    name: "Arcona",
-    summary: "Amphibious humanoids with thick protective hides",
-    description:
-      "Robust and adapted to aquatic environments. Often possess a straightforward and practical nature.",
-    abilityScoreIncrease: {
-      strength: 2,
-      constitution: 1,
-    },
-    size: "Medium",
-    speed: {
-      walk: 30,
-      swim: 30,
-    },
-    vision: { type: "Normal" },
-    traits: [
-      {
-        name: "Amphibious",
-        description: "You can breathe both air and water.",
-      },
-      {
-        name: "Thick Hide",
-        description: "Your thick hide grants you a +1 bonus to your AC.",
-      },
-    ],
-    languages: ["Galactic Basic", "Arconese"],
-    source: "UCSC",
-    commonClasses: ["Warrior", "Guardian"],
-  },
-  {
-    id: "human",
-    name: "Human",
-    summary:
-      "Adaptable and ambitious, humans can be found throughout the galaxy.",
-    description:
-      "Humans are the most widespread species in the galaxy, known for their adaptability and drive. They come from diverse cultures across countless worlds.",
-    abilityScoreIncrease: {
-      Strength: 1,
-      Dexterity: 1,
-    },
-    size: "Medium",
-    speed: { walk: 30 },
-    vision: { type: "Normal" },
-    traits: [
-      { name: "Versatile", description: "Versatile" },
-      { name: "Fast Learner", description: "Fast Learner" },
-    ],
-    languages: ["Galactic Basic", "One additional language of your choice"],
-    source: "Core Rulebook",
-  },
-  {
-    id: "twi-lek",
-    name: "Twi'lek",
-    summary: "Graceful humanoids with distinctive head tentacles called lekku.",
-    description:
-      "Native to the harsh world of Ryloth, Twi'leks are known for their colorful skin and twin head-tails (lekku) that can be used for subtle communication.",
-    abilityScoreIncrease: {
-      Dexterity: 2,
-      Charisma: 1,
-    },
-    size: "Medium",
-    speed: { walk: 30 },
-    vision: { type: "Normal" },
-    traits: [
-      { name: "Lekku Communication", description: "Lekku Communication" },
-      { name: "Heat Resistance", description: "Heat Resistance" },
-    ],
-    languages: ["Galactic Basic", "Twi'leki"],
-    source: "Core Rulebook",
-  },
-  {
-    id: "wookiee",
-    name: "Wookiee",
-    summary: "Tall, powerful warriors with great strength and loyalty.",
-    description:
-      "Hailing from the forest planet Kashyyyk, Wookiees are known for their great strength, technological aptitude, and unwavering loyalty.",
-    abilityScoreIncrease: {
-      Strength: 2,
-      Constitution: 1,
-    },
-    size: "Medium",
-    speed: { walk: 30 },
-    vision: { type: "Normal" },
-    traits: [
-      { name: "Natural Climber", description: "Natural Climber" },
-      { name: "Powerful Build", description: "Powerful Build" },
-      { name: "Wookiee Rage", description: "Wookiee Rage" },
-    ],
-    languages: ["Galactic Basic", "Shyriiwook"],
-    source: "Core Rulebook",
-  },
-  {
-    id: "zabrak",
-    name: "Zabrak",
-    summary: "Resilient humanoids with prominent horns and facial tattoos.",
-    description:
-      "Known for their determination and willpower, Zabraks have distinctive horns and facial patterns that reflect their clans and personal achievements.",
-    abilityScoreIncrease: {
-      Constitution: 2,
-      Wisdom: 1,
-    },
-    size: "Medium",
-    speed: { walk: 30 },
-    vision: { type: "Normal" },
-    traits: [
-      { name: "Warrior Culture", description: "Warrior Culture" },
-      { name: "Resilient", description: "Resilient" },
-      { name: "Fighting Spirit", description: "Fighting Spirit" },
-    ],
-    languages: ["Galactic Basic", "Zabraki"],
-    source: "Core Rulebook",
-  },
-  {
-    id: "bothan",
-    name: "Bothan",
-    summary: "Furred humanoids known for espionage and information gathering.",
-    description:
-      "Bothans are known throughout the galaxy for their extensive information network and skill in espionage. Their fur ripples with their emotional state.",
-    abilityScoreIncrease: {
-      Dexterity: 1,
-      Intelligence: 1,
-      Charisma: 1,
-    },
-    size: "Medium",
-    speed: { walk: 30 },
-    vision: { type: "Normal" },
-    traits: [
-      { name: "Bothan Spy Network", description: "Bothan Spy Network" },
-      { name: "Heightened Senses", description: "Heightened Senses" },
-      { name: "Cunning", description: "Cunning" },
-    ],
-    languages: ["Galactic Basic", "Bothese"],
-    source: "Core Rulebook",
-  },
-  // Add more species as needed
-];
+// Traits every species has; they are shown as fields, not as special traits
+const STANDARD_TRAITS = new Set(["Ability Score Increase", "Age", "Alignment", "Size", "Speed", "Languages", "Type"]);
+
+const isChoice = (increase: AbilityIncrease) => increase.abilities.length !== 1 || /^any /i.test(increase.abilities[0]);
+
+function toSpecies(row: any): Species {
+  const trait = (name: string): string => row.traits?.find((t: any) => t.name === name)?.description ?? "";
+  const options: AbilityIncrease[][] = (row.abilitiesIncreased ?? []).map((set: any[]) =>
+    set.map((i) => ({ abilities: i.abilities, amount: i.amount })),
+  );
+  const fixed: Record<string, number> = {};
+  for (const increase of options[0] ?? []) {
+    if (!isChoice(increase)) fixed[increase.abilities[0].toLowerCase()] = increase.amount;
+  }
+  const speedText = trait("Speed");
+  const speed: Species["speed"] = { walk: Number((speedText.match(/walking speed is (\d+)/) ?? [])[1] ?? 30) };
+  const modes: Record<string, string> = { swimming: "swim", climbing: "climb", flying: "fly", burrowing: "burrow" };
+  for (const m of speedText.matchAll(/(\w+) speed of (\d+)/g)) {
+    if (modes[m[1]]) speed[modes[m[1]]] = Number(m[2]);
+  }
+  const darkvision = row.traits?.find((t: any) => /darkvision/i.test(t.name));
+  const spoken = (trait("Languages").match(/(?:speak, read, and write|speak and understand|write)\s+(.+?)\./i) ?? [])[1];
+  const special = [
+    ...(row.traits ?? []).filter((t: any) => !STANDARD_TRAITS.has(t.name)),
+    ...(row.features ?? []).map((f: any) => ({ name: f.name, description: f.text })),
+  ];
+  return {
+    id: row.id,
+    name: row.name,
+    summary: [row.distinctions, row.homeworld && `Homeworld: ${row.homeworld}`].filter(Boolean).join(". ") || summarize(row.flavorText),
+    description: row.flavorText ?? "",
+    abilityScoreIncrease: fixed,
+    abilityScoreOptions: options,
+    size: row.size ?? "Medium",
+    speed,
+    vision: darkvision
+      ? { type: "Darkvision", range: Number((darkvision.description.match(/(\d+) feet/) ?? [])[1] ?? 60) }
+      : { type: "Normal" },
+    traits: special.map((t: any) => ({ name: t.name, description: t.description })),
+    languages: spoken ? spoken.split(/,\s*(?:and\s+)?|\s+and\s+/).map((l: string) => l.trim()).filter(Boolean) : ["Galactic Basic", row.language].filter(Boolean),
+    source: row.contentSource,
+    homeworld: row.homeworld,
+  };
+}
+
+export const species: Species[] = (speciesData as any[]).map(toSpecies);
 
 // Helper functions
 export function getSpeciesById(id: string): Species | undefined {
@@ -307,6 +113,19 @@ export function getSpeciesNames(): { id: string; name: string }[] {
 export function getSubspeciesBySpeciesId(speciesId: string): Subspecies[] {
   const speciesData = getSpeciesById(speciesId);
   return speciesData?.subspecies || [];
+}
+
+// Does this set of increases leave something for the player to choose?
+export function hasAbilityChoice(set: AbilityIncrease[]): boolean {
+  return set.some(isChoice);
+}
+
+// The abilities one increase may go to, lowercase; "Any ..." allows all six
+export function increaseChoices(increase: AbilityIncrease): { abilities: string[]; count: number } {
+  const all = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"];
+  const any = increase.abilities[0].match(/^any (one|two|three|four|five|six)/i);
+  if (any) return { abilities: all, count: ["one", "two", "three", "four", "five", "six"].indexOf(any[1].toLowerCase()) + 1 };
+  return { abilities: increase.abilities.map((a) => a.toLowerCase()), count: 1 };
 }
 
 // Export named constant for use in UI

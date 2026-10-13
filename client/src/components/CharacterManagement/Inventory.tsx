@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { SearchIcon, PlusIcon, XIcon } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import TranslucentPane from '@/components/ui/TranslucentPane';
-import { getAllItems, getItemsByType, findItemById } from '@/lib/sw5e/items';
+import { getAllItems, findItemById, findItemByName } from '@/lib/sw5e/items';
 import { Item, Weapon, Armor } from '@/lib/sw5e/items';
 
 // Helper function to determine if an item is a weapon
@@ -22,15 +22,18 @@ function isArmor(item: Item): item is Armor {
 
 interface InventoryProps {
   character: any;
+  // Called with the changed fields; the page keeps them until Save Changes
+  onUpdate?: (changes: Record<string, any>) => void;
 }
 
-export default function Inventory({ character }: InventoryProps) {
+export default function Inventory({ character, onUpdate }: InventoryProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [addItemDialogOpen, setAddItemDialogOpen] = useState(false);
   const [tabValue, setTabValue] = useState('all');
   
-  // Initialize inventory if not present
-  const inventory = character.inventory || [];
+  // Characters store equipment as a list of item names
+  const carried: string[] = character.equipment || [];
+  const inventory = carried.map((name) => ({ itemId: findItemByName(name)?.id ?? name, quantity: 1, equipped: false }));
   
   // Filter items based on search term and tab
   const filteredItems = getAllItems().filter(item => {
@@ -43,38 +46,13 @@ export default function Inventory({ character }: InventoryProps) {
   
   // Add an item to the character's inventory
   const addItemToInventory = (item: Item) => {
-    const updatedInventory = [...inventory, {
-      itemId: item.id,
-      quantity: 1,
-      equipped: false
-    }];
-    
-    // Update character data
-    // This would typically involve an API call
-    console.log('Adding item to inventory:', item.name);
-    
-    // Close the dialog
+    onUpdate?.({ equipment: [...carried, item.name] });
     setAddItemDialogOpen(false);
   };
   
   // Remove an item from character's inventory
   const removeItemFromInventory = (index: number) => {
-    const updatedInventory = [...inventory];
-    updatedInventory.splice(index, 1);
-    
-    // Update character data
-    // This would typically involve an API call
-    console.log('Removing item at index:', index);
-  };
-  
-  // Toggle whether an item is equipped
-  const toggleEquipped = (index: number) => {
-    const updatedInventory = [...inventory];
-    updatedInventory[index].equipped = !updatedInventory[index].equipped;
-    
-    // Update character data
-    // This would typically involve an API call
-    console.log('Toggling equipped state for item at index:', index);
+    onUpdate?.({ equipment: carried.filter((_, i) => i !== index) });
   };
   
   return (
@@ -128,7 +106,7 @@ export default function Inventory({ character }: InventoryProps) {
                     
                     <div className="h-96 overflow-y-auto pr-2">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {filteredItems.map((item) => (
+                        {filteredItems.slice(0, 60).map((item) => (
                           <Card key={item.id} className="bg-gray-800 border-gray-700 hover:border-yellow-600 transition-all cursor-pointer" onClick={() => addItemToInventory(item)}>
                             <CardHeader className="p-4 pb-2">
                               <div className="flex justify-between">
@@ -210,7 +188,6 @@ export default function Inventory({ character }: InventoryProps) {
                         equipped: inventoryItem.equipped
                       }}
                       onRemove={() => removeItemFromInventory(index)}
-                      onToggleEquipped={() => toggleEquipped(index)}
                     />
                   );
                 })}
@@ -241,7 +218,6 @@ export default function Inventory({ character }: InventoryProps) {
                         equipped: inventoryItem.equipped
                       }}
                       onRemove={() => removeItemFromInventory(index)}
-                      onToggleEquipped={() => toggleEquipped(index)}
                     />
                   );
                 })}
@@ -272,7 +248,6 @@ export default function Inventory({ character }: InventoryProps) {
                         equipped: inventoryItem.equipped
                       }}
                       onRemove={() => removeItemFromInventory(index)}
-                      onToggleEquipped={() => toggleEquipped(index)}
                     />
                   );
                 })}
@@ -303,7 +278,6 @@ export default function Inventory({ character }: InventoryProps) {
                         equipped: inventoryItem.equipped
                       }}
                       onRemove={() => removeItemFromInventory(index)}
-                      onToggleEquipped={() => toggleEquipped(index)}
                     />
                   );
                 })}
@@ -319,10 +293,9 @@ export default function Inventory({ character }: InventoryProps) {
 interface InventoryItemProps {
   item: any;
   onRemove: () => void;
-  onToggleEquipped: () => void;
 }
 
-function InventoryItem({ item, onRemove, onToggleEquipped }: InventoryItemProps) {
+function InventoryItem({ item, onRemove }: InventoryItemProps) {
   const [showDetails, setShowDetails] = useState(false);
   
   return (
@@ -394,21 +367,11 @@ function InventoryItem({ item, onRemove, onToggleEquipped }: InventoryItemProps)
             
             <p><span className="font-semibold">Value:</span> {item.cost} credits</p>
             {item.weight && (
-              <p><span className="font-semibold">Weight:</span> {item.weight} kg</p>
+              <p><span className="font-semibold">Weight:</span> {item.weight} lb.</p>
             )}
           </div>
         )}
       </CardContent>
-      
-      <CardFooter className="p-4 pt-0 flex justify-end">
-        <Button 
-          variant={item.equipped ? "destructive" : "default"}
-          size="sm"
-          onClick={onToggleEquipped}
-        >
-          {item.equipped ? 'Unequip' : 'Equip'}
-        </Button>
-      </CardFooter>
     </Card>
   );
 }

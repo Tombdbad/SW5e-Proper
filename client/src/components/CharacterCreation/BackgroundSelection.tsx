@@ -73,7 +73,9 @@ export default function BackgroundSelection({ onSelect }: BackgroundSelectionPro
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
             <div>
-              <h4 className="text-yellow-400 text-sm font-medium mb-1">Skill Proficiencies</h4>
+              <h4 className="text-yellow-400 text-sm font-medium mb-1">
+                Skill Proficiencies (choose {backgroundInfo.numSkillChoices} in the Skills step)
+              </h4>
               <ul className="list-disc pl-5 text-sm">
                 {backgroundInfo.skillProficiencies.map((skill, index) => (
                   <li key={index}>{skill}</li>

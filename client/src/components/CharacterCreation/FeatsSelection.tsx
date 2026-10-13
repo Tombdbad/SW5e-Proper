@@ -10,16 +10,19 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { FEATS } from "@/lib/sw5e/feats";
+import { feats } from "@/lib/sw5e/feats";
 
 interface FeatsSelectionProps {
   availableFeats: number;
   characterClass: string;
+  // Feat names on offer (a background's feat list); all feats when left out
+  options?: string[];
 }
 
-export default function FeatsSelection({ availableFeats, characterClass }: FeatsSelectionProps) {
+export default function FeatsSelection({ availableFeats, characterClass, options }: FeatsSelectionProps) {
   const { control, watch, setValue } = useFormContext();
   const selectedFeats = watch("feats") || [];
+  const offered = options ? feats.filter((feat) => options.includes(feat.name)) : feats;
 
   const handleToggleFeat = (featId: string) => {
     if (selectedFeats.includes(featId)) {
@@ -36,7 +39,11 @@ export default function FeatsSelection({ availableFeats, characterClass }: Feats
       <div>
         <FormLabel>Feats ({selectedFeats.length}/{availableFeats})</FormLabel>
         <p className="text-sm text-gray-400 mb-4">
-          Select up to {availableFeats} feats for your character.
+          {options
+            ? availableFeats > 0
+              ? "Your background grants one of these feats."
+              : "Choose a background first: it grants your starting feat."
+            : `Select up to ${availableFeats} feats for your character.`}
         </p>
 
         <FormField
@@ -46,13 +53,13 @@ export default function FeatsSelection({ availableFeats, characterClass }: Feats
             <FormItem>
               <ScrollArea className="h-72 p-1">
                 <div className="space-y-4">
-                  {FEATS.map((feat) => (
+                  {offered.map((feat) => (
                     <div key={feat.id} className="flex items-start space-x-2">
                       <Checkbox
                         id={feat.id}
-                        checked={selectedFeats.includes(feat.id)}
-                        onCheckedChange={() => handleToggleFeat(feat.id)}
-                        disabled={!selectedFeats.includes(feat.id) && selectedFeats.length >= availableFeats}
+                        checked={selectedFeats.includes(feat.name)}
+                        onCheckedChange={() => handleToggleFeat(feat.name)}
+                        disabled={!selectedFeats.includes(feat.name) && selectedFeats.length >= availableFeats}
                       />
                       <div className="grid gap-1.5 leading-none">
                         <label
@@ -61,6 +68,9 @@ export default function FeatsSelection({ availableFeats, characterClass }: Feats
                         >
                           {feat.name}
                         </label>
+                        {feat.prerequisite && (
+                          <p className="text-xs text-gray-400">Prerequisite: {feat.prerequisite}</p>
+                        )}
                       </div>
                     </div>
                   ))}

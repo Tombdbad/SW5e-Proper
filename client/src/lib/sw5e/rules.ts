@@ -1,8 +1,11 @@
-import { AbilityType } from './abilities';
-import { Class } from './classes';
+import lookups from "@shared/data/sw5e/lookups.json";
+import { SW5EClass, getClassById, getPowerProgression } from './classes';
 import { Species } from './species';
 import { Skill } from './skills';
 import { Background } from './backgrounds';
+import { equipment } from './equipment';
+
+type Class = SW5EClass & Record<string, any>;
 
 export type AbilityScores = {
   strength: number;
@@ -45,35 +48,29 @@ export const calculateProficiencyBonus = (level: number): number => {
   return Math.ceil(1 + (level / 4));
 };
 
-// Calculate force points based on character class and wisdom modifier
-export const calculateForcePoints = (
-  character: any, 
-  classFeatures: { forceUser: boolean }, 
+// Force or tech points: the class table's points plus the casting modifier. Force users add
+// Wisdom or Charisma (their choice, so the better one); tech users add Intelligence.
+export const calculatePowerPoints = (
+  classId: string,
   level: number,
-  abilityScores: any
+  abilityScores: AbilityScores
 ): number => {
-  if (!classFeatures.forceUser) return 0;
-
-  const wisdomModifier = getAbilityModifier(abilityScores.wisdom);
-  return level + wisdomModifier;
+  const progression = getPowerProgression(classId, level);
+  if (progression.type === "None" || progression.points === 0) return 0;
+  const modifier = progression.type === "Force"
+    ? Math.max(getAbilityModifier(abilityScores.wisdom), getAbilityModifier(abilityScores.charisma))
+    : getAbilityModifier(abilityScores.intelligence);
+  return Math.max(0, progression.points + modifier);
 };
 
-// Calculate tech points based on character class and intelligence modifier
-export const calculateTechPoints = (
-  character: any, 
-  classFeatures: { techUser: boolean }, 
-  level: number,
-  abilityScores: any
-): number => {
-  if (!classFeatures.techUser) return 0;
-
-  const intelligenceModifier = getAbilityModifier(abilityScores.intelligence);
-  return level + intelligenceModifier;
+// Powers a class knows at a level, from its class table
+export const calculatePowersKnown = (classId: string, level: number): number => {
+  return getPowerProgression(classId, level).powersKnown;
 };
 
-// Calculate maximum force/tech power level based on character level
-export const calculateMaxPowerLevel = (level: number): number => {
-  return Math.min(5, Math.ceil(level / 4));
+// Highest power level a class can cast at a level, from its class table
+export const calculateMaxPowerLevel = (level: number, classId?: string): number => {
+  return classId ? getPowerProgression(classId, level).maxPowerLevel : 0;
 };
 
 // Check if a character meets the prerequisites for a power
@@ -92,16 +89,7 @@ export const meetsPowerPrerequisites = (character: any, power: any): boolean => 
 
 // Point buy system constants
 export const MAX_POINT_BUY_POINTS = 27;
-export const ABILITY_SCORE_COSTS = {
-  8: 0,
-  9: 1,
-  10: 2,
-  11: 3,
-  12: 4,
-  13: 5,
-  14: 7,
-  15: 9
-};
+export const ABILITY_SCORE_COSTS: Record<string, number> = lookups.abilityScorePointCost;
 
 // Aliases for getAbilityModifier for backward compatibility
 export const calculateModifier = getAbilityModifier;
@@ -271,36 +259,25 @@ export const calculatePassivePerception = (
   return 10 + wisdomModifier + bonus;
 };
 
-// Calculate armor class based on armor, dexterity, and other bonuses
+// Armor class from the armor and shield actually carried (names as in the equipment data).
+// Armor entries read "11 + Dex modifier", "13 + Dex modifier (max 2)" or "17"; shields "+1".
 export const calculateArmorClass = (
   abilityScores: AbilityScores,
-  armorType: string | null,
-  shield: boolean,
+  carried: string[] = [],
   armorBonus: number = 0
 ): number => {
   const dexModifier = getAbilityModifier(abilityScores.dexterity);
-
-  // No armor (unarmored defense)
-  if (!armorType) {
-    return 10 + dexModifier + armorBonus;
+  const names = carried.map((n) => String(n).toLowerCase());
+  const owned = equipment.filter((e) => e.category === "Armor" && names.includes(e.name.toLowerCase()));
+  let best = 10 + dexModifier;
+  for (const armor of owned.filter((e) => e.armorClassification !== "Shield")) {
+    const base = Number((String(armor.armorClass).match(/^\d+/) ?? [0])[0]);
+    const cap = String(armor.armorClass).match(/max (\d+)/);
+    const dex = !/dex/i.test(String(armor.armorClass)) ? 0 : cap ? Math.min(Number(cap[1]), dexModifier) : dexModifier;
+    best = Math.max(best, base + dex);
   }
-
-  // Different armor types
-  switch (armorType.toLowerCase()) {
-    case 'light armor':
-      return 11 + dexModifier + armorBonus; // Base for light armor
-    case 'medium armor':
-      return 14 + Math.min(2, dexModifier) + armorBonus; // Cap dex bonus at +2 for medium
-    case 'heavy armor':
-      return 16 + armorBonus; // No dex bonus for heavy armor
-    default:
-      return 10 + dexModifier + armorBonus;
-  }
-
-  // Add shield bonus if applicable
-  if (shield) {
-    return (10 + dexModifier + armorBonus) + 2;
-  }
+  const shield = Math.max(0, ...owned.filter((e) => e.armorClassification === "Shield").map((e) => Number((String(e.armorClass).match(/\d+/) ?? [0])[0])));
+  return best + shield + armorBonus;
 };
 
 // Check if character meets prerequisites for multiclassing
@@ -319,104 +296,6 @@ export const checkMulticlassPrerequisites = (
   }
 
   return true;
-};
-
-// Calculate the power slots available at a given level for a particular class
-export const calculatePowerSlots = (
-  characterClass: Class,
-  level: number,
-  isMulticlass: boolean = false
-): Record<number, number> => {
-  // If the class doesn't have force or tech powers, return empty slots
-  if (!characterClass.forceUser && !characterClass.techUser) {
-    return {};
-  }
-
-  // Slot table indexed by level and slot level
-  const fullCasterTable = {
-    1: { 1: 2, 2: 0, 3: 0, 4: 0, 5: 0 },
-    2: { 1: 3, 2: 0, 3: 0, 4: 0, 5: 0 },
-    3: { 1: 4, 2: 2, 3: 0, 4: 0, 5: 0 },
-    4: { 1: 4, 2: 3, 3: 0, 4: 0, 5: 0 },
-    5: { 1: 4, 2: 3, 3: 2, 4: 0, 5: 0 },
-    6: { 1: 4, 2: 3, 3: 3, 4: 0, 5: 0 },
-    7: { 1: 4, 2: 3, 3: 3, 4: 1, 5: 0 },
-    8: { 1: 4, 2: 3, 3: 3, 4: 2, 5: 0 },
-    9: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 1 },
-    10: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 },
-    11: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 },
-    12: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 },
-    13: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 },
-    14: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 },
-    15: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 },
-    16: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 },
-    17: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 },
-    18: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 3 },
-    19: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 3 },
-    20: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 3 }
-  };
-
-  const halfCasterTable = {
-    1: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-    2: { 1: 2, 2: 0, 3: 0, 4: 0, 5: 0 },
-    3: { 1: 3, 2: 0, 3: 0, 4: 0, 5: 0 },
-    4: { 1: 3, 2: 0, 3: 0, 4: 0, 5: 0 },
-    5: { 1: 4, 2: 2, 3: 0, 4: 0, 5: 0 },
-    6: { 1: 4, 2: 2, 3: 0, 4: 0, 5: 0 },
-    7: { 1: 4, 2: 3, 3: 0, 4: 0, 5: 0 },
-    8: { 1: 4, 2: 3, 3: 0, 4: 0, 5: 0 },
-    9: { 1: 4, 2: 3, 3: 2, 4: 0, 5: 0 },
-    10: { 1: 4, 2: 3, 3: 2, 4: 0, 5: 0 },
-    11: { 1: 4, 2: 3, 3: 3, 4: 0, 5: 0 },
-    12: { 1: 4, 2: 3, 3: 3, 4: 0, 5: 0 },
-    13: { 1: 4, 2: 3, 3: 3, 4: 1, 5: 0 },
-    14: { 1: 4, 2: 3, 3: 3, 4: 1, 5: 0 },
-    15: { 1: 4, 2: 3, 3: 3, 4: 2, 5: 0 },
-    16: { 1: 4, 2: 3, 3: 3, 4: 2, 5: 0 },
-    17: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 1 },
-    18: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 1 },
-    19: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 },
-    20: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 }
-  };
-
-  const thirdCasterTable = {
-    1: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-    2: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-    3: { 1: 2, 2: 0, 3: 0, 4: 0, 5: 0 },
-    4: { 1: 3, 2: 0, 3: 0, 4: 0, 5: 0 },
-    5: { 1: 3, 2: 0, 3: 0, 4: 0, 5: 0 },
-    6: { 1: 3, 2: 0, 3: 0, 4: 0, 5: 0 },
-    7: { 1: 4, 2: 2, 3: 0, 4: 0, 5: 0 },
-    8: { 1: 4, 2: 2, 3: 0, 4: 0, 5: 0 },
-    9: { 1: 4, 2: 2, 3: 0, 4: 0, 5: 0 },
-    10: { 1: 4, 2: 3, 3: 0, 4: 0, 5: 0 },
-    11: { 1: 4, 2: 3, 3: 0, 4: 0, 5: 0 },
-    12: { 1: 4, 2: 3, 3: 0, 4: 0, 5: 0 },
-    13: { 1: 4, 2: 3, 3: 2, 4: 0, 5: 0 },
-    14: { 1: 4, 2: 3, 3: 2, 4: 0, 5: 0 },
-    15: { 1: 4, 2: 3, 3: 2, 4: 0, 5: 0 },
-    16: { 1: 4, 2: 3, 3: 3, 4: 0, 5: 0 },
-    17: { 1: 4, 2: 3, 3: 3, 4: 0, 5: 0 },
-    18: { 1: 4, 2: 3, 3: 3, 4: 0, 5: 0 },
-    19: { 1: 4, 2: 3, 3: 3, 4: 1, 5: 0 },
-    20: { 1: 4, 2: 3, 3: 3, 4: 1, 5: 0 }
-  };
-
-  // Choose the appropriate table based on class casting type
-  let powerTable;
-
-  if (characterClass.spellcastingType === 'full') {
-    powerTable = fullCasterTable;
-  } else if (characterClass.spellcastingType === 'half') {
-    powerTable = halfCasterTable;
-  } else {
-    powerTable = thirdCasterTable;
-  }
-
-  // Cap at level 20
-  const cappedLevel = Math.min(level, 20);
-
-  return powerTable[cappedLevel];
 };
 
 // Enhancement: Character advancement tracking
@@ -494,59 +373,10 @@ export const getStartingEquipment = (
   return equipment;
 };
 
-// Calculate starting credits based on class and background
-export const calculateStartingCredits = (
-  characterClass: Class,
-  background: Background,
-  rollResult?: number
-): number => {
-  // Base credits from background
-  let credits = background.startingCredits || 0;
-
-  // Add class-based credits (either rolled or average)
-  if (rollResult) {
-    credits += rollResult;
-  } else {
-    // Use average class starting credits
-    const dieType = characterClass.startingCreditsDie || 4;
-    const dieCount = characterClass.startingCreditsMultiplier || 3;
-
-    // Average roll is (dieType + 1) / 2
-    const averageRoll = (dieType + 1) / 2;
-    credits += Math.floor(averageRoll * dieCount) * 10;
-  }
-
-  return credits;
-};
-
-// Utility function to check power prerequisites
-
-// Calculate maximum power points available based on character level and casting ability
-export const calculateMaxPowerPoints = (
-  level: number,
-  abilityModifier: number,
-  isFull: boolean = true,
-  isHalf: boolean = false,
-  isThird: boolean = false
-): number => {
-  // Base power points are level + ability modifier
-  let basePoints = level + abilityModifier;
-
-  // Full casters get full points
-  if (isFull) {
-    return Math.max(1, basePoints);
-  }
-
-  // Half casters get half points (min 1)
-  if (isHalf) {
-    return Math.max(1, Math.floor(basePoints / 2));
-  }
-
-  // Third casters get one-third points (min 1)
-  if (isThird) {
-    return Math.max(1, Math.floor(basePoints / 3));
-  }
-
-  // Default to full caster calculation
-  return Math.max(1, basePoints);
+// Starting wealth by class (Player's Handbook variant), e.g. "8d4 x 100 cr": the roll, or its average
+export const calculateStartingCredits = (classId: string, rollResult?: number): number => {
+  const wealth = (getClassById(classId)?.startingWealth ?? "").match(/(\d+)d(\d+)\s*x\s*(\d+)/);
+  if (!wealth) return 0;
+  const [dice, die, multiplier] = [Number(wealth[1]), Number(wealth[2]), Number(wealth[3])];
+  return (rollResult ?? Math.floor((dice * (die + 1)) / 2)) * multiplier;
 };

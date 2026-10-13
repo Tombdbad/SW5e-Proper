@@ -1,8 +1,7 @@
 
 import { CharacterData } from "../../pages/CharacterCreation";
-import { CLASSES } from "../sw5e/classes";
-import { FORCE_POWERS } from "../sw5e/forcePowers";
-import { TECH_POWERS } from "../sw5e/techPowers";
+import { getClassById, getPowerProgression } from "../sw5e/classes";
+import { getBackgroundById } from "../sw5e/backgrounds";
 
 interface ValidationError {
   field: string;
@@ -42,42 +41,33 @@ export const validateCharacter = async (
     });
   }
 
-  // Class-specific validations
-  const selectedClass = CLASSES.find((c) => c.id === characterData.class);
+  // Class and background choices
+  const selectedClass = getClassById(characterData.class);
   if (selectedClass) {
-    // Validate skill proficiencies
-    const requiredSkillCount = selectedClass.numSkillChoices || 0;
-    if (
-      characterData.skillProficiencies.length < requiredSkillCount &&
-      requiredSkillCount > 0
-    ) {
+    const background = getBackgroundById(characterData.background);
+    const classSkills = selectedClass.numSkillChoices;
+    const backgroundSkills = background?.numSkillChoices ?? 0;
+    if ((characterData.skillProficiencies ?? []).length < classSkills + backgroundSkills) {
       errors.push({
         field: "skillProficiencies",
-        message: `You must select ${requiredSkillCount} skills from your class options`,
+        message: `Choose ${classSkills} class skills and ${backgroundSkills} background skills (Skills step)`,
       });
     }
 
-    // Validate force powers for force users
-    if (
-      selectedClass.spellcasting &&
-      selectedClass.spellcasting.type === "Force" &&
-      characterData.forcePowers.length === 0
-    ) {
+    if (background && background.featOptions.length > 0 && (characterData.feats ?? []).length === 0) {
       errors.push({
-        field: "forcePowers",
-        message: `${selectedClass.name} requires selection of Force powers`,
+        field: "feats",
+        message: `Choose the feat your ${background.name} background grants (Feats step)`,
       });
     }
 
-    // Validate tech powers for tech users
-    if (
-      selectedClass.spellcasting &&
-      selectedClass.spellcasting.type === "Tech" &&
-      characterData.techPowers.length === 0
-    ) {
+    // Casters know powers from 1st level (scouts from 2nd)
+    const progression = getPowerProgression(selectedClass.id, Number(characterData.level) || 1);
+    const known = progression.type === "Force" ? characterData.forcePowers : characterData.techPowers;
+    if (progression.powersKnown > 0 && (known ?? []).length === 0) {
       errors.push({
-        field: "techPowers",
-        message: `${selectedClass.name} requires selection of Tech powers`,
+        field: progression.type === "Force" ? "forcePowers" : "techPowers",
+        message: `${selectedClass.name} knows ${progression.powersKnown} ${progression.type.toLowerCase()} powers at this level: choose at least one (Powers step)`,
       });
     }
   }

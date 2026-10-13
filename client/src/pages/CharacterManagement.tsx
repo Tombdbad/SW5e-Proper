@@ -137,7 +137,10 @@ export default function CharacterManagement() {
               </TabsContent>
               
               <TabsContent value="inventory">
-                <Inventory character={character} />
+                <Inventory
+                  character={character}
+                  onUpdate={(changes) => setEdits((current) => ({ ...current, ...changes }))}
+                />
               </TabsContent>
             </Tabs>
           </CardContent>

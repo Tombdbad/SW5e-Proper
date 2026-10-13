@@ -21,7 +21,7 @@ export default function EquipmentSelection({ form, getSelectedClass }: Equipment
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
   const characterEquipment = watch('equipment') || [];
-  const credits = watch('credits') || 1000;
+  const credits = watch('credits') ?? 0;
 
   useEffect(() => {
     const filtered = equipment.filter(item => {
@@ -71,7 +71,12 @@ export default function EquipmentSelection({ form, getSelectedClass }: Equipment
 
           <ScrollArea className="h-[500px] pr-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {filteredEquipment.map((item) => (
+              {filteredEquipment.length > 60 && (
+                <p className="text-sm text-gray-400 md:col-span-2">
+                  Showing 60 of {filteredEquipment.length} items. Search or pick a tab to narrow the list.
+                </p>
+              )}
+              {filteredEquipment.slice(0, 60).map((item) => (
                 <div key={item.id} className="bg-gray-800/50 rounded-lg p-4 flex flex-col">
                   <div className="flex justify-between items-start mb-2">
                     <h3 className="text-white font-semibold">{item.name}</h3>

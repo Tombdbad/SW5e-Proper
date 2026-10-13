@@ -8,6 +8,7 @@ import { useToast } from '@/components/ui/use-toast';
 import SW5E from '@/lib/sw5e/dataProvider';
 import { useCharacterFormWatch } from '@/hooks/useCharacterForm';
 import { Character } from '@shared/unifiedSchema';
+import { getPowerProgression } from '@/lib/sw5e/classes';
 
 interface PowersSelectionProps {
   onContinue: () => void;
@@ -48,12 +49,11 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
         const techPowers = SW5E.data.techPowers || [];
         setAvailableTechPowers(techPowers);
         
-        // Extract available power levels for filtering
-        const forceLevels = [...new Set(forcePowers.map(power => power.level))].sort();
-        const techLevels = [...new Set(techPowers.map(power => power.level))].sort();
-        
-        setForceLevels(forceLevels);
-        setTechLevels(techLevels);
+        // At-will powers (level 0) up to the highest power level the class table allows
+        const { type, maxPowerLevel } = getPowerProgression(characterClass, Number(characterLevel) || 1);
+        const levels = Array.from({ length: maxPowerLevel + 1 }, (_, level) => level);
+        setForceLevels(type === "Force" ? levels : []);
+        setTechLevels(type === "Tech" ? levels : []);
       } catch (error) {
         console.error('Error loading powers:', error);
         toast({
@@ -65,37 +65,16 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
     };
     
     loadPowers();
-  }, [toast]);
+  }, [toast, characterClass, characterLevel]);
   
   // Calculate max powers based on class and level
   useEffect(() => {
     const calculateMaxPowers = () => {
-      // This is simplified example logic - should be replaced with actual SW5E rules
-      let forcePowersCount = 0;
-      let techPowersCount = 0;
-      
-      switch (characterClass) {
-        case 'consular':
-          forcePowersCount = Math.floor(characterLevel / 2) + 2;
-          break;
-        case 'guardian':
-          forcePowersCount = Math.floor(characterLevel / 3) + 1;
-          break;
-        case 'sentinel':
-          forcePowersCount = Math.floor(characterLevel / 3) + 1;
-          techPowersCount = Math.floor(characterLevel / 4) + 1;
-          break;
-        case 'engineer':
-          techPowersCount = Math.floor(characterLevel / 2) + 2;
-          break;
-        case 'scholar':
-          techPowersCount = Math.floor(characterLevel / 2) + 1;
-          break;
-        default:
-          // Other classes might not have powers or have special rules
-          break;
-      }
-      
+      // Powers known come from the class table; at-will powers count toward the total
+      const progression = getPowerProgression(characterClass, Number(characterLevel) || 1);
+      const forcePowersCount = progression.type === "Force" ? progression.powersKnown : 0;
+      const techPowersCount = progression.type === "Tech" ? progression.powersKnown : 0;
+
       setMaxForcePowersCount(forcePowersCount);
       setMaxTechPowersCount(techPowersCount);
     };
@@ -109,17 +88,7 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
       // Filter by level
       if (power.level !== level) return false;
       
-      // Filter by class (simplified - should be enhanced based on actual SW5E rules)
-      switch (characterClass) {
-        case 'consular':
-          return true; // Consular can access all force powers
-        case 'guardian':
-          return true; // Guardian has access to force powers
-        case 'sentinel':
-          return true; // Sentinel has access to force powers
-        default:
-          return false;
-      }
+      return true;
     });
   };
   
@@ -128,17 +97,7 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
       // Filter by level
       if (power.level !== level) return false;
       
-      // Filter by class (simplified - should be enhanced based on actual SW5E rules)
-      switch (characterClass) {
-        case 'engineer':
-          return true; // Engineer can access all tech powers
-        case 'scholar':
-          return true; // Scholar has access to tech powers
-        case 'sentinel':
-          return true; // Sentinel has access to limited tech powers
-        default:
-          return false;
-      }
+      return true;
     });
   };
   
@@ -343,7 +302,6 @@ const PowersSelection: React.FC<PowersSelectionProps> = ({ onContinue }) => {
                               <div className="flex text-xs mt-2 space-x-2 opacity-75">
                                 <span>Range: {power.range || 'Self'}</span>
                                 <span>Duration: {power.duration || 'Instantaneous'}</span>
-                                <span>Type: {power.techType}</span>
                               </div>
                             </div>
                           ))}
