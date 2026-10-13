@@ -12,8 +12,35 @@ Acceptance test: create a character, it saves and reloads; create a campaign wit
 - Phase 2f game depth: DONE (see "Play rules"). Rests and Hit Dice, death saves, casting powers, levelling up with archetypes and Ability Score Improvements, features that change the numbers, quests that advance, ships with fuel and paid passage, maps drawn from the world.
 - `npm run e2e` passes 48 of 48 steps against the production build (35 of 35 at phone size), run 2026-10-13 on the service.
 - Phase 3 deploy: the app runs as a service and is backed up nightly; it is reached over Tailscale only (the user's choice, 2026-10-13). ONE STEP IS OPEN: Tailscale Serve (HTTPS on the tailnet) has to be enabled once by the user (see "Environment and ops"). Until then nothing outside the VM can open the game. Public HTTPS (Caddy) is kept as a possible later development; ask before opening any port.
-- NOT yet tried on a real phone (waits on the step above).
+- Tailscale Serve is enabled and the user has opened the game on their phone (2026-10-13). What they saw was the old test data: see "Live against legacy".
 - Phase 4 phone UI, Phase 5 GM: NOT started (the Play button bar now wraps, and places on the local map can be tapped).
+
+## Live against legacy (review of 2026-10-13, after the first phone session)
+The user's worry: much earlier work is not reflected in the live app. Their instruction: do not discard legacy work because its hard-coded data is wrong; where a legacy screen has value, feed it from the rules data and wire it into the existing files.
+- Why the new work was not seen: the only rows in the database were "Test Pilot" and "Test Campaign" (ids 2), made by a script before the rules import. That campaign has no world, so Play showed the plain location list and Test Combat and `/map` the stock viewers; "blaster" is not an equipment name, so the character fought unarmed. A new character and campaign show the current game.
+- The import graph over-counts what is live: `lib/stores/useCharacter.ts` and `useCharacterStore.ts` are imported but never called by a page. `hooks/useCharacterForm.ts` is used only for `useCharacterFormWatch` (PowersSelection). `ForcePowersSelection` and `TechPowersSelection` are imported by the creation page and never rendered.
+- `client/src/lib/sw5e/starSystems.ts` and `locations.ts` are imported by `server/sw5eData.ts` (the world seed). They are not dead.
+
+Done in this review (each checked in headless Chromium at phone size; throwaway scripts against `e2e/lib.mjs`):
+- Character sheet (`components/CharacterManagement/CharacterSheet.tsx`): skills and their abilities come from the skills data (Piloting was shown as Dexterity); modifiers come from `rules.ts`; the Combat tab lists carried weapons with attack and damage numbers; the Equipment tab reads equipment saved by name; the Powers tab shows force and tech powers with cost, attack bonus and save DC; languages, tools, saving throws, Hit Dice, experience and conditions are shown; the backstory can be edited. It no longer imports the legacy store.
+- Weapons: `carriedWeapons` (characterCalculation.ts) is the one list for the sheet and Play. `hasWeaponProficiency` (rules.ts) parses the class's own wording ("martial vibroweapons with the finesse property", "that lack the ... properties"). Blasters use Dexterity, other weapons Strength, finesse the better. Without proficiency the bonus is not added. Play picks the best melee and ranged weapon carried.
+- `components/ui/ErrorBoundary.tsx` is mounted around the routes (App.tsx): a failing page shows the error with Home and Try Again, and clears on navigation.
+- Personality: `PersonalityTraitForm` (legacy, never rendered, wrote to the dead store, hard-coded examples) now offers the chosen background's own trait, ideal, bond and flaw tables (all 61 backgrounds have them) and hands its result to the opener. It opens from the Background step in creation and from the sheet. It is not a form element, so it cannot submit the creation form.
+- Class step: shows the book's Quick Build and "Creating a ..." text (`quickBuildText`, `creatingText` in the class data). This is what the legacy TemplateSystem and GuidedMode hard-coded.
+- Character page header and tab bar fit a phone; species, class and background are shown by name.
+
+Found and still open (in the order suggested to the user):
+1. GM tab in Play is dead end to end: GMReportManager calls `generateGameReport` (not imported) and reads `useCharacter(state => state.character)` (no such field); `lib/llm/reportHandler.ts` and `debriefCompiler.ts` read the legacy stores, the latter uses `useMap`/`useCharacter`/`useCampaign` without importing them and a `require`; results go to zustand stores Play never reads. `/api/debriefs` works and has no working caller. Rebuild on Play's own character, campaign and area, applying responses through Play's save functions; keep ClipboardIntegration and LLMResponseParser.
+2. Conditions in a fight: legacy `lib/sw5e/effectParser.ts` + `StatusEffectManager.tsx` + `EffectsPanel.tsx` parse conditions and durations from text. Port the patterns into `powerEffect` (rules.ts) and timed conditions into `lib/stores/useCombat.ts`; `lib/sw5e/conditions.ts` is the data view. Do not port the hard-coded Rage and Sneak Attack cases.
+3. `lib/sw5e/characterLanguageProcessor.ts` (themes and plot hooks from a backstory) has no working consumer; feed it into the GM report now that a backstory can be entered.
+4. World options (seed, starting planet, enemy faction, size) are only offered after Discard World; New Campaign sends only the enemy and party level. A species' `homeworld` (131 of 141 have one) could be the default starting planet.
+5. Enemy faction: `CampaignGenerator.tsx` takes it from the hard-coded list in `lib/sw5e/campaignGenerator.ts`. For a dark-side character it picks "Jedi Order", "Republic", "Rebel Alliance" or "Resistance", for which the data has no stat blocks, so `FORCES` in shared/logic fields Imperial troopers under that name. Choose from the factions shared/logic can field.
+6. Power picker: port the search, level and alignment filters of the unused Force/TechPowersSelection into PowersSelection.
+7. `CharacterExportImport.tsx` is self-contained (props only): add it to the character page.
+8. Creation's Details step collects gender, age, height, weight and description and saves none of them (no columns). Species data has height, weight, skin, hair and eye options and distinctions. Needs a column or two; ask.
+9. Weapon proficiency from species traits and feats is not read; exotic weapons are never proficient.
+10. Campaigns without a world still get the legacy Play and `/map`; offer "Generate a world" there instead (Decisions says they keep the list; the user has not been asked to change that).
+Not worth porting: `CharacterVersioning` (localStorage snapshots), `lib/api/*` (second query layer), `lib/core/*`, `lib/performance`, `useAudio`/`useGame`, `combatmanagers.ts` (ship shape differs from shared/logic). Nothing has been deleted.
 
 ## Environment and ops
 - VM: Ubuntu 24.04, aarch64, 1 vCPU, ~8.9 GB RAM, 4 GB swap, ~30 GB free disk, Node v18.19.1, npm 9.2.0. No Docker.
@@ -170,7 +197,8 @@ Done on 2026-10-13: the data files are generated from the API, expanded content 
 - Rules the books leave open are settled by the labelled house rules under "Play rules". Starting equipment follows the starting wealth variant.
 
 ## Next
-1. The user enables Tailscale Serve (see "Environment and ops"); then check `tailscale serve status` and open the HTTPS address it shows from the phone.
+0. Work down "Found and still open" under "Live against legacy", starting with the GM tab.
+1. Done: Tailscale Serve is on and the phone reaches the game.
 2. Host firewall: still off and still the user's decision (see "Environment and ops"). With Tailscale no inbound port is needed for the game, so loading the saved rules (SSH only) is the safe direction; do it only with the user's go-ahead and with a second SSH session open.
 3. First session on a real phone. Fix what breaks.
 4. Phase 4 phone UI: bottom-sheet HUD, combat panel placement, dvh, PWA manifest and icons, prune dependencies.
