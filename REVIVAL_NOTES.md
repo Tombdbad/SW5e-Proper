@@ -5,10 +5,11 @@ Branch: `revive`. Goal: play the SW5e simulator from a phone browser, hosted on 
 
 Acceptance test: create a character, it saves and reloads; create a campaign with the local generator; open Play with that character and campaign; move between locations; run a combat encounter; HP changes persist after reload.
 
-## Status (updated 2026-10-12, late evening)
-- Phase 0 baseline, Phase 1 boots, Phase 2a backend: DONE (see Done).
-- Phase 2b UI wiring: DONE, commit a2d0035. The script applied every patch (no MISSING lines), build exit 0.
-- Phase 2c real play-through: DONE. Driving the app in headless Chromium showed the acceptance path was still broken in three places that curl and module checks could not see (creation form never submitted, campaign save hit the wrong endpoint, combat damage was text). All fixed. `npm run e2e` now passes 38 of 38 steps against the production build, in a desktop and in a phone-sized viewport.
+## Status (updated 2026-10-13)
+- Phase 0 baseline, Phase 1 boots, Phase 2 core loop: DONE (see Done).
+- Phase 2d rules data: DONE. All SW5e content (core books and expanded content) is imported from the sw5e.com API into `shared/data/sw5e/` by `npm run import:sw5e`. That folder is the single source of rules data; `client/src/lib/sw5e/*.ts` are views over it. Character creation follows the real rules.
+- Phase 2e world generator: DONE. `shared/logic/index.ts` generates and edits a campaign world (galaxy > region > system > planet > settlement > building > room) with paths between areas and people, creatures, ships and loot placed from the rules data. New campaigns get a world; the campaign page edits it; Play travels, fights and loots in it.
+- `npm run e2e` passes 44 of 44 steps against the production build (32 of 32 at phone size).
 - NOT yet tried on a real phone. That needs Phase 3, because nothing is reachable from outside the VM.
 - Phase 3 deploy: NOT started. Ask the user before opening any port. Read "Host firewall" below first.
 - Phase 4 phone UI, Phase 5 GM: NOT started.
@@ -24,12 +25,32 @@ Acceptance test: create a character, it saves and reloads; create a campaign wit
 - Old helper scripts: `~/sw5e-phase0/` (historical). Run logs and screenshots: `~/sw5e-logs/` (`e2e/`, `e2e_phone/`, `shots_desktop/`, `shots_phone/`).
 - A Claude session on this VM through Telegram needs a one-time code for most writes; the CLI session does not.
 
+## Rules data: one source (shared/data)
+- `npm run import:sw5e` (shared/scripts/import-sw5e.ts) downloads every dataset from `https://sw5eapi.azurewebsites.net/api` and writes `shared/data/sw5e/<name>.json` plus `manifest.json` (data version 199, 36 datasets, 9.2 MB, about 15 seconds). It strips storage metadata and duplicate "...Json" / "...Enum" fields, repairs the API's broken dashes and apostrophes, gives every record an `id`, and stores class, archetype and species features with their owner. `SW5E_CACHE=<dir>` reads saved responses instead of the network.
+- It also derives two small files from book text: `travel.json` (the nine galactic regions, the hyperspace travel-time table, realspace times, starship size table) and `lookups.json` (languages, the nine alignments, point-buy costs, wealth by level).
+- Do not edit `shared/data/sw5e/*.json` and do not define rules content anywhere else. Re-run the importer to refresh.
+- `shared/data/index.ts`: `loadDataset(name)`, one lazy loader per dataset. `client/src/lib/sw5e/{species,classes,archetypes,backgrounds,feats,forcePowers,techPowers,equipment,items,monsters,npcs,droids,vehicles,starships,maneuvers,fightingStyles,weaponProperties,conditions,skills,exploits,constants}.ts` keep their old export names but only map that data. `client/src/lib/data/*.ts` re-export them.
+- Server: `server/sw5eData.ts` loads datasets on demand; `GET /api/sw5e` (manifest) and `GET /api/sw5e/:dataset?search=&fields=&limit=`.
+- Bundle: pages load lazily (App.tsx), so the home page script fell from 1.9 MB to 0.4 MB; character creation loads a 2.6 MB chunk (0.5 MB gzipped) with the data it needs.
+- The setting's known systems and planets (`client/src/lib/sw5e/starSystems.ts`, `locations.ts`) are not rules data and are not from sw5e.com; the world generator uses them as seeds.
+
+## World generator (shared/logic/index.ts)
+- Model: `World { areas, paths, startId, antagonist, partyLevel, ... }`. An `Area` has a kind (galaxy, region, system, planet, settlement, building, room), a parent, a position, a danger level, `gateway` (the way in and out of its parent) and its contents: `occupants`, `ships`, `loot`. A `Path` joins two areas of the same kind: hyperlane, sublight, route, street or door, with a travel time or distance and optional `locked` DC and `hidden`.
+- Every area is a place to stand: a room, the street in front of a building, the outskirts of a settlement, a planet's orbit, a system's jump point. `exitsOf` lists the moves from an area (along a path, in through a gateway, out to the parent); `findPath` gives the route between any two areas. Regions only group systems.
+- How it builds: regions and hyperspace times from `travel.json`; known systems placed in their regions and generated ones added so no region is empty; hyperlanes as a minimum spanning tree per region plus one lane between neighbouring regions and a few shortcuts; planets on sublight lanes; then for a planet: a starport settlement, a second settlement and one or two wilderness sites suited to the biome, joined by routes; buildings by settlement type joined by streets; rooms by building type with fixed layouts, locked and hidden doors. Only the starting planet is built in full; `expandArea` builds the rest when someone goes there.
+- Placement, all from the rules data: staff by what a room is for, with gear picked by name from the equipment data; faction sentries and hostile garrisons from the stat blocks a faction fields; beasts whose text matches the planet's biome; horrors in ruins; utility droids in ports and workshops; fights sized by the 5th edition XP budgets for the party's level and size and the area's danger; stat-block loadouts read from their attacks and armor; ships assembled from starship equipment by size; loot caches by room purpose, with credits sized against the Wealth by Level table and enhanced items of a rarity suited to the level.
+- `validateWorld(world, catalog?)` lists what is wrong: wrong nesting, paths between different kinds or parents, a container without a gateway, areas unreachable from the start, and (with the catalog) any stat block or item that is not in the rules data.
+- Edit functions keep the map sound and say why when they refuse: `updateArea`, `addArea` (joined to its nearest neighbour), `removeArea` (neighbours are re-joined), `connectAreas`, `disconnectAreas` (refused if it would cut the map), `setGateway`, `setStart`.
+- Server (`server/sw5eRoutes.ts`): `POST /api/world/generate | expand | populate | validate | occupant`. The world is saved in the campaign's `galaxyMap` column; `currentLocation` is then an area id.
+- UI: the campaign page (`components/Campaign/CampaignManager.tsx`) generates, browses and edits the world and now saves everything it edits. Play (`pages/GameBoard.tsx`) shows the current area, who and what is there, and its exits; enemies bar the way onward until beaten; fights use the stat block's AC, HP, attack and damage and the weapons the character carries; the fallen leave their gear; loot goes to the character; locks and hidden things take ability checks; `Explore` builds an unvisited place. The Play galaxy map draws the world's systems and hyperlanes.
+- The same seed and options give the same world.
+
 ## Play-through test (e2e/)
-- `npm run e2e` drives the whole acceptance test through the real UI and deletes what it created. It needs a running server: `npm run build`, then `NODE_ENV=production node dist/index.js`.
+- `npm run e2e` drives the whole game through the real UI and deletes what it created: the rules data endpoints, 25 generated worlds checked against the rules data, two characters made by the real rules, a campaign with a world, world edits, then a fight, loot and travel in Play with reloads. It needs a running server: `npm run build`, then `NODE_ENV=production node dist/index.js`.
 - Options (env): `VIEW=phone` for a 412x915 touch viewport, `FORCE=0` to skip the second (Consular) character, `KEEP=1` to keep the rows, `OUT=<dir>` for the screenshots (default `e2e/out`, gitignored), `BASE=<url>`.
 - `node e2e/shots.mjs` saves a Home screenshot and a mid-combat screenshot.
 - Playwright is pinned to 1.58.0 because newer releases need Node 20. The browser is installed once per machine with `npx playwright install --with-deps chromium` (already done here, in `~/.cache/ms-playwright`). It renders WebGL in software, so the 3D map works without a GPU.
-- About 4 minutes per run on this VM.
+- About 6 minutes per run on this VM. Pages with long lists are slow under software rendering (2 to 5 seconds a click in the powers step), which is the test machine, not the app.
 
 ## Done
 Phase 1: package.json `"type": "module"`, nanoid added, Replit plugin removed (vite.config.ts), tailwind.config.ts uses imports, tsconfig jsx react-jsx, species.ts:13 syntax error, unused nextui imports removed from CharacterCreation.tsx, plural route scheme (/characters, /characters/create, /characters/edit/:id, /characters/:id, /campaigns, /campaigns/:id, /campaigns/create, /map, /game/:campaignId) with all links updated, CampaignView uses lib/queryClient apiRequest, server error handler no longer rethrows, /api/sw5e/* removed (tables never existed; data is bundled client-side), insertDebriefSchema from shared/schema.
@@ -49,6 +70,13 @@ Phase 2c (found by the browser play-through):
 - App.tsx no longer loads the legacy stores at startup (one call did not exist, the other threw a ZodError on every page).
 - Two orphaned test campaigns (ids 1 and 3, their characters already deleted) were removed from the DB.
 
+Phase 2d (rules data) and 2e (world): see the two sections above. Also fixed along the way:
+- Creation: species ability score choices (Human picks +2 and two +1, or four +1), class skills from the class's real list, two skills from the background's list, the background's feat, powers known and power levels from the class table, starting wealth by class (Fighter 8d4 x 100, the average), armor counted in AC, the nine alignments.
+- Force and tech points come from the class table plus the casting modifier (Consular level x 4, Sentinel x 3, Guardian x 2, Engineer x 2, Scout x 1).
+- The character page's Inventory tab shows the equipment carried and can add or remove items.
+- Combat: a natural 1 misses; the attack bonus uses the proficiency bonus for the level; damage comes from the weapon carried (unarmed is 1 + Strength modifier; no ranged attack without a ranged weapon).
+- The campaign page saves name, description, NPCs, locations and quests (its edits used to go nowhere).
+
 ## Findings (from the original static review)
 Confirmed and fixed: A1-A4, B5, B6, B7, C11, most of C12.
 Still open:
@@ -57,24 +85,27 @@ Still open:
 - B10 BasicInfo.tsx imports missing ./LoreTooltip; CharacterCreator.tsx imports missing ./CharacterCreator/SaveControls (both unreachable).
 - C13 client calls endpoints the server lacks: /api/characters/validate, /api/campaign/:id/save, /api/campaign/generate, /api/sw5e/*. In unreachable or fallback paths.
 - C14 repo root has overlapping one-off scripts (migrate.ts, run-migrations.ts, migrations.ts, verify-schema.ts, shared/scripts/migrate-with-verification.ts, fixSpeciesData.*, bulkFormatSpeedFix.ts, db-fix-script.js, convertSpecies.ts, .replit, replit.nix). They import neon and are unused.
-- D15 quests are displayed but nothing advances them; combat only starts from the Test Combat button, not from campaign encounters. The galaxy map uses local data.
+- D15 quests are displayed but nothing advances them. (Combat now starts from the hostile creatures in the area the party is in; Test Combat remains only for campaigns without a world.)
 - D16 there is no built-in GM: lib/llm + GMReportManager + ClipboardIntegration implement a manual copy-paste loop (needs HTTPS or localhost for the clipboard).
 - E17 phone readiness, now seen in screenshots (`~/sw5e-logs/e2e_phone`, `shots_phone`): the HUD covers about three quarters of a phone screen, the bottom button bar is wider than the screen (Galaxy Map and Test Combat are cut off), the combat panel lies on top of the HUD. Everything can still be tapped. Also: keyboard-only map controls, h-screen instead of dvh, no PWA manifest, 1.9 MB script bundle.
 
-Gaps in content and rules (the flow works, the game is thin):
-- Classes: Operative, Scholar and Sentinel have no data in lib/sw5e/classes.ts, so they are not offered. Scout has data and is offered.
-- Backgrounds: the picker lists `BACKGROUNDS` (9), the data is `backgrounds` (8), and they only partly overlap. Background skills and tools are not applied.
-- Class skill lists name History, Science and Religion, which SKILLS does not have, so those are not offered.
-- Power points use the app's own formula (level + ability modifier, minimum 1), not the SW5e tables. They are stored as maxForcePoints, so an Engineer's tech points show as "Force Points".
-- Armor does not change AC. Subclass (archetype) cannot be chosen; ArchetypeSelection.tsx exists but is not used.
-- Test Combat is two enemies with 50 HP between them. A level 1 character loses most fights.
-- The campaign page (CampaignManager) shows the campaign, but its edit controls only change an in-memory store that is not loaded there. Nothing is saved.
+Gaps that remain (2026-10-13):
+- Features are listed, not applied: class features, species traits and feats do nothing mechanically (a feat's ability increase is not added, Darkvision changes nothing).
+- No archetype choice (the 137 are in the data), no levelling up, no multiclassing. Experience is recorded after fights.
+- Background languages, tools and equipment are not applied; a species' "one extra language of your choice" is stored as that text.
+- Powers can be chosen but not cast in play; power prerequisites are not enforced.
+- No death saves, short rests or conditions in play. Rest is a free long rest (not allowed with enemies present).
+- Ships are placed and described; there is no starship travel cost or combat. Paths that need a ship say so but do not check for one.
+- Test Combat (campaigns without a world) still uses two invented enemies.
+- The campaign text generator (lib/sw5e/campaignGenerator.ts: objectives, NPC types, reward names) is invented flavour, not SW5e data.
+- Maps: the /map page's three viewers (GalacticMap3D, SystemMap, LocalAreaMap) still draw their own hard-coded systems, planets and locations, with no paths. Play's Local Map is random scenery.
+- The encounter XP budgets are the 5th edition numbers; the sw5e.com API does not carry Scum and Villainy's encounter guidance.
+- Monsters carry no habitat in the data, so wildlife is matched to a biome by words in its text; where fewer than four match, any beast is used.
 - /characters/edit/:id opens an empty creation form; nothing links to it.
-- The Inventory tab on the character page reads `character.inventory`, which does not exist. Equipment shows on the sheet's Equipment tab and in the Play HUD.
-- lib/sw5e/combatmanagers.ts (starship and vehicle combat, unused) has the same dice bug the combat store had.
-- tsc: 424 errors (was 482), mostly in legacy files. Vite does not typecheck.
+- lib/sw5e/combatmanagers.ts (starship and vehicle combat, unused) adds a dice array to a number.
+- tsc: 378 errors (was 482), mostly in legacy files. Vite does not typecheck.
 
-## SW5e.com crosscheck (2026-10-12)
+## SW5e.com crosscheck (2026-10-12; the content and formula mismatches listed here were fixed on 2026-10-13 by the import, except where "Gaps that remain" says otherwise)
 How it was done: sw5e.com is a single-page app over a public API, `https://sw5eapi.azurewebsites.net/api/<name>` (data version 199, unchanged since 2023-05-06). Every dataset was downloaded and compared by script with a JSON dump of `client/src/lib/sw5e/*.ts`. Dataset names: species, class, archetype, background, feat, power, equipment, enhancedItem, monster, maneuvers, feature, fightingStyle, fightingMastery, lightsaberForm, classImprovement, multiclassImprovement, splashclassImprovement, weaponFocus, weaponSupremacy, weaponProperty, armorProperty, skills, conditions, characterAdvancement, referenceTable, starshipBaseSize, starshipDeployment, starshipEquipment, starshipModification, starshipVenture, PlayerHandbookRule, StarshipRule, WretchedHivesRule, VariantRule, ExpandedContent, dataVersion.
 
 Result in one line: the formulas copied from D&D 5e are right; almost all bundled content is invented or mis-statted, and the SW5e-specific rules (power points, powers known, background feat, alignment) are wrong.
@@ -100,7 +131,7 @@ Present on the site, absent or token in code: 137 archetypes (code 13, three rea
 
 Site pages with no counterpart: Tools is only a login-gated Character Creator (steps Species, Class, Ability Scores, Description, Equipment; Standard Array, Point Buy or Manual, same three methods as here). Assets is PDFs of the four rulebooks, character, deployment and starship sheets, expanded-content links, a podcast.
 
-Suggested fix, not started: generate the data files from the API with a script instead of hand-editing. The full datasets are several MB, so trim fields or serve them from the server; ask the user which books to include (Player's Handbook only, or expanded content too).
+Done on 2026-10-13: the data files are generated from the API, expanded content included (the user asked for all of it).
 
 ## Decisions
 - Package is ESM.
@@ -109,10 +140,14 @@ Suggested fix, not started: generate the data files from the API with a script i
 - The server binds loopback by default (2c). Phase 3 decides what sits in front of it.
 - The class picker offers only classes that have data (2c). Revisit when data for the other three is added.
 - Playwright is a dev dependency, pinned (2c).
+- Rules data is generated, never hand-written (2d). All ten classes are offered again now that all have data.
+- New campaigns always get a generated world; campaigns without one keep the plain location list (2e).
+- The generator's code lives in the existing shared/logic module and the editor in the existing CampaignManager, at the user's request to extend files rather than add them. The only new files are the import script and the generated data.
 
 ## Next
 1. Phase 3 (ask first): systemd service with restart on failure and EnvironmentFile for secrets; Caddy HTTPS reverse proxy to 127.0.0.1:5000, or Tailscale-only; DuckDNS name if public; the app has NO login, so protect it (Caddy basic auth or Tailscale-only); settle the host firewall (see above) before opening 80/443 in the Oracle VCN security list, and explain exactly what; database backup (pg_dump on a timer).
 2. First session on a real phone. Fix what breaks.
-3. Phase 4 phone UI: bottom-sheet HUD, wrap the button bar, combat panel placement, tap controls, dvh, PWA manifest and icons, lazy-load three.js, 2D map fallback, prune dependencies.
-4. Game content and rules accuracy: see "SW5e.com crosscheck". Import real data from the sw5e API (ask the user about scope first); then an encounter a level 1 character can survive and combat started from the campaign; quests that advance; subclass choice.
-5. Phase 5: keep the manual copy-paste GM loop. Do not build an API-based GM without asking.
+3. Phase 4 phone UI: bottom-sheet HUD, wrap the button bar, combat panel placement, tap controls, dvh, PWA manifest and icons, 2D map fallback, prune dependencies.
+4. Game depth, from "Gaps that remain": apply features and feats, archetype choice and levelling, casting powers, death saves and short rests, quests that advance, ships that matter.
+5. Maps: feed the /map viewers and the Local Map from the generated world, so every map shows the same places and paths.
+6. Phase 5: keep the manual copy-paste GM loop. Do not build an API-based GM without asking.

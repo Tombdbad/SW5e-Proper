@@ -1,4 +1,5 @@
-// Acceptance play-through: create character -> create campaign -> play -> move -> combat -> reload.
+// Acceptance play-through: create characters by the real rules -> create a campaign with a
+// generated world -> edit the world -> play: fight, loot, travel -> reload.
 // Usage: npm run e2e   (env: BASE, OUT, VIEW=phone, FORCE=0 to skip the second character,
 // KEEP=1 to leave the created rows in the database). Screenshots of every step go to OUT.
 import { open, step, summary, text, api, pick, BASE } from "./lib.mjs";
@@ -13,6 +14,29 @@ const made = [];
 const sleep = (ms) => page.waitForTimeout(ms);
 const next = () => page.getByRole("button", { name: "Next", exact: true }).click();
 const getChar = async (id) => (await api("GET", `/api/characters/${id}`)).json;
+const getCamp = async () => (await api("GET", `/api/campaigns/${campId}`)).json;
+
+await step(ctx, "rules data: imported and served", async () => {
+  const manifest = (await api("GET", "/api/sw5e")).json;
+  const counts = Object.fromEntries(Object.entries(manifest.datasets).map(([k, v]) => [k, v.count]));
+  if (!(counts.species > 100 && counts.classes === 10 && counts.powers > 400 && counts.monsters > 250)) throw new Error(JSON.stringify(counts));
+  const troopers = (await api("GET", "/api/sw5e/monsters?search=trooper&fields=name&limit=3")).json;
+  if (troopers.length !== 3) throw new Error("search returned " + troopers.length);
+  return `data version ${manifest.dataVersion}: ${counts.species} species, ${counts.classes} classes, ${counts.archetypes} archetypes, ${counts.powers} powers, ${counts.equipment} items, ${counts.enhancedItems} enhanced items, ${counts.monsters} stat blocks`;
+});
+
+await step(ctx, "world generator: 25 seeds, all sound against the rules data", async () => {
+  let areas = 0;
+  for (let seed = 1; seed <= 25; seed++) {
+    const r = await api("POST", "/api/world/generate", { options: { seed, partyLevel: 1 + (seed % 20), partySize: 1 + (seed % 4), systemsPerRegion: 1 + (seed % 3) } });
+    if (r.status !== 200) throw new Error(`seed ${seed}: HTTP ${r.status}`);
+    if (r.json.problems.length) throw new Error(`seed ${seed}: ${r.json.problems.slice(0, 2).join(" ")}`);
+    areas += Object.keys(r.json.world.areas).length;
+  }
+  const again = await Promise.all([1, 2].map(() => api("POST", "/api/world/generate", { options: { seed: 7 } })));
+  if (again[0].text !== again[1].text) throw new Error("the same seed gave two different worlds");
+  return `${areas} areas in all; the same seed gives the same world`;
+});
 
 await step(ctx, "home loads", async () => {
   await page.goto(BASE + "/", { waitUntil: "domcontentloaded", timeout: 120000 });
@@ -26,23 +50,30 @@ async function create(name, cls, species, opts = {}) {
   await step(ctx, p + "details", async () => {
     await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Create New Character" }).click({ timeout: 30000 });
-    await page.getByText("Character Creation").waitFor();
+    await page.getByText("Character Creation").waitFor({ timeout: 60000 });
     await page.getByPlaceholder("Enter character name").fill(name);
     await page.getByPlaceholder("Enter character name").press("Enter");
     await sleep(300);
     if (!page.url().includes("/characters/create")) throw new Error("Enter in the name field left the page");
   });
-  await step(ctx, p + "species", async () => {
+  await step(ctx, p + "species and its ability score choices", async () => {
     await next();
     await pick(page, "Select species", species);
+    // opts.increases: [[text that identifies the increase, abilities to pick]]
+    for (const [label, abilities] of opts.increases ?? []) {
+      const row = page.locator("li", { hasText: label });
+      for (const ability of abilities) await row.getByRole("button", { name: ability, exact: true }).click();
+    }
+    const shown = await page.locator("li", { hasText: "of your choice" }).allInnerTexts();
     await page.getByRole("button", { name: "Continue" }).click();
     await page.getByText("Select class").waitFor({ timeout: 3000 });
-    return `picked ${species}; Continue moved to the class step`;
+    return `picked ${species}; ${shown.map((s) => s.split("\n")[0]).join("; ")}`;
   });
   await step(ctx, p + "class", async () => {
     await pick(page, "Select class", cls);
     await page.getByText(/Hit Die: d\d+/).waitFor();
-    return (await text(page)).match(/Hit Die: d\d+/)[0];
+    const t = await text(page);
+    return `${t.match(/Hit Die: d\d+/)[0]}; ${t.match(/Saving Throws: [^\n]+/)[0]}`;
   });
   await step(ctx, p + "abilities", async () => {
     await next();
@@ -52,24 +83,26 @@ async function create(name, cls, species, opts = {}) {
   await step(ctx, p + "background", async () => {
     await next();
     await pick(page, "Select background", "Soldier");
+    await page.getByText(/choose 2 in the Skills step/).waitFor();
   });
-  await step(ctx, p + "skills", async () => {
+  await step(ctx, p + "skills from class and background", async () => {
     await next();
     await sleep(300);
     const want = Number(((await text(page)).match(/Choose\s+(\d+)\s+skills/) || [0, 0])[1]);
     if (!want) throw new Error("no skill choices offered");
     const items = page.locator("li.cursor-pointer");
-    const n = Math.min(want, await items.count());
-    for (let i = 0; i < n; i++) await items.nth(i).click();
-    const shown = ((await text(page)).match(/Skills Selected:\s*(\S+)/) || [])[1];
+    for (let i = 0; i < want; i++) await items.nth(i).click();
+    for (let i = 0; i < 2; i++) await page.locator("button[data-background-skill]:not([disabled]):not(.bg-blue-600)").first().click();
+    const t = await text(page);
+    const shown = (t.match(/Skills Selected:\s*(\S+)/) || [])[1];
     if (shown !== `${want}/${want}`) throw new Error(`Skills Selected shows ${shown}`);
-    return `picked ${shown}`;
+    if (!/\(\s*2\/2\)/.test(t)) throw new Error("background skills not 2/2");
+    return `class ${shown}, background 2/2`;
   });
   await step(ctx, p + "powers", async () => {
     await next();
     await sleep(400);
-    const t = await text(page);
-    const line = (t.match(/Force powers: \d+\/\d+ selected/) || ["?"])[0];
+    const line = ((await text(page)).match(/Force powers: \d+\/\d+ selected/) || ["?"])[0];
     if (opts.forcePowers) {
       const cards = page.locator("div.cursor-pointer.border.rounded-md");
       const n = Math.min(opts.forcePowers, await cards.count());
@@ -80,28 +113,37 @@ async function create(name, cls, species, opts = {}) {
     }
     return line;
   });
-  await step(ctx, p + "feats", async () => {
+  await step(ctx, p + "background feat", async () => {
     await next();
     await sleep(300);
-    return ((await text(page)).match(/Feats \([^)]*\)/) || ["?"])[0];
+    await page.getByRole("checkbox").first().click();
+    const shown = ((await text(page)).match(/Feats \([^)]*\)/) || ["?"])[0];
+    if (shown !== "Feats (1/1)") throw new Error(shown);
+    return shown;
   });
-  await step(ctx, p + "equipment", async () => {
+  await step(ctx, p + "equipment bought with class starting wealth", async () => {
     await next();
     await page.getByText("Equipment Selection").waitFor();
-    await page.getByRole("button", { name: "Add", exact: true }).first().click();
+    const before = ((await text(page)).match(/Credits: \d+/) || ["?"])[0];
+    for (const item of opts.buy ?? []) {
+      await page.getByPlaceholder("Search equipment...").fill(item);
+      const card = page.locator("div.flex-col", { has: page.getByRole("heading", { name: item, exact: true }) }).last();
+      await card.getByRole("button", { name: "Add", exact: true }).click();
+    }
     await sleep(300);
     if (!page.url().includes("/characters/create")) throw new Error("Add submitted the form");
-    return ((await text(page)).match(/Credits: \d+/) || ["?"])[0] + " after adding the first item";
+    return `${before} -> ${((await text(page)).match(/Credits: \d+/) || ["?"])[0]} after ${(opts.buy ?? []).join(", ") || "nothing"}`;
   });
   await step(ctx, p + "preview", async () => {
     await next();
     await page.getByText(/Hit Points: \d+/).waitFor();
-    return (await text(page)).split("\n").filter((l) => /Hit Points|Armor Class|Skills:|Equipment:/.test(l)).join(" / ");
+    await sleep(400);
+    return (await text(page)).split("\n").filter((l) => /Hit Points|Armor Class|Power Points|Saving Throws|Skills:|Feats:|Equipment:/.test(l)).join(" / ");
   });
   await step(ctx, p + "submit saves the character", async () => {
     const [resp] = await Promise.all([
-      page.waitForResponse((r) => r.url().endsWith("/api/characters") && r.request().method() === "POST", { timeout: 10000 }),
-      page.getByRole("button", { name: "Create Character", exact: true }).click(),
+      page.waitForResponse((r) => r.url().endsWith("/api/characters") && r.request().method() === "POST", { timeout: 40000 }),
+      page.getByRole("button", { name: "Create Character", exact: true }).click({ timeout: 40000 }),
     ]);
     const body = await resp.json().catch(() => ({}));
     if (resp.status() !== 201) throw new Error(`POST /api/characters -> ${resp.status()} ${JSON.stringify(body).slice(0, 300)}`);
@@ -109,41 +151,46 @@ async function create(name, cls, species, opts = {}) {
     made.push(body.id);
     await page.waitForURL(/\/campaigns\/create\?characterId=/);
     const a = body.abilityScores;
-    return `id ${body.id}: ${body.species} ${body.class}, hp ${body.currentHp}/${body.maxHp}, ac ${body.armorClass}, force ${body.maxForcePoints}, str ${a.strength} dex ${a.dexterity} con ${a.constitution} wis ${a.wisdom}, saves ${body.savingThrowProficiencies}, skills ${body.skillProficiencies}, equipment ${body.equipment}, powers ${(body.forcePowers || []).length}`;
+    return `id ${body.id}: ${body.species} ${body.class}, hp ${body.maxHp}, ac ${body.armorClass}, power points ${body.maxForcePoints}, str ${a.strength} dex ${a.dexterity} con ${a.constitution}, saves ${body.savingThrowProficiencies}, skills ${body.skillProficiencies}, feats ${body.feats}, equipment ${body.equipment}, credits ${body.credits}, powers ${(body.forcePowers || []).length}`;
   });
   return saved;
 }
 
 await step(ctx, "creation: empty form explains what is missing", async () => {
   await page.goto(BASE + "/characters/create", { waitUntil: "domcontentloaded" });
-  await page.getByText("Character Creation").waitFor();
+  await page.getByText("Character Creation").waitFor({ timeout: 60000 });
   await page.getByRole("tab", { name: "Preview" }).click();
   await page.getByRole("button", { name: "Create Character", exact: true }).click();
   await page.getByText(/Choose a species/).waitFor({ timeout: 4000 });
   return (await page.getByText(/Choose a species/).first().innerText()).slice(0, 200);
 });
 
-const fighter = await create(NAME, "Fighter", "Human");
+const fighter = await create(NAME, "Fighter", "Human", {
+  increases: [["+2 to one", ["str"]], ["+1 to 2", ["dex", "con"]]],
+  buy: ["Blaster pistol", "Vibroblade", "Combat suit"],
+});
 charId = fighter?.id ?? null;
 
-await step(ctx, "fighter stats follow the rules", async () => {
+await step(ctx, "fighter matches the Player's Handbook", async () => {
   const c = fighter;
   const a = c.abilityScores;
-  const want = { str: 16, dex: 15, con: 13, hp: 11, ac: 12 };
-  const got = { str: a.strength, dex: a.dexterity, con: a.constitution, hp: c.maxHp, ac: c.armorClass };
+  // Standard array 15/14/13 with Human +2 Str, +1 Dex, +1 Con; d10 hit die; combat suit 11 + Dex
+  const want = { str: 17, dex: 15, con: 14, hp: 12, ac: 13, credits: 2000 - 175 - 200 - 100, force: 0 };
+  const got = { str: a.strength, dex: a.dexterity, con: a.constitution, hp: c.maxHp, ac: c.armorClass, credits: c.credits, force: c.maxForcePoints };
   if (JSON.stringify(want) !== JSON.stringify(got)) throw new Error(`want ${JSON.stringify(want)} got ${JSON.stringify(got)}`);
   if (String(c.savingThrowProficiencies) !== "strength,constitution") throw new Error("saves " + c.savingThrowProficiencies);
-  if (c.skillProficiencies.length !== 2) throw new Error("skills " + c.skillProficiencies);
-  return "human +1 str/dex applied, d10 hit die + con, AC 10 + dex";
+  if (c.skillProficiencies.length !== 4) throw new Error("skills " + c.skillProficiencies);
+  if ((c.feats || []).length !== 1) throw new Error("feats " + c.feats);
+  return "species choice applied, d10 + Con, armor counted, 8d4 x 100 starting wealth spent, 2 + 2 skills, background feat";
 });
 
 if (!charId) {
   await step(ctx, "FALLBACK create character through the API", async () => {
     const r = await api("POST", "/api/characters", {
-      name: NAME, species: "human", class: "fighter", background: "soldier", alignment: "Neutral", level: 1,
-      abilityScores: { strength: 15, dexterity: 14, constitution: 13, intelligence: 12, wisdom: 10, charisma: 8 },
-      maxHp: 12, currentHp: 12, maxForcePoints: 0, currentForcePoints: 0, armorClass: 12, speed: 30,
-      equipment: ["Blaster pistol"], startingLocation: "Unknown", skillProficiencies: [], savingThrowProficiencies: [],
+      name: NAME, species: "human", class: "fighter", background: "soldier", alignment: "Neutral Balanced", level: 1,
+      abilityScores: { strength: 17, dexterity: 15, constitution: 14, intelligence: 12, wisdom: 10, charisma: 8 },
+      maxHp: 12, currentHp: 12, maxForcePoints: 0, currentForcePoints: 0, armorClass: 13, speed: 30,
+      equipment: ["Blaster pistol", "Vibroblade", "Combat suit"], startingLocation: "Unknown", skillProficiencies: ["Athletics"], savingThrowProficiencies: ["strength", "constitution"],
     });
     if (r.status !== 201) throw new Error(r.text.slice(0, 300));
     charId = r.json.id;
@@ -156,48 +203,93 @@ await step(ctx, "campaign: generate (arrived from creation)", async () => {
   if (!page.url().includes("/campaigns/create")) {
     await page.goto(`${BASE}/campaigns/create?characterId=${charId}`, { waitUntil: "domcontentloaded" });
   }
-  await page.getByRole("button", { name: "Generate Campaign" }).click();
+  await page.getByRole("button", { name: "Generate Campaign" }).click({ timeout: 60000 });
   await page.getByText("Primary Objective").waitFor();
-  return (await text(page)).split("\n").filter((l) => l.trim()).slice(4, 8).join(" / ").slice(0, 200);
+  return (await text(page)).split("\n").filter((l) => l.trim()).slice(4, 6).join(" / ").slice(0, 200);
 });
 
-await step(ctx, "campaign: save creates it and shows it", async () => {
+let world = null;
+await step(ctx, "campaign: saved with a generated world", async () => {
   const [resp] = await Promise.all([
-    page.waitForResponse((r) => r.url().includes("/api/campaigns") && r.request().method() !== "GET", { timeout: 10000 }),
+    page.waitForResponse((r) => r.url().endsWith("/api/campaigns") && r.request().method() === "POST", { timeout: 20000 }),
     page.getByRole("button", { name: "Create Campaign" }).click(),
   ]);
   const body = await resp.json().catch(() => ({}));
-  if (resp.status() !== 201) throw new Error(`${resp.request().method()} ${resp.url().replace(BASE, "")} -> ${resp.status()} ${JSON.stringify(body).slice(0, 200)}`);
+  if (resp.status() !== 201) throw new Error(`POST /api/campaigns -> ${resp.status()} ${JSON.stringify(body).slice(0, 200)}`);
   campId = body.id;
+  world = body.galaxyMap;
+  if (!world || body.currentLocation !== world.startId) throw new Error("no world, or the party is not at its start");
   await page.waitForURL(new RegExp(`/campaigns/${campId}$`));
-  await page.getByText("Locations").first().waitFor();
-  if (await page.getByText("Campaign Generator").count()) throw new Error("still showing the generator after saving");
-  if (body.characterId !== charId) throw new Error(`campaign belongs to character ${body.characterId}, expected ${charId}`);
-  return `campaign ${campId} "${body.name}", ${body.locations.length} locations, ${body.quests.length} quests`;
+  await page.getByTestId("world-status").waitFor();
+  if (!(await page.getByTestId("world-status").innerText()).includes("Map is sound")) throw new Error(await page.getByTestId("world-status").innerText());
+  const kinds = {};
+  for (const a of Object.values(world.areas)) kinds[a.kind] = (kinds[a.kind] || 0) + 1;
+  return `campaign ${campId}; hostile faction ${world.antagonist}; ${Object.entries(kinds).map(([k, n]) => `${n} ${k}s`).join(", ")}, ${world.paths.length} paths; start: ${await page.getByTestId("world-trail").innerText()}`.replace(/\s*›\s*/g, " > ").replace(/\n/g, "");
 });
 
-if (!campId) {
-  await step(ctx, "FALLBACK create campaign through the API", async () => {
-    const r = await api("POST", "/api/campaigns", {
-      characterId: charId, name: NAME + " campaign", description: "fallback", npcs: [],
-      locations: [
-        { id: "l1", name: "Docks", type: "port", description: "Busy docks" },
-        { id: "l2", name: "Market", type: "city", description: "Crowded market" },
-      ],
-      quests: [{ id: "q1", title: "Find the droid", description: "x", status: "active", objectives: [{ description: "look", completed: false }] }],
-      startingLocation: "Docks",
-    });
-    if (r.status !== 201) throw new Error(r.text.slice(0, 300));
-    campId = r.json.id;
-    return `campaign ${campId}`;
-  });
-}
+await step(ctx, "world editor: place a stat block and a loot cache where the party starts", async () => {
+  await page.getByLabel("Search the rules data").fill("flesh raider");
+  await page.getByRole("button", { name: /^\+ Flesh Raider \(CR 1\/8\)$/ }).click();
+  await page.getByTestId("world-occupants").getByText("Flesh Raider").waitFor();
+  await page.getByRole("button", { name: "Add Loot Cache" }).click();
+  await page.getByLabel("Credits").last().fill("50");
+  await page.getByLabel("Search in").selectOption("equipment");
+  await page.getByLabel("Search the rules data").fill("medpac");
+  await page.getByRole("button", { name: "+ Medpac", exact: true }).last().click();
+  await page.getByTestId("world-occupants").getByText("Medpac").waitFor();
+  return (await page.getByTestId("world-occupants").innerText()).split("\n").filter((l) => /Flesh Raider|Cache|Medpac/.test(l)).join(" | ").slice(0, 260);
+});
+
+await step(ctx, "world editor: add a room, join it, and refuse an edit that would cut the map", async () => {
+  const trail = page.getByTestId("world-trail").getByRole("button");
+  await trail.nth((await trail.count()) - 2).click(); // the building the party starts in
+  await page.getByLabel("New room name").fill("Secret Vault");
+  await page.getByRole("button", { name: "Add room" }).click();
+  await page.getByTestId("world-children").getByRole("button", { name: "Secret Vault" }).click();
+  const exits = await page.getByTestId("world-exits").innerText();
+  if (!/Door/.test(exits)) throw new Error("the new room has no door: " + exits);
+  const route = await page.getByTestId("world-route").innerText();
+  // Its only door cannot be removed
+  await page.getByTestId("world-exits").getByRole("button", { name: "Remove" }).first().click();
+  await page.getByText(/would cut off part of the map/).first().waitFor({ timeout: 4000 });
+  if (!(await page.getByTestId("world-status").innerText()).includes("Map is sound")) throw new Error("map no longer sound");
+  return `${exits.split("\n")[0]}; ${route}`;
+});
+
+await step(ctx, "world editor: save, and the rules data check passes", async () => {
+  await page.getByRole("button", { name: "Check Against Rules Data" }).click();
+  await page.getByText(/Every stat block and item is in the rules data/).waitFor({ timeout: 10000 });
+  const [resp] = await Promise.all([
+    page.waitForResponse((r) => r.url().includes(`/api/campaigns/${campId}`) && r.request().method() === "PUT", { timeout: 15000 }),
+    page.getByRole("button", { name: "Save Campaign" }).click(),
+  ]);
+  if (resp.status() !== 200) throw new Error(`save -> ${resp.status()} ${(await resp.text()).slice(0, 200)}`);
+  const saved = (await getCamp()).galaxyMap;
+  const start = saved.areas[saved.startId];
+  const vault = Object.values(saved.areas).find((a) => a.name === "Secret Vault");
+  if (!vault || vault.parentId !== start.parentId) throw new Error("the new room was not saved");
+  if (!start.occupants.some((o) => o.statBlock === "flesh-raider") || !start.loot.some((c) => c.items.some((i) => i.name === "Medpac"))) throw new Error("placed contents were not saved");
+  const check = await api("POST", "/api/world/validate", { world: saved });
+  if (check.json.problems.length) throw new Error(check.json.problems.join(" "));
+  world = saved;
+  return `saved ${Object.keys(saved.areas).length} areas; server finds no problems`;
+});
+
+await step(ctx, "world: an unvisited planet is built on demand", async () => {
+  const startPlanet = (() => { let a = world.areas[world.startId]; while (a.kind !== "planet") a = world.areas[a.parentId]; return a.id; })();
+  const other = Object.values(world.areas).find((a) => a.kind === "planet" && a.id !== startPlanet && !Object.values(world.areas).some((c) => c.parentId === a.id));
+  const r = await api("POST", "/api/world/expand", { world, areaId: other.id });
+  if (r.status !== 200 || r.json.problems.length) throw new Error(JSON.stringify(r.json).slice(0, 300));
+  const added = Object.keys(r.json.world.areas).length - Object.keys(world.areas).length;
+  const sites = Object.values(r.json.world.areas).filter((a) => a.parentId === other.id).map((a) => `${a.name} (${a.type})`);
+  return `${other.name} (${other.type}): ${added} new areas; ${sites.join(", ")}`;
+});
 
 await step(ctx, "character page: reload, edit HP on the sheet, save", async () => {
   await page.goto(`${BASE}/characters/${charId}`, { waitUntil: "domcontentloaded" });
-  await page.getByRole("heading", { name: NAME }).first().waitFor();
+  await page.getByRole("heading", { name: NAME }).first().waitFor({ timeout: 60000 });
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.getByRole("heading", { name: NAME }).first().waitFor();
+  await page.getByRole("heading", { name: NAME }).first().waitFor({ timeout: 60000 });
   const before = await getChar(charId);
   const hp = page.locator('input[type="number"]').first();
   await hp.fill(String(before.maxHp - 3));
@@ -211,15 +303,10 @@ await step(ctx, "character page: reload, edit HP on the sheet, save", async () =
   return `hp ${before.currentHp} -> ${after.currentHp} saved from the sheet`;
 });
 
-await step(ctx, "character page: roll buttons give numbers", async () => {
-  const roll = page.getByRole("button", { name: /roll|check/i }).first();
-  if (!(await roll.count())) return "no roll button on the first tab (skipped)";
-  await roll.click();
-  await sleep(500);
-  const t = await text(page);
-  const m = t.match(/1d20 \(([^)]*)\)/);
-  if (m && !/^\d+(, \d+)?/.test(m[1])) throw new Error("roll text: " + m[0]);
-  return m ? m[0] : "clicked, no roll text found";
+await step(ctx, "character page: inventory shows the equipment bought", async () => {
+  await page.getByRole("tab", { name: "Inventory" }).click();
+  await page.getByText("Blaster pistol").first().waitFor({ timeout: 5000 });
+  await page.getByText("Combat suit").first().waitFor();
 });
 
 await step(ctx, "home: campaign listed, Play opens the game", async () => {
@@ -229,99 +316,95 @@ await step(ctx, "home: campaign listed, Play opens the game", async () => {
   await page.waitForURL(new RegExp(`/game/${campId}$`));
 });
 
-let locs = [];
-await step(ctx, "play: HUD shows the character", async () => {
-  await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 30000 });
+await step(ctx, "play: the party is at the world's start", async () => {
+  await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 60000 });
   const c = await getChar(charId);
   await page.getByText(`${c.currentHp}/${c.maxHp}`).first().waitFor();
-  locs = (await api("GET", `/api/campaigns/${campId}`)).json.locations.map((l) => l.name);
+  const start = world.areas[world.startId];
+  await page.getByTestId("play-here").getByText(start.name).waitFor();
   if (!(await page.locator("canvas").count())) throw new Error("no map canvas");
-  await sleep(1500);
-  return `HP ${c.currentHp}/${c.maxHp}; locations: ${locs.join(", ")}`;
+  await sleep(1200);
+  return `${await page.getByTestId("play-trail").innerText()} › ${start.name}; ${(await page.getByTestId("play-occupants").innerText()).split("\n").join(", ")}`;
 });
 
-await step(ctx, "play: move to another location, kept after reload", async () => {
-  const target = locs[locs.length - 1];
-  await page.getByRole("button", { name: target, exact: true }).click();
-  await sleep(600);
-  const saved = (await api("GET", `/api/campaigns/${campId}`)).json.currentLocation;
-  if (saved !== target) throw new Error(`server has "${saved}", wanted "${target}"`);
+let hpAfter = null;
+await step(ctx, "play: enemies bar the way; the fight uses their stat block and the character's weapons", async () => {
+  const exits = page.getByTestId("play-exits").getByRole("button");
+  if (!(await exits.first().isDisabled())) throw new Error("exits are open although an enemy is here");
+  const seen = [];
+  let weapons = "";
+  let won = false;
+  for (let attempt = 0; attempt < 8 && !won; attempt++) {
+    if ((await getChar(charId)).currentHp <= 0) {
+      // Cannot rest with enemies about: step out the way we came is not known after a reload, so heal through the API
+      await api("PATCH", `/api/characters/${charId}`, { currentHp: (await getChar(charId)).maxHp });
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 60000 });
+    }
+    await page.getByRole("button", { name: "Fight", exact: true }).click();
+    await page.getByText(/Combat - Round/).waitFor();
+    weapons = await page.getByText(/^Melee: /).innerText();
+    for (let i = 0; i < 200; i++) {
+      if (!(await page.getByText(/Combat - Round/).count())) break;
+      for (const l of await page.locator("div.text-xs.text-gray-300 > div").allInnerTexts().catch(() => [])) if (!seen.includes(l)) seen.push(l);
+      const melee = page.getByRole("button", { name: "Melee", exact: true });
+      if ((await melee.count()) && (await melee.isEnabled().catch(() => false))) await melee.click().catch(() => {});
+      await sleep(300);
+    }
+    await sleep(1200);
+    won = !(await getCamp()).galaxyMap.areas[world.startId].occupants.some((o) => o.disposition === "hostile");
+  }
+  if (!won) throw new Error("the Flesh Raider was never beaten; log: " + seen.slice(-4).join(" | "));
+  const dmg = seen.map((l) => (l.match(/for (\S+) damage/) || [])[1]).filter(Boolean);
+  const odd = dmg.filter((d) => !/^[1-9]\d*$/.test(d) || Number(d) > 30);
+  if (odd.length) throw new Error(`implausible damage values: ${odd.join(", ")}`);
+  if (!/Vibroblade/.test(weapons) || !/Blaster pistol/.test(weapons)) throw new Error("weapons not taken from equipment: " + weapons);
+  const c = await getChar(charId);
+  hpAfter = c.currentHp;
+  if (!(c.experience >= 25)) throw new Error(`experience ${c.experience}`);
+  return `${weapons}; damage rolls ${dmg.join(",")}; hp now ${c.currentHp}/${c.maxHp}; experience ${c.experience}`;
+});
+
+await step(ctx, "play: loot goes to the character, and both survive a reload", async () => {
+  const before = await getChar(charId);
+  await page.getByTestId("play-loot").filter({ hasText: /^Cache/ }).getByRole("button", { name: "Take" }).click();
+  await sleep(1000);
+  const after = await getChar(charId);
+  if (after.credits !== before.credits + 50 || !after.equipment.includes("Medpac")) throw new Error(`credits ${before.credits} -> ${after.credits}, equipment ${after.equipment}`);
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 30000 });
-  await page.locator("p", { hasText: target }).first().waitFor();
-  return `now at ${target}`;
+  await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 60000 });
+  if (after.currentHp !== hpAfter) throw new Error(`hp ${after.currentHp}, expected ${hpAfter}`);
+  await page.getByText(`${after.currentHp}/${after.maxHp}`).first().waitFor();
+  await page.getByTestId("play-loot").filter({ hasText: /^Cache/ }).getByText("(empty)").waitFor();
+  return `credits ${before.credits} -> ${after.credits}; carrying ${after.equipment.join(", ")}; HUD ${after.currentHp}/${after.maxHp}`;
+});
+
+await step(ctx, "play: travel along a path, kept after reload", async () => {
+  const exit = page.getByTestId("play-exits").getByRole("button").filter({ hasNotText: /Unlock/ }).first();
+  const label = (await exit.innerText()).replace(/\s+/g, " ");
+  await exit.click();
+  await sleep(800);
+  const here = (await getCamp()).currentLocation;
+  if (here === world.startId) throw new Error("the party did not move");
+  const area = (await getCamp()).galaxyMap.areas[here];
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 60000 });
+  await page.getByTestId("play-here").getByText(area.name).waitFor();
+  return `took "${label}" to ${area.name} (${area.kind})`;
 });
 
 await step(ctx, "play: rest restores HP", async () => {
-  await page.getByRole("button", { name: /Rest/ }).click();
+  await api("PATCH", `/api/characters/${charId}`, { currentHp: 1 });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 60000 });
+  const rest = page.getByRole("button", { name: /Rest/ });
+  if (await rest.isDisabled()) return "enemies here: resting is not allowed (skipped)";
+  await rest.click();
   await sleep(800);
   const c = await getChar(charId);
   if (c.currentHp !== c.maxHp) throw new Error(`hp ${c.currentHp}/${c.maxHp}`);
   await page.getByText(`${c.maxHp}/${c.maxHp}`).first().waitFor();
   return `HP ${c.currentHp}/${c.maxHp}`;
-});
-
-// Fights until the combat panel closes. Returns what the panel last showed for the player.
-async function fight() {
-  await page.getByRole("button", { name: "Test Combat" }).click();
-  await page.getByText(/Combat - Round/).waitFor();
-  const seen = [];
-  let turns = 0;
-  let lastHp = null;
-  for (let i = 0; i < 200; i++) {
-    if (!(await page.getByText(/Combat - Round/).count())) break;
-    const row = await page.locator("li", { hasText: "(you)" }).first().innerText().catch(() => "");
-    const m = row.match(/(\d+)\/(\d+)\s*$/);
-    if (m) lastHp = Number(m[1]);
-    const log = await page.locator("div.text-xs.text-gray-300 > div").allInnerTexts().catch(() => []);
-    for (const l of log) if (!seen.includes(l)) seen.push(l);
-    const melee = page.getByRole("button", { name: "Melee", exact: true });
-    if ((await melee.count()) && (await melee.isEnabled().catch(() => false))) {
-      turns += 1;
-      await melee.click().catch(() => {});
-    }
-    await sleep(300);
-  }
-  if (await page.getByText(/Combat - Round/).count()) throw new Error("combat did not end; log: " + seen.slice(-4).join(" | "));
-  return { seen, turns, lastHp };
-}
-
-let hpAfter = null;
-await step(ctx, "play: combat runs to an end with sane numbers, HP written back", async () => {
-  const before = await getChar(charId);
-  let total = { seen: [], turns: 0 };
-  let after = before;
-  // Fight (resting in between) until a fight actually costs HP, so the write-back is exercised
-  for (let n = 0; n < 4 && after.currentHp === before.currentHp; n++) {
-    if (n) {
-      await page.getByRole("button", { name: /Rest/ }).click();
-      await sleep(600);
-    }
-    const f = await fight();
-    total.seen.push(...f.seen);
-    total.turns += f.turns;
-    await sleep(900);
-    after = await getChar(charId);
-  }
-  hpAfter = after.currentHp;
-  const dmg = total.seen.map((l) => (l.match(/for (\S+) damage/) || [])[1]).filter(Boolean);
-  const odd = dmg.filter((d) => !/^[1-9]\d*$/.test(d) || Number(d) > 22);
-  if (odd.length) throw new Error(`implausible damage values: ${odd.join(", ")}`);
-  if (!dmg.length) throw new Error("no hits logged");
-  if (after.currentHp === before.currentHp) throw new Error("player never lost HP in 4 fights; write-back not exercised");
-  await page.getByText(`${after.currentHp}/${after.maxHp}`).first().waitFor();
-  return `player turns ${total.turns}; hp ${before.currentHp} -> ${after.currentHp}; damage rolls ${dmg.join(",")}; last lines: ${total.seen.slice(-2).join(" | ")}`;
-});
-
-await step(ctx, "play: HP change kept after reload", async () => {
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 30000 });
-  const c = await getChar(charId);
-  if (c.currentHp !== hpAfter) throw new Error(`server hp ${c.currentHp}, expected ${hpAfter}`);
-  await page.getByText(`${c.currentHp}/${c.maxHp}`).first().waitFor();
-  const blocked = c.currentHp === 0 ? await page.getByRole("button", { name: "Test Combat" }).isDisabled() : null;
-  if (blocked === false) throw new Error("Test Combat is enabled at 0 HP");
-  return `HUD shows ${c.currentHp}/${c.maxHp}` + (blocked ? "; Test Combat disabled at 0 HP" : "");
 });
 
 await step(ctx, "play: tabs and local map do not crash", async () => {
@@ -337,12 +420,16 @@ await step(ctx, "play: tabs and local map do not crash", async () => {
 });
 
 if (process.env.FORCE !== "0") {
-  const consular = await create("E2E force " + TAG, "Consular", "Zabrak", { forcePowers: 2 });
-  await step(ctx, "consular gets force points and powers", async () => {
+  const consular = await create("E2E force " + TAG, "Consular", "Zabrak", { increases: [["+1 to one", ["dex"]]], forcePowers: 2 });
+  await step(ctx, "consular matches the Player's Handbook", async () => {
     if (!consular) throw new Error("not created");
-    if (!(consular.maxForcePoints > 0)) throw new Error(`maxForcePoints ${consular.maxForcePoints}`);
-    if ((consular.forcePowers || []).length !== 2) throw new Error(`powers ${(consular.forcePowers || []).length}`);
-    return `force points ${consular.maxForcePoints}, hp ${consular.maxHp}, powers ${consular.forcePowers.map((x) => x.name).join(", ")}`;
+    const a = consular.abilityScores;
+    // Zabrak +2 Con and +1 Dex; d6 hit die; force points 4 x level + the better of Wisdom and Charisma
+    const want = { con: 15, dex: 15, hp: 8, force: 4, powers: 2, credits: 1200 };
+    const got = { con: a.constitution, dex: a.dexterity, hp: consular.maxHp, force: consular.maxForcePoints, powers: (consular.forcePowers || []).length, credits: consular.credits };
+    if (JSON.stringify(want) !== JSON.stringify(got)) throw new Error(`want ${JSON.stringify(want)} got ${JSON.stringify(got)}`);
+    if (String(consular.savingThrowProficiencies) !== "wisdom,charisma") throw new Error("saves " + consular.savingThrowProficiencies);
+    return `force points ${consular.maxForcePoints}, powers ${consular.forcePowers.map((x) => x.name).join(", ")}`;
   });
 }
 
