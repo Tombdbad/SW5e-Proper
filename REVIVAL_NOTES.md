@@ -9,15 +9,19 @@ Acceptance test: create a character, it saves and reloads; create a campaign wit
 - Phase 0 baseline, Phase 1 boots, Phase 2 core loop: DONE (see Done).
 - Phase 2d rules data: DONE. All SW5e content (core books and expanded content) is imported from the sw5e.com API into `shared/data/sw5e/` by `npm run import:sw5e`. That folder is the single source of rules data; `client/src/lib/sw5e/*.ts` are views over it. Character creation follows the real rules.
 - Phase 2e world generator: DONE. `shared/logic/index.ts` generates and edits a campaign world (galaxy > region > system > planet > settlement > building > room) with paths between areas and people, creatures, ships and loot placed from the rules data. New campaigns get a world; the campaign page edits it; Play travels, fights and loots in it.
-- `npm run e2e` passes 44 of 44 steps against the production build (32 of 32 at phone size).
-- NOT yet tried on a real phone. That needs Phase 3, because nothing is reachable from outside the VM.
-- Phase 3 deploy: NOT started. Ask the user before opening any port. Read "Host firewall" below first.
-- Phase 4 phone UI, Phase 5 GM: NOT started.
+- Phase 2f game depth: DONE (see "Play rules"). Rests and Hit Dice, death saves, casting powers, levelling up with archetypes and Ability Score Improvements, features that change the numbers, quests that advance, ships with fuel and paid passage, maps drawn from the world.
+- `npm run e2e` passes 48 of 48 steps against the production build (35 of 35 at phone size), run 2026-10-13 on the service.
+- Phase 3 deploy: the app runs as a service and is backed up nightly; it is reached over Tailscale only (the user's choice, 2026-10-13). ONE STEP IS OPEN: Tailscale Serve (HTTPS on the tailnet) has to be enabled once by the user (see "Environment and ops"). Until then nothing outside the VM can open the game. Public HTTPS (Caddy) is kept as a possible later development; ask before opening any port.
+- NOT yet tried on a real phone (waits on the step above).
+- Phase 4 phone UI, Phase 5 GM: NOT started (the Play button bar now wraps, and places on the local map can be tapped).
 
 ## Environment and ops
 - VM: Ubuntu 24.04, aarch64, 1 vCPU, ~8.9 GB RAM, 4 GB swap, ~30 GB free disk, Node v18.19.1, npm 9.2.0. No Docker.
 - Postgres 16 on this VM, role and database `sw5e`, listening on 127.0.0.1 only. `DATABASE_URL` is in `.env` (gitignored, mode 600). Do not print it.
-- The server listens on 127.0.0.1:5000 unless `HOST` is set (server/index.ts). The app has no login, so keep it that way until Phase 3 puts something in front of it.
+- The server listens on 127.0.0.1:5000 unless `HOST` is set (server/index.ts). The app has no login, so keep it that way: Tailscale is what stands in front of it.
+- The app is a systemd service, `sw5e` (unit file in `deploy/`, installed in `/etc/systemd/system/`, enabled at boot, restarts on failure, NODE_ENV=production). It owns port 5000: after `npm run build` run `sudo systemctl restart sw5e`; do not start node by hand. Logs: `journalctl -u sw5e`.
+- Backups: `sw5e-backup.timer` runs `deploy/backup.sh` at 03:30 (pg_dump to `~/sw5e-backups`, mode 700, newest 14 kept). Restore: `gunzip -c <file> | psql "$DATABASE_URL"`.
+- Tailscale 1.104.1 (official apt repo). This machine is `sw5e` on the user's tailnet, and their phone is on it. The tailnet's name, addresses and approval links are not written here because this repository is public: `tailscale status` shows them. `tailscale serve --bg 5000` publishes the app over HTTPS at this machine's tailnet name, to tailnet devices only, but Serve must first be enabled for the tailnet by the user: the command prints the approval link and waits. A user unit, `sw5e-serve-enable` (started with systemd-run, log in `~/sw5e-logs/serve-enable.log`), is waiting on that; if it is gone, run the command again. Check with `tailscale serve status`. HTTPS matters because the clipboard GM loop needs it.
 - Host firewall is OFF. `iptables -S` shows only ACCEPT policies and `netfilter-persistent` is masked, so the saved rules in `/etc/iptables/rules.v4` (Oracle default: allow 22, reject the rest, plus an old allow for port 8000 from 10.0.0.0/24) are not loaded. Only the Oracle VCN security list protects the VM. rpcbind also listens on port 111. Nothing was changed; decide with the user in Phase 3.
 - Test data in the DB: character "Test Pilot" and campaign "Test Campaign" (both id 2, from the 2b script). Delete from Home when no longer wanted.
 - Commits need a git identity: `git -c user.name=Tombdbad -c user.email=<account email> commit`. No identity is configured globally.
@@ -45,12 +49,33 @@ Acceptance test: create a character, it saves and reloads; create a campaign wit
 - UI: the campaign page (`components/Campaign/CampaignManager.tsx`) generates, browses and edits the world and now saves everything it edits. Play (`pages/GameBoard.tsx`) shows the current area, who and what is there, and its exits; enemies bar the way onward until beaten; fights use the stat block's AC, HP, attack and damage and the weapons the character carries; the fallen leave their gear; loot goes to the character; locks and hidden things take ability checks; `Explore` builds an unvisited place. The Play galaxy map draws the world's systems and hyperlanes.
 - The same seed and options give the same world.
 
+## Play rules (Phase 2f, 2026-10-13)
+Where the code is: `client/src/lib/sw5e/characterCalculation.ts` (features, their effects, levelling), `client/src/lib/sw5e/rules.ts` (casting), `client/src/lib/stores/useCombat.ts` and `components/Combat/PlayCombat.tsx` (the fight), `shared/logic/index.ts` (quests, ships, fuel, passage), `pages/GameBoard.tsx` (Play), `pages/CharacterManagement.tsx` (level-up panel, Features tab).
+- Rests: a short rest spends one Hit Die (class die + Constitution; `characters.hit_dice_used`) and restores tech points; a long rest needs 1 hit point, restores hit points and power points and returns half the Hit Dice. No resting with enemies in the area.
+- Dying: at 0 hit points the character rolls death saves on their turn (10+ succeeds, a 1 is two failures, a 20 gets up with 1 hit point); damage that carries past the hit point maximum kills outright. Three successes: stable, and the character comes to with 1 hit point (back where they came from, when that is known). Three failures: `conditions: ["Dead"]`.
+- Powers: cost is the power's level + 1, at-will powers are free. `powerEffect` reads the power's text: an attack roll, a saving throw (half on a save where the text says so) or healing, with the dice it names; at-will dice grow at 5th, 11th and 17th level. Force powers use Wisdom (light), Charisma (dark) or the better (universal); tech powers Intelligence. Save DC 8 + proficiency + modifier. Of the 465 powers about 120 resolve this way; the rest are cast, paid for and described. Healing powers can be cast between fights. Stat blocks carry their ability modifiers for saves. Creation and level-up require the power a power builds on.
+- Features that change the numbers (read from their text, so only where the books use the same words each time): natural armor and Unarmored Defense ("your AC is 12 + your Dexterity modifier"), unarmed strike dice (41 species, and the Monk's Martial Arts die), skill and saving throw proficiencies, hit points per level (Toughness, Durable), speed (Mobile, the Monk's Unarmored Movement), and a feat's +1 to an ability. A species' unarmed strike is saved in the character's `weapons` (`natural: true`) so Play needs no species data. Everything else a feature says is shown (character page, Features tab) but not automated.
+- Levelling: Play shows a link when the experience is there; the character page then offers the level. Hit points use the average of the Hit Die plus Constitution (a higher Constitution counts for earlier levels too); proficiency, power points, powers known and the highest power level come from the class table; an archetype is chosen at 3rd level (saved in `subclass` by id); Ability Score Improvement levels are the class's own (Fighter 4, 6, 8, 12, 14, 16, 19) and give two ability points or a feat. A character made at 3rd level or higher can take its archetype from the same panel.
+- Creation: the background's language and tool choices and the species' extra language are picked in the Background step. Class and background starting equipment are not handed out because the app uses the Player's Handbook's starting wealth variant, which replaces them.
+- Quests: `worldQuests` reads three off a new world (clear the most dangerous hostile site on the starting planet, recover a locked or hidden cache, reach the nearest other planet). Objectives name a target (`defeat`, `loot` or `reach` an area) and `advanceQuests` ticks them as the world changes; a finished quest pays credits sized against Wealth by Level. Objectives without a target (older campaigns) are ticked by hand.
+- Ships: the party's ships are in the campaign's `starships` (`PartyShip`: a `Ship` with `fuel` and the berth `areaId`). A ship standing in an area can be bought at its value (size stock cost + fitted equipment) or, when it belonged to the campaign's enemy and nobody is left to guard it, taken. Trips that need a ship burn fuel as Starships of the Galaxy says (one unit for a jump and one per day in hyperspace, one for realspace or atmosphere); a hyperlane needs a hyperdrive; fuel capacity and price by ship size come from the size tables; refuelling is at a settlement with a port.
+- The campaign generator shows and saves the generated world (its quests, places and people). Only the pick of the enemy faction still comes from `lib/sw5e/campaignGenerator.ts`.
+- Maps: Play's Local Map draws the layer the party is in (rooms of the building, buildings of the settlement, sites of the planet, planets of the system) with its paths; tapping a place travels there when an exit leads to it. `/map` is an atlas of a campaign's world (`?campaign=<id>`, default the first campaign that has one): the galaxy with its hyperlanes, then layer by layer. Without such a campaign `/map` shows the old stock viewers.
+
+House rules (not from the books; each is labelled in the game where it appears):
+- Passage on someone else's ship: the fuel the trip burns at a Medium ship's fuel price (100 credits a unit); the shuttle between surface and orbit is free. The books have no fare table.
+- A dead character can be revived with 1 hit point ("Revive (house rule)"), so a solo campaign can go on.
+- Enemies leave a downed character alone instead of attacking them, since the character is alone.
+- One character flies any ship: crew sizes and deployments are not checked.
+- Enemy ships can be taken once their guards are beaten.
+
 ## Play-through test (e2e/)
-- `npm run e2e` drives the whole game through the real UI and deletes what it created: the rules data endpoints, 25 generated worlds checked against the rules data, two characters made by the real rules, a campaign with a world, world edits, then a fight, loot and travel in Play with reloads. It needs a running server: `npm run build`, then `NODE_ENV=production node dist/index.js`.
+- `npm run e2e` drives the whole game through the real UI and deletes what it created: the rules data endpoints, 25 generated worlds checked against the rules data, two characters made by the real rules (tools, languages, the feat's ability and skill, a species' hit points and unarmed strike), a campaign with a world and its quests, world edits, then in Play a fight (with death saves and the revive rule if it goes badly), loot, travel, a short and a long rest, the quests tab, paid passage, a level gained on the character page, and a consular casting the powers chosen in creation. It needs the running service: `npm run build`, then `sudo systemctl restart sw5e`. Do not build while it runs.
 - Options (env): `VIEW=phone` for a 412x915 touch viewport, `FORCE=0` to skip the second (Consular) character, `KEEP=1` to keep the rows, `OUT=<dir>` for the screenshots (default `e2e/out`, gitignored), `BASE=<url>`.
 - `node e2e/shots.mjs` saves a Home screenshot and a mid-combat screenshot.
 - Playwright is pinned to 1.58.0 because newer releases need Node 20. The browser is installed once per machine with `npx playwright install --with-deps chromium` (already done here, in `~/.cache/ms-playwright`). It renders WebGL in software, so the 3D map works without a GPU.
-- About 6 minutes per run on this VM. Pages with long lists are slow under software rendering (2 to 5 seconds a click in the powers step), which is the test machine, not the app.
+- About 13 minutes per run on this VM (10 at phone size without the second character). Pages with long lists are slow under software rendering (2 to 5 seconds a click in the powers step), which is the test machine, not the app. `TIMEOUT=25000` gives slow steps room.
+- Quicker checks of one area, made during Phase 2f, were throwaway scripts (a caster made through the API, then Play; levelling 1 to 4; a feat at 4th level; the maps). If one is wanted again, write it against `e2e/lib.mjs`.
 
 ## Done
 Phase 1: package.json `"type": "module"`, nanoid added, Replit plugin removed (vite.config.ts), tailwind.config.ts uses imports, tsconfig jsx react-jsx, species.ts:13 syntax error, unused nextui imports removed from CharacterCreation.tsx, plural route scheme (/characters, /characters/create, /characters/edit/:id, /characters/:id, /campaigns, /campaigns/:id, /campaigns/create, /map, /game/:campaignId) with all links updated, CampaignView uses lib/queryClient apiRequest, server error handler no longer rethrows, /api/sw5e/* removed (tables never existed; data is bundled client-side), insertDebriefSchema from shared/schema.
@@ -87,23 +112,20 @@ Still open:
 - C14 repo root has overlapping one-off scripts (migrate.ts, run-migrations.ts, migrations.ts, verify-schema.ts, shared/scripts/migrate-with-verification.ts, fixSpeciesData.*, bulkFormatSpeedFix.ts, db-fix-script.js, convertSpecies.ts, .replit, replit.nix). They import neon and are unused.
 - D15 quests are displayed but nothing advances them. (Combat now starts from the hostile creatures in the area the party is in; Test Combat remains only for campaigns without a world.)
 - D16 there is no built-in GM: lib/llm + GMReportManager + ClipboardIntegration implement a manual copy-paste loop (needs HTTPS or localhost for the clipboard).
-- E17 phone readiness, now seen in screenshots (`~/sw5e-logs/e2e_phone`, `shots_phone`): the HUD covers about three quarters of a phone screen, the bottom button bar is wider than the screen (Galaxy Map and Test Combat are cut off), the combat panel lies on top of the HUD. Everything can still be tapped. Also: keyboard-only map controls, h-screen instead of dvh, no PWA manifest, 1.9 MB script bundle.
+- E17 phone readiness, seen in screenshots (`~/sw5e-logs/e2e_phone`): the HUD covers about three quarters of a phone screen and the combat panel lies on top of it. Everything can be tapped and the HUD scrolls clear of the button bar, which now fits the screen. Still: h-screen instead of dvh, no PWA manifest, large script chunks on the creation and character pages.
 
-Gaps that remain (2026-10-13):
-- Features are listed, not applied: class features, species traits and feats do nothing mechanically (a feat's ability increase is not added, Darkvision changes nothing).
-- No archetype choice (the 137 are in the data), no levelling up, no multiclassing. Experience is recorded after fights.
-- Background languages, tools and equipment are not applied; a species' "one extra language of your choice" is stored as that text.
-- Powers can be chosen but not cast in play; power prerequisites are not enforced.
-- No death saves, short rests or conditions in play. Rest is a free long rest (not allowed with enemies present).
-- Ships are placed and described; there is no starship travel cost or combat. Paths that need a ship say so but do not check for one.
-- Test Combat (campaigns without a world) still uses two invented enemies.
-- The campaign text generator (lib/sw5e/campaignGenerator.ts: objectives, NPC types, reward names) is invented flavour, not SW5e data.
-- Maps: the /map page's three viewers (GalacticMap3D, SystemMap, LocalAreaMap) still draw their own hard-coded systems, planets and locations, with no paths. Play's Local Map is random scenery.
-- The encounter XP budgets are the 5th edition numbers; the sw5e.com API does not carry Scum and Villainy's encounter guidance.
+Gaps that remain (2026-10-13, after Phase 2f; the list this replaced is closed except for what is repeated here):
+- Most features are still only shown. What is automated is listed under "Play rules"; Rage, Sneak Attack, fighting styles, maneuvers, Darkvision and the like change nothing in a fight.
+- No multiclassing. Archetypes that grant casting to a class without it (9 of the 137) give no power points. A feat's prerequisite is checked where it is a level, a casting ability, another feat or one ability score; species type, size and either-or ability scores are shown for the player to honour. Creation checks the background feat the same way. One background names a feat ("investigator") that is not in the feat data, so it is not offered.
+- Powers that neither deal damage nor heal (about three quarters of them) have no effect in a fight beyond their cost; conditions are not applied. A power is always aimed at the first standing enemy.
+- Combat is one action a turn: no bonus actions, reactions, movement, range or cover; enemies use their single best attack.
+- No starship combat, crew or ship upgrades. `lib/sw5e/combatmanagers.ts` (starship and vehicle combat) is still unused; its d20 rolls are fixed.
+- The enemy faction of a new campaign is still picked from the list in `lib/sw5e/campaignGenerator.ts`, which is not rules data.
+- Campaigns without a world ("Test Campaign") keep the plain location list, Test Combat and the stock `/map` viewers with their hard-coded places.
+- The encounter XP budgets are the 5th edition numbers; the sw5e.com API does not carry Scum and Villainy's encounter guidance. At 1st level alone they only allow very weak foes.
 - Monsters carry no habitat in the data, so wildlife is matched to a biome by words in its text; where fewer than four match, any beast is used.
-- /characters/edit/:id opens an empty creation form; nothing links to it.
-- lib/sw5e/combatmanagers.ts (starship and vehicle combat, unused) adds a dice array to a number.
-- tsc: 378 errors (was 482), mostly in legacy files. Vite does not typecheck.
+- A character created above 1st level gets that level's hit points and powers but not the Ability Score Improvements of the levels it skipped.
+- tsc: several hundred errors, mostly in legacy files (not re-counted). Vite does not typecheck.
 
 ## SW5e.com crosscheck (2026-10-12; the content and formula mismatches listed here were fixed on 2026-10-13 by the import, except where "Gaps that remain" says otherwise)
 How it was done: sw5e.com is a single-page app over a public API, `https://sw5eapi.azurewebsites.net/api/<name>` (data version 199, unchanged since 2023-05-06). Every dataset was downloaded and compared by script with a JSON dump of `client/src/lib/sw5e/*.ts`. Dataset names: species, class, archetype, background, feat, power, equipment, enhancedItem, monster, maneuvers, feature, fightingStyle, fightingMastery, lightsaberForm, classImprovement, multiclassImprovement, splashclassImprovement, weaponFocus, weaponSupremacy, weaponProperty, armorProperty, skills, conditions, characterAdvancement, referenceTable, starshipBaseSize, starshipDeployment, starshipEquipment, starshipModification, starshipVenture, PlayerHandbookRule, StarshipRule, WretchedHivesRule, VariantRule, ExpandedContent, dataVersion.
@@ -143,11 +165,15 @@ Done on 2026-10-13: the data files are generated from the API, expanded content 
 - Rules data is generated, never hand-written (2d). All ten classes are offered again now that all have data.
 - New campaigns always get a generated world; campaigns without one keep the plain location list (2e).
 - The generator's code lives in the existing shared/logic module and the editor in the existing CampaignManager, at the user's request to extend files rather than add them. The only new files are the import script and the generated data.
+- Access is Tailscale-only (user, 2026-10-13); public HTTPS stays a possible later development. No Oracle port is opened for the game.
+- Phase 2f added no source files: `lib/sw5e/characterCalculation.ts` (an unused helper with two hard-coded experience tables) was rewritten as the module for features and levelling. New files are `deploy/*` and migration 0001.
+- Rules the books leave open are settled by the labelled house rules under "Play rules". Starting equipment follows the starting wealth variant.
 
 ## Next
-1. Phase 3 (ask first): systemd service with restart on failure and EnvironmentFile for secrets; Caddy HTTPS reverse proxy to 127.0.0.1:5000, or Tailscale-only; DuckDNS name if public; the app has NO login, so protect it (Caddy basic auth or Tailscale-only); settle the host firewall (see above) before opening 80/443 in the Oracle VCN security list, and explain exactly what; database backup (pg_dump on a timer).
-2. First session on a real phone. Fix what breaks.
-3. Phase 4 phone UI: bottom-sheet HUD, wrap the button bar, combat panel placement, tap controls, dvh, PWA manifest and icons, 2D map fallback, prune dependencies.
-4. Game depth, from "Gaps that remain": apply features and feats, archetype choice and levelling, casting powers, death saves and short rests, quests that advance, ships that matter.
-5. Maps: feed the /map viewers and the Local Map from the generated world, so every map shows the same places and paths.
+1. The user enables Tailscale Serve (see "Environment and ops"); then check `tailscale serve status` and open the HTTPS address it shows from the phone.
+2. Host firewall: still off and still the user's decision (see "Environment and ops"). With Tailscale no inbound port is needed for the game, so loading the saved rules (SSH only) is the safe direction; do it only with the user's go-ahead and with a second SSH session open.
+3. First session on a real phone. Fix what breaks.
+4. Phase 4 phone UI: bottom-sheet HUD, combat panel placement, dvh, PWA manifest and icons, prune dependencies.
+5. More depth, from "Gaps that remain": conditions and non-damaging powers, class features in a fight, multiclassing, starship combat.
 6. Phase 5: keep the manual copy-paste GM loop. Do not build an API-based GM without asking.
+7. Public HTTPS (Caddy, DuckDNS, a login) only if the user asks for it.
