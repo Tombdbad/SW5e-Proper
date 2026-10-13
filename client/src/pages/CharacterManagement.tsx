@@ -12,6 +12,7 @@ import { useCharacter } from "@/lib/stores/useCharacter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useCampaign } from "@/lib/stores/useCampaign";
 import { getClassById } from "@/lib/sw5e/classes";
+import { getSpeciesById } from "@/lib/sw5e/species";
 import { feats } from "@/lib/sw5e/feats";
 import {
   ABILITIES, applyLevelUp, archetypeOptions, calculateExperienceForNextLevel, characterFeatures, chooseArchetype,
@@ -266,17 +267,17 @@ export default function CharacterManagement() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 p-6 text-white">
+    <div className="min-h-screen bg-gray-900 p-3 md:p-6 text-white">
       <div className="max-w-7xl mx-auto">
-        <header className="flex justify-between items-center mb-8">
+        <header className="flex flex-wrap justify-between items-center gap-3 mb-6 md:mb-8">
           <div>
             <h1 className="text-3xl font-bold text-yellow-400">{character.name}</h1>
             <p className="text-gray-300">
-              Level {character.level} {character.species} {character.class}
+              Level {character.level} {getSpeciesById(character.species)?.name ?? character.species} {getClassById(character.class)?.name ?? character.class}
               {findArchetype(character) ? ` (${findArchetype(character)!.name})` : ""}
             </p>
           </div>
-          <div className="flex gap-4">
+          <div className="flex flex-wrap gap-2 md:gap-4">
             <Button
               variant="outline"
               className="border-yellow-400 text-yellow-400"
@@ -307,7 +308,7 @@ export default function CharacterManagement() {
         <Advancement character={data} onSave={(changes) => updateCharacter.mutate(changes)} saving={updateCharacter.isPending} />
 
         <Card className="bg-gray-800 border-gray-700">
-          <CardContent className="p-6">
+          <CardContent className="p-3 md:p-6">
             <Tabs defaultValue="character-sheet">
               <TabsList className="mb-6">
                 <TabsTrigger value="character-sheet">Character Sheet</TabsTrigger>

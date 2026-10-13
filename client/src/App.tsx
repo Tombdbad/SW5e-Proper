@@ -1,6 +1,6 @@
 
 import { useState, useEffect, lazy, Suspense } from 'react';
-import { Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useParams, useLocation } from 'react-router-dom';
 import Home from './pages/Home';
 import NotFound from './pages/not-found';
 
@@ -11,6 +11,7 @@ const CampaignView = lazy(() => import('./pages/CampaignView'));
 const GalacticMapView = lazy(() => import('./pages/GalacticMapView'));
 const GameBoard = lazy(() => import('./pages/GameBoard'));
 import { Toaster } from './components/ui/sonner';
+import ErrorBoundary from './components/ui/ErrorBoundary';
 const LoadingDemo = lazy(() => import('./pages/LoadingDemo'));
 
 // A character is edited on its own page (the sheet, the inventory, levelling up)
@@ -21,6 +22,7 @@ function CharacterPageRedirect() {
 
 function App() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [showDevTools, setShowDevTools] = useState(false);
   
   // Toggle developer tools with Ctrl+Shift+D
@@ -60,6 +62,8 @@ function App() {
         )}
         
         <div className="flex-grow">
+          {/* A page that fails shows what went wrong instead of a blank screen; moving to another page clears it */}
+          <ErrorBoundary resetKey={location.pathname}>
           <Suspense fallback={<div className="p-6 text-center text-gray-300">Loading...</div>}>
           <Routes>
             <Route path="/" element={<Home />} />
@@ -75,6 +79,7 @@ function App() {
             <Route path="*" element={<NotFound />} />
           </Routes>
           </Suspense>
+          </ErrorBoundary>
         </div>
       </div>
   );

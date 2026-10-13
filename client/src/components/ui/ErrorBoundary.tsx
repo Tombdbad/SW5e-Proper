@@ -7,6 +7,8 @@ import { AlertCircle } from "lucide-react";
 interface Props {
   children: ReactNode;
   fallbackUI?: ReactNode;
+  // When this changes (the page's address, say) the error is cleared
+  resetKey?: string;
 }
 
 interface State {
@@ -34,6 +36,12 @@ class ErrorBoundary extends Component<Props, State> {
     });
   }
 
+  public componentDidUpdate(previous: Props) {
+    if (this.state.hasError && previous.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, error: null, errorInfo: null });
+    }
+  }
+
   public render() {
     if (this.state.hasError) {
       if (this.props.fallbackUI) {
@@ -42,15 +50,18 @@ class ErrorBoundary extends Component<Props, State> {
 
       return (
         <div className="p-4 max-w-xl mx-auto">
-          <Alert variant="destructive">
+          <Alert variant="destructive" className="text-red-200 border-red-500 [&>svg]:text-red-300">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Something went wrong</AlertTitle>
             <AlertDescription>
-              <p className="my-2">An error occurred in this component:</p>
+              <p className="my-2">This page hit an error. Your saved game is not affected.</p>
               <div className="bg-black/30 p-3 text-xs font-mono overflow-auto max-h-[150px] rounded mb-4">
                 {this.state.error?.toString()}
               </div>
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => window.location.assign("/")}>
+                  Home
+                </Button>
                 <Button 
                   variant="outline" 
                   onClick={() => this.setState({ hasError: false, error: null, errorInfo: null })}
