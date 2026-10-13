@@ -1,0 +1,1 @@
+ALTER TABLE "characters" ADD COLUMN "hit_dice_used" integer DEFAULT 0 NOT NULL;

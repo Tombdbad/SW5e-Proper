@@ -44,6 +44,8 @@ export const characters = pgTable("characters", {
   maxHp: integer("max_hp").notNull(),
   currentHp: integer("current_hp").notNull(),
   temporaryHp: integer("temporary_hp").notNull().default(0),
+  // Hit Dice spent on short rests; half the total come back on a long rest
+  hitDiceUsed: integer("hit_dice_used").notNull().default(0),
   armorClass: integer("armor_class").notNull(),
   
   // Force Powers
@@ -125,6 +127,8 @@ export const insertCharacterSchema = z.object({
   maxHp: z.number().min(1),
   currentHp: z.number().min(0),
   temporaryHp: z.number().min(0).default(0),
+  hitDiceUsed: z.number().min(0).optional(),
+  conditions: z.array(z.string()).optional(),
   maxForcePoints: z.number().min(0),
   currentForcePoints: z.number().min(0),
   armorClass: z.number().min(1),
@@ -271,6 +275,8 @@ export const insertCampaignSchema = z.object({
     objectives: z.array(z.object({
       description: z.string(),
       completed: z.boolean(),
+      // What in the generated world completes it: { kind: "defeat" | "loot" | "reach", areaId }
+      target: z.any().optional(),
     })),
     reward: z.object({
       credits: z.number(),
@@ -283,6 +289,8 @@ export const insertCampaignSchema = z.object({
   notes: z.string().optional(),
   // The generated world (shared/logic World): areas, the paths between them, and what is in them
   galaxyMap: z.any().optional(),
+  // Ships the party owns (shared/logic Ship)
+  starships: z.any().optional(),
 });
 
 export type InsertCampaign = z.infer<typeof insertCampaignSchema>;
