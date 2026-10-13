@@ -4,8 +4,18 @@ import { Text, useTexture, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { starSystems } from "@/lib/sw5e/starSystems";
 import { useMap } from "@/lib/stores/useMap";
+import { trailOf, type World } from "@shared/logic";
 
-export default function GalaxyMap() {
+interface GalaxyMapProps {
+  // The campaign's generated world: its systems and hyperlanes are drawn instead of the stock galaxy
+  world?: World | null;
+  hereId?: string | null;
+}
+
+// Generated systems sit on rings up to about 115 units out; the map is about 70 across
+const WORLD_SCALE = 0.6;
+
+export default function GalaxyMap({ world, hereId }: GalaxyMapProps = {}) {
   const { selectStarSystem, selectedStarSystem } = useMap();
   const [hoveredSystem, setHoveredSystem] = useState<string | null>(null);
   const galaxyRef = useRef<THREE.Group>(null);
@@ -41,6 +51,20 @@ export default function GalaxyMap() {
   const handleSystemClick = (systemId: string) => {
     selectStarSystem(systemId);
   };
+
+  // What to draw: the campaign's own galaxy when it has one
+  const shown = world
+    ? Object.values(world.areas)
+        .filter((a) => a.kind === "system")
+        .map((a) => ({ id: a.id, name: a.name, type: a.type, x: a.position.x * WORLD_SCALE, y: a.position.y * WORLD_SCALE, z: a.position.z * WORLD_SCALE }))
+    : starSystems;
+  const lanes = world
+    ? world.paths
+        .filter((p) => p.kind === "hyperlane")
+        .map((p) => ({ id: p.id, ends: [p.from, p.to].map((id) => shown.find((s) => s.id === id)) }))
+        .filter((lane) => lane.ends[0] && lane.ends[1])
+    : [];
+  const hereSystem = world && hereId ? trailOf(world, hereId).find((a) => a.kind === "system")?.id : undefined;
 
   return (
     <>
@@ -79,8 +103,23 @@ export default function GalaxyMap() {
           </line>
         ))}
 
+        {/* Hyperlanes between the systems of a generated world */}
+        {lanes.map((lane) => (
+          <line key={lane.id}>
+            <bufferGeometry>
+              <bufferAttribute
+                attach="attributes-position"
+                count={2}
+                array={new Float32Array(lane.ends.flatMap((s) => [s!.x, s!.y, s!.z]))}
+                itemSize={3}
+              />
+            </bufferGeometry>
+            <lineBasicMaterial color="#60a0ff" opacity={0.6} transparent />
+          </line>
+        ))}
+
         {/* Star systems */}
-        {starSystems.map((system) => (
+        {shown.map((system) => (
           <group key={system.id} position={[system.x, system.y, system.z]}>
             <mesh
               onClick={() => handleSystemClick(system.id)}
@@ -90,7 +129,7 @@ export default function GalaxyMap() {
               <sphereGeometry args={[1, 16, 16]} />
               <meshStandardMaterial
                 color={
-                  selectedStarSystem === system.id
+                  selectedStarSystem === system.id || hereSystem === system.id
                     ? "#ffff00"
                     : hoveredSystem === system.id
                       ? "#ffaa00"

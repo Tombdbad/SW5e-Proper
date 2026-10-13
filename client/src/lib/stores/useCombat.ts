@@ -53,6 +53,21 @@ export interface Combatant {
   };
   attackBonus?: number;
   damageBonus?: number;
+  // Damage as printed on a stat block or weapon ("1d8 + 3"); used instead of the generic dice
+  damageDice?: string;
+  // The player's weapons: dice and names for the two kinds of attack
+  meleeDice?: string;
+  rangedDice?: string;
+  meleeWeapon?: string;
+  rangedWeapon?: string;
+}
+
+// Rolls "2d6 + 1" style damage; a critical hit rolls the dice twice
+export function rollDamage(expression: string, isCritical: boolean): number {
+  const parts = expression.replace(/\s+/g, "").match(/^(\d+)d(\d+)([+-]\d+)?$/);
+  if (!parts) return Math.max(1, parseInt(expression) || 1);
+  const dice = Number(parts[1]) * (isCritical ? 2 : 1);
+  return Math.max(1, roll(dice, Number(parts[2])) + Number(parts[3] ?? 0));
 }
 
 interface CombatState {
@@ -66,6 +81,7 @@ interface CombatState {
   initiateCombat: (
     player: Character,
     enemies: Omit<Combatant, "isPlayer">[],
+    weapons?: Pick<Combatant, "meleeDice" | "rangedDice" | "meleeWeapon" | "rangedWeapon">,
   ) => void;
   endCombat: () => void;
   nextTurn: () => void;
@@ -86,7 +102,7 @@ export const useCombat = create<CombatState>((set, get) => ({
   round: 1,
   combatLog: [],
 
-  initiateCombat: (player, enemies) => {
+  initiateCombat: (player, enemies, weapons) => {
     // Calculate initiatives
     const dexModifier = Math.floor((player.abilityScores.dexterity - 10) / 2);
     const playerInitiative = roll(1, 20) + dexModifier;
@@ -102,6 +118,9 @@ export const useCombat = create<CombatState>((set, get) => ({
       armorClass: player.armorClass,
       isPlayer: true,
       abilities: player.abilityScores,
+      // Proficiency bonus for the character's level
+      attackBonus: Math.ceil(1 + (Number((player as any).level) || 1) / 4),
+      ...weapons,
     };
 
     // Add initiative to enemies
@@ -244,6 +263,18 @@ export const useCombat = create<CombatState>((set, get) => ({
 
     const { currentTurn, combatants } = get();
     const attacker = combatants[currentTurn];
+
+    // A stat block's own damage, or the weapon the player is holding
+    if (!attacker.isPlayer && attacker.damageDice) return rollDamage(attacker.damageDice, isCritical);
+    const weaponDice = attackType === "melee" ? attacker.meleeDice : attackType === "ranged" ? attacker.rangedDice : undefined;
+    if (attacker.isPlayer && weaponDice && attacker.abilities) {
+      const ability = attackType === "melee" ? attacker.abilities.strength : attacker.abilities.dexterity;
+      return Math.max(1, rollDamage(weaponDice, isCritical) + Math.floor((ability - 10) / 2));
+    }
+    // An unarmed strike does 1 + Strength modifier
+    if (attacker.isPlayer && attackType === "melee" && attacker.abilities) {
+      return Math.max(1, 1 + Math.floor((attacker.abilities.strength - 10) / 2));
+    }
 
     // Set dice type based on attack type
     switch (attackType) {

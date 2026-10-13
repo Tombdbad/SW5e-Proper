@@ -21,10 +21,11 @@ export default function PlayCombat() {
     const roll = d20();
     const crit = roll === 20;
     const bonus = attacker.isPlayer
-      ? mod(attacker.abilities?.[type === "melee" ? "strength" : "dexterity"]) + 2
+      ? mod(attacker.abilities?.[type === "melee" ? "strength" : "dexterity"]) + (attacker.attackBonus ?? 2)
       : attacker.attackBonus ?? 3;
     const dmg = s.damageRoll(type, crit);
-    s.attackRoll(target.id, roll + bonus, dmg, crit);
+    // A natural 1 misses whatever the bonus
+    s.attackRoll(target.id, roll === 1 ? 0 : roll + bonus, dmg, crit);
     useCombat.getState().nextTurn();
   };
 
@@ -67,12 +68,15 @@ export default function PlayCombat() {
           ))}
         </ul>
         <div className="flex gap-2 mb-3">
-          <Button disabled={!playerTurn} onClick={() => strike("melee")}>
+          <Button disabled={!playerTurn} onClick={() => strike("melee")} title={player?.meleeWeapon ?? "Unarmed"}>
             Melee
           </Button>
-          <Button disabled={!playerTurn} onClick={() => strike("ranged")}>
+          <Button disabled={!playerTurn || !player?.rangedDice} onClick={() => strike("ranged")} title={player?.rangedWeapon ?? "No ranged weapon"}>
             Ranged
           </Button>
+        </div>
+        <div className="text-xs text-gray-400 mb-2">
+          Melee: {player?.meleeWeapon ?? "unarmed"} · Ranged: {player?.rangedWeapon ?? "none"}
         </div>
         <div className="text-xs text-gray-300 space-y-1 max-h-32 overflow-y-auto">
           {combatLog.slice(-6).map((l, i) => (

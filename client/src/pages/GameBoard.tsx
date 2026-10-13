@@ -15,6 +15,12 @@ import { useCampaign } from "@/lib/stores/useCampaign";
 import { useCombat } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
+import { toast } from "sonner";
+import { findEquipmentByName } from "@/lib/sw5e/equipment";
+import { exitsOf, trailOf, childrenOf, updateArea, type World, type Area, type Exit, type LootCache } from "@shared/logic";
+
+const d20 = () => Math.floor(Math.random() * 20) + 1;
+const modifier = (score?: number) => Math.floor(((score ?? 10) - 10) / 2);
 
 // Define control keys for the game
 const controls = [
@@ -72,19 +78,31 @@ export default function GameBoard() {
     }).then(() => queryClient.invalidateQueries({ queryKey: ["game-character"] }));
   }, [combatants, character?.id]);
 
+  // The generated world, when the campaign has one, and where in it the party is
+  const world: World | null = campaign?.galaxyMap ?? null;
+  const hereId: string | null = world ? (world.areas[campaign.currentLocation] ? campaign.currentLocation : world.startId) : null;
+  const here: Area | null = world && hereId ? world.areas[hereId] : null;
+  const [cameFrom, setCameFrom] = useState<string | null>(null);
+  const [exploring, setExploring] = useState(false);
+  const fightArea = useRef<string | null>(null);
+
   // Load campaign data when available
   useEffect(() => {
     if (data && !isLoading) {
       loadCampaign(data as any);
       
       // Set initial location if available
+      if (here) {
+        setCurrentLocation({ id: here.id, name: here.name, type: here.type, description: here.description, coordinates: here.position });
+        return;
+      }
       const startName = (data as any).currentLocation || (data as any).startingLocation;
       const startLoc = ((data as any).locations || []).find((l: any) => l.name === startName);
       if (startLoc) {
         setCurrentLocation({ coordinates: { x: 0, y: 0, z: 0 }, ...startLoc });
       }
     }
-  }, [data, isLoading, loadCampaign, setCurrentLocation]);
+  }, [data, isLoading, loadCampaign, setCurrentLocation, here?.id]);
 
   // Show combat UI when in combat
   useEffect(() => {
@@ -100,6 +118,147 @@ export default function GameBoard() {
       body: JSON.stringify({ currentLocation: loc.name }),
     });
   };
+
+  // Save campaign fields; the page shows them at once
+  const saveCampaign = async (changes: Record<string, any>) => {
+    queryClient.setQueryData([`/api/campaigns/${campaignId}`], (old: any) => ({ ...old, ...changes }));
+    const response = await fetch(`/api/campaigns/${campaignId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(changes),
+    });
+    if (!response.ok) toast.error("Could not save the campaign");
+  };
+  const saveCharacter = async (changes: Record<string, any>) => {
+    await fetch(`/api/characters/${character.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(changes),
+    });
+    queryClient.invalidateQueries({ queryKey: ["game-character"] });
+  };
+
+  // An ability check against a DC: d20 + the better of the given abilities (+ proficiency if trained)
+  const proficiency = Math.ceil(1 + (Number(character?.level) || 1) / 4);
+  const abilityCheck = (what: string, dc: number, abilities: string[], trained: boolean) => {
+    const roll = d20();
+    const bonus = Math.max(...abilities.map((a) => modifier(character.abilityScores?.[a]))) + (trained ? proficiency : 0);
+    const success = roll + bonus >= dc;
+    toast[success ? "success" : "error"](`${what}: ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${roll + bonus} against DC ${dc}. ${success ? "Success." : "Failed."}`);
+    return success;
+  };
+  const carries = (pattern: RegExp) => (character?.equipment ?? []).some((name: string) => pattern.test(name));
+  const skilled = (skill: string) => (character?.skillProficiencies ?? []).some((s: string) => s.toLowerCase() === skill);
+
+  const hostiles = (here?.occupants ?? []).filter((o) => o.disposition === "hostile" && o.hitPoints);
+  const exits: Exit[] = world && here ? exitsOf(world, here.id) : [];
+
+  // Walk, drive or fly along an exit
+  const travel = (exit: Exit) => {
+    if (!here) return;
+    setCameFrom(here.id);
+    saveCampaign({ currentLocation: exit.to });
+  };
+
+  // Pick or slice a lock: Dexterity or Intelligence, trained with a security or slicer's kit
+  const unlock = (exit: Exit) => {
+    if (!world || !exit.pathId || !abilityCheck("Lock", exit.locked ?? 10, ["dexterity", "intelligence"], carries(/security kit|slicer's kit/i))) return;
+    const paths = world.paths.map((p) => (p.id === exit.pathId ? { ...p, locked: undefined } : p));
+    saveCampaign({ galaxyMap: { ...world, paths } });
+  };
+
+  // Look for hidden ways and caches: Wisdom (Perception)
+  const search = () => {
+    if (!world || !here) return;
+    const hiddenPaths = world.paths.filter((p) => p.hidden && (p.from === here.id || p.to === here.id));
+    const hiddenLoot = here.loot.filter((c) => c.hidden);
+    if (!abilityCheck("Search", 12 + here.danger, ["wisdom"], skilled("perception"))) return;
+    if (hiddenPaths.length + hiddenLoot.length === 0) {
+      toast.info("There is nothing hidden here.");
+      return;
+    }
+    const next = updateArea(world, here.id, { loot: here.loot.map((c) => ({ ...c, hidden: undefined })) }).world;
+    saveCampaign({ galaxyMap: { ...next, paths: next.paths.map((p) => (hiddenPaths.some((h) => h.id === p.id) ? { ...p, hidden: undefined } : p)) } });
+  };
+
+  // Go into a place nobody has mapped yet: the server builds what is inside
+  const explore = async () => {
+    if (!world || !here) return;
+    setExploring(true);
+    try {
+      const response = await fetch("/api/world/expand", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ world, areaId: here.id }),
+      });
+      if (!response.ok) throw new Error("The server could not build this place");
+      await saveCampaign({ galaxyMap: (await response.json()).world });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setExploring(false);
+    }
+  };
+
+  // Open a cache (its lock first, if it has one) and take what is in it
+  const takeLoot = (cache: LootCache) => {
+    if (!world || !here) return;
+    if (cache.locked && !abilityCheck("Lock", cache.locked, ["dexterity", "intelligence"], carries(/security kit|slicer's kit/i))) return;
+    const gained = cache.items.flatMap((item) => Array.from({ length: item.quantity }, () => item.name));
+    saveCharacter({ equipment: [...(character.equipment ?? []), ...gained], credits: (character.credits ?? 0) + cache.credits });
+    const loot = here.loot.map((c) => (c.id === cache.id ? { ...c, items: [], credits: 0, locked: undefined, looted: true } : c));
+    saveCampaign({ galaxyMap: updateArea(world, here.id, { loot }).world });
+    toast.success(`Taken: ${[cache.credits && `${cache.credits} credits`, ...gained].filter(Boolean).join(", ") || "nothing"}`);
+  };
+
+  // The weapons the character carries, from the equipment data: one for melee, one for ranged
+  const weapons = () => {
+    const owned = (character?.equipment ?? []).map((name: string) => findEquipmentByName(name)).filter((e: any) => e?.category === "Weapon" && e.damage);
+    const melee = owned.find((e: any) => /vibroweapon|lightweapon/i.test(e.weaponClassification ?? ""));
+    const ranged = owned.find((e: any) => /blaster/i.test(e.weaponClassification ?? ""));
+    return {
+      meleeDice: melee?.damage.split(" ")[0],
+      meleeWeapon: melee?.name,
+      rangedDice: ranged?.damage.split(" ")[0],
+      rangedWeapon: ranged?.name,
+    };
+  };
+
+  // Fight the hostile creatures in this area, with their own armor, hit points and attacks
+  const fight = () => {
+    if (!character || !here || character.currentHp <= 0) return;
+    const enemies = hostiles.flatMap((o) =>
+      Array.from({ length: o.count }, (_, i) => ({
+        id: `${o.id}-${i}`,
+        name: o.count > 1 ? `${o.name} ${i + 1}` : o.name,
+        hp: o.hitPoints!,
+        maxHp: o.hitPoints!,
+        initiative: 0,
+        armorClass: o.armorClass ?? 10,
+        attackBonus: o.attack?.bonus ?? 2,
+        damageDice: o.attack?.damage ?? "1d4",
+      })),
+    );
+    fightArea.current = here.id;
+    initiateCombat(character, enemies, weapons());
+  };
+
+  // When a fight in the world is won, the fallen leave the area and their gear stays behind
+  useEffect(() => {
+    const areaId = fightArea.current;
+    if (inCombat || !areaId || !world || !world.areas[areaId]) return;
+    const foes = combatants.filter((c) => !c.isPlayer);
+    fightArea.current = null;
+    if (!foes.length || foes.some((c) => c.hp > 0)) return;
+    const area = world.areas[areaId];
+    const fallen = area.occupants.filter((o) => o.disposition === "hostile" && o.hitPoints);
+    const gear = fallen.flatMap((o) => o.loadout.map((name) => ({ name, quantity: o.count, source: "equipment" as const })));
+    const loot = gear.length ? [...area.loot, { id: `l-${Date.now().toString(36)}`, name: "Gear of the fallen", kind: "remains", credits: 0, items: gear }] : area.loot;
+    saveCampaign({ galaxyMap: updateArea(world, areaId, { occupants: area.occupants.filter((o) => !fallen.includes(o)), loot }).world });
+    const xp = fallen.reduce((sum, o) => sum + (o.xp ?? 0) * o.count, 0);
+    if (xp && character) saveCharacter({ experience: (character.experience ?? 0) + xp });
+    toast.success(`Victory${xp ? `: ${xp} XP` : ""}`);
+  }, [inCombat]);
 
   // Full rest: restore HP and Force points
   const rest = async () => {
@@ -129,7 +288,7 @@ export default function GameBoard() {
       { id: "enemy-2", name: "Imperial Officer", hp: 20, maxHp: 20, initiative: 14, armorClass: 12, attackBonus: 2 },
     ];
     
-    initiateCombat(character, enemies);
+    initiateCombat(character, enemies, weapons());
   };
 
   if (isLoading || characterLoading) {
@@ -182,7 +341,7 @@ export default function GameBoard() {
           
           {/* Maps */}
           {activeMapTab === "galaxy" ? (
-            <GalaxyMap />
+            <GalaxyMap world={world} hereId={hereId} />
           ) : (
             <LocalMap />
           )}
@@ -207,7 +366,7 @@ export default function GameBoard() {
               <Button variant="outline" onClick={toggleSidebar}>
                 {showSidebar ? "Hide HUD" : "Show HUD"}
               </Button>
-              {!inCombat && (
+              {!inCombat && !world && (
                 <Button variant="destructive" onClick={startTestCombat} disabled={character.currentHp <= 0}>
                   Test Combat
                 </Button>
@@ -246,6 +405,95 @@ export default function GameBoard() {
               </div>
             </div>
 
+            {world && here ? (
+              <div className="mb-4 space-y-2" data-testid="play-location">
+                <h3 className="font-semibold">Location</h3>
+                <p className="text-xs text-gray-400" data-testid="play-trail">
+                  {trailOf(world, here.id).slice(2, -1).map((a) => a.name).join(" \u203a ")}
+                </p>
+                <p data-testid="play-here">
+                  <span className="font-semibold">{here.name}</span>{" "}
+                  <span className="text-sm text-gray-400">
+                    ({here.kind}{here.kind !== "room" && here.type !== here.kind ? `, ${here.type}` : ""})
+                  </span>
+                </p>
+                {here.description && <p className="text-sm text-gray-400">{here.description}</p>}
+
+                {here.occupants.length + here.ships.length > 0 && (
+                  <ul className="text-sm space-y-1" data-testid="play-occupants">
+                    {here.occupants.map((o) => (
+                      <li key={o.id} className={o.disposition === "hostile" ? "text-red-400" : o.disposition === "friendly" ? "text-green-300" : ""}>
+                        {o.count > 1 ? `${o.count} x ` : ""}{o.name}
+                        <span className="text-gray-400">
+                          {" "}{[o.species, o.role, o.disposition, o.cr && `CR ${o.cr}`].filter(Boolean).join(", ")}
+                        </span>
+                      </li>
+                    ))}
+                    {here.ships.map((ship) => (
+                      <li key={ship.id}>
+                        {ship.name} <span className="text-gray-400">{ship.size} {ship.role.toLowerCase()}, {ship.status}, {ship.owner}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {hostiles.length > 0 && (
+                  <Button size="sm" variant="destructive" onClick={fight} disabled={inCombat || character.currentHp <= 0}>
+                    Fight
+                  </Button>
+                )}
+
+                {here.loot.filter((c) => !c.hidden).map((cache) => (
+                  <div key={cache.id} className="text-sm flex flex-wrap items-center gap-2" data-testid="play-loot">
+                    <span>
+                      {cache.name}
+                      {cache.looted && <span className="text-gray-400"> (empty)</span>}
+                    </span>
+                    {!cache.looted && (
+                      <Button size="sm" variant="outline" onClick={() => takeLoot(cache)} disabled={inCombat || hostiles.length > 0}>
+                        {cache.locked ? `Open (DC ${cache.locked})` : "Take"}
+                      </Button>
+                    )}
+                  </div>
+                ))}
+
+                <div className="flex flex-col gap-1" data-testid="play-exits">
+                  {exits.filter((exit) => !exit.hidden).map((exit) => {
+                    // Enemies bar every way but the way back
+                    const barred = hostiles.length > 0 && exit.to !== cameFrom;
+                    return (
+                      <Button
+                        key={`${exit.via}-${exit.to}`}
+                        size="sm"
+                        variant="outline"
+                        className="h-auto whitespace-normal justify-start text-left"
+                        disabled={inCombat || barred}
+                        onClick={() => (exit.locked ? unlock(exit) : travel(exit))}
+                      >
+                        {exit.locked ? `Unlock (DC ${exit.locked}): ` : ""}{exit.label}{exit.via === "path" ? " to" : ""} {world.areas[exit.to].name}
+                        {[exit.travel, exit.needsShip && "needs a ship"].filter(Boolean).length > 0 && (
+                          <span className="text-gray-400 ml-1">({[exit.travel, exit.needsShip && "needs a ship"].filter(Boolean).join(", ")})</span>
+                        )}
+                      </Button>
+                    );
+                  })}
+                  {hostiles.length > 0 && <p className="text-xs text-red-400">Enemies bar the way onward.</p>}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={search} disabled={inCombat || hostiles.length > 0}>
+                    Search
+                  </Button>
+                  {childrenOf(world, here.id).length === 0 && ["system", "planet", "settlement", "building"].includes(here.kind) && (
+                    <Button size="sm" variant="outline" onClick={explore} disabled={exploring || inCombat}>
+                      {exploring ? "Exploring..." : "Explore"}
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" onClick={rest} disabled={inCombat || hostiles.length > 0}>
+                    Rest (restore HP)
+                  </Button>
+                </div>
+              </div>
+            ) : (
             <div className="mb-4">
               <h3 className="font-semibold mb-2">Location</h3>
               <p>{currentLocation?.name || "Unknown"}</p>
@@ -266,6 +514,7 @@ export default function GameBoard() {
                 Rest (restore HP)
               </Button>
             </div>
+            )}
 
               <Tabs defaultValue="quests">
                 <TabsList className="grid grid-cols-3 mb-4">

@@ -1,15 +1,17 @@
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import Home from './pages/Home';
-import CharacterCreation from './pages/CharacterCreation';
-import CharacterManagement from './pages/CharacterManagement';
-import CampaignView from './pages/CampaignView';
-import GalacticMapView from './pages/GalacticMapView';
-import GameBoard from './pages/GameBoard';
 import NotFound from './pages/not-found';
+
+// Each page loads when it is first opened, with the rules data it needs. The home page stays small.
+const CharacterCreation = lazy(() => import('./pages/CharacterCreation'));
+const CharacterManagement = lazy(() => import('./pages/CharacterManagement'));
+const CampaignView = lazy(() => import('./pages/CampaignView'));
+const GalacticMapView = lazy(() => import('./pages/GalacticMapView'));
+const GameBoard = lazy(() => import('./pages/GameBoard'));
 import { Toaster } from './components/ui/sonner';
-import LoadingDemo from './pages/LoadingDemo';
+const LoadingDemo = lazy(() => import('./pages/LoadingDemo'));
 
 function App() {
   const navigate = useNavigate();
@@ -52,6 +54,7 @@ function App() {
         )}
         
         <div className="flex-grow">
+          <Suspense fallback={<div className="p-6 text-center text-gray-300">Loading...</div>}>
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/characters/create" element={<CharacterCreation />} />
@@ -65,6 +68,7 @@ function App() {
             <Route path="/dev/loading" element={<LoadingDemo />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </Suspense>
         </div>
       </div>
   );

@@ -47,8 +47,14 @@ export default function CampaignView() {
         // Update existing campaign
         return apiRequest('PUT', `/api/campaigns/${id}`, campaignData);
       } else {
-        // Create new campaign
-        return apiRequest('POST', '/api/campaigns', campaignData);
+        // Create new campaign, with a generated world to play in
+        const { worldOptions, ...fields } = campaignData;
+        const generated = await (await apiRequest('POST', '/api/world/generate', { options: worldOptions ?? {} })).json();
+        return apiRequest('POST', '/api/campaigns', {
+          ...fields,
+          galaxyMap: generated.world,
+          currentLocation: generated.world.startId,
+        });
       }
     },
     onSuccess: async (response) => {
@@ -60,9 +66,7 @@ export default function CampaignView() {
     }
   });
 
-  const handleSaveCampaign = (campaignData: any) => {
-    saveCampaign.mutate(campaignData);
-  };
+  const handleSaveCampaign = (campaignData: any) => saveCampaign.mutateAsync(campaignData);
 
   // Show the generator in 'create' mode, the saved campaign otherwise
   useEffect(() => {
@@ -131,7 +135,7 @@ export default function CampaignView() {
                 Play
               </Link>
             </div>
-            <CampaignManager campaign={campaign} />
+            <CampaignManager campaign={campaign} character={character} onSave={handleSaveCampaign} />
           </>
         )
       )}

@@ -118,7 +118,12 @@ export default function CampaignGenerator({ character, onSave }: CampaignGenerat
         }))
       ],
       startingLocation: campaign.location.name,
-      currentLocation: campaign.location.name
+      currentLocation: campaign.location.name,
+      // For the world that is generated with the campaign: its enemy is the objective's faction
+      worldOptions: {
+        antagonist: campaign.primaryObjective.target,
+        partyLevel: character.level,
+      },
     };
     
     onSave(campaignData);
