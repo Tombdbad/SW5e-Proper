@@ -70,7 +70,7 @@ export const characters = pgTable("characters", {
   credits: integer("credits").notNull().default(1000),
   equipment: json("equipment").notNull(), // Array of standard equipment items
   weapons: json("weapons"), // [{ name, damage, damageType, properties, equipped, proficient }]
-  armor: json("armor"), // { name, type, armorClass, equipped }
+  armor: json("armor"), // What is equipped once the player has chosen: { weapons: names, body: name | null, shield: name | null }; absent: everything carried is in use
   customItems: json("custom_items"), // For homebrew/custom items
   encumbrance: integer("encumbrance").default(0),
   carryingCapacity: integer("carrying_capacity"),

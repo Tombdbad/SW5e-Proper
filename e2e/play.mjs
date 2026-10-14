@@ -38,6 +38,49 @@ await step(ctx, "world generator: 25 seeds, all sound against the rules data", a
   return `${areas} areas in all; the same seed gives the same world`;
 });
 
+await step(ctx, "floors: furniture leaves a floor to walk on; cellars lie beneath, ships are on the top floor, ways between floors are bare", async () => {
+  let rooms = 0, below = 0, above = 0, ways = 0, ships = 0, open = 0;
+  for (const seed of [1, 2, 3, 4, 5]) {
+    // (a world with every planet built is large: one more try if the first is dropped)
+    let made = await api("POST", "/api/world/generate", { options: { seed, detail: "all" } }).catch(() => null);
+    made ??= await api("POST", "/api/world/generate", { options: { seed, detail: "all" } });
+    const { world } = made.json;
+    const areas = Object.values(world.areas);
+    for (const room of areas.filter((a) => a.kind === "room" && a.layout)) {
+      rooms++;
+      const l = room.layout;
+      const free = Array.from({ length: l.height }, () => Array(l.width).fill(true));
+      for (const a of l.assets) if (a.blocks) for (let y = a.y; y < a.y + a.h; y++) for (let x = a.x; x < a.x + a.w; x++) if (free[y]?.[x] !== undefined) free[y][x] = false;
+      for (let y = 0; y + 1 < l.height; y++) for (let x = 0; x + 1 < l.width; x++) {
+        const [p, q, r, t] = [free[y][x], free[y][x + 1], free[y + 1][x], free[y + 1][x + 1]];
+        if ((!p && !t && q && r) || (!q && !r && p && t)) throw new Error(`${room.name} (seed ${seed}) has furniture touching only at a corner at ${x},${y}`);
+      }
+      const seen = new Set(); let regions = 0;
+      for (let y = 0; y < l.height; y++) for (let x = 0; x < l.width; x++) {
+        if (!free[y][x] || seen.has(`${x},${y}`)) continue;
+        regions++;
+        const stack = [[x, y]]; seen.add(`${x},${y}`);
+        while (stack.length) { const [cx, cy] = stack.pop(); for (const [nx, ny] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]) if (free[ny]?.[nx] && !seen.has(`${nx},${ny}`)) { seen.add(`${nx},${ny}`); stack.push([nx, ny]); } }
+      }
+      if (regions > 1) throw new Error(`${room.name} (seed ${seed}) has ${regions} parts of floor that cannot be walked between`);
+      if (l.form && l.form !== "gallery" && l.assets.some((a) => a.kind === "furniture" || a.kind === "loot" || a.kind === "ship")) throw new Error(`${room.name} is a way between floors and has something in it`);
+      if ((l.level ?? 0) < 0) below++;
+      if ((l.level ?? 0) >= 1) above++;
+      if (l.form) ways++;
+      if (l.roof) {
+        const top = Math.max(...areas.filter((a) => a.parentId === room.parentId && a.layout && !a.layout.form).map((a) => a.layout.level ?? 0));
+        const siblings = areas.filter((a) => a.parentId === room.parentId && a.layout && !a.layout.form).length;
+        if (siblings > 1 && !["landing field", "landing pad"].includes(world.areas[room.parentId].type) && (l.level ?? 0) !== top) throw new Error(`${room.name} holds ships but is not on the top floor`);
+        open++;
+      }
+      if (room.ships.length && !l.roof) throw new Error(`${room.name} holds a ship under a roof`);
+      ships += room.ships.length;
+    }
+  }
+  if (!below || !above || !ways || !open) throw new Error(`no cellars (${below}), upper floors (${above}), ways between floors (${ways}) or open hangars (${open})`);
+  return `${rooms} rooms: ${below} below the ground, ${above} above it, ${ways} stairwells, lifts, corridors and the like, ${open} hangars open to the sky or with doors, ${ships} ships`;
+});
+
 await step(ctx, "home loads", async () => {
   await page.goto(BASE + "/", { waitUntil: "domcontentloaded", timeout: 120000 });
   await page.getByText("Your Characters").waitFor({ timeout: 120000 });
@@ -368,7 +411,10 @@ await step(ctx, "play: enemies bar the way; the fight uses their stat block and 
       if (((await getChar(charId)).conditions ?? []).includes("Dead")) throw new Error("Revive did not clear Dead");
       revived += 1;
     }
-    if (now.currentHp <= 1) {
+    // A character left for dead comes to in the nearest room with nobody hostile in it: back to the lair
+    const wokeElsewhere = (await getCamp()).currentLocation !== world.startId;
+    if (wokeElsewhere) await api("PATCH", `/api/campaigns/${campId}`, { currentLocation: world.startId });
+    if (now.currentHp <= 1 || wokeElsewhere) {
       // Cannot rest with enemies about, so heal through the API
       await api("PATCH", `/api/characters/${charId}`, { currentHp: now.maxHp });
       await page.reload({ waitUntil: "domcontentloaded" });
@@ -514,6 +560,40 @@ await step(ctx, "play: the HUD tabs do not crash", async () => {
     await sleep(300);
   }
   await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 3000 });
+});
+
+await step(ctx, "play: credits are shown; weapons and armor are wielded and worn from the inventory", async () => {
+  const hud = page.getByTestId("play-credits");
+  await hud.waitFor({ timeout: 5000 });
+  const text = await hud.innerText();
+  const credits = Number((text.match(/Credits:\s*([\d,]+)/) ?? [])[1]?.replace(/,/g, ""));
+  const armorClass = () => page.getByTestId("play-credits").innerText().then((t) => Number((t.match(/AC (\d+)/) ?? [])[1]));
+  if (!(credits > 0)) throw new Error("the HUD shows no credits: " + text);
+  await page.getByRole("tab", { name: "Inventory" }).click();
+  const tab = await page.getByTestId("inventory-credits").innerText();
+  if (!tab.includes("Credits:")) throw new Error("the inventory shows no credits: " + tab);
+  const ac0 = await armorClass();
+  // A weapon put away is not in hand: Play uses what is wielded
+  const weapon = page.getByTestId("equip-Vibroblade");
+  if ((await weapon.innerText()) !== "Put away") throw new Error("the weapon should start in hand: " + (await weapon.innerText()));
+  await weapon.click();
+  await page.getByTestId("equip-Vibroblade").filter({ hasText: "Wield" }).waitFor({ timeout: 8000 });
+  await page.getByTestId("equip-Vibroblade").click();
+  await page.getByTestId("equip-Vibroblade").filter({ hasText: "Put away" }).waitFor({ timeout: 8000 });
+  // Armor taken off lowers the armor class; put back on it is as it was
+  const suit = page.getByTestId("equip-Combat suit");
+  await suit.click();
+  await page.getByTestId("equip-Combat suit").filter({ hasText: "Wear" }).waitFor({ timeout: 8000 });
+  await sleep(500);
+  const ac1 = await armorClass();
+  if (!(ac1 < ac0)) throw new Error(`taking the armor off should lower the armor class (${ac0} -> ${ac1})`);
+  await page.getByTestId("equip-Combat suit").click();
+  await page.getByTestId("equip-Combat suit").filter({ hasText: "Take off" }).waitFor({ timeout: 8000 });
+  await sleep(500);
+  const ac2 = await armorClass();
+  if (ac2 !== ac0) throw new Error(`putting the armor back on should restore the armor class (${ac0} -> ${ac2})`);
+  await page.getByRole("tab", { name: "Quests" }).click();
+  return `${credits} credits shown; Vibroblade put away and wielded; Combat suit off AC ${ac1}, on AC ${ac2}`;
 });
 
 // The 3D map, in a campaign of its own (seed 7: the party starts in a cantina's entrance with
@@ -672,33 +752,41 @@ await step(ctx, "play: the HUD tabs do not crash", async () => {
 
   await step(ctx, "3D map: a fight is fought on the map; a tap on a lit square moves the character", async () => {
     const lair = areas.find((a) => a.kind === "room" && a.layout && a.occupants.some((o) => o.disposition === "hostile" && o.hitPoints));
-    const hp = (await getChar(charId)).currentHp;
-    await api("PATCH", `/api/campaigns/${mapCamp}`, { currentLocation: lair.id });
-    await openGame();
-    await page.getByRole("button", { name: /^(Fight|Ambush)$/ }).first().click();
-    await page.getByText(/Combat - Round/).waitFor();
-    if (await page.getByTestId("combat-grid").count()) throw new Error("the 2D fight grid is still shown");
-    await sleep(2500);
+    const was = await getChar(charId);
+    const hp = was.currentHp;
     let moved = "";
-    for (let i = 0; i < 60 && !moved && (await page.getByText(/Combat - Round/).count()); i++) {
-      const end = page.getByRole("button", { name: "End turn" });
-      const save = page.getByRole("button", { name: "Death saving throw" });
-      if ((await save.count()) && (await save.isEnabled().catch(() => false))) await save.click().catch(() => {});
-      else if (await end.isEnabled().catch(() => false)) {
-        const me = await at("me");
-        // One square over, whichever way is free
-        for (const [dx, dy] of [[34, -4], [-34, 4], [0, 30], [0, -30]]) {
-          await poke(me.x + dx, me.y + dy);
-          await sleep(1000);
-          moved = (await page.locator("div.text-xs.text-gray-300 > div").allInnerTexts()).find((line) => /moves \d+ ft/.test(line) && line.startsWith(NAME)) ?? "";
-          if (moved) break;
+    // A fight is dice: if the character is knocked out before their turn, they are put back on
+    // their feet and tried again (those who were hurt stay hurt)
+    for (let attempt = 0; attempt < 4 && !moved; attempt++) {
+      await api("PATCH", `/api/characters/${charId}`, { currentHp: was.maxHp, conditions: [] });
+      await api("PATCH", `/api/campaigns/${mapCamp}`, { currentLocation: lair.id });
+      await openGame();
+      // (enemies that have already attacked start the fight themselves)
+      await sleep(1500);
+      if (!(await page.getByText(/Combat - Round/).count())) await page.getByRole("button", { name: /^(Fight|Ambush)$/ }).first().click();
+      await page.getByText(/Combat - Round/).waitFor();
+      if (await page.getByTestId("combat-grid").count()) throw new Error("the 2D fight grid is still shown");
+      await sleep(2500);
+      for (let i = 0; i < 60 && !moved && (await page.getByText(/Combat - Round/).count()); i++) {
+        const end = page.getByRole("button", { name: "End turn" });
+        const save = page.getByRole("button", { name: "Death saving throw" });
+        if ((await save.count()) && (await save.isEnabled().catch(() => false))) await save.click().catch(() => {});
+        else if (await end.isEnabled().catch(() => false)) {
+          const me = await at("me");
+          // One square over, whichever way is free (then two over, then the diagonals)
+          for (const [dx, dy] of [[34, -4], [-34, 4], [0, 30], [0, -30], [68, -8], [-68, 8], [0, 60], [0, -60], [34, 26], [-34, -26], [34, -34], [-34, 34]]) {
+            await poke(me.x + dx, me.y + dy);
+            await sleep(1000);
+            moved = (await page.locator("div.text-xs.text-gray-300 > div").allInnerTexts()).find((line) => /moves \d+ ft/.test(line) && line.startsWith(NAME)) ?? "";
+            if (moved) break;
+          }
+          if (!moved) await end.click().catch(() => {});
         }
-        if (!moved) await end.click().catch(() => {});
+        await sleep(600);
       }
-      await sleep(600);
+      if (await page.getByText(/Combat - Round/).count()) await page.getByRole("button", { name: "Leave" }).click();
+      await sleep(800);
     }
-    if (await page.getByText(/Combat - Round/).count()) await page.getByRole("button", { name: "Leave" }).click();
-    await sleep(800);
     // Leave the character as the play-through had them
     await api("PATCH", `/api/characters/${charId}`, { currentHp: hp, conditions: [] });
     if (!moved) throw new Error("a tap on the map never moved the character in the fight");

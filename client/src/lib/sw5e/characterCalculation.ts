@@ -142,6 +142,52 @@ export function featureEffects(features: Feature[], character: { class?: string;
   return effects;
 }
 
+// What a character has in hand and on, once the player has chosen (saved in `armor`): the
+// weapons wielded, the armor worn and the shield carried. Until then everything carried is in
+// use, as it was before there was a choice, and the best armor counts.
+export interface Equipped {
+  weapons: string[];
+  body: string | null;
+  shield: string | null;
+}
+export const equippedOf = (character: any): Equipped | null => {
+  const a = character?.armor;
+  return a && typeof a === "object" && Array.isArray(a.weapons) ? { weapons: a.weapons, body: a.body ?? null, shield: a.shield ?? null } : null;
+};
+const equipmentNamed = (name: string) => equipment.find((e) => e.name.toLowerCase() === String(name).toLowerCase());
+export const isShield = (name: string) => equipmentNamed(name)?.armorClassification === "Shield";
+export const itemKind = (name: string): "weapon" | "armor" | "shield" | "gear" => {
+  const e = equipmentNamed(name);
+  return e?.category === "Weapon" ? "weapon" : e?.category === "Armor" ? (e.armorClassification === "Shield" ? "shield" : "armor") : "gear";
+};
+
+// The names of what is carried and counts: weapons not wielded and armor not worn are only carried
+export function inUse(character: any): string[] {
+  const carried: string[] = (character?.equipment ?? []).map((e: any) => String(e?.name ?? e));
+  const chosen = equippedOf(character);
+  if (!chosen) return carried;
+  const lower = (names: (string | null)[]) => names.filter(Boolean).map((n) => n!.toLowerCase());
+  const wielded = lower(chosen.weapons);
+  const worn = lower([chosen.body, chosen.shield]);
+  return carried.filter((name) => {
+    const kind = itemKind(name);
+    return kind === "weapon" ? wielded.includes(name.toLowerCase()) : kind === "armor" || kind === "shield" ? worn.includes(name.toLowerCase()) : true;
+  });
+}
+
+// What is in use now, written out so that a change can be made to it: everything carried when
+// nothing has been chosen yet, with the armor that gives the best class
+export function equippedNow(character: any): Equipped {
+  const chosen = equippedOf(character);
+  if (chosen) return chosen;
+  const carried: string[] = (character?.equipment ?? []).map((e: any) => String(e?.name ?? e));
+  const armors = carried.filter((n) => itemKind(n) === "armor");
+  const classOf = (name: string) => calculateArmorClass(character?.abilityScores ?? {}, [name]);
+  const body = armors.sort((a, b) => classOf(b) - classOf(a))[0] ?? null;
+  const shield = carried.find((n) => itemKind(n) === "shield") ?? null;
+  return { weapons: Array.from(new Set(carried.filter((n) => itemKind(n) === "weapon"))), body, shield };
+}
+
 const carriedArmor = (carried: string[]) => {
   const names = carried.map((name) => String(name).toLowerCase());
   const owned = equipment.filter((e) => e.category === "Armor" && names.includes(e.name.toLowerCase()));
@@ -166,7 +212,7 @@ export function armorClassOf(abilityScores: any, carried: string[], effects: Fea
 // What features and equipment decide, for a character as it stands
 export function derivedStats(character: any) {
   const effects = featureEffects(characterFeatures(character), character);
-  const carried: string[] = (character.equipment ?? []).map((e: any) => e?.name ?? e);
+  const carried: string[] = inUse(character);
   const unarmored = carriedArmor(carried).body.length === 0;
   return {
     effects,
@@ -212,7 +258,7 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
   const str = getAbilityModifier(scores.strength ?? 10);
   const dex = getAbilityModifier(scores.dexterity ?? 10);
   const proficiency = calculateProficiencyBonus(Number(character?.level) || 1);
-  const carried: string[] = (character?.equipment ?? []).map((e: any) => String(e?.name ?? e).toLowerCase());
+  const carried: string[] = inUse(character).map((name) => name.toLowerCase());
   const owned = equipment.filter((e) => e.category === "Weapon" && e.damage && carried.includes(e.name.toLowerCase()));
   const weapons: CarriedWeapon[] = owned.map((e) => {
     const ranged = /blaster/i.test(e.weaponClassification ?? "");

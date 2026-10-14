@@ -356,6 +356,9 @@ interface CombatState {
   // Death saving throws while the player is at 0 hit points, and how the fight ended
   deathSaves: { successes: number; failures: number };
   outcome: CombatOutcome;
+  // How the enemy stood when the party left the fight (the field is cleared then); otherwise
+  // the combatants themselves say
+  remains: { id: number | string; hp: number }[];
   surprise: boolean;
   // The ground the fight is on, and the enemy the player has picked out
   arena: Arena;
@@ -404,6 +407,7 @@ export const useCombat = create<CombatState>((set, get) => ({
   combatLog: [],
   deathSaves: { successes: 0, failures: 0 },
   outcome: null,
+  remains: [],
 
   surprise: false,
   arena: { width: 10, height: 7, assets: [] },
@@ -492,18 +496,20 @@ export const useCombat = create<CombatState>((set, get) => ({
       combatLog: [surprise ? "You strike first: the enemy is surprised." : "Combat initiated! Roll for initiative!"],
       deathSaves: { successes: 0, failures: 0 },
       outcome: null,
+      remains: [],
     });
   },
 
   endCombat: () => {
-    set({
+    set((state) => ({
+      remains: state.combatants.filter((c) => !c.isPlayer).map((c) => ({ id: c.id, hp: c.hp })),
       inCombat: false,
       combatants: [],
       currentTurn: 0,
       round: 1,
       combatLog: [],
       outcome: "left",
-    });
+    }));
   },
 
   nextTurn: () =>

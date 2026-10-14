@@ -15,14 +15,14 @@ import { useCombat, rollDamage } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
-import { carriedWeapons, characterFeatures, hagglingEdge } from "@/lib/sw5e/characterCalculation";
+import { carriedWeapons, characterFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, type Equipped } from "@/lib/sw5e/characterCalculation";
 import { getSpeciesById } from "@/lib/sw5e/species";
 import { getClassById } from "@/lib/sw5e/classes";
 import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect } from "@/lib/sw5e/rules";
 import { getStarshipSize } from "@/lib/sw5e/starships";
 import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
-  planBuilding, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
+  planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText,
   withPresence,
   waresOf, stockOf, offerFor, attitudeOf, attitudeName, marketAt, haggleDC, isOpen, openingHours, addRenown, emptyStanding, ledgerFor, factionAt,
@@ -260,7 +260,20 @@ export default function GameBoard() {
   // The 3D map: the place being looked at (the party's own, unless another was opened), and
   // whatever was last picked out on it
   const [viewId, setViewId] = useState<string | null>(null);
-  const [picked, setPicked] = useState<{ kind: "area" | "occupant" | "ship"; id: string } | null>(null);
+  const [picked, setPickedNow] = useState<{ kind: "area" | "occupant" | "ship"; id: string } | null>(null);
+  // The card for what was picked lets taps through for a moment: it comes up over the lower part
+  // of the map, where the second tap of a double tap would otherwise land on it. (Closed in the
+  // same step as the pick, so that not even the next tap in the queue finds it open.)
+  const [cardOpen, setCardOpen] = useState(true);
+  const setPicked = (next: { kind: "area" | "occupant" | "ship"; id: string } | null) => {
+    setPickedNow(next);
+    setCardOpen(false);
+  };
+  useEffect(() => {
+    if (cardOpen) return;
+    const timer = setTimeout(() => setCardOpen(true), 450);
+    return () => clearTimeout(timer);
+  }, [cardOpen, picked?.id, picked?.kind]);
   useEffect(() => {
     setViewId(null);
     setPicked(null);
@@ -503,6 +516,23 @@ export default function GameBoard() {
     return feet ? Number(feet[1]) : /^touch/i.test(text) ? 5 : /^self/i.test(text) ? 0 : undefined;
   };
 
+  // Wield or put away a weapon, put on or take off armor or a shield, from the inventory. The
+  // armor class on the sheet moves by what the change makes of it (edits made on the sheet stay).
+  const setEquipped = (name: string, on: boolean) => {
+    if (!character) return;
+    const now = equippedNow(character);
+    const kind = itemKind(name);
+    const lower = name.toLowerCase();
+    const next: Equipped = {
+      weapons: kind === "weapon" ? (on ? Array.from(new Set([...now.weapons, name])) : now.weapons.filter((n) => n.toLowerCase() !== lower)) : now.weapons,
+      body: kind === "armor" ? (on ? name : null) : now.body,
+      shield: kind === "shield" ? (on ? name : null) : now.shield,
+    };
+    const change = derivedStats({ ...character, armor: next }).armorClass - derivedStats(character).armorClass;
+    saveCharacter({ armor: next, armorClass: Math.max(0, (character.armorClass ?? 10) + change) });
+    toast.success(`${name}: ${on ? (kind === "weapon" ? "in hand" : "on") : kind === "weapon" ? "put away" : "taken off"}${change ? `; armor class ${change > 0 ? "+" : ""}${change}` : ""}.`);
+  };
+
   const combatKit = () => {
     // Of the weapons carried, the one with the best attack for each kind; unarmed otherwise
     const weapons = carriedWeapons(character).sort((a, b) => Number(!!a.natural) - Number(!!b.natural) || b.attackBonus - a.attackBonus);
@@ -523,7 +553,8 @@ export default function GameBoard() {
       // For the token: a lightsaber for those who use the Force
       role: (character?.forcePowers ?? []).length ? "force" : "player",
       // Armor picked up since the sheet was last worked out counts too
-      armorClass: Math.max(character.armorClass, calculateArmorClass(character.abilityScores, character.equipment ?? [])),
+      // (once armor has been put on or taken off by choice, the sheet's class is what counts)
+      armorClass: equippedOf(character) ? character.armorClass : Math.max(character.armorClass, calculateArmorClass(character.abilityScores, character.equipment ?? [])),
       powerPoints: character?.currentForcePoints ?? 0,
       powers: knownPowers
         .map((power) => {
@@ -539,7 +570,8 @@ export default function GameBoard() {
   const foe = (o: Occupant, id: string, name: string) => ({
     id,
     name,
-    hp: o.hitPoints!,
+    // Those hurt in a fight the party did not finish are still hurt
+    hp: Math.max(1, Math.min(o.hitPoints!, o.wounds?.[Number(id.split("-").pop())] ?? o.hitPoints!)),
     maxHp: o.hitPoints!,
     initiative: 0,
     armorClass: o.armorClass ?? 10,
@@ -615,7 +647,9 @@ export default function GameBoard() {
     fight();
   }, [here?.id, alert, hostiles.length, !!character]);
 
-  // How a fight ended. Won: the fallen leave the area and their gear stays behind. Stable: the
+  // How a fight ended, whichever way it did. The fallen leave the area and their gear stays
+  // behind; those still standing keep the hit points they have, so that leaving, being knocked
+  // out or dying does not give the enemy their strength back. Won: the room is clear. Stable: the
   // character comes to hours later with 1 hit point, back where they came from. Dead: dead.
   const outcome = useCombat((state) => state.outcome);
   useEffect(() => {
@@ -623,31 +657,54 @@ export default function GameBoard() {
     fightBegun.current = false;
     const areaId = fightArea.current;
     fightArea.current = null;
-    if (outcome === "dead") {
-      saveCharacter({ currentHp: 0, conditions: ["Dead"] });
-      toast.error(`${character.name} has died.`);
-    } else if (outcome === "stable") {
-      lastSavedHp.current = 1;
-      saveCharacter({ currentHp: 1 });
-      if (world && cameFrom && world.areas[cameFrom]) saveCampaign({ currentLocation: cameFrom });
-      toast.info("Left for dead, you come to hours later with 1 hit point" + (cameFrom ? ", back the way you came." : "."));
-    } else if (outcome === "victory" && areaId && world?.areas[areaId]) {
+    let slain = 0;
+    let xp = 0;
+    let fallenKind = false;
+    if (areaId && world?.areas[areaId]) {
       const area = world.areas[areaId];
-      const fallen = area.occupants.filter((o) => o.disposition === "hostile" && o.hitPoints);
-      const gear = fallen.flatMap((o) => o.loadout.map((name) => ({ name, quantity: o.count, source: "equipment" as const })));
-      const loot = gear.length ? [...area.loot, { id: `l-${Date.now().toString(36)}`, name: "Gear of the fallen", kind: "remains", credits: 0, items: gear }] : area.loot;
-      saveCampaign({ galaxyMap: updateArea(world, areaId, { occupants: area.occupants.filter((o) => !fallen.includes(o)), loot }).world });
-      const xp = fallen.reduce((sum, o) => sum + (o.xp ?? 0) * o.count, 0);
-      if (xp) saveCharacter({ experience: (character.experience ?? 0) + xp });
+      const fight = useCombat.getState();
+      const remaining = fight.combatants.length ? fight.combatants.filter((c) => !c.isPlayer).map((c) => ({ id: c.id, hp: c.hp })) : fight.remains;
+      const { occupants, gear, kept, slain: down, xp: earned, people, changed } = afterFight(area, remaining);
+      slain = down;
+      xp = earned;
+      fallenKind = people;
+      if (changed) {
+        const loot = gear.length ? [...area.loot, { id: `l-${Date.now().toString(36)}`, name: "Gear of the fallen", kind: "remains", credits: 0, items: gear }] : area.loot;
+        // Their places on the plan: one for each still standing
+        const layout = area.layout && {
+          ...area.layout,
+          assets: area.layout.assets.filter((a) => {
+            if (a.kind !== "npc" || !kept.has(a.ref ?? "")) return true;
+            const left = kept.get(a.ref!)!;
+            kept.set(a.ref!, left - 1);
+            return left > 0;
+          }),
+        };
+        saveCampaign({ galaxyMap: updateArea(world, areaId, { occupants, loot, ...(layout ? { layout } : {}) }).world });
+      }
       // Renown: a fight costs standing with the side that lost it; the beasts of the wild have none
-      if (fallen.some((o) => !["wildlife", "horror"].includes(o.role))) {
+      if (slain && fallenKind && outcome !== "dead") {
         const losers = world.areas[area.parentId ?? ""]?.faction ?? world.antagonist;
         const holder = factionAt(world, areaId);
         let renown = addRenown(standing, losers, -1);
         if (holder && holder !== losers) renown = addRenown(renown, holder, 1);
         saveCampaign({ factionInfluence: renown });
       }
-      toast.success(`Victory${xp ? `: ${xp} XP` : ""}`);
+    }
+    if (outcome === "dead") {
+      saveCharacter({ currentHp: 0, conditions: ["Dead"] });
+      toast.error(`${character.name} has died.`);
+    } else {
+      if (xp) saveCharacter({ experience: (character.experience ?? 0) + xp });
+      if (outcome === "stable") {
+        lastSavedHp.current = 1;
+        saveCharacter({ currentHp: 1 });
+        // Not into the same fight again: in the nearest room with nobody hostile in it
+        const refuge = (world && areaId && safeHarbour(world, areaId)) || cameFrom;
+        if (world && refuge && world.areas[refuge]) saveCampaign({ currentLocation: refuge });
+        toast.info(`Left for dead, you come to hours later with 1 hit point${refuge && world?.areas[refuge] ? `, in ${world.areas[refuge].name}.` : "."}`);
+      } else if (outcome === "victory") toast.success(`Victory${xp ? `: ${xp} XP` : ""}`);
+      else if (slain) toast.info(`${slain} of them fell before you left; the rest are as hurt as you left them.`);
     }
   }, [inCombat, outcome]);
 
@@ -1097,6 +1154,14 @@ export default function GameBoard() {
     );
   };
   const card = pickedCard();
+  // The card goes to the top of the map when what was picked is in its lower half, so as not to
+  // cover it (the second tap of a double tap, a look at the place)
+  const cardAtTop = (() => {
+    if (!card || picked?.kind !== "area" || typeof document === "undefined") return false;
+    const at = (window as any).__map3d?.at?.(`area:${picked.id}`);
+    const box = document.querySelector("canvas")?.getBoundingClientRect();
+    return !!at && !!box && at.y - box.top > box.height * 0.45;
+  })();
 
   const pointsName = klass?.casterType === "Tech" ? "Tech Points" : "Force Points";
   const restButtons = character && (
@@ -1240,7 +1305,7 @@ export default function GameBoard() {
         )}
 
         {card && (
-          <Card className="absolute bottom-2 left-2 z-10 w-[min(22rem,calc(100%-1rem))] bg-gray-800 bg-opacity-90 text-white p-3 text-sm" data-testid="map-card">
+          <Card className={`absolute ${cardAtTop ? "top-12" : "bottom-2"} left-2 z-10 w-[min(22rem,calc(100%-1rem))] bg-gray-800 bg-opacity-90 text-white p-3 text-sm ${cardOpen ? "" : "pointer-events-none"}`} data-testid="map-card">
             {card}
           </Card>
         )}
@@ -1262,6 +1327,10 @@ export default function GameBoard() {
                 ></div>
               </div>
             </div>
+
+            <p className="text-sm text-gray-300 mb-4" data-testid="play-credits">
+              Credits: {(character.credits ?? 0).toLocaleString()} · AC {character.armorClass}
+            </p>
 
             {dead && (
               <div className="mb-4 p-2 rounded bg-red-900/50 text-sm" data-testid="play-dead">
@@ -1481,15 +1550,41 @@ export default function GameBoard() {
               </TabsContent>
               
               <TabsContent value="inventory">
-                <h3 className="font-semibold mb-2">Inventory</h3>
-                <div className="space-y-1">
-                  {character.equipment?.map((item: any, index: number) => (
-                    <div key={index} className="flex justify-between">
-                      <span>{item}</span>
+                <h3 className="font-semibold mb-1">Inventory</h3>
+                <p className="text-sm text-yellow-300 mb-2" data-testid="inventory-credits">Credits: {(character.credits ?? 0).toLocaleString()}</p>
+                {(() => {
+                  const worn = equippedNow(character);
+                  const counts = new Map<string, number>();
+                  for (const item of character.equipment ?? []) counts.set(String(item), (counts.get(String(item)) ?? 0) + 1);
+                  const is = (list: (string | null)[], name: string) => list.some((n) => n && n.toLowerCase() === name.toLowerCase());
+                  const rank = { weapon: 0, armor: 1, shield: 2, gear: 3 };
+                  return (
+                    <div className="space-y-1" data-testid="inventory-list">
+                      {[...counts.entries()]
+                        .sort(([a], [b]) => rank[itemKind(a)] - rank[itemKind(b)] || a.localeCompare(b))
+                        .map(([name, count]) => {
+                          const kind = itemKind(name);
+                          const on = kind === "weapon" ? is(worn.weapons, name) : kind === "armor" ? is([worn.body], name) : kind === "shield" ? is([worn.shield], name) : false;
+                          return (
+                            <div key={name} className="flex items-center justify-between gap-2 text-sm" data-testid={`inventory-item-${name}`}>
+                              <span>
+                                {name}
+                                {count > 1 ? ` ×${count}` : ""}
+                                {kind !== "gear" && <span className="ml-1 text-xs text-gray-400">{kind === "weapon" ? "weapon" : kind === "shield" ? "shield" : "armor"}{on ? ", " + (kind === "weapon" ? "in hand" : "worn") : ""}</span>}
+                              </span>
+                              {kind !== "gear" && (
+                                <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`equip-${name}`} onClick={() => setEquipped(name, !on)}>
+                                  {on ? (kind === "weapon" ? "Put away" : "Take off") : kind === "weapon" ? "Wield" : "Wear"}
+                                </Button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      {counts.size === 0 && <p className="text-sm text-gray-400">Nothing carried.</p>}
                     </div>
-                  ))}
-            </div>
-          </TabsContent>
+                  );
+                })()}
+              </TabsContent>
 
           <TabsContent value="gm">
             <GMReportManager

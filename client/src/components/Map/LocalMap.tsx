@@ -6,7 +6,7 @@ import { useKeyboardControls } from "@react-three/drei";
 import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
 import { useCombat, attackPlan, cannotAct, pickTarget, reachable } from "@/lib/stores/useCombat";
-import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, ALERT, START_TIME, daylight, hourOf, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
+import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, ALERT, START_TIME, daylight, hourOf, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind, type TokenKind } from "./sprites";
 
@@ -365,6 +365,105 @@ function ShipModel({ ship, w, h }: { ship: Pick<Ship, "size" | "role" | "status"
 // room can be looked into, what is set in the walls, and what stands on the floor.
 // ---------------------------------------------------------------------------------------------
 
+// A floor of a building is this many squares of height; a room stands on the floor of its level
+// (a gallery on half of one), and a stairwell, lift or ladder rises from its lower level
+const LEVEL_H = 2;
+const levelY = (l?: Pick<RoomLayout, "level">) => (l?.level ?? 0) * LEVEL_H;
+const rise = (l?: Pick<RoomLayout, "climb">) => (l?.climb ? l.climb.levels * LEVEL_H : 0);
+// How far up the floor of a way between floors is at a point of it (squares from the room's
+// north-west corner, the middle of a square being half way into it)
+function rampAt(l: RoomLayout, x: number, y: number): number {
+  if (!l.climb) return 0;
+  const { toward } = l.climb;
+  const t = toward === "e" ? x / l.width : toward === "w" ? 1 - x / l.width : toward === "s" ? y / l.height : 1 - y / l.height;
+  return Math.max(0, Math.min(1, t)) * rise(l);
+}
+// Where the soles of someone standing at a point of a room are, in the building's own height
+const floorAt = (l: RoomLayout, x: number, y: number) => levelY(l) + rampAt(l, x, y);
+const sameFootprint = (a: RoomLayout, b: RoomLayout) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+// The steps of a stairwell, or the rungs of a ladder, rising from one end of a room to the other;
+// they are looked at, not tapped (the floor under them takes the tap)
+function Ascent({ w, h, toward, up, form }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; form: string }) {
+  const along = toward === "e" || toward === "w" ? w : h;
+  const across = toward === "e" || toward === "w" ? h : w;
+  const count = Math.max(4, Math.round(along * (form === "ladder" ? 3 : 2.4)));
+  const sign = toward === "e" || toward === "s" ? 1 : -1;
+  const place = (t: number, height: number): V3 => {
+    const d = (toward === "e" || toward === "w" ? w : h) * t * sign + (sign > 0 ? 0 : along);
+    return toward === "e" || toward === "w" ? [d, height, h / 2] : [w / 2, height, d];
+  };
+  const none = () => null;
+  return (
+    <group>
+      {Array.from({ length: count }, (_, i) => {
+        const t = (i + 0.5) / count;
+        const top = (up * (i + 1)) / count;
+        if (form === "ladder") {
+          return (
+            <mesh key={i} position={place(t, top)} raycast={none}>
+              <boxGeometry args={toward === "e" || toward === "w" ? [0.06, 0.06, across * 0.55] : [across * 0.55, 0.06, 0.06]} />
+              <meshStandardMaterial color="#c8ccd2" />
+            </mesh>
+          );
+        }
+        const size: V3 = toward === "e" || toward === "w" ? [along / count + 0.01, Math.max(0.05, top), across * 0.92] : [across * 0.92, Math.max(0.05, top), along / count + 0.01];
+        return (
+          <mesh key={i} position={place(t, top / 2)} raycast={none} receiveShadow castShadow>
+            <boxGeometry args={size} />
+            <meshStandardMaterial color={form === "lift" ? "#5a6b7a" : i % 2 ? "#8b8f96" : "#9aa0a8"} roughness={0.9} />
+          </mesh>
+        );
+      })}
+    </group>
+  );
+}
+
+// Two panels of a roof that slide apart and together: the door of a hangar on a world whose air
+// is no good to breathe, over the ships inside
+function HangarRoof({ width, height, y }: { width: number; height: number; y: number }) {
+  const left = useRef<THREE.Group>(null);
+  const right = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    const slide = (0.5 + 0.5 * Math.sin(clock.elapsedTime * 0.45)) * (width / 2 - 0.2);
+    if (left.current) left.current.position.x = width / 4 - slide;
+    if (right.current) right.current.position.x = (3 * width) / 4 + slide;
+  });
+  return (
+    <>
+      <group ref={left} position={[width / 4, y, height / 2]}>
+        <Box at={[0, 0, 0]} size={[width / 2 - 0.05, 0.14, height + 0.1]} color="#59636d" />
+        <Box at={[0, 0.1, 0]} size={[width / 2 - 0.4, 0.06, height - 0.3]} color="#3a434c" />
+      </group>
+      <group ref={right} position={[(3 * width) / 4, y, height / 2]}>
+        <Box at={[0, 0, 0]} size={[width / 2 - 0.05, 0.14, height + 0.1]} color="#59636d" />
+        <Box at={[0, 0.1, 0]} size={[width / 2 - 0.4, 0.06, height - 0.3]} color="#3a434c" />
+      </group>
+    </>
+  );
+}
+
+// A flight of stairs set in a room's floor, up to a gallery or down from it
+function StairsAsset({ w, h, up }: { w: number; h: number; up: boolean }) {
+  const none = () => null;
+  const count = Math.max(3, Math.round(h * 2.4));
+  return (
+    <group>
+      {Array.from({ length: count }, (_, i) => {
+        const top = up ? (LEVEL_H / 2) * ((i + 1) / count) : 0.04;
+        return (
+          <mesh key={i} position={[w / 2, top / 2 + 0.02, up ? h - (i + 0.5) * (h / count) : (i + 0.5) * (h / count)]} raycast={none}>
+            <boxGeometry args={[w * 0.9, Math.max(0.04, top), h / count + 0.01]} />
+            <meshStandardMaterial color={up ? "#9aa0a8" : "#2c3138"} />
+          </mesh>
+        );
+      })}
+      <Box at={[0.02, 0.45, h / 2]} size={[0.05, 0.9, h]} color="#c8ccd2" />
+      <Box at={[w - 0.02, 0.45, h / 2]} size={[0.05, 0.9, h]} color="#c8ccd2" />
+    </group>
+  );
+}
+
 const FLOORS: Record<FloorKind, string> = { plating: "#1d2530", hangar: "#232a31", sand: "#8f7447", rock: "#3a3835", stone: "#45423d", clay: "#4a3a2d" };
 const WAY_COLORS = { door: "#f59e0b", locked: "#f87171", exit: "#4ade80", secret: "#c084fc", window: "#7dd3fc" };
 const WALL_HEIGHT = 0.8;
@@ -411,9 +510,11 @@ function wallRuns(length: number, gaps: number[]): [number, number][] {
   return runs;
 }
 
-function RoomShell({ width, height, assets, floor, wall, ships = [], walls = true, looted, wayColor, wayLabel, onFloor, onAsset, children }: {
+function RoomShell({ width, height, assets, floor, wall, ships = [], walls = true, looted, wayColor, wayLabel, onFloor, onAsset, plan, children }: {
   width: number;
   height: number;
+  // The room's level and what it is, for stairs, lifts and ladders (their floor rises)
+  plan?: Pick<RoomLayout, "level" | "form" | "climb" | "width" | "height">;
   assets: RoomAsset[];
   floor: FloorKind;
   wall: string;
@@ -435,11 +536,15 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], walls = tru
     for (let y = 1; y < height; y++) points.push(0, 0.012, y, width, 0.012, y);
     return new Float32Array(points);
   }, [width, height]);
+  // A shaft's walls run up with the floor
+  const climbs = plan?.climb ? rise(plan as RoomLayout) : 0;
+  const wallH = WALL_HEIGHT + climbs;
+  const ramp = (x: number, y: number) => (plan?.climb ? rampAt(plan as RoomLayout, x + 0.5, y + 0.5) : 0);
   const sides = [
-    { side: "n", length: width, at: (a: number, b: number): [V3, V3] => [[(a + b) / 2, WALL_HEIGHT / 2, 0], [b - a + (a === 0 ? WALL_THICK / 2 : 0) + (b === width ? WALL_THICK / 2 : 0), WALL_HEIGHT, WALL_THICK]], along: (a: RoomAsset) => a.x },
-    { side: "s", length: width, at: (a: number, b: number): [V3, V3] => [[(a + b) / 2, WALL_HEIGHT / 2, height], [b - a + (a === 0 ? WALL_THICK / 2 : 0) + (b === width ? WALL_THICK / 2 : 0), WALL_HEIGHT, WALL_THICK]], along: (a: RoomAsset) => a.x },
-    { side: "w", length: height, at: (a: number, b: number): [V3, V3] => [[0, WALL_HEIGHT / 2, (a + b) / 2], [WALL_THICK, WALL_HEIGHT, b - a]], along: (a: RoomAsset) => a.y },
-    { side: "e", length: height, at: (a: number, b: number): [V3, V3] => [[width, WALL_HEIGHT / 2, (a + b) / 2], [WALL_THICK, WALL_HEIGHT, b - a]], along: (a: RoomAsset) => a.y },
+    { side: "n", length: width, at: (a: number, b: number): [V3, V3] => [[(a + b) / 2, wallH / 2, 0], [b - a + (a === 0 ? WALL_THICK / 2 : 0) + (b === width ? WALL_THICK / 2 : 0), wallH, WALL_THICK]], along: (a: RoomAsset) => a.x },
+    { side: "s", length: width, at: (a: number, b: number): [V3, V3] => [[(a + b) / 2, wallH / 2, height], [b - a + (a === 0 ? WALL_THICK / 2 : 0) + (b === width ? WALL_THICK / 2 : 0), wallH, WALL_THICK]], along: (a: RoomAsset) => a.x },
+    { side: "w", length: height, at: (a: number, b: number): [V3, V3] => [[0, wallH / 2, (a + b) / 2], [WALL_THICK, wallH, b - a]], along: (a: RoomAsset) => a.y },
+    { side: "e", length: height, at: (a: number, b: number): [V3, V3] => [[width, wallH / 2, (a + b) / 2], [WALL_THICK, wallH, b - a]], along: (a: RoomAsset) => a.y },
   ];
   return (
     <>
@@ -453,6 +558,7 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], walls = tru
         </bufferGeometry>
         <lineBasicMaterial color="#ffffff" transparent opacity={0.12} />
       </lineSegments>
+      {plan?.climb && plan.form && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} />}
       {walls
         ? sides.flatMap(({ side, length, at, along }) =>
             wallRuns(length, assets.filter((a) => a.side === side && isWay(a)).map(along)).map(([a, b]) => {
@@ -464,7 +570,7 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], walls = tru
       {assets.filter((a) => a.side && (walls || a.kind !== "window")).map((a) => {
         const spot = onWall({ width, height }, a);
         return (
-          <group key={a.id} position={[spot.x, 0, spot.z]} rotation={[0, spot.turn, 0]}>
+          <group key={a.id} position={[spot.x, ramp(a.x, a.y), spot.z]} rotation={[0, spot.turn, 0]}>
             <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} />
           </group>
         );
@@ -472,6 +578,7 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], walls = tru
       {assets.filter((a) => !a.side && a.kind !== "npc").map((a) => (
         <group key={a.id} position={[a.x, 0, a.y]}>
           {a.kind === "ship" ? <ShipModel ship={ships.find((ship) => ship.id === a.ref) ?? { size: "Medium", role: "freighter", status: "landed" }} w={a.w} h={a.h} />
+            : a.kind === "stairs" ? <StairsAsset w={a.w} h={a.h} up={/up/i.test(a.name)} />
             : a.kind === "loot" ? <Chest looted={looted?.(a)} />
             : <Furniture name={a.name} w={a.w} h={a.h} />}
           {/* Furniture that can be stood on (a bench, the stage) leaves the tap to the floor beneath, so it walks to that square */}
@@ -1087,7 +1194,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const ground = plan ? { x: plan.x - MARGIN, y: plan.y - MARGIN, w: plan.width + MARGIN * 2, h: plan.height + MARGIN * 2 } : { x: -8, y: -8, w: 16, h: 16 };
   const cx = ground.x + ground.w / 2;
   const cz = ground.y + ground.h / 2;
-  const inRoom = (x: number, y: number) => rooms.some((a) => a.layout && x >= a.layout.x && x < a.layout.x + a.layout.width && y >= a.layout.y && y < a.layout.y + a.layout.height);
+  // (a cellar under the street leaves the street above it free to walk on)
+  const inRoom = (x: number, y: number) => rooms.some((a) => a.layout && (a.layout.level ?? 0) >= 0 && formOf(a) !== "gallery" && x >= a.layout.x && x < a.layout.x + a.layout.width && y >= a.layout.y && y < a.layout.y + a.layout.height);
 
   // What is to be seen in the opened room: hidden doors, caches and secret ways only once found
   const seen = (room: Area) =>
@@ -1191,9 +1299,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   useEffect(() => {
     if (!walk.current && spot.areaId === hereId) feet.current = { x: spot.x, y: spot.y };
   }, [spot.x, spot.y, spot.areaId]);
+  // How high the party stands: on the floor of the room they are in, up the steps of a stairwell
+  const heightNow = () => {
+    const l = inside?.layout;
+    return l ? floorAt(l, feet.current.x - l.x + 0.5, feet.current.y - l.y + 0.5) : 0;
+  };
   useFrame((_, delta) => {
     const going = walk.current;
-    if (token.current) token.current.position.set(feet.current.x + 0.5, 0, feet.current.y + 0.5);
+    if (token.current) token.current.position.set(feet.current.x + 0.5, heightNow(), feet.current.y + 0.5);
     eye.current = outside && planned ? [feet.current.x + 0.5 - cx, 0, feet.current.y + 0.5 - cz] : null;
     if (!going) return;
     let step = Math.min(delta, 0.5) * 7;
@@ -1327,6 +1440,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       if (again) callOver(a.id);
       else lastTap.current.note = setTimeout(() => onAct?.({ type: "note", text: staff ? `${a.name}: ${staff.name} serves here. Double tap it to call them over.` : a.name }), 500);
     } else if (a.kind === "window") onAct?.({ type: "note", text: "A window onto the street outside." });
+    else if (a.kind === "stairs") walkTo([{ x: l.x + a.x, y: l.y + a.y }], () => a.to && onAct?.({ type: "go", areaId: a.to }));
     else if (a.side) walkTo([{ x: l.x + a.x, y: l.y + a.y }], () => a.to && onAct?.({ type: "go", areaId: a.to, secret: a.kind === "secret" }));
     else if (a.kind === "loot" && a.ref) walkTo(around(l.x + a.x, l.y + a.y), () => onAct?.({ type: "loot", id: a.ref! }));
     else if (a.kind === "ship" && a.ref) walkTo(around(l.x + a.x, l.y + a.y, a.w, a.h), () => onAct?.({ type: "ship", id: a.ref! }));
@@ -1347,7 +1461,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   };
 
   // The camera looks at the opened room, at the party when it is out of doors, else at the building
-  const focus: V3 = opened?.layout ? [opened.layout.x + opened.layout.width / 2 - cx, 0, opened.layout.y + opened.layout.height / 2 - cz] : outside && planned ? [standing.x + 0.5 - cx, 0, standing.y + 0.5 - cz] : [0, 0, 0];
+  const focus: V3 = opened?.layout ? [opened.layout.x + opened.layout.width / 2 - cx, levelY(opened.layout) + rise(opened.layout) / 2, opened.layout.y + opened.layout.height / 2 - cz] : outside && planned ? [standing.x + 0.5 - cx, 0, standing.y + 0.5 - cz] : [0, 0, 0];
+  // The ground hides a cellar: it is taken away while one is looked into
+  const underground = !!opened?.layout && (opened.layout.level ?? 0) < 0;
   const reach = opened?.layout ? Math.max(opened.layout.width, opened.layout.height) * 1.1 + 6 : outside && planned ? 17 : plan ? Math.max(plan.width, plan.height) * 0.9 + 12 : 22;
   // The squares of the ground, as faint lines
   const squares = useMemo(() => {
@@ -1361,16 +1477,21 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   return (
     <>
       <group position={[-cx, 0, -cz]}>
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.06, cz]}>
+        {/* The earth round a cellar being looked into */}
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, levelY(opened?.layout) - 0.22, cz]} visible={underground}>
+          <planeGeometry args={[240, 240]} />
+          <meshBasicMaterial color="#14100c" />
+        </mesh>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.06, cz]} visible={!underground}>
           <planeGeometry args={[240, 240]} />
           <meshBasicMaterial color={GROUND[biome] ?? "#1c222b"} />
         </mesh>
         {/* The ground round the building: a tap walks there */}
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.02, cz]} receiveShadow onClick={outside ? (e) => { e.stopPropagation(); if (e.delta <= 8) walkTo([{ x: Math.floor(e.point.x + cx), y: Math.floor(e.point.z + cz) }]); } : undefined}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.02, cz]} visible={!underground} receiveShadow onClick={outside ? (e) => { e.stopPropagation(); if (e.delta <= 8) walkTo([{ x: Math.floor(e.point.x + cx), y: Math.floor(e.point.z + cz) }]); } : undefined}>
           <planeGeometry args={[ground.w, ground.h]} />
           <meshStandardMaterial color={new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(1.5)} roughness={1} />
         </mesh>
-        <lineSegments>
+        <lineSegments visible={!underground}>
           <bufferGeometry>
             <bufferAttribute attach="attributes-position" count={squares.length / 3} array={squares} itemSize={3} />
           </bufferGeometry>
@@ -1388,8 +1509,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           const l = room.layout!;
           if (room === opened) {
             return (
-              <group key={room.id} position={[l.x, 0, l.y]}>
+              <group key={room.id} position={[l.x, levelY(l), l.y]}>
                 <RoomShell
+                  plan={l}
                   width={l.width}
                   height={l.height}
                   assets={shown}
@@ -1418,31 +1540,83 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     />
                   )}
                 </RoomShell>
-                <Label at={[l.width / 2, 2.6, l.height / 2]} size={0.5} color="#facc15">{room.name}</Label>
+                <Label at={[l.width / 2, 2.6 + rise(l), l.height / 2]} size={0.5} color="#facc15">{room.name}</Label>
               </group>
             );
           }
+          // What is over the room being looked into is taken away, so that it can be seen
+          if (opened?.layout && levelY(l) > levelY(opened.layout) + 0.01 && sameFootprint(l, opened.layout)) return null;
           // A room seen from outside it: closed, with what is set in its outside walls
-          const tall = opened ? 1 : 2;
+          const form = formOf(room);
+          // A room looked down into from its gallery is seen low, so that the gallery shows over it
+          const lookedFrom = opened && formOf(opened) === "gallery" && opened.tags.includes(`host:${room.id}`);
+          const tall = lookedFrom ? 0.8 : opened ? 1 : 2;
+          const body = tall + rise(l);
+          const lift = levelY(l);
           const roof = hue(room.id);
+          const wallColor = new THREE.Color(wall).multiplyScalar(opened ? 0.45 : 1).getStyle();
+          const slab = (color: string) => <Box at={[l.width / 2, 0.06, l.height / 2]} size={[l.width, 0.12, l.height]} color={color} />;
+          const rail = (h: number) => (
+            <>
+              <Box at={[l.width / 2, h, 0.04]} size={[l.width, 0.04, 0.05]} color="#c8ccd2" />
+              <Box at={[l.width / 2, h, l.height - 0.04]} size={[l.width, 0.04, 0.05]} color="#c8ccd2" />
+              <Box at={[0.04, h, l.height / 2]} size={[0.05, 0.04, l.height]} color="#c8ccd2" />
+              <Box at={[l.width - 0.04, h, l.height / 2]} size={[0.05, 0.04, l.height]} color="#c8ccd2" />
+            </>
+          );
+          const hollow = (h: number, color: string) => (
+            <>
+              <Box at={[l.width / 2, h / 2, 0.08]} size={[l.width, h, 0.16]} color={color} />
+              <Box at={[l.width / 2, h / 2, l.height - 0.08]} size={[l.width, h, 0.16]} color={color} />
+              <Box at={[0.08, h / 2, l.height / 2]} size={[0.16, h, l.height]} color={color} />
+              <Box at={[l.width - 0.08, h / 2, l.height / 2]} size={[0.16, h, l.height]} color={color} />
+            </>
+          );
           return (
-            <group key={room.id} position={[l.x, 0, l.y]}>
-              <mesh position={[l.width / 2, tall / 2, l.height / 2]} castShadow onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
-                <boxGeometry args={[l.width, tall, l.height]} />
-                <meshStandardMaterial color={opened ? new THREE.Color(wall).multiplyScalar(0.45) : wall} roughness={0.95} />
-              </mesh>
-              <Box at={[l.width / 2, tall + 0.05, l.height / 2]} size={[l.width + 0.2, 0.1, l.height + 0.2]} color={opened ? "#1a2028" : "#4a525c"} />
-              {!opened && (
+            <group key={room.id} position={[l.x, lift, l.y]}>
+              {/* What an upper floor stands on */}
+              {lift > 0.01 && form !== "gallery" && <Box at={[l.width / 2, -lift / 2, l.height / 2]} size={[l.width - 0.1, lift, l.height - 0.1]} color={new THREE.Color(wall).multiplyScalar(0.7).getStyle()} />}
+              {form === "walkway" ? (
+                <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
+                  {slab("#59636d")}
+                  {rail(0.5)}
+                </group>
+              ) : form === "gallery" ? (
+                <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
+                  {slab(opened ? "#2b333c" : "#59636d")}
+                  <Box at={[l.width / 2, 0.45, l.height - 0.04]} size={[l.width, 0.04, 0.05]} color="#c8ccd2" />
+                  {[0, 1, 2, 3].map((i) => <Box key={i} at={[0.1 + (i * (l.width - 0.2)) / 3, 0.25, l.height - 0.04]} size={[0.05, 0.5, 0.05]} color="#c8ccd2" />)}
+                </group>
+              ) : l.roof ? (
+                <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
+                  {/* Open to the sky, the ships inside it to be seen; where the air is no good, doors in the roof slide back */}
+                  <Box at={[l.width / 2, 0.04, l.height / 2]} size={[l.width, 0.08, l.height]} color={FLOORS.hangar} />
+                  {hollow(tall, wallColor)}
+                  {l.assets.filter((a) => a.kind === "ship").map((a) => (
+                    <group key={a.id} position={[a.x, 0, a.y]}><ShipModel ship={room.ships.find((ship) => ship.id === a.ref) ?? { size: "Medium", role: "freighter", status: "landed" }} w={a.w} h={a.h} /></group>
+                  ))}
+                  {l.roof === "hangar" && !opened && <HangarRoof width={l.width} height={l.height} y={tall + 0.05} />}
+                </group>
+              ) : (
                 <>
-                  {/* A parapet round the roof, and what stands on it */}
-                  <Box at={[l.width / 2, tall + 0.2, 0.06]} size={[l.width + 0.2, 0.3, 0.12]} color={wall} />
-                  <Box at={[l.width / 2, tall + 0.2, l.height - 0.06]} size={[l.width + 0.2, 0.3, 0.12]} color={wall} />
-                  <Box at={[0.06, tall + 0.2, l.height / 2]} size={[0.12, 0.3, l.height]} color={wall} />
-                  <Box at={[l.width - 0.06, tall + 0.2, l.height / 2]} size={[0.12, 0.3, l.height]} color={wall} />
-                  {room.gateway ? <Dome at={[l.width / 2, tall + 0.1, l.height / 2]} r={Math.min(l.width, l.height) * 0.3} color={wall} />
-                    : roof % 3 === 0 ? <><Box at={[l.width * 0.3, tall + 0.35, l.height * 0.35]} size={[1, 0.5, 0.8]} color="#59636d" /><Cyl at={[l.width * 0.3, tall + 0.65, l.height * 0.35]} r={0.25} h={0.1} color="#2b2f36" /></>
-                    : roof % 3 === 1 ? <Mast at={[l.width * 0.7, tall + 0.1, l.height * 0.6]} h={1.8} />
-                    : <Cyl at={[l.width * 0.6, tall + 0.4, l.height * 0.4]} r={0.5} h={0.6} color="#59636d" />}
+                  <mesh position={[l.width / 2, body / 2, l.height / 2]} castShadow onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
+                    <boxGeometry args={[l.width, body, l.height]} />
+                    <meshStandardMaterial color={wallColor} roughness={0.95} />
+                  </mesh>
+                  <Box at={[l.width / 2, body + 0.05, l.height / 2]} size={[l.width + 0.2, 0.1, l.height + 0.2]} color={opened ? "#1a2028" : "#4a525c"} />
+                  {!opened && !form && (
+                    <>
+                      {/* A parapet round the roof, and what stands on it */}
+                      <Box at={[l.width / 2, tall + 0.2, 0.06]} size={[l.width + 0.2, 0.3, 0.12]} color={wall} />
+                      <Box at={[l.width / 2, tall + 0.2, l.height - 0.06]} size={[l.width + 0.2, 0.3, 0.12]} color={wall} />
+                      <Box at={[0.06, tall + 0.2, l.height / 2]} size={[0.12, 0.3, l.height]} color={wall} />
+                      <Box at={[l.width - 0.06, tall + 0.2, l.height / 2]} size={[0.12, 0.3, l.height]} color={wall} />
+                      {room.gateway ? <Dome at={[l.width / 2, tall + 0.1, l.height / 2]} r={Math.min(l.width, l.height) * 0.3} color={wall} />
+                        : roof % 3 === 0 ? <><Box at={[l.width * 0.3, tall + 0.35, l.height * 0.35]} size={[1, 0.5, 0.8]} color="#59636d" /><Cyl at={[l.width * 0.3, tall + 0.65, l.height * 0.35]} r={0.25} h={0.1} color="#2b2f36" /></>
+                        : roof % 3 === 1 ? <Mast at={[l.width * 0.7, tall + 0.1, l.height * 0.6]} h={1.8} />
+                        : <Cyl at={[l.width * 0.6, tall + 0.4, l.height * 0.4]} r={0.5} h={0.6} color="#59636d" />}
+                    </>
+                  )}
                 </>
               )}
               {!opened && l.assets.filter((a) => a.side && (a.kind === "exit" || a.kind === "window" || (a.kind === "secret" && room.secretEntry?.found) || (a.kind === "door" && !inRoom(beyond(l, a).x, beyond(l, a).y)))).map((a) => {
@@ -1515,8 +1689,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       <Probe
         locate={(key) => {
           const [what, id] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
-          if (key === "me") return [feet.current.x + 0.5 - cx, 0.6, feet.current.y + 0.5 - cz];
-          if (what === "sq") return [Number(id.split(",")[0]) + 0.5 - cx, 0, Number(id.split(",")[1]) + 0.5 - cz];
+          if (key === "me") return [feet.current.x + 0.5 - cx, heightNow() + 0.6, feet.current.y + 0.5 - cz];
+          if (what === "sq") return [Number(id.split(",")[0]) + 0.5 - cx, levelY(inside?.layout), Number(id.split(",")[1]) + 0.5 - cz];
           if (what === "sign") {
             const sign = street.signs.find((s) => s.exit.to === id);
             return sign && [sign.x + 0.5 - cx, 0.8, sign.y + 0.5 - cz];
@@ -1527,9 +1701,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             const a = l?.assets.find((x) => x.id === id || (what !== "asset" && x.kind === what && (x.ref === id || x.to === id || room.id === id)));
             if (!l || !a) continue;
             const now = a.kind === "npc" ? whereNow(a.id) : undefined;
-            if (now) return [l.x + now.x + 0.5 - cx, 0.6, l.y + now.y + 0.5 - cz];
+            if (now) return [l.x + now.x + 0.5 - cx, levelY(l) + 0.6, l.y + now.y + 0.5 - cz];
             const at = a.side ? onWall(l, a) : { x: a.x + a.w / 2, z: a.y + a.h / 2 };
-            return [l.x + at.x - cx, 0.6, l.y + at.z - cz];
+            return [l.x + at.x - cx, levelY(l) + 0.6, l.y + at.z - cz];
           }
           return undefined;
         }}

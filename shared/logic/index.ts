@@ -48,6 +48,9 @@ export interface Occupant {
   xp?: number;
   armorClass?: number;
   hitPoints?: number;
+  // Hit points now of those who are hurt and still standing (the survivors of a fight the party
+  // did not finish), in the order they are fought; a creature past the list is unhurt
+  wounds?: number[];
   // `range` is the reach of a melee attack or the normal range of a ranged one, in feet; `long` its long range
   attack?: { name: string; bonus: number; damage: string; damageType?: string; ranged?: boolean; range?: number; long?: number };
   // Walking speed in feet, size and creature type, as the stat block gives them
@@ -1247,7 +1250,7 @@ export function populateArea(world: World, areaId: string, catalog: WorldCatalog
 // ---------------------------------------------------------------------------------------------
 
 export type Side = "n" | "e" | "s" | "w";
-export type AssetKind = "door" | "exit" | "window" | "secret" | "furniture" | "npc" | "loot" | "ship";
+export type AssetKind = "door" | "exit" | "window" | "secret" | "furniture" | "npc" | "loot" | "ship" | "stairs";
 
 export interface RoomAsset {
   id: string;
@@ -1275,6 +1278,17 @@ export interface RoomLayout {
   width: number;
   height: number;
   assets: RoomAsset[];
+  // Which floor it is on: 0 the ground, below 0 beneath it, above 0 over it (a gallery is half a
+  // floor up). For stairs, lifts and ladders, the lower landing's floor.
+  level?: number;
+  // What it is when it is a way between floors or between rooms rather than a room to use (see Levels)
+  form?: Form;
+  // Stairs, lifts and ladders: the floor rises by this many levels towards the given side
+  climb?: { toward: Side; levels: number };
+  // Double height: something stands inside it over the floor (a gallery), so nothing is built above it
+  tall?: boolean;
+  // A room a ship can stand in: open to the sky, or roofed with doors that slide back where the air is hostile
+  roof?: "open" | "hangar";
 }
 
 // What furnishes a room: name, where it goes (wall, corner, center, far = the wall opposite the
@@ -1284,23 +1298,23 @@ type Furnishing = [name: string, place: "wall" | "corner" | "center" | "far" | "
 interface RoomPlan { match: RegExp; size: [number, number, number, number]; items: Furnishing[] }
 
 const ROOM_PLANS: RoomPlan[] = [
-  { match: /detention/i, size: [7, 9, 5, 6], items: [["Holding cell", "wall", "2x2", "3-4", "b"], ["Guard console", "center", "2x1", "1", "bcs"], ["Restraint rack", "corner", "1x1", "1", "b"]] },
-  { match: /barracks|tents/i, size: [7, 9, 5, 7], items: [["Bunk", "wall", "2x1", "4-6", "b"], ["Footlocker", "wall", "1x1", "2-4", "bc"], ["Weapon rack", "wall", "2x1", "1", "b"], ["Mess table", "center", "2x1", "1", "bct"]] },
-  { match: /docking|hangar|landing|berth|\barm\b/i, size: [12, 15, 9, 11], items: [["Fuel pump", "wall", "1x1", "1-2", "b"], ["Cargo pallet", "corner", "2x2", "2-3", "bc"], ["Tool cart", "wall", "1x1", "1-2", "bcs"], ["Loading crane", "wall", "2x1", "0-1", "b"]] },
-  { match: /main bar|^cantina$/i, size: [10, 12, 8, 10], items: [["Bar counter", "far", "5x1", "1", "bcs"], ["Bandstand", "corner", "3x2", "1"], ["Table", "center", "1x1", "4-6", "bct"], ["Booth", "wall", "2x1", "2-3", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Sabacc table", "center", "2x2", "0-1", "bct"]] },
-  { match: /bar\b|cantina|common room|commons/i, size: [8, 10, 7, 9], items: [["Bar counter", "far", "5x1", "1", "bcs"], ["Table", "center", "1x1", "3-5", "bct"], ["Booth", "wall", "2x1", "1-3", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Sabacc table", "center", "2x2", "0-1", "bct"]] },
-  { match: /stall|market|promenade|trade|shopfront/i, size: [9, 12, 6, 8], items: [["Market stall", "rows", "2x1", "4-7", "bcs"], ["Crate", "wall", "1x1", "2-4", "bc"], ["Awning post", "corner", "1x1", "0-2", "b"]] },
-  { match: /ward|surgery|reception/i, size: [6, 8, 5, 6], items: [["Medical bed", "wall", "2x1", "2-4", "bt"], ["Bacta tank", "corner", "1x1", "1-2", "b"], ["Instrument cart", "center", "1x1", "1", "bs"], ["Supply cabinet", "wall", "2x1", "1", "b"]] },
-  { match: /reactor|engine/i, size: [7, 9, 6, 8], items: [["Reactor core", "center", "2x2", "1", "bc"], ["Coolant tank", "corner", "1x1", "2", "b"], ["Monitoring console", "wall", "2x1", "1-2", "bs"], ["Pipe run", "wall", "3x1", "1-2", "b"]] },
-  { match: /workfloor|engineering|workshop|maintenance|fuel|hydroponics/i, size: [7, 9, 5, 7], items: [["Workbench", "wall", "3x1", "1-2", "bs"], ["Tool rack", "wall", "2x1", "1", "b"], ["Parts bin", "center", "1x1", "2-3", "bc"], ["Power coupling", "corner", "1x1", "1", "b"]] },
-  { match: /armory|vault|stash|stor|warehouse|cargo|container|hold|depot|cache|cellar|basement|compartment|parts|crib|pharmacy|locker|freight/i, size: [5, 8, 4, 7], items: [["Crate stack", "rows", "2x2", "2-4", "bc"], ["Shelving", "wall", "3x1", "1-3", "b"], ["Crate", "corner", "1x1", "1-3", "bc"], ["Lifter droid dock", "corner", "1x1", "0-1", "b"]] },
-  { match: /command|operations|control|comms|bridge|tower/i, size: [6, 8, 5, 7], items: [["Holo-table", "center", "2x2", "1", "bcs"], ["Console", "wall", "2x1", "2-4", "bs"], ["Sensor mast", "corner", "1x1", "0-1", "b"], ["Command chair", "far", "1x1", "1", "t"]] },
-  { match: /office|records|security|checkpoint|customs|desk|guard|watch|gatehouse|lookout|post\b/i, size: [5, 7, 4, 6], items: [["Desk", "center", "2x1", "1", "bcs"], ["Console", "wall", "2x1", "1-2", "bs"], ["Locker", "corner", "1x1", "1-2", "b"], ["Barricade", "center", "2x1", "0-1", "bc"]] },
-  { match: /booth|den\b|tent|quarters|apartments/i, size: [4, 6, 4, 5], items: [["Couch", "wall", "2x1", "1-2", "bt"], ["Low table", "center", "1x1", "1", "bct"], ["Cabinet", "corner", "1x1", "1", "b"], ["Bed", "wall", "2x1", "0-2", "b"]] },
-  { match: /crypt|sanctum/i, size: [7, 9, 6, 8], items: [["Sarcophagus", "center", "1x2", "1-3", "bc"], ["Broken pillar", "corner", "1x1", "2-4", "bc"], ["Altar", "far", "2x1", "1", "bc"], ["Rubble", "wall", "1x1", "2-4", "bc"]] },
-  { match: /cave|tunnel|chamber|mouth|breach|trailhead|perimeter|shelter|rooftop|collapsed|hull/i, size: [6, 10, 5, 8], items: [["Boulder", "center", "1x1", "2-4", "bc"], ["Rubble", "wall", "2x1", "2-4", "bc"], ["Rock pillar", "corner", "1x1", "1-3", "bc"], ["Campfire ring", "center", "1x1", "0-1", "t"]] },
-  { match: /audience|hall|concourse|lobby|antechamber|reading|gate|entrance|arrivals|airlock|stacks/i, size: [8, 11, 6, 8], items: [["Pillar", "center", "1x1", "2-4", "bc"], ["Bench", "wall", "2x1", "2-4", "t"], ["Dais", "far", "3x1", "0-1", "c"], ["Information terminal", "wall", "1x1", "1", "bs"]] },
-  { match: /./, size: [5, 7, 4, 6], items: [["Crate", "wall", "1x1", "1-3", "bc"], ["Bench", "wall", "2x1", "1-2", "t"], ["Terminal", "wall", "1x1", "0-1", "bs"]] },
+  { match: /detention/i, size: [8, 10, 6, 7], items: [["Holding cell", "wall", "2x2", "3-4", "b"], ["Guard console", "center", "2x1", "1", "bcs"], ["Restraint rack", "corner", "1x1", "1", "b"]] },
+  { match: /barracks|tents/i, size: [8, 10, 6, 8], items: [["Bunk", "wall", "2x1", "4-6", "b"], ["Footlocker", "wall", "1x1", "2-4", "bc"], ["Weapon rack", "wall", "2x1", "1", "b"], ["Mess table", "center", "2x1", "1", "bct"]] },
+  { match: /docking|hangar|landing|berth|\barm\b/i, size: [13, 16, 10, 12], items: [["Fuel pump", "wall", "1x1", "1-2", "b"], ["Cargo pallet", "corner", "2x2", "2-3", "bc"], ["Tool cart", "wall", "1x1", "1-2", "bcs"], ["Loading crane", "wall", "2x1", "0-1", "b"]] },
+  { match: /main bar|^cantina$/i, size: [11, 13, 9, 11], items: [["Bar counter", "far", "5x1", "1", "bcs"], ["Bandstand", "corner", "3x2", "1"], ["Table", "center", "1x1", "4-6", "bct"], ["Booth", "wall", "2x1", "2-3", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Sabacc table", "center", "2x2", "0-1", "bct"]] },
+  { match: /bar\b|cantina|common room|commons/i, size: [9, 11, 8, 10], items: [["Bar counter", "far", "5x1", "1", "bcs"], ["Table", "center", "1x1", "3-5", "bct"], ["Booth", "wall", "2x1", "1-3", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Sabacc table", "center", "2x2", "0-1", "bct"]] },
+  { match: /stall|market|promenade|trade|shopfront/i, size: [10, 13, 7, 9], items: [["Market stall", "rows", "2x1", "4-7", "bcs"], ["Crate", "wall", "1x1", "2-4", "bc"], ["Awning post", "corner", "1x1", "0-2", "b"]] },
+  { match: /ward|surgery|reception/i, size: [7, 9, 6, 7], items: [["Medical bed", "wall", "2x1", "2-4", "bt"], ["Bacta tank", "corner", "1x1", "1-2", "b"], ["Instrument cart", "center", "1x1", "1", "bs"], ["Supply cabinet", "wall", "2x1", "1", "b"]] },
+  { match: /reactor|engine/i, size: [8, 10, 7, 9], items: [["Reactor core", "center", "2x2", "1", "bc"], ["Coolant tank", "corner", "1x1", "2", "b"], ["Monitoring console", "wall", "2x1", "1-2", "bs"], ["Pipe run", "wall", "3x1", "1-2", "b"]] },
+  { match: /workfloor|engineering|workshop|maintenance|fuel|hydroponics/i, size: [8, 10, 6, 8], items: [["Workbench", "wall", "3x1", "1-2", "bs"], ["Tool rack", "wall", "2x1", "1", "b"], ["Parts bin", "center", "1x1", "2-3", "bc"], ["Power coupling", "corner", "1x1", "1", "b"]] },
+  { match: /armory|vault|stash|stor|warehouse|cargo|container|hold|depot|cache|cellar|basement|compartment|parts|crib|pharmacy|locker|freight/i, size: [6, 9, 5, 8], items: [["Crate stack", "rows", "2x2", "2-4", "bc"], ["Shelving", "wall", "3x1", "1-3", "b"], ["Crate", "corner", "1x1", "1-3", "bc"], ["Lifter droid dock", "corner", "1x1", "0-1", "b"]] },
+  { match: /command|operations|control|comms|bridge|tower/i, size: [7, 9, 6, 8], items: [["Holo-table", "center", "2x2", "1", "bcs"], ["Console", "wall", "2x1", "2-4", "bs"], ["Sensor mast", "corner", "1x1", "0-1", "b"], ["Command chair", "far", "1x1", "1", "t"]] },
+  { match: /office|records|security|checkpoint|customs|desk|guard|watch|gatehouse|lookout|post\b/i, size: [6, 8, 5, 7], items: [["Desk", "center", "2x1", "1", "bcs"], ["Console", "wall", "2x1", "1-2", "bs"], ["Locker", "corner", "1x1", "1-2", "b"], ["Barricade", "center", "2x1", "0-1", "bc"]] },
+  { match: /booth|den\b|tent|quarters|apartments/i, size: [5, 7, 5, 6], items: [["Couch", "wall", "2x1", "1-2", "bt"], ["Low table", "center", "1x1", "1", "bct"], ["Cabinet", "corner", "1x1", "1", "b"], ["Bed", "wall", "2x1", "0-2", "b"]] },
+  { match: /crypt|sanctum/i, size: [8, 10, 7, 9], items: [["Sarcophagus", "center", "1x2", "1-3", "bc"], ["Broken pillar", "corner", "1x1", "2-4", "bc"], ["Altar", "far", "2x1", "1", "bc"], ["Rubble", "wall", "1x1", "2-4", "bc"]] },
+  { match: /cave|tunnel|chamber|mouth|breach|trailhead|perimeter|shelter|rooftop|collapsed|hull/i, size: [7, 11, 6, 9], items: [["Boulder", "center", "1x1", "2-4", "bc"], ["Rubble", "wall", "2x1", "2-4", "bc"], ["Rock pillar", "corner", "1x1", "1-3", "bc"], ["Campfire ring", "center", "1x1", "0-1", "t"]] },
+  { match: /audience|hall|concourse|lobby|antechamber|reading|gate|entrance|arrivals|airlock|stacks/i, size: [9, 12, 7, 9], items: [["Pillar", "center", "1x1", "2-4", "bc"], ["Bench", "wall", "2x1", "2-4", "t"], ["Dais", "far", "3x1", "0-1", "c"], ["Information terminal", "wall", "1x1", "1", "bs"]] },
+  { match: /./, size: [6, 8, 5, 7], items: [["Crate", "wall", "1x1", "1-3", "bc"], ["Bench", "wall", "2x1", "1-2", "t"], ["Terminal", "wall", "1x1", "0-1", "bs"]] },
 ];
 
 // Caves, ruins and trails are rock and rubble whatever a chamber is called
@@ -1330,7 +1344,7 @@ function freeSquares(layout: RoomLayout): boolean[][] {
 
 // Whether every way in or out of a room can still be walked to from the first
 function walkable(layout: RoomLayout): boolean {
-  const ways = layout.assets.filter((a) => a.kind === "door" || a.kind === "exit" || a.kind === "secret");
+  const ways = layout.assets.filter((a) => a.kind === "door" || a.kind === "exit" || a.kind === "secret" || a.kind === "stairs");
   if (ways.length < 2) return true;
   const free = freeSquares(layout);
   const seen = new Set<string>([`${ways[0].x},${ways[0].y}`]);
@@ -1344,6 +1358,41 @@ function walkable(layout: RoomLayout): boolean {
     }
   }
   return ways.every((w) => seen.has(`${w.x},${w.y}`));
+}
+
+// What is wrong with the floor of a room, counted: a pair of pieces that touch only at a corner
+// (the gap between them is too narrow to walk through, so a square on either side is cut off
+// from the other), a stretch of floor that cannot be walked to from the rest, or a way in or out
+// that cannot be reached. Furniture is placed only where this stays at nothing.
+function floorFaults(layout: RoomLayout): number {
+  const free = freeSquares(layout);
+  const { width: W, height: H } = layout;
+  let faults = walkable(layout) ? 0 : 1;
+  for (let y = 0; y + 1 < H; y++) {
+    for (let x = 0; x + 1 < W; x++) {
+      const [a, b, c, d] = [free[y][x], free[y][x + 1], free[y + 1][x], free[y + 1][x + 1]];
+      if ((!a && !d && b && c) || (!b && !c && a && d)) faults++;
+    }
+  }
+  const seen = Array.from({ length: H }, () => Array.from({ length: W }, () => false));
+  let regions = 0;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (!free[y][x] || seen[y][x]) continue;
+      regions++;
+      const stack = [[x, y]];
+      seen[y][x] = true;
+      while (stack.length) {
+        const [cx, cy] = stack.pop()!;
+        for (const [nx, ny] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]) {
+          if (!free[ny]?.[nx] || seen[ny][nx]) continue;
+          seen[ny][nx] = true;
+          stack.push([nx, ny]);
+        }
+      }
+    }
+  }
+  return faults + Math.max(0, regions - 1);
 }
 
 // The square inside a room that touches the given wall at the given step along it
@@ -1390,10 +1439,46 @@ function furnishRoom(room: Area, r: Random, buildingType: string) {
       if (!spot) break;
       const asset: RoomAsset = { id: `${room.id}-${++n}`, kind: "furniture", name, ...spot, ...(flags.includes("b") ? { blocks: true } : {}), ...(flags.includes("c") ? { cover: true } : {}) };
       layout.assets.push(asset);
-      if (asset.blocks && !walkable(layout)) layout.assets.pop();
+      if (asset.blocks && floorFaults(layout)) layout.assets.pop();
       else room.tags = room.tags.filter((t) => t !== `use:${name}`).concat(flags.includes("s") || flags.includes("t") ? [`use:${name}`] : []);
     }
   }
+}
+
+// Mends a floor made before furniture was kept clear of corner-to-corner gaps: each piece that
+// cuts the floor up is moved to the nearest place where it does not, or taken out if there is none
+function repairFloor(room: Area, r: Random) {
+  const layout = room.layout!;
+  const loose = (a: RoomAsset) => a.kind === "npc" || a.kind === "loot" || a.kind === "ship";
+  layout.assets = layout.assets.filter((a) => !loose(a));
+  const without = (piece: RoomAsset) => ({ ...layout, assets: layout.assets.filter((a) => a !== piece) });
+  const fits = (x: number, y: number, w: number, h: number) =>
+    x >= 0 && y >= 0 && x + w <= layout.width && y + h <= layout.height && !layout.assets.some((a) => a.x < x + w && x < a.x + a.w && a.y < y + h && y < a.y + a.h);
+  for (let guard = 0; guard < 24 && floorFaults(layout); guard++) {
+    const base = floorFaults(layout);
+    let worst: RoomAsset | undefined;
+    let least = base;
+    for (const piece of layout.assets.filter((a) => a.kind === "furniture" && a.blocks)) {
+      const faults = floorFaults(without(piece));
+      if (faults < least) {
+        worst = piece;
+        least = faults;
+      }
+    }
+    if (!worst) break;
+    layout.assets = layout.assets.filter((a) => a !== worst);
+    // The nearest place for it, either way round, that leaves the floor whole
+    const spots: { x: number; y: number; w: number; h: number; d: number }[] = [];
+    for (const [w, h] of worst.w === worst.h ? [[worst.w, worst.h]] : [[worst.w, worst.h], [worst.h, worst.w]]) {
+      for (let y = 0; y + h <= layout.height; y++) for (let x = 0; x + w <= layout.width; x++) if (fits(x, y, w, h)) spots.push({ x, y, w, h, d: Math.abs(x - worst.x) + Math.abs(y - worst.y) });
+    }
+    for (const spot of spots.sort((a, b) => a.d - b.d)) {
+      layout.assets.push({ ...worst, x: spot.x, y: spot.y, w: spot.w, h: spot.h });
+      if (!floorFaults(layout)) break;
+      layout.assets.pop();
+    }
+  }
+  placeContents(room, r);
 }
 
 // Gives everyone and everything in a room a square: staff at their counters and consoles, patrons
@@ -1429,15 +1514,31 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
   const dispenser = layout.assets.filter((a) => /drink dispenser|bar counter/i.test(a.name));
   const exit = ways.find((a) => a.kind === "exit") ?? wayIn;
 
+  // A ship stands mid-floor; a smaller berth if the furniture would leave the floor cut up
   for (const ship of room.ships) {
-    const w = Math.min(W - 4, 6);
-    const h = Math.min(H - 4, 4);
-    layout.assets.push({ id: `${room.id}-${++n}`, kind: "ship", name: ship.name, x: Math.floor((W - w) / 2), y: Math.floor((H - h) / 2), w, h, blocks: true, cover: true, ref: ship.id });
+    let w = Math.min(W - 4, 6);
+    let h = Math.min(H - 4, 4);
+    const asset = (): RoomAsset => ({ id: `${room.id}-${++n}`, kind: "ship", name: ship.name, x: Math.floor((W - w) / 2), y: Math.floor((H - h) / 2), w, h, blocks: true, cover: true, ref: ship.id });
+    for (let tries = 0; tries < 8; tries++) {
+      layout.assets.push(asset());
+      if (!floorFaults(layout) || w <= 2 || h <= 2) break;
+      layout.assets.pop();
+      if (tries % 2) w--;
+      else h--;
+    }
   }
+  // Caches go against a wall far from the way in, where the floor stays in one piece
   for (const cache of room.loot) {
     const walls = anywhere().filter((s) => s.x === 0 || s.y === 0 || s.x === W - 1 || s.y === H - 1);
-    const spot = r.pick(furthest(walls.length ? walls : anywhere()).concat([])) ?? { x: 0, y: 0 };
-    layout.assets.push({ id: `${room.id}-${++n}`, kind: "loot", name: cache.name, x: spot.x, y: spot.y, w: 1, h: 1, blocks: true, cover: true, ref: cache.id });
+    const candidates = [...furthest(walls.length ? walls : anywhere()), ...walls, ...anywhere()];
+    const asset = (spot: { x: number; y: number }): RoomAsset => ({ id: `${room.id}-${++n}`, kind: "loot", name: cache.name, x: spot.x, y: spot.y, w: 1, h: 1, blocks: true, cover: true, ref: cache.id });
+    const sound = candidates.find((spot) => {
+      layout.assets.push(asset(spot));
+      const faults = floorFaults(layout);
+      layout.assets.pop();
+      return !faults;
+    });
+    layout.assets.push(asset(sound ?? r.pick(furthest(walls.length ? walls : anywhere())) ?? { x: 0, y: 0 }));
   }
   let posted = false;
   for (const occupant of room.occupants) {
@@ -1492,16 +1593,30 @@ export function counterSides(layout: RoomLayout, station: RoomAsset): { behind: 
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 3;
+export const LIFE = 4;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
   const ctx = contextFor(next, catalog, next.seed + next.counter + 4441);
+  // Floors (life 4): buildings made as one flat storey get their cellars, upper floors, stairwells
+  // and hangars on the top floor, and are planned again with furniture kept clear of corner-to-
+  // corner gaps. Secret ways the party has found stay found.
+  if ((next.life ?? 0) < 4) {
+    for (const building of Object.values(next.areas).filter((a) => a.kind === "building" && childrenOf(next, a.id).some((room) => room.layout))) {
+      const found = new Set(childrenOf(next, building.id).filter((room) => room.secretEntry?.found).map((room) => room.id));
+      planBuilding(next, building.id);
+      for (const room of childrenOf(next, building.id)) if (room.secretEntry && found.has(room.id)) room.secretEntry.found = true;
+    }
+  }
   for (const room of Object.values(next.areas)) {
     if (room.kind !== "room") continue;
     const building = next.areas[room.parentId ?? ""];
     const speciesNames = (ancestor(next, room.id, "planet")?.tags ?? []).filter((t) => t.startsWith("species:")).map((t) => t.slice(8));
     let changed = false;
+    // Furniture left corner to corner (life 4): moved apart so every square can be walked to
+    if ((next.life ?? 0) < 4 && room.layout && floorFaults({ ...room.layout, assets: room.layout.assets.filter((a) => a.kind !== "npc" && a.kind !== "loot" && a.kind !== "ship") })) {
+      repairFloor(room, ctx.random);
+    }
     const crowds = (next.life ?? 0) < 1 ? room.occupants.filter((o) => o.role === "civilians" && !o.statBlock) : [];
     if (crowds.length) {
       room.occupants = room.occupants.flatMap((o) => (crowds.includes(o) ? locals(ctx, room, speciesNames, Math.min(6, o.count)) : [o]));
@@ -1529,34 +1644,253 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
     if (changed && room.layout) placeContents(room);
   }
   // Routines (life 3): homes, days and voyages for every settlement that has been built
-  for (const settlement of Object.values(next.areas).filter((a) => a.kind === "settlement")) settleRoutines(next, settlement, ctx.random);
+  if ((next.life ?? 0) < 3) for (const settlement of Object.values(next.areas).filter((a) => a.kind === "settlement")) settleRoutines(next, settlement, ctx.random);
   next.life = LIFE;
   return next;
+}
+
+// Where someone knocked senseless comes to: the nearest room, by the ways between rooms that are
+// not hidden, with no hostile creature in it (a stairwell or corridor only if there is nothing
+// better), so that they are not woken into the fight they lost
+export function safeHarbour(world: World, id: string): string | undefined {
+  const start = world.areas[id];
+  if (!start) return undefined;
+  const hostile = (a: Area) => a.occupants.some((o) => o.disposition === "hostile" && !!o.hitPoints);
+  const seen = new Set([id]);
+  const queue = [id];
+  let fallback: string | undefined;
+  while (queue.length) {
+    const here = queue.shift()!;
+    for (const path of indexOf(world).paths.get(here) ?? []) {
+      const to = path.from === here ? path.to : path.from;
+      const area = world.areas[to];
+      if (path.hidden || seen.has(to) || !area || area.kind !== start.kind || area.parentId !== start.parentId) continue;
+      seen.add(to);
+      if (hostile(area)) queue.push(to);
+      else if (!formOf(area)) return to;
+      else {
+        fallback ??= to;
+        queue.push(to);
+      }
+    }
+  }
+  return fallback;
+}
+
+// What a fight leaves of the hostile creatures in an area, however it ended (won, left, or the
+// character knocked out): the fallen are gone and leave their gear, and those still standing keep
+// the hit points they have, so that leaving or losing never gives the enemy its strength back.
+// `standing` says how each enemy of the fight (id `<occupant id>-<index>`) ended up.
+export function afterFight(area: Pick<Area, "occupants">, standing: { id: string | number; hp: number }[]) {
+  const gear: { name: string; quantity: number; source: "equipment" }[] = [];
+  // For each occupant that is still here, how many of them are
+  const kept = new Map<string, number>();
+  let slain = 0;
+  let xp = 0;
+  let people = false;
+  const occupants = area.occupants.flatMap((o) => {
+    if (o.disposition !== "hostile" || !o.hitPoints) return [o];
+    const now = Array.from({ length: o.count }, (_, i) => standing.find((s) => s.id === `${o.id}-${i}`)?.hp ?? o.wounds?.[i] ?? o.hitPoints!);
+    const alive = now.filter((hp) => hp > 0);
+    const down = o.count - alive.length;
+    if (down) {
+      slain += down;
+      xp += (o.xp ?? 0) * down;
+      if (!["wildlife", "horror"].includes(o.role)) people = true;
+      gear.push(...o.loadout.map((name) => ({ name, quantity: down, source: "equipment" as const })));
+    }
+    kept.set(o.id, alive.length);
+    if (!alive.length) return [];
+    if (!down && !alive.some((hp, i) => hp !== (o.wounds?.[i] ?? o.hitPoints))) return [o];
+    return [{ ...o, count: alive.length, wounds: alive.some((hp) => hp < o.hitPoints!) ? alive : undefined }];
+  });
+  return { occupants, gear, kept, slain, xp, people, changed: occupants.length !== area.occupants.length || occupants.some((o, i) => o !== area.occupants[i]) };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Levels. A building is not one flat floor: cellars, vaults and detention blocks lie beneath it,
+// apartments, offices and towers are over it, and anything a ship can stand in is on the top
+// floor, open to the sky (or with doors that slide back where the air is not fit to breathe).
+// Where two rooms are on different floors, a stairwell (or a lift, or a ladder) of its own lies
+// between them; large buildings have corridors, urban and ocean worlds elevated walkways, tall
+// rooms a gallery, and some buildings a ladder up the outside wall. Those ways are rooms of
+// their own so that nothing is ever put in them.
+// ---------------------------------------------------------------------------------------------
+
+export type Form = "stairs" | "lift" | "ladder" | "corridor" | "walkway" | "gallery";
+export const formOf = (a: Pick<Area, "tags">): Form | undefined => a.tags.find((t) => t.startsWith("form:"))?.slice(5) as Form | undefined;
+const tagNumber = (a: Pick<Area, "tags">, name: string): number | undefined => {
+  const tag = a.tags.find((t) => t.startsWith(`${name}:`));
+  return tag === undefined ? undefined : Number(tag.slice(name.length + 1));
+};
+
+const tagId = (a: Pick<Area, "tags">, name: string): string | undefined => a.tags.find((t) => t.startsWith(`${name}:`))?.slice(name.length + 1);
+const WILD_BUILDINGS = ["cave", "ruin", "wreck", "camp", "trailhead"];
+const OPEN_GROUNDS = ["landing field", "landing pad"];
+const UNDERGROUND = /cellar|basement|crypt|vault|hidden compartment|escape tunnel|detention|sewer|deep chamber/i;
+const UPSTAIRS = /apartment|quarters|offices|command room|operations room|control room|tower|rooftop|lookout|bridge|port office/i;
+const SHIP_ROOMS = /docking|hangar|landing|berth|\barm\b/i;
+const TALL_ROOMS = /main bar|workfloor|engineering deck|storage floor|container stacks|reading hall|audience chamber|loading dock|concourse|hangar|docking bay/i;
+const HOSTILE_AIR = ["volcanic", "ice", "barren", "gas giant", "ocean"];
+export const holdsShips = (room: Pick<Area, "ships" | "tags" | "name">) => room.ships.length > 0 || room.tags.includes("code:S") || SHIP_ROOMS.test(room.name);
+
+// The floor each room is on, by what it is for; the rooms a ship can stand in are on the top floor
+function levelsOf(building: Area, rooms: Area[]): Map<string, number> {
+  const levels = new Map<string, number>();
+  let top = 0;
+  for (const room of rooms) {
+    const level = UNDERGROUND.test(room.name) ? -1 : UPSTAIRS.test(room.name) && !OPEN_GROUNDS.includes(building.type) ? 1 : 0;
+    levels.set(room.id, level);
+    top = Math.max(top, level);
+  }
+  if (rooms.length > 1 && !WILD_BUILDINGS.includes(building.type) && !OPEN_GROUNDS.includes(building.type)) {
+    for (const room of rooms) if (holdsShips(room)) levels.set(room.id, Math.max(1, top));
+  }
+  return levels;
+}
+
+// Puts a room of its own between two rooms on different floors, and now and then corridors,
+// walkways, a gallery and a ladder. Rooms already joined by one are left alone, so this can be
+// run again on a building that has been edited.
+function linkLevels(world: World, building: Area, seed: number) {
+  const rooms = childrenOf(world, building.id).filter((a) => a.kind === "room");
+  if (rooms.length < 2) return;
+  const real = rooms.filter((a) => !formOf(a));
+  const levels = levelsOf(building, real);
+  const first = !building.tags.includes("linked");
+  const r = createRandom(seed + Number(building.id.replace(/\D/g, "") || 1) * 4409 + 17);
+  const wild = WILD_BUILDINGS.includes(building.type);
+  const trail = trailOf(world, building.id);
+  const biome = trail.find((a) => a.kind === "planet")?.type ?? "";
+  const station = trail.some((a) => a.type === "station");
+  const level = (a: Area) => levels.get(a.id) ?? 0;
+  const make = (name: string, form: Form, tags: string[]): Area => {
+    const area: Area = {
+      id: nextId(world, "a"), kind: "room", parentId: building.id, name, type: name.toLowerCase(), description: "",
+      tags: [`form:${form}`, ...tags], position: { x: 0, y: 0, z: 0 }, danger: 0, occupants: [], ships: [], loot: [], faction: building.faction,
+    };
+    world.areas[area.id] = area;
+    return area;
+  };
+  const door = (from: Area, to: Area, label: string, travel: string, extra: Partial<Path> = {}) =>
+    world.paths.push({ id: nextId(world, "p"), from: from.id, to: to.id, kind: "door", label, travel, ...extra });
+  const plain = wild ? "Passage" : station ? "Hatch" : "Doorway";
+  let corridors = 0;
+  for (const path of [...world.paths]) {
+    if (path.kind !== "door") continue;
+    const a = world.areas[path.from];
+    const b = world.areas[path.to];
+    if (!a || !b || a.parentId !== building.id || b.parentId !== building.id || formOf(a) || formOf(b)) continue;
+    const [la, lb] = [level(a), level(b)];
+    let form: Form | undefined;
+    if (la !== lb) form = !wild && (holdsShips(a) || holdsShips(b)) ? "lift" : "stairs";
+    else if (first && corridors < 2 && !wild && real.length >= 5 && !path.locked && !path.hidden && r.chance(0.35)) {
+      form = la >= 1 && (station || ["urban", "ocean"].includes(biome)) && r.chance(0.7) ? "walkway" : "corridor";
+      corridors++;
+    }
+    if (!form) continue;
+    const dir = lb > la ? "up" : "down";
+    const name =
+      form === "stairs" ? `${wild ? "Rising passage" : station ? "Ladderway" : "Stairs"}${wild ? "" : ` ${dir}`} to ${b.name}`
+      : form === "lift" ? `Lift ${dir} to ${b.name}`
+      : form === "walkway" ? `Elevated walkway to ${b.name}`
+      : `Corridor to ${b.name}`;
+    const link = make(name, form, [`low:${Math.min(la, lb)}`, `rise:${Math.abs(la - lb)}`]);
+    world.paths.splice(world.paths.indexOf(path), 1);
+    door(a, link, path.hidden ? path.label : plain, "10 ft.", path.hidden ? { hidden: true } : {});
+    door(link, b, path.locked ? path.label : plain, path.travel, path.locked ? { locked: path.locked } : {});
+  }
+  if (!first) return;
+  // On a city world, an ocean world or a station, an elevated walkway between two rooms on upper
+  // floors that are not already joined (a gantry from the hangar to the tower)
+  if (!wild && (station || ["urban", "ocean"].includes(biome)) && r.chance(0.6)) {
+    const uppers = real.filter((a) => level(a) >= 1);
+    const pairs = uppers.flatMap((a, i) => uppers.slice(i + 1).filter((b) => level(b) === level(a) && !linked(world, a.id, b.id)).map((b) => [a, b] as const));
+    if (pairs.length) {
+      const [a, b] = r.pick(pairs);
+      const walk = make(`Elevated walkway to ${b.name}`, "walkway", [`low:${level(a)}`, "rise:0"]);
+      door(a, walk, "Doorway", "10 ft.");
+      door(walk, b, "Doorway", `${r.int(30, 60)} ft.`);
+    }
+  }
+  // A gallery over a tall room: a half floor of its own up a flight of stairs
+  const hosts = real.filter((a) => level(a) === 0 && TALL_ROOMS.test(a.name) && !a.tags.includes("code:K") && !a.tags.includes("code:H"));
+  if (hosts.length && !wild && r.chance(0.6)) {
+    const host = r.pick(hosts);
+    const gallery = make("Upper gallery", "gallery", [`host:${host.id}`, `low:${level(host) + 0.5}`, "rise:0"]);
+    gallery.description = `The gallery over the ${host.name.toLowerCase()}.`;
+    host.tags.push("tall");
+    door(host, gallery, "Stairs up", "10 ft.");
+  }
+  // A ladder up the outside wall to a room on an upper floor, as a second way in
+  const upper = real.filter((a) => level(a) >= 1 && !a.gateway && !holdsShips(a));
+  if (upper.length && !wild && !station && r.chance(0.4)) {
+    const to = r.pick(upper);
+    const ladder = make(`Ladder up to ${to.name}`, "ladder", [`low:0`, `rise:${level(to)}`]);
+    ladder.gateway = true;
+    door(ladder, to, "Hatch", "10 ft.");
+  }
+  building.tags.push("linked");
 }
 
 // Lays out every room of a building on one grid, sets doors, windows and a secret way in, and
 // furnishes and fills the rooms. The same building and seed give the same plan.
 export function planBuilding(world: World, buildingId: string, seed = world.seed): void {
   const building = world.areas[buildingId];
+  if (!building) return;
+  // Stairwells, lifts and the like between rooms on different floors (see Levels)
+  linkLevels(world, building, seed);
   const rooms = childrenOf(world, buildingId).filter((a) => a.kind === "room");
-  if (!building || !rooms.length) return;
+  if (!rooms.length) return;
   const r = createRandom(seed + Number(buildingId.replace(/\D/g, "") || 1) * 7919);
   const wild = doorsOf(building.type, "") === DOORS.wild;
   const ids = new Set(rooms.map((a) => a.id));
   const doors = world.paths.filter((p) => ids.has(p.from) && ids.has(p.to));
   const root = rooms.find((a) => a.gateway) ?? rooms[0];
 
-  // Sizes by purpose; a room with a ship in it is a hangar whatever it is called
+  // Which floor each room is on, and how big each is: by purpose (a room with a ship in it is a
+  // hangar whatever it is called); the ways between floors have a width and a length, set by
+  // which way they lie when they are put down
+  const levels = levelsOf(building, rooms.filter((a) => !formOf(a)));
+  const station = trailOf(world, buildingId).some((a) => a.type === "station");
+  const biome = ancestor(world, buildingId, "planet")?.type ?? "";
+  const sky = !OPEN_GROUNDS.includes(building.type) && (station || HOSTILE_AIR.includes(biome)) ? "hangar" : "open";
+  const spans = new Map<string, { cross: number; length: number }>();
   for (const room of rooms) {
-    const [w0, w1, h0, h1] = room.ships.length || room.tags.includes("code:S") ? ROOM_PLANS.find((p) => p.match.test("hangar"))!.size : planFor(room, building.type).size;
-    room.layout = { x: 0, y: 0, width: r.int(w0, w1), height: r.int(h0, h1), assets: [] };
+    const form = formOf(room);
+    const rise = tagNumber(room, "rise") ?? 0;
+    const level = form ? tagNumber(room, "low") ?? 0 : levels.get(room.id) ?? 0;
+    let width: number;
+    let height: number;
+    if (form === "gallery") [width, height] = [5, 3];
+    else if (form) {
+      const span = { cross: form === "corridor" || form === "walkway" ? 2 : form === "ladder" ? 2 : 3, length: form === "corridor" || form === "walkway" ? r.int(5, 9) : form === "lift" ? 3 : form === "ladder" ? 3 : 4 + 3 * Math.max(1, rise) };
+      spans.set(room.id, span);
+      [width, height] = [span.cross, span.length];
+    } else {
+      const [w0, w1, h0, h1] = holdsShips(room) ? ROOM_PLANS.find((p) => p.match.test("hangar"))!.size : planFor(room, building.type).size;
+      [width, height] = [r.int(w0, w1), r.int(h0, h1)];
+    }
+    room.layout = {
+      x: 0, y: 0, width, height, assets: [],
+      ...(level ? { level } : {}),
+      ...(form ? { form } : {}),
+      ...(form && ["stairs", "lift", "ladder"].includes(form) ? { climb: { toward: "e" as Side, levels: Math.max(1, rise) } } : {}),
+      ...(room.tags.includes("tall") ? { tall: true } : {}),
+      ...(!form && holdsShips(room) ? { roof: sky } : {}),
+    };
     room.tags = room.tags.filter((t) => !t.startsWith("use:"));
   }
+  // Two rooms are in each other's way when they stand on the same squares at a floor they share
+  const floors = (l: RoomLayout): [number, number] => [l.level ?? 0, (l.level ?? 0) + (l.climb?.levels ?? 0) + (l.tall ? 1 : 0)];
+  const clash = (a: RoomLayout, b: RoomLayout) => overlap(a, b) && floors(a)[0] <= floors(b)[1] && floors(b)[0] <= floors(a)[1];
+  // The side of its parent each way between floors was set on, so that what it leads to goes on past it
+  const attached = new Map<string, Side>();
 
   // Breadth first from the entrance: each room is set against a free stretch of wall of the room
   // it opens off, sharing at least two squares of wall for the door
   const placed: Area[] = [root];
-  const joined: { path: Path; adjacent: boolean }[] = [];
+  const joined: { path: Path; adjacent: boolean; stairs?: boolean }[] = [];
   const queue = [root];
   while (queue.length) {
     const from = queue.shift()!;
@@ -1569,19 +1903,42 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
       const a = from.layout!;
       const b = room.layout!;
       const options: { x: number; y: number }[] = [];
+      // A gallery stands over the north end of the room it looks down into, up a flight of stairs
+      if (b.form === "gallery" && from.id === tagId(room, "host")) {
+        const gh = Math.max(2, Math.min(3, a.height - 3));
+        Object.assign(b, { x: a.x + 1, y: a.y, width: Math.max(3, a.width - 2), height: gh });
+        joined.push({ path, adjacent: false, stairs: true });
+        placed.push(room);
+        queue.push(room);
+        continue;
+      }
+      // The way on from a stairwell or corridor continues straight, as far as there is room
+      const straight = b.form !== "gallery" && a.form && a.form !== "gallery" ? attached.get(from.id) : undefined;
+      let used: Side | undefined;
       // The way in is on the west wall, so the building grows east, then north and south
-      for (const side of ["e", "s", "n", "w"] as Side[]) {
+      for (const side of [...(straight ? [straight] : []), ...(["e", "s", "n", "w"] as Side[]).filter((x) => x !== straight)]) {
         if (from === root && side === "w") continue;
+        const span = spans.get(room.id);
+        if (span) [b.width, b.height] = side === "e" || side === "w" ? [span.length, span.cross] : [span.cross, span.length];
         const along = side === "e" || side === "w" ? a.height : a.width;
         const size = side === "e" || side === "w" ? b.height : b.width;
         for (const offset of r.shuffle(Array.from({ length: along + size - 3 }, (_, i) => i - size + 2))) {
           const spot = side === "e" ? { x: a.x + a.width, y: a.y + offset } : side === "w" ? { x: a.x - b.width, y: a.y + offset } : side === "s" ? { x: a.x + offset, y: a.y + a.height } : { x: a.x + offset, y: a.y - b.height };
-          if (!placed.some((other) => overlap({ ...b, ...spot }, other.layout!))) options.push(spot);
+          if (!placed.some((other) => clash({ ...b, ...spot }, other.layout!))) options.push(spot);
         }
-        if (options.length) break;
+        if (options.length) {
+          used = side;
+          break;
+        }
       }
-      if (options.length) Object.assign(b, options[0]);
-      else {
+      if (options.length) {
+        Object.assign(b, options[0]);
+        if (used) {
+          attached.set(room.id, used);
+          // The floor rises away from the lower of the two rooms it joins
+          if (b.climb) b.climb.toward = (a.level ?? 0) <= (b.level ?? 0) ? used : OPPOSITE[used];
+        }
+      } else {
         // Nowhere beside it: the room stands apart, reached by a passage
         const right = Math.max(...placed.map((p) => p.layout!.x + p.layout!.width));
         Object.assign(b, { x: right + 2, y: a.y });
@@ -1604,8 +1961,9 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
     const length = side === "n" || side === "s" ? l.width : l.height;
     return Array.from({ length }, (_, i) => i).filter((i) => {
       const s = wallSquare(l, side, i);
-      const beyond = { x: l.x + s.x + (side === "e" ? 1 : side === "w" ? -1 : 0), y: l.y + s.y + (side === "s" ? 1 : side === "n" ? -1 : 0), width: 1, height: 1 };
-      return !rooms.some((other) => other !== room && overlap(beyond, other.layout!)) && !l.assets.some((a) => a.side && a.x === s.x && a.y === s.y);
+      // (a room on another floor is not against it)
+      const beyond: RoomLayout = { x: l.x + s.x + (side === "e" ? 1 : side === "w" ? -1 : 0), y: l.y + s.y + (side === "s" ? 1 : side === "n" ? -1 : 0), width: 1, height: 1, assets: [], level: l.level, climb: l.climb, tall: l.tall };
+      return !rooms.some((other) => other !== room && clash(beyond, other.layout!)) && !l.assets.some((a) => a.side && a.x === s.x && a.y === s.y);
     });
   };
   const inWall = (room: Area, kind: AssetKind, name: string, side: Side, along: number, extra: Partial<RoomAsset> = {}) => {
@@ -1623,13 +1981,21 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
   // The ways out of the building first, then the doors between rooms
   for (const room of rooms.filter((a) => a.gateway)) {
     const spot = anyOutside(room, room === root ? ["w"] : ["e", "s"]);
-    if (spot) inWall(room, "exit", room === root ? "Way out" : "Back way out", spot.side, spot.along, { to: buildingId });
+    if (spot) inWall(room, "exit", room === root ? "Way out" : formOf(room) === "ladder" ? "Ladder down" : "Back way out", spot.side, spot.along, { to: buildingId });
   }
-  for (const { path, adjacent } of joined) {
+  for (const { path, adjacent, stairs } of joined) {
     const a = world.areas[path.from];
     const b = world.areas[path.to];
     const la = a.layout!;
     const lb = b.layout!;
+    if (stairs) {
+      // A flight of stairs in the room below, rising to the south edge of the gallery over it
+      const [host, gallery, lh, lg] = lb.form === "gallery" ? [a, b, la, lb] : [b, a, lb, la];
+      const at = Math.floor(lg.x - lh.x + lg.width / 2);
+      lh.assets.push({ id: `${host.id}-${lh.assets.length + 1}`, kind: "stairs", name: "Stairs up", x: at, y: lg.height, w: 1, h: 2, ref: path.id, to: gallery.id });
+      lg.assets.push({ id: `${gallery.id}-${lg.assets.length + 1}`, kind: "stairs", name: "Stairs down", x: at - (lg.x - lh.x), y: lg.height - 1, w: 1, h: 1, ref: path.id, to: host.id });
+      continue;
+    }
     let side: Side | undefined;
     let low = 0;
     let high = -1;
@@ -1650,9 +2016,25 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
       inWall(a, "door", path.label, side, at - (vertical ? la.y : la.x), { ref: path.id, to: b.id });
       inWall(b, "door", path.label, OPPOSITE[side], at - (vertical ? lb.y : lb.x), { ref: path.id, to: a.id });
     } else {
-      // Not wall to wall: the passage leaves each room by an outside wall
+      // Not wall to wall: the passage leaves each room by an outside wall (by any wall with a
+      // free square if every outside square is taken)
       for (const [room, other] of [[a, b], [b, a]]) {
-        const spot = anyOutside(room, [other.layout!.x >= room.layout!.x ? "e" : "w"]);
+        const prefer: Side[] = [other.layout!.x >= room.layout!.x ? "e" : "w"];
+        let spot = anyOutside(room, prefer);
+        if (!spot) {
+          const l = room.layout!;
+          for (const side of [...prefer, "w", "s", "n", "e"] as Side[]) {
+            const length = side === "n" || side === "s" ? l.width : l.height;
+            const free = Array.from({ length }, (_, i) => i).filter((i) => {
+              const sq = wallSquare(l, side, i);
+              return !l.assets.some((x) => x.x === sq.x && x.y === sq.y && (x.side || x.kind === "furniture" || x.kind === "stairs"));
+            });
+            if (free.length) {
+              spot = { side, along: free[Math.floor(free.length / 2)] };
+              break;
+            }
+          }
+        }
         if (spot) inWall(room, "door", path.label, spot.side, spot.along, { ref: path.id, to: other.id });
       }
     }
@@ -1661,7 +2043,7 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
   // A quiet way in: hostile places always have one, others now and then. It opens into a back
   // room that is neither the entrance nor where the leader sits.
   const hostilePlace = rooms.some((a) => a.danger > 0);
-  const candidates = rooms.filter((a) => a !== root && !a.gateway && !a.tags.includes("code:b") && anyOutside(a, []));
+  const candidates = rooms.filter((a) => a !== root && !a.gateway && !formOf(a) && !a.tags.includes("code:b") && anyOutside(a, []));
   for (const room of rooms) delete room.secretEntry;
   if (candidates.length && (hostilePlace || r.chance(0.25))) {
     const room = r.pick(candidates);
@@ -1674,7 +2056,7 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
   // Windows in outside walls, where the room would have them
   if (!wild) {
     for (const room of rooms) {
-      if (WINDOWLESS.test(room.name) || room.tags.includes("code:K") || room.tags.includes("code:H")) continue;
+      if (WINDOWLESS.test(room.name) || (room.layout!.level ?? 0) < 0 || room.tags.includes("code:K") || room.tags.includes("code:H")) continue;
       for (const side of r.shuffle(["n", "s", "e", "w"] as Side[]).slice(0, 2)) {
         const free = outside(room, side).filter((i) => i > 0);
         if (free.length > 2 && r.chance(0.7)) inWall(room, "window", "Window", side, r.pick(free));
@@ -1682,7 +2064,9 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
     }
   }
 
+  // Nothing is put in a stairwell, a lift, a ladder or a corridor
   for (const room of rooms) {
+    if (formOf(room) && formOf(room) !== "gallery") continue;
     furnishRoom(room, r, building.type);
     placeContents(room, r);
   }
