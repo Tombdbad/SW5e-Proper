@@ -139,6 +139,8 @@ export interface World {
   areas: Record<string, Area>;
   paths: Path[];
   counter: number;
+  // Which upgrade of the people in it the world has had (see livenWorld); absent in older worlds
+  life?: number;
 }
 
 export interface WorldOptions {
@@ -260,6 +262,7 @@ const WILD_SITES: Record<string, string[]> = {
 // Rooms of each building type. The first room is the entrance. After "|" come content codes:
 //   s staff   p patrons or residents   g guards   b leader   w wildlife   h horrors
 //   d utility droid   S ship berth   K locked door   H hidden door   L:<kind> loot cache
+//   m a band, with a stage to play on   D a service droid (most cantinas have one)
 //   @n the room this one opens off (its index in the list); without it, the room before
 const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "horror"; rooms: string[] }> = {
   spaceport: { rooms: ["Arrivals concourse|s p", "Customs office|s g", "Docking bay|S s d", "Maintenance hangar|S d L:workshop", "Control tower|s K @0", "Bonded warehouse|L:cargo K g @1"] },
@@ -269,8 +272,8 @@ const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "h
   "city gate": { rooms: ["Gate|g", "Guard room|g L:armory K"] },
   "town gate": { rooms: ["Gate|g", "Watch post|L:armory K"] },
   trailhead: { rooms: ["Trailhead|", "Old shelter|L:remains"] },
-  cantina: { rooms: ["Entrance|", "Main bar|s p p", "Private booth|p", "Back room|p g K @1", "Cellar|L:stash H"] },
-  promenade: { rooms: ["Promenade|p p", "Cantina|s p", "Trade stalls|s s L:coin @0", "Storeroom|L:cargo K"] },
+  cantina: { rooms: ["Entrance|", "Main bar|s p p m D", "Private booth|p", "Back room|p g K @1", "Cellar|L:stash H"] },
+  promenade: { rooms: ["Promenade|p p", "Cantina|s p m D", "Trade stalls|s s L:coin @0", "Storeroom|L:cargo K"] },
   market: { rooms: ["Market gate|p", "Stalls|s s p", "Trader's office|s L:coin K", "Storehouse|L:cargo @1"] },
   garrison: { hostile: "faction", rooms: ["Gatehouse|g", "Barracks|g g", "Armory|L:armory K", "Detention block|g K @0", "Command room|b g L:intel K @1"] },
   "command post": { hostile: "faction", rooms: ["Checkpoint|g", "Operations room|s g", "Comms array|d L:intel", "Supply depot|L:cargo K @0"] },
@@ -307,6 +310,19 @@ const BUILDING_STAFF: Record<string, string> = {
 };
 const staffRole = (buildingType: string, roomName: string) =>
   ROOM_STAFF.find(([pattern]) => pattern.test(roomName))?.[1] ?? BUILDING_STAFF[buildingType] ?? "clerk";
+
+// Why the people of a room are there, from what the room is for. Each is someone of their own,
+// with a name, not a crowd.
+const LOCAL_ROLES: [RegExp, string][] = [
+  [/bar|cantina|booth|back room|common room|commons/i, "patron"], [/stall|market|promenade|trade/i, "shopper"],
+  [/apartment|quarters|lobby/i, "resident"], [/ward|reception/i, "patient"], [/concourse|arrivals|airlock|gate/i, "traveller"],
+  [/reading|stacks|antechamber/i, "reader"], [/audience/i, "petitioner"],
+];
+const localRole = (roomName: string) => LOCAL_ROLES.find(([pattern]) => pattern.test(roomName))?.[1] ?? "local";
+const LOCALS = new Set([...LOCAL_ROLES.map(([, role]) => role), "local", "civilians", "musician", "service droid"]);
+// Someone who is part of the life of a place rather than someone the story is about
+export const isLocal = (o: Pick<Occupant, "role">) => LOCALS.has(o.role);
+const NOTABLES = ["smuggler", "bounty hunter", "informant", "gambler", "pilot for hire"];
 
 // How rooms join, by the kind of place
 const DOORS = { built: ["Door", "Corridor", "Archway", "Stairs"], station: ["Hatch", "Corridor", "Bulkhead door"], wild: ["Passage", "Crawlway", "Narrow gap", "Path"] };
@@ -593,14 +609,15 @@ export function statBlockOccupant(monster: Sw5eMonster, equipment: Sw5eEquipment
 const fromStatBlock = (ctx: Context, monster: Sw5eMonster, count: number, role: string, disposition: Occupant["disposition"]) =>
   statBlockOccupant(monster, ctx.catalog.equipment, nextId(ctx.world, "o"), count, role, disposition);
 
-// As many of one kind of creature as the budget allows (never more than six)
-function encounter(ctx: Context, pool: Sw5eMonster[], budget: number, role: string): Occupant[] {
-  const affordable = pool.filter((m) => m.experiencePoints > 0 && m.experiencePoints <= budget);
-  if (!affordable.length) return [];
+// As many of one kind of creature as the budget allows (never more than six, and at least
+// `least` where the budget allows that many of something)
+function encounter(ctx: Context, pool: Sw5eMonster[], budget: number, role: string, least = 1): Occupant[] {
+  const affordable = pool.filter((m) => m.experiencePoints > 0 && least * m.experiencePoints * groupMultiplier(least) <= budget);
+  if (!affordable.length) return least > 1 ? encounter(ctx, pool, budget, role) : [];
   // Prefer creatures worth a real share of the budget over a crowd of trivial ones
   const worthwhile = affordable.filter((m) => m.experiencePoints >= budget / 8);
   const monster = ctx.random.pick(worthwhile.length ? worthwhile : affordable);
-  let count = 1;
+  let count = least;
   while (count < 6 && (count + 1) * monster.experiencePoints * groupMultiplier(count + 1) <= budget) count++;
   return [fromStatBlock(ctx, monster, count, role, "hostile")];
 }
@@ -629,11 +646,37 @@ function pickGear(ctx: Context, pattern: RegExp): string | undefined {
   return options.length ? ctx.random.pick(options).name : undefined;
 }
 
-function person(ctx: Context, role: string, disposition: Occupant["disposition"], speciesNames: string[]): Occupant {
+// Mostly the planet's own peoples, else any of the core species
+function speciesFor(ctx: Context, speciesNames: string[]): string {
   const core = ctx.catalog.species.filter((s) => s.contentSource === "PHB" && !/droid/i.test(s.name));
-  const species = speciesNames.length && ctx.random.chance(0.6) ? ctx.random.pick(speciesNames) : ctx.random.pick(core.length ? core : ctx.catalog.species).name;
+  return speciesNames.length && ctx.random.chance(0.6) ? ctx.random.pick(speciesNames) : ctx.random.pick(core.length ? core : ctx.catalog.species).name;
+}
+
+function person(ctx: Context, role: string, disposition: Occupant["disposition"], speciesNames: string[], species = speciesFor(ctx, speciesNames)): Occupant {
   const gear = (ROLE_GEAR[role] ?? []).map((pattern) => pickGear(ctx, pattern)).filter((g): g is string => !!g);
   return { id: nextId(ctx.world, "o"), name: personName(ctx.random), role, disposition, count: 1, species, loadout: gear };
+}
+
+// The people of a room, one by one; now and then one of them has a trade worth knowing
+function locals(ctx: Context, room: Area, speciesNames: string[], wanted: number): Occupant[] {
+  const role = localRole(room.name);
+  return Array.from({ length: wanted }, (_, i) => person(ctx, i === 0 && ctx.random.chance(0.35) ? ctx.random.pick(NOTABLES) : role, "neutral", speciesNames));
+}
+
+// A cantina band: three or four players, usually of one people, each with an instrument from the equipment data
+function band(ctx: Context, speciesNames: string[]): Occupant[] {
+  const instruments = ctx.catalog.equipment.filter((e) => e.equipmentCategory === "MusicalInstrument");
+  const kin = speciesFor(ctx, speciesNames);
+  return Array.from({ length: ctx.random.int(3, 4) }, () => ({
+    ...person(ctx, "musician", "neutral", speciesNames, ctx.random.chance(0.75) ? kin : speciesFor(ctx, speciesNames)),
+    loadout: instruments.length ? [ctx.random.pick(instruments).name] : [],
+  }));
+}
+
+// A droid that waits on tables, from the droid stat blocks
+function serviceDroid(ctx: Context): Occupant[] {
+  const droids = ctx.catalog.monsters.filter((m) => /^T3-Series|utility droid/i.test(m.name) && m.experiencePoints <= 25);
+  return droids.length ? [fromStatBlock(ctx, ctx.random.pick(droids), 1, "service droid", "neutral")] : [];
 }
 
 function makeShip(ctx: Context, sizes: string[], status: Ship["status"], owner: string): Ship {
@@ -732,14 +775,20 @@ function populateRoom(ctx: Context, room: Area) {
     if (code === "s") {
       room.occupants.push(person(ctx, staff, r.chance(0.5) ? "friendly" : "neutral", speciesNames));
     } else if (code === "p") {
-      if (r.chance(0.35)) room.occupants.push(person(ctx, r.pick(["smuggler", "bounty hunter", "informant", "gambler", "pilot for hire"]), "neutral", speciesNames));
-      else room.occupants.push({ id: nextId(world, "o"), name: r.pick(["Locals", "Travelers", "Off-duty workers", "Spacers"]), role: "civilians", disposition: "neutral", count: r.int(2, 6), loadout: [] });
+      room.occupants.push(...locals(ctx, room, speciesNames, /bar|cantina|commons|promenade/i.test(room.name) ? r.int(2, 4) : r.int(1, 3)));
+    } else if (code === "m") {
+      room.occupants.push(...band(ctx, speciesNames));
+    } else if (code === "D") {
+      if (r.chance(0.7)) room.occupants.push(...serviceDroid(ctx));
     } else if (code === "g" || code === "b") {
       const forces = forcesOf(ctx, template?.hostile === "criminal" ? "pirate syndicate" : faction);
       if (hostileFaction && budget > 0) {
         const pool = code === "b" && forces.leaders.length ? forces.leaders : forces.troops;
-        const found = encounter(ctx, pool, code === "b" ? budget * 1.5 : budget, code === "b" ? "leader" : "guard");
-        room.occupants.push(...(found.length ? found : encounter(ctx, forces.troops, budget, "guard")));
+        // The way in is held by two at least: one keeps the post, the other walks a round
+        const least = code === "g" && room.gateway ? 2 : 1;
+        const found = encounter(ctx, pool, code === "b" ? budget * 1.5 : budget, code === "b" ? "leader" : "guard", least);
+        room.occupants.push(...(found.length ? found : encounter(ctx, forces.troops, budget, "guard", least)));
+        if (least > 1) guardTheGate(room);
       } else if (code === "g") {
         // A faction that is not the enemy still posts sentries; they are not a fight
         const able = forces.troops.filter((m) => m.experiencePoints <= 450);
@@ -765,6 +814,14 @@ function populateRoom(ctx: Context, room: Area) {
       room.loot.push(makeLoot(ctx, code.slice(2), room.danger, { locked: codes.includes("K"), hidden: codes.includes("H") }));
     }
   }
+}
+
+// A hostile way in always has a sentry on the post and another on a round
+function guardTheGate(room: Area): boolean {
+  const guards = room.occupants.filter((o) => o.role === "guard" && o.disposition === "hostile");
+  if (!guards.length || guards.reduce((sum, o) => sum + o.count, 0) >= 2) return false;
+  guards[0].count = 2;
+  return true;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -952,6 +1009,7 @@ export function generateWorld(options: WorldOptions, catalog: WorldCatalog): Wor
     areas: {},
     paths: [],
     counter: 0,
+    life: LIFE,
   };
   const ctx: Context = { world, random: r, catalog, names: new Set() };
   const galaxy = makeArea(ctx, "galaxy", null, { name: world.name, type: "galaxy" });
@@ -1125,6 +1183,7 @@ const ROOM_PLANS: RoomPlan[] = [
   { match: /detention/i, size: [7, 9, 5, 6], items: [["Holding cell", "wall", "2x2", "3-4", "b"], ["Guard console", "center", "2x1", "1", "bcs"], ["Restraint rack", "corner", "1x1", "1", "b"]] },
   { match: /barracks|tents/i, size: [7, 9, 5, 7], items: [["Bunk", "wall", "2x1", "4-6", "b"], ["Footlocker", "wall", "1x1", "2-4", "bc"], ["Weapon rack", "wall", "2x1", "1", "b"], ["Mess table", "center", "2x1", "1", "bct"]] },
   { match: /docking|hangar|landing|berth|\barm\b/i, size: [12, 15, 9, 11], items: [["Fuel pump", "wall", "1x1", "1-2", "b"], ["Cargo pallet", "corner", "2x2", "2-3", "bc"], ["Tool cart", "wall", "1x1", "1-2", "bcs"], ["Loading crane", "wall", "2x1", "0-1", "b"]] },
+  { match: /main bar|^cantina$/i, size: [10, 12, 8, 10], items: [["Bar counter", "far", "5x1", "1", "bcs"], ["Bandstand", "corner", "3x2", "1"], ["Table", "center", "1x1", "4-6", "bct"], ["Booth", "wall", "2x1", "2-3", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Sabacc table", "center", "2x2", "0-1", "bct"]] },
   { match: /bar\b|cantina|common room|commons/i, size: [8, 10, 7, 9], items: [["Bar counter", "far", "5x1", "1", "bcs"], ["Table", "center", "1x1", "3-5", "bct"], ["Booth", "wall", "2x1", "1-3", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Sabacc table", "center", "2x2", "0-1", "bct"]] },
   { match: /stall|market|promenade|trade|shopfront/i, size: [9, 12, 6, 8], items: [["Market stall", "rows", "2x1", "4-7", "bcs"], ["Crate", "wall", "1x1", "2-4", "bc"], ["Awning post", "corner", "1x1", "0-2", "b"]] },
   { match: /ward|surgery|reception/i, size: [6, 8, 5, 6], items: [["Medical bed", "wall", "2x1", "2-4", "bt"], ["Bacta tank", "corner", "1x1", "1-2", "b"], ["Instrument cart", "center", "1x1", "1", "bs"], ["Supply cabinet", "wall", "2x1", "1", "b"]] },
@@ -1260,6 +1319,11 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
   const uses = room.tags.filter((t) => t.startsWith("use:")).map((t) => t.slice(4));
   const stations = layout.assets.filter((a) => a.kind === "furniture" && uses.includes(a.name) && a.blocks);
   const seats = layout.assets.filter((a) => a.kind === "furniture" && uses.includes(a.name));
+  // Staff stand behind their counters, away from the customers
+  const behind = layout.assets.filter(isCounter).flatMap((s) => counterSides(layout, s).behind).filter((s) => !used(s.x, s.y) && !ways.some((d) => d.x === s.x && d.y === s.y));
+  const stage = layout.assets.filter((a) => a.name === "Bandstand").flatMap((a) => Array.from({ length: a.w * a.h }, (_, i) => ({ x: a.x + (i % a.w), y: a.y + Math.floor(i / a.w) })));
+  const dispenser = layout.assets.filter((a) => /drink dispenser|bar counter/i.test(a.name));
+  const exit = ways.find((a) => a.kind === "exit") ?? wayIn;
 
   for (const ship of room.ships) {
     const w = Math.min(W - 4, 6);
@@ -1271,14 +1335,22 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
     const spot = r.pick(furthest(walls.length ? walls : anywhere()).concat([])) ?? { x: 0, y: 0 };
     layout.assets.push({ id: `${room.id}-${++n}`, kind: "loot", name: cache.name, x: spot.x, y: spot.y, w: 1, h: 1, blocks: true, cover: true, ref: cache.id });
   }
+  let posted = false;
   for (const occupant of room.occupants) {
     for (let i = 0; i < Math.min(occupant.count, 6); i++) {
       const guard = occupant.role === "guard";
+      // The first sentry keeps the post by the way out; the rest by any door
+      const post = guard && !posted && exit ? beside([exit]) : [];
+      if (post.length) posted = true;
+      const free = (spots: { x: number; y: number }[]) => spots.filter((s) => !used(s.x, s.y));
       const preferred =
         occupant.role === "leader" ? furthest(anywhere())
-        : guard ? beside(ways)
+        : guard ? (post.length ? post : beside(ways))
         : occupant.role === "wildlife" || occupant.role === "horror" ? anywhere().filter((s) => s.x > 0 && s.y > 0 && s.x < W - 1 && s.y < H - 1)
-        : occupant.count === 1 && occupant.role !== "civilians" ? beside(stations)
+        : occupant.role === "musician" ? (free(stage).length ? free(stage) : beside(seats))
+        : occupant.role === "service droid" ? beside(dispenser)
+        : isLocal(occupant) || NOTABLES.includes(occupant.role) ? beside(seats)
+        : occupant.count === 1 ? (free(behind).length ? free(behind) : beside(stations))
         : beside(seats);
       const spots = preferred.length ? preferred : anywhere();
       if (!spots.length) break;
@@ -1286,6 +1358,68 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
       layout.assets.push({ id: `${room.id}-${++n}`, kind: "npc", name: occupant.count > 1 ? `${occupant.name} ${i + 1}` : occupant.name, x: spot.x, y: spot.y, w: 1, h: 1, ref: occupant.id });
     }
   }
+}
+
+// What staff stand at to serve (the furnishings flagged "s" in ROOM_PLANS, known by name so that
+// plans made before the flag was kept still work)
+export const isCounter = (a: Pick<RoomAsset, "kind" | "name">) => a.kind === "furniture" && /counter|stall|desk|console|terminal|workbench|tool cart|instrument cart|holo-table/i.test(a.name);
+
+// The squares round a counter (or a desk, a stall, a console), split by the side they are on:
+// `behind` is the side away from the room's way in, where whoever serves stands; `front` is
+// everything else, where customers come up to it. Squares outside the room are left out.
+export function counterSides(layout: RoomLayout, station: RoomAsset): { behind: { x: number; y: number }[]; front: { x: number; y: number }[] } {
+  const way = layout.assets.find((a) => a.kind === "exit") ?? layout.assets.find((a) => a.kind === "door");
+  const wide = station.w >= station.h;
+  const middle = wide ? station.y + (station.h - 1) / 2 : station.x + (station.w - 1) / 2;
+  const towards = way ? Math.sign((wide ? way.y : way.x) - middle) : 1;
+  const behind: { x: number; y: number }[] = [];
+  const front: { x: number; y: number }[] = [];
+  for (let y = station.y - 1; y <= station.y + station.h; y++) {
+    for (let x = station.x - 1; x <= station.x + station.w; x++) {
+      if (x < 0 || y < 0 || x >= layout.width || y >= layout.height) continue;
+      if (x >= station.x && x < station.x + station.w && y >= station.y && y < station.y + station.h) continue;
+      const across = wide ? (y < station.y ? -1 : y >= station.y + station.h ? 1 : 0) : x < station.x ? -1 : x >= station.x + station.w ? 1 : 0;
+      (across && towards && across === -towards ? behind : front).push({ x, y });
+    }
+  }
+  return { behind, front };
+}
+
+// Brings a world made before the people in it were given lives up to date: civilians that were
+// one crowd become people one by one, cantinas get their stage, band and service droid, and a
+// hostile building's way in has a second sentry. Worlds made since are left as they are.
+export const LIFE = 1;
+export function livenWorld(world: World, catalog: WorldCatalog): World {
+  const next: World = JSON.parse(JSON.stringify(world));
+  if ((next.life ?? 0) >= LIFE) return next;
+  const ctx = contextFor(next, catalog, next.seed + next.counter + 4441);
+  for (const room of Object.values(next.areas)) {
+    if (room.kind !== "room") continue;
+    const building = next.areas[room.parentId ?? ""];
+    const speciesNames = (ancestor(next, room.id, "planet")?.tags ?? []).filter((t) => t.startsWith("species:")).map((t) => t.slice(8));
+    let changed = false;
+    const crowds = room.occupants.filter((o) => o.role === "civilians" && !o.statBlock);
+    if (crowds.length) {
+      room.occupants = room.occupants.flatMap((o) => (crowds.includes(o) ? locals(ctx, room, speciesNames, Math.min(6, o.count)) : [o]));
+      changed = true;
+    }
+    if (/^(main bar|cantina)$/i.test(room.name) && ["cantina", "promenade"].includes(building?.type) && !room.occupants.some((o) => o.role === "musician")) {
+      room.occupants.push(...band(ctx, speciesNames), ...(ctx.random.chance(0.7) ? serviceDroid(ctx) : []));
+      const layout = room.layout;
+      if (layout && !layout.assets.some((a) => a.name === "Bandstand")) {
+        layout.assets = layout.assets.filter((a) => a.kind !== "npc" && a.kind !== "loot" && a.kind !== "ship");
+        const spot = findSpot(layout, ctx.random, "corner", 3, 2) ?? findSpot(layout, ctx.random, "corner", 2, 2) ?? findSpot(layout, ctx.random, "wall", 2, 1);
+        if (spot) layout.assets.push({ id: `${room.id}-stage`, kind: "furniture", name: "Bandstand", ...spot });
+      }
+      changed = true;
+    }
+    const template = BUILDINGS[building?.type ?? ""];
+    const hostile = !!template?.hostile && (template.hostile !== "faction" || (building.faction ?? next.antagonist) === next.antagonist);
+    if (room.gateway && hostile && guardTheGate(room)) changed = true;
+    if (changed && room.layout) placeContents(room);
+  }
+  next.life = LIFE;
+  return next;
 }
 
 // Lays out every room of a building on one grid, sets doors, windows and a secret way in, and

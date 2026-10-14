@@ -689,6 +689,27 @@ await step(ctx, "play: the HUD tabs do not crash", async () => {
     if (!moved) throw new Error("a tap on the map never moved the character in the fight");
     return `${lair.name}: ${moved}`;
   });
+
+  await step(ctx, "3D map: people go about the cantina; a double tap on the bar calls the bartender over", async () => {
+    const bar = areas.find((a) => a.name === "Main bar" && a.parentId === start.parentId);
+    if (!bar) throw new Error("the starting cantina has no main bar");
+    const roles = bar.occupants.map((o) => o.role);
+    if (roles.includes("civilians")) throw new Error("people are still a crowd");
+    if (roles.filter((r) => r === "musician").length < 3 || !bar.layout.assets.some((a) => a.name === "Bandstand")) throw new Error("no band on a stage: " + roles.join(", "));
+    await api("PATCH", `/api/campaigns/${mapCamp}`, { currentLocation: bar.id });
+    await openGame();
+    const people = bar.layout.assets.filter((a) => a.kind === "npc");
+    const before = await Promise.all(people.map((a) => at(`asset:${a.id}`)));
+    await sleep(20000);
+    const after = await Promise.all(people.map((a) => at(`asset:${a.id}`)));
+    const moved = people.filter((_, i) => Math.hypot(after[i].x - before[i].x, after[i].y - before[i].y) > 8).length;
+    if (!moved) throw new Error("nobody moved in 20 seconds");
+    const counter = bar.layout.assets.find((a) => a.name === "Bar counter");
+    const tender = bar.occupants.find((o) => o.role === "bartender");
+    await doubleTap(`asset:${counter.id}`);
+    await page.getByTestId("map-card").getByText(tender.name, { exact: true }).waitFor({ timeout: 30000 });
+    return `${roles.length} people, ${moved} moved in 20 s; ${tender.name} came over to the bar`;
+  });
 }
 
 if (process.env.FORCE !== "0") {

@@ -9,7 +9,7 @@ import { Loader2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
-import LocalMap, { FightScene, viewOf, usePartySpot } from "@/components/Map/LocalMap";
+import LocalMap, { FightScene, viewOf, usePartySpot, whereNow } from "@/components/Map/LocalMap";
 import PlayCombat from "@/components/Combat/PlayCombat";
 import { useCombat, rollDamage } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
@@ -21,7 +21,7 @@ import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCo
 import { getStarshipSize } from "@/lib/sw5e/starships";
 import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
-  planBuilding, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS,
+  planBuilding, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   type Occupant,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship,
 } from "@shared/logic";
@@ -165,18 +165,35 @@ export default function GameBoard() {
 
   const hostiles = (here?.occupants ?? []).filter((o) => o.disposition === "hostile" && o.hitPoints);
 
+  // A world from before the people in it had lives of their own is brought up to date once, on
+  // the server (it needs the rules data): crowds become people, cantinas get a band
+  const livened = useRef(false);
+  useEffect(() => {
+    if (!world || (world.life ?? 0) >= LIFE || livened.current) return;
+    livened.current = true;
+    const sent = world;
+    fetch("/api/world/liven", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ world }) })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("The server could not update this world"))))
+      .then((body) => {
+        // Something changed the world meanwhile: try again from the new one
+        if ((queryClient.getQueryData([`/api/campaigns/${campaignId}`]) as any)?.galaxyMap !== sent) livened.current = false;
+        else saveCampaign({ galaxyMap: body.world });
+      })
+      .catch((error) => console.error(error));
+  }, [world]);
+
   // A building from before rooms had floor plans gets its plan the first time the party is in
   // it or in front of it
   const planned = useRef<string | null>(null);
   const buildingId = here?.kind === "room" ? here.parentId : here?.kind === "building" ? here.id : null;
   const unplanned = !!world && !!buildingId && childrenOf(world, buildingId).some((a) => a.kind === "room" && !a.layout);
   useEffect(() => {
-    if (!world || !buildingId || !unplanned || planned.current === buildingId) return;
+    if (!world || (world.life ?? 0) < LIFE || !buildingId || !unplanned || planned.current === buildingId) return;
     planned.current = buildingId;
     const next: World = JSON.parse(JSON.stringify(world));
     planBuilding(next, buildingId);
     saveCampaign({ galaxyMap: next });
-  }, [buildingId, unplanned]);
+  }, [buildingId, unplanned, world?.life]);
 
   // The 3D map: the place being looked at (the party's own, unless another was opened), and
   // whatever was last picked out on it
@@ -483,8 +500,16 @@ export default function GameBoard() {
     const cameIn = here.layout && spot.areaId === here.id
       ? { x: spot.x - here.layout.x, y: spot.y - here.layout.y }
       : ways.find((a) => a.to === cameFrom) ?? ways.find((a) => a.kind === "exit") ?? ways[0];
+    // Where they are drawn just now, else (not drawn, or caught in passing on someone else's square) where the plan has them
+    const taken = new Set(cameIn ? [`${cameIn.x},${cameIn.y}`] : []);
+    const spotOf = (a: { id: string; x: number; y: number }) => {
+      const now = whereNow(a.id);
+      const spot = now && !taken.has(`${now.x},${now.y}`) ? now : a;
+      taken.add(`${spot.x},${spot.y}`);
+      return spot;
+    };
     const enemies = hostiles.flatMap((o) => {
-      const spots = ground.assets.filter((a) => a.kind === "npc" && a.ref === o.id);
+      const spots = ground.assets.filter((a) => a.kind === "npc" && a.ref === o.id).map(spotOf);
       return Array.from({ length: o.count }, (_, i) => ({ ...foe(o, `${o.id}-${i}`, o.count > 1 ? `${o.name} ${i + 1}` : o.name), ...(spots[i] ? { x: spots[i].x, y: spots[i].y } : {}) }));
     });
     // Two of a kind are told apart by a letter
@@ -803,7 +828,20 @@ export default function GameBoard() {
       );
     }
     if (picked.kind === "occupant") {
+      // Someone here, or a sentry standing out in front of the building the party is outside
       const o = here.occupants.find((x) => x.id === picked.id);
+      const gate = !o && here.kind === "building" && world ? childrenOf(world, here.id).find((room) => room.occupants.some((x) => x.id === picked.id)) : undefined;
+      if (gate) {
+        const sentry = gate.occupants.find((x) => x.id === picked.id)!;
+        return (
+          <>
+            {close}
+            <p className={`font-semibold ${sentry.disposition === "hostile" ? "text-red-400" : ""}`}>{sentry.name}</p>
+            <p className="text-xs text-gray-300">{[sentry.species, sentry.role, sentry.disposition, sentry.cr && `CR ${sentry.cr}`].filter(Boolean).join(", ")}</p>
+            <p className="text-xs text-gray-400">{sentry.disposition === "hostile" ? `They keep the way in to ${gate.name}. Walk in and they will stop you; a secret way in is not watched.` : `They keep the way in to ${gate.name}.`}</p>
+          </>
+        );
+      }
       if (!o) return null;
       const hostile = o.disposition === "hostile" && !!o.hitPoints;
       return (

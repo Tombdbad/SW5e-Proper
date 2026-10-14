@@ -4,7 +4,7 @@ import { CampaignElementGenerator } from '../../lib/sw5e/campaignGenerator';
 import { CharacterProfile } from '../../lib/sw5e/characterProfileParser';
 import TranslucentPane from '../ui/TranslucentPane';
 import { Character } from '../../shared/schema';
-import { trailOf, type Quest, type World } from '@shared/logic';
+import { trailOf, isLocal, type Quest, type World } from '@shared/logic';
 
 interface CampaignGeneratorProps {
   character: Character;
@@ -63,7 +63,7 @@ export default function CampaignGenerator({ character, onSave }: CampaignGenerat
   const planet = trail.find((area) => area.kind === 'planet');
   const onPlanet = world && planet ? Object.values(world.areas).filter((area) => trailOf(world, area.id).some((a) => a.id === planet.id)) : [];
   const sites = onPlanet.filter((area) => area.kind === 'settlement');
-  const people = onPlanet.flatMap((area) => area.occupants.filter((o) => !o.statBlock && o.count === 1).map((o) => ({ ...o, where: area.name })));
+  const people = onPlanet.flatMap((area) => area.occupants.filter((o) => !o.statBlock && o.count === 1 && !isLocal(o)).map((o) => ({ ...o, where: area.name })));
   const enemies = Array.from(new Set(onPlanet.flatMap((area) => area.occupants.filter((o) => o.disposition === 'hostile').map((o) => o.name))));
 
   const handleSave = () => {

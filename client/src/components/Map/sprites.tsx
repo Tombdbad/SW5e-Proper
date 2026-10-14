@@ -364,7 +364,7 @@ export function tokenOf(o: Partial<Pick<Occupant, "name" | "role" | "creature" |
   const creature = (o.creature ?? "").toLowerCase();
   if (/swarm/.test(creature) || /swarm/.test(name)) return "swarm";
   if (/hutt/.test(name)) return "hutt";
-  if (/astromech|r2|r5|utility|gonk|mouse|pit droid|junk droid/.test(name) || o.role === "utility droid") return "astromech";
+  if (/astromech|r2|r5|utility|gonk|mouse|pit droid|junk droid/.test(name) || o.role === "utility droid" || o.role === "service droid") return "astromech";
   if (/b1|b2|bx|battle droid|commando droid|tactical/.test(name)) return "battledroid";
   if (/droid|construct/.test(creature) || /droid|probe|ig[- ]|kx|dsd|destroyer|vulture|series/.test(name)) return "droid";
   if (/inquisitor|sith|jedi|dark side|guard, |royal guard|shadow/.test(name)) return "force";

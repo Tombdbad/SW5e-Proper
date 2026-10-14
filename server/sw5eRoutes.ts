@@ -4,10 +4,11 @@
 //   POST /api/world/generate           { options } -> a new world, and quests read off it
 //   POST /api/world/expand             { world, areaId, seed? } -> the world with that area built out
 //   POST /api/world/populate           { world, areaId, seed? } -> the world with that area's contents re-rolled
+//   POST /api/world/liven              { world } -> an older world with its people brought to life (livenWorld)
 //   POST /api/world/validate           { world } -> what is wrong with it, checked against the rules data
 //   POST /api/world/occupant           { statBlock } -> that stat block as someone to place in an area
 import type { Express, Request, Response } from "express";
-import { generateWorld, expandArea, populateArea, statBlockOccupant, validateWorld, worldQuests, type World } from "../shared/logic";
+import { generateWorld, expandArea, populateArea, livenWorld, statBlockOccupant, validateWorld, worldQuests, type World } from "../shared/logic";
 import { datasetNames, getDataset, getWorldCatalog, isDataset, sw5eManifest } from "./sw5eData";
 
 const isWorld = (value: any): value is World =>
@@ -67,6 +68,17 @@ export function registerSw5eRoutes(app: Express) {
   };
   app.post("/api/world/expand", rework(expandArea));
   app.post("/api/world/populate", rework(populateArea));
+
+  app.post("/api/world/liven", async (req: Request, res: Response) => {
+    const world = req.body?.world;
+    if (!isWorld(world)) return res.status(400).json({ message: "A world is required" });
+    try {
+      res.json({ world: livenWorld(world, await getWorldCatalog()) });
+    } catch (error) {
+      console.error("Error livening world:", error);
+      res.status(500).json({ message: "Failed to change world" });
+    }
+  });
 
   app.post("/api/world/occupant", async (req: Request, res: Response) => {
     const catalog = await getWorldCatalog();
