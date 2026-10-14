@@ -374,7 +374,8 @@ await step(ctx, "play: enemies bar the way; the fight uses their stat block and 
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 60000 });
     }
-    await page.getByRole("button", { name: "Fight", exact: true }).click();
+    // Enemies that are already attacking (after a lost fight and a revive) start the fight themselves
+    if (!(await page.getByText(/Combat - Round/).count())) await page.getByRole("button", { name: "Fight", exact: true }).click();
     await page.getByText(/Combat - Round/).waitFor();
     weapons = await page.getByText(/^Melee: /).innerText();
     for (let i = 0; i < 200; i++) {
@@ -740,7 +741,8 @@ if (process.env.FORCE !== "0") {
     forceCamp = made.json.id;
     await page.goto(`${BASE}/game/${forceCamp}`, { waitUntil: "domcontentloaded" });
     await page.getByRole("heading", { name: "E2E force " + TAG }).waitFor({ timeout: 60000 });
-    await page.getByRole("button", { name: "Fight", exact: true }).click();
+    // Enemies that are already attacking (after a lost fight and a revive) start the fight themselves
+    if (!(await page.getByText(/Combat - Round/).count())) await page.getByRole("button", { name: "Fight", exact: true }).click();
     await page.getByText(/Combat - Round/).waitFor();
     const listed = (await page.getByTestId("combat-powers").innerText()).replace(/\n/g, " ");
     for (const power of consular.forcePowers) if (!listed.includes(power.name)) throw new Error(`${power.name} is not offered in the fight: ${listed}`);

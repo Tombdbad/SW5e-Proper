@@ -1173,7 +1173,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       lifeApi.current?.summon(counterId, near, () => onAct?.({ type: "occupant", id: staff.id }));
     });
   };
-  const lastTap = useRef({ id: "", at: 0 });
+  const lastTap = useRef<{ id: string; at: number; note?: ReturnType<typeof setTimeout> }>({ id: "", at: 0 });
   // Someone in the room was tapped: staff are called over to their counter, anyone else walked up to
   const tapPerson = (p: { occupant: Occupant; at: Sq; counter?: string }) => {
     const l = inside?.layout;
@@ -1187,12 +1187,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     const l = inside!.layout!;
     if (isCounter(a)) {
       // A double tap on a counter calls whoever serves there; a tap only says who that is
+      // The note waits to see whether a second tap follows: on a phone it would cover the counter
       const now = performance.now();
       const again = lastTap.current.id === a.id && now - lastTap.current.at < 500;
+      clearTimeout(lastTap.current.note);
       lastTap.current = { id: a.id, at: again ? 0 : now };
       const staff = lifeApi.current?.servedBy(a.id);
       if (again) callOver(a.id);
-      else onAct?.({ type: "note", text: staff ? `${a.name}: ${staff.name} serves here. Double tap it to call them over.` : a.name });
+      else lastTap.current.note = setTimeout(() => onAct?.({ type: "note", text: staff ? `${a.name}: ${staff.name} serves here. Double tap it to call them over.` : a.name }), 500);
     } else if (a.kind === "window") onAct?.({ type: "note", text: "A window onto the street outside." });
     else if (a.side) walkTo([{ x: l.x + a.x, y: l.y + a.y }], () => a.to && onAct?.({ type: "go", areaId: a.to, secret: a.kind === "secret" }));
     else if (a.kind === "loot" && a.ref) walkTo(around(l.x + a.x, l.y + a.y), () => onAct?.({ type: "loot", id: a.ref! }));
