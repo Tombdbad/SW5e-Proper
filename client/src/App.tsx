@@ -37,6 +37,25 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
   
+  // A tab left open keeps the build it loaded. When the page changes or the tab comes back into
+  // view, ask the server which build it serves now, and reload if it is not this one.
+  useEffect(() => {
+    const mine = document.querySelector<HTMLScriptElement>('script[type="module"][src]')?.getAttribute('src');
+    const check = async () => {
+      if (!mine || document.visibilityState !== 'visible') return;
+      try {
+        const html = await (await fetch('/', { cache: 'no-store' })).text();
+        const theirs = html.match(/<script type="module"[^>]*src="([^"]+)"/)?.[1];
+        if (theirs && theirs !== mine) window.location.reload();
+      } catch {
+        // offline: stay on this build
+      }
+    };
+    check();
+    document.addEventListener('visibilitychange', check);
+    return () => document.removeEventListener('visibilitychange', check);
+  }, [location.pathname]);
+
   return (
       <div className="flex flex-col min-h-screen bg-background">
         <Toaster position="top-right" />
