@@ -692,9 +692,11 @@ await step(ctx, "play: the HUD tabs do not crash", async () => {
   });
 
   await step(ctx, "time: the clock shows the era and the law; waiting moves it on", async () => {
+    // Somewhere quiet: waiting is not allowed with enemies about
+    await api("PATCH", `/api/campaigns/${mapCamp}`, { currentLocation: start.id });
     await openGame();
     const before = await page.getByTestId("play-clock").innerText();
-    if (!/^Day \d+, \d\d:\d\d, \w+ · .+ · (lawless|frontier|policed|strict) law$/.test(before)) throw new Error("clock line: " + before);
+    if (!/^Day \d+, \d\d:\d\d, \w+ · .+ · (lawless|frontier law|policed law|strict law)$/.test(before)) throw new Error("clock line: " + before);
     await page.getByRole("button", { name: "Until evening" }).click();
     await page.getByTestId("play-clock").getByText(/18:0\d, evening/).waitFor({ timeout: 10000 });
     const saved = (await api("GET", `/api/campaigns/${mapCamp}`)).json.timeElapsed;
@@ -721,6 +723,48 @@ await step(ctx, "play: the HUD tabs do not crash", async () => {
     await doubleTap(`asset:${counter.id}`);
     await page.getByTestId("map-card").getByText(tender.name, { exact: true }).waitFor({ timeout: 30000 });
     return `${roles.length} people, ${moved} moved in 20 s; ${tender.name} came over to the bar`;
+  });
+
+  await step(ctx, "trade: the bartender's menu, buying and selling a drink, haggling", async () => {
+    const card = page.getByTestId("map-card");
+    await card.getByTestId("trade").waitFor({ timeout: 10000 });
+    const stock = card.getByTestId("trade-stock");
+    const first = stock.locator("li").first();
+    const line = (await first.innerText()).replace(/\s+/g, " ");
+    const name = line.replace(/ x\d+.*$/, "");
+    const before = await getChar(charId);
+    await first.getByRole("button", { name: "Buy" }).click();
+    await sleep(1500);
+    const after = await getChar(charId);
+    if (!after.equipment.includes(name) || after.credits >= before.credits) throw new Error(`bought ${name}? credits ${before.credits} -> ${after.credits}`);
+    await card.getByRole("button", { name: "Sell" }).first().click();
+    const offer = card.getByTestId("trade-offers").locator("li", { hasText: name }).first();
+    await offer.waitFor({ timeout: 5000 });
+    await offer.getByRole("button", { name: "Sell" }).click();
+    await sleep(1500);
+    const sold = await getChar(charId);
+    if (sold.credits <= after.credits) throw new Error("selling paid nothing");
+    await card.getByRole("button", { name: "Haggle" }).click();
+    await card.getByRole("button", { name: /Haggled|Offended/ }).waitFor({ timeout: 5000 });
+    const ledger = (await api("GET", `/api/campaigns/${mapCamp}`)).json.availableResources;
+    if (!ledger?.traders || !Object.keys(ledger.traders).length) throw new Error("the day's dealings were not saved");
+    return `${line}; paid ${before.credits - after.credits}, got back ${sold.credits - after.credits}; haggle tried`;
+  });
+
+  await step(ctx, "routines: the cantina is busy in the evening and quiet in the morning", async () => {
+    const bar = areas.find((a) => a.name === "Main bar" && a.parentId === start.parentId);
+    const at = async (total) => {
+      // Leave the game first: a page that is left saves its own clock
+      await page.goto("about:blank");
+      await sleep(1000);
+      await api("PATCH", `/api/campaigns/${mapCamp}`, { currentLocation: bar.id, timeElapsed: { total } });
+      await openGame();
+      return await page.getByTestId("play-occupants").locator("li").count();
+    };
+    const evening = await at(2 * 1440 + 21 * 60);
+    const morning = await at(2 * 1440 + 9 * 60);
+    if (evening <= morning) throw new Error(`21:00: ${evening}, 09:00: ${morning}`);
+    return `Main bar at 21:00: ${evening} people; at 09:00: ${morning}`;
   });
 }
 

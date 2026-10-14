@@ -4,7 +4,7 @@ import { Text, useTexture, OrbitControls, Billboard } from "@react-three/drei";
 import * as THREE from "three";
 import { starSystems } from "@/lib/sw5e/starSystems";
 import { useMap } from "@/lib/stores/useMap";
-import { trailOf, type Exit, type World } from "@shared/logic";
+import { trailOf, type Exit, type Mover, type World } from "@shared/logic";
 
 // What a tap on the 3D map asks for. Places: a tap picks one out, a second tap straight after
 // opens it (the view of what is inside). In a building, on foot: a door, way out or secret way
@@ -164,6 +164,16 @@ export default function GalaxyMap({ world, hereId, selectedId, onAct }: GalaxyMa
         .filter((lane) => lane.ends[0] && lane.ends[1])
     : [];
   const hereSystem = world && hereId ? trailOf(world, hereId).find((a) => a.kind === "system")?.id : undefined;
+  // Ships in hyperspace between systems (shared/logic withPresence), on the line between them
+  const systemOf = (id: string) => (world ? trailOf(world, id).find((a) => a.kind === "system")?.id : undefined);
+  const flights = ((world as (World & { moving?: Mover[] }) | null | undefined)?.moving ?? [])
+    .filter((m) => m.kind === "ship")
+    .flatMap((m) => {
+      const [a, b] = [shown.find((x) => x.id === systemOf(m.from)), shown.find((x) => x.id === systemOf(m.to))];
+      if (!a || !b || a === b) return [];
+      const t = Math.max(0, Math.min(1, m.progress));
+      return [{ id: m.id, name: m.name, at: [a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t + 0.8, a.z + (b.z - a.z) * t] as [number, number, number] }];
+    });
 
   return (
     <>
@@ -219,6 +229,13 @@ export default function GalaxyMap({ world, hereId, selectedId, onAct }: GalaxyMa
             </bufferGeometry>
             <lineBasicMaterial color="#60a0ff" opacity={0.6} transparent />
           </line>
+        ))}
+
+        {flights.map((f) => (
+          <group key={f.id} position={f.at}>
+            <mesh><octahedronGeometry args={[1]} /><meshBasicMaterial color="#f0a03c" /></mesh>
+            <Billboard position={[0, 2.2, 0]}><Text fontSize={1.6} color="#f5d9a8" outlineWidth={0.12} outlineColor="#000000">{`${f.name} (in hyperspace)`}</Text></Billboard>
+          </group>
         ))}
 
         {/* Star systems */}

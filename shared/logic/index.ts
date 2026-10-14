@@ -58,6 +58,11 @@ export interface Occupant {
   saves?: Record<string, number>;
   // Equipment names from the equipment data
   loadout: string[];
+  // A merchant's line of goods (a WARES key); others trade by their role (see waresOf)
+  trade?: string;
+  // Where they live and how their days go, and the ship they fly (see "Routines")
+  routine?: Routine;
+  ship?: string;
 }
 
 export interface Ship {
@@ -72,6 +77,8 @@ export interface Ship {
   equipment: string[];
   hyperdriveClass?: string;
   value: number;
+  // The ports it flies between (see "Routines")
+  voyage?: Voyage;
 }
 
 export interface LootCache {
@@ -266,7 +273,7 @@ const WILD_SITES: Record<string, string[]> = {
 // Rooms of each building type. The first room is the entrance. After "|" come content codes:
 //   s staff   p patrons or residents   g guards   b leader   w wildlife   h horrors
 //   d utility droid   S ship berth   K locked door   H hidden door   L:<kind> loot cache
-//   m a band, with a stage to play on   D a service droid (most cantinas have one)
+//   m a band, with a stage to play on   D a service droid (most cantinas have one)   X a fence (the black market)
 //   @n the room this one opens off (its index in the list); without it, the room before
 const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "horror"; rooms: string[] }> = {
   spaceport: { rooms: ["Arrivals concourse|s p", "Customs office|s g", "Docking bay|S s d", "Maintenance hangar|S d L:workshop", "Control tower|s K @0", "Bonded warehouse|L:cargo K g @1"] },
@@ -276,7 +283,7 @@ const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "h
   "city gate": { rooms: ["Gate|g", "Guard room|g L:armory K"] },
   "town gate": { rooms: ["Gate|g", "Watch post|L:armory K"] },
   trailhead: { rooms: ["Trailhead|", "Old shelter|L:remains"] },
-  cantina: { rooms: ["Entrance|", "Main bar|s p p m D", "Private booth|p", "Back room|p g K @1", "Cellar|L:stash H"] },
+  cantina: { rooms: ["Entrance|", "Main bar|s p p m D", "Private booth|p", "Back room|p g K X @1", "Cellar|L:stash H"] },
   promenade: { rooms: ["Promenade|p p", "Cantina|s p m D", "Trade stalls|s s L:coin @0", "Storeroom|L:cargo K"] },
   market: { rooms: ["Market gate|p", "Stalls|s s p", "Trader's office|s L:coin K", "Storehouse|L:cargo @1"] },
   garrison: { hostile: "faction", rooms: ["Gatehouse|g", "Barracks|g g", "Armory|L:armory K", "Detention block|g K @0", "Command room|b g L:intel K @1"] },
@@ -350,6 +357,7 @@ const ROLE_GEAR: Record<string, RegExp[]> = {
   farmer: [/^(chef's kit|biochemist's kit)$/i],
   guard: [/^(blaster rifle|blaster carbine)$/i, /^(combat suit|mesh armor)$/i],
   smuggler: [/^(blaster pistol|heavy pistol|hold-out)$/i, /^(security kit|slicer's kit)$/i],
+  fence: [/^(hold-out|vibrodagger)$/i, /^datapad$/i],
   "bounty hunter": [/^(blaster rifle|heavy carbine|wrist launcher)$/i, /^(mesh armor|weave armor)$/i, /^(binders|grappling hook)$/i],
   informant: [/^(commlink|pocket scrambler)$/i, /^(vibrodagger|hold-out)$/i],
   gambler: [/^(sabacc deck|pazaak deck|chance cubes)$/i, /^hold-out$/i],
@@ -389,6 +397,7 @@ export interface Era {
 }
 
 export const LAW_NAMES = ["lawless", "frontier", "policed", "strict"] as const;
+export const lawText = (law: number) => (law === 0 ? "lawless" : `${LAW_NAMES[law]} law`);
 
 export const ERAS: Era[] = [
   {
@@ -860,7 +869,12 @@ function populateRoom(ctx: Context, room: Area) {
   const staff = staffRole(building.type, room.name);
   for (const code of codes) {
     if (code === "s") {
-      room.occupants.push(person(ctx, staff, r.chance(0.5) ? "friendly" : "neutral", speciesNames));
+      const one = person(ctx, staff, r.chance(0.5) ? "friendly" : "neutral", speciesNames);
+      // Merchants keep a line of goods; where there is no law, one in three runs a black market stall
+      if (staff === "merchant") one.trade = lawAt(world, room.id) === 0 && r.chance(0.33) ? "black" : r.pick(MERCHANT_WARES);
+      room.occupants.push(one);
+    } else if (code === "X") {
+      room.occupants.push(person(ctx, "fence", "neutral", speciesNames));
     } else if (code === "p") {
       room.occupants.push(...locals(ctx, room, speciesNames, /bar|cantina|commons|promenade/i.test(room.name) ? r.int(2, 4) : r.int(1, 3)));
     } else if (code === "m") {
@@ -1001,6 +1015,7 @@ function detailSettlement(ctx: Context, settlement: Area) {
   });
   connectGroup(ctx, buildings, (a, b) => ({ label: r.pick(template.street), travel: `${Math.max(20, Math.round(distance(a, b) * 40))} m` }), 0.35);
   buildings.forEach((b) => detailBuilding(ctx, b));
+  settleRoutines(world, settlement, r);
 }
 
 function detailPlanet(ctx: Context, planet: Area) {
@@ -1477,7 +1492,7 @@ export function counterSides(layout: RoomLayout, station: RoomAsset): { behind: 
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 1;
+export const LIFE = 3;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -1487,12 +1502,12 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
     const building = next.areas[room.parentId ?? ""];
     const speciesNames = (ancestor(next, room.id, "planet")?.tags ?? []).filter((t) => t.startsWith("species:")).map((t) => t.slice(8));
     let changed = false;
-    const crowds = room.occupants.filter((o) => o.role === "civilians" && !o.statBlock);
+    const crowds = (next.life ?? 0) < 1 ? room.occupants.filter((o) => o.role === "civilians" && !o.statBlock) : [];
     if (crowds.length) {
       room.occupants = room.occupants.flatMap((o) => (crowds.includes(o) ? locals(ctx, room, speciesNames, Math.min(6, o.count)) : [o]));
       changed = true;
     }
-    if (/^(main bar|cantina)$/i.test(room.name) && ["cantina", "promenade"].includes(building?.type) && !room.occupants.some((o) => o.role === "musician")) {
+    if ((next.life ?? 0) < 1 && /^(main bar|cantina)$/i.test(room.name) && ["cantina", "promenade"].includes(building?.type) && !room.occupants.some((o) => o.role === "musician")) {
       room.occupants.push(...band(ctx, speciesNames), ...(ctx.random.chance(0.7) ? serviceDroid(ctx) : []));
       const layout = room.layout;
       if (layout && !layout.assets.some((a) => a.name === "Bandstand")) {
@@ -1505,8 +1520,16 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
     const template = BUILDINGS[building?.type ?? ""];
     const hostile = !!template?.hostile && (template.hostile !== "faction" || (building.faction ?? next.antagonist) === next.antagonist);
     if (room.gateway && hostile && guardTheGate(room)) changed = true;
+    // Trade (life 2): merchants get their line of goods, cantina back rooms a fence
+    for (const o of room.occupants) if (o.role === "merchant" && !o.trade) o.trade = lawAt(next, room.id) === 0 && ctx.random.chance(0.33) ? "black" : ctx.random.pick(MERCHANT_WARES);
+    if (building?.type === "cantina" && /back room/i.test(room.name) && !room.occupants.some((o) => o.role === "fence")) {
+      room.occupants.push(person(ctx, "fence", "neutral", speciesNames));
+      changed = true;
+    }
     if (changed && room.layout) placeContents(room);
   }
+  // Routines (life 3): homes, days and voyages for every settlement that has been built
+  for (const settlement of Object.values(next.areas).filter((a) => a.kind === "settlement")) settleRoutines(next, settlement, ctx.random);
   next.life = LIFE;
   return next;
 }
@@ -1817,6 +1840,536 @@ export function tripMinutes(exit: Pick<Exit, "via" | "travel" | "needsShip" | "j
   if (metres) return Math.max(1, Math.round(Number(metres[1]) / 80));
   if (exit.needsShip) return 60;
   return 1;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Trade. Staff who keep a counter sell from a stock that changes daily: a bartender pours the
+// drinks of the equipment data, a merchant keeps a line of goods (general goods, arms, tools,
+// medical supplies, music and games), a mechanic tools and kits, a medic medical supplies, a
+// dockmaster spacer's supplies, and a fence or smuggler the black market. Only things in the
+// rules data are sold, at their listed cost moved by where they are sold:
+//   - the region (the further from the Core, the dearer manufactured goods) and the kind of
+//     settlement (cities are cheapest, outposts and wild places dearest);
+//   - what the planet needs (desert and ice worlds pay more for life support, jungles for
+//     medicine ...), and goods from this very planet (named in the item's text) are cheap;
+//   - the day (prices drift a little) and the stock (the last one costs more);
+//   - what the party has bought there today (each one dearer) or sold there (each one fetches less);
+//   - contraband (house rule): what the law here seizes is not sold openly; the black market
+//     sells it at a premium that grows with the law;
+//   - how the trader takes to the party (attitudeOf), and a haggle that came off.
+// Selling: equipment fetches half its cost in a market (Player's Handbook, "Selling Treasure"),
+// moved by the same demand and attitude. A trader buys only the kind of thing they sell; the
+// black market buys anything, contraband at the full cost and the rest cheaply (Wretched Hives:
+// "a shady buyer"). Enhanced items are not bought over a counter (Wretched Hives: finding a buyer
+// is a downtime activity).
+// The party's dealings are kept in the campaign: renown with factions and the number of
+// dealings with each trader (factionInfluence), and what was bought and sold today
+// (availableResources). Haggling: Charisma (Persuasion) against the trader, once a day each.
+// ---------------------------------------------------------------------------------------------
+
+export interface Wares {
+  label: string;
+  categories: string[];
+  // How many lines are on offer, and how many of each
+  lines: [number, number];
+  each: [number, number];
+  black?: boolean;
+}
+export const WARES: Record<string, Wares> = {
+  bar: { label: "Drinks", categories: ["AlcoholicBeverage"], lines: [5, 8], each: [4, 12] },
+  general: { label: "General goods", categories: ["Utility", "Storage", "Clothing", "Communications", "DataRecordingAndStorage", "LifeSupport"], lines: [9, 14], each: [1, 5] },
+  arms: { label: "Arms and armor", categories: ["Weapon", "Armor", "Ammunition", "WeaponOrArmorAccessory"], lines: [8, 12], each: [1, 4] },
+  tech: { label: "Tools and kits", categories: ["Tool", "Kit"], lines: [6, 10], each: [1, 3] },
+  medical: { label: "Medical supplies", categories: ["Medical"], lines: [5, 8], each: [1, 6] },
+  leisure: { label: "Music and games", categories: ["MusicalInstrument", "GamingSet"], lines: [5, 8], each: [1, 3] },
+  spacer: { label: "Spacer's supplies", categories: ["LifeSupport", "Storage", "Communications"], lines: [6, 10], each: [1, 4] },
+  black: { label: "Black market", categories: ["Spice", "Explosive", "Weapon", "Armor", "Kit", "Utility", "Medical", "Clothing", "Communications"], lines: [7, 11], each: [1, 4], black: true },
+};
+export const MERCHANT_WARES = ["general", "general", "arms", "tech", "medical", "leisure"];
+const ROLE_WARES: Record<string, string> = { bartender: "bar", mechanic: "tech", medic: "medical", dockmaster: "spacer", fence: "black", smuggler: "black" };
+// What someone sells, if anything
+export const waresOf = (o: Pick<Occupant, "role" | "trade" | "disposition">): Wares | undefined =>
+  o.disposition === "hostile" ? undefined : WARES[o.trade ?? ROLE_WARES[o.role] ?? (o.role === "merchant" ? "general" : "")];
+
+// The law level at which the law seizes an item (house rule; the books give no list):
+// spice and lightweapons anywhere there is law, explosives, poisons, slicing gear and exotic weapons where it is
+// policed, military blasters and heavy armor where it is strict. Infinity: legal everywhere.
+export function contrabandFrom(item: Pick<Sw5eEquipment, "name" | "equipmentCategory" | "weaponClassification" | "armorClassification">): number {
+  // Lightsabers are not sold over a counter in any era
+  if (item.equipmentCategory === "Spice" || /Lightweapon$/.test(item.weaponClassification ?? "")) return 1;
+  if (item.equipmentCategory === "Explosive" || /poison|computer spike|security spike|comm jammer|holotrace|slicer|spicer|forgery|clandestine|restraining bolt/i.test(item.name)) return 2;
+  if (/^Exotic/.test(item.weaponClassification ?? "")) return 2;
+  if (/^Martial/.test(item.weaponClassification ?? "") || item.armorClassification === "Heavy") return 3;
+  return Infinity;
+}
+export const isContraband = (item: Parameters<typeof contrabandFrom>[0], law: number) => law >= contrabandFrom(item);
+
+// The party's dealings, as kept in the campaign
+export interface Standing {
+  // Renown with each faction, -10 to 10 (Wretched Hives: renown is earned by acting for a faction)
+  renown: Record<string, number>;
+  // Dealings with each trader, by occupant id
+  dealings: Record<string, number>;
+}
+export interface Ledger {
+  day: number;
+  // Per trader: what the party bought and sold today, and whether a haggle was tried (and how it went)
+  traders: Record<string, { bought: Record<string, number>; sold: Record<string, number>; haggle?: "won" | "lost" | "tried" }>;
+}
+export const emptyLedger = (day: number): Ledger => ({ day, traders: {} });
+export const ledgerFor = (ledger: Ledger | undefined | null, day: number): Ledger => (ledger && ledger.day === day ? ledger : emptyLedger(day));
+
+// Who the party is, as a trader sees them
+export interface Customer {
+  species?: string;
+  homeworld?: string;
+  alignment?: string;
+  standing: Standing;
+}
+
+// Which way a faction leans, for how it takes to a character's alignment
+const DARK_FACTIONS = /empire|sith|first order|remnant|black sun|hutt|separatist|trade federation/i;
+const LIGHT_FACTIONS = /republic|rebel|resistance|jedi/i;
+
+// The faction that holds the place a trader works in
+export function factionAt(world: World, areaId: string): string | undefined {
+  for (const area of [...trailOf(world, areaId)].reverse()) if (area.faction) return area.faction;
+  return undefined;
+}
+
+// How a trader takes to the party, -4 to 4, and why
+export function attitudeOf(world: World, trader: Occupant, placeId: string, customer: Customer): { score: number; reasons: string[] } {
+  const reasons: string[] = [];
+  let score = 0;
+  const add = (n: number, why: string) => {
+    if (!n) return;
+    score += n;
+    reasons.push(`${why} (${n > 0 ? "+" : ""}${n})`);
+  };
+  const faction = factionAt(world, placeId);
+  // The campaign's enemy starts with some bad blood; its people are not all its soldiers
+  const renown = faction ? customer.standing.renown[faction] ?? (faction === world.antagonist ? -3 : 0) : 0;
+  if (faction) add(Math.max(-2, Math.min(2, Math.trunc(renown / 3))), `${renown >= 0 ? "standing" : "bad blood"} with ${faction}`);
+  const species = (customer.species ?? "").toLowerCase();
+  if (species && (trader.species ?? "").toLowerCase() === species) add(1, `a fellow ${trader.species}`);
+  const planet = ancestor(world, placeId, "planet");
+  if (planet && species && (planet.tags.includes(`species:${customer.species}`) || (customer.homeworld && planet.name.toLowerCase() === customer.homeworld.toLowerCase()))) add(1, "one of the locals' own people");
+  const light = /light/i.test(customer.alignment ?? "");
+  const dark = /dark/i.test(customer.alignment ?? "");
+  if (faction && (light || dark) && (DARK_FACTIONS.test(faction) || LIGHT_FACTIONS.test(faction))) add(DARK_FACTIONS.test(faction) === dark ? 1 : -1, `${faction} ${DARK_FACTIONS.test(faction) === dark ? "likes" : "distrusts"} your kind`);
+  const black = waresOf(trader)?.black;
+  if (black && /chaotic/i.test(customer.alignment ?? "")) add(1, "you look like you can keep quiet");
+  if (black && /lawful/i.test(customer.alignment ?? "")) add(-1, "you look like trouble with the law");
+  const dealt = customer.standing.dealings[trader.id] ?? 0;
+  if (dealt >= 3) add(dealt >= 10 ? 2 : 1, dealt >= 10 ? "a regular" : "a familiar face");
+  return { score: Math.max(-4, Math.min(4, score)), reasons };
+}
+export const ATTITUDES = ["hostile", "cold", "wary", "cool", "neutral", "warm", "friendly", "generous", "devoted"];
+export const attitudeName = (score: number) => ATTITUDES[score + 4];
+
+// What a planet's people need more of, by equipment category
+const DEMAND: Record<string, Record<string, number>> = {
+  desert: { LifeSupport: 1.3, AlcoholicBeverage: 1.15, Storage: 1.1 },
+  ice: { LifeSupport: 1.3, Clothing: 1.25 },
+  volcanic: { LifeSupport: 1.35, Medical: 1.1 },
+  jungle: { Medical: 1.25, LifeSupport: 1.1 },
+  swamp: { Medical: 1.25, LifeSupport: 1.1 },
+  ocean: { LifeSupport: 1.2 },
+  barren: { LifeSupport: 1.25, AlcoholicBeverage: 1.1 },
+  urban: { Communications: 0.85, DataRecordingAndStorage: 0.85, Clothing: 0.9 },
+  forest: { Tool: 0.9 },
+  temperate: {},
+  "gas giant": { LifeSupport: 1.3 },
+};
+const REGION_PRICE: Record<string, number> = { "Deep Core": 1, Core: 0.92, Colonies: 0.95, "Inner Rim": 1, "Expansion Region": 1.05, "Mid Rim": 1.08, "Outer Rim": 1.15, "Wild Space": 1.3, "Unknown Regions": 1.35 };
+const SETTLEMENT_PRICE: Record<string, number> = { city: 0.95, town: 1, station: 1.05, outpost: 1.1, village: 1.1 };
+// The most a trader keeps in stock per item, by the kind of settlement
+const SETTLEMENT_CAP: Record<string, number> = { city: Infinity, station: 10000, town: 4000, outpost: 1500, village: 1200 };
+
+const hashOf = (text: string) => Array.from(text).reduce((n, ch) => (Math.imul(n, 31) + ch.charCodeAt(0)) | 0, 7) >>> 0;
+
+// Everything about where a trader works that moves prices, with the reasons shown to the player
+export function marketAt(world: World, placeId: string) {
+  const region = ancestor(world, placeId, "region");
+  const planet = ancestor(world, placeId, "planet");
+  const settlement = ancestor(world, placeId, "settlement");
+  const regionFactor = REGION_PRICE[region?.type ?? region?.name ?? ""] ?? 1.1;
+  const settlementFactor = settlement ? SETTLEMENT_PRICE[settlement.type] ?? 1.1 : 1.2;
+  const demand = DEMAND[planet?.type ?? ""] ?? {};
+  const notes: string[] = [];
+  if (regionFactor !== 1) notes.push(`${region?.name ?? "this region"} ${regionFactor > 1 ? "+" : ""}${Math.round((regionFactor - 1) * 100)}%`);
+  if (settlementFactor !== 1) notes.push(`${settlement?.type ?? "the wilds"} ${settlementFactor > 1 ? "+" : ""}${Math.round((settlementFactor - 1) * 100)}%`);
+  const wanted = Object.entries(demand).filter(([, f]) => f > 1).map(([c]) => c.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase());
+  const cheap = Object.entries(demand).filter(([, f]) => f < 1).map(([c]) => c.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase());
+  if (wanted.length) notes.push(`${planet?.type} world: ${wanted.join(", ")} in demand`);
+  if (cheap.length) notes.push(`${cheap.join(", ")} plentiful`);
+  return { law: lawAt(world, placeId), planet, settlement, regionFactor, settlementFactor, demand, cap: settlement ? SETTLEMENT_CAP[settlement.type] ?? 2000 : 800, notes };
+}
+
+export interface TradeLine {
+  name: string;
+  category: string;
+  cost: number;
+  quantity: number;
+  price: number;
+  contraband: boolean;
+  description?: string;
+}
+
+// What a trader has for sale today, at today's prices for this customer
+export function stockOf(world: World, trader: Occupant, placeId: string, equipment: Sw5eEquipment[], day: number, customer: Customer, ledger?: Ledger): TradeLine[] {
+  const wares = waresOf(trader);
+  if (!wares) return [];
+  const market = marketAt(world, placeId);
+  const r = createRandom(hashOf(trader.id) + day * 7919);
+  const categories = market.law === 0 && !wares.black && trader.role === "merchant" ? [...wares.categories, "Spice", "Explosive"] : wares.categories;
+  const pool = equipment.filter((e) => categories.includes(e.equipmentCategory) && e.cost > 0 && e.cost <= market.cap && (wares.black ? contrabandFrom(e) <= 3 : !isContraband(e, market.law)));
+  const picked = r.shuffle(pool).slice(0, r.int(wares.lines[0], wares.lines[1]));
+  const today = ledgerFor(ledger, day).traders[trader.id];
+  // What the party sold here today is for sale again
+  const resold = Object.entries(today?.sold ?? {}).map(([name]) => equipment.find((e) => e.name === name)).filter((e): e is Sw5eEquipment => !!e && !picked.includes(e));
+  return [...picked, ...resold]
+    .map((item) => {
+      const quantity = (picked.includes(item) ? r.int(wares.each[0], wares.each[1]) : 0) + (today?.sold?.[item.name] ?? 0) - (today?.bought?.[item.name] ?? 0);
+      return { item, quantity };
+    })
+    .filter(({ quantity }) => quantity > 0)
+    .map(({ item, quantity }) => ({
+      name: item.name,
+      category: item.equipmentCategory,
+      cost: item.cost,
+      quantity,
+      price: priceOf(world, trader, placeId, item, day, customer, ledger, quantity),
+      contraband: isContraband(item, market.law),
+      description: (item as any).description,
+    }))
+    .sort((a, b) => a.category.localeCompare(b.category) || a.price - b.price);
+}
+
+// Shared by buying and selling: where, when, and what the item is
+function marketFactor(world: World, placeId: string, item: Sw5eEquipment, day: number): number {
+  const market = marketAt(world, placeId);
+  const text = String((item as any).description ?? "");
+  const local = market.planet && text.includes(market.planet.name) ? 0.6 : 1;
+  const drift = 0.9 + (hashOf(`${item.name}:${day}:${market.settlement?.id ?? placeId}`) % 21) / 100;
+  return market.regionFactor * market.settlementFactor * (market.demand[item.equipmentCategory] ?? 1) * local * drift;
+}
+
+// What a trader asks for one more of an item
+export function priceOf(world: World, trader: Occupant, placeId: string, item: Sw5eEquipment, day: number, customer: Customer, ledger?: Ledger, inStock = 2): number {
+  const law = lawAt(world, placeId);
+  const today = ledgerFor(ledger, day).traders[trader.id];
+  const attitude = attitudeOf(world, trader, placeId, customer).score;
+  const risk = waresOf(trader)?.black && isContraband(item, law) ? 1 + 0.6 * law : 1;
+  const pressure = 1 + 0.05 * (today?.bought?.[item.name] ?? 0);
+  const scarce = inStock <= 1 ? 1.15 : 1;
+  const haggle = today?.haggle === "won" ? 0.9 : today?.haggle === "lost" ? 1.05 : 1;
+  return Math.max(1, Math.round(item.cost * marketFactor(world, placeId, item, day) * risk * pressure * scarce * haggle * (1 - 0.05 * attitude)));
+}
+
+// What a trader offers for one of an item the party carries; 0 if they will not buy it
+export function offerFor(world: World, trader: Occupant, placeId: string, item: Sw5eEquipment, day: number, customer: Customer, ledger?: Ledger): number {
+  const wares = waresOf(trader);
+  if (!wares || item.cost <= 0) return 0;
+  const law = lawAt(world, placeId);
+  const contraband = isContraband(item, law);
+  if (!wares.black && (contraband || !wares.categories.includes(item.equipmentCategory))) return 0;
+  const today = ledgerFor(ledger, day).traders[trader.id];
+  const attitude = attitudeOf(world, trader, placeId, customer).score;
+  const share = wares.black ? (contrabandFrom(item) <= 3 ? 0.8 : 0.3) : 0.5;
+  const glut = Math.max(0.2, 1 - 0.1 * (today?.sold?.[item.name] ?? 0));
+  const haggle = today?.haggle === "won" ? 1.1 : today?.haggle === "lost" ? 0.95 : 1;
+  return Math.max(1, Math.round(item.cost * share * marketFactor(world, placeId, item, day) * glut * haggle * (1 + 0.05 * attitude)));
+}
+
+// The DC to haggle with a trader (house rule): 12, +2 for the black market, -1 for each step of goodwill
+export const haggleDC = (trader: Occupant, attitude: number) => 12 + (waresOf(trader)?.black ? 2 : 0) - attitude;
+
+// Renown changes, as kept in the campaign's standing (Wretched Hives: acting for a faction earns
+// renown; acting against it costs it)
+export function addRenown(standing: Standing, faction: string | undefined, amount: number): Standing {
+  if (!faction || !amount) return standing;
+  const now = standing.renown[faction] ?? 0;
+  return { ...standing, renown: { ...standing.renown, [faction]: Math.max(-10, Math.min(10, now + amount)) } };
+}
+export const emptyStanding = (): Standing => ({ renown: {}, dealings: {} });
+
+// When a trader is at work (house rule): by the kind of building. Hours past midnight run on.
+const OPENING: Record<string, [number, number]> = {
+  cantina: [10, 28], promenade: [8, 24], market: [7, 19], workshop: [8, 18], engineering: [0, 24], medcenter: [0, 24],
+  spaceport: [0, 24], "landing field": [0, 24], "landing pad": [0, 24], "docking ring": [0, 24], archive: [9, 17], palace: [9, 17],
+  warehouse: [6, 18], "cargo bay": [0, 24],
+};
+export function openingHours(world: World, trader: Occupant, placeId: string): [number, number] {
+  const building = ancestor(world, placeId, "building");
+  // The black market keeps the night
+  if (waresOf(trader)?.black) return [18, 28];
+  return OPENING[building?.type ?? ""] ?? [8, 20];
+}
+export function isOpen(world: World, trader: Occupant, placeId: string, minutes: number): boolean {
+  const [from, to] = openingHours(world, trader, placeId);
+  const h = hourOf(minutes);
+  return to - from >= 24 || (h >= from && h < to) || (to > 24 && h < to - 24);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Routines. The people of a settlement have homes and days: staff keep their counters in the
+// building's hours, patrons work by day and drink in the evening, shoppers do the rounds of the
+// market, musicians play the night, the fence keeps the back room after dark, and now and then
+// someone takes a speeder to another settlement for the day. Ship owners fly voyages between
+// ports, and are about only while their ship is in. Where someone is, is worked out from the
+// clock (whereAt, shipAt), not stored: the world keeps each person once, in the room they belong
+// to, with their routine, and withPresence shows the world as it is at a given minute.
+// Setting, not rules (the books give no daily routines).
+// ---------------------------------------------------------------------------------------------
+
+// A stop in a day: the area, and the hours (`to` may run past 24 into the next morning)
+export interface Stop {
+  at: string;
+  from: number;
+  to: number;
+}
+export interface Routine {
+  home: string;
+  stops: Stop[];
+  // Every `every` days the day is spent elsewhere: out at 07:00, back by 21:00, `trip` hours each way
+  outing?: { at: string; every: number; phase: number; trip: number };
+}
+export interface Voyage {
+  // Area ids: the ship's own berth first, then the ports it calls at (berth rooms, or settlements,
+  // planets and systems that nobody has mapped yet)
+  ports: string[];
+  // Hours in each port, minutes on each leg (from port i to the next), and where in the cycle day 1 starts
+  stay: number;
+  legs: number[];
+  phase: number;
+}
+// Someone or something on the way between two places
+export interface Mover {
+  kind: "person" | "ship";
+  id: string;
+  name: string;
+  from: string;
+  to: string;
+  progress: number;
+  occupant?: Occupant;
+  ship?: Ship;
+}
+
+// Minutes spent on the street between two places in a settlement
+export const TRANSIT = 15;
+
+const coversHour = (stop: Stop, h: number) => (h >= stop.from && h < stop.to) || (stop.to > 24 && h < stop.to - 24);
+
+// Where someone with a routine is at a minute: an area, or on the way between two
+export function whereAt(o: Occupant, baseId: string, minutes: number): { at: string | null; moving?: { from: string; to: string; progress: number } } {
+  const r = o.routine;
+  if (!r) return { at: baseId };
+  const day = Math.floor(minutes / DAY);
+  const h = (minutes - day * DAY) / 60;
+  const out = r.outing;
+  if (out && (day + out.phase) % out.every === 0) {
+    const arrive = 7 + out.trip;
+    const leave = 21 - out.trip;
+    if (h >= 7 && h < arrive) return { at: null, moving: { from: r.home, to: out.at, progress: (h - 7) / out.trip } };
+    if (h >= arrive && h < leave) return { at: out.at };
+    if (h >= leave && h < 21) return { at: null, moving: { from: out.at, to: r.home, progress: (h - leave) / out.trip } };
+    return { at: r.home };
+  }
+  const now = r.stops.find((s) => coversHour(s, h));
+  // Within TRANSIT minutes before a stop begins: on the way to it
+  const next = r.stops.find((s) => s !== now && ((s.from - h + 24) % 24) * 60 < TRANSIT && (s.from - h + 24) % 24 > 0);
+  if (next) {
+    const from = now?.at ?? r.home;
+    if (from !== next.at) return { at: null, moving: { from, to: next.at, progress: 1 - (((next.from - h + 24) % 24) * 60) / TRANSIT } };
+  }
+  // Within TRANSIT minutes after a stop ends with nothing after it: on the way home
+  if (!now) {
+    const ended = r.stops.find((s) => (((h - (s.to % 24)) + 24) % 24) * 60 < TRANSIT);
+    if (ended && ended.at !== r.home) return { at: null, moving: { from: ended.at, to: r.home, progress: ((((h - (ended.to % 24)) + 24) % 24) * 60) / TRANSIT } };
+  }
+  return { at: now?.at ?? r.home };
+}
+
+// Where a ship on a voyage is at a minute: in a port, or on the way between two
+export function shipAt(ship: Ship, baseId: string, minutes: number): { at: string | null; moving?: { from: string; to: string; progress: number } } {
+  const v = ship.voyage;
+  if (!v || !v.ports.length) return { at: baseId };
+  const stay = v.stay * 60;
+  const cycle = v.legs.reduce((a, b) => a + b, 0) + stay * v.ports.length;
+  let t = (((minutes + v.phase) % cycle) + cycle) % cycle;
+  for (let i = 0; i < v.ports.length; i++) {
+    if (t < stay) return { at: v.ports[i] };
+    t -= stay;
+    if (t < v.legs[i]) return { at: null, moving: { from: v.ports[i], to: v.ports[(i + 1) % v.ports.length], progress: t / v.legs[i] } };
+    t -= v.legs[i];
+  }
+  return { at: baseId };
+}
+
+// Everyone and every ship with a routine or a voyage, and where they belong (cached per world)
+const presenceIndexes = new WeakMap<World, { people: { o: Occupant; base: string }[]; ships: Map<string, { s: Ship; base: string }> }>();
+function presenceIndex(world: World) {
+  let index = presenceIndexes.get(world);
+  if (index) return index;
+  index = { people: [], ships: new Map() };
+  for (const area of Object.values(world.areas)) {
+    for (const o of area.occupants) if (o.routine || o.ship) index.people.push({ o, base: area.id });
+    for (const s of area.ships) if (s.voyage) index.ships.set(s.id, { s, base: area.id });
+  }
+  presenceIndexes.set(world, index);
+  return index;
+}
+
+// The world as it is at a minute: people and ships where their routines and voyages put them,
+// and `moving` for those on the way. For showing only: edits go to the world itself.
+export function withPresence(world: World, minutes: number): World & { moving: Mover[] } {
+  const index = presenceIndex(world);
+  const leave = new Map<string, Set<string>>();
+  const arrive = new Map<string, { occupants: Occupant[]; ships: Ship[] }>();
+  const moving: Mover[] = [];
+  const away = (base: string, id: string) => (leave.get(base) ?? leave.set(base, new Set()).get(base)!).add(id);
+  const into = (at: string) => arrive.get(at) ?? arrive.set(at, { occupants: [], ships: [] }).get(at)!;
+  const shipPlace = new Map<string, ReturnType<typeof shipAt>>();
+  for (const [id, { s, base }] of index.ships) {
+    const where = shipAt(s, base, minutes);
+    shipPlace.set(id, where);
+    if (where.at === base) continue;
+    away(base, id);
+    if (where.at && world.areas[where.at]) into(where.at).ships.push(s);
+    if (where.moving) moving.push({ kind: "ship", id, name: s.name, ...where.moving, ship: s });
+  }
+  for (const { o, base } of index.people) {
+    // Someone whose ship is away is on board
+    const aboard = o.ship ? shipPlace.get(o.ship) : undefined;
+    if (aboard && aboard.at !== (o.ship ? index.ships.get(o.ship)?.base : undefined)) {
+      away(base, o.id);
+      continue;
+    }
+    const where = whereAt(o, base, minutes);
+    if (where.at === base) continue;
+    away(base, o.id);
+    if (where.at && world.areas[where.at]) into(where.at).occupants.push(o);
+    if (where.moving) moving.push({ kind: "person", id: o.id, name: o.name, ...where.moving, occupant: o });
+  }
+  const areas = { ...world.areas };
+  for (const id of new Set([...leave.keys(), ...arrive.keys()])) {
+    const area = world.areas[id];
+    if (!area) continue;
+    const gone = leave.get(id);
+    const come = arrive.get(id);
+    areas[id] = {
+      ...area,
+      occupants: [...area.occupants.filter((o) => !gone?.has(o.id)), ...(come?.occupants ?? [])],
+      ships: [...area.ships.filter((s) => !gone?.has(s.id)), ...(come?.ships ?? [])],
+    };
+  }
+  return { ...world, areas, moving };
+}
+
+// Minutes from one area to another along the paths of the world (findPath)
+function routeMinutes(world: World, from: string, to: string, hyperdriveClass = 1): number {
+  const steps = findPath(world, from, to);
+  if (!steps) return 0;
+  let total = 0;
+  for (let i = 1; i < steps.length; i++) {
+    const exit = exitsOf(world, steps[i - 1]).find((e) => e.to === steps[i]);
+    total += exit ? tripMinutes(exit, hyperdriveClass) : 1;
+  }
+  return total;
+}
+
+// Who keeps what hours, by role (hours of the day; past 24 runs into the next morning)
+const NIGHT_OWLS = ["musician", "fence"];
+const PORT_TYPES = ["spaceport", "landing field", "landing pad", "docking ring"];
+
+// Homes, days and voyages for the people and ships of a settlement that has been built. Anyone
+// who already has a routine keeps it. The same settlement and seed give the same days.
+function settleRoutines(world: World, settlement: Area, r: Random) {
+  const buildings = childrenOf(world, settlement.id).filter((b) => b.kind === "building");
+  const rooms = buildings.flatMap((b) => childrenOf(world, b.id).filter((a) => a.kind === "room").map((room) => ({ room, building: b })));
+  if (!rooms.length) return;
+  const friendly = rooms.filter(({ building }) => !BUILDINGS[building.type]?.hostile);
+  // Each apartment houses a few; everyone else lives somewhere in the settlement off the map
+  const homes = friendly.filter(({ room }) => /apartment|quarters/i.test(room.name)).map(({ room }) => ({ id: room.id, room: 4 }));
+  const homeFor = () => {
+    const free = homes.filter((h) => h.room > 0);
+    if (!free.length || r.chance(0.5)) return settlement.id;
+    const home = r.pick(free);
+    home.room--;
+    return home.id;
+  };
+  const cantinas = friendly.filter(({ room, building }) => /main bar|^cantina$/i.test(room.name) && ["cantina", "promenade"].includes(building.type)).map(({ room }) => room.id);
+  const markets = friendly.filter(({ room }) => /stall|trade/i.test(room.name)).map(({ room }) => room.id);
+  const workplaces = friendly.filter(({ room, building }) => !/apartment|quarters|lobby|rooftop|basement|cellar|vault|back room|booth|main bar|^cantina$/i.test(room.name) && building.type !== "residences").map(({ room }) => room.id);
+  const elsewhere = childrenOf(world, settlement.parentId ?? "").filter((s) => s.kind === "settlement" && s.id !== settlement.id && ["city", "town", "outpost", "village", "station"].includes(s.type));
+  const hours = (building: Area): [number, number] => OPENING[building.type] ?? [8, 20];
+  const around = (h: number, spread = 1) => Math.round((h + (r.next() * 2 - 1) * spread) * 4) / 4;
+
+  for (const { room, building } of friendly) {
+    for (const o of room.occupants) {
+      if (o.routine || o.statBlock || o.count !== 1 || o.disposition === "hostile" || o.role === "guard") continue;
+      const home = /apartment|quarters/i.test(room.name) ? room.id : homeFor();
+      const stops: Stop[] = [];
+      const pub = cantinas.length ? r.pick(cantinas) : undefined;
+      if (o.role === "musician") stops.push({ at: room.id, from: around(17, 0.5), to: around(27, 0.5) });
+      else if (o.role === "fence") stops.push({ at: room.id, from: around(18, 0.5), to: 28 });
+      else if (["patron", "smuggler", "gambler", "informant", "bounty hunter", "pilot for hire"].includes(o.role)) {
+        if (r.chance(0.25)) stops.push({ at: room.id, from: around(12, 1), to: around(23, 1) });
+        else {
+          if (workplaces.length && r.chance(0.8)) stops.push({ at: r.pick(workplaces), from: around(8, 0.5), to: around(16.5, 0.5) });
+          stops.push({ at: room.id, from: around(18.5, 1), to: around(24, 1.5) });
+        }
+      } else if (o.role === "shopper") {
+        stops.push({ at: room.id, from: around(9.5, 1), to: around(12, 0.5) }, { at: markets.length ? r.pick(markets) : room.id, from: around(15, 0.5), to: around(17.5, 0.5) });
+        if (pub && r.chance(0.4)) stops.push({ at: pub, from: around(19.5, 0.5), to: around(22, 0.5) });
+      } else if (o.role === "resident") {
+        if (workplaces.length && r.chance(0.6)) stops.push({ at: r.pick(workplaces), from: around(8, 0.5), to: around(17, 0.5) });
+        if (pub && r.chance(0.35)) stops.push({ at: pub, from: around(19.5, 0.5), to: around(22.5, 0.5) });
+      } else if (["traveller", "reader", "petitioner", "local"].includes(o.role)) {
+        stops.push({ at: room.id, from: around(9, 1), to: around(16, 1) });
+        if (pub && r.chance(0.4)) stops.push({ at: pub, from: around(19, 0.5), to: around(22, 0.5) });
+      } else if (o.role !== "patient" && o.role !== "service droid") {
+        // Staff: the building's hours; where it never closes, a long day shift
+        const [from, to] = hours(building);
+        stops.push(to - from >= 24 ? { at: room.id, from: 6, to: 22 } : { at: room.id, from, to });
+      } else continue;
+      const routine: Routine = { home, stops };
+      // Now and then a day out in another settlement of the planet, by speeder
+      if (elsewhere.length && !NIGHT_OWLS.includes(o.role) && r.chance(0.15)) {
+        const there = r.pick(elsewhere);
+        const trip = routeMinutes(world, settlement.id, there.id) / 60;
+        if (trip > 0 && trip <= 6) routine.outing = { at: there.id, every: r.int(4, 7), phase: r.int(0, 6), trip: Math.max(0.5, Math.round(trip * 4) / 4) };
+      }
+      o.routine = routine;
+    }
+  }
+
+  // Voyages: a ship in a port here is flown by a pilot for hire, smuggler or bounty hunter of the
+  // settlement (its owner, or one who has no ship yet); it flies between ports and comes back,
+  // and its pilot is about only while it is in
+  const planet = ancestor(world, settlement.id, "planet");
+  const system = ancestor(world, settlement.id, "system");
+  const flyers = rooms.flatMap(({ room }) => room.occupants).filter((o) => ["pilot for hire", "smuggler", "bounty hunter"].includes(o.role) && !o.statBlock);
+  for (const { room, building } of friendly) {
+    if (!PORT_TYPES.includes(building.type)) continue;
+    for (const ship of room.ships) {
+      if (ship.voyage) continue;
+      const owner = flyers.find((o) => o.name === ship.owner) ?? flyers.find((o) => !o.ship);
+      if (!owner) continue;
+      ship.owner = owner.name;
+      const ports = [
+        ...elsewhere.map((s) => s.id),
+        ...childrenOf(world, system?.id ?? "").filter((p) => p.kind === "planet" && p.id !== planet?.id).map((p) => p.id),
+        ...(ship.hyperdriveClass ? exitsOf(world, system?.id ?? "").filter((e) => e.jump).map((e) => e.to) : []),
+      ];
+      if (!ports.length) continue;
+      const calls = [room.id, ...r.shuffle(ports).slice(0, r.int(1, Math.min(3, ports.length)))];
+      const legs = calls.map((from, i) => Math.max(60, routeMinutes(world, from, calls[(i + 1) % calls.length], Number(ship.hyperdriveClass) || 1)));
+      ship.voyage = { ports: calls, stay: r.int(12, 36), legs, phase: r.int(0, 3 * DAY) };
+      owner.ship = ship.id;
+    }
+  }
 }
 
 const ENTER: Partial<Record<AreaKind, string>> = { system: "Fly in to", planet: "Land at", settlement: "Go to", building: "Enter" };

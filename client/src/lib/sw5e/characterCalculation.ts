@@ -58,6 +58,15 @@ export function characterFeatures(character: any): Feature[] {
   ];
 }
 
+// Haggling is a Charisma (Persuasion) check to barter or trade. Read from the features' own words:
+// advantage where one grants it for bartering or trading (the Haggler feat), expertise where one
+// treats you as having it for haggling (the Business Savvy of Squibs and Toydarians)
+export function hagglingEdge(features: Feature[]): { advantage?: string; expertise?: string } {
+  const advantage = features.find((f) => /advantage on Charisma \(Persuasion\)[^.]*\b(barter|trade|haggl)/i.test(f.description));
+  const expertise = features.find((f) => /\b(haggl|barter)[^.]*\bexpertise\b|\bexpertise\b[^.]*\b(haggl|barter)/i.test(f.description));
+  return { advantage: advantage?.name, expertise: expertise?.name };
+}
+
 // ---------------------------------------------------------------------------------------------
 // What the features do, where the books word it the same way every time
 // ---------------------------------------------------------------------------------------------

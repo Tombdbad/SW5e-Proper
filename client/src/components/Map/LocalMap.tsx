@@ -6,7 +6,7 @@ import { useKeyboardControls } from "@react-three/drei";
 import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
 import { useCombat, attackPlan, cannotAct, pickTarget, reachable } from "@/lib/stores/useCombat";
-import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, ALERT, START_TIME, daylight, hourOf, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
+import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, ALERT, START_TIME, daylight, hourOf, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind, type TokenKind } from "./sprites";
 
@@ -556,6 +556,8 @@ interface Setting {
   // A sentry's round, and where the one on the post keeps watch
   round: Sq[];
   watch: Sq;
+  // Where people come in and go out
+  doors: Sq[];
 }
 
 interface Agent {
@@ -579,6 +581,8 @@ interface Agent {
   leg: number;
   swap?: boolean;
   phase: number;
+  // Their day takes them elsewhere: they are on their way out
+  leaving?: boolean;
 }
 
 export interface LifeApi {
@@ -621,7 +625,8 @@ function brainOf(o: Occupant, home: Sq, setting: Setting, guards: number): { bra
 }
 
 function Life({ people, setting, party, frozen, onTap, api, record }: {
-  people: { key: string; occupant: Occupant; at: Sq }[];
+  // Who is here; `at` is their place in the plan, or none for someone visiting (they take a free seat)
+  people: { key: string; occupant: Occupant; at: Sq | null }[];
   setting: Setting;
   // Where the party stands, in the scene's squares (none: it is not here)
   party: () => Sq | null;
@@ -633,14 +638,44 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
   record?: boolean;
 }) {
   const signature = people.map((p) => `${p.key}:${p.occupant.id}`).join();
-  const agents = useMemo(() => {
-    let guards = 0;
-    return people.map((p): Agent => {
-      const { brain, counter } = brainOf(p.occupant, p.at, setting, guards);
+  // Everyone drawn: those here, and those on their way out. Newcomers once the scene is up walk
+  // in from the nearest door; those whose day takes them elsewhere walk out by one.
+  const roster = useRef<Agent[]>([]);
+  const shown = useRef(false);
+  const [, redraw] = useState(0);
+  useMemo(() => {
+    const list = roster.current;
+    const wanted = new Set(people.map((p) => p.key));
+    for (const a of list) {
+      if (wanted.has(a.key) || a.leaving) continue;
+      Object.assign(a, { leaving: true, path: [], goal: undefined, then: undefined, call: undefined, wait: 0 });
+    }
+    let guards = list.filter((a) => a.occupant.role === "guard" && !a.leaving).length;
+    const taken = new Set(list.map((a) => sqKey(a.home)));
+    for (const p of people) {
+      const known = list.find((a) => a.key === p.key);
+      if (known) {
+        // Turned back before they got out
+        if (known.leaving) Object.assign(known, { leaving: false, path: [], wait: 0, doing: known.brain === "patron" ? "back" : known.doing });
+        known.occupant = p.occupant;
+        continue;
+      }
+      const seat = setting.seats.flatMap((s) => s.spots).find((q) => !taken.has(sqKey(q)));
+      const spot = p.at ?? seat ?? nearestOpen((x, y) => setting.open(x, y) && !taken.has(`${x},${y}`), setting.watch);
+      taken.add(sqKey(spot));
+      const door = shown.current && setting.doors.length ? [...setting.doors].sort((a, b) => apart(a, spot) - apart(b, spot))[0] : undefined;
+      const { brain, counter } = brainOf(p.occupant, spot, setting, guards);
       if (p.occupant.role === "guard") guards++;
-      return { key: p.key, occupant: p.occupant, brain, counter, home: p.at, x: p.at.x, y: p.at.y, path: [], wait: between(1, 12), doing: brain === "patron" ? "seated" : brain === "musician" ? "playing" : brain, leg: 0, phase: Math.random() * 6 };
-    });
+      const start = door ?? spot;
+      const a: Agent = { key: p.key, occupant: p.occupant, brain, counter, home: spot, x: start.x, y: start.y, path: [], wait: door ? 0 : between(1, 12), doing: brain === "patron" ? (door ? "arriving" : "seated") : brain === "musician" ? "playing" : brain, leg: 0, phase: Math.random() * 6 };
+      if (door) a.path = route(setting.open, door, [spot]) ?? [];
+      list.push(a);
+    }
   }, [signature]);
+  const agents = roster.current;
+  useEffect(() => {
+    shown.current = true;
+  }, []);
   const groups = useRef<Record<string, THREE.Group | null>>({});
   const band = useRef({ playing: true, timer: between(45, 80) });
   const [playing, setPlaying] = useState(true);
@@ -698,6 +733,14 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
 
   const think = (a: Agent) => {
     const r = Math.random();
+    if (a.leaving) {
+      // Taken off the roster after this frame's round
+      const gone = () => {
+        a.doing = "gone";
+      };
+      if (!setting.doors.length || !goTo(a, setting.doors, "leaving", 0, undefined, gone)) gone();
+      return;
+    }
     if (a.brain === "patron") {
       if (a.doing === "seated") {
         const atBar = agents.filter((o) => o.doing === "at the bar").length;
@@ -832,9 +875,9 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
   useEffect(() => {
     if (!api) return;
     api.current = {
-      servedBy: (counterId) => agents.find((a) => a.brain === "staff" && a.counter === counterId)?.occupant,
+      servedBy: (counterId) => agents.find((a) => a.brain === "staff" && a.counter === counterId && !a.leaving)?.occupant,
       summon: (counterId, near, done) => {
-        const staff = agents.find((a) => a.brain === "staff" && a.counter === counterId);
+        const staff = agents.find((a) => a.brain === "staff" && a.counter === counterId && !a.leaving);
         if (!staff) return false;
         staff.call = { near, done };
         staff.path = [];
@@ -931,6 +974,14 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
       if (a.brain === "droid" && a.doing === "cleaning" && !a.path.length) group.rotation.y += dt * 3;
       if (record) drawnAt.set(a.key, squareOf(a));
     }
+    if (agents.some((a) => a.doing === "gone")) {
+      for (let i = agents.length - 1; i >= 0; i--) {
+        if (agents[i].doing !== "gone") continue;
+        drawnAt.delete(agents[i].key);
+        agents.splice(i, 1);
+      }
+      redraw((n) => n + 1);
+    }
     if (notes.current) {
       notes.current.visible = b.playing && setting.stage.length > 0;
       notes.current.children.forEach((child, i) => {
@@ -962,6 +1013,36 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
           {[0, 1, 2].map((i) => <Solid key={i} at={[0, 1.8, 0]} color={["#fde68a", GLOW, "#f472b6"][i]} glow={2}><octahedronGeometry args={[0.07]} /></Solid>)}
         </group>
       )}
+    </>
+  );
+}
+
+// People and ships on the way between places (shared/logic withPresence: `moving`), drawn where
+// they are on the way and eased there between the clock's minutes. Not tappable.
+type Walker = { key: string; from: V3; to: V3; progress: number; kind: "person" | "speeder" | "ship"; name: string; arc?: number; scale?: number };
+function Walkers({ walkers }: { walkers: Walker[] }) {
+  const groups = useRef<Record<string, THREE.Group | null>>({});
+  useFrame((_, delta) => {
+    for (const w of walkers) {
+      const g = groups.current[w.key];
+      if (!g) continue;
+      const want = new THREE.Vector3(...w.from).lerp(new THREE.Vector3(...w.to), Math.max(0, Math.min(1, w.progress)));
+      want.y += (w.arc ?? 0) * Math.sin(Math.PI * Math.max(0, Math.min(1, w.progress)));
+      if (g.position.distanceTo(want) > 8) g.position.copy(want);
+      else g.position.lerp(want, Math.min(1, delta * 3));
+      g.rotation.y = Math.atan2(w.to[0] - w.from[0], w.to[2] - w.from[2]);
+    }
+  });
+  return (
+    <>
+      {walkers.map((w) => (
+        <group key={w.key} ref={(g) => { groups.current[w.key] = g; }} position={w.from} scale={w.scale ?? 1}>
+          {w.kind === "person" ? <Figure kind="person" ring="#9ca3af" name={w.name} />
+            : w.kind === "speeder" ? <><Box at={[0, 0.3, 0]} size={[0.6, 0.25, 1.2]} color="#c8663a" /><Box at={[0, 0.48, -0.15]} size={[0.4, 0.2, 0.4]} color={GLOW} glow={0.8} /></>
+            : <><Solid at={[0, 0, 0]} color="#d9dde2" rot={[Math.PI / 2, 0, 0]}><coneGeometry args={[0.5, 1.6, 8]} /></Solid><Box at={[0, 0, -0.5]} size={[1.4, 0.1, 0.5]} color="#9aa3ad" /><Box at={[0, 0, -0.85]} size={[0.3, 0.2, 0.1]} color={AMBER} glow={2} /></>}
+          {w.kind !== "person" && <Label at={[0, 1.2, 0]} size={0.5} color="#e8dcc0">{w.name}</Label>}
+        </group>
+      ))}
     </>
   );
 }
@@ -1162,6 +1243,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       stageHeight: 0.22,
       round: [{ x: 1, y: 1 }, { x: l.width - 2, y: 1 }, { x: l.width - 2, y: l.height - 2 }, { x: 1, y: l.height - 2 }].map((c) => nearestOpen((x, y) => free(x, y) && !isWayAt({ x, y }), c)),
       watch: { x: Math.floor(l.width / 2), y: Math.floor(l.height / 2) },
+      doors: l.assets.filter((a) => a.kind === "door" || a.kind === "exit").map((a) => ({ x: a.x, y: a.y })),
     };
   }, [opened?.id, world]);
   const streetSetting = useMemo((): Setting | null => {
@@ -1169,9 +1251,30 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     const corners = [{ x: plan.x - 2, y: plan.y - 2 }, { x: plan.x + plan.width + 1, y: plan.y - 2 }, { x: plan.x + plan.width + 1, y: plan.y + plan.height + 1 }, { x: plan.x - 2, y: plan.y + plan.height + 1 }].map((c) => nearestOpen(outdoors, c));
     // The round starts at the corner nearest the way in
     const first = corners.reduce((best, c, i) => (apart(c, street.door) < apart(corners[best], street.door) ? i : best), 0);
-    return { open: outdoors, seats: [], counters: [], stage: [], stageHeight: 0, round: [...corners.slice(first), ...corners.slice(0, first)], watch: { x: street.door.x + street.outward.x * 4, y: street.door.y + street.outward.y * 4 } };
+    return { open: outdoors, seats: [], counters: [], stage: [], stageHeight: 0, round: [...corners.slice(first), ...corners.slice(0, first)], watch: { x: street.door.x + street.outward.x * 4, y: street.door.y + street.outward.y * 4 }, doors: [street.door] };
   }, [world, building.id]);
   const gate = rooms.find((a) => a.gateway) ?? rooms[0];
+  // People on the street: going out of the door towards the signpost for where they are going,
+  // coming in from the one for where they were, or passing between two other places
+  const moving: Mover[] = (world as World & { moving?: Mover[] }).moving ?? [];
+  const streetWalkers = useMemo((): Walker[] => {
+    if (!plan || opened) return [];
+    const buildingOf = (id: string) => trailOf(world, id).find((a) => a.kind === "building")?.id;
+    const signTo = (id: string) => {
+      const b = buildingOf(id);
+      return (b && street.signs.find((sign) => sign.exit.to === b)) || street.signs.find((sign) => sign.exit.via === "leave");
+    };
+    const door: V3 = [street.door.x + 0.5, 0, street.door.y + 0.5];
+    const by = (sign?: { x: number; y: number }): V3 | undefined => (sign ? [sign.x + 1.3, 0, sign.y + 0.5] : undefined);
+    return moving.filter((m) => m.kind === "person").flatMap((m) => {
+      const [fromHere, toHere] = [buildingOf(m.from) === building.id, buildingOf(m.to) === building.id];
+      const ends: [V3 | undefined, V3 | undefined] = fromHere && !toHere ? [door, by(signTo(m.to))]
+        : toHere && !fromHere ? [by(signTo(m.from)), door]
+        : !fromHere && !toHere && buildingOf(m.from) && buildingOf(m.to) ? [by(street.signs.find((sign) => sign.exit.to === buildingOf(m.from))), by(street.signs.find((sign) => sign.exit.to === buildingOf(m.to)))]
+        : [undefined, undefined];
+      return ends[0] && ends[1] && ends[0] !== ends[1] ? [{ key: m.id, from: ends[0], to: ends[1], progress: m.progress, kind: "person" as const, name: m.name }] : [];
+    });
+  }, [moving, plan, opened, street]);
   // Hostiles who have noticed the party stop and watch it
   const watching = (area: Area | undefined, o: Occupant) => !!area && o.disposition === "hostile" && !!o.hitPoints && !area.allowed && (area.alert ?? (area === inside ? ALERT.confronting : -1)) >= ALERT.questioning;
 
@@ -1301,7 +1404,11 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 >
                   {roomSetting && (
                     <Life
-                      people={shown.filter((a) => a.kind === "npc").map((a) => ({ key: a.id, occupant: room.occupants.find((o) => o.id === a.ref)!, at: { x: a.x, y: a.y } }))}
+                      people={[
+                        ...shown.filter((a) => a.kind === "npc").map((a) => ({ key: a.id, occupant: room.occupants.find((o) => o.id === a.ref)!, at: { x: a.x, y: a.y } as Sq | null })),
+                        // Someone whose day brings them here from elsewhere takes a free seat
+                        ...room.occupants.filter((o) => !l.assets.some((a) => a.kind === "npc" && a.ref === o.id)).map((o) => ({ key: `v-${o.id}`, occupant: o, at: null })),
+                      ]}
                       setting={roomSetting}
                       party={() => (inside ? { x: Math.round(feet.current.x) - l.x, y: Math.round(feet.current.y) - l.y } : null)}
                       frozen={(o) => watching(inside ?? undefined, o)}
@@ -1387,6 +1494,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 onTap={outside ? (p) => walkTo(around(p.at.x, p.at.y), () => onAct?.({ type: "occupant", id: p.occupant.id })) : undefined}
               />
             )}
+            <Walkers walkers={streetWalkers} />
             {street.caches.map(({ cache, x, y }) => (
               <group key={cache.id} position={[x, 0, y]}>
                 <Chest looted={cache.looted} />
@@ -1571,6 +1679,22 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
     return [x, lift(x, z) + 0.12, z];
   });
   const partySpot: V3 = system ? [extent * scale * 0.5 + 6, 0, 0] : globe ? [0, 13, 0] : [-22 * span, 0, 24 * span];
+  // Who and what is on the way between the places of this view: people between buildings,
+  // speeders between settlements, ships between ports, planets and systems. Somewhere outside the
+  // view is its edge: the jump point, orbit, the outskirts.
+  const moving: Mover[] = (world as World & { moving?: Mover[] }).moving ?? [];
+  const walkers = useMemo((): Walker[] => {
+    const under = (id: string) => trailOf(world, id).find((a) => a.parentId === view.id);
+    return moving.flatMap((m) => {
+      const [a, b] = [under(m.from), under(m.to)];
+      if ((!a && !b) || a === b) return [];
+      if (m.kind === "person" && system) return [];
+      const [pa, pb] = [a ? at(a) : partySpot, b ? at(b) : partySpot];
+      const kind = m.kind === "ship" ? "ship" : globe ? "speeder" : "person";
+      const lift: V3 = kind === "person" ? [0, 0.2, 0] : kind === "speeder" ? [0, 0.6, 0] : [0, 2.5, 0];
+      return [{ key: `${m.kind}-${m.id}`, from: [pa[0] + lift[0], pa[1] + lift[1], pa[2] + lift[2]] as V3, to: [pb[0] + lift[0], pb[1] + lift[1], pb[2] + lift[2]] as V3, progress: m.progress, kind, name: m.name, arc: kind === "ship" ? 6 : 0, scale: kind === "person" ? 1.6 * span : kind === "speeder" ? 1.5 : 1.4 }];
+    });
+  }, [moving, view.id, world]);
 
   return (
     <>
@@ -1678,6 +1802,7 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
           <Label at={[0, 5.4, 0]} size={1.1} color="#facc15">{`${PARTY_AT[view.kind] ?? "Here"} (you are here)`}</Label>
         </group>
       )}
+      <Walkers walkers={walkers} />
       {!places.length && <Label at={[0, 6, 0]} size={1.6} color="#aabbdd">{`Nobody has mapped ${view.name} yet`}</Label>}
       <Label at={[0, globe ? 20 : 0.5, globe ? -30 : -34 * span - 6]} size={2 * span} color="#aabbdd">{`${LAYER_NAME[view.kind] ?? ""} ${view.name}`}</Label>
 

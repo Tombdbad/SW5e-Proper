@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Canvas } from "@react-three/fiber";
 import { KeyboardControls } from "@react-three/drei";
@@ -15,14 +15,18 @@ import { useCombat, rollDamage } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
-import { carriedWeapons } from "@/lib/sw5e/characterCalculation";
+import { carriedWeapons, characterFeatures, hagglingEdge } from "@/lib/sw5e/characterCalculation";
+import { getSpeciesById } from "@/lib/sw5e/species";
 import { getClassById } from "@/lib/sw5e/classes";
 import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect } from "@/lib/sw5e/rules";
 import { getStarshipSize } from "@/lib/sw5e/starships";
 import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
   planBuilding, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
-  START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, LAW_NAMES,
+  START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText,
+  withPresence,
+  waresOf, stockOf, offerFor, attitudeOf, attitudeName, marketAt, haggleDC, isOpen, openingHours, addRenown, emptyStanding, ledgerFor, factionAt,
+  type Standing, type Ledger, type Customer, type TradeLine,
   type Occupant,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship,
 } from "@shared/logic";
@@ -184,6 +188,11 @@ export default function GameBoard() {
     clockFor.current = String(campaignId);
     useClock.getState().set(Number(campaign.timeElapsed?.total) || START_TIME);
   }, [campaign, campaignId]);
+  // The world as it is just now: people where their routines put them, ships where their voyages
+  // do (shared/logic "Routines"). Shown on the map and in the HUD; edits go to `world`.
+  const scene = useMemo(() => (world ? withPresence(world, clock) : null), [world, clock]);
+  const hereNow: Area | null = scene && hereId ? scene.areas[hereId] ?? null : null;
+
   // Let time pass: the clock moves on and the new time goes with the next save
   const pass = (minutes: number) => {
     const total = Math.round(useClock.getState().minutes + minutes);
@@ -356,9 +365,13 @@ export default function GameBoard() {
       return;
     }
     if (price) saveCharacter({ credits: character.credits - price });
-    const mine: PartyShip = { ...ship, owner: character.name, fuel: getStarshipSize(ship.size)?.fuelCapacity ?? 5, areaId: berthOf(world, here.id) };
+    const mine: PartyShip = { ...ship, voyage: undefined, owner: character.name, fuel: getStarshipSize(ship.size)?.fuelCapacity ?? 5, areaId: berthOf(world, here.id) };
     saveCampaign({
-      galaxyMap: updateArea(world, here.id, { ships: here.ships.filter((s) => s.id !== ship.id) }).world,
+      // Taken from wherever the ship belongs (a ship on a voyage is kept at its home berth)
+      galaxyMap: (() => {
+        const base = Object.values(world.areas).find((a) => a.ships.some((s) => s.id === ship.id)) ?? here;
+        return updateArea(world, base.id, { ships: base.ships.filter((s) => s.id !== ship.id) }).world;
+      })(),
       starships: [...ships, mine],
     });
     toast.success(`${ship.name} is yours${price ? ` for ${price.toLocaleString()} credits` : ""}.`);
@@ -613,9 +626,70 @@ export default function GameBoard() {
       saveCampaign({ galaxyMap: updateArea(world, areaId, { occupants: area.occupants.filter((o) => !fallen.includes(o)), loot }).world });
       const xp = fallen.reduce((sum, o) => sum + (o.xp ?? 0) * o.count, 0);
       if (xp) saveCharacter({ experience: (character.experience ?? 0) + xp });
+      // Renown: a fight costs standing with the side that lost it; the beasts of the wild have none
+      if (fallen.some((o) => !["wildlife", "horror"].includes(o.role))) {
+        const losers = world.areas[area.parentId ?? ""]?.faction ?? world.antagonist;
+        const holder = factionAt(world, areaId);
+        let renown = addRenown(standing, losers, -1);
+        if (holder && holder !== losers) renown = addRenown(renown, holder, 1);
+        saveCampaign({ factionInfluence: renown });
+      }
       toast.success(`Victory${xp ? `: ${xp} XP` : ""}`);
     }
   }, [inCombat, outcome]);
+
+  // Trade (shared/logic "Trade"): the equipment data with prices and descriptions, who the party
+  // is to a trader, its renown and dealings (factionInfluence) and today's purchases and sales
+  // (availableResources)
+  const { data: equipmentData = [] } = useQuery<any[]>({
+    queryKey: ["equipment-for-trade"],
+    queryFn: async () => (await fetch("/api/sw5e/equipment?fields=name,cost,equipmentCategory,weaponClassification,armorClassification,description")).json(),
+    staleTime: Infinity,
+  });
+  const today = dayOf(clock);
+  const standing: Standing = campaign?.factionInfluence?.renown ? campaign.factionInfluence : emptyStanding();
+  const ledger: Ledger = ledgerFor(campaign?.availableResources, today);
+  const speciesFacts = getSpeciesById(character?.species ?? "");
+  const customer: Customer = { species: speciesFacts?.name ?? character?.species, homeworld: (speciesFacts as any)?.homeworld, alignment: character?.alignment, standing };
+  const haggling = useMemo(() => (character ? hagglingEdge(characterFeatures(character)) : {}), [character?.species, character?.feats]);
+  const [tradeTab, setTradeTab] = useState<"buy" | "sell">("buy");
+  const [itemShown, setItemShown] = useState<string | null>(null);
+  const traderLedger = (id: string) => ledger.traders[id] ?? { bought: {}, sold: {} };
+  const recordDeal = (traderId: string, change: (entry: Ledger["traders"][string]) => Ledger["traders"][string], dealt = true) =>
+    saveCampaign({
+      availableResources: { ...ledger, traders: { ...ledger.traders, [traderId]: change(traderLedger(traderId)) } },
+      ...(dealt ? { factionInfluence: { ...standing, dealings: { ...standing.dealings, [traderId]: (standing.dealings[traderId] ?? 0) + 1 } } } : {}),
+    });
+  const buy = (trader: Occupant, line: TradeLine) => {
+    if (line.price > (character.credits ?? 0)) {
+      toast.error(`${line.name} costs ${line.price} credits and you have ${character.credits ?? 0}.`);
+      return;
+    }
+    saveCharacter({ credits: character.credits - line.price, equipment: [...(character.equipment ?? []), line.name] });
+    recordDeal(trader.id, (e) => ({ ...e, bought: { ...e.bought, [line.name]: (e.bought[line.name] ?? 0) + 1 } }));
+    toast.success(`Bought ${line.name} for ${line.price} credits.${line.contraband ? " Contraband here (house rule): keep it out of sight." : ""}`);
+  };
+  const sell = (trader: Occupant, name: string, offer: number) => {
+    const at = (character.equipment ?? []).indexOf(name);
+    if (at < 0 || offer <= 0) return;
+    saveCharacter({ credits: (character.credits ?? 0) + offer, equipment: (character.equipment ?? []).filter((_: string, i: number) => i !== at) });
+    recordDeal(trader.id, (e) => ({ ...e, sold: { ...e.sold, [name]: (e.sold[name] ?? 0) + 1 } }));
+    toast.success(`Sold ${name} for ${offer} credits.`);
+  };
+  // Haggling (house rule for the DC): Charisma (Persuasion), with what the character's features
+  // give for it; once a day with each trader. Made, prices are 10% better today; missed by 5 or
+  // more, a little worse.
+  const haggle = (trader: Occupant, placeId: string) => {
+    const attitude = attitudeOf(world!, trader, placeId, customer).score;
+    const dc = haggleDC(trader, attitude);
+    const first = d20();
+    const roll = haggling.advantage ? Math.max(first, d20()) : first;
+    const bonus = modifier(character.abilityScores?.charisma) + (haggling.expertise ? 2 * proficiency : skilled("persuasion") ? proficiency : 0);
+    const won = roll + bonus >= dc;
+    const how = [haggling.advantage && `advantage from ${haggling.advantage}`, haggling.expertise && `expertise from ${haggling.expertise}`].filter(Boolean).join(", ");
+    toast[won ? "success" : "error"](`Haggling (Persuasion${how ? `, ${how}` : ""}): ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${roll + bonus} against DC ${dc}. ${won ? "Prices 10% better today." : roll + bonus <= dc - 5 ? "They take offence: prices a little worse today." : "They will not budge."}`);
+    recordDeal(trader.id, (e) => ({ ...e, haggle: won ? "won" : roll + bonus <= dc - 5 ? "lost" : "tried" }), false);
+  };
 
   // Quests keep score of the world: objectives tick off as their targets are met, and a finished
   // quest pays its reward
@@ -629,6 +703,14 @@ export default function GameBoard() {
       ...(experience ? { experience: (character.experience ?? 0) + experience } : {}),
       ...(items.length ? { equipment: [...(character.equipment ?? []), ...items] } : {}),
     });
+    // Renown (Wretched Hives): those who hold the place are glad of it; the enemy is not
+    const holder = world && hereId ? factionAt(world, hereId) : undefined;
+    let renown = standing;
+    for (const _ of finished) {
+      if (holder && holder !== world?.antagonist) renown = addRenown(renown, holder, 2);
+      renown = addRenown(renown, world?.antagonist, -1);
+    }
+    if (renown !== standing) saveCampaign({ factionInfluence: renown });
     for (const quest of finished) {
       const reward = [quest.reward?.credits && `${quest.reward.credits} credits`, quest.reward?.experience && `${quest.reward.experience} XP`, ...(quest.reward?.items ?? [])].filter(Boolean);
       toast.success(`Quest complete: ${quest.title}.${reward.length ? ` Reward: ${reward.join(", ")}.` : ""}`);
@@ -787,7 +869,7 @@ export default function GameBoard() {
       else takeLoot(cache);
     } else if (action.type === "look") {
       // House rule: a look through a window shows who is in the room, without a check
-      const room = world.areas[action.areaId];
+      const room = (scene ?? world).areas[action.areaId];
       const seen = [...room.occupants.map((o) => `${o.count > 1 ? `${o.count} x ` : ""}${o.name} (${o.disposition})`), ...room.ships.map((ship) => ship.name)];
       toast.info(`Through the window of ${room.name}: ${seen.join(", ") || "nobody"}. (House rule: looking in needs no check.)`);
     }
@@ -838,6 +920,69 @@ export default function GameBoard() {
   const onFoot = !!view && !!here && view.kind === "building" && (view.id === here.id || view.id === here.parentId);
 
   // The card for what was picked out on the map: a place, someone, or a ship
+  // A trader's counter: today's stock at today's prices, what they would give for what the party
+  // carries, how they take to the party and why, and a haggle
+  const tradePanel = (trader: Occupant, placeId: string) => {
+    if (!world) return null;
+    const wares = waresOf(trader)!;
+    const [from, to] = openingHours(world, trader, placeId);
+    if (!isOpen(world, trader, placeId, clock)) {
+      return <p className="mt-1 text-xs text-amber-300" data-testid="trade-closed">{wares.label}: closed. Open {String(from % 24).padStart(2, "0")}:00 to {String(to % 24).padStart(2, "0")}:00 (house rule).</p>;
+    }
+    const attitude = attitudeOf(world, trader, placeId, customer);
+    const market = marketAt(world, placeId);
+    const lines = equipmentData.length ? stockOf(world, trader, placeId, equipmentData, today, customer, ledger) : [];
+    const mine: string[] = Array.from(new Set((character.equipment ?? []).filter((x: any) => typeof x === "string")));
+    const offers = mine
+      .map((name) => ({ name, item: equipmentData.find((e) => e.name === name) }))
+      .filter((x) => x.item)
+      .map((x) => ({ name: x.name, offer: offerFor(world, trader, placeId, x.item, today, customer, ledger) }))
+      .filter((x) => x.offer > 0);
+    const haggled = traderLedger(trader.id).haggle;
+    return (
+      <div className="mt-2 border-t border-gray-600 pt-2" data-testid="trade">
+        <p className="text-xs">
+          <span className="font-semibold text-amber-200">{wares.label}</span> · {attitudeName(attitude.score)}
+          {attitude.reasons.length > 0 && <span className="text-gray-400">: {attitude.reasons.join(", ")}</span>}
+        </p>
+        <p className="text-xs text-gray-400">
+          {[lawText(market.law), ...market.notes].join("; ")}. Credits: {character.credits ?? 0}.
+        </p>
+        <div className="mt-1 flex gap-1">
+          <Button size="sm" variant={tradeTab === "buy" ? "default" : "outline"} className="h-6 px-2" onClick={() => setTradeTab("buy")}>Buy</Button>
+          <Button size="sm" variant={tradeTab === "sell" ? "default" : "outline"} className="h-6 px-2" onClick={() => setTradeTab("sell")}>Sell</Button>
+          <Button size="sm" variant="outline" className="h-6 px-2" disabled={!!haggled || inCombat || dead} onClick={() => haggle(trader, placeId)}>
+            {haggled === "won" ? "Haggled: -10%" : haggled === "lost" ? "Offended" : haggled ? "Haggled" : "Haggle"}
+          </Button>
+        </div>
+        <ul className="mt-1 max-h-48 overflow-y-auto space-y-0.5 text-xs" data-testid={tradeTab === "buy" ? "trade-stock" : "trade-offers"}>
+          {tradeTab === "buy" &&
+            (lines.length ? lines.map((line) => (
+              <li key={line.name}>
+                <div className="flex items-center gap-1">
+                  <button className="flex-1 text-left" onClick={() => setItemShown(itemShown === line.name ? null : line.name)}>
+                    {line.name} <span className="text-gray-400">x{line.quantity}</span>
+                    {line.contraband && <span className="ml-1 text-red-300">contraband</span>}
+                  </button>
+                  <span className="text-amber-200">{line.price} cr</span>
+                  <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || line.price > (character.credits ?? 0)} onClick={() => buy(trader, line)}>Buy</Button>
+                </div>
+                {itemShown === line.name && line.description && <p className="text-gray-400">{line.description}</p>}
+              </li>
+            )) : <li className="text-gray-400">{equipmentData.length ? "Nothing for sale today." : "Loading..."}</li>)}
+          {tradeTab === "sell" &&
+            (offers.length ? offers.map((x) => (
+              <li key={x.name} className="flex items-center gap-1">
+                <span className="flex-1">{x.name}</span>
+                <span className="text-amber-200">{x.offer} cr</span>
+                <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead} onClick={() => sell(trader, x.name, x.offer)}>Sell</Button>
+              </li>
+            )) : <li className="text-gray-400">They want nothing you carry.</li>)}
+        </ul>
+      </div>
+    );
+  };
+
   const pickedCard = () => {
     if (!picked || !world || !here || inCombat) return null;
     const close = (
@@ -885,7 +1030,7 @@ export default function GameBoard() {
     }
     if (picked.kind === "occupant") {
       // Someone here, or a sentry standing out in front of the building the party is outside
-      const o = here.occupants.find((x) => x.id === picked.id);
+      const o = (hereNow ?? here).occupants.find((x) => x.id === picked.id);
       const gate = !o && here.kind === "building" && world ? childrenOf(world, here.id).find((room) => room.occupants.some((x) => x.id === picked.id)) : undefined;
       if (gate) {
         const sentry = gate.occupants.find((x) => x.id === picked.id)!;
@@ -916,12 +1061,15 @@ export default function GameBoard() {
               {watchButtons}
             </div>
           ) : (
-            <p className="text-xs text-gray-400">To talk with them, say what you do on the GM Interface tab.</p>
+            <>
+              <p className="text-xs text-gray-400">To talk with them, say what you do on the GM Interface tab.</p>
+              {waresOf(o) && tradePanel(o, here.id)}
+            </>
           )}
         </>
       );
     }
-    const ship = here.ships.find((x) => x.id === picked.id);
+    const ship = (hereNow ?? here).ships.find((x) => x.id === picked.id);
     if (!ship) return null;
     return (
       <>
@@ -1019,7 +1167,7 @@ export default function GameBoard() {
           {inCombat ? (
             <FightScene areaId={here?.layout ? here.id : null} origin={here?.layout} />
           ) : world ? (
-            <LocalMap world={world} hereId={hereId} viewId={viewId} selectedId={picked?.kind === "area" ? picked.id : null} onAct={act} locked={dead || exploring} />
+            <LocalMap world={scene} hereId={hereId} viewId={viewId} selectedId={picked?.kind === "area" ? picked.id : null} onAct={act} locked={dead || exploring} />
           ) : activeMapTab === "galaxy" ? (
             <GalaxyMap />
           ) : (
@@ -1137,7 +1285,7 @@ export default function GameBoard() {
               <div className="mb-4 space-y-2" data-testid="play-location">
                 <h3 className="font-semibold">Location</h3>
                 <p className="text-xs text-amber-200" data-testid="play-clock">
-                  {clockText(clock)}, {partOfDay(clock)} · {eraOf(world).name} · {LAW_NAMES[lawAt(world, here.id)]} law
+                  {clockText(clock)}, {partOfDay(clock)} · {eraOf(world).name} · {lawText(lawAt(world, here.id))}
                 </p>
                 <p className="text-xs text-gray-400" data-testid="play-trail">
                   {trailOf(world, here.id).slice(2, -1).map((a) => a.name).join(" \u203a ")}
@@ -1150,9 +1298,9 @@ export default function GameBoard() {
                 </p>
                 {here.description && <p className="text-sm text-gray-400">{here.description}</p>}
 
-                {here.occupants.length + here.ships.length > 0 && (
+                {(hereNow ?? here).occupants.length + (hereNow ?? here).ships.length > 0 && (
                   <ul className="text-sm space-y-1" data-testid="play-occupants">
-                    {here.occupants.map((o) => (
+                    {(hereNow ?? here).occupants.map((o) => (
                       <li key={o.id} className={o.disposition === "hostile" ? "text-red-400" : o.disposition === "friendly" ? "text-green-300" : ""}>
                         {o.count > 1 ? `${o.count} x ` : ""}{o.name}
                         <span className="text-gray-400">
@@ -1160,7 +1308,7 @@ export default function GameBoard() {
                         </span>
                       </li>
                     ))}
-                    {here.ships.map((ship) => (
+                    {(hereNow ?? here).ships.map((ship) => (
                       <li key={ship.id} data-testid="play-ship">
                         {ship.name} <span className="text-gray-400">{ship.size} {ship.role.toLowerCase()}, {ship.status}, {ship.owner}</span>
                         {shipButton(ship)}
@@ -1307,6 +1455,17 @@ export default function GameBoard() {
                   {quests.some((q) => q.status === "completed") && (
                     <p className="text-sm text-green-300">Completed: {quests.filter((q) => q.status === "completed").map((q) => q.title).join("; ")}</p>
                   )}
+                </div>
+                <h3 className="font-semibold mt-3 mb-1">Standing</h3>
+                <div className="text-sm space-y-0.5" data-testid="play-standing">
+                  {Object.entries(standing.renown).filter(([, n]) => n).length ? (
+                    Object.entries(standing.renown).filter(([, n]) => n).sort((a, b) => b[1] - a[1]).map(([faction, n]) => (
+                      <p key={faction} className={n > 0 ? "text-green-300" : "text-red-300"}>{faction}: renown {n > 0 ? "+" : ""}{n}</p>
+                    ))
+                  ) : (
+                    <p className="text-gray-400">No renown yet. Fights and quests win or lose it with the factions involved; traders take it into account.</p>
+                  )}
+                  {world && here && factionAt(world, here.id) && <p className="text-xs text-gray-400">This place is held by {factionAt(world, here.id)}.</p>}
                 </div>
               </TabsContent>
               
