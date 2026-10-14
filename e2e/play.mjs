@@ -549,11 +549,25 @@ await step(ctx, "play: the HUD tabs do not crash", async () => {
     const p = await inView(key);
     await poke(p.x, p.y);
   };
+  // Two taps 150 ms apart by the finger's clock. Playwright's own taps wait for a busy page to
+  // handle the first before sending the second, which a phone's finger does not; the touches
+  // are sent with their times instead.
   const doubleTap = async (key) => {
     const p = await inView(key);
-    await poke(p.x, p.y);
-    await sleep(150);
-    await poke(p.x, p.y);
+    if (!PHONE) {
+      await poke(p.x, p.y);
+      await sleep(150);
+      await poke(p.x, p.y);
+      return;
+    }
+    const cdp = await page.context().newCDPSession(page);
+    const t0 = Date.now() / 1000;
+    const touch = (type, t) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x: p.x, y: p.y }], timestamp: t });
+    await touch("touchStart", t0);
+    await touch("touchEnd", t0 + 0.05);
+    await touch("touchStart", t0 + 0.15);
+    await touch("touchEnd", t0 + 0.2);
+    await cdp.detach();
   };
   const trail = async () => (await page.getByTestId("map-trail").getByRole("button").allInnerTexts()).filter((t) => !/party/.test(t));
   const world = (await api("POST", "/api/world/generate", { options: { seed: 7 } })).json.world;
@@ -710,7 +724,10 @@ await step(ctx, "play: the HUD tabs do not crash", async () => {
     const roles = bar.occupants.map((o) => o.role);
     if (roles.includes("civilians")) throw new Error("people are still a crowd");
     if (roles.filter((r) => r === "musician").length < 3 || !bar.layout.assets.some((a) => a.name === "Bandstand")) throw new Error("no band on a stage: " + roles.join(", "));
-    await api("PATCH", `/api/campaigns/${mapCamp}`, { currentLocation: bar.id });
+    // At 21:00, when the bar is full (leave the game first: a page that is left saves its clock)
+    await page.goto("about:blank");
+    await sleep(1000);
+    await api("PATCH", `/api/campaigns/${mapCamp}`, { currentLocation: bar.id, timeElapsed: { total: 21 * 60 } });
     await openGame();
     const people = bar.layout.assets.filter((a) => a.kind === "npc");
     const before = await Promise.all(people.map((a) => at(`asset:${a.id}`)));

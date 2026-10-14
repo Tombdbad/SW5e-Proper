@@ -53,6 +53,17 @@ const controls = [
   { name: "menu", keys: ["Escape", "Tab"] },
 ];
 
+// The time, to the minute, with what follows it on the line; on its own so that the clock does
+// not redraw the page every minute
+function ClockLine({ after }: { after: string }) {
+  const minutes = useClock((c) => c.minutes);
+  return (
+    <p className="text-xs text-amber-200" data-testid="play-clock">
+      {clockText(minutes)}, {partOfDay(minutes)} · {after}
+    </p>
+  );
+}
+
 export default function GameBoard() {
   const { campaignId } = useParams<{ campaignId: string }>();
   const [showSidebar, setShowSidebar] = useState(true);
@@ -178,7 +189,9 @@ export default function GameBoard() {
   // The campaign clock (shared/logic "Time"): read once when the campaign opens, then one game
   // minute passes every real second on the map (not in a fight, not while the tab is hidden).
   // It is saved every game hour, when the tab is hidden, and with anything that takes time.
-  const clock = useClock((c) => c.minutes);
+  // The page and the map follow the clock in steps of five minutes (each step redraws them); the
+  // clock line in the HUD shows every minute (ClockLine)
+  const clock = useClock((c) => Math.floor(c.minutes / 5) * 5);
   const clockFor = useRef<string | null>(null);
   const clockValue = (total: number) => ({ total, days: dayOf(total) - 1, hours: Math.floor(hourOf(total)), minutes: Math.floor(total % 60) });
   const saveClock = (total = useClock.getState().minutes) =>
@@ -1284,9 +1297,7 @@ export default function GameBoard() {
             {world && here ? (
               <div className="mb-4 space-y-2" data-testid="play-location">
                 <h3 className="font-semibold">Location</h3>
-                <p className="text-xs text-amber-200" data-testid="play-clock">
-                  {clockText(clock)}, {partOfDay(clock)} · {eraOf(world).name} · {lawText(lawAt(world, here.id))}
-                </p>
+                <ClockLine after={`${eraOf(world).name} · ${lawText(lawAt(world, here.id))}`} />
                 <p className="text-xs text-gray-400" data-testid="play-trail">
                   {trailOf(world, here.id).slice(2, -1).map((a) => a.name).join(" \u203a ")}
                 </p>

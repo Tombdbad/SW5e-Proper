@@ -18,6 +18,12 @@ export type MapAction =
   | { type: "look"; areaId: string }
   | { type: "note"; text: string };
 
+// When the finger last came down (or the mouse button went down). A busy phone delivers the
+// click of a tap late, so two taps are timed from when they began, not from their clicks.
+let pointerDownAt = 0;
+if (typeof window !== "undefined") window.addEventListener("pointerdown", (e) => (pointerDownAt = e.timeStamp), true);
+export const tapTime = () => pointerDownAt || performance.now();
+
 // Tap and double tap on a place. A drag that turns the map is not a tap; a mouse double click
 // and two quick taps of a finger both count as a double tap.
 export function useTaps(onAct?: (action: MapAction) => void) {
@@ -26,7 +32,7 @@ export function useTaps(onAct?: (action: MapAction) => void) {
     event.stopPropagation();
     if (event.delta > 8) return;
     // When the finger came down, not when a busy page got round to it
-    const now = event.nativeEvent?.timeStamp ?? performance.now();
+    const now = tapTime();
     const again = last.current.id === areaId && now - last.current.at < 500;
     last.current = { id: areaId, at: again ? 0 : now };
     onAct?.({ type: again ? "open" : "select", areaId });

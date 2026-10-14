@@ -7,7 +7,7 @@ import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
 import { useCombat, attackPlan, cannotAct, pickTarget, reachable } from "@/lib/stores/useCombat";
 import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, ALERT, START_TIME, daylight, hourOf, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
-import GalaxyMap, { Probe, Rig, useTaps, type MapAction } from "./GalaxyMap";
+import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind, type TokenKind } from "./sprites";
 
 interface LocalMapProps {
@@ -1319,7 +1319,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (isCounter(a)) {
       // A double tap on a counter calls whoever serves there; a tap only says who that is
       // The note waits to see whether a second tap follows: on a phone it would cover the counter
-      const now = performance.now();
+      const now = tapTime();
       const again = lastTap.current.id === a.id && now - lastTap.current.at < 500;
       clearTimeout(lastTap.current.note);
       lastTap.current = { id: a.id, at: again ? 0 : now };
