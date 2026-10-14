@@ -4,7 +4,7 @@ import { CampaignElementGenerator } from '../../lib/sw5e/campaignGenerator';
 import { CharacterProfile } from '../../lib/sw5e/characterProfileParser';
 import TranslucentPane from '../ui/TranslucentPane';
 import { Character } from '../../shared/schema';
-import { trailOf, isLocal, type Quest, type World } from '@shared/logic';
+import { trailOf, isLocal, ERAS, DEFAULT_ERA, eraById, START_TIME, type Quest, type World } from '@shared/logic';
 
 interface CampaignGeneratorProps {
   character: Character;
@@ -12,12 +12,15 @@ interface CampaignGeneratorProps {
 }
 
 // What is shown and saved comes from the generated world: its places, the people and enemies
-// placed in it from the rules data, and the quests read off it. Only the choice of enemy
-// faction (the one opposed to the character's alignment) comes from the older text generator.
+// placed in it from the rules data, and the quests read off it. The era decides which enemies
+// there can be; the older text generator's pick (the faction opposed to the character's
+// alignment) is used when the era has it, else the world picks one of the era's.
 export default function CampaignGenerator({ character, onSave }: CampaignGeneratorProps) {
   const [draft, setDraft] = useState<{ world: World; quests: Quest[] } | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [eraId, setEraId] = useState(DEFAULT_ERA);
+  const era = eraById(eraId);
 
   const convertCharacterToProfile = (character: Character): CharacterProfile => {
     return {
@@ -39,11 +42,12 @@ export default function CampaignGenerator({ character, onSave }: CampaignGenerat
     setGenerating(true);
     setError(null);
     try {
-      const antagonist = new CampaignElementGenerator().generatePrimaryObjective(convertCharacterToProfile(character)).target;
+      const wanted = new CampaignElementGenerator().generatePrimaryObjective(convertCharacterToProfile(character)).target;
+      const antagonist = era.antagonists.includes(wanted) ? wanted : undefined;
       const response = await fetch('/api/world/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ options: { antagonist, partyLevel: character.level } }),
+        body: JSON.stringify({ options: { antagonist, era: era.id, partyLevel: character.level } }),
       });
       if (!response.ok) throw new Error('The server could not generate a world');
       const generated = await response.json();
@@ -88,6 +92,8 @@ export default function CampaignGenerator({ character, onSave }: CampaignGenerat
         coordinates: site.position,
       })),
       quests: draft.quests,
+      setting: { era: eraById(world.era).name, backstory: eraById(world.era).summary, themes: [], tone: "Space Opera" },
+      timeElapsed: { total: START_TIME, days: 0, hours: 8, minutes: 0 },
       startingLocation: start.name,
       currentLocation: world.startId,
       galaxyMap: world,
@@ -114,6 +120,15 @@ export default function CampaignGenerator({ character, onSave }: CampaignGenerat
           Generate a galaxy to play in: places joined by paths, with people, enemies, ships and loot
           placed from the rules data, and quests that the world keeps score of. Generate again for a different one.
         </p>
+        <label className="block text-sm text-gray-300 mb-4">
+          Era
+          <select data-testid="era" className="ml-2 rounded bg-gray-800 border border-gray-600 px-2 py-1 text-white" value={eraId} onChange={(e) => setEraId(e.target.value)}>
+            {ERAS.map((e) => (
+              <option key={e.id} value={e.id}>{e.name} ({e.span})</option>
+            ))}
+          </select>
+          <span className="block text-xs text-gray-400 mt-1">{era.summary} Enemies: {era.antagonists.join(", ")}.</span>
+        </label>
         {error && <p className="text-red-400 mb-4">{error}</p>}
 
         {draft && world && start && (
@@ -129,7 +144,7 @@ export default function CampaignGenerator({ character, onSave }: CampaignGenerat
                     ))}
                   </ul>
                 )}
-                <p className="text-sm text-gray-400 mt-2">Enemy: {world.antagonist}</p>
+                <p className="text-sm text-gray-400 mt-2">Era: {eraById(world.era).name} · Enemy: {world.antagonist}</p>
               </TranslucentPane>
             </div>
 

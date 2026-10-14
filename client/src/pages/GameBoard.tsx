@@ -9,7 +9,7 @@ import { Loader2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
-import LocalMap, { FightScene, viewOf, usePartySpot, whereNow } from "@/components/Map/LocalMap";
+import LocalMap, { FightScene, viewOf, usePartySpot, whereNow, useClock } from "@/components/Map/LocalMap";
 import PlayCombat from "@/components/Combat/PlayCombat";
 import { useCombat, rollDamage } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
@@ -22,6 +22,7 @@ import { getStarshipSize } from "@/lib/sw5e/starships";
 import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
   planBuilding, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
+  START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, LAW_NAMES,
   type Occupant,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship,
 } from "@shared/logic";
@@ -131,6 +132,25 @@ export default function GameBoard() {
     setShowCombat(inCombat);
   }, [inCombat]);
 
+  // Time passes on the map
+  const clockRunning = !!campaign?.galaxyMap && !inCombat && (character?.currentHp ?? 0) > 0;
+  useEffect(() => {
+    if (!clockRunning) return;
+    const tick = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      const now = useClock.getState().minutes + 1;
+      useClock.getState().set(now);
+      if (now % 60 === 0) saveClock(now);
+    }, 1000);
+    const hidden = () => document.visibilityState === "hidden" && saveClock();
+    document.addEventListener("visibilitychange", hidden);
+    return () => {
+      clearInterval(tick);
+      document.removeEventListener("visibilitychange", hidden);
+      saveClock();
+    };
+  }, [clockRunning, campaignId]);
+
   // Save campaign fields; the page shows them at once
   const saveCampaign = async (changes: Record<string, any>) => {
     queryClient.setQueryData([`/api/campaigns/${campaignId}`], (old: any) => ({ ...old, ...changes }));
@@ -149,6 +169,26 @@ export default function GameBoard() {
       body: JSON.stringify(changes),
     });
     queryClient.invalidateQueries({ queryKey: ["game-character"] });
+  };
+
+  // The campaign clock (shared/logic "Time"): read once when the campaign opens, then one game
+  // minute passes every real second on the map (not in a fight, not while the tab is hidden).
+  // It is saved every game hour, when the tab is hidden, and with anything that takes time.
+  const clock = useClock((c) => c.minutes);
+  const clockFor = useRef<string | null>(null);
+  const clockValue = (total: number) => ({ total, days: dayOf(total) - 1, hours: Math.floor(hourOf(total)), minutes: Math.floor(total % 60) });
+  const saveClock = (total = useClock.getState().minutes) =>
+    fetch(`/api/campaigns/${campaignId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ timeElapsed: clockValue(total) }), keepalive: true }).catch(() => {});
+  useEffect(() => {
+    if (!campaign || clockFor.current === String(campaignId)) return;
+    clockFor.current = String(campaignId);
+    useClock.getState().set(Number(campaign.timeElapsed?.total) || START_TIME);
+  }, [campaign, campaignId]);
+  // Let time pass: the clock moves on and the new time goes with the next save
+  const pass = (minutes: number) => {
+    const total = Math.round(useClock.getState().minutes + minutes);
+    useClock.getState().set(total);
+    return { timeElapsed: clockValue(total) };
   };
 
   // An ability check against a DC: d20 + the better of the given abilities (+ proficiency if trained)
@@ -251,6 +291,10 @@ export default function GameBoard() {
   const travel = (exit: Exit) => {
     if (!here || !world) return;
     const changes: Record<string, any> = { currentLocation: exit.to };
+    const { ship: flying } = exit.needsShip ? tripBy(exit) : { ship: undefined };
+    const took = tripMinutes(exit, Number(flying?.hyperdriveClass) || 1);
+    Object.assign(changes, pass(took));
+    if (took >= 60) toast.info(`${Math.round(took / 6) / 10} hours on the way${exit.needsShip && !exit.travel ? " (house rule: an hour between the surface and orbit)" : ""}: it is ${clockText(useClock.getState().minutes)}.`);
     if (exit.needsShip) {
       const { ship, fare } = tripBy(exit);
       if (ship) {
@@ -342,7 +386,7 @@ export default function GameBoard() {
       const response = await fetch("/api/world/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ options: { partyLevel: level } }),
+        body: JSON.stringify({ options: { partyLevel: level, era: eraById(campaign?.setting?.era).id } }),
       });
       if (!response.ok) throw new Error("The server could not generate a world");
       const generated = await response.json();
@@ -629,7 +673,8 @@ export default function GameBoard() {
       notes.push(`a Hit Die (d${hitDie}) restores ${healed} hit points`);
     }
     if (Object.keys(changes).length) saveCharacter(changes);
-    toast.info(`Short rest: ${notes.join("; ") || (hitDiceLeft ? "nothing to recover" : "no Hit Dice left")}.`);
+    saveCampaign(pass(60));
+    toast.info(`Short rest (1 hour): ${notes.join("; ") || (hitDiceLeft ? "nothing to recover" : "no Hit Dice left")}.`);
   };
   const rest = async () => {
     if (!character || inCombat) return;
@@ -644,8 +689,19 @@ export default function GameBoard() {
       currentForcePoints: character.maxForcePoints,
       hitDiceUsed: Math.max(0, (character.hitDiceUsed ?? 0) - Math.max(1, Math.floor(level / 2))),
     });
-    if (world && Object.values(world.areas).some((a) => a.alarm)) saveCampaign({ galaxyMap: clearAlarms(world) });
-    toast.info("Long rest: hit points and power points restored, half your Hit Dice regained. Alarms have died down.");
+    saveCampaign({ ...pass(8 * 60), ...(world && Object.values(world.areas).some((a) => a.alarm) ? { galaxyMap: clearAlarms(world) } : {}) });
+    toast.info("Long rest (8 hours): hit points and power points restored, half your Hit Dice regained. Alarms have died down.");
+  };
+
+  // Wait: an hour, or until the next morning (07:00) or evening (18:00)
+  const waitFor = (minutes: number, what: string) => {
+    saveCampaign(pass(minutes));
+    toast.info(`${what}: it is ${clockText(useClock.getState().minutes)}.`);
+  };
+  const until = (hour: number) => {
+    const now = useClock.getState().minutes;
+    const today = now - (now % DAY) + hour * 60;
+    return (today > now ? today : today + DAY) - now;
   };
 
   // House rule, not in the books: a dead character can be brought back so the campaign can go on
@@ -890,6 +946,15 @@ export default function GameBoard() {
       <Button size="sm" variant="outline" onClick={rest} disabled={inCombat || dead || hostiles.length > 0}>
         Long rest
       </Button>
+      <Button size="sm" variant="outline" onClick={() => waitFor(60, "Waited an hour")} disabled={inCombat || dead || hostiles.length > 0}>
+        Wait 1 h
+      </Button>
+      <Button size="sm" variant="outline" onClick={() => waitFor(until(18), "Waited until evening")} disabled={inCombat || dead || hostiles.length > 0}>
+        Until evening
+      </Button>
+      <Button size="sm" variant="outline" onClick={() => waitFor(until(7), "Waited until morning")} disabled={inCombat || dead || hostiles.length > 0}>
+        Until morning
+      </Button>
       {healingPowers.map((power) => (
         <Button
           key={power.name}
@@ -1071,6 +1136,9 @@ export default function GameBoard() {
             {world && here ? (
               <div className="mb-4 space-y-2" data-testid="play-location">
                 <h3 className="font-semibold">Location</h3>
+                <p className="text-xs text-amber-200" data-testid="play-clock">
+                  {clockText(clock)}, {partOfDay(clock)} · {eraOf(world).name} · {LAW_NAMES[lawAt(world, here.id)]} law
+                </p>
                 <p className="text-xs text-gray-400" data-testid="play-trail">
                   {trailOf(world, here.id).slice(2, -1).map((a) => a.name).join(" \u203a ")}
                 </p>

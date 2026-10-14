@@ -37,6 +37,9 @@ import {
   trailOf,
   updateArea,
   validateWorld,
+  ERAS,
+  DEFAULT_ERA,
+  eraById,
   type Area,
   type EditResult,
   type LootCache,
@@ -527,7 +530,6 @@ export default function CampaignManager({ campaign, character, onSave }: Campaig
 // ---------------------------------------------------------------------------------------------
 
 const DANGER = ["Safe", "Easy", "Medium", "Hard", "Deadly"];
-const ANTAGONISTS = ["Galactic Empire", "Hutt Cartel", "Trade Federation", "Black Sun", "Sith Empire"];
 const fieldClass =
   "flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm";
 
@@ -540,7 +542,7 @@ interface WorldEditorProps {
 function WorldEditor({ world, partyLevel, onChange }: WorldEditorProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [options, setOptions] = useState({ seed: "", systemsPerRegion: "1", antagonist: "", startPlanet: "" });
+  const [options, setOptions] = useState({ seed: "", systemsPerRegion: "1", antagonist: "", startPlanet: "", era: DEFAULT_ERA });
   const [rulesProblems, setRulesProblems] = useState<string[] | null>(null);
   const [newChild, setNewChild] = useState({ name: "", type: "" });
   const [newPath, setNewPath] = useState({ to: "", label: "" });
@@ -571,6 +573,7 @@ function WorldEditor({ world, partyLevel, onChange }: WorldEditorProps) {
         systemsPerRegion: Number(options.systemsPerRegion),
         antagonist: options.antagonist || undefined,
         startPlanet: options.startPlanet || undefined,
+        era: options.era,
       },
     });
     if (!result) return;
@@ -597,10 +600,18 @@ function WorldEditor({ world, partyLevel, onChange }: WorldEditorProps) {
             <Input id="worldPlanet" value={options.startPlanet} onChange={(e) => setOptions({ ...options, startPlanet: e.target.value })} placeholder="Tatooine, Naboo, Coruscant ..." />
           </div>
           <div>
+            <Label htmlFor="worldEra">Era</Label>
+            <select id="worldEra" className={fieldClass} value={options.era} onChange={(e) => setOptions({ ...options, era: e.target.value, antagonist: "" })}>
+              {ERAS.map((era) => (
+                <option key={era.id} value={era.id}>{era.name} ({era.span})</option>
+              ))}
+            </select>
+          </div>
+          <div>
             <Label htmlFor="worldEnemy">Hostile faction</Label>
             <select id="worldEnemy" className={fieldClass} value={options.antagonist} onChange={(e) => setOptions({ ...options, antagonist: e.target.value })}>
               <option value="">Random</option>
-              {ANTAGONISTS.map((f) => (
+              {eraById(options.era).antagonists.map((f) => (
                 <option key={f} value={f}>{f}</option>
               ))}
             </select>
@@ -685,7 +696,7 @@ function WorldEditor({ world, partyLevel, onChange }: WorldEditorProps) {
         </div>
       </div>
       <p className="text-sm text-gray-300">
-        Seed {world.seed} · party level {world.partyLevel} · hostile faction: {world.antagonist} · {counts.join(", ")}, {world.paths.length} paths
+        Seed {world.seed} · {eraById(world.era).name} · party level {world.partyLevel} · hostile faction: {world.antagonist} · {counts.join(", ")}, {world.paths.length} paths
       </p>
       <p className={`text-sm ${problems.length ? "text-red-400" : "text-green-400"}`} data-testid="world-status">
         {problems.length ? `Map problems: ${problems.join(" ")}` : "Map is sound: every area can be reached from the start."}

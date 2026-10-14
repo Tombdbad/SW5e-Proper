@@ -302,6 +302,12 @@ export const insertCampaignSchema = z.object({
   sessionLogs: z.any().optional(),
   // Ships the party owns (shared/logic Ship)
   starships: z.any().optional(),
+  // The campaign clock: { total } minutes of Galactic Standard Time (shared/logic, "Time")
+  timeElapsed: z.any().optional(),
+  // Renown with factions and dealings with traders (shared/logic, "Trade")
+  factionInfluence: z.any().optional(),
+  // What the party has bought from and sold to each trader, by day (shared/logic, "Trade")
+  availableResources: z.any().optional(),
 });
 
 export type InsertCampaign = z.infer<typeof insertCampaignSchema>;

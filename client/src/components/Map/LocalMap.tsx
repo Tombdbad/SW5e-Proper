@@ -6,7 +6,7 @@ import { useKeyboardControls } from "@react-three/drei";
 import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
 import { useCombat, attackPlan, cannotAct, pickTarget, reachable } from "@/lib/stores/useCombat";
-import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, ALERT, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
+import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, ALERT, START_TIME, daylight, hourOf, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind, type TokenKind } from "./sprites";
 
@@ -44,6 +44,34 @@ export const usePartySpot = create<{ areaId: string | null; x: number; y: number
   y: 0,
   stand: (areaId, x, y) => set({ areaId, x, y }),
 }));
+
+// The campaign clock, in minutes (shared/logic "Time"). Play keeps it; the map lights the scene by it.
+export const useClock = create<{ minutes: number; set: (minutes: number) => void }>((set) => ({
+  minutes: START_TIME,
+  set: (minutes) => set({ minutes }),
+}));
+
+// The sky and the light over a place on a planet's surface, by the hour: a blue sky by day, warm
+// light at dawn and dusk, and a dark sky with faint blue moonlight at night
+const NIGHT_SKY = new THREE.Color("#05070c");
+const DAY_SKY = new THREE.Color("#5d7fa3");
+const DUSK_SKY = new THREE.Color("#b8683f");
+function Sky({ shadow = 30 }: { shadow?: number }) {
+  const minutes = useClock((c) => Math.round(c.minutes / 5) * 5);
+  const light = daylight(minutes);
+  const twilight = light > 0 && light < 1;
+  const background = NIGHT_SKY.clone().lerp(DAY_SKY, light).lerp(DUSK_SKY, twilight ? 0.35 * (1 - Math.abs(light - 0.5) * 2) : 0);
+  // The sun crosses from east to west over the day; at night the moon stands high
+  const angle = ((hourOf(minutes) - 6) / 12) * Math.PI;
+  const sun: V3 = light > 0 ? [Math.cos(angle) * 30, Math.max(6, Math.sin(angle) * 30), 14] : [-10, 30, 8];
+  return (
+    <>
+      <color attach="background" args={[background]} />
+      <ambientLight intensity={0.32 + 0.43 * light} color={light < 0.3 ? "#a9b8ff" : "#ffffff"} />
+      <directionalLight position={sun} intensity={0.14 + 0.76 * light} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
+    </>
+  );
+}
 
 // ---------------------------------------------------------------------------------------------
 // Models. Places are built from a few plain solids in the look of the setting: sand-coloured
@@ -1229,7 +1257,6 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
 
   return (
     <>
-      <color attach="background" args={["#05070c"]} />
       <group position={[-cx, 0, -cz]}>
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.06, cz]}>
           <planeGeometry args={[240, 240]} />
@@ -1400,8 +1427,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         }}
       />
       <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} />
-      <ambientLight intensity={0.75} />
-      <directionalLight position={[12, 30, 14]} intensity={0.9} castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-30} shadow-camera-right={30} shadow-camera-top={30} shadow-camera-bottom={-30} />
+      <Sky />
     </>
   );
 }
@@ -1548,7 +1574,7 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
 
   return (
     <>
-      <color attach="background" args={["#000000"]} />
+      {system || globe ? <color attach="background" args={["#000000"]} /> : null}
       {(system || globe) && <Stars radius={160} depth={40} count={1500} factor={4} fade speed={0} />}
       {system && (
         <>
@@ -1660,8 +1686,14 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
         return area ? at(area) : undefined;
       }} />
       <Rig target={[0, 0, 0]} offset={globe ? [0, 50, 40] : system ? [0, 40, 34] : [0, 42 * span, 30 * span]} min={10} max={260} />
-      <ambientLight intensity={0.7} />
-      <directionalLight position={[10, 30, 10]} intensity={0.8} />
+      {system || globe ? (
+        <>
+          <ambientLight intensity={0.7} />
+          <directionalLight position={[10, 30, 10]} intensity={0.8} />
+        </>
+      ) : (
+        <Sky shadow={60} />
+      )}
     </>
   );
 }

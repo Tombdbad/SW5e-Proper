@@ -691,6 +691,17 @@ await step(ctx, "play: the HUD tabs do not crash", async () => {
     return `${lair.name}: ${moved}`;
   });
 
+  await step(ctx, "time: the clock shows the era and the law; waiting moves it on", async () => {
+    await openGame();
+    const before = await page.getByTestId("play-clock").innerText();
+    if (!/^Day \d+, \d\d:\d\d, \w+ · .+ · (lawless|frontier|policed|strict) law$/.test(before)) throw new Error("clock line: " + before);
+    await page.getByRole("button", { name: "Until evening" }).click();
+    await page.getByTestId("play-clock").getByText(/18:0\d, evening/).waitFor({ timeout: 10000 });
+    const saved = (await api("GET", `/api/campaigns/${mapCamp}`)).json.timeElapsed;
+    if (!saved || saved.hours < 18) throw new Error("the clock was not saved: " + JSON.stringify(saved));
+    return `${before} -> ${await page.getByTestId("play-clock").innerText()}`;
+  });
+
   await step(ctx, "3D map: people go about the cantina; a double tap on the bar calls the bartender over", async () => {
     const bar = areas.find((a) => a.name === "Main bar" && a.parentId === start.parentId);
     if (!bar) throw new Error("the starting cantina has no main bar");

@@ -141,6 +141,8 @@ export interface World {
   counter: number;
   // Which upgrade of the people in it the world has had (see livenWorld); absent in older worlds
   life?: number;
+  // The era it is set in (ERAS); absent in worlds made before eras (the Galactic Civil War)
+  era?: string;
 }
 
 export interface WorldOptions {
@@ -152,6 +154,8 @@ export interface WorldOptions {
   // Generated systems added so every region has at least this many (1 to 3)
   systemsPerRegion?: number;
   startPlanet?: string;
+  // The era (an ERAS id); the enemy is one the era has, unless named
+  era?: string;
   // "start": settlements, buildings and rooms for the starting planet only (the rest on demand);
   // "all": for every planet
   detail?: "start" | "all";
@@ -361,7 +365,90 @@ const FORCES: { match: RegExp; troops: RegExp; leaders: RegExp }[] = [
   { match: /./, troops: /^(Trooper|Navy Trooper|Officer, Junior|Navy Pilot|KX-Series)/, leaders: /^(Officer, Senior|Trooper, Captain|ISB|Death Trooper|Imperial (Senate|Guard))/ },
 ];
 
-const FACTIONS = ["Galactic Empire", "Hutt Cartel", "Trade Federation", "Black Sun", "Sith Empire", "Rebel Alliance", "Local militia", "Czerka Corporation", "Tusken tribes"];
+
+// ---------------------------------------------------------------------------------------------
+// Eras and the law. Setting, not rules: the books give no era table, so these are the broad
+// periods of the setting. An era decides who governs the settled galaxy, which enemies a
+// campaign can have, and how hard the law bites in each region: 0 lawless (anything goes),
+// 1 frontier (the authority is thinly spread), 2 policed (contraband is seized), 3 strict
+// (patrols, checkpoints, restricted weapons too). Planets held by a crime syndicate are lawless
+// whatever their region; planets held by the authority are at least policed.
+// ---------------------------------------------------------------------------------------------
+
+export interface Era {
+  id: string;
+  name: string;
+  span: string;
+  // Who governs where there is law, and who a campaign can be fought against
+  authority: string;
+  antagonists: string[];
+  // Faction names in the setting seeds that mean someone else in this era
+  renames: [RegExp, string][];
+  law: Record<string, number>;
+  summary: string;
+}
+
+export const LAW_NAMES = ["lawless", "frontier", "policed", "strict"] as const;
+
+export const ERAS: Era[] = [
+  {
+    id: "old-republic", name: "Old Republic", span: "about 3,650 BBY", authority: "Galactic Republic",
+    antagonists: ["Sith Empire", "Hutt Cartel", "Czerka Corporation"],
+    renames: [[/galactic empire|empire|first order|new republic/i, "Galactic Republic"], [/separatist/i, "Local militia"], [/rebel/i, "Local militia"]],
+    law: { "Deep Core": 2, Core: 3, Colonies: 2, "Inner Rim": 2, "Expansion Region": 1, "Mid Rim": 1, "Outer Rim": 0, "Wild Space": 0, "Unknown Regions": 0 },
+    summary: "The Republic and the Jedi Order face a returning Sith Empire; the Outer Rim is left to the Hutts and Czerka.",
+  },
+  {
+    id: "clone-wars", name: "Clone Wars", span: "22-19 BBY", authority: "Galactic Republic",
+    antagonists: ["Separatist Alliance", "Trade Federation", "Hutt Cartel", "Black Sun"],
+    renames: [[/galactic empire|empire|first order|new republic/i, "Galactic Republic"], [/separatist/i, "Separatist Alliance"], [/rebel/i, "Local militia"]],
+    law: { "Deep Core": 3, Core: 3, Colonies: 3, "Inner Rim": 2, "Expansion Region": 2, "Mid Rim": 1, "Outer Rim": 1, "Wild Space": 0, "Unknown Regions": 0 },
+    summary: "Clone armies of the Republic against the droid armies of the Separatists; the underworld profits from both.",
+  },
+  {
+    id: "galactic-civil-war", name: "Galactic Civil War", span: "0-4 ABY", authority: "Galactic Empire",
+    antagonists: ["Galactic Empire", "Black Sun", "Hutt Cartel"],
+    renames: [[/galactic republic|new republic|first order|^empire/i, "Galactic Empire"], [/separatist/i, "Local militia"]],
+    law: { "Deep Core": 3, Core: 3, Colonies: 3, "Inner Rim": 2, "Expansion Region": 2, "Mid Rim": 2, "Outer Rim": 1, "Wild Space": 0, "Unknown Regions": 0 },
+    summary: "The Empire rules by fear; the Rebel Alliance fights back from hidden bases; the Hutts and Black Sun run the Rim.",
+  },
+  {
+    id: "new-republic", name: "New Republic", span: "5-28 ABY", authority: "New Republic",
+    antagonists: ["Imperial Remnant", "Hutt Cartel", "Black Sun"],
+    renames: [[/galactic republic|rebel/i, "New Republic"], [/galactic empire|^empire|first order/i, "Imperial Remnant"], [/separatist/i, "Local militia"]],
+    law: { "Deep Core": 1, Core: 2, Colonies: 2, "Inner Rim": 1, "Expansion Region": 1, "Mid Rim": 1, "Outer Rim": 0, "Wild Space": 0, "Unknown Regions": 1 },
+    summary: "A young republic disarms and looks inward; warlords of the fallen Empire hold out in the Deep Core and beyond.",
+  },
+  {
+    id: "first-order", name: "First Order", span: "34-35 ABY", authority: "First Order",
+    antagonists: ["First Order", "Hutt Cartel"],
+    renames: [[/galactic republic|new republic|galactic empire|^empire/i, "First Order"], [/rebel/i, "Resistance"], [/separatist/i, "Local militia"]],
+    law: { "Deep Core": 3, Core: 3, Colonies: 2, "Inner Rim": 2, "Expansion Region": 1, "Mid Rim": 1, "Outer Rim": 1, "Wild Space": 0, "Unknown Regions": 3 },
+    summary: "The First Order strikes from the Unknown Regions and seizes the Core; the Resistance scatters.",
+  },
+];
+export const DEFAULT_ERA = "galactic-civil-war";
+// A world made before eras is set in the Galactic Civil War, the campaign default
+export const eraOf = (world: Pick<World, "era">): Era => ERAS.find((e) => e.id === world.era) ?? ERAS.find((e) => e.id === DEFAULT_ERA)!;
+export const eraById = (id?: string): Era => ERAS.find((e) => e.id === id || e.name === id) ?? ERAS.find((e) => e.id === DEFAULT_ERA)!;
+// A faction named in the setting seeds, as it is called in the era
+const eraFaction = (name: string, era: Era) => era.renames.find(([pattern]) => pattern.test(name))?.[1] ?? name;
+// Who holds a generated system: the authority more often than not, else the era's enemies or locals
+const eraFactions = (era: Era) => [era.authority, era.authority, ...era.antagonists, "Local militia", "Czerka Corporation", "Tusken tribes"];
+const CRIME = /hutt|black sun|pirate|syndicate|cartel|crime|exchange|smuggler/i;
+
+// How hard the law bites in an area (see above)
+export function lawAt(world: World, areaId: string): number {
+  const era = eraOf(world);
+  const region = ancestor(world, areaId, "region");
+  const planet = ancestor(world, areaId, "planet");
+  const system = ancestor(world, areaId, "system");
+  const faction = planet?.faction ?? system?.faction ?? "";
+  let law = era.law[region?.type ?? region?.name ?? ""] ?? 1;
+  if (CRIME.test(faction) || /tusken|raider/i.test(faction)) law = 0;
+  else if (faction === era.authority) law = Math.max(law, 2);
+  return law;
+}
 
 // Loot caches: container names, equipment categories (optionally only names matching `only`),
 // enhanced item types and how often one turns up, and credits as a share of what a character is
@@ -997,19 +1084,21 @@ function contextFor(world: World, catalog: WorldCatalog, seed: number): Context 
 export function generateWorld(options: WorldOptions, catalog: WorldCatalog): World {
   const seed = options.seed ?? Math.floor(Math.random() * 2 ** 31);
   const r = createRandom(seed);
+  const era = eraById(options.era);
   const world: World = {
     version: 1,
     seed,
     name: options.name ?? "The Galaxy",
     partyLevel: Math.min(20, Math.max(1, Math.round(options.partyLevel ?? 1))),
     partySize: Math.max(1, Math.round(options.partySize ?? 1)),
-    antagonist: options.antagonist ?? r.pick(FACTIONS.slice(0, 5)),
+    antagonist: options.antagonist ?? r.pick(era.antagonists),
     rootId: "",
     startId: "",
     areas: {},
     paths: [],
     counter: 0,
     life: LIFE,
+    era: era.id,
   };
   const ctx: Context = { world, random: r, catalog, names: new Set() };
   const galaxy = makeArea(ctx, "galaxy", null, { name: world.name, type: "galaxy" });
@@ -1046,14 +1135,14 @@ export function generateWorld(options: WorldOptions, catalog: WorldCatalog): Wor
     if (ctx.names.has(seedSystem.name)) continue;
     const system = placeSystem(regionOf(seedSystem.region), seedSystem.name, {
       description: seedSystem.description ?? "",
-      faction: seedSystem.factions?.[0]?.replace(/\s*\(.*\)$/, "") ?? r.pick(FACTIONS),
+      faction: eraFaction(seedSystem.factions?.[0]?.replace(/\s*\(.*\)$/, "") ?? r.pick(eraFactions(era)), era),
     });
     planetNames.set(system.id, seedSystem.planets ?? []);
   }
   const perRegion = Math.min(3, Math.max(1, options.systemsPerRegion ?? 1));
   for (const region of regions) {
     while (childrenOf(world, region.id).length < perRegion) {
-      placeSystem(region, uniqueName(ctx, () => `${placeName(r)} System`), { faction: r.pick(FACTIONS) });
+      placeSystem(region, uniqueName(ctx, () => `${placeName(r)} System`), { faction: r.pick(eraFactions(era)) });
     }
   }
   const systems = Object.values(world.areas).filter((a) => a.kind === "system");
@@ -1685,6 +1774,49 @@ export function tripFuel(kind: PathKind | "surface", travel = ""): number {
   if (kind !== "hyperlane") return 1;
   const hours = Number((travel.match(/(\d+(?:\.\d+)?)\s*hours?/) ?? [0, 24])[1]);
   return 1 + Math.ceil(hours / 24);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Time. A campaign keeps one clock in minutes of Galactic Standard Time (24-hour days); play
+// begins at 08:00 on day 1. Moving takes the time the path says: a street at a walking pace
+// (80 m a minute), a route by speeder, a lane or a jump in the hours given (a hyperdrive's class
+// multiplies hyperspace time, Starships of the Galaxy); between the surface and orbit is an
+// hour's flight; going through a door or in and out of a building a minute.
+// ---------------------------------------------------------------------------------------------
+
+export const DAY = 24 * 60;
+export const START_TIME = 8 * 60;
+export const hourOf = (minutes: number) => ((minutes % DAY) + DAY) % DAY / 60;
+export const dayOf = (minutes: number) => Math.floor(minutes / DAY) + 1;
+export const clockText = (minutes: number) => {
+  const m = Math.floor(((minutes % DAY) + DAY) % DAY);
+  return `Day ${dayOf(minutes)}, ${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+};
+// How light it is outside, 0 (night) to 1 (day): dawn from 05:00 to 07:00, dusk from 18:00 to 20:00
+export function daylight(minutes: number): number {
+  const h = hourOf(minutes);
+  if (h >= 7 && h <= 18) return 1;
+  if (h <= 5 || h >= 20) return 0;
+  return h < 12 ? (h - 5) / 2 : (20 - h) / 2;
+}
+export const partOfDay = (minutes: number) => {
+  const h = hourOf(minutes);
+  return h < 5 ? "night" : h < 12 ? "morning" : h < 17 ? "afternoon" : h < 21 ? "evening" : "night";
+};
+
+// How long a move takes, in minutes
+export function tripMinutes(exit: Pick<Exit, "via" | "travel" | "needsShip" | "jump">, hyperdriveClass = 1): number {
+  const t = exit.travel ?? "";
+  const range = t.match(/(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*hours?/);
+  if (range) return Math.round(((Number(range[1]) + Number(range[2])) / 2) * 60);
+  const hours = t.match(/(\d+(?:\.\d+)?)\s*(?:hours?|h\b)/);
+  if (hours) return Math.round(Number(hours[1]) * 60 * (exit.jump ? Math.max(0.5, hyperdriveClass) : 1));
+  const days = t.match(/(\d+(?:\.\d+)?)\s*days?/);
+  if (days) return Math.round(Number(days[1]) * DAY);
+  const metres = t.match(/(\d+(?:\.\d+)?)\s*m\b/);
+  if (metres) return Math.max(1, Math.round(Number(metres[1]) / 80));
+  if (exit.needsShip) return 60;
+  return 1;
 }
 
 const ENTER: Partial<Record<AreaKind, string>> = { system: "Fly in to", planet: "Land at", settlement: "Go to", building: "Enter" };
