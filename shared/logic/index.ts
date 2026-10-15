@@ -19,6 +19,7 @@ import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eReco
 import conditionData from "../data/sw5e/conditions.json";
 import downtimeData from "../data/sw5e/downtime.json";
 import shipData from "../data/sw5e/ships.json";
+import powerData from "../data/sw5e/powers.json";
 
 // ---------------------------------------------------------------------------------------------
 // Model
@@ -150,6 +151,8 @@ export interface Path {
   travel: string;
   locked?: number; // DC to open
   hidden?: boolean;
+  // A way that is climbed, not walked: the DC of the check (out of a pit)
+  climb?: number;
 }
 
 export interface World {
@@ -173,6 +176,14 @@ export interface World {
   pursuit?: Pursuit;
   // A ship the party is trying to take (see startHeist); absent when there is none
   heist?: Heist;
+  // The encounter waiting in the district the party is in (see rollEncounter), and the settlements
+  // whose master has already taught the party
+  encounter?: Encounter;
+  mastersTaught?: string[];
+  // The last encounter rolled (so one that was dealt with does not come round again that hour)
+  encounterSeen?: string;
+  // How the buildings of each district stand on its grid (see planDistrict)
+  districtPlans?: Record<string, DistrictPlan>;
 }
 
 export interface WorldOptions {
@@ -276,8 +287,8 @@ const ROUTE_LABEL: Record<string, string[]> = {
 
 // Settlement types and the buildings they are made of. "*" marks a gateway; "?" an optional one.
 const SETTLEMENTS: Record<string, { buildings: string[]; street: string[] }> = {
-  city: { buildings: ["spaceport*", "city gate*", "cantina", "market", "garrison", "medcenter", "workshop?", "residences", "palace?", "warehouse?", "archive?", "hideout?"], street: ["Avenue", "Skywalk", "Alley", "Transit tube"] },
-  town: { buildings: ["landing field*", "town gate*", "cantina", "market", "workshop", "residences?", "garrison?", "medcenter?", "hideout?"], street: ["Street", "Alley", "Dirt road"] },
+  city: { buildings: ["spaceport*", "city gate*", "cantina", "market", "garrison", "medcenter", "workshop?", "residences", "palace?", "warehouse?", "archive?", "hideout?", "tenements?", "transit hub?", "droid dealer?", "vehicle dealer?", "shipyard?"], street: ["Avenue", "Skywalk", "Alley", "Transit tube"] },
+  town: { buildings: ["landing field*", "town gate*", "cantina", "market", "workshop", "residences?", "garrison?", "medcenter?", "hideout?", "tenements?", "vehicle dealer?"], street: ["Street", "Alley", "Dirt road"] },
   outpost: { buildings: ["landing pad*", "command post", "garrison", "warehouse", "workshop?"], street: ["Perimeter path", "Covered walkway"] },
   station: { buildings: ["docking ring*", "promenade", "operations center", "engineering", "habitat ring", "cargo bay?"], street: ["Ring corridor", "Turbolift", "Maintenance shaft"] },
   "cave system": { buildings: ["trailhead*", "cave", "cave?"], street: ["Trail", "Scree slope"] },
@@ -319,6 +330,11 @@ const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "h
   workshop: { rooms: ["Shopfront|s", "Workfloor|s d", "Parts storage|L:workshop"] },
   engineering: { rooms: ["Engineering deck|s d", "Reactor room|d K", "Tool crib|L:workshop @0"] },
   residences: { rooms: ["Lobby|", "Apartments|p p", "Rooftop|", "Basement|L:stash H @0"] },
+  tenements: { rooms: ["Lobby|", "Apartments|p p", "Quarters|p", "Basement|L:stash H @0"] },
+  "transit hub": { rooms: ["Concourse|p p s", "Ticket hall|s p", "Control room|s d K @0"] },
+  "droid dealer": { rooms: ["Showroom|s d", "Parts storage|L:workshop", "Repair bay|s d @0"] },
+  "vehicle dealer": { rooms: ["Showroom|s", "Garage|s d L:workshop @0", "Yard|p"] },
+  shipyard: { rooms: ["Yard office|s", "Berth|S s d", "Machine shop|d L:workshop @0"] },
   "habitat ring": { rooms: ["Commons|p p", "Quarters|p", "Hydroponics|s @0", "Locker hall|L:stash K @1"] },
   palace: { rooms: ["Entrance hall|g", "Audience chamber|s g p", "Offices|s", "Guard post|g L:armory K @0", "Vault|L:vault K g"] },
   warehouse: { rooms: ["Loading dock|s", "Storage floor|L:cargo", "Overseer's office|s L:coin K", "Hidden compartment|L:stash H @1"] },
@@ -343,7 +359,7 @@ const BUILDING_STAFF: Record<string, string> = {
   spaceport: "dockmaster", "landing field": "dockmaster", "landing pad": "dockmaster", "docking ring": "dockmaster", cantina: "bartender",
   promenade: "merchant", market: "merchant", medcenter: "medic", workshop: "mechanic", engineering: "mechanic", garrison: "officer",
   "command post": "officer", "operations center": "officer", palace: "official", warehouse: "overseer", "cargo bay": "overseer",
-  archive: "archivist", "habitat ring": "farmer",
+  archive: "archivist", "habitat ring": "farmer", "droid dealer": "merchant", "vehicle dealer": "merchant", shipyard: "dockmaster", "transit hub": "dockmaster",
 };
 const staffRole = (buildingType: string, roomName: string) =>
   ROOM_STAFF.find(([pattern]) => pattern.test(roomName))?.[1] ?? BUILDING_STAFF[buildingType] ?? "clerk";
@@ -1306,6 +1322,7 @@ function detailBuilding(ctx: Context, building: Area) {
   rooms.forEach((room) => populateRoom(ctx, room));
   placeVehicles(ctx, building);
   planBuilding(world, building.id);
+  furnishLevels(ctx, building);
 }
 
 function detailSettlement(ctx: Context, settlement: Area) {
@@ -1333,6 +1350,8 @@ function detailSettlement(ctx: Context, settlement: Area) {
   });
   connectGroup(ctx, buildings, (a, b) => ({ label: r.pick(template.street), travel: `${Math.max(20, Math.round(distance(a, b) * 40))} m` }), 0.35);
   buildings.forEach((b) => detailBuilding(ctx, b));
+  planDistricts(ctx, settlement.id);
+  linkTransit(ctx, settlement);
   settleRoutines(world, settlement, r);
 }
 
@@ -1578,6 +1597,10 @@ export interface RoomAsset {
   h: number;
   // Doors, windows and secret ways are set in a wall
   side?: Side;
+  // In a fight in the open (a district), what it stands on: a height in levels (a roof or a
+  // catwalk is above the street), and how high it stands (a building, which a shot cannot pass)
+  z?: number;
+  height?: number;
   // Nobody can stand on it; a creature behind it has cover
   blocks?: boolean;
   cover?: boolean;
@@ -1626,6 +1649,7 @@ const ROOM_PLANS: RoomPlan[] = [
   { match: /command|operations|control|comms|bridge|tower/i, size: [7, 9, 6, 8], items: [["Holo-table", "center", "2x2", "1", "bcs"], ["Console", "wall", "2x1", "2-4", "bs"], ["Sensor mast", "corner", "1x1", "0-1", "b"], ["Command chair", "far", "1x1", "1", "t"]] },
   { match: /office|records|security|checkpoint|customs|desk|guard|watch|gatehouse|lookout|post\b/i, size: [6, 8, 5, 7], items: [["Desk", "center", "2x1", "1", "bcs"], ["Console", "wall", "2x1", "1-2", "bs"], ["Locker", "corner", "1x1", "1-2", "b"], ["Barricade", "center", "2x1", "0-1", "bc"]] },
   { match: /booth|den\b|tent|quarters|apartments/i, size: [5, 7, 5, 6], items: [["Couch", "wall", "2x1", "1-2", "bt"], ["Low table", "center", "1x1", "1", "bct"], ["Cabinet", "corner", "1x1", "1", "b"], ["Bed", "wall", "2x1", "0-2", "b"]] },
+  { match: /^roof/i, size: [6, 10, 5, 8], items: [["Vent stack", "corner", "1x1", "1-2", "bc"], ["Water tank", "corner", "2x2", "0-1", "bc"], ["Antenna mast", "wall", "1x1", "1", "b"], ["Equipment crate", "wall", "2x1", "1-2", "bc"], ["Cooling unit", "center", "2x1", "0-1", "bc"]] },
   { match: /crypt|sanctum/i, size: [8, 10, 7, 9], items: [["Sarcophagus", "center", "1x2", "1-3", "bc"], ["Broken pillar", "corner", "1x1", "2-4", "bc"], ["Altar", "far", "2x1", "1", "bc"], ["Rubble", "wall", "1x1", "2-4", "bc"]] },
   { match: /cave|tunnel|chamber|mouth|breach|trailhead|perimeter|shelter|rooftop|collapsed|hull/i, size: [7, 11, 6, 9], items: [["Boulder", "center", "1x1", "2-4", "bc"], ["Rubble", "wall", "2x1", "2-4", "bc"], ["Rock pillar", "corner", "1x1", "1-3", "bc"], ["Campfire ring", "center", "1x1", "0-1", "t"]] },
   { match: /audience|hall|concourse|lobby|antechamber|reading|gate|entrance|arrivals|airlock|stacks/i, size: [9, 12, 7, 9], items: [["Pillar", "center", "1x1", "2-4", "bc"], ["Bench", "wall", "2x1", "2-4", "t"], ["Dais", "far", "3x1", "0-1", "c"], ["Information terminal", "wall", "1x1", "1", "bs"]] },
@@ -1908,7 +1932,7 @@ export function counterSides(layout: RoomLayout, station: RoomAsset): { behind: 
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 5;
+export const LIFE = 6;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -1994,6 +2018,13 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
     // Ships spend most of their time in their own berth (a few days at a time)
     for (const room of Object.values(next.areas)) for (const ship of room.ships) if (ship.voyage && !ship.voyage.homeStay) ship.voyage.homeStay = ctx.random.int(96, 216);
   }
+  // Districts (life 6): the buildings of a settlement are put on one map of streets and alleys,
+  // with second ways in, a roof and a ladder to it for each, and catwalks between roofs; and the
+  // levels of each building are furnished (sentries on a gallery, pits under loose flagstones)
+  if ((next.life ?? 0) < 6) {
+    for (const building of Object.values(next.areas).filter((a) => a.kind === "building" && childrenOf(next, a.id).some((r) => r.layout))) furnishLevels(ctx, building);
+    for (const settlement of Object.values(next.areas).filter((a) => a.kind === "settlement")) planDistricts(ctx, settlement.id);
+  }
   next.life = LIFE;
   return next;
 }
@@ -2075,7 +2106,7 @@ export function afterFight(area: Pick<Area, "occupants">, standing: { id: string
 // their own so that nothing is ever put in them.
 // ---------------------------------------------------------------------------------------------
 
-export type Form = "stairs" | "lift" | "ladder" | "corridor" | "walkway" | "gallery";
+export type Form = "stairs" | "lift" | "ladder" | "corridor" | "walkway" | "gallery" | "roof" | "pit";
 export const formOf = (a: Pick<Area, "tags">): Form | undefined => a.tags.find((t) => t.startsWith("form:"))?.slice(5) as Form | undefined;
 const tagNumber = (a: Pick<Area, "tags">, name: string): number | undefined => {
   const tag = a.tags.find((t) => t.startsWith(`${name}:`));
@@ -2111,7 +2142,7 @@ function levelsOf(building: Area, rooms: Area[]): Map<string, number> {
 // walkways, a gallery and a ladder. Rooms already joined by one are left alone, so this can be
 // run again on a building that has been edited.
 function linkLevels(world: World, building: Area, seed: number) {
-  const rooms = childrenOf(world, building.id).filter((a) => a.kind === "room");
+  const rooms = childrenOf(world, building.id).filter((a) => a.kind === "room" && formOf(a) !== "pit");
   if (rooms.length < 2) return;
   const real = rooms.filter((a) => !formOf(a));
   const levels = levelsOf(building, real);
@@ -2198,7 +2229,7 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
   if (!building) return;
   // Stairwells, lifts and the like between rooms on different floors (see Levels)
   linkLevels(world, building, seed);
-  const rooms = childrenOf(world, buildingId).filter((a) => a.kind === "room");
+  const rooms = childrenOf(world, buildingId).filter((a) => a.kind === "room" && formOf(a) !== "pit");
   if (!rooms.length) return;
   const r = createRandom(seed + Number(buildingId.replace(/\D/g, "") || 1) * 7919);
   const wild = doorsOf(building.type, "") === DOORS.wild;
@@ -2465,28 +2496,58 @@ export const ALERT = { unaware: 0, suspicious: 1, questioning: 2, confronting: 3
 export type Approach = "open" | "sneak" | "secret";
 
 export const watchersOf = (area: Area): Occupant[] => area.occupants.filter((o) => o.disposition === "hostile" && !!o.hitPoints);
+
+// Who watches a place: the hostile creatures in it and, in the street of a district or on a roof
+// or catwalk over it (house rule: all of that is in the open and in sight), those on the roofs
+// and catwalks of the district
+export function watchersAt(world: World, areaId: string): Occupant[] {
+  const area = world.areas[areaId];
+  if (!area) return [];
+  return [...watchersOf(area), ...exposedRooms(world, areaId).flatMap((r) => watchersOf(r))];
+}
+
+// The roofs and catwalks of a district that can see (and be seen from) a place in the open: its
+// street, or a roof or catwalk. Nothing for a room indoors.
+export const SIGHT_SQUARES = 18;
+
+export function exposedRooms(world: World, areaId: string): Area[] {
+  const area = world.areas[areaId];
+  if (!area || (area.kind !== "building" && !openAir(area))) return [];
+  const district = districtAt(world, areaId);
+  if (!district) return [];
+  // In sight: on the roofs and catwalks of this building and of those within 18 squares (90 feet) of it
+  const boxes = world.districtPlans?.[district.id]?.boxes ?? {};
+  const mine = boxes[area.kind === "building" ? area.id : area.parentId ?? ""];
+  const near = (id: string) => {
+    const other = boxes[id];
+    if (!mine || !other) return true;
+    const gap = Math.max(0, other.x - (mine.x + mine.width), mine.x - (other.x + other.width), other.y - (mine.y + mine.height), mine.y - (other.y + other.height));
+    return gap <= SIGHT_SQUARES;
+  };
+  return district.buildingIds.filter(near).flatMap((id) => childrenOf(world, id)).filter((r) => r.kind === "room" && openAir(r) && r.id !== areaId);
+}
 const talks = (o: Occupant) => o.role !== "wildlife" && o.role !== "horror";
 const alarmOf = (world: World, area: Area) => !!(area.kind === "room" && area.parentId && world.areas[area.parentId]?.alarm);
 
 // What a Stealth check must beat: the watchers' best passive Perception, more once the alarm is up
 export function watchDC(world: World, areaId: string): number {
   const area = world.areas[areaId];
-  const best = Math.max(0, ...watchersOf(area).map((o) => o.saves?.wisdom ?? 0));
+  const best = Math.max(0, ...watchersAt(world, areaId).map((o) => o.saves?.wisdom ?? 0));
   return 10 + best + (alarmOf(world, area) ? 5 : 0);
 }
 
 // A level the watchers can actually be at: beasts and horrors do not question or warn
-export function alertFor(area: Area, level: number): number {
+export function alertFor(area: Area, level: number, watchers: Occupant[] = watchersOf(area)): number {
   const clamped = Math.max(0, Math.min(4, level));
-  return (clamped === ALERT.questioning || clamped === ALERT.confronting) && !watchersOf(area).some(talks) ? ALERT.attacking : clamped;
+  return (clamped === ALERT.questioning || clamped === ALERT.confronting) && !watchers.some(talks) ? ALERT.attacking : clamped;
 }
 
 // Where the watch starts when the party arrives. `stealth` is the Stealth check total when sneaking.
 export function arrivalAlert(world: World, areaId: string, approach: Approach, stealth = 0): number {
   const area = world.areas[areaId];
-  if (!area || !watchersOf(area).length) return ALERT.unaware;
+  if (!area || !watchersAt(world, areaId).length) return ALERT.unaware;
   const alarm = alarmOf(world, area);
-  const open = alertFor(area, alarm ? ALERT.attacking : area.gateway ? ALERT.questioning : ALERT.confronting);
+  const open = alertFor(area, alarm ? ALERT.attacking : area.gateway ? ALERT.questioning : ALERT.confronting, watchersAt(world, areaId));
   if (approach === "secret") return alarm ? ALERT.suspicious : ALERT.unaware;
   if (approach === "sneak") {
     const dc = watchDC(world, areaId);
@@ -2499,7 +2560,7 @@ export function arrivalAlert(world: World, areaId: string, approach: Approach, s
 export function setAlert(world: World, areaId: string, level: number, allowed = false): World {
   const area = world.areas[areaId];
   if (!area) return world;
-  const alert = alertFor(area, level);
+  const alert = alertFor(area, level, watchersAt(world, areaId));
   const areas = { ...world.areas, [areaId]: { ...area, alert, allowed: allowed || undefined } };
   const parent = area.parentId ? world.areas[area.parentId] : undefined;
   if (alert === ALERT.attacking && area.kind === "room" && parent && !parent.alarm) areas[parent.id] = { ...parent, alarm: true };
@@ -2531,7 +2592,7 @@ const SEARCH_MINUTES: Record<Crime, number> = { trespass: 30, theft: 60, brawl: 
 export interface Pursuit {
   crime: Crime;
   scene: string; // the area where it was done
-  district: string; // the settlement the officers search (see districtOf)
+  district: string; // the settlement the officers search (see settlementOf)
   arrivesAt: number; // the minute the officers reach the scene
   searchUntil: number; // the minute the search for the offenders is called off
   officers: number;
@@ -2540,7 +2601,7 @@ export interface Pursuit {
 }
 
 // The settlement an area is in (or the area itself, out in space or where there is none)
-export function districtOf(world: World, areaId: string): string {
+export function settlementOf(world: World, areaId: string): string {
   for (let id: string | null = areaId; id; id = world.areas[id]?.parentId ?? null) if (world.areas[id]?.kind === "settlement") return id;
   return areaId;
 }
@@ -2565,7 +2626,7 @@ export function reportCrime(world: World, areaId: string, crime: Crime, now: num
   const cartel = CRIME.test(ruler);
   const resp = responseFor(lawAt(world, areaId), crime, cartel);
   if (!resp) return world;
-  const district = districtOf(world, areaId);
+  const district = settlementOf(world, areaId);
   const prior = world.pursuit && world.pursuit.district === district && now < world.pursuit.searchUntil ? world.pursuit : undefined;
   const arrivesAt = prior ? Math.min(prior.arrivesAt, now + resp.delay) : now + resp.delay;
   const pursuit: Pursuit = {
@@ -2586,7 +2647,7 @@ export function reportCrime(world: World, areaId: string, crime: Crime, now: num
 export function pursuitAt(world: World, now: number, areaId?: string): { phase: "coming" | "searching"; minutes: number; here: boolean; pursuit: Pursuit } | null {
   const p = world.pursuit;
   if (!p || now >= p.searchUntil) return null;
-  const here = !!areaId && districtOf(world, areaId) === p.district;
+  const here = !!areaId && settlementOf(world, areaId) === p.district;
   return now < p.arrivesAt ? { phase: "coming", minutes: p.arrivesAt - now, here, pursuit: p } : { phase: "searching", minutes: p.searchUntil - now, here, pursuit: p };
 }
 
@@ -2695,6 +2756,8 @@ export interface Exit {
   fuel?: number;
   // A hyperspace jump: the ship needs a hyperdrive
   jump?: boolean;
+  // A way that has to be climbed (out of a pit): the DC of the check
+  climb?: number;
 }
 
 // Fuel for a trip, by Starships of the Galaxy ("Fuel Usage"): one unit for a jump to hyperspeed
@@ -3011,7 +3074,7 @@ export const emptyStanding = (): Standing => ({ renown: {}, dealings: {} });
 const OPENING: Record<string, [number, number]> = {
   cantina: [10, 28], promenade: [8, 24], market: [7, 19], workshop: [8, 18], engineering: [0, 24], medcenter: [0, 24],
   spaceport: [0, 24], "landing field": [0, 24], "landing pad": [0, 24], "docking ring": [0, 24], archive: [9, 17], palace: [9, 17],
-  warehouse: [6, 18], "cargo bay": [0, 24],
+  warehouse: [6, 18], "cargo bay": [0, 24], "transit hub": [0, 24], shipyard: [0, 24], "droid dealer": [8, 19], "vehicle dealer": [8, 19],
 };
 export function openingHours(world: World, trader: Occupant, placeId: string): [number, number] {
   const building = ancestor(world, placeId, "building");
@@ -3298,10 +3361,10 @@ export function exitsOf(world: World, id: string): Exit[] {
   const exits: Exit[] = [];
   for (const path of indexOf(world).paths.get(id) ?? []) {
     const to = path.from === id ? path.to : path.from;
-    exits.push({ to, via: "path", label: path.label, travel: path.travel, pathId: path.id, locked: path.locked, hidden: path.hidden, ...(path.kind === "hyperlane" || path.kind === "sublight" ? { needsShip: true, fuel: tripFuel(path.kind, path.travel), jump: path.kind === "hyperlane" || undefined } : {}) });
+    exits.push({ to, via: "path", label: path.label, travel: path.travel, pathId: path.id, locked: path.locked, hidden: path.hidden, ...(path.climb ? { climb: path.climb } : {}), ...(path.kind === "hyperlane" || path.kind === "sublight" ? { needsShip: true, fuel: tripFuel(path.kind, path.travel), jump: path.kind === "hyperlane" || undefined } : {}) });
   }
   for (const child of childrenOf(world, id)) {
-    if (child.gateway && ENTER[area.kind]) exits.push({ to: child.id, via: "enter", label: ENTER[area.kind]!, travel: "", ...(area.kind === "system" || area.kind === "planet" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
+    if (child.gateway && ENTER[area.kind]) exits.push({ to: child.id, via: "enter", label: formOf(child) === "roof" ? "Climb the ladder to" : ENTER[area.kind]!, travel: "", ...(area.kind === "system" || area.kind === "planet" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
   }
   for (const child of childrenOf(world, id)) {
     if (child.secretEntry) exits.push({ to: child.id, via: "enter", label: `Slip in through the ${child.secretEntry.name.toLowerCase()} to`, travel: "", secret: true, hidden: !child.secretEntry.found || undefined });
@@ -3311,7 +3374,7 @@ export function exitsOf(world: World, id: string): Exit[] {
     exits.push({ to: parent.id, via: "leave", label: `Slip out through the ${area.secretEntry.name.toLowerCase()} to`, travel: "", secret: true, hidden: !area.secretEntry.found || undefined });
   }
   if (area.gateway && parent && LEAVE[area.kind]) {
-    exits.push({ to: parent.id, via: "leave", label: LEAVE[area.kind]!, travel: "", ...(area.kind === "planet" || area.kind === "settlement" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
+    exits.push({ to: parent.id, via: "leave", label: formOf(area) === "roof" ? "Climb down to" : LEAVE[area.kind]!, travel: "", ...(area.kind === "planet" || area.kind === "settlement" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
   }
   return exits;
 }
@@ -3531,7 +3594,7 @@ export function validateWorld(world: World, catalog?: WorldCatalog): string[] {
     const to = world.areas[path.to];
     if (!from || !to) problems.push(`A ${path.label} leads to an area that does not exist.`);
     else if (from.kind !== to.kind || PATH_KIND[from.kind] !== path.kind) problems.push(`The ${path.label} between ${from.name} and ${to.name} joins areas it cannot join.`);
-    else if (from.kind !== "system" && from.parentId !== to.parentId) problems.push(`The ${path.label} between ${from.name} and ${to.name} crosses out of its ${world.areas[from.parentId!]?.kind}.`);
+    else if (from.kind !== "system" && from.parentId !== to.parentId && !(path.label === "Catwalk" && from.kind === "room" && ancestor(world, from.id, "settlement")?.id === ancestor(world, to.id, "settlement")?.id) && !(path.label === "Transit line" && from.kind === "building" && ancestor(world, from.id, "planet")?.id === ancestor(world, to.id, "planet")?.id)) problems.push(`The ${path.label} between ${from.name} and ${to.name} crosses out of its ${world.areas[from.parentId!]?.kind}.`);
     const key = [path.from, path.to].sort().join("|");
     if (path.from === path.to || seenPaths.has(key)) problems.push(`Duplicate or looping ${path.label} at ${from?.name}.`);
     seenPaths.add(key);
@@ -4074,7 +4137,7 @@ export interface Ride {
   blocked?: string;
 }
 
-export function groundRides(args: { km: number; vehicles: PartyVehicle[]; companions: Companion[]; riders: number; transport: Transport; hire?: boolean }): Ride[] {
+export function groundRides(args: { km: number; vehicles: PartyVehicle[]; companions: Companion[]; riders: number; transport: Transport; hire?: boolean; transit?: boolean }): Ride[] {
   const { km, vehicles, companions, riders, transport } = args;
   const rides: Ride[] = [];
   const pace = transport.pace.find((p) => p.pace === "Normal")?.milesPerHour ?? 3;
@@ -4094,6 +4157,9 @@ export function groundRides(args: { km: number; vehicles: PartyVehicle[]; compan
     const mph = transport.vehicles.find((v) => v.name === "Landspeeder")?.mph ?? 220;
     rides.push({ id: "hired", label: "Hired ride", minutes: Math.max(10, Math.round((km / (mph * KM_PER_MILE)) * 60) + 10), fare: 5 + Math.ceil(km / 4) });
   }
+  // The transit line between two hubs: a fast mass-transit train that anyone may take, at a fare
+  // far under a hired ride's (house rule: the books price no fares)
+  if (args.transit) rides.push({ id: "transit", label: "Transit line", minutes: Math.max(10, Math.round((km / (180 * KM_PER_MILE)) * 60) + 15), fare: 2 + Math.ceil(km / 12) });
   return rides;
 }
 
@@ -4117,6 +4183,8 @@ function dealerTrade(world: World, building: Area, room: Area, r: Random): strin
   const planet = ancestor(world, room.id, "planet");
   if (!settlement) return undefined;
   if (building.type === "workshop" && /shopfront/i.test(room.name) && ["city", "town", "station"].includes(settlement.type)) return "vehicles";
+  if (building.type === "vehicle dealer" && /showroom/i.test(room.name)) return "vehicles";
+  if (building.type === "droid dealer" && /showroom/i.test(room.name)) return "tech";
   if (building.type === "market" && /stalls/i.test(room.name) && ["town", "outpost", "village"].includes(settlement.type) && !["urban", "gas giant"].includes(planet?.type ?? "") && hashOf(room.id) % 2 === 0) return "mounts";
   return undefined;
 }
@@ -5474,4 +5542,736 @@ export function refitPlan(sheet: { size: string; hullMax: number; hullDice: numb
   const perDie = Math.max(1, sheet.hullMax / sheet.hullDice);
   const dice = Math.max(1, Math.ceil((sheet.hullMax - hull) / perDie));
   return { dice, cost: Math.round(100 * dice * (refit.cost[sheet.size] ?? 1)), hours: refit.hours[sheet.size] ?? 8 };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Districts (house rule; the books give no city). A settlement's buildings stand in districts of
+// up to six that belong together and share one map of streets and alleys: the palace with the
+// garrison and the archive (the civic quarter); the market with the workshops, the warehouses and
+// the homes of the working people (market row); the spaceport with the gates, the cantina and
+// whatever hides near them (the docks). Settlements of five or six buildings are one district.
+// The grouping is worked out from what the buildings are, so older worlds have it too.
+// ---------------------------------------------------------------------------------------------
+
+export type DistrictTheme = "civic" | "market" | "docks";
+
+export interface District {
+  id: string; // the settlement's id and the district's number: "<settlement>/<n>"
+  settlementId: string;
+  theme: DistrictTheme;
+  name: string;
+  buildingIds: string[];
+}
+
+const THEMES: [RegExp, DistrictTheme][] = [
+  [/^(palace|garrison|archive|command post|operations center)$/, "civic"],
+  [/^(market|workshop|warehouse|residences|tenements|droid dealer|vehicle dealer|engineering|habitat ring|cargo bay|medcenter)$/, "market"],
+  [/^(spaceport|landing field|landing pad|docking ring|city gate|town gate|cantina|promenade|hideout|transit hub|shipyard)$/, "docks"],
+];
+const WILD_SETTLEMENTS = ["cave system", "ruins", "crash site", "raider camp"];
+export const DISTRICT_MAX = 6;
+
+// A number in [0, 1) from a key: the same key always gives the same number
+export function unitOf(key: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  h ^= h >>> 13;
+  h = Math.imul(h, 0x5bd1e995);
+  h ^= h >>> 15;
+  return (h >>> 0) / 4294967296;
+}
+
+// The districts of a settlement (none for wild sites, where a building stands alone). The
+// buildings are put in a line by what they are (civic, then market, then docks) and by where they
+// stand, and the line is cut into as few districts as will hold them, of near the same size, so a
+// district is four to six buildings where the settlement has the buildings for it.
+export function districtsOf(world: World, settlementId: string): District[] {
+  const settlement = world.areas[settlementId];
+  if (!settlement || settlement.kind !== "settlement" || WILD_SETTLEMENTS.includes(settlement.type)) return [];
+  const buildings = childrenOf(world, settlementId).filter((a) => a.kind === "building");
+  if (!buildings.length) return [];
+  const palace = buildings.some((b) => b.type === "palace");
+  const order: DistrictTheme[] = ["civic", "market", "docks"];
+  const themeOf = (b: Area): DistrictTheme => {
+    if (b.type === "residences" && palace) return "civic";
+    return THEMES.find(([re]) => re.test(b.type))?.[1] ?? "market";
+  };
+  const line = buildings
+    .map((b) => ({ b, theme: themeOf(b) }))
+    .sort((p, q) => order.indexOf(p.theme) - order.indexOf(q.theme) || p.b.position.x - q.b.position.x || p.b.id.localeCompare(q.b.id));
+  const count = Math.max(1, Math.ceil(line.length / DISTRICT_MAX), Math.round(line.length / 5));
+  const size = Math.floor(line.length / count);
+  const extra = line.length % count;
+  const used = new Map<string, number>();
+  const districts: District[] = [];
+  let at = 0;
+  for (let n = 0; n < count; n++) {
+    const members = line.slice(at, at + size + (n < extra ? 1 : 0));
+    at += members.length;
+    // Named for what most of it is
+    const votes = order.map((theme) => ({ theme, n: members.filter((m) => m.theme === theme).length })).sort((p, q) => q.n - p.n);
+    const theme = votes[0].theme;
+    const base = theme === "civic" ? (members.some((m) => m.b.type === "palace") ? "Palace Quarter" : "Civic Quarter")
+      : theme === "market" ? "Market Row"
+      : members.some((m) => /port|landing|docking|shipyard/.test(m.b.type)) ? "Dockside" : "Gate Quarter";
+    used.set(base, (used.get(base) ?? 0) + 1);
+    districts.push({ id: `${settlementId}/${n}`, settlementId, theme, name: used.get(base)! > 1 ? `${base} ${used.get(base)}` : base, buildingIds: members.map((m) => m.b.id) });
+  }
+  return districts;
+}
+
+// The district an area (a building or a room in one) is in, if it is in a settlement
+export function districtAt(world: World, areaId: string): District | undefined {
+  const building = trailOf(world, areaId).find((a) => a.kind === "building");
+  const settlementId = building?.parentId;
+  if (!building || !settlementId) return undefined;
+  return districtsOf(world, settlementId).find((d) => d.buildingIds.includes(building.id));
+}
+
+// ---------------------------------------------------------------------------------------------
+// The people in a district (house rule). Now and then an encounter waits there for the party:
+// someone who needs help, a gang that means to rob them, a fixer with a job and, once the party
+// has earned renown with the settlement's faction, a master who teaches the path of powers the
+// party lacks: the Force to one who has tech, tech to one who has the Force, and to one who has
+// neither whichever suits their alignment and skills. One encounter is open at a time; it stays
+// until it is dealt with or the party leaves the district. Rolls are keyed by district, day and
+// hour, so the same visit always comes out the same way.
+// ---------------------------------------------------------------------------------------------
+
+export const MASTER_RENOWN = 3;
+
+export type EncounterKind = "help" | "robbery" | "fixer" | "master";
+
+export interface Encounter {
+  id: string;
+  kind: EncounterKind;
+  districtId: string;
+  settlementId: string;
+  person: string;
+  title: string;
+  text: string;
+  target?: string; // the fixer's job: a building of the district the party is to reach
+  faction?: string; // whose renown the party earns or loses
+}
+
+// What the party knows of itself, for who will teach it and what
+export interface Learner {
+  level: number;
+  credits: number;
+  force: boolean; // it can already use Force powers
+  tech: boolean; // it can already use tech powers
+  forceAlign: "Light" | "Dark" | "Universal" | "None";
+  // What suits it when it has neither (see leaningOf)
+  leaning: "force" | "tech";
+  known: string[];
+}
+
+export const forceAlignOf = (text: string | null | undefined): Learner["forceAlign"] =>
+  /dark/i.test(text ?? "") ? "Dark" : /light/i.test(text ?? "") ? "Light" : /universal/i.test(text ?? "") ? "Universal" : "None";
+
+// Which path suits someone with neither: the Force for one with a Force alignment or whose
+// Wisdom or Charisma is the greater, tech for one trained in technical skills or whose
+// Intelligence is
+export function leaningOf(forceAlignment: string | null | undefined, skills: string[], abilities: Record<string, number> = {}): Learner["leaning"] {
+  if (forceAlignOf(forceAlignment) !== "None") return "force";
+  if (skills.some((s) => /technology|piloting|investigation|engineering|mechanics/i.test(s))) return "tech";
+  return Math.max(abilities.wisdom ?? 10, abilities.charisma ?? 10) > (abilities.intelligence ?? 10) ? "force" : "tech";
+}
+
+// The path a master offers: the one the learner lacks
+export function pathToTeach(learner: Learner): "force" | "tech" | null {
+  if (learner.force && learner.tech) return null;
+  if (learner.force) return "tech";
+  if (learner.tech) return "force";
+  return learner.leaning;
+}
+
+export interface EncounterOption {
+  label: string;
+  abilities?: string[]; // the check, if there is one
+  skill?: string;
+  dc?: number;
+  cost?: number; // paid before anything else
+}
+
+export function optionsOf(enc: Encounter, level: number, path?: "force" | "tech" | null): EncounterOption[] {
+  if (enc.kind === "help") return [{ label: "Help them (Wisdom, Medicine, DC 12)", abilities: ["wisdom"], skill: "medicine", dc: 12 }, { label: "Walk on" }];
+  if (enc.kind === "robbery")
+    return [
+      { label: "Talk your way out (Charisma, DC 13)", abilities: ["charisma"], dc: 13 },
+      { label: "Fight them off (Strength or Dexterity, DC 12)", abilities: ["strength", "dexterity"], dc: 12 },
+    ];
+  if (enc.kind === "fixer") return [{ label: "Hear the job" }, { label: "Walk on" }];
+  const cost = 200 * level;
+  return [{ label: `Learn ${path === "tech" ? "tech" : "the ways of the Force"} from them (${cost} credits, two days)`, cost }, { label: "Walk on" }];
+}
+
+// What a master gives one who takes up a path: its first powers (an at-will one and one of the
+// first level, of the learner's alignment where the path has one, and none already known) and a
+// pool of power points to cast them with (house rule: the character's level plus the casting
+// ability's modifier, at least two). The points are spent from the same pool a caster's are.
+export interface Teaching {
+  path: "force" | "tech";
+  powers: any[];
+  points: number;
+}
+
+export function teachingFor(learner: Learner, seed: string, castMod = 0): Teaching | null {
+  const path = pathToTeach(learner);
+  if (!path) return null;
+  const kind = path === "force" ? "Force" : "Tech";
+  const fits = (p: any, level: number) =>
+    p.powerType === kind && p.level === level && !learner.known.includes(p.name) && (path === "tech" || p.forceAlignment === "Universal" || p.forceAlignment === learner.forceAlign || (learner.forceAlign === "None" && p.forceAlignment === "Universal"));
+  const pick = (level: number, salt: string) => {
+    const pool = (powerData as any[]).filter((p) => fits(p, level));
+    return pool.length ? pool[Math.floor(unitOf(`${seed}|${salt}`) * pool.length)] : undefined;
+  };
+  const powers = [pick(0, "at-will"), pick(1, "first")].filter(Boolean);
+  if (!powers.length) return null;
+  return { path, powers, points: Math.max(2, Math.min(14, learner.level + castMod)) };
+}
+
+// What an encounter comes to: the message to the party and what changes. `success` is the check's
+// result (ignored where there is none).
+export interface EncounterResult {
+  message: string;
+  credits?: number;
+  renown?: number;
+  damage?: number;
+  crime?: boolean; // a brawl in the street, reported to the law
+  quest?: Quest;
+  teaching?: Teaching;
+}
+
+export function encounterResult(enc: Encounter, option: number, success: boolean, learner: Learner, targetName = "the place", castMod = 0): EncounterResult {
+  const lost = -Math.floor(learner.credits * 0.1);
+  if (enc.kind === "help") {
+    if (option !== 0) return { message: `You walk on. Someone else will have to help ${enc.person}.` };
+    return success
+      ? { message: `${enc.person} gets to a medcentre. They press a few credits into your hand.`, credits: 50 * learner.level, renown: 1 }
+      : { message: `You try, but ${enc.person} is past what you can do here. They thank you anyway.` };
+  }
+  if (enc.kind === "robbery") {
+    if (option === 0) return success ? { message: "They look at your holster and find someone else to bother." } : { message: "They take a tenth of your credits and go.", credits: lost };
+    return success
+      ? { message: "You put them down in the alley. Someone will have heard the brawl.", credits: 25 * learner.level, crime: true }
+      : { message: "They get the better of you: a tenth of your credits gone, and a cut to pay for.", credits: lost, damage: 3, crime: true };
+  }
+  if (enc.kind === "fixer") {
+    if (option !== 0) return { message: "You leave the fixer to their deals." };
+    const quest: Quest = {
+      id: `job-${enc.id}`,
+      title: `A job from ${enc.person}`,
+      description: `${enc.person} wants a package taken to ${targetName}. It pays ${100 * learner.level} credits.`,
+      status: "active",
+      objectives: [{ description: `Take the package to ${targetName}`, completed: false, target: { kind: "reach", areaId: enc.target ?? "" } }],
+      reward: { credits: 100 * learner.level, items: [], experience: 0 },
+    };
+    return { message: `${enc.person} hands you a chip with the drop point on it.`, quest };
+  }
+  if (option !== 0) return { message: "You thank the master and go on." };
+  const teaching = teachingFor(learner, enc.id, castMod);
+  return teaching
+    ? { message: `${enc.person} takes you through the first lessons: ${teaching.powers.map((p) => p.name).join(" and ")}. You can now ${teaching.path === "force" ? "use the Force" : "use tech powers"}.`, teaching }
+    : { message: `${enc.person} has nothing more to teach one of your kind.` };
+}
+
+const PEOPLE = ["Old Dathan", "Pell", "Maro Vell", "Sabe Tarn", "Ilsa Korr", "Teb Rooks", "Ysolde Nim", "Carro Dask"];
+const GANGS = ["Three Hutt runners", "Two Rim hoodlums with vibroknives", "A gang of street kids with slugthrowers", "A bruiser and his two lookouts"];
+const TROUBLES = ["a sick child needs a medpac they cannot pay for", "a brother has not come out of the alley behind the cantina", "a stall was smashed and the owner is bleeding"];
+
+// Whether an encounter waits in the district for the party at this hour, and which one. `avoid` is
+// the building the party is in (a fixer's job goes elsewhere). The master comes once to a
+// settlement, to a party with renown enough with its faction and a path to be taught.
+export function rollEncounter(world: World, district: District, day: number, hour: number, learner: Learner, renown: number, avoid: string): Encounter | null {
+  const key = `${district.id}|${day}|${hour}`;
+  if (unitOf(`${key}|spawn`) >= 0.4) return null;
+  const settlementId = district.settlementId;
+  const master = renown >= MASTER_RENOWN && !!pathToTeach(learner) && !!teachingFor(learner, key) && !(world.mastersTaught ?? []).includes(settlementId);
+  const pick = unitOf(`${key}|kind`);
+  const others = district.buildingIds.filter((id) => id !== avoid);
+  // weights: help 40, robbery 35 (if there is money to take), fixer 25 (if there is a place to send them)
+  const robbery = learner.credits >= 100 ? 35 : 0;
+  const fixer = others.length > 0 ? 25 : 0;
+  const at = pick * (40 + robbery + fixer);
+  const kind: EncounterKind = master && pick < 0.3 ? "master" : at < 40 ? "help" : at < 40 + robbery ? "robbery" : fixer ? "fixer" : "help";
+  const person = PEOPLE[Math.floor(unitOf(`${key}|person`) * PEOPLE.length)];
+  const base = { id: `${key}|${kind}`, districtId: district.id, settlementId, person, faction: factionAt(world, settlementId) };
+  if (kind === "master") {
+    const path = pathToTeach(learner);
+    const teacher = path === "force" ? "a Force master" : "a master of tech";
+    return { ...base, kind, title: "A master in the street", text: `${person}, ${teacher}, has heard what you have done for people here and says you have the gift. For a fee they will start you on the path.` };
+  }
+  if (kind === "robbery") {
+    const gang = GANGS[Math.floor(unitOf(`${key}|gang`) * GANGS.length)];
+    return { ...base, kind, title: "A gang in the alley", text: `${gang} step out in front of you and ask for "a contribution".` };
+  }
+  if (kind === "fixer") {
+    const target = others[Math.floor(unitOf(`${key}|target`) * others.length)];
+    return { ...base, kind, target, title: `A job from ${person}`, text: `${person} offers work: a package, no questions, to be taken to another building of this district.` };
+  }
+  const trouble = TROUBLES[Math.floor(unitOf(`${key}|trouble`) * TROUBLES.length)];
+  return { ...base, kind: "help", title: "Someone in trouble", text: `${person} is in the street and says ${trouble}.` };
+}
+
+// ---------------------------------------------------------------------------------------------
+// District plans (house rule; the books give no city). The buildings of a district stand on one
+// grid of 5-foot squares: alleys of three squares between neighbours in a row, an avenue of six
+// between rows and a street round the whole. A building keeps its rooms as they were planned and
+// is moved as a whole, so a room's place on its grid is now a place in the district. Then:
+//   - every building of three rooms or more gets a second way in, on the other side of it;
+//   - every building gets a roof that can be climbed to by a ladder up its outside wall, seen
+//     from the street, with sentries on it (snipers, where the building is hostile);
+//   - roofs at the same height with up to a dozen squares between them are joined by a catwalk.
+// The roof, the ladder and the catwalk are rooms of their own, open to the air, so that what is
+// on them can be seen from the street and shot at from it, and the other way about.
+// ---------------------------------------------------------------------------------------------
+
+export interface DistrictPlan {
+  id: string;
+  name: string;
+  theme: DistrictTheme;
+  width: number;
+  height: number;
+  // Each building's box on the district's grid, in squares
+  boxes: Record<string, { x: number; y: number; width: number; height: number }>;
+  // Paved ground between the buildings
+  ways: { x: number; y: number; width: number; height: number; kind: "avenue" | "alley" }[];
+}
+
+const ALLEY = 3;
+const AVENUE = 6;
+const EDGE = 6;
+const CATWALK_SPAN = 12;
+
+const floorsOf = (l: RoomLayout): [number, number] => [l.level ?? 0, (l.level ?? 0) + (l.climb?.levels ?? 0) + (l.tall ? 1 : 0)];
+const layoutsClash = (a: RoomLayout, b: RoomLayout) => overlap(a, b) && floorsOf(a)[0] <= floorsOf(b)[1] && floorsOf(b)[0] <= floorsOf(a)[1];
+
+// A room open to the air: a roof, or a walkway between two places
+export const openAir = (a: Pick<Area, "tags">) => formOf(a) === "roof" || formOf(a) === "walkway";
+
+// The squares of a room's wall that nothing is against (no other room at the same floors, no way in)
+function freeWallSquares(all: Area[], room: Area, side: Side): number[] {
+  const l = room.layout!;
+  const length = side === "n" || side === "s" ? l.width : l.height;
+  return Array.from({ length }, (_, i) => i).filter((i) => {
+    const s = wallSquare(l, side, i);
+    const beyond: RoomLayout = { x: l.x + s.x + (side === "e" ? 1 : side === "w" ? -1 : 0), y: l.y + s.y + (side === "s" ? 1 : side === "n" ? -1 : 0), width: 1, height: 1, assets: [], level: l.level, climb: l.climb, tall: l.tall };
+    return !all.some((o) => o !== room && o.layout && layoutsClash(beyond, o.layout)) && !l.assets.some((a) => a.side && a.x === s.x && a.y === s.y);
+  });
+}
+
+// The square outside a wall square, on the district's grid
+const outsideOf = (l: RoomLayout, side: Side, along: number) => {
+  const s = wallSquare(l, side, along);
+  return { x: l.x + s.x + (side === "e" ? 1 : side === "w" ? -1 : 0), y: l.y + s.y + (side === "s" ? 1 : side === "n" ? -1 : 0) };
+};
+
+// A door set in the wall two rooms share, at the middle of what they share (or the nearest square
+// to it that is free); false if they share no wall
+function doorBetween(a: Area, b: Area, path: Path): boolean {
+  const la = a.layout!;
+  const lb = b.layout!;
+  let side: Side | undefined;
+  let low = 0;
+  let high = -1;
+  if (la.x + la.width === lb.x || lb.x + lb.width === la.x) {
+    side = la.x + la.width === lb.x ? "e" : "w";
+    low = Math.max(la.y, lb.y);
+    high = Math.min(la.y + la.height, lb.y + lb.height) - 1;
+  } else if (la.y + la.height === lb.y || lb.y + lb.height === la.y) {
+    side = la.y + la.height === lb.y ? "s" : "n";
+    low = Math.max(la.x, lb.x);
+    high = Math.min(la.x + la.width, lb.x + lb.width) - 1;
+  }
+  if (!side || high < low) return false;
+  const vertical = side === "e" || side === "w";
+  const taken = (l: RoomLayout, s: Side, at: number) => {
+    const sq = wallSquare(l, s, at - (vertical ? l.y : l.x));
+    return l.assets.some((x) => x.side && x.x === sq.x && x.y === sq.y);
+  };
+  const middle = Math.floor((low + high) / 2);
+  const options = Array.from({ length: high - low + 1 }, (_, i) => low + i).sort((p, q) => Math.abs(p - middle) - Math.abs(q - middle));
+  const at = options.find((o) => !taken(la, side!, o) && !taken(lb, OPPOSITE[side!], o));
+  if (at === undefined) return false;
+  la.assets.push({ id: `${a.id}-${la.assets.length + 1}`, kind: "door", name: path.label, ...wallSquare(la, side, at - (vertical ? la.y : la.x)), w: 1, h: 1, side, ref: path.id, to: b.id });
+  lb.assets.push({ id: `${b.id}-${lb.assets.length + 1}`, kind: "door", name: path.label, ...wallSquare(lb, OPPOSITE[side], at - (vertical ? lb.y : lb.x)), w: 1, h: 1, side: OPPOSITE[side], ref: path.id, to: a.id });
+  return true;
+}
+
+export function planDistrict(ctx: Context, district: District): DistrictPlan | undefined {
+  const { world } = ctx;
+  const existing = world.districtPlans?.[district.id];
+  if (existing) return existing;
+  let members = district.buildingIds.map((id) => world.areas[id]).filter((b): b is Area => !!b);
+  for (const b of members) if (childrenOf(world, b.id).some((a) => a.kind === "room" && !a.layout)) planBuilding(world, b.id);
+  const roomsOf = (b: Area) => childrenOf(world, b.id).filter((a) => a.kind === "room" && a.layout);
+  members = members.filter((b) => roomsOf(b).length > 0);
+  if (members.length < 2) return undefined;
+  const r = createRandom(Math.floor(unitOf(`${district.id}|plan`) * 1e9));
+
+  // Each building's rooms start from its own corner, then are set down where the building goes
+  const sized = members.map((b) => {
+    const rooms = roomsOf(b);
+    const x = Math.min(...rooms.map((a) => a.layout!.x));
+    const y = Math.min(...rooms.map((a) => a.layout!.y));
+    for (const a of rooms) {
+      a.layout!.x -= x;
+      a.layout!.y -= y;
+    }
+    return { b, width: Math.max(...rooms.map((a) => a.layout!.x + a.layout!.width)), height: Math.max(...rooms.map((a) => a.layout!.y + a.layout!.height)) };
+  });
+  const order = [...sized].sort((p, q) => Number(!!q.b.gateway) - Number(!!p.b.gateway) || q.width * q.height - p.width * p.height);
+  const target = Math.max(...order.map((o) => o.width), Math.ceil(Math.sqrt(order.reduce((n, o) => n + o.width * o.height, 0)) * 1.8));
+  const rows: (typeof order)[] = [[]];
+  let rowWidth = 0;
+  for (const o of order) {
+    const row = rows[rows.length - 1];
+    if (row.length && rowWidth + ALLEY + o.width > target) {
+      rows.push([o]);
+      rowWidth = o.width;
+    } else {
+      rowWidth += (row.length ? ALLEY : 0) + o.width;
+      row.push(o);
+    }
+  }
+  const boxes: DistrictPlan["boxes"] = {};
+  const ways: DistrictPlan["ways"] = [];
+  let y = EDGE;
+  let right = 0;
+  rows.forEach((row, n) => {
+    const tall = Math.max(...row.map((o) => o.height));
+    let x = EDGE;
+    row.forEach((o, i) => {
+      boxes[o.b.id] = { x, y, width: o.width, height: o.height };
+      for (const a of roomsOf(o.b)) {
+        a.layout!.x += x;
+        a.layout!.y += y;
+      }
+      x += o.width;
+      if (i < row.length - 1) {
+        ways.push({ x, y, width: ALLEY, height: tall, kind: "alley" });
+        x += ALLEY;
+      }
+    });
+    right = Math.max(right, x);
+    y += tall;
+    if (n < rows.length - 1) {
+      ways.push({ x: EDGE, y, width: 0, height: AVENUE, kind: "avenue" });
+      y += AVENUE;
+    }
+  });
+  const width = right + EDGE;
+  const height = y + EDGE;
+  for (const w of ways) if (w.kind === "avenue") w.width = right - EDGE;
+
+  const everyRoom = () => members.flatMap(roomsOf);
+
+  // A second way in, on the side of the building farthest from the first, for any building of
+  // three rooms or more that has none
+  for (const b of members) {
+    const rooms = roomsOf(b);
+    const real = rooms.filter((a) => !formOf(a));
+    if (real.length < 3 || real.filter((a) => a.gateway).length >= 2) continue;
+    const root = real.find((a) => a.gateway) ?? real[0];
+    const from = { x: root.layout!.x + root.layout!.width / 2, y: root.layout!.y + root.layout!.height / 2 };
+    const candidates = real
+      .filter((a) => a !== root && !a.gateway && (a.layout!.level ?? 0) === 0 && !a.tags.includes("code:K") && !a.tags.includes("code:H") && !holdsShips(a) && !a.secretEntry)
+      .sort((p, q) => Math.hypot(q.layout!.x - from.x, q.layout!.y - from.y) - Math.hypot(p.layout!.x - from.x, p.layout!.y - from.y));
+    for (const room of candidates) {
+      const side = (["s", "n", "e", "w"] as Side[]).find((s) => freeWallSquares(everyRoom(), room, s).length > 0);
+      if (!side) continue;
+      const free = freeWallSquares(everyRoom(), room, side);
+      const l = room.layout!;
+      l.assets.push({ id: `${room.id}-${l.assets.length + 1}`, kind: "exit", name: "Side entrance", ...wallSquare(l, side, free[Math.floor(free.length / 2)]), w: 1, h: 1, side, to: b.id });
+      room.gateway = true;
+      break;
+    }
+  }
+
+  // Open-air rooms of the district
+  const make = (b: Area, name: string, form: Form, layout: RoomLayout, tags: string[]): Area => {
+    const area: Area = {
+      id: nextId(world, "a"), kind: "room", parentId: b.id, name, type: name.toLowerCase(), description: "", tags: [`form:${form}`, ...tags],
+      position: { x: 0, y: 0, z: 0 }, danger: 0, occupants: [], ships: [], loot: [], faction: b.faction, layout,
+    };
+    world.areas[area.id] = area;
+    return area;
+  };
+  // The ground (level 0, nothing built at or above it) a ladder's foot can stand on
+  const groundOpen = (px: number, py: number) => !everyRoom().some((o) => o.layout && (o.layout.level ?? 0) >= 0 && !openAir(o) && px >= o.layout.x && px < o.layout.x + o.layout.width && py >= o.layout.y && py < o.layout.y + o.layout.height)
+    && px >= 0 && py >= 0 && px < width && py < height;
+
+  // A roof for each building, on the highest room that has a wall to the street to set a ladder
+  // against (hangars have their own sky)
+  const roofs: { roof: Area; building: Area }[] = [];
+  for (const b of members) {
+    const real = roomsOf(b).filter((a) => !formOf(a) && (a.layout!.level ?? 0) >= 0 && !a.layout!.roof);
+    const ranked = [...real].sort((p, q) => (q.layout!.level ?? 0) - (p.layout!.level ?? 0) || q.layout!.width * q.layout!.height - p.layout!.width * p.layout!.height);
+    for (const room of ranked) {
+      const l = room.layout!;
+      let spot: { side: Side; along: number } | undefined;
+      for (const side of r.shuffle(["s", "n", "e", "w"] as Side[])) {
+        const free = freeWallSquares(everyRoom(), room, side).filter((i) => {
+          const o = outsideOf(l, side, i);
+          return groundOpen(o.x, o.y);
+        });
+        if (free.length) {
+          spot = { side, along: free[Math.floor(free.length / 2)] };
+          break;
+        }
+      }
+      if (!spot) continue;
+      const roofLevel = (l.level ?? 0) + 1;
+      const layout: RoomLayout = { x: l.x, y: l.y, width: l.width, height: l.height, assets: [], level: roofLevel, form: "roof" };
+      // Not inside something that stands higher over it (a hangar over a lower room)
+      if (everyRoom().some((o) => o !== room && o.layout && layoutsClash(layout, o.layout))) continue;
+      layout.assets.push({ id: "", kind: "exit", name: "Ladder down", ...wallSquare(layout, spot.side, spot.along), w: 1, h: 1, side: spot.side, to: b.id });
+      const roof = make(b, "Roof", "roof", layout, [`low:${roofLevel}`, "rise:0"]);
+      layout.assets[0].id = `${roof.id}-1`;
+      roof.gateway = true;
+      roofs.push({ roof, building: b });
+      break;
+    }
+  }
+
+  // Catwalks between roofs at the same height: the shortest ones first, so that the buildings are
+  // joined into a chain, and then one more now and then for a way round
+  type Span = { a: Area; b: Area; ba: Area; bb: Area; layout: RoomLayout; gap: number };
+  const spans: Span[] = [];
+  for (let i = 0; i < roofs.length; i++) {
+    for (let j = i + 1; j < roofs.length; j++) {
+      const [p, q] = [roofs[i], roofs[j]];
+      const [pl, ql] = [p.roof.layout!, q.roof.layout!];
+      if (pl.level !== ql.level) continue;
+      const level = pl.level ?? 1;
+      const tryAcross = (first: typeof p, second: typeof p, axis: "x" | "y") => {
+        const [fl, sl] = [first.roof.layout!, second.roof.layout!];
+        const gap = axis === "x" ? sl.x - (fl.x + fl.width) : sl.y - (fl.y + fl.height);
+        if (gap < 1 || gap > CATWALK_SPAN) return;
+        const lo = axis === "x" ? Math.max(fl.y, sl.y) : Math.max(fl.x, sl.x);
+        const hi = (axis === "x" ? Math.min(fl.y + fl.height, sl.y + sl.height) : Math.min(fl.x + fl.width, sl.x + sl.width)) - 1;
+        if (hi - lo + 1 < 2) return;
+        const at = Math.floor((lo + hi - 1) / 2);
+        const layout: RoomLayout = axis === "x"
+          ? { x: fl.x + fl.width, y: at, width: gap, height: 2, assets: [], level, form: "walkway" }
+          : { x: at, y: fl.y + fl.height, width: 2, height: gap, assets: [], level, form: "walkway" };
+        if (everyRoom().some((o) => o !== first.roof && o !== second.roof && o.layout && layoutsClash(layout, o.layout))) return;
+        spans.push({ a: first.roof, b: second.roof, ba: first.building, bb: second.building, layout, gap });
+      };
+      for (const [first, second] of [[p, q], [q, p]] as const) {
+        tryAcross(first, second, "x");
+        tryAcross(first, second, "y");
+      }
+    }
+  }
+  spans.sort((p, q) => p.gap - q.gap);
+  const group = new Map<string, string>(members.map((b) => [b.id, b.id]));
+  const root = (id: string): string => (group.get(id) === id ? id : root(group.get(id)!));
+  let made = 0;
+  for (const span of spans) {
+    const [ga, gb] = [root(span.ba.id), root(span.bb.id)];
+    const joins = ga !== gb;
+    if (!joins && (made >= members.length || !r.chance(0.35))) continue;
+    // Not across another catwalk
+    if (everyRoom().some((o) => o.layout && formOf(o) === "walkway" && layoutsClash(span.layout, o.layout))) continue;
+    const walk = make(span.ba, `Catwalk to ${span.bb.name}`, "walkway", span.layout, [`low:${span.layout.level}`, "rise:0"]);
+    const one = addPath(world, span.a, walk, "Catwalk", "10 ft.");
+    const two = addPath(world, walk, span.b, "Catwalk", `${span.gap * 5} ft.`);
+    if (!one || !two || !doorBetween(span.a, walk, one) || !doorBetween(walk, span.b, two)) {
+      // No door to be had: take it back
+      delete world.areas[walk.id];
+      world.paths = world.paths.filter((p) => p !== one && p !== two);
+      continue;
+    }
+    if (joins) group.set(ga, gb);
+    made++;
+  }
+
+  // The roofs are furnished (vents, tanks, crates for cover) and given their sentries
+  for (const { roof, building } of roofs) {
+    const template = BUILDINGS[building.type];
+    const hostile = !!template?.hostile && (template.hostile !== "faction" || (building.faction ?? world.antagonist) === world.antagonist);
+    const posted = hostile || /^(palace|garrison|command post|operations center|spaceport|city gate|town gate)$/.test(building.type);
+    roof.danger = hostile ? Math.max(1, building.danger - 1) : 0;
+    furnishRoom(roof, r, building.type);
+    if (posted) {
+      roof.tags.push("code:g");
+      populateRoom(ctx, roof);
+    }
+    placeContents(roof, r);
+  }
+
+  const plan: DistrictPlan = { id: district.id, name: district.name, theme: district.theme, width, height, boxes, ways };
+  world.districtPlans = { ...(world.districtPlans ?? {}), [district.id]: plan };
+  return plan;
+}
+
+// The districts of a settlement, planned (nothing for wild sites)
+export function planDistricts(ctx: Context, settlementId: string) {
+  for (const district of districtsOf(ctx.world, settlementId)) planDistrict(ctx, district);
+}
+
+// ---------------------------------------------------------------------------------------------
+// A fight in the street of a district. The ground is the district's own, with the buildings as
+// blocks of a height (a shot cannot pass through one, and the party cannot walk into one); the
+// roofs and the catwalks are raised floors, with their cover; a ladder joins the street to a roof.
+// Coordinates are the district's grid, as the rooms' places on it are.
+// ---------------------------------------------------------------------------------------------
+
+export interface DistrictArena {
+  district: string;
+  width: number;
+  height: number;
+  assets: RoomAsset[];
+  platforms: { z: number; x: number; y: number; width: number; height: number }[];
+  links: { from: { x: number; y: number; z: number }; to: { x: number; y: number; z: number } }[];
+}
+
+export function districtArena(world: World, districtId: string): DistrictArena | undefined {
+  const plan = world.districtPlans?.[districtId];
+  if (!plan) return undefined;
+  const rooms = Object.keys(plan.boxes).flatMap((id) => childrenOf(world, id)).filter((a) => a.kind === "room" && a.layout);
+  const assets: RoomAsset[] = [];
+  const platforms: DistrictArena["platforms"] = [];
+  const links: DistrictArena["links"] = [];
+  for (const room of rooms) {
+    const l = room.layout!;
+    const level = l.level ?? 0;
+    if (!openAir(room)) {
+      if (level < 0) continue;
+      // The block a building makes: as high as its room's roof
+      assets.push({ id: `block-${room.id}`, kind: "furniture", name: world.areas[room.parentId ?? ""]?.name ?? "Building", x: l.x, y: l.y, w: l.width, h: l.height, blocks: true, height: level + 1 + (l.climb?.levels ?? 0) });
+      continue;
+    }
+    platforms.push({ z: level, x: l.x, y: l.y, width: l.width, height: l.height });
+    for (const a of l.assets) {
+      if (a.kind === "furniture" && !a.side) assets.push({ ...a, id: `${room.id}-${a.id}`, x: l.x + a.x, y: l.y + a.y, z: level });
+      // The ladder from the street to a roof
+      if (a.kind === "exit" && a.side && formOf(room) === "roof") {
+        const foot = { x: l.x + a.x + (a.side === "e" ? 1 : a.side === "w" ? -1 : 0), y: l.y + a.y + (a.side === "s" ? 1 : a.side === "n" ? -1 : 0), z: 0 };
+        links.push({ from: foot, to: { x: l.x + a.x, y: l.y + a.y, z: level } });
+      }
+    }
+  }
+  // A little cover on the street before each way in: a pair of crates a few squares out
+  for (const id of Object.keys(plan.boxes)) {
+    const front = districtFront(world, id);
+    if (!front) continue;
+    for (const [i, side] of [-2, 2].entries()) {
+      const x = front.x + front.outward.x * 3 + Math.abs(front.outward.y) * side;
+      const y = front.y + front.outward.y * 3 + Math.abs(front.outward.x) * side;
+      const inside = assets.some((a) => a.height && x >= a.x && x < a.x + a.w && y >= a.y && y < a.y + a.h);
+      if (!inside && x >= 0 && y >= 0 && x < plan.width && y < plan.height) assets.push({ id: `crate-${id}-${i}`, kind: "furniture", name: "Crate stack", x, y, w: 1, h: 1, blocks: true, cover: true });
+    }
+  }
+  return { district: districtId, width: plan.width, height: plan.height, assets, platforms, links };
+}
+
+// The square before a building's main way in, on its district's grid, and which way it faces
+export function districtFront(world: World, buildingId: string): { x: number; y: number; outward: { x: number; y: number } } | undefined {
+  const rooms = childrenOf(world, buildingId).filter((a) => a.kind === "room" && a.layout);
+  const root = rooms.find((a) => a.gateway && !formOf(a)) ?? rooms.find((a) => a.gateway) ?? rooms[0];
+  const exit = root?.layout?.assets.find((a) => a.kind === "exit" && a.side);
+  if (!root?.layout || !exit) return undefined;
+  const outward = { x: exit.side === "w" ? -1 : exit.side === "e" ? 1 : 0, y: exit.side === "n" ? -1 : exit.side === "s" ? 1 : 0 };
+  return { x: root.layout.x + exit.x + outward.x, y: root.layout.y + exit.y + outward.y, outward };
+}
+
+// ---------------------------------------------------------------------------------------------
+// What the levels of a building hold (house rule). A hostile building keeps a sentry on its
+// gallery, a perch over the room (a gunner or sniper that can be shot back at from the floor, and
+// that shoots down at it). Some rooms have a pit under a loose flagstone: whoever steps on it
+// falls a level (1d6 damage) into a pit it can climb out of (Athletics or Dexterity, DC 12; a
+// failure costs a minute and can be tried again). Passive Perception notices the flagstone from
+// two squares away; Search finds it.
+// ---------------------------------------------------------------------------------------------
+
+export const PIT_CLIMB_DC = 12;
+
+function furnishLevels(ctx: Context, building: Area) {
+  const { world } = ctx;
+  if (building.tags.includes("levels")) return;
+  building.tags.push("levels");
+  const r = createRandom(Math.floor(unitOf(`${building.id}|levels`) * 1e9));
+  const rooms = childrenOf(world, building.id).filter((a) => a.kind === "room" && a.layout);
+  const template = BUILDINGS[building.type];
+  const hostile = !!template?.hostile && (template.hostile !== "faction" || (building.faction ?? world.antagonist) === world.antagonist);
+  const wild = WILD_BUILDINGS.includes(building.type);
+  for (const gallery of rooms.filter((a) => formOf(a) === "gallery")) {
+    if (!hostile || gallery.occupants.length) continue;
+    gallery.tags.push("code:g");
+    gallery.danger = Math.max(1, building.danger - 1);
+    populateRoom(ctx, gallery);
+    placeContents(gallery, r);
+  }
+  for (const room of rooms) {
+    const l = room.layout!;
+    if (formOf(room) || room.gateway || (l.level ?? 0) !== 0 || l.width < 6 || l.height < 5) continue;
+    if (!r.chance(hostile || wild ? 0.3 : 0.08)) continue;
+    // A square clear of the walls (and so of the doors) and of everything in the room
+    const spots: { x: number; y: number }[] = [];
+    for (let y = 2; y < l.height - 2; y++) for (let x = 2; x < l.width - 2; x++) {
+      if (!l.assets.some((a) => a.x - 1 <= x && x <= a.x + a.w && a.y - 1 <= y && y <= a.y + a.h)) spots.push({ x, y });
+    }
+    if (!spots.length) continue;
+    const spot = r.pick(spots);
+    const pitLayout: RoomLayout = { x: l.x + spot.x - 1, y: l.y + spot.y - 1, width: 3, height: 3, assets: [], level: -1, form: "pit" };
+    if (rooms.some((o) => o !== room && o.layout && layoutsClash(pitLayout, o.layout))) continue;
+    const pit: Area = {
+      id: nextId(world, "a"), kind: "room", parentId: building.id, name: "Pit", type: "pit", description: "A pit under the floor, deep enough to hurt and not too deep to climb out of.",
+      tags: ["form:pit", "low:-1", "rise:0"], position: { x: 0, y: 0, z: 0 }, danger: 0, occupants: [], ships: [], loot: [], faction: building.faction, layout: pitLayout,
+    };
+    world.areas[pit.id] = pit;
+    pitLayout.assets.push({ id: `${pit.id}-1`, kind: "stairs", name: "Climb out", x: 1, y: 1, w: 1, h: 1, to: room.id });
+    if (!addPath(world, room, pit, "Climb out of the pit", "10 ft.", { hidden: true, climb: PIT_CLIMB_DC })) {
+      delete world.areas[pit.id];
+      continue;
+    }
+    l.assets.push({ id: `${room.id}-${l.assets.length + 1}`, kind: "furniture", name: "Loose flagstone", x: spot.x, y: spot.y, w: 1, h: 1, ref: pit.id });
+  }
+}
+
+// The trap squares of a room that have not been found, and those that have
+export const trapsIn = (room: Pick<Area, "layout">, found: boolean) =>
+  (room.layout?.assets ?? []).filter((a) => a.kind === "furniture" && a.name === (found ? "Pit trap" : "Loose flagstone") && a.ref);
+
+// A room with a gallery over part of it, or the gallery itself, as a place to fight: the room's
+// own grid with the gallery as a raised floor of half a level, and the stairs as the way up
+export function levelsArena(world: World, roomId: string): { host: Area; gallery: Area; platforms: DistrictArena["platforms"]; links: DistrictArena["links"]; assets: RoomAsset[] } | undefined {
+  const room = world.areas[roomId];
+  if (!room?.layout) return undefined;
+  const host = formOf(room) === "gallery" ? world.areas[tagId(room, "host") ?? ""] : room;
+  if (!host?.layout) return undefined;
+  const gallery = formOf(room) === "gallery" ? room : childrenOf(world, host.parentId ?? "").find((g) => formOf(g) === "gallery" && tagId(g, "host") === host.id);
+  if (!gallery?.layout) return undefined;
+  const [h, g] = [host.layout, gallery.layout];
+  const z = (g.level ?? 0) - (h.level ?? 0);
+  const stairs = h.assets.find((a) => a.kind === "stairs" && a.to === gallery.id);
+  return {
+    host,
+    gallery,
+    platforms: [{ z, x: g.x - h.x, y: g.y - h.y, width: g.width, height: g.height }],
+    links: stairs ? [{ from: { x: stairs.x, y: stairs.y, z: 0 }, to: { x: stairs.x, y: stairs.y - 1, z } }] : [],
+    assets: g.assets.filter((a) => a.kind === "furniture" && !a.side).map((a) => ({ ...a, id: `${gallery.id}-${a.id}`, x: g.x - h.x + a.x, y: g.y - h.y + a.y, z })),
+  };
+}
+
+// The lines of a transit hub (house rule): to the hub of each other settlement of its planet that
+// has one, over the ground, at the distance the settlements' own route has
+function linkTransit(ctx: Context, settlement: Area) {
+  const { world } = ctx;
+  const hubOf = (s: Area) => childrenOf(world, s.id).find((b) => b.kind === "building" && b.type === "transit hub");
+  const hub = hubOf(settlement);
+  const planet = ancestor(world, settlement.id, "planet");
+  if (!hub || !planet) return;
+  for (const other of childrenOf(world, planet.id).filter((a) => a.kind === "settlement" && a.id !== settlement.id)) {
+    const there = hubOf(other);
+    if (!there || WILD_SETTLEMENTS.includes(other.type)) continue;
+    const km = Math.max(5, Math.round(distance(settlement, other) * 25));
+    addPath(world, hub, there, "Transit line", `${km} km`);
+  }
 }

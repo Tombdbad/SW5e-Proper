@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Canvas } from "@react-three/fiber";
-import { KeyboardControls } from "@react-three/drei";
+import { KeyboardControls, PerformanceMonitor } from "@react-three/drei";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -28,6 +28,8 @@ import {
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   reportCrime, pursuitAt, lieLow, lieLowDC, CRIME_NAMES, type Crime,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
+  districtAt, rollEncounter, encounterResult, optionsOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
+  watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
   START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText,
   withPresence, withPartyShips,
   gearUse, toolFor, toolTrained, boonOf, gambleMode, gambleResult, GAMBLE_ROUNDS, GAMBLE_HOUSE_DC, GAMBLE_STAKE, GAMBLE_COMPLICATION, GAMBLE_COMPLICATIONS,
@@ -106,6 +108,9 @@ export default function GameBoard() {
   const [activeMapTab, setActiveMapTab] = useState<"galaxy" | "local">("galaxy");
   const [showCombat, setShowCombat] = useState(false);
   const { inCombat, initiateCombat, endCombat } = useCombat();
+  const fightArena = useCombat((s) => s.arena);
+  // The map's render scale: full on a device that keeps up, lower on one that does not
+  const [sharpness, setSharpness] = useState(1.5);
   const combatants = useCombat((s) => s.combatants);
   const { currentLocation, setCurrentLocation } = useMap();
 
@@ -170,6 +175,7 @@ export default function GameBoard() {
   const [cameFrom, setCameFrom] = useState<string | null>(null);
   const [exploring, setExploring] = useState(false);
   const fightArea = useRef<string | null>(null);
+  const fightAreas = useRef<string[]>([]);
 
   // Load campaign data when available
   useEffect(() => {
@@ -280,7 +286,8 @@ export default function GameBoard() {
   const carries = (pattern: RegExp) => (character?.equipment ?? []).some((name: string) => pattern.test(name));
   const skilled = (skill: string) => (character?.skillProficiencies ?? []).some((s: string) => s.toLowerCase() === skill);
 
-  const hostiles = (here?.occupants ?? []).filter((o) => o.disposition === "hostile" && o.hitPoints);
+  // Hostile creatures here; in the open of a district also those on the roofs and catwalks in sight
+  const hostiles = world && here ? watchersAt(world, here.id) : (here?.occupants ?? []).filter((o) => o.disposition === "hostile" && o.hitPoints);
 
   // A world from before the people in it had lives of their own is brought up to date once, on
   // the server (it needs the rules data): crowds become people, cantinas get a band
@@ -458,14 +465,29 @@ export default function GameBoard() {
       }
       if (!unseen("Slipping past")) return;
     }
-    if (exit.locked) unlock(exit);
-    else travel(exit, ride);
+    if (exit.locked) return unlock(exit);
+    if (exit.climb) {
+      // Out of a pit: Athletics, or Dexterity, a minute for each try
+      const ok = abilityCheck("Climbing out", exit.climb, ["strength", "dexterity"], skilled("athletics"));
+      if (!ok) return void saveCampaign(pass(1));
+    }
+    travel(exit, ride);
   };
 
   // A door, a way out or a secret way walked up to on the map: go through it
-  const travelTo = (areaId: string, secret = false) => {
+  const travelTo = (areaId: string, secret = false, squares = 0) => {
     const ways = exits.filter((e) => e.to === areaId && !e.hidden);
-    const exit = ways.find((e) => !!e.secret === secret) ?? ways[0];
+    let exit = ways.find((e) => !!e.secret === secret) ?? ways[0];
+    // From the street of a district, the way in to another of its buildings is walked to across
+    // the district (a minute for about fifty squares, at the pace of a street)
+    if (!exit && world && here && here.kind === "building") {
+      const target = world.areas[areaId];
+      const there = trailOf(world, areaId).find((a) => a.kind === "building");
+      const sameDistrict = !!there && districtAt(world, there.id)?.id === districtAt(world, here.id)?.id;
+      if (target?.kind === "room" && sameDistrict && (secret ? target.secretEntry?.found : target.gateway)) {
+        exit = { to: areaId, via: "enter", label: secret ? "Slip in through the way to" : "Walk to", travel: `${Math.max(10, Math.round(squares * 1.5))} m`, ...(secret ? { secret: true } : {}) };
+      }
+    }
     if (!exit || inCombat || dead || exploring) return;
     leaveBy(exit);
   };
@@ -709,16 +731,21 @@ export default function GameBoard() {
   // Look for hidden ways and caches: Wisdom (Perception)
   const search = () => {
     if (!world || !here) return;
-    const hiddenPaths = world.paths.filter((p) => p.hidden && (p.from === here.id || p.to === here.id));
+    const hiddenPaths = world.paths.filter((p) => p.hidden && !p.climb && (p.from === here.id || p.to === here.id));
     const hiddenLoot = here.loot.filter((c) => c.hidden);
+    const loose = trapsIn(here, false);
     // Secret ways: out of this room, or into the rooms of the building the party stands before
     const secretRooms = [here, ...childrenOf(world, here.id)].filter((a) => a.secretEntry && !a.secretEntry.found);
     if (!abilityCheck("Search", 12 + here.danger, ["wisdom"], skilled("perception"))) return;
-    if (hiddenPaths.length + hiddenLoot.length + secretRooms.length === 0) {
+    if (hiddenPaths.length + hiddenLoot.length + secretRooms.length + loose.length === 0) {
       toast.info("There is nothing hidden here.");
       return;
     }
-    const next = updateArea(world, here.id, { loot: here.loot.map((c) => ({ ...c, hidden: undefined })) }).world;
+    if (loose.length) toast.success("Found: a loose flagstone over a pit.");
+    const next = updateArea(world, here.id, {
+      loot: here.loot.map((c) => ({ ...c, hidden: undefined })),
+      ...(loose.length && here.layout ? { layout: { ...here.layout, assets: here.layout.assets.map((a) => (loose.some((l) => l.id === a.id) ? { ...a, name: "Pit trap" } : a)) } } : {}),
+    }).world;
     const areas = { ...next.areas };
     for (const room of secretRooms) areas[room.id] = { ...areas[room.id], secretEntry: { ...room.secretEntry!, found: true } };
     if (secretRooms.length) toast.success(`Found: ${secretRooms.map((room) => `a ${room.secretEntry!.name.toLowerCase()}${room.id === here.id ? "" : ` into ${room.name}`}`).join(", ")}.`);
@@ -760,6 +787,76 @@ export default function GameBoard() {
   const klass = getClassById(character?.class ?? "");
   const knownPowers: any[] = [...(character?.forcePowers ?? []), ...(character?.techPowers ?? [])].filter((power) => power?.name);
   const dead = (character?.conditions ?? []).includes("Dead");
+
+  // The people of the district the party is in (shared logic "The people in a district"): an
+  // encounter now and then, and a master who teaches the path of powers the character lacks
+  const districtHere = world && hereId ? districtAt(world, hereId) : undefined;
+  const learner: Learner = {
+    level,
+    credits: character?.credits ?? 0,
+    force: (character?.forcePowers ?? []).length > 0 || klass?.casterType === "Force",
+    tech: (character?.techPowers ?? []).length > 0 || klass?.casterType === "Tech",
+    forceAlign: forceAlignOf(character?.forceAlignment) !== "None" ? forceAlignOf(character?.forceAlignment) : /good/i.test(character?.alignment ?? "") ? "Light" : /evil/i.test(character?.alignment ?? "") ? "Dark" : "None",
+    leaning: leaningOf(character?.forceAlignment, character?.skillProficiencies ?? [], character?.abilityScores ?? {}),
+    known: knownPowers.map((p) => p.name),
+  };
+  const encounterHere = world?.encounter && districtHere?.id === world.encounter.districtId ? world.encounter : null;
+  useEffect(() => {
+    if (!world || !character || inCombat || dead || exploring) return;
+    const open = world.encounter;
+    // Walking out of the district leaves the encounter behind
+    if (open && districtHere?.id !== open.districtId) return void saveCampaign({ galaxyMap: { ...world, encounter: undefined } });
+    if (open || !districtHere || !hereId) return;
+    const hour = Math.floor(hourOf(clockMinutes));
+    const faction = factionAt(world, districtHere.settlementId) ?? "";
+    const building = trailOf(world, hereId).find((a) => a.kind === "building");
+    const rolled = rollEncounter(world, districtHere, dayOf(clockMinutes), hour, learner, standing.renown[faction] ?? 0, building?.id ?? "");
+    if (rolled && rolled.id !== world.encounterSeen) saveCampaign({ galaxyMap: { ...world, encounter: rolled, encounterSeen: rolled.id } });
+  }, [hereId, Math.floor(hourOf(clockMinutes)), world?.encounter?.id, inCombat, dead, exploring, character?.credits]);
+
+  // Deal with the encounter: pay what is asked, make the check, and take what comes of it
+  const answerEncounter = (index: number) => {
+    const open = world?.encounter;
+    if (!world || !open || !character || !hereId) return;
+    const path = pathToTeach(learner);
+    const option = optionsOf(open, level, path)[index];
+    if (!option) return;
+    if (option.cost && option.cost > (character.credits ?? 0)) return void toast.error(`That costs ${option.cost} credits and you have ${character.credits ?? 0}.`);
+    const success = option.abilities ? abilityCheck(option.label.replace(/ \(.*$/, ""), option.dc ?? 10, option.abilities, option.skill ? skilled(option.skill) : false) : true;
+    const castMod = Math.max(...(path === "tech" ? ["intelligence"] : ["wisdom", "charisma"]).map((a) => modifier(character.abilityScores?.[a])));
+    const result = encounterResult(open, index, success, learner, open.target ? world.areas[open.target]?.name : undefined, castMod);
+    let galaxyMap: World = { ...world, encounter: undefined, encounterSeen: open.id };
+    if (result.crime) galaxyMap = reportCrime(galaxyMap, hereId, "brawl", clockNow());
+    const characterChanges: Record<string, any> = {};
+    const credits = (character.credits ?? 0) - (option.cost ?? 0) + (result.credits ?? 0);
+    if (credits !== (character.credits ?? 0)) characterChanges.credits = Math.max(0, credits);
+    if (result.damage) {
+      characterChanges.currentHp = Math.max(0, (character.currentHp ?? 0) - result.damage);
+      lastSavedHp.current = characterChanges.currentHp;
+    }
+    const campaignChanges: Record<string, any> = {};
+    if (result.quest) campaignChanges.quests = [...quests, result.quest];
+    if (result.renown && open.faction) campaignChanges.factionInfluence = addRenown(standing, open.faction, result.renown);
+    if (result.teaching) {
+      // The path is taken up: its first powers, and a pool of points to cast them with (the same
+      // pool a caster's points are in)
+      const asPower = (row: any) => ({
+        id: row.id, name: row.name, level: row.level, castingTime: row.castingPeriodText ?? row.castingPeriod ?? "", range: row.range ?? "", duration: row.duration ?? "",
+        concentration: !!row.concentration, ...(result.teaching!.path === "force" ? { forceAlignment: row.forceAlignment } : {}), description: row.description ?? "",
+        higherLevelDescription: row.higherLevelDescription, source: row.contentSource,
+      });
+      const key = result.teaching.path === "force" ? "forcePowers" : "techPowers";
+      characterChanges[key] = [...(character[key] ?? []), ...result.teaching.powers.map(asPower)];
+      characterChanges.maxForcePoints = (character.maxForcePoints ?? 0) + result.teaching.points;
+      characterChanges.currentForcePoints = (character.currentForcePoints ?? 0) + result.teaching.points;
+      lastSavedPoints.current = characterChanges.currentForcePoints;
+      galaxyMap.mastersTaught = [...(world.mastersTaught ?? []), open.settlementId];
+    }
+    const time = pass(open.kind === "master" ? 2 * 1440 : 10);
+    if (Object.keys(characterChanges).length) saveCharacter(characterChanges);
+    saveCampaign({ galaxyMap, ...campaignChanges, ...time });
+    toast[result.teaching || success ? "success" : "error"](result.message);
+  };
 
   // What the character fights with: the weapons carried (see carriedWeapons), a species' natural
   // weapon when unarmed, and the powers known with the caster's numbers for each
@@ -894,6 +991,106 @@ export default function GameBoard() {
     const surprise = alert === ALERT.unaware;
     if (!surprise && here.alert !== ALERT.attacking) setWatch(ALERT.attacking);
     else if (surprise && world) saveCampaign({ galaxyMap: reportCrime(world, here.id, "assault", clockNow()) });
+    // In the open of a district (its street, a roof, a catwalk) the fight is on the district's own
+    // map: the street, the buildings as blocks, the roofs and catwalks as raised floors, and
+    // everyone who can see the party, the sentries on the roofs and catwalks as well
+    const inTheOpen = here.kind === "building" || openAir(here);
+    const field = world && inTheOpen && districtHere ? districtArena(world, districtHere.id) : undefined;
+    if (field && world) {
+      const front = here.kind === "building" ? districtFront(world, here.id) : undefined;
+      const spot = usePartySpot.getState();
+      const level = here.layout?.level ?? 0;
+      const start = spot.areaId === here.id ? { x: spot.x, y: spot.y, z: level } : front ? { x: front.x, y: front.y, z: 0 } : { x: Math.floor(field.width / 2), y: Math.floor(field.height / 2), z: 0 };
+      const sources = [here as Area, ...exposedRooms(world, here.id)].filter((a) => watchersOf(a).length);
+      const occupied = new Set<string>([`${start.x},${start.y},${start.z}`]);
+      const enemies = sources.flatMap((src) =>
+        watchersOf(src).flatMap((o) => {
+          const lay = src.layout;
+          const z = lay?.level ?? 0;
+          const posts = (lay?.assets ?? []).filter((a) => a.kind === "npc" && a.ref === o.id);
+          return Array.from({ length: o.count }, (_, i) => {
+            const a = posts[i];
+            // Where it stands on the plan; a creature outside a building, near the way in
+            let at = a && lay ? { x: lay.x + a.x, y: lay.y + a.y, z } : front ? { x: front.x + front.outward.x * 4, y: front.y + front.outward.y * 4 + i, z: 0 } : { x: start.x + 4 + i, y: start.y, z: 0 };
+            while (occupied.has(`${at.x},${at.y},${at.z}`)) at = { ...at, x: at.x + 1 };
+            occupied.add(`${at.x},${at.y},${at.z}`);
+            return { ...foe(o, `${o.id}-${i}`, o.count > 1 ? `${o.name} ${i + 1}` : o.name), ...at };
+          });
+        }),
+      );
+      const twins = (name: string) => enemies.filter((e) => e.name === name);
+      for (const enemy of [...enemies]) {
+        const same = twins(enemy.name);
+        if (same.length > 1) same.forEach((e, i) => (e.name = `${e.name} ${String.fromCharCode(65 + i)}`));
+      }
+      fightArea.current = here.id;
+      fightAreas.current = sources.map((a) => a.id);
+      lastSavedHp.current = character.currentHp;
+      lastSavedPoints.current = character.currentForcePoints;
+      lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
+      fightBegun.current = true;
+      initiateCombat(
+        character, enemies, combatKit(), surprise,
+        { width: field.width, height: field.height, assets: field.assets, platforms: field.platforms, links: field.links, district: field.district, open: true, floor: world.areas[here.parentId ?? ""]?.type },
+        start,
+        party.filter((c) => c.hp > 0).map(allyOf),
+      );
+      return;
+    }
+    // A room with a gallery over part of it: the gallery is a raised floor of the same fight, with
+    // whoever stands on it, and the stairs are the way up
+    const tiers = world && !inTheOpen && here.layout ? levelsArena(world, here.id) : undefined;
+    if (tiers && world && tiers.host.layout) {
+      const base = tiers.host.layout;
+      const spot = usePartySpot.getState();
+      const onGallery = here.id === tiers.gallery.id;
+      const z = onGallery ? (tiers.gallery.layout!.level ?? 0) - (base.level ?? 0) : 0;
+      const stood = spot.areaId === here.id ? { x: spot.x - base.x, y: spot.y - base.y } : undefined;
+      const ways = base.assets.filter((a) => a.side && a.kind !== "window");
+      const doorway = ways.find((a) => a.to === cameFrom) ?? ways.find((a) => a.kind === "exit") ?? ways[0];
+      const start = stood ? { ...stood, z } : doorway ? { x: doorway.x, y: doorway.y, z: 0 } : { x: 1, y: 1, z: 0 };
+      const sources = [tiers.host, tiers.gallery].filter((a) => watchersOf(a).length);
+      const occupied = new Set<string>([`${start.x},${start.y},${start.z}`]);
+      const enemies = sources.flatMap((src) => {
+        const lay = src.layout!;
+        const zz = (lay.level ?? 0) - (base.level ?? 0);
+        return watchersOf(src).flatMap((o) => {
+          const posts = lay.assets.filter((a) => a.kind === "npc" && a.ref === o.id);
+          return Array.from({ length: o.count }, (_, i) => {
+            const a = posts[i];
+            let at = a ? { x: lay.x - base.x + a.x, y: lay.y - base.y + a.y, z: zz } : { x: base.width - 2, y: Math.floor(base.height / 2) + i, z: 0 };
+            while (occupied.has(`${at.x},${at.y},${at.z}`)) at = { ...at, x: at.x - 1 };
+            occupied.add(`${at.x},${at.y},${at.z}`);
+            return { ...foe(o, `${o.id}-${i}`, o.count > 1 ? `${o.name} ${i + 1}` : o.name), ...at };
+          });
+        });
+      });
+      const twins = (name: string) => enemies.filter((e) => e.name === name);
+      for (const enemy of [...enemies]) {
+        const same = twins(enemy.name);
+        if (same.length > 1) same.forEach((e, i) => (e.name = `${e.name} ${String.fromCharCode(65 + i)}`));
+      }
+      fightArea.current = here.id;
+      fightAreas.current = sources.map((a) => a.id);
+      lastSavedHp.current = character.currentHp;
+      lastSavedPoints.current = character.currentForcePoints;
+      lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
+      fightBegun.current = true;
+      initiateCombat(
+        character, enemies, combatKit(), surprise,
+        {
+          width: base.width,
+          height: base.height,
+          assets: [...base.assets.filter((a) => a.kind !== "npc" && (a.kind !== "secret" || tiers.host.secretEntry?.found) && (a.kind !== "loot" || tiers.host.loot.some((c) => c.id === a.ref && !c.hidden)) && a.name !== "Loose flagstone"), ...tiers.assets],
+          platforms: tiers.platforms,
+          links: tiers.links,
+          floor: world.areas[tiers.host.parentId ?? ""]?.type,
+        },
+        start,
+        party.filter((c) => c.hp > 0).map(allyOf),
+      );
+      return;
+    }
     // The ground: the room as planned, or open ground with what cover there is. The party
     // stands where it stood on the map (else where it came in); the enemy where the plan has them.
     const ground = here.layout ?? skirmishGround(here);
@@ -921,6 +1118,7 @@ export default function GameBoard() {
       if (same.length > 1) same.forEach((e, i) => (e.name = `${e.name} ${String.fromCharCode(65 + i)}`));
     }
     fightArea.current = here.id;
+    fightAreas.current = [here.id];
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
     lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
@@ -930,7 +1128,7 @@ export default function GameBoard() {
       {
         width: ground.width,
         height: ground.height,
-        assets: ground.assets.filter((a) => a.kind !== "npc" && (a.kind !== "secret" || here.secretEntry?.found) && (a.kind !== "loot" || here.loot.some((c) => c.id === a.ref && !c.hidden))),
+        assets: ground.assets.filter((a) => a.kind !== "npc" && a.name !== "Loose flagstone" && (a.kind !== "secret" || here.secretEntry?.found) && (a.kind !== "loot" || here.loot.some((c) => c.id === a.ref && !c.hidden))),
         floor: world?.areas[here.parentId ?? ""]?.type,
         open: !here.layout,
       },
@@ -958,7 +1156,9 @@ export default function GameBoard() {
     if (inCombat || !outcome || !character || !fightBegun.current) return;
     fightBegun.current = false;
     const areaId = fightArea.current;
+    const areaIds = fightAreas.current.length ? [...fightAreas.current] : areaId ? [areaId] : [];
     fightArea.current = null;
+    fightAreas.current = [];
     let slain = 0;
     let xp = 0;
     let fallenKind = false;
@@ -967,24 +1167,30 @@ export default function GameBoard() {
       const area = world.areas[areaId];
       const fight = useCombat.getState();
       const remaining = fight.combatants.length ? fight.combatants.filter((c) => !onPartySide(c)).map((c) => ({ id: c.id, hp: c.hp })) : fight.remains;
-      const { occupants, gear, kept, slain: down, xp: earned, people, changed } = afterFight(area, remaining);
-      slain = down;
-      xp = earned;
-      fallenKind = people;
-      if (changed) {
-        const loot = gear.length ? [...area.loot, { id: `l-${Date.now().toString(36)}`, name: "Gear of the fallen", kind: "remains", credits: 0, items: gear }] : area.loot;
+      // Each area whose hostiles joined the fight is written back (the street's and the roofs')
+      let galaxyMap: World = world;
+      for (const id of areaIds) {
+        const part = galaxyMap.areas[id];
+        if (!part) continue;
+        const { occupants, gear, kept, slain: down, xp: earned, people, changed } = afterFight(part, remaining);
+        slain += down;
+        xp += earned;
+        fallenKind ||= people;
+        if (!changed) continue;
+        const loot = gear.length ? [...part.loot, { id: `l-${Date.now().toString(36)}-${id}`, name: "Gear of the fallen", kind: "remains", credits: 0, items: gear }] : part.loot;
         // Their places on the plan: one for each still standing
-        const layout = area.layout && {
-          ...area.layout,
-          assets: area.layout.assets.filter((a) => {
+        const layout = part.layout && {
+          ...part.layout,
+          assets: part.layout.assets.filter((a) => {
             if (a.kind !== "npc" || !kept.has(a.ref ?? "")) return true;
             const left = kept.get(a.ref!)!;
             kept.set(a.ref!, left - 1);
             return left > 0;
           }),
         };
-        saveCampaign({ galaxyMap: updateArea(world, areaId, { occupants, loot, ...(layout ? { layout } : {}) }).world });
+        galaxyMap = updateArea(galaxyMap, id, { occupants, loot, ...(layout ? { layout } : {}) }).world;
       }
+      if (galaxyMap !== world) saveCampaign({ galaxyMap });
       // Renown: a fight costs standing with the side that lost it; the beasts of the wild have none
       if (slain && fallenKind && outcome !== "dead") {
         const losers = world.areas[area.parentId ?? ""]?.faction ?? world.antagonist;
@@ -1956,7 +2162,7 @@ export default function GameBoard() {
     if (!km || !transport || !world || !here || exit.needsShip || exit.via !== "path") return [];
     const settlement = world.areas[berthOf(world, here.id)];
     const riders = 1 + party.filter((c) => c.kind !== "beast").length;
-    return groundRides({ km, vehicles: parkedHere, companions: party, riders, transport, hire: settlement?.id === here.id && hasRidesForHire(world, here.id) });
+    return groundRides({ km, vehicles: parkedHere, companions: party, riders, transport, hire: settlement?.id === here.id && hasRidesForHire(world, here.id), transit: exit.label === "Transit line" });
   };
   // The ride a trip takes when none was chosen (a tap on the map): the quickest that costs nothing
   const defaultRide = (rides: Ride[]) => [...rides].filter((r) => !r.blocked && !r.fare).sort((a, b) => a.minutes - b.minutes)[0];
@@ -2182,7 +2388,7 @@ export default function GameBoard() {
     }
     const { ship, reason, fare } = tripBy(exit);
     if (ship) return `${ship.name}, ${exit.fuel} fuel`;
-    return [fare ? `passage ${fare} cr` : "by shuttle", ships.length ? reason : ""].filter(Boolean).join("; ");
+    return [fare ? `a pilot for hire flies you: ${fare} cr` : "by shuttle", ships.length ? reason : ""].filter(Boolean).join("; ");
   };
 
   // Caches are out of reach while those who stopped the party, or let it pass, are watching
@@ -2205,12 +2411,39 @@ export default function GameBoard() {
       // Passive Wisdom (Perception), by the Player's Handbook: 10 + the modifier, noticed without searching
       const room = world.areas[action.areaId];
       const passive = 10 + modifier(character.abilityScores?.wisdom) + (skilled("perception") ? proficiency : 0);
+      // A loose flagstone over a pit (DC 12, more where it is more dangerous)
+      const loose = room ? trapsIn(room, false) : [];
+      if (room?.layout && loose.length && passive >= 12 + room.danger) {
+        toast.success(`You notice a loose flagstone that sounds hollow (passive Perception ${passive} against DC ${12 + room.danger}).`);
+        saveCampaign({ galaxyMap: updateArea(world, room.id, { layout: { ...room.layout, assets: room.layout.assets.map((a) => (loose.some((l) => l.id === a.id) ? { ...a, name: "Pit trap" } : a)) } }).world });
+        return;
+      }
       if (!room?.secretEntry || room.secretEntry.found || passive < room.secretEntry.dc) return;
       toast.success(`You notice a ${room.secretEntry.name.toLowerCase()}${room.id === here.id ? "" : ` into ${room.name}`} (passive Perception ${passive} against DC ${room.secretEntry.dc}).`);
       saveCampaign({ galaxyMap: { ...world, areas: { ...world.areas, [room.id]: { ...room, secretEntry: { ...room.secretEntry, found: true } } } } });
     }
     else if (inCombat || dead || exploring) return;
-    else if (action.type === "go") travelTo(action.areaId, action.secret);
+    else if (action.type === "trap") {
+      // The flagstone gives way: a fall of a level (1d6, never to the last hit point outside a fight)
+      const room = world.areas[action.areaId];
+      const trap = room?.layout?.assets.find((a) => a.id === action.id);
+      const pit = trap?.ref ? world.areas[trap.ref] : undefined;
+      if (!room?.layout || !trap || !pit) return;
+      const fall = die(6);
+      const hp = Math.max(1, (character.currentHp ?? 0) - fall);
+      const galaxyMap: World = {
+        ...world,
+        // The way out of the pit is now known (it was hidden from above)
+        paths: world.paths.map((p) => ((p.from === pit.id || p.to === pit.id) && p.hidden ? { ...p, hidden: undefined } : p)),
+        areas: { ...world.areas, [room.id]: { ...room, layout: { ...room.layout, assets: room.layout.assets.map((a) => (a.id === trap.id ? { ...a, name: "Pit trap" } : a)) } } },
+      };
+      lastSavedHp.current = hp;
+      saveCharacter({ currentHp: hp });
+      saveCampaign({ galaxyMap, currentLocation: pit.id, ...pass(1) });
+      setCameFrom(room.id);
+      toast.error(`The flagstone gives way and you fall into a pit: ${fall} damage. Climb out (Athletics or Dexterity, DC ${PIT_CLIMB_DC}).`);
+    }
+    else if (action.type === "go") travelTo(action.areaId, action.secret, action.squares);
     else if (action.type === "exit") leaveBy(action.exit);
     else if (action.type === "occupant" || action.type === "ship" || action.type === "vehicle" || action.type === "companion") setPicked({ kind: action.type, id: action.id });
     else if (action.type === "loot") {
@@ -3000,6 +3233,7 @@ export default function GameBoard() {
         <div className={`absolute inset-x-0 bottom-0 ${inCombat || shipFight ? "top-0" : "top-16 md:top-12"}`}>
         <Canvas
           shadows
+          dpr={sharpness}
           camera={{
             position: [0, 15, 15],
             fov: 75,
@@ -3012,6 +3246,13 @@ export default function GameBoard() {
           }}
         >
           <color attach="background" args={["#000000"]} />
+          {/* A slow device draws fewer pixels: the render scale steps down while frames are below
+              30 a second, and back up when there is room */}
+          <PerformanceMonitor
+            bounds={() => [30, 50]}
+            onDecline={() => setSharpness((s) => Math.max(0.5, Math.round((s - 0.25) * 100) / 100))}
+            onIncline={() => setSharpness((s) => Math.min(1.5, Math.round((s + 0.25) * 100) / 100))}
+          />
           
           {/* Lighting */}
           <ambientLight intensity={0.3} />
@@ -3023,7 +3264,7 @@ export default function GameBoard() {
           {/* A fight is shown on the floor it is fought on; otherwise the place being looked at */}
           {shipFight ? (
             <SpaceScene />
-          ) : inCombat ? (
+          ) : inCombat && !fightArena.district ? (
             <FightScene areaId={here?.layout ? here.id : null} origin={here?.layout} />
           ) : world ? (
             <LocalMap world={scene} hereId={hereId} viewId={viewId} selectedId={picked?.kind === "area" ? picked.id : null} onAct={act} locked={dead || exploring} />
@@ -3135,6 +3376,20 @@ export default function GameBoard() {
                 {play.poison && <p className="text-green-300">Poison on the weapon: {play.poison.dice}, DC {play.poison.dc}.</p>}
                 {play.substance && <p className={play.substance.phase === "high" ? "text-yellow-200" : "text-red-300"}>{play.substance.name}: {play.substance.phase === "high" ? "a high, waiting for your next check or fight" : `a low for ${Math.max(0, play.substance.ends - clock)} more minutes`}.</p>}
                 {addictionLevel > 0 && <p className="text-red-300">Addiction level {addictionLevel}: lows last longer{addictionLevel >= 2 ? ", highs are shorter" : ""}.</p>}
+              </div>
+            )}
+
+            {encounterHere && (
+              <div className="mb-4 space-y-2 rounded border border-yellow-500/60 p-2 text-xs" data-testid="encounter">
+                <h3 className="font-semibold text-yellow-300">{encounterHere.title}</h3>
+                <p className="text-gray-300">{encounterHere.text}</p>
+                <div className="flex flex-wrap gap-1">
+                  {optionsOf(encounterHere, level, pathToTeach(learner)).map((option, index) => (
+                    <Button key={option.label} size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={inCombat || dead || (option.cost ?? 0) > (character.credits ?? 0)} onClick={() => answerEncounter(index)}>
+                      {option.label}
+                    </Button>
+                  ))}
+                </div>
               </div>
             )}
 

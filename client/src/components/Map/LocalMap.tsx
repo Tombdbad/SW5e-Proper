@@ -5,9 +5,9 @@ import * as THREE from "three";
 import { useKeyboardControls } from "@react-three/drei";
 import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
-import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide } from "@/lib/stores/useCombat";
+import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey } from "@/lib/stores/useCombat";
 import { type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
-import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, ALERT, START_TIME, daylight, hourOf, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
+import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, unitOf, ALERT, START_TIME, daylight, hourOf, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind, type TokenKind } from "./sprites";
 
@@ -57,7 +57,7 @@ export const useClock = create<{ minutes: number; set: (minutes: number) => void
 const NIGHT_SKY = new THREE.Color("#05070c");
 const DAY_SKY = new THREE.Color("#5d7fa3");
 const DUSK_SKY = new THREE.Color("#b8683f");
-function Sky({ shadow = 30 }: { shadow?: number }) {
+function Sky({ shadow = 30, cast = true }: { shadow?: number; cast?: boolean }) {
   const minutes = useClock((c) => Math.round(c.minutes / 5) * 5);
   const light = daylight(minutes);
   const twilight = light > 0 && light < 1;
@@ -69,7 +69,7 @@ function Sky({ shadow = 30 }: { shadow?: number }) {
     <>
       <color attach="background" args={[background]} />
       <ambientLight intensity={0.32 + 0.43 * light} color={light < 0.3 ? "#a9b8ff" : "#ffffff"} />
-      <directionalLight position={sun} intensity={0.14 + 0.76 * light} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
+      <directionalLight position={sun} intensity={0.14 + 0.76 * light} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow={cast} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
     </>
   );
 }
@@ -84,7 +84,7 @@ type V3 = [number, number, number];
 const Solid = ({ at, color, glow, rot, children }: { at: V3; color: string; glow?: number; rot?: V3; children: ReactNode }) => (
   <mesh position={at} rotation={rot} castShadow>
     {children}
-    <meshStandardMaterial color={color} emissive={color} emissiveIntensity={glow ?? 0.08} roughness={0.9} />
+    <meshLambertMaterial color={color} emissive={color} emissiveIntensity={glow ?? 0.08} />
   </mesh>
 );
 const Box = ({ at, size, color, glow, rot }: { at: V3; size: V3; color: string; glow?: number; rot?: V3 }) => <Solid at={at} color={color} glow={glow} rot={rot}><boxGeometry args={size} /></Solid>;
@@ -151,7 +151,7 @@ function BuildingModel({ type, wall }: { type: string; wall: string }) {
   if (/workshop|engineering/.test(type)) return <><Box at={[0, 0.7, 0]} size={[2.6, 1.4, 2]} color={/engineering/.test(type) ? STEEL : wall} /><Cyl at={[1.7, 0.7, 0.5]} r={0.5} h={1.4} color="#59636d" /><Cyl at={[-0.8, 1.9, -0.5]} r={0.2} h={1} color="#3b3f45" /><Box at={[0, 0.5, 1.02]} size={[1.2, 1, 0.05]} color="#f0a03c" glow={0.7} /></>;
   if (/residences|habitat/.test(type)) return <><Box at={[-0.6, 0.6, 0]} size={[1.6, 1.2, 1.8]} color={wall} /><Box at={[0.8, 1, -0.3]} size={[1.4, 2, 1.4]} color={wall} /><Dome at={[0.8, 2, -0.3]} r={0.6} color={wall} /><Box at={[-0.4, 1.5, 0.3]} size={[1, 0.6, 1]} color={wall} />{[0, 1, 2].map((i) => <Box key={i} at={[0.8, 0.5 + i * 0.55, 0.42]} size={[0.3, 0.2, 0.05]} color="#ffd98a" glow={1} />)}</>;
   if (/palace/.test(type)) return <><Cyl at={[0, 0.5, 0]} r={2.2} h={1} color={wall} /><Dome at={[0, 1, 0]} r={1.6} color={wall} />{[[-1.9, -1.9], [1.9, -1.9], [-1.9, 1.9], [1.9, 1.9]].map(([x, z], i) => <Tower key={i} at={[x, 0, z]} r={0.35} h={2.4} color={wall} />)}</>;
-  if (/warehouse|cargo/.test(type)) return <><Box at={[0, 0.6, 0]} size={[3.2, 1.2, 2]} color={STEEL} /><mesh position={[0, 1.2, 0]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[1, 1, 3.2, 16, 1, false, 0, Math.PI]} /><meshStandardMaterial color="#59636d" /></mesh><Box at={[0, 0.5, 1.02]} size={[1.6, 1, 0.05]} color="#2f363d" /><Box at={[2, 0.3, 0.6]} size={[0.6, 0.6, 0.6]} color="#6f7448" /></>;
+  if (/warehouse|cargo/.test(type)) return <><Box at={[0, 0.6, 0]} size={[3.2, 1.2, 2]} color={STEEL} /><mesh position={[0, 1.2, 0]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[1, 1, 3.2, 16, 1, false, 0, Math.PI]} /><meshLambertMaterial color="#59636d" /></mesh><Box at={[0, 0.5, 1.02]} size={[1.6, 1, 0.05]} color="#2f363d" /><Box at={[2, 0.3, 0.6]} size={[0.6, 0.6, 0.6]} color="#6f7448" /></>;
   if (/archive/.test(type)) return <><Tower at={[0, 0, 0]} r={1.1} h={3} color={wall} /><Cyl at={[0, 0.25, 0]} r={1.9} h={0.5} color={wall} /></>;
   if (/hideout/.test(type)) return <><Box at={[0, 0.35, 0]} size={[2.8, 0.7, 2.2]} color="#3b3f45" /><Box at={[0.6, 0.8, 0]} size={[1, 0.3, 1]} color="#2b2f34" /><Box at={[0, 0.3, 1.12]} size={[0.7, 0.6, 0.05]} color="#e5484d" glow={0.5} /><Rock at={[-1.8, 0, 0.8]} r={0.5} /></>;
   if (/camp/.test(type)) return <><Tent at={[-1, 0, -0.5]} color="#8a6f4a" /><Tent at={[1, 0, -0.3]} color="#7a6040" /><Tent at={[0, 0, 1.1]} color="#96794f" /><Box at={[0, 0.15, 0]} size={[0.3, 0.3, 0.3]} color="#ffb347" glow={2} /></>;
@@ -167,7 +167,7 @@ function SettlementModel({ type, wall }: { type: string; wall: string }) {
   if (/city/.test(type)) return <>{[[0, 0, 3.4, 0.5], [-1.1, 0.6, 2.2, 0.4], [1, -0.6, 2.6, 0.45], [0.9, 1, 1.5, 0.4], [-0.9, -1, 1.8, 0.35]].map(([x, z, h, r], i) => <Tower key={i} at={[x, 0, z]} r={r} h={h} color={i % 2 ? "#8a94a3" : "#a3adba"} />)}<Cyl at={[0, 0.1, 0]} r={2.3} h={0.2} color="#3b4654" /></>;
   if (/town/.test(type)) return <><Dome at={[0, 0, 0]} r={1.1} color={wall} /><Dome at={[1.4, 0, 0.5]} r={0.7} color={wall} /><Dome at={[-1.2, 0, 0.8]} r={0.8} color={wall} /><Box at={[0.3, 0.4, -1.3]} size={[1.2, 0.8, 0.9]} color={wall} /><Mast at={[-0.6, 0, -1.2]} /></>;
   if (/outpost/.test(type)) return <><Cyl at={[0, 0.5, 0]} r={1.6} h={1} color="#59636d" top={1.3} /><Mast at={[0, 1, 0]} h={2} /><Box at={[1.9, 0.3, 0]} size={[0.8, 0.6, 0.8]} color="#6f7448" /><Cyl at={[-2, 0.08, 0.6]} r={0.8} h={0.16} color="#2c333b" /></>;
-  if (/station/.test(type)) return <><mesh position={[0, 1.4, 0]} rotation={[Math.PI / 2.4, 0, 0]}><torusGeometry args={[1.8, 0.28, 10, 32]} /><meshStandardMaterial color={STEEL} emissive={STEEL} emissiveIntensity={0.15} /></mesh><Cyl at={[0, 1.4, 0]} r={0.5} h={2.4} color="#a3adba" /><Box at={[0, 2.7, 0]} size={[0.2, 0.2, 0.2]} color="#ff5a5a" glow={2} /></>;
+  if (/station/.test(type)) return <><mesh position={[0, 1.4, 0]} rotation={[Math.PI / 2.4, 0, 0]}><torusGeometry args={[1.8, 0.28, 10, 32]} /><meshLambertMaterial color={STEEL} emissive={STEEL} emissiveIntensity={0.15} /></mesh><Cyl at={[0, 1.4, 0]} r={0.5} h={2.4} color="#a3adba" /><Box at={[0, 2.7, 0]} size={[0.2, 0.2, 0.2]} color="#ff5a5a" glow={2} /></>;
   if (/cave/.test(type)) return <><Rock at={[0, 0, 0]} r={1.6} /><Rock at={[1.5, 0, 0.5]} r={1} color="#5a5753" /><Rock at={[-1.3, 0, 0.9]} r={0.8} /><Solid at={[0.2, 0.5, 1.3]} color="#0a0a0a"><sphereGeometry args={[0.6, 12, 12]} /></Solid></>;
   if (/ruin/.test(type)) return <BuildingModel type="ruin" wall={wall} />;
   if (/crash/.test(type)) return <><Hull /><Box at={[1.8, 0.1, 1.2]} size={[0.8, 0.2, 0.5]} color="#59636d" /><Box at={[-1.6, 0.25, -0.5]} size={[0.3, 0.5, 0.3]} color="#ffb347" glow={1.5} /></>;
@@ -205,7 +205,7 @@ function Figure({ kind, ring, name = "", large, marker }: { kind: TokenKind; rin
   else if (kind === "horror") body = <><Solid at={[0, 0.5, 0]} color="#3a2545"><sphereGeometry args={[0.3, 14, 12]} /></Solid>{[0, 1, 2, 3, 4, 5].map((i) => <Solid key={i} at={[Math.cos(i * 1.05) * 0.34, 0.22, Math.sin(i * 1.05) * 0.34]} color="#5b3b6b" rot={[Math.sin(i * 1.05) * 0.9, 0, -Math.cos(i * 1.05) * 0.9]}><coneGeometry args={[0.07, 0.5, 6]} /></Solid>)}<Box at={[-0.1, 0.58, 0.27]} size={[0.07, 0.07, 0.05]} color="#e5484d" glow={2.5} /><Box at={[0.1, 0.58, 0.27]} size={[0.07, 0.07, 0.05]} color="#e5484d" glow={2.5} /></>;
   else if (kind === "swarm") body = <>{[[-0.2, 0.3, -0.1], [0.18, 0.5, -0.16], [0, 0.2, 0.08], [-0.16, 0.6, 0.2], [0.2, 0.34, 0.18], [0.02, 0.74, -0.04]].map(([x, y, z], i) => <Solid key={i} at={[x, y, z]} color={tone}><sphereGeometry args={[0.07, 8, 6]} /></Solid>)}</>;
   else if (kind === "crowd") body = <>{[[-0.2, -0.12, 20], [0.2, -0.06, 140], [0, 0.2, 260]].map(([x, z, h], i) => <group key={i} position={[x, 0, z]} scale={0.72}><Humanoid body={`hsl(${h}, 25%, 50%)`} /></group>)}</>;
-  else if (kind === "hutt") body = <><mesh position={[0, 0.4, -0.05]} scale={[0.5, 0.45, 0.62]} castShadow><sphereGeometry args={[1, 16, 12]} /><meshStandardMaterial color="#7c8a4a" roughness={0.9} /></mesh><Solid at={[0, 0.16, -0.62]} color="#7c8a4a" rot={[-1.4, 0, 0]}><coneGeometry args={[0.2, 0.6, 8]} /></Solid><Solid at={[0, 0.92, 0.12]} color="#8a985a"><sphereGeometry args={[0.26, 14, 12]} /></Solid><Box at={[-0.1, 0.98, 0.35]} size={[0.06, 0.05, 0.04]} color="#f0a03c" glow={1.5} /><Box at={[0.1, 0.98, 0.35]} size={[0.06, 0.05, 0.04]} color="#f0a03c" glow={1.5} /></>;
+  else if (kind === "hutt") body = <><mesh position={[0, 0.4, -0.05]} scale={[0.5, 0.45, 0.62]} castShadow><sphereGeometry args={[1, 16, 12]} /><meshLambertMaterial color="#7c8a4a" /></mesh><Solid at={[0, 0.16, -0.62]} color="#7c8a4a" rot={[-1.4, 0, 0]}><coneGeometry args={[0.2, 0.6, 8]} /></Solid><Solid at={[0, 0.92, 0.12]} color="#8a985a"><sphereGeometry args={[0.26, 14, 12]} /></Solid><Box at={[-0.1, 0.98, 0.35]} size={[0.06, 0.05, 0.04]} color="#f0a03c" glow={1.5} /><Box at={[0.1, 0.98, 0.35]} size={[0.06, 0.05, 0.04]} color="#f0a03c" glow={1.5} /></>;
   else if (kind === "trooper") body = <><Humanoid body="#e9edf0" head="#e9edf0" legs="#e9edf0" /><Box at={[0, 1.1, 0.11]} size={[0.2, 0.05, 0.06]} color="#11161d" /><Box at={[0.24, 0.62, 0.22]} size={[0.05, 0.07, 0.5]} color="#11161d" /></>;
   else if (kind === "officer") body = <><Humanoid body="#56624f" /><Cyl at={[0, 1.2, 0]} r={0.14} h={0.07} color="#3f4a3a" /><Box at={[0, 1.17, 0.14]} size={[0.2, 0.02, 0.1]} color="#3f4a3a" /><Box at={[-0.08, 0.86, 0.11]} size={[0.1, 0.05, 0.02]} color="#e5484d" glow={0.8} /><Box at={[0.24, 0.56, 0.16]} size={[0.04, 0.06, 0.26]} color="#11161d" /></>;
   else if (kind === "force") {
@@ -270,6 +270,7 @@ function Furniture({ name, w, h }: { name: string; w: number; h: number }) {
   const screen = (y: number, color = GLOW) => <Box at={[cx, y, cz]} size={[wide ? w * 0.6 : 0.06, 0.3, wide ? 0.06 : h * 0.6]} color={color} glow={1.2} rot={wide ? [-0.4, 0, 0] : [0, 0, 0.4]} />;
   const stools = (count: number, r: number) => Array.from({ length: count }, (_, i) => <Cyl key={i} at={[cx + Math.cos(i * (6.28 / count) + 0.6) * r, 0.16, cz + Math.sin(i * (6.28 / count) + 0.6) * r]} r={0.11} h={0.32} color={WOOD} />);
 
+  if (/pit trap/.test(n)) return <><Box at={[cx, 0.005, cz]} size={[w - 0.08, 0.02, h - 0.08]} color="#05070a" />{[[cx, 0.03, 0.04, w, 0.06, 0.08], [cx, 0.03, h - 0.04, w, 0.06, 0.08], [0.04, 0.03, cz, 0.08, 0.06, h], [w - 0.04, 0.03, cz, 0.08, 0.06, h]].map(([x, y, z, sx, sy, sz], i) => <Box key={i} at={[x, y, z]} size={[sx, sy, sz]} color={AMBER} glow={0.6} />)}</>;
   if (/bandstand/.test(n)) return <><Box at={[cx, 0.11, cz]} size={[w - 0.06, 0.22, h - 0.06]} color="#3a2f45" /><Box at={[cx, 0.225, cz]} size={[w - 0.24, 0.01, h - 0.24]} color="#5b4a70" />{Array.from({ length: Math.round(w) }, (_, i) => <Cyl key={i} at={[0.5 + i, 0.24, 0.08]} r={0.06} h={0.04} color={["#f472b6", GLOW, "#fde68a"][i % 3]} glow={2} />)}<pointLight position={[cx, 1.6, cz]} color="#f0abfc" intensity={1.4} distance={5} /></>;
   if (/bar counter/.test(n)) return <>{block(0.7, WOOD_DARK, 0.12)}<Box at={[cx, 0.73, cz]} size={[w - 0.06, 0.06, h - 0.1]} color={WOOD} />{Array.from({ length: Math.floor(span) }, (_, i) => <Cyl key={i} at={[wide ? 0.5 + i : cx, 0.86, wide ? cz : 0.5 + i]} r={0.05} h={0.2} color={[GLOW, AMBER, "#58c98b"][i % 3]} glow={0.9} />)}</>;
   if (/sabacc/.test(n)) return <><Cyl at={[cx, 0.25, cz]} r={0.2} h={0.5} color={DARK} /><Cyl at={[cx, 0.53, cz]} r={Math.min(w, h) * 0.42} h={0.07} color="#2f6b4a" glow={0.25} />{stools(5, Math.min(w, h) * 0.5)}</>;
@@ -290,7 +291,7 @@ function Furniture({ name, w, h }: { name: string; w: number; h: number }) {
   if (/desk/.test(n)) return <><Box at={[cx, 0.54, cz]} size={[w - 0.16, 0.08, h - 0.2]} color={WOOD_DARK} /><Box at={wide ? [0.22, 0.26, cz] : [cx, 0.26, 0.22]} size={[0.24, 0.52, 0.5]} color={DARK} /><Box at={wide ? [w - 0.22, 0.26, cz] : [cx, 0.26, h - 0.22]} size={[0.24, 0.52, 0.5]} color={DARK} />{screen(0.72)}</>;
   if (/workbench/.test(n)) return <>{block(0.6, "#4b5563", 0.12)}<Box at={[cx - 0.3, 0.66, cz]} size={[0.3, 0.1, 0.2]} color={AMBER} /><Box at={[cx + 0.4, 0.68, cz]} size={[0.16, 0.14, 0.16]} color="#7b8794" /><Box at={wide ? [cx, 0.95, 0.12] : [0.12, 0.95, cz]} size={wide ? [w - 0.3, 0.6, 0.06] : [0.06, 0.6, h - 0.3]} color={DARK} /></>;
   if (/reactor core/.test(n)) return <><Cyl at={[cx, 0.15, cz]} r={Math.min(w, h) * 0.46} h={0.3} color={DARK} /><Cyl at={[cx, 0.9, cz]} r={Math.min(w, h) * 0.3} h={1.3} color={GLOW} glow={1.4} /><Cyl at={[cx, 1.6, cz]} r={Math.min(w, h) * 0.4} h={0.14} color={DARK} /><pointLight position={[cx, 1, cz]} color={GLOW} intensity={2} distance={6} /></>;
-  if (/bacta tank/.test(n)) return <><Cyl at={[cx, 0.1, cz]} r={0.36} h={0.2} color={DARK} /><mesh position={[cx, 0.8, cz]}><cylinderGeometry args={[0.3, 0.3, 1.2, 16]} /><meshStandardMaterial color="#58c9b0" emissive="#58c9b0" emissiveIntensity={0.5} transparent opacity={0.55} /></mesh><Cyl at={[cx, 1.46, cz]} r={0.34} h={0.12} color={DARK} /></>;
+  if (/bacta tank/.test(n)) return <><Cyl at={[cx, 0.1, cz]} r={0.36} h={0.2} color={DARK} /><mesh position={[cx, 0.8, cz]}><cylinderGeometry args={[0.3, 0.3, 1.2, 16]} /><meshLambertMaterial color="#58c9b0" emissive="#58c9b0" emissiveIntensity={0.5} transparent opacity={0.55} /></mesh><Cyl at={[cx, 1.46, cz]} r={0.34} h={0.12} color={DARK} /></>;
   if (/coolant tank/.test(n)) return <><Cyl at={[cx, 0.6, cz]} r={0.36} h={1.2} color="#7b8794" /><Cyl at={[cx, 0.6, cz]} r={0.37} h={0.1} color={GLOW} glow={1} /></>;
   if (/fuel pump/.test(n)) return <><Box at={[cx, 0.5, cz]} size={[0.5, 1, 0.36]} color="#a33b3b" /><Box at={[cx, 0.8, cz + 0.19]} size={[0.3, 0.16, 0.02]} color={AMBER} glow={1} /><Cyl at={[cx + 0.3, 0.4, cz]} r={0.03} h={0.7} color="#11161d" /></>;
   if (/drink dispenser/.test(n)) return <><Box at={[cx, 0.6, cz]} size={[0.6, 1.2, 0.5]} color={DARK} /><Box at={[cx, 0.8, cz + 0.26]} size={[0.4, 0.4, 0.02]} color="#58c98b" glow={1.2} /></>;
@@ -349,7 +350,7 @@ function ShipModel({ ship, w, h }: { ship: Pick<Ship, "size" | "role" | "status"
   const wrecked = ship.status === "wrecked";
   const hull = wrecked ? "#5a554f" : "#aeb6bd";
   const dark = "#59636d";
-  const glass = <meshStandardMaterial color="#1b2a38" emissive={GLOW} emissiveIntensity={0.25} roughness={0.2} />;
+  const glass = <meshLambertMaterial color="#1b2a38" emissive={GLOW} emissiveIntensity={0.25} />;
   const struts = [[-1.4, -0.9], [-1.4, 0.9], [1.4, 0]].map(([x, z], i) => <Cyl key={i} at={[x, 0.2, z]} r={0.07} h={0.4} color="#2b2f36" />);
   let body: ReactNode;
   if (/fighter|interceptor|skiff|tiny/.test(role)) {
@@ -416,7 +417,7 @@ function Ascent({ w, h, toward, up, form }: { w: number; h: number; toward: "n" 
           return (
             <mesh key={i} position={place(t, top)} raycast={none}>
               <boxGeometry args={toward === "e" || toward === "w" ? [0.06, 0.06, across * 0.55] : [across * 0.55, 0.06, 0.06]} />
-              <meshStandardMaterial color="#c8ccd2" />
+              <meshLambertMaterial color="#c8ccd2" />
             </mesh>
           );
         }
@@ -424,7 +425,7 @@ function Ascent({ w, h, toward, up, form }: { w: number; h: number; toward: "n" 
         return (
           <mesh key={i} position={place(t, top / 2)} raycast={none} receiveShadow castShadow>
             <boxGeometry args={size} />
-            <meshStandardMaterial color={form === "lift" ? "#5a6b7a" : i % 2 ? "#8b8f96" : "#9aa0a8"} roughness={0.9} />
+            <meshLambertMaterial color={form === "lift" ? "#5a6b7a" : i % 2 ? "#8b8f96" : "#9aa0a8"} />
           </mesh>
         );
       })}
@@ -467,7 +468,7 @@ function StairsAsset({ w, h, up }: { w: number; h: number; up: boolean }) {
         return (
           <mesh key={i} position={[w / 2, top / 2 + 0.02, up ? h - (i + 0.5) * (h / count) : (i + 0.5) * (h / count)]} raycast={none}>
             <boxGeometry args={[w * 0.9, Math.max(0.04, top), h / count + 0.01]} />
-            <meshStandardMaterial color={up ? "#9aa0a8" : "#2c3138"} />
+            <meshLambertMaterial color={up ? "#9aa0a8" : "#2c3138"} />
           </mesh>
         );
       })}
@@ -493,7 +494,7 @@ function Doorway({ kind, color, label, onTap }: { kind: RoomAsset["kind"]; color
   return (
     <>
       {kind === "window" ? (
-        <mesh position={[0, 0.62, 0]}><boxGeometry args={[0.76, 0.42, WALL_THICK + 0.08]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.7} transparent opacity={0.7} /></mesh>
+        <mesh position={[0, 0.62, 0]}><boxGeometry args={[0.76, 0.42, WALL_THICK + 0.08]} /><meshLambertMaterial color={color} emissive={color} emissiveIntensity={0.7} transparent opacity={0.7} /></mesh>
       ) : kind === "secret" ? (
         <><Box at={[0, 0.3, 0]} size={[0.74, 0.5, WALL_THICK + 0.1]} color="#1b1524" />{[-0.24, -0.08, 0.08, 0.24].map((x) => <Box key={x} at={[x, 0.3, 0]} size={[0.05, 0.46, WALL_THICK + 0.14]} color={color} glow={1.2} />)}</>
       ) : (
@@ -501,7 +502,7 @@ function Doorway({ kind, color, label, onTap }: { kind: RoomAsset["kind"]; color
           <Box at={[-0.46, 0.7, 0]} size={[0.1, 1.4, 0.26]} color="#59636d" />
           <Box at={[0.46, 0.7, 0]} size={[0.1, 1.4, 0.26]} color="#59636d" />
           <Box at={[0, 1.4, 0]} size={[1.02, 0.1, 0.26]} color="#59636d" />
-          <mesh position={[0, 0.68, 0]}><boxGeometry args={[0.82, 1.34, 0.07]} /><meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} transparent opacity={0.6} /></mesh>
+          <mesh position={[0, 0.68, 0]}><boxGeometry args={[0.82, 1.34, 0.07]} /><meshLambertMaterial color={color} emissive={color} emissiveIntensity={0.5} transparent opacity={0.6} /></mesh>
           <Box at={[0, 1.5, 0]} size={[0.3, 0.08, 0.3]} color={color} glow={2} />
         </>
       )}
@@ -563,7 +564,7 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], walls = tru
     <>
       <mesh position={[width / 2, -0.1, height / 2]} receiveShadow onClick={onFloor ? (e) => { e.stopPropagation(); if (e.delta > 8) return; const p = e.object.worldToLocal(e.point.clone()); onFloor(Math.max(0, Math.min(width - 1, Math.floor(p.x + width / 2))), Math.max(0, Math.min(height - 1, Math.floor(p.z + height / 2)))); } : undefined}>
         <boxGeometry args={[width, 0.2, height]} />
-        <meshStandardMaterial color={FLOORS[floor]} roughness={0.95} />
+        <meshLambertMaterial color={FLOORS[floor]} />
       </mesh>
       <lineSegments>
         <bufferGeometry>
@@ -588,8 +589,8 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], walls = tru
           </group>
         );
       })}
-      {assets.filter((a) => !a.side && a.kind !== "npc").map((a) => (
-        <group key={a.id} position={[a.x, 0, a.y]}>
+      {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
+        <group key={a.id} position={[a.x, (a.z ?? 0) * LEVEL_H, a.y]}>
           {a.kind === "ship" ? (ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} /> : <Berth w={a.w} h={a.h} name={a.name} />)
             : a.kind === "stairs" ? <StairsAsset w={a.w} h={a.h} up={/up/i.test(a.name)} />
             : a.kind === "loot" ? <Chest looted={looted?.(a)} />
@@ -1216,6 +1217,47 @@ function Follower({ companion, index, feet, open, height, onTap }: { companion: 
 }
 
 type Walker = { key: string; from: V3; to: V3; progress: number; kind: "person" | "speeder" | "ship"; name: string; arc?: number; scale?: number };
+// People about the street of a district, going between the doors of its buildings by the open
+// ground and back again, at a walking pace (purely for life on the street: nobody to talk to)
+type Stroll = { key: string; path: { x: number; y: number }[]; length: number; offset: number };
+function Strollers({ strolls }: { strolls: Stroll[] }) {
+  const groups = useRef<Record<string, THREE.Group | null>>({});
+  useFrame(({ clock }) => {
+    for (const w of strolls) {
+      const g = groups.current[w.key];
+      if (!g || w.length < 1) continue;
+      // There and back, at a square and a bit a second
+      const along = (((clock.elapsedTime + w.offset) * 1.3) % (w.length * 2));
+      const back = along > w.length;
+      let rest = back ? w.length * 2 - along : along;
+      let [px, py] = [w.path[0].x, w.path[0].y];
+      let [dx, dy] = [0, 0];
+      for (let i = 1; i < w.path.length; i++) {
+        const [ax, ay, bx, by] = [w.path[i - 1].x, w.path[i - 1].y, w.path[i].x, w.path[i].y];
+        const leg = Math.hypot(bx - ax, by - ay);
+        [dx, dy] = [bx - ax, by - ay];
+        if (rest <= leg || i === w.path.length - 1) {
+          const k = leg ? Math.min(1, rest / leg) : 0;
+          [px, py] = [ax + (bx - ax) * k, ay + (by - ay) * k];
+          break;
+        }
+        rest -= leg;
+      }
+      g.position.set(px + 0.5, 0, py + 0.5);
+      g.rotation.y = Math.atan2(back ? -dx : dx, back ? -dy : dy);
+    }
+  });
+  return (
+    <>
+      {strolls.map((w) => (
+        <group key={w.key} ref={(g) => { groups.current[w.key] = g; }} position={[w.path[0].x + 0.5, 0, w.path[0].y + 0.5]}>
+          <Figure kind="person" ring="#9ca3af" />
+        </group>
+      ))}
+    </>
+  );
+}
+
 function Walkers({ walkers }: { walkers: Walker[] }) {
   const groups = useRef<Record<string, THREE.Group | null>>({});
   useFrame((_, delta) => {
@@ -1265,26 +1307,52 @@ function Decor({ kind }: { kind: string }) {
 const beyond = (l: RoomLayout, a: RoomAsset) => ({ x: l.x + a.x + (a.side === "e" ? 1 : a.side === "w" ? -1 : 0), y: l.y + a.y + (a.side === "s" ? 1 : a.side === "n" ? -1 : 0) });
 
 function BuildingScene({ world, building, hereId, selectedId, onAct, locked, reveal }: { world: World; building: Area; hereId: string; selectedId?: string | null; onAct?: (action: MapAction) => void; locked?: boolean; reveal?: boolean }) {
-  const rooms = childrenOf(world, building.id).filter((a) => a.kind === "room");
-  const plan = floorPlan(world, building.id);
+  // The buildings that share this one's map: the district it stands in, once the district is
+  // planned (shared logic "District plans"); a building of a wild site stands alone
+  const district = districtAt(world, building.id);
+  const districtPlan = district ? world.districtPlans?.[district.id] : undefined;
+  const buildings: Area[] = useMemo(
+    () => (district && districtPlan ? district.buildingIds.filter((id) => districtPlan.boxes[id]).map((id) => world.areas[id]).filter((b): b is Area => !!b) : [building]),
+    [world, building.id],
+  );
+  const buildingIds = new Set(buildings.map((b) => b.id));
+  const rooms = buildings.flatMap((b) => childrenOf(world, b.id).filter((a) => a.kind === "room"));
+  const withPlan = rooms.filter((a) => a.layout);
+  const plan = withPlan.length
+    ? (() => {
+        const x = Math.min(...withPlan.map((a) => a.layout!.x));
+        const y = Math.min(...withPlan.map((a) => a.layout!.y));
+        return { x, y, width: Math.max(...withPlan.map((a) => a.layout!.x + a.layout!.width)) - x, height: Math.max(...withPlan.map((a) => a.layout!.y + a.layout!.height)) - y };
+      })()
+    : undefined;
   const planned = !!plan && rooms.every((a) => a.layout);
   const trail = trailOf(world, building.id);
   const biome = trail.find((a) => a.kind === "planet")?.type ?? "";
   const wall = trail.some((a) => a.type === "station") ? STEEL : WALLS[biome] ?? "#b9ad96";
   const here = world.areas[hereId];
   // The room the party is in, or whether it stands outside; a room opened up to look at (the atlas)
-  const inside = planned && here?.kind === "room" && here.parentId === building.id ? here : null;
-  const outside = hereId === building.id;
+  const inside = planned && here?.kind === "room" && buildingIds.has(here.parentId ?? "") ? here : null;
+  const outside = buildingIds.has(hereId);
   const present = planned && (!!inside || outside);
   const opened = inside ?? (reveal && planned ? rooms.find((a) => a.id === selectedId) ?? null : null);
+  // The building the party is in or in front of (or the one being looked at)
+  const me = buildings.find((b) => b.id === (inside?.parentId ?? hereId)) ?? building;
   const tapPlace = useTaps(onAct);
+  // A fight in the open of this district is fought here, on its streets, roofs and catwalks
+  const duel = useCombat((state) => state.inCombat && !!district && state.arena.district === district.id);
+  const duelist = useCombat((state) => (state.inCombat ? state.combatants.find((c) => c.isPlayer) : undefined));
+  // The street can be tapped (to walk, to go in, to pick someone out) when not in a fight
+  const tappable = outside && !duel;
 
-  // The ground: the plan and a margin round it
-  const ground = plan ? { x: plan.x - MARGIN, y: plan.y - MARGIN, w: plan.width + MARGIN * 2, h: plan.height + MARGIN * 2 } : { x: -8, y: -8, w: 16, h: 16 };
+  // The ground: the district's streets, or the plan and a margin round it
+  const ground = districtPlan && plan
+    ? { x: Math.min(0, plan.x - 1), y: Math.min(0, plan.y - 1), w: Math.max(districtPlan.width, plan.x + plan.width + 1), h: Math.max(districtPlan.height, plan.y + plan.height + 1) }
+    : plan ? { x: plan.x - MARGIN, y: plan.y - MARGIN, w: plan.width + MARGIN * 2, h: plan.height + MARGIN * 2 } : { x: -8, y: -8, w: 16, h: 16 };
   const cx = ground.x + ground.w / 2;
   const cz = ground.y + ground.h / 2;
-  // (a cellar under the street leaves the street above it free to walk on)
-  const inRoom = (x: number, y: number) => rooms.some((a) => a.layout && (a.layout.level ?? 0) >= 0 && formOf(a) !== "gallery" && x >= a.layout.x && x < a.layout.x + a.layout.width && y >= a.layout.y && y < a.layout.y + a.layout.height);
+  // (a cellar under the street leaves the street above it free to walk on, and so does a roof or
+  // a catwalk, which stand over what is below)
+  const inRoom = (x: number, y: number) => rooms.some((a) => a.layout && (a.layout.level ?? 0) >= 0 && formOf(a) !== "gallery" && !openAir(a) && x >= a.layout.x && x < a.layout.x + a.layout.width && y >= a.layout.y && y < a.layout.y + a.layout.height);
 
   // What is to be seen in the opened room: hidden doors, caches and secret ways only once found
   const seen = (room: Area) =>
@@ -1297,11 +1365,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     }).map((a) => (a.kind === "ship" && !room.ships.some((ship) => ship.id === a.ref) ? { ...a, blocks: false, cover: false } : a));
   const shown = opened ? seen(opened) : [];
 
-  // Outside: where the street leads (a signpost for each way), a few things standing about, and
-  // whoever and whatever is in front of the building
+  // Outside: where the streets lead (a signpost for each way out of the district), a few things
+  // standing about, and whoever and whatever is in front of each building
   const street = useMemo(() => {
-    if (!plan) return { signs: [], decor: [], folk: [], caches: [], sentries: [], rigs: [], door: { x: 0, y: 0 }, outward: { x: -1, y: 0 } };
-    const r = createRandom(Number(building.id.replace(/\D/g, "") || 1) * 613 + 7);
+    const none = { signs: [] as { exit: Exit; x: number; y: number }[], decor: [] as { kind: string; x: number; y: number }[], folk: [] as { occupant: Occupant; x: number; y: number }[], caches: [] as { cache: Area["loot"][number]; x: number; y: number }[], sentries: [] as { buildingId: string; key: string; occupant: Occupant; at: { x: number; y: number } }[], rigs: [] as { v: Vehicle; mine: boolean; outward: { x: number; y: number }; x: number; y: number }[], doors: {} as Record<string, { door: { x: number; y: number }; outward: { x: number; y: number } }> };
+    if (!plan) return none;
+    const r = createRandom(Number(buildings[0].id.replace(/\D/g, "") || 1) * 613 + 7);
     const taken = new Set<string>();
     const free = (x: number, y: number) => x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !taken.has(`${x},${y}`);
     // Somewhere free near where a thing should stand; signposts keep clear of each other, so
@@ -1313,44 +1382,61 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       if (clear) kept.push(spot);
       return spot;
     };
-    // In front of the main way in
-    const root = rooms.find((a) => a.gateway) ?? rooms[0];
-    const wayOut = root?.layout?.assets.find((a) => a.kind === "exit");
-    const door = root?.layout && wayOut ? beyond(root.layout, wayOut) : { x: ground.x + 2, y: Math.round(cz) };
-    taken.add(`${door.x},${door.y}`);
+    // In front of each building's main way in
+    const fronts = buildings.map((b) => {
+      const own = rooms.filter((a) => a.parentId === b.id);
+      const root = own.find((a) => a.gateway && !formOf(a)) ?? own.find((a) => a.gateway) ?? own[0];
+      const wayOut = root?.layout?.assets.find((a) => a.kind === "exit");
+      const door = root?.layout && wayOut ? beyond(root.layout, wayOut) : { x: ground.x + 2, y: Math.round(cz) };
+      taken.add(`${door.x},${door.y}`);
+      const outward = { x: wayOut?.side === "w" ? -1 : wayOut?.side === "e" ? 1 : 0, y: wayOut?.side === "n" ? -1 : wayOut?.side === "s" ? 1 : 0 };
+      return { b, root, wayOut, door, outward };
+    });
+    const doors = Object.fromEntries(fronts.map((f) => [f.b.id, { door: f.door, outward: f.outward }]));
     for (const room of rooms) for (const a of room.layout?.assets ?? []) if (a.side) { const b = beyond(room.layout!, a); taken.add(`${b.x},${b.y}`); }
     // A street leads off towards the place it goes to; the way out of the settlement is the far side
-    const leads = exitsOf(world, building.id).filter((e) => e.via !== "enter" && !e.hidden);
-    const signs = leads.map((exit, index) => {
-      const to = world.areas[exit.to];
-      let dx = to.position.x - building.position.x;
-      let dz = to.position.z - building.position.z;
-      if (exit.via === "leave" || (!dx && !dz)) [dx, dz] = [-1, index % 2 ? 0.6 : -0.6];
-      const k = Math.min((ground.w / 2 - 1.5) / Math.max(0.001, Math.abs(dx)), (ground.h / 2 - 1.5) / Math.max(0.001, Math.abs(dz)));
-      return { exit, ...claim({ x: cx - 0.5 + dx * k, y: cz - 0.5 + dz * k }, 4) };
-    });
-    const folk = building.occupants.flatMap((o, i) => Array.from({ length: Math.min(o.count, 3) }, (_, j) => ({ occupant: o, ...claim({ x: door.x - 2 - j, y: door.y + (i % 2 ? 2 + i : -2 - i) }) })));
-    const caches = building.loot.filter((c) => !c.hidden).map((cache, i) => ({ cache, ...claim({ x: door.x + 1, y: door.y + 3 + i }) }));
+    const signs: { exit: Exit; x: number; y: number }[] = [];
+    const lead = new Set<string>();
+    for (const b of buildings) {
+      for (const exit of exitsOf(world, b.id)) {
+        if (exit.via === "enter" || exit.hidden || buildingIds.has(exit.to) || lead.has(`${exit.via}-${exit.to}`)) continue;
+        lead.add(`${exit.via}-${exit.to}`);
+        const to = world.areas[exit.to];
+        let dx = to.position.x - b.position.x;
+        let dz = to.position.z - b.position.z;
+        if (exit.via === "leave" || (!dx && !dz)) [dx, dz] = [-1, signs.length % 2 ? 0.6 : -0.6];
+        const k = Math.min((ground.w / 2 - 1.5) / Math.max(0.001, Math.abs(dx)), (ground.h / 2 - 1.5) / Math.max(0.001, Math.abs(dz)));
+        signs.push({ exit, ...claim({ x: cx - 0.5 + dx * k, y: cz - 0.5 + dz * k }, 4) });
+      }
+    }
+    const folk = fronts.flatMap(({ b, door }) => b.occupants.flatMap((o, i) => Array.from({ length: Math.min(o.count, 3) }, (_, j) => ({ occupant: o, ...claim({ x: door.x - 2 - j, y: door.y + (i % 2 ? 2 + i : -2 - i) }) }))));
+    const caches = fronts.flatMap(({ b, door }) => b.loot.filter((c) => !c.hidden).map((cache, i) => ({ cache, ...claim({ x: door.x + 1, y: door.y + 3 + i }) })));
     const kinds = DECOR[biome] ?? DECOR.temperate;
-    const decor = Array.from({ length: 9 }, () => ({ kind: r.pick(kinds), x: ground.x + r.int(0, ground.w - 1), y: ground.y + r.int(0, ground.h - 1) }))
+    const count = Math.min(46, Math.max(9, Math.round((ground.w * ground.h) / 260)));
+    const decor = Array.from({ length: count }, () => ({ kind: r.pick(kinds), x: ground.x + r.int(0, ground.w - 1), y: ground.y + r.int(0, ground.h - 1) }))
       .filter((d) => free(d.x, d.y) && ![-1, 0, 1].some((dy) => [-1, 0, 1].some((dx) => inRoom(d.x + dx, d.y + dy) || taken.has(`${d.x + dx},${d.y + dy}`))));
-    // The sentries of the way in stand out in front of it: one by the door, the others close by
+    // The sentries of a way in stand out in front of it: one by the door, the others close by
     // until they set off on their round
-    const sentries = (root?.layout?.assets ?? [])
-      .map((a) => ({ a, occupant: root.occupants.find((o) => o.id === a.ref && o.role === "guard") }))
-      .filter((s): s is { a: RoomAsset; occupant: Occupant } => s.a.kind === "npc" && !!s.occupant)
-      .map(({ a, occupant }, i) => ({ key: `${a.id}-out`, occupant, at: claim({ x: door.x + (i % 2 ? -1 : 1) * (wayOut?.side === "n" || wayOut?.side === "s" ? 1 : 0), y: door.y + (i % 2 ? -1 : 1) * (wayOut?.side === "e" || wayOut?.side === "w" ? 1 : 0) }) }));
-    const outward = { x: wayOut?.side === "w" ? -1 : wayOut?.side === "e" ? 1 : 0, y: wayOut?.side === "n" ? -1 : wayOut?.side === "s" ? 1 : 0 };
-    // Speeders: the party's own, parked in this settlement, and any kept at this building, a few
-    // squares out from the door and to either side
+    const sentries = fronts.flatMap(({ b, root, wayOut, door }) =>
+      (root?.layout?.assets ?? [])
+        .map((a) => ({ a, occupant: root!.occupants.find((o) => o.id === a.ref && o.role === "guard") }))
+        .filter((s): s is { a: RoomAsset; occupant: Occupant } => s.a.kind === "npc" && !!s.occupant)
+        .map(({ a, occupant }, i) => ({ buildingId: b.id, key: `${a.id}-out`, occupant, at: claim({ x: door.x + (i % 2 ? -1 : 1) * (wayOut?.side === "n" || wayOut?.side === "s" ? 1 : 0), y: door.y + (i % 2 ? -1 : 1) * (wayOut?.side === "e" || wayOut?.side === "w" ? 1 : 0) }) })),
+    );
+    // Speeders: the party's own, parked in this settlement (before the first building), and any
+    // kept at a building, a few squares out from its door and to either side
     const settlementId = trail.find((a) => a.kind === "settlement")?.id;
     const mine = (((world as World & { parked?: PartyVehicle[] }).parked ?? []) as PartyVehicle[]).filter((v) => v.areaId === settlementId);
-    const rigs = [...mine.map((v) => ({ v: v as Vehicle, mine: true })), ...(building.vehicles ?? []).map((v) => ({ v, mine: false }))].map((r, i) => {
-      const side = (i % 2 ? 1 : -1) * (1 + Math.floor(i / 2));
-      return { ...r, ...claim({ x: door.x + outward.x * 4 + Math.abs(outward.y) * side * 2, y: door.y + outward.y * 4 + Math.abs(outward.x) * side * 2 }) };
-    });
-    return { signs, decor, folk, caches, sentries, rigs, door, outward };
-  }, [world, building.id]);
+    const rigs = fronts.flatMap(({ b, door, outward }, n) =>
+      [...(n === 0 ? mine.map((v) => ({ v: v as Vehicle, mine: true })) : []), ...(b.vehicles ?? []).map((v) => ({ v, mine: false }))].map((rig, i) => {
+        const side = (i % 2 ? 1 : -1) * (1 + Math.floor(i / 2));
+        return { ...rig, outward, ...claim({ x: door.x + outward.x * 4 + Math.abs(outward.y) * side * 2, y: door.y + outward.y * 4 + Math.abs(outward.x) * side * 2 }) };
+      }),
+    );
+    return { signs, decor, folk, caches, sentries, rigs, doors };
+  }, [world, district?.id ?? building.id]);
+  // The way in of the building the party is in front of, and which way it faces
+  const myFront = street.doors[me.id] ?? Object.values(street.doors)[0] ?? { door: { x: ground.x + 2, y: Math.round(cz) }, outward: { x: -1, y: 0 } };
 
   // Where the party can stand: the free floor of the room they are in, or the open ground outside.
   // People step aside, so only furniture stands in the way.
@@ -1373,18 +1459,20 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (!present) return { x: 0, y: 0 };
     const last = usePartySpot.getState();
     const from = last.areaId ? world.areas[last.areaId] : undefined;
-    if (from && (from.id === building.id || from.parentId === building.id)) return nearestOpen(open, last);
-    if (!inside) return nearestOpen(open, street.door);
+    if (from && (buildingIds.has(from.id) || buildingIds.has(from.parentId ?? ""))) return nearestOpen(open, last);
+    if (!inside) return nearestOpen(open, myFront.door);
     const l = inside.layout!;
     const way = l.assets.find((a) => a.kind === "exit") ?? l.assets.find(isWay);
     return nearestOpen(open, way ? { x: l.x + way.x, y: l.y + way.y } : { x: l.x, y: l.y });
   }, [hereId, present]);
   const standing = spot.areaId === hereId ? spot : entry;
   const token = useRef<THREE.Group>(null);
+  const duelRef = useRef(duel ? duelist : undefined);
+  duelRef.current = duel ? duelist : undefined;
   const feet = useRef({ x: standing.x, y: standing.y });
   // Where the camera looks when the party is out of doors: at the party
   const eye = useRef<V3 | null>(null);
-  const walk = useRef<{ path: { x: number; y: number }[]; then?: () => void } | null>(null);
+  const walk = useRef<{ path: { x: number; y: number }[]; then?: (squares: number) => void; total: number } | null>(null);
   useEffect(() => {
     if (!present) return;
     walk.current = null;
@@ -1403,7 +1491,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   useFrame((_, delta) => {
     const going = walk.current;
     if (token.current) token.current.position.set(feet.current.x + 0.5, heightNow(), feet.current.y + 0.5);
-    eye.current = outside && planned ? [feet.current.x + 0.5 - cx, 0, feet.current.y + 0.5 - cz] : null;
+    eye.current = duelRef.current ? [(duelRef.current.x ?? 0) + 0.5 - cx, (duelRef.current.z ?? 0) * LEVEL_H, (duelRef.current.y ?? 0) + 0.5 - cz] : outside && planned ? [feet.current.x + 0.5 - cx, 0, feet.current.y + 0.5 - cz] : null;
     if (!going) return;
     let step = Math.min(delta, 0.5) * 7;
     while (step > 0 && going.path.length) {
@@ -1415,6 +1503,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         feet.current = { ...next };
         going.path.shift();
         step -= far;
+        // A loose flagstone gives way under the first foot to step on it
+        const trap = inside ? trapsIn(inside, false).find((a) => inside.layout!.x + a.x === next.x && inside.layout!.y + a.y === next.y) : undefined;
+        if (trap && inside) {
+          walk.current = null;
+          spot.stand(hereId, feet.current.x, feet.current.y);
+          onAct?.({ type: "trap", areaId: inside.id, id: trap.id });
+          return;
+        }
       } else {
         feet.current = { x: feet.current.x + (dx / far) * step, y: feet.current.y + (dy / far) * step };
         step = 0;
@@ -1423,7 +1519,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (!going.path.length) {
       walk.current = null;
       spot.stand(hereId, feet.current.x, feet.current.y);
-      going.then?.();
+      going.then?.(going.total);
+      // Stopping within two squares of a loose flagstone: the game sees whether it is noticed
+      if (inside && trapsIn(inside, false).some((a) => Math.max(Math.abs(inside.layout!.x + a.x - feet.current.x), Math.abs(inside.layout!.y + a.y - feet.current.y)) <= 2)) onAct?.({ type: "near", areaId: inside.id });
       // Stopping within two squares of a secret way nobody has found: the game sees whether it is noticed
       for (const room of inside ? [inside] : rooms) {
         const way = room.secretEntry && !room.secretEntry.found ? room.layout?.assets.find((a) => a.kind === "secret") : undefined;
@@ -1455,16 +1553,24 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       doors: l.assets.filter((a) => a.kind === "door" || a.kind === "exit").map((a) => ({ x: a.x, y: a.y })),
     };
   }, [opened?.id, world]);
-  const streetSetting = useMemo((): Setting | null => {
-    if (!plan || !street.sentries.length) return null;
-    const corners = [{ x: plan.x - 2, y: plan.y - 2 }, { x: plan.x + plan.width + 1, y: plan.y - 2 }, { x: plan.x + plan.width + 1, y: plan.y + plan.height + 1 }, { x: plan.x - 2, y: plan.y + plan.height + 1 }].map((c) => nearestOpen(outdoors, c));
-    // The round starts at the corner nearest the way in
-    const first = corners.reduce((best, c, i) => (apart(c, street.door) < apart(corners[best], street.door) ? i : best), 0);
-    return { open: outdoors, seats: [], counters: [], stage: [], stageHeight: 0, round: [...corners.slice(first), ...corners.slice(0, first)], watch: { x: street.door.x + street.outward.x * 4, y: street.door.y + street.outward.y * 4 }, doors: [street.door] };
-  }, [world, building.id]);
-  const gate = rooms.find((a) => a.gateway) ?? rooms[0];
+  const streetSettings = useMemo(() => {
+    if (!plan) return [] as { buildingId: string; setting: Setting; people: typeof street.sentries }[];
+    return buildings.flatMap((b) => {
+      const people = street.sentries.filter((s) => s.buildingId === b.id);
+      const front = street.doors[b.id];
+      if (!people.length || !front) return [];
+      const box = districtPlan?.boxes[b.id] ?? plan;
+      const corners = [{ x: box.x - 2, y: box.y - 2 }, { x: box.x + box.width + 1, y: box.y - 2 }, { x: box.x + box.width + 1, y: box.y + box.height + 1 }, { x: box.x - 2, y: box.y + box.height + 1 }].map((c) => nearestOpen(outdoors, c));
+      // The round starts at the corner nearest the way in
+      const first = corners.reduce((best, c, i) => (apart(c, front.door) < apart(corners[best], front.door) ? i : best), 0);
+      const setting: Setting = { open: outdoors, seats: [], counters: [], stage: [], stageHeight: 0, round: [...corners.slice(first), ...corners.slice(0, first)], watch: { x: front.door.x + front.outward.x * 4, y: front.door.y + front.outward.y * 4 }, doors: [front.door] };
+      return [{ buildingId: b.id, setting, people }];
+    });
+  }, [world, district?.id ?? building.id]);
+  const gateOf = (buildingId: string) => rooms.find((a) => a.parentId === buildingId && a.gateway && !formOf(a)) ?? rooms.find((a) => a.parentId === buildingId);
   // People on the street: going out of the door towards the signpost for where they are going,
-  // coming in from the one for where they were, or passing between two other places
+  // coming in from the one for where they were, between the doors of two buildings of the
+  // district, or passing between two other places
   const moving: Mover[] = (world as World & { moving?: Mover[] }).moving ?? [];
   const streetWalkers = useMemo((): Walker[] => {
     if (!plan || opened) return [];
@@ -1473,28 +1579,55 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       const b = buildingOf(id);
       return (b && street.signs.find((sign) => sign.exit.to === b)) || street.signs.find((sign) => sign.exit.via === "leave");
     };
-    const door: V3 = [street.door.x + 0.5, 0, street.door.y + 0.5];
+    const doorOf = (id: string): V3 | undefined => {
+      const f = street.doors[id];
+      return f ? [f.door.x + 0.5, 0, f.door.y + 0.5] : undefined;
+    };
     const by = (sign?: { x: number; y: number }): V3 | undefined => (sign ? [sign.x + 1.3, 0, sign.y + 0.5] : undefined);
     return moving.filter((m) => m.kind === "person").flatMap((m) => {
-      const [fromHere, toHere] = [buildingOf(m.from) === building.id, buildingOf(m.to) === building.id];
-      const ends: [V3 | undefined, V3 | undefined] = fromHere && !toHere ? [door, by(signTo(m.to))]
-        : toHere && !fromHere ? [by(signTo(m.from)), door]
-        : !fromHere && !toHere && buildingOf(m.from) && buildingOf(m.to) ? [by(street.signs.find((sign) => sign.exit.to === buildingOf(m.from))), by(street.signs.find((sign) => sign.exit.to === buildingOf(m.to)))]
+      const [fb, tb] = [buildingOf(m.from), buildingOf(m.to)];
+      const [fromHere, toHere] = [!!fb && buildingIds.has(fb), !!tb && buildingIds.has(tb)];
+      const ends: [V3 | undefined, V3 | undefined] = fromHere && toHere ? [doorOf(fb!), doorOf(tb!)]
+        : fromHere && !toHere ? [doorOf(fb!), by(signTo(m.to))]
+        : toHere && !fromHere ? [by(signTo(m.from)), doorOf(tb!)]
+        : !fromHere && !toHere && fb && tb ? [by(street.signs.find((sign) => sign.exit.to === fb)), by(street.signs.find((sign) => sign.exit.to === tb))]
         : [undefined, undefined];
       return ends[0] && ends[1] && ends[0] !== ends[1] ? [{ key: m.id, from: ends[0], to: ends[1], progress: m.progress, kind: "person" as const, name: m.name }] : [];
     });
   }, [moving, plan, opened, street]);
+  // People about the street of a district, between the doors of its buildings
+  const strolls = useMemo((): Stroll[] => {
+    if (!plan || !districtPlan || buildings.length < 2) return [];
+    const doors = buildings.map((b) => street.doors[b.id]?.door).filter((d): d is { x: number; y: number } => !!d);
+    if (doors.length < 2) return [];
+    const count = Math.min(8, buildings.length * 2);
+    const out: Stroll[] = [];
+    for (let i = 0; i < count; i++) {
+      const a = Math.floor(unitOf(`${district!.id}|stroll|${i}|a`) * doors.length);
+      let b = Math.floor(unitOf(`${district!.id}|stroll|${i}|b`) * doors.length);
+      if (b === a) b = (b + 1) % doors.length;
+      const from = nearestOpen(outdoors, doors[a]);
+      const to = nearestOpen(outdoors, doors[b]);
+      const path = route(outdoors, from, [to]);
+      if (!path || !path.length) continue;
+      const full = [from, ...path];
+      let length = 0;
+      for (let k = 1; k < full.length; k++) length += Math.hypot(full[k].x - full[k - 1].x, full[k].y - full[k - 1].y);
+      out.push({ key: `stroll-${i}`, path: full, length, offset: unitOf(`${district!.id}|stroll|${i}|t`) * length * 2 });
+    }
+    return out;
+  }, [world, district?.id ?? building.id, street]);
   // Hostiles who have noticed the party stop and watch it
   const watching = (area: Area | undefined, o: Occupant) => !!area && o.disposition === "hostile" && !!o.hitPoints && !area.allowed && (area.alert ?? (area === inside ? ALERT.confronting : -1)) >= ALERT.questioning;
 
   // Walk to a square, or up to something that stands on the given squares, then do what was asked
-  const active = present && !locked;
-  const walkTo = (goals: { x: number; y: number }[], then?: () => void) => {
+  const active = present && !locked && !duel;
+  const walkTo = (goals: { x: number; y: number }[], then?: (squares: number) => void) => {
     if (!active) return;
     const from = { x: Math.round(feet.current.x), y: Math.round(feet.current.y) };
     const path = route(open, from, goals.filter((g) => open(g.x, g.y) || (g.x === from.x && g.y === from.y)));
     if (!path) onAct?.({ type: "note", text: "There is no way through to there." });
-    else walk.current = { path, then };
+    else walk.current = { path, then, total: path.length };
   };
   const around = aroundSquares;
 
@@ -1547,7 +1680,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const actOutside = (room: Area, a: RoomAsset) => {
     const at = [beyond(room.layout!, a)];
     if (a.kind === "window") walkTo(at, () => onAct?.({ type: "look", areaId: room.id }));
-    else if (a.kind === "exit" || a.kind === "secret") walkTo(at, () => onAct?.({ type: "go", areaId: room.id, secret: a.kind === "secret" }));
+    else if (a.kind === "exit" || a.kind === "secret") walkTo(at, (squares) => onAct?.({ type: "go", areaId: room.id, secret: a.kind === "secret", squares }));
     else onAct?.({ type: "note", text: `${a.name}: a passage between two parts of the building.` });
   };
   const wayColor = (a: RoomAsset) => (a.kind === "door" && world.paths.find((p) => p.id === a.ref)?.locked ? WAY_COLORS.locked : WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door);
@@ -1558,10 +1691,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   };
 
   // The camera looks at the opened room, at the party when it is out of doors, else at the building
-  const focus: V3 = opened?.layout ? [opened.layout.x + opened.layout.width / 2 - cx, levelY(opened.layout) + rise(opened.layout) / 2, opened.layout.y + opened.layout.height / 2 - cz] : outside && planned ? [standing.x + 0.5 - cx, 0, standing.y + 0.5 - cz] : [0, 0, 0];
+  const focus: V3 = duelist && duel ? [(duelist.x ?? 0) + 0.5 - cx, (duelist.z ?? 0) * LEVEL_H, (duelist.y ?? 0) + 0.5 - cz] : opened?.layout ? [opened.layout.x + opened.layout.width / 2 - cx, levelY(opened.layout) + rise(opened.layout) / 2, opened.layout.y + opened.layout.height / 2 - cz] : outside && planned ? [standing.x + 0.5 - cx, 0, standing.y + 0.5 - cz] : [0, 0, 0];
   // The ground hides a cellar: it is taken away while one is looked into
   const underground = !!opened?.layout && (opened.layout.level ?? 0) < 0;
-  const reach = opened?.layout ? Math.max(opened.layout.width, opened.layout.height) * 1.1 + 6 : outside && planned ? 17 : plan ? Math.max(plan.width, plan.height) * 0.9 + 12 : 22;
+  const reach = duel ? 22 : opened?.layout ? Math.max(opened.layout.width, opened.layout.height) * 1.1 + 6 : outside && planned ? 17 : plan ? Math.max(plan.width, plan.height) * 0.9 + 12 : 22;
   // The squares of the ground, as faint lines
   const squares = useMemo(() => {
     const points: number[] = [];
@@ -1569,25 +1702,42 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     for (let y = 0; y <= ground.h; y++) points.push(ground.x, 0, ground.y + y, ground.x + ground.w, 0, ground.y + y);
     return new Float32Array(points);
   }, [ground.x, ground.y, ground.w, ground.h]);
-  const floor = floorOf(building.type);
+  const floor = floorOf((opened ? world.areas[opened.parentId ?? ""] : me)?.type ?? building.type);
+  // The rooms that have a roof of their own over them (a platform to climb to, shown on top of them)
+  const roofed = new Set<string>();
+  for (const room of rooms) {
+    if (formOf(room) !== "roof" || !room.layout) continue;
+    const under = rooms.find((o) => o !== room && o.layout && !formOf(o) && o.layout.x === room.layout!.x && o.layout.y === room.layout!.y && o.layout.width === room.layout!.width && o.layout.height === room.layout!.height && (o.layout.level ?? 0) + 1 === room.layout!.level);
+    if (under) roofed.add(under.id);
+  }
+  const sizeOfGround = Math.max(240, ground.w + 80, ground.h + 80);
 
   return (
     <>
       <group position={[-cx, 0, -cz]}>
         {/* The earth round a cellar being looked into */}
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, levelY(opened?.layout) - 0.22, cz]} visible={underground}>
-          <planeGeometry args={[240, 240]} />
+          <planeGeometry args={[sizeOfGround, sizeOfGround]} />
           <meshBasicMaterial color="#14100c" />
         </mesh>
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.06, cz]} visible={!underground}>
-          <planeGeometry args={[240, 240]} />
+          <planeGeometry args={[sizeOfGround, sizeOfGround]} />
           <meshBasicMaterial color={GROUND[biome] ?? "#1c222b"} />
         </mesh>
         {/* The ground round the building: a tap walks there */}
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.02, cz]} visible={!underground} receiveShadow onClick={outside ? (e) => { e.stopPropagation(); if (e.delta <= 8) walkTo([{ x: Math.floor(e.point.x + cx), y: Math.floor(e.point.z + cz) }]); } : undefined}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.02, cz]} visible={!underground} receiveShadow onClick={tappable ? (e) => { e.stopPropagation(); if (e.delta <= 8) walkTo([{ x: Math.floor(e.point.x + cx), y: Math.floor(e.point.z + cz) }]); } : undefined}>
           <planeGeometry args={[ground.w, ground.h]} />
-          <meshStandardMaterial color={new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(1.5)} roughness={1} />
+          <meshLambertMaterial color={new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(1.5)} />
         </mesh>
+        {districtPlan && buildings.map((b) => {
+          const box = districtPlan.boxes[b.id];
+          return box ? (
+            <mesh key={`lot-${b.id}`} rotation={[-Math.PI / 2, 0, 0]} position={[box.x + box.width / 2, -0.005, box.y + box.height / 2]} visible={!underground} raycast={() => null}>
+              <planeGeometry args={[box.width + 1, box.height + 1]} />
+              <meshLambertMaterial color={new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(0.9)} />
+            </mesh>
+          ) : null;
+        })}
         <lineSegments visible={!underground}>
           <bufferGeometry>
             <bufferAttribute attach="attributes-position" count={squares.length / 3} array={squares} itemSize={3} />
@@ -1604,6 +1754,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
 
         {planned && rooms.map((room) => {
           const l = room.layout!;
+          // Inside a building the others of its district are not drawn: nobody looks at them from
+          // there, and a district is a lot to draw (on a roof, on a catwalk or in the street it is all in sight)
+          if (opened && !openAir(opened) && districtPlan && room.parentId !== opened.parentId) return null;
           if (room === opened) {
             return (
               <group key={room.id} position={[l.x, levelY(l), l.y]}>
@@ -1621,7 +1774,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   onFloor={inside ? (x, y) => walkTo([{ x: l.x + x, y: l.y + y }]) : undefined}
                   onAsset={inside ? actOn : undefined}
                 >
-                  {roomSetting && (
+                  {roomSetting && !duel && (
                     <Life
                       people={[
                         ...shown.filter((a) => a.kind === "npc").map((a) => ({ key: a.id, occupant: room.occupants.find((o) => o.id === a.ref)!, at: { x: a.x, y: a.y } as Sq | null })),
@@ -1642,7 +1795,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             );
           }
           // What is over the room being looked into is taken away, so that it can be seen
-          if (opened?.layout && levelY(l) > levelY(opened.layout) + 0.01 && sameFootprint(l, opened.layout)) return null;
+          const galleryOfOpened = !!opened && formOf(room) === "gallery" && room.tags.includes(`host:${opened.id}`);
+          if (opened?.layout && levelY(l) > levelY(opened.layout) + 0.01 && sameFootprint(l, opened.layout) && !galleryOfOpened) return null;
           // A room seen from outside it: closed, with what is set in its outside walls
           const form = formOf(room);
           // A room looked down into from its gallery is seen low, so that the gallery shows over it
@@ -1672,15 +1826,69 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           return (
             <group key={room.id} position={[l.x, lift, l.y]}>
               {/* What an upper floor stands on */}
-              {lift > 0.01 && form !== "gallery" && <Box at={[l.width / 2, -lift / 2, l.height / 2]} size={[l.width - 0.1, lift, l.height - 0.1]} color={new THREE.Color(wall).multiplyScalar(0.7).getStyle()} />}
-              {form === "walkway" ? (
+              {lift > 0.01 && form !== "gallery" && form !== "walkway" && <Box at={[l.width / 2, -lift / 2, l.height / 2]} size={[l.width - 0.1, lift, l.height - 0.1]} color={new THREE.Color(wall).multiplyScalar(0.7).getStyle()} />}
+              {form === "roof" ? (
+                <group position={[0, 0.02, 0]} onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
+                  <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} wayColor={wayColor} wayLabel={() => undefined} />
+                  {/* Who stands on it, to be seen from the street */}
+                  {!duel && l.assets.filter((a) => a.kind === "npc").map((a) => {
+                    const o = room.occupants.find((x) => x.id === a.ref);
+                    return o ? (
+                      <group key={a.id} position={[a.x + 0.5, 0, a.y + 0.5]}>
+                        <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} />
+                        <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS[o.disposition]}>{o.name}</Label>
+                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} />
+                      </group>
+                    ) : null;
+                  })}
+                  {/* The ladder up the wall from the street, with its pad to be tapped */}
+                  {l.assets.filter((a) => a.kind === "exit").map((a) => {
+                    const at = onWall(l, a);
+                    const step = beyond(l, a);
+                    const sign = a.side === "s" || a.side === "e" ? 1 : -1;
+                    const top = lift + 0.9;
+                    const rungs = Math.max(2, Math.round(top / 0.4));
+                    return (
+                      <group key={a.id}>
+                        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[step.x - l.x + 0.5, -lift - 0.02 + 0.03, step.y - l.y + 0.5]} onClick={tappable ? (e) => { e.stopPropagation(); if (e.delta <= 8) actOutside(room, a); } : undefined}>
+                          <planeGeometry args={[0.92, 0.92]} />
+                          <meshBasicMaterial color={WAY_COLORS.exit} transparent opacity={0.45} depthWrite={false} />
+                        </mesh>
+                        <group position={[at.x, -lift - 0.02, at.z]} rotation={[0, at.turn, 0]}>
+                          {[-0.28, 0.28].map((x) => <Box key={x} at={[x, top / 2, sign * 0.12]} size={[0.06, top, 0.06]} color="#c8ccd2" />)}
+                          {Array.from({ length: rungs }, (_, i) => <Box key={i} at={[0, 0.25 + (i * (top - 0.4)) / rungs, sign * 0.12]} size={[0.56, 0.05, 0.05]} color="#9aa0a8" />)}
+                          <Label at={[0, top + 0.5, sign * 0.1]} size={0.3} color={WAY_COLORS.exit}>Ladder to the roof</Label>
+                          {tappable && <Hit at={[0, top / 2, sign * 0.3]} size={[0.9, top, 0.8]} onTap={() => actOutside(room, a)} />}
+                        </group>
+                      </group>
+                    );
+                  })}
+                </group>
+              ) : form === "walkway" ? (
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                   {slab("#59636d")}
                   {rail(0.5)}
+                  {/* Posts it stands on, down to the street */}
+                  {lift > 0.01 && [[0.1, 0.1], [l.width - 0.1, 0.1], [0.1, l.height - 0.1], [l.width - 0.1, l.height - 0.1]].map(([px, pz], i) => <Box key={i} at={[px, -lift / 2, pz]} size={[0.1, lift, 0.1]} color="#59636d" />)}
                 </group>
               ) : form === "gallery" ? (
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
-                  {slab(opened ? "#2b333c" : "#59636d")}
+                  {galleryOfOpened ? (
+                    <mesh position={[l.width / 2, 0.06, l.height / 2]}>
+                      <boxGeometry args={[l.width, 0.12, l.height]} />
+                      <meshLambertMaterial color="#4a525c" transparent opacity={0.72} />
+                    </mesh>
+                  ) : slab(opened ? "#2b333c" : "#59636d")}
+                  {!duel && l.assets.filter((a) => a.kind === "npc").map((a) => {
+                    const o = room.occupants.find((x) => x.id === a.ref);
+                    return o ? (
+                      <group key={a.id} position={[a.x + 0.5, 0.12, a.y + 0.5]}>
+                        <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} />
+                        <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS[o.disposition]}>{o.name}</Label>
+                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} />
+                      </group>
+                    ) : null;
+                  })}
                   <Box at={[l.width / 2, 0.45, l.height - 0.04]} size={[l.width, 0.04, 0.05]} color="#c8ccd2" />
                   {[0, 1, 2, 3].map((i) => <Box key={i} at={[0.1 + (i * (l.width - 0.2)) / 3, 0.25, l.height - 0.04]} size={[0.05, 0.5, 0.05]} color="#c8ccd2" />)}
                 </group>
@@ -1699,10 +1907,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 <>
                   <mesh position={[l.width / 2, body / 2, l.height / 2]} castShadow onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                     <boxGeometry args={[l.width, body, l.height]} />
-                    <meshStandardMaterial color={wallColor} roughness={0.95} />
+                    <meshLambertMaterial color={wallColor} />
                   </mesh>
-                  <Box at={[l.width / 2, body + 0.05, l.height / 2]} size={[l.width + 0.2, 0.1, l.height + 0.2]} color={opened ? "#1a2028" : "#4a525c"} />
-                  {!opened && !form && (
+                  {!roofed.has(room.id) && <Box at={[l.width / 2, body + 0.05, l.height / 2]} size={[l.width + 0.2, 0.1, l.height + 0.2]} color={opened ? "#1a2028" : "#4a525c"} />}
+                  {!opened && !form && !roofed.has(room.id) && (
                     <>
                       {/* A parapet round the roof, and what stands on it */}
                       <Box at={[l.width / 2, tall + 0.2, 0.06]} size={[l.width + 0.2, 0.3, 0.12]} color={wall} />
@@ -1717,19 +1925,19 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   )}
                 </>
               )}
-              {!opened && l.assets.filter((a) => a.side && (a.kind === "exit" || a.kind === "window" || (a.kind === "secret" && room.secretEntry?.found) || (a.kind === "door" && !inRoom(beyond(l, a).x, beyond(l, a).y)))).map((a) => {
+              {!opened && form !== "roof" && l.assets.filter((a) => a.side && (a.kind === "exit" || a.kind === "window" || (a.kind === "secret" && room.secretEntry?.found) || (a.kind === "door" && !inRoom(beyond(l, a).x, beyond(l, a).y)))).map((a) => {
                 const at = onWall(l, a);
                 const step = beyond(l, a);
                 return (
                   <group key={a.id}>
                   {a.kind !== "window" && a.kind !== "door" && (
-                    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[step.x - l.x + 0.5, 0.02, step.y - l.y + 0.5]} onClick={outside ? (e) => { e.stopPropagation(); if (e.delta <= 8) actOutside(room, a); } : undefined}>
+                    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[step.x - l.x + 0.5, 0.02, step.y - l.y + 0.5]} onClick={tappable ? (e) => { e.stopPropagation(); if (e.delta <= 8) actOutside(room, a); } : undefined}>
                       <planeGeometry args={[0.92, 0.92]} />
                       <meshBasicMaterial color={WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} transparent opacity={0.45} depthWrite={false} />
                     </mesh>
                   )}
                   <group position={[at.x, 0, at.z]} rotation={[0, at.turn, 0]}>
-                    <Doorway kind={a.kind} color={WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={outside ? () => actOutside(room, a) : undefined} />
+                    <Doorway kind={a.kind} color={WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} />
                   </group>
                   </group>
                 );
@@ -1746,7 +1954,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 <Cyl at={[0, 0.8, 0]} r={0.07} h={1.6} color={WOOD} />
                 <Box at={[0, 1.4, 0]} size={[1.1, 0.36, 0.08]} color="#e8dcc0" glow={0.4} />
                 <Label at={[0, 2.1, 0]} size={0.36} color="#e8dcc0">{`${exit.via === "leave" ? "Out to" : "To"} ${world.areas[exit.to].name}`}</Label>
-                {outside && <Hit at={[0, 0.8, 0]} size={[1.2, 1.8, 1.2]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "exit", exit }))} />}
+                {tappable && <Hit at={[0, 0.8, 0]} size={[1.2, 1.8, 1.2]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "exit", exit }))} />}
               </group>
             ))}
             {street.decor.map((d, i) => <group key={i} position={[d.x, 0, d.y]}><Decor kind={d.kind} /></group>)}
@@ -1754,42 +1962,48 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               <group key={`${occupant.id}-${i}`} position={[x + 0.5, 0, y + 0.5]}>
                 <Figure kind={tokenOf(occupant)} ring={SIDE_COLORS[occupant.disposition]} name={occupant.name} large={isLarge(occupant.size)} />
                 <Label at={[0, 1.6, 0]} size={0.26} color={SIDE_COLORS[occupant.disposition]}>{occupant.name}</Label>
-                {outside && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "occupant", id: occupant.id }))} />}
+                {tappable && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "occupant", id: occupant.id }))} />}
               </group>
             ))}
-            {streetSetting && (
+            {!duel && streetSettings.map(({ buildingId, setting, people }) => (
               <Life
-                people={street.sentries}
-                setting={streetSetting}
+                key={buildingId}
+                people={people}
+                setting={setting}
                 party={() => (outside ? squareOf(feet.current) : null)}
-                frozen={(o) => watching(gate, o) || (!!building.alarm && o.disposition === "hostile") || !!o.captive || !!o.disabled}
-                onTap={outside ? (p) => walkTo(around(p.at.x, p.at.y), () => onAct?.({ type: "occupant", id: p.occupant.id })) : undefined}
+                frozen={(o) => watching(gateOf(buildingId), o) || (!!world.areas[buildingId]?.alarm && o.disposition === "hostile") || !!o.captive || !!o.disabled}
+                onTap={tappable ? (p) => walkTo(around(p.at.x, p.at.y), () => onAct?.({ type: "occupant", id: p.occupant.id })) : undefined}
               />
-            )}
+            ))}
             <Walkers walkers={streetWalkers} />
-            {street.rigs.map(({ v, mine, x, y }) => (
-              <group key={v.id} position={[x + 0.5, 0, y + 0.5]} rotation={[0, Math.atan2(street.outward.x || 0.0001, street.outward.y || 0.0001), 0]}>
+            {!duel && <Strollers strolls={strolls} />}
+            {street.rigs.map(({ v, mine, outward, x, y }) => (
+              <group key={v.id} position={[x + 0.5, 0, y + 0.5]} rotation={[0, Math.atan2(outward.x || 0.0001, outward.y || 0.0001), 0]}>
                 <SpeederModel model={v.model} wrecked={v.status === "wrecked"} />
                 <Label at={[0, 1.5, 0]} size={0.26} color={mine ? SIDE_COLORS.player : SIDE_COLORS.neutral}>{`${v.name}${v.status === "wrecked" ? " (wreck)" : ""}`}</Label>
-                {outside && <Hit at={[0, 0.5, 0]} size={[1.6, 1.2, 2.4]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "vehicle", id: v.id }))} />}
+                {tappable && <Hit at={[0, 0.5, 0]} size={[1.6, 1.2, 2.4]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "vehicle", id: v.id }))} />}
               </group>
             ))}
             {street.caches.map(({ cache, x, y }) => (
               <group key={cache.id} position={[x, 0, y]}>
                 <Chest looted={cache.looted} />
-                {outside && <Hit at={[0.5, 0.4, 0.5]} size={[1, 0.8, 1]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "loot", id: cache.id }))} />}
+                {tappable && <Hit at={[0.5, 0.4, 0.5]} size={[1, 0.8, 1]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "loot", id: cache.id }))} />}
               </group>
             ))}
-            <Label at={[cx, 4.6, cz]} size={0.8}>{building.name}</Label>
+            {buildings.map((b) => {
+              const box = districtPlan?.boxes[b.id] ?? plan!;
+              return <Label key={`name-${b.id}`} at={[box.x + box.width / 2, 4.6, box.y + box.height / 2]} size={0.8}>{b.name}</Label>;
+            })}
           </>
         )}
 
-        {present && (
+        {duel && <DuelPieces />}
+        {present && !duel && (
           <group ref={token} position={[standing.x + 0.5, 0, standing.y + 0.5]}>
             <Figure kind="player" ring={SIDE_COLORS.player} marker />
           </group>
         )}
-        {present && (((world as World & { party?: Companion[] }).party ?? []) as Companion[]).map((c, i) => (
+        {present && !duel && (((world as World & { party?: Companion[] }).party ?? []) as Companion[]).map((c, i) => (
           <Follower key={c.id} companion={c} index={i} feet={feet} open={open} height={heightNow} onTap={active ? () => onAct?.({ type: "companion", id: c.id }) : undefined} />
         ))}
       </group>
@@ -1797,6 +2011,16 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       <Probe
         locate={(key) => {
           const [what, id] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
+          // In a fight: the fighters, and the squares of the streets, roofs and catwalks by their height
+          if (duelRef.current || (duel && key.startsWith("sq:"))) {
+            const fighters = useCombat.getState().combatants;
+            const fighter = key === "me" ? fighters.find((c) => c.isPlayer) : key.startsWith("foe:") ? fighters.filter((c) => !onPartySide(c) && c.hp > 0)[Number(id) || 0] : undefined;
+            if (fighter) return [(fighter.x ?? 0) + 0.5 - cx, (fighter.z ?? 0) * LEVEL_H + 0.6, (fighter.y ?? 0) + 0.5 - cz];
+            if (what === "sq") {
+              const [qx, qy, qz = 0] = id.split(",").map(Number);
+              return [qx + 0.5 - cx, qz * LEVEL_H + 0.05, qy + 0.5 - cz];
+            }
+          }
           if (key === "me") return [feet.current.x + 0.5 - cx, heightNow() + 0.6, feet.current.y + 0.5 - cz];
           if (what === "sq") return [Number(id.split(",")[0]) + 0.5 - cx, levelY(inside?.layout), Number(id.split(",")[1]) + 0.5 - cz];
           if (what === "sign") {
@@ -1821,7 +2045,69 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         }}
       />
       <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} />
-      <Sky />
+      <Sky cast={!districtPlan || !!opened} />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// A fight on a district's own map (the streets, the roofs and the catwalks, all of it in sight):
+// the squares the character can reach are lit at their height, everyone stands on theirs with a
+// bar of hit points, and a tap on a lit square moves there and a tap on an enemy picks it out.
+// ---------------------------------------------------------------------------------------------
+
+function DuelPieces() {
+  const { combatants, currentTurn, arena, targetId, moveTo, setTarget } = useCombat();
+  const current = combatants[currentTurn];
+  const player = combatants.find((c) => c.isPlayer);
+  const playerTurn = !!current?.isPlayer && (player?.hp ?? 0) > 0 && !cannotAct(player!);
+  const target = player ? pickTarget(combatants, player, targetId) : undefined;
+  const steps = playerTurn && player ? reachable(arena, combatants, player) : new Map<string, { cost: number }>();
+  const plan = player && target ? attackPlan(arena, combatants, player, target, player.rangedDice ? "ranged" : "melee") : undefined;
+  const high = (z?: number) => (z ?? 0) * LEVEL_H;
+  return (
+    <>
+      {Array.from(steps.entries()).filter(([, step]) => step.cost > 0).map(([k]) => {
+        const { x, y, z } = parseKey(k);
+        return (
+          <mesh key={k} rotation={[-Math.PI / 2, 0, 0]} position={[x + 0.5, high(z) + 0.05, y + 0.5]} onClick={(e) => { e.stopPropagation(); if (e.delta <= 8) moveTo(x, y, z); }}>
+            <planeGeometry args={[0.9, 0.9]} />
+            <meshBasicMaterial color="#4ade80" transparent opacity={0.35} depthWrite={false} />
+          </mesh>
+        );
+      })}
+      {player && target && target.hp > 0 && (
+        <Line
+          points={[[(player.x ?? 0) + 0.5, high(player.z) + 1.1, (player.y ?? 0) + 0.5], [(target.x ?? 0) + 0.5, high(target.z) + 1.1, (target.y ?? 0) + 0.5]]}
+          color={plan && (!plan.possible || plan.cover.blocked) ? "#6b7280" : plan?.cover.bonus ? "#fbbf24" : "#f87171"}
+          lineWidth={2}
+          dashed
+          dashSize={0.3}
+          gapSize={0.2}
+        />
+      )}
+      {combatants.map((c) => {
+        const down = c.hp <= 0;
+        const large = isLarge(c.size);
+        const side = c.isPlayer ? SIDE_COLORS.player : c.ally ? SIDE_COLORS.friendly : SIDE_COLORS.hostile;
+        return (
+          <group key={String(c.id)} position={[(c.x ?? 0) + 0.5, high(c.z), (c.y ?? 0) + 0.5]}>
+            <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : 0, 0]}>
+              <Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} />
+            </group>
+            {!down && current?.id === c.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}><ringGeometry args={[0.5, 0.58, 28]} /><meshBasicMaterial color="#fde047" /></mesh>}
+            {!down && target?.id === c.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.07, 0]}><ringGeometry args={[0.62, 0.7, 4]} /><meshBasicMaterial color="#f87171" /></mesh>}
+            {!down && (
+              <Billboard position={[0, large ? 2.5 : 1.85, 0]}>
+                <mesh><planeGeometry args={[0.9, 0.1]} /><meshBasicMaterial color="#111111" /></mesh>
+                <mesh position={[-0.45 * (1 - Math.max(0, Math.min(1, c.hp / c.maxHp))), 0, 0.001]}><planeGeometry args={[0.9 * Math.max(0.001, Math.min(1, c.hp / c.maxHp)), 0.1]} /><meshBasicMaterial color={onPartySide(c) ? "#4ade80" : "#f87171"} /></mesh>
+                <Text position={[0, 0.24, 0]} fontSize={0.24} color={side} anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#000000">{c.name}</Text>
+              </Billboard>
+            )}
+            {!down && !onPartySide(c) && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => setTarget(c.id)} />}
+          </group>
+        );
+      })}
     </>
   );
 }
@@ -1849,10 +2135,10 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
     if (areaId && origin && player) usePartySpot.getState().stand(areaId, origin.x + (player.x ?? 0), origin.y + (player.y ?? 0));
   }, [player?.x, player?.y, areaId]);
 
-  const tapSquare = (x: number, y: number) => {
-    const there = combatants.find((c) => c.hp > 0 && c.x === x && c.y === y);
+  const tapSquare = (x: number, y: number, z = 0) => {
+    const there = combatants.find((c) => c.hp > 0 && c.x === x && c.y === y && (c.z ?? 0) === z);
     if (there && !onPartySide(there)) setTarget(there.id);
-    else if (playerTurn && steps.get(`${x},${y}`)?.cost) moveTo(x, y);
+    else if (playerTurn && steps.get(z ? `${x},${y},${z}` : `${x},${y}`)?.cost) moveTo(x, y, z);
   };
 
   return (
@@ -1864,24 +2150,44 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
           <meshBasicMaterial color="#0b0f16" />
         </mesh>
         <RoomShell width={arena.width} height={arena.height} assets={arena.assets.filter((a) => a.kind !== "npc")} floor={floorOf(arena.floor)} wall={wall} walls={!arena.open} onFloor={tapSquare} onAsset={(a) => !a.side && tapSquare(a.x, a.y)}>
+          {/* Raised floors: a gallery over part of the room */}
+          {(arena.platforms ?? []).map((p, i) => (
+            <group key={`platform-${i}`} position={[p.x, p.z * LEVEL_H, p.y]}>
+              <mesh
+                position={[p.width / 2, 0.06, p.height / 2]}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (e.delta > 8) return;
+                  const at = e.object.worldToLocal(e.point.clone());
+                  tapSquare(p.x + Math.max(0, Math.min(p.width - 1, Math.floor(at.x + p.width / 2))), p.y + Math.max(0, Math.min(p.height - 1, Math.floor(at.z + p.height / 2))), p.z);
+                }}
+              >
+                <boxGeometry args={[p.width, 0.12, p.height]} />
+                <meshLambertMaterial color="#59636d" />
+              </mesh>
+              <Box at={[p.width / 2, 0.45, p.height - 0.04]} size={[p.width, 0.04, 0.05]} color="#c8ccd2" />
+              <Box at={[0.04, 0.45, p.height / 2]} size={[0.05, 0.04, p.height]} color="#c8ccd2" />
+              <Box at={[p.width - 0.04, 0.45, p.height / 2]} size={[0.05, 0.04, p.height]} color="#c8ccd2" />
+            </group>
+          ))}
           {Array.from(steps.entries()).filter(([, step]) => step.cost > 0).map(([k]) => {
-            const [x, y] = k.split(",").map(Number);
+            const { x, y, z } = parseKey(k);
             return (
-              <mesh key={k} rotation={[-Math.PI / 2, 0, 0]} position={[x + 0.5, 0.02, y + 0.5]}>
+              <mesh key={k} rotation={[-Math.PI / 2, 0, 0]} position={[x + 0.5, z * LEVEL_H + 0.1, y + 0.5]}>
                 <planeGeometry args={[0.9, 0.9]} />
                 <meshBasicMaterial color="#4ade80" transparent opacity={0.28} depthWrite={false} />
               </mesh>
             );
           })}
           {player && target && target.hp > 0 && (
-            <Line points={[[(player.x ?? 0) + 0.5, 0.9, (player.y ?? 0) + 0.5], [(target.x ?? 0) + 0.5, 0.9, (target.y ?? 0) + 0.5]]} color={covered ? "#fbbf24" : "#f87171"} lineWidth={2} dashed dashSize={0.3} gapSize={0.2} />
+            <Line points={[[(player.x ?? 0) + 0.5, (player.z ?? 0) * LEVEL_H + 0.9, (player.y ?? 0) + 0.5], [(target.x ?? 0) + 0.5, (target.z ?? 0) * LEVEL_H + 0.9, (target.y ?? 0) + 0.5]]} color={covered ? "#fbbf24" : "#f87171"} lineWidth={2} dashed dashSize={0.3} gapSize={0.2} />
           )}
           {combatants.map((c) => {
             const down = c.hp <= 0;
             const large = isLarge(c.size);
             const side = c.isPlayer ? SIDE_COLORS.player : c.ally ? SIDE_COLORS.friendly : SIDE_COLORS.hostile;
             return (
-              <group key={String(c.id)} position={[(c.x ?? 0) + 0.5, 0, (c.y ?? 0) + 0.5]}>
+              <group key={String(c.id)} position={[(c.x ?? 0) + 0.5, (c.z ?? 0) * LEVEL_H + ((c.z ?? 0) ? 0.12 : 0), (c.y ?? 0) + 0.5]}>
                 {/* The fallen lie where they fell */}
                 <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : 0, 0]}>
                   <Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} />
@@ -1964,7 +2270,7 @@ export function SpaceScene() {
       <gridHelper args={[Math.max(fight.width, fight.height), Math.max(fight.width, fight.height), "#1d2a44", "#121a2c"]} position={[0, 0, 0]} />
       {fight.hazards.map((h, i) => (
         <group key={i} position={at(h.x, h.y)}>
-          <mesh position={[0, 0.35, 0]}><dodecahedronGeometry args={[0.42, 0]} /><meshStandardMaterial color="#6f6a63" roughness={1} /></mesh>
+          <mesh position={[0, 0.35, 0]}><dodecahedronGeometry args={[0.42, 0]} /><meshLambertMaterial color="#6f6a63" /></mesh>
         </group>
       ))}
       {Array.from(steps.entries()).filter(([, v]) => v.cost > 0).map(([k]) => {
@@ -2001,7 +2307,7 @@ export function SpaceScene() {
                 </group>
               </group>
             )}
-            {s.destroyed && <mesh position={[0, 0.3, 0]}><dodecahedronGeometry args={[0.35, 0]} /><meshStandardMaterial color="#3b3835" emissive="#7c2d12" emissiveIntensity={0.6} /></mesh>}
+            {s.destroyed && <mesh position={[0, 0.3, 0]}><dodecahedronGeometry args={[0.35, 0]} /><meshLambertMaterial color="#3b3835" emissive="#7c2d12" emissiveIntensity={0.6} /></mesh>}
             {!s.destroyed && current?.id === s.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}><ringGeometry args={[Math.max(w, h) * 0.55, Math.max(w, h) * 0.55 + 0.08, 32]} /><meshBasicMaterial color="#fde047" /></mesh>}
             {!s.destroyed && targetId === s.id && s.side === "foe" && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}><ringGeometry args={[Math.max(w, h) * 0.62, Math.max(w, h) * 0.62 + 0.08, 4]} /><meshBasicMaterial color="#f87171" /></mesh>}
             {!s.destroyed && (
@@ -2132,7 +2438,7 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
         <>
           <mesh position={[0, -GLOBE, 0]}>
             <sphereGeometry args={[GLOBE - 0.05, 64, 48]} />
-            <meshStandardMaterial color={new THREE.Color(BIOME_COLOR[view.type] ?? "#5fa56a").multiplyScalar(0.5)} roughness={1} />
+            <meshLambertMaterial color={new THREE.Color(BIOME_COLOR[view.type] ?? "#5fa56a").multiplyScalar(0.5)} />
           </mesh>
           <mesh position={[0, -GLOBE, 0]}>
             <sphereGeometry args={[GLOBE + 1.6, 48, 32]} />
@@ -2174,7 +2480,7 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
               <>
                 <mesh>
                   <sphereGeometry args={[giant ? 2.1 : 1.5, 24, 20]} />
-                  <meshStandardMaterial color={BIOME_COLOR[area.type] ?? color} emissive={BIOME_COLOR[area.type] ?? color} emissiveIntensity={0.25} roughness={0.9} />
+                  <meshLambertMaterial color={BIOME_COLOR[area.type] ?? color} emissive={BIOME_COLOR[area.type] ?? color} emissiveIntensity={0.25} />
                 </mesh>
                 {giant && <mesh rotation={[Math.PI / 2.3, 0, 0]}><torusGeometry args={[3, 0.22, 2, 40]} /><meshBasicMaterial color="#e8c9a0" transparent opacity={0.6} /></mesh>}
                 {area.ships.length > 0 && <group position={[2.4, 1.2, 0]} scale={0.22}><group position={[-3, 0, -2]}><ShipModel ship={area.ships[0]} w={6} h={4} /></group></group>}
@@ -2258,7 +2564,8 @@ const LAYER_NAME: Record<string, string> = { settlement: "Streets of", planet: "
 export default function LocalMap({ world, hereId, viewId, selectedId, onAct, locked, reveal }: LocalMapProps = {}) {
   if (!world || !hereId || !world.areas[hereId]) return <Scenery />;
   const view = world.areas[viewId ?? ""] ?? world.areas[viewOf(world, hereId)];
-  if (view.kind === "building") return <BuildingScene key={view.id} world={world} building={view} hereId={hereId} selectedId={selectedId} onAct={onAct} locked={locked} reveal={reveal} />;
+  // The buildings of a district share one scene, so going from one to the next does not rebuild it
+  if (view.kind === "building") return <BuildingScene key={districtAt(world, view.id)?.id ?? view.id} world={world} building={view} hereId={hereId} selectedId={selectedId} onAct={onAct} locked={locked} reveal={reveal} />;
   if (view.kind === "system" || view.kind === "planet" || view.kind === "settlement") return <WorldLayer world={world} view={view} hereId={hereId} selectedId={selectedId} onAct={onAct} />;
   return <GalaxyMap world={world} hereId={hereId} selectedId={selectedId} onAct={onAct} />;
 }
@@ -2338,12 +2645,12 @@ function Scenery() {
           {type === "building" ? (
             <mesh>
               <boxGeometry args={[3, 4, 3]} />
-              <meshStandardMaterial color="#888888" />
+              <meshLambertMaterial color="#888888" />
             </mesh>
           ) : (
             <mesh>
               <cylinderGeometry args={[0, 1.5, 5, 8]} />
-              <meshStandardMaterial color="#228822" />
+              <meshLambertMaterial color="#228822" />
             </mesh>
           )}
         </group>
@@ -2362,7 +2669,7 @@ function Scenery() {
         receiveShadow
       >
         <planeGeometry args={[100, 100, 32, 32]} />
-        <meshStandardMaterial 
+        <meshLambertMaterial 
           map={terrainTexture} 
           color={0x88bb88}
         />
@@ -2371,7 +2678,7 @@ function Scenery() {
       {/* Player */}
       <mesh ref={playerRef} position={[0, 1, 0]} castShadow>
         <boxGeometry args={[1, 2, 1]} />
-        <meshStandardMaterial color="#4444cc" />
+        <meshLambertMaterial color="#4444cc" />
       </mesh>
       
       {/* Environment objects */}

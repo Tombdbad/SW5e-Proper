@@ -63,7 +63,8 @@ await step(ctx, "floors: furniture leaves a floor to walk on; cellars lie beneat
         while (stack.length) { const [cx, cy] = stack.pop(); for (const [nx, ny] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]) if (free[ny]?.[nx] && !seen.has(`${nx},${ny}`)) { seen.add(`${nx},${ny}`); stack.push([nx, ny]); } }
       }
       if (regions > 1) throw new Error(`${room.name} (seed ${seed}) has ${regions} parts of floor that cannot be walked between`);
-      if (l.form && l.form !== "gallery" && l.assets.some((a) => a.kind === "furniture" || a.kind === "loot" || a.kind === "ship")) throw new Error(`${room.name} is a way between floors and has something in it`);
+      // (a gallery and a roof are furnished: cover to shoot over, a sentry's post; the rest are bare)
+      if (l.form && l.form !== "gallery" && l.form !== "roof" && l.assets.some((a) => a.kind === "furniture" || a.kind === "loot" || a.kind === "ship")) throw new Error(`${room.name} is a way between floors and has something in it`);
       if ((l.level ?? 0) < 0) below++;
       if ((l.level ?? 0) >= 1) above++;
       if (l.form) ways++;
@@ -701,6 +702,16 @@ await step(ctx, "play: credits are shown; weapons and armor are wielded and worn
     await sleep(3000);
     const slid = await at(mark);
     if (Math.hypot(slid.x - fixed.x, slid.y - fixed.y) < 15) throw new Error("the character did not walk on the ground outside");
+    // The street is walked across to the way in of another building of the district (a signpost
+    // is only for a way out of the district)
+    const district = Object.values(world.districtPlans ?? {}).find((plan) => plan.boxes[building.id]);
+    const mates = district ? Object.keys(district.boxes).filter((id) => id !== building.id) : [];
+    const gate = mates.map((id) => areas.find((a) => a.kind === "room" && a.parentId === id && a.gateway && !a.tags.some((t) => t.startsWith("form:")))).find(Boolean);
+    if (gate) {
+      await tap(`exit:${gate.id}`);
+      await arrive(gate.id);
+      return `outside ${building.name}, then across the district into ${gate.name} of ${world.areas[gate.parentId].name}`;
+    }
     const street = world.paths.find((p) => p.from === building.id || p.to === building.id);
     const next = street.from === building.id ? street.to : street.from;
     await tap(`sign:${next}`);

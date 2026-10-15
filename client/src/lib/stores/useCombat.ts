@@ -44,6 +44,8 @@ export interface Combatant {
   id: number | string;
   name: string;
   hp: number;
+  // How high it stands, in levels (a level is 10 feet): 0 on the ground, above it on a roof or a catwalk
+  z?: number;
   maxHp: number;
   initiative: number;
   armorClass: number;
@@ -204,17 +206,45 @@ export interface Arena {
   floor?: string;
   // Open ground, not a room: there are no walls round it
   open?: boolean;
+  // A district's street, with what stands over it: raised floors (roofs, catwalks) at a height in
+  // levels, and the ladders and stairs that join one height to another (the foot and the top).
+  // The district's id says which map it is, so that the map draws the fight itself.
+  platforms?: ArenaPlatform[];
+  links?: ArenaLink[];
+  district?: string;
 }
-type Square = { x: number; y: number };
-const key = (x: number, y: number) => `${x},${y}`;
+export interface ArenaPlatform {
+  z: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+export interface ArenaLink {
+  from: { x: number; y: number; z: number };
+  to: { x: number; y: number; z: number };
+}
+type Square = { x: number; y: number; z?: number };
+// A square's key; the ground (height 0) is just "x,y", a raised floor "x,y,z"
+export const key = (x: number, y: number, z = 0) => (z ? `${x},${y},${z}` : `${x},${y}`);
+export const parseKey = (k: string): { x: number; y: number; z: number } => {
+  const [x, y, z = 0] = k.split(",").map(Number);
+  return { x, y, z };
+};
 
-// Squares between two creatures: a diagonal step counts as one (Player's Handbook grid rule)
-export const squaresApart = (a: { x?: number; y?: number }, b: { x?: number; y?: number }) =>
-  Math.max(Math.abs((a.x ?? 0) - (b.x ?? 0)), Math.abs((a.y ?? 0) - (b.y ?? 0)));
+// Squares between two creatures: a diagonal step counts as one (Player's Handbook grid rule); a
+// level of height is two squares (10 feet), and the greatest of the three counts, as for a cube
+export const squaresApart = (a: { x?: number; y?: number; z?: number }, b: { x?: number; y?: number; z?: number }) =>
+  Math.max(Math.abs((a.x ?? 0) - (b.x ?? 0)), Math.abs((a.y ?? 0) - (b.y ?? 0)), Math.round(Math.abs((a.z ?? 0) - (b.z ?? 0)) * 2));
 
 const covers = (asset: RoomAsset, x: number, y: number) => !asset.side && asset.x <= x && x < asset.x + asset.w && asset.y <= y && y < asset.y + asset.h;
-const solid = (arena: Arena, x: number, y: number) =>
-  x < 0 || y < 0 || x >= arena.width || y >= arena.height || arena.assets.some((a) => a.blocks && covers(a, x, y));
+// Whether a square cannot be stood on: off the ground (or off the raised floor), or taken by
+// something that blocks, at that height
+const solid = (arena: Arena, x: number, y: number, z = 0) => {
+  if (z === 0) return x < 0 || y < 0 || x >= arena.width || y >= arena.height || arena.assets.some((a) => a.blocks && !a.z && covers(a, x, y));
+  const floor = (arena.platforms ?? []).some((p) => p.z === z && x >= p.x && x < p.x + p.width && y >= p.y && y < p.y + p.height);
+  return !floor || arena.assets.some((a) => a.blocks && a.z === z && covers(a, x, y));
+};
 
 // Feet a creature can still move this turn, as its conditions allow
 export function movementLeft(c: Combatant): number {
@@ -225,22 +255,33 @@ export function movementLeft(c: Combatant): number {
 // Every square a creature can walk to with the movement it has left, and the feet it costs.
 // Furniture that blocks and other creatures are walked around; no cutting corners.
 export function reachable(arena: Arena, combatants: Combatant[], mover: Combatant, limit = movementLeft(mover)): Map<string, { cost: number; from?: string }> {
-  const taken = new Set(combatants.filter((c) => c.id !== mover.id && c.hp > 0).map((c) => key(c.x ?? -1, c.y ?? -1)));
-  const open = (x: number, y: number) => !solid(arena, x, y) && !taken.has(key(x, y));
-  const start = { x: mover.x ?? 0, y: mover.y ?? 0 };
-  const found = new Map<string, { cost: number; from?: string }>([[key(start.x, start.y), { cost: 0 }]]);
-  const queue: Square[] = [start];
+  const taken = new Set(combatants.filter((c) => c.id !== mover.id && c.hp > 0).map((c) => key(c.x ?? -1, c.y ?? -1, c.z ?? 0)));
+  const open = (x: number, y: number, z: number) => !solid(arena, x, y, z) && !taken.has(key(x, y, z));
+  const start = { x: mover.x ?? 0, y: mover.y ?? 0, z: mover.z ?? 0 };
+  const found = new Map<string, { cost: number; from?: string }>([[key(start.x, start.y, start.z), { cost: 0 }]]);
+  const queue: { x: number; y: number; z: number }[] = [start];
+  // A ladder or a flight of stairs is walked either way, at 10 feet for each level it rises
+  const links = (arena.links ?? []).flatMap((l) => [l, { from: l.to, to: l.from }]);
   while (queue.length) {
     const at = queue.shift()!;
-    const cost = found.get(key(at.x, at.y))!.cost + 5;
-    if (cost > limit) continue;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const x = at.x + dx;
-      const y = at.y + dy;
-      if ((!dx && !dy) || found.has(key(x, y)) || !open(x, y)) continue;
-      if (dx && dy && (solid(arena, at.x + dx, at.y) || solid(arena, at.x, at.y + dy))) continue;
-      found.set(key(x, y), { cost, from: key(at.x, at.y) });
-      queue.push({ x, y });
+    const here = found.get(key(at.x, at.y, at.z))!.cost;
+    if (here + 5 <= limit) {
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const x = at.x + dx;
+        const y = at.y + dy;
+        if ((!dx && !dy) || found.has(key(x, y, at.z)) || !open(x, y, at.z)) continue;
+        if (dx && dy && (solid(arena, at.x + dx, at.y, at.z) || solid(arena, at.x, at.y + dy, at.z))) continue;
+        found.set(key(x, y, at.z), { cost: here + 5, from: key(at.x, at.y, at.z) });
+        queue.push({ x, y, z: at.z });
+      }
+    }
+    for (const link of links) {
+      if (link.from.x !== at.x || link.from.y !== at.y || link.from.z !== at.z) continue;
+      const cost = here + 10 * Math.max(1, Math.abs(link.to.z - link.from.z));
+      const to = link.to;
+      if (cost > limit || found.has(key(to.x, to.y, to.z)) || !open(to.x, to.y, to.z)) continue;
+      found.set(key(to.x, to.y, to.z), { cost, from: key(at.x, at.y, at.z) });
+      queue.push({ ...to });
     }
   }
   return found;
@@ -249,17 +290,30 @@ export function reachable(arena: Arena, combatants: Combatant[], mover: Combatan
 // Cover a target has from an attacker: what it stands behind, that is, cover on the line between
 // them and within 5 feet of the target (a ship's hull counts from anywhere on the line). One
 // thing in the way is half cover (+3 AC, Player's Handbook), more is three-quarters (+5).
-export function coverBetween(arena: Arena, from: { x?: number; y?: number }, to: { x?: number; y?: number }): { bonus: number; name: string } {
+export function coverBetween(arena: Arena, from: { x?: number; y?: number; z?: number }, to: { x?: number; y?: number; z?: number }): { bonus: number; name: string; blocked?: string } {
   const [x0, y0, x1, y1] = [from.x ?? 0, from.y ?? 0, to.x ?? 0, to.y ?? 0];
+  const [z0, z1] = [from.z ?? 0, to.z ?? 0];
   const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
   const inTheWay = new Set<RoomAsset>();
+  // Something that stands higher than the line of fire at that square stops it. Whoever stands on
+  // top of it (on the roof of a building) shoots over its edge: the squares of the edge do not
+  // stop a line from a roof, those further in do
+  const standsOn = (a: RoomAsset, x: number, y: number, z: number) => covers(a, x, y) && z >= (a.height ?? 0);
+  const edge = (a: RoomAsset, x: number, y: number) => x === a.x || x === a.x + a.w - 1 || y === a.y || y === a.y + a.h - 1;
+  let blocked: string | undefined;
   for (let i = 1; i < steps; i++) {
     const x = Math.round(x0 + ((x1 - x0) * i) / steps);
     const y = Math.round(y0 + ((y1 - y0) * i) / steps);
+    const level = z0 + ((z1 - z0) * i) / steps;
     const beside = Math.max(Math.abs(x - x1), Math.abs(y - y1)) <= 1;
-    for (const asset of arena.assets) if (asset.cover && covers(asset, x, y) && (beside || asset.kind === "ship")) inTheWay.add(asset);
+    for (const asset of arena.assets) {
+      const over = asset.height && (standsOn(asset, x0, y0, z0) || standsOn(asset, x1, y1, z1)) && edge(asset, x, y);
+      if (asset.height && covers(asset, x, y) && level < asset.height - 0.001 && !over) blocked ??= asset.name.toLowerCase();
+      else if (asset.cover && covers(asset, x, y) && (asset.z ?? 0) === z1 && (beside || asset.kind === "ship")) inTheWay.add(asset);
+    }
   }
   const names = Array.from(inTheWay).map((a) => a.name.toLowerCase()).join(", ");
+  if (blocked) return { bonus: 0, name: "", blocked };
   return inTheWay.size === 0 ? { bonus: 0, name: "" } : inTheWay.size === 1 ? { bonus: 3, name: `half cover: ${names}` } : { bonus: 5, name: `three-quarters cover: ${names}` };
 }
 
@@ -300,7 +354,11 @@ export function attackPlan(arena: Arena, combatants: Combatant[], attacker: Comb
       reasons.push("an enemy within 5 feet");
     }
   }
-  const cover = feet > 5 ? coverBetween(arena, attacker, target) : { bonus: 0, name: "" };
+  const cover: { bonus: number; name: string; blocked?: string } = feet > 5 ? coverBetween(arena, attacker, target) : { bonus: 0, name: "" };
+  if (cover.blocked) {
+    possible = false;
+    why = `${cover.blocked} is in the way: ${target.name} cannot be seen from here`;
+  }
   // The turn's doings
   if (target.dodging && upright(target)) {
     down = true;
@@ -345,12 +403,13 @@ export function attackPlan(arena: Arena, combatants: Combatant[], attacker: Comb
 
 // The nearest free square to where a creature should stand
 function freeSquare(arena: Arena, taken: Set<string>, want: Square): Square {
+  const z = want.z ?? 0;
   for (let ring = 0; ring < arena.width + arena.height; ring++) {
     for (let dy = -ring; dy <= ring; dy++) for (let dx = -ring; dx <= ring; dx++) {
       if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
       const x = want.x + dx;
       const y = want.y + dy;
-      if (!solid(arena, x, y) && !taken.has(key(x, y))) return { x, y };
+      if (!solid(arena, x, y, z) && !taken.has(key(x, y, z))) return z ? { x, y, z } : { x, y };
     }
   }
   return want;
@@ -358,19 +417,19 @@ function freeSquare(arena: Arena, taken: Set<string>, want: Square): Square {
 
 // Moves a creature towards a target until it is within the given distance, as far as its
 // movement goes. Returns where it ends up and the feet spent.
-function stepTowards(arena: Arena, combatants: Combatant[], mover: Combatant, target: Combatant, withinFeet: number): { x: number; y: number; cost: number } {
-  const here = { x: mover.x ?? 0, y: mover.y ?? 0, cost: 0 };
+function stepTowards(arena: Arena, combatants: Combatant[], mover: Combatant, target: Combatant, withinFeet: number): { x: number; y: number; z: number; cost: number } {
+  const here = { x: mover.x ?? 0, y: mover.y ?? 0, z: mover.z ?? 0, cost: 0 };
   if (squaresApart(mover, target) * 5 <= withinFeet) return here;
   // How far every square is from the target, walking round furniture
   const field = reachable(arena, combatants.filter((c) => c.id === target.id), { ...target, id: "field" }, 10000);
   const options = reachable(arena, combatants, mover);
   let best = { ...here, score: Infinity };
   options.forEach((step, k) => {
-    const [x, y] = k.split(",").map(Number);
-    const apart = squaresApart({ x, y }, target) * 5;
+    const { x, y, z } = parseKey(k);
+    const apart = squaresApart({ x, y, z }, target) * 5;
     // Close enough is best, and of those the nearest to walk to; otherwise whatever gets nearest
     const score = apart <= withinFeet ? step.cost / 1000 : 100 + (field.get(k)?.cost ?? 9999) + step.cost / 1000;
-    if (score < best.score) best = { x, y, cost: step.cost, score };
+    if (score < best.score) best = { x, y, z, cost: step.cost, score };
   });
   return best;
 }
@@ -1126,7 +1185,7 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
 // Whether a creature leaving a square provokes the attacks of those whose reach it leaves, and
 // what happens: each of them that can uses its reaction on one melee attack (Player's Handbook,
 // Opportunity Attacks). Returns false when the mover fell on the way and goes no further.
-function provoke(w: Work, mi: number, from: { x: number; y: number }, to: { x: number; y: number }): boolean {
+function provoke(w: Work, mi: number, from: { x: number; y: number; z?: number }, to: { x: number; y: number; z?: number }): boolean {
   const mover = w.combatants[mi];
   if (mover.disengaged || (mover.profile?.traits ?? []).some((t) => t.kind === "flyby")) return true;
   for (let i = 0; i < w.combatants.length; i++) {
@@ -1154,27 +1213,25 @@ function provoke(w: Work, mi: number, from: { x: number; y: number }, to: { x: n
 // Walks a creature to a square it can reach: each square it leaves the reach of an enemy from
 // provokes an opportunity attack, and a creature that falls on the way goes no further.
 // Returns the feet it walked (0 when it did not move).
-function walk(w: Work, mi: number, x: number, y: number): number {
+function walk(w: Work, mi: number, x: number, y: number, z = 0): number {
   const mover = w.combatants[mi];
   const map = reachable(w.arena, w.combatants, mover);
-  const target = map.get(key(x, y));
+  const target = map.get(key(x, y, z));
   if (!mover || !target || !target.cost) return 0;
   const path: Square[] = [];
-  for (let k: string | undefined = key(x, y); k; k = map.get(k)?.from) {
-    const [px, py] = k.split(",").map(Number);
-    path.unshift({ x: px, y: py });
-  }
+  for (let k: string | undefined = key(x, y, z); k; k = map.get(k)?.from) path.unshift(parseKey(k));
   let at = path[0];
   let feet = 0;
   for (let i = 1; i < path.length; i++) {
     if (!provoke(w, mi, at, path[i])) {
-      w.combatants[mi] = { ...w.combatants[mi], x: at.x, y: at.y, moved: (mover.moved ?? 0) + feet };
+      w.combatants[mi] = { ...w.combatants[mi], x: at.x, y: at.y, z: at.z ?? 0, moved: (mover.moved ?? 0) + feet };
       return feet;
     }
+    // (a ladder or stair costs ten feet a level; the cost of the whole walk is what the map said)
+    feet += Math.abs((path[i].z ?? 0) - (at.z ?? 0)) > 0 ? 10 * Math.abs((path[i].z ?? 0) - (at.z ?? 0)) : 5;
     at = path[i];
-    feet += 5;
   }
-  w.combatants[mi] = { ...w.combatants[mi], x, y, moved: (mover.moved ?? 0) + target.cost };
+  w.combatants[mi] = { ...w.combatants[mi], x, y, z, moved: (mover.moved ?? 0) + target.cost };
   w.log.push(`${mover.name} moves ${target.cost} ft.`);
   return target.cost;
 }
@@ -1183,7 +1240,7 @@ function walk(w: Work, mi: number, x: number, y: number): number {
 function approachTarget(w: Work, mi: number, target: Combatant, withinFeet: number): boolean {
   const mover = w.combatants[mi];
   const end = stepTowards(w.arena, w.combatants, mover, target, withinFeet);
-  if (end.cost) walk(w, mi, end.x, end.y);
+  if (end.cost) walk(w, mi, end.x, end.y, end.z);
   return squaresApart(w.combatants[mi], target) * 5 <= withinFeet;
 }
 
@@ -1433,7 +1490,7 @@ interface CombatState {
   // Marks a boon or a dose of poison as used
   spend: (what: "attack" | "damage" | "ac" | "poison") => void;
   // The creature whose turn it is walks to a square it can reach
-  moveTo: (x: number, y: number) => void;
+  moveTo: (x: number, y: number, z?: number) => void;
   // It closes with a target until within the given feet, as far as its movement goes; true when it got there
   approach: (targetId: number | string, withinFeet: number) => boolean;
   setTarget: (id: number | string) => void;
@@ -1535,11 +1592,11 @@ export const useCombat = create<CombatState>((set, get) => ({
 
   setAutoEnd: (on) => set({ autoEnd: on }),
 
-  moveTo: (x, y) =>
+  moveTo: (x, y, z = 0) =>
     set((state) => {
       if (state.pending) return state;
       const w = workOf(state);
-      const moved = walk(w, state.currentTurn, x, y);
+      const moved = walk(w, state.currentTurn, x, y, z);
       if (!moved && w.log.length === state.combatLog.length) return state;
       return patchOf(w);
     }),
@@ -1591,15 +1648,15 @@ export const useCombat = create<CombatState>((set, get) => ({
     const taken = new Set<string>();
     const stand = <T extends Combatant>(c: T, want: Square): T => {
       const spot = freeSquare(arena, taken, want);
-      taken.add(key(spot.x, spot.y));
-      return { ...c, ...spot, moved: 0 };
+      taken.add(key(spot.x, spot.y, spot.z ?? 0));
+      return { ...c, ...spot, z: spot.z ?? 0, moved: 0 };
     };
     const middle = Math.floor(arena.height / 2);
     const placedPlayer = stand(playerCombatant, playerAt ?? { x: 0, y: middle });
 
     // Companions stand close by the player, and roll for themselves
     const allyCombatants = allies.map((ally) =>
-      stand({ ...ally, ally: true, isPlayer: false, initiative: roll(1, 20) + (ally.saves?.dexterity ?? 0) }, ally.x !== undefined && ally.y !== undefined ? { x: ally.x, y: ally.y } : { x: placedPlayer.x ?? 0, y: placedPlayer.y ?? 0 }),
+      stand({ ...ally, ally: true, isPlayer: false, initiative: roll(1, 20) + (ally.saves?.dexterity ?? 0) }, ally.x !== undefined && ally.y !== undefined ? { x: ally.x, y: ally.y, z: ally.z } : { x: placedPlayer.x ?? 0, y: placedPlayer.y ?? 0, z: placedPlayer.z }),
     );
 
     // Add initiative to enemies: a die and the stat block's Dexterity modifier
@@ -1607,7 +1664,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       ...enemy,
       initiative: roll(1, 20) + (enemy.saves?.dexterity ?? 1),
       isPlayer: false,
-    }, enemy.x !== undefined && enemy.y !== undefined ? { x: enemy.x, y: enemy.y } : { x: arena.width - 1, y: middle }));
+    }, enemy.x !== undefined && enemy.y !== undefined ? { x: enemy.x, y: enemy.y, z: enemy.z } : { x: arena.width - 1, y: middle }));
 
     // Combine and sort by initiative
     const allCombatants = [placedPlayer, ...allyCombatants, ...enemyCombatants].sort(
