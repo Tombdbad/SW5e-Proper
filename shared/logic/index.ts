@@ -169,6 +169,10 @@ export interface World {
   life?: number;
   // The era it is set in (ERAS); absent in worlds made before eras (the Galactic Civil War)
   era?: string;
+  // The search the law is making for the party (see reportCrime); absent when there is none
+  pursuit?: Pursuit;
+  // A ship the party is trying to take (see startHeist); absent when there is none
+  heist?: Heist;
 }
 
 export interface WorldOptions {
@@ -2506,6 +2510,170 @@ export function setAlert(world: World, areaId: string, level: number, allowed = 
 export function clearAlarms(world: World): World {
   const areas = Object.fromEntries(Object.entries(world.areas).map(([id, area]) => [id, area.alarm ? { ...area, alarm: undefined } : area]));
   return { ...world, areas };
+}
+
+// ---------------------------------------------------------------------------------------------
+// The law's response (house rule; the books leave it to the game master). A crime raised here
+// sends officers to the scene, in the law's own time: strict worlds within minutes, with heavy
+// troopers; policed ones in ten minutes with a squad; frontier ones in half an hour with a
+// constable or two. Lawless space sends no one, unless the crime was against the cartel that
+// rules the place: its enforcers come then, whatever the law. The officers search the settlement
+// the crime was done in for a time that depends on the crime and the law. The search is called
+// off when its time is up, or when the party lies low in that district (a Stealth check). Leaving
+// the district ends the search for the party: it does not follow them.
+// ---------------------------------------------------------------------------------------------
+
+export const CRIMES = { trespass: 1, theft: 1, brawl: 2, assault: 2, heinous: 3 } as const;
+export type Crime = keyof typeof CRIMES;
+export const CRIME_NAMES: Record<Crime, string> = { trespass: "trespassing", theft: "theft", brawl: "a brawl", assault: "assault", heinous: "a heinous crime" };
+const SEARCH_MINUTES: Record<Crime, number> = { trespass: 30, theft: 60, brawl: 120, assault: 240, heinous: 720 };
+
+export interface Pursuit {
+  crime: Crime;
+  scene: string; // the area where it was done
+  district: string; // the settlement the officers search (see districtOf)
+  arrivesAt: number; // the minute the officers reach the scene
+  searchUntil: number; // the minute the search for the offenders is called off
+  officers: number;
+  heavy: boolean; // security troopers rather than constables
+  cartel: boolean; // the cartel's own enforcers answer, not the law
+}
+
+// The settlement an area is in (or the area itself, out in space or where there is none)
+export function districtOf(world: World, areaId: string): string {
+  for (let id: string | null = areaId; id; id = world.areas[id]?.parentId ?? null) if (world.areas[id]?.kind === "settlement") return id;
+  return areaId;
+}
+
+// The response to a crime in a place of this law (0 lawless to 3 strict), or none
+export function responseFor(law: number, crime: Crime, cartel: boolean): { delay: number; officers: number; heavy: boolean; search: number } | null {
+  const serious = crime === "assault" || crime === "heinous";
+  if (cartel) return { delay: 15, officers: 3, heavy: serious, search: SEARCH_MINUTES[crime] };
+  if (law <= 0) return null;
+  const hurry = crime === "heinous" ? 0.5 : crime === "theft" || crime === "trespass" ? 1.5 : 1;
+  const delay = Math.round(({ 1: 30, 2: 10, 3: 4 } as Record<number, number>)[Math.min(3, law)] * hurry);
+  const officers = law === 1 ? 2 : law === 2 ? 3 + (crime === "heinous" ? 1 : 0) : 5 + (serious ? 2 : 0);
+  return { delay, officers, heavy: law === 3 || crime === "heinous", search: Math.round(SEARCH_MINUTES[crime] * [0, 0.5, 1, 2][Math.min(3, law)]) };
+}
+
+// Raises a crime seen or reported in an area: the officers are sent for, or the search they are
+// already on is widened. A crime in a place a crime syndicate rules is against that cartel (house
+// rule: its own men are the ones there), so its enforcers come even where the law does not.
+export function reportCrime(world: World, areaId: string, crime: Crime, now: number): World {
+  if (!world.areas[areaId]) return world;
+  const ruler = ancestor(world, areaId, "planet")?.faction ?? ancestor(world, areaId, "system")?.faction ?? "";
+  const cartel = CRIME.test(ruler);
+  const resp = responseFor(lawAt(world, areaId), crime, cartel);
+  if (!resp) return world;
+  const district = districtOf(world, areaId);
+  const prior = world.pursuit && world.pursuit.district === district && now < world.pursuit.searchUntil ? world.pursuit : undefined;
+  const arrivesAt = prior ? Math.min(prior.arrivesAt, now + resp.delay) : now + resp.delay;
+  const pursuit: Pursuit = {
+    crime: prior && CRIMES[prior.crime] > CRIMES[crime] ? prior.crime : crime,
+    scene: areaId,
+    district,
+    arrivesAt,
+    searchUntil: Math.max(prior?.searchUntil ?? 0, arrivesAt + resp.search),
+    officers: Math.max(prior?.officers ?? 0, resp.officers),
+    heavy: !!(prior?.heavy || resp.heavy),
+    cartel: !!(prior?.cartel || cartel),
+  };
+  return { ...world, pursuit };
+}
+
+// Where the search stands at a minute: coming (the officers are on their way), searching (they are
+// out and the district is being searched), or nothing (no search, or it is over)
+export function pursuitAt(world: World, now: number, areaId?: string): { phase: "coming" | "searching"; minutes: number; here: boolean; pursuit: Pursuit } | null {
+  const p = world.pursuit;
+  if (!p || now >= p.searchUntil) return null;
+  const here = !!areaId && districtOf(world, areaId) === p.district;
+  return now < p.arrivesAt ? { phase: "coming", minutes: p.arrivesAt - now, here, pursuit: p } : { phase: "searching", minutes: p.searchUntil - now, here, pursuit: p };
+}
+
+// The party lies low in the district being searched, with this Stealth check. It holds, and the
+// search is called off; or they are caught, and fined.
+export const lieLowDC = (p: Pursuit) => 12 + p.officers + (p.heavy ? 2 : 0);
+
+export function lieLow(world: World, check: number): { world: World; caught: boolean; fine: number } {
+  const p = world.pursuit;
+  if (!p) return { world, caught: false, fine: 0 };
+  const dc = lieLowDC(p);
+  if (check >= dc) return { world: { ...world, pursuit: undefined }, caught: false, fine: 0 };
+  const law = Math.max(1, lawAt(world, p.scene));
+  return { world: { ...world, pursuit: undefined }, caught: true, fine: 100 * CRIMES[p.crime] * law * (p.heavy ? 2 : 1) };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Taking a ship that is not the party's (house rule; the books give no heist). A ship that is not
+// an enemy's can be bought, or taken by a side quest of four stages, each a choice with a check:
+//   customs ... bribe the customs officer (credits), or forge a clearance (Deception)
+//   terminal .. slice the hangar terminal (Intelligence, a slicer's kit helps). That starts the
+//               countdown: the ship lifts off when it runs out, whatever the party has done
+//   guards .... intimidate or charm the security (Charisma), or fight them (Strength or Dexterity)
+//   lockout ... overcome the ship's lockout (Intelligence, a slicer's or security kit)
+// A failed check raises the alarm, a crime the law answers, and the stage can be tried again while
+// the countdown lasts. A failed fight, or four failures in all, ends it with the party caught.
+// Taking the ship is a heinous crime. Leaving the quest is no crime.
+// ---------------------------------------------------------------------------------------------
+
+export type HeistStage = "customs" | "terminal" | "guards" | "lockout";
+export type HeistHow = "bribe" | "forge" | "slice" | "intimidate" | "charm" | "fight" | "unlock";
+export type HeistEnd = "stolen" | "lifted" | "caught" | "abandoned";
+export interface Heist {
+  shipId: string;
+  shipName: string;
+  value: number; // its price, which sets the bribe
+  areaId: string; // the place the ship stands in
+  stage: HeistStage;
+  takeoffAt?: number; // the minute the ship lifts off, once the terminal is sliced
+  fails: number;
+}
+
+export const HEIST_COUNTDOWN = 25; // minutes from the terminal being sliced to take-off
+export const HEIST_MINUTES: Record<HeistStage, number> = { customs: 5, terminal: 10, guards: 10, lockout: 10 };
+export const heistDC = (stage: HeistStage, law: number) => (stage === "lockout" ? 14 : 12) + 2 * law;
+export const bribeCost = (value: number, law: number) => Math.round(value * 0.02 * (law + 1));
+export const heistLifted = (heist: Heist, minute: number) => heist.takeoffAt !== undefined && minute >= heist.takeoffAt;
+
+// A heist on a ship at a place, or nothing when the ship is an enemy's or not there
+export function startHeist(world: World, shipId: string, areaId: string): Heist | null {
+  const ship = world.areas[areaId]?.ships.find((s) => s.id === shipId);
+  if (!ship || ship.owner === world.antagonist) return null;
+  return { shipId, shipName: ship.name, value: ship.value, areaId, stage: "customs", fails: 0 };
+}
+
+// One attempt at the stage the heist is on, made once its minutes have passed (`minute` is the time
+// after them). Returns the heist as it now stands (none when it has ended), and the crime to report.
+export function heistStep(heist: Heist, how: HeistHow, success: boolean, minute: number): { heist?: Heist; ended?: HeistEnd; crime?: Crime } {
+  if (heistLifted(heist, minute)) return { ended: "lifted", crime: "theft" };
+  const next = (stage: HeistStage, extra: Partial<Heist> = {}): { heist: Heist } => ({ heist: { ...heist, stage, ...extra } });
+  const failed = (crime: Crime): { heist?: Heist; ended?: HeistEnd; crime?: Crime } => {
+    const fails = heist.fails + 1;
+    return fails >= 4 ? { ended: "caught", crime } : { heist: { ...heist, fails }, crime };
+  };
+  if (heist.stage === "customs") {
+    if (success) return next("terminal");
+    return failed("trespass");
+  }
+  if (heist.stage === "terminal") {
+    if (success) return next("guards", { takeoffAt: minute + HEIST_COUNTDOWN });
+    return failed("theft");
+  }
+  if (heist.stage === "guards") {
+    if (how === "fight") return success ? next("lockout") : { ended: "caught", crime: "assault" };
+    if (success) return next("lockout");
+    return failed("assault");
+  }
+  if (success) return { ended: "stolen", crime: "heinous" };
+  return failed("theft");
+}
+
+// Takes a ship out of the place it stands in, for the party (see Ship in the party's starships)
+export function takeShip(world: World, shipId: string): { world: World; ship?: Ship; at?: string } {
+  const at = Object.values(world.areas).find((a) => a.ships.some((s) => s.id === shipId));
+  if (!at) return { world };
+  const ship = at.ships.find((s) => s.id === shipId);
+  return { world: updateArea(world, at.id, { ships: at.ships.filter((s) => s.id !== shipId) }).world, ship, at: at.id };
 }
 
 // ---------------------------------------------------------------------------------------------

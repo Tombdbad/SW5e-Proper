@@ -26,6 +26,8 @@ import lookupData from "@shared/data/sw5e/lookups.json";
 import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
+  reportCrime, pursuitAt, lieLow, lieLowDC, CRIME_NAMES, type Crime,
+  startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText,
   withPresence, withPartyShips,
   gearUse, toolFor, toolTrained, boonOf, gambleMode, gambleResult, GAMBLE_ROUNDS, GAMBLE_HOUSE_DC, GAMBLE_STAKE, GAMBLE_COMPLICATION, GAMBLE_COMPLICATIONS,
@@ -337,9 +339,13 @@ export default function GameBoard() {
   const [sneaking, setSneaking] = useState(false);
   const alert = hostiles.length ? here?.alert ?? ALERT.confronting : ALERT.unaware;
   const allowed = hostiles.length > 0 && !!here?.allowed;
+  // The law's search for the party (see reportCrime in shared logic): shown on the map, and lied low from
+  const clockMinutes = useClock((c) => c.minutes);
+  const pursuit = world ? pursuitAt(world, clockMinutes, here?.id) : null;
   const setWatch = (level: number, pass = false) => {
     if (!world || !here) return;
     let next = setAlert(world, here.id, level, pass);
+    if (level === ALERT.attacking && !pass) next = reportCrime(next, here.id, "assault", useClock.getState().minutes);
     // A comm jammer keeps the alarm from going up through the building (it cannot call out)
     const parent = here.parentId;
     if (level === ALERT.attacking && parent && !world.areas[parent]?.alarm && (character?.playState?.jammerUntil ?? 0) > useClock.getState().minutes) next = updateArea(next, parent, { alarm: undefined }).world;
@@ -349,6 +355,17 @@ export default function GameBoard() {
     const roll = d20();
     const bonus = modifier(character.abilityScores?.dexterity) + (skilled("stealth") ? proficiency : 0);
     return { roll, bonus, total: roll + bonus };
+  };
+  // Lying low takes ten minutes; the officers search the district and the party is caught or it is called off
+  const lieLowNow = () => {
+    if (!world || !pursuit) return;
+    const dc = lieLowDC(pursuit.pursuit);
+    const check = stealthRoll();
+    const result = lieLow(world, check.total);
+    const time = pass(10);
+    toast[result.caught ? "error" : "success"](`Lying low (Stealth ${check.roll} ${check.bonus >= 0 ? "+" : "-"} ${Math.abs(check.bonus)} = ${check.total} against DC ${dc}): ${result.caught ? `the officers find you and fine you ${result.fine} credits.` : "the search is called off."}`);
+    saveCampaign({ galaxyMap: result.world, ...time });
+    if (result.caught) saveCharacter({ credits: Math.max(0, (character.credits ?? 0) - result.fine) });
   };
   // Doing something under their noses: Dexterity (Stealth) against their passive Perception.
   // A miss puts them one step further on.
@@ -474,6 +491,51 @@ export default function GameBoard() {
     toast.success(`${ship.name} is yours${price ? ` for ${price.toLocaleString()} credits` : ""}.`);
   };
 
+  // Taking a ship that is not the party's (shared logic "Taking a ship"): a side quest of stages, each
+  // a choice with its own check. The clock runs on whatever is done; the ship lifts off without them
+  // when the countdown runs out.
+  const heistOf = world?.heist;
+  const beginHeist = (ship: Ship) => {
+    if (!world || !here) return;
+    const at = Object.values(world.areas).find((a) => a.ships.some((s) => s.id === ship.id));
+    const heist = at ? startHeist(world, ship.id, at.id) : null;
+    if (!heist) return void toast.error(`${ship.name} cannot be taken.`);
+    saveCampaign({ galaxyMap: { ...world, heist } });
+    toast.info(`You are going for ${ship.name}. Bribe, slice, bluff or fight your way to it.`);
+  };
+  const runHeist = (how: HeistHow, success: boolean, cost = 0) => {
+    if (!world || !heistOf || !here) return;
+    const time = pass(HEIST_MINUTES[heistOf.stage]);
+    const minute = useClock.getState().minutes;
+    const result = heistStep(heistOf, how, success, minute);
+    let galaxyMap: World = { ...world, heist: result.heist };
+    if (result.crime) galaxyMap = reportCrime(galaxyMap, heistOf.areaId, result.crime, minute);
+    let starships: PartyShip[] | undefined;
+    if (result.ended === "stolen") {
+      const took = takeShip(galaxyMap, heistOf.shipId);
+      if (took.ship) starships = [...ships, { ...took.ship, voyage: undefined, owner: character.name, fuel: getStarshipSize(took.ship.size)?.fuelCapacity ?? 5, areaId: berthOf(took.world, took.at ?? heistOf.areaId) }];
+      galaxyMap = took.world;
+    } else if (result.ended === "lifted") {
+      galaxyMap = takeShip(galaxyMap, heistOf.shipId).world;
+    }
+    galaxyMap = { ...galaxyMap, heist: result.heist };
+    if (cost) saveCharacter({ credits: (character.credits ?? 0) - cost });
+    saveCampaign({ galaxyMap, ...time, ...(starships ? { starships } : {}) });
+    const end = {
+      stolen: `${heistOf.shipName} is yours. Get off world before the officers reach the port.`,
+      lifted: `${heistOf.shipName} lifted off without you, and the port is roused.`,
+      caught: `The guards have you. ${heistOf.shipName} stays where it is.`,
+      abandoned: "",
+    } as Record<string, string>;
+    if (result.ended) toast[result.ended === "stolen" ? "success" : "error"](end[result.ended]);
+    else toast[success ? "success" : "error"](`${success ? "It works." : "It does not work, and the alarm is raised."} ${result.heist?.takeoffAt && !heistOf.takeoffAt ? `Take-off in ${HEIST_COUNTDOWN} minutes.` : ""}`.trim());
+  };
+  const abandonHeist = () => {
+    if (!world) return;
+    saveCampaign({ galaxyMap: { ...world, heist: undefined } });
+    toast.info("You give up on the ship.");
+  };
+
   // A fight between starships (shared/logic "Starship combat"): the party's ship against the
   // hostile ships in orbit where it is. What came of it is written back when the fight ends.
   const shipFight = useShipFight((s) => s.fight);
@@ -584,13 +646,14 @@ export default function GameBoard() {
   // Pick or slice a lock: Dexterity or Intelligence, with a security or slicer's kit (proficiency
   // when trained with it); a spike for that kit rerolls a failed check (Security spike, Computer spike)
   const lockKit = () => (character.equipment ?? []).find((n: string) => /^(security kit|slicer's kit)$/i.test(n)) as string | undefined;
-  const openLock = (exit: Exit, extra: Record<string, any> = {}, alarm = false) => {
+  const openLock = (exit: Exit, extra: Record<string, any> = {}, alarm = false, crime?: Crime) => {
     if (!world || !exit.pathId) return;
     const paths = world.paths.map((p) => (p.id === exit.pathId ? { ...p, locked: undefined } : p));
     let galaxyMap: World = { ...world, paths };
     // A blast sets off the alarm of the building the party stands in
     const buildingId = here?.kind === "room" ? here.parentId : here?.kind === "building" ? here.id : null;
     if (alarm && buildingId) galaxyMap = updateArea(galaxyMap, buildingId, { alarm: true }).world;
+    if (crime && here) galaxyMap = reportCrime(galaxyMap, here.id, crime, clockNow());
     saveCampaign({ galaxyMap, ...extra });
   };
   const unlock = (exit: Exit) => {
@@ -606,7 +669,7 @@ export default function GameBoard() {
         ok = abilityCheck("Lock (rerolled)", dc, ["dexterity", "intelligence"], trainedWith(kit));
       }
     }
-    if (ok) openLock(exit);
+    if (ok) openLock(exit, {}, false, "trespass");
   };
   // Forcing a door instead (house rule: DC 5 over the lock's for a Strength check; a ram gives +4 and
   // advantage with a helper (Ram, portable); a fusion cutter takes ten minutes for each 5 of the DC
@@ -619,7 +682,7 @@ export default function GameBoard() {
     };
     if (how === "cutter") {
       const minutes = 10 * Math.ceil((exit.locked ?? 10) / 5);
-      openLock(exit, pass(minutes));
+      openLock(exit, pass(minutes), false, "trespass");
       return void toast.success(`The fusion cutter takes ${minutes} minutes, and the way is open.`);
     }
     if (how === "blast") {
@@ -627,7 +690,7 @@ export default function GameBoard() {
       const bomb = ((character.equipment ?? []) as string[]).filter((n) => gearOf(n)?.kind === "explosive").sort((a, b) => (factsOf(a)?.cost ?? 0) - (factsOf(b)?.cost ?? 0))[0];
       if (!bomb) return;
       saveCharacter({ equipment: consume(bomb).equipment });
-      openLock(exit, {}, true);
+      openLock(exit, {}, true, "heinous");
       noise();
       return void toast.success(`${bomb} blows the lock. Everyone nearby heard it.`);
     }
@@ -639,7 +702,7 @@ export default function GameBoard() {
     const ok = roll + bonus >= dc;
     toast[ok ? "success" : "error"](`${ram ? "Portable ram" : "Shoulder it"} (Strength${ram && helper ? ", helped: advantage" : ""}): ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${roll + bonus} against DC ${dc}. ${ok ? "It gives." : "It holds."} Noisy.`);
     noise();
-    if (ok) openLock(exit);
+    if (ok) openLock(exit, {}, false, "trespass");
   };
 
 
@@ -830,6 +893,7 @@ export default function GameBoard() {
     autoFought.current = here.id;
     const surprise = alert === ALERT.unaware;
     if (!surprise && here.alert !== ALERT.attacking) setWatch(ALERT.attacking);
+    else if (surprise && world) saveCampaign({ galaxyMap: reportCrime(world, here.id, "assault", clockNow()) });
     // The ground: the room as planned, or open ground with what cover there is. The party
     // stands where it stood on the map (else where it came in); the enemy where the plan has them.
     const ground = here.layout ?? skirmishGround(here);
@@ -2197,15 +2261,22 @@ export default function GameBoard() {
         Engage
       </Button>
     ) : (ship.status !== "wrecked" && ship.status !== "orbiting") || ship.disabled ? (
-      <Button
-        size="sm"
-        variant="outline"
-        className="ml-2 h-6 px-2"
-        disabled={inCombat || dead || hostiles.length > 0 || !!shipFight}
-        onClick={() => acquireShip(ship, ship.owner === world?.antagonist ? 0 : ship.value)}
-      >
-        {ship.owner === world?.antagonist ? "Take as a prize" : `Buy (${ship.value.toLocaleString()} cr)`}
-      </Button>
+      <>
+        <Button
+          size="sm"
+          variant="outline"
+          className="ml-2 h-6 px-2"
+          disabled={inCombat || dead || hostiles.length > 0 || !!shipFight}
+          onClick={() => acquireShip(ship, ship.owner === world?.antagonist ? 0 : ship.value)}
+        >
+          {ship.owner === world?.antagonist ? "Take as a prize" : `Buy (${ship.value.toLocaleString()} cr)`}
+        </Button>
+        {ship.owner !== world?.antagonist && (
+          <Button size="sm" variant="outline" className="ml-2 h-6 px-2 border-red-400 text-red-300" disabled={inCombat || dead || !!heistOf || !!shipFight} onClick={() => beginHeist(ship)} data-testid="ship-steal">
+            Steal
+          </Button>
+        )}
+      </>
     ) : null;
 
   // What is being looked at, and the way down to it from the galaxy
@@ -2925,6 +2996,8 @@ export default function GameBoard() {
       <KeyboardControls map={controls}>
         {/* The 3D map. On a phone it has the top of the screen and the HUD the rest */}
         <div className={`absolute inset-x-0 top-0 md:h-full ${showSidebar ? "md:right-80" : ""} ${showSidebar || showCombat ? "h-[46dvh]" : "h-full"}`} data-testid="map-3d">
+        {/* Outside a fight the scene starts under the strip of map buttons and hint, not behind it */}
+        <div className={`absolute inset-x-0 bottom-0 ${inCombat || shipFight ? "top-0" : "top-16 md:top-12"}`}>
         <Canvas
           shadows
           camera={{
@@ -2960,6 +3033,7 @@ export default function GameBoard() {
             <LocalMap />
           )}
         </Canvas>
+        </div>
 
         {/* Where the map is looking: the way down from the galaxy, each step a tap away. Only the
             buttons take taps; the rest of the strip lets them through to the map. */}
@@ -3009,6 +3083,20 @@ export default function GameBoard() {
                   : `Tap a place to pick it out, double tap to ${view.kind === "settlement" ? "go to it or look at it" : "open it"}.`}
               </p>
             )}
+            {heistOf && here?.id === heistOf.areaId && heistOf.takeoffAt !== undefined && clockMinutes < heistOf.takeoffAt && (
+              <p className="mt-0.5 text-[11px] leading-tight font-semibold text-yellow-300 drop-shadow" data-testid="heist-countdown">
+                {heistOf.shipName} lifts off in {heistOf.takeoffAt - clockMinutes} min, with or without you.
+              </p>
+            )}
+            {pursuit && (
+              <p className="mt-0.5 text-[11px] leading-tight font-semibold text-red-300 drop-shadow" data-testid="pursuit">
+                {pursuit.phase === "coming"
+                  ? `${pursuit.pursuit.cartel ? "Enforcers" : "Security"} reach the scene in ${pursuit.minutes} min: ${pursuit.pursuit.officers} ${pursuit.pursuit.heavy ? "heavy troopers" : "officers"} after ${CRIME_NAMES[pursuit.pursuit.crime]}.`
+                  : pursuit.here
+                    ? `Officers are searching this district for the offenders: ${pursuit.minutes} min left. Lie low, or leave the district.`
+                    : `Officers are still searching the district: ${pursuit.minutes} min left.`}
+              </p>
+            )}
           </div>
         )}
 
@@ -3048,6 +3136,25 @@ export default function GameBoard() {
                 {play.substance && <p className={play.substance.phase === "high" ? "text-yellow-200" : "text-red-300"}>{play.substance.name}: {play.substance.phase === "high" ? "a high, waiting for your next check or fight" : `a low for ${Math.max(0, play.substance.ends - clock)} more minutes`}.</p>}
                 {addictionLevel > 0 && <p className="text-red-300">Addiction level {addictionLevel}: lows last longer{addictionLevel >= 2 ? ", highs are shorter" : ""}.</p>}
               </div>
+            )}
+
+            {heistOf && (
+              <HeistPanel
+                heist={heistOf}
+                minute={clockMinutes}
+                here={here?.id === heistOf.areaId}
+                law={lawAt(world, heistOf.areaId)}
+                credits={character.credits ?? 0}
+                disabled={inCombat || dead}
+                onCheck={(how, abilities, trained, what) => {
+                  const ok = abilityCheck(what, heistDC(heistOf.stage, lawAt(world, heistOf.areaId)), abilities, trained);
+                  runHeist(how, ok);
+                }}
+                onBribe={(cost) => runHeist("bribe", true, cost)}
+                onAbandon={abandonHeist}
+                kitTrained={!!lockKit() && trainedWith(lockKit()!)}
+                skilled={skilled}
+              />
             )}
 
             {(party.length > 0 || roster.some((r: any) => r.id !== character.id)) && (
@@ -3292,6 +3399,11 @@ export default function GameBoard() {
                   <Button size="sm" variant="outline" onClick={search} disabled={inCombat || dead || hostiles.length > 0}>
                     Search
                   </Button>
+                  {pursuit?.here && pursuit.phase === "searching" && (
+                    <Button size="sm" variant="destructive" onClick={lieLowNow} disabled={inCombat || dead} data-testid="lie-low">
+                      Lie low (Stealth)
+                    </Button>
+                  )}
                   {childrenOf(world, here.id).length === 0 && ["system", "planet", "settlement", "building"].includes(here.kind) && (
                     <Button size="sm" variant="outline" onClick={() => explore()} disabled={exploring || inCombat || dead}>
                       {exploring ? "Exploring..." : "Explore"}
@@ -3882,6 +3994,69 @@ function WeekActivity(props: DowntimeProps & { activity: DowntimeActivityData; s
           <Button size="sm" variant="outline" onClick={() => { setPhase("setup"); setAttempts([]); }}>Again</Button>
         </div>
       )}
+    </div>
+  );
+}
+
+// The heist on a ship the party is taking (shared logic "Taking a ship"): the stage it is on, what can
+// be done at it, and the countdown once the terminal is sliced. Each choice is a check made in GameBoard.
+function HeistPanel({ heist, minute, here, law, credits, disabled, onCheck, onBribe, onAbandon, kitTrained, skilled }: {
+  heist: Heist;
+  minute: number;
+  here: boolean;
+  law: number;
+  credits: number;
+  disabled: boolean;
+  onCheck: (how: HeistHow, abilities: string[], trained: boolean, what: string) => void;
+  onBribe: (cost: number) => void;
+  onAbandon: () => void;
+  kitTrained: boolean;
+  skilled: (skill: string) => boolean;
+}) {
+  const dc = heistDC(heist.stage, law);
+  const bribe = bribeCost(heist.value, law);
+  const left = heist.takeoffAt !== undefined ? heist.takeoffAt - minute : null;
+  const off = !here || disabled;
+  const choices: { label: string; onClick: () => void; disabled?: boolean }[] =
+    heist.stage === "customs"
+      ? [
+          { label: `Bribe the customs officer (${bribe.toLocaleString()} cr)`, onClick: () => onBribe(bribe), disabled: credits < bribe },
+          { label: `Forge a clearance (Deception, DC ${dc})`, onClick: () => onCheck("forge", ["charisma"], skilled("deception"), "Forged clearance") },
+        ]
+      : heist.stage === "terminal"
+        ? [{ label: `Slice the hangar terminal (Intelligence, DC ${dc})`, onClick: () => onCheck("slice", ["intelligence"], kitTrained, "Slicing the terminal") }]
+        : heist.stage === "guards"
+          ? [
+              { label: `Intimidate the guards (Charisma, DC ${dc})`, onClick: () => onCheck("intimidate", ["charisma"], skilled("intimidation"), "Intimidating the guards") },
+              { label: `Charm the guards (Charisma, DC ${dc})`, onClick: () => onCheck("charm", ["charisma"], skilled("persuasion"), "Charming the guards") },
+              { label: `Fight the guards (Strength or Dexterity, DC ${dc})`, onClick: () => onCheck("fight", ["strength", "dexterity"], false, "Fighting the guards") },
+            ]
+          : [{ label: `Overcome the ship's lockout (Intelligence, DC ${dc})`, onClick: () => onCheck("unlock", ["intelligence"], kitTrained, "Overcoming the lockout") }];
+  const text =
+    heist.stage === "customs"
+      ? "The customs officer at the lock wants paying, or a clearance that is not on file."
+      : heist.stage === "terminal"
+        ? "The hangar terminal holds the ship's lock. Slicing it starts the countdown to take-off."
+        : heist.stage === "guards"
+          ? "Security stands at the ship. Talk them down, frighten them off, or fight."
+          : "The ship's own security is locked. Get past it before it lifts off.";
+  return (
+    <div className="mb-4 space-y-2 rounded border border-red-500/60 p-2 text-xs" data-testid="heist">
+      <h3 className="font-semibold text-red-300">Taking the {heist.shipName}</h3>
+      <p className="text-gray-300">{text}</p>
+      {left !== null && (
+        <p className="font-semibold text-yellow-300">{left > 0 ? `Take-off in ${left} min.` : "It is lifting off."}</p>
+      )}
+      {!here && <p className="text-gray-400">You are not at the ship. Go back to it, or give it up.</p>}
+      {heist.fails > 0 && <p className="text-gray-400">Alarms raised: {heist.fails} of 4.</p>}
+      <div className="flex flex-wrap gap-1">
+        {choices.map((c) => (
+          <Button key={c.label} size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={off || c.disabled} onClick={c.onClick}>
+            {c.label}
+          </Button>
+        ))}
+        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={onAbandon}>Give it up</Button>
+      </div>
     </div>
   );
 }
