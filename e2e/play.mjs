@@ -1313,7 +1313,11 @@ if (process.env.FORCE !== "0") {
     });
     if (facts.dice !== 6 || facts.dr !== 6 || facts.speed !== 350 || facts.foes !== 1 || !(facts.shield > 0)) throw new Error(JSON.stringify(facts));
     // The 3D map is probed for the ships
-    const meAt = await page.evaluate(() => window.__map3d?.at("me") ?? null);
+    let meAt = null;
+    for (let i = 0; i < 30 && !meAt; i++) {
+      meAt = await page.evaluate(() => window.__map3d?.at("me") ?? null);
+      if (!meAt) await sleep(300);
+    }
     if (!meAt) throw new Error("the space scene is not drawn");
     let fired = 0;
     let moved = false;
