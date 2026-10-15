@@ -3786,6 +3786,10 @@ export type GearUse =
   | { kind: "cutter" }
   | { kind: "jammer" }
   | { kind: "beacon" }
+  // Information gear (house rule): a credit chip, a datacard, a datacron or a holocron is read once
+  // (a check against `dc`); a commlink or holocomm calls an allied contact
+  | { kind: "data"; form: "chip" | "card" | "cron" | "holocron"; dc: number }
+  | { kind: "call" }
   | { kind: "game" }
   | { kind: "instrument" }
   | { kind: "tool" };
@@ -3846,6 +3850,13 @@ export function gearUse(item: GearFacts): GearUse | undefined {
     if (/^poison/.test(name)) return { kind: "poison", dc: Number((text.match(/DC (\d+)/i) ?? [])[1]) || 14, dice: (text.match(/(\d+d\d+) poison damage/i) ?? [])[1] ?? "2d4" };
     return undefined;
   }
+  if (category === "DataRecordingAndStorage") {
+    if (/^credit chip/.test(name)) return { kind: "data", form: "chip", dc: Number((text.match(/DC (\d+)/i) ?? [])[1]) || 15 };
+    if (/^(datacard|data disk)/.test(name)) return { kind: "data", form: "card", dc: 12 };
+    if (/^datacron/.test(name)) return { kind: "data", form: "cron", dc: 15 };
+    if (/^holocron/.test(name)) return { kind: "data", form: "holocron", dc: 15 };
+  }
+  if (category === "Communications" && /^(commlink|holocomm)/.test(name)) return { kind: "call" };
   if (/restraining bolt/.test(name)) return { kind: "bolt", dc: Number((text.match(/DC (\d+) Constitution saving throw/i) ?? [])[1]) || 14 };
   if (/^binders/.test(name)) return { kind: "binders", dc: Number((text.match(/DC (\d+) Strength or Dexterity/i) ?? [])[1]) || 14 };
   if (/computer spike/.test(name)) return { kind: "spike", tool: "Slicer's kit" };
@@ -3999,6 +4010,11 @@ export interface Companion {
   // The minute of the clock they joined, and how they came to
   joined: number;
   how?: string;
+  // A droid's customizations fitted, the slots its motor supports, and the armor class and speed
+  // it had before any (house rule: plating sets a base, so they are worked out from these)
+  custom?: string[];
+  motor?: number;
+  stock?: { armorClass: number; speed: number };
 }
 
 export const COMPANION_LIMIT = 4;
@@ -6292,6 +6308,8 @@ export interface ItemEffects {
   // A bonus to armor class, and "your AC becomes 13 + your Dexterity modifier" without armor
   ac?: number;
   acBase?: { base: number; ability: string };
+  // A droid's "base AC becomes 19" (plating)
+  acSet?: number;
   // "Your Strength score becomes 19" (no effect when it is higher already), "increases by 1, to a
   // maximum of 20" (`max`; a package raises the maximum as well)
   setScores?: Record<string, number>;
@@ -6327,6 +6345,14 @@ export interface ItemFacts {
   augment?: "enhancement" | "replacement";
   parts?: string[];
   timed?: TimedEffect;
+  // A modification: the kind of item it goes in ("blaster", "armor", "augment"...) and the
+  // properties it gives the item ("absorbing 2")
+  modKind?: string;
+  properties?: string[];
+  // A chassis: the kind of item it upgrades, and the rarity it brings
+  chassis?: string;
+  // A droid customization: a part (replaces a physical part) or a protocol
+  droid?: "part" | "protocol";
 }
 
 export const ATTUNEMENT_LIMIT_NOTE = "A creature can be attuned to as many items as its proficiency bonus; standard, premium and prototype items take one, advanced, legendary and artifact two.";
@@ -6352,6 +6378,10 @@ export function parseItemEffects(source: string): ItemEffects {
     }
     const ac = sentence.match(/\+(\d+) bonus to AC/i);
     if (ac && effects.ac === undefined) effects.ac = Number(ac[1]);
+    const plating = sentence.match(/base AC becomes (\d+)/i);
+    if (plating) effects.acSet = Number(plating[1]);
+    const quick = sentence.match(/(?:your|its) speed increases by (\d+) feet/i);
+    if (quick && effects.speed === undefined && !/\bwhile\b|\bwhen\b/i.test(sentence)) effects.speed = Number(quick[1]);
     const base = sentence.match(/AC becomes (\d+) \+ your (\w+) modifier/i);
     if (base && abilityOf(base[2]) && /aren't wearing armor|not wearing armor/i.test(sentence)) effects.acBase = { base: Number(base[1]), ability: abilityOf(base[2])! };
     for (const m of sentence.matchAll(/(?:your|the target's) (\w+) score (?:becomes|is(?: treated as)?) (\d+)/gi)) {
@@ -6429,12 +6459,96 @@ export function itemFactsOf(row: { name: string; type: string; subtype?: string;
     const timed = parseTimedEffect(row.name, row.consumableType, text);
     return timed ? { ...base, effects: {}, timed } : undefined;
   }
+  if (row.type === "ItemModification") {
+    const properties = Array.from(plainText(text).matchAll(/gains? the ([a-z\-]+(?: \d+)?) property/gi)).map((m) => m[1].toLowerCase());
+    return { ...base, text: base.text.slice(0, 320), effects: parseItemEffects(text), modKind: String(row.subtype ?? "").toLowerCase(), properties };
+  }
+  if (/ Chassis \(/.test(row.name)) {
+    const kind = chassisKind(row);
+    return kind ? { ...base, text: base.text.slice(0, 200), effects: {}, chassis: kind } : undefined;
+  }
+  if (row.type === "DroidCustomization") {
+    return { ...base, effects: parseItemEffects(text), droid: /protocol/i.test((row as any).droidCustomizationType ?? "") ? "protocol" : "part" };
+  }
   if (row.type === "CyberneticAugmentation") {
     return { ...base, effects: parseItemEffects(text), augment: /replacement/i.test(row.cyberneticAugmentationType ?? row.subtype ?? "") ? "replacement" : "enhancement", parts: augmentationParts(text) };
   }
   if (["Weapon", "Armor", "Shield", "Focus", "AdventuringGear"].includes(row.type)) return { ...base, effects: parseItemEffects(text) };
   return undefined;
 }
+
+// ---- Modifiable items (Wretched Hives, "Modifiable Items"; and its "Common Modifications" variant,
+// which is the house setting here: every plain weapon, armor, shield, wristpad, focus generator
+// and piece of clothing is a standard chassis with four modification slots)
+export const RARITY_ORDER = ["standard", "premium", "prototype", "advanced", "legendary", "artifact"];
+export const rarityRank = (rarity: string) => Math.max(0, RARITY_ORDER.indexOf(String(rarity).toLowerCase()));
+// Base slots 4; augment slots by rarity (prototype and advanced 1, legendary and artifact 2)
+export const MOD_BASE_SLOTS = 4;
+export const augmentSlots = (rarity: string) => [0, 0, 1, 1, 2, 2][rarityRank(rarity)];
+export const MOD_KINDS = ["blaster", "vibroweapon", "lightweapon", "armor", "clothing", "wristpad", "focus generator"] as const;
+
+// Which kind of modification a plain item takes
+export function modKindOf(item: { name: string; equipmentCategory?: string; weaponClassification?: string; armorClassification?: string }): string | undefined {
+  const name = item.name.toLowerCase();
+  const weapon = String(item.weaponClassification ?? "").toLowerCase();
+  if (item.equipmentCategory === "Weapon") return /blaster/.test(weapon) ? "blaster" : /vibro/.test(weapon) ? "vibroweapon" : /light/.test(weapon) ? "lightweapon" : undefined;
+  if (item.equipmentCategory === "Armor") return "armor";
+  if (item.equipmentCategory === "Clothing") return "clothing";
+  if (name === "wristpad") return "wristpad";
+  if (name === "focus generator") return "focus generator";
+  return undefined;
+}
+// What a chassis row upgrades
+function chassisKind(row: { name: string; type: string; subtype?: string }): string | undefined {
+  const sub = String(row.subtype ?? "").toLowerCase();
+  if (/blaster/.test(row.name.toLowerCase())) return "blaster";
+  if (/vibroweapon/.test(row.name.toLowerCase())) return "vibroweapon";
+  if (/lightweapon/.test(row.name.toLowerCase())) return "lightweapon";
+  if (row.type === "Armor" || row.type === "Shield") return "armor";
+  if (row.type === "AdventuringGear") return "clothing";
+  if (row.type === "Focus") return /tech/.test(sub) ? "wristpad" : "focus generator";
+  return undefined;
+}
+// What a modification kind goes into: the kind of the item, with armor mods in shields too
+export const modFits = (modKind: string, itemKind: string) => modKind === itemKind || (modKind === "augment");
+
+// A plain item as modified: its rarity (standard unless a chassis was fitted) and what is in it
+export interface Fitted {
+  rarity: string;
+  mods: string[];
+  crystal?: string;
+}
+
+// ---- Color crystals (Forcecasting Color Crystal Modifier, Color Crystal): the check's DC reached
+// gives the d100's modifier; the crystal is the color rolled or any below it
+export const CRYSTAL_MODIFIER: [number, number][] = [[1, -15], [5, -10], [10, -5], [15, 0], [20, 5], [25, 10], [30, 20]];
+export const CRYSTALS: [number, string][] = [
+  [20, "Blue"], [40, "Red"], [60, "Green"], [70, "Yellow"], [80, "Purple"], [90, "Orange"], [93, "Viridian"], [96, "Cyan"], [97, "Bronze"], [98, "Silver"], [99, "White"], [Infinity, "Black"],
+];
+export const crystalModifier = (check: number) => CRYSTAL_MODIFIER.filter(([dc]) => check >= dc).map(([, m]) => m).pop() ?? -15;
+export const crystalFor = (d100: number) => CRYSTALS.find(([top]) => d100 <= top)![1];
+// The colors at or below one rolled, in the table's order
+export const crystalsUpTo = (color: string) => CRYSTALS.map(([, c]) => c).slice(0, CRYSTALS.findIndex(([, c]) => c === color) + 1);
+
+// ---- Droid customizations (Wretched Hives): a motor supports two, upgraded to six
+export const DROID_MOTOR_COST: Record<number, number> = { 3: 2000, 4: 10000, 5: 50000, 6: 200000 };
+export const DROID_BASE_SLOTS = 2;
+export const droidPlan = (rarity: string, size = "medium", removing = false) => augmentPlan(rarity, size, removing);
+
+// ---- Information gear (house rule): what reading a credit chip, datacard, datacron or holocron
+// gives. A chip is credits; the others, a d100: lore of a place, a blueprint, or credits.
+export function readOutcome(form: "chip" | "card" | "cron" | "holocron", d100: number): "credits" | "lore" | "blueprint" {
+  if (form === "chip") return "credits";
+  if (form === "holocron") return d100 <= 60 ? "lore" : "blueprint";
+  return d100 <= 40 ? "lore" : d100 <= 75 ? "blueprint" : "credits";
+}
+// The rarity of a blueprint a level can find (the book's tiers: levels 1-4 standard and premium...)
+export const blueprintRarity = (level: number, d100: number): string => {
+  const top = level >= 17 ? 4 : level >= 11 ? 3 : level >= 5 ? 2 : 1;
+  return RARITY_ORDER[Math.min(top, Math.floor((d100 / 100) * (top + 1)))];
+};
+// Credits in a chip or a card: 2d6 x 25 x the level's tier (1 to 4)
+export const readCredits = (two6: number, level: number) => two6 * 25 * Math.max(1, Math.ceil(level / 5));
 
 // Effects of what is active, added up (scores are applied by scoresWith)
 export function sumEffects(list: ItemEffects[]): ItemEffects {

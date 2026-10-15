@@ -43,6 +43,8 @@ import {
   type DowntimeActivityData, type ActivitySpec, type DowntimeOutcome, type DowntimeState, type TrainingOption,
   type Occupant,
   attunementLimit, augmentationLimit, augmentPlan, partsFree, sideEffectsOf, describeEffects, PROSTHESES, ITEM_ABILITIES, type ItemFacts,
+  modKindOf, augmentSlots, MOD_BASE_SLOTS, rarityRank, INSTALL_DC, SIZE_TIME, crystalModifier, crystalFor, crystalsUpTo, DROID_MOTOR_COST, DROID_BASE_SLOTS, droidPlan,
+  readOutcome, blueprintRarity, readCredits, RARITY_ORDER, type Fitted,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship,
 } from "@shared/logic";
 
@@ -75,6 +77,12 @@ interface PlayState {
   sides?: Record<string, string>;
   buffs?: { name: string; kind: string; effects: any; weapon?: string; fight?: boolean; until?: number }[];
   augments?: { name: string; parts: string[]; prosthesis?: boolean }[];
+  // Modifications fitted in plain items (by item name), with the item's rarity (a chassis raises
+  // it) and the color crystal of a lightweapon; the minute before which a failed fitting waits
+  fitted?: Record<string, Fitted & { crystalMax?: string }>;
+  tinkerUntil?: number;
+  // The day each allied contact was last called
+  called?: Record<string, number>;
 }
 
 // What each level of the watch means for the party (house rule, see shared/logic)
@@ -700,6 +708,11 @@ export default function GameBoard() {
     if (!world || !exit.pathId) return;
     const kit = lockKit();
     const dc = exit.locked ?? 10;
+    // A code cylinder holds its bearer's clearance: it opens a lock of DC 15 or less (house rule)
+    if (dc <= 15 && carries(/^code cylinder$/i)) {
+      toast.success("The code cylinder is accepted: the lock opens.");
+      return void openLock(exit, {}, false);
+    }
     let ok = abilityCheck("Lock", dc, ["dexterity", "intelligence"], !!kit && trainedWith(kit));
     if (!ok && kit) {
       const spike = (character.equipment ?? []).find((n: string) => { const g = gearOf(n); return g?.kind === "spike" && g.tool.toLowerCase() === kit.toLowerCase(); });
@@ -2794,6 +2807,9 @@ export default function GameBoard() {
 
   // What an item can do, under its row in the inventory
   const [using, setUsing] = useState<string | null>(null);
+  // The plain item whose modification slots are open, and the droid companion being customized
+  const [modding, setModding] = useState<string | null>(null);
+  const [customizing, setCustomizing] = useState<string | null>(null);
   const usePanel = (name: string) => {
     const use = gearOf(name);
     const facts = factsOf(name);
@@ -2854,6 +2870,34 @@ export default function GameBoard() {
         </div>
       );
     }
+    if (use.kind === "data") {
+      return (
+        <div className="mt-1 space-y-1 text-xs" data-testid="data-panel">
+          {text}
+          <p className="text-gray-300">
+            {use.form === "chip" ? `Crack it (Intelligence, a slicer's kit, DC ${use.dc}; +5 without one): credits.` : use.form === "card" ? "Read it on a datapad, wristpad or holocomm (Intelligence, DC 12): lore of a place, a blueprint or credits." : use.form === "cron" ? `Crack it (Intelligence, DC ${use.dc}): lore, a blueprint or credits.` : "Open it with the Force (Wisdom, DC 15): lore or a blueprint."} Ten minutes; house rule.
+          </p>
+          <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid="read-data" onClick={() => readData(name, use)}>{use.form === "chip" ? "Crack it" : "Read it"}</Button>
+        </div>
+      );
+    }
+    if (use.kind === "call") {
+      const day = dayOf(useClock.getState().minutes);
+      const allied = downtime.contacts.filter((c) => c.kind === "allied");
+      return (
+        <div className="mt-1 space-y-1 text-xs" data-testid="call-panel">
+          {text}
+          <p className="text-gray-300">Call an allied contact (30 miles; house rule): they tell you what is kept at a place near them, once a day each. Contacts are made in Downtime.</p>
+          {allied.map((c) => (
+            <div key={c.id} className="flex items-center justify-between gap-2">
+              <span>{c.name} <span className="text-gray-400">{c.whereName}</span></span>
+              <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || (play.called?.[c.id] ?? -1) === day} data-testid={`call-${c.id}`} onClick={() => callContact(c.id)}>Call</Button>
+            </div>
+          ))}
+          {!allied.length && <p className="text-gray-400">No allied contacts yet.</p>}
+        </div>
+      );
+    }
     if (use.kind === "beacon") return <div className="mt-1 space-y-1 text-xs">{text}<p className="text-gray-300">Left on a ship from its card on the map; where it flies is then listed under your companions.</p></div>;
     return <div className="mt-1 text-xs text-gray-300">{text}{use.kind === "bolt" ? <p>Fitted to a powered-down droid from its card.</p> : use.kind === "binders" ? <p>Restrains a Small or Medium creature (DC {use.dc} Strength or Dexterity save).</p> : use.kind === "spike" ? <p>Spent automatically to reroll a failed {use.tool.toLowerCase()} check on a lock.</p> : use.kind === "ram" ? <p>Forcing a locked door gives +{use.bonus}, and advantage with a helper.</p> : use.kind === "cutter" ? <p>Cuts a locked door open in ten minutes for each 5 of its DC.</p> : null}</div>;
   };
@@ -2862,7 +2906,9 @@ export default function GameBoard() {
   // cybernetic augmentation. What an item does is read from its text on the server (itemFacts).
   const factsOfItem = (name: string): ItemFacts | undefined => itemFacts?.[name.toLowerCase()];
   const attuned: string[] = play.attuned ?? [];
-  const slotsUsed = attuned.reduce((n, a) => n + (factsOfItem(a)?.attune ?? 1), 0);
+  // A plain item with modifications fitted needs attunement too: one slot, two from advanced up
+  const attuneCost = (name: string) => factsOfItem(name)?.attune ?? (rarityRank(play.fitted?.[name]?.rarity ?? "standard") >= 3 ? 2 : 1);
+  const slotsUsed = attuned.reduce((n, a) => n + attuneCost(a), 0);
   const slotsMax = attunementLimit(level);
   // "One ability score (chosen by the GM) decreases by 1": house rule, one of the others at random,
   // chosen when the item is attuned or installed and kept
@@ -2874,12 +2920,13 @@ export default function GameBoard() {
   const withSide = (f: ItemFacts) => (f.effects.falls ? { ...(play.sides ?? {}), [f.name]: sideFor(f) } : play.sides);
   const attune = (name: string) => {
     const f = factsOfItem(name);
-    if (!f || inCombat || dead || attuned.includes(name)) return;
+    const cost = attuneCost(name);
+    if ((!f && !play.fitted?.[name]?.mods?.length) || inCombat || dead || attuned.includes(name)) return;
     if (hostiles.length) return speed("Not with armed enemies in the room.");
-    if (slotsUsed + f.attune > slotsMax) return speed(`Attunement is full (${slotsUsed} of ${slotsMax} slots): break one first.`);
-    saveCharacter({ playState: { ...play, attuned: [...attuned, name], sides: withSide(f) } });
+    if (slotsUsed + cost > slotsMax) return speed(`Attunement is full (${slotsUsed} of ${slotsMax} slots): break one first.`);
+    saveCharacter({ playState: { ...play, attuned: [...attuned, name], sides: f ? withSide(f) : play.sides } });
     saveCampaign(pass(60));
-    toast.success(`Attuned to ${name} (an hour; house rule, the book says a short rest).${f.effects.falls ? " It has a side effect: another ability score is lower by 1." : ""}`);
+    toast.success(`Attuned to ${name} (an hour; house rule, the book says a short rest).${f?.effects.falls ? " It has a side effect: another ability score is lower by 1." : ""}`);
   };
   const unattune = (name: string) => {
     if (inCombat || dead) return;
@@ -2985,6 +3032,315 @@ export default function GameBoard() {
             <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`remove-${a.name}`} onClick={() => removeAugment(i)}>Remove</Button>
           </div>
         ))}
+      </div>
+    );
+  };
+
+  // ---- Modifiable items (Wretched Hives, "Modifiable Items", with the "Common Modifications"
+  // variant as the setting: every plain weapon, armor, shield, wristpad, focus generator and piece
+  // of clothing is a standard chassis with four slots). A fitting takes an hour and a check with
+  // the item's tool against the modification's DC; a failure waits a day. House rule: the book
+  // wants proficiency with the tool; without it you may try with the tool at DC +5.
+  const squashN = (x: string) => x.toLowerCase().replace(/[^a-z]/g, "");
+  const kitFor = (kind: string) => {
+    const word = kind.toLowerCase();
+    const t = toolData.find((x) => (x.worksOn ?? "").toLowerCase().includes(word));
+    const owned = t ? ((character.equipment ?? []) as string[]).find((n) => squashN(n) === squashN(t.name)) : undefined;
+    return { tool: t?.name, owned };
+  };
+  const fitOf = (name: string): Fitted & { crystalMax?: string } => play.fitted?.[name] ?? { rarity: "Standard", mods: [] };
+  const writeFit = (name: string, fit: Fitted & { crystalMax?: string }, extra: Record<string, any> = {}) =>
+    saveCharacter({ ...extra, playState: { ...((extra.playState as any) ?? play), fitted: { ...(play.fitted ?? {}), [name]: fit } } });
+  const tinkerWait = () => (play.tinkerUntil ?? 0) > clockNow();
+  const modCheck = (what: string, rarity: string, tool: string) => {
+    const trained = trainedWith(tool);
+    const dc = (INSTALL_DC[rarity.toLowerCase()] ?? 10) + (trained ? 0 : 5);
+    return { ok: abilityCheck(what, dc, ["intelligence"], trained), dc };
+  };
+  const installMod = (item: string, mod: string) => {
+    const f = factsOfItem(mod);
+    const base = factsOf(item);
+    const kind = base ? modKindOf({ name: item, equipmentCategory: base.equipmentCategory, weaponClassification: (base as any).weaponClassification }) : undefined;
+    if (!f?.modKind || !kind || inCombat || dead) return;
+    const fit = fitOf(item);
+    const augment = f.modKind === "augment";
+    const used = fit.mods.map((m) => factsOfItem(m)).filter(Boolean) as ItemFacts[];
+    if (rarityRank(f.rarity) > rarityRank(fit.rarity)) return speed(`This ${fit.rarity.toLowerCase()} item cannot hold ${f.rarity.toLowerCase()} modifications (fit a better chassis).`);
+    if (augment ? used.filter((u) => u.modKind === "augment").length >= augmentSlots(fit.rarity) : used.filter((u) => u.modKind !== "augment").length >= MOD_BASE_SLOTS) return speed(augment ? "No augment slot is free." : "All four slots are taken.");
+    if (augment && used.some((u) => u.name === f.name)) return speed("An item cannot have two of the same augment.");
+    if (tinkerWait()) return speed("A failed fitting waits a day before the next try (the book).");
+    const { tool, owned } = kitFor(augment ? "augment" : kind);
+    if (!owned) return speed(`You need ${tool ?? "the right tools"} for this.`);
+    const { ok, dc } = modCheck(`Fit ${f.name}`, f.rarity, owned);
+    const time = pass(60);
+    if (!ok) {
+      saveCharacter({ playState: { ...play, tinkerUntil: clockNow() + 24 * 60 } });
+      return void saveCampaign(time);
+    }
+    const spent = consume(mod);
+    writeFit(item, { ...fit, mods: [...fit.mods, f.name] }, { equipment: spent.equipment, playState: { ...play, charges: spent.charges } });
+    saveCampaign(time);
+    toast.success(`${f.name} fitted in ${item} (DC ${dc}).${(play.attuned ?? []).includes(item) ? "" : " It works once the item is attuned."}`);
+  };
+  const removeMod = (item: string, mod: string) => {
+    const f = factsOfItem(mod);
+    if (inCombat || dead) return;
+    const fit = fitOf(item);
+    const base = factsOf(item);
+    const kind = base ? modKindOf({ name: item, equipmentCategory: base.equipmentCategory, weaponClassification: (base as any).weaponClassification }) : undefined;
+    const { tool, owned } = kitFor(f?.modKind === "augment" ? "augment" : kind ?? "");
+    if (!owned) return speed(`You need ${tool ?? "the right tools"} for this.`);
+    const { ok } = modCheck(`Remove ${mod}`, f?.rarity ?? "Standard", owned);
+    const mods = fit.mods.filter((m, i) => !(m === mod && i === fit.mods.indexOf(mod)));
+    writeFit(item, { ...fit, mods }, ok ? { equipment: [...(character.equipment ?? []), mod] } : {});
+    saveCampaign(pass(60));
+    toast[ok ? "success" : "error"](ok ? `${mod} removed and salvaged.` : `${mod} was destroyed in the removal.`);
+  };
+  // A chassis item upgrades a plain item's rarity, one step at a time (house rule: the chassis
+  // itself is the rare material the book asks for). 8 hours; a failure waits a day and on a 1 a
+  // modification is destroyed.
+  const upgradeChassis = (item: string, chassisName: string) => {
+    const c = factsOfItem(chassisName);
+    const fit = fitOf(item);
+    if (!c?.chassis || inCombat || dead) return;
+    if (rarityRank(c.rarity) !== rarityRank(fit.rarity) + 1) return speed(`One step at a time: this item is ${fit.rarity.toLowerCase()}, so it takes a ${RARITY_ORDER[rarityRank(fit.rarity) + 1] ?? "better"} chassis.`);
+    if (tinkerWait()) return speed("A failed fitting waits a day before the next try (the book).");
+    const { tool, owned } = kitFor(c.chassis);
+    if (!owned) return speed(`You need ${tool ?? "the right tools"} for this.`);
+    const { ok } = modCheck(`Upgrade ${item} to ${c.rarity}`, c.rarity, owned);
+    const time = pass(8 * 60);
+    if (!ok) {
+      const lost = die(20) === 1 && fit.mods.length ? fit.mods[Math.floor(Math.random() * fit.mods.length)] : undefined;
+      if (lost) writeFit(item, { ...fit, mods: fit.mods.filter((m) => m !== lost) }, { playState: { ...play, tinkerUntil: clockNow() + 24 * 60 } });
+      else saveCharacter({ playState: { ...play, tinkerUntil: clockNow() + 24 * 60 } });
+      saveCampaign(time);
+      return void toast.error(`The upgrade failed.${lost ? ` ${lost} was destroyed.` : ""}`);
+    }
+    const spent = consume(chassisName);
+    writeFit(item, { ...fit, rarity: c.rarity }, { equipment: spent.equipment, playState: { ...play, charges: spent.charges } });
+    saveCampaign(time);
+    toast.success(`${item} is now a ${c.rarity.toLowerCase()} chassis: ${MOD_BASE_SLOTS} slots${augmentSlots(c.rarity) ? ` and ${augmentSlots(c.rarity)} augment` : ""}.`);
+  };
+  // A color crystal for a lightweapon (Forcecasting Color Crystal Modifier): a universal
+  // forcecasting check (the better of Wisdom and Charisma, with proficiency) gives the d100's
+  // modifier; the crystal is the color rolled, or any lower in the table
+  const findCrystal = (item: string) => {
+    if (inCombat || dead) return;
+    const roll = die(20);
+    const bonus = Math.max(modifier(character.abilityScores?.wisdom), modifier(character.abilityScores?.charisma)) + proficiency;
+    const mod = crystalModifier(roll + bonus);
+    const d100 = die(100);
+    const color = crystalFor(Math.max(1, d100 + mod));
+    writeFit(item, { ...fitOf(item), crystal: color, crystalMax: color });
+    saveCampaign(pass(60));
+    toast.success(`Crystal for ${item}: check ${roll + bonus} (${mod >= 0 ? "+" : ""}${mod} to the d100), rolled ${d100}: ${color}. You may choose a lower one.`);
+  };
+  const modPanel = (item: string) => {
+    const base = factsOf(item);
+    const kind = base ? modKindOf({ name: item, equipmentCategory: base.equipmentCategory, weaponClassification: (base as any).weaponClassification }) : undefined;
+    if (!kind) return null;
+    const fit = fitOf(item);
+    const mods = fit.mods.map((m) => ({ name: m, facts: factsOfItem(m) }));
+    const baseSlots = mods.filter((m) => m.facts?.modKind !== "augment").length;
+    const augSlots = mods.filter((m) => m.facts?.modKind === "augment").length;
+    const carried: string[] = Array.from(new Set<string>(character.equipment ?? []));
+    const fits = carried.filter((n) => {
+      const f = factsOfItem(n);
+      return f?.modKind && (f.modKind === kind || (f.modKind === "augment" && augmentSlots(fit.rarity) > 0)) && rarityRank(f.rarity) <= rarityRank(fit.rarity);
+    });
+    const chassis = carried.filter((n) => factsOfItem(n)?.chassis === kind && rarityRank(factsOfItem(n)!.rarity) === rarityRank(fit.rarity) + 1);
+    const { tool, owned } = kitFor(kind);
+    return (
+      <div className="mt-1 space-y-1 text-xs" data-testid={`mod-panel-${item}`}>
+        <p className="text-gray-300">
+          {fit.rarity.toLowerCase()} chassis: {baseSlots}/{MOD_BASE_SLOTS} slots{augmentSlots(fit.rarity) ? `, ${augSlots}/${augmentSlots(fit.rarity)} augment` : ""}. Fitting takes an hour and a check with {tool ?? "the tools"} ({owned ? (trainedWith(owned) ? "trained" : "untrained: DC +5, house rule") : "not carried"}). A modified item needs attunement.
+          {tinkerWait() ? " A failed fitting waits for the day to pass." : ""}
+        </p>
+        {mods.map((m, i) => (
+          <div key={`${m.name}-${i}`} className="flex items-center justify-between gap-2">
+            <span>{m.name} <span className="text-gray-400">{m.facts ? describeEffects(m.facts.effects) || (m.facts.properties ?? []).join(", ") || m.facts.text.slice(0, 80) : ""}</span></span>
+            <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`unmod-${m.name}`} onClick={() => removeMod(item, m.name)}>Remove</Button>
+          </div>
+        ))}
+        {fits.map((n) => (
+          <div key={n} className="flex items-center justify-between gap-2">
+            <span>{n} <span className="text-gray-400">DC {(INSTALL_DC[factsOfItem(n)!.rarity.toLowerCase()] ?? 10) + (owned && trainedWith(owned) ? 0 : 5)}</span></span>
+            <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || !owned} data-testid={`mod-${n}`} onClick={() => installMod(item, n)}>Fit</Button>
+          </div>
+        ))}
+        {chassis.map((n) => (
+          <div key={n} className="flex items-center justify-between gap-2">
+            <span>{n}</span>
+            <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || !owned} data-testid={`chassis-${n}`} onClick={() => upgradeChassis(item, n)}>Upgrade the item (8 hours)</Button>
+          </div>
+        ))}
+        {!fits.length && !chassis.length && <p className="text-gray-400">No {kind} modifications carried.</p>}
+        {kind === "lightweapon" && (
+          <div className="flex flex-wrap items-center gap-2" data-testid="crystal">
+            <span>Crystal: {fit.crystal ?? "none chosen"}</span>
+            {!fit.crystal && (
+              <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || !(character.forcePowers ?? []).length} onClick={() => findCrystal(item)} data-testid="find-crystal">
+                Find a crystal (forcecasting check)
+              </Button>
+            )}
+            {fit.crystal && fit.crystalMax && crystalsUpTo(fit.crystalMax).length > 1 && (
+              <select className="h-6 rounded bg-gray-700 px-1" value={fit.crystal} onChange={(e) => writeFit(item, { ...fit, crystal: e.target.value })}>
+                {crystalsUpTo(fit.crystalMax).map((c) => <option key={c}>{c}</option>)}
+              </select>
+            )}
+            {!(character.forcePowers ?? []).length && !fit.crystal && <span className="text-gray-400">(only the Force-sensitive can tell a crystal's color)</span>}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ---- Information gear (house rules; the books give a datapad and a commlink no numbers): a
+  // credit chip is cracked (DC 15 with a slicer's kit, the book's), a datacard is read on a datapad,
+  // wristpad or holocomm, a datacron cracked like a chip, a holocron answers the Force-sensitive.
+  // What they hold: credits, the lore of a place (kept in the downtime state; spend it there), or a
+  // blueprint. A commlink calls an allied contact for a tip, once a day each.
+  const randomPlace = () => {
+    if (!world) return undefined;
+    const rooms = Object.values(world.areas).filter((a) => a.kind === "room" && a.id !== here?.id);
+    return rooms.length ? rooms[Math.floor(Math.random() * rooms.length)] : undefined;
+  };
+  const readData = (name: string, use: Extract<GearUse, { kind: "data" }>) => {
+    if (!world || inCombat || dead) return;
+    if (use.form === "card" && !carries(/^(datapad|wristpad|holocomm)/i)) return speed("A datacard is read on a datapad, a wristpad or a holocomm.");
+    if (use.form === "holocron" && !(character.forcePowers ?? []).length) return speed("A holocron answers only to the Force.");
+    const kit = (character.equipment ?? []).find((n: string) => /^slicer's kit$/i.test(n)) as string | undefined;
+    const ability = use.form === "holocron" ? ["wisdom"] : ["intelligence"];
+    const trained = use.form === "holocron" ? false : use.form === "card" ? !!kit && trainedWith(kit) : !!kit && trainedWith(kit);
+    // A chip or a datacron is cracked with the kit; without one the attempt is at DC +5 (house rule)
+    const dc = use.dc + (use.form === "chip" || use.form === "cron" ? (kit ? 0 : 5) : 0);
+    const ok = abilityCheck(`${name}`, dc, ability, trained);
+    const time = pass(10);
+    if (!ok) return void saveCampaign(time);
+    const what = readOutcome(use.form, die(100));
+    const spent = consume(name);
+    const changes: Record<string, any> = { equipment: spent.equipment };
+    if (what === "credits") {
+      const amount = readCredits(die(6) + die(6), level);
+      changes.credits = (character.credits ?? 0) + amount;
+      saveCharacter(changes);
+      toast.success(`${name}: ${money(amount)} drawn.`);
+    } else if (what === "lore") {
+      const place = randomPlace();
+      if (!place) return void saveCampaign(time);
+      commitDowntime({ character: changes, downtime: { lore: [...downtime.lore, { id: dtId("l"), topic: `${name}: what is kept at ${place.name}`, where: place.id, whereName: place.name }].slice(-Math.max(1, 1 + Math.floor(((character.abilityScores?.intelligence ?? 10) - 10) / 2))) }, days: 0, log: [`${name} read: lore of ${place.name}.`] });
+      toast.success(`${name}: you learn what is kept at ${place.name} (see Downtime, lore).`);
+    } else {
+      const rarity = blueprintRarity(level, die(100));
+      const pool = Object.values(itemFacts ?? {}).filter((f) => f.rarity.toLowerCase() === rarity && !f.timed && !f.chassis && !downtime.blueprints.includes(f.name));
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      if (!pick) return void saveCampaign(time);
+      commitDowntime({ character: changes, downtime: { blueprints: [...downtime.blueprints, pick.name] }, days: 0, log: [`${name} read: the blueprint of ${pick.name}.`] });
+      toast.success(`${name}: the blueprint of ${pick.name} (${rarity}).`);
+    }
+    saveCampaign(time);
+  };
+  const callContact = (id: string) => {
+    const contact = downtime.contacts.find((c) => c.id === id);
+    const day = dayOf(useClock.getState().minutes);
+    if (!contact || !world || inCombat || dead) return;
+    if ((play.called?.[id] ?? -1) === day) return speed(`${contact.name} has nothing new today.`);
+    const rooms = Object.values(world.areas).filter((a) => a.kind === "room" && (a.id === contact.where || a.parentId === contact.where || world.areas[a.parentId ?? ""]?.parentId === contact.where));
+    const place = rooms.length ? rooms[Math.floor(Math.random() * rooms.length)] : randomPlace();
+    if (!place) return;
+    commitDowntime({
+      character: { playState: { ...play, called: { ...(play.called ?? {}), [id]: day } } },
+      downtime: { lore: [...downtime.lore, { id: dtId("l"), topic: `${contact.name} on ${place.name}`, where: place.id, whereName: place.name }].slice(-Math.max(1, 1 + Math.floor(((character.abilityScores?.intelligence ?? 10) - 10) / 2))) },
+      days: 0,
+      log: [`${contact.name} (${contact.whereName}) tipped you off about ${place.name} over the commlink.`],
+    });
+    toast.success(`${contact.name} tells you what is kept at ${place.name}.`);
+  };
+
+  // ---- Droid customizations (Wretched Hives): a droid's motor supports two, upgraded to six; the
+  // work needs astrotech's implements (house rule as for modifications) and takes 8 hours by size
+  const customize = (c: Companion, item: string) => {
+    const f = factsOfItem(item);
+    if (!f?.droid || inCombat || dead) return;
+    const slots = c.motor ?? DROID_BASE_SLOTS;
+    if ((c.custom ?? []).length >= slots) return speed(`${c.name}'s motor supports ${slots} customizations: upgrade it first.`);
+    if ((c.custom ?? []).includes(f.name)) return speed("It already has that.");
+    if (tinkerWait()) return speed("A failed fitting waits a day before the next try (the book).");
+    const { tool, owned } = kitFor("droid");
+    if (!owned) return speed(`You need ${tool ?? "astrotech's implements"} for this.`);
+    const { ok, dc } = modCheck(`Fit ${f.name} to ${c.name}`, f.rarity, owned);
+    const plan = droidPlan(f.rarity, c.size ?? "medium");
+    const time = pass(plan.hours * 60);
+    if (!ok) {
+      saveCharacter({ playState: { ...play, tinkerUntil: clockNow() + 24 * 60 } });
+      return void saveCampaign(time);
+    }
+    const stock = c.stock ?? { armorClass: c.armorClass, speed: c.speed };
+    const custom = [...(c.custom ?? []), f.name];
+    const spent = consume(item);
+    saveParty(party.map((x) => (x.id === c.id ? droidWith({ ...x, stock, custom }) : x)), { equipment: spent.equipment, playState: { ...play, charges: spent.charges } });
+    saveCampaign(time);
+    toast.success(`${f.name} fitted to ${c.name} (DC ${dc}, ${plan.hours} hours).`);
+  };
+  // The numbers a droid has with its customizations: plating sets a base, an unarmored formula
+  // (13 + Dexterity) counts when better, and speed adds
+  const droidWith = (c: Companion): Companion => {
+    const stock = c.stock ?? { armorClass: c.armorClass, speed: c.speed };
+    const list = (c.custom ?? []).map((n) => factsOfItem(n)).filter(Boolean) as ItemFacts[];
+    let ac = stock.armorClass;
+    for (const f of list) {
+      if (f.effects.acSet) ac = Math.max(ac, f.effects.acSet);
+      if (f.effects.acBase) ac = Math.max(ac, f.effects.acBase.base + (c.saves?.[f.effects.acBase.ability] ?? 0));
+    }
+    return { ...c, armorClass: ac, speed: stock.speed + list.reduce((n, f) => n + (f.effects.speed ?? 0), 0) };
+  };
+  const removeCustom = (c: Companion, name: string) => {
+    if (inCombat || dead) return;
+    const f = factsOfItem(name);
+    const { tool, owned } = kitFor("droid");
+    if (!owned) return speed(`You need ${tool ?? "astrotech's implements"} for this.`);
+    const { ok } = modCheck(`Remove ${name}`, f?.rarity ?? "Standard", owned);
+    const plan = droidPlan(f?.rarity ?? "Standard", c.size ?? "medium", true);
+    saveParty(party.map((x) => (x.id === c.id ? droidWith({ ...x, custom: (x.custom ?? []).filter((n) => n !== name) }) : x)), ok ? { equipment: [...(character.equipment ?? []), name] } : {});
+    saveCampaign(pass(plan.hours * 60));
+    toast[ok ? "success" : "error"](ok ? `${name} removed and salvaged.` : `${name} was destroyed in the removal.`);
+  };
+  const upgradeMotor = (c: Companion) => {
+    const to = (c.motor ?? DROID_BASE_SLOTS) + 1;
+    const cost = (DROID_MOTOR_COST[to] ?? 0) * (SIZE_TIME[(c.size ?? "medium").toLowerCase()] ?? 1);
+    if (!cost || inCombat || dead) return;
+    if ((character.credits ?? 0) < cost) return speed(`The motor upgrade costs ${money(cost)}.`);
+    saveParty(party.map((x) => (x.id === c.id ? { ...x, motor: to } : x)), { credits: (character.credits ?? 0) - cost });
+    saveCampaign(pass(8 * 60 * (SIZE_TIME[(c.size ?? "medium").toLowerCase()] ?? 1)));
+    toast.success(`${c.name}'s motor now supports ${to} customizations (${money(cost)}).`);
+  };
+  const droidPanel = (c: Companion) => {
+    const slots = c.motor ?? DROID_BASE_SLOTS;
+    const carried: string[] = Array.from(new Set<string>(character.equipment ?? []));
+    const fits = carried.filter((n) => factsOfItem(n)?.droid);
+    const next = slots + 1;
+    const size = SIZE_TIME[(c.size ?? "medium").toLowerCase()] ?? 1;
+    return (
+      <div className="mt-1 space-y-1 text-xs" data-testid={`droid-panel-${c.id}`}>
+        <p className="text-gray-300">Motor: {(c.custom ?? []).length}/{slots} customizations. Fitting takes 8 hours{size !== 1 ? ` (x${size} for its size)` : ""} and a check with astrotech's implements.</p>
+        {(c.custom ?? []).map((n) => (
+          <div key={n} className="flex items-center justify-between gap-2">
+            <span>{n} <span className="text-gray-400">{describeEffects(factsOfItem(n)?.effects ?? {}) || (factsOfItem(n)?.text ?? "").slice(0, 80)}</span></span>
+            <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => removeCustom(c, n)}>Remove</Button>
+          </div>
+        ))}
+        {fits.filter((n) => !(c.custom ?? []).includes(factsOfItem(n)!.name)).map((n) => (
+          <div key={n} className="flex items-center justify-between gap-2">
+            <span>{n} <span className="text-gray-400">{factsOfItem(n)!.droid}, {factsOfItem(n)!.rarity.toLowerCase()}</span></span>
+            <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`customize-${n}`} onClick={() => customize(c, n)}>Fit</Button>
+          </div>
+        ))}
+        {!fits.length && <p className="text-gray-400">No droid customizations carried.</p>}
+        {DROID_MOTOR_COST[next] && (
+          <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`motor-${c.id}`} onClick={() => upgradeMotor(c)}>
+            Upgrade the motor to {next} slots ({money(DROID_MOTOR_COST[next] * size)})
+          </Button>
+        )}
       </div>
     );
   };
@@ -3584,8 +3940,12 @@ export default function GameBoard() {
                     </div>
                     <div className="mt-0.5 flex gap-1 text-xs text-gray-400">
                       <span>AC {c.armorClass}{c.attack ? `, ${c.attack.name} ${c.attack.bonus >= 0 ? "+" : ""}${c.attack.bonus} (${c.attack.damage})` : ""}</span>
-                      <Button size="sm" variant="ghost" className="ml-auto h-5 px-1 text-xs" disabled={inCombat} onClick={() => dismiss(c)}>Dismiss</Button>
+                      {c.kind === "droid" && (
+                        <Button size="sm" variant="ghost" className="ml-auto h-5 px-1 text-xs" data-testid={`customize-open-${c.id}`} onClick={() => setCustomizing(customizing === c.id ? null : c.id)}>Customize</Button>
+                      )}
+                      <Button size="sm" variant="ghost" className={`${c.kind === "droid" ? "" : "ml-auto "}h-5 px-1 text-xs`} disabled={inCombat} onClick={() => dismiss(c)}>Dismiss</Button>
                     </div>
+                    {customizing === c.id && droidPanel(c)}
                   </div>
                 ))}
                 <p className="text-xs text-gray-500">{party.length ? "They fight at your side and heal on rests. Wages are paid each day (house rule)." : "No companions yet: hire someone, free a captive, mend a droid or gentle a beast."}</p>
@@ -3972,6 +4332,9 @@ export default function GameBoard() {
                         .map(([name, count]) => {
                           const kind = itemKind(name, character);
                           const enhanced = factsOfItem(name);
+                          const plain = factsOf(name);
+                          const modKind = !enhanced && plain ? modKindOf({ name, equipmentCategory: plain.equipmentCategory, weaponClassification: (plain as any).weaponClassification }) : undefined;
+                          const fitted = play.fitted?.[name];
                           const on = kind === "weapon" ? is(worn.weapons, name) : kind === "armor" ? is([worn.body], name) : kind === "shield" ? is([worn.shield], name) : false;
                           const use = kind === "gear" ? gearOf(name) : undefined;
                           const left = use && "uses" in use ? usesLeft(name, use.uses) : undefined;
@@ -3989,7 +4352,12 @@ export default function GameBoard() {
                                     {on ? (kind === "weapon" ? "Put away" : "Take off") : kind === "weapon" ? "Wield" : "Wear"}
                                   </Button>
                                 )}
-                                {enhanced && enhanced.attune > 0 && (
+                                {modKind && (
+                                  <Button size="sm" variant={modding === name ? "default" : "outline"} className="h-6 px-2" data-testid={`modify-${name}`} onClick={() => setModding(modding === name ? null : name)}>
+                                    Modify
+                                  </Button>
+                                )}
+                                {((enhanced && enhanced.attune > 0) || (!enhanced && (play.fitted?.[name]?.mods?.length ?? 0) > 0)) && (
                                   <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`attune-${name}`} onClick={() => (isAttuned(character, name) ? unattune(name) : attune(name))}>
                                     {isAttuned(character, name) ? "Break attunement" : "Attune"}
                                   </Button>
@@ -4013,7 +4381,14 @@ export default function GameBoard() {
                                   {enhanced.timed ? ` · ${enhanced.timed.kind}, ${enhanced.timed.minutes >= 60 ? `${enhanced.timed.minutes / 60} h` : "a minute"}${describeEffects(enhanced.timed.effects) ? `: ${describeEffects(enhanced.timed.effects)}` : ""}` : ""}
                                 </p>
                               )}
+                              {fitted && fitted.mods.length > 0 && (
+                                <p className="text-xs text-gray-400" data-testid={`fitted-${name}`}>
+                                  {fitted.rarity.toLowerCase()} chassis, {fitted.mods.length} modification{fitted.mods.length > 1 ? "s" : ""}: {fitted.mods.join(", ")}
+                                  {isAttuned(character, name) ? "" : " (needs attunement)"}{fitted.crystal ? ` · ${fitted.crystal} crystal` : ""}
+                                </p>
+                              )}
                               {using === name && usePanel(name)}
+                              {modding === name && modPanel(name)}
                             </div>
                           );
                         })}

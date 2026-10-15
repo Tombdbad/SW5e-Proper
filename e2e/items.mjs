@@ -136,6 +136,101 @@ await step(ctx, "items: augmentations show on the inventory after a reload", asy
   return text.replace(/\s+/g, " ").slice(0, 160);
 });
 
+// ---- Modifications, information gear and droid customizations (a second character)
+const mod = all.find((f) => f.modKind === "blaster" && f.rarity === "Standard" && (f.effects.damage || f.effects.attack || f.properties?.length));
+const part = all.find((f) => f.droid === "part" && f.rarity === "Standard" && f.effects.speed);
+let d = null;
+let dcamp = null;
+await step(ctx, "items: a character with a modification, a datacard, a chip and a droid opens Play", async () => {
+  if (!mod || !part) throw new Error(JSON.stringify({ mod: mod?.name, part: part?.name }));
+  const r = await api("POST", "/api/characters", {
+    name: NAME + " B", species: "human", class: "fighter", background: "soldier", alignment: "Neutral Balanced", level: 3,
+    abilityScores: { strength: 14, dexterity: 14, constitution: 14, intelligence: 20, wisdom: 14, charisma: 14 },
+    maxHp: 30, currentHp: 30, maxForcePoints: 0, currentForcePoints: 0, armorClass: 12, speed: 30, credits: 5000,
+    startingLocation: "Unknown", skillProficiencies: ["Athletics"], savingThrowProficiencies: ["strength", "constitution"],
+    toolProficiencies: ["Armstech's implements", "Astrotech's implements", "Slicer's kit"],
+    equipment: ["Blaster pistol", mod.name, "Armstech's implements", "Astrotech's implements", "Slicer's kit", "Datapad", "Datacard", "Credit chip", part.name],
+    companionData: { party: [{ id: "c-e2e-droid", name: "Bolted B1", kind: "droid", role: "guard", size: "Medium", creature: "droid", armorClass: 14, maxHp: 20, hp: 20, speed: 30, saves: { dexterity: 1 }, loadout: [], wage: 0, joined: 0, bolt: "reprogrammed" }] },
+  });
+  if (r.status !== 201) throw new Error(r.text.slice(0, 300));
+  d = r.json;
+  made.push(d.id);
+  const world = (await api("POST", "/api/world/generate", { options: { seed: 5, partyLevel: 3 } })).json.world;
+  const start = world.areas[world.startId];
+  start.occupants = []; start.loot = []; start.ships = [];
+  start.layout.assets = start.layout.assets.filter((a) => a.kind !== "npc" && a.kind !== "loot" && a.kind !== "ship");
+  const made2 = await api("POST", "/api/campaigns", { characterId: d.id, name: "E2E items B " + TAG, description: "items", npcs: [], locations: [], quests: [], startingLocation: "start", galaxyMap: world });
+  if (made2.status !== 201) throw new Error(made2.text.slice(0, 200));
+  dcamp = made2.json;
+  await page.goto(`${BASE}/game/${dcamp.id}`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: NAME + " B" }).waitFor({ timeout: 60000 });
+  await sleep(2500);
+  await page.getByRole("tab", { name: "Inventory" }).click();
+  await sleep(500);
+  return "Play is open";
+});
+
+await step(ctx, "items: a modification is fitted in a blaster, which then needs attunement", async () => {
+  await page.getByTestId("modify-Blaster pistol").click();
+  for (let tries = 0; tries < 4; tries++) {
+    if ((await getChar(d.id)).playState?.fitted?.["Blaster pistol"]?.mods?.length) break;
+    // a failed fitting waits a day: clear the wait for the retry
+    const cur = await getChar(d.id);
+    if (cur.playState?.tinkerUntil) await api("PATCH", `/api/characters/${d.id}`, { playState: { ...cur.playState, tinkerUntil: 0 } });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: NAME + " B" }).waitFor({ timeout: 60000 });
+    await page.getByRole("tab", { name: "Inventory" }).click();
+    await page.getByTestId("modify-Blaster pistol").click();
+    await page.getByTestId(`mod-${mod.name}`).click();
+    await sleep(1500);
+  }
+  const saved = await getChar(d.id);
+  if (!saved.playState?.fitted?.["Blaster pistol"]?.mods?.includes(mod.name)) throw new Error(JSON.stringify(saved.playState));
+  await page.getByTestId("attune-Blaster pistol").click();
+  await sleep(1500);
+  const line = await page.getByTestId("fitted-Blaster pistol").innerText();
+  if (/needs attunement/.test(line)) throw new Error(line);
+  return line.replace(/\s+/g, " ").slice(0, 120);
+});
+
+await step(ctx, "items: a chip is cracked and a datacard read", async () => {
+  const before = (await getChar(d.id)).credits;
+  for (let tries = 0; tries < 6; tries++) {
+    if (!(await getChar(d.id)).equipment.includes("Credit chip")) break;
+    await page.getByTestId("use-Credit chip").click();
+    await page.getByTestId("read-data").click();
+    await sleep(1200);
+  }
+  for (let tries = 0; tries < 6; tries++) {
+    if (!(await getChar(d.id)).equipment.includes("Datacard")) break;
+    await page.getByTestId("use-Datacard").click();
+    await page.getByTestId("read-data").click();
+    await sleep(1200);
+  }
+  const saved = await getChar(d.id);
+  if (saved.equipment.includes("Credit chip") || saved.equipment.includes("Datacard")) throw new Error("still carried: " + saved.equipment.join(", "));
+  if (!(saved.credits > before)) throw new Error(`credits ${before} -> ${saved.credits}`);
+  const dt = saved.playState?.downtime ?? {};
+  return `credits ${before} -> ${saved.credits}; lore ${(dt.lore ?? []).length}, blueprints ${(dt.blueprints ?? []).length}`;
+});
+
+await step(ctx, "items: a droid companion gets a customization (speed up)", async () => {
+  await page.getByTestId("customize-open-c-e2e-droid").click();
+  for (let tries = 0; tries < 4; tries++) {
+    const cur = await getChar(d.id);
+    if (cur.companionData.party[0].custom?.length) break;
+    if (cur.playState?.tinkerUntil) await api("PATCH", `/api/characters/${d.id}`, { playState: { ...cur.playState, tinkerUntil: 0 } });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: NAME + " B" }).waitFor({ timeout: 60000 });
+    await page.getByTestId("customize-open-c-e2e-droid").click();
+    await page.getByTestId(`customize-${part.name}`).click();
+    await sleep(1500);
+  }
+  const droid = (await getChar(d.id)).companionData.party[0];
+  if (!droid.custom?.includes(part.name) || !(droid.speed > 30)) throw new Error(JSON.stringify(droid));
+  return `${part.name}: speed 30 -> ${droid.speed}`;
+});
+
 if (!process.env.KEEP) {
   for (const id of made) {
     for (const k of await api("GET", "/api/campaigns").then((r) => r.json.filter((x) => x.characterId === id))) await api("DELETE", `/api/campaigns/${k.id}`);

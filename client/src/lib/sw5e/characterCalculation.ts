@@ -736,6 +736,15 @@ export function activeEffects(character: any): { source: string; effects: ItemEf
     const facts = factsFor(character, name);
     if (facts && !facts.timed && facts.type !== "CyberneticAugmentation" && itemWorks(character, facts)) out.push({ source: facts.name, effects: facts.effects });
   }
+  // Modifications fitted in plain items in use: they work once the item is attuned
+  for (const name of inUse(character)) {
+    const fit = character?.playState?.fitted?.[name];
+    if (!fit?.mods?.length || !isAttuned(character, name)) continue;
+    for (const m of fit.mods) {
+      const facts = factsFor(character, m);
+      if (facts) out.push({ source: `${name}: ${facts.name}`, effects: facts.effects });
+    }
+  }
   for (const a of character?.playState?.augments ?? []) {
     const facts = factsFor(character, a.name);
     if (facts) out.push({ source: facts.name, effects: facts.effects });
@@ -859,10 +868,17 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
     const buff = (character?.playState?.buffs ?? []).find((b: any) => b.kind === "collimator" && String(e.weaponClassification ?? "").toLowerCase().includes(String(b.weapon ?? "")));
     return buff ? { attack: buff.effects?.attack ?? 0, damage: buff.effects?.damage ?? 0 } : { attack: 0, damage: 0 };
   };
+  // What modifications fitted in a plain weapon give (once attuned): bonuses and properties
+  const modded = (name: string): { attack: number; damage: number; props: string[] } => {
+    const fit = character?.playState?.fitted?.[name];
+    if (!fit?.mods?.length || !isAttuned(character, name)) return { attack: 0, damage: 0, props: [] };
+    const list = fit.mods.map((m: string) => factsFor(character, m)).filter(Boolean) as ItemFacts[];
+    return { attack: list.reduce((n, f) => n + (f.effects.attack ?? 0), 0), damage: list.reduce((n, f) => n + (f.effects.damage ?? 0), 0), props: list.flatMap((f) => f.properties ?? []) };
+  };
   const weapons: CarriedWeapon[] = [
-    ...owned.map((e) => ({ e, name: e.name, bonus: buffed(e) })),
+    ...owned.map((e) => ({ e, name: e.name, bonus: { ...buffed(e), attack: buffed(e).attack + modded(e.name).attack, damage: buffed(e).damage + modded(e.name).damage, props: modded(e.name).props } })),
     ...enhanced.map((x) => ({ e: x.base as typeof owned[number], name: x.name, bonus: { attack: bonusOf(x.name).attack + buffed(x.base!).attack, damage: bonusOf(x.name).damage + buffed(x.base!).damage } })),
-  ].map(({ e, name, bonus }) => {
+  ].map(({ e, name, bonus }: { e: typeof owned[number]; name: string; bonus: { attack: number; damage: number; props?: string[] } }) => {
     const ranged = /blaster/i.test(e.weaponClassification ?? "");
     const finesse = (e.properties ?? []).some((p) => /^finesse/i.test(p));
     const ability = ranged || (finesse && dex > str) ? "dexterity" : "strength";
@@ -877,8 +893,8 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
       damageType,
       ability,
       proficient,
-      properties: e.properties ?? [],
-      ...weaponReach(e.properties ?? []),
+      properties: [...(e.properties ?? []), ...(bonus.props ?? [])],
+      ...weaponReach([...(e.properties ?? []), ...(bonus.props ?? [])]),
       attackBonus: modifier + (proficient ? proficiency : 0) + bonus.attack,
       damageBonus: modifier + bonus.damage,
     };
