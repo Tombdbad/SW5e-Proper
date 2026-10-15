@@ -2836,7 +2836,7 @@ export interface Heist {
   fails: number;
 }
 
-export const HEIST_COUNTDOWN = 25; // minutes from the terminal being sliced to take-off
+export const HEIST_COUNTDOWN = 45; // minutes from the terminal being sliced to take-off
 export const HEIST_MINUTES: Record<HeistStage, number> = { customs: 5, terminal: 10, guards: 10, lockout: 10 };
 export const heistDC = (stage: HeistStage, law: number) => (stage === "lockout" ? 12 : 10) + law;
 export const bribeCost = (value: number, law: number) => Math.round(value * 0.02 * (law + 1));
@@ -2852,7 +2852,9 @@ export function startHeist(world: World, shipId: string, areaId: string): Heist 
 // One attempt at the stage the heist is on, made once its minutes have passed (`minute` is the time
 // after them). Returns the heist as it now stands (none when it has ended), and the crime to report.
 export function heistStep(heist: Heist, how: HeistHow, success: boolean, minute: number): { heist?: Heist; ended?: HeistEnd; crime?: Crime } {
-  if (heistLifted(heist, minute)) return { ended: "lifted", crime: "theft" };
+  // Getting the lockout open as the clock runs out still counts: the party is aboard before it lifts
+  const aboard = heist.stage === "lockout" && success;
+  if (!aboard && heistLifted(heist, minute)) return { ended: "lifted", crime: "theft" };
   const next = (stage: HeistStage, extra: Partial<Heist> = {}): { heist: Heist } => ({ heist: { ...heist, stage, ...extra } });
   const failed = (crime: Crime): { heist?: Heist; ended?: HeistEnd; crime?: Crime } => {
     const fails = heist.fails + 1;
