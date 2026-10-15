@@ -6275,3 +6275,232 @@ function linkTransit(ctx: Context, settlement: Area) {
     addPath(world, hub, there, "Transit line", `${km} km`);
   }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Enhanced items in play (Wretched Hives, "Enhanced Items": attunement, consumables, cybernetic
+// augmentations; the Prosthetics of the Equipment chapter). What an item does is read from its
+// text where the wording is regular; the rest is shown and not applied.
+// ---------------------------------------------------------------------------------------------
+
+export const ITEM_ABILITIES = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"] as const;
+
+export interface ItemEffects {
+  // A bonus to the weapon's own attack and damage rolls (or to unarmed strikes, for handwraps)
+  attack?: number;
+  damage?: number;
+  unarmed?: boolean;
+  // A bonus to armor class, and "your AC becomes 13 + your Dexterity modifier" without armor
+  ac?: number;
+  acBase?: { base: number; ability: string };
+  // "Your Strength score becomes 19" (no effect when it is higher already), "increases by 1, to a
+  // maximum of 20" (`max`; a package raises the maximum as well)
+  setScores?: Record<string, number>;
+  raiseScores?: Record<string, { by: number; max: number }>;
+  // Speed gained, in feet, and temporary hit points given (adrenals, barriers)
+  speed?: number;
+  tempHp?: number;
+  // Side effect: one other ability score falls by 1
+  falls?: boolean;
+}
+
+// What a stimpac, an adrenal, a barrier or a collimator does for how long; `fight` ones last for
+// the minute of a fight (ten rounds) and wait for the next one when taken outside it (house
+// rule, like a substance's high)
+export interface TimedEffect {
+  kind: "stimpac" | "adrenal" | "barrier" | "collimator";
+  minutes: number;
+  effects: ItemEffects;
+  // A collimator is applied to one kind of weapon
+  weapon?: string;
+}
+
+export interface ItemFacts {
+  name: string;
+  type: string;
+  subtype?: string;
+  rarity: string;
+  // Attunement slots it takes (0: none needed)
+  attune: number;
+  effects: ItemEffects;
+  text: string;
+  // Augmentations: replacement or enhancement, and the body parts replaced
+  augment?: "enhancement" | "replacement";
+  parts?: string[];
+  timed?: TimedEffect;
+}
+
+export const ATTUNEMENT_LIMIT_NOTE = "A creature can be attuned to as many items as its proficiency bonus; standard, premium and prototype items take one, advanced, legendary and artifact two.";
+export const attunementLimit = (level: number) => 2 + Math.floor(((Number(level) || 1) - 1) / 4);
+export const attunementSlots = (requires: boolean, rarity: string) => (!requires ? 0 : /advanced|legendary|artifact/i.test(rarity) ? 2 : 1);
+
+const plainText = (text: string) => text.replace(/[*_]/g, "").replace(/\s+/g, " ").trim();
+const abilityOf = (word: string) => (ITEM_ABILITIES as readonly string[]).find((a) => a === word.toLowerCase());
+
+// What a text gives: the bonuses of the weapon, armor class, ability scores, speed. Conditional
+// lines ("when you do so", "instead of", "while ... attuned to this armor, X and Y") are left out.
+export function parseItemEffects(source: string): ItemEffects {
+  const effects: ItemEffects = {};
+  const text = plainText(source);
+  for (const sentence of text.split(/(?<=\.)\s+/)) {
+    if (/\binstead of\b|\bwhen you do so\b|\blose the\b|\bfor each saving throw\b/i.test(sentence)) continue;
+    const bonus = sentence.match(/\+(\d+) bonus to (attack and damage rolls|attack rolls and damage rolls|attack rolls|damage rolls)/i);
+    if (bonus && !/force attack|tech attack|force powers|grenade|save DC|wrist launcher|dart/i.test(sentence) && effects.attack === undefined && effects.damage === undefined) {
+      const n = Number(bonus[1]);
+      if (/attack/i.test(bonus[2])) effects.attack = n;
+      if (/damage/i.test(bonus[2])) effects.damage = n;
+      if (/unarmed strikes/i.test(sentence)) effects.unarmed = true;
+    }
+    const ac = sentence.match(/\+(\d+) bonus to AC/i);
+    if (ac && effects.ac === undefined) effects.ac = Number(ac[1]);
+    const base = sentence.match(/AC becomes (\d+) \+ your (\w+) modifier/i);
+    if (base && abilityOf(base[2]) && /aren't wearing armor|not wearing armor/i.test(sentence)) effects.acBase = { base: Number(base[1]), ability: abilityOf(base[2])! };
+    for (const m of sentence.matchAll(/(?:your|the target's) (\w+) score (?:becomes|is(?: treated as)?) (\d+)/gi)) {
+      const a = abilityOf(m[1]);
+      if (a) effects.setScores = { ...(effects.setScores ?? {}), [a]: Number(m[2]) };
+    }
+    const raise = sentence.match(/(?:your|the target's) (\w+) score increases by (\d+)(?:, to a maximum of (\d+)|, and (?:your|its) maximum for this score increases by (\d+))/i);
+    if (raise && abilityOf(raise[1])) effects.raiseScores = { ...(effects.raiseScores ?? {}), [abilityOf(raise[1])!]: { by: Number(raise[2]), max: raise[3] ? Number(raise[3]) : 20 + Number(raise[4]) } };
+  }
+  if (/Side Effect:\s*One ability score/i.test(text)) effects.falls = true;
+  return effects;
+}
+
+// A stimpac, adrenal, barrier or collimator's effect, for how long
+export function parseTimedEffect(name: string, consumableType: string | undefined, source: string): TimedEffect | undefined {
+  const text = plainText(source);
+  const length = text.match(/lasts? (?:for )?(\d+) (minute|hour)s?/i) ?? text.match(/for (\d+) (minute|hour)s?/i);
+  const minutes = length ? Number(length[1]) * (/hour/i.test(length[2]) ? 60 : 1) : 1;
+  const collimator = text.match(/apply this \w+ to one (\w+)(?: or \w+)? within 5 feet, granting it a \+(\d+) bonus to attack and damage rolls for 1 minute/i);
+  if (collimator) return { kind: "collimator", minutes: 1, weapon: collimator[1].toLowerCase(), effects: { attack: Number(collimator[2]), damage: Number(collimator[2]) } };
+  if (consumableType === "Stimpacs") return { kind: "stimpac", minutes, effects: parseItemEffects(text) };
+  if (consumableType === "Barriers") {
+    const hp = Number((text.match(/barrier has (\d+) hit points/i) ?? [])[1]);
+    const hours = Number((text.match(/lasts (\d+) hours?/i) ?? [])[1]) || 1;
+    return hp ? { kind: "barrier", minutes: hours * 60, effects: { tempHp: hp } } : undefined;
+  }
+  if (consumableType === "Adrenals") {
+    const effects: ItemEffects = {};
+    const speed = text.match(/speed increases by (\d+) feet/i);
+    if (speed) effects.speed = Number(speed[1]);
+    const hp = text.match(/current and maximum hit points increase by (\d+)/i);
+    if (hp) effects.tempHp = Number(hp[1]);
+    return { kind: "adrenal", minutes, effects };
+  }
+  return undefined;
+}
+
+// Body parts an augmentation takes, from "This augmentation replaces an arm", "both legs", "your
+// eyes and face". Two arms, two legs, two eyes, two ears; one face, torso and throat.
+export function augmentationParts(text: string): string[] {
+  const m = plainText(text).match(/replaces ([^.]*)\./i);
+  if (!m) return [];
+  const parts: string[] = [];
+  const clause = m[1].toLowerCase();
+  // An arm, a forearm and a hand are one limb (one place for a replacement); so are a leg and a foot
+  const groups: [RegExp, string, RegExp][] = [
+    [/\b(?:arms?|forearms?|hands?)\b/, "arm", /\b(?:both|arms|forearms|hands)\b/],
+    [/\b(?:legs?|foot|feet)\b/, "leg", /\b(?:both|legs|feet)\b/],
+    [/\beyes?\b/, "eye", /\b(?:both|eyes)\b/],
+    [/\bears?\b/, "ear", /\b(?:both|ears)\b/],
+    [/\bface\b/, "face", /$^/],
+    [/\btorso\b/, "torso", /$^/],
+    [/\bthroat\b/, "throat", /$^/],
+  ];
+  for (const [present, key, both] of groups) {
+    if (present.test(clause)) for (let i = 0; i < (both.test(clause) ? 2 : 1); i++) parts.push(key);
+  }
+  return parts;
+}
+
+// The prosthetics of the Equipment chapter (house rule for their effects: none beyond replacing
+// the part; the books give them no numbers)
+export const PROSTHESES: Record<string, string[]> = {
+  "arm prosthesis": ["arm"], "forearm prosthesis": ["arm"], "hand prosthesis": ["arm"],
+  "leg prosthesis": ["leg"], "foot prosthesis": ["leg"], "eye prosthesis": ["eye"], "ear prosthesis": ["ear"],
+  "facial prosthesis": ["face"], "throat prosthesis": ["throat"], "torso prosthesis": ["torso"],
+};
+export const BODY_PARTS: Record<string, number> = { arm: 2, leg: 2, eye: 2, ear: 2, face: 1, torso: 1, throat: 1 };
+
+// What an enhanced item row amounts to in play; undefined for those with nothing to apply
+export function itemFactsOf(row: { name: string; type: string; subtype?: string; searchableRarity: string; requiresAttunement?: boolean; text?: string; consumableType?: string; cyberneticAugmentationType?: string }): ItemFacts | undefined {
+  const text = row.text ?? "";
+  const base = { name: row.name, type: row.type, subtype: row.subtype, rarity: row.searchableRarity, attune: attunementSlots(!!row.requiresAttunement, row.searchableRarity), text: plainText(text) };
+  if (row.type === "Consumable") {
+    const timed = parseTimedEffect(row.name, row.consumableType, text);
+    return timed ? { ...base, effects: {}, timed } : undefined;
+  }
+  if (row.type === "CyberneticAugmentation") {
+    return { ...base, effects: parseItemEffects(text), augment: /replacement/i.test(row.cyberneticAugmentationType ?? row.subtype ?? "") ? "replacement" : "enhancement", parts: augmentationParts(text) };
+  }
+  if (["Weapon", "Armor", "Shield", "Focus", "AdventuringGear"].includes(row.type)) return { ...base, effects: parseItemEffects(text) };
+  return undefined;
+}
+
+// Effects of what is active, added up (scores are applied by scoresWith)
+export function sumEffects(list: ItemEffects[]): ItemEffects {
+  const total: ItemEffects = {};
+  for (const e of list) {
+    if (e.ac) total.ac = (total.ac ?? 0) + e.ac;
+    if (e.speed) total.speed = (total.speed ?? 0) + e.speed;
+    if (e.tempHp) total.tempHp = Math.max(total.tempHp ?? 0, e.tempHp);
+    if (e.acBase && (!total.acBase || e.acBase.base > total.acBase.base)) total.acBase = e.acBase;
+  }
+  return total;
+}
+
+// Ability scores with items applied: set first (no effect when the score is higher already), then
+// raised up to the cap, then a side effect lowers the ability chosen for it by 1
+export function scoresWith(scores: Record<string, number>, list: ItemEffects[], falls: string[] = []): Record<string, number> {
+  const out: Record<string, number> = { ...scores };
+  for (const e of list) for (const [a, v] of Object.entries(e.setScores ?? {})) out[a] = Math.max(out[a] ?? 10, v);
+  for (const e of list) for (const [a, r] of Object.entries(e.raiseScores ?? {})) out[a] = Math.min((out[a] ?? 10) + r.by, Math.max(out[a] ?? 10, r.max));
+  for (const a of falls) if (a in out) out[a] = Math.max(1, out[a] - 1);
+  return out;
+}
+
+// A short line saying what an item's effects are
+export function describeEffects(e: ItemEffects): string {
+  const parts: string[] = [];
+  if (e.attack || e.damage) parts.push(`+${e.attack ?? 0}/+${e.damage ?? 0} attack/damage${e.unarmed ? " (unarmed)" : ""}`);
+  if (e.ac) parts.push(`+${e.ac} AC`);
+  if (e.acBase) parts.push(`AC ${e.acBase.base} + ${e.acBase.ability.slice(0, 3)} unarmored`);
+  for (const [a, v] of Object.entries(e.setScores ?? {})) parts.push(`${a.slice(0, 3)} ${v}`);
+  for (const [a, r] of Object.entries(e.raiseScores ?? {})) parts.push(`${a.slice(0, 3)} +${r.by} (max ${r.max})`);
+  if (e.speed) parts.push(`+${e.speed} ft. speed`);
+  if (e.tempHp) parts.push(`${e.tempHp} temporary hit points`);
+  if (e.falls) parts.push("side effect: another score -1");
+  return parts.join(", ");
+}
+
+// ---- Cybernetic augmentation
+// The check's DC by rarity (Installation/Removal DC by Rarity)
+export const INSTALL_DC: Record<string, number> = { standard: 10, premium: 14, prototype: 18, advanced: 22, legendary: 26, artifact: 30 };
+export const SIZE_TIME: Record<string, number> = { tiny: 0.25, small: 0.5, medium: 1, large: 2, huge: 5, gargantuan: 10 };
+export const AUGMENT_HOURS = 8;
+export const SURGEON_RATE = 100; // credits per hour with an NPC
+
+// How many augmentations a creature supports (the proficiency bonus; prostheses do not count
+// against it but do count towards the side effects)
+export const augmentationLimit = attunementLimit;
+
+export function augmentPlan(rarity: string, size = "medium", removing = false) {
+  const hours = AUGMENT_HOURS * (SIZE_TIME[size.toLowerCase()] ?? 1) * (removing ? 0.5 : 1);
+  return { hours, cost: hours * SURGEON_RATE, dc: INSTALL_DC[rarity.toLowerCase()] ?? 10 };
+}
+
+// The body's side effects by how many augmentations (prostheses too) it carries
+export const AUGMENT_SIDE_EFFECTS: [number, string][] = [
+  [2, "disadvantage on saving throws against effects that deal ion damage"],
+  [4, "vulnerability to ion damage"],
+  [6, "counts as a droid for powers that affect only droids or constructs"],
+];
+export const sideEffectsOf = (count: number) => AUGMENT_SIDE_EFFECTS.filter(([n]) => count >= n).map(([, text]) => text);
+
+// Whether the parts an augmentation takes are free, given the parts taken already
+export function partsFree(taken: string[], wants: string[]): boolean {
+  const used: Record<string, number> = {};
+  for (const p of taken) used[p] = (used[p] ?? 0) + 1;
+  const need: Record<string, number> = {};
+  for (const p of wants) need[p] = (need[p] ?? 0) + 1;
+  return Object.entries(need).every(([p, n]) => (used[p] ?? 0) + n <= (BODY_PARTS[p] ?? 1));
+}

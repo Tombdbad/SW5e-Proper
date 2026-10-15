@@ -22,6 +22,7 @@ import { maneuvers as maneuverList, type Maneuver } from "./maneuvers";
 import { fightingStyles } from "./fightingStyles";
 import { conditions as conditionRows } from "./conditions";
 import lookups from "@shared/data/sw5e/lookups.json";
+import { scoresWith, sumEffects, type ItemFacts, type ItemEffects } from "@shared/logic";
 
 export const ABILITIES = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"] as const;
 const isAbility = (name: string) => (ABILITIES as readonly string[]).includes(name);
@@ -701,10 +702,47 @@ export const equippedOf = (character: any): Equipped | null => {
 };
 const equipmentNamed = (name: string) => equipment.find((e) => e.name.toLowerCase() === String(name).toLowerCase());
 export const isShield = (name: string) => equipmentNamed(name)?.armorClassification === "Shield";
-export const itemKind = (name: string): "weapon" | "armor" | "shield" | "gear" => {
+// What the Play page has worked out about the items carried (`withItemEffects` below): the facts
+// of each enhanced item by lower-case name, on the character it hands to everything else
+const factsFor = (character: any, name: string): ItemFacts | undefined => character?.itemFacts?.[String(name).toLowerCase()];
+export const itemKind = (name: string, character?: any): "weapon" | "armor" | "shield" | "gear" => {
+  const facts = character ? factsFor(character, name) : undefined;
+  if (facts && facts.type === "Weapon") return "weapon";
+  if (facts && facts.type === "Armor") return "armor";
+  if (facts && facts.type === "Shield") return "shield";
+  if (facts) return "gear";
   const e = equipmentNamed(name);
   return e?.category === "Weapon" ? "weapon" : e?.category === "Armor" ? (e.armorClassification === "Shield" ? "shield" : "armor") : "gear";
 };
+
+// The plain item an enhanced weapon, armor or shield is a kind of ("combat suit", "bo-rifle")
+const squashName = (s: string) => String(s).toLowerCase().replace(/[^a-z]/g, "");
+const baseOf = (character: any, name: string) => {
+  const facts = factsFor(character, name);
+  if (!facts || !["Weapon", "Armor", "Shield"].includes(facts.type) || !facts.subtype) return undefined;
+  const wanted = squashName(facts.subtype);
+  return equipment.find((e) => squashName(e.name) === wanted || squashName(e.name) === wanted + "s");
+};
+
+// Whether an enhanced item's effects apply: it needs no attunement, or the character is attuned
+export const isAttuned = (character: any, name: string): boolean => (character?.playState?.attuned ?? []).some((n: string) => String(n).toLowerCase() === String(name).toLowerCase());
+const itemWorks = (character: any, facts: ItemFacts) => facts.attune === 0 || isAttuned(character, facts.name);
+
+// Every effect in force: carried items that are worn, wielded or just carried (and attuned where
+// that is needed), installed augmentations, and a stimpac, adrenal or collimator's hour
+export function activeEffects(character: any): { source: string; effects: ItemEffects }[] {
+  const out: { source: string; effects: ItemEffects }[] = [];
+  for (const name of inUse(character)) {
+    const facts = factsFor(character, name);
+    if (facts && !facts.timed && facts.type !== "CyberneticAugmentation" && itemWorks(character, facts)) out.push({ source: facts.name, effects: facts.effects });
+  }
+  for (const a of character?.playState?.augments ?? []) {
+    const facts = factsFor(character, a.name);
+    if (facts) out.push({ source: facts.name, effects: facts.effects });
+  }
+  for (const b of character?.playState?.buffs ?? []) if (b.kind !== "collimator") out.push({ source: b.name, effects: b.effects });
+  return out;
+}
 
 // The names of what is carried and counts: weapons not wielded and armor not worn are only carried
 export function inUse(character: any): string[] {
@@ -715,7 +753,7 @@ export function inUse(character: any): string[] {
   const wielded = lower(chosen.weapons);
   const worn = lower([chosen.body, chosen.shield]);
   return carried.filter((name) => {
-    const kind = itemKind(name);
+    const kind = itemKind(name, character);
     return kind === "weapon" ? wielded.includes(name.toLowerCase()) : kind === "armor" || kind === "shield" ? worn.includes(name.toLowerCase()) : true;
   });
 }
@@ -726,11 +764,11 @@ export function equippedNow(character: any): Equipped {
   const chosen = equippedOf(character);
   if (chosen) return chosen;
   const carried: string[] = (character?.equipment ?? []).map((e: any) => String(e?.name ?? e));
-  const armors = carried.filter((n) => itemKind(n) === "armor");
-  const classOf = (name: string) => calculateArmorClass(character?.abilityScores ?? {}, [name]);
+  const armors = carried.filter((n) => itemKind(n, character) === "armor");
+  const classOf = (name: string) => calculateArmorClass(character?.abilityScores ?? {}, [baseOf(character, name)?.name ?? name]);
   const body = armors.sort((a, b) => classOf(b) - classOf(a))[0] ?? null;
-  const shield = carried.find((n) => itemKind(n) === "shield") ?? null;
-  return { weapons: Array.from(new Set(carried.filter((n) => itemKind(n) === "weapon"))), body, shield };
+  const shield = carried.find((n) => itemKind(n, character) === "shield") ?? null;
+  return { weapons: Array.from(new Set(carried.filter((n) => itemKind(n, character) === "weapon"))), body, shield };
 }
 
 const carriedArmor = (carried: string[]) => {
@@ -757,12 +795,16 @@ export function armorClassOf(abilityScores: any, carried: string[], effects: Fea
 // What features and equipment decide, for a character as it stands
 export function derivedStats(character: any) {
   const effects = featureEffects(characterFeatures(character), character);
-  const carried: string[] = inUse(character);
+  // Enhanced armor and shields count as the plain kind they are a kind of, with their own bonus
+  const carried: string[] = inUse(character).map((name) => baseOf(character, name)?.name ?? name);
   const unarmored = carriedArmor(carried).body.length === 0;
+  const items = sumEffects(activeEffects(character).map((a) => a.effects));
+  // "When you aren't wearing armor, your AC becomes 13 + your Dexterity modifier"
+  if (items.acBase && unarmored) effects.armor.push({ base: items.acBase.base, abilities: [[items.acBase.ability]], shield: true, source: "Augmentation" });
   return {
     effects,
-    armorClass: armorClassOf(character.abilityScores ?? {}, carried, effects),
-    speedBonus: effects.speed + (unarmored ? effects.unarmoredSpeed : 0),
+    armorClass: armorClassOf(character.abilityScores ?? {}, carried, effects) + (items.ac ?? 0),
+    speedBonus: effects.speed + (unarmored ? effects.unarmoredSpeed : 0) + (items.speed ?? 0),
     hitPointBonus: effects.hitPointsPerLevel * (Number(character.level) || 1),
     // Saved in the character's `weapons` so that Play can use it without the species data
     naturalWeapons: effects.unarmed
@@ -805,7 +847,22 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
   const proficiency = calculateProficiencyBonus(Number(character?.level) || 1);
   const carried: string[] = inUse(character).map((name) => name.toLowerCase());
   const owned = equipment.filter((e) => e.category === "Weapon" && e.damage && carried.includes(e.name.toLowerCase()));
-  const weapons: CarriedWeapon[] = owned.map((e) => {
+  // Enhanced weapons: the plain weapon they are a kind of, with their bonus when it works
+  const enhanced = inUse(character)
+    .map((name) => ({ name, facts: factsFor(character, name), base: baseOf(character, name) }))
+    .filter((x) => x.facts?.type === "Weapon" && x.base?.category === "Weapon" && x.base.damage);
+  const bonusOf = (name: string): { attack: number; damage: number } => {
+    const facts = factsFor(character, name);
+    return facts && itemWorks(character, facts) ? { attack: facts.effects.attack ?? 0, damage: facts.effects.damage ?? 0 } : { attack: 0, damage: 0 };
+  };
+  const buffed = (e: { weaponClassification?: string }) => {
+    const buff = (character?.playState?.buffs ?? []).find((b: any) => b.kind === "collimator" && String(e.weaponClassification ?? "").toLowerCase().includes(String(b.weapon ?? "")));
+    return buff ? { attack: buff.effects?.attack ?? 0, damage: buff.effects?.damage ?? 0 } : { attack: 0, damage: 0 };
+  };
+  const weapons: CarriedWeapon[] = [
+    ...owned.map((e) => ({ e, name: e.name, bonus: buffed(e) })),
+    ...enhanced.map((x) => ({ e: x.base as typeof owned[number], name: x.name, bonus: { attack: bonusOf(x.name).attack + buffed(x.base!).attack, damage: bonusOf(x.name).damage + buffed(x.base!).damage } })),
+  ].map(({ e, name, bonus }) => {
     const ranged = /blaster/i.test(e.weaponClassification ?? "");
     const finesse = (e.properties ?? []).some((p) => /^finesse/i.test(p));
     const ability = ranged || (finesse && dex > str) ? "dexterity" : "strength";
@@ -813,7 +870,7 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
     const proficient = hasWeaponProficiency(String(character?.class ?? ""), e);
     const [dice, damageType = ""] = e.damage!.split(" ");
     return {
-      name: e.name,
+      name,
       type: (e.weaponClassification ?? "Weapon").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/ (\w)/, (_, c) => ` ${c.toLowerCase()}`),
       ranged,
       dice,
@@ -822,8 +879,8 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
       proficient,
       properties: e.properties ?? [],
       ...weaponReach(e.properties ?? []),
-      attackBonus: modifier + (proficient ? proficiency : 0),
-      damageBonus: modifier,
+      attackBonus: modifier + (proficient ? proficiency : 0) + bonus.attack,
+      damageBonus: modifier + bonus.damage,
     };
   });
   const natural: CarriedWeapon[] = (character?.weapons ?? [])
@@ -1045,3 +1102,29 @@ export function applyLevelUp(character: any, choices: LevelUpChoices): { changes
 
 // The standard array (Player's Handbook, Determine Ability Scores)
 export const getStandardAbilityArray = (): number[] => [15, 14, 13, 12, 10, 8];
+
+// The character as Play sees it: ability scores with items and augmentations applied, the armor
+// class the items change, and the facts of what is carried for the functions above. `facts` is
+// the server's item facts by lower-case name; nothing is written back (the sheet keeps its own
+// numbers, and Play's saves send only what they change).
+export function withItemEffects(character: any, facts: Record<string, ItemFacts> | undefined, clockMinutes = 0): any {
+  if (!character || !facts) return character;
+  const state = character.playState ?? {};
+  // A timed effect ends at its minute; one that waits for a fight (`fight`) stays until it is over
+  const buffs = (state.buffs ?? []).filter((b: any) => b.fight || (b.until ?? 0) > clockMinutes);
+  const view = { ...character, itemFacts: facts, playState: { ...state, buffs } };
+  const active = activeEffects(view);
+  // The side effects fall on the abilities chosen when the item was attuned or installed
+  const falls = active.filter((a) => a.effects.falls).map((a) => state.sides?.[a.source]).filter(Boolean) as string[];
+  const abilityScores = scoresWith(character.abilityScores ?? {}, active.map((a) => a.effects), falls);
+  const scored = { ...view, abilityScores };
+  const change = derivedStats(scored).armorClass - derivedStats({ ...character, itemFacts: undefined, playState: { ...state, buffs: [], augments: [] } }).armorClass;
+  const unarmed = active.filter((a) => a.effects.unarmed);
+  return {
+    ...scored,
+    armorClass: Math.max(0, (character.armorClass ?? 10) + change),
+    itemTempHp: sumEffects(active.map((a) => a.effects)).tempHp,
+    // Handwraps and the like: a bonus to unarmed strikes
+    itemUnarmed: { attack: unarmed.reduce((n, a) => n + (a.effects.attack ?? 0), 0), damage: unarmed.reduce((n, a) => n + (a.effects.damage ?? 0), 0) },
+  };
+}

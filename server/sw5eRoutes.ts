@@ -8,7 +8,7 @@
 //   POST /api/world/validate           { world } -> what is wrong with it, checked against the rules data
 //   POST /api/world/occupant           { statBlock } -> that stat block as someone to place in an area
 import type { Express, Request, Response } from "express";
-import { generateWorld, expandArea, populateArea, livenWorld, statBlockOccupant, validateWorld, worldQuests, type World } from "../shared/logic";
+import { generateWorld, expandArea, populateArea, livenWorld, statBlockOccupant, validateWorld, worldQuests, itemFactsOf, type ItemFacts, type World } from "../shared/logic";
 import { datasetNames, getDataset, getWorldCatalog, isDataset, sw5eManifest } from "./sw5eData";
 
 const isWorld = (value: any): value is World =>
@@ -17,6 +17,25 @@ const isWorld = (value: any): value is World =>
 export function registerSw5eRoutes(app: Express) {
   app.get("/api/sw5e", (_req: Request, res: Response) => {
     res.json({ ...sw5eManifest, names: datasetNames });
+  });
+
+  // What carried enhanced items do in play (itemFactsOf), by lower-case name; read once
+  let itemFacts: Promise<Record<string, ItemFacts>> | undefined;
+  app.get("/api/sw5e/itemFacts", async (_req: Request, res: Response) => {
+    try {
+      itemFacts ??= getDataset("enhancedItems").then((rows: any[]) => {
+        const out: Record<string, ItemFacts> = {};
+        for (const row of rows) {
+          const facts = itemFactsOf(row);
+          if (facts) out[row.name.toLowerCase()] = facts;
+        }
+        return out;
+      });
+      res.json(await itemFacts);
+    } catch (error) {
+      console.error("Error reading item facts:", error);
+      res.status(500).json({ message: "Failed to read item facts" });
+    }
   });
 
   app.get("/api/sw5e/:dataset", async (req: Request, res: Response) => {

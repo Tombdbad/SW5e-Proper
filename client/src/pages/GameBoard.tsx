@@ -15,7 +15,7 @@ import { useCombat, useShipFight, rollDamage, onPartySide } from "@/lib/stores/u
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
-import { carriedWeapons, characterFeatures, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, type Equipped } from "@/lib/sw5e/characterCalculation";
+import { carriedWeapons, characterFeatures, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, withItemEffects, isAttuned, type Equipped } from "@/lib/sw5e/characterCalculation";
 import { getSpeciesById } from "@/lib/sw5e/species";
 import { getClassById, getClassLevelValue } from "@/lib/sw5e/classes";
 import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect } from "@/lib/sw5e/rules";
@@ -42,6 +42,7 @@ import {
   trainingOptions, ingredientRarity, emptyDowntime, shipSheet, refitPlan,
   type DowntimeActivityData, type ActivitySpec, type DowntimeOutcome, type DowntimeState, type TrainingOption,
   type Occupant,
+  attunementLimit, augmentationLimit, augmentPlan, partsFree, sideEffectsOf, describeEffects, PROSTHESES, ITEM_ABILITIES, type ItemFacts,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship,
 } from "@shared/logic";
 
@@ -67,6 +68,13 @@ interface PlayState {
   // Uses spent before the next rest of each class, archetype and species feature that has them
   // (keyed as the feature's pool: "Source:Name"), and of the focus points
   featureUses?: Record<string, number>;
+  // Enhanced items: the names attuned to, the ability each side effect falls on (by item name),
+  // the stimpac, adrenal, barrier and collimator in force, and the augmentations installed (the
+  // body parts each takes; prostheses are listed too)
+  attuned?: string[];
+  sides?: Record<string, string>;
+  buffs?: { name: string; kind: string; effects: any; weapon?: string; fight?: boolean; until?: number }[];
+  augments?: { name: string; parts: string[]; prosthesis?: boolean }[];
 }
 
 // What each level of the watch means for the party (house rule, see shared/logic)
@@ -123,7 +131,7 @@ export default function GameBoard() {
 
   // The character is the one the campaign belongs to
   const gameCharacterId = (data as any)?.characterId as number | undefined;
-  const { data: character, isLoading: characterLoading } = useQuery<any>({
+  const { data: rawCharacter, isLoading: characterLoading } = useQuery<any>({
     queryKey: ["game-character", gameCharacterId],
     queryFn: async () => {
       const r = await fetch(`/api/characters/${gameCharacterId}`);
@@ -132,6 +140,16 @@ export default function GameBoard() {
     },
     enabled: !!gameCharacterId,
   });
+  // What the carried enhanced items do (read from their texts on the server), and the character as
+  // Play sees it with them applied: ability scores, armor class, weapons. The sheet is untouched
+  // (`rawCharacter`); saves send only what they change.
+  const { data: itemFacts } = useQuery<Record<string, ItemFacts>>({
+    queryKey: ["item-facts"],
+    queryFn: async () => (await fetch("/api/sw5e/itemFacts")).json(),
+    staleTime: Infinity,
+  });
+  const itemClock = useClock((c) => Math.floor(c.minutes / 5) * 5);
+  const character = useMemo(() => withItemEffects(rawCharacter, itemFacts, itemClock), [rawCharacter, itemFacts, itemClock]);
 
   // Write the player's hit points and power points back to the database whenever combat changes them
   const queryClient = useQueryClient();
@@ -879,7 +897,7 @@ export default function GameBoard() {
   const setEquipped = (name: string, on: boolean) => {
     if (!character) return;
     const now = equippedNow(character);
-    const kind = itemKind(name);
+    const kind = itemKind(name, character);
     const lower = name.toLowerCase();
     const next: Equipped = {
       weapons: kind === "weapon" ? (on ? Array.from(new Set([...now.weapons, name])) : now.weapons.filter((n) => n.toLowerCase() !== lower)) : now.weapons,
@@ -887,7 +905,7 @@ export default function GameBoard() {
       shield: kind === "shield" ? (on ? name : null) : now.shield,
     };
     const change = derivedStats({ ...character, armor: next }).armorClass - derivedStats(character).armorClass;
-    saveCharacter({ armor: next, armorClass: Math.max(0, (character.armorClass ?? 10) + change) });
+    saveCharacter({ armor: next, armorClass: Math.max(0, (rawCharacter.armorClass ?? 10) + change) });
     toast.success(`${name}: ${on ? (kind === "weapon" ? "in hand" : "on") : kind === "weapon" ? "put away" : "taken off"}${change ? `; armor class ${change > 0 ? "+" : ""}${change}` : ""}.`);
   };
 
@@ -924,7 +942,10 @@ export default function GameBoard() {
       offhand: other ? { name: other.name, dice: other.dice, attack: other.attackBonus, damage: other.damageBonus, type: other.damageType, props: other.properties } : undefined,
       unarmed: natural
         ? { name: natural.name, dice: natural.dice, attack: natural.attackBonus, damage: natural.damageBonus, type: natural.damageType }
-        : { name: "Unarmed strike", dice: "1", attack: scoreMod("strength") + proficiency, damage: scoreMod("strength"), type: "kinetic" },
+        : { name: "Unarmed strike", dice: "1", attack: scoreMod("strength") + proficiency + (character.itemUnarmed?.attack ?? 0), damage: scoreMod("strength") + (character.itemUnarmed?.damage ?? 0), type: "kinetic" },
+      // A barrier's hit points, taken before real ones; the body's side effects of augmentation
+      tempHp: character.itemTempHp || undefined,
+      vulnerable: (play.augments?.length ?? 0) >= 4 ? ["ion"] : undefined,
       // Saving throws: the ability modifier, and the proficiency bonus where the class is proficient
       saves: Object.fromEntries(["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"].map((a) => [a, scoreMod(a) + (savedAbilities.includes(a) ? proficiency : 0)])),
       stealth: scoreMod("dexterity") + (skilled("stealth") ? proficiency : 0),
@@ -2837,6 +2858,137 @@ export default function GameBoard() {
     return <div className="mt-1 text-xs text-gray-300">{text}{use.kind === "bolt" ? <p>Fitted to a powered-down droid from its card.</p> : use.kind === "binders" ? <p>Restrains a Small or Medium creature (DC {use.dc} Strength or Dexterity save).</p> : use.kind === "spike" ? <p>Spent automatically to reroll a failed {use.tool.toLowerCase()} check on a lock.</p> : use.kind === "ram" ? <p>Forcing a locked door gives +{use.bonus}, and advantage with a helper.</p> : use.kind === "cutter" ? <p>Cuts a locked door open in ten minutes for each 5 of its DC.</p> : null}</div>;
   };
 
+  // ---- Enhanced items (Wretched Hives, "Enhanced Items"): attunement, stimpacs and the like,
+  // cybernetic augmentation. What an item does is read from its text on the server (itemFacts).
+  const factsOfItem = (name: string): ItemFacts | undefined => itemFacts?.[name.toLowerCase()];
+  const attuned: string[] = play.attuned ?? [];
+  const slotsUsed = attuned.reduce((n, a) => n + (factsOfItem(a)?.attune ?? 1), 0);
+  const slotsMax = attunementLimit(level);
+  // "One ability score (chosen by the GM) decreases by 1": house rule, one of the others at random,
+  // chosen when the item is attuned or installed and kept
+  const sideFor = (f: ItemFacts) => {
+    const raised = Object.keys(f.effects.raiseScores ?? {});
+    const others = ITEM_ABILITIES.filter((a) => !raised.includes(a));
+    return others[Math.floor(Math.random() * others.length)];
+  };
+  const withSide = (f: ItemFacts) => (f.effects.falls ? { ...(play.sides ?? {}), [f.name]: sideFor(f) } : play.sides);
+  const attune = (name: string) => {
+    const f = factsOfItem(name);
+    if (!f || inCombat || dead || attuned.includes(name)) return;
+    if (hostiles.length) return speed("Not with armed enemies in the room.");
+    if (slotsUsed + f.attune > slotsMax) return speed(`Attunement is full (${slotsUsed} of ${slotsMax} slots): break one first.`);
+    saveCharacter({ playState: { ...play, attuned: [...attuned, name], sides: withSide(f) } });
+    saveCampaign(pass(60));
+    toast.success(`Attuned to ${name} (an hour; house rule, the book says a short rest).${f.effects.falls ? " It has a side effect: another ability score is lower by 1." : ""}`);
+  };
+  const unattune = (name: string) => {
+    if (inCombat || dead) return;
+    saveCharacter({ playState: { ...play, attuned: attuned.filter((n) => n !== name) } });
+    saveCampaign(pass(60));
+    toast.info(`No longer attuned to ${name}.`);
+  };
+  // A stimpac, adrenal, barrier or collimator: one of each kind at a time. Those that last a
+  // minute or a fight (and a barrier, a house rule) wait for the next fight and end with it.
+  const takeTimed = (name: string) => {
+    const f = factsOfItem(name);
+    const t = f?.timed;
+    if (!f || !t || inCombat || dead) return;
+    if (t.kind === "collimator" && !carriedWeapons(character).some((w) => !w.natural && w.type.toLowerCase().includes(t.weapon ?? "")))
+      return speed(`Wield a ${t.weapon} to apply it to.`);
+    const buff = { name: f.name, kind: t.kind, effects: t.effects, weapon: t.weapon, fight: t.kind === "barrier" || t.minutes <= 1, until: clockNow() + t.minutes };
+    const spent = consume(name);
+    saveCharacter({ equipment: spent.equipment, playState: { ...play, charges: spent.charges, buffs: [...(play.buffs ?? []).filter((b) => b.kind !== t.kind), buff] } });
+    toast.success(`${f.name}: ${describeEffects(t.effects) || "applied"}${buff.fight ? ", for the next fight" : `, for ${t.minutes / 60} hour${t.minutes > 60 ? "s" : ""}`}.`);
+  };
+  // What waits for a fight ends with it
+  const wasFighting = useRef(false);
+  useEffect(() => {
+    if (inCombat) wasFighting.current = true;
+    else if (wasFighting.current) {
+      wasFighting.current = false;
+      if ((play.buffs ?? []).some((b) => b.fight)) saveCharacter({ playState: { ...play, buffs: (play.buffs ?? []).filter((b) => !b.fight) } });
+    }
+  }, [inCombat]);
+
+  // Cybernetic augmentation at a medic (house rule: the surgeon's check is d20 + 5). The book's
+  // time, cost and DC: 8 hours (by size) at 100 credits an hour, a check against the rarity's DC;
+  // a failed enhancement is a level of exhaustion, a failed replacement a part lost for as long as
+  // the work took (shown, not enforced); removal takes half, a failure destroys the augmentation.
+  const SURGEON_BONUS = 5;
+  const sizeOfPatient = "medium";
+  const partsTaken = (play.augments ?? []).flatMap((a) => a.parts);
+  const installAugment = (name: string) => {
+    if (inCombat || dead || !world) return;
+    const f = factsOfItem(name);
+    const prosthesis = PROSTHESES[name.toLowerCase()];
+    const parts = f?.parts ?? prosthesis ?? [];
+    const rarity = f?.rarity ?? "Standard";
+    if (!f && !prosthesis) return;
+    const counted = (play.augments ?? []).filter((a) => !a.prosthesis).length;
+    if (!prosthesis && counted >= augmentationLimit(level)) return speed(`Your body supports ${augmentationLimit(level)} augmentations (your proficiency bonus; prostheses are extra).`);
+    if (!partsFree(partsTaken, parts)) return speed("That part of the body already has a replacement.");
+    const plan = augmentPlan(rarity, sizeOfPatient);
+    if ((character.credits ?? 0) < plan.cost) return speed(`The surgeon wants ${money(plan.cost)} (${plan.hours} hours at 100 credits).`);
+    const roll = die(20);
+    const total = roll + SURGEON_BONUS;
+    const ok = total >= plan.dc;
+    const spent = consume(name);
+    const changes: Record<string, any> = { credits: (character.credits ?? 0) - plan.cost };
+    if (ok) {
+      changes.equipment = spent.equipment;
+      changes.playState = { ...play, charges: spent.charges, augments: [...(play.augments ?? []), { name, parts, ...(prosthesis ? { prosthesis: true } : {}) }], sides: f ? withSide(f) : play.sides };
+    } else if (f?.augment === "enhancement") changes.exhaustionLevel = Math.min(6, (character.exhaustionLevel ?? 0) + 1);
+    saveCharacter(changes);
+    saveCampaign(pass(plan.hours * 60));
+    toast[ok ? "success" : "error"](
+      ok
+        ? `${name} fitted (surgeon ${roll} + ${SURGEON_BONUS} = ${total} against DC ${plan.dc}; ${plan.hours} hours, ${money(plan.cost)}).${f?.effects.falls ? " A side effect lowers another ability score by 1." : ""}`
+        : `The work on ${name} failed (${roll} + ${SURGEON_BONUS} = ${total} against DC ${plan.dc}); the time and ${money(plan.cost)} are spent.${f?.augment === "enhancement" ? " A level of exhaustion." : f?.augment === "replacement" ? ` You are without that part for ${plan.hours} hours (house rule: shown, not enforced).` : ""}`,
+    );
+  };
+  const removeAugment = (index: number) => {
+    if (inCombat || dead) return;
+    const a = (play.augments ?? [])[index];
+    if (!a) return;
+    const f = factsOfItem(a.name);
+    const plan = augmentPlan(f?.rarity ?? "Standard", sizeOfPatient, true);
+    if ((character.credits ?? 0) < plan.cost) return speed(`The surgeon wants ${money(plan.cost)}.`);
+    const roll = die(20);
+    const ok = roll + SURGEON_BONUS >= plan.dc;
+    const next = (play.augments ?? []).filter((_, i) => i !== index);
+    const { [a.name]: _gone, ...sides } = play.sides ?? {};
+    saveCharacter({ credits: (character.credits ?? 0) - plan.cost, ...(ok ? { equipment: [...(character.equipment ?? []), a.name] } : {}), playState: { ...play, augments: next, sides } });
+    saveCampaign(pass(plan.hours * 60));
+    toast[ok ? "success" : "error"](`${a.name} removed (${roll} + ${SURGEON_BONUS} against DC ${plan.dc}): ${ok ? "salvaged" : "destroyed in the removal"}. ${plan.hours} hours, ${money(plan.cost)}.`);
+  };
+  const augmentPanel = (surgeon: Occupant) => {
+    const waiting = Array.from(new Set<string>((character.equipment ?? []).filter((n: string) => factsOfItem(n)?.type === "CyberneticAugmentation" || PROSTHESES[n.toLowerCase()])));
+    const installed = play.augments ?? [];
+    if (!waiting.length && !installed.length) return null;
+    return (
+      <div className="mt-1 space-y-1 text-xs" data-testid={`augment-${surgeon.id}`}>
+        <p className="font-semibold text-gray-200">Surgery</p>
+        <p className="text-gray-400">8 hours (a Medium patient) at 100 credits an hour, a check against the item's rarity (DC 10 to 30); the surgeon rolls d20 + {SURGEON_BONUS} (house rule). Your body supports {augmentationLimit(level)} augmentations; prostheses are extra.</p>
+        {waiting.map((name) => {
+          const f = factsOfItem(name);
+          const plan = augmentPlan(f?.rarity ?? "Standard", sizeOfPatient);
+          return (
+            <div key={name} className="flex items-center justify-between gap-2">
+              <span>{name} <span className="text-gray-400">DC {plan.dc}, {money(plan.cost)}</span></span>
+              <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`install-${name}`} onClick={() => installAugment(name)}>Fit it</Button>
+            </div>
+          );
+        })}
+        {installed.map((a, i) => (
+          <div key={`${a.name}-${i}`} className="flex items-center justify-between gap-2">
+            <span>{a.name} <span className="text-gray-400">fitted</span></span>
+            <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`remove-${a.name}`} onClick={() => removeAugment(i)}>Remove</Button>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   // A homing beacon left on someone's ship, and where that ship is now (from the map's present)
   const beacon = carriesAny((n) => gearOf(n)?.kind === "beacon") ? (character.equipment as string[]).find((n) => gearOf(n)?.kind === "beacon") : undefined;
   const plantBeacon = (ship: Ship) => {
@@ -2955,6 +3107,7 @@ export default function GameBoard() {
             <>
               <p className="text-xs text-gray-400">To talk with them, say what you do on the GM Interface tab.</p>
               {waresOf(o) && tradePanel(o, here.id)}
+              {o.role === "medic" && augmentPanel(o)}
               {canHire(o) && hireSection(o, here.id)}
               {!isDroid(o) && o.species && o.role !== "guard" && o.role !== "freed" && gamblePanel(o.id, o.name, o.role === "gambler" ? 4 : 2)}
             </>
@@ -3796,6 +3949,16 @@ export default function GameBoard() {
               <TabsContent value="inventory">
                 <h3 className="font-semibold mb-1">Inventory</h3>
                 <p className="text-sm text-yellow-300 mb-2" data-testid="inventory-credits">Credits: {(character.credits ?? 0).toLocaleString()}</p>
+                {(attuned.length > 0 || Object.values(itemFacts ?? {}).length > 0) && (
+                  <p className="text-xs text-gray-400 mb-1" data-testid="attunement-slots">Attunement: {slotsUsed} of {slotsMax} slots used (house rule: an hour, not a rest).</p>
+                )}
+                {(play.augments ?? []).length > 0 && (
+                  <div className="text-xs text-gray-300 mb-2" data-testid="augmentations">
+                    <p className="font-semibold">Augmentations ({(play.augments ?? []).length}; {(play.augments ?? []).filter((a) => !a.prosthesis).length} of {augmentationLimit(level)} supported, prostheses are extra)</p>
+                    {(play.augments ?? []).map((a, i) => <p key={`${a.name}-${i}`}>{a.name}{itemFacts?.[a.name.toLowerCase()] ? `: ${describeEffects(itemFacts[a.name.toLowerCase()].effects) || itemFacts[a.name.toLowerCase()].text.slice(0, 120)}` : ""}</p>)}
+                    {sideEffectsOf((play.augments ?? []).length).map((t) => <p key={t} className="text-amber-300">Body: {t}.</p>)}
+                  </div>
+                )}
                 {(() => {
                   const worn = equippedNow(character);
                   const counts = new Map<string, number>();
@@ -3805,9 +3968,10 @@ export default function GameBoard() {
                   return (
                     <div className="space-y-1" data-testid="inventory-list">
                       {[...counts.entries()]
-                        .sort(([a], [b]) => rank[itemKind(a)] - rank[itemKind(b)] || a.localeCompare(b))
+                        .sort(([a], [b]) => rank[itemKind(a, character)] - rank[itemKind(b, character)] || a.localeCompare(b))
                         .map(([name, count]) => {
-                          const kind = itemKind(name);
+                          const kind = itemKind(name, character);
+                          const enhanced = factsOfItem(name);
                           const on = kind === "weapon" ? is(worn.weapons, name) : kind === "armor" ? is([worn.body], name) : kind === "shield" ? is([worn.shield], name) : false;
                           const use = kind === "gear" ? gearOf(name) : undefined;
                           const left = use && "uses" in use ? usesLeft(name, use.uses) : undefined;
@@ -3825,12 +3989,30 @@ export default function GameBoard() {
                                     {on ? (kind === "weapon" ? "Put away" : "Take off") : kind === "weapon" ? "Wield" : "Wear"}
                                   </Button>
                                 )}
+                                {enhanced && enhanced.attune > 0 && (
+                                  <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`attune-${name}`} onClick={() => (isAttuned(character, name) ? unattune(name) : attune(name))}>
+                                    {isAttuned(character, name) ? "Break attunement" : "Attune"}
+                                  </Button>
+                                )}
+                                {enhanced?.timed && (
+                                  <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`take-${name}`} onClick={() => takeTimed(name)}>
+                                    {enhanced.timed.kind === "collimator" ? "Apply" : "Use"}
+                                  </Button>
+                                )}
                                 {use && (
                                   <Button size="sm" variant={using === name ? "default" : "outline"} className="h-6 px-2" data-testid={`use-${name}`} onClick={() => setUsing(using === name ? null : name)}>
                                     {use.kind === "tool" ? "Tool" : use.kind === "game" ? "Game" : use.kind === "instrument" ? "Play" : "Use"}
                                   </Button>
                                 )}
                               </div>
+                              {enhanced && (
+                                <p className="text-xs text-gray-400" data-testid={`item-effects-${name}`}>
+                                  {enhanced.rarity.toLowerCase()}
+                                  {enhanced.attune > 0 ? (isAttuned(character, name) ? ", attuned" : ", needs attunement: no enhanced effect until then") : ""}
+                                  {describeEffects(enhanced.effects) ? ` · ${describeEffects(enhanced.effects)}` : ""}
+                                  {enhanced.timed ? ` · ${enhanced.timed.kind}, ${enhanced.timed.minutes >= 60 ? `${enhanced.timed.minutes / 60} h` : "a minute"}${describeEffects(enhanced.timed.effects) ? `: ${describeEffects(enhanced.timed.effects)}` : ""}` : ""}
+                                </p>
+                              )}
                               {using === name && usePanel(name)}
                             </div>
                           );
