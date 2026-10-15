@@ -27,6 +27,7 @@ import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   reportCrime, pursuitAt, lieLow, lieLowDC, CRIME_NAMES, type Crime,
+  lawmenAt, lawWatchDC, turnLawmen, engageOfficers, maxSquads, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, optionsOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
@@ -411,6 +412,33 @@ export default function GameBoard() {
     if (!made) setWatch(alert + 1);
     return made;
   };
+  // The law in person (see "The law in person" in shared logic): a stat block for lawmen who have
+  // none, the lawmen turning on the party, and the Stealth check that keeps them from seeing a crime
+  const lawBlock = async (id: "trooper" | "officer-junior"): Promise<Occupant | undefined> => {
+    try {
+      const response = await fetch("/api/world/occupant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ statBlock: id }) });
+      return response.ok ? ((await response.json()) as Occupant) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const latestWorld = (): World | undefined => ((queryClient.getQueryData([`/api/campaigns/${campaignId}`]) as any)?.galaxyMap as World | undefined) ?? world ?? undefined;
+  const callTheLaw = async (areaId: string, crime: Crime) => {
+    const current = latestWorld();
+    if (!current) return;
+    const block = await lawBlock(lawAt(current, areaId) >= 3 ? "trooper" : "officer-junior");
+    const base = latestWorld() ?? current;
+    saveCampaign({ galaxyMap: reportCrime(turnLawmen(base, areaId, block), areaId, crime, clockNow()) });
+  };
+  const lawUnseen = (what: string, crime: Crime): boolean => {
+    if (!world || !here || !lawmenAt(world, here.id).length) return true;
+    const dc = lawWatchDC(world, here.id);
+    const { roll, bonus, total } = stealthRoll();
+    const made = total >= dc;
+    toast[made ? "success" : "error"](`${what} (Stealth): ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against the guards' passive Perception ${dc}. ${made ? "Unnoticed." : "Seen! They turn on you."}`);
+    if (!made) void callTheLaw(here.id, crime);
+    return made;
+  };
   // Talking to those who stopped you: Charisma against 10 + their Wisdom + how dangerous the
   // place is; threats work on those already facing you down, but are harder
   const talk = (skill: "deception" | "persuasion" | "intimidation") => {
@@ -713,6 +741,7 @@ export default function GameBoard() {
       toast.success("The code cylinder is accepted: the lock opens.");
       return void openLock(exit, {}, false);
     }
+    if (!lawUnseen("Picking the lock", "trespass")) return;
     let ok = abilityCheck("Lock", dc, ["dexterity", "intelligence"], !!kit && trainedWith(kit));
     if (!ok && kit) {
       const spike = (character.equipment ?? []).find((n: string) => { const g = gearOf(n); return g?.kind === "spike" && g.tool.toLowerCase() === kit.toLowerCase(); });
@@ -729,6 +758,10 @@ export default function GameBoard() {
   // and no check; a charge, mine or grenade simply opens it). Noise brings the watch down on the room.
   const forceDoor = (exit: Exit, how: "strength" | "ram" | "cutter" | "blast") => {
     if (!world || !here || !exit.pathId) return;
+    if (lawmenAt(world, here.id).length) {
+      toast.error("Forcing a door under the guards' eyes: they see it, and turn on you.");
+      return void callTheLaw(here.id, how === "blast" ? "heinous" : "trespass");
+    }
     const dc = (exit.locked ?? 10) + 5;
     const noise = () => {
       if (hostiles.length) setWatch(ALERT.attacking);
@@ -806,6 +839,7 @@ export default function GameBoard() {
   const takeLoot = (cache: LootCache) => {
     if (!world || !here) return;
     if (hostiles.length > 0 && !unseen("Taking it")) return;
+    if (!lawUnseen("Taking it", "theft")) return;
     if (cache.locked && !abilityCheck("Lock", cache.locked, ["dexterity", "intelligence"], carries(/security kit|slicer's kit/i))) return;
     const gained = cache.items.flatMap((item) => Array.from({ length: item.quantity }, () => item.name));
     saveCharacter({ equipment: [...(character.equipment ?? []), ...gained], credits: (character.credits ?? 0) + cache.credits });
@@ -1180,6 +1214,42 @@ export default function GameBoard() {
     toast.error("They attack!");
     fight();
   }, [here?.id, alert, hostiles.length, !!character]);
+
+  // The search reaches the party (see engageOfficers in shared logic): at the scene a squad is there
+  // when the officers arrive; elsewhere in the district, walking in takes a Stealth check to be
+  // missed (one try a place). A found party faces the squad, and the fight begins by itself.
+  const engaging = useRef(false);
+  const slipped = useRef<{ key: number; ids: string[] }>({ key: 0, ids: [] });
+  useEffect(() => {
+    if (!world || !here || !pursuit || pursuit.phase !== "searching" || !pursuit.here || inCombat || dead || engaging.current || !character || character.currentHp <= 0) return;
+    const p = pursuit.pursuit;
+    const met = p.met ?? [];
+    if (met.includes(here.id) || met.length >= maxSquads(p)) return;
+    if (slipped.current.key !== p.arrivesAt) slipped.current = { key: p.arrivesAt, ids: [] };
+    if (slipped.current.ids.includes(here.id)) return;
+    if (here.id !== p.scene) {
+      const dc = lieLowDC(p);
+      const check = stealthRoll();
+      slipped.current.ids.push(here.id);
+      if (check.total >= dc) {
+        toast.success(`Officers are about (Stealth ${check.total} against ${dc}): you keep out of their sight.`);
+        return;
+      }
+      toast.error(`Officers are about (Stealth ${check.total} against ${dc}): they spot you.`);
+    }
+    engaging.current = true;
+    const at = here.id;
+    lawBlock(p.heavy || p.cartel ? "trooper" : "officer-junior")
+      .then((block) => {
+        const base = latestWorld();
+        if (!block || !base?.pursuit) return;
+        toast.error(`${p.cartel ? "Syndicate enforcers" : "Security"} close in: ${p.officers} after ${CRIME_NAMES[p.crime]}.`);
+        saveCampaign({ galaxyMap: engageOfficers(base, at, block, clockNow()) });
+      })
+      .finally(() => {
+        engaging.current = false;
+      });
+  }, [here?.id, pursuit?.phase, pursuit?.here, inCombat, !!character]);
 
   // How a fight ended, whichever way it did. The fallen leave the area and their gear stays
   // behind; those still standing keep the hit points they have, so that leaving, being knocked
@@ -2196,7 +2266,7 @@ export default function GameBoard() {
     if (!km || !transport || !world || !here || exit.needsShip || exit.via !== "path") return [];
     const settlement = world.areas[berthOf(world, here.id)];
     const riders = 1 + party.filter((c) => c.kind !== "beast").length;
-    return groundRides({ km, vehicles: parkedHere, companions: party, riders, transport, hire: settlement?.id === here.id && hasRidesForHire(world, here.id), transit: exit.label === "Transit line" });
+    return groundRides({ km, vehicles: parkedHere, companions: party, riders, transport, hire: settlement ? hasRidesForHire(world, settlement.id) : false, transit: exit.label === "Transit line" });
   };
   // The ride a trip takes when none was chosen (a tap on the map): the quickest that costs nothing
   const defaultRide = (rides: Ride[]) => [...rides].filter((r) => !r.blocked && !r.fare).sort((a, b) => a.minutes - b.minutes)[0];
@@ -3008,6 +3078,71 @@ export default function GameBoard() {
     saveCampaign(pass(plan.hours * 60));
     toast[ok ? "success" : "error"](`${a.name} removed (${roll} + ${SURGEON_BONUS} against DC ${plan.dc}): ${ok ? "salvaged" : "destroyed in the removal"}. ${plan.hours} hours, ${money(plan.cost)}.`);
   };
+  // Passage off world, sold by a ticket agent at the port, or by a smuggler who asks no questions, or
+  // slipped into the hold of a freighter (see "Passage off world" in shared logic; house rule)
+  const bookPassage = (offer: PassageOffer, how: "ticket" | "smuggler" | "stowaway") => {
+    if (!world || !here || inCombat || dead) return;
+    const law = lawAt(world, here.id);
+    const fare = how === "ticket" ? offer.fare : how === "smuggler" ? Math.ceil(offer.fare * SMUGGLER_SHARE) : 0;
+    if (fare > (character.credits ?? 0)) return void toast.error(`Passage to ${offer.name} costs ${fare} credits and you have ${character.credits ?? 0}.`);
+    if (how !== "ticket" && law > 0) {
+      const dc = passageCheckDC(how, law);
+      const ok = how === "smuggler" ? abilityCheck("Fooling the customs scan", dc, ["charisma"], skilled("deception")) : abilityCheck("Slipping aboard unseen", dc, ["dexterity"], skilled("stealth"));
+      if (!ok) {
+        const fine = how === "stowaway" ? Math.min(character.credits ?? 0, stowawayFine(law)) : 0;
+        if (fine) saveCharacter({ credits: (character.credits ?? 0) - fine });
+        saveCampaign({ galaxyMap: reportCrime(world, here.id, "trespass", clockNow()), ...pass(10) });
+        return void toast.error(how === "smuggler" ? "The customs scan flags the hold, and the smuggler is gone. Nothing was paid; the port is roused." : `Caught in the hold${fine ? `: fined ${fine} credits` : ""}. The port is roused.`);
+      }
+    }
+    if (fare) {
+      saveCharacter({ credits: (character.credits ?? 0) - fare });
+      toast.info(`${how === "smuggler" ? "Passage paid under the table" : "Ticket bought"}: ${fare} credits (house rule: the books price no fares).`);
+    }
+    const changes: Record<string, any> = { currentLocation: offer.to, ...pass(offer.minutes) };
+    setCameFrom(here.id);
+    toast.info(`${Math.round(offer.minutes / 6) / 10} hours to ${offer.name}: it is ${clockText(useClock.getState().minutes)}.`);
+    if (childrenOf(world, offer.to).length === 0) explore(offer.to, changes);
+    else saveCampaign(changes);
+  };
+  const passagePanel = (agent: Occupant) => {
+    if (!world || !here) return null;
+    const dealer = agent.role === "smuggler";
+    const offers = passageOffers(world, berthOf(world, here.id), passageRate).slice(0, 6);
+    if (!offers.length) return <p className="mt-1 text-xs text-gray-400">No lanes lead out of here that anyone sells passage on.</p>;
+    const law = lawAt(world, here.id);
+    return (
+      <div className="mt-1 space-y-1 text-xs" data-testid={`passage-${agent.id}`}>
+        <p className="font-semibold text-gray-200">{dealer ? "Off world, no questions" : "Tickets off world"}</p>
+        <p className="text-gray-400">
+          {dealer
+            ? `${Math.round(SMUGGLER_SHARE * 100)}% of the fare; ${law > 0 ? `Deception DC ${passageCheckDC("smuggler", law)} to fool the customs scan (a failure reports you), or Stealth DC ${passageCheckDC("stowaway", law)} to ride in the hold for free.` : "no customs here to fool."}`
+            : "Berths on the liners, a half hour's wait to board. House rule: the books price no fares."}
+        </p>
+        {offers.map((offer) => {
+          const fare = dealer ? Math.ceil(offer.fare * SMUGGLER_SHARE) : offer.fare;
+          return (
+            <div key={offer.to} className="flex flex-wrap items-center justify-between gap-1">
+              <span>
+                {offer.name} <span className="text-gray-400">({offer.system}, {rideText(offer.minutes)})</span>
+              </span>
+              <span className="flex gap-1">
+                <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => bookPassage(offer, dealer ? "smuggler" : "ticket")} data-testid={`passage-buy-${offer.to}`}>
+                  {fare} cr
+                </Button>
+                {dealer && (
+                  <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => bookPassage(offer, "stowaway")}>
+                    Stow away
+                  </Button>
+                )}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   const augmentPanel = (surgeon: Occupant) => {
     const waiting = Array.from(new Set<string>((character.equipment ?? []).filter((n: string) => factsOfItem(n)?.type === "CyberneticAugmentation" || PROSTHESES[n.toLowerCase()])));
     const installed = play.augments ?? [];
@@ -3464,6 +3599,7 @@ export default function GameBoard() {
               <p className="text-xs text-gray-400">To talk with them, say what you do on the GM Interface tab.</p>
               {waresOf(o) && tradePanel(o, here.id)}
               {o.role === "medic" && augmentPanel(o)}
+              {(o.role === "ticket agent" || (o.role === "smuggler" && o.disposition !== "hostile")) && passagePanel(o)}
               {canHire(o) && hireSection(o, here.id)}
               {!isDroid(o) && o.species && o.role !== "guard" && o.role !== "freed" && gamblePanel(o.id, o.name, o.role === "gambler" ? 4 : 2)}
             </>

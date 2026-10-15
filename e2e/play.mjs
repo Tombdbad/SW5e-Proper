@@ -516,9 +516,9 @@ await step(ctx, "play: off-world travel is by shuttle and paid passage without a
   await api("PATCH", `/api/characters/${charId}`, { credits: 1000 });
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 60000 });
-  const lane = page.getByTestId("play-exits").getByRole("button").filter({ hasText: /passage \d+ cr/ }).first();
+  const lane = page.getByTestId("play-exits").getByRole("button").filter({ hasText: /flies you: \d+ cr/ }).first();
   const label = (await lane.innerText()).replace(/\s+/g, " ");
-  const fare = Number(label.match(/passage (\d+) cr/)[1]);
+  const fare = Number(label.match(/flies you: (\d+) cr/)[1]);
   await lane.click();
   await sleep(2000);
   const after = await getChar(charId);

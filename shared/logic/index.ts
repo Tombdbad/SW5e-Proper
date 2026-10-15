@@ -352,7 +352,7 @@ const ROOM_STAFF: [RegExp, string][] = [
   [/customs/i, "customs officer"], [/docking|hangar|fuel|workfloor|engineering|reactor|landing/i, "mechanic"],
   [/control|operations|command|security/i, "officer"], [/bar|cantina/i, "bartender"], [/stall|trader|shopfront|market/i, "merchant"],
   [/reception|ward|surgery|pharmacy/i, "medic"], [/audience/i, "official"], [/reading|stacks|archive/i, "archivist"],
-  [/loading|overseer|cargo|freight|storage/i, "overseer"], [/hydroponics/i, "farmer"], [/arrivals|airlock|port office/i, "dockmaster"],
+  [/loading|overseer|cargo|freight|storage/i, "overseer"], [/hydroponics/i, "farmer"], [/arrivals|airlock|port office/i, "ticket agent"],
   [/office/i, "clerk"],
 ];
 const BUILDING_STAFF: Record<string, string> = {
@@ -1932,7 +1932,7 @@ export function counterSides(layout: RoomLayout, station: RoomAsset): { behind: 
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 6;
+export const LIFE = 7;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -2024,6 +2024,29 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
   if ((next.life ?? 0) < 6) {
     for (const building of Object.values(next.areas).filter((a) => a.kind === "building" && childrenOf(next, a.id).some((r) => r.layout))) furnishLevels(ctx, building);
     for (const settlement of Object.values(next.areas).filter((a) => a.kind === "settlement")) planDistricts(ctx, settlement.id);
+  }
+  // Passage (life 7): a ticket agent where the port takes arrivals, a smuggler's contact in the bar
+  if ((next.life ?? 0) < 7) {
+    for (const settlement of Object.values(next.areas).filter((a) => a.kind === "settlement")) {
+      const rooms = childrenOf(next, settlement.id).filter((b) => b.kind === "building").flatMap((b) => childrenOf(next, b.id).filter((r) => r.kind === "room").map((room) => ({ room, building: b })));
+      const ports = rooms.filter(({ room, building }) => PORT_TYPES.includes(building.type) && /arrivals|port office|airlock/i.test(room.name));
+      if (!ports.length) continue;
+      const speciesNames = (ancestor(next, settlement.id, "planet")?.tags ?? []).filter((t) => t.startsWith("species:")).map((t) => t.slice(8));
+      if (!rooms.some(({ room }) => room.occupants.some((o) => o.role === "ticket agent"))) {
+        const desk = ports[0].room;
+        const clerk = desk.occupants.find((o) => o.role === "dockmaster" && !o.statBlock && o.count === 1);
+        if (clerk) clerk.role = "ticket agent";
+        else desk.occupants.push(person(ctx, "ticket agent", "friendly", speciesNames));
+        if (desk.layout) placeContents(desk);
+      }
+      if (!rooms.some(({ room }) => room.occupants.some((o) => o.role === "smuggler" && o.disposition !== "hostile"))) {
+        const bar = rooms.find(({ room, building }) => /^(main bar|cantina)$/i.test(room.name) && ["cantina", "promenade"].includes(building.type))?.room ?? rooms.find(({ building }) => PORT_TYPES.includes(building.type))?.room;
+        if (bar) {
+          bar.occupants.push(person(ctx, "smuggler", "neutral", speciesNames));
+          if (bar.layout) placeContents(bar);
+        }
+      }
+    }
   }
   next.life = LIFE;
   return next;
@@ -2598,6 +2621,7 @@ export interface Pursuit {
   officers: number;
   heavy: boolean; // security troopers rather than constables
   cartel: boolean; // the cartel's own enforcers answer, not the law
+  met?: string[]; // the areas where a squad has already found the party (see engageOfficers)
 }
 
 // The settlement an area is in (or the area itself, out in space or where there is none)
@@ -2665,6 +2689,128 @@ export function lieLow(world: World, check: number): { world: World; caught: boo
 }
 
 // ---------------------------------------------------------------------------------------------
+// The law in person (house rule). Guards, officers and customs officers who are not hostile (yet)
+// see what the party does in their sight: picking a lock, forcing a door or taking what is not
+// theirs is Dexterity (Stealth) against the best passive Perception among them (`lawWatchDC`).
+// Caught, they turn hostile at once (`turnLawmen`) and the fight starts. The officers a search
+// sends are real: when the search reaches the party (at the scene, or when it walks into another
+// place of the district and fails to keep out of sight) a squad stands in the room hostile
+// (`engageOfficers`). A district sends at most two squads, three for heavy troopers.
+// ---------------------------------------------------------------------------------------------
+
+export const LAW_ROLES = ["guard", "officer", "customs officer"];
+export const isLawman = (o: Occupant) => LAW_ROLES.includes(o.role) && o.disposition !== "hostile" && !o.captive && !o.disabled;
+
+// The lawmen who can see what is done in a place: those in it and, in the open, on the roofs and catwalks
+export function lawmenAt(world: World, areaId: string): Occupant[] {
+  const area = world.areas[areaId];
+  if (!area) return [];
+  return [area, ...exposedRooms(world, areaId)].flatMap((a) => a.occupants.filter(isLawman));
+}
+
+export function lawWatchDC(world: World, areaId: string): number {
+  const area = world.areas[areaId];
+  const best = Math.max(1, ...lawmenAt(world, areaId).map((o) => o.saves?.wisdom ?? 1));
+  return 10 + best + (area && alarmOf(world, area) ? 5 : 0);
+}
+
+// Every lawman who can see the party turns on it. `block` is a stat block for those who have none.
+export function turnLawmen(world: World, areaId: string, block?: Occupant): World {
+  const areas = { ...world.areas };
+  for (const id of [areaId, ...exposedRooms(world, areaId).map((r) => r.id)]) {
+    const area = areas[id];
+    if (!area || !area.occupants.some(isLawman)) continue;
+    areas[id] = {
+      ...area,
+      occupants: area.occupants.map((o) => {
+        if (!isLawman(o)) return o;
+        if (o.hitPoints || !block) return { ...o, disposition: "hostile" as const, routine: undefined };
+        return { ...block, id: o.id, name: o.name, role: o.role, species: o.species, count: o.count, loadout: o.loadout.length ? o.loadout : block.loadout, disposition: "hostile" as const, wounds: undefined, routine: undefined };
+      }),
+    };
+  }
+  return setAlert({ ...world, areas }, areaId, ALERT.attacking);
+}
+
+export const maxSquads = (p: Pursuit) => (p.heavy || p.cartel ? 3 : 2);
+
+// A squad of the search finds the party in this area: it stands there, hostile, and attacks
+export function engageOfficers(world: World, areaId: string, block: Occupant, now: number): World {
+  const p = world.pursuit;
+  const area = world.areas[areaId];
+  if (!p || !area) return world;
+  const squad: Occupant = {
+    ...block,
+    id: `o-law-${now}-${p.met?.length ?? 0}`,
+    name: p.cartel ? "Syndicate enforcers" : p.heavy ? "Security troopers" : "Constables",
+    role: "guard",
+    disposition: "hostile",
+    count: Math.max(1, Math.min(6, p.officers)),
+    wounds: undefined,
+    routine: undefined,
+  };
+  const met = [...(p.met ?? []), areaId];
+  const placed: World = { ...world, areas: { ...world.areas, [areaId]: { ...area, occupants: [...area.occupants, squad] } }, pursuit: { ...p, met } };
+  return setAlert(placed, areaId, ALERT.attacking, false);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Passage off world (house rule: the books price no fares). A ticket agent at a port sells a berth
+// on a liner to any planet the lanes reach, at the fuel the trip burns at a Medium ship's price
+// (see passageFare) and half an hour's wait for boarding. A smuggler in the port takes a passenger
+// for 60% of that, no questions, but the customs scan must be fooled (Deception) or the party is
+// reported for trespass; slipping aboard a freighter's hold unseen (Stealth) costs nothing and, if
+// missed, a fine and the same report. All of them leave the party in orbit of the world they choose.
+// ---------------------------------------------------------------------------------------------
+
+export interface PassageOffer {
+  to: string;
+  name: string;
+  system: string;
+  fare: number;
+  minutes: number;
+}
+
+export const SMUGGLER_SHARE = 0.6;
+export const BOARDING_MINUTES = 30;
+export const passageCheckDC = (kind: "smuggler" | "stowaway", law: number) => (kind === "smuggler" ? 10 : 12) + 2 * law;
+export const stowawayFine = (law: number) => 50 * Math.max(1, law);
+
+export function passageOffers(world: World, settlementId: string, rate: number, limit = 8): PassageOffer[] {
+  const planet = ancestor(world, settlementId, "planet");
+  if (!world.areas[settlementId]) return [];
+  // A port that is not the planet's gateway has no take-off of its own: the liner lifts from the planet's
+  // orbit and a shuttle goes up to it first (an hour, free like every shuttle)
+  const direct = exitsOf(world, settlementId).some((e) => e.needsShip);
+  const start = direct || !planet ? settlementId : planet.id;
+  const previous = new Map<string, string | null>([[start, null]]);
+  const queue = [start];
+  const found: string[] = [];
+  while (queue.length && found.length < limit * 2) {
+    const current = queue.shift()!;
+    for (const exit of exitsOf(world, current)) {
+      if (!exit.needsShip || previous.has(exit.to)) continue;
+      previous.set(exit.to, current);
+      queue.push(exit.to);
+      if (world.areas[exit.to]?.kind === "planet" && exit.to !== planet?.id) found.push(exit.to);
+    }
+  }
+  return found.slice(0, limit).map((id) => {
+    const steps: string[] = [];
+    for (let at: string | null = id; at; at = previous.get(at) ?? null) steps.unshift(at);
+    let fare = 0;
+    let minutes = BOARDING_MINUTES + (direct || !planet ? 0 : 60);
+    for (let i = 1; i < steps.length; i++) {
+      const exit = exitsOf(world, steps[i - 1]).find((e) => e.to === steps[i]);
+      if (!exit) continue;
+      fare += passageFare(exit, rate);
+      minutes += tripMinutes(exit, 1);
+    }
+    return { to: id, name: world.areas[id].name, system: ancestor(world, id, "system")?.name ?? "", fare: Math.max(10, fare), minutes };
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
 // Taking a ship that is not the party's (house rule; the books give no heist). A ship that is not
 // an enemy's can be bought, or taken by a side quest of four stages, each a choice with a check:
 //   customs ... bribe the customs officer (credits), or forge a clearance (Deception)
@@ -2692,7 +2838,7 @@ export interface Heist {
 
 export const HEIST_COUNTDOWN = 25; // minutes from the terminal being sliced to take-off
 export const HEIST_MINUTES: Record<HeistStage, number> = { customs: 5, terminal: 10, guards: 10, lockout: 10 };
-export const heistDC = (stage: HeistStage, law: number) => (stage === "lockout" ? 14 : 12) + 2 * law;
+export const heistDC = (stage: HeistStage, law: number) => (stage === "lockout" ? 12 : 10) + law;
 export const bribeCost = (value: number, law: number) => Math.round(value * 0.02 * (law + 1));
 export const heistLifted = (heist: Heist, minute: number) => heist.takeoffAt !== undefined && minute >= heist.takeoffAt;
 
@@ -2858,7 +3004,7 @@ export const WARES: Record<string, Wares> = {
   mounts: { label: "Mounts and beasts", categories: ["Mount"], lines: [3, 5], each: [1, 2] },
 };
 export const MERCHANT_WARES = ["general", "general", "arms", "tech", "medical", "leisure"];
-const ROLE_WARES: Record<string, string> = { bartender: "bar", mechanic: "tech", medic: "medical", dockmaster: "spacer", fence: "black", smuggler: "black" };
+const ROLE_WARES: Record<string, string> = { bartender: "bar", mechanic: "tech", medic: "medical", dockmaster: "spacer", "ticket agent": "spacer", fence: "black", smuggler: "black" };
 // What someone sells, if anything
 export const waresOf = (o: Pick<Occupant, "role" | "trade" | "disposition">): Wares | undefined =>
   o.disposition === "hostile" ? undefined : WARES[o.trade ?? ROLE_WARES[o.role] ?? (o.role === "merchant" ? "general" : "")];
@@ -4153,7 +4299,7 @@ export interface Ride {
   blocked?: string;
 }
 
-export function groundRides(args: { km: number; vehicles: PartyVehicle[]; companions: Companion[]; riders: number; transport: Transport; hire?: boolean; transit?: boolean }): Ride[] {
+export function groundRides(args: { km: number; vehicles: PartyVehicle[]; companions: Companion[]; riders: number; transport: Transport; hire?: boolean | "remote"; transit?: boolean }): Ride[] {
   const { km, vehicles, companions, riders, transport } = args;
   const rides: Ride[] = [];
   const pace = transport.pace.find((p) => p.pace === "Normal")?.milesPerHour ?? 3;
@@ -4171,7 +4317,10 @@ export function groundRides(args: { km: number; vehicles: PartyVehicle[]; compan
   }
   if (args.hire) {
     const mph = transport.vehicles.find((v) => v.name === "Landspeeder")?.mph ?? 220;
-    rides.push({ id: "hired", label: "Hired ride", minutes: Math.max(10, Math.round((km / (mph * KM_PER_MILE)) * 60) + 10), fare: 5 + Math.ceil(km / 4) });
+    // House rule: a town's cab or a village's hauler. The hauler (outposts, villages) is dearer and
+    // slower to find, 2 credits + 1 per 10 km in a town and double that out in the sticks
+    const remote = args.hire === "remote";
+    rides.push({ id: "hired", label: remote ? "Hired hauler" : "Hired ride", minutes: Math.max(10, Math.round((km / (mph * KM_PER_MILE)) * 60) + (remote ? 40 : 10)), fare: (2 + Math.ceil(km / 10)) * (remote ? 2 : 1) });
   }
   // The transit line between two hubs: a fast mass-transit train that anyone may take, at a fare
   // far under a hired ride's (house rule: the books price no fares)
@@ -4180,9 +4329,11 @@ export function groundRides(args: { km: number; vehicles: PartyVehicle[]; compan
 }
 
 // Who runs a ride for hire: only places with a port or a town's worth of traffic (house rule)
-export const hasRidesForHire = (world: World, settlementId: string): boolean => {
+export const hasRidesForHire = (world: World, settlementId: string): false | true | "remote" => {
   const s = world.areas[settlementId];
-  return !!s && s.kind === "settlement" && ["city", "town", "station"].includes(s.type);
+  if (!s || s.kind !== "settlement") return false;
+  if (["city", "town", "station"].includes(s.type)) return true;
+  return ["outpost", "village"].includes(s.type) ? "remote" : false;
 };
 
 // The vehicle a model name stands for (74-Z Speeder Bike is a speederbike)
