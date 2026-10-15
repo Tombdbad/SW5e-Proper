@@ -96,7 +96,10 @@ export const characters = pgTable("characters", {
   forceAlignment: text("force_alignment"), // Light, Dark, Universal, etc.
   deployments: json("deployments"), // For soldier class
   modifications: json("modifications"), // For engineer class
-  companionData: json("companion_data"), // For companions/pets
+  companionData: json("companion_data"), // The companions that go with the character (shared/logic Companion[])
+  // What the character is in the middle of: kit charges, a tool's boon until the next rest, a
+  // substance's high or low and the level of addiction (see "Gear" in REVIVAL_NOTES.md)
+  playState: json("play_state"),
   
   // Conditions & Status Effects
   conditions: json("conditions"), // Array of current conditions
@@ -161,6 +164,8 @@ export const insertCharacterSchema = z.object({
   techPowers: z.array(z.any()).optional(),
   feats: z.array(z.any()).optional(),
   toolProficiencies: z.array(z.string()).optional(),
+  companionData: z.any().optional(),
+  playState: z.any().optional(),
   personalityTraits: z.array(z.string()).optional(),
   ideals: z.array(z.string()).optional(),
   bonds: z.array(z.string()).optional(),
@@ -237,6 +242,7 @@ export const campaigns = pgTable("campaigns", {
   // SW5E Specific
   forcePresence: json("force_presence"), // { lightSideInfluence, darkSideInfluence, significantForceEvents }
   starships: json("starships"), // [ { name, class, stats, crew, location, status } ]
+  vehicles: json("vehicles"), // Speeders the party owns: [ { id, name, model, mph, areaId, status, ... } ]
   techLevel: json("tech_level"), // Technology level and availability
   factionInfluence: json("faction_influence"), // [ { factionId, influence, territory } ]
   planetaryConditions: json("planetary_conditions"), // Environmental and atmospheric conditions
@@ -302,6 +308,8 @@ export const insertCampaignSchema = z.object({
   sessionLogs: z.any().optional(),
   // Ships the party owns (shared/logic Ship)
   starships: z.any().optional(),
+  // Speeders the party owns and where they are parked (shared/logic PartyVehicle)
+  vehicles: z.any().optional(),
   // The campaign clock: { total } minutes of Galactic Standard Time (shared/logic, "Time")
   timeElapsed: z.any().optional(),
   // Renown with factions and dealings with traders (shared/logic, "Trade")

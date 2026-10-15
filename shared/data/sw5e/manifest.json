@@ -295,6 +295,17 @@
    "derivedFrom": "rulesPlayersHandbook",
    "languages": 27,
    "bytes": 1013
+  },
+  "transport": {
+   "derivedFrom": "rulesExpandedContent",
+   "mounts": 7,
+   "vehicles": 3,
+   "bytes": 2411
+  },
+  "tools": {
+   "derivedFrom": "rulesWretchedHives",
+   "count": 36,
+   "bytes": 36774
   }
  },
  "features": {

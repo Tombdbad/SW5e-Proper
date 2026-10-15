@@ -47,6 +47,8 @@ export const datasets = {
   rulesVariant: () => import("./sw5e/rulesVariant.json"),
   rulesExpandedContent: () => import("./sw5e/rulesExpandedContent.json"),
   travel: () => import("./sw5e/travel.json"),
+  transport: () => import("./sw5e/transport.json"),
+  tools: () => import("./sw5e/tools.json"),
   lookups: () => import("./sw5e/lookups.json"),
 } as const;
 

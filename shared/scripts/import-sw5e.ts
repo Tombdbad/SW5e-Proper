@@ -6,6 +6,7 @@
  * Run: npm run import:sw5e
  *   SW5E_CACHE=<dir>  read <dir>/<endpoint>.json instead of the network when the file exists
  *   SW5E_API=<url>    another API base (default https://sw5eapi.azurewebsites.net/api)
+ *   DERIVE_ONLY=1     rebuild only the datasets derived from book text (transport, tools), without the network
  */
 import fs from "fs";
 import path from "path";
@@ -259,6 +260,105 @@ function deriveTravel(starshipChapters: any[]) {
   };
 }
 
+
+// Ground transport from the Expanded Content equipment chapter (mounts, tack and vehicles) and
+// the Player's Handbook travel pace table; each mount's carrying capacity is in pounds, its
+// speed in feet, and a vehicle's speed in miles an hour
+function deriveTransport(expanded: any[], handbook: any[]) {
+  const chapter = expanded.find((c) => c.chapterName === "Equipment")?.contentMarkdown ?? "";
+  const all = tables(chapter);
+  const mountTable = all.find((t) => t.title === "Mounts and Other Animals");
+  const vehicleTable = all.find((t) => t.title === "Vehicles");
+  const tackTable = all.find((t) => /^Tack, Harness/.test(t.title));
+  if (!mountTable || !vehicleTable) throw new Error("could not read the Mounts and Vehicles tables from the Expanded Content");
+  const adventuring = handbook.find((c) => c.chapterName === "Adventuring")?.contentMarkdown ?? "";
+  const pace = tables(adventuring).find((t) => t.title === "Travel Pace");
+  if (!pace) throw new Error("could not read the Travel Pace table from the Player's Handbook");
+  return {
+    mounts: mountTable.rows.map((r) => ({ name: r[0], cost: number(r[1]) ?? 0, speed: number(r[3]) ?? 0, capacity: number(r[4]) ?? 0 })),
+    vehicles: vehicleTable.rows.map((r) => ({ name: r[0], cost: number(r[1]) ?? 0, mph: number(r[2]) ?? 0 })),
+    tack: (tackTable?.rows ?? [])
+      .filter((r) => r[1])
+      .map((r) => ({ name: r[0].replace(/&emsp;|_/g, "").replace(/\s+/g, " ").trim(), cost: r[1], weight: r[2] })),
+    pace: pace.rows.map((r) => ({ pace: r[0], feetPerMinute: number(r[1]) ?? 0, milesPerHour: number(r[2]) ?? 0, milesPerDay: number(r[3]) ?? 0, effect: r[4] ?? "" })),
+  };
+}
+
+// What each tool is for, from Wretched Hives' Tool Proficiencies chapter: the three skills it helps
+// (with proficiency in both, advantage), its special use (once a rest), and sample activities
+// with their DCs. Entries the book left as a template are kept with what they do have.
+function deriveTools(hives: any[], equipment: any[]) {
+  const markdown: string = hives.find((c) => c.chapterName === "Tool Proficiencies")?.contentMarkdown ?? "";
+  if (!markdown) throw new Error("could not find the Tool Proficiencies chapter in Wretched Hives");
+  const template = /\*(Tool description|Skill and tool description interaction|Feature that utilizes the tool in some capacity|Activity description)\.?\*/i;
+  const tableOfItems = tables(markdown).find((t) => t.title === "Item Specific Tools");
+  const worksOn = new Map((tableOfItems?.rows ?? []).map((r) => [r[0].toLowerCase(), r[1] ?? ""]));
+  const sections = markdown.split(/^## /m).slice(1).filter((s) => !/^(Tool Descriptions)\b/.test(s));
+  const tools: any[] = [];
+  for (const section of sections) {
+    const lines = section.split("\n");
+    const name = lines[0].trim();
+    if (!name) continue;
+    const body = lines.slice(1);
+    const intro: string[] = [];
+    const skills: { skill: string[]; text: string }[] = [];
+    let feature: { name: string; text: string } | undefined;
+    const activities: { activity: string; dc: number | null }[] = [];
+    let mode: "intro" | "skill" | "feature" | "activities" = "intro";
+    let current: { skill: string[]; text: string[] } | undefined;
+    let featureLines: string[] = [];
+    let featureName = "";
+    const closeSkill = () => {
+      if (current) {
+        const text = current.text.join(" ").trim();
+        if (text && !template.test(text) && !current.skill.some((x) => /^Skill \d$/.test(x))) skills.push({ skill: current.skill, text });
+      }
+      current = undefined;
+    };
+    for (const raw of body) {
+      const line = raw.replace(/^>\s?/, "").trim();
+      const heading = line.match(/^(#{3,6})\s+(.*)$/);
+      if (heading) {
+        const title = heading[2].replace(/\*/g, "").trim();
+        const level = heading[1].length;
+        if (/^Sample Activities/i.test(title)) { closeSkill(); mode = "activities"; continue; }
+        if (level === 4 && !/^Feature$/i.test(title) && !/^Hidden Compartment$/i.test(title) && mode !== "feature") {
+          closeSkill();
+          mode = "skill";
+          current = { skill: title.split(/\s*(?:,|\/|\band\b)\s*/).map((x) => x.trim()).filter(Boolean), text: [] };
+          continue;
+        }
+        closeSkill();
+        mode = "feature";
+        if (!/^Feature$/i.test(title)) featureName = title;
+        continue;
+      }
+      if (!line) continue;
+      if (mode === "activities") {
+        const row = line.match(/^\|\s*([^|]+?)\s*\|\s*([^|]*?)\s*\|/);
+        if (row && !/^[:\-\s]+$/.test(row[1]) && !/^Activity$/i.test(row[1]) && !template.test(row[1])) activities.push({ activity: row[1].replace(/\*/g, ""), dc: number(row[2]) ?? null });
+      } else if (mode === "skill" && current) current.text.push(line);
+      else if (mode === "feature") featureLines.push(line);
+      else if (mode === "intro" && !template.test(line)) intro.push(line);
+    }
+    closeSkill();
+    const featureText = featureLines.filter((l) => !template.test(l) && !(/^Over the course of a short or long rest, you can make a DC 15/.test(l) && l.length < 120 && !/[.]$/.test(l))).join(" ").trim();
+    if (featureText) feature = { name: featureName || "Special use", text: featureText };
+    const key = name.toLowerCase().replace(/’/g, "'");
+    const known = equipment.find((e) => e.name.toLowerCase() === key || e.name.toLowerCase() === key.replace(/ kit$/, " kit"));
+    tools.push({
+      name: known?.name ?? name,
+      kind: /gaming set/i.test(name) ? "gaming" : /musical instrument/i.test(name) ? "instrument" : /kit$/i.test(name) ? "kit" : "implements",
+      ...(intro.length ? { summary: intro.join(" ") } : {}),
+      ...(skills.length ? { skills } : {}),
+      ...(feature ? { feature } : {}),
+      ...(activities.length ? { activities } : {}),
+      ...(worksOn.get(key) && worksOn.get(key) !== "—" ? { worksOn: worksOn.get(key) } : {}),
+    });
+  }
+  return tools;
+}
+
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
   const versions: any[] = await fetchJson("dataVersion");
@@ -293,12 +393,29 @@ async function main() {
   manifest.datasets.travel = { derivedFrom: "rulesStarships", regions: travel.regions.length, bytes: write("travel", travel) };
   const lookups = deriveLookups(loaded.rulesPlayersHandbook, loaded);
   manifest.datasets.lookups = { derivedFrom: "rulesPlayersHandbook", languages: lookups.languages.length, bytes: write("lookups", lookups) };
+  const transport = deriveTransport(loaded.rulesExpandedContent, loaded.rulesPlayersHandbook);
+  manifest.datasets.transport = { derivedFrom: "rulesExpandedContent", mounts: transport.mounts.length, vehicles: transport.vehicles.length, bytes: write("transport", transport) };
+  const tools = deriveTools(loaded.rulesWretchedHives, loaded.equipment);
+  manifest.datasets.tools = { derivedFrom: "rulesWretchedHives", count: tools.length, bytes: write("tools", tools) };
   write("manifest", manifest);
   const total = Object.values(manifest.datasets).reduce((sum: number, d: any) => sum + d.bytes, 0);
   console.log(`\n${Object.keys(manifest.datasets).length} datasets, ${(total / 1048576).toFixed(1)} MB, data version ${manifest.dataVersion} -> ${OUT}`);
 }
 
-main().catch((error) => {
+// DERIVE_ONLY=1: rebuild only the datasets derived from book text, from the files already imported
+// (no network): the transport and tools sets and their manifest entries
+async function deriveOnly() {
+  const read = (name: string) => JSON.parse(fs.readFileSync(path.join(OUT, `${name}.json`), "utf8"));
+  const manifest = read("manifest");
+  const transport = deriveTransport(read("rulesExpandedContent"), read("rulesPlayersHandbook"));
+  manifest.datasets.transport = { derivedFrom: "rulesExpandedContent", mounts: transport.mounts.length, vehicles: transport.vehicles.length, bytes: write("transport", transport) };
+  const tools = deriveTools(read("rulesWretchedHives"), read("equipment"));
+  manifest.datasets.tools = { derivedFrom: "rulesWretchedHives", count: tools.length, bytes: write("tools", tools) };
+  write("manifest", manifest);
+  console.log(`transport: ${transport.mounts.length} mounts, ${transport.vehicles.length} vehicles; tools: ${tools.length}`);
+}
+
+(process.env.DERIVE_ONLY ? deriveOnly() : main()).catch((error) => {
   console.error("Import failed:", error);
   process.exit(1);
 });

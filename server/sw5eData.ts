@@ -72,7 +72,8 @@ export function getWorldCatalog(): Promise<WorldCatalog> {
     getDataset("starshipEquipment"),
     getDataset("travel"),
     getDataset("lookups"),
-  ]).then(([monsters, equipment, enhancedItems, species, starshipEquipment, travel, lookups]) => ({
+    getDataset("transport"),
+  ]).then(([monsters, equipment, enhancedItems, species, starshipEquipment, travel, lookups, transport]) => ({
     monsters,
     equipment,
     enhancedItems,
@@ -80,6 +81,7 @@ export function getWorldCatalog(): Promise<WorldCatalog> {
     starshipEquipment,
     travel,
     wealthByLevel: lookups.wealthByLevel,
+    transport,
     setting: settingSeed(),
   }));
   return catalog;

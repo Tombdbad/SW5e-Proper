@@ -1,0 +1,163 @@
+{
+ "mounts": [
+  {
+   "name": "Tauntaun",
+   "cost": 500,
+   "speed": 50,
+   "capacity": 480
+  },
+  {
+   "name": "Kaadu",
+   "cost": 450,
+   "speed": 40,
+   "capacity": 620
+  },
+  {
+   "name": "Rancor",
+   "cost": 2000,
+   "speed": 40,
+   "capacity": 3320
+  },
+  {
+   "name": "Sleen",
+   "cost": 500,
+   "speed": 40,
+   "capacity": 740
+  },
+  {
+   "name": "Varactyl",
+   "cost": 750,
+   "speed": 60,
+   "capacity": 2200
+  },
+  {
+   "name": "Bantha",
+   "cost": 1200,
+   "speed": 40,
+   "capacity": 8000
+  },
+  {
+   "name": "Dewback",
+   "cost": 900,
+   "speed": 50,
+   "capacity": 1140
+  }
+ ],
+ "vehicles": [
+  {
+   "name": "Airspeeder",
+   "cost": 14500,
+   "mph": 750
+  },
+  {
+   "name": "Landspeeder",
+   "cost": 10000,
+   "mph": 220
+  },
+  {
+   "name": "Speederbike",
+   "cost": 6000,
+   "mph": 300
+  }
+ ],
+ "tack": [
+  {
+   "name": "Barding (Tiny)",
+   "cost": "x 1/3",
+   "weight": "x 1/2"
+  },
+  {
+   "name": "Barding (Small or Medium)",
+   "cost": "x 1",
+   "weight": "x 1"
+  },
+  {
+   "name": "Barding (Large)",
+   "cost": "x 3",
+   "weight": "x 2"
+  },
+  {
+   "name": "Barding (Huge)",
+   "cost": "x 9",
+   "weight": "x 4"
+  },
+  {
+   "name": "Barding (Gargantuan)",
+   "cost": "x 27",
+   "weight": "x 8"
+  },
+  {
+   "name": "Bit and bridle",
+   "cost": "20 cr",
+   "weight": "1.00 lb"
+  },
+  {
+   "name": "Cart",
+   "cost": "150 cr",
+   "weight": "200.00 lb"
+  },
+  {
+   "name": "Feed (per day)",
+   "cost": "1 cr",
+   "weight": "10.00 lb"
+  },
+  {
+   "name": "Exotic",
+   "cost": "600 cr",
+   "weight": "40.00 lb"
+  },
+  {
+   "name": "Military",
+   "cost": "200 cr",
+   "weight": "30.00 lb"
+  },
+  {
+   "name": "Pack",
+   "cost": "50 cr",
+   "weight": "15.00 lb"
+  },
+  {
+   "name": "Riding",
+   "cost": "100 cr",
+   "weight": "25.00 lb"
+  },
+  {
+   "name": "Saddlebags",
+   "cost": "40 cr",
+   "weight": "8.00 lb"
+  },
+  {
+   "name": "Stabling (per day)",
+   "cost": "5 cr",
+   "weight": "—"
+  },
+  {
+   "name": "Wagon",
+   "cost": "350 cr",
+   "weight": "400.00 lb"
+  }
+ ],
+ "pace": [
+  {
+   "pace": "Fast",
+   "feetPerMinute": 400,
+   "milesPerHour": 4,
+   "milesPerDay": 30,
+   "effect": "-5 penalty to passive Wisdom (Perception) scores"
+  },
+  {
+   "pace": "Normal",
+   "feetPerMinute": 300,
+   "milesPerHour": 3,
+   "milesPerDay": 24,
+   "effect": ""
+  },
+  {
+   "pace": "Slow",
+   "feetPerMinute": 200,
+   "milesPerHour": 2,
+   "milesPerDay": 18,
+   "effect": "Able to use stealth"
+  }
+ ]
+}

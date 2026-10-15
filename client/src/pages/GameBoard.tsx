@@ -10,8 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
 import LocalMap, { FightScene, viewOf, usePartySpot, whereNow, useClock } from "@/components/Map/LocalMap";
-import PlayCombat from "@/components/Combat/PlayCombat";
-import { useCombat, rollDamage } from "@/lib/stores/useCombat";
+import PlayCombat, { type CombatItemOption } from "@/components/Combat/PlayCombat";
+import { useCombat, rollDamage, onPartySide } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
@@ -25,11 +25,32 @@ import {
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText,
   withPresence,
+  gearUse, toolFor, toolTrained, boonOf, gambleMode, gambleResult, GAMBLE_ROUNDS, GAMBLE_HOUSE_DC, GAMBLE_STAKE, GAMBLE_COMPLICATION, GAMBLE_COMPLICATIONS,
+  companionFrom, hireFee, wageFor, canHire, COMPANION_LIMIT, crOf, gentleDC, gentleLimit, isDroid, reprogramDC, FREEING, hitDieOfSize,
+  groundRides, kmOf, hasRidesForHire, SEATS, EXPLOSIVE_CONDITION_ROUNDS,
+  type GearUse, type ToolFacts, type Boon, type GambleApproach, type Companion, type CompanionKind, type PartyVehicle, type Vehicle, type Transport, type Ride,
   waresOf, stockOf, offerFor, attitudeOf, attitudeName, marketAt, haggleDC, isOpen, openingHours, addRenown, emptyStanding, ledgerFor, factionAt,
   type Standing, type Ledger, type Customer, type TradeLine,
   type Occupant,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship,
 } from "@shared/logic";
+
+// What the character is in the middle of, kept with the character (`playState`)
+interface PlayState {
+  // Uses of the kit that is open, by item name
+  charges?: Record<string, number>;
+  // The tool's special use prepared at the last rest, for one thing before the next
+  boon?: Boon;
+  // A dose of poison on the weapon
+  poison?: { dice: string; dc: number };
+  // A substance in the blood: a high until `ends` (clock minutes) or until it is used, then a low
+  substance?: { name: string; ability?: string; pool?: "tech" | "force"; phase: "high" | "low"; ends: number; lowMinutes: number; boost: number; reduce: number; temp?: string; wisdomDc: number; constitutionDc: number };
+  addiction?: number;
+  lastSubstance?: number;
+  protectedUntil?: number;
+  // Credits owed to the gaming tables
+  debt?: number;
+}
 
 // What each level of the watch means for the party (house rule, see shared/logic)
 const WATCH_NOTE = [
@@ -203,7 +224,12 @@ export default function GameBoard() {
   }, [campaign, campaignId]);
   // The world as it is just now: people where their routines put them, ships where their voyages
   // do (shared/logic "Routines"). Shown on the map and in the HUD; edits go to `world`.
-  const scene = useMemo(() => (world ? withPresence(world, clock) : null), [world, clock]);
+  // (with the party's companions and speeders, which the map draws with it)
+  const scene = useMemo(() => {
+    if (!world) return null;
+    const present = withPresence(world, clock);
+    return Object.assign(present, { party: character?.companionData?.party ?? [], parked: campaign?.vehicles ?? [] });
+  }, [world, clock, character?.companionData, campaign?.vehicles]);
   const hereNow: Area | null = scene && hereId ? scene.areas[hereId] ?? null : null;
 
   // Let time pass: the clock moves on and the new time goes with the next save
@@ -217,7 +243,11 @@ export default function GameBoard() {
   const proficiency = Math.ceil(1 + (Number(character?.level) || 1) / 4);
   const abilityCheck = (what: string, dc: number, abilities: string[], trained: boolean) => {
     const roll = d20();
-    const bonus = Math.max(...abilities.map((a) => modifier(character.abilityScores?.[a]))) + (trained ? proficiency : 0);
+    const best = abilities.reduce((a, b) => (modifier(character.abilityScores?.[b]) > modifier(character.abilityScores?.[a]) ? b : a), abilities[0]);
+    // A substance's extra d3 (a high) or d3 less (a low) for this ability; a high ends with its use
+    const s = (play.substance?.ability === best ? (play.substance.phase === "high" ? 1 : -1) : 0) * (die(3));
+    if (s > 0) setTimeout(() => endHigh("used on a check"), 0);
+    const bonus = modifier(character.abilityScores?.[best]) + (trained ? proficiency : 0) + s;
     const success = roll + bonus >= dc;
     toast[success ? "success" : "error"](`${what}: ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${roll + bonus} against DC ${dc}. ${success ? "Success." : "Failed."}`);
     return success;
@@ -260,12 +290,12 @@ export default function GameBoard() {
   // The 3D map: the place being looked at (the party's own, unless another was opened), and
   // whatever was last picked out on it
   const [viewId, setViewId] = useState<string | null>(null);
-  const [picked, setPickedNow] = useState<{ kind: "area" | "occupant" | "ship"; id: string } | null>(null);
+  const [picked, setPickedNow] = useState<{ kind: "area" | "occupant" | "ship" | "vehicle" | "companion"; id: string } | null>(null);
   // The card for what was picked lets taps through for a moment: it comes up over the lower part
   // of the map, where the second tap of a double tap would otherwise land on it. (Closed in the
   // same step as the pick, so that not even the next tap in the queue finds it open.)
   const [cardOpen, setCardOpen] = useState(true);
-  const setPicked = (next: { kind: "area" | "occupant" | "ship"; id: string } | null) => {
+  const setPicked = (next: { kind: "area" | "occupant" | "ship" | "vehicle" | "companion"; id: string } | null) => {
     setPickedNow(next);
     setCardOpen(false);
   };
@@ -323,13 +353,24 @@ export default function GameBoard() {
   };
 
   // Walk, drive or fly along an exit. A place nobody has been to is built on arrival.
-  const travel = (exit: Exit) => {
+  const travel = (exit: Exit, chosen?: Ride) => {
     if (!here || !world) return;
     const changes: Record<string, any> = { currentLocation: exit.to };
     const { ship: flying } = exit.needsShip ? tripBy(exit) : { ship: undefined };
-    const took = tripMinutes(exit, Number(flying?.hyperdriveClass) || 1);
+    // A route over the ground goes by the ride chosen (on foot, a mount, a speeder, a hired ride)
+    const rides = exit.needsShip ? [] : ridesFor(exit);
+    const ride = chosen ?? defaultRide(rides);
+    if (ride?.blocked) return void toast.error(`${ride.label}: ${ride.blocked}.`);
+    if (ride?.fare) {
+      if (ride.fare > (character.credits ?? 0)) return void toast.error(`A ride costs ${ride.fare} credits and you have ${character.credits ?? 0}.`);
+      saveCharacter({ credits: character.credits - ride.fare });
+      toast.info(`Ride paid: ${ride.fare} credits (house rule: the books price no fares).`);
+    }
+    if (ride?.vehicleId) changes.vehicles = vehicles.map((v) => (v.id === ride.vehicleId ? { ...v, areaId: exit.to } : v));
+    const took = ride ? ride.minutes : tripMinutes(exit, Number(flying?.hyperdriveClass) || 1);
     Object.assign(changes, pass(took));
-    if (took >= 60) toast.info(`${Math.round(took / 6) / 10} hours on the way${exit.needsShip && !exit.travel ? " (house rule: an hour between the surface and orbit)" : ""}: it is ${clockText(useClock.getState().minutes)}.`);
+    if (ride) toast.info(`${ride.label}: ${rideText(took)} to ${world.areas[exit.to]?.name}; it is ${clockText(useClock.getState().minutes)}.`);
+    else if (took >= 60) toast.info(`${Math.round(took / 6) / 10} hours on the way${exit.needsShip && !exit.travel ? " (house rule: an hour between the surface and orbit)" : ""}: it is ${clockText(useClock.getState().minutes)}.`);
     if (exit.needsShip) {
       const { ship, fare } = tripBy(exit);
       if (ship) {
@@ -362,7 +403,7 @@ export default function GameBoard() {
 
   // Take an exit, as the watch allows: those who have stopped the party bar every way but the
   // way back; past those who have not, it takes a Stealth check
-  const leaveBy = (exit: Exit) => {
+  const leaveBy = (exit: Exit, ride?: Ride) => {
     if (hostiles.length > 0 && !allowed && exit.to !== cameFrom) {
       if (alert >= ALERT.questioning) {
         toast.error("Enemies bar the way onward.");
@@ -371,7 +412,7 @@ export default function GameBoard() {
       if (!unseen("Slipping past")) return;
     }
     if (exit.locked) unlock(exit);
-    else travel(exit);
+    else travel(exit, ride);
   };
 
   // A door, a way out or a secret way walked up to on the map: go through it
@@ -438,12 +479,66 @@ export default function GameBoard() {
     }
   };
 
-  // Pick or slice a lock: Dexterity or Intelligence, trained with a security or slicer's kit
-  const unlock = (exit: Exit) => {
-    if (!world || !exit.pathId || !abilityCheck("Lock", exit.locked ?? 10, ["dexterity", "intelligence"], carries(/security kit|slicer's kit/i))) return;
+  // Pick or slice a lock: Dexterity or Intelligence, with a security or slicer's kit (proficiency
+  // when trained with it); a spike for that kit rerolls a failed check (Security spike, Computer spike)
+  const lockKit = () => (character.equipment ?? []).find((n: string) => /^(security kit|slicer's kit)$/i.test(n)) as string | undefined;
+  const openLock = (exit: Exit, extra: Record<string, any> = {}, alarm = false) => {
+    if (!world || !exit.pathId) return;
     const paths = world.paths.map((p) => (p.id === exit.pathId ? { ...p, locked: undefined } : p));
-    saveCampaign({ galaxyMap: { ...world, paths } });
+    let galaxyMap: World = { ...world, paths };
+    // A blast sets off the alarm of the building the party stands in
+    const buildingId = here?.kind === "room" ? here.parentId : here?.kind === "building" ? here.id : null;
+    if (alarm && buildingId) galaxyMap = updateArea(galaxyMap, buildingId, { alarm: true }).world;
+    saveCampaign({ galaxyMap, ...extra });
   };
+  const unlock = (exit: Exit) => {
+    if (!world || !exit.pathId) return;
+    const kit = lockKit();
+    const dc = exit.locked ?? 10;
+    let ok = abilityCheck("Lock", dc, ["dexterity", "intelligence"], !!kit && trainedWith(kit));
+    if (!ok && kit) {
+      const spike = (character.equipment ?? []).find((n: string) => { const g = gearOf(n); return g?.kind === "spike" && g.tool.toLowerCase() === kit.toLowerCase(); });
+      if (spike) {
+        saveCharacter({ equipment: consume(spike).equipment });
+        toast.info(`${spike} spent: reroll.`);
+        ok = abilityCheck("Lock (rerolled)", dc, ["dexterity", "intelligence"], trainedWith(kit));
+      }
+    }
+    if (ok) openLock(exit);
+  };
+  // Forcing a door instead (house rule: DC 5 over the lock's for a Strength check; a ram gives +4 and
+  // advantage with a helper (Ram, portable); a fusion cutter takes ten minutes for each 5 of the DC
+  // and no check; a charge, mine or grenade simply opens it). Noise brings the watch down on the room.
+  const forceDoor = (exit: Exit, how: "strength" | "ram" | "cutter" | "blast") => {
+    if (!world || !here || !exit.pathId) return;
+    const dc = (exit.locked ?? 10) + 5;
+    const noise = () => {
+      if (hostiles.length) setWatch(ALERT.attacking);
+    };
+    if (how === "cutter") {
+      const minutes = 10 * Math.ceil((exit.locked ?? 10) / 5);
+      openLock(exit, pass(minutes));
+      return void toast.success(`The fusion cutter takes ${minutes} minutes, and the way is open.`);
+    }
+    if (how === "blast") {
+      const bomb = (character.equipment ?? []).find((n: string) => gearOf(n)?.kind === "explosive");
+      if (!bomb) return;
+      saveCharacter({ equipment: consume(bomb).equipment });
+      openLock(exit, {}, true);
+      noise();
+      return void toast.success(`${bomb} blows the lock. Everyone nearby heard it.`);
+    }
+    const ram = how === "ram";
+    const helper = party.some((c) => c.hp > 0 && c.kind !== "beast");
+    const first = d20();
+    const roll = ram && helper ? Math.max(first, d20()) : first;
+    const bonus = modifier(character.abilityScores?.strength) + (ram ? 4 : 0) + (substanceFor("strength") || 0);
+    const ok = roll + bonus >= dc;
+    toast[ok ? "success" : "error"](`${ram ? "Portable ram" : "Shoulder it"} (Strength${ram && helper ? ", helped: advantage" : ""}): ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${roll + bonus} against DC ${dc}. ${ok ? "It gives." : "It holds."} Noisy.`);
+    noise();
+    if (ok) openLock(exit);
+  };
+
 
   // Look for hidden ways and caches: Wisdom (Perception)
   const search = () => {
@@ -552,6 +647,15 @@ export default function GameBoard() {
       range: ranged?.range,
       // For the token: a lightsaber for those who use the Force
       role: (character?.forcePowers ?? []).length ? "force" : "player",
+      // What a tool prepared at the last rest gives, a dose of poison on the weapon, and a substance
+      boons: {
+        attack: play.boon?.kind === "attack" && weaponFits(play.boon) ? play.boon.die : undefined,
+        damage: play.boon?.kind === "damage" && play.boon.die && weaponFits(play.boon) ? play.boon.die : undefined,
+        damageFlat: play.boon?.kind === "damage" && !play.boon.die && weaponFits(play.boon) ? Math.max(0, modifier(character.abilityScores?.intelligence)) : undefined,
+        ac: play.boon?.kind === "ac" ? play.boon.die : undefined,
+        poison: play.poison,
+      },
+      high: play.substance?.ability || play.substance?.temp ? { name: play.substance.name, ability: play.substance.ability, rounds: addictionLevel >= 2 ? 5 : 10, temp: play.substance.temp, low: play.substance.phase === "low" } : undefined,
       // Armor picked up since the sheet was last worked out counts too
       // (once armor has been put on or taken off by choice, the sheet's class is what counts)
       armorClass: equippedOf(character) ? character.armorClass : Math.max(character.armorClass, calculateArmorClass(character.abilityScores, character.equipment ?? [])),
@@ -634,6 +738,7 @@ export default function GameBoard() {
         open: !here.layout,
       },
       cameIn ? { x: cameIn.x, y: cameIn.y } : undefined,
+      party.filter((c) => c.hp > 0).map(allyOf),
     );
   };
 
@@ -660,10 +765,11 @@ export default function GameBoard() {
     let slain = 0;
     let xp = 0;
     let fallenKind = false;
+    const fightNow = useCombat.getState();
     if (areaId && world?.areas[areaId]) {
       const area = world.areas[areaId];
       const fight = useCombat.getState();
-      const remaining = fight.combatants.length ? fight.combatants.filter((c) => !c.isPlayer).map((c) => ({ id: c.id, hp: c.hp })) : fight.remains;
+      const remaining = fight.combatants.length ? fight.combatants.filter((c) => !onPartySide(c)).map((c) => ({ id: c.id, hp: c.hp })) : fight.remains;
       const { occupants, gear, kept, slain: down, xp: earned, people, changed } = afterFight(area, remaining);
       slain = down;
       xp = earned;
@@ -691,6 +797,41 @@ export default function GameBoard() {
         saveCampaign({ factionInfluence: renown });
       }
     }
+    // Companions keep the hit points they ended with; those of flesh and blood who fell make death
+    // saving throws at once (a droid is only powered down; a traumakit or medpac in the fight saved them)
+    const survivors: Companion[] = [];
+    const allyNow = fightNow.combatants.length ? fightNow.combatants.filter((c) => c.ally).map((c) => ({ id: String(c.id), hp: c.hp })) : fightNow.allyRemains.map((a) => ({ id: String(a.id), hp: a.hp }));
+    for (const c of party) {
+      const now = allyNow.find((a) => a.id === c.id);
+      let hp = now ? now.hp : c.hp;
+      if (hp <= 0 && isOrganic(c) && c.hp > 0) {
+        let good = 0;
+        let bad = 0;
+        while (good < 3 && bad < 3) {
+          const d = die(20);
+          if (d === 20) { good = 3; hp = 1; break; }
+          if (d >= 10) good++; else bad += d === 1 ? 2 : 1;
+        }
+        if (bad >= 3) {
+          toast.error(`${c.name} did not make it.`);
+          continue;
+        }
+        toast.info(`${c.name} fell and is stable, at ${hp} hit point${hp === 1 ? "" : "s"}.`);
+      }
+      survivors.push({ ...c, hp: Math.max(0, hp) });
+    }
+    // What was used up: prepared dice and poison
+    const spent = fightNow.spent;
+    const state: PlayState = { ...play };
+    if (spent.length) {
+      if (play.boon && spent.includes(play.boon.kind as any)) state.boon = undefined;
+      if (spent.includes("poison")) state.poison = undefined;
+    }
+    if (party.length || spent.length) saveCharacter({ playState: state, ...(party.length ? { companionData: { ...(character.companionData ?? {}), party: survivors } } : {}) });
+    // A fight is a minute at least (house rule: ten rounds a minute)
+    saveCampaign(pass(Math.max(1, Math.ceil(fightNow.round / 10))));
+    // A high used in the fight is over with it
+    if (play.substance?.phase === "high") setTimeout(() => endHigh("the fight is over"), 50);
     if (outcome === "dead") {
       saveCharacter({ currentHp: 0, conditions: ["Dead"] });
       toast.error(`${character.name} has died.`);
@@ -703,7 +844,15 @@ export default function GameBoard() {
         const refuge = (world && areaId && safeHarbour(world, areaId)) || cameFrom;
         if (world && refuge && world.areas[refuge]) saveCampaign({ currentLocation: refuge });
         toast.info(`Left for dead, you come to hours later with 1 hit point${refuge && world?.areas[refuge] ? `, in ${world.areas[refuge].name}.` : "."}`);
-      } else if (outcome === "victory") toast.success(`Victory${xp ? `: ${xp} XP` : ""}`);
+      } else if (outcome === "victory") {
+        const me = fightNow.combatants.find((c) => c.isPlayer);
+        if (me && me.hp <= 0) {
+          lastSavedHp.current = 1;
+          saveCharacter({ currentHp: 1 });
+          toast.info("Your companions pull you through: 1 hit point.");
+        }
+        toast.success(`Victory${xp ? `: ${xp} XP` : ""}`);
+      }
       else if (slain) toast.info(`${slain} of them fell before you left; the rest are as hurt as you left them.`);
     }
   }, [inCombat, outcome]);
@@ -714,6 +863,21 @@ export default function GameBoard() {
   const { data: equipmentData = [] } = useQuery<any[]>({
     queryKey: ["equipment-for-trade"],
     queryFn: async () => (await fetch("/api/sw5e/equipment?fields=name,cost,equipmentCategory,weaponClassification,armorClassification,description")).json(),
+    staleTime: Infinity,
+  });
+  const { data: toolData = [] } = useQuery<ToolFacts[]>({
+    queryKey: ["tools-data"],
+    queryFn: async () => (await fetch("/api/sw5e/tools")).json(),
+    staleTime: Infinity,
+  });
+  const { data: transport } = useQuery<Transport>({
+    queryKey: ["transport-data"],
+    queryFn: async () => (await fetch("/api/sw5e/transport")).json(),
+    staleTime: Infinity,
+  });
+  const { data: monsterNames = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["monster-names"],
+    queryFn: async () => (await fetch("/api/sw5e/monsters?fields=id,name")).json(),
     staleTime: Infinity,
   });
   const today = dayOf(clock);
@@ -731,6 +895,7 @@ export default function GameBoard() {
       ...(dealt ? { factionInfluence: { ...standing, dealings: { ...standing.dealings, [traderId]: (standing.dealings[traderId] ?? 0) + 1 } } } : {}),
     });
   const buy = (trader: Occupant, line: TradeLine) => {
+    if (line.category === "Vehicle" || line.category === "Mount") return void buyTransport(trader, line);
     if (line.price > (character.credits ?? 0)) {
       toast.error(`${line.name} costs ${line.price} credits and you have ${character.credits ?? 0}.`);
       return;
@@ -810,23 +975,53 @@ export default function GameBoard() {
   // tech points come back. Long: all hit points and power points, and half the Hit Dice, come back.
   const hitDie = klass?.hitDie ?? 8;
   const hitDiceLeft = Math.max(0, level - (character?.hitDiceUsed ?? 0));
+  // What a rest does for the companions: each spends a Hit Die on a short rest (the fallen are
+  // brought round with 1 hit point), all hit points back on a long one; a meal adds to a short
+  // rest's healing, and droids mended by astrotech's implements get a die more
+  const restParty = (long: boolean, work: ReturnType<typeof workTool>): { party: Companion[]; notes: string[] } => {
+    const notes: string[] = [];
+    const next = party.map((c) => {
+      if (long) return { ...c, hp: c.maxHp };
+      if (c.hp >= c.maxHp && c.hp > 0) return c;
+      const base = Math.max(1, die(hitDieOfSize(c.size)) + (c.saves?.constitution ?? 0));
+      const extra = (work?.mealHp ?? 0) + (work?.repairDie && !isOrganic(c) ? die(work.repairDie) : 0);
+      return { ...c, hp: Math.min(c.maxHp, Math.max(c.hp, 0) + base + extra) };
+    });
+    if (party.length) notes.push(long ? "companions back to full" : "companions tended");
+    return { party: next, notes };
+  };
   const shortRest = () => {
     if (!character || inCombat) return;
-    const changes: Record<string, number> = {};
+    const changes: Record<string, any> = {};
     const notes: string[] = [];
     if (klass?.casterType === "Tech" && character.currentForcePoints < character.maxForcePoints) {
       changes.currentForcePoints = character.maxForcePoints;
       notes.push("tech points restored");
     }
+    const work = workTool("short");
+    let spentDie = false;
     if (hitDiceLeft > 0 && character.currentHp < character.maxHp) {
-      const healed = Math.max(0, rollDamage(`1d${hitDie}`, false) + modifier(character.abilityScores?.constitution));
+      const healed = Math.max(0, rollDamage(`1d${hitDie}`, false) + modifier(character.abilityScores?.constitution)) + (work?.mealHp ?? 0);
       changes.currentHp = lastSavedHp.current = Math.min(character.maxHp, character.currentHp + healed);
       changes.hitDiceUsed = (character.hitDiceUsed ?? 0) + 1;
+      spentDie = true;
       notes.push(`a Hit Die (d${hitDie}) restores ${healed} hit points`);
     }
-    if (Object.keys(changes).length) saveCharacter(changes);
+    // Resting clears what was prepared before, and a coat of poison dries
+    let state: PlayState = { ...play, boon: undefined, poison: undefined };
+    if (work) {
+      if (work.boon) state.boon = work.boon;
+      if (work.food) Object.assign(changes, { equipment: consume(work.food).equipment });
+      if (work.herbal && (character.conditions ?? []).some((c: string) => /poison|disease/i.test(c))) changes.conditions = (character.conditions ?? []).filter((c: string) => !/poison|disease/i.test(c));
+      notes.push(work.note);
+    }
+    const healed = restParty(false, work);
+    notes.push(...healed.notes);
+    if (spentDie || Object.keys(changes).length || party.length || state.boon !== play.boon || play.poison) {
+      saveCharacter({ ...changes, playState: state, ...(party.length ? { companionData: { ...(character.companionData ?? {}), party: healed.party } } : {}) });
+    }
     saveCampaign(pass(60));
-    toast.info(`Short rest (1 hour): ${notes.join("; ") || (hitDiceLeft ? "nothing to recover" : "no Hit Dice left")}.`);
+    toast.info(`Short rest (1 hour): ${notes.filter(Boolean).join("; ") || (hitDiceLeft ? "nothing to recover" : "no Hit Dice left")}.`);
   };
   const rest = async () => {
     if (!character || inCombat) return;
@@ -836,13 +1031,28 @@ export default function GameBoard() {
     }
     lastSavedHp.current = character.maxHp;
     lastSavedPoints.current = character.maxForcePoints;
+    const work = workTool("long");
+    const state: PlayState = { ...play, boon: undefined, poison: undefined };
+    if (work?.boon) state.boon = work.boon;
+    const regained = Math.max(1, Math.floor(level / 2)) + (work?.mealDice ?? 0);
+    const extra: Record<string, any> = {};
+    if (work?.food) extra.equipment = consume(work.food).equipment;
+    const poisoned = work?.herbal && (character.conditions ?? []).some((c: string) => /poison|disease/i.test(c));
+    if (poisoned) extra.conditions = (character.conditions ?? []).filter((c: string) => !/poison|disease/i.test(c));
+    // A day without a substance, and a long rest, may lower an addiction
+    const clean = detox();
+    if (clean.playState) state.addiction = clean.playState.addiction;
+    const healed = restParty(true, work);
     await saveCharacter({
       currentHp: character.maxHp,
       currentForcePoints: character.maxForcePoints,
-      hitDiceUsed: Math.max(0, (character.hitDiceUsed ?? 0) - Math.max(1, Math.floor(level / 2))),
+      hitDiceUsed: Math.max(0, (character.hitDiceUsed ?? 0) - regained),
+      playState: state,
+      ...(party.length ? { companionData: { ...(character.companionData ?? {}), party: healed.party } } : {}),
+      ...extra,
     });
     saveCampaign({ ...pass(8 * 60), ...(world && Object.values(world.areas).some((a) => a.alarm) ? { galaxyMap: clearAlarms(world) } : {}) });
-    toast.info("Long rest (8 hours): hit points and power points restored, half your Hit Dice regained. Alarms have died down.");
+    toast.info(`Long rest (8 hours): hit points and power points restored, ${regained} Hit Dice regained.${work?.note ? ` ${work.note}.` : ""}${party.length ? " Your companions are back to full." : ""} Alarms have died down.`);
   };
 
   // Wait: an hour, or until the next morning (07:00) or evening (18:00)
@@ -875,6 +1085,789 @@ export default function GameBoard() {
     toast.success(`${power.name}: ${healed} hit points regained.`);
   };
 
+  // ---------------------------------------------------------------------------------------------
+  // Gear, tools, companions and vehicles (shared/logic "Gear, tools, companions and ground
+  // transport"). What an item does is read from its description; what the books leave open is a
+  // house rule and says so where it is used.
+  // ---------------------------------------------------------------------------------------------
+  const play: PlayState = (character?.playState ?? {}) as PlayState;
+  const party: Companion[] = Array.isArray(character?.companionData?.party) ? character.companionData.party : [];
+  const factsOf = (name: string) => equipmentData.find((e) => e.name === name);
+  const gearOf = (name: string): GearUse | undefined => gearUse({ name, equipmentCategory: factsOf(name)?.equipmentCategory, description: factsOf(name)?.description });
+  const die = (sides: number) => Math.floor(Math.random() * sides) + 1;
+  const clockNow = () => useClock.getState().minutes;
+  const speed = (what: string) => toast.info(what);
+
+  // One of an item gone, or a use of the kit that is open
+  const consume = (name: string, uses?: number): { equipment: string[]; charges: Record<string, number> } => {
+    const equipment: string[] = [...(character.equipment ?? [])];
+    const charges = { ...(play.charges ?? {}) };
+    const at = equipment.indexOf(name);
+    if (at < 0) return { equipment, charges };
+    if (uses && uses > 1) {
+      const used = (charges[name] ?? 0) + 1;
+      if (used >= uses) {
+        equipment.splice(at, 1);
+        charges[name] = 0;
+      } else charges[name] = used;
+    } else equipment.splice(at, 1);
+    return { equipment, charges };
+  };
+  const usesLeft = (name: string, uses?: number) => (uses && uses > 1 ? uses - (play.charges?.[name] ?? 0) : undefined);
+
+  const saveParty = (next: Companion[], extra: Record<string, any> = {}) =>
+    saveCharacter({ companionData: { ...(character.companionData ?? {}), party: next }, ...extra });
+  const isOrganic = (c: { creature?: string }) => !/droid|construct/i.test(c.creature ?? "");
+
+  // What the character can do for a creature with an item: whom, and how much a die gives
+  const hitDieOfCharacter = hitDie;
+  const healFor = (who: "self" | Companion, max = false) => {
+    const sides = who === "self" ? hitDieOfCharacter : hitDieOfSize(who.size);
+    const bonus = who === "self" ? modifier(character.abilityScores?.constitution) : who.saves?.constitution ?? 0;
+    return Math.max(1, (max ? sides : die(sides)) + bonus);
+  };
+
+  // A boon is for one thing and ends with the next rest
+  const clearBoon = (state: PlayState = play): PlayState => ({ ...state, boon: undefined });
+
+  // Use an item on the character or a companion, away from a fight
+  const useOn = (name: string, who: "self" | string) => {
+    if (!character || inCombat) return;
+    const use = gearOf(name);
+    if (!use) return;
+    const companion = who === "self" ? undefined : party.find((c) => c.id === who);
+    const spent = consume(name, "uses" in use ? use.uses : undefined);
+    const state: PlayState = { ...play, charges: spent.charges };
+    const changes: Record<string, any> = { equipment: spent.equipment };
+    let note = "";
+    if (use.kind === "heal" || use.kind === "repair") {
+      const droidTarget = companion ? !isOrganic(companion) : false;
+      if (use.kind === "heal" && droidTarget) return speed("A medpac works on beasts and humanoids, not on droids or constructs.");
+      if (use.kind === "repair" && !droidTarget) return speed("A repair kit is for droids and constructs.");
+      const maxed = use.kind === "heal" && play.boon?.kind === "medpac";
+      const amount = healFor(companion ?? "self", maxed);
+      if (maxed) changes.playState = { ...state, boon: undefined };
+      if (companion) {
+        saveParty(party.map((c) => (c.id === companion.id ? { ...c, hp: Math.min(c.maxHp, c.hp + amount) } : c)), changes);
+        note = `${companion.name} regains ${amount} hit points${companion.hp <= 0 ? " and is back on their feet" : ""}`;
+      } else {
+        if (use.kind === "repair") return speed("You are not a droid.");
+        lastSavedHp.current = Math.min(character.maxHp, character.currentHp + amount);
+        saveCharacter({ ...changes, currentHp: lastSavedHp.current, playState: changes.playState ?? state });
+        note = `${amount} hit points regained${maxed ? " (the prepared medpac gives the most it can)" : ""}`;
+      }
+    } else if (use.kind === "stabilize") {
+      if (!companion) return speed("That is for someone who has fallen: use it on a companion.");
+      if ((use.target === "droid") === isOrganic(companion)) return speed(use.target === "droid" ? "An emergency battery is for droids." : "A traumakit is for beasts and people, not droids.");
+      if (companion.hp > 0) return speed(`${companion.name} is on their feet.`);
+      saveParty(party.map((c) => (c.id === companion.id ? { ...c, hp: 1 } : c)), { ...changes, playState: state });
+      note = `${companion.name} is stable, with 1 hit point`;
+    } else if (use.kind === "antidote") {
+      const conditions: string[] = character.conditions ?? [];
+      const cured = conditions.includes("Poisoned");
+      saveCharacter({ ...changes, playState: { ...state, protectedUntil: clockNow() + 60 }, ...(cured ? { conditions: conditions.filter((c) => c !== "Poisoned") } : {}) });
+      note = cured ? "the poison is neutralized" : "advantage on saving throws against poison for an hour";
+    } else if (use.kind === "substance") {
+      const next = takeSubstance(name, use, state);
+      saveCharacter({ ...changes, ...next.changes, playState: next.state });
+      note = next.note;
+    } else return;
+    toast.success(`${name}${usesLeft(name, "uses" in use ? use.uses : undefined) !== undefined ? ` (${usesLeft(name, "uses" in use ? use.uses : undefined)! > 0 && spent.equipment.includes(name) ? usesLeft(name, "uses" in use ? use.uses : undefined) : 0} uses left)` : ""}: ${note}.`);
+  };
+
+  // Substances (Wretched Hives, "Substances"): a high for a minute, then a Wisdom save against a
+  // low of ten minutes, then a Constitution save against addiction. House rule: out of a fight the
+  // high waits for the next ability check, and ends with it (the map clock would run it out unused).
+  const addictionLevel = play.addiction ?? 0;
+  const takeSubstance = (name: string, use: Extract<GearUse, { kind: "substance" }>, state: PlayState) => {
+    const now = clockNow();
+    const changes: Record<string, any> = {};
+    let note = "";
+    let addiction = addictionLevel;
+    // Taking another while high or low: a saving throw against addiction first
+    const busy = state.substance;
+    if (busy) {
+      const roll = die(20) + modifier(character.abilityScores?.constitution);
+      if (roll < use.constitutionDc) {
+        addiction = Math.min(6, addiction + 1);
+        note += `Addiction save failed (${roll} against ${use.constitutionDc}): level ${addiction}. `;
+      }
+    }
+    const carriedLow = busy?.phase === "low" ? Math.max(0, busy.ends - now) : 0;
+    const lowMinutes = 10 * (addiction >= 3 ? 4 : addiction >= 1 ? 2 : 1) + carriedLow;
+    const boost = use.poolDice ? Math.max(1, rollDamage(use.poolDice, false) >> (addiction >= 4 ? 1 : 0)) : 0;
+    const reduce = use.lowDice ? rollDamage(use.lowDice, false) : 0;
+    const high = { name, ability: use.ability, pool: use.pool, phase: "high" as const, ends: now + 10, lowMinutes, boost, reduce, temp: use.temp, wisdomDc: use.wisdomDc, constitutionDc: use.constitutionDc };
+    if (boost) {
+      // Current and maximum tech or force points rise together
+      changes.maxForcePoints = (character.maxForcePoints ?? 0) + boost;
+      changes.currentForcePoints = (character.currentForcePoints ?? 0) + boost;
+      lastSavedPoints.current = changes.currentForcePoints;
+    }
+    note += `a high${use.ability ? ` (+d3 on ${use.ability} checks, attacks and saves)` : ""}${boost ? ` (+${boost} points)` : ""}${use.temp ? ` (${use.temp} temporary hit points each turn in a fight)` : ""}, until your next check or fight`;
+    return { state: { ...state, addiction, substance: high, lastSubstance: now }, changes, note };
+  };
+
+  // The high ends (it was used, or ten minutes went by): a Wisdom saving throw against the low
+  const endHigh = (reason: string) => {
+    const s = play.substance;
+    if (!character || !s || s.phase !== "high") return;
+    const changes: Record<string, any> = {};
+    if (s.boost) {
+      changes.maxForcePoints = Math.max(0, (character.maxForcePoints ?? 0) - s.boost);
+      changes.currentForcePoints = Math.max(0, Math.min(changes.maxForcePoints, (character.currentForcePoints ?? 0) - s.boost));
+      lastSavedPoints.current = changes.currentForcePoints;
+    }
+    const roll = die(20) + modifier(character.abilityScores?.wisdom);
+    const saved = roll >= s.wisdomDc;
+    if (saved) {
+      saveCharacter({ ...changes, playState: { ...play, substance: undefined } });
+      toast.info(`${s.name}: the high ends (${reason}). Wisdom save ${roll} against ${s.wisdomDc}: no low.`);
+      return;
+    }
+    // The low reverses the high
+    if (s.boost) {
+      changes.maxForcePoints = Math.max(0, changes.maxForcePoints - s.boost);
+      changes.currentForcePoints = Math.max(0, Math.min(changes.maxForcePoints, changes.currentForcePoints - s.boost));
+    }
+    if (s.reduce) {
+      changes.maxHp = Math.max(1, character.maxHp - s.reduce);
+      changes.currentHp = lastSavedHp.current = Math.max(1, Math.min(changes.maxHp, character.currentHp - s.reduce));
+    }
+    saveCharacter({ ...changes, playState: { ...play, substance: { ...s, phase: "low", ends: clockNow() + s.lowMinutes } } });
+    toast.error(`${s.name}: the high ends (${reason}). Wisdom save ${roll} against ${s.wisdomDc}: a low for ${s.lowMinutes} minutes (-d3 with ${s.ability ?? "its ability"})${s.reduce ? `, ${s.reduce} fewer hit points` : ""}.`);
+  };
+  // The low ends: a Constitution saving throw against addiction
+  const endLow = () => {
+    const s = play.substance;
+    if (!character || !s || s.phase !== "low") return;
+    const changes: Record<string, any> = {};
+    if (s.boost) {
+      changes.maxForcePoints = (character.maxForcePoints ?? 0) + s.boost;
+    }
+    if (s.reduce) changes.maxHp = character.maxHp + s.reduce;
+    const roll = die(20) + modifier(character.abilityScores?.constitution);
+    const hooked = roll < s.constitutionDc;
+    const addiction = Math.min(6, addictionLevel + (hooked ? 1 : 0));
+    saveCharacter({ ...changes, playState: { ...play, substance: undefined, addiction } });
+    toast[hooked ? "error" : "info"](`${s.name}: the low ends. Constitution save ${roll} against ${s.constitutionDc}: ${hooked ? `you are hooked (addiction level ${addiction})` : "no addiction"}.`);
+  };
+  // Time moves a substance along; ten minutes of waiting ends a high nobody used
+  useEffect(() => {
+    const s = play.substance;
+    if (!character || !s || inCombat) return;
+    if (s.phase === "high" && clock >= s.ends) endHigh("ten minutes went by");
+    else if (s.phase === "low" && clock >= s.ends) endLow();
+  }, [clock, play.substance?.phase, play.substance?.ends, inCombat]);
+  // What a high or a low adds to a check with an ability: +d3 on a high (which then ends), -d3 on a low
+  const substanceFor = (ability: string): number => {
+    const s = play.substance;
+    if (!s || s.ability !== ability) return 0;
+    return s.phase === "high" ? die(3) : -die(3);
+  };
+
+  // Abstaining for a day and a long rest: a Wisdom save to lower the level of addiction (see rest)
+  const detox = (): Record<string, any> => {
+    if (!addictionLevel || play.substance) return {};
+    const last = play.lastSubstance ?? -Infinity;
+    if (clockNow() - last < DAY) return {};
+    const roll = die(20) + modifier(character.abilityScores?.wisdom);
+    const dc = 10 + addictionLevel;
+    if (roll >= dc) {
+      toast.success(`A day without: Wisdom save ${roll} against ${dc}. Addiction falls to level ${addictionLevel - 1}.`);
+      return { playState: { ...play, addiction: addictionLevel - 1 } };
+    }
+    toast.info(`A day without: Wisdom save ${roll} against ${dc}. The craving holds.`);
+    return {};
+  };
+
+  // Poison on a weapon (see Medical: Poison): a dose lasts the fight it is used in
+  const coatWeapon = (name: string) => {
+    const use = gearOf(name);
+    if (use?.kind !== "poison") return;
+    const wielded = carriedWeapons(character).find((w) => /vibro|launcher|knife|blade|sword/i.test(`${w.type} ${w.name}`) && !w.ranged) ?? carriedWeapons(character).find((w) => /launcher/i.test(w.name));
+    if (!wielded) return speed("Poison goes on a vibroweapon, a slug cartridge or a wrist launcher dart: you carry none in hand.");
+    const spent = consume(name);
+    saveCharacter({ equipment: spent.equipment, playState: { ...play, poison: { dice: use.dice, dc: use.dc } } });
+    toast.success(`${wielded.name} is coated: the next hit adds ${use.dice} poison damage (Constitution save DC ${use.dc} for half).`);
+  };
+
+  // ---- Tools (Wretched Hives, "Tool Proficiencies")
+  const toolInfo = (name: string) => toolFor(name, factsOf(name)?.equipmentCategory, toolData);
+  const trainedWith = (name: string) => toolTrained(character, name, factsOf(name)?.equipmentCategory);
+  const toolsCarried: string[] = Array.from(new Set<string>((character?.equipment ?? []).filter((n: string) => ["Kit", "Tool", "GamingSet", "MusicalInstrument"].includes(factsOf(n)?.equipmentCategory ?? ""))));
+  const setsCarried = toolsCarried.filter((n) => factsOf(n)?.equipmentCategory === "GamingSet");
+  const instrumentsCarried = toolsCarried.filter((n) => factsOf(n)?.equipmentCategory === "MusicalInstrument");
+  // A check with a tool: the ability (Intelligence unless said), with proficiency when trained with
+  // the tool and advantage when also trained in a skill the tool is for (house rule: the book
+  // leaves it to the GM, "consider allowing the character to make the check with advantage")
+  const toolRoll = (name: string, dc: number, what: string, ability = "intelligence", extra = 0) => {
+    const info = toolInfo(name);
+    const trained = trainedWith(name);
+    const skillNames = (info?.skills ?? []).flatMap((s) => s.skill.map((x) => x.toLowerCase()));
+    const edge = trained && skillNames.some((sk) => skilled(sk));
+    const first = die(20);
+    const roll = edge ? Math.max(first, die(20)) : first;
+    const high = substanceFor(ability);
+    if (high > 0 && play.substance?.phase === "high") setTimeout(() => endHigh("used on a check"), 0);
+    const bonus = modifier(character.abilityScores?.[ability]) + (trained ? proficiency : 0) + high + extra;
+    const total = roll + bonus;
+    const success = total >= dc;
+    toast[success ? "success" : "error"](`${what} (${name}${trained ? "" : ", untrained"}${edge ? ", advantage" : ""}): ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against DC ${dc}. ${success ? "Success." : "Failed."}`);
+    return { success, total, roll };
+  };
+
+  // A tool's special use is worked at a rest, once. The tool chosen for the coming rest:
+  const [restTool, setRestTool] = useState("");
+  const workableTools = toolsCarried.filter((n) => {
+    const info = toolInfo(n);
+    return !!info?.feature && trainedWith(n) && !!boonOf(info, proficiency);
+  });
+  const weaponFits = (boon: Boon) => {
+    if (!boon.weapon) return true;
+    const kinds = carriedWeapons(character).map((w) => `${w.type} ${w.name}`.toLowerCase());
+    const wanted = boon.weapon === "blaster or vibroweapon" ? /blaster|vibro/ : boon.weapon === "lightweapon" ? /light/ : /vibro/;
+    return kinds.some((k) => wanted.test(k));
+  };
+  // What the chosen tool does for this rest: the check (DC 15) and what it gives. Returns what the
+  // rest should add: a prepared boon for the next fight, extra healing from a meal, a cure.
+  const workTool = (rest: "short" | "long") => {
+    if (!restTool || !toolsCarried.includes(restTool)) return null;
+    const info = toolInfo(restTool);
+    const boon = info ? boonOf(info, proficiency) : undefined;
+    if (!info || !boon) return null;
+    const result: { boon?: Boon; mealHp?: number; mealDice?: number; herbal?: boolean; repairDie?: number; credit?: number; note: string; food?: string } = { note: "" };
+    if (boon.kind === "meal") {
+      const food = (character.equipment ?? []).find((n: string) => /rations/i.test(n));
+      if (!food) {
+        toast.error("A meal needs food: you carry no rations.");
+        return null;
+      }
+      result.food = food;
+    }
+    const check = toolRoll(restTool, 15, `${boon.feature}`);
+    if (!check.success) return { note: `${boon.feature} failed.` } as typeof result;
+    if (boon.kind === "meal") {
+      if (rest === "short") result.mealHp = 1;
+      else result.mealDice = 2;
+      result.note = rest === "short" ? "a meal: one extra hit point for each Hit Die spent, you and up to five companions" : "a meal: two more Hit Dice regained, and advantage on Constitution saves against disease for a day";
+    } else if (boon.kind === "herbal") {
+      result.herbal = true;
+      result.note = "herbal remedies cure one poison or disease";
+    } else if (boon.kind === "repair") {
+      result.repairDie = boon.die;
+      result.note = `droids regain d${boon.die} extra for each Hit Die they spend`;
+    } else if (!weaponFits(boon) && boon.kind !== "check" && boon.kind !== "medpac" && boon.kind !== "poison" && boon.kind !== "note" && boon.kind !== "ac") {
+      result.note = `${boon.feature} worked, but you carry nothing to use it on (${boon.weapon})`;
+    } else {
+      result.boon = boon;
+      result.note = boon.die ? `${boon.feature}: a d${boon.die} for ${boon.kind === "ac" ? "armor class against one attack" : boon.kind === "check" ? "one check" : boon.kind === "medpac" ? "the next medpac (the most it can give)" : `one ${boon.kind}`}, until your next rest` : `${boon.feature} ready until your next rest`;
+    }
+    return result;
+  };
+
+  // ---- Games (Wretched Hives, "Gambling (Uptime)"): five checks, stake 20 to 2,000 credits
+  type Gamble = { against: string; label: string; set: string; stake: number; round: number; wins: number; log: string[]; opponentBonus: number; house: boolean; result?: { change: number; debt: number; text: string; complications: string[] } };
+  const [gamble, setGamble] = useState<Gamble | null>(null);
+  const [stake, setStake] = useState(100);
+  const approaches: { id: GambleApproach; label: string; ability: string; needsTraining: boolean }[] = [
+    { id: "game", label: "Play the game (Intelligence)", ability: "intelligence", needsTraining: false },
+    { id: "deception", label: "Bluff (Charisma, Deception)", ability: "charisma", needsTraining: true },
+    { id: "insight", label: "Read them (Wisdom, Insight)", ability: "wisdom", needsTraining: true },
+  ];
+  const startGamble = (against: string, label: string, set: string, opponentBonus: number, house = false) => {
+    if (stake < GAMBLE_STAKE[0] || stake > Math.min(GAMBLE_STAKE[1], character.credits ?? 0)) {
+      toast.error(`The stake is ${GAMBLE_STAKE[0]} to ${GAMBLE_STAKE[1].toLocaleString()} credits, and no more than you have (${character.credits ?? 0}).`);
+      return;
+    }
+    setGamble({ against, label, set, stake, round: 0, wins: 0, log: [], opponentBonus, house });
+  };
+  const gambleRound = (approach: GambleApproach) => {
+    if (!gamble || gamble.result) return;
+    const trained = trainedWith(gamble.set);
+    const choice = approaches.find((a) => a.id === approach)!;
+    const rival: GambleApproach = (["game", "deception", "insight"] as GambleApproach[])[die(3) - 1];
+    const mode = gamble.house ? 0 : gambleMode(approach, rival);
+    const twice = (m: number) => {
+      const a = die(20);
+      const b = die(20);
+      return m > 0 ? Math.max(a, b) : m < 0 ? Math.min(a, b) : a;
+    };
+    const skillBonus = approach === "game" ? (trained ? proficiency : 0) : skilled(approach === "deception" ? "deception" : "insight") ? proficiency : 0;
+    const high = substanceFor(choice.ability);
+    if (high > 0 && play.substance?.phase === "high") setTimeout(() => endHigh("used at the table"), 0);
+    const bonus = modifier(character.abilityScores?.[choice.ability]) + skillBonus + high;
+    let mine = twice(mode) + bonus;
+    let line: string;
+    let won: boolean;
+    if (gamble.house) {
+      won = mine >= GAMBLE_HOUSE_DC;
+      line = `Round ${gamble.round + 1}: ${mine} against the house's DC ${GAMBLE_HOUSE_DC}: ${won ? "a win" : "a loss"}.`;
+    } else {
+      let theirs = twice(-mode) + gamble.opponentBonus;
+      // A tie is played again
+      while (theirs === mine) {
+        mine = twice(mode) + bonus;
+        theirs = twice(-mode) + gamble.opponentBonus;
+      }
+      won = mine > theirs;
+      line = `Round ${gamble.round + 1}: you ${approach === "game" ? "play" : approach === "deception" ? "bluff" : "read them"}, they ${rival === "game" ? "play" : rival === "deception" ? "bluff" : "read you"}${mode ? ` (${mode > 0 ? "advantage" : "disadvantage"})` : ""}: ${mine} to ${theirs}: ${won ? "a win" : "a loss"}.`;
+    }
+    const wins = gamble.wins + (won ? 1 : 0);
+    const round = gamble.round + 1;
+    if (round < GAMBLE_ROUNDS) return setGamble({ ...gamble, round, wins, log: [...gamble.log, line] });
+    const result = gambleResult(wins, gamble.stake);
+    // Each win has a one in ten chance of drawing the wrong kind of attention
+    const complications = Array.from({ length: wins }, () => (Math.random() < GAMBLE_COMPLICATION ? GAMBLE_COMPLICATIONS[die(6) - 1] : "")).filter(Boolean);
+    saveCharacter({ credits: Math.max(0, (character.credits ?? 0) + result.change), ...(result.debt ? { playState: { ...play, debt: (play.debt ?? 0) + result.debt } } : {}) });
+    setGamble({ ...gamble, round, wins, log: [...gamble.log, line], result: { ...result, complications } });
+  };
+
+  // ---- Playing an instrument for a room (house rule: Musical Instruments give Performance and
+  // the book's sample DCs, tune 10 / manipulate the audience 15 / improvise 20; it prices no tips)
+  const perform = (instrument: string) => {
+    if (!here || !world || inCombat || dead) return;
+    const audience = Math.min(12, (hereNow ?? here).occupants.filter((o) => o.disposition !== "hostile" && !o.disabled && !o.captive).reduce((n, o) => n + (o.count ?? 1), 0));
+    if (hostiles.length) return speed("Not with armed enemies in the room.");
+    if (!audience) return speed("There is nobody here to play to.");
+    const dc = /cantina|bar|booth/i.test(here.name) ? 12 : 15;
+    const trained = trainedWith(instrument);
+    const tuned = play.boon?.kind === "check" ? die(play.boon.die || 2) : 0;
+    const bonus = modifier(character.abilityScores?.charisma) + (skilled("performance") ? proficiency : 0) + (trained ? proficiency : 0) + tuned + substanceFor("charisma");
+    const roll = die(20);
+    const total = roll + bonus;
+    const margin = total - dc;
+    const tips = margin >= 0 ? Array.from({ length: audience }, () => die(4)).reduce((a, b) => a + b, 0) * (1 + (margin >= 5 ? 1 : 0) + (margin >= 10 ? 1 : 0)) : 0;
+    const changes: Record<string, any> = { ...(tuned ? { playState: clearBoon() } : {}) };
+    if (tips) changes.credits = (character.credits ?? 0) + tips;
+    if (Object.keys(changes).length) saveCharacter(changes);
+    const holder = factionAt(world, here.id);
+    if (margin >= 10 && holder) saveCampaign({ factionInfluence: addRenown(standing, holder, 1), ...pass(60) });
+    else saveCampaign(pass(60));
+    toast[margin >= 0 ? "success" : "error"](`${instrument} for ${audience} listener${audience === 1 ? "" : "s"} (Performance${trained ? "" : ", untrained"}): ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against DC ${dc}. ${margin >= 0 ? `They are generous: ${tips} credits${margin >= 10 && holder ? `, and word reaches ${holder}` : ""}.` : "A cold room, and nothing in the hat."} An hour passes. (House rule: the books price no tips.)`);
+  };
+
+  // ---- Companions: hiring, freeing, mending droids, gentling beasts
+  const baseOf = (id: string): Area | undefined => (world ? Object.values(world.areas).find((a) => a.occupants.some((o) => o.id === id)) : undefined);
+  const newId = (prefix: string) => `${prefix}-${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
+  const partyFull = party.length >= COMPANION_LIMIT;
+  const mountsTable = transport?.mounts ?? [];
+  // Edit the occupants of the area an occupant belongs to
+  const editBase = (occupantId: string, change: (list: Occupant[]) => Occupant[], extra: Record<string, any> = {}) => {
+    const area = baseOf(occupantId);
+    if (!area || !world) return;
+    saveCampaign({ galaxyMap: updateArea(world, area.id, { occupants: change(area.occupants) }).world, ...extra });
+  };
+  // One of a group takes up with the party (the rest of the group stays)
+  const recruit = (o: Occupant, kind: CompanionKind, how: string, extra: Partial<Companion> = {}, changes: Record<string, any> = {}, campaign: Record<string, any> = {}) => {
+    if (partyFull) return toast.error(`You can lead ${COMPANION_LIMIT} companions at most (house rule).`);
+    const companion = companionFrom(o, kind, clockNow(), newId("c"), { how, ...extra }, mountsTable);
+    editBase(
+      o.id,
+      (list) => list.flatMap((x) => (x.id !== o.id ? [x] : x.count > 1 ? [{ ...x, count: x.count - 1, wounds: x.wounds?.slice(1) }] : [])),
+      campaign,
+    );
+    saveParty([...party, companion], changes);
+    toast.success(`${companion.name} ${kind === "hireling" ? "joins you for hire" : kind === "droid" ? "is yours now" : kind === "beast" ? "follows you" : "comes with you"}${companion.mount ? " (it can be ridden)" : ""}.`);
+  };
+  const dismiss = (c: Companion) => {
+    saveParty(party.filter((x) => x.id !== c.id));
+    // They stay where the party is (a droid or beast waits; a hireling goes about their business)
+    if (world && here) saveCampaign({ galaxyMap: updateArea(world, here.id, { occupants: [...here.occupants, { id: newId("o"), name: c.name, role: c.kind === "hireling" ? c.role : c.kind === "droid" ? "utility droid" : c.kind === "beast" ? "wildlife" : "local", disposition: "neutral", count: 1, species: c.species, statBlock: c.statBlock, cr: c.cr, xp: c.xp, armorClass: c.armorClass, hitPoints: c.maxHp, attack: c.attack, speed: c.speed, size: c.size, creature: c.creature, saves: c.saves, loadout: c.loadout, wounds: c.hp < c.maxHp ? [c.hp] : undefined }] }).world });
+    toast.info(`${c.name} stays behind.`);
+  };
+
+  // Hiring (house rule): a signing fee of five days' wages, then the wage each day
+  const hire = (o: Occupant, placeId: string) => {
+    if (!world || !character) return;
+    const attitude = attitudeOf(world, o, placeId, customer).score;
+    const fee = hireFee(o.xp, attitude);
+    if (fee > (character.credits ?? 0)) return toast.error(`${o.name} wants ${fee} credits to sign on and you have ${character.credits ?? 0}.`);
+    recruit(o, "hireling", "hired", { wage: wageFor(o.xp) }, { credits: (character.credits ?? 0) - fee }, { factionInfluence: { ...standing, dealings: { ...standing.dealings, [o.id]: (standing.dealings[o.id] ?? 0) + 1 } } });
+  };
+
+  // Wages come due as the days pass; a hireling not paid leaves
+  const paidThrough: number = character?.companionData?.paidThrough ?? today;
+  useEffect(() => {
+    if (!character || !party.length || today <= paidThrough || inCombat) return;
+    const wage = party.reduce((sum, c) => sum + c.wage, 0);
+    const owed = wage * (today - paidThrough);
+    if (!wage) return void saveCharacter({ companionData: { ...(character.companionData ?? {}), paidThrough: today } });
+    if ((character.credits ?? 0) >= owed) {
+      saveCharacter({ credits: character.credits - owed, companionData: { ...(character.companionData ?? {}), paidThrough: today } });
+      toast.info(`Wages: ${owed} credits for ${today - paidThrough} day${today - paidThrough === 1 ? "" : "s"}.`);
+    } else {
+      const gone = party.filter((c) => c.wage > 0);
+      saveCharacter({ companionData: { ...(character.companionData ?? {}), party: party.filter((c) => c.wage === 0), paidThrough: today } });
+      toast.error(`You cannot pay ${owed} credits: ${gone.map((c) => c.name).join(", ")} ${gone.length > 1 ? "leave" : "leaves"} (house rule).`);
+    }
+  }, [today, party.length, inCombat]);
+
+  // Freeing those held in bonds: the lock or the collar's circuit (Security kit, Slicer's kit),
+  // or the strength to break chains (Binders: DC 20 Strength). Each try takes ten minutes.
+  const freeCaptive = (o: Occupant, how: "kit" | "break") => {
+    if (!o.captive || !world) return;
+    // Their guards see what is done under their noses
+    if (hostiles.length > 0 && !unseen("Working at the lock")) return;
+    const { restraint, dc } = o.captive;
+    const spec = FREEING[restraint];
+    const kit = spec.tools.find((t) => carries(new RegExp(`^${t.replace(/[^a-z]/gi, ".")}$`, "i")));
+    let result: { success: boolean };
+    if (how === "kit") {
+      if (!kit) return toast.error(`You need a ${spec.tools[0].toLowerCase()}.`);
+      const name = (character.equipment ?? []).find((n: string) => n.toLowerCase() === kit.toLowerCase())!;
+      const spike = (character.equipment ?? []).find((n: string) => gearOf(n)?.kind === "spike" && (gearOf(n) as any).tool.toLowerCase() === kit.toLowerCase());
+      result = toolRoll(name, dc, spec.label, spec.ability.includes("dexterity") && modifier(character.abilityScores?.dexterity) > modifier(character.abilityScores?.intelligence) ? "dexterity" : "intelligence");
+      // A spike rerolls a failed check
+      if (!result.success && spike) {
+        const spent = consume(spike);
+        saveCharacter({ equipment: spent.equipment });
+        toast.info(`${spike}: reroll.`);
+        result = toolRoll(name, dc, `${spec.label} (rerolled)`, "intelligence");
+      }
+    } else {
+      const roll = die(20) + modifier(character.abilityScores?.strength) + substanceFor("strength");
+      result = { success: roll >= 20 };
+      toast[result.success ? "success" : "error"](`Break the ${restraint === "collar" ? "collar" : "chains"} (Strength): ${roll} against DC 20. ${result.success ? "It gives." : "It holds."} (Binders: Breaking them requires a DC 20 Strength check.)`);
+    }
+    const time = pass(10);
+    if (!result.success) return void saveCampaign(time);
+    editBase(o.id, (list) => list.map((x) => (x.id === o.id ? { ...x, captive: undefined, role: "freed", disposition: "friendly" as const } : x)), time);
+    toast.success(`${o.name} is free.`);
+  };
+  // Freed, they can come along, or be sent home: a deed worth experience (house rule: 25 x your level)
+  const sendHome = (o: Occupant) => {
+    if (!world || !here) return;
+    const xp = 25 * level;
+    const holder = factionAt(world, here.id);
+    editBase(o.id, (list) => list.flatMap((x) => (x.id !== o.id ? [x] : x.count > 1 ? [{ ...x, count: x.count - 1 }] : [])), holder ? { factionInfluence: addRenown(standing, holder, -1) } : {});
+    saveCharacter({ experience: (character.experience ?? 0) + xp });
+    toast.success(`${o.name} goes home, with thanks. ${xp} XP (house rule).${holder ? ` ${holder} will not like it.` : ""}`);
+  };
+
+  // Droids powered down by a fight (disabled): stabilize, mend, then a restraining bolt or reprogramming
+  const unitOf = (o: Occupant) => o.wounds?.[0] ?? 0;
+  // One droid of a group, as an occupant of its own
+  const splitOne = (o: Occupant, list: Occupant[]): { list: Occupant[]; unit: Occupant } => {
+    if (o.count <= 1) return { list, unit: o };
+    const unit: Occupant = { ...o, id: newId("o"), count: 1, wounds: [o.wounds?.[0] ?? 0] };
+    return { list: list.flatMap((x) => (x.id === o.id ? [{ ...x, count: x.count - 1, wounds: x.wounds?.slice(1) }, unit] : [x])), unit };
+  };
+  const mendDroid = (o: Occupant, how: "battery" | "check" | "kit") => {
+    if (!world) return;
+    const area = baseOf(o.id);
+    if (!area) return;
+    const { list, unit } = splitOne(o, area.occupants);
+    let hp = unit.wounds?.[0] ?? 0;
+    const changes: Record<string, any> = {};
+    if (how === "kit") {
+      const kit = (character.equipment ?? []).find((n: string) => gearOf(n)?.kind === "repair");
+      if (!kit) return toast.error("You need a repair kit.");
+      const use = gearOf(kit) as Extract<GearUse, { kind: "repair" }>;
+      const spent = consume(kit, use.uses);
+      const amount = Math.max(1, die(hitDieOfSize(unit.size)) + (unit.saves?.constitution ?? 0) + (play.boon?.kind === "repair" ? die(play.boon.die) : 0));
+      hp = Math.min(unit.hitPoints ?? 1, hp + amount);
+      Object.assign(changes, { equipment: spent.equipment, playState: { ...play, charges: spent.charges } });
+      toast.success(`Repair kit: ${unit.name} regains ${amount} hit points (${hp}/${unit.hitPoints}).`);
+    } else if (how === "battery") {
+      const battery = (character.equipment ?? []).find((n: string) => gearOf(n)?.kind === "stabilize" && (gearOf(n) as any).target === "droid");
+      if (!battery) return toast.error("You need an emergency battery.");
+      const use = gearOf(battery) as Extract<GearUse, { kind: "stabilize" }>;
+      const spent = consume(battery, use.uses);
+      hp = Math.max(1, hp);
+      Object.assign(changes, { equipment: spent.equipment, playState: { ...play, charges: spent.charges } });
+      toast.success(`Emergency battery: ${unit.name} is stable, with ${hp} hit point${hp === 1 ? "" : "s"}.`);
+    } else {
+      const check = toolRoll(toolsCarried.find((n) => /astrotech|mechanic|tinker/i.test(n)) ?? "Toolkit", 10, `Stabilize ${unit.name}`, "intelligence", 0);
+      if (!check.success) return void saveCampaign(pass(10));
+      hp = Math.max(1, hp);
+    }
+    saveCampaign({ galaxyMap: updateArea(world, area.id, { occupants: list.map((x) => (x.id === unit.id ? { ...x, wounds: [hp] } : x)) }).world, ...pass(how === "kit" ? 1 : 10) });
+    if (Object.keys(changes).length) saveCharacter(changes);
+  };
+  // The droid comes online hostile
+  const wakeHostile = (o: Occupant, why: string) => {
+    if (!world) return;
+    const area = baseOf(o.id);
+    if (!area) return;
+    const { list, unit } = splitOne(o, area.occupants);
+    const next = list.map((x) => (x.id === unit.id ? { ...x, disabled: undefined, disposition: "hostile" as const, role: "guard", wounds: [Math.max(1, unitOf(unit))] } : x));
+    saveCampaign({ galaxyMap: setAlert(updateArea(world, area.id, { occupants: next }).world, area.id, ALERT.attacking) });
+    toast.error(why);
+  };
+  const boltDroid = (o: Occupant) => {
+    if (!world || partyFull) return partyFull ? toast.error(`You can lead ${COMPANION_LIMIT} companions at most (house rule).`) : undefined;
+    if (unitOf(o) < 1) return toast.error("It has to be stabilized first: a restraining bolt answers to a droid that is running.");
+    const boltName = (character.equipment ?? []).find((n: string) => gearOf(n)?.kind === "bolt");
+    if (!boltName) return toast.error("You need a restraining bolt.");
+    const use = gearOf(boltName) as Extract<GearUse, { kind: "bolt" }>;
+    const spent = consume(boltName);
+    // The droid saves against the bolt (a hostile droid with advantage, the book says); a save overloads it
+    const a = die(20);
+    const roll = Math.max(a, die(20)) + (o.saves?.constitution ?? 0);
+    const resisted = roll >= use.dc;
+    const time = pass(1);
+    if (resisted) {
+      saveCharacter({ equipment: spent.equipment });
+      saveCampaign(time);
+      return wakeHostile(o, `${o.name} saves (${roll} against DC ${use.dc}): the bolt overloads, and its optics flare.`);
+    }
+    const area = baseOf(o.id);
+    if (!area) return;
+    const { unit } = splitOne(o, area.occupants);
+    // The droid keeps the hit points it has
+    recruit({ ...unit, wounds: [unitOf(unit)] }, "droid", `under a ${boltName.toLowerCase()}`, { bolt: boltName }, { equipment: spent.equipment }, time);
+  };
+  const reprogramDroid = (o: Occupant) => {
+    if (!world) return;
+    if (partyFull) return toast.error(`You can lead ${COMPANION_LIMIT} companions at most (house rule).`);
+    if (unitOf(o) < 1) return toast.error("It has to be stabilized first.");
+    const kit = toolsCarried.find((n) => /^slicer's kit$/i.test(n));
+    if (!kit) return toast.error("You need a slicer's kit to rewrite its routines.");
+    const dc = reprogramDC(o);
+    const check = toolRoll(kit, dc, `Reprogram ${o.name}`, "intelligence");
+    const time = pass(10);
+    if (check.success) {
+      const area = baseOf(o.id);
+      if (!area) return;
+      const { unit } = splitOne(o, area.occupants);
+      return recruit({ ...unit, wounds: [unitOf(unit)] }, "droid", "reprogrammed", { bolt: "reprogrammed" }, {}, time);
+    }
+    saveCampaign(time);
+    if (check.total <= dc - 5) wakeHostile(o, `The reprogramming goes badly: ${o.name} comes online, hostile.`);
+  };
+
+  // Gentling a wild creature (house rule for the DC): Wisdom (Animal Handling); rations in hand
+  // give advantage; it takes an hour; a failure by 5 or more is an attack
+  const gentle = (o: Occupant) => {
+    if (!world || !here || inCombat) return;
+    if (partyFull) return toast.error(`You can lead ${COMPANION_LIMIT} companions at most (house rule).`);
+    if (crOf(o) > gentleLimit(level)) return toast.error(`${o.name} (CR ${o.cr}) is too fierce for a character of level ${level} to gentle (house rule: up to CR ${gentleLimit(level)}).`);
+    const hurt = (o.wounds?.[0] ?? o.hitPoints ?? 0) < (o.hitPoints ?? 0);
+    const dc = gentleDC(o, hurt);
+    const food = (character.equipment ?? []).find((n: string) => /rations/i.test(n));
+    const first = die(20);
+    const roll = food ? Math.max(first, die(20)) : first;
+    const bonus = modifier(character.abilityScores?.wisdom) + (skilled("animal handling") ? proficiency : 0) + substanceFor("wisdom");
+    const total = roll + bonus;
+    const success = total >= dc;
+    const spent = food ? consume(food) : null;
+    toast[success ? "success" : "error"](`Animal Handling on ${o.name}${food ? ` (${food} in hand: advantage)` : ""}: ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against DC ${dc}. ${success ? "It settles." : total <= dc - 5 ? "It bares its teeth." : "It shies away; try again."}`);
+    const time = pass(60);
+    const changes: Record<string, any> = spent ? { equipment: spent.equipment } : {};
+    if (success) return recruit({ ...o, wounds: [o.wounds?.[0] ?? o.hitPoints ?? 1] }, "beast", "gentled", {}, changes, time);
+    if (Object.keys(changes).length) saveCharacter(changes);
+    saveCampaign({ ...time, ...(total <= dc - 5 ? { galaxyMap: setAlert(world, here.id, ALERT.attacking) } : {}) });
+  };
+
+  // ---- Vehicles and the ground routes between settlements
+  const vehicles: PartyVehicle[] = Array.isArray(campaign?.vehicles) ? campaign.vehicles : [];
+  const inBuildingsHere: { building: Area; vehicle: Vehicle }[] = world && here
+    ? [here, ...trailOf(world, here.id), ...childrenOf(world, here.id)].filter((a, i, all) => a.kind === "building" && all.indexOf(a) === i).flatMap((b) => (b.vehicles ?? []).map((v) => ({ building: b, vehicle: v })))
+    : [];
+  const parkedHere = world && here ? vehicles.filter((v) => v.areaId === berthOf(world, here.id)) : [];
+  // The rides for a route: on foot, riding a companion, a speeder of the party's parked here, a hired ride
+  const ridesFor = (exit: Exit): Ride[] => {
+    const km = kmOf(exit.travel);
+    if (!km || !transport || !world || !here || exit.needsShip || exit.via !== "path") return [];
+    const settlement = world.areas[berthOf(world, here.id)];
+    const riders = 1 + party.filter((c) => c.kind !== "beast").length;
+    return groundRides({ km, vehicles: parkedHere, companions: party, riders, transport, hire: settlement?.id === here.id && hasRidesForHire(world, here.id) });
+  };
+  // The ride a trip takes when none was chosen (a tap on the map): the quickest that costs nothing
+  const defaultRide = (rides: Ride[]) => [...rides].filter((r) => !r.blocked && !r.fare).sort((a, b) => a.minutes - b.minutes)[0];
+  const rideText = (minutes: number) => (minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.round(minutes / 6) / 10} h` : `${Math.floor(minutes / 1440)} d ${Math.round((minutes % 1440) / 60)} h`);
+
+  // A speeder taken from a base, or mended where it stands (Mechanic's kit: "Restoring power to a
+  // damaged vehicle", DC 15)
+  const takeVehicle = (building: Area, vehicle: Vehicle) => {
+    if (!world || !here) return;
+    if (building.occupants.some((o) => o.disposition === "hostile" && o.hitPoints) || childrenOf(world, building.id).some((r) => r.occupants.some((o) => o.disposition === "hostile" && o.hitPoints && r.gateway))) {
+      return toast.error("Someone is guarding it.");
+    }
+    if (vehicle.status === "wrecked") return toast.error("It is a wreck: it needs mending first (a mechanic's kit).");
+    const mine: PartyVehicle = { ...vehicle, owner: character.name, areaId: berthOf(world, here.id) };
+    saveCampaign({
+      galaxyMap: updateArea(world, building.id, { vehicles: (building.vehicles ?? []).filter((v) => v.id !== vehicle.id) }).world,
+      vehicles: [...vehicles, mine],
+    });
+    toast.success(`${vehicle.name} is yours.`);
+  };
+  const mendVehicle = (building: Area | null, vehicle: Vehicle) => {
+    if (!world) return;
+    const kit = toolsCarried.find((n) => /^mechanic's kit$/i.test(n));
+    if (!kit) return toast.error("You need a mechanic's kit.");
+    const check = toolRoll(kit, 15, `Restore power to ${vehicle.name}`, "intelligence");
+    const time = pass(60);
+    if (!check.success) return void saveCampaign(time);
+    if (building) saveCampaign({ galaxyMap: updateArea(world, building.id, { vehicles: (building.vehicles ?? []).map((v) => (v.id === vehicle.id ? { ...v, status: "parked" as const } : v)) }).world, ...time });
+    else saveCampaign({ vehicles: vehicles.map((v) => (v.id === vehicle.id ? { ...v, status: "parked" as const } : v)), ...time });
+    toast.success(`${vehicle.name} runs again.`);
+  };
+
+  // Buying a speeder or a mount: they are not equipment, so they do not go in the pack
+  const buyTransport = async (trader: Occupant, line: TradeLine) => {
+    if (!world || !here || !transport) return;
+    if (line.price > (character.credits ?? 0)) return toast.error(`${line.name} costs ${line.price.toLocaleString()} credits and you have ${(character.credits ?? 0).toLocaleString()}.`);
+    if (line.category === "Vehicle") {
+      const model = transport.vehicles.find((v) => v.name === line.name);
+      if (!model) return;
+      const mine: PartyVehicle = { id: newId("v"), name: model.name, model: model.name, mph: model.mph, value: line.price, status: "parked", owner: character.name, seats: SEATS[model.name] ?? 2, areaId: berthOf(world, here.id) };
+      saveCharacter({ credits: character.credits - line.price });
+      saveCampaign({ vehicles: [...vehicles, mine], availableResources: { ...ledger, traders: { ...ledger.traders, [trader.id]: { ...traderLedger(trader.id), bought: { ...traderLedger(trader.id).bought, [line.name]: (traderLedger(trader.id).bought[line.name] ?? 0) + 1 } } } } });
+      return void toast.success(`${model.name} bought for ${line.price.toLocaleString()} credits. It is parked at ${world.areas[mine.areaId]?.name ?? "the settlement"}; ${model.mph} mph.`);
+    }
+    if (partyFull) return toast.error(`You can lead ${COMPANION_LIMIT} companions at most (house rule).`);
+    const stat = mountStat(line.name);
+    if (!stat) return toast.error("That mount is not in the rules data.");
+    const response = await fetch("/api/world/occupant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ statBlock: stat.id }) });
+    if (!response.ok) return toast.error("Could not load that creature.");
+    const o: Occupant = { ...(await response.json()), disposition: "neutral", role: "wildlife" };
+    const companion = companionFrom(o, "beast", clockNow(), newId("c"), { how: "bought", name: line.name }, mountsTable);
+    saveCharacter({ credits: character.credits - line.price });
+    saveParty([...party, { ...companion, mount: true }]);
+    saveCampaign({ availableResources: { ...ledger, traders: { ...ledger.traders, [trader.id]: { ...traderLedger(trader.id), bought: { ...traderLedger(trader.id).bought, [line.name]: (traderLedger(trader.id).bought[line.name] ?? 0) + 1 } } } } });
+    toast.success(`${line.name} bought for ${line.price.toLocaleString()} credits: a mount that follows you (${companion.speed} ft. a round).`);
+  };
+  // The stat block of a mount in the rules data: "Dewback" is "Dewback, Adult"
+  const mountStat = (name: string) => {
+    const wanted = name.toLowerCase();
+    const options = monsterNames.filter((m) => m.name.toLowerCase().startsWith(wanted));
+    return options.find((m) => /adult|juvenile/i.test(m.name)) ?? options[0];
+  };
+
+  // ---- Fighting with companions and items
+  // A companion as a combatant on the character's side
+  const allyOf = (c: Companion) => ({
+    id: c.id,
+    name: c.name,
+    hp: c.hp,
+    maxHp: c.maxHp,
+    initiative: 0,
+    armorClass: c.armorClass,
+    attackBonus: c.attack?.bonus ?? 2,
+    damageDice: c.attack?.damage ?? "1d4",
+    rangedAttacker: c.attack?.ranged ?? false,
+    saves: c.saves,
+    speed: c.speed || 30,
+    reach: c.attack?.ranged ? 5 : c.attack?.range ?? 5,
+    range: c.attack?.ranged ? ([c.attack.range ?? 80, c.attack.long ?? (c.attack.range ?? 80) * 4] as [number, number]) : undefined,
+    size: c.size,
+    creature: c.creature,
+    role: c.kind === "droid" ? "droid" : c.kind === "beast" ? "wildlife" : "ally",
+  });
+
+  // What the character can use in a fight: healing and mending, stabilizing a fallen companion,
+  // grenades, a dose of poison on the weapon, and a substance
+  const combatItems: CombatItemOption[] = (() => {
+    if (!character) return [];
+    const out: CombatItemOption[] = [];
+    const strength = modifier(character.abilityScores?.strength);
+    for (const name of Array.from(new Set<string>(character.equipment ?? []))) {
+      const use = gearOf(name);
+      if (!use) continue;
+      const left = usesLeft(name, "uses" in use ? use.uses : undefined);
+      const label = `${name}${left !== undefined ? ` (${left} left)` : ""}`;
+      const companionOf = (id?: number | string) => party.find((c) => c.id === String(id));
+      if (use.kind === "heal" || use.kind === "repair") {
+        out.push({
+          key: name,
+          label,
+          hint: use.kind === "heal" ? "heals a person or beast" : "mends a droid",
+          target: "ally",
+          use: (id) => {
+            const ally = companionOf(id);
+            const droid = ally ? !isOrganic(ally) : false;
+            if (use.kind === "heal" && droid) return !!speed("A medpac works on beasts and humanoids, not on droids.");
+            if (use.kind === "repair" && !droid) return !!speed("A repair kit is for droids and constructs.");
+            const maxed = use.kind === "heal" && play.boon?.kind === "medpac";
+            const amount = healFor(ally ?? "self", maxed);
+            if (!useCombat.getState().itemEffect({ kind: "heal", label: name, targetId: id ?? character.id, amount })) return false;
+            const spent = consume(name, use.uses);
+            saveCharacter({ equipment: spent.equipment, playState: { ...play, charges: spent.charges, ...(maxed ? { boon: undefined } : {}) } });
+            return true;
+          },
+        });
+      } else if (use.kind === "stabilize") {
+        out.push({
+          key: name,
+          label,
+          hint: use.target === "droid" ? "gets a downed droid up" : "stabilizes the fallen",
+          target: "ally",
+          use: (id) => {
+            const ally = companionOf(id);
+            if (!ally) return !!speed("Use it on a companion who has fallen.");
+            if ((use.target === "droid") === isOrganic(ally)) return !!speed(use.target === "droid" ? "An emergency battery is for droids." : "A traumakit is for beasts and people.");
+            if (!useCombat.getState().itemEffect({ kind: "stabilize", label: name, targetId: ally.id, to: 1 })) return false;
+            const spent = consume(name, use.uses);
+            saveCharacter({ equipment: spent.equipment, playState: { ...play, charges: spent.charges } });
+            return true;
+          },
+        });
+      } else if (use.kind === "explosive" && (use.form === "grenade" || use.form === "detonator")) {
+        out.push({
+          key: name,
+          label,
+          hint: `${use.radius} ft., DC ${use.dc} ${use.save}${use.damage.length ? `, ${use.damage.map((d) => `${d.dice} ${d.type}`).join(" + ")}` : ""}${use.conditions.length ? `, ${use.conditions.join("/").toLowerCase()}` : ""}`,
+          target: "foe",
+          use: (id) => {
+            if (id === undefined) return !!speed("There is nobody to throw it at.");
+            const ok = useCombat.getState().itemEffect({
+              kind: "explosive", label: name, targetId: id, radius: use.radius, maxFeet: 30 + strength * 5, dc: use.dc, save: use.save, damage: use.damage, conditions: use.conditions, conditionRounds: EXPLOSIVE_CONDITION_ROUNDS,
+            });
+            if (!ok) return false;
+            const spent = consume(name);
+            saveCharacter({ equipment: spent.equipment });
+            return true;
+          },
+        });
+      } else if (use.kind === "substance") {
+        out.push({
+          key: name,
+          label,
+          hint: `a high${use.ability ? ` on ${use.ability}` : ""}${use.temp ? `, ${use.temp} temporary hit points a turn` : ""}; a low follows`,
+          target: "none",
+          use: () => {
+            const taken = takeSubstance(name, use, { ...play, charges: consume(name).charges });
+            useCombat.getState().itemEffect({ kind: "substance", label: name, ability: use.ability, temp: use.temp, rounds: addictionLevel >= 2 ? 5 : 10 });
+            saveCharacter({ equipment: consume(name).equipment, ...taken.changes, playState: taken.state });
+            return true;
+          },
+        });
+      } else if (use.kind === "poison") {
+        out.push({
+          key: name,
+          label,
+          hint: `+${use.dice} poison on the next hit, DC ${use.dc}`,
+          target: "none",
+          use: () => {
+            useCombat.getState().itemEffect({ kind: "poison", label: name, dice: use.dice, dc: use.dc });
+            saveCharacter({ equipment: consume(name).equipment, playState: { ...play, poison: { dice: use.dice, dc: use.dc } } });
+            return true;
+          },
+        });
+      } else if (use.kind === "antidote") {
+        out.push({
+          key: name,
+          label,
+          hint: "cures a poison",
+          target: "none",
+          use: () => {
+            const cured = (character.conditions ?? []).includes("Poisoned");
+            useCombat.setState((s) => ({
+              combatants: s.combatants.map((c) => (c.isPlayer ? { ...c, conditions: (c.conditions ?? []).filter((x) => x.name !== "Poisoned") } : c)),
+              combatLog: [...s.combatLog, `${character.name} uses ${name}${cured || s.combatants.find((c) => c.isPlayer)?.conditions?.some((x) => x.name === "Poisoned") ? " and the poison is neutralized" : ": advantage against poison for an hour"}.`],
+            }));
+            const spent = consume(name, use.uses);
+            saveCharacter({ equipment: spent.equipment, playState: { ...play, charges: spent.charges, protectedUntil: clockNow() + 60 }, ...(cured ? { conditions: (character.conditions ?? []).filter((c: string) => c !== "Poisoned") } : {}) });
+            return true;
+          },
+        });
+      }
+    }
+    return out;
+  })();
+
   // Toggle sidebar
   const toggleSidebar = () => {
     setShowSidebar(!showSidebar);
@@ -897,7 +1890,11 @@ export default function GameBoard() {
 
   // How a trip that needs a ship will be made, for the exit's label
   const tripNote = (exit: Exit) => {
-    if (!exit.needsShip) return "";
+    if (!exit.needsShip) {
+      // A route over the ground: how it would be made now
+      const ride = defaultRide(exit.locked ? [] : ridesFor(exit));
+      return ride ? `${ride.label} ${rideText(ride.minutes)}` : "";
+    }
     const { ship, reason, fare } = tripBy(exit);
     if (ship) return `${ship.name}, ${exit.fuel} fuel`;
     return [fare ? `passage ${fare} cr` : "by shuttle", ships.length ? reason : ""].filter(Boolean).join("; ");
@@ -930,7 +1927,7 @@ export default function GameBoard() {
     else if (inCombat || dead || exploring) return;
     else if (action.type === "go") travelTo(action.areaId, action.secret);
     else if (action.type === "exit") leaveBy(action.exit);
-    else if (action.type === "occupant" || action.type === "ship") setPicked({ kind: action.type, id: action.id });
+    else if (action.type === "occupant" || action.type === "ship" || action.type === "vehicle" || action.type === "companion") setPicked({ kind: action.type, id: action.id });
     else if (action.type === "loot") {
       const cache = here.loot.find((c) => c.id === action.id);
       if (!cache) return;
@@ -1001,7 +1998,13 @@ export default function GameBoard() {
     }
     const attitude = attitudeOf(world, trader, placeId, customer);
     const market = marketAt(world, placeId);
-    const lines = equipmentData.length ? stockOf(world, trader, placeId, equipmentData, today, customer, ledger) : [];
+    // Speeders and mounts are for sale beside the equipment (they come from the transport set)
+    const stockPool = [
+      ...equipmentData,
+      ...(transport?.vehicles ?? []).map((v) => ({ name: v.name, cost: v.cost, equipmentCategory: "Vehicle", description: `${v.mph} mph; seats ${SEATS[v.name] ?? 2} (house rule).` })),
+      ...(transport?.mounts ?? []).filter((m) => !!mountStat(m.name)).map((m) => ({ name: m.name, cost: m.cost, equipmentCategory: "Mount", description: `${m.speed} ft. a round; carries ${m.capacity} lb.` })),
+    ];
+    const lines = equipmentData.length ? stockOf(world, trader, placeId, stockPool, today, customer, ledger) : [];
     const mine: string[] = Array.from(new Set((character.equipment ?? []).filter((x: any) => typeof x === "string")));
     const offers = mine
       .map((name) => ({ name, item: equipmentData.find((e) => e.name === name) }))
@@ -1051,6 +2054,260 @@ export default function GameBoard() {
         </ul>
       </div>
     );
+  };
+
+  // ---- Cards and panels for companions, droids, captives, beasts, games and tools
+  const watched = hostiles.length > 0;
+  const carriesAny = (test: (name: string) => boolean) => (character?.equipment ?? []).some((n: string) => test(n));
+  const captiveSection = (o: Occupant) => {
+    const c = o.captive!;
+    const spec = FREEING[c.restraint];
+    const kit = spec.tools.find((t) => carriesAny((n) => n.toLowerCase() === t.toLowerCase()));
+    return (
+      <div className="mt-1 space-y-1 text-xs" data-testid="captive">
+        <p className="text-amber-200">
+          Held in {c.restraint === "collar" ? "a slave collar" : c.restraint === "cell" ? "a locked cell" : "shackles"} (DC {c.dc}).
+          {watched ? " Their guards are watching: free them quietly, or deal with the guards first." : ""}
+        </p>
+        <div className="flex flex-wrap gap-1">
+          <Button size="sm" variant="outline" className="h-auto whitespace-normal text-left" disabled={!kit || inCombat || dead} onClick={() => freeCaptive(o, "kit")} data-testid="free-kit">
+            {spec.label} {kit ? `(${kit})` : `(needs a ${spec.tools[0].toLowerCase()})`}
+          </Button>
+          {c.restraint === "shackles" && (
+            <Button size="sm" variant="outline" disabled={inCombat || dead} onClick={() => freeCaptive(o, "break")} data-testid="free-break">
+              Break the chains (Strength, DC 20)
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  };
+  const freedSection = (o: Occupant) => (
+    <div className="mt-1 space-y-1 text-xs" data-testid="freed">
+      <p className="text-green-300">Free, and grateful.</p>
+      <div className="flex flex-wrap gap-1">
+        <Button size="sm" disabled={partyFull || inCombat || dead} onClick={() => recruit(o, "freed", "freed from bonds")} data-testid="freed-join">
+          Ask them to come with you {partyFull ? `(${COMPANION_LIMIT} companions at most)` : ""}
+        </Button>
+        <Button size="sm" variant="outline" disabled={inCombat || dead} onClick={() => sendHome(o)} data-testid="freed-home">
+          Send them home ({25 * level} XP)
+        </Button>
+      </div>
+    </div>
+  );
+  const droidSection = (o: Occupant) => {
+    const hp = o.wounds?.[0] ?? 0;
+    const battery = carriesAny((n) => { const g = gearOf(n); return g?.kind === "stabilize" && g.target === "droid"; });
+    const kit = carriesAny((n) => gearOf(n)?.kind === "repair");
+    const bolt = carriesAny((n) => gearOf(n)?.kind === "bolt");
+    const slicer = carriesAny((n) => /^slicer's kit$/i.test(n));
+    return (
+      <div className="mt-1 space-y-1 text-xs" data-testid="disabled-droid">
+        <p className="text-amber-200">
+          Powered down: {hp}/{o.hitPoints} hit points{o.count > 1 ? `, ${o.count} of them` : ""}. Droids are powered down, not destroyed: stabilize it, mend it, then put a restraining bolt on it or rewrite its routines.
+        </p>
+        <div className="flex flex-wrap gap-1">
+          {hp < 1 && (
+            <Button size="sm" variant="outline" disabled={inCombat || dead || watched} onClick={() => mendDroid(o, battery ? "battery" : "check")} data-testid="droid-stabilize">
+              Stabilize ({battery ? "emergency battery" : "Technology DC 10"})
+            </Button>
+          )}
+          {hp < (o.hitPoints ?? 0) && (
+            <Button size="sm" variant="outline" disabled={!kit || inCombat || dead || watched} onClick={() => mendDroid(o, "kit")} data-testid="droid-mend">
+              Mend {kit ? "(repair kit)" : "(needs a repair kit)"}
+            </Button>
+          )}
+          {hp >= 1 && (
+            <>
+              <Button size="sm" disabled={!bolt || partyFull || inCombat || dead || watched} onClick={() => boltDroid(o)} data-testid="droid-bolt">
+                Fit a restraining bolt {bolt ? "" : "(you have none)"}
+              </Button>
+              <Button size="sm" variant="outline" disabled={!slicer || partyFull || inCombat || dead || watched} onClick={() => reprogramDroid(o)} data-testid="droid-reprogram">
+                Reprogram (slicer's kit, DC {reprogramDC(o)})
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
+  const gentleSection = (o: Occupant) => {
+    const tooFierce = crOf(o) > gentleLimit(level);
+    const hurt = (o.wounds?.[0] ?? o.hitPoints ?? 0) < (o.hitPoints ?? 0);
+    const food = carriesAny((n) => /rations/i.test(n));
+    return (
+      <div className="mt-1 space-y-1 text-xs" data-testid="gentle">
+        <p className="text-gray-300">
+          {tooFierce ? `Too fierce for a character of level ${level} to gentle (CR ${o.cr}).` : `Gentle it: Wisdom (Animal Handling) against DC ${gentleDC(o, hurt)}, an hour${food ? "; rations in hand give advantage" : "; rations would give advantage"}. A miss by 5 or more and it attacks. (House rule.)`}
+        </p>
+        {!tooFierce && (
+          <Button size="sm" variant="outline" disabled={partyFull || inCombat || dead} onClick={() => gentle(o)} data-testid="gentle-beast">
+            Gentle it {partyFull ? `(${COMPANION_LIMIT} companions at most)` : ""}
+          </Button>
+        )}
+      </div>
+    );
+  };
+  const hireSection = (o: Occupant, placeId: string) => {
+    if (!world) return null;
+    const attitude = attitudeOf(world, o, placeId, customer).score;
+    const fee = hireFee(o.xp, attitude);
+    return (
+      <div className="mt-1 space-y-1 text-xs" data-testid="hire">
+        <p className="text-gray-300">
+          For hire: {fee.toLocaleString()} credits to sign on (five days' wages), then {wageFor(o.xp)} credits a day. CR {o.cr}, AC {o.armorClass}, {o.hitPoints} hit points. (House rule: the books give no wages.)
+        </p>
+        <Button size="sm" disabled={partyFull || inCombat || dead || fee > (character.credits ?? 0)} onClick={() => hire(o, placeId)} data-testid="hire-button">
+          Hire {partyFull ? `(${COMPANION_LIMIT} companions at most)` : fee > (character.credits ?? 0) ? "(not enough credits)" : ""}
+        </Button>
+      </div>
+    );
+  };
+
+  // A game of chance, five rounds (Wretched Hives, "Gambling (Uptime)"), against the house or a person
+  const gamblePanel = (against: string, label: string, opponentBonus: number, house = false) => {
+    if (!setsCarried.length) return null;
+    const mine = gamble?.against === against ? gamble : null;
+    const set = mine?.set ?? setsCarried[0];
+    return (
+      <div className="mt-2 border-t border-gray-600 pt-2 text-xs" data-testid="gamble">
+        {!mine && (
+          <>
+            <p className="font-semibold text-amber-200">{house ? "Play against the house" : `A game with ${label}`}</p>
+            <div className="mt-1 flex flex-wrap items-center gap-1">
+              <select className="h-7 rounded bg-gray-700 px-1" value={gambleSet || setsCarried[0]} onChange={(e) => setGambleSet(e.target.value)} aria-label="Gaming set">
+                {setsCarried.map((n) => <option key={n} value={n}>{n}{trainedWith(n) ? "" : " (untrained)"}</option>)}
+              </select>
+              <input type="number" className="h-7 w-20 rounded bg-gray-700 px-1" min={GAMBLE_STAKE[0]} max={Math.min(GAMBLE_STAKE[1], character.credits ?? 0)} value={stake} onChange={(e) => setStake(Number(e.target.value))} aria-label="Stake" data-testid="gamble-stake" />
+              <Button size="sm" disabled={inCombat || dead || watched} onClick={() => startGamble(against, label, gambleSet || setsCarried[0], opponentBonus, house)} data-testid="gamble-start">
+                Play for {stake} cr
+              </Button>
+            </div>
+            <p className="text-gray-400">Five checks; {house ? `the house wants ${GAMBLE_HOUSE_DC}` : "a contest: bluffing beats the game, the game beats reading, reading beats bluffing"}. Stake {GAMBLE_STAKE[0]} to {GAMBLE_STAKE[1].toLocaleString()}.</p>
+          </>
+        )}
+        {mine && (
+          <>
+            <p className="font-semibold text-amber-200">{mine.set} against {house ? "the house" : label}: round {Math.min(GAMBLE_ROUNDS, mine.round + (mine.result ? 0 : 1))} of {GAMBLE_ROUNDS}, {mine.wins} won, stake {mine.stake}</p>
+            <ul className="text-gray-300">{mine.log.map((line, i) => <li key={i}>{line}</li>)}</ul>
+            {!mine.result && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {approaches.filter((a) => !(house && a.id !== "game") && !(a.needsTraining && !trainedWith(mine.set))).map((a) => (
+                  <Button key={a.id} size="sm" variant="outline" className="h-auto whitespace-normal text-left" onClick={() => gambleRound(a.id)} data-testid={`gamble-${a.id}`}>
+                    {a.label}
+                  </Button>
+                ))}
+              </div>
+            )}
+            {mine.result && (
+              <div data-testid="gamble-result">
+                <p className={mine.result.change > 0 ? "text-green-300" : mine.result.change < 0 ? "text-red-300" : ""}>{mine.result.text} ({mine.result.change > 0 ? "+" : ""}{mine.result.change} credits{mine.result.debt ? `, debt ${mine.result.debt}` : ""})</p>
+                {mine.result.complications.map((text) => <p key={text} className="text-yellow-300">Trouble: {text}</p>)}
+                <Button size="sm" variant="outline" className="mt-1" onClick={() => setGamble(null)}>Leave the table</Button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
+  const [gambleSet, setGambleSet] = useState("");
+
+  // A tool taken out: what it is for and the sample activities with their DCs
+  const toolPanel = (name: string) => {
+    const info = toolInfo(name);
+    const trained = trainedWith(name);
+    return (
+      <div className="mt-1 space-y-1 rounded bg-gray-700/60 p-2 text-xs" data-testid="tool-panel">
+        <p>{trained ? "You are trained with it (proficiency on its checks)." : "You are not trained with it: no proficiency on its checks."}</p>
+        {info?.summary && <p className="text-gray-300">{info.summary}</p>}
+        {(info?.skills ?? []).map((s) => (
+          <p key={s.skill.join()} className="text-gray-400"><span className="text-gray-200">{s.skill.join(" / ")}:</span> {s.text}</p>
+        ))}
+        {info?.feature && <p className="text-gray-300"><span className="font-semibold">{info.feature.name}.</span> {info.feature.text} {trained ? "Choose it for a rest (under the rest buttons)." : "(Needs training.)"}</p>}
+        {(info?.activities ?? []).map((a) => (
+          <div key={a.activity} className="flex items-center gap-1">
+            <span className="flex-1">{a.activity}{a.dc ? ` (DC ${a.dc})` : ""}</span>
+            {a.dc && (
+              <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => toolRoll(name, a.dc!, a.activity)}>
+                Try
+              </Button>
+            )}
+          </div>
+        ))}
+        {!info?.feature && !(info?.activities ?? []).length && !info?.skills?.length && <p className="text-gray-400">The book gives this tool no further uses.</p>}
+      </div>
+    );
+  };
+
+  // What an item can do, under its row in the inventory
+  const [using, setUsing] = useState<string | null>(null);
+  const usePanel = (name: string) => {
+    const use = gearOf(name);
+    const facts = factsOf(name);
+    if (!use) return null;
+    const people: { id: string; label: string }[] = [{ id: "self", label: "you" }, ...party.map((c) => ({ id: c.id, label: c.name }))];
+    const text = facts?.description ? <p className="text-gray-400">{facts.description}</p> : null;
+    if (use.kind === "tool") return <>{toolPanel(name)}{text}</>;
+    if (use.kind === "game") return <div className="mt-1 text-xs text-gray-300">Gaming set: open someone at a table and choose Play, or sit at the house table in a cantina.</div>;
+    if (use.kind === "instrument") {
+      return (
+        <div className="mt-1 space-y-1 text-xs">
+          <p className="text-gray-300">{trainedWith(name) ? "You are trained with it." : "You are not trained with it."} Play it for the room: Charisma (Performance) against DC 12 in a cantina, 15 elsewhere; the audience tips. (House rule.)</p>
+          <Button size="sm" variant="outline" disabled={inCombat || dead} onClick={() => perform(name)} data-testid="perform">Play for the room (1 hour)</Button>
+        </div>
+      );
+    }
+    if (use.kind === "heal" || use.kind === "repair" || use.kind === "stabilize" || use.kind === "antidote" || use.kind === "substance") {
+      const droid = use.kind === "repair" || (use.kind === "stabilize" && use.target === "droid");
+      return (
+        <div className="mt-1 space-y-1 text-xs" data-testid="use-panel">
+          {text}
+          {use.kind === "substance" && <p className="text-yellow-300">A high waits for your next check or fight; a low follows (a Wisdom save), then a Constitution save against addiction. Addiction level {addictionLevel}.</p>}
+          <div className="flex flex-wrap gap-1">
+            {people.filter((p) => (use.kind === "substance" || use.kind === "antidote" ? p.id === "self" : droid ? p.id !== "self" : true)).map((p) => (
+              <Button key={p.id} size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => useOn(name, p.id)} data-testid={`use-on-${p.id}`}>
+                {p.id === "self" ? "Use on yourself" : `Use on ${p.label}`}
+              </Button>
+            ))}
+            {people.length === 1 && droid && <span className="text-gray-400">It is for a droid or construct companion.</span>}
+          </div>
+        </div>
+      );
+    }
+    if (use.kind === "poison") return <div className="mt-1 text-xs space-y-1">{text}<Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => coatWeapon(name)}>Coat your weapon</Button></div>;
+    if (use.kind === "explosive") {
+      return (
+        <div className="mt-1 text-xs space-y-1">
+          {text}
+          <p className="text-gray-300">{use.form === "grenade" || use.form === "detonator" ? "Thrown in a fight (Items, in the combat panel)." : "Set against a locked door to blow it (Forcing a door)."} Radius {use.radius} ft., DC {use.dc} {use.save}{use.damage.length ? `, ${use.damage.map((d) => `${d.dice} ${d.type}`).join(" and ")}` : ""}.</p>
+        </div>
+      );
+    }
+    if (use.kind === "scout") {
+      return (
+        <div className="mt-1 text-xs space-y-1">
+          {text}
+          <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || !world || !here} onClick={() => scout()} data-testid="scout">Scout the buildings in sight</Button>
+        </div>
+      );
+    }
+    return <div className="mt-1 text-xs text-gray-300">{text}{use.kind === "bolt" ? <p>Fitted to a powered-down droid from its card.</p> : use.kind === "binders" ? <p>Restrains a Small or Medium creature (DC {use.dc} Strength or Dexterity save).</p> : use.kind === "spike" ? <p>Spent automatically to reroll a failed {use.tool.toLowerCase()} check on a lock.</p> : use.kind === "ram" ? <p>Forcing a locked door gives +{use.bonus}, and advantage with a helper.</p> : use.kind === "cutter" ? <p>Cuts a locked door open in ten minutes for each 5 of its DC.</p> : null}</div>;
+  };
+
+  // Macrobinoculars: who is on watch at the buildings round about, from where the party stands
+  const scout = () => {
+    if (!world || !here) return;
+    const settlement = world.areas[berthOf(world, here.id)];
+    const buildings = settlement ? childrenOf(world, settlement.id).filter((a) => a.kind === "building") : [];
+    const lines = buildings.map((b) => {
+      const rooms = childrenOf(world, b.id).filter((r) => r.kind === "room");
+      if (!rooms.length) return `${b.name}: nobody has been inside; you see only its walls`;
+      const armed = rooms.flatMap((r) => r.occupants).filter((o) => o.disposition === "hostile" && o.hitPoints).reduce((n, o) => n + o.count, 0);
+      const gate = rooms.find((r) => r.gateway)?.occupants.filter((o) => o.role === "guard").reduce((n, o) => n + o.count, 0) ?? 0;
+      return `${b.name}: ${gate ? `${gate} on the door` : "nobody on the door"}${armed ? `, ${armed} armed and hostile inside` : ""}`;
+    });
+    toast.info(`Through the macrobinoculars: ${lines.join("; ") || "nothing of interest"}.`);
   };
 
   const pickedCard = () => {
@@ -1129,13 +2386,56 @@ export default function GameBoard() {
                 <span className="font-semibold text-red-300">Watch: {allowed ? "letting you pass" : ALERT_LEVELS[alert]}.</span> {allowed ? "They let you through, and watch what you do." : WATCH_NOTE[alert]}
               </p>
               {watchButtons}
+              {o.role === "wildlife" && o.creature === "beast" && gentleSection(o)}
             </div>
+          ) : o.captive ? (
+            captiveSection(o)
+          ) : o.disabled ? (
+            droidSection(o)
+          ) : o.role === "freed" ? (
+            freedSection(o)
           ) : (
             <>
               <p className="text-xs text-gray-400">To talk with them, say what you do on the GM Interface tab.</p>
               {waresOf(o) && tradePanel(o, here.id)}
+              {canHire(o) && hireSection(o, here.id)}
+              {!isDroid(o) && o.species && o.role !== "guard" && o.role !== "freed" && gamblePanel(o.id, o.name, o.role === "gambler" ? 4 : 2)}
             </>
           )}
+        </>
+      );
+    }
+    if (picked.kind === "vehicle") {
+      const building = inBuildingsHere.find((x) => x.vehicle.id === picked.id);
+      const mineHere = vehicles.find((v) => v.id === picked.id);
+      const v: Vehicle | undefined = building?.vehicle ?? mineHere;
+      if (!v) return null;
+      return (
+        <>
+          {close}
+          <p className="font-semibold">{v.name}</p>
+          <p className="text-xs text-gray-300">{v.model}, {v.mph} mph, seats {v.seats}, {v.status}{mineHere ? ", yours" : `, ${v.owner}`}.</p>
+          <p className="text-xs text-gray-400">{mineHere ? "It carries the party over the ground between settlements: pick it on the route's exits." : v.status === "wrecked" ? "A wreck. A mechanic's kit can restore its power (DC 15)." : hostiles.length ? "Someone is guarding it." : "Nobody is left to stop you taking it."}</p>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {building && v.status === "parked" && <Button size="sm" disabled={inCombat || dead || hostiles.length > 0} onClick={() => { takeVehicle(building.building, v); setPicked(null); }} data-testid="vehicle-take">Take it</Button>}
+            {v.status === "wrecked" && <Button size="sm" variant="outline" disabled={inCombat || dead || hostiles.length > 0} onClick={() => mendVehicle(building?.building ?? null, v)} data-testid="vehicle-mend">Mend it (mechanic's kit, DC 15)</Button>}
+          </div>
+        </>
+      );
+    }
+    if (picked.kind === "companion") {
+      const c = party.find((x) => x.id === picked.id);
+      if (!c) return null;
+      return (
+        <>
+          {close}
+          <p className="font-semibold text-green-300">{c.name}</p>
+          <p className="text-xs text-gray-300">{[c.species, c.role, c.kind === "hireling" ? `hired, ${c.wage} cr/day` : c.kind, c.cr && `CR ${c.cr}`, `AC ${c.armorClass}`, `${c.hp}/${c.maxHp} hit points`, c.mount && "can be ridden"].filter(Boolean).join(", ")}</p>
+          {c.attack && <p className="text-xs text-gray-400">{c.attack.name} {c.attack.bonus >= 0 ? "+" : ""}{c.attack.bonus}, {c.attack.damage}</p>}
+          {c.how && <p className="text-xs text-gray-400">Joined: {c.how}.</p>}
+          <div className="mt-1 flex flex-wrap gap-1">
+            <Button size="sm" variant="outline" disabled={inCombat} onClick={() => { dismiss(c); setPicked(null); }}>Dismiss</Button>
+          </div>
         </>
       );
     }
@@ -1181,6 +2481,17 @@ export default function GameBoard() {
       <Button size="sm" variant="outline" onClick={() => waitFor(until(7), "Waited until morning")} disabled={inCombat || dead || hostiles.length > 0}>
         Until morning
       </Button>
+      {workableTools.length > 0 && (
+        <label className="flex w-full items-center gap-1 text-xs" data-testid="rest-tool">
+          Tool work at the next rest:
+          <select className="h-7 flex-1 rounded bg-gray-700 px-1" value={restTool} onChange={(e) => setRestTool(e.target.value)}>
+            <option value="">none</option>
+            {workableTools.map((n) => (
+              <option key={n} value={n}>{n}: {toolInfo(n)?.feature?.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
       {healingPowers.map((power) => (
         <Button
           key={power.name}
@@ -1330,7 +2641,44 @@ export default function GameBoard() {
 
             <p className="text-sm text-gray-300 mb-4" data-testid="play-credits">
               Credits: {(character.credits ?? 0).toLocaleString()} · AC {character.armorClass}
+              {play.debt ? <span className="ml-1 text-red-300">· owes {play.debt.toLocaleString()}</span> : null}
             </p>
+
+            {(play.boon || play.poison || play.substance || addictionLevel > 0) && (
+              <div className="mb-4 space-y-0.5 text-xs" data-testid="play-status">
+                {play.boon && <p className="text-cyan-200">Prepared: {play.boon.tool}, {play.boon.feature}{play.boon.die ? ` (d${play.boon.die})` : ""} until your next rest.</p>}
+                {play.poison && <p className="text-green-300">Poison on the weapon: {play.poison.dice}, DC {play.poison.dc}.</p>}
+                {play.substance && <p className={play.substance.phase === "high" ? "text-yellow-200" : "text-red-300"}>{play.substance.name}: {play.substance.phase === "high" ? "a high, waiting for your next check or fight" : `a low for ${Math.max(0, play.substance.ends - clock)} more minutes`}.</p>}
+                {addictionLevel > 0 && <p className="text-red-300">Addiction level {addictionLevel}: lows last longer{addictionLevel >= 2 ? ", highs are shorter" : ""}.</p>}
+              </div>
+            )}
+
+            {party.length > 0 && (
+              <div className="mb-4 space-y-2" data-testid="play-party">
+                <h3 className="font-semibold">Companions ({party.length}/{COMPANION_LIMIT})</h3>
+                {party.map((c) => (
+                  <div key={c.id} className="text-sm" data-testid="party-member">
+                    <div className="flex justify-between">
+                      <span>
+                        {c.name}{" "}
+                        <span className="text-xs text-gray-400">
+                          {c.kind === "hireling" ? `hired, ${c.wage} cr/day` : c.kind === "droid" ? (c.bolt === "reprogrammed" ? "droid, reprogrammed" : "droid, restraining bolt") : c.kind === "beast" ? (c.mount ? "beast, mount" : "beast") : "freed"}
+                        </span>
+                      </span>
+                      <span>{c.hp > 0 ? `${c.hp}/${c.maxHp}` : c.kind === "droid" ? "powered down" : "down"}</span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-gray-700">
+                      <div className="h-1.5 rounded-full bg-green-600" style={{ width: `${Math.max(0, Math.min(100, (c.hp / c.maxHp) * 100))}%` }} />
+                    </div>
+                    <div className="mt-0.5 flex gap-1 text-xs text-gray-400">
+                      <span>AC {c.armorClass}{c.attack ? `, ${c.attack.name} ${c.attack.bonus >= 0 ? "+" : ""}${c.attack.bonus} (${c.attack.damage})` : ""}</span>
+                      <Button size="sm" variant="ghost" className="ml-auto h-5 px-1 text-xs" disabled={inCombat} onClick={() => dismiss(c)}>Dismiss</Button>
+                    </div>
+                  </div>
+                ))}
+                <p className="text-xs text-gray-500">They fight at your side and heal on rests. Wages are paid each day (house rule).</p>
+              </div>
+            )}
 
             {dead && (
               <div className="mb-4 p-2 rounded bg-red-900/50 text-sm" data-testid="play-dead">
@@ -1408,6 +2756,43 @@ export default function GameBoard() {
                     <p className="text-xs text-gray-400">House rule: how enemies notice you is not in the books.</p>
                   </div>
                 )}
+                {(vehicles.length > 0 || inBuildingsHere.length > 0) && (
+                  <div className="space-y-1 text-sm" data-testid="play-vehicles">
+                    <h3 className="font-semibold">Speeders</h3>
+                    {vehicles.map((v) => (
+                      <div key={v.id} className="flex flex-wrap items-center gap-2">
+                        <span>
+                          {v.name} <span className="text-gray-400">{v.mph} mph, seats {v.seats}, {v.status === "wrecked" ? "wrecked" : v.areaId === berthOf(world, here.id) ? "parked here" : `parked at ${world.areas[v.areaId]?.name ?? "a settlement"}`}</span>
+                        </span>
+                        {v.status === "wrecked" && v.areaId === berthOf(world, here.id) && (
+                          <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => mendVehicle(null, v)}>Mend (mechanic's kit, DC 15)</Button>
+                        )}
+                      </div>
+                    ))}
+                    {inBuildingsHere.map(({ building, vehicle }) => (
+                      <div key={vehicle.id} className="flex flex-wrap items-center gap-2" data-testid="building-vehicle">
+                        <span>
+                          {vehicle.name} <span className="text-gray-400">{vehicle.mph} mph, {vehicle.status}, at {building.name}</span>
+                        </span>
+                        {vehicle.status === "wrecked" ? (
+                          <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || hostiles.length > 0} onClick={() => mendVehicle(building, vehicle)}>Mend (mechanic's kit, DC 15)</Button>
+                        ) : (
+                          <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || hostiles.length > 0} onClick={() => takeVehicle(building, vehicle)}>Take it</Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {(hereNow ?? here).occupants.some((o) => o.disposition !== "hostile" && o.hitPoints) && instrumentsCarried.length > 0 && !hostiles.length && (
+                  <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="play-perform">
+                    {instrumentsCarried.map((n) => (
+                      <Button key={n} size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => perform(n)}>
+                        Play the {n.toLowerCase()} for the room
+                      </Button>
+                    ))}
+                  </div>
+                )}
+                {setsCarried.length > 0 && /bar|cantina|booth|common|back room|casino|lounge/i.test(here.name) && !hostiles.length && gamblePanel("house", here.name, 0, true)}
                 {here.loot.filter((c) => !c.hidden).map((cache) => (
                   <div key={cache.id} className="text-sm flex flex-wrap items-center gap-2" data-testid="play-loot">
                     <span>
@@ -1426,20 +2811,48 @@ export default function GameBoard() {
                   {exits.filter((exit) => !exit.hidden).map((exit) => {
                     // Enemies who have stopped the party bar every way but the way back
                     const barred = hostiles.length > 0 && exit.to !== cameFrom && !allowed && alert >= ALERT.questioning;
+                    const rides = exit.locked ? [] : ridesFor(exit);
                     return (
-                      <Button
-                        key={`${exit.via}-${exit.to}`}
-                        size="sm"
-                        variant="outline"
-                        className="h-auto whitespace-normal justify-start text-left"
-                        disabled={inCombat || dead || exploring || barred}
-                        onClick={() => leaveBy(exit)}
-                      >
-                        {exit.locked ? `Unlock (DC ${exit.locked}): ` : ""}{exit.label}{exit.via === "path" ? " to" : ""} {world.areas[exit.to].name}
-                        {[exit.travel, tripNote(exit)].filter(Boolean).length > 0 && (
-                          <span className="text-gray-400 ml-1">({[exit.travel, tripNote(exit)].filter(Boolean).join(", ")})</span>
+                      <div key={`${exit.via}-${exit.to}`} className="flex flex-col gap-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-auto whitespace-normal justify-start text-left"
+                          disabled={inCombat || dead || exploring || barred}
+                          onClick={() => leaveBy(exit)}
+                        >
+                          {exit.locked ? `Unlock (DC ${exit.locked}): ` : ""}{exit.label}{exit.via === "path" ? " to" : ""} {world.areas[exit.to].name}
+                          {[exit.travel, tripNote(exit)].filter(Boolean).length > 0 && (
+                            <span className="text-gray-400 ml-1">({[exit.travel, tripNote(exit)].filter(Boolean).join(", ")})</span>
+                          )}
+                        </Button>
+                        {rides.length > 1 && (
+                          <div className="flex flex-wrap gap-1 pl-2" data-testid="rides">
+                            {rides.map((ride) => (
+                              <Button
+                                key={ride.id}
+                                size="sm"
+                                variant="outline"
+                                className="h-6 px-2 text-xs"
+                                disabled={inCombat || dead || exploring || barred || !!ride.blocked || (ride.fare > (character.credits ?? 0))}
+                                title={ride.blocked}
+                                onClick={() => leaveBy(exit, ride)}
+                                data-testid={`ride-${ride.id}`}
+                              >
+                                {ride.label}: {rideText(ride.minutes)}{ride.fare ? `, ${ride.fare} cr` : ""}{ride.blocked ? ` (${ride.blocked})` : ""}
+                              </Button>
+                            ))}
+                          </div>
                         )}
-                      </Button>
+                        {exit.locked && (
+                          <div className="flex flex-wrap gap-1 pl-2" data-testid="force-door">
+                            <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={inCombat || dead} onClick={() => forceDoor(exit, "strength")}>Force it (Strength DC {exit.locked + 5})</Button>
+                            {carriesAny((n) => gearOf(n)?.kind === "ram") && <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={inCombat || dead} onClick={() => forceDoor(exit, "ram")}>Ram it (+4)</Button>}
+                            {carriesAny((n) => gearOf(n)?.kind === "cutter") && <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={inCombat || dead} onClick={() => forceDoor(exit, "cutter")}>Cut it ({10 * Math.ceil(exit.locked / 5)} min)</Button>}
+                            {carriesAny((n) => gearOf(n)?.kind === "explosive") && <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={inCombat || dead} onClick={() => forceDoor(exit, "blast")}>Blow it</Button>}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                   {hostiles.length > 0 && !allowed && alert >= ALERT.questioning && <p className="text-xs text-red-400">Enemies bar the way onward.</p>}
@@ -1565,18 +2978,29 @@ export default function GameBoard() {
                         .map(([name, count]) => {
                           const kind = itemKind(name);
                           const on = kind === "weapon" ? is(worn.weapons, name) : kind === "armor" ? is([worn.body], name) : kind === "shield" ? is([worn.shield], name) : false;
+                          const use = kind === "gear" ? gearOf(name) : undefined;
+                          const left = use && "uses" in use ? usesLeft(name, use.uses) : undefined;
                           return (
-                            <div key={name} className="flex items-center justify-between gap-2 text-sm" data-testid={`inventory-item-${name}`}>
-                              <span>
-                                {name}
-                                {count > 1 ? ` ×${count}` : ""}
-                                {kind !== "gear" && <span className="ml-1 text-xs text-gray-400">{kind === "weapon" ? "weapon" : kind === "shield" ? "shield" : "armor"}{on ? ", " + (kind === "weapon" ? "in hand" : "worn") : ""}</span>}
-                              </span>
-                              {kind !== "gear" && (
-                                <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`equip-${name}`} onClick={() => setEquipped(name, !on)}>
-                                  {on ? (kind === "weapon" ? "Put away" : "Take off") : kind === "weapon" ? "Wield" : "Wear"}
-                                </Button>
-                              )}
+                            <div key={name} data-testid={`inventory-item-${name}`}>
+                              <div className="flex items-center justify-between gap-2 text-sm">
+                                <span>
+                                  {name}
+                                  {count > 1 ? ` ×${count}` : ""}
+                                  {left !== undefined && <span className="ml-1 text-xs text-gray-400">{left} uses left</span>}
+                                  {kind !== "gear" && <span className="ml-1 text-xs text-gray-400">{kind === "weapon" ? "weapon" : kind === "shield" ? "shield" : "armor"}{on ? ", " + (kind === "weapon" ? "in hand" : "worn") : ""}</span>}
+                                </span>
+                                {kind !== "gear" && (
+                                  <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`equip-${name}`} onClick={() => setEquipped(name, !on)}>
+                                    {on ? (kind === "weapon" ? "Put away" : "Take off") : kind === "weapon" ? "Wield" : "Wear"}
+                                  </Button>
+                                )}
+                                {use && (
+                                  <Button size="sm" variant={using === name ? "default" : "outline"} className="h-6 px-2" data-testid={`use-${name}`} onClick={() => setUsing(using === name ? null : name)}>
+                                    {use.kind === "tool" ? "Tool" : use.kind === "game" ? "Game" : use.kind === "instrument" ? "Play" : "Use"}
+                                  </Button>
+                                )}
+                              </div>
+                              {using === name && usePanel(name)}
                             </div>
                           );
                         })}
@@ -1603,7 +3027,7 @@ export default function GameBoard() {
         )}
 
         {/* Combat UI */}
-        {showCombat && <PlayCombat />}
+        {showCombat && <PlayCombat items={combatItems} />}
       </KeyboardControls>
     </div>
   );

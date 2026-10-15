@@ -1,12 +1,23 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import TranslucentPane from "@/components/ui/TranslucentPane";
-import { useCombat, attackPlan, cannotAct, rollD20, movementLeft, pickTarget, powerOutOfRange, squaresApart, LASTING } from "@/lib/stores/useCombat";
+import { useCombat, attackPlan, cannotAct, rollD20, movementLeft, pickTarget, powerOutOfRange, squaresApart, onPartySide, rollDamage, LASTING } from "@/lib/stores/useCombat";
 import { conditionSummary } from "@/lib/sw5e/rules";
 
 const mod = (score?: number) => Math.floor(((score ?? 10) - 10) / 2);
+const dieRoll = (sides: number) => Math.floor(Math.random() * sides) + 1;
 
-export default function PlayCombat() {
+// What the character can use in a fight, made by the Play page from what is carried: `target` says
+// who it is used on (an ally or the character, an enemy, nobody), `use` does it and says whether it was used
+export interface CombatItemOption {
+  key: string;
+  label: string;
+  hint?: string;
+  target: "ally" | "foe" | "none";
+  use: (targetId?: number | string) => boolean;
+}
+
+export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] }) {
   const { combatants, currentTurn, round, combatLog, endCombat, deathSaves, castPower, deathSave, pass, arena, targetId, setTarget } = useCombat();
   const current = combatants[currentTurn];
 
@@ -32,14 +43,59 @@ export default function PlayCombat() {
     }
     const roll = rollD20(plan.mode);
     // The player's bonus with the weapon in hand; unarmed, Strength and proficiency
-    const bonus = attacker.isPlayer
+    let bonus = attacker.isPlayer
       ? (type === "melee" ? attacker.meleeAttack : attacker.rangedAttack) ?? mod(attacker.abilities?.[type === "melee" ? "strength" : "dexterity"]) + (attacker.attackBonus ?? 2)
       : attacker.attackBonus ?? 3;
-    // A natural 1 misses whatever the bonus; cover adds to the target's Armor Class
-    const total = roll === 1 ? 0 : roll + bonus - plan.cover.bonus;
+    const extras: string[] = [];
+    // A substance's extra d3 on attacks made with its ability
+    if (attacker.high && attacker.high.ability === (type === "melee" ? "strength" : "dexterity")) {
+      const d3 = dieRoll(3) * (attacker.high.low ? -1 : 1);
+      bonus += d3;
+      extras.push(`${d3 > 0 ? "+" : ""}${d3} ${attacker.high.low ? "low" : "high"}`);
+    }
+    // A tool's prepared die, once, on an attack
+    if (attacker.isPlayer && attacker.boons?.attack && !s.spent.includes("attack")) {
+      const d = dieRoll(attacker.boons.attack);
+      bonus += d;
+      extras.push(`+${d} prepared`);
+      s.spend("attack");
+    }
+    // A natural 1 misses whatever the bonus; cover adds to the target's Armor Class, and so does a
+    // prepared die of armor work, once, against one attack
+    let guard = 0;
+    if (target.isPlayer && target.boons?.ac && !s.spent.includes("ac")) {
+      guard = dieRoll(target.boons.ac);
+      extras.push(`armor work +${guard} AC`);
+      s.spend("ac");
+    }
+    const total = roll === 1 ? 0 : roll + bonus - plan.cover.bonus - guard;
     const crit = roll === 20 || (plan.crit && total >= target.armorClass);
-    const dmg = s.damageRoll(type, crit);
-    const notes = [plan.mode ? `${plan.mode > 0 ? "advantage" : "disadvantage"}: ${plan.reasons.join(", ")}` : "", plan.cover.name, `${plan.feet} ft.`].filter(Boolean).join("; ");
+    let dmg = s.damageRoll(type, crit);
+    const hit = roll !== 1 && (total >= target.armorClass || crit);
+    if (hit && attacker.isPlayer) {
+      if (attacker.boons?.damage && !s.spent.includes("damage")) {
+        const d = dieRoll(attacker.boons.damage);
+        dmg += d;
+        extras.push(`+${d} prepared damage`);
+        s.spend("damage");
+      }
+      if (attacker.boons?.damageFlat && !s.spent.includes("damage")) {
+        dmg += attacker.boons.damageFlat;
+        extras.push(`+${attacker.boons.damageFlat} honed`);
+        s.spend("damage");
+      }
+      const poison = attacker.boons?.poison;
+      if (poison && !s.spent.includes("poison")) {
+        // A dose of poison on the weapon: Constitution save against its DC, half on a save
+        const full = rollDamage(poison.dice, false);
+        const saved = rollD20(0) + (target.saves?.constitution ?? 0) >= poison.dc;
+        const taken = saved ? Math.floor(full / 2) : full;
+        dmg += taken;
+        extras.push(`poison ${taken}${saved ? " (saved)" : ""}`);
+        s.spend("poison");
+      }
+    }
+    const notes = [plan.mode ? `${plan.mode > 0 ? "advantage" : "disadvantage"}: ${plan.reasons.join(", ")}` : "", plan.cover.name, extras.join(", "), `${plan.feet} ft.`].filter(Boolean).join("; ");
     s.attackRoll(target.id, total, dmg, crit, notes);
     useCombat.getState().nextTurn();
   };
@@ -98,15 +154,15 @@ export default function PlayCombat() {
         </div>
         <ul className="space-y-1 mb-2">
           {combatants.map((c, i) => (
-            <li key={String(c.id)} className={`text-sm ${i === currentTurn ? "text-yellow-300 font-semibold" : ""} ${c.hp <= 0 ? "opacity-50 line-through" : ""}`} onClick={() => !c.isPlayer && c.hp > 0 && setTarget(c.id)}>
+            <li key={String(c.id)} className={`text-sm ${i === currentTurn ? "text-yellow-300 font-semibold" : ""} ${c.hp <= 0 ? "opacity-50 line-through" : ""}`} onClick={() => !onPartySide(c) && c.hp > 0 && setTarget(c.id)}>
               <div className="flex justify-between">
                 <span>
                   {target?.id === c.id && c.hp > 0 ? "◎ " : ""}
                   {c.name}
-                  {c.isPlayer ? " (you)" : ""}
+                  {c.isPlayer ? " (you)" : c.ally ? " (ally)" : ""}
                 </span>
                 <span>
-                  {c.hp}/{c.maxHp}
+                  {c.hp}/{c.maxHp}{c.tempHp ? ` +${c.tempHp}` : ""}
                 </span>
               </div>
               {c.hp > 0 && (c.conditions?.length ?? 0) > 0 && (
@@ -176,6 +232,7 @@ export default function PlayCombat() {
             </Button>
           </div>
         )}
+        {!down && items.length > 0 && <ItemList items={items} disabled={!playerTurn} />}
         {!down && (player?.powers?.length ?? 0) > 0 && (
           <div className="mb-3" data-testid="combat-powers">
             <p className="text-xs text-gray-400 mb-1">Powers ({player?.powerPoints ?? 0} points left)</p>
@@ -207,6 +264,50 @@ export default function PlayCombat() {
           ))}
         </div>
       </TranslucentPane>
+    </div>
+  );
+}
+
+// The items the character can use now. An item used on a friend asks whom; one thrown goes at the
+// enemy picked out. Using one takes the turn.
+function ItemList({ items, disabled }: { items: CombatItemOption[]; disabled: boolean }) {
+  const { combatants, targetId } = useCombat();
+  const [who, setWho] = useState<Record<string, string>>({});
+  const friends = combatants.filter((c) => onPartySide(c));
+  const player = combatants.find((c) => c.isPlayer);
+  const run = (item: CombatItemOption) => {
+    const state = useCombat.getState();
+    const foe = player ? pickTarget(state.combatants, player, state.targetId) : undefined;
+    const target = item.target === "ally" ? who[item.key] ?? String(player?.id) : item.target === "foe" ? foe?.id : undefined;
+    const friend = item.target === "ally" ? state.combatants.find((c) => String(c.id) === String(target)) : undefined;
+    if (item.use(friend ? friend.id : target)) useCombat.getState().nextTurn();
+  };
+  return (
+    <div className="mb-3" data-testid="combat-items">
+      <p className="text-xs text-gray-400 mb-1">Items (using one takes the turn)</p>
+      <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
+        {items.map((item) => (
+          <div key={item.key} className="flex items-center gap-1">
+            <Button size="sm" variant="outline" className="h-auto flex-1 whitespace-normal justify-start text-left" disabled={disabled} onClick={() => run(item)} data-testid={`combat-item-${item.key}`}>
+              {item.label}
+              {item.hint && <span className="text-gray-400 ml-1">({item.hint})</span>}
+            </Button>
+            {item.target === "ally" && friends.length > 1 && (
+              <select
+                className="h-8 rounded bg-gray-700 px-1 text-xs"
+                value={who[item.key] ?? String(player?.id)}
+                onChange={(e) => setWho({ ...who, [item.key]: e.target.value })}
+                aria-label={`Use ${item.label} on`}
+              >
+                {friends.map((c) => (
+                  <option key={String(c.id)} value={String(c.id)}>{c.isPlayer ? "you" : c.name}{c.hp <= 0 ? " (down)" : ""}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        ))}
+      </div>
+      <p className="text-[11px] text-gray-500">{targetId ? "Thrown at the enemy picked out." : "Thrown at the nearest enemy."}</p>
     </div>
   );
 }

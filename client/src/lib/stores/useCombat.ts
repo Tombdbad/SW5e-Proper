@@ -89,7 +89,21 @@ export interface Combatant {
   role?: string;
   // Conditions in force (what each does is read from the conditions data, see conditionMechanics)
   conditions?: ActiveCondition[];
+  // Fights on the player's side without being the player: a companion (its id is the companion's)
+  ally?: boolean;
+  // Temporary hit points, taken before real ones
+  tempHp?: number;
+  // A substance's high: the ability the extra d3 goes to, the turns it has left and what it gives
+  // at the start of each turn
+  high?: { name: string; ability?: string; rounds: number; temp?: string; low?: boolean };
+  // What the character has prepared or coated: a tool's die for one attack, one damage roll and one
+  // attack against the character, and a dose of poison on the weapon (the dice, the DC, and whether
+  // it has been spent). Spent ones are listed in the fight's `spent`.
+  boons?: { attack?: number; damage?: number; damageFlat?: number; ac?: number; poison?: { dice: string; dc: number } };
 }
+
+// Which side a combatant is on: the player's (with companions) or the enemy's
+export const onPartySide = (c: Pick<Combatant, "isPlayer" | "ally">) => !!c.isPlayer || !!c.ally;
 
 export interface ActiveCondition {
   name: string;
@@ -197,7 +211,7 @@ export function attackPlan(arena: Arena, combatants: Combatant[], attacker: Comb
       down = true;
       reasons.push("long range");
     }
-    if (combatants.some((c) => c.hp > 0 && !!c.isPlayer !== !!attacker.isPlayer && !cannotAct(c) && squaresApart(c, attacker) <= 1)) {
+    if (combatants.some((c) => c.hp > 0 && onPartySide(c) !== onPartySide(attacker) && !cannotAct(c) && squaresApart(c, attacker) <= 1)) {
       down = true;
       reasons.push("an enemy within 5 feet");
     }
@@ -271,7 +285,7 @@ export function attackOdds(attacker: Combatant, target: Combatant, type: "melee"
 
 // Who an attack or power is aimed at: the enemy picked out if it still stands, else the nearest
 export function pickTarget(combatants: Combatant[], attacker: Combatant, targetId: number | string | null): Combatant | undefined {
-  const foes = combatants.filter((c) => !!c.isPlayer !== !!attacker.isPlayer && c.hp > 0);
+  const foes = combatants.filter((c) => onPartySide(c) !== onPartySide(attacker) && c.hp > 0);
   return foes.find((c) => c.id === targetId) ?? [...foes].sort((a, b) => squaresApart(a, attacker) - squaresApart(b, attacker))[0];
 }
 
@@ -294,7 +308,8 @@ export const rollD20 = (mode = 0): number => {
 function savingThrow(c: Combatant, ability: string, dc: number): boolean {
   const all = mechanicsOf(c);
   if (all.some((x) => x.m.autoFailSaves.includes(ability))) return false;
-  return rollD20(all.some((x) => x.m.disadvantageSaves.includes(ability)) ? -1 : 0) + (c.saves?.[ability] ?? 0) >= dc;
+  const high = c.high && c.high.ability === ability ? roll(1, 3) * (c.high.low ? -1 : 1) : 0;
+  return rollD20(all.some((x) => x.m.disadvantageSaves.includes(ability)) ? -1 : 0) + (c.saves?.[ability] ?? 0) + high >= dc;
 }
 
 // Adds conditions to a creature; one it already has is replaced
@@ -304,11 +319,15 @@ function withConditions(c: Combatant, added: ActiveCondition[]): Combatant {
 }
 
 // Takes hit points off a creature; damage ends the conditions that say so (a sleeper wakes)
-const hurt = (c: Combatant, amount: number): Combatant => ({
-  ...c,
-  hp: Math.max(0, c.hp - amount),
-  conditions: c.conditions?.filter((x) => !x.endsOnDamage),
-});
+const hurt = (c: Combatant, amount: number): Combatant => {
+  const absorbed = Math.min(c.tempHp ?? 0, amount);
+  return {
+    ...c,
+    tempHp: (c.tempHp ?? 0) - absorbed,
+    hp: Math.max(0, c.hp - (amount - absorbed)),
+    conditions: c.conditions?.filter((x) => !x.endsOnDamage),
+  };
+};
 
 const lasts = (rounds: number) => (rounds >= LASTING ? "for the fight" : rounds === 1 ? "for 1 turn" : `for ${rounds} turns`);
 
@@ -339,6 +358,15 @@ export interface CombatPower {
 
 export type CombatOutcome = "victory" | "stable" | "dead" | "left" | null;
 
+// What using an item does in a fight. The numbers (the amount healed, the dice and DCs of an
+// explosive) are read from the item's text by the caller.
+export type ItemEffect =
+  | { kind: "heal"; label: string; targetId: number | string; amount: number }
+  | { kind: "stabilize"; label: string; targetId: number | string; to: number }
+  | { kind: "explosive"; label: string; targetId: number | string; radius: number; maxFeet: number; dc: number; save: string; damage: { dice: string; type: string }[]; conditions: string[]; conditionRounds: number }
+  | { kind: "substance"; label: string; ability?: string; temp?: string; rounds: number }
+  | { kind: "poison"; label: string; dice: string; dc: number };
+
 // Rolls "2d6 + 1" style damage; a critical hit rolls the dice twice
 export function rollDamage(expression: string, isCritical: boolean): number {
   const parts = expression.replace(/\s+/g, "").match(/^(\d+)d(\d+)([+-]\d+)?$/);
@@ -359,10 +387,14 @@ interface CombatState {
   // How the enemy stood when the party left the fight (the field is cleared then); otherwise
   // the combatants themselves say
   remains: { id: number | string; hp: number }[];
+  // The same for the companions, when the fight was left
+  allyRemains: { id: number | string; hp: number }[];
   surprise: boolean;
   // The ground the fight is on, and the enemy the player has picked out
   arena: Arena;
   targetId: number | string | null;
+  // Prepared boons and doses of poison that were used up in this fight
+  spent: ("attack" | "damage" | "ac" | "poison")[];
 
   // Combat actions
   initiateCombat: (
@@ -375,7 +407,13 @@ interface CombatState {
     // The room's plan and the square the player comes in at; open floor without one
     arena?: Arena,
     playerAt?: { x: number; y: number },
+    // Companions fighting on the player's side, with where they stand
+    allies?: Omit<Combatant, "isPlayer">[],
   ) => void;
+  // The player uses an item that acts on the fight (see ItemEffect); the turn is not ended here
+  itemEffect: (effect: ItemEffect) => boolean;
+  // Marks a boon or a dose of poison as used
+  spend: (what: "attack" | "damage" | "ac" | "poison") => void;
   // The creature whose turn it is walks to a square it can reach
   moveTo: (x: number, y: number) => void;
   // It closes with a target until within the given feet, as far as its movement goes; true when it got there
@@ -408,6 +446,7 @@ export const useCombat = create<CombatState>((set, get) => ({
   deathSaves: { successes: 0, failures: 0 },
   outcome: null,
   remains: [],
+  allyRemains: [],
 
   surprise: false,
   arena: { width: 10, height: 7, assets: [] },
@@ -436,7 +475,11 @@ export const useCombat = create<CombatState>((set, get) => ({
 
   setTarget: (id) => set({ targetId: id }),
 
-  initiateCombat: (player, enemies, weapons, surprise = false, arena = { width: 10, height: 7, assets: [] }, playerAt) => {
+  spent: [],
+
+  spend: (what) => set((state) => ({ spent: state.spent.includes(what) ? state.spent : [...state.spent, what] })),
+
+  initiateCombat: (player, enemies, weapons, surprise = false, arena = { width: 10, height: 7, assets: [] }, playerAt, allies = []) => {
     // Calculate initiatives
     const dexModifier = Math.floor((player.abilityScores.dexterity - 10) / 2);
     const playerInitiative = roll(1, 20) + dexModifier;
@@ -472,6 +515,11 @@ export const useCombat = create<CombatState>((set, get) => ({
     const middle = Math.floor(arena.height / 2);
     const placedPlayer = stand(playerCombatant, playerAt ?? { x: 0, y: middle });
 
+    // Companions stand close by the player, and roll for themselves
+    const allyCombatants = allies.map((ally) =>
+      stand({ ...ally, ally: true, isPlayer: false, initiative: roll(1, 20) + 1 }, ally.x !== undefined && ally.y !== undefined ? { x: ally.x, y: ally.y } : { x: placedPlayer.x ?? 0, y: placedPlayer.y ?? 0 }),
+    );
+
     // Add initiative to enemies
     const enemyCombatants = enemies.map((enemy) => stand({
       ...enemy,
@@ -480,7 +528,7 @@ export const useCombat = create<CombatState>((set, get) => ({
     }, enemy.x !== undefined && enemy.y !== undefined ? { x: enemy.x, y: enemy.y } : { x: arena.width - 1, y: middle }));
 
     // Combine and sort by initiative
-    const allCombatants = [placedPlayer, ...enemyCombatants].sort(
+    const allCombatants = [placedPlayer, ...allyCombatants, ...enemyCombatants].sort(
       (a, b) => b.initiative - a.initiative,
     );
     // Find index of combatant with highest initiative
@@ -497,12 +545,14 @@ export const useCombat = create<CombatState>((set, get) => ({
       deathSaves: { successes: 0, failures: 0 },
       outcome: null,
       remains: [],
+      spent: [],
     });
   },
 
   endCombat: () => {
     set((state) => ({
-      remains: state.combatants.filter((c) => !c.isPlayer).map((c) => ({ id: c.id, hp: c.hp })),
+      remains: state.combatants.filter((c) => !onPartySide(c)).map((c) => ({ id: c.id, hp: c.hp })),
+      allyRemains: state.combatants.filter((c) => c.ally).map((c) => ({ id: c.id, hp: c.hp })),
       inCombat: false,
       combatants: [],
       currentTurn: 0,
@@ -530,9 +580,21 @@ export const useCombat = create<CombatState>((set, get) => ({
         combatants[state.currentTurn] = { ...ending, conditions: kept };
       }
 
+      // A high runs down as its creature's turns end
+      const after = combatants[state.currentTurn];
+      if (after?.high && after.hp > 0) {
+        const rounds = after.high.rounds - 1;
+        if (rounds <= 0) log.push(`${after.name}'s high from ${after.high.name} ends.`);
+        combatants[state.currentTurn] = { ...after, high: rounds > 0 ? { ...after.high, rounds } : undefined };
+      }
       // The creature whose turn begins has its whole movement again
       const next = state.currentTurn === state.combatants.length - 1 ? 0 : state.currentTurn + 1;
-      if (combatants[next]) combatants[next] = { ...combatants[next], moved: 0 };
+      if (combatants[next]) {
+        const starting = combatants[next];
+        const temp = starting.high?.temp && !starting.high.low && starting.hp > 0 ? rollDamage(starting.high.temp, false) : 0;
+        if (temp) log.push(`${starting.name} gains ${temp} temporary hit points.`);
+        combatants[next] = { ...starting, moved: 0, ...(temp ? { tempHp: Math.max(starting.tempHp ?? 0, temp) } : {}) };
+      }
 
       // Handle end of round
       if (state.currentTurn === state.combatants.length - 1) {
@@ -600,7 +662,7 @@ export const useCombat = create<CombatState>((set, get) => ({
           logMessage += ` ${target.name} is defeated!`;
           // Check if all enemies are defeated
           const remainingEnemies = updatedCombatants.filter(
-            (c) => !c.isPlayer && c.hp > 0,
+            (c) => !onPartySide(c) && c.hp > 0,
           );
           if (remainingEnemies.length === 0) {
             return {
@@ -619,7 +681,7 @@ export const useCombat = create<CombatState>((set, get) => ({
           // The player at 0 hit points: dead outright if the blow carried on past their
           // hit point maximum, otherwise down and making death saving throws
           const player = updatedCombatants.find((c) => c.isPlayer);
-          if (player && player.hp === 0) {
+          if (target.isPlayer && player && player.hp === 0) {
             const massive = damageValue - target.hp >= target.maxHp;
             return {
               ...state,
@@ -647,6 +709,59 @@ export const useCombat = create<CombatState>((set, get) => ({
         combatLog: [...state.combatLog, logMessage],
       };
     }),
+
+  // The player uses an item in the fight. False when it cannot be used as asked (the target is out of throwing range).
+  itemEffect: (effect) => {
+    const state = get();
+    const user = state.combatants[state.currentTurn];
+    if (!user?.isPlayer) return false;
+    const log = [...state.combatLog];
+    let combatants = [...state.combatants];
+    const at = combatants.findIndex((c) => c.id === (effect as any).targetId);
+    if (effect.kind === "heal") {
+      if (at < 0) return false;
+      const target = combatants[at];
+      combatants[at] = { ...target, hp: Math.min(target.maxHp, target.hp + effect.amount) };
+      log.push(`${user.name} uses ${effect.label} on ${target.name}: ${effect.amount} hit points${target.hp <= 0 ? ", back on their feet" : ""}.`);
+    } else if (effect.kind === "stabilize") {
+      if (at < 0) return false;
+      const target = combatants[at];
+      combatants[at] = { ...target, hp: Math.max(target.hp, effect.to) };
+      log.push(`${user.name} uses ${effect.label} on ${target.name}, who is stable again.`);
+    } else if (effect.kind === "explosive") {
+      if (at < 0) return false;
+      const centre = combatants[at];
+      if (squaresApart(user, centre) * 5 > effect.maxFeet) {
+        log.push(`${centre.name} is ${squaresApart(user, centre) * 5} ft. away, beyond the ${effect.maxFeet} ft. a throw reaches.`);
+        set({ combatLog: log });
+        return false;
+      }
+      log.push(`${user.name} throws ${effect.label} at ${centre.name}.`);
+      combatants = combatants.map((c) => {
+        if (c.hp <= 0 || squaresApart(c, centre) * 5 > effect.radius) return c;
+        const saved = savingThrow(c, effect.save, effect.dc);
+        const full = effect.damage.reduce((sum, d) => sum + rollDamage(d.dice, false), 0);
+        const amount = saved ? Math.floor(full / 2) : full;
+        let next = amount > 0 ? hurt(c, amount) : c;
+        const afflicted = !saved && effect.conditions.length > 0 && next.hp > 0;
+        if (afflicted) next = withConditions(next, effect.conditions.map((name) => ({ name, rounds: effect.conditionRounds, save: { ability: effect.save, dc: effect.dc }, by: user.id, source: effect.label })));
+        log.push(`${c.name} ${saved ? "saves" : "fails the save"}${amount > 0 ? ` and takes ${amount} damage` : ""}${afflicted ? `, and is ${effect.conditions.join(" and ").toLowerCase()}` : ""}${next.hp <= 0 && c.hp > 0 ? ` (${c.isPlayer ? "down" : "defeated"})` : ""}.`);
+        return next;
+      });
+      const won = !combatants.some((c) => !onPartySide(c) && c.hp > 0);
+      if (won) log.push("Victory! All enemies defeated.");
+      set({ combatants, combatLog: log, ...(won ? { inCombat: false, outcome: "victory" as CombatOutcome } : {}) });
+      return true;
+    } else if (effect.kind === "substance") {
+      combatants = combatants.map((c) => (c.id === user.id ? { ...c, high: { name: effect.label, ability: effect.ability, rounds: effect.rounds, temp: effect.temp } } : c));
+      log.push(`${user.name} takes ${effect.label}: a high for ${effect.rounds} turns.`);
+    } else if (effect.kind === "poison") {
+      combatants = combatants.map((c) => (c.id === user.id ? { ...c, boons: { ...c.boons, poison: { dice: effect.dice, dc: effect.dc } } } : c));
+      log.push(`${user.name} coats their weapon with ${effect.label}.`);
+    }
+    set({ combatants, combatLog: log });
+    return true;
+  },
 
   // Cast one of the player's powers at the first standing enemy (or on themselves, to heal or hide)
   castPower: (index) =>
@@ -724,7 +839,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       } else {
         log.push(`${caster.name} casts ${power.name}. Its effect is described in its text.`);
       }
-      const won = !combatants.some((c) => !c.isPlayer && c.hp > 0);
+      const won = !combatants.some((c) => !onPartySide(c) && c.hp > 0);
       if (won) log.push("Victory! All enemies defeated.");
       return { ...state, combatants, combatLog: log, ...(won ? { inCombat: false, outcome: "victory" as CombatOutcome } : {}) };
     }),

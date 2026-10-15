@@ -66,6 +66,10 @@ export interface Occupant {
   // Where they live and how their days go, and the ship they fly (see "Routines")
   routine?: Routine;
   ship?: string;
+  // Held in bonds that have to be opened before they can walk away (see "Companions")
+  captive?: Captive;
+  // A droid powered down by a fight: it can be stabilized, mended and put under a bolt
+  disabled?: boolean;
 }
 
 export interface Ship {
@@ -113,6 +117,8 @@ export interface Area {
   occupants: Occupant[];
   ships: Ship[];
   loot: LootCache[];
+  // Speeders parked at a building (an enemy's, to be taken as a prize; or a wreck to be mended)
+  vehicles?: Vehicle[];
   // A room's floor plan: its place on the building's grid and what stands where (see planBuilding)
   layout?: RoomLayout;
   // A quiet way into this room from outside the building, and the DC to find it
@@ -187,6 +193,8 @@ export interface WorldCatalog {
   // Credits a character should have earned by each level, 1st level first (Player's Handbook)
   wealthByLevel: number[];
   setting?: SettingSeed;
+  // Mounts, vehicles and travel pace (the transport dataset)
+  transport?: Transport;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -277,6 +285,7 @@ const WILD_SITES: Record<string, string[]> = {
 //   s staff   p patrons or residents   g guards   b leader   w wildlife   h horrors
 //   d utility droid   S ship berth   K locked door   H hidden door   L:<kind> loot cache
 //   m a band, with a stage to play on   D a service droid (most cantinas have one)   X a fence (the black market)
+//   P captives, held in shackles, collars or cells (see "Companions")
 //   @n the room this one opens off (its index in the list); without it, the room before
 const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "horror"; rooms: string[] }> = {
   spaceport: { rooms: ["Arrivals concourse|s p", "Customs office|s g", "Docking bay|S s d", "Maintenance hangar|S d L:workshop", "Control tower|s K @0", "Bonded warehouse|L:cargo K g @1"] },
@@ -289,7 +298,7 @@ const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "h
   cantina: { rooms: ["Entrance|", "Main bar|s p p m D", "Private booth|p", "Back room|p g K X @1", "Cellar|L:stash H"] },
   promenade: { rooms: ["Promenade|p p", "Cantina|s p m D", "Trade stalls|s s L:coin @0", "Storeroom|L:cargo K"] },
   market: { rooms: ["Market gate|p", "Stalls|s s p", "Trader's office|s L:coin K", "Storehouse|L:cargo @1"] },
-  garrison: { hostile: "faction", rooms: ["Gatehouse|g", "Barracks|g g", "Armory|L:armory K", "Detention block|g K @0", "Command room|b g L:intel K @1"] },
+  garrison: { hostile: "faction", rooms: ["Gatehouse|g", "Barracks|g g", "Armory|L:armory K", "Detention block|g P K @0", "Command room|b g L:intel K @1"] },
   "command post": { hostile: "faction", rooms: ["Checkpoint|g", "Operations room|s g", "Comms array|d L:intel", "Supply depot|L:cargo K @0"] },
   "operations center": { rooms: ["Security desk|g", "Control room|s s d", "Records vault|L:intel K"] },
   medcenter: { rooms: ["Reception|s", "Ward|s p", "Surgery|s d", "Pharmacy|L:medical K @0"] },
@@ -301,8 +310,8 @@ const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "h
   warehouse: { rooms: ["Loading dock|s", "Storage floor|L:cargo", "Overseer's office|s L:coin K", "Hidden compartment|L:stash H @1"] },
   "cargo bay": { rooms: ["Cargo lock|s", "Container stacks|L:cargo", "Quarantine hold|L:cargo K"] },
   archive: { rooms: ["Antechamber|", "Reading hall|p s", "Stacks|s L:intel", "Sealed vault|L:relic K H"] },
-  hideout: { hostile: "criminal", rooms: ["Lookout|g", "Common room|g g", "Stash room|L:stash K", "Boss's den|b L:vault K @1", "Escape tunnel|H"] },
-  camp: { hostile: "criminal", rooms: ["Perimeter|g", "Tents|g g", "Supply cache|L:cargo", "Leader's tent|b L:coin @1"] },
+  hideout: { hostile: "criminal", rooms: ["Lookout|g", "Common room|g g", "Stash room|L:stash K", "Boss's den|b L:vault K @1", "Escape tunnel|H", "Holding cells|P K @1"] },
+  camp: { hostile: "criminal", rooms: ["Perimeter|g", "Tents|g g", "Supply cache|L:cargo", "Leader's tent|b L:coin @1", "Slave pens|P K @0"] },
   cave: { hostile: "wild", rooms: ["Cave mouth|", "Winding tunnel|w", "Den|w L:remains", "Deep chamber|w L:stash H @1"] },
   ruin: { hostile: "horror", rooms: ["Broken gate|", "Collapsed hall|w", "Inner sanctum|h L:relic K", "Crypt|h L:relic H"] },
   wreck: { hostile: "wild", rooms: ["Hull breach|", "Cargo hold|w L:cargo", "Bridge|L:intel K @0", "Engine room|d L:workshop @1"] },
@@ -336,7 +345,7 @@ const localRole = (roomName: string) => LOCAL_ROLES.find(([pattern]) => pattern.
 const LOCALS = new Set([...LOCAL_ROLES.map(([, role]) => role), "local", "civilians", "musician", "service droid"]);
 // Someone who is part of the life of a place rather than someone the story is about
 export const isLocal = (o: Pick<Occupant, "role">) => LOCALS.has(o.role);
-const NOTABLES = ["smuggler", "bounty hunter", "informant", "gambler", "pilot for hire"];
+const NOTABLES = ["smuggler", "bounty hunter", "informant", "gambler", "pilot for hire", "mercenary"];
 
 // How rooms join, by the kind of place
 const DOORS = { built: ["Door", "Corridor", "Archway", "Stairs"], station: ["Hatch", "Corridor", "Bulkhead door"], wild: ["Passage", "Crawlway", "Narrow gap", "Path"] };
@@ -362,6 +371,7 @@ const ROLE_GEAR: Record<string, RegExp[]> = {
   smuggler: [/^(blaster pistol|heavy pistol|hold-out)$/i, /^(security kit|slicer's kit)$/i],
   fence: [/^(hold-out|vibrodagger)$/i, /^datapad$/i],
   "bounty hunter": [/^(blaster rifle|heavy carbine|wrist launcher)$/i, /^(mesh armor|weave armor)$/i, /^(binders|grappling hook)$/i],
+  mercenary: [/^(blaster rifle|blaster carbine|heavy carbine)$/i, /^(combat suit|mesh armor)$/i],
   informant: [/^(commlink|pocket scrambler)$/i, /^(vibrodagger|hold-out)$/i],
   gambler: [/^(sabacc deck|pazaak deck|chance cubes)$/i, /^hold-out$/i],
   "pilot for hire": [/^(blaster pistol|heavy pistol)$/i, /^(mechanic's kit|astrotech's implements)$/i],
@@ -753,7 +763,29 @@ function speciesFor(ctx: Context, speciesNames: string[]): string {
 
 function person(ctx: Context, role: string, disposition: Occupant["disposition"], speciesNames: string[], species = speciesFor(ctx, speciesNames)): Occupant {
   const gear = (ROLE_GEAR[role] ?? []).map((pattern) => pickGear(ctx, pattern)).filter((g): g is string => !!g);
-  return { id: nextId(ctx.world, "o"), name: personName(ctx.random), role, disposition, count: 1, species, loadout: gear };
+  const one: Occupant = { id: nextId(ctx.world, "o"), name: personName(ctx.random), role, disposition, count: 1, species, loadout: gear };
+  return HIRE_ROLES.includes(role) ? withStats(ctx.catalog, one, ctx.random, ctx.world.partyLevel) : one;
+}
+
+// The stat block a trade fights with (house rule: the books give no stat block for a bounty hunter
+// for hire), none harder than the party's level can hire: Challenge Rating up to about half the level + 1
+const TRADE_STATS: Record<string, RegExp> = {
+  "bounty hunter": /headhunter|sniper|scout|trandoshan hunter|mistryl apprentice/i,
+  smuggler: /officer, junior|trooper, scout|jawa scrapper/i,
+  "pilot for hire": /navy pilot|officer, junior/i,
+  mercenary: /trooper, (heavy|flame|demolitions|jump|shore|sniper)|trooper$|trandoshan warrior|wookiee berserker/i,
+};
+const xpCap = (level: number) => (level <= 2 ? 200 : level <= 4 ? 450 : level <= 8 ? 1100 : level <= 12 ? 2900 : 5900);
+export function withStats(catalog: Pick<WorldCatalog, "monsters" | "equipment">, o: Occupant, r: Random, level: number): Occupant {
+  if (o.hitPoints) return o;
+  const pattern = TRADE_STATS[o.role];
+  if (!pattern) return o;
+  const people = catalog.monsters.filter((m) => !/droid|beast|swarm/i.test((m.types ?? []).join(" ")) && pattern.test(m.name));
+  const fit = people.filter((m) => m.experiencePoints <= xpCap(level));
+  const block = r.pick(fit.length ? fit : people.sort((a, b) => a.experiencePoints - b.experiencePoints).slice(0, 1));
+  if (!block) return o;
+  const stats = statBlockOccupant(block, catalog.equipment, o.id, 1, o.role, o.disposition);
+  return { ...stats, name: o.name, species: o.species, loadout: o.loadout.length ? o.loadout : stats.loadout };
 }
 
 // The people of a room, one by one; now and then one of them has a trade worth knowing
@@ -875,7 +907,10 @@ function populateRoom(ctx: Context, room: Area) {
       const one = person(ctx, staff, r.chance(0.5) ? "friendly" : "neutral", speciesNames);
       // Merchants keep a line of goods; where there is no law, one in three runs a black market stall
       if (staff === "merchant") one.trade = lawAt(world, room.id) === 0 && r.chance(0.33) ? "black" : r.pick(MERCHANT_WARES);
+      if (staff === "merchant") one.trade = dealerTrade(world, building, room, r) ?? one.trade;
       room.occupants.push(one);
+    } else if (code === "P") {
+      room.occupants.push(...captivesOf(ctx, room, building, speciesNames));
     } else if (code === "X") {
       room.occupants.push(person(ctx, "fence", "neutral", speciesNames));
     } else if (code === "p") {
@@ -990,6 +1025,7 @@ function detailBuilding(ctx: Context, building: Area) {
   const open = rooms.filter((_, index) => !specs[index].codes.some((c) => c === "K" || c === "H"));
   if (open.length >= 4 && r.chance(0.5)) addPath(world, open[1], open[open.length - 1], "Side passage", `${Math.max(10, Math.round(distance(open[1], open[open.length - 1]) * 5))} ft.`);
   rooms.forEach((room) => populateRoom(ctx, room));
+  placeVehicles(ctx, building);
   planBuilding(world, building.id);
 }
 
@@ -1593,7 +1629,7 @@ export function counterSides(layout: RoomLayout, station: RoomAsset): { behind: 
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 4;
+export const LIFE = 5;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -1645,6 +1681,38 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
   }
   // Routines (life 3): homes, days and voyages for every settlement that has been built
   if ((next.life ?? 0) < 3) for (const settlement of Object.values(next.areas).filter((a) => a.kind === "settlement")) settleRoutines(next, settlement, ctx.random);
+  // Companions and transport (life 5): people who can be hired get stat blocks and a few
+  // mercenaries sit in the bars, cells hold prisoners, bases keep speeders and wrecks lie in the
+  // wilds, workshops sell speeders and markets mounts
+  if ((next.life ?? 0) < 5) {
+    for (const room of Object.values(next.areas).filter((a) => a.kind === "room")) {
+      const building = next.areas[room.parentId ?? ""];
+      if (!building) continue;
+      const speciesNames = (ancestor(next, room.id, "planet")?.tags ?? []).filter((t) => t.startsWith("species:")).map((t) => t.slice(8));
+      let changed = false;
+      room.occupants = room.occupants.map((o) => {
+        if (!HIRE_ROLES.includes(o.role) || o.hitPoints) return o;
+        const stats = withStats(catalog, o, ctx.random, next.partyLevel);
+        changed ||= !!stats.hitPoints;
+        return stats;
+      });
+      if (/^(main bar|cantina)$/i.test(room.name) && ["cantina", "promenade"].includes(building.type) && !room.occupants.some((o) => o.role === "mercenary") && ctx.random.chance(0.5)) {
+        room.occupants.push(person(ctx, "mercenary", "neutral", speciesNames));
+        changed = true;
+      }
+      if (/detention|holding|pens/i.test(room.name) && !room.occupants.some((o) => o.captive)) {
+        room.occupants.push(...captivesOf(ctx, room, building, speciesNames));
+        changed = true;
+      }
+      for (const o of room.occupants) {
+        if (o.role !== "merchant") continue;
+        const trade = dealerTrade(next, building, room, ctx.random);
+        if (trade && o.trade !== trade) { o.trade = trade; }
+      }
+      if (changed && room.layout) placeContents(room);
+    }
+    for (const building of Object.values(next.areas).filter((a) => a.kind === "building" && !a.vehicles)) placeVehicles(ctx, building);
+  }
   next.life = LIFE;
   return next;
 }
@@ -1688,22 +1756,31 @@ export function afterFight(area: Pick<Area, "occupants">, standing: { id: string
   let slain = 0;
   let xp = 0;
   let people = false;
+  // Droids that fell are powered down, not destroyed: they stay where they fell, to be mended
+  const disabled: Occupant[] = [];
   const occupants = area.occupants.flatMap((o) => {
     if (o.disposition !== "hostile" || !o.hitPoints) return [o];
     const now = Array.from({ length: o.count }, (_, i) => standing.find((s) => s.id === `${o.id}-${i}`)?.hp ?? o.wounds?.[i] ?? o.hitPoints!);
     const alive = now.filter((hp) => hp > 0);
     const down = o.count - alive.length;
+    const droid = isDroid(o) && o.creature === "droid";
     if (down) {
       slain += down;
       xp += (o.xp ?? 0) * down;
       if (!["wildlife", "horror"].includes(o.role)) people = true;
       gear.push(...o.loadout.map((name) => ({ name, quantity: down, source: "equipment" as const })));
+      if (droid) disabled.push({ ...o, id: alive.length ? `${o.id}-down` : o.id, count: down, disposition: "neutral", role: "disabled droid", disabled: true, wounds: Array(down).fill(0), loadout: [], routine: undefined, ship: undefined });
     }
-    kept.set(o.id, alive.length);
+    if (!(droid && !alive.length)) kept.set(o.id, alive.length);
     if (!alive.length) return [];
     if (!down && !alive.some((hp, i) => hp !== (o.wounds?.[i] ?? o.hitPoints))) return [o];
     return [{ ...o, count: alive.length, wounds: alive.some((hp) => hp < o.hitPoints!) ? alive : undefined }];
   });
+  for (const wreck of disabled) {
+    const there = occupants.find((o) => o.id === wreck.id && o.disabled);
+    if (there) there.count += wreck.count, there.wounds = [...(there.wounds ?? []), ...(wreck.wounds ?? [])];
+    else occupants.push(wreck);
+  }
   return { occupants, gear, kept, slain, xp, people, changed: occupants.length !== area.occupants.length || occupants.some((o, i) => o !== area.occupants[i]) };
 }
 
@@ -2268,6 +2345,9 @@ export const WARES: Record<string, Wares> = {
   leisure: { label: "Music and games", categories: ["MusicalInstrument", "GamingSet"], lines: [5, 8], each: [1, 3] },
   spacer: { label: "Spacer's supplies", categories: ["LifeSupport", "Storage", "Communications"], lines: [6, 10], each: [1, 4] },
   black: { label: "Black market", categories: ["Spice", "Explosive", "Weapon", "Armor", "Kit", "Utility", "Medical", "Clothing", "Communications"], lines: [7, 11], each: [1, 4], black: true },
+  // Not equipment: the transport dataset's vehicles and mounts (the client adds them to the stock pool)
+  vehicles: { label: "Speeders", categories: ["Vehicle"], lines: [2, 3], each: [1, 2] },
+  mounts: { label: "Mounts and beasts", categories: ["Mount"], lines: [3, 5], each: [1, 2] },
 };
 export const MERCHANT_WARES = ["general", "general", "arms", "tech", "medical", "leisure"];
 const ROLE_WARES: Record<string, string> = { bartender: "bar", mechanic: "tech", medic: "medical", dockmaster: "spacer", fence: "black", smuggler: "black" };
@@ -3152,4 +3232,459 @@ export function setStart(world: World, id: string): EditResult {
   next.startId = id;
   const problems = validateWorld(next);
   return problems.length ? { world, error: problems[0] } : { world: next };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Gear, tools, companions and ground transport. What the party carries, and who and what goes
+// along with it. Everything that comes from the books is read from the rules data (item
+// descriptions, the tools and transport sets derived from the book text); what the books leave
+// open is a house rule and is marked as one.
+// ---------------------------------------------------------------------------------------------
+
+// Hit die by size (5th edition: Tiny d4 to Gargantuan d20), for what a medpac or repair kit rolls
+// when the creature is a stat block with no class
+export const HIT_DIE_BY_SIZE: Record<string, number> = { Tiny: 4, Small: 6, Medium: 8, Large: 10, Huge: 12, Gargantuan: 20 };
+export const hitDieOfSize = (size?: string) => HIT_DIE_BY_SIZE[size ?? "Medium"] ?? 8;
+
+const NUMBER_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+const countOf = (text: string, pattern: RegExp): number => {
+  const m = text.match(pattern);
+  if (!m) return 0;
+  return NUMBER_WORDS[m[1].toLowerCase()] ?? (Number(m[1]) || 0);
+};
+
+// What using an item does, read from its description (and its category, for those with none).
+// `uses` is how many times a kit can be used before it is spent (undefined: once, and it is gone).
+export type GearUse =
+  | { kind: "heal"; uses?: number }
+  | { kind: "repair"; uses?: number }
+  | { kind: "stabilize"; target: "organic" | "droid"; uses?: number }
+  | { kind: "antidote"; uses?: number }
+  | { kind: "substance"; ability?: string; pool?: "tech" | "force"; temp?: string; poolDice?: string; lowDice?: string; wisdomDc: number; constitutionDc: number; alcohol?: boolean }
+  | { kind: "explosive"; form: "grenade" | "mine" | "charge" | "detonator"; radius: number; cone?: boolean; dc: number; save: string; damage: { dice: string; type: string }[]; conditions: string[]; lingers?: boolean }
+  | { kind: "poison"; dc: number; dice: string }
+  | { kind: "bolt"; dc: number }
+  | { kind: "binders"; dc: number }
+  | { kind: "spike"; tool: string }
+  | { kind: "ram"; bonus: number }
+  | { kind: "scout" }
+  | { kind: "cutter" }
+  | { kind: "game" }
+  | { kind: "instrument" }
+  | { kind: "tool" };
+
+export interface GearFacts {
+  name: string;
+  equipmentCategory?: string;
+  description?: string;
+}
+
+const EXPLOSIVE_CONDITIONS: [RegExp, string][] = [
+  [/\bblinded\b/i, "Blinded"], [/\bdeafened\b/i, "Deafened"], [/\bstunned\b/i, "Stunned"], [/\bunconscious\b/i, "Unconscious"],
+  [/\bfrightened\b/i, "Frightened"], [/\bshocked\b/i, "Shocked"], [/\bpoisoned\b/i, "Poisoned"], [/\bprone\b/i, "Prone"],
+];
+
+export function gearUse(item: GearFacts): GearUse | undefined {
+  const name = item.name.toLowerCase();
+  const text = (item.description ?? "").replace(/\s+/g, " ");
+  const category = item.equipmentCategory ?? "";
+  if (category === "Kit" || category === "Tool") return { kind: "tool" };
+  if (category === "GamingSet") return { kind: "game" };
+  if (category === "MusicalInstrument") return { kind: "instrument" };
+  if (category === "Spice" || category === "AlcoholicBeverage") {
+    const ability = (text.match(/using (Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma)/i) ?? [])[1]?.toLowerCase();
+    const pool = /tech points/i.test(text) ? "tech" : /force points/i.test(text) ? "force" : undefined;
+    const wis = Number((text.match(/DC (\d+) Wisdom saving throw or experience a low/i) ?? text.match(/DC (\d+) Wisdom saving throw to resist addiction/i) ?? [])[1]) || 14;
+    const con = Number((text.match(/DC (\d+) Constitution saving throw (?:to resist addiction|or experience a low)/i) ?? [])[1]) || 14;
+    return {
+      kind: "substance",
+      ability,
+      pool,
+      temp: (text.match(/gains (\d+d\d+) temporary hit points/i) ?? [])[1],
+      poolDice: pool ? (text.match(/increases their current and maximum \w+ points by (\d+d\d+)/i) ?? [])[1] : undefined,
+      lowDice: (text.match(/maximum hit points are reduced by (\d+d\d+)/i) ?? text.match(/maximum \w+ points are reduced by (\d+d\d+)/i) ?? [])[1],
+      wisdomDc: category === "AlcoholicBeverage" ? con : wis,
+      constitutionDc: category === "AlcoholicBeverage" ? wis : con,
+      alcohol: category === "AlcoholicBeverage",
+    };
+  }
+  if (category === "Explosive") {
+    const form = /^grenade/.test(name) ? "grenade" : /^mine/.test(name) ? "mine" : /^charge/.test(name) ? "charge" : "detonator";
+    const cone = /(\d+)-foot cone/i.exec(text);
+    const radius = cone ? Number(cone[1]) : Number((text.match(/within (\d+) feet/i) ?? text.match(/(\d+)-foot[- ]radius/i) ?? text.match(/in a (\d+)-foot radius/i) ?? [])[1]) || 10;
+    const save = (text.match(/DC \d+ (Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) saving throw/i) ?? [])[1]?.toLowerCase() ?? "dexterity";
+    const dc = Number((text.match(/DC (\d+) \w+ saving throw/i) ?? [])[1]) || 14;
+    const clause = (text.match(/(?:takes|taking) ([^.]*?) damage on a failed save/i) ?? [])[1] ?? "";
+    const damage = Array.from(clause.matchAll(/(\d+d\d+)\s+([a-z]+)/gi)).map((m) => ({ dice: m[1], type: m[2].toLowerCase() }));
+    const afterSave = text.split(/saving throw\./i).slice(1).join(" ");
+    const conditions = EXPLOSIVE_CONDITIONS.filter(([pattern]) => pattern.test(afterSave) || (/gas|fog/.test(name) && pattern.source.includes("poisoned") && pattern.test(text))).map(([, n]) => n);
+    return { kind: "explosive", form, radius, cone: !!cone, dc, save, damage, conditions, lingers: /for 1 minute/i.test(text) && /enters|starts its turn/i.test(text) };
+  }
+  if (category === "Medical") {
+    if (/medpac/.test(name)) return { kind: "heal" };
+    if (/repair kit/.test(name)) return { kind: "repair", uses: countOf(text, /(\w+) uses/i) || 3 };
+    if (/traumakit/.test(name)) return { kind: "stabilize", target: "organic", uses: countOf(text, /(\w+) uses/i) || 5 };
+    if (/emergency battery/.test(name)) return { kind: "stabilize", target: "droid", uses: countOf(text, /(\w+) uses/i) || 10 };
+    if (/antitoxkit/.test(name)) return { kind: "antidote", uses: countOf(text, /(\w+) charges/i) || 5 };
+    if (/^poison/.test(name)) return { kind: "poison", dc: Number((text.match(/DC (\d+)/i) ?? [])[1]) || 14, dice: (text.match(/(\d+d\d+) poison damage/i) ?? [])[1] ?? "2d4" };
+    return undefined;
+  }
+  if (/restraining bolt/.test(name)) return { kind: "bolt", dc: Number((text.match(/DC (\d+) Constitution saving throw/i) ?? [])[1]) || 14 };
+  if (/^binders/.test(name)) return { kind: "binders", dc: Number((text.match(/DC (\d+) Strength or Dexterity/i) ?? [])[1]) || 14 };
+  if (/computer spike/.test(name)) return { kind: "spike", tool: "Slicer's kit" };
+  if (/security spike/.test(name)) return { kind: "spike", tool: "Security kit" };
+  if (/ram, portable/.test(name)) return { kind: "ram", bonus: Number((text.match(/\+(\d+) bonus/i) ?? [])[1]) || 4 };
+  if (/macrobinoculars/.test(name)) return { kind: "scout" };
+  if (/fusion cutter/.test(name)) return { kind: "cutter" };
+  return undefined;
+}
+
+// A tool the character can have proficiency in: the equipment's kits and implements, a gaming set
+// or an instrument. Gaming sets and instruments each have one tool entry in the tools data.
+export interface ToolFacts {
+  name: string;
+  kind: "kit" | "implements" | "gaming" | "instrument";
+  summary?: string;
+  skills?: { skill: string[]; text: string }[];
+  feature?: { name: string; text: string };
+  activities?: { activity: string; dc: number | null }[];
+  worksOn?: string;
+}
+
+const squash = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+// The tool entry for an item the character carries (a Dejarik set is a gaming set)
+export function toolFor(itemName: string, category: string | undefined, tools: ToolFacts[]): ToolFacts | undefined {
+  if (category === "GamingSet") return tools.find((t) => t.kind === "gaming");
+  if (category === "MusicalInstrument") return tools.find((t) => t.kind === "instrument");
+  const wanted = squash(itemName);
+  return tools.find((t) => squash(t.name) === wanted);
+}
+
+// Whether a character is trained with a tool (the tool itself, or its gaming set / instrument group)
+export function toolTrained(character: { toolProficiencies?: string[] | null }, itemName: string, category?: string): boolean {
+  const known = (character.toolProficiencies ?? []).map(squash);
+  const wanted = squash(itemName);
+  if (known.includes(wanted)) return true;
+  if (category === "GamingSet") return known.some((k) => /gamingset|dejarik|pazaak|sabacc|chancecubes|kirgatz|chattaragul/.test(k));
+  if (category === "MusicalInstrument") return known.some((k) => /instrument|bandfill|horn|drum|fanfar|fizzz|flute|lute|mandoviol|ommni|shawm|traz|valahorn|xantha|slitherhorn/.test(k));
+  return false;
+}
+
+// A tool's special use, as the game applies it: a die (its size is the proficiency bonus, twice
+// that with expertise) added once before the next rest, to one thing. Read from the feature's text;
+// uses the game cannot apply are kept as notes.
+export interface Boon {
+  tool: string;
+  feature: string;
+  kind: "attack" | "damage" | "ac" | "check" | "medpac" | "meal" | "repair" | "herbal" | "poison" | "note";
+  die: number;
+  text: string;
+  // For a boon that belongs to one kind of weapon ("blaster", "vibroweapon", "lightweapon")
+  weapon?: string;
+}
+export function boonOf(tool: Pick<ToolFacts, "name" | "feature">, proficiency: number, expertise = false): Boon | undefined {
+  const feature = tool.feature;
+  if (!feature) return undefined;
+  const text = feature.text;
+  const die = Math.max(2, expertise ? proficiency * 2 : proficiency);
+  const base = { tool: tool.name, feature: feature.name, die, text };
+  const weapon = /lightweapon|focus generator/i.test(text) ? "lightweapon" : /blaster or vibroweapon/i.test(text) ? "blaster or vibroweapon" : /vibroweapon/i.test(text) ? "vibroweapon" : undefined;
+  if (/bonus to AC against one attack/i.test(text)) return { ...base, kind: "ac" };
+  if (/bonus to one (?:weapon attack|force attack|attack roll)/i.test(text)) return { ...base, kind: "attack", weapon };
+  if (/bonus to one weapon damage roll|bonus to one force damage/i.test(text)) return { ...base, kind: "damage", weapon };
+  if (/Hone Blade|extra damage equal to your Intelligence modifier/i.test(`${feature.name} ${text}`)) return { ...base, kind: "damage", weapon: "vibroweapon", die: 0 };
+  if (/bonus to one check you make with the instrument/i.test(text)) return { ...base, kind: "check" };
+  if (/medpac is consumed/i.test(text)) return { ...base, kind: "medpac" };
+  if (/prepare a tasty meal|prepare and serve a meal/i.test(text)) return { ...base, kind: "meal" };
+  if (/for each Hit Die the droid spends/i.test(text)) return { ...base, kind: "repair" };
+  if (/remove one poison or disease/i.test(text)) return { ...base, kind: "herbal" };
+  if (/dose of poison/i.test(text)) return { ...base, kind: "poison" };
+  return { ...base, kind: "note", die: 0 };
+}
+
+// The condition names an explosive's text can put on a creature, as the conditions data has them
+export const EXPLOSIVE_CONDITION_ROUNDS = 10; // "for 1 minute"
+
+// ---------------------------------------------------------------------------------------------
+// Gambling (Wretched Hives, "Gambling (Uptime)"): five checks, against the house at a fixed DC or
+// against an opponent in a contest of three approaches that beat each other in a circle.
+// ---------------------------------------------------------------------------------------------
+
+export type GambleApproach = "deception" | "game" | "insight";
+export const GAMBLE_ROUNDS = 5;
+export const GAMBLE_HOUSE_DC = 20;
+export const GAMBLE_STAKE: [number, number] = [20, 2000];
+
+// The mode of a roll for a player's approach against an opponent's (-1 disadvantage, 0 straight, 1 advantage)
+export function gambleMode(mine: GambleApproach, theirs: GambleApproach): number {
+  if (mine === theirs) return 0;
+  const beats: Record<GambleApproach, GambleApproach> = { deception: "game", game: "insight", insight: "deception" };
+  return beats[mine] === theirs ? 1 : -1;
+}
+export function gambleResult(successes: number, stake: number): { change: number; debt: number; text: string } {
+  if (successes <= 0) return { change: -stake, debt: stake, text: "You lose your entire stake, and accrue a debt equal to that amount." };
+  if (successes === 1) return { change: -stake, debt: 0, text: "You lose your entire stake." };
+  if (successes === 2) return { change: -Math.floor(stake / 2), debt: 0, text: "You lose half your stake." };
+  if (successes === 3) return { change: 0, debt: 0, text: "You break even. Not bad." };
+  if (successes === 4) return { change: stake, debt: 0, text: "You win an amount equal to your stake." };
+  return { change: stake * 3, debt: 0, text: "You win an amount equal to three times your stake." };
+}
+// The chance that a round draws attention (10% for each success, Wretched Hives)
+export const GAMBLE_COMPLICATION = 0.1;
+export const GAMBLE_COMPLICATIONS = [
+  "You are accused of cheating. You decide whether you did cheat or were framed.",
+  "The town guards raid the gambling hall.",
+  "A noble in town loses badly to you and loudly vows to get revenge.",
+  "You won a sum from a low-ranking member of a nefarious guild, and the guild wants its money back.",
+  "A local crime boss insists you start frequenting their gambling parlor, and no others.",
+  "A high-stakes gambler insists that you take part in a game.",
+];
+
+// ---------------------------------------------------------------------------------------------
+// Companions: the people and creatures that go along with the party. Each comes from a stat block
+// of the rules data, so it fights with the numbers printed there.
+//   hireling  a mercenary, bounty hunter or pilot, paid by the day (house rule: the books give no wages)
+//   freed     someone set free from bonds, who chose to follow the party
+//   droid     a disabled enemy droid mended and put under a restraining bolt, or reprogrammed
+//   beast     a creature gentled with Animal Handling, or a mount bought in a market
+// ---------------------------------------------------------------------------------------------
+
+export type CompanionKind = "hireling" | "freed" | "droid" | "beast";
+
+export interface Companion {
+  id: string;
+  name: string;
+  kind: CompanionKind;
+  statBlock?: string;
+  species?: string;
+  role: string;
+  size?: string;
+  creature?: string;
+  armorClass: number;
+  maxHp: number;
+  hp: number;
+  attack?: Occupant["attack"];
+  speed: number;
+  saves?: Record<string, number>;
+  cr?: string;
+  xp?: number;
+  loadout: string[];
+  // Credits a day (house rule)
+  wage: number;
+  // Can be ridden: a beast of a size that carries a rider
+  mount?: boolean;
+  // The restraining bolt on a droid (its grade), or "reprogrammed"
+  bolt?: string;
+  // The minute of the clock they joined, and how they came to
+  joined: number;
+  how?: string;
+}
+
+export const COMPANION_LIMIT = 4;
+
+// House rule: a share of what a creature is worth in experience, for each day of its service.
+// CR 1/8 and 1/2 cost 10 credits a day, CR 1 20, CR 2 45, CR 5 180.
+export const wageFor = (xp = 50) => Math.max(10, Math.round(xp / 10));
+// House rule: a signing fee of five days' wages, 5% less for each step of goodwill
+export const hireFee = (xp = 50, attitude = 0) => Math.max(0, Math.round(wageFor(xp) * 5 * (1 - 0.05 * attitude)));
+
+// The roles that are for hire (house rule): those whose trade is going where the work is
+export const HIRE_ROLES = ["bounty hunter", "smuggler", "pilot for hire", "mercenary"];
+export const canHire = (o: Occupant) => HIRE_ROLES.includes(o.role) && o.disposition !== "hostile" && !!o.hitPoints && !o.captive && !o.disabled;
+
+// A beast that can be ridden: one of the book's mounts, or any beast big enough to carry a rider
+export function carriesRider(creature: { name?: string; size?: string }, mounts: { name: string }[] = []): boolean {
+  const name = (creature.name ?? "").toLowerCase();
+  return /large|huge|gargantuan/i.test(creature.size ?? "") || mounts.some((m) => name.includes(m.name.toLowerCase()));
+}
+
+// One of a group of occupants, as a companion
+export function companionFrom(o: Occupant, kind: CompanionKind, joined: number, id: string, extra: Partial<Companion> = {}, mounts: { name: string }[] = []): Companion {
+  const hurt = o.wounds?.[0];
+  return {
+    id,
+    name: o.name,
+    kind,
+    statBlock: o.statBlock,
+    species: o.species,
+    role: o.role,
+    size: o.size,
+    creature: o.creature,
+    armorClass: o.armorClass ?? 10,
+    maxHp: o.hitPoints ?? 4,
+    hp: Math.max(1, Math.min(o.hitPoints ?? 4, hurt ?? o.hitPoints ?? 4)),
+    attack: o.attack,
+    speed: o.speed || 30,
+    saves: o.saves,
+    cr: o.cr,
+    xp: o.xp,
+    loadout: [...o.loadout],
+    wage: kind === "hireling" ? wageFor(o.xp) : 0,
+    mount: kind === "beast" && carriesRider(o, mounts),
+    joined,
+    ...extra,
+  };
+}
+
+// Bonds on a captive, and how to be rid of them (house rule: the books give the DCs of locks, 15
+// for a moderate one, and of reprogramming a security routine, 20)
+export interface Captive {
+  restraint: "shackles" | "collar" | "cell";
+  dc: number;
+}
+export const FREEING: Record<Captive["restraint"], { label: string; tools: string[]; ability: string[]; skill?: string }> = {
+  shackles: { label: "Open the shackles", tools: ["Security kit"], ability: ["dexterity", "intelligence"] },
+  cell: { label: "Pick the cell's lock", tools: ["Security kit"], ability: ["dexterity", "intelligence"] },
+  collar: { label: "Slice the collar's lock", tools: ["Slicer's kit"], ability: ["intelligence"] },
+};
+
+// A Challenge Rating as a number ("1/2" is 0.5)
+export const crOf = (o: Pick<Occupant, "cr">): number => {
+  const text = String(o.cr ?? "0");
+  if (text.includes("/")) {
+    const [a, b] = text.split("/").map(Number);
+    return b ? a / b : 0;
+  }
+  return Number(text) || 0;
+};
+// Wisdom (Animal Handling) to gentle a wild creature (house rule): 10 + its Challenge Rating
+// rounded up, 2 less when it is hurt. The most a character of a level can manage is a creature of
+// Challenge Rating level + 2.
+export const gentleDC = (o: Pick<Occupant, "cr">, hurt: boolean): number => 10 + Math.ceil(crOf(o)) + (hurt ? -2 : 0);
+export const gentleLimit = (level: number) => level + 2;
+
+// Disabled droids: after a fight a droid is not destroyed but powered down. It can be stabilized,
+// mended, and put under a restraining bolt or reprogrammed (Restraining bolt, Repair kit and Emergency battery items; Slicer's kit).
+export const isDroid = (o: Pick<Occupant, "creature" | "name">) => /droid/i.test(o.creature ?? "") || /\bdroid\b/i.test(o.name);
+export const repairDC = (o: Pick<Occupant, "cr">) => 10 + Math.max(0, Math.ceil(crOf(o)));
+// Reprogramming a droid that is not under a bolt: "reprogram a security routine" is DC 20 (Slicer's kit)
+export const reprogramDC = (o: Pick<Occupant, "cr">) => 20 + (crOf(o) >= 5 ? 2 : 0);
+
+// ---------------------------------------------------------------------------------------------
+// Ground transport. Routes between settlements give their length in kilometres. The party can go
+// on foot at the Player's Handbook travel pace (3 miles an hour, 8 hours a day), on a mount at its
+// speed in feet / 10 miles an hour (the same scale: 30 ft. is 3 mph), in a speeder of its own at
+// the miles an hour of the Expanded Content's Vehicles table, or in a hired ride (house rule: the
+// books price no fares).
+// ---------------------------------------------------------------------------------------------
+
+export const KM_PER_MILE = 1.609;
+export interface Transport {
+  mounts: { name: string; cost: number; speed: number; capacity: number }[];
+  vehicles: { name: string; cost: number; mph: number }[];
+  pace: { pace: string; feetPerMinute: number; milesPerHour: number; milesPerDay: number; effect: string }[];
+}
+export interface Vehicle {
+  id: string;
+  name: string;
+  // The kind in the Vehicles table: Airspeeder, Landspeeder or Speederbike
+  model: string;
+  mph: number;
+  value: number;
+  status: "parked" | "wrecked";
+  owner: string;
+  // House rule: the Vehicles table has no seats
+  seats: number;
+}
+export interface PartyVehicle extends Vehicle {
+  // The settlement it is parked at
+  areaId: string;
+}
+export const SEATS: Record<string, number> = { Speederbike: 2, Airspeeder: 4, Landspeeder: 6 };
+
+export const kmOf = (travel = ""): number | undefined => {
+  const m = travel.match(/(\d+(?:\.\d+)?)\s*km\b/i);
+  return m ? Number(m[1]) : undefined;
+};
+
+// Hours and nights: a day's travel is 8 hours at the Player's Handbook pace, and the other 16 are rest
+export function journeyMinutes(travelHours: number): number {
+  const nights = Math.max(0, Math.ceil(travelHours / 8) - 1);
+  return Math.max(1, Math.round((travelHours + nights * 16) * 60));
+}
+
+export interface Ride {
+  id: string;
+  label: string;
+  minutes: number;
+  fare: number;
+  // The party vehicle or mount used
+  vehicleId?: string;
+  mountId?: string;
+  // Why it cannot be used just now
+  blocked?: string;
+}
+
+export function groundRides(args: { km: number; vehicles: PartyVehicle[]; companions: Companion[]; riders: number; transport: Transport; hire?: boolean }): Ride[] {
+  const { km, vehicles, companions, riders, transport } = args;
+  const rides: Ride[] = [];
+  const pace = transport.pace.find((p) => p.pace === "Normal")?.milesPerHour ?? 3;
+  rides.push({ id: "foot", label: "On foot", minutes: journeyMinutes(km / (pace * KM_PER_MILE)), fare: 0 });
+  for (const mount of companions.filter((c) => c.mount && c.hp > 0)) {
+    // 30 ft. a round is the walking pace of 3 miles an hour, so a speed of N feet is N / 10 mph
+    const mph = Math.max(1, mount.speed / 10);
+    rides.push({ id: `mount-${mount.id}`, label: `Riding ${mount.name}`, minutes: journeyMinutes(km / (mph * KM_PER_MILE)), fare: 0, mountId: mount.id });
+  }
+  for (const v of vehicles) {
+    const blocked = v.status === "wrecked" ? "wrecked: needs repair" : riders > v.seats ? `seats ${v.seats}, party of ${riders}` : undefined;
+    rides.push({ id: `vehicle-${v.id}`, label: v.name, minutes: Math.max(5, Math.round((km / (v.mph * KM_PER_MILE)) * 60)), fare: 0, vehicleId: v.id, ...(blocked ? { blocked } : {}) });
+  }
+  if (args.hire) {
+    const mph = transport.vehicles.find((v) => v.name === "Landspeeder")?.mph ?? 220;
+    rides.push({ id: "hired", label: "Hired ride", minutes: Math.max(10, Math.round((km / (mph * KM_PER_MILE)) * 60) + 10), fare: 5 + Math.ceil(km / 4) });
+  }
+  return rides;
+}
+
+// Who runs a ride for hire: only places with a port or a town's worth of traffic (house rule)
+export const hasRidesForHire = (world: World, settlementId: string): boolean => {
+  const s = world.areas[settlementId];
+  return !!s && s.kind === "settlement" && ["city", "town", "station"].includes(s.type);
+};
+
+// The vehicle a model name stands for (74-Z Speeder Bike is a speederbike)
+export function modelOf(name: string, vehicles: Transport["vehicles"]): Transport["vehicles"][number] | undefined {
+  const n = name.toLowerCase();
+  if (/bike/.test(n)) return vehicles.find((v) => /bike/i.test(v.name));
+  return vehicles.find((v) => n.includes(v.name.toLowerCase()));
+}
+
+// Who runs a speeder lot or a stable (life 5): the shopfront of a city's or town's workshop sells
+// speeders; one stall in two of a town's or outpost's market, on a world that is not paved over, sells mounts
+function dealerTrade(world: World, building: Area, room: Area, r: Random): string | undefined {
+  const settlement = ancestor(world, room.id, "settlement");
+  const planet = ancestor(world, room.id, "planet");
+  if (!settlement) return undefined;
+  if (building.type === "workshop" && /shopfront/i.test(room.name) && ["city", "town", "station"].includes(settlement.type)) return "vehicles";
+  if (building.type === "market" && /stalls/i.test(room.name) && ["town", "outpost", "village"].includes(settlement.type) && !["urban", "gas giant"].includes(planet?.type ?? "") && hashOf(room.id) % 2 === 0) return "mounts";
+  return undefined;
+}
+
+// People held in bonds, for freeing (house rule; see Captive). Each is someone of the planet's peoples.
+function captivesOf(ctx: Context, room: Area, building: Area, speciesNames: string[]): Occupant[] {
+  const r = ctx.random;
+  const pool = ctx.catalog.monsters.filter((m) => isType(m, /humanoid|human/i) && m.experiencePoints <= 200 && !/trooper|guard|champion|officer|inquisitor|hutt|kolkpravis|trandoshan|tusken|admiral|crime lord|wrestler|gorax|navy|death|purge|isb/i.test(m.name));
+  if (!pool.length) return [];
+  return Array.from({ length: r.int(1, 3) }, () => {
+    const restraint: Captive["restraint"] = building.type === "camp" ? (r.chance(0.5) ? "collar" : "shackles") : building.type === "hideout" ? "cell" : r.chance(0.3) ? "collar" : "cell";
+    const block = fromStatBlock(ctx, r.pick(pool), 1, "captive", "friendly");
+    return { ...block, name: personName(r), species: speciesFor(ctx, speciesNames), loadout: [], captive: { restraint, dc: restraint === "collar" ? 20 : 15 } };
+  });
+}
+
+// Speeders at an enemy's base are a prize (a bike or two); wrecks in the wild want mending
+function placeVehicles(ctx: Context, building: Area) {
+  const transport = ctx.catalog.transport;
+  if (!transport || building.vehicles?.length) return;
+  const r = ctx.random;
+  const owner = building.faction ?? ctx.world.antagonist;
+  const make = (model: string, name: string, status: Vehicle["status"]): Vehicle | undefined => {
+    const v = transport.vehicles.find((x) => x.name === model);
+    return v ? { id: nextId(ctx.world, "v"), name, model: v.name, mph: v.mph, value: v.cost, status, owner, seats: SEATS[v.name] ?? 2 } : undefined;
+  };
+  const bikeName = ctx.catalog.monsters.find((m) => /speeder bike/i.test(m.name))?.name ?? "Speederbike";
+  let found: Vehicle | undefined;
+  if (building.type === "wreck") found = make(r.pick(["Landspeeder", "Airspeeder", "Speederbike"]), "Wrecked speeder", "wrecked");
+  else if (["camp", "hideout", "garrison", "command post"].includes(building.type) && r.chance(0.45)) found = make("Speederbike", bikeName, "parked");
+  if (found) building.vehicles = [found];
 }
