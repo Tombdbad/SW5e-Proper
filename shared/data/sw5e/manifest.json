@@ -294,7 +294,7 @@
   "lookups": {
    "derivedFrom": "rulesPlayersHandbook",
    "languages": 27,
-   "bytes": 1013
+   "bytes": 1112
   },
   "transport": {
    "derivedFrom": "rulesExpandedContent",
@@ -306,6 +306,16 @@
    "derivedFrom": "rulesWretchedHives",
    "count": 36,
    "bytes": 36774
+  },
+  "downtime": {
+   "derivedFrom": "rulesWretchedHives",
+   "activities": 14,
+   "bytes": 97522
+  },
+  "ships": {
+   "derivedFrom": "starshipBaseSize",
+   "sizes": 6,
+   "bytes": 22139
   }
  },
  "features": {

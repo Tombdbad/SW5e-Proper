@@ -213,8 +213,15 @@ function deriveLookups(handbook: any[], loaded: Record<string, any[]>) {
     .filter((t) => t.title === "Wealth by Level")
     .flatMap((t) => t.rows.map((r) => number(r[1]) ?? 0));
   if (wealthByLevel.length !== 20) throw new Error("could not read the Wealth by Level table from the Player's Handbook");
+  // "2 for d4, 2 for d6, 3 for d8, 4 for d10, 5 for d12, and 8 for d20": what a die can no longer roll below
+  const abilityScores = handbook.find((c) => c.chapterName === "Using Ability Scores")?.contentMarkdown ?? "";
+  const minimumRollThreshold: Record<string, number> = Object.fromEntries(
+    Array.from(abilityScores.slice(abilityScores.indexOf("Minimum Roll Threshold")).matchAll(/(\d+) for (d\d+)/g)).map((m) => [m[2], Number(m[1])]),
+  );
+  if (!minimumRollThreshold.d4 || !minimumRollThreshold.d12) throw new Error("could not read the Minimum Roll Threshold from the Player's Handbook");
   return {
     wealthByLevel,
+    minimumRollThreshold,
     languages,
     alignments: society.flatMap((s) => morality.map((m) => `${s} ${m}`)),
     abilities: ["Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"],
@@ -282,6 +289,200 @@ function deriveTransport(expanded: any[], handbook: any[]) {
       .map((r) => ({ name: r[0].replace(/&emsp;|_/g, "").replace(/\s+/g, " ").trim(), cost: r[1], weight: r[2] })),
     pace: pace.rows.map((r) => ({ pace: r[0], feetPerMinute: number(r[1]) ?? 0, milesPerHour: number(r[2]) ?? 0, milesPerDay: number(r[3]) ?? 0, effect: r[4] ?? "" })),
   };
+}
+
+// The downtime activities of Wretched Hives' Entertainment and Downtime chapter: for each, what it
+// costs and asks for (the text), the d100 result table, the uptime table, and the complications
+// tables; and the tables the activities share (roll modifiers by DC, enhanced items by rarity).
+// The engine in shared/logic reads these; nothing about an activity's outcomes is written there.
+function deriveDowntime(hives: any[]) {
+  const chapter: string = hives.find((c) => c.chapterName === "Entertainment and Downtime")?.contentMarkdown ?? "";
+  const items: string = hives.find((c) => c.chapterName === "Enhanced Items")?.contentMarkdown ?? "";
+  if (!chapter) throw new Error("could not find the Entertainment and Downtime chapter in Wretched Hives");
+  const all = [...tables(chapter), ...tables(items)];
+  const band = (cell: string): { min?: number; max?: number } => {
+    const text = cell.replace(/,/g, "").trim();
+    let m: RegExpMatchArray | null;
+    if ((m = text.match(/^(\d+) or lower/i))) return { max: Number(m[1]) };
+    if ((m = text.match(/^(\d+) or higher/i))) return { min: Number(m[1]) };
+    if ((m = text.match(/^(\d+)\s*[-–]\s*(\d+)/))) return { min: Number(m[1]), max: Number(m[2]) };
+    return {};
+  };
+  const modifierTable = all.find((t) => /Roll Modifier$/.test(t.title) && /DC/i.test(t.header[0]) && t.rows.length === 5);
+  if (!modifierTable) throw new Error("could not read a Roll Modifier table from Wretched Hives");
+  const rollModifier = modifierTable.rows.map((r) => ({ dc: number(r[0]) ?? 0, bonus: number(r[1]) ?? 0 }));
+  const byRarity = (title: string) => all.find((t) => t.title === title)?.rows ?? [];
+  const sections = chapter.split(/^## /m).slice(1);
+  const activities: any[] = [];
+  let rivals: string[] = [];
+  for (const section of sections) {
+    const name = section.split("\n")[0].trim();
+    const found = tables(`## ${section}`);
+    if (name === "Rivals") {
+      rivals = found.find((t) => t.title === "Example Rivals")?.rows.map((r) => r[1]) ?? [];
+      continue;
+    }
+    const part = (heading: string) => {
+      const m = section.match(new RegExp(`^### ${heading}\\s*$([\\s\\S]*?)(?=^### |^## |^#### |$(?![\\s\\S]))`, "m"));
+      return (m?.[1] ?? "").replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
+    };
+    // Everything under Resources, its sub-headings too (Training lists what it takes for each thing trained)
+    const full = section.match(/^### Resources\s*$([\s\S]*?)(?=^### |^## |$(?![\s\S]))/m)?.[1] ?? "";
+    const resourcesFull = full.replace(/^#{4,6}\s+(.*)$/gm, " [$1] ").replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
+    const upIndex = section.indexOf("### Uptime");
+    const upText = upIndex >= 0 ? section.slice(upIndex) : "";
+    const upTables = tables(`## ${upText}`);
+    // The d100 table (not the roll modifiers, not the uptime table)
+    const results = found.filter((t) => /^d100$/i.test(t.header[0]) && !/Uptime/i.test(t.title) && !/Roll Modifier/i.test(t.title));
+    const complications = found
+      .filter((t) => /Complications$/.test(t.title))
+      .map((t) => ({ title: t.title, die: number(t.header[0]) ?? 6, rows: t.rows.map((r) => ({ roll: number(r[0]) ?? 0, text: r[1] })) }));
+    // By the successes in five checks, or by the DC met (Work)
+    const upTable = upTables.find((t) => /\(Uptime\)$/.test(t.title));
+    const upResults = upTable?.rows.map((r) => ({ [/success/i.test(upTable.header[0]) ? "successes" : "dc"]: number(r[0]) ?? 0, text: r[1] }));
+    activities.push({
+      id: name.toLowerCase().replace(/[^a-z]+/g, "-").replace(/^-|-$/g, ""),
+      name,
+      intro: section.split("\n").slice(1).find((l) => l.trim() && !l.startsWith("#")) ?? "",
+      resources: part("Resources"),
+      resourcesFull,
+      resolution: part("Resolution"),
+      complicationText: part("Complications") || part("Crafting Complications"),
+      results: results.length ? results[0].rows.map((r) => ({ ...band(r[0]), text: r[1] })) : [],
+      complications,
+      uptime: upText
+        ? {
+            resources: (upText.match(/#### Resources\s+([\s\S]*?)(?=\n#### |$)/)?.[1] ?? "").replace(/\s+/g, " ").trim(),
+            resolution: (upText.match(/#### Resolution\s+([\s\S]*?)(?=\n#### |$)/)?.[1] ?? "").replace(/\s+/g, " ").trim(),
+            ...(upResults ? { results: upResults } : {}),
+          }
+        : undefined,
+    });
+  }
+  const rarityRows = (title: string, pick: (r: string[]) => any) => Object.fromEntries(byRarity(title).map((r) => [r[0], pick(r)]));
+  const range = (cell: string) => {
+    const nums = Array.from(cell.replace(/,/g, "").matchAll(/\d+/g)).map((m) => Number(m[0]));
+    return /up to/i.test(cell) ? { min: 0, max: nums[0] } : /at least/i.test(cell) ? { min: nums[0] } : { min: nums[0], max: nums[1] };
+  };
+  const out = {
+    rollModifier,
+    rivals,
+    activities,
+    // Enhanced items: the DC to find a seller and the d100 modifier by rarity (Buying Enhanced Items)
+    sellers: rarityRows("Purchasable Enhanced Items", (r) => ({ dc: number(r[1]), modifier: number(r[2]) })),
+    // The creature level to face for a rare ingredient, and the d100 modifier (Crafting)
+    ingredients: rarityRows("Enhanced Item Ingredients", (r) => ({ cr: range(r[1].replace(/-/, " to ")), modifier: number(r[2]) })),
+    blueprintDc: rarityRows("Blueprint Learning DC by Rarity", (r) => number(r[1])),
+    reverseDc: rarityRows("Reverse Engineer DC by Rarity", (r) => number(r[1])),
+    value: rarityRows("Enhanced Item Value by Rarity", (r) => range(r[1].replace(/ - /, " to "))),
+    valueModifier: rarityRows("Value Modifier by Rarity", (r) => number(r[1])),
+    // Selling an enhanced item: the dice of days to find a buyer and the d100 modifier by rarity
+    buyers: rarityRows("Salable Enhanced Items", (r) => ({ days: r[1], modifier: number(r[2]) })),
+  };
+  if (activities.length < 13 || activities.some((a) => !a.results.length) || !Object.keys(out.sellers).length || !Object.keys(out.value).length) {
+    throw new Error(`could not read the downtime tables from Wretched Hives: ${activities.map((a) => `${a.name}:${a.results.length}`).join(", ")}`);
+  }
+  return out;
+}
+
+// What a starship of each size is made of, from Starships of the Galaxy's size texts: the ability
+// score adjustments, the hull die and the hull and shield dice and AC upgrade of each tier, and the
+// roles (their ability adjustment, armor, shields, reactor, power coupling, speed and turning speed)
+function deriveShips(sizes: any[], starshipChapters: any[]) {
+  const out: Record<string, any> = {};
+  for (const size of sizes) {
+    const text: string = size.fullText ?? "";
+    const header = text.match(/##### [A-Za-z ]+\n\|[^\n]+\n\|[^\n]+\n((?:\|[^\n]+\n?)+)/);
+    if (!header) throw new Error(`could not read the tier table of ${size.name} ships`);
+    const rows = header[1].trim().split("\n").map((l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
+    const dice = rows.map((r) => r[3].match(/(\d+)d(\d+)/)).map((m) => (m ? [Number(m[1]), Number(m[2])] : [0, 0]));
+    const acUpgrade = rows.map((r) => Number((r[4] ?? "").replace(/[^\d]/g, "")) || 0);
+    const abilities: Record<string, number> = {};
+    const adjust = text.match(/#### Ability Score Adjustments\n___\n((?:- [^\n]+\n?)+)/)?.[1] ?? "";
+    for (const m of adjust.matchAll(/\*\*(\w+)\*\*\s*([+-]?\d+)/g)) abilities[m[1].toLowerCase()] = Number(m[2]);
+    const firstHull = Number(text.match(/Hull Points for 1st Hull Die:\*\*\s*(\d+)/)?.[1] ?? dice[0][1]);
+    const slots = Number(text.match(/Base Modification Slots:\*\*\s*(\d+)/)?.[1] ?? 0);
+    const roleSection = text.split(/### Role\n/)[1]?.split(/\n### /)[0] ?? "";
+    const roles = roleSection.split(/\n#### /).slice(1).map((block) => {
+      const name = block.split("\n")[0].trim();
+      const get = (key: string) => block.match(new RegExp(`\\*\\*${key}:\\*\\*\\s*([^\\n]*)`))?.[1]?.trim() ?? "";
+      const adj: Record<string, number> = {};
+      for (const m of get("Ability Score Adjustment").matchAll(/([+-]\d+)\s+(\w+)/g)) adj[m[2].toLowerCase()] = Number(m[1]);
+      const speed = get("Speed/Turning").match(/(\d+)\s*\/\s*(\d+)/);
+      return { name, abilities: adj, armor: get("Armor"), shields: get("Shields"), reactor: get("Reactor"), coupling: get("Power Coupling"), speed: speed ? Number(speed[1]) : 0, turning: speed ? Number(speed[2]) : 0 };
+    });
+    if (!roles.length) throw new Error(`could not read the roles of ${size.name} ships`);
+    out[size.name] = { abilities, hullDie: dice[0][1], hullDice: dice.map((d) => d[0]), firstHull, acUpgrade, slots, roles };
+  }
+  // Ammunition: the damage of missiles, rockets and torpedoes (a dice figure for Large and smaller
+  // ships and one in brackets for Huge and larger), and the area and saving throw of bombs and mines
+  const equipment: string = starshipChapters.find((c) => c.chapterName === "Equipment")?.contentMarkdown ?? "";
+  const dice = (cell: string) => {
+    const m = cell.match(/(\d+d\d+)(?:\s*\((\d+d\d+)\))?\s*(\w+)?/);
+    return m ? { dice: m[1], diceHuge: m[2] ?? m[1], type: (m[3] ?? "").toLowerCase() } : null;
+  };
+  const tertiary: any[] = [];
+  const grouped = tables(equipment).find((t) => t.title === "Tertiary Ammunition");
+  let launcher = "";
+  for (const row of grouped?.rows ?? []) {
+    const name = row[0].replace(/^_|_$/g, "").trim();
+    if (!row[1] && !row[2]) {
+      launcher = name.replace(/^\(Assault\)\s*/i, "");
+      continue;
+    }
+    const hit = dice(row[2] ?? "");
+    const range = (row[4] ?? "").match(/Range (\d+)\/(\d+)/i);
+    tertiary.push({ launcher, name, cost: number(row[1]) ?? 0, ...(hit ?? {}), normal: range ? Number(range[1]) : 0, long: range ? Number(range[2]) : 0, properties: (row[4] ?? "").replace(/[()]/g, "") });
+  }
+  const bombs: any[] = [];
+  const descriptions = equipment.split("## Ammunition Descriptions")[1] ?? equipment.split(/Ammunition Descriptions/i)[1] ?? "";
+  for (const block of descriptions.split(/\n#### /).slice(1)) {
+    const name = block.split("\n")[0].trim();
+    const body = block.split("\n").slice(1).join(" ");
+    const save = body.match(/(Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) saving throw \(DC (\d+)\)/);
+    const hit = body.match(/takes (\d+d\d+) \[(\d+d\d+)\] (\w+) damage/);
+    const radius = body.match(/within (\d+) \[(\d+)\] feet/);
+    bombs.push({ name, ...(save ? { save: save[1].toLowerCase(), dc: Number(save[2]) } : {}), ...(hit ? { dice: hit[1], diceHuge: hit[2], type: hit[3].toLowerCase() } : {}), ...(radius ? { radius: Number(radius[1]), radiusHuge: Number(radius[2]) } : {}), text: body.slice(0, 400) });
+  }
+  out.ammunition = { tertiary, quaternary: bombs };
+  // Armor (the most of the Dexterity modifier that counts, and the damage reduction) and shields
+  // (capacity and regeneration rate as multiples), from the armor and shields table
+  const fraction = (cell: string) => {
+    const f = cell.match(/(\d+)\s*\/\s*(\d+)/);
+    if (f) return Number(f[1]) / Number(f[2]);
+    const n = cell.match(/(\d+(?:\.\d+)?)/);
+    return n ? Number(n[1]) : null;
+  };
+  const armorTable = tables(equipment).find((t) => t.header[0] === "Name" && t.header.some((h) => /Shield\s+Capacity/i.test(h)));
+  if (!armorTable) throw new Error("could not read the armor and shields table of Starships of the Galaxy");
+  const armor: Record<string, { cap: number | null; dr: number }> = {};
+  const shields: Record<string, { capacity: number; regen: number }> = {};
+  for (const row of armorTable.rows) {
+    const name = row[0].replace(/_/g, "").trim();
+    if (/armor$/i.test(name) && /\s/.test(name)) {
+      const max = (row[2] ?? "").match(/max (\d+)/i);
+      armor[name.replace(/ armor$/i, "")] = { cap: max ? Number(max[1]) : null, dr: Number((row[3] ?? "").replace(/[^\d]/g, "")) || 0 };
+    } else if (/shield$/i.test(name)) {
+      shields[name.replace(/ shield$/i, "")] = { capacity: fraction(row[5] ?? "") ?? 1, regen: fraction(row[6] ?? "") ?? 1 };
+    }
+  }
+  out.armor = armor;
+  out.shields = shields;
+  // Refitting: 100 credits for each hull die missing, times the size's cost modifier; the time by size
+  const chapter3: string = starshipChapters.find((c) => c.chapterName === "Starships")?.contentMarkdown ?? "";
+  const chapter8: string = starshipChapters.find((c) => c.chapterName === "Adventuring")?.contentMarkdown ?? "";
+  const costTable = tables(chapter3).find((t) => /Starship Size Upgrade Cost/i.test(t.title));
+  const timeTable = tables(chapter8).find((t) => /Refitting Time/i.test(t.title));
+  const hours = (cell: string) => {
+    const n = number(cell) ?? 0;
+    return /week/i.test(cell) ? n * 168 : /month/i.test(cell) ? n * 720 : /day/i.test(cell) ? n * 24 : n;
+  };
+  out.refit = {
+    cost: Object.fromEntries((costTable?.rows ?? []).map((r) => [r[0].trim(), number(r[1].replace(/x/i, "")) ?? 1])),
+    hours: Object.fromEntries((timeTable?.rows ?? []).map((r) => [r[0].trim(), hours(r[1])])),
+  };
+  if (!Object.keys(out.refit.cost).length || !Object.keys(out.refit.hours).length) throw new Error("could not read the refitting tables of Starships of the Galaxy");
+  return out;
 }
 
 // What each tool is for, from Wretched Hives' Tool Proficiencies chapter: the three skills it helps
@@ -397,13 +598,17 @@ async function main() {
   manifest.datasets.transport = { derivedFrom: "rulesExpandedContent", mounts: transport.mounts.length, vehicles: transport.vehicles.length, bytes: write("transport", transport) };
   const tools = deriveTools(loaded.rulesWretchedHives, loaded.equipment);
   manifest.datasets.tools = { derivedFrom: "rulesWretchedHives", count: tools.length, bytes: write("tools", tools) };
+  const downtime = deriveDowntime(loaded.rulesWretchedHives);
+  manifest.datasets.downtime = { derivedFrom: "rulesWretchedHives", activities: downtime.activities.length, bytes: write("downtime", downtime) };
+  const ships = deriveShips(loaded.starshipSizes, loaded.rulesStarships);
+  manifest.datasets.ships = { derivedFrom: "starshipBaseSize", sizes: Object.keys(ships).filter((k) => !/^(ammunition|armor|shields|refit)$/.test(k)).length, bytes: write("ships", ships) };
   write("manifest", manifest);
   const total = Object.values(manifest.datasets).reduce((sum: number, d: any) => sum + d.bytes, 0);
   console.log(`\n${Object.keys(manifest.datasets).length} datasets, ${(total / 1048576).toFixed(1)} MB, data version ${manifest.dataVersion} -> ${OUT}`);
 }
 
 // DERIVE_ONLY=1: rebuild only the datasets derived from book text, from the files already imported
-// (no network): the transport and tools sets and their manifest entries
+// (no network): the lookups, transport, tools and downtime sets and their manifest entries
 async function deriveOnly() {
   const read = (name: string) => JSON.parse(fs.readFileSync(path.join(OUT, `${name}.json`), "utf8"));
   const manifest = read("manifest");
@@ -411,6 +616,12 @@ async function deriveOnly() {
   manifest.datasets.transport = { derivedFrom: "rulesExpandedContent", mounts: transport.mounts.length, vehicles: transport.vehicles.length, bytes: write("transport", transport) };
   const tools = deriveTools(read("rulesWretchedHives"), read("equipment"));
   manifest.datasets.tools = { derivedFrom: "rulesWretchedHives", count: tools.length, bytes: write("tools", tools) };
+  const downtime = deriveDowntime(read("rulesWretchedHives"));
+  manifest.datasets.downtime = { derivedFrom: "rulesWretchedHives", activities: downtime.activities.length, bytes: write("downtime", downtime) };
+  const ships = deriveShips(read("starshipSizes"), read("rulesStarships"));
+  manifest.datasets.ships = { derivedFrom: "starshipBaseSize", sizes: Object.keys(ships).filter((k) => !/^(ammunition|armor|shields|refit)$/.test(k)).length, bytes: write("ships", ships) };
+  const lookups = deriveLookups(read("rulesPlayersHandbook"), { referenceTables: read("referenceTables") });
+  manifest.datasets.lookups = { derivedFrom: "rulesPlayersHandbook", languages: lookups.languages.length, bytes: write("lookups", lookups) };
   write("manifest", manifest);
   console.log(`transport: ${transport.mounts.length} mounts, ${transport.vehicles.length} vehicles; tools: ${tools.length}`);
 }

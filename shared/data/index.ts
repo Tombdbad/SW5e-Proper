@@ -49,6 +49,8 @@ export const datasets = {
   travel: () => import("./sw5e/travel.json"),
   transport: () => import("./sw5e/transport.json"),
   tools: () => import("./sw5e/tools.json"),
+  downtime: () => import("./sw5e/downtime.json"),
+  ships: () => import("./sw5e/ships.json"),
   lookups: () => import("./sw5e/lookups.json"),
 } as const;
 
