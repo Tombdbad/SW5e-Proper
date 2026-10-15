@@ -925,6 +925,335 @@ if (process.env.FORCE !== "0") {
   });
 }
 
+// Gear, companions and transport (2026-10-15): items used from the inventory, tools, a game, a
+// disabled droid mended and bolted, a captive freed, a bounty hunter hired, allies and grenades in a
+// fight, a beast gentled, speeders taken, mended, bought and driven, and a hangar's empty berth.
+// Each part builds its own campaign through the API and drives the page.
+{
+  const PHONE = process.env.VIEW === "phone";
+  const poke = (x, y) => (PHONE ? page.touchscreen.tap(x, y) : page.mouse.click(x, y));
+  const at = async (key) => {
+    for (let i = 0; i < 40; i++) {
+      const p = await page.evaluate((k) => window.__map3d?.at(k) ?? null, key);
+      if (p) return p;
+      await sleep(250);
+    }
+    throw new Error("nothing on the map for " + key);
+  };
+  const inView = async (key) => {
+    const box = await page.locator("canvas").boundingBox();
+    for (let i = 0; i < 15; i++) {
+      const p = await at(key);
+      if (p.x > box.x + 10 && p.x < box.x + box.width - 10 && p.y > box.y + 50 && p.y < box.y + box.height - 10) return p;
+      await page.mouse.move(box.x + 100, box.y + box.height / 2);
+      for (let n = 0; n < 6; n++) { await page.mouse.wheel(0, 400); await sleep(60); }
+      await sleep(500);
+    }
+    throw new Error(key + " cannot be brought into view");
+  };
+  const tap = async (key) => { const p = await inView(key); await poke(p.x, p.y); };
+  const card = () => page.getByTestId("map-card");
+  const stat = async (statBlock) => (await api("POST", "/api/world/occupant", { statBlock })).json;
+  const named = async (search) => (await api("GET", `/api/sw5e/monsters?search=${encodeURIComponent(search)}&fields=id,name`)).json[0];
+  const GEAR = "Gear " + TAG;
+  const newChar = async (extra) => {
+    const r = await api("POST", "/api/characters", {
+      name: GEAR, species: "human", class: "fighter", background: "soldier", alignment: "Neutral Balanced", level: 3,
+      abilityScores: { strength: 16, dexterity: 14, constitution: 14, intelligence: 14, wisdom: 14, charisma: 14 },
+      maxHp: 30, currentHp: 30, maxForcePoints: 0, currentForcePoints: 0, armorClass: 14, speed: 30, credits: 5000,
+      startingLocation: "Unknown", skillProficiencies: ["Athletics", "Perception", "Animal Handling", "Insight", "Deception", "Performance"], savingThrowProficiencies: ["strength", "constitution"],
+      ...extra,
+    });
+    if (r.status !== 201) throw new Error(r.text.slice(0, 300));
+    made.push(r.json.id);
+    return r.json;
+  };
+  // A campaign on a generated world whose start room has been cleared for the test; `place` fills it
+  const newCamp = async (character, seed, edit, extra = {}) => {
+    const world = (await api("POST", "/api/world/generate", { options: { seed, partyLevel: 3 } })).json.world;
+    const start = world.areas[world.startId];
+    start.occupants = []; start.loot = []; start.ships = [];
+    start.layout.assets = start.layout.assets.filter((a) => a.kind !== "npc" && a.kind !== "loot" && a.kind !== "ship");
+    const put = (o, top = false) => {
+      const l = start.layout;
+      const blocked = (x, y) => l.assets.some((a) => !a.side && (a.blocks || a.kind === "npc") && a.x <= x && x < a.x + a.w && a.y <= y && y < a.y + a.h);
+      const doors = l.assets.filter((a) => a.side).map((a) => `${a.x},${a.y}`);
+      const ys = Array.from({ length: l.height }, (_, i) => (top ? i : l.height - 1 - i));
+      const xs = Array.from({ length: l.width }, (_, i) => (top ? i : l.width - 1 - i));
+      for (const y of ys) for (const x of xs) {
+        if (blocked(x, y) || doors.includes(`${x},${y}`)) continue;
+        l.assets.push({ id: `t-${o.id}`, kind: "npc", name: o.name, x, y, w: 1, h: 1, ref: o.id });
+        start.occupants.push(o);
+        return;
+      }
+    };
+    await edit(world, start, put);
+    const made2 = await api("POST", "/api/campaigns", { characterId: character.id, name: "E2E gear " + TAG, description: "gear", npcs: [], locations: [], quests: [], startingLocation: "start", currentLocation: extra.currentLocation ?? world.startId, galaxyMap: world, ...extra });
+    if (made2.status !== 201) throw new Error(made2.text.slice(0, 200));
+    await page.goto(`${BASE}/game/${made2.json.id}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await sleep(2500);
+    return { world, start, id: made2.json.id };
+  };
+  const campOf = async (id) => (await api("GET", `/api/campaigns/${id}`)).json;
+  const toInventory = async () => { await page.getByRole("tab", { name: "Inventory" }).click(); await sleep(300); };
+  let g = null;
+  let gc = null;
+
+  await step(ctx, "gear: carried items have uses; a medpac heals, a kit lists its activities, a substance gives a high", async () => {
+    g = await newChar({
+      equipment: ["Blaster pistol", "Vibroblade", "Combat suit", "Medpac", "Medpac", "Traumakit", "Repair kit", "Restraining bolt", "Emergency battery", "Security kit", "Slicer's kit", "Mechanic's kit", "Glitterstim", "Grenade, fragmentation", "Poison", "Sabacc deck", "Flute", "Antitoxkit"],
+      toolProficiencies: ["Security kit", "Slicer's kit", "Mechanic's kit", "Sabacc deck", "Flute"], currentHp: 5,
+    });
+    gc = await newCamp(g, 3, async (world, start, put) => {
+      const droid = await stat((await named("B1-A")).id);
+      put({ ...droid, id: "ox-droid", disposition: "neutral", role: "disabled droid", disabled: true, wounds: [0], loadout: [], saves: { constitution: -10 } });
+      put({ ...(await stat((await named("Jawa Tinkerer")).id)), id: "ox-captive", name: "Wuzz", role: "captive", disposition: "friendly", species: "Human", loadout: [], captive: { restraint: "shackles", dc: 12 } });
+      put({ ...(await stat((await named("Headhunter")).id)), id: "ox-hire", name: "Kess Varn", role: "bounty hunter", disposition: "neutral", species: "Human" });
+      put({ id: "ox-gambler", name: "Dollo", role: "gambler", disposition: "neutral", count: 1, species: "Human", loadout: [] }, true);
+    });
+    await toInventory();
+    for (const n of ["Medpac", "Traumakit", "Repair kit", "Glitterstim", "Grenade, fragmentation", "Poison", "Mechanic's kit", "Sabacc deck", "Flute", "Antitoxkit"]) {
+      if (!(await page.getByTestId(`use-${n}`).count())) throw new Error("no Use button for " + n);
+    }
+    await page.getByTestId("use-Medpac").click();
+    await page.getByTestId("use-on-self").click();
+    await sleep(1200);
+    let c = await getChar(g.id);
+    if (!(c.currentHp > 5) || c.equipment.filter((n) => n === "Medpac").length !== 1) throw new Error(`hp ${c.currentHp}, medpacs ${c.equipment.filter((n) => n === "Medpac").length}`);
+    await page.getByTestId("use-Mechanic's kit").click();
+    const panel = page.getByTestId("tool-panel");
+    await panel.waitFor();
+    if (!/trained with it/i.test(await panel.innerText())) throw new Error("tool panel: " + (await panel.innerText()).slice(0, 200));
+    await panel.getByRole("button", { name: "Try" }).first().click();
+    await page.getByTestId("use-Glitterstim").click();
+    await page.getByTestId("use-on-self").click();
+    await sleep(800);
+    c = await getChar(g.id);
+    if (c.playState?.substance?.phase !== "high" || c.equipment.includes("Glitterstim")) throw new Error(JSON.stringify(c.playState));
+    return `medpac healed to ${c.currentHp}; mechanic's kit panel; Glitterstim: ${c.playState.substance.phase}`;
+  });
+
+  await step(ctx, "droid: a disabled droid is stabilized, mended and bolted, and joins the party", async () => {
+    await tap("npc:ox-droid");
+    await card().getByTestId("disabled-droid").waitFor();
+    await card().getByTestId("droid-stabilize").click();
+    await sleep(1200);
+    await tap("npc:ox-droid");
+    await card().getByTestId("droid-mend").click();
+    await sleep(1200);
+    await tap("npc:ox-droid");
+    await card().getByTestId("droid-bolt").click();
+    await sleep(1500);
+    const c = await getChar(g.id);
+    const droid = (c.companionData?.party ?? []).find((p) => p.kind === "droid");
+    if (!droid || c.equipment.includes("Restraining bolt")) throw new Error(JSON.stringify(c.companionData));
+    return `${droid.name} joined at ${droid.hp}/${droid.maxHp} under a bolt`;
+  });
+
+  await step(ctx, "captive and hire: shackles opened with a kit, the freed come along; a bounty hunter is hired for a fee and a wage", async () => {
+    let freed = false;
+    for (let i = 0; i < 6 && !freed; i++) {
+      await tap("npc:ox-captive");
+      await card().getByTestId("captive").waitFor();
+      await card().getByTestId("free-kit").click();
+      await sleep(1200);
+      freed = (await campOf(gc.id)).galaxyMap.areas[gc.world.startId].occupants.find((x) => x.id === "ox-captive")?.role === "freed";
+    }
+    if (!freed) throw new Error("six tries and the shackles held");
+    await tap("npc:ox-captive");
+    await card().getByTestId("freed-join").click();
+    await sleep(1200);
+    const before = await getChar(g.id);
+    await tap("npc:ox-hire");
+    await card().getByTestId("hire").waitFor();
+    await card().getByTestId("hire-button").click();
+    await sleep(1200);
+    const after = await getChar(g.id);
+    const hired = after.companionData.party.find((p) => p.kind === "hireling");
+    if (!hired || !(after.credits < before.credits) || !(hired.wage > 0) || !after.companionData.party.some((p) => p.kind === "freed")) throw new Error(JSON.stringify(after.companionData));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await page.getByTestId("play-party").waitFor();
+    if ((await page.getByTestId("party-member").count()) !== 3) throw new Error("party shown: " + (await page.getByTestId("party-member").count()));
+    return `party of 3 kept after a reload; hire: credits ${before.credits} -> ${after.credits}, wage ${hired.wage}`;
+  });
+
+  await step(ctx, "gambling: five rounds at the table end in a result, and credits move", async () => {
+    await sleep(1500);
+    await tap("npc:ox-gambler");
+    const panel = card().getByTestId("gamble");
+    await panel.waitFor();
+    await panel.getByTestId("gamble-start").click();
+    for (let i = 0; i < 5; i++) {
+      await panel.getByTestId("gamble-game").click();
+      await sleep(150);
+    }
+    await panel.getByTestId("gamble-result").waitFor();
+    return (await panel.getByTestId("gamble-result").innerText()).replace(/\s+/g, " ").slice(0, 120);
+  });
+
+  await step(ctx, "allies: companions fight at the character's side, items are offered, a grenade hits two", async () => {
+    const hp = { id: "c-e2e-droid", name: "Bolted B1", kind: "droid", role: "guard", size: "Medium", creature: "droid", armorClass: 14, maxHp: 20, hp: 20, attack: { name: "Blaster rifle", bonus: 6, damage: "1d8+2", ranged: true, range: 80, long: 320 }, speed: 30, saves: {}, loadout: [], wage: 0, joined: 480, bolt: "Restraining bolt" };
+    const f = await newChar({ abilityScores: { strength: 20, dexterity: 14, constitution: 14, intelligence: 14, wisdom: 14, charisma: 14 }, equipment: ["Blaster pistol", "Vibroblade", "Combat suit", "Medpac", "Grenade, fragmentation"], companionData: { party: [hp], paidThrough: 1 } });
+    const fc = await newCamp(f, 5, async (world, start, put) => {
+      const trooper = await stat("trooper");
+      put({ ...trooper, id: "ox-foes", disposition: "hostile", role: "guard", count: 2 });
+    });
+    if (!(await page.getByText(/Combat - Round/).count())) await page.getByRole("button", { name: "Fight", exact: true }).click();
+    await page.getByText(/Combat - Round/).waitFor();
+    const list = await page.locator("ul.space-y-1 li").allInnerTexts();
+    if (!list.some((t) => /\(ally\)/.test(t))) throw new Error("no ally listed: " + JSON.stringify(list));
+    const items = await page.getByTestId("combat-items").innerText();
+    if (!/Medpac/.test(items) || !/Grenade/.test(items)) throw new Error(items);
+    const melee = page.getByRole("button", { name: "Melee", exact: true });
+    for (let i = 0; i < 60 && !(await melee.isEnabled().catch(() => false)); i++) await sleep(300);
+    await page.getByTestId("combat-item-Grenade, fragmentation").click();
+    await sleep(600);
+    const log = (await page.locator("div.text-xs.text-gray-300 > div").allInnerTexts().catch(() => [])).join(" | ");
+    for (let i = 0; i < 200 && (await page.getByText(/Combat - Round/).count()); i++) {
+      const save = page.getByRole("button", { name: "Death saving throw" });
+      if ((await save.count()) && (await save.isEnabled().catch(() => false))) await save.click().catch(() => {});
+      else if ((await melee.count()) && (await melee.isEnabled().catch(() => false))) await melee.click().catch(() => {});
+      await sleep(300);
+    }
+    await sleep(1500);
+    const c = await getChar(f.id);
+    if (!(c.experience >= 100)) throw new Error("experience " + c.experience);
+    if ((c.companionData?.party ?? []).length !== 1) throw new Error(JSON.stringify(c.companionData));
+    return `${/throws Grenade/.test(log) ? "grenade thrown" : "grenade out of range"}; the droid kept its ${c.companionData.party[0].hp}/20; xp ${c.experience}`;
+  });
+
+  await step(ctx, "beast and stable: a dealer sells speeders, a stable keeper mounts, a wild creature is gentled", async () => {
+    const b = await newChar({ credits: 40000, equipment: ["Blaster pistol", "Vibroblade", "Field rations (one day's)"] });
+    const bc = await newCamp(b, 3, async (world, start, put) => {
+      // a city: speeders are sold in cities
+      world.areas[world.areas[start.parentId].parentId].type = "city";
+      put({ id: "ox-dealer", name: "Dorg the Dealer", role: "merchant", trade: "vehicles", disposition: "friendly", count: 1, species: "Human", loadout: [] });
+      put({ id: "ox-stable", name: "Hanna Stablehand", role: "merchant", trade: "mounts", disposition: "friendly", count: 1, species: "Human", loadout: [] }, true);
+      put({ ...(await stat("tauntaun")), id: "ox-beast", disposition: "neutral", role: "wildlife", count: 1 });
+    }, { timeElapsed: { total: 700 } });
+    // (the beast is made hostile after the trade, so that it does not start a fight)
+    await tap("npc:ox-dealer");
+    const stock = card().getByTestId("trade-stock");
+    await stock.waitFor();
+    const line = stock.locator("li").filter({ hasText: /Landspeeder|Speederbike|Airspeeder/ }).first();
+    await line.getByRole("button", { name: "Buy" }).click();
+    await sleep(1500);
+    const bought = (await campOf(bc.id)).vehicles?.[0];
+    if (!bought) throw new Error("no speeder bought");
+    await tap("npc:ox-stable");
+    await card().getByText("Hanna Stablehand").waitFor({ timeout: 30000 });
+    const mounts = card().getByTestId("trade-stock").locator("li").filter({ hasText: /Tauntaun|Kaadu|Dewback|Varactyl|Bantha|Rancor/ }).first();
+    await mounts.getByRole("button", { name: "Buy" }).click();
+    await sleep(2000);
+    let party = (await getChar(b.id)).companionData?.party ?? [];
+    if (!party.some((p) => p.kind === "beast" && p.mount)) throw new Error(JSON.stringify(party));
+    // a wild creature, hurt, in the room
+    const camp = await campOf(bc.id);
+    const w = camp.galaxyMap;
+    const room = w.areas[bc.world.startId];
+    room.occupants = room.occupants.map((o) => (o.id === "ox-beast" ? { ...o, disposition: "hostile", role: "wildlife", wounds: [6] } : o));
+    await api("PATCH", `/api/campaigns/${bc.id}`, { galaxyMap: w });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await sleep(2500);
+    let joined = false;
+    for (let i = 0; i < 6 && !joined; i++) {
+      await tap("npc:ox-beast");
+      await card().getByTestId("gentle-beast").click();
+      await sleep(1500);
+      party = (await getChar(b.id)).companionData?.party ?? [];
+      joined = party.filter((p) => p.kind === "beast").length >= 2;
+    }
+    if (!joined) throw new Error("six tries and the creature would not settle");
+    return `bought ${bought.name} (${bought.mph} mph); party: ${party.map((p) => `${p.name} ${p.hp}/${p.maxHp}`).join(", ")}`;
+  });
+
+  await step(ctx, "speeders: a base's bike is taken, a wreck mended with a kit, and the routes offer rides", async () => {
+    const m = await newChar({ credits: 30000, equipment: ["Blaster pistol", "Vibroblade", "Combat suit", "Mechanic's kit"], toolProficiencies: ["Mechanic's kit"] });
+    let building = null;
+    let settlement = null;
+    const mc = await newCamp(m, 3, async (world, start) => {
+      building = world.areas[start.parentId];
+      settlement = world.areas[building.parentId];
+      building.vehicles = [
+        { id: "vx-bike", name: "74-Z Speeder Bike", model: "Speederbike", mph: 300, value: 6000, status: "parked", owner: "Raiders", seats: 2 },
+        { id: "vx-wreck", name: "Wrecked speeder", model: "Landspeeder", mph: 220, value: 10000, status: "wrecked", owner: "Raiders", seats: 6 },
+      ];
+      for (const room of Object.values(world.areas).filter((a) => a.parentId === building.id)) room.occupants = room.occupants.filter((o) => o.disposition !== "hostile");
+    });
+    // the helper put the party in the start room; stand outside, before the building
+    await api("PATCH", `/api/campaigns/${mc.id}`, { currentLocation: building.id });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await sleep(3000);
+    await tap("vehicle:vx-bike");
+    await card().getByTestId("vehicle-take").click();
+    await sleep(1500);
+    let mended = false;
+    for (let i = 0; i < 8 && !mended; i++) {
+      await tap("vehicle:vx-wreck");
+      await card().getByTestId("vehicle-mend").click();
+      await sleep(1400);
+      mended = (await campOf(mc.id)).galaxyMap.areas[building.id].vehicles.find((v) => v.id === "vx-wreck").status === "parked";
+    }
+    if (!mended) throw new Error("eight tries and it would not start");
+    await tap("vehicle:vx-wreck");
+    await card().getByTestId("vehicle-take").click();
+    await sleep(1400);
+    await api("PATCH", `/api/campaigns/${mc.id}`, { currentLocation: settlement.id });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    const rides = page.getByTestId("rides").first();
+    await rides.waitFor();
+    const text = (await rides.innerText()).replace(/\s+/g, " ");
+    if (!/On foot/.test(text) || !/speeder/i.test(text)) throw new Error(text);
+    await rides.getByRole("button").filter({ hasText: /speeder/i }).first().click();
+    await sleep(1500);
+    const after = await campOf(mc.id);
+    if (after.currentLocation === settlement.id) throw new Error("did not travel: " + text);
+    if (!after.vehicles.some((v) => v.areaId === after.currentLocation)) throw new Error("the speeder stayed behind");
+    return `${text.slice(0, 160)} => ${after.galaxyMap.areas[after.currentLocation].name}, the speeder with them`;
+  });
+
+  await step(ctx, "roster: another saved character is brought along as a companion", async () => {
+    const lead = await newChar({ equipment: ["Blaster pistol", "Vibroblade", "Combat suit"] });
+    const friend = await newChar({ name: "Friend " + TAG, class: "scout", equipment: ["Blaster pistol", "Vibroblade", "Combat suit"] });
+    await newCamp(lead, 3, async () => {});
+    const sel = page.getByTestId("recruit-character").locator("select");
+    await sel.waitFor();
+    await sel.selectOption({ index: (await sel.locator("option").allInnerTexts()).findIndex((t) => t.startsWith("Friend " + TAG)) });
+    await sleep(1500);
+    const m = (await getChar(lead.id)).companionData?.party?.[0];
+    if (m?.name !== "Friend " + TAG || m.kind !== "character") throw new Error(JSON.stringify(m));
+    return `${m.name}: AC ${m.armorClass}, ${m.hp}/${m.maxHp}, ${m.attack.name} +${m.attack.bonus} ${m.attack.damage}`;
+  });
+
+  await step(ctx, "hangar: a ship away on a voyage leaves a marked berth, inside and out", async () => {
+    const h = await newChar({ equipment: ["Blaster pistol"] });
+    let room = null, building = null;
+    const hc = await newCamp(h, 3, async (world) => {
+      room = Object.values(world.areas).find((a) => a.kind === "room" && a.ships.length && a.layout?.assets.some((x) => x.kind === "ship"));
+      building = world.areas[room.parentId];
+      const other = Object.values(world.areas).find((a) => a.kind === "settlement" && a.id !== building.parentId && a.parentId === world.areas[building.parentId].parentId);
+      room.ships[0].voyage = { ports: [room.id, other.id], stay: 1, legs: [600, 600], phase: 0, homeStay: 1 };
+      for (const r of Object.values(world.areas).filter((a) => a.parentId === building.id)) r.occupants = r.occupants.filter((o) => o.disposition !== "hostile");
+    }, { timeElapsed: { total: 480 } });
+    await api("PATCH", `/api/campaigns/${hc.id}`, { currentLocation: room.id });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await sleep(3000);
+    const shipName = room.ships[0].name;
+    // the ship is away: no ship in the HUD's list, and the berth is on the map (its label)
+    const here = (await page.getByTestId("play-occupants").innerText().catch(() => "")).includes(shipName);
+    if (here) throw new Error("the ship is listed although it is away");
+    // ... but its berth is there to be seen
+    await at(`ship:${room.ships[0].id}`);
+    return `${shipName} away; the room lists no ship and its berth is on the map`;
+  });
+}
+
 if (!process.env.KEEP) {
   await step(ctx, "home: delete buttons remove the test data", async () => {
     await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });

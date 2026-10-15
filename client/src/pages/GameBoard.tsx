@@ -24,7 +24,7 @@ import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText,
-  withPresence,
+  withPresence, withPartyShips,
   gearUse, toolFor, toolTrained, boonOf, gambleMode, gambleResult, GAMBLE_ROUNDS, GAMBLE_HOUSE_DC, GAMBLE_STAKE, GAMBLE_COMPLICATION, GAMBLE_COMPLICATIONS,
   companionFrom, hireFee, wageFor, canHire, COMPANION_LIMIT, crOf, gentleDC, gentleLimit, isDroid, reprogramDC, FREEING, hitDieOfSize,
   groundRides, kmOf, hasRidesForHire, SEATS, EXPLOSIVE_CONDITION_ROUNDS,
@@ -50,6 +50,10 @@ interface PlayState {
   protectedUntil?: number;
   // Credits owed to the gaming tables
   debt?: number;
+  // A comm jammer's hour: alarms are not raised before this minute of the clock
+  jammerUntil?: number;
+  // Ships a homing beacon was left on
+  tracked?: { id: string; name: string }[];
 }
 
 // What each level of the watch means for the party (house rule, see shared/logic)
@@ -227,9 +231,10 @@ export default function GameBoard() {
   // (with the party's companions and speeders, which the map draws with it)
   const scene = useMemo(() => {
     if (!world) return null;
-    const present = withPresence(world, clock);
+    // The party's own ships stand in the berths they have left empty
+    const present = withPartyShips(withPresence(world, clock), Array.isArray(campaign?.starships) ? campaign.starships : []);
     return Object.assign(present, { party: character?.companionData?.party ?? [], parked: campaign?.vehicles ?? [] });
-  }, [world, clock, character?.companionData, campaign?.vehicles]);
+  }, [world, clock, character?.companionData, campaign?.vehicles, campaign?.starships]);
   const hereNow: Area | null = scene && hereId ? scene.areas[hereId] ?? null : null;
 
   // Let time pass: the clock moves on and the new time goes with the next save
@@ -314,7 +319,14 @@ export default function GameBoard() {
   const [sneaking, setSneaking] = useState(false);
   const alert = hostiles.length ? here?.alert ?? ALERT.confronting : ALERT.unaware;
   const allowed = hostiles.length > 0 && !!here?.allowed;
-  const setWatch = (level: number, pass = false) => world && here && saveCampaign({ galaxyMap: setAlert(world, here.id, level, pass) });
+  const setWatch = (level: number, pass = false) => {
+    if (!world || !here) return;
+    let next = setAlert(world, here.id, level, pass);
+    // A comm jammer keeps the alarm from going up through the building (it cannot call out)
+    const parent = here.parentId;
+    if (level === ALERT.attacking && parent && !world.areas[parent]?.alarm && (character?.playState?.jammerUntil ?? 0) > useClock.getState().minutes) next = updateArea(next, parent, { alarm: undefined }).world;
+    saveCampaign({ galaxyMap: next });
+  };
   const stealthRoll = () => {
     const roll = d20();
     const bonus = modifier(character.abilityScores?.dexterity) + (skilled("stealth") ? proficiency : 0);
@@ -521,7 +533,8 @@ export default function GameBoard() {
       return void toast.success(`The fusion cutter takes ${minutes} minutes, and the way is open.`);
     }
     if (how === "blast") {
-      const bomb = (character.equipment ?? []).find((n: string) => gearOf(n)?.kind === "explosive");
+      // The cheapest of what is carried
+      const bomb = ((character.equipment ?? []) as string[]).filter((n) => gearOf(n)?.kind === "explosive").sort((a, b) => (factsOf(a)?.cost ?? 0) - (factsOf(b)?.cost ?? 0))[0];
       if (!bomb) return;
       saveCharacter({ equipment: consume(bomb).equipment });
       openLock(exit, {}, true);
@@ -875,6 +888,12 @@ export default function GameBoard() {
     queryFn: async () => (await fetch("/api/sw5e/transport")).json(),
     staleTime: Infinity,
   });
+  // The user's other characters, who can be brought along as companions
+  const { data: roster = [] } = useQuery<any[]>({
+    queryKey: ["characters-roster"],
+    queryFn: async () => (await fetch("/api/characters")).json(),
+    staleTime: 60000,
+  });
   const { data: monsterNames = [] } = useQuery<{ id: string; name: string }[]>({
     queryKey: ["monster-names"],
     queryFn: async () => (await fetch("/api/sw5e/monsters?fields=id,name")).json(),
@@ -1172,7 +1191,9 @@ export default function GameBoard() {
       saveCharacter({ ...changes, ...next.changes, playState: next.state });
       note = next.note;
     } else return;
-    toast.success(`${name}${usesLeft(name, "uses" in use ? use.uses : undefined) !== undefined ? ` (${usesLeft(name, "uses" in use ? use.uses : undefined)! > 0 && spent.equipment.includes(name) ? usesLeft(name, "uses" in use ? use.uses : undefined) : 0} uses left)` : ""}: ${note}.`);
+    const kitUses = "uses" in use ? use.uses : undefined;
+    const left = kitUses && kitUses > 1 ? (spent.equipment.filter((n) => n === name).length < (character.equipment ?? []).filter((n: string) => n === name).length ? 0 : kitUses - (spent.charges[name] ?? 0)) : undefined;
+    toast.success(`${name}${left !== undefined ? ` (${left} uses left in this kit)` : ""}: ${note}.`);
   };
 
   // Substances (Wretched Hives, "Substances"): a high for a minute, then a Wisdom save against a
@@ -1477,6 +1498,36 @@ export default function GameBoard() {
     toast.info(`${c.name} stays behind.`);
   };
 
+  // Another of the user's characters, brought along as a companion: they fight as they are on
+  // their sheet (armor class, hit points and their best weapon) and do not level or rest apart
+  // (house rule); the sheet itself is left as it was
+  const recruitCharacter = (other: any) => {
+    if (partyFull) return toast.error(`You can lead ${COMPANION_LIMIT} companions at most (house rule).`);
+    const weapons = carriedWeapons(other).sort((a, b) => Number(!!a.natural) - Number(!!b.natural) || b.attackBonus - a.attackBonus);
+    const best = weapons.find((w) => !w.natural) ?? weapons[0];
+    const companion: Companion = {
+      id: newId("c"),
+      name: other.name,
+      kind: "character",
+      species: other.species,
+      role: other.class,
+      size: "Medium",
+      creature: "humanoid",
+      armorClass: other.armorClass ?? 10,
+      maxHp: other.maxHp,
+      hp: Math.max(1, other.currentHp ?? other.maxHp),
+      attack: best ? { name: best.name, bonus: best.attackBonus, damage: `${best.dice}${best.damageBonus ? (best.damageBonus > 0 ? "+" : "") + best.damageBonus : ""}`, damageType: best.damageType, ranged: best.ranged, range: best.range?.[0] ?? best.reach, long: best.range?.[1] } : { name: "Unarmed strike", bonus: 2, damage: "1d4", ranged: false, range: 5 },
+      speed: Number(other.speed) || 30,
+      saves: Object.fromEntries(Object.entries(other.abilityScores ?? {}).map(([a, v]) => [a, modifier(Number(v))])),
+      loadout: [],
+      wage: 0,
+      joined: clockNow(),
+      how: "a character of yours",
+    };
+    saveParty([...party, companion]);
+    toast.success(`${other.name} joins you (${companion.attack?.name}, AC ${companion.armorClass}, ${companion.hp}/${companion.maxHp} hit points).`);
+  };
+
   // Hiring (house rule): a signing fee of five days' wages, then the wage each day
   const hire = (o: Occupant, placeId: string) => {
     if (!world || !character) return;
@@ -1612,11 +1663,8 @@ export default function GameBoard() {
       saveCampaign(time);
       return wakeHostile(o, `${o.name} saves (${roll} against DC ${use.dc}): the bolt overloads, and its optics flare.`);
     }
-    const area = baseOf(o.id);
-    if (!area) return;
-    const { unit } = splitOne(o, area.occupants);
-    // The droid keeps the hit points it has
-    recruit({ ...unit, wounds: [unitOf(unit)] }, "droid", `under a ${boltName.toLowerCase()}`, { bolt: boltName }, { equipment: spent.equipment }, time);
+    // The droid keeps the hit points it has (one of a group leaves it)
+    recruit({ ...o, wounds: [unitOf(o)] }, "droid", `under a ${boltName.toLowerCase()}`, { bolt: boltName }, { equipment: spent.equipment }, time);
   };
   const reprogramDroid = (o: Occupant) => {
     if (!world) return;
@@ -1627,12 +1675,7 @@ export default function GameBoard() {
     const dc = reprogramDC(o);
     const check = toolRoll(kit, dc, `Reprogram ${o.name}`, "intelligence");
     const time = pass(10);
-    if (check.success) {
-      const area = baseOf(o.id);
-      if (!area) return;
-      const { unit } = splitOne(o, area.occupants);
-      return recruit({ ...unit, wounds: [unitOf(unit)] }, "droid", "reprogrammed", { bolt: "reprogrammed" }, {}, time);
-    }
+    if (check.success) return recruit({ ...o, wounds: [unitOf(o)] }, "droid", "reprogrammed", { bolt: "reprogrammed" }, {}, time);
     saveCampaign(time);
     if (check.total <= dc - 5) wakeHostile(o, `The reprogramming goes badly: ${o.name} comes online, hostile.`);
   };
@@ -1666,6 +1709,8 @@ export default function GameBoard() {
     ? [here, ...trailOf(world, here.id), ...childrenOf(world, here.id)].filter((a, i, all) => a.kind === "building" && all.indexOf(a) === i).flatMap((b) => (b.vehicles ?? []).map((v) => ({ building: b, vehicle: v })))
     : [];
   const parkedHere = world && here ? vehicles.filter((v) => v.areaId === berthOf(world, here.id)) : [];
+  // A route's length without the generator's old "(N h by speeder)", which the rides replace
+  const travelText = (exit: Exit) => (kmOf(exit.travel) && !exit.needsShip ? exit.travel.replace(/\s*\([^)]*by speeder\)/i, "") : exit.travel);
   // The rides for a route: on foot, riding a companion, a speeder of the party's parked here, a hired ride
   const ridesFor = (exit: Exit): Ride[] => {
     const km = kmOf(exit.travel);
@@ -1969,7 +2014,9 @@ export default function GameBoard() {
   );
   // The enemy's ship is a prize once nobody is left to guard it; any other is for sale
   const shipButton = (ship: Ship) =>
-    ship.status !== "wrecked" && ship.status !== "orbiting" && (
+    ships.some((mine) => mine.id === ship.id) ? (
+      <span className="ml-2 text-xs text-green-300">Yours, in its berth{(ships.find((mine) => mine.id === ship.id)?.fuel ?? 0) > 0 ? ` (fuel ${ships.find((mine) => mine.id === ship.id)!.fuel})` : ""}</span>
+    ) : ship.status !== "wrecked" && ship.status !== "orbiting" && (
       <Button
         size="sm"
         variant="outline"
@@ -2292,7 +2339,33 @@ export default function GameBoard() {
         </div>
       );
     }
+    if (use.kind === "jammer") {
+      const on = (play.jammerUntil ?? 0) > clockNow();
+      return (
+        <div className="mt-1 space-y-1 text-xs">
+          {text}
+          <p className="text-gray-300">{on ? `Running for ${Math.round((play.jammerUntil! - clockNow()))} more minutes: no alarm goes up.` : "Switch it on for an hour: a fight raises no alarm through the building (house rule)."}</p>
+          <Button size="sm" variant="outline" className="h-6 px-2" disabled={on || inCombat || dead} onClick={() => saveCharacter({ playState: { ...play, jammerUntil: clockNow() + 60 } })}>Switch it on</Button>
+        </div>
+      );
+    }
+    if (use.kind === "beacon") return <div className="mt-1 space-y-1 text-xs">{text}<p className="text-gray-300">Left on a ship from its card on the map; where it flies is then listed under your companions.</p></div>;
     return <div className="mt-1 text-xs text-gray-300">{text}{use.kind === "bolt" ? <p>Fitted to a powered-down droid from its card.</p> : use.kind === "binders" ? <p>Restrains a Small or Medium creature (DC {use.dc} Strength or Dexterity save).</p> : use.kind === "spike" ? <p>Spent automatically to reroll a failed {use.tool.toLowerCase()} check on a lock.</p> : use.kind === "ram" ? <p>Forcing a locked door gives +{use.bonus}, and advantage with a helper.</p> : use.kind === "cutter" ? <p>Cuts a locked door open in ten minutes for each 5 of its DC.</p> : null}</div>;
+  };
+
+  // A homing beacon left on someone's ship, and where that ship is now (from the map's present)
+  const beacon = carriesAny((n) => gearOf(n)?.kind === "beacon") ? (character.equipment as string[]).find((n) => gearOf(n)?.kind === "beacon") : undefined;
+  const plantBeacon = (ship: Ship) => {
+    if (!beacon) return;
+    saveCharacter({ equipment: consume(beacon).equipment, playState: { ...play, tracked: [...(play.tracked ?? []), { id: ship.id, name: ship.name }] } });
+    toast.success(`A homing beacon is on ${ship.name}.`);
+  };
+  const shipWhere = (id: string): string => {
+    if (!scene) return "unknown";
+    const there = Object.values(scene.areas).find((a) => a.ships.some((s) => s.id === id));
+    if (there) return `at ${there.name}`;
+    const flying = scene.moving.find((m) => m.kind === "ship" && m.id === id);
+    return flying ? `in flight from ${scene.areas[flying.from]?.name ?? "somewhere"} to ${scene.areas[flying.to]?.name ?? "somewhere"}` : "out of range";
   };
 
   // Macrobinoculars: who is on watch at the buildings round about, from where the party stands
@@ -2343,7 +2416,7 @@ export default function GameBoard() {
             {exit && (
               <Button size="sm" className="h-auto whitespace-normal text-left" disabled={inCombat || dead || exploring || barred} onClick={() => leaveBy(exit)} data-testid="map-travel">
                 {exit.locked ? `Unlock (DC ${exit.locked}): ` : ""}{exit.label}{exit.via === "path" ? " to" : ""} {place.name}
-                {[exit.travel, tripNote(exit)].filter(Boolean).length > 0 && ` (${[exit.travel, tripNote(exit)].filter(Boolean).join(", ")})`}
+                {[travelText(exit), tripNote(exit)].filter(Boolean).length > 0 && ` (${[travelText(exit), tripNote(exit)].filter(Boolean).join(", ")})`}
               </Button>
             )}
             {place.id === here.id && unmapped && (
@@ -2449,7 +2522,14 @@ export default function GameBoard() {
           {ship.size} {ship.role.toLowerCase()}, tier {ship.tier}, {ship.status}, {ship.owner}{ship.hyperdriveClass ? `, hyperdrive class ${ship.hyperdriveClass}` : ", no hyperdrive"}
         </p>
         {ship.equipment.length > 0 && <p className="text-xs text-gray-400">Fitted: {ship.equipment.join(", ")}</p>}
-        <div className="mt-1">{shipButton(ship)}</div>
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          {shipButton(ship)}
+          {beacon && !ships.some((mine) => mine.id === ship.id) && !(play.tracked ?? []).some((t) => t.id === ship.id) && (
+            <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => plantBeacon(ship)}>
+              Plant a homing beacon
+            </Button>
+          )}
+        </div>
       </>
     );
   };
@@ -2653,7 +2733,7 @@ export default function GameBoard() {
               </div>
             )}
 
-            {party.length > 0 && (
+            {(party.length > 0 || roster.some((r: any) => r.id !== character.id)) && (
               <div className="mb-4 space-y-2" data-testid="play-party">
                 <h3 className="font-semibold">Companions ({party.length}/{COMPANION_LIMIT})</h3>
                 {party.map((c) => (
@@ -2662,7 +2742,7 @@ export default function GameBoard() {
                       <span>
                         {c.name}{" "}
                         <span className="text-xs text-gray-400">
-                          {c.kind === "hireling" ? `hired, ${c.wage} cr/day` : c.kind === "droid" ? (c.bolt === "reprogrammed" ? "droid, reprogrammed" : "droid, restraining bolt") : c.kind === "beast" ? (c.mount ? "beast, mount" : "beast") : "freed"}
+                          {c.kind === "hireling" ? `hired, ${c.wage} cr/day` : c.kind === "droid" ? (c.bolt === "reprogrammed" ? "droid, reprogrammed" : "droid, restraining bolt") : c.kind === "beast" ? (c.mount ? "beast, mount" : "beast") : c.kind === "character" ? "your character" : "freed"}
                         </span>
                       </span>
                       <span>{c.hp > 0 ? `${c.hp}/${c.maxHp}` : c.kind === "droid" ? "powered down" : "down"}</span>
@@ -2676,7 +2756,28 @@ export default function GameBoard() {
                     </div>
                   </div>
                 ))}
-                <p className="text-xs text-gray-500">They fight at your side and heal on rests. Wages are paid each day (house rule).</p>
+                <p className="text-xs text-gray-500">{party.length ? "They fight at your side and heal on rests. Wages are paid each day (house rule)." : "No companions yet: hire someone, free a captive, mend a droid or gentle a beast."}</p>
+                {!partyFull && roster.filter((r: any) => r.id !== character.id && !(r.conditions ?? []).includes("Dead") && !party.some((c) => c.name === r.name && c.kind === "character")).length > 0 && (
+                  <label className="flex items-center gap-1 text-xs" data-testid="recruit-character">
+                    Bring one of your characters:
+                    <select
+                      className="h-7 min-w-0 flex-1 rounded bg-gray-700 px-1"
+                      value=""
+                      disabled={inCombat}
+                      onChange={(e) => {
+                        const other = roster.find((r: any) => String(r.id) === e.target.value);
+                        if (other) recruitCharacter(other);
+                      }}
+                    >
+                      <option value="">choose</option>
+                      {roster
+                        .filter((r: any) => r.id !== character.id && !(r.conditions ?? []).includes("Dead") && !party.some((c) => c.name === r.name && c.kind === "character"))
+                        .map((r: any) => (
+                          <option key={r.id} value={r.id}>{r.name} (level {r.level} {r.class})</option>
+                        ))}
+                    </select>
+                  </label>
+                )}
               </div>
             )}
 
@@ -2687,6 +2788,14 @@ export default function GameBoard() {
                 <Button size="sm" variant="outline" className="mt-1" onClick={revive}>
                   Revive (house rule)
                 </Button>
+              </div>
+            )}
+            {(play.tracked ?? []).length > 0 && (
+              <div className="mb-4 text-xs" data-testid="play-tracked">
+                <h3 className="text-sm font-semibold">Tracked by beacon</h3>
+                {(play.tracked ?? []).map((t) => (
+                  <p key={t.id} className="text-gray-300">{t.name}: {shipWhere(t.id)}</p>
+                ))}
               </div>
             )}
             <p className="text-sm text-gray-300 mb-4" data-testid="play-hit-dice">
@@ -2822,8 +2931,8 @@ export default function GameBoard() {
                           onClick={() => leaveBy(exit)}
                         >
                           {exit.locked ? `Unlock (DC ${exit.locked}): ` : ""}{exit.label}{exit.via === "path" ? " to" : ""} {world.areas[exit.to].name}
-                          {[exit.travel, tripNote(exit)].filter(Boolean).length > 0 && (
-                            <span className="text-gray-400 ml-1">({[exit.travel, tripNote(exit)].filter(Boolean).join(", ")})</span>
+                          {[travelText(exit), tripNote(exit)].filter(Boolean).length > 0 && (
+                            <span className="text-gray-400 ml-1">({[travelText(exit), tripNote(exit)].filter(Boolean).join(", ")})</span>
                           )}
                         </Button>
                         {rides.length > 1 && (

@@ -1965,6 +1965,8 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
     return [x, lift(x, z) + 0.12, z];
   });
   const partySpot: V3 = system ? [extent * scale * 0.5 + 6, 0, 0] : globe ? [0, 13, 0] : [-22 * span, 0, 24 * span];
+  // The party's speeders parked at a place
+  const parkedAt = (id: string): PartyVehicle[] => ((((world as World & { parked?: PartyVehicle[] }).parked ?? []) as PartyVehicle[])).filter((v) => v.areaId === id);
   // Who and what is on the way between the places of this view: people between buildings,
   // speeders between settlements, ships between ports, planets and systems. Somewhere outside the
   // view is its edge: the jump point, orbit, the outskirts.
@@ -2065,6 +2067,12 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
                 </group>
               </>
             )}
+            {/* The party's speeders parked at this place */}
+            {parkedAt(area.id).map((v, i) => (
+              <group key={v.id} position={[-4 + i * 1.8, area.kind === "planet" ? 0 : -0.3, 3]} scale={1.3}>
+                <SpeederModel model={v.model} wrecked={v.status === "wrecked"} />
+              </group>
+            ))}
             {/* A wider target than the model, for a finger */}
             <mesh position={[0, 1, 0]}>
               <sphereGeometry args={[wide, 8, 8]} />
@@ -2085,6 +2093,16 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
       {hereId === view.id && (
         <group position={partySpot}>
           <group scale={2.6}><Figure kind="player" ring={SIDE_COLORS.player} marker /></group>
+          {(((world as World & { party?: Companion[] }).party ?? []) as Companion[]).map((c, i) => (
+            <group key={c.id} position={[3.4 + i * 2.8, 0, 0.8]} scale={2.2}>
+              <Figure kind={tokenOf({ name: c.name, role: c.kind === "droid" ? "utility droid" : c.kind === "beast" ? "wildlife" : c.role, creature: c.creature })} ring={SIDE_COLORS.friendly} name={c.name} />
+            </group>
+          ))}
+          {parkedAt(view.id).map((v, i) => (
+            <group key={v.id} position={[-6 - i * 3.4, 0, 1]} scale={2.2}>
+              <SpeederModel model={v.model} wrecked={v.status === "wrecked"} />
+            </group>
+          ))}
           <Label at={[0, 5.4, 0]} size={1.1} color="#facc15">{`${PARTY_AT[view.kind] ?? "Here"} (you are here)`}</Label>
         </group>
       )}

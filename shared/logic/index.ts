@@ -1712,6 +1712,8 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
       if (changed && room.layout) placeContents(room);
     }
     for (const building of Object.values(next.areas).filter((a) => a.kind === "building" && !a.vehicles)) placeVehicles(ctx, building);
+    // Ships spend most of their time in their own berth (a few days at a time)
+    for (const room of Object.values(next.areas)) for (const ship of room.ships) if (ship.voyage && !ship.voyage.homeStay) ship.voyage.homeStay = ctx.random.int(96, 216);
   }
   next.life = LIFE;
   return next;
@@ -2607,6 +2609,9 @@ export interface Voyage {
   stay: number;
   legs: number[];
   phase: number;
+  // Hours in its own berth, where it is most of the time (absent in voyages made before life 5:
+  // those stay as long in their own berth as anywhere)
+  homeStay?: number;
 }
 // Someone or something on the way between two places
 export interface Mover {
@@ -2659,12 +2664,12 @@ export function whereAt(o: Occupant, baseId: string, minutes: number): { at: str
 export function shipAt(ship: Ship, baseId: string, minutes: number): { at: string | null; moving?: { from: string; to: string; progress: number } } {
   const v = ship.voyage;
   if (!v || !v.ports.length) return { at: baseId };
-  const stay = v.stay * 60;
-  const cycle = v.legs.reduce((a, b) => a + b, 0) + stay * v.ports.length;
+  const stayAt = (i: number) => (i === 0 && v.homeStay ? v.homeStay : v.stay) * 60;
+  const cycle = v.legs.reduce((a, b) => a + b, 0) + v.ports.reduce((sum, _, i) => sum + stayAt(i), 0);
   let t = (((minutes + v.phase) % cycle) + cycle) % cycle;
   for (let i = 0; i < v.ports.length; i++) {
-    if (t < stay) return { at: v.ports[i] };
-    t -= stay;
+    if (t < stayAt(i)) return { at: v.ports[i] };
+    t -= stayAt(i);
     if (t < v.legs[i]) return { at: null, moving: { from: v.ports[i], to: v.ports[(i + 1) % v.ports.length], progress: t / v.legs[i] } };
     t -= v.legs[i];
   }
@@ -2830,7 +2835,7 @@ function settleRoutines(world: World, settlement: Area, r: Random) {
       if (!ports.length) continue;
       const calls = [room.id, ...r.shuffle(ports).slice(0, r.int(1, Math.min(3, ports.length)))];
       const legs = calls.map((from, i) => Math.max(60, routeMinutes(world, from, calls[(i + 1) % calls.length], Number(ship.hyperdriveClass) || 1)));
-      ship.voyage = { ports: calls, stay: r.int(12, 36), legs, phase: r.int(0, 3 * DAY) };
+      ship.voyage = { ports: calls, stay: r.int(12, 36), legs, phase: r.int(0, 3 * DAY), homeStay: r.int(96, 216) };
       owner.ship = ship.id;
     }
   }
@@ -3269,6 +3274,8 @@ export type GearUse =
   | { kind: "ram"; bonus: number }
   | { kind: "scout" }
   | { kind: "cutter" }
+  | { kind: "jammer" }
+  | { kind: "beacon" }
   | { kind: "game" }
   | { kind: "instrument" }
   | { kind: "tool" };
@@ -3336,6 +3343,8 @@ export function gearUse(item: GearFacts): GearUse | undefined {
   if (/ram, portable/.test(name)) return { kind: "ram", bonus: Number((text.match(/\+(\d+) bonus/i) ?? [])[1]) || 4 };
   if (/macrobinoculars/.test(name)) return { kind: "scout" };
   if (/fusion cutter/.test(name)) return { kind: "cutter" };
+  if (/comm jammer/.test(name)) return { kind: "jammer" };
+  if (/homing beacon/.test(name)) return { kind: "beacon" };
   return undefined;
 }
 
@@ -3447,9 +3456,10 @@ export const GAMBLE_COMPLICATIONS = [
 //   freed     someone set free from bonds, who chose to follow the party
 //   droid     a disabled enemy droid mended and put under a restraining bolt, or reprogrammed
 //   beast     a creature gentled with Animal Handling, or a mount bought in a market
+//   character another of the user's characters, brought along as they stand on their sheet
 // ---------------------------------------------------------------------------------------------
 
-export type CompanionKind = "hireling" | "freed" | "droid" | "beast";
+export type CompanionKind = "hireling" | "freed" | "droid" | "beast" | "character";
 
 export interface Companion {
   id: string;
@@ -3620,11 +3630,13 @@ export function groundRides(args: { km: number; vehicles: PartyVehicle[]; compan
   const rides: Ride[] = [];
   const pace = transport.pace.find((p) => p.pace === "Normal")?.milesPerHour ?? 3;
   rides.push({ id: "foot", label: "On foot", minutes: journeyMinutes(km / (pace * KM_PER_MILE)), fare: 0 });
-  for (const mount of companions.filter((c) => c.mount && c.hp > 0)) {
+  const mounts = companions.filter((c) => c.mount && c.hp > 0);
+  mounts.forEach((mount, i) => {
     // 30 ft. a round is the walking pace of 3 miles an hour, so a speed of N feet is N / 10 mph
     const mph = Math.max(1, mount.speed / 10);
-    rides.push({ id: `mount-${mount.id}`, label: `Riding ${mount.name}`, minutes: journeyMinutes(km / (mph * KM_PER_MILE)), fare: 0, mountId: mount.id });
-  }
+    const twin = mounts.filter((m) => m.name === mount.name).length > 1;
+    rides.push({ id: `mount-${mount.id}`, label: `Riding ${mount.name}${twin ? ` (${mount.hp}/${mount.maxHp} hp)` : ""}`, minutes: journeyMinutes(km / (mph * KM_PER_MILE)), fare: 0, mountId: mount.id });
+  });
   for (const v of vehicles) {
     const blocked = v.status === "wrecked" ? "wrecked: needs repair" : riders > v.seats ? `seats ${v.seats}, party of ${riders}` : undefined;
     rides.push({ id: `vehicle-${v.id}`, label: v.name, minutes: Math.max(5, Math.round((km / (v.mph * KM_PER_MILE)) * 60)), fare: 0, vehicleId: v.id, ...(blocked ? { blocked } : {}) });
@@ -3687,4 +3699,32 @@ function placeVehicles(ctx: Context, building: Area) {
   if (building.type === "wreck") found = make(r.pick(["Landspeeder", "Airspeeder", "Speederbike"]), "Wrecked speeder", "wrecked");
   else if (["camp", "hideout", "garrison", "command post"].includes(building.type) && r.chance(0.45)) found = make("Speederbike", bikeName, "parked");
   if (found) building.vehicles = [found];
+}
+
+// The party's ships stand in the berths of the port they are at: where a berth has been left
+// empty (a ship bought or taken from it, or one away on a voyage) the party's ship takes it. For
+// showing only, like withPresence.
+export function withPartyShips<T extends World>(world: T, ships: PartyShip[]): T {
+  if (!ships.length) return world;
+  const areas = { ...world.areas };
+  const used = new Set<string>();
+  for (const ship of ships) {
+    const place = world.areas[ship.areaId];
+    if (!place) continue;
+    // Berth rooms under the settlement (or the building) the ship is at, the ones holding ships first
+    const rooms = Object.values(world.areas).filter((a) => a.kind === "room" && a.layout && trailOf(world, a.id).some((t) => t.id === place.id) && a.layout.assets.some((x) => x.kind === "ship"));
+    for (const room of rooms) {
+      const current = areas[room.id];
+      const berth = current.layout!.assets.find((a) => a.kind === "ship" && !used.has(a.id) && !current.ships.some((s) => s.id === a.ref));
+      if (!berth) continue;
+      used.add(berth.id);
+      areas[room.id] = {
+        ...current,
+        ships: [...current.ships, ship],
+        layout: { ...current.layout!, assets: current.layout!.assets.map((a) => (a === berth ? { ...a, ref: ship.id, name: ship.name } : a)) },
+      };
+      break;
+    }
+  }
+  return { ...world, areas };
 }

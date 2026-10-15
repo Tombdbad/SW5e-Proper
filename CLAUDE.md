@@ -13,6 +13,7 @@ Star Wars 5e RPG simulator (Express server on 127.0.0.1:5000, Vite + React clien
 - Never print or commit secrets. `.env` (DATABASE_URL) and `~/.git-credentials` (GitHub PAT) hold them.
 - Rules content (species, classes, powers, equipment, stat blocks, ...) lives only in `shared/data/sw5e/*.json`, generated from the sw5e.com API by `npm run import:sw5e`. Never edit those files by hand and never write rules content elsewhere; `client/src/lib/sw5e/*.ts` are views over them. The database stores characters, campaigns (with their generated world in `galaxyMap`) and debriefs.
 - World generation, travel, quests, ships and world edits are pure functions in `shared/logic/index.ts`; anything that needs the rules data runs on the server (`server/sw5eRoutes.ts`).
+- Gear, tools, games, substances, companions (hired, freed, bolted droids, gentled beasts) and ground transport (speeders, mounts, rides) follow the books' item texts and the derived `tools.json` / `transport.json`; their pure rules are the last sections of `shared/logic/index.ts` and their play is in `pages/GameBoard.tsx`. Anything the books leave open is a labelled house rule there and in REVIVAL_NOTES.md ("Gear and tools", "Companions", "Ground transport").
 - What a character's features do and what a level gives is in `client/src/lib/sw5e/characterCalculation.ts`, read from the rules text. Do not hard-code a feature's effect by name; if the wording is regular, parse it there.
 - Where the books give no rule (passage fares, reviving a dead character), the game uses a house rule and says so on screen. Keep the list in REVIVAL_NOTES.md ("Play rules") complete, and label any new one the same way.
 - No 2D maps (the user, 2026-10-13). Places, people and things are shown on the 3D map (`client/src/components/Map/LocalMap.tsx`, see "The 3D map" in REVIVAL_NOTES.md) and are used by tapping them there; a tap picks out, a double tap opens. Do not bring back an SVG or flat plan, in the HUD or in a fight.
@@ -25,6 +26,7 @@ Star Wars 5e RPG simulator (Express server on 127.0.0.1:5000, Vite + React clien
 - A build replaces the files a running browser test is loading, so do not build while `npm run e2e` runs.
 - DB: Postgres 16 on this VM. Schema is `shared/schema.ts`; migrations in `migrations/` are generated with `npx drizzle-kit generate` and applied with `npx drizzle-kit migrate`.
 - `npx tsc --noEmit` reports hundreds of errors in legacy or unreachable files. Vite does not typecheck, so they do not block running. Only fix errors in code the app actually uses.
+- A new database column needs its migration applied to the service's database (`npx drizzle-kit migrate` with the service's DATABASE_URL) before the new build is restarted, and to `sw5e_test` for the test copy (`deploy/test-copy.sh` does not do it).
 - Check changes in a real browser, not with curl: with the production server running, `npm run e2e` plays the acceptance test through the UI in headless Chromium (details in REVIVAL_NOTES.md, "Play-through test"). Module checks and API calls passed while the UI was broken in three places.
 
 ## Acceptance test
