@@ -9,17 +9,20 @@ import { Loader2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
-import LocalMap, { FightScene, viewOf, usePartySpot, whereNow, useClock } from "@/components/Map/LocalMap";
-import PlayCombat, { type CombatItemOption } from "@/components/Combat/PlayCombat";
-import { useCombat, rollDamage, onPartySide } from "@/lib/stores/useCombat";
+import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, whereNow, useClock } from "@/components/Map/LocalMap";
+import PlayCombat, { ShipCombatPanel, type CombatItemOption } from "@/components/Combat/PlayCombat";
+import { useCombat, useShipFight, rollDamage, onPartySide } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
-import { carriedWeapons, characterFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, type Equipped } from "@/lib/sw5e/characterCalculation";
+import { carriedWeapons, characterFeatures, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, type Equipped } from "@/lib/sw5e/characterCalculation";
 import { getSpeciesById } from "@/lib/sw5e/species";
-import { getClassById } from "@/lib/sw5e/classes";
+import { getClassById, getClassLevelValue } from "@/lib/sw5e/classes";
 import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect } from "@/lib/sw5e/rules";
 import { getStarshipSize } from "@/lib/sw5e/starships";
+import { SKILLS } from "@/lib/sw5e/constants";
+import { feats } from "@/lib/sw5e/feats";
+import lookupData from "@shared/data/sw5e/lookups.json";
 import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
@@ -31,6 +34,9 @@ import {
   type GearUse, type ToolFacts, type Boon, type GambleApproach, type Companion, type CompanionKind, type PartyVehicle, type Vehicle, type Transport, type Ride,
   waresOf, stockOf, offerFor, attitudeOf, attitudeName, marketAt, haggleDC, isOpen, openingHours, addRenown, emptyStanding, ledgerFor, factionAt,
   type Standing, type Ledger, type Customer, type TradeLine,
+  DOWNTIME, WORKWEEK, downtimeActivity, activitySpec, checkModifier, resultRow, outcomeOf, failureOf, complicationChance, complicationTable, complicationEffect, enhancedValue, priceFactor, foundRarity,
+  trainingOptions, ingredientRarity, emptyDowntime, shipSheet, refitPlan,
+  type DowntimeActivityData, type ActivitySpec, type DowntimeOutcome, type DowntimeState, type TrainingOption,
   type Occupant,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship,
 } from "@shared/logic";
@@ -54,6 +60,9 @@ interface PlayState {
   jammerUntil?: number;
   // Ships a homing beacon was left on
   tracked?: { id: string; name: string }[];
+  // Uses spent before the next rest of each class, archetype and species feature that has them
+  // (keyed as the feature's pool: "Source:Name"), and of the focus points
+  featureUses?: Record<string, number>;
 }
 
 // What each level of the watch means for the party (house rule, see shared/logic)
@@ -121,6 +130,7 @@ export default function GameBoard() {
   const queryClient = useQueryClient();
   const lastSavedHp = useRef<number | null>(null);
   const lastSavedPoints = useRef<number | null>(null);
+  const lastSavedUses = useRef<string | null>(null);
   // The fight store outlives this page. A fight left over from another visit (perhaps another
   // character's) is dropped, and only a fight begun here is written back or acted on.
   const fightBegun = useRef(false);
@@ -132,9 +142,17 @@ export default function GameBoard() {
     if (!p || !character || !fightBegun.current || p.id !== character.id) return;
     if (lastSavedHp.current === null) lastSavedHp.current = character.currentHp;
     if (lastSavedPoints.current === null) lastSavedPoints.current = character.currentForcePoints;
-    const changes: Record<string, number> = {};
+    const changes: Record<string, any> = {};
     if (p.hp !== lastSavedHp.current) changes.currentHp = lastSavedHp.current = p.hp;
     if (p.powerPoints !== undefined && p.powerPoints !== lastSavedPoints.current) changes.currentForcePoints = lastSavedPoints.current = p.powerPoints;
+    // Uses of features and focus points spent stay spent until a rest
+    const focusMax = getClassLevelValue(character.class, Number(character.level) || 1, "Focus Points");
+    const usedNow = { ...(p.uses ?? {}), ...(focusMax ? { focus: focusMax - (p.focus ?? focusMax) } : {}) };
+    const usedJson = JSON.stringify(usedNow);
+    if (lastSavedUses.current !== null && usedJson !== lastSavedUses.current) {
+      lastSavedUses.current = usedJson;
+      changes.playState = { ...(character.playState ?? {}), featureUses: usedNow };
+    }
     if (!Object.keys(changes).length) return;
     fetch(`/api/characters/${character.id}`, {
       method: "PATCH",
@@ -456,6 +474,78 @@ export default function GameBoard() {
     toast.success(`${ship.name} is yours${price ? ` for ${price.toLocaleString()} credits` : ""}.`);
   };
 
+  // A fight between starships (shared/logic "Starship combat"): the party's ship against the
+  // hostile ships in orbit where it is. What came of it is written back when the fight ends.
+  const shipFight = useShipFight((s) => s.fight);
+  const { data: shipRows = [] } = useQuery<any[]>({
+    queryKey: ["starship-equipment"],
+    queryFn: async () => (await fetch("/api/sw5e/starshipEquipment")).json(),
+    staleTime: Infinity,
+  });
+  const engage = () => {
+    if (!world || !here || !character) return;
+    const mine = ships.find((s) => s.areaId === here.id) ?? ships.find((s) => s.areaId === berthOf(world, here.id));
+    const foes = here.ships.filter((s) => s.status === "orbiting" && !s.disabled && s.owner === world.antagonist);
+    if (!mine) return void toast.error("You have no ship here to fight from.");
+    if (!foes.length) return void toast.info("There is nobody hostile to fight.");
+    if (!shipRows.length) return void toast.info("The ship data is still loading.");
+    const prof = Math.ceil(1 + level / 4);
+    const crew = Math.min(4, party.filter((c) => c.hp > 0 && c.kind !== "beast").length);
+    useShipFight.getState().start(
+      { id: mine.id, ref: mine.id, sheet: shipSheet(mine, shipRows, prof), crew, hull: mine.hull },
+      foes.map((f) => ({ id: f.id, ref: f.id, sheet: shipSheet(f, shipRows, Math.max(2, (f.tier ?? 0) + 1)) })),
+      here.id,
+    );
+  };
+  const finishShipFight = (outcome: string | null | undefined) => {
+    const state = useShipFight.getState();
+    const fight = state.fight;
+    if (!fight || !world || !state.areaId) return state.leave();
+    const area = world.areas[state.areaId];
+    const mineNow = fight.ships.find((s) => s.id === state.partyShipId);
+    const foesNow = fight.ships.filter((s) => s.side === "foe");
+    // The party's ship keeps the damage it took; a lost ship is gone
+    const starships = ships
+      .map((s) => (s.id === state.partyShipId ? (mineNow?.destroyed ? null : { ...s, hull: Math.max(1, mineNow?.hull ?? s.hull ?? 1), fuel: outcome === "fled" ? Math.max(0, s.fuel - 1) : s.fuel }) : s))
+      .filter(Boolean);
+    // The enemy: destroyed ships are wrecks, disabled ones can be taken, those that jumped away are gone
+    const areaShips = (area?.ships ?? [])
+      .filter((s) => !foesNow.some((f) => f.id === s.id && f.fled))
+      .map((s) => {
+        const f = foesNow.find((x) => x.id === s.id);
+        if (!f) return s;
+        return f.destroyed ? { ...s, status: "wrecked" as const } : f.disabled ? { ...s, disabled: true } : s;
+      });
+    const beaten = foesNow.filter((f) => f.destroyed || f.disabled);
+    // House rule: experience for the hull of each ship beaten, and the salvage a tenth of its value
+    const xp = beaten.reduce((sum, f) => sum + Math.round(f.sheet.hullMax / 2), 0);
+    const salvage = foesNow.filter((f) => f.destroyed).reduce((sum, f) => sum + Math.round(((area?.ships ?? []).find((s) => s.id === f.id)?.value ?? 0) / 10), 0);
+    saveCampaign({
+      starships,
+      galaxyMap: updateArea(world, state.areaId, { ships: areaShips }).world,
+      ...(beaten.length ? { factionInfluence: addRenown(standing, world.antagonist, -1) } : {}),
+      ...pass(Math.max(1, Math.round(fight.round / 10))),
+    });
+    const changes: Record<string, any> = {};
+    if (xp) changes.experience = (character.experience ?? 0) + xp;
+    if (salvage) changes.credits = (character.credits ?? 0) + salvage;
+    if (mineNow?.destroyed) {
+      changes.currentHp = 1;
+      lastSavedHp.current = 1;
+    }
+    if (Object.keys(changes).length) saveCharacter(changes);
+    toast[outcome === "victory" || outcome === "fled" ? "success" : "error"](
+      outcome === "victory"
+        ? `The enemy is beaten${xp ? `: ${xp} XP` : ""}${salvage ? `, ${salvage} credits of salvage` : ""}.`
+        : outcome === "fled"
+          ? "You jump away from the fight."
+          : outcome === "destroyed"
+            ? "Your ship is lost; you get away in an escape pod with 1 hit point (house rule)."
+            : "Your ship is disabled and drifts; it will need repairs.",
+    );
+    state.leave();
+  };
+
   // Fill a ship's tanks at a port, as far as the credits go
   const refuel = (ship: PartyShip) => {
     const size = getStarshipSize(ship.size);
@@ -613,7 +703,7 @@ export default function GameBoard() {
   // A saved power has its name, level and text; its range, duration and concentration are looked up
   const { data: powerRows } = useQuery<any>({
     queryKey: ["power-facts"],
-    queryFn: () => fetch("/api/sw5e/powers?fields=name,range,duration,concentration&limit=1000").then((r) => r.json()),
+    queryFn: () => fetch("/api/sw5e/powers?fields=name,range,duration,concentration,castingPeriodText&limit=1000").then((r) => r.json()),
     enabled: knownPowers.length > 0,
     staleTime: Infinity,
   });
@@ -647,15 +737,41 @@ export default function GameBoard() {
     const melee = weapons.find((w) => !w.ranged);
     const ranged = weapons.find((w) => w.ranged);
     const order = { attack: 0, save: 0, condition: 1, heal: 1, other: 2 };
+    const isLight = (w?: { properties: string[] }) => !!w?.properties.some((p) => /^light/i.test(p));
+    // A second light weapon in the other hand (Two-Weapon Fighting)
+    const other = isLight(melee) ? weapons.find((w) => !w.ranged && !w.natural && w !== melee && isLight(w)) : undefined;
+    const natural = weapons.find((w) => w.natural);
+    const proficiency = Math.ceil(1 + level / 4);
+    const scoreMod = (a: string) => modifier(character.abilityScores?.[a]);
+    const savedAbilities = (character.savingThrowProficiencies ?? []).map((a: string) => String(a).toLowerCase());
+    // The class table's focus points, and what has been spent of them since the last rest
+    const focusMax = getClassLevelValue(character.class, level, "Focus Points");
+    const uses = play.featureUses ?? {};
     return {
       meleeDice: melee?.dice,
       meleeWeapon: melee?.name,
       meleeAttack: melee?.attackBonus,
       meleeDamage: melee?.damageBonus,
+      meleeProps: melee?.properties,
+      meleeType: melee?.damageType,
+      meleeAbility: melee?.ability,
       rangedDice: ranged?.dice,
       rangedWeapon: ranged?.name,
       rangedAttack: ranged?.attackBonus,
       rangedDamage: ranged?.damageBonus,
+      rangedProps: ranged?.properties,
+      rangedType: ranged?.damageType,
+      offhand: other ? { name: other.name, dice: other.dice, attack: other.attackBonus, damage: other.damageBonus, type: other.damageType, props: other.properties } : undefined,
+      unarmed: natural
+        ? { name: natural.name, dice: natural.dice, attack: natural.attackBonus, damage: natural.damageBonus, type: natural.damageType }
+        : { name: "Unarmed strike", dice: "1", attack: scoreMod("strength") + proficiency, damage: scoreMod("strength"), type: "kinetic" },
+      // Saving throws: the ability modifier, and the proficiency bonus where the class is proficient
+      saves: Object.fromEntries(["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"].map((a) => [a, scoreMod(a) + (savedAbilities.includes(a) ? proficiency : 0)])),
+      stealth: scoreMod("dexterity") + (skilled("stealth") ? proficiency : 0),
+      // What the class, archetype and species features can do, their uses spent since the last rest, and the focus left
+      features: combatFeatures(character),
+      uses,
+      focus: Math.max(0, focusMax - (uses.focus ?? 0)),
       reach: melee?.reach ?? 5,
       range: ranged?.range,
       // For the token: a lightsaber for those who use the Force
@@ -677,7 +793,9 @@ export default function GameBoard() {
         .map((power) => {
           const facts = powerFacts(power.name) ?? {};
           const effect = powerEffect({ duration: facts.duration, concentration: facts.concentration, ...power }, level);
-          return { name: power.name as string, level: power.level as number, cost: powerCost(power), range: rangeFeet(power.range ?? facts.range), ...effect, ...castingStats(character.abilityScores, level, power) };
+          const time = String(facts.castingPeriodText ?? "1 action").toLowerCase();
+          const castTime: "bonus" | "reaction" | "action" | "long" = /bonus action/.test(time) ? "bonus" : /reaction/.test(time) ? "reaction" : /^1 action/.test(time) ? "action" : "long";
+          return { name: power.name as string, level: power.level as number, cost: powerCost(power), range: rangeFeet(power.range ?? facts.range), castTime, ...effect, ...castingStats(character.abilityScores, level, power) };
         })
         .sort((a, b) => order[a.kind] - order[b.kind] || a.level - b.level),
     };
@@ -696,6 +814,7 @@ export default function GameBoard() {
     damageDice: o.attack?.damage ?? "1d4",
     rangedAttacker: o.attack?.ranged ?? true,
     saves: o.saves,
+    profile: o.profile,
     speed: o.speed || 30,
     reach: o.attack?.ranged ? 5 : o.attack?.range ?? 5,
     range: o.attack?.ranged ? ([o.attack.range ?? 80, o.attack.long ?? (o.attack.range ?? 80) * 4] as [number, number]) : undefined,
@@ -740,6 +859,7 @@ export default function GameBoard() {
     fightArea.current = here.id;
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
+    lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
     fightBegun.current = true;
     initiateCombat(
       character, enemies, combatKit(), surprise,
@@ -833,14 +953,35 @@ export default function GameBoard() {
       }
       survivors.push({ ...c, hp: Math.max(0, hp) });
     }
+    // Rare ingredients (Crafting): a creature of a rarity's Challenge Rating, one time in three, leaves one
+    if (areaId && world?.areas[areaId] && outcome === "victory") {
+      const rare = { ...dtState.rare };
+      let found = false;
+      for (const o of world.areas[areaId].occupants) {
+        if (o.disposition !== "hostile" || !o.cr) continue;
+        const rarity = ingredientRarity(crOf(o));
+        if (!rarity || Math.random() > 1 / 3) continue;
+        rare[rarity] = (rare[rarity] ?? 0) + 1;
+        found = true;
+      }
+      if (found) {
+        setTimeout(() => saveCharacter({ playState: { ...((character.playState as any) ?? {}), downtime: { ...dtState, rare } } }), 120);
+        toast.info("A rare ingredient is taken from what was fought (for crafting enhanced items).");
+      }
+    }
     // What was used up: prepared dice and poison
     const spent = fightNow.spent;
     const state: PlayState = { ...play };
+    const me = fightNow.combatants.find((c) => c.isPlayer);
+    if (me?.uses) {
+      const focusMax = getClassLevelValue(character.class, level, "Focus Points");
+      state.featureUses = { ...me.uses, ...(focusMax ? { focus: focusMax - (me.focus ?? focusMax) } : {}) };
+    }
     if (spent.length) {
       if (play.boon && spent.includes(play.boon.kind as any)) state.boon = undefined;
       if (spent.includes("poison")) state.poison = undefined;
     }
-    if (party.length || spent.length) saveCharacter({ playState: state, ...(party.length ? { companionData: { ...(character.companionData ?? {}), party: survivors } } : {}) });
+    if (party.length || spent.length || me?.uses) saveCharacter({ playState: state, ...(party.length ? { companionData: { ...(character.companionData ?? {}), party: survivors } } : {}) });
     // A fight is a minute at least (house rule: ten rounds a minute)
     saveCampaign(pass(Math.max(1, Math.ceil(fightNow.round / 10))));
     // A high used in the fight is over with it
@@ -903,7 +1044,20 @@ export default function GameBoard() {
   const standing: Standing = campaign?.factionInfluence?.renown ? campaign.factionInfluence : emptyStanding();
   const ledger: Ledger = ledgerFor(campaign?.availableResources, today);
   const speciesFacts = getSpeciesById(character?.species ?? "");
-  const customer: Customer = { species: speciesFacts?.name ?? character?.species, homeworld: (speciesFacts as any)?.homeworld, alignment: character?.alignment, standing };
+  const dtState: DowntimeState = { ...emptyDowntime(), ...((character?.playState as any)?.downtime ?? {}) };
+  const tradeSettlement = world && hereId ? [...trailOf(world, hereId)].reverse().find((a) => a.kind === "settlement")?.id : undefined;
+  const customer: Customer = {
+    species: speciesFacts?.name ?? character?.species,
+    homeworld: (speciesFacts as any)?.homeworld,
+    alignment: character?.alignment,
+    standing,
+    contacts: tradeSettlement
+      ? {
+          allied: dtState.contacts.filter((c) => c.kind === "allied" && c.where === tradeSettlement).length,
+          hostile: dtState.contacts.filter((c) => c.kind === "hostile" && c.where === tradeSettlement).length + dtState.rivals.filter((r) => r.where === tradeSettlement).length,
+        }
+      : undefined,
+  };
   const haggling = useMemo(() => (character ? hagglingEdge(characterFeatures(character)) : {}), [character?.species, character?.feats]);
   const [tradeTab, setTradeTab] = useState<"buy" | "sell">("buy");
   const [itemShown, setItemShown] = useState<string | null>(null);
@@ -1009,6 +1163,15 @@ export default function GameBoard() {
     if (party.length) notes.push(long ? "companions back to full" : "companions tended");
     return { party: next, notes };
   };
+  // Uses of features a rest gives back: a short rest those that come back on one (and the focus
+  // points), a long rest all of them
+  const restoredUses = (kind: "short" | "long"): Record<string, number> => {
+    const used = { ...(play.featureUses ?? {}) };
+    if (kind === "long") return {};
+    for (const f of combatFeatures(character)) if (f.uses?.recharge === "short") delete used[f.pool];
+    delete used.focus;
+    return used;
+  };
   const shortRest = () => {
     if (!character || inCombat) return;
     const changes: Record<string, any> = {};
@@ -1027,16 +1190,27 @@ export default function GameBoard() {
       notes.push(`a Hit Die (d${hitDie}) restores ${healed} hit points`);
     }
     // Resting clears what was prepared before, and a coat of poison dries
-    let state: PlayState = { ...play, boon: undefined, poison: undefined };
+    let state: PlayState = { ...play, boon: undefined, poison: undefined, featureUses: restoredUses("short") };
     if (work) {
       if (work.boon) state.boon = work.boon;
       if (work.food) Object.assign(changes, { equipment: consume(work.food).equipment });
       if (work.herbal && (character.conditions ?? []).some((c: string) => /poison|disease/i.test(c))) changes.conditions = (character.conditions ?? []).filter((c: string) => !/poison|disease/i.test(c));
       notes.push(work.note);
     }
+    // Features that give points back at the end of a short rest (Force Recovery), each used once for its pool
+    for (const f of combatFeatures(character)) {
+      if (!f.onRest || (f.uses && (state.featureUses?.[f.pool] ?? 0) >= f.uses.max)) continue;
+      const max = character.maxForcePoints ?? 0;
+      const have = changes.currentForcePoints ?? character.currentForcePoints ?? 0;
+      if (have >= max) continue;
+      const amount = Math.max(1, (f.onRest.points.dice ? rollDamage(f.onRest.points.dice, false) : 0) + f.onRest.points.flat);
+      changes.currentForcePoints = lastSavedPoints.current = Math.min(max, have + amount);
+      state.featureUses = { ...(state.featureUses ?? {}), [f.pool]: (state.featureUses?.[f.pool] ?? 0) + 1 };
+      notes.push(`${f.name}: ${changes.currentForcePoints - have} ${f.onRest.kind} points back`);
+    }
     const healed = restParty(false, work);
     notes.push(...healed.notes);
-    if (spentDie || Object.keys(changes).length || party.length || state.boon !== play.boon || play.poison) {
+    if (spentDie || Object.keys(changes).length || party.length || state.boon !== play.boon || play.poison || JSON.stringify(state.featureUses) !== JSON.stringify(play.featureUses ?? {})) {
       saveCharacter({ ...changes, playState: state, ...(party.length ? { companionData: { ...(character.companionData ?? {}), party: healed.party } } : {}) });
     }
     saveCampaign(pass(60));
@@ -1051,7 +1225,7 @@ export default function GameBoard() {
     lastSavedHp.current = character.maxHp;
     lastSavedPoints.current = character.maxForcePoints;
     const work = workTool("long");
-    const state: PlayState = { ...play, boon: undefined, poison: undefined };
+    const state: PlayState = { ...play, boon: undefined, poison: undefined, featureUses: {} };
     if (work?.boon) state.boon = work.boon;
     const regained = Math.max(1, Math.floor(level / 2)) + (work?.mealDice ?? 0);
     const extra: Record<string, any> = {};
@@ -1066,6 +1240,7 @@ export default function GameBoard() {
       currentHp: character.maxHp,
       currentForcePoints: character.maxForcePoints,
       hitDiceUsed: Math.max(0, (character.hitDiceUsed ?? 0) - regained),
+      ...((character.exhaustionLevel ?? 0) > 0 ? { exhaustionLevel: (character.exhaustionLevel ?? 0) - 1 } : {}),
       playState: state,
       ...(party.length ? { companionData: { ...(character.companionData ?? {}), party: healed.party } } : {}),
       ...extra,
@@ -1494,7 +1669,7 @@ export default function GameBoard() {
   const dismiss = (c: Companion) => {
     saveParty(party.filter((x) => x.id !== c.id));
     // They stay where the party is (a droid or beast waits; a hireling goes about their business)
-    if (world && here) saveCampaign({ galaxyMap: updateArea(world, here.id, { occupants: [...here.occupants, { id: newId("o"), name: c.name, role: c.kind === "hireling" ? c.role : c.kind === "droid" ? "utility droid" : c.kind === "beast" ? "wildlife" : "local", disposition: "neutral", count: 1, species: c.species, statBlock: c.statBlock, cr: c.cr, xp: c.xp, armorClass: c.armorClass, hitPoints: c.maxHp, attack: c.attack, speed: c.speed, size: c.size, creature: c.creature, saves: c.saves, loadout: c.loadout, wounds: c.hp < c.maxHp ? [c.hp] : undefined }] }).world });
+    if (world && here) saveCampaign({ galaxyMap: updateArea(world, here.id, { occupants: [...here.occupants, { id: newId("o"), name: c.name, role: c.kind === "hireling" ? c.role : c.kind === "droid" ? "utility droid" : c.kind === "beast" ? "wildlife" : "local", disposition: "neutral", count: 1, species: c.species, statBlock: c.statBlock, cr: c.cr, xp: c.xp, armorClass: c.armorClass, hitPoints: c.maxHp, attack: c.attack, profile: c.profile, speed: c.speed, size: c.size, creature: c.creature, saves: c.saves, loadout: c.loadout, wounds: c.hp < c.maxHp ? [c.hp] : undefined }] }).world });
     toast.info(`${c.name} stays behind.`);
   };
 
@@ -1794,6 +1969,7 @@ export default function GameBoard() {
     damageDice: c.attack?.damage ?? "1d4",
     rangedAttacker: c.attack?.ranged ?? false,
     saves: c.saves,
+    profile: c.profile,
     speed: c.speed || 30,
     reach: c.attack?.ranged ? 5 : c.attack?.range ?? 5,
     range: c.attack?.ranged ? ([c.attack.range ?? 80, c.attack.long ?? (c.attack.range ?? 80) * 4] as [number, number]) : undefined,
@@ -2016,17 +2192,21 @@ export default function GameBoard() {
   const shipButton = (ship: Ship) =>
     ships.some((mine) => mine.id === ship.id) ? (
       <span className="ml-2 text-xs text-green-300">Yours, in its berth{(ships.find((mine) => mine.id === ship.id)?.fuel ?? 0) > 0 ? ` (fuel ${ships.find((mine) => mine.id === ship.id)!.fuel})` : ""}</span>
-    ) : ship.status !== "wrecked" && ship.status !== "orbiting" && (
+    ) : ship.status === "orbiting" && ship.owner === world?.antagonist && !ship.disabled ? (
+      <Button size="sm" variant="destructive" className="ml-2 h-6 px-2" disabled={inCombat || dead || !!shipFight} onClick={engage} data-testid="ship-engage">
+        Engage
+      </Button>
+    ) : (ship.status !== "wrecked" && ship.status !== "orbiting") || ship.disabled ? (
       <Button
         size="sm"
         variant="outline"
         className="ml-2 h-6 px-2"
-        disabled={inCombat || dead || hostiles.length > 0}
+        disabled={inCombat || dead || hostiles.length > 0 || !!shipFight}
         onClick={() => acquireShip(ship, ship.owner === world?.antagonist ? 0 : ship.value)}
       >
         {ship.owner === world?.antagonist ? "Take as a prize" : `Buy (${ship.value.toLocaleString()} cr)`}
       </Button>
-    );
+    ) : null;
 
   // What is being looked at, and the way down to it from the galaxy
   const view: Area | null = world && hereId ? world.areas[viewId ?? ""] ?? world.areas[viewOf(world, hereId)] : null;
@@ -2543,7 +2723,137 @@ export default function GameBoard() {
     return !!at && !!box && at.y - box.top > box.height * 0.45;
   })();
 
+  // ---- Downtime: the character's checks and what is kept (see DowntimePanel)
+  const downtime: DowntimeState = { ...emptyDowntime(), ...((character?.playState as any)?.downtime ?? {}) };
+  // The settlement the party is in: the nearest one up the tree from here
+  const settlementHere = world && hereId ? [...trailOf(world, hereId)].reverse().find((a) => a.kind === "settlement") ?? null : null;
+  // (worked out when the world or the settlement changes, not at every redraw)
+  const settlementKey = settlementHere?.id;
+  const downtimePeople = useMemo(() => {
+    if (!world || !settlementKey) return [] as { name: string; cls: "lower" | "middle" | "upper" }[];
+    const out: { name: string; cls: "lower" | "middle" | "upper" }[] = [];
+    const inside = new Set<string>();
+    for (const a of Object.values(world.areas)) {
+      if (a.id === settlementKey || trailOf(world, a.id).some((t) => t.id === settlementKey)) inside.add(a.id);
+    }
+    for (const area of Object.values(world.areas)) {
+      if (!area.occupants.length || !inside.has(area.id)) continue;
+      for (const o of area.occupants) {
+        if (o.disposition === "hostile" || /droid|beast|wildlife/i.test(o.role)) continue;
+        const role = o.role.toLowerCase();
+        out.push({ name: o.name, cls: /noble|official|diplomat|governor|senator|aristocrat|magistrate/.test(role) ? "upper" : /merchant|trader|shop|dock|medic|mechanic|barkeep|bartender|clerk|guild|banker|scholar|pilot/.test(role) ? "middle" : "lower" });
+      }
+    }
+    return out;
+  }, [world, settlementKey]);
+  const downtimeBlocked = !character ? "no character" : dead ? "the character is dead" : inCombat ? "not in a fight" : hostiles.length ? "not with enemies about" : null;
+  const checkFor = (c: { ability: string; using: string }) => {
+    const using = c.using.toLowerCase();
+    const level2 = level;
+    const prof = Math.ceil(1 + level2 / 4);
+    const skillRows = SKILLS.map((s) => s.name.toLowerCase());
+    let bonus = modifier(character.abilityScores?.[c.ability]);
+    let note = "";
+    const proficientSkills: string[] = (character.skillProficiencies ?? []).map((s: string) => s.toLowerCase());
+    const skillKnown = skillRows.includes(using);
+    if (using === "attack roll") {
+      const best = carriedWeapons(character).sort((a, b) => b.attackBonus - a.attackBonus)[0];
+      bonus = best?.attackBonus ?? bonus;
+      note = best ? best.name : "unarmed";
+    } else if (skillKnown) {
+      if (downtime.expertise.includes(using)) { bonus += 2 * prof; note = "expertise"; }
+      else if (proficientSkills.includes(using)) { bonus += prof; note = "trained"; }
+      else if (downtime.trained.includes(using)) { bonus += Math.floor(prof / 2); note = "half proficiency"; }
+    } else {
+      // A tool or kit, or a gaming set: the best the character is trained with that fits the name
+      const names: string[] = [...(character.toolProficiencies ?? []), ...(character.equipment ?? [])];
+      const hit = names.find((n) => n.toLowerCase().includes(using.replace(/ kit$| set$/, "")) || using.includes(n.toLowerCase()));
+      const trained = (character.toolProficiencies ?? []).some((n: string) => n.toLowerCase().replace(/[^a-z]/g, "") === (hit ?? using).toLowerCase().replace(/[^a-z]/g, "")) || (using.includes("gaming") && (character.toolProficiencies ?? []).some((n: string) => /gaming|sabacc|dejarik|pazaak|chance/i.test(n)));
+      if (trained) { bonus += downtime.expertise.includes(using) ? 2 * prof : prof; note = "trained"; }
+      else if (downtime.trained.includes(using)) { bonus += Math.floor(prof / 2); note = "half proficiency"; }
+      else note = "untrained";
+    }
+    // Exhaustion: disadvantage on ability checks
+    const exhausted = (character.exhaustionLevel ?? 0) >= 1;
+    const first = d20();
+    const roll = exhausted ? Math.min(first, d20()) : first;
+    return { roll, bonus, total: roll + bonus, note: `${note}${exhausted ? "; exhausted: disadvantage" : ""}`.replace(/^; /, "") };
+  };
+  const commitDowntime = (what: { character?: Record<string, any>; downtime: Partial<DowntimeState>; days: number; log?: string[]; renown?: number }) => {
+    if (!character) return;
+    const next: DowntimeState = { ...downtime, ...what.downtime };
+    const today2 = dayOf(useClock.getState().minutes);
+    next.log = [...downtime.log, ...(what.log ?? []).map((text) => ({ day: today2, text }))].slice(-40);
+    const charChanges: Record<string, any> = { ...(what.character ?? {}) };
+    const basePlay = (charChanges.playState ?? character.playState ?? {}) as any;
+    charChanges.playState = { ...basePlay, downtime: next };
+    saveCharacter(charChanges);
+    const campaignChanges: Record<string, any> = {};
+    // Rivals do not rest while the character does (Wretched Hives): in each workweek one of them may act
+    if (what.days >= WORKWEEK && next.rivals.length) {
+      const credits2 = Number(charChanges.credits ?? character.credits) || 0;
+      for (const rival of next.rivals) {
+        if (Math.random() > 0.35) continue;
+        if (Math.random() < 0.5) {
+          const lost = Math.min(Math.floor(credits2 * 0.15), (Math.floor(Math.random() * 6) + 1) * 100);
+          if (lost > 0) {
+            charChanges.credits = (Number(charChanges.credits ?? character.credits) || 0) - lost;
+            next.log.push({ day: today2, text: `${rival.name} (${rival.whereName}) has your goods stolen: ${lost} cr.` });
+          }
+        } else {
+          next.log.push({ day: today2, text: `${rival.name} (${rival.whereName}) spreads rumors about you; ${rival.motive.slice(0, 80)}` });
+          if (settlementHere && rival.where === settlementHere.id) what.renown = (what.renown ?? 0) - 1;
+        }
+      }
+      charChanges.playState = { ...(charChanges.playState as any), downtime: next };
+      saveCharacter(charChanges);
+    }
+    if (what.days > 0) Object.assign(campaignChanges, pass(what.days * DAY));
+    if (what.renown && settlementHere) {
+      const holder = factionAt(world!, settlementHere.id);
+      if (holder) campaignChanges.factionInfluence = addRenown(standing, holder, what.renown);
+    }
+    if (Object.keys(campaignChanges).length) saveCampaign(campaignChanges);
+    if (what.log?.length) toast.info(what.log[0].slice(0, 160));
+  };
+  const spendBlackmail = (id: string) => {
+    const item = downtime.blackmail.find((b) => b.id === id);
+    if (!item || !world || !here) return;
+    // The nearest locked way out of here opens, no check (the blackmailed see to it)
+    const locked = exitsOf(world, here.id).find((e) => e.locked && e.pathId);
+    if (!locked) return void toast.info("Nothing is locked here that blackmail would open.");
+    openLock(locked, {}, false);
+    commitDowntime({ downtime: { blackmail: downtime.blackmail.filter((b) => b.id !== id) }, days: 0, log: [`Blackmail on ${item.name} spent: ${locked.label} is opened for you.`] });
+  };
+  const spendLore = (id: string) => {
+    const item = downtime.lore.find((l) => l.id === id);
+    if (!item || !world || !here) return;
+    // What is hidden in the room: ways, caches, secret entrances, without a check
+    const hiddenPaths = world.paths.filter((p) => p.hidden && (p.from === here.id || p.to === here.id));
+    const secretRooms = [here, ...childrenOf(world, here.id)].filter((a) => a.secretEntry && !a.secretEntry.found);
+    const next = updateArea(world, here.id, { loot: here.loot.map((c) => ({ ...c, hidden: undefined })) }).world;
+    const areas = { ...next.areas };
+    for (const room of secretRooms) areas[room.id] = { ...areas[room.id], secretEntry: { ...room.secretEntry!, found: true } };
+    saveCampaign({ galaxyMap: { ...next, areas, paths: next.paths.map((p) => (hiddenPaths.some((h) => h.id === p.id) ? { ...p, hidden: undefined } : p)) } });
+    commitDowntime({ downtime: { lore: downtime.lore.filter((l) => l.id !== id) }, days: 0, log: [`Lore spent (${item.topic}): what is hidden here is found.`] });
+  };
+
   const pointsName = klass?.casterType === "Tech" ? "Tech Points" : "Force Points";
+  // Features that heal and have a use left can be used between fights, as they are in one (Second Wind)
+  const parsedFeatures = useMemo(() => (character ? combatFeatures(character) : []), [character?.class, character?.level, character?.subclass, character?.species, character?.feats, character?.fighterManeuvers, character?.abilityScores]);
+  const outsideFeatures = character && !inCombat && !dead
+    ? parsedFeatures.filter((f) => f.heal && f.heal.target === "self" && (!f.uses || (play.featureUses?.[f.pool] ?? 0) < f.uses.max))
+    : [];
+  const useOutside = (f: ReturnType<typeof combatFeatures>[number]) => {
+    if (!character || !f.heal || character.currentHp >= character.maxHp) return;
+    const amount = Math.max(1, (f.heal.amount.dice ? rollDamage(f.heal.amount.dice, false) : 0) + f.heal.amount.flat);
+    lastSavedHp.current = Math.min(character.maxHp, character.currentHp + amount);
+    saveCharacter({
+      currentHp: lastSavedHp.current,
+      playState: { ...play, featureUses: { ...(play.featureUses ?? {}), [f.pool]: (play.featureUses?.[f.pool] ?? 0) + 1 } },
+    });
+    toast.success(`${f.name}: ${amount} hit points regained.`);
+  };
   const restButtons = character && (
     <div className="flex flex-wrap gap-2" data-testid="play-rest">
       <Button size="sm" variant="outline" onClick={shortRest} disabled={inCombat || dead || hostiles.length > 0}>
@@ -2572,6 +2882,11 @@ export default function GameBoard() {
           </select>
         </label>
       )}
+      {outsideFeatures.map((f) => (
+        <Button key={f.key} size="sm" variant="outline" onClick={() => useOutside(f)} disabled={character.currentHp >= character.maxHp} data-testid={`feature-${f.name}`}>
+          {f.name}{f.uses ? ` (${f.uses.max - (play.featureUses?.[f.pool] ?? 0)} left)` : ""}
+        </Button>
+      ))}
       {healingPowers.map((power) => (
         <Button
           key={power.name}
@@ -2633,7 +2948,9 @@ export default function GameBoard() {
           />
           
           {/* A fight is shown on the floor it is fought on; otherwise the place being looked at */}
-          {inCombat ? (
+          {shipFight ? (
+            <SpaceScene />
+          ) : inCombat ? (
             <FightScene areaId={here?.layout ? here.id : null} origin={here?.layout} />
           ) : world ? (
             <LocalMap world={scene} hereId={hereId} viewId={viewId} selectedId={picked?.kind === "area" ? picked.id : null} onAct={act} locked={dead || exploring} />
@@ -2646,7 +2963,7 @@ export default function GameBoard() {
 
         {/* Where the map is looking: the way down from the galaxy, each step a tap away. Only the
             buttons take taps; the rest of the strip lets them through to the map. */}
-        {!inCombat && (
+        {!inCombat && !shipFight && (
           <div className="pointer-events-none absolute inset-x-1 top-1 z-10">
             <div className="flex items-center gap-1">
               {world && view ? (
@@ -2996,6 +3313,22 @@ export default function GameBoard() {
                             {ship.areaId === here.id ? ", here" : `, at ${world.areas[ship.areaId]?.name ?? "an unknown berth"}`}
                           </span>
                         </span>
+                        {(() => {
+                          // A damaged ship is refitted at a port: the hull dice missing, by the size's cost and time
+                          if (ship.areaId !== here.id || !hasPort(world, here.id) || ship.hull === undefined || !shipRows.length) return null;
+                          const sheet = shipSheet(ship, shipRows);
+                          const plan = refitPlan(sheet, ship.hull);
+                          if (!plan) return null;
+                          return (
+                            <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || (character.credits ?? 0) < plan.cost} data-testid="ship-refit" onClick={() => {
+                              saveCharacter({ credits: character.credits - plan.cost });
+                              saveCampaign({ starships: ships.map((s) => (s.id === ship.id ? { ...s, hull: undefined } : s)), ...pass(plan.hours * 60) });
+                              toast.success(`${ship.name} is refitted: ${plan.dice} hull dice for ${plan.cost.toLocaleString()} credits and ${plan.hours >= 24 ? `${Math.round(plan.hours / 24)} days` : `${plan.hours} hours`}.`);
+                            }}>
+                              Refit ({plan.cost.toLocaleString()} cr)
+                            </Button>
+                          );
+                        })()}
                         {ship.areaId === here.id && hasPort(world, here.id) && ship.fuel < (getStarshipSize(ship.size)?.fuelCapacity ?? 0) && (
                           <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => refuel(ship)}>
                             Refuel ({getStarshipSize(ship.size)?.fuelCost} cr a unit)
@@ -3022,10 +3355,11 @@ export default function GameBoard() {
             )}
 
               <Tabs defaultValue="quests">
-                <TabsList className="grid grid-cols-3 mb-4">
-                  <TabsTrigger value="quests">Quests</TabsTrigger>
-                  <TabsTrigger value="inventory">Inventory</TabsTrigger>
-                  <TabsTrigger value="gm">GM Interface</TabsTrigger>
+                <TabsList className="grid grid-cols-4 mb-4 h-auto">
+                  <TabsTrigger value="quests" className="px-1 text-xs">Quests</TabsTrigger>
+                  <TabsTrigger value="inventory" className="px-1 text-xs">Inventory</TabsTrigger>
+                  <TabsTrigger value="downtime" className="px-1 text-xs">Downtime</TabsTrigger>
+                  <TabsTrigger value="gm" className="px-1 text-xs">GM Interface</TabsTrigger>
                 </TabsList>
               
               <TabsContent value="quests">
@@ -3071,6 +3405,27 @@ export default function GameBoard() {
                 </div>
               </TabsContent>
               
+              <TabsContent value="downtime">
+                {character && (
+                  <DowntimePanel
+                    character={character}
+                    level={level}
+                    day={dayOf(clock)}
+                    settlement={settlementHere ? { id: settlementHere.id, name: settlementHere.name, type: String(settlementHere.type ?? ""), faction: factionAt(world!, settlementHere.id) } : null}
+                    blocked={downtimeBlocked}
+                    equipment={equipmentData}
+                    tools={toolData}
+                    people={downtimePeople}
+                    hasVehicle={Array.isArray(campaign?.vehicles) && campaign.vehicles.length > 0}
+                    state={downtime}
+                    check={checkFor}
+                    commit={commitDowntime}
+                    spendBlackmail={spendBlackmail}
+                    spendLore={spendLore}
+                  />
+                )}
+              </TabsContent>
+
               <TabsContent value="inventory">
                 <h3 className="font-semibold mb-1">Inventory</h3>
                 <p className="text-sm text-yellow-300 mb-2" data-testid="inventory-credits">Credits: {(character.credits ?? 0).toLocaleString()}</p>
@@ -3137,7 +3492,859 @@ export default function GameBoard() {
 
         {/* Combat UI */}
         {showCombat && <PlayCombat items={combatItems} />}
+        {shipFight && <ShipCombatPanel onFinish={finishShipFight} />}
       </KeyboardControls>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Downtime (Wretched Hives, Entertainment and Downtime; the engine is in shared/logic "Downtime").
+// A workweek of an activity: the money is paid, up to three checks are made (each after the first
+// five harder), the best one's roll modifier goes to a d100 and the result table is read. What a
+// result gives is kept in the character's `playState.downtime`.
+// ---------------------------------------------------------------------------------------------
+
+interface DowntimeProps {
+  character: any;
+  level: number;
+  day: number;
+  // The settlement the party is in (downtime needs one), or why it cannot be done now
+  settlement: { id: string; name: string; type: string; faction?: string } | null;
+  blocked: string | null;
+  equipment: any[];
+  tools: ToolFacts[];
+  // People of this settlement, for naming contacts and blackmail: their names and the social class their role suggests
+  people: { name: string; cls: "lower" | "middle" | "upper" }[];
+  hasVehicle: boolean;
+  state: DowntimeState;
+  // A check of the character: the roll and what is added to it
+  check: (c: { ability: string; using: string }) => { roll: number; bonus: number; total: number; note: string };
+  // Keeps the result: changes to the character, the downtime record, days that pass, a line for the log
+  commit: (what: { character?: Record<string, any>; downtime: Partial<DowntimeState>; days: number; log?: string[]; renown?: number }) => void;
+  // Unlocks nothing here; blackmail and lore are spent from the panel through these
+  spendBlackmail: (id: string) => void;
+  spendLore: (id: string) => void;
+}
+
+const CLASS_NAMES = { lower: "lower class", middle: "middle class", upper: "upper class" } as const;
+const roll = (sides: number) => Math.floor(Math.random() * sides) + 1;
+const rollExpr = (expr: string) => {
+  const m = expr.match(/^(\d+)d(\d+)$/);
+  return m ? Array.from({ length: Number(m[1]) }, () => roll(Number(m[2]))).reduce((a, b) => a + b, 0) : Number(expr) || 0;
+};
+const money = (n: number) => `${n.toLocaleString()} cr`;
+const dtId = (prefix: string) => `${prefix}-${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
+
+function DowntimePanel(props: DowntimeProps) {
+  const { character, state } = props;
+  const [open, setOpen] = useState<string | null>(null);
+  const credits = Number(character?.credits) || 0;
+  const here = props.settlement;
+  const specs = DOWNTIME.activities.map((a) => ({ a, spec: activitySpec(a) }));
+  const city = !!here && /city|station|town/i.test(here.type);
+
+  if (props.blocked) {
+    return <p className="text-sm text-gray-300" data-testid="downtime-blocked">Downtime: {props.blocked}</p>;
+  }
+  if (!here) {
+    return <p className="text-sm text-gray-300" data-testid="downtime-blocked">Downtime needs a settlement: a workweek of it is spent in a town, a city or a station.</p>;
+  }
+  const mine = specs.find((s) => s.a.id === open);
+  const allied = state.contacts.filter((c) => c.kind === "allied");
+  const hostile = state.contacts.filter((c) => c.kind === "hostile");
+  return (
+    <div className="space-y-3 text-sm" data-testid="downtime">
+      <div className="bg-gray-700 rounded p-2 space-y-1" data-testid="downtime-state">
+        <div>In {here.name} ({here.type}). {money(credits)}. Day {props.day}.{(character?.exhaustionLevel ?? 0) > 0 ? ` Exhaustion ${character.exhaustionLevel}.` : ""}</div>
+        <div className="text-xs text-gray-300">
+          Contacts: {allied.length} allied, {hostile.length} hostile · Blackmail: {state.blackmail.length} · Lore: {state.lore.length} · Rivals: {state.rivals.length} · Blueprints: {state.blueprints.length}
+          {state.titles.length ? ` · ${state.titles.join(", ")}` : ""}
+        </div>
+        {state.blackmail.length + state.lore.length + allied.length > 0 && (
+          <div className="flex flex-wrap gap-1 pt-1">
+            {state.blackmail.map((b) => (
+              <Button key={b.id} size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={() => props.spendBlackmail(b.id)} title="Spend it: the nearest locked way opens without a check">
+                Blackmail on {b.name}
+              </Button>
+            ))}
+            {state.lore.map((l) => (
+              <Button key={l.id} size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={() => props.spendLore(l.id)} title="Spend it: what is hidden in the room you are in is found">
+                Lore: {l.topic}
+              </Button>
+            ))}
+          </div>
+        )}
+        {state.rivals.length > 0 && <div className="text-xs text-red-300">Rivals: {state.rivals.map((r) => `${r.name} (${r.whereName})`).join("; ")}</div>}
+        {allied.length + hostile.length > 0 && (
+          <div className="text-xs text-gray-300">
+            {state.contacts.map((c) => `${c.name} (${c.kind}, ${CLASS_NAMES[c.cls]}, ${c.whereName})`).join("; ")}
+          </div>
+        )}
+      </div>
+      {!mine && (
+        <div className="grid grid-cols-1 gap-1" data-testid="downtime-menu">
+          {specs.map(({ a }) => {
+            const needsCity = /enhanced items/i.test(a.name) && !city;
+            return (
+              <Button key={a.id} size="sm" variant="outline" className="h-auto justify-start whitespace-normal text-left" disabled={needsCity} onClick={() => setOpen(a.id)} data-testid={`downtime-${a.id}`}>
+                {a.name}
+                <span className="ml-1 text-xs text-gray-400">{a.intro.slice(0, 90)}{a.intro.length > 90 ? "…" : ""}</span>
+              </Button>
+            );
+          })}
+        </div>
+      )}
+      {mine && (
+        <div className="space-y-2">
+          <Button size="sm" variant="ghost" className="h-6 px-1" onClick={() => setOpen(null)}>← Activities</Button>
+          <h3 className="text-base font-semibold text-yellow-300">{mine.a.name}</h3>
+          <p className="text-xs text-gray-300">{mine.a.intro}</p>
+          <details className="text-xs text-gray-300">
+            <summary className="cursor-pointer">The book's text</summary>
+            <p className="mt-1">{mine.a.resourcesFull || mine.a.resources}</p>
+            <p className="mt-1">{mine.a.resolution}</p>
+          </details>
+          {mine.a.id === "training" ? (
+            <TrainingActivity {...props} />
+          ) : mine.a.id === "buying-enhanced-items" ? (
+            <EnhancedTrade {...props} mode="buy" />
+          ) : mine.a.id === "selling-enhanced-items" ? (
+            <EnhancedTrade {...props} mode="sell" />
+          ) : mine.a.id === "crafting" ? (
+            <CraftingActivity {...props} />
+          ) : (
+            <WeekActivity key={mine.a.id} {...props} activity={mine.a} spec={mine.spec} />
+          )}
+        </div>
+      )}
+      {state.log.length > 0 && (
+        <div className="text-xs text-gray-400" data-testid="downtime-log">
+          <p className="font-semibold text-gray-300">Recent downtime</p>
+          {state.log.slice(-6).reverse().map((l, i) => (
+            <p key={i}>Day {l.day}: {l.text}</p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Contacts, blackmail and the like are made of the people of the place where they were made
+function personFor(people: DowntimeProps["people"], cls: "lower" | "middle" | "upper", taken: string[]): string {
+  const pool = people.filter((p) => p.cls === cls && !taken.includes(p.name));
+  const any = people.filter((p) => !taken.includes(p.name));
+  const pick = (pool.length ? pool : any)[Math.floor(Math.random() * (pool.length ? pool.length : any.length))];
+  return pick?.name ?? `a ${CLASS_NAMES[cls]} local`;
+}
+
+// What a complication does that the game can apply (shared/logic complicationEffect): what is lost,
+// a rival made, a spell in jail; the rest is kept in the log for the player to play out
+function applyComplication(props: DowntimeProps, activity: DowntimeActivityData, cls: "lower" | "middle" | "upper" | undefined, shady: boolean, tries: number) {
+  const chance = complicationChance(activity, tries, shady);
+  if (roll(100) > chance) return null;
+  const table = complicationTable(activity, cls);
+  if (!table) return null;
+  const row = table.rows.find((r) => r.roll === roll(table.die)) ?? table.rows[0];
+  return { text: row.text, effect: complicationEffect(row.text, rollExpr), chance };
+}
+
+// Activities worked out in one workweek by checks and a d100: bounty hunting, carousing, crime,
+// espionage, gambling, mercenary work, pit fighting, racing, research, work
+function WeekActivity(props: DowntimeProps & { activity: DowntimeActivityData; spec: ActivitySpec }) {
+  const { activity, spec, character, state, settlement } = props;
+  const [cls, setCls] = useState<"lower" | "middle" | "upper">("lower");
+  const [extra, setExtra] = useState(0);
+  const [stake, setStake] = useState(spec.stake?.min ?? 0);
+  const [rent, setRent] = useState(!props.hasVehicle);
+  const [disguised, setDisguised] = useState(false);
+  const [phase, setPhase] = useState<"setup" | "checks" | "done">("setup");
+  const [attempts, setAttempts] = useState<{ label: string; total: number; roll: number; bonus: number; modifier: number; met: boolean; note: string }[]>([]);
+  const [report, setReport] = useState<string[]>([]);
+  const credits = Number(character?.credits) || 0;
+  const tier = spec.tiers?.find((t) => t.cls === cls);
+  const cost = tier ? tier.cost : spec.stake ? stake : (spec.entry ?? spec.cost) + extra + (spec.entry && rent ? spec.rent ?? 0 : 0);
+  const checks = spec.checks.filter((c) => {
+    if (activity.id === "carousing") return disguised ? c.using === "persuasion" ? false : true : c.using === "persuasion";
+    return true;
+  });
+  const options = activity.id === "carousing" ? (disguised ? [{ ability: "charisma", using: "deception" }] : [{ ability: "charisma", using: "persuasion" }]) : checks;
+  const maxChecks = spec.multi ? Math.min(3, options.length) : 1;
+  const best = attempts.reduce((a, b) => (b.modifier > a ? b.modifier : a), 0);
+  const anyMet = attempts.some((a) => a.met);
+  const ready = attempts.length >= maxChecks || (attempts.length > 0 && anyMet) || (!spec.multi && attempts.length > 0);
+
+  const begin = () => {
+    if (credits < cost) return void toast.error(`Not enough credits: ${money(cost)} needed.`);
+    setAttempts([]);
+    setReport([]);
+    setPhase("checks");
+  };
+  const tryCheck = (c: { ability: string; using: string }) => {
+    const r = props.check(c);
+    const total = r.total + (spec.spendBonus ? Math.max(0, Math.min(spec.spendBonus.max, Math.floor((extra) / spec.spendBonus.per))) : 0);
+    const shift = attempts.length;
+    const m = spec.multi ? checkModifier(total, shift) : checkModifier(total, 0);
+    setAttempts([...attempts, { label: `${c.ability[0].toUpperCase()}${c.ability.slice(1)} (${c.using})`, total, roll: r.roll, bonus: r.bonus, modifier: m.bonus, met: m.met, note: r.note }]);
+  };
+  const resolve = () => {
+    const d100 = roll(100);
+    const lines: string[] = [];
+    let paid = cost;
+    let outcome: DowntimeOutcome;
+    let text: string;
+    let debt = 0;
+    const failed = spec.multi && !anyMet;
+    const failure = failed ? failureOf(activity) : null;
+    if (failure) {
+      outcome = failure.outcome;
+      text = `No check met a DC: ${failure.text}`;
+      if (failure.debt) debt = stake;
+    } else {
+      const total = d100 + (spec.multi ? best : best);
+      const row = resultRow(activity, total);
+      outcome = outcomeOf(row.text);
+      text = `d100 ${d100} + ${best} = ${total}: ${row.text}`;
+    }
+    lines.push(text);
+    let gained = outcome.credits;
+    if (spec.stake) {
+      const back = Math.round(stake * (outcome.stakeBack ?? 0));
+      gained = back;
+      paid = stake;
+    }
+    const downtime: Partial<DowntimeState> = {};
+    const where = settlement!;
+    const taken = state.contacts.map((c) => c.name);
+    const contacts = [...state.contacts];
+    for (let i = 0; i < outcome.allied; i++) contacts.push({ id: dtId("c"), kind: "allied", cls, where: where.id, whereName: where.name, name: personFor(props.people, cls, [...taken, ...contacts.map((c) => c.name)]) });
+    for (let i = 0; i < outcome.hostile; i++) contacts.push({ id: dtId("c"), kind: "hostile", cls, where: where.id, whereName: where.name, name: personFor(props.people, cls, [...taken, ...contacts.map((c) => c.name)]) });
+    // At most 1 + the Charisma modifier unspecified allied contacts are kept
+    const limit = Math.max(1, 1 + Math.floor(((character.abilityScores?.charisma ?? 10) - 10) / 2));
+    const alliedKept = contacts.filter((c) => c.kind === "allied");
+    if (alliedKept.length > limit) {
+      const drop = new Set(alliedKept.slice(0, alliedKept.length - limit).map((c) => c.id));
+      downtime.contacts = contacts.filter((c) => !drop.has(c.id));
+      lines.push(`Only ${limit} allied contacts can be kept: the oldest is forgotten.`);
+    } else if (outcome.allied || outcome.hostile) downtime.contacts = contacts;
+    if (outcome.allied) lines.push(`${outcome.allied} allied contact${outcome.allied > 1 ? "s" : ""} made in ${where.name}.`);
+    if (outcome.hostile) lines.push(`${outcome.hostile} hostile contact${outcome.hostile > 1 ? "s" : ""} made in ${where.name}.`);
+    if (outcome.blackmail) {
+      downtime.blackmail = [...state.blackmail, ...Array.from({ length: outcome.blackmail }, () => ({ id: dtId("b"), cls, where: where.id, whereName: where.name, name: personFor(props.people, cls, state.blackmail.map((b) => b.name)) }))];
+      lines.push(`Blackmail found on ${downtime.blackmail.slice(-outcome.blackmail).map((b) => b.name).join(", ")}.`);
+    }
+    if (outcome.lore) {
+      const limitLore = Math.max(1, 1 + Math.floor(((character.abilityScores?.intelligence ?? 10) - 10) / 2));
+      const added = Array.from({ length: outcome.lore }, (_, i) => ({ id: dtId("l"), topic: `${where.name}: lore ${state.lore.length + i + 1}`, where: where.id, whereName: where.name }));
+      downtime.lore = [...state.lore, ...added].slice(-Math.max(limitLore, outcome.lore));
+      lines.push(`${outcome.lore} piece${outcome.lore > 1 ? "s" : ""} of lore, to be spent where it helps.`);
+    }
+    let days = WORKWEEK;
+    let renown = 0;
+    const charChanges: Record<string, any> = {};
+    let money2 = credits - paid + gained - (failure?.outcome.repairs ?? 0);
+    if (failure?.outcome.repairs) lines.push(`${money(failure.outcome.repairs)} in repairs.`);
+    if (debt) {
+      if (money2 >= debt) {
+        money2 -= debt;
+        lines.push(`The debt of ${money(debt)} is paid at once.`);
+      } else {
+        charChanges.playState = { ...(character.playState ?? {}), debt: (character.playState?.debt ?? 0) + debt };
+        lines.push(`A debt of ${money(debt)} is owed.`);
+      }
+    }
+    if (outcome.jailed) {
+      days += WORKWEEK;
+      renown -= 1;
+      lines.push("A week in jail follows, and your name is worse for it here.");
+    }
+    if (outcome.exhaustion) {
+      charChanges.exhaustionLevel = Math.min(6, (character.exhaustionLevel ?? 0) + 1);
+      lines.push("A level of exhaustion.");
+    }
+    if (outcome.title) {
+      const title = activity.id === "pit-fighting" ? `Pit champion of ${where.name}` : activity.id === "racing" ? `Racer of ${where.name}` : activity.id === "bounty-hunting" ? "Bounty hunter of note" : `Known in ${where.name}`;
+      if (!state.titles.includes(title)) downtime.titles = [...state.titles, title];
+      lines.push(`A title: ${title}.`);
+    }
+    if (outcome.favor) lines.push("An employer or a patron owes you a favor (an allied contact is made).");
+    if (outcome.favor && !outcome.allied) {
+      const withFavor = downtime.contacts ?? state.contacts;
+      downtime.contacts = [...withFavor, { id: dtId("c"), kind: "allied", cls, where: where.id, whereName: where.name, name: personFor(props.people, cls, withFavor.map((c) => c.name)) }];
+    }
+    if (outcome.loreItem) lines.push("The relative location of an item worth at least 5,000 cr: ask the GM tab where.");
+    // A complication, by the activity's own chance
+    const shady = false;
+    const complication = applyComplication(props, activity, activity.complications.length > 1 ? cls : undefined, shady, attempts.length || 1);
+    let rivals = state.rivals;
+    if (complication) {
+      lines.push(`Complication (${complication.chance}% chance): ${complication.text}`);
+      if (complication.effect.credits) {
+        money2 = Math.max(0, money2 - complication.effect.credits);
+        lines.push(`It costs ${money(complication.effect.credits)}.`);
+      }
+      if (complication.effect.jailed && !outcome.jailed) {
+        days += WORKWEEK;
+        renown -= 1;
+        lines.push("A week in jail follows.");
+      }
+      if (complication.effect.rival) {
+        const name = personFor(props.people, cls, rivals.map((r) => r.name));
+        rivals = [...rivals, { id: dtId("r"), name, motive: complication.text, where: where.id, whereName: where.name, since: props.day }];
+        lines.push(`${name} is now a rival: ${complication.text}`);
+      }
+      if (complication.effect.scar) charChanges.notes = `${character.notes ? `${character.notes}\n` : ""}Day ${props.day}: a scar (${activity.name}).`;
+    }
+    if (rivals !== state.rivals) downtime.rivals = rivals;
+    charChanges.credits = Math.max(0, money2);
+    setReport(lines);
+    setPhase("done");
+    props.commit({ character: charChanges, downtime, days, log: [`${activity.name}: ${lines.join(" ")}`], renown });
+  };
+
+  const tierNote = spec.tiers ? `${CLASS_NAMES[cls]}: ${money(tier!.cost)}` : "";
+  return (
+    <div className="space-y-2" data-testid={`downtime-activity-${activity.id}`}>
+      {phase === "setup" && (
+        <div className="space-y-2">
+          {spec.tiers && (
+            <label className="flex items-center gap-2">
+              Among the
+              <select className="h-7 rounded bg-gray-700 px-1" value={cls} onChange={(e) => setCls(e.target.value as any)} data-testid="downtime-class">
+                {spec.tiers.map((t) => (
+                  <option key={t.cls} value={t.cls}>{CLASS_NAMES[t.cls]} ({money(t.cost)})</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {activity.id === "carousing" && cls === "upper" && (
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={disguised} onChange={(e) => setDisguised(e.target.checked)} /> Pass as a noble from afar (Deception, needs a disguise kit)
+            </label>
+          )}
+          {spec.spendBonus && (
+            <label className="flex items-center gap-2 text-xs">
+              Spend more (+1 to the check for each {money(spec.spendBonus.per)})
+              <input type="number" min={0} step={spec.spendBonus.per} className="h-7 w-24 rounded bg-gray-700 px-1" value={extra} onChange={(e) => setExtra(Math.max(0, Number(e.target.value) || 0))} data-testid="downtime-extra" />
+            </label>
+          )}
+          {spec.stake && (
+            <label className="flex items-center gap-2 text-xs">
+              Stake ({money(spec.stake.min)} to {money(spec.stake.max)})
+              <input type="number" min={spec.stake.min} max={spec.stake.max} step={100} className="h-7 w-24 rounded bg-gray-700 px-1" value={stake} onChange={(e) => setStake(Math.max(spec.stake!.min, Math.min(spec.stake!.max, Number(e.target.value) || 0)))} data-testid="downtime-stake" />
+            </label>
+          )}
+          {spec.entry && !props.hasVehicle && (
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={rent} onChange={(e) => setRent(e.target.checked)} /> Rent a vehicle ({money(spec.rent ?? 0)})
+            </label>
+          )}
+          <p className="text-xs text-gray-300">{tierNote || `Costs ${money(cost)}`} · a workweek ({WORKWEEK} days). You have {money(credits)}.</p>
+          <Button size="sm" onClick={begin} disabled={credits < cost} data-testid="downtime-begin">
+            Begin the workweek ({money(cost)})
+          </Button>
+        </div>
+      )}
+      {phase === "checks" && (
+        <div className="space-y-2" data-testid="downtime-checks">
+          <p className="text-xs text-gray-300">
+            {spec.multi ? `Make up to ${maxChecks} checks; each after the first has every DC raised by 5, and the best counts.` : "Make the check."}
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {options.map((c) => {
+              const label = `${c.ability[0].toUpperCase()}${c.ability.slice(1)} (${c.using})`;
+              const done = attempts.some((a) => a.label === label);
+              return (
+                <Button key={label} size="sm" variant="outline" disabled={done || attempts.length >= maxChecks} onClick={() => tryCheck(c)} data-testid={`downtime-check-${c.using}`}>
+                  {label}
+                </Button>
+              );
+            })}
+          </div>
+          {attempts.map((a, i) => (
+            <p key={i} className="text-xs" data-testid="downtime-attempt">
+              {a.label}: {a.roll} {a.bonus >= 0 ? "+" : "-"} {Math.abs(a.bonus)}{a.total !== a.roll + a.bonus ? ` + ${a.total - a.roll - a.bonus}` : ""} = {a.total}
+              {a.met ? `, roll modifier +${a.modifier}` : ", no DC met"}
+              {a.note ? ` (${a.note})` : ""}
+            </p>
+          ))}
+          <Button size="sm" disabled={!ready} onClick={resolve} data-testid="downtime-resolve">
+            {attempts.length && !anyMet && spec.multi && attempts.length >= maxChecks ? "See what comes of it" : `Roll the d100 (+${best})`}
+          </Button>
+          {attempts.length > 0 && !ready && <p className="text-xs text-amber-200">No DC met yet: make another check.</p>}
+        </div>
+      )}
+      {phase === "done" && (
+        <div className="space-y-1" data-testid="downtime-result">
+          {report.map((l, i) => (
+            <p key={i} className="text-sm">{l}</p>
+          ))}
+          <Button size="sm" variant="outline" onClick={() => { setPhase("setup"); setAttempts([]); }}>Again</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Buying and selling enhanced items (Wretched Hives): a search of days and money for a seller or
+// a buyer, a check, a d100 with the item's rarity as a modifier, and an offer to take or leave
+function EnhancedTrade(props: DowntimeProps & { mode: "buy" | "sell" }) {
+  const { character, state, mode, settlement } = props;
+  const activity = downtimeActivity(mode === "buy" ? "buying-enhanced-items" : "selling-enhanced-items")!;
+  const { data: items = [] } = useQuery<any[]>({
+    queryKey: ["enhanced-names"],
+    queryFn: async () => (await fetch("/api/sw5e/enhancedItems?fields=id,name,type,searchableRarity,subtype")).json(),
+    staleTime: Infinity,
+  });
+  const credits = Number(character?.credits) || 0;
+  const [days, setDays] = useState(5);
+  const [spend, setSpend] = useState(1000);
+  const [want, setWant] = useState("");
+  const [pick, setPick] = useState("");
+  const [offer, setOffer] = useState<null | { item: any; value: number; plain: number; shady: number | null; text: string; line: string[]; favor: boolean; days: number }>(null);
+  const [message, setMessage] = useState<string[]>([]);
+  const owned: any[] = ((character?.equipment ?? []) as string[]).map((n) => items.find((i) => i.name === n)).filter((i) => i && i.searchableRarity !== "Artifact");
+  const byName = (name: string) => items.find((i) => i.name.toLowerCase() === name.trim().toLowerCase());
+
+  const search = () => {
+    if (mode === "buy") {
+      const cost = spend;
+      if (credits < cost) return void toast.error(`${money(cost)} needed.`);
+      const bonus = Math.min(10, Math.floor((days - 1) / 5) + Math.floor((spend - 1000) / 1000));
+      const seek = want ? byName(want) : undefined;
+      if (want && !seek) return void toast.error("No such enhanced item.");
+      const once = () => props.check({ ability: "intelligence", using: "investigation" });
+      let a = once();
+      let total = a.total + bonus;
+      let note = `Investigation ${a.roll} ${a.bonus >= 0 ? "+" : "-"} ${Math.abs(a.bonus)} + ${bonus} = ${total}`;
+      if (seek) {
+        const b = once();
+        const second = b.total + bonus;
+        note += `; second check ${second}`;
+        total = Math.min(total, second);
+        const dc = DOWNTIME.sellers[seek.searchableRarity]?.dc ?? 99;
+        if (total < dc) {
+          const sold = foundRarity(total);
+          props.commit({ character: { credits: credits - cost }, downtime: {}, days, log: [`Buying enhanced items: no seller of ${seek.name} found (${note}).`] });
+          return void setMessage([note, sold ? `No seller of ${seek.name} turns up, only ${sold.toLowerCase()} items.` : "No seller turns up."]);
+        }
+      }
+      const rarity = seek ? seek.searchableRarity : foundRarity(total);
+      if (!rarity || !DOWNTIME.sellers[rarity]) {
+        props.commit({ character: { credits: credits - cost }, downtime: {}, days, log: [`Buying enhanced items: nobody sells (${note}).`] });
+        return void setMessage([note, "No seller turns up: the days and the money are spent."]);
+      }
+      const d100 = roll(100);
+      const modifier = DOWNTIME.sellers[rarity].modifier;
+      const row = resultRow(activity, d100 + modifier);
+      const factor = priceFactor(row.text);
+      const pool = items.filter((i) => i.searchableRarity === rarity && i.type !== "ShipArmor" && i.type !== "ShipShield" && i.type !== "ShipWeapon");
+      const item = seek ?? pool[Math.floor(Math.random() * pool.length)];
+      if (!item) return void setMessage([note, "Nothing of that rarity is for sale."]);
+      const value = enhancedValue(item);
+      setMessage([note, `d100 ${d100} ${modifier >= 0 ? "+" : "-"} ${Math.abs(modifier)} = ${d100 + modifier}: ${row.text}`]);
+      props.commit({ character: { credits: credits - cost }, downtime: {}, days, log: [`Buying enhanced items: a ${rarity.toLowerCase()} seller (${note}).`] });
+      setOffer({ item, value, plain: Math.round(value * factor.plain), shady: factor.shady === null ? null : Math.round(value * factor.shady), text: row.text, line: [], favor: factor.favor, days });
+    } else {
+      const item = byName(pick);
+      if (!item) return;
+      const rarity = item.searchableRarity;
+      const maxDays = Number((DOWNTIME.buyers[rarity]?.days ?? "1d4").split("d")[1]) * Number((DOWNTIME.buyers[rarity]?.days ?? "1d4").split("d")[0]);
+      const r = props.check({ ability: "intelligence", using: "investigation" });
+      const found = r.total >= 20;
+      const spent = found ? rollExpr(DOWNTIME.buyers[rarity].days) : maxDays;
+      const cost = spent * 100;
+      if (credits < cost) return void toast.error(`${money(cost)} needed for the search.`);
+      const note = `Investigation ${r.roll} ${r.bonus >= 0 ? "+" : "-"} ${Math.abs(r.bonus)} = ${r.total} against DC 20`;
+      if (!found) {
+        props.commit({ character: { credits: credits - cost }, downtime: {}, days: spent, log: [`Selling ${item.name}: no buyer in ${spent} days (${note}).`] });
+        return void setMessage([note, `No buyer after ${spent} days; ${money(cost)} spent.`]);
+      }
+      const d100 = roll(100);
+      const modifier = DOWNTIME.buyers[rarity].modifier;
+      const row = resultRow(activity, d100 + modifier);
+      const factor = priceFactor(row.text);
+      const value = enhancedValue(item);
+      setMessage([note, `A buyer is found after ${spent} days (${money(cost)}).`, `d100 ${d100} ${modifier >= 0 ? "+" : "-"} ${Math.abs(modifier)} = ${d100 + modifier}: ${row.text}`]);
+      props.commit({ character: { credits: credits - cost }, downtime: {}, days: spent, log: [`Selling ${item.name}: a buyer after ${spent} days.`] });
+      setOffer({ item, value, plain: Math.round(value * factor.plain), shady: factor.shady === null ? null : Math.round(value * factor.shady), text: row.text, line: [], favor: factor.favor, days: spent });
+    }
+  };
+  const settle = (shady: boolean) => {
+    if (!offer) return;
+    const amount = shady ? offer.shady! : offer.plain;
+    const lines: string[] = [];
+    const complication = applyComplication(props, activity, undefined, shady, 1);
+    let fake = false;
+    let stolen = false;
+    let rival = false;
+    if (complication) {
+      lines.push(`Complication (${complication.chance}%): ${complication.text}`);
+      fake = /fake/i.test(complication.text);
+      stolen = /stolen/i.test(complication.text);
+      rival = complication.effect.rival;
+    }
+    const equipment = [...((character.equipment ?? []) as string[])];
+    let creditsNow = credits;
+    if (mode === "buy") {
+      if (credits < amount) return void toast.error(`${money(amount)} needed.`);
+      creditsNow -= amount;
+      if (fake || stolen) lines.push(`${offer.item.name} is ${fake ? "a fake" : "stolen after the purchase"}: it is not yours to keep.`);
+      else equipment.push(offer.item.name);
+      lines.unshift(`Bought ${offer.item.name} for ${money(amount)}${shady ? " from a shady seller" : ""}.`);
+    } else {
+      const at = equipment.indexOf(offer.item.name);
+      if (at >= 0) equipment.splice(at, 1);
+      if (stolen) lines.push("The item is stolen before the sale: no credits.");
+      else creditsNow += amount;
+      lines.unshift(`Sold ${offer.item.name} for ${money(stolen ? 0 : amount)}${shady ? " to a shady buyer" : ""}.`);
+    }
+    const downtime: Partial<DowntimeState> = {};
+    if (rival || offer.favor) {
+      const where = settlement!;
+      if (rival) downtime.rivals = [...state.rivals, { id: dtId("r"), name: personFor(props.people, "middle", state.rivals.map((r) => r.name)), motive: complication!.text, where: where.id, whereName: where.name, since: props.day }];
+      if (offer.favor) {
+        downtime.contacts = [...state.contacts, { id: dtId("c"), kind: "allied", cls: "upper", where: where.id, whereName: where.name, name: personFor(props.people, "upper", state.contacts.map((c) => c.name)) }];
+        lines.push("They also want a favor: an allied contact owes you, and you owe them.");
+      }
+    }
+    props.commit({ character: { credits: Math.max(0, creditsNow), equipment }, downtime, days: 0, log: lines });
+    setMessage((m) => [...m, ...lines]);
+    setOffer(null);
+  };
+
+  return (
+    <div className="space-y-2" data-testid={`downtime-${mode}`}>
+      {!offer && mode === "buy" && (
+        <div className="space-y-2">
+          <label className="flex items-center gap-2 text-xs">
+            Days
+            <input type="number" min={5} step={5} className="h-7 w-16 rounded bg-gray-700 px-1" value={days} onChange={(e) => setDays(Math.max(5, Number(e.target.value) || 5))} />
+            Spend
+            <input type="number" min={1000} step={1000} className="h-7 w-24 rounded bg-gray-700 px-1" value={spend} onChange={(e) => setSpend(Math.max(1000, Number(e.target.value) || 1000))} />
+          </label>
+          <label className="flex items-center gap-2 text-xs">
+            Looking for (a name, or leave blank)
+            <input className="h-7 min-w-0 flex-1 rounded bg-gray-700 px-1" value={want} onChange={(e) => setWant(e.target.value)} list="enhanced-names" />
+            <datalist id="enhanced-names">{items.slice(0, 400).map((i) => <option key={i.id} value={i.name} />)}</datalist>
+          </label>
+          <p className="text-xs text-gray-300">+1 to the check for each five days beyond the first and each 1,000 cr beyond the first 1,000 (up to +10). {money(spend)} · {days} days.</p>
+          <Button size="sm" onClick={search} disabled={credits < spend || !items.length} data-testid="downtime-search">Look for a seller</Button>
+        </div>
+      )}
+      {!offer && mode === "sell" && (
+        <div className="space-y-2">
+          <select className="h-8 w-full rounded bg-gray-700 px-1" value={pick} onChange={(e) => setPick(e.target.value)} data-testid="downtime-sell-pick">
+            <option value="">An enhanced item you carry</option>
+            {owned.map((i, k) => (
+              <option key={`${i.id}-${k}`} value={i.name}>{i.name} ({i.searchableRarity})</option>
+            ))}
+          </select>
+          {owned.length === 0 && <p className="text-xs text-gray-400">You carry no enhanced items to sell.</p>}
+          <p className="text-xs text-gray-300">A search costs 100 cr a day, up to the days the rarity allows; a DC 20 Intelligence (Investigation) check finds a buyer.</p>
+          <Button size="sm" onClick={search} disabled={!pick} data-testid="downtime-search">Look for a buyer</Button>
+        </div>
+      )}
+      {offer && (
+        <div className="space-y-2 rounded bg-gray-700 p-2" data-testid="downtime-offer">
+          <p>
+            {offer.item.name} <span className="text-xs text-gray-400">({offer.item.searchableRarity}, worth about {money(offer.value)})</span>
+          </p>
+          <div className="flex flex-wrap gap-1">
+            <Button size="sm" onClick={() => settle(false)} disabled={mode === "buy" && credits < offer.plain} data-testid="downtime-accept">
+              {mode === "buy" ? "Buy" : "Sell"} for {money(offer.plain)}
+            </Button>
+            {offer.shady !== null && (
+              <Button size="sm" variant="secondary" onClick={() => settle(true)} disabled={mode === "buy" && credits < offer.shady} data-testid="downtime-accept-shady">
+                Shady {mode === "buy" ? "seller" : "buyer"}: {money(offer.shady)}
+              </Button>
+            )}
+            <Button size="sm" variant="outline" onClick={() => setOffer(null)}>Walk away</Button>
+          </div>
+        </div>
+      )}
+      {message.map((m, i) => (
+        <p key={i} className="text-xs text-gray-200">{m}</p>
+      ))}
+    </div>
+  );
+}
+
+// Crafting, and taking an enhanced item apart to learn its blueprint (Wretched Hives). Unenhanced
+// gear needs the right tools and raw materials worth half its value, and a workweek's checks;
+// enhanced items need their blueprint, and for the higher rarities a rare ingredient.
+function CraftingActivity(props: DowntimeProps) {
+  const { character, state, equipment, tools, settlement } = props;
+  const activity = downtimeActivity("crafting")!;
+  const credits = Number(character?.credits) || 0;
+  const { data: enhanced = [] } = useQuery<any[]>({
+    queryKey: ["enhanced-names"],
+    queryFn: async () => (await fetch("/api/sw5e/enhancedItems?fields=id,name,type,searchableRarity,subtype")).json(),
+    staleTime: Infinity,
+  });
+  const [mode, setMode] = useState<"craft" | "blueprint" | "reverse">("craft");
+  const [pick, setPick] = useState("");
+  const [find, setFind] = useState("");
+  const [message, setMessage] = useState<string[]>([]);
+  const carried: string[] = character?.equipment ?? [];
+  const squash2 = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+  // The tool a piece of equipment is made with: the Item Specific Tools table's "works on" words
+  const toolOf = (item: any): ToolFacts | undefined => {
+    const hay = squash2(`${item.name} ${item.equipmentCategory} ${item.weaponClassification ?? ""} ${item.armorClassification ?? ""}`);
+    return tools.find((t) =>
+      (t.worksOn ?? "")
+        .split(/,|\band\b/)
+        .map((w) => w.trim().toLowerCase().replace(/s$/, ""))
+        .filter((w) => w.length > 3)
+        .some((w) => hay.includes(squash2(w)) || (w === "armor" && item.equipmentCategory === "Armor") || (w === "shield" && item.armorClassification === "Shield") || (w === "explosive" && item.equipmentCategory === "Explosive") || (w === "ammunition" && item.equipmentCategory === "Ammunition")),
+    );
+  };
+  const craftable = equipment.filter((e) => e.cost > 0 && !["Spice", "AlcoholicBeverage"].includes(e.equipmentCategory) && toolOf(e)).filter((e) => !find || e.name.toLowerCase().includes(find.toLowerCase()));
+  const item = equipment.find((e) => e.name === pick);
+  const tool = item ? toolOf(item) : undefined;
+  const has = tool ? carried.some((n) => squash2(n) === squash2(tool.name)) : false;
+
+  const craft = () => {
+    if (!item || !tool) return;
+    const value = item.cost;
+    const raw = Math.ceil(value / 2);
+    const daysNeeded = Math.max(1, Math.ceil(value / 250));
+    if (credits < raw * 2) return void toast.error(`Raw materials worth up to ${money(raw * 2)} may be needed.`);
+    if (!has) return void toast.error(`You need ${tool.name}.`);
+    const r = props.check({ ability: "intelligence", using: tool.name.toLowerCase() });
+    const m = checkModifier(r.total, 0);
+    const d100 = roll(100);
+    const row = resultRow(activity, d100 + m.bonus);
+    const idx = activity.results.indexOf(row);
+    const factor = [2, 1.5, 1, 0.5, 0.25][idx] ?? 1;
+    const materials = Math.ceil(raw * factor);
+    const lines = [
+      `${tool.name} check ${r.roll} ${r.bonus >= 0 ? "+" : "-"} ${Math.abs(r.bonus)} = ${r.total}${m.met ? `, roll modifier +${m.bonus}` : ", no DC met"}`,
+      `d100 ${d100} + ${m.bonus} = ${d100 + m.bonus}: ${row.text}`,
+      `${item.name} made in ${daysNeeded} day${daysNeeded > 1 ? "s" : ""}, raw materials ${money(materials)}.`,
+    ];
+    let creditsNow = credits - materials;
+    const comp = applyComplication(props, activity, undefined, false, 1);
+    const downtime: Partial<DowntimeState> = {};
+    if (comp) {
+      lines.push(`Complication (${comp.chance}%): ${comp.text}`);
+      if (comp.effect.rival) downtime.rivals = [...state.rivals, { id: dtId("r"), name: personFor(props.people, "middle", state.rivals.map((x) => x.name)), motive: comp.text, where: settlement!.id, whereName: settlement!.name, since: props.day }];
+    }
+    props.commit({ character: { credits: Math.max(0, creditsNow), equipment: [...carried, item.name] }, downtime, days: daysNeeded, log: lines });
+    setMessage(lines);
+  };
+  const reverse = () => {
+    const found = enhanced.find((i) => i.name === pick);
+    if (!found) return;
+    const dc = DOWNTIME.reverseDc[found.searchableRarity] ?? 30;
+    const r = props.check({ ability: "intelligence", using: "tools" });
+    const ok = r.total >= dc;
+    const equipmentNow = [...carried];
+    equipmentNow.splice(equipmentNow.indexOf(found.name), 1);
+    const value = enhancedValue(found);
+    const lines = [`Taking ${found.name} apart (1 hour): ${r.roll} ${r.bonus >= 0 ? "+" : "-"} ${Math.abs(r.bonus)} = ${r.total} against DC ${dc}.`];
+    const downtime: Partial<DowntimeState> = {};
+    let creditsNow = credits;
+    if (ok) {
+      downtime.blueprints = Array.from(new Set([...state.blueprints, found.name]));
+      creditsNow += Math.round(value / 4);
+      lines.push(`The blueprint is learned, and half the raw materials (${money(Math.round(value / 4))}) are recovered.`);
+    } else lines.push("It comes apart for nothing: the item is destroyed and no blueprint is learned.");
+    props.commit({ character: { credits: creditsNow, equipment: equipmentNow }, downtime, days: 0, log: lines });
+    setMessage(lines);
+  };
+  const buildEnhanced = () => {
+    const found = enhanced.find((i) => i.name === pick);
+    if (!found || !state.blueprints.includes(found.name)) return;
+    const rarity = found.searchableRarity as string;
+    const needsRare = !["Standard", "Premium"].includes(rarity);
+    if (needsRare && !(state.rare[rarity] > 0)) return void toast.error(`A rare ingredient from a creature of challenge ${DOWNTIME.ingredients[rarity]?.cr.min}+ is needed.`);
+    const value = enhancedValue(found);
+    const raw = Math.ceil(value / 2);
+    if (credits < raw * 2) return void toast.error(`Raw materials worth up to ${money(raw * 2)} may be needed.`);
+    const days = Math.max(1, Math.ceil(value / 250));
+    const r = props.check({ ability: "intelligence", using: "tools" });
+    const m = checkModifier(r.total, 0);
+    const d100 = roll(100);
+    const modifier = DOWNTIME.ingredients[rarity]?.modifier ?? 0;
+    const row = resultRow(activity, d100 + m.bonus + modifier);
+    const factor = [2, 1.5, 1, 0.5, 0.25][activity.results.indexOf(row)] ?? 1;
+    const materials = Math.ceil(raw * factor);
+    const lines = [
+      `Check ${r.total}${m.met ? `, roll modifier +${m.bonus}` : ", no DC met"}; d100 ${d100} + ${m.bonus} ${modifier >= 0 ? "+" : "-"} ${Math.abs(modifier)} = ${d100 + m.bonus + modifier}: ${row.text}`,
+      `${found.name} made in ${days} day${days > 1 ? "s" : ""}; raw materials ${money(materials)}.`,
+    ];
+    const rare = { ...state.rare };
+    if (needsRare) rare[rarity] = Math.max(0, (rare[rarity] ?? 0) - (activity.results.indexOf(row) >= 3 ? 0 : 1));
+    props.commit({ character: { credits: Math.max(0, credits - materials), equipment: [...carried, found.name] }, downtime: { rare }, days, log: lines });
+    setMessage(lines);
+  };
+  const ownedEnhanced = carried.map((n) => enhanced.find((i) => i.name === n)).filter(Boolean) as any[];
+  return (
+    <div className="space-y-2" data-testid="downtime-crafting">
+      <div className="flex gap-1">
+        {(["craft", "blueprint", "reverse"] as const).map((m) => (
+          <Button key={m} size="sm" variant={mode === m ? "default" : "outline"} className="h-7 px-2" onClick={() => { setMode(m); setPick(""); }}>
+            {m === "craft" ? "Craft gear" : m === "blueprint" ? "From a blueprint" : "Take apart"}
+          </Button>
+        ))}
+      </div>
+      {mode === "craft" && (
+        <div className="space-y-2">
+          <input className="h-7 w-full rounded bg-gray-700 px-1 text-xs" placeholder="Find an item" value={find} onChange={(e) => setFind(e.target.value)} />
+          <select className="h-8 w-full rounded bg-gray-700 px-1" value={pick} onChange={(e) => setPick(e.target.value)} data-testid="downtime-craft-pick">
+            <option value="">An item to make</option>
+            {craftable.slice(0, 120).map((e) => (
+              <option key={e.name} value={e.name}>{e.name} ({money(e.cost)})</option>
+            ))}
+          </select>
+          {item && tool && (
+            <p className="text-xs text-gray-300">
+              Needs {tool.name}{has ? "" : " (you do not carry it)"}, raw materials worth {money(Math.ceil(item.cost / 2))}, {Math.max(1, Math.ceil(item.cost / 250))} day(s).
+            </p>
+          )}
+          <Button size="sm" onClick={craft} disabled={!item || !has || credits < Math.ceil((item?.cost ?? 0) / 2) * 2} data-testid="downtime-craft">Craft it</Button>
+        </div>
+      )}
+      {mode === "blueprint" && (
+        <div className="space-y-2">
+          <select className="h-8 w-full rounded bg-gray-700 px-1" value={pick} onChange={(e) => setPick(e.target.value)}>
+            <option value="">A blueprint you know</option>
+            {state.blueprints.map((b) => (
+              <option key={b} value={b}>{b}</option>
+            ))}
+          </select>
+          <p className="text-xs text-gray-300">Rare ingredients held: {Object.entries(state.rare).filter(([, n]) => n > 0).map(([r, n]) => `${r} ${n}`).join(", ") || "none"}. Standard and premium items waive them (the book suggests it).</p>
+          <Button size="sm" onClick={buildEnhanced} disabled={!pick}>Make it</Button>
+        </div>
+      )}
+      {mode === "reverse" && (
+        <div className="space-y-2">
+          <select className="h-8 w-full rounded bg-gray-700 px-1" value={pick} onChange={(e) => setPick(e.target.value)} data-testid="downtime-reverse-pick">
+            <option value="">An enhanced item you carry</option>
+            {ownedEnhanced.map((i, k) => (
+              <option key={`${i.id}-${k}`} value={i.name}>{i.name} ({i.searchableRarity}, DC {DOWNTIME.reverseDc[i.searchableRarity]})</option>
+            ))}
+          </select>
+          <Button size="sm" onClick={reverse} disabled={!pick} data-testid="downtime-reverse">Take it apart (1 hour)</Button>
+        </div>
+      )}
+      {message.map((m, i) => (
+        <p key={i} className="text-xs text-gray-200">{m}</p>
+      ))}
+    </div>
+  );
+}
+
+// Training (Wretched Hives): so many workweeks and so much a workweek for a language, weapon,
+// tool, skill, saving throw or feat; each workweek ends in a check and a d100 that advances it
+function TrainingActivity(props: DowntimeProps) {
+  const { character, state, equipment } = props;
+  const activity = downtimeActivity("training")!;
+  const credits = Number(character?.credits) || 0;
+  const options = trainingOptions();
+  const [optionId, setOptionId] = useState(options[0]?.id ?? "");
+  const [topic, setTopic] = useState("");
+  const [message, setMessage] = useState<string[]>([]);
+  const option = options.find((o) => o.id === optionId);
+  const topics: string[] = !option
+    ? []
+    : option.kind === "language"
+      ? lookupData.languages
+      : option.kind === "skill"
+        ? SKILLS.map((s) => s.name)
+        : option.kind === "save"
+          ? ["Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"]
+          : option.kind === "tool"
+            ? props.tools.map((t) => t.name)
+            : option.kind === "weapon"
+              ? Array.from(new Set(equipment.filter((e) => e.equipmentCategory === "Weapon").map((e) => String(e.weaponClassification ?? "").replace(/([a-z])([A-Z])/g, "$1 $2")).filter(Boolean)))
+              : feats.map((f) => f.name);
+  const weekly = (o: { perWeek: number | null }, t: string) => o.perWeek ?? Math.max(1, Math.round((equipment.find((e) => e.name.toLowerCase() === t.toLowerCase())?.cost ?? 100)));
+  const start = () => {
+    if (!option || !topic) return;
+    const per = weekly(option, topic);
+    const entry = { id: dtId("t"), option: option.id, label: `${option.label}: ${topic}`, topic, weeks: option.weeks, perWeek: per, done: 0 };
+    props.commit({ downtime: { training: [...state.training, entry] }, days: 0, log: [`Training begun: ${entry.label}, ${entry.weeks} workweeks at ${money(per)} a workweek.`] });
+    setMessage([`Training begun: ${entry.label}.`]);
+  };
+  const abilityFor = (t: { option: string; topic: string }) => {
+    const kind = t.option.split("-")[0];
+    if (kind === "skill") return SKILLS.find((s) => s.name === t.topic)?.ability?.toLowerCase() ?? "intelligence";
+    if (kind === "save") return t.topic.toLowerCase();
+    if (kind === "weapon") return "strength";
+    return "intelligence";
+  };
+  const week = (t: DowntimeState["training"][number]) => {
+    if (credits < t.perWeek) return void toast.error(`${money(t.perWeek)} needed for the workweek.`);
+    const ability = abilityFor(t);
+    const kind = t.option.split("-")[0];
+    const r = props.check({ ability, using: kind === "skill" ? t.topic.toLowerCase() : kind === "tool" ? t.topic.toLowerCase() : "training" });
+    const m = checkModifier(r.total, 0);
+    const d100 = roll(100);
+    const row = resultRow(activity, d100 + m.bonus);
+    const out = outcomeOf(row.text);
+    const advance = out.advance || 0.5;
+    const done = t.done + advance;
+    const lines = [`${t.label}: check ${r.total}${m.met ? ` (+${m.bonus})` : ", no DC met"}, d100 ${d100 + m.bonus}: ${row.text}`];
+    let creditsNow = credits - t.perWeek;
+    const downtime: Partial<DowntimeState> = {};
+    const charChanges: Record<string, any> = {};
+    let remaining = state.training.map((x) => (x.id === t.id ? { ...x, done } : x));
+    if (done >= t.weeks) {
+      remaining = remaining.filter((x) => x.id !== t.id);
+      const level = t.option.split("-")[1] ?? "proficiency";
+      const name = t.topic;
+      if (kind === "language") charChanges.languages = Array.from(new Set([...(character.languages ?? []), name]));
+      else if (kind === "weapon") charChanges.weaponProficiencies = Array.from(new Set([...(character.weaponProficiencies ?? []), name]));
+      else if (kind === "feat") charChanges.feats = [...(character.feats ?? []), name];
+      else if (level === "training") downtime.trained = Array.from(new Set([...state.trained, name.toLowerCase()]));
+      else if (level === "expertise") downtime.expertise = Array.from(new Set([...state.expertise, name.toLowerCase()]));
+      else if (kind === "skill") charChanges.skillProficiencies = Array.from(new Set([...(character.skillProficiencies ?? []), name]));
+      else if (kind === "tool") charChanges.toolProficiencies = Array.from(new Set([...(character.toolProficiencies ?? []), name]));
+      else if (kind === "save") charChanges.savingThrowProficiencies = Array.from(new Set([...(character.savingThrowProficiencies ?? []), name.toLowerCase()]));
+      lines.push(`Training complete: ${t.label} (${level}).`);
+    }
+    downtime.training = remaining;
+    // A complication for each failure at the checks (the book: or every five workweeks)
+    if (!m.met || Math.floor(done / 5) > Math.floor(t.done / 5)) {
+      const comp = applyComplication(props, activity, undefined, false, 1);
+      if (comp) lines.push(`Complication: ${comp.text}`);
+    }
+    charChanges.credits = creditsNow;
+    props.commit({ character: charChanges, downtime, days: WORKWEEK, log: lines });
+    setMessage(lines);
+  };
+  return (
+    <div className="space-y-2" data-testid="downtime-training">
+      {state.training.length > 0 && (
+        <div className="space-y-1">
+          {state.training.map((t) => (
+            <div key={t.id} className="flex items-center justify-between gap-2 rounded bg-gray-700 p-2">
+              <span>{t.label}: {t.done}/{t.weeks} workweeks</span>
+              <Button size="sm" disabled={credits < t.perWeek} onClick={() => week(t)} data-testid="downtime-train-week">Train a workweek ({money(t.perWeek)})</Button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="space-y-2">
+        <select className="h-8 w-full rounded bg-gray-700 px-1" value={optionId} onChange={(e) => { setOptionId(e.target.value); setTopic(""); }} data-testid="downtime-train-option">
+          {options.map((o) => (
+            <option key={o.id} value={o.id}>{o.label} ({o.weeks} workweeks, {o.perWeek ? money(o.perWeek) : "the tool's value"} each)</option>
+          ))}
+        </select>
+        <select className="h-8 w-full rounded bg-gray-700 px-1" value={topic} onChange={(e) => setTopic(e.target.value)} data-testid="downtime-train-topic">
+          <option value="">What to train in</option>
+          {topics.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </select>
+        <p className="text-xs text-gray-400">Training is half proficiency, proficiency or expertise as the book's three tiers; the half and expert tiers count in downtime checks.</p>
+        <Button size="sm" disabled={!topic} onClick={start} data-testid="downtime-train-start">Find a teacher and begin</Button>
+      </div>
+      {message.map((m, i) => (
+        <p key={i} className="text-xs text-gray-200">{m}</p>
+      ))}
     </div>
   );
 }

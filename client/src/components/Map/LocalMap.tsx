@@ -5,8 +5,8 @@ import * as THREE from "three";
 import { useKeyboardControls } from "@react-three/drei";
 import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
-import { useCombat, attackPlan, cannotAct, pickTarget, reachable, onPartySide } from "@/lib/stores/useCombat";
-import { type Companion, type PartyVehicle, type Vehicle } from "@shared/logic";
+import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide } from "@/lib/stores/useCombat";
+import { type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
 import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, ALERT, START_TIME, daylight, hourOf, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind, type TokenKind } from "./sprites";
@@ -1916,6 +1916,129 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
       <Rig target={[0, 0, 0]} offset={[0, reach * 0.95, reach * 0.75]} min={4} max={90} fov={45} />
       <ambientLight intensity={0.75} />
       <directionalLight position={[10, 26, 12]} intensity={0.9} castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-20} shadow-camera-right={20} shadow-camera-top={20} shadow-camera-bottom={-20} />
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// A fight between starships, in open space: a grid of 50-foot squares (shared/logic "Starship
+// combat"), the ships on it facing the way they fly, the squares the party's ship can fly to lit
+// on its turn, and the forward arc its fixed guns cover. A tap on a lit square flies there, a tap
+// on an enemy picks it out.
+// ---------------------------------------------------------------------------------------------
+
+const SHIP_FOOTPRINT: Record<string, [number, number]> = { Tiny: [0.9, 0.6], Small: [1.3, 0.9], Medium: [2.1, 1.4], Large: [3.2, 1.9], Huge: [4.4, 2.6], Gargantuan: [6, 3.4] };
+
+export function SpaceScene() {
+  const { fight, partyShipId, targetId, move, setTarget } = useShipFight();
+  if (!fight) return null;
+  const me = fight.ships.find((s) => s.id === partyShipId);
+  const current = fight.ships[fight.turn];
+  const myTurn = !!me && current?.id === me.id && !me.disabled && !me.destroyed && !fight.outcome;
+  const steps = myTurn && me ? shipReach(fight, me.id) : new Map<string, { cost: number }>();
+  const cx = fight.width / 2;
+  const cz = fight.height / 2;
+  const reach = Math.max(fight.width, fight.height) * 0.9 + 4;
+  const target = fight.ships.find((s) => s.id === targetId && !s.destroyed && !s.fled);
+  const at = (x: number, y: number): V3 => [x + 0.5 - cx, 0, y + 0.5 - cz];
+  const arc = me ? SHIP_FACINGS[me.facing] : null;
+
+  const tapSquare = (x: number, y: number) => {
+    const there = fight.ships.find((s) => !s.destroyed && !s.fled && s.x === x && s.y === y);
+    if (there && there.side === "foe") setTarget(there.id);
+    else if (myTurn && steps.get(`${x},${y}`)?.cost) move(x, y);
+  };
+
+  return (
+    <>
+      <color attach="background" args={["#03050a"]} />
+      <Stars radius={90} depth={40} count={1400} factor={4} saturation={0} fade speed={0} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]} onClick={(e) => {
+        e.stopPropagation();
+        if (e.delta > 8) return;
+        tapSquare(Math.floor(e.point.x + cx), Math.floor(e.point.z + cz));
+      }}>
+        <planeGeometry args={[fight.width, fight.height]} />
+        <meshBasicMaterial color="#080d18" transparent opacity={0.9} />
+      </mesh>
+      <gridHelper args={[Math.max(fight.width, fight.height), Math.max(fight.width, fight.height), "#1d2a44", "#121a2c"]} position={[0, 0, 0]} />
+      {fight.hazards.map((h, i) => (
+        <group key={i} position={at(h.x, h.y)}>
+          <mesh position={[0, 0.35, 0]}><dodecahedronGeometry args={[0.42, 0]} /><meshStandardMaterial color="#6f6a63" roughness={1} /></mesh>
+        </group>
+      ))}
+      {Array.from(steps.entries()).filter(([, v]) => v.cost > 0).map(([k]) => {
+        const [x, y] = k.split(",").map(Number);
+        return (
+          <mesh key={k} rotation={[-Math.PI / 2, 0, 0]} position={[x + 0.5 - cx, 0.02, y + 0.5 - cz]}>
+            <planeGeometry args={[0.9, 0.9]} />
+            <meshBasicMaterial color="#4ade80" transparent opacity={0.22} depthWrite={false} />
+          </mesh>
+        );
+      })}
+      {me && target && !me.destroyed && (
+        <Line points={[[me.x + 0.5 - cx, 0.6, me.y + 0.5 - cz], [target.x + 0.5 - cx, 0.6, target.y + 0.5 - cz]]} color="#f87171" lineWidth={1.5} dashed dashSize={0.4} gapSize={0.3} />
+      )}
+      {me && arc && !me.destroyed && myTurn && (
+        <mesh position={[me.x + 0.5 - cx, 0.03, me.y + 0.5 - cz]} rotation={[-Math.PI / 2, 0, Math.atan2(arc[1], arc[0])]}>
+          <circleGeometry args={[10, 12, -Math.PI / 4, Math.PI / 2]} />
+          <meshBasicMaterial color="#fde047" transparent opacity={0.06} depthWrite={false} side={THREE.DoubleSide} />
+        </mesh>
+      )}
+      {fight.ships.map((s) => {
+        if (s.fled) return null;
+        const [w, h] = SHIP_FOOTPRINT[s.sheet.size] ?? [1.3, 0.9];
+        const [dx, dz] = SHIP_FACINGS[s.facing];
+        const hullShare = Math.max(0, Math.min(1, s.hull / s.sheet.hullMax));
+        const shieldShare = s.sheet.shieldMax ? Math.max(0, Math.min(1, s.shield / s.sheet.shieldMax)) : 0;
+        const side = s.side === "party" ? SIDE_COLORS.player : SIDE_COLORS.hostile;
+        return (
+          <group key={s.id} position={at(s.x, s.y)}>
+            {!s.destroyed && (
+              <group rotation={[0, -Math.atan2(dz, dx), 0]}>
+                <group position={[-w / 2, 0.1, -h / 2]}>
+                  <ShipModel ship={{ size: s.sheet.size, role: s.sheet.role, status: s.disabled ? "wrecked" : "orbiting" }} w={w} h={h} />
+                </group>
+              </group>
+            )}
+            {s.destroyed && <mesh position={[0, 0.3, 0]}><dodecahedronGeometry args={[0.35, 0]} /><meshStandardMaterial color="#3b3835" emissive="#7c2d12" emissiveIntensity={0.6} /></mesh>}
+            {!s.destroyed && current?.id === s.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}><ringGeometry args={[Math.max(w, h) * 0.55, Math.max(w, h) * 0.55 + 0.08, 32]} /><meshBasicMaterial color="#fde047" /></mesh>}
+            {!s.destroyed && targetId === s.id && s.side === "foe" && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}><ringGeometry args={[Math.max(w, h) * 0.62, Math.max(w, h) * 0.62 + 0.08, 4]} /><meshBasicMaterial color="#f87171" /></mesh>}
+            {!s.destroyed && (
+              <Billboard position={[0, 1.6 + h * 0.4, 0]}>
+                <mesh><planeGeometry args={[1.2, 0.1]} /><meshBasicMaterial color="#111111" /></mesh>
+                <mesh position={[-0.6 * (1 - Math.max(0.001, hullShare)), 0, 0.001]}><planeGeometry args={[1.2 * Math.max(0.001, hullShare), 0.1]} /><meshBasicMaterial color={s.side === "party" ? "#4ade80" : "#f87171"} /></mesh>
+                {s.sheet.shieldMax > 0 && (
+                  <>
+                    <mesh position={[0, -0.13, 0]}><planeGeometry args={[1.2, 0.07]} /><meshBasicMaterial color="#111111" /></mesh>
+                    <mesh position={[-0.6 * (1 - Math.max(0.001, shieldShare)), -0.13, 0.001]}><planeGeometry args={[1.2 * Math.max(0.001, shieldShare), 0.07]} /><meshBasicMaterial color="#38bdf8" /></mesh>
+                  </>
+                )}
+                <Text position={[0, 0.25, 0]} fontSize={0.26} color={side} anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#000000">{s.name}</Text>
+              </Billboard>
+            )}
+            {!s.destroyed && s.side === "foe" && <Hit at={[0, 0.6, 0]} size={[Math.max(w, 1.2), 1.4, Math.max(h, 1.2)]} onTap={() => setTarget(s.id)} />}
+          </group>
+        );
+      })}
+      <Probe
+        locate={(key) => {
+          if (key === "me" && me) return [me.x + 0.5 - cx, 0.4, me.y + 0.5 - cz];
+          if (key.startsWith("foe:")) {
+            const foes = fight.ships.filter((s) => s.side === "foe" && !s.destroyed);
+            const who = foes[Number(key.slice(4)) || 0];
+            return who ? [who.x + 0.5 - cx, 0.4, who.y + 0.5 - cz] : undefined;
+          }
+          if (key.startsWith("sq:")) {
+            const [x, y] = key.slice(3).split(",").map(Number);
+            return [x + 0.5 - cx, 0, y + 0.5 - cz];
+          }
+          return undefined;
+        }}
+      />
+      <Rig target={[-fight.width * 0.1, 0, 0]} offset={[0, reach * 1.1, reach * 0.62]} min={5} max={110} fov={45} />
+      <ambientLight intensity={0.9} />
+      <directionalLight position={[10, 26, 12]} intensity={0.9} />
     </>
   );
 }

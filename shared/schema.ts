@@ -166,6 +166,8 @@ export const insertCharacterSchema = z.object({
   toolProficiencies: z.array(z.string()).optional(),
   companionData: z.any().optional(),
   playState: z.any().optional(),
+  // Fighting styles and maneuvers chosen: { styles: string[], maneuvers: string[] }
+  fighterManeuvers: z.any().optional(),
   personalityTraits: z.array(z.string()).optional(),
   ideals: z.array(z.string()).optional(),
   bonds: z.array(z.string()).optional(),

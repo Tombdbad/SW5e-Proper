@@ -14,12 +14,120 @@ import { useCampaign } from "@/lib/stores/useCampaign";
 import { getClassById } from "@/lib/sw5e/classes";
 import { getSpeciesById } from "@/lib/sw5e/species";
 import { feats } from "@/lib/sw5e/feats";
+import { maneuvers as maneuverList } from "@/lib/sw5e/maneuvers";
+import { fightingStyles } from "@/lib/sw5e/fightingStyles";
 import {
   ABILITIES, applyLevelUp, archetypeOptions, calculateExperienceForNextLevel, characterFeatures, chooseArchetype,
   featAbilityOptions, featPrerequisiteUnmet, findArchetype, levelUpPlan, type LevelUpChoices,
+  combatChoicesOf, combatChoiceSlots, superiorityDice,
 } from "@/lib/sw5e/characterCalculation";
 
 const selectClass = "w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm";
+
+// The combat options a class gives to choose from: fighting styles and maneuvers. How many comes
+// from the class's features and table; what they do in a fight is read from their text.
+function CombatOptions({ character, onSave, saving }: { character: any; onSave: (changes: Record<string, any>) => void; saving: boolean }) {
+  const slots = combatChoiceSlots(character);
+  const saved = combatChoicesOf(character);
+  const [styles, setStyles] = useState<string[]>(saved.styles);
+  const [known, setKnown] = useState<string[]>(saved.maneuvers);
+  const [kind, setKind] = useState<string>("All");
+  useEffect(() => {
+    setStyles(saved.styles);
+    setKnown(saved.maneuvers);
+  }, [JSON.stringify(saved), character.level]);
+  if (slots.styles === 0 && slots.maneuvers === 0) return null;
+  const dice = superiorityDice({ ...character, fighterManeuvers: { styles, maneuvers: known } });
+  const proficient = (character.skillProficiencies ?? []).map((s: string) => s.toLowerCase());
+  // A maneuver may need the one it improves, or a skill; what cannot be checked is left to the player
+  const unmet = (m: (typeof maneuverList)[number]) => {
+    const need = m.prerequisite ?? "";
+    const base = need.match(/^(.+?) maneuver$/i)?.[1];
+    if (base && !known.includes(base)) return `needs ${base}`;
+    const skill = need.match(/^Proficiency in (\w[\w ]*)$/i)?.[1];
+    if (skill && !proficient.includes(skill.toLowerCase())) return `needs proficiency in ${skill}`;
+    return null;
+  };
+  const stylesOver = styles.length > slots.styles;
+  const dirty = JSON.stringify([styles, known]) !== JSON.stringify([saved.styles, saved.maneuvers]);
+  return (
+    <Card className="bg-gray-800 border-gray-700 mb-6" data-testid="combat-options">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-yellow-400 text-lg">Combat options</CardTitle>
+      </CardHeader>
+      <CardContent className="p-4 pt-0 space-y-4 text-sm">
+        {slots.styles > 0 && (
+          <div className="space-y-1">
+            <p className="font-semibold">Fighting style ({styles.length} of {slots.styles})</p>
+            <select
+              aria-label="Fighting style"
+              className={selectClass}
+              value=""
+              disabled={styles.length >= slots.styles}
+              onChange={(e) => e.target.value && setStyles([...styles, e.target.value])}
+            >
+              <option value="">{styles.length >= slots.styles ? "All chosen" : "Choose a fighting style"}</option>
+              {fightingStyles.filter((f) => !styles.includes(f.name)).map((f) => (
+                <option key={f.id} value={f.name}>{f.name}</option>
+              ))}
+            </select>
+            <div className="space-y-1">
+              {styles.map((name) => (
+                <details key={name} className="bg-gray-900 rounded p-2">
+                  <summary className="cursor-pointer">
+                    {name}{" "}
+                    <button className="ml-2 text-xs text-red-300 underline" onClick={(e) => { e.preventDefault(); setStyles(styles.filter((n) => n !== name)); }}>remove</button>
+                  </summary>
+                  <p className="text-xs text-gray-300 whitespace-pre-line mt-1">{fightingStyles.find((f) => f.name === name)?.description}</p>
+                </details>
+              ))}
+            </div>
+          </div>
+        )}
+        {(slots.maneuvers > 0 || known.length > 0) && (
+          <div className="space-y-1">
+            <p className="font-semibold">
+              Maneuvers ({known.length} of {slots.maneuvers}){dice ? `; ${dice.count} superiority ${dice.count === 1 ? "die" : "dice"}, d${dice.size}` : ""}
+            </p>
+            <div className="flex gap-1 flex-wrap">
+              {["All", "Physical", "Mental", "General"].map((k) => (
+                <Button key={k} size="sm" variant={kind === k ? "default" : "outline"} className="h-6 px-2" onClick={() => setKind(k)}>{k}</Button>
+              ))}
+            </div>
+            <div className="max-h-72 overflow-y-auto space-y-1" data-testid="maneuver-list">
+              {maneuverList.filter((m) => kind === "All" || m.type === kind).map((m) => {
+                const on = known.includes(m.name);
+                const blocked = !on && (known.length >= slots.maneuvers || !!unmet(m));
+                return (
+                  <label key={m.id} className={`block bg-gray-900 rounded p-2 ${blocked ? "opacity-50" : ""}`}>
+                    <span className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        disabled={blocked}
+                        onChange={() => setKnown(on ? known.filter((n) => n !== m.name) : [...known, m.name])}
+                        aria-label={m.name}
+                      />
+                      <span>
+                        <span className="font-medium">{m.name}</span>{" "}
+                        <span className="text-xs text-gray-400">{m.type}{m.prerequisite ? `; ${m.prerequisite}` : ""}{unmet(m) && !on ? `; ${unmet(m)}` : ""}</span>
+                        <span className="block text-xs text-gray-300">{m.description.slice(0, 220)}{m.description.length > 220 ? "…" : ""}</span>
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <Button disabled={saving || stylesOver || !dirty || known.length > slots.maneuvers} onClick={() => onSave({ fighterManeuvers: { styles, maneuvers: known } })}>
+          Save combat options
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 
 // Gaining a level when the experience is there, or taking an archetype that is due. What a level
 // gives comes from the class table; the choices are the archetype (3rd level), an Ability Score
@@ -306,6 +414,7 @@ export default function CharacterManagement() {
         </header>
 
         <Advancement character={data} onSave={(changes) => updateCharacter.mutate(changes)} saving={updateCharacter.isPending} />
+        <CombatOptions character={data} onSave={(changes) => updateCharacter.mutate(changes)} saving={updateCharacter.isPending} />
 
         <Card className="bg-gray-800 border-gray-700">
           <CardContent className="p-3 md:p-6">

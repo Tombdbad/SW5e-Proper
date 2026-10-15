@@ -41,6 +41,8 @@ export async function open() {
 const results = [];
 let shot = 0;
 export async function step(ctx, name, fn) {
+  // ONLY=<regex> runs just the steps whose names match (the self-contained ones: gear, fights, downtime, ships)
+  if (process.env.ONLY && !new RegExp(process.env.ONLY, "i").test(name)) return;
   const { page, events } = ctx;
   const before = events.length;
   let ok = true;

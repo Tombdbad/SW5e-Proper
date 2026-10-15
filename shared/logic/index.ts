@@ -16,6 +16,9 @@
  * The edit and travel functions need only the world itself and run anywhere.
  */
 import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eRecord } from "../data";
+import conditionData from "../data/sw5e/conditions.json";
+import downtimeData from "../data/sw5e/downtime.json";
+import shipData from "../data/sw5e/ships.json";
 
 // ---------------------------------------------------------------------------------------------
 // Model
@@ -53,6 +56,9 @@ export interface Occupant {
   wounds?: number[];
   // `range` is the reach of a melee attack or the normal range of a ranged one, in feet; `long` its long range
   attack?: { name: string; bonus: number; damage: string; damageType?: string; ranged?: boolean; range?: number; long?: number };
+  // Everything else the stat block does in a fight: its other attacks, multiattack, area actions,
+  // traits and reactions (see statProfile). Worlds made before have only `attack`.
+  profile?: StatProfile;
   // Walking speed in feet, size and creature type, as the stat block gives them
   speed?: number;
   size?: string;
@@ -79,6 +85,10 @@ export interface Ship {
   role: string;
   tier: number;
   status: "landed" | "docked" | "orbiting" | "wrecked";
+  // Beaten in a fight but not destroyed: it can be taken as a prize
+  disabled?: boolean;
+  // Hull points left after a fight (the party's ships; absent: undamaged)
+  hull?: number;
   owner: string;
   // Names from the starship equipment data
   equipment: string[];
@@ -691,6 +701,270 @@ const attackRange = (text = ""): { range?: number; long?: number } => {
   return found ? { range: Number(found[1]), ...(found[2] ? { long: Number(found[2]) } : {}) } : {};
 };
 
+// ---------------------------------------------------------------------------------------------
+// What a stat block does in a fight, read from its actions, traits and reactions. The numbers are
+// the ones printed in the text; only the wording is matched here, never a creature's name.
+// ---------------------------------------------------------------------------------------------
+
+// A saving throw that comes with a hit or an action: "a DC 15 Constitution saving throw, taking
+// 18 (4d8) poison damage on a failed save, or half as much on a successful one", "or become frightened"
+export interface StatSave {
+  dc: number;
+  ability: string;
+  damage?: string;
+  damageType?: string;
+  half?: boolean;
+  conditions?: string[];
+  // Turns the conditions last (10 to the minute)
+  rounds?: number;
+}
+
+export interface StatAttack {
+  name: string;
+  bonus: number;
+  damage: string;
+  damageType?: string;
+  ranged: boolean;
+  // Reach, or the normal range of a ranged attack, in feet; `long` is the long range
+  range: number;
+  long?: number;
+  // What the hit brings with it: extra damage and a saving throw
+  extra?: { dice: string; type?: string };
+  save?: StatSave;
+}
+
+export interface StatSpecial extends Partial<StatSave> {
+  name: string;
+  text: string;
+  // The area it fills: "30-foot cone", "10-foot cube", "10-foot-radius sphere", and how far away it can be aimed
+  shape?: "cone" | "cube" | "sphere" | "line" | "cylinder";
+  size?: number;
+  range?: number;
+  // Limits: recharges on this roll of a d6 or more, so many times in a fight
+  recharge?: number;
+  perFight?: number;
+}
+
+export interface StatTrait {
+  name: string;
+  text: string;
+  kind: "packTactics" | "regeneration" | "charge" | "reckless" | "sneakAttack" | "aggressive" | "legendaryResistance" | "flyby" | "evasion" | "forceResistance" | "other";
+  // Hit points regained, the feet a charge needs, the extra damage, uses a day
+  amount?: number;
+  feet?: number;
+  dice?: string;
+  type?: string;
+  save?: StatSave;
+}
+
+export interface StatReaction {
+  name: string;
+  text: string;
+  kind: "acBonus" | "halve" | "other";
+  amount?: number;
+  against?: "melee" | "ranged" | "any";
+}
+
+export interface StatProfile {
+  attacks: StatAttack[];
+  // The attacks made on its turn, by name, in order ("makes two attacks: one with its bite and one with its claws")
+  multiattack?: string[];
+  specials: StatSpecial[];
+  traits: StatTrait[];
+  reactions: StatReaction[];
+  resistances?: string[];
+  vulnerabilities?: string[];
+  immunities?: string[];
+  conditionImmunities?: string[];
+}
+
+const COUNT_WORDS: Record<string, number> = { one: 1, a: 1, an: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 };
+const ABILITY_NAMES = "Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma";
+const DICE = "\\d+d\\d+(?:\\s*[+-]\\s*\\d+)?";
+const compactDice = (dice: string) => dice.replace(/\s+/g, " ").replace(/ ?([+-]) ?/g, " $1 ").trim();
+const conditionNames: string[] = (conditionData as { name: string }[]).map((c) => c.name.toLowerCase());
+const conditionPattern = new RegExp(`\\b(?:be|become|becomes|is|are|been|gain|gains|knocked)\\s+(?:also\\s+|then\\s+)?(${conditionNames.join("|")})\\b`, "gi");
+
+// How long an effect lasts in turns (10 to the minute); an unstated duration is one turn
+const roundsOf = (text: string): number => {
+  const span = text.match(/for (?:up to )?(\d+) (round|minute|hour)/i);
+  if (span) return Math.min(100, Number(span[1]) * ({ round: 1, minute: 10, hour: 600 } as Record<string, number>)[span[2].toLowerCase()]);
+  return 1;
+};
+
+// "must succeed on a DC 15 Constitution saving throw ... or be paralyzed": the DC, the damage on a
+// failed save and the conditions
+function saveIn(text: string): StatSave | undefined {
+  const found = text.match(new RegExp(`DC (\\d+) (${ABILITY_NAMES}) saving throw`, "i"));
+  if (!found) return undefined;
+  const after = text.slice(found.index! + found[0].length);
+  const damage = after.match(new RegExp(`(?:taking|takes?|suffer\\w*) (?:an extra |an additional )?\\d+ \\((${DICE})\\) (\\w+) damage`, "i"));
+  const conditions: string[] = [];
+  for (const c of after.matchAll(conditionPattern)) if (!conditions.includes(c[1].toLowerCase())) conditions.push(c[1].toLowerCase());
+  // "knocked prone" and the like are caught by the pattern; so are "is also poisoned"
+  return {
+    dc: Number(found[1]),
+    ability: found[2].toLowerCase(),
+    ...(damage ? { damage: compactDice(damage[1]), damageType: damage[2].toLowerCase() } : {}),
+    half: /half as much|half damage/i.test(after),
+    ...(conditions.length ? { conditions, rounds: roundsOf(after) } : {}),
+  };
+}
+
+// The attacks named in a Multiattack, by name and count: "makes four blaster rifle attacks",
+// "makes two attacks: one with its bite and one with its claws", "attacks twice with Force Saber",
+// "makes 2 Lightsaber Strikes". An action that is not a weapon attack is left out; when the text
+// names no attack the creature has, its best attack is made the stated number of times.
+function multiattackOf(text: string, attacks: StatAttack[]): string[] | undefined {
+  if (!attacks.length) return undefined;
+  const words = "one|two|three|four|five|six|seven|eight|once|twice|a|an|\\d+";
+  const countOf = (word: string) => ({ once: 1, twice: 2 } as Record<string, number>)[word] ?? COUNT_WORDS[word] ?? (Number(word) || 0);
+  const flat = (name: string) => name.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/ +/g, " ").trim();
+  const named = (a: StatAttack, within: string) => new RegExp(`\\b${flat(a.name)}s?\\b`).test(within);
+  const out: string[] = [];
+  for (const sentence of text.split(/(?<=\.)\s+/)) {
+    // Of two alternatives ("one bite attack or one pummel attack") the first is made
+    const plain = flat(sentence).split(/ or (?:uses?|takes?|can use|makes? (?:a|one|two))\b/)[0].split(/ or (?=(?:one|two|three|once|twice|\d+) )/)[0];
+    const parts: string[] = [];
+    // "one with its bite and two with its claws": a count before each "with"
+    for (const w of plain.matchAll(new RegExp(`\\b(${words})\\b(?: attacks?)? with (?:its |his |her |their |the |a |an )?([a-z0-9 ]+?)(?= and | or |$)`, "g"))) {
+      const target = attacks.find((a) => named(a, w[2]));
+      if (target) for (let i = 0; i < countOf(w[1]); i++) parts.push(target.name);
+    }
+    if (!parts.length) {
+      // "attacks twice with Force Saber", "makes two attacks with its blaster", "makes four blaster rifle attacks"
+      const total = plain.match(new RegExp(`\\b(?:attacks? (once|twice)|(one|two|three|four|five|six|seven|eight|\\d+) (?:[a-z0-9 ]+ )?attacks?)\\b`));
+      const count = total ? countOf(total[1] ?? total[2]) : 0;
+      if (count) {
+        const mentioned = attacks.filter((a) => named(a, plain));
+        const pool = mentioned.length ? mentioned : [[...attacks].sort((a, b) => b.bonus - a.bonus)[0]];
+        for (let i = 0; i < count; i++) parts.push(pool[i % pool.length].name);
+      } else {
+        // "makes 2 Lightsaber Strikes": a count, then the attack's name
+        for (const a of attacks) {
+          const m = plain.match(new RegExp(`\\b(${words}) ${flat(a.name)}s?\\b`));
+          if (m) for (let i = 0; i < countOf(m[1]); i++) parts.push(a.name);
+        }
+      }
+    }
+    out.push(...parts);
+  }
+  return out.length ? out : undefined;
+}
+
+// One weapon attack of a stat block. The data types most of them (attackType, attackBonus, damageRoll);
+// those it leaves untyped are read from their own text: "Melee Weapon Attack: +9 to hit, reach 10 ft.,
+// one target. Hit: 24 (4d8 + 6) kinetic damage."
+function attackFrom(b: NonNullable<Sw5eMonster["behaviors"]>[number]): StatAttack | undefined {
+  const text = b.description ?? "";
+  const hit = text.split(/Hit:/i)[1] ?? "";
+  const typed = (b.attackType === "MeleeWeapon" || b.attackType === "RangedWeapon") && !!b.damageRoll;
+  const written = text.match(/\b(melee|ranged)(?: or (?:melee|ranged))? (?:weapon|power|spell|tech|force) attack:\s*\+?(\d+) to hit/i);
+  if (!typed && !written) return undefined;
+  const damage = typed ? { dice: b.damageRoll!, type: b.damageType } : hit.match(new RegExp(`\\d+ \\((${DICE})\\) (\\w+) damage`, "i")) && { dice: hit.match(new RegExp(`\\d+ \\((${DICE})\\) (\\w+) damage`, "i"))![1], type: hit.match(new RegExp(`\\d+ \\((${DICE})\\) (\\w+) damage`, "i"))![2] };
+  if (!damage) return undefined;
+  const ranged = typed ? b.attackType === "RangedWeapon" : /^ranged/i.test(written![1]);
+  const feet = attackRange(typed ? b.range : text.match(/(?:reach|range) [^,]*ft/i)?.[0]);
+  const extra = hit.match(new RegExp(`(?:plus|and|an extra|additional)\\s+(?:an extra |an additional )?\\d+ \\((${DICE})\\) (\\w+) damage`, "i"));
+  const save = saveIn(hit);
+  return {
+    name: b.name,
+    bonus: typed ? b.attackBonus ?? 0 : Number(written![2]),
+    damage: compactDice(damage.dice),
+    damageType: damage.type?.toLowerCase(),
+    ranged,
+    range: feet.range ?? (ranged ? 80 : 5),
+    ...(feet.long ? { long: feet.long } : ranged && feet.range ? { long: feet.range * 4 } : {}),
+    ...(extra && !/saving throw[^.]*taking/i.test(extra[0]) ? { extra: { dice: compactDice(extra[1]), type: extra[2].toLowerCase() } } : {}),
+    ...(save ? { save } : {}),
+  };
+}
+
+// The stat block's fighting profile
+export function statProfile(monster: Sw5eMonster): StatProfile {
+  const behaviors = monster.behaviors ?? [];
+  const attacks: StatAttack[] = [];
+  for (const b of behaviors) {
+    if (b.monsterBehaviorType !== "Action" || /^multiattack/i.test(b.name)) continue;
+    const attack = attackFrom(b);
+    if (attack && !attacks.some((a) => a.name === attack.name)) attacks.push(attack);
+  }
+  const specials: StatSpecial[] = [];
+  const traits: StatTrait[] = [];
+  const reactions: StatReaction[] = [];
+  let multiattack: string[] | undefined;
+  for (const b of behaviors) {
+    const text = (b.description ?? "").trim();
+    const limit = String((b as any).restrictions ?? "");
+    if (b.monsterBehaviorType === "Action" && /^multiattack/i.test(b.name)) {
+      multiattack = multiattackOf(text, attacks);
+    } else if (b.monsterBehaviorType === "Action" && !attacks.some((a) => a.name === b.name) && !attackFrom(b)) {
+      const save = saveIn(text);
+      if (!save || !(save.damage || save.conditions)) continue;
+      const shape = text.match(/(\d+)-foot[- ](cone|cube|sphere|line|cylinder|radius)/i);
+      const reach = text.match(/within (\d+) f(?:ee|oo)t/i);
+      const recharge = limit.match(/Recharge (\d)/i);
+      const uses = limit.match(/(\d+)\/(?:day|rest)/i);
+      specials.push({
+        name: b.name,
+        text,
+        ...save,
+        ...(shape ? { shape: shape[2].toLowerCase() === "radius" ? "sphere" : (shape[2].toLowerCase() as StatSpecial["shape"]), size: Number(shape[1]) } : {}),
+        ...(reach ? { range: Number(reach[1]) } : {}),
+        ...(recharge ? { recharge: Number(recharge[1]) } : {}),
+        ...(uses ? { perFight: Number(uses[1]) } : /1\/turn/i.test(limit) ? { perFight: 99 } : {}),
+      });
+    } else if (b.monsterBehaviorType === "Trait") {
+      const name = b.name;
+      const trait: StatTrait = { name, text, kind: "other" };
+      if (/advantage on (?:an )?attack rolls? against a creature if[^.]*(?:at least one|an ally|allies)/i.test(text) || /^pack tactics/i.test(name)) trait.kind = "packTactics";
+      else if (/regains? (\d+) hit points at the start of (?:its|his|her) turn/i.test(text)) Object.assign(trait, { kind: "regeneration", amount: Number(text.match(/regains? (\d+) hit points/i)![1]) });
+      else if (/moves? at least (\d+) feet (?:straight )?toward[^.]*(?:and )?hits? (?:it|that|the target)/i.test(text)) {
+        const run = text.match(/moves? at least (\d+) feet/i)!;
+        const dice = text.match(new RegExp(`extra \\d+ \\((${DICE})\\) (\\w+) damage`, "i"));
+        Object.assign(trait, { kind: "charge", feet: Number(run[1]), ...(dice ? { dice: compactDice(dice[1]), type: dice[2].toLowerCase() } : {}), save: saveIn(text) });
+      } else if (/gain advantage on all melee weapon attack rolls[^.]*attack rolls against it have advantage/i.test(text)) trait.kind = "reckless";
+      else if (/extra (?:\d+ )?\((\d+d\d+)\)[^.]*damage[^.]*(?:advantage|surprise|within 5 feet of it)|(?:advantage|surprise)[^.]*extra (?:\d+ )?\((\d+d\d+)\)/i.test(text) && /once per turn|once on each|first round|surprise|advantage/i.test(text)) {
+        const dice = text.match(/extra (?:\d+ )?\((\d+d\d+)\)/i);
+        if (dice) Object.assign(trait, { kind: "sneakAttack", dice: dice[1], type: "" });
+      } else if (/bonus action[^.]*move up to (?:its|his|her) speed toward a hostile creature/i.test(text)) trait.kind = "aggressive";
+      else if (/fails? a saving throw[^.]*(?:can )?choose to succeed/i.test(text)) Object.assign(trait, { kind: "legendaryResistance", amount: Number(String(text.match(/(\d+)\/day/i)?.[1] ?? limit.match(/(\d+)\/day/i)?.[1] ?? 3)) });
+      else if (/doesn't provoke opportunity attacks when it flies out/i.test(text)) trait.kind = "flyby";
+      else if (/no damage if (?:it|he|she) succeeds on the saving throw/i.test(text) || /^evasion$/i.test(name)) trait.kind = "evasion";
+      else if (/advantage on saving throws against (?:force|powers|force powers)/i.test(text)) trait.kind = "forceResistance";
+      traits.push(trait);
+    } else if (b.monsterBehaviorType === "Reaction") {
+      const ac = text.match(/adds? (\d+) to (?:its|his|her|their) (?:AC|Armor Class)/i);
+      const reaction: StatReaction = { name: b.name, text, kind: "other" };
+      if (ac) Object.assign(reaction, { kind: "acBonus", amount: Number(ac[1]), against: /ranged/i.test(text) && !/melee/i.test(text) ? "ranged" : /melee/i.test(text) && !/ranged/i.test(text) ? "melee" : "any" });
+      else if (/halve/i.test(text) && /damage/i.test(text)) Object.assign(reaction, { kind: "halve", against: "any" });
+      reactions.push(reaction);
+    }
+  }
+  const list = (value: unknown) => (Array.isArray(value) ? value.map((v) => String(v).toLowerCase()) : []);
+  return {
+    attacks,
+    ...(multiattack?.length ? { multiattack } : {}),
+    specials,
+    traits,
+    reactions,
+    resistances: list(monster.damageResistances),
+    vulnerabilities: list(monster.damageVulnerabilities),
+    immunities: list(monster.damageImmunities),
+    conditionImmunities: list(monster.conditionImmunities),
+  };
+}
+
+// The profile as an occupant keeps it in the saved world: the texts of traits that do nothing in a fight are left out
+export function slimProfile(profile: StatProfile): StatProfile {
+  return {
+    ...profile,
+    specials: profile.specials.map(({ text: _text, ...rest }) => ({ ...rest, text: "" })),
+    traits: profile.traits.filter((t) => t.kind !== "other").map((t) => ({ ...t, text: "" })),
+    reactions: profile.reactions.filter((r) => r.kind !== "other").map((r) => ({ ...r, text: "" })),
+  };
+}
+
 // An occupant that uses a stat block: its combat figures and the gear it is shown using
 export function statBlockOccupant(monster: Sw5eMonster, equipment: Sw5eEquipment[], id: string, count = 1, role = "creature", disposition: Occupant["disposition"] = "hostile"): Occupant {
   const attacks = (monster.behaviors ?? []).filter((b) => (b.attackType === "MeleeWeapon" || b.attackType === "RangedWeapon") && b.damageRoll);
@@ -707,6 +981,7 @@ export function statBlockOccupant(monster: Sw5eMonster, equipment: Sw5eEquipment
     armorClass: monster.armorClass,
     hitPoints: monster.hitPoints,
     attack: best ? { name: best.name, bonus: best.attackBonus ?? 0, damage: best.damageRoll!, damageType: best.damageType?.toLowerCase(), ranged: best.attackType === "RangedWeapon", ...attackRange(best.range) } : undefined,
+    profile: slimProfile(statProfile(monster)),
     speed: Number(monster.speed) || 0,
     size: monster.size,
     creature: String(monster.types?.[0] ?? "").toLowerCase(),
@@ -829,7 +1104,7 @@ function makeShip(ctx: Context, sizes: string[], status: Ship["status"], owner: 
     id: nextId(ctx.world, "s"),
     name: uniqueName(ctx, () => `${r.pick(SHIP_WORDS[0])} ${r.pick(SHIP_WORDS[1])}`),
     size,
-    role: r.pick(SHIP_ROLES[size].roles),
+    role: r.pick(shipRoleNames(size)),
     tier: Math.min(5, Math.floor(ctx.world.partyLevel / 4)),
     status,
     owner,
@@ -2391,6 +2666,8 @@ export interface Customer {
   homeworld?: string;
   alignment?: string;
   standing: Standing;
+  // Allied and hostile contacts and rivals in the settlement (from downtime): they move how its people take to the customer
+  contacts?: { allied: number; hostile: number };
 }
 
 // Which way a faction leans, for how it takes to a character's alignment
@@ -2428,6 +2705,8 @@ export function attitudeOf(world: World, trader: Occupant, placeId: string, cust
   if (black && /lawful/i.test(customer.alignment ?? "")) add(-1, "you look like trouble with the law");
   const dealt = customer.standing.dealings[trader.id] ?? 0;
   if (dealt >= 3) add(dealt >= 10 ? 2 : 1, dealt >= 10 ? "a regular" : "a familiar face");
+  if (customer.contacts?.allied) add(Math.min(2, customer.contacts.allied), "friends in town");
+  if (customer.contacts?.hostile) add(-Math.min(2, customer.contacts.hostile), "enemies and rivals in town");
   return { score: Math.max(-4, Math.min(4, score)), reasons };
 }
 export const ATTITUDES = ["hostile", "cold", "wary", "cool", "neutral", "warm", "friendly", "generous", "devoted"];
@@ -3474,6 +3753,7 @@ export interface Companion {
   maxHp: number;
   hp: number;
   attack?: Occupant["attack"];
+  profile?: StatProfile;
   speed: number;
   saves?: Record<string, number>;
   cr?: string;
@@ -3524,6 +3804,7 @@ export function companionFrom(o: Occupant, kind: CompanionKind, joined: number, 
     maxHp: o.hitPoints ?? 4,
     hp: Math.max(1, Math.min(o.hitPoints ?? 4, hurt ?? o.hitPoints ?? 4)),
     attack: o.attack,
+    profile: o.profile,
     speed: o.speed || 30,
     saves: o.saves,
     cr: o.cr,
@@ -3727,4 +4008,1302 @@ export function withPartyShips<T extends World>(world: T, ships: PartyShip[]): T
     }
   }
   return { ...world, areas };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Downtime (Wretched Hives, Entertainment and Downtime). The tables and the words of every
+// activity come from the derived `downtime.json` (see deriveDowntime in the importer); what is
+// worked out here is the book's procedure: spend the money, make up to three checks (each one
+// after the first five harder), add the roll modifier to a d100, read the table, and see whether a
+// complication follows. Where the book leaves a result to the GM (who a contact is, what a piece
+// of lore says) a house rule decides, and says so in the result.
+// ---------------------------------------------------------------------------------------------
+
+export interface DowntimeRow {
+  min?: number;
+  max?: number;
+  text: string;
+}
+export interface DowntimeTable {
+  title: string;
+  die: number;
+  rows: { roll: number; text: string }[];
+}
+export interface DowntimeActivityData {
+  id: string;
+  name: string;
+  intro: string;
+  resources: string;
+  // Everything under Resources, its sub-headings too ("[Skill Training, ...] ...")
+  resourcesFull?: string;
+  resolution: string;
+  complicationText: string;
+  results: DowntimeRow[];
+  complications: DowntimeTable[];
+  uptime?: { resources: string; resolution: string; results?: { successes?: number; dc?: number; text: string }[] };
+}
+export interface DowntimeData {
+  rollModifier: { dc: number; bonus: number }[];
+  rivals: string[];
+  activities: DowntimeActivityData[];
+  sellers: Record<string, { dc: number; modifier: number }>;
+  ingredients: Record<string, { cr: { min: number; max?: number }; modifier: number }>;
+  blueprintDc: Record<string, number>;
+  reverseDc: Record<string, number>;
+  value: Record<string, { min: number; max?: number }>;
+  valueModifier: Record<string, number>;
+  buyers: Record<string, { days: string; modifier: number }>;
+}
+
+export const DOWNTIME = downtimeData as unknown as DowntimeData;
+export const downtimeActivity = (id: string): DowntimeActivityData | undefined => DOWNTIME.activities.find((a) => a.id === id);
+
+// A workweek is five days of work and two of rest
+export const WORKWEEK = 7;
+
+// A check's total against the DCs of the roll modifier table, the DCs raised by 5 for each check
+// made beyond the first: the modifier it earns, or none when it meets no DC
+export function checkModifier(total: number, attempt = 0): { bonus: number; met: boolean; dc: number | null } {
+  let best: { bonus: number; dc: number } | null = null;
+  for (const tier of DOWNTIME.rollModifier) if (total >= tier.dc + 5 * attempt) best = { bonus: tier.bonus, dc: tier.dc + 5 * attempt };
+  return best ? { bonus: best.bonus, met: true, dc: best.dc } : { bonus: 0, met: false, dc: null };
+}
+
+// The row of a d100 table a total lands on
+export function resultRow(activity: DowntimeActivityData, total: number): DowntimeRow {
+  const rows = activity.results;
+  return (
+    rows.find((r) => (r.min === undefined || total >= r.min) && (r.max === undefined || total <= r.max)) ??
+    (total < (rows[0].max ?? 40) ? rows[0] : rows[rows.length - 1])
+  );
+}
+
+// What an activity asks, read from its Resources and Resolution text
+export interface ActivitySpec {
+  id: string;
+  name: string;
+  // Workweeks it takes (the days of an activity that is not measured in workweeks)
+  workweeks: number;
+  days?: number;
+  // The least money that has to be spent
+  cost: number;
+  // Costs by the social class dealt with (carousing, espionage)
+  tiers?: { cls: "lower" | "middle" | "upper"; cost: number }[];
+  // A stake, between a least and a most (gambling)
+  stake?: { min: number; max: number };
+  // A bonus of +1 for each so many credits beyond so many, up to a maximum (bounty hunting, research)
+  spendBonus?: { per: number; beyond: number; max: number };
+  // The checks that may be made: ability, and the skill or tool in brackets
+  checks: { ability: string; using: string }[];
+  // Up to three checks, each after the first five harder
+  multi: boolean;
+  // An entry fee and the rent of a vehicle (racing)
+  entry?: number;
+  rent?: number;
+}
+
+const money = (s: string) => Number(s.replace(/,/g, ""));
+
+export function activitySpec(activity: DowntimeActivityData): ActivitySpec {
+  const text = `${activity.resources} ${activity.resolution}`;
+  const first = activity.resources.match(/([\d,]+)\s*cr/);
+  const tiers = activity.resources.match(/lower-, middle-, or upper-class costs ([\d,]+), ([\d,]+),? or ([\d,]+) cr/i);
+  const stake = activity.resources.match(/stake of at least ([\d,]+) cr to a maximum of ([\d,]+) cr/i);
+  const bonus = text.match(/\+1 bonus per ([\d,]+) cr (?:spent )?beyond the initial ([\d,]+) cr, up to a maximum bonus of \+(\d+)/i);
+  const abilities = "Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma";
+  const checks: { ability: string; using: string }[] = [];
+  for (const m of activity.resolution.matchAll(new RegExp(`(${abilities}) \\(([^)]+)\\)`, "g"))) {
+    if (!checks.some((c) => c.ability === m[1].toLowerCase() && c.using === m[2].toLowerCase())) checks.push({ ability: m[1].toLowerCase(), using: m[2].toLowerCase() });
+  }
+  // "an Intelligence check with the appropriate gaming set / artisan's tools"
+  for (const m of activity.resolution.matchAll(new RegExp(`(${abilities}) check with (?:the appropriate|a|an) ([a-z' ]+?)(?:[,.]| or )`, "g"))) {
+    const using = /gaming/i.test(m[2]) ? "gaming set" : /artisan|tools/i.test(m[2]) ? "tools" : m[2].trim();
+    if (!checks.some((c) => c.using === using)) checks.push({ ability: m[1].toLowerCase(), using });
+  }
+  if (/attack roll using one of the character's weapons/i.test(activity.resolution)) checks.push({ ability: "strength", using: "attack roll" });
+  const days = activity.resources.match(/at least (\w+) days/i);
+  const entry = activity.resources.match(/([\d,]+) cr entry fee/i);
+  const rent = activity.resources.match(/rent one for ([\d,]+) cr/i);
+  return {
+    id: activity.id,
+    name: activity.name,
+    workweeks: 1,
+    ...(days ? { days: ({ five: 5, ten: 10, seven: 7 } as Record<string, number>)[days[1].toLowerCase()] ?? Number(days[1]) } : {}),
+    cost: first ? money(first[1]) : 0,
+    ...(tiers ? { tiers: [{ cls: "lower" as const, cost: money(tiers[1]) }, { cls: "middle" as const, cost: money(tiers[2]) }, { cls: "upper" as const, cost: money(tiers[3]) }] } : {}),
+    ...(stake ? { stake: { min: money(stake[1]), max: money(stake[2]) } } : {}),
+    ...(bonus ? { spendBonus: { per: money(bonus[1]), beyond: money(bonus[2]), max: Number(bonus[3]) } } : {}),
+    checks,
+    multi: /at least one, but up to three/i.test(activity.resolution),
+    ...(entry ? { entry: money(entry[1]) } : {}),
+    ...(rent ? { rent: money(rent[1]) } : {}),
+  };
+}
+
+// The bonus that spending more earns (+1 for each so many credits beyond the least)
+export function spendBonus(spec: ActivitySpec, spent: number): number {
+  if (!spec.spendBonus) return 0;
+  return Math.max(0, Math.min(spec.spendBonus.max, Math.floor((spent - spec.spendBonus.beyond) / spec.spendBonus.per)));
+}
+
+// What a result says happens, read from its words. Money comes back as `credits`; `stakeBack` is the
+// share of the stake returned (gambling: the stake is paid first, and what is returned is what the
+// result gives back).
+export interface DowntimeOutcome {
+  credits: number;
+  stakeBack?: number;
+  allied: number;
+  hostile: number;
+  blackmail: number;
+  lore: number;
+  loreItem: boolean;
+  jailed: boolean;
+  exhaustion: number;
+  title: boolean;
+  favor: boolean;
+  advance: number;
+  repairs: number;
+}
+
+const COUNTS: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, half: 0.5 };
+
+export function outcomeOf(text: string): DowntimeOutcome {
+  const out: DowntimeOutcome = { credits: 0, allied: 0, hostile: 0, blackmail: 0, lore: 0, loreItem: false, jailed: false, exhaustion: 0, title: false, favor: false, advance: 0, repairs: 0 };
+  const t = text.replace(/,/g, "");
+  const earn = t.match(/(?:earn(?:ing)?|win(?:ning)?|collect|resulting in a|result in a|paying)\D{0,24}?(\d+) cr/i);
+  if (earn && !/left over/i.test(t)) out.credits = Number(earn[1]);
+  const leftOver = t.match(/with (\d+) cr left over/i);
+  if (leftOver) out.credits = Number(leftOver[1]);
+  // Gambling's results are shares of the stake
+  if (/lose (?:your|their) entire stake/i.test(t)) out.stakeBack = 0;
+  else if (/lose half your stake/i.test(t)) out.stakeBack = 0.5;
+  else if (/break even/i.test(t)) out.stakeBack = 1;
+  else if (/win an amount equal to three times your stake/i.test(t)) out.stakeBack = 4;
+  else if (/win an amount equal to your stake/i.test(t)) out.stakeBack = 2;
+  const allied = t.match(/(?:make|makes) (an?|one|two|three) allied contacts?/i);
+  if (allied) out.allied = COUNTS[allied[1].toLowerCase()] ?? 1;
+  if (/hostile contact/i.test(t)) out.hostile = /two or more hostile/i.test(t) ? 2 : 1;
+  const blackmail = t.match(/blackmail (one|two|three) (?:person|people)/i);
+  if (blackmail) out.blackmail = COUNTS[blackmail[1].toLowerCase()];
+  const lore = t.match(/learn (one|two|three|five) pieces? of lore/i);
+  if (lore) out.lore = COUNTS[lore[1].toLowerCase()] ?? 5;
+  out.loreItem = /location of an item worth/i.test(t);
+  out.jailed = /(?:caught|arrested|jailed|jail)\b/i.test(t);
+  out.exhaustion = /exhaustion/i.test(t) ? 1 : 0;
+  out.title = /\b(title|nickname)\b/i.test(t);
+  out.favor = /\bfavor\b/i.test(t);
+  const advance = t.match(/advancing (?:only )?(half|one|two|three|four) workweeks?/i);
+  if (advance) out.advance = COUNTS[advance[1].toLowerCase()] ?? 1;
+  const repairs = t.match(/(\d+) cr in repairs/i);
+  if (repairs) out.repairs = Number(repairs[1]);
+  return out;
+}
+
+// The chance of a complication, in percent, from the activity's own words: "a 10 percent chance",
+// and "an additional 10 percent chance ... for each check made during Resolution beyond the first"
+export function complicationChance(activity: DowntimeActivityData, checksMade = 1, shady = false): number {
+  const text = activity.complicationText;
+  if (/shady (?:seller|buyer), they have a 50 percent chance/i.test(text)) return shady ? 50 : 10;
+  const base = Number(text.match(/(\d+) percent chance/i)?.[1] ?? 10);
+  const extra = /additional (\d+) percent chance[^.]*for each check made[^.]*beyond the first/i.exec(text);
+  return Math.min(100, base + (extra ? Number(extra[1]) * Math.max(0, checksMade - 1) : 0));
+}
+
+// The table complications come from: the one for the social class where an activity has one for each
+export function complicationTable(activity: DowntimeActivityData, cls?: "lower" | "middle" | "upper"): DowntimeTable | undefined {
+  if (activity.complications.length > 1 && cls) {
+    const named = activity.complications.find((t) => new RegExp(`^${cls}`, "i").test(t.title));
+    if (named) return named;
+  }
+  return activity.complications[0];
+}
+
+// What a complication does that the game can apply, read from its text: money lost (a number, or
+// dice times a number), a debt, a scar or nickname, a rival or foe made, a spell in jail
+export interface ComplicationEffect {
+  credits: number;
+  rival: boolean;
+  jailed: boolean;
+  scar: boolean;
+  nickname: boolean;
+  banned: boolean;
+  text: string;
+}
+export function complicationEffect(text: string, dice: (expr: string) => number): ComplicationEffect {
+  const t = text.replace(/,/g, "");
+  let credits = 0;
+  const lifted = t.match(/(\d+d\d+) x (\d+) cr/i);
+  if (lifted && /lifts|steal|lose|pays?/i.test(t)) credits = dice(lifted[1]) * Number(lifted[2]);
+  const extra = t.match(/spent an additional (\d+) cr/i);
+  if (extra) credits = Number(extra[1]);
+  return {
+    credits,
+    rival: /\b(ire|revenge|foe|vows?|swears?|wants? (?:their|it) money back|challenged you|will kill|besmirching|grudge|bounty)\b/i.test(t),
+    jailed: /\bjail|arrested\b/i.test(t),
+    scar: /\bscar\b/i.test(t),
+    nickname: /nickname/i.test(t),
+    banned: /\bbanned\b/i.test(t),
+    text,
+  };
+}
+
+// Enhanced items for sale or to be found: their value by rarity. The book rolls percentile dice
+// twice, keeps the higher and multiplies by the rarity's modifier (not below the rarity's least; half
+// for consumables and modifications). Here the two rolls come from the item's own name, so a given
+// item is always worth the same.
+export function enhancedValue(item: { id?: string; name: string; searchableRarity?: string; type?: string }): number {
+  const rarity = item.searchableRarity ?? "Standard";
+  const modifier = DOWNTIME.valueModifier[rarity] ?? 10;
+  const band = DOWNTIME.value[rarity] ?? { min: 0 };
+  let h = 2166136261;
+  for (const ch of item.id ?? item.name) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+  const a = (h % 100) + 1;
+  const b = ((h >>> 8) % 100) + 1;
+  let value = Math.max(a, b) * modifier;
+  value = Math.max(value, band.min);
+  if (band.max !== undefined) value = Math.min(value, band.max);
+  if (item.type === "Consumable" || item.type === "ItemModification") value = Math.round(value / 2);
+  return Math.max(1, value);
+}
+
+// The multiplier of an item's value a seller asks, or a buyer offers, from the roll's row text:
+// "a seller asking five times the item's value, or a shady seller asking two and a half times"
+export function priceFactor(text: string): { plain: number; shady: number | null; favor: boolean } {
+  const words: Record<string, number> = { "one-quarter": 0.25, "one quarter": 0.25, half: 0.5, "the full": 1, "one and a half times": 1.5, "two and a half times": 2.5, twice: 2, "five times": 5 };
+  const find = (s: string): number => {
+    for (const [word, value] of Object.entries(words)) if (s.toLowerCase().includes(word)) return value;
+    return 1;
+  };
+  const shady = text.split(/or a shady (?:seller|buyer)/i);
+  const isShadyOnly = /^\s*a shady (?:seller|buyer)/i.test(text);
+  return {
+    plain: isShadyOnly ? find(text) : find(shady[0]),
+    shady: shady[1] !== undefined ? find(shady[1]) : isShadyOnly ? find(text) : null,
+    favor: /\bfavor\b/i.test(text),
+  };
+}
+
+// The rarity of the best enhanced item a check finds a seller for: the highest whose DC it meets
+export function foundRarity(total: number): string | null {
+  let best: string | null = null;
+  for (const [rarity, row] of Object.entries(DOWNTIME.sellers)) if (total >= row.dc) best = rarity;
+  return best;
+}
+
+// What happens when none of the checks of an activity meets a DC: the book's worked example ends
+// "In this instance, ... they are caught and jailed", "they lose their entire stake, and accrue a
+// debt equal to that amount", "they lose all of their bouts, and suffer one level of exhaustion"
+export function failureOf(activity: DowntimeActivityData): { text: string; outcome: DowntimeOutcome; debt: boolean } | null {
+  const found = Array.from(activity.resolution.matchAll(/In this instance[^.]*\./g)).pop();
+  if (!found) return null;
+  return { text: found[0].replace(/^In this instance,\s*/i, "").replace(/^since they failed to meet a DC,\s*/i, ""), outcome: outcomeOf(found[0]), debt: /accrue a debt/i.test(found[0]) };
+}
+
+// The things that can be trained, with their workweeks and the credits a workweek costs (null: the
+// tool's own value), read from the Training activity's Resources text
+export interface TrainingOption {
+  id: string;
+  kind: "language" | "weapon" | "tool" | "skill" | "save" | "feat";
+  level: "training" | "proficiency" | "expertise";
+  label: string;
+  weeks: number;
+  perWeek: number | null;
+}
+export function trainingOptions(): TrainingOption[] {
+  const text = downtimeActivity("training")?.resourcesFull ?? "";
+  const section = (title: RegExp) => text.match(new RegExp(`\\[(?:${title.source})\\]([^\\[]*)`, "i"))?.[1] ?? "";
+  const out: TrainingOption[] = [];
+  const list = (s: string, re: RegExp) => (s.match(re)?.[1] ?? "").split(/,\s*(?:or\s+)?|\s+or\s+/).map((n) => Number(n.replace(/[^\d]/g, ""))).filter(Boolean);
+  const lang = section(/Language or Weapon/);
+  const lw = lang.match(/takes (\d+) workweeks and costs ([\d,]+) cr per workweek/);
+  if (lw) {
+    for (const kind of ["language", "weapon"] as const) out.push({ id: `${kind}`, kind, level: "proficiency", label: kind === "language" ? "Learn a language" : "Train in a weapon", weeks: Number(lw[1]), perWeek: money(lw[2]) });
+  }
+  const levels = ["training", "proficiency", "expertise"] as const;
+  const tool = section(/Tool Training, Proficiency, or Expertise/);
+  const toolWeeks = list(tool, /takes ([\d, or]+) workweeks/);
+  toolWeeks.forEach((weeks, i) => out.push({ id: `tool-${levels[i]}`, kind: "tool", level: levels[i], label: `Tool: ${levels[i]}`, weeks, perWeek: null }));
+  const skill = section(/Skill Training, Proficiency, or Expertise/);
+  const skillWeeks = list(skill, /takes ([\d, or]+) workweeks/);
+  const credits = (part: string) => Array.from(part.matchAll(/([\d,]+) cr/g)).map((m) => money(m[1]));
+  const skillCosts = credits(skill.match(/costs at least ([^.]*?) per workweek/)?.[1] ?? "");
+  skillWeeks.forEach((weeks, i) => out.push({ id: `skill-${levels[i]}`, kind: "skill", level: levels[i], label: `Skill: ${levels[i]}`, weeks, perWeek: skillCosts[i] ?? 250 }));
+  const save = section(/Saving Throw Training or Proficiency/);
+  const saveWeeks = list(save, /takes ([\d, or]+) workweeks/);
+  const saveCosts = credits(save.match(/costs ([^.]*?) per workweek/)?.[1] ?? "");
+  saveWeeks.forEach((weeks, i) => out.push({ id: `save-${levels[i]}`, kind: "save", level: levels[i], label: `Saving throw: ${levels[i]}`, weeks, perWeek: saveCosts[i] ?? 750 }));
+  const feat = section(/Feat/).match(/takes (\d+) workweeks and costs at least ([\d,]+) cr per workweek/);
+  if (feat) out.push({ id: "feat", kind: "feat", level: "proficiency", label: "A feat", weeks: Number(feat[1]), perWeek: money(feat[2]) });
+  return out;
+}
+
+// The rarity of the rare ingredient a creature of this Challenge Rating gives for crafting: the
+// highest rarity whose range of Challenge Ratings it falls in
+export function ingredientRarity(cr: number): string | null {
+  let best: string | null = null;
+  for (const [rarity, row] of Object.entries(DOWNTIME.ingredients)) if (cr >= row.cr.min && (row.cr.max === undefined || cr <= row.cr.max)) best = rarity;
+  return best;
+}
+
+// What a character keeps of its downtime between visits to a settlement: contacts made, blackmail
+// and lore held, blueprints learned, rivals, trainings under way, titles, and a log
+export interface DowntimeContact {
+  id: string;
+  kind: "allied" | "hostile";
+  cls: "lower" | "middle" | "upper";
+  // The settlement it is in, and who it is (a person of that settlement where the world has one)
+  where: string;
+  whereName: string;
+  name: string;
+}
+export interface DowntimeRival {
+  id: string;
+  name: string;
+  motive: string;
+  where: string;
+  whereName: string;
+  since: number;
+}
+export interface DowntimeTraining {
+  id: string;
+  option: string;
+  label: string;
+  topic: string;
+  weeks: number;
+  perWeek: number;
+  done: number;
+}
+export interface DowntimeState {
+  contacts: DowntimeContact[];
+  blackmail: { id: string; cls: "lower" | "middle" | "upper"; where: string; whereName: string; name: string }[];
+  lore: { id: string; topic: string; where: string; whereName: string }[];
+  blueprints: string[];
+  rare: Record<string, number>;
+  // Skills, tools and saving throws trained to half proficiency, and to expertise, in downtime
+  trained: string[];
+  expertise: string[];
+  rivals: DowntimeRival[];
+  training: DowntimeTraining[];
+  titles: string[];
+  log: { day: number; text: string }[];
+}
+export const emptyDowntime = (): DowntimeState => ({ contacts: [], blackmail: [], lore: [], blueprints: [], rare: {}, trained: [], expertise: [], rivals: [], training: [], titles: [], log: [] });
+
+// ---------------------------------------------------------------------------------------------
+// Starship combat (Starships of the Galaxy, chapters 3, 5, 7 and 9). A ship's numbers come from
+// its size, role, tier and equipment (`ships.json`, derived from the book's size texts and
+// equipment tables, and the starship equipment data). The fight is on a grid of 50-foot squares
+// (the book's variant), in rounds of ship turns. All of it is pure: a `ShipFight` goes in and a
+// new one comes out, so the same code runs the client's fight and a node test.
+// Where the book leaves the choice to a GM, a house rule decides and is named: ability score
+// increases of a tier go to Dexterity, Strength, Constitution and Wisdom in turn; the character
+// counts as a trained pilot (the proficiency bonus applies to attacks); secondary weapons are in
+// turrets and others fixed forward; a diagonal move is 75 feet; deployments, power dice and
+// modifications are not used.
+// ---------------------------------------------------------------------------------------------
+
+const SHIP_ABILITIES = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"] as const;
+type ShipAbility = (typeof SHIP_ABILITIES)[number];
+
+interface ShipRole {
+  name: string;
+  abilities: Record<string, number>;
+  armor: string;
+  shields: string;
+  reactor: string;
+  coupling: string;
+  speed: number;
+  turning: number;
+}
+interface ShipSize {
+  abilities: Record<string, number>;
+  hullDie: number;
+  hullDice: number[];
+  firstHull: number;
+  acUpgrade: number[];
+  slots: number;
+  roles: ShipRole[];
+}
+interface ShipAmmo {
+  launcher: string;
+  name: string;
+  cost: number;
+  dice?: string;
+  diceHuge?: string;
+  type?: string;
+  normal: number;
+  long: number;
+  properties: string;
+}
+const SHIPS = shipData as unknown as Record<string, ShipSize> & {
+  ammunition: { tertiary: ShipAmmo[]; quaternary: { name: string; save?: string; dc?: number; dice?: string; diceHuge?: string; type?: string; radius?: number; radiusHuge?: number }[] };
+  armor: Record<string, { cap: number | null; dr: number }>;
+  shields: Record<string, { capacity: number; regen: number }>;
+};
+
+// The sizes in order, smallest first
+export const SHIP_SIZE_ORDER = ["Tiny", "Small", "Medium", "Large", "Huge", "Gargantuan"];
+const sizeIndex = (size: string) => Math.max(0, SHIP_SIZE_ORDER.indexOf(size));
+const mod = (score: number) => Math.floor((score - 10) / 2);
+
+// The role of the book that a ship's role name stands for: the same name, one that contains it or is
+// contained in it, else the size's first (ships made before the book's roles were used)
+export function bookRole(size: string, roleName: string): ShipRole {
+  const roles = SHIPS[size]?.roles ?? SHIPS.Medium.roles;
+  const wanted = roleName.toLowerCase();
+  return (
+    roles.find((r) => r.name.toLowerCase() === wanted) ??
+    roles.find((r) => wanted.includes(r.name.toLowerCase()) || r.name.toLowerCase().includes(wanted)) ??
+    roles.find((r) => r.name.toLowerCase().split(" ").some((w) => w.length > 4 && wanted.includes(w))) ??
+    roles[0]
+  );
+}
+export const shipRoleNames = (size: string): string[] => (SHIPS[size]?.roles ?? []).map((r) => r.name);
+
+export interface ShipWeapon {
+  name: string;
+  category: "Primary" | "Secondary" | "Tertiary" | "Quaternary";
+  dice: string;
+  damageType: string;
+  // Primary and tertiary: normal and long range; secondary: close and normal range (feet)
+  near: number;
+  far: number;
+  // A fixed hardpoint fires within the forward arc; a turret all round
+  arc: "forward" | "turret";
+  // Tertiary and quaternary weapons spend ammunition, and call for a saving throw
+  ammo?: number;
+  ammoName?: string;
+  // The area of a bomb's blast, in feet
+  radius?: number;
+  save?: { ability: string; dc?: number };
+  keen: number;
+  heavy: boolean;
+  ionizing: boolean;
+  properties: string;
+}
+
+export interface ShipSheet {
+  name: string;
+  size: string;
+  tier: number;
+  role: string;
+  abilities: Record<ShipAbility, number>;
+  hullMax: number;
+  hullDie: number;
+  hullDice: number;
+  shieldMax: number;
+  shieldDie: number;
+  shieldDice: number;
+  shieldRegen: number;
+  hasShield: boolean;
+  shieldKind: string;
+  armorKind: string;
+  ac: number;
+  reduction: number;
+  speed: number;
+  turning: number;
+  weapons: ShipWeapon[];
+  hyperdrive: boolean;
+  // The proficiency bonus added to attack rolls and the save DC of its weapons
+  proficiency: number;
+}
+
+// A ship's numbers from its size, role, tier and the names of the equipment it carries.
+// `rows` is the starship equipment data (weapons, armor, shields).
+export function shipSheet(
+  ship: { name: string; size: string; role: string; tier: number; equipment: string[]; hyperdriveClass?: string },
+  rows: { name: string; type: string; weaponCategory?: string; weaponSize?: string; damageNumberOfDice?: number; damageDieType?: number; damageType?: string; shortRange?: number; longRange?: number; reload?: number; properties?: string }[],
+  proficiency = 2,
+): ShipSheet {
+  const size = SHIPS[ship.size] ? ship.size : "Medium";
+  const base = SHIPS[size];
+  const role = bookRole(size, ship.role);
+  const tier = Math.max(0, Math.min(5, ship.tier ?? 0));
+  const scores: Record<ShipAbility, number> = { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 };
+  for (const [a, n] of Object.entries(base.abilities)) if (a in scores) scores[a as ShipAbility] += n;
+  for (const [a, n] of Object.entries(role.abilities)) if (a in scores) scores[a as ShipAbility] += n;
+  // The ability score increases of the tiers: two points each tier, to Dexterity, Strength, Constitution and Wisdom in turn
+  const order: ShipAbility[] = ["dexterity", "strength", "constitution", "wisdom"];
+  for (let t = 0; t < tier; t++) {
+    const a = order[t % order.length];
+    scores[a] = Math.min(a === "dexterity" ? 22 : 20, scores[a] + 2);
+  }
+  const named = (type: string) => ship.equipment.map((n) => rows.find((r) => r.name === n && r.type === type)).filter(Boolean) as typeof rows;
+  const armorRow = named("Armor")[0];
+  const armorKind = armorRow ? armorRow.name.replace(/ armor$/i, "") : "Lightweight";
+  const armor = SHIPS.armor[armorKind] ?? { cap: null, dr: 0 };
+  const shieldRow = named("Shield")[0];
+  const shieldKind = shieldRow ? shieldRow.name.replace(/ shield$/i, "") : "";
+  const shield = SHIPS.shields[shieldKind];
+  const dice = base.hullDice[tier] ?? base.hullDice[0];
+  const die = base.hullDie;
+  const average = Math.floor(die / 2) + 1;
+  const hullEach = Math.max(1, average + mod(scores.constitution));
+  const hullMax = Math.max(1, base.firstHull + mod(scores.constitution) + (dice - 1) * hullEach);
+  const shieldEach = Math.max(1, average + mod(scores.strength));
+  const shieldBase = Math.max(1, base.firstHull + mod(scores.strength) + (dice - 1) * shieldEach);
+  const dexMod = mod(scores.dexterity);
+  const ac = 10 + (armor.cap === null ? dexMod : Math.min(dexMod, armor.cap)) + (base.acUpgrade[tier] ?? 0);
+  const weapons: ShipWeapon[] = [];
+  for (const row of named("Weapon")) {
+    const category = (row.weaponCategory ?? "Primary") as ShipWeapon["category"];
+    const props = row.properties ?? "";
+    const keen = Number(props.match(/keen (\d+)/i)?.[1] ?? 0);
+    const common = { name: row.name, category, keen, heavy: /\bheavy\b/i.test(props), ionizing: /ionizing/i.test(props) || row.damageType === "ion", properties: props };
+    if (category === "Primary" || category === "Secondary") {
+      weapons.push({
+        ...common,
+        dice: `${row.damageNumberOfDice ?? 1}d${row.damageDieType ?? 6}`,
+        damageType: row.damageType ?? "energy",
+        near: row.shortRange ?? 800,
+        far: row.longRange ?? 3200,
+        arc: category === "Secondary" ? "turret" : "forward",
+      });
+    } else {
+      // A launcher with the ammunition most often used in it: its damage and range, and as many pieces as it holds
+      const launcher = row.name.replace(/^Assault /i, "").replace(/ launcher$/i, "");
+      const ammo = SHIPS.ammunition.tertiary.filter((a) => a.launcher.toLowerCase().includes(launcher.toLowerCase()) || launcher.toLowerCase().includes(a.launcher.toLowerCase()));
+      const choice = ammo.find((a) => /proton torpedo|concussion missile|cluster missile/i.test(a.name) && a.dice) ?? ammo.find((a) => a.dice);
+      if (category === "Tertiary" && choice) {
+        const huge = sizeIndex(size) >= sizeIndex("Huge");
+        weapons.push({
+          ...common,
+          dice: (huge ? choice.diceHuge : choice.dice) ?? "2d8",
+          damageType: choice.type ?? "energy",
+          near: choice.normal,
+          far: choice.long,
+          arc: "forward",
+          ammo: row.reload ?? 4,
+          ammoName: choice.name,
+          save: { ability: "dexterity" },
+        });
+      } else if (category === "Quaternary") {
+        const bomb = SHIPS.ammunition.quaternary.find((b) => /proton bomb|seismic charge|bomblets/i.test(b.name) && b.dice) ?? SHIPS.ammunition.quaternary.find((b) => b.dice);
+        const huge = sizeIndex(size) >= sizeIndex("Huge");
+        weapons.push({
+          ...common,
+          dice: (huge ? bomb?.diceHuge : bomb?.dice) ?? "4d10",
+          damageType: bomb?.type ?? "energy",
+          near: 0,
+          far: 100,
+          arc: "forward",
+          ammo: row.reload ?? 4,
+          ammoName: bomb?.name,
+          radius: (huge ? bomb?.radiusHuge : bomb?.radius) ?? 100,
+          save: { ability: bomb?.save ?? "dexterity", dc: bomb?.dc ?? 15 },
+        });
+      }
+    }
+  }
+  return {
+    name: ship.name,
+    size,
+    tier,
+    role: role.name,
+    abilities: scores,
+    hullMax,
+    hullDie: die,
+    hullDice: dice,
+    shieldMax: shield ? Math.max(1, Math.round(shieldBase * shield.capacity)) : 0,
+    shieldDie: die,
+    shieldDice: shield ? dice : 0,
+    shieldRegen: shield ? Math.max(1, Math.round(die * shield.regen)) : 0,
+    hasShield: !!shield,
+    shieldKind,
+    armorKind,
+    ac,
+    reduction: armor.dr,
+    speed: role.speed,
+    turning: role.turning,
+    weapons,
+    hyperdrive: !!ship.hyperdriveClass || ship.equipment.some((n) => /hyperdrive/i.test(n)),
+    proficiency,
+  };
+}
+
+// ---- The fight
+
+export const SHIP_SQUARE = 50;
+// Facings, a step of 45 degrees clockwise from east
+export const SHIP_FACINGS: [number, number][] = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
+
+export interface ShipCombatant {
+  id: string;
+  name: string;
+  side: "party" | "foe";
+  sheet: ShipSheet;
+  hull: number;
+  shield: number;
+  hullDiceLeft: number;
+  shieldDiceLeft: number;
+  systemDamage: number;
+  slowed: number;
+  ionized: boolean;
+  disabled: boolean;
+  stable: boolean;
+  destroyed: boolean;
+  destruction: { successes: number; failures: number };
+  x: number;
+  y: number;
+  facing: number;
+  // Flying speed left this turn, and the actions: crew that can act, and whether the helm has acted
+  speedLeft: number;
+  speedBonus: number;
+  actions: number;
+  actionsMax: number;
+  helmUsed: boolean;
+  gunners: number;
+  fired: number[];
+  ammo: Record<number, number>;
+  boosts: { engines: number; shields: number; weapons: number };
+  // Effects that last until the ship's next turn
+  evading: boolean;
+  flew: boolean;
+  weaponsBoosted: boolean;
+  directed: boolean;
+  interfered: boolean;
+  attackRun: boolean;
+  movedToward: number;
+  initiative: number;
+  // The party's ship's crew actions per turn beyond the character's
+  crew: number;
+  fled: boolean;
+}
+
+export interface ShipFight {
+  width: number;
+  height: number;
+  ships: ShipCombatant[];
+  turn: number;
+  round: number;
+  log: string[];
+  outcome: null | "victory" | "destroyed" | "fled" | "disabled";
+  // Squares of asteroids or debris (difficult terrain)
+  hazards: { x: number; y: number }[];
+}
+
+// Creates a ship in the fight at a place, facing a way
+export function shipCombatant(id: string, side: "party" | "foe", sheet: ShipSheet, at: { x: number; y: number; facing: number }, crew = 0, hull?: number): ShipCombatant {
+  return {
+    id,
+    name: sheet.name,
+    side,
+    sheet,
+    hull: Math.max(0, Math.min(hull ?? sheet.hullMax, sheet.hullMax)),
+    shield: sheet.shieldMax,
+    hullDiceLeft: sheet.hullDice,
+    shieldDiceLeft: sheet.shieldDice,
+    systemDamage: 0,
+    slowed: 0,
+    ionized: false,
+    disabled: false,
+    stable: false,
+    destroyed: false,
+    destruction: { successes: 0, failures: 0 },
+    ...at,
+    speedLeft: sheet.speed,
+    speedBonus: 0,
+    actions: 1 + crew,
+    actionsMax: 1 + crew,
+    helmUsed: false,
+    gunners: crew,
+    fired: [],
+    ammo: Object.fromEntries(sheet.weapons.map((w, i) => [i, w.ammo ?? 0])),
+    boosts: { engines: 0, shields: 0, weapons: 0 },
+    evading: false,
+    flew: false,
+    weaponsBoosted: false,
+    directed: false,
+    interfered: false,
+    attackRun: false,
+    movedToward: 0,
+    initiative: 0,
+    crew,
+    fled: false,
+  };
+}
+
+const dieRoll = (n: number, rng: () => number) => Math.floor(rng() * n) + 1;
+const rollDice = (expr: string, rng: () => number, crit = false) => {
+  const m = expr.match(/^(\d+)d(\d+)$/);
+  if (!m) return Number(expr) || 0;
+  const n = Number(m[1]) * (crit ? 2 : 1);
+  let total = 0;
+  for (let i = 0; i < n; i++) total += dieRoll(Number(m[2]), rng);
+  return total;
+};
+
+// Feet between two squares: a straight square is 50, a diagonal 75 on average (50, then 100)
+export function shipFeet(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = Math.abs(a.x - b.x);
+  const dy = Math.abs(a.y - b.y);
+  const diagonal = Math.min(dx, dy);
+  return (Math.max(dx, dy) - diagonal) * SHIP_SQUARE + diagonal * 75;
+}
+
+// The angle between a ship's facing and the direction of a target, in degrees
+export function bearingOff(ship: { x: number; y: number; facing: number }, target: { x: number; y: number }): number {
+  const [fx, fy] = SHIP_FACINGS[ship.facing];
+  const dx = target.x - ship.x;
+  const dy = target.y - ship.y;
+  if (!dx && !dy) return 0;
+  const a = Math.atan2(fy, fx);
+  const b = Math.atan2(dy, dx);
+  let d = Math.abs(a - b);
+  if (d > Math.PI) d = 2 * Math.PI - d;
+  return (d * 180) / Math.PI;
+}
+
+// Speed a ship has now: its role's, with slowed levels and what boosts and bad systems do to it
+export function shipSpeed(c: ShipCombatant): number {
+  const levels = Math.max(c.slowed, c.systemDamage >= 2 ? Math.max(c.slowed, 1) : 0);
+  const slow = [0, 150, 250, 300][Math.min(3, levels)] ?? 0;
+  if (c.disabled || levels >= 4) return 0;
+  return Math.max(0, c.sheet.speed + c.speedBonus - slow);
+}
+
+// The ships (but not the one asked of) standing in a square
+const occupied = (fight: ShipFight, x: number, y: number, except?: string) => fight.ships.some((s) => !s.destroyed && !s.fled && s.id !== except && s.x === x && s.y === y);
+
+// Where a ship can get to this turn and what each place costs: forward a square in its facing (50 feet,
+// 75 on a diagonal), turning 45 degrees for half the turning speed; it cannot end on another ship.
+export function shipReach(fight: ShipFight, id: string, free90 = false): Map<string, { cost: number; facing: number; from?: string; steps: number }> {
+  const ship = fight.ships.find((s) => s.id === id)!;
+  const key = (x: number, y: number, f: number) => `${x},${y},${f}`;
+  const best = new Map<string, { cost: number; facing: number; from?: string; steps: number }>();
+  const start = key(ship.x, ship.y, ship.facing);
+  best.set(start, { cost: 0, facing: ship.facing, steps: 0 });
+  const queue: { x: number; y: number; f: number; cost: number; steps: number }[] = [{ x: ship.x, y: ship.y, f: ship.facing, cost: 0, steps: 0 }];
+  const turn = ship.sheet.turning / 2;
+  const limit = ship.speedLeft;
+  const hazard = (x: number, y: number) => fight.hazards.some((h) => h.x === x && h.y === y);
+  while (queue.length) {
+    queue.sort((a, b) => a.cost - b.cost);
+    const at = queue.shift()!;
+    if ((best.get(key(at.x, at.y, at.f))?.cost ?? Infinity) < at.cost) continue;
+    const moves: { x: number; y: number; f: number; cost: number }[] = [];
+    // Forward
+    const [dx, dy] = SHIP_FACINGS[at.f];
+    const step = (dx && dy ? 75 : 50) * (hazard(at.x + dx, at.y + dy) ? 2 : 1);
+    if (at.x + dx >= 0 && at.y + dy >= 0 && at.x + dx < fight.width && at.y + dy < fight.height) moves.push({ x: at.x + dx, y: at.y + dy, f: at.f, cost: step });
+    // Turning a step either way
+    for (const t of [-1, 1]) moves.push({ x: at.x, y: at.y, f: (at.f + t + 8) % 8, cost: turn });
+    for (const m of moves) {
+      const cost = at.cost + m.cost;
+      if (cost > limit) continue;
+      const k = key(m.x, m.y, m.f);
+      if ((best.get(k)?.cost ?? Infinity) <= cost) continue;
+      best.set(k, { cost, facing: m.f, from: key(at.x, at.y, at.f), steps: at.steps + 1 });
+      queue.push({ x: m.x, y: m.y, f: m.f, cost, steps: at.steps + 1 });
+    }
+  }
+  void free90;
+  // Only the places a ship may end on: the cheapest way to each square, with the facing that costs least
+  const squares = new Map<string, { cost: number; facing: number; from?: string; steps: number }>();
+  best.forEach((v, k) => {
+    const [x, y] = k.split(",").map(Number);
+    if (occupied(fight, x, y, id)) return;
+    const sq = `${x},${y}`;
+    if (!squares.has(sq) || squares.get(sq)!.cost > v.cost) squares.set(sq, { ...v, from: k });
+  });
+  return squares;
+}
+
+// Moves a ship to a square it can reach, with the facing of the cheapest way there
+export function shipMove(fight: ShipFight, id: string, x: number, y: number, facing?: number): ShipFight {
+  const ship = fight.ships.find((s) => s.id === id);
+  if (!ship || ship.disabled || ship.destroyed || (ship.speedLeft <= 0)) return fight;
+  const reach = shipReach(fight, id);
+  const found = reach.get(`${x},${y}`);
+  if (!found || (found.cost === 0 && facing === undefined)) return fight;
+  const toward = (a: ShipCombatant) => Math.max(0, shipFeet(a, { x, y }));
+  const feet = found.cost;
+  const moved = shipFeet(ship, { x, y });
+  let end = facing ?? found.facing;
+  // Facing in the direction of travel when the way there leaves it free
+  if (facing === undefined && (x !== ship.x || y !== ship.y)) {
+    const dx = Math.sign(x - ship.x);
+    const dy = Math.sign(y - ship.y);
+    const direct = SHIP_FACINGS.findIndex(([a, b]) => a === dx && b === dy);
+    if (direct >= 0 && direct === found.facing) end = direct;
+  }
+  void toward;
+  return {
+    ...fight,
+    ships: fight.ships.map((s) => (s.id === id ? { ...s, x, y, facing: end, speedLeft: Math.max(0, s.speedLeft - feet), movedToward: s.movedToward + (moved > 0 ? moved : 0) } : s)),
+    log: [...fight.log, `${ship.name} moves ${feet} ft.`],
+  };
+}
+
+// Turns a ship a step (45 degrees) either way for half its turning speed
+export function shipTurn(fight: ShipFight, id: string, steps: number): ShipFight {
+  const ship = fight.ships.find((s) => s.id === id);
+  if (!ship || ship.disabled || ship.destroyed) return fight;
+  const cost = (ship.sheet.turning / 2) * Math.abs(steps);
+  if (cost > ship.speedLeft) return fight;
+  return { ...fight, ships: fight.ships.map((s) => (s.id === id ? { ...s, facing: (s.facing + steps + 80) % 8, speedLeft: s.speedLeft - cost } : s)) };
+}
+
+// What a damage type does to shields and to hull, as halves (0.5), none (0) or all (1)
+const SHIELD_FACTOR: Record<string, number> = { acid: 0.5, cold: 0.5, fire: 0.5, necrotic: 0.5, poison: 0, psychic: 0, sonic: 0 };
+const HULL_FACTOR: Record<string, number> = { ion: 0.5, lightning: 0.5, necrotic: 0.5, poison: 0, psychic: 0, sonic: 0 };
+
+// Damage dealt to a ship: its armor takes off the damage of an attack roll (at least 1 of it
+// left), the shields take it first and then the hull. Returns the ship and what happened.
+export function shipDamage(
+  ship: ShipCombatant,
+  amount: number,
+  type: string,
+  opts: { attack: boolean; crit?: boolean; disable?: boolean; sourceIon?: boolean } = { attack: true },
+): { ship: ShipCombatant; shield: number; hull: number; note: string } {
+  let raw = amount;
+  if (opts.attack && ship.sheet.reduction > 0) raw = Math.max(1, raw - ship.sheet.reduction);
+  const fs = SHIELD_FACTOR[type] ?? 1;
+  const fh = HULL_FACTOR[type] ?? 1;
+  let shield = ship.shield;
+  let hull = ship.hull;
+  let toShield = 0;
+  let toHull = 0;
+  let left = raw;
+  if (shield > 0 && fs > 0) {
+    const vsShield = Math.floor(left * fs);
+    if (shield >= vsShield) {
+      toShield = vsShield;
+      shield -= vsShield;
+      left = 0;
+    } else {
+      toShield = shield;
+      left = left - Math.ceil(shield / fs);
+      shield = 0;
+    }
+  } else if (shield > 0 && fs === 0) {
+    left = 0;
+  }
+  if (left > 0 && fh > 0) {
+    toHull = Math.floor(left * fh);
+    hull = Math.max(0, hull - toHull);
+  }
+  let next: ShipCombatant = { ...ship, shield, hull };
+  const notes: string[] = [];
+  if (ship.hull > 0 && hull === 0) {
+    const overflow = toHull - ship.hull;
+    const instant = overflow >= ship.sheet.hullMax;
+    // A non-player ship explodes at 0 hull, unless it was only ion damage or the attacker chose to disable it
+    if (instant || (ship.side === "foe" && !opts.disable && type !== "ion")) {
+      next = { ...next, destroyed: true };
+      notes.push(`${ship.name} is destroyed!`);
+    } else {
+      next = { ...next, disabled: true, stable: type === "ion" || !!opts.disable, systemDamage: next.systemDamage };
+      notes.push(`${ship.name} is disabled${next.stable ? " and stable" : ""}.`);
+    }
+  } else if (ship.hull === 0 && toHull > 0 && !next.destroyed) {
+    // Damage at 0 hull points: a level of system damage, two from a critical hit, destroyed if it equals the maximum
+    next = { ...next, stable: false, systemDamage: Math.min(6, next.systemDamage + (opts.crit ? 2 : 1)) };
+    if (toHull >= ship.sheet.hullMax || next.systemDamage >= 6) {
+      next = { ...next, destroyed: true };
+      notes.push(`${ship.name} is destroyed!`);
+    }
+  }
+  return { ship: next, shield: toShield, hull: toHull, note: notes.join(" ") };
+}
+
+// Sets the turn up for a ship: speed and actions are its own again, what lasted to its turn ends, the
+// shields regenerate by their rate (spending a shield die), and a ship at 0 hull makes a destruction save
+export function startShipTurn(fight: ShipFight, id: string, rng: () => number): ShipFight {
+  let log = [...fight.log];
+  const ships = fight.ships.map((s) => {
+    if (s.id !== id || s.destroyed || s.fled) return s;
+    let ship: ShipCombatant = {
+      ...s,
+      speedLeft: 0,
+      speedBonus: 0,
+      actions: s.actionsMax,
+      helmUsed: false,
+      fired: [],
+      boosts: { engines: 0, shields: 0, weapons: 0 },
+      evading: false,
+      flew: false,
+      weaponsBoosted: false,
+      attackRun: false,
+      movedToward: 0,
+    };
+    ship.speedLeft = shipSpeed(ship);
+    // The shields come back by the regeneration rate, each time using a die; with system damage 4 they are halved
+    if (ship.sheet.hasShield && ship.shield > 0 && ship.shieldDiceLeft > 0) {
+      const max = Math.floor(ship.sheet.shieldMax / (ship.systemDamage >= 4 ? 2 : 1));
+      const rate = Math.max(1, Math.floor(ship.sheet.shieldRegen / (ship.systemDamage >= 4 ? 2 : 1)));
+      const back = Math.min(rate, max - ship.shield);
+      if (back > 0) {
+        ship = { ...ship, shield: ship.shield + back, shieldDiceLeft: ship.shieldDiceLeft - 1 };
+        log.push(`${ship.name}'s shields regenerate ${back}.`);
+      }
+    }
+    // A ship at 0 hull points that is not stable makes a destruction saving throw: 10 or higher succeeds
+    if (ship.hull === 0 && ship.disabled && !ship.stable) {
+      const d = dieRoll(20, rng);
+      if (d === 20) {
+        ship = { ...ship, hull: 1, disabled: false, destruction: { successes: 0, failures: 0 } };
+        log.push(`${ship.name}: a destruction save of 20: 1 hull point, back in the fight.`);
+      } else {
+        const d2 = ship.destruction;
+        const failures = d2.failures + (d === 1 ? 2 : d < 10 ? 1 : 0);
+        const successes = d2.successes + (d >= 10 ? 1 : 0);
+        ship = { ...ship, destruction: { successes, failures }, systemDamage: Math.min(6, ship.systemDamage + (d < 10 ? (d === 1 ? 2 : 1) : 0)) };
+        log.push(`${ship.name}: destruction save ${d}, ${d >= 10 ? "success" : d === 1 ? "two failures" : "failure"} (${successes} of 3, system damage ${ship.systemDamage}).`);
+        if (successes >= 3) ship = { ...ship, stable: true };
+        if (ship.systemDamage >= 6) {
+          ship = { ...ship, destroyed: true };
+          log.push(`${ship.name}'s primary systems fail: it is lost.`);
+        }
+      }
+    }
+    return ship;
+  });
+  return { ...fight, ships, log };
+}
+
+// Whether the fight is over, and how for the party
+export function shipOutcome(fight: ShipFight): ShipFight["outcome"] {
+  const party = fight.ships.filter((s) => s.side === "party");
+  const foes = fight.ships.filter((s) => s.side === "foe");
+  if (party.every((s) => s.destroyed)) return "destroyed";
+  if (party.every((s) => s.fled || s.destroyed)) return "fled";
+  if (foes.every((s) => s.destroyed || s.fled || s.disabled)) return "victory";
+  if (party.every((s) => s.disabled || s.destroyed || s.fled)) return "disabled";
+  return null;
+}
+
+// The active ship's turn passes to the next ship that can act; a new round begins when everyone has had theirs
+export function endShipTurn(fight: ShipFight, rng: () => number): ShipFight {
+  const order = fight.ships;
+  let turn = fight.turn;
+  let round = fight.round;
+  let next = fight;
+  for (let i = 0; i < order.length; i++) {
+    turn += 1;
+    if (turn >= order.length) {
+      turn = 0;
+      round += 1;
+    }
+    const s = order[turn];
+    if (!s.destroyed && !s.fled) break;
+  }
+  next = { ...fight, turn, round };
+  const id = order[turn].id;
+  next = startShipTurn(next, id, rng);
+  const outcome = shipOutcome(next);
+  return { ...next, outcome };
+}
+
+export interface ShipAttackOutcome {
+  fight: ShipFight;
+  hit: boolean;
+  line: string;
+}
+
+// A weapon fired at a target: arc and range, the roll (or the target's saving throw for missiles and
+// bombs), damage by the book's rules. `fromHelm` is the helm's crewmember firing (disadvantage with
+// primary and secondary weapons unless an Attack Run or Dogfight, or a gunner fires).
+export function shipFire(fight: ShipFight, shooterId: string, weaponIndex: number, targetId: string, rng: () => number, opts: { disable?: boolean; gunner?: boolean } = {}): ShipAttackOutcome {
+  const shooter = fight.ships.find((s) => s.id === shooterId);
+  const target = fight.ships.find((s) => s.id === targetId);
+  const weapon = shooter?.sheet.weapons[weaponIndex];
+  const fail = (line: string): ShipAttackOutcome => ({ fight: { ...fight, log: [...fight.log, line] }, hit: false, line });
+  if (!shooter || !target || !weapon) return { fight, hit: false, line: "" };
+  if (shooter.disabled || shooter.destroyed) return fail(`${shooter.name} cannot fire.`);
+  if (shooter.fired.includes(weaponIndex)) return fail(`${weapon.name} has fired this turn.`);
+  if (shooter.actions <= 0) return fail(`${shooter.name} has no action left.`);
+  if ((weapon.ammo ?? 1) > 0 && weapon.ammo !== undefined && (shooter.ammo[weaponIndex] ?? 0) <= 0) return fail(`${weapon.name} is out of ammunition.`);
+  const feet = shipFeet(shooter, target);
+  const bearing = bearingOff(shooter, target);
+  const forwardOk = weapon.arc === "turret" || bearing <= 45.01 || shooter.attackRun;
+  if (!forwardOk) return fail(`${target.name} is outside the forward arc of ${weapon.name}.`);
+  if (feet > weapon.far) return fail(`${target.name} is ${feet} ft. away, beyond ${weapon.far} ft.`);
+  // Huge and larger ships' secondary weapons cannot be brought on small ships
+  const bigShooter = sizeIndex(shooter.sheet.size) >= sizeIndex("Huge");
+  if (bigShooter && weapon.category === "Secondary" && sizeIndex(target.sheet.size) <= sizeIndex("Small")) return fail(`${weapon.name} cannot target a ship that small.`);
+  const proficiency = shooter.sheet.proficiency;
+  const wis = mod(shooter.sheet.abilities.wisdom);
+  const str = mod(shooter.sheet.abilities.strength);
+  const badSystems = shooter.systemDamage >= 3 || shooter.ionized;
+  let log = [...fight.log];
+  let ships = fight.ships.map((s) => (s.id === shooterId ? { ...s, fired: [...s.fired, weaponIndex], actions: s.actions - 1, directed: false, interfered: false, ammo: { ...s.ammo, [weaponIndex]: weapon.ammo !== undefined ? (s.ammo[weaponIndex] ?? 0) - 1 : s.ammo[weaponIndex] } } : s));
+  let adv = false;
+  let dis = false;
+  const reasons: string[] = [];
+  if (shooter.directed) { adv = true; reasons.push("directed"); }
+  if (shooter.interfered) { dis = true; reasons.push("interfered with"); }
+  if (badSystems) { dis = true; reasons.push("systems damaged"); }
+  if (shooter.evading || shooter.flew) { dis = true; reasons.push("busy flying"); }
+  if (target.evading) { dis = true; reasons.push("target evading"); }
+  if (feet <= SHIP_SQUARE && weapon.category !== "Quaternary") { dis = true; reasons.push("within 50 ft."); }
+  if (weapon.category === "Secondary" && feet < weapon.near) { dis = true; reasons.push("inside close range"); }
+  if ((weapon.category === "Primary" || weapon.category === "Tertiary") && feet > weapon.near && weapon.category === "Primary") { dis = true; reasons.push("beyond normal range"); }
+  // The helm firing a primary or secondary weapon has disadvantage, unless it is an attack run or a gunner is at the gun
+  if (!opts.gunner && (weapon.category === "Primary" || weapon.category === "Secondary") && !shooter.attackRun) { dis = true; reasons.push("fired from the helm"); }
+  const mode = Number(adv) - Number(dis);
+  const roll = () => {
+    const a = dieRoll(20, rng);
+    if (!mode) return a;
+    const b = dieRoll(20, rng);
+    return mode > 0 ? Math.max(a, b) : Math.min(a, b);
+  };
+  const cover = target.disabled ? 0 : 0;
+  let hit = false;
+  let amount = 0;
+  let line = "";
+  const keenAt = 20 - weapon.keen;
+  const damageRoll = (crit: boolean) => {
+    let n = rollDice(weapon.dice, rng, crit);
+    if (shooter.weaponsBoosted) n = Math.max(n, rollDice(weapon.dice, rng, crit));
+    return n + (weapon.category === "Primary" || weapon.category === "Secondary" ? str : 0) + (weapon.heavy && str > 0 ? Math.max(1, Math.ceil(str / 2)) : 0);
+  };
+  let attacked: ShipCombatant = target;
+  if (weapon.category === "Primary" || weapon.category === "Secondary") {
+    const d = roll();
+    const total = d + proficiency + wis;
+    const crit = d >= keenAt;
+    hit = d !== 1 && (crit || total >= target.sheet.ac + cover);
+    line = `${shooter.name} fires ${weapon.name} at ${target.name} (${d} + ${proficiency + wis} = ${total} against AC ${target.sheet.ac}${reasons.length ? `; ${reasons.join(", ")}` : ""})`;
+    if (hit) {
+      amount = Math.max(1, damageRoll(crit));
+      const result = shipDamage(target, amount, weapon.damageType, { attack: true, crit, disable: opts.disable });
+      attacked = result.ship;
+      line += ` and hits for ${result.shield} on the shields${result.hull ? ` and ${result.hull} on the hull` : ""}${crit ? " (critical)" : ""}. ${result.note}`.trimEnd();
+    } else line += " and misses.";
+  } else {
+    // Missiles, torpedoes and bombs: a saving throw against the weapon's DC, half damage on a success
+    const dc = weapon.save?.dc ?? 8 + proficiency + wis;
+    const sizeDiff = sizeIndex(shooter.sheet.size) - sizeIndex(target.sheet.size);
+    const saveAdv = sizeDiff >= 2 || (feet > weapon.near && weapon.category === "Tertiary");
+    const saveDis = sizeDiff <= -2 || mode > 0;
+    const ability = (weapon.save?.ability ?? "dexterity") as ShipAbility;
+    const bonus = mod(target.sheet.abilities[ability]) + (["strength", "dexterity"].includes(ability) && target.sheet.size ? 0 : 0);
+    const a = dieRoll(20, rng);
+    const b = saveAdv !== saveDis ? dieRoll(20, rng) : a;
+    const d = saveAdv && !saveDis ? Math.max(a, b) : saveDis && !saveAdv ? Math.min(a, b) : a;
+    const saved = target.evading ? d + bonus + 5 >= dc : d + bonus >= dc;
+    const full = rollDice(weapon.dice, rng, false);
+    amount = saved ? Math.floor(full / 2) : full;
+    hit = !saved;
+    line = `${shooter.name} launches ${weapon.ammoName ?? weapon.name} at ${target.name}: ${ability.slice(0, 3).toUpperCase()} save ${d + bonus} against DC ${dc}, ${saved ? "saves" : "fails"}`;
+    if (amount > 0) {
+      const result = shipDamage(target, amount, weapon.damageType, { attack: false, disable: opts.disable });
+      attacked = result.ship;
+      line += `, ${result.shield} on the shields${result.hull ? ` and ${result.hull} on the hull` : ""}. ${result.note}`.trimEnd();
+    } else line += ".";
+  }
+  ships = ships.map((s) => (s.id === targetId ? attacked : s));
+  log.push(line);
+  const next: ShipFight = { ...fight, ships, log };
+  return { fight: { ...next, outcome: shipOutcome(next) }, hit, line };
+}
+
+export type ShipHelmAction = "evade" | "fly" | "hardTurn" | "attackRun";
+
+// A helm action (one a turn). Evade: attacks against the ship have disadvantage and its own have too;
+// Fly: the speed again, with disadvantage on attacks; Hard Turn: 90 degrees for free; Attack Run:
+// after 150 feet toward a target, a shot with no disadvantage from the forward arc
+export function shipHelm(fight: ShipFight, id: string, action: ShipHelmAction, turnSteps = 2): ShipFight {
+  const ship = fight.ships.find((s) => s.id === id);
+  if (!ship || ship.disabled || ship.destroyed || ship.helmUsed || ship.actions <= 0) return fight;
+  const speed = shipSpeed(ship);
+  const patch: Partial<ShipCombatant> = { helmUsed: true, actions: ship.actions - 1 };
+  let line = "";
+  if (action === "evade") {
+    patch.evading = true;
+    line = `${ship.name} evades: attacks against it have disadvantage until its next turn.`;
+  } else if (action === "fly") {
+    patch.speedLeft = ship.speedLeft + speed;
+    patch.flew = true;
+    line = `${ship.name} flies: ${speed} ft. more speed this turn.`;
+  } else if (action === "hardTurn") {
+    patch.facing = (ship.facing + turnSteps + 8) % 8;
+    line = `${ship.name} makes a hard turn.`;
+  } else {
+    if (ship.movedToward < 150) {
+      return { ...fight, log: [...fight.log, `${ship.name}: an attack run needs 150 ft. of movement toward the target first.`] };
+    }
+    patch.attackRun = true;
+    line = `${ship.name} makes an attack run: its next shot suffers no penalty.`;
+  }
+  return { ...fight, ships: fight.ships.map((s) => (s.id === id ? { ...s, ...patch } : s)), log: [...fight.log, line] };
+}
+
+export type ShipBoost = "engines" | "shields" | "weapons";
+
+// Boost a function: DC 10 Strength check, each boost of a function after the first this turn 5 higher
+export function shipBoost(fight: ShipFight, id: string, what: ShipBoost, rng: () => number): ShipFight {
+  const ship = fight.ships.find((s) => s.id === id);
+  if (!ship || ship.disabled || ship.destroyed || ship.actions <= 0 || ship.boosts[what] > 0) return fight;
+  const dc = 10 + 5 * (ship.boosts.engines + ship.boosts.shields + ship.boosts.weapons);
+  const d = dieRoll(20, rng);
+  const total = d + mod(ship.sheet.abilities.strength);
+  const ok = total >= dc;
+  const patch: Partial<ShipCombatant> = { actions: ship.actions - 1, boosts: { ...ship.boosts, [what]: 1 } };
+  let line = `${ship.name} boosts its ${what}: Strength (Boost) ${total} against DC ${dc}, ${ok ? "succeeds" : "fails"}.`;
+  if (ok) {
+    if (what === "engines") {
+      patch.speedBonus = ship.speedBonus + 50;
+      patch.speedLeft = ship.speedLeft + 50;
+    } else if (what === "shields") {
+      const gained = dieRoll(ship.sheet.shieldDie, rng);
+      patch.shield = ship.shield + gained;
+      line += ` ${gained} temporary shield points.`;
+    } else patch.weaponsBoosted = true;
+  }
+  return { ...fight, ships: fight.ships.map((s) => (s.id === id ? { ...s, ...patch } : s)), log: [...fight.log, line] };
+}
+
+// Patch: spend a Hull Die to mend the hull (Constitution check, DC 10 or half the missing hull points)
+export function shipPatch(fight: ShipFight, id: string, rng: () => number): ShipFight {
+  const ship = fight.ships.find((s) => s.id === id);
+  if (!ship || ship.destroyed || ship.actions <= 0 || ship.hullDiceLeft <= 0 || ship.hull >= ship.sheet.hullMax) return fight;
+  const dc = Math.max(10, Math.ceil((ship.sheet.hullMax - ship.hull) / 2));
+  const d = dieRoll(20, rng) + mod(ship.sheet.abilities.constitution);
+  const ok = d >= dc;
+  const a = dieRoll(ship.sheet.hullDie, rng);
+  const rolled = ok ? a : Math.min(a, dieRoll(ship.sheet.hullDie, rng));
+  const healed = Math.max(1, rolled + mod(ship.sheet.abilities.constitution));
+  const hull = Math.min(ship.sheet.hullMax, ship.hull + healed);
+  const stable = ship.hull === 0 && hull > 0;
+  return {
+    ...fight,
+    ships: fight.ships.map((s) => (s.id === id ? { ...s, hull, hullDiceLeft: s.hullDiceLeft - 1, actions: s.actions - 1, disabled: stable ? false : s.disabled, stable: stable ? false : s.stable } : s)),
+    log: [...fight.log, `${ship.name} patches the hull: Constitution (Patch) ${d} against DC ${dc}, ${ok ? "succeeds" : "fails"}: ${healed} hull points.`],
+  };
+}
+
+// Regenerate Shields as an action: spend a Shield Die (DC 10 or half the missing shield points)
+export function shipRegenerate(fight: ShipFight, id: string, rng: () => number): ShipFight {
+  const ship = fight.ships.find((s) => s.id === id);
+  if (!ship || ship.destroyed || ship.actions <= 0 || ship.shieldDiceLeft <= 0 || !ship.sheet.hasShield || ship.shield >= ship.sheet.shieldMax) return fight;
+  const dc = Math.max(10, Math.ceil((ship.sheet.shieldMax - ship.shield) / 2));
+  const d = dieRoll(20, rng) + mod(ship.sheet.abilities.strength);
+  const ok = d >= dc;
+  const a = dieRoll(ship.sheet.shieldDie, rng);
+  const rolled = ok ? a : Math.min(a, dieRoll(ship.sheet.shieldDie, rng));
+  const back = Math.max(1, rolled + mod(ship.sheet.abilities.strength));
+  const shield = Math.min(ship.sheet.shieldMax, ship.shield + back);
+  return {
+    ...fight,
+    ships: fight.ships.map((s) => (s.id === id ? { ...s, shield, shieldDiceLeft: s.shieldDiceLeft - 1, actions: s.actions - 1 } : s)),
+    log: [...fight.log, `${ship.name} regenerates its shields: Strength (Boost) ${d} against DC ${dc}, ${ok ? "succeeds" : "fails"}: ${back}.`],
+  };
+}
+
+// Direct: the next attack of a friendly ship has advantage. Interfere: Charisma (Interfere) against
+// the target's Wisdom (Scan); on a success its next attack roll has disadvantage.
+export function shipDirect(fight: ShipFight, id: string, allyId: string): ShipFight {
+  const ship = fight.ships.find((s) => s.id === id);
+  if (!ship || ship.actions <= 0 || ship.disabled) return fight;
+  return {
+    ...fight,
+    ships: fight.ships.map((s) => (s.id === id ? { ...s, actions: s.actions - 1 } : s.id === allyId ? { ...s, directed: true } : s)),
+    log: [...fight.log, `${ship.name} directs: the next attack has advantage.`],
+  };
+}
+export function shipInterfere(fight: ShipFight, id: string, targetId: string, rng: () => number): ShipFight {
+  const ship = fight.ships.find((s) => s.id === id);
+  const target = fight.ships.find((s) => s.id === targetId);
+  if (!ship || !target || ship.actions <= 0 || ship.disabled || shipFeet(ship, target) > 1000) return fight;
+  const a = dieRoll(20, rng) + mod(ship.sheet.abilities.charisma);
+  const b = dieRoll(20, rng) + mod(target.sheet.abilities.wisdom);
+  const ok = a > b;
+  return {
+    ...fight,
+    ships: fight.ships.map((s) => (s.id === id ? { ...s, actions: s.actions - 1 } : s.id === targetId && ok ? { ...s, interfered: true } : s)),
+    log: [...fight.log, `${ship.name} interferes with ${target.name}: Charisma (Interfere) ${a} against Wisdom (Scan) ${b}, ${ok ? "succeeds: disadvantage on its next attack" : "fails"}.`],
+  };
+}
+
+// Taking a ship out of the fight by hyperdrive: needs a hyperdrive and a turn spent flying away
+export function shipFlee(fight: ShipFight, id: string): ShipFight {
+  const ship = fight.ships.find((s) => s.id === id);
+  if (!ship || ship.disabled || ship.destroyed || !ship.sheet.hyperdrive || ship.actions <= 0) return fight;
+  const next = { ...fight, ships: fight.ships.map((s) => (s.id === id ? { ...s, fled: true, actions: 0 } : s)), log: [...fight.log, `${ship.name} jumps to hyperspace.`] };
+  return { ...next, outcome: shipOutcome(next) };
+}
+
+// The computer's pilot: one step of an NPC ship's turn. It closes to its best weapon's range and
+// faces its target, fires everything that can fire, evades when the hull is low, and goes on.
+// Returns the new fight and whether its turn is over.
+export function shipAi(fight: ShipFight, id: string, rng: () => number): { fight: ShipFight; done: boolean } {
+  const ship = fight.ships.find((s) => s.id === id);
+  if (!ship || ship.disabled || ship.destroyed || ship.fled) return { fight, done: true };
+  const foes = fight.ships.filter((s) => s.side !== ship.side && !s.destroyed && !s.fled);
+  if (!foes.length) return { fight, done: true };
+  const target = [...foes].sort((a, b) => shipFeet(ship, a) - shipFeet(ship, b))[0];
+  let next = fight;
+  const me = () => next.ships.find((s) => s.id === id)!;
+  // Fire whatever can fire
+  const guns = ship.sheet.weapons
+    .map((w, i) => ({ w, i }))
+    .filter(({ w, i }) => !me().fired.includes(i) && (w.ammo === undefined || (me().ammo[i] ?? 0) > 0))
+    .sort((a, b) => (b.w.category === "Primary" ? 1 : 0) - (a.w.category === "Primary" ? 1 : 0));
+  // First get into position: toward the target until its nearest gun's normal range, facing it
+  const range = Math.min(...ship.sheet.weapons.filter((w) => w.category !== "Quaternary").map((w) => w.near || w.far), 1000);
+  if (!me().helmUsed && me().speedLeft > 0 && (shipFeet(me(), target) > Math.max(range, 100) || bearingOff(me(), target) > 45)) {
+    const reach = shipReach(next, id);
+    const candidates: { x: number; y: number; score: number }[] = [];
+    reach.forEach((v, k) => {
+      const [x, y] = k.split(",").map(Number);
+      const probe = { x, y, facing: v.facing };
+      const feet = shipFeet(probe, target);
+      const off = bearingOff(probe, target);
+      candidates.push({ x, y, score: Math.abs(feet - Math.max(range, 100)) + (off > 45 ? 400 : 0) + v.cost / 10 });
+    });
+    candidates.sort((a, b) => a.score - b.score);
+    const best = candidates[0];
+    if (best && (best.x !== me().x || best.y !== me().y)) next = shipMove(next, id, best.x, best.y);
+    // Turn toward the target when nothing else did
+    if (bearingOff(me(), target) > 45) {
+      for (const t of [1, -1]) {
+        const trial = shipTurn(next, id, t);
+        if (bearingOff(trial.ships.find((s) => s.id === id)!, target) < bearingOff(me(), target)) { next = trial; break; }
+      }
+    }
+  }
+  for (const { w, i } of guns) {
+    if (me().actions <= 0) break;
+    const feet = shipFeet(me(), target);
+    if (feet > w.far) continue;
+    if (w.arc === "forward" && bearingOff(me(), target) > 45.01) continue;
+    const out = shipFire(next, id, i, target.id, rng, { gunner: true });
+    next = out.fight;
+    if (next.outcome) return { fight: next, done: true };
+  }
+  // A damaged ship evades if it has the helm free
+  if (!me().helmUsed && me().actions > 0 && me().hull < me().sheet.hullMax / 3) next = shipHelm(next, id, "evade");
+  return { fight: next, done: true };
+}
+
+// Starts a fight: ships placed on opposite sides facing each other, initiative rolled (Dexterity
+// modifier and a d20; a ship's own is the lowest of its crew's), the first turn begun
+export function startShipFight(party: ShipCombatant[], foes: ShipCombatant[], rng: () => number, size = { width: 30, height: 18 }): ShipFight {
+  const place = (list: ShipCombatant[], side: "party" | "foe") =>
+    list.map((s, i) => ({
+      ...s,
+      x: side === "party" ? 3 : size.width - 4,
+      y: Math.floor(size.height / 2) + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 2,
+      facing: side === "party" ? 0 : 4,
+    }));
+  const all = [...place(party, "party"), ...place(foes, "foe")].map((s) => ({ ...s, initiative: dieRoll(20, rng) + mod(s.sheet.abilities.dexterity) }));
+  all.sort((a, b) => b.initiative - a.initiative);
+  // A few rocks and debris between them
+  const hazards: { x: number; y: number }[] = [];
+  for (let i = 0; i < 8; i++) hazards.push({ x: 8 + Math.floor(rng() * (size.width - 16)), y: 2 + Math.floor(rng() * (size.height - 4)) });
+  const fight: ShipFight = { width: size.width, height: size.height, ships: all, turn: 0, round: 1, log: ["Ships clash: roll for initiative!"], outcome: null, hazards };
+  return startShipTurn(fight, all[0].id, rng);
+}
+
+// Refitting a ship at a port (Starships of the Galaxy, Refitting): 100 credits for each hull die
+// missing, times the size's cost modifier, and a time that depends on the size. It gives back all
+// the hull and shield points and the dice.
+export function refitPlan(sheet: { size: string; hullMax: number; hullDice: number }, hull: number): { dice: number; cost: number; hours: number } | null {
+  if (hull >= sheet.hullMax) return null;
+  const refit = (SHIPS as any).refit as { cost: Record<string, number>; hours: Record<string, number> };
+  const perDie = Math.max(1, sheet.hullMax / sheet.hullDice);
+  const dice = Math.max(1, Math.ceil((sheet.hullMax - hull) / perDie));
+  return { dice, cost: Math.round(100 * dice * (refit.cost[sheet.size] ?? 1)), hours: refit.hours[sheet.size] ?? 8 };
 }

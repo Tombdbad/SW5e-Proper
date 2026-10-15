@@ -1,6 +1,6 @@
 // Acceptance play-through: create characters by the real rules -> create a campaign with a
 // generated world -> edit the world -> play: fight, loot, travel -> reload.
-// Usage: npm run e2e   (env: BASE, OUT, VIEW=phone, FORCE=0 to skip the second character,
+// Usage: npm run e2e   (env: BASE, OUT, VIEW=phone, FORCE=0 to skip the second character, ONLY=<regex> for steps by name,
 // KEEP=1 to leave the created rows in the database). Screenshots of every step go to OUT.
 import { open, step, summary, text, api, pick, BASE } from "./lib.mjs";
 
@@ -431,6 +431,7 @@ await step(ctx, "play: enemies bar the way; the fight uses their stat block and 
       const melee = page.getByRole("button", { name: "Melee", exact: true });
       if ((await save.count()) && (await save.isEnabled().catch(() => false))) await save.click().catch(() => {});
       else if ((await melee.count()) && (await melee.isEnabled().catch(() => false))) await melee.click().catch(() => {});
+      else if (await page.getByRole("button", { name: "End turn" }).isEnabled().catch(() => false)) await page.getByRole("button", { name: "End turn" }).click().catch(() => {});
       await sleep(300);
     }
     await sleep(1200);
@@ -917,6 +918,7 @@ if (process.env.FORCE !== "0") {
       if ((await save.count()) && (await save.isEnabled().catch(() => false))) await save.click().catch(() => {});
       else if (!cast && (await power.count()) && (await power.isEnabled().catch(() => false))) await power.click().catch(() => {});
       else if ((await melee.count()) && (await melee.isEnabled().catch(() => false))) await melee.click().catch(() => {});
+      else if (await page.getByRole("button", { name: "End turn" }).isEnabled().catch(() => false)) await page.getByRole("button", { name: "End turn" }).click().catch(() => {});
       await sleep(300);
     }
     const casts = seen.filter((l) => /casts/.test(l));
@@ -1115,6 +1117,7 @@ if (process.env.FORCE !== "0") {
       const save = page.getByRole("button", { name: "Death saving throw" });
       if ((await save.count()) && (await save.isEnabled().catch(() => false))) await save.click().catch(() => {});
       else if ((await melee.count()) && (await melee.isEnabled().catch(() => false))) await melee.click().catch(() => {});
+      else if (await page.getByRole("button", { name: "End turn" }).isEnabled().catch(() => false)) await page.getByRole("button", { name: "End turn" }).click().catch(() => {});
       await sleep(300);
     }
     await sleep(1500);
@@ -1122,6 +1125,241 @@ if (process.env.FORCE !== "0") {
     if (!(c.experience >= 100)) throw new Error("experience " + c.experience);
     if ((c.companionData?.party ?? []).length !== 1) throw new Error(JSON.stringify(c.companionData));
     return `${/throws Grenade/.test(log) ? "grenade thrown" : "grenade out of range"}; the droid kept its ${c.companionData.party[0].hp}/20; xp ${c.experience}`;
+  });
+
+  await step(ctx, "fight depth: a turn has an action, a bonus action and a reaction; Extra Attack; a maneuver; Second Wind; a stat block's multiattack", async () => {
+    const d = await newChar({
+      level: 5, class: "fighter", maxHp: 55, currentHp: 40, armorClass: 15,
+      abilityScores: { strength: 16, dexterity: 14, constitution: 14, intelligence: 10, wisdom: 12, charisma: 10 },
+      equipment: ["Blaster pistol", "Vibrosword", "Combat suit"],
+      fighterManeuvers: { styles: ["Dual Wield Style"], maneuvers: ["Precision Attack", "Parry", "Trip Attack", "Inner Strength"] },
+    });
+    const depthCamp = await newCamp(d, 6, async (world, start, put) => {
+      put({ ...(await stat("navy-trooper")), id: "ox-navy", disposition: "hostile", role: "guard", count: 1 });
+      put({ ...(await stat("dewback-adult")), id: "ox-dew", disposition: "hostile", role: "wildlife", count: 1 });
+    });
+    if (!(await page.getByText(/Combat - Round/).count())) await page.getByRole("button", { name: /^(Fight|Ambush)$/ }).first().click();
+    await page.getByText(/Combat - Round/).waitFor();
+    const melee = page.getByRole("button", { name: "Melee", exact: true });
+    // (a reaction may be offered before the character's turn: Parry against the first hit)
+    for (let i = 0; i < 80 && !(await melee.isEnabled().catch(() => false)); i++) {
+      const offered = page.getByTestId("combat-reaction-none");
+      if (await offered.count()) await offered.click().catch(() => {});
+      await sleep(300);
+    }
+    const economy = (await page.getByTestId("combat-economy").innerText()).replace(/\s+/g, " ");
+    if (!/Action/.test(economy) || !/Bonus/.test(economy) || !/Reaction/.test(economy)) throw new Error("economy: " + economy);
+    const standard = await page.getByTestId("combat-standard").innerText();
+    for (const a of ["Dash", "Disengage", "Dodge", "Hide"]) if (!standard.includes(a)) throw new Error("no " + a + ": " + standard);
+    const maneuvers = await page.getByTestId("combat-maneuver").innerText();
+    if (!/Precision Attack/.test(maneuvers) || !/Trip Attack/.test(maneuvers)) throw new Error("maneuvers: " + maneuvers);
+    const facts = await page.evaluate(() => {
+      const s = window.__fight.getState();
+      const me = s.combatants.find((c) => c.isPlayer);
+      const navy = s.combatants.find((c) => /Navy/.test(c.name));
+      return { attacks: Math.max(...me.features.map((f) => f.attacksPerAction ?? 1)), second: !!me.features.find((f) => /Second Wind/.test(f.name))?.heal, dice: me.uses ?? {}, multi: navy?.profile?.multiattack ?? null, offhandStyle: me.features.some((f) => f.offhandModifier) };
+    });
+    if (facts.attacks !== 2 || !facts.second || !facts.offhandStyle) throw new Error(JSON.stringify(facts));
+    if (!facts.multi || facts.multi.length !== 2) throw new Error("the Navy Trooper's multiattack was not read: " + JSON.stringify(facts.multi));
+    // Dodge uses the action; Second Wind the bonus action; then the turn passes by itself
+    await page.getByTestId("combat-standard").getByRole("button", { name: "Dodge" }).click();
+    await sleep(300);
+    if (!(await page.evaluate(() => window.__fight.getState().combatants.find((c) => c.isPlayer).dodging))) throw new Error("not dodging");
+    const hpBefore = await page.evaluate(() => window.__fight.getState().combatants.find((c) => c.isPlayer).hp);
+    await page.getByTestId("combat-feature-Second Wind").click();
+    await sleep(400);
+    const hpAfter = await page.evaluate(() => window.__fight.getState().combatants.find((c) => c.isPlayer).hp);
+    if (!(hpAfter > hpBefore)) throw new Error(`Second Wind: ${hpBefore} -> ${hpAfter}`);
+    // The use is written to the character at once (the effect that saves hit points saves it)
+    await sleep(1200);
+    const usedAtOnce = (await getChar(d.id)).playState?.featureUses ?? {};
+    if (!Object.keys(usedAtOnce).some((k) => /Second Wind/.test(k))) throw new Error("Second Wind's use was not saved at once: " + JSON.stringify(usedAtOnce));
+    // Play the fight out, noting what the log shows
+    const lines = new Set();
+    let twice = 0;
+    let usedManeuver = false;
+    for (let i = 0; i < 200 && (await page.getByText(/Combat - Round/).count()); i++) {
+      const log = await page.evaluate(() => window.__fight?.getState().combatLog ?? []).catch(() => []);
+      for (const l of log) lines.add(l);
+      const save = page.getByRole("button", { name: "Death saving throw" });
+      const reaction = page.getByTestId("combat-reaction-none");
+      const select = page.getByTestId("combat-maneuver").locator("select");
+      if ((await reaction.count()) && (await reaction.isEnabled().catch(() => false))) await reaction.click().catch(() => {});
+      else if ((await save.count()) && (await save.isEnabled().catch(() => false))) await save.click().catch(() => {});
+      else if ((await melee.count()) && (await melee.isEnabled().catch(() => false))) {
+        if (!usedManeuver && (await select.count())) {
+          await select.selectOption({ label: "Trip Attack" }).catch(() => {});
+          usedManeuver = true;
+        }
+        await melee.click().catch(() => {});
+      } else if (await page.getByRole("button", { name: "End turn" }).isEnabled().catch(() => false)) await page.getByRole("button", { name: "End turn" }).click().catch(() => {});
+      await sleep(300);
+    }
+    const ordered = Array.from(lines);
+    let run = 0;
+    for (const l of ordered) {
+      if (/^Navy Trooper (hits|attacks)/.test(l)) { run += 1; if (run === 2) twice += 1; }
+      else if (/turn$|^Round/.test(l)) run = 0;
+    }
+    await sleep(1500);
+    const c = await getChar(d.id);
+    const spent = c.playState?.featureUses ?? {};
+    if (!Object.keys(spent).some((k) => /Second Wind/.test(k))) throw new Error("Second Wind's use was not kept: " + JSON.stringify(c.playState));
+    // A short rest gives Second Wind and the superiority dice back (once nobody hostile is left: whoever
+    // the fight did not finish is taken out of the room through the API)
+    const campNow = await campOf(depthCamp.id);
+    const wm = campNow.galaxyMap;
+    for (const a of Object.values(wm.areas)) a.occupants = a.occupants.filter((o) => o.disposition !== "hostile");
+    await api("PATCH", `/api/campaigns/${depthCamp.id}`, { galaxyMap: wm });
+    await api("PATCH", `/api/characters/${d.id}`, { currentHp: Math.max(1, (await getChar(d.id)).currentHp), conditions: [] });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await sleep(1500);
+    await page.getByRole("button", { name: "Short rest" }).click();
+    await sleep(1200);
+    const rested = await getChar(d.id);
+    if (Object.keys(rested.playState?.featureUses ?? {}).some((k) => /Second Wind|Maneuver/.test(k))) throw new Error("not restored by a short rest: " + JSON.stringify(rested.playState));
+    return `economy ${economy}; ${facts.attacks} attacks an action; multiattack ${facts.multi.join("+")}${twice ? ` made twice in a turn ${twice} time(s)` : " (no double attack seen)"}; Second Wind ${hpBefore}->${hpAfter}, kept ${JSON.stringify(spent)}, restored by a short rest`;
+  });
+
+  await step(ctx, "downtime: a workweek of work, gambling and carousing by the book's tables; a training is begun and a workweek of it done", async () => {
+    const dt = await newChar({ credits: 20000, equipment: ["Vibroblade", "Blaster pistol", "Combat suit"], toolProficiencies: ["Sabacc deck"] });
+    const dc = await newCamp(dt, 7, async () => {});
+    const timeOf = async () => (await campOf(dc.id)).timeElapsed?.total ?? 0;
+    const t0 = await timeOf();
+    await page.getByRole("tab", { name: "Downtime" }).click();
+    await page.getByTestId("downtime").waitFor();
+    const menu = await page.getByTestId("downtime-menu").innerText();
+    for (const n of ["Bounty Hunting", "Carousing", "Crafting", "Gambling", "Training", "Work", "Buying Enhanced Items"]) if (!menu.includes(n)) throw new Error("no " + n + " in the menu");
+    // Work: one check, then the d100
+    await page.getByTestId("downtime-work").click();
+    await page.getByTestId("downtime-begin").click();
+    await page.getByTestId("downtime-check-athletics").click();
+    await page.getByTestId("downtime-resolve").click();
+    await page.getByTestId("downtime-result").waitFor();
+    const work = (await page.getByTestId("downtime-result").innerText()).replace(/\s+/g, " ");
+    if (!/d100 \d+ \+ \d+ = \d+/.test(work)) throw new Error("work: " + work);
+    await sleep(1200);
+    const t1 = await timeOf();
+    if (t1 - t0 < 7 * 1440) throw new Error(`a workweek should be 7 days: ${t0} -> ${t1}`);
+    let c = await getChar(dt.id);
+    if (!(c.credits >= 20000 + 10)) throw new Error("work paid nothing: " + c.credits);
+    // Gambling: a stake, up to three checks, and the stake comes back by the table
+    await page.getByRole("button", { name: /Activities/ }).click();
+    await page.getByTestId("downtime-gambling").click();
+    await page.getByTestId("downtime-begin").click();
+    await page.getByRole("button", { name: /Charisma \(deception\)/i }).click();
+    for (let i = 0; i < 2 && !(await page.getByTestId("downtime-resolve").isEnabled()); i++) {
+      await page.getByRole("button", { name: /Wisdom \(insight\)/i }).click().catch(() => {});
+      if (!(await page.getByTestId("downtime-resolve").isEnabled())) await page.getByRole("button", { name: /Intelligence \(gaming set\)/i }).click().catch(() => {});
+    }
+    await page.getByTestId("downtime-resolve").click();
+    await page.getByTestId("downtime-result").waitFor();
+    const gamble = (await page.getByTestId("downtime-result").innerText()).replace(/\s+/g, " ");
+    // Carousing among the lower class: Persuasion, then the table
+    await page.getByRole("button", { name: /Again/ }).count();
+    await page.getByRole("button", { name: /Activities/ }).click();
+    await page.getByTestId("downtime-carousing").click();
+    await page.getByTestId("downtime-begin").click();
+    await page.getByTestId("downtime-check-persuasion").click();
+    await page.getByTestId("downtime-resolve").click();
+    await page.getByTestId("downtime-result").waitFor();
+    const carouse = (await page.getByTestId("downtime-result").innerText()).replace(/\s+/g, " ");
+    // Training: a skill, begun and one workweek done
+    await page.getByRole("button", { name: /Activities/ }).click();
+    await page.getByTestId("downtime-training").click();
+    await page.getByTestId("downtime-train-option").selectOption("skill-training");
+    await page.getByTestId("downtime-train-topic").selectOption({ label: "Stealth" });
+    await page.getByTestId("downtime-train-start").click();
+    await sleep(800);
+    await page.getByTestId("downtime-train-week").click();
+    await sleep(1500);
+    c = await getChar(dt.id);
+    const state = c.playState?.downtime;
+    if (!state || state.training.length !== 1 || !(state.training[0].done > 0)) throw new Error("training not kept: " + JSON.stringify(state?.training));
+    if (!(state.log.length >= 4)) throw new Error("the log has " + state.log.length);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await page.getByRole("tab", { name: "Downtime" }).click();
+    await page.getByTestId("downtime-log").waitFor();
+    return `work: ${work.slice(0, 90)}; gambling: ${gamble.slice(0, 80)}; carousing: ${carouse.slice(0, 80)}; ${state.training[0].label} ${state.training[0].done}/${state.training[0].weeks}; ${(await timeOf() - t0) / 1440} days passed`;
+  });
+
+  await step(ctx, "starship combat: the party's ship engages a hostile ship in orbit on the 3D map; weapons, a helm action, a move, the enemy's turns, and what comes of it is kept", async () => {
+    const sc = await newChar({ level: 5, class: "fighter", maxHp: 45, currentHp: 45, credits: 500, equipment: ["Vibroblade", "Blaster pistol", "Combat suit"] });
+    const camp = await newCamp(sc, 9, async () => {});
+    // The world: the planet the start is on gets a hostile ship in orbit; the party's ship is there too
+    const world = camp.world;
+    let planet = world.areas[camp.start.id];
+    while (planet && planet.kind !== "planet") planet = world.areas[planet.parentId];
+    const foe = { id: "e2e-raider", name: "E2E Raider", size: "Small", role: "Superiority Fighter", tier: 0, status: "orbiting", owner: world.antagonist, equipment: ["Lightweight armor", "Light laser cannon"], value: 20000 };
+    planet.ships = [...(planet.ships ?? []), foe];
+    const mine = { id: "e2e-mynock", name: "E2E Mynock", size: "Small", role: "Attack Fighter", tier: 3, status: "orbiting", owner: sc.name, equipment: ["Reinforced armor", "Heavy laser cannon", "Laser cannon", "Directional shield", "Hyperdrive, class 1.0"], value: 60000, fuel: 5, areaId: planet.id, hyperdriveClass: "1.0" };
+    await api("PATCH", `/api/campaigns/${camp.id}`, { galaxyMap: world, currentLocation: planet.id, starships: [mine] });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await sleep(2500);
+    await page.getByTestId("ship-engage").first().click();
+    await page.getByTestId("ship-combat").waitFor();
+    const info = (await page.getByTestId("ship-info").innerText()).replace(/\s+/g, " ");
+    if (!/Hull \d+\/\d+/.test(info) || !/shields \d+\/\d+/.test(info)) throw new Error("ship info: " + info);
+    const weapons = await page.getByTestId("ship-weapons").innerText();
+    if (!/Heavy laser cannon/.test(weapons) || !/primary/.test(weapons)) throw new Error("weapons: " + weapons);
+    // The ship's numbers come from its size, role and equipment: a Small tier 3 ship has 6d6 of hull, AC 10 + Dex (Reinforced: none) + 2
+    const facts = await page.evaluate(() => {
+      const f = window.__shipFight.getState().fight;
+      const me = f.ships.find((x) => x.id === window.__shipFight.getState().partyShipId);
+      return { hull: me.sheet.hullMax, dice: me.sheet.hullDice, ac: me.sheet.ac, dr: me.sheet.reduction, speed: me.sheet.speed, turning: me.sheet.turning, foes: f.ships.filter((x) => x.side === "foe").length, shield: me.sheet.shieldMax };
+    });
+    if (facts.dice !== 6 || facts.dr !== 6 || facts.speed !== 350 || facts.foes !== 1 || !(facts.shield > 0)) throw new Error(JSON.stringify(facts));
+    // The 3D map is probed for the ships
+    const meAt = await page.evaluate(() => window.__map3d?.at("me") ?? null);
+    if (!meAt) throw new Error("the space scene is not drawn");
+    let fired = 0;
+    let moved = false;
+    for (let i = 0; i < 160 && !(await page.getByTestId("ship-outcome").count()); i++) {
+      const state = await page.evaluate(() => {
+        const s = window.__shipFight.getState();
+        const f = s.fight;
+        if (!f) return null;
+        return { mine: f.ships[f.turn].id === s.partyShipId, actions: f.ships.find((x) => x.id === s.partyShipId).actions, outcome: f.outcome };
+      });
+      if (!state || state.outcome) break;
+      if (state.mine) {
+        if (!moved) {
+          // Fly: a tap on a lit square on the map
+          const lit = await page.evaluate(() => {
+            const s = window.__shipFight.getState();
+            const me = s.fight.ships.find((x) => x.id === s.partyShipId);
+            return { x: me.x + 4, y: me.y };
+          });
+          const p = await page.evaluate((k) => window.__map3d?.at(k) ?? null, `sq:${lit.x},${lit.y}`);
+          if (p) { await (PHONE ? page.touchscreen.tap(p.x, p.y) : page.mouse.click(p.x, p.y)); await sleep(500); }
+          moved = true;
+        }
+        const fire = page.getByTestId("ship-fire-0");
+        if (state.actions > 0 && (await fire.isEnabled().catch(() => false))) { await fire.click(); fired += 1; await sleep(300); }
+        else if (state.actions > 0 && (await page.getByTestId("ship-fire-1").isEnabled().catch(() => false))) { await page.getByTestId("ship-fire-1").click(); fired += 1; await sleep(300); }
+        else if (await page.getByRole("button", { name: "Evade" }).isEnabled().catch(() => false)) { await page.getByRole("button", { name: "Evade" }).click(); await sleep(300); }
+        else await page.getByTestId("ship-end-turn").click().catch(() => {});
+      }
+      await sleep(500);
+    }
+    await page.getByTestId("ship-outcome").waitFor({ timeout: 25000 });
+    const outcome = (await page.getByTestId("ship-outcome").innerText()).replace(/\s+/g, " ");
+    await page.getByTestId("ship-finish").click();
+    await sleep(1500);
+    const after = await campOf(camp.id);
+    const area = after.galaxyMap.areas[planet.id];
+    const raider = area.ships.find((x) => x.id === "e2e-raider");
+    const c = await getChar(sc.id);
+    const myShip = (after.starships ?? []).find((x) => x.id === "e2e-mynock");
+    if (/beaten/.test(outcome)) {
+      if (!(raider && (raider.status === "wrecked" || raider.disabled))) throw new Error("the beaten ship is untouched: " + JSON.stringify(raider));
+      if (!(c.experience > 0)) throw new Error("no experience for the win: " + c.experience);
+    }
+    if (/lost/.test(outcome) && myShip) throw new Error("a lost ship is still listed");
+    return `${outcome}; fired ${fired} times; hull ${facts.hull} (${facts.dice} dice), AC ${facts.ac}, armor takes ${facts.dr}; foe ${raider?.status}${raider?.disabled ? " (disabled)" : ""}; my ship ${myShip ? `hull ${myShip.hull}` : "gone"}; xp ${c.experience}`;
   });
 
   await step(ctx, "beast and stable: a dealer sells speeders, a stable keeper mounts, a wild creature is gentled", async () => {

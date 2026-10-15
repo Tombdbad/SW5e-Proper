@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import TranslucentPane from "@/components/ui/TranslucentPane";
-import { useCombat, attackPlan, cannotAct, rollD20, movementLeft, pickTarget, powerOutOfRange, squaresApart, onPartySide, rollDamage, LASTING } from "@/lib/stores/useCombat";
+import {
+  useCombat, attackPlan, cannotAct, movementLeft, pickTarget, powerOutOfRange, squaresApart, onPartySide, LASTING,
+  playerSpec, bonusAttackKinds, bonusFeatures, attacksPerAction,
+} from "@/lib/stores/useCombat";
 import { conditionSummary } from "@/lib/sw5e/rules";
-
-const mod = (score?: number) => Math.floor(((score ?? 10) - 10) / 2);
-const dieRoll = (sides: number) => Math.floor(Math.random() * sides) + 1;
 
 // What the character can use in a fight, made by the Play page from what is carried: `target` says
 // who it is used on (an ally or the character, an enemy, nobody), `use` does it and says whether it was used
@@ -18,130 +18,80 @@ export interface CombatItemOption {
 }
 
 export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] }) {
-  const { combatants, currentTurn, round, combatLog, endCombat, deathSaves, castPower, deathSave, pass, arena, targetId, setTarget } = useCombat();
+  const {
+    combatants, currentTurn, round, combatLog, endCombat, deathSaves, castPower, deathSave, pass, arena, targetId, setTarget,
+    pending, resolvePending, attack, standard, useFeature, setEmpower, setManeuver, autoEnd, setAutoEnd, aiStep, nextTurn,
+  } = useCombat();
   const current = combatants[currentTurn];
-
-  // An attack from where the attacker stands, with whatever weapon suits the kind of attack
-  const strike = (type: "melee" | "ranged") => {
-    const s = useCombat.getState();
-    const attacker = s.combatants[s.currentTurn];
-    const target = attacker && pickTarget(s.combatants, attacker, attacker.isPlayer ? s.targetId : null);
-    if (!attacker || !target) {
-      // Nobody left standing to attack: a downed player is left for dead
-      useCombat.getState().nextTurn();
-      return;
-    }
-    // Reach, range, cover and conditions: whether the attack can be made, and how the die is rolled
-    const plan = attackPlan(s.arena, s.combatants, attacker, target, type);
-    if (plan.barred) {
-      pass(`is ${plan.barred.toLowerCase()} and cannot attack ${target.name}`);
-      return;
-    }
-    if (!plan.possible) {
-      pass(`cannot attack: ${plan.why}`);
-      return;
-    }
-    const roll = rollD20(plan.mode);
-    // The player's bonus with the weapon in hand; unarmed, Strength and proficiency
-    let bonus = attacker.isPlayer
-      ? (type === "melee" ? attacker.meleeAttack : attacker.rangedAttack) ?? mod(attacker.abilities?.[type === "melee" ? "strength" : "dexterity"]) + (attacker.attackBonus ?? 2)
-      : attacker.attackBonus ?? 3;
-    const extras: string[] = [];
-    // A substance's extra d3 on attacks made with its ability
-    if (attacker.high && attacker.high.ability === (type === "melee" ? "strength" : "dexterity")) {
-      const d3 = dieRoll(3) * (attacker.high.low ? -1 : 1);
-      bonus += d3;
-      extras.push(`${d3 > 0 ? "+" : ""}${d3} ${attacker.high.low ? "low" : "high"}`);
-    }
-    // A tool's prepared die, once, on an attack
-    if (attacker.isPlayer && attacker.boons?.attack && !s.spent.includes("attack")) {
-      const d = dieRoll(attacker.boons.attack);
-      bonus += d;
-      extras.push(`+${d} prepared`);
-      s.spend("attack");
-    }
-    // A natural 1 misses whatever the bonus; cover adds to the target's Armor Class, and so does a
-    // prepared die of armor work, once, against one attack
-    let guard = 0;
-    if (target.isPlayer && target.boons?.ac && !s.spent.includes("ac")) {
-      guard = dieRoll(target.boons.ac);
-      extras.push(`armor work +${guard} AC`);
-      s.spend("ac");
-    }
-    const total = roll === 1 ? 0 : roll + bonus - plan.cover.bonus - guard;
-    const crit = roll === 20 || (plan.crit && total >= target.armorClass);
-    let dmg = s.damageRoll(type, crit);
-    const hit = roll !== 1 && (total >= target.armorClass || crit);
-    if (hit && attacker.isPlayer) {
-      if (attacker.boons?.damage && !s.spent.includes("damage")) {
-        const d = dieRoll(attacker.boons.damage);
-        dmg += d;
-        extras.push(`+${d} prepared damage`);
-        s.spend("damage");
-      }
-      if (attacker.boons?.damageFlat && !s.spent.includes("damage")) {
-        dmg += attacker.boons.damageFlat;
-        extras.push(`+${attacker.boons.damageFlat} honed`);
-        s.spend("damage");
-      }
-      const poison = attacker.boons?.poison;
-      if (poison && !s.spent.includes("poison")) {
-        // A dose of poison on the weapon: Constitution save against its DC, half on a save
-        const full = rollDamage(poison.dice, false);
-        const saved = rollD20(0) + (target.saves?.constitution ?? 0) >= poison.dc;
-        const taken = saved ? Math.floor(full / 2) : full;
-        dmg += taken;
-        extras.push(`poison ${taken}${saved ? " (saved)" : ""}`);
-        s.spend("poison");
-      }
-    }
-    const notes = [plan.mode ? `${plan.mode > 0 ? "advantage" : "disadvantage"}: ${plan.reasons.join(", ")}` : "", plan.cover.name, extras.join(", "), `${plan.feet} ft.`].filter(Boolean).join("; ");
-    s.attackRoll(target.id, total, dmg, crit, notes);
-    useCombat.getState().nextTurn();
-  };
-
-  // Close with the target as far as movement allows, then attack if it is in reach
-  const charge = (reachFeet: number, type: "melee" | "ranged") => {
-    const s = useCombat.getState();
-    const attacker = s.combatants[s.currentTurn];
-    const target = attacker && pickTarget(s.combatants, attacker, attacker.isPlayer ? s.targetId : null);
-    if (!attacker || !target) return strike(type);
-    if (s.approach(target.id, reachFeet)) strike(type);
-    else pass(`closes in on ${target.name} but cannot reach this turn`);
-  };
-
-  // Enemies act by themselves after a short pause; defeated combatants are skipped. One that
-  // fights hand to hand closes in; one that shoots holds its ground unless out of range.
+  // For the play-through test (as `window.__map3d` is for the map): the fight's state
   useEffect(() => {
-    if (!current) return;
-    const t = setTimeout(() => {
-      // The player acts by tapping, even when down (death saving throws)
-      if (current.isPlayer) return;
-      const held = cannotAct(current);
-      if (current.hp <= 0) useCombat.getState().nextTurn();
-      else if (held) pass(`is ${held.toLowerCase()} and cannot act`);
-      else if (useCombat.getState().surprise && useCombat.getState().round === 1) pass("is surprised and cannot act");
-      else if (current.rangedAttacker === false) charge(current.reach ?? 5, "melee");
-      else charge(current.range?.[0] ?? 80, "ranged");
-    }, 800);
+    (window as any).__fight = useCombat;
+  }, []);
+
+  // Close with the target as far as movement allows, then strike if it is in reach
+  const melee = () => {
+    const s = useCombat.getState();
+    const me = s.combatants[s.currentTurn];
+    if (!me?.isPlayer) return;
+    const spec = playerSpec(me, "melee")!;
+    const foe = pickTarget(s.combatants, me, s.targetId);
+    if (!foe) {
+      // Nobody left standing to attack: a downed player is left for dead
+      s.nextTurn();
+      return;
+    }
+    if (squaresApart(me, foe) * 5 > spec.reach && !s.approach(foe.id, spec.reach)) {
+      const after = useCombat.getState();
+      if (after.pending) return;
+      pass(`closes in on ${foe.name} but cannot reach this turn`);
+      return;
+    }
+    if (useCombat.getState().inCombat) useCombat.getState().attack("melee");
+  };
+
+  // Computer-run creatures (enemies, companions) act by themselves, a step at a time, after a short
+  // pause; a reaction offered to the character holds them until it is answered
+  useEffect(() => {
+    if (!current || current.isPlayer || pending) return;
+    const t = setTimeout(() => aiStep(), 700);
     return () => clearTimeout(t);
-  }, [currentTurn, round, combatants.length, current?.id]);
+  }, [currentTurn, round, combatants.length, current?.id, pending, combatLog.length]);
 
   const player = combatants.find((c) => c.isPlayer);
   const held = player ? cannotAct(player) : undefined;
-  const playerTurn = !!current?.isPlayer && (player?.hp ?? 0) > 0 && !held;
+  const playerTurn = !!current?.isPlayer && (player?.hp ?? 0) > 0 && !held && !pending;
   const down = !!player && player.hp <= 0;
   const target = player ? pickTarget(combatants, player, targetId) : undefined;
-  const ranged = player && target && player.rangedDice ? attackPlan(arena, combatants, player, target, "ranged") : undefined;
-  const melee = player && target ? attackPlan(arena, combatants, player, target, "melee") : undefined;
-  const cast = (index: number) => {
-    castPower(index);
-    if (useCombat.getState().inCombat) useCombat.getState().nextTurn();
-  };
+  const rangedSpec = player ? playerSpec(player, "ranged") : undefined;
+  const meleeSpec = player ? playerSpec(player, "melee") : undefined;
+  const ranged = player && target && rangedSpec ? attackPlan(arena, combatants, player, target, "ranged", { range: rangedSpec.range }) : undefined;
+  const meleePlan = player && target && meleeSpec ? attackPlan(arena, combatants, player, target, "melee", { reach: meleeSpec.reach }) : undefined;
+  const hasAction = (player?.actions ?? 0) > 0 || (player?.attacksLeft ?? 0) > 0;
+  const perAction = player ? attacksPerAction(player) : 1;
+  const midAttack = (player?.attacksLeft ?? 0) > 0;
+  const bonusAttacks = player ? bonusAttackKinds(player) : [];
+  const bonusUses = player ? bonusFeatures(player) : [];
+  const bonusStandard = (player?.features ?? []).filter((f) => f.actions?.length && (player?.bonus ?? 0) > 0).flatMap((f) => f.actions!.map((a) => ({ a: a.toLowerCase() as "dash" | "disengage" | "hide" | "dodge" | "help", from: f.name })));
+  const friends = combatants.filter((c) => onPartySide(c) && !c.isPlayer && c.hp > 0);
+  const cast = (index: number) => castPower(index);
   const rollDeathSave = () => {
     deathSave();
     if (useCombat.getState().inCombat) useCombat.getState().nextTurn();
   };
+  // Features that are used by choice (not a reaction offered when a hit lands, not always on)
+  const chosen = (player?.features ?? []).filter((f) => f.activation !== "passive" || f.uses);
+  const usesLeft = (key: string) => {
+    const f = chosen.find((x) => x.key === key);
+    return f?.uses ? f.uses.max - (player?.uses?.[f.pool] ?? 0) : null;
+  };
+  const maneuvers = (player?.features ?? []).filter((f) => f.maneuver && f.maneuver.timing !== "use");
+  // What the character chooses to do with an action or no action at all: not what happens by itself
+  // on a hit or as a reaction, a stance (a bonus action), a maneuver picked for the attack
+  const usedNow = (f: (typeof chosen)[number]) =>
+    (f.activation === "action" || f.activation === "free") && !f.bonusAttack && !f.stance && !(f.maneuver && f.maneuver.timing !== "use") && !f.marks && !f.extraDamage && !f.acDie && !f.reduce && !f.acBonus;
+  const empowerFeature = (player?.features ?? []).find((f) => f.extraDamage?.perPoint);
+  const empowerMax = empowerFeature ? Math.min(empowerFeature.extraDamage!.maxDice ?? 9, player?.powerPoints ?? 0) : 0;
+  const attacker = pending ? combatants.find((c) => c.id === pending.attackerId) : undefined;
 
   return (
     <div className="absolute inset-x-0 bottom-0 z-20 h-[54dvh] overflow-y-auto bg-gray-900 md:inset-x-auto md:bottom-auto md:left-2 md:top-2 md:h-auto md:w-80 md:max-h-[82vh] md:bg-transparent">
@@ -165,9 +115,14 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
                   {c.hp}/{c.maxHp}{c.tempHp ? ` +${c.tempHp}` : ""}
                 </span>
               </div>
-              {c.hp > 0 && (c.conditions?.length ?? 0) > 0 && (
+              {c.hp > 0 && ((c.conditions?.length ?? 0) > 0 || c.stance || c.dodging || c.hidden || c.reckless || c.guarding !== undefined) && (
                 <div className="flex flex-wrap gap-1 font-normal" data-testid="combat-conditions">
-                  {c.conditions!.map((condition) => (
+                  {c.stance && <span className="rounded bg-red-900/70 px-1 text-xs text-red-100">{c.stance.label}</span>}
+                  {c.dodging && <span className="rounded bg-sky-900/70 px-1 text-xs text-sky-100">dodging</span>}
+                  {c.hidden && <span className="rounded bg-sky-900/70 px-1 text-xs text-sky-100">hidden</span>}
+                  {c.reckless && <span className="rounded bg-red-900/70 px-1 text-xs text-red-100">reckless</span>}
+                  {c.guarding !== undefined && <span className="rounded bg-sky-900/70 px-1 text-xs text-sky-100">guarding</span>}
+                  {c.conditions?.map((condition) => (
                     <span key={condition.name} className="rounded bg-purple-900/60 px-1 text-xs text-purple-100" title={conditionSummary(condition.name)}>
                       {condition.name}
                       {condition.rounds < LASTING ? ` ${condition.rounds}` : ""}
@@ -186,20 +141,133 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
             . Movement left: {movementLeft(player)} ft.
           </p>
         )}
+        {player && !down && (
+          <div className="flex flex-wrap gap-1 mb-2 text-xs" data-testid="combat-economy">
+            <span className={`rounded px-1.5 py-0.5 ${hasAction ? "bg-emerald-900/70 text-emerald-100" : "bg-gray-700 text-gray-400"}`}>
+              Action {midAttack ? `(${player.attacksLeft} attack${player.attacksLeft === 1 ? "" : "s"} left)` : hasAction ? "●" : "○"}
+            </span>
+            <span className={`rounded px-1.5 py-0.5 ${(player.bonus ?? 0) > 0 ? "bg-emerald-900/70 text-emerald-100" : "bg-gray-700 text-gray-400"}`}>Bonus {(player.bonus ?? 0) > 0 ? "●" : "○"}</span>
+            <span className={`rounded px-1.5 py-0.5 ${(player.reactions ?? 0) > 0 ? "bg-emerald-900/70 text-emerald-100" : "bg-gray-700 text-gray-400"}`}>Reaction {(player.reactions ?? 0) > 0 ? "●" : "○"}</span>
+            <label className="ml-auto flex items-center gap-1 text-gray-400">
+              <input type="checkbox" checked={autoEnd} onChange={(e) => setAutoEnd(e.target.checked)} /> end turn by itself
+            </label>
+          </div>
+        )}
+        {pending && player && (
+          <div className="mb-3 p-2 rounded bg-amber-900/50 text-sm" data-testid="combat-reaction">
+            <p>
+              {attacker?.name ?? "Something"} hits you with {pending.attackName} for {pending.damage} damage{pending.crit ? " (critical)" : ""}. Use your reaction?
+            </p>
+            <div className="mt-1 flex flex-col gap-1">
+              {pending.options.map((o) => (
+                <Button key={o.key} size="sm" variant="outline" className="h-auto whitespace-normal justify-start text-left" onClick={() => resolvePending(o.key)} data-testid={`combat-reaction-${o.feature}`}>
+                  {o.label}
+                </Button>
+              ))}
+              <Button size="sm" onClick={() => resolvePending(null)} data-testid="combat-reaction-none">
+                Take the hit
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2 mb-2">
-          <Button disabled={!playerTurn} onClick={() => charge(player?.reach ?? 5, "melee")} title={player?.meleeWeapon ?? "Unarmed"}>
+          <Button disabled={!playerTurn || !hasAction} onClick={melee} title={player?.meleeWeapon ?? "Unarmed"}>
             Melee
           </Button>
-          <Button disabled={!playerTurn || !player?.rangedDice || !ranged?.possible} onClick={() => strike("ranged")} title={player?.rangedWeapon ?? "No ranged weapon"}>
+          <Button disabled={!playerTurn || !hasAction || !rangedSpec || !ranged?.possible} onClick={() => attack("ranged")} title={player?.rangedWeapon ?? "No ranged weapon"}>
             Ranged
           </Button>
-          <Button variant="outline" disabled={!playerTurn} onClick={() => pass("holds")}>
+          <Button variant="outline" disabled={!playerTurn} onClick={() => (midAttack || (player?.actions ?? 0) <= 0 ? nextTurn() : pass("holds"))}>
             End turn
           </Button>
         </div>
+        {playerTurn && (
+          <div className="flex flex-wrap gap-1 mb-2" data-testid="combat-standard">
+            {(["dash", "disengage", "dodge", "hide"] as const).map((a) => (
+              <Button key={a} size="sm" variant="outline" disabled={!hasAction} onClick={() => standard(a)}>
+                {a[0].toUpperCase() + a.slice(1)}
+              </Button>
+            ))}
+            {friends.length > 0 && (
+              <>
+                <Button size="sm" variant="outline" disabled={!hasAction} onClick={() => standard("help")}>Help</Button>
+                <Button size="sm" variant="outline" disabled={!hasAction} onClick={() => standard("guard")}>Guard</Button>
+              </>
+            )}
+            {bonusStandard.map((b) => (
+              <Button key={`${b.from}-${b.a}`} size="sm" variant="secondary" onClick={() => standard(b.a, true)} title={`${b.from}: as a bonus action`}>
+                {b.a[0].toUpperCase() + b.a.slice(1)} (bonus)
+              </Button>
+            ))}
+          </div>
+        )}
+        {playerTurn && (bonusAttacks.length > 0 || bonusUses.length > 0) && (
+          <div className="mb-2" data-testid="combat-bonus">
+            <p className="text-xs text-gray-400 mb-1">Bonus action</p>
+            <div className="flex flex-col gap-1">
+              {bonusAttacks.map((b) => (
+                <Button key={`${b.kind}-${b.source}`} size="sm" variant="secondary" className="h-auto whitespace-normal justify-start text-left" onClick={() => attack(b.kind)}>
+                  {b.label} <span className="text-gray-400 ml-1">({b.source})</span>
+                </Button>
+              ))}
+              {bonusUses.map((f) => (
+                <Button key={f.key} size="sm" variant="secondary" className="h-auto whitespace-normal justify-start text-left" onClick={() => useFeature(f.key, player?.id)} data-testid={`combat-feature-${f.name}`}>
+                  {player?.stance && f.stance ? `End ${f.stance.label.replace(/ing$/, "e")}` : f.name}
+                  <span className="text-gray-400 ml-1">
+                    {usesLeft(f.key) !== null ? `(${usesLeft(f.key)} left` : "("}
+                    {f.cost ? `${usesLeft(f.key) !== null ? "; " : ""}${f.cost.points} ${f.cost.pool === "focus" ? "focus" : "point"}` : ""}
+                    {f.automated ? "" : `${usesLeft(f.key) !== null || f.cost ? "; " : ""}you apply it`})
+                  </span>
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+        {playerTurn && chosen.some(usedNow) && (
+          <div className="mb-2" data-testid="combat-features">
+            <p className="text-xs text-gray-400 mb-1">Features</p>
+            <div className="flex flex-col gap-1">
+              {chosen
+                .filter(usedNow)
+                .map((f) => {
+                  const left = usesLeft(f.key);
+                  const blocked = (left !== null && left <= 0) || (f.activation === "action" && !hasAction) || (f.cost && (f.cost.pool === "focus" ? (player?.focus ?? 0) : (player?.powerPoints ?? 0)) < f.cost.points);
+                  return (
+                    <Button key={f.key} size="sm" variant="outline" className="h-auto whitespace-normal justify-start text-left" disabled={!!blocked} onClick={() => useFeature(f.key, target?.id)} data-testid={`combat-feature-${f.name}`}>
+                      {f.name}
+                      <span className="text-gray-400 ml-1">
+                        ({[f.activation === "action" ? "action" : "no action", left !== null ? `${left} left` : "", f.cost ? `${f.cost.points} ${f.cost.pool === "focus" ? "focus" : "point"}` : "", f.automated ? "" : "you apply it"].filter(Boolean).join("; ")})
+                      </span>
+                    </Button>
+                  );
+                })}
+            </div>
+          </div>
+        )}
+        {playerTurn && maneuvers.length > 0 && (
+          <label className="mb-2 flex items-center gap-2 text-xs text-gray-300" data-testid="combat-maneuver">
+            Maneuver ({maneuvers[0].uses ? maneuvers[0].uses.max - (player?.uses?.[maneuvers[0].pool] ?? 0) : 0} dice left)
+            <select className="h-7 min-w-0 flex-1 rounded bg-gray-700 px-1" value={player?.maneuver ?? ""} onChange={(e) => setManeuver(e.target.value || null)}>
+              <option value="">none</option>
+              {maneuvers.map((m) => (
+                <option key={m.key} value={m.key}>{m.name}{m.maneuver!.timing === "attack" ? " (with the attack roll)" : ""}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {playerTurn && empowerFeature && empowerMax > 0 && (
+          <label className="mb-2 flex items-center gap-2 text-xs text-gray-300">
+            {empowerFeature.name}: force points on the next hit
+            <select className="h-7 rounded bg-gray-700 px-1" value={player?.empower ?? 0} onChange={(e) => setEmpower(Number(e.target.value))}>
+              {Array.from({ length: empowerMax + 1 }, (_, n) => (
+                <option key={n} value={n}>{n === 0 ? "none" : `${n} (+${n}${empowerFeature.extraDamage!.dice.replace(/^\d+/, "")})`}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className="text-xs text-gray-400 mb-2">
-          Melee: {player?.meleeWeapon ?? "unarmed"} ({player?.reach ?? 5} ft.{melee && !melee.possible ? "; Melee closes in first" : ""}) · Ranged: {player?.rangedWeapon ? `${player.rangedWeapon} (${player.range?.join("/") ?? "80/320"} ft.)` : "none"}.
-          On the map, tap a green square to move and an enemy to pick it out; an attack or power ends the turn.
+          Melee: {player?.meleeWeapon ?? "unarmed"} ({player?.reach ?? 5} ft.{meleePlan && !meleePlan.possible ? "; Melee closes in first" : ""}) · Ranged: {player?.rangedWeapon ? `${player.rangedWeapon} (${player.range?.join("/") ?? "80/320"} ft.)` : "none"}.
+          {perAction > 1 ? ` The Attack action makes ${perAction} attacks.` : ""} On the map, tap a green square to move and an enemy to pick it out; moving out of an enemy's reach gives it an attack unless you Disengage.
         </div>
         {held && current?.isPlayer && !down && (
           <div className="mb-3 p-2 rounded bg-purple-900/40 text-sm" data-testid="combat-held">
@@ -232,25 +300,27 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
             </Button>
           </div>
         )}
-        {!down && items.length > 0 && <ItemList items={items} disabled={!playerTurn} />}
+        {!down && items.length > 0 && <ItemList items={items} disabled={!playerTurn || !hasAction} />}
         {!down && (player?.powers?.length ?? 0) > 0 && (
           <div className="mb-3" data-testid="combat-powers">
             <p className="text-xs text-gray-400 mb-1">Powers ({player?.powerPoints ?? 0} points left)</p>
             <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
               {player!.powers!.map((power, index) => {
                 const far = powerOutOfRange(combatants, player!, power, targetId);
+                const bonusCast = power.castTime === "bonus";
+                const noTime = bonusCast ? (player?.bonus ?? 0) <= 0 : !hasAction;
                 return (
                   <Button
                     key={power.name}
                     size="sm"
                     variant="outline"
                     className="h-auto whitespace-normal justify-start text-left"
-                    disabled={!playerTurn || (player?.powerPoints ?? 0) < power.cost || far}
+                    disabled={!playerTurn || (player?.powerPoints ?? 0) < power.cost || far || noTime || power.castTime === "reaction" || power.castTime === "long"}
                     onClick={() => cast(index)}
                   >
                     {power.name}
                     <span className="text-gray-400 ml-1">
-                      ({power.cost ? `${power.cost} pts` : "at-will"}; {power.range === 0 ? "self; " : power.range === 5 ? "touch; " : power.range ? `${power.range} ft.; ` : ""}{far ? "out of range; " : ""}{power.summary})
+                      ({power.cost ? `${power.cost} pts` : "at-will"}; {bonusCast ? "bonus action; " : ""}{power.range === 0 ? "self; " : power.range === 5 ? "touch; " : power.range ? `${power.range} ft.; ` : ""}{far ? "out of range; " : ""}{power.summary})
                     </span>
                   </Button>
                 );
@@ -269,7 +339,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
 }
 
 // The items the character can use now. An item used on a friend asks whom; one thrown goes at the
-// enemy picked out. Using one takes the turn.
+// enemy picked out. Using one is the Use an Object action.
 function ItemList({ items, disabled }: { items: CombatItemOption[]; disabled: boolean }) {
   const { combatants, targetId } = useCombat();
   const [who, setWho] = useState<Record<string, string>>({});
@@ -280,11 +350,11 @@ function ItemList({ items, disabled }: { items: CombatItemOption[]; disabled: bo
     const foe = player ? pickTarget(state.combatants, player, state.targetId) : undefined;
     const target = item.target === "ally" ? who[item.key] ?? String(player?.id) : item.target === "foe" ? foe?.id : undefined;
     const friend = item.target === "ally" ? state.combatants.find((c) => String(c.id) === String(target)) : undefined;
-    if (item.use(friend ? friend.id : target)) useCombat.getState().nextTurn();
+    item.use(friend ? friend.id : target);
   };
   return (
     <div className="mb-3" data-testid="combat-items">
-      <p className="text-xs text-gray-400 mb-1">Items (using one takes the turn)</p>
+      <p className="text-xs text-gray-400 mb-1">Items (using one is your action)</p>
       <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
         {items.map((item) => (
           <div key={item.key} className="flex items-center gap-1">
@@ -308,6 +378,161 @@ function ItemList({ items, disabled }: { items: CombatItemOption[]; disabled: bo
         ))}
       </div>
       <p className="text-[11px] text-gray-500">{targetId ? "Thrown at the enemy picked out." : "Thrown at the nearest enemy."}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// A fight between starships (shared/logic "Starship combat"). The character's ship acts on its
+// turn: fire its weapons (each once, an action each), the helm's one action (evade, fly, a hard
+// turn, an attack run), boost, patch the hull, regenerate shields; tap the map to fly.
+// ---------------------------------------------------------------------------------------------
+
+import { shipFeet, bearingOff, shipSpeed } from "@shared/logic";
+import { useShipFight } from "@/lib/stores/useCombat";
+
+export function ShipCombatPanel({ onFinish }: { onFinish: (outcome: NonNullable<ReturnType<typeof useShipFight.getState>["fight"]>["outcome"]) => void }) {
+  const { fight, partyShipId, targetId, setTarget, fire, helm, boost, patch, regenerate, direct, interfere, flee, endTurn, aiStep, turn } = useShipFight();
+  const me = fight?.ships.find((s) => s.id === partyShipId);
+  const current = fight?.ships[fight.turn];
+  const myTurn = !!fight && !!me && current?.id === me.id && !fight.outcome && !me.disabled && !me.destroyed;
+
+  // The computer's ships fly their turns by themselves, a step at a time
+  useEffect(() => {
+    if (!fight || fight.outcome || !current || current.id === partyShipId) return;
+    const t = setTimeout(() => aiStep(), 800);
+    return () => clearTimeout(t);
+  }, [fight?.turn, fight?.round, fight?.log.length, fight?.outcome]);
+  // A disabled ship at 0 hull cannot act, but its turn still comes round
+  useEffect(() => {
+    if (!fight || fight.outcome || !me || current?.id !== me.id || !(me.disabled || me.destroyed)) return;
+    const t = setTimeout(() => endTurn(), 700);
+    return () => clearTimeout(t);
+  }, [fight?.turn, fight?.round]);
+
+  useEffect(() => {
+    (window as any).__shipFight = useShipFight;
+  }, []);
+
+  if (!fight || !me) return null;
+  const foes = fight.ships.filter((s) => s.side === "foe");
+  const target = fight.ships.find((s) => s.id === targetId && !s.destroyed && !s.fled) ?? foes.find((s) => !s.destroyed && !s.fled);
+  const why = (index: number): string => {
+    const w = me.sheet.weapons[index];
+    if (!target) return "no target";
+    if (me.fired.includes(index)) return "fired";
+    if (me.actions <= 0) return "no action";
+    if (w.ammo !== undefined && (me.ammo[index] ?? 0) <= 0) return "empty";
+    if (shipFeet(me, target) > w.far) return "out of range";
+    if (w.arc === "forward" && bearingOff(me, target) > 45.01 && !me.attackRun) return "not in arc";
+    return "";
+  };
+  const feet = target ? shipFeet(me, target) : 0;
+  const bar = (now: number, max: number) => (max > 0 ? `${now}/${max}` : "-");
+
+  return (
+    <div className="absolute inset-x-0 bottom-0 z-20 h-[54dvh] overflow-y-auto bg-gray-900 md:inset-x-auto md:bottom-auto md:left-2 md:top-2 md:h-auto md:w-80 md:max-h-[82vh] md:bg-transparent" data-testid="ship-combat">
+      <TranslucentPane className="p-3 text-white">
+        <div className="flex justify-between items-center mb-2">
+          <h2 className="text-lg font-bold text-yellow-400">Space - Round {fight.round}</h2>
+          {me.sheet.hyperdrive && myTurn && (
+            <Button size="sm" variant="outline" onClick={flee} data-testid="ship-flee">
+              Jump away
+            </Button>
+          )}
+        </div>
+        <ul className="space-y-1 mb-2" data-testid="ship-list">
+          {fight.ships.map((s) => (
+            <li key={s.id} className={`text-sm ${current?.id === s.id ? "text-yellow-300 font-semibold" : ""} ${s.destroyed || s.fled ? "opacity-50 line-through" : ""}`} onClick={() => s.side === "foe" && !s.destroyed && setTarget(s.id)}>
+              <div className="flex justify-between">
+                <span>
+                  {target?.id === s.id ? "◎ " : ""}
+                  {s.name}
+                  {s.side === "party" ? " (you)" : ""}
+                  <span className="text-xs text-gray-400"> {s.sheet.size} {s.sheet.role.toLowerCase()}</span>
+                </span>
+                <span>
+                  {bar(s.hull, s.sheet.hullMax)}
+                  {s.sheet.shieldMax ? <span className="text-sky-300"> +{s.shield}</span> : ""}
+                </span>
+              </div>
+              {(s.disabled || s.systemDamage > 0 || s.evading || s.stable) && (
+                <div className="flex flex-wrap gap-1 text-xs">
+                  {s.disabled && <span className="rounded bg-red-900/70 px-1">disabled{s.stable ? ", stable" : ""}</span>}
+                  {s.systemDamage > 0 && <span className="rounded bg-purple-900/60 px-1">system damage {s.systemDamage}</span>}
+                  {s.evading && <span className="rounded bg-sky-900/70 px-1">evading</span>}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+        <p className="text-xs text-gray-300 mb-2" data-testid="ship-info">
+          Hull {me.hull}/{me.sheet.hullMax}{me.sheet.shieldMax ? `, shields ${me.shield}/${me.sheet.shieldMax} (+${me.sheet.shieldRegen} a turn, ${me.shieldDiceLeft} dice)` : ", no shields"} · AC {me.sheet.ac}{me.sheet.reduction ? `, armor takes ${me.sheet.reduction}` : ""} · speed {me.speedLeft}/{shipSpeed(me)} ft.
+          {target ? ` · Target: ${target.name}, ${feet} ft.` : ""}
+        </p>
+        <div className="flex flex-wrap gap-1 mb-2 text-xs" data-testid="ship-economy">
+          <span className={`rounded px-1.5 py-0.5 ${me.actions > 0 ? "bg-emerald-900/70 text-emerald-100" : "bg-gray-700 text-gray-400"}`}>Actions {me.actions}/{me.actionsMax}</span>
+          <span className={`rounded px-1.5 py-0.5 ${!me.helmUsed ? "bg-emerald-900/70 text-emerald-100" : "bg-gray-700 text-gray-400"}`}>Helm {me.helmUsed ? "○" : "●"}</span>
+          {me.attackRun && <span className="rounded bg-amber-900/70 px-1.5 py-0.5">attack run</span>}
+        </div>
+        {fight.outcome ? (
+          <div className="mb-3 rounded bg-gray-800 p-2 text-sm" data-testid="ship-outcome">
+            <p>
+              {fight.outcome === "victory" ? "The enemy is beaten." : fight.outcome === "destroyed" ? "Your ship is lost." : fight.outcome === "fled" ? "You jump away." : "Your ship is disabled."}
+            </p>
+            <Button size="sm" className="mt-1" onClick={() => onFinish(fight.outcome)} data-testid="ship-finish">Continue</Button>
+          </div>
+        ) : (
+          <>
+            <div className="mb-2" data-testid="ship-weapons">
+              <p className="text-xs text-gray-400 mb-1">Fire (an action each, once a turn)</p>
+              <div className="flex flex-col gap-1">
+                {me.sheet.weapons.length === 0 && <p className="text-xs text-gray-400">The ship carries no weapons.</p>}
+                {me.sheet.weapons.map((w, i) => {
+                  const reason = why(i);
+                  return (
+                    <Button key={`${w.name}-${i}`} size="sm" variant="outline" className="h-auto whitespace-normal justify-start text-left" disabled={!myTurn || !!reason} onClick={() => fire(i)} data-testid={`ship-fire-${i}`}>
+                      {w.name}
+                      <span className="text-gray-400 ml-1">
+                        ({w.category.toLowerCase()}, {w.dice} {w.damageType}, {w.near ? `${w.near}/` : ""}{w.far} ft., {w.arc}{w.ammo !== undefined ? `, ${me.ammo[i] ?? 0} left` : ""}{reason ? `; ${reason}` : ""})
+                      </span>
+                    </Button>
+                  );
+                })}
+                {me.sheet.weapons.some((w, i) => !why(i) && w.category !== "Tertiary" && w.category !== "Quaternary") && me.gunners === 0 && !me.attackRun && (
+                  <p className="text-[11px] text-gray-500">Firing from the helm has disadvantage with primary and secondary weapons; an attack run or a gunner removes it.</p>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1 mb-2" data-testid="ship-helm">
+              <Button size="sm" variant="outline" disabled={!myTurn || me.helmUsed || me.actions <= 0} onClick={() => helm("evade")}>Evade</Button>
+              <Button size="sm" variant="outline" disabled={!myTurn || me.helmUsed || me.actions <= 0} onClick={() => helm("fly")}>Fly</Button>
+              <Button size="sm" variant="outline" disabled={!myTurn || me.helmUsed || me.actions <= 0} onClick={() => helm("hardTurn")}>Hard turn</Button>
+              <Button size="sm" variant="outline" disabled={!myTurn || me.helmUsed || me.actions <= 0 || me.movedToward < 150} onClick={() => helm("attackRun")} title="Needs 150 ft. of flying toward the target first">Attack run</Button>
+              <Button size="sm" variant="outline" disabled={!myTurn} onClick={() => turn(-1)}>Turn ↶</Button>
+              <Button size="sm" variant="outline" disabled={!myTurn} onClick={() => turn(1)}>Turn ↷</Button>
+            </div>
+            <div className="flex flex-wrap gap-1 mb-2" data-testid="ship-actions">
+              {(["engines", "shields", "weapons"] as const).map((b) => (
+                <Button key={b} size="sm" variant="secondary" disabled={!myTurn || me.actions <= 0 || me.boosts[b] > 0 || (b === "shields" && !me.sheet.hasShield)} onClick={() => boost(b)}>
+                  Boost {b}
+                </Button>
+              ))}
+              <Button size="sm" variant="secondary" disabled={!myTurn || me.actions <= 0 || me.hullDiceLeft <= 0 || me.hull >= me.sheet.hullMax} onClick={patch}>Patch ({me.hullDiceLeft})</Button>
+              <Button size="sm" variant="secondary" disabled={!myTurn || me.actions <= 0 || !me.sheet.hasShield || me.shieldDiceLeft <= 0 || me.shield >= me.sheet.shieldMax} onClick={regenerate}>Regenerate shields</Button>
+              <Button size="sm" variant="secondary" disabled={!myTurn || me.actions <= 0} onClick={direct}>Direct</Button>
+              <Button size="sm" variant="secondary" disabled={!myTurn || me.actions <= 0 || !target} onClick={interfere}>Interfere</Button>
+            </div>
+            <Button className="mb-2" variant="outline" disabled={!myTurn} onClick={endTurn} data-testid="ship-end-turn">End turn</Button>
+            <p className="text-xs text-gray-400 mb-2">On the map, tap a green square to fly there (a square is 50 ft.; turning costs half the turning speed for each 45 degrees) and an enemy to pick it out.</p>
+          </>
+        )}
+        <div className="text-xs text-gray-300 space-y-1 max-h-32 overflow-y-auto">
+          {fight.log.slice(-6).map((l, i) => (
+            <div key={i}>{l}</div>
+          ))}
+        </div>
+      </TranslucentPane>
     </div>
   );
 }
