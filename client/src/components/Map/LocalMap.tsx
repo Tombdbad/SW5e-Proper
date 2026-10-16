@@ -2373,7 +2373,7 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
   const partyTrail = new Set(trailOf(world, hereId).map((a) => a.id));
   const trail = trailOf(world, view.id);
   const biome = trail.find((a) => a.kind === "planet")?.type ?? "";
-  const wall = trail.some((a) => a.type === "station") || building.type === "starship" ? STEEL : WALLS[biome] ?? "#b9ad96";
+  const wall = trail.some((a) => a.type === "station") ? STEEL : WALLS[biome] ?? "#b9ad96";
   const system = view.kind === "system";
   const globe = view.kind === "planet";
 
