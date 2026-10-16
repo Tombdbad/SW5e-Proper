@@ -17,6 +17,7 @@ export type MapAction =
   | { type: "loot" | "occupant" | "ship" | "vehicle" | "companion" | "station"; id: string }
   | { type: "look"; areaId: string }
   | { type: "trap"; areaId: string; id: string }
+  | { type: "use"; areaId: string; id: string; name: string }
   | { type: "note"; text: string };
 
 // When the finger last came down (or the mouse button went down). A busy phone delivers the

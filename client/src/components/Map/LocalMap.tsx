@@ -7,7 +7,7 @@ import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey } from "@/lib/stores/useCombat";
 import { type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
-import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
+import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind, type TokenKind } from "./sprites";
 
@@ -321,6 +321,11 @@ function Furniture({ name, w, h }: { name: string; w: number; h: number }) {
   if (/command chair/.test(n)) return <><Cyl at={[cx, 0.16, cz]} r={0.1} h={0.32} color={DARK} /><Box at={[cx, 0.36, cz]} size={[0.5, 0.1, 0.5]} color="#3d4856" /><Box at={[cx, 0.72, cz - 0.22]} size={[0.5, 0.7, 0.1]} color="#3d4856" /></>;
   if (/barricade/.test(n)) return <><Box at={[cx, 0.34, cz]} size={[w - 0.1, 0.68, h * 0.3]} color="#59636d" rot={wide ? [0.2, 0, 0] : [0, 0, 0.2]} /><Box at={[cx, 0.5, cz]} size={[w * 0.5, 0.08, h * 0.32]} color={AMBER} /></>;
   if (/lifter droid dock/.test(n)) return <><Box at={[cx, 0.05, cz]} size={[0.8, 0.1, 0.8]} color={DARK} /><Box at={[cx - 0.3, 0.5, cz - 0.3]} size={[0.1, 1, 0.1]} color="#7b8794" /><Box at={[cx - 0.3, 1.02, cz - 0.3]} size={[0.12, 0.08, 0.12]} color="#58c98b" glow={2} /></>;
+  // Wall-mounted equipment and kiosks (see useKindOf)
+  if (/security camera|camera pole/.test(n)) return <><Box at={[cx, 1.5, cz]} size={[0.22, 0.2, 0.34]} color="#2a2f36" /><Box at={[cx, 1.5, cz + 0.2]} size={[0.1, 0.1, 0.06]} color="#e5484d" glow={2} /><Cyl at={[cx, 0.75, cz]} r={0.03} h={1.5} color="#59636d" /></>;
+  if (/alarm panel/.test(n)) return <><Box at={[cx, 1.1, cz]} size={[0.36, 0.44, 0.1]} color="#8f2f35" /><Box at={[cx, 1.1, cz + 0.06]} size={[0.14, 0.14, 0.04]} color="#ff6b6b" glow={1.4} /></>;
+  if (/info kiosk|notice board/.test(n)) return <>{block(0.7, "#2a2f36", 0.2)}<Box at={[cx, 1.05, cz]} size={[0.5, 0.5, 0.12]} color={GLOW} glow={1.1} /></>;
+  if (/access panel/.test(n)) return <><Box at={[cx, 1.05, cz]} size={[0.34, 0.44, 0.1]} color="#2a2f36" /><Box at={[cx, 1.12, cz + 0.06]} size={[0.2, 0.14, 0.03]} color="#58c98b" glow={1.2} /><Box at={[cx, 0.98, cz + 0.06]} size={[0.2, 0.16, 0.03]} color="#59636d" /></>;
   return block(0.5, "#3d4856", 0.16);
 }
 
@@ -599,7 +604,7 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], walls = tru
             : a.kind === "loot" ? <Chest looted={looted?.(a)} />
             : <Furniture name={a.name} w={a.w} h={a.h} />}
           {/* Furniture that can be stood on (a bench, the stage) leaves the tap to the floor beneath, so it walks to that square */}
-          {onAsset && !(onFloor && a.kind === "furniture" && !a.blocks) && <Hit at={[a.w / 2, 0.5, a.h / 2]} size={[a.w, 1, a.h]} onTap={() => onAsset(a)} />}
+          {onAsset && !(onFloor && a.kind === "furniture" && !a.blocks && !useKindOf(a.name)) && <Hit at={[a.w / 2, 0.5, a.h / 2]} size={[a.w, 1, a.h]} onTap={() => onAsset(a)} />}
         </group>
       ))}
       {children}
@@ -1364,12 +1369,14 @@ function Barricade({ squares, guards, onTap }: { squares: { x: number; y: number
 // ---------------------------------------------------------------------------------------------
 
 const MARGIN = 6;
-const DECOR: Record<string, string[]> = { desert: ["rock", "mast"], ice: ["ice"], forest: ["tree", "rock"], jungle: ["tree", "tree", "rock"], swamp: ["tree", "rock"], temperate: ["tree", "rock"], urban: ["lamp", "crate"], "gas giant": ["lamp", "crate"], ocean: ["lamp", "rock"], volcanic: ["rock"], barren: ["rock"] };
+const DECOR: Record<string, string[]> = { desert: ["rock", "mast"], ice: ["ice"], forest: ["tree", "rock"], jungle: ["tree", "tree", "rock"], swamp: ["tree", "rock"], temperate: ["tree", "rock"], urban: ["lamp", "crate", "kiosk", "camera"], "gas giant": ["lamp", "crate"], ocean: ["lamp", "rock"], volcanic: ["rock"], barren: ["rock"] };
 
 function Decor({ kind }: { kind: string }) {
   if (kind === "tree") return <><Cyl at={[0.5, 0.4, 0.5]} r={0.1} h={0.8} color="#5f3f28" /><Solid at={[0.5, 1.4, 0.5]} color="#2f6b3a"><coneGeometry args={[0.5, 1.5, 7]} /></Solid></>;
   if (kind === "lamp") return <><Cyl at={[0.5, 0.9, 0.5]} r={0.05} h={1.8} color="#59636d" /><Box at={[0.5, 1.84, 0.5]} size={[0.3, 0.1, 0.3]} color="#ffd98a" glow={2} /></>;
   if (kind === "mast") return <Mast at={[0.5, 0, 0.5]} h={2} />;
+  if (kind === "kiosk") return <><Box at={[0.5, 0.4, 0.5]} size={[0.5, 0.8, 0.4]} color="#2a2f36" /><Box at={[0.5, 0.95, 0.5]} size={[0.5, 0.5, 0.1]} color="#5ad1ff" glow={1} /></>;
+  if (kind === "camera") return <><Cyl at={[0.5, 1.2, 0.5]} r={0.04} h={2.4} color="#59636d" /><Box at={[0.5, 2.3, 0.62]} size={[0.24, 0.2, 0.36]} color="#2a2f36" /><Box at={[0.5, 2.3, 0.82]} size={[0.1, 0.1, 0.05]} color="#e5484d" glow={2} /></>;
   if (kind === "crate") return <Box at={[0.5, 0.28, 0.5]} size={[0.6, 0.56, 0.6]} color={OLIVE} />;
   return <Rock at={[0.5, 0, 0.5]} r={0.4} color={kind === "ice" ? "#cfe3ec" : ROCK} />;
 }
@@ -1782,6 +1789,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const actOn = (a: RoomAsset) => {
     const l = inside!.layout!;
     if (a.kind === "furniture" && a.ref?.startsWith("station:")) walkTo(around(l.x + a.x, l.y + a.y, a.w, a.h), () => onAct?.({ type: "station", id: a.ref!.slice(8) }));
+    else if (a.kind === "furniture" && useKindOf(a.name)) walkTo(around(l.x + a.x, l.y + a.y, a.w, a.h), () => onAct?.({ type: "use", areaId: inside!.id, id: a.id, name: a.name }));
     else if (isCounter(a)) {
       // A double tap on a counter calls whoever serves there; a tap only says who that is
       // The note waits to see whether a second tap follows: on a phone it would cover the counter
@@ -2085,7 +2093,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               <Barricade key={`${b.sign.x},${b.sign.y}`} squares={b.squares} guards={b.guards} onTap={tappable ? () => onAct?.({ type: "note", text: "Barricades. The officers are holding this way out until the search is called off." }) : undefined} />
             ))}
             {!duel && <Squads spots={squadSpots} onTap={tappable ? (squad, label) => onAct?.({ type: "note", text: `${squad.heavy ? "Troopers" : "Constables"} (${squad.count}) are searching the district ${label ?? ""}.` }) : undefined} />}
-            {street.decor.map((d, i) => <group key={i} position={[d.x, 0, d.y]}><Decor kind={d.kind} /></group>)}
+            {street.decor.map((d, i) => (
+              <group key={i} position={[d.x, 0, d.y]}>
+                <Decor kind={d.kind} />
+                {tappable && (d.kind === "kiosk" || d.kind === "camera") && <Hit at={[0.5, 0.8, 0.5]} size={[1, 1.8, 1]} onTap={() => walkTo(around(d.x, d.y), () => onAct?.({ type: "use", areaId: me.id, id: `street:${d.kind}:${d.x},${d.y}`, name: d.kind === "kiosk" ? "Info kiosk" : "Security camera" }))} />}
+              </group>
+            ))}
             {street.folk.map(({ occupant, x, y }, i) => (
               <group key={`${occupant.id}-${i}`} position={[x + 0.5, 0, y + 0.5]}>
                 <Figure kind={tokenOf(occupant)} ring={SIDE_COLORS[occupant.disposition]} name={occupant.name} large={isLarge(occupant.size)} />

@@ -28,7 +28,7 @@ import {
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   reportCrime, pursuitAt, lieLow, lieLowDC, CRIME_NAMES, type Crime,
   advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
-  heatAt, heatLevel, settlementOf, seatsOf, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
+  heatAt, heatLevel, settlementOf, useKindOf, camerasIn, seatsOf, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
   boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
@@ -69,6 +69,8 @@ interface PlayState {
   debt?: number;
   // A comm jammer's hour: alarms are not raised before this minute of the clock
   jammerUntil?: number;
+  // The settlement's cameras are looped until this minute of the clock (they record nothing)
+  loopUntil?: number;
   // Ships a homing beacon was left on
   tracked?: { id: string; name: string }[];
   // Uses spent before the next rest of each class, archetype and species feature that has them
@@ -352,12 +354,12 @@ export default function GameBoard() {
   // The 3D map: the place being looked at (the party's own, unless another was opened), and
   // whatever was last picked out on it
   const [viewId, setViewId] = useState<string | null>(null);
-  const [picked, setPickedNow] = useState<{ kind: "area" | "occupant" | "ship" | "vehicle" | "companion"; id: string } | null>(null);
+  const [picked, setPickedNow] = useState<{ kind: "area" | "occupant" | "ship" | "vehicle" | "companion" | "asset"; id: string; name?: string } | null>(null);
   // The card for what was picked lets taps through for a moment: it comes up over the lower part
   // of the map, where the second tap of a double tap would otherwise land on it. (Closed in the
   // same step as the pick, so that not even the next tap in the queue finds it open.)
   const [cardOpen, setCardOpen] = useState(true);
-  const setPicked = (next: { kind: "area" | "occupant" | "ship" | "vehicle" | "companion"; id: string } | null) => {
+  const setPicked = (next: { kind: "area" | "occupant" | "ship" | "vehicle" | "companion" | "asset"; id: string; name?: string } | null) => {
     setPickedNow(next);
     setCardOpen(false);
   };
@@ -493,6 +495,16 @@ export default function GameBoard() {
     saveCampaign({ galaxyMap: reportCrime(turnLawmen(base, areaId, block), areaId, crime, clockNow()) });
   };
   const lawUnseen = (what: string, crime: Crime): boolean => {
+    // A camera sees it too, in a place of the law, unless the cameras are looped: the crime is reported
+    // (a moment later, so that whatever is saved for the act itself is not written over)
+    if (world && here && camerasIn(here) && here.danger === 0 && lawAt(world, here.id) >= 2 && (character?.playState?.loopUntil ?? 0) <= clockNow()) {
+      toast.warning(`${what}: a security camera records it.`);
+      const areaId = here.id;
+      setTimeout(() => {
+        const latest = latestWorld();
+        if (latest) saveCampaign({ galaxyMap: reportCrime(latest, areaId, crime, clockNow()) });
+      }, 60);
+    }
     if (!world || !here || !lawmenAt(world, here.id).length) return true;
     const dc = lawWatchDC(world, here.id);
     const { roll, bonus, total } = stealthRoll();
@@ -2662,6 +2674,7 @@ export default function GameBoard() {
     }
     else if (action.type === "go") travelTo(action.areaId, action.secret, action.squares);
     else if (action.type === "exit") leaveBy(action.exit);
+    else if (action.type === "use") setPicked({ kind: "asset", id: `${action.areaId}|${action.id}`, name: action.name });
     else if (action.type === "station") {
       if (action.id === "helm") setHelmOpen(true);
       else if (action.id === "ramp") disembarkNow();
@@ -3846,6 +3859,80 @@ export default function GameBoard() {
               </Button>
             )}
           </div>
+        </>
+      );
+    }
+    if (picked.kind === "asset") {
+      const [areaId, assetId] = picked.id.split("|");
+      const name = picked.name ?? "";
+      const kind = useKindOf(name);
+      const room = world.areas[areaId];
+      const dcBase = 12 + lawAt(world, here.id);
+      const kit = lockKit();
+      const trained = !!kit && trainedWith(kit);
+      const building = room && (room.kind === "building" ? room : world.areas[room.parentId ?? ""]);
+      const looped = (play.loopUntil ?? 0) > clockNow();
+      const loop = () => {
+        if (!abilityCheck(`Loop the camera`, dcBase, ["intelligence", "dexterity"], trained)) return void saveCampaign(pass(5));
+        saveCharacter({ playState: { ...play, loopUntil: clockNow() + 60 } });
+        saveCampaign(pass(5));
+        toast.success("The cameras show an empty room for the next hour.");
+      };
+      const readNotices = () => {
+        const lines: string[] = [];
+        const open = (world.incidents ?? []).filter((i) => i.status === "open" || i.status === "fled");
+        for (const i of open) lines.push(`${i.name} is wanted for ${INCIDENT_WORDS[i.kind].what}${i.vehicle ? ` (a ${i.vehicle.name} is missing)` : ""}; reward ${incidentReward(world, i)} cr.`);
+        if (pursuit) lines.push(pursuit.phase === "coming" ? `Officers are on their way to ${world.areas[pursuit.pursuit.scene]?.name} after ${CRIME_NAMES[pursuit.pursuit.crime]}.` : `${pursuit.pursuit.squads?.length ?? 0} squad(s) are out searching for the offenders${pursuit.pursuit.identified ? " and they have a name and a face" : ""}.`);
+        const level = heatLevel(heatAt(world, settlementOf(world, here.id), clockNow()));
+        if (level) lines.push(["", "The watch here knows your face.", "You are wanted here.", "The officers will blockade the ways out in a search."][level]);
+        saveCampaign(pass(5));
+        toast.info(lines.length ? lines.join(" ") : "Nothing on the notices but the tariff and a curfew.");
+      };
+      const openDoors = () => {
+        if (!building) return;
+        const ids = new Set([building.id, ...childrenOf(world, building.id).map((r) => r.id)]);
+        const locked = world.paths.filter((pth) => pth.locked && (ids.has(pth.from) || ids.has(pth.to)));
+        if (!locked.length) return void toast.info("Every door of this building is already open.");
+        if (!abilityCheck("Open the doors from the panel", dcBase, ["intelligence"], trained)) {
+          toast.error("The panel locks up and a warning goes out.");
+          return void saveCampaign({ galaxyMap: reportCrime(world, here.id, "trespass", clockNow()), ...pass(5) });
+        }
+        saveCampaign({ galaxyMap: { ...world, paths: world.paths.map((pth) => (locked.includes(pth) ? { ...pth, locked: undefined } : pth)) }, ...pass(5) });
+        toast.success(`${locked.length} door${locked.length > 1 ? "s" : ""} unlocked.`);
+      };
+      const alarmUp = !!building?.alarm;
+      return (
+        <>
+          {close}
+          <p className="font-semibold">{name}</p>
+          {kind === "camera" && (
+            <>
+              <p className="text-xs text-gray-300">{looped ? "The cameras here are looped: they record nothing for now." : lawAt(world, here.id) >= 2 ? "It records what is done in this room, and the law is called for a crime it sees." : "A camera, but nobody is watching it here."}</p>
+              <Button size="sm" className="mt-1" disabled={inCombat || dead || looped} onClick={() => { loop(); setPicked(null); }} data-testid="camera-loop">Loop it for an hour (Intelligence or Dexterity, DC {dcBase})</Button>
+            </>
+          )}
+          {kind === "alarm" && (
+            <>
+              <p className="text-xs text-gray-300">{alarmUp ? "The alarm is up in this building." : "The alarm is quiet."}</p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                <Button size="sm" disabled={inCombat || dead || !alarmUp || !building} onClick={() => { if (building) saveCampaign({ galaxyMap: updateArea(world, building.id, { alarm: undefined }).world, ...pass(1) }); toast.success("The alarm is silenced."); setPicked(null); }}>Silence it</Button>
+                <Button size="sm" variant="outline" disabled={inCombat || dead || alarmUp || !building} onClick={() => { if (building) saveCampaign({ galaxyMap: updateArea(world, building.id, { alarm: true }).world, ...pass(1) }); toast.error("The alarm goes up through the building."); setPicked(null); }}>Trip it</Button>
+              </div>
+            </>
+          )}
+          {kind === "kiosk" && (
+            <>
+              <p className="text-xs text-gray-300">Notices, wanted lists, and what the law is doing in the settlement.</p>
+              <Button size="sm" className="mt-1" disabled={inCombat || dead} onClick={() => { readNotices(); setPicked(null); }} data-testid="kiosk-read">Read the notices (5 min)</Button>
+            </>
+          )}
+          {kind === "access" && (
+            <>
+              <p className="text-xs text-gray-300">A panel that opens the locked doors of the building.</p>
+              <Button size="sm" className="mt-1" disabled={inCombat || dead} onClick={() => { openDoors(); setPicked(null); }} data-testid="access-open">Open the locked doors (Intelligence, DC {dcBase}{trained ? "" : "; a security or slicer's kit helps"})</Button>
+            </>
+          )}
+          {!kind && <p className="text-xs text-gray-400">{assetId}</p>}
         </>
       );
     }

@@ -1646,7 +1646,7 @@ type Furnishing = [name: string, place: "wall" | "corner" | "center" | "far" | "
 interface RoomPlan { match: RegExp; size: [number, number, number, number]; items: Furnishing[] }
 
 const ROOM_PLANS: RoomPlan[] = [
-  { match: /detention/i, size: [8, 10, 6, 7], items: [["Holding cell", "wall", "2x2", "3-4", "b"], ["Guard console", "center", "2x1", "1", "bcs"], ["Restraint rack", "corner", "1x1", "1", "b"]] },
+  { match: /detention/i, size: [8, 10, 6, 7], items: [["Holding cell", "wall", "2x2", "3-4", "b"], ["Guard console", "center", "2x1", "1", "bcs"], ["Restraint rack", "corner", "1x1", "1", "b"], ["Access panel", "wall", "1x1", "1"], ["Security camera", "wall", "1x1", "1"]] },
   { match: /barracks|tents/i, size: [8, 10, 6, 8], items: [["Bunk", "wall", "2x1", "4-6", "b"], ["Footlocker", "wall", "1x1", "2-4", "bc"], ["Weapon rack", "wall", "2x1", "1", "b"], ["Mess table", "center", "2x1", "1", "bct"]] },
   { match: /docking|hangar|landing|berth|\barm\b/i, size: [13, 16, 10, 12], items: [["Fuel pump", "wall", "1x1", "1-2", "b"], ["Cargo pallet", "corner", "2x2", "2-3", "bc"], ["Tool cart", "wall", "1x1", "1-2", "bcs"], ["Loading crane", "wall", "2x1", "0-1", "b"]] },
   { match: /main bar|^cantina$/i, size: [11, 13, 9, 11], items: [["Bar counter", "far", "5x1", "1", "bcs"], ["Bandstand", "corner", "3x2", "1"], ["Table", "center", "1x1", "4-6", "bct"], ["Booth", "wall", "2x1", "2-3", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Sabacc table", "center", "2x2", "0-1", "bct"]] },
@@ -1655,20 +1655,56 @@ const ROOM_PLANS: RoomPlan[] = [
   { match: /ward|surgery|reception/i, size: [7, 9, 6, 7], items: [["Medical bed", "wall", "2x1", "2-4", "bt"], ["Bacta tank", "corner", "1x1", "1-2", "b"], ["Instrument cart", "center", "1x1", "1", "bs"], ["Supply cabinet", "wall", "2x1", "1", "b"]] },
   { match: /reactor|engine/i, size: [8, 10, 7, 9], items: [["Reactor core", "center", "2x2", "1", "bc"], ["Coolant tank", "corner", "1x1", "2", "b"], ["Monitoring console", "wall", "2x1", "1-2", "bs"], ["Pipe run", "wall", "3x1", "1-2", "b"]] },
   { match: /workfloor|engineering|workshop|maintenance|fuel|hydroponics/i, size: [8, 10, 6, 8], items: [["Workbench", "wall", "3x1", "1-2", "bs"], ["Tool rack", "wall", "2x1", "1", "b"], ["Parts bin", "center", "1x1", "2-3", "bc"], ["Power coupling", "corner", "1x1", "1", "b"]] },
-  { match: /armory|vault|stash|stor|warehouse|cargo|container|hold|depot|cache|cellar|basement|compartment|parts|crib|pharmacy|locker|freight/i, size: [6, 9, 5, 8], items: [["Crate stack", "rows", "2x2", "2-4", "bc"], ["Shelving", "wall", "3x1", "1-3", "b"], ["Crate", "corner", "1x1", "1-3", "bc"], ["Lifter droid dock", "corner", "1x1", "0-1", "b"]] },
-  { match: /command|operations|control|comms|bridge|tower/i, size: [7, 9, 6, 8], items: [["Holo-table", "center", "2x2", "1", "bcs"], ["Console", "wall", "2x1", "2-4", "bs"], ["Sensor mast", "corner", "1x1", "0-1", "b"], ["Command chair", "far", "1x1", "1", "t"]] },
-  { match: /office|records|security|checkpoint|customs|desk|guard|watch|gatehouse|lookout|post\b/i, size: [6, 8, 5, 7], items: [["Desk", "center", "2x1", "1", "bcs"], ["Console", "wall", "2x1", "1-2", "bs"], ["Locker", "corner", "1x1", "1-2", "b"], ["Barricade", "center", "2x1", "0-1", "bc"]] },
+  { match: /armory|vault|stash|stor|warehouse|cargo|container|hold|depot|cache|cellar|basement|compartment|parts|crib|pharmacy|locker|freight/i, size: [6, 9, 5, 8], items: [["Crate stack", "rows", "2x2", "2-4", "bc"], ["Shelving", "wall", "3x1", "1-3", "b"], ["Crate", "corner", "1x1", "1-3", "bc"], ["Lifter droid dock", "corner", "1x1", "0-1", "b"], ["Access panel", "wall", "1x1", "0-1"], ["Security camera", "wall", "1x1", "0-1"]] },
+  { match: /command|operations|control|comms|bridge|tower/i, size: [7, 9, 6, 8], items: [["Holo-table", "center", "2x2", "1", "bcs"], ["Console", "wall", "2x1", "2-4", "bs"], ["Sensor mast", "corner", "1x1", "0-1", "b"], ["Command chair", "far", "1x1", "1", "t"], ["Access panel", "wall", "1x1", "1"], ["Security camera", "wall", "1x1", "0-1"]] },
+  { match: /office|records|security|checkpoint|customs|desk|guard|watch|gatehouse|lookout|post\b/i, size: [6, 8, 5, 7], items: [["Desk", "center", "2x1", "1", "bcs"], ["Console", "wall", "2x1", "1-2", "bs"], ["Locker", "corner", "1x1", "1-2", "b"], ["Barricade", "center", "2x1", "0-1", "bc"], ["Security camera", "wall", "1x1", "0-1"], ["Alarm panel", "wall", "1x1", "0-1"]] },
   { match: /booth|den\b|tent|quarters|apartments/i, size: [5, 7, 5, 6], items: [["Couch", "wall", "2x1", "1-2", "bt"], ["Low table", "center", "1x1", "1", "bct"], ["Cabinet", "corner", "1x1", "1", "b"], ["Bed", "wall", "2x1", "0-2", "b"]] },
   { match: /^roof/i, size: [6, 10, 5, 8], items: [["Vent stack", "corner", "1x1", "1-2", "bc"], ["Water tank", "corner", "2x2", "0-1", "bc"], ["Antenna mast", "wall", "1x1", "1", "b"], ["Equipment crate", "wall", "2x1", "1-2", "bc"], ["Cooling unit", "center", "2x1", "0-1", "bc"]] },
   { match: /crypt|sanctum/i, size: [8, 10, 7, 9], items: [["Sarcophagus", "center", "1x2", "1-3", "bc"], ["Broken pillar", "corner", "1x1", "2-4", "bc"], ["Altar", "far", "2x1", "1", "bc"], ["Rubble", "wall", "1x1", "2-4", "bc"]] },
   { match: /cave|tunnel|chamber|mouth|breach|trailhead|perimeter|shelter|rooftop|collapsed|hull/i, size: [7, 11, 6, 9], items: [["Boulder", "center", "1x1", "2-4", "bc"], ["Rubble", "wall", "2x1", "2-4", "bc"], ["Rock pillar", "corner", "1x1", "1-3", "bc"], ["Campfire ring", "center", "1x1", "0-1", "t"]] },
-  { match: /audience|hall|concourse|lobby|antechamber|reading|gate|entrance|arrivals|airlock|stacks/i, size: [9, 12, 7, 9], items: [["Pillar", "center", "1x1", "2-4", "bc"], ["Bench", "wall", "2x1", "2-4", "t"], ["Dais", "far", "3x1", "0-1", "c"], ["Information terminal", "wall", "1x1", "1", "bs"]] },
+  { match: /audience|hall|concourse|lobby|antechamber|reading|gate|entrance|arrivals|airlock|stacks/i, size: [9, 12, 7, 9], items: [["Pillar", "center", "1x1", "2-4", "bc"], ["Bench", "wall", "2x1", "2-4", "t"], ["Dais", "far", "3x1", "0-1", "c"], ["Information terminal", "wall", "1x1", "1", "bs"], ["Security camera", "wall", "1x1", "0-1"], ["Info kiosk", "wall", "1x1", "0-1", "b"], ["Alarm panel", "wall", "1x1", "0-1"]] },
   { match: /./, size: [6, 8, 5, 7], items: [["Crate", "wall", "1x1", "1-3", "bc"], ["Bench", "wall", "2x1", "1-2", "t"], ["Terminal", "wall", "1x1", "0-1", "bs"]] },
 ];
 
 // Caves, ruins and trails are rock and rubble whatever a chamber is called
 const planFor = (room: Area, buildingType: string): RoomPlan =>
   ROOM_PLANS.find((p) => p.match.test(/^(cave|ruin|trailhead)$/.test(buildingType) && !/crypt|sanctum/i.test(room.name) ? "cave" : room.name))!;
+
+// What can be done with the wall-mounted and standing equipment of a room (house rule): a
+// camera sees what is done in front of it, unless it is looped; an alarm panel raises or silences
+// the building's alarm; an info kiosk gives the notices and what the law is doing; an access panel
+// opens the locked doors of the building. Named by the furniture, so that worlds made before them
+// can be given them (see addPanels).
+export type UseKind = "camera" | "alarm" | "kiosk" | "access";
+export const useKindOf = (name: string): UseKind | undefined =>
+  /security camera|camera pole/i.test(name) ? "camera" : /alarm panel/i.test(name) ? "alarm" : /info kiosk|notice board/i.test(name) ? "kiosk" : /access panel/i.test(name) ? "access" : undefined;
+
+// Whether a camera watches a room
+export const camerasIn = (room: Pick<Area, "layout">) => !!room.layout?.assets.some((a) => useKindOf(a.name) === "camera");
+
+// Gives rooms of a world made before them their panels, cameras and kiosks (life 10)
+function addPanels(world: World, r: Random) {
+  for (const room of Object.values(world.areas)) {
+    if (room.kind !== "room" || !room.layout || formOf(room)) continue;
+    const building = world.areas[room.parentId ?? ""];
+    if (!building || BUILDINGS[building.type]?.hostile) continue;
+    const plan = planFor(room, building.type);
+    const have = new Set(room.layout.assets.filter((a) => useKindOf(a.name)).map((a) => useKindOf(a.name)));
+    for (const [name, place, size, count, flags = ""] of plan.items) {
+      const kind = useKindOf(name);
+      if (!kind || have.has(kind)) continue;
+      const [w, h] = size.split("x").map(Number);
+      for (let i = 0, wanted = range(count, r); i < wanted; i++) {
+        const spot = findSpot(room.layout, r, place, w, h);
+        if (!spot) break;
+        const asset: RoomAsset = { id: `${room.id}-p${room.layout.assets.length + 1}`, kind: "furniture", name, ...spot, ...(flags.includes("b") ? { blocks: true } : {}) };
+        room.layout.assets.push(asset);
+        if (asset.blocks && floorFaults(room.layout)) room.layout.assets.pop();
+        else have.add(kind);
+      }
+    }
+  }
+}
 
 const SECRET_WAYS = { built: ["Ventilation shaft", "Maintenance crawlway", "Loose wall panel", "Sewer grate", "Service hatch"], wild: ["Narrow fissure", "Half-buried tunnel", "Gap under the rubble", "Old animal run"] };
 const WINDOWLESS = /vault|cellar|basement|armory|detention|stash|compartment|crypt|tunnel|reactor|hold|den\b|stor/i;
@@ -2083,6 +2119,8 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
   // Ways in and out (life 9): furniture, caches and ships are moved off the squares ways stand on,
   // and a way out that opens on a pocket between buildings is moved to a wall that opens on the street
   if ((next.life ?? 0) < 9) repairAccess(next, ctx.random);
+  // Panels (life 10): cameras, alarm and access panels and info kiosks where the plans now put them
+  if ((next.life ?? 0) < 10) addPanels(next, ctx.random);
   // Traffic (life 10): the day trips people already make get a vehicle, and more of them go (merchants
   // every few days, by hauler)
   if ((next.life ?? 0) < 10) {
@@ -2324,7 +2362,9 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
       spans.set(room.id, span);
       [width, height] = [span.cross, span.length];
     } else {
-      const [w0, w1, h0, h1] = holdsShips(room) ? hangarRange(room) : planFor(room, building.type).size;
+      const [p0, p1, q0, q1] = planFor(room, building.type).size;
+      // (A little larger than the plans were, 2026-10-16: the districts had a good deal of empty ground)
+      const [w0, w1, h0, h1] = holdsShips(room) ? hangarRange(room) : [p0 + 1, p1 + 2, q0 + 1, q1 + 1];
       [width, height] = [r.int(w0, w1), r.int(h0, h1)];
     }
     room.layout = {
