@@ -3151,6 +3151,57 @@ export function shipDeck(ship: Pick<Ship, "id" | "size">): RoomLayout {
   return { x: 0, y: 0, width: W, height: H, assets };
 }
 
+// ---------------------------------------------------------------------------------------------
+// Crew (house rule; the books give crew actions, not who sits where). The seats of a ship are the
+// stations on its deck: the helm, the co-pilot's seat, navigation, engineering and the gunnery seats
+// (one on a small ship, up to three on a large one). The character flies the ship from wherever
+// they sit and takes the helm's action; each other living party member (not a beast) seated at a
+// station gives the ship one more action in a ship fight, and each one at a gunnery seat is a
+// gunner, whose shots are not made from the helm (see shipFire). A ship whose crew was never
+// assigned is crewed by the first companions in the party order, gunnery seats first.
+// ---------------------------------------------------------------------------------------------
+
+export interface Seat {
+  id: string; // the deck asset's id
+  name: string;
+  station: string; // helm, copilot, nav, guns, engines
+}
+
+export function seatsOf(layout: RoomLayout | undefined): Seat[] {
+  return (layout?.assets ?? []).filter((a) => a.ref?.startsWith(STATION) && a.ref !== `${STATION}ramp`).map((a) => ({ id: a.id, name: a.name, station: a.ref!.slice(STATION.length) }));
+}
+
+export interface CrewMember {
+  id: string; // "self" for the character
+  hp: number;
+  kind?: string;
+}
+
+// Who is seated where, which of them count, and what that gives a ship fight
+export function crewOf(seats: Seat[], assigned: Record<string, string> | undefined, members: CrewMember[]): { seated: Record<string, string>; crew: number; gunners: number } {
+  const alive = (id: string) => members.some((m) => m.id === id && m.hp > 0 && m.kind !== "beast");
+  let seated: Record<string, string> = {};
+  if (assigned) {
+    for (const seat of seats) if (assigned[seat.id] && alive(assigned[seat.id])) seated[seat.id] = assigned[seat.id];
+  } else {
+    // Companions in order, gunnery seats first, up to four
+    const free = members.filter((m) => m.id !== "self" && m.hp > 0 && m.kind !== "beast").map((m) => m.id);
+    const order = [...seats.filter((x) => x.station === "guns"), ...seats.filter((x) => x.station !== "guns" && x.station !== "helm")];
+    order.forEach((seat, i) => {
+      if (free[i] && i < 4) seated[seat.id] = free[i];
+    });
+  }
+  // The helm's action is the base one; every other seat gives one, and the character gives one only when someone else flies
+  const helm = seats.find((x) => x.station === "helm");
+  const flying = helm ? seated[helm.id] : undefined;
+  const counted = Object.entries(seated).filter(([seatId, id]) => {
+    const seat = seats.find((x) => x.id === seatId);
+    if (!seat || seat.station === "helm") return false;
+    return id !== "self" || (!!flying && flying !== "self");
+  });
+  return { seated, crew: Math.min(4, counted.length), gunners: counted.filter(([seatId]) => seats.find((x) => x.id === seatId)?.station === "guns").length };
+}
+
 // The ship's own building and deck (made on the first boarding; `from` is the room it was boarded
 // from, so that the party steps back out where it came in)
 export function boardShip(world: World, ship: Pick<Ship, "id" | "name" | "size" | "role">, berthId: string, from?: string): { world: World; deckId: string } {
@@ -3937,6 +3988,8 @@ export interface PartyShip extends Ship {
   fuel: number;
   // The berth it stands at
   areaId: string;
+  // Who sits at which station of the deck (a station's asset id -> "self" for the character or a companion's id)
+  crew?: Record<string, string>;
 }
 
 // Where a ship kept somewhere in an area takes off from
@@ -5503,7 +5556,7 @@ export interface ShipFight {
 }
 
 // Creates a ship in the fight at a place, facing a way
-export function shipCombatant(id: string, side: "party" | "foe", sheet: ShipSheet, at: { x: number; y: number; facing: number }, crew = 0, hull?: number): ShipCombatant {
+export function shipCombatant(id: string, side: "party" | "foe", sheet: ShipSheet, at: { x: number; y: number; facing: number }, crew = 0, hull?: number, gunners = crew): ShipCombatant {
   return {
     id,
     name: sheet.name,
@@ -5526,7 +5579,7 @@ export function shipCombatant(id: string, side: "party" | "foe", sheet: ShipShee
     actions: 1 + crew,
     actionsMax: 1 + crew,
     helmUsed: false,
-    gunners: crew,
+    gunners,
     fired: [],
     ammo: Object.fromEntries(sheet.weapons.map((w, i) => [i, w.ammo ?? 0])),
     boosts: { engines: 0, shields: 0, weapons: 0 },

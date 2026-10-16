@@ -2142,7 +2142,7 @@ interface ShipFightState {
   areaId: string | null;
   targetId: string | null;
   // Whether the helm's crewmember or a gunner at the guns makes the attacks
-  start: (party: { id: string; ref: string; sheet: ShipSheetData; crew: number; hull?: number }, foes: { id: string; ref: string; sheet: ShipSheetData; hull?: number }[], areaId: string) => void;
+  start: (party: { id: string; ref: string; sheet: ShipSheetData; crew: number; gunners?: number; hull?: number }, foes: { id: string; ref: string; sheet: ShipSheetData; hull?: number }[], areaId: string) => void;
   setTarget: (id: string) => void;
   move: (x: number, y: number) => void;
   turn: (steps: number) => void;
@@ -2172,7 +2172,7 @@ export const useShipFight = create<ShipFightState>((set, get) => {
     targetId: null,
     start: (party, foes, areaId) => {
       const fight = startShipFight(
-        [shipCombatant(party.id, "party", party.sheet, { x: 0, y: 0, facing: 0 }, party.crew, party.hull)],
+        [shipCombatant(party.id, "party", party.sheet, { x: 0, y: 0, facing: 0 }, party.crew, party.hull, party.gunners)],
         foes.map((f) => shipCombatant(f.id, "foe", f.sheet, { x: 0, y: 0, facing: 0 }, f.sheet.weapons.length, f.hull)),
         rng,
       );

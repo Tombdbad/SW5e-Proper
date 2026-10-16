@@ -28,7 +28,7 @@ import {
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   reportCrime, pursuitAt, lieLow, lieLowDC, CRIME_NAMES, type Crime,
   advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
-  heatAt, heatLevel, settlementOf, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
+  heatAt, heatLevel, settlementOf, seatsOf, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
   boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
@@ -690,6 +690,8 @@ export default function GameBoard() {
     queryFn: async () => (await fetch("/api/sw5e/starshipEquipment")).json(),
     staleTime: Infinity,
   });
+  // The party as a ship's crew: the character, and every companion that is not a beast
+  const crewMembers = (): CrewMember[] => [{ id: "self", hp: character?.currentHp ?? 0 }, ...party.map((c) => ({ id: c.id, hp: c.hp, kind: c.kind }))];
   const engage = () => {
     if (!world || !here || !character) return;
     const mine = ships.find((s) => s.areaId === here.id) ?? ships.find((s) => s.areaId === berthOf(world, here.id));
@@ -698,9 +700,11 @@ export default function GameBoard() {
     if (!foes.length) return void toast.info("There is nobody hostile to fight.");
     if (!shipRows.length) return void toast.info("The ship data is still loading.");
     const prof = Math.ceil(1 + level / 4);
-    const crew = Math.min(4, party.filter((c) => c.hp > 0 && c.kind !== "beast").length);
+    // The party members seated at the stations of the ship's deck are its crew (a ship never boarded: the companions in order)
+    const seats = seatsOf(world.areas[deckIdOf(mine.id)]?.layout);
+    const crewing = crewOf(seats.length ? seats : [{ id: "g1", name: "Gunnery seat", station: "guns" }, { id: "g2", name: "Gunnery seat", station: "guns" }, { id: "g3", name: "Gunnery seat", station: "guns" }, { id: "g4", name: "Gunnery seat", station: "guns" }], seats.length ? mine.crew : undefined, crewMembers());
     useShipFight.getState().start(
-      { id: mine.id, ref: mine.id, sheet: shipSheet(mine, shipRows, prof), crew, hull: mine.hull },
+      { id: mine.id, ref: mine.id, sheet: shipSheet(mine, shipRows, prof), crew: crewing.crew, gunners: crewing.gunners, hull: mine.hull },
       foes.map((f) => ({ id: f.id, ref: f.id, sheet: shipSheet(f, shipRows, Math.max(2, (f.tier ?? 0) + 1)) })),
       here.id,
     );
@@ -2743,6 +2747,43 @@ export default function GameBoard() {
     copilot: "Co-pilot's seat.",
   };
 
+  // Seating a party member at a station of the deck; a member sits in one seat at a time
+  const seatMember = (ship: PartyShip, seatId: string, memberId: string) => {
+    const was = ship.crew ?? {};
+    const next: Record<string, string> = {};
+    for (const [seat, who] of Object.entries(was)) if (who !== memberId && seat !== seatId) next[seat] = who;
+    if (memberId) next[seatId] = memberId;
+    saveCampaign({ starships: ships.map((s) => (s.id === ship.id ? { ...s, crew: next } : s)) });
+  };
+  const crewPanel = (ship: PartyShip) => {
+    const seats = seatsOf(world?.areas[deckIdOf(ship.id)]?.layout);
+    if (!seats.length) return null;
+    const members = crewMembers();
+    const crewing = crewOf(seats, ship.crew, members);
+    const label = (id: string) => (id === "self" ? `${character.name} (you)` : party.find((c) => c.id === id)?.name ?? "?");
+    return (
+      <div className="space-y-1" data-testid="crew">
+        <p className="font-semibold text-sky-200">Stations</p>
+        <p className="text-gray-400">In a ship fight: you fly it, and each other party member seated at a station gives it another action ({crewing.crew} now, {crewing.gunners} of them at the guns). House rule.</p>
+        {seats.map((seat) => (
+          <div key={seat.id} className="flex items-center justify-between gap-2">
+            <span>{seat.name}{seat.station === "guns" ? " (guns)" : ""}</span>
+            <select
+              className="max-w-[55%] rounded border border-gray-600 bg-gray-900 px-1 py-0.5 text-xs"
+              value={crewing.seated[seat.id] ?? (seat.station === "helm" && !ship.crew ? "self" : "")}
+              disabled={inCombat || dead}
+              onChange={(e) => seatMember(ship, seat.id, e.target.value)}
+              data-testid={`seat-${seat.station}`}
+            >
+              <option value="">Empty</option>
+              {members.filter((m) => m.kind !== "beast" && m.hp > 0).map((m) => <option key={m.id} value={m.id}>{label(m.id)}</option>)}
+            </select>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   // The enemy's ship is a prize once nobody is left to guard it; any other is for sale
   const shipButton = (ship: Ship) =>
     ships.some((mine) => mine.id === ship.id) ? (
@@ -4328,6 +4369,7 @@ export default function GameBoard() {
                     Disembark
                   </Button>
                 </div>
+                {crewPanel(aboardShip)}
                 {helmOpen && (
                   <div className="space-y-1" data-testid="helm-courses">
                     {helmExits(world, aboardShip.areaId).map((exit, i) => {
