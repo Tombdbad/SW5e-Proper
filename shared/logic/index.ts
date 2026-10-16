@@ -1854,10 +1854,16 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
   const exit = ways.find((a) => a.kind === "exit") ?? wayIn;
 
   // A ship stands mid-floor; a smaller berth if the furniture would leave the floor cut up
+  const feet = room.ships.map((ship) => footprintOf(ship.size));
+  const spread = feet.reduce((sum, [fw]) => sum + Math.min(W - 4, fw), 0) + 2 * Math.max(0, feet.length - 1);
+  let cursor = Math.floor((W - spread) / 2);
   for (const ship of room.ships) {
-    let w = Math.min(W - 4, 6);
-    let h = Math.min(H - 4, 4);
-    const asset = (): RoomAsset => ({ id: `${room.id}-${++n}`, kind: "ship", name: ship.name, x: Math.floor((W - w) / 2), y: Math.floor((H - h) / 2), w, h, blocks: true, cover: true, ref: ship.id });
+    const [fw, fh] = footprintOf(ship.size);
+    let w = Math.min(W - 4, fw);
+    let h = Math.min(H - 4, fh);
+    const left = cursor;
+    cursor += w + 2;
+    const asset = (): RoomAsset => ({ id: `${room.id}-${++n}`, kind: "ship", name: ship.name, x: Math.max(1, feet.length > 1 ? left : Math.floor((W - w) / 2)), y: Math.floor((H - h) / 2), w, h, blocks: true, cover: true, ref: ship.id });
     for (let tries = 0; tries < 8; tries++) {
       layout.assets.push(asset());
       if (!floorFaults(layout) || w <= 2 || h <= 2) break;
@@ -1932,7 +1938,7 @@ export function counterSides(layout: RoomLayout, station: RoomAsset): { behind: 
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 7;
+export const LIFE = 8;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -2047,6 +2053,22 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
         }
       }
     }
+  }
+  // Hangars (life 8): a hangar is built to hold the ships that berth in it (see hangarRange). A building
+  // with a hangar too small for them is planned again (the secret ways found stay found) and the
+  // streets of its settlement are laid out again round it.
+  if ((next.life ?? 0) < 8) {
+    const settlements = new Set<string>();
+    for (const building of Object.values(next.areas).filter((a) => a.kind === "building")) {
+      const rooms = childrenOf(next, building.id).filter((r) => r.kind === "room");
+      if (!rooms.some((r) => r.layout && !r.layout.form && holdsShips(r) && r.layout.width < hangarRange(r)[0])) continue;
+      const found = new Set(rooms.filter((room) => room.secretEntry?.found).map((room) => room.id));
+      planBuilding(next, building.id);
+      for (const room of childrenOf(next, building.id)) if (room.secretEntry && found.has(room.id)) room.secretEntry.found = true;
+      const settlement = ancestor(next, building.id, "settlement");
+      if (settlement && next.districtPlans) settlements.add(settlement.id);
+    }
+    for (const id of settlements) planDistricts(ctx, id);
   }
   next.life = LIFE;
   return next;
@@ -2280,7 +2302,7 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
       spans.set(room.id, span);
       [width, height] = [span.cross, span.length];
     } else {
-      const [w0, w1, h0, h1] = holdsShips(room) ? ROOM_PLANS.find((p) => p.match.test("hangar"))!.size : planFor(room, building.type).size;
+      const [w0, w1, h0, h1] = holdsShips(room) ? hangarRange(room) : planFor(room, building.type).size;
       [width, height] = [r.int(w0, w1), r.int(h0, h1)];
     }
     room.layout = {
@@ -2808,6 +2830,130 @@ export function passageOffers(world: World, settlementId: string, rate: number, 
     }
     return { to: id, name: world.areas[id].name, system: ancestor(world, id, "system")?.name ?? "", fare: Math.max(10, fare), minutes };
   });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Ships in the round (house rule: the books give ships no deck plans, only the sizes of their
+// stat blocks). A ship's size sets how many 5-foot squares it covers on a hangar floor (a Medium
+// ship is 80 by 50 feet) and a hangar is built to hold the largest ship that berths in it with a
+// margin round it. Inside, the party's ship has one deck, drawn on the 3D map: the bow to the east
+// with the pilot's seat, navigation, and gunnery, bunks and a table amidships, cargo and the
+// reactor aft, and the boarding ramp at the stern. The party boards by tapping the ship, flies
+// by tapping the pilot's seat (the helm lists every take-off, landing and jump from where the
+// ship stands) and walks down the ramp to leave. The deck is a room of a building of type
+// "starship" that stands wherever its ship does.
+// ---------------------------------------------------------------------------------------------
+
+export const SHIP_FOOTPRINT: Record<string, [number, number]> = { Tiny: [6, 4], Small: [10, 6], Medium: [16, 10], Large: [26, 14], Huge: [40, 22], Gargantuan: [56, 30] };
+export const footprintOf = (size: string): [number, number] => SHIP_FOOTPRINT[size] ?? SHIP_FOOTPRINT.Small;
+
+// The floor a hangar needs for the ships that berth in it (an empty berth is for a Medium ship)
+export function hangarRange(room: Pick<Area, "ships">): [number, number, number, number] {
+  const base = ROOM_PLANS.find((p) => p.match.test("hangar"))!.size;
+  const feet = (room.ships.length ? room.ships : [{ size: "Medium" }]).map((s) => footprintOf(s.size));
+  const width = feet.reduce((sum, [w]) => sum + w, 0) + 2 * (feet.length - 1) + 8;
+  const height = Math.max(...feet.map(([, h]) => h)) + 6;
+  const w = Math.max(base[0], width);
+  const h = Math.max(base[2], height);
+  return [w, w + 2, h, h + 2];
+}
+
+const DECK_SIZE: Record<string, [number, number]> = { Tiny: [5, 3], Small: [10, 6], Medium: [16, 9], Large: [26, 13], Huge: [38, 19], Gargantuan: [52, 26] };
+export const deckIdOf = (shipId: string) => `deck-${shipId}`;
+export const shipBuildingIdOf = (shipId: string) => `ship-${shipId}`;
+export const STATION = "station:";
+
+// The deck of a ship: stations at the bow, bunks and a table amidships, cargo and engines aft
+export function shipDeck(ship: Pick<Ship, "id" | "size">): RoomLayout {
+  const [W, H] = DECK_SIZE[ship.size] ?? DECK_SIZE.Small;
+  const rank = Math.max(0, SHIP_SIZE_ORDER.indexOf(ship.size));
+  const assets: RoomAsset[] = [];
+  let n = 0;
+  const mid = Math.floor(H / 2);
+  const add = (name: string, x: number, y: number, w = 1, h = 1, extra: Partial<RoomAsset> = {}) =>
+    assets.push({ id: `${ship.id}-d${++n}`, kind: "furniture", name, x, y, w, h, blocks: true, cover: true, ...extra });
+  add("Pilot's seat", W - 2, mid, 1, 1, { ref: `${STATION}helm`, cover: false });
+  add("Boarding ramp", 0, mid, 1, 1, { ref: `${STATION}ramp`, cover: false });
+  if (H >= 5) {
+    add("Navigation console", W - 3, Math.max(0, mid - 2), 1, 1, { ref: `${STATION}nav` });
+    add("Gunnery seat", W - 3, Math.min(H - 1, mid + 2), 1, 1, { ref: `${STATION}guns` });
+  }
+  if (rank >= 2) {
+    add("Co-pilot's seat", W - 2, mid - 1, 1, 1, { ref: `${STATION}copilot`, cover: false });
+    add("Bunk", 4, 0, 2, 1);
+    add("Bunk", 7, 0, 2, 1);
+    add("Table", Math.floor(W / 2), mid - 3 >= 1 ? mid - 3 : 1, 2, 1, { cover: true });
+    add("Reactor core", 1, 0, 2, 2, { ref: `${STATION}engines` });
+    add("Crate stack", 1, H - 2, 2, 2);
+  } else if (rank === 1) {
+    add("Bunk", 4, 0, 2, 1);
+    add("Power coupling", 1, 0, 1, 1, { ref: `${STATION}engines` });
+    add("Crate stack", 1, H - 2, 2, 2);
+  } else {
+    add("Power coupling", 1, 0, 1, 1, { ref: `${STATION}engines` });
+  }
+  if (rank >= 3) {
+    for (let i = 0; i < Math.min(4, rank); i++) add("Bunk", 11 + (i % 2) * 3, i < 2 ? 0 : H - 1, 2, 1);
+    add("Medical bed", Math.floor(W / 2) + 3, 0, 2, 1);
+    add("Gunnery seat", W - 6, 1, 1, 1, { ref: `${STATION}guns` });
+    add("Gunnery seat", W - 6, H - 2, 1, 1, { ref: `${STATION}guns` });
+    add("Crate stack", 4, H - 2, 2, 2);
+    add("Crate stack", 7, H - 2, 2, 2);
+  }
+  return { x: 0, y: 0, width: W, height: H, assets };
+}
+
+// The ship's own building and deck (made on the first boarding; `from` is the room it was boarded
+// from, so that the party steps back out where it came in)
+export function boardShip(world: World, ship: Pick<Ship, "id" | "name" | "size" | "role">, berthId: string, from?: string): { world: World; deckId: string } {
+  const deckId = deckIdOf(ship.id);
+  const buildingId = shipBuildingIdOf(ship.id);
+  const parent = world.areas[berthId];
+  const areas = { ...world.areas };
+  const base = { description: "", danger: 0, occupants: [], ships: [], loot: [], position: parent?.position ?? { x: 0, y: 0, z: 0 } };
+  const building: Area = { ...base, ...(areas[buildingId] ?? {}), id: buildingId, kind: "building", name: ship.name, parentId: berthId, type: "starship", tags: [`ship:${ship.id}`], description: `The ${ship.role.toLowerCase()} ${ship.name}.` } as Area;
+  const old = areas[deckId];
+  const deck: Area = {
+    ...base, ...(old ?? {}),
+    id: deckId, kind: "room", name: `${ship.name}, main deck`, parentId: buildingId, type: "deck",
+    tags: [`ship:${ship.id}`, ...(from ? [`from:${from}`] : (old?.tags ?? []).filter((t) => t.startsWith("from:")))],
+    layout: old?.layout ?? shipDeck(ship),
+  } as Area;
+  areas[buildingId] = building;
+  areas[deckId] = deck;
+  return { world: { ...world, areas }, deckId };
+}
+
+// The ship has flown: its building stands where it now is
+export function moveShipInterior(world: World, shipId: string, berthId: string): World {
+  const building = world.areas[shipBuildingIdOf(shipId)];
+  if (!building || !world.areas[berthId]) return world;
+  return { ...world, areas: { ...world.areas, [building.id]: { ...building, parentId: berthId } } };
+}
+
+// Where the ramp leads: the room the ship was boarded from if it still stands in that settlement
+export function rampLeadsTo(world: World, shipId: string): string | undefined {
+  const deck = world.areas[deckIdOf(shipId)];
+  const building = world.areas[shipBuildingIdOf(shipId)];
+  const berth = building?.parentId ? world.areas[building.parentId] : undefined;
+  if (!deck || !berth || berth.kind !== "settlement") return undefined;
+  const from = deck.tags.find((t) => t.startsWith("from:"))?.slice(5);
+  if (from && world.areas[from] && trailOf(world, from).some((a) => a.id === berth.id)) return from;
+  const bay = childrenOf(world, berth.id).filter((b) => b.kind === "building").flatMap((b) => childrenOf(world, b.id)).find((r) => r.kind === "room" && holdsShips(r));
+  return bay?.id ?? berth.id;
+}
+
+// Every take-off, landing and jump the ship can make from where it stands. A port that is not its
+// planet's gateway still lifts off to the orbit.
+export function helmExits(world: World, berthId: string): Exit[] {
+  const area = world.areas[berthId];
+  if (!area) return [];
+  const out = exitsOf(world, berthId).filter((e) => e.needsShip);
+  if (area.kind === "settlement" && !out.some((e) => e.via === "leave")) {
+    const planet = ancestor(world, berthId, "planet");
+    if (planet) out.unshift({ to: planet.id, via: "leave", label: LEAVE.settlement!, travel: "", needsShip: true, fuel: tripFuel("surface") });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -3413,7 +3559,7 @@ const PORT_TYPES = ["spaceport", "landing field", "landing pad", "docking ring"]
 // Homes, days and voyages for the people and ships of a settlement that has been built. Anyone
 // who already has a routine keeps it. The same settlement and seed give the same days.
 function settleRoutines(world: World, settlement: Area, r: Random) {
-  const buildings = childrenOf(world, settlement.id).filter((b) => b.kind === "building");
+  const buildings = childrenOf(world, settlement.id).filter((b) => b.kind === "building" && b.type !== "starship");
   const rooms = buildings.flatMap((b) => childrenOf(world, b.id).filter((a) => a.kind === "room").map((room) => ({ room, building: b })));
   if (!rooms.length) return;
   const friendly = rooms.filter(({ building }) => !BUILDINGS[building.type]?.hostile);
@@ -5760,7 +5906,7 @@ export function unitOf(key: string): number {
 export function districtsOf(world: World, settlementId: string): District[] {
   const settlement = world.areas[settlementId];
   if (!settlement || settlement.kind !== "settlement" || WILD_SETTLEMENTS.includes(settlement.type)) return [];
-  const buildings = childrenOf(world, settlementId).filter((a) => a.kind === "building");
+  const buildings = childrenOf(world, settlementId).filter((a) => a.kind === "building" && a.type !== "starship");
   if (!buildings.length) return [];
   const palace = buildings.some((b) => b.type === "palace");
   const order: DistrictTheme[] = ["civic", "market", "docks"];

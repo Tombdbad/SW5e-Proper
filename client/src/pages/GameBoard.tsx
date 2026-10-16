@@ -28,6 +28,7 @@ import {
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   reportCrime, pursuitAt, lieLow, lieLowDC, CRIME_NAMES, type Crime,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, maxSquads, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
+  boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, optionsOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
@@ -817,7 +818,7 @@ export default function GameBoard() {
   };
 
   // Go into a place nobody has mapped yet: the server builds what is inside
-  const explore = async (areaId?: string, alsoSave: Record<string, any> = {}) => {
+  const explore = async (areaId?: string, alsoSave: Record<string, any> = {}, then?: (built: World) => World) => {
     if (!world || !here) return;
     setExploring(true);
     try {
@@ -827,7 +828,8 @@ export default function GameBoard() {
         body: JSON.stringify({ world, areaId: areaId ?? here.id }),
       });
       if (!response.ok) throw new Error("The server could not build this place");
-      await saveCampaign({ galaxyMap: (await response.json()).world, ...alsoSave });
+      const built: World = (await response.json()).world;
+      await saveCampaign({ galaxyMap: then ? then(built) : built, ...alsoSave });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {
@@ -2549,7 +2551,11 @@ export default function GameBoard() {
     }
     else if (action.type === "go") travelTo(action.areaId, action.secret, action.squares);
     else if (action.type === "exit") leaveBy(action.exit);
-    else if (action.type === "occupant" || action.type === "ship" || action.type === "vehicle" || action.type === "companion") setPicked({ kind: action.type, id: action.id });
+    else if (action.type === "station") {
+      if (action.id === "helm") setHelmOpen(true);
+      else if (action.id === "ramp") disembarkNow();
+      else toast.info(stationNote[action.id] ?? action.id);
+    } else if (action.type === "occupant" || action.type === "ship" || action.type === "vehicle" || action.type === "companion") setPicked({ kind: action.type, id: action.id });
     else if (action.type === "loot") {
       const cache = here.loot.find((c) => c.id === action.id);
       if (!cache) return;
@@ -2589,10 +2595,56 @@ export default function GameBoard() {
       </Button>
     </div>
   );
+  // Aboard the party's own ship (see "Ships in the round" in shared logic): its deck is a room of a
+  // building that stands where the ship does. The pilot's seat opens the helm, which lists every
+  // take-off, landing and jump from there; the ramp leads out.
+  const aboardId = here?.type === "deck" ? here.tags.find((t) => t.startsWith("ship:"))?.slice(5) : undefined;
+  const aboardShip = aboardId ? ships.find((s) => s.id === aboardId) : undefined;
+  const [helmOpen, setHelmOpen] = useState(false);
+  const boardNow = (ship: PartyShip) => {
+    if (!world || !here) return;
+    const out = boardShip(world, ship, ship.areaId, here.kind === "room" ? here.id : undefined);
+    setCameFrom(here.id);
+    saveCampaign({ galaxyMap: out.world, currentLocation: out.deckId });
+    toast.info(`You board ${ship.name}. Tap the pilot's seat to take the helm, the ramp to leave.`);
+  };
+  const disembarkNow = () => {
+    if (!world || !aboardShip) return;
+    const to = rampLeadsTo(world, aboardShip.id);
+    if (!to) return void toast.error(`${aboardShip.name} is in space: land first.`);
+    setHelmOpen(false);
+    saveCampaign({ currentLocation: to });
+    toast.info(`You step off ${aboardShip.name} into ${world.areas[to]?.name}.`);
+  };
+  const flyShip = (exit: Exit) => {
+    if (!world || !aboardShip || inCombat || dead || exploring) return;
+    const ship = aboardShip;
+    if (ship.fuel < (exit.fuel ?? 0)) return void toast.error(`${ship.name} needs ${exit.fuel} fuel and has ${ship.fuel}.`);
+    if (exit.jump && !ship.hyperdriveClass) return void toast.error(`${ship.name} has no hyperdrive.`);
+    const took = tripMinutes(exit, Number(ship.hyperdriveClass) || 1);
+    const changes = { ...pass(took), starships: ships.map((s) => (s.id === ship.id ? { ...s, fuel: s.fuel - (exit.fuel ?? 0), areaId: exit.to } : s)) };
+    const target = world.areas[exit.to];
+    toast.info(`${ship.name}: ${exit.label} ${target?.name}, ${Math.round(took / 6) / 10} h; it is ${clockText(useClock.getState().minutes)}.`);
+    const land = (w: World) => moveShipInterior(w, ship.id, exit.to);
+    if (target && childrenOf(world, target.id).length === 0 && ["system", "planet", "settlement", "building"].includes(target.kind)) explore(target.id, changes, land);
+    else saveCampaign({ ...changes, galaxyMap: land(world) });
+  };
+  const stationNote: Record<string, string> = {
+    nav: "Navigation console: the courses open from here are listed at the helm.",
+    guns: "Gunnery seat: the guns are manned in a ship fight.",
+    engines: aboardShip ? `Engines: fuel ${aboardShip.fuel}/${getStarshipSize(aboardShip.size)?.fuelCapacity ?? "?"}${aboardShip.hyperdriveClass ? `, hyperdrive class ${aboardShip.hyperdriveClass}` : ", no hyperdrive"}.` : "Engines.",
+    copilot: "Co-pilot's seat.",
+  };
+
   // The enemy's ship is a prize once nobody is left to guard it; any other is for sale
   const shipButton = (ship: Ship) =>
     ships.some((mine) => mine.id === ship.id) ? (
-      <span className="ml-2 text-xs text-green-300">Yours, in its berth{(ships.find((mine) => mine.id === ship.id)?.fuel ?? 0) > 0 ? ` (fuel ${ships.find((mine) => mine.id === ship.id)!.fuel})` : ""}</span>
+      <>
+        <span className="ml-2 text-xs text-green-300">Yours, in its berth{(ships.find((mine) => mine.id === ship.id)?.fuel ?? 0) > 0 ? ` (fuel ${ships.find((mine) => mine.id === ship.id)!.fuel})` : ""}</span>
+        <Button size="sm" variant="outline" className="ml-2 h-6 px-2" disabled={inCombat || dead || hostiles.length > 0 || !!shipFight} onClick={() => boardNow(ships.find((mine) => mine.id === ship.id)!)} data-testid="ship-board">
+          Board
+        </Button>
+      </>
     ) : ship.status === "orbiting" && ship.owner === world?.antagonist && !ship.disabled ? (
       <Button size="sm" variant="destructive" className="ml-2 h-6 px-2" disabled={inCombat || dead || !!shipFight} onClick={engage} data-testid="ship-engage">
         Engage
@@ -4038,6 +4090,43 @@ export default function GameBoard() {
               </div>
             )}
 
+            {aboardShip && world && (
+              <div className="mb-4 space-y-2 rounded border border-sky-500/60 p-2 text-xs" data-testid="helm">
+                <h3 className="font-semibold text-sky-300">Aboard {aboardShip.name}</h3>
+                <p className="text-gray-300">
+                  {aboardShip.size} {aboardShip.role.toLowerCase()}, fuel {aboardShip.fuel}/{getStarshipSize(aboardShip.size)?.fuelCapacity ?? "?"}
+                  {aboardShip.hyperdriveClass ? `, hyperdrive class ${aboardShip.hyperdriveClass}` : ", no hyperdrive"}; {world.areas[aboardShip.areaId]?.kind === "settlement" ? "landed at" : "in the space of"} {world.areas[aboardShip.areaId]?.name}.
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  <Button size="sm" variant="outline" className="h-6 px-2" onClick={() => setHelmOpen((open) => !open)} data-testid="helm-open">
+                    {helmOpen ? "Leave the helm" : "Take the helm"}
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-6 px-2" onClick={disembarkNow} disabled={inCombat || dead} data-testid="disembark">
+                    Disembark
+                  </Button>
+                </div>
+                {helmOpen && (
+                  <div className="space-y-1" data-testid="helm-courses">
+                    {helmExits(world, aboardShip.areaId).map((exit, i) => {
+                      const short = (exit.fuel ?? 0) > aboardShip.fuel || (exit.jump && !aboardShip.hyperdriveClass);
+                      const minutes = tripMinutes(exit, Number(aboardShip.hyperdriveClass) || 1);
+                      return (
+                        <div key={`${exit.to}-${i}`} className="flex items-center justify-between gap-2">
+                          <span>
+                            {exit.label} {world.areas[exit.to]?.name}
+                            <span className="text-gray-400"> ({exit.jump ? "jump, " : ""}fuel {exit.fuel ?? 0}, {rideText(minutes)})</span>
+                          </span>
+                          <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || exploring || !!short} onClick={() => flyShip(exit)} data-testid={`helm-go-${exit.to}`}>
+                            {exit.via === "leave" ? "Take off" : exit.jump ? "Jump" : "Fly"}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                    {helmExits(world, aboardShip.areaId).length === 0 && <p className="text-gray-400">No course leads from here.</p>}
+                  </div>
+                )}
+              </div>
+            )}
             {heistOf && (
               <HeistPanel
                 heist={heistOf}

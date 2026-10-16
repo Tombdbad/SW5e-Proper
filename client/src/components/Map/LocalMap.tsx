@@ -315,6 +315,9 @@ function Furniture({ name, w, h }: { name: string; w: number; h: number }) {
   if (/loading crane/.test(n)) return <><Cyl at={[0.4, 0.9, cz]} r={0.12} h={1.8} color={AMBER} /><Box at={[cx, 1.75, cz]} size={[w - 0.2, 0.12, 0.14]} color={AMBER} /><Cyl at={[w - 0.3, 1.4, cz]} r={0.02} h={0.6} color="#11161d" /><Box at={[w - 0.3, 1.08, cz]} size={[0.14, 0.1, 0.14]} color="#11161d" /></>;
   if (/pipe run/.test(n)) return <><Solid at={[cx, 0.4, cz]} color="#7b8794" rot={wide ? [0, 0, Math.PI / 2] : [Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.16, 0.16, span - 0.1, 12]} /></Solid><Solid at={[cx, 0.72, cz]} color="#59636d" rot={wide ? [0, 0, Math.PI / 2] : [Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.09, 0.09, span - 0.1, 10]} /></Solid>{[0.3, span - 0.3].map((d) => <Box key={d} at={wide ? [d, 0.4, cz] : [cx, 0.4, d]} size={[0.14, 0.8, 0.14]} color={DARK} />)}</>;
   if (/cart/.test(n)) return <><Box at={[cx, 0.34, cz]} size={[0.6, 0.4, 0.44]} color={/instrument/.test(n) ? "#e9edf0" : "#59636d"} /><Box at={[cx, 0.57, cz]} size={[0.5, 0.05, 0.36]} color={/instrument/.test(n) ? GLOW : AMBER} glow={0.6} />{[[-0.22, -0.16], [0.22, -0.16], [-0.22, 0.16], [0.22, 0.16]].map(([x, z], i) => <Cyl key={i} at={[cx + x, 0.07, cz + z]} r={0.07} h={0.06} color="#11161d" />)}</>;
+  if (/pilot's seat|co-pilot's seat/.test(n)) return <><Cyl at={[cx, 0.16, cz]} r={0.1} h={0.32} color={DARK} /><Box at={[cx, 0.38, cz]} size={[0.5, 0.1, 0.5]} color="#3d4856" /><Box at={[cx - 0.24, 0.74, cz]} size={[0.1, 0.7, 0.5]} color="#3d4856" /><Box at={[cx + 0.42, 0.55, cz]} size={[0.34, 0.5, 0.5]} color={DARK} /><Box at={[cx + 0.42, 0.84, cz]} size={[0.34, 0.06, 0.4]} color={GLOW} glow={1.4} rot={[0, 0, -0.5]} /></>;
+  if (/gunnery seat/.test(n)) return <><Cyl at={[cx, 0.16, cz]} r={0.1} h={0.32} color={DARK} /><Box at={[cx, 0.38, cz]} size={[0.46, 0.1, 0.46]} color="#4a3d3d" /><Box at={[cx - 0.22, 0.7, cz]} size={[0.1, 0.6, 0.46]} color="#4a3d3d" /><Box at={[cx + 0.3, 0.7, cz]} size={[0.06, 0.06, 0.5]} color="#e5484d" glow={0.8} /><Box at={[cx + 0.3, 0.52, cz]} size={[0.2, 0.3, 0.2]} color={DARK} /></>;
+  if (/boarding ramp/.test(n)) return <><Box at={[cx, 0.04, cz]} size={[w - 0.1, 0.08, h - 0.1]} color="#59636d" />{[0, 1, 2, 3].map((i) => <Box key={i} at={[0.2 + i * 0.2, 0.09, cz]} size={[0.06, 0.02, h - 0.2]} color={AMBER} glow={0.7} />)}<Box at={[0.06, 0.8, cz]} size={[0.08, 1.4, h - 0.1]} color={DARK} /></>;
   if (/command chair/.test(n)) return <><Cyl at={[cx, 0.16, cz]} r={0.1} h={0.32} color={DARK} /><Box at={[cx, 0.36, cz]} size={[0.5, 0.1, 0.5]} color="#3d4856" /><Box at={[cx, 0.72, cz - 0.22]} size={[0.5, 0.7, 0.1]} color="#3d4856" /></>;
   if (/barricade/.test(n)) return <><Box at={[cx, 0.34, cz]} size={[w - 0.1, 0.68, h * 0.3]} color="#59636d" rot={wide ? [0.2, 0, 0] : [0, 0, 0.2]} /><Box at={[cx, 0.5, cz]} size={[w * 0.5, 0.08, h * 0.32]} color={AMBER} /></>;
   if (/lifter droid dock/.test(n)) return <><Box at={[cx, 0.05, cz]} size={[0.8, 0.1, 0.8]} color={DARK} /><Box at={[cx - 0.3, 0.5, cz - 0.3]} size={[0.1, 1, 0.1]} color="#7b8794" /><Box at={[cx - 0.3, 1.02, cz - 0.3]} size={[0.12, 0.08, 0.12]} color="#58c98b" glow={2} /></>;
@@ -1328,7 +1331,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const planned = !!plan && rooms.every((a) => a.layout);
   const trail = trailOf(world, building.id);
   const biome = trail.find((a) => a.kind === "planet")?.type ?? "";
-  const wall = trail.some((a) => a.type === "station") ? STEEL : WALLS[biome] ?? "#b9ad96";
+  const wall = trail.some((a) => a.type === "station") || building.type === "starship" ? STEEL : WALLS[biome] ?? "#b9ad96";
   const here = world.areas[hereId];
   // The room the party is in, or whether it stands outside; a room opened up to look at (the atlas)
   const inside = planned && here?.kind === "room" && buildingIds.has(here.parentId ?? "") ? here : null;
@@ -1658,7 +1661,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // Something in the room the party is in was tapped
   const actOn = (a: RoomAsset) => {
     const l = inside!.layout!;
-    if (isCounter(a)) {
+    if (a.kind === "furniture" && a.ref?.startsWith("station:")) walkTo(around(l.x + a.x, l.y + a.y, a.w, a.h), () => onAct?.({ type: "station", id: a.ref!.slice(8) }));
+    else if (isCounter(a)) {
       // A double tap on a counter calls whoever serves there; a tap only says who that is
       // The note waits to see whether a second tap follows: on a phone it would cover the counter
       const now = tapTime();
@@ -2369,7 +2373,7 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
   const partyTrail = new Set(trailOf(world, hereId).map((a) => a.id));
   const trail = trailOf(world, view.id);
   const biome = trail.find((a) => a.kind === "planet")?.type ?? "";
-  const wall = trail.some((a) => a.type === "station") ? STEEL : WALLS[biome] ?? "#b9ad96";
+  const wall = trail.some((a) => a.type === "station") || building.type === "starship" ? STEEL : WALLS[biome] ?? "#b9ad96";
   const system = view.kind === "system";
   const globe = view.kind === "planet";
 

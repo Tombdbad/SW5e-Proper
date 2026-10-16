@@ -1505,6 +1505,55 @@ if (process.env.FORCE !== "0") {
     await at(`ship:${room.ships[0].id}`);
     return `${shipName} away; the room lists no ship and its berth is on the map`;
   });
+
+  await step(ctx, "ship: boarded from the hangar, the deck has a pilot's seat, the helm takes off, lands and the ramp leads out", async () => {
+    const h = await newChar({ equipment: ["Blaster pistol"] });
+    let room = null, building = null, mine = null;
+    const hc = await newCamp(h, 3, async (world) => {
+      room = Object.values(world.areas).find((a) => a.kind === "room" && a.ships.length && a.layout?.assets.some((x) => x.kind === "ship"));
+      building = world.areas[room.parentId];
+      mine = { ...room.ships[0], owner: GEAR, fuel: 6, hyperdriveClass: "1", areaId: building.parentId };
+      room.ships = [];
+      for (const r of Object.values(world.areas).filter((a) => a.parentId === building.id)) r.occupants = r.occupants.filter((o) => o.disposition !== "hostile");
+    }, { timeElapsed: { total: 480 } });
+    await api("PATCH", `/api/campaigns/${hc.id}`, { currentLocation: room.id, starships: [mine] });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await sleep(3000);
+    const [fw, fh] = { Tiny: [6, 4], Small: [10, 6], Medium: [16, 10], Large: [26, 14] }[mine.size] ?? [10, 6];
+    const berth = room.layout.assets.find((a) => a.kind === "ship");
+    if (berth.w < Math.min(fw, room.layout.width - 4) - 0) throw new Error(`berth ${berth.w}x${berth.h} for a ${mine.size} ship`);
+    await tap(`ship:${mine.id}`);
+    await card().getByTestId("ship-board").click();
+    await sleep(1500);
+    let camp = (await api("GET", `/api/campaigns/${hc.id}`)).json;
+    const deck = camp.galaxyMap.areas[camp.currentLocation];
+    if (deck?.type !== "deck") throw new Error("not aboard: " + camp.currentLocation);
+    if (!deck.layout.assets.some((a) => a.name === "Pilot's seat" && a.ref === "station:helm")) throw new Error("no pilot's seat");
+    await page.getByTestId("helm-open").click();
+    const orbit = camp.galaxyMap.areas[building.parentId];
+    const planet = camp.galaxyMap.areas[orbit.parentId];
+    const helmText = await page.getByTestId("helm").innerText().catch(() => "no helm panel");
+    if (!(await page.getByTestId(`helm-go-${planet.id}`).count())) throw new Error(`no course to ${planet.id} (${planet.kind}) from ${orbit.id} (${orbit.kind}): ${helmText.replace(/\s+/g, " ")}`);
+    await page.getByTestId(`helm-go-${planet.id}`).click();
+    await sleep(2500);
+    camp = (await api("GET", `/api/campaigns/${hc.id}`)).json;
+    const ship = camp.starships[0];
+    if (ship.areaId !== planet.id) throw new Error("the ship is at " + ship.areaId);
+    if (camp.currentLocation !== deck.id) throw new Error("the party left the deck");
+    if (camp.galaxyMap.areas[`ship-${mine.id}`].parentId !== planet.id) throw new Error("the interior did not move");
+    if (!(ship.fuel < 6)) throw new Error("no fuel burned");
+    if (!(await page.getByTestId("helm-courses").count())) await page.getByTestId("helm-open").click();
+    await page.getByTestId(`helm-go-${orbit.id}`).click();
+    await sleep(2500);
+    camp = (await api("GET", `/api/campaigns/${hc.id}`)).json;
+    if (camp.starships[0].areaId !== orbit.id) throw new Error("did not land: " + camp.starships[0].areaId);
+    await page.getByTestId("disembark").click();
+    await sleep(1500);
+    camp = (await api("GET", `/api/campaigns/${hc.id}`)).json;
+    if (camp.currentLocation === deck.id || camp.galaxyMap.areas[camp.currentLocation]?.type === "deck") throw new Error("still aboard");
+    return `${mine.name} (${mine.size}): berth ${berth.w}x${berth.h}, deck ${deck.layout.width}x${deck.layout.height}; took off to ${planet.name}, landed at ${orbit.name}, stepped out into ${camp.galaxyMap.areas[camp.currentLocation].name}`;
+  });
 }
 
 if (!process.env.KEEP) {

@@ -14,7 +14,7 @@ export type MapAction =
   | { type: "select" | "open" | "near"; areaId: string }
   | { type: "go"; areaId: string; secret?: boolean; squares?: number }
   | { type: "exit"; exit: Exit }
-  | { type: "loot" | "occupant" | "ship" | "vehicle" | "companion"; id: string }
+  | { type: "loot" | "occupant" | "ship" | "vehicle" | "companion" | "station"; id: string }
   | { type: "look"; areaId: string }
   | { type: "trap"; areaId: string; id: string }
   | { type: "note"; text: string };
