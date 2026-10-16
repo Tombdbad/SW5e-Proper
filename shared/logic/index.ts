@@ -110,6 +110,8 @@ export interface LootCache {
   locked?: number; // DC to open
   hidden?: boolean;
   looted?: boolean;
+  // A resource node (house rule, see "Gathering"): a vein, a patch, a wreck's guts, to be worked with a kit
+  node?: ResourceNode;
 }
 
 export interface Area {
@@ -352,9 +354,9 @@ const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "h
   archive: { rooms: ["Antechamber|", "Reading hall|p s", "Stacks|s L:intel", "Sealed vault|L:relic K H"] },
   hideout: { hostile: "criminal", rooms: ["Lookout|g", "Common room|g g", "Stash room|L:stash K", "Boss's den|b L:vault K @1", "Escape tunnel|H", "Holding cells|P K @1"] },
   camp: { hostile: "criminal", rooms: ["Perimeter|g", "Tents|g g", "Supply cache|L:cargo", "Leader's tent|b L:coin @1", "Slave pens|P K @0"] },
-  cave: { hostile: "wild", rooms: ["Cave mouth|", "Winding tunnel|w", "Den|w L:remains", "Deep chamber|w L:stash H @1"] },
-  ruin: { hostile: "horror", rooms: ["Broken gate|", "Collapsed hall|w", "Inner sanctum|h L:relic K", "Crypt|h L:relic H"] },
-  wreck: { hostile: "wild", rooms: ["Hull breach|", "Cargo hold|w L:cargo", "Bridge|L:intel K @0", "Engine room|d L:workshop @1"] },
+  cave: { hostile: "wild", rooms: ["Cave mouth|N:plant", "Winding tunnel|w N:ore", "Den|w L:remains", "Deep chamber|w L:stash H N:crystal @1"] },
+  ruin: { hostile: "horror", rooms: ["Broken gate|N:plant", "Collapsed hall|w N:crystal", "Inner sanctum|h L:relic K", "Crypt|h L:relic H N:crystal"] },
+  wreck: { hostile: "wild", rooms: ["Hull breach|N:salvage", "Cargo hold|w L:cargo N:ore", "Bridge|L:intel K @0", "Engine room|d L:workshop N:salvage @1"] },
 };
 
 // Who works in a room, from what the room is for; otherwise whoever runs that kind of building
@@ -1254,6 +1256,8 @@ function populateRoom(ctx: Context, room: Area) {
       const sizes = /pad|field/i.test(room.name) ? ["Tiny", "Small"] : /hangar/i.test(room.name) ? ["Small"] : ["Small", "Medium"];
       const owners = room.occupants.filter((o) => !o.statBlock && o.count === 1).map((o) => o.name);
       room.ships.push(makeShip(ctx, sizes, building.type === "docking ring" ? "docked" : "landed", owners[0] ?? faction));
+    } else if (code.startsWith("N:")) {
+      room.loot.push(makeNode(ctx.random, nextId(world, "n"), code.slice(2) as MaterialFamily, room.danger));
     } else if (code.startsWith("L:")) {
       room.loot.push(makeLoot(ctx, code.slice(2), room.danger, { locked: codes.includes("K"), hidden: codes.includes("H") }));
     }
@@ -1984,7 +1988,7 @@ export function counterSides(layout: RoomLayout, station: RoomAsset): { behind: 
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 10;
+export const LIFE = 11;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -2130,6 +2134,8 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
     // ...and rides parked at the houses and shops (those of a hostile base are left as they were)
     for (const building of Object.values(next.areas).filter((a) => a.kind === "building" && !a.vehicles?.length && !BUILDINGS[a.type]?.hostile)) placeVehicles(ctx, building);
   }
+  // Resource nodes (life 11): caves, ruins and wrecks of worlds made before them get their veins, patches and salvage
+  if ((next.life ?? 0) < 11) addNodes(next, ctx.random);
   next.life = LIFE;
   return next;
 }
@@ -4117,7 +4123,7 @@ export function worldQuests(world: World, earnings = 0): Quest[] {
   }
 
   const guarded = local
-    .flatMap((area) => area.loot.filter((c) => !c.looted && (c.locked || c.hidden)).map((cache) => ({ area, cache })))
+    .flatMap((area) => area.loot.filter((c) => !c.looted && !c.node && (c.locked || c.hidden)).map((cache) => ({ area, cache })))
     .sort((a, b) => Number(siteOf(a.area).id === worst?.id) - Number(siteOf(b.area).id === worst?.id) || b.cache.credits - a.cache.credits)[0];
   if (guarded) {
     const site = siteOf(guarded.area);
@@ -4156,7 +4162,7 @@ function targetMet(world: World, target: QuestTarget, hereId: string): boolean {
   const area = world.areas[target.areaId];
   if (!area) return true;
   if (target.kind === "defeat") return !isHeld(area);
-  if (target.kind === "loot") return area.loot.filter((c) => !target.cacheId || c.id === target.cacheId).every((c) => c.looted);
+  if (target.kind === "loot") return area.loot.filter((c) => !target.cacheId || c.id === target.cacheId).filter((c) => !c.node).every((c) => c.looted);
   return trailOf(world, hereId).some((a) => a.id === area.id);
 }
 
@@ -7731,3 +7737,128 @@ export function droidStock(world: World, trader: Occupant, placeId: string, day:
 export const droidOffer = (xp: number, hp: number, maxHp: number) => Math.round(droidPrice(xp) * 0.4 * Math.max(0.25, hp / Math.max(1, maxHp)));
 // The cost of mending a droid to full: a hit point is 5 credits and 5 for each point of challenge
 export const droidRepairPrice = (cr: string | number | undefined, missing: number) => Math.max(0, Math.ceil(missing * (5 + 5 * crNumber(cr))));
+
+// ---------------------------------------------------------------------------------------------
+// Gathering and materials (HOUSE RULES). Star Wars 5e has no rules for harvesting or mining: it has
+// the Scavenging kit ("harvest and scavenge ores and metals"), the Bioanalysis kit ("harvest and
+// store plants"), the Archaeologist kit ("collect crystals, gems, relics"), Jeweler's implements
+// (refine gems) and Tinker's implements (improvise an item from scraps), and the Crafting downtime
+// activity, which spends raw materials worth half an item's value. So here:
+//  - Caves, ruins and wrecks hold resource nodes (a vein, a patch, a hulk's guts) of four families;
+//    a node has a tier that matches the book's rarities (standard, premium, prototype, advanced) and
+//    its check DC is the book's blueprint DC for that rarity (10, 14, 18, 22).
+//  - A harvest is a check with the family's kit (10 minutes). Without a kit only the lowest tier can
+//    be worked, at +5 to the DC. A tool the character is trained with adds the proficiency bonus (in
+//    GameBoard) and one more unit. Every 5 over the DC is one more unit.
+//  - A node gives a few harvests and then runs dry; it recovers three days after it was emptied.
+//  - Materials are kept in stacks (`playState.materials`). In the Crafting downtime activity the
+//    raw materials (half the item's value) can be paid with them at their value, a shortfall is paid
+//    in credits. Refining 4 units of a material makes one of the refined kind, worth half as much
+//    again as the four were (a kit of the family and a check at the tier's DC).
+// ---------------------------------------------------------------------------------------------
+
+export type MaterialFamily = "ore" | "plant" | "crystal" | "salvage";
+export interface ResourceNode {
+  family: MaterialFamily;
+  tier: number;
+  material: string;
+  charges: number;
+  max: number;
+  // The minute on the clock when it ran dry
+  emptiedAt?: number;
+}
+export const RARITY_TIERS = ["Standard", "Premium", "Prototype", "Advanced"];
+export const NODE_RESPAWN = 3 * 24 * 60;
+export const HARVEST_MINUTES = 10;
+
+export const FAMILIES: Record<MaterialFamily, { label: string; verb: string; kits: RegExp; kitNames: string; ability: string; skill: string; refiners: RegExp }> = {
+  ore: { kitNames: "a scavenging kit", label: "Ore and metal", verb: "mine", kits: /scavenging kit/i, ability: "intelligence", skill: "Investigation", refiners: /armormech|armstech|scavenging kit/i },
+  plant: { kitNames: "a bioanalysis kit or biochemist's kit", label: "Plants and herbs", verb: "gather", kits: /bioanalysis kit|biochemist's kit/i, ability: "wisdom", skill: "Nature", refiners: /biochemist|bioanalysis|chef/i },
+  crystal: { kitNames: "an archaeologist kit or jeweler's implements", label: "Crystals and gems", verb: "cut free", kits: /archaeologist kit|jeweler's implements/i, ability: "intelligence", skill: "Investigation", refiners: /jeweler|artificer|archaeologist/i },
+  salvage: { kitNames: "a scavenging kit, tinker's or astrotech's implements or a mechanic's kit", label: "Salvage and parts", verb: "strip", kits: /scavenging kit|tinker's implements|mechanic's kit|astrotech's implements/i, ability: "intelligence", skill: "Technology", refiners: /tinker|mechanic|astrotech|cybertech/i },
+};
+
+// Raw materials by family and tier, each with a value in credits per unit
+export const MATERIALS: Record<string, { name: string; family: MaterialFamily; tier: number; value: number; refined?: boolean }> = {};
+const RAW: Record<MaterialFamily, [string, number][]> = {
+  ore: [["Scrap metal", 5], ["Durasteel ore", 40], ["Phrik ore", 300], ["Cortosis ore", 2000]],
+  plant: [["Medicinal herbs", 5], ["Bacta moss", 40], ["Kolto bloom", 300], ["Ancient sap", 2000]],
+  crystal: [["Rough crystal", 10], ["Raw gemstone", 50], ["Kyber shard", 400], ["Pure kyber", 2500]],
+  salvage: [["Scrap electronics", 8], ["Power cell", 45], ["Droid brain core", 350], ["Intact hypermatter cell", 2200]],
+};
+for (const family of Object.keys(RAW) as MaterialFamily[]) {
+  RAW[family].forEach(([name, value], tier) => {
+    MATERIALS[`${family}-${tier}`] = { name, family, tier, value };
+    MATERIALS[`${family}-${tier}-r`] = { name: `Refined ${name.toLowerCase()}`, family, tier, value: Math.round(value * 6), refined: true };
+  });
+}
+export const REFINE_UNITS = 4;
+
+export type Materials = Record<string, number>;
+export const materialsOf = (character: { playState?: any } | null | undefined): Materials => ({ ...((character?.playState as any)?.materials ?? {}) });
+export const materialsWorth = (stock: Materials) => Object.entries(stock).reduce((sum, [id, n]) => sum + (MATERIALS[id]?.value ?? 0) * n, 0);
+
+export const harvestDc = (tier: number) => [10, 14, 18, 22][Math.min(3, Math.max(0, tier))];
+
+export function makeNode(r: Random, id: string, family: MaterialFamily, danger: number): LootCache {
+  const tier = Math.min(3, Math.floor(danger / 2) + (danger > 0 && r.chance(0.25) ? 1 : 0));
+  const max = r.int(2, 4);
+  const material = `${family}-${tier}`;
+  const names: Record<MaterialFamily, string[]> = {
+    ore: ["Mineral vein", "Exposed seam", "Ore outcrop"],
+    plant: ["Patch of growth", "Hardy undergrowth", "Cluster of blooms"],
+    crystal: ["Crystal cluster", "Gem-bearing rock", "Glittering geode"],
+    salvage: ["Stripped wreckage", "Salvageable machinery", "Heap of parts"],
+  };
+  return { id, name: r.pick(names[family]), kind: "node", credits: 0, items: [], node: { family, tier, material, charges: max, max } };
+}
+
+// A node as it stands at a time on the clock: one that ran dry has come back after its respawn
+export function nodeAt(node: ResourceNode, now: number): ResourceNode {
+  if (node.charges > 0 || node.emptiedAt === undefined || now - node.emptiedAt < NODE_RESPAWN) return node;
+  return { ...node, charges: node.max, emptiedAt: undefined };
+}
+
+// Gives the caves, ruins and wrecks of an older world their nodes, in a room of the kind the plan names
+function addNodes(world: World, r: Random) {
+  for (const building of Object.values(world.areas).filter((a) => a.kind === "building")) {
+    const template = BUILDINGS[building.type];
+    if (!template || !["cave", "ruin", "wreck"].includes(building.type)) continue;
+    for (const room of Object.values(world.areas).filter((a) => a.kind === "room" && a.parentId === building.id)) {
+      if (room.loot.some((c) => c.node)) continue;
+      const entry = template.rooms.map((line) => line.split("|")).find(([name]) => name === room.name);
+      const family = entry?.[1]?.split(" ").find((c) => c.startsWith("N:"))?.slice(2) as MaterialFamily | undefined;
+      if (!family) continue;
+      const cache = makeNode(r, `n${++world.counter}`, family, room.danger);
+      room.loot.push(cache);
+      if (room.layout) {
+        const spot = findSpot(room.layout, r, "wall", 1, 1);
+        if (spot) room.layout.assets.push({ id: `${room.id}-n${room.layout.assets.length + 1}`, kind: "loot", name: cache.name, ...spot, blocks: true, cover: true, ref: cache.id });
+      }
+    }
+  }
+}
+
+// What a harvest gives: a unit, one more for every 5 over the DC, and one more with a trained tool
+export const harvestYield = (total: number, dc: number, trained: boolean) => Math.min(6, Math.max(1, 1 + Math.floor((total - dc) / 5) + (trained ? 1 : 0)));
+
+// Pays a cost in credits with materials first: the dearest unit that still fits in what is left is
+// taken, down to the cheapest; what no unit fits is left to credits
+export function spendMaterials(stock: Materials, cost: number): { stock: Materials; paid: number; spent: [string, number][]; shortfall: number } {
+  const left = { ...stock };
+  const spent: Record<string, number> = {};
+  let owed = cost;
+  const ids = Object.keys(left).filter((id) => MATERIALS[id] && left[id] > 0).sort((a, b) => MATERIALS[b].value - MATERIALS[a].value);
+  for (const id of ids) {
+    const unit = MATERIALS[id].value;
+    const n = Math.min(left[id], Math.floor(owed / unit));
+    if (n > 0) { left[id] -= n; spent[id] = n; owed -= n * unit; }
+  }
+  // The last of it may be covered by one more unit than is owed, if that is better than paying in credits
+  if (owed > 0) {
+    const covering = ids.filter((id) => left[id] > 0).sort((a, b) => MATERIALS[a].value - MATERIALS[b].value).find((id) => MATERIALS[id].value >= owed && MATERIALS[id].value <= owed * 1.5);
+    if (covering) { left[covering]--; spent[covering] = (spent[covering] ?? 0) + 1; owed = 0; }
+  }
+  for (const id of Object.keys(left)) if (left[id] <= 0) delete left[id];
+  return { stock: left, paid: cost - owed, spent: Object.entries(spent), shortfall: owed };
+}

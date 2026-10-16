@@ -49,6 +49,7 @@ import {
   attunementLimit, augmentationLimit, augmentPlan, partsFree, sideEffectsOf, describeEffects, PROSTHESES, ITEM_ABILITIES, type ItemFacts,
   modKindOf, augmentSlots, MOD_BASE_SLOTS, rarityRank, INSTALL_DC, SIZE_TIME, crystalModifier, crystalFor, crystalsUpTo, DROID_MOTOR_COST, DROID_BASE_SLOTS, droidPlan,
   readOutcome, blueprintRarity, readCredits, RARITY_ORDER, type Fitted,
+  FAMILIES, MATERIALS, REFINE_UNITS, RARITY_TIERS, NODE_RESPAWN, HARVEST_MINUTES, harvestDc, harvestYield, materialsOf, materialsWorth, spendMaterials, nodeAt, type ResourceNode,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship,
 } from "@shared/logic";
 
@@ -934,6 +935,39 @@ export default function GameBoard() {
     const loot = here.loot.map((c) => (c.id === cache.id ? { ...c, items: [], credits: 0, locked: undefined, looted: true } : c));
     saveCampaign({ galaxyMap: updateArea(world, here.id, { loot }).world });
     toast.success(`Taken: ${[cache.credits && `${cache.credits} credits`, ...gained].filter(Boolean).join(", ") || "nothing"}`);
+  };
+
+  // Work a resource node (house rule, see "Gathering and materials" in shared logic): a check with
+  // the family's kit, 10 minutes, a few units into the character's stacks
+  const harvest = (cache: LootCache) => {
+    if (!world || !here || !cache.node) return;
+    if (hostiles.length > 0 && !unseen("Working it")) return;
+    const now = useClock.getState().minutes;
+    const node = nodeAt(cache.node, now);
+    if (node.charges <= 0) {
+      const days = Math.max(1, Math.ceil((NODE_RESPAWN - (now - (node.emptiedAt ?? now))) / 1440));
+      return void toast.info(`${cache.name} is worked out; it recovers in about ${days} day${days > 1 ? "s" : ""}. (House rule.)`);
+    }
+    const family = FAMILIES[node.family];
+    const kit: string | undefined = (character.equipment ?? []).find((n: string) => family.kits.test(n));
+    if (!kit && node.tier > 0) return void toast.error(`It takes ${family.kitNames} to work this ${RARITY_TIERS[node.tier].toLowerCase()} find. (House rule: bare hands only manage the lowest tier.)`);
+    const dc = harvestDc(node.tier) + (kit ? 0 : 5);
+    const r = toolRoll(kit ?? "bare hands", dc, `${family.verb[0].toUpperCase()}${family.verb.slice(1)} ${cache.name} (${family.skill})`, family.ability);
+    const total = pass(HARVEST_MINUTES);
+    const after = useClock.getState().minutes;
+    const ruined = !r.success && r.roll === 1;
+    const used = r.success || ruined;
+    const gained = r.success ? harvestYield(r.total, dc, !!kit && trainedWith(kit)) : 0;
+    if (ruined) toast.error(`A natural 1: you spoil part of ${cache.name}.`);
+    const next: ResourceNode = used ? { ...node, charges: node.charges - 1, ...(node.charges - 1 <= 0 ? { emptiedAt: after } : {}) } : node;
+    const loot = here.loot.map((c) => (c.id === cache.id ? { ...c, node: next } : c));
+    if (gained) {
+      const stock = materialsOf(character);
+      stock[node.material] = (stock[node.material] ?? 0) + gained;
+      saveCharacter({ playState: { ...(character.playState ?? {}), materials: stock } });
+      toast.success(`Gathered ${gained} x ${MATERIALS[node.material].name} (${next.charges} of ${node.max} harvests left here).`);
+    }
+    saveCampaign({ galaxyMap: updateArea(world, here.id, { loot }).world, ...total });
   };
 
   const level = Number(character?.level) || 1;
@@ -2683,7 +2717,8 @@ export default function GameBoard() {
     else if (action.type === "loot") {
       const cache = here.loot.find((c) => c.id === action.id);
       if (!cache) return;
-      if (cache.looted) toast.info(`${cache.name} is empty.`);
+      if (cache.node) harvest(cache);
+      else if (cache.looted) toast.info(`${cache.name} is empty.`);
       else if (lootWatched) toast.error("They are watching you: that cannot be taken now.");
       else takeLoot(cache);
     } else if (action.type === "look") {
@@ -4671,7 +4706,21 @@ export default function GameBoard() {
                   </div>
                 )}
                 {setsCarried.length > 0 && /bar|cantina|booth|common|back room|casino|lounge/i.test(here.name) && !hostiles.length && gamblePanel("house", here.name, 0, true)}
-                {here.loot.filter((c) => !c.hidden).map((cache) => (
+                {here.loot.filter((c) => !c.hidden && c.node).map((cache) => {
+                  const node = nodeAt(cache.node!, useClock.getState().minutes);
+                  const family = FAMILIES[node.family];
+                  return (
+                    <div key={cache.id} className="text-sm flex flex-wrap items-center gap-2" data-testid="play-node">
+                      <span>
+                        {cache.name} <span className="text-gray-400">({RARITY_TIERS[node.tier]} {family.label.toLowerCase()}, {node.charges} of {node.max} harvests)</span>
+                      </span>
+                      <Button size="sm" variant="outline" onClick={() => harvest(cache)} disabled={inCombat || dead || lootWatched || node.charges <= 0}>
+                        {family.verb[0].toUpperCase()}{family.verb.slice(1)} (DC {harvestDc(node.tier)})
+                      </Button>
+                    </div>
+                  );
+                })}
+                {here.loot.filter((c) => !c.hidden && !c.node).map((cache) => (
                   <div key={cache.id} className="text-sm flex flex-wrap items-center gap-2" data-testid="play-loot">
                     <span>
                       {cache.name}
@@ -5658,7 +5707,15 @@ function CraftingActivity(props: DowntimeProps) {
     queryFn: async () => (await fetch("/api/sw5e/enhancedItems?fields=id,name,type,searchableRarity,subtype")).json(),
     staleTime: Infinity,
   });
-  const [mode, setMode] = useState<"craft" | "blueprint" | "reverse">("craft");
+  const [mode, setMode] = useState<"craft" | "blueprint" | "reverse" | "refine">("craft");
+  // Gathered materials count at their value toward the raw materials; a shortfall is paid in credits (house rule)
+  const stock = materialsOf(character);
+  const means = credits + materialsWorth(stock);
+  const pay = (cost: number) => {
+    const spent = spendMaterials(stock, cost);
+    const note = spent.spent.length ? ` Materials used: ${spent.spent.map(([id, n]) => `${n} x ${MATERIALS[id].name}`).join(", ")}${spent.shortfall ? `; ${money(spent.shortfall)} paid in credits` : ""}.` : "";
+    return { character: { credits: Math.max(0, credits - spent.shortfall), playState: { ...(character.playState ?? {}), materials: spent.stock } }, note };
+  };
   const [pick, setPick] = useState("");
   const [find, setFind] = useState("");
   const [message, setMessage] = useState<string[]>([]);
@@ -5685,7 +5742,7 @@ function CraftingActivity(props: DowntimeProps) {
     const value = item.cost;
     const raw = Math.ceil(value / 2);
     const daysNeeded = Math.max(1, Math.ceil(value / 250));
-    if (credits < raw * 2) return void toast.error(`Raw materials worth up to ${money(raw * 2)} may be needed.`);
+    if (means < raw * 2) return void toast.error(`Raw materials worth up to ${money(raw * 2)} may be needed (credits and gathered materials together).`);
     if (!has) return void toast.error(`You need ${tool.name}.`);
     const r = props.check({ ability: "intelligence", using: tool.name.toLowerCase() });
     const m = checkModifier(r.total, 0);
@@ -5699,14 +5756,15 @@ function CraftingActivity(props: DowntimeProps) {
       `d100 ${d100} + ${m.bonus} = ${d100 + m.bonus}: ${row.text}`,
       `${item.name} made in ${daysNeeded} day${daysNeeded > 1 ? "s" : ""}, raw materials ${money(materials)}.`,
     ];
-    let creditsNow = credits - materials;
+    const paid = pay(materials);
+    lines[lines.length - 1] += paid.note;
     const comp = applyComplication(props, activity, undefined, false, 1);
     const downtime: Partial<DowntimeState> = {};
     if (comp) {
       lines.push(`Complication (${comp.chance}%): ${comp.text}`);
       if (comp.effect.rival) downtime.rivals = [...state.rivals, { id: dtId("r"), name: personFor(props.people, "middle", state.rivals.map((x) => x.name)), motive: comp.text, where: settlement!.id, whereName: settlement!.name, since: props.day }];
     }
-    props.commit({ character: { credits: Math.max(0, creditsNow), equipment: [...carried, item.name] }, downtime, days: daysNeeded, log: lines });
+    props.commit({ character: { ...paid.character, equipment: [...carried, item.name] }, downtime, days: daysNeeded, log: lines });
     setMessage(lines);
   };
   const reverse = () => {
@@ -5737,7 +5795,7 @@ function CraftingActivity(props: DowntimeProps) {
     if (needsRare && !(state.rare[rarity] > 0)) return void toast.error(`A rare ingredient from a creature of challenge ${DOWNTIME.ingredients[rarity]?.cr.min}+ is needed.`);
     const value = enhancedValue(found);
     const raw = Math.ceil(value / 2);
-    if (credits < raw * 2) return void toast.error(`Raw materials worth up to ${money(raw * 2)} may be needed.`);
+    if (means < raw * 2) return void toast.error(`Raw materials worth up to ${money(raw * 2)} may be needed (credits and gathered materials together).`);
     const days = Math.max(1, Math.ceil(value / 250));
     const r = props.check({ ability: "intelligence", using: "tools" });
     const m = checkModifier(r.total, 0);
@@ -5752,16 +5810,34 @@ function CraftingActivity(props: DowntimeProps) {
     ];
     const rare = { ...state.rare };
     if (needsRare) rare[rarity] = Math.max(0, (rare[rarity] ?? 0) - (activity.results.indexOf(row) >= 3 ? 0 : 1));
-    props.commit({ character: { credits: Math.max(0, credits - materials), equipment: [...carried, found.name] }, downtime: { rare }, days, log: lines });
+    const paid = pay(materials);
+    lines[lines.length - 1] += paid.note;
+    props.commit({ character: { ...paid.character, equipment: [...carried, found.name] }, downtime: { rare }, days, log: lines });
+    setMessage(lines);
+  };
+  // Refining (house rule): 4 units of a material into one refined unit, with a kit of the family and a check at the tier's DC
+  const refine = () => {
+    const raw = MATERIALS[pick];
+    if (!raw || raw.refined || (stock[pick] ?? 0) < REFINE_UNITS) return;
+    const family = FAMILIES[raw.family];
+    const kit = carried.find((n) => family.refiners.test(n));
+    if (!kit) return void toast.error(`Refining ${raw.family} needs a kit: ${family.refiners.source.replace(/\|/g, ", ")}.`);
+    const dc = harvestDc(raw.tier);
+    const r = props.check({ ability: "intelligence", using: kit.toLowerCase() });
+    const ok = r.total >= dc;
+    const next = { ...stock, [pick]: stock[pick] - (ok ? REFINE_UNITS : 1) };
+    if (ok) next[`${pick}-r`] = (next[`${pick}-r`] ?? 0) + 1;
+    const lines = [`Refining ${raw.name} (${kit}): ${r.roll} ${r.bonus >= 0 ? "+" : "-"} ${Math.abs(r.bonus)} = ${r.total} against DC ${dc}. ${ok ? `${REFINE_UNITS} units become one ${MATERIALS[`${pick}-r`].name.toLowerCase()}.` : "It comes to nothing and one unit is spoiled."}`];
+    props.commit({ character: { playState: { ...(character.playState ?? {}), materials: next } }, downtime: {}, days: 0, log: lines });
     setMessage(lines);
   };
   const ownedEnhanced = carried.map((n) => enhanced.find((i) => i.name === n)).filter(Boolean) as any[];
   return (
     <div className="space-y-2" data-testid="downtime-crafting">
       <div className="flex gap-1">
-        {(["craft", "blueprint", "reverse"] as const).map((m) => (
+        {(["craft", "blueprint", "reverse", "refine"] as const).map((m) => (
           <Button key={m} size="sm" variant={mode === m ? "default" : "outline"} className="h-7 px-2" onClick={() => { setMode(m); setPick(""); }}>
-            {m === "craft" ? "Craft gear" : m === "blueprint" ? "From a blueprint" : "Take apart"}
+            {m === "craft" ? "Craft gear" : m === "blueprint" ? "From a blueprint" : m === "reverse" ? "Take apart" : "Refine"}
           </Button>
         ))}
       </div>
@@ -5779,7 +5855,7 @@ function CraftingActivity(props: DowntimeProps) {
               Needs {tool.name}{has ? "" : " (you do not carry it)"}, raw materials worth {money(Math.ceil(item.cost / 2))}, {Math.max(1, Math.ceil(item.cost / 250))} day(s).
             </p>
           )}
-          <Button size="sm" onClick={craft} disabled={!item || !has || credits < Math.ceil((item?.cost ?? 0) / 2) * 2} data-testid="downtime-craft">Craft it</Button>
+          <Button size="sm" onClick={craft} disabled={!item || !has || means < Math.ceil((item?.cost ?? 0) / 2) * 2} data-testid="downtime-craft">Craft it</Button>
         </div>
       )}
       {mode === "blueprint" && (
@@ -5792,6 +5868,20 @@ function CraftingActivity(props: DowntimeProps) {
           </select>
           <p className="text-xs text-gray-300">Rare ingredients held: {Object.entries(state.rare).filter(([, n]) => n > 0).map(([r, n]) => `${r} ${n}`).join(", ") || "none"}. Standard and premium items waive them (the book suggests it).</p>
           <Button size="sm" onClick={buildEnhanced} disabled={!pick}>Make it</Button>
+        </div>
+      )}
+      <p className="text-xs text-gray-300" data-testid="downtime-materials">
+        Materials (house rule: they count at their value toward raw materials): {Object.entries(stock).filter(([id, n]) => n > 0 && MATERIALS[id]).map(([id, n]) => `${n} x ${MATERIALS[id].name}`).join(", ") || "none gathered yet"}.
+      </p>
+      {mode === "refine" && (
+        <div className="space-y-2">
+          <select className="h-8 w-full rounded bg-gray-700 px-1" value={pick} onChange={(e) => setPick(e.target.value)} data-testid="downtime-refine-pick">
+            <option value="">A material to refine ({REFINE_UNITS} units make one)</option>
+            {Object.entries(stock).filter(([id, n]) => MATERIALS[id] && !MATERIALS[id].refined && n >= REFINE_UNITS).map(([id, n]) => (
+              <option key={id} value={id}>{MATERIALS[id].name} ({n}, DC {harvestDc(MATERIALS[id].tier)})</option>
+            ))}
+          </select>
+          <Button size="sm" onClick={refine} disabled={!pick} data-testid="downtime-refine">Refine it</Button>
         </div>
       )}
       {mode === "reverse" && (

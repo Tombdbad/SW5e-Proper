@@ -7,7 +7,7 @@ import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey } from "@/lib/stores/useCombat";
 import { type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
-import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
+import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind, type TokenKind } from "./sprites";
 
@@ -340,6 +340,24 @@ function Chest({ looted }: { looted?: boolean }) {
   );
 }
 
+// A resource node (house rule, see "Gathering" in shared/logic): a vein of ore, a patch of plants,
+// a crystal cluster or a heap of parts, dull once it has run dry
+function NodeModel({ node, empty }: { node: ResourceNode; empty?: boolean }) {
+  const glow = empty ? 0 : 0.5 + node.tier * 0.5;
+  if (node.family === "plant") {
+    return <>{[[0.3, 0.35, 0.5], [0.55, 0.5, 0.3], [0.7, 0.3, 0.65], [0.45, 0.4, 0.7]].map(([x, h, z], i) => <Box key={i} at={[x, h / 2, z]} size={[0.1, h, 0.1]} color={empty ? "#4d4a35" : "#4f9a4f"} />)}{!empty && [[0.3, 0.38, 0.5], [0.55, 0.52, 0.3], [0.7, 0.33, 0.65]].map(([x, y, z], i) => <Box key={i} at={[x, y, z]} size={[0.16, 0.12, 0.16]} color="#f0c24b" glow={glow} />)}</>;
+  }
+  if (node.family === "crystal") {
+    const color = ["#9ad1f0", "#c0a0f0", "#5fa8ff", "#ff6fa8"][node.tier] ?? "#9ad1f0";
+    return <><Box at={[0.5, 0.08, 0.5]} size={[0.7, 0.16, 0.6]} color="#4a4f58" />{[[0.4, 0.45, 0.45, 0.5], [0.62, 0.35, 0.55, 0.4], [0.5, 0.3, 0.7, 0.3]].map(([x, h, z, r], i) => <Box key={i} at={[x, 0.16 + h / 2, z]} size={[0.14, h, 0.14]} color={empty ? "#6a6f78" : color} glow={glow} rot={[0, r, r - 0.4]} />)}</>;
+  }
+  if (node.family === "salvage") {
+    return <><Box at={[0.45, 0.14, 0.5]} size={[0.7, 0.28, 0.5]} color="#59636d" rot={[0, 0.3, 0]} /><Box at={[0.6, 0.34, 0.4]} size={[0.3, 0.2, 0.3]} color="#3d4856" rot={[0.2, 0.5, 0]} />{!empty && <Box at={[0.35, 0.34, 0.6]} size={[0.14, 0.06, 0.14]} color="#58c98b" glow={glow} />}</>;
+  }
+  const vein = ["#b0b8c0", "#7fd0ff", "#ffb347", "#ff6b6b"][node.tier] ?? "#b0b8c0";
+  return <><Box at={[0.5, 0.2, 0.5]} size={[0.8, 0.4, 0.6]} color="#4a4f58" rot={[0, 0.2, 0]} /><Box at={[0.5, 0.32, 0.5]} size={[0.5, 0.1, 0.62]} color={empty ? "#5a5f68" : vein} glow={glow} rot={[0, 0.2, 0.1]} /></>;
+}
+
 // The painted berth of a ship that is out on a voyage (its pilot is off with it): the place it
 // will come back to, so that a hangar is not drawn empty without saying why
 function Berth({ w, h, name }: { w: number; h: number; name: string }) {
@@ -532,7 +550,7 @@ function wallRuns(length: number, gaps: number[]): [number, number][] {
   return runs;
 }
 
-function RoomShell({ width, height, assets, floor, wall, ships = [], walls = true, looted, wayColor, wayLabel, onFloor, onAsset, plan, children }: {
+function RoomShell({ width, height, assets, floor, wall, ships = [], walls = true, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, children }: {
   width: number;
   height: number;
   // The room's level and what it is, for stairs, lifts and ladders (their floor rises)
@@ -544,6 +562,8 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], walls = tru
   // Open ground has no walls, only posts at its corners
   walls?: boolean;
   looted?: (asset: RoomAsset) => boolean;
+  // The resource node a cache stands for, if it is one
+  nodeOf?: (asset: RoomAsset) => ResourceNode | undefined;
   wayColor?: (asset: RoomAsset) => string;
   wayLabel?: (asset: RoomAsset) => string | undefined;
   // A square of the floor, or something in the room, was tapped
@@ -601,7 +621,7 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], walls = tru
         <group key={a.id} position={[a.x, (a.z ?? 0) * LEVEL_H, a.y]}>
           {a.kind === "ship" ? (ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} /> : <Berth w={a.w} h={a.h} name={a.name} />)
             : a.kind === "stairs" ? <StairsAsset w={a.w} h={a.h} up={/up/i.test(a.name)} />
-            : a.kind === "loot" ? <Chest looted={looted?.(a)} />
+            : a.kind === "loot" ? (nodeOf?.(a) ? <NodeModel node={nodeOf(a)!} empty={looted?.(a)} /> : <Chest looted={looted?.(a)} />)
             : <Furniture name={a.name} w={a.w} h={a.h} />}
           {/* Furniture that can be stood on (a bench, the stage) leaves the tap to the floor beneath, so it walks to that square */}
           {onAsset && !(onFloor && a.kind === "furniture" && !a.blocks && !useKindOf(a.name)) && <Hit at={[a.w / 2, 0.5, a.h / 2]} size={[a.w, 1, a.h]} onTap={() => onAsset(a)} />}
@@ -1900,7 +1920,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   floor={floor}
                   wall={wall}
                   ships={room.ships}
-                  looted={(a) => !!room.loot.find((c) => c.id === a.ref)?.looted}
+                  looted={(a) => { const c = room.loot.find((c) => c.id === a.ref); return !!c && (c.node ? nodeAt(c.node, minutes).charges === 0 : !!c.looted); }}
+                  nodeOf={(a) => room.loot.find((c) => c.id === a.ref)?.node}
                   wayColor={wayColor}
                   wayLabel={wayLabel}
                   onFloor={inside ? (x, y) => walkTo([{ x: l.x + x, y: l.y + y }]) : undefined}
@@ -2127,7 +2148,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             ))}
             {street.caches.map(({ cache, x, y }) => (
               <group key={cache.id} position={[x, 0, y]}>
-                <Chest looted={cache.looted} />
+                {cache.node ? <NodeModel node={cache.node} empty={nodeAt(cache.node, minutes).charges === 0} /> : <Chest looted={cache.looted} />}
                 {tappable && <Hit at={[0.5, 0.4, 0.5]} size={[1, 0.8, 1]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "loot", id: cache.id }))} />}
               </group>
             ))}
