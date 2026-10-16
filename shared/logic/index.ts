@@ -72,6 +72,8 @@ export interface Occupant {
   trade?: string;
   // Where they live and how their days go, and the ship they fly (see "Routines")
   routine?: Routine;
+  // Wanted for a crime done here (an Incident id): the constables are looking for them
+  wanted?: string;
   ship?: string;
   // Held in bonds that have to be opened before they can walk away (see "Companions")
   captive?: Captive;
@@ -178,6 +180,10 @@ export interface World {
   pursuit?: Pursuit;
   // The criminal reputation of each settlement: points, and the minute they were last counted (see heatAt)
   heat?: Record<string, { points: number; at: number }>;
+  // Crimes done by the people of a settlement, and the search for them (see rollIncident), and the
+  // last hour of the clock each settlement was rolled for
+  incidents?: Incident[];
+  incidentClock?: Record<string, number>;
   // A ship the party is trying to take (see startHeist); absent when there is none
   heist?: Heist;
   // The encounter waiting in the district the party is in (see rollEncounter), and the settlements
@@ -1942,7 +1948,7 @@ export function counterSides(layout: RoomLayout, station: RoomAsset): { behind: 
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 9;
+export const LIFE = 10;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -2077,6 +2083,15 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
   // Ways in and out (life 9): furniture, caches and ships are moved off the squares ways stand on,
   // and a way out that opens on a pocket between buildings is moved to a wall that opens on the street
   if ((next.life ?? 0) < 9) repairAccess(next, ctx.random);
+  // Traffic (life 10): the day trips people already make get a vehicle, and more of them go (merchants
+  // every few days, by hauler)
+  if ((next.life ?? 0) < 10) {
+    // ...droid dealers sell droids (they sold tools and kits before)
+    for (const room of Object.values(next.areas).filter((a) => a.kind === "room" && next.areas[a.parentId ?? ""]?.type === "droid dealer" && /showroom|repair bay/i.test(a.name))) for (const o of room.occupants) if (o.role === "merchant") o.trade = "droids";
+    for (const settlement of Object.values(next.areas).filter((a) => a.kind === "settlement")) addTraffic(next, settlement, ctx.random);
+    // ...and rides parked at the houses and shops (those of a hostile base are left as they were)
+    for (const building of Object.values(next.areas).filter((a) => a.kind === "building" && !a.vehicles?.length && !BUILDINGS[a.type]?.hostile)) placeVehicles(ctx, building);
+  }
   next.life = LIFE;
   return next;
 }
@@ -2798,7 +2813,9 @@ export function leaveSight(world: World, fromId: string, toId: string, now: numb
   return { ...world, areas: { ...world.areas, [fromId]: { ...area, calmAt: now + WATCH_COOLDOWN } } };
 }
 
-export const isCivilian = (o: Occupant) => o.disposition !== "hostile" && !!o.hitPoints && !o.captive && !isLawman(o);
+// Someone going about their life: not hostile, not held, not a lawman, not a droid or an animal
+// (the people of a settlement carry no stat block, so no hit points either)
+export const isCivilian = (o: Occupant) => o.disposition !== "hostile" && !o.captive && !o.disabled && !isLawman(o) && !/droid|wildlife|horror|guard|captive|patient/i.test(o.role);
 export const hasCommlink = (o: Occupant) => (o.loadout ?? []).some((n) => /^commlink/i.test(n));
 const isReporter = (o: Occupant) => isCivilian(o) && o.disposition === "neutral" && hasCommlink(o);
 
@@ -2901,7 +2918,7 @@ export function advanceSearch(world: World, now: number, party: { area: string; 
 
 // The owner of a room hides the party in it (or a room in the same building they keep for it): a
 // hidden way or a locked door is opened for the search (house rule; a Persuade check)
-export const shelterOwner = (o: Occupant) => isCivilian(o) && o.disposition === "friendly" && /bartender|barkeep|innkeep|resident|owner|landlord|proprietor|keeper/i.test(o.role + " " + o.name);
+export const shelterOwner = (o: Occupant) => isCivilian(o) && /bartender|barkeep|innkeep|resident|owner|landlord|proprietor|keeper|merchant|overseer|manager|mechanic|medic/i.test(o.role + " " + o.name);
 
 export function grantShelter(world: World, fromId: string, exit: Exit): World {
   const target = world.areas[exit.to];
@@ -3381,6 +3398,8 @@ export const WARES: Record<string, Wares> = {
   // Not equipment: the transport dataset's vehicles and mounts (the client adds them to the stock pool)
   vehicles: { label: "Speeders", categories: ["Vehicle"], lines: [2, 3], each: [1, 2] },
   mounts: { label: "Mounts and beasts", categories: ["Mount"], lines: [3, 5], each: [1, 2] },
+  // Droids are not equipment: stat blocks (see droidStock), sold, bought back, repaired and fitted at a droid dealer
+  droids: { label: "Droids", categories: ["Droid"], lines: [4, 6], each: [1, 1] },
 };
 export const MERCHANT_WARES = ["general", "general", "arms", "tech", "medical", "leisure"];
 const ROLE_WARES: Record<string, string> = { bartender: "bar", mechanic: "tech", medic: "medical", dockmaster: "spacer", "ticket agent": "spacer", fence: "black", smuggler: "black" };
@@ -3634,7 +3653,8 @@ export interface Routine {
   home: string;
   stops: Stop[];
   // Every `every` days the day is spent elsewhere: out at 07:00, back by 21:00, `trip` hours each way
-  outing?: { at: string; every: number; phase: number; trip: number };
+  // `by` is what carries them (a speeder, an airspeeder, a mount or a hauler)
+  outing?: { at: string; every: number; phase: number; trip: number; by?: string };
 }
 export interface Voyage {
   // Area ids: the ship's own berth first, then the ports it calls at (berth rooms, or settlements,
@@ -3658,6 +3678,8 @@ export interface Mover {
   progress: number;
   occupant?: Occupant;
   ship?: Ship;
+  // What carries a person between settlements: speeder, airspeeder, mount or hauler
+  vehicle?: string;
 }
 
 // Minutes spent on the street between two places in a settlement
@@ -3754,7 +3776,7 @@ export function withPresence(world: World, minutes: number): World & { moving: M
     if (where.at === base) continue;
     away(base, o.id);
     if (where.at && world.areas[where.at]) into(where.at).occupants.push(o);
-    if (where.moving) moving.push({ kind: "person", id: o.id, name: o.name, ...where.moving, occupant: o });
+    if (where.moving) moving.push({ kind: "person", id: o.id, name: o.name, ...where.moving, occupant: o, ...(o.routine?.outing && settlementOf(world, where.moving.from) !== settlementOf(world, where.moving.to) ? { vehicle: o.routine.outing.by ?? "speeder" } : {}) });
   }
   const areas = { ...world.areas };
   for (const id of new Set([...leave.keys(), ...arrive.keys()])) {
@@ -3840,12 +3862,14 @@ function settleRoutines(world: World, settlement: Area, r: Random) {
       } else continue;
       const routine: Routine = { home, stops };
       // Now and then a day out in another settlement of the planet, by speeder
-      if (elsewhere.length && !NIGHT_OWLS.includes(o.role) && r.chance(0.15)) {
+      if (elsewhere.length && !NIGHT_OWLS.includes(o.role) && r.chance(o.role === "merchant" ? 0.5 : 0.3)) {
         const there = r.pick(elsewhere);
         const trip = routeMinutes(world, settlement.id, there.id) / 60;
-        if (trip > 0 && trip <= 6) routine.outing = { at: there.id, every: r.int(4, 7), phase: r.int(0, 6), trip: Math.max(0.5, Math.round(trip * 4) / 4) };
+        if (trip > 0 && trip <= 6) routine.outing = { at: there.id, every: o.role === "merchant" ? r.int(2, 4) : r.int(4, 7), phase: r.int(0, 6), trip: Math.max(0.5, Math.round(trip * 4) / 4), by: outingVehicle(world, settlement, o.role, Math.max(0.5, trip), r) };
       }
       o.routine = routine;
+      // Personal commlinks are cheap and common: a good many of the settlement's people carry one (house rule)
+      if (!o.loadout.some((n) => /^commlink/i.test(n)) && r.chance(0.4)) o.loadout.push("Commlink");
     }
   }
 
@@ -4648,6 +4672,8 @@ export interface Vehicle {
   owner: string;
   // House rule: the Vehicles table has no seats
   seats: number;
+  // Belongs to the people of the settlement, not to an enemy: taking it is theft
+  civil?: boolean;
 }
 export interface PartyVehicle extends Vehicle {
   // The settlement it is parked at
@@ -4730,7 +4756,7 @@ function dealerTrade(world: World, building: Area, room: Area, r: Random): strin
   if (!settlement) return undefined;
   if (building.type === "workshop" && /shopfront/i.test(room.name) && ["city", "town", "station"].includes(settlement.type)) return "vehicles";
   if (building.type === "vehicle dealer" && /showroom/i.test(room.name)) return "vehicles";
-  if (building.type === "droid dealer" && /showroom/i.test(room.name)) return "tech";
+  if (building.type === "droid dealer" && /showroom|repair bay/i.test(room.name)) return "droids";
   if (building.type === "market" && /stalls/i.test(room.name) && ["town", "outpost", "village"].includes(settlement.type) && !["urban", "gas giant"].includes(planet?.type ?? "") && hashOf(room.id) % 2 === 0) return "mounts";
   return undefined;
 }
@@ -4762,7 +4788,19 @@ function placeVehicles(ctx: Context, building: Area) {
   if (building.type === "wreck") found = make(r.pick(["Landspeeder", "Airspeeder", "Speederbike"]), "Wrecked speeder", "wrecked");
   else if (["camp", "hideout", "garrison", "command post"].includes(building.type) && r.chance(0.45)) found = make("Speederbike", bikeName, "parked");
   if (found) building.vehicles = [found];
+  // Rides parked at the buildings of a settlement belong to its people (house rule): one at a
+  // house, shop or port in about half of them, and a showroom's worth at a vehicle dealer
+  else if (!BUILDINGS[building.type]?.hostile && CIVIL_RIDES[building.type] !== undefined && r.chance(CIVIL_RIDES[building.type])) {
+    const models = building.type === "vehicle dealer" ? ["Landspeeder", "Speederbike", "Airspeeder", r.pick(["Landspeeder", "Speederbike"])] : [r.pick(["Landspeeder", "Landspeeder", "Speederbike", "Airspeeder"])];
+    const owners = ["Dren", "Mala", "Orrin", "Teva", "Kell", "Sorra", "Bram", "Iska"];
+    const vehicles = models.flatMap((m, i) => {
+      const v = make(m, `${r.pick(owners)}'s ${m.toLowerCase()}`, "parked");
+      return v ? [{ ...v, civil: true, owner: building.type === "vehicle dealer" ? "the dealer" : v.name.split("'")[0], name: building.type === "vehicle dealer" ? `${m} for sale` : v.name, id: v.id + i }] : [];
+    });
+    if (vehicles.length) building.vehicles = vehicles;
+  }
 }
+const CIVIL_RIDES: Record<string, number> = { residences: 0.6, tenements: 0.4, market: 0.5, workshop: 0.6, cantina: 0.4, spaceport: 0.5, "transit hub": 0.3, "vehicle dealer": 1, warehouse: 0.3, medcenter: 0.3, promenade: 0.4 };
 
 // The party's ships stand in the berths of the port they are at: where a berth has been left
 // empty (a ship bought or taken from it, or one away on a voyage) the party's ship takes it. For
@@ -7294,3 +7332,309 @@ export function partsFree(taken: string[], wants: string[]): boolean {
   for (const p of wants) need[p] = (need[p] ?? 0) + 1;
   return Object.entries(need).every(([p, n]) => (used[p] ?? 0) + n <= (BODY_PARTS[p] ?? 1));
 }
+
+// ---------------------------------------------------------------------------------------------
+// Traffic, lifts and incidents (house rules; the books give none of this).
+//  - The people who spend a day in another settlement (`Routine.outing`) go by a vehicle: a
+//    speeder, an airspeeder, a mount, or a hauler for a merchant with goods. More of them go, and
+//    merchants go every few days. The map shows them on their way (`Mover.vehicle`).
+//  - A party that wants to go where someone is going can ask for a lift (`liftsBetween`): they
+//    leave when the person does, and the fare is a few credits.
+//  - Now and then one of the settlement's people does something against the law: steals, starts
+//    a brawl, or takes a parked speeder (`rollIncident`). They hide somewhere in the settlement (a
+//    carjacker takes the speeder to another one), and the constables search for them as they
+//    would for the party: squads walk the rooms, question whoever is in them, and now and then get
+//    a tip that sends them straight to the hiding place (`advanceIncidents`). The party can find
+//    the culprit first and turn them in for a reward (`closeIncident`).
+// ---------------------------------------------------------------------------------------------
+
+// Gives the day trips of a settlement's people a vehicle, and sends more of them out (life 10)
+function addTraffic(world: World, settlement: Area, r: Random) {
+  const elsewhere = childrenOf(world, settlement.parentId ?? "").filter((s) => s.kind === "settlement" && s.id !== settlement.id && ["city", "town", "outpost", "village", "station"].includes(s.type));
+  for (const b of childrenOf(world, settlement.id).filter((x) => x.kind === "building")) {
+    for (const room of childrenOf(world, b.id).filter((x) => x.kind === "room")) {
+      for (const o of room.occupants) {
+        const routine = o.routine;
+        if (!routine) continue;
+        if (!o.statBlock && !o.loadout.some((n) => /^commlink/i.test(n)) && r.chance(0.4)) o.loadout.push("Commlink");
+        if (routine.outing) {
+          routine.outing.by ??= outingVehicle(world, settlement, o.role, routine.outing.trip, r);
+          continue;
+        }
+        if (!elsewhere.length || NIGHT_OWLS.includes(o.role) || o.disposition === "hostile" || !r.chance(o.role === "merchant" ? 0.4 : 0.15)) continue;
+        const there = r.pick(elsewhere);
+        const trip = routeMinutes(world, settlement.id, there.id) / 60;
+        if (trip > 0 && trip <= 6) routine.outing = { at: there.id, every: o.role === "merchant" ? r.int(2, 4) : r.int(4, 7), phase: r.int(0, 6), trip: Math.max(0.5, Math.round(trip * 4) / 4), by: outingVehicle(world, settlement, o.role, Math.max(0.5, trip), r) };
+      }
+    }
+  }
+}
+
+export function outingVehicle(world: World, settlement: Area, role: string, tripHours: number, r: Random): string {
+  if (role === "merchant") return tripHours > 3 || r.chance(0.5) ? "hauler" : "speeder";
+  const biome = ancestor(world, settlement.id, "planet")?.type ?? "";
+  if (/desert|ice|forest|jungle|swamp|temperate/i.test(biome) && tripHours <= 3 && r.chance(0.35)) return "mount";
+  return tripHours > 3 && r.chance(0.7) ? "airspeeder" : "speeder";
+}
+
+export interface Lift {
+  id: string;
+  who: string;
+  whoId: string;
+  vehicle: string;
+  departs: number; // the minute they set out
+  minutes: number; // from now to arriving: the wait and the journey
+  fare: number;
+}
+
+// Lifts the people of the settlements offer between two of them, leaving within ten hours
+export function liftsBetween(world: World, from: string, to: string, now: number): Lift[] {
+  const out: Lift[] = [];
+  for (const { o } of presenceIndex(world).people) {
+    const trip = o.routine?.outing;
+    if (!trip || !o.routine) continue;
+    const home = settlementOf(world, o.routine.home);
+    const going = home === from && trip.at === to;
+    const coming = trip.at === from && home === to;
+    if (!going && !coming) continue;
+    const day = Math.floor(now / DAY);
+    for (let d = day; d <= day + trip.every; d++) {
+      if ((d + trip.phase) % trip.every !== 0) continue;
+      const departs = d * DAY + (going ? 7 : 21 - trip.trip) * 60;
+      if (departs < now) continue;
+      if (departs - now <= 600) out.push({ id: `lift-${o.id}`, who: o.name, whoId: o.id, vehicle: trip.by ?? "speeder", departs, minutes: departs - now + Math.round(trip.trip * 60), fare: Math.max(2, Math.round(trip.trip * 6)) });
+      break;
+    }
+  }
+  return out.sort((a, b) => a.departs - b.departs).slice(0, 3);
+}
+
+export type IncidentKind = "theft" | "brawl" | "carjacking";
+export const INCIDENT_WORDS: Record<IncidentKind, { crime: Crime; what: string }> = {
+  theft: { crime: "theft", what: "a theft" },
+  brawl: { crime: "brawl", what: "a brawl" },
+  carjacking: { crime: "theft", what: "the theft of a speeder" },
+};
+export const INCIDENT_COOLDOWN = 45; // minutes the constables search for a culprit from the time they arrive, in strict law (more where it is lax)
+
+export interface Incident {
+  id: string;
+  kind: IncidentKind;
+  settlement: string;
+  scene: string; // the room it was done in
+  culprit: string; // Occupant.id
+  name: string;
+  hideAt: string; // the room the culprit is lying low in (or the settlement they fled to)
+  was?: Routine; // what they were doing before, restored when it is over
+  vehicle?: Vehicle & { from: string }; // a speeder taken, and the building it was taken from
+  loot: number; // credits taken (a theft)
+  startedAt: number;
+  arrivesAt: number;
+  searchUntil: number;
+  squads: Squad[];
+  tipped?: boolean; // the constables know where the culprit is
+  status: "open" | "caught" | "fled" | "cold" | "turned in";
+  note: string;
+}
+
+const hourOfClock = (minutes: number) => Math.floor(minutes / 60);
+
+// Where an occupant is stored (the room whose list holds them)
+function homeOf(world: World, occupantId: string): Area | undefined {
+  return Object.values(world.areas).find((a) => a.occupants.some((o) => o.id === occupantId));
+}
+
+// The rooms of the settlement's friendly buildings
+function townRooms(world: World, settlementId: string): Area[] {
+  return childrenOf(world, settlementId)
+    .filter((b) => b.kind === "building" && b.type !== "starship" && !BUILDINGS[b.type]?.hostile)
+    .flatMap((b) => childrenOf(world, b.id).filter((a) => a.kind === "room" && !formOf(a) && (a.layout?.level ?? 0) >= 0));
+}
+
+// Rolls the hour for a crime in a settlement. Rare (about one a day in a policed town), and not
+// while another is open there. Returns the world with the culprit in hiding, or the same world.
+export function rollIncident(world: World, settlementId: string, hour: number, now: number): World {
+  const settlement = world.areas[settlementId];
+  if (!settlement || settlement.kind !== "settlement") return world;
+  if ((world.incidents ?? []).some((i) => i.settlement === settlementId && i.status === "open")) return world;
+  const law = lawAt(world, settlementId);
+  const key = `${settlementId}|incident|${hour}`;
+  const chance = law === 0 ? 0.006 : 0.01 + 0.003 * Math.min(3, law);
+  if (unitOf(`${key}|roll`) >= chance) return world;
+  // Who: a civilian of the settlement who is somewhere just now, with a life to leave
+  const present = withPresence(world, now);
+  const rooms = townRooms(present, settlementId);
+  const people = rooms.flatMap((room) => room.occupants.filter((o) => isCivilian(o) && o.disposition === "neutral" && o.count === 1 && !!o.routine && !o.wanted && !["service droid", "musician", "patient"].includes(o.role)).map((o) => ({ o, room })));
+  if (!people.length) return world;
+  const { o: culprit, room: scene } = people[Math.floor(unitOf(`${key}|who`) * people.length)];
+  const pick = unitOf(`${key}|kind`);
+  const parked = childrenOf(world, settlementId).filter((b) => b.kind === "building" && (b.vehicles ?? []).some((v) => v.status === "parked"));
+  const kind: IncidentKind = pick < 0.45 ? "theft" : pick < 0.8 || !parked.length ? "brawl" : "carjacking";
+  // Where: a room to lie low in, or for a carjacker another settlement of the planet
+  const hides = rooms.filter((r) => r.id !== scene.id);
+  const others = childrenOf(world, settlement.parentId ?? "").filter((s) => s.kind === "settlement" && s.id !== settlementId);
+  let hideAt = hides.length ? hides[Math.floor(unitOf(`${key}|hide`) * hides.length)].id : scene.id;
+  let vehicle: Incident["vehicle"];
+  const areas = { ...world.areas };
+  if (kind === "carjacking") {
+    const building = parked[Math.floor(unitOf(`${key}|building`) * parked.length)];
+    const taken = building.vehicles!.find((v) => v.status === "parked")!;
+    vehicle = { ...taken, from: building.id };
+    areas[building.id] = { ...building, vehicles: building.vehicles!.filter((v) => v !== taken) };
+    if (others.length) hideAt = others[Math.floor(unitOf(`${key}|far`) * others.length)].id;
+  }
+  const home = homeOf(world, culprit.id)!;
+  const was = culprit.routine;
+  areas[home.id] = { ...areas[home.id] ?? home, occupants: (areas[home.id] ?? home).occupants.map((o) => (o.id === culprit.id ? { ...o, wanted: key, routine: { home: hideAt, stops: [] } } : o)) };
+  const resp = responseFor(law, INCIDENT_WORDS[kind].crime, false);
+  const arrivesAt = now + (resp?.delay ?? 0);
+  const squadCount = !resp ? 0 : law >= 3 ? 2 : 1;
+  const incident: Incident = {
+    id: key,
+    kind,
+    settlement: settlementId,
+    scene: scene.id,
+    culprit: culprit.id,
+    name: culprit.name,
+    hideAt,
+    was,
+    vehicle,
+    loot: kind === "theft" ? 20 * (1 + Math.floor(unitOf(`${key}|loot`) * 10)) : 0,
+    startedAt: now,
+    arrivesAt,
+    searchUntil: arrivesAt + (resp ? Math.round(INCIDENT_COOLDOWN * [1, 2, 1.5, 1][Math.min(3, law)] * (kind === "brawl" ? 1 : 1.5)) : 60),
+    squads: Array.from({ length: squadCount }, (_, i) => ({ id: `sq-${key}-${i}`, at: scene.id, count: law >= 3 ? 4 : 2, heavy: law >= 3, next: arrivesAt, step: 0 })),
+    status: kind === "carjacking" && others.length ? "fled" : "open",
+    note: `${culprit.name} is wanted for ${INCIDENT_WORDS[kind].what} at ${scene.name}.`,
+  };
+  return { ...world, areas, incidents: [incident, ...(world.incidents ?? [])].slice(0, 10) };
+}
+
+// Ends an incident: the culprit goes back to what they were doing, and the speeder to its building
+export function closeIncident(world: World, id: string, status: Incident["status"], note: string): World {
+  const incident = (world.incidents ?? []).find((i) => i.id === id);
+  if (!incident) return world;
+  const areas = { ...world.areas };
+  const home = homeOf(world, incident.culprit);
+  if (home) areas[home.id] = { ...areas[home.id], occupants: areas[home.id].occupants.map((o) => (o.id === incident.culprit ? { ...o, wanted: undefined, routine: incident.was } : o)) };
+  if (incident.vehicle) {
+    const building = areas[incident.vehicle.from];
+    const { from: _from, ...back } = incident.vehicle;
+    if (building && status !== "cold") areas[building.id] = { ...building, vehicles: [...(building.vehicles ?? []), back] };
+  }
+  return { ...world, areas, incidents: (world.incidents ?? []).map((i) => (i.id === id ? { ...i, status, note, squads: [] } : i)) };
+}
+
+// Moves the constables of every open incident on to `now`. A squad walks the settlement, questions
+// the people of each room it comes to (a quarter of the time somebody tells it where the culprit
+// went), and once it has the tip goes there. Finding the culprit ends it. Past its time the search
+// is called off. Returns the world and what the constables did.
+export function advanceIncidents(world: World, now: number): { world: World; notes: string[] } {
+  const notes: string[] = [];
+  let next = world;
+  for (const incident of world.incidents ?? []) {
+    if (incident.status !== "open" && incident.status !== "fled") continue;
+    if (now >= incident.searchUntil) {
+      next = closeIncident(next, incident.id, "cold", `The search for ${incident.name} was called off.`);
+      notes.push(`The constables give up the search for ${incident.name}.`);
+      continue;
+    }
+    if (!incident.squads.length || now < incident.arrivesAt || !incident.squads.some((s) => s.next <= now)) continue;
+    const squads = incident.squads.map((s) => ({ ...s }));
+    let tipped = !!incident.tipped;
+    let caught = false;
+    for (const squad of squads) {
+      while (!caught && squad.next <= now && squad.next < incident.searchUntil) {
+        if (squad.step > 0) {
+          const path = tipped && incident.status === "open" ? findPath(next, squad.at, incident.hideAt) : null;
+          if (path && path.length > 1) squad.at = path[1];
+          else {
+            const options = searchNeighbours(next, incident.settlement, squad.at);
+            if (options.length) squad.at = createRandom(Math.imul(incident.startedAt, 1009) + Math.imul(squad.step, 7919) + [...squad.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0)).pick(options);
+          }
+        }
+        squad.step += 1;
+        squad.next += SEARCH_STEP;
+        const area = next.areas[squad.at];
+        if (!area) continue;
+        if (area.occupants.some(isCivilian) && !tipped && unitOf(`${incident.id}|tip|${squad.id}|${squad.step}`) < 0.25) {
+          tipped = true;
+          notes.push(`A witness in ${area.name} tells the constables where ${incident.name} went.`);
+        }
+        if (squad.at === incident.hideAt && incident.status === "open") caught = true;
+      }
+      if (caught) break;
+    }
+    if (caught) {
+      next = closeIncident(next, incident.id, "caught", `${incident.name} was caught in ${next.areas[incident.hideAt]?.name}.`);
+      notes.push(`The constables catch ${incident.name} in ${next.areas[incident.hideAt]?.name}.`);
+    } else {
+      next = { ...next, incidents: (next.incidents ?? []).map((i) => (i.id === incident.id ? { ...i, squads, tipped } : i)) };
+    }
+  }
+  return { world: next, notes };
+}
+
+// The credits for turning a culprit in: the stolen sum, and a reward by the law
+export const incidentReward = (world: World, incident: Incident) => incident.loot + 25 * Math.max(1, lawAt(world, incident.settlement)) * (incident.kind === "carjacking" ? 3 : 1);
+
+
+// ---------------------------------------------------------------------------------------------
+// Droid dealers (house rules; the books give no droid prices). A droid dealer's showroom and repair
+// bay sell the droid stat blocks of the rules data (`monsters.json`, type droid) at 6 credits an
+// experience point (150 at least): an astromech (CR 1/2) 600, a protocol droid a few hundred, a
+// medical unit more. Droids built for war (security, battle, assassin, tactical, probe) are only
+// sold where the law allows, or at 1.6 times by the black market, and nothing dearer than the
+// settlement can carry is on the floor. The dealer buys the party's droids back at 40% of the
+// price, less for the hurt; mends one at a credit rate by its challenge (5 + 5 per CR a hit point);
+// and fits the customizations the party carries for the fee of a surgeon (see augmentPlan), with no
+// check and no kit. The motor upgrade is the party's own (see DROID_MOTOR_COST).
+// ---------------------------------------------------------------------------------------------
+
+export interface DroidStat {
+  id: string;
+  name: string;
+  experiencePoints: number;
+  challengeRating?: string | number;
+  hitPoints?: number;
+  size?: string;
+}
+export interface DroidLine {
+  id: string;
+  name: string;
+  xp: number;
+  cr: string;
+  price: number;
+  combat: boolean;
+  quantity: number;
+}
+export const COMBAT_DROIDS = /security|battle|destroyer|assassin|enforcer|tactical|probe|tracker|seeker|interrog|sabotage|hailfire|vulture|spider|persuader|bomber|remote|weaponized|blastromech|behemoth|DSD1|^B[12] series|^BX series|^HK|^IG|^IT-O|^T-Series|^Z-58|^KX/i;
+export const droidPrice = (xp: number) => Math.max(150, Math.round(xp * 6));
+export const crNumber = (cr: string | number | undefined): number => {
+  if (typeof cr === "number") return cr;
+  if (!cr) return 0;
+  if (cr.includes("/")) {
+    const [a, b] = cr.split("/").map(Number);
+    return b ? a / b : 0;
+  }
+  return Number(cr) || 0;
+};
+
+// What a dealer has on the floor today: a few droids by a seeded draw, none that the law forbids, none dearer than the settlement carries
+export function droidStock(world: World, trader: Occupant, placeId: string, day: number, droids: DroidStat[], bought: Record<string, number> = {}): DroidLine[] {
+  const market = marketAt(world, placeId);
+  const black = !!WARES[trader.trade ?? ""]?.black;
+  const r = createRandom(hashOf(trader.id) + day * 104729);
+  const legal = (d: DroidStat) => !COMBAT_DROIDS.test(d.name) || market.law <= 1 || black;
+  const pool = droids.filter((d) => d.experiencePoints > 0 && legal(d) && droidPrice(d.experiencePoints) <= market.cap);
+  const picked = r.shuffle(pool).slice(0, r.int(WARES.droids.lines[0], WARES.droids.lines[1]));
+  return picked
+    .filter((d) => !(bought[`droid:${d.id}`] > 0))
+    .map((d) => ({ id: d.id, name: d.name, xp: d.experiencePoints, cr: String(d.challengeRating ?? "0"), price: Math.round(droidPrice(d.experiencePoints) * (black ? 1.6 : 1) * (0.92 + (hashOf(`${d.id}:${day}`) % 17) / 100)), combat: COMBAT_DROIDS.test(d.name), quantity: 1 }))
+    .sort((a, b) => a.price - b.price);
+}
+
+// What the dealer pays for one of the party's droids, by what it would sell for and how hurt it is
+export const droidOffer = (xp: number, hp: number, maxHp: number) => Math.round(droidPrice(xp) * 0.4 * Math.max(0.25, hp / Math.max(1, maxHp)));
+// The cost of mending a droid to full: a hit point is 5 credits and 5 for each point of challenge
+export const droidRepairPrice = (cr: string | number | undefined, missing: number) => Math.max(0, Math.ceil(missing * (5 + 5 * crNumber(cr))));

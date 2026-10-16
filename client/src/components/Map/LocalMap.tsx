@@ -1219,7 +1219,7 @@ function Follower({ companion, index, feet, open, height, onTap }: { companion: 
   );
 }
 
-type Walker = { key: string; from: V3; to: V3; progress: number; kind: "person" | "speeder" | "ship"; name: string; arc?: number; scale?: number };
+type Walker = { key: string; from: V3; to: V3; progress: number; kind: "person" | "speeder" | "airspeeder" | "mount" | "hauler" | "ship"; name: string; arc?: number; scale?: number; note?: string };
 // People about the street of a district, going between the doors of its buildings by the open
 // ground and back again, at a walking pace (purely for life on the street: nobody to talk to)
 type Stroll = { key: string; path: { x: number; y: number }[]; length: number; offset: number };
@@ -1279,9 +1279,12 @@ function Walkers({ walkers }: { walkers: Walker[] }) {
       {walkers.map((w) => (
         <group key={w.key} ref={(g) => { groups.current[w.key] = g; }} position={w.from} scale={w.scale ?? 1}>
           {w.kind === "person" ? <Figure kind="person" ring="#9ca3af" name={w.name} />
-            : w.kind === "speeder" ? <><Box at={[0, 0.3, 0]} size={[0.6, 0.25, 1.2]} color="#c8663a" /><Box at={[0, 0.48, -0.15]} size={[0.4, 0.2, 0.4]} color={GLOW} glow={0.8} /></>
+            : w.kind === "speeder" || w.kind === "airspeeder" ? <><Box at={[0, 0.3, 0]} size={[0.6, 0.25, 1.2]} color={w.kind === "airspeeder" ? "#3d7fb0" : "#c8663a"} /><Box at={[0, 0.48, -0.15]} size={[0.4, 0.2, 0.4]} color={GLOW} glow={0.8} /></>
+            : w.kind === "mount" ? <><Solid at={[0, 0.5, 0]} color="#8a6a46" rot={[Math.PI / 2, 0, 0]}><capsuleGeometry args={[0.22, 0.6, 4, 10]} /></Solid>{[[-0.14, 0.28], [0.14, 0.28], [-0.14, -0.28], [0.14, -0.28]].map(([x, z], i) => <Box key={i} at={[x, 0.2, z]} size={[0.09, 0.4, 0.09]} color="#6b4f33" />)}<Box at={[0, 0.82, 0.42]} size={[0.14, 0.34, 0.2]} color="#8a6a46" /><Box at={[0, 0.78, -0.05]} size={[0.3, 0.14, 0.4]} color="#b9424a" /></>
+            : w.kind === "hauler" ? <><Box at={[0, 0.5, 0.35]} size={[0.8, 0.5, 0.5]} color="#5b6773" /><Box at={[0, 0.62, -0.45]} size={[0.9, 0.8, 1.1]} color="#c9b48a" /><Box at={[0, 0.2, 0]} size={[0.7, 0.12, 1.8]} color="#2a2f36" /></>
             : <><Solid at={[0, 0, 0]} color="#d9dde2" rot={[Math.PI / 2, 0, 0]}><coneGeometry args={[0.5, 1.6, 8]} /></Solid><Box at={[0, 0, -0.5]} size={[1.4, 0.1, 0.5]} color="#9aa3ad" /><Box at={[0, 0, -0.85]} size={[0.3, 0.2, 0.1]} color={AMBER} glow={2} /></>}
           {w.kind !== "person" && <Label at={[0, 1.2, 0]} size={0.5} color="#e8dcc0">{w.name}</Label>}
+          {w.note && <Label at={[0, w.kind === "person" ? 1.5 : 1.8, 0]} size={w.kind === "person" ? 0.24 : 0.4} color="#fca5a5">{w.note}</Label>}
         </group>
       ))}
     </>
@@ -1295,9 +1298,9 @@ function Walkers({ walkers }: { walkers: Walker[] }) {
 // as the search moves it on, and in between it goes up and down a little on the spot.
 // ---------------------------------------------------------------------------------------------
 
-type SquadSpot = { key: string; squad: Squad; at: V3 };
+type SquadSpot = { key: string; squad: Squad; at: V3; label?: string };
 
-function Squads({ spots, onTap }: { spots: SquadSpot[]; onTap?: (squad: Squad) => void }) {
+function Squads({ spots, onTap }: { spots: SquadSpot[]; onTap?: (squad: Squad, label?: string) => void }) {
   const groups = useRef<Record<string, THREE.Group | null>>({});
   useFrame(({ clock }, delta) => {
     for (const { key, at } of spots) {
@@ -1317,15 +1320,15 @@ function Squads({ spots, onTap }: { spots: SquadSpot[]; onTap?: (squad: Squad) =
   });
   return (
     <>
-      {spots.map(({ key, squad, at }) => (
+      {spots.map(({ key, squad, at, label }) => (
         <group key={key} ref={(g) => { groups.current[key] = g; }} position={at}>
           {Array.from({ length: Math.min(3, squad.count) }, (_, i) => (
             <group key={i} position={[(i - (Math.min(3, squad.count) - 1) / 2) * 0.6, 0, i % 2 ? -0.3 : 0]}>
               <Figure kind={squad.heavy ? "trooper" : "officer"} ring={SIDE_COLORS.hostile} />
             </group>
           ))}
-          <Label at={[0, 1.7, 0]} size={0.3} color={SIDE_COLORS.hostile}>{`${squad.heavy ? "Troopers" : "Constables"} x${squad.count}`}</Label>
-          {onTap && <Hit at={[0, 0.8, 0]} size={[2, 1.8, 1.6]} onTap={() => onTap(squad)} />}
+          <Label at={[0, 1.7, 0]} size={0.3} color={SIDE_COLORS.hostile}>{`${squad.heavy ? "Troopers" : "Constables"} x${squad.count}${label ? ` ${label}` : ""}`}</Label>
+          {onTap && <Hit at={[0, 0.8, 0]} size={[2, 1.8, 1.6]} onTap={() => onTap(squad, label)} />}
         </group>
       ))}
     </>
@@ -1683,29 +1686,37 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         : toHere && !fromHere ? [by(signTo(m.from)), doorOf(tb!)]
         : !fromHere && !toHere && fb && tb ? [by(street.signs.find((sign) => sign.exit.to === fb)), by(street.signs.find((sign) => sign.exit.to === tb))]
         : [undefined, undefined];
-      return ends[0] && ends[1] && ends[0] !== ends[1] ? [{ key: m.id, from: ends[0], to: ends[1], progress: m.progress, kind: "person" as const, name: m.name }] : [];
+      // A blockade stops whoever is going out of the district, or coming into it, at the barricade, where the
+      // officers question them
+      const crossing = fromHere !== toHere;
+      const held = blockade && crossing;
+      return ends[0] && ends[1] && ends[0] !== ends[1] ? [{ key: m.id, from: ends[0], to: ends[1], progress: held ? (fromHere ? Math.min(m.progress, 0.8) : 0.08) : m.progress, kind: "person" as const, name: m.name, ...(held ? { note: "Questioned at the blockade" } : {}) }] : [];
     });
-  }, [moving, plan, opened, street]);
+  }, [moving, plan, opened, street, blockade]);
   // The search's squads, each where its room is: in front of its building's door (one beside the
   // other), or up on the roof or catwalk it is on
   const squadSpots = useMemo((): SquadSpot[] => {
+    if (!plan || opened) return [];
+    // The search for the party, and the searches for the people of the settlement who broke the law
+    const sources: { squads: Squad[]; label?: string }[] = [];
     const p = world.pursuit;
-    if (!plan || opened || !p?.squads?.length || minutes < p.arrivesAt || minutes >= p.searchUntil) return [];
+    if (p?.squads?.length && minutes >= p.arrivesAt && minutes < p.searchUntil) sources.push({ squads: p.squads, label: "(after the party)" });
+    for (const i of world.incidents ?? []) if ((i.status === "open" || i.status === "fled") && minutes >= i.arrivesAt && minutes < i.searchUntil && i.squads.length) sources.push({ squads: i.squads, label: `(after ${i.name})` });
     const taken = new Map<string, number>();
-    return p.squads.flatMap((squad): SquadSpot[] => {
+    return sources.flatMap(({ squads, label }) => squads.flatMap((squad): SquadSpot[] => {
       const area = world.areas[squad.at];
       const bId = area?.kind === "building" ? area.id : area?.parentId ?? "";
       if (!area || !buildingIds.has(bId)) return [];
       const l = area.layout;
-      if (area.kind === "room" && l && openAir(area)) return [{ key: squad.id, squad, at: [l.x + l.width / 2, levelY(l), l.y + l.height / 2] }];
+      if (area.kind === "room" && l && openAir(area)) return [{ key: squad.id, squad, label, at: [l.x + l.width / 2, levelY(l), l.y + l.height / 2] }];
       const front = street.doors[bId];
       if (!front) return [];
       const n = taken.get(bId) ?? 0;
       taken.set(bId, n + 1);
       const side = (n % 2 ? 1 : -1) * (1 + Math.floor(n / 2)) * 1.8;
       const spot = nearestOpen(outdoors, { x: Math.round(front.door.x + front.outward.x * 2 + Math.abs(front.outward.y) * side), y: Math.round(front.door.y + front.outward.y * 2 + Math.abs(front.outward.x) * side) });
-      return [{ key: squad.id, squad, at: [spot.x + 0.5, 0, spot.y + 0.5] }];
-    });
+      return [{ key: squad.id, squad, label, at: [spot.x + 0.5, 0, spot.y + 0.5] }];
+    }));
   }, [world, minutes, plan, opened, street, barred]);
   // People about the street of a district, between the doors of its buildings
   const strolls = useMemo((): Stroll[] => {
@@ -2073,7 +2084,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             {barricades.map((b) => (
               <Barricade key={`${b.sign.x},${b.sign.y}`} squares={b.squares} guards={b.guards} onTap={tappable ? () => onAct?.({ type: "note", text: "Barricades. The officers are holding this way out until the search is called off." }) : undefined} />
             ))}
-            {!duel && <Squads spots={squadSpots} onTap={tappable ? (squad) => onAct?.({ type: "note", text: `${squad.heavy ? "Troopers" : "Constables"} (${squad.count}) are searching the district for the offenders.` }) : undefined} />}
+            {!duel && <Squads spots={squadSpots} onTap={tappable ? (squad, label) => onAct?.({ type: "note", text: `${squad.heavy ? "Troopers" : "Constables"} (${squad.count}) are searching the district ${label ?? ""}.` }) : undefined} />}
             {street.decor.map((d, i) => <group key={i} position={[d.x, 0, d.y]}><Decor kind={d.kind} /></group>)}
             {street.folk.map(({ occupant, x, y }, i) => (
               <group key={`${occupant.id}-${i}`} position={[x + 0.5, 0, y + 0.5]}>
@@ -2524,9 +2535,10 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
       if ((!a && !b) || a === b) return [];
       if (m.kind === "person" && system) return [];
       const [pa, pb] = [a ? at(a) : partySpot, b ? at(b) : partySpot];
-      const kind = m.kind === "ship" ? "ship" : globe ? "speeder" : "person";
-      const lift: V3 = kind === "person" ? [0, 0.2, 0] : kind === "speeder" ? [0, 0.6, 0] : [0, 2.5, 0];
-      return [{ key: `${m.kind}-${m.id}`, from: [pa[0] + lift[0], pa[1] + lift[1], pa[2] + lift[2]] as V3, to: [pb[0] + lift[0], pb[1] + lift[1], pb[2] + lift[2]] as V3, progress: m.progress, kind, name: m.name, arc: kind === "ship" ? 6 : 0, scale: kind === "person" ? 1.6 * span : kind === "speeder" ? 1.5 : 1.4 }];
+      // Between settlements a person rides what their outing goes by (shared logic "Traffic")
+      const kind: Walker["kind"] = m.kind === "ship" ? "ship" : globe ? (m.vehicle === "mount" || m.vehicle === "hauler" || m.vehicle === "airspeeder" ? m.vehicle : "speeder") : "person";
+      const lift: V3 = kind === "person" ? [0, 0.2, 0] : kind === "speeder" || kind === "mount" || kind === "hauler" ? [0, 0.6, 0] : kind === "airspeeder" ? [0, 1.4, 0] : [0, 2.5, 0];
+      return [{ key: `${m.kind}-${m.id}`, from: [pa[0] + lift[0], pa[1] + lift[1], pa[2] + lift[2]] as V3, to: [pb[0] + lift[0], pb[1] + lift[1], pb[2] + lift[2]] as V3, progress: m.progress, kind, name: m.name, arc: kind === "ship" ? 6 : 0, scale: kind === "person" ? 1.6 * span : kind === "ship" ? 1.4 : 1.5 }];
     });
   }, [moving, view.id, world]);
 

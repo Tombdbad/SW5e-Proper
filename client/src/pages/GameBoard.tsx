@@ -28,7 +28,7 @@ import {
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   reportCrime, pursuitAt, lieLow, lieLowDC, CRIME_NAMES, type Crime,
   advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
-  heatAt, heatLevel, settlementOf,
+  heatAt, heatLevel, settlementOf, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
   boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
@@ -405,6 +405,35 @@ export default function GameBoard() {
     saveCampaign({ galaxyMap: result.world, ...time });
     if (result.caught) saveCharacter({ credits: Math.max(0, (character.credits ?? 0) - result.fine) });
   };
+  // Crimes by the people of the settlement and the constables' search for them (see rollIncident in
+  // shared logic): the hours that have passed are rolled for, the squads walk on, and what they do
+  // is told. The party can turn a culprit in for the reward.
+  const turnIn = (incident: Incident) => {
+    if (!world) return;
+    const reward = incidentReward(world, incident);
+    saveCampaign({ galaxyMap: closeIncident(world, incident.id, "turned in", `${incident.name} was turned in by the party.`) });
+    saveCharacter({ credits: (character.credits ?? 0) + reward });
+    toast.success(`${incident.name} is handed over to the law: ${reward} credits.${incident.vehicle ? ` The ${incident.vehicle.name} goes back to its owner.` : ""}`);
+  };
+  useEffect(() => {
+    if (!world || !here || inCombat) return;
+    const settlement = settlementOf(world, here.id);
+    if (world.areas[settlement]?.kind !== "settlement") return;
+    const now = clockNow();
+    const hour = Math.floor(now / 60);
+    const last = world.incidentClock?.[settlement];
+    let next: World = world;
+    if (last === undefined || hour > last) {
+      for (let h = (last ?? hour) + 1; h <= Math.min(hour, (last ?? hour) + 6); h++) next = rollIncident(next, settlement, h, h * 60);
+      next = { ...next, incidentClock: { ...(next.incidentClock ?? {}), [settlement]: hour } };
+    }
+    for (const fresh of (next.incidents ?? []).filter((i) => !(world.incidents ?? []).some((x) => x.id === i.id))) toast.warning(fresh.note);
+    const step = advanceIncidents(next, now);
+    for (const note of step.notes) toast.info(note);
+    next = step.world;
+    if (next !== world) saveCampaign({ galaxyMap: next });
+  }, [clockMinutes, here?.id]);
+
   // A search on the district: the calls to security put through from this place, a friendly owner
   // here who can open a hidden or locked back room for the party, and the rooms they could open
   const callsHere = pursuit?.here ? (pursuit.pursuit.reports ?? []).filter((r) => r.area === here?.id && r.at > clockMinutes) : [];
@@ -413,7 +442,7 @@ export default function GameBoard() {
   // Persuading the owner: Charisma against 12 + the law here; the way is opened for the search
   const askShelter = (exit: Exit) => {
     if (!world || !here || !shelterOwnerHere) return;
-    if (!abilityCheck(`Ask ${shelterOwnerHere.name} for shelter`, 12 + 2 * lawAt(world, here.id), ["charisma"], skilled("persuasion"))) return;
+    if (!abilityCheck(`Ask ${shelterOwnerHere.name} for shelter`, 12 + 2 * lawAt(world, here.id) + (shelterOwnerHere.disposition === "friendly" ? 0 : 2), ["charisma"], skilled("persuasion"))) return;
     saveCampaign({ galaxyMap: grantShelter(world, here.id, exit) });
     toast.success(`${shelterOwnerHere.name} opens the ${world.areas[exit.to].name} for the party.`);
   };
@@ -1457,6 +1486,15 @@ export default function GameBoard() {
     queryFn: async () => (await fetch("/api/sw5e/monsters?fields=id,name")).json(),
     staleTime: Infinity,
   });
+  // The droid stat blocks of the rules data: what a droid dealer has to sell, by experience points
+  const { data: droidStats = [] } = useQuery<DroidStat[]>({
+    queryKey: ["droid-stats"],
+    queryFn: async () => {
+      const rows: any[] = await (await fetch("/api/sw5e/monsters?fields=id,name,types,experiencePoints,challengeRating,hitPoints,size")).json();
+      return rows.filter((m) => /droid/i.test(String(m.types)) && !/swarm/i.test(String(m.types))).map((m) => ({ id: m.id, name: m.name, experiencePoints: Number(m.experiencePoints) || 0, challengeRating: m.challengeRating, hitPoints: m.hitPoints, size: m.size }));
+    },
+    staleTime: Infinity,
+  });
   const today = dayOf(clock);
   const standing: Standing = campaign?.factionInfluence?.renown ? campaign.factionInfluence : emptyStanding();
   const ledger: Ledger = ledgerFor(campaign?.availableResources, today);
@@ -2310,6 +2348,12 @@ export default function GameBoard() {
     const settlement = world.areas[berthOf(world, here.id)];
     const riders = 1 + party.filter((c) => c.kind !== "beast").length;
     const rides = groundRides({ km, vehicles: parkedHere, companions: party, riders, transport, hire: settlement ? hasRidesForHire(world, settlement.id) : false, transit: exit.label === "Transit line" });
+    // Lifts: someone going where the party is going offers a seat (they leave when they leave)
+    if (settlement) {
+      for (const lift of liftsBetween(world, settlement.id, exit.to, clockNow())) {
+        rides.push({ id: lift.id, label: `A lift with ${lift.who} (${lift.vehicle}, leaves ${clockText(lift.departs)})`, minutes: lift.minutes, fare: lift.fare });
+      }
+    }
     // A blockade stops vehicles and hired rides until the search is called off (on foot is still open)
     if (blockadeAt(world, settlementOf(world, here.id), clockNow())) return rides.map((r) => (r.id === "foot" ? r : { ...r, blocked: "blockade: no vehicles until the search is called off" }));
     return rides;
@@ -2320,6 +2364,25 @@ export default function GameBoard() {
 
   // A speeder taken from a base, or mended where it stands (Mechanic's kit: "Restoring power to a
   // damaged vehicle", DC 15)
+  // A ride that belongs to the settlement's people is not a prize: hotwiring it (Dexterity or
+  // Intelligence against 12 + the law, a security or slicer's kit if trained) is theft. Seen by a
+  // lawman, or botched, the law is called; done quietly, nobody knows.
+  const stealVehicle = (building: Area, vehicle: Vehicle) => {
+    if (!world || !here) return;
+    if (vehicle.status === "wrecked") return toast.error("It is a wreck: it needs mending first (a mechanic's kit).");
+    if (!lawUnseen("Hotwiring it", "theft")) return;
+    const kit = lockKit();
+    if (!abilityCheck(`Hotwiring ${vehicle.name}`, 12 + lawAt(world, here.id), ["dexterity", "intelligence"], !!kit && trainedWith(kit))) {
+      toast.error("The alarm sounds: its owner will call the law.");
+      return void saveCampaign({ galaxyMap: reportCrime(world, here.id, "theft", clockNow()) });
+    }
+    const mine: PartyVehicle = { ...vehicle, civil: undefined, owner: character.name, areaId: berthOf(world, here.id) };
+    saveCampaign({
+      galaxyMap: updateArea(world, building.id, { vehicles: (building.vehicles ?? []).filter((v) => v.id !== vehicle.id) }).world,
+      vehicles: [...vehicles, mine],
+    });
+    toast.success(`${vehicle.name} is yours, and nobody saw.`);
+  };
   const takeVehicle = (building: Area, vehicle: Vehicle) => {
     if (!world || !here) return;
     if (building.occupants.some((o) => o.disposition === "hostile" && o.hitPoints) || childrenOf(world, building.id).some((r) => r.occupants.some((o) => o.disposition === "hostile" && o.hitPoints && r.gateway))) {
@@ -2720,6 +2783,100 @@ export default function GameBoard() {
   // The card for what was picked out on the map: a place, someone, or a ship
   // A trader's counter: today's stock at today's prices, what they would give for what the party
   // carries, how they take to the party and why, and a haggle
+  // A droid dealer: droids for sale, the party's droids bought back, mended and fitted (see droidStock)
+  const buyDroid = async (trader: Occupant, d: { id: string; name: string; price: number }) => {
+    if (!world || inCombat || dead) return;
+    if (d.price > (character.credits ?? 0)) return toast.error(`${d.name} costs ${d.price.toLocaleString()} credits and you have ${(character.credits ?? 0).toLocaleString()}.`);
+    if (partyFull) return toast.error(`You can lead ${COMPANION_LIMIT} companions at most (house rule).`);
+    const response = await fetch("/api/world/occupant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ statBlock: d.id }) });
+    if (!response.ok) return toast.error("Could not load that droid.");
+    const o: Occupant = { ...(await response.json()), disposition: "neutral", role: "droid" };
+    const companion = companionFrom(o, "droid", clockNow(), newId("c"), { how: "bought", name: d.name });
+    saveCharacter({ credits: character.credits - d.price });
+    saveParty([...party, companion]);
+    recordDeal(trader.id, (e) => ({ ...e, bought: { ...e.bought, [`droid:${d.id}`]: (e.bought[`droid:${d.id}`] ?? 0) + 1 } }));
+    toast.success(`${d.name} bought for ${d.price.toLocaleString()} credits: it follows you.`);
+  };
+  const sellDroid = (trader: Occupant, c: Companion, offer: number) => {
+    saveParty(party.filter((x) => x.id !== c.id), { credits: (character.credits ?? 0) + offer });
+    recordDeal(trader.id, (e) => ({ ...e, sold: { ...e.sold, [`droid:${c.name}`]: (e.sold[`droid:${c.name}`] ?? 0) + 1 } }), false);
+    toast.success(`${c.name} sold for ${offer.toLocaleString()} credits.`);
+  };
+  const repairDroidAt = (c: Companion, cost: number) => {
+    if (cost > (character.credits ?? 0)) return toast.error(`The repair costs ${cost.toLocaleString()} credits.`);
+    saveParty(party.map((x) => (x.id === c.id ? { ...x, hp: x.maxHp } : x)), { credits: character.credits - cost });
+    saveCampaign(pass(30));
+    toast.success(`${c.name} is mended for ${cost.toLocaleString()} credits (half an hour).`);
+  };
+  // The dealer's technician fits a customization the party carries: the surgeon's fee, no check, no kit
+  const fitAtDealer = (c: Companion, item: string) => {
+    const f = factsOfItem(item);
+    if (!f?.droid || inCombat || dead) return;
+    const slots = c.motor ?? DROID_BASE_SLOTS;
+    if ((c.custom ?? []).length >= slots) return speed(`${c.name}'s motor supports ${slots} customizations: upgrade it first.`);
+    if ((c.custom ?? []).includes(f.name)) return speed("It already has that.");
+    const plan = droidPlan(f.rarity, c.size ?? "medium");
+    if (plan.cost > (character.credits ?? 0)) return speed(`The fitting costs ${money(plan.cost)}.`);
+    const stock = c.stock ?? { armorClass: c.armorClass, speed: c.speed };
+    const spent = consume(item);
+    saveParty(party.map((x) => (x.id === c.id ? droidWith({ ...x, stock, custom: [...(x.custom ?? []), f.name] }) : x)), { equipment: spent.equipment, credits: character.credits - plan.cost, playState: { ...play, charges: spent.charges } });
+    saveCampaign(pass(plan.hours * 60));
+    toast.success(`${f.name} fitted to ${c.name} by the dealer's technician (${money(plan.cost)}, ${plan.hours} hours).`);
+  };
+  const droidShop = (trader: Occupant, placeId: string, label: string) => {
+    if (!world) return null;
+    const traded = traderLedger(trader.id);
+    const stock = droidStock(world, trader, placeId, today, droidStats, traded.bought);
+    const droids = party.filter((c) => c.kind === "droid");
+    const carried: string[] = Array.from(new Set<string>(character.equipment ?? []));
+    const fits = carried.filter((n) => factsOfItem(n)?.droid);
+    return (
+      <div className="mt-2 space-y-1 border-t border-gray-600 pt-2 text-xs" data-testid="droid-shop">
+        <p><span className="font-semibold text-amber-200">{label}</span> <span className="text-gray-400">Credits: {character.credits ?? 0}. Priced by experience (house rule).</span></p>
+        <p className="font-semibold text-gray-300">For sale</p>
+        <ul className="max-h-40 space-y-0.5 overflow-y-auto">
+          {stock.map((d) => (
+            <li key={d.id} className="flex items-center gap-1">
+              <span className="flex-1">{d.name} <span className="text-gray-400">CR {d.cr}{d.combat ? ", built for war" : ""}</span></span>
+              <span className="text-amber-200">{d.price} cr</span>
+              <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || d.price > (character.credits ?? 0) || partyFull} onClick={() => buyDroid(trader, d)} data-testid={`droid-buy-${d.id}`}>Buy</Button>
+            </li>
+          ))}
+          {!stock.length && <li className="text-gray-400">{droidStats.length ? "No droid on the floor today." : "Loading..."}</li>}
+        </ul>
+        {droids.length > 0 && <p className="font-semibold text-gray-300">Your droids</p>}
+        {droids.map((c) => {
+          const offer = droidOffer(c.xp ?? 50, c.hp, c.maxHp);
+          const mend = droidRepairPrice(c.cr, c.maxHp - c.hp);
+          return (
+            <div key={c.id} className="space-y-0.5" data-testid={`droid-mine-${c.id}`}>
+              <div className="flex items-center gap-1">
+                <span className="flex-1">{c.name} <span className="text-gray-400">{c.hp}/{c.maxHp} hp, {(c.custom ?? []).length}/{c.motor ?? DROID_BASE_SLOTS} customizations</span></span>
+                {mend > 0 && <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || mend > (character.credits ?? 0)} onClick={() => repairDroidAt(c, mend)} data-testid={`droid-repair-${c.id}`}>Repair ({mend} cr)</Button>}
+                <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead} onClick={() => sellDroid(trader, c, offer)} data-testid={`droid-sell-${c.id}`}>Sell ({offer} cr)</Button>
+              </div>
+              {fits.filter((n) => !(c.custom ?? []).includes(factsOfItem(n)!.name)).map((n) => {
+                const fee = droidPlan(factsOfItem(n)!.rarity, c.size ?? "medium").cost;
+                return (
+                  <div key={n} className="flex items-center gap-1 pl-3">
+                    <span className="flex-1 text-gray-300">Fit {n}</span>
+                    <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || fee > (character.credits ?? 0)} onClick={() => fitAtDealer(c, n)} data-testid={`droid-fit-${c.id}`}>Fit ({fee} cr)</Button>
+                  </div>
+                );
+              })}
+              {(c.motor ?? DROID_BASE_SLOTS) < 6 && (
+                <div className="pl-3">
+                  <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead} onClick={() => upgradeMotor(c)}>Upgrade the motor to {(c.motor ?? DROID_BASE_SLOTS) + 1} slots ({money(DROID_MOTOR_COST[(c.motor ?? DROID_BASE_SLOTS) + 1] * (SIZE_TIME[(c.size ?? "medium").toLowerCase()] ?? 1))})</Button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {!droids.length && <p className="text-gray-400">You have no droids to sell, mend or fit. A disabled droid is mended and bolted from its card.</p>}
+        <p className="text-gray-500">A droid's base price is {droidPrice(200)} credits for CR 1; the dealer pays two fifths of it for yours.</p>
+      </div>
+    );
+  };
   const tradePanel = (trader: Occupant, placeId: string) => {
     if (!world) return null;
     const wares = waresOf(trader)!;
@@ -2727,6 +2884,7 @@ export default function GameBoard() {
     if (!isOpen(world, trader, placeId, clock)) {
       return <p className="mt-1 text-xs text-amber-300" data-testid="trade-closed">{wares.label}: closed. Open {String(from % 24).padStart(2, "0")}:00 to {String(to % 24).padStart(2, "0")}:00 (house rule).</p>;
     }
+    if (trader.trade === "droids") return droidShop(trader, placeId, wares.label);
     const attitude = attitudeOf(world, trader, placeId, customer);
     const market = marketAt(world, placeId);
     // Speeders and mounts are for sale beside the equipment (they come from the transport set)
@@ -3675,6 +3833,17 @@ export default function GameBoard() {
           </p>
           <p className="text-xs text-gray-300">{[o.species, o.role, o.disposition, o.cr && `CR ${o.cr}`, o.armorClass && `AC ${o.armorClass}`, o.hitPoints && `${o.hitPoints} hit points`].filter(Boolean).join(", ")}</p>
           {o.loadout.length > 0 && <p className="text-xs text-gray-400">Carrying: {o.loadout.join(", ")}</p>}
+          {(() => {
+            const wanted = o.wanted ? (world?.incidents ?? []).find((i) => i.id === o.wanted && (i.status === "open" || i.status === "fled")) : undefined;
+            return wanted && world ? (
+              <div className="mt-1 space-y-1 rounded border border-red-500/60 p-1 text-xs" data-testid="wanted">
+                <p className="text-red-300">Wanted for {INCIDENT_WORDS[wanted.kind].what}. The constables are looking for them.</p>
+                <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => turnIn(wanted)} data-testid="turn-in">
+                  Turn them in ({incidentReward(world, wanted)} cr)
+                </Button>
+              </div>
+            ) : null;
+          })()}
           {hostile ? (
             <div className="mt-1 space-y-1">
               <p className="text-xs">
@@ -3714,7 +3883,7 @@ export default function GameBoard() {
           <p className="text-xs text-gray-300">{v.model}, {v.mph} mph, seats {v.seats}, {v.status}{mineHere ? ", yours" : `, ${v.owner}`}.</p>
           <p className="text-xs text-gray-400">{mineHere ? "It carries the party over the ground between settlements: pick it on the route's exits." : v.status === "wrecked" ? "A wreck. A mechanic's kit can restore its power (DC 15)." : hostiles.length ? "Someone is guarding it." : "Nobody is left to stop you taking it."}</p>
           <div className="mt-1 flex flex-wrap gap-1">
-            {building && v.status === "parked" && <Button size="sm" disabled={inCombat || dead || hostiles.length > 0} onClick={() => { takeVehicle(building.building, v); setPicked(null); }} data-testid="vehicle-take">Take it</Button>}
+            {building && v.status === "parked" && <Button size="sm" disabled={inCombat || dead || hostiles.length > 0} onClick={() => { (v.civil ? stealVehicle : takeVehicle)(building.building, v); setPicked(null); }} data-testid="vehicle-take">{v.civil ? "Steal it (hotwire)" : "Take it"}</Button>}
             {v.status === "wrecked" && <Button size="sm" variant="outline" disabled={inCombat || dead || hostiles.length > 0} onClick={() => mendVehicle(building?.building ?? null, v)} data-testid="vehicle-mend">Mend it (mechanic's kit, DC 15)</Button>}
           </div>
         </>
@@ -4357,7 +4526,7 @@ export default function GameBoard() {
                         {vehicle.status === "wrecked" ? (
                           <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || hostiles.length > 0} onClick={() => mendVehicle(building, vehicle)}>Mend (mechanic's kit, DC 15)</Button>
                         ) : (
-                          <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || hostiles.length > 0} onClick={() => takeVehicle(building, vehicle)}>Take it</Button>
+                          <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || hostiles.length > 0} onClick={() => (vehicle.civil ? stealVehicle : takeVehicle)(building, vehicle)}>{vehicle.civil ? "Steal it (hotwire)" : "Take it"}</Button>
                         )}
                       </div>
                     ))}
