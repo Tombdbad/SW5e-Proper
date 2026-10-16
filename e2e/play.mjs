@@ -1009,7 +1009,7 @@ if (process.env.FORCE !== "0") {
     await edit(world, start, put);
     const made2 = await api("POST", "/api/campaigns", { characterId: character.id, name: "E2E gear " + TAG, description: "gear", npcs: [], locations: [], quests: [], startingLocation: "start", currentLocation: extra.currentLocation ?? world.startId, galaxyMap: world, ...extra });
     if (made2.status !== 201) throw new Error(made2.text.slice(0, 200));
-    await page.goto(`${BASE}/game/${made2.json.id}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/game/${made2.json.id}`, { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
     await sleep(2500);
     return { world, start, id: made2.json.id };
@@ -1559,6 +1559,141 @@ if (process.env.FORCE !== "0") {
     camp = (await api("GET", `/api/campaigns/${hc.id}`)).json;
     if (camp.currentLocation === deck.id || camp.galaxyMap.areas[camp.currentLocation]?.type === "deck") throw new Error("still aboard");
     return `${mine.name} (${mine.size}): berth ${berth.w}x${berth.h}, deck ${deck.layout.width}x${deck.layout.height}; took off to ${planet.name}, landed at ${orbit.name}, stepped out into ${camp.galaxyMap.areas[camp.currentLocation].name}`;
+  });
+
+  // Gathering and crafting (2026-10-16, house rules): a vein in a room of the party's own is worked
+  // with a kit; a premium vein is refused without one; crafting is paid with the materials the tool
+  // works with; refining; and the check dialog's choice of who rolls and with which skill.
+  const addNode = (start, id, name, node) => {
+    const l = start.layout;
+    const blocked = (x, y) => l.assets.some((a) => !a.side && (a.blocks || a.kind === "npc") && a.x <= x && x < a.x + a.w && a.y <= y && y < a.y + a.h);
+    const doors = l.assets.filter((a) => a.side).map((a) => `${a.x},${a.y}`);
+    for (let y = l.height - 1; y >= 0; y--) for (let x = l.width - 1; x >= 0; x--) {
+      if (blocked(x, y) || doors.includes(`${x},${y}`)) continue;
+      start.loot.push({ id, name, kind: "node", credits: 0, items: [], node });
+      l.assets.push({ id: `t-${id}`, kind: "loot", name, x, y, w: 1, h: 1, blocks: true, cover: true, ref: id });
+      return;
+    }
+    throw new Error("no room for a node");
+  };
+  const veinIn = async (cid, id) => {
+    const camp = await campOf(cid);
+    for (const area of Object.values(camp.galaxyMap.areas)) {
+      const cache = (area.loot ?? []).find((c) => c.id === id);
+      if (cache) return cache.node;
+    }
+    return undefined;
+  };
+  const dtCraft = async (pick) => {
+    await page.getByRole("tab", { name: "Downtime" }).click();
+    await page.getByTestId("downtime").waitFor();
+    await page.getByTestId("downtime-crafting").click();
+    await page.getByTestId("downtime-craft-pick").selectOption(pick);
+  };
+
+  await step(ctx, "gathering: a vein in the room is mined with a scavenging kit; the ore is kept and the vein runs dry", async () => {
+    const mk = await newChar({ equipment: ["Scavenging kit"], toolProficiencies: ["Scavenging kit"] });
+    const mc = await newCamp(mk, 11, async (world, start) => addNode(start, "e2e-vein", "Mineral vein", { family: "ore", tier: 0, material: "ore-0", charges: 2, max: 2 }));
+    const button = () => page.getByTestId("play-node").getByRole("button", { name: /^Mine/ });
+    await page.getByTestId("play-node").waitFor();
+    for (let i = 0; i < 12; i++) {
+      const node = await veinIn(mc.id, "e2e-vein");
+      if (!node || node.charges <= 0) break;
+      await button().click();
+      await sleep(1500);
+    }
+    const node = await veinIn(mc.id, "e2e-vein");
+    if (node.charges !== 0) throw new Error("the vein still has " + node.charges + " harvests after 12 tries");
+    await sleep(800);
+    const c = await getChar(mk.id);
+    const ore = c.playState?.materials?.["ore-0"] ?? 0;
+    if (ore < 1) throw new Error("no ore kept: " + JSON.stringify(c.playState?.materials));
+    if (!(await button().isDisabled())) throw new Error("the button of a worked-out vein is still enabled");
+    return `vein of 2 harvests run dry; ${ore} x Scrap metal kept in the character's stacks`;
+  });
+
+  await step(ctx, "gathering: a premium vein is refused to bare hands, and nothing is taken", async () => {
+    const bh = await newChar({ equipment: [] });
+    const bc = await newCamp(bh, 17, async (world, start) => addNode(start, "e2e-rich", "Glittering seam", { family: "ore", tier: 1, material: "ore-1", charges: 3, max: 3 }));
+    await page.getByTestId("play-node").waitFor();
+    await page.getByTestId("play-node").getByRole("button", { name: /^Mine/ }).click();
+    await page.getByText(/It takes a scavenging kit to work this premium find/).waitFor();
+    await sleep(800);
+    const node = await veinIn(bc.id, "e2e-rich");
+    if (node.charges !== 3) throw new Error("a refused harvest used the vein: " + node.charges);
+    const c = await getChar(bh.id);
+    if (Object.keys(c.playState?.materials ?? {}).length) throw new Error("materials given without a kit: " + JSON.stringify(c.playState.materials));
+    return "refused without a kit: the vein keeps its 3 harvests, nothing is taken";
+  });
+
+  await step(ctx, "crafting: a plant stock does not pay for a blaster (it is not what an armstech works with); ore pays for it and is spent", async () => {
+    const ar = await newChar({ credits: 0, equipment: ["Armstech's implements"], toolProficiencies: ["Armstech's implements"], playState: { materials: { "plant-1": 50 } } });
+    await newCamp(ar, 19, async () => {});
+    await dtCraft("Blaster pistol");
+    await page.getByTestId("downtime-craft").waitFor();
+    if (!(await page.getByTestId("downtime-craft").isDisabled())) throw new Error("a plant stock let an armstech build a blaster");
+    const br = await newChar({ credits: 0, equipment: ["Armstech's implements"], toolProficiencies: ["Armstech's implements"], playState: { materials: { "ore-1": 12 } } });
+    await newCamp(br, 23, async () => {});
+    await dtCraft("Blaster pistol");
+    await page.getByTestId("downtime-craft").click();
+    await page.getByText(/Materials used: .*Durasteel ore/).first().waitFor({ timeout: 20000 });
+    await sleep(1200);
+    const c = await getChar(br.id);
+    if (!c.equipment.includes("Blaster pistol")) throw new Error("no blaster made: " + JSON.stringify(c.equipment));
+    const left = c.playState?.materials?.["ore-1"] ?? 0;
+    if (left >= 12) throw new Error("no ore spent: " + left);
+    return `plant stock refused for a blaster; ore paid it: ${12 - left} of 12 Durasteel ore used, ${c.credits} credits left`;
+  });
+
+  await step(ctx, "refining: four units of scrap metal are refined with a scavenging kit (one refined unit, or one unit spoiled)", async () => {
+    const rf = await newChar({ equipment: ["Scavenging kit"], toolProficiencies: ["Scavenging kit"], playState: { materials: { "ore-0": 4 } } });
+    const rc = await newCamp(rf, 29, async () => {});
+    await page.getByRole("tab", { name: "Downtime" }).click();
+    await page.getByTestId("downtime").waitFor();
+    await page.getByTestId("downtime-crafting").click();
+    await page.getByRole("button", { name: "Refine", exact: true }).click();
+    await page.getByTestId("downtime-refine-pick").selectOption("ore-0");
+    await page.getByTestId("downtime-refine").click();
+    await page.getByText(/Refining Scrap metal/).waitFor();
+    await sleep(1200);
+    const c = await getChar(rf.id);
+    const m = c.playState?.materials ?? {};
+    const ok = (m["ore-0-r"] ?? 0) === 1 && !m["ore-0"];
+    const spoiled = m["ore-0"] === 3 && !m["ore-0-r"];
+    if (!ok && !spoiled) throw new Error("refining left " + JSON.stringify(m));
+    return ok ? "four scrap metal refined to one refined unit" : "the roll failed: one scrap metal spoiled, three kept";
+  });
+
+  await step(ctx, "checks: the player picks who rolls and with which skill; cancelling calls the check off", async () => {
+    const trooper = await named("trooper");
+    const ck = await newChar({
+      equipment: ["Scavenging kit"], toolProficiencies: ["Scavenging kit"],
+      companionData: { party: [{ id: "c-e2e-trooper", name: "Trooper Bo", kind: "hireling", role: "guard", statBlock: trooper.id, armorClass: 14, maxHp: 20, hp: 20, speed: 30, loadout: [], wage: 0, joined: 0 }] },
+    });
+    const kc = await newCamp(ck, 31, async (world, start) => addNode(start, "e2e-check", "Mineral vein", { family: "ore", tier: 0, material: "ore-0", charges: 2, max: 2 }));
+    // Turn the dialog on for this step only (the context's default skips it)
+    await page.evaluate(() => localStorage.setItem("sw5e.autoChecks", "0"));
+    try {
+      const mine = () => page.getByTestId("play-node").getByRole("button", { name: /^Mine/ });
+      await mine().click();
+      await page.getByTestId("check-dialog").waitFor();
+      await page.getByTestId("check-who-c-e2e-trooper").click();
+      await page.getByTestId("check-skill-none").click();
+      await page.getByTestId("check-roll").click();
+      await page.getByText(/Trooper Bo: Mine Mineral vein/).waitFor();
+      await sleep(1000);
+      const before = await veinIn(kc.id, "e2e-check");
+      await mine().click();
+      await page.getByTestId("check-dialog").waitFor();
+      await page.getByTestId("check-cancel").click();
+      await page.getByTestId("check-dialog").waitFor({ state: "detached" });
+      await sleep(800);
+      const after = await veinIn(kc.id, "e2e-check");
+      if (after.charges !== before.charges) throw new Error(`a cancelled check still worked the vein: ${before.charges} -> ${after.charges}`);
+      return `Trooper Bo rolled the mining check; cancelling left the vein at ${after.charges} harvests`;
+    } finally {
+      await page.evaluate(() => localStorage.setItem("sw5e.autoChecks", "1"));
+    }
   });
 }
 
