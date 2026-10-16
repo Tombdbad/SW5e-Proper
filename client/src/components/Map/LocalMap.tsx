@@ -7,7 +7,7 @@ import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey } from "@/lib/stores/useCombat";
 import { type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
-import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, unitOf, ALERT, START_TIME, daylight, hourOf, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
+import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind, type TokenKind } from "./sprites";
 
@@ -1289,6 +1289,71 @@ function Walkers({ walkers }: { walkers: Walker[] }) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// The officers of a search, walking the district (shared logic "advanceSearch"), and the barricades
+// a blockade puts across the ways out of it. A squad stands where its room is: out in front of the
+// door of the building it is in, or up on the roof or catwalk it is on; it walks to its next place
+// as the search moves it on, and in between it goes up and down a little on the spot.
+// ---------------------------------------------------------------------------------------------
+
+type SquadSpot = { key: string; squad: Squad; at: V3 };
+
+function Squads({ spots, onTap }: { spots: SquadSpot[]; onTap?: (squad: Squad) => void }) {
+  const groups = useRef<Record<string, THREE.Group | null>>({});
+  useFrame(({ clock }, delta) => {
+    for (const { key, at } of spots) {
+      const g = groups.current[key];
+      if (!g) continue;
+      const want = new THREE.Vector3(...at);
+      // A step or two on the spot while it looks about
+      want.x += Math.sin(clock.elapsedTime * 0.7 + key.length) * 0.35;
+      want.z += Math.cos(clock.elapsedTime * 0.5 + key.length) * 0.35;
+      if (g.position.distanceTo(want) > 12) g.position.copy(want);
+      else {
+        const before = g.position.clone();
+        g.position.lerp(want, Math.min(1, delta * 1.6));
+        if (before.distanceTo(g.position) > 0.002) g.rotation.y = Math.atan2(g.position.x - before.x, g.position.z - before.z);
+      }
+    }
+  });
+  return (
+    <>
+      {spots.map(({ key, squad, at }) => (
+        <group key={key} ref={(g) => { groups.current[key] = g; }} position={at}>
+          {Array.from({ length: Math.min(3, squad.count) }, (_, i) => (
+            <group key={i} position={[(i - (Math.min(3, squad.count) - 1) / 2) * 0.6, 0, i % 2 ? -0.3 : 0]}>
+              <Figure kind={squad.heavy ? "trooper" : "officer"} ring={SIDE_COLORS.hostile} />
+            </group>
+          ))}
+          <Label at={[0, 1.7, 0]} size={0.3} color={SIDE_COLORS.hostile}>{`${squad.heavy ? "Troopers" : "Constables"} x${squad.count}`}</Label>
+          {onTap && <Hit at={[0, 0.8, 0]} size={[2, 1.8, 1.6]} onTap={() => onTap(squad)} />}
+        </group>
+      ))}
+    </>
+  );
+}
+
+// A barricade: striped barriers across the squares round a signpost, with two officers behind them
+function Barricade({ squares, guards, onTap }: { squares: { x: number; y: number }[]; guards: { x: number; y: number }[]; onTap?: () => void }) {
+  return (
+    <>
+      {squares.map((q) => (
+        <group key={`${q.x},${q.y}`} position={[q.x + 0.5, 0, q.y + 0.5]}>
+          <Box at={[0, 0.3, 0]} size={[0.96, 0.6, 0.4]} color="#d9a23a" />
+          <Box at={[0, 0.45, 0]} size={[0.98, 0.14, 0.42]} color="#1f2328" />
+          {onTap && <Hit at={[0, 0.4, 0]} size={[1, 0.9, 1]} onTap={onTap} />}
+        </group>
+      ))}
+      {guards.map((q, i) => (
+        <group key={`guard-${i}`} position={[q.x + 0.5, 0, q.y + 0.5]}>
+          <Figure kind={i % 2 ? "officer" : "trooper"} ring={SIDE_COLORS.hostile} />
+          {i === 0 && <Label at={[0, 1.7, 0]} size={0.3} color={SIDE_COLORS.hostile}>Blockade</Label>}
+        </group>
+      ))}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
 // A building and the ground around it, to the scale of its floor plan. Standing outside, the
 // party sees it closed: its ways in, its windows, a secret way once it has been found, and
 // signposts to wherever its street leads. Inside, the room they are in is opened up. A tap on
@@ -1441,10 +1506,33 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // The way in of the building the party is in front of, and which way it faces
   const myFront = street.doors[me.id] ?? Object.values(street.doors)[0] ?? { door: { x: ground.x + 2, y: Math.round(cz) }, outward: { x: -1, y: 0 } };
 
+  // A blockade (shared logic "Criminal reputation") holds the ways out of the settlement while a
+  // search is on: the squares two away from each signpost, all the way round it, are barricaded, so
+  // that the sign cannot be walked up to. The barricade stands only where the ground is open.
+  const minutes = useClock((c) => c.minutes);
+  const settlementId = trail.find((a) => a.kind === "settlement")?.id;
+  const blockade = !!settlementId && blockadeAt(world, settlementId, minutes);
+  const barricades = useMemo(() => {
+    if (!blockade) return [] as { sign: { x: number; y: number }; squares: { x: number; y: number }[]; guards: { x: number; y: number }[] }[];
+    return street.signs.map(({ x, y }) => {
+      const squares: { x: number; y: number }[] = [];
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== 2) continue;
+        const [qx, qy] = [x + dx, y + dy];
+        if (qx >= ground.x && qy >= ground.y && qx < ground.x + ground.w && qy < ground.y + ground.h && !inRoom(qx, qy)) squares.push({ x: qx, y: qy });
+      }
+      // Two officers stand on the side the street comes from
+      const toward = (a: { x: number; y: number }) => Math.hypot(a.x - cx, a.y - cz);
+      const guards = [...squares].sort((p, q) => toward(p) - toward(q)).slice(0, 2);
+      return { sign: { x, y }, squares, guards };
+    });
+  }, [blockade, street]);
+  const barred = useMemo(() => new Set(barricades.flatMap((b) => b.squares.map((q) => `${q.x},${q.y}`))), [barricades]);
+
   // Where the party can stand: the free floor of the room they are in, or the open ground outside.
   // People step aside, so only furniture stands in the way.
   const outdoors = (x: number, y: number) =>
-    x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y)
+    x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !barred.has(`${x},${y}`)
     && ![...street.signs, ...street.decor, ...street.folk, ...street.caches, ...street.rigs].some((thing) => thing.x === x && thing.y === y);
   const open = (x: number, y: number) => {
     if (inside) {
@@ -1598,6 +1686,27 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       return ends[0] && ends[1] && ends[0] !== ends[1] ? [{ key: m.id, from: ends[0], to: ends[1], progress: m.progress, kind: "person" as const, name: m.name }] : [];
     });
   }, [moving, plan, opened, street]);
+  // The search's squads, each where its room is: in front of its building's door (one beside the
+  // other), or up on the roof or catwalk it is on
+  const squadSpots = useMemo((): SquadSpot[] => {
+    const p = world.pursuit;
+    if (!plan || opened || !p?.squads?.length || minutes < p.arrivesAt || minutes >= p.searchUntil) return [];
+    const taken = new Map<string, number>();
+    return p.squads.flatMap((squad): SquadSpot[] => {
+      const area = world.areas[squad.at];
+      const bId = area?.kind === "building" ? area.id : area?.parentId ?? "";
+      if (!area || !buildingIds.has(bId)) return [];
+      const l = area.layout;
+      if (area.kind === "room" && l && openAir(area)) return [{ key: squad.id, squad, at: [l.x + l.width / 2, levelY(l), l.y + l.height / 2] }];
+      const front = street.doors[bId];
+      if (!front) return [];
+      const n = taken.get(bId) ?? 0;
+      taken.set(bId, n + 1);
+      const side = (n % 2 ? 1 : -1) * (1 + Math.floor(n / 2)) * 1.8;
+      const spot = nearestOpen(outdoors, { x: Math.round(front.door.x + front.outward.x * 2 + Math.abs(front.outward.y) * side), y: Math.round(front.door.y + front.outward.y * 2 + Math.abs(front.outward.x) * side) });
+      return [{ key: squad.id, squad, at: [spot.x + 0.5, 0, spot.y + 0.5] }];
+    });
+  }, [world, minutes, plan, opened, street, barred]);
   // People about the street of a district, between the doors of its buildings
   const strolls = useMemo((): Stroll[] => {
     if (!plan || !districtPlan || buildings.length < 2) return [];
@@ -1958,9 +2067,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 <Cyl at={[0, 0.8, 0]} r={0.07} h={1.6} color={WOOD} />
                 <Box at={[0, 1.4, 0]} size={[1.1, 0.36, 0.08]} color="#e8dcc0" glow={0.4} />
                 <Label at={[0, 2.1, 0]} size={0.36} color="#e8dcc0">{`${exit.via === "leave" ? "Out to" : "To"} ${world.areas[exit.to].name}`}</Label>
-                {tappable && <Hit at={[0, 0.8, 0]} size={[1.2, 1.8, 1.2]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "exit", exit }))} />}
+                {tappable && <Hit at={[0, 0.8, 0]} size={[1.2, 1.8, 1.2]} onTap={() => (blockade ? onAct?.({ type: "note", text: "The officers hold the way out: barricades across the road until the search is called off." }) : walkTo(around(x, y), () => onAct?.({ type: "exit", exit })))} />}
               </group>
             ))}
+            {barricades.map((b) => (
+              <Barricade key={`${b.sign.x},${b.sign.y}`} squares={b.squares} guards={b.guards} onTap={tappable ? () => onAct?.({ type: "note", text: "Barricades. The officers are holding this way out until the search is called off." }) : undefined} />
+            ))}
+            {!duel && <Squads spots={squadSpots} onTap={tappable ? (squad) => onAct?.({ type: "note", text: `${squad.heavy ? "Troopers" : "Constables"} (${squad.count}) are searching the district for the offenders.` }) : undefined} />}
             {street.decor.map((d, i) => <group key={i} position={[d.x, 0, d.y]}><Decor kind={d.kind} /></group>)}
             {street.folk.map(({ occupant, x, y }, i) => (
               <group key={`${occupant.id}-${i}`} position={[x + 0.5, 0, y + 0.5]}>
