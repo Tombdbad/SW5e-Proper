@@ -27,7 +27,9 @@ import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   reportCrime, pursuitAt, lieLow, lieLowDC, CRIME_NAMES, type Crime,
-  lawmenAt, lawWatchDC, turnLawmen, engageOfficers, maxSquads, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
+  advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
+  heatAt, heatLevel, settlementOf,
+  lawmenAt, lawWatchDC, turnLawmen, engageOfficers, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
   boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, optionsOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
@@ -372,10 +374,12 @@ export default function GameBoard() {
   // The watch (house rule): how far the hostile creatures here have noticed the party. Where
   // nothing was recorded (an older save, enemies the game master added) they stand ready.
   const [sneaking, setSneaking] = useState(false);
-  const alert = hostiles.length ? here?.alert ?? ALERT.confronting : ALERT.unaware;
-  const allowed = hostiles.length > 0 && !!here?.allowed;
   // The law's search for the party (see reportCrime in shared logic): shown on the map, and lied low from
   const clockMinutes = useClock((c) => c.minutes);
+  // (The watch calms down once the party has been out of its sight for WATCH_COOLDOWN minutes: see leaveSight)
+  const alert = hostiles.length && !(here && calmedAt(here, clockMinutes)) ? here?.alert ?? ALERT.confronting : ALERT.unaware;
+  const allowed = hostiles.length > 0 && !!here?.allowed;
+  const heat = world && here ? heatLevel(heatAt(world, settlementOf(world, here.id), clockMinutes)) : 0;
   const pursuit = world ? pursuitAt(world, clockMinutes, here?.id) : null;
   const setWatch = (level: number, pass = false) => {
     if (!world || !here) return;
@@ -401,6 +405,35 @@ export default function GameBoard() {
     saveCampaign({ galaxyMap: result.world, ...time });
     if (result.caught) saveCharacter({ credits: Math.max(0, (character.credits ?? 0) - result.fine) });
   };
+  // A search on the district: the calls to security put through from this place, a friendly owner
+  // here who can open a hidden or locked back room for the party, and the rooms they could open
+  const callsHere = pursuit?.here ? (pursuit.pursuit.reports ?? []).filter((r) => r.area === here?.id && r.at > clockMinutes) : [];
+  const shelterOwnerHere = world && here && pursuit?.here ? (hereNow ?? here).occupants.find(shelterOwner) : undefined;
+  const hideouts = world && here && pursuit?.here && shelterOwnerHere ? shelterExits(world, here.id) : [];
+  // Persuading the owner: Charisma against 12 + the law here; the way is opened for the search
+  const askShelter = (exit: Exit) => {
+    if (!world || !here || !shelterOwnerHere) return;
+    if (!abilityCheck(`Ask ${shelterOwnerHere.name} for shelter`, 12 + 2 * lawAt(world, here.id), ["charisma"], skilled("persuasion"))) return;
+    saveCampaign({ galaxyMap: grantShelter(world, here.id, exit) });
+    toast.success(`${shelterOwnerHere.name} opens the ${world.areas[exit.to].name} for the party.`);
+  };
+  // A caller is talked down (Intimidate against 10 + their Wisdom): the call does not go through
+  const talkDown = (who: string) => {
+    if (!world || !here) return;
+    const caller = (hereNow ?? here).occupants.find((o) => o.name === who);
+    if (abilityCheck(`Intimidate ${who}`, 10 + (caller?.saves?.wisdom ?? 0), ["charisma"], skilled("intimidation"))) {
+      saveCampaign({ galaxyMap: interceptCall(world, here.id, who) });
+      toast.info(`${who} drops the line.`);
+    }
+  };
+  // Or they are silenced by force: the caller turns on the party, the call is cut and the fight begins
+  const silence = (who: string) => {
+    if (!world || !here) return;
+    const occupants = here.occupants.map((o) => (o.name === who ? { ...o, disposition: "hostile" as const, routine: undefined } : o));
+    saveCampaign({ galaxyMap: setAlert(interceptCall(updateArea(world, here.id, { occupants }).world, here.id, who), here.id, ALERT.attacking) });
+    toast.error(`${who} is silenced by force.`);
+  };
+
   // Doing something under their noses: Dexterity (Stealth) against their passive Perception.
   // A miss puts them one step further on.
   const unseen = (what: string) => {
@@ -505,6 +538,12 @@ export default function GameBoard() {
         const how = approach === "secret" ? `Through the ${target.secretEntry?.name.toLowerCase() ?? "secret way"}` : approach === "sneak" ? `Sneaking in (Stealth ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against ${watchDC(world, target.id)})` : "Walking in openly";
         toast[level <= ALERT.suspicious ? "success" : "error"](`${how}: ${WATCH_NOTE[level]}`);
       }
+      // Out of the sight of those who watched this place, their watch calms down (WATCH_COOLDOWN);
+      // a search the party is in is seen by whoever is there, and called by those with a comm
+      let next: World = (changes.galaxyMap as World | undefined) ?? world;
+      next = leaveSight(next, here.id, exit.to, clockNow());
+      next = noteArrival(next, exit.to, clockNow(), (character?.playState?.jammerUntil ?? 0) > clockNow());
+      if (next !== world) changes.galaxyMap = next;
       saveCampaign(changes);
     }
   };
@@ -512,12 +551,14 @@ export default function GameBoard() {
   // Take an exit, as the watch allows: those who have stopped the party bar every way but the
   // way back; past those who have not, it takes a Stealth check
   const leaveBy = (exit: Exit, ride?: Ride) => {
+    const blocked = world && here ? blockedExit(world, here.id, exit, clockMinutes) : undefined;
+    if (blocked) return void toast.error(`Blockade: ${blocked}.`);
+    // Only those who can see the party (see SIGHT_SQUARES) get a say: a Stealth check to slip past.
+    // A miss puts their watch up a step and the party may still go; it stops them only where they
+    // attack, and then the fight begins where they stand.
     if (hostiles.length > 0 && !allowed && exit.to !== cameFrom) {
-      if (alert >= ALERT.questioning) {
-        toast.error("Enemies bar the way onward.");
-        return;
-      }
-      if (!unseen("Slipping past")) return;
+      const spotted = !unseen("Slipping past");
+      if (spotted && alert + 1 >= ALERT.attacking) return;
     }
     if (exit.locked) return unlock(exit);
     if (exit.climb) {
@@ -1217,41 +1258,41 @@ export default function GameBoard() {
     fight();
   }, [here?.id, alert, hostiles.length, !!character]);
 
-  // The search reaches the party (see engageOfficers in shared logic): at the scene a squad is there
-  // when the officers arrive; elsewhere in the district, walking in takes a Stealth check to be
-  // missed (one try a place). A found party faces the squad, and the fight begins by itself.
-  const engaging = useRef(false);
-  const slipped = useRef<{ key: number; ids: string[] }>({ key: 0, ids: [] });
+  // The search walks the district (see advanceSearch in shared logic): its squads move a room every
+  // couple of minutes, question the people they pass, and where one walks in on the party it rolls to
+  // stay hidden. Found, the squad stands there hostile and the fight begins by itself.
+  const searching = useRef(false);
   useEffect(() => {
-    if (!world || !here || !pursuit || pursuit.phase !== "searching" || !pursuit.here || inCombat || dead || engaging.current || !character || character.currentHp <= 0) return;
-    const p = pursuit.pursuit;
-    const met = p.met ?? [];
-    if (met.includes(here.id) || met.length >= maxSquads(p)) return;
-    if (slipped.current.key !== p.arrivesAt) slipped.current = { key: p.arrivesAt, ids: [] };
-    if (slipped.current.ids.includes(here.id)) return;
-    if (here.id !== p.scene) {
-      const dc = lieLowDC(p);
-      const check = stealthRoll();
-      slipped.current.ids.push(here.id);
-      if (check.total >= dc) {
-        toast.success(`Officers are about (Stealth ${check.total} against ${dc}): you keep out of their sight.`);
-        return;
+    if (!world || !here || !pursuit?.pursuit.squads?.length || inCombat || dead || searching.current || !character || character.currentHp <= 0) return;
+    searching.current = true;
+    const jammed = (character.playState?.jammerUntil ?? 0) > clockNow();
+    const run = async () => {
+      let current: World = world;
+      for (let i = 0; i < 20; i++) {
+        const step = advanceSearch(current, clockNow(), { area: here.id, jammed });
+        if (step.world !== current) {
+          current = step.world;
+          saveCampaign({ galaxyMap: current });
+        }
+        if (!step.sighted) break;
+        const { squad, area, dc } = step.sighted;
+        const check = stealthRoll();
+        if (check.total >= dc) {
+          toast.success(`${squad.count} ${squad.heavy ? "troopers" : "constables"} walk in (Stealth ${check.total} against ${dc}): you keep out of their sight.`);
+          continue;
+        }
+        const block = await lawBlock(squad.heavy || pursuit.pursuit.cartel ? "trooper" : "officer-junior");
+        if (!block) break;
+        toast.error(`${squad.count} ${squad.heavy ? "troopers" : "constables"} spot you (Stealth ${check.total} against ${dc}): they close in.`);
+        current = engageOfficers(retireSquad(current, squad.id), area, block, clockNow(), squad.count);
+        saveCampaign({ galaxyMap: current });
+        break;
       }
-      toast.error(`Officers are about (Stealth ${check.total} against ${dc}): they spot you.`);
-    }
-    engaging.current = true;
-    const at = here.id;
-    lawBlock(p.heavy || p.cartel ? "trooper" : "officer-junior")
-      .then((block) => {
-        const base = latestWorld();
-        if (!block || !base?.pursuit) return;
-        toast.error(`${p.cartel ? "Syndicate enforcers" : "Security"} close in: ${p.officers} after ${CRIME_NAMES[p.crime]}.`);
-        saveCampaign({ galaxyMap: engageOfficers(base, at, block, clockNow()) });
-      })
-      .finally(() => {
-        engaging.current = false;
-      });
-  }, [here?.id, pursuit?.phase, pursuit?.here, inCombat, !!character]);
+    };
+    run().finally(() => {
+      searching.current = false;
+    });
+  }, [clockMinutes, here?.id, pursuit?.pursuit.squads?.length, inCombat, !!character]);
 
   // How a fight ended, whichever way it did. The fallen leave the area and their gear stays
   // behind; those still standing keep the hit points they have, so that leaving, being knocked
@@ -2268,7 +2309,10 @@ export default function GameBoard() {
     if (!km || !transport || !world || !here || exit.needsShip || exit.via !== "path") return [];
     const settlement = world.areas[berthOf(world, here.id)];
     const riders = 1 + party.filter((c) => c.kind !== "beast").length;
-    return groundRides({ km, vehicles: parkedHere, companions: party, riders, transport, hire: settlement ? hasRidesForHire(world, settlement.id) : false, transit: exit.label === "Transit line" });
+    const rides = groundRides({ km, vehicles: parkedHere, companions: party, riders, transport, hire: settlement ? hasRidesForHire(world, settlement.id) : false, transit: exit.label === "Transit line" });
+    // A blockade stops vehicles and hired rides until the search is called off (on foot is still open)
+    if (blockadeAt(world, settlementOf(world, here.id), clockNow())) return rides.map((r) => (r.id === "foot" ? r : { ...r, blocked: "blockade: no vehicles until the search is called off" }));
+    return rides;
   };
   // The ride a trip takes when none was chosen (a tap on the map): the quickest that costs nothing
   const defaultRide = (rides: Ride[]) => [...rides].filter((r) => !r.blocked && !r.fare).sort((a, b) => a.minutes - b.minutes)[0];
@@ -2987,7 +3031,7 @@ export default function GameBoard() {
       return (
         <div className="mt-1 space-y-1 text-xs">
           {text}
-          <p className="text-gray-300">{on ? `Running for ${Math.round((play.jammerUntil! - clockNow()))} more minutes: no alarm goes up.` : "Switch it on for an hour: a fight raises no alarm through the building (house rule)."}</p>
+          <p className="text-gray-300">{on ? `Running for ${Math.round((play.jammerUntil! - clockNow()))} more minutes: no alarm goes up.` : "Switch it on for an hour (house rule): comms in this district are jammed, so no call reaches security or goes out, and no alarm goes up through the building."}</p>
           <Button size="sm" variant="outline" className="h-6 px-2" disabled={on || inCombat || dead} onClick={() => saveCharacter({ playState: { ...play, jammerUntil: clockNow() + 60 } })}>Switch it on</Button>
         </div>
       );
@@ -3009,11 +3053,11 @@ export default function GameBoard() {
       return (
         <div className="mt-1 space-y-1 text-xs" data-testid="call-panel">
           {text}
-          <p className="text-gray-300">Call an allied contact (30 miles; house rule): they tell you what is kept at a place near them, once a day each. Contacts are made in Downtime.</p>
+          <p className="text-gray-300">Call an allied contact (30 miles; house rule): they tell you what is kept at a place near them, once a day each. Contacts are made in Downtime.{(play.jammerUntil ?? 0) > clockNow() ? " Your comm is jammed: no call goes out." : ""}</p>
           {allied.map((c) => (
             <div key={c.id} className="flex items-center justify-between gap-2">
               <span>{c.name} <span className="text-gray-400">{c.whereName}</span></span>
-              <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || (play.called?.[c.id] ?? -1) === day} data-testid={`call-${c.id}`} onClick={() => callContact(c.id)}>Call</Button>
+              <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || (play.called?.[c.id] ?? -1) === day || (play.jammerUntil ?? 0) > clockNow()} data-testid={`call-${c.id}`} onClick={() => callContact(c.id)}>Call</Button>
             </div>
           ))}
           {!allied.length && <p className="text-gray-400">No allied contacts yet.</p>}
@@ -3573,7 +3617,6 @@ export default function GameBoard() {
       const place = world.areas[picked.id];
       if (!place) return null;
       const exit = exits.find((e) => e.to === place.id && !e.hidden);
-      const barred = hostiles.length > 0 && exit?.to !== cameFrom && !allowed && alert >= ALERT.questioning;
       const way = !exit && place.id !== here.id && !trailOf(world, here.id).some((a) => a.id === place.id) ? findPath(world, here.id, place.id) : null;
       const unmapped = childrenOf(world, place.id).length === 0 && OPENS.includes(place.kind);
       return (
@@ -3593,7 +3636,7 @@ export default function GameBoard() {
               </Button>
             )}
             {exit && (
-              <Button size="sm" className="h-auto whitespace-normal text-left" disabled={inCombat || dead || exploring || barred} onClick={() => leaveBy(exit)} data-testid="map-travel">
+              <Button size="sm" className="h-auto whitespace-normal text-left" disabled={inCombat || dead || exploring} onClick={() => leaveBy(exit)} data-testid="map-travel">
                 {exit.locked ? `Unlock (DC ${exit.locked}): ` : ""}{exit.label}{exit.via === "path" ? " to" : ""} {place.name}
                 {[travelText(exit), tripNote(exit)].filter(Boolean).length > 0 && ` (${[travelText(exit), tripNote(exit)].filter(Boolean).join(", ")})`}
               </Button>
@@ -4035,6 +4078,17 @@ export default function GameBoard() {
                     : `Officers are still searching the district: ${pursuit.minutes} min left.`}
               </p>
             )}
+            {pursuit && pursuit.phase === "searching" && (
+              <p className="mt-0.5 text-[11px] leading-tight text-red-200 drop-shadow" data-testid="search-status">
+                {pursuit.pursuit.squads?.length ? `${pursuit.pursuit.squads.length} squad${pursuit.pursuit.squads.length > 1 ? "s" : ""} on foot${pursuit.pursuit.identified ? ", and they know who you are" : ""}. ` : ""}
+                {pursuit.pursuit.lastNote ?? ""}
+              </p>
+            )}
+            {heat > 0 && (
+              <p className="mt-0.5 text-[11px] leading-tight text-red-200 drop-shadow" data-testid="reputation">
+                {["", "Known to the watch here", "Wanted here", "Marked: the ways out are blockaded during a search"][heat]}.
+              </p>
+            )}
           </div>
         )}
 
@@ -4336,7 +4390,6 @@ export default function GameBoard() {
                 <div className="flex flex-col gap-1" data-testid="play-exits">
                   {exits.filter((exit) => !exit.hidden).map((exit) => {
                     // Enemies who have stopped the party bar every way but the way back
-                    const barred = hostiles.length > 0 && exit.to !== cameFrom && !allowed && alert >= ALERT.questioning;
                     const rides = exit.locked ? [] : ridesFor(exit);
                     return (
                       <div key={`${exit.via}-${exit.to}`} className="flex flex-col gap-1">
@@ -4344,7 +4397,7 @@ export default function GameBoard() {
                           size="sm"
                           variant="outline"
                           className="h-auto whitespace-normal justify-start text-left"
-                          disabled={inCombat || dead || exploring || barred}
+                          disabled={inCombat || dead || exploring}
                           onClick={() => leaveBy(exit)}
                         >
                           {exit.locked ? `Unlock (DC ${exit.locked}): ` : ""}{exit.label}{exit.via === "path" ? " to" : ""} {world.areas[exit.to].name}
@@ -4360,7 +4413,7 @@ export default function GameBoard() {
                                 size="sm"
                                 variant="outline"
                                 className="h-6 px-2 text-xs"
-                                disabled={inCombat || dead || exploring || barred || !!ride.blocked || (ride.fare > (character.credits ?? 0))}
+                                disabled={inCombat || dead || exploring || !!ride.blocked || (ride.fare > (character.credits ?? 0))}
                                 title={ride.blocked}
                                 onClick={() => leaveBy(exit, ride)}
                                 data-testid={`ride-${ride.id}`}
@@ -4381,7 +4434,8 @@ export default function GameBoard() {
                       </div>
                     );
                   })}
-                  {hostiles.length > 0 && !allowed && alert >= ALERT.questioning && <p className="text-xs text-red-400">Enemies bar the way onward.</p>}
+                  {hostiles.length > 0 && !allowed && <p className="text-xs text-red-400">Watching you: {alert >= ALERT.questioning ? "they can see you; slipping past takes a Stealth check." : "a Stealth check to slip past."}</p>}
+                  {!!world && !!here && blockadeAt(world, settlementOf(world, here.id), clockMinutes) && <p className="text-xs text-red-400" data-testid="blockade">Blockade: the officers hold the ways out of the settlement and its vehicles until the search is called off.</p>}
                   <label className="flex items-center gap-2 text-sm" data-testid="play-sneak">
                     <input type="checkbox" checked={sneaking} onChange={(e) => setSneaking(e.target.checked)} />
                     Move quietly (Stealth against whoever is watching)
@@ -4397,6 +4451,18 @@ export default function GameBoard() {
                       Lie low (Stealth)
                     </Button>
                   )}
+                  {pursuit?.here && pursuit.phase === "searching" && shelterOwnerHere && hideouts.map((exit) => (
+                    <Button key={`shelter-${exit.to}`} size="sm" variant="outline" disabled={inCombat || dead} onClick={() => askShelter(exit)} data-testid="ask-shelter">
+                      Ask {shelterOwnerHere.name} to open the {world.areas[exit.to].name}
+                    </Button>
+                  ))}
+                  {callsHere.map((r) => (
+                    <div key={`call-${r.who}`} className="flex w-full flex-wrap items-center gap-1 text-xs text-red-300" data-testid="call-to-security">
+                      <span>{r.who} is calling security on the comm.</span>
+                      <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => talkDown(r.who)} data-testid="talk-down">Talk them down (Intimidate)</Button>
+                      <Button size="sm" variant="destructive" className="h-6 px-2" disabled={inCombat || dead} onClick={() => silence(r.who)} data-testid="silence">Silence them</Button>
+                    </div>
+                  ))}
                   {childrenOf(world, here.id).length === 0 && ["system", "planet", "settlement", "building"].includes(here.kind) && (
                     <Button size="sm" variant="outline" onClick={() => explore()} disabled={exploring || inCombat || dead}>
                       {exploring ? "Exploring..." : "Explore"}

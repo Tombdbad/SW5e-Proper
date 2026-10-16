@@ -140,6 +140,8 @@ export interface Area {
   allowed?: boolean;
   // A building where the alarm has been raised
   alarm?: boolean;
+  // The minute the watch here calms down, set when the party leaves out of sight (see calmedAt)
+  calmAt?: number;
 }
 
 export interface Path {
@@ -174,6 +176,8 @@ export interface World {
   era?: string;
   // The search the law is making for the party (see reportCrime); absent when there is none
   pursuit?: Pursuit;
+  // The criminal reputation of each settlement: points, and the minute they were last counted (see heatAt)
+  heat?: Record<string, { points: number; at: number }>;
   // A ship the party is trying to take (see startHeist); absent when there is none
   heist?: Heist;
   // The encounter waiting in the district the party is in (see rollEncounter), and the settlements
@@ -2553,7 +2557,8 @@ export function watchersAt(world: World, areaId: string): Occupant[] {
 
 // The roofs and catwalks of a district that can see (and be seen from) a place in the open: its
 // street, or a roof or catwalk. Nothing for a room indoors.
-export const SIGHT_SQUARES = 18;
+// (House rule: watchers see about 30 feet, 6 squares; was 18, which put a whole district in sight.)
+export const SIGHT_SQUARES = 6;
 
 export function exposedRooms(world: World, areaId: string): Area[] {
   const area = world.areas[areaId];
@@ -2606,7 +2611,8 @@ export function setAlert(world: World, areaId: string, level: number, allowed = 
   const area = world.areas[areaId];
   if (!area) return world;
   const alert = alertFor(area, level, watchersAt(world, areaId));
-  const areas = { ...world.areas, [areaId]: { ...area, alert, allowed: allowed || undefined } };
+  // (Back in their sight, the watch no longer calms down: calmAt goes.)
+  const areas = { ...world.areas, [areaId]: { ...area, alert, allowed: allowed || undefined, calmAt: undefined } };
   const parent = area.parentId ? world.areas[area.parentId] : undefined;
   if (alert === ALERT.attacking && area.kind === "room" && parent && !parent.alarm) areas[parent.id] = { ...parent, alarm: true };
   return { ...world, areas };
@@ -2644,6 +2650,29 @@ export interface Pursuit {
   heavy: boolean; // security troopers rather than constables
   cartel: boolean; // the cartel's own enforcers answer, not the law
   met?: string[]; // the areas where a squad has already found the party (see engageOfficers)
+  // The squads walking the district (see advanceSearch); absent in searches begun before they were
+  squads?: Squad[];
+  // Rooms where people saw the party while the search was on, the room they were last seen in,
+  // and whether the search knows who they are (by questioning, or by a call on the comm)
+  seen?: string[];
+  known?: string;
+  identified?: boolean;
+  // Calls to security on the comm, due at a minute (see noteArrival)
+  reports?: { area: string; at: number; who: string }[];
+  // A room whose owner has hidden the party in it (see grantShelter)
+  sheltered?: string;
+  // What the search last did, for the map's status line
+  lastNote?: string;
+}
+
+// A squad of officers walking the district: where it is, how many it has, and when it next moves
+export interface Squad {
+  id: string;
+  at: string;
+  count: number;
+  heavy: boolean;
+  next: number; // the minute it next moves
+  step: number; // how many squares it has walked (0 at the scene)
 }
 
 // The settlement an area is in (or the area itself, out in space or where there is none)
@@ -2675,18 +2704,217 @@ export function reportCrime(world: World, areaId: string, crime: Crime, now: num
   const district = settlementOf(world, areaId);
   const prior = world.pursuit && world.pursuit.district === district && now < world.pursuit.searchUntil ? world.pursuit : undefined;
   const arrivesAt = prior ? Math.min(prior.arrivesAt, now + resp.delay) : now + resp.delay;
+  const heavy = !!(prior?.heavy || resp.heavy);
+  const cartelled = !!(prior?.cartel || cartel);
+  const officers = Math.max(prior?.officers ?? 0, resp.officers);
   const pursuit: Pursuit = {
+    ...(prior ?? {}),
     crime: prior && CRIMES[prior.crime] > CRIMES[crime] ? prior.crime : crime,
     scene: areaId,
     district,
     arrivesAt,
     searchUntil: Math.max(prior?.searchUntil ?? 0, arrivesAt + resp.search),
-    officers: Math.max(prior?.officers ?? 0, resp.officers),
-    heavy: !!(prior?.heavy || resp.heavy),
-    cartel: !!(prior?.cartel || cartel),
+    officers,
+    heavy,
+    cartel: cartelled,
+    // A search already walking the district keeps its squads; a new one sends them from the scene
+    squads: prior?.squads ?? startSquads(areaId, arrivesAt, officers, cartelled || heavy ? 3 : 2, heavy),
   };
-  return { ...world, pursuit };
+  return addHeat({ ...world, pursuit }, district, crime, now);
 }
+
+// The squads a search sends: as many as the officers can make up, each walking from the scene
+function startSquads(areaId: string, arrivesAt: number, officers: number, squads: number, heavy: boolean): Squad[] {
+  const n = Math.max(1, Math.min(squads, officers));
+  return Array.from({ length: n }, (_, i) => ({ id: `sq-${arrivesAt}-${i}`, at: areaId, count: Math.max(1, Math.ceil(officers / n)), heavy, next: arrivesAt, step: 0 }));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Criminal reputation, the watch calming down, the search on foot, the comms and the shelter
+// (house rules; the books give none of this). Three cooldowns run side by side:
+//  - the watch in a place calms down (`calmedAt`) ten minutes after the party has left where
+//    the watchers can see it, and goes back to unaware;
+//  - the search is short: the officers' time on the case (`searchUntil`, see reportCrime);
+//  - the criminal reputation of a settlement is long: each crime adds points, and a day takes one
+//    away. Heat 3 and up blockades the ways out of the settlement and stops vehicles while a search
+//    is on, until the search cooldown is over.
+// Officers in a search walk the district rather than wait for the party: a squad moves a room
+// every two minutes (`advanceSearch`), questions whoever is in the room and sees the party when it
+// walks in on them (a Stealth check, `squadSightDC`). People who saw the party tell the squad who
+// it is when they are questioned, and those with a commlink call security (`noteArrival`) unless
+// a comm jammer is running; the party can stop a call (`interceptCall`).
+// ---------------------------------------------------------------------------------------------
+
+export const WATCH_COOLDOWN = 10; // minutes out of sight before the watch in a place calms down
+export const HEAT_POINTS: Record<Crime, number> = { trespass: 1, theft: 2, brawl: 2, assault: 3, heinous: 5 };
+export const HEAT_DAY = 1440; // minutes for one point of heat to fade
+export const SEARCH_STEP = 2; // minutes a squad takes to walk from one room to the next
+export const REPORT_MINUTES = 2; // minutes before a call to security is put through
+
+export const heatLevel = (points: number) => (points >= 9 ? 3 : points >= 6 ? 2 : points >= 3 ? 1 : 0);
+
+// The heat of a settlement now: the points it had, less a day's fading for each day since
+export function heatAt(world: World, settlementId: string, now: number): number {
+  const h = world.heat?.[settlementId];
+  if (!h) return 0;
+  return Math.max(0, h.points - Math.floor(Math.max(0, now - h.at) / HEAT_DAY));
+}
+
+export function addHeat(world: World, settlementId: string, crime: Crime, now: number): World {
+  const points = heatAt(world, settlementId, now) + HEAT_POINTS[crime];
+  return { ...world, heat: { ...(world.heat ?? {}), [settlementId]: { points, at: now } } };
+}
+
+// A blockade holds the ways out of a settlement, and its vehicles, while the search is on
+export function blockadeAt(world: World, settlementId: string, now: number): boolean {
+  const p = world.pursuit;
+  return !!p && p.district === settlementId && now < p.searchUntil && heatLevel(heatAt(world, settlementId, now)) >= 3;
+}
+
+// Why an exit cannot be taken at this minute (a blockade), or nothing
+export function blockedExit(world: World, fromId: string, exit: Pick<Exit, "to">, now: number): string | undefined {
+  const from = settlementOf(world, fromId);
+  if (blockadeAt(world, from, now) && settlementOf(world, exit.to) !== from) return "the officers hold the way out of the settlement until the search is called off";
+  return undefined;
+}
+
+// The watch in a place is calm when the party has been out of its sight for the cooldown
+export const calmedAt = (area: Pick<Area, "calmAt">, now: number) => area.calmAt !== undefined && now >= area.calmAt;
+
+// Can the watchers in one place see the party in another (the same place, or the roofs and
+// catwalks in sight of it)?
+export function inSight(world: World, watcherId: string, partyId: string): boolean {
+  if (watcherId === partyId) return true;
+  return exposedRooms(world, watcherId).some((r) => r.id === partyId) || exposedRooms(world, partyId).some((r) => r.id === watcherId);
+}
+
+// The party leaves a place: if the watchers there cannot see where it went, their watch starts to calm
+export function leaveSight(world: World, fromId: string, toId: string, now: number): World {
+  const area = world.areas[fromId];
+  if (!area || !watchersAt(world, fromId).length || inSight(world, fromId, toId)) return world;
+  return { ...world, areas: { ...world.areas, [fromId]: { ...area, calmAt: now + WATCH_COOLDOWN } } };
+}
+
+export const isCivilian = (o: Occupant) => o.disposition !== "hostile" && !!o.hitPoints && !o.captive && !isLawman(o);
+export const hasCommlink = (o: Occupant) => (o.loadout ?? []).some((n) => /^commlink/i.test(n));
+const isReporter = (o: Occupant) => isCivilian(o) && o.disposition === "neutral" && hasCommlink(o);
+
+// The party is in a place of the district being searched: the people there see it, and those with
+// a commlink who are not friends call security (unless a comm jammer is running in the district)
+export function noteArrival(world: World, areaId: string, now: number, jammed: boolean): World {
+  const p = world.pursuit;
+  const area = world.areas[areaId];
+  if (!p || !area || now >= p.searchUntil || settlementOf(world, areaId) !== p.district) return world;
+  const people = area.occupants.filter(isCivilian);
+  if (!people.length) return world;
+  const seen = p.seen?.includes(areaId) ? p.seen : [...(p.seen ?? []), areaId];
+  const callers = jammed ? [] : area.occupants.filter(isReporter).filter((o) => !(p.reports ?? []).some((r) => r.area === areaId && r.who === o.name));
+  const reports = [...(p.reports ?? []), ...callers.map((o) => ({ area: areaId, at: now + REPORT_MINUTES, who: o.name }))];
+  return { ...world, pursuit: { ...p, seen, known: areaId, reports } };
+}
+
+// Stops a call to security from being put through (the party talked the caller down or cut the line)
+export function interceptCall(world: World, areaId: string, who: string): World {
+  const p = world.pursuit;
+  if (!p?.reports) return world;
+  return { ...world, pursuit: { ...p, reports: p.reports.filter((r) => !(r.area === areaId && r.who === who)) } };
+}
+
+// The Stealth check a squad's passive Perception sets against the party; a sheltered party is hard to find
+export const squadSightDC = (p: Pursuit, sheltered: boolean) => (sheltered ? 15 : 10 + (p.heavy ? 2 : 0));
+
+// The rooms a squad can walk to from here: the exits in the same settlement, and the other
+// buildings of the district from the street
+function searchNeighbours(world: World, settlementId: string, id: string): string[] {
+  const inTown = (a: string) => {
+    const k = world.areas[a]?.kind;
+    return (k === "room" || k === "building") && settlementOf(world, a) === settlementId;
+  };
+  const out = new Set<string>();
+  for (const e of exitsOf(world, id)) if (!e.needsShip && !e.hidden && inTown(e.to)) out.add(e.to);
+  const district = districtAt(world, id);
+  if (world.areas[id]?.kind === "building" && district) for (const b of district.buildingIds) if (b !== id) out.add(b);
+  return [...out];
+}
+
+export interface SearchStep {
+  world: World;
+  // A squad has walked in on the party: where, and the Stealth DC to stay hidden from it
+  sighted?: { squad: Squad; area: string; dc: number };
+  // A line for the map's status: what the officers did
+  note?: string;
+}
+
+// Moves the squads of the search on to `now`. They walk the district, or straight for the party
+// once the search knows who it is. Stops at the first squad that walks in on the party, so the
+// caller can roll for it and call again.
+export function advanceSearch(world: World, now: number, party: { area: string; jammed: boolean }): SearchStep {
+  const p = world.pursuit;
+  if (!p?.squads || now < p.arrivesAt || now >= p.searchUntil) return { world };
+  let pur: Pursuit = { ...p, squads: p.squads.map((s) => ({ ...s })) };
+  let note: string | undefined;
+  // Calls put through (a jammer stops them) make the search know who the party is
+  const due = (pur.reports ?? []).filter((r) => r.at <= now);
+  if (due.length) {
+    pur = { ...pur, reports: (pur.reports ?? []).filter((r) => r.at > now) };
+    for (const r of due) {
+      if (party.jammed) continue;
+      pur = { ...pur, identified: true };
+      note = `${r.who} called security: the officers know who the party is.`;
+    }
+  }
+  // (Nothing to do returns the same world, so the caller saves nothing.)
+  if (!due.length && !pur.squads!.some((s) => s.next <= now && s.next < pur.searchUntil)) return { world };
+  for (const squad of pur.squads!) {
+    while (squad.next <= now && squad.next < pur.searchUntil) {
+      if (squad.step > 0) {
+        let hop: string | undefined;
+        const path = pur.identified && pur.known ? findPath(world, squad.at, pur.known) : null;
+        if (path && path.length > 1) hop = path[1];
+        else {
+          const options = searchNeighbours(world, pur.district, squad.at);
+          if (options.length) hop = createRandom(Math.imul(pur.arrivesAt, 1009) + Math.imul(squad.step, 7919) + [...squad.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0)).pick(options);
+        }
+        if (hop) squad.at = hop;
+      }
+      squad.step += 1;
+      squad.next += SEARCH_STEP;
+      const area = world.areas[squad.at];
+      if (!area) continue;
+      // Questioning: the people in the room tell what they saw, and if the party was seen here, who it is
+      if (area.occupants.some(isCivilian)) {
+        note = `${squad.count} ${squad.heavy ? "troopers" : "constables"} question the people of ${area.name}${pur.seen?.includes(area.id) ? ": they know the party's face" : ""}.`;
+        if (pur.seen?.includes(area.id) && !pur.identified) pur = { ...pur, identified: true };
+      }
+      // Sight: a squad walks in on the party, here or on a roof or catwalk in its sight
+      if (squad.at === party.area || exposedRooms(world, party.area).some((r) => r.id === squad.at)) {
+        const dc = squadSightDC(pur, pur.sheltered === party.area);
+        return { world: { ...world, pursuit: { ...pur, squads: pur.squads!.map((s) => (s.id === squad.id ? squad : s)), lastNote: note ?? pur.lastNote } }, sighted: { squad: { ...squad }, area: squad.at, dc }, note };
+      }
+    }
+  }
+  return { world: { ...world, pursuit: { ...pur, lastNote: note ?? pur.lastNote } }, note };
+}
+
+// The owner of a room hides the party in it (or a room in the same building they keep for it): a
+// hidden way or a locked door is opened for the search (house rule; a Persuade check)
+export const shelterOwner = (o: Occupant) => isCivilian(o) && o.disposition === "friendly" && /bartender|barkeep|innkeep|resident|owner|landlord|proprietor|keeper/i.test(o.role + " " + o.name);
+
+export function grantShelter(world: World, fromId: string, exit: Exit): World {
+  const target = world.areas[exit.to];
+  if (!target || !world.pursuit) return world;
+  const paths = exit.pathId ? world.paths.map((path) => (path.id === exit.pathId ? { ...path, locked: undefined, hidden: undefined } : path)) : world.paths;
+  const areas = { ...world.areas, [target.id]: target.secretEntry ? { ...target, secretEntry: { ...target.secretEntry, found: true } } : target };
+  return { ...world, paths, areas, pursuit: { ...world.pursuit, sheltered: target.id } };
+}
+
+// A squad that has found the party stops being a squad of the search (it is in the room now)
+export const retireSquad = (world: World, squadId: string): World =>
+  world.pursuit?.squads ? { ...world, pursuit: { ...world.pursuit, squads: world.pursuit.squads.filter((s) => s.id !== squadId) } } : world;
+
+// The rooms of a building an owner could open for the party: those a hidden or locked way leads to
+export const shelterExits = (world: World, fromId: string): Exit[] =>
+  exitsOf(world, fromId).filter((e) => (e.hidden || e.locked || e.secret) && world.areas[e.to]?.kind === "room" && world.areas[e.to]?.parentId === world.areas[fromId]?.parentId);
 
 // Where the search stands at a minute: coming (the officers are on their way), searching (they are
 // out and the district is being searched), or nothing (no search, or it is over)
@@ -2757,7 +2985,7 @@ export function turnLawmen(world: World, areaId: string, block?: Occupant): Worl
 export const maxSquads = (p: Pursuit) => (p.heavy || p.cartel ? 3 : 2);
 
 // A squad of the search finds the party in this area: it stands there, hostile, and attacks
-export function engageOfficers(world: World, areaId: string, block: Occupant, now: number): World {
+export function engageOfficers(world: World, areaId: string, block: Occupant, now: number, count = world.pursuit?.officers ?? 1): World {
   const p = world.pursuit;
   const area = world.areas[areaId];
   if (!p || !area) return world;
@@ -2767,7 +2995,7 @@ export function engageOfficers(world: World, areaId: string, block: Occupant, no
     name: p.cartel ? "Syndicate enforcers" : p.heavy ? "Security troopers" : "Constables",
     role: "guard",
     disposition: "hostile",
-    count: Math.max(1, Math.min(6, p.officers)),
+    count: Math.max(1, Math.min(6, count)),
     wounds: undefined,
     routine: undefined,
   };

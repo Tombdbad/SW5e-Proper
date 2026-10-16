@@ -397,9 +397,10 @@ await step(ctx, "play: the party is at the world's start", async () => {
 });
 
 let hpAfter = null;
-await step(ctx, "play: enemies bar the way; the fight uses their stat block and the character's weapons", async () => {
+await step(ctx, "play: enemies watch the party but do not bar the way; the fight uses their stat block and the character's weapons", async () => {
+  // (House rule since 2026-10-16: watchers see only a few squares, and leaving is a Stealth check, never a bar)
   const exits = page.getByTestId("play-exits").getByRole("button");
-  if (!(await exits.first().isDisabled())) throw new Error("exits are open although an enemy is here");
+  if (await exits.first().isDisabled()) throw new Error("exits are closed by an enemy: they should only be a check");
   const seen = [];
   let weapons = "";
   let won = false;
