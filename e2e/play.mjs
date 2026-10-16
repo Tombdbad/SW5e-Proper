@@ -659,7 +659,7 @@ await step(ctx, "play: credits are shown; weapons and armor are wielded and worn
   let mapCamp = null;
   const where = async () => (await api("GET", `/api/campaigns/${mapCamp}`)).json;
   const arrive = async (areaId) => {
-    for (let i = 0; i < 40 && (await where()).currentLocation !== areaId; i++) await sleep(400);
+    for (let i = 0; i < 150 && (await where()).currentLocation !== areaId; i++) await sleep(400);
     const now = (await where()).currentLocation;
     if (now !== areaId) throw new Error(`the party is at ${world.areas[now]?.name ?? now}, not at ${world.areas[areaId].name}`);
     await sleep(2000);

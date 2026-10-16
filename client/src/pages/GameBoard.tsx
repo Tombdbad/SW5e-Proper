@@ -380,7 +380,6 @@ export default function GameBoard() {
   const setWatch = (level: number, pass = false) => {
     if (!world || !here) return;
     let next = setAlert(world, here.id, level, pass);
-    if (level === ALERT.attacking && !pass) next = reportCrime(next, here.id, "assault", useClock.getState().minutes);
     // A comm jammer keeps the alarm from going up through the building (it cannot call out)
     const parent = here.parentId;
     if (level === ALERT.attacking && parent && !world.areas[parent]?.alarm && (character?.playState?.jammerUntil ?? 0) > useClock.getState().minutes) next = updateArea(next, parent, { alarm: undefined }).world;
@@ -742,7 +741,7 @@ export default function GameBoard() {
       toast.success("The code cylinder is accepted: the lock opens.");
       return void openLock(exit, {}, false);
     }
-    if (!lawUnseen("Picking the lock", "trespass")) return;
+    if (here?.danger === 0 && !lawUnseen("Picking the lock", "trespass")) return;
     let ok = abilityCheck("Lock", dc, ["dexterity", "intelligence"], !!kit && trainedWith(kit));
     if (!ok && kit) {
       const spike = (character.equipment ?? []).find((n: string) => { const g = gearOf(n); return g?.kind === "spike" && g.tool.toLowerCase() === kit.toLowerCase(); });
@@ -759,7 +758,7 @@ export default function GameBoard() {
   // and no check; a charge, mine or grenade simply opens it). Noise brings the watch down on the room.
   const forceDoor = (exit: Exit, how: "strength" | "ram" | "cutter" | "blast") => {
     if (!world || !here || !exit.pathId) return;
-    if (lawmenAt(world, here.id).length) {
+    if (here.danger === 0 && lawmenAt(world, here.id).length) {
       toast.error("Forcing a door under the guards' eyes: they see it, and turn on you.");
       return void callTheLaw(here.id, how === "blast" ? "heinous" : "trespass");
     }
@@ -841,7 +840,8 @@ export default function GameBoard() {
   const takeLoot = (cache: LootCache) => {
     if (!world || !here) return;
     if (hostiles.length > 0 && !unseen("Taking it")) return;
-    if (!lawUnseen("Taking it", "theft")) return;
+    // Spoils of a place the enemy holds are nobody's property: only what is kept in a place of the law is theft
+    if (hostiles.length === 0 && here.danger === 0 && !lawUnseen("Taking it", "theft")) return;
     if (cache.locked && !abilityCheck("Lock", cache.locked, ["dexterity", "intelligence"], carries(/security kit|slicer's kit/i))) return;
     const gained = cache.items.flatMap((item) => Array.from({ length: item.quantity }, () => item.name));
     saveCharacter({ equipment: [...(character.equipment ?? []), ...gained], credits: (character.credits ?? 0) + cache.credits });
@@ -1059,8 +1059,8 @@ export default function GameBoard() {
     // Those who never noticed the party lose the first round; any other fight raises the alarm
     autoFought.current = here.id;
     const surprise = alert === ALERT.unaware;
+    // (Enemies are not the law's concern: fighting them is no crime; see "The law in person")
     if (!surprise && here.alert !== ALERT.attacking) setWatch(ALERT.attacking);
-    else if (surprise && world) saveCampaign({ galaxyMap: reportCrime(world, here.id, "assault", clockNow()) });
     // In the open of a district (its street, a roof, a catwalk) the fight is on the district's own
     // map: the street, the buildings as blocks, the roofs and catwalks as raised floors, and
     // everyone who can see the party, the sentries on the roofs and catwalks as well
