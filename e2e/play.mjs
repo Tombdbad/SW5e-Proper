@@ -687,7 +687,12 @@ await step(ctx, "play: credits are shown; weapons and armor are wielded and worn
     const square = `sq:${l.x + goal.x},${l.y + goal.y}`;
     const before = await at("me");
     await tap(square);
-    await sleep(3500);
+    // (The walk is as long as the room; a slow software renderer takes its time, so wait for the arrival)
+    for (let waited = 0; waited < 20000; waited += 500) {
+      await sleep(500);
+      const [now, goal] = [await at("me"), await at(square)];
+      if (Math.hypot(now.x - goal.x, now.y - goal.y) <= 40) break;
+    }
     const [after, want] = [await at("me"), await at(square)];
     if (Math.hypot(after.x - want.x, after.y - want.y) > 40) throw new Error(`the character is at ${JSON.stringify(after)}, not at ${JSON.stringify(want)} (was at ${JSON.stringify(before)})`);
     return `${start.name}, ${l.width} x ${l.height} squares: walked to square ${goal.x},${goal.y}`;
