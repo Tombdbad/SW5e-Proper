@@ -21,6 +21,7 @@ import { getClassById, getClassLevelValue } from "@/lib/sw5e/classes";
 import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect } from "@/lib/sw5e/rules";
 import { getStarshipSize } from "@/lib/sw5e/starships";
 import { SKILLS } from "@/lib/sw5e/constants";
+import CheckDialog, { autoChecks, type CheckOption, type CheckRequest, type CheckRoller } from "@/components/Play/CheckDialog";
 import { feats } from "@/lib/sw5e/feats";
 import lookupData from "@shared/data/sw5e/lookups.json";
 import {
@@ -49,7 +50,7 @@ import {
   attunementLimit, augmentationLimit, augmentPlan, partsFree, sideEffectsOf, describeEffects, PROSTHESES, ITEM_ABILITIES, type ItemFacts,
   modKindOf, augmentSlots, MOD_BASE_SLOTS, rarityRank, INSTALL_DC, SIZE_TIME, crystalModifier, crystalFor, crystalsUpTo, DROID_MOTOR_COST, DROID_BASE_SLOTS, droidPlan,
   readOutcome, blueprintRarity, readCredits, RARITY_ORDER, type Fitted,
-  FAMILIES, MATERIALS, REFINE_UNITS, RARITY_TIERS, NODE_RESPAWN, HARVEST_MINUTES, harvestDc, harvestYield, materialsOf, materialsWorth, spendMaterials, nodeAt, type ResourceNode,
+  FAMILIES, MATERIALS, REFINE_UNITS, tierOfCr, makeRemains, haulOf, withCacheAsset, familiesForTool, familiesForEnhanced, ALL_FAMILIES, type MaterialFamily, crNumber, RARITY_TIERS, NODE_RESPAWN, HARVEST_MINUTES, harvestDc, harvestYield, materialsOf, materialsWorth, spendMaterials, nodeAt, type ResourceNode,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship,
 } from "@shared/logic";
 
@@ -101,6 +102,8 @@ const WATCH_NOTE = [
   "They attack on sight.",
 ];
 
+interface CheckPlan { what: string; dc: number; abilities: string[]; skills?: string[]; tool?: string; extra?: number }
+interface CheckResult { success: boolean; total: number; roll: number; bonus: number }
 const d20 = () => Math.floor(Math.random() * 20) + 1;
 const modifier = (score?: number) => Math.floor(((score ?? 10) - 10) / 2);
 
@@ -305,16 +308,84 @@ export default function GameBoard() {
 
   // An ability check against a DC: d20 + the better of the given abilities (+ proficiency if trained)
   const proficiency = Math.ceil(1 + (Number(character?.level) || 1) / 4);
-  const abilityCheck = (what: string, dc: number, abilities: string[], trained: boolean) => {
-    const roll = d20();
-    const best = abilities.reduce((a, b) => (modifier(character.abilityScores?.[b]) > modifier(character.abilityScores?.[a]) ? b : a), abilities[0]);
-    // A substance's extra d3 (a high) or d3 less (a low) for this ability; a high ends with its use
-    const s = (play.substance?.ability === best ? (play.substance.phase === "high" ? 1 : -1) : 0) * (die(3));
+  // ---- Checks: the player picks who makes it (the character or a companion with a stat block) and
+  // against which of the skills that bear on it. The bonus is shown for each choice.
+  const [checkAsk, setCheckAsk] = useState<{ request: CheckRequest; plan: CheckPlan; resolve: (r: CheckResult | null) => void } | null>(null);
+  const cancelledCheck = useRef(false);
+  const { data: monsterSheets = [] } = useQuery<any[]>({
+    queryKey: ["monster-sheets"],
+    queryFn: async () => (await fetch("/api/sw5e/monsters?fields=id,name,strengthModifier,dexterityModifier,constitutionModifier,intelligenceModifier,wisdomModifier,charismaModifier,skills")).json(),
+    staleTime: Infinity,
+  });
+  const skillAbility = (skill: string) => SKILLS.find((x) => x.name.toLowerCase() === skill)?.ability ?? "intelligence";
+  const optionsFor = (rollerId: string, plan: CheckPlan): CheckOption[] => {
+    const skills = plan.skills?.length ? plan.skills : SKILLS.filter((x) => plan.abilities.includes(x.ability)).map((x) => x.name.toLowerCase());
+    const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+    if (rollerId === "me") {
+      const mod = (ab: string) => modifier(character.abilityScores?.[ab]);
+      const best = plan.abilities.reduce((a, b) => (mod(b) > mod(a) ? b : a), plan.abilities[0]);
+      const toolProf = plan.tool && trainedWith(plan.tool) ? proficiency : 0;
+      const rows: CheckOption[] = [{ skill: null, label: "No skill", ability: best, bonus: mod(best) + toolProf, note: toolProf ? plan.tool! : "", edge: false }];
+      for (const sk of skills) {
+        const ab = skillAbility(sk);
+        const dt = dtState;
+        const prof = dt.expertise.includes(sk) ? 2 * proficiency : skilled(sk) ? proficiency : dt.trained.includes(sk) ? Math.floor(proficiency / 2) : 0;
+        const note = dt.expertise.includes(sk) ? "expertise" : skilled(sk) ? "trained" : dt.trained.includes(sk) ? "half proficiency" : "untrained";
+        rows.push({ skill: sk, label: cap(sk), ability: ab, bonus: mod(ab) + Math.max(prof, toolProf), note: toolProf && toolProf >= prof ? `${note}, ${plan.tool}` : note, edge: !!toolProf && skilled(sk) });
+      }
+      return rows;
+    }
+    const mate = (character.companionData?.party ?? []).find((c: Companion) => c.id === rollerId);
+    const sheet = monsterSheets.find((m) => m.id === mate?.statBlock);
+    if (!sheet) return [{ skill: null, label: "No skill", ability: plan.abilities[0], bonus: 0, note: "", edge: false }];
+    const mod = (ab: string) => Number(sheet[`${ab}Modifier`]) || 0;
+    const best = plan.abilities.reduce((a, b) => (mod(b) > mod(a) ? b : a), plan.abilities[0]);
+    const listed: Record<string, number> = {};
+    for (const t of sheet.skills ?? []) { const m = String(t).match(/^(.*?)\s*([+-]\d+)/); if (m) listed[m[1].trim().toLowerCase()] = Number(m[2]); }
+    const rows: CheckOption[] = [{ skill: null, label: "No skill", ability: best, bonus: mod(best), note: "", edge: false }];
+    for (const sk of skills) rows.push({ skill: sk, label: cap(sk), ability: skillAbility(sk), bonus: sk in listed ? listed[sk] : mod(skillAbility(sk)), note: sk in listed ? "trained" : "untrained", edge: false });
+    return rows;
+  };
+  const askCheck = (plan: CheckPlan): Promise<CheckResult | null> => {
+    const rollers: CheckRoller[] = [{ id: "me", name: character?.name ?? "You", options: optionsFor("me", plan) }];
+    if (!autoChecks()) {
+      for (const c of (character?.companionData?.party ?? []) as Companion[]) {
+        if (c.hp > 0 && monsterSheets.some((m) => m.id === c.statBlock)) rollers.push({ id: c.id, name: c.name, options: optionsFor(c.id, plan) });
+      }
+    }
+    let best = { roller: "me", skill: null as string | null, bonus: -99 };
+    for (const r of rollers) for (const o of r.options) if (o.bonus > best.bonus) best = { roller: r.id, skill: o.skill, bonus: o.bonus };
+    const meBest = [...rollers[0].options].sort((a, b) => b.bonus - a.bonus)[0];
+    if (autoChecks()) return Promise.resolve(performCheck(plan, "me", meBest.skill));
+    return new Promise((resolve) => setCheckAsk({ request: { what: plan.what, dc: plan.dc, rollers, best: { roller: best.roller, skill: best.skill } }, plan, resolve }));
+  };
+  // Roll it: d20 (two, the higher, with advantage) + the chosen bonus (+ the substance's d3 for the character)
+  const performCheck = (plan: CheckPlan, rollerId: string, skill: string | null): CheckResult => {
+    const option = optionsFor(rollerId, plan).find((o) => o.skill === skill) ?? optionsFor(rollerId, plan)[0];
+    const first = d20();
+    const roll = option.edge ? Math.max(first, d20()) : first;
+    const mine = rollerId === "me";
+    const s = mine ? (play.substance?.ability === option.ability ? (play.substance.phase === "high" ? 1 : -1) : 0) * die(3) : 0;
     if (s > 0) setTimeout(() => endHigh("used on a check"), 0);
-    const bonus = modifier(character.abilityScores?.[best]) + (trained ? proficiency : 0) + s;
-    const success = roll + bonus >= dc;
-    toast[success ? "success" : "error"](`${what}: ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${roll + bonus} against DC ${dc}. ${success ? "Success." : "Failed."}`);
-    return success;
+    const bonus = option.bonus + s + (plan.extra ?? 0);
+    const total = roll + bonus;
+    const success = total >= plan.dc;
+    const who = mine ? "" : `${(character.companionData?.party ?? []).find((c: Companion) => c.id === rollerId)?.name}: `;
+    toast[success ? "success" : "error"](`${who}${plan.what}${option.skill ? ` (${option.label}${option.edge ? ", advantage" : ""})` : ""}: ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against DC ${plan.dc}. ${success ? "Success." : "Failed."}`);
+    return { success, total, roll, bonus };
+  };
+  const finishCheck = (rollerId: string | null, skill: string | null) => {
+    if (!checkAsk) return;
+    const { plan, resolve } = checkAsk;
+    setCheckAsk(null);
+    resolve(rollerId === null ? null : performCheck(plan, rollerId, skill));
+  };
+  // An ability check against a DC: asks who rolls and with which skill; false if it is called off
+  const abilityCheck = async (what: string, dc: number, abilities: string[], _trained?: boolean, more: Partial<CheckPlan> = {}): Promise<boolean> => {
+    cancelledCheck.current = false;
+    const r = await askCheck({ what, dc, abilities, ...more });
+    if (!r) cancelledCheck.current = true;
+    return !!r?.success;
   };
   const carries = (pattern: RegExp) => (character?.equipment ?? []).some((name: string) => pattern.test(name));
   const skilled = (skill: string) => (character?.skillProficiencies ?? []).some((s: string) => s.toLowerCase() === skill);
@@ -443,17 +514,17 @@ export default function GameBoard() {
   const shelterOwnerHere = world && here && pursuit?.here ? (hereNow ?? here).occupants.find(shelterOwner) : undefined;
   const hideouts = world && here && pursuit?.here && shelterOwnerHere ? shelterExits(world, here.id) : [];
   // Persuading the owner: Charisma against 12 + the law here; the way is opened for the search
-  const askShelter = (exit: Exit) => {
+  const askShelter = async (exit: Exit) => {
     if (!world || !here || !shelterOwnerHere) return;
-    if (!abilityCheck(`Ask ${shelterOwnerHere.name} for shelter`, 12 + 2 * lawAt(world, here.id) + (shelterOwnerHere.disposition === "friendly" ? 0 : 2), ["charisma"], skilled("persuasion"))) return;
+    if (!await abilityCheck(`Ask ${shelterOwnerHere.name} for shelter`, 12 + 2 * lawAt(world, here.id) + (shelterOwnerHere.disposition === "friendly" ? 0 : 2), ["charisma"], skilled("persuasion"))) return;
     saveCampaign({ galaxyMap: grantShelter(world, here.id, exit) });
     toast.success(`${shelterOwnerHere.name} opens the ${world.areas[exit.to].name} for the party.`);
   };
   // A caller is talked down (Intimidate against 10 + their Wisdom): the call does not go through
-  const talkDown = (who: string) => {
+  const talkDown = async (who: string) => {
     if (!world || !here) return;
     const caller = (hereNow ?? here).occupants.find((o) => o.name === who);
-    if (abilityCheck(`Intimidate ${who}`, 10 + (caller?.saves?.wisdom ?? 0), ["charisma"], skilled("intimidation"))) {
+    if (await abilityCheck(`Intimidate ${who}`, 10 + (caller?.saves?.wisdom ?? 0), ["charisma"], skilled("intimidation"))) {
       saveCampaign({ galaxyMap: interceptCall(world, here.id, who) });
       toast.info(`${who} drops the line.`);
     }
@@ -516,10 +587,12 @@ export default function GameBoard() {
   };
   // Talking to those who stopped you: Charisma against 10 + their Wisdom + how dangerous the
   // place is; threats work on those already facing you down, but are harder
-  const talk = (skill: "deception" | "persuasion" | "intimidation") => {
+  const talk = async (skill: "deception" | "persuasion" | "intimidation") => {
     if (!here) return;
     const dc = 10 + Math.max(0, ...watchersOf(here).map((o) => o.saves?.wisdom ?? 0)) + here.danger + (alert >= ALERT.confronting ? 5 : 0);
-    if (abilityCheck(skill.charAt(0).toUpperCase() + skill.slice(1), dc, ["charisma"], skilled(skill))) {
+    const passed = await abilityCheck(skill.charAt(0).toUpperCase() + skill.slice(1), dc, ["charisma"], skilled(skill));
+    if (cancelledCheck.current) return;
+    if (passed) {
       setWatch(ALERT.suspicious, true);
       toast.info("They let you pass, and keep an eye on you.");
     } else setWatch(alert + 1);
@@ -592,7 +665,7 @@ export default function GameBoard() {
 
   // Take an exit, as the watch allows: those who have stopped the party bar every way but the
   // way back; past those who have not, it takes a Stealth check
-  const leaveBy = (exit: Exit, ride?: Ride) => {
+  const leaveBy = async (exit: Exit, ride?: Ride) => {
     const blocked = world && here ? blockedExit(world, here.id, exit, clockMinutes) : undefined;
     if (blocked) return void toast.error(`Blockade: ${blocked}.`);
     // Only those who can see the party (see SIGHT_SQUARES) get a say: a Stealth check to slip past.
@@ -605,7 +678,8 @@ export default function GameBoard() {
     if (exit.locked) return unlock(exit);
     if (exit.climb) {
       // Out of a pit: Athletics, or Dexterity, a minute for each try
-      const ok = abilityCheck("Climbing out", exit.climb, ["strength", "dexterity"], skilled("athletics"));
+      const ok = await abilityCheck("Climbing out", exit.climb, ["strength", "dexterity"], skilled("athletics"));
+      if (cancelledCheck.current) return;
       if (!ok) return void saveCampaign(pass(1));
     }
     travel(exit, ride);
@@ -754,6 +828,13 @@ export default function GameBoard() {
     const changes: Record<string, any> = {};
     if (xp) changes.experience = (character.experience ?? 0) + xp;
     if (salvage) changes.credits = (character.credits ?? 0) + salvage;
+    // House rule: the hull is stripped for parts as well, worth a twentieth of the ship's value, in salvage and ore
+    const parts = haulOf(salvage / 2, ["salvage", "ore"]);
+    if (Object.keys(parts).length) {
+      const stock = materialsOf(character);
+      for (const [id, n] of Object.entries(parts)) stock[id] = (stock[id] ?? 0) + n;
+      changes.playState = { ...(character.playState ?? {}), materials: stock };
+    }
     if (mineNow?.destroyed) {
       changes.currentHp = 1;
       lastSavedHp.current = 1;
@@ -761,7 +842,7 @@ export default function GameBoard() {
     if (Object.keys(changes).length) saveCharacter(changes);
     toast[outcome === "victory" || outcome === "fled" ? "success" : "error"](
       outcome === "victory"
-        ? `The enemy is beaten${xp ? `: ${xp} XP` : ""}${salvage ? `, ${salvage} credits of salvage` : ""}.`
+        ? `The enemy is beaten${xp ? `: ${xp} XP` : ""}${salvage ? `, ${salvage} credits of salvage` : ""}${Object.keys(parts).length ? ` and parts (${Object.entries(parts).map(([id, n]) => `${n} x ${MATERIALS[id].name}`).join(", ")})` : ""}.`
         : outcome === "fled"
           ? "You jump away from the fight."
           : outcome === "destroyed"
@@ -819,7 +900,7 @@ export default function GameBoard() {
     if (crime && here) galaxyMap = reportCrime(galaxyMap, here.id, crime, clockNow());
     saveCampaign({ galaxyMap, ...extra });
   };
-  const unlock = (exit: Exit) => {
+  const unlock = async (exit: Exit) => {
     if (!world || !exit.pathId) return;
     const kit = lockKit();
     const dc = exit.locked ?? 10;
@@ -829,13 +910,13 @@ export default function GameBoard() {
       return void openLock(exit, {}, false);
     }
     if (here?.danger === 0 && !lawUnseen("Picking the lock", "trespass")) return;
-    let ok = abilityCheck("Lock", dc, ["dexterity", "intelligence"], !!kit && trainedWith(kit));
+    let ok = await abilityCheck("Lock", dc, ["dexterity", "intelligence"], !!kit && trainedWith(kit));
     if (!ok && kit) {
       const spike = (character.equipment ?? []).find((n: string) => { const g = gearOf(n); return g?.kind === "spike" && g.tool.toLowerCase() === kit.toLowerCase(); });
       if (spike) {
         saveCharacter({ equipment: consume(spike).equipment });
         toast.info(`${spike} spent: reroll.`);
-        ok = abilityCheck("Lock (rerolled)", dc, ["dexterity", "intelligence"], trainedWith(kit));
+        ok = await abilityCheck("Lock (rerolled)", dc, ["dexterity", "intelligence"], trainedWith(kit));
       }
     }
     if (ok) openLock(exit, {}, false, "trespass");
@@ -880,14 +961,14 @@ export default function GameBoard() {
 
 
   // Look for hidden ways and caches: Wisdom (Perception)
-  const search = () => {
+  const search = async () => {
     if (!world || !here) return;
     const hiddenPaths = world.paths.filter((p) => p.hidden && !p.climb && (p.from === here.id || p.to === here.id));
     const hiddenLoot = here.loot.filter((c) => c.hidden);
     const loose = trapsIn(here, false);
     // Secret ways: out of this room, or into the rooms of the building the party stands before
     const secretRooms = [here, ...childrenOf(world, here.id)].filter((a) => a.secretEntry && !a.secretEntry.found);
-    if (!abilityCheck("Search", 12 + here.danger, ["wisdom"], skilled("perception"))) return;
+    if (!await abilityCheck("Search", 12 + here.danger, ["wisdom"], skilled("perception"))) return;
     if (hiddenPaths.length + hiddenLoot.length + secretRooms.length + loose.length === 0) {
       toast.info("There is nothing hidden here.");
       return;
@@ -924,12 +1005,12 @@ export default function GameBoard() {
   };
 
   // Open a cache (its lock first, if it has one) and take what is in it
-  const takeLoot = (cache: LootCache) => {
+  const takeLoot = async (cache: LootCache) => {
     if (!world || !here) return;
     if (hostiles.length > 0 && !unseen("Taking it")) return;
     // Spoils of a place the enemy holds are nobody's property: only what is kept in a place of the law is theft
     if (hostiles.length === 0 && here.danger === 0 && !lawUnseen("Taking it", "theft")) return;
-    if (cache.locked && !abilityCheck("Lock", cache.locked, ["dexterity", "intelligence"], carries(/security kit|slicer's kit/i))) return;
+    if (cache.locked && !await abilityCheck("Lock", cache.locked, ["dexterity", "intelligence"], carries(/security kit|slicer's kit/i))) return;
     const gained = cache.items.flatMap((item) => Array.from({ length: item.quantity }, () => item.name));
     saveCharacter({ equipment: [...(character.equipment ?? []), ...gained], credits: (character.credits ?? 0) + cache.credits });
     const loot = here.loot.map((c) => (c.id === cache.id ? { ...c, items: [], credits: 0, locked: undefined, looted: true } : c));
@@ -939,11 +1020,12 @@ export default function GameBoard() {
 
   // Work a resource node (house rule, see "Gathering and materials" in shared logic): a check with
   // the family's kit, 10 minutes, a few units into the character's stacks
-  const harvest = (cache: LootCache) => {
+  const harvest = async (cache: LootCache) => {
     if (!world || !here || !cache.node) return;
     if (hostiles.length > 0 && !unseen("Working it")) return;
     const now = useClock.getState().minutes;
     const node = nodeAt(cache.node, now);
+    if (node.charges <= 0 && node.once) return void toast.info(`${cache.name} is picked clean.`);
     if (node.charges <= 0) {
       const days = Math.max(1, Math.ceil((NODE_RESPAWN - (now - (node.emptiedAt ?? now))) / 1440));
       return void toast.info(`${cache.name} is worked out; it recovers in about ${days} day${days > 1 ? "s" : ""}. (House rule.)`);
@@ -952,7 +1034,8 @@ export default function GameBoard() {
     const kit: string | undefined = (character.equipment ?? []).find((n: string) => family.kits.test(n));
     if (!kit && node.tier > 0) return void toast.error(`It takes ${family.kitNames} to work this ${RARITY_TIERS[node.tier].toLowerCase()} find. (House rule: bare hands only manage the lowest tier.)`);
     const dc = harvestDc(node.tier) + (kit ? 0 : 5);
-    const r = toolRoll(kit ?? "bare hands", dc, `${family.verb[0].toUpperCase()}${family.verb.slice(1)} ${cache.name} (${family.skill})`, family.ability);
+    const r = await toolRoll(kit ?? "bare hands", dc, `${family.verb[0].toUpperCase()}${family.verb.slice(1)} ${cache.name} (${family.skill})`, family.ability);
+    if ((r as any).cancelled) return;
     const total = pass(HARVEST_MINUTES);
     const after = useClock.getState().minutes;
     const ruined = !r.success && r.roll === 1;
@@ -1002,14 +1085,15 @@ export default function GameBoard() {
   }, [hereId, Math.floor(hourOf(clockMinutes)), world?.encounter?.id, inCombat, dead, exploring, character?.credits]);
 
   // Deal with the encounter: pay what is asked, make the check, and take what comes of it
-  const answerEncounter = (index: number) => {
+  const answerEncounter = async (index: number) => {
     const open = world?.encounter;
     if (!world || !open || !character || !hereId) return;
     const path = pathToTeach(learner);
     const option = optionsOf(open, level, path)[index];
     if (!option) return;
     if (option.cost && option.cost > (character.credits ?? 0)) return void toast.error(`That costs ${option.cost} credits and you have ${character.credits ?? 0}.`);
-    const success = option.abilities ? abilityCheck(option.label.replace(/ \(.*$/, ""), option.dc ?? 10, option.abilities, option.skill ? skilled(option.skill) : false) : true;
+    const success = option.abilities ? await abilityCheck(option.label.replace(/ \(.*$/, ""), option.dc ?? 10, option.abilities, option.skill ? skilled(option.skill) : false) : true;
+    if (cancelledCheck.current) return;
     const castMod = Math.max(...(path === "tech" ? ["intelligence"] : ["wisdom", "charisma"]).map((a) => modifier(character.abilityScores?.[a])));
     const result = encounterResult(open, index, success, learner, open.target ? world.areas[open.target]?.name : undefined, castMod);
     let galaxyMap: World = { ...world, encounter: undefined, encounterSeen: open.id };
@@ -1398,12 +1482,13 @@ export default function GameBoard() {
       for (const id of areaIds) {
         const part = galaxyMap.areas[id];
         if (!part) continue;
-        const { occupants, gear, kept, slain: down, xp: earned, people, changed } = afterFight(part, remaining);
+        const { occupants, gear, remains, kept, slain: down, xp: earned, people, changed } = afterFight(part, remaining);
         slain += down;
         xp += earned;
         fallenKind ||= people;
         if (!changed) continue;
-        const loot = gear.length ? [...part.loot, { id: `l-${Date.now().toString(36)}-${id}`, name: "Gear of the fallen", kind: "remains", credits: 0, items: gear }] : part.loot;
+        const carcasses = remains.map((r, i) => makeRemains(`n-${Date.now().toString(36)}-${id}-${i}`, r.name, r.cr, r.count));
+        const loot = [...(gear.length ? [...part.loot, { id: `l-${Date.now().toString(36)}-${id}`, name: "Gear of the fallen", kind: "remains", credits: 0, items: gear }] : part.loot), ...carcasses];
         // Their places on the plan: one for each still standing
         const layout = part.layout && {
           ...part.layout,
@@ -1414,7 +1499,8 @@ export default function GameBoard() {
             return left > 0;
           }),
         };
-        galaxyMap = updateArea(galaxyMap, id, { occupants, loot, ...(layout ? { layout } : {}) }).world;
+        const placed = layout && carcasses.reduce((l, c) => withCacheAsset({ id, layout: l }, c) ?? l, layout);
+        galaxyMap = updateArea(galaxyMap, id, { occupants, loot, ...(placed ? { layout: placed } : {}) }).world;
       }
       if (galaxyMap !== world) saveCampaign({ galaxyMap });
       // Renown: a fight costs standing with the side that lost it; the beasts of the wild have none
@@ -1656,7 +1742,7 @@ export default function GameBoard() {
   // What a rest does for the companions: each spends a Hit Die on a short rest (the fallen are
   // brought round with 1 hit point), all hit points back on a long one; a meal adds to a short
   // rest's healing, and droids mended by astrotech's implements get a die more
-  const restParty = (long: boolean, work: ReturnType<typeof workTool>): { party: Companion[]; notes: string[] } => {
+  const restParty = (long: boolean, work: Awaited<ReturnType<typeof workTool>>): { party: Companion[]; notes: string[] } => {
     const notes: string[] = [];
     const next = party.map((c) => {
       if (long) return { ...c, hp: c.maxHp };
@@ -1677,7 +1763,7 @@ export default function GameBoard() {
     delete used.focus;
     return used;
   };
-  const shortRest = () => {
+  const shortRest = async () => {
     if (!character || inCombat) return;
     const changes: Record<string, any> = {};
     const notes: string[] = [];
@@ -1685,7 +1771,7 @@ export default function GameBoard() {
       changes.currentForcePoints = character.maxForcePoints;
       notes.push("tech points restored");
     }
-    const work = workTool("short");
+    const work = await workTool("short");
     let spentDie = false;
     if (hitDiceLeft > 0 && character.currentHp < character.maxHp) {
       const healed = Math.max(0, rollDamage(`1d${hitDie}`, false) + modifier(character.abilityScores?.constitution)) + (work?.mealHp ?? 0);
@@ -1729,7 +1815,7 @@ export default function GameBoard() {
     }
     lastSavedHp.current = character.maxHp;
     lastSavedPoints.current = character.maxForcePoints;
-    const work = workTool("long");
+    const work = await workTool("long");
     const state: PlayState = { ...play, boon: undefined, poison: undefined, featureUses: {} };
     if (work?.boon) state.boon = work.boon;
     const regained = Math.max(1, Math.floor(level / 2)) + (work?.mealDice ?? 0);
@@ -2002,20 +2088,13 @@ export default function GameBoard() {
   // A check with a tool: the ability (Intelligence unless said), with proficiency when trained with
   // the tool and advantage when also trained in a skill the tool is for (house rule: the book
   // leaves it to the GM, "consider allowing the character to make the check with advantage")
-  const toolRoll = (name: string, dc: number, what: string, ability = "intelligence", extra = 0) => {
+  const toolRoll = async (name: string, dc: number, what: string, ability = "intelligence", extra = 0): Promise<{ success: boolean; total: number; roll: number; bonus: number; cancelled?: boolean }> => {
     const info = toolInfo(name);
-    const trained = trainedWith(name);
-    const skillNames = (info?.skills ?? []).flatMap((s) => s.skill.map((x) => x.toLowerCase()));
-    const edge = trained && skillNames.some((sk) => skilled(sk));
-    const first = die(20);
-    const roll = edge ? Math.max(first, die(20)) : first;
-    const high = substanceFor(ability);
-    if (high > 0 && play.substance?.phase === "high") setTimeout(() => endHigh("used on a check"), 0);
-    const bonus = modifier(character.abilityScores?.[ability]) + (trained ? proficiency : 0) + high + extra;
-    const total = roll + bonus;
-    const success = total >= dc;
-    toast[success ? "success" : "error"](`${what} (${name}${trained ? "" : ", untrained"}${edge ? ", advantage" : ""}): ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against DC ${dc}. ${success ? "Success." : "Failed."}`);
-    return { success, total, roll };
+    const skills = (info?.skills ?? []).flatMap((x) => x.skill.map((y) => y.toLowerCase())).filter((y) => SKILLS.some((x) => x.name.toLowerCase() === y));
+    cancelledCheck.current = false;
+    const r = await askCheck({ what: `${what} (${name})`, dc, abilities: [ability], skills, tool: name, extra });
+    if (!r) cancelledCheck.current = true;
+    return r ?? { success: false, total: 0, roll: 0, bonus: 0, cancelled: true };
   };
 
   // A tool's special use is worked at a rest, once. The tool chosen for the coming rest:
@@ -2032,7 +2111,7 @@ export default function GameBoard() {
   };
   // What the chosen tool does for this rest: the check (DC 15) and what it gives. Returns what the
   // rest should add: a prepared boon for the next fight, extra healing from a meal, a cure.
-  const workTool = (rest: "short" | "long") => {
+  const workTool = async (rest: "short" | "long") => {
     if (!restTool || !toolsCarried.includes(restTool)) return null;
     const info = toolInfo(restTool);
     const boon = info ? boonOf(info, proficiency) : undefined;
@@ -2046,7 +2125,7 @@ export default function GameBoard() {
       }
       result.food = food;
     }
-    const check = toolRoll(restTool, 15, `${boon.feature}`);
+    const check = await toolRoll(restTool, 15, `${boon.feature}`);
     if (!check.success) return { note: `${boon.feature} failed.` } as typeof result;
     if (boon.kind === "meal") {
       if (rest === "short") result.mealHp = 1;
@@ -2236,7 +2315,7 @@ export default function GameBoard() {
 
   // Freeing those held in bonds: the lock or the collar's circuit (Security kit, Slicer's kit),
   // or the strength to break chains (Binders: DC 20 Strength). Each try takes ten minutes.
-  const freeCaptive = (o: Occupant, how: "kit" | "break") => {
+  const freeCaptive = async (o: Occupant, how: "kit" | "break") => {
     if (!o.captive || !world) return;
     // Their guards see what is done under their noses
     if (hostiles.length > 0 && !unseen("Working at the lock")) return;
@@ -2248,13 +2327,13 @@ export default function GameBoard() {
       if (!kit) return toast.error(`You need a ${spec.tools[0].toLowerCase()}.`);
       const name = (character.equipment ?? []).find((n: string) => n.toLowerCase() === kit.toLowerCase())!;
       const spike = (character.equipment ?? []).find((n: string) => gearOf(n)?.kind === "spike" && (gearOf(n) as any).tool.toLowerCase() === kit.toLowerCase());
-      result = toolRoll(name, dc, spec.label, spec.ability.includes("dexterity") && modifier(character.abilityScores?.dexterity) > modifier(character.abilityScores?.intelligence) ? "dexterity" : "intelligence");
+      result = await toolRoll(name, dc, spec.label, spec.ability.includes("dexterity") && modifier(character.abilityScores?.dexterity) > modifier(character.abilityScores?.intelligence) ? "dexterity" : "intelligence");
       // A spike rerolls a failed check
       if (!result.success && spike) {
         const spent = consume(spike);
         saveCharacter({ equipment: spent.equipment });
         toast.info(`${spike}: reroll.`);
-        result = toolRoll(name, dc, `${spec.label} (rerolled)`, "intelligence");
+        result = await toolRoll(name, dc, `${spec.label} (rerolled)`, "intelligence");
       }
     } else {
       const roll = die(20) + modifier(character.abilityScores?.strength) + substanceFor("strength");
@@ -2284,7 +2363,7 @@ export default function GameBoard() {
     const unit: Occupant = { ...o, id: newId("o"), count: 1, wounds: [o.wounds?.[0] ?? 0] };
     return { list: list.flatMap((x) => (x.id === o.id ? [{ ...x, count: x.count - 1, wounds: x.wounds?.slice(1) }, unit] : [x])), unit };
   };
-  const mendDroid = (o: Occupant, how: "battery" | "check" | "kit") => {
+  const mendDroid = async (o: Occupant, how: "battery" | "check" | "kit") => {
     if (!world) return;
     const area = baseOf(o.id);
     if (!area) return;
@@ -2309,12 +2388,37 @@ export default function GameBoard() {
       Object.assign(changes, { equipment: spent.equipment, playState: { ...play, charges: spent.charges } });
       toast.success(`Emergency battery: ${unit.name} is stable, with ${hp} hit point${hp === 1 ? "" : "s"}.`);
     } else {
-      const check = toolRoll(toolsCarried.find((n) => /astrotech|mechanic|tinker/i.test(n)) ?? "Toolkit", 10, `Stabilize ${unit.name}`, "intelligence", 0);
+      const check = await toolRoll(toolsCarried.find((n) => /astrotech|mechanic|tinker/i.test(n)) ?? "Toolkit", 10, `Stabilize ${unit.name}`, "intelligence", 0);
       if (!check.success) return void saveCampaign(pass(10));
       hp = Math.max(1, hp);
     }
     saveCampaign({ galaxyMap: updateArea(world, area.id, { occupants: list.map((x) => (x.id === unit.id ? { ...x, wounds: [hp] } : x)) }).world, ...pass(how === "kit" ? 1 : 10) });
     if (Object.keys(changes).length) saveCharacter(changes);
+  };
+  // Strip a powered-down droid for parts (house rule): a check with a kit, 20 minutes; the droid is gone
+  const stripDroid = async (o: Occupant) => {
+    if (!world) return;
+    const area = baseOf(o.id);
+    if (!area) return;
+    const tier = tierOfCr(crNumber(o.cr));
+    const family = FAMILIES.salvage;
+    const kit: string | undefined = (character.equipment ?? []).find((n: string) => family.kits.test(n));
+    if (!kit && tier > 0) return void toast.error(`It takes ${family.kitNames} to strip this ${RARITY_TIERS[tier].toLowerCase()} droid. (House rule.)`);
+    const dc = harvestDc(tier) + (kit ? 0 : 5);
+    const r = await toolRoll(kit ?? "bare hands", dc, `Strip ${o.name} for parts`, "intelligence");
+    if (r.cancelled) return;
+    const time = pass(2 * HARVEST_MINUTES);
+    if (!r.success) return void saveCampaign(time);
+    const gained = harvestYield(r.total, dc, !!kit && trainedWith(kit)) + 1;
+    const stock = materialsOf(character);
+    const material = `salvage-${tier}`;
+    stock[material] = (stock[material] ?? 0) + gained;
+    saveCharacter({ playState: { ...(character.playState ?? {}), materials: stock } });
+    const occupants = area.occupants.flatMap((x) => (x.id !== o.id ? [x] : x.count > 1 ? [{ ...x, count: x.count - 1, wounds: x.wounds?.slice(1) }] : []));
+    let dropped = false;
+    const layout = area.layout && { ...area.layout, assets: area.layout.assets.filter((a) => { if (!dropped && a.kind === "npc" && a.ref === o.id) { dropped = true; return false; } return true; }) };
+    saveCampaign({ galaxyMap: updateArea(world, area.id, { occupants, ...(layout ? { layout } : {}) }).world, ...time });
+    toast.success(`Stripped ${o.name}: ${gained} x ${MATERIALS[material].name}.`);
   };
   // The droid comes online hostile
   const wakeHostile = (o: Occupant, why: string) => {
@@ -2346,14 +2450,14 @@ export default function GameBoard() {
     // The droid keeps the hit points it has (one of a group leaves it)
     recruit({ ...o, wounds: [unitOf(o)] }, "droid", `under a ${boltName.toLowerCase()}`, { bolt: boltName }, { equipment: spent.equipment }, time);
   };
-  const reprogramDroid = (o: Occupant) => {
+  const reprogramDroid = async (o: Occupant) => {
     if (!world) return;
     if (partyFull) return toast.error(`You can lead ${COMPANION_LIMIT} companions at most (house rule).`);
     if (unitOf(o) < 1) return toast.error("It has to be stabilized first.");
     const kit = toolsCarried.find((n) => /^slicer's kit$/i.test(n));
     if (!kit) return toast.error("You need a slicer's kit to rewrite its routines.");
     const dc = reprogramDC(o);
-    const check = toolRoll(kit, dc, `Reprogram ${o.name}`, "intelligence");
+    const check = await toolRoll(kit, dc, `Reprogram ${o.name}`, "intelligence");
     const time = pass(10);
     if (check.success) return recruit({ ...o, wounds: [unitOf(o)] }, "droid", "reprogrammed", { bolt: "reprogrammed" }, {}, time);
     saveCampaign(time);
@@ -2417,12 +2521,14 @@ export default function GameBoard() {
   // A ride that belongs to the settlement's people is not a prize: hotwiring it (Dexterity or
   // Intelligence against 12 + the law, a security or slicer's kit if trained) is theft. Seen by a
   // lawman, or botched, the law is called; done quietly, nobody knows.
-  const stealVehicle = (building: Area, vehicle: Vehicle) => {
+  const stealVehicle = async (building: Area, vehicle: Vehicle) => {
     if (!world || !here) return;
     if (vehicle.status === "wrecked") return toast.error("It is a wreck: it needs mending first (a mechanic's kit).");
     if (!lawUnseen("Hotwiring it", "theft")) return;
     const kit = lockKit();
-    if (!abilityCheck(`Hotwiring ${vehicle.name}`, 12 + lawAt(world, here.id), ["dexterity", "intelligence"], !!kit && trainedWith(kit))) {
+    const wired = await abilityCheck(`Hotwiring ${vehicle.name}`, 12 + lawAt(world, here.id), ["dexterity", "intelligence"], !!kit && trainedWith(kit));
+    if (cancelledCheck.current) return;
+    if (!wired) {
       toast.error("The alarm sounds: its owner will call the law.");
       return void saveCampaign({ galaxyMap: reportCrime(world, here.id, "theft", clockNow()) });
     }
@@ -2446,11 +2552,11 @@ export default function GameBoard() {
     });
     toast.success(`${vehicle.name} is yours.`);
   };
-  const mendVehicle = (building: Area | null, vehicle: Vehicle) => {
+  const mendVehicle = async (building: Area | null, vehicle: Vehicle) => {
     if (!world) return;
     const kit = toolsCarried.find((n) => /^mechanic's kit$/i.test(n));
     if (!kit) return toast.error("You need a mechanic's kit.");
-    const check = toolRoll(kit, 15, `Restore power to ${vehicle.name}`, "intelligence");
+    const check = await toolRoll(kit, 15, `Restore power to ${vehicle.name}`, "intelligence");
     const time = pass(60);
     if (!check.success) return void saveCampaign(time);
     if (building) saveCampaign({ galaxyMap: updateArea(world, building.id, { vehicles: (building.vehicles ?? []).map((v) => (v.id === vehicle.id ? { ...v, status: "parked" as const } : v)) }).world, ...time });
@@ -3095,6 +3201,9 @@ export default function GameBoard() {
               Mend {kit ? "(repair kit)" : "(needs a repair kit)"}
             </Button>
           )}
+          <Button size="sm" variant="outline" disabled={inCombat || dead || watched} onClick={() => stripDroid(o)} data-testid="droid-strip">
+            Strip for parts (DC {harvestDc(tierOfCr(crNumber(o.cr)))})
+          </Button>
           {hp >= 1 && (
             <>
               <Button size="sm" disabled={!bolt || partyFull || inCombat || dead || watched} onClick={() => boltDroid(o)} data-testid="droid-bolt">
@@ -3207,7 +3316,7 @@ export default function GameBoard() {
           <div key={a.activity} className="flex items-center gap-1">
             <span className="flex-1">{a.activity}{a.dc ? ` (DC ${a.dc})` : ""}</span>
             {a.dc && (
-              <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => toolRoll(name, a.dc!, a.activity)}>
+              <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={async () => await toolRoll(name, a.dc!, a.activity)}>
                 Try
               </Button>
             )}
@@ -3423,14 +3532,15 @@ export default function GameBoard() {
   };
   // Passage off world, sold by a ticket agent at the port, or by a smuggler who asks no questions, or
   // slipped into the hold of a freighter (see "Passage off world" in shared logic; house rule)
-  const bookPassage = (offer: PassageOffer, how: "ticket" | "smuggler" | "stowaway") => {
+  const bookPassage = async (offer: PassageOffer, how: "ticket" | "smuggler" | "stowaway") => {
     if (!world || !here || inCombat || dead) return;
     const law = lawAt(world, here.id);
     const fare = how === "ticket" ? offer.fare : how === "smuggler" ? Math.ceil(offer.fare * SMUGGLER_SHARE) : 0;
     if (fare > (character.credits ?? 0)) return void toast.error(`Passage to ${offer.name} costs ${fare} credits and you have ${character.credits ?? 0}.`);
     if (how !== "ticket" && law > 0) {
       const dc = passageCheckDC(how, law);
-      const ok = how === "smuggler" ? abilityCheck("Fooling the customs scan", dc, ["charisma"], skilled("deception")) : abilityCheck("Slipping aboard unseen", dc, ["dexterity"], skilled("stealth"));
+      const ok = how === "smuggler" ? await abilityCheck("Fooling the customs scan", dc, ["charisma"], skilled("deception")) : await abilityCheck("Slipping aboard unseen", dc, ["dexterity"], skilled("stealth"));
+      if (cancelledCheck.current) return;
       if (!ok) {
         const fine = how === "stowaway" ? Math.min(character.credits ?? 0, stowawayFine(law)) : 0;
         if (fine) saveCharacter({ credits: (character.credits ?? 0) - fine });
@@ -3530,12 +3640,12 @@ export default function GameBoard() {
   const writeFit = (name: string, fit: Fitted & { crystalMax?: string }, extra: Record<string, any> = {}) =>
     saveCharacter({ ...extra, playState: { ...((extra.playState as any) ?? play), fitted: { ...(play.fitted ?? {}), [name]: fit } } });
   const tinkerWait = () => (play.tinkerUntil ?? 0) > clockNow();
-  const modCheck = (what: string, rarity: string, tool: string) => {
+  const modCheck = async (what: string, rarity: string, tool: string) => {
     const trained = trainedWith(tool);
     const dc = (INSTALL_DC[rarity.toLowerCase()] ?? 10) + (trained ? 0 : 5);
-    return { ok: abilityCheck(what, dc, ["intelligence"], trained), dc };
+    return { ok: await abilityCheck(what, dc, ["intelligence"], trained), dc };
   };
-  const installMod = (item: string, mod: string) => {
+  const installMod = async (item: string, mod: string) => {
     const f = factsOfItem(mod);
     const base = factsOf(item);
     const kind = base ? modKindOf({ name: item, equipmentCategory: base.equipmentCategory, weaponClassification: (base as any).weaponClassification }) : undefined;
@@ -3549,7 +3659,8 @@ export default function GameBoard() {
     if (tinkerWait()) return speed("A failed fitting waits a day before the next try (the book).");
     const { tool, owned } = kitFor(augment ? "augment" : kind);
     if (!owned) return speed(`You need ${tool ?? "the right tools"} for this.`);
-    const { ok, dc } = modCheck(`Fit ${f.name}`, f.rarity, owned);
+    const { ok, dc } = await modCheck(`Fit ${f.name}`, f.rarity, owned);
+    if (cancelledCheck.current) return;
     const time = pass(60);
     if (!ok) {
       saveCharacter({ playState: { ...play, tinkerUntil: clockNow() + 24 * 60 } });
@@ -3560,7 +3671,7 @@ export default function GameBoard() {
     saveCampaign(time);
     toast.success(`${f.name} fitted in ${item} (DC ${dc}).${(play.attuned ?? []).includes(item) ? "" : " It works once the item is attuned."}`);
   };
-  const removeMod = (item: string, mod: string) => {
+  const removeMod = async (item: string, mod: string) => {
     const f = factsOfItem(mod);
     if (inCombat || dead) return;
     const fit = fitOf(item);
@@ -3568,7 +3679,8 @@ export default function GameBoard() {
     const kind = base ? modKindOf({ name: item, equipmentCategory: base.equipmentCategory, weaponClassification: (base as any).weaponClassification }) : undefined;
     const { tool, owned } = kitFor(f?.modKind === "augment" ? "augment" : kind ?? "");
     if (!owned) return speed(`You need ${tool ?? "the right tools"} for this.`);
-    const { ok } = modCheck(`Remove ${mod}`, f?.rarity ?? "Standard", owned);
+    const { ok } = await modCheck(`Remove ${mod}`, f?.rarity ?? "Standard", owned);
+    if (cancelledCheck.current) return;
     const mods = fit.mods.filter((m, i) => !(m === mod && i === fit.mods.indexOf(mod)));
     writeFit(item, { ...fit, mods }, ok ? { equipment: [...(character.equipment ?? []), mod] } : {});
     saveCampaign(pass(60));
@@ -3577,7 +3689,7 @@ export default function GameBoard() {
   // A chassis item upgrades a plain item's rarity, one step at a time (house rule: the chassis
   // itself is the rare material the book asks for). 8 hours; a failure waits a day and on a 1 a
   // modification is destroyed.
-  const upgradeChassis = (item: string, chassisName: string) => {
+  const upgradeChassis = async (item: string, chassisName: string) => {
     const c = factsOfItem(chassisName);
     const fit = fitOf(item);
     if (!c?.chassis || inCombat || dead) return;
@@ -3585,7 +3697,8 @@ export default function GameBoard() {
     if (tinkerWait()) return speed("A failed fitting waits a day before the next try (the book).");
     const { tool, owned } = kitFor(c.chassis);
     if (!owned) return speed(`You need ${tool ?? "the right tools"} for this.`);
-    const { ok } = modCheck(`Upgrade ${item} to ${c.rarity}`, c.rarity, owned);
+    const { ok } = await modCheck(`Upgrade ${item} to ${c.rarity}`, c.rarity, owned);
+    if (cancelledCheck.current) return;
     const time = pass(8 * 60);
     if (!ok) {
       const lost = die(20) === 1 && fit.mods.length ? fit.mods[Math.floor(Math.random() * fit.mods.length)] : undefined;
@@ -3683,7 +3796,7 @@ export default function GameBoard() {
     const rooms = Object.values(world.areas).filter((a) => a.kind === "room" && a.id !== here?.id);
     return rooms.length ? rooms[Math.floor(Math.random() * rooms.length)] : undefined;
   };
-  const readData = (name: string, use: Extract<GearUse, { kind: "data" }>) => {
+  const readData = async (name: string, use: Extract<GearUse, { kind: "data" }>) => {
     if (!world || inCombat || dead) return;
     if (use.form === "card" && !carries(/^(datapad|wristpad|holocomm)/i)) return speed("A datacard is read on a datapad, a wristpad or a holocomm.");
     if (use.form === "holocron" && !(character.forcePowers ?? []).length) return speed("A holocron answers only to the Force.");
@@ -3692,7 +3805,8 @@ export default function GameBoard() {
     const trained = use.form === "holocron" ? false : use.form === "card" ? !!kit && trainedWith(kit) : !!kit && trainedWith(kit);
     // A chip or a datacron is cracked with the kit; without one the attempt is at DC +5 (house rule)
     const dc = use.dc + (use.form === "chip" || use.form === "cron" ? (kit ? 0 : 5) : 0);
-    const ok = abilityCheck(`${name}`, dc, ability, trained);
+    const ok = await abilityCheck(`${name}`, dc, ability, trained);
+    if (cancelledCheck.current) return;
     const time = pass(10);
     if (!ok) return void saveCampaign(time);
     const what = readOutcome(use.form, die(100));
@@ -3737,7 +3851,7 @@ export default function GameBoard() {
 
   // ---- Droid customizations (Wretched Hives): a droid's motor supports two, upgraded to six; the
   // work needs astrotech's implements (house rule as for modifications) and takes 8 hours by size
-  const customize = (c: Companion, item: string) => {
+  const customize = async (c: Companion, item: string) => {
     const f = factsOfItem(item);
     if (!f?.droid || inCombat || dead) return;
     const slots = c.motor ?? DROID_BASE_SLOTS;
@@ -3746,7 +3860,8 @@ export default function GameBoard() {
     if (tinkerWait()) return speed("A failed fitting waits a day before the next try (the book).");
     const { tool, owned } = kitFor("droid");
     if (!owned) return speed(`You need ${tool ?? "astrotech's implements"} for this.`);
-    const { ok, dc } = modCheck(`Fit ${f.name} to ${c.name}`, f.rarity, owned);
+    const { ok, dc } = await modCheck(`Fit ${f.name} to ${c.name}`, f.rarity, owned);
+    if (cancelledCheck.current) return;
     const plan = droidPlan(f.rarity, c.size ?? "medium");
     const time = pass(plan.hours * 60);
     if (!ok) {
@@ -3772,12 +3887,13 @@ export default function GameBoard() {
     }
     return { ...c, armorClass: ac, speed: stock.speed + list.reduce((n, f) => n + (f.effects.speed ?? 0), 0) };
   };
-  const removeCustom = (c: Companion, name: string) => {
+  const removeCustom = async (c: Companion, name: string) => {
     if (inCombat || dead) return;
     const f = factsOfItem(name);
     const { tool, owned } = kitFor("droid");
     if (!owned) return speed(`You need ${tool ?? "astrotech's implements"} for this.`);
-    const { ok } = modCheck(`Remove ${name}`, f?.rarity ?? "Standard", owned);
+    const { ok } = await modCheck(`Remove ${name}`, f?.rarity ?? "Standard", owned);
+    if (cancelledCheck.current) return;
     const plan = droidPlan(f?.rarity ?? "Standard", c.size ?? "medium", true);
     saveParty(party.map((x) => (x.id === c.id ? droidWith({ ...x, custom: (x.custom ?? []).filter((n) => n !== name) }) : x)), ok ? { equipment: [...(character.equipment ?? []), name] } : {});
     saveCampaign(pass(plan.hours * 60));
@@ -3907,8 +4023,10 @@ export default function GameBoard() {
       const trained = !!kit && trainedWith(kit);
       const building = room && (room.kind === "building" ? room : world.areas[room.parentId ?? ""]);
       const looped = (play.loopUntil ?? 0) > clockNow();
-      const loop = () => {
-        if (!abilityCheck(`Loop the camera`, dcBase, ["intelligence", "dexterity"], trained)) return void saveCampaign(pass(5));
+      const loop = async () => {
+        const looped = await abilityCheck(`Loop the camera`, dcBase, ["intelligence", "dexterity"], trained);
+        if (cancelledCheck.current) return;
+        if (!looped) return void saveCampaign(pass(5));
         saveCharacter({ playState: { ...play, loopUntil: clockNow() + 60 } });
         saveCampaign(pass(5));
         toast.success("The cameras show an empty room for the next hour.");
@@ -3923,12 +4041,14 @@ export default function GameBoard() {
         saveCampaign(pass(5));
         toast.info(lines.length ? lines.join(" ") : "Nothing on the notices but the tariff and a curfew.");
       };
-      const openDoors = () => {
+      const openDoors = async () => {
         if (!building) return;
         const ids = new Set([building.id, ...childrenOf(world, building.id).map((r) => r.id)]);
         const locked = world.paths.filter((pth) => pth.locked && (ids.has(pth.from) || ids.has(pth.to)));
         if (!locked.length) return void toast.info("Every door of this building is already open.");
-        if (!abilityCheck("Open the doors from the panel", dcBase, ["intelligence"], trained)) {
+        const opened = await abilityCheck("Open the doors from the panel", dcBase, ["intelligence"], trained);
+        if (cancelledCheck.current) return;
+        if (!opened) {
           toast.error("The panel locks up and a warning goes out.");
           return void saveCampaign({ galaxyMap: reportCrime(world, here.id, "trespass", clockNow()), ...pass(5) });
         }
@@ -4298,6 +4418,7 @@ export default function GameBoard() {
 
   return (
     <div className="relative h-[100dvh] w-screen bg-black overflow-hidden">
+      {checkAsk && <CheckDialog request={checkAsk.request} onRoll={(roller, skill) => finishCheck(roller, skill)} onCancel={() => finishCheck(null, null)} />}
       <KeyboardControls map={controls}>
         {/* The 3D map. On a phone it has the top of the screen and the HUD the rest */}
         <div className={`absolute inset-x-0 top-0 md:h-full ${showSidebar ? "md:right-80" : ""} ${showSidebar || showCombat ? "h-[46dvh]" : "h-full"}`} data-testid="map-3d">
@@ -4522,8 +4643,9 @@ export default function GameBoard() {
                 law={lawAt(world, heistOf.areaId)}
                 credits={character.credits ?? 0}
                 disabled={inCombat || dead}
-                onCheck={(how, abilities, trained, what) => {
-                  const ok = abilityCheck(what, heistDC(heistOf.stage, lawAt(world, heistOf.areaId)), abilities, trained);
+                onCheck={async (how, abilities, trained, what) => {
+                  const ok = await abilityCheck(what, heistDC(heistOf.stage, lawAt(world, heistOf.areaId)), abilities, trained);
+                  if (cancelledCheck.current) return;
                   runHeist(how, ok);
                 }}
                 onBribe={(cost) => runHeist("bribe", true, cost)}
@@ -4937,6 +5059,7 @@ export default function GameBoard() {
                     hasVehicle={Array.isArray(campaign?.vehicles) && campaign.vehicles.length > 0}
                     state={downtime}
                     check={checkFor}
+                    ask={askCheck}
                     commit={commitDowntime}
                     spendBlackmail={spendBlackmail}
                     spendLore={spendLore}
@@ -5082,6 +5205,8 @@ interface DowntimeProps {
   state: DowntimeState;
   // A check of the character: the roll and what is added to it
   check: (c: { ability: string; using: string }) => { roll: number; bonus: number; total: number; note: string };
+  // The player picks who rolls and with which skill
+  ask: (plan: CheckPlan) => Promise<CheckResult | null>;
   // Keeps the result: changes to the character, the downtime record, days that pass, a line for the log
   commit: (what: { character?: Record<string, any>; downtime: Partial<DowntimeState>; days: number; log?: string[]; renown?: number }) => void;
   // Unlocks nothing here; blackmail and lore are spent from the panel through these
@@ -5710,9 +5835,10 @@ function CraftingActivity(props: DowntimeProps) {
   const [mode, setMode] = useState<"craft" | "blueprint" | "reverse" | "refine">("craft");
   // Gathered materials count at their value toward the raw materials; a shortfall is paid in credits (house rule)
   const stock = materialsOf(character);
-  const means = credits + materialsWorth(stock);
-  const pay = (cost: number) => {
-    const spent = spendMaterials(stock, cost);
+  // Only the families the tool works with count (house rule): ore and parts for a blaster, plants for medicine
+  const usable = (families: MaterialFamily[]) => credits + materialsWorth(Object.fromEntries(Object.entries(stock).filter(([id]) => MATERIALS[id] && families.includes(MATERIALS[id].family))));
+  const pay = (cost: number, families: MaterialFamily[]) => {
+    const spent = spendMaterials(stock, cost, families);
     const note = spent.spent.length ? ` Materials used: ${spent.spent.map(([id, n]) => `${n} x ${MATERIALS[id].name}`).join(", ")}${spent.shortfall ? `; ${money(spent.shortfall)} paid in credits` : ""}.` : "";
     return { character: { credits: Math.max(0, credits - spent.shortfall), playState: { ...(character.playState ?? {}), materials: spent.stock } }, note };
   };
@@ -5737,14 +5863,16 @@ function CraftingActivity(props: DowntimeProps) {
   const tool = item ? toolOf(item) : undefined;
   const has = tool ? carried.some((n) => squash2(n) === squash2(tool.name)) : false;
 
-  const craft = () => {
+  const craft = async () => {
     if (!item || !tool) return;
     const value = item.cost;
     const raw = Math.ceil(value / 2);
     const daysNeeded = Math.max(1, Math.ceil(value / 250));
-    if (means < raw * 2) return void toast.error(`Raw materials worth up to ${money(raw * 2)} may be needed (credits and gathered materials together).`);
+    const families = familiesForTool(tool.name);
+    if (usable(families) < raw * 2) return void toast.error(`Raw materials worth up to ${money(raw * 2)} may be needed (credits and gathered ${families.join(", ")}).`);
     if (!has) return void toast.error(`You need ${tool.name}.`);
-    const r = props.check({ ability: "intelligence", using: tool.name.toLowerCase() });
+    const r = await props.ask({ what: `Craft ${item.name}: a total of 10, 15, 20... adds to the d100`, dc: 10, abilities: ["intelligence"], skills: (tool.skills ?? []).flatMap((x) => x.skill.map((y) => y.toLowerCase())).filter((y) => SKILLS.some((x) => x.name.toLowerCase() === y)), tool: tool.name });
+    if (!r) return;
     const m = checkModifier(r.total, 0);
     const d100 = roll(100);
     const row = resultRow(activity, d100 + m.bonus);
@@ -5756,7 +5884,7 @@ function CraftingActivity(props: DowntimeProps) {
       `d100 ${d100} + ${m.bonus} = ${d100 + m.bonus}: ${row.text}`,
       `${item.name} made in ${daysNeeded} day${daysNeeded > 1 ? "s" : ""}, raw materials ${money(materials)}.`,
     ];
-    const paid = pay(materials);
+    const paid = pay(materials, families);
     lines[lines.length - 1] += paid.note;
     const comp = applyComplication(props, activity, undefined, false, 1);
     const downtime: Partial<DowntimeState> = {};
@@ -5767,11 +5895,12 @@ function CraftingActivity(props: DowntimeProps) {
     props.commit({ character: { ...paid.character, equipment: [...carried, item.name] }, downtime, days: daysNeeded, log: lines });
     setMessage(lines);
   };
-  const reverse = () => {
+  const reverse = async () => {
     const found = enhanced.find((i) => i.name === pick);
     if (!found) return;
     const dc = DOWNTIME.reverseDc[found.searchableRarity] ?? 30;
-    const r = props.check({ ability: "intelligence", using: "tools" });
+    const r = await props.ask({ what: `Take ${found.name} apart`, dc, abilities: ["intelligence"] });
+    if (!r) return;
     const ok = r.total >= dc;
     const equipmentNow = [...carried];
     equipmentNow.splice(equipmentNow.indexOf(found.name), 1);
@@ -5787,7 +5916,7 @@ function CraftingActivity(props: DowntimeProps) {
     props.commit({ character: { credits: creditsNow, equipment: equipmentNow }, downtime, days: 0, log: lines });
     setMessage(lines);
   };
-  const buildEnhanced = () => {
+  const buildEnhanced = async () => {
     const found = enhanced.find((i) => i.name === pick);
     if (!found || !state.blueprints.includes(found.name)) return;
     const rarity = found.searchableRarity as string;
@@ -5795,9 +5924,11 @@ function CraftingActivity(props: DowntimeProps) {
     if (needsRare && !(state.rare[rarity] > 0)) return void toast.error(`A rare ingredient from a creature of challenge ${DOWNTIME.ingredients[rarity]?.cr.min}+ is needed.`);
     const value = enhancedValue(found);
     const raw = Math.ceil(value / 2);
-    if (means < raw * 2) return void toast.error(`Raw materials worth up to ${money(raw * 2)} may be needed (credits and gathered materials together).`);
+    const families = familiesForEnhanced(found.type, found.subtype);
+    if (usable(families) < raw * 2) return void toast.error(`Raw materials worth up to ${money(raw * 2)} may be needed (credits and gathered ${families.join(", ")}).`);
     const days = Math.max(1, Math.ceil(value / 250));
-    const r = props.check({ ability: "intelligence", using: "tools" });
+    const r = await props.ask({ what: `Make ${found.name}: a total of 10, 15, 20... adds to the d100`, dc: 10, abilities: ["intelligence"] });
+    if (!r) return;
     const m = checkModifier(r.total, 0);
     const d100 = roll(100);
     const modifier = DOWNTIME.ingredients[rarity]?.modifier ?? 0;
@@ -5810,20 +5941,21 @@ function CraftingActivity(props: DowntimeProps) {
     ];
     const rare = { ...state.rare };
     if (needsRare) rare[rarity] = Math.max(0, (rare[rarity] ?? 0) - (activity.results.indexOf(row) >= 3 ? 0 : 1));
-    const paid = pay(materials);
+    const paid = pay(materials, families);
     lines[lines.length - 1] += paid.note;
     props.commit({ character: { ...paid.character, equipment: [...carried, found.name] }, downtime: { rare }, days, log: lines });
     setMessage(lines);
   };
   // Refining (house rule): 4 units of a material into one refined unit, with a kit of the family and a check at the tier's DC
-  const refine = () => {
+  const refine = async () => {
     const raw = MATERIALS[pick];
     if (!raw || raw.refined || (stock[pick] ?? 0) < REFINE_UNITS) return;
     const family = FAMILIES[raw.family];
     const kit = carried.find((n) => family.refiners.test(n));
     if (!kit) return void toast.error(`Refining ${raw.family} needs a kit: ${family.refiners.source.replace(/\|/g, ", ")}.`);
     const dc = harvestDc(raw.tier);
-    const r = props.check({ ability: "intelligence", using: kit.toLowerCase() });
+    const r = await props.ask({ what: `Refine ${raw.name}`, dc, abilities: ["intelligence"], skills: Array.from(new Set([family.skill.toLowerCase(), "technology"])), tool: kit });
+    if (!r) return;
     const ok = r.total >= dc;
     const next = { ...stock, [pick]: stock[pick] - (ok ? REFINE_UNITS : 1) };
     if (ok) next[`${pick}-r`] = (next[`${pick}-r`] ?? 0) + 1;
@@ -5852,10 +5984,10 @@ function CraftingActivity(props: DowntimeProps) {
           </select>
           {item && tool && (
             <p className="text-xs text-gray-300">
-              Needs {tool.name}{has ? "" : " (you do not carry it)"}, raw materials worth {money(Math.ceil(item.cost / 2))}, {Math.max(1, Math.ceil(item.cost / 250))} day(s).
+              Needs {tool.name}{has ? "" : " (you do not carry it)"}, raw materials worth {money(Math.ceil(item.cost / 2))} (house rule: gathered {familiesForTool(tool.name).map((f) => FAMILIES[f].label.toLowerCase()).join(", ")} count; the rest in credits), {Math.max(1, Math.ceil(item.cost / 250))} day(s).
             </p>
           )}
-          <Button size="sm" onClick={craft} disabled={!item || !has || means < Math.ceil((item?.cost ?? 0) / 2) * 2} data-testid="downtime-craft">Craft it</Button>
+          <Button size="sm" onClick={craft} disabled={!item || !has || usable(tool ? familiesForTool(tool.name) : ALL_FAMILIES) < Math.ceil((item?.cost ?? 0) / 2) * 2} data-testid="downtime-craft">Craft it</Button>
         </div>
       )}
       {mode === "blueprint" && (
@@ -5867,6 +5999,9 @@ function CraftingActivity(props: DowntimeProps) {
             ))}
           </select>
           <p className="text-xs text-gray-300">Rare ingredients held: {Object.entries(state.rare).filter(([, n]) => n > 0).map(([r, n]) => `${r} ${n}`).join(", ") || "none"}. Standard and premium items waive them (the book suggests it).</p>
+          {pick && enhanced.find((i) => i.name === pick) && (
+            <p className="text-xs text-gray-300">House rule: gathered {familiesForEnhanced(enhanced.find((i) => i.name === pick).type, enhanced.find((i) => i.name === pick).subtype).map((f) => FAMILIES[f].label.toLowerCase()).join(", ")} count toward the raw materials.</p>
+          )}
           <Button size="sm" onClick={buildEnhanced} disabled={!pick}>Make it</Button>
         </div>
       )}

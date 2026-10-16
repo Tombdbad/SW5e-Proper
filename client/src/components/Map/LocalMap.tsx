@@ -347,6 +347,9 @@ function NodeModel({ node, empty }: { node: ResourceNode; empty?: boolean }) {
   if (node.family === "plant") {
     return <>{[[0.3, 0.35, 0.5], [0.55, 0.5, 0.3], [0.7, 0.3, 0.65], [0.45, 0.4, 0.7]].map(([x, h, z], i) => <Box key={i} at={[x, h / 2, z]} size={[0.1, h, 0.1]} color={empty ? "#4d4a35" : "#4f9a4f"} />)}{!empty && [[0.3, 0.38, 0.5], [0.55, 0.52, 0.3], [0.7, 0.33, 0.65]].map(([x, y, z], i) => <Box key={i} at={[x, y, z]} size={[0.16, 0.12, 0.16]} color="#f0c24b" glow={glow} />)}</>;
   }
+  if (node.family === "hide") {
+    return <><Box at={[0.5, 0.12, 0.5]} size={[0.8, 0.24, 0.5]} color={empty ? "#4d4540" : "#6e4b3a"} rot={[0, 0.3, 0]} />{[-0.25, 0, 0.25].map((d, i) => <Box key={i} at={[0.5 + d, 0.3, 0.5]} size={[0.04, 0.2, 0.4]} color="#d9d2c0" rot={[0, 0.3, 0.2]} />)}</>;
+  }
   if (node.family === "crystal") {
     const color = ["#9ad1f0", "#c0a0f0", "#5fa8ff", "#ff6fa8"][node.tier] ?? "#9ad1f0";
     return <><Box at={[0.5, 0.08, 0.5]} size={[0.7, 0.16, 0.6]} color="#4a4f58" />{[[0.4, 0.45, 0.45, 0.5], [0.62, 0.35, 0.55, 0.4], [0.5, 0.3, 0.7, 0.3]].map(([x, h, z, r], i) => <Box key={i} at={[x, 0.16 + h / 2, z]} size={[0.14, h, 0.14]} color={empty ? "#6a6f78" : color} glow={glow} rot={[0, r, r - 0.4]} />)}</>;

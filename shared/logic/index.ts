@@ -2174,6 +2174,8 @@ export function safeHarbour(world: World, id: string): string | undefined {
 // `standing` says how each enemy of the fight (id `<occupant id>-<index>`) ended up.
 export function afterFight(area: Pick<Area, "occupants">, standing: { id: string | number; hp: number }[]) {
   const gear: { name: string; quantity: number; source: "equipment" }[] = [];
+  // Beasts and horrors that fell leave a carcass to be skinned (house rule, see "Gathering and materials")
+  const remains: { name: string; cr?: string; count: number }[] = [];
   // For each occupant that is still here, how many of them are
   const kept = new Map<string, number>();
   let slain = 0;
@@ -2192,6 +2194,7 @@ export function afterFight(area: Pick<Area, "occupants">, standing: { id: string
       xp += (o.xp ?? 0) * down;
       if (!["wildlife", "horror"].includes(o.role)) people = true;
       gear.push(...o.loadout.map((name) => ({ name, quantity: down, source: "equipment" as const })));
+      if (!droid && !["humanoid"].includes((o.creature ?? "").toLowerCase()) && ["wildlife", "horror"].includes(o.role)) remains.push({ name: o.name, cr: o.cr, count: down });
       if (droid) disabled.push({ ...o, id: alive.length ? `${o.id}-down` : o.id, count: down, disposition: "neutral", role: "disabled droid", disabled: true, wounds: Array(down).fill(0), loadout: [], routine: undefined, ship: undefined });
     }
     if (!(droid && !alive.length)) kept.set(o.id, alive.length);
@@ -2204,7 +2207,7 @@ export function afterFight(area: Pick<Area, "occupants">, standing: { id: string
     if (there) there.count += wreck.count, there.wounds = [...(there.wounds ?? []), ...(wreck.wounds ?? [])];
     else occupants.push(wreck);
   }
-  return { occupants, gear, kept, slain, xp, people, changed: occupants.length !== area.occupants.length || occupants.some((o, i) => o !== area.occupants[i]) };
+  return { occupants, gear, remains, kept, slain, xp, people, changed: occupants.length !== area.occupants.length || occupants.some((o, i) => o !== area.occupants[i]) };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -7757,7 +7760,7 @@ export const droidRepairPrice = (cr: string | number | undefined, missing: numbe
 //    again as the four were (a kit of the family and a check at the tier's DC).
 // ---------------------------------------------------------------------------------------------
 
-export type MaterialFamily = "ore" | "plant" | "crystal" | "salvage";
+export type MaterialFamily = "ore" | "plant" | "crystal" | "salvage" | "hide";
 export interface ResourceNode {
   family: MaterialFamily;
   tier: number;
@@ -7766,6 +7769,8 @@ export interface ResourceNode {
   max: number;
   // The minute on the clock when it ran dry
   emptiedAt?: number;
+  // A carcass or a wreck: it is worked once and does not come back
+  once?: boolean;
 }
 export const RARITY_TIERS = ["Standard", "Premium", "Prototype", "Advanced"];
 export const NODE_RESPAWN = 3 * 24 * 60;
@@ -7775,6 +7780,7 @@ export const FAMILIES: Record<MaterialFamily, { label: string; verb: string; kit
   ore: { kitNames: "a scavenging kit", label: "Ore and metal", verb: "mine", kits: /scavenging kit/i, ability: "intelligence", skill: "Investigation", refiners: /armormech|armstech|scavenging kit/i },
   plant: { kitNames: "a bioanalysis kit or biochemist's kit", label: "Plants and herbs", verb: "gather", kits: /bioanalysis kit|biochemist's kit/i, ability: "wisdom", skill: "Nature", refiners: /biochemist|bioanalysis|chef/i },
   crystal: { kitNames: "an archaeologist kit or jeweler's implements", label: "Crystals and gems", verb: "cut free", kits: /archaeologist kit|jeweler's implements/i, ability: "intelligence", skill: "Investigation", refiners: /jeweler|artificer|archaeologist/i },
+  hide: { kitNames: "a scavenging kit, bioanalysis kit or poisoner's kit", label: "Hides and parts", verb: "skin", kits: /scavenging kit|bioanalysis kit|poisoner's kit/i, ability: "wisdom", skill: "Survival", refiners: /scavenging kit|synthweaver|poisoner|bioanalysis/i },
   salvage: { kitNames: "a scavenging kit, tinker's or astrotech's implements or a mechanic's kit", label: "Salvage and parts", verb: "strip", kits: /scavenging kit|tinker's implements|mechanic's kit|astrotech's implements/i, ability: "intelligence", skill: "Technology", refiners: /tinker|mechanic|astrotech|cybertech/i },
 };
 
@@ -7784,6 +7790,7 @@ const RAW: Record<MaterialFamily, [string, number][]> = {
   ore: [["Scrap metal", 5], ["Durasteel ore", 40], ["Phrik ore", 300], ["Cortosis ore", 2000]],
   plant: [["Medicinal herbs", 5], ["Bacta moss", 40], ["Kolto bloom", 300], ["Ancient sap", 2000]],
   crystal: [["Rough crystal", 10], ["Raw gemstone", 50], ["Kyber shard", 400], ["Pure kyber", 2500]],
+  hide: [["Hide scraps", 6], ["Tough hide", 45], ["Venom gland", 320], ["Prime trophy", 2200]],
   salvage: [["Scrap electronics", 8], ["Power cell", 45], ["Droid brain core", 350], ["Intact hypermatter cell", 2200]],
 };
 for (const family of Object.keys(RAW) as MaterialFamily[]) {
@@ -7809,13 +7816,14 @@ export function makeNode(r: Random, id: string, family: MaterialFamily, danger: 
     plant: ["Patch of growth", "Hardy undergrowth", "Cluster of blooms"],
     crystal: ["Crystal cluster", "Gem-bearing rock", "Glittering geode"],
     salvage: ["Stripped wreckage", "Salvageable machinery", "Heap of parts"],
+    hide: ["Carcass"],
   };
   return { id, name: r.pick(names[family]), kind: "node", credits: 0, items: [], node: { family, tier, material, charges: max, max } };
 }
 
 // A node as it stands at a time on the clock: one that ran dry has come back after its respawn
 export function nodeAt(node: ResourceNode, now: number): ResourceNode {
-  if (node.charges > 0 || node.emptiedAt === undefined || now - node.emptiedAt < NODE_RESPAWN) return node;
+  if (node.once || node.charges > 0 || node.emptiedAt === undefined || now - node.emptiedAt < NODE_RESPAWN) return node;
   return { ...node, charges: node.max, emptiedAt: undefined };
 }
 
@@ -7842,13 +7850,66 @@ function addNodes(world: World, r: Random) {
 // What a harvest gives: a unit, one more for every 5 over the DC, and one more with a trained tool
 export const harvestYield = (total: number, dc: number, trained: boolean) => Math.min(6, Math.max(1, 1 + Math.floor((total - dc) / 5) + (trained ? 1 : 0)));
 
+// What a kill or a wreck gives (house rule): a creature's hide and glands, a droid's parts. The tier follows the
+// Challenge Rating as the book's rare ingredients do (1-3 standard, 4-7 premium, 8-11 prototype, 12 and up advanced).
+export const tierOfCr = (cr: number) => (cr < 4 ? 0 : cr < 8 ? 1 : cr < 12 ? 2 : 3);
+export function makeRemains(id: string, name: string, cr: string | number | undefined, count: number, droid = false): LootCache {
+  const family: MaterialFamily = droid ? "salvage" : "hide";
+  const tier = tierOfCr(crNumber(cr));
+  const charges = Math.max(1, Math.min(4, count));
+  return { id, name: `${droid ? "Wreck of" : "Carcass of"} ${name}`, kind: "node", credits: 0, items: [], node: { family, tier, material: `${family}-${tier}`, charges, max: charges, once: true } };
+}
+
+// Materials worth about this many credits, split over the families, the dearest tier first
+export function haulOf(worth: number, families: MaterialFamily[]): Materials {
+  const out: Materials = {};
+  for (const family of families) {
+    let left = worth / families.length;
+    for (let tier = 3; tier >= 0; tier--) {
+      const unit = MATERIALS[`${family}-${tier}`].value;
+      const n = Math.min(12, Math.floor(left / unit));
+      if (n > 0) { out[`${family}-${tier}`] = n; left -= n * unit; }
+    }
+  }
+  return out;
+}
+
+// Which materials a thing can be made of (house rule): each tool works its own stuff. A blaster is ore and
+// parts, medicine is plants, a lightweapon needs crystal, clothes need fibre and hides. Other families do not
+// count toward the raw materials.
+const TOOL_FAMILIES: [RegExp, MaterialFamily[]][] = [
+  [/armormech/i, ["ore", "hide", "salvage"]], [/armstech/i, ["ore", "salvage"]], [/artificer/i, ["crystal", "ore", "salvage"]],
+  [/astrotech/i, ["salvage", "ore"]], [/artillerist/i, ["ore", "salvage"]], [/artist/i, ["crystal", "ore", "plant", "hide"]],
+  [/audiotech/i, ["salvage", "ore"]], [/bioanalysis|biochemist|poisoner|spicer|brewer|chef/i, ["plant", "hide"]],
+  [/biotech|geneticist/i, ["plant", "hide", "crystal"]], [/constructor/i, ["ore", "salvage"]], [/cybertech/i, ["salvage", "crystal", "ore"]],
+  [/demolitions/i, ["ore", "plant", "salvage"]], [/disguise/i, ["plant", "hide"]], [/forgery/i, ["plant", "salvage"]],
+  [/gadgeteer/i, ["salvage", "ore", "crystal"]], [/jeweler/i, ["crystal", "ore"]], [/mechanic/i, ["ore", "salvage"]],
+  [/munitions/i, ["ore", "salvage", "plant"]], [/security/i, ["ore", "salvage"]], [/slicer/i, ["salvage"]],
+  [/surveyor/i, ["salvage", "ore"]], [/synthweaver/i, ["plant", "hide"]], [/tinker/i, ["salvage", "ore", "crystal", "plant", "hide"]],
+];
+export const ALL_FAMILIES: MaterialFamily[] = ["ore", "plant", "crystal", "salvage", "hide"];
+export function familiesForTool(tool?: string): MaterialFamily[] {
+  return (tool && TOOL_FAMILIES.find(([pattern]) => pattern.test(tool))?.[1]) || ALL_FAMILIES;
+}
+// An enhanced item by its kind (type and subtype in the data)
+export function familiesForEnhanced(type: string, subtype?: string): MaterialFamily[] {
+  const kind = `${type} ${subtype ?? ""}`.toLowerCase();
+  if (/lightweapon|focus/.test(kind)) return ["crystal", "ore", "salvage"];
+  if (/weapon|blaster|vibro|ammunition|explosive/.test(kind)) return ["ore", "salvage"];
+  if (/armor|shield/.test(kind)) return ["ore", "hide", "salvage"];
+  if (/stimpac|medpac|adrenal|substance|consumable/.test(kind)) return ["plant", "hide"];
+  if (/droid|wristpad|technology|augment|cybernetic/.test(kind)) return ["salvage", "crystal", "ore"];
+  if (/clothing|adventuringgear|body|hands|back|feet|shoulders|finger/.test(kind)) return ["plant", "hide", "crystal"];
+  return ALL_FAMILIES;
+}
+
 // Pays a cost in credits with materials first: the dearest unit that still fits in what is left is
 // taken, down to the cheapest; what no unit fits is left to credits
-export function spendMaterials(stock: Materials, cost: number): { stock: Materials; paid: number; spent: [string, number][]; shortfall: number } {
+export function spendMaterials(stock: Materials, cost: number, families: MaterialFamily[] = ALL_FAMILIES): { stock: Materials; paid: number; spent: [string, number][]; shortfall: number } {
   const left = { ...stock };
   const spent: Record<string, number> = {};
   let owed = cost;
-  const ids = Object.keys(left).filter((id) => MATERIALS[id] && left[id] > 0).sort((a, b) => MATERIALS[b].value - MATERIALS[a].value);
+  const ids = Object.keys(left).filter((id) => MATERIALS[id] && left[id] > 0 && families.includes(MATERIALS[id].family)).sort((a, b) => MATERIALS[b].value - MATERIALS[a].value);
   for (const id of ids) {
     const unit = MATERIALS[id].value;
     const n = Math.min(left[id], Math.floor(owed / unit));
@@ -7861,4 +7922,12 @@ export function spendMaterials(stock: Materials, cost: number): { stock: Materia
   }
   for (const id of Object.keys(left)) if (left[id] <= 0) delete left[id];
   return { stock: left, paid: cost - owed, spent: Object.entries(spent), shortfall: owed };
+}
+
+// A cache made in play (a carcass, a wreck) given a place on the floor of the room it lies in
+export function withCacheAsset(area: Pick<Area, "id" | "layout">, cache: LootCache, r: Random = createRandom(Math.floor(Math.random() * 2 ** 31))): RoomLayout | undefined {
+  if (!area.layout) return undefined;
+  const spot = findSpot(area.layout, r, "wall", 1, 1) ?? findSpot(area.layout, r, "center", 1, 1);
+  if (!spot) return area.layout;
+  return { ...area.layout, assets: [...area.layout.assets, { id: `${area.id}-c${area.layout.assets.length + 1}-${cache.id}`, kind: "loot", name: cache.name, ...spot, ref: cache.id }] };
 }

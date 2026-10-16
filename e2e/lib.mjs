@@ -18,6 +18,8 @@ export async function open() {
       ? { viewport: { width: 412, height: 915 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true }
       : { viewport: { width: 1280, height: 900 } },
   );
+  // The play-through rolls checks by itself: no dialog asking who rolls and with which skill
+  await context.addInitScript(() => { try { localStorage.setItem("sw5e.autoChecks", "1"); } catch {} });
   const page = await context.newPage();
   page.setDefaultTimeout(Number(process.env.TIMEOUT || 15000));
   const events = [];
