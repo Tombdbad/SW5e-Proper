@@ -1942,7 +1942,7 @@ export function counterSides(layout: RoomLayout, station: RoomAsset): { behind: 
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 8;
+export const LIFE = 9;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -2074,6 +2074,9 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
     }
     for (const id of settlements) planDistricts(ctx, id);
   }
+  // Ways in and out (life 9): furniture, caches and ships are moved off the squares ways stand on,
+  // and a way out that opens on a pocket between buildings is moved to a wall that opens on the street
+  if ((next.life ?? 0) < 9) repairAccess(next, ctx.random);
   next.life = LIFE;
   return next;
 }
@@ -6413,6 +6416,53 @@ const outsideOf = (l: RoomLayout, side: Side, along: number) => {
   return { x: l.x + s.x + (side === "e" ? 1 : side === "w" ? -1 : 0), y: l.y + s.y + (side === "s" ? 1 : side === "n" ? -1 : 0) };
 };
 
+// The ground of a district that can be walked to from its streets: not inside a building at the
+// ground floor, and joined to the margin round the plan. A way out that opens anywhere else
+// (a walled-in pocket between buildings, the inside of another room) leads nowhere.
+const STREET_MARGIN = 3;
+export function streetGround(rooms: Area[], width: number, height: number): (x: number, y: number) => boolean {
+  const M = STREET_MARGIN;
+  const solid = rooms.filter((a) => a.layout && (a.layout.level ?? 0) >= 0 && formOf(a) !== "gallery" && !openAir(a));
+  const inRoom = (x: number, y: number) => solid.some((a) => x >= a.layout!.x && x < a.layout!.x + a.layout!.width && y >= a.layout!.y && y < a.layout!.y + a.layout!.height);
+  const inside = (x: number, y: number) => x >= -M && y >= -M && x < width + M && y < height + M;
+  const seen = new Set<string>([`${-M},${-M}`]);
+  const stack: [number, number][] = [[-M, -M]];
+  while (stack.length) {
+    const [x, y] = stack.pop()!;
+    for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]] as [number, number][]) {
+      if (!inside(nx, ny) || inRoom(nx, ny) || seen.has(`${nx},${ny}`)) continue;
+      seen.add(`${nx},${ny}`);
+      stack.push([nx, ny]);
+    }
+  }
+  return (x, y) => seen.has(`${x},${y}`);
+}
+
+// Whether something that blocks stands on a square of a room (a way in the wall is not such a thing)
+const blockedAt = (l: RoomLayout, x: number, y: number) => l.assets.some((a) => !a.side && a.blocks && a.x <= x && x < a.x + a.w && a.y <= y && y < a.y + a.h);
+
+// A wall square for a way out on this side of a room: nothing against it, nothing standing on it,
+// opening on to the street, and leaving every way of the room still reachable. Tries the squares
+// nearest the middle first. Returns the square, or nothing.
+function wayOutSquare(all: Area[], room: Area, side: Side, reach: (x: number, y: number) => boolean, ignore?: RoomAsset): number | undefined {
+  const l = room.layout!;
+  const free = freeWallSquares(all, room, side).filter((i) => {
+    const sq = wallSquare(l, side, i);
+    const o = outsideOf(l, side, i);
+    return reach(o.x, o.y) && !blockedAt(l, sq.x, sq.y) && !l.assets.some((a) => a !== ignore && a.side && a.x === sq.x && a.y === sq.y);
+  });
+  const middle = free.length ? free[Math.floor(free.length / 2)] : 0;
+  for (const i of [...free].sort((p, q) => Math.abs(p - middle) - Math.abs(q - middle))) {
+    const sq = wallSquare(l, side, i);
+    const probe: RoomAsset = { id: "probe", kind: "exit", name: "probe", x: sq.x, y: sq.y, w: 1, h: 1, side };
+    l.assets.push(probe);
+    const faults = floorFaults(l);
+    l.assets.pop();
+    if (!faults) return i;
+  }
+  return undefined;
+}
+
 // A door set in the wall two rooms share, at the middle of what they share (or the nearest square
 // to it that is free); false if they share no wall
 function doorBetween(a: Area, b: Area, path: Path): boolean {
@@ -6513,6 +6563,11 @@ export function planDistrict(ctx: Context, district: District): DistrictPlan | u
 
   const everyRoom = () => members.flatMap(roomsOf);
 
+  // (Ground a way out can open on: the streets, not a pocket between buildings or the foot of an
+  // upper floor that overhangs the door.) Every way out the buildings were planned with is made to open on it.
+  const reach = streetGround(everyRoom(), width, height);
+  fixStreetWays(everyRoom, reach);
+
   // A second way in, on the side of the building farthest from the first, for any building of
   // three rooms or more that has none
   for (const b of members) {
@@ -6525,13 +6580,18 @@ export function planDistrict(ctx: Context, district: District): DistrictPlan | u
       .filter((a) => a !== root && !a.gateway && (a.layout!.level ?? 0) === 0 && !a.tags.includes("code:K") && !a.tags.includes("code:H") && !holdsShips(a) && !a.secretEntry)
       .sort((p, q) => Math.hypot(q.layout!.x - from.x, q.layout!.y - from.y) - Math.hypot(p.layout!.x - from.x, p.layout!.y - from.y));
     for (const room of candidates) {
-      const side = (["s", "n", "e", "w"] as Side[]).find((s) => freeWallSquares(everyRoom(), room, s).length > 0);
-      if (!side) continue;
-      const free = freeWallSquares(everyRoom(), room, side);
+      // On a side whose wall opens on the street and has a square nothing stands on
       const l = room.layout!;
-      l.assets.push({ id: `${room.id}-${l.assets.length + 1}`, kind: "exit", name: "Side entrance", ...wallSquare(l, side, free[Math.floor(free.length / 2)]), w: 1, h: 1, side, to: b.id });
-      room.gateway = true;
-      break;
+      let placed = false;
+      for (const side of ["s", "n", "e", "w"] as Side[]) {
+        const at = wayOutSquare(everyRoom(), room, side, reach);
+        if (at === undefined) continue;
+        l.assets.push({ id: `${room.id}-${l.assets.length + 1}`, kind: "exit", name: "Side entrance", ...wallSquare(l, side, at), w: 1, h: 1, side, to: b.id });
+        room.gateway = true;
+        placed = true;
+        break;
+      }
+      if (placed) break;
     }
   }
 
@@ -6560,7 +6620,7 @@ export function planDistrict(ctx: Context, district: District): DistrictPlan | u
       for (const side of r.shuffle(["s", "n", "e", "w"] as Side[])) {
         const free = freeWallSquares(everyRoom(), room, side).filter((i) => {
           const o = outsideOf(l, side, i);
-          return groundOpen(o.x, o.y);
+          return groundOpen(o.x, o.y) && reach(o.x, o.y);
         });
         if (free.length) {
           spot = { side, along: free[Math.floor(free.length / 2)] };
@@ -6651,6 +6711,95 @@ export function planDistrict(ctx: Context, district: District): DistrictPlan | u
   const plan: DistrictPlan = { id: district.id, name: district.name, theme: district.theme, width, height, boxes, ways };
   world.districtPlans = { ...(world.districtPlans ?? {}), [district.id]: plan };
   return plan;
+}
+
+// Every way out of a building (an exit set in a ground-floor wall) is made to open on the street:
+// a way that opens on a pocket, or under an upper floor that overhangs it, is moved to another
+// wall of its room; failing that it is taken out if its building has another that works, or moved
+// to another ground-floor room of the building. Returns how many were moved and how many could not be.
+function fixStreetWays(rooms: () => Area[], reach: (x: number, y: number) => boolean): { moved: number; unresolved: number } {
+  const out = { moved: 0, unresolved: 0 };
+  const touched = new Set<Area>();
+  const beyondOf = (l: RoomLayout, a: RoomAsset) => ({ x: l.x + a.x + (a.side === "e" ? 1 : a.side === "w" ? -1 : 0), y: l.y + a.y + (a.side === "s" ? 1 : a.side === "n" ? -1 : 0) });
+  const ground = (o: Area) => (o.layout!.level ?? 0) <= 0 && !openAir(o);
+  const works = (o: Area) => o.layout!.assets.some((a) => a.kind === "exit" && a.side && reach(beyondOf(o.layout!, a).x, beyondOf(o.layout!, a).y));
+  for (const room of rooms()) {
+    const l = room.layout!;
+    if (!ground(room)) continue;
+    for (const way of l.assets.filter((a) => a.kind === "exit" && a.side)) {
+      const o = beyondOf(l, way);
+      if (reach(o.x, o.y)) continue;
+      // Another wall square of the same room (any side) that opens on the street, with this way set aside
+      const saved = l.assets;
+      l.assets = saved.filter((a) => a !== way);
+      let moved = false;
+      for (const side of ["s", "n", "e", "w"] as Side[]) {
+        const at = wayOutSquare(rooms(), room, side, reach);
+        if (at === undefined) continue;
+        Object.assign(way, wallSquare(l, side, at), { side });
+        moved = true;
+        break;
+      }
+      l.assets = saved;
+      if (moved) {
+        out.moved++;
+        touched.add(room);
+        continue;
+      }
+      const others = rooms().filter((x) => x !== room && x.parentId === room.parentId && ground(x));
+      if (way.name === "Side entrance" || others.some(works)) {
+        // A dead way, and the building has another that opens on the street: it is taken out
+        l.assets = saved.filter((a) => a !== way);
+        if (!l.assets.some((a) => a.kind === "exit")) room.gateway = false;
+        out.moved++;
+        touched.add(room);
+        continue;
+      }
+      // The only way in: moved to another ground-floor room that has a wall on the street
+      const host = others.find((x) => (["s", "n", "e", "w"] as Side[]).some((side) => wayOutSquare(rooms(), x, side, reach) !== undefined));
+      const side = host && (["s", "n", "e", "w"] as Side[]).find((sd) => wayOutSquare(rooms(), host, sd, reach) !== undefined);
+      if (host && side) {
+        const hl = host.layout!;
+        hl.assets.push({ ...way, id: `${host.id}-${hl.assets.length + 1}`, ...wallSquare(hl, side, wayOutSquare(rooms(), host, side, reach)!), side });
+        host.gateway = true;
+        l.assets = saved.filter((a) => a !== way);
+        if (!l.assets.some((a) => a.kind === "exit")) room.gateway = false;
+        out.moved++;
+        touched.add(room);
+        touched.add(host);
+      } else out.unresolved++;
+    }
+  }
+  // Whoever stands by a way that moved goes with it
+  for (const room of touched) placeContents(room);
+  return out;
+}
+
+// Mends the ways in and out of the planned districts of a world (mutates it): ways are kept
+// clear of anything that blocks, so that every door, side entrance, secret way and stair of a room
+// can be walked to; and a way out of a building that opens on a pocket between buildings, or on
+// nothing, is moved to a wall of its room that opens on the street (a side entrance with no such wall
+// is taken out). Returns how many rooms were mended, ways moved and ways that could not be.
+export function repairAccess(world: World, random: Random = createRandom(world.seed + 9)): { mended: number; moved: number; unresolved: number } {
+  const out = { mended: 0, moved: 0, unresolved: 0 };
+  for (const plan of Object.values(world.districtPlans ?? {})) {
+    const members = Object.keys(plan.boxes).map((id) => world.areas[id]).filter((b): b is Area => !!b);
+    const roomsOf = () => members.flatMap((b) => childrenOf(world, b.id).filter((a) => a.kind === "room" && a.layout));
+    // Nothing stands on a way, and every way can be walked to
+    for (const room of roomsOf()) {
+      const l = room.layout!;
+      const standsOn = l.assets.some((w) => w.side && blockedAt(l, w.x, w.y));
+      if (standsOn || floorFaults({ ...l, assets: l.assets.filter((a) => a.kind !== "npc" && a.kind !== "loot" && a.kind !== "ship") })) {
+        repairFloor(room, random);
+        out.mended++;
+      }
+    }
+    // A way out that opens on the street
+    const moved = fixStreetWays(roomsOf, streetGround(roomsOf(), plan.width, plan.height));
+    out.moved += moved.moved;
+    out.unresolved += moved.unresolved;
+  }
+  return out;
 }
 
 // The districts of a settlement, planned (nothing for wild sites)
