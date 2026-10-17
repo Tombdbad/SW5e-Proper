@@ -4013,7 +4013,9 @@ export function exitsOf(world: World, id: string): Exit[] {
     exits.push({ to, via: "path", label: path.label, travel: path.travel, pathId: path.id, locked: path.locked, hidden: path.hidden, ...(path.climb ? { climb: path.climb } : {}), ...(path.kind === "hyperlane" || path.kind === "sublight" ? { needsShip: true, fuel: tripFuel(path.kind, path.travel), jump: path.kind === "hyperlane" || undefined } : {}) });
   }
   for (const child of childrenOf(world, id)) {
-    if (child.gateway && ENTER[area.kind]) exits.push({ to: child.id, via: "enter", label: formOf(child) === "roof" ? "Climb the ladder to" : ENTER[area.kind]!, travel: "", ...(area.kind === "system" || area.kind === "planet" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
+    // A ship from orbit can land at any settlement or point of interest on a planet, not only a gateway
+    const landing = area.kind === "planet" && child.kind === "settlement";
+    if ((child.gateway || landing) && ENTER[area.kind]) exits.push({ to: child.id, via: "enter", label: formOf(child) === "roof" ? "Climb the ladder to" : ENTER[area.kind]!, travel: "", ...(area.kind === "system" || area.kind === "planet" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
   }
   for (const child of childrenOf(world, id)) {
     if (child.secretEntry) exits.push({ to: child.id, via: "enter", label: `Slip in through the ${child.secretEntry.name.toLowerCase()} to`, travel: "", secret: true, hidden: !child.secretEntry.found || undefined });
@@ -4022,7 +4024,8 @@ export function exitsOf(world: World, id: string): Exit[] {
   if (area.secretEntry && parent) {
     exits.push({ to: parent.id, via: "leave", label: `Slip out through the ${area.secretEntry.name.toLowerCase()} to`, travel: "", secret: true, hidden: !area.secretEntry.found || undefined });
   }
-  if (area.gateway && parent && LEAVE[area.kind]) {
+  // A settlement lifts off to its planet's orbit whether or not it is a gateway (see helmExits)
+  if ((area.gateway || (area.kind === "settlement" && parent?.kind === "planet")) && parent && LEAVE[area.kind]) {
     exits.push({ to: parent.id, via: "leave", label: formOf(area) === "roof" ? "Climb down to" : LEAVE[area.kind]!, travel: "", ...(area.kind === "planet" || area.kind === "settlement" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
   }
   return exits;
