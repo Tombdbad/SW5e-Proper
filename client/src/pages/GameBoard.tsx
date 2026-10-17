@@ -24,6 +24,7 @@ import { SKILLS } from "@/lib/sw5e/constants";
 import CheckDialog, { autoChecks, type CheckOption, type CheckRequest, type CheckRoller } from "@/components/Play/CheckDialog";
 import { feats } from "@/lib/sw5e/feats";
 import lookupData from "@shared/data/sw5e/lookups.json";
+import FlightScene, { type FlightOutcome } from "@/components/Map/FlightScene";
 import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
@@ -31,7 +32,7 @@ import {
   advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
   heatAt, heatLevel, settlementOf, useKindOf, camerasIn, seatsOf, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
-  boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf,
+  boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf, flightPayout, type FlightMode,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, optionsOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
@@ -5059,6 +5060,7 @@ export default function GameBoard() {
                     tools={toolData}
                     people={downtimePeople}
                     hasVehicle={Array.isArray(campaign?.vehicles) && campaign.vehicles.length > 0}
+                    hasShip={ships.length > 0}
                     state={downtime}
                     check={checkFor}
                     ask={askCheck}
@@ -5235,6 +5237,7 @@ interface DowntimeProps {
   // People of this settlement, for naming contacts and blackmail: their names and the social class their role suggests
   people: { name: string; cls: "lower" | "middle" | "upper" }[];
   hasVehicle: boolean;
+  hasShip: boolean;
   state: DowntimeState;
   // A check of the character: the roll and what is added to it
   check: (c: { ability: string; using: string }) => { roll: number; bonus: number; total: number; note: string };
@@ -5256,6 +5259,20 @@ const rollExpr = (expr: string) => {
 const money = (n: number) => `${n.toLocaleString()} cr`;
 const dtId = (prefix: string) => `${prefix}-${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
 
+// The downtime menu's sub-categories (house rule: the book's activities, grouped; the flying games are new)
+const DOWNTIME_GROUPS: [string, string[]][] = [
+  ["Side quests", ["bounty-hunting", "espionage", "mercenary-contracting", "crime"]],
+  ["Fighting games", ["pit-fighting"]],
+  ["Racing games", ["racing"]],
+  ["Flying games", ["taxi-run", "delivery-run"]],
+  ["Everyday downtime", ["carousing", "buying-enhanced-items", "selling-enhanced-items", "crafting", "gambling", "research", "training", "work"]],
+];
+// The flying games (house rules, shared/logic "Flying games"): flown on the 3D map for a day
+const FLYING: { id: string; name: string; mode: FlightMode; intro: string }[] = [
+  { id: "taxi-run", name: "Taxi run", mode: "speeder", intro: "Fly your landspeeder through the rings of a course over the settlement's ground, for a fare." },
+  { id: "delivery-run", name: "Delivery run", mode: "ship", intro: "Fly your ship through the rings of a course in the space of its planet, against the clock." },
+];
+
 function DowntimePanel(props: DowntimeProps) {
   const { character, state } = props;
   const [open, setOpen] = useState<string | null>(null);
@@ -5271,6 +5288,7 @@ function DowntimePanel(props: DowntimeProps) {
     return <p className="text-sm text-gray-300" data-testid="downtime-blocked">Downtime needs a settlement: a workweek of it is spent in a town, a city or a station.</p>;
   }
   const mine = specs.find((s) => s.a.id === open);
+  const flying = FLYING.find((f) => f.id === open);
   const allied = state.contacts.filter((c) => c.kind === "allied");
   const hostile = state.contacts.filter((c) => c.kind === "hostile");
   return (
@@ -5302,17 +5320,36 @@ function DowntimePanel(props: DowntimeProps) {
           </div>
         )}
       </div>
-      {!mine && (
-        <div className="grid grid-cols-1 gap-1" data-testid="downtime-menu">
-          {specs.map(({ a }) => {
-            const needsCity = /enhanced items/i.test(a.name) && !city;
+      {!mine && !flying && (
+        <div className="space-y-3" data-testid="downtime-menu">
+          {DOWNTIME_GROUPS.map(([group, ids]) => {
+            const items = [
+              ...specs.filter(({ a }) => ids.includes(a.id)).map(({ a }) => ({ key: a.id, name: a.name, intro: a.intro, disabled: /enhanced items/i.test(a.name) && !city, reason: "", pick: () => setOpen(a.id), testId: `downtime-${a.id}` })),
+              ...FLYING.filter((f) => ids.includes(f.id)).map((f) => ({ key: f.id, name: f.name, intro: f.intro, disabled: !!(f.id === "taxi-run" ? !props.hasVehicle : !props.hasShip), reason: f.id === "taxi-run" ? (props.hasVehicle ? "" : " (needs a landspeeder of your own)") : (props.hasShip ? "" : " (needs a ship of your own)"), pick: () => setOpen(f.id), testId: `downtime-${f.id}` })),
+            ];
+            if (!items.length) return null;
             return (
-              <Button key={a.id} size="sm" variant="outline" className="h-auto justify-start whitespace-normal text-left" disabled={needsCity} onClick={() => setOpen(a.id)} data-testid={`downtime-${a.id}`}>
-                {a.name}
-                <span className="ml-1 text-xs text-gray-400">{a.intro.slice(0, 90)}{a.intro.length > 90 ? "…" : ""}</span>
-              </Button>
+              <div key={group} className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-yellow-300/80" data-testid={`downtime-group-${group.toLowerCase().replace(/\s+/g, "-")}`}>{group}</p>
+                <div className="grid grid-cols-1 gap-1">
+                  {items.map((item) => (
+                    <Button key={item.key} size="sm" variant="outline" className="h-auto justify-start whitespace-normal text-left" disabled={item.disabled} onClick={item.pick} data-testid={item.testId}>
+                      {item.name}{item.reason}
+                      <span className="ml-1 text-xs text-gray-400">{item.intro.slice(0, 90)}{item.intro.length > 90 ? "…" : ""}</span>
+                    </Button>
+                  ))}
+                </div>
+              </div>
             );
           })}
+        </div>
+      )}
+      {flying && (
+        <div className="space-y-2" data-testid={`downtime-${flying.id}-panel`}>
+          <Button size="sm" variant="ghost" className="h-6 px-1" onClick={() => setOpen(null)}>← Activities</Button>
+          <h3 className="text-base font-semibold text-yellow-300">{flying.name}</h3>
+          <p className="text-xs text-gray-300">{flying.intro}</p>
+          <FlightActivity {...props} mode={flying.mode} label={flying.name} />
         </div>
       )}
       {mine && (
@@ -5367,6 +5404,26 @@ function applyComplication(props: DowntimeProps, activity: DowntimeActivityData,
   if (!table) return null;
   const row = table.rows.find((r) => r.roll === roll(table.die)) ?? table.rows[0];
   return { text: row.text, effect: complicationEffect(row.text, rollExpr), chance };
+}
+
+// A flying minigame of downtime: a run is flown on the 3D map and paid by the rings it takes (a day's work)
+function FlightActivity(props: DowntimeProps & { mode: FlightMode; label: string }) {
+  const { character, commit, mode, label } = props;
+  const [seed, setSeed] = useState<number | null>(null);
+  const credits = Number(character?.credits) || 0;
+  const finish = ({ course, collected, timeLeft }: FlightOutcome) => {
+    const pay = flightPayout(course, collected, timeLeft);
+    commit({ character: { credits: credits + pay.credits }, downtime: {}, days: 1, log: [`${label}: ${pay.note}.`] });
+    setSeed(null);
+  };
+  if (seed === null) {
+    return (
+      <Button size="sm" variant="outline" onClick={() => setSeed(Math.floor(Math.random() * 1e9) + 1)} data-testid={`flight-start-${mode}`}>
+        Start the run (a day)
+      </Button>
+    );
+  }
+  return <FlightScene mode={mode} seed={seed} onDone={finish} />;
 }
 
 // Activities worked out in one workweek by checks and a d100: bounty hunting, carousing, crime,

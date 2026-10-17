@@ -1302,6 +1302,48 @@ if (process.env.FORCE !== "0") {
     return `work: ${work.slice(0, 90)}; gambling: ${gamble.slice(0, 80)}; carousing: ${carouse.slice(0, 80)}; ${state.training[0].label} ${state.training[0].done}/${state.training[0].weeks}; ${(await timeOf() - t0) / 1440} days passed`;
   });
 
+  await step(ctx, "flying games: the downtime menu is in groups; a taxi run is flown on the 3D map with the drag pad and boost, and paid by the rings it takes", async () => {
+    const fl = await newChar({ credits: 1000, equipment: ["Blaster pistol"] });
+    const fc = await newCamp(fl, 7, async () => {});
+    const before = (await getChar(fl.id)).credits;
+    // A landspeeder of the party's, parked where the party stands (a taxi run needs one)
+    const parkedAt = fc.world.areas[fc.start.parentId]?.parentId ?? fc.world.startId;
+    await api("PATCH", `/api/campaigns/${fc.id}`, { vehicles: [{ id: "v-taxi", name: "Landspeeder", model: "Landspeeder", mph: 220, value: 10000, status: "parked", owner: GEAR, seats: 2, areaId: parkedAt }] });
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await page.getByRole("tab", { name: "Downtime" }).click();
+    await page.getByTestId("downtime-menu").waitFor();
+    const menu = await page.getByTestId("downtime-menu").textContent();
+    for (const g of ["Side quests", "Fighting games", "Racing games", "Flying games", "Everyday downtime"]) if (!menu.includes(g)) throw new Error("no group " + g);
+    await page.getByTestId("downtime-taxi-run").click();
+    await page.getByTestId("flight-start-speeder").click();
+    await page.getByTestId("flight").waitFor({ timeout: 30000 });
+    // Steer right with the pad, then boost for a few seconds
+    const box = await page.getByTestId("flight-pad").boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 30, box.y + box.height / 2, { steps: 4 });
+    await sleep(600);
+    await page.mouse.up();
+    const boost = await page.getByTestId("flight-boost").boundingBox();
+    await page.mouse.move(boost.x + boost.width / 2, boost.y + boost.height / 2);
+    await page.mouse.down();
+    await sleep(4000);
+    await page.mouse.up();
+    const hud = await page.getByTestId("flight-hud").innerText();
+    if (!/Taxi run/.test(hud)) throw new Error("no flight hud: " + hud);
+    const shown = await page.getByTestId("flight-hud").innerText();
+    await page.getByTestId("flight-over").waitFor({ timeout: 150000 }).catch((e) => { throw new Error("no end of the run; hud: " + shown.replace(/\s+/g, " ") + " " + e.message.split("\n")[0]); });
+    await page.getByTestId("flight-land").click();
+    await page.getByTestId("downtime-log").waitFor();
+    await sleep(1500);
+    const log = await page.getByTestId("downtime-log").innerText();
+    if (!/Taxi run:.*rings/.test(log)) throw new Error("no taxi run in the log: " + log.replace(/\s+/g, " "));
+    const after = (await getChar(fl.id)).credits;
+    if (!(after >= before)) throw new Error(`credits fell: ${before} -> ${after}`);
+    return `${log.split("\n").find((l) => /Taxi run/.test(l))?.slice(0, 110)}; credits ${before} -> ${after}`;
+  });
+
   await step(ctx, "starship combat: the party's ship engages a hostile ship in orbit on the 3D map; weapons, a helm action, a move, the enemy's turns, and what comes of it is kept", async () => {
     const sc = await newChar({ level: 5, class: "fighter", maxHp: 45, currentHp: 45, credits: 500, equipment: ["Vibroblade", "Blaster pistol", "Combat suit"] });
     const camp = await newCamp(sc, 9, async () => {});
