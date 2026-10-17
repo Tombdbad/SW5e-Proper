@@ -8071,29 +8071,178 @@ export function pilotMinutes(minutes: number, collected: number, total: number):
   return Math.max(1, Math.round(minutes * (1.2 - 0.4 * share)));
 }
 
-// ---- Racing (house rule): laps of a course against rivals who keep a pace of their own
+// ---- Racing (house rule). Racers start on a grid behind the start line, all facing the first ring. The
+// party and the rivals fly the same model and course; they bump each other, and hazards on the course
+// (pylons, slicks, mines) hurt a racer. A racer at 0 hull is out of the race.
 export const RACE_PRIZES = [1000, 500, 250, 100];
-export interface Rival { name: string; finish: number; pace: number }
-export function raceRivals(seed: number, course: FlightCourse, count = 4): Rival[] {
-  const r = createRandom(seed + 77);
-  const names = ["Rhys", "Tavi", "the Hutt's runner", "Kessa", "Doro", "Vex", "Brann"];
-  return Array.from({ length: count }, (_, i) => {
-    const pace = 0.8 + r.next() * 0.2;
-    return { name: names[i % names.length], pace, finish: courseLength(course) / (pace * FLIGHT[course.mode].top) };
+export const RACER = { radius: 2.5, hull: 12, bump: 1, bumpSpeed: 20 };
+export const HAZARD_STATS: Record<HazardKind, { radius: number; damage: number; cap: number }> = {
+  pylon: { radius: 2.5, damage: 2, cap: 1 },
+  slick: { radius: 10, damage: 0, cap: 0.35 },
+  mine: { radius: 3, damage: 3, cap: 1 },
+};
+export type HazardKind = "pylon" | "slick" | "mine";
+export interface Hazard { id: number; kind: HazardKind; p: Vec3; spent: boolean }
+// `touching` keys what the racer is in contact with (h<hazard id>, r<racer id>): damage is taken when a contact starts
+export interface Racer { id: number; name: string; party: boolean; model: string; pace: number; craft: Craft; next: number; hull: number; finish: number | null; wrecked: boolean; touching: string[] }
+export interface Race { t: number; limit: number; racers: Racer[]; hazards: Hazard[]; over: boolean; log: string[] }
+const RIVALS = [["Rhys", 0.9], ["Tavi", 0.93], ["the Hutt's runner", 0.86], ["Kessa", 0.97], ["Doro", 0.88], ["Vex", 0.95], ["Brann", 0.9]] as const;
+
+// The grid: two abreast, rows back from the start, all facing the first ring
+export function raceStart(course: FlightCourse, seed: number, model: string, rivalModels: string[]): Race {
+  const start = flightStart(course);
+  const first = course.rings[0];
+  const yaw = Math.atan2(first[2] - start.p[2], first[0] - start.p[0]);
+  const [hx, hz] = [Math.cos(yaw), Math.sin(yaw)];
+  const [px, pz] = [-hz, hx];
+  const r = createRandom(seed + 5);
+  const count = 1 + rivalModels.length;
+  const racers: Racer[] = Array.from({ length: count }, (_, i) => {
+    const col = i % 2 === 0 ? -1 : 1;
+    const row = Math.floor(i / 2);
+    const back = 6 + row * 9;
+    const side = col * 3.5;
+    const at: Vec3 = [start.p[0] - hx * back + px * side, FLIGHT.speeder.hover, start.p[2] - hz * back + pz * side];
+    const rival = i === 0 ? null : RIVALS[(i - 1) % RIVALS.length];
+    return {
+      id: i, name: rival ? rival[0] : "You", party: i === 0, model: i === 0 ? model : rivalModels[i - 1],
+      pace: rival ? rival[1] : 1, craft: { p: at, yaw, pitch: 0, speed: 0 }, next: 0, hull: RACER.hull, finish: null, wrecked: false, touching: [],
+    };
+  });
+  // Hazards on the legs of the course (never on the start leg)
+  const hazards: Hazard[] = [];
+  const kinds: HazardKind[] = ["pylon", "slick", "mine"];
+  let from: Vec3 = start.p;
+  course.rings.forEach((ring, i) => {
+    if (i > 0 && r.next() < 0.45) {
+      const mid = [(from[0] + ring[0]) / 2, FLIGHT.speeder.hover, (from[2] + ring[2]) / 2] as Vec3;
+      const side = (r.next() - 0.5) * 16;
+      hazards.push({ id: hazards.length, kind: kinds[Math.floor(r.next() * kinds.length)], p: [mid[0] - pz * side, mid[1], mid[2] + px * side], spent: false });
+    }
+    from = ring;
+  });
+  return { t: 0, limit: course.limit, racers, hazards, over: false, log: [] };
+}
+
+// The input a rival steers by: toward the next ring, flat out on the straights, off the throttle in a sharp turn
+function rivalInput(racer: Racer, course: FlightCourse): FlightInput {
+  const ring = course.rings[racer.next];
+  const { p, yaw } = racer.craft;
+  // Each rival keeps its own lane across the ring, so the field does not pile up on one line
+  const [dx, dz] = [ring[0] - p[0], ring[2] - p[2]];
+  const len = Math.hypot(dx, dz) || 1;
+  const lane = (racer.id - 2.5) * 4;
+  const target: Vec3 = [ring[0] - (dz / len) * lane, ring[1], ring[2] + (dx / len) * lane];
+  let diff = Math.atan2(target[2] - p[2], target[0] - p[0]) - yaw;
+  diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+  return { steer: { x: Math.max(-1, Math.min(1, diff * 2.5)), y: 0 }, throttle: Math.abs(diff) < 0.9 ? 1 : 0 };
+}
+
+// One tick of a race. The party's racer is steered by `input`; rivals by their own line. Pace caps a
+// rival's speed; a hazard slows, hurts or pushes a racer; racers that touch bump and lose speed and hull.
+export function stepRace(race: Race, course: FlightCourse, input: FlightInput, dt: number): Race {
+  if (race.over) return race;
+  const cfg = FLIGHT.speeder;
+  const t = race.t + dt;
+  let racers: Racer[] = race.racers.map((racer) => {
+    if (racer.wrecked || racer.finish !== null) return racer;
+    const drive = racer.party ? input : rivalInput(racer, course);
+    let craft = stepFlight(racer.craft, drive, dt, "speeder");
+    const cap = racer.party ? cfg.top : cfg.top * racer.pace;
+    if (craft.speed > cap) craft = { ...craft, speed: cap };
+    return { ...racer, craft };
+  });
+  // Hazards: a slick caps the speed; a pylon or a mine hurts and pushes the racer off it, when it first touches it
+  const hazards = race.hazards.map((h) => ({ ...h }));
+  const newLog: string[] = [];
+  racers = racers.map((racer) => {
+    if (racer.wrecked || racer.finish !== null) return racer;
+    let { craft, hull } = racer;
+    const touching: string[] = [];
+    for (const h of hazards) {
+      const st = HAZARD_STATS[h.kind];
+      const d = Math.hypot(craft.p[0] - h.p[0], craft.p[2] - h.p[2]);
+      if (d >= st.radius + RACER.radius) continue;
+      const key = `h${h.id}`;
+      touching.push(key);
+      if (h.kind === "slick") {
+        if (craft.speed > cfg.top * st.cap) craft = { ...craft, speed: cfg.top * st.cap };
+        continue;
+      }
+      if (racer.touching.includes(key) || (h.kind === "mine" && h.spent)) continue;
+      h.spent = h.kind === "mine" ? true : h.spent;
+      hull -= st.damage;
+      const k = (st.radius + RACER.radius) / Math.max(d, 0.01);
+      craft = { ...craft, p: [h.p[0] + (craft.p[0] - h.p[0]) * k, craft.p[1], h.p[2] + (craft.p[2] - h.p[2]) * k], speed: craft.speed * 0.4 };
+      newLog.push(`${racer.name} hits a ${h.kind}`);
+    }
+    return { ...racer, craft, hull, touching };
+  });
+  // Racers touching each other bump: they push apart, lose speed and take hull by the speed of the bump
+  for (let a = 0; a < racers.length; a++) {
+    for (let b = a + 1; b < racers.length; b++) {
+      const A = racers[a];
+      const B = racers[b];
+      if (A.wrecked || B.wrecked || A.finish !== null || B.finish !== null) continue;
+      const dx = B.craft.p[0] - A.craft.p[0];
+      const dz = B.craft.p[2] - A.craft.p[2];
+      const d = Math.hypot(dx, dz);
+      const key = `r${B.id}`;
+      // A contact counts again only once the pair has clearly parted (a few metres of hysteresis)
+      if (d >= RACER.radius * 2 + 3) {
+        racers[a] = { ...A, touching: A.touching.filter((k) => k !== key) };
+        continue;
+      }
+      if (d >= RACER.radius * 2 && !A.touching.includes(key)) continue;
+      const nx = d ? dx / d : 1;
+      const nz = d ? dz / d : 0;
+      const push = Math.max(0, RACER.radius * 2 - d) / 2 + 0.2;
+      const fresh = !A.touching.includes(key);
+      const impact = (A.craft.speed + B.craft.speed) / 2;
+      // A scrape at low speed costs nothing; a hit at speed costs hull by how fast it was
+      const damage = fresh && impact >= RACER.bumpSpeed ? RACER.bump + Math.floor(impact / RACER.bumpSpeed) : 0;
+      racers[a] = { ...A, hull: A.hull - damage, touching: fresh ? [...A.touching, key] : A.touching, craft: { ...A.craft, p: [A.craft.p[0] - nx * push, A.craft.p[1], A.craft.p[2] - nz * push], speed: A.craft.speed * 0.6 } };
+      racers[b] = { ...B, hull: B.hull - damage, craft: { ...B.craft, p: [B.craft.p[0] + nx * push, B.craft.p[1], B.craft.p[2] + nz * push], speed: B.craft.speed * 0.6 } };
+      if (fresh) newLog.push(damage ? `${A.name} and ${B.name} crash (${damage} hull each)` : `${A.name} and ${B.name} scrape`);
+    }
+  }
+  // Rings in order; the last one is the finish; a racer at 0 hull is out
+  racers = racers.map((racer) => {
+    if (racer.wrecked || racer.finish !== null) return racer;
+    let next = racer.next;
+    while (next < course.rings.length && inRing(racer.craft.p, course.rings[next], course.radius)) next++;
+    const finish = next >= course.rings.length ? t : null;
+    const wrecked = racer.hull <= 0;
+    if (wrecked) newLog.push(`${racer.name} is out`);
+    return { ...racer, next, finish, wrecked, hull: Math.max(0, racer.hull) };
+  });
+  const over = t >= race.limit || racers.every((racer) => racer.wrecked || racer.finish !== null);
+  return { t, limit: race.limit, racers, hazards, over, log: [...race.log, ...newLog].slice(-60) };
+}
+
+// Where each racer placed: finished ones by their time, the rest by the rings they took
+export function raceOrder(race: Race): Racer[] {
+  return [...race.racers].sort((a, b) => {
+    if (a.finish !== null || b.finish !== null) return a.finish === null ? 1 : b.finish === null ? -1 : a.finish - b.finish;
+    if (a.wrecked !== b.wrecked) return a.wrecked ? 1 : -1;
+    return b.next - a.next;
   });
 }
-// Where the party finishes: 1 plus the rivals who finished before its time (none when it did not finish)
-export function raceResult(rivals: Rival[], time: number | null): { place: number; credits: number; note: string } {
-  if (time === null) return { place: rivals.length + 1, credits: 0, note: "you did not finish the race (house rule)" };
-  const place = 1 + rivals.filter((rival) => rival.finish < time).length;
-  const credits = RACE_PRIZES[place - 1] ?? 0;
-  return { place, credits, note: `${place}${["st", "nd", "rd"][place - 1] ?? "th"} of ${rivals.length + 1}` };
+
+// What the party's race pays: the prize of its place (house rule), or nothing when it did not finish
+export function raceResult(race: Race): { place: number; credits: number; note: string } {
+  const order = raceOrder(race);
+  const place = order.findIndex((racer) => racer.party) + 1;
+  const mine = race.racers.find((racer) => racer.party)!;
+  if (mine.finish === null) return { place: race.racers.length, credits: 0, note: `you did not finish the race (${mine.wrecked ? "out with no hull" : "out of time"}; house rule)` };
+  return { place, credits: RACE_PRIZES[place - 1] ?? 0, note: `${place}${["st", "nd", "rd"][place - 1] ?? "th"} of ${race.racers.length}${race.log.length ? ", " + race.log.length + " incidents" : ""}` };
 }
 
 // ---- Dogfight (house rule): a ship in the space of a planet against foes that fly at it and fire
 export const DOGFIGHT = { hull: 10, foes: 4, range: 320, cone: 0.35, reload: 0.6, foeRange: 220, foeSpeed: 55, foeReload: 3.5, foeHit: 0.3, playerHit: 0.7, limit: 90, perFoe: 250, clearBonus: 500 };
 export interface Foe { id: number; p: Vec3; yaw: number; pitch: number; hull: number; reload: number }
-export interface Dogfight { craft: Craft; hull: number; foes: Foe[]; kills: number; t: number; reload: number; shots: number; hits: number; over: boolean }
+export interface Shot { from: Vec3; to: Vec3; by: "player" | "foe"; hit: boolean; at: number }
+export interface Dogfight { craft: Craft; hull: number; foes: Foe[]; kills: number; t: number; reload: number; shots: number; hits: number; over: boolean; events: Shot[] }
 export function dogfightStart(seed: number): Dogfight {
   const r = createRandom(seed);
   const foes: Foe[] = Array.from({ length: DOGFIGHT.foes }, (_, i) => {
@@ -8101,61 +8250,78 @@ export function dogfightStart(seed: number): Dogfight {
     const dist = 180 + r.next() * 80;
     return { id: i, p: [Math.cos(angle) * dist, (r.next() - 0.5) * 80, Math.sin(angle) * dist], yaw: angle + Math.PI, pitch: 0, hull: 1 + (i % 2), reload: r.next() * DOGFIGHT.foeReload };
   });
-  return { craft: { p: [0, 0, 0], yaw: 0, pitch: 0, speed: 0 }, hull: DOGFIGHT.hull, foes, kills: 0, t: 0, reload: 0, shots: 0, hits: 0, over: false };
+  return { craft: { p: [0, 0, 0], yaw: 0, pitch: 0, speed: 0 }, hull: DOGFIGHT.hull, foes, kills: 0, t: 0, reload: 0, shots: 0, hits: 0, over: false, events: [] };
 }
-// One tick: the craft flies (its speed is held at the cruise of a ship), the foes close and fire, and a
-// shot from the craft hits the nearest foe in its cone and range. `roll` is the dice of the fight.
+
+// The foe the craft's reticule is on: the nearest in its cone and range (null when none)
+export function targetOf(state: Dogfight): Foe | null {
+  const heading = headingOf(state.craft.yaw, state.craft.pitch);
+  let best: { foe: Foe; dist: number } | null = null;
+  for (const foe of state.foes) {
+    const d: Vec3 = [foe.p[0] - state.craft.p[0], foe.p[1] - state.craft.p[1], foe.p[2] - state.craft.p[2]];
+    const dist = Math.hypot(d[0], d[1], d[2]);
+    const cos = dist ? (d[0] * heading[0] + d[1] * heading[1] + d[2] * heading[2]) / dist : 0;
+    if (dist <= DOGFIGHT.range && cos >= 1 - DOGFIGHT.cone && (!best || dist < best.dist)) best = { foe, dist };
+  }
+  return best?.foe ?? null;
+}
+
+// One tick: the craft flies, the foes close and fire, and a shot from the craft hits the foe on its
+// reticule (see targetOf). `roll` is the dice of the fight. `events` are the shots of this tick.
 export function stepDogfight(state: Dogfight, input: FlightInput, fire: boolean, dt: number, roll: () => number): Dogfight {
-  if (state.over) return state;
+  if (state.over) return { ...state, events: [] };
   const craft = stepFlight(state.craft, input, dt, "ship");
   const t = state.t + dt;
   let reload = Math.max(0, state.reload - dt);
   let hull = state.hull;
-  let kills = state.kills;
   let shots = state.shots;
   let hits = state.hits;
+  const events: Shot[] = [];
   let foes: Foe[] = state.foes.map((foe) => {
     const d: Vec3 = [craft.p[0] - foe.p[0], craft.p[1] - foe.p[1], craft.p[2] - foe.p[2]];
     const dist = Math.hypot(d[0], d[1], d[2]) || 1;
     const yaw = Math.atan2(d[2], d[0]);
     const pitch = Math.asin(Math.max(-1, Math.min(1, d[1] / dist)));
     const h = headingOf(yaw, pitch);
-    const reloadNow = foe.reload - dt;
-    return { ...foe, yaw, pitch, p: [foe.p[0] + h[0] * DOGFIGHT.foeSpeed * dt, foe.p[1] + h[1] * DOGFIGHT.foeSpeed * dt, foe.p[2] + h[2] * DOGFIGHT.foeSpeed * dt] as Vec3, reload: reloadNow };
+    return { ...foe, yaw, pitch, p: [foe.p[0] + h[0] * DOGFIGHT.foeSpeed * dt, foe.p[1] + h[1] * DOGFIGHT.foeSpeed * dt, foe.p[2] + h[2] * DOGFIGHT.foeSpeed * dt] as Vec3, reload: foe.reload - dt };
   });
-  // The foes that are in range and loaded fire at the craft
+  // The foes in range and loaded fire at the craft
   foes = foes.map((foe) => {
     if (foe.reload > 0) return foe;
     const dist = Math.hypot(craft.p[0] - foe.p[0], craft.p[1] - foe.p[1], craft.p[2] - foe.p[2]);
     if (dist > DOGFIGHT.foeRange) return { ...foe, reload: 0 };
-    if (roll() < DOGFIGHT.foeHit) hull -= 1;
+    const hit = roll() < DOGFIGHT.foeHit;
+    if (hit) hull -= 1;
+    events.push({ from: foe.p, to: craft.p, by: "foe", hit, at: t });
     return { ...foe, reload: DOGFIGHT.foeReload };
   });
-  // The craft fires at the nearest foe in its cone and range
+  // The craft fires at the foe on its reticule
+  let shotFoe: number | null = null;
   if (fire && reload <= 0) {
     shots++;
     reload = DOGFIGHT.reload;
-    const heading = headingOf(craft.yaw, craft.pitch);
-    const target = foes
-      .map((foe) => {
-        const d: Vec3 = [foe.p[0] - craft.p[0], foe.p[1] - craft.p[1], foe.p[2] - craft.p[2]];
-        const dist = Math.hypot(d[0], d[1], d[2]);
-        const cos = dist ? (d[0] * heading[0] + d[1] * heading[1] + d[2] * heading[2]) / dist : 0;
-        return { foe, dist, cos };
-      })
-      .filter(({ dist, cos }) => dist <= DOGFIGHT.range && cos >= 1 - DOGFIGHT.cone)
-      .sort((a, b) => a.dist - b.dist)[0];
-    if (target && roll() < DOGFIGHT.playerHit) {
-      hits++;
-      foes = foes.map((foe) => (foe.id === target.foe.id ? { ...foe, hull: foe.hull - 1 } : foe));
+    const target = targetOf({ ...state, craft, foes });
+    const hit = !!target && roll() < DOGFIGHT.playerHit;
+    if (target) {
+      shotFoe = target.id;
+      if (hit) hits++;
     }
+    const end: Vec3 = target ? target.p : headingPoint(craft, DOGFIGHT.range);
+    events.push({ from: craft.p, to: end, by: "player", hit, at: t });
+  }
+  if (shotFoe !== null && events[events.length - 1]?.hit) {
+    foes = foes.map((foe) => (foe.id === shotFoe ? { ...foe, hull: foe.hull - 1 } : foe));
   }
   const before = foes.length;
   foes = foes.filter((foe) => foe.hull > 0);
-  kills += before - foes.length;
+  const kills = state.kills + before - foes.length;
   const over = hull <= 0 || foes.length === 0 || t >= DOGFIGHT.limit;
-  return { craft, hull: Math.max(0, hull), foes, kills, t, reload, shots, hits, over };
+  return { craft, hull: Math.max(0, hull), foes, kills, t, reload, shots, hits, over, events };
 }
+const headingPoint = (craft: Craft, distance: number): Vec3 => {
+  const h = headingOf(craft.yaw, craft.pitch);
+  return [craft.p[0] + h[0] * distance, craft.p[1] + h[1] * distance, craft.p[2] + h[2] * distance];
+};
 export function dogfightPayout(state: Dogfight): { credits: number; note: string } {
   const cleared = state.foes.length === 0 && state.hull > 0;
   const credits = state.kills * DOGFIGHT.perFoe + (cleared ? DOGFIGHT.clearBonus : 0);

@@ -2,7 +2,7 @@
 // generated world -> edit the world -> play: fight, loot, travel -> reload.
 // Usage: npm run e2e   (env: BASE, OUT, VIEW=phone, FORCE=0 to skip the second character, ONLY=<regex> for steps by name,
 // KEEP=1 to leave the created rows in the database). Screenshots of every step go to OUT.
-import { open, step, summary, text, api, pick, BASE } from "./lib.mjs";
+import { open, step, summary, text, api, pick, BASE, OUT } from "./lib.mjs";
 
 const ctx = await open();
 const { page, browser } = ctx;
@@ -1317,7 +1317,10 @@ if (process.env.FORCE !== "0") {
     for (const g of ["Side quests", "Fighting games", "Racing games", "Flying games", "Everyday downtime", "Speeder race", "Dogfight"]) if (!menu.includes(g)) throw new Error("no " + g + " in the menu");
     await page.getByTestId("downtime-taxi-run").click();
     await page.getByTestId("flight-start-taxi-run").click();
-    await page.getByTestId("flight").waitFor({ timeout: 30000 });
+    await page.getByTestId("minigame-page").waitFor({ timeout: 30000 });
+    await page.getByTestId("countdown").waitFor({ timeout: 5000 });
+    await page.getByTestId("minigame-run").waitFor({ timeout: 15000 });
+    await page.getByTestId("countdown").waitFor({ state: "detached", timeout: 15000 });
     // Steer right with the pad, then boost for a few seconds
     const box = await page.getByTestId("flight-pad").boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -1333,8 +1336,8 @@ if (process.env.FORCE !== "0") {
     const hud = await page.getByTestId("flight-hud").innerText();
     if (!/Taxi run/.test(hud)) throw new Error("no flight hud: " + hud);
     const shown = await page.getByTestId("flight-hud").innerText();
-    await page.getByTestId("flight-over").waitFor({ timeout: 150000 }).catch((e) => { throw new Error("no end of the run; hud: " + shown.replace(/\s+/g, " ") + " " + e.message.split("\n")[0]); });
-    await page.getByTestId("flight-land").click();
+    await page.getByTestId("minigame-over").waitFor({ timeout: 150000 }).catch((e) => { throw new Error("no end of the run; hud: " + shown.replace(/\s+/g, " ") + " " + e.message.split("\n")[0]); });
+    await page.getByTestId("minigame-land").click();
     await page.getByTestId("downtime-log").waitFor();
     await sleep(1500);
     const log = await page.getByTestId("downtime-log").innerText();
@@ -1353,22 +1356,53 @@ if (process.env.FORCE !== "0") {
     await page.getByRole("tab", { name: "Downtime" }).click();
     await page.getByTestId("downtime-dogfight").click();
     await page.getByTestId("flight-start-dogfight").click();
-    await page.getByTestId("dogfight").waitFor({ timeout: 30000 });
+    await page.getByTestId("minigame-dogfight").waitFor({ timeout: 30000 });
+    await page.getByTestId("countdown").waitFor({ timeout: 5000 });
     await page.getByTestId("flight-fire").boundingBox().then(async (b) => {
       await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
       await page.mouse.down();
-      await sleep(20000);
+      await sleep(8000);
+      await page.screenshot({ path: `${OUT}/dogfight-running.png` }).catch((e) => console.log("shot failed", e.message.slice(0, 200)));
+      await sleep(12000);
       await page.mouse.up();
     });
-    await page.getByTestId("dogfight-over").waitFor({ timeout: 150000 }).catch(async (e) => {
+    await page.getByTestId("minigame-over").waitFor({ timeout: 150000 }).catch(async (e) => {
       throw new Error("no end of the fight; hud: " + (await page.getByTestId("dogfight-hud").innerText()).replace(/\s+/g, " ") + " " + e.message.split("\n")[0]);
     });
-    await page.getByTestId("dogfight-land").click();
+    await page.getByTestId("minigame-land").click();
     await page.getByTestId("downtime-log").waitFor();
     await sleep(1500);
     const log = await page.getByTestId("downtime-log").innerText();
     if (!/Dogfight:.*foes down/.test(log)) throw new Error("no dogfight in the log: " + log.replace(/\s+/g, " "));
     return log.split("\n").find((l) => /Dogfight/.test(l))?.slice(0, 120);
+  });
+
+  await step(ctx, "flying games: a speeder race from a grid, against four rivals, with hazards; the race is run to its end and placed", async () => {
+    const rc = await newChar({ credits: 1000, equipment: ["Blaster pistol"] });
+    const rcc = await newCamp(rc, 7, async () => {});
+    const parkedAt = rcc.world.areas[rcc.start.parentId]?.parentId ?? rcc.world.startId;
+    await api("PATCH", `/api/campaigns/${rcc.id}`, { vehicles: [{ id: "v-race", name: "Landspeeder", model: "Landspeeder", mph: 220, value: 10000, status: "parked", owner: GEAR, seats: 2, areaId: parkedAt }] });
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await page.getByRole("tab", { name: "Downtime" }).click();
+    await page.getByTestId("downtime-speeder-race").click();
+    await page.getByTestId("flight-start-speeder-race").click();
+    await page.getByTestId("minigame-race").waitFor({ timeout: 30000 });
+    await page.getByTestId("countdown").waitFor({ timeout: 5000 });
+    await sleep(2000);
+    await page.screenshot({ path: `${OUT}/race-countdown.png` }).catch(() => {});
+    await page.getByTestId("countdown").waitFor({ state: "detached", timeout: 15000 });
+    await sleep(6000);
+    await page.screenshot({ path: `${OUT}/race-running.png` }).catch(() => {});
+    await page.getByTestId("minigame-over").waitFor({ timeout: 150000 }).catch(async (e) => {
+      throw new Error("the race did not end; hud: " + (await page.getByTestId("race-hud").innerText()).replace(/\s+/g, " ") + " " + e.message.split("\n")[0]);
+    });
+    await page.getByTestId("minigame-land").click();
+    await page.getByTestId("downtime-log").waitFor();
+    await sleep(1500);
+    const log = await page.getByTestId("downtime-log").innerText();
+    if (!/Speeder race:/.test(log)) throw new Error("no race in the log: " + log.replace(/\s+/g, " "));
+    return log.split("\n").find((l) => /Speeder race/.test(l))?.slice(0, 120);
   });
 
   await step(ctx, "starship combat: the party's ship engages a hostile ship in orbit on the 3D map; weapons, a helm action, a move, the enemy's turns, and what comes of it is kept", async () => {

@@ -374,7 +374,7 @@ function Berth({ w, h, name }: { w: number; h: number; name: string }) {
 }
 
 // A ship on the floor, built on 6 by 4 squares with the bow to +x and stretched to its footprint
-function ShipModel({ ship, w, h }: { ship: Pick<Ship, "size" | "role" | "status">; w: number; h: number }) {
+export function ShipModel({ ship, w, h }: { ship: Pick<Ship, "size" | "role" | "status">; w: number; h: number }) {
   const role = `${ship.role} ${ship.size}`.toLowerCase();
   const wrecked = ship.status === "wrecked";
   const hull = wrecked ? "#5a554f" : "#aeb6bd";
@@ -1254,7 +1254,7 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
 // they are on the way and eased there between the clock's minutes. Not tappable.
 // A speeder standing on the ground, hovering a hand's breadth up: a bike, a landspeeder with its
 // canopy, or an airspeeder with its fins. A wreck lies tilted and dark, smoking.
-function SpeederModel({ model, wrecked }: { model: string; wrecked?: boolean }) {
+export function SpeederModel({ model, wrecked }: { model: string; wrecked?: boolean }) {
   const kind = /bike/i.test(model) ? "bike" : /air/i.test(model) ? "air" : "land";
   const hull = wrecked ? "#4b4742" : kind === "bike" ? "#c8663a" : kind === "air" ? "#4a7bd0" : "#d0a23a";
   const dark = wrecked ? "#2b2926" : "#2b2f36";
