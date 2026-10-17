@@ -2274,7 +2274,7 @@ export default function GameBoard() {
       creature: "humanoid",
       armorClass: other.armorClass ?? 10,
       maxHp: other.maxHp,
-      hp: Math.max(1, other.currentHp ?? other.maxHp),
+      hp: (other.currentHp ?? 0) > 0 ? Math.min(other.maxHp, other.currentHp) : other.maxHp,
       attack: best ? { name: best.name, bonus: best.attackBonus, damage: `${best.dice}${best.damageBonus ? (best.damageBonus > 0 ? "+" : "") + best.damageBonus : ""}`, damageType: best.damageType, ranged: best.ranged, range: best.range?.[0] ?? best.reach, long: best.range?.[1] } : { name: "Unarmed strike", bonus: 2, damage: "1d4", ranged: false, range: 5 },
       speed: Number(other.speed) || 30,
       saves: Object.fromEntries(Object.entries(other.abilityScores ?? {}).map(([a, v]) => [a, modifier(Number(v))])),
@@ -3329,6 +3329,8 @@ export default function GameBoard() {
 
   // What an item can do, under its row in the inventory
   const [using, setUsing] = useState<string | null>(null);
+  // Which kind of thing the Inventory tab lists
+  const [invTab, setInvTab] = useState<"all" | "weapons" | "armor" | "gear" | "ships" | "speeders">("all");
   // The plain item whose modification slots are open, and the droid companion being customized
   const [modding, setModding] = useState<string | null>(null);
   const [customizing, setCustomizing] = useState<string | null>(null);
@@ -5080,7 +5082,34 @@ export default function GameBoard() {
                     {sideEffectsOf((play.augments ?? []).length).map((t) => <p key={t} className="text-amber-300">Body: {t}.</p>)}
                   </div>
                 )}
-                {(() => {
+                <div className="flex flex-wrap gap-1 mb-2" data-testid="inventory-tabs">
+                  {([["all", "All"], ["weapons", "Weapons"], ["armor", "Armor"], ["gear", "Gear"], ["ships", `Ships (${ships.length})`], ["speeders", `Speeders (${vehicles.length})`]] as const).map(([key, label]) => (
+                    <Button key={key} size="sm" variant={invTab === key ? "default" : "outline"} className="h-6 px-2 text-xs" data-testid={`inventory-tab-${key}`} onClick={() => setInvTab(key)}>
+                      {label}
+                    </Button>
+                  ))}
+                </div>
+                {invTab === "ships" && (
+                  <div className="space-y-1 text-sm" data-testid="inventory-ships">
+                    {ships.map((sh) => (
+                      <p key={sh.id}>
+                        {sh.name} <span className="text-xs text-gray-400">{sh.size} {sh.role}, hull {sh.hull ?? "undamaged"}, fuel {sh.fuel}, {world && here && sh.areaId === berthOf(world, here.id) ? "berthed here" : `berthed at ${world?.areas[sh.areaId]?.name ?? "a port"}`}</span>
+                      </p>
+                    ))}
+                    {ships.length === 0 && <p className="text-gray-400">No ships acquired yet.</p>}
+                  </div>
+                )}
+                {invTab === "speeders" && (
+                  <div className="space-y-1 text-sm" data-testid="inventory-speeders">
+                    {vehicles.map((v) => (
+                      <p key={v.id}>
+                        {v.name} <span className="text-xs text-gray-400">{v.mph} mph, seats {v.seats}, {v.status === "wrecked" ? "wrecked" : world && here && v.areaId === berthOf(world, here.id) ? "parked here" : `parked at ${world?.areas[v.areaId]?.name ?? "a settlement"}`}</span>
+                      </p>
+                    ))}
+                    {vehicles.length === 0 && <p className="text-gray-400">No speeders acquired yet.</p>}
+                  </div>
+                )}
+                {invTab !== "ships" && invTab !== "speeders" && (() => {
                   const worn = equippedNow(character);
                   const counts = new Map<string, number>();
                   for (const item of character.equipment ?? []) counts.set(String(item), (counts.get(String(item)) ?? 0) + 1);
@@ -5089,6 +5118,10 @@ export default function GameBoard() {
                   return (
                     <div className="space-y-1" data-testid="inventory-list">
                       {[...counts.entries()]
+                        .filter(([name]) => {
+                          const k = itemKind(name, character);
+                          return invTab === "all" || (invTab === "weapons" ? k === "weapon" : invTab === "armor" ? k === "armor" || k === "shield" : k === "gear");
+                        })
                         .sort(([a], [b]) => rank[itemKind(a, character)] - rank[itemKind(b, character)] || a.localeCompare(b))
                         .map(([name, count]) => {
                           const kind = itemKind(name, character);

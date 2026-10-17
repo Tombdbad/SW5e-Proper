@@ -50,6 +50,12 @@ export default function CampaignView() {
         // Create new campaign. The generator hands over the world it showed; anything else
         // that creates a campaign gets a world generated here.
         const { worldOptions, ...fields } = campaignData;
+        // A new campaign starts with the character on their feet: a sheet left at 0 hit points
+        // (and not dead) is restored to full
+        if (character && character.currentHp < 1 && !(character.conditions ?? []).includes('Dead')) {
+          await apiRequest('PATCH', `/api/characters/${character.id}`, { currentHp: character.maxHp });
+          queryClient.invalidateQueries({ queryKey: ['/api/characters'] });
+        }
         if (fields.galaxyMap) return apiRequest('POST', '/api/campaigns', fields);
         const generated = await (await apiRequest('POST', '/api/world/generate', { options: worldOptions ?? {} })).json();
         return apiRequest('POST', '/api/campaigns', {
