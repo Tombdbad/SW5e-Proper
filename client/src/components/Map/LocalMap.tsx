@@ -636,30 +636,108 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], walls = tru
 }
 
 // Walks over open squares, round what stands in the way and never across a corner, from one
-// square to the nearest of the goals. The squares to step on, without the first; null if no way.
-function route(open: (x: number, y: number) => boolean, from: { x: number; y: number }, goals: { x: number; y: number }[]): { x: number; y: number }[] | null {
+// square to the nearest of the goals (A*, a diagonal step costing more than a straight one, so the
+// way is the short one and not a zigzag). With `smooth` the path is then pulled straight: a stretch
+// is walked in a line wherever a body a little under a square wide fits between open squares all
+// along it (never over a square in `keep`, which has to be stepped on). The squares to step on,
+// without the first; null if no way.
+function route(open: (x: number, y: number) => boolean, from: { x: number; y: number }, goals: { x: number; y: number }[], smooth?: { keep?: Set<string> }): { x: number; y: number }[] | null {
   const key = (x: number, y: number) => `${x},${y}`;
   const wanted = new Set(goals.map((g) => key(g.x, g.y)));
-  const came = new Map<string, string | null>([[key(from.x, from.y), null]]);
-  const queue = [from];
-  while (queue.length) {
-    const at = queue.shift()!;
-    if (wanted.has(key(at.x, at.y))) {
-      const steps: { x: number; y: number }[] = [];
-      for (let k: string | null = key(at.x, at.y); k && came.get(k); k = came.get(k)!) steps.unshift({ x: Number(k.split(",")[0]), y: Number(k.split(",")[1]) });
-      return steps;
+  if (!goals.length) return null;
+  const heuristic = (x: number, y: number) => {
+    let best = Infinity;
+    for (const g of goals) {
+      const [dx, dy] = [Math.abs(g.x - x), Math.abs(g.y - y)];
+      best = Math.min(best, Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy));
     }
-    if (came.size > 4000) break;
+    return best;
+  };
+  const cost = new Map<string, number>([[key(from.x, from.y), 0]]);
+  const came = new Map<string, string | null>([[key(from.x, from.y), null]]);
+  const closed = new Set<string>();
+  const heap: { f: number; g: number; x: number; y: number }[] = [{ f: heuristic(from.x, from.y), g: 0, x: from.x, y: from.y }];
+  const push = (n: { f: number; g: number; x: number; y: number }) => {
+    heap.push(n);
+    for (let i = heap.length - 1; i > 0;) {
+      const up = (i - 1) >> 1;
+      if (heap[up].f <= heap[i].f) break;
+      [heap[up], heap[i]] = [heap[i], heap[up]];
+      i = up;
+    }
+  };
+  const pop = () => {
+    const top = heap[0];
+    const last = heap.pop()!;
+    if (heap.length) {
+      heap[0] = last;
+      for (let i = 0; ;) {
+        const [l, r] = [2 * i + 1, 2 * i + 2];
+        let m = i;
+        if (l < heap.length && heap[l].f < heap[m].f) m = l;
+        if (r < heap.length && heap[r].f < heap[m].f) m = r;
+        if (m === i) break;
+        [heap[m], heap[i]] = [heap[i], heap[m]];
+        i = m;
+      }
+    }
+    return top;
+  };
+  while (heap.length) {
+    const at = pop();
+    const k = key(at.x, at.y);
+    if (closed.has(k)) continue;
+    closed.add(k);
+    if (wanted.has(k)) {
+      const steps: { x: number; y: number }[] = [];
+      for (let q: string | null = k; q && came.get(q); q = came.get(q)!) steps.unshift({ x: Number(q.split(",")[0]), y: Number(q.split(",")[1]) });
+      return smooth ? straighten(open, from, steps, smooth.keep) : steps;
+    }
+    if (closed.size > 6000) break;
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       const x = at.x + dx;
       const y = at.y + dy;
-      if ((!dx && !dy) || came.has(key(x, y)) || !open(x, y)) continue;
+      if ((!dx && !dy) || closed.has(key(x, y)) || !open(x, y)) continue;
       if (dx && dy && (!open(at.x + dx, at.y) || !open(at.x, at.y + dy))) continue;
-      came.set(key(x, y), key(at.x, at.y));
-      queue.push({ x, y });
+      const g = at.g + (dx && dy ? Math.SQRT2 : 1);
+      if (g >= (cost.get(key(x, y)) ?? Infinity)) continue;
+      cost.set(key(x, y), g);
+      came.set(key(x, y), k);
+      push({ f: g + heuristic(x, y), g, x, y });
     }
   }
   return null;
+}
+
+// A body of this radius, in squares, walks the straight stretches of a path
+const BODY = 0.34;
+// Whether a body can walk the line between two squares: every sample along it, and the four
+// corners of the body about it, are on open squares
+function clear(open: (x: number, y: number) => boolean, a: { x: number; y: number }, b: { x: number; y: number }, keep?: Set<string>): boolean {
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  const samples = Math.max(1, Math.ceil(length / 0.1));
+  for (let i = 0; i <= samples; i++) {
+    const px = a.x + ((b.x - a.x) * i) / samples;
+    const py = a.y + ((b.y - a.y) * i) / samples;
+    if (keep && i > 0 && i < samples && keep.has(`${Math.round(px)},${Math.round(py)}`)) return false;
+    for (const ox of [-BODY, BODY]) for (const oy of [-BODY, BODY]) if (!open(Math.round(px + ox), Math.round(py + oy))) return false;
+  }
+  return true;
+}
+
+// Pulls a path of squares straight: from each stop, on to the farthest square that can be walked
+// to in a line. A step to the next square is always kept, so that a path the squares allow is
+// never lost.
+function straighten(open: (x: number, y: number) => boolean, from: { x: number; y: number }, steps: { x: number; y: number }[], keep?: Set<string>): { x: number; y: number }[] {
+  const points = [from, ...steps];
+  const out: { x: number; y: number }[] = [];
+  for (let i = 0; i < points.length - 1;) {
+    let j = i + 1;
+    for (let k = points.length - 1; k > i + 1; k--) if (clear(open, points[i], points[k], keep)) { j = k; break; }
+    out.push(points[j]);
+    i = j;
+  }
+  return out;
 }
 
 // The open square nearest to where someone should stand
@@ -1778,7 +1856,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const walkTo = (goals: { x: number; y: number }[], then?: (squares: number) => void) => {
     if (!active) return;
     const from = { x: Math.round(feet.current.x), y: Math.round(feet.current.y) };
-    const path = route(open, from, goals.filter((g) => open(g.x, g.y) || (g.x === from.x && g.y === from.y)));
+    // Loose flagstones have to be stepped on to be felt, so the path is not pulled straight over them
+    const traps = inside ? new Set(trapsIn(inside, false).map((t) => `${inside.layout!.x + t.x},${inside.layout!.y + t.y}`)) : undefined;
+    const path = route(open, from, goals.filter((g) => open(g.x, g.y) || (g.x === from.x && g.y === from.y)), { keep: traps });
     if (!path) onAct?.({ type: "note", text: "There is no way through to there." });
     else walk.current = { path, then, total: path.length };
   };
@@ -1911,7 +1991,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           const l = room.layout!;
           // Inside a building the others of its district are not drawn: nobody looks at them from
           // there, and a district is a lot to draw (on a roof, on a catwalk or in the street it is all in sight)
-          if (opened && !openAir(opened) && districtPlan && room.parentId !== opened.parentId) return null;
+          // (from a roof, a catwalk or a mezzanine the street and the buildings round it are in sight, so they stay)
+          if (opened && !openAir(opened) && formOf(opened) !== "gallery" && districtPlan && room.parentId !== opened.parentId) return null;
           if (room === opened) {
             return (
               <group key={room.id} position={[l.x, levelY(l), l.y]}>
@@ -1957,7 +2038,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           const form = formOf(room);
           // A room looked down into from its gallery is seen low, so that the gallery shows over it
           const lookedFrom = opened && formOf(opened) === "gallery" && opened.tags.includes(`host:${room.id}`);
-          const tall = lookedFrom ? 0.8 : opened ? 1 : 2;
+          // (a room with the opened one standing right on it keeps its full height, so that there is no gap under the floor)
+          const carries = !!opened?.layout && sameFootprint(l, opened.layout) && levelY(opened.layout) >= levelY(l) + LEVEL_H - 0.01;
+          const tall = lookedFrom ? 0.8 : opened && !carries ? 1 : 2;
           const body = tall + rise(l);
           const lift = levelY(l);
           const roof = hue(room.id);
@@ -2047,6 +2130,21 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   })}
                   <Box at={[l.width / 2, 0.45, l.height - 0.04]} size={[l.width, 0.04, 0.05]} color="#c8ccd2" />
                   {[0, 1, 2, 3].map((i) => <Box key={i} at={[0.1 + (i * (l.width - 0.2)) / 3, 0.25, l.height - 0.04]} size={[0.05, 0.5, 0.05]} color="#c8ccd2" />)}
+                </group>
+              ) : lookedFrom ? (
+                // The room under a mezzanine is looked down into, not boxed in: its floor, low walls and what is in it
+                <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
+                  <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} ships={room.ships} wayColor={wayColor} wayLabel={() => undefined} />
+                  {!duel && l.assets.filter((a) => a.kind === "npc").map((a) => {
+                    const o = room.occupants.find((x) => x.id === a.ref);
+                    return o ? (
+                      <group key={a.id} position={[a.x + 0.5, 0, a.y + 0.5]}>
+                        <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} />
+                        <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS[o.disposition]}>{o.name}</Label>
+                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} />
+                      </group>
+                    ) : null;
+                  })}
                 </group>
               ) : l.roof ? (
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
