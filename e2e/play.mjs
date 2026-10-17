@@ -1314,9 +1314,9 @@ if (process.env.FORCE !== "0") {
     await page.getByRole("tab", { name: "Downtime" }).click();
     await page.getByTestId("downtime-menu").waitFor();
     const menu = await page.getByTestId("downtime-menu").textContent();
-    for (const g of ["Side quests", "Fighting games", "Racing games", "Flying games", "Everyday downtime"]) if (!menu.includes(g)) throw new Error("no group " + g);
+    for (const g of ["Side quests", "Fighting games", "Racing games", "Flying games", "Everyday downtime", "Speeder race", "Dogfight"]) if (!menu.includes(g)) throw new Error("no " + g + " in the menu");
     await page.getByTestId("downtime-taxi-run").click();
-    await page.getByTestId("flight-start-speeder").click();
+    await page.getByTestId("flight-start-taxi-run").click();
     await page.getByTestId("flight").waitFor({ timeout: 30000 });
     // Steer right with the pad, then boost for a few seconds
     const box = await page.getByTestId("flight-pad").boundingBox();
@@ -1342,6 +1342,33 @@ if (process.env.FORCE !== "0") {
     const after = (await getChar(fl.id)).credits;
     if (!(after >= before)) throw new Error(`credits fell: ${before} -> ${after}`);
     return `${log.split("\n").find((l) => /Taxi run/.test(l))?.slice(0, 110)}; credits ${before} -> ${after}`;
+  });
+
+  await step(ctx, "flying games: a dogfight in the space of a planet: the ship fires on the foes and flies to the end of the fight, which is paid", async () => {
+    const dg = await newChar({ credits: 1000, equipment: ["Blaster pistol"] });
+    const dgc = await newCamp(dg, 7, async () => {});
+    await api("PATCH", `/api/campaigns/${dgc.id}`, { starships: [{ id: "s-dog", name: "Wing", size: "Small", role: "fighter", tier: 1, equipment: [], hyperdriveClass: "1", owner: GEAR, fuel: 6, areaId: dgc.world.areas[dgc.start.parentId]?.parentId ?? dgc.world.startId, value: 50000, hull: undefined, crew: {} }] });
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await page.getByRole("tab", { name: "Downtime" }).click();
+    await page.getByTestId("downtime-dogfight").click();
+    await page.getByTestId("flight-start-dogfight").click();
+    await page.getByTestId("dogfight").waitFor({ timeout: 30000 });
+    await page.getByTestId("flight-fire").boundingBox().then(async (b) => {
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+      await page.mouse.down();
+      await sleep(20000);
+      await page.mouse.up();
+    });
+    await page.getByTestId("dogfight-over").waitFor({ timeout: 150000 }).catch(async (e) => {
+      throw new Error("no end of the fight; hud: " + (await page.getByTestId("dogfight-hud").innerText()).replace(/\s+/g, " ") + " " + e.message.split("\n")[0]);
+    });
+    await page.getByTestId("dogfight-land").click();
+    await page.getByTestId("downtime-log").waitFor();
+    await sleep(1500);
+    const log = await page.getByTestId("downtime-log").innerText();
+    if (!/Dogfight:.*foes down/.test(log)) throw new Error("no dogfight in the log: " + log.replace(/\s+/g, " "));
+    return log.split("\n").find((l) => /Dogfight/.test(l))?.slice(0, 120);
   });
 
   await step(ctx, "starship combat: the party's ship engages a hostile ship in orbit on the 3D map; weapons, a helm action, a move, the enemy's turns, and what comes of it is kept", async () => {

@@ -4802,6 +4802,8 @@ export interface Ride {
   label: string;
   minutes: number;
   fare: number;
+  // A party vehicle flown by the party itself, in 3D, between settlements (see pilotMinutes)
+  pilot?: boolean;
   // The party vehicle or mount used
   vehicleId?: string;
   mountId?: string;
@@ -7936,50 +7938,59 @@ export function withCacheAsset(area: Pick<Area, "id" | "layout">, cache: LootCac
 }
 
 // ---------------------------------------------------------------------------------------------
-// Flying games (HOUSE RULES; the books give no taxi, delivery or flight minigame). A taxi run flies a
-// landspeeder through the rings of a course over the settlement's ground; a delivery run flies a ship
-// through the rings of a course in the space of its planet. The party steers with a drag pad (yaw,
-// and pitch for a ship) and a throttle. The rings are taken in order, each when the craft passes
-// within its radius; the run ends when every ring is taken or the time runs out.
+// Flying (HOUSE RULES; the books give no taxi, delivery, race or dogfight minigame, and no pilot's
+// route between settlements). One flight model serves them all: a landspeeder over the ground, an
+// airspeeder and a ship in the air or space. The party steers with a drag pad (yaw, and pitch where
+// the craft can climb) and a throttle. A run takes rings in order, each when the craft passes within
+// its radius. A race is laps of the same course against rivals; a dogfight is against foes that fly
+// at the craft and fire on it; a pilot's route between two settlements is a run whose time it sets.
 // ---------------------------------------------------------------------------------------------
 
-export type FlightMode = "speeder" | "ship";
+export type FlightMode = "speeder" | "airspeeder" | "ship";
 export type Vec3 = [number, number, number];
-export interface FlightCourse { mode: FlightMode; rings: Vec3[]; radius: number; limit: number }
+export interface FlightCourse { mode: FlightMode; rings: Vec3[]; radius: number; limit: number; laps: number }
 export interface Craft { p: Vec3; yaw: number; pitch: number; speed: number }
 export interface FlightInput { steer: { x: number; y: number }; throttle: -1 | 0 | 1 }
 
-// Speeds in metres a second, and rings and the course's spread in metres. A taxi run flies slower than a
+// Speeds in metres a second, rings and the course's spread in metres. A taxi run flies slower than a
 // landspeeder's 220 mph over a town; a ship's runs are near its real speed in the space of a planet.
-const FLIGHT: Record<FlightMode, { top: number; accel: number; turn: number; radius: number; count: number; spread: number; hover: number; perRing: number; bonus: number }> = {
-  speeder: { top: 40, accel: 25, turn: 1.6, radius: 7, count: 5, spread: 120, hover: 3, perRing: 60, bonus: 150 },
-  ship: { top: 80, accel: 40, turn: 2, radius: 14, count: 6, spread: 260, hover: 0, perRing: 200, bonus: 600 },
+interface FlightConfig { top: number; accel: number; turn: number; radius: number; count: number; spread: number; hover: number; perRing: number; bonus: number; pitch: boolean }
+const FLIGHT: Record<FlightMode, FlightConfig> = {
+  speeder: { top: 40, accel: 25, turn: 1.6, radius: 7, count: 5, spread: 120, hover: 3, perRing: 60, bonus: 150, pitch: false },
+  airspeeder: { top: 70, accel: 35, turn: 1.8, radius: 9, count: 6, spread: 200, hover: 12, perRing: 90, bonus: 300, pitch: true },
+  ship: { top: 80, accel: 40, turn: 2, radius: 14, count: 6, spread: 260, hover: 0, perRing: 200, bonus: 600, pitch: true },
 };
 const PITCH_LIMIT = 1.2;
 
-// The course of a run: rings on a loop over the ground (a taxi run) or scattered through the space of a
-// planet (a delivery run), taken in order. The time allowed is the flight at top speed, with 80% to spare.
-export function flightCourse(seed: number, mode: FlightMode): FlightCourse {
+// The course of a run: rings on a loop over the ground, or scattered through the air or space, taken in
+// order. A race repeats the loop for its laps. The time allowed is the flight at top speed with 80% to spare.
+export function flightCourse(seed: number, mode: FlightMode, options: { laps?: number; count?: number } = {}): FlightCourse {
   const cfg = FLIGHT[mode];
+  const laps = Math.max(1, options.laps ?? 1);
+  const count = options.count ?? cfg.count;
   const r = createRandom(seed);
-  const rings: Vec3[] = Array.from({ length: cfg.count }, (_, i) => {
-    if (mode === "speeder") {
-      const angle = (i / cfg.count) * Math.PI * 2 + (r.next() - 0.5) * 0.4;
+  const loop: Vec3[] = Array.from({ length: count }, (_, i) => {
+    if (mode !== "ship") {
+      const angle = (i / count) * Math.PI * 2 + (r.next() - 0.5) * 0.4;
       const dist = cfg.spread * (0.6 + r.next() * 0.4);
-      return [Math.cos(angle) * dist, cfg.hover, Math.sin(angle) * dist];
+      const y = mode === "airspeeder" ? cfg.hover + (r.next() - 0.5) * cfg.spread * 0.3 : cfg.hover;
+      return [Math.cos(angle) * dist, y, Math.sin(angle) * dist];
     }
     const angle = r.next() * Math.PI * 2;
     const dist = cfg.spread * (0.5 + r.next() * 0.5);
     return [Math.cos(angle) * dist, (r.next() - 0.5) * cfg.spread * 0.6, Math.sin(angle) * dist];
   });
+  const rings = Array.from({ length: laps }, () => loop).flat();
   let length = 0;
   let from: Vec3 = [0, cfg.hover, 0];
   for (const ring of rings) {
     length += Math.hypot(ring[0] - from[0], ring[1] - from[1], ring[2] - from[2]);
     from = ring;
   }
-  return { mode, rings, radius: cfg.radius, limit: Math.ceil((length / cfg.top) * 1.8) };
+  return { mode, rings, radius: cfg.radius, limit: Math.ceil((length / cfg.top) * 1.8), laps };
 }
+
+export const flightTop = (mode: FlightMode): number => FLIGHT[mode].top;
 
 export const flightStart = (course: FlightCourse): Craft => {
   const cfg = FLIGHT[course.mode];
@@ -7988,23 +7999,53 @@ export const flightStart = (course: FlightCourse): Craft => {
   return { p: [0, cfg.hover, 0], yaw, pitch: 0, speed: 0 };
 };
 
-// One tick of flight. A speeder stays on its hover height; a throttle at +1 goes to top speed, at -1
+// The unit vector a craft is heading in
+export const headingOf = (yaw: number, pitch: number): Vec3 => {
+  const cp = Math.cos(pitch);
+  return [cp * Math.cos(yaw), Math.sin(pitch), cp * Math.sin(yaw)];
+};
+
+// One tick of flight. A landspeeder stays on its hover height; a throttle at +1 goes to top speed, at -1
 // brakes to a stop, and at 0 drifts to a cruise of 40% of top speed.
 export function stepFlight(craft: Craft, input: FlightInput, dt: number, mode: FlightMode): Craft {
   const cfg = FLIGHT[mode];
   const yaw = craft.yaw + input.steer.x * cfg.turn * dt;
-  const pitch = mode === "ship" ? Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, craft.pitch - input.steer.y * cfg.turn * dt)) : 0;
+  const pitch = cfg.pitch ? Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, craft.pitch - input.steer.y * cfg.turn * dt)) : 0;
   const target = input.throttle > 0 ? cfg.top : input.throttle < 0 ? 0 : cfg.top * 0.4;
   const step = cfg.accel * dt;
   const speed = craft.speed < target ? Math.min(target, craft.speed + step) : Math.max(target, craft.speed - step);
-  const [cp, sp] = [Math.cos(pitch), Math.sin(pitch)];
-  const heading: Vec3 = [cp * Math.cos(yaw), sp, cp * Math.sin(yaw)];
-  const p: Vec3 = [craft.p[0] + heading[0] * speed * dt, mode === "speeder" ? cfg.hover : craft.p[1] + heading[1] * speed * dt, craft.p[2] + heading[2] * speed * dt];
+  const heading = headingOf(yaw, pitch);
+  const p: Vec3 = [craft.p[0] + heading[0] * speed * dt, cfg.pitch ? craft.p[1] + heading[1] * speed * dt : cfg.hover, craft.p[2] + heading[2] * speed * dt];
   return { p, yaw, pitch, speed };
 }
 
 // Whether the craft is within a ring's radius
 export const inRing = (p: Vec3, ring: Vec3, radius: number) => Math.hypot(p[0] - ring[0], p[1] - ring[1], p[2] - ring[2]) <= radius;
+
+// The point a distance along the course's path (start, then the rings in order), held at its end
+export function alongCourse(course: FlightCourse, distance: number): Vec3 {
+  let at: Vec3 = flightStart(course).p;
+  let left = Math.max(0, distance);
+  for (const ring of course.rings) {
+    const len = Math.hypot(ring[0] - at[0], ring[1] - at[1], ring[2] - at[2]);
+    if (left <= len) {
+      const f = len ? left / len : 0;
+      return [at[0] + (ring[0] - at[0]) * f, at[1] + (ring[1] - at[1]) * f, at[2] + (ring[2] - at[2]) * f];
+    }
+    left -= len;
+    at = ring;
+  }
+  return at;
+}
+export function courseLength(course: FlightCourse): number {
+  let length = 0;
+  let at: Vec3 = flightStart(course).p;
+  for (const ring of course.rings) {
+    length += Math.hypot(ring[0] - at[0], ring[1] - at[1], ring[2] - at[2]);
+    at = ring;
+  }
+  return length;
+}
 
 // What a run pays (house rule): per ring taken, a bonus for taking them all, and a share of the time left
 export function flightPayout(course: FlightCourse, collected: number, timeLeft: number): { credits: number; note: string } {
@@ -8015,5 +8056,109 @@ export function flightPayout(course: FlightCourse, collected: number, timeLeft: 
   const time = collected === rings ? Math.round((cfg.perRing * rings * 0.5 * Math.max(0, timeLeft)) / Math.max(1, course.limit)) : 0;
   const credits = perRing + all + time;
   const note = `${collected} of ${rings} rings${all ? ", all of them" : ""}${time ? `, ${time} cr for the time to spare` : ""} (house rule: the books give no fares for flying)`;
+  return { credits, note };
+}
+
+// A pilot's route between two settlements (house rule): the trip is flown as a run of rings. Taking
+// every ring makes the trip a fifth quicker, taking none makes it a fifth slower; the ride's own time
+// is the middle of that.
+export const ROUTE_RINGS = { min: 3, max: 8 };
+export function routeCount(km: number): number {
+  return Math.max(ROUTE_RINGS.min, Math.min(ROUTE_RINGS.max, Math.round(km / 6)));
+}
+export function pilotMinutes(minutes: number, collected: number, total: number): number {
+  const share = total ? collected / total : 0;
+  return Math.max(1, Math.round(minutes * (1.2 - 0.4 * share)));
+}
+
+// ---- Racing (house rule): laps of a course against rivals who keep a pace of their own
+export const RACE_PRIZES = [1000, 500, 250, 100];
+export interface Rival { name: string; finish: number; pace: number }
+export function raceRivals(seed: number, course: FlightCourse, count = 4): Rival[] {
+  const r = createRandom(seed + 77);
+  const names = ["Rhys", "Tavi", "the Hutt's runner", "Kessa", "Doro", "Vex", "Brann"];
+  return Array.from({ length: count }, (_, i) => {
+    const pace = 0.8 + r.next() * 0.2;
+    return { name: names[i % names.length], pace, finish: courseLength(course) / (pace * FLIGHT[course.mode].top) };
+  });
+}
+// Where the party finishes: 1 plus the rivals who finished before its time (none when it did not finish)
+export function raceResult(rivals: Rival[], time: number | null): { place: number; credits: number; note: string } {
+  if (time === null) return { place: rivals.length + 1, credits: 0, note: "you did not finish the race (house rule)" };
+  const place = 1 + rivals.filter((rival) => rival.finish < time).length;
+  const credits = RACE_PRIZES[place - 1] ?? 0;
+  return { place, credits, note: `${place}${["st", "nd", "rd"][place - 1] ?? "th"} of ${rivals.length + 1}` };
+}
+
+// ---- Dogfight (house rule): a ship in the space of a planet against foes that fly at it and fire
+export const DOGFIGHT = { hull: 10, foes: 4, range: 320, cone: 0.35, reload: 0.6, foeRange: 220, foeSpeed: 55, foeReload: 3.5, foeHit: 0.3, playerHit: 0.7, limit: 90, perFoe: 250, clearBonus: 500 };
+export interface Foe { id: number; p: Vec3; yaw: number; pitch: number; hull: number; reload: number }
+export interface Dogfight { craft: Craft; hull: number; foes: Foe[]; kills: number; t: number; reload: number; shots: number; hits: number; over: boolean }
+export function dogfightStart(seed: number): Dogfight {
+  const r = createRandom(seed);
+  const foes: Foe[] = Array.from({ length: DOGFIGHT.foes }, (_, i) => {
+    const angle = (i / DOGFIGHT.foes) * Math.PI * 2 + (r.next() - 0.5) * 0.5;
+    const dist = 180 + r.next() * 80;
+    return { id: i, p: [Math.cos(angle) * dist, (r.next() - 0.5) * 80, Math.sin(angle) * dist], yaw: angle + Math.PI, pitch: 0, hull: 1 + (i % 2), reload: r.next() * DOGFIGHT.foeReload };
+  });
+  return { craft: { p: [0, 0, 0], yaw: 0, pitch: 0, speed: 0 }, hull: DOGFIGHT.hull, foes, kills: 0, t: 0, reload: 0, shots: 0, hits: 0, over: false };
+}
+// One tick: the craft flies (its speed is held at the cruise of a ship), the foes close and fire, and a
+// shot from the craft hits the nearest foe in its cone and range. `roll` is the dice of the fight.
+export function stepDogfight(state: Dogfight, input: FlightInput, fire: boolean, dt: number, roll: () => number): Dogfight {
+  if (state.over) return state;
+  const craft = stepFlight(state.craft, input, dt, "ship");
+  const t = state.t + dt;
+  let reload = Math.max(0, state.reload - dt);
+  let hull = state.hull;
+  let kills = state.kills;
+  let shots = state.shots;
+  let hits = state.hits;
+  let foes: Foe[] = state.foes.map((foe) => {
+    const d: Vec3 = [craft.p[0] - foe.p[0], craft.p[1] - foe.p[1], craft.p[2] - foe.p[2]];
+    const dist = Math.hypot(d[0], d[1], d[2]) || 1;
+    const yaw = Math.atan2(d[2], d[0]);
+    const pitch = Math.asin(Math.max(-1, Math.min(1, d[1] / dist)));
+    const h = headingOf(yaw, pitch);
+    const reloadNow = foe.reload - dt;
+    return { ...foe, yaw, pitch, p: [foe.p[0] + h[0] * DOGFIGHT.foeSpeed * dt, foe.p[1] + h[1] * DOGFIGHT.foeSpeed * dt, foe.p[2] + h[2] * DOGFIGHT.foeSpeed * dt] as Vec3, reload: reloadNow };
+  });
+  // The foes that are in range and loaded fire at the craft
+  foes = foes.map((foe) => {
+    if (foe.reload > 0) return foe;
+    const dist = Math.hypot(craft.p[0] - foe.p[0], craft.p[1] - foe.p[1], craft.p[2] - foe.p[2]);
+    if (dist > DOGFIGHT.foeRange) return { ...foe, reload: 0 };
+    if (roll() < DOGFIGHT.foeHit) hull -= 1;
+    return { ...foe, reload: DOGFIGHT.foeReload };
+  });
+  // The craft fires at the nearest foe in its cone and range
+  if (fire && reload <= 0) {
+    shots++;
+    reload = DOGFIGHT.reload;
+    const heading = headingOf(craft.yaw, craft.pitch);
+    const target = foes
+      .map((foe) => {
+        const d: Vec3 = [foe.p[0] - craft.p[0], foe.p[1] - craft.p[1], foe.p[2] - craft.p[2]];
+        const dist = Math.hypot(d[0], d[1], d[2]);
+        const cos = dist ? (d[0] * heading[0] + d[1] * heading[1] + d[2] * heading[2]) / dist : 0;
+        return { foe, dist, cos };
+      })
+      .filter(({ dist, cos }) => dist <= DOGFIGHT.range && cos >= 1 - DOGFIGHT.cone)
+      .sort((a, b) => a.dist - b.dist)[0];
+    if (target && roll() < DOGFIGHT.playerHit) {
+      hits++;
+      foes = foes.map((foe) => (foe.id === target.foe.id ? { ...foe, hull: foe.hull - 1 } : foe));
+    }
+  }
+  const before = foes.length;
+  foes = foes.filter((foe) => foe.hull > 0);
+  kills += before - foes.length;
+  const over = hull <= 0 || foes.length === 0 || t >= DOGFIGHT.limit;
+  return { craft, hull: Math.max(0, hull), foes, kills, t, reload, shots, hits, over };
+}
+export function dogfightPayout(state: Dogfight): { credits: number; note: string } {
+  const cleared = state.foes.length === 0 && state.hull > 0;
+  const credits = state.kills * DOGFIGHT.perFoe + (cleared ? DOGFIGHT.clearBonus : 0);
+  const note = `${state.kills} of ${DOGFIGHT.foes} foes down, ${state.hull} hull left${cleared ? ", the sky clear" : state.hull <= 0 ? ", shot down" : ""} (house rule: the books give no dogfight)`;
   return { credits, note };
 }

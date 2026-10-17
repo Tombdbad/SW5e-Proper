@@ -24,7 +24,7 @@ import { SKILLS } from "@/lib/sw5e/constants";
 import CheckDialog, { autoChecks, type CheckOption, type CheckRequest, type CheckRoller } from "@/components/Play/CheckDialog";
 import { feats } from "@/lib/sw5e/feats";
 import lookupData from "@shared/data/sw5e/lookups.json";
-import FlightScene, { type FlightOutcome } from "@/components/Map/FlightScene";
+import { FlightRun, DogfightScene } from "@/components/Map/FlightScene";
 import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
@@ -32,7 +32,7 @@ import {
   advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
   heatAt, heatLevel, settlementOf, useKindOf, camerasIn, seatsOf, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
-  boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf, flightPayout, type FlightMode,
+  boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf, flightPayout, flightCourse, raceRivals, raceResult, dogfightPayout, pilotMinutes, routeCount, type FlightMode,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, optionsOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
@@ -610,8 +610,14 @@ export default function GameBoard() {
   };
 
   // Walk, drive or fly along an exit. A place nobody has been to is built on arrival.
+  // A pilot's route being flown, between two settlements (see travel)
+  const [pilot, setPilot] = useState<{ exit: Exit; ride: Ride; mode: FlightMode; seed: number } | null>(null);
   const travel = (exit: Exit, chosen?: Ride) => {
     if (!here || !world) return;
+    if (chosen?.pilot) {
+      const vehicle = vehicles.find((v) => v.id === chosen.vehicleId);
+      return void setPilot({ exit, ride: chosen, mode: /air/i.test(String(vehicle?.model ?? "")) ? "airspeeder" : "speeder", seed: Math.floor(Math.random() * 1e9) + 1 });
+    }
     const changes: Record<string, any> = { currentLocation: exit.to };
     const { ship: flying } = exit.needsShip ? tripBy(exit) : { ship: undefined };
     // A route over the ground goes by the ride chosen (on foot, a mount, a speeder, a hired ride)
@@ -2503,6 +2509,8 @@ export default function GameBoard() {
     const settlement = world.areas[berthOf(world, here.id)];
     const riders = 1 + party.filter((c) => c.kind !== "beast").length;
     const rides = groundRides({ km, vehicles: parkedHere, companions: party, riders, transport, hire: settlement ? hasRidesForHire(world, settlement.id) : false, transit: exit.label === "Transit line" });
+    // The party's own vehicle can be flown by its pilot, in 3D, for the route (house rule)
+    for (const ride of rides.filter((r) => r.vehicleId && !r.blocked)) rides.push({ ...ride, id: `pilot-${ride.id}`, label: `Fly it yourself (${ride.label})`, pilot: true });
     // Lifts: someone going where the party is going offers a seat (they leave when they leave)
     if (settlement) {
       for (const lift of liftsBetween(world, settlement.id, exit.to, clockNow())) {
@@ -2514,7 +2522,7 @@ export default function GameBoard() {
     return rides;
   };
   // The ride a trip takes when none was chosen (a tap on the map): the quickest that costs nothing
-  const defaultRide = (rides: Ride[]) => [...rides].filter((r) => !r.blocked && !r.fare).sort((a, b) => a.minutes - b.minutes)[0];
+  const defaultRide = (rides: Ride[]) => [...rides].filter((r) => !r.blocked && !r.fare && !r.pilot).sort((a, b) => a.minutes - b.minutes)[0];
   const rideText = (minutes: number) => (minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.round(minutes / 6) / 10} h` : `${Math.floor(minutes / 1440)} d ${Math.round((minutes % 1440) / 60)} h`);
 
   // A speeder taken from a base, or mended where it stands (Mechanic's kit: "Restoring power to a
@@ -4422,6 +4430,26 @@ export default function GameBoard() {
   return (
     <div className="relative h-[100dvh] w-screen bg-black overflow-hidden">
       {checkAsk && <CheckDialog request={checkAsk.request} onRoll={(roller, skill) => finishCheck(roller, skill)} onCancel={() => finishCheck(null, null)} />}
+      {pilot && world && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3" data-testid="pilot-route">
+          <div className="w-full max-w-3xl space-y-2 rounded-lg bg-gray-900 p-3 text-sm text-gray-100">
+            <h3 className="font-semibold text-sky-300">Flying to {world.areas[pilot.exit.to]?.name}: {pilot.ride.label}</h3>
+            <p className="text-xs text-gray-300">Take the rings of the route. With every ring taken the trip is a fifth quicker, with none a fifth slower (house rule).</p>
+            <FlightRun
+              key={pilot.seed}
+              mode={pilot.mode}
+              seed={pilot.seed}
+              count={routeCount(kmOf(pilot.exit.travel) ?? 0)}
+              title="Route"
+              onDone={(o) => {
+                setPilot(null);
+                travel(pilot.exit, { ...pilot.ride, pilot: false, minutes: pilotMinutes(pilot.ride.minutes, o.collected, o.course.rings.length) });
+              }}
+            />
+            <Button size="sm" variant="ghost" onClick={() => setPilot(null)} data-testid="pilot-cancel">Cancel the route</Button>
+          </div>
+        </div>
+      )}
       <KeyboardControls map={controls}>
         {/* The 3D map. On a phone it has the top of the screen and the HUD the rest */}
         <div className={`absolute inset-x-0 top-0 md:h-full ${showSidebar ? "md:right-80" : ""} ${showSidebar || showCombat ? "h-[46dvh]" : "h-full"}`} data-testid="map-3d">
@@ -5263,14 +5291,18 @@ const dtId = (prefix: string) => `${prefix}-${Date.now().toString(36)}${Math.flo
 const DOWNTIME_GROUPS: [string, string[]][] = [
   ["Side quests", ["bounty-hunting", "espionage", "mercenary-contracting", "crime"]],
   ["Fighting games", ["pit-fighting"]],
-  ["Racing games", ["racing"]],
-  ["Flying games", ["taxi-run", "delivery-run"]],
+  ["Racing games", ["racing", "speeder-race"]],
+  ["Flying games", ["taxi-run", "delivery-run", "dogfight"]],
   ["Everyday downtime", ["carousing", "buying-enhanced-items", "selling-enhanced-items", "crafting", "gambling", "research", "training", "work"]],
 ];
-// The flying games (house rules, shared/logic "Flying games"): flown on the 3D map for a day
-const FLYING: { id: string; name: string; mode: FlightMode; intro: string }[] = [
-  { id: "taxi-run", name: "Taxi run", mode: "speeder", intro: "Fly your landspeeder through the rings of a course over the settlement's ground, for a fare." },
-  { id: "delivery-run", name: "Delivery run", mode: "ship", intro: "Fly your ship through the rings of a course in the space of its planet, against the clock." },
+// The flying games (house rules, shared/logic "Flying"): flown on the 3D map for a day. A run takes rings,
+// a race is laps against rivals, a dogfight is against foes that fire back; each needs one of the party's
+// vehicles or ships.
+const FLYING: { id: string; name: string; kind: "run" | "race" | "dogfight"; mode: FlightMode; needs: "vehicle" | "ship"; intro: string }[] = [
+  { id: "taxi-run", name: "Taxi run", kind: "run", mode: "speeder", needs: "vehicle", intro: "Fly your landspeeder through the rings of a course over the settlement's ground, for a fare." },
+  { id: "speeder-race", name: "Speeder race", kind: "race", mode: "speeder", needs: "vehicle", intro: "Race your landspeeder over two laps of the course against four rivals, paid by the place you finish." },
+  { id: "delivery-run", name: "Delivery run", kind: "run", mode: "ship", needs: "ship", intro: "Fly your ship through the rings of a course in the space of its planet, against the clock." },
+  { id: "dogfight", name: "Dogfight", kind: "dogfight", mode: "ship", needs: "ship", intro: "Fly your ship in the space of its planet against four foes who fly at you and fire back. Boost to keep up, fire to hit." },
 ];
 
 function DowntimePanel(props: DowntimeProps) {
@@ -5325,7 +5357,7 @@ function DowntimePanel(props: DowntimeProps) {
           {DOWNTIME_GROUPS.map(([group, ids]) => {
             const items = [
               ...specs.filter(({ a }) => ids.includes(a.id)).map(({ a }) => ({ key: a.id, name: a.name, intro: a.intro, disabled: /enhanced items/i.test(a.name) && !city, reason: "", pick: () => setOpen(a.id), testId: `downtime-${a.id}` })),
-              ...FLYING.filter((f) => ids.includes(f.id)).map((f) => ({ key: f.id, name: f.name, intro: f.intro, disabled: !!(f.id === "taxi-run" ? !props.hasVehicle : !props.hasShip), reason: f.id === "taxi-run" ? (props.hasVehicle ? "" : " (needs a landspeeder of your own)") : (props.hasShip ? "" : " (needs a ship of your own)"), pick: () => setOpen(f.id), testId: `downtime-${f.id}` })),
+              ...FLYING.filter((f) => ids.includes(f.id)).map((f) => ({ key: f.id, name: f.name, intro: f.intro, disabled: f.needs === "vehicle" ? !props.hasVehicle : !props.hasShip, reason: f.needs === "vehicle" ? (props.hasVehicle ? "" : " (needs a vehicle of your own)") : (props.hasShip ? "" : " (needs a ship of your own)"), pick: () => setOpen(f.id), testId: `downtime-${f.id}` })),
             ];
             if (!items.length) return null;
             return (
@@ -5349,7 +5381,7 @@ function DowntimePanel(props: DowntimeProps) {
           <Button size="sm" variant="ghost" className="h-6 px-1" onClick={() => setOpen(null)}>← Activities</Button>
           <h3 className="text-base font-semibold text-yellow-300">{flying.name}</h3>
           <p className="text-xs text-gray-300">{flying.intro}</p>
-          <FlightActivity {...props} mode={flying.mode} label={flying.name} />
+          <FlightActivity {...props} flying={flying} />
         </div>
       )}
       {mine && (
@@ -5406,24 +5438,31 @@ function applyComplication(props: DowntimeProps, activity: DowntimeActivityData,
   return { text: row.text, effect: complicationEffect(row.text, rollExpr), chance };
 }
 
-// A flying minigame of downtime: a run is flown on the 3D map and paid by the rings it takes (a day's work)
-function FlightActivity(props: DowntimeProps & { mode: FlightMode; label: string }) {
-  const { character, commit, mode, label } = props;
+// A flying minigame of downtime: a run is flown on the 3D map and paid by what it takes (a day's work)
+function FlightActivity(props: DowntimeProps & { flying: (typeof FLYING)[number] }) {
+  const { character, commit, flying } = props;
   const [seed, setSeed] = useState<number | null>(null);
   const credits = Number(character?.credits) || 0;
-  const finish = ({ course, collected, timeLeft }: FlightOutcome) => {
-    const pay = flightPayout(course, collected, timeLeft);
-    commit({ character: { credits: credits + pay.credits }, downtime: {}, days: 1, log: [`${label}: ${pay.note}.`] });
+  const rivals = useMemo(() => {
+    const course = flightCourse(seed ?? 1, flying.mode, { laps: 2 });
+    return raceRivals(seed ?? 1, course);
+  }, [seed, flying.mode]);
+  const pay = (won: { credits: number; note: string }) => {
+    commit({ character: { credits: credits + won.credits }, downtime: {}, days: 1, log: [`${flying.name}: ${won.note}.`] });
     setSeed(null);
   };
   if (seed === null) {
     return (
-      <Button size="sm" variant="outline" onClick={() => setSeed(Math.floor(Math.random() * 1e9) + 1)} data-testid={`flight-start-${mode}`}>
-        Start the run (a day)
+      <Button size="sm" variant="outline" onClick={() => setSeed(Math.floor(Math.random() * 1e9) + 1)} data-testid={`flight-start-${flying.id}`}>
+        Start the {flying.name.toLowerCase()} (a day)
       </Button>
     );
   }
-  return <FlightScene mode={mode} seed={seed} onDone={finish} />;
+  if (flying.kind === "dogfight") return <DogfightScene seed={seed} onDone={(state) => pay(dogfightPayout(state))} />;
+  if (flying.kind === "race") {
+    return <FlightRun mode={flying.mode} seed={seed} laps={2} rivals={rivals} title={flying.name} onDone={(o) => pay(raceResult(rivals, o.time))} />;
+  }
+  return <FlightRun mode={flying.mode} seed={seed} title={flying.name} onDone={(o) => pay(flightPayout(o.course, o.collected, o.timeLeft))} />;
 }
 
 // Activities worked out in one workweek by checks and a d100: bounty hunting, carousing, crime,
