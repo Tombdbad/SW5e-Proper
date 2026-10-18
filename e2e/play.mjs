@@ -932,7 +932,10 @@ if (process.env.FORCE !== "0") {
       const power = page.getByTestId("combat-powers").getByRole("button").first();
       const melee = page.getByRole("button", { name: "Melee", exact: true });
       const cast = seen.some((l) => /casts/.test(l));
-      if ((await save.count()) && (await save.isEnabled().catch(() => false))) await save.click().catch(() => {});
+      // A power that moves things asks what to move and which way
+      const choose = page.getByTestId("motion-chooser").locator("button:not([disabled])").first();
+      if ((await choose.count()) && !/Cancel|Drop/.test(await choose.innerText().catch(() => "Cancel"))) await choose.click().catch(() => {});
+      else if ((await save.count()) && (await save.isEnabled().catch(() => false))) await save.click().catch(() => {});
       else if (!cast && (await power.count()) && (await power.isEnabled().catch(() => false))) await power.click().catch(() => {});
       else if ((await melee.count()) && (await melee.isEnabled().catch(() => false))) await melee.click().catch(() => {});
       else if (await page.getByRole("button", { name: "End turn" }).isEnabled().catch(() => false)) await page.getByRole("button", { name: "End turn" }).click().catch(() => {});
@@ -941,6 +944,113 @@ if (process.env.FORCE !== "0") {
     const casts = seen.filter((l) => /casts/.test(l));
     if (!casts.length) throw new Error("no power was cast; log: " + seen.slice(-5).join(" | "));
     return `offered: ${listed.slice(0, 200)}; ${casts[0]}; unarmed line: ${seen.find((l) => /Unarmed strike|unarmed/i.test(l)) ?? "(melee log does not name the weapon)"}`;
+  });
+}
+
+// Moving things with the Force (2026-10-18): a crate is pushed with Force Push/Pull out of a
+// fight and stays where it stops; in a fight a crate is picked out on the map and hurled at an
+// enemy with Force Throw, strikes it, and stays where it landed once the fight is over.
+{
+  const PHONE = process.env.VIEW === "phone";
+  const poke = (x, y) => (PHONE ? page.touchscreen.tap(x, y) : page.mouse.click(x, y));
+  const at = async (key) => {
+    for (let i = 0; i < 40; i++) {
+      const p = await page.evaluate((k) => window.__map3d?.at(k) ?? null, key);
+      if (p) return p;
+      await sleep(250);
+    }
+    throw new Error("nothing on the map for " + key);
+  };
+  let campaign = null;
+  let roomId = null;
+  let crateId = null;
+  const crateNow = async () => (await api("GET", `/api/campaigns/${campaign}`)).json.galaxyMap.areas[roomId].layout.assets.find((a) => a.id === crateId);
+  await step(ctx, "force moves: a crate pushed with Force Push/Pull stays where it stops", async () => {
+    const rows = (await api("GET", "/api/sw5e/powers?fields=name,level,description,forceAlignment&limit=1000")).json;
+    const list = Array.isArray(rows) ? rows : rows.items;
+    const known = ["Force Push/Pull", "Force Throw"].map((n) => list.find((p) => p.name === n));
+    const r = await api("POST", "/api/characters", {
+      name: "E2E mover " + TAG, species: "Togruta", class: "Consular", background: "Jedi", alignment: "Lawful Good", level: 5,
+      abilityScores: { strength: 10, dexterity: 14, constitution: 14, intelligence: 12, wisdom: 16, charisma: 12 },
+      maxHp: 60, currentHp: 60, maxForcePoints: 20, currentForcePoints: 20, armorClass: 14, speed: 30, credits: 500,
+      startingLocation: "Unknown", skillProficiencies: ["Perception"], savingThrowProficiencies: ["wisdom", "charisma"],
+      forcePowers: known, equipment: ["Lightsaber"],
+    });
+    if (r.status !== 201) throw new Error(r.text.slice(0, 200));
+    made.push(r.json.id);
+    // A room with nothing in it but a crate two squares in from its way in, and nobody about
+    const world = (await api("POST", "/api/world/generate", { options: { seed: 3, partyLevel: 3 } })).json.world;
+    const room = world.areas[world.startId];
+    roomId = room.id;
+    room.occupants = [];
+    room.layout.assets = room.layout.assets.filter((a) => a.side);
+    const exit = room.layout.assets.find((a) => a.kind === "exit");
+    const inward = { w: [1, 0], e: [-1, 0], n: [0, 1], s: [0, -1] }[exit.side];
+    crateId = `${room.id}-e2e-crate`;
+    room.layout.assets.push({ id: crateId, kind: "furniture", name: "Crate", x: exit.x + inward[0] * 3, y: exit.y + inward[1] * 3, w: 1, h: 1, blocks: true, cover: true });
+    const madeCamp = await api("POST", "/api/campaigns", { characterId: r.json.id, name: "E2E force moves " + TAG, description: "force moves", npcs: [], locations: [], quests: [], startingLocation: "start", currentLocation: world.startId, galaxyMap: world });
+    if (madeCamp.status !== 201) throw new Error(madeCamp.text.slice(0, 200));
+    campaign = madeCamp.json.id;
+    await page.goto(`${BASE}/game/${campaign}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: "E2E mover " + TAG }).waitFor({ timeout: 60000 });
+    await sleep(4000);
+    const before = await crateNow();
+    const p = await at(`asset:${crateId}`);
+    await poke(p.x, p.y);
+    await page.getByTestId("force-moves").waitFor({ timeout: 10000 });
+    const card = (await page.getByTestId("force-moves").innerText()).replace(/\n/g, " ");
+    if (!/medium object/i.test(card) || !/Force Push\/Pull \(at will, 10 ft\)/.test(card)) throw new Error("card: " + card);
+    await page.getByTestId("force-push").first().click();
+    for (let i = 0; i < 20 && JSON.stringify(await crateNow()) === JSON.stringify(before); i++) await sleep(500);
+    const after = await crateNow();
+    const moved = Math.max(Math.abs(after.x - before.x), Math.abs(after.y - before.y));
+    if (!moved) throw new Error(`the crate did not move: ${JSON.stringify(before)}`);
+    return `crate (${before.x},${before.y}) -> (${after.x},${after.y}), ${moved * 5} ft; card: ${card.slice(0, 120)}`;
+  });
+
+  await step(ctx, "force moves: in a fight a crate is hurled at an enemy and stays where it lands", async () => {
+    if (!campaign) throw new Error("no campaign from the step before");
+    const foe = (await api("POST", "/api/world/occupant", { statBlock: "trooper" })).json;
+    const world = (await api("GET", `/api/campaigns/${campaign}`)).json.galaxyMap;
+    const room = world.areas[roomId];
+    const crate = room.layout.assets.find((a) => a.id === crateId);
+    const exit = room.layout.assets.find((a) => a.kind === "exit");
+    const inward = { w: [1, 0], e: [-1, 0], n: [0, 1], s: [0, -1] }[exit.side];
+    const spot = { x: Math.min(room.layout.width - 1, Math.max(0, crate.x + inward[0] * 4)), y: Math.min(room.layout.height - 1, Math.max(0, crate.y + inward[1] * 4)) };
+    room.occupants.push({ ...foe, id: "o-e2e-foe", hitPoints: 60, disposition: "hostile", count: 1 });
+    room.layout.assets.push({ id: "t-e2e-foe", kind: "npc", name: foe.name, ...spot, w: 1, h: 1, ref: "o-e2e-foe" });
+    await api("PATCH", `/api/campaigns/${campaign}`, { galaxyMap: world });
+    await page.goto(`${BASE}/game/${campaign}`, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.getByRole("heading", { name: "E2E mover " + TAG }).waitFor({ timeout: 60000 });
+    await sleep(3000);
+    if (!(await page.getByText(/Combat - Round/).count())) await page.getByRole("button", { name: "Fight", exact: true }).click();
+    await page.getByText(/Combat - Round/).waitFor();
+    for (let i = 0; i < 60 && !(await page.evaluate(() => { const s = window.__fight.getState(); return !!s.combatants[s.currentTurn]?.isPlayer; })); i++) await sleep(500);
+    // A tap on the crate picks it out (again after a moment if the camera was still flying in)
+    for (let tries = 0; tries < 6 && !(await page.evaluate(() => window.__fight.getState().objectId)); tries++) {
+      await sleep(900);
+      const p = await at(`asset:${crateId}`);
+      await poke(p.x, p.y);
+      for (let i = 0; i < 6 && !(await page.evaluate(() => window.__fight.getState().objectId)); i++) await sleep(250);
+    }
+    if (!(await page.evaluate(() => window.__fight.getState().objectId))) throw new Error("a tap on the crate did not pick it out");
+    await page.getByTestId("combat-powers").getByRole("button", { name: /Force Throw/ }).click();
+    await page.getByTestId("motion-chooser").waitFor();
+    await page.getByTestId("motion-hurl").click();
+    for (let i = 0; i < 20 && !(await page.evaluate(() => window.__fight.getState().combatLog.some((l) => /casts Force Throw/.test(l)))); i++) await sleep(250);
+    const line = await page.evaluate(() => window.__fight.getState().combatLog.find((l) => /casts Force Throw/.test(l)));
+    if (!line || !/flies \d+ feet at/.test(line)) throw new Error("log: " + line);
+    const landed = await page.evaluate((id) => window.__fight.getState().arena.assets.find((a) => a.id === id), crateId);
+    // Leave the fight: the crate stays where it landed
+    await page.getByRole("button", { name: "Leave", exact: true }).click();
+    let saved = null;
+    for (let i = 0; i < 30; i++) {
+      saved = await crateNow();
+      if (saved.x === landed.x && saved.y === landed.y) break;
+      await sleep(500);
+    }
+    if (saved.x !== landed.x || saved.y !== landed.y) throw new Error(`landed at ${landed.x},${landed.y} but saved at ${saved.x},${saved.y}`);
+    return `${line} | saved at ${saved.x},${saved.y}`;
   });
 }
 
