@@ -8519,3 +8519,39 @@ export function dogfightPayout(state: Dogfight): { credits: number; note: string
   const note = `${state.kills} of ${DOGFIGHT.foes} foes down, ${state.hull} hull left${cleared ? ", the sky clear" : state.hull <= 0 ? ", shot down" : ""} (house rule: the books give no dogfight)`;
   return { credits, note };
 }
+
+// ---------------------------------------------------------------------------------------------
+// Pit arena (HOUSE RULES; the book's Pit Fighting roll is not used here). A gladiatorial run: each bout
+// is a fight of the combat engine against a creature from the rules' stat blocks, and each win makes the
+// next opponent harder. A win pays a prize that grows with the bouts won, and an enhanced item of a rarity
+// the bout's level can find. Losing a bout ends the run and the party is carried out at 1 hit point.
+// ---------------------------------------------------------------------------------------------
+
+export const PIT = { prize: 200, growth: 1.7, pool: 6, maxCR: 20 };
+// A challenge rating as a number ("1/2" is half a point)
+export const crValue = (cr: string | number) => {
+  const [a, b] = String(cr).split("/");
+  return b ? Number(a) / Number(b) : Number(a) || 0;
+};
+// The prize for winning bout n (1-based): 200 cr, then 1.7 times the last, in tens of credits
+export const pitPrize = (bout: number) => Math.round((PIT.prize * PIT.growth ** (bout - 1)) / 10) * 10;
+// The opponent of bout n: a creature whose challenge rating is near the bout's (one more for each win),
+// drawn from the six nearest (a creature of the rules' stat blocks, not a droid or a swarm)
+export const pitTargetCR = (bout: number) => Math.min(PIT.maxCR, bout);
+export function pitOpponent(monsters: Sw5eMonster[], bout: number, roll: () => number): Sw5eMonster | null {
+  const target = pitTargetCR(bout);
+  const pool = monsters
+    .filter((m) => m.hitPoints > 0 && !/droid|swarm/i.test((m.types ?? []).join(" ")))
+    .sort((a, b) => Math.abs(crValue(a.challengeRating) - target) - Math.abs(crValue(b.challengeRating) - target) || a.name.localeCompare(b.name))
+    .slice(0, PIT.pool);
+  return pool.length ? pool[Math.floor(roll() * pool.length)] : null;
+}
+// The level a bout's prize and item are for: a bout is worth two levels more than the one before
+export const pitLevel = (bout: number) => Math.min(20, 2 * bout + 1);
+// The enhanced item a win gives: of the rarities the bout's level finds (the same ladder as the loot tables)
+export function pitItem(enhanced: { name: string; searchableRarity: string }[], bout: number, roll: () => number): string | null {
+  const rarities = lootRarities(pitLevel(bout));
+  const pool = enhanced.filter((e) => rarities.includes(e.searchableRarity));
+  const from = pool.length ? pool : enhanced;
+  return from.length ? from[Math.floor(roll() * from.length)].name : null;
+}

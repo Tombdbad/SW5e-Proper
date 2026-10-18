@@ -26,6 +26,9 @@ import CheckDialog, { autoChecks, type CheckOption, type CheckRequest, type Chec
 import { feats } from "@/lib/sw5e/feats";
 import lookupData from "@shared/data/sw5e/lookups.json";
 import { MinigamePage, type Minigame, type MinigameResult } from "@/components/Map/FlightScene";
+import PitArena, { type PitSummary } from "@/components/Map/PitArena";
+import monsterData from "@shared/data/sw5e/monsters.json";
+import type { Sw5eMonster } from "@shared/data";
 import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
@@ -33,7 +36,7 @@ import {
   advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
   heatAt, heatLevel, settlementOf, useKindOf, camerasIn, seatsOf, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
-  boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf, flightPayout, raceResult, dogfightPayout, pilotMinutes, routeCount, type FlightMode,
+  boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf, flightPayout, raceResult, dogfightPayout, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, optionsOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
@@ -135,10 +138,29 @@ export default function GameBoard() {
   const [showSidebar, setShowSidebar] = useState(true);
   const [activeMapTab, setActiveMapTab] = useState<"galaxy" | "local">("galaxy");
   const [showCombat, setShowCombat] = useState(false);
+  // The pit arena (a dedicated page): open, and the credits and equipment the party had when it opened
+  const [pitOpen, setPitOpen] = useState(false);
+  const pitBase = useRef<{ credits: number; equipment: string[] }>({ credits: 0, equipment: [] });
+  const { data: pitEnhanced = [] } = useQuery<any[]>({
+    queryKey: ["enhanced-names"],
+    queryFn: async () => (await fetch("/api/sw5e/enhancedItems?fields=id,name,type,searchableRarity,subtype")).json(),
+    staleTime: Infinity,
+  });
   const { inCombat, initiateCombat, endCombat } = useCombat();
   const fightArena = useCombat((s) => s.arena);
-  // The map's render scale: full on a device that keeps up, lower on one that does not
-  const [sharpness, setSharpness] = useState(1.5);
+  // The map's render scale: full on a device that keeps up, lower on one that does not. It is
+  // remembered, so that a reload starts where the device settled and not with a full-size first frame
+  const [sharpness, setSharpness] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem("sw5e.sharpness"));
+      return saved >= 0.5 && saved <= 1.5 ? saved : 1.5;
+    } catch {
+      return 1.5;
+    }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("sw5e.sharpness", String(sharpness)); } catch {}
+  }, [sharpness]);
   const combatants = useCombat((s) => s.combatants);
   const { currentLocation, setCurrentLocation } = useMap();
 
@@ -1274,6 +1296,33 @@ export default function GameBoard() {
   });
 
   // Fight the hostile creatures in this area, with their own armor, hit points and attacks
+  // A bout of the pit arena: a creature of the rules fights the party on the arena, by the combat engine
+  const launchBout = (monster: Sw5eMonster, bout: number) => {
+    if (!character) return;
+    const occupant = statBlockOccupant(monster, equipmentData as any, `pit-${bout}`, 1, "creature", "hostile");
+    const enemies = [{ ...foe(occupant, `pit-${bout}-0`, occupant.name), x: 8, y: 4, z: 0 }];
+    initiateCombat(character, enemies as any, combatKit(), false, { width: 12, height: 9, assets: [] } as any, { x: 3, y: 4 }, []);
+  };
+  const keepPitHp = (hp: number) => {
+    lastSavedHp.current = hp;
+    saveCharacter({ currentHp: hp });
+  };
+  // What the party has won in the pit, on top of what it had when the pit opened
+  const bankPit = (total: { credits: number; items: string[] }) => saveCharacter({ credits: pitBase.current.credits + total.credits, equipment: [...pitBase.current.equipment, ...total.items] });
+  const openPit = () => {
+    if (!character || character.currentHp <= 0) return;
+    pitBase.current = { credits: Number(character.credits) || 0, equipment: [...(character.equipment ?? [])] };
+    setPitOpen(true);
+  };
+  const exitPit = (summary: PitSummary) => {
+    setPitOpen(false);
+    if (!summary.bouts) return;
+    commitDowntime({
+      character: {}, downtime: {}, days: 1,
+      log: [`Pit arena: ${summary.bouts} bout${summary.bouts === 1 ? "" : "s"} won, ${summary.credits.toLocaleString()} cr${summary.items.length ? `, ${summary.items.join(", ")}` : ""}${summary.knockedOut ? "; knocked out in the last bout" : ""}.`],
+    });
+  };
+
   const fight = () => {
     if (!character || !here || character.currentHp <= 0) return;
     // Those who never noticed the party lose the first round; any other fight raises the alarm
@@ -5182,6 +5231,7 @@ export default function GameBoard() {
                     commit={commitDowntime}
                     spendBlackmail={spendBlackmail}
                     spendLore={spendLore}
+                    openPit={openPit}
                   />
                 )}
               </TabsContent>
@@ -5326,7 +5376,8 @@ export default function GameBoard() {
         )}
 
         {/* Combat UI */}
-        {showCombat && <PlayCombat items={combatItems} />}
+        {pitOpen && <PitArena enhanced={pitEnhanced} opponentFor={(bout) => pitOpponent(monsterData as unknown as Sw5eMonster[], bout, Math.random)} launch={launchBout} keepHp={keepPitHp} bank={bankPit} onExit={exitPit} />}
+        {showCombat && !pitOpen && <PlayCombat items={combatItems} />}
         {shipFight && <ShipCombatPanel onFinish={finishShipFight} />}
       </KeyboardControls>
     </div>
@@ -5353,6 +5404,8 @@ interface DowntimeProps {
   people: { name: string; cls: "lower" | "middle" | "upper" }[];
   hasVehicle: boolean;
   hasShip: boolean;
+  // Opens the pit arena (a page of the game board)
+  openPit: () => void;
   // The model of the party's first vehicle and the size and role of its first ship, for the flying games
   vehicleModel?: string;
   shipSpec?: { size: string; role: string };
@@ -5380,11 +5433,13 @@ const dtId = (prefix: string) => `${prefix}-${Date.now().toString(36)}${Math.flo
 // The downtime menu's sub-categories (house rule: the book's activities, grouped; the flying games are new)
 const DOWNTIME_GROUPS: [string, string[]][] = [
   ["Side quests", ["bounty-hunting", "espionage", "mercenary-contracting", "crime"]],
-  ["Fighting games", ["pit-fighting"]],
+  ["Fighting games", ["pit-arena"]],
   ["Racing games", ["racing", "speeder-race"]],
   ["Flying games", ["taxi-run", "delivery-run", "dogfight"]],
   ["Everyday downtime", ["carousing", "buying-enhanced-items", "selling-enhanced-items", "crafting", "gambling", "research", "training", "work"]],
 ];
+// The pit arena (house rules): a gladiatorial run of bouts on the combat engine; the book's Pit Fighting roll is not used
+const ARENA = [{ id: "pit-arena", name: "Pit arena", intro: "Fight creatures of the rules in the pit, bout after bout: each win makes the next opponent harder and pays more, with an enhanced item of the bout's level. Quit after any bout." }];
 // The flying games (house rules, shared/logic "Flying"): flown on the 3D map for a day. A run takes rings,
 // a race is laps against rivals, a dogfight is against foes that fire back; each needs one of the party's
 // vehicles or ships.
@@ -5447,6 +5502,7 @@ function DowntimePanel(props: DowntimeProps) {
           {DOWNTIME_GROUPS.map(([group, ids]) => {
             const items = [
               ...specs.filter(({ a }) => ids.includes(a.id)).map(({ a }) => ({ key: a.id, name: a.name, intro: a.intro, disabled: /enhanced items/i.test(a.name) && !city, reason: "", pick: () => setOpen(a.id), testId: `downtime-${a.id}` })),
+              ...ARENA.filter((x) => ids.includes(x.id)).map((x) => ({ key: x.id, name: x.name, intro: x.intro, disabled: false, reason: "", pick: props.openPit, testId: `downtime-${x.id}` })),
               ...FLYING.filter((f) => ids.includes(f.id)).map((f) => ({ key: f.id, name: f.name, intro: f.intro, disabled: f.needs === "vehicle" ? !props.hasVehicle : !props.hasShip, reason: f.needs === "vehicle" ? (props.hasVehicle ? "" : " (needs a vehicle of your own)") : (props.hasShip ? "" : " (needs a ship of your own)"), pick: () => setOpen(f.id), testId: `downtime-${f.id}` })),
             ];
             if (!items.length) return null;
