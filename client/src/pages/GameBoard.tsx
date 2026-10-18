@@ -9,6 +9,7 @@ import { Loader2 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
+import { useQuality } from "@/components/Map/siteAssets";
 import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, whereNow, useClock } from "@/components/Map/LocalMap";
 import { usePartyLook } from "@/components/Map/models";
 import PlayCombat, { ShipCombatPanel, type CombatItemOption } from "@/components/Combat/PlayCombat";
@@ -47,6 +48,7 @@ import {
   groundRides, kmOf, hasRidesForHire, SEATS, EXPLOSIVE_CONDITION_ROUNDS,
   type GearUse, type ToolFacts, type Boon, type GambleApproach, type Companion, type CompanionKind, type PartyVehicle, type Vehicle, type Transport, type Ride,
   waresOf, stockOf, offerFor, attitudeOf, attitudeName, marketAt, haggleDC, isOpen, openingHours, addRenown, emptyStanding, ledgerFor, factionAt,
+  hangarsOf, hangarOpen, sellsFuelAt, repairPrice, outfitterStock, fitting, scriptsFor, afterHoursLock, hoursOfBuilding, type RoleScript, type Hangar,
   type Standing, type Ledger, type Customer, type TradeLine,
   DOWNTIME, WORKWEEK, downtimeActivity, activitySpec, checkModifier, resultRow, outcomeOf, failureOf, complicationChance, complicationTable, complicationEffect, enhancedValue, priceFactor, foundRarity,
   trainingOptions, ingredientRarity, emptyDowntime, shipSheet, refitPlan,
@@ -161,6 +163,8 @@ export default function GameBoard() {
   useEffect(() => {
     try { localStorage.setItem("sw5e.sharpness", String(sharpness)); } catch {}
   }, [sharpness]);
+  const detailFixed = useQuality((q) => q.fixed);
+  const detailTier = useQuality((q) => q.tier);
   const combatants = useCombat((s) => s.combatants);
   const { currentLocation, setCurrentLocation } = useMap();
 
@@ -622,6 +626,8 @@ export default function GameBoard() {
     } else setWatch(alert + 1);
   };
   const exits: Exit[] = world && here ? exitsOf(world, here.id) : [];
+  // Shops the party has picked the lock of tonight, and when (they stay open to it until morning)
+  const afterHours = useRef(new Map<string, number>());
 
   // The party's ships, and how a trip that needs one is made: in a ship of their own berthed
   // here (it burns fuel), or as a passenger (the fare is a house rule, see passageFare)
@@ -660,7 +666,7 @@ export default function GameBoard() {
     if (exit.needsShip) {
       const { ship, fare } = tripBy(exit);
       if (ship) {
-        changes.starships = ships.map((s) => (s.id === ship.id ? { ...s, fuel: s.fuel - (exit.fuel ?? 0), areaId: exit.to } : s));
+        changes.starships = ships.map((s) => (s.id === ship.id ? { ...s, fuel: s.fuel - (exit.fuel ?? 0), areaId: exit.to, hangar: undefined } : s));
       } else if (fare > (character.credits ?? 0)) {
         toast.error(`Passage costs ${fare} credits and you have ${character.credits ?? 0}.`);
         return;
@@ -706,6 +712,11 @@ export default function GameBoard() {
       if (spotted && alert + 1 >= ALERT.attacking) return;
     }
     if (exit.locked) return unlock(exit);
+    // A shop that is shut for the night is locked (shared logic afterHoursLock)
+    const door = exit.via === "enter" ? world?.areas[exit.to] : undefined;
+    const shutDC = door?.kind === "room" && world ? afterHoursLock(world, door.parentId ?? "", clockNow()) : undefined;
+    const picked = door ? afterHours.current.get(door.parentId ?? "") : undefined;
+    if (shutDC !== undefined && door && !(picked !== undefined && clockNow() - picked < 780)) return breakIn(door.parentId!, shutDC);
     if (exit.climb) {
       // Out of a pit: Athletics, or Dexterity, a minute for each try
       const ok = await abilityCheck("Climbing out", exit.climb, ["strength", "dexterity"], skilled("athletics"));
@@ -929,6 +940,22 @@ export default function GameBoard() {
     if (alarm && buildingId) galaxyMap = updateArea(galaxyMap, buildingId, { alarm: true }).world;
     if (crime && here) galaxyMap = reportCrime(galaxyMap, here.id, crime, clockNow());
     saveCampaign({ galaxyMap, ...extra });
+  };
+  // A shop that is shut: its lock is picked like any other (Dexterity or Intelligence, the better of the two, with a
+  // security kit), and the trespass is a crime where the law sees it
+  const breakIn = async (buildingId: string, dc: number) => {
+    if (!world || !here) return;
+    const b = world.areas[buildingId];
+    const [from, to] = hoursOfBuilding(b?.type ?? "") ?? [8, 20];
+    toast.info(`${b?.name ?? "It"} is shut: open ${String(from % 24).padStart(2, "0")}:00 to ${String(to % 24).padStart(2, "0")}:00 (house rule). The door is locked.`);
+    const kit = lockKit();
+    if (here.danger === 0 && !lawUnseen("Picking the lock", "trespass")) return;
+    const ok = await abilityCheck("Lock (after hours)", dc, ["dexterity", "intelligence"], !!kit && trainedWith(kit));
+    if (cancelledCheck.current || !ok) return;
+    afterHours.current.set(buildingId, clockNow());
+    const latest = latestWorld();
+    if (latest) saveCampaign({ galaxyMap: reportCrime(latest, here.id, "trespass", clockNow()) });
+    toast.success("The lock gives. Tap the door again to go in.");
   };
   const unlock = async (exit: Exit) => {
     if (!world || !exit.pathId) return;
@@ -3027,8 +3054,10 @@ export default function GameBoard() {
   };
   const disembarkNow = () => {
     if (!world || !aboardShip) return;
-    const to = rampLeadsTo(world, aboardShip.id);
+    const to = rampLeadsTo(world, aboardShip.id, aboardShip.hangar);
     if (!to) return void toast.error(`${aboardShip.name} is in space: land first.`);
+    // At a port with hangars the ship has to be put down in one
+    if (!aboardShip.hangar && hangarsOf(world, aboardShip.areaId).length) return void toast.error("Choose a hangar to put down in first (under the helm).");
     setHelmOpen(false);
     saveCampaign({ currentLocation: to });
     toast.info(`You step off ${aboardShip.name} into ${world.areas[to]?.name}.`);
@@ -3039,7 +3068,7 @@ export default function GameBoard() {
     if (ship.fuel < (exit.fuel ?? 0)) return void toast.error(`${ship.name} needs ${exit.fuel} fuel and has ${ship.fuel}.`);
     if (exit.jump && !ship.hyperdriveClass) return void toast.error(`${ship.name} has no hyperdrive.`);
     const took = tripMinutes(exit, Number(ship.hyperdriveClass) || 1);
-    const changes = { ...pass(took), starships: ships.map((s) => (s.id === ship.id ? { ...s, fuel: s.fuel - (exit.fuel ?? 0), areaId: exit.to } : s)) };
+    const changes = { ...pass(took), starships: ships.map((s) => (s.id === ship.id ? { ...s, fuel: s.fuel - (exit.fuel ?? 0), areaId: exit.to, hangar: undefined } : s)) };
     const target = world.areas[exit.to];
     toast.info(`${ship.name}: ${exit.label} ${target?.name}, ${Math.round(took / 6) / 10} h; it is ${clockText(useClock.getState().minutes)}.`);
     const land = (w: World) => moveShipInterior(w, ship.id, exit.to);
@@ -3221,6 +3250,120 @@ export default function GameBoard() {
         })}
         {!droids.length && <p className="text-gray-400">You have no droids to sell, mend or fit. A disabled droid is mended and bolted from its card.</p>}
         <p className="text-gray-500">A droid's base price is {droidPrice(200)} credits for CR 1; the dealer pays two fifths of it for yours.</p>
+      </div>
+    );
+  };
+  // Hangars: the ship puts down in one of the port's (shared logic "Hangars"); whoever works there sells fuel,
+  // mends the hull or fits upgrades; a few others do something for the party for a check (SCRIPTS)
+  const chooseHangar = (ship: PartyShip, h: Hangar) => {
+    if (!world) return;
+    const gate = hangarOpen(world, h, standing);
+    if (!gate.open) return void toast.error(gate.reason);
+    const moved = !!ship.hangar && ship.hangar !== h.buildingId;
+    saveCampaign({ starships: ships.map((s) => (s.id === ship.id ? { ...s, hangar: h.buildingId } : s)), ...(moved ? pass(10) : {}) });
+    toast.info(`${ship.name} puts down in ${h.name}${moved ? " (ten minutes)" : ""}. ${h.note}`);
+  };
+  const shipServices = (o: Occupant, holderId: string) => {
+    if (!world) return null;
+    const building = trailOf(world, holderId).find((a) => a.kind === "building");
+    const settlement = building ? trailOf(world, building.id).find((a) => a.kind === "settlement") : undefined;
+    const hangar = building && settlement ? hangarsOf(world, settlement.id).find((h) => h.buildingId === building.id) : undefined;
+    if (!building || !settlement || !hangar) return null;
+    const refuels = hangar.services.includes("refuel") && ["fuel attendant", "mechanic", "dockmaster"].includes(o.role);
+    const repairs = hangar.services.includes("repair") && o.role === "mechanic";
+    const upgrades = hangar.services.includes("upgrade") && o.role === "starship outfitter";
+    if (!refuels && !repairs && !upgrades) return null;
+    const mine = ships.filter((s) => s.areaId === settlement.id && s.hangar === building.id);
+    if (!mine.length) return <p className="mt-1 text-xs text-gray-400" data-testid="ship-service-none">Your ship is not in this hangar. Put it down here first: take the helm and choose the hangar.</p>;
+    const prof = Math.ceil(1 + level / 4);
+    const credits = character.credits ?? 0;
+    return (
+      <div className="mt-1 space-y-2 border-t border-gray-600 pt-1 text-xs" data-testid="ship-services">
+        {mine.map((ship) => {
+          const cap = getStarshipSize(ship.size)?.fuelCapacity ?? ship.fuel;
+          const price = getStarshipSize(ship.size)?.fuelCost ?? passageRate;
+          const sheet = shipRows.length ? shipSheet(ship, shipRows, prof) : undefined;
+          const missing = sheet ? Math.max(0, sheet.hullMax - (ship.hull ?? sheet.hullMax)) : 0;
+          const mend = repairPrice(missing, ship.size);
+          return (
+            <div key={ship.id} className="space-y-1">
+              <p className="font-semibold text-amber-200">{ship.name}: fuel {ship.fuel}/{cap}{sheet ? `, hull ${ship.hull ?? sheet.hullMax}/${sheet.hullMax}` : ""}</p>
+              {refuels && (
+                <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || ship.fuel >= cap} onClick={() => refuel(ship)} data-testid="service-refuel">
+                  Refuel ({price} cr a unit, {Math.max(0, cap - ship.fuel)} to fill)
+                </Button>
+              )}
+              {repairs && (
+                <Button
+                  size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || missing <= 0 || mend > credits} data-testid="service-repair"
+                  onClick={() => {
+                    saveCharacter({ credits: credits - mend });
+                    saveCampaign({ starships: ships.map((s) => (s.id === ship.id ? { ...s, hull: undefined } : s)), ...pass(Math.max(30, missing * 6)) });
+                    toast.success(`${ship.name}: ${missing} hull points mended for ${mend} credits.`);
+                  }}
+                >
+                  {missing > 0 ? `Mend the hull (${missing} points, ${mend} cr)` : "The hull is sound"}
+                </Button>
+              )}
+              {upgrades && shipRows.length > 0 && (
+                <div className="space-y-0.5" data-testid="service-upgrades">
+                  {outfitterStock(shipRows, o.id).map((item) => {
+                    const fit = fitting(ship.equipment, item, shipRows);
+                    return (
+                      <div key={item.name} className="flex items-center gap-1">
+                        <span className="flex-1">{item.name} <span className="text-gray-400">{item.type}</span></span>
+                        <Button
+                          size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || !!fit.error || fit.price > credits} title={fit.error}
+                          onClick={() => {
+                            saveCharacter({ credits: credits - fit.price });
+                            saveCampaign({ starships: ships.map((s) => (s.id === ship.id ? { ...s, equipment: fit.equipment } : s)), ...pass(60) });
+                            toast.success(`${item.name} fitted to ${ship.name} for ${fit.price} credits.`);
+                          }}
+                        >
+                          {fit.error ? "Fitted" : `Fit (${fit.price} cr)`}
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <p className="text-gray-500">Prices for repairs and fittings are house rules (the books price none); a part replaces the one of its kind, taken in part exchange for half its cost.</p>
+      </div>
+    );
+  };
+  const runScript = async (script: RoleScript, buildingId: string | undefined) => {
+    if (!world || !here || !buildingId || inCombat || dead) return;
+    const faction = factionAt(world, buildingId);
+    if (script.cost && script.cost > (character.credits ?? 0)) return void toast.error(`${script.label}: it takes ${script.cost} credits and you have ${character.credits ?? 0}.`);
+    if (script.needs === "audience" && (world.audiences?.[buildingId] ?? 0) <= clockNow() && (faction ? standing.renown[faction] ?? 0 : 0) < 3) {
+      return void toast.error("The dignitary receives no one without a slip from the chamberlain (or renown of 3 or more with the court). House rule.");
+    }
+    toast.info(script.text);
+    const ok = await abilityCheck(script.label, script.dc, script.abilities, script.skill ? skilled(script.skill) : false);
+    if (cancelledCheck.current) return;
+    if (script.cost) saveCharacter({ credits: (character.credits ?? 0) - script.cost });
+    const changes: Record<string, any> = pass(script.minutes + (!ok && script.effect === "cleared" ? 60 : 0));
+    if (ok && script.effect === "audience") changes.galaxyMap = { ...world, audiences: { ...(world.audiences ?? {}), [buildingId]: clockNow() + 12 * 60 } };
+    if (ok && script.effect === "renown" && faction) changes.factionInfluence = addRenown(standing, faction, 1);
+    saveCampaign(changes);
+    toast[ok ? "success" : "error"](ok ? script.win : script.lose);
+  };
+  const scriptPanel = (o: Occupant, holderId: string) => {
+    const list = scriptsFor(o.role);
+    if (!list.length || !world) return null;
+    const buildingId = trailOf(world, holderId).find((a) => a.kind === "building")?.id;
+    return (
+      <div className="mt-1 space-y-1 border-t border-gray-600 pt-1" data-testid="scripts">
+        {list.map((sc) => (
+          <div key={sc.id} className="flex items-center gap-2 text-xs">
+            <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => runScript(sc, buildingId)} data-testid={`script-${sc.id}`}>{sc.label}</Button>
+            <span className="text-gray-400">DC {sc.dc}{sc.needs ? ", by slip or renown" : ""}</span>
+          </div>
+        ))}
+        <p className="text-xs text-gray-500">A few things they will do for you; the checks and what they bring are house rules.</p>
       </div>
     );
   };
@@ -4247,7 +4390,11 @@ export default function GameBoard() {
     }
     if (picked.kind === "occupant") {
       // Someone here, or a sentry standing out in front of the building the party is outside
-      const o = (hereNow ?? here).occupants.find((x) => x.id === picked.id);
+      const ownO = (hereNow ?? here).occupants.find((x) => x.id === picked.id);
+      // (a stallholder of the market in the district stands at a stall, not at the building the party is in front of)
+      const nearB = !ownO && here.kind === "building" && world ? (districtAt(world, here.id)?.buildingIds ?? []).map((id) => (scene ?? world).areas[id]).find((b) => b?.occupants.some((x) => x.id === picked.id)) : undefined;
+      const o = ownO ?? nearB?.occupants.find((x) => x.id === picked.id);
+      const holderId = nearB?.id ?? here.id;
       const gate = !o && here.kind === "building" && world ? childrenOf(world, here.id).find((room) => room.occupants.some((x) => x.id === picked.id)) : undefined;
       if (gate) {
         const sentry = gate.occupants.find((x) => x.id === picked.id)!;
@@ -4298,7 +4445,9 @@ export default function GameBoard() {
           ) : (
             <>
               <p className="text-xs text-gray-400">To talk with them, say what you do on the GM Interface tab.</p>
-              {waresOf(o) && tradePanel(o, here.id)}
+              {waresOf(o) && tradePanel(o, holderId)}
+              {shipServices(o, holderId)}
+              {scriptPanel(o, holderId)}
               {o.role === "medic" && augmentPanel(o)}
               {(o.role === "ticket agent" || (o.role === "smuggler" && o.disposition !== "hostile")) && passagePanel(o)}
               {canHire(o) && hireSection(o, here.id)}
@@ -4608,8 +4757,15 @@ export default function GameBoard() {
               30 a second, and back up when there is room */}
           <PerformanceMonitor
             bounds={() => [30, 50]}
-            onDecline={() => setSharpness((s) => Math.max(0.5, Math.round((s - 0.25) * 100) / 100))}
-            onIncline={() => setSharpness((s) => Math.min(1.5, Math.round((s + 0.25) * 100) / 100))}
+            onDecline={() => {
+              setSharpness((s) => Math.max(0.5, Math.round((s - 0.25) * 100) / 100));
+              // (and once the render scale is down, fewer plants and no flowers in the gardens of a site)
+              if (sharpness <= 0.75) useQuality.getState().lower();
+            }}
+            onIncline={() => {
+              setSharpness((s) => Math.min(1.5, Math.round((s + 0.25) * 100) / 100));
+              if (sharpness >= 1.25) useQuality.getState().raise();
+            }}
           />
           
           {/* Lighting */}
@@ -4671,6 +4827,13 @@ export default function GameBoard() {
                   </Button>
                 </div>
               )}
+              <Button
+                size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" data-testid="detail-toggle"
+                title={`How much the map draws: Auto follows the device (now ${detailTier}), Lite draws fewer plants (phones), Full everything`}
+                onClick={() => useQuality.getState().fix(detailFixed === undefined ? "lite" : detailFixed === "lite" ? "full" : undefined)}
+              >
+                Detail: {detailFixed ? (detailFixed === "lite" ? "Lite" : "Full") : "Auto"}
+              </Button>
               <Button size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" onClick={toggleSidebar}>
                 {showSidebar ? "Hide HUD" : "Show HUD"}
               </Button>
@@ -4778,6 +4941,23 @@ export default function GameBoard() {
                   </Button>
                 </div>
                 {crewPanel(aboardShip)}
+                {world.areas[aboardShip.areaId]?.kind === "settlement" && hangarsOf(world, aboardShip.areaId).length > 0 && (
+                  <div className="space-y-1" data-testid="hangars">
+                    <p className="font-semibold">{aboardShip.hangar ? "Put down in" : "Choose a hangar to put down in"}</p>
+                    {hangarsOf(world, aboardShip.areaId).map((h) => {
+                      const gate = hangarOpen(world, h, standing);
+                      const here = aboardShip.hangar === h.buildingId;
+                      return (
+                        <div key={h.buildingId} className="flex items-center justify-between gap-2">
+                          <span>{h.name} <span className="text-gray-400">{gate.open ? h.note : gate.reason}</span></span>
+                          <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || !gate.open || here} onClick={() => chooseHangar(aboardShip, h)} data-testid={`hangar-${h.kind}`}>
+                            {here ? "Here" : gate.open ? (aboardShip.hangar ? "Move (10 min)" : "Put down") : "By invitation"}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 {helmOpen && (
                   <div className="space-y-1" data-testid="helm-courses">
                     {helmExits(world, aboardShip.areaId).map((exit, i) => {
@@ -5134,7 +5314,7 @@ export default function GameBoard() {
                             </Button>
                           );
                         })()}
-                        {ship.areaId === here.id && hasPort(world, here.id) && ship.fuel < (getStarshipSize(ship.size)?.fuelCapacity ?? 0) && (
+                        {ship.areaId === here.id && hasPort(world, here.id) && !sellsFuelAt(world, here.id) && ship.fuel < (getStarshipSize(ship.size)?.fuelCapacity ?? 0) && (
                           <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => refuel(ship)}>
                             Refuel ({getStarshipSize(ship.size)?.fuelCost} cr a unit)
                           </Button>

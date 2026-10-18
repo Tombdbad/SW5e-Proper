@@ -20,9 +20,9 @@ export type V3 = [number, number, number];
 // screens, blades, eyes; glass: canopies and tanks; haze: force fields, holograms, steam;
 // cloth: thin sheets seen from both sides (awnings, capes, sails, wings)
 export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth";
-const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth"];
+export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth"];
 
-const MATERIALS: Record<Finish, THREE.Material> = {
+export const MATERIALS: Record<Finish, THREE.Material> = {
   matte: new THREE.MeshLambertMaterial({ vertexColors: true, emissive: new THREE.Color("#0a0a0a") }),
   sheen: new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 55, specular: new THREE.Color("#5a5a5a"), emissive: new THREE.Color("#0a0a0a") }),
   glow: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
@@ -497,6 +497,88 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number) {
   if (/pit trap/.test(n)) {
     k.box([L - 0.08, 0.02, D - 0.08], "#05070a", { at: [0, 0.005, 0] });
     for (const [x, z, sx, sz] of [[0, -D / 2 + 0.04, L, 0.08], [0, D / 2 - 0.04, L, 0.08], [-L / 2 + 0.04, 0, 0.08, D], [L / 2 - 0.04, 0, 0.08, D]]) k.box([sx, 0.05, sz], C.amber, { at: [x, 0.03, z], finish: "glow" });
+    return;
+  }
+  if (/curtain wall/.test(n)) {
+    // A stone wall with a walk along the top and a toothed parapet, as long as the piece is
+    k.box([L, 2.0, D * 0.8], "#9a9288", { at: [0, 1.0, 0], round: 0.04 });
+    k.box([L, 0.1, D], "#7a736a", { at: [0, 2.05, 0], round: 0.02 });
+    const teeth = Math.max(1, Math.floor(L / 0.9));
+    for (let i = 0; i < teeth; i++) k.box([0.5, 0.34, D * 0.34], "#8a8278", { at: [-L / 2 + (i + 0.5) * (L / teeth), 2.3, -D * 0.28], round: 0.02 });
+    return;
+  }
+  if (/sales counter/.test(n)) {
+    k.box([L - 0.2, 0.62, D - 0.3], C.woodDark, { at: [0, 0.31, 0], round: 0.04 });
+    k.box([L - 0.1, 0.05, D - 0.2], "#c9b48a", { at: [0, 0.64, 0], round: 0.02, finish: "sheen" });
+    k.box([L - 0.34, 0.3, D - 0.46], "#bfe8f5", { at: [0, 0.82, 0.02], finish: "glass" });
+    screen(k, [L / 2 - 0.45, 0.7, -0.05], 0.3, 0.2, 0.7);
+    return;
+  }
+  if (/display shelf|goods shelf|curio shelf|droid parts shelf|herb rack|instrument rack|wares rack/.test(n)) {
+    // A shelving unit against a wall, its shelves loaded with what the shop sells
+    const wares = /droid parts/.test(n) ? [C.steel, C.amber, C.steelDark] : /herb/.test(n) ? ["#6a9a4a", "#9aa05a", "#7a5a8a"] : /curio/.test(n) ? [C.gold, "#8a6a9a", "#c8663a"] : /instrument/.test(n) ? [C.wood, "#a1495a", C.gold] : /goods/.test(n) ? ["#c8663a", "#e8dcc0", "#4f8a8b"] : [C.steel, "#5f7a9a", C.amber];
+    k.box([L - 0.16, 1.5, 0.06], C.woodDark, { at: [0, 0.75, back + 0.14], round: 0.015 });
+    for (const x of [-L / 2 + 0.12, L / 2 - 0.12]) k.box([0.06, 1.5, D - 0.3], C.woodDark, { at: [x, 0.75, 0.02], round: 0.015 });
+    for (const [j, y] of [0.04, 0.4, 0.78, 1.14, 1.48].entries()) {
+      k.box([L - 0.2, 0.04, D - 0.34], C.wood, { at: [0, y, 0.02], round: 0.01 });
+      if (j === 4) continue;
+      const count = Math.max(2, Math.round(L * 2.4));
+      for (let i = 0; i < count; i++) {
+        const x = -L / 2 + 0.3 + (i * (L - 0.6)) / Math.max(1, count - 1);
+        const c = wares[(i + j + seed) % wares.length];
+        if ((i + j) % 3 === 0) k.sphere(0.08, c, { at: [x, y + 0.12, 0.02], seg: [8, 6], finish: /droid|curio|instrument/.test(n) ? "sheen" : "matte" });
+        else if ((i + j) % 3 === 1) k.cyl(0.06, 0.2, c, { at: [x, y + 0.12, 0.02], seg: 8 });
+        else k.box([0.16, 0.18, 0.16], c, { at: [x, y + 0.11, 0.02], round: 0.02 });
+      }
+    }
+    return;
+  }
+  if (/produce bin/.test(n)) {
+    k.box([L - 0.2, 0.28, D - 0.2], C.wood, { at: [0, 0.14, 0], round: 0.03 });
+    for (let i = 0; i < 6; i++) k.blob(0.11, ["#c8663a", "#9fbf5a", "#d6a85a", "#a1495a"][(i + seed) % 4], { at: [(i % 3 - 1) * 0.24, 0.32, (Math.floor(i / 3) - 0.5) * 0.24], smooth: true, rough: 0.15, seed: i, squash: [1, 0.85, 1] });
+    return;
+  }
+  if (/cloth bolts/.test(n)) {
+    k.box([L - 0.2, 0.5, 0.16], C.woodDark, { at: [0, 0.25, back + 0.16], round: 0.02 });
+    for (let i = 0; i < Math.round(L * 2.2); i++) k.cyl(0.1, 0.5, ["#c8663a", "#4f8a8b", "#a1495a", "#e8dcc0", "#5a6a9a"][i % 5], { at: [-L / 2 + 0.25 + i * 0.4, 0.62 + (i % 2) * 0.16, back + 0.2], rot: [Math.PI / 2, 0, 0], seg: 12, finish: "cloth" });
+    return;
+  }
+  if (/display case|display table/.test(n)) {
+    k.box([L - 0.2, 0.7, D - 0.2], C.black, { at: [0, 0.35, 0], round: 0.03, finish: "sheen" });
+    k.box([L - 0.26, 0.26, D - 0.26], "#bfe8f5", { at: [0, 0.83, 0], finish: "glass" });
+    for (let i = 0; i < Math.round(L * 1.6); i++) k.box([0.12, 0.05, 0.1], [C.gold, C.steelLight, "#8a6a9a", C.glow][(i + seed) % 4], { at: [-L / 2 + 0.3 + i * 0.3, 0.74, (i % 2) * 0.1 - 0.05], rot: [0, i, 0], finish: i % 3 ? "sheen" : "glow" });
+    return;
+  }
+  if (/clothing rack/.test(n)) {
+    for (const x of [-L / 2 + 0.15, L / 2 - 0.15]) k.cyl(0.025, 1.4, C.steelDark, { at: [x, 0.7, 0], seg: 6 });
+    k.cyl(0.02, L - 0.3, C.steelLight, { at: [0, 1.38, 0], rot: [0, 0, Math.PI / 2], seg: 6, finish: "sheen" });
+    for (let i = 0; i < Math.round(L * 3); i++) k.box([0.07, 0.56, 0.3], ["#7d3b4a", "#3a6a9a", "#c9a56e", "#4f6b4a", "#e8dcc0"][(i + seed) % 5], { at: [-L / 2 + 0.3 + i * 0.28, 1.08, 0], finish: "cloth" });
+    return;
+  }
+  if (/armor stand/.test(n)) {
+    k.lathe([[0.2, 0], [0.2, 0.03], [0.04, 0.06], [0.04, 0.5], [0, 0.5]], C.black, { seg: 10, finish: "sheen" });
+    k.box([0.4, 0.46, 0.22], [C.steel, "#6b4f36", "#3f5f7a"][seed % 3], { at: [0, 0.78, 0], round: 0.08, finish: "sheen" });
+    k.pair((s) => k.box([0.18, 0.12, 0.2], C.steelDark, { at: [s * 0.28, 0.96, 0], round: 0.04, finish: "sheen" }));
+    k.sphere(0.13, C.steelLight, { at: [0, 1.18, 0], finish: "sheen" });
+    k.box([0.2, 0.05, 0.02], C.glow, { at: [0, 1.2, 0.12], finish: "glow" });
+    return;
+  }
+  if (/holo display/.test(n)) {
+    k.lathe([[0.26, 0], [0.26, 0.04], [0.14, 0.1], [0.12, 0.7], [0.24, 0.76], [0, 0.76]], C.black, { seg: 14, finish: "sheen" });
+    k.cone(0.18, 0.5, C.glow, { at: [0, 1.0, 0], finish: "haze" });
+    k.sphere(0.09, C.glow, { at: [0, 1.12, 0], finish: "glow" });
+    return;
+  }
+  if (/statuette plinth/.test(n)) {
+    k.box([0.5, 0.6, 0.5], "#b8b2a4", { at: [0, 0.3, 0], round: 0.04 });
+    k.capsule(0.07, 0.22, C.gold, { at: [0, 0.82, 0], finish: "sheen" });
+    k.sphere(0.06, C.gold, { at: [0, 1.04, 0], finish: "sheen" });
+    return;
+  }
+  if (/starship part/.test(n)) {
+    k.box([L - 0.2, 0.18, D - 0.3], C.steelDark, { at: [0, 0.09, 0], round: 0.03, finish: "sheen" });
+    k.lathe([[0.16, -0.5], [0.3, -0.3], [0.32, 0.1], [0.2, 0.5], [0.1, 0.7]], C.steel, { at: [0, 0.5, 0], rot: [0, 0, Math.PI / 2], seg: 16, finish: "sheen" });
+    k.torus(0.3, 0.03, C.glow, { at: [-0.3, 0.5, 0], rot: [0, Math.PI / 2, 0], seg: [5, 18], finish: "glow" });
     return;
   }
   if (/bandstand/.test(n)) {
@@ -1688,13 +1770,16 @@ export function outfitOf(name: string, role = "", look?: Look, force?: { blade: 
   if (/guard|sentry|sentries|constable|watch|security|patrol|warden|enforcer/.test(n)) return { ...base, garment: "armor", armor: pickOf(["#59636d", "#4a5a6a", "#7b8794"], role || name), head: "helmet", hand: "rifle" };
   if (/bartender|barkeep|cook|chef/.test(n)) return { ...base, garment: "apron", accent: "#e8dcc0", hand: /bartender|barkeep/.test(n) ? "tray" : "" };
   if (/medic|doctor|surgeon|healer/.test(n)) return { ...base, garment: "labcoat", top: white, bottom: "#5b6b8a", head: "", hand: "datapad" };
-  if (/mechanic|engineer|technician|tinker|repair/.test(n)) return { ...base, garment: "overalls", top: pickOf(["#a0703a", "#5a6a7a", "#7a7a5a"], name), bottom: "", head: "", hand: "tool", belt: true };
+  if (/dignitary|governor|regent|queen|king|prince|duke|baron|chancellor/.test(n)) return { ...base, garment: "robe", top: pickOf(["#5a2a6a", "#7a2a3a", "#2a4a6a"], name), bottom: "#2b2f36", accent: "#d8b45a", head: "", hand: "", cape: pickOf(["#3a1a4a", "#6a1a2a"], name), belt: true };
+  if (/chamberlain|steward|herald/.test(n)) return { ...base, garment: "coat", top: "#3a2a4a", accent: "#d8b45a", head: "", hand: "datapad", belt: true };
+  if (/croupier/.test(n)) return { ...base, garment: "vest", top: "#e8e0d0", accent: "#9a2a3a", hand: "", belt: true };
+  if (/mechanic|engineer|technician|tinker|repair|attendant|outfitter/.test(n)) return { ...base, garment: "overalls", top: pickOf(["#a0703a", "#5a6a7a", "#7a7a5a"], name), bottom: "", head: "", hand: "tool", belt: true };
   if (/dockmaster|ticket|clerk|agent|official/.test(n)) return { ...base, garment: "coat", top: pickOf(["#3d4856", "#4a3a3a"], name), accent: "#f0a03c", head: "cap", hand: "datapad" };
   if (/pilot/.test(n)) return { ...base, garment: "flightsuit", top: pickOf(["#d9752b", "#6b4f36", "#4a5a3a"], name), bottom: "", head: "", hand: "pistol", belt: true };
   if (/smuggl|scoundrel|gambler/.test(n)) return { ...base, garment: "vest", top: "#e8e0d0", accent: pickOf(["#2b2522", "#4a3a2a", "#3a4a5a"], name), hand: "pistol", belt: true };
   if (/thug|gang|enforcer|bruiser|brawl|pirate|raider/.test(n)) return { ...base, garment: "vest", accent: "#2b2522", hand: "vibro", belt: true };
   if (/fence|spy|informant/.test(n)) return { ...base, garment: "robe", top: "#2b2f36", bottom: "#2b2f36", head: "hood", hand: "" };
-  if (/merchant|trader|shop|vendor|dealer|seller/.test(n)) return { ...base, garment: "coat", accent: base.accent, head: "", hand: "datapad", belt: true };
+  if (/merchant|trader|shop|vendor|dealer|seller|stallholder/.test(n)) return { ...base, garment: "coat", accent: base.accent, head: "", hand: "datapad", belt: true };
   if (/noble|aristocrat|governor|senator|crime lord|boss/.test(n)) return { ...base, garment: "robe", top: pickOf(["#5a2a6a", "#7a5a2a", "#2a4a6a"], name), bottom: "#2b2f36", accent: "#d8b45a", head: "", hand: "", cape: "#3a1a4a" };
   if (/captive|slave|prisoner/.test(n)) return { ...base, garment: "rags", top: "#8a7a62", bottom: "#5a4a3a", head: "", hand: "" };
   if (/musician|singer|performer|dancer/.test(n)) return { ...base, garment: pickOf(["tunic", "vest"], name) as Outfit["garment"], top: pickOf(["#7d3b4a", "#3a6a9a", "#9a6a3a"], name), head: "", hand: "" };
@@ -3112,6 +3197,33 @@ function buildBuilding(k: Kit, type: string, wall: string) {
     for (const [x, z] of [[-1.9, -1.9], [1.9, -1.9], [-1.9, 1.9], [1.9, 1.9]]) tower(k, [x, 0, z], 0.35, 2.4, wall);
     k.extrude(archShape(0.9, 1.2), 0.4, "#3a2c20", { at: [0, 0, 2.1] });
     k.torus(2.3, 0.06, trim, { at: [0, 0.9, 0], rot: [Math.PI / 2, 0, 0], seg: [6, 40] });
+    return;
+  }
+  if (/estates|manor/.test(type)) {
+    // A great house with a tiled roof and a tower, in a walled garden with a gate
+    upright(k, planRect(3.4, 3.0, 0.1), 0.32, "#8a8478", { y: 0 });
+    upright(k, planRect(3.0, 2.6, 0.1), 0.02, "#5a8a4a", { y: 0.32 });
+    upright(k, planRect(1.8, 1.2, 0.2), 0.9, wall, { at: [0, 0, -0.4], y: 0.34, bevel: 0.04 });
+    k.cone(1.15, 0.7, "#8a4a3a", { at: [0, 1.58, -0.4], seg: 4, rot: [0, Math.PI / 4, 0] });
+    tower(k, [0.95, 0.34, -0.9], 0.22, 1.5, wall);
+    for (const [x, z] of [[-1.4, 1.2], [-1.0, 1.25], [1.0, 1.2], [1.4, 1.25]]) k.blob(0.2, "#3f7d3a", { at: [x, 0.5, z], smooth: true, rough: 0.15, seed: x * 3 });
+    k.box([0.5, 0.3, 0.08], C.gold, { at: [0, 0.5, 1.5], round: 0.03, finish: "sheen" });
+    return;
+  }
+  if (/junkyard|scrap/.test(type)) {
+    // Heaps of scrap, a crane and stacked containers
+    rocks(k, [[-1.0, -0.6, 0.9, "#6a5a4a"], [1.0, 0.6, 0.8, "#59636d"], [0.2, 1.1, 0.5, "#7a5a3a"]]);
+    for (const [x, z, c, y] of [[-1.5, 1.0, "#a1495a", 0], [-1.5, 1.0, "#4f8a8b", 0.5], [1.7, -0.8, "#c8663a", 0]] as [number, number, string, number][]) k.box([1.0, 0.5, 0.5], c, { at: [x, 0.25 + y, z], round: 0.02 });
+    k.cyl(0.06, 2.2, C.steelDark, { at: [0.4, 1.1, -1.0], seg: 8, finish: "sheen" });
+    k.rod([0.4, 2.2, -1.0], [1.5, 1.6, -0.4], 0.04, C.amber, { finish: "sheen" });
+    k.box([0.18, 0.18, 0.18], C.steelDark, { at: [1.5, 1.4, -0.4], finish: "sheen" });
+    return;
+  }
+  if (/tenements/.test(type)) {
+    for (const [x, z, h] of [[-0.9, 0, 2.0], [0.2, -0.3, 2.6], [1.2, 0.2, 1.6]]) {
+      upright(k, planRect(0.9, 1.2, 0.1), h, wall, { at: [x, 0, z], bevel: 0.03 });
+      for (let i = 0; i < Math.floor(h / 0.5); i++) k.box([0.2, 0.14, 0.04], "#ffd98a", { at: [x, 0.3 + i * 0.5, z + 0.62], round: 0.03, finish: i % 3 ? "matte" : "glow" });
+    }
     return;
   }
   if (/warehouse|cargo/.test(type)) {

@@ -3,9 +3,14 @@ import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls, Text, Billboard } from "@react-three/drei";
 import { Figure, Furniture, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount } from "@/components/Map/models";
 import { tokenOf, SIDE_COLORS } from "@/components/Map/sprites";
+import { CurtainWall, GardenGround, Scatter, StallModel, paletteOf, plantGarden, type StallState } from "@/components/Map/siteAssets";
 
 // Every model of the 3D map laid out in rows, for looking them over (a developer's page, not
-// linked from the game). ?section=people|roles|droids|beasts|furniture|ships|places picks one.
+// linked from the game). ?section=people|roles|droids|beasts|furniture|ships|places|sites picks one.
+// `sites` shows the asset library of the sites: a garden planted for each kind of world, the stalls of a
+// market open, being packed and packed, a curtain wall, and the pieces a shop shows.
+const SHOP_PIECES: [string, number, number][] = [["Sales counter", 4, 1], ["Display shelf", 3, 1], ["Goods shelf", 3, 1], ["Curio shelf", 2, 1], ["Droid parts shelf", 3, 1], ["Herb rack", 2, 1], ["Instrument rack", 2, 1], ["Wares rack", 1, 1], ["Produce bin", 1, 1], ["Cloth bolts", 2, 1], ["Display case", 2, 1], ["Clothing rack", 2, 1], ["Armor stand", 1, 1], ["Holo display", 1, 1], ["Statuette plinth", 1, 1], ["Starship part", 2, 1], ["Weapon rack", 2, 1], ["Medical cabinet", 2, 1]];
+const BIOMES = ["temperate", "forest", "jungle", "desert", "ice", "volcanic", "swamp", "urban"];
 
 const SPECIES = ["Human", "Twi'lek", "Togruta", "Zabrak", "Rodian", "Wookiee", "Trandoshan", "Mon Calamari", "Duros", "Ithorian", "Bith", "Gamorrean", "Jawa", "Tusken", "Kel Dor", "Nautolan", "Chiss", "Cathar", "Gungan", "Weequay", "Devaronian", "Ewok", "Sullustan", "Toydarian", "Cerean", "Sith Pureblood", "Quarren", "Besalisk", "Kaminoan", "Iktotchi", "Gran", "Bothan"];
 const ROLES = ["bartender", "merchant", "mechanic", "medic", "pilot for hire", "smuggler", "bounty hunter", "guard", "officer", "dockmaster", "noble", "captive", "musician", "scholar", "patron", "resident"];
@@ -104,6 +109,20 @@ export default function ModelGallery() {
               );
             }} />
             <Rows z={38} items={["closed", "looted", "plant", "crystal", "ore", "salvage", "hide"]} per={7} gap={1.6} name={(s) => s} draw={(s) => <group position={[-0.5, 0, -0.5]}>{s === "closed" || s === "looted" ? <Chest looted={s === "looted"} /> : <NodeModel node={{ family: s === "ore" ? "ore" : s, tier: 2 }} />}</group>} />
+          </>
+        )}
+        {section === "sites" && (
+          <>
+            {BIOMES.map((biome, i) => (
+              <group key={biome} position={[(i % 4) * 15 - 22, 0, Math.floor(i / 4) * 15 - 4]}>
+                <GardenGround rects={[{ x: 0, y: 0, width: 12, height: 12 }]} biome={biome} />
+                <Scatter placed={plantGarden({ x: 0, y: 0, width: 12, height: 12 }, `gallery|${biome}`, biome, "full")} biome={biome} />
+                <Label at={[6, 0.1, 13]} text={biome} />
+              </group>
+            ))}
+            <Rows z={28} items={["general", "arms", "tech", "medical", "outfit", "leisure", "black"].flatMap((trade) => (["open", "packing", "packed"] as StallState[]).map((state) => ({ trade, state })))} per={9} gap={4} name={(s) => `${s.trade} ${s.state}`} draw={(s) => <StallModel trade={s.trade} state={s.state} canvas={paletteOf("temperate").canvas[s.trade.length % 4]} seed={s.trade.length} />} />
+            <Rows z={40} items={SHOP_PIECES} per={9} gap={4} name={([n]) => n} draw={([n, w, h]) => <group position={[-w / 2, 0, -h / 2]}><Furniture name={n} w={w} h={h} seed={n.length} /></group>} />
+            <group position={[-12, 0, 48]}><CurtainWall wall={{ x: 0, y: 0, width: 28, height: 12, gates: [{ side: "s", at: 12, width: 4 }] }} biome="temperate" /></group>
           </>
         )}
         <OrbitControls target={look} />

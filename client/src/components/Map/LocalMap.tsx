@@ -7,9 +7,10 @@ import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey } from "@/lib/stores/useCombat";
 import { type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
-import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
+import { afterHoursLock, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind } from "./sprites";
+import { CurtainWall, GardenGround, Scatter, StallModel, fixturesOf, keeperSpot, paletteOf, stallState, useQuality } from "./siteAssets";
 import { Figure, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, RoundedFloor, CornerWall, DomeRoof, Opening, styleOf, hue, type Style } from "./models";
 
 // The flying games draw the same ships and speeders
@@ -1273,6 +1274,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     : plan ? { x: plan.x - MARGIN, y: plan.y - MARGIN, w: plan.width + MARGIN * 2, h: plan.height + MARGIN * 2 } : { x: -8, y: -8, w: 16, h: 16 };
   const cx = ground.x + ground.w / 2;
   const cz = ground.y + ground.h / 2;
+  // What the site lays out on its open ground (a palace's wall and gardens, a market's stalls): the pieces
+  // are drawn from the asset library and the squares they fill cannot be walked over
+  const tier = useQuality((q) => q.tier);
+  const fixtures = useMemo(() => fixturesOf(districtPlan, biome, tier), [districtPlan, biome, tier]);
   // (a cellar under the street leaves the street above it free to walk on, and so does a roof or
   // a catwalk, which stand over what is below)
   const inRoom = (x: number, y: number) => rooms.some((a) => a.layout && (a.layout.level ?? 0) >= 0 && formOf(a) !== "gallery" && !openAir(a) && x >= a.layout.x && x < a.layout.x + a.layout.width && y >= a.layout.y && y < a.layout.y + a.layout.height);
@@ -1295,7 +1300,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (!plan) return none;
     const r = createRandom(Number(buildings[0].id.replace(/\D/g, "") || 1) * 613 + 7);
     const taken = new Set<string>();
-    const free = (x: number, y: number) => x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !taken.has(`${x},${y}`);
+    const free = (x: number, y: number) => x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !taken.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`);
     // Somewhere free near where a thing should stand; signposts keep clear of each other, so
     // that a finger can tell them apart
     const kept: { x: number; y: number }[] = [];
@@ -1332,7 +1337,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         signs.push({ exit, ...claim({ x: cx - 0.5 + dx * k, y: cz - 0.5 + dz * k }, 4) });
       }
     }
-    const folk = fronts.flatMap(({ b, door }) => b.occupants.flatMap((o, i) => Array.from({ length: Math.min(o.count, 3) }, (_, j) => ({ occupant: o, ...claim({ x: door.x - 2 - j, y: door.y + (i % 2 ? 2 + i : -2 - i) }) }))));
+    const folk = fronts.flatMap(({ b, door }) => b.occupants.filter((o) => !o.stall).flatMap((o, i) => Array.from({ length: Math.min(o.count, 3) }, (_, j) => ({ occupant: o, ...claim({ x: door.x - 2 - j, y: door.y + (i % 2 ? 2 + i : -2 - i) }) }))));
     const caches = fronts.flatMap(({ b, door }) => b.loot.filter((c) => !c.hidden).map((cache, i) => ({ cache, ...claim({ x: door.x + 1, y: door.y + 3 + i }) })));
     const kinds = DECOR[biome] ?? DECOR.temperate;
     const count = Math.min(46, Math.max(9, Math.round((ground.w * ground.h) / 260)));
@@ -1365,6 +1370,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // search is on: the squares two away from each signpost, all the way round it, are barricaded, so
   // that the sign cannot be walked up to. The barricade stands only where the ground is open.
   const minutes = useClock((c) => c.minutes);
+  // The shops that are shut for the night (shared logic afterHoursLock): their ways in are drawn locked
+  const shut = useMemo(() => new Set(buildings.filter((b) => afterHoursLock(world, b.id, minutes) !== undefined).map((b) => b.id)), [world, buildings, Math.floor(minutes / 5)]);
   const settlementId = trail.find((a) => a.kind === "settlement")?.id;
   const blockade = !!settlementId && blockadeAt(world, settlementId, minutes);
   const barricades = useMemo(() => {
@@ -1387,7 +1394,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // Where the party can stand: the free floor of the room they are in, or the open ground outside.
   // People step aside, so only furniture stands in the way.
   const outdoors = (x: number, y: number) =>
-    x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !barred.has(`${x},${y}`)
+    x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !barred.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`)
     && ![...street.signs, ...street.decor, ...street.folk, ...street.caches, ...street.rigs].some((thing) => thing.x === x && thing.y === y);
   const open = (x: number, y: number) => {
     if (inside) {
@@ -1815,7 +1822,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           // (a room with the opened one standing right on it keeps its full height, so that there is no gap under the floor)
           const carries = !!opened?.layout && sameFootprint(l, opened.layout) && levelY(opened.layout) >= levelY(l) + LEVEL_H - 0.01;
           const tall = lookedFrom ? 0.8 : opened && !carries ? 1 : 2;
-          const body = tall + rise(l);
+          // (the floor of an opened room above, or of a roof, is a slab 0.2 thick with the same footprint, and
+          // sits on this room: the block stops where the slab starts, so that their faces are never in one plane)
+          const sunk = carries ? 0.2 : roofed.has(room.id) ? 0.18 : 0;
+          const body = tall + rise(l) - sunk;
           const lift = levelY(l);
           const roof = hue(room.id);
           const wallColor = new THREE.Color(wall).multiplyScalar(opened ? 0.45 : 1).getStyle();
@@ -1939,7 +1949,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   {!opened && !form && !roofed.has(room.id) && (
                     <>
                       {/* What stands on the roof */}
-                      {room.gateway ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.3} color={wall} /></group>
+                      {/* (a tower of a palace is capped with a spire, its great hall with a dome) */}
+                      {/tower/i.test(room.name) ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><Cyl at={[0, 1.4, 0]} r={Math.min(l.width, l.height) * 0.42} h={2.8} color={paletteOf(biome).canvas[0]} top={0.03} /><Cyl at={[0, 3.0, 0]} r={0.04} h={0.8} color="#d8b45a" /></group>
+                        : /audience chamber/i.test(room.name) && building.type === "palace" ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.4} color={wall} /></group>
+                        : room.gateway ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.3} color={wall} /></group>
                         : roof % 3 === 0 ? <><Box at={[l.width * 0.3, tall + 0.35, l.height * 0.35]} size={[1, 0.5, 0.8]} color="#59636d" /><Cyl at={[l.width * 0.3, tall + 0.65, l.height * 0.35]} r={0.25} h={0.1} color="#2b2f36" /></>
                         : roof % 3 === 1 ? <Mast at={[l.width * 0.7, tall + 0.1, l.height * 0.6]} h={1.8} />
                         : <Cyl at={[l.width * 0.6, tall + 0.4, l.height * 0.4]} r={0.5} h={0.6} color="#59636d" />}
@@ -1955,11 +1968,11 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   {a.kind !== "window" && a.kind !== "door" && (
                     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[step.x - l.x + 0.5, 0.02, step.y - l.y + 0.5]} onClick={tappable ? (e) => { e.stopPropagation(); if (e.delta <= 8) actOutside(room, a); } : undefined}>
                       <planeGeometry args={[0.92, 0.92]} />
-                      <meshBasicMaterial color={WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} transparent opacity={0.45} depthWrite={false} />
+                      <meshBasicMaterial color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} transparent opacity={0.45} depthWrite={false} />
                     </mesh>
                   )}
                   <group position={[at.x, 0, at.z]} rotation={[0, at.turn, 0]}>
-                    <Doorway kind={a.kind} color={WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} />
+                    <Doorway kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} />
                   </group>
                   </group>
                 );
@@ -1983,6 +1996,28 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               <Barricade key={`${b.sign.x},${b.sign.y}`} squares={b.squares} guards={b.guards} onTap={tappable ? () => onAct?.({ type: "note", text: "Barricades. The officers are holding this way out until the search is called off." }) : undefined} />
             ))}
             {!duel && <Squads spots={squadSpots} onTap={tappable ? (squad, label) => onAct?.({ type: "note", text: `${squad.heavy ? "Troopers" : "Constables"} (${squad.count}) are searching the district ${label ?? ""}.` }) : undefined} />}
+            {districtPlan?.grounds?.wall && <CurtainWall wall={districtPlan.grounds.wall} biome={biome} />}
+            {districtPlan?.grounds?.gardens && <GardenGround rects={districtPlan.grounds.gardens} biome={biome} />}
+            <Scatter placed={fixtures.placed} biome={biome} />
+            {fixtures.stalls.map((st) => {
+              const keeper = buildings.flatMap((b) => b.occupants).find((o) => o.stall === st.id);
+              const spot = keeperSpot(st);
+              return (
+                <group key={st.id}>
+                  <group position={[st.x + st.w / 2, 0, st.y + st.h / 2]} rotation={[0, st.south ? 0 : Math.PI, 0]}>
+                    <StallModel trade={st.trade} state={stallState("market", minutes)} canvas={st.canvas} seed={hue(st.id)} />
+                  </group>
+                  {keeper && stallState("market", minutes) !== "packed" && (
+                    <group position={[spot.x, 0, spot.y]} rotation={[0, st.south ? 0 : Math.PI, 0]}>
+                      <Figure kind={tokenOf(keeper)} ring={SIDE_COLORS[keeper.disposition]} name={keeper.name} species={keeper.species} role={keeper.role} />
+                      <Label at={[0, 1.6, 0]} size={0.26} color={SIDE_COLORS[keeper.disposition]}>{keeper.name}</Label>
+                      {tappable && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => walkTo(around(Math.floor(st.x + st.w / 2), st.south ? st.y + st.h : st.y - 1), () => onAct?.({ type: "occupant", id: keeper.id }))} />}
+                    </group>
+                  )}
+                  {tappable && !keeper && <Hit at={[st.x + st.w / 2, 0.6, st.y + st.h / 2]} size={[st.w, 1.2, st.h]} onTap={() => onAct?.({ type: "note", text: stallState("market", minutes) === "packed" ? "The stall is packed up for the night; its keeper is gone home. It opens in the morning." : "Nobody keeps this stall just now." })} />}
+                </group>
+              );
+            })}
             {street.decor.map((d, i) => (
               <group key={i} position={[d.x, 0, d.y]}>
                 <Decor kind={d.kind} seed={d.x * 7 + d.y * 13} />
@@ -2428,10 +2463,11 @@ const UP = new THREE.Vector3(0, 1, 0);
 
 function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; view: Area; hereId: string; selectedId?: string | null; onAct?: (action: MapAction) => void }) {
   const tap = useTaps(onAct);
-  const places = childrenOf(world, view.id);
+  // (the buildings that belong to a site are on its local map, not on the settlement's)
+  const places = childrenOf(world, view.id).filter((a) => !isSatellite(a));
   const ids = new Set(places.map((a) => a.id));
   const paths = world.paths.filter((p) => ids.has(p.from) && ids.has(p.to) && !p.hidden);
-  const partyTrail = new Set(trailOf(world, hereId).map((a) => a.id));
+  const partyTrail = new Set(trailOf(world, hereId).flatMap((a) => [a.id, ...a.tags.filter((t) => t.startsWith("site:")).map((t) => t.slice(5))]));
   const trail = trailOf(world, view.id);
   const biome = trail.find((a) => a.kind === "planet")?.type ?? "";
   const wall = trail.some((a) => a.type === "station") ? STEEL : WALLS[biome] ?? "#b9ad96";

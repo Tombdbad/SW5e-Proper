@@ -79,6 +79,8 @@ export interface Occupant {
   captive?: Captive;
   // A droid powered down by a fight: it can be stabilized, mended and put under a bolt
   disabled?: boolean;
+  // The outdoor stall of a market that they keep (see SiteGrounds); they pack up at closing time
+  stall?: string;
 }
 
 export interface Ship {
@@ -188,6 +190,8 @@ export interface World {
   incidentClock?: Record<string, number>;
   // A ship the party is trying to take (see startHeist); absent when there is none
   heist?: Heist;
+  // The audience slips the party holds (a palace's id -> the minute the slip runs out; see SCRIPTS)
+  audiences?: Record<string, number>;
   // The encounter waiting in the district the party is in (see rollEncounter), and the settlements
   // whose master has already taught the party
   encounter?: Encounter;
@@ -299,8 +303,8 @@ const ROUTE_LABEL: Record<string, string[]> = {
 
 // Settlement types and the buildings they are made of. "*" marks a gateway; "?" an optional one.
 const SETTLEMENTS: Record<string, { buildings: string[]; street: string[] }> = {
-  city: { buildings: ["spaceport*", "city gate*", "cantina", "market", "garrison", "medcenter", "workshop?", "residences", "palace?", "warehouse?", "archive?", "hideout?", "tenements?", "transit hub?", "droid dealer?", "vehicle dealer?", "shipyard?"], street: ["Avenue", "Skywalk", "Alley", "Transit tube"] },
-  town: { buildings: ["landing field*", "town gate*", "cantina", "market", "workshop", "residences?", "garrison?", "medcenter?", "hideout?", "tenements?", "vehicle dealer?"], street: ["Street", "Alley", "Dirt road"] },
+  city: { buildings: ["spaceport*", "city gate*", "cantina", "market", "garrison", "medcenter", "workshop?", "residences", "palace?", "estates", "warehouse", "archive?", "hideout?", "tenements", "junkyard", "droid dealer?", "vehicle dealer?"], street: ["Avenue", "Skywalk", "Alley", "Transit tube"] },
+  town: { buildings: ["landing field*", "town gate*", "cantina", "market", "workshop", "residences?", "garrison?", "medcenter?", "hideout?", "tenements?", "junkyard?", "warehouse?", "vehicle dealer?"], street: ["Street", "Alley", "Dirt road"] },
   outpost: { buildings: ["landing pad*", "command post", "garrison", "warehouse", "workshop?"], street: ["Perimeter path", "Covered walkway"] },
   station: { buildings: ["docking ring*", "promenade", "operations center", "engineering", "habitat ring", "cargo bay?"], street: ["Ring corridor", "Turbolift", "Maintenance shaft"] },
   "cave system": { buildings: ["trailhead*", "cave", "cave?"], street: ["Trail", "Scree slope"] },
@@ -308,6 +312,39 @@ const SETTLEMENTS: Record<string, { buildings: string[]; street: string[] }> = {
   "crash site": { buildings: ["trailhead*", "wreck", "camp?"], street: ["Debris trail", "Gully"] },
   "raider camp": { buildings: ["trailhead*", "camp", "camp?", "cave?"], street: ["Trail", "Dry wash"] },
 };
+
+// ---------------------------------------------------------------------------------------------
+// Sites (the user's design, 2026-10-18). A settlement lists a building (the spaceport, the cantina, the
+// market, the palace...) and the local map of that building is its site: the building itself and the
+// buildings that belong to it, standing round it on one map of streets. A satellite is a building of the
+// settlement that is shown only on the local map of its site (it has the tag site:<anchor id>); the
+// settlement's own map shows the listed buildings alone. A town has half as many satellites as a city.
+// Where the listed buildings stand in the settlement follows the town's plan (SPOTS): the port on one
+// side, the palace on the other, the warehouses between the port and the market, the tenements beside
+// the junkyard and the estates beside the palace.
+// ---------------------------------------------------------------------------------------------
+
+export const SITES: Record<string, string[]> = {
+  spaceport: ["refuelling depot", "cargo hangar", "transit hub", "public hangar", "private hangar", "shipyard"],
+  "landing field": ["refuelling depot", "shipyard"],
+  cantina: ["cookshop", "rooming house", "gambling hall", "pawnshop"],
+  market: ["general store", "armsmith", "tech shop", "apothecary", "outfitter", "curio shop"],
+  palace: ["royal hangar", "guardhouse", "gatehouse"],
+  warehouse: ["warehouse", "warehouse"],
+  estates: ["manor house", "manor house"],
+  junkyard: ["scrap dealer", "scrap dealer"],
+};
+// Settlements whose buildings are sites; the others (outposts, stations, wild sites) keep the old districts
+const SITED = ["city", "town"];
+// Quoted names, like a cantina's, for the places that have a name of their own
+const NAMED_PLACES = ["cantina", "workshop", "hideout", "cookshop", "rooming house", "gambling hall", "pawnshop", "general store", "armsmith", "tech shop", "apothecary", "outfitter", "curio shop", "scrap dealer"];
+const SPOTS: Record<string, [number, number]> = {
+  spaceport: [-8, -1], "landing field": [-8, -1], warehouse: [-4.2, -2.6], cantina: [-4.2, 2.4], market: [0, 0],
+  "city gate": [-2, -8], "town gate": [-2, -8], workshop: [1.8, 3.4], "droid dealer": [3.6, 3], "vehicle dealer": [0.4, 5],
+  medcenter: [3.2, -3.4], residences: [4.6, 1.4], archive: [5.8, -4.2], garrison: [4.4, -6.2], palace: [9, -0.5], estates: [8.4, 4.2],
+  tenements: [-1.4, 7.6], junkyard: [-4.6, 7.6], hideout: [-7.4, 6.2],
+};
+export const isSatellite = (a: Pick<Area, "tags">) => a.tags.some((t) => t.startsWith("site:"));
 
 // Wilderness sites that suit each biome
 const WILD_SITES: Record<string, string[]> = {
@@ -325,16 +362,34 @@ const WILD_SITES: Record<string, string[]> = {
 //   P captives, held in shackles, collars or cells (see "Companions")
 //   @n the room this one opens off (its index in the list); without it, the room before
 const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "horror"; rooms: string[] }> = {
-  spaceport: { rooms: ["Arrivals concourse|s p", "Customs office|s g", "Docking bay|S s d", "Maintenance hangar|S d L:workshop", "Control tower|s K @0", "Bonded warehouse|L:cargo K g @1"] },
+  spaceport: { rooms: ["Arrivals concourse|s p", "Customs office|s g", "Docking bay|S s d", "Control tower|s K @0", "Bonded warehouse|L:cargo K g @1"] },
+  // The hangars and yards round a spaceport (see SITES). A ship that puts down chooses one of them;
+  // each is a ground-floor hangar (GROUND_HANGARS), and keeps berths free for visitors ("berths:n").
+  "refuelling depot": { rooms: ["Refuelling hangar|s d berths:2", "Pump house|d L:workshop K", "Depot office|s L:coin K @0"] },
+  "cargo hangar": { rooms: ["Freight hangar|S s d L:cargo berths:1", "Cargo office|s L:coin K @0", "Customs bond store|L:cargo K g @0"] },
+  "public hangar": { rooms: ["Public hangar|S s d berths:2", "Passenger lounge|p p s @0"] },
+  "private hangar": { rooms: ["Private hangar|S s berths:1", "Owners' lounge|p s K @0"] },
   "landing field": { rooms: ["Landing field|S s", "Fuel depot|d L:workshop", "Port office|s L:coin K @0"] },
   "landing pad": { rooms: ["Landing pad|S s", "Fuel depot|d L:workshop"] },
   "docking ring": { rooms: ["Airlock|s", "Docking arm|S d", "Customs lock|s g @0", "Freight lift|L:cargo @2"] },
   "city gate": { rooms: ["Gate|g", "Guard room|g L:armory K"] },
   "town gate": { rooms: ["Gate|g", "Watch post|L:armory K"] },
   trailhead: { rooms: ["Trailhead|", "Old shelter|L:remains"] },
-  cantina: { rooms: ["Entrance|", "Main bar|s p p m D", "Private booth|p", "Back room|p g K X @1", "Cellar|L:stash H"] },
+  cantina: { rooms: ["Entrance|", "Main bar|s p p m D", "Dance floor|p p", "Private booth|p @1", "Gambling room|p p s @1", "Back room|p g K X @1", "Cellar|L:stash H"] },
+  // What stands round a cantina (see SITES)
+  cookshop: { rooms: ["Dining room|s p p", "Kitchen|s d @0", "Pantry|L:cargo K @1"] },
+  "rooming house": { rooms: ["Lobby|s", "Guest rooms|p p @0", "Common room|p p s @0", "Attic store|L:stash K @1"] },
+  "gambling hall": { rooms: ["Gaming floor|s p p", "Cashier's cage|s L:coin K @0", "High-stakes room|p p g K @0"] },
+  pawnshop: { rooms: ["Sales floor|s p", "Vault room|L:stash K @0"] },
   promenade: { rooms: ["Promenade|p p", "Cantina|s p m D", "Trade stalls|s s L:coin @0", "Storeroom|L:cargo K"] },
   market: { rooms: ["Market gate|p", "Stalls|s s p", "Trader's office|s L:coin K", "Storehouse|L:cargo @1"] },
+  // The shops of a market district (see SITES): each sells its own line of goods (SHOP_TRADE) and shows some of it
+  "general store": { rooms: ["Sales floor|s p", "Stockroom|L:cargo K @0"] },
+  armsmith: { rooms: ["Sales floor|s p g", "Forge room|d L:armory K @0"] },
+  "tech shop": { rooms: ["Sales floor|s p", "Repair counter|s d @0", "Parts storage|L:workshop K @0"] },
+  apothecary: { rooms: ["Sales floor|s p", "Dispensary|s L:medical K @0"] },
+  outfitter: { rooms: ["Sales floor|s p", "Tailor's room|s @0", "Stockroom|L:cargo K @0"] },
+  "curio shop": { rooms: ["Sales floor|s p", "Back store|L:stash K @0"] },
   garrison: { hostile: "faction", rooms: ["Gatehouse|g", "Barracks|g g", "Armory|L:armory K", "Detention block|g P K @0", "Command room|b g L:intel K @1"] },
   "command post": { hostile: "faction", rooms: ["Checkpoint|g", "Operations room|s g", "Comms array|d L:intel", "Supply depot|L:cargo K @0"] },
   "operations center": { rooms: ["Security desk|g", "Control room|s s d", "Records vault|L:intel K"] },
@@ -343,12 +398,30 @@ const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "h
   engineering: { rooms: ["Engineering deck|s d", "Reactor room|d K", "Tool crib|L:workshop @0"] },
   residences: { rooms: ["Lobby|", "Apartments|p p", "Rooftop|", "Basement|L:stash H @0"] },
   tenements: { rooms: ["Lobby|", "Apartments|p p", "Quarters|p", "Basement|L:stash H @0"] },
-  "transit hub": { rooms: ["Concourse|p p s", "Ticket hall|s p", "Control room|s d K @0"] },
+  "transit hub": { rooms: ["Mass transit concourse|p p s", "Ticket kiosk|s p", "Customs and security checkpoint|s g @0", "Control room|s d K @0"] },
   "droid dealer": { rooms: ["Showroom|s d", "Parts storage|L:workshop", "Repair bay|s d @0"] },
   "vehicle dealer": { rooms: ["Showroom|s", "Garage|s d L:workshop @0", "Yard|p"] },
-  shipyard: { rooms: ["Yard office|s", "Berth|S s d", "Machine shop|d L:workshop @0"] },
+  shipyard: { rooms: ["Yard office|s", "Mechanics hangar|S s d berths:1", "Machine shop|d L:workshop @1", "Upgrade showroom|s p @0"] },
   "habitat ring": { rooms: ["Commons|p p", "Quarters|p", "Hydroponics|s @0", "Locker hall|L:stash K @1"] },
-  palace: { rooms: ["Entrance hall|g", "Audience chamber|s g p", "Offices|s", "Guard post|g L:armory K @0", "Vault|L:vault K g"] },
+  // A great house of several floors: the ground floor (entrance, security, the petitioners' hall, the audience
+  // chamber, kitchens), the offices, guest rooms and servants' quarters over it, the palatial suite above
+  // those, and a tower at either end (F<n>: the floor, 0 the ground). Security is high: the way in is held by
+  // sentries, there is a checkpoint, and the rooms that matter are locked.
+  palace: { rooms: [
+    "Entrance hall|g g", "Security checkpoint|g g s @0", "Petitioners' hall|p p s @0", "Audience chamber|s g p V @2",
+    "Guard post|g L:armory K @0", "Kitchens|s d p @0", "Offices|s @2", "Guest rooms|p p F1 @6", "Servants' quarters|p F1 @5",
+    "Palatial suite|s p K F2 L:coin @7", "West tower|g F3 @9", "East tower|g F3 @8", "Vault|L:vault K g @3",
+  ] },
+  // Round a palace (see SITES)
+  "royal hangar": { rooms: ["Royal hangar|S g g K berths:1", "Guardroom|g L:armory K @0"] },
+  guardhouse: { rooms: ["Barracks|g g", "Armory|L:armory K g @0", "Parade yard|g @0"] },
+  gatehouse: { rooms: ["Gate passage|g g", "Inspection room|g s K @0"] },
+  // The houses of the well-to-do, by the palace
+  estates: { rooms: ["Gatehouse|g", "Grand hall|p s", "Bedchambers|p p F1 @1", "Servants' quarters|p F1 @1", "Cellar|L:stash H @1"] },
+  "manor house": { rooms: ["Hall|p s", "Salon|p p @0", "Bedchambers|p F1 @1", "Strongroom|L:vault K @0"] },
+  // The scrap trade, by the tenements
+  junkyard: { rooms: ["Scrap gate|s", "Scrapyard|s d L:workshop N:salvage @0", "Dealer's shack|s L:coin K @0"] },
+  "scrap dealer": { rooms: ["Dealer's lean-to|s", "Salvage heap|d L:workshop N:salvage @0"] },
   warehouse: { rooms: ["Loading dock|s", "Storage floor|L:cargo", "Overseer's office|s L:coin K", "Hidden compartment|L:stash H @1"] },
   "cargo bay": { rooms: ["Cargo lock|s", "Container stacks|L:cargo", "Quarantine hold|L:cargo K"] },
   archive: { rooms: ["Antechamber|", "Reading hall|p s", "Stacks|s L:intel", "Sealed vault|L:relic K H"] },
@@ -361,6 +434,8 @@ const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "h
 
 // Who works in a room, from what the room is for; otherwise whoever runs that kind of building
 const ROOM_STAFF: [RegExp, string][] = [
+  [/refuelling|pump house/i, "fuel attendant"], [/upgrade showroom/i, "starship outfitter"], [/ticket/i, "ticket agent"],
+  [/petitioners/i, "chamberlain"], [/guest rooms|palatial suite|salon/i, "steward"], [/gambling|gaming floor|cashier/i, "croupier"], [/kitchen|dining/i, "cook"],
   [/customs/i, "customs officer"], [/docking|hangar|fuel|workfloor|engineering|reactor|landing/i, "mechanic"],
   [/control|operations|command|security/i, "officer"], [/bar|cantina/i, "bartender"], [/stall|trader|shopfront|market/i, "merchant"],
   [/reception|ward|surgery|pharmacy/i, "medic"], [/audience/i, "official"], [/reading|stacks|archive/i, "archivist"],
@@ -372,6 +447,10 @@ const BUILDING_STAFF: Record<string, string> = {
   promenade: "merchant", market: "merchant", medcenter: "medic", workshop: "mechanic", engineering: "mechanic", garrison: "officer",
   "command post": "officer", "operations center": "officer", palace: "official", warehouse: "overseer", "cargo bay": "overseer",
   archive: "archivist", "habitat ring": "farmer", "droid dealer": "merchant", "vehicle dealer": "merchant", shipyard: "dockmaster", "transit hub": "dockmaster",
+  "refuelling depot": "fuel attendant", "cargo hangar": "overseer", "public hangar": "dockmaster", "private hangar": "dockmaster", "royal hangar": "officer",
+  cookshop: "cook", "rooming house": "clerk", "gambling hall": "croupier", pawnshop: "merchant", "general store": "merchant", armsmith: "merchant",
+  "tech shop": "merchant", apothecary: "merchant", outfitter: "merchant", "curio shop": "merchant", guardhouse: "officer", gatehouse: "officer",
+  estates: "clerk", "manor house": "clerk", junkyard: "merchant", "scrap dealer": "merchant",
 };
 const staffRole = (buildingType: string, roomName: string) =>
   ROOM_STAFF.find(([pattern]) => pattern.test(roomName))?.[1] ?? BUILDING_STAFF[buildingType] ?? "clerk";
@@ -380,8 +459,8 @@ const staffRole = (buildingType: string, roomName: string) =>
 // with a name, not a crowd.
 const LOCAL_ROLES: [RegExp, string][] = [
   [/bar|cantina|booth|back room|common room|commons/i, "patron"], [/stall|market|promenade|trade/i, "shopper"],
-  [/apartment|quarters|lobby/i, "resident"], [/ward|reception/i, "patient"], [/concourse|arrivals|airlock|gate/i, "traveller"],
-  [/reading|stacks|antechamber/i, "reader"], [/audience/i, "petitioner"],
+  [/apartment|quarters|lobby|guest rooms|bedchambers|salon/i, "resident"], [/ward|reception/i, "patient"], [/concourse|arrivals|airlock|gate/i, "traveller"],
+  [/reading|stacks|antechamber/i, "reader"], [/audience|petitioner/i, "petitioner"],
 ];
 const localRole = (roomName: string) => LOCAL_ROLES.find(([pattern]) => pattern.test(roomName))?.[1] ?? "local";
 const LOCALS = new Set([...LOCAL_ROLES.map(([, role]) => role), "local", "civilians", "musician", "service droid"]);
@@ -1220,6 +1299,9 @@ function populateRoom(ctx: Context, room: Area) {
       room.occupants.push(...captivesOf(ctx, room, building, speciesNames));
     } else if (code === "X") {
       room.occupants.push(person(ctx, "fence", "neutral", speciesNames));
+    } else if (code === "V") {
+      // The great person of a house, who receives petitioners in the audience chamber
+      room.occupants.push(person(ctx, "dignitary", "neutral", speciesNames));
     } else if (code === "p") {
       room.occupants.push(...locals(ctx, room, speciesNames, /bar|cantina|commons|promenade/i.test(room.name) ? r.int(2, 4) : r.int(1, 3)));
     } else if (code === "m") {
@@ -1339,17 +1421,64 @@ function detailBuilding(ctx: Context, building: Area) {
   furnishLevels(ctx, building);
 }
 
+// Where a listed building stands in a city or a town (SPOTS, a little unevenly)
+function spotFor(r: Random, type: string) {
+  const [x, z] = SPOTS[type] ?? [0, 0];
+  return { x: Math.round((x + (r.next() - 0.5) * 0.8) * 10) / 10, y: 0, z: Math.round((z + (r.next() - 0.5) * 0.8) * 10) / 10 };
+}
+
+// The satellites of a site: buildings of the settlement that belong to a listed one (SITES), joined to it
+// and to each other by service roads. They stand beside it in the settlement (their place is the
+// anchor's) and are drawn only on its local map.
+function makeSatellites(ctx: Context, settlement: Area, anchor: Area, adopt: Area[] = []): Area[] {
+  const { world, random: r } = ctx;
+  const all = SITES[anchor.type] ?? [];
+  const kinds = settlement.type === "town" ? all.slice(0, Math.ceil(all.length / 2)) : all;
+  const seen = new Map<string, number>([[anchor.type, 1]]);
+  // (buildings of the settlement that are already of a kind a site wants are taken into it)
+  const have = [...adopt];
+  const out = kinds.flatMap((type) => {
+    const mine = have.findIndex((b) => b.type === type);
+    if (mine >= 0) {
+      const [b] = have.splice(mine, 1);
+      b.tags = [...b.tags.filter((t) => !t.startsWith("site:")), `site:${anchor.id}`];
+      seen.set(type, (seen.get(type) ?? 0) + 1);
+      return [b];
+    }
+    const n = (seen.get(type) ?? 0) + 1;
+    seen.set(type, n);
+    const hostile = BUILDINGS[type]?.hostile;
+    return [makeArea(ctx, "building", settlement.id, {
+      name: uniqueName(ctx, () =>
+        NAMED_PLACES.includes(type) ? `${title(type)} "${r.pick(SHIP_WORDS[0])} ${r.pick(SHIP_WORDS[1])}"` : `${settlement.name} ${title(type)}${n > 1 ? ` ${n}` : ""}`,
+      ),
+      type,
+      faction: hostile === "criminal" ? "Local syndicate" : settlement.faction,
+      position: { ...anchor.position },
+      tags: [`site:${anchor.id}`, ...(hostile ? [`hostile:${hostile}`] : [])],
+    })];
+  });
+  out.forEach((b, i) => {
+    addPath(world, anchor, b, "Service road", `${r.int(20, 60)} m`);
+    if (i > 0) addPath(world, out[i - 1], b, "Service road", `${r.int(20, 60)} m`);
+  });
+  return out;
+}
+
 function detailSettlement(ctx: Context, settlement: Area) {
   const { world, random: r } = ctx;
   const template = SETTLEMENTS[settlement.type];
   if (!template || childrenOf(world, settlement.id).length) return;
-  const chosen = template.buildings.filter((b) => !b.endsWith("?") || r.chance(0.5)).map((b) => b.replace("?", ""));
+  const sited = SITED.includes(settlement.type);
+  let chosen = template.buildings.filter((b) => !b.endsWith("?") || r.chance(0.5)).map((b) => b.replace("?", ""));
+  // Estates are the palace's neighbours: with no palace there are none
+  if (!chosen.includes("palace")) chosen = chosen.filter((b) => b !== "estates");
   const buildings = chosen.map((spec, index) => {
     const type = spec.replace("*", "");
     const hostile = BUILDINGS[type]?.hostile;
     return makeArea(ctx, "building", settlement.id, {
       name: uniqueName(ctx, () =>
-        ["cantina", "workshop", "hideout"].includes(type)
+        NAMED_PLACES.includes(type)
           ? `${title(type)} "${r.pick(SHIP_WORDS[0])} ${r.pick(SHIP_WORDS[1])}"`
           : ["cave", "ruin", "wreck", "camp"].includes(type)
             ? `${r.pick(["Lower", "Upper", "Old", "Sunken", "Far", "Hidden", "Black", "Broken", "Windy", "Red"])} ${title(type)}`
@@ -1358,12 +1487,14 @@ function detailSettlement(ctx: Context, settlement: Area) {
       type,
       gateway: spec.endsWith("*"),
       faction: hostile === "criminal" ? "Local syndicate" : settlement.faction,
-      position: scatter(r, index, chosen.length, 8),
+      position: sited && SPOTS[type.replace("*", "")] ? spotFor(r, type) : scatter(r, index, chosen.length, 8),
       tags: hostile ? [`hostile:${hostile}`] : [],
     });
   });
   connectGroup(ctx, buildings, (a, b) => ({ label: r.pick(template.street), travel: `${Math.max(20, Math.round(distance(a, b) * 40))} m` }), 0.35);
-  buildings.forEach((b) => detailBuilding(ctx, b));
+  // The buildings that stand round each of the listed ones, on its local map
+  const satellites = sited ? buildings.flatMap((anchor) => makeSatellites(ctx, settlement, anchor)) : [];
+  buildings.concat(satellites).forEach((b) => detailBuilding(ctx, b));
   planDistricts(ctx, settlement.id);
   linkTransit(ctx, settlement);
   settleRoutines(world, settlement, r);
@@ -1656,9 +1787,14 @@ const ROOM_PLANS: RoomPlan[] = [
   { match: /main bar|^cantina$/i, size: [11, 13, 9, 11], items: [["Bar counter", "far", "5x1", "1", "bcs"], ["Bandstand", "corner", "3x2", "1"], ["Table", "center", "1x1", "4-6", "bct"], ["Booth", "wall", "2x1", "2-3", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Sabacc table", "center", "2x2", "0-1", "bct"]] },
   { match: /bar\b|cantina|common room|commons/i, size: [9, 11, 8, 10], items: [["Bar counter", "far", "5x1", "1", "bcs"], ["Table", "center", "1x1", "3-5", "bct"], ["Booth", "wall", "2x1", "1-3", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Sabacc table", "center", "2x2", "0-1", "bct"]] },
   { match: /stall|market|promenade|trade|shopfront/i, size: [10, 13, 7, 9], items: [["Market stall", "rows", "2x1", "4-7", "bcs"], ["Crate", "wall", "1x1", "2-4", "bc"], ["Awning post", "corner", "1x1", "0-2", "b"]] },
+  { match: /dance floor|gambling|gaming floor|high-stakes|lounge|salon|dining/i, size: [9, 12, 7, 9], items: [["Sabacc table", "center", "2x2", "1-3", "bct"], ["Table", "center", "1x1", "2-4", "bct"], ["Couch", "wall", "2x1", "1-2", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Security camera", "wall", "1x1", "1"]] },
+  { match: /sales floor|upgrade showroom/i, size: [8, 11, 6, 8], items: [["Sales counter", "far", "4x1", "1", "bcs"], ["Display shelf", "wall", "3x1", "2-4", "bc"], ["Display table", "center", "2x1", "1-2", "bc"], ["Wares rack", "corner", "1x1", "1-2", "bc"], ["Security camera", "wall", "1x1", "1"]] },
+  { match: /kitchen|pantry|dispensary|forge room|tailor|repair counter/i, size: [6, 8, 5, 7], items: [["Workbench", "wall", "3x1", "1-2", "bs"], ["Shelving", "wall", "3x1", "1-2", "b"], ["Parts bin", "center", "1x1", "1-2", "bc"]] },
+  { match: /parade yard/i, size: [9, 12, 7, 9], items: [["Barricade", "center", "2x1", "1-2", "bc"], ["Weapon rack", "wall", "2x1", "1", "b"], ["Bench", "wall", "2x1", "1-2", "t"]] },
+  { match: /bedchambers|guest rooms|palatial suite|grand hall|^hall$/i, size: [8, 11, 6, 8], items: [["Bed", "wall", "2x1", "2-4", "b"], ["Couch", "wall", "2x1", "1-2", "bt"], ["Low table", "center", "1x1", "1-2", "bct"], ["Cabinet", "corner", "1x1", "1-2", "b"], ["Pillar", "center", "1x1", "0-2", "bc"]] },
   { match: /ward|surgery|reception/i, size: [7, 9, 6, 7], items: [["Medical bed", "wall", "2x1", "2-4", "bt"], ["Bacta tank", "corner", "1x1", "1-2", "b"], ["Instrument cart", "center", "1x1", "1", "bs"], ["Supply cabinet", "wall", "2x1", "1", "b"]] },
   { match: /reactor|engine/i, size: [8, 10, 7, 9], items: [["Reactor core", "center", "2x2", "1", "bc"], ["Coolant tank", "corner", "1x1", "2", "b"], ["Monitoring console", "wall", "2x1", "1-2", "bs"], ["Pipe run", "wall", "3x1", "1-2", "b"]] },
-  { match: /workfloor|engineering|workshop|maintenance|fuel|hydroponics/i, size: [8, 10, 6, 8], items: [["Workbench", "wall", "3x1", "1-2", "bs"], ["Tool rack", "wall", "2x1", "1", "b"], ["Parts bin", "center", "1x1", "2-3", "bc"], ["Power coupling", "corner", "1x1", "1", "b"]] },
+  { match: /workfloor|engineering|workshop|maintenance|fuel|hydroponics|machine shop|pump house|scrapyard|salvage heap/i, size: [8, 10, 6, 8], items: [["Workbench", "wall", "3x1", "1-2", "bs"], ["Tool rack", "wall", "2x1", "1", "b"], ["Parts bin", "center", "1x1", "2-3", "bc"], ["Power coupling", "corner", "1x1", "1", "b"]] },
   { match: /armory|vault|stash|stor|warehouse|cargo|container|hold|depot|cache|cellar|basement|compartment|parts|crib|pharmacy|locker|freight/i, size: [6, 9, 5, 8], items: [["Crate stack", "rows", "2x2", "2-4", "bc"], ["Shelving", "wall", "3x1", "1-3", "b"], ["Crate", "corner", "1x1", "1-3", "bc"], ["Lifter droid dock", "corner", "1x1", "0-1", "b"], ["Access panel", "wall", "1x1", "0-1"], ["Security camera", "wall", "1x1", "0-1"]] },
   { match: /command|operations|control|comms|bridge|tower/i, size: [7, 9, 6, 8], items: [["Holo-table", "center", "2x2", "1", "bcs"], ["Console", "wall", "2x1", "2-4", "bs"], ["Sensor mast", "corner", "1x1", "0-1", "b"], ["Command chair", "far", "1x1", "1", "t"], ["Access panel", "wall", "1x1", "1"], ["Security camera", "wall", "1x1", "0-1"]] },
   { match: /office|records|security|checkpoint|customs|desk|guard|watch|gatehouse|lookout|post\b/i, size: [6, 8, 5, 7], items: [["Desk", "center", "2x1", "1", "bcs"], ["Console", "wall", "2x1", "1-2", "bs"], ["Locker", "corner", "1x1", "1-2", "b"], ["Barricade", "center", "2x1", "0-1", "bc"], ["Security camera", "wall", "1x1", "0-1"], ["Alarm panel", "wall", "1x1", "0-1"]] },
@@ -1671,8 +1807,23 @@ const ROOM_PLANS: RoomPlan[] = [
 ];
 
 // Caves, ruins and trails are rock and rubble whatever a chamber is called
-const planFor = (room: Area, buildingType: string): RoomPlan =>
-  ROOM_PLANS.find((p) => p.match.test(/^(cave|ruin|trailhead)$/.test(buildingType) && !/crypt|sanctum/i.test(room.name) ? "cave" : room.name))!;
+const planFor = (room: Area, buildingType: string): RoomPlan => {
+  const plan = ROOM_PLANS.find((p) => p.match.test(/^(cave|ruin|trailhead)$/.test(buildingType) && !/crypt|sanctum/i.test(room.name) ? "cave" : room.name))!;
+  // A shop shows its wares: pieces of its own line stand on its sales floor
+  const wares = /sales floor|upgrade showroom/i.test(room.name) ? SHOP_WARES[buildingType] : undefined;
+  return wares ? { ...plan, items: [...plan.items, ...wares] } : plan;
+};
+// What each kind of shop has on show (physical pieces on the floor, not only the stock a trader lists)
+const SHOP_WARES: Record<string, Furnishing[]> = {
+  "general store": [["Goods shelf", "wall", "3x1", "2-3", "bc"], ["Produce bin", "center", "1x1", "2-3", "bc"], ["Cloth bolts", "wall", "2x1", "1", "bc"]],
+  armsmith: [["Weapon rack", "wall", "2x1", "2-3", "bc"], ["Armor stand", "corner", "1x1", "2-3", "bc"], ["Display case", "center", "2x1", "1", "bc"]],
+  "tech shop": [["Display case", "center", "2x1", "1-2", "bc"], ["Droid parts shelf", "wall", "3x1", "1-2", "bc"], ["Holo display", "corner", "1x1", "1", "bc"]],
+  apothecary: [["Medical cabinet", "wall", "2x1", "2", "bc"], ["Herb rack", "wall", "2x1", "1-2", "bc"], ["Bacta tank", "corner", "1x1", "1", "b"]],
+  outfitter: [["Clothing rack", "center", "2x1", "2-3", "bc"], ["Armor stand", "corner", "1x1", "1-2", "bc"], ["Cloth bolts", "wall", "2x1", "1", "bc"]],
+  "curio shop": [["Curio shelf", "wall", "2x1", "2-3", "bc"], ["Statuette plinth", "corner", "1x1", "1-2", "bc"], ["Instrument rack", "wall", "2x1", "1", "bc"]],
+  pawnshop: [["Curio shelf", "wall", "2x1", "1-2", "bc"], ["Display case", "center", "2x1", "1-2", "bc"], ["Weapon rack", "wall", "2x1", "1", "bc"]],
+  shipyard: [["Starship part", "wall", "2x1", "2-3", "bc"], ["Display case", "center", "2x1", "1", "bc"], ["Weapon rack", "wall", "2x1", "1", "bc"]],
+};
 
 // What can be done with the wall-mounted and standing equipment of a room (house rule): a
 // camera sees what is done in front of it, unless it is looped; an alarm panel raises or silences
@@ -1904,16 +2055,21 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
   const exit = ways.find((a) => a.kind === "exit") ?? wayIn;
 
   // A ship stands mid-floor; a smaller berth if the furniture would leave the floor cut up
-  const feet = room.ships.map((ship) => footprintOf(ship.size));
+  // (a hangar keeps berths free for visitors too: empty ship places, which a ship that puts down takes)
+  const berths: { name: string; size: string; ref: string }[] = [
+    ...room.ships.map((ship) => ({ name: ship.name, size: ship.size, ref: ship.id })),
+    ...Array.from({ length: visitorBerths(room) }, (_, i) => ({ name: "Visitors' berth", size: "Medium", ref: `${room.id}-berth${i + 1}` })),
+  ];
+  const feet = berths.map((b) => footprintOf(b.size));
   const spread = feet.reduce((sum, [fw]) => sum + Math.min(W - 4, fw), 0) + 2 * Math.max(0, feet.length - 1);
   let cursor = Math.floor((W - spread) / 2);
-  for (const ship of room.ships) {
+  for (const ship of berths) {
     const [fw, fh] = footprintOf(ship.size);
     let w = Math.min(W - 4, fw);
     let h = Math.min(H - 4, fh);
     const left = cursor;
     cursor += w + 2;
-    const asset = (): RoomAsset => ({ id: `${room.id}-${++n}`, kind: "ship", name: ship.name, x: Math.max(1, feet.length > 1 ? left : Math.floor((W - w) / 2)), y: Math.floor((H - h) / 2), w, h, blocks: true, cover: true, ref: ship.id });
+    const asset = (): RoomAsset => ({ id: `${room.id}-${++n}`, kind: "ship", name: ship.name, x: Math.max(1, feet.length > 1 ? left : Math.floor((W - w) / 2)), y: Math.floor((H - h) / 2), w, h, blocks: true, cover: true, ref: ship.ref });
     for (let tries = 0; tries < 8; tries++) {
       layout.assets.push(asset());
       if (!floorFaults(layout) || w <= 2 || h <= 2) break;
@@ -1985,10 +2141,130 @@ export function counterSides(layout: RoomLayout, station: RoomAsset): { behind: 
   return { behind, front };
 }
 
+// ---------------------------------------------------------------------------------------------
+// Sites for worlds made before them (life 12). In each built city or town: what the old districts made (roofs,
+// catwalks, second ways in, the plans) is taken down; the listed buildings are set out as SPOTS has them and the ones a
+// city is missing are added (warehouses, tenements, the junkyard, estates); each gets the buildings of its site, and
+// the cantina and the palace the rooms the new plans have (what is there stays as it is: caches, secret ways found,
+// who is where); then the districts are planned again.
+// ---------------------------------------------------------------------------------------------
+
+// Rooms that were called something else
+const ROOM_ALIASES: Record<string, string[]> = { "Mechanics hangar": ["Berth"], "Mass transit concourse": ["Concourse"], "Ticket kiosk": ["Ticket hall"] };
+
+function roomSpecs(rooms: string[]) {
+  return rooms.map((spec, index) => {
+    const [name, codeText = ""] = spec.split("|");
+    const parts = codeText.split(" ").filter(Boolean);
+    const opensOff = parts.find((c) => c.startsWith("@"));
+    return { name, codes: parts.filter((c) => !c.startsWith("@")), from: opensOff ? Number(opensOff.slice(1)) : index - 1 };
+  });
+}
+
+// Adds the rooms of a building's plan that it lacks, joined as the plan has them; true if it added any
+function addMissingRooms(ctx: Context, building: Area): boolean {
+  const { world, random: r } = ctx;
+  const template = BUILDINGS[building.type];
+  if (!template) return false;
+  const specs = roomSpecs(template.rooms);
+  const have = childrenOf(world, building.id).filter((a) => a.kind === "room" && !formOf(a));
+  const at: (Area | undefined)[] = [];
+  const made: { room: Area; index: number }[] = [];
+  specs.forEach((spec, index) => {
+    const found = have.find((x) => x.name.toLowerCase() === spec.name.toLowerCase()) ?? have.find((x) => (ROOM_ALIASES[spec.name] ?? []).some((alias) => alias.toLowerCase() === x.name.toLowerCase()));
+    if (found) {
+      if (found.name !== spec.name) Object.assign(found, { name: spec.name, type: spec.name.toLowerCase() });
+      at[index] = found;
+      return;
+    }
+    const room = makeArea(ctx, "room", building.id, { name: spec.name, type: spec.name.toLowerCase(), tags: spec.codes.map((c) => `code:${c}`), danger: 0 });
+    at[index] = room;
+    made.push({ room, index });
+  });
+  for (const { room, index } of made) {
+    const from = at[specs[index].from] ?? at[0];
+    if (!from || from === room) continue;
+    const { codes } = specs[index];
+    addPath(world, from, room, codes.includes("K") ? "Locked blast door" : r.pick(DOORS.built), "10 ft.", { ...(codes.includes("K") ? { locked: 10 + 5 } : {}) });
+    populateRoom(ctx, room);
+  }
+  if (!made.length) return false;
+  const found = new Set(childrenOf(world, building.id).filter((room) => room.secretEntry?.found).map((room) => room.id));
+  planBuilding(world, building.id);
+  for (const room of childrenOf(world, building.id)) if (room.secretEntry && found.has(room.id)) room.secretEntry.found = true;
+  return true;
+}
+
+function migrateSites(ctx: Context) {
+  const { world, random: r } = ctx;
+  for (const settlement of Object.values(world.areas).filter((a) => a.kind === "settlement" && SITED.includes(a.type))) {
+    const listed = () => childrenOf(world, settlement.id).filter((b) => b.kind === "building" && b.type !== "starship");
+    if (!listed().length || listed().some(isSatellite)) continue;
+    // What the old districts made comes down
+    const gone = new Set<string>();
+    for (const b of listed()) {
+      for (const room of childrenOf(world, b.id).filter((x) => x.kind === "room")) {
+        if ((formOf(room) === "roof" && room.name === "Roof") || (formOf(room) === "walkway" && /^Catwalk to /.test(room.name))) {
+          gone.add(room.id);
+          delete world.areas[room.id];
+          continue;
+        }
+        const exits = room.layout?.assets.filter((a) => a.name === "Side entrance") ?? [];
+        if (exits.length && room.layout) {
+          room.layout.assets = room.layout.assets.filter((a) => a.name !== "Side entrance");
+          if (!room.layout.assets.some((a) => a.kind === "exit")) room.gateway = false;
+        }
+      }
+    }
+    world.paths = world.paths.filter((p) => !gone.has(p.from) && !gone.has(p.to));
+    if (world.districtPlans) for (const id of Object.keys(world.districtPlans)) if (id.startsWith(`${settlement.id}/`)) delete world.districtPlans[id];
+    // The listed buildings a city is missing
+    const template = SETTLEMENTS[settlement.type];
+    const palace = listed().some((b) => b.type === "palace");
+    const wanted = (settlement.type === "city" ? ["warehouse", "tenements", "junkyard", ...(palace ? ["estates"] : [])] : []).filter((t) => !listed().some((b) => b.type === t));
+    const strangers = listed();
+    for (const type of wanted) {
+      const b = makeArea(ctx, "building", settlement.id, {
+        name: uniqueName(ctx, () => (NAMED_PLACES.includes(type) ? `${title(type)} "${r.pick(SHIP_WORDS[0])} ${r.pick(SHIP_WORDS[1])}"` : `${settlement.name} ${title(type)}`)),
+        type, faction: settlement.faction, position: spotFor(r, type), tags: [],
+      });
+      const near = strangers.filter((o) => !isSatellite(o)).sort((p, q) => distance(p, b) - distance(q, b))[0];
+      if (near) addPath(world, near, b, r.pick(template.street), `${Math.max(20, Math.round(distance(near, b) * 40))} m`);
+    }
+    // Set out as the plan has them, the streets between them as long as they are now
+    const anchors = () => listed().filter((b) => !isSatellite(b));
+    for (const b of anchors()) if (SPOTS[b.type]) b.position = spotFor(r, b.type);
+    for (const p of world.paths) {
+      const [a, b] = [world.areas[p.from], world.areas[p.to]];
+      if (a?.parentId === settlement.id && b?.parentId === settlement.id) p.travel = `${Math.max(20, Math.round(distance(a, b) * 40))} m`;
+    }
+    // Their sites (a transit hub or a shipyard of the settlement belongs to the port now)
+    const loose = listed().filter((b) => ["transit hub", "shipyard"].includes(b.type));
+    const placed = anchors().flatMap((anchor) => makeSatellites(ctx, settlement, anchor, anchor.type === "spaceport" || anchor.type === "landing field" ? loose : []));
+    // The buildings new to the settlement are built; those that stand get the rooms the new plans have
+    for (const b of placed) detailBuilding(ctx, b);
+    for (const b of anchors().concat(placed)) {
+      if (!placed.includes(b)) addMissingRooms(ctx, b);
+      // The dignitary of a palace (the audience chamber had none)
+      if (b.type === "palace") {
+        const hall = childrenOf(world, b.id).find((x) => /^audience chamber$/i.test(x.name));
+        if (hall && !hall.occupants.some((o) => o.role === "dignitary")) {
+          const species = (ancestor(world, b.id, "planet")?.tags ?? []).filter((t) => t.startsWith("species:")).map((t) => t.slice(8));
+          hall.occupants.push(person(ctx, "dignitary", "neutral", species));
+          if (hall.layout) placeContents(hall);
+        }
+      }
+    }
+    planDistricts(ctx, settlement.id);
+    linkTransit(ctx, settlement);
+    settleRoutines(world, settlement, r);
+  }
+}
+
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 11;
+export const LIFE = 12;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -2104,6 +2380,8 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
       }
     }
   }
+  // Sites (life 12): the districts are laid out as sites (see migrateSites)
+  if ((next.life ?? 0) < 12) migrateSites(ctx);
   // Hangars (life 8): a hangar is built to hold the ships that berth in it (see hangarRange). A building
   // with a hangar too small for them is planned again (the secret ways found stay found) and the
   // streets of its settlement are laid out again round it.
@@ -2231,7 +2509,9 @@ const tagId = (a: Pick<Area, "tags">, name: string): string | undefined => a.tag
 const WILD_BUILDINGS = ["cave", "ruin", "wreck", "camp", "trailhead"];
 const OPEN_GROUNDS = ["landing field", "landing pad"];
 const UNDERGROUND = /cellar|basement|crypt|vault|hidden compartment|escape tunnel|detention|sewer|deep chamber/i;
-const UPSTAIRS = /apartment|quarters|offices|command room|operations room|control room|tower|rooftop|lookout|bridge|port office/i;
+const UPSTAIRS = /apartment|quarters|offices|command room|operations room|control room|tower|rooftop|lookout|bridge|port office|guest rooms|bedchambers/i;
+// Hangars that stand on the ground, with sliding doors in the roof, for ships to put down in (see SITES)
+export const GROUND_HANGARS = ["refuelling depot", "cargo hangar", "public hangar", "private hangar", "royal hangar", "shipyard"];
 const SHIP_ROOMS = /docking|hangar|landing|berth|\barm\b/i;
 const TALL_ROOMS = /main bar|workfloor|engineering deck|storage floor|container stacks|reading hall|audience chamber|loading dock|concourse|hangar|docking bay/i;
 const HOSTILE_AIR = ["volcanic", "ice", "barren", "gas giant", "ocean"];
@@ -2242,11 +2522,13 @@ function levelsOf(building: Area, rooms: Area[]): Map<string, number> {
   const levels = new Map<string, number>();
   let top = 0;
   for (const room of rooms) {
-    const level = UNDERGROUND.test(room.name) ? -1 : UPSTAIRS.test(room.name) && !OPEN_GROUNDS.includes(building.type) ? 1 : 0;
+    // A room may name its floor (code F<n>; F-1 under the ground), as the rooms of a palace do
+    const named = room.tags.find((t) => /^code:F-?\d+$/.test(t));
+    const level = named ? Number(named.slice(6)) : UNDERGROUND.test(room.name) ? -1 : UPSTAIRS.test(room.name) && !OPEN_GROUNDS.includes(building.type) ? 1 : 0;
     levels.set(room.id, level);
     top = Math.max(top, level);
   }
-  if (rooms.length > 1 && !WILD_BUILDINGS.includes(building.type) && !OPEN_GROUNDS.includes(building.type)) {
+  if (rooms.length > 1 && !WILD_BUILDINGS.includes(building.type) && !OPEN_GROUNDS.includes(building.type) && !GROUND_HANGARS.includes(building.type)) {
     for (const room of rooms) if (holdsShips(room)) levels.set(room.id, Math.max(1, top));
   }
   return levels;
@@ -2286,7 +2568,8 @@ function linkLevels(world: World, building: Area, seed: number) {
     if (!a || !b || a.parentId !== building.id || b.parentId !== building.id || formOf(a) || formOf(b)) continue;
     const [la, lb] = [level(a), level(b)];
     let form: Form | undefined;
-    if (la !== lb) form = !wild && (holdsShips(a) || holdsShips(b)) ? "lift" : "stairs";
+    // (a great house has stairs, and lifts to its upper floors; never a ladder)
+    if (la !== lb) form = !wild && (holdsShips(a) || holdsShips(b) || (building.type === "palace" && (Math.abs(la - lb) > 1 || r.chance(0.4)))) ? "lift" : "stairs";
     else if (first && corridors < 2 && !wild && real.length >= 5 && !path.locked && !path.hidden && r.chance(0.35)) {
       form = la >= 1 && (station || ["urban", "ocean"].includes(biome)) && r.chance(0.7) ? "walkway" : "corridor";
       corridors++;
@@ -2327,7 +2610,7 @@ function linkLevels(world: World, building: Area, seed: number) {
   }
   // A ladder up the outside wall to a room on an upper floor, as a second way in
   const upper = real.filter((a) => level(a) >= 1 && !a.gateway && !holdsShips(a));
-  if (upper.length && !wild && !station && r.chance(0.4)) {
+  if (upper.length && !wild && !station && building.type !== "palace" && r.chance(0.4)) {
     const to = r.pick(upper);
     const ladder = make(`Ladder up to ${to.name}`, "ladder", [`low:0`, `rise:${level(to)}`]);
     ladder.gateway = true;
@@ -2357,7 +2640,7 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
   const levels = levelsOf(building, rooms.filter((a) => !formOf(a)));
   const station = trailOf(world, buildingId).some((a) => a.type === "station");
   const biome = ancestor(world, buildingId, "planet")?.type ?? "";
-  const sky = !OPEN_GROUNDS.includes(building.type) && (station || HOSTILE_AIR.includes(biome)) ? "hangar" : "open";
+  const sky = GROUND_HANGARS.includes(building.type) || (!OPEN_GROUNDS.includes(building.type) && (station || HOSTILE_AIR.includes(biome))) ? "hangar" : "open";
   const spans = new Map<string, { cross: number; length: number }>();
   for (const room of rooms) {
     const form = formOf(room);
@@ -3144,10 +3427,16 @@ export function passageOffers(world: World, settlementId: string, rate: number, 
 export const SHIP_FOOTPRINT: Record<string, [number, number]> = { Tiny: [6, 4], Small: [10, 6], Medium: [16, 10], Large: [26, 14], Huge: [40, 22], Gargantuan: [56, 30] };
 export const footprintOf = (size: string): [number, number] => SHIP_FOOTPRINT[size] ?? SHIP_FOOTPRINT.Small;
 
+// Berths a hangar keeps free for ships that put down in it (code berths:<n>)
+export const visitorBerths = (room: Partial<Pick<Area, "tags">>): number => Number(room.tags?.find((t) => t.startsWith("code:berths:"))?.slice(12) ?? 0);
+
 // The floor a hangar needs for the ships that berth in it (an empty berth is for a Medium ship)
-export function hangarRange(room: Pick<Area, "ships">): [number, number, number, number] {
+export function hangarRange(room: Pick<Area, "ships"> & Partial<Pick<Area, "tags">>): [number, number, number, number] {
   const base = ROOM_PLANS.find((p) => p.match.test("hangar"))!.size;
-  const feet = (room.ships.length ? room.ships : [{ size: "Medium" }]).map((s) => footprintOf(s.size));
+  // (berths kept free for visiting ships count as Medium ones)
+  const free = visitorBerths(room);
+  const feet = [...room.ships.map((s) => s.size), ...Array.from({ length: free }, () => "Medium")].map((size) => footprintOf(size));
+  if (!feet.length) feet.push(footprintOf("Medium"));
   const width = feet.reduce((sum, [w]) => sum + w, 0) + 2 * (feet.length - 1) + 8;
   const height = Math.max(...feet.map(([, h]) => h)) + 6;
   const w = Math.max(base[0], width);
@@ -3280,11 +3569,14 @@ export function moveShipInterior(world: World, shipId: string, berthId: string):
 }
 
 // Where the ramp leads: the room the ship was boarded from if it still stands in that settlement
-export function rampLeadsTo(world: World, shipId: string): string | undefined {
+export function rampLeadsTo(world: World, shipId: string, hangar?: string): string | undefined {
   const deck = world.areas[deckIdOf(shipId)];
   const building = world.areas[shipBuildingIdOf(shipId)];
   const berth = building?.parentId ? world.areas[building.parentId] : undefined;
   if (!deck || !berth || berth.kind !== "settlement") return undefined;
+  // Into the hangar it put down in
+  const landed = hangar ? childrenOf(world, hangar).find((r) => r.kind === "room" && holdsShips(r)) : undefined;
+  if (landed && trailOf(world, landed.id).some((a) => a.id === berth.id)) return landed.id;
   const from = deck.tags.find((t) => t.startsWith("from:"))?.slice(5);
   if (from && world.areas[from] && trailOf(world, from).some((a) => a.id === berth.id)) return from;
   const bay = childrenOf(world, berth.id).filter((b) => b.kind === "building").flatMap((b) => childrenOf(world, b.id)).find((r) => r.kind === "room" && holdsShips(r));
@@ -3491,6 +3783,7 @@ export const WARES: Record<string, Wares> = {
   general: { label: "General goods", categories: ["Utility", "Storage", "Clothing", "Communications", "DataRecordingAndStorage", "LifeSupport"], lines: [9, 14], each: [1, 5] },
   arms: { label: "Arms and armor", categories: ["Weapon", "Armor", "Ammunition", "WeaponOrArmorAccessory"], lines: [8, 12], each: [1, 4] },
   tech: { label: "Tools and kits", categories: ["Tool", "Kit"], lines: [6, 10], each: [1, 3] },
+  outfit: { label: "Clothing and armor", categories: ["Clothing", "Armor"], lines: [8, 12], each: [1, 3] },
   medical: { label: "Medical supplies", categories: ["Medical"], lines: [5, 8], each: [1, 6] },
   leisure: { label: "Music and games", categories: ["MusicalInstrument", "GamingSet"], lines: [5, 8], each: [1, 3] },
   spacer: { label: "Spacer's supplies", categories: ["LifeSupport", "Storage", "Communications"], lines: [6, 10], each: [1, 4] },
@@ -3719,6 +4012,11 @@ const OPENING: Record<string, [number, number]> = {
   cantina: [10, 28], promenade: [8, 24], market: [7, 19], workshop: [8, 18], engineering: [0, 24], medcenter: [0, 24],
   spaceport: [0, 24], "landing field": [0, 24], "landing pad": [0, 24], "docking ring": [0, 24], archive: [9, 17], palace: [9, 17],
   warehouse: [6, 18], "cargo bay": [0, 24], "transit hub": [0, 24], shipyard: [0, 24], "droid dealer": [8, 19], "vehicle dealer": [8, 19],
+  "refuelling depot": [0, 24], "cargo hangar": [0, 24], "public hangar": [0, 24], "private hangar": [0, 24], "royal hangar": [0, 24],
+  // Shops keep the hours of the market and lock up after them (afterHoursLock)
+  "general store": [8, 19], armsmith: [9, 18], "tech shop": [8, 19], apothecary: [8, 20], outfitter: [9, 18], "curio shop": [10, 20], pawnshop: [9, 21],
+  cookshop: [7, 23], "rooming house": [0, 24], "gambling hall": [16, 30], junkyard: [7, 18], "scrap dealer": [7, 18],
+  estates: [0, 24], "manor house": [0, 24], guardhouse: [0, 24], gatehouse: [0, 24],
 };
 export function openingHours(world: World, trader: Occupant, placeId: string): [number, number] {
   const building = ancestor(world, placeId, "building");
@@ -3731,6 +4029,74 @@ export function isOpen(world: World, trader: Occupant, placeId: string, minutes:
   const h = hourOf(minutes);
   return to - from >= 24 || (h >= from && h < to) || (to > 24 && h < to - 24);
 }
+
+// Shops lock up after hours (house rule). A closed shop's ways in are locked: the DC to pick the lock is 12, and 3 more
+// for each step of the law there (policed, strict). Breaking in is a crime where the law sees it (trespass).
+const LOCKED_AT_NIGHT = ["market", "general store", "armsmith", "tech shop", "apothecary", "outfitter", "curio shop", "pawnshop", "workshop", "warehouse", "archive", "droid dealer", "vehicle dealer", "scrap dealer", "junkyard"];
+const openAt = (type: string, minutes: number) => {
+  const [from, to] = OPENING[type] ?? [8, 20];
+  const h = hourOf(minutes);
+  return to - from >= 24 || (h >= from && h < to) || (to > 24 && h < to - 24);
+};
+export function afterHoursLock(world: World, buildingId: string, minutes: number): number | undefined {
+  const b = world.areas[buildingId];
+  if (!b || b.kind !== "building" || !LOCKED_AT_NIGHT.includes(b.type) || openAt(b.type, minutes)) return undefined;
+  return 12 + 3 * Math.min(2, lawAt(world, buildingId));
+}
+export const hoursOfBuilding = (type: string): [number, number] | undefined => (LOCKED_AT_NIGHT.includes(type) ? OPENING[type] ?? [8, 20] : undefined);
+// How far a stall of a market is packed up: 0 with its wares out, 1 packed away. The stallholder packs up in the
+// forty minutes before closing, and sets out again in the forty after opening.
+export function packedness(buildingType: string, minutes: number): number {
+  const [from, to] = OPENING[buildingType] ?? [8, 20];
+  if (to - from >= 24) return 0;
+  const h = hourOf(minutes) + (to > 24 && hourOf(minutes) < to - 24 ? 24 : 0);
+  if (h < from || h >= to) return 1;
+  const ramp = 40 / 60;
+  if (h < from + ramp) return 1 - (h - from) / ramp;
+  if (h > to - ramp) return (h - (to - ramp)) / ramp;
+  return 0;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Scripted exchanges (2026-10-18; a few, to be filled out later). Someone whose work is a way to get something
+// done has a few things they will do for the party: each is a check (or a fee), a result in words, and
+// at most one effect on the world. The effects are all house rules, and the card says so.
+// ---------------------------------------------------------------------------------------------
+
+export interface RoleScript {
+  id: string;
+  label: string;
+  // What the party says or does
+  text: string;
+  abilities: string[];
+  skill?: string;
+  dc: number;
+  // Credits paid whatever the result
+  cost?: number;
+  // Minutes it takes
+  minutes: number;
+  win: string;
+  lose: string;
+  // What a success does: a slip for the audience chamber for the day, renown with the faction that holds the place,
+  // or a report of the party's cargo cleared
+  effect?: "audience" | "renown" | "cleared";
+  // Needs: a slip for the audience, or renown of at least this much with the faction
+  needs?: "audience";
+}
+export const SCRIPTS: Record<string, RoleScript[]> = {
+  "customs officer": [
+    { id: "declare", label: "Declare your cargo", text: "You lay your manifest on the counter and answer the questions.", abilities: ["charisma"], skill: "persuasion", dc: 10, minutes: 10, win: "The officer stamps the manifest and waves you through.", lose: "The officer sends you to the back of the queue; the inspection takes an hour.", effect: "cleared" },
+    { id: "smooth", label: "Smooth the inspection (50 cr)", text: "A chip slides across the counter with the manifest.", abilities: ["charisma"], skill: "deception", dc: 13, cost: 50, minutes: 5, win: "The officer pockets the chip and finds nothing to look at.", lose: "The officer pockets the chip and looks at everything.", effect: "cleared" },
+  ],
+  chamberlain: [
+    { id: "petition", label: "Enter a petition", text: "You give your name and your business to the chamberlain.", abilities: ["charisma"], skill: "persuasion", dc: 12, minutes: 30, win: "You are given a slip for the audience chamber: good for today.", lose: "You are put on the list for another day, and told to wait.", effect: "audience" },
+  ],
+  dignitary: [
+    { id: "audience", label: "Present your petition", text: "You are called before the dignitary, and say what you have come for.", abilities: ["charisma"], skill: "persuasion", dc: 14, minutes: 20, win: "The dignitary hears you out, and the court is told that you are to be helped.", lose: "The dignitary has heard it all before, and the guards show you out.", effect: "renown", needs: "audience" },
+  ],
+  "ticket agent": [],
+};
+export const scriptsFor = (role: string): RoleScript[] => SCRIPTS[role] ?? [];
 
 // ---------------------------------------------------------------------------------------------
 // Routines. The people of a settlement have homes and days: staff keep their counters in the
@@ -3907,7 +4273,7 @@ function routeMinutes(world: World, from: string, to: string, hyperdriveClass = 
 
 // Who keeps what hours, by role (hours of the day; past 24 runs into the next morning)
 const NIGHT_OWLS = ["musician", "fence"];
-const PORT_TYPES = ["spaceport", "landing field", "landing pad", "docking ring"];
+const PORT_TYPES = ["spaceport", "landing field", "landing pad", "docking ring", ...GROUND_HANGARS];
 
 // Homes, days and voyages for the people and ships of a settlement that has been built. Anyone
 // who already has a routine keeps it. The same settlement and seed give the same days.
@@ -4042,6 +4408,8 @@ export interface PartyShip extends Ship {
   areaId: string;
   // Who sits at which station of the deck (a station's asset id -> "self" for the character or a companion's id)
   crew?: Record<string, string>;
+  // The building (a hangar) of the port it put down in, chosen on landing (see hangarsOf)
+  hangar?: string;
 }
 
 // Where a ship kept somewhere in an area takes off from
@@ -4056,6 +4424,83 @@ export function hasPort(world: World, areaId: string): boolean {
   const area = world.areas[areaId];
   if (!area || area.kind !== "settlement") return false;
   return area.tags.includes("starport") || childrenOf(world, areaId).some((b) => /spaceport|landing|docking/i.test(b.type));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Hangars (the user's design, 2026-10-18). A ship that puts down at a port chooses a hangar to put down
+// in, steps off, and deals with whoever works there: the fuel attendant of the refuelling hangar sells
+// fuel, the mechanic of the mechanics' hangar mends the hull, the outfitter of the upgrade showroom
+// next to it sells and fits starship equipment. The rest are berths: the terminal's docking bay, the
+// public hangar, the private hangar, the freight hangar; the royal hangar is the dignitary's, and is
+// open to the party only by invitation (renown of 3 or more with the faction that holds the port).
+// Prices are HOUSE RULES (the books price no repairs or fittings, see repairPrice and fitting).
+// ---------------------------------------------------------------------------------------------
+
+export type ShipService = "refuel" | "repair" | "upgrade";
+export interface Hangar {
+  buildingId: string;
+  roomId: string;
+  name: string;
+  kind: "terminal" | "field" | "refuelling" | "mechanics" | "public" | "private" | "freight" | "royal";
+  services: ShipService[];
+  note: string;
+}
+const HANGAR_KIND: Record<string, { kind: Hangar["kind"]; services: ShipService[]; note: string }> = {
+  spaceport: { kind: "terminal", services: [], note: "The terminal's docking bay, under the control tower." },
+  "landing field": { kind: "field", services: ["refuel"], note: "The open field, with its fuel depot." },
+  "landing pad": { kind: "field", services: ["refuel"], note: "The landing pad, with its fuel depot." },
+  "refuelling depot": { kind: "refuelling", services: ["refuel"], note: "Fuel is sold here, by the attendant." },
+  shipyard: { kind: "mechanics", services: ["repair", "upgrade"], note: "Mechanics mend the hull; the showroom sells and fits upgrades." },
+  "public hangar": { kind: "public", services: [], note: "Berths for public transport and visiting ships." },
+  "private hangar": { kind: "private", services: [], note: "Berths for private ships." },
+  "cargo hangar": { kind: "freight", services: [], note: "Freight berths, with the cargo office." },
+  "royal hangar": { kind: "royal", services: [], note: "Reserved for the dignitary; by invitation." },
+};
+// The hangars of a port settlement that a ship can put down in (none for a settlement with no berths)
+export function hangarsOf(world: World, settlementId: string): Hangar[] {
+  const out: Hangar[] = [];
+  for (const b of childrenOf(world, settlementId).filter((a) => a.kind === "building" && HANGAR_KIND[a.type])) {
+    const room = childrenOf(world, b.id).find((r) => r.kind === "room" && !formOf(r) && holdsShips(r) && r.layout?.assets.some((x) => x.kind === "ship"));
+    if (!room) continue;
+    out.push({ buildingId: b.id, roomId: room.id, name: b.name, ...HANGAR_KIND[b.type] });
+  }
+  const order = ["refuelling", "mechanics", "public", "private", "freight", "terminal", "field", "royal"];
+  return out.sort((p, q) => order.indexOf(p.kind) - order.indexOf(q.kind));
+}
+// Whether the party may put down in a hangar: the royal one only by invitation
+export function hangarOpen(world: World, hangar: Hangar, standing: Standing | undefined): { open: boolean; reason: string } {
+  if (hangar.kind !== "royal") return { open: true, reason: "" };
+  const faction = factionAt(world, hangar.buildingId);
+  const renown = faction ? standing?.renown[faction] ?? 0 : 0;
+  return renown >= 3 ? { open: true, reason: "" } : { open: false, reason: `By invitation only: it takes renown of 3 or more with ${faction ?? "the ruler"}.` };
+}
+// Whether a port has a hangar that sells fuel (otherwise any port does, as before hangars)
+export const sellsFuelAt = (world: World, settlementId: string) => hangarsOf(world, settlementId).some((h) => h.services.includes("refuel"));
+
+// House rule: mending a hull costs 10 credits a hull point for a Tiny ship, 20 for a Small, and so on up the sizes
+export const repairPrice = (missing: number, size: string) => Math.max(0, Math.ceil(missing)) * 10 * (1 + Math.max(0, SHIP_SIZE_ORDER.indexOf(size)));
+
+// What the outfitter of the upgrade showroom has in stock (house rule): a dozen pieces of starship
+// equipment picked by who the outfitter is, always an armor, a shield, a reactor, a power coupling and a
+// hyperdrive when the data has them
+const FITTED_ONCE = ["Armor", "Shield", "Reactor", "PowerCoupling", "Hyperdrive"];
+export function outfitterStock<T extends { name: string; type: string; cost: number }>(rows: T[], outfitterId: string): T[] {
+  const sellable = rows.filter((e) => e.cost > 0 && e.type !== "Ammunition");
+  const pick = (type: string, n: number) => sellable.filter((e) => e.type === type).sort((a, b) => unitOf(`${outfitterId}|${a.name}`) - unitOf(`${outfitterId}|${b.name}`)).slice(0, n);
+  return [...FITTED_ONCE.flatMap((type) => pick(type, 2)), ...pick("Weapon", 6)].sort((a, b) => a.cost - b.cost);
+}
+// Fitting a piece of equipment (house rule): armor, shield, reactor, power coupling and hyperdrive replace the one of
+// their type, which is taken in part exchange for half its cost; weapons are added, to four at most
+export function fitting<T extends { name: string; type: string; cost: number }>(equipment: string[], item: T, rows: T[]): { equipment: string[]; price: number; error?: string } {
+  const type = (name: string) => rows.find((r) => r.name === name)?.type;
+  if (equipment.includes(item.name)) return { equipment, price: 0, error: `${item.name} is already fitted.` };
+  if (FITTED_ONCE.includes(item.type)) {
+    const old = equipment.find((n) => type(n) === item.type);
+    const credit = old ? Math.floor((rows.find((r) => r.name === old)?.cost ?? 0) / 2) : 0;
+    return { equipment: [...equipment.filter((n) => n !== old), item.name], price: Math.max(0, item.cost - credit) };
+  }
+  if (item.type === "Weapon" && equipment.filter((n) => type(n) === "Weapon").length >= 4) return { equipment, price: 0, error: "The ship carries four weapons already." };
+  return { equipment: [...equipment, item.name], price: item.cost };
 }
 
 // The party's ship that can make a trip from here, or what stops them
@@ -4855,12 +5300,20 @@ export function modelOf(name: string, vehicles: Transport["vehicles"]): Transpor
   return vehicles.find((v) => n.includes(v.name.toLowerCase()));
 }
 
+// The line of goods each shop sells (a WARES key)
+export const SHOP_TRADE: Record<string, string> = {
+  "general store": "general", armsmith: "arms", "tech shop": "tech", apothecary: "medical", outfitter: "outfit", "curio shop": "leisure",
+  pawnshop: "general", cookshop: "bar", "scrap dealer": "tech", junkyard: "tech", shipyard: "spacer",
+};
+
 // Who runs a speeder lot or a stable (life 5): the shopfront of a city's or town's workshop sells
 // speeders; one stall in two of a town's or outpost's market, on a world that is not paved over, sells mounts
 function dealerTrade(world: World, building: Area, room: Area, r: Random): string | undefined {
   const settlement = ancestor(world, room.id, "settlement");
   const planet = ancestor(world, room.id, "planet");
   if (!settlement) return undefined;
+  // Each shop keeps its own line of goods
+  if (SHOP_TRADE[building.type] && /sales floor|upgrade showroom|repair counter|dispensary|tailor/i.test(room.name)) return SHOP_TRADE[building.type];
   if (building.type === "workshop" && /shopfront/i.test(room.name) && ["city", "town", "station"].includes(settlement.type)) return "vehicles";
   if (building.type === "vehicle dealer" && /showroom/i.test(room.name)) return "vehicles";
   if (building.type === "droid dealer" && /showroom|repair bay/i.test(room.name)) return "droids";
@@ -4907,7 +5360,7 @@ function placeVehicles(ctx: Context, building: Area) {
     if (vehicles.length) building.vehicles = vehicles;
   }
 }
-const CIVIL_RIDES: Record<string, number> = { residences: 0.6, tenements: 0.4, market: 0.5, workshop: 0.6, cantina: 0.4, spaceport: 0.5, "transit hub": 0.3, "vehicle dealer": 1, warehouse: 0.3, medcenter: 0.3, promenade: 0.4 };
+const CIVIL_RIDES: Record<string, number> = { residences: 0.6, tenements: 0.4, market: 0.5, workshop: 0.6, cantina: 0.4, spaceport: 0.5, "transit hub": 0.3, "vehicle dealer": 1, warehouse: 0.3, medcenter: 0.3, promenade: 0.4, estates: 0.9, "manor house": 0.9, junkyard: 0.4, "scrap dealer": 0.5 };
 
 // The party's ships stand in the berths of the port they are at: where a berth has been left
 // empty (a ship bought or taken from it, or one away on a voyage) the party's ship takes it. For
@@ -4919,8 +5372,11 @@ export function withPartyShips<T extends World>(world: T, ships: PartyShip[]): T
   for (const ship of ships) {
     const place = world.areas[ship.areaId];
     if (!place) continue;
-    // Berth rooms under the settlement (or the building) the ship is at, the ones holding ships first
-    const rooms = Object.values(world.areas).filter((a) => a.kind === "room" && a.layout && trailOf(world, a.id).some((t) => t.id === place.id) && a.layout.assets.some((x) => x.kind === "ship"));
+    // Berth rooms under the settlement (or the building) the ship is at, the ones holding ships first; the
+    // hangar it put down in before any other
+    const rooms = Object.values(world.areas)
+      .filter((a) => a.kind === "room" && a.layout && trailOf(world, a.id).some((t) => t.id === place.id) && a.layout.assets.some((x) => x.kind === "ship"))
+      .sort((p, q) => Number(q.parentId === ship.hangar) - Number(p.parentId === ship.hangar));
     for (const room of rooms) {
       const current = areas[room.id];
       const berth = current.layout!.assets.find((a) => a.kind === "ship" && !used.has(a.id) && !current.ships.some((s) => s.id === a.ref));
@@ -6244,7 +6700,7 @@ export function refitPlan(sheet: { size: string; hullMax: number; hullDice: numb
 // The grouping is worked out from what the buildings are, so older worlds have it too.
 // ---------------------------------------------------------------------------------------------
 
-export type DistrictTheme = "civic" | "market" | "docks";
+export type DistrictTheme = "civic" | "market" | "docks" | "residential" | "yards";
 
 export interface District {
   id: string; // the settlement's id and the district's number: "<settlement>/<n>"
@@ -6256,9 +6712,18 @@ export interface District {
 
 const THEMES: [RegExp, DistrictTheme][] = [
   [/^(palace|garrison|archive|command post|operations center)$/, "civic"],
-  [/^(market|workshop|warehouse|residences|tenements|droid dealer|vehicle dealer|engineering|habitat ring|cargo bay|medcenter)$/, "market"],
+  [/^(estates|residences|tenements)$/, "residential"],
+  [/^(warehouse|junkyard|workshop)$/, "yards"],
+  [/^(market|droid dealer|vehicle dealer|engineering|habitat ring|cargo bay|medcenter)$/, "market"],
   [/^(spaceport|landing field|landing pad|docking ring|city gate|town gate|cantina|promenade|hideout|transit hub|shipyard)$/, "docks"],
 ];
+// What each site's local map is called
+const SITE_NAMES: Record<string, string> = {
+  spaceport: "Spaceport", "landing field": "Landing Field", cantina: "Cantina Quarter", market: "Market District", palace: "Palace Grounds",
+  warehouse: "Warehouse District", estates: "Estates", junkyard: "Scrap Quarter", tenements: "Tenement Row", residences: "Residential Quarter",
+  garrison: "Garrison", medcenter: "Medical Quarter", workshop: "Workshop Row", archive: "Archive Square", hideout: "Back Alleys",
+  "city gate": "City Gate", "town gate": "Town Gate", "droid dealer": "Droid Dealers' Row", "vehicle dealer": "Speeder Lots",
+};
 const WILD_SETTLEMENTS = ["cave system", "ruins", "crash site", "raider camp"];
 export const DISTRICT_MAX = 6;
 
@@ -6284,11 +6749,25 @@ export function districtsOf(world: World, settlementId: string): District[] {
   if (!settlement || settlement.kind !== "settlement" || WILD_SETTLEMENTS.includes(settlement.type)) return [];
   const buildings = childrenOf(world, settlementId).filter((a) => a.kind === "building" && a.type !== "starship");
   if (!buildings.length) return [];
+  // A city or a town: a district for each of the listed buildings, with the satellites that belong to it
+  if (SITED.includes(settlement.type)) {
+    return buildings
+      .filter((b) => !isSatellite(b))
+      .map((anchor) => ({
+        id: `${settlementId}/${anchor.id}`,
+        settlementId,
+        theme: THEMES.find(([re]) => re.test(anchor.type))?.[1] ?? "market",
+        name: SITE_NAMES[anchor.type] ?? `${title(anchor.type)} Quarter`,
+        buildingIds: [anchor.id, ...buildings.filter((b) => b.tags.includes(`site:${anchor.id}`)).map((b) => b.id)],
+      }));
+  }
+  // An outpost or a station: the buildings in a line by theme, cut into districts of four to six
   const palace = buildings.some((b) => b.type === "palace");
   const order: DistrictTheme[] = ["civic", "market", "docks"];
   const themeOf = (b: Area): DistrictTheme => {
     if (b.type === "residences" && palace) return "civic";
-    return THEMES.find(([re]) => re.test(b.type))?.[1] ?? "market";
+    const theme = THEMES.find(([re]) => re.test(b.type))?.[1] ?? "market";
+    return theme === "residential" || theme === "yards" ? "market" : theme;
   };
   const line = buildings
     .map((b) => ({ b, theme: themeOf(b) }))
@@ -6531,11 +7010,23 @@ export interface DistrictPlan {
   boxes: Record<string, { x: number; y: number; width: number; height: number }>;
   // Paved ground between the buildings
   ways: { x: number; y: number; width: number; height: number; kind: "avenue" | "alley" }[];
+  // What the site lays out on the open ground: a curtain wall, gardens, a market's stalls
+  grounds?: SiteGrounds;
+}
+
+// Open ground of a site, in squares of the district's grid. The wall and the stalls block movement and shots;
+// the gardens are ground for the map to plant (shrubs, trees, beds, fountains, statues) from its asset library.
+export interface SiteGrounds {
+  wall?: { x: number; y: number; width: number; height: number; gates: { side: Side; at: number; width: number }[] };
+  gardens?: { x: number; y: number; width: number; height: number }[];
+  stalls?: { id: string; x: number; y: number; w: number; h: number; trade: string }[];
 }
 
 const ALLEY = 3;
 const AVENUE = 6;
 const EDGE = 6;
+// (a palace stands in grounds: room for gardens inside its curtain wall)
+const PALACE_EDGE = 11;
 const CATWALK_SPAN = 12;
 
 const floorsOf = (l: RoomLayout): [number, number] => [l.level ?? 0, (l.level ?? 0) + (l.climb?.levels ?? 0) + (l.tall ? 1 : 0)];
@@ -6648,7 +7139,7 @@ export function planDistrict(ctx: Context, district: District): DistrictPlan | u
   for (const b of members) if (childrenOf(world, b.id).some((a) => a.kind === "room" && !a.layout)) planBuilding(world, b.id);
   const roomsOf = (b: Area) => childrenOf(world, b.id).filter((a) => a.kind === "room" && a.layout);
   members = members.filter((b) => roomsOf(b).length > 0);
-  if (members.length < 2) return undefined;
+  if (members.length < 1) return undefined;
   const r = createRandom(Math.floor(unitOf(`${district.id}|plan`) * 1e9));
 
   // Each building's rooms start from its own corner, then are set down where the building goes
@@ -6663,26 +7154,36 @@ export function planDistrict(ctx: Context, district: District): DistrictPlan | u
     return { b, width: Math.max(...rooms.map((a) => a.layout!.x + a.layout!.width)), height: Math.max(...rooms.map((a) => a.layout!.y + a.layout!.height)) };
   });
   const order = [...sized].sort((p, q) => Number(!!q.b.gateway) - Number(!!p.b.gateway) || q.width * q.height - p.width * p.height);
-  const target = Math.max(...order.map((o) => o.width), Math.ceil(Math.sqrt(order.reduce((n, o) => n + o.width * o.height, 0)) * 1.8));
-  const rows: (typeof order)[] = [[]];
-  let rowWidth = 0;
-  for (const o of order) {
-    const row = rows[rows.length - 1];
-    if (row.length && rowWidth + ALLEY + o.width > target) {
-      rows.push([o]);
-      rowWidth = o.width;
-    } else {
-      rowWidth += (row.length ? ALLEY : 0) + o.width;
-      row.push(o);
+  // Rows of buildings, packed to a width: several widths are tried and the one that makes the squarest, smallest map is kept
+  const pack = (target: number) => {
+    const rows: (typeof order)[] = [[]];
+    let rowWidth = 0;
+    for (const o of order) {
+      const row = rows[rows.length - 1];
+      if (row.length && rowWidth + ALLEY + o.width > target) {
+        rows.push([o]);
+        rowWidth = o.width;
+      } else {
+        rowWidth += (row.length ? ALLEY : 0) + o.width;
+        row.push(o);
+      }
     }
-  }
+    const across = Math.max(...rows.map((row) => row.reduce((n, o, i) => n + o.width + (i ? ALLEY : 0), 0)));
+    const down = rows.reduce((n, row) => n + Math.max(...row.map((o) => o.height)), 0) + AVENUE * (rows.length - 1);
+    return { rows, across, down };
+  };
+  const base = Math.sqrt(order.reduce((n, o) => n + o.width * o.height, 0));
+  const tries = [1.2, 1.5, 1.8, 2.1, 2.5].map((k) => pack(Math.max(...order.map((o) => o.width), Math.ceil(base * k))));
+  const longest = (t: { across: number; down: number }) => Math.max(t.across, t.down * 1.15) + (t.across * t.down) / 1e5;
+  const rows = tries.reduce((best, t) => (longest(t) < longest(best) ? t : best)).rows;
   const boxes: DistrictPlan["boxes"] = {};
   const ways: DistrictPlan["ways"] = [];
-  let y = EDGE;
+  const edge = members.some((b) => b.type === "palace") ? PALACE_EDGE : EDGE;
+  let y = edge;
   let right = 0;
   rows.forEach((row, n) => {
     const tall = Math.max(...row.map((o) => o.height));
-    let x = EDGE;
+    let x = edge;
     row.forEach((o, i) => {
       boxes[o.b.id] = { x, y, width: o.width, height: o.height };
       for (const a of roomsOf(o.b)) {
@@ -6698,13 +7199,13 @@ export function planDistrict(ctx: Context, district: District): DistrictPlan | u
     right = Math.max(right, x);
     y += tall;
     if (n < rows.length - 1) {
-      ways.push({ x: EDGE, y, width: 0, height: AVENUE, kind: "avenue" });
+      ways.push({ x: edge, y, width: 0, height: AVENUE, kind: "avenue" });
       y += AVENUE;
     }
   });
-  const width = right + EDGE;
-  const height = y + EDGE;
-  for (const w of ways) if (w.kind === "avenue") w.width = right - EDGE;
+  const width = right + edge;
+  const height = y + edge;
+  for (const w of ways) if (w.kind === "avenue") w.width = right - edge;
 
   const everyRoom = () => members.flatMap(roomsOf);
 
@@ -6757,6 +7258,8 @@ export function planDistrict(ctx: Context, district: District): DistrictPlan | u
   // against (hangars have their own sky)
   const roofs: { roof: Area; building: Area }[] = [];
   for (const b of members) {
+    // (a palace has no roof to climb to by a ladder: its towers are manned from inside)
+    if (b.type === "palace") continue;
     const real = roomsOf(b).filter((a) => !formOf(a) && (a.layout!.level ?? 0) >= 0 && !a.layout!.roof);
     const ranked = [...real].sort((p, q) => (q.layout!.level ?? 0) - (p.layout!.level ?? 0) || q.layout!.width * q.layout!.height - p.layout!.width * p.layout!.height);
     for (const room of ranked) {
@@ -6853,9 +7356,120 @@ export function planDistrict(ctx: Context, district: District): DistrictPlan | u
     placeContents(roof, r);
   }
 
-  const plan: DistrictPlan = { id: district.id, name: district.name, theme: district.theme, width, height, boxes, ways };
+  const grounds = siteGrounds(ctx, district, members, everyRoom(), width, height, edge, boxes, ways);
+  const plan: DistrictPlan = { id: district.id, name: district.name, theme: district.theme, width, height, boxes, ways, ...(grounds ? { grounds } : {}) };
   world.districtPlans = { ...(world.districtPlans ?? {}), [district.id]: plan };
   return plan;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Site grounds (house rule; the books give no city). The open ground of a site is laid out when its
+// district is planned. A palace stands in grounds: a curtain wall three squares in from the edge of the
+// map with a gate in its west wall and one in its south wall, and gardens on every stretch of ground
+// inside it that the buildings leave free. A market has stalls in the open: along its avenues and
+// before its buildings, each with a stallholder who sells their own line of goods in the market's
+// hours (OPENING) and packs up at closing time.
+// ---------------------------------------------------------------------------------------------
+
+const STALL_W = 3;
+const STALL_H = 2;
+const STALL_TRADES = ["general", "arms", "tech", "medical", "outfit", "leisure", "general", "tech"];
+const STALL_MAX = { city: 12, town: 8 } as Record<string, number>;
+
+function siteGrounds(ctx: Context, district: District, members: Area[], rooms: Area[], width: number, height: number, edge: number, boxes: DistrictPlan["boxes"], ways: DistrictPlan["ways"]): SiteGrounds | undefined {
+  const { world } = ctx;
+  const r = createRandom(Math.floor(unitOf(`${district.id}|grounds`) * 1e9));
+  const grounds: SiteGrounds = {};
+  const boxList = Object.values(boxes);
+  const inBox = (x: number, y: number, pad = 0) => boxList.some((b) => x >= b.x - pad && x < b.x + b.width + pad && y >= b.y - pad && y < b.y + b.height + pad);
+  // The squares in front of every way out of a building (kept clear)
+  const doors: { x: number; y: number }[] = [];
+  for (const room of rooms) {
+    const l = room.layout!;
+    for (const a of l.assets) if (a.side && a.kind === "exit") doors.push({ x: l.x + a.x + (a.side === "e" ? 1 : a.side === "w" ? -1 : 0), y: l.y + a.y + (a.side === "s" ? 1 : a.side === "n" ? -1 : 0) });
+  }
+  const nearDoor = (x: number, y: number, reach: number) => doors.some((d) => Math.abs(d.x - x) <= reach && Math.abs(d.y - y) <= reach);
+
+  const palace = members.find((b) => b.type === "palace");
+  if (palace) {
+    const gap = 3;
+    const wall = { x: gap, y: gap, width: width - 2 * gap, height: height - 2 * gap, gates: [] as { side: Side; at: number; width: number }[] };
+    wall.gates.push({ side: "w", at: Math.floor(wall.height / 2) - 2, width: 4 }, { side: "s", at: Math.floor(wall.width / 2) - 2, width: 4 });
+    grounds.wall = wall;
+    // The lanes from the gates stay lawn and gravel, with nothing planted
+    const lanes = [
+      { x: wall.x, y: wall.y + wall.gates[0].at, width: edge, height: 4 },
+      { x: wall.x + wall.gates[1].at, y: wall.y + wall.height - edge, width: 4, height: edge },
+    ];
+    const inLane = (x: number, y: number) => lanes.some((q) => x >= q.x && x < q.x + q.width && y >= q.y && y < q.y + q.height);
+    // Gardens: 2x2 cells of free ground inside the wall, joined into the largest rectangles
+    const cs = 2;
+    const ox = wall.x + 1;
+    const oy = wall.y + 1;
+    const cols = Math.floor((wall.width - 2) / cs);
+    const rowsN = Math.floor((wall.height - 2) / cs);
+    const free = (c: number, q: number) => {
+      for (let j = 0; j < cs; j++) for (let i = 0; i < cs; i++) {
+        const [x, y] = [ox + c * cs + i, oy + q * cs + j];
+        if (inBox(x, y, 1) || inLane(x, y) || nearDoor(x, y, 2)) return false;
+      }
+      return true;
+    };
+    const seen = new Set<string>();
+    const gardens: NonNullable<SiteGrounds["gardens"]> = [];
+    for (let q = 0; q < rowsN; q++) {
+      for (let c = 0; c < cols; c++) {
+        if (seen.has(`${c},${q}`) || !free(c, q)) continue;
+        let w = 1;
+        while (c + w < cols && !seen.has(`${c + w},${q}`) && free(c + w, q)) w++;
+        let h = 1;
+        while (q + h < rowsN && Array.from({ length: w }, (_, i) => c + i).every((cc) => !seen.has(`${cc},${q + h}`) && free(cc, q + h))) h++;
+        for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) seen.add(`${c + i},${q + j}`);
+        if (w * h >= 4) gardens.push({ x: ox + c * cs, y: oy + q * cs, width: w * cs, height: h * cs });
+      }
+    }
+    grounds.gardens = gardens;
+  }
+
+  const market = members.find((b) => b.type === "market");
+  if (market) {
+    const taken = (x: number, y: number) => x < 2 || y < 2 || x >= width - 2 || y >= height - 2 || inBox(x, y) || nearDoor(x, y, 2);
+    const placed: NonNullable<SiteGrounds["stalls"]> = [];
+    const fits = (x: number, y: number) => {
+      for (let j = -1; j <= STALL_H; j++) for (let i = -1; i <= STALL_W; i++) {
+        const inside = i >= 0 && i < STALL_W && j >= 0 && j < STALL_H;
+        if (inside ? taken(x + i, y + j) : placed.some((q) => x + i >= q.x && x + i < q.x + q.w && y + j >= q.y && y + j < q.y + q.h)) return false;
+      }
+      return true;
+    };
+    const spots: { x: number; y: number }[] = [];
+    // Along the avenues, a line of stalls on either side of a lane two squares wide
+    for (const w of ways.filter((a) => a.kind === "avenue" && a.width >= 8)) {
+      for (let x = w.x + 1; x + STALL_W <= w.x + w.width; x += STALL_W + 2) spots.push({ x, y: w.y }, { x, y: w.y + w.height - STALL_H });
+    }
+    // Before the buildings, on the ground south and north of them
+    const bottom = Math.max(...boxList.map((b) => b.y + b.height));
+    for (let x = edge; x + STALL_W < width - 2; x += STALL_W + 2) spots.push({ x, y: bottom + 1 }, { x, y: 2 });
+    const lawless = lawAt(world, market.id) === 0;
+    const speciesNames = (ancestor(world, market.id, "planet")?.tags ?? []).filter((t) => t.startsWith("species:")).map((t) => t.slice(8));
+    const chosen = r.shuffle(spots);
+    const hours = OPENING[market.type] ?? [8, 20];
+    for (const spot of chosen) {
+      if (placed.length >= (STALL_MAX[ancestor(world, market.id, "settlement")?.type ?? "town"] ?? 8)) break;
+      if (!fits(spot.x, spot.y)) continue;
+      const n = placed.length;
+      const trade = lawless && n === 0 ? "black" : STALL_TRADES[n % STALL_TRADES.length];
+      const id = `${district.id}#s${n + 1}`;
+      placed.push({ id, x: spot.x, y: spot.y, w: STALL_W, h: STALL_H, trade });
+      const keeper = person(ctx, "stallholder", r.chance(0.5) ? "friendly" : "neutral", speciesNames);
+      keeper.trade = trade;
+      keeper.stall = id;
+      keeper.routine = { home: ancestor(world, market.id, "settlement")?.id ?? market.id, stops: [{ at: market.id, from: hours[0] + 0.25, to: hours[1] - 0.25 }] };
+      market.occupants.push(keeper);
+    }
+    if (placed.length) grounds.stalls = placed;
+  }
+  return grounds.wall || grounds.gardens || grounds.stalls ? grounds : undefined;
 }
 
 // Every way out of a building (an exit set in a ground-floor wall) is made to open on the street:
@@ -7005,6 +7619,24 @@ export function districtArena(world: World, districtId: string): DistrictArena |
       if (!inside && x >= 0 && y >= 0 && x < plan.width && y < plan.height) assets.push({ id: `crate-${id}-${i}`, kind: "furniture", name: "Crate stack", x, y, w: 1, h: 1, blocks: true, cover: true });
     }
   }
+  // The curtain wall of a palace (its gates left open) and the stalls of a market
+  const wall = plan.grounds?.wall;
+  if (wall) {
+    for (const side of ["n", "s", "w", "e"] as Side[]) {
+      const length = side === "n" || side === "s" ? wall.width : wall.height;
+      const gates = wall.gates.filter((g) => g.side === side).sort((p, q) => p.at - q.at);
+      let from = 0;
+      for (const run of [...gates.map((g) => [g.at, g.at + g.width] as const), [length, length] as const]) {
+        if (run[0] > from) {
+          const len = run[0] - from;
+          const [x, y, w, h] = side === "n" ? [wall.x + from, wall.y, len, 1] : side === "s" ? [wall.x + from, wall.y + wall.height - 1, len, 1] : side === "w" ? [wall.x, wall.y + from, 1, len] : [wall.x + wall.width - 1, wall.y + from, 1, len];
+          assets.push({ id: `wall-${side}-${from}`, kind: "furniture", name: "Curtain wall", x, y, w, h, blocks: true, height: 2 });
+        }
+        from = run[1];
+      }
+    }
+  }
+  for (const stall of plan.grounds?.stalls ?? []) assets.push({ id: stall.id, kind: "furniture", name: "Market stall", x: stall.x, y: stall.y, w: stall.w, h: stall.h, blocks: true, cover: true });
   return { district: districtId, width: plan.width, height: plan.height, assets, platforms, links };
 }
 
@@ -7021,7 +7653,7 @@ export function districtArena(world: World, districtId: string): DistrictArena |
 // ---------------------------------------------------------------------------------------------
 
 export interface Bulk { size: "Tiny" | "Small" | "Medium" | "Large" | "Huge" | "Gargantuan"; pounds: number; fixed?: boolean }
-const BUILT_IN = /bar counter|bandstand|holding cell|reactor core|pipe run|\bdais\b|rock pillar|^pillar|awning post|loading crane|sensor mast|antenna mast|vent stack|water tank|security camera|camera pole|alarm panel|access panel|info kiosk|notice board|lifter droid dock|fuel pump|bacta tank|coolant tank|power coupling|holo-table|console|terminal|pilot's seat|co-pilot's seat|gunnery seat|command chair|boarding ramp|booth|altar|campfire|pit trap|workbench|cooling unit|bunk|stairs/i;
+const BUILT_IN = /bar counter|bandstand|holding cell|reactor core|pipe run|\bdais\b|rock pillar|^pillar|awning post|loading crane|sensor mast|antenna mast|vent stack|water tank|security camera|camera pole|alarm panel|access panel|info kiosk|notice board|lifter droid dock|fuel pump|bacta tank|coolant tank|power coupling|holo-table|console|terminal|pilot's seat|co-pilot's seat|gunnery seat|command chair|boarding ramp|booth|altar|campfire|pit trap|workbench|cooling unit|bunk|stairs|sales counter|display shelf|goods shelf|curio shelf|droid parts shelf|herb rack|instrument rack|wares rack|display case|clothing rack|holo display|medical cabinet|statuette plinth|starship part|curtain wall|market stall/i;
 const SMALL_PIECES = /footlocker|parts bin|cart|low table|stool/i;
 const STONE = /sarcophagus|broken pillar|boulder|rubble/i;
 const POUNDS: Record<Bulk["size"], number> = { Tiny: 5, Small: 40, Medium: 150, Large: 600, Huge: 3000, Gargantuan: 12000 };

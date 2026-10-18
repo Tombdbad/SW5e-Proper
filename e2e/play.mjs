@@ -1799,11 +1799,140 @@ if (process.env.FORCE !== "0") {
     await sleep(2500);
     camp = (await api("GET", `/api/campaigns/${hc.id}`)).json;
     if (camp.starships[0].areaId !== orbit.id) throw new Error("did not land: " + camp.starships[0].areaId);
+    // A port with hangars: the ship has to be put down in one first (the first that is open)
+    if (await page.getByTestId("hangars").count()) {
+      await page.locator('[data-testid^="hangar-"]:not([disabled])').first().click();
+      await sleep(1200);
+      camp = (await api("GET", `/api/campaigns/${hc.id}`)).json;
+      if (!camp.starships[0].hangar) throw new Error("the hangar was not chosen");
+    }
     await page.getByTestId("disembark").click();
     await sleep(1500);
     camp = (await api("GET", `/api/campaigns/${hc.id}`)).json;
     if (camp.currentLocation === deck.id || camp.galaxyMap.areas[camp.currentLocation]?.type === "deck") throw new Error("still aboard");
     return `${mine.name} (${mine.size}): berth ${berth.w}x${berth.h}, deck ${deck.layout.width}x${deck.layout.height}; took off to ${planet.name}, landed at ${orbit.name}, stepped out into ${camp.galaxyMap.areas[camp.currentLocation].name}`;
+  });
+
+  // Sites (2026-10-18): each building the settlement lists has a local map of its own, with the
+  // buildings that belong to it round it; the port's hangars, the palace's wall and gardens, the market's stalls.
+  await step(ctx, "sites: the settlement lists its buildings, each with a site of its own (hangars, a palace with its wall and gardens, a market with stalls); the town lies out as designed", async () => {
+    const notes = [];
+    for (const seed of [1, 7]) {
+      const w = (await api("POST", "/api/world/generate", { options: { seed, partyLevel: 3 } })).json.world;
+      const all = Object.values(w.areas);
+      const kids = (id) => all.filter((a) => a.parentId === id);
+      const rooms = (b) => kids(b.id).filter((r) => r.kind === "room");
+      const cities = all.filter((a) => a.kind === "settlement" && a.type === "city" && kids(a.id).length);
+      for (const city of cities) {
+        const bs = kids(city.id).filter((b) => b.kind === "building");
+        const anchor = (type) => bs.find((b) => b.type === type && !b.tags.some((t) => t.startsWith("site:")));
+        const spaceport = anchor("spaceport");
+        const mine = (a) => bs.filter((b) => b.tags.includes(`site:${a.id}`)).map((b) => b.type).sort().join(",");
+        const want = ["cargo hangar", "private hangar", "public hangar", "refuelling depot", "shipyard", "transit hub"].join(",");
+        if (mine(spaceport) !== want) throw new Error(`${city.name}: the spaceport's site is ${mine(spaceport)}`);
+        const [market, warehouse, palace, estates, tenements, junk, cantina] = ["market", "warehouse", "palace", "estates", "tenements", "junkyard", "cantina"].map(anchor);
+        if (!(spaceport.position.x < warehouse.position.x && warehouse.position.x < market.position.x)) throw new Error(`${city.name}: the warehouses are not between the port and the market`);
+        if (palace && !(market.position.x < palace.position.x - 5)) throw new Error(`${city.name}: the palace is not across town`);
+        if (palace && Math.hypot(estates.position.x - palace.position.x, estates.position.z - palace.position.z) > 6) throw new Error("the estates are not by the palace");
+        if (Math.hypot(tenements.position.x - junk.position.x, tenements.position.z - junk.position.z) > 5) throw new Error("the tenements are not by the junkyard");
+        if (mine(market).split(",").length < 6) throw new Error(`${city.name}: the market has only ${mine(market)}`);
+        if (rooms(cantina).length < 6) throw new Error("the cantina is not larger");
+        const plans = Object.values(w.districtPlans).filter((p) => p.id.startsWith(city.id + "/"));
+        if (plans.length !== bs.filter((b) => !b.tags.some((t) => t.startsWith("site:"))).length) throw new Error(`${plans.length} districts for the listed buildings`);
+        const plan = (b) => w.districtPlans[`${city.id}/${b.id}`];
+        const stalls = plan(market).grounds?.stalls ?? [];
+        const keepers = market.occupants.filter((o) => o.stall);
+        if (stalls.length < 6 || keepers.length !== stalls.length) throw new Error(`${stalls.length} stalls, ${keepers.length} keepers`);
+        for (const shop of bs.filter((b) => ["armsmith", "general store", "tech shop"].includes(b.type))) {
+          const floor = rooms(shop).find((r) => /sales floor/i.test(r.name));
+          if (!floor.layout.assets.some((a) => /shelf|rack|case|stand/i.test(a.name))) throw new Error(`${shop.name} shows no wares`);
+        }
+        let palaceNote = "no palace";
+        if (palace) {
+          const pr = rooms(palace);
+          const floors = new Set(pr.map((r) => r.layout?.level ?? 0));
+          if (Math.max(...floors) < 3) throw new Error("the palace has too few floors");
+          if (!pr.some((r) => r.occupants.some((o) => o.role === "dignitary")) || !pr.some((r) => r.occupants.some((o) => o.role === "petitioner"))) throw new Error("no dignitary or petitioners");
+          if (pr.some((r) => r.layout?.form === "ladder" || r.layout?.assets.some((a) => /ladder/i.test(a.name)))) throw new Error("a ladder in the palace");
+          const g = plan(palace).grounds;
+          if (!g?.wall || !g.wall.gates.length || (g.gardens ?? []).length < 4) throw new Error("the palace has no curtain wall and gardens");
+          if (!mine(palace).includes("royal hangar")) throw new Error("no hangar for the dignitary");
+          palaceNote = `palace of ${pr.length} rooms on ${floors.size} floors, ${g.gardens.length} gardens`;
+        }
+        notes.push(`${city.name}: ${stalls.length} stalls, ${palaceNote}`);
+      }
+    }
+    return notes.join("; ");
+  });
+
+  await step(ctx, "sites: by day the market's stalls are kept; by night their keepers are gone and a shop's door is locked", async () => {
+    const h = await newChar({ equipment: ["Blaster pistol", "Security kit"] });
+    let market = null;
+    const hc = await newCamp(h, 7, async (world) => {
+      const all = Object.values(world.areas);
+      const start = world.areas[world.startId];
+      const city = world.areas[start.parentId].parentId;
+      market = all.find((a) => a.parentId === city && a.type === "market");
+      for (const r of all.filter((a) => a.kind === "room" && all.some((b) => b.id === a.parentId && b.parentId === city))) r.occupants = r.occupants.filter((o) => o.disposition !== "hostile");
+    }, { timeElapsed: { total: 600 } });
+    // (leave the game first: a page that is left saves its own clock)
+    const openAt = async (total) => {
+      await page.goto("about:blank");
+      await sleep(1000);
+      await api("PATCH", `/api/campaigns/${hc.id}`, { currentLocation: market.id, timeElapsed: { total } });
+      await page.goto(`${BASE}/game/${hc.id}`, { waitUntil: "domcontentloaded" });
+      await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+      await sleep(4000);
+    };
+    await openAt(600);
+    const day = await page.getByTestId("play-occupants").innerText().catch(() => "");
+    if (!/stallholder/.test(day)) throw new Error("no stallholders by day: " + day.replace(/\s+/g, " ").slice(0, 200));
+    await openAt(1400);
+    const night = await page.getByTestId("play-occupants").innerText().catch(() => "");
+    if (/stallholder/.test(night)) throw new Error("stallholders at night");
+    await tap(`exit:${market.id}`);
+    await page.getByText(/is shut: open/).first().waitFor({ timeout: 20000 });
+    return "stallholders listed at 10:00, none at 23:20, and the market's door answered with its hours";
+  });
+
+  await step(ctx, "ports: the ship puts down in the hangar of its choice, steps off there, and the fuel attendant sells fuel", async () => {
+    const h = await newChar({ equipment: ["Blaster pistol"], credits: 3000 });
+    let depot = null, hangar = null, mine = null, settlement = null;
+    const hc = await newCamp(h, 7, async (world) => {
+      const all = Object.values(world.areas);
+      const start = world.areas[world.startId];
+      settlement = world.areas[start.parentId].parentId;
+      depot = all.find((a) => a.parentId === settlement && a.type === "refuelling depot");
+      hangar = all.find((a) => a.parentId === depot.id && /refuelling hangar/i.test(a.name));
+      mine = { id: "e2e-hopper", name: "Dust Hopper", size: "Small", role: "Freighter", tier: 1, status: "landed", owner: GEAR, equipment: [], value: 1000, fuel: 1, hyperdriveClass: "1", areaId: settlement };
+      for (const r of all.filter((a) => a.parentId === depot.id)) r.occupants = r.occupants.filter((o) => o.disposition !== "hostile");
+    }, { timeElapsed: { total: 600 } });
+    await api("PATCH", `/api/campaigns/${hc.id}`, { currentLocation: hangar.id, starships: [{ ...mine, hangar: depot.id }] });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await sleep(4000);
+    await tap(`ship:${mine.id}`);
+    await page.getByTestId("map-card").getByTestId("ship-board").click();
+    await sleep(1500);
+    await page.getByTestId("hangars").waitFor({ timeout: 10000 });
+    const refuelling = page.getByTestId("hangar-refuelling");
+    if (!/Here/.test(await refuelling.innerText())) throw new Error("the ship is not shown in the refuelling hangar");
+    await page.getByTestId("disembark").click();
+    await sleep(1500);
+    let camp = (await api("GET", `/api/campaigns/${hc.id}`)).json;
+    if (camp.currentLocation !== hangar.id) throw new Error("the ramp led to " + camp.currentLocation + ", not the refuelling hangar");
+    const attendant = Object.values(camp.galaxyMap.areas).filter((a) => a.id === hangar.id).flatMap((r) => r.layout.assets.filter((a) => a.kind === "npc").map((a) => ({ asset: a, o: r.occupants.find((o) => o.id === a.ref) }))).find((x) => x.o?.role === "fuel attendant");
+    if (!attendant) throw new Error("no fuel attendant in the hangar");
+    await tap(`asset:${attendant.asset.id}`);
+    const card = page.getByTestId("map-card");
+    await card.getByTestId("service-refuel").waitFor({ timeout: 10000 });
+    const before = await getChar(h.id);
+    await card.getByTestId("service-refuel").click();
+    await sleep(1500);
+    camp = (await api("GET", `/api/campaigns/${hc.id}`)).json;
+    const after = await getChar(h.id);
+    if (!(camp.starships[0].fuel > 1) || !(after.credits < before.credits)) throw new Error(`fuel ${camp.starships[0].fuel}, credits ${before.credits} -> ${after.credits}`);
+    return `put down in ${depot.name}; ${attendant.o.name} sold ${camp.starships[0].fuel - 1} units of fuel for ${before.credits - after.credits} credits`;
   });
 
   // Gathering and crafting (2026-10-16, house rules): a vein in a room of the party's own is worked
