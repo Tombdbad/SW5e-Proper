@@ -1488,7 +1488,7 @@ if (process.env.FORCE !== "0") {
     return log.split("\n").find((l) => /Dogfight/.test(l))?.slice(0, 120);
   });
 
-  await step(ctx, "flying games: a speeder race from a grid, against four rivals, with hazards; the race is run to its end and placed", async () => {
+  await step(ctx, "flying games: a speeder race of three laps from a grid, against four rivals; hull and boost bars, the boost meter drains while held; the race is run to its end and placed", async () => {
     const rc = await newChar({ credits: 1000, equipment: ["Blaster pistol"] });
     const rcc = await newCamp(rc, 7, async () => {});
     const parkedAt = rcc.world.areas[rcc.start.parentId]?.parentId ?? rcc.world.startId;
@@ -1498,22 +1498,39 @@ if (process.env.FORCE !== "0") {
     await page.getByRole("tab", { name: "Downtime" }).click();
     await page.getByTestId("downtime-speeder-race").click();
     await page.getByTestId("flight-start-speeder-race").click();
-    await page.getByTestId("minigame-race").waitFor({ timeout: 30000 });
-    await page.getByTestId("countdown").waitFor({ timeout: 5000 });
+    await page.getByTestId("minigame-race").waitFor({ timeout: 60000 });
+    await page.getByTestId("countdown").waitFor({ timeout: 30000 });
     await sleep(2000);
     await page.screenshot({ path: `${OUT}/race-countdown.png` }).catch(() => {});
-    await page.getByTestId("countdown").waitFor({ state: "detached", timeout: 15000 });
+    await page.getByTestId("countdown").waitFor({ state: "detached", timeout: 60000 });
+    await page.getByTestId("race-hull").waitFor({ timeout: 30000 });
+    const bar = async (id) => Number(await page.getByTestId(id).getAttribute("data-value"));
+    const hullMax = Number(await page.getByTestId("race-hull").getAttribute("data-max"));
+    if (!(hullMax > 0) || (await bar("race-hull")) !== hullMax) throw new Error(`the hull bar does not start full: ${await bar("race-hull")} of ${hullMax}`);
+    // Boost held: the meter drains (it is not stopped by anything but running empty)
+    const boost = page.getByTestId("flight-boost");
+    const box = await boost.boundingBox();
+    const full = await bar("race-boost");
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await sleep(4000);
+    const held = await bar("race-boost");
+    await page.screenshot({ path: `${OUT}/race-boost.png` }).catch(() => {});
+    await page.mouse.up();
+    if (!(held < full - 5)) throw new Error(`the boost meter did not drain while held: ${full} then ${held}`);
     await sleep(6000);
     await page.screenshot({ path: `${OUT}/race-running.png` }).catch(() => {});
-    await page.getByTestId("minigame-over").waitFor({ timeout: 150000 }).catch(async (e) => {
+    await page.getByTestId("minigame-over").waitFor({ timeout: 600000 }).catch(async (e) => {
       throw new Error("the race did not end; hud: " + (await page.getByTestId("race-hud").innerText()).replace(/\s+/g, " ") + " " + e.message.split("\n")[0]);
     });
+    const result = (await page.getByTestId("race-result").innerText()).replace(/\s+/g, " ");
+    await page.screenshot({ path: `${OUT}/race-over.png` }).catch(() => {});
     await page.getByTestId("minigame-land").click();
     await page.getByTestId("downtime-log").waitFor();
     await sleep(1500);
     const log = await page.getByTestId("downtime-log").innerText();
     if (!/Speeder race:/.test(log)) throw new Error("no race in the log: " + log.replace(/\s+/g, " "));
-    return log.split("\n").find((l) => /Speeder race/.test(l))?.slice(0, 120);
+    return `boost ${full} -> ${held} held; ${result.slice(0, 160)}`;
   });
 
   await step(ctx, "pit arena: a bout against a creature of the rules on the 3D arena, after a five-second countdown; a win pays the prize, the party can take the winnings and leave", async () => {
