@@ -1136,7 +1136,8 @@ if (process.env.FORCE !== "0") {
     });
     gc = await newCamp(g, 3, async (world, start, put) => {
       const droid = await stat((await named("B1-A")).id);
-      put({ ...droid, id: "ox-droid", disposition: "neutral", role: "disabled droid", disabled: true, wounds: [0], loadout: [], saves: { constitution: -10 } });
+      // top corner: at the bottom corner the droid sits under the player's own token on a phone, and the tap picks the player
+      put({ ...droid, id: "ox-droid", disposition: "neutral", role: "disabled droid", disabled: true, wounds: [0], loadout: [], saves: { constitution: -10 } }, true);
       put({ ...(await stat((await named("Jawa Tinkerer")).id)), id: "ox-captive", name: "Wuzz", role: "captive", disposition: "friendly", species: "Human", loadout: [], captive: { restraint: "shackles", dc: 12 } });
       put({ ...(await stat((await named("Headhunter")).id)), id: "ox-hire", name: "Kess Varn", role: "bounty hunter", disposition: "neutral", species: "Human" });
       put({ id: "ox-gambler", name: "Dollo", role: "gambler", disposition: "neutral", count: 1, species: "Human", loadout: [] }, true);
@@ -1646,6 +1647,8 @@ if (process.env.FORCE !== "0") {
     await sleep(1500);
     const bought = (await campOf(bc.id)).vehicles?.[0];
     if (!bought) throw new Error("no speeder bought");
+    // the dealer's card covers the stable on a phone: close it first
+    await card().getByRole("button", { name: "Close" }).click();
     await tap("npc:ox-stable");
     await card().getByText("Hanna Stablehand").waitFor({ timeout: 30000 });
     const mounts = card().getByTestId("trade-stock").locator("li").filter({ hasText: /Tauntaun|Kaadu|Dewback|Varactyl|Bantha|Rancor/ }).first();
@@ -2028,7 +2031,7 @@ if (process.env.FORCE !== "0") {
     await page.getByRole("button", { name: "Refine", exact: true }).click();
     await page.getByTestId("downtime-refine-pick").selectOption("ore-0");
     await page.getByTestId("downtime-refine").click();
-    await page.getByText(/Refining Scrap metal/).waitFor();
+    await page.getByText(/Refining Scrap metal/).first().waitFor();
     await sleep(1200);
     const c = await getChar(rf.id);
     const m = c.playState?.materials ?? {};
