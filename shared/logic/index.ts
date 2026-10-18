@@ -9250,13 +9250,14 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
   for (const t of track.trails) for (const p of t.points) p[1] = groundAt(track, p[0], p[2], false);
 
   // Gates: evenly round the lap, the first on the start line; one that would fall where a shortcut
-  // leaves the track is moved past where it joins, so that both ways pass every gate
+  // leaves the track is moved 90 m past where it joins (time to settle onto the track), so that both ways
+// pass every gate
   const G = RACE.gates;
   const gateAt: number[] = [];
   for (let k = 0; k < G; k++) {
     let s = (k * loop.length) / G;
-    const t = track.trails.find((tr) => s > tr.from - 20 && s < tr.to + 60);
-    if (t) s = t.to + 60;
+    const t = track.trails.find((tr) => s > tr.from - 20 && s < tr.to + 90);
+    if (t) s = t.to + 90;
     if (gateAt.length && s - gateAt[gateAt.length - 1] < 70) continue;
     if (s > loop.length - 70) continue;
     gateAt.push(s);
@@ -9467,6 +9468,8 @@ export interface Racer {
   craft: Craft;
   v: Vec3; spin: number; bank: number;
   boost: number; boosting: boolean; rest: number; air: boolean; rough: boolean;
+  // On a shortcut's trail now (whoever steers: the party's own driving sets no `trail`)
+  onTrail: boolean;
   // Gates passed, in order over all laps (the start line first), and how far it is to the next
   gates: number; toGate: number;
   hull: number; hullMax: number; finish: number | null; wrecked: boolean;
@@ -9503,7 +9506,7 @@ export function raceStart(track: RaceTrack, seed: number, model: string, rivalMo
     return {
       id: who, name: rival ? rival[0] : "You", party, model: m, kind, pace: rival ? rival[1] : 1, daring: rival ? rival[2] : 0.6,
       craft: { p: [px, groundAt(track, px, pz) + RACE.hover, pz], yaw, pitch: 0, speed: 0 }, v: [0, 0, 0], spin: 0, bank: 0,
-      boost: 1, boosting: false, rest: 0, air: false, rough: false, gates: 0, toGate: 0, hull, hullMax: hull, finish: null, wrecked: false,
+      boost: 1, boosting: false, rest: 0, air: false, rough: false, onTrail: false, gates: 0, toGate: 0, hull, hullMax: hull, finish: null, wrecked: false,
       lane: lat, home: within(lat + (r.next() - 0.5) * 3, -4, 4), at, tat: 0, trail: -1, stuck: 0, off: 0, backing: 0, ghost: 0,
     };
   });
@@ -9745,6 +9748,7 @@ function drive(rc: Racer, input: RaceInput, track: RaceTrack, race: Race, h: num
   rc.off = near.d > RACE.off ? rc.off + h : 0;
   const slick = race.hazards.some((hz) => hz.kind === "slick" && (hz.p[0] - x) ** 2 + (hz.p[2] - z) ** 2 < hz.r * hz.r);
   rc.rough = rough;
+  rc.onTrail = near.owner >= 0 && !rough;
   const live = !rc.wrecked;
   const boosting = live && !!input.boost && rc.boost > 0.02 && !air && rc.finish === null;
   if (boosting) {
@@ -9999,7 +10003,8 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
     if (d0 < 0 && d1 >= 0) {
       const f = d0 / (d0 - d1);
       const [qx, qz] = [x0 + (x1 - x0) * f, z0 + (z1 - z0) * f];
-      if (Math.abs(-(qx - gate.p[0]) * gz + (qz - gate.p[2]) * gx) <= gate.half) {
+      // Through the opening: the racer's middle passes inside the posts' middles
+      if (Math.abs(-(qx - gate.p[0]) * gz + (qz - gate.p[2]) * gx) <= gate.half + 0.5) {
         rc.gates++;
         race.events.push({ kind: "gate", p: gate.p, by: rc.id, power: rc.gates });
         if (rc.gates >= total) {
@@ -10020,7 +10025,7 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
     // Gone 60 m down the track past the next gate without going through it: towed back to it
     const gateAt = Math.round(next.s / track.step) % track.points.length;
     const past = ((((rc.at - gateAt) * track.step + track.length / 2) % track.length) + track.length) % track.length - track.length / 2;
-    if (rc.trail < 0 && past > 60 && past < 400) tow(rc, track, race, gateAt);
+    if (rc.trail < 0 && !rc.onTrail && past > 60 && past < 400) tow(rc, track, race, gateAt);
     else if (rc.stuck > RACE.stuck || rc.off > RACE.offTime) tow(rc, track, race);
   });
   const party = race.racers.find((rc) => rc.party);

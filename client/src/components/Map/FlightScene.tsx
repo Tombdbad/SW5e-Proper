@@ -406,10 +406,12 @@ function Hazards({ track, hazards }: { track: RaceTrack; hazards: Hazard[] }) {
 // broken), and ground cover between them, more of it on a device that can draw it
 function RaceProps({ track, biome, broken, cover }: { track: RaceTrack; biome: string; broken: number[]; cover: string[] }) {
   const tier = useQuality((q) => q.tier);
+  // Laid out again only when something more is broken (the race hands a new list every step)
+  const gone = broken.length;
   const placed = useMemo(() => {
-    const gone = new Set(broken);
-    return track.props.filter((p) => p.key !== "gate" && !gone.has(p.id)).map((p): Placed => ({ key: p.key, x: p.p[0], y: p.p[2], h: p.p[1], rot: -p.yaw, scale: p.scale, v: p.v }));
-  }, [track, broken]);
+    const out = new Set(broken);
+    return track.props.filter((p) => p.key !== "gate" && !out.has(p.id)).map((p): Placed => ({ key: p.key, x: p.p[0], y: p.p[2], h: p.p[1], rot: -p.yaw, scale: p.scale, v: p.v }));
+  }, [track, gone]);
   const ground = useMemo(() => {
     if (!cover.length) return [];
     const r = createRandom(track.seed + 77);
