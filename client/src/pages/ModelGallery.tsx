@@ -8,7 +8,9 @@ import { CurtainWall, GardenGround, Scatter, StallModel, paletteOf, plantGarden,
 // Every model of the 3D map laid out in rows, for looking them over (a developer's page, not
 // linked from the game). ?section=people|roles|droids|beasts|furniture|ships|places|sites picks one.
 // `sites` shows the asset library of the sites: a garden planted for each kind of world, the stalls of a
-// market open, being packed and packed, a curtain wall, and the pieces a shop shows.
+// market open, being packed and packed, a curtain wall, the pieces a shop shows, and the wild ground and
+// racing pieces (trees, rocks, ground cover, barriers, a grandstand) in a temperate and a desert world.
+const WILD_PIECES = ["tree_tall", "tree_pine", "tree_birch", "cactus", "boulder", "rock", "rock_small", "log", "stump", "grass_tuft", "wildflowers", "fern", "reeds", "barrier", "crate_stack", "pylon", "banner", "grandstand"];
 const SHOP_PIECES: [string, number, number][] = [["Sales counter", 4, 1], ["Display shelf", 3, 1], ["Goods shelf", 3, 1], ["Curio shelf", 2, 1], ["Droid parts shelf", 3, 1], ["Herb rack", 2, 1], ["Instrument rack", 2, 1], ["Wares rack", 1, 1], ["Produce bin", 1, 1], ["Cloth bolts", 2, 1], ["Display case", 2, 1], ["Clothing rack", 2, 1], ["Armor stand", 1, 1], ["Holo display", 1, 1], ["Statuette plinth", 1, 1], ["Starship part", 2, 1], ["Weapon rack", 2, 1], ["Medical cabinet", 2, 1]];
 const BIOMES = ["temperate", "forest", "jungle", "desert", "ice", "volcanic", "swamp", "urban"];
 
@@ -123,6 +125,9 @@ export default function ModelGallery() {
             <Rows z={28} items={["general", "arms", "tech", "medical", "outfit", "leisure", "black"].flatMap((trade) => (["open", "packing", "packed"] as StallState[]).map((state) => ({ trade, state })))} per={9} gap={4} name={(s) => `${s.trade} ${s.state}`} draw={(s) => <StallModel trade={s.trade} state={s.state} canvas={paletteOf("temperate").canvas[s.trade.length % 4]} seed={s.trade.length} />} />
             <Rows z={40} items={SHOP_PIECES} per={9} gap={4} name={([n]) => n} draw={([n, w, h]) => <group position={[-w / 2, 0, -h / 2]}><Furniture name={n} w={w} h={h} seed={n.length} /></group>} />
             <group position={[-12, 0, 48]}><CurtainWall wall={{ x: 0, y: 0, width: 28, height: 12, gates: [{ side: "s", at: 12, width: 4 }] }} biome="temperate" /></group>
+            {["temperate", "desert"].map((biome, b) => (
+              <Rows key={biome} z={66 + b * 8} items={WILD_PIECES} per={9} gap={4} name={(key) => `${key} (${biome})`} draw={(key) => <Scatter placed={[{ key, x: 0, y: 0, rot: 0, scale: 1, v: 1 }]} biome={biome} />} />
+            ))}
           </>
         )}
         <OrbitControls target={look} />

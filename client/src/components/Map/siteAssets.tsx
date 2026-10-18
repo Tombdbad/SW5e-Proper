@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, type V3, type Finish } from "./models";
-import { createRandom, unitOf, packedness, type SiteGrounds, type DistrictPlan } from "@shared/logic";
+import { createRandom, unitOf, packedness, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery } from "@shared/logic";
 
 // ---------------------------------------------------------------------------------------------
 // The asset library of the sites (2026-10-18). A site's open ground is laid out by the shared logic
@@ -20,7 +20,9 @@ import { createRandom, unitOf, packedness, type SiteGrounds, type DistrictPlan }
 // path: its meshes are merged into one and drawn instead of `build` once the file has loaded (its
 // materials' colours are kept; textures are not), and `build` is drawn until then and if the file
 // is missing, so a pack can be added a piece at a time. `piecesTagged("tree")` lists what the
-// library has for a tag.
+// library has for a tag. A piece that stands in the way gives its `hit`, the shape it is struck by
+// at a scale of 1 (the speeder race uses it; see PropHit in shared/logic), drawn round the same
+// parts as its `build`, so that what is seen is what is struck.
 // ---------------------------------------------------------------------------------------------
 
 // How much a device is asked to draw: "lite" on a phone or a slow device (fewer plants, no
@@ -110,6 +112,8 @@ export interface Piece {
   size: [number, number];
   // Whether it stands in the way of anyone walking
   blocks: boolean;
+  // The shape a speeder strikes, or drags through (at a scale of 1)
+  hit?: PropHit;
   build: Build;
   // A model made elsewhere, under client/public (see above)
   gltf?: string;
@@ -120,7 +124,7 @@ const leafAt = (k: Kit, color: string, at: V3, rot: V3, long: number, seed: numb
 
 const LIBRARY: Record<string, Piece> = {
   tree_broad: {
-    tags: ["tree", "garden", "shade"], size: [1, 1], blocks: true,
+    tags: ["tree", "garden", "shade"], size: [1, 1], blocks: true, hit: { r: 0.2, h: 2 },
     build: (k, p, v) => {
       k.lathe([[0.2, 0], [0.15, 0.4], [0.1, 1.4], [0.06, 1.9]], p.bark, { seg: 8 });
       k.blob(0.95, p.leaf, { at: [0, 2.25, 0], seed: v + 1, rough: 0.22, smooth: true, squash: [1, 0.85, 1] });
@@ -129,14 +133,14 @@ const LIBRARY: Record<string, Piece> = {
     },
   },
   tree_conifer: {
-    tags: ["tree", "garden", "evergreen"], size: [1, 1], blocks: true,
+    tags: ["tree", "garden", "evergreen"], size: [1, 1], blocks: true, hit: { r: 0.22, h: 3, soft: 0.7 },
     build: (k, p, v) => {
       k.cyl(0.09, 0.8, p.bark, { at: [0, 0.4, 0], seg: 6 });
       [[0.85, 1.0, 0.7], [0.68, 1.0, 1.4], [0.5, 0.9, 2.05], [0.3, 0.8, 2.65]].forEach(([r, h, y], i) => k.cone(r, h, i % 2 ? p.leaf2 : p.leaf, { at: [0, y, 0], seg: 8 + (v % 2) * 2 }));
     },
   },
   tree_palm: {
-    tags: ["tree", "garden", "arid"], size: [1, 1], blocks: true,
+    tags: ["tree", "garden", "arid"], size: [1, 1], blocks: true, hit: { r: 0.16, h: 2.8 },
     build: (k, p, v) => {
       const lean = 0.25 + (v % 3) * 0.12;
       k.tube([[0, 0, 0], [lean * 0.4, 1.1, 0], [lean, 2.2, 0.05], [lean * 1.5, 2.9, 0.05]], (t) => 0.15 - t * 0.07, p.bark, { around: 6 });
@@ -148,7 +152,7 @@ const LIBRARY: Record<string, Piece> = {
     },
   },
   tree_dry: {
-    tags: ["tree", "garden", "arid", "dead"], size: [1, 1], blocks: true,
+    tags: ["tree", "garden", "arid", "dead"], size: [1, 1], blocks: true, hit: { r: 0.14, h: 1.9 },
     build: (k, p, v) => {
       k.tube([[0, 0, 0], [0.05, 0.9, 0], [-0.05, 1.7, 0.05]], (t) => 0.13 - t * 0.07, p.bark, { around: 6 });
       for (let i = 0; i < 4; i++) {
@@ -159,13 +163,13 @@ const LIBRARY: Record<string, Piece> = {
     },
   },
   shrub: {
-    tags: ["plant", "garden", "low"], size: [1, 1], blocks: false,
+    tags: ["plant", "garden", "low"], size: [1, 1], blocks: false, hit: { h: 0.65, soft: 0.45 },
     build: (k, p, v) => {
       for (let i = 0; i < 3; i++) k.blob(0.3 + (i % 2) * 0.08, i % 2 ? p.leaf2 : p.leaf, { at: [Math.cos(i * 2.1 + v) * 0.22, 0.28, Math.sin(i * 2.1 + v) * 0.22], seed: v + i, rough: 0.2, smooth: true });
     },
   },
   hedge: {
-    tags: ["hedge", "garden", "wall"], size: [1, 1], blocks: true,
+    tags: ["hedge", "garden", "wall"], size: [1, 1], blocks: true, hit: { box: [0.5, 0.5], h: 0.85 },
     build: (k, p, v) => {
       k.box([0.98, 0.82, 0.98], p.leaf, { at: [0, 0.41, 0], round: 0.22 });
       k.blob(0.42, p.leaf2, { at: [0.1, 0.84, -0.05], seed: v, rough: 0.15, smooth: true, squash: [1, 0.5, 1] });
@@ -181,7 +185,7 @@ const LIBRARY: Record<string, Piece> = {
     },
   },
   topiary: {
-    tags: ["topiary", "garden", "formal"], size: [1, 1], blocks: true,
+    tags: ["topiary", "garden", "formal"], size: [1, 1], blocks: true, hit: { r: 0.28, h: 1.9 },
     build: (k, p, v) => {
       k.cyl(0.26, 0.34, shade(p.stone, 0.85), { at: [0, 0.17, 0], seg: 10 });
       k.cyl(0.05, 0.5, p.bark, { at: [0, 0.55, 0], seg: 6 });
@@ -191,7 +195,7 @@ const LIBRARY: Record<string, Piece> = {
     },
   },
   fountain: {
-    tags: ["fountain", "garden", "water", "centre"], size: [3, 3], blocks: true,
+    tags: ["fountain", "garden", "water", "centre"], size: [3, 3], blocks: true, hit: { r: 1.5, h: 1.5 },
     build: (k, p) => {
       k.lathe([[1.5, 0], [1.5, 0.5], [1.38, 0.54], [1.3, 0.46], [0, 0.46]], p.stone, { seg: 28 });
       k.cyl(1.28, 0.03, p.water, { at: [0, 0.4, 0], seg: 28, finish: "glass" });
@@ -202,7 +206,7 @@ const LIBRARY: Record<string, Piece> = {
     },
   },
   statue: {
-    tags: ["statue", "garden", "formal", "centre"], size: [1, 1], blocks: true,
+    tags: ["statue", "garden", "formal", "centre"], size: [1, 1], blocks: true, hit: { box: [0.4, 0.4], h: 2.1 },
     build: (k, p, v) => {
       const stone = shade(p.stone, 0.95);
       k.box([0.8, 0.22, 0.8], shade(stone, 0.85), { at: [0, 0.11, 0], round: 0.03 });
@@ -217,7 +221,7 @@ const LIBRARY: Record<string, Piece> = {
     },
   },
   column: {
-    tags: ["statue", "garden", "ruin", "formal"], size: [1, 1], blocks: true,
+    tags: ["statue", "garden", "ruin", "formal"], size: [1, 1], blocks: true, hit: { r: 0.35, h: 2.05 },
     build: (k, p, v) => {
       const stone = shade(p.stone, 0.92);
       k.box([0.7, 0.18, 0.7], stone, { at: [0, 0.09, 0], round: 0.03 });
@@ -227,14 +231,14 @@ const LIBRARY: Record<string, Piece> = {
     },
   },
   urn: {
-    tags: ["urn", "garden", "formal", "low"], size: [1, 1], blocks: false,
+    tags: ["urn", "garden", "formal", "low"], size: [1, 1], blocks: false, hit: { r: 0.3, h: 0.8 },
     build: (k, p) => {
       k.lathe([[0.22, 0], [0.24, 0.05], [0.14, 0.18], [0.3, 0.46], [0.34, 0.62], [0.24, 0.66], [0, 0.6]], shade(p.stone, 0.9), { seg: 12 });
       k.blob(0.2, p.leaf2, { at: [0, 0.76, 0], seed: 3, rough: 0.2, smooth: true });
     },
   },
   planter: {
-    tags: ["planter", "garden", "low"], size: [1, 1], blocks: true,
+    tags: ["planter", "garden", "low"], size: [1, 1], blocks: true, hit: { box: [0.42, 0.42], h: 0.9 },
     build: (k, p, v) => {
       k.box([0.84, 0.42, 0.84], p.stone, { at: [0, 0.21, 0], round: 0.05 });
       k.blob(0.38, p.leaf, { at: [0, 0.58, 0], seed: v, rough: 0.2, smooth: true });
@@ -242,7 +246,7 @@ const LIBRARY: Record<string, Piece> = {
     },
   },
   bench: {
-    tags: ["bench", "garden", "seat"], size: [2, 1], blocks: false,
+    tags: ["bench", "garden", "seat"], size: [2, 1], blocks: false, hit: { box: [0.9, 0.25], h: 0.8 },
     build: (k, p) => {
       for (const x of [-0.8, 0.8]) k.box([0.12, 0.42, 0.5], p.stone, { at: [x, 0.21, 0], round: 0.03 });
       k.box([1.8, 0.07, 0.46], "#8b5e3c", { at: [0, 0.44, 0], round: 0.02 });
@@ -250,11 +254,208 @@ const LIBRARY: Record<string, Piece> = {
     },
   },
   lamp: {
-    tags: ["lamp", "garden", "light"], size: [1, 1], blocks: false,
+    tags: ["lamp", "garden", "light"], size: [1, 1], blocks: false, hit: { r: 0.1, h: 1.9 },
     build: (k) => {
       k.lathe([[0.1, 0], [0.1, 0.06], [0.04, 0.12], [0.035, 1.5], [0.08, 1.56], [0, 1.58]], C.black, { seg: 8, finish: "sheen" });
       k.sphere(0.12, "#ffe7a8", { at: [0, 1.7, 0], seg: [8, 6], finish: "glow" });
       k.cone(0.16, 0.12, C.black, { at: [0, 1.86, 0], seg: 8, finish: "sheen" });
+    },
+  },
+  // Wild ground (2026-10-18, first for the speeder race's course; any site can plant them): taller and
+  // slimmer trees, a cactus, rocks and boulders, fallen wood, and ground cover of grass, wildflowers,
+  // ferns, reeds and pebbles. The palette turns them to the world (moss or frost on a boulder's crown).
+  tree_tall: {
+    tags: ["tree", "wild", "shade"], size: [2, 2], blocks: true, hit: { r: 0.3, h: 3.2 },
+    build: (k, p, v) => {
+      k.lathe([[0.34, 0], [0.26, 0.25], [0.2, 1.2], [0.15, 2.6], [0.1, 3.3]], p.bark, { seg: 9 });
+      k.rod([0, 2.1, 0], [0.9, 2.9, 0.2], 0.07, p.bark, { seg: 6 });
+      k.rod([0, 2.4, 0], [-0.7, 3.2, -0.4], 0.06, p.bark, { seg: 6 });
+      k.blob(1.25, p.leaf, { at: [0, 3.7, 0], seed: v + 2, rough: 0.25, smooth: true, squash: [1, 0.75, 1] });
+      k.blob(0.85, p.leaf2, { at: [1.0, 3.3, 0.3], seed: v + 6, rough: 0.22, smooth: true });
+      k.blob(0.8, p.leaf2, { at: [-0.8, 3.5, -0.5], seed: v + 11, rough: 0.22, smooth: true });
+      k.blob(0.7, shade(p.leaf, 1.1), { at: [0.2, 4.4, -0.2], seed: v + 15, rough: 0.2, smooth: true });
+    },
+  },
+  tree_pine: {
+    tags: ["tree", "wild", "evergreen"], size: [1, 1], blocks: true, hit: { r: 0.18, h: 4, soft: 0.6 },
+    build: (k, p, v) => {
+      k.cyl(0.13, 1.2, p.bark, { at: [0, 0.6, 0], top: 0.09, seg: 7 });
+      [[0.75, 1.1, 1.0], [0.64, 1.0, 1.65], [0.52, 0.95, 2.25], [0.4, 0.85, 2.8], [0.27, 0.75, 3.3], [0.14, 0.55, 3.75]].forEach(([r, h, y], i) => k.cone(r, h, i % 2 ? p.leaf2 : shade(p.leaf, 0.9), { at: [0, y, 0], seg: 9 + (v % 3) }));
+    },
+  },
+  tree_birch: {
+    tags: ["tree", "wild", "garden"], size: [1, 1], blocks: true, hit: { r: 0.12, h: 3 },
+    build: (k, p, v) => {
+      const bend = ((v % 3) - 1) * 0.15;
+      k.tube([[0, 0, 0], [bend * 0.5, 1.2, 0], [bend, 2.4, 0.05], [bend * 1.2, 3.1, 0.05]], (t) => 0.11 - t * 0.06, "#e8e4da", { around: 7 });
+      for (let i = 0; i < 6; i++) k.box([0.1, 0.03, 0.03], "#2b2722", { at: [bend * (i / 6) * 0.9, 0.4 + i * 0.42, 0.09 - i * 0.004], rot: [0, i * 0.4, 0] });
+      k.blob(0.55, p.leaf2, { at: [bend * 1.1, 3.0, 0], seed: v + 3, rough: 0.25, smooth: true, squash: [0.8, 1.2, 0.8] });
+      k.blob(0.42, p.leaf, { at: [bend + 0.3, 2.5, 0.15], seed: v + 7, rough: 0.25, smooth: true });
+      k.blob(0.38, p.leaf, { at: [bend - 0.3, 2.7, -0.15], seed: v + 9, rough: 0.25, smooth: true });
+    },
+  },
+  cactus: {
+    tags: ["plant", "wild", "arid"], size: [1, 1], blocks: true, hit: { r: 0.24, h: 2.1 },
+    build: (k, p, v) => {
+      const green = mix(p.leaf, "#5f8a4a", 0.5);
+      k.capsule(0.22, 1.5, green, { at: [0, 0.97, 0], seg: 10 });
+      k.tube([[0.15, 0.9, 0], [0.5, 0.95, 0], [0.55, 1.25, 0], [0.55, 1.6, 0]], 0.12, green, { around: 8 });
+      if (v % 2) k.tube([[-0.15, 1.2, 0], [-0.45, 1.25, 0.05], [-0.48, 1.5, 0.05], [-0.48, 1.75, 0.05]], 0.1, green, { around: 8 });
+      k.sphere(0.07, p.bloom[v % p.bloom.length], { at: [0, 1.97, 0], seg: [6, 5] });
+    },
+  },
+  rock: {
+    tags: ["rock", "wild"], size: [1, 1], blocks: true, hit: { r: 0.55, h: 0.7 },
+    build: (k, p, v) => {
+      k.blob(0.5, p.stone, { at: [0, 0.22, 0], seed: v + 1, rough: 0.35, squash: [1.15, 0.65, 0.95] });
+      k.blob(0.22, shade(p.stone, 0.88), { at: [0.45, 0.08, 0.2], seed: v + 4, rough: 0.4, squash: [1, 0.7, 1] });
+    },
+  },
+  boulder: {
+    tags: ["rock", "wild", "large"], size: [2, 2], blocks: true, hit: { r: 0.9, h: 1.3 },
+    build: (k, p, v) => {
+      k.blob(0.85, p.stone, { at: [0, 0.5, 0], seed: v + 2, rough: 0.32, squash: [1.05, 0.8, 1] });
+      k.blob(0.5, shade(p.stone, 0.9), { at: [0.7, 0.25, -0.3], seed: v + 8, rough: 0.35, squash: [1, 0.75, 1] });
+      k.blob(0.3, shade(p.stone, 1.08), { at: [-0.6, 0.12, 0.5], seed: v + 5, rough: 0.4 });
+      k.blob(0.42, mix(p.stone, p.lawn, 0.55), { at: [0.05, 1.08, 0.05], seed: v + 3, rough: 0.2, smooth: true, squash: [1.2, 0.25, 1.1] });
+    },
+  },
+  rock_small: {
+    tags: ["rock", "ground", "low"], size: [1, 1], blocks: false,
+    build: (k, p, v) => {
+      for (let i = 0; i < 4; i++) k.blob(0.07 + ((i * 37 + v) % 5) * 0.02, shade(p.stone, 0.85 + (i % 3) * 0.1), { at: [Math.cos(i * 1.9 + v) * 0.28, 0.03, Math.sin(i * 1.9 + v) * 0.28], seed: v + i, rough: 0.4, squash: [1, 0.6, 1] });
+    },
+  },
+  log: {
+    tags: ["wood", "wild", "low"], size: [2, 1], blocks: true, hit: { box: [1, 0.22], h: 0.45 },
+    build: (k, p, v) => {
+      k.cyl(0.22, 2.0, p.bark, { at: [0, 0.2, 0], rot: [0, 0, Math.PI / 2], seg: 9 });
+      k.pair((s) => k.cyl(0.2, 0.02, shade(p.bark, 1.35), { at: [s * 1.005, 0.2, 0], rot: [0, 0, Math.PI / 2], seg: 9 }));
+      k.rod([0.3, 0.3, 0.1], [0.55, 0.62, 0.25], 0.05, p.bark, { seg: 5 });
+      k.blob(0.16, p.leaf2, { at: [-0.5, 0.42, 0], seed: v, rough: 0.2, smooth: true, squash: [1.4, 0.4, 1] });
+    },
+  },
+  stump: {
+    tags: ["wood", "wild", "low"], size: [1, 1], blocks: true, hit: { r: 0.32, h: 0.45 },
+    build: (k, p, v) => {
+      k.lathe([[0.42, 0], [0.32, 0.08], [0.27, 0.4], [0, 0.42]], p.bark, { seg: 10 });
+      k.cyl(0.25, 0.02, shade(p.bark, 1.4), { at: [0, 0.42, 0], seg: 10 });
+      for (let i = 0; i < 3; i++) k.rod([0, 0.1, 0], [Math.cos(i * 2.1 + v) * 0.55, 0, Math.sin(i * 2.1 + v) * 0.55], 0.05, p.bark, { seg: 5 });
+    },
+  },
+  grass_tuft: {
+    tags: ["ground", "grass", "low"], size: [1, 1], blocks: false,
+    build: (k, p, v) => {
+      for (let i = 0; i < 9; i++) {
+        const a = i * 2.4 + v;
+        const lean = 0.25 + (i % 3) * 0.12;
+        const h = 0.3 + ((i * 7 + v) % 4) * 0.06;
+        k.cone(0.03, h, i % 2 ? p.leaf2 : p.leaf, { at: [Math.cos(a) * (0.06 + lean * h * 0.5), (h / 2) * Math.cos(lean), Math.sin(a) * (0.06 + lean * h * 0.5)], rot: [Math.sin(a) * lean, 0, -Math.cos(a) * lean], seg: 3 });
+      }
+    },
+  },
+  wildflowers: {
+    tags: ["ground", "flowers", "low"], size: [1, 1], blocks: false,
+    build: (k, p, v) => {
+      for (let i = 0; i < 6; i++) {
+        const a = i * 2.1 + v;
+        k.cone(0.025, 0.26, p.leaf2, { at: [Math.cos(a) * 0.1, 0.12, Math.sin(a) * 0.1], rot: [Math.sin(a) * 0.35, 0, -Math.cos(a) * 0.35], seg: 3 });
+      }
+      for (let i = 0; i < 5; i++) {
+        const a = i * 1.3 + v;
+        const [x, z] = [Math.cos(a) * 0.2, Math.sin(a) * 0.2];
+        k.cyl(0.008, 0.32, p.leaf, { at: [x, 0.16, z], seg: 3 });
+        k.sphere(0.045, p.bloom[(i + v) % p.bloom.length], { at: [x, 0.34, z], seg: [6, 4] });
+      }
+    },
+  },
+  fern: {
+    tags: ["plant", "ground", "low", "wild"], size: [1, 1], blocks: false, hit: { h: 0.5, soft: 0.4 },
+    build: (k, p, v) => {
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2 + v;
+        leafAt(k, i % 2 ? p.leaf : p.leaf2, [Math.cos(a) * 0.26, 0.2, Math.sin(a) * 0.26], [0.45 * Math.sin(a), -a, 0.45 * Math.cos(a)], 0.7, v + i);
+      }
+    },
+  },
+  reeds: {
+    tags: ["ground", "water", "low", "wild"], size: [1, 1], blocks: false,
+    build: (k, p, v) => {
+      for (let i = 0; i < 8; i++) {
+        const a = i * 2.2 + v;
+        const h = 0.7 + (i % 3) * 0.18;
+        const [x, z] = [Math.cos(a) * 0.15, Math.sin(a) * 0.15];
+        k.cyl(0.015, h, i % 2 ? p.leaf2 : mix(p.leaf, p.bark, 0.3), { at: [x, h / 2, z], rot: [Math.sin(a) * 0.12, 0, -Math.cos(a) * 0.12], seg: 3 });
+        if (i % 3 === 0) k.capsule(0.03, 0.12, p.bark, { at: [x + Math.cos(a) * h * 0.12, h, z + Math.sin(a) * h * 0.12], seg: 5 });
+      }
+    },
+  },
+  // Racing and crowds (2026-10-18): a duracrete barrier in red and white, a stack of crates, a pylon, a
+  // grandstand with its crowd under a canopy, and a banner on a pole
+  barrier: {
+    tags: ["barrier", "race", "wall"], size: [2, 1], blocks: true, hit: { box: [1, 0.2], h: 0.55 },
+    build: (k, p, v) => {
+      const face = new THREE.Shape();
+      face.moveTo(-0.2, 0);
+      face.lineTo(0.2, 0);
+      face.lineTo(0.12, 0.14);
+      face.lineTo(0.07, 0.55);
+      face.lineTo(-0.07, 0.55);
+      face.lineTo(-0.12, 0.14);
+      face.lineTo(-0.2, 0);
+      for (let i = 0; i < 2; i++) k.extrude(face, 0.98, i % 2 === v % 2 ? "#c83a32" : "#ece8e0", { at: [-0.99 + i, 0, 0], rot: [0, Math.PI / 2, 0], bevel: 0.02 });
+      k.box([2, 0.03, 0.15], "#2b2722", { at: [0, 0.555, 0] });
+    },
+  },
+  crate_stack: {
+    tags: ["crates", "cargo", "race"], size: [1, 1], blocks: true, hit: { box: [0.55, 0.45], h: 1, breaks: true, mass: 0.15 },
+    build: (k, p, v) => {
+      const wood = ["#8b6a43", "#7a5a38", "#9a7a4e"][v % 3];
+      const crates: [V3, number][] = [[[-0.27, 0.24, 0], 0], [[0.27, 0.24, 0.05], 0.15], [[0, 0.72, 0], -0.2]];
+      crates.forEach(([at, turn], i) => {
+        k.box([0.5, 0.48, 0.5], shade(wood, 0.92 + i * 0.07), { at, rot: [0, turn, 0], round: 0.03 });
+        k.box([0.52, 0.05, 0.52], "#5a5f66", { at, rot: [0, turn, 0], finish: "sheen" });
+      });
+    },
+  },
+  pylon: {
+    tags: ["pylon", "race", "marker"], size: [1, 1], blocks: false, hit: { r: 0.14, h: 0.95, breaks: true, mass: 0.05 },
+    build: (k) => {
+      k.cyl(0.2, 0.06, "#2b2722", { at: [0, 0.03, 0], seg: 10 });
+      k.lathe([[0.13, 0.06], [0.05, 0.9], [0, 0.92]], "#ff6a1f", { seg: 12 });
+      k.cyl(0.11, 0.1, "#f4f1ea", { at: [0, 0.35, 0], top: 0.1, seg: 12 });
+      k.cyl(0.082, 0.08, "#f4f1ea", { at: [0, 0.62, 0], top: 0.075, seg: 12 });
+      k.sphere(0.045, "#ffb347", { at: [0, 0.93, 0], seg: [6, 5], finish: "glow" });
+    },
+  },
+  grandstand: {
+    tags: ["stand", "seating", "race", "crowd"], size: [6, 3], blocks: true, hit: { box: [3, 1.5], h: 2.6 },
+    build: (k, p, v) => {
+      // Three tiers rising away from the front (+z), a canopy on posts, and the crowd on the benches
+      for (let t = 0; t < 3; t++) {
+        const top = 0.4 + t * 0.45;
+        k.box([6, top, 0.95], shade(p.stone, 0.95 - t * 0.05), { at: [0, top / 2, 1.0 - t * 0.95], round: 0.03 });
+        k.box([6, 0.06, 0.3], "#6b4a33", { at: [0, top + 0.03, 1.2 - t * 0.95] });
+        for (let i = 0; i < 13; i++) {
+          if ((i * 7 + t * 3 + v) % 5 === 0) continue;
+          const x = -2.8 + i * 0.47 + ((i + t) % 2) * 0.08;
+          const z = 1.15 - t * 0.95;
+          k.capsule(0.11, 0.16, p.canvas[(i + t + v) % p.canvas.length], { at: [x, top + 0.2, z], seg: 6 });
+          k.sphere(0.08, ["#e0b08a", "#8a5a3a", "#c88a6a", "#5a3a2a"][(i * 3 + t) % 4], { at: [x, top + 0.42, z], seg: [6, 5] });
+        }
+      }
+      k.box([6.3, 0.08, 3.2], p.canvas[v % p.canvas.length], { at: [0, 2.6, 0.1], rot: [0.08, 0, 0], finish: "cloth" });
+      for (const x of [-3, 0, 3]) k.cyl(0.05, 2.6, "#3a3f46", { at: [x, 1.3, -1.4], seg: 6, finish: "sheen" });
+      for (const x of [-3, 3]) k.cyl(0.04, 2.4, "#3a3f46", { at: [x, 1.2, 1.55], seg: 6, finish: "sheen" });
+    },
+  },
+  banner: {
+    tags: ["banner", "flag", "race"], size: [1, 1], blocks: false, hit: { r: 0.06, h: 2.6 },
+    build: (k, p, v) => {
+      k.cyl(0.035, 2.6, "#3a3f46", { at: [0, 1.3, 0], seg: 6, finish: "sheen" });
+      k.box([0.03, 1.2, 0.5], p.canvas[v % p.canvas.length], { at: [0, 1.85, 0.27], finish: "cloth" });
+      k.rod([0, 2.48, 0], [0, 2.48, 0.55], 0.015, "#3a3f46", { seg: 4 });
+      k.sphere(0.05, "#ffd24a", { at: [0, 2.64, 0], seg: [6, 5], finish: "glow" });
     },
   },
 };
@@ -303,6 +504,26 @@ function useFile(path?: string): THREE.BufferGeometry | null {
 // What the library has for a tag
 export const piecesTagged = (tag: string): string[] => Object.keys(LIBRARY).filter((key) => LIBRARY[key].tags.includes(tag));
 
+// What a world's speeder race course is dressed with (its trees, shrubs and boulders, and the ground
+// cover drawn between them), and the shape of every piece that has one
+const WILD: Record<string, { trees: string[]; shrubs: string[]; boulders: string[]; cover: string[] }> = {
+  temperate: { trees: ["tree_broad", "tree_tall", "tree_birch", "tree_conifer"], shrubs: ["shrub", "fern"], boulders: ["rock", "boulder", "log"], cover: ["grass_tuft", "grass_tuft", "wildflowers", "rock_small"] },
+  forest: { trees: ["tree_pine", "tree_conifer", "tree_tall", "tree_pine"], shrubs: ["fern", "shrub"], boulders: ["boulder", "rock", "log", "stump"], cover: ["grass_tuft", "rock_small", "wildflowers"] },
+  jungle: { trees: ["tree_palm", "tree_tall", "tree_broad"], shrubs: ["fern", "shrub"], boulders: ["boulder", "rock", "log"], cover: ["grass_tuft", "wildflowers", "grass_tuft"] },
+  swamp: { trees: ["tree_dry", "tree_broad", "tree_tall"], shrubs: ["shrub", "fern"], boulders: ["log", "stump", "rock"], cover: ["reeds", "grass_tuft", "reeds"] },
+  desert: { trees: ["cactus", "tree_palm", "tree_dry", "cactus"], shrubs: ["shrub"], boulders: ["boulder", "rock", "rock"], cover: ["rock_small", "rock_small", "grass_tuft"] },
+  ice: { trees: ["tree_pine", "tree_conifer"], shrubs: [], boulders: ["boulder", "rock"], cover: ["rock_small"] },
+  volcanic: { trees: ["tree_dry", "stump"], shrubs: [], boulders: ["boulder", "rock"], cover: ["rock_small"] },
+  barren: { trees: ["tree_dry", "cactus"], shrubs: ["shrub"], boulders: ["boulder", "rock", "stump"], cover: ["rock_small", "grass_tuft"] },
+  urban: { trees: ["tree_broad", "tree_birch", "tree_tall"], shrubs: ["shrub"], boulders: ["rock", "boulder"], cover: ["grass_tuft", "wildflowers"] },
+  ocean: { trees: ["tree_palm", "tree_broad", "tree_palm"], shrubs: ["shrub", "fern"], boulders: ["rock", "boulder"], cover: ["grass_tuft", "wildflowers", "rock_small"] },
+};
+export function raceScenery(biome: string): RaceScenery & { cover: string[] } {
+  const wild = WILD[biome] ?? WILD.temperate;
+  const hits = Object.fromEntries(Object.entries(LIBRARY).filter(([, piece]) => piece.hit).map(([key, piece]) => [key, piece.hit!]));
+  return { ...wild, hits };
+}
+
 // Which trees a world grows
 const TREES: Record<string, string[]> = {
   temperate: ["tree_broad", "tree_broad", "tree_conifer"], forest: ["tree_conifer", "tree_broad", "tree_conifer"], jungle: ["tree_broad", "tree_palm", "tree_palm"],
@@ -322,6 +543,8 @@ export interface Placed {
   rot: number;
   scale: number;
   v: number;
+  // The height of the ground under it (0 when left out)
+  h?: number;
   // The squares it fills, if it blocks: x, y, width, height
   fills?: [number, number, number, number];
 }
@@ -406,7 +629,7 @@ function Instanced({ id, build, items, file }: { id: string; build: (k: Kit) => 
       const mesh = refs.current[f];
       if (!mesh) continue;
       items.forEach((it, i) => {
-        m.compose(pos.set(it.x, 0, it.y), q.setFromEuler(e.set(0, it.rot, 0)), sc.setScalar(it.scale));
+        m.compose(pos.set(it.x, it.h ?? 0, it.y), q.setFromEuler(e.set(0, it.rot, 0)), sc.setScalar(it.scale));
         mesh.setMatrixAt(i, m);
       });
       mesh.instanceMatrix.needsUpdate = true;
