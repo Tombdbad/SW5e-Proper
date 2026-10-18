@@ -5405,6 +5405,7 @@ export default function GameBoard() {
                     hasShip={ships.length > 0}
                     vehicleModel={campaign?.vehicles?.[0]?.model}
                     shipSpec={ships[0] ? { size: ships[0].size, role: ships[0].role } : undefined}
+                    biome={world && hereId ? trailOf(world, hereId).find((a) => a.kind === "planet")?.type : undefined}
                     state={downtime}
                     check={checkFor}
                     ask={askCheck}
@@ -5586,9 +5587,11 @@ interface DowntimeProps {
   hasShip: boolean;
   // Opens the pit arena (a page of the game board)
   openPit: () => void;
-  // The model of the party's first vehicle and the size and role of its first ship, for the flying games
+  // The model of the party's first vehicle and the size and role of its first ship, for the flying games,
+  // and the kind of world the settlement is on (the speeder race's ground and what grows on it)
   vehicleModel?: string;
   shipSpec?: { size: string; role: string };
+  biome?: string;
   state: DowntimeState;
   // A check of the character: the roll and what is added to it
   check: (c: { ability: string; using: string }) => { roll: number; bonus: number; total: number; note: string };
@@ -5625,7 +5628,7 @@ const ARENA = [{ id: "pit-arena", name: "Pit arena", intro: "Fight creatures of 
 // vehicles or ships.
 const FLYING: { id: string; name: string; kind: "run" | "race" | "dogfight"; mode: FlightMode; needs: "vehicle" | "ship"; intro: string }[] = [
   { id: "taxi-run", name: "Taxi run", kind: "run", mode: "speeder", needs: "vehicle", intro: "Fly your landspeeder through the rings of a course over the settlement's ground, for a fare." },
-  { id: "speeder-race", name: "Speeder race", kind: "race", mode: "speeder", needs: "vehicle", intro: "Race your landspeeder over two laps of the course against four rivals, paid by the place you finish." },
+  { id: "speeder-race", name: "Speeder race", kind: "race", mode: "speeder", needs: "vehicle", intro: "Race your speeder over three laps of a long course against four rivals: gates to pass in order, jumps, shortcuts down a trail with a ravine to clear, mines and oil. Boost draws on a meter that refills; the hull bar is what you can still take. Paid by the place you finish." },
   { id: "delivery-run", name: "Delivery run", kind: "run", mode: "ship", needs: "ship", intro: "Fly your ship through the rings of a course in the space of its planet, against the clock." },
   { id: "dogfight", name: "Dogfight", kind: "dogfight", mode: "ship", needs: "ship", intro: "Fly your ship in the space of its planet against four foes who fly at you and fire back. Boost to keep up, fire to hit." },
 ];
@@ -5779,7 +5782,7 @@ function FlightActivity(props: DowntimeProps & { flying: (typeof FLYING)[number]
       <Button size="sm" variant="outline" onClick={() => {
         const seed = Math.floor(Math.random() * 1e9) + 1;
         const vehicle = props.vehicleModel ?? "Landspeeder";
-        if (flying.kind === "race") setGame({ kind: "race", title: flying.name, seed, vehicle });
+        if (flying.kind === "race") setGame({ kind: "race", title: flying.name, seed, vehicle, biome: props.biome });
         else if (flying.kind === "dogfight") setGame({ kind: "dogfight", title: flying.name, seed, ship: props.shipSpec });
         else setGame({ kind: "run", title: flying.name, seed, mode: flying.mode, vehicle, ship: props.shipSpec });
       }} data-testid={`flight-start-${flying.id}`}>

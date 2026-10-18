@@ -8828,161 +8828,1232 @@ export function pilotMinutes(minutes: number, collected: number, total: number):
   return Math.max(1, Math.round(minutes * (1.2 - 0.4 * share)));
 }
 
-// ---- Racing (house rule). Racers start on a grid behind the start line, all facing the first ring. The
-// party and the rivals fly the same model and course; they bump each other, and hazards on the course
-// (pylons, slicks, mines) hurt a racer. A racer at 0 hull is out of the race.
+// ---- Racing (house rules; overhauled 2026-10-18 at the user's request). A race is three laps of a
+// closed course: a track 16 m wide over rolling ground in a valley of hills, gates passed in order
+// (the first is the start and finish line), ramps that throw a speeder into the air, and shortcuts
+// between two gates down a narrow trail with a ravine to jump. The speeders are rigid bodies the size
+// of their models (boxes measured from `buildSpeeder` in models.tsx at the race's scale) with a
+// velocity apart from their heading, so that they slide in a fast turn; they hover on a spring over
+// the ground and fly off a ramp's lip. Contacts are resolved by impulse (restitution, friction, and a
+// turn by where a body was struck); a hit costs hull by how hard it was met head on, so a graze costs
+// nothing. What stands by the track (trees, boulders, barriers, the garden by the start) collides with
+// the shape of its model (`PropHit`, given with the pieces in siteAssets.tsx); shrubs and low boughs
+// drag, crates and pylons break. Boost draws on a meter that drains while it is held and refills
+// slowly after; nothing but an empty meter stops it. The race steps at 1/60 s however slowly the
+// frames come, so nothing passes through anything.
 export const RACE_PRIZES = [1000, 500, 250, 100];
-export const RACER = { radius: 2.5, hull: 12, bump: 1, bumpSpeed: 20 };
-export const HAZARD_STATS: Record<HazardKind, { radius: number; damage: number; cap: number }> = {
-  pylon: { radius: 2.5, damage: 2, cap: 1 },
-  slick: { radius: 10, damage: 0, cap: 0.35 },
-  mine: { radius: 3, damage: 3, cap: 1 },
+export const RACE = {
+  laps: 3, width: 16, step: 4, gates: 8, radius: 300, tick: 1 / 60,
+  // Speeds in m/s: plain driving, boost (the old top speed of 40 and 15% more), and the accelerations
+  drive: 38, boost: 46, accel: 16, boostAccel: 34, brake: 30, reverse: 8, coast: 10,
+  // The boost meter, as a share of full: drained a second while held, refilled a second once `wait` has passed, faster in the air
+  drain: 0.22, fill: 0.07, wait: 0.8, airFill: 0.15,
+  // Grip (how fast sliding sideways is stopped, m/s²) on the track, off it and on oil; off the track's share of speed; steering (rad/s)
+  grip: 30, roughGrip: 18, slickGrip: 6, rough: 0.68, steer: 1.9,
+  // Hover height, gravity, the hover's spring and damping, and the step a speeder rides up without striking it
+  hover: 0.7, gravity: 20, spring: 140, damp: 24, stepUp: 0.6,
+  // Contacts: restitution, friction, and the head-on speed from which a hit costs hull (one, and one more each `hitPer` over it)
+  restitution: 0.25, friction: 0.35, hitSpeed: 7, hitPer: 8, landHard: 11,
+  // The finish window after the winner; a racer stuck or far off the course is towed back and passes through others for a while
+  grace: 30, stuck: 3.5, off: 45, offTime: 2, ghost: 1.5,
 };
-export type HazardKind = "pylon" | "slick" | "mine";
-export interface Hazard { id: number; kind: HazardKind; p: Vec3; spent: boolean }
-// `touching` keys what the racer is in contact with (h<hazard id>, r<racer id>): damage is taken when a contact starts
-export interface Racer { id: number; name: string; party: boolean; model: string; pace: number; craft: Craft; next: number; hull: number; finish: number | null; wrecked: boolean; touching: string[] }
-export interface Race { t: number; limit: number; racers: Racer[]; hazards: Hazard[]; over: boolean; log: string[] }
-const RIVALS = [["Rhys", 0.9], ["Tavi", 0.93], ["the Hutt's runner", 0.86], ["Kessa", 0.97], ["Doro", 0.88], ["Vex", 0.95], ["Brann", 0.9]] as const;
 
-// The grid: two abreast, rows back from the start, all facing the first ring
-export function raceStart(course: FlightCourse, seed: number, model: string, rivalModels: string[]): Race {
-  const start = flightStart(course);
-  const first = course.rings[0];
-  const yaw = Math.atan2(first[2] - start.p[2], first[0] - start.p[0]);
-  const [hx, hz] = [Math.cos(yaw), Math.sin(yaw)];
-  const [px, pz] = [-hz, hx];
-  const r = createRandom(seed + 5);
-  const count = 1 + rivalModels.length;
-  const racers: Racer[] = Array.from({ length: count }, (_, i) => {
-    const col = i % 2 === 0 ? -1 : 1;
-    const row = Math.floor(i / 2);
-    const back = 6 + row * 9;
-    const side = col * 3.5;
-    const at: Vec3 = [start.p[0] - hx * back + px * side, FLIGHT.speeder.hover, start.p[2] - hz * back + pz * side];
-    const rival = i === 0 ? null : RIVALS[(i - 1) % RIVALS.length];
-    return {
-      id: i, name: rival ? rival[0] : "You", party: i === 0, model: i === 0 ? model : rivalModels[i - 1],
-      pace: rival ? rival[1] : 1, craft: { p: at, yaw, pitch: 0, speed: 0 }, next: 0, hull: RACER.hull, finish: null, wrecked: false, touching: [],
-    };
-  });
-  // Hazards on the legs of the course (never on the start leg)
-  const hazards: Hazard[] = [];
-  const kinds: HazardKind[] = ["pylon", "slick", "mine"];
-  let from: Vec3 = start.p;
-  course.rings.forEach((ring, i) => {
-    if (i > 0 && r.next() < 0.45) {
-      const mid = [(from[0] + ring[0]) / 2, FLIGHT.speeder.hover, (from[2] + ring[2]) / 2] as Vec3;
-      const side = (r.next() - 0.5) * 16;
-      hazards.push({ id: hazards.length, kind: kinds[Math.floor(r.next() * kinds.length)], p: [mid[0] - pz * side, mid[1], mid[2] + px * side], spent: false });
-    }
-    from = ring;
-  });
-  return { t: 0, limit: course.limit, racers, hazards, over: false, log: [] };
+export type SpeederKind = "bike" | "land" | "air";
+export const speederKind = (model: string): SpeederKind => (/bike|swoop/i.test(model) ? "bike" : /air|snow|cloud/i.test(model) ? "air" : "land");
+// The models are drawn 1.3 times their map size in a race (a landspeeder 3.4 m long, as the X-34). The
+// boxes are their measured bounds at that size: half length and half width, how far the box's middle
+// lies ahead of the model's origin, and its height; mass (tonnes), hull, and top speed and steering as
+// shares of the plain figures
+export const RACE_MODEL_SCALE = 1.3;
+export const SPEEDER_BODY: Record<SpeederKind, { half: [number, number]; ahead: number; height: number; mass: number; hull: number; top: number; turn: number }> = {
+  bike: { half: [1.79, 0.26], ahead: 0.51, height: 0.75, mass: 0.4, hull: 9, top: 1.04, turn: 1.12 },
+  land: { half: [1.72, 0.91], ahead: -0.29, height: 0.8, mass: 1.1, hull: 14, top: 1, turn: 1 },
+  air: { half: [1.96, 1.52], ahead: 0, height: 0.9, mass: 1, hull: 12, top: 1, turn: 0.95 },
+};
+const inertiaOf = (kind: SpeederKind) => (SPEEDER_BODY[kind].mass * (SPEEDER_BODY[kind].half[0] ** 2 + SPEEDER_BODY[kind].half[1] ** 2)) / 3;
+const angleWrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+const within = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+const easeStep = (a: number, b: number, v: number) => {
+  const t = within((v - a) / (b - a), 0, 1);
+  return t * t * (3 - 2 * t);
+};
+
+// Mines go off under a racer (hurting it, and those near less) and throw it; an oil slick takes the grip away
+export type HazardKind = "slick" | "mine";
+export interface Hazard { id: number; kind: HazardKind; p: Vec3; r: number; spent: boolean }
+export const HAZARD_STATS = { mine: { r: 0.8, trigger: 2.2, blast: 8, damage: 3, near: 1, lift: 8, push: 11 }, slick: { r: 9 } };
+
+// The shape a piece is struck by, at its drawn size of 1 (siteAssets.tsx gives these with the pieces): a
+// circle or a box of half sizes (along the piece's x, along its z), from `base` to `h` high; a wider
+// circle that only drags (shrubs, low boughs); whether a speeder breaks it (crates, pylons), and its mass
+export interface PropHit { r?: number; box?: [number, number]; h: number; base?: number; soft?: number; breaks?: boolean; mass?: number }
+export interface RaceProp { id: number; key: string; p: Vec3; yaw: number; scale: number; v: number; hit?: PropHit }
+// What a course is dressed with: the library's pieces for the world's trees, shrubs and boulders, and the shapes of every piece
+export interface RaceScenery { trees: string[]; shrubs: string[]; boulders: string[]; hits: Record<string, PropHit> }
+export interface RaceGate { p: Vec3; yaw: number; half: number; s: number }
+export interface RaceRamp { p: Vec3; yaw: number; len: number; wid: number; h: number }
+// A ravine across a trail: `yaw` along the trail
+export interface RaceDip { p: Vec3; yaw: number; len: number; wid: number; depth: number }
+// A shortcut: its line every few metres, its width, the track distances where it leaves and joins, its ramp and ravine
+export interface RaceTrail { points: Vec3[]; width: number; from: number; to: number; ramp: number; dip: number }
+// Something on the track a rival steers round: the track point it is at, how far right of the centre, its half width
+interface RaceMark { at: number; lat: number; half: number; prop?: number; hazard?: number }
+export interface RaceTrack {
+  seed: number; laps: number; width: number; step: number;
+  // The centre line round the loop every `step` metres, the heading and the bend (radians a metre) at each point
+  points: Vec3[]; yaws: number[]; bends: number[]; length: number;
+  gates: RaceGate[]; ramps: RaceRamp[]; dips: RaceDip[]; trails: RaceTrail[]; props: RaceProp[]; hazards: Hazard[]; marks: RaceMark[];
+  hills: number[];
+  // Distance to the nearest centre line (track or trail) on a grid of `cell` metres, for the lie of the ground
+  field: { x0: number; z0: number; cell: number; n: number; d: Float32Array };
+  extent: number; limit: number;
 }
 
-// The input a rival steers by: toward the next ring, flat out on the straights, off the throttle in a sharp turn
-function rivalInput(racer: Racer, course: FlightCourse): FlightInput {
-  const ring = course.rings[racer.next];
-  const { p, yaw } = racer.craft;
-  // Each rival keeps its own lane across the ring, so the field does not pile up on one line
-  const [dx, dz] = [ring[0] - p[0], ring[2] - p[2]];
-  const len = Math.hypot(dx, dz) || 1;
-  const lane = (racer.id - 2.5) * 4;
-  const target: Vec3 = [ring[0] - (dz / len) * lane, ring[1], ring[2] + (dx / len) * lane];
-  let diff = Math.atan2(target[2] - p[2], target[0] - p[0]) - yaw;
-  diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-  return { steer: { x: Math.max(-1, Math.min(1, diff * 2.5)), y: 0 }, throttle: Math.abs(diff) < 0.9 ? 1 : 0 };
-}
+// ---- The course
 
-// One tick of a race. The party's racer is steered by `input`; rivals by their own line. Pace caps a
-// rival's speed; a hazard slows, hurts or pushes a racer; racers that touch bump and lose speed and hull.
-export function stepRace(race: Race, course: FlightCourse, input: FlightInput, dt: number): Race {
-  if (race.over) return race;
-  const cfg = FLIGHT.speeder;
-  const t = race.t + dt;
-  let racers: Racer[] = race.racers.map((racer) => {
-    if (racer.wrecked || racer.finish !== null) return racer;
-    const drive = racer.party ? input : rivalInput(racer, course);
-    let craft = stepFlight(racer.craft, drive, dt, "speeder");
-    const cap = racer.party ? cfg.top : cfg.top * racer.pace;
-    if (craft.speed > cap) craft = { ...craft, speed: cap };
-    return { ...racer, craft };
+// A closed loop through control points round a centre: one or two pushed out into lobes (a long way
+// round that a shortcut can cut across the neck of), others pinched in to make hairpins; through a
+// centripetal Catmull-Rom spline (no loops or cusps), sampled every few metres
+function raceLoop(r: ReturnType<typeof createRandom>): [number, number][] {
+  const n = 10 + Math.floor(r.next() * 3);
+  const lobe = Math.floor(r.next() * n);
+  const lobes = new Set(r.next() < 0.6 ? [lobe, (lobe + Math.floor(n / 2)) % n] : [lobe]);
+  const nextTo = (i: number) => [...lobes].some((l) => Math.abs(((i - l + n + n / 2) % n) - n / 2) === 1);
+  const free = Array.from({ length: n }, (_, i) => i).filter((i) => !lobes.has(i) && !nextTo(i));
+  const pinched = new Set([r.pick(free), r.pick(free)]);
+  const ctrl: [number, number][] = Array.from({ length: n }, (_, i) => {
+    const a = (i / n) * Math.PI * 2 + (r.next() - 0.5) * 0.3;
+    const shape = lobes.has(i) ? 1.55 : nextTo(i) ? 0.8 : pinched.has(i) ? 0.6 : 0.72 + r.next() * 0.28;
+    const rad = RACE.radius * shape;
+    return [Math.cos(a) * rad, Math.sin(a) * rad];
   });
-  // Hazards: a slick caps the speed; a pylon or a mine hurts and pushes the racer off it, when it first touches it
-  const hazards = race.hazards.map((h) => ({ ...h }));
-  const newLog: string[] = [];
-  racers = racers.map((racer) => {
-    if (racer.wrecked || racer.finish !== null) return racer;
-    let { craft, hull } = racer;
-    const touching: string[] = [];
-    for (const h of hazards) {
-      const st = HAZARD_STATS[h.kind];
-      const d = Math.hypot(craft.p[0] - h.p[0], craft.p[2] - h.p[2]);
-      if (d >= st.radius + RACER.radius) continue;
-      const key = `h${h.id}`;
-      touching.push(key);
-      if (h.kind === "slick") {
-        if (craft.speed > cfg.top * st.cap) craft = { ...craft, speed: cfg.top * st.cap };
-        continue;
-      }
-      if (racer.touching.includes(key) || (h.kind === "mine" && h.spent)) continue;
-      h.spent = h.kind === "mine" ? true : h.spent;
-      hull -= st.damage;
-      const k = (st.radius + RACER.radius) / Math.max(d, 0.01);
-      craft = { ...craft, p: [h.p[0] + (craft.p[0] - h.p[0]) * k, craft.p[1], h.p[2] + (craft.p[2] - h.p[2]) * k], speed: craft.speed * 0.4 };
-      newLog.push(`${racer.name} hits a ${h.kind}`);
-    }
-    return { ...racer, craft, hull, touching };
-  });
-  // Racers touching each other bump: they push apart, lose speed and take hull by the speed of the bump
-  for (let a = 0; a < racers.length; a++) {
-    for (let b = a + 1; b < racers.length; b++) {
-      const A = racers[a];
-      const B = racers[b];
-      if (A.wrecked || B.wrecked || A.finish !== null || B.finish !== null) continue;
-      const dx = B.craft.p[0] - A.craft.p[0];
-      const dz = B.craft.p[2] - A.craft.p[2];
-      const d = Math.hypot(dx, dz);
-      const key = `r${B.id}`;
-      // A contact counts again only once the pair has clearly parted (a few metres of hysteresis)
-      if (d >= RACER.radius * 2 + 3) {
-        racers[a] = { ...A, touching: A.touching.filter((k) => k !== key) };
-        continue;
-      }
-      if (d >= RACER.radius * 2 && !A.touching.includes(key)) continue;
-      const nx = d ? dx / d : 1;
-      const nz = d ? dz / d : 0;
-      const push = Math.max(0, RACER.radius * 2 - d) / 2 + 0.2;
-      const fresh = !A.touching.includes(key);
-      const impact = (A.craft.speed + B.craft.speed) / 2;
-      // A scrape at low speed costs nothing; a hit at speed costs hull by how fast it was
-      const damage = fresh && impact >= RACER.bumpSpeed ? RACER.bump + Math.floor(impact / RACER.bumpSpeed) : 0;
-      racers[a] = { ...A, hull: A.hull - damage, touching: fresh ? [...A.touching, key] : A.touching, craft: { ...A.craft, p: [A.craft.p[0] - nx * push, A.craft.p[1], A.craft.p[2] - nz * push], speed: A.craft.speed * 0.6 } };
-      racers[b] = { ...B, hull: B.hull - damage, craft: { ...B.craft, p: [B.craft.p[0] + nx * push, B.craft.p[1], B.craft.p[2] + nz * push], speed: B.craft.speed * 0.6 } };
-      if (fresh) newLog.push(damage ? `${A.name} and ${B.name} crash (${damage} hull each)` : `${A.name} and ${B.name} scrape`);
+  const dense: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    const [p0, p1, p2, p3] = [ctrl[(i - 1 + n) % n], ctrl[i], ctrl[(i + 1) % n], ctrl[(i + 2) % n]];
+    const knot = (a: [number, number], b: [number, number]) => Math.sqrt(Math.hypot(b[0] - a[0], b[1] - a[1])) || 1e-3;
+    const k1 = knot(p0, p1);
+    const k2 = k1 + knot(p1, p2);
+    const k3 = k2 + knot(p2, p3);
+    for (let s = 0; s < 40; s++) {
+      const t = k1 + ((k2 - k1) * s) / 40;
+      const lerp = (a: [number, number], b: [number, number], ta: number, tb: number): [number, number] => {
+        const w = (t - ta) / (tb - ta || 1e-6);
+        return [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w];
+      };
+      const a1 = lerp(p0, p1, 0, k1);
+      const a2 = lerp(p1, p2, k1, k2);
+      const a3 = lerp(p2, p3, k2, k3);
+      const b1 = lerp(a1, a2, 0, k2);
+      const b2 = lerp(a2, a3, k1, k3);
+      dense.push(lerp(b1, b2, k1, k2));
     }
   }
-  // Rings in order; the last one is the finish; a racer at 0 hull is out
-  racers = racers.map((racer) => {
-    if (racer.wrecked || racer.finish !== null) return racer;
-    let next = racer.next;
-    while (next < course.rings.length && inRing(racer.craft.p, course.rings[next], course.radius)) next++;
-    const finish = next >= course.rings.length ? t : null;
-    const wrecked = racer.hull <= 0;
-    if (wrecked) newLog.push(`${racer.name} is out`);
-    return { ...racer, next, finish, wrecked, hull: Math.max(0, racer.hull) };
-  });
-  const over = t >= race.limit || racers.every((racer) => racer.wrecked || racer.finish !== null);
-  return { t, limit: race.limit, racers, hazards, over, log: [...race.log, ...newLog].slice(-60) };
+  return dense;
+}
+// Resampled at an even step round the closed loop
+function evenLoop(dense: [number, number][], step: number): { points: [number, number][]; length: number; step: number } {
+  const lens = [0];
+  for (let i = 1; i <= dense.length; i++) lens.push(lens[i - 1] + Math.hypot(dense[i % dense.length][0] - dense[i - 1][0], dense[i % dense.length][1] - dense[i - 1][1]));
+  const length = lens[lens.length - 1];
+  const n = Math.round(length / step);
+  const even = length / n;
+  const points: [number, number][] = [];
+  let j = 0;
+  for (let i = 0; i < n; i++) {
+    const s = i * even;
+    while (lens[j + 1] < s) j++;
+    const w = (s - lens[j]) / (lens[j + 1] - lens[j] || 1);
+    const [a, b] = [dense[j], dense[(j + 1) % dense.length]];
+    points.push([a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w]);
+  }
+  return { points, length, step: even };
+}
+// A loop fits when it never comes back near itself (the track's width twice over, and some) and bends no tighter than 22 m
+function loopFits(points: [number, number][], step: number, width: number): boolean {
+  const n = points.length;
+  const apart = Math.ceil(90 / step);
+  for (let i = 0; i < n; i += 2) {
+    for (let j = i + apart; j < n; j += 2) {
+      if (n - (j - i) < apart) continue;
+      if (Math.hypot(points[i][0] - points[j][0], points[i][1] - points[j][1]) < width * 2.4) return false;
+    }
+  }
+  const yaws = loopYaws(points);
+  for (let i = 0; i < n; i++) if (Math.abs(angleWrap(yaws[(i + 3) % n] - yaws[(i - 3 + n) % n])) / (6 * step) > 1 / 22) return false;
+  return true;
+}
+const loopYaws = (points: [number, number][]) => points.map((_, i) => {
+  const [a, b] = [points[(i - 1 + points.length) % points.length], points[(i + 1) % points.length]];
+  return Math.atan2(b[1] - a[1], b[0] - a[0]);
+});
+
+// The rolling ground: three long swells, never steeper than about 1 in 10
+function hillsAt(hills: number[], x: number, z: number): number {
+  return 3.2 * Math.sin(x * 0.0105 + hills[0]) * Math.sin(z * 0.0123 + hills[1]) + 1.6 * Math.sin((0.6 * x + 0.8 * z) * 0.019 + hills[2]) + 0.8 * Math.sin((0.9 * x - 0.43 * z) * 0.033 + hills[3]);
+}
+function fieldAt(track: RaceTrack, x: number, z: number): number {
+  const f = track.field;
+  const fx = (x - f.x0) / f.cell;
+  const fz = (z - f.z0) / f.cell;
+  const ix = Math.floor(fx);
+  const iz = Math.floor(fz);
+  if (ix < 0 || iz < 0 || ix >= f.n - 1 || iz >= f.n - 1) return 999;
+  const [wx, wz] = [fx - ix, fz - iz];
+  const at = (i: number, j: number) => f.d[j * f.n + i];
+  return (at(ix, iz) * (1 - wx) + at(ix + 1, iz) * wx) * (1 - wz) + (at(ix, iz + 1) * (1 - wx) + at(ix + 1, iz + 1) * wx) * wz;
+}
+// How far a point is from the nearest centre line, track or trail (from the grid; for scenery and the look of the ground)
+export const raceDistance = (track: RaceTrack, x: number, z: number) => fieldAt(track, x, z);
+
+// The height of the ground: the swells, hills rising away from the course on either side, the ravines of
+// the trails, and (unless left out, for drawing the ground under them) the ramps
+export function groundAt(track: RaceTrack, x: number, z: number, ramps = true): number {
+  let y = hillsAt(track.hills, x, z);
+  const d = fieldAt(track, x, z);
+  y += easeStep(track.width / 2 + 8, track.width / 2 + 98, d) * (8 + 5 * Math.sin(x * 0.009 + track.hills[4]) * Math.cos(z * 0.008 + track.hills[5]));
+  for (const dip of track.dips) {
+    const [dx, dz] = [x - dip.p[0], z - dip.p[2]];
+    const u = Math.abs(dx * Math.cos(dip.yaw) + dz * Math.sin(dip.yaw)) / (dip.len / 2);
+    const v = Math.abs(-dx * Math.sin(dip.yaw) + dz * Math.cos(dip.yaw)) / (dip.wid / 2);
+    if (u < 1 && v < 1) y -= dip.depth * easeStep(1, 0.45, u) * easeStep(1, 0.7, v);
+  }
+  if (ramps) {
+    for (const ramp of track.ramps) {
+      const [dx, dz] = [x - ramp.p[0], z - ramp.p[2]];
+      const u = dx * Math.cos(ramp.yaw) + dz * Math.sin(ramp.yaw);
+      const v = -dx * Math.sin(ramp.yaw) + dz * Math.cos(ramp.yaw);
+      if (Math.abs(u) <= ramp.len / 2 && Math.abs(v) <= ramp.wid / 2) y += (ramp.h * (u + ramp.len / 2)) / ramp.len;
+    }
+  }
+  return y;
+}
+// Which way the ground rises, and how steeply (rise a metre, along x and z)
+function slopeAt(track: RaceTrack, x: number, z: number): [number, number] {
+  const e = 0.75;
+  return [(groundAt(track, x + e, z) - groundAt(track, x - e, z)) / (2 * e), (groundAt(track, x, z + e) - groundAt(track, x, z - e)) / (2 * e)];
 }
 
-// Where each racer placed: finished ones by their time, the rest by the rings they took
+// Lookups by cell: the segments of the centre lines, and the props, so a racer only tests what is near it
+interface TrackIndex { segs: Map<number, number[]>; seg: [number, number, number, number, number][]; props: Map<number, number[]> }
+const INDEXES = new WeakMap<RaceTrack, TrackIndex>();
+const SEG_CELL = 24;
+const PROP_CELL = 12;
+const cellKey = (cx: number, cz: number) => (cx + 2048) * 4096 + (cz + 2048);
+function trackIndexOf(track: RaceTrack): TrackIndex {
+  let index = INDEXES.get(track);
+  if (index) return index;
+  index = { segs: new Map(), seg: [], props: new Map() };
+  const lines: [Vec3[], number, boolean][] = [[track.points, -1, true], ...track.trails.map((t, i) => [t.points, i, false] as [Vec3[], number, boolean])];
+  for (const [pts, owner, closed] of lines) {
+    const count = closed ? pts.length : pts.length - 1;
+    for (let i = 0; i < count; i++) {
+      const [a, b] = [pts[i], pts[(i + 1) % pts.length]];
+      const id = index.seg.length;
+      index.seg.push([a[0], a[2], b[0], b[2], owner]);
+      const [x0, x1] = [Math.floor(Math.min(a[0], b[0]) / SEG_CELL), Math.floor(Math.max(a[0], b[0]) / SEG_CELL)];
+      const [z0, z1] = [Math.floor(Math.min(a[2], b[2]) / SEG_CELL), Math.floor(Math.max(a[2], b[2]) / SEG_CELL)];
+      for (let cx = x0; cx <= x1; cx++) for (let cz = z0; cz <= z1; cz++) {
+        const key = cellKey(cx, cz);
+        const list = index.segs.get(key);
+        if (list) list.push(id);
+        else index.segs.set(key, [id]);
+      }
+    }
+  }
+  track.props.forEach((prop, id) => {
+    if (!prop.hit) return;
+    const reach = Math.max(prop.hit.r ?? 0, prop.hit.box ? Math.hypot(prop.hit.box[0], prop.hit.box[1]) : 0, prop.hit.soft ?? 0);
+    for (let cx = Math.floor((prop.p[0] - reach) / PROP_CELL); cx <= Math.floor((prop.p[0] + reach) / PROP_CELL); cx++) {
+      for (let cz = Math.floor((prop.p[2] - reach) / PROP_CELL); cz <= Math.floor((prop.p[2] + reach) / PROP_CELL); cz++) {
+        const key = cellKey(cx, cz);
+        const list = index.props.get(key);
+        if (list) list.push(id);
+        else index.props.set(key, [id]);
+      }
+    }
+  });
+  INDEXES.set(track, index);
+  return index;
+}
+const segDistance = (x: number, z: number, s: [number, number, number, number, number]) => {
+  const [ax, az, bx, bz] = s;
+  const [dx, dz] = [bx - ax, bz - az];
+  const t = within(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1), 0, 1);
+  return Math.hypot(x - (ax + dx * t), z - (az + dz * t));
+};
+// The nearest centre line within 48 m: how far, and whose (-1 the track, else the trail's number)
+function nearCentre(track: RaceTrack, x: number, z: number): { d: number; owner: number } {
+  const index = trackIndexOf(track);
+  const [cx, cz] = [Math.floor(x / SEG_CELL), Math.floor(z / SEG_CELL)];
+  let best = { d: 999, owner: -1 };
+  for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) {
+    for (const id of index.segs.get(cellKey(cx + i, cz + j)) ?? []) {
+      const d = segDistance(x, z, index.seg[id]);
+      if (d < best.d) best = { d, owner: index.seg[id][4] };
+    }
+  }
+  return best;
+}
+// Whether a point is on the running surface (the track or a trail)
+function onCourse(track: RaceTrack, near: { d: number; owner: number }, margin = 1): boolean {
+  return near.d <= (near.owner < 0 ? track.width / 2 : track.trails[near.owner].width / 2) + margin;
+}
+
+// The course of a race: the loop, its shortcuts, gates, ramps, hazards, what lines it and the ground it runs over
+// Where the course can be cut: pairs of track points whose chord saves about 150 m, and for the first
+// few of them a trail that branches off at half the angle between the track and the chord, joins the
+// same way and keeps well clear of the track between; never over the start, up to two and apart
+function shortcutsOf(flat: [number, number][], yaws: number[], step: number, W: number): { i: number; j: number; line: [number, number][] }[] {
+  const n = flat.length;
+  const distTo = (x: number, z: number, skip: (i: number) => boolean) => {
+    let best = Infinity;
+    for (let i = 0; i < n; i++) if (!skip(i)) best = Math.min(best, Math.hypot(flat[i][0] - x, flat[i][1] - z));
+    return best;
+  };
+  const bezier = (a: [number, number], ta: [number, number], tb: [number, number], b: [number, number], t: number): [number, number] => {
+    const u = 1 - t;
+    return [u * u * u * a[0] + 3 * u * u * t * ta[0] + 3 * u * t * t * tb[0] + t * t * t * b[0], u * u * u * a[1] + 3 * u * u * t * ta[1] + 3 * u * t * t * tb[1] + t * t * t * b[1]];
+  };
+  const pairs: { i: number; j: number; save: number }[] = [];
+  for (let i = Math.ceil(120 / step); i < n - Math.ceil(160 / step); i += 2) {
+    for (let j = i + Math.ceil(120 / step); j <= Math.min(n - Math.ceil(100 / step), i + Math.ceil(700 / step)); j += 2) {
+      const arc = (j - i) * step;
+      const chord = Math.hypot(flat[i][0] - flat[j][0], flat[i][1] - flat[j][1]);
+      if (chord < 80 || chord > 240 || chord > arc * 0.62) continue;
+      pairs.push({ i, j, save: arc - chord * 1.15 });
+    }
+  }
+  // A shortcut worth taking but not the race: about 150 m saved, before its ravine
+  pairs.sort((a, b) => Math.abs(a.save - 150) - Math.abs(b.save - 150));
+  const trailLine = (i: number, j: number): [number, number][] | null => {
+    const a = flat[i];
+    const b = flat[j];
+    const chord = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    const pull = chord * 0.3;
+    const across = Math.atan2(b[1] - a[1], b[0] - a[0]);
+    const [ya, yb] = [yaws[i] + angleWrap(across - yaws[i]) / 2, yaws[j] + angleWrap(across - yaws[j]) / 2];
+    const ta: [number, number] = [a[0] + Math.cos(ya) * pull, a[1] + Math.sin(ya) * pull];
+    const tb: [number, number] = [b[0] - Math.cos(yb) * pull, b[1] - Math.sin(yb) * pull];
+    const count = Math.ceil(chord / step) + 2;
+    const line = Array.from({ length: count + 1 }, (_, k) => bezier(a, ta, tb, b, k / count));
+    for (let k = 2; k < count - 1; k += 2) {
+      const [x, z] = line[k];
+      const middle = k > count * 0.25 && k < count * 0.75;
+      const clear = distTo(x, z, (q) => (q > i - 12 && q < i + 12) || (q > j - 12 && q < j + 12));
+      if (clear < (middle ? W / 2 + 24 : W / 2 + 3)) return null;
+    }
+    return line;
+  };
+  const cuts: { i: number; j: number; line: [number, number][] }[] = [];
+  let tested = 0;
+  for (const c of pairs) {
+    if (cuts.length >= 2 || tested > 160) break;
+    if (cuts.some((t) => !(c.j + 80 / step < t.i || c.i - 80 / step > t.j))) continue;
+    tested++;
+    const line = trailLine(c.i, c.j);
+    if (line) cuts.push({ i: c.i, j: c.j, line });
+  }
+  return cuts;
+}
+// The loop turned to start on its straightest stretch (40 m behind the line for the grid, 100 m ahead)
+function fromStart(points: [number, number][], step: number): [number, number][] {
+  const n = points.length;
+  const yaws = loopYaws(points);
+  let start = 0;
+  let straightest = Infinity;
+  const back = Math.ceil(40 / step);
+  const ahead = Math.ceil(100 / step);
+  for (let i = 0; i < n; i++) {
+    let turn = 0;
+    for (let k = -back; k < ahead; k++) turn += Math.abs(angleWrap(yaws[(i + k + 1 + n) % n] - yaws[(i + k + n) % n]));
+    if (turn < straightest) [straightest, start] = [turn, i];
+  }
+  return Array.from({ length: n }, (_, i) => points[(i + start) % n]);
+}
+
+// The course of a race: the loop, its shortcuts, gates, ramps, hazards, what lines it and the ground it runs over
+export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps): RaceTrack {
+  const r = createRandom(seed * 7 + 3);
+  const W = RACE.width;
+  // A loop that fits, with a shortcut if one of a few tries gives one
+  let pick: { length: number; step: number; flat: [number, number][]; cuts: ReturnType<typeof shortcutsOf> } | null = null;
+  for (let tries = 0; tries < 30 && !(pick && pick.cuts.length); tries++) {
+    const loop = evenLoop(raceLoop(r), RACE.step);
+    if (!loopFits(loop.points, loop.step, W) && (pick || tries < 29)) continue;
+    const flat = fromStart(loop.points, loop.step);
+    const cuts = shortcutsOf(flat, loopYaws(flat), loop.step, W);
+    if (!pick || cuts.length > pick.cuts.length) pick = { length: loop.length, step: loop.step, flat, cuts };
+  }
+  const { flat, cuts, step } = pick!;
+  const loop = { length: pick!.length };
+  const n = flat.length;
+  const yaws = loopYaws(flat);
+  const bends = yaws.map((_, i) => Math.abs(angleWrap(yaws[(i + 3) % n] - yaws[(i - 3 + n) % n])) / (6 * step));
+  const hills = Array.from({ length: 6 }, () => r.next() * Math.PI * 2);
+  const points: Vec3[] = flat.map(([x, z]) => [x, 0, z]);
+  const right = (i: number): [number, number] => [-Math.sin(yaws[(i + n) % n]), Math.cos(yaws[(i + n) % n])];
+  const pointAt = (i: number, lat = 0): [number, number] => {
+    const [px, pz] = flat[((i % n) + n) % n];
+    const [rx, rz] = right(i);
+    return [px + rx * lat, pz + rz * lat];
+  };
+  const track: RaceTrack = {
+    seed, laps, width: W, step, points, yaws, bends, length: loop.length, gates: [], ramps: [], dips: [], trails: [], props: [], hazards: [], marks: [], hills,
+    field: { x0: 0, z0: 0, cell: 6, n: 0, d: new Float32Array(0) }, extent: 0, limit: 0,
+  };
+  // The shortcuts' trails, every few metres along, each with a ramp at its middle and a ravine past the
+  // ramp's lip: jumped at speed, or dropped into and climbed out of
+  for (const c of cuts) {
+    const width = 9;
+    const lens = [0];
+    for (let k = 1; k < c.line.length; k++) lens.push(lens[k - 1] + Math.hypot(c.line[k][0] - c.line[k - 1][0], c.line[k][1] - c.line[k - 1][1]));
+    const total = lens[lens.length - 1];
+    const along = (s: number): [number, number, number] => {
+      let k = 1;
+      while (k < lens.length - 1 && lens[k] < s) k++;
+      const w = (s - lens[k - 1]) / (lens[k] - lens[k - 1] || 1);
+      const [a, b] = [c.line[k - 1], c.line[k]];
+      return [a[0] + (b[0] - a[0]) * w, a[1] + (b[1] - a[1]) * w, Math.atan2(b[1] - a[1], b[0] - a[0])];
+    };
+    const count = Math.max(2, Math.round(total / step));
+    const pts: Vec3[] = Array.from({ length: count + 1 }, (_, k) => {
+      const [x, z] = along((k * total) / count);
+      return [x, 0, z];
+    });
+    const lip = total * 0.5;
+    const [rx, rz, ryaw] = along(lip - 6);
+    track.ramps.push({ p: [rx, 0, rz], yaw: ryaw, len: 12, wid: width + 1, h: 2.4 });
+    const [dx, dz, dyaw] = along(lip + 13);
+    track.dips.push({ p: [dx, 0, dz], yaw: dyaw, len: 24, wid: 30, depth: 5 });
+    track.trails.push({ points: pts, width, from: c.i * step, to: c.j * step, ramp: track.ramps.length - 1, dip: track.dips.length - 1 });
+  }
+  const inTrail = (s: number, margin: number) => track.trails.some((t) => s > t.from - margin && s < t.to + margin);
+
+  // The distance grid, now that the centre lines are known (each segment stamps the cells near it)
+  const extent = Math.max(...flat.map(([x, z]) => Math.max(Math.abs(x), Math.abs(z)))) + 170;
+  const cell = 6;
+  const fn = Math.ceil((extent * 2) / cell) + 1;
+  const field = new Float32Array(fn * fn).fill(999);
+  track.field = { x0: -extent, z0: -extent, cell, n: fn, d: field };
+  track.extent = extent;
+  const index = trackIndexOf(track);
+  const reach = 104;
+  for (const s of index.seg) {
+    const [x0, x1] = [Math.max(0, Math.floor((Math.min(s[0], s[2]) - reach + extent) / cell)), Math.min(fn - 1, Math.ceil((Math.max(s[0], s[2]) + reach + extent) / cell))];
+    const [z0, z1] = [Math.max(0, Math.floor((Math.min(s[1], s[3]) - reach + extent) / cell)), Math.min(fn - 1, Math.ceil((Math.max(s[1], s[3]) + reach + extent) / cell))];
+    for (let j = z0; j <= z1; j++) for (let i = x0; i <= x1; i++) {
+      const d = segDistance(i * cell - extent, j * cell - extent, s);
+      if (d < field[j * fn + i]) field[j * fn + i] = d;
+    }
+  }
+  for (const p of points) p[1] = groundAt(track, p[0], p[2], false);
+  for (const t of track.trails) for (const p of t.points) p[1] = groundAt(track, p[0], p[2], false);
+
+  // Gates: evenly round the lap, the first on the start line; one that would fall where a shortcut
+  // leaves the track is moved past where it joins, so that both ways pass every gate
+  const G = RACE.gates;
+  const gateAt: number[] = [];
+  for (let k = 0; k < G; k++) {
+    let s = (k * loop.length) / G;
+    const t = track.trails.find((tr) => s > tr.from - 20 && s < tr.to + 60);
+    if (t) s = t.to + 60;
+    if (gateAt.length && s - gateAt[gateAt.length - 1] < 70) continue;
+    if (s > loop.length - 70) continue;
+    gateAt.push(s);
+  }
+  const atS = (s: number) => Math.round(s / step) % n;
+  track.gates = gateAt.map((s) => {
+    const i = atS(s);
+    return { p: points[i], yaw: yaws[i], half: W / 2 + 0.8, s };
+  });
+  const near = (s: number, list: number[], gap: number) => list.some((q) => Math.abs(q - s) < gap || Math.abs(q - s) > loop.length - gap);
+  const used: number[] = [...gateAt];
+  // Two ramps on the main track, on the straight, on one half of it (the other half drives by)
+  const straight = (i: number, from: number, to: number) => {
+    for (let k = from; k <= to; k++) if (bends[(i + k + n) % n] > 1 / 140) return false;
+    return true;
+  };
+  const rampAt: number[] = [];
+  for (let tries = 0; tries < 400 && rampAt.length < 2; tries++) {
+    const s = 220 + r.next() * (loop.length - 360);
+    const i = atS(s);
+    if (inTrail(s, 40) || near(s, used, 50) || near(s, rampAt, 300) || !straight(i, -Math.ceil(20 / step), Math.ceil(70 / step))) continue;
+    const side = r.next() < 0.5 ? -1 : 1;
+    const [x, z] = pointAt(i, (side * W) / 4);
+    track.ramps.push({ p: [x, 0, z], yaw: yaws[i], len: 12, wid: 7, h: 2.2 });
+    rampAt.push(s);
+  }
+  const reserved = [...used, ...rampAt, ...rampAt.map((s) => s + 30)];
+
+  // Props: drawn from the library by key, struck by its shape at their scale
+  const hitOf = (key: string, scale: number): PropHit | undefined => {
+    const hit = scenery.hits[key];
+    if (!hit) return undefined;
+    return { ...hit, r: hit.r !== undefined ? hit.r * scale : undefined, box: hit.box ? [hit.box[0] * scale, hit.box[1] * scale] : undefined, h: hit.h * scale, base: (hit.base ?? 0) * scale, soft: hit.soft !== undefined ? hit.soft * scale : undefined };
+  };
+  // A coarse grid of what is taken, so props keep apart
+  const taken = new Set<number>();
+  const free = (x: number, z: number, radius: number) => {
+    const c = 3;
+    for (let i = Math.floor((x - radius) / c); i <= Math.floor((x + radius) / c); i++) for (let j = Math.floor((z - radius) / c); j <= Math.floor((z + radius) / c); j++) if (taken.has(cellKey(i, j))) return false;
+    return true;
+  };
+  const take = (x: number, z: number, radius: number) => {
+    const c = 3;
+    for (let i = Math.floor((x - radius) / c); i <= Math.floor((x + radius) / c); i++) for (let j = Math.floor((z - radius) / c); j <= Math.floor((z + radius) / c); j++) taken.add(cellKey(i, j));
+  };
+  const clearOfJumps = (x: number, z: number, margin: number) => track.ramps.every((ramp) => {
+    const [dx, dz] = [x - ramp.p[0], z - ramp.p[2]];
+    const u = dx * Math.cos(ramp.yaw) + dz * Math.sin(ramp.yaw);
+    const v = -dx * Math.sin(ramp.yaw) + dz * Math.cos(ramp.yaw);
+    return !(u > -ramp.len / 2 - margin && u < ramp.len / 2 + 60 && Math.abs(v) < ramp.wid / 2 + margin);
+  });
+  const put = (key: string, x: number, z: number, yaw: number, scale: number, o: { radius?: number; v?: number; force?: boolean } = {}) => {
+    const radius = o.radius ?? 1.5;
+    if (!o.force && !free(x, z, radius)) return false;
+    take(x, z, radius);
+    track.props.push({ id: track.props.length, key, p: [x, groundAt(track, x, z, false), z], yaw, scale, v: o.v ?? Math.floor(r.next() * 6), hit: hitOf(key, scale) });
+    return true;
+  };
+  // The gates' posts
+  for (const g of track.gates) {
+    const [rx, rz] = [-Math.sin(g.yaw), Math.cos(g.yaw)];
+    for (const side of [-1, 1]) put("gate", g.p[0] + rx * side * (g.half + 0.5), g.p[2] + rz * side * (g.half + 0.5), g.yaw, 1, { radius: 1, force: true });
+  }
+  // Hazards and things on the track, kept apart, away from the start, the gates and the jumps
+  const onTrackAt: number[] = [];
+  const spot = (minGap: number, test: (i: number) => boolean = () => true) => {
+    for (let tries = 0; tries < 200; tries++) {
+      const s = 160 + r.next() * (loop.length - 230);
+      if (inTrail(s, 20) || near(s, reserved, 40) || near(s, onTrackAt, minGap) || !test(atS(s))) continue;
+      onTrackAt.push(s);
+      return atS(s);
+    }
+    return -1;
+  };
+  const mark = (at: number, lat: number, half: number, ref: { prop?: number; hazard?: number }) => track.marks.push({ at, lat, half, ...ref });
+  for (let k = 0; k < 3; k++) {
+    const i = spot(70);
+    if (i < 0) continue;
+    const lat = (r.next() - 0.5) * 10;
+    const [x, z] = pointAt(i, lat);
+    track.hazards.push({ id: track.hazards.length, kind: "mine", p: [x, groundAt(track, x, z, false), z], r: HAZARD_STATS.mine.r, spent: false });
+    mark(i, lat, HAZARD_STATS.mine.trigger, { hazard: track.hazards.length - 1 });
+  }
+  for (let k = 0; k < 2; k++) {
+    const i = spot(70, (q) => bends[q] > 1 / 90);
+    if (i < 0) continue;
+    const lat = (r.next() - 0.5) * 4;
+    const [x, z] = pointAt(i, lat);
+    track.hazards.push({ id: track.hazards.length, kind: "slick", p: [x, groundAt(track, x, z, false), z], r: HAZARD_STATS.slick.r, spent: false });
+  }
+  for (let k = 0; k < 3; k++) {
+    const i = spot(70, (q) => bends[q] < 1 / 120);
+    if (i < 0) continue;
+    const lat = (r.next() < 0.5 ? -1 : 1) * (2.5 + r.next() * 3);
+    const [x, z] = pointAt(i, lat);
+    if (put("crate_stack", x, z, yaws[i] + (r.next() - 0.5) * 0.6, 1.6, { radius: 1, force: true })) mark(i, lat, 1.4, { prop: track.props.length - 1 });
+  }
+  // A slalom of pylons, five of them from side to side
+  {
+    const i = spot(120, (q) => straight(q, 0, Math.ceil(64 / step)));
+    if (i >= 0) {
+      for (let k = 0; k < 5; k++) {
+        const q = (i + Math.round((k * 14) / step)) % n;
+        const lat = k % 2 ? 2.5 : -2.5;
+        const [x, z] = pointAt(q, lat);
+        put("pylon", x, z, yaws[q], 2, { radius: 0.6, force: true });
+        mark(q, lat, 0.6, { prop: track.props.length - 1 });
+      }
+    }
+  }
+  // Barriers on the outside of the tight bends, and nowhere near where a trail leaves or joins
+  {
+    const outside = (i: number) => (angleWrap(yaws[(i + 2) % n] - yaws[(i - 2 + n) % n]) > 0 ? -1 : 1);
+    let run = 0;
+    for (let i = 0; i < n; i++) {
+      const s = i * step;
+      if (bends[i] < 1 / 70 || track.trails.some((t) => Math.abs(s - t.from) < 45 || Math.abs(s - t.to) < 45) || near(s, gateAt, 8)) {
+        run = 0;
+        continue;
+      }
+      run += step * (1 + (W / 2 + 3) * bends[i]);
+      if (run < 3.6) continue;
+      run = 0;
+      const [x, z] = pointAt(i, outside(i) * (W / 2 + 3));
+      put("barrier", x, z, yaws[i], 1.8, { radius: 0.6, force: true });
+    }
+  }
+  // By the start: grandstands on the outside of the straight, banners and lamps along it, and on the
+  // inside a formal garden of hedges, clipped trees, statues and a fountain
+  {
+    const [sx, sz] = flat[0];
+    const outward = Math.sign(-Math.sin(yaws[0]) * sx + Math.cos(yaws[0]) * sz) || 1;
+    for (const s of [-24, 24]) {
+      const i = atS((s + loop.length) % loop.length);
+      const [x, z] = pointAt(i, outward * (W / 2 + 13));
+      put("grandstand", x, z, yaws[i] + (outward > 0 ? Math.PI : 0), 2.2, { radius: 8, force: true });
+    }
+    for (let s = -36; s <= 90; s += 15) {
+      const i = atS((s + loop.length) % loop.length);
+      for (const side of [-1, 1]) {
+        const [x, z] = pointAt(i, side * (W / 2 + 3.2));
+        put(side === outward ? "banner" : "lamp", x, z, yaws[i], side === outward ? 2.2 : 2.4, { radius: 0.8 });
+      }
+    }
+    for (let s = -40; s <= 100; s += 3.6) {
+      const i = atS((s + loop.length) % loop.length);
+      const [x, z] = pointAt(i, -outward * (W / 2 + 7));
+      if (Math.round(s / 3.6) % 7 === 3) put("topiary", x, z, 0, 2.2, { radius: 1, v: 1 });
+      else put("hedge", x, z, yaws[i], 2, { radius: 1 });
+    }
+    for (const [s, lat, key, scale] of [[30, 24, "fountain", 3], [-10, 18, "statue", 2.4], [70, 18, "statue", 2.4], [10, 30, "column", 2.4], [50, 30, "column", 2.4]] as [number, number, string, number][]) {
+      const i = atS((s + loop.length) % loop.length);
+      const [x, z] = pointAt(i, -outward * (W / 2 + lat));
+      put(key, x, z, yaws[i], scale, { radius: key === "fountain" ? 5 : 1.5 });
+    }
+  }
+  // Trees, boulders and shrubs: woods where a slow pattern says so, scattered elsewhere, kept off the
+  // running surface and the jumps' landings; trails are lined close, so that a shortcut is a narrow way
+  const woods = (x: number, z: number) => Math.sin(x * 0.013 + hills[2]) * Math.sin(z * 0.011 + hills[3]) + 0.5 * Math.sin((x + z) * 0.021 + hills[4]);
+  const scatter = (keys: string[], count: number, from: number, to: number, scaleFrom: number, scaleTo: number, spacing: number, wooded: boolean) => {
+    if (!keys.length) return;
+    let placed = 0;
+    for (let tries = 0; tries < count * 12 && placed < count; tries++) {
+      const x = (r.next() * 2 - 1) * (extent - 40);
+      const z = (r.next() * 2 - 1) * (extent - 40);
+      const d = fieldAt(track, x, z);
+      if (d < from || d > to) continue;
+      const exact = nearCentre(track, x, z);
+      if (exact.d < from - 0.5) continue;
+      if (wooded && woods(x, z) < 0.15 && r.next() < 0.75) continue;
+      if (!clearOfJumps(x, z, 4)) continue;
+      if (put(r.pick(keys), x, z, r.next() * Math.PI * 2, scaleFrom + r.next() * (scaleTo - scaleFrom), { radius: spacing })) placed++;
+    }
+  };
+  for (const t of track.trails) {
+    const dip = track.dips[t.dip];
+    for (let k = 2; k < t.points.length - 2; k += 2) {
+      const [x, , z] = t.points[k];
+      const [a, b] = [t.points[k - 1], t.points[k + 1]];
+      const yaw = Math.atan2(b[2] - a[2], b[0] - a[0]);
+      if (Math.hypot(x - dip.p[0], z - dip.p[2]) < dip.len) continue;
+      for (const side of [-1, 1]) {
+        if (r.next() < 0.35) continue;
+        const off = t.width / 2 + 1.8 + r.next() * 3;
+        const [px, pz] = [x - Math.sin(yaw) * side * off, z + Math.cos(yaw) * side * off];
+        if (nearCentre(track, px, pz).d < t.width / 2 + 1.2) continue;
+        const tree = r.next() < 0.45;
+        put(r.pick(tree ? scenery.trees : scenery.boulders.length ? scenery.boulders : scenery.trees), px, pz, r.next() * 6, tree ? 2.6 + r.next() * 0.8 : 1.4 + r.next() * 0.8, { radius: 1.6 });
+      }
+    }
+  }
+  scatter(scenery.trees, 320, W / 2 + 6, W / 2 + 170, 2.6, 3.8, 3.5, true);
+  scatter(scenery.boulders, 110, W / 2 + 3.5, W / 2 + 130, 1.4, 2.8, 2.5, false);
+  scatter(scenery.shrubs, 240, W / 2 + 2.5, W / 2 + 110, 1.8, 2.8, 1.8, false);
+  // Rivals' marks for the hazards and props on the track were set above; the time allowed is generous
+  track.limit = Math.ceil((laps * loop.length) / 22) + 60;
+  return track;
+}
+
+// ---- The racers
+
+// `boost` is held on the Boost button; `throttle` -1 brakes and backs up, otherwise the speeder drives;
+// `auto` hands the party's speeder to the rivals' driving (a test hook: localStorage sw5e.autopilot)
+export interface RaceInput extends FlightInput { boost?: boolean; auto?: boolean }
+export interface Racer {
+  id: number; name: string; party: boolean; model: string; kind: SpeederKind; pace: number; daring: number;
+  // The middle of its box at hover height, heading, nose pitch, forward speed
+  craft: Craft;
+  v: Vec3; spin: number; bank: number;
+  boost: number; boosting: boolean; rest: number; air: boolean; rough: boolean;
+  // Gates passed, in order over all laps (the start line first), and how far it is to the next
+  gates: number; toGate: number;
+  hull: number; hullMax: number; finish: number | null; wrecked: boolean;
+  // A rival's line: metres right of the centre, the track point and trail point it is at, the trail it is on (-1 none)
+  lane: number; home: number; at: number; tat: number; trail: number;
+  stuck: number; off: number; backing: number; ghost: number;
+}
+export interface RaceEvent { kind: "hit" | "smash" | "mine" | "land" | "tow" | "gate" | "wreck" | "finish"; p: Vec3; by: number; power: number }
+// `events` and `said` are what happened in the last step (for sparks and the HUD's messages); `first` is the winner's time
+export interface Race { t: number; limit: number; laps: number; gateCount: number; racers: Racer[]; hazards: Hazard[]; broken: number[]; over: boolean; log: string[]; events: RaceEvent[]; said: string[]; first: number | null }
+const RIVALS = [["Rhys", 0.95, 0.5], ["Tavi", 0.97, 0.8], ["the Hutt's runner", 0.92, 0.3], ["Kessa", 0.99, 0.9], ["Doro", 0.93, 0.4], ["Vex", 0.98, 0.7], ["Brann", 0.94, 0.6]] as const;
+
+export const raceLap = (race: Race, racer: Racer) => Math.min(race.laps, Math.max(1, Math.floor((racer.gates - 1) / race.gateCount) + 1));
+export const raceNextGate = (race: Race, racer: Racer) => racer.gates % race.gateCount;
+
+// The grid: two abreast, rows back from the start line, all facing along the track; the party in the second row
+export function raceStart(track: RaceTrack, seed: number, model: string, rivalModels: string[]): Race {
+  const r = createRandom(seed + 5);
+  const field = r.shuffle(RIVALS);
+  const count = 1 + rivalModels.length;
+  const order = [1, 2, 0, 3, 4, 5, 6, 7].filter((k) => k < count);
+  const n = track.points.length;
+  const racers: Racer[] = order.map((who, slot) => {
+    const row = Math.floor(slot / 2);
+    const lat = slot % 2 === 0 ? -3.4 : 3.4;
+    const at = (n - Math.round((7 + row * 9) / track.step)) % n;
+    const yaw = track.yaws[at];
+    const [px, pz] = [track.points[at][0] - Math.sin(yaw) * lat, track.points[at][2] + Math.cos(yaw) * lat];
+    const party = who === 0;
+    const rival = party ? null : field[(who - 1) % field.length];
+    const m = party ? model : rivalModels[who - 1];
+    const kind = speederKind(m);
+    const hull = SPEEDER_BODY[kind].hull;
+    return {
+      id: who, name: rival ? rival[0] : "You", party, model: m, kind, pace: rival ? rival[1] : 1, daring: rival ? rival[2] : 0.6,
+      craft: { p: [px, groundAt(track, px, pz) + RACE.hover, pz], yaw, pitch: 0, speed: 0 }, v: [0, 0, 0], spin: 0, bank: 0,
+      boost: 1, boosting: false, rest: 0, air: false, rough: false, gates: 0, toGate: 0, hull, hullMax: hull, finish: null, wrecked: false,
+      lane: lat, home: within(lat + (r.next() - 0.5) * 3, -4, 4), at, tat: 0, trail: -1, stuck: 0, off: 0, backing: 0, ghost: 0,
+    };
+  });
+  racers.sort((a, b) => a.id - b.id);
+  return { t: 0, limit: track.limit, laps: track.laps, gateCount: track.gates.length, racers, hazards: track.hazards.map((h) => ({ ...h, p: [...h.p] as Vec3 })), broken: [], over: false, log: [], events: [], said: [], first: null };
+}
+
+// The nearest point of a line to a position, looked for a few points either side of where it was
+function nearestPoint(points: Vec3[], x: number, z: number, from: number, span: number, closed: boolean): number {
+  let best = from;
+  let bestD = Infinity;
+  for (let k = -span; k <= span; k++) {
+    let i = from + k;
+    if (closed) i = ((i % points.length) + points.length) % points.length;
+    else if (i < 0 || i >= points.length) continue;
+    const d = (points[i][0] - x) ** 2 + (points[i][2] - z) ** 2;
+    if (d < bestD) [bestD, best] = [d, i];
+  }
+  return best;
+}
+
+// A rival's driving: along its lane of the track (or down a shortcut it chose to take), off the throttle
+// for a bend it would run wide in, boost on the straights, round what is on the track ahead of it
+// (hazards, crates, pylons, slower racers), and backing out when it is stuck
+function rivalInput(rc: Racer, track: RaceTrack, race: Race, h: number): RaceInput {
+  const n = track.points.length;
+  const [x, , z] = rc.craft.p;
+  const u = rc.craft.speed;
+  if (rc.backing > 0) {
+    rc.backing -= h;
+    return { steer: { x: rc.lane > 0 ? 1 : -1, y: 0 }, throttle: -1 };
+  }
+  if (rc.stuck > 1.2) rc.backing = 1;
+  const look = 10 + Math.abs(u) * 0.55;
+  const lap = raceLap(race, rc);
+  let tx: number;
+  let tz: number;
+  let input: RaceInput = { steer: { x: 0, y: 0 }, throttle: 0 };
+  if (rc.trail < 0 && rc.finish === null) {
+    track.trails.forEach((t, k) => {
+      const ahead = (Math.round(t.from / track.step) - rc.at + n) % n;
+      if (ahead > 2 && ahead < 10 && ((rc.id * 31 + k * 17 + lap * 7) % 10) / 10 < rc.daring) {
+        rc.trail = k;
+        rc.tat = 0;
+      }
+    });
+  }
+  if (rc.trail >= 0) {
+    const t = track.trails[rc.trail];
+    rc.tat = nearestPoint(t.points, x, z, rc.tat, 6, false);
+    if (rc.tat >= t.points.length - 3) {
+      rc.trail = -1;
+      rc.at = Math.round(t.to / track.step) % n;
+    }
+  }
+  if (rc.trail >= 0) {
+    const t = track.trails[rc.trail];
+    const ti = Math.min(t.points.length - 1, rc.tat + Math.round(look / track.step));
+    [tx, , tz] = t.points[ti];
+    // Fast at the jump, to clear the ravine
+    const ramp = track.ramps[t.ramp];
+    const toRamp = Math.hypot(ramp.p[0] - x, ramp.p[2] - z);
+    input = { ...input, boost: toRamp < 90 && rc.boost > 0.05 };
+  } else {
+    // What is on the track ahead, and where to go round it
+    let goal = rc.home + 1.5 * Math.sin(race.t * 0.13 + rc.id * 2);
+    const body = SPEEDER_BODY[rc.kind];
+    const things: { k: number; lat: number; half: number }[] = [];
+    for (const m of track.marks) {
+      const k = (m.at - rc.at + n) % n;
+      if (k < 1 || k > 12) continue;
+      if (m.prop !== undefined && race.broken.includes(m.prop)) continue;
+      if (m.hazard !== undefined && race.hazards[m.hazard].spent) continue;
+      things.push({ k, lat: m.lat, half: m.half });
+    }
+    for (const o of race.racers) {
+      if (o === rc || o.ghost > 0 || o.finish !== null) continue;
+      const k = (o.at - rc.at + n) % n;
+      if (k < 1 || k > 8 || (o.craft.speed > u - 3 && !o.wrecked)) continue;
+      const yaw = track.yaws[o.at];
+      const lat = -(o.craft.p[0] - track.points[o.at][0]) * Math.sin(yaw) + (o.craft.p[2] - track.points[o.at][2]) * Math.cos(yaw);
+      things.push({ k, lat, half: SPEEDER_BODY[o.kind].half[1] });
+    }
+    things.sort((a, b) => a.k - b.k);
+    for (const th of things) {
+      const room = th.half + body.half[1] + 1.2;
+      if (Math.abs(th.lat - goal) >= room) continue;
+      const left = th.lat - room - 0.6;
+      const right = th.lat + room + 0.6;
+      const edge = track.width / 2 - body.half[1] - 0.8;
+      goal = right > edge ? left : left < -edge ? right : Math.abs(left - rc.lane) < Math.abs(right - rc.lane) ? left : right;
+      break;
+    }
+    // Lined up on the next gate's opening when it is near
+    const gate = track.gates[raceNextGate(race, rc)];
+    const toGate = (Math.round(gate.s / track.step) - rc.at + n) % n;
+    if (toGate * track.step < 70) goal = within(goal, -gate.half + 3, gate.half - 3);
+    rc.lane += within(goal - rc.lane, -5 * h, 5 * h);
+    const ti = (rc.at + Math.round(look / track.step)) % n;
+    const yaw = track.yaws[ti];
+    tx = track.points[ti][0] - Math.sin(yaw) * rc.lane;
+    tz = track.points[ti][2] + Math.cos(yaw) * rc.lane;
+    // The bends ahead: brake for one it could not take at this speed in the distance it has
+    let brake = false;
+    let open = true;
+    for (let k = 1; k <= Math.ceil(110 / track.step); k++) {
+      const bend = track.bends[(rc.at + k) % n];
+      if (bend > 1 / 120) open = false;
+      const fast = Math.sqrt(24 / Math.max(bend, 1e-4)) * (0.94 + 0.06 * rc.pace);
+      if (u > fast && (u * u - fast * fast) / (2 * RACE.brake * 0.8) > k * track.step - 4) brake = true;
+    }
+    input = { ...input, throttle: brake ? -1 : 0, boost: !brake && open && rc.boost > 0.3 + (1 - rc.pace) * 4 };
+  }
+  const diff = angleWrap(Math.atan2(tz - z, tx - x) - rc.craft.yaw);
+  if (Math.abs(diff) > 1 && u > 15) input.throttle = -1;
+  // Steering counters its own spin so that it does not swing
+  input.steer = { x: within(diff * 2.4 - rc.spin * 0.25, -1, 1), y: 0 };
+  return input;
+}
+
+const cross2 = (ax: number, az: number, bx: number, bz: number) => ax * bz - az * bx;
+interface Box2 { c: [number, number]; f: [number, number]; r: [number, number]; hl: number; hw: number }
+const boxOf = (rc: Racer): Box2 => {
+  const b = SPEEDER_BODY[rc.kind];
+  const [cy, sy] = [Math.cos(rc.craft.yaw), Math.sin(rc.craft.yaw)];
+  return { c: [rc.craft.p[0], rc.craft.p[2]], f: [cy, sy], r: [-sy, cy], hl: b.half[0], hw: b.half[1] };
+};
+const cornersOf = (b: Box2): [number, number][] => [[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([i, j]) => [b.c[0] + b.f[0] * b.hl * i + b.r[0] * b.hw * j, b.c[1] + b.f[1] * b.hl * i + b.r[1] * b.hw * j]);
+const insideBox = (b: Box2, p: [number, number]) => {
+  const [dx, dz] = [p[0] - b.c[0], p[1] - b.c[1]];
+  return Math.abs(dx * b.f[0] + dz * b.f[1]) <= b.hl + 1e-6 && Math.abs(dx * b.r[0] + dz * b.r[1]) <= b.hw + 1e-6;
+};
+// Two boxes that overlap: the axis of least overlap (from A to B), how deep, and where they touch
+function boxContact(A: Box2, B: Box2): { n: [number, number]; depth: number; point: [number, number] } | null {
+  const d: [number, number] = [B.c[0] - A.c[0], B.c[1] - A.c[1]];
+  let depth = Infinity;
+  let n: [number, number] = [1, 0];
+  for (const ax of [A.f, A.r, B.f, B.r]) {
+    const ra = A.hl * Math.abs(A.f[0] * ax[0] + A.f[1] * ax[1]) + A.hw * Math.abs(A.r[0] * ax[0] + A.r[1] * ax[1]);
+    const rb = B.hl * Math.abs(B.f[0] * ax[0] + B.f[1] * ax[1]) + B.hw * Math.abs(B.r[0] * ax[0] + B.r[1] * ax[1]);
+    const dist = d[0] * ax[0] + d[1] * ax[1];
+    const o = ra + rb - Math.abs(dist);
+    if (o <= 0) return null;
+    if (o < depth) [depth, n] = [o, dist < 0 ? [-ax[0], -ax[1]] : [ax[0], ax[1]]];
+  }
+  const pts = [...cornersOf(B).filter((p) => insideBox(A, p)), ...cornersOf(A).filter((p) => insideBox(B, p))];
+  const point: [number, number] = pts.length ? [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length] : [(A.c[0] + B.c[0]) / 2, (A.c[1] + B.c[1]) / 2];
+  return { n, depth, point };
+}
+// A box and a circle that overlap: the way from the box to the circle, how deep, and where they touch
+function circleContact(A: Box2, cx: number, cz: number, radius: number): { n: [number, number]; depth: number; point: [number, number] } | null {
+  const [dx, dz] = [cx - A.c[0], cz - A.c[1]];
+  const lx = dx * A.f[0] + dz * A.f[1];
+  const lz = dx * A.r[0] + dz * A.r[1];
+  const qx = within(lx, -A.hl, A.hl);
+  const qz = within(lz, -A.hw, A.hw);
+  let nx = lx - qx;
+  let nz = lz - qz;
+  let dist = Math.hypot(nx, nz);
+  let depth: number;
+  if (dist > 1e-6) {
+    if (dist >= radius) return null;
+    [nx, nz] = [nx / dist, nz / dist];
+    depth = radius - dist;
+  } else {
+    const [px, pz] = [A.hl - Math.abs(lx), A.hw - Math.abs(lz)];
+    [nx, nz, depth] = px < pz ? [Math.sign(lx) || 1, 0, px + radius] : [0, Math.sign(lz) || 1, pz + radius];
+    dist = 0;
+  }
+  return { n: [A.f[0] * nx + A.r[0] * nz, A.f[1] * nx + A.r[1] * nz], depth, point: [A.c[0] + A.f[0] * qx + A.r[0] * qz, A.c[1] + A.f[1] * qx + A.r[1] * qz] };
+}
+
+// A line of the race's log about a racer: "Kessa hits", "You hit"
+const says = (rc: Racer, third: string, second: string) => (rc.party ? `You ${second}` : `${rc.name} ${third}`);
+
+// Hull lost to a blow: none below the hit speed, one at it and one more each `hitPer` m/s over
+function hurt(rc: Racer, impact: number, race: Race, what: string, at: Vec3): number {
+  if (impact < RACE.hitSpeed || rc.wrecked) return 0;
+  const damage = 1 + Math.floor((impact - RACE.hitSpeed) / RACE.hitPer);
+  rc.hull = Math.max(0, rc.hull - damage);
+  race.log.push(`${says(rc, "hits", "hit")} ${what} (${damage} hull)`);
+  if (rc.hull <= 0) {
+    rc.wrecked = true;
+    rc.boosting = false;
+    race.events.push({ kind: "wreck", p: at, by: rc.id, power: impact });
+    race.log.push(`${says(rc, "is", "are")} out of the race`);
+  }
+  return damage;
+}
+// Sparks where something was struck hard enough to see
+const spark = (race: Race, at: Vec3, by: number, impact: number) => impact > 3 && race.events.push({ kind: "hit", p: at, by, power: impact });
+
+// A racer against something that does not move (or, with `mass`, something light it knocks away): the
+// impulse along the normal with restitution, friction along the surface, and the turn from where it struck
+function strike(rc: Racer, n: [number, number], depth: number, point: [number, number], mass: number, push: boolean): number {
+  const body = SPEEDER_BODY[rc.kind];
+  const m = rc.wrecked ? body.mass * 40 : body.mass;
+  const I = inertiaOf(rc.kind) * (rc.wrecked ? 40 : 1);
+  const [ax, az] = [point[0] - rc.craft.p[0], point[1] - rc.craft.p[2]];
+  if (push) {
+    rc.craft.p[0] -= n[0] * (depth + 0.005);
+    rc.craft.p[2] -= n[1] * (depth + 0.005);
+  }
+  const vcx = rc.v[0] - rc.spin * az;
+  const vcz = rc.v[2] + rc.spin * ax;
+  const vn = vcx * n[0] + vcz * n[1];
+  if (vn <= 0) return 0;
+  const rn = cross2(ax, az, n[0], n[1]);
+  const j = ((1 + RACE.restitution) * vn) / (1 / m + (rn * rn) / I + 1 / mass);
+  rc.v[0] -= (j / m) * n[0];
+  rc.v[2] -= (j / m) * n[1];
+  rc.spin -= (rn * j) / I;
+  const [tx0, tz0] = [vcx - vn * n[0], vcz - vn * n[1]];
+  const tl = Math.hypot(tx0, tz0);
+  if (tl > 1e-4) {
+    const [tx, tz] = [tx0 / tl, tz0 / tl];
+    const rt = cross2(ax, az, tx, tz);
+    const jt = Math.min(RACE.friction * j, tl / (1 / m + (rt * rt) / I + 1 / mass));
+    rc.v[0] -= (jt / m) * tx;
+    rc.v[2] -= (jt / m) * tz;
+    rc.spin -= (rt * jt) / I;
+  }
+  return j / m / (1 + RACE.restitution);
+}
+
+// One racer's tick of driving: the meter, thrust and brakes, grip, steering, the slope, the hover and
+// gravity, the move, a step too high to ride up struck as a wall, and a hard landing
+function drive(rc: Racer, input: RaceInput, track: RaceTrack, race: Race, h: number) {
+  const body = SPEEDER_BODY[rc.kind];
+  const [x, y, z] = rc.craft.p;
+  const yaw = rc.craft.yaw;
+  const [fx, fz] = [Math.cos(yaw), Math.sin(yaw)];
+  const [rx, rz] = [-fz, fx];
+  const ground = groundAt(track, x, z);
+  const lift = y - ground;
+  const air = lift > RACE.hover * 1.6;
+  const near = nearCentre(track, x, z);
+  const rough = !onCourse(track, near);
+  rc.off = near.d > RACE.off ? rc.off + h : 0;
+  const slick = race.hazards.some((hz) => hz.kind === "slick" && (hz.p[0] - x) ** 2 + (hz.p[2] - z) ** 2 < hz.r * hz.r);
+  rc.rough = rough;
+  const live = !rc.wrecked;
+  const boosting = live && !!input.boost && rc.boost > 0.02 && !air && rc.finish === null;
+  if (boosting) {
+    rc.boost = Math.max(0, rc.boost - RACE.drain * h);
+    rc.rest = 0;
+  } else {
+    rc.rest += h;
+    if (rc.rest > RACE.wait) rc.boost = Math.min(1, rc.boost + RACE.fill * h);
+  }
+  if (air && live) rc.boost = Math.min(1, rc.boost + RACE.airFill * h);
+  rc.boosting = boosting;
+  let u = rc.v[0] * fx + rc.v[2] * fz;
+  let w = rc.v[0] * rx + rc.v[2] * rz;
+  if (!air) {
+    if (!live) u -= Math.sign(u) * Math.min(Math.abs(u), 14 * h);
+    else {
+      const top = (boosting ? RACE.boost : RACE.drive * rc.pace) * body.top * (rough ? RACE.rough : 1) * (rc.finish !== null ? 0.6 : 1);
+      if (input.throttle < 0) u = u > 0.5 ? Math.max(0, u - RACE.brake * h) : Math.max(-RACE.reverse, u - RACE.accel * 0.5 * h);
+      else if (u < top) u = Math.min(top, u + (boosting ? RACE.boostAccel : RACE.accel) * h);
+      else u = Math.max(top, u - RACE.coast * h);
+    }
+    const stop = Math.min(Math.abs(w), (slick ? RACE.slickGrip : rough || !live ? RACE.roughGrip : RACE.grip) * h);
+    w -= Math.sign(w) * stop;
+    u -= Math.sign(u) * Math.min(Math.abs(u), stop * 0.15);
+  }
+  const turn = live ? (input.steer.x * RACE.steer * body.turn) / (1 + Math.abs(u) / 60) : 0;
+  rc.spin += (turn - rc.spin) * Math.min(1, (air ? 2 : live ? 9 : 4) * h);
+  let vx = fx * u + rx * w;
+  let vz = fz * u + rz * w;
+  const [gx, gz] = slopeAt(track, x, z);
+  if (!air) {
+    vx -= RACE.gravity * 0.5 * gx * h;
+    vz -= RACE.gravity * 0.5 * gz * h;
+  }
+  let vy = rc.v[1];
+  const k = within((RACE.hover * 1.6 - lift) / (RACE.hover * 0.6), 0, 1);
+  vy += (-RACE.gravity + k * (RACE.gravity + RACE.spring * (RACE.hover - lift) - RACE.damp * vy)) * h;
+  let [nx, ny, nz] = [x + vx * h, y + vy * h, z + vz * h];
+  const ahead = groundAt(track, nx, nz);
+  if (ahead > ny + RACE.stepUp) {
+    // A face too steep to ride up: struck like a wall, and the racer stays where it was
+    const [sx, sz] = slopeAt(track, nx, nz);
+    const sl = Math.hypot(sx, sz) || 1;
+    const [wx, wz] = [-sx / sl, -sz / sl];
+    const vn = vx * wx + vz * wz;
+    if (vn < 0) {
+      vx -= (1 + RACE.restitution) * vn * wx;
+      vz -= (1 + RACE.restitution) * vn * wz;
+      spark(race, [nx, ahead, nz], rc.id, -vn);
+      hurt(rc, -vn, race, "the ground", [nx, ahead, nz]);
+    }
+    [nx, nz] = [x, z];
+  }
+  const floor = groundAt(track, nx, nz) + 0.2;
+  if (ny < floor) {
+    if (vy < -RACE.landHard) {
+      hurt(rc, RACE.hitSpeed + (-vy - RACE.landHard), race, "the ground hard", [nx, floor, nz]);
+      race.events.push({ kind: "land", p: [nx, floor, nz], by: rc.id, power: -vy });
+    }
+    ny = floor;
+    vy = Math.max(0, vy);
+  }
+  if (rc.air && !air && rc.v[1] < -6) race.events.push({ kind: "land", p: [nx, ny, nz], by: rc.id, power: -rc.v[1] });
+  rc.craft.p = [nx, ny, nz];
+  rc.v = [vx, vy, vz];
+  rc.craft.yaw = yaw + rc.spin * h;
+  rc.craft.speed = u;
+  rc.air = air;
+  // How it is drawn: the nose along the slope or the flight, banked into the turn
+  const pitch = air ? within(Math.atan2(vy, Math.max(4, Math.abs(u))) * 0.7, -0.5, 0.5) : Math.atan(gx * fx + gz * fz);
+  rc.craft.pitch += (pitch - rc.craft.pitch) * Math.min(1, 6 * h);
+  rc.bank += (within(rc.spin * Math.abs(u) * 0.012, -0.5, 0.5) - rc.bank) * Math.min(1, 5 * h);
+}
+
+// Back on the track a little behind where it was (or before a gate it went past), facing along it,
+// passing through the others for a moment
+function tow(rc: Racer, track: RaceTrack, race: Race, before?: number) {
+  const n = track.points.length;
+  let best = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < n; i++) {
+    const d = (track.points[i][0] - rc.craft.p[0]) ** 2 + (track.points[i][2] - rc.craft.p[2]) ** 2;
+    if (d < bestD) [bestD, best] = [d, i];
+  }
+  const at = before !== undefined ? (before - 4 + n) % n : (best - 3 + n) % n;
+  const yaw = track.yaws[at];
+  const lat = within(rc.home, -4, 4);
+  const [x, z] = [track.points[at][0] - Math.sin(yaw) * lat, track.points[at][2] + Math.cos(yaw) * lat];
+  rc.craft = { p: [x, groundAt(track, x, z) + RACE.hover, z], yaw, pitch: 0, speed: 8 };
+  rc.v = [Math.cos(yaw) * 8, 0, Math.sin(yaw) * 8];
+  rc.spin = 0;
+  rc.at = at;
+  rc.trail = -1;
+  rc.stuck = 0;
+  rc.off = 0;
+  rc.backing = 0;
+  rc.ghost = RACE.ghost;
+  race.events.push({ kind: "tow", p: rc.craft.p, by: rc.id, power: before !== undefined ? 1 : 0 });
+  race.log.push(before !== undefined ? `${says(rc, "missed a gate and is", "missed a gate and are")} towed back to it` : `${says(rc, "is", "are")} towed back to the track`);
+}
+
+// One tick of the race at RACE.tick or less
+function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
+  race.t += h;
+  const index = trackIndexOf(track);
+  // Every half second each racer's place on the track is found afresh (it is followed tick by tick between)
+  const resync = Math.floor(race.t / 0.5) !== Math.floor((race.t - h) / 0.5);
+  const before = race.racers.map((rc) => [rc.craft.p[0], rc.craft.p[2]] as [number, number]);
+  for (const rc of race.racers) {
+    const own = rc.party && rc.finish === null && !rc.wrecked && !input.auto;
+    const steer = rc.wrecked ? { steer: { x: 0, y: 0 }, throttle: 0 as const } : own ? input : rivalInput(rc, track, race, h);
+    drive(rc, steer, track, race, h);
+    rc.ghost = Math.max(0, rc.ghost - h);
+    if (rc.trail < 0 || rc.party) rc.at = nearestPoint(track.points, rc.craft.p[0], rc.craft.p[2], resync ? 0 : rc.at, resync ? track.points.length : 8, true);
+  }
+  // What stands by the track: struck by shape, dragged through, or broken
+  for (const rc of race.racers) {
+    let box = boxOf(rc);
+    const body = SPEEDER_BODY[rc.kind];
+    const [x, y, z] = rc.craft.p;
+    const seen = new Set<number>();
+    let dragged = false;
+    for (let cx = Math.floor((x - 2.5) / PROP_CELL); cx <= Math.floor((x + 2.5) / PROP_CELL); cx++) {
+      for (let cz = Math.floor((z - 2.5) / PROP_CELL); cz <= Math.floor((z + 2.5) / PROP_CELL); cz++) {
+        for (const id of index.props.get(cellKey(cx, cz)) ?? []) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+          const prop = track.props[id];
+          const hit = prop.hit!;
+          if (race.broken.includes(id)) continue;
+          const [base, top] = [prop.p[1] + (hit.base ?? 0), prop.p[1] + hit.h];
+          if (y > top || y + body.height + 0.35 < base) continue;
+          if (hit.soft && !dragged && Math.hypot(prop.p[0] - x, prop.p[2] - z) < hit.soft + body.half[1]) {
+            dragged = true;
+            const keep = 1 - 2.2 * h;
+            rc.v[0] *= keep;
+            rc.v[2] *= keep;
+          }
+          const contact = hit.r !== undefined ? circleContact(box, prop.p[0], prop.p[2], hit.r) : hit.box ? boxContact(box, { c: [prop.p[0], prop.p[2]], f: [Math.cos(prop.yaw), Math.sin(prop.yaw)], r: [-Math.sin(prop.yaw), Math.cos(prop.yaw)], hl: hit.box[0], hw: hit.box[1] }) : null;
+          if (!contact) continue;
+          const at: Vec3 = [contact.point[0], y + 0.5, contact.point[1]];
+          const [ax, az] = [contact.point[0] - x, contact.point[1] - z];
+          const vn = (rc.v[0] - rc.spin * az) * contact.n[0] + (rc.v[2] + rc.spin * ax) * contact.n[1];
+          if (hit.breaks && vn > 4) {
+            const dv = strike(rc, contact.n, contact.depth, contact.point, hit.mass ?? 0.1, false);
+            box = boxOf(rc);
+            race.broken.push(id);
+            race.events.push({ kind: "smash", p: at, by: rc.id, power: vn });
+            race.log.push(`${says(rc, "smashes", "smash")} through a ${prop.key.replace(/_/g, " ")}`);
+            hurt(rc, dv, race, `a ${prop.key.replace(/_/g, " ")}`, at);
+            continue;
+          }
+          const dv = strike(rc, contact.n, contact.depth, contact.point, Infinity, true);
+          box = boxOf(rc);
+          spark(race, at, rc.id, dv);
+          hurt(rc, dv, race, prop.key === "gate" ? "a gate post" : `a ${prop.key.replace(/_\w+$/, "").replace(/_/g, " ")}`, at);
+        }
+      }
+    }
+    // Mines go off under a racer that is low over them (one high in a jump flies over)
+    for (const hz of race.hazards) {
+      if (hz.kind !== "mine" || hz.spent || rc.ghost > 0) continue;
+      if (Math.hypot(hz.p[0] - x, hz.p[2] - z) > HAZARD_STATS.mine.trigger + body.half[1] || y - hz.p[1] > 2.5) continue;
+      hz.spent = true;
+      race.events.push({ kind: "mine", p: [...hz.p] as Vec3, by: rc.id, power: HAZARD_STATS.mine.blast });
+      race.log.push(`${says(rc, "sets", "set")} off a mine`);
+      for (const o of race.racers) {
+        const d = Math.hypot(o.craft.p[0] - hz.p[0], o.craft.p[2] - hz.p[2]);
+        if (d > HAZARD_STATS.mine.blast || o.ghost > 0) continue;
+        const share = 1 - d / HAZARD_STATS.mine.blast;
+        const [dx, dz] = d > 0.01 ? [(o.craft.p[0] - hz.p[0]) / d, (o.craft.p[2] - hz.p[2]) / d] : [Math.cos(o.craft.yaw), Math.sin(o.craft.yaw)];
+        o.v[0] += dx * HAZARD_STATS.mine.push * share;
+        o.v[2] += dz * HAZARD_STATS.mine.push * share;
+        o.v[1] += HAZARD_STATS.mine.lift * share;
+        o.spin += (o.id % 2 ? 1 : -1) * 2.5 * share;
+        if (o === rc || d < HAZARD_STATS.mine.blast / 2) {
+          const damage = o === rc ? HAZARD_STATS.mine.damage : HAZARD_STATS.mine.near;
+          o.hull = Math.max(0, o.hull - damage);
+          if (o.hull <= 0 && !o.wrecked) {
+            o.wrecked = true;
+            race.events.push({ kind: "wreck", p: o.craft.p, by: o.id, power: 0 });
+            race.log.push(`${says(o, "is", "are")} out of the race`);
+          }
+        }
+      }
+    }
+  }
+  // Racers against each other: boxes, the impulse between them by their masses, and each one's hull by
+  // the blow it took (a bike knocked by a landspeeder takes more); one passing high over another is clear
+  for (let a = 0; a < race.racers.length; a++) {
+    for (let b = a + 1; b < race.racers.length; b++) {
+      const A = race.racers[a];
+      const B = race.racers[b];
+      if (A.ghost > 0 || B.ghost > 0 || A.finish !== null || B.finish !== null) continue;
+      const [ba, bb] = [SPEEDER_BODY[A.kind], SPEEDER_BODY[B.kind]];
+      if (Math.hypot(A.craft.p[0] - B.craft.p[0], A.craft.p[2] - B.craft.p[2]) > ba.half[0] + bb.half[0] + 0.5) continue;
+      if (Math.abs(A.craft.p[1] - B.craft.p[1]) > (ba.height + bb.height) / 2 + 0.2) continue;
+      const contact = boxContact(boxOf(A), boxOf(B));
+      if (!contact) continue;
+      const [mA, mB] = [ba.mass * (A.wrecked ? 40 : 1), bb.mass * (B.wrecked ? 40 : 1)];
+      const [iA, iB] = [inertiaOf(A.kind) * (A.wrecked ? 40 : 1), inertiaOf(B.kind) * (B.wrecked ? 40 : 1)];
+      const { n: nn, depth, point } = contact;
+      const shareA = mB / (mA + mB);
+      A.craft.p[0] -= nn[0] * depth * shareA;
+      A.craft.p[2] -= nn[1] * depth * shareA;
+      B.craft.p[0] += nn[0] * depth * (1 - shareA);
+      B.craft.p[2] += nn[1] * depth * (1 - shareA);
+      const [rax, raz] = [point[0] - A.craft.p[0], point[1] - A.craft.p[2]];
+      const [rbx, rbz] = [point[0] - B.craft.p[0], point[1] - B.craft.p[2]];
+      const rvx = B.v[0] - B.spin * rbz - (A.v[0] - A.spin * raz);
+      const rvz = B.v[2] + B.spin * rbx - (A.v[2] + A.spin * rax);
+      const vn = rvx * nn[0] + rvz * nn[1];
+      if (vn >= 0) continue;
+      const [cA, cB] = [cross2(rax, raz, nn[0], nn[1]), cross2(rbx, rbz, nn[0], nn[1])];
+      const e = 0.3;
+      const j = (-(1 + e) * vn) / (1 / mA + 1 / mB + (cA * cA) / iA + (cB * cB) / iB);
+      A.v[0] -= (j / mA) * nn[0];
+      A.v[2] -= (j / mA) * nn[1];
+      A.spin -= (cA * j) / iA;
+      B.v[0] += (j / mB) * nn[0];
+      B.v[2] += (j / mB) * nn[1];
+      B.spin += (cB * j) / iB;
+      const [tx0, tz0] = [rvx - vn * nn[0], rvz - vn * nn[1]];
+      const tl = Math.hypot(tx0, tz0);
+      if (tl > 1e-4) {
+        const [tx, tz] = [tx0 / tl, tz0 / tl];
+        const [tA, tB] = [cross2(rax, raz, tx, tz), cross2(rbx, rbz, tx, tz)];
+        const jt = Math.min(RACE.friction * j, tl / (1 / mA + 1 / mB + (tA * tA) / iA + (tB * tB) / iB));
+        A.v[0] += (jt / mA) * tx;
+        A.v[2] += (jt / mA) * tz;
+        A.spin += (tA * jt) / iA;
+        B.v[0] -= (jt / mB) * tx;
+        B.v[2] -= (jt / mB) * tz;
+        B.spin -= (tB * jt) / iB;
+      }
+      const at: Vec3 = [point[0], (A.craft.p[1] + B.craft.p[1]) / 2 + 0.5, point[1]];
+      spark(race, at, -1, -vn);
+      hurt(A, j / mA / (1 + e), race, B.party ? "you" : B.name, at);
+      hurt(B, j / mB / (1 + e), race, A.party ? "you" : A.name, at);
+    }
+  }
+  // Gates, crossed in order through their opening; the finish is the start line once the laps are run
+  const total = race.laps * race.gateCount + 1;
+  race.racers.forEach((rc, i) => {
+    if (rc.finish !== null || rc.wrecked) return;
+    const gate = track.gates[rc.gates % race.gateCount];
+    const [gx, gz] = [Math.cos(gate.yaw), Math.sin(gate.yaw)];
+    const [x0, z0] = before[i];
+    const [x1, z1] = [rc.craft.p[0], rc.craft.p[2]];
+    const d0 = (x0 - gate.p[0]) * gx + (z0 - gate.p[2]) * gz;
+    const d1 = (x1 - gate.p[0]) * gx + (z1 - gate.p[2]) * gz;
+    if (d0 < 0 && d1 >= 0) {
+      const f = d0 / (d0 - d1);
+      const [qx, qz] = [x0 + (x1 - x0) * f, z0 + (z1 - z0) * f];
+      if (Math.abs(-(qx - gate.p[0]) * gz + (qz - gate.p[2]) * gx) <= gate.half) {
+        rc.gates++;
+        race.events.push({ kind: "gate", p: gate.p, by: rc.id, power: rc.gates });
+        if (rc.gates >= total) {
+          rc.finish = race.t - h * (1 - f);
+          race.first = race.first ?? rc.finish;
+          rc.ghost = 9999;
+          const place = race.racers.filter((o) => o.finish !== null).length;
+          race.events.push({ kind: "finish", p: gate.p, by: rc.id, power: place });
+          race.log.push(`${says(rc, "finishes", "finish")} ${place}${["st", "nd", "rd"][place - 1] ?? "th"}`);
+        }
+      }
+    }
+    const next = track.gates[rc.gates % race.gateCount];
+    rc.toGate = Math.hypot(next.p[0] - x1, next.p[2] - z1);
+    // Stuck against something, or lost far off the course: towed back
+    const slow = Math.hypot(rc.v[0], rc.v[2]) < 2 && !rc.air && (!rc.party || input.throttle >= 0);
+    rc.stuck = slow && race.t > 1 ? rc.stuck + h : 0;
+    // Gone 60 m down the track past the next gate without going through it: towed back to it
+    const gateAt = Math.round(next.s / track.step) % track.points.length;
+    const past = ((((rc.at - gateAt) * track.step + track.length / 2) % track.length) + track.length) % track.length - track.length / 2;
+    if (rc.trail < 0 && past > 60 && past < 400) tow(rc, track, race, gateAt);
+    else if (rc.stuck > RACE.stuck || rc.off > RACE.offTime) tow(rc, track, race);
+  });
+  const party = race.racers.find((rc) => rc.party);
+  if ((party && (party.finish !== null || party.wrecked)) || (race.first !== null && race.t >= race.first + RACE.grace) || race.t >= race.limit || race.racers.every((rc) => rc.finish !== null || rc.wrecked)) race.over = true;
+}
+
+// One step of a race, in ticks of RACE.tick: the party's racer is steered by `input`, the rivals by
+// their own line. Returns the next race; `events` holds what happened in this step (for sparks and sounds)
+export function stepRace(race: Race, track: RaceTrack, input: RaceInput, dt: number): Race {
+  if (race.over) return race;
+  const next: Race = {
+    ...race,
+    racers: race.racers.map((rc) => ({ ...rc, craft: { ...rc.craft, p: [...rc.craft.p] as Vec3 }, v: [...rc.v] as Vec3 })),
+    hazards: race.hazards.map((h) => ({ ...h })),
+    broken: [...race.broken],
+    log: [...race.log],
+    events: [],
+    said: [],
+  };
+  const ticks = Math.max(1, Math.ceil(dt / RACE.tick - 1e-6));
+  for (let i = 0; i < ticks && !next.over; i++) raceTick(next, track, input, dt / ticks);
+  next.said = next.log.slice(race.log.length);
+  next.log = next.log.slice(-60);
+  return next;
+}
+
+// Where each racer placed: finished ones by their time, then the rest by gates passed and how near the
+// next one they are, those out of the race last
 export function raceOrder(race: Race): Racer[] {
   return [...race.racers].sort((a, b) => {
     if (a.finish !== null || b.finish !== null) return a.finish === null ? 1 : b.finish === null ? -1 : a.finish - b.finish;
     if (a.wrecked !== b.wrecked) return a.wrecked ? 1 : -1;
-    return b.next - a.next;
+    return b.gates - a.gates || a.toGate - b.toGate;
   });
 }
 
@@ -8991,8 +10062,10 @@ export function raceResult(race: Race): { place: number; credits: number; note: 
   const order = raceOrder(race);
   const place = order.findIndex((racer) => racer.party) + 1;
   const mine = race.racers.find((racer) => racer.party)!;
-  if (mine.finish === null) return { place: race.racers.length, credits: 0, note: `you did not finish the race (${mine.wrecked ? "out with no hull" : "out of time"}; house rule)` };
-  return { place, credits: RACE_PRIZES[place - 1] ?? 0, note: `${place}${["st", "nd", "rd"][place - 1] ?? "th"} of ${race.racers.length}${race.log.length ? ", " + race.log.length + " incidents" : ""}` };
+  const time = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
+  const hull = `hull ${mine.hull} of ${mine.hullMax}`;
+  if (mine.finish === null) return { place: race.racers.length, credits: 0, note: `you did not finish the race (${mine.wrecked ? "out with no hull" : race.first !== null ? "the winner was home " + RACE.grace + " s before you" : "out of time"}; ${hull}; house rule)` };
+  return { place, credits: RACE_PRIZES[place - 1] ?? 0, note: `${place}${["st", "nd", "rd"][place - 1] ?? "th"} of ${race.racers.length} in ${time(mine.finish)} over ${race.laps} laps, ${hull}` };
 }
 
 // ---- Dogfight (house rule): a ship in the space of a planet against foes that fly at it and fire

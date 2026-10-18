@@ -5,6 +5,7 @@ import { create } from "zustand";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { ImprovedNoise } from "three/examples/jsm/math/ImprovedNoise.js";
+import { speederKind } from "@shared/logic";
 
 // ---------------------------------------------------------------------------------------------
 // The 3D models of the map: people, droids, creatures, furniture, ships, vehicles and buildings.
@@ -1498,7 +1499,7 @@ export function ShipModel({ ship, w, h }: { ship: ShipLook; w: number; h: number
 // A speeder standing on the ground, hovering a hand's breadth up: a bike, a landspeeder with its
 // windscreen, or an airspeeder with its canopy. A wreck lies tilted and dark, smoking.
 export function SpeederModel({ model, wrecked }: { model: string; wrecked?: boolean }) {
-  const kind = /bike|swoop/i.test(model) ? "bike" : /air|snow|cloud/i.test(model) ? "air" : "land";
+  const kind = speederKind(model);
   return (
     <group position={[0, wrecked ? 0.05 : 0.28, 0]} rotation={wrecked ? [0.12, 0.5, 0.18] : [0, 0, 0]}>
       <Model id={`speeder:${kind}:${wrecked ? 1 : 0}:${pickOf(["a", "b", "c"], model)}`} build={(k) => buildSpeeder(k, kind, !!wrecked, model)} />
