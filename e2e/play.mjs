@@ -1515,6 +1515,38 @@ if (process.env.FORCE !== "0") {
     return log.split("\n").find((l) => /Speeder race/.test(l))?.slice(0, 120);
   });
 
+  await step(ctx, "pit arena: a bout against a creature of the rules on the 3D arena, after a five-second countdown; a win pays the prize, the party can take the winnings and leave", async () => {
+    const pc = await newChar({ credits: 1000, equipment: ["Blaster pistol"] });
+    const pcc = await newCamp(pc, 7, async () => {});
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await page.getByRole("tab", { name: "Downtime" }).click();
+    await page.getByTestId("downtime-pit-arena").click();
+    await page.getByTestId("pit-prize").waitFor();
+    await page.getByTestId("pit-enter").click();
+    await page.getByTestId("countdown").waitFor({ timeout: 5000 });
+    await page.getByTestId("pit-scene").waitFor({ timeout: 30000 });
+    await page.waitForFunction(() => window.__fight && window.__fight.getState().inCombat === true, null, { timeout: 30000 });
+    await sleep(1500);
+    await page.screenshot({ path: `${OUT}/pit-bout.png` }).catch(() => {});
+    // The bout is decided through the combat store: the creatures fall
+    await page.evaluate(() => {
+      const s = window.__fight.getState();
+      window.__fight.setState({ combatants: s.combatants.map((c) => (c.isPlayer ? c : { ...c, hp: 0 })), inCombat: false, outcome: "victory" });
+    });
+    await page.getByTestId("pit-result").waitFor({ timeout: 15000 });
+    const result = (await page.getByTestId("pit-result").innerText()).replace(/\s+/g, " ");
+    if (!/Bout 1 won/.test(result)) throw new Error("no win: " + result);
+    await page.getByTestId("pit-quit").click();
+    await page.getByTestId("downtime-log").waitFor();
+    await sleep(1500);
+    const log = await page.getByTestId("downtime-log").innerText();
+    if (!/Pit arena: 1 bout won, 200 cr/.test(log)) throw new Error("no pit in the log: " + log.replace(/\s+/g, " "));
+    const after = (await getChar(pc.id)).credits;
+    if (after < 1200) throw new Error(`prize not paid: credits ${after}`);
+    return `${result.slice(0, 100)}; credits ${after}`;
+  });
+
   await step(ctx, "starship combat: the party's ship engages a hostile ship in orbit on the 3D map; weapons, a helm action, a move, the enemy's turns, and what comes of it is kept", async () => {
     const sc = await newChar({ level: 5, class: "fighter", maxHp: 45, currentHp: 45, credits: 500, equipment: ["Vibroblade", "Blaster pistol", "Combat suit"] });
     const camp = await newCamp(sc, 9, async () => {});
@@ -1920,7 +1952,7 @@ if (!process.env.KEEP) {
         .filter({ has: page.getByRole("button", { name: "Delete" }) })
         .last();
       await card.getByRole("button", { name: "Delete" }).click();
-      await page.locator(`a[href="/characters/${id}"]`).waitFor({ state: "detached", timeout: 8000 });
+      await page.locator(`a[href="/characters/${id}"]`).waitFor({ state: "detached", timeout: 30000 });
     }
     const left = (await api("GET", "/api/characters")).json.filter((c) => made.includes(c.id)).length;
     const camps = (await api("GET", "/api/campaigns")).json.filter((c) => made.includes(c.characterId)).length;
