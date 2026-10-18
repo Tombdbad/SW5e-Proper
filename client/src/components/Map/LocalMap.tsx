@@ -1,5 +1,5 @@
-import { useRef, useState, useEffect, useMemo, type ReactNode } from "react";
-import { useFrame, useThree } from "@react-three/fiber";
+import { useRef, useState, useEffect, useLayoutEffect, useMemo, type ReactNode } from "react";
+import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Text, useTexture, OrbitControls, PerspectiveCamera, Billboard, Line, Stars, Html } from "@react-three/drei";
 import * as THREE from "three";
 import { useKeyboardControls } from "@react-three/drei";
@@ -9,7 +9,11 @@ import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, 
 import { type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
 import { childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
-import { floorOf, tokenOf, SIDE_COLORS, type FloorKind, type TokenKind } from "./sprites";
+import { floorOf, tokenOf, SIDE_COLORS, type FloorKind } from "./sprites";
+import { Figure, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, RoundedFloor, CornerWall, DomeRoof, Opening, styleOf, hue, type Style } from "./models";
+
+// The flying games draw the same ships and speeders
+export { ShipModel, SpeederModel } from "./models";
 
 interface LocalMapProps {
   // The campaign's generated world and where the party is in it
@@ -75,9 +79,9 @@ function Sky({ shadow = 30, cast = true }: { shadow?: number; cast?: boolean }) 
 }
 
 // ---------------------------------------------------------------------------------------------
-// Models. Places are built from a few plain solids in the look of the setting: sand-coloured
-// domes and vaporator masts in the desert, grey towers in the cities, bunkers with turrets,
-// landing pads ringed with lights, tents, rock and broken columns in the wild.
+// Plain solids for what is built round the models (walls, slabs, rails, ladders, posts). The
+// models themselves (people, droids, creatures, furniture, ships, vehicles, buildings) are in
+// models.tsx.
 // ---------------------------------------------------------------------------------------------
 
 type V3 = [number, number, number];
@@ -89,7 +93,6 @@ const Solid = ({ at, color, glow, rot, children }: { at: V3; color: string; glow
 );
 const Box = ({ at, size, color, glow, rot }: { at: V3; size: V3; color: string; glow?: number; rot?: V3 }) => <Solid at={at} color={color} glow={glow} rot={rot}><boxGeometry args={size} /></Solid>;
 const Cyl = ({ at, r, h, color, glow, top = r }: { at: V3; r: number; h: number; color: string; glow?: number; top?: number }) => <Solid at={at} color={color} glow={glow}><cylinderGeometry args={[top, r, h, 18]} /></Solid>;
-const Dome = ({ at, r, color }: { at: V3; r: number; color: string }) => <Solid at={at} color={color}><sphereGeometry args={[r, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2]} /></Solid>;
 const Mast = ({ at, h = 2.2 }: { at: V3; h?: number }) => (
   <>
     <Cyl at={[at[0], at[1] + h / 2, at[2]]} r={0.06} h={h} color="#d7d2c4" />
@@ -97,134 +100,10 @@ const Mast = ({ at, h = 2.2 }: { at: V3; h?: number }) => (
     <Box at={[at[0], at[1] + h * 0.5, at[2]]} size={[0.36, 0.06, 0.06]} color="#d7d2c4" />
   </>
 );
-const Tower = ({ at, r, h, color }: { at: V3; r: number; h: number; color: string }) => (
-  <>
-    <Cyl at={[at[0], h / 2, at[2]]} r={r} h={h} color={color} />
-    <Cyl at={[at[0], h + 0.25, at[2]]} r={r * 0.6} h={0.5} color={color} top={0.05} />
-    <Box at={[at[0], h * 0.6, at[2] + r]} size={[r * 0.5, 0.12, 0.04]} color="#ffd98a" glow={1} />
-  </>
-);
-const Tent = ({ at, color }: { at: V3; color: string }) => <Solid at={[at[0], 0.6, at[2]]} color={color}><coneGeometry args={[0.8, 1.2, 6]} /></Solid>;
-const Rock = ({ at, r, color = "#6d6a66" }: { at: V3; r: number; color?: string }) => <Solid at={[at[0], r * 0.6, at[2]]} color={color}><dodecahedronGeometry args={[r, 0]} /></Solid>;
-const Hull = ({ color = "#8b9299" }: { color?: string }) => (
-  <group rotation={[0, 0.5, 0.25]}>
-    <Solid at={[0, 0.5, 0]} color={color}><capsuleGeometry args={[0.7, 2.2, 6, 12]} /></Solid>
-    <Box at={[0.2, 1.1, 0.9]} size={[0.1, 1.2, 1]} color="#59636d" />
-    <Box at={[0, 0.2, -0.6]} size={[0.5, 0.3, 0.5]} color="#2b2b2b" />
-  </group>
-);
-
 // Wall colour by the world the place stands on
 const WALLS: Record<string, string> = { desert: "#c9a56e", ice: "#cfd8dc", urban: "#8a94a3", volcanic: "#6b5a55", forest: "#a69f80", jungle: "#9aa080", swamp: "#8f9278", ocean: "#b8c4c8", barren: "#a59c8f", temperate: "#b9ad96", "gas giant": "#8f98a8" };
 const GROUND: Record<string, string> = { desert: "#4a3a22", ice: "#39505c", urban: "#1c222b", volcanic: "#2a1a18", forest: "#1f3324", jungle: "#1a3a22", swamp: "#252f22", ocean: "#12303d", barren: "#33302c", temperate: "#26361f", "gas giant": "#1d2233" };
 const STEEL = "#7b8794";
-
-// A building of a settlement, by what kind of place it is
-function BuildingModel({ type, wall }: { type: string; wall: string }) {
-  if (/cantina/.test(type)) return <><Dome at={[0, 0, 0]} r={1.5} color={wall} /><Dome at={[1.3, 0, 0.7]} r={0.8} color={wall} /><Box at={[0, 0.4, 1.45]} size={[0.6, 0.8, 0.3]} color="#3a2c20" /><Box at={[0, 0.9, 1.5]} size={[0.5, 0.12, 0.05]} color="#5ad1ff" glow={1.2} /><Mast at={[-1.3, 0, -0.8]} /></>;
-  if (/spaceport|landing|docking/.test(type)) {
-    return (
-      <>
-        <Cyl at={[0, 0.1, 0]} r={2.3} h={0.2} color="#2c333b" />
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.22, 0]}><ringGeometry args={[1.7, 1.9, 32]} /><meshBasicMaterial color="#f0a03c" /></mesh>
-        {[0, 1, 2, 3, 4, 5].map((i) => <Box key={i} at={[Math.cos(i * 1.047) * 2.15, 0.28, Math.sin(i * 1.047) * 2.15]} size={[0.14, 0.14, 0.14]} color="#ff5a5a" glow={1.5} />)}
-        {/spaceport|docking/.test(type) && <Tower at={[2.2, 0, -2]} r={0.4} h={2.6} color={/docking/.test(type) ? STEEL : wall} />}
-        <group position={[0, 0.5, 0]} scale={0.5}><Hull color="#aeb6bd" /></group>
-      </>
-    );
-  }
-  if (/market|promenade/.test(type)) return <>{[[-0.9, -0.8, "#c8663a"], [0.9, -0.7, "#e8dcc0"], [-0.8, 0.9, "#4f8a8b"], [0.9, 0.9, "#c8663a"]].map(([x, z, c], i) => <group key={i}><Box at={[x as number, 0.4, z as number]} size={[1.1, 0.8, 1.1]} color={wall} /><Solid at={[x as number, 1.05, z as number]} color={c as string}><coneGeometry args={[1, 0.5, 4]} /></Solid></group>)}</>;
-  if (/garrison|command post|operations|gate/.test(type)) {
-    const gate = /gate/.test(type);
-    return gate ? <><Box at={[-1.2, 1, 0]} size={[0.8, 2, 1]} color={wall} /><Box at={[1.2, 1, 0]} size={[0.8, 2, 1]} color={wall} /><Box at={[0, 1.9, 0]} size={[3.2, 0.4, 0.8]} color={wall} /><Box at={[0, 0.9, 0]} size={[1.5, 1.6, 0.1]} color="#f0a03c" glow={0.4} /></> : (
-      <>
-        <Cyl at={[0, 0.6, 0]} r={2} h={1.2} color="#59636d" top={1.6} />
-        <Box at={[0, 1.5, 0]} size={[1.6, 0.7, 1.6]} color="#4a545f" />
-        <Cyl at={[-1.3, 1.5, 1.1]} r={0.3} h={0.5} color="#2f363d" /><Box at={[-1.3, 1.6, 1.6]} size={[0.1, 0.1, 0.9]} color="#2f363d" />
-        <Cyl at={[1.3, 1.5, -1.1]} r={0.3} h={0.5} color="#2f363d" /><Box at={[1.3, 1.6, -1.6]} size={[0.1, 0.1, 0.9]} color="#2f363d" />
-        <Mast at={[0.4, 1.8, 0.3]} h={1.8} />
-        <Box at={[0, 0.5, 1.95]} size={[0.8, 1, 0.1]} color="#e5484d" glow={0.6} />
-      </>
-    );
-  }
-  if (/medcenter/.test(type)) return <><Box at={[0, 0.8, 0]} size={[2.8, 1.6, 2]} color="#e9edf0" /><Dome at={[0, 1.6, 0]} r={0.9} color="#e9edf0" /><Box at={[0, 0.9, 1.02]} size={[2.8, 0.25, 0.05]} color="#5ad1ff" glow={1} /></>;
-  if (/workshop|engineering/.test(type)) return <><Box at={[0, 0.7, 0]} size={[2.6, 1.4, 2]} color={/engineering/.test(type) ? STEEL : wall} /><Cyl at={[1.7, 0.7, 0.5]} r={0.5} h={1.4} color="#59636d" /><Cyl at={[-0.8, 1.9, -0.5]} r={0.2} h={1} color="#3b3f45" /><Box at={[0, 0.5, 1.02]} size={[1.2, 1, 0.05]} color="#f0a03c" glow={0.7} /></>;
-  if (/residences|habitat/.test(type)) return <><Box at={[-0.6, 0.6, 0]} size={[1.6, 1.2, 1.8]} color={wall} /><Box at={[0.8, 1, -0.3]} size={[1.4, 2, 1.4]} color={wall} /><Dome at={[0.8, 2, -0.3]} r={0.6} color={wall} /><Box at={[-0.4, 1.5, 0.3]} size={[1, 0.6, 1]} color={wall} />{[0, 1, 2].map((i) => <Box key={i} at={[0.8, 0.5 + i * 0.55, 0.42]} size={[0.3, 0.2, 0.05]} color="#ffd98a" glow={1} />)}</>;
-  if (/palace/.test(type)) return <><Cyl at={[0, 0.5, 0]} r={2.2} h={1} color={wall} /><Dome at={[0, 1, 0]} r={1.6} color={wall} />{[[-1.9, -1.9], [1.9, -1.9], [-1.9, 1.9], [1.9, 1.9]].map(([x, z], i) => <Tower key={i} at={[x, 0, z]} r={0.35} h={2.4} color={wall} />)}</>;
-  if (/warehouse|cargo/.test(type)) return <><Box at={[0, 0.6, 0]} size={[3.2, 1.2, 2]} color={STEEL} /><mesh position={[0, 1.2, 0]} rotation={[0, 0, Math.PI / 2]}><cylinderGeometry args={[1, 1, 3.2, 16, 1, false, 0, Math.PI]} /><meshLambertMaterial color="#59636d" /></mesh><Box at={[0, 0.5, 1.02]} size={[1.6, 1, 0.05]} color="#2f363d" /><Box at={[2, 0.3, 0.6]} size={[0.6, 0.6, 0.6]} color="#6f7448" /></>;
-  if (/archive/.test(type)) return <><Tower at={[0, 0, 0]} r={1.1} h={3} color={wall} /><Cyl at={[0, 0.25, 0]} r={1.9} h={0.5} color={wall} /></>;
-  if (/hideout/.test(type)) return <><Box at={[0, 0.35, 0]} size={[2.8, 0.7, 2.2]} color="#3b3f45" /><Box at={[0.6, 0.8, 0]} size={[1, 0.3, 1]} color="#2b2f34" /><Box at={[0, 0.3, 1.12]} size={[0.7, 0.6, 0.05]} color="#e5484d" glow={0.5} /><Rock at={[-1.8, 0, 0.8]} r={0.5} /></>;
-  if (/camp/.test(type)) return <><Tent at={[-1, 0, -0.5]} color="#8a6f4a" /><Tent at={[1, 0, -0.3]} color="#7a6040" /><Tent at={[0, 0, 1.1]} color="#96794f" /><Box at={[0, 0.15, 0]} size={[0.3, 0.3, 0.3]} color="#ffb347" glow={2} /></>;
-  if (/cave/.test(type)) return <><Rock at={[0, 0, 0]} r={1.9} /><Rock at={[1.6, 0, 0.8]} r={0.9} color="#5a5753" /><Solid at={[0, 0.6, 1.5]} color="#0a0a0a"><sphereGeometry args={[0.75, 12, 12]} /></Solid></>;
-  if (/ruin/.test(type)) return <><Box at={[0, 0.1, 0]} size={[3.4, 0.2, 2.6]} color="#6d6a66" />{[[-1.3, -0.9, 2], [1.3, -0.9, 1.1], [-1.3, 0.9, 0.7], [1.3, 0.9, 1.7], [0, -0.9, 1.4]].map(([x, z, h], i) => <Cyl key={i} at={[x, h / 2 + 0.2, z]} r={0.24} h={h} color="#8a8680" />)}<Rock at={[0.3, 0, 0.5]} r={0.5} /></>;
-  if (/wreck/.test(type)) return <><Hull /><Rock at={[1.6, 0, 1]} r={0.4} color="#3a3835" /></>;
-  if (/trailhead/.test(type)) return <><Cyl at={[0, 0.8, 0]} r={0.08} h={1.6} color="#8a6f4a" /><Box at={[0.3, 1.3, 0]} size={[0.9, 0.35, 0.06]} color="#c9a56e" /><Rock at={[-0.8, 0, 0.5]} r={0.45} /></>;
-  return <><Box at={[0, 0.7, 0]} size={[2.4, 1.4, 2.2]} color={wall} /><Dome at={[0, 1.4, 0]} r={0.8} color={wall} /></>;
-}
-
-// A settlement or wild site on a planet's surface
-function SettlementModel({ type, wall }: { type: string; wall: string }) {
-  if (/city/.test(type)) return <>{[[0, 0, 3.4, 0.5], [-1.1, 0.6, 2.2, 0.4], [1, -0.6, 2.6, 0.45], [0.9, 1, 1.5, 0.4], [-0.9, -1, 1.8, 0.35]].map(([x, z, h, r], i) => <Tower key={i} at={[x, 0, z]} r={r} h={h} color={i % 2 ? "#8a94a3" : "#a3adba"} />)}<Cyl at={[0, 0.1, 0]} r={2.3} h={0.2} color="#3b4654" /></>;
-  if (/town/.test(type)) return <><Dome at={[0, 0, 0]} r={1.1} color={wall} /><Dome at={[1.4, 0, 0.5]} r={0.7} color={wall} /><Dome at={[-1.2, 0, 0.8]} r={0.8} color={wall} /><Box at={[0.3, 0.4, -1.3]} size={[1.2, 0.8, 0.9]} color={wall} /><Mast at={[-0.6, 0, -1.2]} /></>;
-  if (/outpost/.test(type)) return <><Cyl at={[0, 0.5, 0]} r={1.6} h={1} color="#59636d" top={1.3} /><Mast at={[0, 1, 0]} h={2} /><Box at={[1.9, 0.3, 0]} size={[0.8, 0.6, 0.8]} color="#6f7448" /><Cyl at={[-2, 0.08, 0.6]} r={0.8} h={0.16} color="#2c333b" /></>;
-  if (/station/.test(type)) return <><mesh position={[0, 1.4, 0]} rotation={[Math.PI / 2.4, 0, 0]}><torusGeometry args={[1.8, 0.28, 10, 32]} /><meshLambertMaterial color={STEEL} emissive={STEEL} emissiveIntensity={0.15} /></mesh><Cyl at={[0, 1.4, 0]} r={0.5} h={2.4} color="#a3adba" /><Box at={[0, 2.7, 0]} size={[0.2, 0.2, 0.2]} color="#ff5a5a" glow={2} /></>;
-  if (/cave/.test(type)) return <><Rock at={[0, 0, 0]} r={1.6} /><Rock at={[1.5, 0, 0.5]} r={1} color="#5a5753" /><Rock at={[-1.3, 0, 0.9]} r={0.8} /><Solid at={[0.2, 0.5, 1.3]} color="#0a0a0a"><sphereGeometry args={[0.6, 12, 12]} /></Solid></>;
-  if (/ruin/.test(type)) return <BuildingModel type="ruin" wall={wall} />;
-  if (/crash/.test(type)) return <><Hull /><Box at={[1.8, 0.1, 1.2]} size={[0.8, 0.2, 0.5]} color="#59636d" /><Box at={[-1.6, 0.25, -0.5]} size={[0.3, 0.5, 0.3]} color="#ffb347" glow={1.5} /></>;
-  if (/camp/.test(type)) return <BuildingModel type="camp" wall={wall} />;
-  return <Dome at={[0, 0, 0]} r={1.4} color={wall} />;
-}
-
-// ---------------------------------------------------------------------------------------------
-// People, droids and creatures, standing on a ring in the colour of their side. One unit is a
-// 5-foot square; a person is a little over a unit tall. They face +z.
-// ---------------------------------------------------------------------------------------------
-
-const hue = (text: string) => Array.from(text).reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) % 360, 7);
-const SKIN = "#d9b99a";
-
-function Humanoid({ body, head = SKIN, legs = "#2b2f36", robe }: { body: string; head?: string; legs?: string; robe?: boolean }) {
-  return (
-    <>
-      {robe ? <Cyl at={[0, 0.3, 0]} r={0.26} top={0.16} h={0.6} color={body} /> : <><Box at={[-0.09, 0.26, 0]} size={[0.12, 0.52, 0.14]} color={legs} /><Box at={[0.09, 0.26, 0]} size={[0.12, 0.52, 0.14]} color={legs} /></>}
-      <Box at={[0, 0.74, 0]} size={[0.36, 0.44, 0.2]} color={body} />
-      <Box at={[-0.24, 0.72, 0]} size={[0.09, 0.42, 0.11]} color={body} />
-      <Box at={[0.24, 0.72, 0]} size={[0.09, 0.42, 0.11]} color={body} />
-      <Solid at={[0, 1.08, 0]} color={head}><sphereGeometry args={[0.13, 12, 10]} /></Solid>
-    </>
-  );
-}
-
-function Figure({ kind, ring, name = "", large, marker }: { kind: TokenKind; ring: string; name?: string; large?: boolean; marker?: boolean }) {
-  const tone = `hsl(${hue(name || kind)}, 30%, 42%)`;
-  let body: ReactNode;
-  if (kind === "astromech") body = <><Cyl at={[0, 0.36, 0]} r={0.2} h={0.44} color="#e9edf0" /><Dome at={[0, 0.58, 0]} r={0.2} color="#3b6fb5" /><Box at={[-0.25, 0.28, 0]} size={[0.08, 0.5, 0.18]} color="#7b8794" /><Box at={[0.25, 0.28, 0]} size={[0.08, 0.5, 0.18]} color="#7b8794" /><Box at={[0, 0.66, 0.17]} size={[0.07, 0.07, 0.05]} color="#e5484d" glow={1.5} /></>;
-  else if (kind === "battledroid") body = <><Box at={[-0.08, 0.3, 0]} size={[0.06, 0.6, 0.06]} color="#c9b48a" /><Box at={[0.08, 0.3, 0]} size={[0.06, 0.6, 0.06]} color="#c9b48a" /><Box at={[0, 0.76, 0]} size={[0.24, 0.32, 0.14]} color="#d8c59c" /><Box at={[0, 0.78, -0.12]} size={[0.16, 0.22, 0.1]} color="#a8956c" /><Box at={[-0.17, 0.7, 0.08]} size={[0.05, 0.36, 0.05]} color="#c9b48a" /><Box at={[0.17, 0.7, 0.08]} size={[0.05, 0.36, 0.05]} color="#c9b48a" /><Box at={[0, 1.04, 0.06]} size={[0.1, 0.12, 0.3]} color="#d8c59c" /><Box at={[0.17, 0.6, 0.3]} size={[0.04, 0.05, 0.42]} color="#22262b" /></>;
-  else if (kind === "droid") body = <><Solid at={[0, 0.82, 0]} color="#2a2f36"><sphereGeometry args={[0.24, 14, 12]} /></Solid><Box at={[-0.09, 0.86, 0.2]} size={[0.08, 0.08, 0.06]} color="#e5484d" glow={2} /><Box at={[0.1, 0.84, 0.21]} size={[0.06, 0.06, 0.05]} color="#f0a03c" glow={2} />{[0, 1, 2, 3].map((i) => <Box key={i} at={[Math.cos(i * 1.57 + 0.8) * 0.2, 0.36, Math.sin(i * 1.57 + 0.8) * 0.2]} size={[0.04, 0.6, 0.04]} color="#7b8794" rot={[Math.sin(i * 1.57 + 0.8) * 0.3, 0, -Math.cos(i * 1.57 + 0.8) * 0.3]} />)}<Cyl at={[0.06, 1.16, 0]} r={0.012} h={0.3} color="#7b8794" /></>;
-  else if (kind === "beast") body = <><Solid at={[0, 0.46, 0]} color={tone} rot={[Math.PI / 2, 0, 0]}><capsuleGeometry args={[0.2, 0.44, 4, 10]} /></Solid>{[[-0.15, 0.24], [0.15, 0.24], [-0.15, -0.24], [0.15, -0.24]].map(([x, z], i) => <Box key={i} at={[x, 0.16, z]} size={[0.09, 0.32, 0.09]} color={tone} />)}<Solid at={[0, 0.62, 0.42]} color={tone}><sphereGeometry args={[0.17, 12, 10]} /></Solid><Solid at={[-0.1, 0.8, 0.44]} color="#e8dcc0" rot={[0.5, 0, 0.3]}><coneGeometry args={[0.035, 0.18, 6]} /></Solid><Solid at={[0.1, 0.8, 0.44]} color="#e8dcc0" rot={[0.5, 0, -0.3]}><coneGeometry args={[0.035, 0.18, 6]} /></Solid><Solid at={[0, 0.5, -0.5]} color={tone} rot={[-1.1, 0, 0]}><coneGeometry args={[0.05, 0.4, 6]} /></Solid></>;
-  else if (kind === "horror") body = <><Solid at={[0, 0.5, 0]} color="#3a2545"><sphereGeometry args={[0.3, 14, 12]} /></Solid>{[0, 1, 2, 3, 4, 5].map((i) => <Solid key={i} at={[Math.cos(i * 1.05) * 0.34, 0.22, Math.sin(i * 1.05) * 0.34]} color="#5b3b6b" rot={[Math.sin(i * 1.05) * 0.9, 0, -Math.cos(i * 1.05) * 0.9]}><coneGeometry args={[0.07, 0.5, 6]} /></Solid>)}<Box at={[-0.1, 0.58, 0.27]} size={[0.07, 0.07, 0.05]} color="#e5484d" glow={2.5} /><Box at={[0.1, 0.58, 0.27]} size={[0.07, 0.07, 0.05]} color="#e5484d" glow={2.5} /></>;
-  else if (kind === "swarm") body = <>{[[-0.2, 0.3, -0.1], [0.18, 0.5, -0.16], [0, 0.2, 0.08], [-0.16, 0.6, 0.2], [0.2, 0.34, 0.18], [0.02, 0.74, -0.04]].map(([x, y, z], i) => <Solid key={i} at={[x, y, z]} color={tone}><sphereGeometry args={[0.07, 8, 6]} /></Solid>)}</>;
-  else if (kind === "crowd") body = <>{[[-0.2, -0.12, 20], [0.2, -0.06, 140], [0, 0.2, 260]].map(([x, z, h], i) => <group key={i} position={[x, 0, z]} scale={0.72}><Humanoid body={`hsl(${h}, 25%, 50%)`} /></group>)}</>;
-  else if (kind === "hutt") body = <><mesh position={[0, 0.4, -0.05]} scale={[0.5, 0.45, 0.62]} castShadow><sphereGeometry args={[1, 16, 12]} /><meshLambertMaterial color="#7c8a4a" /></mesh><Solid at={[0, 0.16, -0.62]} color="#7c8a4a" rot={[-1.4, 0, 0]}><coneGeometry args={[0.2, 0.6, 8]} /></Solid><Solid at={[0, 0.92, 0.12]} color="#8a985a"><sphereGeometry args={[0.26, 14, 12]} /></Solid><Box at={[-0.1, 0.98, 0.35]} size={[0.06, 0.05, 0.04]} color="#f0a03c" glow={1.5} /><Box at={[0.1, 0.98, 0.35]} size={[0.06, 0.05, 0.04]} color="#f0a03c" glow={1.5} /></>;
-  else if (kind === "trooper") body = <><Humanoid body="#e9edf0" head="#e9edf0" legs="#e9edf0" /><Box at={[0, 1.1, 0.11]} size={[0.2, 0.05, 0.06]} color="#11161d" /><Box at={[0.24, 0.62, 0.22]} size={[0.05, 0.07, 0.5]} color="#11161d" /></>;
-  else if (kind === "officer") body = <><Humanoid body="#56624f" /><Cyl at={[0, 1.2, 0]} r={0.14} h={0.07} color="#3f4a3a" /><Box at={[0, 1.17, 0.14]} size={[0.2, 0.02, 0.1]} color="#3f4a3a" /><Box at={[-0.08, 0.86, 0.11]} size={[0.1, 0.05, 0.02]} color="#e5484d" glow={0.8} /><Box at={[0.24, 0.56, 0.16]} size={[0.04, 0.06, 0.26]} color="#11161d" /></>;
-  else if (kind === "force") {
-    // A robe and a lit lightsaber: red for the dark side and for anyone hostile, blue otherwise
-    const blade = /sith|inquisitor|dark|guard/i.test(name) || ring === SIDE_COLORS.hostile ? "#ff5a5a" : "#7fe3ff";
-    body = <><Humanoid body="#4a3626" head="#33251b" robe /><Box at={[0.26, 0.56, 0.12]} size={[0.04, 0.16, 0.04]} color="#9aa3ad" /><mesh position={[0.26, 1, 0.2]} rotation={[0.25, 0, 0]}><cylinderGeometry args={[0.025, 0.025, 0.8, 8]} /><meshBasicMaterial color={blade} /></mesh></>;
-  } else if (kind === "player") body = <><Humanoid body="#7a4b2a" legs="#3d4856" /><Box at={[0, 0.76, -0.14]} size={[0.26, 0.34, 0.1]} color="#2f3a48" /><Box at={[0.24, 0.56, 0.16]} size={[0.04, 0.06, 0.26]} color="#11161d" /></>;
-  else body = <Humanoid body={tone} />;
-  return (
-    <group scale={large ? 1.5 : 1}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
-        <ringGeometry args={[0.34, 0.44, 24]} />
-        <meshBasicMaterial color={ring} />
-      </mesh>
-      {body}
-      {marker && <Solid at={[0, 1.55, 0]} color="#facc15" glow={1.2}><octahedronGeometry args={[0.12]} /></Solid>}
-    </group>
-  );
-}
 
 const isLarge = (size?: string) => /large|huge|gargantuan/i.test(size ?? "");
 
@@ -245,121 +124,11 @@ const Hit = ({ at, size, onTap }: { at: V3; size: V3; onTap: () => void }) => (
   </mesh>
 );
 
-// ---------------------------------------------------------------------------------------------
-// Furniture, by what it is called (the names come from ROOM_PLANS in shared/logic). Drawn on
-// the squares it stands on: w by h, with its corner at the origin.
-// ---------------------------------------------------------------------------------------------
-
 const WOOD = "#8b5e3c";
 const WOOD_DARK = "#5f3f28";
 const DARK = "#27303b";
-const OLIVE = "#6f7448";
-const ROCK = "#6d6a66";
 const GLOW = "#5ad1ff";
 const AMBER = "#f0a03c";
-
-function Furniture({ name, w, h }: { name: string; w: number; h: number }) {
-  const n = name.toLowerCase();
-  const cx = w / 2;
-  const cz = h / 2;
-  const wide = w >= h;
-  const span = Math.max(w, h);
-  // A box that fills the footprint less a margin, standing on the floor
-  const block = (height: number, color: string, margin = 0.1, glow?: number) => <Box at={[cx, height / 2, cz]} size={[w - margin * 2, height, h - margin * 2]} color={color} glow={glow} />;
-  // A lit screen leaning back on top of something
-  const screen = (y: number, color = GLOW) => <Box at={[cx, y, cz]} size={[wide ? w * 0.6 : 0.06, 0.3, wide ? 0.06 : h * 0.6]} color={color} glow={1.2} rot={wide ? [-0.4, 0, 0] : [0, 0, 0.4]} />;
-  const stools = (count: number, r: number) => Array.from({ length: count }, (_, i) => <Cyl key={i} at={[cx + Math.cos(i * (6.28 / count) + 0.6) * r, 0.16, cz + Math.sin(i * (6.28 / count) + 0.6) * r]} r={0.11} h={0.32} color={WOOD} />);
-
-  if (/pit trap/.test(n)) return <><Box at={[cx, 0.005, cz]} size={[w - 0.08, 0.02, h - 0.08]} color="#05070a" />{[[cx, 0.03, 0.04, w, 0.06, 0.08], [cx, 0.03, h - 0.04, w, 0.06, 0.08], [0.04, 0.03, cz, 0.08, 0.06, h], [w - 0.04, 0.03, cz, 0.08, 0.06, h]].map(([x, y, z, sx, sy, sz], i) => <Box key={i} at={[x, y, z]} size={[sx, sy, sz]} color={AMBER} glow={0.6} />)}</>;
-  if (/bandstand/.test(n)) return <><Box at={[cx, 0.11, cz]} size={[w - 0.06, 0.22, h - 0.06]} color="#3a2f45" /><Box at={[cx, 0.225, cz]} size={[w - 0.24, 0.01, h - 0.24]} color="#5b4a70" />{Array.from({ length: Math.round(w) }, (_, i) => <Cyl key={i} at={[0.5 + i, 0.24, 0.08]} r={0.06} h={0.04} color={["#f472b6", GLOW, "#fde68a"][i % 3]} glow={2} />)}<pointLight position={[cx, 1.6, cz]} color="#f0abfc" intensity={1.4} distance={5} /></>;
-  if (/bar counter/.test(n)) return <>{block(0.7, WOOD_DARK, 0.12)}<Box at={[cx, 0.73, cz]} size={[w - 0.06, 0.06, h - 0.1]} color={WOOD} />{Array.from({ length: Math.floor(span) }, (_, i) => <Cyl key={i} at={[wide ? 0.5 + i : cx, 0.86, wide ? cz : 0.5 + i]} r={0.05} h={0.2} color={[GLOW, AMBER, "#58c98b"][i % 3]} glow={0.9} />)}</>;
-  if (/sabacc/.test(n)) return <><Cyl at={[cx, 0.25, cz]} r={0.2} h={0.5} color={DARK} /><Cyl at={[cx, 0.53, cz]} r={Math.min(w, h) * 0.42} h={0.07} color="#2f6b4a" glow={0.25} />{stools(5, Math.min(w, h) * 0.5)}</>;
-  if (/holo-table/.test(n)) return <><Cyl at={[cx, 0.27, cz]} r={Math.min(w, h) * 0.4} h={0.54} color={DARK} /><mesh position={[cx, 0.95, cz]}><sphereGeometry args={[Math.min(w, h) * 0.26, 12, 10]} /><meshBasicMaterial color={GLOW} transparent opacity={0.45} wireframe /></mesh><Cyl at={[cx, 0.56, cz]} r={Math.min(w, h) * 0.3} h={0.03} color={GLOW} glow={1.5} /></>;
-  if (/low table/.test(n)) return <><Cyl at={[cx, 0.13, cz]} r={0.1} h={0.26} color={DARK} /><Box at={[cx, 0.29, cz]} size={[w - 0.3, 0.05, h - 0.3]} color={WOOD} /></>;
-  if (/table/.test(n)) return <><Cyl at={[cx, 0.25, cz]} r={0.08} h={0.5} color={DARK} />{span > 1 ? <Box at={[cx, 0.52, cz]} size={[w - 0.25, 0.06, h - 0.25]} color={WOOD} /> : <Cyl at={[cx, 0.52, cz]} r={0.36} h={0.06} color={WOOD} />}{span > 1 ? [-1, 1].flatMap((side) => Array.from({ length: Math.floor(span) }, (_, i) => <Cyl key={`${side}${i}`} at={wide ? [0.5 + i, 0.16, cz + side * 0.42] : [cx + side * 0.42, 0.16, 0.5 + i]} r={0.1} h={0.32} color={WOOD_DARK} />)) : stools(3, 0.44)}</>;
-  if (/booth|couch|bench/.test(n)) {
-    const soft = /bench/.test(n) ? "#59636d" : "#7a3b3b";
-    return <>{block(0.3, soft, 0.1)}<Box at={wide ? [cx, 0.42, 0.14] : [0.14, 0.42, cz]} size={wide ? [w - 0.2, 0.6, 0.14] : [0.14, 0.6, h - 0.2]} color={soft} /></>;
-  }
-  if (/bunk/.test(n)) return <><Box at={[cx, 0.24, cz]} size={[w - 0.16, 0.12, h - 0.16]} color="#56624f" /><Box at={[cx, 0.84, cz]} size={[w - 0.16, 0.12, h - 0.16]} color="#56624f" />{[[0.1, 0.1], [w - 0.1, 0.1], [0.1, h - 0.1], [w - 0.1, h - 0.1]].map(([x, z], i) => <Box key={i} at={[x, 0.5, z]} size={[0.07, 1, 0.07]} color="#7b8794" />)}</>;
-  if (/bed/.test(n)) {
-    const medical = /medical/.test(n);
-    return <>{block(0.34, medical ? "#e9edf0" : "#59636d", 0.12)}<Box at={wide ? [0.32, 0.4, cz] : [cx, 0.4, 0.32]} size={[0.34, 0.08, 0.34]} color={medical ? GLOW : "#e8dcc0"} glow={medical ? 0.5 : undefined} />{medical && <Box at={wide ? [w - 0.16, 0.6, cz] : [cx, 0.6, h - 0.16]} size={[0.08, 0.7, 0.3]} color={DARK} />}</>;
-  }
-  if (/holding cell/.test(n)) return <><Box at={[cx, 0.04, cz]} size={[w - 0.1, 0.08, h - 0.1]} color={DARK} />{[[0.1, 0.1], [w - 0.1, 0.1], [0.1, h - 0.1], [w - 0.1, h - 0.1]].map(([x, z], i) => <Box key={i} at={[x, 0.7, z]} size={[0.1, 1.4, 0.1]} color="#7b8794" />)}<Box at={[cx, 1.42, cz]} size={[w - 0.1, 0.08, h - 0.1]} color={DARK} /><mesh position={[cx, 0.72, cz]}><boxGeometry args={[w - 0.22, 1.3, h - 0.22]} /><meshBasicMaterial color="#e5484d" transparent opacity={0.16} depthWrite={false} /></mesh></>;
-  if (/console|terminal/.test(n)) return <>{block(0.6, DARK, 0.14)}{screen(0.78, /guard/.test(n) ? AMBER : GLOW)}<Box at={[cx, 0.62, cz]} size={[w - 0.4, 0.03, h - 0.4]} color={GLOW} glow={0.6} /></>;
-  if (/desk/.test(n)) return <><Box at={[cx, 0.54, cz]} size={[w - 0.16, 0.08, h - 0.2]} color={WOOD_DARK} /><Box at={wide ? [0.22, 0.26, cz] : [cx, 0.26, 0.22]} size={[0.24, 0.52, 0.5]} color={DARK} /><Box at={wide ? [w - 0.22, 0.26, cz] : [cx, 0.26, h - 0.22]} size={[0.24, 0.52, 0.5]} color={DARK} />{screen(0.72)}</>;
-  if (/workbench/.test(n)) return <>{block(0.6, "#4b5563", 0.12)}<Box at={[cx - 0.3, 0.66, cz]} size={[0.3, 0.1, 0.2]} color={AMBER} /><Box at={[cx + 0.4, 0.68, cz]} size={[0.16, 0.14, 0.16]} color="#7b8794" /><Box at={wide ? [cx, 0.95, 0.12] : [0.12, 0.95, cz]} size={wide ? [w - 0.3, 0.6, 0.06] : [0.06, 0.6, h - 0.3]} color={DARK} /></>;
-  if (/reactor core/.test(n)) return <><Cyl at={[cx, 0.15, cz]} r={Math.min(w, h) * 0.46} h={0.3} color={DARK} /><Cyl at={[cx, 0.9, cz]} r={Math.min(w, h) * 0.3} h={1.3} color={GLOW} glow={1.4} /><Cyl at={[cx, 1.6, cz]} r={Math.min(w, h) * 0.4} h={0.14} color={DARK} /><pointLight position={[cx, 1, cz]} color={GLOW} intensity={2} distance={6} /></>;
-  if (/bacta tank/.test(n)) return <><Cyl at={[cx, 0.1, cz]} r={0.36} h={0.2} color={DARK} /><mesh position={[cx, 0.8, cz]}><cylinderGeometry args={[0.3, 0.3, 1.2, 16]} /><meshLambertMaterial color="#58c9b0" emissive="#58c9b0" emissiveIntensity={0.5} transparent opacity={0.55} /></mesh><Cyl at={[cx, 1.46, cz]} r={0.34} h={0.12} color={DARK} /></>;
-  if (/coolant tank/.test(n)) return <><Cyl at={[cx, 0.6, cz]} r={0.36} h={1.2} color="#7b8794" /><Cyl at={[cx, 0.6, cz]} r={0.37} h={0.1} color={GLOW} glow={1} /></>;
-  if (/fuel pump/.test(n)) return <><Box at={[cx, 0.5, cz]} size={[0.5, 1, 0.36]} color="#a33b3b" /><Box at={[cx, 0.8, cz + 0.19]} size={[0.3, 0.16, 0.02]} color={AMBER} glow={1} /><Cyl at={[cx + 0.3, 0.4, cz]} r={0.03} h={0.7} color="#11161d" /></>;
-  if (/drink dispenser/.test(n)) return <><Box at={[cx, 0.6, cz]} size={[0.6, 1.2, 0.5]} color={DARK} /><Box at={[cx, 0.8, cz + 0.26]} size={[0.4, 0.4, 0.02]} color="#58c98b" glow={1.2} /></>;
-  if (/power coupling/.test(n)) return <><Cyl at={[cx, 0.35, cz]} r={0.3} h={0.7} color="#4b5563" /><Cyl at={[cx, 0.75, cz]} r={0.14} h={0.14} color={AMBER} glow={1.6} /></>;
-  if (/sensor mast/.test(n)) return <><Cyl at={[cx, 0.1, cz]} r={0.26} h={0.2} color={DARK} /><Mast at={[cx, 0.2, cz]} h={1.6} /></>;
-  if (/broken pillar/.test(n)) return <><Cyl at={[cx, 0.35, cz]} r={0.3} h={0.7} color="#8a8680" /><Rock at={[cx + 0.3, 0, cz + 0.28]} r={0.16} color="#8a8680" /></>;
-  if (/rock pillar/.test(n)) return <Cyl at={[cx, 0.8, cz]} r={0.36} top={0.22} h={1.6} color={ROCK} />;
-  if (/pillar|awning post/.test(n)) return <><Cyl at={[cx, 0.8, cz]} r={/awning/.test(n) ? 0.1 : 0.28} h={1.6} color={/awning/.test(n) ? WOOD : "#8a8680"} /><Cyl at={[cx, 0.06, cz]} r={0.36} h={0.12} color="#6d6a66" /></>;
-  if (/boulder/.test(n)) return <Rock at={[cx, 0, cz]} r={0.44} />;
-  if (/rubble/.test(n)) return <>{Array.from({ length: Math.round(span) + 1 }, (_, i) => <Rock key={i} at={[wide ? 0.3 + i * 0.6 : cx + (i % 2 ? 0.14 : -0.14), 0, wide ? cz + (i % 2 ? 0.14 : -0.14) : 0.3 + i * 0.6]} r={0.2 + (i % 3) * 0.06} color={i % 2 ? "#5a5753" : ROCK} />)}</>;
-  if (/sarcophagus/.test(n)) return <>{block(0.5, "#6d6a66", 0.14)}<Box at={[cx, 0.56, cz]} size={[w - 0.2, 0.12, h - 0.2]} color="#8a8680" /></>;
-  if (/altar/.test(n)) return <>{block(0.6, "#6d6a66", 0.16)}<Solid at={[cx, 0.8, cz]} color="#c084fc" glow={1.5}><octahedronGeometry args={[0.14]} /></Solid></>;
-  if (/dais/.test(n)) return block(0.14, "#5a564f", 0.04);
-  if (/campfire/.test(n)) return <>{[0, 1, 2, 3, 4, 5].map((i) => <Rock key={i} at={[cx + Math.cos(i * 1.05) * 0.34, 0, cz + Math.sin(i * 1.05) * 0.34]} r={0.1} />)}<Solid at={[cx, 0.2, cz]} color="#ffb347" glow={2.5}><coneGeometry args={[0.18, 0.4, 6]} /></Solid><pointLight position={[cx, 0.5, cz]} color="#ffb347" intensity={2} distance={5} /></>;
-  if (/market stall/.test(n)) return <>{block(0.55, WOOD_DARK, 0.14)}{[[0.12, 0.12], [w - 0.12, 0.12], [0.12, h - 0.12], [w - 0.12, h - 0.12]].map(([x, z], i) => <Box key={i} at={[x, 0.75, z]} size={[0.05, 1.5, 0.05]} color={WOOD} />)}<Box at={[cx, 1.52, cz]} size={[w, 0.05, h]} color={["#c8663a", "#e8dcc0", "#4f8a8b"][hue(`${w}${h}${name.length}`) % 3]} rot={wide ? [0.14, 0, 0] : [0, 0, 0.14]} /><Box at={[cx - 0.3, 0.63, cz]} size={[0.2, 0.12, 0.2]} color={AMBER} /><Box at={[cx + 0.3, 0.62, cz]} size={[0.24, 0.1, 0.2]} color="#58c98b" /></>;
-  if (/crate stack/.test(n)) return <><Box at={[cx - w * 0.22, 0.3, cz - h * 0.22]} size={[w * 0.46, 0.6, h * 0.46]} color={OLIVE} /><Box at={[cx + w * 0.24, 0.3, cz - h * 0.2]} size={[w * 0.42, 0.6, h * 0.46]} color="#59636d" /><Box at={[cx - w * 0.2, 0.3, cz + h * 0.25]} size={[w * 0.5, 0.6, h * 0.4]} color="#59636d" /><Box at={[cx + w * 0.24, 0.26, cz + h * 0.26]} size={[w * 0.4, 0.52, h * 0.38]} color={OLIVE} /><Box at={[cx - w * 0.2, 0.86, cz - h * 0.2]} size={[w * 0.4, 0.5, h * 0.4]} color="#7b8794" /><Box at={[cx + w * 0.2, 0.84, cz + h * 0.1]} size={[w * 0.36, 0.5, h * 0.4]} color={OLIVE} /></>;
-  if (/cargo pallet/.test(n)) return <><Box at={[cx, 0.06, cz]} size={[w - 0.1, 0.12, h - 0.1]} color={WOOD_DARK} /><Box at={[cx - w * 0.2, 0.42, cz]} size={[w * 0.44, 0.6, h * 0.8]} color="#59636d" /><Box at={[cx + w * 0.24, 0.36, cz - h * 0.16]} size={[w * 0.36, 0.48, h * 0.44]} color={OLIVE} /><Box at={[cx + w * 0.24, 0.3, cz + h * 0.26]} size={[w * 0.34, 0.36, h * 0.3]} color={AMBER} /></>;
-  if (/crate|footlocker|parts bin/.test(n)) return <>{block(/footlocker/.test(n) ? 0.36 : 0.56, /parts/.test(n) ? "#59636d" : OLIVE, 0.16)}<Box at={[cx, /footlocker/.test(n) ? 0.2 : 0.3, cz + (h - 0.3) / 2]} size={[0.16, 0.1, 0.03]} color={AMBER} glow={0.8} /></>;
-  if (/weapon rack|tool rack|restraint rack/.test(n)) return <><Box at={[cx, 0.7, cz]} size={wide ? [w - 0.2, 1.3, 0.12] : [0.12, 1.3, h - 0.2]} color={DARK} />{Array.from({ length: Math.round(span * 2) }, (_, i) => <Box key={i} at={wide ? [0.3 + i * 0.42, 0.75, cz + 0.1] : [cx + 0.1, 0.75, 0.3 + i * 0.42]} size={[0.06, 0.8, 0.06]} color={/tool/.test(n) ? AMBER : "#11161d"} />)}</>;
-  if (/shelving|cabinet|locker/.test(n)) return <>{block(1.3, /locker/.test(n) ? "#59636d" : DARK, 0.16)}{[0.4, 0.8, 1.15].map((y) => <Box key={y} at={[cx, y, cz]} size={[w - 0.28, 0.03, h - 0.28]} color={/supply/.test(n) ? GLOW : "#7b8794"} glow={/supply/.test(n) ? 0.8 : undefined} />)}</>;
-  if (/loading crane/.test(n)) return <><Cyl at={[0.4, 0.9, cz]} r={0.12} h={1.8} color={AMBER} /><Box at={[cx, 1.75, cz]} size={[w - 0.2, 0.12, 0.14]} color={AMBER} /><Cyl at={[w - 0.3, 1.4, cz]} r={0.02} h={0.6} color="#11161d" /><Box at={[w - 0.3, 1.08, cz]} size={[0.14, 0.1, 0.14]} color="#11161d" /></>;
-  if (/pipe run/.test(n)) return <><Solid at={[cx, 0.4, cz]} color="#7b8794" rot={wide ? [0, 0, Math.PI / 2] : [Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.16, 0.16, span - 0.1, 12]} /></Solid><Solid at={[cx, 0.72, cz]} color="#59636d" rot={wide ? [0, 0, Math.PI / 2] : [Math.PI / 2, 0, 0]}><cylinderGeometry args={[0.09, 0.09, span - 0.1, 10]} /></Solid>{[0.3, span - 0.3].map((d) => <Box key={d} at={wide ? [d, 0.4, cz] : [cx, 0.4, d]} size={[0.14, 0.8, 0.14]} color={DARK} />)}</>;
-  if (/cart/.test(n)) return <><Box at={[cx, 0.34, cz]} size={[0.6, 0.4, 0.44]} color={/instrument/.test(n) ? "#e9edf0" : "#59636d"} /><Box at={[cx, 0.57, cz]} size={[0.5, 0.05, 0.36]} color={/instrument/.test(n) ? GLOW : AMBER} glow={0.6} />{[[-0.22, -0.16], [0.22, -0.16], [-0.22, 0.16], [0.22, 0.16]].map(([x, z], i) => <Cyl key={i} at={[cx + x, 0.07, cz + z]} r={0.07} h={0.06} color="#11161d" />)}</>;
-  if (/pilot's seat|co-pilot's seat/.test(n)) return <><Cyl at={[cx, 0.16, cz]} r={0.1} h={0.32} color={DARK} /><Box at={[cx, 0.38, cz]} size={[0.5, 0.1, 0.5]} color="#3d4856" /><Box at={[cx - 0.24, 0.74, cz]} size={[0.1, 0.7, 0.5]} color="#3d4856" /><Box at={[cx + 0.42, 0.55, cz]} size={[0.34, 0.5, 0.5]} color={DARK} /><Box at={[cx + 0.42, 0.84, cz]} size={[0.34, 0.06, 0.4]} color={GLOW} glow={1.4} rot={[0, 0, -0.5]} /></>;
-  if (/gunnery seat/.test(n)) return <><Cyl at={[cx, 0.16, cz]} r={0.1} h={0.32} color={DARK} /><Box at={[cx, 0.38, cz]} size={[0.46, 0.1, 0.46]} color="#4a3d3d" /><Box at={[cx - 0.22, 0.7, cz]} size={[0.1, 0.6, 0.46]} color="#4a3d3d" /><Box at={[cx + 0.3, 0.7, cz]} size={[0.06, 0.06, 0.5]} color="#e5484d" glow={0.8} /><Box at={[cx + 0.3, 0.52, cz]} size={[0.2, 0.3, 0.2]} color={DARK} /></>;
-  if (/boarding ramp/.test(n)) return <><Box at={[cx, 0.04, cz]} size={[w - 0.1, 0.08, h - 0.1]} color="#59636d" />{[0, 1, 2, 3].map((i) => <Box key={i} at={[0.2 + i * 0.2, 0.09, cz]} size={[0.06, 0.02, h - 0.2]} color={AMBER} glow={0.7} />)}<Box at={[0.06, 0.8, cz]} size={[0.08, 1.4, h - 0.1]} color={DARK} /></>;
-  if (/command chair/.test(n)) return <><Cyl at={[cx, 0.16, cz]} r={0.1} h={0.32} color={DARK} /><Box at={[cx, 0.36, cz]} size={[0.5, 0.1, 0.5]} color="#3d4856" /><Box at={[cx, 0.72, cz - 0.22]} size={[0.5, 0.7, 0.1]} color="#3d4856" /></>;
-  if (/barricade/.test(n)) return <><Box at={[cx, 0.34, cz]} size={[w - 0.1, 0.68, h * 0.3]} color="#59636d" rot={wide ? [0.2, 0, 0] : [0, 0, 0.2]} /><Box at={[cx, 0.5, cz]} size={[w * 0.5, 0.08, h * 0.32]} color={AMBER} /></>;
-  if (/lifter droid dock/.test(n)) return <><Box at={[cx, 0.05, cz]} size={[0.8, 0.1, 0.8]} color={DARK} /><Box at={[cx - 0.3, 0.5, cz - 0.3]} size={[0.1, 1, 0.1]} color="#7b8794" /><Box at={[cx - 0.3, 1.02, cz - 0.3]} size={[0.12, 0.08, 0.12]} color="#58c98b" glow={2} /></>;
-  // Wall-mounted equipment and kiosks (see useKindOf)
-  if (/security camera|camera pole/.test(n)) return <><Box at={[cx, 1.5, cz]} size={[0.22, 0.2, 0.34]} color="#2a2f36" /><Box at={[cx, 1.5, cz + 0.2]} size={[0.1, 0.1, 0.06]} color="#e5484d" glow={2} /><Cyl at={[cx, 0.75, cz]} r={0.03} h={1.5} color="#59636d" /></>;
-  if (/alarm panel/.test(n)) return <><Box at={[cx, 1.1, cz]} size={[0.36, 0.44, 0.1]} color="#8f2f35" /><Box at={[cx, 1.1, cz + 0.06]} size={[0.14, 0.14, 0.04]} color="#ff6b6b" glow={1.4} /></>;
-  if (/info kiosk|notice board/.test(n)) return <>{block(0.7, "#2a2f36", 0.2)}<Box at={[cx, 1.05, cz]} size={[0.5, 0.5, 0.12]} color={GLOW} glow={1.1} /></>;
-  if (/access panel/.test(n)) return <><Box at={[cx, 1.05, cz]} size={[0.34, 0.44, 0.1]} color="#2a2f36" /><Box at={[cx, 1.12, cz + 0.06]} size={[0.2, 0.14, 0.03]} color="#58c98b" glow={1.2} /><Box at={[cx, 0.98, cz + 0.06]} size={[0.2, 0.16, 0.03]} color="#59636d" /></>;
-  return block(0.5, "#3d4856", 0.16);
-}
-
-// A cache: a strongbox with a lit lock, standing open once it has been emptied
-function Chest({ looted }: { looted?: boolean }) {
-  return (
-    <>
-      <Box at={[0.5, 0.2, 0.5]} size={[0.66, 0.4, 0.46]} color="#3a3320" />
-      <Box at={[0.5, 0.2, 0.5]} size={[0.7, 0.06, 0.5]} color="#f5d342" glow={0.3} />
-      {looted ? <Box at={[0.5, 0.56, 0.3]} size={[0.66, 0.06, 0.46]} color="#3a3320" rot={[1.2, 0, 0]} /> : <><Box at={[0.5, 0.44, 0.5]} size={[0.68, 0.1, 0.48]} color="#4a4228" /><Box at={[0.5, 0.36, 0.74]} size={[0.12, 0.12, 0.03]} color="#f5d342" glow={2} /></>}
-    </>
-  );
-}
-
-// A resource node (house rule, see "Gathering" in shared/logic): a vein of ore, a patch of plants,
-// a crystal cluster or a heap of parts, dull once it has run dry
-function NodeModel({ node, empty }: { node: ResourceNode; empty?: boolean }) {
-  const glow = empty ? 0 : 0.5 + node.tier * 0.5;
-  if (node.family === "plant") {
-    return <>{[[0.3, 0.35, 0.5], [0.55, 0.5, 0.3], [0.7, 0.3, 0.65], [0.45, 0.4, 0.7]].map(([x, h, z], i) => <Box key={i} at={[x, h / 2, z]} size={[0.1, h, 0.1]} color={empty ? "#4d4a35" : "#4f9a4f"} />)}{!empty && [[0.3, 0.38, 0.5], [0.55, 0.52, 0.3], [0.7, 0.33, 0.65]].map(([x, y, z], i) => <Box key={i} at={[x, y, z]} size={[0.16, 0.12, 0.16]} color="#f0c24b" glow={glow} />)}</>;
-  }
-  if (node.family === "hide") {
-    return <><Box at={[0.5, 0.12, 0.5]} size={[0.8, 0.24, 0.5]} color={empty ? "#4d4540" : "#6e4b3a"} rot={[0, 0.3, 0]} />{[-0.25, 0, 0.25].map((d, i) => <Box key={i} at={[0.5 + d, 0.3, 0.5]} size={[0.04, 0.2, 0.4]} color="#d9d2c0" rot={[0, 0.3, 0.2]} />)}</>;
-  }
-  if (node.family === "crystal") {
-    const color = ["#9ad1f0", "#c0a0f0", "#5fa8ff", "#ff6fa8"][node.tier] ?? "#9ad1f0";
-    return <><Box at={[0.5, 0.08, 0.5]} size={[0.7, 0.16, 0.6]} color="#4a4f58" />{[[0.4, 0.45, 0.45, 0.5], [0.62, 0.35, 0.55, 0.4], [0.5, 0.3, 0.7, 0.3]].map(([x, h, z, r], i) => <Box key={i} at={[x, 0.16 + h / 2, z]} size={[0.14, h, 0.14]} color={empty ? "#6a6f78" : color} glow={glow} rot={[0, r, r - 0.4]} />)}</>;
-  }
-  if (node.family === "salvage") {
-    return <><Box at={[0.45, 0.14, 0.5]} size={[0.7, 0.28, 0.5]} color="#59636d" rot={[0, 0.3, 0]} /><Box at={[0.6, 0.34, 0.4]} size={[0.3, 0.2, 0.3]} color="#3d4856" rot={[0.2, 0.5, 0]} />{!empty && <Box at={[0.35, 0.34, 0.6]} size={[0.14, 0.06, 0.14]} color="#58c98b" glow={glow} />}</>;
-  }
-  const vein = ["#b0b8c0", "#7fd0ff", "#ffb347", "#ff6b6b"][node.tier] ?? "#b0b8c0";
-  return <><Box at={[0.5, 0.2, 0.5]} size={[0.8, 0.4, 0.6]} color="#4a4f58" rot={[0, 0.2, 0]} /><Box at={[0.5, 0.32, 0.5]} size={[0.5, 0.1, 0.62]} color={empty ? "#5a5f68" : vein} glow={glow} rot={[0, 0.2, 0.1]} /></>;
-}
 
 // The painted berth of a ship that is out on a voyage (its pilot is off with it): the place it
 // will come back to, so that a hangar is not drawn empty without saying why
@@ -370,36 +139,6 @@ function Berth({ w, h, name }: { w: number; h: number; name: string }) {
       {[[0.1, 0.1], [w - 0.1, 0.1], [0.1, h - 0.1], [w - 0.1, h - 0.1]].map(([x, z], i) => <Box key={i} at={[x, 0.08, z]} size={[0.5, 0.06, 0.5]} color="#f5d342" />)}
       <Label at={[w / 2, 0.9, h / 2]} size={0.34} color="#f5d342">{`${name}: away on a voyage`}</Label>
     </>
-  );
-}
-
-// A ship on the floor, built on 6 by 4 squares with the bow to +x and stretched to its footprint
-export function ShipModel({ ship, w, h }: { ship: Pick<Ship, "size" | "role" | "status">; w: number; h: number }) {
-  const role = `${ship.role} ${ship.size}`.toLowerCase();
-  const wrecked = ship.status === "wrecked";
-  const hull = wrecked ? "#5a554f" : "#aeb6bd";
-  const dark = "#59636d";
-  const glass = <meshLambertMaterial color="#1b2a38" emissive={GLOW} emissiveIntensity={0.25} />;
-  const struts = [[-1.4, -0.9], [-1.4, 0.9], [1.4, 0]].map(([x, z], i) => <Cyl key={i} at={[x, 0.2, z]} r={0.07} h={0.4} color="#2b2f36" />);
-  let body: ReactNode;
-  if (/fighter|interceptor|skiff|tiny/.test(role)) {
-    // A snub fighter: a long nose, four foils with cannon at the tips, engines aft
-    body = <><Box at={[0.3, 0.75, 0]} size={[4.2, 0.5, 0.6]} color={hull} /><Solid at={[2.7, 0.75, 0]} color={hull} rot={[0, 0, -Math.PI / 2]}><coneGeometry args={[0.3, 0.8, 8]} /></Solid><mesh position={[0.6, 1.02, 0]}><sphereGeometry args={[0.28, 10, 8]} />{glass}</mesh>{[[1, 0.22], [1, -0.22], [-1, 0.22], [-1, -0.22]].map(([side, tilt], i) => <group key={i}><Box at={[-1, 0.75 + tilt * 2.2, side * 1.15]} size={[1.5, 0.06, 1.7]} color={dark} rot={[side * tilt, 0, 0]} /><Box at={[-0.6, 0.75 + tilt * 4, side * 1.9]} size={[1.9, 0.06, 0.06]} color="#e5484d" /></group>)}{[[0.26, 0.2], [0.26, -0.2], [-0.26, 0.2], [-0.26, -0.2]].map(([y, z], i) => <Cyl key={i} at={[-1.9, 0.75 + y, z]} r={0.16} h={0.1} color={GLOW} glow={2} />)}</>;
-  } else if (/shuttle|transport|courier|small/.test(role)) {
-    // A shuttle: a wedge of a hull, a tall fin, wings folded up for landing
-    body = <><Box at={[-0.3, 0.95, 0]} size={[3.6, 1.1, 1.5]} color={hull} /><Box at={[1.9, 0.82, 0]} size={[1.2, 0.7, 1.1]} color={hull} rot={[0, 0, -0.25]} /><mesh position={[2.2, 1.05, 0]}><boxGeometry args={[0.5, 0.3, 0.9]} />{glass}</mesh><Box at={[-0.8, 2.3, 0]} size={[2, 1.8, 0.08]} color={dark} /><Box at={[-0.7, 0.9, 1.5]} size={[2.2, 0.08, 1.7]} color={dark} rot={[0.35, 0, 0]} /><Box at={[-0.7, 0.9, -1.5]} size={[2.2, 0.08, 1.7]} color={dark} rot={[-0.35, 0, 0]} /><Box at={[-2.12, 0.95, 0]} size={[0.06, 0.6, 1.1]} color={GLOW} glow={1.6} /></>;
-  } else if (/freighter|hauler|smuggl|medium/.test(role)) {
-    // A light freighter: a saucer with forward mandibles and a cockpit pod on the starboard side
-    body = <><Cyl at={[-0.5, 0.9, 0]} r={1.9} h={0.6} color={hull} /><Cyl at={[-0.5, 1.26, 0]} r={0.8} h={0.14} color={dark} /><Box at={[1.9, 0.9, 0.5]} size={[1.8, 0.4, 0.5]} color={hull} /><Box at={[1.9, 0.9, -0.5]} size={[1.8, 0.4, 0.5]} color={hull} /><Solid at={[0.9, 0.95, 1.7]} color={dark} rot={[0, 0.5, Math.PI / 2]}><cylinderGeometry args={[0.28, 0.28, 1.5, 10]} /></Solid><mesh position={[1.55, 0.98, 2.05]}><sphereGeometry args={[0.27, 10, 8]} />{glass}</mesh><Cyl at={[-0.2, 1.42, -1]} r={0.36} top={0.5} h={0.14} color="#7b8794" /><Box at={[-2.36, 0.9, 0]} size={[0.08, 0.3, 1.9]} color={GLOW} glow={1.8} /></>;
-  } else {
-    // A corvette: a hammerhead bow, a slim neck, a block of engines aft
-    body = <><Box at={[2.3, 1, 0]} size={[1, 0.9, 2.4]} color={hull} /><Box at={[0.4, 1, 0]} size={[3, 0.6, 0.9]} color={hull} /><Box at={[-1.9, 1, 0]} size={[1.6, 1.3, 2.6]} color={dark} /><Box at={[0.4, 1.02, 0]} size={[2.8, 0.1, 0.94]} color="#e5484d" />{[-0.9, -0.3, 0.3, 0.9].map((z) => <Cyl key={z} at={[-2.74, 1, z]} r={0.22} h={0.1} color={GLOW} glow={2} />)}<mesh position={[2.82, 1.1, 0]}><boxGeometry args={[0.06, 0.24, 1.2]} />{glass}</mesh></>;
-  }
-  return (
-    <group position={[w / 2, 0, h / 2]} scale={[w / 6, Math.min(w / 6, h / 4), h / 4]} rotation={wrecked ? [0.12, 0, 0.16] : undefined}>
-      {!wrecked && struts}
-      {body}
-    </group>
   );
 }
 
@@ -518,27 +257,49 @@ const isWay = (a: RoomAsset) => !!a.side && a.kind !== "window";
 const onWall = (layout: { width: number; height: number }, a: RoomAsset): { x: number; z: number; turn: number } =>
   a.side === "n" ? { x: a.x + 0.5, z: 0, turn: 0 } : a.side === "s" ? { x: a.x + 0.5, z: layout.height, turn: 0 } : a.side === "w" ? { x: 0, z: a.y + 0.5, turn: Math.PI / 2 } : { x: layout.width, z: a.y + 0.5, turn: Math.PI / 2 };
 
-// A door, way out, secret way or window, drawn along x about the origin
-function Doorway({ kind, color, label, onTap }: { kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void }) {
+// A door, way out, secret way or window, drawn along x about the origin, its frame in the
+// building's style (arched, rounded or square; round windows in hulls)
+function Doorway({ kind, color, label, onTap, style }: { kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style }) {
   return (
     <>
-      {kind === "window" ? (
-        <mesh position={[0, 0.62, 0]}><boxGeometry args={[0.76, 0.42, WALL_THICK + 0.08]} /><meshLambertMaterial color={color} emissive={color} emissiveIntensity={0.7} transparent opacity={0.7} /></mesh>
-      ) : kind === "secret" ? (
-        <><Box at={[0, 0.3, 0]} size={[0.74, 0.5, WALL_THICK + 0.1]} color="#1b1524" />{[-0.24, -0.08, 0.08, 0.24].map((x) => <Box key={x} at={[x, 0.3, 0]} size={[0.05, 0.46, WALL_THICK + 0.14]} color={color} glow={1.2} />)}</>
-      ) : (
-        <>
-          <Box at={[-0.46, 0.7, 0]} size={[0.1, 1.4, 0.26]} color="#59636d" />
-          <Box at={[0.46, 0.7, 0]} size={[0.1, 1.4, 0.26]} color="#59636d" />
-          <Box at={[0, 1.4, 0]} size={[1.02, 0.1, 0.26]} color="#59636d" />
-          <mesh position={[0, 0.68, 0]}><boxGeometry args={[0.82, 1.34, 0.07]} /><meshLambertMaterial color={color} emissive={color} emissiveIntensity={0.5} transparent opacity={0.6} /></mesh>
-          <Box at={[0, 1.5, 0]} size={[0.3, 0.08, 0.3]} color={color} glow={2} />
-        </>
-      )}
+      <Opening kind={kind} color={color} style={style} />
       {label && <Label at={[0, kind === "window" || kind === "secret" ? 1.2 : 1.9, 0]} size={0.3} color={color}>{label}</Label>}
       {onTap && <Hit at={[0, 0.75, 0]} size={[1, 1.5, 0.9]} onTap={onTap} />}
     </>
   );
+}
+
+// Something standing on the floor that glides to a new square when it is moved (a crate shoved
+// by the Force) instead of jumping there: a short hop and a turn on the way
+function Glide({ x, y, z = 0, children }: { x: number; y: number; z?: number; children: ReactNode }) {
+  const group = useRef<THREE.Group>(null);
+  const move = useRef<{ from: THREE.Vector3; to: THREE.Vector3; start: number } | null>(null);
+  const placed = useRef("");
+  const key = `${x},${y},${z}`;
+  useLayoutEffect(() => {
+    const g = group.current;
+    if (!g) return;
+    const to = new THREE.Vector3(x, z, y);
+    if (!placed.current) g.position.copy(to);
+    else if (placed.current !== key) move.current = { from: g.position.clone(), to, start: performance.now() };
+    placed.current = key;
+  }, [key]);
+  useFrame(() => {
+    const m = move.current;
+    const g = group.current;
+    if (!m || !g) return;
+    const far = m.from.distanceTo(m.to);
+    const t = Math.min(1, (performance.now() - m.start) / (260 + far * 90));
+    g.position.lerpVectors(m.from, m.to, 1 - (1 - t) ** 3);
+    g.position.y += Math.sin(Math.PI * t) * Math.min(0.7, 0.12 + far * 0.08);
+    g.rotation.y = Math.sin(Math.PI * t) * 0.3;
+    if (t >= 1) {
+      move.current = null;
+      g.position.copy(m.to);
+      g.rotation.y = 0;
+    }
+  });
+  return <group ref={group}>{children}</group>;
 }
 
 // The squares of a wall that are solid, as runs between the gaps for doors
@@ -553,9 +314,13 @@ function wallRuns(length: number, gaps: number[]): [number, number][] {
   return runs;
 }
 
-function RoomShell({ width, height, assets, floor, wall, ships = [], walls = true, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, children }: {
+function RoomShell({ width, height, assets, floor, wall, ships = [], walls = true, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, children }: {
   width: number;
   height: number;
+  // How far each outside corner is rounded: north-west, north-east, south-east, south-west
+  corners?: [number, number, number, number];
+  // The building's look, for its doors and windows
+  style?: Style;
   // The room's level and what it is, for stairs, lifts and ladders (their floor rises)
   plan?: Pick<RoomLayout, "level" | "form" | "climb" | "width" | "height">;
   assets: RoomAsset[];
@@ -585,18 +350,37 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], walls = tru
   const climbs = plan?.climb ? rise(plan as RoomLayout) : 0;
   const wallH = WALL_HEIGHT + climbs;
   const ramp = (x: number, y: number) => (plan?.climb ? rampAt(plan as RoomLayout, x + 0.5, y + 0.5) : 0);
+  const [nw, ne, se, sw] = corners ?? [0, 0, 0, 0];
+  const rounded = nw + ne + se + sw > 0;
+  // Each wall runs between its corners, stopping short of a rounded one
   const sides = [
-    { side: "n", length: width, at: (a: number, b: number): [V3, V3] => [[(a + b) / 2, wallH / 2, 0], [b - a + (a === 0 ? WALL_THICK / 2 : 0) + (b === width ? WALL_THICK / 2 : 0), wallH, WALL_THICK]], along: (a: RoomAsset) => a.x },
-    { side: "s", length: width, at: (a: number, b: number): [V3, V3] => [[(a + b) / 2, wallH / 2, height], [b - a + (a === 0 ? WALL_THICK / 2 : 0) + (b === width ? WALL_THICK / 2 : 0), wallH, WALL_THICK]], along: (a: RoomAsset) => a.x },
-    { side: "w", length: height, at: (a: number, b: number): [V3, V3] => [[0, wallH / 2, (a + b) / 2], [WALL_THICK, wallH, b - a]], along: (a: RoomAsset) => a.y },
-    { side: "e", length: height, at: (a: number, b: number): [V3, V3] => [[width, wallH / 2, (a + b) / 2], [WALL_THICK, wallH, b - a]], along: (a: RoomAsset) => a.y },
+    { side: "n", length: width, ends: [nw, ne], at: (a: number, b: number): [V3, V3] => [[(a + b) / 2, wallH / 2, 0], [b - a + (a === 0 ? WALL_THICK / 2 : 0) + (b === width ? WALL_THICK / 2 : 0), wallH, WALL_THICK]], along: (a: RoomAsset) => a.x },
+    { side: "s", length: width, ends: [sw, se], at: (a: number, b: number): [V3, V3] => [[(a + b) / 2, wallH / 2, height], [b - a + (a === 0 ? WALL_THICK / 2 : 0) + (b === width ? WALL_THICK / 2 : 0), wallH, WALL_THICK]], along: (a: RoomAsset) => a.x },
+    { side: "w", length: height, ends: [nw, sw], at: (a: number, b: number): [V3, V3] => [[0, wallH / 2, (a + b) / 2], [WALL_THICK, wallH, b - a]], along: (a: RoomAsset) => a.y },
+    { side: "e", length: height, ends: [ne, se], at: (a: number, b: number): [V3, V3] => [[width, wallH / 2, (a + b) / 2], [WALL_THICK, wallH, b - a]], along: (a: RoomAsset) => a.y },
   ];
+  const trim = ([a, b]: [number, number], length: number, [first, last]: number[]): [number, number] => [a === 0 && first ? first : a, b === length && last ? length - last : b];
+  const floorTap = onFloor
+    ? (e: ThreeEvent<MouseEvent>) => {
+        e.stopPropagation();
+        if (e.delta > 8) return;
+        const p = e.object.worldToLocal(e.point.clone());
+        onFloor(Math.max(0, Math.min(width - 1, Math.floor(p.x + width / 2))), Math.max(0, Math.min(height - 1, Math.floor(p.z + height / 2))));
+      }
+    : undefined;
   return (
     <>
-      <mesh position={[width / 2, -0.1, height / 2]} receiveShadow onClick={onFloor ? (e) => { e.stopPropagation(); if (e.delta > 8) return; const p = e.object.worldToLocal(e.point.clone()); onFloor(Math.max(0, Math.min(width - 1, Math.floor(p.x + width / 2))), Math.max(0, Math.min(height - 1, Math.floor(p.z + height / 2)))); } : undefined}>
-        <boxGeometry args={[width, 0.2, height]} />
-        <meshLambertMaterial color={FLOORS[floor]} />
-      </mesh>
+      {/* The floor; a tap on it walks to the square (both floors are centred on the room's middle) */}
+      {rounded ? (
+        <group onClick={floorTap}>
+          <RoundedFloor w={width} d={height} radii={[nw, ne, se, sw]} color={FLOORS[floor]} />
+        </group>
+      ) : (
+        <mesh position={[width / 2, -0.1, height / 2]} receiveShadow onClick={floorTap}>
+          <boxGeometry args={[width, 0.2, height]} />
+          <meshLambertMaterial color={FLOORS[floor]} />
+        </mesh>
+      )}
       <lineSegments>
         <bufferGeometry>
           <bufferAttribute attach="attributes-position" count={grid.length / 3} array={grid} itemSize={3} />
@@ -605,30 +389,37 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], walls = tru
       </lineSegments>
       {plan?.climb && plan.form && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} />}
       {walls
-        ? sides.flatMap(({ side, length, at, along }) =>
-            wallRuns(length, assets.filter((a) => a.side === side && isWay(a)).map(along)).map(([a, b]) => {
+        ? sides.flatMap(({ side, length, at, along, ends }) =>
+            wallRuns(length, assets.filter((a) => a.side === side && isWay(a)).map(along)).map((run) => {
+              const [a, b] = trim(run, length, ends);
+              if (b - a < 0.01) return null;
               const [position, size] = at(a, b);
-              return <Box key={`${side}${a}`} at={position} size={size} color={wall} />;
+              return <Box key={`${side}${run[0]}`} at={position} size={size} color={wall} />;
             }),
           )
         : [[0, 0], [width, 0], [0, height], [width, height]].map(([x, z], i) => <Cyl key={i} at={[x, 0.3, z]} r={0.08} h={0.6} color={wall} />)}
+      {walls && ([[nw, nw, nw, 0], [ne, width - ne, ne, 1], [se, width - se, height - se, 2], [sw, sw, height - sw, 3]] as const).filter(([r]) => r > 0).map(([r, x, z, corner]) => (
+        <group key={`corner${corner}`} position={[x, 0, z]}>
+          <CornerWall r={r} h={wallH} thick={WALL_THICK} corner={corner} color={wall} />
+        </group>
+      ))}
       {assets.filter((a) => a.side && (walls || a.kind !== "window")).map((a) => {
         const spot = onWall({ width, height }, a);
         return (
           <group key={a.id} position={[spot.x, ramp(a.x, a.y), spot.z]} rotation={[0, spot.turn, 0]}>
-            <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} />
+            <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} />
           </group>
         );
       })}
       {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
-        <group key={a.id} position={[a.x, (a.z ?? 0) * LEVEL_H, a.y]}>
+        <Glide key={a.id} x={a.x} y={a.y} z={(a.z ?? 0) * LEVEL_H}>
           {a.kind === "ship" ? (ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} /> : <Berth w={a.w} h={a.h} name={a.name} />)
             : a.kind === "stairs" ? <StairsAsset w={a.w} h={a.h} up={/up/i.test(a.name)} />
             : a.kind === "loot" ? (nodeOf?.(a) ? <NodeModel node={nodeOf(a)!} empty={looted?.(a)} /> : <Chest looted={looted?.(a)} />)
-            : <Furniture name={a.name} w={a.w} h={a.h} />}
+            : <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} />}
           {/* Furniture that can be stood on (a bench, the stage) leaves the tap to the floor beneath, so it walks to that square */}
           {onAsset && !(onFloor && a.kind === "furniture" && !a.blocks && !useKindOf(a.name)) && <Hit at={[a.w / 2, 0.5, a.h / 2]} size={[a.w, 1, a.h]} onTap={() => onAsset(a)} />}
-        </group>
+        </Glide>
       ))}
       {children}
     </>
@@ -1227,7 +1018,7 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
       {agents.map((a) => (
         <group key={a.key} ref={(g) => { groups.current[a.key] = g; }} position={[a.x + 0.5, 0, a.y + 0.5]} rotation={[0, hue(a.key) % 6, 0]}>
           <group rotation={a.occupant.disabled ? [-Math.PI / 2, 0, 0.4] : [0, 0, 0]} position={[0, a.occupant.disabled ? 0.14 : 0, 0]}>
-            <Figure kind={tokenOf(a.occupant)} ring={a.occupant.disabled ? "#6b7280" : SIDE_COLORS[a.occupant.disposition]} name={a.occupant.name} large={isLarge(a.occupant.size)} />
+            <Figure kind={tokenOf(a.occupant)} ring={a.occupant.disabled ? "#6b7280" : SIDE_COLORS[a.occupant.disposition]} name={a.occupant.name} large={isLarge(a.occupant.size)} species={a.occupant.species} role={a.occupant.role} creature={a.occupant.creature} size={a.occupant.size} />
           </group>
           {a.occupant.captive && <><Box at={[-0.2, 0.15, 0]} size={[0.14, 0.1, 0.14]} color="#59636d" /><Box at={[0.2, 0.15, 0]} size={[0.14, 0.1, 0.14]} color="#59636d" /></>}
           {a.brain === "musician" && <Instrument name={a.occupant.loadout[0]} />}
@@ -1247,48 +1038,6 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
         </group>
       )}
     </>
-  );
-}
-
-// People and ships on the way between places (shared/logic withPresence: `moving`), drawn where
-// they are on the way and eased there between the clock's minutes. Not tappable.
-// A speeder standing on the ground, hovering a hand's breadth up: a bike, a landspeeder with its
-// canopy, or an airspeeder with its fins. A wreck lies tilted and dark, smoking.
-export function SpeederModel({ model, wrecked }: { model: string; wrecked?: boolean }) {
-  const kind = /bike/i.test(model) ? "bike" : /air/i.test(model) ? "air" : "land";
-  const hull = wrecked ? "#4b4742" : kind === "bike" ? "#c8663a" : kind === "air" ? "#4a7bd0" : "#d0a23a";
-  const dark = wrecked ? "#2b2926" : "#2b2f36";
-  const lift = wrecked ? 0.05 : 0.28;
-  return (
-    <group position={[0, lift, 0]} rotation={wrecked ? [0.12, 0.5, 0.18] : [0, 0, 0]}>
-      {kind === "bike" ? (
-        <>
-          <Box at={[0, 0.2, 0]} size={[0.3, 0.2, 1.7]} color={hull} />
-          <Box at={[0, 0.34, 0.5]} size={[0.5, 0.06, 0.1]} color={dark} />
-          <Box at={[0, 0.4, -0.5]} size={[0.3, 0.12, 0.5]} color={dark} />
-          <Cyl at={[0, 0.16, -0.95]} r={0.16} h={0.2} color={dark} />
-          {!wrecked && <Box at={[0, 0.16, -1.08]} size={[0.2, 0.12, 0.06]} color={GLOW} glow={1.4} />}
-        </>
-      ) : kind === "air" ? (
-        <>
-          <Box at={[0, 0.25, 0]} size={[1.3, 0.3, 2.6]} color={hull} />
-          <Box at={[0, 0.5, -0.2]} size={[0.9, 0.34, 1.2]} color="#1b2a38" />
-          <Box at={[-0.85, 0.3, -0.7]} size={[0.5, 0.06, 1]} color={dark} />
-          <Box at={[0.85, 0.3, -0.7]} size={[0.5, 0.06, 1]} color={dark} />
-          <Box at={[0, 0.55, -1.2]} size={[0.08, 0.5, 0.5]} color={dark} />
-          {!wrecked && [-0.4, 0.4].map((x) => <Box key={x} at={[x, 0.18, -1.35]} size={[0.3, 0.2, 0.08]} color={GLOW} glow={1.4} />)}
-        </>
-      ) : (
-        <>
-          <Box at={[0, 0.25, 0]} size={[1.2, 0.3, 2.2]} color={hull} />
-          <Box at={[0, 0.5, -0.1]} size={[0.9, 0.28, 0.9]} color="#1b2a38" />
-          <Box at={[0, 0.34, 0.95]} size={[0.8, 0.14, 0.4]} color={dark} />
-          {[-0.5, 0.5].map((x) => <Cyl key={x} at={[x, 0.1, -0.9]} r={0.17} h={0.22} color={dark} />)}
-          {!wrecked && [-0.5, 0.5].map((x) => <Box key={x} at={[x, 0.1, -1.05]} size={[0.22, 0.14, 0.06]} color={GLOW} glow={1.4} />)}
-        </>
-      )}
-      {wrecked && <Solid at={[0.1, 0.9, 0]} color="#6b6862"><sphereGeometry args={[0.22, 8, 8]} /></Solid>}
-    </group>
   );
 }
 
@@ -1317,7 +1066,7 @@ function Follower({ companion, index, feet, open, height, onTap }: { companion: 
   return (
     <group ref={group}>
       <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, 0, 0]} position={[0, down ? 0.14 : 0, 0]}>
-        <Figure kind={tokenOf({ name: companion.name, role: companion.kind === "droid" ? "utility droid" : companion.kind === "beast" ? "wildlife" : companion.role, creature: companion.creature })} ring={SIDE_COLORS.friendly} name={companion.name} large={isLarge(companion.size)} />
+        <Figure kind={tokenOf({ name: companion.name, role: companion.kind === "droid" ? "utility droid" : companion.kind === "beast" ? "wildlife" : companion.role, creature: companion.creature })} ring={SIDE_COLORS.friendly} name={companion.name} large={isLarge(companion.size)} species={companion.species} role={companion.role} creature={companion.creature} size={companion.size} />
       </group>
       <Label at={[0, isLarge(companion.size) ? 2.2 : 1.6, 0]} size={0.26} color={SIDE_COLORS.friendly}>{companion.name}</Label>
       {onTap && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={onTap} />}
@@ -1360,13 +1109,18 @@ function Strollers({ strolls }: { strolls: Stroll[] }) {
     <>
       {strolls.map((w) => (
         <group key={w.key} ref={(g) => { groups.current[w.key] = g; }} position={[w.path[0].x + 0.5, 0, w.path[0].y + 0.5]}>
-          <Figure kind="person" ring="#9ca3af" />
+          <Figure kind="person" ring="#9ca3af" name={w.key} />
         </group>
       ))}
     </>
   );
 }
 
+// A beast to ride, by the rider's name (the mounts of the transport data)
+const pickMount = (name: string) => ["Dewback", "Eopie", "Bantha", "Tauntaun", "Kaadu", "Varactyl"][hue(name) % 6];
+
+// People and ships on the way between places (shared/logic withPresence: `moving`), drawn where
+// they are on the way and eased there between the clock's minutes. Not tappable.
 function Walkers({ walkers }: { walkers: Walker[] }) {
   const groups = useRef<Record<string, THREE.Group | null>>({});
   useFrame((_, delta) => {
@@ -1385,10 +1139,10 @@ function Walkers({ walkers }: { walkers: Walker[] }) {
       {walkers.map((w) => (
         <group key={w.key} ref={(g) => { groups.current[w.key] = g; }} position={w.from} scale={w.scale ?? 1}>
           {w.kind === "person" ? <Figure kind="person" ring="#9ca3af" name={w.name} />
-            : w.kind === "speeder" || w.kind === "airspeeder" ? <><Box at={[0, 0.3, 0]} size={[0.6, 0.25, 1.2]} color={w.kind === "airspeeder" ? "#3d7fb0" : "#c8663a"} /><Box at={[0, 0.48, -0.15]} size={[0.4, 0.2, 0.4]} color={GLOW} glow={0.8} /></>
-            : w.kind === "mount" ? <><Solid at={[0, 0.5, 0]} color="#8a6a46" rot={[Math.PI / 2, 0, 0]}><capsuleGeometry args={[0.22, 0.6, 4, 10]} /></Solid>{[[-0.14, 0.28], [0.14, 0.28], [-0.14, -0.28], [0.14, -0.28]].map(([x, z], i) => <Box key={i} at={[x, 0.2, z]} size={[0.09, 0.4, 0.09]} color="#6b4f33" />)}<Box at={[0, 0.82, 0.42]} size={[0.14, 0.34, 0.2]} color="#8a6a46" /><Box at={[0, 0.78, -0.05]} size={[0.3, 0.14, 0.4]} color="#b9424a" /></>
+            : w.kind === "speeder" || w.kind === "airspeeder" ? <group scale={0.55}><SpeederModel model={w.kind === "airspeeder" ? "Airspeeder" : `Landspeeder ${w.name}`} /></group>
+            : w.kind === "mount" ? <Figure kind="beast" ring="#9ca3af" name={pickMount(w.name)} />
             : w.kind === "hauler" ? <><Box at={[0, 0.5, 0.35]} size={[0.8, 0.5, 0.5]} color="#5b6773" /><Box at={[0, 0.62, -0.45]} size={[0.9, 0.8, 1.1]} color="#c9b48a" /><Box at={[0, 0.2, 0]} size={[0.7, 0.12, 1.8]} color="#2a2f36" /></>
-            : <><Solid at={[0, 0, 0]} color="#d9dde2" rot={[Math.PI / 2, 0, 0]}><coneGeometry args={[0.5, 1.6, 8]} /></Solid><Box at={[0, 0, -0.5]} size={[1.4, 0.1, 0.5]} color="#9aa3ad" /><Box at={[0, 0, -0.85]} size={[0.3, 0.2, 0.1]} color={AMBER} glow={2} /></>}
+            : <group rotation={[0, -Math.PI / 2, 0]} scale={0.3}><group position={[0, -0.9, 0]}><ShipBody ship={{ size: "Small", role: "shuttle", status: "orbiting", name: w.name }} /></group></group>}
           {w.kind !== "person" && <Label at={[0, 1.2, 0]} size={0.5} color="#e8dcc0">{w.name}</Label>}
           {w.note && <Label at={[0, w.kind === "person" ? 1.5 : 1.8, 0]} size={w.kind === "person" ? 0.24 : 0.4} color="#fca5a5">{w.note}</Label>}
         </group>
@@ -1471,16 +1225,6 @@ function Barricade({ squares, guards, onTap }: { squares: { x: number; y: number
 
 const MARGIN = 6;
 const DECOR: Record<string, string[]> = { desert: ["rock", "mast"], ice: ["ice"], forest: ["tree", "rock"], jungle: ["tree", "tree", "rock"], swamp: ["tree", "rock"], temperate: ["tree", "rock"], urban: ["lamp", "crate", "kiosk", "camera"], "gas giant": ["lamp", "crate"], ocean: ["lamp", "rock"], volcanic: ["rock"], barren: ["rock"] };
-
-function Decor({ kind }: { kind: string }) {
-  if (kind === "tree") return <><Cyl at={[0.5, 0.4, 0.5]} r={0.1} h={0.8} color="#5f3f28" /><Solid at={[0.5, 1.4, 0.5]} color="#2f6b3a"><coneGeometry args={[0.5, 1.5, 7]} /></Solid></>;
-  if (kind === "lamp") return <><Cyl at={[0.5, 0.9, 0.5]} r={0.05} h={1.8} color="#59636d" /><Box at={[0.5, 1.84, 0.5]} size={[0.3, 0.1, 0.3]} color="#ffd98a" glow={2} /></>;
-  if (kind === "mast") return <Mast at={[0.5, 0, 0.5]} h={2} />;
-  if (kind === "kiosk") return <><Box at={[0.5, 0.4, 0.5]} size={[0.5, 0.8, 0.4]} color="#2a2f36" /><Box at={[0.5, 0.95, 0.5]} size={[0.5, 0.5, 0.1]} color="#5ad1ff" glow={1} /></>;
-  if (kind === "camera") return <><Cyl at={[0.5, 1.2, 0.5]} r={0.04} h={2.4} color="#59636d" /><Box at={[0.5, 2.3, 0.62]} size={[0.24, 0.2, 0.36]} color="#2a2f36" /><Box at={[0.5, 2.3, 0.82]} size={[0.1, 0.1, 0.05]} color="#e5484d" glow={2} /></>;
-  if (kind === "crate") return <Box at={[0.5, 0.28, 0.5]} size={[0.6, 0.56, 0.6]} color={OLIVE} />;
-  return <Rock at={[0.5, 0, 0.5]} r={0.4} color={kind === "ice" ? "#cfe3ec" : ROCK} />;
-}
 
 // The square outside a wall that something set in it opens on to (on the building's grid)
 const beyond = (l: RoomLayout, a: RoomAsset) => ({ x: l.x + a.x + (a.side === "e" ? 1 : a.side === "w" ? -1 : 0), y: l.y + a.y + (a.side === "s" ? 1 : a.side === "n" ? -1 : 0) });
@@ -1909,6 +1653,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     else if (a.kind === "loot" && a.ref) walkTo(around(l.x + a.x, l.y + a.y), () => onAct?.({ type: "loot", id: a.ref! }));
     else if (a.kind === "ship" && a.ref && !inside!.ships.some((ship) => ship.id === a.ref)) onAct?.({ type: "note", text: `${a.name}'s berth: the ship is away on a voyage and will be back.` });
     else if (a.kind === "ship" && a.ref) walkTo(around(l.x + a.x, l.y + a.y, a.w, a.h), () => onAct?.({ type: "ship", id: a.ref! }));
+    // Any other piece: a card that says what it is (and moves it with the Force, for one who can)
+    else if (a.kind === "furniture") onAct?.({ type: "use", areaId: inside!.id, id: a.id, name: a.name });
     else onAct?.({ type: "note", text: a.name });
   };
   // Something in an outside wall was tapped from the street
@@ -1946,6 +1692,32 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (under) roofed.add(under.id);
   }
   const sizeOfGround = Math.max(240, ground.w + 80, ground.h + 80);
+  // The look of the building's walls by the world it stands on (models.tsx styleOf)
+  const style = styleOf(wall === STEEL ? "station" : biome, building.type);
+  // How far each outside corner of a room is rounded (north-west, north-east, south-east, south-
+  // west): a corner another room touches at the same height stays square, and so does one with a
+  // door or window in the wall beside it (it is cut back to the nearest one)
+  const radiiOf = (room: Area, most = style.corner): [number, number, number, number] => {
+    const l = room.layout;
+    if (!l || most <= 0) return [0, 0, 0, 0];
+    const lv = l.level ?? 0;
+    const top = lv + 1 + (l.climb?.levels ?? 0);
+    const others = rooms.filter((o) => o !== room && o.layout && formOf(o) !== "gallery" && (o.layout.level ?? 0) < top && lv < (o.layout.level ?? 0) + 1 + (o.layout.climb?.levels ?? 0));
+    const taken = (x: number, y: number) => others.some((o) => x >= o.layout!.x && x < o.layout!.x + o.layout!.width && y >= o.layout!.y && y < o.layout!.y + o.layout!.height);
+    const ways = l.assets.filter((a) => a.side);
+    const cap = Math.min(most, l.width / 2.5, l.height / 2.5);
+    const corner = (cells: [number, number][], limits: number[]) => (cells.some(([x, y]) => taken(x, y)) ? 0 : Math.max(0, Math.min(cap, ...limits)));
+    const { x, y, width: w, height: h } = l;
+    const along = (side: string, f: (a: RoomAsset) => number) => ways.filter((a) => a.side === side).map(f);
+    return [
+      corner([[x - 1, y - 1], [x - 1, y], [x, y - 1]], [...along("n", (a) => a.x), ...along("w", (a) => a.y)]),
+      corner([[x + w, y - 1], [x + w, y], [x + w - 1, y - 1]], [...along("n", (a) => w - a.x - 1), ...along("e", (a) => a.y)]),
+      corner([[x + w, y + h], [x + w, y + h - 1], [x + w - 1, y + h]], [...along("s", (a) => w - a.x - 1), ...along("e", (a) => h - a.y - 1)]),
+      corner([[x - 1, y + h], [x - 1, y + h - 1], [x, y + h]], [...along("s", (a) => a.x), ...along("w", (a) => h - a.y - 1)]),
+    ];
+  };
+  // Inside a room the curve is kept small, so that the corner square stays a square to stand on
+  const insideRadii = (room: Area) => radiiOf(room).map((r) => Math.min(r, 1.1)) as [number, number, number, number];
 
   return (
     <>
@@ -1998,6 +1770,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               <group key={room.id} position={[l.x, levelY(l), l.y]}>
                 <RoomShell
                   plan={l}
+                  corners={formOf(room) || openAir(room) ? undefined : insideRadii(room)}
+                  style={style}
                   width={l.width}
                   height={l.height}
                   assets={shown}
@@ -2068,13 +1842,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               {lift > 0.01 && form !== "gallery" && form !== "walkway" && <Box at={[l.width / 2, -lift / 2, l.height / 2]} size={[l.width - 0.1, lift, l.height - 0.1]} color={new THREE.Color(wall).multiplyScalar(0.7).getStyle()} />}
               {form === "roof" ? (
                 <group position={[0, 0.02, 0]} onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
-                  <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} wayColor={wayColor} wayLabel={() => undefined} />
+                  <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} wayColor={wayColor} wayLabel={() => undefined} style={style} corners={(() => { const under = rooms.find((o) => roofed.has(o.id) && o.layout!.x === l.x && o.layout!.y === l.y && o.layout!.width === l.width && o.layout!.height === l.height); return under ? radiiOf(under) : undefined; })()} />
                   {/* Who stands on it, to be seen from the street */}
                   {!duel && l.assets.filter((a) => a.kind === "npc").map((a) => {
                     const o = room.occupants.find((x) => x.id === a.ref);
                     return o ? (
                       <group key={a.id} position={[a.x + 0.5, 0, a.y + 0.5]}>
-                        <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} />
+                        <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} species={o.species} role={o.role} creature={o.creature} size={o.size} />
                         <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS[o.disposition]}>{o.name}</Label>
                         <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} />
                       </group>
@@ -2122,7 +1896,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     const o = room.occupants.find((x) => x.id === a.ref);
                     return o ? (
                       <group key={a.id} position={[a.x + 0.5, 0.12, a.y + 0.5]}>
-                        <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} />
+                        <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} species={o.species} role={o.role} creature={o.creature} size={o.size} />
                         <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS[o.disposition]}>{o.name}</Label>
                         <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} />
                       </group>
@@ -2139,7 +1913,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     const o = room.occupants.find((x) => x.id === a.ref);
                     return o ? (
                       <group key={a.id} position={[a.x + 0.5, 0, a.y + 0.5]}>
-                        <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} />
+                        <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} species={o.species} role={o.role} creature={o.creature} size={o.size} />
                         <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS[o.disposition]}>{o.name}</Label>
                         <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} />
                       </group>
@@ -2159,19 +1933,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 </group>
               ) : (
                 <>
-                  <mesh position={[l.width / 2, body / 2, l.height / 2]} castShadow onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
-                    <boxGeometry args={[l.width, body, l.height]} />
-                    <meshLambertMaterial color={wallColor} />
-                  </mesh>
-                  {!roofed.has(room.id) && <Box at={[l.width / 2, body + 0.05, l.height / 2]} size={[l.width + 0.2, 0.1, l.height + 0.2]} color={opened ? "#1a2028" : "#4a525c"} />}
+                  <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
+                    <RoomBlock w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} />
+                  </group>
                   {!opened && !form && !roofed.has(room.id) && (
                     <>
-                      {/* A parapet round the roof, and what stands on it */}
-                      <Box at={[l.width / 2, tall + 0.2, 0.06]} size={[l.width + 0.2, 0.3, 0.12]} color={wall} />
-                      <Box at={[l.width / 2, tall + 0.2, l.height - 0.06]} size={[l.width + 0.2, 0.3, 0.12]} color={wall} />
-                      <Box at={[0.06, tall + 0.2, l.height / 2]} size={[0.12, 0.3, l.height]} color={wall} />
-                      <Box at={[l.width - 0.06, tall + 0.2, l.height / 2]} size={[0.12, 0.3, l.height]} color={wall} />
-                      {room.gateway ? <Dome at={[l.width / 2, tall + 0.1, l.height / 2]} r={Math.min(l.width, l.height) * 0.3} color={wall} />
+                      {/* What stands on the roof */}
+                      {room.gateway ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.3} color={wall} /></group>
                         : roof % 3 === 0 ? <><Box at={[l.width * 0.3, tall + 0.35, l.height * 0.35]} size={[1, 0.5, 0.8]} color="#59636d" /><Cyl at={[l.width * 0.3, tall + 0.65, l.height * 0.35]} r={0.25} h={0.1} color="#2b2f36" /></>
                         : roof % 3 === 1 ? <Mast at={[l.width * 0.7, tall + 0.1, l.height * 0.6]} h={1.8} />
                         : <Cyl at={[l.width * 0.6, tall + 0.4, l.height * 0.4]} r={0.5} h={0.6} color="#59636d" />}
@@ -2191,7 +1959,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     </mesh>
                   )}
                   <group position={[at.x, 0, at.z]} rotation={[0, at.turn, 0]}>
-                    <Doorway kind={a.kind} color={WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} />
+                    <Doorway kind={a.kind} color={WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} />
                   </group>
                   </group>
                 );
@@ -2217,13 +1985,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             {!duel && <Squads spots={squadSpots} onTap={tappable ? (squad, label) => onAct?.({ type: "note", text: `${squad.heavy ? "Troopers" : "Constables"} (${squad.count}) are searching the district ${label ?? ""}.` }) : undefined} />}
             {street.decor.map((d, i) => (
               <group key={i} position={[d.x, 0, d.y]}>
-                <Decor kind={d.kind} />
+                <Decor kind={d.kind} seed={d.x * 7 + d.y * 13} />
                 {tappable && (d.kind === "kiosk" || d.kind === "camera") && <Hit at={[0.5, 0.8, 0.5]} size={[1, 1.8, 1]} onTap={() => walkTo(around(d.x, d.y), () => onAct?.({ type: "use", areaId: me.id, id: `street:${d.kind}:${d.x},${d.y}`, name: d.kind === "kiosk" ? "Info kiosk" : "Security camera" }))} />}
               </group>
             ))}
             {street.folk.map(({ occupant, x, y }, i) => (
               <group key={`${occupant.id}-${i}`} position={[x + 0.5, 0, y + 0.5]}>
-                <Figure kind={tokenOf(occupant)} ring={SIDE_COLORS[occupant.disposition]} name={occupant.name} large={isLarge(occupant.size)} />
+                <Figure kind={tokenOf(occupant)} ring={SIDE_COLORS[occupant.disposition]} name={occupant.name} large={isLarge(occupant.size)} species={occupant.species} role={occupant.role} creature={occupant.creature} size={occupant.size} />
                 <Label at={[0, 1.6, 0]} size={0.26} color={SIDE_COLORS[occupant.disposition]}>{occupant.name}</Label>
                 {tappable && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "occupant", id: occupant.id }))} />}
               </group>
@@ -2279,6 +2047,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             const fighters = useCombat.getState().combatants;
             const fighter = key === "me" ? fighters.find((c) => c.isPlayer) : key.startsWith("foe:") ? fighters.filter((c) => !onPartySide(c) && c.hp > 0)[Number(id) || 0] : undefined;
             if (fighter) return [(fighter.x ?? 0) + 0.5 - cx, (fighter.z ?? 0) * LEVEL_H + 0.6, (fighter.y ?? 0) + 0.5 - cz];
+            const piece = what === "asset" ? useCombat.getState().arena.assets.find((a) => a.id === id) : undefined;
+            if (piece) return [piece.x + piece.w / 2 - cx, (piece.z ?? 0) * LEVEL_H + 0.5, piece.y + piece.h / 2 - cz];
             if (what === "sq") {
               const [qx, qy, qz = 0] = id.split(",").map(Number);
               return [qx + 0.5 - cx, qz * LEVEL_H + 0.05, qy + 0.5 - cz];
@@ -2313,6 +2083,22 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   );
 }
 
+// Whether the character can pick a piece of the ground out for a power to move: they know a
+// power that moves objects, and it is loose furniture (on a district's streets, only the crates
+// set out as cover: what stands on the roofs is drawn from the world and stays put in a fight)
+function usePickable(): (a: RoomAsset) => boolean {
+  const mover = useCombat((state) => state.combatants.find((c) => c.isPlayer)?.powers?.some((p) => p.motion && !p.motion.rider && p.motion.objects));
+  const district = useCombat((state) => !!state.arena.district);
+  return (a) => !!mover && a.kind === "furniture" && !a.side && !a.height && (!district || a.id.startsWith("crate-"));
+}
+
+// The outline of a piece picked out for a power to move
+function Picked({ asset, high = 0 }: { asset: RoomAsset; high?: number }) {
+  const y = high + 0.06;
+  const [x0, z0, x1, z1] = [asset.x - 0.05, asset.y - 0.05, asset.x + asset.w + 0.05, asset.y + asset.h + 0.05];
+  return <Line points={[[x0, y, z0], [x1, y, z0], [x1, y, z1], [x0, y, z1], [x0, y, z0]]} color="#7dd3fc" lineWidth={3} />;
+}
+
 // ---------------------------------------------------------------------------------------------
 // A fight on a district's own map (the streets, the roofs and the catwalks, all of it in sight):
 // the squares the character can reach are lit at their height, everyone stands on theirs with a
@@ -2320,7 +2106,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
 // ---------------------------------------------------------------------------------------------
 
 function DuelPieces() {
-  const { combatants, currentTurn, arena, targetId, moveTo, setTarget } = useCombat();
+  const { combatants, currentTurn, arena, targetId, moveTo, setTarget, objectId, setObject } = useCombat();
+  const pickable = usePickable();
+  const picked = objectId ? arena.assets.find((a) => a.id === objectId) : undefined;
   const current = combatants[currentTurn];
   const player = combatants.find((c) => c.isPlayer);
   const playerTurn = !!current?.isPlayer && (player?.hp ?? 0) > 0 && !cannotAct(player!);
@@ -2330,6 +2118,14 @@ function DuelPieces() {
   const high = (z?: number) => (z ?? 0) * LEVEL_H;
   return (
     <>
+      {/* The crates set out on the street as cover, which a power can shove or hurl */}
+      {arena.assets.filter((a) => a.id.startsWith("crate-")).map((a) => (
+        <Glide key={a.id} x={a.x} y={a.y} z={high(a.z)}>
+          <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} />
+          {pickable(a) && <Hit at={[a.w / 2, 0.5, a.h / 2]} size={[a.w, 1, a.h]} onTap={() => setObject(objectId === a.id ? null : a.id)} />}
+        </Glide>
+      ))}
+      {picked && <Picked asset={picked} high={high(picked.z)} />}
       {Array.from(steps.entries()).filter(([, step]) => step.cost > 0).map(([k]) => {
         const { x, y, z } = parseKey(k);
         return (
@@ -2356,7 +2152,7 @@ function DuelPieces() {
         return (
           <group key={String(c.id)} position={[(c.x ?? 0) + 0.5, high(c.z), (c.y ?? 0) + 0.5]}>
             <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : 0, 0]}>
-              <Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} />
+              <Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} />
             </group>
             {!down && current?.id === c.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}><ringGeometry args={[0.5, 0.58, 28]} /><meshBasicMaterial color="#fde047" /></mesh>}
             {!down && target?.id === c.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.07, 0]}><ringGeometry args={[0.62, 0.7, 4]} /><meshBasicMaterial color="#f87171" /></mesh>}
@@ -2382,7 +2178,9 @@ function DuelPieces() {
 // ---------------------------------------------------------------------------------------------
 
 export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; areaId?: string | null; origin?: { x: number; y: number } }) {
-  const { combatants, currentTurn, arena, targetId, moveTo, setTarget } = useCombat();
+  const { combatants, currentTurn, arena, targetId, moveTo, setTarget, objectId, setObject } = useCombat();
+  const pickable = usePickable();
+  const picked = objectId ? arena.assets.find((a) => a.id === objectId) : undefined;
   const current = combatants[currentTurn];
   const player = combatants.find((c) => c.isPlayer);
   const playerTurn = !!current?.isPlayer && (player?.hp ?? 0) > 0 && !cannotAct(player!);
@@ -2412,7 +2210,8 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
           <planeGeometry args={[240, 240]} />
           <meshBasicMaterial color="#0b0f16" />
         </mesh>
-        <RoomShell width={arena.width} height={arena.height} assets={arena.assets.filter((a) => a.kind !== "npc")} floor={floorOf(arena.floor)} wall={wall} walls={!arena.open} onFloor={tapSquare} onAsset={(a) => !a.side && tapSquare(a.x, a.y)}>
+        <RoomShell width={arena.width} height={arena.height} assets={arena.assets.filter((a) => a.kind !== "npc")} floor={floorOf(arena.floor)} wall={wall} walls={!arena.open} onFloor={tapSquare} onAsset={(a) => !a.side && (pickable(a) ? setObject(objectId === a.id ? null : a.id) : tapSquare(a.x, a.y))}>
+          {picked && <Picked asset={picked} high={(picked.z ?? 0) * LEVEL_H} />}
           {/* Raised floors: a gallery over part of the room */}
           {(arena.platforms ?? []).map((p, i) => (
             <group key={`platform-${i}`} position={[p.x, p.z * LEVEL_H, p.y]}>
@@ -2453,7 +2252,7 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
               <group key={String(c.id)} position={[(c.x ?? 0) + 0.5, (c.z ?? 0) * LEVEL_H + ((c.z ?? 0) ? 0.12 : 0), (c.y ?? 0) + 0.5]}>
                 {/* The fallen lie where they fell */}
                 <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : 0, 0]}>
-                  <Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} />
+                  <Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} />
                 </group>
                 {!down && current?.id === c.id && (
                   <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}><ringGeometry args={[0.5, 0.58, 28]} /><meshBasicMaterial color="#fde047" /></mesh>
@@ -2479,6 +2278,9 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
           const [x, y] = key.slice(key.indexOf(":") + 1).split(",").map(Number);
           const who = key === "me" ? player : key.startsWith("foe:") ? combatants.filter((c) => !onPartySide(c) && c.hp > 0)[x || 0] : undefined;
           if (who) return [(who.x ?? 0) + 0.5 - cx, 0.6, (who.y ?? 0) + 0.5 - cz];
+          // A piece of the ground (to pick it out for a power that moves things)
+          const piece = key.startsWith("asset:") ? arena.assets.find((a) => a.id === key.slice(6)) : undefined;
+          if (piece) return [piece.x + piece.w / 2 - cx, (piece.z ?? 0) * LEVEL_H + 0.5, piece.y + piece.h / 2 - cz];
           return key.startsWith("sq:") ? [x + 0.5 - cx, 0, y + 0.5 - cz] : undefined;
         }}
       />
@@ -2788,7 +2590,7 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
           <group scale={2.6}><Figure kind="player" ring={SIDE_COLORS.player} marker /></group>
           {(((world as World & { party?: Companion[] }).party ?? []) as Companion[]).map((c, i) => (
             <group key={c.id} position={[3.4 + i * 2.8, 0, 0.8]} scale={2.2}>
-              <Figure kind={tokenOf({ name: c.name, role: c.kind === "droid" ? "utility droid" : c.kind === "beast" ? "wildlife" : c.role, creature: c.creature })} ring={SIDE_COLORS.friendly} name={c.name} />
+              <Figure kind={tokenOf({ name: c.name, role: c.kind === "droid" ? "utility droid" : c.kind === "beast" ? "wildlife" : c.role, creature: c.creature })} ring={SIDE_COLORS.friendly} name={c.name} species={c.species} role={c.role} creature={c.creature} size={c.size} />
             </group>
           ))}
           {parkedAt(view.id).map((v, i) => (

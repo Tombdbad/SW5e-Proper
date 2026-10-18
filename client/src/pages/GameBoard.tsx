@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
 import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, whereNow, useClock } from "@/components/Map/LocalMap";
+import { usePartyLook } from "@/components/Map/models";
 import PlayCombat, { ShipCombatPanel, type CombatItemOption } from "@/components/Combat/PlayCombat";
 import { useCombat, useShipFight, rollDamage, onPartySide } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
@@ -18,7 +19,7 @@ import { toast } from "sonner";
 import { carriedWeapons, characterFeatures, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, withItemEffects, isAttuned, type Equipped } from "@/lib/sw5e/characterCalculation";
 import { getSpeciesById } from "@/lib/sw5e/species";
 import { getClassById, getClassLevelValue } from "@/lib/sw5e/classes";
-import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect } from "@/lib/sw5e/rules";
+import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect, powerMotion, motionFeet, motionSummary } from "@/lib/sw5e/rules";
 import { getStarshipSize } from "@/lib/sw5e/starships";
 import { SKILLS } from "@/lib/sw5e/constants";
 import CheckDialog, { autoChecks, type CheckOption, type CheckRequest, type CheckRoller } from "@/components/Play/CheckDialog";
@@ -37,7 +38,7 @@ import {
   districtAt, rollEncounter, encounterResult, optionsOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
   START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText,
-  withPresence, withPartyShips,
+  withPresence, withPartyShips, bulkOf, shoveAsset, moveRoomAssets,
   gearUse, toolFor, toolTrained, boonOf, gambleMode, gambleResult, GAMBLE_ROUNDS, GAMBLE_HOUSE_DC, GAMBLE_STAKE, GAMBLE_COMPLICATION, GAMBLE_COMPLICATIONS,
   companionFrom, hireFee, wageFor, canHire, COMPANION_LIMIT, crOf, gentleDC, gentleLimit, isDroid, reprogramDC, FREEING, hitDieOfSize,
   groundRides, kmOf, hasRidesForHire, SEATS, EXPLOSIVE_CONDITION_ROUNDS,
@@ -1077,6 +1078,11 @@ export default function GameBoard() {
     leaning: leaningOf(character?.forceAlignment, character?.skillProficiencies ?? [], character?.abilityScores ?? {}),
     known: knownPowers.map((p) => p.name),
   };
+  // The character's figure on the map: their species, and a lit blade for one who uses the Force
+  // (red on the dark side)
+  useEffect(() => {
+    usePartyLook.getState().set({ species: character?.species, name: character?.name, force: learner.force, blade: learner.forceAlign === "Dark" ? "#ff4040" : (character?.name?.length ?? 0) % 2 ? "#6ef08a" : "#7fe3ff" });
+  }, [character?.species, character?.name, learner.force, learner.forceAlign]);
   const encounterHere = world?.encounter && districtHere?.id === world.encounter.districtId ? world.encounter : null;
   useEffect(() => {
     if (!world || !character || inCombat || dead || exploring) return;
@@ -1236,7 +1242,9 @@ export default function GameBoard() {
           const effect = powerEffect({ duration: facts.duration, concentration: facts.concentration, ...power }, level);
           const time = String(facts.castingPeriodText ?? "1 action").toLowerCase();
           const castTime: "bonus" | "reaction" | "action" | "long" = /bonus action/.test(time) ? "bonus" : /reaction/.test(time) ? "reaction" : /^1 action/.test(time) ? "action" : "long";
-          return { name: power.name as string, level: power.level as number, cost: powerCost(power), range: rangeFeet(power.range ?? facts.range), castTime, ...effect, ...castingStats(character.abilityScores, level, power) };
+          // A power that moves a creature or an object (Force Push/Pull, Force Throw, Telekinesis, the push of Force Repulse)
+          const motion = powerMotion({ level: power.level, description: power.description ?? facts.description, range: power.range ?? facts.range }, level);
+          return { name: power.name as string, level: power.level as number, cost: powerCost(power), range: rangeFeet(power.range ?? facts.range), castTime, ...effect, motion, ...(motion && !motion.rider ? { summary: motionSummary(motion) } : {}), ...castingStats(character.abilityScores, level, power) };
         })
         .sort((a, b) => order[a.kind] - order[b.kind] || a.level - b.level),
     };
@@ -1262,6 +1270,7 @@ export default function GameBoard() {
     size: o.size,
     creature: o.creature,
     role: o.role,
+    species: o.species,
   });
 
   // Fight the hostile creatures in this area, with their own armor, hit points and attacks
@@ -1508,6 +1517,17 @@ export default function GameBoard() {
         };
         const placed = layout && carcasses.reduce((l, c) => withCacheAsset({ id, layout: l }, c) ?? l, layout);
         galaxyMap = updateArea(galaxyMap, id, { occupants, loot, ...(placed ? { layout: placed } : {}) }).world;
+      }
+      // Furniture a power moved in the fight stays where it was put
+      for (const id of areaIds) {
+        const part = galaxyMap.areas[id];
+        if (!part?.layout) continue;
+        const moves: Record<string, { x: number; y: number }> = {};
+        for (const a of fightNow.arena.assets) {
+          const was = part.layout.assets.find((x) => x.id === a.id);
+          if (was?.kind === "furniture" && (was.x !== a.x || was.y !== a.y)) moves[a.id] = { x: a.x, y: a.y };
+        }
+        if (Object.keys(moves).length) galaxyMap = moveRoomAssets(galaxyMap, id, moves);
       }
       if (galaxyMap !== world) saveCampaign({ galaxyMap });
       // Renown: a fight costs standing with the side that lost it; the beasts of the wild have none
@@ -2623,6 +2643,7 @@ export default function GameBoard() {
     range: c.attack?.ranged ? ([c.attack.range ?? 80, c.attack.long ?? (c.attack.range ?? 80) * 4] as [number, number]) : undefined,
     size: c.size,
     creature: c.creature,
+    species: c.species,
     role: c.kind === "droid" ? "droid" : c.kind === "beast" ? "wildlife" : "ally",
   });
 
@@ -2842,6 +2863,79 @@ export default function GameBoard() {
       const seen = [...room.occupants.map((o) => `${o.count > 1 ? `${o.count} x ` : ""}${o.name} (${o.disposition})`), ...room.ships.map((ship) => ship.name)];
       toast.info(`Through the window of ${room.name}: ${seen.join(", ") || "nobody"}. (House rule: looking in needs no check.)`);
     }
+  };
+
+  // Moving a piece of furniture with the Force, out of a fight (shared/logic "Moving things with
+  // the Force"): the powers the character knows that can move it, each with Push and Pull. It
+  // goes away from the character or towards them, a square at a time, stopping before walls,
+  // furniture and people, and never where it would block a way in or out.
+  // (a render function, not a component: the page redraws every few seconds and a component made
+  // here would be a new one each time, taking the buttons away from under a finger)
+  const forceMoves = (areaId: string, assetId: string) => {
+    const room = world?.areas[areaId];
+    const l = room?.layout;
+    const asset = l?.assets.find((a) => a.id === assetId);
+    if (!world || !room || !l || !asset) return null;
+    const bulk = bulkOf(asset);
+    const movers = knownPowers
+      .map((power) => {
+        const facts = powerFacts(power.name) ?? {};
+        return { power, motion: powerMotion({ level: power.level, description: power.description ?? facts.description, range: power.range ?? facts.range }, level), range: rangeFeet(power.range ?? facts.range), cost: powerCost(power) };
+      })
+      .filter((m) => m.motion && !m.motion.rider && m.motion.objects);
+    const spot = usePartySpot.getState();
+    const me = { x: spot.x - l.x, y: spot.y - l.y };
+    const far = Math.max(0, asset.x - me.x, me.x - (asset.x + asset.w - 1), asset.y - me.y, me.y - (asset.y + asset.h - 1));
+    const points = character?.currentForcePoints ?? 0;
+    const move = (m: (typeof movers)[number], feet: number, mode: "away" | "toward") => {
+      // Where the people of the room stand just now: a piece stops before them
+      const people = new Set<string>();
+      for (const o of (scene ?? world).areas[areaId]?.occupants ?? []) {
+        const keys = [...l.assets.filter((a) => a.kind === "npc" && a.ref === o.id).map((a) => a.id), `v-${o.id}`];
+        for (const k of keys) {
+          const at = whereNow(k) ?? l.assets.find((a) => a.id === k);
+          if (at) people.add(`${at.x},${at.y}`);
+        }
+      }
+      const from = { x: asset.x + (asset.w - 1) / 2, y: asset.y + (asset.h - 1) / 2 };
+      const dir = mode === "toward" ? { x: me.x - from.x, y: me.y - from.y } : { x: from.x - me.x, y: from.y - me.y };
+      const res = shoveAsset(l, asset.id, dir, Math.floor(feet / 5), {
+        creatureAt: (x, y) => (people.has(`${x},${y}`) ? { id: "someone", name: "someone" } : undefined),
+        soft: (x, y) => x === me.x && y === me.y,
+      });
+      const name = asset.name.toLowerCase();
+      if (!res.squares) {
+        toast.info(`The ${name} will not move that way${res.blocked ? ": it would block the way" : res.struck ? (res.struck.what === "wall" ? ": a wall is in the way" : res.struck.what === "creature" ? ": someone is in the way" : `: the ${(res.struck.name ?? "").toLowerCase()} is in the way`) : ""}.`);
+        return;
+      }
+      if (m.cost) {
+        lastSavedPoints.current = points - m.cost;
+        saveCharacter({ currentForcePoints: points - m.cost });
+      }
+      saveCampaign({ galaxyMap: moveRoomAssets(world, room.id, { [asset.id]: { x: res.x, y: res.y } }) });
+      toast.success(`${m.power.name}: the ${name} ${mode === "toward" ? "slides towards you" : "is shoved away"} ${res.squares * 5} feet${res.blocked ? " and stops before it would block the way" : res.struck ? (res.struck.what === "wall" ? " and hits the wall" : res.struck.what === "creature" ? ", stopping short of someone" : ` up against the ${(res.struck.name ?? "").toLowerCase()}`) : ""}.`);
+      setPicked(null);
+    };
+    return (
+      <div className="mt-1 space-y-1" data-testid="force-moves">
+        <p className="text-xs text-gray-300">
+          {bulk.fixed ? "Built in: it cannot be moved." : `A ${bulk.size.toLowerCase()} object, about ${bulk.pounds.toLocaleString()} lb (house rule: judged from its size).`}
+        </p>
+        {!bulk.fixed && movers.map((m) => {
+          const feet = m.motion!.maxPounds !== undefined && bulk.pounds > m.motion!.maxPounds ? 0 : motionFeet(m.motion!, bulk.size, true);
+          const outOfRange = m.range !== undefined && far * 5 > Math.max(5, m.range);
+          const short = m.cost > points;
+          const why = !feet ? "too big or heavy for it" : outOfRange ? "out of range" : short ? "not enough force points" : "";
+          return (
+            <div key={m.power.name} className="flex flex-wrap items-center gap-1">
+              <span className="text-xs text-sky-200">{m.power.name} ({m.cost ? `${m.cost} pts` : "at will"}{feet ? `, ${feet} ft` : ""}{why ? `; ${why}` : ""}):</span>
+              <Button size="sm" disabled={!!why || inCombat || dead} onClick={() => move(m, feet, "away")} data-testid="force-push">Push</Button>
+              <Button size="sm" variant="outline" disabled={!!why || inCombat || dead} onClick={() => move(m, feet, "toward")} data-testid="force-pull">Pull</Button>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   // The buttons for dealing with whoever is watching: talk, threaten, fight
@@ -4098,7 +4192,7 @@ export default function GameBoard() {
               <Button size="sm" className="mt-1" disabled={inCombat || dead} onClick={() => { openDoors(); setPicked(null); }} data-testid="access-open">Open the locked doors (Intelligence, DC {dcBase}{trained ? "" : "; a security or slicer's kit helps"})</Button>
             </>
           )}
-          {!kind && <p className="text-xs text-gray-400">{assetId}</p>}
+          {!kind && forceMoves(areaId, assetId)}
         </>
       );
     }
