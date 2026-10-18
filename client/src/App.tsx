@@ -13,6 +13,7 @@ const GameBoard = lazy(() => import('./pages/GameBoard'));
 import { Toaster } from './components/ui/sonner';
 import ErrorBoundary from './components/ui/ErrorBoundary';
 const LoadingDemo = lazy(() => import('./pages/LoadingDemo'));
+const ModelGallery = lazy(() => import('./pages/ModelGallery'));
 
 // A character is edited on its own page (the sheet, the inventory, levelling up)
 function CharacterPageRedirect() {
@@ -95,6 +96,7 @@ function App() {
             <Route path="/map" element={<GalacticMapView />} />
             <Route path="/game/:campaignId" element={<GameBoard />} />
             <Route path="/dev/loading" element={<LoadingDemo />} />
+            <Route path="/dev/models" element={<ModelGallery />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
           </Suspense>
