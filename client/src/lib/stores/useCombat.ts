@@ -1,10 +1,10 @@
 import { create } from "zustand";
 import { useCharacter, Character } from "./useCharacter";
 import { rollDice, sumDiceResults } from "@/lib/sw5e/dice";
-import { conditionMechanics } from "@/lib/sw5e/rules";
+import { conditionMechanics, motionFeet, sizeRank, type PowerMotion } from "@/lib/sw5e/rules";
 import { conditions as conditionList } from "@/lib/sw5e/conditions";
 import type { RoomAsset, StatProfile, StatAttack, StatSpecial, StatSave, ShipFight as ShipFightData, ShipSheet as ShipSheetData, ShipHelmAction, ShipBoost } from "@shared/logic";
-import { shipCombatant, startShipFight, shipMove, shipTurn, shipFire, shipHelm, shipBoost, shipPatch, shipRegenerate, shipDirect, shipInterfere, shipFlee, endShipTurn, shipAi } from "@shared/logic";
+import { shipCombatant, startShipFight, shipMove, shipTurn, shipFire, shipHelm, shipBoost, shipPatch, shipRegenerate, shipDirect, shipInterfere, shipFlee, endShipTurn, shipAi, shoveAsset, bulkOf, type Bulk } from "@shared/logic";
 import { minimumRoll, type CombatFeature, type Amount } from "@/lib/sw5e/characterCalculation";
 import {
   StarshipCombatManager,
@@ -102,6 +102,7 @@ export interface Combatant {
   size?: string;
   creature?: string;
   role?: string;
+  species?: string;
   // Conditions in force (what each does is read from the conditions data, see conditionMechanics)
   conditions?: ActiveCondition[];
   // Fights on the player's side without being the player: a companion (its id is the companion's)
@@ -531,6 +532,8 @@ export interface CombatPower {
   range?: number;
   // What its casting takes: an action (the default), a bonus action, a reaction, or longer
   castTime?: "action" | "bonus" | "reaction" | "long";
+  // It moves a creature or an object (read from its text: rules.ts powerMotion)
+  motion?: PowerMotion;
   summary: string;
   // The caster's numbers for this power
   modifier: number;
@@ -1464,6 +1467,8 @@ interface CombatState {
   // The ground the fight is on, and the enemy the player has picked out
   arena: Arena;
   targetId: number | string | null;
+  // A piece of the ground picked out for a power to move (its asset id)
+  objectId: string | null;
   // Prepared boons and doses of poison that were used up in this fight
   spent: ("attack" | "damage" | "ac" | "poison")[];
   // A hit on the character waiting for them to choose a reaction (or none)
@@ -1494,6 +1499,7 @@ interface CombatState {
   // It closes with a target until within the given feet, as far as its movement goes; true when it got there
   approach: (targetId: number | string, withinFeet: number) => boolean;
   setTarget: (id: number | string) => void;
+  setObject: (id: string | null) => void;
   setAutoEnd: (on: boolean) => void;
   endCombat: () => void;
   nextTurn: () => void;
@@ -1514,7 +1520,8 @@ interface CombatState {
   aiStep: () => void;
   // The creature whose turn it is does nothing, and why
   pass: (reason: string) => void;
-  castPower: (index: number) => void;
+  // Casts one of the character's powers; a power that moves things is told what to move and which way
+  castPower: (index: number, choice?: MotionChoice) => void;
   deathSave: () => void;
 }
 
@@ -1541,6 +1548,7 @@ export function turnSpent(c: Combatant): boolean {
 }
 
 const patchOf = (w: Work): Partial<CombatState> => ({
+  arena: w.arena,
   combatants: w.combatants,
   combatLog: w.log,
   inCombat: w.inCombat,
@@ -1565,6 +1573,130 @@ const workOf = (s: CombatState): Work => ({
   spent: [...s.spent],
   currentTurn: s.currentTurn,
 });
+
+// ---------------------------------------------------------------------------------------------
+// Moving creatures and things with a power (rules.ts powerMotion; shared/logic shoveAsset, and
+// bulkOf for what furniture weighs). A creature is moved a square at a time along the line,
+// stopping before a wall, furniture or someone else (it strikes them) and dropping off the edge
+// of a roof or gantry (1d6 per 10 feet and prone, Player's Handbook "Falling").
+// ---------------------------------------------------------------------------------------------
+
+export type MotionChoice = { mode: "away" | "toward" | "at"; objectId?: string };
+
+const middleOf = (a: RoomAsset) => ({ x: a.x + (a.w - 1) / 2, y: a.y + (a.h - 1) / 2 });
+const cellsOf = (a: RoomAsset) => Array.from({ length: a.w * a.h }, (_, i) => ({ x: a.x + (i % a.w), y: a.y + Math.floor(i / a.w), z: a.z ?? 0 }));
+// Squares from a creature to the nearest square of a piece
+export const squaresToAsset = (c: Combatant, a: RoomAsset) => Math.min(...cellsOf(a).map((cell) => squaresApart(c, cell)));
+const way = (from: { x?: number; y?: number }, to: { x?: number; y?: number }) => ({ x: (to.x ?? 0) - (from.x ?? 0), y: (to.y ?? 0) - (from.y ?? 0) });
+
+// What a power can do with a piece of the fight's ground: how far it would move it, or why not
+export function objectReach(motion: PowerMotion | undefined, asset: RoomAsset | undefined): { feet: number; bulk?: Bulk; why?: string } {
+  if (!motion || motion.rider || !motion.objects || !asset) return { feet: 0, why: "it does not move objects" };
+  // A building's block on a district's map stays where it is
+  const bulk = asset.height ? { size: "Gargantuan" as const, pounds: Infinity, fixed: true } : bulkOf(asset);
+  if (bulk.fixed) return { feet: 0, bulk, why: `the ${asset.name.toLowerCase()} is fixed in place` };
+  if (motion.maxPounds !== undefined && bulk.pounds > motion.maxPounds) return { feet: 0, bulk, why: `the ${asset.name.toLowerCase()} is too heavy (about ${bulk.pounds.toLocaleString()} lb)` };
+  const feet = motionFeet(motion, bulk.size, true);
+  return feet ? { feet, bulk } : { feet: 0, bulk, why: `the ${asset.name.toLowerCase()} is too big (${bulk.size.toLowerCase()})` };
+}
+
+// Shoves a creature along a line: where it ends up, what it struck, how far it fell
+function shoveCreature(w: Work, at: number, dir: { x: number; y: number }, squares: number, soft?: (x: number, y: number) => boolean): { squares: number; struck?: { what: "wall" | "object" | "creature"; name?: string; index?: number }; fell?: number } {
+  const c = w.combatants[at];
+  const most = Math.max(Math.abs(dir.x), Math.abs(dir.y));
+  if (!most || squares <= 0) return { squares: 0 };
+  const [ux, uy] = [dir.x / most, dir.y / most];
+  const start = { x: c.x ?? 0, y: c.y ?? 0 };
+  let [x, y, z] = [start.x, start.y, c.z ?? 0];
+  const arena = w.arena;
+  const floorAt = (fx: number, fy: number, fz: number) => (fz === 0 ? fx >= 0 && fy >= 0 && fx < arena.width && fy < arena.height : (arena.platforms ?? []).some((p) => p.z === fz && fx >= p.x && fx < p.x + p.width && fy >= p.y && fy < p.y + p.height));
+  const blockAt = (fx: number, fy: number, fz: number) => arena.assets.find((a) => a.blocks && !a.side && (a.z ?? 0) === fz && covers(a, fx, fy));
+  const whoAt = (fx: number, fy: number, fz: number) => w.combatants.findIndex((o, j) => j !== at && o.hp > 0 && o.x === fx && o.y === fy && (o.z ?? 0) === fz);
+  const stopper = (fx: number, fy: number, fz: number): { what: "wall" | "object" | "creature"; name?: string; index?: number } | "soft" | undefined => {
+    if (fz === 0 && !floorAt(fx, fy, 0)) return { what: "wall" };
+    const block = blockAt(fx, fy, fz);
+    if (block) return { what: "object", name: block.name };
+    if (soft?.(fx, fy)) return "soft";
+    const j = whoAt(fx, fy, fz);
+    return j >= 0 ? { what: "creature", name: w.combatants[j].name, index: j } : undefined;
+  };
+  let moved = 0;
+  let struck: ReturnType<typeof shoveCreature>["struck"];
+  let fell: number | undefined;
+  for (let k = 1; k <= squares; k++) {
+    const [nx, ny] = [Math.round(start.x + ux * k), Math.round(start.y + uy * k)];
+    if (nx === x && ny === y) continue;
+    const hit = (nx !== x && ny !== y ? stopper(nx, y, z) ?? stopper(x, ny, z) : undefined) ?? stopper(nx, ny, z);
+    if (hit) {
+      if (hit !== "soft") struck = hit;
+      break;
+    }
+    if (z > 0 && !floorAt(nx, ny, z)) {
+      // Over the edge: down to the highest floor below, if there is room to land
+      const below = [...new Set((arena.platforms ?? []).map((p) => p.z))].filter((lz) => lz < z).sort((a, b) => b - a).find((lz) => floorAt(nx, ny, lz)) ?? 0;
+      const landing = stopper(nx, ny, below);
+      if (landing) {
+        if (landing !== "soft") struck = landing;
+        break;
+      }
+      fell = z - below;
+      [x, y, z] = [nx, ny, below];
+      moved++;
+      break;
+    }
+    [x, y] = [nx, ny];
+    moved++;
+  }
+  w.combatants[at] = { ...c, x, y, z };
+  return { squares: moved, struck, fell };
+}
+
+// A fall of so many levels (10 feet each): 1d6 bludgeoning per 10 feet, and prone
+function fall(w: Work, at: number, levels: number): string {
+  const amount = damageCreature(w, at, rollDamage(`${levels}d6`, false), "bludgeoning");
+  if (w.combatants[at].hp > 0) w.combatants[at] = withConditions(w.combatants[at], [{ name: "Prone", rounds: 1, source: "a fall" }]);
+  return `falls ${levels * 10} feet and takes ${amount} damage${w.combatants[at].hp > 0 ? ", landing prone" : ""}`;
+}
+
+// What happens when a moved creature or object strikes someone at the end of its move: both
+// take the power's damage, unless the one moved keeps its footing (its save; an object always
+// fails it) or the one struck dodges half of it (its save)
+function strike(w: Work, motion: PowerMotion, dc: number, mover: number | null, struck: number | null): string {
+  const s = motion.strike;
+  if (!s || (mover === null && struck === null)) return "";
+  if (s.save && s.who === "mover" && mover !== null && savingThrow(w.combatants[mover], s.save, dc)) return `, but ${w.combatants[mover].name} rolls with it (${s.save.slice(0, 3).toUpperCase()} save)`;
+  const amount = rollDamage(s.dice, false);
+  const parts: string[] = [];
+  if (struck !== null) {
+    const saved = !!(s.save && s.who === "struck" && savingThrow(w.combatants[struck], s.save, dc));
+    const taken = damageCreature(w, struck, saved && s.half ? Math.floor(amount / 2) : amount, s.type);
+    parts.push(`${w.combatants[struck].name} takes ${taken} ${s.type} damage${saved ? " (half on a save)" : ""}`);
+  }
+  if (mover !== null) parts.push(`${w.combatants[mover].name} takes ${damageCreature(w, mover, amount, s.type)}`);
+  return `: ${parts.join(" and ")}`;
+}
+
+// The pieces an area power sweeps aside (Force Repulse, Force Current): those no bigger than it
+// moves, within its reach of the caster, pushed straight away from them
+function sweepObjects(w: Work, caster: Combatant, motion: PowerMotion): string[] {
+  const area = motion.area;
+  if (!area) return [];
+  const lines: string[] = [];
+  for (const asset of w.arena.assets.filter((a) => a.kind === "furniture" && !a.side && !a.height)) {
+    const bulk = bulkOf(asset);
+    if (bulk.fixed || sizeRank(bulk.size) > sizeRank(area.size) || squaresToAsset(caster, asset) * 5 > area.reach) continue;
+    const res = shoveAsset({ ...w.arena, open: !!(w.arena.open || w.arena.district) }, asset.id, way(caster, middleOf(asset)), Math.floor(area.feet / 5), {
+      creatureAt: (x, y, z) => {
+        const c = w.combatants.find((o) => o.hp > 0 && o.x === x && o.y === y && (o.z ?? 0) === z);
+        return c ? { id: String(c.id), name: c.name } : undefined;
+      },
+    });
+    if (!res.squares) continue;
+    w.arena = { ...w.arena, assets: w.arena.assets.map((a) => (a.id === asset.id ? { ...a, x: res.x, y: res.y, z: res.z || undefined } : a)) };
+    lines.push(`The ${asset.name.toLowerCase()} is swept ${res.squares * 5} feet aside.`);
+  }
+  return lines;
+}
 
 // When the character's action leaves nothing worth doing, the turn passes
 function settle(w: Work, autoEnd: boolean) {
@@ -1612,6 +1744,9 @@ export const useCombat = create<CombatState>((set, get) => ({
   },
 
   setTarget: (id) => set({ targetId: id }),
+
+  objectId: null,
+  setObject: (id) => set({ objectId: id }),
 
   spent: [],
 
@@ -1697,6 +1832,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       surprise,
       arena,
       targetId: null,
+      objectId: null,
       remains: [],
     });
   },
@@ -2007,8 +2143,10 @@ export const useCombat = create<CombatState>((set, get) => ({
   },
 
   // Cast one of the player's powers at the first standing enemy (or on themselves, to heal or hide).
-  // Casting is an action, or a bonus action for the powers whose casting time says so.
-  castPower: (index) =>
+  // Casting is an action, or a bonus action for the powers whose casting time says so. A power
+  // that moves things moves the enemy picked out or, when one is given, a piece of the ground:
+  // away from the caster, towards them, or (a piece) at the enemy picked out.
+  castPower: (index, choice) =>
     set((state) => {
       const caster = state.combatants[state.currentTurn];
       const power = caster?.powers?.[index];
@@ -2017,7 +2155,12 @@ export const useCombat = create<CombatState>((set, get) => ({
       if (bonusCast ? (caster.bonus ?? 0) <= 0 : (caster.actions ?? 0) <= 0 && (caster.attacksLeft ?? 0) <= 0) {
         return { ...state, combatLog: [...state.combatLog, `${power.name}: no ${bonusCast ? "bonus " : ""}action left this turn.`] };
       }
-      if (powerOutOfRange(state.combatants, caster, power, state.targetId)) return state;
+      const motion = power.motion;
+      const objectId = choice ? choice.objectId : state.objectId;
+      const picked = motion && !motion.rider && motion.objects && objectId ? state.arena.assets.find((a) => a.id === objectId) : undefined;
+      if (picked ? squaresToAsset(caster, picked) * 5 > Math.max(5, power.range ?? 1000) : powerOutOfRange(state.combatants, caster, power, state.targetId)) {
+        return picked ? { ...state, combatLog: [...state.combatLog, `${power.name}: the ${picked.name.toLowerCase()} is out of range.`] } : state;
+      }
       const log = [...state.combatLog];
       const combatants = state.combatants.map((c) => {
         // A new concentration power ends the one before it; casting gives a hidden caster away
@@ -2056,6 +2199,58 @@ export const useCombat = create<CombatState>((set, get) => ({
         return `${power.conditions.join(" and ").toLowerCase()} ${lasts(rounds)}`;
       };
       const selfIndex = combatants.findIndex((c) => c.id === caster.id);
+      // Whom the power's own save or hit leaves to be pushed or pulled (Force Repulse, Wire Line)
+      let pushed: number | null = null;
+      if (motion && !motion.rider && (picked || motion.creatures)) {
+        const w = workOf({ ...state, combatants, combatLog: log } as CombatState);
+        const me = idx(w, caster.id);
+        const mode = choice?.mode ?? "away";
+        const meNow = w.combatants[me];
+        const creatureAt = (x: number, y: number, z: number) => {
+          const c = w.combatants.find((o) => o.hp > 0 && o.x === x && o.y === y && (o.z ?? 0) === z);
+          return c ? { id: String(c.id), name: c.name } : undefined;
+        };
+        const mine = mode === "toward" ? (x: number, y: number) => x === meNow.x && y === meNow.y : undefined;
+        if (picked) {
+          const reach = objectReach(motion, picked);
+          if (!reach.feet) w.log.push(`${caster.name} casts ${power.name}, but ${reach.why}.`);
+          else {
+            const target = mode === "at" ? pickTarget(w.combatants, meNow, state.targetId) : undefined;
+            const from = middleOf(picked);
+            const dir = mode === "at" && target ? way(from, target) : mode === "toward" ? way(from, meNow) : way(meNow, from);
+            const res = shoveAsset({ ...w.arena, open: !!(w.arena.open || w.arena.district) }, picked.id, dir, Math.floor(reach.feet / 5), { creatureAt, soft: mine });
+            w.arena = { ...w.arena, assets: w.arena.assets.map((a) => (a.id === picked.id ? { ...a, x: res.x, y: res.y, z: res.z || undefined } : a)) };
+            let line = `${caster.name} casts ${power.name}: the ${picked.name.toLowerCase()} (${reach.bulk!.size.toLowerCase()}) ${res.squares ? `${mode === "at" ? "flies" : mode === "toward" ? "slides" : "is shoved"} ${res.squares * 5} feet${mode === "at" && target ? ` at ${target.name}` : mode === "toward" ? ` towards ${caster.name}` : ""}` : "does not move"}`;
+            if (res.struck?.what === "creature") {
+              const struck = w.combatants.findIndex((c) => String(c.id) === res.struck!.id);
+              line += ` and strikes ${res.struck.name}${strike(w, motion, power.dc, null, struck >= 0 ? struck : null)}`;
+            } else if (res.struck) line += res.struck.what === "wall" ? " and hits the wall" : ` and crashes into the ${(res.struck.name ?? "").toLowerCase()}`;
+            if (res.blocked) line += " (it will not go where it would block the way)";
+            if (res.fell) line += ` and drops ${res.fell * 10} feet`;
+            w.log.push(`${line}.`);
+          }
+        } else {
+          const ti = w.combatants.indexOf(pickTarget(w.combatants, meNow, state.targetId)!);
+          if (ti < 0) return state;
+          const t = w.combatants[ti];
+          const feet = motionFeet(motion, t.size ?? "Medium", false);
+          if (!feet) w.log.push(`${caster.name} casts ${power.name}, but ${t.name} is too large to move.`);
+          else if (motion.save && savingThrow(t, motion.save, power.dc)) w.log.push(`${caster.name} casts ${power.name}: ${t.name} resists (${motion.save.slice(0, 3).toUpperCase()} save, DC ${power.dc}).`);
+          else {
+            const res = shoveCreature(w, ti, mode === "toward" ? way(t, meNow) : way(meNow, t), Math.floor(feet / 5), mine);
+            let line = `${caster.name} casts ${power.name}: ${t.name} ${res.squares ? `is ${mode === "toward" ? "pulled" : "thrown"} ${res.squares * 5} feet` : "does not budge"}`;
+            if (res.struck) line += ` and strikes ${res.struck.what === "creature" ? res.struck.name : res.struck.what === "object" ? `the ${(res.struck.name ?? "").toLowerCase()}` : "a wall"}${strike(w, motion, power.dc, ti, res.struck.index ?? null)}`;
+            if (res.fell) line += `, goes over the edge and ${fall(w, ti, res.fell)}`;
+            w.log.push(`${line}.`);
+            if (power.conditions?.length && w.combatants[ti].hp > 0) {
+              w.combatants[ti] = withConditions(w.combatants[ti], power.conditions.map((name) => ({ name, rounds: power.conditionRounds ?? 1, by: caster.id, source: power.name, concentration: power.concentration })));
+              w.log.push(`${t.name} is ${power.conditions.join(" and ").toLowerCase()} ${lasts(power.conditionRounds ?? 1)}.`);
+            }
+          }
+        }
+        settle(w, state.autoEnd);
+        return { ...state, ...patchOf(w), objectId: null };
+      }
       if (power.kind === "heal") {
         const amount = Math.max(1, rollDamage(power.dice!, false) + power.modifier);
         combatants[selfIndex] = { ...combatants[selfIndex], hp: Math.min(combatants[selfIndex].maxHp, combatants[selfIndex].hp + amount) };
@@ -2079,6 +2274,7 @@ export const useCombat = create<CombatState>((set, get) => ({
             const amount = rollDamage(power.dice!, d === 20);
             log.push(`${caster.name} casts ${power.name} at ${target.name}${note} and hits for ${amount} damage${d === 20 ? " (critical)" : ""}.`);
             hit(targetIndex, amount);
+            pushed = targetIndex;
             if (power.conditions?.length && combatants[targetIndex].hp > 0) {
               if (power.save && savingThrow(target, power.save, power.dc)) log.push(`${target.name} saves against the rest.`);
               else log.push(`${target.name} is ${afflict(targetIndex)}.`);
@@ -2090,6 +2286,7 @@ export const useCombat = create<CombatState>((set, get) => ({
           const amount = saved ? (power.halfOnSave ? Math.floor(full / 2) : 0) : full;
           log.push(`${caster.name} casts ${power.name}: ${target.name} ${saved ? "saves" : "fails the save"}${power.dice ? ` and takes ${amount} damage` : ""}.`);
           if (amount > 0) hit(targetIndex, amount);
+          if (!saved) pushed = targetIndex;
           const landed = saved ? "" : afflict(targetIndex);
           if (landed) log.push(`${target.name} is ${landed}.`);
         }
@@ -2099,6 +2296,18 @@ export const useCombat = create<CombatState>((set, get) => ({
       const won = !combatants.some((c) => !onPartySide(c) && c.hp > 0);
       if (won) log.push("Victory! All enemies defeated.");
       const w = workOf({ ...state, combatants, combatLog: log, inCombat: won ? false : state.inCombat, outcome: won ? ("victory" as CombatOutcome) : state.outcome } as CombatState);
+      // A push or pull that comes with the hit or the failed save, and the pieces an area power sweeps aside
+      if (motion?.rider && pushed !== null && w.combatants[pushed]?.hp > 0) {
+        const t = w.combatants[pushed];
+        const feet = motionFeet(motion, t.size ?? "Medium", false);
+        const meNow = w.combatants[idx(w, caster.id)];
+        const toward = motion.way === "toward" || choice?.mode === "toward";
+        if (feet) {
+          const res = shoveCreature(w, pushed, toward ? way(t, meNow) : way(meNow, t), Math.floor(feet / 5), toward ? (x, y) => x === meNow.x && y === meNow.y : undefined);
+          if (res.squares || res.fell) w.log.push(`${t.name} is ${toward ? "pulled" : "pushed"} ${res.squares * 5} feet${res.struck ? ` up against ${res.struck.what === "creature" ? res.struck.name : res.struck.what === "object" ? `the ${(res.struck.name ?? "").toLowerCase()}` : "a wall"}` : ""}${res.fell ? `, goes over the edge and ${fall(w, pushed, res.fell)}` : ""}.`);
+        }
+      }
+      if (motion?.area) for (const line of sweepObjects(w, w.combatants[idx(w, caster.id)], motion)) w.log.push(line);
       settle(w, state.autoEnd);
       return { ...state, ...patchOf(w) };
     }),

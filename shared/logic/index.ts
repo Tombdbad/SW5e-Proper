@@ -7008,6 +7008,131 @@ export function districtArena(world: World, districtId: string): DistrictArena |
   return { district: districtId, width: plan.width, height: plan.height, assets, platforms, links };
 }
 
+// ---------------------------------------------------------------------------------------------
+// Moving things with the Force (2026-10-18). What a power can move and how far is read from its
+// text (rules.ts powerMotion). HOUSE RULES, since the books give furniture no size or weight: a
+// piece's size is judged from its footprint and what it is, by the object sizes of the Dungeon
+// Master's Guide (a chest is Small, a barrel Medium, a cart Large, anything over two squares
+// Huge), its weight from its size (Small 40 lb, Medium 150, Large 600, Huge 3,000, Gargantuan
+// 12,000; stone four times as much), and what is built in (counters, booths, consoles, tanks,
+// pillars, cells, seats on a ship's deck) cannot be moved at all. A moved piece goes a square at
+// a time and stops before a wall, another piece or someone in the way (it strikes them), and
+// never where it would cut the floor or block a way in or out (floorFaults).
+// ---------------------------------------------------------------------------------------------
+
+export interface Bulk { size: "Tiny" | "Small" | "Medium" | "Large" | "Huge" | "Gargantuan"; pounds: number; fixed?: boolean }
+const BUILT_IN = /bar counter|bandstand|holding cell|reactor core|pipe run|\bdais\b|rock pillar|^pillar|awning post|loading crane|sensor mast|antenna mast|vent stack|water tank|security camera|camera pole|alarm panel|access panel|info kiosk|notice board|lifter droid dock|fuel pump|bacta tank|coolant tank|power coupling|holo-table|console|terminal|pilot's seat|co-pilot's seat|gunnery seat|command chair|boarding ramp|booth|altar|campfire|pit trap|workbench|cooling unit|bunk|stairs/i;
+const SMALL_PIECES = /footlocker|parts bin|cart|low table|stool/i;
+const STONE = /sarcophagus|broken pillar|boulder|rubble/i;
+const POUNDS: Record<Bulk["size"], number> = { Tiny: 5, Small: 40, Medium: 150, Large: 600, Huge: 3000, Gargantuan: 12000 };
+
+export function bulkOf(asset: Pick<RoomAsset, "name" | "w" | "h" | "kind">): Bulk {
+  if (asset.kind !== "furniture" || BUILT_IN.test(asset.name)) return { size: "Huge", pounds: Infinity, fixed: true };
+  const squares = asset.w * asset.h;
+  const size: Bulk["size"] = squares >= 9 ? "Gargantuan" : squares > 4 || Math.max(asset.w, asset.h) >= 3 ? "Huge" : squares >= 2 ? "Large" : SMALL_PIECES.test(asset.name) ? "Small" : "Medium";
+  return { size, pounds: POUNDS[size] * (STONE.test(asset.name) ? 4 : 1) };
+}
+
+// The ground something is shoved over: a room's plan, or a fight's (with its raised floors)
+export interface ShoveGround {
+  width: number;
+  height: number;
+  assets: RoomAsset[];
+  platforms?: { z: number; x: number; y: number; width: number; height: number }[];
+  // A district's streets have no plan of a room to keep walkable
+  open?: boolean;
+}
+export interface ShoveResult {
+  x: number;
+  y: number;
+  z: number;
+  // Squares moved
+  squares: number;
+  // What it came up against at the end, if anything
+  struck?: { what: "wall" | "object" | "creature"; id?: string; name?: string; x: number; y: number };
+  // It stopped short so as not to block the way
+  blocked?: boolean;
+  // It went over an edge and dropped this many levels
+  fell?: number;
+}
+
+// Shoves a piece up to `squares` squares along a direction (a step of a square at a time along
+// the line, a diagonal step counting as one), stopping before what is in the way. `creatureAt`
+// says who stands on a square (they are struck); `soft` squares stop it without a strike (the
+// caster, when a thing is pulled to them).
+export function shoveAsset(ground: ShoveGround, assetId: string, dir: { x: number; y: number }, squares: number, opts: { creatureAt?: (x: number, y: number, z: number) => { id: string; name: string } | undefined; soft?: (x: number, y: number) => boolean } = {}): ShoveResult {
+  const piece = ground.assets.find((a) => a.id === assetId);
+  if (!piece) return { x: 0, y: 0, z: 0, squares: 0 };
+  const z0 = piece.z ?? 0;
+  const result: ShoveResult = { x: piece.x, y: piece.y, z: z0, squares: 0 };
+  const most = Math.max(Math.abs(dir.x), Math.abs(dir.y));
+  if (!most || squares <= 0) return result;
+  const [ux, uy] = [dir.x / most, dir.y / most];
+  const others = ground.assets.filter((a) => a.id !== assetId && !a.side && a.kind !== "npc" && a.name !== "Loose flagstone" && a.name !== "Pit trap");
+  const onFloor = (x: number, y: number, z: number) => (z === 0 ? x >= 0 && y >= 0 && x < ground.width && y < ground.height : (ground.platforms ?? []).some((p) => p.z === z && x >= p.x && x < p.x + p.width && y >= p.y && y < p.y + p.height));
+  const cells = (x: number, y: number) => Array.from({ length: piece.w * piece.h }, (_, i) => [x + (i % piece.w), y + Math.floor(i / piece.w)] as [number, number]);
+  // What stops the piece at a place: a wall (off its floor), another piece, someone standing there
+  const obstacle = (x: number, y: number, z: number): ShoveResult["struck"] | "soft" | undefined => {
+    for (const [cx, cy] of cells(x, y)) {
+      if (z === 0 && !onFloor(cx, cy, 0)) return { what: "wall", x: cx, y: cy };
+      const other = others.find((a) => (a.z ?? 0) === z && a.x <= cx && cx < a.x + a.w && a.y <= cy && cy < a.y + a.h);
+      if (other) return { what: "object", id: other.id, name: other.name, x: cx, y: cy };
+      if (opts.soft?.(cx, cy)) return "soft";
+      const who = opts.creatureAt?.(cx, cy, z);
+      if (who) return { what: "creature", id: who.id, name: who.name, x: cx, y: cy };
+    }
+    return undefined;
+  };
+  const faultsBefore = ground.open ? 0 : floorFaults(ground as RoomLayout);
+  let [px, py, pz] = [piece.x, piece.y, z0];
+  for (let i = 1; i <= squares; i++) {
+    const [nx, ny] = [Math.round(piece.x + ux * i), Math.round(piece.y + uy * i)];
+    if (nx === px && ny === py) continue;
+    // A diagonal step cannot squeeze past a corner
+    const corner = nx !== px && ny !== py ? obstacle(nx, py, pz) ?? obstacle(px, ny, pz) : undefined;
+    const hit = corner ?? obstacle(nx, ny, pz);
+    if (hit) {
+      if (hit !== "soft") result.struck = hit;
+      break;
+    }
+    // Off the edge of a raised floor: it drops to whatever is below and stops there
+    let z = pz;
+    if (pz > 0 && !cells(nx, ny).every(([cx, cy]) => onFloor(cx, cy, pz))) {
+      const below = [...new Set((ground.platforms ?? []).map((p) => p.z))].filter((lz) => lz < pz).sort((a, b) => b - a);
+      z = below.find((lz) => cells(nx, ny).every(([cx, cy]) => onFloor(cx, cy, lz))) ?? 0;
+      const landing = obstacle(nx, ny, z);
+      if (landing) {
+        if (landing !== "soft") result.struck = landing;
+        break;
+      }
+    }
+    // Never where it would cut the floor or bar a way in or out
+    if (!ground.open && z === 0) {
+      const trial = { ...(ground as RoomLayout), assets: ground.assets.map((a) => (a.id === assetId ? { ...a, x: nx, y: ny } : a)) };
+      if (floorFaults(trial) > faultsBefore) {
+        result.blocked = true;
+        break;
+      }
+    }
+    [px, py] = [nx, ny];
+    result.squares++;
+    if (z !== pz) {
+      result.fell = pz - z;
+      pz = z;
+      break;
+    }
+  }
+  return { ...result, x: px, y: py, z: pz };
+}
+
+// A room with some of its pieces put down elsewhere (by the Force, by a fight)
+export function moveRoomAssets(world: World, roomId: string, moves: Record<string, { x: number; y: number }>): World {
+  const room = world.areas[roomId];
+  if (!room?.layout || !Object.keys(moves).length) return world;
+  const assets = room.layout.assets.map((a) => (moves[a.id] ? { ...a, x: moves[a.id].x, y: moves[a.id].y } : a));
+  return { ...world, areas: { ...world.areas, [roomId]: { ...room, layout: { ...room.layout, assets } } } };
+}
+
 // The square before a building's main way in, on its district's grid, and which way it faces
 export function districtFront(world: World, buildingId: string): { x: number; y: number; outward: { x: number; y: number } } | undefined {
   const rooms = childrenOf(world, buildingId).filter((a) => a.kind === "room" && a.layout);

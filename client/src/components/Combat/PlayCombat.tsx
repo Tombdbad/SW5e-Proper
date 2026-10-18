@@ -3,9 +3,9 @@ import { Button } from "@/components/ui/button";
 import TranslucentPane from "@/components/ui/TranslucentPane";
 import {
   useCombat, attackPlan, cannotAct, movementLeft, pickTarget, powerOutOfRange, squaresApart, onPartySide, LASTING,
-  playerSpec, bonusAttackKinds, bonusFeatures, attacksPerAction,
+  playerSpec, bonusAttackKinds, bonusFeatures, attacksPerAction, objectReach, squaresToAsset,
 } from "@/lib/stores/useCombat";
-import { conditionSummary } from "@/lib/sw5e/rules";
+import { conditionSummary, motionFeet } from "@/lib/sw5e/rules";
 
 // What the character can use in a fight, made by the Play page from what is carried: `target` says
 // who it is used on (an ally or the character, an enemy, nobody), `use` does it and says whether it was used
@@ -21,7 +21,10 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
   const {
     combatants, currentTurn, round, combatLog, endCombat, deathSaves, castPower, deathSave, pass, arena, targetId, setTarget,
     pending, resolvePending, attack, standard, useFeature, setEmpower, setManeuver, autoEnd, setAutoEnd, aiStep, nextTurn,
+    objectId, setObject,
   } = useCombat();
+  // A power that moves things waiting to be told what to move and which way
+  const [aiming, setAiming] = useState<number | null>(null);
   const current = combatants[currentTurn];
   // For the play-through test (as `window.__map3d` is for the map): the fight's state
   useEffect(() => {
@@ -301,12 +304,54 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
           </div>
         )}
         {!down && items.length > 0 && <ItemList items={items} disabled={!playerTurn || !hasAction} />}
+        {!down && aiming !== null && player?.powers?.[aiming]?.motion && (() => {
+          const power = player.powers![aiming];
+          const motion = power.motion!;
+          const piece = objectId ? arena.assets.find((a) => a.id === objectId) : undefined;
+          const reach = piece ? objectReach(motion, piece) : undefined;
+          const pieceFar = !!piece && squaresToAsset(player, piece) * 5 > Math.max(5, power.range ?? 1000);
+          const foeFeet = target && motion.creatures ? motionFeet(motion, target.size ?? "Medium", false) : 0;
+          const foeFar = powerOutOfRange(combatants, player, power, targetId);
+          const go = (choice: { mode: "away" | "toward" | "at"; objectId?: string }) => {
+            setAiming(null);
+            castPower(aiming, choice);
+          };
+          const thing = piece?.name.toLowerCase();
+          return (
+            <div className="mb-3 rounded bg-sky-950/70 p-2 text-sm" data-testid="motion-chooser">
+              <p className="mb-1 text-xs text-sky-200">
+                {power.name}: {piece ? `the ${thing} is picked out${reach?.bulk ? ` (${reach.bulk.size.toLowerCase()}, about ${reach.bulk.pounds === Infinity ? "fixed" : `${reach.bulk.pounds.toLocaleString()} lb`})` : ""}` : motion.objects ? "tap a piece of furniture on the map to move it" : ""}
+                {piece && pieceFar ? "; it is out of range" : ""}
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {piece && reach?.feet ? (
+                  <>
+                    <Button size="sm" disabled={pieceFar} onClick={() => go({ mode: "away", objectId: piece.id })} data-testid="motion-push-object">Push the {thing} up to {reach.feet} ft away</Button>
+                    <Button size="sm" disabled={pieceFar} onClick={() => go({ mode: "toward", objectId: piece.id })} data-testid="motion-pull-object">Pull it to you</Button>
+                    {target && target.hp > 0 && <Button size="sm" disabled={pieceFar} onClick={() => go({ mode: "at", objectId: piece.id })} data-testid="motion-hurl">Hurl it at {target.name}</Button>}
+                  </>
+                ) : piece ? <p className="text-xs text-gray-300">Not with this power: {reach?.why}.</p> : null}
+                {target && target.hp > 0 && foeFeet > 0 && (
+                  <>
+                    <Button size="sm" variant="outline" disabled={foeFar} onClick={() => go({ mode: "away" })} data-testid="motion-push-foe">Push {target.name} {foeFeet} ft away</Button>
+                    <Button size="sm" variant="outline" disabled={foeFar} onClick={() => go({ mode: "toward" })} data-testid="motion-pull-foe">Pull {target.name} to you</Button>
+                  </>
+                )}
+                {target && target.hp > 0 && motion.creatures && !foeFeet && <p className="text-xs text-gray-300">{target.name} is too large for this power.</p>}
+                <Button size="sm" variant="ghost" onClick={() => setAiming(null)}>Cancel</Button>
+                {piece && <Button size="sm" variant="ghost" onClick={() => setObject(null)}>Drop the {thing}</Button>}
+              </div>
+            </div>
+          );
+        })()}
         {!down && (player?.powers?.length ?? 0) > 0 && (
           <div className="mb-3" data-testid="combat-powers">
             <p className="text-xs text-gray-400 mb-1">Powers ({player?.powerPoints ?? 0} points left)</p>
             <div className="flex flex-col gap-1 max-h-32 overflow-y-auto">
               {player!.powers!.map((power, index) => {
-                const far = powerOutOfRange(combatants, player!, power, targetId);
+                // A power that moves things can be aimed at a piece of the ground even with the enemy out of range
+                const moves = !!power.motion && !power.motion.rider;
+                const far = !moves && powerOutOfRange(combatants, player!, power, targetId);
                 const bonusCast = power.castTime === "bonus";
                 const noTime = bonusCast ? (player?.bonus ?? 0) <= 0 : !hasAction;
                 return (
@@ -316,7 +361,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
                     variant="outline"
                     className="h-auto whitespace-normal justify-start text-left"
                     disabled={!playerTurn || (player?.powerPoints ?? 0) < power.cost || far || noTime || power.castTime === "reaction" || power.castTime === "long"}
-                    onClick={() => cast(index)}
+                    onClick={() => (moves ? setAiming(aiming === index ? null : index) : cast(index))}
                   >
                     {power.name}
                     <span className="text-gray-400 ml-1">

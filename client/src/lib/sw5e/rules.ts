@@ -595,6 +595,127 @@ export function powerEffect(power: { level: number; description?: string; durati
   return { kind: "other", summary: "effect described in its text" };
 }
 
+// ---------------------------------------------------------------------------------------------
+// Powers that move a creature or an object, read from their text: Force Push/Pull and Force
+// Throw ("A Tiny creature or object can be moved up to 20 feet, a Small ... 10 feet", growing at
+// 5th, 11th and 17th level), Telekinesis ("move the creature up to 30 feet", "an object that ...
+// weighs up to 2,500 lbs up to 30 feet"), Force Propel ("weigh up to a combined total of 15
+// pounds ... move 60 feet"), and the pushes and pulls that come with a failed save or a hit
+// ("is pushed back 5 feet", "pushed 10 feet away from you", "moved 5 feet in a direction of your
+// choice", "pull the creature up to 10 feet closer to you"), with the objects an area power
+// shoves aside ("All small objects ... are also pushed 5 feet back").
+// ---------------------------------------------------------------------------------------------
+
+export const SIZES = ["Tiny", "Small", "Medium", "Large", "Huge", "Gargantuan"] as const;
+export type Size = (typeof SIZES)[number];
+export const sizeRank = (size?: string) => Math.max(0, SIZES.findIndex((s) => s.toLowerCase() === (size ?? "Medium").toLowerCase().trim()));
+
+export interface PowerMotion {
+  // The largest creature and the largest object it can move (absent: it cannot move that kind)
+  creatures?: Size;
+  objects?: Size;
+  // The heaviest object, in pounds
+  maxPounds?: number;
+  // How far, by the size of what is moved; `any` for every size it can move
+  feet: Partial<Record<Size | "any", number>>;
+  // The saving throw a creature makes against being moved (an object fails it)
+  save?: string;
+  // Which way: as the caster chooses, away from the caster, or towards them
+  way: "choice" | "away" | "toward";
+  // Damage when what is moved strikes another creature or object at the end of the move: the
+  // one moved saves (Force Push/Pull), or the one struck saves for half (Force Propel)
+  strike?: { dice: string; type: string; save?: string; who?: "mover" | "struck"; half?: boolean };
+  // It only moves its target after the power's own save fails or its attack hits
+  rider?: boolean;
+  // Objects in its area are pushed too: how far, the largest, and the area's reach in feet
+  area?: { feet: number; size: Size; reach: number };
+}
+
+const SIZE_WORDS = "Tiny|Small|Medium|Large|Huge|Gargantuan";
+const asSize = (word: string): Size => SIZES.find((s) => s.toLowerCase() === word.toLowerCase()) ?? "Medium";
+
+export function powerMotion(power: { level: number; description?: string; range?: string }, casterLevel: number): PowerMotion | undefined {
+  const all = (power.description ?? "").replace(/\s+/g, " ");
+  // What a higher slot adds is not used; the headings of a power's parts ("***Object.***") are kept as text
+  const text = all.split(/\*\*\*(?:Force Potency|Overcharge Tech|Tech Potency)/i)[0].replace(/\*\*\*/g, "");
+  // The base text, and what a higher level adds (at-will powers only)
+  const clauses = [...text.matchAll(/At (\d+)(?:st|nd|rd|th) level,([^.]*)\./g)].filter(([, at]) => power.level === 0 && casterLevel >= Number(at)).map(([, , clause]) => clause);
+  const base = text.replace(/This power improves when you reach higher levels\..*$/, "").replace(/At \d+(?:st|nd|rd|th) level,[^.]*\./g, "");
+  const feet: PowerMotion["feet"] = {};
+  const sized = new RegExp(`(${SIZE_WORDS}) creature(?: or object)?(?: can be moved)? (?:up to|to up) (\\d+) feet`, "gi");
+  for (const source of [base, ...clauses]) for (const m of source.matchAll(sized)) feet[asSize(m[1])] = Math.max(feet[asSize(m[1])] ?? 0, Number(m[2]));
+  const strikeOf = (): PowerMotion["strike"] => {
+    let dice = "";
+    let type = "";
+    let save: string | undefined;
+    let who: "mover" | "struck" | undefined;
+    let half = false;
+    const struck = base.match(/strikes another creature or object, (?:it must make an? (\w+) saving throw\.[^.]*\. On a failed save, )?they both take (\d+d\d+) (\w+) damage/i);
+    const collide = base.match(/collide with[^.]*take (\d+d\d+) (\w+) damage\. If the target is a creature, it must make an? (\w+) saving throw[^.]*\.[^.]*half/i);
+    if (struck) [dice, type, save, who] = [struck[2], struck[3], struck[1]?.toLowerCase(), struck[1] ? "mover" : undefined];
+    else if (collide) [dice, type, save, who, half] = [collide[1], collide[2], collide[3].toLowerCase(), "struck", true];
+    else return undefined;
+    for (const clause of clauses) {
+      const grown = clause.match(/damage increases to (\d+d\d+)/i);
+      if (grown) dice = grown[1];
+    }
+    return { dice, type: type.toLowerCase(), save, who, half };
+  };
+  const saveOf = base.match(/The target must make an? (\w+) saving throw\. (?:An object automatically fails|On a failed save, you move the creature)/i)?.[1]?.toLowerCase();
+  const choice = /in a direction of your choice|in any direction/i.test(base);
+  // A creature or an object moved by size (Force Push/Pull, Force Throw)
+  const either = base.match(new RegExp(`move an? (${SIZE_WORDS}) or smaller creature or object`, "i"));
+  if (either && Object.keys(feet).length) return { creatures: asSize(either[1]), objects: asSize(either[1]), feet, save: saveOf, way: choice ? "choice" : "away", strike: strikeOf() };
+  // Telekinesis: a creature up to a size, an object up to a weight, both a set distance
+  const creature = base.match(new RegExp(`move an? (${SIZE_WORDS}) or smaller creature\\b`, "i"));
+  const creatureFeet = base.match(/move the creature up to (\d+) feet/i);
+  const object = base.match(/move an object that[^.]*?weighs up to ([\d,]+) (?:lbs|pounds) up to (\d+) feet/i);
+  if ((creature && creatureFeet) || object) {
+    return {
+      creatures: creature && creatureFeet ? asSize(creature[1]) : undefined,
+      objects: object ? "Gargantuan" : undefined,
+      maxPounds: object ? Number(object[1].replace(/,/g, "")) : undefined,
+      feet: { any: Number((creatureFeet ?? object)![creatureFeet ? 1 : 2]) },
+      save: saveOf,
+      way: "choice",
+      strike: strikeOf(),
+    };
+  }
+  // Force Propel: anything up to a combined weight, a set distance
+  const propel = base.match(/weigh up to a combined total of (\d+) pounds\. The creatures or objects immediately move (\d+) feet/i);
+  if (propel) return { creatures: "Tiny", objects: "Gargantuan", maxPounds: Number(propel[1]), feet: { any: Number(propel[2]) }, way: choice ? "choice" : "away", strike: strikeOf() };
+  // A push or a pull that comes with the power's own save or hit
+  const push = base.match(/(?:is (?:also )?pushed(?: back)? (\d+) feet(?: away from you)?|is pushed (\d+) feet away from you|moved (\d+) feet in a direction of your choice|pull(?:s)? (?:the creature |it )?up to (\d+) feet closer to you|pulled (\d+) feet directly toward)/i);
+  if (!push) return undefined;
+  const distance = Number(push[1] ?? push[2] ?? push[3] ?? push[4] ?? push[5]);
+  const limit = base.match(new RegExp(`if (?:it|the creature) is (${SIZE_WORDS}) or smaller`, "i"));
+  const objects = base.match(new RegExp(`All (small|(?:${SIZE_WORDS}) or smaller) objects[^.]*?pushed (\\d+) feet`, "i"));
+  const reach = Number((power.range ?? "").match(/(\d+)-foot/)?.[1] ?? 0);
+  return {
+    creatures: limit ? asSize(limit[1]) : "Gargantuan",
+    feet: { any: distance },
+    way: push[4] || push[5] ? "toward" : push[3] ? "choice" : "away",
+    rider: true,
+    area: objects && reach ? { feet: Number(objects[2]), size: /^small$/i.test(objects[1]) ? "Small" : asSize(objects[1].split(" ")[0]), reach } : undefined,
+  };
+}
+
+// What a power that moves things does, in a few words for its button
+export function motionSummary(m: PowerMotion): string {
+  const what = m.creatures && m.objects ? "a creature or an object" : m.objects ? "an object" : "a creature";
+  const sized = SIZES.filter((size) => m.feet[size]).map((size) => `${size.toLowerCase()} ${m.feet[size]} ft`).reverse();
+  const far = sized.length ? sized.join(", ") : `${m.feet.any ?? 0} ft`;
+  const limits = [m.creatures && m.creatures !== "Gargantuan" ? `creatures up to ${m.creatures.toLowerCase()}` : "", m.maxPounds ? `objects up to ${m.maxPounds.toLocaleString()} lb` : ""].filter(Boolean).join(", ");
+  return `moves ${what}: ${far}${limits ? ` (${limits})` : ""}${m.save ? `; ${m.save} save` : ""}${m.strike ? `; ${m.strike.dice} ${m.strike.type} when it strikes something` : ""}`;
+}
+
+// How far a power moves something of a size, in feet (0: it cannot move it)
+export function motionFeet(motion: PowerMotion, size: string, object: boolean): number {
+  const most = object ? motion.objects : motion.creatures;
+  if (!most || sizeRank(size) > sizeRank(most)) return 0;
+  return motion.feet[asSize(size)] ?? motion.feet.any ?? 0;
+}
+
 // The caster's modifier, attack bonus and save DC for a power. Force powers use Wisdom (light),
 // Charisma (dark) or the better of the two (universal); tech powers use Intelligence.
 export function castingStats(
