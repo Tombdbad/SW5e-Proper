@@ -104,6 +104,15 @@ export interface CaveFeature {
   size: number;
 }
 
+// Which model of the Space Kit stands for a crystal cluster or a rock (the file under /assets), by its place in the list: the
+// same cave is the same each time
+const KIT_CRYSTALS = ["rock_crystals", "rock_crystalsLargeA", "rock_crystalsLargeB"];
+const KIT_ROCKS = ["rock_largeA", "rock_largeB", "rocks_smallA", "rocks_smallB"];
+export function kitPieceOf(f: Pick<CaveFeature, "kind">, index: number): string {
+  const list = f.kind === "crystals" ? KIT_CRYSTALS : KIT_ROCKS;
+  return `/assets/kenney-space/${list[index % list.length]}.glb`;
+}
+
 // What stands in a cave room of w by h squares: features on the squares along its edge (never the middle, which
 // is walked) so that the cave has a rim. `open(x, y)` says whether a square is free of furniture and ways.
 export function caveFeatures(w: number, h: number, seed: number, open: (x: number, y: number) => boolean = () => true): CaveFeature[] {
