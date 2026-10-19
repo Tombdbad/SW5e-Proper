@@ -15,6 +15,7 @@
  * enhanced items, starship equipment, travel times) and run where it is loaded: on the server.
  * The edit and travel functions need only the world itself and run anywhere.
  */
+import { radiiOf as shapeRadii, standing, waysStand, type Shape } from "./footprint";
 import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eRecord } from "../data";
 import conditionData from "../data/sw5e/conditions.json";
 import downtimeData from "../data/sw5e/downtime.json";
@@ -1774,6 +1775,8 @@ export interface RoomLayout {
   tall?: boolean;
   // A room a ship can stand in: open to the sky, or roofed with doors that slide back where the air is hostile
   roof?: "open" | "hangar";
+  // A round or oval room: the squares outside its curve are not floor (see footprint.ts, standsAt)
+  shape?: Shape;
 }
 
 // What furnishes a room: name, where it goes (wall, corner, center, far = the wall opposite the
@@ -1874,9 +1877,40 @@ const range = (text: string, r: Random) => {
 const overlap = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) =>
   a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
+// The curve of a round or oval room (see footprint.ts), worked out once per shape and size
+const curves = new Map<string, boolean[][]>();
+// Whether a square of a room is floor: all are, unless the room is round or oval and it lies outside the curve
+export function standsAt(layout: RoomLayout, x: number, y: number): boolean {
+  if (!layout.shape) return true;
+  const key = `${layout.shape}:${layout.width}x${layout.height}`;
+  let grid = curves.get(key);
+  if (!grid) {
+    grid = standing(layout.width, layout.height, shapeRadii(layout.shape, layout.width, layout.height));
+    curves.set(key, grid);
+  }
+  return grid[x]?.[y] ?? false;
+}
+// Whether a corridor's squares that touch a round room's squares only touch floor of the room (so it meets the curve on
+// a standing stretch of a side, and not at a cut corner). `shape` is the curve it would have.
+function meetsStanding(room: RoomLayout, corridor: RoomLayout, shape: Shape): boolean {
+  const curved = { ...room, shape };
+  for (let y = corridor.y; y < corridor.y + corridor.height; y++) for (let x = corridor.x; x < corridor.x + corridor.width; x++) {
+    for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+      const inRoom = nx >= room.x && nx < room.x + room.width && ny >= room.y && ny < room.y + room.height;
+      if (inRoom && !standsAt(curved, nx - room.x, ny - room.y)) return false;
+    }
+  }
+  return true;
+}
+// Whether every square of a block of a room is floor
+const standsAll = (layout: RoomLayout, x: number, y: number, w: number, h: number) => {
+  for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) if (!standsAt(layout, xx, yy)) return false;
+  return true;
+};
+
 // The squares of a room that are free to stand on (true), given its assets
 function freeSquares(layout: RoomLayout): boolean[][] {
-  const free = Array.from({ length: layout.height }, () => Array.from({ length: layout.width }, () => true));
+  const free = Array.from({ length: layout.height }, (_, y) => Array.from({ length: layout.width }, (_, x) => standsAt(layout, x, y)));
   for (const asset of layout.assets) {
     if (!asset.blocks) continue;
     for (let y = asset.y; y < asset.y + asset.h; y++) for (let x = asset.x; x < asset.x + asset.w; x++) if (free[y]?.[x] !== undefined) free[y][x] = false;
@@ -1944,7 +1978,7 @@ const wallSquare = (layout: RoomLayout, side: Side, along: number) =>
 // Somewhere for an asset of the given size, where nothing stands and no way in is blocked
 function findSpot(layout: RoomLayout, r: Random, place: Furnishing[1], w: number, h: number, awayFrom?: Side): { x: number; y: number; w: number; h: number } | undefined {
   const taken = (x: number, y: number, ww: number, hh: number) =>
-    x < 0 || y < 0 || x + ww > layout.width || y + hh > layout.height ||
+    x < 0 || y < 0 || x + ww > layout.width || y + hh > layout.height || !standsAll(layout, x, y, ww, hh) ||
     layout.assets.some((a) => a.x < x + ww && x < a.x + a.w && a.y < y + hh && y < a.y + a.h);
   const options: { x: number; y: number; w: number; h: number }[] = [];
   const add = (x: number, y: number, ww: number, hh: number) => { if (!taken(x, y, ww, hh)) options.push({ x, y, w: ww, h: hh }); };
@@ -1969,7 +2003,7 @@ function findSpot(layout: RoomLayout, r: Random, place: Furnishing[1], w: number
 }
 
 // Fixed dressing for a room: furniture by what the room is for, kept only where it leaves the doors reachable
-function furnishRoom(room: Area, r: Random, buildingType: string) {
+export function furnishRoom(room: Area, r: Random, buildingType: string) {
   const layout = room.layout!;
   const plan = planFor(room, buildingType);
   const wayIn = layout.assets.find((a) => a.kind === "exit" || a.kind === "door")?.side;
@@ -2033,7 +2067,7 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
   layout.assets = layout.assets.filter((a) => a.kind !== "npc" && a.kind !== "loot" && a.kind !== "ship");
   const { width: W, height: H } = layout;
   let n = layout.assets.length;
-  const used = (x: number, y: number) => x < 0 || y < 0 || x >= W || y >= H || layout.assets.some((a) => (a.blocks || a.kind === "npc" || a.kind === "loot" || a.kind === "ship") && a.x <= x && x < a.x + a.w && a.y <= y && y < a.y + a.h);
+  const used = (x: number, y: number) => x < 0 || y < 0 || x >= W || y >= H || !standsAt(layout, x, y) || layout.assets.some((a) => (a.blocks || a.kind === "npc" || a.kind === "loot" || a.kind === "ship") && a.x <= x && x < a.x + a.w && a.y <= y && y < a.y + a.h);
   const ways = layout.assets.filter((a) => a.kind === "door" || a.kind === "exit");
   const wayIn = ways[0];
   const beside = (targets: RoomAsset[]) => {
@@ -2510,6 +2544,9 @@ const tagNumber = (a: Pick<Area, "tags">, name: string): number | undefined => {
 const tagId = (a: Pick<Area, "tags">, name: string): string | undefined => a.tags.find((t) => t.startsWith(`${name}:`))?.slice(name.length + 1);
 const WILD_BUILDINGS = ["cave", "ruin", "wreck", "camp", "trailhead"];
 const OPEN_GROUNDS = ["landing field", "landing pad"];
+// Buildings that may be round or oval when they are one room (see planBuilding): the towns' guard posts, a cantina
+// or a cookshop's round hall, the shops that are one room, and any hut, shrine or tower a world may add later
+const ROUND_BUILDINGS = /^(guardhouse|gatehouse|cantina|cookshop|pawnshop|curio shop|scrap dealer|hut|shrine|temple|chapel|tower|silo|cistern|observatory|dome|lighthouse|shelter)$/i;
 const UNDERGROUND = /cellar|basement|crypt|vault|hidden compartment|escape tunnel|detention|sewer|deep chamber/i;
 const UPSTAIRS = /apartment|quarters|offices|command room|operations room|control room|tower|rooftop|lookout|bridge|port office|guest rooms|bedchambers/i;
 // Hangars that stand on the ground, with sliding doors in the roof, for ships to put down in (see SITES)
@@ -2539,6 +2576,106 @@ function levelsOf(building: Area, rooms: Area[]): Map<string, number> {
 // Puts a room of its own between two rooms on different floors, and now and then corridors,
 // walkways, a gallery and a ladder. Rooms already joined by one are left alone, so this can be
 // run again on a building that has been edited.
+// A round or oval room (see footprint.ts) can only have a neighbour through a corridor: a room set against its curve
+// would cover squares that are cut away. So one room of a round kind of building is marked `round`, and every
+// door that joins it to another room on its floor is split with a corridor (as a stairway is, in linkLevels). The
+// planner (planBuilding) makes it round where the corridors meet its standing squares.
+function linkRounds(world: World, building: Area, seed: number) {
+  if (!ROUND_BUILDINGS.test(building.type) || WILD_BUILDINGS.includes(building.type) || building.tags.includes("rounded")) return;
+  building.tags.push("rounded");
+  const rooms = childrenOf(world, building.id).filter((a) => a.kind === "room" && !formOf(a));
+  const r = createRandom(seed + Number(building.id.replace(/\D/g, "") || 1) * 6151 + 3);
+  if (!rooms.length || !r.chance(0.6)) return;
+  const room = r.pick(rooms);
+  room.tags.push("round");
+  const levels = levelsOf(building, rooms);
+  const station = trailOf(world, building.id).some((a) => a.type === "station");
+  for (const path of [...world.paths]) {
+    if (path.kind !== "door") continue;
+    const a = world.areas[path.from];
+    const b = world.areas[path.to];
+    const other = a === room ? b : b === room ? a : undefined;
+    if (!other || other.parentId !== building.id || formOf(other) || levels.get(other.id) !== levels.get(room.id)) continue;
+    const link: Area = {
+      id: nextId(world, "a"), kind: "room", parentId: building.id, name: `Corridor to ${other.name}`, type: "corridor", description: "",
+      tags: ["form:corridor", `low:${levels.get(room.id) ?? 0}`, "rise:0"], position: { x: 0, y: 0, z: 0 }, danger: 0, occupants: [], ships: [], loot: [], faction: building.faction,
+    };
+    world.areas[link.id] = link;
+    world.paths.splice(world.paths.indexOf(path), 1);
+    const plain = station ? "Hatch" : "Doorway";
+    const { locked, hidden, label, travel } = path;
+    const first = a === room ? [room, link] : [other, link];
+    const second = a === room ? [link, other] : [link, room];
+    world.paths.push(
+      { id: nextId(world, "p"), from: first[0].id, to: first[1].id, kind: "door", label: hidden ? label : plain, travel: "10 ft.", ...(hidden ? { hidden: true } : {}) },
+      { id: nextId(world, "p"), from: second[0].id, to: second[1].id, kind: "door", label: locked ? label : plain, travel, ...(locked ? { locked } : {}) },
+    );
+  }
+}
+
+// A building of five rooms or more with no room of its own on an upper floor gets one or two: rooms of the ground that
+// are not the way in, a yard, a store or a bay (named so, by the code F1 tag that levelsOf reads). linkLevels then joins
+// them with stairs or a lift. Once per building (tag "floored").
+function linkFloors(world: World, building: Area, seed: number) {
+  if (WILD_BUILDINGS.includes(building.type) || OPEN_GROUNDS.includes(building.type) || GROUND_HANGARS.includes(building.type) || building.tags.includes("floored")) return;
+  building.tags.push("floored");
+  const real = childrenOf(world, building.id).filter((a) => a.kind === "room" && !formOf(a));
+  if (real.length < 5 || real.some((a) => (levelsOf(building, real).get(a.id) ?? 0) > 0)) return;
+  const r = createRandom(seed + Number(building.id.replace(/\D/g, "") || 1) * 3407 + 41);
+  if (!r.chance(0.7)) return;
+  const ground = real.filter((a) => !a.gateway && !/entr|gate|lobby|reception|foyer|hall\b|stall|yard|bay|cellar|basement|vault|roof|hangar|dock|kitchen|store/i.test(a.name) && !holdsShips(a));
+  const count = Math.min(2, Math.floor(real.length / 4));
+  for (let i = 0; i < count && ground.length; i++) {
+    const pick = ground.splice(Math.floor(r.next() * ground.length), 1)[0];
+    pick.tags.push("code:F1");
+  }
+}
+
+// An upper floor is for use, not a dead end: a room on an upper floor that is reached by one way only (the stairs or lift
+// it was built with) gets a second way, a short corridor to another room on its floor or else stairs down to a room
+// below it. Once per building (tag "upfloor"). The roofs, galleries and ship rooms are left alone.
+function linkUpperFloors(world: World, building: Area, seed: number) {
+  if (WILD_BUILDINGS.includes(building.type) || OPEN_GROUNDS.includes(building.type) || building.tags.includes("upfloor")) return;
+  building.tags.push("upfloor");
+  const real = childrenOf(world, building.id).filter((a) => a.kind === "room" && !formOf(a));
+  const levels = levelsOf(building, real);
+  const r = createRandom(seed + Number(building.id.replace(/\D/g, "") || 1) * 5119 + 29);
+  const joinedTo = (a: Area) => world.paths
+    .filter((p) => p.kind === "door" && (p.from === a.id || p.to === a.id))
+    .map((p) => world.areas[p.from === a.id ? p.to : p.from])
+    .filter((o): o is Area => !!o);
+  const door = (from: Area, to: Area) => world.paths.push({ id: nextId(world, "p"), from: from.id, to: to.id, kind: "door", label: "Doorway", travel: "10 ft." });
+  for (const room of real) {
+    const level = levels.get(room.id) ?? 0;
+    if (level < 1 || /roof|gallery/i.test(room.name) || holdsShips(room)) continue;
+    const joined = joinedTo(room);
+    if (joined.length !== 1) continue;
+    const same = real.filter((o) => o !== room && levels.get(o.id) === level && !joined.includes(o));
+    const below = real.filter((o) => o !== room && levels.get(o.id) === level - 1 && !joined.includes(o));
+    if (same.length && (!below.length || r.chance(0.6))) {
+      const partner = r.pick(same);
+      const link = addGeneratedRoom(world, building, `Upper corridor to ${partner.name}`, "corridor", [`low:${level}`, "rise:0"]);
+      door(room, link);
+      door(link, partner);
+    } else if (below.length) {
+      const partner = r.pick(below);
+      const stairs = addGeneratedRoom(world, building, `Stairs down to ${partner.name}`, "stairs", [`low:${level - 1}`, "rise:1"]);
+      door(room, stairs);
+      door(stairs, partner);
+    }
+  }
+}
+
+// A room of a building made in generation (a corridor, a stairway), as linkLevels makes them
+function addGeneratedRoom(world: World, building: Area, name: string, form: Form, tags: string[]): Area {
+  const area: Area = {
+    id: nextId(world, "a"), kind: "room", parentId: building.id, name, type: name.toLowerCase(), description: "",
+    tags: [`form:${form}`, ...tags], position: { x: 0, y: 0, z: 0 }, danger: 0, occupants: [], ships: [], loot: [], faction: building.faction,
+  };
+  world.areas[area.id] = area;
+  return area;
+}
+
 function linkLevels(world: World, building: Area, seed: number) {
   const rooms = childrenOf(world, building.id).filter((a) => a.kind === "room" && formOf(a) !== "pit");
   if (rooms.length < 2) return;
@@ -2627,7 +2764,10 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
   const building = world.areas[buildingId];
   if (!building) return;
   // Stairwells, lifts and the like between rooms on different floors (see Levels)
+  linkFloors(world, building, seed);
   linkLevels(world, building, seed);
+  linkRounds(world, building, seed);
+  linkUpperFloors(world, building, seed);
   const rooms = childrenOf(world, buildingId).filter((a) => a.kind === "room" && formOf(a) !== "pit");
   if (!rooms.length) return;
   const r = createRandom(seed + Number(buildingId.replace(/\D/g, "") || 1) * 7919);
@@ -2753,7 +2893,7 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
       const s = wallSquare(l, side, i);
       // (a room on another floor is not against it)
       const beyond: RoomLayout = { x: l.x + s.x + (side === "e" ? 1 : side === "w" ? -1 : 0), y: l.y + s.y + (side === "s" ? 1 : side === "n" ? -1 : 0), width: 1, height: 1, assets: [], level: l.level, climb: l.climb, tall: l.tall };
-      return !rooms.some((other) => other !== room && clash(beyond, other.layout!)) && !l.assets.some((a) => a.side && a.x === s.x && a.y === s.y);
+      return standsAt(l, s.x, s.y) && !rooms.some((other) => other !== room && clash(beyond, other.layout!)) && !l.assets.some((a) => a.side && a.x === s.x && a.y === s.y);
     });
   };
   const inWall = (room: Area, kind: AssetKind, name: string, side: Side, along: number, extra: Partial<RoomAsset> = {}) => {
@@ -2767,6 +2907,20 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
     }
     return undefined;
   };
+
+  // Some rooms of the round kinds of building are round or oval (see footprint.ts): one that has no room against
+  // it or its corners on a floor it shares, and at least five squares a side. Its way in or out is put on a
+  // square that stands (see `outside`), so the doors stay on the curve.
+  for (const room of rooms) {
+    const l = room.layout!;
+    const pick: Shape = r.next() < 0.5 ? "round" : "oval";
+    if (formOf(room) || !room.tags.includes("round") || Math.min(l.width, l.height) < 5) continue;
+    const ring = { ...l, x: l.x - 1, y: l.y - 1, width: l.width + 2, height: l.height + 2 };
+    const near = rooms.filter((other) => other !== room && clash(ring, other.layout!));
+    // Only corridors may be against it, and each must meet its standing squares
+    if (near.some((other) => formOf(other) !== "corridor" || !meetsStanding(l, other.layout!, pick))) continue;
+    if (waysStand(l.width, l.height, shapeRadii(pick, l.width, l.height))) l.shape = pick;
+  }
 
   // The ways out of the building first, then the doors between rooms
   for (const room of rooms.filter((a) => a.gateway)) {

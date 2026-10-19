@@ -7,6 +7,8 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import { ImprovedNoise } from "three/examples/jsm/math/ImprovedNoise.js";
 import { speederKind } from "@shared/logic";
 import { skinOf, type RoomLook } from "./interiors/wealth";
+import { useModels } from "./interiors/assets";
+import { pieceOf, type PackId } from "./interiors/packs";
 
 // ---------------------------------------------------------------------------------------------
 // The 3D models of the map: people, droids, creatures, furniture, ships, vehicles and buildings.
@@ -440,7 +442,31 @@ function screen(k: Kit, at: V3, w: number, h: number, tilt: number, color = C.gl
 // `seed` gives rocks and crates a shape of their own.
 // ---------------------------------------------------------------------------------------------
 
-export function Furniture({ name, w, h, seed = 0, look }: { name: string; w: number; h: number; seed?: number; look?: RoomLook }) {
+// A piece of a room's furniture: from the room's pack where the pack has it (fitted to its footprint, in the pack's palette and
+// not skinned), else drawn by the code (CodeFurniture). Until the pack's file is in, the code's piece stands.
+export function Furniture({ name, w, h, seed = 0, look, pack }: { name: string; w: number; h: number; seed?: number; look?: RoomLook; pack?: PackId }) {
+  const file = pieceOf(pack, name);
+  if (file) return <PackPiece file={file} name={name} w={w} h={h} seed={seed} look={look} />;
+  return <CodeFurniture name={name} w={w} h={h} seed={seed} look={look} />;
+}
+
+function PackPiece({ file, name, w, h, seed, look }: { file: string; name: string; w: number; h: number; seed: number; look?: RoomLook }) {
+  const geometry = useModels([file], "base")[file];
+  const fit = useMemo(() => {
+    if (!geometry) return 1;
+    geometry.computeBoundingBox();
+    const size = geometry.boundingBox!.getSize(new THREE.Vector3());
+    return Math.min(w / Math.max(size.x, 0.01), h / Math.max(size.z, 0.01));
+  }, [geometry, w, h]);
+  if (!geometry) return <CodeFurniture name={name} w={w} h={h} seed={seed} look={look} />;
+  return (
+    <mesh geometry={geometry} position={[w / 2, 0, h / 2]} scale={fit} castShadow receiveShadow>
+      <meshLambertMaterial vertexColors />
+    </mesh>
+  );
+}
+
+function CodeFurniture({ name, w, h, seed = 0, look }: { name: string; w: number; h: number; seed?: number; look?: RoomLook }) {
   const n = name.toLowerCase();
   const varied = /boulder|rubble|rock|crate|pallet|parts bin/.test(n) ? seed % 4 : 0;
   return (

@@ -14,10 +14,12 @@ import { Atmosphere } from "./interiors/Atmosphere";
 import { Stock } from "./interiors/Stock";
 import { CaveDressing, RockWall } from "./interiors/CaveRoom";
 import { moodOf } from "./interiors/atmosphere";
+import { packOf } from "./interiors/packs";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
 import { CurtainWall, GardenGround, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { Figure, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, RoundedFloor, CornerWall, DomeRoof, Opening, styleOf, hue, type Style } from "./models";
+import { radiiOf as shapeRadii } from "@shared/logic/footprint";
 
 // The flying games draw the same ships and speeders
 export { ShipModel, SpeederModel } from "./models";
@@ -350,7 +352,7 @@ function wallRuns(length: number, gaps: number[]): [number, number][] {
   return runs;
 }
 
-function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, children }: {
+export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, children }: {
   width: number;
   height: number;
   // How far each outside corner is rounded: north-west, north-east, south-east, south-west
@@ -475,7 +477,7 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls 
             : a.kind === "loot" ? (nodeOf?.(a) ? <NodeModel node={nodeOf(a)!} empty={looted?.(a)} /> : <Chest looted={looted?.(a)} />)
             : (
               <>
-                <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} />
+                <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={mood ? packOf(mood.roomName) : undefined} />
                 {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} />}
               </>
             )}
@@ -1982,6 +1984,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // door or window in the wall beside it (it is cut back to the nearest one)
   const radiiOf = (room: Area, most = style.corner): [number, number, number, number] => {
     const l = room.layout;
+    // A round or oval room is drawn as its planned curve (shared/logic/footprint.ts), whatever touches it
+    if (l?.shape) return shapeRadii(l.shape, l.width, l.height);
     if (!l || most <= 0) return [0, 0, 0, 0];
     const lv = l.level ?? 0;
     const top = lv + 1 + (l.climb?.levels ?? 0);
@@ -2000,7 +2004,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     ];
   };
   // Inside a room the curve is kept small, so that the corner square stays a square to stand on
-  const insideRadii = (room: Area) => radiiOf(room).map((r) => Math.min(r, 1.1)) as [number, number, number, number];
+  const insideRadii = (room: Area) => (room.layout?.shape ? radiiOf(room) : radiiOf(room).map((r) => Math.min(r, 1.1))) as [number, number, number, number];
 
   return (
     <>

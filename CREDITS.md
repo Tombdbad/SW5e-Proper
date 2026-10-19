@@ -10,6 +10,10 @@ missing from this list.
 |---|---|---|---|---|
 | `kenney-blaster` — Blaster Kit 2.1 | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/blaster-kit | the blasters, clips, grenades and crates on weapon racks, shelves and in cases (hero and low detail) |
 | `kenney-space` — Space Kit 2.0 | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/space-kit | barrels, generators, desks and consoles, rocks and crystals for interiors |
+| `kenney-station` — Space Station Kit | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/space-station-kit | beds, chairs, walls and corners of the Imperial-toned rooms (converted with `tone=imperial`; not yet placed in a scene) |
+| `kenney-station` — two pieces from the Furniture Kit (`furniture-kit-sofa`, `furniture-kit-table-low`) | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/furniture-kit | a sofa and a low table for the palace rooms, converted with `tone=imperial` so they match the station pieces |
+| `kenney-station-frontier` — four pieces of the Space Station Kit | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/space-station-kit | a test of the frontier palette (`tone=frontier`) on a bed, a chair and two walls (`/dev/models?section=packs`) |
+| `kenney-furniture` — Furniture Kit (seven pieces: bed, sofa, tables, cabinet) | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/furniture-kit | the furniture of servants' quarters, apartments and tenement rooms (converted with `tone=frontier`; `packs.ts`) |
 
 The models are not used as downloaded. `tools/convert-assets.mjs` bakes each model's texture colours into vertex colours
 (so there is no texture to fetch), rebuilds blasters in a steel ramp, quantises the meshes and writes a second,

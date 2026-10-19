@@ -9,6 +9,77 @@ import { CaveDressing, RockWall } from "@/components/Map/interiors/CaveRoom";
 import { moodOf } from "@/components/Map/interiors/atmosphere";
 import { WEALTH, lookOf, wealthOf } from "@/components/Map/interiors/wealth";
 import { CurtainWall, GardenGround, Scatter, StallModel, paletteOf, plantGarden, type StallState } from "@/components/Map/siteAssets";
+import { RoomShell } from "@/components/Map/LocalMap";
+import { useModels } from "@/components/Map/interiors/assets";
+import { floorOf } from "@/components/Map/sprites";
+import { furnishRoom, createRandom, type Area } from "@shared/logic";
+import { radiiOf as shapeRadii } from "@shared/logic/footprint";
+
+// `rounds` shows the first round and oval rooms (2026-10-19): furnished by the planner (furnishRoom) on their curve.
+const ROUNDS: [string, number, number, string, string][] = [["round", 9, 9, "cantina", "Main bar"], ["oval", 11, 7, "guardhouse", "Guard post"], ["round", 7, 7, "scrap dealer", "Back room"]];
+function Rounds() {
+  return (
+    <>
+      {ROUNDS.map(([shape, w, h, type, name], i) => {
+        const room = { id: `gallery-round-${i}`, kind: "room", name, parentId: null, type, description: "", tags: [], position: { x: 0, y: 0, z: 0 }, danger: 0, occupants: [], ships: [], loot: [], layout: { x: 0, y: 0, width: w, height: h, assets: [], shape: shape as "round" | "oval" } } as unknown as Area;
+        furnishRoom(room, createRandom(7 + i), type);
+        const l = room.layout!;
+        return (
+          <group key={room.id} position={[i * 13 - 13, 0, 0]}>
+            <RoomShell width={w} height={h} assets={l.assets} floor={floorOf(type)} wall="#b9ad96" style={styleOf("desert", type)} corners={shapeRadii(l.shape!, w, h)} />
+            <Label at={[w / 2, 0.1, h + 1]} text={`${shape}: ${name} (${w}x${h})`} />
+          </group>
+        );
+      })}
+    </>
+  );
+}
+
+// `packs` puts pieces of three packs side by side, in the palettes they were converted with, to judge whether they read as one
+// place: the Space Kit as made (kenney-space), the Space Station Kit in the Imperial palette and in the frontier one (kenney-station,
+// kenney-station-frontier), and a blaster in steel (kenney-blaster, tone=gunmetal). Pieces of one pack share a palette.
+const PACK_PIECES: [string, string][] = [
+  ["/assets/kenney-space/desk_computer.glb", "space kit: computer desk"],
+  ["/assets/kenney-space/barrel.glb", "space kit: barrel"],
+  ["/assets/kenney-station/bed-single.glb", "station, imperial: bed"],
+  ["/assets/kenney-station/chair-armrest-headrest.glb", "station, imperial: chair"],
+  ["/assets/kenney-station-frontier/bed-single.glb", "station, frontier: bed"],
+  ["/assets/kenney-station-frontier/chair-armrest-headrest.glb", "station, frontier: chair"],
+  ["/assets/kenney-blaster/blaster-a.glb", "blaster, steel"],
+];
+// Two rooms furnished by the planner, each from its pack: a palace guest room and a residence's servants' quarters
+const PACK_ROOMS: [string, string, string][] = [["palace", "Guest rooms", "desert"], ["residences", "Servants' quarters", "desert"]];
+function PackRooms() {
+  return (
+    <>
+      {PACK_ROOMS.map(([type, name, biome], i) => {
+        const room = { id: `gallery-pack-${i}`, kind: "room", name, parentId: null, type: name, description: "", tags: [], position: { x: 0, y: 0, z: 0 }, danger: 0, occupants: [], ships: [], loot: [], layout: { x: 0, y: 0, width: 8, height: 6, assets: [] } } as unknown as Area;
+        furnishRoom(room, createRandom(11 + i), type);
+        return (
+          <group key={room.id} position={[i * 11 - 5.5, 0, 9]}>
+            <RoomShell width={8} height={6} assets={room.layout!.assets} floor={floorOf(type)} wall="#b9ad96" style={styleOf(biome, type)} mood={{ buildingType: type, roomName: name, biome }} />
+            <Label at={[4, 0.1, 7.2]} text={`${type}: ${name}`} />
+          </group>
+        );
+      })}
+    </>
+  );
+}
+
+function Packs() {
+  const got = useModels(PACK_PIECES.map(([url]) => url), "base");
+  return (
+    <>
+      <PackRooms />
+      {PACK_PIECES.map(([url, name], i) => (
+        <group key={url} position={[i * 2.4 - 7.2, 0, 0]}>
+          {got[url] && <mesh geometry={got[url]!} castShadow><meshLambertMaterial vertexColors /></mesh>}
+          <Label at={[0, 0.02, 1.6]} text={name} />
+        </group>
+      ))}
+    </>
+  );
+}
 
 // Every model of the 3D map laid out in rows, for looking them over (a developer's page, not
 // linked from the game). ?section=people|roles|droids|beasts|furniture|ships|places|sites|interiors picks one.
@@ -137,6 +208,8 @@ export default function ModelGallery() {
             ))}
           </>
         )}
+        {section === "rounds" && <Rounds />}
+        {section === "packs" && <Packs />}
         {section === "interiors" && (
           <>
             {/* The stock of a rack by the place: an armsmith, a garrison armory, a palace guard post, a hideout */}

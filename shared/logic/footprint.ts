@@ -2,7 +2,7 @@
 // rounded its outside corners (see `RoundedFloor`, `CornerWall`); a round or oval room is the same
 // thing taken as far as it goes: corner radii of half the shorter side. These say which squares
 // that leaves standing, so that nothing is furnished or walked in the part that was cut away.
-// Pure (tests/interiors/footprint.test.ts).
+// Pure, so the planner (shared/logic) and the map (client) share it (tests/interiors/footprint.test.ts).
 
 export type Radii = [nw: number, ne: number, se: number, sw: number];
 export type Shape = "rect" | "round" | "oval" | "chamfer";

@@ -5,7 +5,7 @@
 import { childrenOf, trailOf, type Area, type Path, type World } from "@shared/logic";
 
 // The buildings the overhaul shows off: each gets a fast way from every other
-export const SHOWCASE_BUILDINGS = ["palace", "estates", "armsmith", "garrison", "cantina", "medcenter", "tenements", "hideout", "workshop", "gambling hall", "archive", "market"];
+export const SHOWCASE_BUILDINGS = ["palace", "estates", "armsmith", "garrison", "cantina", "medcenter", "tenements", "hideout", "workshop", "gambling hall", "archive", "market", "guardhouse", "cookshop", "scrap dealer"];
 // The wild settlements worth keeping: caves and ruins
 export const SHOWCASE_SITES = ["cave system", "ruins"];
 
@@ -24,7 +24,9 @@ export function showcaseScore(world: World): number {
   if (!wild.some((s) => s.type === "cave system")) return 0;
   const here = new Set(childrenOf(world, home.id).map((b) => b.type));
   const there = new Set(wild.flatMap((s) => childrenOf(world, s.id).map((b) => b.type)));
-  return SHOWCASE_BUILDINGS.filter((t) => here.has(t)).length + (here.has("palace") ? 3 : 0) + (there.has("cave") ? 3 : 0) + (there.has("ruin") ? 1 : 0);
+  // (a round or oval room in the city is worth two: the curves of 2026-10-19 show only where one is)
+  const round = childrenOf(world, home.id).filter((b) => childrenOf(world, b.id).some((r) => r.layout?.shape)).length;
+  return SHOWCASE_BUILDINGS.filter((t) => here.has(t)).length + (here.has("palace") ? 3 : 0) + (there.has("cave") ? 3 : 0) + (there.has("ruin") ? 1 : 0) + 2 * round;
 }
 
 // The world cut down to its starting planet's city and wild sites, with quick ways between them
@@ -71,7 +73,10 @@ export function trimToShowcase(world: World): World {
 const FOUND = new Map<number, number>();
 
 // Tries seeds until a world shows the work (or the tries run out: the best one seen), then trims it
+// With SW5E_SHOWCASE_SEED set (the test copy's unit), every new campaign gets that one world and no other.
 export function showcaseWorld(make: (seed: number) => World, seed: number, tries = 120): World {
+  const fixed = Number(process.env.SW5E_SHOWCASE_SEED);
+  if (Number.isInteger(fixed) && fixed > 0) return trimToShowcase(make(fixed));
   const known = FOUND.get(seed);
   if (known !== undefined) return trimToShowcase(make(known));
   let best: { world: World; score: number; seed: number } | undefined;

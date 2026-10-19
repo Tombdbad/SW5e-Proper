@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { radiiOf, standing, insideFloor, waysStand } from "../../client/src/components/Map/interiors/footprint";
+import { radiiOf, standing, insideFloor, waysStand } from "../../shared/logic/footprint";
 
 const count = (g: boolean[][]) => g.flat().filter(Boolean).length;
 

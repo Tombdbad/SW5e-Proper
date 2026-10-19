@@ -6,13 +6,15 @@
 set -e
 SRC=/home/ubuntu/SW5e-Proper
 DST=/home/ubuntu/sw5e-test
+# The one world every new campaign gets on the test copy (server/showcase.ts: a city with round rooms, caves and ruins beside it)
+SEED=34
 mkdir -p "$DST"
 rsync -a --delete --exclude node_modules --exclude dist --exclude .git --exclude e2e/out "$SRC/" "$DST/"
 [ -e "$DST/node_modules" ] || ln -s "$SRC/node_modules" "$DST/node_modules"
 cd "$DST" && npm run build >/tmp/sw5e-test-build.log 2>&1 || { tail -20 /tmp/sw5e-test-build.log; exit 1; }
 systemctl --user stop sw5e-test 2>/dev/null || true
 systemctl --user reset-failed sw5e-test 2>/dev/null || true
-systemd-run --user --unit sw5e-test --working-directory="$DST" --setenv=NODE_ENV=production --setenv=PORT=5001 --setenv=SW5E_SHOWCASE=1 \
-  sh -c "set -a; . $SRC/.env; set +a; export NODE_ENV=production PORT=5001 SW5E_SHOWCASE=1 DATABASE_URL=\$(node -e 'const u=new URL(process.env.DATABASE_URL); u.pathname=\"/sw5e_test\"; console.log(u.toString())'); exec /usr/bin/node dist/index.js"
+systemd-run --user --unit sw5e-test --working-directory="$DST" --setenv=NODE_ENV=production --setenv=PORT=5001 --setenv=SW5E_SHOWCASE=1 --setenv=SW5E_SHOWCASE_SEED=$SEED \
+  sh -c "set -a; . $SRC/.env; set +a; export NODE_ENV=production PORT=5001 SW5E_SHOWCASE=1 SW5E_SHOWCASE_SEED=$SEED DATABASE_URL=\$(node -e 'const u=new URL(process.env.DATABASE_URL); u.pathname=\"/sw5e_test\"; console.log(u.toString())'); exec /usr/bin/node dist/index.js"
 sleep 3
 curl -s -o /dev/null -w "test copy on 5001: %{http_code}\n" http://127.0.0.1:5001/

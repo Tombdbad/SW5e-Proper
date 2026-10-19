@@ -1,6 +1,6 @@
 // The interiors gallery, looked at in a real browser without the play-through (2026-10-19): opens /dev/models?section=interiors
 // at a few cameras, saves a shot of each, reports what was drawn (calls, triangles) and fails on a console error or a model that
-// did not load. Usage: BASE=http://127.0.0.1:5173 node e2e/interiors.mjs [name ...]   (names: racks wealth caves moods)
+// did not load. Usage: BASE=http://127.0.0.1:5173 node e2e/interiors.mjs [name ...]   (names: racks wealth caves moods rounds packs)
 // Needs a server that serves the client: `npx vite --port 5173 --host 127.0.0.1` (no build, no database), and nobody else on the VM busy.
 import { open, OUT } from "./lib.mjs";
 
@@ -10,6 +10,8 @@ const VIEWS = {
   wealth: { cam: [0, 9, 22], look: [0, 0, 12] },
   caves: { cam: [-6, 13, 40], look: [-6, 0, 28] },
   moods: { cam: [-2, 22, 62], look: [-2, 0, 44] },
+  rounds: { section: "rounds", cam: [0, 22, 30], look: [0, 0, 4] },
+  packs: { section: "packs", cam: [0, 14, 26], look: [4, 0, 9] },
 };
 const wanted = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(VIEWS);
 const { browser, page, events } = await open();
@@ -21,7 +23,7 @@ try {
     const v = VIEWS[name];
     if (!v) throw new Error(`no view ${name}`);
     const t0 = Date.now();
-    await page.goto(`${BASE}/dev/models?section=interiors&cam=${v.cam}&look=${v.look}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/dev/models?section=${v.section ?? "interiors"}&cam=${v.cam}&look=${v.look}`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => window.__gallery?.info().calls > 0, null, { timeout: 120000 });
     // Models are fetched after the first frame: give them time, then see that the stock has grown into its hero detail
     await page.waitForTimeout(6000);

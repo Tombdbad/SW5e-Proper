@@ -9,7 +9,10 @@ const make = (seed: number): World => generateWorld({ seed, partyLevel: 5 }, cat
 
 test("the showcase is a single planet with its city and wild sites, valid, and every place reachable", () => {
   const started = Date.now();
+  // The world the test copy ships (deploy/test-copy.sh) is the one checked
+  process.env.SW5E_SHOWCASE_SEED = "34";
   const world = showcaseWorld(make, 1);
+  delete process.env.SW5E_SHOWCASE_SEED;
   const planets = Object.values(world.areas).filter((a) => a.kind === "planet");
   assert.equal(planets.length, 1);
   assert.equal(Object.values(world.areas).filter((a) => a.kind === "system").length, 1);
