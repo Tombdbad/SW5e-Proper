@@ -15,7 +15,7 @@ import { Stock } from "./interiors/Stock";
 import { CaveDressing, RockWall } from "./interiors/CaveRoom";
 import { moodOf } from "./interiors/atmosphere";
 import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
-import { PackWalls, type WallRun } from "./interiors/Walls";
+import { PackWalls, cornerCentre, type WallRun } from "./interiors/Walls";
 import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
@@ -415,6 +415,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   const packLook = useMemo(() => (pack ? packTone(PACKS[pack], wall) : undefined), [pack, wall]);
   const [nw, ne, se, sw] = rocky ? [0, 0, 0, 0] : corners ?? [0, 0, 0, 0];
   const rounded = nw + ne + se + sw > 0;
+  // The rounded corners, each a quarter ring
+  const cornerList = ([[nw, 0], [ne, 1], [se, 2], [sw, 3]] as const).filter(([r]) => r > 0).map(([r, corner]) => ({ r, corner }));
   // Each wall runs between its corners, stopping short of a rounded one
   const sides = [
     { side: "n", length: width, ends: [nw, ne], at: (a: number, b: number): [V3, V3] => [[(a + b) / 2, wallH / 2, 0], [b - a + (a === 0 ? WALL_THICK / 2 : 0) + (b === width ? WALL_THICK / 2 : 0), wallH, WALL_THICK]], along: (a: RoomAsset) => a.x },
@@ -464,15 +466,18 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
               const [position, size] = at(a, b);
               return <Box key={`${side}${run[0]}`} at={position} size={size} color={wall} />;
             });
-            // A room of a pack with walls has the kit's, in its palette; the plain ones stand until the kit is in
-            return packLook && hasWalls(pack!) && !rocky ? <PackWalls runs={runs} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={packLook} fallback={plain} /> : plain;
+            // A room of a pack with walls has the kit's, straight and bent round its corners, in its palette; the plain ones stand until the kit is in
+            const corner = cornerList.map((c) => {
+              const [x, z] = cornerCentre(c, width, height);
+              return (
+                <group key={`corner${c.corner}`} position={[x, 0, z]}>
+                  <CornerWall r={c.r} h={wallH} thick={WALL_THICK} corner={c.corner} color={packLook && pack && hasWalls(pack) ? toneColour(packLook) : wall} />
+                </group>
+              );
+            });
+            return packLook && hasWalls(pack!) && !rocky ? <PackWalls runs={runs} corners={cornerList} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={packLook} fallback={<>{plain}{corner}</>} /> : <>{plain}{corner}</>;
           })()
         : [[0, 0], [width, 0], [0, height], [width, height]].map(([x, z], i) => <Cyl key={i} at={[x, 0.3, z]} r={0.08} h={0.6} color={wall} />)}
-      {walls && ([[nw, nw, nw, 0], [ne, width - ne, ne, 1], [se, width - se, height - se, 2], [sw, sw, height - sw, 3]] as const).filter(([r]) => r > 0).map(([r, x, z, corner]) => (
-        <group key={`corner${corner}`} position={[x, 0, z]}>
-          <CornerWall r={r} h={wallH} thick={WALL_THICK} corner={corner} color={packLook && pack && hasWalls(pack) ? toneColour(packLook) : wall} />
-        </group>
-      ))}
       {assets.filter((a) => a.side && (walls || a.kind !== "window")).map((a) => {
         const spot = onWall({ width, height }, a);
         return (
