@@ -1985,6 +1985,143 @@ if (process.env.FORCE !== "0") {
     await page.getByTestId("downtime-craft-pick").selectOption(pick);
   };
 
+  await step(ctx, "hangars: the roof doors are shut unless a ship is coming or going; visiting ships come and go by the clock", async () => {
+    const h = await newChar({ equipment: ["Blaster pistol"] });
+    let room = null, building = null;
+    const hc = await newCamp(h, 3, async (world) => {
+      room = Object.values(world.areas).find((a) => a.kind === "room" && a.layout?.roof === "hangar" && a.layout.assets.some((x) => x.kind === "ship" && x.ref?.startsWith(`${a.id}-berth`)));
+      building = world.areas[room.parentId];
+      for (const r of Object.values(world.areas).filter((a) => a.parentId === building.id)) r.occupants = r.occupants.filter((o) => o.disposition !== "hostile");
+    }, { timeElapsed: { total: 480 } });
+    await api("PATCH", `/api/campaigns/${hc.id}`, { currentLocation: building.id });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await sleep(3000);
+    // The hangar's berths and doors at every minute of four days, by the same functions the map draws with
+    const scan = await page.evaluate((id) => {
+      let open = 0, total = 0, wide = false, landing = false, docked = 0;
+      for (let m = 480; m < 480 + 4 * 1440; m++) {
+        const b = window.__bay(id, m);
+        total++;
+        if (b.door > 0.01) open++;
+        if (b.door > 0.99) wide = true;
+        if (b.door > 0.99 && b.berths.some((x) => x.ship && x.lift > 0.5)) landing = true;
+        if (b.door < 0.01 && b.berths.some((x) => x.ship && x.visitor)) docked++;
+      }
+      return { open, total, wide, landing, docked };
+    }, room.id);
+    if (scan.open / scan.total > 0.12) throw new Error(`the doors are open ${scan.open} of ${scan.total} minutes: they should open only for a ship`);
+    if (!scan.wide || !scan.landing) throw new Error("no ship was ever seen coming or going through open doors: " + JSON.stringify(scan));
+    if (!scan.docked) throw new Error("no visiting ship ever stood in a berth with the doors shut");
+    return `${room.name}: doors open ${Math.round((100 * scan.open) / scan.total)}% of four days, wide and with a ship aloft at the changes; a visitor in a berth ${Math.round((100 * scan.docked) / scan.total)}% of the time`;
+  });
+
+  await step(ctx, "streets: someone in need walks up to the party on the street, follows it to the building they must reach, and is paid", async () => {
+    const h = await newChar({ equipment: ["Blaster pistol"], credits: 100 });
+    let building = null, target = null, door = null, district = null;
+    const hc = await newCamp(h, 7, async (world) => {
+      const start = world.areas[world.startId];
+      building = world.areas[start.parentId];
+      district = Object.values(world.districtPlans).find((p) => p.boxes[building.id]);
+      const mine = district.boxes[building.id];
+      const near = Object.keys(district.boxes).filter((id) => id !== building.id).sort((a, b) => Math.hypot(district.boxes[a].x - mine.x, district.boxes[a].y - mine.y) - Math.hypot(district.boxes[b].x - mine.x, district.boxes[b].y - mine.y))[0];
+      target = world.areas[near];
+      const root = Object.values(world.areas).find((a) => a.parentId === target.id && a.layout?.assets.some((x) => x.kind === "exit"));
+      const way = root.layout.assets.find((x) => x.kind === "exit");
+      door = { x: root.layout.x + way.x + (way.side === "e" ? 1 : way.side === "w" ? -1 : 0), y: root.layout.y + way.y + (way.side === "s" ? 1 : way.side === "n" ? -1 : 0) };
+      for (const r of Object.values(world.areas).filter((a) => a.parentId === building.id)) r.occupants = r.occupants.filter((o) => o.disposition !== "hostile");
+      world.encounter = { id: "e2e|help", kind: "help", districtId: district.id, settlementId: building.parentId, person: "Old Dathan", title: "Someone in trouble", text: "Old Dathan comes up to you in the street and says a sick child needs a medpac.", phase: "approach", begun: 480, target: target.id };
+    }, { timeElapsed: { total: 480 } });
+    await api("PATCH", `/api/campaigns/${hc.id}`, { currentLocation: building.id });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    // Nothing is asked of the party until the person has walked up to it
+    let phase = "";
+    for (let i = 0; i < 80 && phase !== "talk"; i++) {
+      phase = (await campOf(hc.id)).galaxyMap.encounter?.phase;
+      if (phase !== "talk") await sleep(1000);
+    }
+    if (phase !== "talk") throw new Error("the person never walked up to the party (phase " + phase + ")");
+    const folk = await page.evaluate(() => window.__folk);
+    if (folk["e2e|help"] !== 1) throw new Error("the person is on the map " + folk["e2e|help"] + " times");
+    await page.getByTestId("encounter").getByRole("button", { name: "Help them" }).click();
+    await sleep(1500);
+    if ((await campOf(hc.id)).galaxyMap.encounter?.phase !== "follow") throw new Error("the person did not start to follow");
+    await tap(`sq:${door.x},${door.y}`);
+    let paid = false;
+    for (let i = 0; i < 120 && !paid; i++) {
+      await sleep(1000);
+      paid = !(await campOf(hc.id)).galaxyMap.encounter;
+    }
+    if (!paid) throw new Error("the person was never delivered");
+    const c = await getChar(h.id);
+    if (c.credits !== 250) throw new Error("credits " + c.credits);
+    return `Old Dathan walked up, followed the party to ${target.name} and paid 150 credits`;
+  });
+
+  await step(ctx, "streets: a gang in a lawless alley closes in, bars the way out and is fought on the map; its leader's fall sends the rest running", async () => {
+    const h = await newChar({ equipment: ["Vibroblade", "Blaster pistol"], level: 14, maxHp: 180, currentHp: 180, armorClass: 22, credits: 800, abilityScores: { strength: 20, dexterity: 14, constitution: 16, intelligence: 12, wisdom: 12, charisma: 12 } });
+    let building = null, alley = null;
+    const hc = await newCamp(h, 5, async (world) => {
+      const start = world.areas[world.startId];
+      building = world.areas[start.parentId];
+      const district = Object.values(world.districtPlans).find((p) => p.boxes[building.id]);
+      alley = district.ways.find((w) => w.kind === "alley" && Math.max(w.width, w.height) >= 8);
+      for (const r of Object.values(world.areas).filter((a) => a.parentId === building.id)) r.occupants = r.occupants.filter((o) => o.disposition !== "hostile");
+    }, { timeElapsed: { total: 480 } });
+    await page.goto("about:blank");
+    await api("PATCH", `/api/campaigns/${hc.id}`, { currentLocation: building.id });
+    await page.goto(`${BASE}/game/${hc.id}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    await sleep(3000);
+    // A day and an hour in which a gang waits in this alley
+    const hours = await page.evaluate((a) => window.__street.ambushHours(a, 1), alley);
+    if (!hours.length) throw new Error("no hour of the day has a gang in the alley");
+    await page.evaluate(() => localStorage.setItem("sw5e.noEncounters", "0"));
+    await page.goto("about:blank");
+    await api("PATCH", `/api/campaigns/${hc.id}`, { timeElapsed: { total: hours[0] * 60 + 2 } });
+    try {
+      await page.goto(`${BASE}/game/${hc.id}`, { waitUntil: "domcontentloaded" });
+      await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+      await sleep(3000);
+      if ((await campOf(hc.id)).galaxyMap.encounter) throw new Error("a gang is on the party before it has walked into the alley");
+      await tap(`sq:${alley.x + 1},${alley.y + Math.floor(alley.height / 2)}`);
+      let phase = "";
+      for (let i = 0; i < 90 && phase !== "surround"; i++) {
+        await sleep(1000);
+        phase = (await campOf(hc.id)).galaxyMap.encounter?.phase;
+      }
+      if (phase !== "surround") throw new Error("the gang never surrounded the party (phase " + phase + ")");
+      const hud = await page.getByTestId("encounter").innerText();
+      if (!/Fight the gang/.test(hud) || !/Pay the toll/.test(hud)) throw new Error("the options: " + hud.replace(/\s+/g, " "));
+      // The way out is barred: a walk out of the alley is refused
+      await tap(`sq:${alley.x + 1},${alley.y - 3}`);
+      await page.getByText("The gang bars the way out of the alley.").first().waitFor({ timeout: 15000 });
+      const before = (await getChar(h.id)).credits;
+      await page.getByRole("button", { name: "Fight the gang" }).click();
+      await page.getByText(/Combat - Round/).waitFor({ timeout: 60000 });
+      const seen = [];
+      for (let i = 0; i < 300; i++) {
+        if (!(await page.getByText(/Combat - Round/).count())) break;
+        for (const l of await page.locator("div.text-xs.text-gray-300 > div").allInnerTexts().catch(() => [])) if (!seen.includes(l)) seen.push(l);
+        const save = page.getByRole("button", { name: "Death saving throw" });
+        const melee = page.getByRole("button", { name: "Melee", exact: true });
+        if ((await save.count()) && (await save.isEnabled().catch(() => false))) await save.click().catch(() => {});
+        else if ((await melee.count()) && (await melee.isEnabled().catch(() => false))) await melee.click().catch(() => {});
+        else if (await page.getByRole("button", { name: "End turn" }).isEnabled().catch(() => false)) await page.getByRole("button", { name: "End turn" }).click().catch(() => {});
+        await sleep(300);
+      }
+      await sleep(2500);
+      const camp = await campOf(hc.id);
+      if (camp.galaxyMap.encounter) throw new Error("the gang is still there after the fight: " + seen.slice(-3).join(" | "));
+      const after = await getChar(h.id);
+      if (after.credits !== before + 350) throw new Error(`credits ${before} -> ${after.credits}, not the boss's purse of 350`);
+      return `the gang closed in, the alley was barred, the fight opened on the map and won (${seen.filter((l) => /breaks and runs/.test(l)).length ? "the rest ran when their leader fell" : "all fell"}); +350 credits`;
+    } finally {
+      await page.evaluate(() => localStorage.setItem("sw5e.noEncounters", "1"));
+    }
+  });
+
   await step(ctx, "gathering: a vein in the room is mined with a scavenging kit; the ore is kept and the vein runs dry", async () => {
     const mk = await newChar({ equipment: ["Scavenging kit"], toolProficiencies: ["Scavenging kit"] });
     const mc = await newCamp(mk, 11, async (world, start) => addNode(start, "e2e-vein", "Mineral vein", { family: "ore", tier: 0, material: "ore-0", charges: 2, max: 2 }));
