@@ -16,7 +16,7 @@ import { CaveDressing, RockWall } from "./interiors/CaveRoom";
 import { moodOf } from "./interiors/atmosphere";
 import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
 import { PackWalls, type WallRun } from "./interiors/Walls";
-import { packTone } from "./interiors/tones";
+import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
 import { CurtainWall, GardenGround, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
@@ -470,7 +470,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         : [[0, 0], [width, 0], [0, height], [width, height]].map(([x, z], i) => <Cyl key={i} at={[x, 0.3, z]} r={0.08} h={0.6} color={wall} />)}
       {walls && ([[nw, nw, nw, 0], [ne, width - ne, ne, 1], [se, width - se, height - se, 2], [sw, sw, height - sw, 3]] as const).filter(([r]) => r > 0).map(([r, x, z, corner]) => (
         <group key={`corner${corner}`} position={[x, 0, z]}>
-          <CornerWall r={r} h={wallH} thick={WALL_THICK} corner={corner} color={wall} />
+          <CornerWall r={r} h={wallH} thick={WALL_THICK} corner={corner} color={packLook && pack && hasWalls(pack) ? toneColour(packLook) : wall} />
         </group>
       ))}
       {assets.filter((a) => a.side && (walls || a.kind !== "window")).map((a) => {

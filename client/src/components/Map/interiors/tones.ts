@@ -84,3 +84,6 @@ export function toneOfColours(id: string, ramp: [string, string, string], accent
   };
   return { id, ramp: ramp.map(lin) as Tone["ramp"], accent: lin(accent) };
 }
+
+// A tone's middle stop as a colour string: for the plain parts of a wall (a rounded corner) that stand beside the kit's tiles
+export const toneColour = (tone: Tone): string => `#${new THREE.Color().setRGB(...tone.ramp[1]).getHexString()}`;

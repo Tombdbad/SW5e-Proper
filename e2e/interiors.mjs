@@ -10,7 +10,7 @@ const VIEWS = {
   wealth: { cam: [0, 9, 22], look: [0, 0, 12] },
   caves: { cam: [-6, 13, 40], look: [-6, 0, 28] },
   moods: { cam: [-2, 22, 62], look: [-2, 0, 44] },
-  rounds: { section: "rounds", cam: [0, 22, 30], look: [0, 0, 4] },
+  rounds: { section: "rounds", cam: [0, 26, 24], look: [0, 0, 7] },
   packs: { section: "packs", cam: [0, 14, 26], look: [4, 0, 9] },
   tones: { section: "packs", cam: [0, 20, -4], look: [0, 0, -12] },
   shops: { section: "interiors", cam: [-0.5, 8, -2], look: [-0.5, 0, -9.5] },

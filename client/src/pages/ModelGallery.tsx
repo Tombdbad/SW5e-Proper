@@ -19,7 +19,7 @@ import { furnishRoom, createRandom, type Area } from "@shared/logic";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
 
 // `rounds` shows the first round and oval rooms (2026-10-19): furnished by the planner (furnishRoom) on their curve.
-const ROUNDS: [string, number, number, string, string][] = [["round", 9, 9, "cantina", "Main bar"], ["oval", 11, 7, "guardhouse", "Guard post"], ["round", 7, 7, "scrap dealer", "Back room"]];
+const ROUNDS: [string, number, number, string, string][] = [["round", 9, 9, "cantina", "Main bar"], ["oval", 11, 7, "guardhouse", "Guard post"], ["round", 7, 7, "scrap dealer", "Back room"], ["round", 9, 9, "palace", "Audience chamber"], ["oval", 11, 7, "medcenter", "Ward"]];
 function Rounds() {
   return (
     <>
@@ -28,8 +28,8 @@ function Rounds() {
         furnishRoom(room, createRandom(7 + i), type);
         const l = room.layout!;
         return (
-          <group key={room.id} position={[i * 13 - 13, 0, 0]}>
-            <RoomShell width={w} height={h} assets={l.assets} floor={floorOf(type)} wall="#b9ad96" style={styleOf("desert", type)} corners={shapeRadii(l.shape!, w, h)} />
+          <group key={room.id} position={[(i % 3) * 13 - 13, 0, Math.floor(i / 3) * 13]}>
+            <RoomShell width={w} height={h} assets={l.assets} floor={floorOf(type)} wall="#b9ad96" style={styleOf("desert", type)} corners={shapeRadii(l.shape!, w, h)} mood={{ buildingType: type, roomName: name, biome: "desert" }} />
             <Label at={[w / 2, 0.1, h + 1]} text={`${shape}: ${name} (${w}x${h})`} />
           </group>
         );
