@@ -8,7 +8,8 @@ import { ImprovedNoise } from "three/examples/jsm/math/ImprovedNoise.js";
 import { speederKind } from "@shared/logic";
 import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels } from "./interiors/assets";
-import { pieceOf, type PackId } from "./interiors/packs";
+import { fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
+import type { Tone } from "./interiors/tones";
 
 // ---------------------------------------------------------------------------------------------
 // The 3D models of the map: people, droids, creatures, furniture, ships, vehicles and buildings.
@@ -442,35 +443,51 @@ function screen(k: Kit, at: V3, w: number, h: number, tilt: number, color = C.gl
 // `seed` gives rocks and crates a shape of their own.
 // ---------------------------------------------------------------------------------------------
 
-// A piece of a room's furniture: from the room's pack where the pack has it (fitted to its footprint, in the pack's palette and
-// not skinned), else drawn by the code (CodeFurniture). Until the pack's file is in, the code's piece stands.
-export function Furniture({ name, w, h, seed = 0, look, pack }: { name: string; w: number; h: number; seed?: number; look?: RoomLook; pack?: PackId }) {
+// A piece of a room's furniture: from the room's pack where the pack has it (turned to face away from its wall, fitted to its
+// footprint and the height the piece may reach, repeated along a long side, and in the room's palette: `tone`), else drawn by
+// the code (CodeFurniture). Until the pack's file is in, the code's piece stands.
+export function Furniture({ name, w, h, seed = 0, look, pack, tone, face = 0, bare }: { name: string; w: number; h: number; seed?: number; look?: RoomLook; pack?: PackId; tone?: Tone; face?: number; bare?: boolean }) {
   const file = pieceOf(pack, name);
-  if (file) return <PackPiece file={file} name={name} w={w} h={h} seed={seed} look={look} />;
-  return <CodeFurniture name={name} w={w} h={h} seed={seed} look={look} />;
+  if (file) return <PackPiece file={file} name={name} w={w} h={h} seed={seed} look={look} tone={tone} face={face} />;
+  return <CodeFurniture name={name} w={w} h={h} seed={seed} look={look} bare={bare} />;
 }
 
-function PackPiece({ file, name, w, h, seed, look }: { file: string; name: string; w: number; h: number; seed: number; look?: RoomLook }) {
-  const geometry = useModels([file], "base")[file];
-  const fit = useMemo(() => {
-    if (!geometry) return 1;
+function PackPiece({ file, name, w, h, seed, look, tone, face }: { file: string; name: string; w: number; h: number; seed: number; look?: RoomLook; tone?: Tone; face: number }) {
+  const geometry = useModels([file], "base", tone)[file];
+  const placed = useMemo(() => {
+    if (!geometry) return null;
     geometry.computeBoundingBox();
     const size = geometry.boundingBox!.getSize(new THREE.Vector3());
-    return Math.min(w / Math.max(size.x, 0.01), h / Math.max(size.z, 0.01));
-  }, [geometry, w, h]);
-  if (!geometry) return <CodeFurniture name={name} w={w} h={h} seed={seed} look={look} />;
+    const fit = fitPiece([size.x, size.y, size.z], w, h, face, maxHeightOf(name), stretches(name));
+    // The stretch is along the model's axis that ends up on the footprint's longer side
+    const quarter = Math.abs(Math.abs(fit.turn) % Math.PI - Math.PI / 2) < 1e-6;
+    const stretchX = fit.alongX !== quarter;
+    const copies = fit.offsets.map((offset) => {
+      const g = geometry.clone();
+      g.scale(fit.scale * (stretchX ? fit.stretch : 1), fit.scale, fit.scale * (stretchX ? 1 : fit.stretch));
+      g.rotateY(fit.turn);
+      g.translate(w / 2 + (fit.alongX ? offset : 0), 0, h / 2 + (fit.alongX ? 0 : offset));
+      return g;
+    });
+    const merged = copies.length === 1 ? copies[0] : mergeGeometries(copies, false);
+    if (copies.length > 1) copies.forEach((g) => g.dispose());
+    return merged;
+  }, [geometry, w, h, face, name]);
+  useEffect(() => () => placed?.dispose(), [placed]);
+  if (!placed) return <CodeFurniture name={name} w={w} h={h} seed={seed} look={look} />;
   return (
-    <mesh geometry={geometry} position={[w / 2, 0, h / 2]} scale={fit} castShadow receiveShadow>
+    <mesh geometry={placed} castShadow receiveShadow>
       <meshLambertMaterial vertexColors />
     </mesh>
   );
 }
 
-function CodeFurniture({ name, w, h, seed = 0, look }: { name: string; w: number; h: number; seed?: number; look?: RoomLook }) {
+// `bare` is a piece that carries stock drawn on it (interiors/Stock.tsx): a shelf without the generic wares, a stand without its dummy
+function CodeFurniture({ name, w, h, seed = 0, look, bare = false }: { name: string; w: number; h: number; seed?: number; look?: RoomLook; bare?: boolean }) {
   const n = name.toLowerCase();
   const varied = /boulder|rubble|rock|crate|pallet|parts bin/.test(n) ? seed % 4 : 0;
   return (
-    <Model id={`furn:${n}:${w}x${h}:${varied}${look ? `:${look.wood}${look.cloth}${look.metal}` : ""}`} build={(k) => { if (look) k.skin = skinOf(look); k.group([w / 2, 0, h / 2], w >= h ? undefined : [0, Math.PI / 2, 0], undefined, () => buildFurniture(k, n, Math.max(w, h), Math.min(w, h), varied)); }}>
+    <Model id={`furn:${n}:${w}x${h}:${varied}${bare ? ":bare" : ""}${look ? `:${look.wood}${look.cloth}${look.metal}` : ""}`} build={(k) => { if (look) k.skin = skinOf(look); k.group([w / 2, 0, h / 2], w >= h ? undefined : [0, Math.PI / 2, 0], undefined, () => buildFurniture(k, n, Math.max(w, h), Math.min(w, h), varied, bare)); }}>
       {furnitureLights(n, w, h)}
     </Model>
   );
@@ -517,7 +534,7 @@ function buildSeat(k: Kit, n: string) {
   });
 }
 
-function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number) {
+function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number, bare = false) {
   const back = -D / 2;
   // Posts at the corners of a footprint, inset by `m`
   const corners = (m: number) => [[-L / 2 + m, -D / 2 + m], [L / 2 - m, -D / 2 + m], [-L / 2 + m, D / 2 - m], [L / 2 - m, D / 2 - m]] as [number, number][];
@@ -552,7 +569,7 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number) {
     for (const x of [-L / 2 + 0.12, L / 2 - 0.12]) k.box([0.06, 1.5, D - 0.3], C.woodDark, { at: [x, 0.75, 0.02], round: 0.015 });
     for (const [j, y] of [0.04, 0.4, 0.78, 1.14, 1.48].entries()) {
       k.box([L - 0.2, 0.04, D - 0.34], C.wood, { at: [0, y, 0.02], round: 0.01 });
-      if (j === 4) continue;
+      if (j === 4 || bare) continue;
       const count = Math.max(2, Math.round(L * 2.4));
       for (let i = 0; i < count; i++) {
         const x = -L / 2 + 0.3 + (i * (L - 0.6)) / Math.max(1, count - 1);
@@ -587,6 +604,7 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number) {
     return;
   }
   if (/armor stand/.test(n)) {
+    if (bare) return;
     k.lathe([[0.2, 0], [0.2, 0.03], [0.04, 0.06], [0.04, 0.5], [0, 0.5]], C.black, { seg: 10, finish: "sheen" });
     k.box([0.4, 0.46, 0.22], [C.steel, "#6b4f36", "#3f5f7a"][seed % 3], { at: [0, 0.78, 0], round: 0.08, finish: "sheen" });
     k.pair((s) => k.box([0.18, 0.12, 0.2], C.steelDark, { at: [s * 0.28, 0.96, 0], round: 0.04, finish: "sheen" }));

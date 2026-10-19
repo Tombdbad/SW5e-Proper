@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { retone, type Tone } from "./tones";
 
 // Where the model's origin goes: its middle (a weapon on a peg), the middle of its underside (a crate on a floor)
 export type Anchor = "centre" | "base";
@@ -54,24 +55,32 @@ export function geometryOf(scene: THREE.Object3D, anchor: Anchor): THREE.BufferG
 }
 
 const FILES = new Map<string, Promise<THREE.BufferGeometry | null>>();
-export function loadModel(url: string, anchor: Anchor = "centre"): Promise<THREE.BufferGeometry | null> {
+// With a tone the model comes in that palette (see tones.ts): made once per tone from the file as it was converted
+export function loadModel(url: string, anchor: Anchor = "centre", tone?: Tone): Promise<THREE.BufferGeometry | null> {
   const key = `${anchor}:${url}`;
   let found = FILES.get(key);
   if (!found) {
     found = new GLTFLoader().loadAsync(url).then((gltf) => geometryOf(gltf.scene, anchor)).catch(() => null);
     FILES.set(key, found);
   }
-  return found;
+  if (!tone) return found;
+  const toneKey = `${tone.id}|${key}`;
+  let colored = FILES.get(toneKey);
+  if (!colored) {
+    colored = found.then((g) => (g ? retone(g, tone) : null));
+    FILES.set(toneKey, colored);
+  }
+  return colored;
 }
 
 // Several models at once: null for a name until it is in, and for good if it could not be had
-export function useModels(urls: string[], anchor: Anchor = "centre"): Record<string, THREE.BufferGeometry | null> {
+export function useModels(urls: string[], anchor: Anchor = "centre", tone?: Tone): Record<string, THREE.BufferGeometry | null> {
   const [got, setGot] = useState<Record<string, THREE.BufferGeometry | null>>({});
   const wanted = urls.join("|");
   useEffect(() => {
     let live = true;
-    for (const url of urls) loadModel(url, anchor).then((g) => live && setGot((was) => (was[url] === g ? was : { ...was, [url]: g })));
+    for (const url of urls) loadModel(url, anchor, tone).then((g) => live && setGot((was) => (was[url] === g ? was : { ...was, [url]: g })));
     return () => { live = false; };
-  }, [wanted, anchor]);
+  }, [wanted, anchor, tone?.id]);
   return got;
 }

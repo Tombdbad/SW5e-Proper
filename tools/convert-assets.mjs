@@ -1,7 +1,7 @@
 // Converts a downloaded CC0 pack model into what the map loads: one mesh with vertex colours and no
 // textures (the colour under each vertex's UV is baked into it), quantised and welded, so a piece
 // is a few kilobytes. Usage: node tools/convert-assets.mjs <pack-dir> <out-dir> <name[,name...]|all>
-// With tone=<name> (gunmetal, imperial, frontier: see TONES) the colours are turned into a ramp of that palette, by lightness, so that
+// With tone=<name> (see shared/art/tones.json) the colours are turned into a ramp of that palette, by lightness, so that
 // packs from different makers can share one look for a location (gunmetal is the toy-bright blasters of the Blaster Kit). The pack is read from <pack-dir>/**/GLB format (or GLTF format); the credits are kept in CREDITS.md.
 import { NodeIO } from "@gltf-transform/core";
 import { KHRMaterialsUnlit, KHRMeshQuantization } from "@gltf-transform/extensions";
@@ -10,6 +10,7 @@ import { MeshoptSimplifier } from "meshoptimizer";
 import { PNG } from "pngjs";
 import fs from "node:fs";
 import path from "node:path";
+import { TONES, toned } from "./tones.mjs";
 
 const [pack, out, which = "all", toneArg = ""] = process.argv.slice(2);
 const tone = toneArg.replace(/^tone=/, "");
@@ -19,20 +20,9 @@ const find = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =
 const files = find(pack).filter((f) => which === "all" || which.split(",").includes(path.basename(f, ".glb")));
 fs.mkdirSync(out, { recursive: true });
 const io = new NodeIO().registerExtensions([KHRMaterialsUnlit, KHRMeshQuantization]);
-// Palettes, as three stops from dark to light in linear colour: steel (a dark gunmetal to pale steel), the Imperial
-// blue-greys and white, and the frontier's dust, rust and sand
-const TONES = {
-  gunmetal: [[0.005, 0.006, 0.008], [0.045, 0.055, 0.068], [0.2, 0.22, 0.25]],
-  imperial: [[0.01, 0.02, 0.035], [0.2, 0.25, 0.31], [0.8, 0.84, 0.88]],
-  frontier: [[0.03, 0.015, 0.007], [0.22, 0.12, 0.06], [0.62, 0.45, 0.28]],
-};
+// Palettes: shared/art/tones.json (the client turns the same ones at load time, so a pack is usually kept as it was
+// converted, with no tone, and the room it stands in chooses; tone= bakes one in, as the blasters' gunmetal)
 if (tone && !TONES[tone]) throw new Error(`no tone ${tone}`);
-const toned = (ramp, [r, g, b]) => {
-  const l = Math.min(1, 0.2126 * r + 0.7152 * g + 0.0722 * b);
-  const t = Math.min(1, l * 1.6);
-  const [a, c, f] = t < 0.5 ? [ramp[0], ramp[1], t * 2] : [ramp[1], ramp[2], (t - 0.5) * 2];
-  return [0, 1, 2].map((i) => a[i] + (c[i] - a[i]) * f);
-};
 const srgb = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
 
 const lod = Number(process.env.LOD || 0);

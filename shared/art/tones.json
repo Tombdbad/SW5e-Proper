@@ -1,0 +1,12 @@
+{
+  "_about": "Palettes for the downloaded models (2026-10-19). A model keeps the colours of its pack on disk; a room's pack turns them into one of these when it loads (client/src/components/Map/interiors/tones.ts), and tools/convert-assets.mjs can bake one in (tone=<name>). ramp: dark, middle and light stops in sRGB, by the lightness of the colour they replace; accent: what the saturated colours of the model (a stripe, a lamp, a hazard mark) become.",
+  "gunmetal": { "ramp": ["#101216", "#3c424a", "#7c8189"], "accent": "#c43b2f" },
+  "imperial": { "ramp": ["#192735", "#7c8997", "#e7ecf1"], "accent": "#8f2233" },
+  "frontier": { "ramp": ["#302114", "#816145", "#ceb390"], "accent": "#b5532a" },
+  "industrial": { "ramp": ["#1d2024", "#5b6168", "#b7bcc2"], "accent": "#e0a81c" },
+  "military": { "ramp": ["#1c2118", "#5d6648", "#b3b896"], "accent": "#c9892a" },
+  "medical": { "ramp": ["#20282b", "#8aa5aa", "#f1f6f6"], "accent": "#cf3b3b" },
+  "criminal": { "ramp": ["#171214", "#4d3a3c", "#a08a80"], "accent": "#c8372d" },
+  "hull": { "ramp": ["#14202e", "#4a6178", "#b9cad8"], "accent": "#e07a2a" },
+  "ruin": { "ramp": ["#2a2822", "#6e6a5c", "#b8b29a"], "accent": "#5f7a48" }
+}

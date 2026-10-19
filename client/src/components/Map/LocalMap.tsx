@@ -14,7 +14,9 @@ import { Atmosphere } from "./interiors/Atmosphere";
 import { Stock } from "./interiors/Stock";
 import { CaveDressing, RockWall } from "./interiors/CaveRoom";
 import { moodOf } from "./interiors/atmosphere";
-import { packOf } from "./interiors/packs";
+import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
+import { PackWalls, type WallRun } from "./interiors/Walls";
+import { packTone } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
 import { CurtainWall, GardenGround, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
@@ -408,6 +410,9 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   const climbs = plan?.climb ? rise(plan as RoomLayout) : 0;
   const wallH = WALL_HEIGHT + climbs;
   const ramp = (x: number, y: number) => (plan?.climb ? rampAt(plan as RoomLayout, x + 0.5, y + 0.5) : 0);
+  // The kit this room is furnished and walled from, and its palette
+  const pack = mood && !rocky ? packOf(mood.roomName, mood.buildingType) : undefined;
+  const packLook = useMemo(() => (pack ? packTone(PACKS[pack], wall) : undefined), [pack, wall]);
   const [nw, ne, se, sw] = rocky ? [0, 0, 0, 0] : corners ?? [0, 0, 0, 0];
   const rounded = nw + ne + se + sw > 0;
   // Each wall runs between its corners, stopping short of a rounded one
@@ -447,15 +452,21 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
       </lineSegments>
       {plan?.climb && plan.form && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} />}
       {walls
-        ? sides.flatMap(({ side, length, at, along, ends }) =>
-            wallRuns(length, assets.filter((a) => a.side === side && isWay(a)).map(along)).map((run) => {
-              const [a, b] = trim(run, length, ends);
-              if (b - a < 0.01) return null;
+        ? (() => {
+            const runs = sides.flatMap(({ side, length, at, along, ends }) =>
+              wallRuns(length, assets.filter((a) => a.side === side && isWay(a)).map(along)).flatMap((run) => {
+                const [a, b] = trim(run, length, ends);
+                return b - a < 0.01 ? [] : [{ side: side as WallRun["side"], a, b, at, run }];
+              }),
+            );
+            const plain = runs.map(({ side, a, b, at, run }) => {
+              if (rocky) return <RockWall key={`${side}${run[0]}`} side={side} a={a} b={b} w={width} h={height} height={1.1} seed={Math.round(a * 10) + side.charCodeAt(0) + width} biome={mood!.biome} tier={detail} />;
               const [position, size] = at(a, b);
-              if (rocky) return <RockWall key={`${side}${run[0]}`} side={side as "n" | "s" | "w" | "e"} a={a} b={b} w={width} h={height} height={1.1} seed={Math.round(a * 10) + side.charCodeAt(0) + width} biome={mood!.biome} tier={detail} />;
               return <Box key={`${side}${run[0]}`} at={position} size={size} color={wall} />;
-            }),
-          )
+            });
+            // A room of a pack with walls has the kit's, in its palette; the plain ones stand until the kit is in
+            return packLook && hasWalls(pack!) && !rocky ? <PackWalls runs={runs} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={packLook} fallback={plain} /> : plain;
+          })()
         : [[0, 0], [width, 0], [0, height], [width, height]].map(([x, z], i) => <Cyl key={i} at={[x, 0.3, z]} r={0.08} h={0.6} color={wall} />)}
       {walls && ([[nw, nw, nw, 0], [ne, width - ne, ne, 1], [se, width - se, height - se, 2], [sw, sw, height - sw, 3]] as const).filter(([r]) => r > 0).map(([r, x, z, corner]) => (
         <group key={`corner${corner}`} position={[x, 0, z]}>
@@ -477,8 +488,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             : a.kind === "loot" ? (nodeOf?.(a) ? <NodeModel node={nodeOf(a)!} empty={looted?.(a)} /> : <Chest looted={looted?.(a)} />)
             : (
               <>
-                <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={mood ? packOf(mood.roomName) : undefined} />
-                {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} />}
+                <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={pack} tone={packLook} face={facing(a, width, height)} bare={!!mood && !!holdsOf(a.name, mood.buildingType, mood.roomName)} />
+                {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} tone={packLook} />}
               </>
             )}
           {/* Furniture that can be stood on (a bench, the stage) leaves the tap to the floor beneath, so it walks to that square */}
