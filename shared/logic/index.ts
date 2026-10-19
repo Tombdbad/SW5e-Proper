@@ -7595,7 +7595,7 @@ export function districtArena(world: World, districtId: string): DistrictArena |
     if (!openAir(room)) {
       if (level < 0) continue;
       // The block a building makes: as high as its room's roof
-      assets.push({ id: `block-${room.id}`, kind: "furniture", name: world.areas[room.parentId ?? ""]?.name ?? "Building", x: l.x, y: l.y, w: l.width, h: l.height, blocks: true, height: level + 1 + (l.climb?.levels ?? 0) });
+      assets.push({ id: `block-${room.id}`, kind: "furniture", name: world.areas[room.parentId ?? ""]?.name ?? "Building", x: l.x, y: l.y, w: l.width, h: l.height, blocks: true, height: level + 1 + (l.climb?.levels ?? 0) + (l.tall ? 1 : 0) });
       continue;
     }
     platforms.push({ z: level, x: l.x, y: l.y, width: l.width, height: l.height });

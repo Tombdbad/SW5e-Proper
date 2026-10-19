@@ -1486,11 +1486,13 @@ function buildShip(k: Kit, kind: string, imperial: boolean, wrecked: boolean, to
   k.box([0.06, 0.24, 1.2], "#1b2a38", { at: [2.82, 1.12, 0], finish: glass });
 }
 
-// A ship on the floor, built on 6 by 4 squares with the bow to +x and stretched to its footprint
-export function ShipModel({ ship, w, h }: { ship: ShipLook; w: number; h: number }) {
+// A ship on the floor, built on 6 by 4 squares with the bow to +x and stretched to its footprint;
+// `ceiling` (squares) is the roof it stands under, which the hull is kept below
+const HULL_HEIGHT = 2.4;
+export function ShipModel({ ship, w, h, ceiling }: { ship: ShipLook; w: number; h: number; ceiling?: number }) {
   const wrecked = ship.status === "wrecked";
   return (
-    <group position={[w / 2, 0, h / 2]} scale={[w / 6, Math.min(w / 6, h / 4), h / 4]} rotation={wrecked ? [0.12, 0, 0.16] : undefined}>
+    <group position={[w / 2, 0, h / 2]} scale={[w / 6, Math.min(w / 6, h / 4, ceiling ? ceiling / HULL_HEIGHT : Infinity), h / 4]} rotation={wrecked ? [0.12, 0, 0.16] : undefined}>
       <ShipBody ship={ship} />
     </group>
   );

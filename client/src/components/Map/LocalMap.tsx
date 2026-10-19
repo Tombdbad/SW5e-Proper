@@ -148,9 +148,11 @@ function Berth({ w, h, name }: { w: number; h: number; name: string }) {
 // room can be looked into, what is set in the walls, and what stands on the floor.
 // ---------------------------------------------------------------------------------------------
 
-// A floor of a building is this many squares of height; a room stands on the floor of its level
-// (a gallery on half of one), and a stairwell, lift or ladder rises from its lower level
-const LEVEL_H = 2;
+// A floor of a building is this many squares of height (2026-10-19: 40% more than it was, 2,
+// so that the tallest species stands in a room); a room stands on the floor of its level
+// (a gallery on half of one), and a stairwell, lift or ladder rises from its lower level.
+// A room with a mezzanine (`layout.tall`) is two floors high
+const LEVEL_H = 2.8;
 const levelY = (l?: Pick<RoomLayout, "level">) => (l?.level ?? 0) * LEVEL_H;
 const rise = (l?: Pick<RoomLayout, "climb">) => (l?.climb ? l.climb.levels * LEVEL_H : 0);
 // How far up the floor of a way between floors is at a point of it (squares from the room's
@@ -1820,8 +1822,11 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           // A room looked down into from its gallery is seen low, so that the gallery shows over it
           const lookedFrom = opened && formOf(opened) === "gallery" && opened.tags.includes(`host:${room.id}`);
           // (a room with the opened one standing right on it keeps its full height, so that there is no gap under the floor)
-          const carries = !!opened?.layout && sameFootprint(l, opened.layout) && levelY(opened.layout) >= levelY(l) + LEVEL_H - 0.01;
-          const tall = lookedFrom ? 0.8 : opened && !carries ? 1 : 2;
+          const storeys = l.tall ? 2 : 1;
+          const carries = !!opened?.layout && sameFootprint(l, opened.layout) && levelY(opened.layout) >= levelY(l) + LEVEL_H * storeys - 0.01;
+          // (a room with a mezzanine is two floors high, so that those on the gallery have the roof well over their heads;
+          // while another room is opened it is lowered a little, but still clears a figure on the gallery)
+          const tall = lookedFrom ? WALL_HEIGHT : opened && !carries ? (l.tall ? LEVEL_H * 1.3 : LEVEL_H / 2) : LEVEL_H * storeys;
           // (the floor of an opened room above, or of a roof, is a slab 0.2 thick with the same footprint, and
           // sits on this room: the block stops where the slab starts, so that their faces are never in one plane)
           const sunk = carries ? 0.2 : roofed.has(room.id) ? 0.18 : 0;
@@ -1937,7 +1942,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   {hollow(tall, wallColor)}
                   {l.assets.filter((a) => a.kind === "ship").map((a) => {
                     const ship = room.ships.find((x) => x.id === a.ref);
-                    return <group key={a.id} position={[a.x, 0, a.y]}>{ship ? <ShipModel ship={ship} w={a.w} h={a.h} /> : <Berth w={a.w} h={a.h} name={a.name} />}</group>;
+                    return <group key={a.id} position={[a.x, 0, a.y]}>{ship ? <ShipModel ship={ship} w={a.w} h={a.h} ceiling={l.roof === "hangar" ? tall - 0.3 : undefined} /> : <Berth w={a.w} h={a.h} name={a.name} />}</group>;
                   })}
                   {l.roof === "hangar" && !opened && <HangarRoof width={l.width} height={l.height} y={tall + 0.05} />}
                 </group>
