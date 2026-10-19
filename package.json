@@ -10,7 +10,14 @@
     "check": "tsc",
     "db:push": "drizzle-kit push",
     "e2e": "node e2e/play.mjs",
-    "import:sw5e": "tsx shared/scripts/import-sw5e.ts"
+    "import:sw5e": "tsx shared/scripts/import-sw5e.ts",
+    "test": "node --import tsx --test tests/",
+    "test:interiors": "node --import tsx --test tests/interiors/",
+    "test:assets": "node --import tsx --test tests/interiors/assets.test.ts",
+    "test:weapons": "node --import tsx --test tests/interiors/weapons.test.ts tests/interiors/stock.test.ts",
+    "test:atmosphere": "node --import tsx --test tests/interiors/atmosphere.test.ts tests/interiors/wealth.test.ts",
+    "test:caves": "node --import tsx --test tests/interiors/cave.test.ts tests/interiors/footprint.test.ts",
+    "convert:assets": "node tools/convert-assets.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.5",
@@ -114,6 +121,9 @@
     "zustand": "^5.0.3"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^3.10.1",
+    "@gltf-transform/extensions": "^3.10.1",
+    "@gltf-transform/functions": "^3.10.1",
     "@tailwindcss/typography": "^0.5.15",
     "@types/connect-pg-simple": "^7.0.3",
     "@types/express": "4.17.21",
@@ -130,6 +140,7 @@
     "drizzle-kit": "^0.30.4",
     "esbuild": "^0.25.0",
     "playwright": "1.58.0",
+    "pngjs": "^7.0.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",
     "tsx": "^4.19.4",
