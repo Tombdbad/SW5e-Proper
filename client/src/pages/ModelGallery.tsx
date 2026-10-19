@@ -11,6 +11,9 @@ import { WEALTH, lookOf, wealthOf } from "@/components/Map/interiors/wealth";
 import { CurtainWall, GardenGround, Scatter, StallModel, paletteOf, plantGarden, type StallState } from "@/components/Map/siteAssets";
 import { RoomShell } from "@/components/Map/LocalMap";
 import { useModels } from "@/components/Map/interiors/assets";
+import { packOf } from "@/components/Map/interiors/packs";
+import { TONES, TONE_NAMES, type Tone } from "@/components/Map/interiors/tones";
+import { KIT_MODELS, kitUrl } from "@/components/Map/interiors/kitbash";
 import { floorOf } from "@/components/Map/sprites";
 import { furnishRoom, createRandom, type Area } from "@shared/logic";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
@@ -35,20 +38,23 @@ function Rounds() {
   );
 }
 
-// `packs` puts pieces of three packs side by side, in the palettes they were converted with, to judge whether they read as one
-// place: the Space Kit as made (kenney-space), the Space Station Kit in the Imperial palette and in the frontier one (kenney-station,
-// kenney-station-frontier), and a blaster in steel (kenney-blaster, tone=gunmetal). Pieces of one pack share a palette.
+// `packs` (2026-10-19) shows what the downloaded kits do for a place: the same pieces in every palette of shared/art/tones.json
+// (the top row is the kits as made), then a room for each style the planner furnishes from a kit, with the kit's walls.
 const PACK_PIECES: [string, string][] = [
-  ["/assets/kenney-space/desk_computer.glb", "space kit: computer desk"],
-  ["/assets/kenney-space/barrel.glb", "space kit: barrel"],
-  ["/assets/kenney-station/bed-single.glb", "station, imperial: bed"],
-  ["/assets/kenney-station/chair-armrest-headrest.glb", "station, imperial: chair"],
-  ["/assets/kenney-station-frontier/bed-single.glb", "station, frontier: bed"],
-  ["/assets/kenney-station-frontier/chair-armrest-headrest.glb", "station, frontier: chair"],
-  ["/assets/kenney-blaster/blaster-a.glb", "blaster, steel"],
+  ["/assets/kenney-station/bed-single.glb", "bed"],
+  ["/assets/kenney-station/chair-armrest-headrest.glb", "chair"],
+  ["/assets/kenney-station/table-large.glb", "table"],
+  ["/assets/kenney-station/container-tall.glb", "locker"],
+  ["/assets/kenney-station/wall-window.glb", "wall"],
+  ["/assets/kenney-space/desk_computer.glb", "console"],
+  ["/assets/kenney-space/machine_generator.glb", "generator"],
+  ["/assets/kenney-space/barrels.glb", "barrels"],
+  ["/assets/kenney-space/rock_crystalsLargeA.glb", "crystals"],
 ];
-// Two rooms furnished by the planner, each from its pack: a palace guest room and a residence's servants' quarters
-const PACK_ROOMS: [string, string, string][] = [["palace", "Guest rooms", "desert"], ["residences", "Servants' quarters", "desert"]];
+const PACK_ROOMS: [string, string, string][] = [
+  ["palace", "Guest rooms", "desert"], ["residences", "Servants' quarters", "desert"], ["workshop", "Workfloor", "urban"], ["garrison", "Barracks", "temperate"],
+  ["medcenter", "Ward", "urban"], ["starship", "Command bridge", "barren"], ["hideout", "Den", "volcanic"], ["armsmith", "Sales floor", "desert"],
+];
 function PackRooms() {
   return (
     <>
@@ -56,9 +62,9 @@ function PackRooms() {
         const room = { id: `gallery-pack-${i}`, kind: "room", name, parentId: null, type: name, description: "", tags: [], position: { x: 0, y: 0, z: 0 }, danger: 0, occupants: [], ships: [], loot: [], layout: { x: 0, y: 0, width: 8, height: 6, assets: [] } } as unknown as Area;
         furnishRoom(room, createRandom(11 + i), type);
         return (
-          <group key={room.id} position={[i * 11 - 5.5, 0, 9]}>
+          <group key={room.id} position={[(i % 4) * 10 - 15, 0, 9 + Math.floor(i / 4) * 9]}>
             <RoomShell width={8} height={6} assets={room.layout!.assets} floor={floorOf(type)} wall="#b9ad96" style={styleOf(biome, type)} mood={{ buildingType: type, roomName: name, biome }} />
-            <Label at={[4, 0.1, 7.2]} text={`${type}: ${name}`} />
+            <Label at={[4, 0.1, 7.2]} text={`${type}: ${name} (${packOf(name, type) ?? "no kit"})`} />
           </group>
         );
       })}
@@ -66,17 +72,45 @@ function PackRooms() {
   );
 }
 
-function Packs() {
-  const got = useModels(PACK_PIECES.map(([url]) => url), "base");
+function PackRow({ tone, z }: { tone?: Tone; z: number }) {
+  const got = useModels(PACK_PIECES.map(([url]) => url), "base", tone);
   return (
-    <>
-      <PackRooms />
+    <group position={[0, 0, z]}>
       {PACK_PIECES.map(([url, name], i) => (
-        <group key={url} position={[i * 2.4 - 7.2, 0, 0]}>
-          {got[url] && <mesh geometry={got[url]!} castShadow><meshLambertMaterial vertexColors /></mesh>}
-          <Label at={[0, 0.02, 1.6]} text={name} />
+        <group key={url} position={[i * 2 - 8, 0, 0]}>
+          {got[url] && <mesh geometry={got[url]!} scale={url.includes("wall") ? [1.4, 1.4, 1.4] : 1.8} castShadow><meshLambertMaterial vertexColors /></mesh>}
+          {!tone && <Label at={[0, 0.02, 1.2]} text={name} />}
         </group>
       ))}
+      <Label at={[-10.5, 0.4, 0]} text={tone?.id ?? "as made"} />
+    </group>
+  );
+}
+
+// The models built from pieces of the kits (tools/kitbash.mjs), as made and in three palettes
+const KIT_NAMES = Object.keys(KIT_MODELS);
+function KitRow({ tone, z }: { tone?: Tone; z: number }) {
+  const urls = KIT_NAMES.map((n) => kitUrl(n));
+  const got = useModels(urls, "base", tone);
+  return (
+    <group position={[0, 0, z]}>
+      {KIT_NAMES.map((n, i) => (
+        <group key={n} position={[(i % 12) * 1.5 - 8, 0, Math.floor(i / 12) * 2]}>
+          {got[kitUrl(n)] && <mesh geometry={got[kitUrl(n)]!} castShadow><meshLambertMaterial vertexColors /></mesh>}
+          {!tone && <Label at={[0, 0.02, 0.8]} text={n} />}
+        </group>
+      ))}
+      <Label at={[-10, 0.4, 0]} text={tone?.id ?? "as made"} />
+    </group>
+  );
+}
+
+function Packs() {
+  return (
+    <>
+      {[undefined, TONES.gunmetal, TONES.medical, TONES.industrial].map((tone, i) => <KitRow key={tone?.id ?? "made"} tone={tone} z={-30 - i * 5} />)}
+      {[undefined, ...TONE_NAMES.filter((n) => n !== "gunmetal").map((n) => TONES[n])].map((tone, i) => <PackRow key={tone?.id ?? "made"} tone={tone} z={-2 - i * 2.4} />)}
+      <PackRooms />
     </>
   );
 }
@@ -235,6 +269,16 @@ export default function ModelGallery() {
               <Stock name="Shelving" w={3} h={1} seed={1} buildingType="garrison" roomName="Armory" />
               <Label at={[1.5, 0.08, 1.7]} text="armory crates" />
             </group>
+            {/* The stock of the shops (2026-10-19): armour on stands, kits, medicine, prostheses and tools, and the melee weapons built from the kits */}
+            {([["Armor stand", 1, "armsmith", "Sales floor"], ["Armor stand", 1, "outfitter", "Sales floor"], ["Armor stand", 1, "palace", "Guard post"], ["Armor stand", 1, "garrison", "Armory"], ["Armor stand", 1, "curio shop", "Sales floor"],
+              ["Droid parts shelf", 3, "tech shop", "Sales floor"], ["Display shelf", 3, "outfitter", "Sales floor"], ["Medical cabinet", 3, "apothecary", "Sales floor"], ["Supply cabinet", 3, "medcenter", "Ward"],
+              ["Display case", 3, "tech shop", "Sales floor"], ["Display case", 3, "medcenter", "Ward"], ["Workbench", 3, "workshop", "Workfloor"], ["Weapon rack", 3, "criminal", "Common room"]] as const).map(([n, w, b, r], i) => (
+              <group key={`${n}${b}${i}`} position={[(i % 6) * 4.5 - 11, 0, -7 - Math.floor(i / 6) * 3.5]}>
+                <Furniture name={n} w={w} h={1} seed={i + 1} look={lookOf(wealthOf(b, r))} bare />
+                <Stock name={n} w={w} h={1} seed={i + 1} buildingType={b === "criminal" ? "hideout" : b} roomName={r} />
+                <Label at={[w / 2, 0.08, 1.4]} text={`${n.toLowerCase()} (${b})`} />
+              </group>
+            ))}
             {/* The same furniture in the six wealths */}
             {["Bed", "Couch", "Table", "Cabinet"].map((name, row) =>
               WEALTH.map((w, col) => (

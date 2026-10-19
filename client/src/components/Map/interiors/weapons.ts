@@ -4,6 +4,7 @@
 // code for the rest) and in a few dozen triangles where someone holds it. Pure: nothing here draws
 // (tests/interiors/weapons.test.ts); `StockDraw.tsx` does.
 import type { Kit } from "../models";
+import { KITBASH } from "./kitbash";
 
 export type Kind =
   | "pistol" | "carbine" | "rifle" | "heavy" | "launcher" | "bow"
@@ -53,21 +54,38 @@ export const BLASTER_FILES: Record<"pistol" | "carbine" | "rifle" | "heavy", { f
 };
 export const KENNEY_BLASTER = "/assets/kenney-blaster";
 
+// The blades, hafted weapons and launcher the Blaster Kit lacks, built from pieces of the other kits (kitbash.ts), one design for each kind
+// and, for the heavy weapons, a launcher beside the blasters. Lengths are the files' own (tests/interiors/assets.test.ts holds them to it).
+export const MELEE_FILES: Partial<Record<Kind, { file: string; length: number }>> = {
+  dagger: { file: "vibro-dagger", length: 0.21 },
+  sword: { file: "vibro-blade", length: 0.54 },
+  axe: { file: "vibro-axe", length: 0.54 },
+  mace: { file: "vibro-mace", length: 0.56 },
+  spear: { file: "vibro-pike", length: 1.02 },
+  staff: { file: "electrostaff", length: 0.99 },
+};
+export const LAUNCHER_FILE = { file: "launcher", length: 0.74 };
+
 // A small hash of the name (the same weapon is the same design each time)
 const hashOf = (text: string) => Array.from(text).reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 7);
 
 export interface Hung {
   kind: Kind;
-  // The model file (without ".glb"; the low detail is "<file>.lod") and the scale that sets it to its kind's length; none where it is built in code
+  // The model file (without ".glb"; the low detail is "<file>.lod"), the folder it is in, and the scale that sets it to its kind's length;
+  // none where it is built in code
   file?: string;
+  dir?: string;
   scale: number;
 }
 export function hungWeapon(name: string, classification = ""): Hung {
   const kind = kindOfWeapon(name, classification);
+  if (kind === "heavy" && /launcher|mortar/i.test(name)) return { kind, file: LAUNCHER_FILE.file, dir: KITBASH, scale: LENGTH.heavy / LAUNCHER_FILE.length };
+  const melee = MELEE_FILES[kind];
+  if (melee) return { kind, file: melee.file, dir: KITBASH, scale: LENGTH[kind] / melee.length };
   const designs = kind === "pistol" || kind === "carbine" || kind === "rifle" || kind === "heavy" ? BLASTER_FILES[kind] : kind === "launcher" ? BLASTER_FILES.heavy : undefined;
   if (!designs) return { kind, scale: 1 };
   const d = designs[hashOf(name) % designs.length];
-  return { kind, file: d.file, scale: LENGTH[kind] / d.length };
+  return { kind, file: d.file, dir: KENNEY_BLASTER, scale: LENGTH[kind] / d.length };
 }
 
 // Built in code, lying along z and centred, `length` long: `detail` "hero" for where it hangs and "low" where it is held.

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { kindOfWeapon, hungWeapon, buildWeapon, LENGTH, BLASTER_FILES, type Kind } from "../../client/src/components/Map/interiors/weapons";
+import { kindOfWeapon, hungWeapon, buildWeapon, LENGTH, BLASTER_FILES, MELEE_FILES, type Kind } from "../../client/src/components/Map/interiors/weapons";
 import { weaponsOf, baked, sizeOf, trianglesOfBaked } from "../helpers";
 
 const KINDS = Object.keys(LENGTH) as Kind[];
@@ -26,7 +26,12 @@ test("a blaster hangs as a model, scaled to the length of its kind, always the s
   assert.deepEqual(hungWeapon("Blaster rifle"), a);
   const files = new Set(weaponsOf().map((w) => hungWeapon(w.name, w.weaponClassification).file).filter(Boolean));
   assert.ok(files.size >= 8, `${files.size} different designs hang on the racks`);
-  assert.equal(hungWeapon("Vibroblade").file, undefined);
+  // Blades, hafted weapons and launchers are models built from pieces of the kits; sabers, bows, whips and shields are drawn by the code
+  assert.deepEqual([hungWeapon("Vibroblade").file, hungWeapon("Vibroblade").dir], ["vibro-blade", "/assets/kenney-kitbash"]);
+  assert.equal(hungWeapon("Grenade launcher").file, "launcher");
+  assert.equal(hungWeapon("Lightsaber").file, undefined);
+  assert.equal(hungWeapon("Shortbow").file, undefined);
+  for (const kind of Object.keys(MELEE_FILES) as Kind[]) assert.ok(hungWeapon({ dagger: "Vibroknife", sword: "Vibroblade", axe: "Vibroaxe", mace: "Vibromace", spear: "Vibropike", staff: "Electrostaff" }[kind as string] ?? "x").file, kind);
 });
 test("the catalogue's lengths are the right size for a hand", () => {
   for (const kind of KINDS) assert.ok(LENGTH[kind] > 0.08 && LENGTH[kind] < 1.2, `${kind} ${LENGTH[kind]}`);

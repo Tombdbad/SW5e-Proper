@@ -1,6 +1,6 @@
 // The interiors gallery, looked at in a real browser without the play-through (2026-10-19): opens /dev/models?section=interiors
 // at a few cameras, saves a shot of each, reports what was drawn (calls, triangles) and fails on a console error or a model that
-// did not load. Usage: BASE=http://127.0.0.1:5173 node e2e/interiors.mjs [name ...]   (names: racks wealth caves moods rounds packs)
+// did not load. Usage: BASE=http://127.0.0.1:5173 node e2e/interiors.mjs [name ...]   (names: racks wealth caves moods rounds packs tones rooms kitbash shops)
 // Needs a server that serves the client: `npx vite --port 5173 --host 127.0.0.1` (no build, no database), and nobody else on the VM busy.
 import { open, OUT } from "./lib.mjs";
 
@@ -12,6 +12,10 @@ const VIEWS = {
   moods: { cam: [-2, 22, 62], look: [-2, 0, 44] },
   rounds: { section: "rounds", cam: [0, 22, 30], look: [0, 0, 4] },
   packs: { section: "packs", cam: [0, 14, 26], look: [4, 0, 9] },
+  tones: { section: "packs", cam: [0, 20, -4], look: [0, 0, -12] },
+  shops: { section: "interiors", cam: [-0.5, 8, -2], look: [-0.5, 0, -9.5] },
+  kitbash: { section: "packs", cam: [-1.5, 17, -22], look: [-1.5, 0, -37] },
+  rooms: { section: "packs", cam: [5, 28, 30], look: [5, 0, 13] },
 };
 const wanted = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(VIEWS);
 const { browser, page, events } = await open();
@@ -20,7 +24,8 @@ await page.setViewportSize({ width: Number(process.env.W || 900), height: Number
 let failed = false;
 try {
   for (const name of wanted) {
-    const v = VIEWS[name];
+    // CAM=x,y,z and LOOK=x,y,z override the view (a close look at one room of the gallery)
+    const v = VIEWS[name] && process.env.CAM ? { ...VIEWS[name], cam: process.env.CAM.split(",").map(Number), look: (process.env.LOOK || "0,0,0").split(",").map(Number) } : VIEWS[name];
     if (!v) throw new Error(`no view ${name}`);
     const t0 = Date.now();
     await page.goto(`${BASE}/dev/models?section=${v.section ?? "interiors"}&cam=${v.cam}&look=${v.look}`, { waitUntil: "domcontentloaded" });

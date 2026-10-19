@@ -8,16 +8,18 @@ missing from this list.
 
 | Pack | Author | Licence | Where from | What it is used for |
 |---|---|---|---|---|
-| `kenney-blaster` — Blaster Kit 2.1 | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/blaster-kit | the blasters, clips, grenades and crates on weapon racks, shelves and in cases (hero and low detail) |
-| `kenney-space` — Space Kit 2.0 | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/space-kit | barrels, generators, desks and consoles, rocks and crystals for interiors |
-| `kenney-station` — Space Station Kit | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/space-station-kit | beds, chairs, walls and corners of the Imperial-toned rooms (converted with `tone=imperial`; not yet placed in a scene) |
-| `kenney-station` — two pieces from the Furniture Kit (`furniture-kit-sofa`, `furniture-kit-table-low`) | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/furniture-kit | a sofa and a low table for the palace rooms, converted with `tone=imperial` so they match the station pieces |
-| `kenney-station-frontier` — four pieces of the Space Station Kit | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/space-station-kit | a test of the frontier palette (`tone=frontier`) on a bed, a chair and two walls (`/dev/models?section=packs`) |
-| `kenney-furniture` — Furniture Kit (seven pieces: bed, sofa, tables, cabinet) | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/furniture-kit | the furniture of servants' quarters, apartments and tenement rooms (converted with `tone=frontier`; `packs.ts`) |
+| `kenney-blaster` — Blaster Kit 2.1 | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/blaster-kit | the blasters, clips, grenades and crates on weapon racks, shelves and in cases (hero and low detail), baked in steel (`tone=gunmetal`) |
+| `kenney-space` — Space Kit 2.0 | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/space-kit | the machines, consoles, chairs, barrels, masts and pipes of workshops, hangars, garrisons, sickbays and ships (`interiors/packs.ts`); the crystals and rocks of caves (`interiors/CaveRoom.tsx`); the astronaut suits, arms and legs that the armour and prostheses are built from |
+| `kenney-station` — Space Station Kit | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/space-station-kit | the straight walls of palaces, garrisons, workshops, sickbays, hangars and ships (`interiors/Walls.tsx`), and the beds, tables, lockers and chairs of their rooms (`interiors/packs.ts`) |
+| `kenney-furniture` — Furniture Kit (21 pieces: beds, sofas, tables, cabinets, bunks) | Kenney (kenney.nl) | CC0 1.0 (public domain) | https://kenney.nl/assets/furniture-kit | the furniture of servants' quarters, residences, hideouts, barracks and palace suites (`packs.ts`) |
+| `kenney-kitbash` — built from pieces of the Space Kit and Space Station Kit | Kenney (kenney.nl), assembled here | CC0 1.0 (public domain) | https://kenney.nl/assets/space-kit | armour on stands, shields, kit cases, medpacs, prostheses, tool rolls and the melee weapons and launcher the Blaster Kit lacks (`tools/kitbash-recipes.mjs`; `interiors/stock.ts`, `weapons.ts`) |
 
 The models are not used as downloaded. `tools/convert-assets.mjs` bakes each model's texture colours into vertex colours
-(so there is no texture to fetch), rebuilds blasters in a steel ramp, quantises the meshes and writes a second,
-low-detail file beside each (what a figure holds in a hand). The converted files are what is under `client/public/assets`.
+(so there is no texture to fetch), quantises the meshes and writes a second, low-detail file beside each (what a figure holds in
+a hand); the blasters are baked in a steel ramp. The other packs keep their own colours on disk and are recoloured when they
+load, into the palette of the room they stand in (`shared/art/tones.json`, `interiors/tones.ts`). `tools/kitbash.mjs` takes
+converted models apart (islands of a mesh: a helmet, a limb) and builds new ones from the pieces. The converted files are what is
+under `client/public/assets`; the downloads themselves are not kept (fetch the three kits again from kenney.nl to rebuild).
 CC0 asks for no credit; Kenney is credited here because the work is theirs.
 
 ## Libraries

@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { stockLayout, holdsOf, armsFor } from "../../client/src/components/Map/interiors/stock";
+import { stockLayout, holdsOf, armsFor, armourFor } from "../../client/src/components/Map/interiors/stock";
 import { hungWeapon, LENGTH } from "../../client/src/components/Map/interiors/weapons";
 import { weaponsOf } from "../helpers";
+import { KIT_MODELS } from "../../client/src/components/Map/interiors/kitbash";
 
 test("what holds weapons depends on the shop and the room", () => {
   assert.equal(holdsOf("Weapon rack", "garrison", "Armory"), "rack");
@@ -12,6 +13,35 @@ test("what holds weapons depends on the shop and the room", () => {
   assert.equal(holdsOf("Shelving", "garrison", "Armory"), "crates");
   assert.equal(holdsOf("Shelving", "tenements", "Apartments"), null);
   assert.equal(holdsOf("Bed", "garrison", "Barracks"), null);
+});
+test("armour, kits, medicine and prostheses stand where a shop of that kind would show them", () => {
+  assert.equal(holdsOf("Armor stand", "armsmith", "Sales floor"), "armour");
+  assert.equal(holdsOf("Armor stand", "outfitter", "Sales floor"), "armour");
+  assert.equal(holdsOf("Droid parts shelf", "tech shop", "Sales floor"), "kits");
+  assert.equal(holdsOf("Display case", "tech shop", "Sales floor"), "prosthetics");
+  assert.equal(holdsOf("Display case", "armsmith", "Sales floor"), "case");
+  assert.equal(holdsOf("Medical cabinet", "apothecary", "Sales floor"), "medical");
+  assert.equal(holdsOf("Supply cabinet", "medcenter", "Ward"), "medical");
+  assert.equal(holdsOf("Instrument cart", "medcenter", "Ward"), null);
+  assert.equal(holdsOf("Workbench", "workshop", "Workfloor"), "tools");
+  assert.equal(holdsOf("Workbench", "tenements", "Apartments"), null);
+});
+test("each stocks with models that exist in kitbash and fit the piece, the same each time", () => {
+  const known = new Set(Object.keys(KIT_MODELS));
+  for (const [holds, L, b, r] of [["armour", 1, "armsmith", "Sales floor"], ["kits", 3, "tech shop", "Sales floor"], ["medical", 2, "apothecary", "Sales floor"], ["prosthetics", 2, "tech shop", "Sales floor"], ["tools", 3, "workshop", "Workfloor"]] as const) {
+    for (const seed of [0, 1, 2, 3]) {
+      const items = stockLayout(holds, L, 1, b, r, seed);
+      assert.ok(items.length >= 1, `${holds} seed ${seed} is empty`);
+      assert.deepEqual(items, stockLayout(holds, L, 1, b, r, seed));
+      for (const it of items) {
+        assert.ok(it.model && known.has(it.model), `${holds}: ${it.model}`);
+        assert.ok(Math.abs(it.x) <= L / 2 + 0.01, `${holds}: ${it.model} at ${it.x} on ${L}`);
+      }
+    }
+  }
+  assert.ok(stockLayout("kits", 3, 1, "tech shop", "Sales floor", 1).length >= 6, "a shelf is well stocked");
+  assert.ok(armourFor("palace", "Guard post").includes("armour-heavy"));
+  assert.ok(armourFor("outfitter", "Sales floor").includes("armour-light"));
 });
 test("the stock is what the place would keep, and every name is in the rules data", () => {
   const known = new Set(weaponsOf().map((w) => w.name.toLowerCase()));
