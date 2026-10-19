@@ -16,6 +16,8 @@ import { CaveDressing, RockWall } from "./interiors/CaveRoom";
 import { moodOf } from "./interiors/atmosphere";
 import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
 import { PackWalls, cornerCentre, type WallRun } from "./interiors/Walls";
+import { AIM, useView } from "./interiors/aim";
+import { ViewRig } from "./interiors/ViewRig";
 import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
@@ -101,13 +103,22 @@ function Sky({ shadow = 30, cast = true, indoors = 0 }: { shadow?: number; cast?
 // ---------------------------------------------------------------------------------------------
 
 type V3 = [number, number, number];
-const Solid = ({ at, color, glow, rot, children }: { at: V3; color: string; glow?: number; rot?: V3; children: ReactNode }) => (
-  <mesh position={at} rotation={rot} castShadow>
-    {children}
-    <meshLambertMaterial color={color} emissive={color} emissiveIntensity={glow ?? 0.08} />
-  </mesh>
-);
-const Box = ({ at, size, color, glow, rot }: { at: V3; size: V3; color: string; glow?: number; rot?: V3 }) => <Solid at={at} color={color} glow={glow} rot={rot}><boxGeometry args={size} /></Solid>;
+const Solid = ({ at, color, glow, rot, solid, children }: { at: V3; color: string; glow?: number; rot?: V3; solid?: boolean; children: ReactNode }) => {
+  const mesh = useRef<THREE.Mesh>(null);
+  useEffect(() => {
+    const m = mesh.current;
+    if (!m || !solid) return;
+    AIM.solids.add(m);
+    return () => { AIM.solids.delete(m); };
+  }, [solid]);
+  return (
+    <mesh ref={mesh} position={at} rotation={rot} castShadow>
+      {children}
+      <meshLambertMaterial color={color} emissive={color} emissiveIntensity={glow ?? 0.08} />
+    </mesh>
+  );
+};
+const Box = ({ at, size, color, glow, rot, solid }: { at: V3; size: V3; color: string; glow?: number; rot?: V3; solid?: boolean }) => <Solid at={at} color={color} glow={glow} rot={rot} solid={solid}><boxGeometry args={size} /></Solid>;
 const Cyl = ({ at, r, h, color, glow, top = r }: { at: V3; r: number; h: number; color: string; glow?: number; top?: number }) => <Solid at={at} color={color} glow={glow}><cylinderGeometry args={[top, r, h, 18]} /></Solid>;
 const Mast = ({ at, h = 2.2 }: { at: V3; h?: number }) => (
   <>
@@ -124,21 +135,48 @@ const STEEL = "#7b8794";
 const isLarge = (size?: string) => /large|huge|gargantuan/i.test(size ?? "");
 
 // A name that turns to face whoever is looking
-const Label = ({ at, size = 0.34, color = "white", children }: { at: V3; size?: number; color?: string; children: string }) => (
-  <Billboard position={at}>
-    <Text fontSize={size} color={color} anchorX="center" anchorY="middle" outlineWidth={size * 0.08} outlineColor="#000000">
-      {children}
-    </Text>
-  </Billboard>
-);
+// Names are sized to be read from above; from the character's eyes they are a third as large (the crosshair names what it is on)
+const Label = ({ at, size = 0.34, color = "white", children }: { at: V3; size?: number; color?: string; children: string }) => {
+  const eyes = useView((v) => v.eyes);
+  const fontSize = eyes ? size * 0.32 : size;
+  return (
+    <Billboard position={at}>
+      <Text fontSize={fontSize} color={color} anchorX="center" anchorY="middle" outlineWidth={fontSize * 0.08} outlineColor="#000000">
+        {children}
+      </Text>
+    </Billboard>
+  );
+};
 
-// Something to tap that is easier to hit than what is drawn
-const Hit = ({ at, size, onTap }: { at: V3; size: V3; onTap: () => void }) => (
-  <mesh position={at} onClick={(e) => { e.stopPropagation(); if (e.delta <= 8) onTap(); }}>
-    <boxGeometry args={size} />
-    <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-  </mesh>
-);
+// Something to tap that is easier to hit than what is drawn. It is also what the crosshair of the first-person and shoulder views can
+// aim at (interiors/aim.ts): `label` says what it is, and the action key calls `onTap` as a tap does
+const Hit = ({ at, size, onTap, label }: { at: V3; size: V3; onTap: () => void; label?: string }) => {
+  const mesh = useRef<THREE.Mesh>(null);
+  useEffect(() => {
+    const m = mesh.current;
+    if (!m) return;
+    m.userData.aim = { label, onTap };
+    AIM.targets.add(m);
+    return () => { AIM.targets.delete(m); };
+  });
+  return (
+    <mesh ref={mesh} position={at} onClick={(e) => { e.stopPropagation(); if (e.delta <= 8) onTap(); }}>
+      <boxGeometry args={size} />
+      <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+    </mesh>
+  );
+};
+// Walls drawn as groups (a rounded corner): they block the view and the shot as the boxes do
+const Solids = ({ children }: { children: ReactNode }) => {
+  const group = useRef<THREE.Group>(null);
+  useEffect(() => {
+    const g = group.current;
+    if (!g) return;
+    AIM.solids.add(g);
+    return () => { AIM.solids.delete(g); };
+  }, []);
+  return <group ref={group}>{children}</group>;
+};
 
 const WOOD = "#8b5e3c";
 const WOOD_DARK = "#5f3f28";
@@ -289,6 +327,7 @@ function StairsAsset({ w, h, up }: { w: number; h: number; up: boolean }) {
 const FLOORS: Record<FloorKind, string> = { plating: "#1d2530", hangar: "#232a31", sand: "#8f7447", rock: "#3a3835", stone: "#45423d", clay: "#4a3a2d" };
 const WAY_COLORS = { door: "#f59e0b", locked: "#f87171", exit: "#4ade80", secret: "#c084fc", window: "#7dd3fc" };
 const WALL_HEIGHT = 0.8;
+const FULL_WALL_HEIGHT = 2.4;
 const WALL_THICK = 0.16;
 const isWay = (a: RoomAsset) => !!a.side && a.kind !== "window";
 
@@ -304,7 +343,7 @@ function Doorway({ kind, color, label, onTap, style }: { kind: RoomAsset["kind"]
     <>
       <Opening kind={kind} color={color} style={style} />
       {label && <Label at={[0, kind === "window" || kind === "secret" ? 1.2 : 1.9, 0]} size={0.3} color={color}>{label}</Label>}
-      {onTap && <Hit at={[0, 0.75, 0]} size={[1, 1.5, 0.9]} onTap={onTap} />}
+      {onTap && <Hit at={[0, 0.75, 0]} size={[1, 1.5, 0.9]} onTap={onTap} label={label ?? kind} />}
     </>
   );
 }
@@ -354,7 +393,7 @@ function wallRuns(length: number, gaps: number[]): [number, number][] {
   return runs;
 }
 
-export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, children }: {
+export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, children }: {
   width: number;
   height: number;
   // How far each outside corner is rounded: north-west, north-east, south-east, south-west
@@ -373,6 +412,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   bay?: { room: Pick<Area, "id" | "ships">; based?: Ship[] };
   // Open ground has no walls, only posts at its corners
   walls?: boolean;
+  // Walls as high as a room's, for the views from the character's eyes (the overhead view keeps them low to look over)
+  fullWalls?: boolean;
   looted?: (asset: RoomAsset) => boolean;
   // The resource node a cache stands for, if it is one
   nodeOf?: (asset: RoomAsset) => ResourceNode | undefined;
@@ -408,7 +449,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   }, [width, height]);
   // A shaft's walls run up with the floor
   const climbs = plan?.climb ? rise(plan as RoomLayout) : 0;
-  const wallH = WALL_HEIGHT + climbs;
+  const wallH = (fullWalls ? FULL_WALL_HEIGHT : WALL_HEIGHT) + climbs;
   const ramp = (x: number, y: number) => (plan?.climb ? rampAt(plan as RoomLayout, x + 0.5, y + 0.5) : 0);
   // The kit this room is furnished and walled from, and its palette
   const pack = mood && !rocky ? packOf(mood.roomName, mood.buildingType) : undefined;
@@ -464,14 +505,14 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             const plain = runs.map(({ side, a, b, at, run }) => {
               if (rocky) return <RockWall key={`${side}${run[0]}`} side={side} a={a} b={b} w={width} h={height} height={1.1} seed={Math.round(a * 10) + side.charCodeAt(0) + width} biome={mood!.biome} tier={detail} />;
               const [position, size] = at(a, b);
-              return <Box key={`${side}${run[0]}`} at={position} size={size} color={wall} />;
+              return <Box key={`${side}${run[0]}`} at={position} size={size} color={wall} solid />;
             });
             // A room of a pack with walls has the kit's, straight and bent round its corners, in its palette; the plain ones stand until the kit is in
             const corner = cornerList.map((c) => {
               const [x, z] = cornerCentre(c, width, height);
               return (
                 <group key={`corner${c.corner}`} position={[x, 0, z]}>
-                  <CornerWall r={c.r} h={wallH} thick={WALL_THICK} corner={c.corner} color={packLook && pack && hasWalls(pack) ? toneColour(packLook) : wall} />
+                  <Solids><CornerWall r={c.r} h={wallH} thick={WALL_THICK} corner={c.corner} color={packLook && pack && hasWalls(pack) ? toneColour(packLook) : wall} /></Solids>
                 </group>
               );
             });
@@ -498,7 +539,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
               </>
             )}
           {/* Furniture that can be stood on (a bench, the stage) leaves the tap to the floor beneath, so it walks to that square */}
-          {onAsset && !(onFloor && a.kind === "furniture" && !a.blocks && !useKindOf(a.name)) && <Hit at={[a.w / 2, 0.5, a.h / 2]} size={[a.w, 1, a.h]} onTap={() => onAsset(a)} />}
+          {onAsset && !(onFloor && a.kind === "furniture" && !a.blocks && !useKindOf(a.name)) && <Hit at={[a.w / 2, 0.5, a.h / 2]} size={[a.w, 1, a.h]} onTap={() => onAsset(a)} label={a.name} />}
         </Glide>
       ))}
       {atmosphere && look && walls && <Atmosphere mood={atmosphere} look={look} w={width} h={height} tier={detail} />}
@@ -1111,7 +1152,7 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
               <div className="whitespace-nowrap rounded-lg bg-gray-900/90 px-2 py-0.5 text-xs text-amber-200 shadow">{bubbles[a.key]}</div>
             </Html>
           )}
-          {onTap && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onTap({ key: a.key, occupant: a.occupant, at: squareOf(a), counter: a.brain === "staff" ? a.counter : undefined })} />}
+          {onTap && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onTap({ key: a.key, occupant: a.occupant, at: squareOf(a), counter: a.brain === "staff" ? a.counter : undefined })} label={a.occupant.name} />}
         </group>
       ))}
       {setting.stage.length > 0 && (
@@ -1151,7 +1192,7 @@ function Follower({ companion, index, feet, open, height, onTap }: { companion: 
         <Figure kind={tokenOf({ name: companion.name, role: companion.kind === "droid" ? "utility droid" : companion.kind === "beast" ? "wildlife" : companion.role, creature: companion.creature })} ring={SIDE_COLORS.friendly} name={companion.name} large={isLarge(companion.size)} species={companion.species} role={companion.role} creature={companion.creature} size={companion.size} />
       </group>
       <Label at={[0, isLarge(companion.size) ? 2.2 : 1.6, 0]} size={0.26} color={SIDE_COLORS.friendly}>{companion.name}</Label>
-      {onTap && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={onTap} />}
+      {onTap && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={onTap} label={companion.name} />}
     </group>
   );
 }
@@ -1402,7 +1443,7 @@ function Squads({ spots, onTap }: { spots: SquadSpot[]; onTap?: (squad: Squad, l
             </group>
           ))}
           <Label at={[0, 1.7, 0]} size={0.3} color={SIDE_COLORS.hostile}>{`${squad.heavy ? "Troopers" : "Constables"} x${squad.count}${label ? ` ${label}` : ""}`}</Label>
-          {onTap && <Hit at={[0, 0.8, 0]} size={[2, 1.8, 1.6]} onTap={() => onTap(squad, label)} />}
+          {onTap && <Hit at={[0, 0.8, 0]} size={[2, 1.8, 1.6]} onTap={() => onTap(squad, label)} label={label ?? "Squad"} />}
         </group>
       ))}
     </>
@@ -1417,7 +1458,7 @@ function Barricade({ squares, guards, onTap }: { squares: { x: number; y: number
         <group key={`${q.x},${q.y}`} position={[q.x + 0.5, 0, q.y + 0.5]}>
           <Box at={[0, 0.3, 0]} size={[0.96, 0.6, 0.4]} color="#d9a23a" />
           <Box at={[0, 0.45, 0]} size={[0.98, 0.14, 0.42]} color="#1f2328" />
-          {onTap && <Hit at={[0, 0.4, 0]} size={[1, 0.9, 1]} onTap={onTap} />}
+          {onTap && <Hit at={[0, 0.4, 0]} size={[1, 0.9, 1]} onTap={onTap} label="Barricade" />}
         </group>
       ))}
       {guards.map((q, i) => (
@@ -1711,6 +1752,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // Where the camera looks when the party is out of doors: at the party
   const eye = useRef<V3 | null>(null);
   const walk = useRef<{ path: { x: number; y: number }[]; then?: (squares: number) => void; total: number } | null>(null);
+  // Over the shoulder or from the eyes (interiors/ViewRig.tsx), instead of the overhead view; `facing` is the way the character looks then
+  const mode = useView((v) => v.mode);
+  const viewing = mode !== "overhead" && present && !duel;
+  const facing = useRef<number | null>(null);
   useEffect(() => {
     if (!present) return;
     walk.current = null;
@@ -1728,7 +1773,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   };
   useFrame((_, delta) => {
     const going = walk.current;
-    if (token.current) token.current.position.set(feet.current.x + 0.5, heightNow(), feet.current.y + 0.5);
+    if (token.current) {
+      token.current.position.set(feet.current.x + 0.5, heightNow(), feet.current.y + 0.5);
+      // From the eyes the character is not drawn; over the shoulder they face where the camera looks
+      token.current.visible = !(viewing && mode === "first");
+      if (viewing && facing.current !== null) token.current.rotation.y = facing.current;
+    }
     eye.current = duelRef.current ? [(duelRef.current.x ?? 0) + 0.5 - cx, (duelRef.current.z ?? 0) * LEVEL_H, (duelRef.current.y ?? 0) + 0.5 - cz] : outside && planned ? [feet.current.x + 0.5 - cx, 0, feet.current.y + 0.5 - cz] : null;
     if (!going) return;
     let step = Math.min(delta, 0.5) * 7;
@@ -1736,7 +1786,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       const next = going.path[0];
       const [dx, dy] = [next.x - feet.current.x, next.y - feet.current.y];
       const far = Math.hypot(dx, dy);
-      if (token.current && far > 0.001) token.current.rotation.y = Math.atan2(dx, dy);
+      if (token.current && far > 0.001 && facing.current === null) token.current.rotation.y = Math.atan2(dx, dy);
       if (far <= step) {
         feet.current = { ...next };
         going.path.shift();
@@ -1897,6 +1947,23 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     const path = route(open, from, goals.filter((g) => open(g.x, g.y) || (g.x === from.x && g.y === from.y)), { keep: traps });
     if (!path) onAct?.({ type: "note", text: gangRing.length ? "The gang bars the way out of the alley." : "There is no way through to there." });
     else walk.current = { path, then, total: path.length };
+  };
+  // A step the way a stick or key points, queued into the walk (so that flagstones, secret ways and arrivals all still happen): the
+  // eight directions of the grid, a diagonal only past two open squares, a blocked one slid along a wall
+  const stepToward = (dx: number, dz: number) => {
+    if (!active) return;
+    const queued = walk.current;
+    if (queued && queued.path.length > 1) return;
+    const from = queued ? queued.path[queued.path.length - 1] : { x: Math.round(feet.current.x), y: Math.round(feet.current.y) };
+    const octant = ((Math.round(Math.atan2(dx, dz) / (Math.PI / 4)) % 8) + 8) % 8;
+    const [sx, sy] = [[0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1]][octant];
+    const tries = sx && sy ? [[sx, sy], [sx, 0], [0, sy]] : [[sx, sy]];
+    for (const [mx, my] of tries) {
+      const next = { x: from.x + mx, y: from.y + my };
+      if (!open(next.x, next.y) || (mx && my && !(open(from.x + mx, from.y) && open(from.x, from.y + my)))) continue;
+      walk.current = { path: [...(queued?.path ?? []), next], then: queued?.then, total: (queued?.total ?? 0) + 1 };
+      return;
+    }
   };
   const around = aroundSquares;
 
@@ -2083,6 +2150,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   wall={wall}
                   ships={room.ships}
                   bay={{ room, based: based[room.id] }}
+                  fullWalls={viewing}
                   looted={(a) => { const c = room.loot.find((c) => c.id === a.ref); return !!c && (c.node ? nodeAt(c.node, minutes).charges === 0 : !!c.looted); }}
                   nodeOf={(a) => room.loot.find((c) => c.id === a.ref)?.node}
                   wayColor={wayColor}
@@ -2161,7 +2229,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                       <group key={a.id} position={[a.x + 0.5, 0, a.y + 0.5]}>
                         <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} species={o.species} role={o.role} creature={o.creature} size={o.size} />
                         <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS[o.disposition]}>{o.name}</Label>
-                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} />
+                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} label={o.name} />
                       </group>
                     ) : null;
                   })}
@@ -2182,7 +2250,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                           {[-0.28, 0.28].map((x) => <Box key={x} at={[x, top / 2, sign * 0.12]} size={[0.06, top, 0.06]} color="#c8ccd2" />)}
                           {Array.from({ length: rungs }, (_, i) => <Box key={i} at={[0, 0.25 + (i * (top - 0.4)) / rungs, sign * 0.12]} size={[0.56, 0.05, 0.05]} color="#9aa0a8" />)}
                           <Label at={[0, top + 0.5, sign * 0.1]} size={0.3} color={WAY_COLORS.exit}>Ladder to the roof</Label>
-                          {tappable && <Hit at={[0, top / 2, sign * 0.3]} size={[0.9, top, 0.8]} onTap={() => actOutside(room, a)} />}
+                          {tappable && <Hit at={[0, top / 2, sign * 0.3]} size={[0.9, top, 0.8]} onTap={() => actOutside(room, a)} label={a.name} />}
                         </group>
                       </group>
                     );
@@ -2209,7 +2277,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                       <group key={a.id} position={[a.x + 0.5, 0.12, a.y + 0.5]}>
                         <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} species={o.species} role={o.role} creature={o.creature} size={o.size} />
                         <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS[o.disposition]}>{o.name}</Label>
-                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} />
+                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} label={o.name} />
                       </group>
                     ) : null;
                   })}
@@ -2226,7 +2294,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                       <group key={a.id} position={[a.x + 0.5, 0, a.y + 0.5]}>
                         <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} species={o.species} role={o.role} creature={o.creature} size={o.size} />
                         <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS[o.disposition]}>{o.name}</Label>
-                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} />
+                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} label={o.name} />
                       </group>
                     ) : null;
                   })}
@@ -2291,7 +2359,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 <Cyl at={[0, 0.8, 0]} r={0.07} h={1.6} color={WOOD} />
                 <Box at={[0, 1.4, 0]} size={[1.1, 0.36, 0.08]} color="#e8dcc0" glow={0.4} />
                 <Label at={[0, 2.1, 0]} size={0.36} color="#e8dcc0">{`${exit.via === "leave" ? "Out to" : "To"} ${world.areas[exit.to].name}`}</Label>
-                {tappable && <Hit at={[0, 0.8, 0]} size={[1.2, 1.8, 1.2]} onTap={() => (blockade ? onAct?.({ type: "note", text: "The officers hold the way out: barricades across the road until the search is called off." }) : walkTo(around(x, y), () => onAct?.({ type: "exit", exit })))} />}
+                {tappable && <Hit at={[0, 0.8, 0]} size={[1.2, 1.8, 1.2]} onTap={() => (blockade ? onAct?.({ type: "note", text: "The officers hold the way out: barricades across the road until the search is called off." }) : walkTo(around(x, y), () => onAct?.({ type: "exit", exit })))} label="Way out" />}
               </group>
             ))}
             {barricades.map((b) => (
@@ -2316,24 +2384,24 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     <group position={[spot.x, 0, spot.y]} rotation={[0, st.south ? 0 : Math.PI, 0]}>
                       <Figure kind={tokenOf(keeper)} ring={SIDE_COLORS[keeper.disposition]} name={keeper.name} species={keeper.species} role={keeper.role} />
                       <Label at={[0, 1.6, 0]} size={0.26} color={SIDE_COLORS[keeper.disposition]}>{keeper.name}</Label>
-                      {tappable && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => walkTo(around(Math.floor(st.x + st.w / 2), st.south ? st.y + st.h : st.y - 1), () => onAct?.({ type: "occupant", id: keeper.id }))} />}
+                      {tappable && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => walkTo(around(Math.floor(st.x + st.w / 2), st.south ? st.y + st.h : st.y - 1), () => onAct?.({ type: "occupant", id: keeper.id }))} label={keeper.name} />}
                     </group>
                   )}
-                  {tappable && !keeper && <Hit at={[st.x + st.w / 2, 0.6, st.y + st.h / 2]} size={[st.w, 1.2, st.h]} onTap={() => onAct?.({ type: "note", text: stallState("market", minutes) === "packed" ? "The stall is packed up for the night; its keeper is gone home. It opens in the morning." : "Nobody keeps this stall just now." })} />}
+                  {tappable && !keeper && <Hit at={[st.x + st.w / 2, 0.6, st.y + st.h / 2]} size={[st.w, 1.2, st.h]} onTap={() => onAct?.({ type: "note", text: stallState("market", minutes) === "packed" ? "The stall is packed up for the night; its keeper is gone home. It opens in the morning." : "Nobody keeps this stall just now." })} label="Stall" />}
                 </group>
               );
             })}
             {street.decor.map((d, i) => (
               <group key={i} position={[d.x, 0, d.y]}>
                 <Decor kind={d.kind} seed={d.x * 7 + d.y * 13} />
-                {tappable && (d.kind === "kiosk" || d.kind === "camera") && <Hit at={[0.5, 0.8, 0.5]} size={[1, 1.8, 1]} onTap={() => walkTo(around(d.x, d.y), () => onAct?.({ type: "use", areaId: me.id, id: `street:${d.kind}:${d.x},${d.y}`, name: d.kind === "kiosk" ? "Info kiosk" : "Security camera" }))} />}
+                {tappable && (d.kind === "kiosk" || d.kind === "camera") && <Hit at={[0.5, 0.8, 0.5]} size={[1, 1.8, 1]} onTap={() => walkTo(around(d.x, d.y), () => onAct?.({ type: "use", areaId: me.id, id: `street:${d.kind}:${d.x},${d.y}`, name: d.kind === "kiosk" ? "Info kiosk" : "Security camera" }))} label={d.kind === "kiosk" ? "Info kiosk" : "Security camera"} />}
               </group>
             ))}
             {street.folk.map(({ occupant, x, y }, i) => (
               <group key={`${occupant.id}-${i}`} position={[x + 0.5, 0, y + 0.5]}>
                 <Figure kind={tokenOf(occupant)} ring={SIDE_COLORS[occupant.disposition]} name={occupant.name} large={isLarge(occupant.size)} species={occupant.species} role={occupant.role} creature={occupant.creature} size={occupant.size} />
                 <Label at={[0, 1.6, 0]} size={0.26} color={SIDE_COLORS[occupant.disposition]}>{occupant.name}</Label>
-                {tappable && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "occupant", id: occupant.id }))} />}
+                {tappable && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "occupant", id: occupant.id }))} label={occupant.name} />}
               </group>
             ))}
             {!duel && streetSettings.map(({ buildingId, setting, people }) => (
@@ -2387,7 +2455,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 >
                   <Figure kind={tokenOf(o)} ring={SIDE_COLORS.hostile} name={o.name} role={o.role} creature={o.creature} size={o.size} />
                   <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS.hostile}>{o.name}</Label>
-                  {tappable && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "encounter", step: "talk" })} />}
+                  {tappable && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "encounter", step: "talk" })} label="Stranger" />}
                 </Wanderer>
               );
             })}
@@ -2396,13 +2464,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               <group key={v.id} position={[x + 0.5, 0, y + 0.5]} rotation={[0, Math.atan2(outward.x || 0.0001, outward.y || 0.0001), 0]}>
                 <SpeederModel model={v.model} wrecked={v.status === "wrecked"} />
                 <Label at={[0, 1.5, 0]} size={0.26} color={mine ? SIDE_COLORS.player : SIDE_COLORS.neutral}>{`${v.name}${v.status === "wrecked" ? " (wreck)" : ""}`}</Label>
-                {tappable && <Hit at={[0, 0.5, 0]} size={[1.6, 1.2, 2.4]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "vehicle", id: v.id }))} />}
+                {tappable && <Hit at={[0, 0.5, 0]} size={[1.6, 1.2, 2.4]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "vehicle", id: v.id }))} label={v.name} />}
               </group>
             ))}
             {street.caches.map(({ cache, x, y }) => (
               <group key={cache.id} position={[x, 0, y]}>
                 {cache.node ? <NodeModel node={cache.node} empty={nodeAt(cache.node, minutes).charges === 0} /> : <Chest looted={cache.looted} />}
-                {tappable && <Hit at={[0.5, 0.4, 0.5]} size={[1, 0.8, 1]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "loot", id: cache.id }))} />}
+                {tappable && <Hit at={[0.5, 0.4, 0.5]} size={[1, 0.8, 1]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "loot", id: cache.id }))} label="Cache" />}
               </group>
             ))}
             {buildings.map((b) => {
@@ -2461,7 +2529,11 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           return undefined;
         }}
       />
-      <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} />
+      {mode !== "overhead" && viewing ? (
+        <ViewRig mode={mode} start={token.current?.rotation.y ?? 0} feet={() => [feet.current.x + 0.5 - cx, heightNow(), feet.current.y + 0.5 - cz]} facing={facing} step={stepToward} />
+      ) : (
+        <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} />
+      )}
       <Sky cast={!districtPlan || !!opened} indoors={opened && !openAir(opened) && !formOf(opened) ? 1 : 0} />
     </>
   );
@@ -2506,7 +2578,7 @@ function DuelPieces() {
       {arena.assets.filter((a) => a.id.startsWith("crate-")).map((a) => (
         <Glide key={a.id} x={a.x} y={a.y} z={high(a.z)}>
           <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} />
-          {pickable(a) && <Hit at={[a.w / 2, 0.5, a.h / 2]} size={[a.w, 1, a.h]} onTap={() => setObject(objectId === a.id ? null : a.id)} />}
+          {pickable(a) && <Hit at={[a.w / 2, 0.5, a.h / 2]} size={[a.w, 1, a.h]} onTap={() => setObject(objectId === a.id ? null : a.id)} label={a.name} />}
         </Glide>
       ))}
       {picked && <Picked asset={picked} high={high(picked.z)} />}
@@ -2547,7 +2619,7 @@ function DuelPieces() {
                 <Text position={[0, 0.24, 0]} fontSize={0.24} color={side} anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#000000">{c.name}</Text>
               </Billboard>
             )}
-            {!down && !onPartySide(c) && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => setTarget(c.id)} />}
+            {!down && !onPartySide(c) && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => setTarget(c.id)} label={c.name} />}
           </group>
         );
       })}
@@ -2651,7 +2723,7 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
                     <Text position={[0, 0.24, 0]} fontSize={0.24} color={side} anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#000000">{c.name}</Text>
                   </Billboard>
                 )}
-                {!down && !onPartySide(c) && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => setTarget(c.id)} />}
+                {!down && !onPartySide(c) && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => setTarget(c.id)} label={c.name} />}
               </group>
             );
           })}
@@ -2772,7 +2844,7 @@ export function SpaceScene() {
                 <Text position={[0, 0.25, 0]} fontSize={0.26} color={side} anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#000000">{s.name}</Text>
               </Billboard>
             )}
-            {!s.destroyed && s.side === "foe" && <Hit at={[0, 0.6, 0]} size={[Math.max(w, 1.2), 1.4, Math.max(h, 1.2)]} onTap={() => setTarget(s.id)} />}
+            {!s.destroyed && s.side === "foe" && <Hit at={[0, 0.6, 0]} size={[Math.max(w, 1.2), 1.4, Math.max(h, 1.2)]} onTap={() => setTarget(s.id)} label={s.name} />}
           </group>
         );
       })}

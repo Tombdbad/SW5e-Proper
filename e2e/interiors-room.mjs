@@ -10,6 +10,8 @@ const [type, roomPattern] = KINDS[kind] ?? [kind, new RegExp(pattern || ".")];
 const ctx = await open();
 const { page, events, browser } = ctx;
 await page.setViewportSize({ width: Number(process.env.W || 900), height: Number(process.env.H || 600) });
+// VIEWMODE=first|shoulder|overhead starts the game in that view (the view is remembered in localStorage "sw5e.view")
+if (process.env.VIEWMODE) await page.addInitScript((m) => localStorage.setItem("sw5e.view", m), process.env.VIEWMODE);
 const NAME = "Room " + Date.now().toString(36);
 const made = [];
 let campId;
@@ -36,8 +38,17 @@ try {
   await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 120000 });
   // The first frame of a 3D scene blocks the page for a good while in software
   await page.waitForTimeout(Number(process.env.SETTLE || 45000));
-  await page.screenshot({ path: `${OUT}/room-${kind}.png`, timeout: 300000 });
-  console.log(`saved ${OUT}/room-${kind}.png after ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+  // KEYS="KeyW,1500;ArrowLeft,600" holds each key for that many milliseconds (walking and turning in the first-person and shoulder views)
+  for (const step of (process.env.KEYS || "").split(";").filter(Boolean)) {
+    const [key, ms] = step.split(",");
+    await page.keyboard.down(key);
+    await page.waitForTimeout(Number(ms));
+    await page.keyboard.up(key);
+    await page.waitForTimeout(1500);
+  }
+  if (process.env.KEYS) console.log("reticle", await page.evaluate(() => { const r = document.querySelector('[data-testid="reticle"]'); return r ? `${r.getAttribute("data-kind")} ${r.getAttribute("data-blocked")} ${r.textContent}` : "none"; }));
+  await page.screenshot({ path: `${OUT}/room-${kind}${process.env.VIEWMODE ? "-" + process.env.VIEWMODE : ""}.png`, timeout: 300000 });
+  console.log(`saved ${OUT}/room-${kind}${process.env.VIEWMODE ? "-" + process.env.VIEWMODE : ""}.png after ${((Date.now() - t0) / 1000).toFixed(0)}s`);
 } finally {
   if (campId) await api("DELETE", `/api/campaigns/${campId}`).catch(() => {});
   for (const id of made) await api("DELETE", `/api/characters/${id}`).catch(() => {});

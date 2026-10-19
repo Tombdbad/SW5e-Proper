@@ -1,10 +1,11 @@
 // A room's walls as tiles of the Space Station Kit (see packs.ts `wallTiles`), merged into one mesh and in the room's palette: the
 // straight runs between the ways, and the rounded corners with the tiles bent round their radius. Doorways and windows are the map's own.
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { WALL_FILES, wallTiles } from "./packs";
 import { useModels } from "./assets";
+import { AIM } from "./aim";
 import type { Tone } from "./tones";
 
 export type WallSide = "n" | "s" | "w" | "e";
@@ -104,9 +105,17 @@ export function PackWalls({ runs, corners = [], width, height, wallH, thick, ton
   const key = runs.map((r) => `${r.side}${r.a}-${r.b}`).join(",") + corners.map((c) => `c${c.corner}${c.r}`).join(",");
   const geometry = useMemo(() => wallsGeometry(runs, width, height, wallH, thick, files, corners), [key, width, height, wallH, thick, files]);
   useEffect(() => () => geometry?.dispose(), [geometry]);
+  const mesh = useRef<THREE.Mesh>(null);
+  // What blocks the view and the shot, for the crosshair (aim.ts)
+  useEffect(() => {
+    const m = mesh.current;
+    if (!m) return;
+    AIM.solids.add(m);
+    return () => { AIM.solids.delete(m); };
+  }, [geometry]);
   if (!geometry) return <>{fallback}</>;
   return (
-    <mesh geometry={geometry} castShadow receiveShadow>
+    <mesh ref={mesh} geometry={geometry} castShadow receiveShadow>
       <meshLambertMaterial vertexColors />
     </mesh>
   );

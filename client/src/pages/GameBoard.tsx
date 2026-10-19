@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
 import { useQuality } from "@/components/Map/siteAssets";
+import { useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
 import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, whereNow, useClock, noEncounters } from "@/components/Map/LocalMap";
 import { usePartyLook } from "@/components/Map/models";
 import PlayCombat, { ShipCombatPanel, type CombatItemOption } from "@/components/Combat/PlayCombat";
@@ -164,6 +165,16 @@ export default function GameBoard() {
     try { localStorage.setItem("sw5e.sharpness", String(sharpness)); } catch {}
   }, [sharpness]);
   const detailFixed = useQuality((q) => q.fixed);
+  const viewMode = useView((v) => v.mode);
+  // V cycles the view on foot (overhead, over the shoulder, first person); the mode only matters where the party walks
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.code !== "KeyV" || e.ctrlKey || e.metaKey || e.altKey || e.repeat || /^(input|textarea|select)$/i.test((e.target as HTMLElement)?.tagName ?? "")) return;
+      useView.getState().next();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
   const detailTier = useQuality((q) => q.tier);
   const combatants = useCombat((s) => s.combatants);
   const { currentLocation, setCurrentLocation } = useMap();
@@ -4934,6 +4945,15 @@ export default function GameBoard() {
               >
                 Detail: {detailFixed ? (detailFixed === "lite" ? "Lite" : "Full") : "Auto"}
               </Button>
+              {onFoot && (
+                <Button
+                  size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" data-testid="view-toggle"
+                  title="Overhead, over the shoulder, or first person (V). Drag to look; W A S D or the stick to walk; E, Space or Use to act on what the crosshair is on"
+                  onClick={() => useView.getState().next()}
+                >
+                  View: {VIEW_LABEL[viewMode]}
+                </Button>
+              )}
               <Button size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" onClick={toggleSidebar}>
                 {showSidebar ? "Hide HUD" : "Show HUD"}
               </Button>
