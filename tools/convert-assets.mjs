@@ -19,7 +19,7 @@ const files = find(pack).filter((f) => which === "all" || which.split(",").inclu
 fs.mkdirSync(out, { recursive: true });
 const io = new NodeIO().registerExtensions([KHRMaterialsUnlit, KHRMeshQuantization]);
 // Steel: a dark gunmetal at the bottom of the lightness, pale steel at the top (linear colour)
-const RAMP = [[0.007, 0.009, 0.012], [0.1, 0.12, 0.145], [0.42, 0.45, 0.48]];
+const RAMP = [[0.005, 0.006, 0.008], [0.045, 0.055, 0.068], [0.2, 0.22, 0.25]];
 const steel = ([r, g, b]) => {
   const l = Math.min(1, 0.2126 * r + 0.7152 * g + 0.0722 * b);
   const t = Math.min(1, l * 1.6);

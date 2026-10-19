@@ -2,10 +2,12 @@
 // for a hovel and for a palace; what differs is the wood, the cloth, the metal, the trim and how
 // much clutter lies about. Pure: no drawing here, so tests can read it (tests/interiors/wealth.test.ts).
 
+import * as THREE from "three";
+
 export type Wealth = "squalid" | "poor" | "modest" | "comfortable" | "rich" | "palatial";
 export const WEALTH: Wealth[] = ["squalid", "poor", "modest", "comfortable", "rich", "palatial"];
 
-export interface Look {
+export interface RoomLook {
   // Furniture woods: the frame and the darker joinery
   wood: string;
   woodDark: string;
@@ -24,7 +26,7 @@ export interface Look {
   light: string;
 }
 
-export const LOOKS: Record<Wealth, Look> = {
+export const LOOKS: Record<Wealth, RoomLook> = {
   squalid: { wood: "#6b5a46", woodDark: "#463a2e", cloth: "#6f6657", cloth2: "#524b40", metal: "#6a5a4c", trim: "#5b4a3a", clutter: 0.9, wear: 0.9, lamp: "tallow", light: "#ff9a4a" },
   poor: { wood: "#8a6a48", woodDark: "#5f452e", cloth: "#8a7a62", cloth2: "#6f5f4a", metal: "#7b7468", trim: "#74553a", clutter: 0.7, wear: 0.6, lamp: "bulb", light: "#ffb866" },
   modest: { wood: "#9a6e46", woodDark: "#6a4a2e", cloth: "#8a6f5a", cloth2: "#b0905a", metal: "#8c9299", trim: "#8b5e3c", clutter: 0.45, wear: 0.3, lamp: "bulb", light: "#ffc27a" },
@@ -83,9 +85,34 @@ const CLOTH_BY_BIOME: Record<string, [string, string]> = {
   volcanic: ["#6a2a22", "#a07a4a"],
   swamp: ["#5a6a46", "#a89a5a"],
 };
-export function lookOf(wealth: Wealth, biome = ""): Look {
+export function lookOf(wealth: Wealth, biome = ""): RoomLook {
   const base = LOOKS[wealth];
   const dye = CLOTH_BY_BIOME[biome];
   // Only the poorer rooms are dyed by the land; a palace brings its own colours
   return dye && WEALTH.indexOf(wealth) <= WEALTH.indexOf("comfortable") ? { ...base, cloth: dye[0], cloth2: dye[1] } : base;
+}
+
+// A skin for the Kit (`Kit.skin`): turns the colours a piece of furniture was drawn in into the room's own. The
+// furniture is drawn once, in browns, steels and golds; wealth turns the browns into the room's woods, the steels
+// into its metal, the golds into its trim and any other soft colour into its cloth, whatever it was dyed. Lights,
+// glass and haze are left as they are, and so are blacks and the darkest greys (they are shadow, not material).
+const hsl = (c: THREE.Color) => c.getHSL({ h: 0, s: 0, l: 0 }, THREE.SRGBColorSpace);
+export function skinOf(look: RoomLook): (c: THREE.Color, finish: string) => THREE.Color {
+  const [wood, woodDark, metal, trim, cloth, cloth2] = [look.wood, look.woodDark, look.metal, look.trim, look.cloth, look.cloth2].map((x) => hsl(new THREE.Color(x)));
+  // `target` keeps its hue and saturation; the piece's own lightness decides how light, a little less strongly
+  const toward = (c: THREE.Color, own: { h: number; s: number; l: number }, ref: number, target: { h: number; s: number; l: number }, spread = 0.8) =>
+    c.setHSL(target.h, target.s, Math.max(0.03, Math.min(0.92, target.l + (own.l - ref) * spread)), THREE.SRGBColorSpace);
+  return (c, finish) => {
+    if (finish === "glow" || finish === "glass" || finish === "haze") return c;
+    const own = hsl(c);
+    // Near black and dark greys: shadow, left alone
+    if (own.l < 0.2) return c;
+    const brown = own.h >= 0.03 && own.h <= 0.11 && own.s >= 0.2 && own.s <= 0.8 && own.l <= 0.6;
+    if (brown) return own.l < 0.31 ? toward(c, own, 0.26, woodDark) : toward(c, own, 0.38, wood);
+    // Steel is grey, or a grey with a blue in it; a dull green or red is cloth
+    if (own.s < 0.06 || (own.s < 0.18 && own.h > 0.5 && own.h < 0.68)) return own.l > 0.3 ? toward(c, own, 0.5, metal, 0.9) : c;
+    if (own.h > 0.1 && own.h < 0.17 && own.s > 0.4 && own.l > 0.4) return toward(c, own, 0.6, trim);
+    // Any other dyed, soft colour: the room's cloth, or its second colour for the brighter ones
+    return own.l > 0.55 ? toward(c, own, 0.65, cloth2) : toward(c, own, 0.4, cloth);
+  };
 }

@@ -3,10 +3,17 @@ import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls, Text, Billboard } from "@react-three/drei";
 import { Figure, Furniture, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount } from "@/components/Map/models";
 import { tokenOf, SIDE_COLORS } from "@/components/Map/sprites";
+import { Atmosphere } from "@/components/Map/interiors/Atmosphere";
+import { Stock } from "@/components/Map/interiors/Stock";
+import { CaveDressing, RockWall } from "@/components/Map/interiors/CaveRoom";
+import { moodOf } from "@/components/Map/interiors/atmosphere";
+import { WEALTH, lookOf, wealthOf } from "@/components/Map/interiors/wealth";
 import { CurtainWall, GardenGround, Scatter, StallModel, paletteOf, plantGarden, type StallState } from "@/components/Map/siteAssets";
 
 // Every model of the 3D map laid out in rows, for looking them over (a developer's page, not
-// linked from the game). ?section=people|roles|droids|beasts|furniture|ships|places|sites picks one.
+// linked from the game). ?section=people|roles|droids|beasts|furniture|ships|places|sites|interiors picks one.
+// `interiors` shows the overhaul of 2026-10-19: the stock of racks, shelves and cases by kind of place, the furniture
+// in the six wealths, a cave room (rock walls, formations, light) and the mood of each kind of room.
 // `sites` shows the asset library of the sites: a garden planted for each kind of world, the stalls of a
 // market open, being packed and packed, a curtain wall, the pieces a shop shows, and the wild ground and
 // racing pieces (trees, rocks, ground cover, barriers, a grandstand) in a temperate and a desert world.
@@ -128,6 +135,79 @@ export default function ModelGallery() {
             {["temperate", "desert"].map((biome, b) => (
               <Rows key={biome} z={66 + b * 8} items={WILD_PIECES} per={9} gap={4} name={(key) => `${key} (${biome})`} draw={(key) => <Scatter placed={[{ key, x: 0, y: 0, rot: 0, scale: 1, v: 1 }]} biome={biome} />} />
             ))}
+          </>
+        )}
+        {section === "interiors" && (
+          <>
+            {/* The stock of a rack by the place: an armsmith, a garrison armory, a palace guard post, a hideout */}
+            {[["armsmith", "Sales floor"], ["garrison", "Armory"], ["palace", "Guard post"], ["hideout", "Common room"]].map(([b, r], i) => (
+              <group key={b} position={[i * 4.5 - 7, 0, 0]}>
+                <Furniture name="Weapon rack" w={3} h={1} seed={3} look={lookOf(wealthOf(b, r))} />
+                <Stock name="Weapon rack" w={3} h={1} seed={3} buildingType={b} roomName={r} />
+                <Label at={[1.5, 0.08, 1.7]} text={`${b} (${r})`} />
+              </group>
+            ))}
+            <group position={[-7, 0, 4]}>
+              <Furniture name="Display shelf" w={3} h={1} seed={1} look={lookOf("comfortable")} />
+              <Stock name="Display shelf" w={3} h={1} seed={1} buildingType="armsmith" roomName="Sales floor" />
+              <Label at={[1.5, 0.08, 1.7]} text="display shelf" />
+            </group>
+            <group position={[-2.5, 0, 4]}>
+              <Furniture name="Display table" w={3} h={1} seed={1} look={lookOf("comfortable")} />
+              <Stock name="Display table" w={3} h={1} seed={1} buildingType="armsmith" roomName="Sales floor" />
+              <Label at={[1.5, 0.08, 1.7]} text="display case" />
+            </group>
+            <group position={[2, 0, 4]}>
+              <Furniture name="Crate stack" w={3} h={1} seed={1} look={lookOf("modest")} />
+              <Stock name="Shelving" w={3} h={1} seed={1} buildingType="garrison" roomName="Armory" />
+              <Label at={[1.5, 0.08, 1.7]} text="armory crates" />
+            </group>
+            {/* The same furniture in the six wealths */}
+            {["Bed", "Couch", "Table", "Cabinet"].map((name, row) =>
+              WEALTH.map((w, col) => (
+                <group key={`${name}${w}`} position={[col * 3.2 - 8, 0, 10 + row * 3]}>
+                  <Furniture name={name} w={2} h={1} seed={2} look={lookOf(w)} />
+                  {row === 0 && <Label at={[1, 0.08, -0.9]} text={w} />}
+                </group>
+              )),
+            )}
+            {/* A cave room of 12 by 9 squares: rock walls on three sides, its rim, and its light */}
+            <group position={[-14, 0, 26]}>
+              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[6, 0.01, 4.5]} receiveShadow><planeGeometry args={[12, 9]} /><meshLambertMaterial color="#3a3835" /></mesh>
+              <RockWall side="n" a={0} b={12} w={12} h={9} height={1.1} seed={3} biome="temperate" tier="full" />
+              <RockWall side="w" a={0} b={9} w={12} h={9} height={1.1} seed={4} biome="temperate" tier="full" />
+              <RockWall side="e" a={0} b={9} w={12} h={9} height={1.1} seed={5} biome="temperate" tier="full" />
+              <RockWall side="s" a={0} b={5} w={12} h={9} height={1.1} seed={6} biome="temperate" tier="full" />
+              <RockWall side="s" a={7} b={12} w={12} h={9} height={1.1} seed={7} biome="temperate" tier="full" />
+              <CaveDressing w={12} h={9} seed={12 * 31 + 9} biome="temperate" tier="full" takenKey="5,8;6,8" />
+              <Atmosphere mood={moodOf("cave", "Deep chamber", "squalid", "temperate")} look={lookOf("squalid")} w={12} h={9} tier="full" />
+              <Label at={[6, 0.1, 10.5]} text="cave: Deep chamber" />
+            </group>
+            {/* Ice, volcanic */}
+            {["ice", "volcanic"].map((biome, i) => (
+              <group key={biome} position={[2 + i * 14, 0, 26]}>
+                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[5, 0.01, 4]} receiveShadow><planeGeometry args={[10, 8]} /><meshLambertMaterial color="#3a3835" /></mesh>
+                <RockWall side="n" a={0} b={10} w={10} h={8} height={1.1} seed={3} biome={biome} tier="full" />
+                <RockWall side="w" a={0} b={8} w={10} h={8} height={1.1} seed={4} biome={biome} tier="full" />
+                <RockWall side="e" a={0} b={8} w={10} h={8} height={1.1} seed={5} biome={biome} tier="full" />
+                <CaveDressing w={10} h={8} seed={10 * 31 + 8} biome={biome} tier="full" takenKey="" />
+                <Atmosphere mood={moodOf("cave", "Den", "squalid", biome)} look={lookOf("squalid", biome)} w={10} h={8} tier="full" />
+                <Label at={[5, 0.1, 9.5]} text={`cave: ${biome}`} />
+              </group>
+            ))}
+            {/* The mood of each kind of room: a floor, a couch and a table under its light */}
+            {[["cantina", "Main bar"], ["palace", "Audience chamber"], ["medcenter", "Ward"], ["garrison", "Barracks"], ["tenements", "Apartments"], ["engineering", "Reactor room"], ["spaceport", "Docking bay"], ["armsmith", "Sales floor"], ["ruin", "Inner sanctum"], ["garrison", "Detention block"]].map(([b, r], i) => {
+              const wealth = wealthOf(b, r);
+              return (
+                <group key={`${b}${r}`} position={[(i % 5) * 9 - 14, 0, 42 + Math.floor(i / 5) * 8]}>
+                  <mesh rotation={[-Math.PI / 2, 0, 0]} position={[3.5, 0.01, 2.5]} receiveShadow><planeGeometry args={[7, 5]} /><meshLambertMaterial color="#3a3a40" /></mesh>
+                  <group position={[0.5, 0, 0.5]}><Furniture name="Couch" w={2} h={1} look={lookOf(wealth)} /></group>
+                  <group position={[3.5, 0, 2]}><Furniture name="Table" w={1} h={1} look={lookOf(wealth)} /></group>
+                  <Atmosphere mood={moodOf(b, r, wealth)} look={lookOf(wealth)} w={7} h={5} tier="full" />
+                  <Label at={[3.5, 0.1, 5.8]} text={`${b}: ${r} (${wealth})`} />
+                </group>
+              );
+            })}
           </>
         )}
         <OrbitControls target={look} />

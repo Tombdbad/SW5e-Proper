@@ -6,6 +6,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { ImprovedNoise } from "three/examples/jsm/math/ImprovedNoise.js";
 import { speederKind } from "@shared/logic";
+import { skinOf, type RoomLook } from "./interiors/wealth";
 
 // ---------------------------------------------------------------------------------------------
 // The 3D models of the map: people, droids, creatures, furniture, ships, vehicles and buildings.
@@ -135,6 +136,8 @@ export function archShape(w: number, h: number): THREE.Shape {
 
 export class Kit {
   readonly parts: { geo: THREE.BufferGeometry; finish: Finish }[] = [];
+  // Turns every colour drawn into another (a room's own woods, cloth and metal; see interiors/wealth.ts `skinOf`)
+  skin?: (color: THREE.Color, finish: Finish) => THREE.Color;
   private frames: THREE.Matrix4[] = [new THREE.Matrix4()];
 
   // Draws what `draw` draws moved, turned and scaled together
@@ -167,6 +170,7 @@ export class Kit {
       geo.index!.needsUpdate = true;
     }
     const c = new THREE.Color(color);
+    if (this.skin) c.copy(this.skin(c, finish));
     const n = geo.attributes.position.count;
     const colors = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) {
@@ -436,11 +440,11 @@ function screen(k: Kit, at: V3, w: number, h: number, tilt: number, color = C.gl
 // `seed` gives rocks and crates a shape of their own.
 // ---------------------------------------------------------------------------------------------
 
-export function Furniture({ name, w, h, seed = 0 }: { name: string; w: number; h: number; seed?: number }) {
+export function Furniture({ name, w, h, seed = 0, look }: { name: string; w: number; h: number; seed?: number; look?: RoomLook }) {
   const n = name.toLowerCase();
   const varied = /boulder|rubble|rock|crate|pallet|parts bin/.test(n) ? seed % 4 : 0;
   return (
-    <Model id={`furn:${n}:${w}x${h}:${varied}`} build={(k) => k.group([w / 2, 0, h / 2], w >= h ? undefined : [0, Math.PI / 2, 0], undefined, () => buildFurniture(k, n, Math.max(w, h), Math.min(w, h), varied))}>
+    <Model id={`furn:${n}:${w}x${h}:${varied}${look ? `:${look.wood}${look.cloth}${look.metal}` : ""}`} build={(k) => { if (look) k.skin = skinOf(look); k.group([w / 2, 0, h / 2], w >= h ? undefined : [0, Math.PI / 2, 0], undefined, () => buildFurniture(k, n, Math.max(w, h), Math.min(w, h), varied)); }}>
       {furnitureLights(n, w, h)}
     </Model>
   );

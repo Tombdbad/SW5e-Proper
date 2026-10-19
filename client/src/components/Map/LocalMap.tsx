@@ -10,6 +10,12 @@ import { type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACING
 import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind } from "./sprites";
+import { Atmosphere } from "./interiors/Atmosphere";
+import { Stock } from "./interiors/Stock";
+import { CaveDressing, RockWall } from "./interiors/CaveRoom";
+import { moodOf } from "./interiors/atmosphere";
+import { lookOf, wealthOf } from "./interiors/wealth";
+import { holdsOf } from "./interiors/stock";
 import { CurtainWall, GardenGround, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { Figure, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, RoundedFloor, CornerWall, DomeRoof, Opening, styleOf, hue, type Style } from "./models";
 
@@ -67,7 +73,7 @@ const minuteNow = () => useClock.getState().minutes + Math.min(1, (performance.n
 const NIGHT_SKY = new THREE.Color("#05070c");
 const DAY_SKY = new THREE.Color("#5d7fa3");
 const DUSK_SKY = new THREE.Color("#b8683f");
-function Sky({ shadow = 30, cast = true }: { shadow?: number; cast?: boolean }) {
+function Sky({ shadow = 30, cast = true, indoors = 0 }: { shadow?: number; cast?: boolean; indoors?: number }) {
   const minutes = useClock((c) => Math.round(c.minutes / 5) * 5);
   const light = daylight(minutes);
   const twilight = light > 0 && light < 1;
@@ -78,8 +84,8 @@ function Sky({ shadow = 30, cast = true }: { shadow?: number; cast?: boolean }) 
   return (
     <>
       <color attach="background" args={[background]} />
-      <ambientLight intensity={0.32 + 0.43 * light} color={light < 0.3 ? "#a9b8ff" : "#ffffff"} />
-      <directionalLight position={sun} intensity={0.14 + 0.76 * light} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow={cast} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
+      <ambientLight intensity={(0.32 + 0.43 * light) * (1 - 0.5 * indoors)} color={light < 0.3 ? "#a9b8ff" : "#ffffff"} />
+      <directionalLight position={sun} intensity={(0.14 + 0.76 * light) * (1 - 0.6 * indoors)} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow={cast} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
     </>
   );
 }
@@ -344,13 +350,15 @@ function wallRuns(length: number, gaps: number[]): [number, number][] {
   return runs;
 }
 
-function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, children }: {
+function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, children }: {
   width: number;
   height: number;
   // How far each outside corner is rounded: north-west, north-east, south-east, south-west
   corners?: [number, number, number, number];
   // The building's look, for its doors and windows
   style?: Style;
+  // What this room is, for its light, its air and what is in it (interiors/): the kind of building, the room's name, the world
+  mood?: { buildingType: string; roomName: string; biome: string };
   // The room's level and what it is, for stairs, lifts and ladders (their floor rises)
   plan?: Pick<RoomLayout, "level" | "form" | "climb" | "width" | "height">;
   assets: RoomAsset[];
@@ -371,6 +379,22 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls 
   onAsset?: (asset: RoomAsset) => void;
   children?: ReactNode;
 }) {
+  // A cave has walls of rock and a rim of formations; every room has the light, the air and the stock its kind of place would
+  // (interiors/): its wealth turns the furniture's browns, steels and golds into its own woods, metal and trim
+  const detail = useQuality((q) => q.tier);
+  const rocky = !!mood && mood.buildingType === "cave";
+  const wealth = mood ? wealthOf(mood.buildingType, mood.roomName) : null;
+  const look = useMemo(() => (wealth && mood ? lookOf(wealth, mood.biome) : undefined), [wealth, mood?.biome]);
+  const atmosphere = useMemo(() => (mood && wealth ? moodOf(mood.buildingType, mood.roomName, wealth, mood.biome) : null), [mood?.buildingType, mood?.roomName, mood?.biome, wealth]);
+  // The squares that are taken (furniture, and the ways in and the squares beside them), as a string that only changes when they do
+  const takenKey = useMemo(() => {
+    const set = new Set<string>();
+    for (const a of assets) {
+      if (a.side) for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) set.add(`${a.x + dx},${a.y + dy}`);
+      else for (let x = a.x; x < a.x + a.w; x++) for (let y = a.y; y < a.y + a.h; y++) set.add(`${x},${y}`);
+    }
+    return [...set].sort().join(";");
+  }, [assets]);
   // The lines between the squares, as one piece of geometry
   const grid = useMemo(() => {
     const points: number[] = [];
@@ -382,7 +406,7 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls 
   const climbs = plan?.climb ? rise(plan as RoomLayout) : 0;
   const wallH = WALL_HEIGHT + climbs;
   const ramp = (x: number, y: number) => (plan?.climb ? rampAt(plan as RoomLayout, x + 0.5, y + 0.5) : 0);
-  const [nw, ne, se, sw] = corners ?? [0, 0, 0, 0];
+  const [nw, ne, se, sw] = rocky ? [0, 0, 0, 0] : corners ?? [0, 0, 0, 0];
   const rounded = nw + ne + se + sw > 0;
   // Each wall runs between its corners, stopping short of a rounded one
   const sides = [
@@ -426,6 +450,7 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls 
               const [a, b] = trim(run, length, ends);
               if (b - a < 0.01) return null;
               const [position, size] = at(a, b);
+              if (rocky) return <RockWall key={`${side}${run[0]}`} side={side as "n" | "s" | "w" | "e"} a={a} b={b} w={width} h={height} height={1.1} seed={Math.round(a * 10) + side.charCodeAt(0) + width} biome={mood!.biome} tier={detail} />;
               return <Box key={`${side}${run[0]}`} at={position} size={size} color={wall} />;
             }),
           )
@@ -448,11 +473,18 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls 
           {a.kind === "ship" ? (bay ? <BayBerth room={bay.room} asset={a} based={bay.based} /> : ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} /> : <Berth w={a.w} h={a.h} name={a.name} note="away on a voyage" />)
             : a.kind === "stairs" ? <StairsAsset w={a.w} h={a.h} up={/up/i.test(a.name)} />
             : a.kind === "loot" ? (nodeOf?.(a) ? <NodeModel node={nodeOf(a)!} empty={looted?.(a)} /> : <Chest looted={looted?.(a)} />)
-            : <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} />}
+            : (
+              <>
+                <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} />
+                {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} />}
+              </>
+            )}
           {/* Furniture that can be stood on (a bench, the stage) leaves the tap to the floor beneath, so it walks to that square */}
           {onAsset && !(onFloor && a.kind === "furniture" && !a.blocks && !useKindOf(a.name)) && <Hit at={[a.w / 2, 0.5, a.h / 2]} size={[a.w, 1, a.h]} onTap={() => onAsset(a)} />}
         </Glide>
       ))}
+      {atmosphere && look && walls && <Atmosphere mood={atmosphere} look={look} w={width} h={height} tier={detail} />}
+      {rocky && <CaveDressing w={width} h={height} seed={width * 31 + height} biome={mood!.biome} tier={detail} takenKey={takenKey} />}
       {children}
     </>
   );
@@ -2023,6 +2055,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   plan={l}
                   corners={formOf(room) || openAir(room) ? undefined : insideRadii(room)}
                   style={style}
+                  mood={formOf(room) || openAir(room) ? undefined : { buildingType: building.type, roomName: room.name, biome }}
                   width={l.width}
                   height={l.height}
                   assets={shown}
@@ -2409,7 +2442,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         }}
       />
       <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} />
-      <Sky cast={!districtPlan || !!opened} />
+      <Sky cast={!districtPlan || !!opened} indoors={opened && !openAir(opened) && !formOf(opened) ? 1 : 0} />
     </>
   );
 }
