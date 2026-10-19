@@ -43,6 +43,8 @@ try {
     const [key, ms] = step.split(",");
     await page.keyboard.down(key);
     await page.waitForTimeout(Number(ms));
+    // MID=1 takes a shot while the key is still held (a figure mid-stride)
+    if (process.env.MID) await page.screenshot({ path: `${OUT}/room-${kind}-mid.png`, timeout: 300000 });
     await page.keyboard.up(key);
     await page.waitForTimeout(1500);
   }

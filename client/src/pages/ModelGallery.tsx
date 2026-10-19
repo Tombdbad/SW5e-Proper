@@ -1,5 +1,6 @@
-import { useEffect } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
+import { useEffect, useRef, type ReactNode } from "react";
+import * as THREE from "three";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Text, Billboard } from "@react-three/drei";
 import { Figure, Furniture, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount } from "@/components/Map/models";
 import { tokenOf, SIDE_COLORS } from "@/components/Map/sprites";
@@ -102,6 +103,34 @@ function KitRow({ tone, z }: { tone?: Tone; z: number }) {
       ))}
       <Label at={[-10, 0.4, 0]} text={tone?.id ?? "as made"} />
     </group>
+  );
+}
+
+// `walk` (2026-10-19): people and a droid pacing to and fro, their legs and arms swinging by their own speed (interiors/limbs.ts)
+function Pacer({ z, speed, children }: { z: number; speed: number; children: ReactNode }) {
+  const g = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (!g.current) return;
+    // A triangle wave: out, a pause at each end, and back
+    const t = (clock.getElapsedTime() * speed) % 8;
+    const x = t < 3 ? -4.5 + t * 3 : t < 4 ? 4.5 : t < 7 ? 4.5 - (t - 4) * 3 : -4.5;
+    g.current.position.set(x, 0, z);
+    g.current.rotation.y = t < 3 ? Math.PI / 2 : t < 4 ? Math.PI / 2 : t < 7 ? -Math.PI / 2 : -Math.PI / 2;
+  });
+  return <group ref={g}>{children}</group>;
+}
+function Walk() {
+  const people: [string, string, string][] = [["Navy Trooper", "trooper", "Human"], ["Zara", "merchant", "Twi'lek"], ["Kel", "scout", "Wookiee"], ["Mira", "player", "Human"]];
+  return (
+    <>
+      {people.map(([name, role, species], i) => (
+        <Pacer key={name} z={i * 1.6 - 2.4} speed={1}>
+          <Figure kind={role === "player" ? "player" : "humanoid"} ring={SIDE_COLORS.neutral} name={name} role={role} species={species} />
+        </Pacer>
+      ))}
+      <Pacer z={4.2} speed={1}><Figure kind="droid" ring={SIDE_COLORS.hostile} name="R2 Series Astromech Droid" /></Pacer>
+      <Pacer z={5.8} speed={1}><Figure kind="beast" ring={SIDE_COLORS.hostile} name="Dewback, Adult" creature="beast" /></Pacer>
+    </>
   );
 }
 
@@ -244,6 +273,7 @@ export default function ModelGallery() {
         )}
         {section === "rounds" && <Rounds />}
         {section === "packs" && <Packs />}
+        {section === "walk" && <Walk />}
         {section === "interiors" && (
           <>
             {/* The stock of a rack by the place: an armsmith, a garrison armory, a palace guard post, a hideout */}

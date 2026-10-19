@@ -10,6 +10,7 @@ import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels } from "./interiors/assets";
 import { fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
+import { advance, bob, LIMB, limbMaterial, pose as poseLimbs, standing } from "./interiors/limbs";
 
 // ---------------------------------------------------------------------------------------------
 // The 3D models of the map: people, droids, creatures, furniture, ships, vehicles and buildings.
@@ -138,6 +139,9 @@ export function archShape(w: number, h: number): THREE.Shape {
 }
 
 export class Kit {
+  // Built for a walking figure: every vertex is given the limb it belongs to and the point that limb swings about (interiors/limbs.ts)
+  animated = false;
+  private limbNow = { index: 0, pivot: new THREE.Vector3() };
   readonly parts: { geo: THREE.BufferGeometry; finish: Finish }[] = [];
   // Turns every colour drawn into another (a room's own woods, cloth and metal; see interiors/wealth.ts `skinOf`)
   skin?: (color: THREE.Color, finish: Finish) => THREE.Color;
@@ -148,6 +152,14 @@ export class Kit {
     this.frames.push(this.frames[this.frames.length - 1].clone().multiply(matrixOf(at, rot, scale)));
     draw();
     this.frames.pop();
+  }
+
+  // Draws a limb that swings about `pivot` (in the current frame) in an animated build: 1 and 2 the legs, 3 and 4 the arms (limbs.ts LIMB)
+  limb(index: number, pivot: V3, draw: () => void) {
+    const was = this.limbNow;
+    this.limbNow = { index, pivot: new THREE.Vector3(...pivot).applyMatrix4(this.frames[this.frames.length - 1]) };
+    draw();
+    this.limbNow = was;
   }
 
   // The same thing on both sides: `draw` is given 1 for the right and -1 for the left
@@ -182,6 +194,14 @@ export class Kit {
       colors[i * 3 + 2] = c.b;
     }
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    // Every part of an animated build carries the attributes (merged parts must have the same set)
+    if (this.animated) {
+      const { index, pivot } = this.limbNow;
+      geo.setAttribute("limb", new THREE.BufferAttribute(new Float32Array(n).fill(index), 1));
+      const pivots = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) pivots.set([pivot.x, pivot.y, pivot.z], i * 3);
+      geo.setAttribute("pivot", new THREE.BufferAttribute(pivots, 3));
+    }
     this.parts.push({ geo, finish });
     return this;
   }
@@ -1858,7 +1878,7 @@ export function buildHumanoid(k: Kit, look: Look, o: Outfit, skin: string, hair:
   const hipW = 0.085 * b;
   k.group(undefined, undefined, look.scale, () => {
     // Legs and feet
-    k.pair((s) => {
+    k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * hipW, 0.56, 0], () => {
       k.tube([[s * hipW, 0.56, 0], [s * hipW * 1.05, 0.31, 0.025], [s * hipW, 0.08, -0.01]], (t) => (0.064 - t * 0.02) * b, legs, { along: 6, around: 7, finish: armored ? "sheen" : "matte" });
       const boot = bare ? flesh : armored ? plate : o.garment === "uniform" ? "#15171b" : "#2a2420";
       k.box([0.1 * b, 0.09, 0.2], boot, { at: [s * hipW, 0.045, 0.03], round: 0.035, finish: armored || o.garment === "uniform" ? "sheen" : "matte" });
@@ -1867,7 +1887,7 @@ export function buildHumanoid(k: Kit, look: Look, o: Outfit, skin: string, hair:
         k.capsule(0.056 * b, 0.1, plate, { at: [s * hipW, 0.43, 0.014], finish: "sheen", seg: 8 });
         k.sphere(0.046 * b, under, { at: [s * hipW * 1.05, 0.31, 0.03], seg: [8, 6] });
       }
-    });
+    }));
     // A robe or a coat falls from the waist; a tail behind
     if (robe) k.lathe([[0.27 * b, 0.03], [0.28 * b, 0.06], [0.22 * b, 0.28], [0.175 * b, 0.5], [0.15 * b, 0.62]], o.bottom, { seg: 16, scale: [1, 1, 0.85] });
     if (o.garment === "coat" || o.garment === "labcoat") k.lathe([[0.21 * b, 0.28], [0.2 * b, 0.32], [0.17 * b, 0.5], [0.15 * b, 0.62]], o.top, { seg: 14, scale: [1, 1, 0.8] });
@@ -1959,6 +1979,8 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
   const glove = armored ? p.under : p.bare || o.garment !== "uniform" ? flesh : "#15171b";
   for (const [i, arm] of [pose.r, pose.l].entries()) {
     const s = i ? 1 : -1;
+    // An arm that hangs swings with the stride; one that holds something stays where it is
+    k.limb(pose === hang ? (i ? LIMB.armL : LIMB.armR) : LIMB.body, [s * 0.19 * b, sh, 0], () => {
     k.sphere(0.062 * b, armored ? plate : sleeve, { at: [s * 0.19 * b, sh, 0], seg: [8, 6], finish: armored ? "sheen" : "matte" });
     k.tube(arm, (t) => (0.05 - t * 0.014) * b, sleeve, { along: 6, around: 6, finish: armored ? "sheen" : "matte" });
     if (armored) k.sphere(0.042 * b, p.under, { at: arm[1], seg: [8, 6] });
@@ -1968,6 +1990,7 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
       k.tube(low, (t) => (0.044 - t * 0.012) * b, sleeve, { along: 8, around: 6 });
       k.sphere(0.04 * b, glove, { at: low[2], seg: [8, 6] });
     }
+    });
   }
   held(k, o, pose.r[2], pose.l[2]);
   // The neck and the head
@@ -3110,6 +3133,57 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
   return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, seed), height: 1.25 * look.scale };
 }
 
+// How far this figure walks: the stride follows how far the group itself moves along the ground between frames, so whoever moves it
+// (the party, a follower, a stroller in a street, a fighter) walks without being told (interiors/limbs.ts)
+function useStride(group: React.RefObject<THREE.Group>, apply: (stride: ReturnType<typeof standing>, g: THREE.Group) => void) {
+  const stride = useRef(standing());
+  const last = useRef<THREE.Vector3 | null>(null);
+  const here = useMemo(() => new THREE.Vector3(), []);
+  useFrame((_, delta) => {
+    const g = group.current;
+    if (!g) return;
+    g.getWorldPosition(here);
+    // Only along the ground: a figure that rises onto a stair or a stage is not striding
+    const moved = last.current ? Math.hypot(here.x - last.current.x, here.z - last.current.z) : 0;
+    (last.current ??= new THREE.Vector3()).copy(here);
+    stride.current = advance(stride.current, moved, Math.min(delta, 0.1));
+    apply(stride.current, g);
+  });
+}
+
+// A person who walks: the same body as `Model` bakes, built with its limbs marked (Kit.animated), drawn with materials of its own that
+// swing them by the stride
+function Walker({ id, build }: { id: string; build: (k: Kit) => void }) {
+  const m = useModel(`${id}:walk`, (k) => { k.animated = true; build(k); });
+  const mats = useMemo(() => Object.fromEntries(FINISHES.map((f) => [f, limbMaterial(MATERIALS[f])])) as Record<Finish, THREE.Material>, []);
+  useEffect(() => () => { Object.values(mats).forEach((x) => x.dispose()); }, [mats]);
+  const group = useRef<THREE.Group>(null);
+  useStride(group, (stride, g) => {
+    poseLimbs(Object.values(mats), stride);
+    g.position.y = bob(stride);
+  });
+  return (
+    <group ref={group}>
+      {m.matte && <mesh geometry={m.matte} material={mats.matte} castShadow receiveShadow />}
+      {m.sheen && <mesh geometry={m.sheen} material={mats.sheen} castShadow receiveShadow />}
+      {m.glow && <mesh geometry={m.glow} material={mats.glow} />}
+      {m.glass && <mesh geometry={m.glass} material={mats.glass} renderOrder={1} />}
+      {m.haze && <mesh geometry={m.haze} material={mats.haze} renderOrder={2} />}
+      {m.cloth && <mesh geometry={m.cloth} material={mats.cloth} castShadow receiveShadow />}
+    </group>
+  );
+}
+
+// Anything else that moves (a droid, a beast, a war machine) has no limbs to swing in its baked body: it bobs and rocks with its stride
+function Gait({ children }: { children: ReactNode }) {
+  const group = useRef<THREE.Group>(null);
+  useStride(group, (stride, g) => {
+    g.position.y = bob(stride) * 1.3;
+    g.rotation.z = Math.sin(stride.phase) * stride.amp * 0.04;
+  });
+  return <group ref={group}>{children}</group>;
+}
+
 export function Figure({ kind, ring, name = "", large, marker, species, role, creature, size, player }: { kind: string; ring: string; name?: string; large?: boolean; marker?: boolean; species?: string; role?: string; creature?: string; size?: string; player?: boolean }) {
   const looks = useSpecies();
   const party = usePartyLook();
@@ -3121,7 +3195,7 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
         <ringGeometry args={[0.34, 0.44, 24]} />
         <meshBasicMaterial color={ring} />
       </mesh>
-      <Model id={spec.key} build={spec.build} />
+      {spec.key.startsWith("hum:") ? <Walker id={spec.key} build={spec.build} /> : <Gait><Model id={spec.key} build={spec.build} /></Gait>}
       {marker && (
         <mesh position={[0, Math.max(1.55, spec.height + 0.3), 0]}>
           <octahedronGeometry args={[0.12]} />
