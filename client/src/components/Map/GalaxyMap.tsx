@@ -18,7 +18,12 @@ export type MapAction =
   | { type: "look"; areaId: string }
   | { type: "trap"; areaId: string; id: string }
   | { type: "use"; areaId: string; id: string; name: string }
-  | { type: "note"; text: string };
+  | { type: "note"; text: string }
+  // The people of a street encounter (see "The people in a district"): one has walked up to the party (met), the one in
+  // need has been taken where they had to go (delivered), the party has walked into an alley (alley), and the gang
+  // has closed in and surrounds it (surrounded); talk asks for the words again
+  | { type: "encounter"; step: "met" | "delivered" | "surrounded" | "talk" }
+  | { type: "alley"; alley: { x: number; y: number; width: number; height: number } };
 
 // When the finger last came down (or the mouse button went down). A busy phone delivers the
 // click of a tap late, so two taps are timed from when they began, not from their clicks.

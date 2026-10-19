@@ -196,8 +196,10 @@ export interface World {
   // whose master has already taught the party
   encounter?: Encounter;
   mastersTaught?: string[];
-  // The last encounter rolled (so one that was dealt with does not come round again that hour)
+  // The last encounter rolled (so one that was dealt with does not come round again that hour), and the
+  // minute before which no other begins
   encounterSeen?: string;
+  encounterNext?: number;
   // How the buildings of each district stand on its grid (see planDistrict)
   districtPlans?: Record<string, DistrictPlan>;
 }
@@ -4215,7 +4217,7 @@ function presenceIndex(world: World) {
 
 // The world as it is at a minute: people and ships where their routines and voyages put them,
 // and `moving` for those on the way. For showing only: edits go to the world itself.
-export function withPresence(world: World, minutes: number): World & { moving: Mover[] } {
+export function withPresence(world: World, minutes: number): World & { moving: Mover[]; based: Record<string, Ship[]> } {
   const index = presenceIndex(world);
   const leave = new Map<string, Set<string>>();
   const arrive = new Map<string, { occupants: Occupant[]; ships: Ship[] }>();
@@ -4256,8 +4258,121 @@ export function withPresence(world: World, minutes: number): World & { moving: M
       ships: [...area.ships.filter((s) => !gone?.has(s.id)), ...(come?.ships ?? [])],
     };
   }
-  return { ...world, areas, moving };
+  // The ships that belong to each room, away or in (the map draws their comings and goings, see "Ships coming and going")
+  const based: Record<string, Ship[]> = {};
+  for (const { s, base } of index.ships.values()) (based[base] ??= []).push(s);
+  return { ...world, areas, moving, based };
 }
+
+// ---------------------------------------------------------------------------------------------
+// Ships coming and going (2026-10-19). A ship that flies voyages comes back to its berth and leaves
+// it by the clock (shipAt); the berths a hangar keeps for visitors (code berths:<n>) take a ship for
+// some hours at a time and are empty between, each on a cycle of its own (the same from the same
+// room and berth). Setting, not rules. A ship in comes down from above and one leaving rises out,
+// over BAY_MOVE minutes, and the doors in a hangar's roof slide back BAY_DOOR minutes before and
+// shut as many after: a hangar's doors are open only for a ship. All of it is a function of the
+// minute, so the map can draw it between the clock's ticks.
+// ---------------------------------------------------------------------------------------------
+
+export const BAY_MOVE = 6;
+export const BAY_DOOR = 3;
+
+// Where a berth's ship is in its cycle: in the berth (home) or away, and the minutes since it
+// came or left and until it next leaves or comes
+export interface BerthTimes {
+  home: boolean;
+  sinceArrival: number;
+  untilDeparture: number;
+  sinceDeparture: number;
+  untilArrival: number;
+}
+const berthTimes = (cycle: number, stay: number, at: number): BerthTimes => {
+  const p = ((at % cycle) + cycle) % cycle;
+  return { home: p < stay, sinceArrival: p, untilDeparture: stay - p, sinceDeparture: p - stay, untilArrival: cycle - p };
+};
+export function voyageTimes(v: Voyage, minutes: number): BerthTimes {
+  const stayAt = (i: number) => (i === 0 && v.homeStay ? v.homeStay : v.stay) * 60;
+  const cycle = v.legs.reduce((a, b) => a + b, 0) + v.ports.reduce((sum, _, i) => sum + stayAt(i), 0);
+  return berthTimes(cycle, stayAt(0), minutes + v.phase);
+}
+
+// A visitor's cycle: 16 to 48 hours, of which 5 to 16 in the berth; a different ship each time
+const VISITORS = [
+  { role: "light freighter", names: ["Dust Runner", "Lucky Margin", "Third Moon", "Kessel Wind", "Tin Kestrel", "Quiet Debt"] },
+  { role: "shuttle", names: ["Pallas Ferry", "Dayflower", "Lantern", "Short Hop", "Weekday", "Cormorant"] },
+  { role: "courier", names: ["Postmark", "Swift Letter", "Errand", "Pigeon", "Last Call", "Dispatch"] },
+  { role: "smuggler", names: ["Nobody's Cargo", "Grey Tide", "Honest Mistake", "Empty Hold", "Ghost Ledger", "Soft Landing"] },
+];
+const visitorCycles = new Map<string, { cycle: number; stay: number; phase: number }>();
+function visitorCycle(key: string) {
+  let c = visitorCycles.get(key);
+  if (!c) {
+    const cycle = (16 + Math.floor(unitOf(`${key}|cycle`) * 32)) * 60;
+    c = { cycle, stay: (5 + Math.floor(unitOf(`${key}|stay`) * 12)) * 60, phase: Math.floor(unitOf(`${key}|phase`) * cycle) };
+    visitorCycles.set(key, c);
+  }
+  return c;
+}
+export interface VisitingShip { id: string; name: string; size: string; role: string; status: "landed"; owner: string; visitor: true }
+export function visitorAt(key: string, minutes: number): { ship: VisitingShip; times: BerthTimes } {
+  const { cycle, stay, phase } = visitorCycle(key);
+  const n = Math.floor((minutes + phase) / cycle);
+  const look = VISITORS[Math.floor(unitOf(`${key}|${n}|kind`) * VISITORS.length)];
+  const name = look.names[Math.floor(unitOf(`${key}|${n}|name`) * look.names.length)];
+  return { ship: { id: `${key}|${n}`, name, size: "Medium", role: look.role, status: "landed", owner: "Visitor", visitor: true }, times: berthTimes(cycle, stay, minutes + phase) };
+}
+
+const smooth = (x: number) => x * x * (3 - 2 * x);
+// What a berth's cycle shows at this minute: whether its ship is there, how far up it is (0 on the floor,
+// 1 clear of the roof) and how far open the hangar's doors are for it (0 shut, 1 wide)
+export function bayStage(t: BerthTimes): { present: boolean; lift: number; door: number } {
+  let lift = 0;
+  let door = 0;
+  if (t.home) {
+    if (t.sinceArrival < BAY_MOVE) {
+      lift = 1 - smooth(t.sinceArrival / BAY_MOVE);
+      door = 1;
+    } else if (t.sinceArrival < BAY_MOVE + BAY_DOOR) door = 1 - (t.sinceArrival - BAY_MOVE) / BAY_DOOR;
+    if (t.untilDeparture <= BAY_MOVE) {
+      lift = Math.max(lift, smooth(1 - t.untilDeparture / BAY_MOVE));
+      door = 1;
+    } else if (t.untilDeparture <= BAY_MOVE + BAY_DOOR) door = Math.max(door, (BAY_MOVE + BAY_DOOR - t.untilDeparture) / BAY_DOOR);
+  } else {
+    if (t.sinceDeparture < BAY_DOOR) door = 1 - t.sinceDeparture / BAY_DOOR;
+    if (t.untilArrival <= BAY_DOOR) door = Math.max(door, 1 - t.untilArrival / BAY_DOOR);
+  }
+  return { present: t.home, lift, door };
+}
+
+// One berth of a hangar at a minute. The ship of a voyage (listed in `based`) or a visitor comes and
+// goes; any other ship in the berth stays where it is (and a berth with none is just painted).
+export interface BayBerth {
+  ship?: Ship | VisitingShip;
+  // The ship is a visitor, and not for sale or taking
+  visitor: boolean;
+  // The berth is that of a ship on a voyage, which is away
+  away: boolean;
+  lift: number;
+  door: number;
+}
+export function bayBerth(room: Pick<Area, "id" | "ships">, asset: Pick<RoomAsset, "id" | "ref">, based: Ship[] | undefined, minutes: number): BayBerth {
+  const flying = based?.find((s) => s.id === asset.ref && s.voyage?.ports.length);
+  if (flying) {
+    const stage = bayStage(voyageTimes(flying.voyage!, minutes));
+    return { ship: stage.present ? (room.ships.find((s) => s.id === flying.id) ?? flying) : undefined, visitor: false, away: !stage.present, lift: stage.lift, door: stage.door };
+  }
+  const own = room.ships.find((s) => s.id === asset.ref);
+  if (own) return { ship: own, visitor: false, away: false, lift: 0, door: 0 };
+  if (asset.ref?.startsWith(`${room.id}-berth`)) {
+    const { ship, times } = visitorAt(`${room.id}|${asset.id}`, minutes);
+    const stage = bayStage(times);
+    return { ship: stage.present ? ship : undefined, visitor: true, away: false, lift: stage.lift, door: stage.door };
+  }
+  return { visitor: false, away: !!asset.ref, lift: 0, door: 0 };
+}
+// How far open the roof doors of a hangar are, for the ships coming and going in it
+export const bayDoor = (room: Pick<Area, "id" | "ships" | "layout">, based: Ship[] | undefined, minutes: number) =>
+  Math.max(0, ...(room.layout?.assets ?? []).filter((a) => a.kind === "ship").map((a) => bayBerth(room, a, based, minutes).door));
 
 // Minutes from one area to another along the paths of the world (findPath)
 function routeMinutes(world: World, from: string, to: string, hyperdriveClass = 1): number {
@@ -6802,18 +6917,36 @@ export function districtAt(world: World, areaId: string): District | undefined {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The people in a district (house rule). Now and then an encounter waits there for the party:
-// someone who needs help, a gang that means to rob them, a fixer with a job and, once the party
-// has earned renown with the settlement's faction, a master who teaches the path of powers the
-// party lacks: the Force to one who has tech, tech to one who has the Force, and to one who has
-// neither whichever suits their alignment and skills. One encounter is open at a time; it stays
-// until it is dealt with or the party leaves the district. Rolls are keyed by district, day and
-// hour, so the same visit always comes out the same way.
+// The people in a district (house rule). Now and then someone comes up to the party in the street:
+// a person who needs help (and is taken where they must go), a fixer with a job and, once the
+// party has earned renown with the settlement's faction, a master who teaches the path of powers
+// the party lacks: the Force to one who has tech, tech to one who has the Force, and to one who
+// has neither whichever suits their alignment and skills. They are people on the 3D map: they
+// walk up to the party (nothing is asked of it before they arrive), and one in need follows it
+// to the place they must reach. In a lawless place a gang may be waiting in an alley between
+// buildings; when the party walks into it the gang closes in, bars the ways out and surrounds it,
+// and the party fights them (the fight is over when their leader falls: the rest run) or pays the
+// toll. One encounter is open at a time, a few hours apart at the least; it stays until it is
+// dealt with or the party leaves the district. Rolls are keyed by district, day and hour, so the
+// same visit always comes out the same way.
 // ---------------------------------------------------------------------------------------------
 
 export const MASTER_RENOWN = 3;
 
 export type EncounterKind = "help" | "robbery" | "fixer" | "master";
+
+// Where an encounter stands: the person walks up to the party (approach) and speaks (talk); one in
+// need is then taken to the place they must reach (follow). A gang closes in on the party in an
+// alley (ambush) and surrounds it (surround).
+export type EncounterPhase = "approach" | "talk" | "follow" | "ambush" | "surround";
+
+// A rectangle of the district's grid of squares
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface Encounter {
   id: string;
@@ -6823,9 +6956,21 @@ export interface Encounter {
   person: string;
   title: string;
   text: string;
-  target?: string; // the fixer's job: a building of the district the party is to reach
+  phase: EncounterPhase;
+  // The game minute it began
+  begun: number;
+  target?: string; // the place the party is to reach: a fixer's job, or where the person in need must be taken (a building of the district)
   faction?: string; // whose renown the party earns or loses
+  // A gang: the alley it waits in, and its members (the leader first)
+  alley?: Rect;
+  gang?: Occupant[];
 }
+
+// Hours between one encounter ending and the next being able to begin
+export const ENCOUNTER_GAP = 4;
+// The chance an hour of a street visit brings someone up to the party (a gang's chance is for an alley walked into)
+export const ENCOUNTER_CHANCE = 0.12;
+export const AMBUSH_CHANCE = 0.45;
 
 // What the party knows of itself, for who will teach it and what
 export interface Learner {
@@ -6867,13 +7012,12 @@ export interface EncounterOption {
   cost?: number; // paid before anything else
 }
 
-export function optionsOf(enc: Encounter, level: number, path?: "force" | "tech" | null): EncounterOption[] {
-  if (enc.kind === "help") return [{ label: "Help them (Wisdom, Medicine, DC 12)", abilities: ["wisdom"], skill: "medicine", dc: 12 }, { label: "Walk on" }];
-  if (enc.kind === "robbery")
-    return [
-      { label: "Talk your way out (Charisma, DC 13)", abilities: ["charisma"], dc: 13 },
-      { label: "Fight them off (Strength or Dexterity, DC 12)", abilities: ["strength", "dexterity"], dc: 12 },
-    ];
+// What the party's credits come to as a gang's toll (a tenth)
+export const tollOf = (credits: number) => Math.max(0, Math.floor(credits * 0.1));
+
+export function optionsOf(enc: Encounter, level: number, path?: "force" | "tech" | null, credits = 0): EncounterOption[] {
+  if (enc.kind === "help") return enc.phase === "follow" ? [{ label: "Send them on their way" }] : [{ label: "Help them" }, { label: "Walk on" }];
+  if (enc.kind === "robbery") return [{ label: "Fight the gang" }, { label: `Pay the toll (${tollOf(credits)} credits)`, cost: tollOf(credits) }];
   if (enc.kind === "fixer") return [{ label: "Hear the job" }, { label: "Walk on" }];
   const cost = 200 * level;
   return [{ label: `Learn ${path === "tech" ? "tech" : "the ways of the Force"} from them (${cost} credits, two days)`, cost }, { label: "Walk on" }];
@@ -6908,6 +7052,8 @@ export function teachingFor(learner: Learner, seed: string, castMod = 0): Teachi
 // result (ignored where there is none).
 export interface EncounterResult {
   message: string;
+  // The encounter goes on, changed (a person in need who is to be taken somewhere); absent: it is over
+  next?: Partial<Encounter>;
   credits?: number;
   renown?: number;
   damage?: number;
@@ -6917,18 +7063,14 @@ export interface EncounterResult {
 }
 
 export function encounterResult(enc: Encounter, option: number, success: boolean, learner: Learner, targetName = "the place", castMod = 0): EncounterResult {
-  const lost = -Math.floor(learner.credits * 0.1);
   if (enc.kind === "help") {
+    if (enc.phase === "follow") return { message: `${enc.person} goes off on their own. You hope they find their way.` };
     if (option !== 0) return { message: `You walk on. Someone else will have to help ${enc.person}.` };
-    return success
-      ? { message: `${enc.person} gets to a medcentre. They press a few credits into your hand.`, credits: 50 * learner.level, renown: 1 }
-      : { message: `You try, but ${enc.person} is past what you can do here. They thank you anyway.` };
+    return { message: `${enc.person}: "Thank you. If you could take me to ${targetName}, I'll find my own way from there."`, next: { phase: "follow" } };
   }
   if (enc.kind === "robbery") {
-    if (option === 0) return success ? { message: "They look at your holster and find someone else to bother." } : { message: "They take a tenth of your credits and go.", credits: lost };
-    return success
-      ? { message: "You put them down in the alley. Someone will have heard the brawl.", credits: 25 * learner.level, crime: true }
-      : { message: "They get the better of you: a tenth of your credits gone, and a cut to pay for.", credits: lost, damage: 3, crime: true };
+    // (a fight is begun on the map; this is the toll, which the caller takes off the credits)
+    return { message: "They take the toll and step aside. The alley is yours again." };
   }
   if (enc.kind === "fixer") {
     if (option !== 0) return { message: "You leave the fixer to their deals." };
@@ -6949,6 +7091,14 @@ export function encounterResult(enc: Encounter, option: number, success: boolean
     : { message: `${enc.person} has nothing more to teach one of your kind.` };
 }
 
+// A person in need who has been taken where they had to go
+export function deliveredResult(enc: Encounter, learner: Learner, targetName = "the place"): EncounterResult {
+  return { message: `${enc.person} reaches ${targetName}, safe. They press a few credits into your hand.`, credits: 50 * learner.level, renown: 1 };
+}
+
+// What a gang that is beaten gives: its leader's purse, and no crime in it (the party was set on)
+export const gangPurse = (level: number) => 25 * level;
+
 const PEOPLE = ["Old Dathan", "Pell", "Maro Vell", "Sabe Tarn", "Ilsa Korr", "Teb Rooks", "Ysolde Nim", "Carro Dask"];
 const GANGS = ["Three Hutt runners", "Two Rim hoodlums with vibroknives", "A gang of street kids with slugthrowers", "A bruiser and his two lookouts"];
 const TROUBLES = ["a sick child needs a medpac they cannot pay for", "a brother has not come out of the alley behind the cantina", "a stall was smashed and the owner is bleeding"];
@@ -6958,33 +7108,103 @@ const TROUBLES = ["a sick child needs a medpac they cannot pay for", "a brother 
 // settlement, to a party with renown enough with its faction and a path to be taught.
 export function rollEncounter(world: World, district: District, day: number, hour: number, learner: Learner, renown: number, avoid: string): Encounter | null {
   const key = `${district.id}|${day}|${hour}`;
-  if (unitOf(`${key}|spawn`) >= 0.4) return null;
+  if (unitOf(`${key}|spawn`) >= ENCOUNTER_CHANCE) return null;
   const settlementId = district.settlementId;
   const master = renown >= MASTER_RENOWN && !!pathToTeach(learner) && !!teachingFor(learner, key) && !(world.mastersTaught ?? []).includes(settlementId);
   const pick = unitOf(`${key}|kind`);
   const others = district.buildingIds.filter((id) => id !== avoid);
-  // weights: help 40, robbery 35 (if there is money to take), fixer 25 (if there is a place to send them)
-  const robbery = learner.credits >= 100 ? 35 : 0;
-  const fixer = others.length > 0 ? 25 : 0;
-  const at = pick * (40 + robbery + fixer);
-  const kind: EncounterKind = master && pick < 0.3 ? "master" : at < 40 ? "help" : at < 40 + robbery ? "robbery" : fixer ? "fixer" : "help";
+  // weights: help 60, fixer 40 (if there is a place to send them); a gang is another matter (see ambushIn)
+  const fixer = others.length > 0 ? 40 : 0;
+  const at = pick * (60 + fixer);
+  const kind: EncounterKind = master && pick < 0.3 ? "master" : at < 60 || !fixer ? "help" : "fixer";
   const person = PEOPLE[Math.floor(unitOf(`${key}|person`) * PEOPLE.length)];
-  const base = { id: `${key}|${kind}`, districtId: district.id, settlementId, person, faction: factionAt(world, settlementId) };
+  const base = { id: `${key}|${kind}`, districtId: district.id, settlementId, person, faction: factionAt(world, settlementId), phase: "approach" as const, begun: 0 };
   if (kind === "master") {
     const path = pathToTeach(learner);
     const teacher = path === "force" ? "a Force master" : "a master of tech";
     return { ...base, kind, title: "A master in the street", text: `${person}, ${teacher}, has heard what you have done for people here and says you have the gift. For a fee they will start you on the path.` };
-  }
-  if (kind === "robbery") {
-    const gang = GANGS[Math.floor(unitOf(`${key}|gang`) * GANGS.length)];
-    return { ...base, kind, title: "A gang in the alley", text: `${gang} step out in front of you and ask for "a contribution".` };
   }
   if (kind === "fixer") {
     const target = others[Math.floor(unitOf(`${key}|target`) * others.length)];
     return { ...base, kind, target, title: `A job from ${person}`, text: `${person} offers work: a package, no questions, to be taken to another building of this district.` };
   }
   const trouble = TROUBLES[Math.floor(unitOf(`${key}|trouble`) * TROUBLES.length)];
-  return { ...base, kind: "help", title: "Someone in trouble", text: `${person} is in the street and says ${trouble}.` };
+  // The person must be taken to a building of the district other than the one the party is in front of
+  const target = others.length ? others[Math.floor(unitOf(`${key}|target`) * others.length)] : undefined;
+  return { ...base, kind: "help", target, title: "Someone in trouble", text: `${person} comes up to you in the street and says ${trouble}.` };
+}
+
+// Whether a gang is waiting in an alley the party has walked into, in a lawless place
+export function ambushIn(world: World, district: District, alley: Rect, day: number, hour: number): boolean {
+  if (lawAt(world, district.settlementId) !== 0) return false;
+  return unitOf(`${district.id}|${day}|${hour}|alley${alley.x},${alley.y}`) < AMBUSH_CHANCE;
+}
+
+// The encounter of a gang that has been walked in on
+export function ambushEncounter(world: World, district: District, alley: Rect, gang: Occupant[], day: number, hour: number, begun: number): Encounter {
+  return {
+    id: `${district.id}|${day}|${hour}|alley${alley.x},${alley.y}|robbery`,
+    kind: "robbery",
+    districtId: district.id,
+    settlementId: district.settlementId,
+    person: "the gang",
+    title: "A gang in the alley",
+    text: `${gang.length} toughs close in from both ends of the alley, and their boss steps out in front of you: "A toll to use our alley. Or we take it."`,
+    phase: "ambush",
+    begun,
+    alley,
+    gang,
+    faction: factionAt(world, district.settlementId),
+  };
+}
+
+// The gang (the leader first): the leader a hard case for the party's level, the rest street
+// toughs, from the humanoid stat blocks that are no soldiers of the law. A stat block is a stat
+// block: only the name and role say what they are here.
+const GANG_LEADERS: [number, string][] = [[1, "wookiee-berserker"], [3, "trandoshan-warrior"], [6, "trandoshan-hunter"]];
+export function makeGang(monsters: Sw5eMonster[], equipment: Sw5eEquipment[], level: number, seed: string): Occupant[] {
+  const byId = new Map(monsters.map((m) => [m.id, m]));
+  const leaderId = [...GANG_LEADERS].reverse().find(([from]) => level >= from)?.[1] ?? GANG_LEADERS[0][1];
+  const leader = byId.get(leaderId) ?? byId.get("tusken-brute");
+  const tough = byId.get("tusken-raider") ?? byId.get("kolkpravis-warrior");
+  if (!leader || !tough) return [];
+  const members = Math.max(2, Math.min(4, 2 + Math.floor((level - 1) / 4)));
+  const out: Occupant[] = [{ ...statBlockOccupant(leader, equipment, `gang-${seed}-boss`, 1, "gang boss", "hostile"), name: "Gang boss", species: undefined }];
+  for (let i = 0; i < members; i++) out.push({ ...statBlockOccupant(tough, equipment, `gang-${seed}-${i + 1}`, 1, "thug", "hostile"), name: `Street tough ${String.fromCharCode(65 + i)}`, species: undefined });
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Alleys. A gang waits in the alleys between the buildings of a lawless district (the plan's
+// `ways` of kind alley). An alley is walked into when the party is a couple of squares inside it
+// from both ends; the gang then starts at its ends, comes to the party and stands round it.
+// ---------------------------------------------------------------------------------------------
+
+const alleyLength = (a: Rect) => Math.max(a.width, a.height);
+export const alleysOf = (plan?: DistrictPlan): Rect[] => (plan?.ways ?? []).filter((w) => w.kind === "alley" && alleyLength(w) >= 8);
+export function alleyAt(plan: DistrictPlan | undefined, x: number, y: number, depth = 2): Rect | undefined {
+  return alleysOf(plan).find((a) => {
+    if (x < a.x || y < a.y || x >= a.x + a.width || y >= a.y + a.height) return false;
+    const along = a.height >= a.width ? y - a.y : x - a.x;
+    return along >= depth && alleyLength(a) - 1 - along >= depth;
+  });
+}
+// Where the gang starts: along the two ends of the alley, in turn
+export function gangStarts(alley: Rect, count: number): { x: number; y: number }[] {
+  const vertical = alley.height >= alley.width;
+  return Array.from({ length: count }, (_, i) => {
+    const end = i % 2 ? alleyLength(alley) - 1 : 0;
+    const across = Math.floor(i / 2) % (vertical ? alley.width : alley.height);
+    return vertical ? { x: alley.x + across, y: alley.y + end } : { x: alley.x + end, y: alley.y + across };
+  });
+}
+// Where they stand round the party: the squares of the alley nearest to it, the leader on the
+// nearest (the party's own square is left alone)
+export function gangSpots(alley: Rect, party: { x: number; y: number }, count: number): { x: number; y: number }[] {
+  const squares: { x: number; y: number }[] = [];
+  for (let y = alley.y; y < alley.y + alley.height; y++) for (let x = alley.x; x < alley.x + alley.width; x++) if (x !== party.x || y !== party.y) squares.push({ x, y });
+  const far = (q: { x: number; y: number }) => Math.max(Math.abs(q.x - party.x), Math.abs(q.y - party.y)) * 10 + Math.abs(q.x - party.x) + Math.abs(q.y - party.y);
+  return squares.sort((p, q) => far(p) - far(q) || p.y - q.y || p.x - q.x).slice(0, count);
 }
 
 // ---------------------------------------------------------------------------------------------

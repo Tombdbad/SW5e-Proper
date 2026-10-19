@@ -107,6 +107,10 @@ export interface Combatant {
   conditions?: ActiveCondition[];
   // Fights on the player's side without being the player: a companion (its id is the companion's)
   ally?: boolean;
+  // A gang's members share a `gang`; when its `leader` falls the rest break and run (hit points to 0, `fled`)
+  gang?: string;
+  leader?: boolean;
+  fled?: boolean;
   // Temporary hit points, taken before real ones
   tempHp?: number;
   // A substance's high: the ability the extra d3 goes to, the turns it has left and what it gives
@@ -767,6 +771,21 @@ interface Work {
 
 const idx = (w: Work, id: number | string) => w.combatants.findIndex((c) => c.id === id);
 
+// A gang whose leader has fallen breaks and runs: the rest are out of the fight (no hit points
+// left to fight with; they are not counted among the slain)
+function breakGang(list: Combatant[], log: string[]): Combatant[] {
+  const gangs = new Set(list.filter((c) => c.leader && c.gang && c.hp <= 0).map((c) => c.gang));
+  if (!gangs.size) return list;
+  let ran = false;
+  const next = list.map((c) => {
+    if (!c.gang || c.leader || c.hp <= 0 || !gangs.has(c.gang)) return c;
+    ran = true;
+    return { ...c, hp: 0, fled: true };
+  });
+  if (ran) log.push("With their leader down, the rest of the gang breaks and runs.");
+  return next;
+}
+
 // Takes hit points off a creature (damage types resisted or doubled, temporary hit points first),
 // and settles what that does to the fight: a fallen creature, the party's victory, the character
 // down or dead outright. Returns the damage taken.
@@ -778,6 +797,7 @@ function damageCreature(w: Work, at: number, amount: number, type?: string, atta
   const now = w.combatants[at];
   if (before > 0 && now.hp === 0) {
     w.log.push(`${c.name} is ${c.isPlayer ? "down" : "defeated"}!`);
+    w.combatants = breakGang(w.combatants, w.log);
     if (!w.combatants.some((x) => !onPartySide(x) && x.hp > 0)) {
       w.log.push("Victory! All enemies defeated.");
       w.inCombat = false;
@@ -2127,6 +2147,7 @@ export const useCombat = create<CombatState>((set, get) => ({
         log.push(`${c.name} ${saved ? "saves" : "fails the save"}${amount > 0 ? ` and takes ${amount} damage` : ""}${afflicted ? `, and is ${effect.conditions.join(" and ").toLowerCase()}` : ""}${next.hp <= 0 && c.hp > 0 ? ` (${c.isPlayer ? "down" : "defeated"})` : ""}.`);
         return next;
       });
+      combatants = breakGang(combatants, log);
       const won = !combatants.some((c) => !onPartySide(c) && c.hp > 0);
       if (won) log.push("Victory! All enemies defeated.");
       commit(won ? { inCombat: false, outcome: "victory" as CombatOutcome } : {});
@@ -2293,9 +2314,10 @@ export const useCombat = create<CombatState>((set, get) => ({
       } else {
         log.push(`${caster.name} casts ${power.name}. Its effect is described in its text.`);
       }
-      const won = !combatants.some((c) => !onPartySide(c) && c.hp > 0);
+      const settled = breakGang(combatants, log);
+      const won = !settled.some((c) => !onPartySide(c) && c.hp > 0);
       if (won) log.push("Victory! All enemies defeated.");
-      const w = workOf({ ...state, combatants, combatLog: log, inCombat: won ? false : state.inCombat, outcome: won ? ("victory" as CombatOutcome) : state.outcome } as CombatState);
+      const w = workOf({ ...state, combatants: settled, combatLog: log, inCombat: won ? false : state.inCombat, outcome: won ? ("victory" as CombatOutcome) : state.outcome } as CombatState);
       // A push or pull that comes with the hit or the failed save, and the pieces an area power sweeps aside
       if (motion?.rider && pushed !== null && w.combatants[pushed]?.hp > 0) {
         const t = w.combatants[pushed];

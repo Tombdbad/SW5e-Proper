@@ -612,6 +612,94 @@ export function plantGarden(rect: Rect, seed: string, biome: string, tier: Tier,
 }
 
 // ---------------------------------------------------------------------------------------------
+// The ground of a settlement (2026-10-19): the trees, boulders, shrubs and ground cover the speeder
+// races are dressed with, set on the open ground between and round the buildings. Pure layouts, the
+// same from the same seed. Trees and boulders block (and are kept apart, and clear of the ways in,
+// the signs and the streets, so that no one is shut in); the rest is only to be seen.
+// ---------------------------------------------------------------------------------------------
+
+// One tree for this many squares of open ground, and one boulder, by world
+const GROWTH: Record<string, { tree: number; rock: number }> = {
+  temperate: { tree: 70, rock: 220 }, forest: { tree: 40, rock: 240 }, jungle: { tree: 32, rock: 280 }, swamp: { tree: 80, rock: 320 },
+  desert: { tree: 230, rock: 170 }, ice: { tree: 260, rock: 190 }, volcanic: { tree: 420, rock: 130 }, barren: { tree: 380, rock: 150 },
+  urban: { tree: 300, rock: 650 }, ocean: { tree: 120, rock: 320 }, "gas giant": { tree: 300, rock: 650 },
+};
+const BLOCKING_CAP = 130;
+const wildOf = (biome: string) => WILD[biome === "gas giant" ? "urban" : biome] ?? WILD.temperate;
+const sizeFor = (r: ReturnType<typeof createRandom>, key: string) => (LIBRARY[key].size[0] > 1 || LIBRARY[key].size[1] > 1 ? 0.9 + r.next() * 0.15 : 0.85 + r.next() * 0.35);
+
+// The trees and boulders of a settlement's open ground. `free` says whether a square is open ground
+// that may be built on. They do not depend on the picture quality, because what blocks must not.
+export function ambientBlockers(rect: Rect, seed: string, biome: string, free: (x: number, y: number) => boolean): Placed[] {
+  const r = createRandom(Math.floor(unitOf(`${seed}|ambient`) * 1e9));
+  const grown = GROWTH[biome] ?? GROWTH.temperate;
+  const wild = wildOf(biome);
+  const area = rect.width * rect.height;
+  const trees = wild.trees.filter((k) => LIBRARY[k]?.blocks);
+  const rocks = wild.boulders.filter((k) => LIBRARY[k]?.blocks);
+  const wants: [string[], number][] = [[trees, Math.round(area / grown.tree)], [rocks, Math.round(area / grown.rock)]];
+  const total = wants.reduce((n, [, w]) => n + w, 0);
+  const out: Placed[] = [];
+  const used = new Set<string>();
+  const centres: { x: number; y: number }[] = [];
+  for (const [keys, wanted] of wants) {
+    const want = total > BLOCKING_CAP ? Math.round((wanted * BLOCKING_CAP) / total) : wanted;
+    if (!keys.length) continue;
+    let placed = 0;
+    for (let tries = 0; tries < want * 10 && placed < want; tries++) {
+      const key = r.pick(keys);
+      const [w, h] = LIBRARY[key].size;
+      const x = rect.x + r.int(0, Math.max(0, rect.width - w));
+      const y = rect.y + r.int(0, Math.max(0, rect.height - h));
+      let ok = true;
+      for (let j = 0; ok && j < h; j++) for (let i = 0; ok && i < w; i++) if (used.has(`${x + i},${y + j}`) || !free(x + i, y + j)) ok = false;
+      // Far enough from the others that a way between any two is two squares wide at least
+      if (!ok || centres.some((c) => Math.hypot(c.x - (x + w / 2), c.y - (y + h / 2)) < 4 + (w - 1))) continue;
+      for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) used.add(`${x + i},${y + j}`);
+      centres.push({ x: x + w / 2, y: y + h / 2 });
+      out.push({ key, x: x + w / 2, y: y + h / 2, rot: r.next() * Math.PI * 2, scale: sizeFor(r, key), v: Math.floor(r.next() * 6), fills: [x, y, w, h] });
+      placed++;
+    }
+  }
+  return out;
+}
+
+// What grows low between them: shrubs, ferns, small rocks, grass, flowers and reeds, none of which
+// is in anyone's way. `free` is as above, and also true of the squares the blockers fill.
+export function ambientCover(rect: Rect, seed: string, biome: string, tier: Tier, free: (x: number, y: number) => boolean): Placed[] {
+  const r = createRandom(Math.floor(unitOf(`${seed}|cover`) * 1e9));
+  const wild = wildOf(biome);
+  const keys = [...wild.shrubs, ...wild.cover].filter((k) => LIBRARY[k] && !LIBRARY[k].blocks);
+  if (!keys.length) return [];
+  const want = Math.min(tier === "lite" ? 150 : 420, Math.round((rect.width * rect.height) / (tier === "lite" ? 55 : 24)));
+  const out: Placed[] = [];
+  for (let tries = 0; tries < want * 5 && out.length < want; tries++) {
+    const x = rect.x + r.int(0, rect.width - 1);
+    const y = rect.y + r.int(0, rect.height - 1);
+    if (!free(x, y)) continue;
+    out.push({ key: r.pick(keys), x: x + 0.15 + r.next() * 0.7, y: y + 0.15 + r.next() * 0.7, rot: r.next() * Math.PI * 2, scale: 0.8 + r.next() * 0.5, v: Math.floor(r.next() * 6) });
+  }
+  return out;
+}
+
+// A belt of trees, boulders and shrubs beyond the ground that can be walked on, only to be seen
+export function ambientBackdrop(rect: Rect, belt: number, seed: string, biome: string, tier: Tier): Placed[] {
+  const r = createRandom(Math.floor(unitOf(`${seed}|backdrop`) * 1e9));
+  const wild = wildOf(biome);
+  const keys = [...wild.trees, ...wild.trees, ...wild.boulders, ...wild.shrubs].filter((k) => LIBRARY[k]);
+  if (!keys.length) return [];
+  const want = tier === "lite" ? 80 : 220;
+  const out: Placed[] = [];
+  for (let tries = 0; tries < want * 6 && out.length < want; tries++) {
+    const x = rect.x - belt + r.next() * (rect.width + belt * 2);
+    const y = rect.y - belt + r.next() * (rect.height + belt * 2);
+    if (x > rect.x - 1 && x < rect.x + rect.width + 1 && y > rect.y - 1 && y < rect.y + rect.height + 1) continue;
+    out.push({ key: r.pick(keys), x, y, rot: r.next() * Math.PI * 2, scale: 1 + r.next() * 0.6, v: Math.floor(r.next() * 6) });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------
 // Drawing many copies of a piece in a call or two
 // ---------------------------------------------------------------------------------------------
 

@@ -112,7 +112,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
                 <span>
                   {target?.id === c.id && c.hp > 0 ? "◎ " : ""}
                   {c.name}
-                  {c.isPlayer ? " (you)" : c.ally ? " (ally)" : ""}
+                  {c.isPlayer ? " (you)" : c.ally ? " (ally)" : c.fled ? " (ran)" : c.leader ? " (leader)" : ""}
                 </span>
                 <span>
                   {c.hp}/{c.maxHp}{c.tempHp ? ` +${c.tempHp}` : ""}

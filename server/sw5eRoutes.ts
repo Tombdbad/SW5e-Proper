@@ -8,7 +8,7 @@
 //   POST /api/world/validate           { world } -> what is wrong with it, checked against the rules data
 //   POST /api/world/occupant           { statBlock } -> that stat block as someone to place in an area
 import type { Express, Request, Response } from "express";
-import { generateWorld, expandArea, populateArea, livenWorld, statBlockOccupant, validateWorld, worldQuests, itemFactsOf, type ItemFacts, type World } from "../shared/logic";
+import { generateWorld, expandArea, populateArea, livenWorld, statBlockOccupant, makeGang, validateWorld, worldQuests, itemFactsOf, type ItemFacts, type World } from "../shared/logic";
 import { datasetNames, getDataset, getWorldCatalog, isDataset, sw5eManifest } from "./sw5eData";
 
 const isWorld = (value: any): value is World =>
@@ -104,6 +104,14 @@ export function registerSw5eRoutes(app: Express) {
     const monster = catalog.monsters.find((m) => m.id === req.body?.statBlock);
     if (!monster) return res.status(404).json({ message: "No such stat block" });
     res.json(statBlockOccupant(monster, catalog.equipment, `o-${Date.now().toString(36)}`));
+  });
+
+  // The gang that waits in a lawless alley (see makeGang), for a party of the given level
+  app.post("/api/world/gang", async (req: Request, res: Response) => {
+    const catalog = await getWorldCatalog();
+    const gang = makeGang(catalog.monsters, catalog.equipment, Math.max(1, Math.min(20, Number(req.body?.level) || 1)), String(req.body?.seed ?? Date.now().toString(36)).replace(/[^\w-]/g, ""));
+    if (!gang.length) return res.status(404).json({ message: "No stat blocks for a gang" });
+    res.json(gang);
   });
 
   app.post("/api/world/validate", async (req: Request, res: Response) => {

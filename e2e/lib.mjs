@@ -24,6 +24,9 @@ export async function open() {
   // and draws the 3D map at a lower render scale (SHARPNESS=1.5 for the full size)
   const sharp = process.env.SHARPNESS || "0.75";
   await context.addInitScript((v) => { try { localStorage.setItem("sw5e.autoChecks", "1"); if (!localStorage.getItem("sw5e.sharpness")) localStorage.setItem("sw5e.sharpness", v); } catch {} }, sharp);
+  // No one comes up to the party and no gang waits in an alley (the steps that are about them switch it off):
+  // a play-through that walks the streets must not be stopped by a chance meeting
+  await context.addInitScript(() => { try { localStorage.setItem("sw5e.noEncounters", "1"); } catch {} });
   // Long tasks and frame gaps in the page, read back by diagnose() when a step fails
   await context.addInitScript(() => {
     const perf = (window.__perf = { long: [], frames: 0, maxGap: 0, last: performance.now() });

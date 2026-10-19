@@ -7,10 +7,10 @@ import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey } from "@/lib/stores/useCombat";
 import { type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
-import { afterHoursLock, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
+import { afterHoursLock, alleyAt, alleysOf, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind } from "./sprites";
-import { CurtainWall, GardenGround, Scatter, StallModel, fixturesOf, keeperSpot, paletteOf, stallState, useQuality } from "./siteAssets";
+import { CurtainWall, GardenGround, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { Figure, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, RoundedFloor, CornerWall, DomeRoof, Opening, styleOf, hue, type Style } from "./models";
 
 // The flying games draw the same ships and speeders
@@ -56,6 +56,11 @@ export const useClock = create<{ minutes: number; set: (minutes: number) => void
   minutes: START_TIME,
   set: (minutes) => set({ minutes }),
 }));
+// The minute between the clock's ticks (a minute passes each real second while the clock runs), for what is
+// drawn moving by the clock: a ship coming down into its berth, the doors of its hangar
+let tickedAt = performance.now();
+useClock.subscribe((state, before) => { if (state.minutes !== before.minutes) tickedAt = performance.now(); });
+const minuteNow = () => useClock.getState().minutes + Math.min(1, (performance.now() - tickedAt) / 1000);
 
 // The sky and the light over a place on a planet's surface, by the hour: a blue sky by day, warm
 // light at dawn and dusk, and a dark sky with faint blue moonlight at night
@@ -131,14 +136,35 @@ const DARK = "#27303b";
 const GLOW = "#5ad1ff";
 const AMBER = "#f0a03c";
 
-// The painted berth of a ship that is out on a voyage (its pilot is off with it): the place it
-// will come back to, so that a hangar is not drawn empty without saying why
-function Berth({ w, h, name }: { w: number; h: number; name: string }) {
+// The painted berth of a ship that is not in it: one out on a voyage (its pilot is off with it), the place it
+// will come back to, or one kept for visitors, so that a hangar is not drawn empty without saying why
+function Berth({ w, h, name, note }: { w: number; h: number; name: string; note: string }) {
   return (
     <>
       <Box at={[w / 2, 0.02, h / 2]} size={[w, 0.04, h]} color="#2f3a45" />
       {[[0.1, 0.1], [w - 0.1, 0.1], [0.1, h - 0.1], [w - 0.1, h - 0.1]].map(([x, z], i) => <Box key={i} at={[x, 0.08, z]} size={[0.5, 0.06, 0.5]} color="#f5d342" />)}
-      <Label at={[w / 2, 0.9, h / 2]} size={0.34} color="#f5d342">{`${name}: away on a voyage`}</Label>
+      <Label at={[w / 2, 0.9, h / 2]} size={0.34} color="#f5d342">{`${name}: ${note}`}</Label>
+    </>
+  );
+}
+
+// What a berth of a hangar shows: its ship, which comes down from above or rises out by the clock (the minute
+// between ticks, see `bayBerth`), or the painted berth. `rise` is how high it goes to be clear of the roof.
+function BayBerth({ room, asset, based, ceiling, rise: up = 8 }: { room: Pick<Area, "id" | "ships">; asset: RoomAsset; based?: Ship[]; ceiling?: number; rise?: number }) {
+  const group = useRef<THREE.Group>(null);
+  const [shown, setShown] = useState(() => bayBerth(room, asset, based, minuteNow()));
+  const was = useRef("");
+  const keyOf = (b: ReturnType<typeof bayBerth>) => `${b.ship?.id ?? ""}|${b.away}`;
+  useFrame(() => {
+    const b = bayBerth(room, asset, based, minuteNow());
+    if (group.current) group.current.position.y = b.lift * up;
+    if (keyOf(b) !== (was.current || keyOf(shown))) setShown(b);
+    was.current = keyOf(b);
+  });
+  return (
+    <>
+      <group ref={group}>{shown.ship && <ShipModel ship={shown.ship} w={asset.w} h={asset.h} ceiling={ceiling} />}</group>
+      {!shown.ship && <Berth w={asset.w} h={asset.h} name={asset.name} note={shown.away ? "away on a voyage" : "free for visiting ships"} />}
     </>
   );
 }
@@ -204,13 +230,14 @@ function Ascent({ w, h, toward, up, form }: { w: number; h: number; toward: "n" 
   );
 }
 
-// Two panels of a roof that slide apart and together: the door of a hangar on a world whose air
-// is no good to breathe, over the ships inside
-function HangarRoof({ width, height, y }: { width: number; height: number; y: number }) {
+// Two panels of a roof that slide apart and together: the door of a hangar on a world whose air is no good
+// to breathe, over the ships inside. They are open only for a ship coming or going (`door`, from 0 to 1, is
+// read each frame from the clock).
+function HangarRoof({ width, height, y, door }: { width: number; height: number; y: number; door: () => number }) {
   const left = useRef<THREE.Group>(null);
   const right = useRef<THREE.Group>(null);
-  useFrame(({ clock }) => {
-    const slide = (0.5 + 0.5 * Math.sin(clock.elapsedTime * 0.45)) * (width / 2 - 0.2);
+  useFrame(() => {
+    const slide = door() * (width / 2 - 0.2);
     if (left.current) left.current.position.x = width / 4 - slide;
     if (right.current) right.current.position.x = (3 * width) / 4 + slide;
   });
@@ -317,7 +344,7 @@ function wallRuns(length: number, gaps: number[]): [number, number][] {
   return runs;
 }
 
-function RoomShell({ width, height, assets, floor, wall, ships = [], walls = true, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, children }: {
+function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, children }: {
   width: number;
   height: number;
   // How far each outside corner is rounded: north-west, north-east, south-east, south-west
@@ -330,6 +357,8 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], walls = tru
   floor: FloorKind;
   wall: string;
   ships?: Ship[];
+  // The hangar these are the berths of, whose ships come and go by the clock (with the ships that belong to it)
+  bay?: { room: Pick<Area, "id" | "ships">; based?: Ship[] };
   // Open ground has no walls, only posts at its corners
   walls?: boolean;
   looted?: (asset: RoomAsset) => boolean;
@@ -416,7 +445,7 @@ function RoomShell({ width, height, assets, floor, wall, ships = [], walls = tru
       })}
       {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
         <Glide key={a.id} x={a.x} y={a.y} z={(a.z ?? 0) * LEVEL_H}>
-          {a.kind === "ship" ? (ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} /> : <Berth w={a.w} h={a.h} name={a.name} />)
+          {a.kind === "ship" ? (bay ? <BayBerth room={bay.room} asset={a} based={bay.based} /> : ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} /> : <Berth w={a.w} h={a.h} name={a.name} note="away on a voyage" />)
             : a.kind === "stairs" ? <StairsAsset w={a.w} h={a.h} up={/up/i.test(a.name)} />
             : a.kind === "loot" ? (nodeOf?.(a) ? <NodeModel node={nodeOf(a)!} empty={looted?.(a)} /> : <Chest looted={looted?.(a)} />)
             : <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} />}
@@ -1077,6 +1106,123 @@ function Follower({ companion, index, feet, open, height, onTap }: { companion: 
   );
 }
 
+// A person of a street encounter (see "The people in a district"): walks the open ground by `route` to a goal
+// that may move (the party, a place), and says when it is within `stop` squares of it. `at` keeps its square
+// for the scene to read, and `onArrive` is called once each time it comes up to the goal.
+function Wanderer({ id, start, goal, open, stop = 1.6, speed = 3.6, at, onArrive, children }: {
+  id: string;
+  start: Sq;
+  goal: () => Sq | null;
+  open: (x: number, y: number) => boolean;
+  stop?: number;
+  speed?: number;
+  at: React.MutableRefObject<Record<string, Sq>>;
+  onArrive?: () => void;
+  children: ReactNode;
+}) {
+  const group = useRef<THREE.Group>(null);
+  const pos = useRef<Sq>({ ...start });
+  const path = useRef<Sq[]>([]);
+  const routedTo = useRef("");
+  const arrived = useRef(false);
+  const latest = useRef({ open, onArrive, goal });
+  latest.current = { open, onArrive, goal };
+  useFrame((_, delta) => {
+    const g = latest.current.goal();
+    const p = pos.current;
+    if (g) {
+      const far = Math.hypot(g.x - p.x, g.y - p.y);
+      if (far <= stop) {
+        if (!arrived.current) {
+          arrived.current = true;
+          latest.current.onArrive?.();
+        }
+      } else {
+        if (far > stop + 1.2) arrived.current = false;
+        const [gx, gy] = [Math.round(g.x), Math.round(g.y)];
+        if (routedTo.current !== `${gx},${gy}`) {
+          routedTo.current = `${gx},${gy}`;
+          // (one that is to stand on a square goes to that square; one that is to come up to someone, to any square by them)
+          const goals = stop < 1 && latest.current.open(gx, gy) ? [{ x: gx, y: gy }] : [{ x: gx, y: gy }, ...aroundSquares(gx, gy)].filter((q) => latest.current.open(q.x, q.y));
+          path.current = route(latest.current.open, { x: Math.round(p.x), y: Math.round(p.y) }, goals) ?? [];
+        }
+        let step = Math.min(delta, 0.5) * speed;
+        while (step > 0 && path.current.length) {
+          const next = path.current[0];
+          const [mx, my] = [next.x - p.x, next.y - p.y];
+          const d = Math.hypot(mx, my);
+          if (d <= step) {
+            pos.current = { x: next.x, y: next.y };
+            path.current.shift();
+            step -= d;
+          } else {
+            pos.current = { x: p.x + (mx / d) * step, y: p.y + (my / d) * step };
+            if (group.current) group.current.rotation.y = Math.atan2(mx, my);
+            step = 0;
+          }
+        }
+      }
+    }
+    at.current[id] = pos.current;
+    if (group.current) group.current.position.set(pos.current.x + 0.5, 0, pos.current.y + 0.5);
+  });
+  return <group ref={group} position={[start.x + 0.5, 0, start.y + 0.5]}>{children}</group>;
+}
+
+// The test machine's switch: with it set, no one comes up to the party and no gang waits in an alley
+export const noEncounters = () => {
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem("sw5e.noEncounters") === "1";
+  } catch {
+    return false;
+  }
+};
+
+// Says once when a person who has been following the party is close to the party at the place they were to be
+// taken to (the front of that building)
+function Delivery({ id, at, feet, door, onDeliver }: { id: string; at: React.MutableRefObject<Record<string, Sq>>; feet: React.MutableRefObject<{ x: number; y: number }>; door: Sq; onDeliver: () => void }) {
+  const done = useRef(false);
+  useFrame(() => {
+    const them = at.current[id];
+    if (done.current || !them) return;
+    if (Math.hypot(feet.current.x - door.x, feet.current.y - door.y) <= 2.6 && Math.hypot(them.x - feet.current.x, them.y - feet.current.y) <= 4) {
+      done.current = true;
+      onDeliver();
+    }
+  });
+  return null;
+}
+
+// Watches for the party walking into an alley (a couple of squares in from both ends), and says so once on each
+// entry. The one it stands in when this begins does not count.
+function AlleyWatch({ plan, feet, active, onEnter }: { plan?: DistrictPlan; feet: React.MutableRefObject<{ x: number; y: number }>; active: boolean; onEnter: (alley: Rect) => void }) {
+  const last = useRef<string | null>(null);
+  useFrame(() => {
+    const a = alleyAt(plan, Math.round(feet.current.x), Math.round(feet.current.y));
+    const key = a ? `${a.x},${a.y}` : "";
+    if (last.current === null) last.current = key;
+    if (key === last.current) return;
+    last.current = key;
+    if (a && active) onEnter(a);
+  });
+  return null;
+}
+
+// What bars the ends and the sides of an alley that a gang holds: stacked crates and junk on the open squares
+// round it (the squares are barred to the party; this is only how they look)
+function AlleyBlock({ squares }: { squares: Sq[] }) {
+  return (
+    <>
+      {squares.map((q, i) => (
+        <group key={`${q.x},${q.y}`} position={[q.x + 0.5, 0, q.y + 0.5]} rotation={[0, (i * 0.7) % 1.5, 0]}>
+          <Box at={[0, 0.3, 0]} size={[0.8, 0.6, 0.8]} color={i % 3 ? "#6b5a45" : "#4a525c"} />
+          {i % 2 === 0 && <Box at={[0.05, 0.8, 0]} size={[0.6, 0.4, 0.6]} color={i % 4 ? "#7a6a52" : "#59636d"} />}
+        </group>
+      ))}
+    </>
+  );
+}
+
 type Walker = { key: string; from: V3; to: V3; progress: number; kind: "person" | "speeder" | "airspeeder" | "mount" | "hauler" | "ship"; name: string; arc?: number; scale?: number; note?: string };
 // People about the street of a district, going between the doors of its buildings by the open
 // ground and back again, at a walking pace (purely for life on the street: nobody to talk to)
@@ -1227,7 +1373,8 @@ function Barricade({ squares, guards, onTap }: { squares: { x: number; y: number
 // ---------------------------------------------------------------------------------------------
 
 const MARGIN = 6;
-const DECOR: Record<string, string[]> = { desert: ["rock", "mast"], ice: ["ice"], forest: ["tree", "rock"], jungle: ["tree", "tree", "rock"], swamp: ["tree", "rock"], temperate: ["tree", "rock"], urban: ["lamp", "crate", "kiosk", "camera"], "gas giant": ["lamp", "crate"], ocean: ["lamp", "rock"], volcanic: ["rock"], barren: ["rock"] };
+// (the trees and rocks of the open ground are the asset library's, see `ambientBlockers`: what is here stands about the streets)
+const DECOR: Record<string, string[]> = { desert: ["mast"], ice: ["ice"], forest: ["lamp", "crate"], jungle: ["lamp", "crate"], swamp: ["crate", "lamp"], temperate: ["lamp", "crate"], urban: ["lamp", "crate", "kiosk", "camera"], "gas giant": ["lamp", "crate"], ocean: ["lamp", "crate"], volcanic: ["crate", "mast"], barren: ["crate", "mast"] };
 
 // The square outside a wall that something set in it opens on to (on the building's grid)
 const beyond = (l: RoomLayout, a: RoomAsset) => ({ x: l.x + a.x + (a.side === "e" ? 1 : a.side === "w" ? -1 : 0), y: l.y + a.y + (a.side === "s" ? 1 : a.side === "n" ? -1 : 0) });
@@ -1242,6 +1389,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     [world, building.id],
   );
   const buildingIds = new Set(buildings.map((b) => b.id));
+  // The ships that belong to each hangar, away or in: their comings and goings are drawn by the clock
+  const based = (world as World & { based?: Record<string, Ship[]> }).based ?? {};
   const rooms = buildings.flatMap((b) => childrenOf(world, b.id).filter((a) => a.kind === "room"));
   const withPlan = rooms.filter((a) => a.layout);
   const plan = withPlan.length
@@ -1292,13 +1441,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       if (a.kind === "loot") return room.loot.some((c) => c.id === a.ref && !c.hidden);
       if (a.kind === "npc") return room.occupants.some((o) => o.id === a.ref);
       return true;
-    }).map((a) => (a.kind === "ship" && !room.ships.some((ship) => ship.id === a.ref) ? { ...a, blocks: false, cover: false } : a));
+    }).map((a) => (a.kind === "ship" && !bayBerth(room, a, based[room.id], minuteNow()).ship ? { ...a, blocks: false, cover: false } : a));
   const shown = opened ? seen(opened) : [];
 
   // Outside: where the streets lead (a signpost for each way out of the district), a few things
   // standing about, and whoever and whatever is in front of each building
   const street = useMemo(() => {
-    const none = { signs: [] as { exit: Exit; x: number; y: number }[], decor: [] as { kind: string; x: number; y: number }[], folk: [] as { occupant: Occupant; x: number; y: number }[], caches: [] as { cache: Area["loot"][number]; x: number; y: number }[], sentries: [] as { buildingId: string; key: string; occupant: Occupant; at: { x: number; y: number } }[], rigs: [] as { v: Vehicle; mine: boolean; outward: { x: number; y: number }; x: number; y: number }[], doors: {} as Record<string, { door: { x: number; y: number }; outward: { x: number; y: number } }> };
+    const none = { signs: [] as { exit: Exit; x: number; y: number }[], decor: [] as { kind: string; x: number; y: number }[], folk: [] as { occupant: Occupant; x: number; y: number }[], caches: [] as { cache: Area["loot"][number]; x: number; y: number }[], sentries: [] as { buildingId: string; key: string; occupant: Occupant; at: { x: number; y: number } }[], rigs: [] as { v: Vehicle; mine: boolean; outward: { x: number; y: number }; x: number; y: number }[], doors: {} as Record<string, { door: { x: number; y: number }; outward: { x: number; y: number } }>, ambient: [] as Placed[], ambientBlocked: new Set<string>(), clear: new Set<string>() };
     if (!plan) return none;
     const r = createRandom(Number(buildings[0].id.replace(/\D/g, "") || 1) * 613 + 7);
     const taken = new Set<string>();
@@ -1363,8 +1512,34 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         return { ...rig, outward, ...claim({ x: door.x + outward.x * 4 + Math.abs(outward.y) * side * 2, y: door.y + outward.y * 4 + Math.abs(outward.x) * side * 2 }) };
       }),
     );
-    return { signs, decor, folk, caches, sentries, rigs, doors };
+    // The trees and boulders of the biome (the speeder races' own), on the open ground that is left: clear of
+    // every room, of the squares before each way in, the signposts and what stands about them, of the streets
+    // between the buildings and of a palace's grounds, so that no one is shut in or walled off from a door.
+    // (They block, so they do not depend on the picture quality; the cover and the belt beyond do, below.)
+    const clear = new Set<string>();
+    const mark = (x: number, y: number, n: number) => { for (let dy = -n; dy <= n; dy++) for (let dx = -n; dx <= n; dx++) clear.add(`${x + dx},${y + dy}`); };
+    const markRect = (r: { x: number; y: number; width: number; height: number }, n = 0) => { for (let y = r.y - n; y < r.y + r.height + n; y++) for (let x = r.x - n; x < r.x + r.width + n; x++) clear.add(`${x},${y}`); };
+    for (const key of taken) { const [tx, ty] = key.split(",").map(Number); mark(tx, ty, 2); }
+    for (const d of decor) mark(d.x, d.y, 1);
+    for (const a of rooms) if (a.layout) markRect(a.layout, 1);
+    for (const w of districtPlan?.ways ?? []) markRect(w);
+    const grounds = districtPlan?.grounds;
+    if (grounds?.wall) markRect(grounds.wall, 1);
+    for (const g of grounds?.gardens ?? []) markRect(g, 1);
+    for (const st of grounds?.stalls ?? []) markRect({ x: st.x, y: st.y, width: st.w, height: st.h }, 1);
+    const inGround = (x: number, y: number) => x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h;
+    const ambient = ambientBlockers({ x: ground.x, y: ground.y, width: ground.w, height: ground.h }, buildings[0].id, biome, (x, y) => inGround(x, y) && !inRoom(x, y) && !clear.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`));
+    const ambientBlocked = new Set<string>();
+    for (const it of ambient) if (it.fills) for (let j = 0; j < it.fills[3]; j++) for (let i = 0; i < it.fills[2]; i++) ambientBlocked.add(`${it.fills[0] + i},${it.fills[1] + j}`);
+    return { signs, decor, folk, caches, sentries, rigs, doors, ambient, ambientBlocked, clear };
   }, [world, district?.id ?? building.id]);
+  // What grows low between them, and the belt of trees beyond the ground that can be walked on: only to be seen,
+  // and fewer on a slow screen
+  const cover = useMemo(
+    () => (planned ? ambientCover({ x: ground.x, y: ground.y, width: ground.w, height: ground.h }, buildings[0].id, biome, tier, (x, y) => x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !street.clear.has(`${x},${y}`) && !street.ambientBlocked.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`)) : []),
+    [street, tier, biome],
+  );
+  const backdrop = useMemo(() => (planned ? ambientBackdrop({ x: ground.x, y: ground.y, width: ground.w, height: ground.h }, 40, buildings[0].id, biome, tier) : []), [street, tier, biome]);
   // The way in of the building the party is in front of, and which way it faces
   const myFront = street.doors[me.id] ?? Object.values(street.doors)[0] ?? { door: { x: ground.x + 2, y: Math.round(cz) }, outward: { x: -1, y: 0 } };
 
@@ -1391,13 +1566,41 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       return { sign: { x, y }, squares, guards };
     });
   }, [blockade, street]);
-  const barred = useMemo(() => new Set(barricades.flatMap((b) => b.squares.map((q) => `${q.x},${q.y}`))), [barricades]);
+  // The encounter in the street (see "The people in a district"): who is about, and the alley a gang holds. A gang
+  // bars every open square round its alley, so that the party cannot leave it until they are dealt with (this is
+  // the blockade's own way of closing a road: squares that cannot be walked on).
+  const enc = world.encounter && district && world.encounter.districtId === district.id && outside && !duel ? world.encounter : null;
+  const gangRing = useMemo(() => {
+    const a = enc?.kind === "robbery" ? enc.alley : undefined;
+    const out: Sq[] = [];
+    if (!a) return out;
+    for (let y = a.y - 1; y <= a.y + a.height; y++) for (let x = a.x - 1; x <= a.x + a.width; x++) {
+      if (x >= a.x && x < a.x + a.width && y >= a.y && y < a.y + a.height) continue;
+      if (x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y)) out.push({ x, y });
+    }
+    return out;
+  }, [enc?.id, enc?.kind, enc?.alley?.x, enc?.alley?.y]);
+  const barred = useMemo(() => new Set([...barricades.flatMap((b) => b.squares), ...gangRing].map((q) => `${q.x},${q.y}`)), [barricades, gangRing]);
 
   // Where the party can stand: the free floor of the room they are in, or the open ground outside.
   // People step aside, so only furniture stands in the way.
   const outdoors = (x: number, y: number) =>
-    x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !barred.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`)
+    x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !barred.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`) && !street.ambientBlocked.has(`${x},${y}`)
     && ![...street.signs, ...street.decor, ...street.folk, ...street.caches, ...street.rigs].some((thing) => thing.x === x && thing.y === y);
+  // Where the people of an encounter are (their squares), where one comes in from (a way out of the district, or
+  // the edge of the ground), and the squares a gang stands on round the party in its alley
+  const folkAt = useRef<Record<string, Sq>>({});
+  const encounterSpawn = (): Sq => {
+    const sign = enc ? street.signs[hue(enc.id) % Math.max(1, street.signs.length)] : undefined;
+    return nearestOpen(outdoors, sign ? { x: sign.x, y: sign.y } : { x: ground.x + 1, y: Math.round(cz) });
+  };
+  const gangCache = useRef({ key: "", spots: [] as Sq[] });
+  const gangSpotsNow = (alley: Rect, n: number): Sq[] => {
+    const p = squareOf(feet.current);
+    const key = `${alley.x},${alley.y},${n},${p.x},${p.y}`;
+    if (gangCache.current.key !== key) gangCache.current = { key, spots: gangSpots(alley, p, n) };
+    return gangCache.current.spots;
+  };
   const open = (x: number, y: number) => {
     if (inside) {
       const l = inside.layout!;
@@ -1612,7 +1815,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     // Loose flagstones have to be stepped on to be felt, so the path is not pulled straight over them
     const traps = inside ? new Set(trapsIn(inside, false).map((t) => `${inside.layout!.x + t.x},${inside.layout!.y + t.y}`)) : undefined;
     const path = route(open, from, goals.filter((g) => open(g.x, g.y) || (g.x === from.x && g.y === from.y)), { keep: traps });
-    if (!path) onAct?.({ type: "note", text: "There is no way through to there." });
+    if (!path) onAct?.({ type: "note", text: gangRing.length ? "The gang bars the way out of the alley." : "There is no way through to there." });
     else walk.current = { path, then, total: path.length };
   };
   const around = aroundSquares;
@@ -1660,7 +1863,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     else if (a.kind === "stairs") walkTo([{ x: l.x + a.x, y: l.y + a.y }], () => a.to && onAct?.({ type: "go", areaId: a.to }));
     else if (a.side) walkTo([{ x: l.x + a.x, y: l.y + a.y }], () => a.to && onAct?.({ type: "go", areaId: a.to, secret: a.kind === "secret" }));
     else if (a.kind === "loot" && a.ref) walkTo(around(l.x + a.x, l.y + a.y), () => onAct?.({ type: "loot", id: a.ref! }));
-    else if (a.kind === "ship" && a.ref && !inside!.ships.some((ship) => ship.id === a.ref)) onAct?.({ type: "note", text: `${a.name}'s berth: the ship is away on a voyage and will be back.` });
+    else if (a.kind === "ship" && a.ref && bayBerth(inside!, a, based[inside!.id], minuteNow()).visitor) {
+      const berth = bayBerth(inside!, a, based[inside!.id], minuteNow());
+      onAct?.({ type: "note", text: berth.ship ? `The ${berth.ship.name}, a visiting ${berth.ship.role}: in for a few hours, its crew aboard. It is not for sale.` : `${a.name}: free for a ship that puts down.` });
+    } else if (a.kind === "ship" && a.ref && !bayBerth(inside!, a, based[inside!.id], minuteNow()).ship) onAct?.({ type: "note", text: `${a.name}'s berth: the ship is away on a voyage and will be back.` });
     else if (a.kind === "ship" && a.ref) walkTo(around(l.x + a.x, l.y + a.y, a.w, a.h), () => onAct?.({ type: "ship", id: a.ref! }));
     // Any other piece: a card that says what it is (and moves it with the Force, for one who can)
     else if (a.kind === "furniture") onAct?.({ type: "use", areaId: inside!.id, id: a.id, name: a.name });
@@ -1787,6 +1993,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   floor={floor}
                   wall={wall}
                   ships={room.ships}
+                  bay={{ room, based: based[room.id] }}
                   looted={(a) => { const c = room.loot.find((c) => c.id === a.ref); return !!c && (c.node ? nodeAt(c.node, minutes).charges === 0 : !!c.looted); }}
                   nodeOf={(a) => room.loot.find((c) => c.id === a.ref)?.node}
                   wayColor={wayColor}
@@ -1923,7 +2130,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               ) : lookedFrom ? (
                 // The room under a mezzanine is looked down into, not boxed in: its floor, low walls and what is in it
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
-                  <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} ships={room.ships} wayColor={wayColor} wayLabel={() => undefined} />
+                  <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} ships={room.ships} bay={{ room, based: based[room.id] }} wayColor={wayColor} wayLabel={() => undefined} />
                   {!duel && l.assets.filter((a) => a.kind === "npc").map((a) => {
                     const o = room.occupants.find((x) => x.id === a.ref);
                     return o ? (
@@ -1940,11 +2147,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   {/* Open to the sky, the ships inside it to be seen; where the air is no good, doors in the roof slide back */}
                   <Box at={[l.width / 2, 0.04, l.height / 2]} size={[l.width, 0.08, l.height]} color={FLOORS.hangar} />
                   {hollow(tall, wallColor)}
-                  {l.assets.filter((a) => a.kind === "ship").map((a) => {
-                    const ship = room.ships.find((x) => x.id === a.ref);
-                    return <group key={a.id} position={[a.x, 0, a.y]}>{ship ? <ShipModel ship={ship} w={a.w} h={a.h} ceiling={l.roof === "hangar" ? tall - 0.3 : undefined} /> : <Berth w={a.w} h={a.h} name={a.name} />}</group>;
-                  })}
-                  {l.roof === "hangar" && !opened && <HangarRoof width={l.width} height={l.height} y={tall + 0.05} />}
+                  {l.assets.filter((a) => a.kind === "ship").map((a) => (
+                    <group key={a.id} position={[a.x, 0, a.y]}>
+                      <BayBerth room={room} asset={a} based={based[room.id]} ceiling={l.roof === "hangar" ? tall - 0.3 : undefined} rise={tall + 5} />
+                    </group>
+                  ))}
+                  {l.roof === "hangar" && !opened && <HangarRoof width={l.width} height={l.height} y={tall + 0.05} door={() => bayDoor(room, based[room.id], minuteNow())} />}
                 </group>
               ) : (
                 <>
@@ -2004,6 +2212,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             {districtPlan?.grounds?.wall && <CurtainWall wall={districtPlan.grounds.wall} biome={biome} />}
             {districtPlan?.grounds?.gardens && <GardenGround rects={districtPlan.grounds.gardens} biome={biome} />}
             <Scatter placed={fixtures.placed} biome={biome} />
+            <Scatter placed={street.ambient} biome={biome} />
+            <Scatter placed={cover} biome={biome} />
+            <Scatter placed={backdrop} biome={biome} />
             {fixtures.stalls.map((st) => {
               const keeper = buildings.flatMap((b) => b.occupants).find((o) => o.stall === st.id);
               const spot = keeperSpot(st);
@@ -2047,6 +2258,48 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               />
             ))}
             <Walkers walkers={streetWalkers} />
+            {/* Alleys: a gang may be waiting in one in a lawless place, and closes in when the party walks into it */}
+            <AlleyWatch plan={districtPlan} feet={feet} active={tappable && !locked && !world.encounter && lawAt(world, building.id) === 0 && !noEncounters()} onEnter={(alley) => onAct?.({ type: "alley", alley })} />
+            {gangRing.length > 0 && <AlleyBlock squares={gangRing} />}
+            {enc && enc.kind !== "robbery" && (
+              <Wanderer
+                key={enc.id}
+                id={enc.id}
+                start={enc.phase === "approach" ? encounterSpawn() : nearestOpen(outdoors, { x: squareOf(feet.current).x + 1, y: squareOf(feet.current).y + 1 })}
+                goal={() => squareOf(feet.current)}
+                stop={enc.phase === "follow" ? 1.9 : 1.6}
+                open={outdoors}
+                at={folkAt}
+                onArrive={enc.phase === "approach" ? () => onAct?.({ type: "encounter", step: "met" }) : undefined}
+              >
+                <Figure kind="person" ring={SIDE_COLORS.friendly} name={enc.person} />
+                <Label at={[0, 1.7, 0]} size={0.28} color="#facc15">{enc.person}</Label>
+              </Wanderer>
+            )}
+            {enc && enc.kind === "help" && enc.phase === "follow" && enc.target && street.doors[enc.target] && (
+              <Delivery key={enc.id} id={enc.id} at={folkAt} feet={feet} door={street.doors[enc.target].door} onDeliver={() => onAct?.({ type: "encounter", step: "delivered" })} />
+            )}
+            {enc?.kind === "robbery" && enc.alley && enc.gang?.map((o, i) => {
+              const alley = enc.alley!;
+              const surround = () => gangSpotsNow(alley, enc.gang!.length)[i] ?? null;
+              return (
+                <Wanderer
+                  key={o.id}
+                  id={o.id}
+                  start={enc.phase === "surround" ? surround() ?? gangStarts(alley, enc.gang!.length)[i] : gangStarts(alley, enc.gang!.length)[i]}
+                  goal={surround}
+                  stop={0.35}
+                  speed={4.4}
+                  open={outdoors}
+                  at={folkAt}
+                  onArrive={i === 0 ? () => onAct?.({ type: "encounter", step: "surrounded" }) : undefined}
+                >
+                  <Figure kind={tokenOf(o)} ring={SIDE_COLORS.hostile} name={o.name} role={o.role} creature={o.creature} size={o.size} />
+                  <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS.hostile}>{o.name}</Label>
+                  {tappable && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "encounter", step: "talk" })} />}
+                </Wanderer>
+              );
+            })}
             {!duel && <Strollers strolls={strolls} />}
             {street.rigs.map(({ v, mine, outward, x, y }) => (
               <group key={v.id} position={[x + 0.5, 0, y + 0.5]} rotation={[0, Math.atan2(outward.x || 0.0001, outward.y || 0.0001), 0]}>
@@ -2185,7 +2438,7 @@ function DuelPieces() {
           gapSize={0.2}
         />
       )}
-      {combatants.map((c) => {
+      {combatants.filter((c) => !c.fled).map((c) => {
         const down = c.hp <= 0;
         const large = isLarge(c.size);
         const side = c.isPlayer ? SIDE_COLORS.player : c.ally ? SIDE_COLORS.friendly : SIDE_COLORS.hostile;
@@ -2284,7 +2537,7 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
           {player && target && target.hp > 0 && (
             <Line points={[[(player.x ?? 0) + 0.5, (player.z ?? 0) * LEVEL_H + 0.9, (player.y ?? 0) + 0.5], [(target.x ?? 0) + 0.5, (target.z ?? 0) * LEVEL_H + 0.9, (target.y ?? 0) + 0.5]]} color={covered ? "#fbbf24" : "#f87171"} lineWidth={2} dashed dashSize={0.3} gapSize={0.2} />
           )}
-          {combatants.map((c) => {
+          {combatants.filter((c) => !c.fled).map((c) => {
             const down = c.hp <= 0;
             const large = isLarge(c.size);
             const side = c.isPlayer ? SIDE_COLORS.player : c.ally ? SIDE_COLORS.friendly : SIDE_COLORS.hostile;

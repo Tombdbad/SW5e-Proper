@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
 import { useQuality } from "@/components/Map/siteAssets";
-import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, whereNow, useClock } from "@/components/Map/LocalMap";
+import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, whereNow, useClock, noEncounters } from "@/components/Map/LocalMap";
 import { usePartyLook } from "@/components/Map/models";
 import PlayCombat, { ShipCombatPanel, type CombatItemOption } from "@/components/Combat/PlayCombat";
 import { useCombat, useShipFight, rollDamage, onPartySide } from "@/lib/stores/useCombat";
@@ -39,7 +39,7 @@ import {
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
   boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf, flightPayout, raceResult, dogfightPayout, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
-  districtAt, rollEncounter, encounterResult, optionsOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
+  districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
   START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText,
   withPresence, withPartyShips, bulkOf, shoveAsset, moveRoomAssets,
@@ -58,7 +58,7 @@ import {
   modKindOf, augmentSlots, MOD_BASE_SLOTS, rarityRank, INSTALL_DC, SIZE_TIME, crystalModifier, crystalFor, crystalsUpTo, DROID_MOTOR_COST, DROID_BASE_SLOTS, droidPlan,
   readOutcome, blueprintRarity, readCredits, RARITY_ORDER, type Fitted,
   FAMILIES, MATERIALS, REFINE_UNITS, tierOfCr, makeRemains, haulOf, withCacheAsset, familiesForTool, familiesForEnhanced, ALL_FAMILIES, type MaterialFamily, crNumber, RARITY_TIERS, NODE_RESPAWN, HARVEST_MINUTES, harvestDc, harvestYield, materialsOf, materialsWorth, spendMaterials, nodeAt, type ResourceNode,
-  type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship,
+  type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship, type Rect,
 } from "@shared/logic";
 
 // What the character is in the middle of, kept with the character (`playState`)
@@ -240,6 +240,8 @@ export default function GameBoard() {
   const [exploring, setExploring] = useState(false);
   const fightArea = useRef<string | null>(null);
   const fightAreas = useRef<string[]>([]);
+  // The encounter whose gang is being fought (it is not in the area's own people: see startGangFight)
+  const gangFight = useRef<Encounter | null>(null);
 
   // Load campaign data when available
   useEffect(() => {
@@ -1133,32 +1135,75 @@ export default function GameBoard() {
     usePartyLook.getState().set({ species: character?.species, name: character?.name, force: learner.force, blade: learner.forceAlign === "Dark" ? "#ff4040" : (character?.name?.length ?? 0) % 2 ? "#6ef08a" : "#7fe3ff" });
   }, [character?.species, character?.name, learner.force, learner.forceAlign]);
   const encounterHere = world?.encounter && districtHere?.id === world.encounter.districtId ? world.encounter : null;
+  // A gang is on the party once it has them surrounded (or has had time enough to: it is never left out of reach)
+  const gangReady = encounterHere?.kind === "robbery" && (encounterHere.phase === "surround" || (encounterHere.phase === "ambush" && clockMinutes - encounterHere.begun >= 12));
+  const gangHolds = encounterHere?.kind === "robbery" && (encounterHere.phase === "ambush" || encounterHere.phase === "surround");
   useEffect(() => {
     if (!world || !character || inCombat || dead || exploring) return;
     const open = world.encounter;
-    // Walking out of the district leaves the encounter behind
-    if (open && districtHere?.id !== open.districtId) return void saveCampaign({ galaxyMap: { ...world, encounter: undefined } });
-    if (open || !districtHere || !hereId) return;
+    // Walking out of the district leaves the encounter behind (and one from before encounters were people on the map has no phase)
+    if (open && (!open.phase || districtHere?.id !== open.districtId)) return void saveCampaign({ galaxyMap: { ...world, encounter: undefined } });
+    if (open || !districtHere || !hereId || noEncounters()) return;
+    // Someone comes up to the party only on the street (not indoors), and a few hours after the last had its say
+    if (world.areas[hereId]?.kind !== "building" || clockMinutes < (world.encounterNext ?? 0)) return;
     const hour = Math.floor(hourOf(clockMinutes));
     const faction = factionAt(world, districtHere.settlementId) ?? "";
     const building = trailOf(world, hereId).find((a) => a.kind === "building");
     const rolled = rollEncounter(world, districtHere, dayOf(clockMinutes), hour, learner, standing.renown[faction] ?? 0, building?.id ?? "");
-    if (rolled && rolled.id !== world.encounterSeen) saveCampaign({ galaxyMap: { ...world, encounter: rolled, encounterSeen: rolled.id } });
-  }, [hereId, Math.floor(hourOf(clockMinutes)), world?.encounter?.id, inCombat, dead, exploring, character?.credits]);
+    if (rolled && rolled.id !== world.encounterSeen) {
+      saveCampaign({ galaxyMap: { ...world, encounter: { ...rolled, begun: clockMinutes }, encounterSeen: rolled.id } });
+      toast.info(rolled.kind === "master" ? "Someone is making their way through the street toward you." : "A figure is coming up the street toward you.");
+    }
+  }, [hereId, here?.kind, Math.floor(hourOf(clockMinutes)), world?.encounter?.id, inCombat, dead, exploring, character?.credits]);
 
-  // Deal with the encounter: pay what is asked, make the check, and take what comes of it
+  // An encounter is over: it is cleared, and the next waits some hours
+  const closeEncounter = (w: World): World => ({ ...w, encounter: undefined, encounterSeen: w.encounter?.id ?? w.encounterSeen, encounterNext: clockNow() + ENCOUNTER_GAP * 60 });
+
+  // The party has walked into an alley: in a lawless place a gang may be waiting in it (see ambushIn). It starts
+  // at the ends of the alley; the map brings it to the party, bars the ways out and has it stand round them.
+  const ambush = async (alley: Rect) => {
+    if (!world || !districtHere || !character || world.encounter || inCombat || dead || noEncounters()) return;
+    if (clockMinutes < (world.encounterNext ?? 0)) return;
+    const day = dayOf(clockMinutes);
+    const hour = Math.floor(hourOf(clockMinutes));
+    if (!ambushIn(world, districtHere, alley, day, hour)) return;
+    try {
+      const response = await fetch("/api/world/gang", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ level, seed: `${day}-${hour}-${alley.x}-${alley.y}` }) });
+      if (!response.ok) return;
+      const gang = (await response.json()) as Occupant[];
+      const current = latestWorld() ?? world;
+      if (current.encounter || !gang.length) return;
+      const encounter = ambushEncounter(current, districtHere, alley, gang, day, hour, clockNow());
+      saveCampaign({ galaxyMap: { ...current, encounter, encounterSeen: encounter.id } });
+      toast.warning("A gang closes in from both ends of the alley!");
+    } catch {
+      /* no gang this time */
+    }
+  };
+
+  // A person in need has been taken where they had to go
+  const deliverEncounter = () => {
+    const open = world?.encounter;
+    if (!world || !character || !open || open.kind !== "help" || open.phase !== "follow") return;
+    const result = deliveredResult(open, learner, open.target ? world.areas[open.target]?.name : undefined);
+    if (result.credits) saveCharacter({ credits: (character.credits ?? 0) + result.credits });
+    saveCampaign({ galaxyMap: closeEncounter(world), ...(result.renown && open.faction ? { factionInfluence: addRenown(standing, open.faction, result.renown) } : {}), ...pass(5) });
+    toast.success(result.message);
+  };
+
+  // Deal with the encounter: pay what is asked, and take what comes of it (a gang is fought on the map, or paid)
   const answerEncounter = async (index: number) => {
     const open = world?.encounter;
     if (!world || !open || !character || !hereId) return;
     const path = pathToTeach(learner);
-    const option = optionsOf(open, level, path)[index];
+    const option = optionsOf(open, level, path, character.credits ?? 0)[index];
     if (!option) return;
     if (option.cost && option.cost > (character.credits ?? 0)) return void toast.error(`That costs ${option.cost} credits and you have ${character.credits ?? 0}.`);
-    const success = option.abilities ? await abilityCheck(option.label.replace(/ \(.*$/, ""), option.dc ?? 10, option.abilities, option.skill ? skilled(option.skill) : false) : true;
-    if (cancelledCheck.current) return;
+    if (open.kind === "robbery" && index === 0) return void startGangFight(open);
+    const success = true;
     const castMod = Math.max(...(path === "tech" ? ["intelligence"] : ["wisdom", "charisma"]).map((a) => modifier(character.abilityScores?.[a])));
     const result = encounterResult(open, index, success, learner, open.target ? world.areas[open.target]?.name : undefined, castMod);
-    let galaxyMap: World = { ...world, encounter: undefined, encounterSeen: open.id };
+    let galaxyMap: World = result.next ? { ...world, encounter: { ...open, ...result.next } as Encounter } : closeEncounter(world);
     if (result.crime) galaxyMap = reportCrime(galaxyMap, hereId, "brawl", clockNow());
     const characterChanges: Record<string, any> = {};
     const credits = (character.credits ?? 0) - (option.cost ?? 0) + (result.credits ?? 0);
@@ -1185,7 +1230,7 @@ export default function GameBoard() {
       lastSavedPoints.current = characterChanges.currentForcePoints;
       galaxyMap.mastersTaught = [...(world.mastersTaught ?? []), open.settlementId];
     }
-    const time = pass(open.kind === "master" ? 2 * 1440 : 10);
+    const time = result.next ? {} : pass(open.kind === "master" ? 2 * 1440 : 10);
     if (Object.keys(characterChanges).length) saveCharacter(characterChanges);
     saveCampaign({ galaxyMap, ...campaignChanges, ...time });
     toast[result.teaching || success ? "success" : "error"](result.message);
@@ -1348,6 +1393,33 @@ export default function GameBoard() {
       character: {}, downtime: {}, days: 1,
       log: [`Pit arena: ${summary.bouts} bout${summary.bouts === 1 ? "" : "s"} won, ${summary.credits.toLocaleString()} cr${summary.items.length ? `, ${summary.items.join(", ")}` : ""}${summary.knockedOut ? "; knocked out in the last bout" : ""}.`],
     });
+  };
+
+  // The gang of an alley that has the party surrounded is fought on the district's own map, in the alley: the
+  // members stand where the map has them round the party, and when their leader falls the rest run (see breakGang
+  // in useCombat). They are not among the people of the area, so what is written back after the fight is the
+  // encounter's alone.
+  const startGangFight = (open: Encounter) => {
+    if (!character || !world || !open.gang?.length || !open.alley || !districtHere || character.currentHp <= 0) return;
+    const field = districtArena(world, districtHere.id);
+    if (!field) return;
+    const spot = usePartySpot.getState();
+    const start = { x: spot.x, y: spot.y, z: 0 };
+    const spots = gangSpots(open.alley, start, open.gang.length);
+    const enemies = open.gang.map((o, i) => ({ ...foe(o, o.id, o.name), x: (spots[i] ?? start).x, y: (spots[i] ?? start).y, z: 0, gang: open.id, leader: i === 0 }));
+    fightArea.current = null;
+    fightAreas.current = [];
+    gangFight.current = open;
+    lastSavedHp.current = character.currentHp;
+    lastSavedPoints.current = character.currentForcePoints;
+    lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
+    fightBegun.current = true;
+    initiateCombat(
+      character, enemies as any, combatKit(), false,
+      { width: field.width, height: field.height, assets: field.assets, platforms: field.platforms, links: field.links, district: field.district, open: true, floor: world.areas[here?.parentId ?? ""]?.type },
+      start,
+      party.filter((c) => c.hp > 0).map(allyOf),
+    );
   };
 
   const fight = () => {
@@ -1565,6 +1637,23 @@ export default function GameBoard() {
     let xp = 0;
     let fallenKind = false;
     const fightNow = useCombat.getState();
+    // A gang fought in an alley: those struck down are worth their experience; their boss's purse is the party's, and the
+    // alley is open again. Left alone (the fight left), the gang is still there; left for dead, the gang takes its toll.
+    const gang = gangFight.current;
+    gangFight.current = null;
+    if (gang?.gang) {
+      const down = fightNow.combatants.filter((c) => c.gang === gang.id && c.hp <= 0 && !c.fled);
+      xp += down.reduce((sum, c) => sum + (gang.gang!.find((o) => o.id === String(c.id))?.xp ?? 0), 0);
+      const current = latestWorld();
+      if (outcome === "victory" && current) {
+        saveCharacter({ credits: (character.credits ?? 0) + gangPurse(level) });
+        saveCampaign({ galaxyMap: closeEncounter(current) });
+        toast.success(`The gang is broken. The boss's purse is yours: ${gangPurse(level)} credits.`);
+      } else if (outcome === "stable" && current) {
+        saveCharacter({ credits: Math.max(0, (character.credits ?? 0) - tollOf(character.credits ?? 0)) });
+        saveCampaign({ galaxyMap: closeEncounter(current) });
+      }
+    }
     if (areaId && world?.areas[areaId]) {
       const area = world.areas[areaId];
       const fight = useCombat.getState();
@@ -2882,7 +2971,15 @@ export default function GameBoard() {
       if (exit && !inCombat && !dead && !exploring) leaveBy(exit);
       else if (place && OPENS.includes(place.kind)) setViewId(place.id);
     } else if (action.type === "note") toast.info(action.text);
-    else if (action.type === "near") {
+    else if (action.type === "alley") void ambush(action.alley);
+    else if (action.type === "encounter") {
+      const open = world?.encounter;
+      if (!world || !open) return;
+      if (action.step === "met" && open.phase === "approach") saveCampaign({ galaxyMap: { ...world, encounter: { ...open, phase: "talk" } } });
+      else if (action.step === "delivered") deliverEncounter();
+      else if (action.step === "surrounded" && open.phase === "ambush") saveCampaign({ galaxyMap: { ...world, encounter: { ...open, phase: "surround" } } });
+      else if (action.step === "talk") toast.info(open.text);
+    } else if (action.type === "near") {
       // Passive Wisdom (Perception), by the Player's Handbook: 10 + the modifier, noticed without searching
       const room = world.areas[action.areaId];
       const passive = 10 + modifier(character.abilityScores?.wisdom) + (skilled("perception") ? proficiency : 0);
@@ -2918,7 +3015,10 @@ export default function GameBoard() {
       setCameFrom(room.id);
       toast.error(`The flagstone gives way and you fall into a pit: ${fall} damage. Climb out (Athletics or Dexterity, DC ${PIT_CLIMB_DC}).`);
     }
-    else if (action.type === "go") travelTo(action.areaId, action.secret, action.squares);
+    else if (action.type === "go") {
+      if (gangHolds) toast.warning("The gang has you. There is no slipping through a door with them on you.");
+      else travelTo(action.areaId, action.secret, action.squares);
+    }
     else if (action.type === "exit") leaveBy(action.exit);
     else if (action.type === "use") setPicked({ kind: "asset", id: `${action.areaId}|${action.id}`, name: action.name });
     else if (action.type === "station") {
@@ -4911,13 +5011,17 @@ export default function GameBoard() {
               </div>
             )}
 
-            {encounterHere && (
+            {encounterHere && (["talk", "follow", "surround"].includes(encounterHere.phase) || gangReady) && (
               <div className="mb-4 space-y-2 rounded border border-yellow-500/60 p-2 text-xs" data-testid="encounter">
                 <h3 className="font-semibold text-yellow-300">{encounterHere.title}</h3>
-                <p className="text-gray-300">{encounterHere.text}</p>
+                <p className="text-gray-300">
+                  {encounterHere.phase === "follow"
+                    ? `${encounterHere.person} is following you. Take them to ${world?.areas[encounterHere.target ?? ""]?.name ?? "the place they named"}: walk to its front door with them.`
+                    : encounterHere.text}
+                </p>
                 <div className="flex flex-wrap gap-1">
-                  {optionsOf(encounterHere, level, pathToTeach(learner)).map((option, index) => (
-                    <Button key={option.label} size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={inCombat || dead || (option.cost ?? 0) > (character.credits ?? 0)} onClick={() => answerEncounter(index)}>
+                  {optionsOf(encounterHere, level, pathToTeach(learner), character.credits ?? 0).map((option, index) => (
+                    <Button key={option.label} size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={inCombat || dead || (option.cost ?? 0) > (character.credits ?? 0) || (encounterHere.kind === "robbery" && (!gangReady || here?.kind !== "building"))} onClick={() => answerEncounter(index)}>
                       {option.label}
                     </Button>
                   ))}
