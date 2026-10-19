@@ -2583,7 +2583,8 @@ function levelsOf(building: Area, rooms: Area[]): Map<string, number> {
 function linkRounds(world: World, building: Area, seed: number) {
   if (!ROUND_BUILDINGS.test(building.type) || WILD_BUILDINGS.includes(building.type) || building.tags.includes("rounded")) return;
   building.tags.push("rounded");
-  const rooms = childrenOf(world, building.id).filter((a) => a.kind === "room" && !formOf(a));
+  const all = childrenOf(world, building.id).filter((a) => a.kind === "room" && !formOf(a));
+  const rooms = all.filter((a) => !a.tags.some((t) => t.startsWith("stack:")) && !all.some((o) => o.tags.includes(`stack:${a.id}`)));
   const r = createRandom(seed + Number(building.id.replace(/\D/g, "") || 1) * 6151 + 3);
   if (!rooms.length || !r.chance(0.6)) return;
   const room = r.pick(rooms);
@@ -2613,67 +2614,41 @@ function linkRounds(world: World, building: Area, seed: number) {
   }
 }
 
-// A building of five rooms or more with no room of its own on an upper floor gets one or two: rooms of the ground that
-// are not the way in, a yard, a store or a bay (named so, by the code F1 tag that levelsOf reads). linkLevels then joins
-// them with stairs or a lift. Once per building (tag "floored").
+// A building of five rooms or more with no room of its own on an upper floor gets one or two, stacked: each takes the
+// footprint of a ground room it has a door to (its partner), one level up (see planBuilding). The rooms are not the way in,
+// a yard, a store or a bay. Once per building (tag "floored").
 function linkFloors(world: World, building: Area, seed: number) {
   if (WILD_BUILDINGS.includes(building.type) || OPEN_GROUNDS.includes(building.type) || GROUND_HANGARS.includes(building.type) || building.tags.includes("floored")) return;
   building.tags.push("floored");
   const real = childrenOf(world, building.id).filter((a) => a.kind === "room" && !formOf(a));
-  if (real.length < 5 || real.some((a) => (levelsOf(building, real).get(a.id) ?? 0) > 0)) return;
-  const r = createRandom(seed + Number(building.id.replace(/\D/g, "") || 1) * 3407 + 41);
-  if (!r.chance(0.7)) return;
-  const ground = real.filter((a) => !a.gateway && !/entr|gate|lobby|reception|foyer|hall\b|stall|yard|bay|cellar|basement|vault|roof|hangar|dock|kitchen|store/i.test(a.name) && !holdsShips(a));
-  const count = Math.min(2, Math.floor(real.length / 4));
-  for (let i = 0; i < count && ground.length; i++) {
-    const pick = ground.splice(Math.floor(r.next() * ground.length), 1)[0];
-    pick.tags.push("code:F1");
-  }
-}
-
-// An upper floor is for use, not a dead end: a room on an upper floor that is reached by one way only (the stairs or lift
-// it was built with) gets a second way, a short corridor to another room on its floor or else stairs down to a room
-// below it. Once per building (tag "upfloor"). The roofs, galleries and ship rooms are left alone.
-function linkUpperFloors(world: World, building: Area, seed: number) {
-  if (WILD_BUILDINGS.includes(building.type) || OPEN_GROUNDS.includes(building.type) || building.tags.includes("upfloor")) return;
-  building.tags.push("upfloor");
-  const real = childrenOf(world, building.id).filter((a) => a.kind === "room" && !formOf(a));
+  if (real.length < 5) return;
   const levels = levelsOf(building, real);
-  const r = createRandom(seed + Number(building.id.replace(/\D/g, "") || 1) * 5119 + 29);
-  const joinedTo = (a: Area) => world.paths
-    .filter((p) => p.kind === "door" && (p.from === a.id || p.to === a.id))
-    .map((p) => world.areas[p.from === a.id ? p.to : p.from])
-    .filter((o): o is Area => !!o);
-  const door = (from: Area, to: Area) => world.paths.push({ id: nextId(world, "p"), from: from.id, to: to.id, kind: "door", label: "Doorway", travel: "10 ft." });
+  const ground = real.filter((a) => !a.gateway && !/entr|gate|lobby|reception|foyer|hall\b|stall|yard|bay|cellar|basement|vault|roof|hangar|dock|kitchen|store/i.test(a.name) && !holdsShips(a));
+  const partnerOf = (room: Area) => world.paths
+    .filter((p) => p.kind === "door" && (p.from === room.id || p.to === room.id))
+    .map((p) => world.areas[p.from === room.id ? p.to : p.from])
+    .find((o): o is Area => !!o && real.includes(o) && o !== room && (levels.get(o.id) ?? 0) === 0 && !holdsShips(o) && !o.gateway && !o.tags.includes("round") && !o.tags.includes("tall") && !o.tags.some((t) => t.startsWith("stack:")) && !real.some((u) => u.tags.includes(`stack:${o.id}`)));
+  // A room that is already on an upper floor by name is stacked on the ground room it opens off, as well
   for (const room of real) {
-    const level = levels.get(room.id) ?? 0;
-    if (level < 1 || /roof|gallery/i.test(room.name) || holdsShips(room)) continue;
-    const joined = joinedTo(room);
-    if (joined.length !== 1) continue;
-    const same = real.filter((o) => o !== room && levels.get(o.id) === level && !joined.includes(o));
-    const below = real.filter((o) => o !== room && levels.get(o.id) === level - 1 && !joined.includes(o));
-    if (same.length && (!below.length || r.chance(0.6))) {
-      const partner = r.pick(same);
-      const link = addGeneratedRoom(world, building, `Upper corridor to ${partner.name}`, "corridor", [`low:${level}`, "rise:0"]);
-      door(room, link);
-      door(link, partner);
-    } else if (below.length) {
-      const partner = r.pick(below);
-      const stairs = addGeneratedRoom(world, building, `Stairs down to ${partner.name}`, "stairs", [`low:${level - 1}`, "rise:1"]);
-      door(room, stairs);
-      door(stairs, partner);
-    }
+    if ((levels.get(room.id) ?? 0) < 1 || /roof|gallery/i.test(room.name) || room.tags.includes("tall") || holdsShips(room)) continue;
+    if (room.tags.some((t) => t.startsWith("stack:"))) continue;
+    const partner = partnerOf(room);
+    if (partner && (levels.get(partner.id) ?? 0) === (levels.get(room.id) ?? 0) - 1) room.tags.push(`stack:${partner.id}`);
   }
-}
-
-// A room of a building made in generation (a corridor, a stairway), as linkLevels makes them
-function addGeneratedRoom(world: World, building: Area, name: string, form: Form, tags: string[]): Area {
-  const area: Area = {
-    id: nextId(world, "a"), kind: "room", parentId: building.id, name, type: name.toLowerCase(), description: "",
-    tags: [`form:${form}`, ...tags], position: { x: 0, y: 0, z: 0 }, danger: 0, occupants: [], ships: [], loot: [], faction: building.faction,
-  };
-  world.areas[area.id] = area;
-  return area;
+  // Ground rooms made into upper rooms, up to a quarter of the building's rooms (at most three)
+  const upper = real.filter((a) => (levels.get(a.id) ?? 0) > 0 || a.tags.some((t) => t.startsWith("stack:"))).length;
+  const count = Math.min(3, Math.floor(real.length / 4)) - upper;
+  const r = createRandom(seed + Number(building.id.replace(/\D/g, "") || 1) * 3407 + 41);
+  if (count <= 0 || !r.chance(0.85)) return;
+  let made = 0;
+  for (const room of r.shuffle([...ground])) {
+    if (made >= count) break;
+    const partner = partnerOf(room);
+    if (!partner || room.tags.some((t) => t.startsWith("stack:"))) continue;
+    room.tags.push("code:F1", `stack:${partner.id}`);
+    ground.splice(ground.indexOf(partner), 1);
+    made++;
+  }
 }
 
 function linkLevels(world: World, building: Area, seed: number) {
@@ -2705,6 +2680,8 @@ function linkLevels(world: World, building: Area, seed: number) {
     const a = world.areas[path.from];
     const b = world.areas[path.to];
     if (!a || !b || a.parentId !== building.id || b.parentId !== building.id || formOf(a) || formOf(b)) continue;
+    // (a room stacked on its neighbour is joined by a stairwell inside that room, not by a stair room: see planBuilding)
+    if (a.tags.includes(`stack:${b.id}`) || b.tags.includes(`stack:${a.id}`)) continue;
     const [la, lb] = [level(a), level(b)];
     let form: Form | undefined;
     // (a great house has stairs, and lifts to its upper floors; never a ladder)
@@ -2767,7 +2744,6 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
   linkFloors(world, building, seed);
   linkLevels(world, building, seed);
   linkRounds(world, building, seed);
-  linkUpperFloors(world, building, seed);
   const rooms = childrenOf(world, buildingId).filter((a) => a.kind === "room" && formOf(a) !== "pit");
   if (!rooms.length) return;
   const r = createRandom(seed + Number(buildingId.replace(/\D/g, "") || 1) * 7919);
@@ -2817,6 +2793,13 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
   // The side of its parent each way between floors was set on, so that what it leads to goes on past it
   const attached = new Map<string, Side>();
 
+  // The squares a w-by-h room could stand on, touching the room p on one of its walls
+  const spotsBeside = (p: RoomLayout, w: number, h: number) => {
+    const out: { x: number; y: number }[] = [];
+    for (let o = -h + 1; o < p.height; o++) out.push({ x: p.x + p.width, y: p.y + o }, { x: p.x - w, y: p.y + o });
+    for (let o = -w + 1; o < p.width; o++) out.push({ x: p.x + o, y: p.y + p.height }, { x: p.x + o, y: p.y - h });
+    return out;
+  };
   // Breadth first from the entrance: each room is set against a free stretch of wall of the room
   // it opens off, sharing at least two squares of wall for the door
   const placed: Area[] = [root];
@@ -2826,6 +2809,8 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
     const from = queue.shift()!;
     for (const path of doors.filter((p) => p.from === from.id || p.to === from.id)) {
       const room = world.areas[path.from === from.id ? path.to : path.from];
+      // A room stacked on another room is placed from that room only, so its footprint is its partner's
+      if (room.tags.some((t) => t.startsWith("stack:") && t !== `stack:${from.id}`)) continue;
       if (placed.includes(room)) {
         if (!joined.some((j) => j.path.id === path.id)) joined.push({ path, adjacent: false });
         continue;
@@ -2833,6 +2818,15 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
       const a = from.layout!;
       const b = room.layout!;
       const options: { x: number; y: number }[] = [];
+      let touching = false;
+      // A room stacked on this one (see linkFloors) has its footprint, one level up
+      if (room.tags.includes(`stack:${from.id}`)) {
+        Object.assign(b, { x: a.x, y: a.y, width: a.width, height: a.height });
+        joined.push({ path, adjacent: false });
+        placed.push(room);
+        queue.push(room);
+        continue;
+      }
       // A gallery stands over the north end of the room it looks down into, up a flight of stairs
       if (b.form === "gallery" && from.id === tagId(room, "host")) {
         const gh = Math.max(2, Math.min(3, a.height - 3));
@@ -2862,6 +2856,7 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
         }
       }
       if (options.length) {
+        touching = true;
         Object.assign(b, options[0]);
         if (used) {
           attached.set(room.id, used);
@@ -2869,11 +2864,23 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
           if (b.climb) b.climb.toward = (a.level ?? 0) <= (b.level ?? 0) ? used : OPPOSITE[used];
         }
       } else {
-        // Nowhere beside it: the room stands apart, reached by a passage
-        const right = Math.max(...placed.map((p) => p.layout!.x + p.layout!.width));
-        Object.assign(b, { x: right + 2, y: a.y });
+        // Nowhere beside it: it is set against another placed room it can touch, and the passage joins that room instead
+        // (a passage is never put in an outside wall). With no room to touch it stands apart, and its passage is dropped.
+        const beside = placed.flatMap((p) => spotsBeside(p.layout!, b.width, b.height).map((spot) => ({ p, spot })));
+        // (a round room is only joined through a corridor, so it is never anchored straight onto a room: see linkRounds)
+        const roundDirect = (p: Area) => (room.tags.includes("round") || p.tags.includes("round")) && !formOf(room) && !formOf(p);
+        const anchor = beside.find(({ p, spot }) => !roundDirect(p) && !placed.some((o) => clash({ ...b, ...spot }, o.layout!)));
+        if (anchor) {
+          Object.assign(b, anchor.spot);
+          if (path.from === from.id) path.from = anchor.p.id;
+          else path.to = anchor.p.id;
+          touching = true;
+        } else {
+          const right = Math.max(...placed.map((p) => p.layout!.x + p.layout!.width));
+          Object.assign(b, { x: right + 2, y: a.y });
+        }
       }
-      joined.push({ path, adjacent: options.length > 0 });
+      joined.push({ path, adjacent: touching });
       placed.push(room);
       queue.push(room);
     }
@@ -2927,11 +2934,42 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
     const spot = anyOutside(room, room === root ? ["w"] : ["e", "s"]);
     if (spot) inWall(room, "exit", room === root ? "Way out" : formOf(room) === "ladder" ? "Ladder down" : "Back way out", spot.side, spot.along, { to: buildingId });
   }
-  for (const { path, adjacent, stairs } of joined) {
+  // The wall two rooms share on a floor they both stand on: the side of `la` and the absolute square along it that the door takes
+  const sharedWall = (la: RoomLayout, lb: RoomLayout): { side: Side; at: number } | undefined => {
+    if (!(floors(la)[0] <= floors(lb)[1] && floors(lb)[0] <= floors(la)[1])) return undefined;
+    const middle = (lo: number, hi: number) => (lo <= hi ? Math.floor((lo + hi) / 2) : undefined);
+    if (la.x + la.width === lb.x || lb.x + lb.width === la.x) {
+      const at = middle(Math.max(la.y, lb.y), Math.min(la.y + la.height, lb.y + lb.height) - 1);
+      if (at !== undefined) return { side: la.x + la.width === lb.x ? "e" : "w", at };
+    }
+    if (la.y + la.height === lb.y || lb.y + lb.height === la.y) {
+      const at = middle(Math.max(la.x, lb.x), Math.min(la.x + la.width, lb.x + lb.width) - 1);
+      if (at !== undefined) return { side: la.y + la.height === lb.y ? "s" : "n", at };
+    }
+    return undefined;
+  };
+  for (const { path, stairs } of joined) {
     const a = world.areas[path.from];
     const b = world.areas[path.to];
     const la = a.layout!;
     const lb = b.layout!;
+    // A stacked room (linkFloors): a stairwell in the room below, rising to the same footprint one level up
+    if (a.tags.includes(`stack:${b.id}`) || b.tags.includes(`stack:${a.id}`)) {
+      const [up, down] = (la.level ?? 0) > (lb.level ?? 0) ? [a, b] : [b, a];
+      // The upper room takes the footprint of the room below, if nothing else on its floor is there; otherwise the passage is dropped
+      const ul = up.layout!;
+      const dl = down.layout!;
+      const same = ul.x === dl.x && ul.y === dl.y && ul.width === dl.width && ul.height === dl.height;
+      const moved = { ...ul, x: dl.x, y: dl.y, width: dl.width, height: dl.height };
+      if (!same && !rooms.some((o) => o !== up && o.layout && (o.layout.level ?? 0) === (ul.level ?? 0) && overlap(o.layout, moved))) Object.assign(ul, { x: dl.x, y: dl.y, width: dl.width, height: dl.height });
+      else if (!same) {
+        world.paths.splice(world.paths.indexOf(path), 1);
+        continue;
+      }
+      down.layout!.assets.push({ id: `${down.id}-${down.layout!.assets.length + 1}`, kind: "stairs", name: `Stairs up to ${up.name}`, x: 1, y: 1, w: 1, h: 2, blocks: true, ref: path.id, to: up.id });
+      up.layout!.assets.push({ id: `${up.id}-${up.layout!.assets.length + 1}`, kind: "stairs", name: `Stairs down to ${down.name}`, x: 1, y: 1, w: 1, h: 2, blocks: true, ref: path.id, to: down.id });
+      continue;
+    }
     if (stairs) {
       // A flight of stairs in the room below, rising to the south edge of the gallery over it
       const [host, gallery, lh, lg] = lb.form === "gallery" ? [a, b, la, lb] : [b, a, lb, la];
@@ -2940,48 +2978,16 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
       lg.assets.push({ id: `${gallery.id}-${lg.assets.length + 1}`, kind: "stairs", name: "Stairs down", x: at - (lg.x - lh.x), y: lg.height - 1, w: 1, h: 1, ref: path.id, to: host.id });
       continue;
     }
-    let side: Side | undefined;
-    let low = 0;
-    let high = -1;
-    if (adjacent) {
-      if (la.x + la.width === lb.x || lb.x + lb.width === la.x) {
-        side = la.x + la.width === lb.x ? "e" : "w";
-        low = Math.max(la.y, lb.y);
-        high = Math.min(la.y + la.height, lb.y + lb.height) - 1;
-      } else if (la.y + la.height === lb.y || lb.y + lb.height === la.y) {
-        side = la.y + la.height === lb.y ? "s" : "n";
-        low = Math.max(la.x, lb.x);
-        high = Math.min(la.x + la.width, lb.x + lb.width) - 1;
-      }
+    // Rooms that share a wall on a floor they both stand on are joined by a door in that wall; any other passage (a loop
+    // that could not be laid out beside its rooms) is dropped, so no door ever opens in an outside wall
+    const wall = sharedWall(la, lb);
+    if (!wall) {
+      world.paths.splice(world.paths.indexOf(path), 1);
+      continue;
     }
-    if (side && high >= low) {
-      const at = Math.floor((low + high) / 2);
-      const vertical = side === "e" || side === "w";
-      inWall(a, "door", path.label, side, at - (vertical ? la.y : la.x), { ref: path.id, to: b.id });
-      inWall(b, "door", path.label, OPPOSITE[side], at - (vertical ? lb.y : lb.x), { ref: path.id, to: a.id });
-    } else {
-      // Not wall to wall: the passage leaves each room by an outside wall (by any wall with a
-      // free square if every outside square is taken)
-      for (const [room, other] of [[a, b], [b, a]]) {
-        const prefer: Side[] = [other.layout!.x >= room.layout!.x ? "e" : "w"];
-        let spot = anyOutside(room, prefer);
-        if (!spot) {
-          const l = room.layout!;
-          for (const side of [...prefer, "w", "s", "n", "e"] as Side[]) {
-            const length = side === "n" || side === "s" ? l.width : l.height;
-            const free = Array.from({ length }, (_, i) => i).filter((i) => {
-              const sq = wallSquare(l, side, i);
-              return !l.assets.some((x) => x.x === sq.x && x.y === sq.y && (x.side || x.kind === "furniture" || x.kind === "stairs"));
-            });
-            if (free.length) {
-              spot = { side, along: free[Math.floor(free.length / 2)] };
-              break;
-            }
-          }
-        }
-        if (spot) inWall(room, "door", path.label, spot.side, spot.along, { ref: path.id, to: other.id });
-      }
-    }
+    const vertical = wall.side === "e" || wall.side === "w";
+    inWall(a, "door", path.label, wall.side, wall.at - (vertical ? la.y : la.x), { ref: path.id, to: b.id });
+    inWall(b, "door", path.label, OPPOSITE[wall.side], wall.at - (vertical ? lb.y : lb.x), { ref: path.id, to: a.id });
   }
 
   // A quiet way in: hostile places always have one, others now and then. It opens into a back

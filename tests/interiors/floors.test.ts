@@ -21,13 +21,22 @@ test("a building of five rooms or more has rooms on an upper floor", () => {
   assert.ok(big > 0);
 });
 
-test("no room on an upper floor is a dead end", () => {
+test("an upper room is stacked on the room below it, or reached by a stairway or lift", () => {
+  let stacked = 0;
   for (const w of worlds) for (const b of Object.values(w.areas)) {
     if (b.kind !== "building") continue;
-    for (const r of rooms(w, b)) {
-      if ((r.layout!.level ?? 0) < 1 || r.layout!.roof || /roof|gallery/i.test(r.name)) continue;
-      const ways = w.paths.filter((p) => p.from === r.id || p.to === r.id).length;
-      assert.ok(ways >= 2, `${b.type}/${r.name} has ${ways} way(s)`);
+    const all = childrenOf(w, b.id).filter((a): a is Area => a.kind === "room" && !!a.layout);
+    for (const r of all) {
+      const l = r.layout!;
+      if (r.tags.some((t) => t.startsWith("form:")) || (l.level ?? 0) < 1 || l.roof || /roof|gallery/i.test(r.name)) continue;
+      const below = all.find((o) => (o.layout!.level ?? 0) === (l.level ?? 0) - 1 && o.layout!.x === l.x && o.layout!.y === l.y && o.layout!.width === l.width && o.layout!.height === l.height);
+      if (below) {
+        stacked++;
+        continue;
+      }
+      const ways = w.paths.some((p) => p.from === r.id || p.to === r.id);
+      assert.ok(ways, `${b.type}/${r.name} on an upper floor is not reached`);
     }
   }
+  assert.ok(stacked > 0, "no room is stacked on the one below");
 });

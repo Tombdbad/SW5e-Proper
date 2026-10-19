@@ -30,7 +30,8 @@ test("nothing stands outside a round or oval room's curve, and every way in stan
 
 test("a round room is joined to its neighbours only through corridors", () => {
   for (const world of worlds) for (const room of Object.values(world.areas)) {
-    if (room.kind !== "room" || !room.tags.includes("round")) continue;
+    // (only a room that is drawn round: one tagged round but planned square may be joined directly)
+    if (room.kind !== "room" || !room.tags.includes("round") || !room.layout?.shape) continue;
     for (const p of world.paths) {
       const other = p.from === room.id ? world.areas[p.to] : p.to === room.id ? world.areas[p.from] : undefined;
       // (a stairway, lift, pit or the like may be joined directly: those are ways, not rooms set against the curve)
