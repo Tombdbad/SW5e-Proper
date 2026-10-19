@@ -12,7 +12,7 @@ rsync -a --delete --exclude node_modules --exclude dist --exclude .git --exclude
 cd "$DST" && npm run build >/tmp/sw5e-test-build.log 2>&1 || { tail -20 /tmp/sw5e-test-build.log; exit 1; }
 systemctl --user stop sw5e-test 2>/dev/null || true
 systemctl --user reset-failed sw5e-test 2>/dev/null || true
-systemd-run --user --unit sw5e-test --working-directory="$DST" --setenv=NODE_ENV=production --setenv=PORT=5001 \
-  sh -c "set -a; . $SRC/.env; set +a; export NODE_ENV=production PORT=5001 DATABASE_URL=\$(node -e 'const u=new URL(process.env.DATABASE_URL); u.pathname=\"/sw5e_test\"; console.log(u.toString())'); exec /usr/bin/node dist/index.js"
+systemd-run --user --unit sw5e-test --working-directory="$DST" --setenv=NODE_ENV=production --setenv=PORT=5001 --setenv=SW5E_SHOWCASE=1 \
+  sh -c "set -a; . $SRC/.env; set +a; export NODE_ENV=production PORT=5001 SW5E_SHOWCASE=1 DATABASE_URL=\$(node -e 'const u=new URL(process.env.DATABASE_URL); u.pathname=\"/sw5e_test\"; console.log(u.toString())'); exec /usr/bin/node dist/index.js"
 sleep 3
 curl -s -o /dev/null -w "test copy on 5001: %{http_code}\n" http://127.0.0.1:5001/

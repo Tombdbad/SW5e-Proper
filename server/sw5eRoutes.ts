@@ -9,6 +9,7 @@
 //   POST /api/world/occupant           { statBlock } -> that stat block as someone to place in an area
 import type { Express, Request, Response } from "express";
 import { generateWorld, expandArea, populateArea, livenWorld, statBlockOccupant, makeGang, validateWorld, worldQuests, itemFactsOf, type ItemFacts, type World } from "../shared/logic";
+import { showcaseOn, showcaseWorld } from "./showcase";
 import { datasetNames, getDataset, getWorldCatalog, isDataset, sw5eManifest } from "./sw5eData";
 
 const isWorld = (value: any): value is World =>
@@ -61,7 +62,9 @@ export function registerSw5eRoutes(app: Express) {
   app.post("/api/world/generate", async (req: Request, res: Response) => {
     try {
       const catalog = await getWorldCatalog();
-      const world = generateWorld(req.body?.options ?? {}, catalog);
+      const options = req.body?.options ?? {};
+      // The test copy (SW5E_SHOWCASE=1, set in its unit only) makes one planet that shows the interiors; the service makes the galaxy
+      const world = showcaseOn() ? showcaseWorld((seed) => generateWorld({ ...options, seed }, catalog), options.seed ?? 1) : generateWorld(options, catalog);
       // Quest rewards are shares of what the party should earn over its current level
       const wealth = catalog.wealthByLevel;
       const level = Math.min(wealth.length - 1, Math.max(1, world.partyLevel));
