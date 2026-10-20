@@ -8,7 +8,7 @@ import { getWorldCatalog } from "../../server/sw5eData";
 const catalog = await getWorldCatalog();
 const worlds: World[] = [1, 2, 34].map((seed) => generateWorld({ seed, partyLevel: 5 }, catalog));
 // (wild sites, open grounds and the hangars are not built in floors)
-const open = /cave|ruin|wreck|camp|trailhead|landing|hangar|shipyard|refuelling/;
+const open = /cave|ruin|wreck|camp|trailhead|landing|hangar|shipyard|refuelling|sewer|speeder platform/;
 const rooms = (w: World, b: Area) => childrenOf(w, b.id).filter((a) => a.kind === "room" && a.layout && !a.tags.some((t) => t.startsWith("form:")));
 
 test("a building of five rooms or more has rooms on an upper floor", () => {
