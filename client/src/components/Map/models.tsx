@@ -3192,7 +3192,7 @@ const HUMAN = lookOf({ name: "Human", skinColorOptions: "Light to dark tones", h
 // `wants` are the models this figure carries (interiors/gear.ts), which Figure loads and bakes in
 export interface FigureSpec { key: string; build: (k: Kit) => void; height: number; wants?: Want[] }
 
-export function figureSpec(kind: string, name: string, opts: { role?: string; creature?: string; species?: string; size?: string; looks: Record<string, Look>; party?: { species?: string; name?: string; force?: boolean; blade?: string; gear?: Gear }; player?: boolean; attach?: Attach[] }): FigureSpec {
+export function figureSpec(kind: string, name: string, opts: { role?: string; creature?: string; species?: string; size?: string; looks: Record<string, Look>; party?: { species?: string; name?: string; force?: boolean; blade?: string; gear?: Gear }; player?: boolean; attach?: Attach[]; gear?: Gear }): FigureSpec {
   const { role = "", creature = "", size = "", looks, party } = opts;
   const seed = hue(name || kind);
   const machine = constructKind(name);
@@ -3238,7 +3238,8 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
   const blade = forceUser ? (player ? party?.blade : undefined) ?? (/sith|inquisitor|dark|guard/i.test(name) ? "#ff4040" : "#7fe3ff") : undefined;
   let outfit = player ? outfitOf(forceUser ? who : "player", forceUser ? "jedi" : "player", look, forceUser ? { blade: blade! } : null) : outfitOf(name || kind, kind === "officer" ? "officer" : kind === "trooper" ? `trooper ${role}` : role, look, forceUser && !/inquisitor|guard/i.test(name) ? { blade: blade! } : null);
   // What the character has chosen to wield and wear shows on them (the weapon's pose, the weight of armour)
-  const gear = player ? party?.gear : undefined;
+  // A figure given gear (the gallery's species rows) wears it like the player does
+  const gear = opts.gear ?? (player ? party?.gear : undefined);
   if (gear) {
     const hand = handOf(gear.weapons[0]);
     if (hand) outfit = { ...outfit, hand };
@@ -3304,18 +3305,18 @@ function Gait({ children }: { children: ReactNode }) {
 // Sabers made of a hilt and another blade (a model of the hilt and one of the blade, joined once)
 const COMPOSED = new Map<string, THREE.BufferGeometry>();
 
-export function Figure({ kind, ring, name = "", large, marker, species, role, creature, size, player }: { kind: string; ring: string; name?: string; large?: boolean; marker?: boolean; species?: string; role?: string; creature?: string; size?: string; player?: boolean }) {
+export function Figure({ kind, ring, name = "", large, marker, species, role, creature, size, player, gear }: { kind: string; ring: string; name?: string; large?: boolean; marker?: boolean; species?: string; role?: string; creature?: string; size?: string; player?: boolean; gear?: Gear }) {
   const looks = useSpecies();
   const party = usePartyLook();
   const me = player ?? kind === "player";
-  const base = figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me });
+  const base = figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear });
   // What a person holds, wears and carries is loaded (one set of hooks per kind of model, in its own palette) and baked into the body
   // once it is all in; until then the code's own weapon is in the hand
   const wants = base.wants ?? [];
   const toneOf = (look: KitLook) => { const n = toneNameOf(look); return n ? TONES[n] : undefined; };
   // A saber with a blade shape of its own is two files: the hilt and the blade
   const urlsOf = (w: Want) => [`/assets/${w.model}.glb`, ...(w.blade ? [`/assets/${w.blade.model}.glb`] : [])];
-  const loaded = Object.fromEntries((["armour", "kit", "medical", "prosthetic", "weapon", "plain"] as KitLook[]).map((look) => [look, useModels(wants.filter((w) => w.look === look).flatMap(urlsOf), "centre", toneOf(look))]));
+  const loaded = Object.fromEntries((["armour", "kit", "medical", "prosthetic", "weapon", "worn", "plain"] as KitLook[]).map((look) => [look, useModels(wants.filter((w) => w.look === look).flatMap(urlsOf), "centre", toneOf(look))]));
   const geometryOfWant = (w: Want): THREE.BufferGeometry | null => {
     const files = loaded[w.look];
     const hilt = files[`/assets/${w.model}.glb`];
@@ -3329,7 +3330,7 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
   };
   const ready = wants.length > 0 && wants.every((w) => geometryOfWant(w));
   const spec = ready
-    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, attach: wants.map((w) => ({ id: w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model, slot: w.slot, scale: w.scale, geometry: geometryOfWant(w)! })) })
+    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, attach: wants.map((w) => ({ id: w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model, slot: w.slot, scale: w.scale, geometry: geometryOfWant(w)! })) })
     : base;
   return (
     <group scale={large ? 1.5 : 1}>

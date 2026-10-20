@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Text, Billboard } from "@react-three/drei";
@@ -6,6 +6,8 @@ import { usePartyLook, Figure, Furniture, ShipModel, SpeederModel, BuildingModel
 import { tokenOf, SIDE_COLORS } from "@/components/Map/sprites";
 import { Atmosphere } from "@/components/Map/interiors/Atmosphere";
 import { Stock } from "@/components/Map/interiors/Stock";
+import { ItemModel, lookScale } from "@/components/Map/interiors/ItemModel";
+import { ITEM_MODELS } from "@/components/Map/interiors/items";
 import { CaveDressing, RockWall } from "@/components/Map/interiors/CaveRoom";
 import { moodOf } from "@/components/Map/interiors/atmosphere";
 import { WEALTH, lookOf, wealthOf } from "@/components/Map/interiors/wealth";
@@ -127,6 +129,9 @@ const LOADOUTS: Record<string, { equipment: string[]; armor: { weapons: string[]
   light: { equipment: ["Blaster rifle", "Combat suit", "Mechanic's kit", "Bandolier"], armor: { weapons: ["Blaster rifle"], body: "Combat suit", shield: null } },
   medic: { equipment: ["Blaster pistol", "Composite armor", "Medpac", "Traumakit", "Tinker's implements"], armor: { weapons: ["Blaster pistol"], body: "Composite armor", shield: null } },
   cyber: { equipment: ["Vibroaxe", "Arm prosthesis", "Leg prosthesis", "Medium shield generator"], armor: { weapons: ["Vibroaxe"], body: null, shield: "Medium shield generator" } },
+  // The item models worn: a saber, a holster, a pack, a buckle, a pauldron, a wristpad (the `worn` section puts it on every species)
+  worn: { equipment: ["Lightsaber", "Holster", "Backpack", "Power belt", "Wristpad", "Ammo Pouch", "Pauldron of Retribution"], armor: { weapons: ["Lightsaber"], body: null, shield: null } },
+  hunter: { equipment: ["Bowcaster", "Quiver", "Smugglepack", "Stealth field generator", "Light physical shield"], armor: { weapons: ["Bowcaster"], body: "Combat suit", shield: "Light physical shield" } },
 };
 function Gear({ loadout }: { loadout: string }) {
   useEffect(() => {
@@ -137,6 +142,37 @@ function Gear({ loadout }: { loadout: string }) {
   const npcs: [string, string, string][] = [["Navy Trooper", "trooper", "Human"], ["Gamorrean Guard", "guard", "Gamorrean"], ["Mechanic Pell", "mechanic", "Human"], ["Medic Senn", "medic", "Twi'lek"], ["Scout Kel", "scout", "Human"], ["Death Trooper", "trooper", "Human"], ["Trandoshan Hunter", "hunter", "Trandoshan"]];
   return (
     <Rows items={[["player", "Mira (player)", "Human"], ...npcs]} per={8} gap={1.5} name={([, n]) => n} draw={([kind, name, species]) => <Figure kind={kind === "player" ? "player" : "humanoid"} ring={SIDE_COLORS.neutral} name={name} role={kind} species={species} />} />
+  );
+}
+
+// `worn` (2026-10-20): one loadout on a figure of each species, to see where the hips, back, belt, shoulder and wrist land on every body
+// (interiors/anchors.ts): bulk, a hunched torso (Abyssin, Anx, Baragwin), wings (Diathim, Geonosian, Rishii, Toydarian), a long neck (Kaminoan...). ?loadout=worn|hunter|heavy|light
+const WORN_SPECIES = ["Human", "Wookiee", "Jawa", "Abyssin", "Anx", "Baragwin", "Diathim", "Geonosian", "Rishii", "Toydarian", "Kaminoan", "Quermian", "Tiss'shar", "Xexto", "Barabel", "Bothan", "Twi'lek", "Gamorrean", "Rodian", "Zabrak", "Mon Calamari", "Bith", "Ewok", "Trandoshan"];
+function Worn({ loadout }: { loadout: string }) {
+  const l = LOADOUTS[loadout] ?? LOADOUTS.worn;
+  const gear = useMemo(() => gearOf({ ...l, abilityScores: {} }), [loadout]);
+  return <Rows items={WORN_SPECIES} per={8} gap={1.5} name={(s) => s} draw={(s) => <Figure kind="humanoid" ring={SIDE_COLORS.neutral} name={`Kel ${s}`} role="patron" species={s} gear={gear} />} />;
+}
+
+// `items` (2026-10-20): every model of the item catalogue by pack, each enlarged to about half a square so that the small ones can be seen;
+// ?pack=sw5e-sabers shows one pack, and the label says the model and the scale it is shown at
+function Items({ pack }: { pack: string | null }) {
+  const packs = [...new Set(Object.values(ITEM_MODELS).map((m) => m.pack))].filter((p) => !pack || p === pack);
+  let row = 0;
+  return (
+    <>
+      {packs.map((p) => {
+        const names = Object.keys(ITEM_MODELS).filter((n) => ITEM_MODELS[n].pack === p).sort();
+        const z = row * 1.1;
+        row += Math.ceil(names.length / 12) + 1.4;
+        return (
+          <group key={p} position={[0, 0, z]}>
+            <Label at={[-7.2, 0.4, -0.2]} text={p} />
+            <Rows items={names} per={12} gap={1.1} name={(n) => n.replace(/^(droid|mod|saber|blade|grenade|mine)-/, "$1·")} draw={(n) => <ItemModel model={n} scale={lookScale(n)} />} />
+          </group>
+        );
+      })}
+    </>
   );
 }
 
@@ -296,6 +332,8 @@ export default function ModelGallery() {
         {section === "packs" && <Packs />}
         {section === "walk" && <Walk />}
         {section === "gear" && <Gear loadout={query.get("loadout") ?? "heavy"} />}
+        {section === "worn" && <Worn loadout={query.get("loadout") ?? "worn"} />}
+        {section === "items" && <Items pack={query.get("pack")} />}
         {section === "interiors" && (
           <>
             {/* The stock of a rack by the place: an armsmith, a garrison armory, a palace guard post, a hideout */}

@@ -18,6 +18,7 @@ import { forcePowers } from "./forcePowers";
 import { techPowers } from "./techPowers";
 import { equipment } from "./equipment";
 import type { Gear, GearItem } from "@/components/Map/interiors/gear";
+import { itemRef } from "@/components/Map/interiors/items";
 import { SKILLS } from "./constants";
 import { maneuvers as maneuverList, type Maneuver } from "./maneuvers";
 import { fightingStyles } from "./fightingStyles";
@@ -788,7 +789,9 @@ export function gearOf(character: any): Gear {
   const item = (name: string | null | undefined): GearItem | undefined => {
     if (!name) return undefined;
     const e = equipmentNamed(baseOf(character, name)?.name ?? name);
-    return e ? { name: e.name, equipmentCategory: e.kind, armorClassification: e.armorClassification, weaponClassification: e.weaponClassification } : undefined;
+    if (e) return { name: e.name, equipmentCategory: e.kind, armorClassification: e.armorClassification, weaponClassification: e.weaponClassification };
+    // An enhanced item with a model made for it (a pauldron, a ring, a bo-rifle) is known by its name
+    return itemRef(name) ? { name, equipmentCategory: "Enhanced" } : undefined;
   };
   const body = item(worn.body);
   const used = new Set([...worn.weapons, worn.body, worn.shield].map((n) => String(n ?? "").toLowerCase()));

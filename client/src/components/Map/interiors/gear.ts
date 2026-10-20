@@ -123,6 +123,8 @@ export function lookOfModel(model: string): KitLook {
   if (info.meta.slot === "weapon" || info.meta.slot === "weapon-accessory" || kind === "weapon") return "weapon";
   if (info.meta.slot === "shield" || info.meta.slot === "stand" || kind === "armour" || kind === "shield") return "armour";
   if (kind === "medical" || kind === "injector") return "medical";
+  // Things worn on a body are leather and canvas
+  if (["hipR", "hipL", "back", "belt", "shoulder", "wrist", "head", "neck", "feet", "hands", "forearm", "torso", "finger", "body"].includes(info.meta.slot ?? "")) return "worn";
   return "kit";
 }
 // What the slot of a catalogue model's `meta.slot` means on a figure, if it is worn at all

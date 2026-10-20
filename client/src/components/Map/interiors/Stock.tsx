@@ -67,7 +67,7 @@ export function Stock({ name, w, h, seed, buildingType, roomName, tone }: { name
   const [weaponUrls, propUrls, kitUrls, itemUrls] = useMemo(() => {
     const [weapons, props] = [new Set<string>(), new Set<string>()];
     // The catalogue's models, by the look that says whether the room's palette applies
-    const catalogue: Record<KitLook, Set<string>> = { armour: new Set(), kit: new Set(), medical: new Set(), prosthetic: new Set(), weapon: new Set(), plain: new Set() };
+    const catalogue: Record<KitLook, Set<string>> = { armour: new Set(), kit: new Set(), medical: new Set(), prosthetic: new Set(), weapon: new Set(), worn: new Set(), plain: new Set() };
     const kits: Record<KitLook, { centre: Set<string>; base: Set<string> }> = Object.fromEntries((Object.keys(DEFAULT_TONE) as KitLook[]).map((l) => [l, { centre: new Set<string>(), base: new Set<string>() }])) as never;
     for (const it of items) {
       if (it.item) {
@@ -96,7 +96,7 @@ export function Stock({ name, w, h, seed, buildingType, roomName, tone }: { name
   const toneOf = (look: KitLook) => { if (look === "plain") return undefined; const n = toneNameOf(look); return tone ?? (n ? TONES[n] : undefined); };
   const [armour, kit, medical, prosthetic] = (["armour", "kit", "medical", "prosthetic"] as const).map((look) => useModels([...kitUrls[look].base], "base", toneOf(look)));
   const meleeFiles = useModels([...kitUrls.weapon.centre], "centre", toneOf("weapon"));
-  const cat = (["armour", "kit", "medical", "prosthetic", "weapon", "plain"] as const).map((look) => useModels([...itemUrls[look]], "base", toneOf(look)));
+  const cat = (["armour", "kit", "medical", "prosthetic", "weapon", "worn", "plain"] as const).map((look) => useModels([...itemUrls[look]], "base", toneOf(look)));
   const files = useMemo(() => ({ ...weaponFiles, ...propFiles, ...armour, ...kit, ...medical, ...prosthetic, ...meleeFiles, ...Object.assign({}, ...cat) }), [weaponFiles, propFiles, armour, kit, medical, prosthetic, meleeFiles, ...cat]);
   const group = useRef<THREE.Group>(null);
   const [near, setNear] = useState(true);
