@@ -35,3 +35,10 @@ Create a character (saves, reloads); create a campaign with the local generator;
 
 ## Phases
 0 baseline, 1 boots, 2 core loop and game depth, 3 deploy (systemd service, nightly DB backup, Tailscale Serve): see REVIVAL_NOTES.md for status. 4 phone UI. 5 GM (manual copy-paste loop stays for now). If public access is ever asked for: Caddy HTTPS reverse proxy, a login, and note that Oracle blocks inbound twice (VCN security list in the console and iptables on the VM).
+
+## Handoff (the user reaches this VM over a flaky ssh app, which ends the session when it drops)
+- `HANDOFF.md` in the repo root is the handoff report for the next agent. Read it right after `REVIVAL_NOTES.md` at the start of a session, to see what the last session was doing.
+- Keep it current as you work, not only at the end: update it after each commit, before starting anything long (a build, the e2e run, a conversion), and whenever the user answers or decides something. A session can end at any moment, so what is not in the file is lost.
+- Overwrite it; do not append. The next agent replaces it with its own. Keep it short enough to read in two minutes (under about 80 lines).
+- It holds: the date and branch and the last commit; what was done this session (and which commits); what is running or half done (background units such as `sw5e-e2e`, uncommitted files, a test copy built from which commit); outstanding TODOs and next steps in order; open questions and decisions the user has not made; anything learned that the next agent would otherwise rediscover (a failing test and its cause, a command that works).
+- Commit it with the work (`git add HANDOFF.md`). Do not put secrets in it.
