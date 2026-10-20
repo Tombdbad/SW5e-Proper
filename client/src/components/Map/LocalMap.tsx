@@ -2427,31 +2427,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   {lift > 0.01 && [[0.1, 0.1], [l.width - 0.1, 0.1], [0.1, l.height - 0.1], [l.width - 0.1, l.height - 0.1]].map(([px, pz], i) => <Box key={i} at={[px, -lift / 2, pz]} size={[0.1, lift, 0.1]} color="#59636d" />)}
                 </group>
               ) : form === "balcony" ? (
-                // A balcony over the street (shared/logic "Balconies"): its floor and balustrade, and the climb up to it from the street
+                // A balcony over the street (shared/logic "Balconies"): its floor and balustrade (it is reached by its patio doors only)
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                   {slab("#6b6f78")}
                   {rail(0.55)}
-                  {l.assets.filter((a) => a.kind === "exit").map((a) => {
-                    const at = onWall(l, a);
-                    const step = beyond(l, a);
-                    const sign = a.side === "s" || a.side === "e" ? 1 : -1;
-                    const top = lift + 0.6;
-                    return (
-                      <group key={a.id}>
-                        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[step.x - l.x + 0.5, -lift + 0.01, step.y - l.y + 0.5]} onClick={tappable ? (e) => { e.stopPropagation(); if (e.delta <= 8) actOutside(room, a); } : undefined}>
-                          <planeGeometry args={[0.92, 0.92]} />
-                          <meshBasicMaterial color={WAY_COLORS.exit} transparent opacity={0.45} depthWrite={false} />
-                        </mesh>
-                        {/* A trellis of vines and rails up the wall under the balcony */}
-                        <group position={[at.x, -lift, at.z]} rotation={[0, at.turn, 0]}>
-                          {[-0.32, 0, 0.32].map((x) => <Box key={x} at={[x, top / 2, sign * 0.1]} size={[0.04, top, 0.04]} color="#5a7a48" />)}
-                          {Array.from({ length: Math.max(2, Math.round(top / 0.5)) }, (_, i) => <Box key={i} at={[0, 0.3 + (i * (top - 0.4)) / Math.max(2, Math.round(top / 0.5)), sign * 0.1]} size={[0.7, 0.04, 0.04]} color="#6b8a52" />)}
-                          <Label at={[0, top + 0.4, sign * 0.1]} size={0.28} color={WAY_COLORS.exit}>Climb to the balcony</Label>
-                          {tappable && <Hit at={[0, top / 2, sign * 0.3]} size={[0.9, top, 0.8]} onTap={() => actOutside(room, a)} label="Climb to the balcony" />}
-                        </group>
-                      </group>
-                    );
-                  })}
                 </group>
               ) : form === "gallery" ? (
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>

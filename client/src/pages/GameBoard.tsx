@@ -732,8 +732,8 @@ export default function GameBoard() {
     const picked = door ? afterHours.current.get(door.parentId ?? "") : undefined;
     if (shutDC !== undefined && door && !(picked !== undefined && clockNow() - picked < 780)) return breakIn(door.parentId!, shutDC);
     if (exit.climb) {
-      // Out of a pit, up to or down from a balcony (house rule): Athletics, or Dexterity, a minute for each try
-      const ok = await abilityCheck(exit.via === "path" ? "Climbing out" : exit.label.replace(/ to$/, ""), exit.climb, ["strength", "dexterity"], skilled("athletics"));
+      // Out of a pit: Athletics, or Dexterity, a minute for each try
+      const ok = await abilityCheck("Climbing out", exit.climb, ["strength", "dexterity"], skilled("athletics"));
       if (cancelledCheck.current) return;
       if (!ok) return void saveCampaign(pass(1));
     }

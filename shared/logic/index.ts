@@ -4607,7 +4607,7 @@ export interface Exit {
   fuel?: number;
   // A hyperspace jump: the ship needs a hyperdrive
   jump?: boolean;
-  // A way that has to be climbed (out of a pit, up to a balcony): the DC of the check
+  // A way that has to be climbed (out of a pit): the DC of the check
   climb?: number;
   // A sensor on the way (see Path)
   alarmed?: boolean;
@@ -5413,7 +5413,7 @@ export function exitsOf(world: World, id: string): Exit[] {
   for (const child of childrenOf(world, id)) {
     // A ship from orbit can land at any settlement or point of interest on a planet, not only a gateway
     const landing = area.kind === "planet" && child.kind === "settlement";
-    if ((child.gateway || landing) && ENTER[area.kind]) exits.push({ to: child.id, via: "enter", label: formOf(child) === "roof" ? "Climb the ladder to" : formOf(child) === "balcony" ? "Climb up to" : ENTER[area.kind]!, travel: "", ...(formOf(child) === "balcony" ? { climb: BALCONY_CLIMB_DC } : {}), ...(area.kind === "system" || area.kind === "planet" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
+    if ((child.gateway || landing) && ENTER[area.kind]) exits.push({ to: child.id, via: "enter", label: formOf(child) === "roof" ? "Climb the ladder to" : ENTER[area.kind]!, travel: "", ...(area.kind === "system" || area.kind === "planet" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
   }
   for (const child of childrenOf(world, id)) {
     if (child.secretEntry) exits.push({ to: child.id, via: "enter", label: `Slip in through the ${child.secretEntry.name.toLowerCase()} to`, travel: "", secret: true, hidden: !child.secretEntry.found || undefined });
@@ -5424,7 +5424,7 @@ export function exitsOf(world: World, id: string): Exit[] {
   }
   // A settlement lifts off to its planet's orbit whether or not it is a gateway (see helmExits)
   if ((area.gateway || (area.kind === "settlement" && parent?.kind === "planet")) && parent && LEAVE[area.kind]) {
-    exits.push({ to: parent.id, via: "leave", label: formOf(area) === "roof" || formOf(area) === "balcony" ? "Climb down to" : LEAVE[area.kind]!, travel: "", ...(formOf(area) === "balcony" ? { climb: BALCONY_CLIMB_DC } : {}), ...(area.kind === "planet" || area.kind === "settlement" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
+    exits.push({ to: parent.id, via: "leave", label: formOf(area) === "roof" ? "Climb down to" : LEAVE[area.kind]!, travel: "", ...(area.kind === "planet" || area.kind === "settlement" ? { needsShip: true, fuel: tripFuel("surface") } : {}) });
   }
   return exits;
 }
@@ -8514,12 +8514,11 @@ function doorBetween(a: Area, b: Area, path: Path): boolean {
 // ---------------------------------------------------------------------------------------------
 // Balconies (2026-10-20, house rules). The upper rooms of a palace, an estate or a manor house that face the street may have a
 // balcony: an open-air platform two squares deep and three wide over the street, at the room's floor, through patio doors (locked
-// and alarmed in a palace, often in the great houses). It is climbed up to from the street, and down again (Athletics or
-// Acrobatics, DC 12); going through alarmed patio doors trips the building's alarm unless the sensor is slipped past (Intelligence,
-// DC 13). In a street fight the climb is a way up to the balcony, as a roof's ladder is.
+// and alarmed in a palace, often in the great houses). It is reached through those doors only: there is no climb to it from the
+// street (the user's intent: a grapple hook will reach it, once grapple hooks have their rules). Going through alarmed patio doors
+// trips the building's alarm unless the sensor is slipped past (Intelligence, DC 13).
 // ---------------------------------------------------------------------------------------------
 const BALCONIED = /^(palace|estates|manor house)$/;
-export const BALCONY_CLIMB_DC = 12;
 export const PATIO_SENSOR_DC = 13;
 
 // The stairs up to a roof (2026-10-20): where a building's roof stands on the top of a column, its stair block climbs one floor more,
@@ -8768,15 +8767,8 @@ export function planDistrict(ctx: Context, district: District): DistrictPlan | u
           let streetUnder = true;
           for (let x = layout.x; x < layout.x + layout.width; x++) for (let y = layout.y; y < layout.y + layout.height; y++) if (!under(x, y)) streetUnder = false;
           if (!streetUnder || everyRoom().some((o) => o.layout && layoutsClash(layout, o.layout))) continue;
-          // The climb from the street, on the balcony's outer edge in the middle, its foot on the street
-          const out = side;
-          const middle = out === "e" || out === "w" ? { x: out === "e" ? 1 : 0, y: 1 } : { x: 1, y: out === "s" ? 1 : 0 };
-          const foot = { x: layout.x + middle.x + (out === "e" ? 1 : out === "w" ? -1 : 0), y: layout.y + middle.y + (out === "s" ? 1 : out === "n" ? -1 : 0) };
-          if (!under(foot.x, foot.y)) continue;
           const balcony = make(b, "Balcony", "balcony", layout, [`low:${l.level}`, "rise:0"]);
-          balcony.gateway = true;
           balcony.description = `A balcony off the ${room.name.toLowerCase()}, over the street.`;
-          layout.assets.push({ id: `${balcony.id}-1`, kind: "exit", name: "Climb down", ...middle, w: 1, h: 1, side: out, to: b.id });
           // The patio doors: locked and alarmed in a palace, often in a great house
           const grand = b.type === "palace";
           const locked = grand || r.chance(0.5) ? (grand ? 15 : 13) : undefined;
@@ -8785,7 +8777,7 @@ export function planDistrict(ctx: Context, district: District): DistrictPlan | u
           world.paths.push(path);
           const wallAt = start + 1;
           l.assets.push({ id: `${room.id}-${l.assets.length + 1}-b`, kind: "door", name: "Patio doors", ...wallSquare(l, side, wallAt), w: 1, h: 1, side, ref: path.id, to: balcony.id });
-          layout.assets.push({ id: `${balcony.id}-2`, kind: "door", name: "Patio doors", ...wallSquare(layout, OPPOSITE[side], 1), w: 1, h: 1, side: OPPOSITE[side], ref: path.id, to: room.id });
+          layout.assets.push({ id: `${balcony.id}-1`, kind: "door", name: "Patio doors", ...wallSquare(layout, OPPOSITE[side], 1), w: 1, h: 1, side: OPPOSITE[side], ref: path.id, to: room.id });
           // (the room's floor stays whole, its door square clear: else no balcony)
           const doorSq = wallSquare(l, side, wallAt);
           if (floorFaults(l) || l.assets.some((a) => a.ref !== path.id && !a.side && a.kind !== "npc" && a.x <= doorSq.x && doorSq.x < a.x + a.w && a.y <= doorSq.y && doorSq.y < a.y + a.h)) {
@@ -9115,8 +9107,8 @@ export function districtArena(world: World, districtId: string): DistrictArena |
     platforms.push({ z: level, x: l.x, y: l.y, width: l.width, height: l.height });
     for (const a of l.assets) {
       if (a.kind === "furniture" && !a.side) assets.push({ ...a, id: `${room.id}-${a.id}`, x: l.x + a.x, y: l.y + a.y, z: level });
-      // The ladder from the street to a roof, the climb to a balcony
-      if (a.kind === "exit" && a.side && (formOf(room) === "roof" || formOf(room) === "balcony")) {
+      // The ladder from the street to a roof
+      if (a.kind === "exit" && a.side && formOf(room) === "roof") {
         const foot = { x: l.x + a.x + (a.side === "e" ? 1 : a.side === "w" ? -1 : 0), y: l.y + a.y + (a.side === "s" ? 1 : a.side === "n" ? -1 : 0), z: 0 };
         links.push({ from: foot, to: { x: l.x + a.x, y: l.y + a.y, z: level } });
       }

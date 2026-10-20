@@ -3,8 +3,8 @@
 // host -> hall and back).
 // Each tap is on the thing itself, where the map draws it (window.__map3d), and the HUD must then say the party is in the next room.
 // Self-contained (makes and deletes its own character and campaigns). Not the play-through: one building of each, a few minutes.
-// Then the ways in from outside (2026-10-20): down from a roof by its stairs; in through a window from the street; up to a balcony
-// and in by its patio doors (a climb, rolled in the check dialog, tried again until it succeeds).
+// Then the ways in from outside (2026-10-20): down from a roof by its stairs; in through a window from the street; and out onto a
+// balcony by its patio doors and back (a balcony is not climbed to from the street: grapple hooks will, once they have rules).
 // Usage: BASE=http://127.0.0.1:5002 node e2e/stairs.mjs   (ONLY=outside for the second part alone)
 import { open, api, BASE, OUT } from "./lib.mjs";
 
@@ -35,26 +35,6 @@ const tap = async (asset, expect) => {
   throw new Error(`tapped ${asset.name}: the party is in "${await here()}", not ${expect}`);
 };
 const doorTo = (room, to) => room.layout.assets.find((a) => (a.kind === "door" || a.kind === "stairs") && a.to === to.id);
-// Tap a point of the map (a key the map probe knows), then wait for the HUD to name a room; a check dialog that comes up is rolled
-const tapUntil = async (key, expect, what, tries = 6) => {
-  const t0 = Date.now();
-  for (let n = 0; n < tries; n++) {
-    const at = await page.evaluate((k) => window.__map3d?.at(k) ?? null, key);
-    if (!at) throw new Error(`${what}: not on the map`);
-    await page.mouse.click(at.x, at.y);
-    if (n === 0 && process.env.SHOT) await page.screenshot({ path: `${OUT}/tap-${what.replace(/\W+/g, "-")}.png`, timeout: 60000 }).catch(() => {});
-    const roll = page.locator('[data-testid="check-roll"]');
-    if (await roll.waitFor({ timeout: 15000 }).then(() => true).catch(() => false)) await roll.click();
-    const ok = await page.waitForFunction((name) => document.querySelector('[data-testid="play-here"] .font-semibold')?.textContent === name, expect, { timeout: 30000 }).then(() => true).catch(() => false);
-    if (ok) {
-      console.log(`  ${what} -> ${expect} (${((Date.now() - t0) / 1000).toFixed(0)} s${n ? `, try ${n + 1}` : ""})`);
-      await page.waitForTimeout(8000);
-      return;
-    }
-  }
-  await page.screenshot({ path: `${OUT}/stairs-fail.png`, timeout: 60000 }).catch(() => {});
-  throw new Error(`${what}: the party is in "${await here()}", not ${expect}`);
-};
 const play = async (world, start) => {
   const camp = (await api("POST", "/api/campaigns", { characterId: made[0], name: NAME, description: "stairs", npcs: [], locations: [], quests: [], startingLocation: "start", currentLocation: start.id, galaxyMap: world, timeElapsed: { total: 0 } })).json;
   camps.push(camp.id);
@@ -150,7 +130,7 @@ try {
         const room = world.areas[doors.to];
         unlock(balcony, room);
         calm(balcony.parentId);
-        balconyWay = { world, balcony, room, climb: balcony.layout.assets.find((d) => d.kind === "exit"), building: world.areas[balcony.parentId] };
+        balconyWay = { world, balcony, room, building: world.areas[balcony.parentId] };
       }
     }
   }
@@ -197,34 +177,9 @@ try {
   }
 
   console.log(`balcony: off ${balconyWay.room.name} of ${balconyWay.building.name}`);
-  await play(balconyWay.world, balconyWay.building);
-  {
-    const l = balconyWay.balcony.layout;
-    const c = balconyWay.climb;
-    const foot = { x: l.x + c.x + (c.side === "e" ? 1 : c.side === "w" ? -1 : 0), y: l.y + c.y + (c.side === "s" ? 1 : c.side === "n" ? -1 : 0) };
-    // The trellis's foot, tapped where it is in view; where it is not (the camera follows the party, and a palace is large) the
-    // same climb from the list of ways on (the HUD), which runs the same rules (the climb is rolled in the check dialog)
-    const at = await page.evaluate((k) => window.__map3d?.at(k) ?? null, `sq:${foot.x},${foot.y}`);
-    const box = await page.locator("canvas").first().boundingBox();
-    const inView = at && box && at.x > box.x + 10 && at.x < box.x + box.width - 10 && at.y > box.y + 10 && at.y < box.y + box.height - 10;
-    if (inView) await tapUntil(`sq:${foot.x},${foot.y}`, balconyWay.balcony.name, "Climb to the balcony");
-    else {
-      const t0 = Date.now();
-      let ok = false;
-      for (let n = 0; n < 6 && !ok; n++) {
-        await page.getByRole("button", { name: /^Climb up to Balcony/ }).first().click();
-        const roll = page.locator('[data-testid="check-roll"]');
-        if (await roll.waitFor({ timeout: 15000 }).then(() => true).catch(() => false)) await roll.click();
-        ok = await page.waitForFunction((name) => document.querySelector('[data-testid="play-here"] .font-semibold')?.textContent === name, balconyWay.balcony.name, { timeout: 30000 }).then(() => true).catch(() => false);
-      }
-      if (!ok) throw new Error(`Climb up to Balcony (from the list of ways): the party is in "${await here()}"`);
-      console.log(`  Climb up to Balcony (from the list of ways; the trellis is out of view) -> Balcony (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
-      // (the palace's district is a great deal to draw in software: the camera's move up to the balcony takes a while)
-      await page.waitForTimeout(Number(process.env.SETTLE || 45000));
-      if (process.env.SHOT) await page.screenshot({ path: `${OUT}/on-balcony.png`, timeout: 60000 }).catch(() => {});
-    }
-    await tap(doorTo(balconyWay.balcony, balconyWay.room), balconyWay.room.name);
-  }
+  await play(balconyWay.world, balconyWay.room);
+  await tap(doorTo(balconyWay.room, balconyWay.balcony), balconyWay.balcony.name);
+  await tap(doorTo(balconyWay.balcony, balconyWay.room), balconyWay.room.name);
   console.log("PASS: every flight and door taken by tapping it, and the ways in from outside");
 } catch (e) {
   failed = true;

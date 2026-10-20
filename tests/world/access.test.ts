@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateWorld, auditBuildings, walkBuilding, validateWorld, stairBlock, climbAt, canStep, floorLevelAt, formOf, exitsOf, paneFor, climbable, setPane, arrivalSquares, createRandom, BLOCK_LENGTH, BALCONY_CLIMB_DC, type Area, type RoomLayout, type Side, type World } from "@shared/logic";
+import { generateWorld, auditBuildings, walkBuilding, validateWorld, stairBlock, climbAt, canStep, floorLevelAt, formOf, exitsOf, paneFor, climbable, setPane, arrivalSquares, createRandom, BLOCK_LENGTH, type Area, type RoomLayout, type Side, type World } from "@shared/logic";
 import { getWorldCatalog } from "../../server/sw5eData";
 
 // Access to every floor of the buildings the generator makes (2026-10-20): the stair blocks (shared/logic "Stair blocks": rooms
@@ -230,7 +230,7 @@ test("generated windows are of every kind, a window's state changes on its own, 
   assert.equal(world.areas[room.id].layout!.assets.find((w) => w.id === win.id)!.pane!.latch, "latched", "the world it came from is left alone");
 });
 
-test("balconies: on the upper floors of the great houses, over the street, patio doors into their room, climbed up to and down from", () => {
+test("balconies: on the upper floors of the great houses, over the street, reached through patio doors from their room only", () => {
   let balconies = 0;
   for (const seed of SEEDS) {
     const world = worldOf(seed);
@@ -239,17 +239,18 @@ test("balconies: on the upper floors of the great houses, over the street, patio
       const building = world.areas[b.parentId!];
       assert.ok(/^(palace|estates|manor house)$/.test(building.type), `${building.type}: a balcony`);
       const l = b.layout!;
-      assert.ok((l.level ?? 0) >= 1 && b.gateway, "a balcony is on an upper floor and reached from outside");
+      assert.ok((l.level ?? 0) >= 1, "a balcony is on an upper floor");
+      // No climb to it from the street (a grapple hook will, once it has its rules): not a way in, nothing but its patio doors
+      assert.ok(!b.gateway && !l.assets.some((a) => a.kind === "exit"), "a balcony is not climbed to from the street");
+      assert.ok(!exitsOf(world, building.id).some((e) => e.to === b.id), "the street has no way up to a balcony");
       const doors = l.assets.filter((a) => a.kind === "door");
       assert.equal(doors.length, 1);
+      assert.equal(l.assets.length, 1, "nothing but the patio doors");
       const room = world.areas[doors[0].to!];
       assert.equal(room.layout!.level, l.level, "the patio doors open into a room on the balcony's floor");
       assert.ok(room.layout!.assets.some((a) => a.kind === "door" && a.to === b.id && a.name === "Patio doors"));
-      // From the street it is climbed up to, and down from the balcony
-      const up = exitsOf(world, building.id).find((e) => e.to === b.id);
-      assert.ok(up && up.climb === BALCONY_CLIMB_DC, "climbed up to from the street");
-      const down = exitsOf(world, b.id).find((e) => e.to === building.id);
-      assert.ok(down && down.climb === BALCONY_CLIMB_DC, "climbed down from");
+      // Walked to through the house, out of the patio doors
+      assert.ok(walkBuilding(world, building.id).reached.has(b.id), "the balcony is walked to from inside");
     }
   }
   assert.ok(balconies > 0, "no balcony in the worlds");
