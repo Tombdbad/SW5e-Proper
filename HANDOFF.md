@@ -1,13 +1,15 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-20 ~14:30 UTC. Branch `revive`, HEAD `b14b6d7` (pushed). `main` is still at `3aa0586` (the previous clean full run); this session's work is NOT merged.
+Written 2026-10-20 ~14:30 UTC, result added 2026-10-20 14:26 UTC. Branch `revive`, HEAD `b14b6d7` (pushed). `main` is still at `3aa0586` (the previous clean full run); this session's work is NOT merged.
 
 ## Running now / result of the full e2e (read this first)
 <!-- E2E-RESULT -->
-RUNNING. The full play-through of HEAD `b14b6d7` (plain copy, port 5002, no showcase, speeder race skipped) is the user unit `sw5e-e2e-full`, started 13:36:15 UTC, log `~/e2e-full2.log`, screenshots `e2e/out/full2`. At 14:22 UTC it had 85 pass, 2 fail, about 1 step left (the clean run of yesterday had 88 steps). A background job (`sw5e-handoff-after-e2e`, script `~/handoff-after-e2e.py`) replaces this block with the final numbers, the failed steps and their messages when the run ends, and commits and pushes this file.
-Failures seen so far (not yet investigated; neither involves models, both passed in yesterday's clean run):
-- `world: an unvisited planet is built on demand` (2 s, an API/world assertion; its message is the world JSON, so the real cause is in `e2e/play.mjs` line ~334 and `expandArea`): may depend on the random seed of that campaign.
-- `flying games: ... a taxi run is flown on the 3D map` (33 s): the countdown did not show in 5 s; the page stalled 4.9 s (`maxGap` 4867) under software rendering: the known render stall (load), likely a flake.
+**FINISHED 2026-10-20 14:26 UTC** (started Tue 2026-10-20 13:36:15 UTC). HEAD `b14b6d7`, plain copy 5002, speeder race skipped. Unit result: exit-code. **86/88 steps passed** (86 PASS lines, 2 FAIL lines).
+Log `~/e2e-full2.log`, screenshots `e2e/out/full2`.
+Failed steps (message cut to 260 characters; the full line is in the log, with diagnostics above it):
+- [2s] world: an unvisited planet is built on demand  :: {"world":{"version":1,"seed":170810146,"name":"The Galaxy","partyLevel":1,"partySize":1,"antagonist":"Black Sun","rootId":"a1","startId":"a220","areas":{"a1":{"id":"a1","kind":"galaxy","parentId":null,"des
+- [33s] flying games: the downtime menu is in groups; a taxi run is flown on the 3D map with the drag pad and boost, and paid by the rings it takes  :: locator.waitFor: Timeout 5000ms exceeded. | Call log: |   - waiting for getByTestId('countdown') to be visible
+Neither of the two failures seen mid-run involved models; check each against the clean run of `3aa0586` (88/88) before blaming this session's work.
 <!-- /E2E-RESULT -->
 
 ## State of the machines
