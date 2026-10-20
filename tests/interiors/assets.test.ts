@@ -10,9 +10,10 @@ import { MODELS, OUT } from "../../tools/kitbash-recipes.mjs";
 const dirs = fs.readdirSync(ASSETS).filter((d) => fs.statSync(path.join(ASSETS, d)).isDirectory());
 const size = (dir: string) => fs.readdirSync(dir).reduce((n, f) => n + fs.statSync(path.join(dir, f)).size, 0);
 
-test("the downloaded assets stay inside the budget (10 MB for everything, 2 MB for a pack)", () => {
+test("the downloaded assets stay inside the budget (24 MB for everything, 2 MB for a pack)", () => {
+  // Raised from 10 MB on 2026-10-20 for the item models (14 packs, about 7 MB): they load a few at a time, by what a scene shows
   const total = dirs.reduce((n, d) => n + size(path.join(ASSETS, d)), 0);
-  assert.ok(total < 10 * 1024 * 1024, `${(total / 1048576).toFixed(1)} MB in all`);
+  assert.ok(total < 24 * 1024 * 1024, `${(total / 1048576).toFixed(1)} MB in all`);
   for (const d of dirs) assert.ok(size(path.join(ASSETS, d)) < 2 * 1024 * 1024, `${d} is ${(size(path.join(ASSETS, d)) / 1048576).toFixed(1)} MB`);
 });
 test("every pack has its licence beside it, and the credits name it", () => {

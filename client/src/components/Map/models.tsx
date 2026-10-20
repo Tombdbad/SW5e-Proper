@@ -7,12 +7,14 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import { ImprovedNoise } from "three/examples/jsm/math/ImprovedNoise.js";
 import { speederKind } from "@shared/logic";
 import { skinOf, type RoomLook } from "./interiors/wealth";
-import { useModels } from "./interiors/assets";
+import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
 import { advance, bob, LIMB, limbMaterial, pose as poseLimbs, standing } from "./interiors/limbs";
-import { handOf, wantsOf, type Gear, type Want } from "./interiors/gear";
-import { DEFAULT_TONE, type KitLook } from "./interiors/kitbash";
+import { handOf, wantsOf, type Gear, type Want, type Slot } from "./interiors/gear";
+import { bodyAnchor } from "./interiors/anchors";
+import { composeSaber } from "./interiors/items";
+import { toneNameOf, type KitLook } from "./interiors/kitbash";
 import { TONES } from "./interiors/tones";
 
 // ---------------------------------------------------------------------------------------------
@@ -211,7 +213,12 @@ export class Kit {
 
   // A loaded model (a weapon, a case, a limb of a prosthesis) set in the figure: its own colours kept, moved by the current frame and,
   // in an animated build, on the current limb. The model is copied; the shared one is never changed
-  addModel(source: THREE.BufferGeometry, { at, rot, scale, finish = "sheen" }: PartOptions = {}) {
+  addModel(source: THREE.BufferGeometry, o: PartOptions = {}) {
+    // An item model says per vertex how it is drawn (metal, matte, glow, cloth): each finish is added as a part of its own
+    for (const { finish, geo } of splitByFinish(source, (o.finish ?? "sheen") as MarkFinish)) this.addModelPart(geo, { ...o, finish });
+    return this;
+  }
+  private addModelPart(source: THREE.BufferGeometry, { at, rot, scale, finish = "sheen" }: PartOptions = {}) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", source.getAttribute("position").clone());
     if (source.getAttribute("normal")) geo.setAttribute("normal", source.getAttribute("normal").clone());
@@ -1815,7 +1822,7 @@ export const useSpecies = (() => {
 export interface Attach {
   // The model's name (gear.ts), to tell one figure's gear from another's
   id: string;
-  slot: "weapon" | "shield" | "hipR" | "hipL" | "back" | "armR" | "legL";
+  slot: Slot;
   geometry: THREE.BufferGeometry;
   scale: number;
 }
@@ -1934,10 +1941,12 @@ export function buildHumanoid(k: Kit, look: Look, o: Outfit, skin: string, hair:
     if (o.cape) k.lathe([[0.3 * b, 0.1], [0.24 * b, 0.4], [0.2 * b, 0.95]], o.cape, { seg: 14, start: Math.PI / 2 + 0.25, arc: Math.PI - 0.5, finish: "cloth", at: [0, 0, -0.02] });
     // Everything above the hips, leaning forward when the species is hunched
     k.group([0, 0.56, 0], look.hunched ? [0.32, 0, 0] : undefined, undefined, () => upper(k, look, o, { b, flesh, torsoColor, sleeve, plate, under, armored, bare, hair, skin, eye, seed, attach }));
-    // Kits and tools on the hips and the back
+    // Kits, tools and gear worn on the hips, the back, the belt and the shoulder, where this species has them (interiors/anchors.ts)
     for (const a of attach) {
-      if (a.slot === "hipR" || a.slot === "hipL") k.addModel(a.geometry, { at: [(a.slot === "hipR" ? -1 : 1) * (0.2 * b + 0.04), 0.5, 0], rot: [0, a.slot === "hipR" ? -Math.PI / 2 : Math.PI / 2, 0], scale: a.scale });
-      else if (a.slot === "back") k.addModel(a.geometry, { at: [0, 0.92, -(0.15 * b + 0.07)], rot: [0, Math.PI, 0], scale: a.scale });
+      if (a.slot === "hipR" || a.slot === "hipL" || a.slot === "back" || a.slot === "belt" || a.slot === "shoulder") {
+        const { at, rot } = bodyAnchor(a.slot, { bulk: b, hunched: look.hunched, wings: look.wings, longNeck: look.longNeck });
+        k.addModel(a.geometry, { at, rot, scale: a.scale });
+      }
     }
   });
 }
@@ -2068,6 +2077,14 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
         else if (o.hand === "pike" || o.hand === "staff" || o.hand === "gaffi") inHand(k, a, right, [0, 1, 0.05], 0.35);
         else if (o.hand === "pistol") inHand(k, a, right, [0, 0.08, 1], 0.2);
         else inHand(k, a, right, [0, 0.6, 0.55], 0.15);
+      } else if (!i && a.slot === "wrist") {
+        // A band round the forearm just above the hand, its axis along the forearm, as wide as the arm is
+        const from = new THREE.Vector3(...arm[1]);
+        const to = new THREE.Vector3(...arm[2]);
+        const dir = to.clone().sub(from);
+        const at = from.clone().add(dir.clone().multiplyScalar(0.8));
+        const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.normalize()));
+        k.addModel(a.geometry, { at: [at.x, at.y, at.z], rot: [e.x, e.y, e.z], scale: a.scale * b });
       } else if (i && a.slot === "shield") {
         // A generator is worn on the forearm with its emitter forward; a physical shield is carried on the arm's outer side
         if (/generator/.test(a.id)) k.addModel(a.geometry, { at: [arm[1][0] + 0.07 * b, arm[1][1] - 0.02, arm[1][2] + 0.06], rot: [Math.PI / 2, 0, 0], scale: a.scale * 0.7 });
@@ -3284,6 +3301,9 @@ function Gait({ children }: { children: ReactNode }) {
   return <group ref={group}>{children}</group>;
 }
 
+// Sabers made of a hilt and another blade (a model of the hilt and one of the blade, joined once)
+const COMPOSED = new Map<string, THREE.BufferGeometry>();
+
 export function Figure({ kind, ring, name = "", large, marker, species, role, creature, size, player }: { kind: string; ring: string; name?: string; large?: boolean; marker?: boolean; species?: string; role?: string; creature?: string; size?: string; player?: boolean }) {
   const looks = useSpecies();
   const party = usePartyLook();
@@ -3292,11 +3312,24 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
   // What a person holds, wears and carries is loaded (one set of hooks per kind of model, in its own palette) and baked into the body
   // once it is all in; until then the code's own weapon is in the hand
   const wants = base.wants ?? [];
-  const toneOf = (look: KitLook) => TONES[DEFAULT_TONE[look]];
-  const loaded = Object.fromEntries((["armour", "kit", "medical", "prosthetic", "weapon"] as KitLook[]).map((look) => [look, useModels(wants.filter((w) => w.look === look).map((w) => `/assets/${w.model}.glb`), "centre", toneOf(look))]));
-  const ready = wants.length > 0 && wants.every((w) => loaded[w.look][`/assets/${w.model}.glb`]);
+  const toneOf = (look: KitLook) => { const n = toneNameOf(look); return n ? TONES[n] : undefined; };
+  // A saber with a blade shape of its own is two files: the hilt and the blade
+  const urlsOf = (w: Want) => [`/assets/${w.model}.glb`, ...(w.blade ? [`/assets/${w.blade.model}.glb`] : [])];
+  const loaded = Object.fromEntries((["armour", "kit", "medical", "prosthetic", "weapon", "plain"] as KitLook[]).map((look) => [look, useModels(wants.filter((w) => w.look === look).flatMap(urlsOf), "centre", toneOf(look))]));
+  const geometryOfWant = (w: Want): THREE.BufferGeometry | null => {
+    const files = loaded[w.look];
+    const hilt = files[`/assets/${w.model}.glb`];
+    if (!hilt || !w.blade) return hilt ?? null;
+    const blade = files[`/assets/${w.blade.model}.glb`];
+    if (!blade) return null;
+    const key = `${w.look}|${w.model}|${w.blade.model}|${w.blade.scale}`;
+    let made = COMPOSED.get(key);
+    if (!made) { made = composeSaber(hilt, w.name!, blade, w.blade.name, w.blade.scale); COMPOSED.set(key, made); }
+    return made;
+  };
+  const ready = wants.length > 0 && wants.every((w) => geometryOfWant(w));
   const spec = ready
-    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, attach: wants.map((w) => ({ id: w.model, slot: w.slot, scale: w.scale, geometry: loaded[w.look][`/assets/${w.model}.glb`]! })) })
+    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, attach: wants.map((w) => ({ id: w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model, slot: w.slot, scale: w.scale, geometry: geometryOfWant(w)! })) })
     : base;
   return (
     <group scale={large ? 1.5 : 1}>

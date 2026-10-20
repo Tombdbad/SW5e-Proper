@@ -9,7 +9,7 @@ import { Kit, MATERIALS, type Baked } from "../models";
 import { holdsOf, stockLayout, type Item } from "./stock";
 import { buildWeapon, hungWeapon, KENNEY_BLASTER, LENGTH } from "./weapons";
 import { useModels } from "./assets";
-import { DEFAULT_TONE, KIT_MODELS, kitUrl, type KitLook } from "./kitbash";
+import { DEFAULT_TONE, KIT_MODELS, kitUrl, toneNameOf, type KitLook } from "./kitbash";
 import { TONES, type Tone } from "./tones";
 
 const NEAR = 11;
@@ -80,7 +80,7 @@ export function Stock({ name, w, h, seed, buildingType, roomName, tone }: { name
   }, [items]);
   const weaponFiles = useModels(weaponUrls, "centre");
   const propFiles = useModels(propUrls, "base");
-  const toneOf = (look: KitLook) => tone ?? TONES[DEFAULT_TONE[look]];
+  const toneOf = (look: KitLook) => { const n = toneNameOf(look); return tone ?? (n ? TONES[n] : undefined); };
   const [armour, kit, medical, prosthetic] = (["armour", "kit", "medical", "prosthetic"] as const).map((look) => useModels([...kitUrls[look].base], "base", toneOf(look)));
   const meleeFiles = useModels([...kitUrls.weapon.centre], "centre", toneOf("weapon"));
   const files = useMemo(() => ({ ...weaponFiles, ...propFiles, ...armour, ...kit, ...medical, ...prosthetic, ...meleeFiles }), [weaponFiles, propFiles, armour, kit, medical, prosthetic, meleeFiles]);

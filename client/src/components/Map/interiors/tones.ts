@@ -65,8 +65,10 @@ export function retone(geometry: THREE.BufferGeometry, tone: Tone): THREE.Buffer
   const src = geometry.getAttribute("color");
   if (!src) return out;
   const colours = new Float32Array(src.count * 3);
+  const mark = geometry.getAttribute("mark");
   for (let i = 0; i < src.count; i++) {
-    const [r, g, b] = toned(tone, [src.getX(i), src.getY(i), src.getZ(i)]);
+    // A glowing part (a blade, a screen, a lamp) keeps its own colour: the palette is for what a room is made of
+    const [r, g, b] = mark && Math.round(mark.getX(i)) === 2 ? [src.getX(i), src.getY(i), src.getZ(i)] : toned(tone, [src.getX(i), src.getY(i), src.getZ(i)]);
     colours.set([r, g, b], i * 3);
   }
   out.setAttribute("color", new THREE.BufferAttribute(colours, 3));

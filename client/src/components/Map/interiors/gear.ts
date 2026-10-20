@@ -4,6 +4,7 @@
 import { hungWeapon, type Kind } from "./weapons";
 import { KITBASH, type KitLook } from "./kitbash";
 import { KENNEY_BLASTER } from "./weapons";
+import { assetPath, itemRef, modelInfo, needsBlade } from "./items";
 
 export interface Item {
   name: string;
@@ -41,6 +42,11 @@ const MEDICAL: [RegExp, string, Bucket][] = [
 
 export function coverageOf(item: Item): Coverage {
   const { name, equipmentCategory: category } = item;
+  // A model made for this item (interiors/items.ts: the catalogue and the index of the item models)
+  const ref = itemRef(name);
+  if (ref?.model.startsWith("kitbash:")) return { bucket: "shared", model: kit(ref.model.slice(8)), what: ref.model.slice(8) };
+  const own = ref && !ref.model.startsWith("weapon:") ? assetPath(ref.model) : undefined;
+  if (ref && own) return { bucket: "dedicated", model: own, what: ref.blade ? `${ref.model}, ${ref.blade} blade` : ref.model };
   switch (category) {
     case "Weapon": {
       const hung = hungWeapon(name, item.weaponClassification);
@@ -69,7 +75,8 @@ export function coverageOf(item: Item): Coverage {
 export const armourWeight = (item: Pick<Item, "armorClassification">): "light" | "medium" | "heavy" | "shield" | undefined =>
   ({ Light: "light", Medium: "medium", Heavy: "heavy", Shield: "shield" } as const)[(item.armorClassification ?? "") as "Light"];
 
-// The kinds of weapon that are drawn in code (no model yet)
+// The kinds of weapon that are drawn in code when the item has no model of its own (the item models cover them now: sabers, bows, whips and
+// thrown weapons by name; this is what a name the index lacks falls back to)
 export const CODE_KINDS: Kind[] = ["saber", "dualsaber", "bow", "whip", "shield", "thrown", "other"];
 
 // ---------------------------------------------------------------------------------------------
@@ -90,8 +97,9 @@ export interface Gear {
   carried: GearItem[];
 }
 export type Hand = "" | "pistol" | "rifle" | "saber" | "saber2" | "pike" | "gaffi" | "vibro" | "axe" | "bowcaster" | "tool" | "tray" | "datapad" | "staff";
-// Where on the body a model goes: the main hand, the other arm (a shield), either hip, the back, the right arm or the left leg (prostheses)
-export type Slot = "weapon" | "shield" | "hipR" | "hipL" | "back" | "armR" | "legL";
+// Where on the body a model goes: the main hand, the other arm (a shield), either hip, the back, the right arm or the left leg (prostheses),
+// the front of the belt (a buckle, a power pack), the right shoulder (a pauldron, a cannon), the right wrist (a wristpad)
+export type Slot = "weapon" | "shield" | "hipR" | "hipL" | "back" | "armR" | "legL" | "belt" | "shoulder" | "wrist";
 export interface Want {
   slot: Slot;
   // Under /assets, without ".glb"
@@ -99,7 +107,26 @@ export interface Want {
   look: KitLook;
   // How big, against its own size (a person's hand is smaller than a rack's reach)
   scale: number;
+  // For a model of the item catalogue: its name there (its sockets and parts are looked up by it), and, for a saber with a blade shape
+  // of its own, that blade (the file under /assets, its catalogue name, and how long against the shape's own length)
+  name?: string;
+  blade?: { model: string; name: string; scale: number };
 }
+
+// How a catalogue model is looked at: left in its own colours when they mean something (a blade, a grenade's type, a suit's use), else in
+// the palette of what it is (a weapon in gunmetal, armour, medicine, a kit)
+export function lookOfModel(model: string): KitLook {
+  const info = modelInfo(model);
+  if (!info) return "kit";
+  if (info.meta.tone === "none") return "plain";
+  const kind = info.meta.kind ?? "";
+  if (info.meta.slot === "weapon" || info.meta.slot === "weapon-accessory" || kind === "weapon") return "weapon";
+  if (info.meta.slot === "shield" || info.meta.slot === "stand" || kind === "armour" || kind === "shield") return "armour";
+  if (kind === "medical" || kind === "injector") return "medical";
+  return "kit";
+}
+// What the slot of a catalogue model's `meta.slot` means on a figure, if it is worn at all
+const SLOT_OF: Record<string, Slot> = { hipR: "hipR", hipL: "hipL", back: "back", belt: "belt", shoulder: "shoulder", wrist: "wrist" };
 
 // The pose a weapon is held in, from its kind: a blaster pistol at the side, a rifle across the body, a blade up and forward
 export function handOf(item: GearItem | undefined): Hand | undefined {
@@ -113,6 +140,13 @@ export function handOf(item: GearItem | undefined): Hand | undefined {
 export const HAND_WEAPON: Partial<Record<Hand, string>> = { pistol: "Blaster pistol", rifle: "Blaster rifle", vibro: "Vibroblade", axe: "Vibroaxe", pike: "Vibropike", staff: "Electrostaff" };
 
 const weaponWant = (name: string, classification?: string): Want | undefined => {
+  // A weapon with a model made for it (sabers, bows, whips, thrown weapons, a bowcaster...)
+  const ref = itemRef(name);
+  const own = ref && !ref.model.startsWith("weapon:") ? assetPath(ref.model) : undefined;
+  if (ref && own && modelInfo(ref.model)?.meta.slot === "weapon") {
+    const blade = needsBlade(ref) && assetPath(`blade-${ref.blade}`) ? { model: assetPath(`blade-${ref.blade}`)!, name: `blade-${ref.blade}`, scale: ref.bladeScale ?? 1 } : undefined;
+    return { slot: "weapon", model: own, look: lookOfModel(ref.model), scale: 0.85, name: ref.model, ...(blade ? { blade } : {}) };
+  }
   const hung = hungWeapon(name, classification);
   return hung.file ? { slot: "weapon", model: `${(hung.dir ?? KENNEY_BLASTER).replace("/assets/", "")}/${hung.file}`, look: "weapon", scale: hung.scale * 0.85 } : undefined;
 };
@@ -136,9 +170,28 @@ export function wantsOf(hand: Hand, gear?: Gear, role = ""): Want[] {
     if (r) out.push(r[1]);
     return out;
   }
-  if (gear.shield) out.push(/generator/i.test(gear.shield.name) ? { slot: "shield", model: kit("shield-generator"), look: "armour", scale: 0.5 } : { slot: "shield", model: kit("shield-physical"), look: "armour", scale: 0.5 });
-  const free: Slot[] = ["hipR", "hipL", "back"];
+  if (gear.shield) {
+    // A named shield has a model of its own, sized by its weight (about as wide as the kit's, at this scale)
+    const ref = itemRef(gear.shield.name);
+    const own = ref && !ref.model.startsWith("kitbash:") ? assetPath(ref.model) : undefined;
+    if (ref && own) out.push({ slot: "shield", model: own, look: lookOfModel(ref.model), scale: /generator/i.test(gear.shield.name) ? 0.6 : 0.8, name: ref.model });
+    else out.push(/generator/i.test(gear.shield.name) ? { slot: "shield", model: kit("shield-generator"), look: "armour", scale: 0.5 } : { slot: "shield", model: kit("shield-physical"), look: "armour", scale: 0.5 });
+  }
+  const free: Slot[] = ["hipR", "hipL", "back", "belt", "shoulder", "wrist"];
   for (const item of gear.carried) {
+    // An item with a model made for it that is worn (a holster, a quiver, a pack, a buckle, a pauldron, a wristpad) goes where its model says,
+    // or on the other hip when that one is taken
+    const ref = itemRef(item.name);
+    const info = ref && !ref.model.includes(":") ? modelInfo(ref.model) : undefined;
+    const worn = info ? SLOT_OF[info.meta.slot ?? ""] : undefined;
+    if (ref && info && worn) {
+      const slot = free.includes(worn) ? worn : worn === "hipR" && free.includes("hipL") ? "hipL" : worn === "hipL" && free.includes("hipR") ? "hipR" : undefined;
+      if (slot) {
+        free.splice(free.indexOf(slot), 1);
+        out.push({ slot, model: assetPath(ref.model)!, look: lookOfModel(ref.model), scale: 1, name: ref.model });
+      }
+      continue;
+    }
     const c = coverageOf(item);
     const name = c.model?.replace("kenney-kitbash/", "");
     if (!name) continue;

@@ -6,23 +6,25 @@ import { armourWeight, coverageOf, type Item } from "../../client/src/components
 const items: Item[] = JSON.parse(fs.readFileSync("shared/data/sw5e/equipment.json", "utf8"));
 const named = (name: string) => items.find((i) => i.name === name)!;
 
-test("armour is covered by the rules data's own class, shields by what they are", () => {
-  assert.equal(coverageOf(named("Combat suit")).model, "kenney-kitbash/armour-light");
-  assert.equal(coverageOf(named("Composite armor")).model, "kenney-kitbash/armour-medium");
-  assert.equal(coverageOf(named("Battle armor")).model, "kenney-kitbash/armour-heavy");
-  assert.equal(coverageOf(named("Heavy shield generator")).model, "kenney-kitbash/shield-generator");
-  assert.equal(coverageOf(named("Heavy physical shield")).model, "kenney-kitbash/shield-physical");
+test("every armour and shield has a model of its own, and its weight is the rules data's own class", () => {
+  assert.equal(coverageOf(named("Combat suit")).model, "sw5e-armour/combat-suit");
+  assert.equal(coverageOf(named("Composite armor")).model, "sw5e-armour/composite-armor");
+  assert.equal(coverageOf(named("Battle armor")).model, "sw5e-armour/battle-armor");
+  assert.equal(coverageOf(named("Heavy shield generator")).model, "sw5e-armour/heavy-shield-generator");
+  assert.equal(coverageOf(named("Heavy physical shield")).model, "sw5e-armour/heavy-physical-shield");
+  assert.equal(coverageOf(named("Combat suit")).bucket, "dedicated");
   assert.equal(armourWeight(named("Battle armor")), "heavy");
   assert.equal(armourWeight(named("Blaster rifle")), undefined);
 });
 test("weapons, kits, tools and prostheses are covered as they are modelled", () => {
   assert.equal(coverageOf(named("Blaster rifle")).bucket, "shared");
   assert.equal(coverageOf(named("Vibroblade")).model, "kenney-kitbash/vibro-blade");
-  assert.equal(coverageOf(named("Lightsaber")).bucket, "code");
+  assert.deepEqual([coverageOf(named("Lightsaber")).bucket, coverageOf(named("Lightsaber")).model], ["dedicated", "sw5e-sabers/saber-straight"]);
   assert.equal(coverageOf(named("Mechanic's kit")).bucket, "shared");
   assert.equal(coverageOf(named("Tinker's implements")).model, "kenney-kitbash/tool-roll");
-  assert.deepEqual([coverageOf(named("Medpac")).bucket, coverageOf(named("Arm prosthesis")).bucket, coverageOf(named("Torso prosthesis")).bucket], ["dedicated", "dedicated", "none"]);
-  assert.equal(coverageOf(named("Datapad")).bucket, "none");
+  assert.deepEqual([coverageOf(named("Medpac")).bucket, coverageOf(named("Arm prosthesis")).bucket, coverageOf(named("Torso prosthesis")).bucket], ["dedicated", "dedicated", "dedicated"]);
+  assert.equal(coverageOf(named("Datapad")).model, "sw5e-hybrids/datapad");
+  assert.equal(coverageOf(named("Torso prosthesis")).model, "sw5e-ordnance/torso-prosthesis");
 });
 test("every model a coverage names exists", () => {
   for (const it of items) {
@@ -32,7 +34,7 @@ test("every model a coverage names exists", () => {
 });
 
 import { handOf, wantsOf, type Gear } from "../../client/src/components/Map/interiors/gear";
-test("a character's weapon sets their pose and their model; sabers stay in code", () => {
+test("a character's weapon sets their pose and their model; a saber has its own", () => {
   assert.equal(handOf(named("Blaster pistol")), "pistol");
   assert.equal(handOf(named("Blaster rifle")), "rifle");
   assert.equal(handOf(named("Vibroaxe")), "axe");
@@ -43,7 +45,13 @@ test("a character's weapon sets their pose and their model; sabers stay in code"
   assert.equal(w.slot, "weapon");
   assert.match(w.model, /^kenney-blaster\/blaster-/);
   assert.ok(w.scale > 0.3 && w.scale < 1.2);
-  assert.deepEqual(wantsOf("saber", { weapons: [named("Lightsaber")], carried: [] }), []);
+  const saber = wantsOf("saber", { weapons: [named("Lightsaber")], carried: [] });
+  assert.deepEqual(saber.map((x) => [x.slot, x.model, x.look, x.blade]), [["weapon", "sw5e-sabers/saber-straight", "weapon", undefined]]);
+  // A saber whose name wants another blade is a hilt and a blade shape, joined when they are loaded
+  const axe = wantsOf("saber", { weapons: [named("Lightaxe")], carried: [] })[0];
+  assert.equal(axe.model, "sw5e-sabers/saber-straight");
+  assert.deepEqual(axe.blade, { model: "sw5e-blades/blade-axe", name: "blade-axe", scale: 1 });
+  assert.equal(wantsOf("saber", { weapons: [named("Great-saber")], carried: [] })[0].blade?.scale, 1.4);
 });
 test("shields, kits, medicine and prostheses go where they are worn, each place once", () => {
   const gear: Gear = {
@@ -56,7 +64,21 @@ test("shields, kits, medicine and prostheses go where they are worn, each place 
   for (const slot of ["weapon", "shield", "armR", "legL", "hipR", "hipL"]) assert.ok(slots.includes(slot as never), slot);
   assert.ok(slots.length <= 7);
   assert.equal(wants.find((w) => w.slot === "armR")!.model, "kenney-kitbash/prosthesis-arm");
-  assert.equal(wants.find((w) => w.slot === "shield")!.model, "kenney-kitbash/shield-physical");
+  assert.equal(wants.find((w) => w.slot === "shield")!.model, "sw5e-armour/medium-physical-shield");
+  for (const w of wants) assert.ok(fs.existsSync(`client/public/assets/${w.model}.glb`), w.model);
+});
+test("worn gear with a model goes where the model says, on a free place, and the datapad in the hand is not worn", () => {
+  const gear: Gear = { weapons: [], carried: [named("Holster"), named("Ammo Pouch"), named("Backpack"), named("Power belt"), named("Wristpad"), named("Datapad")].filter(Boolean) };
+  const wants = wantsOf("", gear);
+  const bySlot = Object.fromEntries(wants.map((w) => [w.slot, w.model]));
+  assert.equal(bySlot.hipR, "sw5e-worn/holster");
+  assert.equal(bySlot.hipL, "sw5e-worn/ammo-pouch");
+  assert.equal(bySlot.back, "sw5e-worn/backpack");
+  assert.equal(bySlot.belt, "sw5e-worn/power-belt");
+  assert.ok(!wants.some((w) => w.model.endsWith("datapad")));
+  // Two things for one hip: the second takes the other hip, a third has no place
+  const crowded = wantsOf("", { weapons: [], carried: [named("Holster"), named("Holster"), named("Holster")] });
+  assert.deepEqual(crowded.map((w) => w.slot).sort(), ["hipL", "hipR"]);
   for (const w of wants) assert.ok(fs.existsSync(`client/public/assets/${w.model}.glb`), w.model);
 });
 test("an NPC holds what their outfit's pose says and carries what their work suggests", () => {

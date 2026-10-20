@@ -1,0 +1,9 @@
+	sw5e-instruments
+
+	Item models made for this project in Blender, from primitives and from pieces of CC0 packs: Kenney (www.kenney.nl:
+	Survival Kit, Food Kit, Pirate Kit) and Quaternius (quaternius.com: LowPoly Medieval Weapons). Converted by tools/build-item-assets.mjs.
+
+			------------------------------
+
+	License: (Creative Commons Zero, CC0)
+	http://creativecommons.org/publicdomain/zero/1.0/
