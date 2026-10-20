@@ -1,70 +1,45 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-20 ~01:00 UTC by the previous session. Branch `revive`, last commit `62e1fc4` (pushed), CLAUDE.md edited and not yet committed with this file.
+Written 2026-10-20 ~09:00 UTC. Branch `revive`. `main` is at `3aa0586` (the full e2e run, merged as a fast-forward).
 
-## What the last session did (all committed and pushed)
-- Station-kit walls, recolour per room, Space Kit machines, caves, kitbash models: `f2dd4f1`..`7f79966`. Curved kit walls on round rooms: `b047926`. Details: REVIVAL_NOTES.md (the long 2026-10-19 bullets in "Interiors overhaul").
-- Model coverage list and TODO (`npm run coverage:models`, notes section "Model coverage and TODO"): `22ec834`.
-- Over-the-shoulder / first-person views with an aimed crosshair (on foot and in fights): `1a4ed07`, `62e1fc4`. Files: `interiors/aim.ts`, `interiors/ViewRig.tsx`; button "View:" in the map bar, key V.
-- Walking animation (`interiors/limbs.ts`, `Kit.limb`, `Walker`/`Gait` in models.tsx): `b7eb0bb`.
-- Gear on figures (weapons, shields, kits, medicine, prostheses, armour weight): `2040cdb`. Files: `interiors/gear.ts`, `gearOf` in characterCalculation.ts.
-- The test copy (port 5001, `https://sw5e.tailb1e5d7.ts.net:8443`) was rebuilt from the last code change. The live `sw5e` service (5000) was never touched and is on an older build (promoting it needs the user's go-ahead).
+## State now
+- **Live service `sw5e` (port 5000)** runs a build of `main` at `3aa0586`, restarted 08:55 UTC on the user's go-ahead. Backup taken first: `~/sw5e-backups/sw5e-20261020-085534.sql.gz`. Migrations 0001-0003 are applied.
+- **Test copies are stopped:** `sw5e-test` (5001, showcase seed 34, DB `sw5e_test`) and `sw5e-plain` (5002). Start again with `sh deploy/test-copy.sh` or `sh deploy/test-plain.sh` when testing new features.
+- **Nothing else is running.** The background agent `cc71904b` has stood down.
+- **Full play-through (`e2e/play.mjs`, plain copy, no showcase, speeder race skipped): 88 of 88 steps pass.** Run 08:25 UTC, log `~/e2e-full.log`.
 
-## Running now / half done
-- 2026-10-20 ~01:10: the run on 5001 (showcase on) finished: 78 pass, 11 fail (log `~/e2e-run4.log`). Started `sw5e-compare` (user unit, `deploy/compare-e2e.sh`): builds HEAD with the showcase OFF on port 5002, runs the play-through (`~/e2e-head.log`), then does the same for commit 6373324 (`~/e2e-base.log`). When it finishes it writes `~/e2e-compare.txt`. Compare the FAIL lines of the two logs (`grep ^FAIL`). Takes 1 to 2 hours; do not start other browser or build jobs meanwhile.
-- (older note) 
-- `sw5e-e2e` (user unit) was running the full play-through against 5001 since 00:08 UTC, log `~/e2e-run4.log`, screenshots `e2e/out/play`. Check `systemctl --user is-active sw5e-e2e`; do not build, run tsc/tsx or other browser jobs while it runs (the 3D steps fail under load).
-- At 01:00 it had 75 pass, 11 fail (see below). Run 3 (`~/e2e-run3.log`, before the showcase world and before this session) had 72 steps, 6 failures, all of which were load or timing.
+## Done (all on `revive`, merged to `main`)
+- Stacked rooms and stairs: `auditBuildings` (shared/logic) with `tests/world/layouts.test.ts` and `stairs.test.ts`; switchback stairwells; galleries.
+- Ship decks: fixed plans per size, `tests/world/decks.test.ts`.
+- Caves: organic masks (`shared/logic/caves.ts`), passages 2-6 squares wide.
+- City planets: sewers instead of caves, speeder platforms as district ways (`tests/world/city-planets.test.ts`).
+- Eye views: ceilings over roofed rooms; `interiors/aim.ts` and `ViewRig.tsx` reticle.
+- Stick: `interiors/stick.ts`, one size and expo curve for walking, race and dogfight; Run/Walk button (key R).
+- Walking animation (`interiors/limbs.ts`); gear on figures (`interiors/gear.ts`).
+- Details: REVIVAL_NOTES.md, the 2026-10-20 bullet under "Interiors overhaul".
 
-## Requested by the user, NOT STARTED (2026-10-20): stacked buildings, switchback stairs, Coruscant
-Do not start while `sw5e-compare` runs (it needs the VM idle). Ask nothing before starting; the user gave the brief below.
-1. **A logic check like the one that proves locations are accessible** (`tests/interiors/doors.test.ts`, `floors.test.ts` are the nearest; also the e2e "world checked against the rules data" step), for the generator's stacked rooms (`linkUpperFloors` was removed; upper rooms now take their ground partner's footprint one level up, `linkFloors`/`planBuilding` in `shared/logic/index.ts`). It must show, over many seeds and building types: every room is reachable from the way in by walking (doors, stairs, lifts, ladders), every door sits on a wall two rooms share on a floor both stand on, every stair or lift has a landing room on both floors with an open square at each end, and nothing is orphaned.
-2. **Known breakage to fix (reported by the user, may be a test-server artefact but must not reach main):** not all stacked rooms have their access doors correctly situated, and the steps up to a mezzanine level are broken (placement). Reproduce first: the showcase world (`SW5E_SHOWCASE_SEED=34`) and `e2e/interiors-room.mjs`/the gallery `rooms` view help; write the failing test before fixing.
-3. **Switchback stairwells** to reach a room directly above or below, working across two AND MORE levels (a stair that doubles back on itself, landing at each floor; a stack of 3+ rooms is reached by a continuous stairwell, not by one stair per pair). Update `Form`/`linkLevels`/`StairsAsset`/`Ascent` (LocalMap.tsx) and the footprint rules so a stairwell reserves the same squares on every floor it serves.
-4. **Coruscant** (and any city-planet): its locations should mostly be the "stacked" type (towers of rooms), connected by **catwalks** between buildings and **speeder platforms** for travel between districts. Coruscant is a planet-wide metropolis, so the word "settlement" does not fit there: find the right word for the level (district, level, tower complex) in the generator's area kinds and UI text. It has **no caves**: introduce **sewers** (and perhaps under-levels) in their place, as the dungeon-like locations. Look at how world generation picks building and cave types per planet (`shared/logic/index.ts`, `BUILDINGS`/biome tables around the building plans, "urban" biome) and the e2e step that expands "Coruscant".
-5. Keep the rule: rules content stays in `shared/data`; generation stays pure functions in `shared/logic`; update `REVIVAL_NOTES.md`, add tests, run the e2e on a copy with the showcase OFF (`deploy/compare-e2e.sh` shows how) before calling it done.
+## Still open
+- **Item models** (TODO in REVIVAL_NOTES.md, "Model coverage and TODO"): 184 of 507 equipment items have no model; 69 weapons are code-only. Next: find and download free packs, then deconstruct, rescale, recolour and low-poly-build hybrids. Sources manifest: `~/asset-sources/MANIFEST.md`.
+- Coruscant catwalks between buildings are not built (only platforms and roof catwalks exist).
+- Fight-view ceilings: drawn but not looked at in a browser.
+- The Run/Walk ratio is unit-tested only.
+- Accent colour makes a whole bunk or generator one colour (loud in barracks). Fix or leave? (user's call)
 
-## Also requested by the user, NOT STARTED (2026-10-20): caves, ceilings, ship interiors
-Same rule: do not start while `sw5e-compare` runs. Write the failing test first where the brief is checkable.
-1. **Caves must not use the standard building generation.** They currently look like other buildings, which is WRONG. A cave needs: an organic-looking entrance; interiors of organic, winding passages (no straight walls, no rectangular rooms); mostly narrow (never more than 5 or 6 squares wide, never fewer than 2), with the occasional larger chamber. Today a cave is a "building" planned by `planBuilding` with rectangular rooms and the rock walls drawn over them (`interiors/cave.ts`, `CaveRoom.tsx`, `RockWall`); the footprint, not just the walls, has to become organic (compare `shared/logic/footprint.ts` for round rooms: a cave room's squares should be a cave-shaped mask, with the same rule that nothing stands on a cut square and every way in stands). Test: width of every passage between 2 and 6 squares, the floor is one connected piece, entrances and exits are on floor squares.
-2. **Coruscant's sewers** (the replacement for caves on a city planet, see the section above) are NOT organic: straight, built passages, still mainly narrow, with a few larger chambers.
-3. **Ceilings.** Overhead view, while the party is inside a building, cave, ship or sewer: roofs and ceilings are transparent (as the opened room is now). Over-the-shoulder and first-person views: the interior ceiling is drawn (NOT the sky; today the opened room has no roof at all, so those views show sky). `RoomShell` already has `fullWalls` for the eye views (`viewing` in BuildingScene, FightScene); add a ceiling there, lit as an interior (`Sky` has an `indoors` factor; caves want a rock ceiling, ships a deck head, buildings a plain ceiling), and keep the overhead view as it is.
-4. **Ship interiors.** The user got stuck between the hyperdrive module and the access hatch on a "tiny" ship's interior. Extend the furniture placement logic (the room-layout planner and `ROOM_PLANS`, `furnishRoom` in `shared/logic/index.ts`) to ship decks so that every door and hatch keeps a clear way to every other (a walkability check over many ships and sizes, tiny first: no squares sealed off, a 1-square clear path from each hatch to the others). Consider whether small ships should be hand-authored layouts instead of generated ones (a table of deck plans per ship type and size in shared/logic or shared/data, with the generator only for odd cases): decide and say which in REVIVAL_NOTES.md.
+## Next: item models
+- The Kenney packs are not on the VM any more; only the converted output in `client/public/assets/` (`kenney-blaster`, `kenney-space`, `kenney-station`, `kenney-furniture`, `kenney-kitbash`, about 2.4 MB). Downloads go to `~/asset-sources/<pack>/`, outside the repo, with licences recorded.
+- Pipeline to reuse: `tools/convert-assets.mjs` (`npm run convert:assets`), `tools/kitbash.mjs` and `tools/kitbash-recipes.mjs`, `tools/inspect-glb.mjs`, palettes in `shared/art/tones.json`, buckets in `interiors/gear.ts`, `npm run coverage:models`.
+- Keep: hero and low detail (under 120 triangles for low), no textures, the 10 MB budget (`test:assets`), a CREDITS.md entry for every pack.
 
-## Progress 2026-10-20 (stacked rooms, stairs; committed)
-Done: `auditBuildings(world)` in shared/logic (floors, ways standing and uncovered, doors with doors back, stairs with stairs back, stacked rooms on their partner's footprint with stairs, galleries whose stairs meet them, every room reachable) and `tests/world/layouts.test.ts` (23 worlds) + `tests/world/stairs.test.ts`. Fixed along the way: `walkable()` treated stairs as unreachable so rooms with stairs got no blocking furniture; tall rooms are no longer stacked (the Main bar over the Dance floor bug); stairwells (`stairwellSpot`, 2x3 or 3x2 switchbacks, else 1x2) and gallery stairs (`galleryStairs`) are laid out AFTER the doors on squares that stand, clear of everything, leaving the floor whole; doors keep off occupied squares; ships, caches and people keep off every way; exits keep off cut squares; a displaced room is anchored only to a room on its floor; rooms stranded by a dropped passage are joined by a door or a bridging corridor (`joinStranded`); three-floor towers (`addTower` in linkFloors). The 3D `StairsAsset` draws a switchback for a stairwell of two flights. The e2e "floors" step no longer checks pinched corners (it ignored round rooms: that was the pre-existing failure); the audit does. Modular e2e on a plain copy (ONLY="^(rules data|world generator|home loads|create Fighter|character page|3D map|trade)"): floor tap, fight tap, cantina and trade now PASS (the cantina and trade failures were the Bar counter not being placed in rooms with stairs, from the walkable() bug; the fight step guessed pixel offsets and now asks the probe for `me+dx,dy` squares). Still to do from the brief: ship interiors, caves and sewers, ceilings in eye views, the stick/run, Coruscant stacked towers/catwalks/speeder platforms, then the remaining pre-existing e2e failures (floor tap, fight tap, cantina, trade; consular passes alone, it fails only late in the full run).
-
-## State (2026-10-20 ~06:00 UTC)
-The full play-through on the plain copy (port 5002, no showcase) came back clean: 88 pass, 0 fail (speeder race skipped by default, `RACE=1` runs it). `revive` was merged into `main` (fast-forward) and pushed. The live `sw5e` service (5000) was NOT touched and runs an older build; promoting needs the user's go-ahead (`npm run build` in ~/SW5e-Proper, then `sudo systemctl restart sw5e`). The test copy on 5001 (showcase world) is older than HEAD: `sh deploy/test-copy.sh` rebuilds it. Open points: Coruscant catwalks between buildings are only the existing roof catwalks and transit lines (nothing new); the eye-view ceilings in fights were not looked at; the Run/Walk ratio was unit-tested but not measured in a browser; the consular fight e2e step needs a 60 s wait for its Fight button under load (the first 3D frame blocks the page).
-
-## Result of the comparison (2026-10-20 03:10, no showcase)
-HEAD: 82 pass, 7 fail. Pre-session commit 6373324: 82 pass, 5 fail so far (still finishing). The SAME five fail at both, so this session's work (views, animation, gear, walls, kitbash) introduced no regression: floors check ("furniture touching only at a corner", Inspection room seed 1; a generator bug, see the stacked-rooms item), 3D map floor tap walks the character, 3D map fight tap moves the character, 3D map cantina ("Cannot read properties of undefined (reading 'id')": the step finds no cantina/bartender), trade (bartender menu). HEAD alone also failed: consular (a long-standing failure, see below) and the speeder race (did not finish in time, load; now opt-in). Logs: `~/e2e-head.log`, `~/e2e-base.log`. These pre-existing failures are the first thing to fix (they are the previous session's generator and map work), starting with the floors check since it is the user's stacked-rooms complaint.
-
-## Decisions from the user (2026-10-20)
-- The speeder race step is left out of the default e2e (`RACE=1` or `ONLY=race` runs it); the user finds the race works and will report problems.
-- The consular fight step ("consular in play: the powers chosen in creation are cast in a fight") has failed for a long time; the user has no consular character to test with, so it is unconfirmed whether it is a real bug. Get to the bottom of it (is the 'Fight' button missing for that character, or is the step wrong?).
-- No separate worktree: one CPU, so e2e runs one at a time. Work in small commits on `revive`; run e2e in slices with `ONLY=<regex>`; the full run last, on an idle VM.
-
-## Also requested (2026-10-20), queued after the fixes and the generator work
-- **Bigger mobile control stick** for the speeder race, the dogfight (flying games: `FlightScene.tsx`, the "drag pad") and the on-foot shoulder/first-person walk (`interiors/ViewRig.tsx` Overlay: stick is 96 px now, thumb 36).
-- **Variable walking speed on the stick with expo** (a response curve, e.g. speed = sign * |x|^2 .. 3 of the deflection, with a small dead zone), and a **Run toggle button** next to the stick. Today the walk speed is fixed at 7 squares a second (`useFrame` in BuildingScene: `step = delta * 7`) and that is the RUN speed; with Run OFF the speed is 30% lower (4.9). Keys keep full deflection. The step queue (`stepToward`) must carry the speed to the walk loop (a speed factor on `walk.current`, or a `moveSpeed` ref), and the stride animation follows by itself (it reads displacement). Keep the stick sizes in one place and test the curve as a pure function (`tests/interiors/`).
-
-## Workflow the user ordered (2026-10-20)
-After the comparison runs: for each item (the e2e regressions, then each item above, in this order: stacked-room doors and mezzanine steps with the logic check; switchback stairs; ship interiors; caves and sewers; ceilings in the eye views; the bigger stick with expo and run) write modular tests for what you touch (node tests in `tests/` for logic; `ONLY=<regex> node e2e/play.mjs` or a small `e2e/*.mjs` for the browser), run them, and only when they are clean move to the next item. When all are done run the FULL e2e (showcase off, idle VM); when that is clean, push and merge `revive` into `main` (the user authorised this merge; it does NOT authorise restarting the live `sw5e` service or building into `~/SW5e-Proper/dist`; ask before that).
-
-## Next steps, in order
-1. Decide whether the 11 e2e failures are mine. Suspect cause for most: the test copy runs the fixed showcase world (`SW5E_SHOWCASE=1`, `deploy/test-copy.sh`), so tests that expect their own seeded world fail (no second planet, no off-world exits, no seed-7 areas). Failures: unvisited planet built on demand; short/long rest (Long rest button disabled); off-world shuttle; level-up on the character page; 3D map double taps galaxy to building ("nothing on the map for area:a94"); 3D map fight tap moves the character; 3D map people in the cantina "nobody moved in 20 seconds"; trade bartender; sites; streets x2.
-   Worrying ones, which could be this session's changes (Hit meshes now register in a registry, `Figure` now wraps humanoids in `Walker` and others in `Gait`, fight figures are inside a `Turner` group): the fight tap, the cantina movement, trade, sites and streets.
-2. To settle it: when the run has ended, build a copy with the showcase OFF and run `e2e/play.mjs` on it twice, once from HEAD and once from `6373324` (the commit before this work; use `git worktree` or a clean checkout in a scratch directory, not the working tree). Compare failure lists. Showcase off: copy `deploy/test-copy.sh`, drop `SW5E_SHOWCASE=1`/`SEED`, use another port (5002) and another unit name, keep the `sw5e_test` database. Run each as a systemd user unit (`systemd-run --user`), 45 to 60 minutes each.
-3. If the fight/cantina/trade/sites/streets failures are caused by this work, fix them (look first at `Hit`'s effect in LocalMap.tsx, `Turner`, and `Walker` in models.tsx; `window.__map3d` Probe locate keys).
-4. Update REVIVAL_NOTES.md "Play-through test" with the result, commit, push.
-5. Model TODO list (notes): sabers/bows/whips/thrown weapons still code-drawn; 18 worn accessories (jetpack, holster, bandolier...) and most storage/utility items have no model; ear/facial/throat/torso prostheses; named armour suits look alike per weight.
-
-## Not decided / worth asking the user
-- Promote the test build to the live service (`sudo systemctl restart sw5e` after `npm run build` in `~/SW5e-Proper`)? The user plays live; ask first.
-- The accent colour makes a whole bunk or generator one colour (loud in barracks); fix or leave?
+## Decisions from the user
+- Speeder race is opt-in (`RACE=1`).
+- The consular fight step waits 60 s for the Fight button (its first 3D frame blocks the page).
+- No separate worktrees. One CPU: run e2e one at a time, on an idle VM.
+- Commits: `git -c user.name=Tombdbad -c user.email=<account email> commit`, with the Co-Authored-By trailer.
+- Future builds for the live service: `npm run build && sudo systemctl restart sw5e`, after checking the journal for recent saves.
 
 ## Things learned
-- The test copy build: `sh deploy/test-copy.sh` (about 1 minute); gallery shots: `BASE=http://127.0.0.1:5001 node e2e/interiors.mjs <view>` (views: racks wealth caves moods rounds packs tones rooms kitbash shops walk gear, `CAM=`/`LOOK=`/`LOADOUT=` env). Real room in a view: `VIEWMODE=first KEYS="KeyW,1500" node e2e/interiors-room.mjs armsmith`; fights: `e2e/fight-view.mjs`.
-- Kenney kits are not kept; re-download from kenney.nl to rebuild converted models or kitbash (`tools/convert-assets.mjs`, `tools/kitbash.mjs`).
-- Commit with `git -c user.name=Tombdbad -c user.email=sjerps.nadine@gmail.com commit ...` and the Co-Authored-By trailer given in the session.
+- `bash deploy/backup.sh`: `sh` fails on `pipefail`.
+- Gallery shots: `BASE=http://127.0.0.1:5001 node e2e/interiors.mjs <view>`; a real room: `VIEWMODE=first KEYS="KeyW,1500" node e2e/interiors-room.mjs armsmith`; fights: `e2e/fight-view.mjs`.
+- Modular e2e: `ONLY="<regex>" node e2e/play.mjs` on port 5002 (`sh deploy/test-plain.sh` rebuilds it).
+- Do not build, run `tsc`/`tsx` or start a browser while the full run is going: the 3D steps fail under load.
+- `npx tsc --noEmit` shows hundreds of errors in legacy files; only fix errors in code the app uses.
