@@ -1,7 +1,8 @@
 // Recolouring the downloaded models (2026-10-19). A converted model keeps the colours its pack gave it; the room it stands
 // in decides its palette, so that one room (walls, furniture, machines) reads as one place and a workshop, a sickbay and a
 // palace do not look alike. Colours are turned by lightness along a three-stop ramp (dark, middle, light), and the saturated
-// ones (a hazard stripe, a lamp, a trim) become the palette's accent. The ramps are in shared/art/tones.json, which
+// ones (a hazard stripe, a lamp, a trim) become the palette's accent; the less saturated a colour, the more of the ramp stays in it,
+// and a model that is mostly coloured has the accent held back (`holdOf`), so a bunk is not one loud colour. The ramps are in shared/art/tones.json, which
 // tools/convert-assets.mjs also reads. Pure but for the geometry it is given: tests/interiors/tones.test.ts.
 import * as THREE from "three";
 import data from "@shared/art/tones.json";
@@ -32,18 +33,52 @@ export const saturation = ([r, g, b]: Rgb) => {
   return hi <= 1e-6 ? 0 : (hi - Math.min(r, g, b)) / hi;
 };
 const lightness = ([r, g, b]: Rgb) => Math.min(1, 0.2126 * r + 0.7152 * g + 0.0722 * b);
-const SATURATED = 0.42;
+// Below SATURATED a colour is a material and follows the ramp; from FULL up (hazard stripes, lamps, crystals) it is the accent;
+// between, the two are mixed (wood, a blanket: coloured, but not a signal), so the parts of a bed or a table still differ
+const SATURATED = 0.5;
+const FULL = 0.75;
 
-// The colour a model colour becomes in a tone
-export function toned(tone: Tone, rgb: Rgb): Rgb {
+// How much of the accent a colour takes (0 none, 1 all of it)
+export function accentShare(rgb: Rgb): number {
+  const x = Math.min(1, Math.max(0, (saturation(rgb) - SATURATED) / (FULL - SATURATED)));
+  return x * x * (3 - 2 * x);
+}
+
+// The colour a model colour becomes in a tone. `hold` (0..1) scales the accent down for a model that is mostly coloured
+export function toned(tone: Tone, rgb: Rgb, hold = 1): Rgb {
   const l = lightness(rgb);
   const t = Math.min(1, l * 1.6);
-  if (saturation(rgb) >= SATURATED) {
-    const f = Math.min(1.25, 0.35 + t * 0.95);
-    return [Math.min(1, tone.accent[0] * f), Math.min(1, tone.accent[1] * f), Math.min(1, tone.accent[2] * f)];
+  const m = accentShare(rgb) * hold;
+  // A coloured material (wood, a blanket) sits lower in the ramp than a grey as light as it, so that it does not turn to paper
+  const s = t * (1 - 0.45 * Math.min(1, Math.max(0, (saturation(rgb) - 0.35) / 0.25)));
+  const [a, b, f] = s < 0.5 ? [tone.ramp[0], tone.ramp[1], s * 2] : [tone.ramp[1], tone.ramp[2], (s - 0.5) * 2];
+  const ramp: Rgb = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  if (m <= 0) return ramp;
+  const k = Math.min(1.25, 0.35 + t * 0.95);
+  return [0, 1, 2].map((i) => ramp[i] + (Math.min(1, tone.accent[i] * k) - ramp[i]) * m) as Rgb;
+}
+
+// How much of a model's surface the accent may cover before it turns loud: an accent is a stripe, a lamp or a trim, so a model that
+// is mostly coloured (a bunk, a sofa, a barrel) has it held back, and its parts keep to the ramp where they are materials
+const LOUD = 0.35;
+export function holdOf(geometry: THREE.BufferGeometry): number {
+  const pos = geometry.getAttribute("position");
+  const col = geometry.getAttribute("color");
+  if (!pos || !col) return 1;
+  const index = geometry.getIndex();
+  const triangles = (index ? index.count : pos.count) / 3;
+  const at = (i: number) => (index ? index.getX(i) : i);
+  const [p, q, r, u, v] = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  let area = 0;
+  let coloured = 0;
+  for (let n = 0; n < triangles; n++) {
+    const [i, j, k] = [at(n * 3), at(n * 3 + 1), at(n * 3 + 2)];
+    const a = u.subVectors(q.fromBufferAttribute(pos, j), p.fromBufferAttribute(pos, i)).cross(v.subVectors(r.fromBufferAttribute(pos, k), p)).length();
+    area += a;
+    coloured += a * accentShare([col.getX(i), col.getY(i), col.getZ(i)]);
   }
-  const [a, b, f] = t < 0.5 ? [tone.ramp[0], tone.ramp[1], t * 2] : [tone.ramp[1], tone.ramp[2], (t - 0.5) * 2];
-  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  const share = area > 0 ? coloured / area : 0;
+  return share <= LOUD ? 1 : Math.max(0.7, Math.sqrt(LOUD / share));
 }
 
 // A tone for a place on a world: the named palette's accent, with the ramp drawn from the colour its walls are on that world
@@ -66,9 +101,10 @@ export function retone(geometry: THREE.BufferGeometry, tone: Tone): THREE.Buffer
   if (!src) return out;
   const colours = new Float32Array(src.count * 3);
   const mark = geometry.getAttribute("mark");
+  const hold = holdOf(geometry);
   for (let i = 0; i < src.count; i++) {
     // A glowing part (a blade, a screen, a lamp) keeps its own colour: the palette is for what a room is made of
-    const [r, g, b] = mark && Math.round(mark.getX(i)) === 2 ? [src.getX(i), src.getY(i), src.getZ(i)] : toned(tone, [src.getX(i), src.getY(i), src.getZ(i)]);
+    const [r, g, b] = mark && Math.round(mark.getX(i)) === 2 ? [src.getX(i), src.getY(i), src.getZ(i)] : toned(tone, [src.getX(i), src.getY(i), src.getZ(i)], hold);
     colours.set([r, g, b], i * 3);
   }
   out.setAttribute("color", new THREE.BufferAttribute(colours, 3));

@@ -16,13 +16,19 @@ const saturation = ([r, g, b]) => {
   const hi = Math.max(r, g, b);
   return hi <= 1e-6 ? 0 : (hi - Math.min(r, g, b)) / hi;
 };
-export const toned = (tone, rgb) => {
+// Below 0.5 a colour is a material and follows the ramp, from 0.75 up it is the accent, between the two are mixed
+const accentShare = (rgb) => {
+  const x = Math.min(1, Math.max(0, (saturation(rgb) - 0.5) / (0.75 - 0.5)));
+  return x * x * (3 - 2 * x);
+};
+export const toned = (tone, rgb, hold = 1) => {
   const l = Math.min(1, 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]);
   const t = Math.min(1, l * 1.6);
-  if (saturation(rgb) >= 0.42) {
-    const f = Math.min(1.25, 0.35 + t * 0.95);
-    return tone.accent.map((v) => Math.min(1, v * f));
-  }
-  const [a, b, f] = t < 0.5 ? [tone.ramp[0], tone.ramp[1], t * 2] : [tone.ramp[1], tone.ramp[2], (t - 0.5) * 2];
-  return [0, 1, 2].map((i) => a[i] + (b[i] - a[i]) * f);
+  const s = t * (1 - 0.45 * Math.min(1, Math.max(0, (saturation(rgb) - 0.35) / 0.25)));
+  const [a, b, f] = s < 0.5 ? [tone.ramp[0], tone.ramp[1], s * 2] : [tone.ramp[1], tone.ramp[2], (s - 0.5) * 2];
+  const ramp = [0, 1, 2].map((i) => a[i] + (b[i] - a[i]) * f);
+  const m = accentShare(rgb) * hold;
+  if (m <= 0) return ramp;
+  const k = Math.min(1.25, 0.35 + t * 0.95);
+  return ramp.map((v, i) => v + (Math.min(1, tone.accent[i] * k) - v) * m);
 };
