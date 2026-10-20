@@ -28,6 +28,13 @@ Plan: `~/.claude/plans/we-have-an-issue-wise-mango.md`. LIVE: user said "push to
 - Cost: a world with its starting planet built has 290 areas (274 before), ~2 s as before; seed 1 fully built 9027 areas (7596 before, +19%), 59 s (49 s before), 13.7 MB of JSON.
 - Known gap: a fight that starts on a switchback (a squad walking in on the party on the stairs) uses the room's flat squares, so it could cross the well; not handled. The landing can take a door to a half-level room, none is generated yet.
 
+## IN PROGRESS (2026-10-20 ~19:40 UTC): taller stacks, roof stairs, windows, balconies (user asked; same rules: judge, no full e2e, test touched modules)
+1. Taller columns (city towers up to 6 floors) and sub-basements: more switchbacks stacked in the block's lanes (`stairBlock` ups/downs counts).
+2. Roof stairs: `planDistrict` puts the roof on a column top and adds a switchback from the top floor to the roof with a doorway onto it (way in: outside ladder -> roof -> stairs).
+3. Windows: `RoomAsset.pane` (slit, small, large, wide; open, latched, locked; alarmed); large ground-floor windows can be climbed through (jimmy, pick, break, disable the alarm: house rules, labelled).
+4. Balconies (palace, estates, manor house): open-air room on an upper floor over the street, patio doors (locked, alarmed), climb from the street (Athletics).
+Nothing merged or live until the user says so.
+
 ## Next steps, in order
 1. The stairs are live; the user makes a new campaign to get the new buildings (campaign 144 keeps its old ones). Next merge or restart: ask again.
 1b. The accent fix is live; if the user dislikes it in play, the tuning is the constants in `interiors/tones.ts` (`SATURATED`, `FULL`, `LOUD`, the 0.45 in `toned`).
