@@ -26,7 +26,11 @@ Not rerun since the fixes: a full e2e (50 min). The plain copy 5002 still runs t
 1. The test copy 5001 (showcase) was rebuilt from the commit with this file for the user to look at (`sh deploy/test-copy.sh`). Next full e2e, when the user wants one: `BASE=http://127.0.0.1:5002 OUT=e2e/out/full3 node e2e/play.mjs` as a user unit (`systemd-run --user --unit sw5e-e2e-full ...`), after `sh deploy/test-plain.sh` for the fixes; it takes about 50 min, VM idle.
 2. Ask the user before merging `revive` into `main` or touching the live service.
 3. Work down `ITEM_TODO.md` by group, each time checking the code first and updating `CURATED` in the tool: personal ammunition and special ammunition effects, environmental hazards for life support, encumbrance, effects of the 18 weapon/armour accessories, enhanced explosives and spice (450 enhanced consumables have no facts), loot and vendor gaps (no cache holds instruments, cybernetics or ship items), droid modules drawn on droids, head/neck/finger/feet/hands/torso slots (per-species fitting), blade halo, `off_hand` socket for the second hand, animation.
-4. Open decisions for the user: the packs' `License.txt` offers the models as CC0 (original shapes plus CC0 pieces): confirm; accent colour makes a whole bunk or generator one colour (fix or leave?).
+4. **Decisions for the user (not made yet; ask at the start of the next session):**
+   - Merge `revive` into `main`? `main` is still at `3aa0586`; the earlier go-ahead covered the previous run only.
+   - Promote the live service `sw5e` (port 5000) to this build? Back up the database and check the journal first (`bash deploy/backup.sh`, then `npm run build && sudo systemctl restart sw5e`).
+   - Confirm the CC0 licence text in the 14 packs' `License.txt` (original shapes plus CC0 pieces).
+   - Accent colour makes a whole bunk or generator one colour: fix it or leave it?
 
 ## Decisions from the user
 - Speeder race is opt-in (`RACE=1`). The consular fight step waits 60 s for the Fight button.
