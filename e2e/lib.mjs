@@ -80,6 +80,8 @@ let shot = 0;
 export async function step(ctx, name, fn) {
   // ONLY=<regex> runs just the steps whose names match (the self-contained ones: gear, fights, downtime, ships)
   if (process.env.ONLY && !new RegExp(process.env.ONLY, "i").test(name)) return;
+  // The speeder race is left out of the default run (the user plays it and finds it sound; it takes ten minutes here): RACE=1 runs it
+  if (/speeder race of three laps/.test(name) && !process.env.RACE && !(process.env.ONLY && /race/i.test(process.env.ONLY))) return;
   const { page, events } = ctx;
   const before = events.length;
   const t0 = Date.now();
