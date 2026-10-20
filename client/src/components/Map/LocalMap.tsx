@@ -1772,7 +1772,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (from && (buildingIds.has(from.id) || buildingIds.has(from.parentId ?? ""))) return nearestOpen(open, last);
     if (!inside) return nearestOpen(open, myFront.door);
     const l = inside.layout!;
-    const way = l.assets.find((a) => a.kind === "exit") ?? l.assets.find(isWay);
+    // (a ship's deck has no door: whoever boards arrives beside the boarding ramp, not in the corner of the deck)
+    const way = l.assets.find((a) => a.kind === "exit") ?? l.assets.find(isWay) ?? l.assets.find((a) => a.ref === "station:ramp");
     return nearestOpen(open, way ? { x: l.x + way.x, y: l.y + way.y } : { x: l.x, y: l.y });
   }, [hereId, present]);
   const standing = spot.areaId === hereId ? spot : entry;

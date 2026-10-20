@@ -3841,11 +3841,13 @@ export function shipDeck(ship: Pick<Ship, "id" | "size">): RoomLayout {
   const mid = Math.floor(H / 2);
   const add = (name: string, x: number, y: number, w = 1, h = 1, extra: Partial<RoomAsset> = {}) =>
     assets.push({ id: `${ship.id}-d${++n}`, kind: "furniture", name, x, y, w, h, blocks: true, cover: true, ...extra });
+  // The stations stand against the bow wall, one above the next, each reached from the west; the ramp is at the stern with a clear floor
+  // beside it. No two pieces touch only at a corner and no pocket of floor is shut in (tests/world/decks.test.ts walks every size)
   add("Pilot's seat", W - 2, mid, 1, 1, { ref: `${STATION}helm`, cover: false });
   add("Boarding ramp", 0, mid, 1, 1, { ref: `${STATION}ramp`, cover: false });
   if (H >= 5) {
-    add("Navigation console", W - 3, Math.max(0, mid - 2), 1, 1, { ref: `${STATION}nav` });
-    add("Gunnery seat", W - 3, Math.min(H - 1, mid + 2), 1, 1, { ref: `${STATION}guns` });
+    add("Navigation console", W - 2, Math.max(0, mid - 2), 1, 1, { ref: `${STATION}nav` });
+    add("Gunnery seat", W - 2, Math.min(H - 1, mid + 2), 1, 1, { ref: `${STATION}guns` });
   }
   if (rank >= 2) {
     add("Co-pilot's seat", W - 2, mid - 1, 1, 1, { ref: `${STATION}copilot`, cover: false });
@@ -3857,9 +3859,10 @@ export function shipDeck(ship: Pick<Ship, "id" | "size">): RoomLayout {
   } else if (rank === 1) {
     add("Bunk", 4, 0, 2, 1);
     add("Power coupling", 1, 0, 1, 1, { ref: `${STATION}engines` });
-    add("Crate stack", 1, H - 2, 2, 2);
+    add("Crate stack", 2, H - 2, 2, 2);
   } else {
-    add("Power coupling", 1, 0, 1, 1, { ref: `${STATION}engines` });
+    // (the Tiny deck is 5 by 3: the coupling beside the ramp, so neither shuts in a corner)
+    add("Power coupling", 1, mid, 1, 1, { ref: `${STATION}engines` });
   }
   if (rank >= 3) {
     for (let i = 0; i < Math.min(4, rank); i++) add("Bunk", 11 + (i % 2) * 3, i < 2 ? 0 : H - 1, 2, 1);
@@ -3937,7 +3940,8 @@ export function boardShip(world: World, ship: Pick<Ship, "id" | "name" | "size" 
     ...base, ...(old ?? {}),
     id: deckId, kind: "room", name: `${ship.name}, main deck`, parentId: buildingId, type: "deck",
     tags: [`ship:${ship.id}`, ...(from ? [`from:${from}`] : (old?.tags ?? []).filter((t) => t.startsWith("from:")))],
-    layout: old?.layout ?? shipDeck(ship),
+    // (a deck is a fixed plan for its size, laid out again each boarding so that a world saved with an older plan, one that shut a corner in, is mended)
+    layout: shipDeck(ship),
   } as Area;
   areas[buildingId] = building;
   areas[deckId] = deck;
