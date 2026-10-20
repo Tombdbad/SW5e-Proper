@@ -44,3 +44,12 @@ test("some buildings are towers of three floors, each reached by a stairwell fro
   assert.ok(towers > 0, "no tower of three floors in any world");
   assert.ok(deepest >= 2);
 });
+
+test("caves are organic: every cave room has a winding floor, and there are caves in the worlds", () => {
+  let rooms = 0;
+  for (const seed of [...FULL, ...START]) {
+    const world = generateWorld({ seed, partyLevel: 5, ...(FULL.includes(seed) ? { detail: "all" as const } : {}) }, catalog);
+    for (const a of Object.values(world.areas)) if (a.kind === "room" && a.layout?.mask) rooms++;
+  }
+  assert.ok(rooms >= 8, `${rooms} cave rooms with a winding floor in the test worlds`);
+});

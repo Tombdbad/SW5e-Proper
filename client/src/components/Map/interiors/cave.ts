@@ -115,11 +115,13 @@ export function kitPieceOf(f: Pick<CaveFeature, "kind">, index: number): string 
 
 // What stands in a cave room of w by h squares: features on the squares along its edge (never the middle, which
 // is walked) so that the cave has a rim. `open(x, y)` says whether a square is free of furniture and ways.
-export function caveFeatures(w: number, h: number, seed: number, open: (x: number, y: number) => boolean = () => true): CaveFeature[] {
+// `rim` (for a room whose floor is a winding mask) lists the squares along its edge; without it the edge is the room's rectangle.
+export function caveFeatures(w: number, h: number, seed: number, open: (x: number, y: number) => boolean = () => true, rim?: [number, number][]): CaveFeature[] {
   const next = stream(seed * 31 + 7);
   const out: CaveFeature[] = [];
   const edge: [number, number][] = [];
-  for (let x = 0; x < w; x++) for (let y = 0; y < h; y++) if (x === 0 || y === 0 || x === w - 1 || y === h - 1) edge.push([x, y]);
+  if (rim) edge.push(...rim);
+  else for (let x = 0; x < w; x++) for (let y = 0; y < h; y++) if (x === 0 || y === 0 || x === w - 1 || y === h - 1) edge.push([x, y]);
   for (const [x, y] of edge) {
     if (!open(x, y)) continue;
     const r = next();
@@ -130,6 +132,6 @@ export function caveFeatures(w: number, h: number, seed: number, open: (x: numbe
     else if (r < 0.43) out.push({ kind: "rock", x: fx, y: fy, size: 0.3 + next() * 0.3 });
   }
   // A pool in the middle of a large room, off the squares that are walked: only inside, in the largest chamber
-  if (w * h >= 40 && next() < 0.5) out.push({ kind: "pool", x: w / 2 + (next() - 0.5) * (w / 3), y: h / 2 + (next() - 0.5) * (h / 3), size: 0.9 + next() * 0.7 });
+  if (w * h >= 40 && next() < 0.5 && !rim) out.push({ kind: "pool", x: w / 2 + (next() - 0.5) * (w / 3), y: h / 2 + (next() - 0.5) * (h / 3), size: 0.9 + next() * 0.7 });
   return out;
 }

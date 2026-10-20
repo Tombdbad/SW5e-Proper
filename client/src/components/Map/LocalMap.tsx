@@ -6,13 +6,13 @@ import { useKeyboardControls } from "@react-three/drei";
 import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey, squaresApart, type Combatant } from "@/lib/stores/useCombat";
-import { type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
+import { standsAt, type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
 import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind } from "./sprites";
 import { Atmosphere } from "./interiors/Atmosphere";
 import { Stock } from "./interiors/Stock";
-import { CaveDressing, RockWall } from "./interiors/CaveRoom";
+import { CaveDressing, CaveMound, CaveWalls, MaskFloor, RockWall } from "./interiors/CaveRoom";
 import { moodOf } from "./interiors/atmosphere";
 import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
 import { PackWalls, cornerCentre, type WallRun } from "./interiors/Walls";
@@ -434,7 +434,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // What this room is, for its light, its air and what is in it (interiors/): the kind of building, the room's name, the world
   mood?: { buildingType: string; roomName: string; biome: string };
   // The room's level and what it is, for stairs, lifts and ladders (their floor rises)
-  plan?: Pick<RoomLayout, "level" | "form" | "climb" | "width" | "height">;
+  plan?: Pick<RoomLayout, "level" | "form" | "climb" | "width" | "height" | "mask">;
   assets: RoomAsset[];
   floor: FloorKind;
   wall: string;
@@ -459,6 +459,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // (interiors/): its wealth turns the furniture's browns, steels and golds into its own woods, metal and trim
   const detail = useQuality((q) => q.tier);
   const rocky = !!mood && mood.buildingType === "cave";
+  // A cave room whose floor winds (layout.mask): floor squares, rock round them, no straight walls
+  const mask = rocky ? plan?.mask : undefined;
   const wealth = mood ? wealthOf(mood.buildingType, mood.roomName) : null;
   const look = useMemo(() => (wealth && mood ? lookOf(wealth, mood.biome) : undefined), [wealth, mood?.biome]);
   const atmosphere = useMemo(() => (mood && wealth ? moodOf(mood.buildingType, mood.roomName, wealth, mood.biome) : null), [mood?.buildingType, mood?.roomName, mood?.biome, wealth]);
@@ -471,13 +473,23 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
     }
     return [...set].sort().join(";");
   }, [assets]);
-  // The lines between the squares, as one piece of geometry
+  // The lines between the squares, as one piece of geometry (of the standing squares only, in a cave that winds)
   const grid = useMemo(() => {
     const points: number[] = [];
+    if (mask) {
+      const stands = (x: number, y: number) => mask[y]?.[x] === "#";
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        if (!stands(x, y)) continue;
+        points.push(x, 0.012, y, x + 1, 0.012, y, x, 0.012, y, x, 0.012, y + 1);
+        if (!stands(x + 1, y)) points.push(x + 1, 0.012, y, x + 1, 0.012, y + 1);
+        if (!stands(x, y + 1)) points.push(x, 0.012, y + 1, x + 1, 0.012, y + 1);
+      }
+      return new Float32Array(points);
+    }
     for (let x = 1; x < width; x++) points.push(x, 0.012, 0, x, 0.012, height);
     for (let y = 1; y < height; y++) points.push(0, 0.012, y, width, 0.012, y);
     return new Float32Array(points);
-  }, [width, height]);
+  }, [width, height, mask]);
   // A shaft's walls run up with the floor
   const climbs = plan?.climb ? rise(plan as RoomLayout) : 0;
   const wallH = (fullWalls ? FULL_WALL_HEIGHT : WALL_HEIGHT) + climbs;
@@ -508,7 +520,9 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   return (
     <>
       {/* The floor; a tap on it walks to the square (both floors are centred on the room's middle) */}
-      {rounded ? (
+      {mask ? (
+        <MaskFloor mask={mask} width={width} height={height} color={FLOORS[floor]} onClick={floorTap} />
+      ) : rounded ? (
         <group onClick={floorTap}>
           <RoundedFloor w={width} d={height} radii={[nw, ne, se, sw]} color={FLOORS[floor]} />
         </group>
@@ -525,7 +539,9 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         <lineBasicMaterial color="#ffffff" transparent opacity={0.12} />
       </lineSegments>
       {plan?.climb && plan.form && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} />}
-      {walls
+      {walls && mask
+        ? <CaveWalls mask={mask} ways={assets.filter((a) => a.side).map((a) => ({ x: a.x, y: a.y }))} w={width} h={height} biome={mood!.biome} tier={detail} seed={width * 31 + height} />
+        : walls
         ? (() => {
             const runs = sides.flatMap(({ side, length, at, along, ends }) =>
               wallRuns(length, assets.filter((a) => a.side === side && isWay(a)).map(along)).flatMap((run) => {
@@ -574,7 +590,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         </Glide>
       ))}
       {atmosphere && look && walls && <Atmosphere mood={atmosphere} look={look} w={width} h={height} tier={detail} />}
-      {rocky && <CaveDressing w={width} h={height} seed={width * 31 + height} biome={mood!.biome} tier={detail} takenKey={takenKey} />}
+      {rocky && <CaveDressing w={width} h={height} seed={width * 31 + height} biome={mood!.biome} tier={detail} takenKey={takenKey} mask={mask} />}
       {children}
     </>
   );
@@ -1757,7 +1773,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (inside) {
       const l = inside.layout!;
       const [lx, ly] = [x - l.x, y - l.y];
-      return lx >= 0 && ly >= 0 && lx < l.width && ly < l.height && !shown.some((a) => !a.side && a.blocks && a.x <= lx && lx < a.x + a.w && a.y <= ly && ly < a.y + a.h);
+      return lx >= 0 && ly >= 0 && lx < l.width && ly < l.height && standsAt(l, lx, ly) && !shown.some((a) => !a.side && a.blocks && a.x <= lx && lx < a.x + a.w && a.y <= ly && ly < a.y + a.h);
     }
     return outdoors(x, y);
   };
@@ -1786,6 +1802,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const walk = useRef<{ path: { x: number; y: number }[]; then?: (squares: number) => void; total: number } | null>(null);
   // Over the shoulder or from the eyes (interiors/ViewRig.tsx), instead of the overhead view; `facing` is the way the character looks then
   const mode = useView((v) => v.mode);
+  const tierNow = useQuality((q) => q.tier);
   const viewing = mode !== "overhead" && present && !duel;
   const facing = useRef<number | null>(null);
   useEffect(() => {
@@ -2346,9 +2363,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               ) : (
                 <>
                   <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
+                    {/* A cave is rock, not a building: a mound over its winding floor, open at its mouth */}
+                    {building.type === "cave" && l.mask && !form ? (
+                      <CaveMound mask={l.mask} exits={l.assets.filter((a) => a.kind === "exit").map((a) => ({ x: a.x, y: a.y }))} w={l.width} h={l.height} biome={biome} tier={tierNow} seed={l.width * 31 + l.height} />
+                    ) : (
                     <RoomBlock w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} />
+                    )}
                   </group>
-                  {!opened && !form && !roofed.has(room.id) && (
+                  {!opened && !form && !roofed.has(room.id) && !(building.type === "cave" && l.mask) && (
                     <>
                       {/* What stands on the roof */}
                       {/* (a tower of a palace is capped with a spire, its great hall with a dome) */}

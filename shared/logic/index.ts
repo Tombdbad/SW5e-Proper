@@ -16,6 +16,8 @@
  * The edit and travel functions need only the world itself and run anywhere.
  */
 import { radiiOf as shapeRadii, standing, waysStand, type Shape } from "./footprint";
+import { caveMask, caveStyleOf, describeMask, MAX_WIDTH, MIN_WIDTH, type CaveWay } from "./caves";
+export { caveMask, caveStyleOf, describeMask, MIN_WIDTH, MAX_WIDTH } from "./caves";
 import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eRecord } from "../data";
 import conditionData from "../data/sw5e/conditions.json";
 import downtimeData from "../data/sw5e/downtime.json";
@@ -1777,6 +1779,8 @@ export interface RoomLayout {
   roof?: "open" | "hangar";
   // A round or oval room: the squares outside its curve are not floor (see footprint.ts, standsAt)
   shape?: Shape;
+  // A cave's floor: rows of `#` (stands) and `.` (rock), where the room is not a rectangle of floor but a winding passage or a chamber (see caves.ts)
+  mask?: string[];
 }
 
 // What furnishes a room: name, where it goes (wall, corner, center, far = the wall opposite the
@@ -1881,6 +1885,7 @@ const overlap = (a: { x: number; y: number; width: number; height: number }, b: 
 const curves = new Map<string, boolean[][]>();
 // Whether a square of a room is floor: all are, unless the room is round or oval and it lies outside the curve
 export function standsAt(layout: RoomLayout, x: number, y: number): boolean {
+  if (layout.mask) return layout.mask[y]?.[x] === "#";
   if (!layout.shape) return true;
   const key = `${layout.shape}:${layout.width}x${layout.height}`;
   let grid = curves.get(key);
@@ -3222,6 +3227,17 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
     const name = r.pick(wild ? SECRET_WAYS.wild : SECRET_WAYS.built);
     inWall(room, "secret", name, spot.side, spot.along, { to: buildingId });
     room.secretEntry = { name, dc: 12 + building.danger };
+  }
+
+  // A cave's rooms are not rectangles of floor: each is a winding passage, a mouth or a chamber of rock, by what it is called, with its ways
+  // (set now that they are placed) kept standing (see caves.ts)
+  if (building.type === "cave") {
+    for (const room of rooms) {
+      const l = room.layout!;
+      if (formOf(room) || l.shape) continue;
+      const ways: CaveWay[] = l.assets.filter((a) => a.side && (a.kind === "door" || a.kind === "exit" || a.kind === "secret")).map((a) => ({ x: a.x, y: a.y, side: a.side! }));
+      l.mask = caveMask(l.width, l.height, ways, caveStyleOf(room.name), seed * 31 + Number(room.id.replace(/\D/g, "") || 1));
+    }
   }
 
   // Windows in outside walls, where the room would have them
@@ -5255,13 +5271,23 @@ export function auditBuildings(world: World): string[] {
         const faults = floorFaults(l);
         if (faults) problems.push(`${at(room)}: the floor has ${faults} fault(s) (pinched at a corner, cut in two, or a way that cannot be reached)`);
       }
+      // A cave's floor winds: one piece, passages of two to six squares (a chamber may be wider), and never a plain rectangle of rock
+      if (l.mask) {
+        const d = describeMask(l.mask);
+        const chamber = caveStyleOf(room.name) === "chamber";
+        if (d.pieces !== 1) problems.push(`${at(room)}: the cave floor is in ${d.pieces} pieces`);
+        if (d.min < MIN_WIDTH) problems.push(`${at(room)}: a cave passage only ${d.min} square wide`);
+        if (!chamber && d.max > MAX_WIDTH) problems.push(`${at(room)}: a cave passage ${d.max} squares wide`);
+      } else if (building.type === "cave" && !formOf(room)) problems.push(`${at(room)}: a cave room with a plain rectangular floor`);
       // Every way in or out stands on a floor square, under nothing, and is not on top of another way
       const ways = l.assets.filter((a) => WAY_KINDS.includes(a.kind));
       for (const way of ways) {
         if (!standsAll(l, way.x, way.y, way.w, way.h)) problems.push(`${at(room)}: ${way.kind} "${way.name}" stands on a cut square`);
         if (way.x < 0 || way.y < 0 || way.x + way.w > l.width || way.y + way.h > l.height) problems.push(`${at(room)}: ${way.kind} "${way.name}" is outside the room`);
         const covers = l.assets.find((o) => o !== way && (o.blocks || WAY_KINDS.includes(o.kind) || o.kind === "furniture") && !(o.kind === "window") && o.x < way.x + way.w && way.x < o.x + o.w && o.y < way.y + way.h && way.y < o.y + o.h);
-        if (covers && way.kind !== "stairs") problems.push(`${at(room)}: ${way.kind} "${way.name}" is covered by ${covers.kind} "${covers.name}"`);
+        // (a corridor one square long has its two doors, one on each side, on the same square)
+        const through = covers && covers.kind === "door" && way.kind === "door" && formOf(room) === "corridor" && covers.side && way.side && OPPOSITE[covers.side] === way.side;
+        if (covers && !through && way.kind !== "stairs") problems.push(`${at(room)}: ${way.kind} "${way.name}" is covered by ${covers.kind} "${covers.name}"`);
         if (covers && way.kind === "stairs" && covers.kind !== "stairs") problems.push(`${at(room)}: stairs "${way.name}" are covered by ${covers.kind} "${covers.name}"`);
         if (way.side && (way.kind === "door" || way.kind === "exit" || way.kind === "secret")) {
           const edge = (way.side === "w" && way.x === 0) || (way.side === "e" && way.x === l.width - 1) || (way.side === "n" && way.y === 0) || (way.side === "s" && way.y === l.height - 1);
