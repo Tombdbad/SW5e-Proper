@@ -30,7 +30,10 @@ export const useView = create<{ mode: ViewMode; eyes: boolean; set: (mode: ViewM
 
 // What can be aimed at: meshes that carry `userData.aim` ({ label, onTap }), and what blocks the view and the shot (walls)
 export const AIM = { targets: new Set<THREE.Object3D>(), solids: new Set<THREE.Object3D>() };
-export interface AimInfo { label?: string; onTap: () => void }
+// `plan` asks the game's own rules about the target as it is now (in a fight: `attackPlan`: reach, range, cover), so that the crosshair says
+// what the roll would say; `feet` is the rules' own distance, which the crosshair shows in place of its geometric one
+export interface AimPlan { ok: boolean; text: string; feet?: number }
+export interface AimInfo { label?: string; onTap: () => void; plan?: () => AimPlan }
 export const aimInfoOf = (o: THREE.Object3D): AimInfo | undefined => o.userData.aim;
 
 // The direction of a yaw and a pitch: yaw 0 looks along +z (the way a figure faces at rest), a quarter turn towards +x
@@ -71,6 +74,7 @@ export interface Aimed {
   kind: "target" | "ground" | "wall" | "none";
   label?: string;
   onTap?: () => void;
+  plan?: () => AimPlan;
   // Where the ray ends, and how far that is from the camera and from the character
   point: THREE.Vector3;
   distance: number;
@@ -95,7 +99,7 @@ export function aimAt(camera: THREE.Camera, floorY: number, muzzle?: THREE.Vecto
   if (!isFinite(distance) || distance > RANGE) return { kind: "none", point: ray.ray.at(RANGE, new THREE.Vector3()), distance: RANGE };
   const point = ray.ray.at(distance, new THREE.Vector3());
   const info = object && aimInfoOf(object);
-  const out: Aimed = { kind, point, distance, ...(info ? { label: info.label, onTap: info.onTap } : {}) };
+  const out: Aimed = { kind, point, distance, ...(info ? { label: info.label, onTap: info.onTap, plan: info.plan } : {}) };
   if (muzzle) {
     const to = point.clone().sub(muzzle);
     const length = to.length();
@@ -107,7 +111,7 @@ export function aimAt(camera: THREE.Camera, floorY: number, muzzle?: THREE.Vecto
 }
 
 // What the crosshair says now, for the overlay (a DOM element over the canvas): kept in a store so that the 3D scene need not render it
-export interface Reticle { kind: Aimed["kind"]; label?: string; feet?: number; blocked: boolean }
+export interface Reticle { kind: Aimed["kind"]; label?: string; feet?: number; blocked: boolean; note?: string }
 export const useReticle = create<Reticle>(() => ({ kind: "none", blocked: false }));
 // Squares are five feet across
 export const FEET_PER_SQUARE = 5;

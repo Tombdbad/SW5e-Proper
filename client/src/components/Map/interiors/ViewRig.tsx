@@ -41,7 +41,7 @@ function Overlay({ stick, use }: { stick: { current: [number, number] }; use: ()
         {r.blocked && <div style={{ position: "absolute", left: -10, top: -10, width: 20, height: 20, color: colour, font: "bold 22px/20px sans-serif", textAlign: "center", textShadow: "0 0 3px #000" }}>×</div>}
         {(r.label || r.feet !== undefined) && (
           <div style={{ position: "absolute", left: -90, top: 18, width: 180, textAlign: "center", color: colour, font: "600 12px/1.2 sans-serif", textShadow: "0 0 3px #000, 0 0 3px #000" }}>
-            {r.label}{r.label && r.feet !== undefined ? " · " : ""}{r.feet !== undefined ? `${r.feet} ft` : ""}{r.blocked ? " · blocked" : ""}
+            {r.label}{r.label && r.feet !== undefined ? " · " : ""}{r.feet !== undefined ? `${r.feet} ft` : ""}{r.note ? ` · ${r.note}` : r.blocked ? " · blocked" : ""}
           </div>
         )}
       </div>
@@ -85,7 +85,7 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
   const aimed = useRef<Aimed | null>(null);
   const since = useRef(1);
   const marker = useRef<THREE.Mesh>(null);
-  const shown = useRef({ kind: "none", label: "", feet: -1, blocked: false });
+  const shown = useRef({ kind: "none", label: "", feet: -1, blocked: false, note: "" });
 
   // The camera's lens, and giving the overhead one back
   useEffect(() => {
@@ -101,13 +101,14 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
       cam.near = was.near;
       cam.updateProjectionMatrix();
       facing.current = null;
-      useReticle.setState({ kind: "none", label: undefined, feet: undefined, blocked: false });
+      useReticle.setState({ kind: "none", label: undefined, feet: undefined, blocked: false, note: undefined });
     };
   }, [mode, camera]);
 
+  // The action picks out what the crosshair is on, as a tap on it does (the game says whether it can be done)
   const use = () => {
     const a = aimed.current;
-    if (a?.kind === "target" && !a.blocked) a.onTap?.();
+    if (a?.kind === "target") a.onTap?.();
   };
   const useNow = useRef(use);
   useNow.current = use;
@@ -169,7 +170,7 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
     if (!parent) return;
     if (getComputedStyle(parent).position === "static") parent.style.position = "relative";
     const host = document.createElement("div");
-    host.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:5";
+    host.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:40";
     parent.appendChild(host);
     const root = createRoot(host);
     root.render(<Overlay stick={stick} use={() => useNow.current()} />);
@@ -202,12 +203,16 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
     const a = aimAt(camera, at[1], mode === "shoulder" ? pose.muzzle : undefined);
     aimed.current = a;
     const label = a.kind === "target" ? a.label ?? "" : "";
-    const ft = a.kind === "none" ? -1 : Math.round(a.point.distanceTo(new THREE.Vector3(at[0], at[1], at[2])) * FEET_PER_SQUARE);
-    const now = { kind: a.kind, label, feet: ft, blocked: !!a.blocked };
+    // The game's own word on the target, where it has one (reach, range and cover in a fight)
+    const plan = a.kind === "target" ? a.plan?.() : undefined;
+    const ft = plan?.feet ?? (a.kind === "none" ? -1 : Math.round(a.point.distanceTo(new THREE.Vector3(at[0], at[1], at[2])) * FEET_PER_SQUARE));
+    const blocked = !!a.blocked || (plan ? !plan.ok : false);
+    const note = plan?.text ?? "";
+    const now = { kind: a.kind, label, feet: ft, blocked, note };
     const was = shown.current;
-    if (now.kind !== was.kind || now.label !== was.label || now.feet !== was.feet || now.blocked !== was.blocked) {
+    if (now.kind !== was.kind || now.label !== was.label || now.feet !== was.feet || now.blocked !== was.blocked || now.note !== was.note) {
       shown.current = now;
-      useReticle.setState({ kind: a.kind, label: label || undefined, feet: ft >= 0 ? ft : undefined, blocked: !!a.blocked });
+      useReticle.setState({ kind: a.kind, label: label || undefined, feet: ft >= 0 ? ft : undefined, blocked, note: note || undefined });
     }
     // Where the shot would land, seen from over the shoulder (the crosshair is the same point, so the two agree)
     if (marker.current) {
@@ -215,7 +220,7 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
       marker.current.position.copy(a.blocked ?? a.point);
       marker.current.quaternion.copy(camera.quaternion);
       marker.current.scale.setScalar(Math.max(0.05, a.distance * 0.018));
-      (marker.current.material as THREE.MeshBasicMaterial).color.set(a.blocked ? "#f87171" : a.kind === "target" ? "#4ade80" : "#ffffff");
+      (marker.current.material as THREE.MeshBasicMaterial).color.set(shown.current.blocked ? "#f87171" : a.kind === "target" ? "#4ade80" : "#ffffff");
     }
   });
   return (

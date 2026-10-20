@@ -90,3 +90,12 @@ test("the shoulder camera is pulled in by a wall behind the character, and the e
   assert.equal(poseOf("first", new THREE.Vector3(2, 3, 4), 1, 0).position.y, 3 + EYE);
   assert.ok(AIM.targets instanceof Set && AIM.solids instanceof Set);
 });
+
+test("a target's own plan (in a fight, the rules' word on reach and cover) comes through the crosshair with its distance", () => {
+  const plan = () => ({ ok: false, text: "out of range", feet: 120 });
+  const foe = box([0, 1.15, 5], [0.9, 1.4, 0.9], { label: "Trooper", onTap: () => {}, plan } as never);
+  const pose = poseOf("first", new THREE.Vector3(0, 0, 0), 0, 0);
+  const aimed = aimAt(cameraFor(pose), 0, undefined, [foe], []);
+  assert.equal(aimed.kind, "target");
+  assert.deepEqual(aimed.plan?.(), { ok: false, text: "out of range", feet: 120 });
+});

@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { useKeyboardControls } from "@react-three/drei";
 import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
-import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey } from "@/lib/stores/useCombat";
+import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey, squaresApart, type Combatant } from "@/lib/stores/useCombat";
 import { type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
 import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
@@ -16,7 +16,7 @@ import { CaveDressing, RockWall } from "./interiors/CaveRoom";
 import { moodOf } from "./interiors/atmosphere";
 import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
 import { PackWalls, cornerCentre, type WallRun } from "./interiors/Walls";
-import { AIM, useView } from "./interiors/aim";
+import { AIM, useView, type AimPlan } from "./interiors/aim";
 import { ViewRig } from "./interiors/ViewRig";
 import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
@@ -150,12 +150,12 @@ const Label = ({ at, size = 0.34, color = "white", children }: { at: V3; size?: 
 
 // Something to tap that is easier to hit than what is drawn. It is also what the crosshair of the first-person and shoulder views can
 // aim at (interiors/aim.ts): `label` says what it is, and the action key calls `onTap` as a tap does
-const Hit = ({ at, size, onTap, label }: { at: V3; size: V3; onTap: () => void; label?: string }) => {
+const Hit = ({ at, size, onTap, label, plan }: { at: V3; size: V3; onTap: () => void; label?: string; plan?: () => AimPlan }) => {
   const mesh = useRef<THREE.Mesh>(null);
   useEffect(() => {
     const m = mesh.current;
     if (!m) return;
-    m.userData.aim = { label, onTap };
+    m.userData.aim = { label, onTap, plan };
     AIM.targets.add(m);
     return () => { AIM.targets.delete(m); };
   });
@@ -166,6 +166,17 @@ const Hit = ({ at, size, onTap, label }: { at: V3; size: V3; onTap: () => void; 
     </mesh>
   );
 };
+// A figure that turns to where the camera looks (over the shoulder) and is not drawn from the eyes
+const Turner = ({ facing, on, base, hide, children }: { facing: { current: number | null }; on: boolean; base: number; hide: boolean; children: ReactNode }) => {
+  const g = useRef<THREE.Group>(null);
+  useFrame(() => {
+    if (!g.current) return;
+    g.current.visible = !hide;
+    g.current.rotation.y = on && facing.current !== null ? facing.current - base : 0;
+  });
+  return <group ref={g}>{children}</group>;
+};
+
 // Walls drawn as groups (a rounded corner): they block the view and the shot as the boxes do
 const Solids = ({ children }: { children: ReactNode }) => {
   const group = useRef<THREE.Group>(null);
@@ -2646,6 +2657,19 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
   const cx = arena.width / 2;
   const cz = arena.height / 2;
   const reach = Math.max(arena.width, arena.height) * 1.1 + 6;
+  // Over the shoulder or from the eyes of the party's character (interiors/ViewRig.tsx): the fight is still taken a turn at a time, the
+  // camera only stands where they stand and looks where it is turned; the crosshair picks out a foe as a tap does and says what the rules
+  // say of it (`attackPlan`: reach, range, cover)
+  const mode = useView((v) => v.mode);
+  const viewing = mode !== "overhead" && !!player && player.hp > 0;
+  const facing = useRef<number | null>(null);
+  const aimPlan = (c: Combatant) => (): AimPlan => {
+    if (!player) return { ok: false, text: "" };
+    const p = attackPlan(arena, combatants, player, c, player.rangedDice ? "ranged" : "melee");
+    const feet = squaresApart(player, c) * 5;
+    if (!p.possible) return { ok: false, text: p.why, feet };
+    return { ok: true, text: [p.cover.bonus > 0 ? `${p.cover.name} cover` : "clear", p.down ? "disadvantage" : p.up ? "advantage" : ""].filter(Boolean).join(", "), feet };
+  };
 
   // Where the fight leaves the party is where they stand afterwards
   useEffect(() => {
@@ -2666,7 +2690,7 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
           <planeGeometry args={[240, 240]} />
           <meshBasicMaterial color="#0b0f16" />
         </mesh>
-        <RoomShell width={arena.width} height={arena.height} assets={arena.assets.filter((a) => a.kind !== "npc")} floor={floorOf(arena.floor)} wall={wall} walls={!arena.open} onFloor={tapSquare} onAsset={(a) => !a.side && (pickable(a) ? setObject(objectId === a.id ? null : a.id) : tapSquare(a.x, a.y))}>
+        <RoomShell fullWalls={viewing} width={arena.width} height={arena.height} assets={arena.assets.filter((a) => a.kind !== "npc")} floor={floorOf(arena.floor)} wall={wall} walls={!arena.open} onFloor={tapSquare} onAsset={(a) => !a.side && (pickable(a) ? setObject(objectId === a.id ? null : a.id) : tapSquare(a.x, a.y))}>
           {picked && <Picked asset={picked} high={(picked.z ?? 0) * LEVEL_H} />}
           {/* Raised floors: a gallery over part of the room */}
           {(arena.platforms ?? []).map((p, i) => (
@@ -2708,7 +2732,9 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
               <group key={String(c.id)} position={[(c.x ?? 0) + 0.5, (c.z ?? 0) * LEVEL_H + ((c.z ?? 0) ? 0.12 : 0), (c.y ?? 0) + 0.5]}>
                 {/* The fallen lie where they fell */}
                 <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : 0, 0]}>
+                  <Turner facing={facing} on={viewing && !!c.isPlayer && !down} base={Math.PI / 2} hide={viewing && mode === "first" && !!c.isPlayer}>
                   <Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} />
+                  </Turner>
                 </group>
                 {!down && current?.id === c.id && (
                   <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}><ringGeometry args={[0.5, 0.58, 28]} /><meshBasicMaterial color="#fde047" /></mesh>
@@ -2723,7 +2749,7 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
                     <Text position={[0, 0.24, 0]} fontSize={0.24} color={side} anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#000000">{c.name}</Text>
                   </Billboard>
                 )}
-                {!down && !onPartySide(c) && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => setTarget(c.id)} label={c.name} />}
+                {!down && !onPartySide(c) && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => setTarget(c.id)} label={c.name} plan={aimPlan(c)} />}
               </group>
             );
           })}
@@ -2740,7 +2766,11 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
           return key.startsWith("sq:") ? [x + 0.5 - cx, 0, y + 0.5 - cz] : undefined;
         }}
       />
-      <Rig target={[0, 0, 0]} offset={[0, reach * 0.95, reach * 0.75]} min={4} max={90} fov={45} />
+      {viewing && player ? (
+        <ViewRig mode={mode} start={Math.PI / 2} feet={() => [(player.x ?? 0) + 0.5 - cx, (player.z ?? 0) * LEVEL_H + ((player.z ?? 0) ? 0.12 : 0), (player.y ?? 0) + 0.5 - cz]} facing={facing} step={() => {}} />
+      ) : (
+        <Rig target={[0, 0, 0]} offset={[0, reach * 0.95, reach * 0.75]} min={4} max={90} fov={45} />
+      )}
       <ambientLight intensity={0.75} />
       <directionalLight position={[10, 26, 12]} intensity={0.9} castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-20} shadow-camera-right={20} shadow-camera-top={20} shadow-camera-bottom={-20} />
     </>
