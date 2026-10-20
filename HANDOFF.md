@@ -9,6 +9,28 @@ Written 2026-10-20 ~18:30 UTC. Branch `revive`, HEAD is the commit that carries 
 - Second go-ahead ("merge it and restart live", ~16:20 UTC): `main` fast-forwarded to `bb61494` and pushed, backup `~/sw5e-backups/sw5e-20261020-162244.sql.gz`, build, `sudo systemctl restart sw5e` 16:23 UTC, page / `/api/campaigns` / a glb all 200, journal clean. No schema change.
 - Each go-ahead covers that run only; ask again before the next merge or restart.
 
+## NEW TASK (user, 2026-10-21 ~00:00 UTC, "dont ask question, just carry on ... GO!")
+Work through ALL of `ITEM_TODO.md`: every item must do what the SW5e rules say. Specifics from the user:
+- Ship upgrade parts sold at junkyards/scrap dealers (low rarity only, relevant territories/settlements); rarer ones at ship mechanics / spaceport-complex vendors in richer areas.
+- Droid vendors in a SHOP (not a market stall) with real model assets on display: full droids AND droid upgrade parts.
+- Variety of ways to get work done: pay a mechanic, or assign a party member to do the upgrade, etc. My judgment on the rest.
+- Modular tests per step; when the list is done and all module tests pass, run the full e2e.
+Progress log for this task: "Item logic progress" just below (tick after each commit). GO covers `revive` and the test copies only: ask before any merge/restart of live 5000.
+
+## Item logic progress (steps in order; advisor-reviewed plan)
+- [ ] A. Ship upgrades: SotG modifications (cost = base x size x grade, install DC by grade/tier, workforce and days), ship equipment, enhanced ShipArmor/Shield/Weapon; scrap dealers/junkyards sell low grade where a port is; shipyard showroom higher grades in rich places; install by shipyard (fee, no check) or party (half cost, workforce, Int (mechanic's kit) check); effects in `shipSheet`.
+- [ ] B. Droid shop: droid dealer a shop in every city (LIFE bump for old worlds), today's `droidStock` drawn on display, parts shelf = what it sells, sells DroidCustomization rows, install by dealer fee or a party member (CheckDialog).
+- [ ] C. Every equipment row classified (a use the game applies or a labelled house use); test fails on unclassified; item-audit reads it.
+- [ ] D. Ammunition (loaded at start), reload, special ammo riders, pouches/belts/quiver/bandolier, calibrators/collimators.
+- [ ] E. Food and water (wild only; lifestyle covers settlements), rests with bedroll/tent/shelter.
+- [ ] F. Hazards (derived suit rules; climate = labelled house rule), air timers, light/darkness.
+- [ ] G. Encumbrance (Str x 15 base, variant tiers), containers, hidden compartments, mounts/hovercart.
+- [ ] H. Accessories, explosives (enhanced, mines, detonator), consumables, data/comms.
+- [ ] I. Cybernetics/prostheses vendors, item mods bought/installed, vendors/loot holders.
+- [ ] J. Visual items (time-boxed): halo, off_hand, slots, garments, droid parts on droids.
+- [ ] K. All module tests, targeted browser scripts, full e2e on 5002 (user unit, idle VM). Then report; ask before live.
+
+
 ## Done this session
 - **Accent fix** (`client/src/components/Map/interiors/tones.ts`, `tools/tones.mjs`, `tests/interiors/tones.test.ts`, REVIVAL_NOTES "Interiors"): saturation is a band (below 0.5 ramp, from 0.75 accent, mixed between), coloured materials sit lower in the ramp, `holdOf` holds the accent back on a model that is mostly coloured. A barracks bunk is now a khaki frame with an ochre blanket; tables, sofas and crystals keep several colours; stripes on grey bodies are as before. Looked at in the gallery (`e2e/out/accent0` before, `accent3` after, `accent3b` the barracks); `npm run test:interiors` 106 pass before the two new tests, `tones.test.ts` 7 pass. Not run: the full e2e (50 min) on this commit.
 - Earlier this session (already on `main`): item models for all items, figures holding and wearing gear, `ITEM_TODO.md`, generator fix `ffd24b5`, 20 s countdown waits `ce1914c`; full e2e of `b14b6d7` 86/88 (both failures fixed, see REVIVAL_NOTES).
