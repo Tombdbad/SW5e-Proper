@@ -2705,7 +2705,9 @@ function linkFloors(world: World, building: Area, seed: number) {
     for (let storey = 0; storey < (urban ? 2 : 1); storey++) {
       const levelOf = (a: Area) => Math.max(levels.get(a.id) ?? 0, Number(a.tags.find((t) => /^code:F\d+$/.test(t))?.slice(6) ?? 0), a.tags.some((t) => t.startsWith("stack:")) ? 1 : 0);
       const second = r.shuffle(real.filter((a) => levelOf(a) >= 1 && levelOf(a) < 3 && a.tags.some((t) => t.startsWith("stack:")) && !tall(a) && !real.some((u) => u.tags.includes(`stack:${a.id}`))))[0];
-      const third = r.shuffle(ground.filter((a) => a !== second && !a.tags.some((t) => t.startsWith("stack:")) && !real.some((u) => u.tags.includes(`stack:${a.id}`)) && !a.tags.includes("round")))[0];
+      // (not one that already opens onto the second room: a second path between the same two rooms is a duplicate)
+      const joined = (a: Area) => !!second && world.paths.some((p) => (p.from === a.id && p.to === second.id) || (p.to === a.id && p.from === second.id));
+      const third = r.shuffle(ground.filter((a) => a !== second && !a.tags.some((t) => t.startsWith("stack:")) && !real.some((u) => u.tags.includes(`stack:${a.id}`)) && !a.tags.includes("round"))).find((a) => !joined(a));
       if (!second || !third) return;
       third.tags = third.tags.filter((t) => !/^code:F-?\d+$/.test(t));
       third.tags.push(`code:F${levelOf(second) + 1}`, `stack:${second.id}`);
