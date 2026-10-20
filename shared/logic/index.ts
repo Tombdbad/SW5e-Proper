@@ -608,7 +608,7 @@ export function lawAt(world: World, areaId: string): number {
 // Loot caches: container names, equipment categories (optionally only names matching `only`),
 // enhanced item types and how often one turns up, and credits as a share of what a character is
 // expected to earn over the party's current level. `rare` caches reach one rarity higher.
-const LOOT: Record<string, { names: string[]; equipment: string[]; only?: RegExp; enhanced: string[]; enhancedChance: number; credits: number; rare?: boolean }> = {
+export const LOOT: Record<string, { names: string[]; equipment: string[]; only?: RegExp; enhanced: string[]; enhancedChance: number; credits: number; rare?: boolean }> = {
   armory: { names: ["Weapons locker", "Arms rack"], equipment: ["Weapon", "Armor", "Ammunition", "Explosive"], enhanced: ["Weapon", "Armor", "Shield", "ItemModification"], enhancedChance: 0.25, credits: 0 },
   medical: { names: ["Medical cabinet", "Supply cart"], equipment: ["Medical", "Kit"], only: /medpac|traumakit|antitoxkit|emergency battery|repair kit|bioanalysis|biochemist/i, enhanced: ["Consumable"], enhancedChance: 0.4, credits: 0 },
   workshop: { names: ["Parts bin", "Tool chest"], equipment: ["Tool", "Kit", "Utility"], enhanced: ["ItemModification", "DroidCustomization"], enhancedChance: 0.3, credits: 0.005 },

@@ -18,7 +18,9 @@
     "test:atmosphere": "node --import tsx --test tests/interiors/atmosphere.test.ts tests/interiors/wealth.test.ts",
     "test:caves": "node --import tsx --test tests/interiors/cave.test.ts tests/interiors/footprint.test.ts",
     "convert:assets": "node tools/convert-assets.mjs",
-    "coverage:models": "node --import tsx tools/model-coverage.ts"
+    "coverage:models": "node --import tsx tools/model-coverage.ts",
+    "audit:items": "node --import tsx tools/item-audit.ts",
+    "build:items": "node tools/build-item-assets.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.5",
