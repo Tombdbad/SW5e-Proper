@@ -8,7 +8,9 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { Kit, MATERIALS, type Baked } from "../models";
 import { holdsOf, stockLayout, type Item } from "./stock";
 import { buildWeapon, hungWeapon, KENNEY_BLASTER, LENGTH } from "./weapons";
-import { useModels } from "./assets";
+import { useModels, splitByFinish } from "./assets";
+import { modelUrl } from "./items";
+import { lookOfModel } from "./gear";
 import { DEFAULT_TONE, KIT_MODELS, kitUrl, toneNameOf, type KitLook } from "./kitbash";
 import { TONES, type Tone } from "./tones";
 
@@ -21,20 +23,22 @@ export function stockGeometry(items: Item[], files: Record<string, THREE.BufferG
   const m = new THREE.Matrix4();
   const e = new THREE.Euler();
   const q = new THREE.Quaternion();
-  const matte: THREE.BufferGeometry[] = [];  // the loaded models, drawn with the sheen of metal
-  const dull: THREE.BufferGeometry[] = [];   // the loaded models of cloth, plastic and paint (cases, bags, prostheses)
+  // The loaded models by how they are drawn: metal (the Blaster Kit's and the kits' steel), matte (cases, bags, prostheses), and, for the
+  // item catalogue's models, which say it per vertex, glow and cloth as well
+  const by: Record<"sheen" | "matte" | "glow" | "cloth", THREE.BufferGeometry[]> = { sheen: [], matte: [], glow: [], cloth: [] };
   const kit = new Kit();
   for (const it of items) {
     const hung = it.weapon ? hungWeapon(it.weapon) : undefined;
     const lod = detail === "low" ? ".lod" : "";
-    const url = it.model ? kitUrl(it.model, detail) : it.prop ? `${KENNEY_BLASTER}/${it.prop}${lod}.glb` : hung?.file ? `${hung.dir ?? KENNEY_BLASTER}/${hung.file}${lod}.glb` : undefined;
+    const url = it.item ? modelUrl(it.item, detail) : it.model ? kitUrl(it.model, detail) : it.prop ? `${KENNEY_BLASTER}/${it.prop}${lod}.glb` : hung?.file ? `${hung.dir ?? KENNEY_BLASTER}/${hung.file}${lod}.glb` : undefined;
     const model = url ? files[url] : null;
     if (url && model) {
       const g = model.clone();
       // The files lie along z with the barrel to +z; turned about the upright axis, then tipped
       m.compose(new THREE.Vector3(it.x, it.y, it.z), q.setFromEuler(e.set(it.tilt ?? 0, it.turn, 0, "YXZ")), new THREE.Vector3().setScalar(it.scale));
       g.applyMatrix4(m);
-      (it.model && DULL.has(KIT_MODELS[it.model]) ? dull : matte).push(g);
+      if (it.item) for (const part of splitByFinish(g)) by[part.finish].push(part.geo);
+      else (it.model && DULL.has(KIT_MODELS[it.model]) ? by.matte : by.sheen).push(g);
     } else if (hung) {
       // Built in code (blades, pikes, and blasters while their model is on its way)
       kit.group([it.x, it.y, it.z], [it.tilt ?? 0, it.turn, 0], undefined, () => buildWeapon(kit, hung.kind, LENGTH[hung.kind], detail));
@@ -42,10 +46,12 @@ export function stockGeometry(items: Item[], files: Record<string, THREE.BufferG
   }
   const built = kit.bake();
   const out: Baked = { ...built };
-  // The models are one mesh with the built sheen or matte (both without an index, so that they join)
+  // The models are one mesh per finish with what the code built (both without an index, so that they join)
   const flat = (g: THREE.BufferGeometry) => (g.index ? g.toNonIndexed() : g);
-  if (matte.length) out.sheen = mergeGeometries([...matte, ...(built.sheen ? [flat(built.sheen)] : [])], false) ?? built.sheen;
-  if (dull.length) out.matte = mergeGeometries([...dull, ...(built.matte ? [flat(built.matte)] : [])], false) ?? built.matte;
+  for (const finish of ["sheen", "matte", "glow", "cloth"] as const) {
+    if (!by[finish].length) continue;
+    out[finish] = mergeGeometries([...by[finish], ...(built[finish] ? [flat(built[finish]!)] : [])], false) ?? built[finish];
+  }
   return out;
 }
 
@@ -58,10 +64,16 @@ export function Stock({ name, w, h, seed, buildingType, roomName, tone }: { name
   const items = useMemo(() => stockLayout(holds, L, D, buildingType, roomName, seed, name), [holds, L, D, buildingType, roomName, seed, name]);
   // Weapons are set on their middles, props (crates, clips, grenades) and the kits' models on their undersides. The Blaster Kit's
   // pieces keep their steel; the kits' models take the room's palette, or their own where the room has none
-  const [weaponUrls, propUrls, kitUrls] = useMemo(() => {
+  const [weaponUrls, propUrls, kitUrls, itemUrls] = useMemo(() => {
     const [weapons, props] = [new Set<string>(), new Set<string>()];
+    // The catalogue's models, by the look that says whether the room's palette applies
+    const catalogue: Record<KitLook, Set<string>> = { armour: new Set(), kit: new Set(), medical: new Set(), prosthetic: new Set(), weapon: new Set(), plain: new Set() };
     const kits: Record<KitLook, { centre: Set<string>; base: Set<string> }> = Object.fromEntries((Object.keys(DEFAULT_TONE) as KitLook[]).map((l) => [l, { centre: new Set<string>(), base: new Set<string>() }])) as never;
     for (const it of items) {
+      if (it.item) {
+        for (const detail of ["hero", "low"] as const) catalogue[lookOfModel(it.item)].add(modelUrl(it.item, detail)!);
+        continue;
+      }
       if (it.model) {
         const look = KIT_MODELS[it.model];
         for (const detail of ["hero", "low"] as const) kits[look].base.add(kitUrl(it.model, detail));
@@ -76,14 +88,16 @@ export function Stock({ name, w, h, seed, buildingType, roomName, tone }: { name
         else (it.prop ? props : weapons).add(url);
       }
     }
-    return [[...weapons], [...props], kits] as [string[], string[], typeof kits];
+    return [[...weapons], [...props], kits, catalogue] as [string[], string[], typeof kits, typeof catalogue];
   }, [items]);
   const weaponFiles = useModels(weaponUrls, "centre");
   const propFiles = useModels(propUrls, "base");
-  const toneOf = (look: KitLook) => { const n = toneNameOf(look); return tone ?? (n ? TONES[n] : undefined); };
+  // The room's palette where there is one; a plain model (its colours mean something) is never recoloured
+  const toneOf = (look: KitLook) => { if (look === "plain") return undefined; const n = toneNameOf(look); return tone ?? (n ? TONES[n] : undefined); };
   const [armour, kit, medical, prosthetic] = (["armour", "kit", "medical", "prosthetic"] as const).map((look) => useModels([...kitUrls[look].base], "base", toneOf(look)));
   const meleeFiles = useModels([...kitUrls.weapon.centre], "centre", toneOf("weapon"));
-  const files = useMemo(() => ({ ...weaponFiles, ...propFiles, ...armour, ...kit, ...medical, ...prosthetic, ...meleeFiles }), [weaponFiles, propFiles, armour, kit, medical, prosthetic, meleeFiles]);
+  const cat = (["armour", "kit", "medical", "prosthetic", "weapon", "plain"] as const).map((look) => useModels([...itemUrls[look]], "base", toneOf(look)));
+  const files = useMemo(() => ({ ...weaponFiles, ...propFiles, ...armour, ...kit, ...medical, ...prosthetic, ...meleeFiles, ...Object.assign({}, ...cat) }), [weaponFiles, propFiles, armour, kit, medical, prosthetic, meleeFiles, ...cat]);
   const group = useRef<THREE.Group>(null);
   const [near, setNear] = useState(true);
   const clock = useRef(0);
@@ -104,6 +118,7 @@ export function Stock({ name, w, h, seed, buildingType, roomName, tone }: { name
       {baked.matte && <mesh geometry={baked.matte} material={MATERIALS.matte} castShadow receiveShadow raycast={() => null} />}
       {baked.sheen && <mesh geometry={baked.sheen} material={MATERIALS.sheen} castShadow receiveShadow raycast={() => null} />}
       {baked.glow && <mesh geometry={baked.glow} material={MATERIALS.glow} raycast={() => null} />}
+      {baked.cloth && <mesh geometry={baked.cloth} material={MATERIALS.cloth} castShadow raycast={() => null} />}
     </group>
   );
 }

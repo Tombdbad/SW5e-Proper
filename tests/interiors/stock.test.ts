@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { stockLayout, holdsOf, armsFor, armourFor } from "../../client/src/components/Map/interiors/stock";
+import { stockLayout, holdsOf, armsFor, armourFor, namedArmourFor, POOLS } from "../../client/src/components/Map/interiors/stock";
+import { ITEM_MODELS } from "../../client/src/components/Map/interiors/items";
 import { hungWeapon, LENGTH } from "../../client/src/components/Map/interiors/weapons";
 import { weaponsOf } from "../helpers";
 import { KIT_MODELS } from "../../client/src/components/Map/interiors/kitbash";
@@ -17,7 +18,8 @@ test("what holds weapons depends on the shop and the room", () => {
 test("armour, kits, medicine and prostheses stand where a shop of that kind would show them", () => {
   assert.equal(holdsOf("Armor stand", "armsmith", "Sales floor"), "armour");
   assert.equal(holdsOf("Armor stand", "outfitter", "Sales floor"), "armour");
-  assert.equal(holdsOf("Droid parts shelf", "tech shop", "Sales floor"), "kits");
+  assert.equal(holdsOf("Droid parts shelf", "tech shop", "Sales floor"), "droidparts");
+  assert.equal(holdsOf("Display shelf", "tech shop", "Sales floor"), "kits");
   assert.equal(holdsOf("Display case", "tech shop", "Sales floor"), "prosthetics");
   assert.equal(holdsOf("Display case", "armsmith", "Sales floor"), "case");
   assert.equal(holdsOf("Medical cabinet", "apothecary", "Sales floor"), "medical");
@@ -34,7 +36,8 @@ test("each stocks with models that exist in kitbash and fit the piece, the same 
       assert.ok(items.length >= 1, `${holds} seed ${seed} is empty`);
       assert.deepEqual(items, stockLayout(holds, L, 1, b, r, seed));
       for (const it of items) {
-        assert.ok(it.model && known.has(it.model), `${holds}: ${it.model}`);
+        // An armour stand holds a named suit of the item catalogue or one of the kit's
+        assert.ok(it.item ? ITEM_MODELS[it.item] : it.model && known.has(it.model), `${holds}: ${it.model ?? it.item}`);
         assert.ok(Math.abs(it.x) <= L / 2 + 0.01, `${holds}: ${it.model} at ${it.x} on ${L}`);
       }
     }
@@ -91,4 +94,55 @@ test("shelves, cases and crates hold what they should", () => {
   const crates = stockLayout("crates", 2, 1, "garrison", "Armory", 1);
   assert.ok(crates.length >= 2 && crates.every((i) => /^crate-/.test(i.prop!)));
   assert.deepEqual(stockLayout(null, 2, 1, "x", "y", 1), []);
+});
+
+test("the new shelves are where a shop of that kind would have them", () => {
+  assert.equal(holdsOf("Goods shelf", "general store", "Sales floor"), "goods");
+  assert.equal(holdsOf("Instrument rack", "curio shop", "Sales floor"), "instruments");
+  assert.equal(holdsOf("Herb rack", "apothecary", "Sales floor"), "vials");
+  assert.equal(holdsOf("Clothing rack", "outfitter", "Sales floor"), "clothing");
+  assert.equal(holdsOf("Bar counter", "cantina", "Main bar"), "bar");
+  assert.equal(holdsOf("Holo display", "tech shop", "Sales floor"), "devices");
+  assert.equal(holdsOf("Bar counter", "garrison", "Barracks"), null);
+  assert.equal(holdsOf("Clothing rack", "tenements", "Apartments"), null);
+});
+test("every pool names models of the catalogue, and the stock lies on the furniture it is for, the same each time", () => {
+  for (const [name, pool] of Object.entries(POOLS)) {
+    assert.ok(pool.length >= 8, `${name} has ${pool.length}`);
+    for (const m of pool) assert.ok(ITEM_MODELS[m], `${name}: ${m} is not in the catalogue`);
+  }
+  for (const where of ["armsmith", "garrison", "palace", "outfitter", "general store", "spaceport", "cave"]) for (const m of namedArmourFor(where, "x")) assert.ok(ITEM_MODELS[m], `${where}: ${m}`);
+  for (const [holds, L, b, r] of [["goods", 3, "general store", "Sales floor"], ["instruments", 3, "curio shop", "Sales floor"], ["vials", 2, "apothecary", "Sales floor"], ["clothing", 2, "outfitter", "Sales floor"],
+    ["bar", 5, "cantina", "Main bar"], ["devices", 2, "tech shop", "Sales floor"], ["droidparts", 3, "tech shop", "Sales floor"]] as const) {
+    for (const seed of [0, 1, 2]) {
+      const items = stockLayout(holds, L, 1, b, r, seed);
+      assert.ok(items.length >= 2, `${holds} seed ${seed}: ${items.length} items`);
+      assert.deepEqual(items, stockLayout(holds, L, 1, b, r, seed));
+      for (const it of items) {
+        assert.ok(it.item && ITEM_MODELS[it.item], `${holds}: ${it.item}`);
+        assert.ok(Math.abs(it.x) <= L / 2 + 0.01, `${holds}: ${it.item} at ${it.x} on ${L}`);
+        assert.ok(it.y >= 0 && it.y <= 1.5, `${holds}: ${it.item} at height ${it.y}`);
+      }
+    }
+  }
+});
+test("things on a shelf do not overlap along it, and an armour stand holds a named suit or a kit one", () => {
+  for (const [holds, b] of [["goods", "general store"], ["instruments", "curio shop"], ["droidparts", "tech shop"]] as const) for (const seed of [0, 1, 2, 3]) {
+    const items = stockLayout(holds, 3, 1, b, "Sales floor", seed);
+    for (const y of new Set(items.map((i) => i.y))) {
+      const row = items.filter((i) => i.y === y).sort((p, q) => p.x - q.x);
+      for (let i = 1; i < row.length; i++) {
+        const half = (m: string, turn: number) => { const bx = ITEM_MODELS[m].box; return (Math.abs(Math.cos(turn)) > 0.7 ? bx[3] - bx[0] : bx[5] - bx[2]) / 2; };
+        const gap = row[i].x - row[i - 1].x - half(row[i].item!, row[i].turn) - half(row[i - 1].item!, row[i - 1].turn);
+        assert.ok(gap > -0.06, `${holds} seed ${seed}: ${row[i - 1].item} and ${row[i].item} overlap by ${(-gap).toFixed(2)}`);
+      }
+    }
+  }
+  const kinds = new Set<string>();
+  for (let seed = 0; seed < 30; seed++) {
+    const [one] = stockLayout("armour", 1, 1, "garrison", "Armory", seed);
+    kinds.add(one.item ? "named" : "kit");
+    assert.ok(one.item ? ITEM_MODELS[one.item] : one.model);
+  }
+  assert.deepEqual([...kinds].sort(), ["kit", "named"]);
 });

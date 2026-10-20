@@ -5,6 +5,7 @@
 // the furniture is built in: lying along x and centred, its back at z = -D/2, y up.
 import { hungWeapon, LENGTH, type Kind } from "./weapons";
 import { KIT_MODELS } from "./kitbash";
+import { ITEM_MODELS } from "./items";
 
 export interface Item {
   // A weapon by its name in the rules data, a prop of the Blaster Kit (clip, grenade, crate) by its file, or a model built from
@@ -12,6 +13,8 @@ export interface Item {
   weapon?: string;
   prop?: string;
   model?: string;
+  // A model of the item catalogue (items.ts), by its name there: stands on its underside like the kit models
+  item?: string;
   x: number;
   y: number;
   z: number;
@@ -56,7 +59,7 @@ export function armsFor(buildingType: string, roomName = ""): string[] {
 
 // Does the furniture hold stock, and how: weapons hung on a rack, laid on shelves or in a glass case; crates; armour on its stand;
 // kits and tools on shelves and benches; medical cases; prostheses laid out under glass
-export type Holds = "rack" | "shelf" | "case" | "crates" | "armour" | "kits" | "medical" | "prosthetics" | "tools" | null;
+export type Holds = "rack" | "shelf" | "case" | "crates" | "armour" | "kits" | "medical" | "prosthetics" | "tools" | "goods" | "devices" | "droidparts" | "clothing" | "instruments" | "vials" | "bar" | null;
 export function holdsOf(furniture: string, buildingType: string, roomName = ""): Holds {
   const n = furniture.toLowerCase();
   const b = buildingType.toLowerCase();
@@ -66,6 +69,13 @@ export function holdsOf(furniture: string, buildingType: string, roomName = ""):
   if (/display case|display table/.test(n) && /armsmith|pawnshop/.test(b)) return "case";
   if (/display case|display table/.test(n) && /tech shop|droid dealer|medcenter|apothecary/.test(b)) return "prosthetics";
   if (/display shelf|wares rack/.test(n) && /armsmith/.test(b)) return "shelf";
+  if (/droid parts shelf/.test(n) && /tech shop|droid dealer/.test(b)) return "droidparts";
+  if (/holo display/.test(n) && /tech shop|droid dealer|shipyard/.test(b)) return "devices";
+  if (/goods shelf|display shelf|wares rack/.test(n) && /general store|pawnshop|curio/.test(b)) return /curio/.test(b) ? null : "goods";
+  if (/instrument rack/.test(n) && /curio shop|pawnshop/.test(b)) return "instruments";
+  if (/herb rack/.test(n) && /apothecary|medcenter/.test(b)) return "vials";
+  if (/clothing rack/.test(n) && /outfitter/.test(b)) return "clothing";
+  if (/bar counter/.test(n) && /cantina|gambling|rooming|cookshop|promenade/.test(b)) return "bar";
   if (/display shelf|wares rack|goods shelf|droid parts shelf/.test(n) && /tech shop|droid dealer|outfitter|general store|workshop|engineering/.test(b)) return "kits";
   if (/display shelf|wares rack|goods shelf|medical cabinet|supply cabinet|shelving/.test(n) && /medcenter|apothecary/.test(b)) return "medical";
   if (/crate stack|shelving/.test(n) && /armory|armsmith|garrison|guardhouse|command post/.test(where)) return "crates";
@@ -83,6 +93,55 @@ const ARMOUR_BY_PLACE: [RegExp, string[]][] = [
   [/./, ["armour-light", "armour-medium", "armour-heavy", "shield-physical", "armour-medium", "shield-generator"]],
 ];
 export const armourFor = (buildingType: string, roomName = ""): string[] => ARMOUR_BY_PLACE.find(([m]) => m.test(`${buildingType}/${roomName}`.toLowerCase()))![1];
+
+// The named armours and suits (models of the item catalogue) that stand where a place keeps them: a palace its best, a garrison what
+// the soldiers wear, an outfitter the light suits, and a general store or a spaceport's shop the life-support suits
+const NAMED_ARMOUR: [RegExp, string[]][] = [
+  [/palace|royal|estates|manor/, ["laminanium-assault", "beskar-weave-armor", "assault-armor", "heavy-physical-shield", "composite-armor"]],
+  [/garrison|command post|guardhouse|gatehouse|gate|barracks|armory|operations/, ["battle-armor", "composite-armor", "durafiber-battle-armor", "medium-physical-shield", "plastoid-composite", "assault-armor", "light-shield-generator"]],
+  [/outfitter|pawnshop/, ["fiber-armor", "combat-suit", "weave-armor", "fleximetal-fiber-armor", "duranium-combat-suit", "duravlex-fiber-armor", "space-suit"]],
+  [/general store|spaceport|dock|shipyard|hangar/, ["space-suit", "hazard-suit", "diving-suit", "flame-proof-suit", "water-suit", "chemical-suit", "stabilizer-suit"]],
+  [/./, ["mesh-armor", "combat-suit", "mesh-armor", "durasteel-exoskeleton", "bone-light-shield", "neutronium-mesh", "light-physical-shield", "hazard-suit", "heavy-exoskeleton", "dampening-suit", "conductive-suit", "mind-shielding-suit", "crystadium-medium-shield", "quadanium-heavy-shield", "heavy-shield-generator", "medium-shield-generator"]],
+];
+export const namedArmourFor = (buildingType: string, roomName = ""): string[] => NAMED_ARMOUR.find(([m]) => m.test(`${buildingType}/${roomName}`.toLowerCase()))![1];
+
+// What each kind of shelf or case keeps, by name in the item catalogue (items.ts); every name is checked by tests/interiors/stock.test.ts
+export const POOLS: Record<string, string[]> = {
+  goods: ["canteen", "flask", "jug", "bucket", "pot", "tankard", "pouch", "sack", "glowrod", "mess-kit", "bedroll", "blanket", "binders", "fibercord-cable", "chronometer", "mirror", "field-rations", "macrobinoculars", "hydrospanner", "grappling-hook", "pitcher", "vial", "emergency-rations", "respirator", "oxygen-tank", "clothes-common"],
+  devices: ["datapad", "commlink", "holocomm", "personal-translator", "pocket-scrambler", "credit-chip", "datacard", "datacron", "holorecorder", "wristpad", "stylus-pen", "comm-jammer", "focus-generator", "holotrace-device", "homing-beacon", "restraining-bolt", "code-cylinder", "commlink-hands-free", "repelling-wristpad", "computer-spike", "security-spike"],
+  instruments: ["kloo-horn", "fizzz", "ommni-box", "bandfill", "fanfar", "slitherhorn", "valahorn", "chindinkalu-horn", "shawm", "traz", "xantha", "drum", "flute", "lute", "mandoviol"],
+  vials: ["vial", "pitcher", "flask", "canteen", "emergency-battery", "poison", "vial", "tankard", "glitterstim", "andris", "cilona", "karrak"],
+  clothing: ["jedi-padawan-robe", "cloak", "flightsuit", "sith-acolyte-robe", "jedi-knight-robe", "clothes-fine", "clothes-travelers", "clothes-dress-uniform", "clothes-costume", "clothes-clandestine", "jedi-master-robe", "sith-warrior-robe"],
+  bar: ["deuterium-pyro", "mummergy", "novanian-grog", "raava", "spicebrew", "tihaar", "tsiraki", "vayerbok", "tankard", "jug", "flask"],
+  ammo: ["arrow", "arrow-combustive", "arrow-electroshock", "arrow-noisemaker", "bolt", "bolt-deafening", "bolt-electrifying", "bolt-panic", "dart", "deafening-dart", "electrifying-dart", "panic-dart", "grenade-fragmentation", "grenade-stun", "grenade-flash", "grenade-plasma", "grenade-ion", "grenade-gas", "cartridge-slug", "cartridge-electrifying", "cell-cryo", "cell-incendiary", "flechette-clip-ion", "flechette-clip-plasma", "missile-ion", "mine-stun", "mine-flash", "charge-fragmentation", "thermal-detonator", "power-generator", "snare"],
+  droidparts: Object.keys(ITEM_MODELS).filter((m) => m.startsWith("droid-")),
+};
+
+// How far a catalogue model reaches along x and z (so that it can be laid along a shelf), and how tall it is, at a scale
+function reach(model: string, scale: number) {
+  const b = ITEM_MODELS[model].box;
+  const [w, h, d] = [(b[3] - b[0]) * scale, (b[4] - b[1]) * scale, (b[5] - b[2]) * scale];
+  // Laid so that its longer side runs along the shelf
+  return d > w ? { along: d, turn: Math.PI / 2, height: h } : { along: w, turn: 0, height: h };
+}
+
+// Models of the catalogue laid in rows on shelves (`ys` the tops of the shelves, from the shelf up), left to right, as many as fit
+function shelfRows(pool: string[], L: number, ys: number[], next: () => number, o: { scale?: number; gap?: number; z?: number; margin?: number; maxLong?: number } = {}): Item[] {
+  const { scale = 1, gap = 0.05, z = 0.02, margin = 0.3, maxLong = 0.9 } = o;
+  const items: Item[] = [];
+  const usable = pool.filter((m) => ITEM_MODELS[m]);
+  for (const y of ys) {
+    let x = -L / 2 + margin;
+    for (let tries = 0; tries < 24; tries++) {
+      const model = usable[Math.floor(next() * usable.length)];
+      const r = reach(model, scale);
+      if (r.along > maxLong || x + r.along > L / 2 - margin + 0.05) continue;
+      items.push({ item: model, x: x + r.along / 2, y: y + 0.04, z, turn: r.turn + (next() - 0.5) * 0.2, scale });
+      x += r.along + gap;
+    }
+  }
+  return items;
+}
 
 // The items of a piece of furniture, `L` long and `D` deep, in the frame it is built in
 export function stockLayout(holds: Holds, L: number, D: number, buildingType: string, roomName: string, seed: number, name = ""): Item[] {
@@ -124,6 +183,13 @@ export function stockLayout(holds: Holds, L: number, D: number, buildingType: st
       while (x < L / 2 - 0.3) {
         const r = next();
         if (r < 0.2) {
+          // Half the clips and grenades are the Blaster Kit's, half ammunition and grenades of the catalogue (every type with its colour)
+          if (next() < 0.5) {
+            const model = POOLS.ammo[Math.floor(next() * POOLS.ammo.length)];
+            const e = reach(model, 1);
+            if (e.along < 0.4 && x + e.along < L / 2 - 0.25) { items.push({ item: model, x: x + e.along / 2, y: y + 0.04, z: 0.02, turn: e.turn + next() * 0.6, scale: 1 }); x += e.along + 0.05; }
+            continue;
+          }
           items.push({ prop: r < 0.1 ? "clip-large" : "grenade-a", x: x + 0.06, y: y + 0.02, z: 0.02, turn: next() * 3, scale: 0.9 });
           x += 0.16;
           continue;
@@ -146,9 +212,30 @@ export function stockLayout(holds: Holds, L: number, D: number, buildingType: st
       x += length + 0.1;
     }
   } else if (holds === "armour") {
-    // One suit, or a shield, on the stand's footprint
+    // One suit, or a shield, on the stand's footprint: a named one three times in four, else one of the kit's by weight
+    const named = namedArmourFor(buildingType, roomName);
     const models = armourFor(buildingType, roomName);
-    items.push({ model: models[Math.floor(next() * models.length)], x: 0, y: 0, z: 0, turn: (next() - 0.5) * 0.5, scale: 1 });
+    if (next() < 0.75) items.push({ item: named[Math.floor(next() * named.length)], x: 0, y: 0, z: 0, turn: (next() - 0.5) * 0.5, scale: 1 });
+    else items.push({ model: models[Math.floor(next() * models.length)], x: 0, y: 0, z: 0, turn: (next() - 0.5) * 0.5, scale: 1 });
+  } else if (holds === "goods" || holds === "vials" || holds === "instruments") {
+    // Open shelves: a general store's goods, an apothecary's vials, a curio shop's instruments
+    const shelves = [0.4, 0.78, 1.14];
+    items.push(...shelfRows(POOLS[holds], L, shelves, next, { scale: holds === "instruments" ? 0.9 : 1, maxLong: holds === "instruments" ? 0.95 : 0.4 }));
+  } else if (holds === "droidparts") {
+    // The modules of a droid dealer's shelf: small, many
+    items.push(...shelfRows(POOLS.droidparts, L, [0.4, 0.78, 1.14], next, { scale: 0.85, gap: 0.04, maxLong: 0.2 }));
+  } else if (holds === "devices") {
+    // On the glass top of a display: devices
+    items.push(...shelfRows(POOLS.devices, L, [0.72], next, { scale: 1, gap: 0.08, margin: 0.2, z: 0, maxLong: 0.25 }));
+  } else if (holds === "clothing") {
+    // Stood along the rack, robes and coats on their mannequins at the scale of the rack
+    const pool = POOLS.clothing.filter((m) => ITEM_MODELS[m] && ITEM_MODELS[m].meta.slot === "stand");
+    const count = Math.max(1, Math.round(L * 2));
+    for (let i = 0; i < count; i++) items.push({ item: pool[Math.floor(next() * pool.length)], x: -L / 2 + 0.35 + (i * (L - 0.7)) / Math.max(1, count - 1), y: 0, z: 0, turn: (next() - 0.5) * 0.4, scale: 0.9 });
+  } else if (holds === "bar") {
+    // Bottles and tankards along the polished top of the bar counter (0.72 up), as the bar draws its own
+    const pool = POOLS.bar.filter((m) => ITEM_MODELS[m]);
+    for (let i = 0; i < Math.floor(L) * 2; i++) items.push({ item: pool[Math.floor(next() * pool.length)], x: -L / 2 + 0.4 + i * 0.5, y: 0.72, z: i % 2 ? 0.08 : -0.06, turn: next() * 6, scale: 1 });
   } else if (holds === "kits" || holds === "medical") {
     // Cases, rolls and bags along the shelves, left to right, what fits: the medical cases are small and many
     const pool = holds === "kits" ? ["kit-case", "kit-roll", "kit-bag", "tool-roll", "kit-case", "kit-bag"] : ["medpac", "medpac", "trauma-case", "medpac", "kit-roll"];
