@@ -3024,14 +3024,19 @@ function linkColumns(world: World, building: Area, seed: number) {
     world.areas[area.id] = area;
     return area;
   };
-  const hosts = real.filter((a) => level(a) === 0 && (over(a) || under(a)));
-  const top = (a: Area): Area => { let x = a; while (over(x)) x = over(x)!; return x; };
-  const bottom = (a: Area): Area => { let x = a; while (under(x)) x = under(x)!; return x; };
   const add = (name: string, floor: number, tag: string) => {
     const room = make(name, undefined, [`code:F${floor}`, tag]);
     real.push(room);
     levels.set(room.id, floor);
   };
+  // A building of five rooms or more is never all on one floor: one of its ground rooms gets a column
+  if (real.length >= 5 && real.every((a) => level(a) === 0)) {
+    const host = real.find((a) => hostable(a) && !a.gateway) ?? real.find(hostable);
+    if (host) add(station ? "Upper deck store" : "Upper storeroom", 1, `stack:${host.id}`);
+  }
+  const hosts = real.filter((a) => level(a) === 0 && (over(a) || under(a)));
+  const top = (a: Area): Area => { let x = a; while (over(x)) x = over(x)!; return x; };
+  const bottom = (a: Area): Area => { let x = a; while (under(x)) x = under(x)!; return x; };
   // Each column has a floor over its host and a basement under it
   for (const host of hosts) {
     if (!over(host)) add(station ? "Upper deck store" : "Upper storeroom", 1, `stack:${host.id}`);
