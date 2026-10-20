@@ -11,6 +11,8 @@ Written 2026-10-20 ~01:00 UTC by the previous session. Branch `revive`, last com
 - The test copy (port 5001, `https://sw5e.tailb1e5d7.ts.net:8443`) was rebuilt from the last code change. The live `sw5e` service (5000) was never touched and is on an older build (promoting it needs the user's go-ahead).
 
 ## Running now / half done
+- 2026-10-20 ~01:10: the run on 5001 (showcase on) finished: 78 pass, 11 fail (log `~/e2e-run4.log`). Started `sw5e-compare` (user unit, `deploy/compare-e2e.sh`): builds HEAD with the showcase OFF on port 5002, runs the play-through (`~/e2e-head.log`), then does the same for commit 6373324 (`~/e2e-base.log`). When it finishes it writes `~/e2e-compare.txt`. Compare the FAIL lines of the two logs (`grep ^FAIL`). Takes 1 to 2 hours; do not start other browser or build jobs meanwhile.
+- (older note) 
 - `sw5e-e2e` (user unit) was running the full play-through against 5001 since 00:08 UTC, log `~/e2e-run4.log`, screenshots `e2e/out/play`. Check `systemctl --user is-active sw5e-e2e`; do not build, run tsc/tsx or other browser jobs while it runs (the 3D steps fail under load).
 - At 01:00 it had 75 pass, 11 fail (see below). Run 3 (`~/e2e-run3.log`, before the showcase world and before this session) had 72 steps, 6 failures, all of which were load or timing.
 
