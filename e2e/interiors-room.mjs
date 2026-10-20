@@ -40,6 +40,30 @@ try {
   await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 120000 });
   // The first frame of a 3D scene blocks the page for a good while in software
   await page.waitForTimeout(Number(process.env.SETTLE || 45000));
+  // PACE=1 holds W for under a second with Run on and again with it off (the Run button), and says how far the character went each time (squares)
+  if (process.env.PACE) {
+    const feet = () => page.evaluate(() => window.__map3d?.world("me") ?? null);
+    const goBack = async () => { await page.keyboard.down("KeyS"); await page.waitForTimeout(1800); await page.keyboard.up("KeyS"); await page.waitForTimeout(800); };
+    // The speed while the key is held, between 0.4 s and 1.0 s after pressing it (squares a second)
+    const run = async () => {
+      await page.keyboard.down("KeyW");
+      await page.waitForTimeout(400);
+      const a = await feet();
+      await page.waitForTimeout(600);
+      const b = await feet();
+      await page.keyboard.up("KeyW");
+      await page.waitForTimeout(900);
+      return Math.hypot(b[0] - a[0], b[2] - a[2]) / 0.6;
+    };
+    const fast = await run();
+    await goBack();
+    const label = async () => page.evaluate(() => document.querySelector('[data-testid="run-toggle"]')?.textContent);
+    const before = await label();
+    await page.locator('[data-testid="run-toggle"]').dispatchEvent("pointerdown");
+    const after = await label();
+    const slow = await run();
+    console.log(`pace: run ${fast.toFixed(2)} squares a second, walk ${slow.toFixed(2)} (button ${before} -> ${after}); ratio ${(slow / fast).toFixed(2)}`);
+  }
   // PEOPLE=1 samples where each person of the room is (screen position) twice, ten seconds apart, and says how many moved
   if (process.env.PEOPLE) {
     const people = room.layout.assets.filter((a) => a.kind === "npc");

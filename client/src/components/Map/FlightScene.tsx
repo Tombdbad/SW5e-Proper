@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { STICK } from "./interiors/stick";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Stars } from "@react-three/drei";
 import * as THREE from "three";
@@ -16,7 +17,7 @@ import { Scatter, raceScenery, useQuality, type Placed } from "./siteAssets";
 // Boost, Brake and Fire are the buttons (in a race Boost draws on its meter). The chase camera follows
 // the party's craft.
 
-const PAD = 56; // pixels from the pad's centre to its edge
+const PAD = STICK.radius; // pixels from the pad's centre to its edge (the pad is the same size as the walking stick: interiors/stick.ts)
 const RACE_RIVAL_MODELS = ["Landspeeder", "Speederbike", "Landspeeder", "Speederbike"];
 const TRACERS = 40;
 const TRACER_TIME = 0.18;
@@ -785,19 +786,20 @@ function Controls({ input, onThrottle, onFire, onBoost, meter }: { input: { curr
     onPointerCancel: () => set(false),
     onLostPointerCapture: () => set(false),
   });
-  const button = "h-12 rounded-full border border-sky-400/60 bg-gray-900/70 px-4 text-sm font-semibold text-sky-100 select-none touch-none";
+  const button = "h-14 min-w-[5rem] rounded-full border border-sky-400/60 bg-gray-900/70 px-5 text-base font-semibold text-sky-100 select-none touch-none";
   return (
     <>
       <div
         ref={pad}
         data-testid="flight-pad"
-        className="absolute bottom-4 left-4 h-28 w-28 touch-none rounded-full border-2 border-sky-400/60 bg-gray-900/50"
+        className="absolute bottom-4 left-4 touch-none rounded-full border-2 border-sky-400/60 bg-gray-900/50"
+        style={{ width: STICK.size, height: STICK.size }}
         onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); steer(e); }}
         onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) steer(e); }}
         onPointerUp={release}
         onPointerCancel={release}
       >
-        <div className="absolute h-8 w-8 rounded-full bg-sky-300/80" style={{ left: `calc(50% + ${knob.x * 36}px - 16px)`, top: `calc(50% + ${knob.y * 36}px - 16px)` }} />
+        <div className="absolute rounded-full bg-sky-300/80" style={{ width: STICK.knob, height: STICK.knob, left: `calc(50% + ${knob.x * STICK.travel}px - ${STICK.knob / 2}px)`, top: `calc(50% + ${knob.y * STICK.travel}px - ${STICK.knob / 2}px)` }} />
       </div>
       <div className="absolute bottom-4 right-4 flex flex-col gap-2">
         {onFire && <button type="button" data-testid="flight-fire" className={button} {...hold(onFire)}>Fire</button>}

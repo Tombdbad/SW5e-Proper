@@ -1818,12 +1818,15 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const feet = useRef({ x: standing.x, y: standing.y });
   // Where the camera looks when the party is out of doors: at the party
   const eye = useRef<V3 | null>(null);
-  const walk = useRef<{ path: { x: number; y: number }[]; then?: (squares: number) => void; total: number } | null>(null);
+  // (`pace` is a fraction of the full pace; a tap on the map is the full pace, the stick in the eye views sets its own)
+  const walk = useRef<{ path: { x: number; y: number }[]; then?: (squares: number) => void; total: number; pace?: number } | null>(null);
   // Over the shoulder or from the eyes (interiors/ViewRig.tsx), instead of the overhead view; `facing` is the way the character looks then
   const mode = useView((v) => v.mode);
   const tierNow = useQuality((q) => q.tier);
   const viewing = mode !== "overhead" && present && !duel;
   const facing = useRef<number | null>(null);
+  // How fast the party walks, as a fraction of the pace they have always had (7 squares a second): a tap on the map is the full pace, the stick sets its own
+  const pace = useRef(1);
   useEffect(() => {
     if (!present) return;
     walk.current = null;
@@ -1849,7 +1852,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     }
     eye.current = duelRef.current ? [(duelRef.current.x ?? 0) + 0.5 - cx, (duelRef.current.z ?? 0) * LEVEL_H, (duelRef.current.y ?? 0) + 0.5 - cz] : outside && planned ? [feet.current.x + 0.5 - cx, 0, feet.current.y + 0.5 - cz] : null;
     if (!going) return;
-    let step = Math.min(delta, 0.5) * 7;
+    let step = Math.min(delta, 0.5) * 7 * Math.max(0.05, going.pace ?? 1);
     while (step > 0 && going.path.length) {
       const next = going.path[0];
       const [dx, dy] = [next.x - feet.current.x, next.y - feet.current.y];
@@ -2018,7 +2021,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   };
   // A step the way a stick or key points, queued into the walk (so that flagstones, secret ways and arrivals all still happen): the
   // eight directions of the grid, a diagonal only past two open squares, a blocked one slid along a wall
-  const stepToward = (dx: number, dz: number) => {
+  const stepToward = (dx: number, dz: number, speed = 1) => {
     if (!active) return;
     const queued = walk.current;
     if (queued && queued.path.length > 1) return;
@@ -2029,7 +2032,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     for (const [mx, my] of tries) {
       const next = { x: from.x + mx, y: from.y + my };
       if (!open(next.x, next.y) || (mx && my && !(open(from.x + mx, from.y) && open(from.x, from.y + my)))) continue;
-      walk.current = { path: [...(queued?.path ?? []), next], then: queued?.then, total: (queued?.total ?? 0) + 1 };
+      walk.current = { path: [...(queued?.path ?? []), next], then: queued?.then, total: (queued?.total ?? 0) + 1, pace: speed };
       return;
     }
   };

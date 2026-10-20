@@ -3365,7 +3365,7 @@ function buildBuilding(k: Kit, type: string, wall: string) {
     vaporator(k, [-1.3, 0, -0.9]);
     return;
   }
-  if (/spaceport|landing|docking/.test(type)) {
+  if (/spaceport|landing|docking|speeder platform/.test(type)) {
     // A round bay sunk into the ground, ringed with lights, a control tower, a ship in it
     k.lathe([[2.4, 0], [2.4, 0.45], [2.2, 0.5], [2.15, 0.12], [0, 0.12]], /docking/.test(type) ? C.steel : wall, { seg: 36 });
     k.cyl(2.12, 0.02, "#2c333b", { at: [0, 0.13, 0], seg: 36 });

@@ -59,6 +59,8 @@ export function Probe({ locate }: { locate: (key: string) => [number, number, nu
         const box = gl.domElement.getBoundingClientRect();
         return { x: box.left + ((v.x + 1) / 2) * box.width, y: box.top + ((1 - v.y) / 2) * box.height };
       },
+      // Where something is in the scene itself (not on the screen), for measuring how far it has moved
+      world: (key: string) => locate(key) ?? null,
       // What the last frame cost, for judging how heavy a scene is
       info: () => ({ calls: gl.info.render.calls, triangles: gl.info.render.triangles, geometries: gl.info.memory.geometries }),
     };

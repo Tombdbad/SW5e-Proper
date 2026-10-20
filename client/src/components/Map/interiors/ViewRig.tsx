@@ -6,6 +6,7 @@ import { useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
+import { paceOf, STICK, useRun } from "./stick";
 import { AIM, aimAt, FEET_PER_SQUARE, lookDirection, PITCH, poseOf, rightOf, useReticle, useView, type Aimed, type ViewMode } from "./aim";
 
 type V3 = [number, number, number];
@@ -13,15 +14,16 @@ type V3 = [number, number, number];
 // Stick and action button over the canvas, and the crosshair at its middle (a separate DOM root: the canvas has no DOM children)
 function Overlay({ stick, use }: { stick: { current: [number, number] }; use: () => void }) {
   const r = useReticle();
+  const run = useRun((x) => x.run);
   const pad = useRef<HTMLDivElement>(null);
   const thumb = useRef<HTMLDivElement>(null);
   const move = (e: React.PointerEvent) => {
     const box = pad.current!.getBoundingClientRect();
     const [dx, dy] = [e.clientX - (box.left + box.width / 2), e.clientY - (box.top + box.height / 2)];
-    const k = Math.min(1, Math.hypot(dx, dy) / 44);
+    const k = Math.min(1, Math.hypot(dx, dy) / STICK.travel);
     const a = Math.atan2(dy, dx);
     stick.current = [Math.cos(a) * k, -Math.sin(a) * k];
-    thumb.current!.style.transform = `translate(${Math.cos(a) * k * 36}px, ${Math.sin(a) * k * 36}px)`;
+    thumb.current!.style.transform = `translate(${Math.cos(a) * k * STICK.travel}px, ${Math.sin(a) * k * STICK.travel}px)`;
   };
   const release = () => {
     stick.current = [0, 0];
@@ -47,19 +49,25 @@ function Overlay({ stick, use }: { stick: { current: [number, number] }; use: ()
       </div>
       <div
         ref={pad} data-testid="stick"
-        style={{ position: "absolute", left: 14, bottom: 14, width: 96, height: 96, borderRadius: 48, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.35)", pointerEvents: "auto", touchAction: "none" }}
+        style={{ position: "absolute", left: 14, bottom: 14, width: STICK.size, height: STICK.size, borderRadius: STICK.size / 2, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.35)", pointerEvents: "auto", touchAction: "none" }}
         onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); move(e); }}
         onPointerMove={(e) => e.buttons && move(e)}
         onPointerUp={release}
         onPointerCancel={release}
       >
-        <div ref={thumb} style={{ position: "absolute", left: 30, top: 30, width: 36, height: 36, borderRadius: 18, background: "rgba(255,255,255,0.45)" }} />
+        <div ref={thumb} style={{ position: "absolute", left: (STICK.size - STICK.knob) / 2, top: (STICK.size - STICK.knob) / 2, width: STICK.knob, height: STICK.knob, borderRadius: STICK.knob / 2, background: "rgba(255,255,255,0.45)" }} />
       </div>
       <button
         data-testid="use-button" onPointerDown={(e) => { e.preventDefault(); use(); }}
-        style={{ position: "absolute", right: 14, bottom: 22, width: 72, height: 72, borderRadius: 36, background: r.kind === "target" && !r.blocked ? "rgba(74,222,128,0.55)" : "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.5)", color: "#fff", font: "600 13px sans-serif", pointerEvents: "auto", touchAction: "none" }}
+        style={{ position: "absolute", right: 14, bottom: 22, width: 88, height: 88, borderRadius: 44, background: r.kind === "target" && !r.blocked ? "rgba(74,222,128,0.55)" : "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.5)", color: "#fff", font: "600 13px sans-serif", pointerEvents: "auto", touchAction: "none" }}
       >
         Use
+      </button>
+      <button
+        data-testid="run-toggle" onPointerDown={(e) => { e.preventDefault(); useRun.getState().toggle(); }}
+        style={{ position: "absolute", right: 24, bottom: 124, width: 68, height: 44, borderRadius: 22, background: run ? "rgba(250,204,21,0.55)" : "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.5)", color: "#fff", font: "600 13px sans-serif", pointerEvents: "auto", touchAction: "none" }}
+      >
+        {run ? "Run" : "Walk"}
       </button>
     </div>
   );
@@ -72,7 +80,8 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
   // The yaw the figure is turned to (the camera's), for the figure to take
   facing: { current: number | null };
   // Asks the walk for a step in a direction on the ground (x, z), which it queues or declines
-  step: (dx: number, dz: number) => void;
+  // (the third is the pace, a fraction of the top speed: the stick's deflection through its curve, less thirty per cent when walking)
+  step: (dx: number, dz: number, pace: number) => void;
   // The yaw to begin looking along (the way the figure was facing)
   start?: number;
   fov?: number;
@@ -150,6 +159,7 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
     const down = (e: KeyboardEvent) => {
       if (typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
       if (["KeyE", "Space", "Enter"].includes(e.code)) { if (!e.repeat) useNow.current(); e.preventDefault(); return; }
+      if (e.code === "KeyR" && !e.repeat) { useRun.getState().toggle(); return; }
       if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) { keys.current.add(e.code); e.preventDefault(); }
     };
     const up = (e: KeyboardEvent) => keys.current.delete(e.code);
@@ -188,10 +198,12 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
     const forward = (k.has("KeyW") || k.has("ArrowUp") ? 1 : 0) - (k.has("KeyS") || k.has("ArrowDown") ? 1 : 0) + stick.current[1];
     const strafe = (k.has("KeyD") ? 1 : 0) - (k.has("KeyA") ? 1 : 0) + stick.current[0];
     facing.current = yaw.current;
-    if (Math.hypot(forward, strafe) > 0.25) {
+    const deflection = Math.min(1, Math.hypot(forward, strafe));
+    const pace = paceOf(deflection, useRun.getState().run);
+    if (pace > 0) {
       const f = lookDirection(yaw.current, 0);
       const r = rightOf(yaw.current);
-      step(f.x * forward + r.x * strafe, f.z * forward + r.z * strafe);
+      step(f.x * forward + r.x * strafe, f.z * forward + r.z * strafe, pace);
     }
     const at = feet();
     const pose = poseOf(mode, new THREE.Vector3(...at), yaw.current, pitch.current, AIM.solids);
