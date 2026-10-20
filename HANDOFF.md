@@ -28,12 +28,12 @@ Plan: `~/.claude/plans/we-have-an-issue-wise-mango.md`. LIVE: user said "push to
 - Cost: a world with its starting planet built has 290 areas (274 before), ~2 s as before; seed 1 fully built 9027 areas (7596 before, +19%), 59 s (49 s before), 13.7 MB of JSON.
 - Known gap: a fight that starts on a switchback (a squad walking in on the party on the stairs) uses the room's flat squares, so it could cross the well; not handled. The landing can take a door to a half-level room, none is generated yet.
 
-## IN PROGRESS (2026-10-20 ~19:40 UTC): taller stacks, roof stairs, windows, balconies (user asked; same rules: judge, no full e2e, test touched modules)
-1. Taller columns (city towers up to 6 floors) and sub-basements: more switchbacks stacked in the block's lanes (`stairBlock` ups/downs counts).
-2. Roof stairs: `planDistrict` puts the roof on a column top and adds a switchback from the top floor to the roof with a doorway onto it (way in: outside ladder -> roof -> stairs).
-3. Windows: `RoomAsset.pane` (slit, small, large, wide; open, latched, locked; alarmed); large ground-floor windows can be climbed through (jimmy, pick, break, disable the alarm: house rules, labelled).
-4. Balconies (palace, estates, manor house): open-air room on an upper floor over the street, patio doors (locked, alarmed), climb from the street (Athletics).
-Nothing merged or live until the user says so.
+## Taller stacks, roof stairs, windows, balconies (2026-10-20 evening, on `revive`, NOT merged or live: ask first)
+- `b73152e` stair blocks stack both ways (`stairBlock(..., ups, downs)`): city towers 3-5 floors over the ground (`MAX_HEIGHT`), sub-basements (`MAX_DEPTH` 2; vaults, crypts, cells go deep), filler floors named by building (`upperFloorOf`). `11f587f`: a building of five rooms or more always has a column (gateways stay on the ground now).
+- `8384745` roof stairs (`roofStairs` in planDistrict): a roof on a column top gets a switchback from the top floor, roof door at its head (locked in hostile buildings, 2 in 5 elsewhere). ~1 roof in 3 has them in the test worlds.
+- `a175887` windows (`Pane`: slit/small/large/wide; open/latched/locked; alarmed; `paneFor`, `setPane`, window card in GameBoard: look, climb in/out, jimmy DC 12, pick, break DC 10 noisy, disable sensor DC 13) and balconies (form `balcony`, open air, gateway; palace/estates/manor upper rooms over the street; patio doors locked/`alarmed` path; climb DC 12 both ways via `exitsOf`; street-fight link). All labelled house rules; REVIVAL_NOTES "Play rules" has the list.
+- `4bacc2f` camera fix: the street's follow point was cleared a frame late, so climbing from the street to a balcony or roof aimed the camera at the street (old bug for roof ladders too). Room behind a stood-on balcony drawn open.
+- Tests: `tests/world/access.test.ts` (8 tests: block geometry incl. towers and sub-basements, walk, windows, balconies, roof ways) and the world/interiors/showcase suites pass (final rerun in progress at 20:55 UTC; check `$CLAUDE_JOB_DIR/tmp/suite4.log` / `layouts4.log` if this job died). Browser: `e2e/stairs.mjs` PASS on 5002 (mezzanine, block up/down/hall, roof -> stairs -> Offices floor 5, window climb-in, balcony climb + patio doors).
 
 ## Next steps, in order
 1. The stairs are live; the user makes a new campaign to get the new buildings (campaign 144 keeps its old ones). Next merge or restart: ask again.
