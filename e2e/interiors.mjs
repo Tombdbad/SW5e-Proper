@@ -1,6 +1,6 @@
 // The interiors gallery, looked at in a real browser without the play-through (2026-10-19): opens /dev/models?section=interiors
 // at a few cameras, saves a shot of each, reports what was drawn (calls, triangles) and fails on a console error or a model that
-// did not load. Usage: BASE=http://127.0.0.1:5173 node e2e/interiors.mjs [name ...]   (names: racks wealth caves moods rounds packs tones rooms kitbash shops walk gear worn hunter items)
+// did not load. Usage: BASE=http://127.0.0.1:5173 node e2e/interiors.mjs [name ...]   (names: racks wealth caves moods rounds packs tones rooms kitbash shops walk gear worn hunter hands items)
 // Needs a server that serves the client: `npx vite --port 5173 --host 127.0.0.1` (no build, no database), and nobody else on the VM busy.
 import { open, OUT } from "./lib.mjs";
 
@@ -21,6 +21,7 @@ const VIEWS = {
   // 2026-10-20: the item models worn on every species (one loadout), and every model of the catalogue by pack (PACK=sw5e-sabers)
   worn: { section: "worn", cam: [0, 4.2, 9], look: [0, 0.7, 1.5] },
   hunter: { section: "worn", loadout: "hunter", cam: [0, 4.2, 9], look: [0, 0.7, 1.5] },
+  hands: { section: "hands", cam: [0, 3.2, 8.5], look: [0, 0.8, 1] },
   items: { section: "items", cam: [0, 9, 8], look: [0, 0, 1] },
 };
 const wanted = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(VIEWS);

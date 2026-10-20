@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LEAN, WAIST, bodyAnchor, type WornSlot } from "../../client/src/components/Map/interiors/anchors";
+import * as THREE from "three";
+import { LEAN, WAIST, bodyAnchor, holdAt, type WornSlot } from "../../client/src/components/Map/interiors/anchors";
 
 const SLOTS: WornSlot[] = ["hipR", "hipL", "back", "belt", "shoulder"];
 const human = { bulk: 1 };
@@ -33,4 +34,22 @@ test("every slot is on the body: between the knee and above the head, not off to
     assert.ok(at[1] > 0.3 && at[1] < 1.2, `${slot} at height ${at[1]}`);
     assert.ok(Math.abs(at[0]) < 0.5 && Math.abs(at[2]) < 0.5, `${slot} at ${at}`);
   }
+});
+
+test("a hand closes exactly on a model's grip socket, whichever way the weapon points and however it is scaled", () => {
+  const grip: [number, number, number] = [0, 0.01, -0.06];
+  for (const dir of [[0, 0.6, 0.55], [0, 0, 1], [0.3, -0.5, 0.8], [1, 0, 0]] as [number, number, number][]) for (const scale of [0.5, 0.85, 1.2]) {
+    const hand: [number, number, number] = [-0.12, 0.6, 0.25];
+    const { at, rot } = holdAt(hand, dir, 0.28, scale, 0.15, grip);
+    const m = new THREE.Matrix4().compose(new THREE.Vector3(...at), new THREE.Quaternion().setFromEuler(new THREE.Euler(...rot)), new THREE.Vector3().setScalar(scale));
+    const p = new THREE.Vector3(...grip).applyMatrix4(m);
+    assert.ok(p.distanceTo(new THREE.Vector3(...hand)) < 1e-6, `${dir} x${scale}: ${p.toArray()}`);
+    // The weapon's length axis points along the way it is held
+    const along = new THREE.Vector3(0, 0, 1).applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(...rot)));
+    assert.ok(along.dot(new THREE.Vector3(...dir).normalize()) > 0.999);
+  }
+  // Without a socket the hand takes it a fraction of the way along: the middle of the weapon at 0.5
+  const mid = holdAt([0, 1, 0], [0, 0, 1], 0.4, 1, 0.5);
+  assert.deepEqual(mid.at.map((v) => +v.toFixed(9)), [0, 1, 0]);
+  assert.ok(holdAt([0, 1, 0], [0, 0, 1], 0.4, 1, 0.2).at[2] > 0, "the rear is in the hand: the weapon sits forward of it");
 });

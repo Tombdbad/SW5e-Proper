@@ -74,6 +74,14 @@ export const modelUrl = (model: string, detail: "hero" | "low" = "hero"): string
   return m ? `/assets/${m.pack}/${model}${detail === "low" ? ".lod" : ""}.glb` : undefined;
 };
 export const socketOf = (model: string, name: string): V3 | undefined => ITEM_MODELS[model]?.sockets?.[name];
+// A socket in the frame of the model as it is loaded (centred on its box: assets.ts geometryOf, anchor "centre"), which is what a figure holds
+export function socketCentred(model: string, name: string): V3 | undefined {
+  const m = ITEM_MODELS[model];
+  const at = m?.sockets?.[name];
+  if (!m || !at) return undefined;
+  const b = m.box;
+  return [at[0] - (b[0] + b[3]) / 2, at[1] - (b[1] + b[4]) / 2, at[2] - (b[2] + b[5]) / 2];
+}
 export const partOfModel = (model: string, name: string) => ITEM_MODELS[model]?.parts?.findIndex((p) => p.name === name) ?? -1;
 export const pivotOf = (model: string, name: string): V3 | undefined => ITEM_MODELS[model]?.parts?.find((p) => p.name === name)?.pivot;
 
@@ -146,5 +154,22 @@ function mergeAligned(list: THREE.BufferGeometry[]): THREE.BufferGeometry {
   }
   out.computeBoundingBox();
   out.computeBoundingSphere();
+  return out;
+}
+
+// A copy of a geometry whose glowing vertices (a saber's blade, a lamp) are `hex` coloured: the wielder's blade colour. The marks say which
+// vertices glow; nothing else changes
+export function tintGlow(geometry: THREE.BufferGeometry, hex: string): THREE.BufferGeometry {
+  const out = geometry.clone();
+  const mark = geometry.getAttribute("mark");
+  const src = geometry.getAttribute("color");
+  if (!mark || !src) return out;
+  const c = new THREE.Color(hex);
+  const colours = new Float32Array(src.count * 3);
+  for (let i = 0; i < src.count; i++) {
+    const glow = Math.round(mark.getX(i)) === 2;
+    colours.set(glow ? [c.r, c.g, c.b] : [src.getX(i), src.getY(i), src.getZ(i)], i * 3);
+  }
+  out.setAttribute("color", new THREE.BufferAttribute(colours, 3));
   return out;
 }

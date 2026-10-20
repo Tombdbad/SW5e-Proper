@@ -1,3 +1,4 @@
+import * as THREE from "three";
 // Where things are worn on a body, for every species (2026-10-20). The figure (models.tsx `buildHumanoid`) is built upright, facing +z, a
 // little over a square tall for a human and then scaled by the species; what a species changes besides that is its bulk (how wide the hips
 // and shoulders are), a lean (a hunched species carries everything above the waist forward), wings (a pack must stand clear of them) and
@@ -43,4 +44,17 @@ export function bodyAnchor(slot: WornSlot, t: BodyTraits): Anchor {
     // On the right shoulder
     case "shoulder": return lean({ at: [-(0.2 * b + 0.03), WAIST + 0.4 + (t.longNeck ? 0 : 0), 0], rot: [0, 0, 0] }, t.hunched);
   }
+}
+
+// Where a held weapon or shield goes so that the hand closes on it: its origin and turn (euler XYZ) for a model that lies along +z, held
+// along `dir` at `hand`. A model with a `grip` socket (the point of its own frame the hand takes, from the catalogue) is placed so that
+// socket is exactly in the hand; one without is placed with the hand `grip` of the way along its length (0 the rear, 1 the point).
+export function holdAt(hand: V3, dir: V3, length: number, scale: number, fraction: number, socket?: V3): Anchor {
+  const d = new THREE.Vector3(...dir).normalize();
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), d);
+  const e = new THREE.Euler().setFromQuaternion(q);
+  const at = new THREE.Vector3(...hand);
+  if (socket) at.sub(new THREE.Vector3(...socket).multiplyScalar(scale).applyQuaternion(q));
+  else at.add(d.clone().multiplyScalar(length * scale * (0.5 - fraction)));
+  return { at: [at.x, at.y, at.z], rot: [e.x, e.y, e.z] };
 }

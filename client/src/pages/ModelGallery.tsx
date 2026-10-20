@@ -154,6 +154,17 @@ function Worn({ loadout }: { loadout: string }) {
   return <Rows items={WORN_SPECIES} per={8} gap={1.5} name={(s) => s} draw={(s) => <Figure kind="humanoid" ring={SIDE_COLORS.neutral} name={`Kel ${s}`} role="patron" species={s} gear={gear} />} />;
 }
 
+// `hands` (2026-10-20): what people hold: a band with an instrument each (picked by name), and Force users with a saber of their own colour
+const HANDS: [string, string, string, string][] = [
+  ["humanoid", "Figrin", "musician", "Bith"], ["humanoid", "Doikk", "musician", "Human"], ["humanoid", "Tech", "musician", "Twi'lek"], ["humanoid", "Nalan", "musician", "Rodian"],
+  ["humanoid", "Ickabel", "musician", "Human"], ["humanoid", "Tedn", "musician", "Zabrak"], ["humanoid", "Lirin", "musician", "Bith"], ["humanoid", "Sari", "musician", "Human"],
+  ["force", "Jedi Knight Aro", "jedi", "Human"], ["force", "Jedi Padawan Vee", "jedi", "Twi'lek"], ["force", "Sith Lord Karn", "sith", "Zabrak"], ["force", "Inquisitor Seven", "inquisitor", "Human"],
+  ["humanoid", "Navy Trooper", "trooper", "Human"], ["humanoid", "Mechanic Pell", "mechanic", "Human"], ["humanoid", "Medic Senn", "medic", "Twi'lek"], ["humanoid", "Gamorrean Guard", "guard", "Gamorrean"],
+];
+function Hands() {
+  return <Rows items={HANDS} per={8} gap={1.5} name={([, n]) => n} draw={([kind, name, role, species]) => <Figure kind={kind} ring={SIDE_COLORS.neutral} name={name} role={role} species={species} />} />;
+}
+
 // `items` (2026-10-20): every model of the item catalogue by pack, each enlarged to about half a square so that the small ones can be seen;
 // ?pack=sw5e-sabers shows one pack, and the label says the model and the scale it is shown at
 function Items({ pack }: { pack: string | null }) {
@@ -333,6 +344,7 @@ export default function ModelGallery() {
         {section === "walk" && <Walk />}
         {section === "gear" && <Gear loadout={query.get("loadout") ?? "heavy"} />}
         {section === "worn" && <Worn loadout={query.get("loadout") ?? "worn"} />}
+        {section === "hands" && <Hands />}
         {section === "items" && <Items pack={query.get("pack")} />}
         {section === "interiors" && (
           <>

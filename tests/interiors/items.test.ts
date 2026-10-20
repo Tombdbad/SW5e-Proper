@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { ROOT, ASSETS, loadGlb, trianglesOf } from "../helpers";
 import { FINISH_OF_MARK, geometryOf, splitByFinish } from "../../client/src/components/Map/interiors/assets";
-import { ITEM_MODELS, assetPath, composeSaber, itemRef, modelUrl, needsBlade, pivotOf, socketOf, toned, withoutParts } from "../../client/src/components/Map/interiors/items";
+import { ITEM_MODELS, assetPath, composeSaber, itemRef, modelUrl, needsBlade, pivotOf, socketCentred, socketOf, tintGlow, toned, withoutParts } from "../../client/src/components/Map/interiors/items";
 import { KIT_MODELS } from "../../client/src/components/Map/interiors/kitbash";
 import { LENGTH } from "../../client/src/components/Map/interiors/weapons";
 
@@ -130,4 +130,22 @@ test("loading is by the file as converted: one mesh, vertex colours, normals in 
     const json = JSON.parse(fs.readFileSync(file(n)).subarray(20, 20 + fs.readFileSync(file(n)).readUInt32LE(12)).toString("utf8"));
     assert.ok(!json.images && !json.textures && !json.materials?.length, `${n} carries a material or a texture`);
   }
+});
+
+test("a saber's blade can take another colour, and only what glows changes; a socket is given in the centred frame", async () => {
+  const g = await loaded("saber-straight");
+  const red = tintGlow(g, "#ff4040");
+  const [mark, was, now] = [g.getAttribute("mark"), g.getAttribute("color"), red.getAttribute("color")];
+  let glow = 0;
+  for (let i = 0; i < mark.count; i++) {
+    if (Math.round(mark.getX(i)) === 2) { glow++; assert.ok(now.getX(i) > now.getZ(i) * 3, "the blade is red"); }
+    else assert.deepEqual([now.getX(i), now.getY(i), now.getZ(i)], [was.getX(i), was.getY(i), was.getZ(i)]);
+  }
+  assert.ok(glow > 20);
+  assert.equal(g.getAttribute("color").getX(0), was.getX(0), "the original is untouched");
+  // The grip in the centred frame is the file's socket less the middle of the box
+  const [s, c] = [socketOf("saber-straight", "grip")!, socketCentred("saber-straight", "grip")!];
+  const b = ITEM_MODELS["saber-straight"].box;
+  assert.ok(Math.abs(c[2] - (s[2] - (b[2] + b[5]) / 2)) < 1e-9);
+  assert.equal(socketCentred("saber-straight", "nothing"), undefined);
 });

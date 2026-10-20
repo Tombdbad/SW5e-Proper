@@ -12,8 +12,8 @@ import { fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interi
 import type { Tone } from "./interiors/tones";
 import { advance, bob, LIMB, limbMaterial, pose as poseLimbs, standing } from "./interiors/limbs";
 import { handOf, wantsOf, type Gear, type Want, type Slot } from "./interiors/gear";
-import { bodyAnchor } from "./interiors/anchors";
-import { composeSaber } from "./interiors/items";
+import { bodyAnchor, holdAt } from "./interiors/anchors";
+import { composeSaber, tintGlow } from "./interiors/items";
 import { toneNameOf, type KitLook } from "./interiors/kitbash";
 import { TONES } from "./interiors/tones";
 
@@ -1826,6 +1826,8 @@ export interface Attach {
   slot: Slot;
   geometry: THREE.BufferGeometry;
   scale: number;
+  // The point of the model's own frame the hand closes on (its `grip` socket), where it has one
+  grip?: [number, number, number];
 }
 export interface Outfit {
   // The weight of armour worn (pauldrons, a heavier plate): from what the character wears
@@ -1835,7 +1837,7 @@ export interface Outfit {
   bottom: string;
   accent: string;
   head: "" | "trooper" | "scout" | "pilot" | "tiepilot" | "hood" | "cap" | "bounty" | "guard" | "helmet" | "deathtrooper" | "navy";
-  hand: "" | "pistol" | "rifle" | "saber" | "saber2" | "pike" | "gaffi" | "vibro" | "axe" | "bowcaster" | "tool" | "tray" | "datapad" | "staff";
+  hand: "" | "pistol" | "rifle" | "saber" | "saber2" | "pike" | "gaffi" | "vibro" | "axe" | "bowcaster" | "tool" | "tray" | "datapad" | "staff" | "play";
   blade?: string;
   armor?: string;
   cape?: string;
@@ -1896,7 +1898,7 @@ export function outfitOf(name: string, role = "", look?: Look, force?: { blade: 
   if (/merchant|trader|shop|vendor|dealer|seller|stallholder/.test(n)) return { ...base, garment: "coat", accent: base.accent, head: "", hand: "datapad", belt: true };
   if (/noble|aristocrat|governor|senator|crime lord|boss/.test(n)) return { ...base, garment: "robe", top: pickOf(["#5a2a6a", "#7a5a2a", "#2a4a6a"], name), bottom: "#2b2f36", accent: "#d8b45a", head: "", hand: "", cape: "#3a1a4a" };
   if (/captive|slave|prisoner/.test(n)) return { ...base, garment: "rags", top: "#8a7a62", bottom: "#5a4a3a", head: "", hand: "" };
-  if (/musician|singer|performer|dancer/.test(n)) return { ...base, garment: pickOf(["tunic", "vest"], name) as Outfit["garment"], top: pickOf(["#7d3b4a", "#3a6a9a", "#9a6a3a"], name), head: "", hand: "" };
+  if (/musician|singer|performer|dancer/.test(n)) return { ...base, garment: pickOf(["tunic", "vest"], name) as Outfit["garment"], top: pickOf(["#7d3b4a", "#3a6a9a", "#9a6a3a"], name), head: "", hand: /musician/.test(n) ? "play" : "" };
   if (/scaveng|scrapper|farmer|settler|nomad/.test(n)) return { ...base, garment: "rags", top: pickOf(["#a08a6a", "#8a7a62"], name), head: "", hand: "", belt: true };
   if (/hunter/.test(n)) return { ...base, garment: "vest", accent: "#5a4a3a", hand: "rifle", belt: true };
   if (/player/.test(n)) return { ...base, garment: "jacket", top: "#7a4b2a", bottom: "#3d4856", accent: "#e8e0d0", head: "", hand: "pistol", belt: true };
@@ -1966,15 +1968,14 @@ function alongLimb(k: Kit, a: Attach, from: V3, to: V3, axis: "x") {
   k.addModel(g, { at: [mid.x, mid.y, mid.z], rot: [e.x, e.y, e.z], scale });
 }
 
-// A held weapon or shield set on a hand: `grip` is how far along it (0 the rear, 1 the muzzle or point) the hand takes it
+// A held weapon or shield set on a hand: `grip` is how far along it (0 the rear, 1 the muzzle or point) the hand takes it, unless the model
+// says where its own grip is (its `grip` socket), when the hand closes there exactly
 function inHand(k: Kit, a: Attach, hand: V3, dir: V3, grip: number) {
   const g = a.geometry;
   g.boundingBox ?? g.computeBoundingBox();
-  const length = (g.boundingBox!.max.z - g.boundingBox!.min.z) * a.scale;
-  const d = new THREE.Vector3(...dir).normalize();
-  const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), d));
-  const c = new THREE.Vector3(...hand).add(d.clone().multiplyScalar(length * (0.5 - grip)));
-  k.addModel(g, { at: [c.x, c.y, c.z], rot: [e.x, e.y, e.z], scale: a.scale });
+  const length = g.boundingBox!.max.z - g.boundingBox!.min.z;
+  const { at, rot } = holdAt(hand, dir, length, a.scale, grip, a.grip);
+  k.addModel(g, { at, rot, scale: a.scale });
 }
 
 interface Body { b: number; flesh: string; torsoColor: string; sleeve: string; plate: string; under: string; armored: boolean; bare: boolean; hair: string; skin: string; eye: string; seed: number; attach: Attach[] }
@@ -2054,6 +2055,8 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
     saber2: { r: [[-0.2 * b, sh, 0], [-0.24 * b, 0.13, 0.06], [-0.12, 0.05, 0.2]], l: [[0.2 * b, sh, 0], [0.24 * b, 0.12, 0.02], [0.25 * b, -0.06, 0.06]] },
     tray: { r: [[-0.2 * b, sh, 0], [-0.24 * b, 0.12, -0.01], [-0.22 * b, 0.12, 0.2]], l: [[0.2 * b, sh, 0], [0.25 * b, 0.12, -0.02], [0.25 * b, -0.06, 0.06]] },
     datapad: { r: [[-0.2 * b, sh, 0], [-0.24 * b, 0.12, 0], [-0.1, 0.12, 0.17]], l: [[0.2 * b, sh, 0], [0.24 * b, 0.12, 0], [0.06, 0.13, 0.17]] },
+    // Playing an instrument held out in front of the chest in both hands (what a band plays: interiors/gear.ts, `Hand` "play")
+    play: { r: [[-0.2 * b, sh, 0], [-0.21 * b, 0.17, 0.07], [-0.07, 0.2, 0.2]], l: [[0.2 * b, sh, 0], [0.2 * b, 0.2, 0.11], [0.09, 0.22, 0.25]] },
   };
   const hang = { r: [[-0.2 * b, sh, 0], [-0.25 * b, 0.12, -0.02], [-0.25 * b, -0.06, 0.06]] as V3[], l: [[0.2 * b, sh, 0], [0.25 * b, 0.12, -0.02], [0.25 * b, -0.06, 0.06]] as V3[] };
   const pose = poses[o.hand] ?? hang;
@@ -2074,7 +2077,7 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
     for (const a of p.attach) {
       if (!i && a.slot === "weapon") {
         const [right, left] = [pose.r[2], pose.l[2]];
-        if (o.hand === "rifle" || o.hand === "bowcaster") inHand(k, a, right, [left[0] - right[0], left[1] - right[1], left[2] - right[2]], 0.3);
+        if (o.hand === "rifle" || o.hand === "bowcaster" || o.hand === "play") inHand(k, a, right, [left[0] - right[0], left[1] - right[1], left[2] - right[2]], 0.3);
         else if (o.hand === "pike" || o.hand === "staff" || o.hand === "gaffi") inHand(k, a, right, [0, 1, 0.05], 0.35);
         else if (o.hand === "pistol") inHand(k, a, right, [0, 0.08, 1], 0.2);
         else inHand(k, a, right, [0, 0.6, 0.55], 0.15);
@@ -3191,7 +3194,7 @@ function speciesInName(name: string, looks: Record<string, Look>): string | unde
 const HUMAN = lookOf({ name: "Human", skinColorOptions: "Light to dark tones", hairColorOptions: "Black, blond, orange, brown, gray to white", heightAverage: "4'8\"", heightRollMod: "+2d10\"" });
 
 // `wants` are the models this figure carries (interiors/gear.ts), which Figure loads and bakes in
-export interface FigureSpec { key: string; build: (k: Kit) => void; height: number; wants?: Want[] }
+export interface FigureSpec { key: string; build: (k: Kit) => void; height: number; wants?: Want[]; blade?: string }
 
 export function figureSpec(kind: string, name: string, opts: { role?: string; creature?: string; species?: string; size?: string; looks: Record<string, Look>; party?: { species?: string; name?: string; force?: boolean; blade?: string; gear?: Gear }; player?: boolean; attach?: Attach[]; gear?: Gear }): FigureSpec {
   const { role = "", creature = "", size = "", looks, party } = opts;
@@ -3246,10 +3249,10 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
     if (hand) outfit = { ...outfit, hand };
     if (gear.bodyClass) outfit = { ...outfit, garment: gear.bodyClass === "light" ? "vest" : "armor", armor: gear.bodyClass === "heavy" ? "#59636d" : "#7b8794", weight: gear.bodyClass, cape: gear.bodyClass === "light" ? outfit.cape : undefined };
   }
-  const wants = wantsOf(outfit.hand, gear, role || name);
+  const wants = wantsOf(outfit.hand, gear, role || name, name);
   const attach = opts.attach ?? [];
   const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.weight ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}:${seed & 28}${attach.length ? `:g${attach.map((a) => `${a.slot}=${a.id}@${a.scale}`).join("+")}` : ""}`;
-  return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, seed, attach), height: 1.25 * look.scale, wants };
+  return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, seed, attach), height: 1.25 * look.scale, wants, blade: outfit.blade };
 }
 
 // How far this figure walks: the stride follows how far the group itself moves along the ground between frames, so whoever moves it
@@ -3321,17 +3324,27 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
   const geometryOfWant = (w: Want): THREE.BufferGeometry | null => {
     const files = loaded[w.look];
     const hilt = files[`/assets/${w.model}.glb`];
-    if (!hilt || !w.blade) return hilt ?? null;
-    const blade = files[`/assets/${w.blade.model}.glb`];
-    if (!blade) return null;
-    const key = `${w.look}|${w.model}|${w.blade.model}|${w.blade.scale}`;
-    let made = COMPOSED.get(key);
-    if (!made) { made = composeSaber(hilt, w.name!, blade, w.blade.name, w.blade.scale); COMPOSED.set(key, made); }
+    if (!hilt) return null;
+    let made: THREE.BufferGeometry | null | undefined = hilt;
+    if (w.blade) {
+      const blade = files[`/assets/${w.blade.model}.glb`];
+      if (!blade) return null;
+      const key = `${w.look}|${w.model}|${w.blade.model}|${w.blade.scale}`;
+      made = COMPOSED.get(key);
+      if (!made) { made = composeSaber(hilt, w.name!, blade, w.blade.name, w.blade.scale); COMPOSED.set(key, made); }
+    }
+    // A saber's blade takes its wielder's colour (a Jedi's, a Sith's, the character's own)
+    if (base.blade && w.slot === "weapon" && w.name?.startsWith("saber-")) {
+      const key = `tint:${base.blade}|${w.look}|${w.model}|${w.blade?.model ?? ""}|${w.blade?.scale ?? 1}`;
+      let tinted = COMPOSED.get(key);
+      if (!tinted) { tinted = tintGlow(made, base.blade); COMPOSED.set(key, tinted); }
+      made = tinted;
+    }
     return made;
   };
   const ready = wants.length > 0 && wants.every((w) => geometryOfWant(w));
   const spec = ready
-    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, attach: wants.map((w) => ({ id: w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model, slot: w.slot, scale: w.scale, geometry: geometryOfWant(w)! })) })
+    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, attach: wants.map((w) => ({ id: (w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model) + (base.blade && w.name?.startsWith("saber-") ? `~${base.blade}` : ""), slot: w.slot, scale: w.scale, grip: w.grip, geometry: geometryOfWant(w)! })) })
     : base;
   return (
     <group scale={large ? 1.5 : 1}>

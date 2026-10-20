@@ -4,7 +4,8 @@
 import { hungWeapon, type Kind } from "./weapons";
 import { KITBASH, type KitLook } from "./kitbash";
 import { KENNEY_BLASTER } from "./weapons";
-import { assetPath, itemRef, modelInfo, needsBlade } from "./items";
+import { assetPath, itemRef, modelInfo, needsBlade, socketCentred } from "./items";
+import { POOLS } from "./stock";
 
 export interface Item {
   name: string;
@@ -96,7 +97,7 @@ export interface Gear {
   // Everything else carried: kits, tools, medical supplies, prostheses
   carried: GearItem[];
 }
-export type Hand = "" | "pistol" | "rifle" | "saber" | "saber2" | "pike" | "gaffi" | "vibro" | "axe" | "bowcaster" | "tool" | "tray" | "datapad" | "staff";
+export type Hand = "" | "pistol" | "rifle" | "saber" | "saber2" | "pike" | "gaffi" | "vibro" | "axe" | "bowcaster" | "tool" | "tray" | "datapad" | "staff" | "play";
 // Where on the body a model goes: the main hand, the other arm (a shield), either hip, the back, the right arm or the left leg (prostheses),
 // the front of the belt (a buckle, a power pack), the right shoulder (a pauldron, a cannon), the right wrist (a wristpad)
 export type Slot = "weapon" | "shield" | "hipR" | "hipL" | "back" | "armR" | "legL" | "belt" | "shoulder" | "wrist";
@@ -111,6 +112,8 @@ export interface Want {
   // of its own, that blade (the file under /assets, its catalogue name, and how long against the shape's own length)
   name?: string;
   blade?: { model: string; name: string; scale: number };
+  // Where the hand closes on it, in the model's own (centred) frame: its `grip` socket
+  grip?: [number, number, number];
 }
 
 // How a catalogue model is looked at: left in its own colours when they mean something (a blade, a grenade's type, a suit's use), else in
@@ -139,7 +142,11 @@ export function handOf(item: GearItem | undefined): Hand | undefined {
 }
 
 // What an NPC holds, by the pose their outfit gives (the name stands for a design of that kind; the data has them all)
-export const HAND_WEAPON: Partial<Record<Hand, string>> = { pistol: "Blaster pistol", rifle: "Blaster rifle", vibro: "Vibroblade", axe: "Vibroaxe", pike: "Vibropike", staff: "Electrostaff" };
+export const HAND_WEAPON: Partial<Record<Hand, string>> = { pistol: "Blaster pistol", rifle: "Blaster rifle", vibro: "Vibroblade", axe: "Vibroaxe", pike: "Vibropike", staff: "Electrostaff", saber: "Lightsaber", saber2: "Doublesaber" };
+
+// The base weapon an enhanced weapon is built on ("sniper rifle", "any blaster"): its name in the rules data, so that it takes that design
+const BASE_WEAPON: [RegExp, string][] = [[/vibroweapon|vibro/, "Vibroblade"], [/lightweapon|saber/, "Lightsaber"], [/blaster|^any$|pistol/, "Blaster pistol"], [/rifle|nightstinger/, "Blaster rifle"], [/shotgun/, "Shotgun"], [/launcher/, "Grenade launcher"]];
+const baseWeaponOf = (sub: string) => BASE_WEAPON.find(([m]) => m.test(sub))?.[1] ?? sub;
 
 const weaponWant = (name: string, classification?: string): Want | undefined => {
   // A weapon with a model made for it (sabers, bows, whips, thrown weapons, a bowcaster...)
@@ -147,7 +154,12 @@ const weaponWant = (name: string, classification?: string): Want | undefined => 
   const own = ref && !ref.model.startsWith("weapon:") ? assetPath(ref.model) : undefined;
   if (ref && own && modelInfo(ref.model)?.meta.slot === "weapon") {
     const blade = needsBlade(ref) && assetPath(`blade-${ref.blade}`) ? { model: assetPath(`blade-${ref.blade}`)!, name: `blade-${ref.blade}`, scale: ref.bladeScale ?? 1 } : undefined;
-    return { slot: "weapon", model: own, look: lookOfModel(ref.model), scale: 0.85, name: ref.model, ...(blade ? { blade } : {}) };
+    return { slot: "weapon", model: own, look: lookOfModel(ref.model), scale: 0.85, name: ref.model, grip: socketCentred(ref.model, "grip"), ...(blade ? { blade } : {}) };
+  }
+  // An enhanced weapon built on a base weapon takes that weapon's design
+  if (ref?.model.startsWith("weapon:")) {
+    const base = baseWeaponOf(ref.model.slice(7));
+    if (base !== name) return weaponWant(base);
   }
   const hung = hungWeapon(name, classification);
   return hung.file ? { slot: "weapon", model: `${(hung.dir ?? KENNEY_BLASTER).replace("/assets/", "")}/${hung.file}`, look: "weapon", scale: hung.scale * 0.85 } : undefined;
@@ -162,10 +174,20 @@ const BY_ROLE: [RegExp, Want][] = [
 
 // The models a person has: their weapon (by their outfit's pose for an NPC, by what they wield for a character), a shield, kits and
 // tools on the hips and back, prostheses on the limbs they replace
-export function wantsOf(hand: Hand, gear?: Gear, role = ""): Want[] {
+// A stable number from a name, to pick the same instrument for the same musician each time
+const hashName = (text: string) => Array.from(text).reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 7);
+
+export function wantsOf(hand: Hand, gear?: Gear, role = "", name = ""): Want[] {
   const out: Want[] = [];
+  // A musician plays an instrument, one of the catalogue's by their name
+  if (hand === "play" && !gear) {
+    const model = POOLS.instruments[hashName(name || role) % POOLS.instruments.length];
+    const own = assetPath(model);
+    return own ? [{ slot: "weapon", model: own, look: lookOfModel(model), scale: 1, name: model, grip: socketCentred(model, "grip") }] : [];
+  }
   const main = gear ? gear.weapons[0] : undefined;
-  const w = main ? weaponWant(main.name, main.weaponClassification) : !gear && HAND_WEAPON[hand] ? weaponWant(HAND_WEAPON[hand]!) : undefined;
+  // A person with no weapon of their own wielded holds what their pose says (an NPC's blaster, a Force user's saber)
+  const w = main ? weaponWant(main.name, main.weaponClassification) : (!gear || hand === "saber" || hand === "saber2") && HAND_WEAPON[hand] ? weaponWant(HAND_WEAPON[hand]!) : undefined;
   if (w) out.push(w);
   if (!gear) {
     const r = BY_ROLE.find(([m]) => m.test(role));

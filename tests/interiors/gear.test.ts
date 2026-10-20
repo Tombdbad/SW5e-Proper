@@ -86,7 +86,10 @@ test("an NPC holds what their outfit's pose says and carries what their work sug
   assert.equal(wantsOf("vibro", undefined)[0].model, "kenney-kitbash/vibro-blade");
   assert.deepEqual(wantsOf("", undefined, "medic").map((w) => w.model), ["kenney-kitbash/medpac"]);
   assert.deepEqual(wantsOf("tool", undefined, "mechanic").map((w) => w.slot), ["hipR"]);
-  assert.deepEqual(wantsOf("saber", undefined, "patron"), []);
+  // Force users hold the saber model; the blade's colour is the figure's (models.tsx tints it by its wielder)
+  assert.deepEqual(wantsOf("saber", undefined, "patron").map((w) => w.model), ["sw5e-sabers/saber-straight"]);
+  assert.deepEqual(wantsOf("saber2", undefined, "inquisitor").map((w) => w.model), ["sw5e-sabers/saber-double"]);
+  assert.deepEqual(wantsOf("", undefined, "patron"), []);
 });
 
 import { gearOf } from "../../client/src/lib/sw5e/characterCalculation";
@@ -99,4 +102,35 @@ test("a character's gear is read from what they wield and wear, by the rules dat
   assert.deepEqual(gear.carried.map((c) => c.name).sort(), ["Arm prosthesis", "Blaster pistol", "Mechanic's kit", "Medpac"].sort());
   assert.equal(gearOf({ equipment: ["Battle armor"], abilityScores: {} }).bodyClass, "heavy");
   assert.deepEqual(gearOf({ equipment: [] }), { weapons: [], bodyClass: undefined, shield: undefined, carried: [] });
+});
+
+test("a weapon with a model says where the hand closes on it, and an enhanced weapon takes its base weapon's design", () => {
+  const saber = wantsOf("saber", { weapons: [named("Lightsaber")], carried: [] })[0];
+  assert.ok(saber.grip && Math.abs(saber.grip[2]) < 0.1, `grip ${saber.grip}`);
+  // A Force user with no saber of their own item still holds one in their pose
+  assert.equal(wantsOf("saber", { weapons: [], carried: [] })[0].model, "sw5e-sabers/saber-straight");
+  assert.deepEqual(wantsOf("", { weapons: [], carried: [] }), []);
+  // The index sends "Charric Rifle" to a sniper rifle, "Flashy" to a heavy pistol: the Blaster Kit's designs
+  for (const [name, kind] of [["Charric Rifle", "rifle"], ["Flashy", "pistol"], ["Sparkles", "pistol"], ["Hewey", "sword"]] as const) {
+    const w = wantsOf("rifle", { weapons: [{ name, equipmentCategory: "Enhanced" }], carried: [] })[0];
+    assert.ok(w && /^kenney-/.test(w.model), `${name}: ${w?.model}`);
+    void kind;
+  }
+  // A bo-rifle has its own model
+  assert.equal(wantsOf("staff", { weapons: [{ name: "AB-75 Bo-Rifle", equipmentCategory: "Enhanced" }], carried: [] })[0].model, "sw5e-gear/bo-rifle");
+});
+
+test("a musician plays an instrument of the catalogue, the same one each time, and a band is not all one instrument", () => {
+  const played = new Set<string>();
+  for (const name of ["Figrin", "Doikk", "Tech", "Nalan", "Ickabel", "Tedn", "Lirin"]) {
+    const w = wantsOf("play", undefined, "musician", name);
+    assert.equal(w.length, 1);
+    assert.equal(w[0].slot, "weapon");
+    assert.ok(w[0].grip, "it has a grip socket");
+    assert.deepEqual(w, wantsOf("play", undefined, "musician", name));
+    assert.ok(fs.existsSync(`client/public/assets/${w[0].model}.glb`), w[0].model);
+    played.add(w[0].model);
+  }
+  assert.ok(played.size >= 4, `${played.size} instruments among seven musicians`);
+  assert.deepEqual(wantsOf("play", { weapons: [], carried: [] }, "musician", "x"), [], "the player is not a musician");
 });
