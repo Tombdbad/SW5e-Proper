@@ -58,11 +58,12 @@ test("buildings of a city planet are towers of stacked rooms more than other wor
       const b = w.areas[r.parentId!];
       if (!b || ["cave", "ruin", "wreck", "camp", "trailhead", "sewer", "sewer access"].includes(b.type)) continue;
       rooms++;
-      if (r.tags.some((t) => t.startsWith("stack:"))) stacked++;
+      // (every column has a floor over its ground room since the stair blocks, 2026-10-20: a tower is two floors or more over it)
+      if (r.tags.some((t) => t.startsWith("stack:")) && (r.layout.level ?? 0) >= 2) stacked++;
     }
     return stacked / Math.max(1, rooms);
   };
-  assert.ok(share(true) > share(false) * 1.1, `${share(true).toFixed(3)} on city planets, ${share(false).toFixed(3)} elsewhere`);
+  assert.ok(share(true) > share(false) * 1.1, `${share(true).toFixed(3)} of rooms two floors up or more on city planets, ${share(false).toFixed(3)} elsewhere`);
 });
 
 test("a settlement on a city planet is called a district", () => {
