@@ -362,7 +362,11 @@ export default function ModelGallery() {
             {/* The stock of the shops (2026-10-19): armour on stands, kits, medicine, prostheses and tools, and the melee weapons built from the kits */}
             {([["Armor stand", 1, "armsmith", "Sales floor"], ["Armor stand", 1, "outfitter", "Sales floor"], ["Armor stand", 1, "palace", "Guard post"], ["Armor stand", 1, "garrison", "Armory"], ["Armor stand", 1, "curio shop", "Sales floor"],
               ["Droid parts shelf", 3, "tech shop", "Sales floor"], ["Display shelf", 3, "outfitter", "Sales floor"], ["Medical cabinet", 3, "apothecary", "Sales floor"], ["Supply cabinet", 3, "medcenter", "Ward"],
-              ["Display case", 3, "tech shop", "Sales floor"], ["Display case", 3, "medcenter", "Ward"], ["Workbench", 3, "workshop", "Workfloor"], ["Weapon rack", 3, "criminal", "Common room"]] as const).map(([n, w, b, r], i) => (
+              ["Display case", 3, "tech shop", "Sales floor"], ["Display case", 3, "medcenter", "Ward"], ["Workbench", 3, "workshop", "Workfloor"], ["Weapon rack", 3, "criminal", "Common room"],
+              // The item models on their shelves (2026-10-20)
+              ["Goods shelf", 3, "general store", "Sales floor"], ["Instrument rack", 3, "curio shop", "Sales floor"], ["Herb rack", 3, "apothecary", "Sales floor"], ["Clothing rack", 3, "outfitter", "Sales floor"],
+              ["Bar counter", 5, "cantina", "Main bar"], ["Display table", 3, "tech shop", "Sales floor"], ["Droid parts shelf", 3, "droid dealer", "Showroom"], ["Display shelf", 3, "armsmith", "Sales floor"],
+              ["Armor stand", 1, "spaceport", "Docking bay"], ["Armor stand", 1, "general store", "Sales floor"]] as const).map(([n, w, b, r], i) => (
               <group key={`${n}${b}${i}`} position={[(i % 6) * 4.5 - 11, 0, -7 - Math.floor(i / 6) * 3.5]}>
                 <Furniture name={n} w={w} h={1} seed={i + 1} look={lookOf(wealthOf(b, r))} bare />
                 <Stock name={n} w={w} h={1} seed={i + 1} buildingType={b === "criminal" ? "hideout" : b} roomName={r} />

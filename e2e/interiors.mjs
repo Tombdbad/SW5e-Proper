@@ -37,7 +37,7 @@ try {
     await page.goto(`${BASE}/dev/models?section=${v.section ?? "interiors"}&cam=${v.cam}&look=${v.look}&loadout=${process.env.LOADOUT || v.loadout || ""}&pack=${process.env.PACK || ""}`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => window.__gallery?.info().calls > 0, null, { timeout: 120000 });
     // Models are fetched after the first frame: give them time, then see that the stock has grown into its hero detail
-    await page.waitForTimeout(6000);
+    await page.waitForTimeout(Number(process.env.WAIT || 6000));
     const info = await page.evaluate(() => window.__gallery.info());
     await page.screenshot({ path: `${OUT}/interiors-${name}.png`, timeout: 300000 });
     console.log(`${name}: ${info.calls} calls, ${info.triangles} triangles, ${info.geometries} geometries, ${info.baked} baked (${((Date.now() - t0) / 1000).toFixed(0)}s) -> ${OUT}/interiors-${name}.png`);

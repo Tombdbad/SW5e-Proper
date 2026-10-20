@@ -652,7 +652,7 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number, b
   if (/clothing rack/.test(n)) {
     for (const x of [-L / 2 + 0.15, L / 2 - 0.15]) k.cyl(0.025, 1.4, C.steelDark, { at: [x, 0.7, 0], seg: 6 });
     k.cyl(0.02, L - 0.3, C.steelLight, { at: [0, 1.38, 0], rot: [0, 0, Math.PI / 2], seg: 6, finish: "sheen" });
-    for (let i = 0; i < Math.round(L * 3); i++) k.box([0.07, 0.56, 0.3], ["#7d3b4a", "#3a6a9a", "#c9a56e", "#4f6b4a", "#e8dcc0"][(i + seed) % 5], { at: [-L / 2 + 0.3 + i * 0.28, 1.08, 0], finish: "cloth" });
+    if (!bare) for (let i = 0; i < Math.round(L * 3); i++) k.box([0.07, 0.56, 0.3], ["#7d3b4a", "#3a6a9a", "#c9a56e", "#4f6b4a", "#e8dcc0"][(i + seed) % 5], { at: [-L / 2 + 0.3 + i * 0.28, 1.08, 0], finish: "cloth" });
     return;
   }
   if (/armor stand/.test(n)) {
@@ -696,7 +696,8 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number, b
     upright(k, planRect(L - 0.12, d, d / 2), 0.66, C.woodDark, { bevel: 0.02 });
     upright(k, planRect(L - 0.02, d + 0.12, (d + 0.12) / 2), 0.06, "#b07a4c", { y: 0.66, bevel: 0.02, finish: "sheen" });
     upright(k, planRect(L - 0.1, d + 0.02, (d + 0.02) / 2), 0.04, C.glow, { y: 0.05, finish: "glow" });
-    for (let i = 0; i < Math.floor(L) * 2; i++) bottle(k, [-L / 2 + 0.4 + i * 0.5, 0.72, (i % 2 ? 0.08 : -0.06)], [C.glow, C.amber, C.green, "#c084fc"][i % 4], i % 3 === 0);
+    // (bottles and tankards of the item models stand there instead when the counter carries stock: `bare`, interiors/stock.ts "bar")
+    if (!bare) for (let i = 0; i < Math.floor(L) * 2; i++) bottle(k, [-L / 2 + 0.4 + i * 0.5, 0.72, (i % 2 ? 0.08 : -0.06)], [C.glow, C.amber, C.green, "#c084fc"][i % 4], i % 3 === 0);
     return;
   }
   if (/sabacc/.test(n)) {

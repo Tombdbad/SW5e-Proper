@@ -67,10 +67,11 @@ export function holdsOf(furniture: string, buildingType: string, roomName = ""):
   if (/weapon rack/.test(n)) return "rack";
   if (/armor stand|armour stand/.test(n)) return "armour";
   if (/display case|display table/.test(n) && /armsmith|pawnshop/.test(b)) return "case";
+  // A tech shop's display table keeps devices under glass; its display case, a medcentre's and a droid dealer's, the prostheses
+  if (/display table/.test(n) && /tech shop/.test(b)) return "devices";
   if (/display case|display table/.test(n) && /tech shop|droid dealer|medcenter|apothecary/.test(b)) return "prosthetics";
   if (/display shelf|wares rack/.test(n) && /armsmith/.test(b)) return "shelf";
   if (/droid parts shelf/.test(n) && /tech shop|droid dealer/.test(b)) return "droidparts";
-  if (/holo display/.test(n) && /tech shop|droid dealer|shipyard/.test(b)) return "devices";
   if (/goods shelf|display shelf|wares rack/.test(n) && /general store|pawnshop|curio/.test(b)) return /curio/.test(b) ? null : "goods";
   if (/instrument rack/.test(n) && /curio shop|pawnshop/.test(b)) return "instruments";
   if (/herb rack/.test(n) && /apothecary|medcenter/.test(b)) return "vials";
@@ -215,7 +216,8 @@ export function stockLayout(holds: Holds, L: number, D: number, buildingType: st
     // One suit, or a shield, on the stand's footprint: a named one three times in four, else one of the kit's by weight
     const named = namedArmourFor(buildingType, roomName);
     const models = armourFor(buildingType, roomName);
-    if (next() < 0.75) items.push({ item: named[Math.floor(next() * named.length)], x: 0, y: 0, z: 0, turn: (next() - 0.5) * 0.5, scale: 1 });
+    // The named suits are built a little smaller than the kit's (0.56 against 0.74 tall): shown larger on the stand
+    if (next() < 0.75) items.push({ item: named[Math.floor(next() * named.length)], x: 0, y: 0, z: 0, turn: (next() - 0.5) * 0.5, scale: 1.3 });
     else items.push({ model: models[Math.floor(next() * models.length)], x: 0, y: 0, z: 0, turn: (next() - 0.5) * 0.5, scale: 1 });
   } else if (holds === "goods" || holds === "vials" || holds === "instruments") {
     // Open shelves: a general store's goods, an apothecary's vials, a curio shop's instruments

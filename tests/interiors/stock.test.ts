@@ -102,7 +102,8 @@ test("the new shelves are where a shop of that kind would have them", () => {
   assert.equal(holdsOf("Herb rack", "apothecary", "Sales floor"), "vials");
   assert.equal(holdsOf("Clothing rack", "outfitter", "Sales floor"), "clothing");
   assert.equal(holdsOf("Bar counter", "cantina", "Main bar"), "bar");
-  assert.equal(holdsOf("Holo display", "tech shop", "Sales floor"), "devices");
+  assert.equal(holdsOf("Display table", "tech shop", "Sales floor"), "devices");
+  assert.equal(holdsOf("Holo display", "tech shop", "Sales floor"), null);
   assert.equal(holdsOf("Bar counter", "garrison", "Barracks"), null);
   assert.equal(holdsOf("Clothing rack", "tenements", "Apartments"), null);
 });
