@@ -1417,7 +1417,7 @@ if (process.env.FORCE !== "0") {
     await page.getByTestId("downtime-taxi-run").click();
     await page.getByTestId("flight-start-taxi-run").click();
     await page.getByTestId("minigame-page").waitFor({ timeout: 30000 });
-    await page.getByTestId("countdown").waitFor({ timeout: 5000 });
+    await page.getByTestId("countdown").waitFor({ timeout: 20000 }); // software rendering can stall the page for 5 s as the 3D scene starts; the countdown lasts 5.7 s from the first frame
     await page.getByTestId("minigame-run").waitFor({ timeout: 15000 });
     await page.getByTestId("countdown").waitFor({ state: "detached", timeout: 15000 });
     // Steer right with the pad, then boost for a few seconds
@@ -1456,7 +1456,7 @@ if (process.env.FORCE !== "0") {
     await page.getByTestId("downtime-dogfight").click();
     await page.getByTestId("flight-start-dogfight").click();
     await page.getByTestId("minigame-dogfight").waitFor({ timeout: 30000 });
-    await page.getByTestId("countdown").waitFor({ timeout: 5000 });
+    await page.getByTestId("countdown").waitFor({ timeout: 20000 }); // software rendering can stall the page for 5 s as the 3D scene starts; the countdown lasts 5.7 s from the first frame
     await page.getByTestId("flight-fire").boundingBox().then(async (b) => {
       await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
       await page.mouse.down();
@@ -1530,7 +1530,7 @@ if (process.env.FORCE !== "0") {
     await page.getByTestId("downtime-pit-arena").click();
     await page.getByTestId("pit-prize").waitFor();
     await page.getByTestId("pit-enter").click();
-    await page.getByTestId("countdown").waitFor({ timeout: 5000 });
+    await page.getByTestId("countdown").waitFor({ timeout: 20000 }); // software rendering can stall the page for 5 s as the 3D scene starts; the countdown lasts 5.7 s from the first frame
     await page.getByTestId("pit-scene").waitFor({ timeout: 30000 });
     await page.waitForFunction(() => window.__fight && window.__fight.getState().inCombat === true, null, { timeout: 30000 });
     await sleep(1500);
