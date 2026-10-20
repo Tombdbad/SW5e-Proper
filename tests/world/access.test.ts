@@ -20,15 +20,15 @@ const STEP = 1 / 6;
 test("a stair block is five lanes beside its host: the flights up, the hall in the middle, the flights down", () => {
   for (const side of ["e", "w", "n", "s"] as Side[]) {
     for (const mirror of [false, true]) {
-      const b = stairBlock(host, side, 1, mirror, 1, true);
+      const b = stairBlock(host, side, 1, mirror, 1, 1);
       assert.deepEqual(b.lanes, mirror ? ["downReturn", "downStart", "hall", "upStart", "upReturn"] : ["upReturn", "upStart", "hall", "downStart", "downReturn"]);
-      const rooms = [b.hall, ...b.ups, b.down!];
+      const rooms = [b.hall, ...b.ups, ...b.downs];
       // One square wide hall, two-lane switchbacks, all BLOCK_LENGTH long away from the host's wall and against it
       const along = (l: Pick<RoomLayout, "width" | "height">) => (side === "e" || side === "w" ? l.width : l.height);
       const across = (l: Pick<RoomLayout, "width" | "height">) => (side === "e" || side === "w" ? l.height : l.width);
       assert.equal(across(b.hall), 1);
       assert.ok(rooms.every((l) => along(l) === BLOCK_LENGTH));
-      assert.equal(across(b.ups[0]) + across(b.down!) + across(b.hall), 5);
+      assert.equal(across(b.ups[0]) + across(b.downs[0]) + across(b.hall), 5);
       const touches = (l: RoomLayout) => (side === "e" ? l.x === host.x + host.width : side === "w" ? l.x + l.width === host.x : side === "s" ? l.y === host.y + host.height : l.y + l.height === host.y);
       assert.ok(rooms.every(touches), `${side}: against the host's wall`);
       // The rooms do not overlap
@@ -38,12 +38,13 @@ test("a stair block is five lanes beside its host: the flights up, the hall in t
         cells.add(`${x},${y}`);
       }
       // Each door is two squares across one wall, and the floors either side of it are within a step of each other
-      const floorOfHost = (key: string) => (key === "host-hall" || key === "head-down" ? 0 : key === "foot-down" ? -1 : key.startsWith("head-up") ? Number(key.slice(7)) + 1 : Number(key.slice(7)));
-      const layoutOf = (room: string, key: string): RoomLayout => room === "host" ? { ...host, assets: [], level: floorOfHost(key) } : room === "hall" ? b.hall : room === "down" ? b.down! : b.ups[Number(room.slice(2))];
+      const n = (key: string) => Number(key.replace(/^\D+-(up|down)/, ""));
+      const floorOfHost = (key: string) => (key === "host-hall" ? 0 : key.startsWith("head-down") ? -n(key) : key.startsWith("foot-down") ? -n(key) - 1 : key.startsWith("head-up") ? n(key) + 1 : n(key));
+      const layoutOf = (room: string, key: string): RoomLayout => room === "host" ? { ...host, assets: [], level: floorOfHost(key) } : room === "hall" ? b.hall : room.startsWith("down") ? b.downs[Number(room.slice(4))] : b.ups[Number(room.slice(2))];
       const keys = [...new Set(b.doors.map((d) => d.key))];
-      assert.deepEqual(keys.sort(), ["foot-down", "foot-up0", "head-down", "head-up0", "host-hall"]);
+      assert.deepEqual(keys.sort(), ["foot-down0", "foot-up0", "head-down0", "head-up0", "host-hall"]);
       // The host's wall holds the doorways to the flight up, the hall and the flight down, side by side (three squares, one each)
-      const onHost = b.doors.filter((d) => d.room === "host" && ["foot-up0", "host-hall", "head-down"].includes(d.key)).map((d) => `${d.x},${d.y}`);
+      const onHost = b.doors.filter((d) => d.room === "host" && ["foot-up0", "host-hall", "head-down0"].includes(d.key)).map((d) => `${d.x},${d.y}`);
       assert.equal(new Set(onHost).size, 3, `${side}: three doorways in the host's wall`);
       for (const key of keys) {
         const pair = b.doors.filter((d) => d.key === key);
@@ -58,12 +59,28 @@ test("a stair block is five lanes beside its host: the flights up, the hall in t
       }
     }
   }
-  // A tower: a switchback over the first for each floor more, its foot from the room on the floor below
-  const tower = stairBlock(host, "e", 0, false, 3, true);
-  assert.equal(tower.ups.length, 3);
+  // A tower and a sub-basement: a switchback over the first for each floor more, its foot from the room on the floor below; one
+  // under the first down for each floor deeper. Every door meets its floor within a step.
+  const tower = stairBlock(host, "e", 0, false, 3, 2);
   assert.deepEqual(tower.ups.map((l) => l.level), [0, 1, 2]);
-  assert.ok(tower.ups.every((l) => l.x === tower.ups[0].x && l.y === tower.ups[0].y), "the switchbacks stand one over another");
-  assert.ok(["foot-up1", "head-up1", "foot-up2", "head-up2"].every((k) => tower.doors.filter((d) => d.key === k).length === 2));
+  assert.deepEqual(tower.downs.map((l) => l.level), [-1, -2]);
+  assert.ok(tower.ups.every((l) => l.x === tower.ups[0].x && l.y === tower.ups[0].y), "the switchbacks up stand one over another");
+  assert.ok(tower.downs.every((l) => l.x === tower.downs[0].x && l.y === tower.downs[0].y), "the switchbacks down stand one under another");
+  const n = (key: string) => Number(key.replace(/^\D+-(up|down)/, ""));
+  const floorOf = (key: string) => (key === "host-hall" ? 0 : key.startsWith("head-down") ? -n(key) : key.startsWith("foot-down") ? -n(key) - 1 : key.startsWith("head-up") ? n(key) + 1 : n(key));
+  const layoutIn = (room: string, key: string): RoomLayout => room === "host" ? { ...host, assets: [], level: floorOf(key) } : room === "hall" ? tower.hall : room.startsWith("down") ? tower.downs[Number(room.slice(4))] : tower.ups[Number(room.slice(2))];
+  const keys = [...new Set(tower.doors.map((d) => d.key))];
+  assert.deepEqual(keys.sort(), ["foot-down0", "foot-down1", "foot-up0", "foot-up1", "foot-up2", "head-down0", "head-down1", "head-up0", "head-up1", "head-up2", "host-hall"]);
+  for (const key of keys) {
+    const [p, q] = tower.doors.filter((d) => d.key === key).map((d) => ({ d, l: layoutIn(d.room, key) }));
+    const gap = Math.abs(floorLevelAt(p.l, p.d.x, p.d.y) - floorLevelAt(q.l, q.d.x, q.d.y));
+    assert.ok(gap <= STEP / 2 + 1e-9, `tower ${key}: the floors either side are ${gap} of a floor apart`);
+  }
+  // (on any one floor of the host's footprint, its doorways to the block are on different squares)
+  for (const floor of [-2, -1, 0, 1, 2, 3]) {
+    const here = tower.doors.filter((d) => d.room === "host" && floorOf(d.key) === floor).map((d) => `${d.x},${d.y}`);
+    assert.equal(new Set(here).size, here.length, `floor ${floor}: two doorways on one square`);
+  }
 });
 
 test("a switchback climbs a floor: up one lane to the landing at half, back along the other, and nobody steps across the well", () => {
@@ -112,12 +129,14 @@ test("every building of the worlds can be walked into every room, through every 
 });
 
 test("every room over or under the ground is in a column with a five-lane block; towers, both lane orders, halls that go on and dead ends", () => {
-  let columns = 0, towers = 0, mirrored = 0, plain = 0, onward = 0, deadEnd = 0, lifts = 0;
+  let columns = 0, towers = 0, mirrored = 0, plain = 0, onward = 0, deadEnd = 0, lifts = 0, highest = 0, deepest = 0;
   for (const seed of SEEDS) {
     const world = worldOf(seed);
     const areas = Object.values(world.areas);
     for (const room of areas.filter((a) => a.kind === "room" && a.layout && !formOf(a))) {
       const level = room.layout!.level ?? 0;
+      highest = Math.max(highest, level);
+      deepest = Math.min(deepest, level);
       if (level === 0) continue;
       const building = world.areas[room.parentId!];
       // (hangars on a top floor are reached by a lift; the wild has rising passages)
@@ -149,4 +168,7 @@ test("every room over or under the ground is in a column with a five-lane block;
   assert.ok(mirrored > 0 && plain > 0, `lanes one way ${plain}, the other ${mirrored}`);
   assert.ok(onward > 0 && deadEnd > 0, `halls that go on ${onward}, dead ends ${deadEnd}`);
   assert.equal(lifts, 0, "a column whose block found no place (a lift instead)");
+  // City towers rise past the third floor, and some columns go down to a sub-basement
+  assert.ok(highest >= 4, `the highest floor is ${highest}`);
+  assert.ok(deepest <= -2, `the deepest floor is ${deepest}`);
 });
