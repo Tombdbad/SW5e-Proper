@@ -6,7 +6,7 @@ import { useKeyboardControls } from "@react-three/drei";
 import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey, squaresApart, type Combatant } from "@/lib/stores/useCombat";
-import { standsAt, stairsApproach, arrivalSquares, type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
+import { standsAt, stairsApproach, arrivalSquares, climbAt, canStep, floorsOf, type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
 import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind } from "./sprites";
@@ -241,20 +241,17 @@ const LEVEL_H = 2.8;
 const levelY = (l?: Pick<RoomLayout, "level">) => (l?.level ?? 0) * LEVEL_H;
 const rise = (l?: Pick<RoomLayout, "climb">) => (l?.climb ? l.climb.levels * LEVEL_H : 0);
 // How far up the floor of a way between floors is at a point of it (squares from the room's
-// north-west corner, the middle of a square being half way into it)
-function rampAt(l: RoomLayout, x: number, y: number): number {
-  if (!l.climb) return 0;
-  const { toward } = l.climb;
-  const t = toward === "e" ? x / l.width : toward === "w" ? 1 - x / l.width : toward === "s" ? y / l.height : 1 - y / l.height;
-  return Math.max(0, Math.min(1, t)) * rise(l);
-}
+// north-west corner, the middle of a square being half way into it): evenly up a flight, lift or
+// ladder, up one lane of a switchback to its landing and back along the other (shared/logic climbAt)
+const rampAt = (l: RoomLayout, x: number, y: number) => climbAt(l, x, y) * rise(l);
 // Where the soles of someone standing at a point of a room are, in the building's own height
 const floorAt = (l: RoomLayout, x: number, y: number) => levelY(l) + rampAt(l, x, y);
 const sameFootprint = (a: RoomLayout, b: RoomLayout) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
 // The steps of a stairwell, or the rungs of a ladder, rising from one end of a room to the other;
 // they are looked at, not tapped (the floor under them takes the tap)
-function Ascent({ w, h, toward, up, form }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; form: string }) {
+function Ascent({ w, h, toward, up, form, switchback }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; form: string; switchback?: RoomLayout["switchback"] }) {
+  if (switchback) return <Switchback w={w} h={h} toward={toward} up={up} low={switchback.low} />;
   const along = toward === "e" || toward === "w" ? w : h;
   const across = toward === "e" || toward === "w" ? h : w;
   const count = Math.max(4, Math.round(along * (form === "ladder" ? 3 : 2.4)));
@@ -285,6 +282,46 @@ function Ascent({ w, h, toward, up, form }: { w: number; h: number; toward: "n" 
           </mesh>
         );
       })}
+    </group>
+  );
+}
+
+// The two flights of a switchback and its landing (a stair block's way up or down a floor, see shared/logic "Stair blocks"): treads
+// along each lane at the height the floor is there (climbAt), the landing flat across the far row, and a wall between the flights
+// with a rail along it, up to the landing
+function Switchback({ w, h, toward, up, low }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; low: 0 | 1 }) {
+  const none = () => null;
+  const plan = { width: w, height: h, climb: { toward, levels: 1 }, switchback: { low } };
+  const ew = toward === "e" || toward === "w";
+  const along = ew ? w : h;
+  const TREADS = 3;
+  const treads: { at: V3; size: V3; top: number }[] = [];
+  for (let lane = 0; lane < 2; lane++) {
+    for (let k = 0; k < along * TREADS; k++) {
+      const a = (k + 0.5) / TREADS;
+      const [px, py] = ew ? [a, lane + 0.5] : [lane + 0.5, a];
+      const top = Math.max(0.04, climbAt(plan, px, py) * up);
+      treads.push({ at: [px, top / 2, py], size: ew ? [1 / TREADS + 0.01, top, 0.92] : [0.92, top, 1 / TREADS + 0.01], top });
+    }
+  }
+  // The wall between the flights runs from the near end to the landing, as high as the higher flight there and a rail more
+  const run = along - 1;
+  const near = toward === "e" || toward === "s" ? 0 : along;
+  const sign = toward === "e" || toward === "s" ? 1 : -1;
+  const wall = Array.from({ length: run }, (_, i) => {
+    const mid = near + sign * (i + 0.5);
+    const tall = Math.max(climbAt(plan, ew ? mid : 0.5, ew ? 0.5 : mid), climbAt(plan, ew ? mid : 1.5, ew ? 1.5 : mid)) * up + 0.9;
+    return { at: (ew ? [mid, tall / 2, 1] : [1, tall / 2, mid]) as V3, size: (ew ? [1.01, tall, 0.06] : [0.06, tall, 1.01]) as V3 };
+  });
+  return (
+    <group>
+      {treads.map((t, i) => (
+        <mesh key={i} position={t.at} raycast={none} receiveShadow castShadow>
+          <boxGeometry args={t.size} />
+          <meshLambertMaterial color={i % 2 ? "#8b8f96" : "#9aa0a8"} />
+        </mesh>
+      ))}
+      {wall.map((p, i) => <Box key={`w${i}`} at={p.at} size={p.size} color="#c8ccd2" />)}
     </group>
   );
 }
@@ -335,6 +372,14 @@ function StairsAsset({ w, h, up }: { w: number; h: number; up: boolean }) {
         </mesh>
       );
     });
+  // A doorway at the foot of a flight and at its top (the user's rule: every flight of stairs has one at each end)
+  const frame = (z: number, base: number, key: string) => (
+    <group key={key}>
+      <Box at={[0.05, base + 1.0, z]} size={[0.07, 2.0, 0.07]} color="#c8ccd2" />
+      <Box at={[C - 0.05, base + 1.0, z]} size={[0.07, 2.0, 0.07]} color="#c8ccd2" />
+      <Box at={[C / 2, base + 2.0, z]} size={[C, 0.08, 0.08]} color="#c8ccd2" />
+    </group>
+  );
   const body = switchback ? (
     <>
       {steps(0, C / 2, L, 0.6, 0, rise / 2, Math.max(3, Math.round(L * 1.3)), "a")}
@@ -344,7 +389,11 @@ function StairsAsset({ w, h, up }: { w: number; h: number; up: boolean }) {
       <Box at={[C / 2, 0.45, L / 2]} size={[0.05, 0.9, L]} color="#c8ccd2" />
     </>
   ) : (
-    steps(0, C, L, 0, 0, rise, Math.max(3, Math.round(L * 2.4)), "s")
+    <>
+      {steps(0, C, L, 0, 0, rise, Math.max(3, Math.round(L * 2.4)), "s")}
+      {up && frame(L - 0.04, 0, "foot")}
+      {up && frame(0.04, rise, "top")}
+    </>
   );
   return (
     <group position={turned ? [0, 0, C] : undefined} rotation={turned ? [0, Math.PI / 2, 0] : undefined}>
@@ -434,7 +483,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // What this room is, for its light, its air and what is in it (interiors/): the kind of building, the room's name, the world
   mood?: { buildingType: string; roomName: string; biome: string };
   // The room's level and what it is, for stairs, lifts and ladders (their floor rises)
-  plan?: Pick<RoomLayout, "level" | "form" | "climb" | "width" | "height" | "mask">;
+  plan?: Pick<RoomLayout, "level" | "form" | "climb" | "width" | "height" | "mask" | "switchback">;
   assets: RoomAsset[];
   floor: FloorKind;
   wall: string;
@@ -541,7 +590,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         </bufferGeometry>
         <lineBasicMaterial color="#ffffff" transparent opacity={0.12} />
       </lineSegments>
-      {plan?.climb && plan.form && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} />}
+      {plan?.climb && plan.form && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} />}
       {walls && mask
         ? <CaveWalls mask={mask} ways={assets.filter((a) => a.side).map((a) => ({ x: a.x, y: a.y }))} w={width} h={height} biome={mood!.biome} tier={detail} seed={width * 31 + height} tall={fullWalls} />
         : walls
@@ -621,7 +670,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
 // is walked in a line wherever a body a little under a square wide fits between open squares all
 // along it (never over a square in `keep`, which has to be stepped on). The squares to step on,
 // without the first; null if no way.
-function route(open: (x: number, y: number) => boolean, from: { x: number; y: number }, goals: { x: number; y: number }[], smooth?: { keep?: Set<string> }): { x: number; y: number }[] | null {
+function route(open: (x: number, y: number) => boolean, from: { x: number; y: number }, goals: { x: number; y: number }[], smooth?: { keep?: Set<string> }, step?: (a: { x: number; y: number }, b: { x: number; y: number }) => boolean): { x: number; y: number }[] | null {
   const key = (x: number, y: number) => `${x},${y}`;
   const wanted = new Set(goals.map((g) => key(g.x, g.y)));
   if (!goals.length) return null;
@@ -679,6 +728,8 @@ function route(open: (x: number, y: number) => boolean, from: { x: number; y: nu
       const y = at.y + dy;
       if ((!dx && !dy) || closed.has(key(x, y)) || !open(x, y)) continue;
       if (dx && dy && (!open(at.x + dx, at.y) || !open(at.x, at.y + dy))) continue;
+      // (and only where a step may be taken: never from one flight of a switchback to the other but on its landing)
+      if (step && (!step(at, { x, y }) || (dx && dy && (!step(at, { x: at.x + dx, y: at.y }) || !step(at, { x: at.x, y: at.y + dy }))))) continue;
       const g = at.g + (dx && dy ? Math.SQRT2 : 1);
       if (g >= (cost.get(key(x, y)) ?? Infinity)) continue;
       cost.set(key(x, y), g);
@@ -1603,7 +1654,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const fixtures = useMemo(() => fixturesOf(districtPlan, biome, tier), [districtPlan, biome, tier]);
   // (a cellar under the street leaves the street above it free to walk on, and so does a roof or
   // a catwalk, which stand over what is below)
-  const inRoom = (x: number, y: number) => rooms.some((a) => a.layout && (a.layout.level ?? 0) >= 0 && formOf(a) !== "gallery" && !openAir(a) && x >= a.layout.x && x < a.layout.x + a.layout.width && y >= a.layout.y && y < a.layout.y + a.layout.height);
+  const inRoom = (x: number, y: number) => rooms.some((a) => a.layout && floorsOf(a.layout)[1] >= 0 && formOf(a) !== "gallery" && !openAir(a) && x >= a.layout.x && x < a.layout.x + a.layout.width && y >= a.layout.y && y < a.layout.y + a.layout.height);
 
   // What is to be seen in the opened room: hidden doors, caches and secret ways only once found
   const seen = (room: Area) =>
@@ -2015,12 +2066,19 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
 
   // Walk to a square, or up to something that stands on the given squares, then do what was asked
   const active = present && !locked && !duel;
+  // Which steps can be taken in the room the party is in, on the building's grid (only a switchback has a rule: shared/logic canStep)
+  const stepRule = () => {
+    const l = inside?.layout;
+    return l?.switchback ? (a: { x: number; y: number }, b: { x: number; y: number }) => canStep(l, { x: a.x - l.x, y: a.y - l.y }, { x: b.x - l.x, y: b.y - l.y }) : undefined;
+  };
   const walkTo = (goals: { x: number; y: number }[], then?: (squares: number) => void) => {
     if (!active) return;
     const from = { x: Math.round(feet.current.x), y: Math.round(feet.current.y) };
     // Loose flagstones have to be stepped on to be felt, so the path is not pulled straight over them
     const traps = inside ? new Set(trapsIn(inside, false).map((t) => `${inside.layout!.x + t.x},${inside.layout!.y + t.y}`)) : undefined;
-    const path = route(open, from, goals.filter((g) => open(g.x, g.y) || (g.x === from.x && g.y === from.y)), { keep: traps });
+    // (up a switchback the way is not pulled straight: it would cut across the well from one flight to the other)
+    const step = stepRule();
+    const path = route(open, from, goals.filter((g) => open(g.x, g.y) || (g.x === from.x && g.y === from.y)), step ? undefined : { keep: traps }, step);
     if (!path) onAct?.({ type: "note", text: gangRing.length ? "The gang bars the way out of the alley." : "There is no way through to there." });
     else walk.current = { path, then, total: path.length };
   };
@@ -2037,6 +2095,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     for (const [mx, my] of tries) {
       const next = { x: from.x + mx, y: from.y + my };
       if (!open(next.x, next.y) || (mx && my && !(open(from.x + mx, from.y) && open(from.x, from.y + my)))) continue;
+      const step = stepRule();
+      if (step && (!step(from, next) || (mx && my && !(step(from, { x: from.x + mx, y: from.y }) && step(from, { x: from.x, y: from.y + my }))))) continue;
       walk.current = { path: [...(queued?.path ?? []), next], then: queued?.then, total: (queued?.total ?? 0) + 1, pace: speed };
       return;
     }

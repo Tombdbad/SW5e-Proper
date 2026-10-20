@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateWorld, auditBuildings } from "@shared/logic";
+import { generateWorld, auditBuildings, type Area } from "@shared/logic";
 import { getWorldCatalog } from "../../server/sw5eData";
 
 // The audit of every building's rooms (shared/logic auditBuildings): floors that can be walked, ways that stand and are reachable,
@@ -24,7 +24,7 @@ test("every building of every world is sound inside (floors, ways, stairs, stack
   assert.equal(found.length, 0, `${found.length} problems; by kind: ${[...kinds].map(([k, n]) => `${n} x ${k}`).join("; ")}\n${found.slice(0, 12).join("\n")}`);
 });
 
-test("some buildings are towers of three floors, each reached by a stairwell from the one below", () => {
+test("some buildings are towers of three floors, each reached by a switchback of its stair block from the one below", () => {
   let towers = 0;
   let deepest = 0;
   for (const seed of [...FULL, ...START]) {
@@ -38,7 +38,9 @@ test("some buildings are towers of three floors, each reached by a stairwell fro
       deepest = Math.max(deepest, room.layout.level ?? 0);
       // three floors: the top above the middle above the ground, on one footprint
       assert.ok((room.layout.level ?? 0) > (lower.layout!.level ?? 0) && (lower.layout!.level ?? 0) > (below.layout!.level ?? 0), `${room.name}: floors ${below.layout!.level ?? 0}, ${lower.layout!.level ?? 0}, ${room.layout.level}`);
-      assert.ok(room.layout.assets.some((a) => a.kind === "stairs" && a.to === lower.id) && lower.layout!.assets.some((a) => a.kind === "stairs" && a.to === room.id), `${room.name}: no stairs between it and ${lower.name}`);
+      // the top floor's door opens off the head of a switchback whose foot opens off the floor below
+      const flights = (a: Area) => a.layout!.assets.filter((d) => d.kind === "door" && world.areas[d.to ?? ""]?.layout?.switchback).map((d) => d.to);
+      assert.ok(flights(room).some((id) => flights(lower).includes(id)), `${room.name}: no switchback between it and ${lower.name}`);
     }
   }
   assert.ok(towers > 0, "no tower of three floors in any world");
