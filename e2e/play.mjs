@@ -907,8 +907,9 @@ if (process.env.FORCE !== "0") {
     await page.goto(`${BASE}/game/${forceCamp}`, { waitUntil: "domcontentloaded" });
     await page.getByRole("heading", { name: "E2E force " + TAG }).waitFor({ timeout: 60000 });
     // Enemies that are already attacking (after a lost fight and a revive) start the fight themselves
-    if (!(await page.getByText(/Combat - Round/).count())) await page.getByRole("button", { name: "Fight", exact: true }).click();
-    await page.getByText(/Combat - Round/).waitFor();
+    // (the first frame of the 3D map blocks a page on this VM for a while: the button is waited for a minute, not fifteen seconds)
+    if (!(await page.getByText(/Combat - Round/).count())) await page.getByRole("button", { name: "Fight", exact: true }).click({ timeout: 60000 });
+    await page.getByText(/Combat - Round/).waitFor({ timeout: 60000 });
     const listed = (await page.getByTestId("combat-powers").innerText()).replace(/\n/g, " ");
     for (const power of consular.forcePowers) if (!listed.includes(power.name)) throw new Error(`${power.name} is not offered in the fight: ${listed}`);
     const seen = [];
