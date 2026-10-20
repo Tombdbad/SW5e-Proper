@@ -16,6 +16,8 @@ export type MapAction =
   | { type: "exit"; exit: Exit }
   | { type: "loot" | "occupant" | "ship" | "vehicle" | "companion" | "station"; id: string }
   | { type: "look"; areaId: string }
+  // A window walked up to (shared/logic "Windows"): from inside its room, or from the street outside it
+  | { type: "window"; areaId: string; id: string; outside: boolean }
   | { type: "trap"; areaId: string; id: string }
   | { type: "use"; areaId: string; id: string; name: string }
   | { type: "note"; text: string }

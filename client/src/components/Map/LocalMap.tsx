@@ -419,10 +419,12 @@ const onWall = (layout: { width: number; height: number }, a: RoomAsset): { x: n
 
 // A door, way out, secret way or window, drawn along x about the origin, its frame in the
 // building's style (arched, rounded or square; round windows in hulls)
-function Doorway({ kind, color, label, onTap, style }: { kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style }) {
+// (a window by its size: a slit, a small pane, a window one climbs through, a great window; shared/logic "Windows")
+const PANE_SCALE: Record<string, V3> = { slit: [0.3, 1.35, 1], small: [0.6, 0.75, 1], large: [1, 1.5, 1], wide: [1.15, 1.8, 1] };
+function Doorway({ kind, color, label, onTap, style, pane }: { kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"] }) {
   return (
     <>
-      <Opening kind={kind} color={color} style={style} />
+      {kind === "window" && pane ? <group scale={PANE_SCALE[pane.size]}><Opening kind={kind} color={color} style={style} /></group> : <Opening kind={kind} color={color} style={style} />}
       {label && <Label at={[0, kind === "window" || kind === "secret" ? 1.2 : 1.9, 0]} size={0.3} color={color}>{label}</Label>}
       {onTap && <Hit at={[0, 0.75, 0]} size={[1, 1.5, 0.9]} onTap={onTap} label={label ?? kind} />}
     </>
@@ -624,7 +626,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         const spot = onWall({ width, height }, a);
         return (
           <group key={a.id} position={[spot.x, ramp(a.x, a.y), spot.z]} rotation={[0, spot.turn, 0]}>
-            <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} />
+            <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} />
           </group>
         );
       })}
@@ -2154,7 +2156,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       const staff = lifeApi.current?.servedBy(a.id);
       if (again) callOver(a.id);
       else lastTap.current.note = setTimeout(() => onAct?.({ type: "note", text: staff ? `${a.name}: ${staff.name} serves here. Double tap it to call them over.` : a.name }), 500);
-    } else if (a.kind === "window") onAct?.({ type: "note", text: "A window onto the street outside." });
+    } else if (a.kind === "window") walkTo([{ x: l.x + a.x, y: l.y + a.y }], () => onAct?.({ type: "window", areaId: inside!.id, id: a.id, outside: false }));
     // Stairs nobody can stand on are taken from their foot (or from beside them), stairs that can be stood on where they are
     else if (a.kind === "stairs") {
       const goals = stairsGoals(a, (x, y) => open(l.x + x, l.y + y)).map((q) => ({ x: l.x + q.x, y: l.y + q.y }));
@@ -2174,7 +2176,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // Something in an outside wall was tapped from the street
   const actOutside = (room: Area, a: RoomAsset) => {
     const at = [beyond(room.layout!, a)];
-    if (a.kind === "window") walkTo(at, () => onAct?.({ type: "look", areaId: room.id }));
+    if (a.kind === "window") walkTo(at, () => onAct?.({ type: "window", areaId: room.id, id: a.id, outside: true }));
     else if (a.kind === "exit" || a.kind === "secret") walkTo(at, (squares) => {
       // Going in at the place a person in need was to be taken to, with them close behind, is taking them there
       const them = enc?.kind === "help" && enc.phase === "follow" && enc.target === room.parentId ? folkAt.current[enc.id] : undefined;
@@ -2184,7 +2186,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     });
     else onAct?.({ type: "note", text: `${a.name}: a passage between two parts of the building.` });
   };
-  const wayColor = (a: RoomAsset) => (a.kind === "door" && world.paths.find((p) => p.id === a.ref)?.locked ? WAY_COLORS.locked : WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door);
+  const wayColor = (a: RoomAsset) =>
+    (a.kind === "door" && world.paths.find((p) => p.id === a.ref)?.locked) || (a.kind === "window" && a.pane?.latch === "locked" && !a.pane.broken) ? WAY_COLORS.locked
+    : a.kind === "window" && (a.pane?.latch === "open" || a.pane?.broken) && (a.pane.size === "large" || a.pane.size === "wide") ? WAY_COLORS.exit
+    : WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door;
   const wayLabel = (a: RoomAsset) => {
     if (a.kind === "window") return undefined;
     const lock = a.kind === "door" ? world.paths.find((p) => p.id === a.ref)?.locked : undefined;
@@ -2417,6 +2422,33 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   {/* Posts it stands on, down to the street */}
                   {lift > 0.01 && [[0.1, 0.1], [l.width - 0.1, 0.1], [0.1, l.height - 0.1], [l.width - 0.1, l.height - 0.1]].map(([px, pz], i) => <Box key={i} at={[px, -lift / 2, pz]} size={[0.1, lift, 0.1]} color="#59636d" />)}
                 </group>
+              ) : form === "balcony" ? (
+                // A balcony over the street (shared/logic "Balconies"): its floor and balustrade, and the climb up to it from the street
+                <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
+                  {slab("#6b6f78")}
+                  {rail(0.55)}
+                  {l.assets.filter((a) => a.kind === "exit").map((a) => {
+                    const at = onWall(l, a);
+                    const step = beyond(l, a);
+                    const sign = a.side === "s" || a.side === "e" ? 1 : -1;
+                    const top = lift + 0.6;
+                    return (
+                      <group key={a.id}>
+                        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[step.x - l.x + 0.5, -lift + 0.01, step.y - l.y + 0.5]} onClick={tappable ? (e) => { e.stopPropagation(); if (e.delta <= 8) actOutside(room, a); } : undefined}>
+                          <planeGeometry args={[0.92, 0.92]} />
+                          <meshBasicMaterial color={WAY_COLORS.exit} transparent opacity={0.45} depthWrite={false} />
+                        </mesh>
+                        {/* A trellis of vines and rails up the wall under the balcony */}
+                        <group position={[at.x, -lift, at.z]} rotation={[0, at.turn, 0]}>
+                          {[-0.32, 0, 0.32].map((x) => <Box key={x} at={[x, top / 2, sign * 0.1]} size={[0.04, top, 0.04]} color="#5a7a48" />)}
+                          {Array.from({ length: Math.max(2, Math.round(top / 0.5)) }, (_, i) => <Box key={i} at={[0, 0.3 + (i * (top - 0.4)) / Math.max(2, Math.round(top / 0.5)), sign * 0.1]} size={[0.7, 0.04, 0.04]} color="#6b8a52" />)}
+                          <Label at={[0, top + 0.4, sign * 0.1]} size={0.28} color={WAY_COLORS.exit}>Climb to the balcony</Label>
+                          {tappable && <Hit at={[0, top / 2, sign * 0.3]} size={[0.9, top, 0.8]} onTap={() => actOutside(room, a)} label="Climb to the balcony" />}
+                        </group>
+                      </group>
+                    );
+                  })}
+                </group>
               ) : form === "gallery" ? (
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                   {galleryOfOpened ? (
@@ -2489,7 +2521,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   )}
                 </>
               )}
-              {!opened && form !== "roof" && l.assets.filter((a) => a.side && (a.kind === "exit" || a.kind === "window" || (a.kind === "secret" && room.secretEntry?.found) || (a.kind === "door" && !inRoom(beyond(l, a).x, beyond(l, a).y)))).map((a) => {
+              {!opened && form !== "roof" && form !== "balcony" && l.assets.filter((a) => a.side && (a.kind === "exit" || a.kind === "window" || (a.kind === "secret" && room.secretEntry?.found) || (a.kind === "door" && !inRoom(beyond(l, a).x, beyond(l, a).y)))).map((a) => {
                 const at = onWall(l, a);
                 const step = beyond(l, a);
                 return (
@@ -2501,7 +2533,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     </mesh>
                   )}
                   <group position={[at.x, 0, at.z]} rotation={[0, at.turn, 0]}>
-                    <Doorway kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} />
+                    <Doorway pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} />
                   </group>
                   </group>
                 );

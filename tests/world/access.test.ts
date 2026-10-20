@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateWorld, auditBuildings, walkBuilding, validateWorld, stairBlock, climbAt, canStep, floorLevelAt, formOf, BLOCK_LENGTH, type Area, type RoomLayout, type Side, type World } from "@shared/logic";
+import { generateWorld, auditBuildings, walkBuilding, validateWorld, stairBlock, climbAt, canStep, floorLevelAt, formOf, exitsOf, paneFor, climbable, setPane, arrivalSquares, createRandom, BLOCK_LENGTH, BALCONY_CLIMB_DC, type Area, type RoomLayout, type Side, type World } from "@shared/logic";
 import { getWorldCatalog } from "../../server/sw5eData";
 
 // Access to every floor of the buildings the generator makes (2026-10-20): the stair blocks (shared/logic "Stair blocks": rooms
@@ -182,4 +182,75 @@ test("every room over or under the ground is in a column with a five-lane block;
   assert.ok(highest >= 4, `the highest floor is ${highest}`);
   assert.ok(deepest <= -2, `the deepest floor is ${deepest}`);
   assert.ok(roofWays > 0, "no roof with stairs down into its building");
+});
+
+test("windows: slits in fortified places, portholes on stations, great windows locked and alarmed in palaces; only large ones are climbed through", () => {
+  const r = createRandom(7);
+  assert.equal(paneFor("garrison", "Barracks", false, r).size, "slit");
+  assert.equal(paneFor("cantina", "Main bar", true, r).size, "small");
+  for (let i = 0; i < 20; i++) {
+    const p = paneFor("palace", "Guest rooms", false, r);
+    assert.ok((p.size === "wide" || p.size === "large") && p.alarmed && p.latch !== "open", `a palace window: ${JSON.stringify(p)}`);
+    const shop = paneFor("armsmith", "Sales floor", false, r);
+    assert.ok(shop.size === "large" && shop.latch !== "open", "shop glass is shut");
+  }
+  assert.ok(climbable({ size: "large", latch: "open" }) && climbable({ size: "wide", latch: "locked" }));
+  assert.ok(!climbable({ size: "slit", latch: "open" }) && !climbable({ size: "small", latch: "open" }));
+  // Coming in through a window, the party stands at it (it leads to the building outside, as a way out does)
+  const room: RoomLayout = { x: 0, y: 0, width: 8, height: 6, assets: [
+    { id: "exit", kind: "exit", name: "Way out", x: 0, y: 3, w: 1, h: 1, side: "w", to: "b1" },
+    { id: "win", kind: "window", name: "Window", x: 7, y: 2, w: 1, h: 1, side: "e", to: "b1", pane: { size: "large", latch: "open" } },
+  ] };
+  assert.deepEqual(arrivalSquares(room, "b1", { x: 8, y: 2 }), [{ x: 7, y: 2 }], "in through the window: at it");
+  assert.deepEqual(arrivalSquares(room, "b1", { x: -1, y: 3 }), [{ x: 0, y: 3 }], "in through the door: at the door");
+});
+
+test("generated windows are of every kind, a window's state changes on its own, and the large ones on the ground floor can be climbed through", () => {
+  const sizes = new Set<string>();
+  let climb = 0, alarmed = 0;
+  for (const seed of SEEDS) {
+    for (const a of Object.values(worldOf(seed).areas)) {
+      for (const w of a.layout?.assets ?? []) {
+        if (w.kind !== "window") continue;
+        assert.ok(w.pane, `${a.name}: a window with no pane`);
+        assert.ok(w.to && worldOf(seed).areas[w.to]?.kind === "building", `${a.name}: a window that does not look out of its building`);
+        sizes.add(w.pane!.size);
+        if (climbable(w.pane) && (a.layout!.level ?? 0) === 0) climb++;
+        if (w.pane!.alarmed) alarmed++;
+      }
+    }
+  }
+  assert.deepEqual([...sizes].sort(), ["large", "slit", "small", "wide"]);
+  assert.ok(climb > 20 && alarmed > 5, `${climb} windows to climb through, ${alarmed} alarmed`);
+  const world = worldOf(5);
+  const room = Object.values(world.areas).find((a) => a.layout?.assets.some((w) => w.kind === "window" && w.pane?.latch === "latched"))!;
+  const win = room.layout!.assets.find((w) => w.kind === "window" && w.pane?.latch === "latched")!;
+  const next = setPane(world, room.id, win.id, { latch: "open" });
+  assert.equal(next.areas[room.id].layout!.assets.find((w) => w.id === win.id)!.pane!.latch, "open");
+  assert.equal(world.areas[room.id].layout!.assets.find((w) => w.id === win.id)!.pane!.latch, "latched", "the world it came from is left alone");
+});
+
+test("balconies: on the upper floors of the great houses, over the street, patio doors into their room, climbed up to and down from", () => {
+  let balconies = 0;
+  for (const seed of SEEDS) {
+    const world = worldOf(seed);
+    for (const b of Object.values(world.areas).filter((a) => formOf(a) === "balcony")) {
+      balconies++;
+      const building = world.areas[b.parentId!];
+      assert.ok(/^(palace|estates|manor house)$/.test(building.type), `${building.type}: a balcony`);
+      const l = b.layout!;
+      assert.ok((l.level ?? 0) >= 1 && b.gateway, "a balcony is on an upper floor and reached from outside");
+      const doors = l.assets.filter((a) => a.kind === "door");
+      assert.equal(doors.length, 1);
+      const room = world.areas[doors[0].to!];
+      assert.equal(room.layout!.level, l.level, "the patio doors open into a room on the balcony's floor");
+      assert.ok(room.layout!.assets.some((a) => a.kind === "door" && a.to === b.id && a.name === "Patio doors"));
+      // From the street it is climbed up to, and down from the balcony
+      const up = exitsOf(world, building.id).find((e) => e.to === b.id);
+      assert.ok(up && up.climb === BALCONY_CLIMB_DC, "climbed up to from the street");
+      const down = exitsOf(world, b.id).find((e) => e.to === building.id);
+      assert.ok(down && down.climb === BALCONY_CLIMB_DC, "climbed down from");
+    }
+  }
+  assert.ok(balconies > 0, "no balcony in the worlds");
 });

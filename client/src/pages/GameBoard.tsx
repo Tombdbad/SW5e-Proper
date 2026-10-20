@@ -42,6 +42,7 @@ import {
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
+  setPane, climbable, PANE_LATCH_DC, PANE_BREAK_DC, PANE_SENSOR_DC, PANE_SENSOR_SEEN, PATIO_SENSOR_DC, type Pane,
   START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText,
   withPresence, withPartyShips, bulkOf, shoveAsset, moveRoomAssets,
   gearUse, toolFor, toolTrained, boonOf, gambleMode, gambleResult, GAMBLE_ROUNDS, GAMBLE_HOUSE_DC, GAMBLE_STAKE, GAMBLE_COMPLICATION, GAMBLE_COMPLICATIONS,
@@ -467,12 +468,12 @@ export default function GameBoard() {
   // The 3D map: the place being looked at (the party's own, unless another was opened), and
   // whatever was last picked out on it
   const [viewId, setViewId] = useState<string | null>(null);
-  const [picked, setPickedNow] = useState<{ kind: "area" | "occupant" | "ship" | "vehicle" | "companion" | "asset"; id: string; name?: string } | null>(null);
+  const [picked, setPickedNow] = useState<{ kind: "area" | "occupant" | "ship" | "vehicle" | "companion" | "asset" | "window"; id: string; name?: string } | null>(null);
   // The card for what was picked lets taps through for a moment: it comes up over the lower part
   // of the map, where the second tap of a double tap would otherwise land on it. (Closed in the
   // same step as the pick, so that not even the next tap in the queue finds it open.)
   const [cardOpen, setCardOpen] = useState(true);
-  const setPicked = (next: { kind: "area" | "occupant" | "ship" | "vehicle" | "companion" | "asset"; id: string; name?: string } | null) => {
+  const setPicked = (next: { kind: "area" | "occupant" | "ship" | "vehicle" | "companion" | "asset" | "window"; id: string; name?: string } | null) => {
     setPickedNow(next);
     setCardOpen(false);
   };
@@ -731,10 +732,29 @@ export default function GameBoard() {
     const picked = door ? afterHours.current.get(door.parentId ?? "") : undefined;
     if (shutDC !== undefined && door && !(picked !== undefined && clockNow() - picked < 780)) return breakIn(door.parentId!, shutDC);
     if (exit.climb) {
-      // Out of a pit: Athletics, or Dexterity, a minute for each try
-      const ok = await abilityCheck("Climbing out", exit.climb, ["strength", "dexterity"], skilled("athletics"));
+      // Out of a pit, up to or down from a balcony (house rule): Athletics, or Dexterity, a minute for each try
+      const ok = await abilityCheck(exit.via === "path" ? "Climbing out" : exit.label.replace(/ to$/, ""), exit.climb, ["strength", "dexterity"], skilled("athletics"));
       if (cancelledCheck.current) return;
       if (!ok) return void saveCampaign(pass(1));
+    }
+    // A sensor on the way (patio doors, house rule): slipped past (Intelligence, a security or slicer's kit helps), else the alarm
+    // goes up through the building; either way the party goes through
+    if (exit.alarmed && exit.pathId) {
+      const kit = lockKit();
+      const ok = await abilityCheck("Slip past the sensor", PATIO_SENSOR_DC, ["intelligence"], !!kit && trainedWith(kit));
+      if (cancelledCheck.current) return;
+      const pathId = exit.pathId;
+      const buildingOf = here?.kind === "room" ? here.parentId : undefined;
+      travel(exit, ride);
+      setTimeout(() => {
+        const latest = latestWorld();
+        if (!latest) return;
+        let next: World = { ...latest, paths: latest.paths.map((p) => (p.id === pathId ? { ...p, alarmed: ok ? undefined : p.alarmed } : p)) };
+        if (!ok && buildingOf) next = updateArea(next, buildingOf, { alarm: true }).world;
+        saveCampaign({ galaxyMap: next });
+        toast[ok ? "success" : "error"](ok ? "The sensor is slipped past: it will not trip now." : "The sensor trips: the alarm goes up through the building (house rule).");
+      }, 80);
+      return;
     }
     travel(exit, ride);
   };
@@ -3032,6 +3052,7 @@ export default function GameBoard() {
     }
     else if (action.type === "exit") leaveBy(action.exit);
     else if (action.type === "use") setPicked({ kind: "asset", id: `${action.areaId}|${action.id}`, name: action.name });
+    else if (action.type === "window") setPicked({ kind: "window", id: `${action.areaId}|${action.id}`, name: action.outside ? "outside" : "inside" });
     else if (action.type === "station") {
       if (action.id === "helm") setHelmOpen(true);
       else if (action.id === "ramp") disembarkNow();
@@ -4418,6 +4439,100 @@ export default function GameBoard() {
               </Button>
             )}
           </div>
+        </>
+      );
+    }
+    // A window walked up to (shared/logic "Windows", house rules): looked through, and a large one climbed through, its latch
+    // jimmied, its lock picked or its glass broken, its alarm sensor disabled
+    if (picked.kind === "window") {
+      const [roomId, assetId] = picked.id.split("|");
+      const outside = picked.name === "outside";
+      const room = world.areas[roomId];
+      const a = room?.layout?.assets.find((x) => x.id === assetId);
+      const pane = a?.pane;
+      const building = room ? world.areas[room.parentId ?? ""] : undefined;
+      if (!room?.layout || !a || !building) return close;
+      const passive = 10 + modifier(character.abilityScores?.wisdom) + (skilled("perception") ? proficiency : 0);
+      const sensor = !!pane?.alarmed && passive >= PANE_SENSOR_SEEN;
+      // (from the street only a window on the ground floor is in reach; from inside any window opens without a check)
+      const reach = (room.layout.level ?? 0) === 0 && climbable(pane);
+      const open = !!pane && (!outside || pane.latch === "open" || !!pane.broken);
+      const kit = lockKit();
+      const trained = !!kit && trainedWith(kit);
+      const busy = inCombat || dead || exploring;
+      const save = (change: Partial<Pane>, minutes = 1, extra: (w: World) => World = (w) => w) => saveCampaign({ galaxyMap: extra(setPane(world, room.id, a.id, change)), ...pass(minutes) });
+      // The alarm goes up through the building, and those in the room turn on whoever came in
+      const trip = () => setTimeout(() => {
+        const latest = latestWorld();
+        if (!latest) return;
+        let next = updateArea(latest, building.id, { alarm: true }).world;
+        if (watchersAt(next, room.id).length) next = setAlert(next, room.id, ALERT.attacking);
+        saveCampaign({ galaxyMap: next });
+        toast.error("The window's sensor trips: the alarm goes up through the building (house rule).");
+      }, 80);
+      const climb = () => {
+        if (outside && here.danger === 0 && !lawUnseen("Climbing in through a window", "trespass")) return;
+        setPicked(null);
+        travel(outside ? { to: room.id, via: "enter", label: "Climb in through the window", travel: "", secret: true } : { to: building.id, via: "leave", label: "Climb out through the window", travel: "" });
+        if (pane?.alarmed) trip();
+      };
+      const jimmy = async () => {
+        if (here.danger === 0 && !lawUnseen("Jimmying a window", "trespass")) return;
+        const ok = await abilityCheck("Jimmy the latch", PANE_LATCH_DC, ["dexterity"], skilled("sleight of hand"));
+        if (cancelledCheck.current) return;
+        save(ok ? { latch: "open" } : {});
+        toast[ok ? "success" : "error"](ok ? "The latch slips: the window opens." : "The latch holds. A minute gone.");
+      };
+      const pick = async () => {
+        if (here.danger === 0 && !lawUnseen("Picking a window's lock", "trespass")) return;
+        const ok = await abilityCheck("Window lock", pane?.dc ?? 12, ["dexterity", "intelligence"], trained);
+        if (cancelledCheck.current) return;
+        save(ok ? { latch: "open" } : {});
+        toast[ok ? "success" : "error"](ok ? "The lock turns: the window opens." : "The lock holds. A minute gone.");
+      };
+      const smash = async () => {
+        const ok = await abilityCheck("Break the glass", PANE_BREAK_DC, ["strength"], skilled("athletics"));
+        if (cancelledCheck.current) return;
+        if (!ok) return void save({});
+        // Noisy: whoever is in the room hears it, the sensor (if any) trips, and the law hears of it where it is about
+        save({ broken: true }, 1, (w) => {
+          let next = w;
+          if (watchersAt(next, room.id).length) next = setAlert(next, room.id, ALERT.attacking);
+          if (pane?.alarmed) next = updateArea(next, building.id, { alarm: true }).world;
+          return here.danger === 0 ? reportCrime(next, here.id, "trespass", clockNow()) : next;
+        });
+        toast.warning(`The glass breaks: a way through, and everyone nearby heard it.${pane?.alarmed ? " The sensor trips: the alarm is up." : ""}`);
+      };
+      const disable = async () => {
+        const ok = await abilityCheck("Disable the window's sensor", PANE_SENSOR_DC, ["intelligence"], trained);
+        if (cancelledCheck.current) return;
+        if (ok) {
+          save({ alarmed: false });
+          toast.success("The sensor is dead: the window can be used without tripping the alarm.");
+        } else {
+          setPicked(null);
+          trip();
+        }
+      };
+      const look = () => {
+        const seen = [...room.occupants.map((o) => `${o.count > 1 ? `${o.count} x ` : ""}${o.name} (${o.disposition})`), ...room.ships.map((ship) => ship.name)];
+        toast.info(outside ? `Through the window of ${room.name}: ${seen.join(", ") || "nobody"}. (House rule: looking in needs no check.)` : `Outside the window: the street by ${building.name}.`);
+      };
+      const what = !pane ? "A window." : `${{ slit: "A slit, too narrow for anyone to get through", small: "A small window, too small to climb through", large: "A window big enough to climb through", wide: "A great window, easily climbed through" }[pane.size]}${pane.broken ? ", its glass broken" : pane.latch === "open" ? ", open" : pane.latch === "latched" ? ", latched from inside" : `, locked (DC ${pane.dc ?? 12})`}.${sensor ? ` A sensor on the frame: going through it trips the alarm (seen with passive Perception ${passive}).` : ""}${climbable(pane) && outside && (room.layout.level ?? 0) > 0 ? " It is out of reach from the street." : ""}`;
+      return (
+        <>
+          {close}
+          <p className="font-semibold">{a.name}</p>
+          <p className="text-xs text-gray-300">{what}</p>
+          <div className="mt-1 flex flex-wrap gap-1">
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => { look(); setPicked(null); }} data-testid="window-look">{outside ? "Look in" : "Look out"}</Button>
+            {reach && open && <Button size="sm" disabled={busy} onClick={climb} data-testid="window-climb">{outside ? "Climb in" : "Climb out"}{pane?.alarmed ? (sensor ? " (trips the alarm)" : "") : ""}</Button>}
+            {reach && outside && !open && pane?.latch === "latched" && <Button size="sm" disabled={busy} onClick={() => { jimmy(); }} data-testid="window-jimmy">Jimmy the latch (Dexterity, DC {PANE_LATCH_DC})</Button>}
+            {reach && outside && !open && pane?.latch === "locked" && <Button size="sm" disabled={busy} onClick={() => { pick(); }} data-testid="window-pick">Pick the lock (DC {pane.dc ?? 12}{trained ? "" : "; a security kit helps"})</Button>}
+            {reach && outside && !open && <Button size="sm" variant="outline" disabled={busy} onClick={() => { smash(); }} data-testid="window-break">Break the glass (Strength, DC {PANE_BREAK_DC}; noisy)</Button>}
+            {reach && sensor && <Button size="sm" variant="outline" disabled={busy} onClick={() => { disable(); }} data-testid="window-sensor">Disable the sensor (Intelligence, DC {PANE_SENSOR_DC})</Button>}
+          </div>
+          <p className="mt-1 text-[11px] text-gray-500">House rules: the books give none for windows.</p>
         </>
       );
     }
