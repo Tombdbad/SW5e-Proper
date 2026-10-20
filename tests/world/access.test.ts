@@ -38,10 +38,13 @@ test("a stair block is five lanes beside its host: the flights up, the hall in t
         cells.add(`${x},${y}`);
       }
       // Each door is two squares across one wall, and the floors either side of it are within a step of each other
-      const floorOfHost = (key: string) => (key === "host-hall" ? 0 : key === "foot-down" ? -1 : key.startsWith("head-up") ? Number(key.slice(7)) + 1 : Number(key.slice(7)));
+      const floorOfHost = (key: string) => (key === "host-hall" || key === "head-down" ? 0 : key === "foot-down" ? -1 : key.startsWith("head-up") ? Number(key.slice(7)) + 1 : Number(key.slice(7)));
       const layoutOf = (room: string, key: string): RoomLayout => room === "host" ? { ...host, assets: [], level: floorOfHost(key) } : room === "hall" ? b.hall : room === "down" ? b.down! : b.ups[Number(room.slice(2))];
       const keys = [...new Set(b.doors.map((d) => d.key))];
       assert.deepEqual(keys.sort(), ["foot-down", "foot-up0", "head-down", "head-up0", "host-hall"]);
+      // The host's wall holds the doorways to the flight up, the hall and the flight down, side by side (three squares, one each)
+      const onHost = b.doors.filter((d) => d.room === "host" && ["foot-up0", "host-hall", "head-down"].includes(d.key)).map((d) => `${d.x},${d.y}`);
+      assert.equal(new Set(onHost).size, 3, `${side}: three doorways in the host's wall`);
       for (const key of keys) {
         const pair = b.doors.filter((d) => d.key === key);
         assert.equal(pair.length, 2, key);
@@ -86,10 +89,11 @@ test("the walk finds what cannot be reached: a door taken away, a flight's foot 
   const building = Object.values(world.areas).find((b) => b.kind === "building" && Object.values(world.areas).some((h) => h.parentId === b.id && h.tags.includes("lane:hall")))!;
   assert.ok(building, "a building with a stair block");
   assert.deepEqual(walkBuilding(world, building.id).problems, []);
-  // Take away the door from the hall to the stairs up: the switchback and the floors over it cannot be walked to
+  // Take away the doorway from the host to the stairs up: the switchback and the floors over it cannot be walked to
   const hall = Object.values(world.areas).find((a) => a.parentId === building.id && a.tags.includes("lane:hall"))!;
-  const up = Object.values(world.areas).find((a) => a.parentId === building.id && a.tags.includes(`block:${hall.tags.find((t) => t.startsWith("block:"))!.slice(6)}`) && a.tags.includes("storey:0"))!;
-  hall.layout!.assets = hall.layout!.assets.filter((a) => a.to !== up.id);
+  const host = world.areas[hall.tags.find((t) => t.startsWith("block:"))!.slice(6)];
+  const up = Object.values(world.areas).find((a) => a.parentId === building.id && a.tags.includes(`block:${host.id}`) && a.tags.includes("storey:0"))!;
+  host.layout!.assets = host.layout!.assets.filter((a) => a.to !== up.id);
   const lost = walkBuilding(world, building.id).problems;
   assert.ok(lost.some((p) => p.includes(up.name) && /cannot be walked to/.test(p)), lost.join("\n"));
 });
@@ -134,7 +138,8 @@ test("every room over or under the ground is in a column with a five-lane block;
       if (first(up) < first(down)) plain++;
       else mirrored++;
       void host;
-      if (hall.layout!.assets.filter((a) => a.kind === "door").length > 3) onward++;
+      // (the host's door at its near end, and one at its far end where it goes on to the next room)
+      if (hall.layout!.assets.filter((a) => a.kind === "door").length > 1) onward++;
       else deadEnd++;
     }
     lifts += areas.filter((a) => a.kind === "room" && a.name === "Lift" && formOf(a) === "lift").length;

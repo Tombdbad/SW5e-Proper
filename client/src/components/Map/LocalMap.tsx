@@ -6,7 +6,7 @@ import { useKeyboardControls } from "@react-three/drei";
 import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey, squaresApart, type Combatant } from "@/lib/stores/useCombat";
-import { standsAt, stairsApproach, arrivalSquares, climbAt, canStep, floorsOf, type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
+import { standsAt, stairsGoals, arrivalSquares, climbAt, canStep, floorsOf, type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
 import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind } from "./sprites";
@@ -250,8 +250,8 @@ const sameFootprint = (a: RoomLayout, b: RoomLayout) => a.x < b.x + b.width && b
 
 // The steps of a stairwell, or the rungs of a ladder, rising from one end of a room to the other;
 // they are looked at, not tapped (the floor under them takes the tap)
-function Ascent({ w, h, toward, up, form, switchback }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; form: string; switchback?: RoomLayout["switchback"] }) {
-  if (switchback) return <Switchback w={w} h={h} toward={toward} up={up} low={switchback.low} />;
+function Ascent({ w, h, toward, up, form, switchback, onTap }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; form: string; switchback?: RoomLayout["switchback"]; onTap?: (x: number, y: number) => void }) {
+  if (switchback) return <Switchback w={w} h={h} toward={toward} up={up} low={switchback.low} onTap={onTap} />;
   const along = toward === "e" || toward === "w" ? w : h;
   const across = toward === "e" || toward === "w" ? h : w;
   const count = Math.max(4, Math.round(along * (form === "ladder" ? 3 : 2.4)));
@@ -289,19 +289,20 @@ function Ascent({ w, h, toward, up, form, switchback }: { w: number; h: number; 
 // The two flights of a switchback and its landing (a stair block's way up or down a floor, see shared/logic "Stair blocks"): treads
 // along each lane at the height the floor is there (climbAt), the landing flat across the far row, and a wall between the flights
 // with a rail along it, up to the landing
-function Switchback({ w, h, toward, up, low }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; low: 0 | 1 }) {
+function Switchback({ w, h, toward, up, low, onTap }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; low: 0 | 1; onTap?: (x: number, y: number) => void }) {
   const none = () => null;
   const plan = { width: w, height: h, climb: { toward, levels: 1 }, switchback: { low } };
   const ew = toward === "e" || toward === "w";
   const along = ew ? w : h;
   const TREADS = 3;
-  const treads: { at: V3; size: V3; top: number }[] = [];
+  // (a tap on a tread walks to its square: the floor under the flights is far below it)
+  const treads: { at: V3; size: V3; top: number; sq: [number, number] }[] = [];
   for (let lane = 0; lane < 2; lane++) {
     for (let k = 0; k < along * TREADS; k++) {
       const a = (k + 0.5) / TREADS;
       const [px, py] = ew ? [a, lane + 0.5] : [lane + 0.5, a];
       const top = Math.max(0.04, climbAt(plan, px, py) * up);
-      treads.push({ at: [px, top / 2, py], size: ew ? [1 / TREADS + 0.01, top, 0.92] : [0.92, top, 1 / TREADS + 0.01], top });
+      treads.push({ at: [px, top / 2, py], size: ew ? [1 / TREADS + 0.01, top, 0.92] : [0.92, top, 1 / TREADS + 0.01], top, sq: [Math.floor(px), Math.floor(py)] });
     }
   }
   // The wall between the flights runs from the near end to the landing, as high as the higher flight there and a rail more
@@ -316,7 +317,7 @@ function Switchback({ w, h, toward, up, low }: { w: number; h: number; toward: "
   return (
     <group>
       {treads.map((t, i) => (
-        <mesh key={i} position={t.at} raycast={none} receiveShadow castShadow>
+        <mesh key={i} position={t.at} raycast={onTap ? undefined : none} receiveShadow castShadow onClick={onTap ? (e) => { e.stopPropagation(); if (e.delta <= 8) onTap(t.sq[0], t.sq[1]); } : undefined}>
           <boxGeometry args={t.size} />
           <meshLambertMaterial color={i % 2 ? "#8b8f96" : "#9aa0a8"} />
         </mesh>
@@ -544,7 +545,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   }, [width, height, mask]);
   // A shaft's walls run up with the floor
   const climbs = plan?.climb ? rise(plan as RoomLayout) : 0;
-  const wallH = (fullWalls ? FULL_WALL_HEIGHT : WALL_HEIGHT) + climbs;
+  // (seen from overhead, a switchback's walls stop at its landing, so that both flights can be looked into)
+  const wallH = (fullWalls ? FULL_WALL_HEIGHT : WALL_HEIGHT) + (plan?.switchback && !fullWalls ? climbs / 2 : climbs);
   const ramp = (x: number, y: number) => (plan?.climb ? rampAt(plan as RoomLayout, x + 0.5, y + 0.5) : 0);
   // The kit this room is furnished and walled from, and its palette
   const pack = mood && !rocky ? packOf(mood.roomName, mood.buildingType) : undefined;
@@ -590,7 +592,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         </bufferGeometry>
         <lineBasicMaterial color="#ffffff" transparent opacity={0.12} />
       </lineSegments>
-      {plan?.climb && plan.form && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} />}
+      {plan?.climb && plan.form && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} onTap={onFloor} />}
       {walls && mask
         ? <CaveWalls mask={mask} ways={assets.filter((a) => a.side).map((a) => ({ x: a.x, y: a.y }))} w={width} h={height} biome={mood!.biome} tier={detail} seed={width * 31 + height} tall={fullWalls} />
         : walls
@@ -2155,9 +2157,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     } else if (a.kind === "window") onAct?.({ type: "note", text: "A window onto the street outside." });
     // Stairs nobody can stand on are taken from their foot (or from beside them), stairs that can be stood on where they are
     else if (a.kind === "stairs") {
-      const goals = stairsApproach(a).map((q) => ({ x: l.x + q.x, y: l.y + q.y }));
-      const foot = a.blocks && a.toward ? goals.slice(0, a.toward === "n" || a.toward === "s" ? a.w : a.h).filter((q) => open(q.x, q.y)) : [];
-      walkTo(foot.length ? foot : goals.filter((q) => open(q.x, q.y)), () => a.to && onAct?.({ type: "go", areaId: a.to }));
+      const goals = stairsGoals(a, (x, y) => open(l.x + x, l.y + y)).map((q) => ({ x: l.x + q.x, y: l.y + q.y }));
+      walkTo(goals, () => a.to && onAct?.({ type: "go", areaId: a.to }));
     }
     else if (a.side) walkTo([{ x: l.x + a.x, y: l.y + a.y }], () => a.to && onAct?.({ type: "go", areaId: a.to, secret: a.kind === "secret" }));
     else if (a.kind === "loot" && a.ref) walkTo(around(l.x + a.x, l.y + a.y), () => onAct?.({ type: "loot", id: a.ref! }));
@@ -2346,7 +2347,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           // (the floor of an opened room above, or of a roof, is a slab 0.2 thick with the same footprint, and
           // sits on this room: the block stops where the slab starts, so that their faces are never in one plane)
           const sunk = carries ? 0.2 : roofed.has(room.id) ? 0.18 : 0;
-          const body = tall + rise(l) - sunk;
+          // (a flight under the opened one, in a tower's stair block, stops at its floor: its climb would fill the flight above)
+          const body = (carries && opened?.layout ? Math.min(tall + rise(l), levelY(opened.layout) - levelY(l)) : tall + rise(l)) - sunk;
           const lift = levelY(l);
           const roof = hue(room.id);
           const wallColor = new THREE.Color(wall).multiplyScalar(opened ? 0.45 : 1).getStyle();
@@ -2664,7 +2666,11 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             }
           }
           if (key === "me") return [feet.current.x + 0.5 - cx, heightNow() + 0.6, feet.current.y + 0.5 - cz];
-          if (what === "sq") return [Number(id.split(",")[0]) + 0.5 - cx, levelY(inside?.layout), Number(id.split(",")[1]) + 0.5 - cz];
+          if (what === "sq") {
+            const [qx, qy] = id.split(",").map(Number);
+            const l = inside?.layout;
+            return [qx + 0.5 - cx, levelY(l) + (l ? rampAt(l, qx - l.x + 0.5, qy - l.y + 0.5) : 0), qy + 0.5 - cz];
+          }
           if (what === "sign") {
             const sign = street.signs.find((s) => s.exit.to === id);
             return sign && [sign.x + 0.5 - cx, 0.8, sign.y + 0.5 - cz];
@@ -2681,7 +2687,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             const now = a.kind === "npc" ? whereNow(a.id) : undefined;
             if (now) return [l.x + now.x + 0.5 - cx, levelY(l) + 0.6, l.y + now.y + 0.5 - cz];
             const at = a.side ? onWall(l, a) : { x: a.x + a.w / 2, z: a.y + a.h / 2 };
-            return [l.x + at.x - cx, levelY(l) + 0.6, l.y + at.z - cz];
+            // (up the floor of a flight, where the thing is drawn: a door at the head of a switchback is a floor up)
+            return [l.x + at.x - cx, levelY(l) + rampAt(l, a.x + 0.5, a.y + 0.5) + 0.6, l.y + at.z - cz];
           }
           return undefined;
         }}
