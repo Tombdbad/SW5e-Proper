@@ -1,6 +1,6 @@
 // The interiors gallery, looked at in a real browser without the play-through (2026-10-19): opens /dev/models?section=interiors
 // at a few cameras, saves a shot of each, reports what was drawn (calls, triangles) and fails on a console error or a model that
-// did not load. Usage: BASE=http://127.0.0.1:5173 node e2e/interiors.mjs [name ...]   (names: racks wealth caves moods rounds packs tones rooms kitbash shops walk)
+// did not load. Usage: BASE=http://127.0.0.1:5173 node e2e/interiors.mjs [name ...]   (names: racks wealth caves moods rounds packs tones rooms kitbash shops walk gear)
 // Needs a server that serves the client: `npx vite --port 5173 --host 127.0.0.1` (no build, no database), and nobody else on the VM busy.
 import { open, OUT } from "./lib.mjs";
 
@@ -15,6 +15,7 @@ const VIEWS = {
   tones: { section: "packs", cam: [0, 20, -4], look: [0, 0, -12] },
   shops: { section: "interiors", cam: [-0.5, 8, -2], look: [-0.5, 0, -9.5] },
   walk: { section: "walk", cam: [0, 3.2, 9], look: [0, 0.7, 1.5] },
+  gear: { section: "gear", cam: [0, 1.6, 6], look: [0, 0.7, 0] },
   kitbash: { section: "packs", cam: [-1.5, 17, -22], look: [-1.5, 0, -37] },
   rooms: { section: "packs", cam: [5, 28, 30], look: [5, 0, 13] },
 };
@@ -29,7 +30,7 @@ try {
     const v = VIEWS[name] && process.env.CAM ? { ...VIEWS[name], cam: process.env.CAM.split(",").map(Number), look: (process.env.LOOK || "0,0,0").split(",").map(Number) } : VIEWS[name];
     if (!v) throw new Error(`no view ${name}`);
     const t0 = Date.now();
-    await page.goto(`${BASE}/dev/models?section=${v.section ?? "interiors"}&cam=${v.cam}&look=${v.look}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/dev/models?section=${v.section ?? "interiors"}&cam=${v.cam}&look=${v.look}&loadout=${process.env.LOADOUT || ""}`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => window.__gallery?.info().calls > 0, null, { timeout: 120000 });
     // Models are fetched after the first frame: give them time, then see that the stock has grown into its hero detail
     await page.waitForTimeout(6000);

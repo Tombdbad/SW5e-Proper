@@ -17,6 +17,7 @@ import { findFeatByName, type Feat } from "./feats";
 import { forcePowers } from "./forcePowers";
 import { techPowers } from "./techPowers";
 import { equipment } from "./equipment";
+import type { Gear, GearItem } from "@/components/Map/interiors/gear";
 import { SKILLS } from "./constants";
 import { maneuvers as maneuverList, type Maneuver } from "./maneuvers";
 import { fightingStyles } from "./fightingStyles";
@@ -778,6 +779,26 @@ export function equippedNow(character: any): Equipped {
   const body = armors.sort((a, b) => classOf(b) - classOf(a))[0] ?? null;
   const shield = carried.find((n) => itemKind(n, character) === "shield") ?? null;
   return { weapons: Array.from(new Set(carried.filter((n) => itemKind(n, character) === "weapon"))), body, shield };
+}
+
+// What shows on the character's figure on the map (components/Map/interiors/gear.ts): the weapons wielded, the weight of armour worn (by
+// the rules data's own class), the shield, and the kits, tools, medical supplies and prostheses carried
+export function gearOf(character: any): Gear {
+  const worn = equippedNow(character);
+  const item = (name: string | null | undefined): GearItem | undefined => {
+    if (!name) return undefined;
+    const e = equipmentNamed(baseOf(character, name)?.name ?? name);
+    return e ? { name: e.name, equipmentCategory: e.kind, armorClassification: e.armorClassification, weaponClassification: e.weaponClassification } : undefined;
+  };
+  const body = item(worn.body);
+  const used = new Set([...worn.weapons, worn.body, worn.shield].map((n) => String(n ?? "").toLowerCase()));
+  const carried = ((character?.equipment ?? []) as any[]).map((e) => String(e?.name ?? e)).filter((n) => !used.has(n.toLowerCase())).map(item).filter((i): i is GearItem => !!i);
+  return {
+    weapons: worn.weapons.map(item).filter((i): i is GearItem => !!i).slice(0, 2),
+    bodyClass: body?.armorClassification === "Light" || body?.armorClassification === "Medium" || body?.armorClassification === "Heavy" ? (body.armorClassification.toLowerCase() as "light" | "medium" | "heavy") : undefined,
+    shield: item(worn.shield),
+    carried,
+  };
 }
 
 const carriedArmor = (carried: string[]) => {

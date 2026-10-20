@@ -18,7 +18,7 @@ import { useCombat, useShipFight, rollDamage, onPartySide } from "@/lib/stores/u
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
-import { carriedWeapons, characterFeatures, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, withItemEffects, isAttuned, type Equipped } from "@/lib/sw5e/characterCalculation";
+import { gearOf as figureGearOf, carriedWeapons, characterFeatures, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, withItemEffects, isAttuned, type Equipped } from "@/lib/sw5e/characterCalculation";
 import { getSpeciesById } from "@/lib/sw5e/species";
 import { getClassById, getClassLevelValue } from "@/lib/sw5e/classes";
 import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect, powerMotion, motionFeet, motionSummary } from "@/lib/sw5e/rules";
@@ -1143,8 +1143,8 @@ export default function GameBoard() {
   // The character's figure on the map: their species, and a lit blade for one who uses the Force
   // (red on the dark side)
   useEffect(() => {
-    usePartyLook.getState().set({ species: character?.species, name: character?.name, force: learner.force, blade: learner.forceAlign === "Dark" ? "#ff4040" : (character?.name?.length ?? 0) % 2 ? "#6ef08a" : "#7fe3ff" });
-  }, [character?.species, character?.name, learner.force, learner.forceAlign]);
+    usePartyLook.getState().set({ species: character?.species, name: character?.name, force: learner.force, blade: learner.forceAlign === "Dark" ? "#ff4040" : (character?.name?.length ?? 0) % 2 ? "#6ef08a" : "#7fe3ff", gear: character ? figureGearOf(character) : undefined });
+  }, [character?.species, character?.name, learner.force, learner.forceAlign, JSON.stringify(character?.equipment ?? []), JSON.stringify(character?.armor ?? null)]);
   const encounterHere = world?.encounter && districtHere?.id === world.encounter.districtId ? world.encounter : null;
   // A gang is on the party once it has them surrounded (or has had time enough to: it is never left out of reach)
   const gangReady = encounterHere?.kind === "robbery" && (encounterHere.phase === "surround" || (encounterHere.phase === "ambush" && clockMinutes - encounterHere.begun >= 12));

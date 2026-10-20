@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Text, Billboard } from "@react-three/drei";
-import { Figure, Furniture, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount } from "@/components/Map/models";
+import { usePartyLook, Figure, Furniture, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount } from "@/components/Map/models";
 import { tokenOf, SIDE_COLORS } from "@/components/Map/sprites";
 import { Atmosphere } from "@/components/Map/interiors/Atmosphere";
 import { Stock } from "@/components/Map/interiors/Stock";
@@ -16,6 +16,7 @@ import { packOf } from "@/components/Map/interiors/packs";
 import { TONES, TONE_NAMES, type Tone } from "@/components/Map/interiors/tones";
 import { KIT_MODELS, kitUrl } from "@/components/Map/interiors/kitbash";
 import { floorOf } from "@/components/Map/sprites";
+import { gearOf } from "@/lib/sw5e/characterCalculation";
 import { furnishRoom, createRandom, type Area } from "@shared/logic";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
 
@@ -119,6 +120,26 @@ function Pacer({ z, speed, children }: { z: number; speed: number; children: Rea
   });
   return <group ref={g}>{children}</group>;
 }
+// `gear` (2026-10-19): what people hold, wear and carry, baked into their figures (interiors/gear.ts): NPCs by their outfit and work, and the
+// player's by what the character has chosen (?loadout=heavy|light|medic|cyber)
+const LOADOUTS: Record<string, { equipment: string[]; armor: { weapons: string[]; body: string | null; shield: string | null } }> = {
+  heavy: { equipment: ["Vibroblade", "Battle armor", "Heavy physical shield", "Medpac"], armor: { weapons: ["Vibroblade"], body: "Battle armor", shield: "Heavy physical shield" } },
+  light: { equipment: ["Blaster rifle", "Combat suit", "Mechanic's kit", "Bandolier"], armor: { weapons: ["Blaster rifle"], body: "Combat suit", shield: null } },
+  medic: { equipment: ["Blaster pistol", "Composite armor", "Medpac", "Traumakit", "Tinker's implements"], armor: { weapons: ["Blaster pistol"], body: "Composite armor", shield: null } },
+  cyber: { equipment: ["Vibroaxe", "Arm prosthesis", "Leg prosthesis", "Medium shield generator"], armor: { weapons: ["Vibroaxe"], body: null, shield: "Medium shield generator" } },
+};
+function Gear({ loadout }: { loadout: string }) {
+  useEffect(() => {
+    const l = LOADOUTS[loadout] ?? LOADOUTS.heavy;
+    usePartyLook.getState().set({ species: "Human", name: "Mira", force: false, gear: gearOf({ ...l, abilityScores: {} }) });
+    return () => usePartyLook.getState().set({ gear: undefined });
+  }, [loadout]);
+  const npcs: [string, string, string][] = [["Navy Trooper", "trooper", "Human"], ["Gamorrean Guard", "guard", "Gamorrean"], ["Mechanic Pell", "mechanic", "Human"], ["Medic Senn", "medic", "Twi'lek"], ["Scout Kel", "scout", "Human"], ["Death Trooper", "trooper", "Human"], ["Trandoshan Hunter", "hunter", "Trandoshan"]];
+  return (
+    <Rows items={[["player", "Mira (player)", "Human"], ...npcs]} per={8} gap={1.5} name={([, n]) => n} draw={([kind, name, species]) => <Figure kind={kind === "player" ? "player" : "humanoid"} ring={SIDE_COLORS.neutral} name={name} role={kind} species={species} />} />
+  );
+}
+
 function Walk() {
   const people: [string, string, string][] = [["Navy Trooper", "trooper", "Human"], ["Zara", "merchant", "Twi'lek"], ["Kel", "scout", "Wookiee"], ["Mira", "player", "Human"]];
   return (
@@ -274,6 +295,7 @@ export default function ModelGallery() {
         {section === "rounds" && <Rounds />}
         {section === "packs" && <Packs />}
         {section === "walk" && <Walk />}
+        {section === "gear" && <Gear loadout={query.get("loadout") ?? "heavy"} />}
         {section === "interiors" && (
           <>
             {/* The stock of a rack by the place: an armsmith, a garrison armory, a palace guard post, a hideout */}

@@ -30,3 +30,51 @@ test("every model a coverage names exists", () => {
     if (c.model) assert.ok(fs.existsSync(`client/public/assets/${c.model}.glb`), `${it.name}: ${c.model}`);
   }
 });
+
+import { handOf, wantsOf, type Gear } from "../../client/src/components/Map/interiors/gear";
+test("a character's weapon sets their pose and their model; sabers stay in code", () => {
+  assert.equal(handOf(named("Blaster pistol")), "pistol");
+  assert.equal(handOf(named("Blaster rifle")), "rifle");
+  assert.equal(handOf(named("Vibroaxe")), "axe");
+  assert.equal(handOf(named("Lightsaber")), "saber");
+  assert.equal(handOf(named("Medpac")), undefined);
+  const gear: Gear = { weapons: [named("Blaster rifle")], carried: [] };
+  const w = wantsOf("rifle", gear)[0];
+  assert.equal(w.slot, "weapon");
+  assert.match(w.model, /^kenney-blaster\/blaster-/);
+  assert.ok(w.scale > 0.3 && w.scale < 1.2);
+  assert.deepEqual(wantsOf("saber", { weapons: [named("Lightsaber")], carried: [] }), []);
+});
+test("shields, kits, medicine and prostheses go where they are worn, each place once", () => {
+  const gear: Gear = {
+    weapons: [named("Vibroblade")], shield: named("Medium physical shield"),
+    carried: [named("Mechanic's kit"), named("Medpac"), named("Tinker's implements"), named("Arm prosthesis"), named("Leg prosthesis"), named("Datapad")],
+  };
+  const wants = wantsOf("vibro", gear);
+  const slots = wants.map((w) => w.slot);
+  assert.equal(new Set(slots).size, slots.length, `a slot twice: ${slots}`);
+  for (const slot of ["weapon", "shield", "armR", "legL", "hipR", "hipL"]) assert.ok(slots.includes(slot as never), slot);
+  assert.ok(slots.length <= 7);
+  assert.equal(wants.find((w) => w.slot === "armR")!.model, "kenney-kitbash/prosthesis-arm");
+  assert.equal(wants.find((w) => w.slot === "shield")!.model, "kenney-kitbash/shield-physical");
+  for (const w of wants) assert.ok(fs.existsSync(`client/public/assets/${w.model}.glb`), w.model);
+});
+test("an NPC holds what their outfit's pose says and carries what their work suggests", () => {
+  assert.equal(wantsOf("pistol", undefined)[0].model.startsWith("kenney-blaster/"), true);
+  assert.equal(wantsOf("vibro", undefined)[0].model, "kenney-kitbash/vibro-blade");
+  assert.deepEqual(wantsOf("", undefined, "medic").map((w) => w.model), ["kenney-kitbash/medpac"]);
+  assert.deepEqual(wantsOf("tool", undefined, "mechanic").map((w) => w.slot), ["hipR"]);
+  assert.deepEqual(wantsOf("saber", undefined, "patron"), []);
+});
+
+import { gearOf } from "../../client/src/lib/sw5e/characterCalculation";
+test("a character's gear is read from what they wield and wear, by the rules data's class", () => {
+  const character = { equipment: ["Vibroblade", "Combat suit", "Medium physical shield", "Medpac", "Arm prosthesis", "Mechanic's kit", "Blaster pistol"], armor: { weapons: ["Vibroblade"], body: "Combat suit", shield: "Medium physical shield" }, abilityScores: {} };
+  const gear = gearOf(character);
+  assert.deepEqual(gear.weapons.map((w) => w.name), ["Vibroblade"]);
+  assert.equal(gear.bodyClass, "light");
+  assert.equal(gear.shield?.name, "Medium physical shield");
+  assert.deepEqual(gear.carried.map((c) => c.name).sort(), ["Arm prosthesis", "Blaster pistol", "Mechanic's kit", "Medpac"].sort());
+  assert.equal(gearOf({ equipment: ["Battle armor"], abilityScores: {} }).bodyClass, "heavy");
+  assert.deepEqual(gearOf({ equipment: [] }), { weapons: [], bodyClass: undefined, shield: undefined, carried: [] });
+});

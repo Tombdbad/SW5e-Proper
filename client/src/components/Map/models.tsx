@@ -11,6 +11,9 @@ import { useModels } from "./interiors/assets";
 import { fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
 import { advance, bob, LIMB, limbMaterial, pose as poseLimbs, standing } from "./interiors/limbs";
+import { handOf, wantsOf, type Gear, type Want } from "./interiors/gear";
+import { DEFAULT_TONE, type KitLook } from "./interiors/kitbash";
+import { TONES } from "./interiors/tones";
 
 // ---------------------------------------------------------------------------------------------
 // The 3D models of the map: people, droids, creatures, furniture, ships, vehicles and buildings.
@@ -195,6 +198,28 @@ export class Kit {
     }
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     // Every part of an animated build carries the attributes (merged parts must have the same set)
+    if (this.animated) {
+      const { index, pivot } = this.limbNow;
+      geo.setAttribute("limb", new THREE.BufferAttribute(new Float32Array(n).fill(index), 1));
+      const pivots = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) pivots.set([pivot.x, pivot.y, pivot.z], i * 3);
+      geo.setAttribute("pivot", new THREE.BufferAttribute(pivots, 3));
+    }
+    this.parts.push({ geo, finish });
+    return this;
+  }
+
+  // A loaded model (a weapon, a case, a limb of a prosthesis) set in the figure: its own colours kept, moved by the current frame and,
+  // in an animated build, on the current limb. The model is copied; the shared one is never changed
+  addModel(source: THREE.BufferGeometry, { at, rot, scale, finish = "sheen" }: PartOptions = {}) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", source.getAttribute("position").clone());
+    if (source.getAttribute("normal")) geo.setAttribute("normal", source.getAttribute("normal").clone());
+    geo.setAttribute("color", source.getAttribute("color").clone());
+    const n = geo.attributes.position.count;
+    geo.setIndex(Array.from({ length: n }, (_, i) => i));
+    if (!geo.attributes.normal) geo.computeVertexNormals();
+    geo.applyMatrix4(this.frames[this.frames.length - 1].clone().multiply(matrixOf(at, rot, scale)));
     if (this.animated) {
       const { index, pivot } = this.limbNow;
       geo.setAttribute("limb", new THREE.BufferAttribute(new Float32Array(n).fill(index), 1));
@@ -1786,7 +1811,17 @@ export const useSpecies = (() => {
 })();
 
 // What someone wears and carries
+// A loaded model for a place on a body (interiors/gear.ts `wantsOf` says which; `scale` is how large)
+export interface Attach {
+  // The model's name (gear.ts), to tell one figure's gear from another's
+  id: string;
+  slot: "weapon" | "shield" | "hipR" | "hipL" | "back" | "armR" | "legL";
+  geometry: THREE.BufferGeometry;
+  scale: number;
+}
 export interface Outfit {
+  // The weight of armour worn (pauldrons, a heavier plate): from what the character wears
+  weight?: "light" | "medium" | "heavy";
   garment: "tunic" | "robe" | "armor" | "jacket" | "vest" | "apron" | "coat" | "labcoat" | "flightsuit" | "overalls" | "uniform" | "rags" | "bare";
   top: string;
   bottom: string;
@@ -1862,7 +1897,7 @@ export function outfitOf(name: string, role = "", look?: Look, force?: { blade: 
 
 // A person, built standing on the origin facing +z, a little over a square tall for a human.
 // Heights and widths follow the look; `skin`, `hair` and `eye` are this one's colours.
-export function buildHumanoid(k: Kit, look: Look, o: Outfit, skin: string, hair: string, eye: string, seed = 0) {
+export function buildHumanoid(k: Kit, look: Look, o: Outfit, skin: string, hair: string, eye: string, seed = 0, attach: Attach[] = []) {
   const b = look.bulk;
   const fur = look.fur;
   const flesh = fur && hair ? hair : skin;
@@ -1876,10 +1911,13 @@ export function buildHumanoid(k: Kit, look: Look, o: Outfit, skin: string, hair:
   const torsoColor = armored ? shade(plate, 0.9) : bare ? flesh : o.top;
   const sleeve = armored ? plate : bare || o.garment === "vest" ? flesh : o.top;
   const hipW = 0.085 * b;
+  const prosLeg = attach.find((a) => a.slot === "legL");
   k.group(undefined, undefined, look.scale, () => {
     // Legs and feet
     k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * hipW, 0.56, 0], () => {
-      k.tube([[s * hipW, 0.56, 0], [s * hipW * 1.05, 0.31, 0.025], [s * hipW, 0.08, -0.01]], (t) => (0.064 - t * 0.02) * b, legs, { along: 6, around: 7, finish: armored ? "sheen" : "matte" });
+      // A leg of metal where there is a prosthesis, drawn over with the model
+      if (prosLeg && s > 0) alongLimb(k, prosLeg, [s * hipW, 0.56, 0], [s * hipW, 0.05, 0.01], "x");
+      k.tube([[s * hipW, 0.56, 0], [s * hipW * 1.05, 0.31, 0.025], [s * hipW, 0.08, -0.01]], (t) => (0.064 - t * 0.02) * b, prosLeg && s > 0 ? "#8a949e" : legs, { along: 6, around: 7, finish: armored ? "sheen" : "matte" });
       const boot = bare ? flesh : armored ? plate : o.garment === "uniform" ? "#15171b" : "#2a2420";
       k.box([0.1 * b, 0.09, 0.2], boot, { at: [s * hipW, 0.045, 0.03], round: 0.035, finish: armored || o.garment === "uniform" ? "sheen" : "matte" });
       if (o.garment === "uniform") k.cyl(0.05 * b, 0.2, boot, { at: [s * hipW, 0.16, 0], seg: 10, finish: "sheen" });
@@ -1895,11 +1933,41 @@ export function buildHumanoid(k: Kit, look: Look, o: Outfit, skin: string, hair:
     if (look.tail) k.tube([[0, 0.55, -0.08], [0, 0.38, -0.25], [0.04, 0.12, -0.4], [0.1, 0.03, -0.58]], (t) => 0.05 * (1 - t * 0.7) * b, flesh, { along: 12, around: 7 });
     if (o.cape) k.lathe([[0.3 * b, 0.1], [0.24 * b, 0.4], [0.2 * b, 0.95]], o.cape, { seg: 14, start: Math.PI / 2 + 0.25, arc: Math.PI - 0.5, finish: "cloth", at: [0, 0, -0.02] });
     // Everything above the hips, leaning forward when the species is hunched
-    k.group([0, 0.56, 0], look.hunched ? [0.32, 0, 0] : undefined, undefined, () => upper(k, look, o, { b, flesh, torsoColor, sleeve, plate, under, armored, bare, hair, skin, eye, seed }));
+    k.group([0, 0.56, 0], look.hunched ? [0.32, 0, 0] : undefined, undefined, () => upper(k, look, o, { b, flesh, torsoColor, sleeve, plate, under, armored, bare, hair, skin, eye, seed, attach }));
+    // Kits and tools on the hips and the back
+    for (const a of attach) {
+      if (a.slot === "hipR" || a.slot === "hipL") k.addModel(a.geometry, { at: [(a.slot === "hipR" ? -1 : 1) * (0.2 * b + 0.04), 0.5, 0], rot: [0, a.slot === "hipR" ? -Math.PI / 2 : Math.PI / 2, 0], scale: a.scale });
+      else if (a.slot === "back") k.addModel(a.geometry, { at: [0, 0.92, -(0.15 * b + 0.07)], rot: [0, Math.PI, 0], scale: a.scale });
+    }
   });
 }
 
-interface Body { b: number; flesh: string; torsoColor: string; sleeve: string; plate: string; under: string; armored: boolean; bare: boolean; hair: string; skin: string; eye: string; seed: number }
+// A model lying along a limb: its `axis` end (the hand or foot, +x for the prostheses) at `to`, its other end at `from`, scaled to the
+// length between them
+function alongLimb(k: Kit, a: Attach, from: V3, to: V3, axis: "x") {
+  const g = a.geometry;
+  g.boundingBox ?? g.computeBoundingBox();
+  const length = g.boundingBox!.max.x - g.boundingBox!.min.x;
+  const [p, q] = [new THREE.Vector3(...from), new THREE.Vector3(...to)];
+  const dir = q.clone().sub(p);
+  const scale = dir.length() / Math.max(length, 0.01);
+  const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(axis === "x" ? 1 : 0, 0, 0), dir.normalize()));
+  const mid = p.add(q).multiplyScalar(0.5);
+  k.addModel(g, { at: [mid.x, mid.y, mid.z], rot: [e.x, e.y, e.z], scale });
+}
+
+// A held weapon or shield set on a hand: `grip` is how far along it (0 the rear, 1 the muzzle or point) the hand takes it
+function inHand(k: Kit, a: Attach, hand: V3, dir: V3, grip: number) {
+  const g = a.geometry;
+  g.boundingBox ?? g.computeBoundingBox();
+  const length = (g.boundingBox!.max.z - g.boundingBox!.min.z) * a.scale;
+  const d = new THREE.Vector3(...dir).normalize();
+  const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), d));
+  const c = new THREE.Vector3(...hand).add(d.clone().multiplyScalar(length * (0.5 - grip)));
+  k.addModel(g, { at: [c.x, c.y, c.z], rot: [e.x, e.y, e.z], scale: a.scale });
+}
+
+interface Body { b: number; flesh: string; torsoColor: string; sleeve: string; plate: string; under: string; armored: boolean; bare: boolean; hair: string; skin: string; eye: string; seed: number; attach: Attach[] }
 
 function upper(k: Kit, look: Look, o: Outfit, p: Body) {
   const { b, flesh, torsoColor, sleeve, plate, armored } = p;
@@ -1916,6 +1984,9 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
   const front = 0.12 * b;
   switch (o.garment) {
     case "armor":
+      // Medium and heavy armour carries pauldrons, heavy ones a back plate
+      if (o.weight === "medium" || o.weight === "heavy") k.pair((s) => k.sphere((o.weight === "heavy" ? 0.085 : 0.07) * b, plate, { at: [s * 0.2 * b, 0.37, 0], scale: [1.05, 0.75, 1.15], finish: "sheen", seg: [8, 6] }));
+      if (o.weight === "heavy") k.box([0.26 * b, 0.26, 0.04], shade(plate, 0.85), { at: [0, 0.22, -0.11 * b], round: 0.02, finish: "sheen" });
       k.box([0.32 * b, 0.19, 0.2 * b], plate, { at: [0, 0.27, 0.01], round: 0.07, finish: "sheen" });
       k.box([0.24 * b, 0.11, 0.17 * b], plate, { at: [0, 0.12, 0.01], round: 0.05, finish: "sheen" });
       k.torus(0.15 * b, 0.025, plate, { at: [0, 0.03, 0], rot: [Math.PI / 2, 0, 0], scale: [1, 0.65, 1], finish: "sheen", seg: [6, 18] });
@@ -1981,10 +2052,28 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
     const s = i ? 1 : -1;
     // An arm that hangs swings with the stride; one that holds something stays where it is
     k.limb(pose === hang ? (i ? LIMB.armL : LIMB.armR) : LIMB.body, [s * 0.19 * b, sh, 0], () => {
+    // An arm of metal where there is a prosthesis, drawn over with the model
+    const metal = !i && !!p.attach.find((a) => a.slot === "armR");
+    const prosthesis = !i ? p.attach.find((a) => a.slot === "armR") : undefined;
+    if (prosthesis) alongLimb(k, prosthesis, [s * 0.19 * b, sh, 0], arm[2], "x");
     k.sphere(0.062 * b, armored ? plate : sleeve, { at: [s * 0.19 * b, sh, 0], seg: [8, 6], finish: armored ? "sheen" : "matte" });
-    k.tube(arm, (t) => (0.05 - t * 0.014) * b, sleeve, { along: 6, around: 6, finish: armored ? "sheen" : "matte" });
+    k.tube(arm, (t) => (0.05 - t * 0.014) * b, metal ? "#8a949e" : sleeve, { along: 6, around: 6, finish: armored || metal ? "sheen" : "matte" });
     if (armored) k.sphere(0.042 * b, p.under, { at: arm[1], seg: [8, 6] });
-    k.sphere(0.044 * b, glove, { at: arm[2], scale: [0.85, 1.1, 0.95], seg: [7, 5] });
+    k.sphere(0.044 * b, metal ? "#59636d" : glove, { at: arm[2], scale: [0.85, 1.1, 0.95], seg: [7, 5] });
+    // What the hands hold: the weapon in the right, a shield on the left forearm
+    for (const a of p.attach) {
+      if (!i && a.slot === "weapon") {
+        const [right, left] = [pose.r[2], pose.l[2]];
+        if (o.hand === "rifle" || o.hand === "bowcaster") inHand(k, a, right, [left[0] - right[0], left[1] - right[1], left[2] - right[2]], 0.3);
+        else if (o.hand === "pike" || o.hand === "staff" || o.hand === "gaffi") inHand(k, a, right, [0, 1, 0.05], 0.35);
+        else if (o.hand === "pistol") inHand(k, a, right, [0, 0.08, 1], 0.2);
+        else inHand(k, a, right, [0, 0.6, 0.55], 0.15);
+      } else if (i && a.slot === "shield") {
+        // A generator is worn on the forearm with its emitter forward; a physical shield is carried on the arm's outer side
+        if (/generator/.test(a.id)) k.addModel(a.geometry, { at: [arm[1][0] + 0.07 * b, arm[1][1] - 0.02, arm[1][2] + 0.06], rot: [Math.PI / 2, 0, 0], scale: a.scale * 0.7 });
+        else k.addModel(a.geometry, { at: [arm[2][0] + 0.08, arm[2][1] + 0.05, arm[2][2] + 0.1], rot: [0, 0.35, 0], scale: a.scale });
+      }
+    }
     if (look.arms === 4) {
       const low = arm.map(([x, y, z]) => [x * 0.95, y - 0.13, z + 0.02] as V3);
       k.tube(low, (t) => (0.044 - t * 0.012) * b, sleeve, { along: 8, around: 6 });
@@ -1992,7 +2081,8 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
     }
     });
   }
-  held(k, o, pose.r[2], pose.l[2]);
+  // A modelled weapon is drawn in the hand (above); the code's own is for those that have none
+  if (!p.attach.some((a) => a.slot === "weapon")) held(k, o, pose.r[2], pose.l[2]);
   // The neck and the head
   const neckH = look.longNeck ? 0.18 : 0.08;
   k.cyl(0.045 * b, neckH + 0.02, armored && o.head ? p.under : flesh, { at: [0, 0.43 + neckH / 2, 0], seg: 10 });
@@ -3070,7 +3160,7 @@ function buildConstruct(k: Kit, kind: string) {
 // model within it. The player's species and whether they use the Force come from Play.
 // ---------------------------------------------------------------------------------------------
 
-export const usePartyLook = create<{ species?: string; name?: string; force?: boolean; blade?: string; set: (look: { species?: string; name?: string; force?: boolean; blade?: string }) => void }>((set) => ({
+export const usePartyLook = create<{ species?: string; name?: string; force?: boolean; blade?: string; gear?: Gear; set: (look: { species?: string; name?: string; force?: boolean; blade?: string; gear?: Gear }) => void }>((set) => ({
   set: (look) => set(look),
 }));
 
@@ -3082,9 +3172,10 @@ function speciesInName(name: string, looks: Record<string, Look>): string | unde
 
 const HUMAN = lookOf({ name: "Human", skinColorOptions: "Light to dark tones", hairColorOptions: "Black, blond, orange, brown, gray to white", heightAverage: "4'8\"", heightRollMod: "+2d10\"" });
 
-export interface FigureSpec { key: string; build: (k: Kit) => void; height: number }
+// `wants` are the models this figure carries (interiors/gear.ts), which Figure loads and bakes in
+export interface FigureSpec { key: string; build: (k: Kit) => void; height: number; wants?: Want[] }
 
-export function figureSpec(kind: string, name: string, opts: { role?: string; creature?: string; species?: string; size?: string; looks: Record<string, Look>; party?: { species?: string; name?: string; force?: boolean; blade?: string }; player?: boolean }): FigureSpec {
+export function figureSpec(kind: string, name: string, opts: { role?: string; creature?: string; species?: string; size?: string; looks: Record<string, Look>; party?: { species?: string; name?: string; force?: boolean; blade?: string; gear?: Gear }; player?: boolean; attach?: Attach[] }): FigureSpec {
   const { role = "", creature = "", size = "", looks, party } = opts;
   const seed = hue(name || kind);
   const machine = constructKind(name);
@@ -3128,9 +3219,18 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
   const eye = look.eyes.length ? pickOf(look.eyes, who, 4) : "";
   const forceUser = kind === "force" || (player && party?.force);
   const blade = forceUser ? (player ? party?.blade : undefined) ?? (/sith|inquisitor|dark|guard/i.test(name) ? "#ff4040" : "#7fe3ff") : undefined;
-  const outfit = player ? outfitOf(forceUser ? who : "player", forceUser ? "jedi" : "player", look, forceUser ? { blade: blade! } : null) : outfitOf(name || kind, kind === "officer" ? "officer" : kind === "trooper" ? `trooper ${role}` : role, look, forceUser && !/inquisitor|guard/i.test(name) ? { blade: blade! } : null);
-  const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}:${seed & 28}`;
-  return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, seed), height: 1.25 * look.scale };
+  let outfit = player ? outfitOf(forceUser ? who : "player", forceUser ? "jedi" : "player", look, forceUser ? { blade: blade! } : null) : outfitOf(name || kind, kind === "officer" ? "officer" : kind === "trooper" ? `trooper ${role}` : role, look, forceUser && !/inquisitor|guard/i.test(name) ? { blade: blade! } : null);
+  // What the character has chosen to wield and wear shows on them (the weapon's pose, the weight of armour)
+  const gear = player ? party?.gear : undefined;
+  if (gear) {
+    const hand = handOf(gear.weapons[0]);
+    if (hand) outfit = { ...outfit, hand };
+    if (gear.bodyClass) outfit = { ...outfit, garment: gear.bodyClass === "light" ? "vest" : "armor", armor: gear.bodyClass === "heavy" ? "#59636d" : "#7b8794", weight: gear.bodyClass, cape: gear.bodyClass === "light" ? outfit.cape : undefined };
+  }
+  const wants = wantsOf(outfit.hand, gear, role || name);
+  const attach = opts.attach ?? [];
+  const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.weight ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}:${seed & 28}${attach.length ? `:g${attach.map((a) => `${a.slot}=${a.id}@${a.scale}`).join("+")}` : ""}`;
+  return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, seed, attach), height: 1.25 * look.scale, wants };
 }
 
 // How far this figure walks: the stride follows how far the group itself moves along the ground between frames, so whoever moves it
@@ -3188,7 +3288,16 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
   const looks = useSpecies();
   const party = usePartyLook();
   const me = player ?? kind === "player";
-  const spec = figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me });
+  const base = figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me });
+  // What a person holds, wears and carries is loaded (one set of hooks per kind of model, in its own palette) and baked into the body
+  // once it is all in; until then the code's own weapon is in the hand
+  const wants = base.wants ?? [];
+  const toneOf = (look: KitLook) => TONES[DEFAULT_TONE[look]];
+  const loaded = Object.fromEntries((["armour", "kit", "medical", "prosthetic", "weapon"] as KitLook[]).map((look) => [look, useModels(wants.filter((w) => w.look === look).map((w) => `/assets/${w.model}.glb`), "centre", toneOf(look))]));
+  const ready = wants.length > 0 && wants.every((w) => loaded[w.look][`/assets/${w.model}.glb`]);
+  const spec = ready
+    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, attach: wants.map((w) => ({ id: w.model, slot: w.slot, scale: w.scale, geometry: loaded[w.look][`/assets/${w.model}.glb`]! })) })
+    : base;
   return (
     <group scale={large ? 1.5 : 1}>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
