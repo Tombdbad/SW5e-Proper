@@ -120,11 +120,11 @@ export function maskFloorGeometry(mask: string[], width: number, height: number)
   parts.forEach((g) => g.dispose());
   return merged;
 }
-export function MaskFloor({ mask, width, height, color, onClick }: { mask: string[]; width: number; height: number; color: string; onClick?: (e: ThreeEvent<MouseEvent>) => void }) {
+export function MaskFloor({ mask, width, height, color, onClick, y = -0.1, receive = true }: { mask: string[]; width: number; height: number; color: string; onClick?: (e: ThreeEvent<MouseEvent>) => void; y?: number; receive?: boolean }) {
   const geometry = useMemo(() => maskFloorGeometry(mask, width, height), [mask.join("|"), width, height]);
   useEffect(() => () => geometry.dispose(), [geometry]);
   return (
-    <mesh geometry={geometry} position={[width / 2, -0.1, height / 2]} receiveShadow onClick={onClick}>
+    <mesh geometry={geometry} position={[width / 2, y, height / 2]} receiveShadow={receive} onClick={onClick} raycast={onClick ? undefined : () => null}>
       <meshLambertMaterial color={color} />
     </mesh>
   );
@@ -133,9 +133,9 @@ export function MaskFloor({ mask, width, height, color, onClick }: { mask: strin
 // The rock round a winding floor: along every edge of a standing square that meets rock (or the room's own boundary, but not at a way), a few
 // shaped rocks, low at the foot and rising to a lip, in the colours of the world's stone; and a slab of dark rock under the whole room, so
 // that what is not floor reads as rock. `ways` are the squares of doors and exits, kept open.
-export function CaveWalls({ mask, ways, w, h, biome, tier, seed }: { mask: string[]; ways: { x: number; y: number }[]; w: number; h: number; biome: string; tier: Tier; seed: number }) {
+export function CaveWalls({ mask, ways, w, h, biome, tier, seed, tall = false }: { mask: string[]; ways: { x: number; y: number }[]; w: number; h: number; biome: string; tier: Tier; seed: number; tall?: boolean }) {
   const palette = rockPaletteOf(biome);
-  const key = `${mask.join("|")}:${ways.map((a) => `${a.x},${a.y}`).join(";")}:${biome}:${tier}:${seed}`;
+  const key = `${mask.join("|")}:${ways.map((a) => `${a.x},${a.y}`).join(";")}:${biome}:${tier}:${seed}:${tall ? "t" : "l"}`;
   return (
     <>
       <mesh position={[w / 2, -0.12, h / 2]} raycast={() => null}>
@@ -160,7 +160,7 @@ export function CaveWalls({ mask, ways, w, h, biome, tier, seed }: { mask: strin
                 const along = (i + 0.5) / count - 0.5 + (next() - 0.5) * 0.2;
                 const [ex, ey] = [x + 0.5 + dx * 0.5 + (dy ? along : 0), y + 0.5 + dy * 0.5 + (dx ? along : 0)];
                 const r = 0.34 + next() * 0.2;
-                const high = 0.7 + next() * 0.9;
+                const high = tall ? 1.7 + next() * 0.8 : 0.7 + next() * 0.9;
                 k.blob(r * 0.95, palette.rockDark, { at: [ex + dx * r * 0.5, r * 0.4, ey + dy * r * 0.5], seed: seed + x * 7 + y * 13 + i, rough: 0.3, detail: 0, squash: [1.1, 0.8, 1.1] });
                 k.blob(r * 0.8, (x + y + i) % 3 ? palette.rock : palette.rockLight, { at: [ex + dx * r * 0.7, high * 0.5, ey + dy * r * 0.7], seed: seed * 3 + x + y * 5 + i, rough: 0.34, detail: tier === "lite" ? 0 : 1, squash: [0.95, high / (r * 1.6), 0.95] });
               }

@@ -313,6 +313,8 @@ const SETTLEMENTS: Record<string, { buildings: string[]; street: string[] }> = {
   outpost: { buildings: ["landing pad*", "command post", "garrison", "warehouse", "workshop?"], street: ["Perimeter path", "Covered walkway"] },
   station: { buildings: ["docking ring*", "promenade", "operations center", "engineering", "habitat ring", "cargo bay?"], street: ["Ring corridor", "Turbolift", "Maintenance shaft"] },
   "cave system": { buildings: ["trailhead*", "cave", "cave?"], street: ["Trail", "Scree slope"] },
+  // The works under a city planet's streets (2026-10-20): built tunnels, not caves
+  "sewer system": { buildings: ["sewer access*", "sewer", "sewer?"], street: ["Gantry", "Service ladder", "Drain tunnel"] },
   ruins: { buildings: ["trailhead*", "ruin", "ruin?", "cave?"], street: ["Overgrown path", "Broken causeway"] },
   "crash site": { buildings: ["trailhead*", "wreck", "camp?"], street: ["Debris trail", "Gully"] },
   "raider camp": { buildings: ["trailhead*", "camp", "camp?", "cave?"], street: ["Trail", "Dry wash"] },
@@ -356,7 +358,7 @@ const WILD_SITES: Record<string, string[]> = {
   desert: ["raider camp", "cave system", "ruins", "crash site"], ice: ["cave system", "crash site", "ruins"],
   forest: ["ruins", "cave system", "raider camp"], jungle: ["ruins", "cave system", "crash site"],
   swamp: ["ruins", "cave system"], ocean: ["crash site", "ruins"], volcanic: ["cave system", "ruins"],
-  urban: ["ruins", "raider camp"], temperate: ["raider camp", "ruins", "cave system"],
+  urban: ["sewer system", "ruins", "raider camp"], temperate: ["raider camp", "ruins", "cave system"],
   barren: ["crash site", "cave system"], "gas giant": ["crash site"],
 };
 
@@ -435,6 +437,11 @@ const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "h
   cave: { hostile: "wild", rooms: ["Cave mouth|N:plant", "Winding tunnel|w N:ore", "Den|w L:remains", "Deep chamber|w L:stash H N:crystal @1"] },
   ruin: { hostile: "horror", rooms: ["Broken gate|N:plant", "Collapsed hall|w N:crystal", "Inner sanctum|h L:relic K", "Crypt|h L:relic H N:crystal"] },
   wreck: { hostile: "wild", rooms: ["Hull breach|N:salvage", "Cargo hold|w L:cargo N:ore", "Bridge|L:intel K @0", "Engine room|d L:workshop N:salvage @1"] },
+  // Under a city planet's streets: the way down, and the channels with their junctions and a few larger chambers (straight, built passages)
+  "sewer access": { rooms: ["Access hatch|N:salvage", "Maintenance room|s d L:workshop @0"] },
+  sewer: { hostile: "wild", rooms: ["Outfall|N:salvage", "Main channel|w N:ore", "Junction|w", "Side channel|w L:remains @2", "Pump chamber|d L:workshop K @2", "Cistern|w L:stash H @4"] },
+  // A landing place for speeders on the roofs of a city planet, where its districts meet
+  "speeder platform": { rooms: ["Landing platform|S s d berths:2", "Platform office|s L:coin @0"] },
 };
 
 // Who works in a room, from what the room is for; otherwise whoever runs that kind of building
@@ -474,9 +481,9 @@ export const isLocal = (o: Pick<Occupant, "role">) => LOCALS.has(o.role);
 const NOTABLES = ["smuggler", "bounty hunter", "informant", "gambler", "pilot for hire", "mercenary"];
 
 // How rooms join, by the kind of place
-const DOORS = { built: ["Door", "Corridor", "Archway", "Stairs"], station: ["Hatch", "Corridor", "Bulkhead door"], wild: ["Passage", "Crawlway", "Narrow gap", "Path"] };
+const DOORS = { built: ["Door", "Corridor", "Archway", "Stairs"], station: ["Hatch", "Corridor", "Bulkhead door"], wild: ["Passage", "Crawlway", "Narrow gap", "Path"], sewer: ["Grate", "Culvert", "Maintenance door", "Drain mouth"] };
 const doorsOf = (buildingType: string, settlementType: string) =>
-  ["cave", "ruin", "wreck", "camp", "trailhead"].includes(buildingType) ? DOORS.wild : settlementType === "station" ? DOORS.station : DOORS.built;
+  buildingType === "sewer" || buildingType === "sewer access" ? DOORS.sewer : ["cave", "ruin", "wreck", "camp", "trailhead"].includes(buildingType) ? DOORS.wild : settlementType === "station" ? DOORS.station : DOORS.built;
 
 // What each role carries: one item per pattern, picked from the equipment data by name
 const ROLE_GEAR: Record<string, RegExp[]> = {
@@ -744,7 +751,7 @@ export function trailOf(world: World, id: string): Area[] {
   return trail;
 }
 
-const ancestor = (world: World, id: string, kind: AreaKind) => trailOf(world, id).find((a) => a.kind === kind);
+export const ancestor = (world: World, id: string, kind: AreaKind) => trailOf(world, id).find((a) => a.kind === kind);
 
 const distance = (a: Area, b: Area) => Math.hypot(a.position.x - b.position.x, a.position.y - b.position.y, a.position.z - b.position.z);
 
@@ -1478,6 +1485,13 @@ function detailSettlement(ctx: Context, settlement: Area) {
   let chosen = template.buildings.filter((b) => !b.endsWith("?") || r.chance(0.5)).map((b) => b.replace("?", ""));
   // Estates are the palace's neighbours: with no palace there are none
   if (!chosen.includes("palace")) chosen = chosen.filter((b) => b !== "estates");
+  // On a city planet the districts of the city meet at speeder platforms on the roofs, not at gates in a wall: the way in is a platform, and
+  // there is another to fly on from
+  if (ancestor(world, settlement.id, "planet")?.type === "urban" && SITED.includes(settlement.type)) {
+    chosen = chosen.map((b) => (/^(city|town) gate\*?$/.test(b) ? "speeder platform*" : b));
+    if (!chosen.some((b) => b.startsWith("speeder platform"))) chosen.push("speeder platform*");
+    chosen.push("speeder platform");
+  }
   const buildings = chosen.map((spec, index) => {
     const type = spec.replace("*", "");
     const hostile = BUILDINGS[type]?.hostile;
@@ -1514,7 +1528,9 @@ function detailPlanet(ctx: Context, planet: Area) {
   const mainType = biome === "gas giant" ? "station" : biome === "urban" || r.chance(0.5) ? "city" : "town";
   // A second place that has a name is somewhere people live; otherwise it may be an outpost
   const secondType = biome === "gas giant" || biome === "barren" ? "outpost" : known.length > 1 ? "town" : r.pick(["town", "outpost"]);
-  const sites = [mainType, secondType, ...r.shuffle(WILD_SITES[biome] ?? WILD_SITES.temperate).slice(0, r.int(1, 2))];
+  // (a city planet is covered in city: under it are sewers, never caves; and a ruin or a camp at most)
+  const wild = biome === "urban" ? ["sewer system", ...r.shuffle(["ruins", "raider camp"]).slice(0, r.int(0, 1))] : r.shuffle(WILD_SITES[biome] ?? WILD_SITES.temperate).slice(0, r.int(1, 2));
+  const sites = [mainType, secondType, ...wild];
   const settlements = sites.map((type, index) => {
     const wild = !["city", "town", "outpost", "station"].includes(type);
     const name = !wild && known.length ? known.shift()! : uniqueName(ctx, () => (wild ? `${placeName(r)} ${title(type)}` : placeName(r) + (type === "station" ? " Station" : type === "outpost" ? " Outpost" : "")));
@@ -1790,6 +1806,11 @@ type Furnishing = [name: string, place: "wall" | "corner" | "center" | "far" | "
 interface RoomPlan { match: RegExp; size: [number, number, number, number]; items: Furnishing[] }
 
 const ROOM_PLANS: RoomPlan[] = [
+  // The channels under a city planet's streets are long and narrow, their junctions and chambers larger (the sewers are built, with straight walls)
+  { match: /channel|outfall|culvert|drain|duct/i, size: [10, 14, 3, 4], items: [["Pipe run", "wall", "3x1", "1-2", "b"], ["Rubble", "wall", "1x1", "0-2", "bc"], ["Crate", "wall", "1x1", "0-2", "bc"]] },
+  { match: /junction|pump chamber|cistern|settling/i, size: [7, 9, 6, 8], items: [["Water tank", "corner", "2x2", "0-1", "bc"], ["Pipe run", "wall", "3x1", "1-2", "b"], ["Crate stack", "wall", "2x1", "0-2", "bc"], ["Rubble", "center", "1x1", "1-2", "bc"]] },
+  { match: /access hatch|maintenance room/i, size: [5, 7, 5, 6], items: [["Workbench", "wall", "3x1", "0-1", "bs"], ["Crate", "wall", "1x1", "1-2", "bc"], ["Tool rack", "wall", "2x1", "0-1", "b"]] },
+  { match: /landing platform|platform office/i, size: [12, 14, 9, 11], items: [["Fuel pump", "wall", "1x1", "1-2", "b"], ["Cargo pallet", "corner", "2x2", "1-2", "bc"], ["Tool cart", "wall", "1x1", "1", "bcs"]] },
   { match: /detention/i, size: [8, 10, 6, 7], items: [["Holding cell", "wall", "2x2", "3-4", "b"], ["Guard console", "center", "2x1", "1", "bcs"], ["Restraint rack", "corner", "1x1", "1", "b"], ["Access panel", "wall", "1x1", "1"], ["Security camera", "wall", "1x1", "1"]] },
   { match: /barracks|tents/i, size: [8, 10, 6, 8], items: [["Bunk", "wall", "2x1", "4-6", "b"], ["Footlocker", "wall", "1x1", "2-4", "bc"], ["Weapon rack", "wall", "2x1", "1", "b"], ["Mess table", "center", "2x1", "1", "bct"]] },
   { match: /docking|hangar|landing|berth|\barm\b/i, size: [13, 16, 10, 12], items: [["Fuel pump", "wall", "1x1", "1-2", "b"], ["Cargo pallet", "corner", "2x2", "2-3", "bc"], ["Tool cart", "wall", "1x1", "1-2", "bcs"], ["Loading crane", "wall", "2x1", "0-1", "b"]] },
@@ -2577,8 +2598,8 @@ const tagNumber = (a: Pick<Area, "tags">, name: string): number | undefined => {
 };
 
 const tagId = (a: Pick<Area, "tags">, name: string): string | undefined => a.tags.find((t) => t.startsWith(`${name}:`))?.slice(name.length + 1);
-const WILD_BUILDINGS = ["cave", "ruin", "wreck", "camp", "trailhead"];
-const OPEN_GROUNDS = ["landing field", "landing pad"];
+const WILD_BUILDINGS = ["cave", "ruin", "wreck", "camp", "trailhead", "sewer", "sewer access"];
+const OPEN_GROUNDS = ["landing field", "landing pad", "speeder platform"];
 // Buildings that may be round or oval when they are one room (see planBuilding): the towns' guard posts, a cantina
 // or a cookshop's round hall, the shops that are one room, and any hut, shrine or tower a world may add later
 const ROUND_BUILDINGS = /^(guardhouse|gatehouse|cantina|cookshop|pawnshop|curio shop|scrap dealer|hut|shrine|temple|chapel|tower|silo|cistern|observatory|dome|lighthouse|shelter)$/i;
@@ -2673,17 +2694,21 @@ function linkFloors(world: World, building: Area, seed: number) {
   }
   // Ground rooms made into upper rooms, up to a quarter of the building's rooms (at most three)
   const upper = real.filter((a) => (levels.get(a.id) ?? 0) > 0 || a.tags.some((t) => t.startsWith("stack:"))).length;
-  const count = Math.min(3, Math.floor(real.length / 4)) - upper;
+  const urban = trailOf(world, building.id).some((a) => a.kind === "planet" && a.type === "urban");
+  const count = Math.min(urban ? 4 : 3, Math.floor(real.length / (urban ? 3 : 4))) - upper;
   const r = createRandom(seed + Number(building.id.replace(/\D/g, "") || 1) * 3407 + 41);
   // A tower of more than two floors: in a building of eight rooms or more, a third floor stacked on one of the upper rooms, reached by
   // a stairwell of its own (a room on the second floor is the partner; the passage between them is made here)
   const addTower = () => {
-    if (real.length < 8 || !r.chance(0.6)) return;
-    const second = r.shuffle(real.filter((a) => (levels.get(a.id) ?? 0) < 2 && a.tags.some((t) => t.startsWith("stack:")) && !tall(a) && !real.some((u) => u.tags.includes(`stack:${a.id}`))))[0];
-    const third = r.shuffle(ground.filter((a) => a !== second && !a.tags.some((t) => t.startsWith("stack:")) && !real.some((u) => u.tags.includes(`stack:${a.id}`)) && !a.tags.includes("round")))[0];
-    if (second && third) {
+    if (real.length < 8 || !r.chance(urban ? 0.95 : 0.6)) return;
+    // A floor stacked on the highest stacked room (or another), up to the fourth floor; on a city planet the towers rise higher
+    for (let storey = 0; storey < (urban ? 2 : 1); storey++) {
+      const levelOf = (a: Area) => Math.max(levels.get(a.id) ?? 0, Number(a.tags.find((t) => /^code:F\d+$/.test(t))?.slice(6) ?? 0), a.tags.some((t) => t.startsWith("stack:")) ? 1 : 0);
+      const second = r.shuffle(real.filter((a) => levelOf(a) >= 1 && levelOf(a) < 3 && a.tags.some((t) => t.startsWith("stack:")) && !tall(a) && !real.some((u) => u.tags.includes(`stack:${a.id}`))))[0];
+      const third = r.shuffle(ground.filter((a) => a !== second && !a.tags.some((t) => t.startsWith("stack:")) && !real.some((u) => u.tags.includes(`stack:${a.id}`)) && !a.tags.includes("round")))[0];
+      if (!second || !third) return;
       third.tags = third.tags.filter((t) => !/^code:F-?\d+$/.test(t));
-      third.tags.push("code:F2", `stack:${second.id}`);
+      third.tags.push(`code:F${levelOf(second) + 1}`, `stack:${second.id}`);
       ground.splice(ground.indexOf(third), 1);
       world.paths.push({ id: nextId(world, "p"), from: third.id, to: second.id, kind: "door", label: "Stairs", travel: "20 ft." });
     }
@@ -2696,7 +2721,8 @@ function linkFloors(world: World, building: Area, seed: number) {
   for (const room of r.shuffle([...ground])) {
     if (made >= count) break;
     const partner = partnerOf(room);
-    if (!partner || room.tags.some((t) => t.startsWith("stack:"))) continue;
+    // (a room already stacked on, or that another room is stacked on, is not stacked again)
+    if (!partner || room.tags.some((t) => t.startsWith("stack:")) || real.some((u) => u.tags.includes(`stack:${room.id}`))) continue;
     room.tags.push("code:F1", `stack:${partner.id}`);
     ground.splice(ground.indexOf(partner), 1);
     made++;
@@ -5246,6 +5272,13 @@ export function validateWorld(world: World, catalog?: WorldCatalog): string[] {
   return problems;
 }
 
+// What an area is called to the player: a settlement of a city planet is a district (the planet is one city, so the word settlement does not
+// fit), anything else by its kind
+export function kindLabel(world: World, area: Area): string {
+  if (area.kind === "settlement" && ancestor(world, area.id, "planet")?.type === "urban") return "district";
+  return area.kind;
+}
+
 // ---------------------------------------------------------------------------------------------
 // The audit of a building's rooms (2026-10-20): what `validateWorld` does for the map of areas, for the squares inside them.
 // It reads the laid-out rooms of every building and reports, in words, anything that cannot be walked, reached or climbed:
@@ -7371,7 +7404,7 @@ const SITE_NAMES: Record<string, string> = {
   garrison: "Garrison", medcenter: "Medical Quarter", workshop: "Workshop Row", archive: "Archive Square", hideout: "Back Alleys",
   "city gate": "City Gate", "town gate": "Town Gate", "droid dealer": "Droid Dealers' Row", "vehicle dealer": "Speeder Lots",
 };
-const WILD_SETTLEMENTS = ["cave system", "ruins", "crash site", "raider camp"];
+const WILD_SETTLEMENTS = ["cave system", "ruins", "crash site", "raider camp", "sewer system"];
 export const DISTRICT_MAX = 6;
 
 // A number in [0, 1) from a key: the same key always gives the same number

@@ -28,6 +28,11 @@ test("a tunnel, a mouth and a chamber are whole, narrow where they should be, an
         assert.ok(d.min >= MIN_WIDTH, `${style} ${w}x${h} seed ${seed}: a passage ${d.min} wide\n${mask.join("\n")}`);
         if (style !== "chamber") assert.ok(d.max <= MAX_WIDTH, `${style} ${w}x${h} seed ${seed}: a passage ${d.max} wide\n${mask.join("\n")}`);
         assert.ok(d.total >= 8, "a floor of some size");
+        const g = maskGrid(mask);
+        for (let y = 0; y + 1 < h; y++) for (let x = 0; x + 1 < w; x++) {
+          const [a, b, c, e] = [g[y][x], g[y][x + 1], g[y + 1][x], g[y + 1][x + 1]];
+          assert.ok(!((a && e && !b && !c) || (b && c && !a && !e)), `${style} ${w}x${h} seed ${seed}: floor squares touch only at a corner at ${x},${y}\n${mask.join("\n")}`);
+        }
       }
     }
   }

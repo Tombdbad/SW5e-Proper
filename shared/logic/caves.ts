@@ -93,6 +93,21 @@ const inner = (w: CaveWay, depth: number, width: number, height: number): [numbe
   return [Math.max(0.5, Math.min(width - 0.5, w.x + 0.5 + dx * depth)), Math.max(0.5, Math.min(height - 0.5, w.y + 0.5 + dy * depth))];
 };
 
+// Two squares of floor that touch only at a corner (the other two squares of their 2 by 2 are rock) cannot be walked between: one of the rock
+// squares is made floor
+function fixPinches(g: Grid, next: () => number) {
+  for (let pass = 0; pass < 6; pass++) {
+    let any = false;
+    for (let y = 0; y + 1 < g.length; y++)
+      for (let x = 0; x + 1 < g[0].length; x++) {
+        const [a, b, c, d] = [g[y][x], g[y][x + 1], g[y + 1][x], g[y + 1][x + 1]];
+        if (a && d && !b && !c) { const f = next() < 0.5; g[f ? y : y + 1][f ? x + 1 : x] = true; any = true; }
+        else if (b && c && !a && !d) { const f = next() < 0.5; g[f ? y : y + 1][f ? x : x + 1] = true; any = true; }
+      }
+    if (!any) return;
+  }
+}
+
 // Takes out what is too thin: a square whose passage is a single square wide goes, again and again, except the ways and their throats
 function trim(g: Grid, keep: Set<string>) {
   for (let pass = 0; pass < 12; pass++) {
@@ -173,7 +188,9 @@ function build(width: number, height: number, ways: CaveWay[], style: CaveStyle,
     }
   }
   if (style === "chamber") smooth(g, keep);
+  fixPinches(g, next);
   trim(g, keep);
+  fixPinches(g, next);
   // One piece, holding every way, of some size
   const parts = regions(g);
   if (!parts.length) return undefined;

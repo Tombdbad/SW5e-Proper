@@ -36,7 +36,7 @@ import {
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   reportCrime, pursuitAt, lieLow, lieLowDC, CRIME_NAMES, type Crime,
   advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
-  heatAt, heatLevel, settlementOf, useKindOf, camerasIn, seatsOf, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
+  heatAt, heatLevel, kindLabel, settlementOf, useKindOf, camerasIn, seatsOf, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
   boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf, flightPayout, raceResult, dogfightPayout, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
@@ -4394,7 +4394,7 @@ export default function GameBoard() {
         <>
           {close}
           <p className="font-semibold">
-            {place.name} <span className="text-sm font-normal text-gray-400">({place.kind}{place.type && place.type !== place.kind ? `, ${place.type}` : ""})</span>
+            {place.name} <span className="text-sm font-normal text-gray-400">({world ? kindLabel(world, place) : place.kind}{place.type && place.type !== place.kind ? `, ${place.type}` : ""})</span>
           </p>
           {place.description && <p className="text-xs text-gray-300">{place.description}</p>}
           {trailOf(world, here.id).some((a) => a.id === place.id) && <p className="text-xs text-yellow-300">You are {place.id === here.id ? "here" : "in here"}.</p>}
@@ -5225,7 +5225,7 @@ export default function GameBoard() {
                 <p data-testid="play-here">
                   <span className="font-semibold">{here.name}</span>{" "}
                   <span className="text-sm text-gray-400">
-                    ({here.kind}{here.kind !== "room" && here.type !== here.kind ? `, ${here.type}` : ""})
+                    ({world ? kindLabel(world, here) : here.kind}{here.kind !== "room" && here.type !== here.kind ? `, ${here.type}` : ""})
                   </span>
                 </p>
                 {here.description && <p className="text-sm text-gray-400">{here.description}</p>}

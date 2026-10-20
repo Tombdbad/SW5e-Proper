@@ -424,7 +424,7 @@ function wallRuns(length: number, gaps: number[]): [number, number][] {
   return runs;
 }
 
-export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, children }: {
+export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, ceiling = false, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, children }: {
   width: number;
   height: number;
   // How far each outside corner is rounded: north-west, north-east, south-east, south-west
@@ -445,6 +445,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   walls?: boolean;
   // Walls as high as a room's, for the views from the character's eyes (the overhead view keeps them low to look over)
   fullWalls?: boolean;
+  // A ceiling over the room, for those views too: what is overhead there is the room's own roof, not the sky
+  ceiling?: boolean;
   looted?: (asset: RoomAsset) => boolean;
   // The resource node a cache stands for, if it is one
   nodeOf?: (asset: RoomAsset) => ResourceNode | undefined;
@@ -461,6 +463,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   const rocky = !!mood && mood.buildingType === "cave";
   // A cave room whose floor winds (layout.mask): floor squares, rock round them, no straight walls
   const mask = rocky ? plan?.mask : undefined;
+  const ceilingColour = rocky ? "#34302b" : mood && /starship/.test(mood.buildingType) ? "#3a424b" : "#8c8a84";
   const wealth = mood ? wealthOf(mood.buildingType, mood.roomName) : null;
   const look = useMemo(() => (wealth && mood ? lookOf(wealth, mood.biome) : undefined), [wealth, mood?.biome]);
   const atmosphere = useMemo(() => (mood && wealth ? moodOf(mood.buildingType, mood.roomName, wealth, mood.biome) : null), [mood?.buildingType, mood?.roomName, mood?.biome, wealth]);
@@ -540,7 +543,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
       </lineSegments>
       {plan?.climb && plan.form && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} />}
       {walls && mask
-        ? <CaveWalls mask={mask} ways={assets.filter((a) => a.side).map((a) => ({ x: a.x, y: a.y }))} w={width} h={height} biome={mood!.biome} tier={detail} seed={width * 31 + height} />
+        ? <CaveWalls mask={mask} ways={assets.filter((a) => a.side).map((a) => ({ x: a.x, y: a.y }))} w={width} h={height} biome={mood!.biome} tier={detail} seed={width * 31 + height} tall={fullWalls} />
         : walls
         ? (() => {
             const runs = sides.flatMap(({ side, length, at, along, ends }) =>
@@ -589,6 +592,22 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
           {onAsset && !(onFloor && a.kind === "furniture" && !a.blocks && !useKindOf(a.name)) && <Hit at={[a.w / 2, 0.5, a.h / 2]} size={[a.w, 1, a.h]} onTap={() => onAsset(a)} label={a.name} />}
         </Glide>
       ))}
+      {ceiling && walls && (
+        // The roof seen from inside: rock over a cave, a deck head in a ship, a plain ceiling elsewhere, on the room's own footprint
+        mask ? (
+          <mesh position={[width / 2, wallH + 0.05, height / 2]} raycast={() => null}>
+            <boxGeometry args={[width + 2, 0.1, height + 2]} />
+            <meshLambertMaterial color={ceilingColour} />
+          </mesh>
+        )
+        : rounded ? <RoundedFloor w={width} d={height} radii={[nw, ne, se, sw]} color={ceilingColour} y={wallH} thick={0.1} />
+        : (
+          <mesh position={[width / 2, wallH + 0.05, height / 2]} raycast={() => null}>
+            <boxGeometry args={[width, 0.1, height]} />
+            <meshLambertMaterial color={ceilingColour} />
+          </mesh>
+        )
+      )}
       {atmosphere && look && walls && <Atmosphere mood={atmosphere} look={look} w={width} h={height} tier={detail} />}
       {rocky && <CaveDressing w={width} h={height} seed={width * 31 + height} biome={mood!.biome} tier={detail} takenKey={takenKey} mask={mask} />}
       {children}
@@ -2014,6 +2033,16 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       return;
     }
   };
+  // Which way to look on starting the eye views: into the room if the party has only just come in by a way (not at the door they came through),
+  // else the way the figure faces
+  const startYaw = () => {
+    const l = inside?.layout;
+    const rest = token.current?.rotation.y ?? 0;
+    if (!l || Math.hypot(feet.current.x - entry.x, feet.current.y - entry.y) > 0.5) return rest;
+    const near = l.assets.filter((a) => a.side && (a.kind === "door" || a.kind === "exit" || a.kind === "secret")).sort((a, b) => Math.hypot(a.x + l.x - feet.current.x, a.y + l.y - feet.current.y) - Math.hypot(b.x + l.x - feet.current.x, b.y + l.y - feet.current.y))[0];
+    if (!near || Math.hypot(near.x + l.x - feet.current.x, near.y + l.y - feet.current.y) > 3) return rest;
+    return { w: Math.PI / 2, e: -Math.PI / 2, n: 0, s: Math.PI }[near.side!];
+  };
   const around = aroundSquares;
 
   // Call whoever serves at a counter over: the party goes up to the near side of it and they come
@@ -2200,6 +2229,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   ships={room.ships}
                   bay={{ room, based: based[room.id] }}
                   fullWalls={viewing}
+                  ceiling={viewing && !openAir(room)}
                   looted={(a) => { const c = room.loot.find((c) => c.id === a.ref); return !!c && (c.node ? nodeAt(c.node, minutes).charges === 0 : !!c.looted); }}
                   nodeOf={(a) => room.loot.find((c) => c.id === a.ref)?.node}
                   wayColor={wayColor}
@@ -2584,7 +2614,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         }}
       />
       {mode !== "overhead" && viewing ? (
-        <ViewRig mode={mode} start={token.current?.rotation.y ?? 0} feet={() => [feet.current.x + 0.5 - cx, heightNow(), feet.current.y + 0.5 - cz]} facing={facing} step={stepToward} />
+        <ViewRig mode={mode} start={startYaw()} feet={() => [feet.current.x + 0.5 - cx, heightNow(), feet.current.y + 0.5 - cz]} facing={facing} step={stepToward} />
       ) : (
         <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} />
       )}
@@ -2733,7 +2763,7 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
           <planeGeometry args={[240, 240]} />
           <meshBasicMaterial color="#0b0f16" />
         </mesh>
-        <RoomShell fullWalls={viewing} width={arena.width} height={arena.height} assets={arena.assets.filter((a) => a.kind !== "npc")} floor={floorOf(arena.floor)} wall={wall} walls={!arena.open} onFloor={tapSquare} onAsset={(a) => !a.side && (pickable(a) ? setObject(objectId === a.id ? null : a.id) : tapSquare(a.x, a.y))}>
+        <RoomShell fullWalls={viewing} ceiling={viewing && !arena.open} width={arena.width} height={arena.height} assets={arena.assets.filter((a) => a.kind !== "npc")} floor={floorOf(arena.floor)} wall={wall} walls={!arena.open} onFloor={tapSquare} onAsset={(a) => !a.side && (pickable(a) ? setObject(objectId === a.id ? null : a.id) : tapSquare(a.x, a.y))}>
           {picked && <Picked asset={picked} high={(picked.z ?? 0) * LEVEL_H} />}
           {/* Raised floors: a gallery over part of the room */}
           {(arena.platforms ?? []).map((p, i) => (
