@@ -40,6 +40,14 @@ try {
   await page.getByRole("heading", { name: NAME }).waitFor({ timeout: 120000 });
   // The first frame of a 3D scene blocks the page for a good while in software
   await page.waitForTimeout(Number(process.env.SETTLE || 45000));
+  // PEOPLE=1 samples where each person of the room is (screen position) twice, ten seconds apart, and says how many moved
+  if (process.env.PEOPLE) {
+    const people = room.layout.assets.filter((a) => a.kind === "npc");
+    const sample = () => page.evaluate((ids) => ids.map((id) => window.__map3d?.at(`asset:${id}`) ?? null), people.map((a) => a.id));
+    const [one, two] = [await sample(), await (async () => { await page.waitForTimeout(10000); return sample(); })()];
+    const moved = people.filter((_, i) => one[i] && two[i] && Math.hypot(one[i].x - two[i].x, one[i].y - two[i].y) > 8).length;
+    console.log(`people: ${people.length}, found ${one.filter(Boolean).length}, moved ${moved} in 10 s`);
+  }
   // KEYS="KeyW,1500;ArrowLeft,600" holds each key for that many milliseconds (walking and turning in the first-person and shoulder views)
   for (const step of (process.env.KEYS || "").split(";").filter(Boolean)) {
     const [key, ms] = step.split(",");

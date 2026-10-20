@@ -777,10 +777,10 @@ await step(ctx, "play: credits are shown; weapons and armor are wielded and worn
         const save = page.getByRole("button", { name: "Death saving throw" });
         if ((await save.count()) && (await save.isEnabled().catch(() => false))) await save.click().catch(() => {});
         else if (await end.isEnabled().catch(() => false)) {
-          const me = await at("me");
-          // One square over, whichever way is free (then two over, then the diagonals)
-          for (const [dx, dy] of [[34, -4], [-34, 4], [0, 30], [0, -30], [68, -8], [-68, 8], [0, 60], [0, -60], [34, 26], [-34, -26], [34, -34], [-34, 34]]) {
-            await poke(me.x + dx, me.y + dy);
+          // One square over, whichever way is free (then two over, then the diagonals): squares are found by the map, not by a guessed pixel size
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [2, 0], [-2, 0], [0, 2], [0, -2], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
+            const square = await at(`me+${dx},${dy}`);
+            await poke(square.x, square.y);
             await sleep(1000);
             moved = (await page.locator("div.text-xs.text-gray-300 > div").allInnerTexts()).find((line) => /moves \d+ ft/.test(line) && line.startsWith(NAME)) ?? "";
             if (moved) break;

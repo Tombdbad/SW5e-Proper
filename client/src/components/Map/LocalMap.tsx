@@ -2780,6 +2780,11 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
           const [x, y] = key.slice(key.indexOf(":") + 1).split(",").map(Number);
           const who = key === "me" ? player : key.startsWith("foe:") ? combatants.filter((c) => !onPartySide(c) && c.hp > 0)[x || 0] : undefined;
           if (who) return [(who.x ?? 0) + 0.5 - cx, 0.6, (who.y ?? 0) + 0.5 - cz];
+          // The square dx, dy over from the character's ("me+1,0"), wherever the camera has put the squares
+          if (key.startsWith("me+") && player) {
+            const [dx, dy] = key.slice(3).split(",").map(Number);
+            return [(player.x ?? 0) + dx + 0.5 - cx, 0.05, (player.y ?? 0) + dy + 0.5 - cz];
+          }
           // A piece of the ground (to pick it out for a power that moves things)
           const piece = key.startsWith("asset:") ? arena.assets.find((a) => a.id === key.slice(6)) : undefined;
           if (piece) return [piece.x + piece.w / 2 - cx, (piece.z ?? 0) * LEVEL_H + 0.5, piece.y + piece.h / 2 - cz];
