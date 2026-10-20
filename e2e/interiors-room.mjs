@@ -6,7 +6,9 @@ import { open, api, BASE, OUT } from "./lib.mjs";
 
 const KINDS = { cave: ["cave", /deep chamber|den/i], armsmith: ["armsmith", /sales/i], garrison: ["garrison", /armory/i], palace: ["palace", /audience/i], cantina: ["cantina", /main bar/i], medcenter: ["medcenter", /ward/i], tenements: ["tenements", /apartments/i] };
 const [kind, pattern] = [process.argv[2] || "cave", process.argv[3]];
-const [type, roomPattern] = KINDS[kind] ?? [kind, new RegExp(pattern || ".")];
+const [type, kindPattern] = KINDS[kind] ?? [kind, new RegExp(pattern || ".")];
+// ROOM=<regex> picks the room by name whatever the kind
+const roomPattern = process.env.ROOM ? new RegExp(process.env.ROOM, "i") : kindPattern;
 const ctx = await open();
 const { page, events, browser } = ctx;
 await page.setViewportSize({ width: Number(process.env.W || 900), height: Number(process.env.H || 600) });

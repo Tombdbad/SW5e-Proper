@@ -314,23 +314,43 @@ function HangarRoof({ width, height, y, door }: { width: number; height: number;
   );
 }
 
-// A flight of stairs set in a room's floor, up to a gallery or down from it
+// A flight of stairs set in a room's floor, up to a gallery or down from it; where the stairwell is wide enough for two flights (2 by 3
+// or more), a switchback: up the first half, round a landing, and back along the second to the floor above. The stairwell lies along its
+// longer side (a quarter turn for one that is wider than it is deep)
 function StairsAsset({ w, h, up }: { w: number; h: number; up: boolean }) {
   const none = () => null;
-  const count = Math.max(3, Math.round(h * 2.4));
+  const turned = w > h;
+  const [C, L] = turned ? [h, w] : [w, h];
+  const switchback = C >= 2 && L >= 3;
+  const rise = LEVEL_H / 2;
+  // A run of steps across `width`, from z = `from` to z = `to`, rising from `low` to `high`
+  const steps = (x0: number, width: number, from: number, to: number, low: number, high: number, n: number, key: string) =>
+    Array.from({ length: n }, (_, i) => {
+      const top = up ? low + (high - low) * ((i + 1) / n) : 0.04;
+      const z = from + (to - from) * ((i + 0.5) / n);
+      return (
+        <mesh key={`${key}${i}`} position={[x0 + width / 2, top / 2 + 0.02, z]} raycast={none}>
+          <boxGeometry args={[width * 0.9, Math.max(0.04, top), Math.abs(to - from) / n + 0.01]} />
+          <meshLambertMaterial color={up ? "#9aa0a8" : "#2c3138"} />
+        </mesh>
+      );
+    });
+  const body = switchback ? (
+    <>
+      {steps(0, C / 2, L, 0.6, 0, rise / 2, Math.max(3, Math.round(L * 1.3)), "a")}
+      {/* The landing at the far end, and the second flight rising back to the floor above */}
+      {up && <mesh position={[C / 2, rise / 4 + 0.02, 0.3]} raycast={none}><boxGeometry args={[C * 0.9, rise / 2, 0.6]} /><meshLambertMaterial color="#9aa0a8" /></mesh>}
+      {steps(C / 2, C / 2, 0.6, L, rise / 2, rise, Math.max(3, Math.round(L * 1.3)), "b")}
+      <Box at={[C / 2, 0.45, L / 2]} size={[0.05, 0.9, L]} color="#c8ccd2" />
+    </>
+  ) : (
+    steps(0, C, L, 0, 0, rise, Math.max(3, Math.round(L * 2.4)), "s")
+  );
   return (
-    <group>
-      {Array.from({ length: count }, (_, i) => {
-        const top = up ? (LEVEL_H / 2) * ((i + 1) / count) : 0.04;
-        return (
-          <mesh key={i} position={[w / 2, top / 2 + 0.02, up ? h - (i + 0.5) * (h / count) : (i + 0.5) * (h / count)]} raycast={none}>
-            <boxGeometry args={[w * 0.9, Math.max(0.04, top), h / count + 0.01]} />
-            <meshLambertMaterial color={up ? "#9aa0a8" : "#2c3138"} />
-          </mesh>
-        );
-      })}
-      <Box at={[0.02, 0.45, h / 2]} size={[0.05, 0.9, h]} color="#c8ccd2" />
-      <Box at={[w - 0.02, 0.45, h / 2]} size={[0.05, 0.9, h]} color="#c8ccd2" />
+    <group position={turned ? [0, 0, C] : undefined} rotation={turned ? [0, Math.PI / 2, 0] : undefined}>
+      {body}
+      <Box at={[0.02, 0.45, L / 2]} size={[0.05, 0.9, L]} color="#c8ccd2" />
+      <Box at={[C - 0.02, 0.45, L / 2]} size={[0.05, 0.9, L]} color="#c8ccd2" />
     </group>
   );
 }

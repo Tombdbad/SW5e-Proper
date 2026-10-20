@@ -38,7 +38,7 @@ await step(ctx, "world generator: 25 seeds, all sound against the rules data", a
   return `${areas} areas in all; the same seed gives the same world`;
 });
 
-await step(ctx, "floors: furniture leaves a floor to walk on; cellars lie beneath, ships are on the top floor, ways between floors are bare", async () => {
+await step(ctx, "floors: cellars lie beneath, ships are on the top floor, ways between floors are bare", async () => {
   let rooms = 0, below = 0, above = 0, ways = 0, ships = 0, open = 0;
   for (const seed of [1, 2, 3, 4, 5]) {
     // (a world with every planet built is large: one more try if the first is dropped)
@@ -49,20 +49,7 @@ await step(ctx, "floors: furniture leaves a floor to walk on; cellars lie beneat
     for (const room of areas.filter((a) => a.kind === "room" && a.layout)) {
       rooms++;
       const l = room.layout;
-      const free = Array.from({ length: l.height }, () => Array(l.width).fill(true));
-      for (const a of l.assets) if (a.blocks) for (let y = a.y; y < a.y + a.h; y++) for (let x = a.x; x < a.x + a.w; x++) if (free[y]?.[x] !== undefined) free[y][x] = false;
-      for (let y = 0; y + 1 < l.height; y++) for (let x = 0; x + 1 < l.width; x++) {
-        const [p, q, r, t] = [free[y][x], free[y][x + 1], free[y + 1][x], free[y + 1][x + 1]];
-        if ((!p && !t && q && r) || (!q && !r && p && t)) throw new Error(`${room.name} (seed ${seed}) has furniture touching only at a corner at ${x},${y}`);
-      }
-      const seen = new Set(); let regions = 0;
-      for (let y = 0; y < l.height; y++) for (let x = 0; x < l.width; x++) {
-        if (!free[y][x] || seen.has(`${x},${y}`)) continue;
-        regions++;
-        const stack = [[x, y]]; seen.add(`${x},${y}`);
-        while (stack.length) { const [cx, cy] = stack.pop(); for (const [nx, ny] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]) if (free[ny]?.[nx] && !seen.has(`${nx},${ny}`)) { seen.add(`${nx},${ny}`); stack.push([nx, ny]); } }
-      }
-      if (regions > 1) throw new Error(`${room.name} (seed ${seed}) has ${regions} parts of floor that cannot be walked between`);
+      // (the floor itself, its doors and stairs and the stacked rooms are audited in tests/world/layouts.test.ts, which knows the curve of a round room)
       // (a gallery and a roof are furnished: cover to shoot over, a sentry's post; the rest are bare)
       if (l.form && l.form !== "gallery" && l.form !== "roof" && l.assets.some((a) => a.kind === "furniture" || a.kind === "loot" || a.kind === "ship")) throw new Error(`${room.name} is a way between floors and has something in it`);
       if ((l.level ?? 0) < 0) below++;

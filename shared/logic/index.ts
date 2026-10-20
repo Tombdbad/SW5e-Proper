@@ -1918,13 +1918,30 @@ function freeSquares(layout: RoomLayout): boolean[][] {
   return free;
 }
 
-// Whether every way in or out of a room can still be walked to from the first
+// Whether every way in or out of a room can still be walked to from the first. A way is reached from a free square of its own or
+// beside it (stairs stand on squares nothing can walk through, so they are reached from the squares round them)
 function walkable(layout: RoomLayout): boolean {
   const ways = layout.assets.filter((a) => a.kind === "door" || a.kind === "exit" || a.kind === "secret" || a.kind === "stairs");
   if (ways.length < 2) return true;
   const free = freeSquares(layout);
-  const seen = new Set<string>([`${ways[0].x},${ways[0].y}`]);
-  const queue = [[ways[0].x, ways[0].y]];
+  const access = (w: RoomAsset) => {
+    const out: [number, number][] = [];
+    for (let y = w.y - 1; y <= w.y + w.h; y++) {
+      for (let x = w.x - 1; x <= w.x + w.w; x++) {
+        const inside = x >= w.x && x < w.x + w.w && y >= w.y && y < w.y + w.h;
+        const corner = (x < w.x || x >= w.x + w.w) && (y < w.y || y >= w.y + w.h);
+        if (!corner && free[y]?.[x]) out.push([x, y]);
+        void inside;
+      }
+    }
+    return out;
+  };
+  const seen = new Set<string>();
+  const queue: [number, number][] = [];
+  for (const sq of access(ways[0])) {
+    seen.add(`${sq[0]},${sq[1]}`);
+    queue.push(sq);
+  }
   while (queue.length) {
     const [x, y] = queue.pop()!;
     for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
@@ -1933,7 +1950,7 @@ function walkable(layout: RoomLayout): boolean {
       queue.push([nx, ny]);
     }
   }
-  return ways.every((w) => seen.has(`${w.x},${w.y}`));
+  return ways.every((w) => access(w).some(([x, y]) => seen.has(`${x},${y}`)));
 }
 
 // What is wrong with the floor of a room, counted: a pair of pieces that touch only at a corner
@@ -2069,15 +2086,18 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
   let n = layout.assets.length;
   const used = (x: number, y: number) => x < 0 || y < 0 || x >= W || y >= H || !standsAt(layout, x, y) || layout.assets.some((a) => (a.blocks || a.kind === "npc" || a.kind === "loot" || a.kind === "ship") && a.x <= x && x < a.x + a.w && a.y <= y && y < a.y + a.h);
   const ways = layout.assets.filter((a) => a.kind === "door" || a.kind === "exit");
+  // (every kind of way keeps its square: a secret way or a flight of stairs has nothing put on it)
+  const anyWay = layout.assets.filter((a) => a.kind === "door" || a.kind === "exit" || a.kind === "secret" || a.kind === "stairs");
+  const onWay = (x: number, y: number) => anyWay.some((d) => d.x <= x && x < d.x + d.w && d.y <= y && y < d.y + d.h);
   const wayIn = ways[0];
   const beside = (targets: RoomAsset[]) => {
     const spots: { x: number; y: number }[] = [];
-    for (const t of targets) for (let y = t.y - 1; y <= t.y + t.h; y++) for (let x = t.x - 1; x <= t.x + t.w; x++) if (!used(x, y) && !ways.some((d) => d.x === x && d.y === y)) spots.push({ x, y });
+    for (const t of targets) for (let y = t.y - 1; y <= t.y + t.h; y++) for (let x = t.x - 1; x <= t.x + t.w; x++) if (!used(x, y) && !onWay(x, y)) spots.push({ x, y });
     return spots;
   };
   const anywhere = () => {
     const spots: { x: number; y: number }[] = [];
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (!used(x, y) && !ways.some((d) => d.x === x && d.y === y)) spots.push({ x, y });
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (!used(x, y) && !onWay(x, y)) spots.push({ x, y });
     return spots;
   };
   const furthest = (spots: { x: number; y: number }[]) => (wayIn ? [...spots].sort((a, b) => Math.hypot(b.x - wayIn.x, b.y - wayIn.y) - Math.hypot(a.x - wayIn.x, a.y - wayIn.y)).slice(0, 3) : spots);
@@ -2085,7 +2105,7 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
   const stations = layout.assets.filter((a) => a.kind === "furniture" && uses.includes(a.name) && a.blocks);
   const seats = layout.assets.filter((a) => a.kind === "furniture" && uses.includes(a.name));
   // Staff stand behind their counters, away from the customers
-  const behind = layout.assets.filter(isCounter).flatMap((s) => counterSides(layout, s).behind).filter((s) => !used(s.x, s.y) && !ways.some((d) => d.x === s.x && d.y === s.y));
+  const behind = layout.assets.filter(isCounter).flatMap((s) => counterSides(layout, s).behind).filter((s) => !used(s.x, s.y) && !onWay(s.x, s.y));
   const stage = layout.assets.filter((a) => a.name === "Bandstand").flatMap((a) => Array.from({ length: a.w * a.h }, (_, i) => ({ x: a.x + (i % a.w), y: a.y + Math.floor(i / a.w) })));
   const dispenser = layout.assets.filter((a) => /drink dispenser|bar counter/i.test(a.name));
   const exit = ways.find((a) => a.kind === "exit") ?? wayIn;
@@ -2105,14 +2125,24 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
     let h = Math.min(H - 4, fh);
     const left = cursor;
     cursor += w + 2;
-    const asset = (): RoomAsset => ({ id: `${room.id}-${++n}`, kind: "ship", name: ship.name, x: Math.max(1, feet.length > 1 ? left : Math.floor((W - w) / 2)), y: Math.floor((H - h) / 2), w, h, blocks: true, cover: true, ref: ship.ref });
-    for (let tries = 0; tries < 8; tries++) {
-      layout.assets.push(asset());
-      if (!floorFaults(layout) || w <= 2 || h <= 2) break;
-      layout.assets.pop();
-      if (tries % 2) w--;
-      else h--;
+    const asset = (x: number, y: number): RoomAsset => ({ id: `${room.id}-${++n}`, kind: "ship", name: ship.name, x, y, w, h, blocks: true, cover: true, ref: ship.ref });
+    // Mid-floor (or in its place in a row of berths), or the nearest place to it that covers no way and leaves the floor whole; smaller if need be
+    const home = { x: Math.max(1, feet.length > 1 ? left : Math.floor((W - w) / 2)), y: Math.floor((H - h) / 2) };
+    let put = false;
+    for (let tries = 0; tries < 10 && !put; tries++) {
+      const spots: { x: number; y: number }[] = [];
+      for (let y = 0; y + h <= H; y++) for (let x = 0; x + w <= W; x++) if (!anyWay.some((d) => d.x < x + w && x < d.x + d.w && d.y < y + h && y < d.y + d.h)) spots.push({ x, y });
+      spots.sort((p, q) => Math.hypot(p.x - home.x, p.y - home.y) - Math.hypot(q.x - home.x, q.y - home.y));
+      for (const spot of spots.slice(0, 40)) {
+        layout.assets.push(asset(spot.x, spot.y));
+        if (!floorFaults(layout)) { put = true; break; }
+        layout.assets.pop();
+      }
+      if (put || (w <= 2 && h <= 2)) break;
+      if (tries % 2) w = Math.max(2, w - 1);
+      else h = Math.max(2, h - 1);
     }
+    if (!put) layout.assets.push(asset(home.x, home.y));
   }
   // Caches go against a wall far from the way in, where the floor stays in one piece
   for (const cache of room.loot) {
@@ -2623,14 +2653,15 @@ function linkFloors(world: World, building: Area, seed: number) {
   const real = childrenOf(world, building.id).filter((a) => a.kind === "room" && !formOf(a));
   if (real.length < 5) return;
   const levels = levelsOf(building, real);
-  const ground = real.filter((a) => !a.gateway && !/entr|gate|lobby|reception|foyer|hall\b|stall|yard|bay|cellar|basement|vault|roof|hangar|dock|kitchen|store/i.test(a.name) && !holdsShips(a));
+  const tall = (a: Area) => a.tags.includes("tall") || TALL_ROOMS.test(a.name);
+  const ground = real.filter((a) => !a.gateway && !/entr|gate|lobby|reception|foyer|hall\b|stall|yard|bay|cellar|basement|vault|roof|hangar|dock|kitchen|store/i.test(a.name) && !holdsShips(a) && !tall(a));
   const partnerOf = (room: Area) => world.paths
     .filter((p) => p.kind === "door" && (p.from === room.id || p.to === room.id))
     .map((p) => world.areas[p.from === room.id ? p.to : p.from])
-    .find((o): o is Area => !!o && real.includes(o) && o !== room && (levels.get(o.id) ?? 0) === 0 && !holdsShips(o) && !o.gateway && !o.tags.includes("round") && !o.tags.includes("tall") && !o.tags.some((t) => t.startsWith("stack:")) && !real.some((u) => u.tags.includes(`stack:${o.id}`)));
+    .find((o): o is Area => !!o && real.includes(o) && o !== room && (levels.get(o.id) ?? 0) === 0 && !holdsShips(o) && !o.gateway && !o.tags.includes("round") && !tall(o) && !o.tags.some((t) => t.startsWith("stack:")) && !real.some((u) => u.tags.includes(`stack:${o.id}`)));
   // A room that is already on an upper floor by name is stacked on the ground room it opens off, as well
   for (const room of real) {
-    if ((levels.get(room.id) ?? 0) < 1 || /roof|gallery/i.test(room.name) || room.tags.includes("tall") || holdsShips(room)) continue;
+    if ((levels.get(room.id) ?? 0) < 1 || /roof|gallery/i.test(room.name) || tall(room) || holdsShips(room)) continue;
     if (room.tags.some((t) => t.startsWith("stack:"))) continue;
     const partner = partnerOf(room);
     if (partner && (levels.get(partner.id) ?? 0) === (levels.get(room.id) ?? 0) - 1) room.tags.push(`stack:${partner.id}`);
@@ -2639,7 +2670,23 @@ function linkFloors(world: World, building: Area, seed: number) {
   const upper = real.filter((a) => (levels.get(a.id) ?? 0) > 0 || a.tags.some((t) => t.startsWith("stack:"))).length;
   const count = Math.min(3, Math.floor(real.length / 4)) - upper;
   const r = createRandom(seed + Number(building.id.replace(/\D/g, "") || 1) * 3407 + 41);
-  if (count <= 0 || !r.chance(0.85)) return;
+  // A tower of more than two floors: in a building of eight rooms or more, a third floor stacked on one of the upper rooms, reached by
+  // a stairwell of its own (a room on the second floor is the partner; the passage between them is made here)
+  const addTower = () => {
+    if (real.length < 8 || !r.chance(0.6)) return;
+    const second = r.shuffle(real.filter((a) => (levels.get(a.id) ?? 0) < 2 && a.tags.some((t) => t.startsWith("stack:")) && !tall(a) && !real.some((u) => u.tags.includes(`stack:${a.id}`))))[0];
+    const third = r.shuffle(ground.filter((a) => a !== second && !a.tags.some((t) => t.startsWith("stack:")) && !real.some((u) => u.tags.includes(`stack:${a.id}`)) && !a.tags.includes("round")))[0];
+    if (second && third) {
+      third.tags = third.tags.filter((t) => !/^code:F-?\d+$/.test(t));
+      third.tags.push("code:F2", `stack:${second.id}`);
+      ground.splice(ground.indexOf(third), 1);
+      world.paths.push({ id: nextId(world, "p"), from: third.id, to: second.id, kind: "door", label: "Stairs", travel: "20 ft." });
+    }
+  };
+  if (count <= 0 || !r.chance(0.85)) {
+    addTower();
+    return;
+  }
   let made = 0;
   for (const room of r.shuffle([...ground])) {
     if (made >= count) break;
@@ -2649,6 +2696,7 @@ function linkFloors(world: World, building: Area, seed: number) {
     ground.splice(ground.indexOf(partner), 1);
     made++;
   }
+  addTower();
 }
 
 function linkLevels(world: World, building: Area, seed: number) {
@@ -2737,6 +2785,45 @@ function linkLevels(world: World, building: Area, seed: number) {
 
 // Lays out every room of a building on one grid, sets doors, windows and a secret way in, and
 // furnishes and fills the rooms. The same building and seed give the same plan.
+// Somewhere for a stairwell of w by h squares in two rooms that stand on the same footprint (a room and the one stacked on it): against a
+// wall, on squares that stand in both, clear of every other asset, and leaving each floor whole (no pinched corner, no cut-off stretch,
+// every way still reachable). The sizes are tried in turn: a switchback of two flights (2 by 3, or 3 by 2), then a straight flight (1 by 2).
+// A random one of the places that fit is taken, so that the same building is the same each time but stairwells are not all in one corner.
+const STAIRWELLS: [number, number][] = [[2, 3], [3, 2], [1, 2], [2, 1]];
+export function stairwellSpot(lower: RoomLayout, upper: RoomLayout, r: Random): { x: number; y: number; w: number; h: number } | undefined {
+  const { width: W, height: H } = lower;
+  for (const [w, h] of STAIRWELLS) {
+    const fits: { x: number; y: number; w: number; h: number }[] = [];
+    for (let y = 0; y + h <= H; y++) {
+      for (let x = 0; x + w <= W; x++) {
+        // Against a wall
+        if (x !== 0 && y !== 0 && x + w !== W && y + h !== H) continue;
+        const free = (l: RoomLayout) => standsAll(l, x, y, w, h) && !l.assets.some((a) => a.x < x + w && x < a.x + a.w && a.y < y + h && y < a.y + a.h);
+        if (!free(lower) || !free(upper)) continue;
+        const withStairs = (l: RoomLayout): RoomLayout => ({ ...l, assets: [...l.assets, { id: "probe", kind: "stairs", name: "Stairs", x, y, w, h, blocks: true }] });
+        if (floorFaults(withStairs(lower)) || floorFaults(withStairs(upper))) continue;
+        fits.push({ x, y, w, h });
+      }
+    }
+    if (fits.length) return r.pick(fits);
+  }
+  return undefined;
+}
+
+// Where the flight of stairs up to a gallery stands in the room below it: a column of the gallery (`lg`, over the north end of the host `lh`),
+// the flight of two squares starting just south of its edge, on squares that stand and have nothing on them, leaving the floor whole.
+// The middle of the gallery first, then the nearest others.
+export function galleryStairs(lh: RoomLayout, lg: RoomLayout, r: Random): { x: number } | undefined {
+  const y = lg.y - lh.y + lg.height;
+  const cols = Array.from({ length: lg.width }, (_, i) => lg.x - lh.x + i);
+  const middle = (lg.x - lh.x) + (lg.width - 1) / 2;
+  const free = (x: number) =>
+    y + 2 <= lh.height && standsAll(lh, x, y, 1, 2) && !lh.assets.some((a) => a.x < x + 1 && x < a.x + a.w && a.y < y + 2 && y < a.y + a.h) &&
+    !floorFaults({ ...lh, assets: [...lh.assets, { id: "probe", kind: "stairs", name: "Stairs", x, y, w: 1, h: 2, blocks: true }] });
+  void r;
+  return [...cols].sort((p, q) => Math.abs(p - middle) - Math.abs(q - middle)).filter(free).map((x) => ({ x }))[0];
+}
+
 export function planBuilding(world: World, buildingId: string, seed = world.seed): void {
   const building = world.areas[buildingId];
   if (!building) return;
@@ -2869,7 +2956,9 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
         const beside = placed.flatMap((p) => spotsBeside(p.layout!, b.width, b.height).map((spot) => ({ p, spot })));
         // (a round room is only joined through a corridor, so it is never anchored straight onto a room: see linkRounds)
         const roundDirect = (p: Area) => (room.tags.includes("round") || p.tags.includes("round")) && !formOf(room) && !formOf(p);
-        const anchor = beside.find(({ p, spot }) => !roundDirect(p) && !placed.some((o) => clash({ ...b, ...spot }, o.layout!)));
+        // (a door joins rooms on one floor, so the room it is anchored to is on the floor of this one, or one of them is a way between floors)
+        const sameFloor = (p: Area) => formOf(room) || formOf(p) || (p.layout!.level ?? 0) === (b.level ?? 0);
+        const anchor = beside.find(({ p, spot }) => !roundDirect(p) && sameFloor(p) && !placed.some((o) => clash({ ...b, ...spot }, o.layout!)));
         if (anchor) {
           Object.assign(b, anchor.spot);
           if (path.from === from.id) path.from = anchor.p.id;
@@ -2900,7 +2989,7 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
       const s = wallSquare(l, side, i);
       // (a room on another floor is not against it)
       const beyond: RoomLayout = { x: l.x + s.x + (side === "e" ? 1 : side === "w" ? -1 : 0), y: l.y + s.y + (side === "s" ? 1 : side === "n" ? -1 : 0), width: 1, height: 1, assets: [], level: l.level, climb: l.climb, tall: l.tall };
-      return standsAt(l, s.x, s.y) && !rooms.some((other) => other !== room && clash(beyond, other.layout!)) && !l.assets.some((a) => a.side && a.x === s.x && a.y === s.y);
+      return standsAt(l, s.x, s.y) && !rooms.some((other) => other !== room && clash(beyond, other.layout!)) && !l.assets.some((a) => a.x <= s.x && s.x < a.x + a.w && a.y <= s.y && s.y < a.y + a.h);
     });
   };
   const inWall = (room: Area, kind: AssetKind, name: string, side: Side, along: number, extra: Partial<RoomAsset> = {}) => {
@@ -2948,7 +3037,139 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
     }
     return undefined;
   };
+  // The stairs between floors are laid out after the doors, so that they keep clear of every door and leave each floor whole
+  const deferred: { path: Path; stairs?: boolean }[] = [];
+  // Does a square of the wall, at the absolute position (x, y) on `side` of room `la` and the room `lb` across it, have nothing on it in either room
+  const doorFree = (a: Area, b: Area, side: Side, at: number) => {
+    const [la, lb] = [a.layout!, b.layout!];
+    const vertical = side === "e" || side === "w";
+    const sq = (l: RoomLayout, s: Side) => wallSquare(l, s, at - (vertical ? l.y : l.x));
+    const [sa, sb] = [sq(la, side), sq(lb, OPPOSITE[side])];
+    const clear = (l: RoomLayout, p: { x: number; y: number }) => standsAt(l, p.x, p.y) && !l.assets.some((o) => o.kind !== "npc" && o.kind !== "loot" && o.kind !== "ship" && o.x <= p.x && p.x < o.x + o.w && o.y <= p.y && p.y < o.y + o.h);
+    return clear(la, sa) && clear(lb, sb);
+  };
+  // A passage that could not be laid out as a door (the rooms touch by a single square, or by squares with something on them) is dropped; if
+  // that leaves rooms nothing leads to, they are joined to the rooms that can be walked to by a door in a wall they share and that is clear
+  // (a new path, so every room is reachable whatever was dropped)
+  const joinStranded = () => {
+    for (let guard = 0; guard < 12; guard++) {
+      const real = rooms.filter((a) => a.layout);
+      const seen = new Set<string>(real.filter((a) => a.gateway).map((a) => a.id));
+      if (!seen.size) seen.add(root.id);
+      const queue = [...seen];
+      while (queue.length) {
+        const id = queue.pop()!;
+        for (const p of world.paths) {
+          const o = p.from === id ? p.to : p.to === id ? p.from : undefined;
+          if (o && !seen.has(o) && real.some((x) => x.id === o)) {
+            seen.add(o);
+            queue.push(o);
+          }
+        }
+      }
+      const lost = real.filter((a) => !seen.has(a.id) && formOf(a) !== "roof" && formOf(a) !== "pit");
+      if (!lost.length) return;
+      let joinedOne = false;
+      for (const room of lost) {
+        for (const other of real.filter((o) => seen.has(o.id) && o !== room)) {
+          // (on one floor, or one of them is a way between floors: a door never joins two floors)
+          if (!formOf(room) && !formOf(other) && (room.layout!.level ?? 0) !== (other.layout!.level ?? 0)) continue;
+          const wall = sharedWall(room.layout!, other.layout!);
+          if (!wall) continue;
+          const [la, lb] = [room.layout!, other.layout!];
+          const vertical = wall.side === "e" || wall.side === "w";
+          const lo = vertical ? Math.max(la.y, lb.y) : Math.max(la.x, lb.x);
+          const hi = vertical ? Math.min(la.y + la.height, lb.y + lb.height) - 1 : Math.min(la.x + la.width, lb.x + lb.width) - 1;
+          let at: number | undefined;
+          for (let d = 0; d <= hi - lo && at === undefined; d++) for (const c of d ? [wall.at - d, wall.at + d] : [wall.at]) if (c >= lo && c <= hi && doorFree(room, other, wall.side, c)) { at = c; break; }
+          if (at === undefined) continue;
+          const path: Path = { id: nextId(world, "p"), from: room.id, to: other.id, kind: "door", label: station ? "Hatch" : "Doorway", travel: "10 ft." };
+          world.paths.push(path);
+          inWall(room, "door", path.label, wall.side, at - (vertical ? la.y : la.x), { ref: path.id, to: other.id });
+          inWall(other, "door", path.label, OPPOSITE[wall.side], at - (vertical ? lb.y : lb.x), { ref: path.id, to: room.id });
+          joinedOne = true;
+          break;
+        }
+        if (joinedOne) break;
+      }
+      // No wall to put a door in: a corridor across the gap to a room on the same floor that can be walked to
+      if (!joinedOne) {
+        search: for (const room of lost) {
+          for (const other of real.filter((o) => seen.has(o.id) && o !== room && !formOf(o) && (o.layout!.level ?? 0) === (room.layout!.level ?? 0))) {
+            const [la, lb] = [room.layout!, other.layout!];
+            for (const side of ["e", "w", "s", "n"] as Side[]) {
+              // `side` of `room` faces `other`
+              const vertical = side === "e" || side === "w";
+              const gap = side === "e" ? lb.x - (la.x + la.width) : side === "w" ? la.x - (lb.x + lb.width) : side === "s" ? lb.y - (la.y + la.height) : la.y - (lb.y + lb.height);
+              if (gap < 1 || gap > 9) continue;
+              const lo = vertical ? Math.max(la.y, lb.y) : Math.max(la.x, lb.x);
+              const hi = vertical ? Math.min(la.y + la.height, lb.y + lb.height) - 1 : Math.min(la.x + la.width, lb.x + lb.width) - 1;
+              for (let at = lo; at <= hi - 1; at++) {
+                const [cx, cy] = side === "e" ? [la.x + la.width, at] : side === "w" ? [la.x - gap, at] : side === "s" ? [at, la.y + la.height] : [at, la.y - gap];
+                const corridor: RoomLayout = { x: cx, y: cy, width: vertical ? gap : 2, height: vertical ? 2 : gap, assets: [], form: "corridor", ...(la.level ? { level: la.level } : {}) };
+                if (rooms.some((o) => o.layout && clash(corridor, o.layout))) continue;
+                // A door on the corridor's first row or column, in the wall of each room
+                const a1 = wallSquare(la, side, at - (vertical ? la.y : la.x));
+                const b1 = wallSquare(lb, OPPOSITE[side], at - (vertical ? lb.y : lb.x));
+                const open = (l: RoomLayout, q: { x: number; y: number }) => standsAt(l, q.x, q.y) && !l.assets.some((o) => o.kind !== "npc" && o.kind !== "loot" && o.kind !== "ship" && o.x <= q.x && q.x < o.x + o.w && o.y <= q.y && q.y < o.y + o.h);
+                if (!open(la, a1) || !open(lb, b1)) continue;
+                const link: Area = {
+                  id: nextId(world, "a"), kind: "room", parentId: building.id, name: `Corridor to ${other.name}`, type: "corridor", description: "",
+                  tags: ["form:corridor", `low:${la.level ?? 0}`, "rise:0"], position: { x: 0, y: 0, z: 0 }, danger: 0, occupants: [], ships: [], loot: [], faction: building.faction,
+                };
+                link.layout = corridor;
+                world.areas[link.id] = link;
+                rooms.push(link);
+                const label = station ? "Hatch" : "Doorway";
+                const p1: Path = { id: nextId(world, "p"), from: room.id, to: link.id, kind: "door", label, travel: "10 ft." };
+                const p2: Path = { id: nextId(world, "p"), from: link.id, to: other.id, kind: "door", label, travel: "10 ft." };
+                world.paths.push(p1, p2);
+                // The corridor's doors lie on its end squares, on the row `at` (the first of its two)
+                inWall(room, "door", label, side, at - (vertical ? la.y : la.x), { ref: p1.id, to: link.id });
+                inWall(link, "door", label, OPPOSITE[side], 0, { ref: p1.id, to: room.id });
+                inWall(link, "door", label, side, 0, { ref: p2.id, to: other.id });
+                inWall(other, "door", label, OPPOSITE[side], at - (vertical ? lb.y : lb.x), { ref: p2.id, to: link.id });
+                joinedOne = true;
+                break search;
+              }
+            }
+          }
+        }
+      }
+      if (!joinedOne) return;
+    }
+  };
   for (const { path, stairs } of joined) {
+    const a = world.areas[path.from];
+    const b = world.areas[path.to];
+    const la = a.layout!;
+    const lb = b.layout!;
+    if (a.tags.includes(`stack:${b.id}`) || b.tags.includes(`stack:${a.id}`) || stairs) {
+      deferred.push({ path, stairs });
+      continue;
+    }
+    // Rooms that share a wall on a floor they both stand on are joined by a door in that wall; any other passage (a loop
+    // that could not be laid out beside its rooms) is dropped, so no door ever opens in an outside wall
+    const wall = sharedWall(la, lb);
+    if (!wall) {
+      world.paths.splice(world.paths.indexOf(path), 1);
+      continue;
+    }
+    // The middle of the shared wall, or the nearest square along it that nothing stands on in either room
+    const vertical = wall.side === "e" || wall.side === "w";
+    const lo = vertical ? Math.max(la.y, lb.y) : Math.max(la.x, lb.x);
+    const hi = vertical ? Math.min(la.y + la.height, lb.y + lb.height) - 1 : Math.min(la.x + la.width, lb.x + lb.width) - 1;
+    let at: number | undefined;
+    for (let d = 0; d <= hi - lo && at === undefined; d++) for (const c of d ? [wall.at - d, wall.at + d] : [wall.at]) if (c >= lo && c <= hi && doorFree(a, b, wall.side, c)) { at = c; break; }
+    if (at === undefined) {
+      world.paths.splice(world.paths.indexOf(path), 1);
+      continue;
+    }
+    inWall(a, "door", path.label, wall.side, at - (vertical ? la.y : la.x), { ref: path.id, to: b.id });
+    inWall(b, "door", path.label, OPPOSITE[wall.side], at - (vertical ? lb.y : lb.x), { ref: path.id, to: a.id });
+  }
+  joinStranded();
+  for (const { path, stairs } of deferred) {
     const a = world.areas[path.from];
     const b = world.areas[path.to];
     const la = a.layout!;
@@ -2966,29 +3187,29 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
         world.paths.splice(world.paths.indexOf(path), 1);
         continue;
       }
-      down.layout!.assets.push({ id: `${down.id}-${down.layout!.assets.length + 1}`, kind: "stairs", name: `Stairs up to ${up.name}`, x: 1, y: 1, w: 1, h: 2, blocks: true, ref: path.id, to: up.id });
-      up.layout!.assets.push({ id: `${up.id}-${up.layout!.assets.length + 1}`, kind: "stairs", name: `Stairs down to ${down.name}`, x: 1, y: 1, w: 1, h: 2, blocks: true, ref: path.id, to: down.id });
+      // A stairwell on the same squares in both rooms (a switchback where there is room), against a wall and clear of everything else
+      const well = stairwellSpot(dl, ul, r);
+      if (!well) {
+        world.paths.splice(world.paths.indexOf(path), 1);
+        continue;
+      }
+      down.layout!.assets.push({ id: `${down.id}-${down.layout!.assets.length + 1}`, kind: "stairs", name: `Stairs up to ${up.name}`, ...well, blocks: true, ref: path.id, to: up.id });
+      up.layout!.assets.push({ id: `${up.id}-${up.layout!.assets.length + 1}`, kind: "stairs", name: `Stairs down to ${down.name}`, ...well, blocks: true, ref: path.id, to: down.id });
       continue;
     }
     if (stairs) {
       // A flight of stairs in the room below, rising to the south edge of the gallery over it
       const [host, gallery, lh, lg] = lb.form === "gallery" ? [a, b, la, lb] : [b, a, lb, la];
-      const at = Math.floor(lg.x - lh.x + lg.width / 2);
-      lh.assets.push({ id: `${host.id}-${lh.assets.length + 1}`, kind: "stairs", name: "Stairs up", x: at, y: lg.height, w: 1, h: 2, ref: path.id, to: gallery.id });
-      lg.assets.push({ id: `${gallery.id}-${lg.assets.length + 1}`, kind: "stairs", name: "Stairs down", x: at - (lg.x - lh.x), y: lg.height - 1, w: 1, h: 1, ref: path.id, to: host.id });
-      continue;
+      const spot = galleryStairs(lh, lg, r);
+      if (!spot) {
+        world.paths.splice(world.paths.indexOf(path), 1);
+        continue;
+      }
+      lh.assets.push({ id: `${host.id}-${lh.assets.length + 1}`, kind: "stairs", name: "Stairs up", x: spot.x, y: lg.y - lh.y + lg.height, w: 1, h: 2, blocks: true, ref: path.id, to: gallery.id });
+      lg.assets.push({ id: `${gallery.id}-${lg.assets.length + 1}`, kind: "stairs", name: "Stairs down", x: spot.x - (lg.x - lh.x), y: lg.height - 1, w: 1, h: 1, ref: path.id, to: host.id });
     }
-    // Rooms that share a wall on a floor they both stand on are joined by a door in that wall; any other passage (a loop
-    // that could not be laid out beside its rooms) is dropped, so no door ever opens in an outside wall
-    const wall = sharedWall(la, lb);
-    if (!wall) {
-      world.paths.splice(world.paths.indexOf(path), 1);
-      continue;
-    }
-    const vertical = wall.side === "e" || wall.side === "w";
-    inWall(a, "door", path.label, wall.side, wall.at - (vertical ? la.y : la.x), { ref: path.id, to: b.id });
-    inWall(b, "door", path.label, OPPOSITE[wall.side], wall.at - (vertical ? lb.y : lb.x), { ref: path.id, to: a.id });
   }
+  joinStranded();
 
   // A quiet way in: hostile places always have one, others now and then. It opens into a back
   // room that is neither the entrance nor where the leader sits.
@@ -5001,6 +5222,127 @@ export function validateWorld(world: World, catalog?: WorldCatalog): string[] {
       }
       for (const ship of area.ships) for (const item of ship.equipment) if (!shipGear.has(item)) problems.push(`${ship.name} mounts unknown equipment: ${item}.`);
     }
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The audit of a building's rooms (2026-10-20): what `validateWorld` does for the map of areas, for the squares inside them.
+// It reads the laid-out rooms of every building and reports, in words, anything that cannot be walked, reached or climbed:
+// a floor cut in two or pinched at a corner, a way in or out that stands on a cut square or under furniture or cannot be
+// reached from the others, doors and stairs with no partner across the wall or between the floors, a stacked room that is not
+// on its partner's footprint or has no stairs, a gallery whose stairs do not meet it, a room no path leads to. Tests run it over
+// many worlds (tests/world/layouts.test.ts); it is the check that stacked rooms, stairs and mezzanines stay sound.
+// ---------------------------------------------------------------------------------------------
+
+const WAY_KINDS = ["door", "exit", "secret", "stairs"];
+
+export function auditBuildings(world: World): string[] {
+  const problems: string[] = [];
+  const DELTA = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] } as const;
+  for (const building of Object.values(world.areas)) {
+    if (building.kind !== "building") continue;
+    const rooms = childrenOf(world, building.id).filter((a) => a.kind === "room" && a.layout);
+    const at = (r: Area) => `${building.type} ${building.id} / ${r.name} [${r.id}]`;
+    for (const room of rooms) {
+      const l = room.layout!;
+      // The floor
+      if (!formOf(room) || formOf(room) === "gallery") {
+        const faults = floorFaults(l);
+        if (faults) problems.push(`${at(room)}: the floor has ${faults} fault(s) (pinched at a corner, cut in two, or a way that cannot be reached)`);
+      }
+      // Every way in or out stands on a floor square, under nothing, and is not on top of another way
+      const ways = l.assets.filter((a) => WAY_KINDS.includes(a.kind));
+      for (const way of ways) {
+        if (!standsAll(l, way.x, way.y, way.w, way.h)) problems.push(`${at(room)}: ${way.kind} "${way.name}" stands on a cut square`);
+        if (way.x < 0 || way.y < 0 || way.x + way.w > l.width || way.y + way.h > l.height) problems.push(`${at(room)}: ${way.kind} "${way.name}" is outside the room`);
+        const covers = l.assets.find((o) => o !== way && (o.blocks || WAY_KINDS.includes(o.kind) || o.kind === "furniture") && !(o.kind === "window") && o.x < way.x + way.w && way.x < o.x + o.w && o.y < way.y + way.h && way.y < o.y + o.h);
+        if (covers && way.kind !== "stairs") problems.push(`${at(room)}: ${way.kind} "${way.name}" is covered by ${covers.kind} "${covers.name}"`);
+        if (covers && way.kind === "stairs" && covers.kind !== "stairs") problems.push(`${at(room)}: stairs "${way.name}" are covered by ${covers.kind} "${covers.name}"`);
+        if (way.side && (way.kind === "door" || way.kind === "exit" || way.kind === "secret")) {
+          const edge = (way.side === "w" && way.x === 0) || (way.side === "e" && way.x === l.width - 1) || (way.side === "n" && way.y === 0) || (way.side === "s" && way.y === l.height - 1);
+          if (!edge) problems.push(`${at(room)}: ${way.kind} "${way.name}" is not on the ${way.side} wall it says`);
+        }
+      }
+      // Doors have the door back, on the square across the wall
+      for (const d of ways.filter((a) => a.kind === "door" && a.to && world.areas[a.to]?.layout && world.areas[a.to].parentId === building.id)) {
+        const target = world.areas[d.to!];
+        const tl = target.layout!;
+        const [dx, dy] = DELTA[d.side!];
+        const across = { x: l.x + d.x + dx, y: l.y + d.y + dy };
+        const back = tl.assets.find((a) => a.kind === "door" && a.ref === d.ref && a.to === room.id);
+        if (!back) problems.push(`${at(room)}: the door to ${target.name} has no door back`);
+        else if (tl.x + back.x !== across.x || tl.y + back.y !== across.y) problems.push(`${at(room)}: the door to ${target.name} and its door back are not across the same wall`);
+        const bothFloors = !formOf(room) && !formOf(target) ? (tl.level ?? 0) === (l.level ?? 0) : true;
+        if (!bothFloors) problems.push(`${at(room)}: a door joins two floors (${target.name})`);
+      }
+      // Stairs have stairs back, which meet them
+      for (const s of ways.filter((a) => a.kind === "stairs" && a.to && formOf(world.areas[a.to] ?? ({ tags: [] } as unknown as Area)) !== "pit" && formOf(room) !== "pit")) {
+        const other = world.areas[s.to!];
+        if (!other?.layout) {
+          problems.push(`${at(room)}: stairs lead nowhere`);
+          continue;
+        }
+        const back = other.layout.assets.find((a) => a.kind === "stairs" && a.to === room.id);
+        if (!back) problems.push(`${at(room)}: the stairs to ${other.name} have no stairs back`);
+      }
+    }
+    // Rooms stacked on one another
+    for (const room of rooms) {
+      const lower = tagId(room, "stack");
+      if (!lower) continue;
+      const lo = world.areas[lower];
+      const l = room.layout!;
+      if (!lo?.layout) {
+        problems.push(`${at(room)}: stacked on a room that is not there`);
+        continue;
+      }
+      const m = lo.layout;
+      if (!(m.x === l.x && m.y === l.y && m.width === l.width && m.height === l.height)) problems.push(`${at(room)}: stacked on ${lo.name} but not on its footprint`);
+      if ((l.level ?? 0) <= (m.level ?? 0)) problems.push(`${at(room)}: stacked on ${lo.name} but not above it`);
+      if (room.tags.includes("tall") || lo.tags.includes("tall")) problems.push(`${at(room)}: a tall room cannot be stacked on or under (${lo.name})`);
+      if (!l.assets.some((a) => a.kind === "stairs" && a.to === lower)) problems.push(`${at(room)}: no stairs down to ${lo.name}`);
+      if (!m.assets.some((a) => a.kind === "stairs" && a.to === room.id)) problems.push(`${lo.name} [${lo.id}]: no stairs up to ${room.name}`);
+    }
+    // A gallery lies inside its host and its stairs meet it
+    for (const gallery of rooms.filter((r) => formOf(r) === "gallery")) {
+      const host = world.areas[tagId(gallery, "host") ?? ""];
+      if (!host?.layout) {
+        problems.push(`${at(gallery)}: a gallery with no host`);
+        continue;
+      }
+      const g = gallery.layout!;
+      const h = host.layout;
+      if (g.x < h.x || g.y < h.y || g.x + g.width > h.x + h.width || g.y + g.height > h.y + h.height) problems.push(`${at(gallery)}: the gallery is not inside ${host.name}`);
+      const up = h.assets.find((a) => a.kind === "stairs" && a.to === gallery.id);
+      const down = g.assets.find((a) => a.kind === "stairs" && a.to === host.id);
+      if (!up || !down) problems.push(`${at(gallery)}: the gallery and ${host.name} are not joined by stairs`);
+      else {
+        // The flight rises to the gallery's edge: the square after its top is a square of the gallery
+        const topY = h.y + up.y;
+        const landing = { x: h.x + up.x, y: topY - 1 };
+        const onGallery = landing.x >= g.x && landing.x < g.x + g.width && landing.y >= g.y && landing.y < g.y + g.height;
+        if (!onGallery) problems.push(`${at(gallery)}: the stairs up from ${host.name} do not reach the gallery (they stop at ${landing.x},${landing.y})`);
+        const arrive = { x: g.x + down.x, y: g.y + down.y };
+        if (arrive.x !== landing.x || arrive.y !== landing.y) problems.push(`${at(gallery)}: the stairs down meet the gallery at ${arrive.x},${arrive.y}, not where the flight ends (${landing.x},${landing.y})`);
+      }
+    }
+    // Every room can be walked to from a way into the building
+    const ids = new Set(rooms.map((r) => r.id));
+    const start = rooms.filter((r) => r.gateway || r.layout!.assets.some((a) => a.kind === "exit" || a.kind === "secret"));
+    const seen = new Set(start.map((r) => r.id));
+    const queue = [...seen];
+    while (queue.length) {
+      const id = queue.pop()!;
+      for (const p of world.paths) {
+        const other = p.from === id ? p.to : p.to === id ? p.from : undefined;
+        if (other && ids.has(other) && !seen.has(other)) {
+          seen.add(other);
+          queue.push(other);
+        }
+      }
+    }
+    for (const room of rooms) if (!seen.has(room.id) && formOf(room) !== "roof") problems.push(`${at(room)}: no path leads to it from a way into the building`);
   }
   return problems;
 }
@@ -7465,7 +7807,9 @@ function wayOutSquare(all: Area[], room: Area, side: Side, reach: (x: number, y:
   const free = freeWallSquares(all, room, side).filter((i) => {
     const sq = wallSquare(l, side, i);
     const o = outsideOf(l, side, i);
-    return reach(o.x, o.y) && !blockedAt(l, sq.x, sq.y) && !l.assets.some((a) => a !== ignore && a.side && a.x === sq.x && a.y === sq.y);
+    // (nothing at all stands on a way's square: not furniture that does not block, not stairs)
+    const covered = l.assets.some((a) => a !== ignore && a.kind !== "npc" && a.kind !== "loot" && a.kind !== "ship" && a.x <= sq.x && sq.x < a.x + a.w && a.y <= sq.y && sq.y < a.y + a.h);
+    return reach(o.x, o.y) && standsAt(l, sq.x, sq.y) && !blockedAt(l, sq.x, sq.y) && !covered;
   });
   const middle = free.length ? free[Math.floor(free.length / 2)] : 0;
   for (const i of [...free].sort((p, q) => Math.abs(p - middle) - Math.abs(q - middle))) {
