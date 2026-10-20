@@ -1,47 +1,43 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-20 ~09:00 UTC. Branch `revive`. `main` is at `3aa0586` (the full e2e run, merged as a fast-forward).
+Written 2026-10-20 ~14:30 UTC. Branch `revive`, HEAD `b14b6d7` (pushed). `main` is still at `3aa0586` (the previous clean full run); this session's work is NOT merged.
 
-## State now
-- **Live service `sw5e` (port 5000)** runs a build of `main` at `3aa0586`, restarted 08:55 UTC on the user's go-ahead. Backup taken first: `~/sw5e-backups/sw5e-20261020-085534.sql.gz`. Migrations 0001-0003 are applied.
-- **Test copies are stopped:** `sw5e-test` (5001, showcase seed 34, DB `sw5e_test`) and `sw5e-plain` (5002). Start again with `sh deploy/test-copy.sh` or `sh deploy/test-plain.sh` when testing new features.
-- **Nothing else is running.** The background agent `cc71904b` has stood down.
-- **Full play-through (`e2e/play.mjs`, plain copy, no showcase, speeder race skipped): 88 of 88 steps pass.** Run 08:25 UTC, log `~/e2e-full.log`.
+## Running now / result of the full e2e (read this first)
+<!-- E2E-RESULT -->
+RUNNING. The full play-through of HEAD `b14b6d7` (plain copy, port 5002, no showcase, speeder race skipped) is the user unit `sw5e-e2e-full`, started 13:36:15 UTC, log `~/e2e-full2.log`, screenshots `e2e/out/full2`. At 14:22 UTC it had 85 pass, 2 fail, about 1 step left (the clean run of yesterday had 88 steps). A background job (`sw5e-handoff-after-e2e`, script `~/handoff-after-e2e.py`) replaces this block with the final numbers, the failed steps and their messages when the run ends, and commits and pushes this file.
+Failures seen so far (not yet investigated; neither involves models, both passed in yesterday's clean run):
+- `world: an unvisited planet is built on demand` (2 s, an API/world assertion; its message is the world JSON, so the real cause is in `e2e/play.mjs` line ~334 and `expandArea`): may depend on the random seed of that campaign.
+- `flying games: ... a taxi run is flown on the 3D map` (33 s): the countdown did not show in 5 s; the page stalled 4.9 s (`maxGap` 4867) under software rendering: the known render stall (load), likely a flake.
+<!-- /E2E-RESULT -->
 
-## Done (all on `revive`, merged to `main`)
-- Stacked rooms and stairs: `auditBuildings` (shared/logic) with `tests/world/layouts.test.ts` and `stairs.test.ts`; switchback stairwells; galleries.
-- Ship decks: fixed plans per size, `tests/world/decks.test.ts`.
-- Caves: organic masks (`shared/logic/caves.ts`), passages 2-6 squares wide.
-- City planets: sewers instead of caves, speeder platforms as district ways (`tests/world/city-planets.test.ts`).
-- Eye views: ceilings over roofed rooms; `interiors/aim.ts` and `ViewRig.tsx` reticle.
-- Stick: `interiors/stick.ts`, one size and expo curve for walking, race and dogfight; Run/Walk button (key R).
-- Walking animation (`interiors/limbs.ts`); gear on figures (`interiors/gear.ts`).
-- Details: REVIVAL_NOTES.md, the 2026-10-20 bullet under "Interiors overhaul".
+## State of the machines
+- **Live service `sw5e` (port 5000)** runs `main` at `3aa0586` (restarted 08:55 UTC). Backup `~/sw5e-backups/sw5e-20261020-085534.sql.gz`. It has none of this session's work; promoting needs the user's go-ahead (`npm run build && sudo systemctl restart sw5e`, after a backup and a look at the journal).
+- Plain copy `sw5e-plain` (5002, DB `sw5e_test`) runs HEAD for the e2e. `sw5e-test` (5001, showcase) and the Vite gallery server `sw5e-vite` (5173) are stopped; `sh deploy/test-copy.sh` rebuilds 5001 (the real server is needed for the gallery: species bodies come from `/api/sw5e/species`; a bare Vite server shows every species as the same human).
+- Merging `revive` into `main` was authorised only for the previous run; ask again after this run is clean.
 
-## Still open
-- **Item models** (TODO in REVIVAL_NOTES.md, "Model coverage and TODO"): 184 of 507 equipment items have no model; 69 weapons are code-only. Next: find and download free packs, then deconstruct, rescale, recolour and low-poly-build hybrids. Sources manifest: `~/asset-sources/MANIFEST.md`.
-- Coruscant catwalks between buildings are not built (only platforms and roof catwalks exist).
-- Fight-view ceilings: drawn but not looked at in a browser.
-- The Run/Walk ratio is unit-tested only.
-- Accent colour makes a whole bunk or generator one colour (loud in barracks). Fix or leave? (user's call)
+## Done this session (all pushed on `revive`)
+- Item models for all 507 equipment items and all 1,918 enhanced items: 392 models in 14 packs `client/public/assets/sw5e-*` (commits `658bffb` ...). `tools/build-item-assets.mjs` (`npm run build:items <staged-dir>`), `shared/art/itemModels.json` + `itemIndex.json`, per-vertex finish+part (`_MARK`), `interiors/items.ts` (catalogue, `composeSaber`, `tintGlow`), `anchors.ts` (`bodyAnchor` per species, `holdAt` grip), `ItemModel.tsx`, `gear.ts`, `stock.ts`/`Stock.tsx` (goods, devices, droid parts, clothing, instruments, vials, bar, ammunition, named armour on stands). See REVIVAL_NOTES "Item models".
+- Figures: weapons held by their `grip` socket, saber blades take the wielder's colour, NPC Force users hold the saber model, enhanced weapons use their base design, cantina musicians hold an instrument (pose `play`), worn gear on hips, back, belt, shoulder, wrist (checked on real species: hunched, winged, long-necked), worn look = frontier palette, `gearOf` knows enhanced items with a model.
+- `tools/item-audit.ts` -> **`ITEM_TODO.md`** (`npm run audit:items`): per category what the game does with each item (use, vendors, loot, model) and the gaps by group, computed from `gearUse`, `itemFactsOf`, `WARES`, `LOOT`, `coverageOf`; the notes are in the tool's `CURATED`.
+- Asset budget raised from 10 to 24 MB (the 14 packs are 7.2 MB). Gallery: `/dev/models?section=worn|hands|items` (`e2e/interiors.mjs worn|hunter|hands|items`).
+- Tests: `npm run test:interiors` (106 pass, about 60 s). Use it, not `npm test` (see below).
 
-## Item models: wired (2026-10-20), see REVIVAL_NOTES "Item models" and ITEM_TODO.md
-- Done and pushed (`658bffb`, `041f8df`, `b35fc7f` and later): 392 models in 14 packs `client/public/assets/sw5e-*`, `shared/art/itemModels.json` + `itemIndex.json`, `tools/build-item-assets.mjs` (`npm run build:items <staged-dir>`), finish + part per vertex, `interiors/items.ts`, `anchors.ts`, `ItemModel.tsx`, gear/stock wiring, tests (`npm run test:interiors`, 102 pass), `tools/item-audit.ts` -> `ITEM_TODO.md` (`npm run audit:items`). Asset budget raised to 24 MB. Nothing is on the live service or the test copy yet (the Vite dev server `sw5e-vite` on 5173 serves the gallery: `systemctl --user stop sw5e-vite` when done).
-- The models are rebuilt from the staged Blender files in `~/asset-sources/staged` (outside the repo; the skill `blender-sw5e` and `~/asset-sources/builders/*.py` make them; `tools/flag_tones.py` re-sets tone flags after a rebuild; `tools/resolve_enhanced.py` rewrites INDEX_ENHANCED.json). If those are lost the repo's packs and JSON still work, but cannot be rebuilt.
-- Next: look at `?section=worn`, `hunter`, `items` in the gallery (`BASE=http://127.0.0.1:5173 node e2e/interiors.mjs worn`) and fix what looks wrong; then work down ITEM_TODO.md by group (personal ammunition, hazards and life support, encumbrance, accessory effects, enhanced explosives, cache and vendor gaps, droid modules on droids, instruments in musicians' hands, head/neck/feet/hands slots, saber blade colour, `grip` socket, animation). Each group: check the code, update `CURATED` in the audit tool, regenerate.
-- Species: figures are scaled as one group by `look.scale`, so models are built at human size; `bodyAnchor` (anchors.ts) handles bulk, hunch, wings; wrapping straps (belt, bandolier) are drawn by code from `b` and exist already.
-- Type-coloured models carry `meta.tone: "none"` and are never palette-toned (KitLook `plain`).
+## Next steps, in order
+1. Read the result block above. Investigate the failed steps (compare with `3aa0586`, which was 88/88: build it with `sh deploy/test-plain.sh <dir>` from a clean checkout if needed). If only flakes, rerun that step: `ONLY="<regex>" BASE=http://127.0.0.1:5002 node e2e/play.mjs`.
+2. If clean: rebuild the test copy (`sh deploy/test-copy.sh`) for the user to look at; ask before merging to `main` or touching the live service.
+3. Work down `ITEM_TODO.md` by group, each time checking the code first and updating `CURATED` in the tool: personal ammunition and special ammunition effects, environmental hazards for life support, encumbrance, effects of the 18 weapon/armour accessories, enhanced explosives and spice (450 enhanced consumables have no facts), loot and vendor gaps (no cache holds instruments, cybernetics or ship items), droid modules drawn on droids, head/neck/finger/feet/hands/torso slots (per-species fitting), blade halo, `off_hand` socket for the second hand, animation.
+4. Open decisions for the user: the packs' `License.txt` offers the models as CC0 (original shapes plus CC0 pieces): confirm; accent colour makes a whole bunk or generator one colour (fix or leave?).
 
 ## Decisions from the user
-- Speeder race is opt-in (`RACE=1`).
-- The consular fight step waits 60 s for the Fight button (its first 3D frame blocks the page).
-- No separate worktrees. One CPU: run e2e one at a time, on an idle VM.
+- Speeder race is opt-in (`RACE=1`). The consular fight step waits 60 s for the Fight button.
+- No separate worktrees. One CPU: run e2e one at a time, on an idle VM; do not build, run `tsc`/`tsx` or a browser meanwhile.
+- Asset budget may be raised (done); extra timeouts in tests are my call.
 - Commits: `git -c user.name=Tombdbad -c user.email=<account email> commit`, with the Co-Authored-By trailer.
-- Future builds for the live service: `npm run build && sudo systemctl restart sw5e`, after checking the journal for recent saves.
 
 ## Things learned
-- `bash deploy/backup.sh`: `sh` fails on `pipefail`.
-- Gallery shots: `BASE=http://127.0.0.1:5001 node e2e/interiors.mjs <view>`; a real room: `VIEWMODE=first KEYS="KeyW,1500" node e2e/interiors-room.mjs armsmith`; fights: `e2e/fight-view.mjs`.
-- Modular e2e: `ONLY="<regex>" node e2e/play.mjs` on port 5002 (`sh deploy/test-plain.sh` rebuilds it).
-- Do not build, run `tsc`/`tsx` or start a browser while the full run is going: the 3D steps fail under load.
-- `npx tsc --noEmit` shows hundreds of errors in legacy files; only fix errors in code the app uses.
+- `npm test` takes more than ten minutes (`tests/world/layouts.test.ts`, 23 generated worlds); use `npm run test:interiors`.
+- Shop stock models load lazily: in software rendering they took about 30 s to appear (`WAIT=30000` for `e2e/interiors.mjs`).
+- A slice of the e2e (`ONLY=`) must keep the steps a later step depends on: "enough experience offers a level" needs Play opened by "home: campaign listed, Play opens the game".
+- Never `pkill -f` a pattern in your own command line (it kills the shell). `bash deploy/backup.sh`, not `sh`.
+- The Blender work (outside the repo): skill `blender-sw5e`, `~/asset-sources/` (MANIFEST.md, SELECTION.md, `builders/*.py`, `staged/`, `tools/flag_tones.py`, `tools/resolve_enhanced.py`). Rebuild: edit a builder, run it with `blender -b --python X.py -- <out>`, `python3 ~/asset-sources/tools/flag_tones.py`, then `npm run build:items ~/asset-sources/staged`.
+- `npx tsc --noEmit` shows errors only in legacy files (`CharacterCreator.tsx`, `lib/game/index.ts`); fix errors only in code the app uses.
