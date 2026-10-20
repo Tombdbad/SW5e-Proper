@@ -1878,6 +1878,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const feet = useRef({ x: standing.x, y: standing.y });
   // Where the camera looks when the party is out of doors: at the party
   const eye = useRef<V3 | null>(null);
+  // (cleared at once on leaving the street, not at the next frame: the camera is set on the new place in the same step, and with the
+  // street's point still here it would be aimed at the street, which put it under a balcony or a roof climbed to)
+  if (!(outside && planned) && !duel) eye.current = null;
   // (`pace` is a fraction of the full pace; a tap on the map is the full pace, the stick in the eye views sets its own)
   const walk = useRef<{ path: { x: number; y: number }[]; then?: (squares: number) => void; total: number; pace?: number } | null>(null);
   // Over the shoulder or from the eyes (interiors/ViewRig.tsx), instead of the overhead view; `facing` is the way the character looks then
@@ -2341,8 +2344,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           if (opened?.layout && levelY(l) > levelY(opened.layout) + 0.01 && sameFootprint(l, opened.layout) && !galleryOfOpened) return null;
           // A room seen from outside it: closed, with what is set in its outside walls
           const form = formOf(room);
-          // A room looked down into from its gallery is seen low, so that the gallery shows over it
-          const lookedFrom = opened && formOf(opened) === "gallery" && opened.tags.includes(`host:${room.id}`);
+          // A room looked down into from its gallery is seen low, so that the gallery shows over it; so is the room behind a balcony
+          // being stood on (its patio doors), which would stand in front of the balcony as a block
+          const lookedFrom = opened && ((formOf(opened) === "gallery" && opened.tags.includes(`host:${room.id}`)) || (formOf(opened) === "balcony" && !!opened.layout?.assets.some((a) => a.kind === "door" && a.to === room.id)));
           // (a room with the opened one standing right on it keeps its full height, so that there is no gap under the floor)
           const storeys = l.tall ? 2 : 1;
           const carries = !!opened?.layout && sameFootprint(l, opened.layout) && levelY(opened.layout) >= levelY(l) + LEVEL_H * storeys - 0.01;

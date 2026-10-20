@@ -31,7 +31,7 @@ const tap = async (asset, expect) => {
       return;
     }
   }
-  await page.screenshot({ path: `${OUT}/stairs-fail.png` });
+  await page.screenshot({ path: `${OUT}/stairs-fail.png`, timeout: 60000 }).catch(() => {});
   throw new Error(`tapped ${asset.name}: the party is in "${await here()}", not ${expect}`);
 };
 const doorTo = (room, to) => room.layout.assets.find((a) => (a.kind === "door" || a.kind === "stairs") && a.to === to.id);
@@ -42,6 +42,7 @@ const tapUntil = async (key, expect, what, tries = 6) => {
     const at = await page.evaluate((k) => window.__map3d?.at(k) ?? null, key);
     if (!at) throw new Error(`${what}: not on the map`);
     await page.mouse.click(at.x, at.y);
+    if (n === 0 && process.env.SHOT) await page.screenshot({ path: `${OUT}/tap-${what.replace(/\W+/g, "-")}.png`, timeout: 60000 }).catch(() => {});
     const roll = page.locator('[data-testid="check-roll"]');
     if (await roll.waitFor({ timeout: 15000 }).then(() => true).catch(() => false)) await roll.click();
     const ok = await page.waitForFunction((name) => document.querySelector('[data-testid="play-here"] .font-semibold')?.textContent === name, expect, { timeout: 30000 }).then(() => true).catch(() => false);
@@ -51,7 +52,7 @@ const tapUntil = async (key, expect, what, tries = 6) => {
       return;
     }
   }
-  await page.screenshot({ path: `${OUT}/stairs-fail.png` });
+  await page.screenshot({ path: `${OUT}/stairs-fail.png`, timeout: 60000 }).catch(() => {});
   throw new Error(`${what}: the party is in "${await here()}", not ${expect}`);
 };
 const play = async (world, start) => {
@@ -72,7 +73,7 @@ try {
   made.push(c.id);
   // A main bar with a gallery, and a stair block whose ways into the rooms over and under its host are neither locked nor hidden
   let gallery, block;
-  for (let seed = 1; seed <= 40 && !(gallery && block) && process.env.ONLY !== "outside"; seed++) {
+  for (let seed = 1; seed <= 40 && !(gallery && block) && !["outside", "balcony"].includes(process.env.ONLY); seed++) {
     const world = (await api("POST", "/api/world/generate", { options: { seed, partyLevel: 3 } })).json.world;
     const areas = Object.values(world.areas);
     const calm = (b) => { for (const r of areas.filter((a) => a.parentId === b)) r.occupants = (r.occupants || []).filter((o) => o.disposition !== "hostile"); };
@@ -95,8 +96,8 @@ try {
       }
     }
   }
-  if (process.env.ONLY !== "outside" && (!gallery || !block)) throw new Error(`no ${!gallery ? "gallery" : "stair block"} in 40 worlds`);
-  if (process.env.ONLY !== "outside") {
+  if (!["outside", "balcony"].includes(process.env.ONLY) && (!gallery || !block)) throw new Error(`no ${!gallery ? "gallery" : "stair block"} in 40 worlds`);
+  if (!["outside", "balcony"].includes(process.env.ONLY)) {
   console.log(`mezzanine: ${gallery.host.name} and its ${gallery.g.name}`);
   await play(gallery.world, gallery.host);
   await tap(doorTo(gallery.host, gallery.g), gallery.g.name);
@@ -131,13 +132,15 @@ try {
       if (roof && top) { unlock(stairs, roof); unlock(stairs, top); calm(roof.parentId); roofWay = { world, roof, stairs, top }; }
     }
     if (!windowWay) {
-      for (const room of areas.filter((a) => a.kind === "room" && a.layout && !a.tags.some((t) => t.startsWith("form:")) && (a.layout.level ?? 0) === 0 && world.districtPlans && Object.values(world.districtPlans).some((d) => d.boxes[a.parentId]))) {
-        const win = room.layout.assets.find((w) => w.kind === "window" && (w.pane?.size === "large" || w.pane?.size === "wide"));
-        if (!win) continue;
-        win.pane = { ...win.pane, latch: "open", alarmed: false };
-        calm(room.parentId);
-        windowWay = { world, room, win, building: world.areas[room.parentId] };
-        break;
+      // (the windows of one building that can be climbed through, opened; tried in turn, the ones facing the camera first)
+      const rooms = areas.filter((a) => a.kind === "room" && a.layout && !a.tags.some((t) => t.startsWith("form:")) && (a.layout.level ?? 0) === 0 && world.districtPlans && Object.values(world.districtPlans).some((d) => d.boxes[a.parentId]));
+      // (the overhead camera looks from the south-west: a window on a south or west wall is in its sight)
+      const building = rooms.find((room) => room.layout.assets.some((w) => w.kind === "window" && (w.side === "s" || w.side === "w") && (w.pane?.size === "large" || w.pane?.size === "wide")))?.parentId;
+      if (building) {
+        const wins = rooms.filter((r) => r.parentId === building).flatMap((room) => room.layout.assets.filter((w) => w.kind === "window" && (w.pane?.size === "large" || w.pane?.size === "wide")).map((win) => ({ room, win })));
+        for (const { win } of wins) win.pane = { ...win.pane, latch: "open", alarmed: false };
+        calm(building);
+        windowWay = { world, wins: wins.sort((p, q) => "swen".indexOf(p.win.side) - "swen".indexOf(q.win.side)).slice(0, 4), building: world.areas[building] };
       }
     }
     if (!balconyWay) {
@@ -153,23 +156,44 @@ try {
   }
   if (!roofWay || !windowWay || !balconyWay) throw new Error(`no ${!roofWay ? "roof with stairs" : !windowWay ? "window to climb through" : "balcony"} in 40 worlds`);
 
+  if (process.env.ONLY !== "balcony") {
   console.log(`roof: ${roofWay.roof.name} of ${roofWay.world.areas[roofWay.roof.parentId].name}, down to ${roofWay.top.name}`);
   await play(roofWay.world, roofWay.roof);
   await tap(doorTo(roofWay.roof, roofWay.stairs), roofWay.stairs.name);
   await tap(doorTo(roofWay.stairs, roofWay.top), roofWay.top.name);
 
-  console.log(`window: ${windowWay.win.name} of ${windowWay.room.name}, from the street in front of ${windowWay.building.name}`);
+  console.log(`window: from the street in front of ${windowWay.building.name}`);
   await play(windowWay.world, windowWay.building);
   {
-    const at = await page.evaluate((id) => window.__map3d?.at(`asset:${id}`) ?? null, windowWay.win.id);
-    if (!at) throw new Error("the window is not on the map");
-    await page.mouse.click(at.x, at.y);
-    const climb = page.locator('[data-testid="window-climb"]');
-    await climb.waitFor({ timeout: 60000 });
-    await climb.click();
-    await page.waitForFunction((name) => document.querySelector('[data-testid="play-here"] .font-semibold')?.textContent === name, windowWay.room.name, { timeout: 60000 });
-    console.log(`  Climb in -> ${windowWay.room.name}`);
-    await page.waitForTimeout(8000);
+    let inside = null;
+    for (const { room, win } of windowWay.wins) {
+      // Walk to the street square outside it, then tap the window
+      const l = room.layout;
+      const out = { x: l.x + win.x + (win.side === "e" ? 1 : win.side === "w" ? -1 : 0), y: l.y + win.y + (win.side === "s" ? 1 : win.side === "n" ? -1 : 0) };
+      const sq = await page.evaluate((k) => window.__map3d?.at(k) ?? null, `sq:${out.x},${out.y}`);
+      if (sq) await page.mouse.click(sq.x, sq.y);
+      await page.waitForTimeout(6000);
+      const at = await page.evaluate((id) => window.__map3d?.at(`asset:${id}`) ?? null, win.id);
+      if (!at) continue;
+      await page.mouse.click(at.x, at.y);
+      const climb = page.locator('[data-testid="window-climb"]');
+      if (!(await climb.waitFor({ timeout: 25000 }).then(() => true).catch(() => false))) {
+        console.log(`  (the ${win.name.toLowerCase()} of ${room.name} on its ${win.side} wall was not to be tapped from where the camera is)`);
+        await page.keyboard.press("Escape").catch(() => {});
+        continue;
+      }
+      await climb.click();
+      await page.waitForFunction((name) => document.querySelector('[data-testid="play-here"] .font-semibold')?.textContent === name, room.name, { timeout: 60000 });
+      console.log(`  ${win.name} (${win.side} wall), Climb in -> ${room.name}`);
+      inside = room;
+      await page.waitForTimeout(8000);
+      break;
+    }
+    if (!inside) {
+      await page.screenshot({ path: `${OUT}/stairs-fail.png`, timeout: 60000 }).catch(() => {});
+      throw new Error(`no window of ${windowWay.building.name} could be climbed through by tapping it (the party is in "${await here()}")`);
+    }
+  }
   }
 
   console.log(`balcony: off ${balconyWay.room.name} of ${balconyWay.building.name}`);
@@ -178,7 +202,27 @@ try {
     const l = balconyWay.balcony.layout;
     const c = balconyWay.climb;
     const foot = { x: l.x + c.x + (c.side === "e" ? 1 : c.side === "w" ? -1 : 0), y: l.y + c.y + (c.side === "s" ? 1 : c.side === "n" ? -1 : 0) };
-    await tapUntil(`sq:${foot.x},${foot.y}`, balconyWay.balcony.name, "Climb to the balcony");
+    // The trellis's foot, tapped where it is in view; where it is not (the camera follows the party, and a palace is large) the
+    // same climb from the list of ways on (the HUD), which runs the same rules (the climb is rolled in the check dialog)
+    const at = await page.evaluate((k) => window.__map3d?.at(k) ?? null, `sq:${foot.x},${foot.y}`);
+    const box = await page.locator("canvas").first().boundingBox();
+    const inView = at && box && at.x > box.x + 10 && at.x < box.x + box.width - 10 && at.y > box.y + 10 && at.y < box.y + box.height - 10;
+    if (inView) await tapUntil(`sq:${foot.x},${foot.y}`, balconyWay.balcony.name, "Climb to the balcony");
+    else {
+      const t0 = Date.now();
+      let ok = false;
+      for (let n = 0; n < 6 && !ok; n++) {
+        await page.getByRole("button", { name: /^Climb up to Balcony/ }).first().click();
+        const roll = page.locator('[data-testid="check-roll"]');
+        if (await roll.waitFor({ timeout: 15000 }).then(() => true).catch(() => false)) await roll.click();
+        ok = await page.waitForFunction((name) => document.querySelector('[data-testid="play-here"] .font-semibold')?.textContent === name, balconyWay.balcony.name, { timeout: 30000 }).then(() => true).catch(() => false);
+      }
+      if (!ok) throw new Error(`Climb up to Balcony (from the list of ways): the party is in "${await here()}"`);
+      console.log(`  Climb up to Balcony (from the list of ways; the trellis is out of view) -> Balcony (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
+      // (the palace's district is a great deal to draw in software: the camera's move up to the balcony takes a while)
+      await page.waitForTimeout(Number(process.env.SETTLE || 45000));
+      if (process.env.SHOT) await page.screenshot({ path: `${OUT}/on-balcony.png`, timeout: 60000 }).catch(() => {});
+    }
     await tap(doorTo(balconyWay.balcony, balconyWay.room), balconyWay.room.name);
   }
   console.log("PASS: every flight and door taken by tapping it, and the ways in from outside");
