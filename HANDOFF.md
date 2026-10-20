@@ -1,21 +1,19 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-20 ~14:30 UTC, result added 2026-10-20 14:26 UTC. Branch `revive`, HEAD `b14b6d7` (pushed). `main` is still at `3aa0586` (the previous clean full run); this session's work is NOT merged.
+Written 2026-10-20 ~14:50 UTC. Branch `revive`, HEAD is the commit that carries this file (pushed). `main` is still at `3aa0586` (the previous clean full run); this session's work is NOT merged.
 
-## Running now / result of the full e2e (read this first)
+## Result of the full e2e (read this first)
 <!-- E2E-RESULT -->
-**FINISHED 2026-10-20 14:26 UTC** (started Tue 2026-10-20 13:36:15 UTC). HEAD `b14b6d7`, plain copy 5002, speeder race skipped. Unit result: exit-code. **86/88 steps passed** (86 PASS lines, 2 FAIL lines).
-Log `~/e2e-full2.log`, screenshots `e2e/out/full2`.
-Failed steps (message cut to 260 characters; the full line is in the log, with diagnostics above it):
-- [2s] world: an unvisited planet is built on demand  :: {"world":{"version":1,"seed":170810146,"name":"The Galaxy","partyLevel":1,"partySize":1,"antagonist":"Black Sun","rootId":"a1","startId":"a220","areas":{"a1":{"id":"a1","kind":"galaxy","parentId":null,"des
-- [33s] flying games: the downtime menu is in groups; a taxi run is flown on the 3D map with the drag pad and boost, and paid by the rings it takes  :: locator.waitFor: Timeout 5000ms exceeded. | Call log: |   - waiting for getByTestId('countdown') to be visible
-Neither of the two failures seen mid-run involved models; check each against the clean run of `3aa0586` (88/88) before blaming this session's work.
+**Full e2e of `b14b6d7` finished 2026-10-20 14:26 UTC** (started 13:36:15; plain copy 5002, speeder race skipped): **86/88 steps passed**. Log `~/e2e-full2.log`, screenshots `e2e/out/full2`. Both failures are explained and neither came from the item models:
+- `world: an unvisited planet is built on demand` was a **generator bug, older than this session**: `addTower` in `shared/logic/index.ts` joined a third-floor room to the room it is stacked on without checking that they already shared a door, and the server then said "Duplicate or looping Stairs at East tower". It depends on the random seed (campaign seed 170810146 hit it on 2 of 40 expansions of Coruscant), so the clean run of `3aa0586` was lucky. Fixed in `ffd24b5` (same shuffle, so sound worlds generate as before); test `tests/world/expand.test.ts` fails without the fix; 576 expansions over 8 seeds are sound.
+- `flying games: ... taxi run` timed out waiting 5 s for the countdown, with a 4.9 s page stall (`maxGap` 4867) in software rendering. The step alone passes in 76 s. The three countdown waits are now 20 s (`ce1914c`).
+Not rerun since the fixes: a full e2e (50 min). The plain copy 5002 still runs the build before them.
 <!-- /E2E-RESULT -->
 
 ## State of the machines
 - **Live service `sw5e` (port 5000)** runs `main` at `3aa0586` (restarted 08:55 UTC). Backup `~/sw5e-backups/sw5e-20261020-085534.sql.gz`. It has none of this session's work; promoting needs the user's go-ahead (`npm run build && sudo systemctl restart sw5e`, after a backup and a look at the journal).
-- Plain copy `sw5e-plain` (5002, DB `sw5e_test`) runs HEAD for the e2e. `sw5e-test` (5001, showcase) and the Vite gallery server `sw5e-vite` (5173) are stopped; `sh deploy/test-copy.sh` rebuilds 5001 (the real server is needed for the gallery: species bodies come from `/api/sw5e/species`; a bare Vite server shows every species as the same human).
-- Merging `revive` into `main` was authorised only for the previous run; ask again after this run is clean.
+- Plain copy `sw5e-plain` (5002, DB `sw5e_test`) still runs `b14b6d7` (before the two fixes). **Test copy `sw5e-test` (5001, showcase) was rebuilt 14:5x UTC from `ce1914c` and is running: the user can look at it.** The Vite gallery server `sw5e-vite` (5173) is stopped; `sh deploy/test-copy.sh` rebuilds 5001 (the real server is needed for the gallery: species bodies come from `/api/sw5e/species`; a bare Vite server shows every species as the same human).
+- Merging `revive` into `main` was authorised only for the previous run; ask again.
 
 ## Done this session (all pushed on `revive`)
 - Item models for all 507 equipment items and all 1,918 enhanced items: 392 models in 14 packs `client/public/assets/sw5e-*` (commits `658bffb` ...). `tools/build-item-assets.mjs` (`npm run build:items <staged-dir>`), `shared/art/itemModels.json` + `itemIndex.json`, per-vertex finish+part (`_MARK`), `interiors/items.ts` (catalogue, `composeSaber`, `tintGlow`), `anchors.ts` (`bodyAnchor` per species, `holdAt` grip), `ItemModel.tsx`, `gear.ts`, `stock.ts`/`Stock.tsx` (goods, devices, droid parts, clothing, instruments, vials, bar, ammunition, named armour on stands). See REVIVAL_NOTES "Item models".
@@ -25,8 +23,8 @@ Neither of the two failures seen mid-run involved models; check each against the
 - Tests: `npm run test:interiors` (106 pass, about 60 s). Use it, not `npm test` (see below).
 
 ## Next steps, in order
-1. Read the result block above. Investigate the failed steps (compare with `3aa0586`, which was 88/88: build it with `sh deploy/test-plain.sh <dir>` from a clean checkout if needed). If only flakes, rerun that step: `ONLY="<regex>" BASE=http://127.0.0.1:5002 node e2e/play.mjs`.
-2. If clean: rebuild the test copy (`sh deploy/test-copy.sh`) for the user to look at; ask before merging to `main` or touching the live service.
+1. The test copy 5001 (showcase) was rebuilt from the commit with this file for the user to look at (`sh deploy/test-copy.sh`). Next full e2e, when the user wants one: `BASE=http://127.0.0.1:5002 OUT=e2e/out/full3 node e2e/play.mjs` as a user unit (`systemd-run --user --unit sw5e-e2e-full ...`), after `sh deploy/test-plain.sh` for the fixes; it takes about 50 min, VM idle.
+2. Ask the user before merging `revive` into `main` or touching the live service.
 3. Work down `ITEM_TODO.md` by group, each time checking the code first and updating `CURATED` in the tool: personal ammunition and special ammunition effects, environmental hazards for life support, encumbrance, effects of the 18 weapon/armour accessories, enhanced explosives and spice (450 enhanced consumables have no facts), loot and vendor gaps (no cache holds instruments, cybernetics or ship items), droid modules drawn on droids, head/neck/finger/feet/hands/torso slots (per-species fitting), blade halo, `off_hand` socket for the second hand, animation.
 4. Open decisions for the user: the packs' `License.txt` offers the models as CC0 (original shapes plus CC0 pieces): confirm; accent colour makes a whole bunk or generator one colour (fix or leave?).
 
