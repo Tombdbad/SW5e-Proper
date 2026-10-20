@@ -6,7 +6,7 @@ import { useKeyboardControls } from "@react-three/drei";
 import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey, squaresApart, type Combatant } from "@/lib/stores/useCombat";
-import { standsAt, type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
+import { standsAt, stairsApproach, arrivalSquares, type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
 import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind } from "./sprites";
@@ -1804,7 +1804,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (!present) return { x: 0, y: 0 };
     const last = usePartySpot.getState();
     const from = last.areaId ? world.areas[last.areaId] : undefined;
-    if (from && (buildingIds.has(from.id) || buildingIds.has(from.parentId ?? ""))) return nearestOpen(open, last);
+    if (from && (buildingIds.has(from.id) || buildingIds.has(from.parentId ?? ""))) {
+      // At the way that joins the two rooms: a door's own square, the foot of stairs (or the top, coming up them)
+      const l = inside?.layout;
+      const at = l ? arrivalSquares(l, from.id, last).map((q) => ({ x: l.x + q.x, y: l.y + q.y })) : [];
+      return nearestOpen(open, at.find((q) => open(q.x, q.y)) ?? at[0] ?? last);
+    }
     if (!inside) return nearestOpen(open, myFront.door);
     const l = inside.layout!;
     // (a ship's deck has no door: whoever boards arrives beside the boarding ramp, not in the corner of the deck)
@@ -2088,7 +2093,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       if (again) callOver(a.id);
       else lastTap.current.note = setTimeout(() => onAct?.({ type: "note", text: staff ? `${a.name}: ${staff.name} serves here. Double tap it to call them over.` : a.name }), 500);
     } else if (a.kind === "window") onAct?.({ type: "note", text: "A window onto the street outside." });
-    else if (a.kind === "stairs") walkTo([{ x: l.x + a.x, y: l.y + a.y }], () => a.to && onAct?.({ type: "go", areaId: a.to }));
+    // Stairs nobody can stand on are taken from their foot (or from beside them), stairs that can be stood on where they are
+    else if (a.kind === "stairs") {
+      const goals = stairsApproach(a).map((q) => ({ x: l.x + q.x, y: l.y + q.y }));
+      const foot = a.blocks && a.toward ? goals.slice(0, a.toward === "n" || a.toward === "s" ? a.w : a.h).filter((q) => open(q.x, q.y)) : [];
+      walkTo(foot.length ? foot : goals.filter((q) => open(q.x, q.y)), () => a.to && onAct?.({ type: "go", areaId: a.to }));
+    }
     else if (a.side) walkTo([{ x: l.x + a.x, y: l.y + a.y }], () => a.to && onAct?.({ type: "go", areaId: a.to, secret: a.kind === "secret" }));
     else if (a.kind === "loot" && a.ref) walkTo(around(l.x + a.x, l.y + a.y), () => onAct?.({ type: "loot", id: a.ref! }));
     else if (a.kind === "ship" && a.ref && bayBerth(inside!, a, based[inside!.id], minuteNow()).visitor) {

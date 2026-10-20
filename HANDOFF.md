@@ -17,6 +17,11 @@ Written 2026-10-20 ~16:30 UTC. Branch `revive`, HEAD is the commit that carries 
 - **Live `sw5e` (5000)**: `main` at `bb61494`, restarted 16:23 UTC. Has the item models and the accent fix.
 - Plain copy `sw5e-plain` (5002, DB `sw5e_test`) still runs `b14b6d7`. Test copy `sw5e-test` (5001, showcase): rebuilt from the commit with this file (accent fix included) for the user to look at: `sh deploy/test-copy.sh` rebuilds it. Vite 5173 stopped (start with `systemd-run --user --unit sw5e-vite --working-directory=$HOME/SW5e-Proper sh -c 'exec npx vite --port 5173 --host 127.0.0.1'`).
 
+## IN PROGRESS (2026-10-20 ~17:00 UTC): stairs and multi-level buildings (user: "go, ask no questions")
+Plan: `~/.claude/plans/we-have-an-issue-wise-mango.md`. User rules for this job: do not worry about saved game data (a new campaign will be made); test only the modules touched, NO full e2e; flawless access to every floor of generated buildings.
+- Mezzanine bug cause: stairs assets are `blocks: true`, and `LocalMap.tsx` `actOn` walks to the stairs' own squares, which `walkTo` filters out as not open -> "There is no way through to there." (gallery stairs since `ab2e7e9`; stacked stairwells always).
+- Staircase as the user defined it (confirmed): a 5-wide block beside a stack (room above U, ground room G1, basement B on one footprint); lanes: up-return (door into U), up-start, corridor (ground, G1 door -> next room / dead end / exit), down-start, down-return (door into B); flights 3 squares, landings at +-1/2 at the far end; doorway at the foot and head of every flight and off a landing where relevant. Mezzanine: straight in-room flight with a doorway at foot and top.
+
 ## Next steps, in order
 1. The accent fix is live; if the user dislikes it in play, the tuning is the constants in `interiors/tones.ts` (`SATURATED`, `FULL`, `LOUD`, the 0.45 in `toned`).
 2. Full e2e when the user wants one: `sh deploy/test-plain.sh`, then `BASE=http://127.0.0.1:5002 OUT=e2e/out/full3 node e2e/play.mjs` as a user unit (`systemd-run --user --unit sw5e-e2e-full ...`), VM idle, about 50 min.

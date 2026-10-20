@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createRandom, galleryStairs, stairwellSpot, type RoomAsset, type RoomLayout } from "@shared/logic";
+import { arrivalSquares, createRandom, galleryStairs, stairsApproach, stairwellSpot, type RoomAsset, type RoomLayout } from "@shared/logic";
 
 // Stairwells and the stairs up to a gallery (shared/logic stairwellSpot, galleryStairs): placed on squares that stand, clear of every way,
 // leaving the floor whole; a switchback of two flights where there is room, a straight flight where there is not.
@@ -57,3 +57,27 @@ test("the stairs up to a gallery start just south of it, on squares that stand a
   // A host with no room south of the gallery
   assert.equal(galleryStairs(room(12, 4), gallery, createRandom(1)), undefined);
 });
+
+test("stairs nobody can stand on are taken from their foot, stairs that can be stood on where they are", () => {
+  // A flight of 1 by 2 climbing north: its foot is the square south of it, then the squares beside it, never the top
+  const flight = { x: 4, y: 3, w: 1, h: 2, blocks: true, toward: "n" as const };
+  const goals = stairsApproach(flight);
+  assert.deepEqual(goals[0], { x: 4, y: 5 }, "the foot first");
+  assert.ok(!goals.some((g) => g.x === 4 && g.y === 2), "not the top, where the flight meets the gallery");
+  assert.ok(goals.some((g) => g.x === 3 && g.y === 3) && goals.some((g) => g.x === 5 && g.y === 4), "then beside it");
+  // Stairs whose climb is not known: any square touching a side
+  assert.equal(stairsApproach({ x: 2, y: 2, w: 2, h: 3, blocks: true }).length, 2 * (2 + 3));
+  // Stairs that can be stood on (the top of a flight, the way out of a pit): their own squares
+  assert.deepEqual(stairsApproach({ x: 1, y: 1, w: 1, h: 1 }), [{ x: 1, y: 1 }]);
+});
+
+test("arriving by a way, the party stands at its partner: a door's square, the foot of the stairs coming down, the top going up", () => {
+  const host: RoomLayout = { x: 10, y: 10, width: 9, height: 8, assets: [
+    { id: "s", kind: "stairs", name: "Stairs up", x: 4, y: 3, w: 1, h: 2, blocks: true, toward: "n", to: "gallery" },
+    { id: "d", kind: "door", name: "Door", x: 0, y: 5, w: 1, h: 1, side: "w", to: "hall" },
+  ] };
+  assert.deepEqual(arrivalSquares(host, "gallery", { x: 14, y: 12 })[0], { x: 4, y: 5 }, "down from the gallery: the foot of the flight");
+  assert.deepEqual(arrivalSquares(host, "hall", { x: 9, y: 15 }), [{ x: 0, y: 5 }], "through the door: on its square");
+  assert.deepEqual(arrivalSquares(host, "elsewhere", { x: 0, y: 0 }), [], "no way from there: nothing (the map takes the nearest open square)");
+});
+

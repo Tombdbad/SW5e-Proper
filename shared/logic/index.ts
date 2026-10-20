@@ -1770,6 +1770,8 @@ export interface RoomAsset {
   // Nobody can stand on it; a creature behind it has cover
   blocks?: boolean;
   cover?: boolean;
+  // A flight of stairs set in a room's floor: the way it climbs (its foot is the square beyond its other end)
+  toward?: Side;
   // The path a door is, the room it leads to, or the occupant, cache or ship the asset stands for
   ref?: string;
   to?: string;
@@ -2014,8 +2016,37 @@ function floorFaults(layout: RoomLayout): number {
   return faults + Math.max(0, regions - 1);
 }
 
+// Where to stand to take a way between floors set in a room's floor (stairs up to a gallery, the way out of a pit), in the room's
+// squares, best first. Stairs nobody can stand on are taken from beside them: from the square at their foot when it is known
+// which way they climb, else from any square that touches one of their sides. Stairs that can be stood on are taken where they are.
+// The map (LocalMap) walks to the first of these that is open; the access test (tests/world/access.test.ts) does the same.
+export function stairsApproach(asset: Pick<RoomAsset, "x" | "y" | "w" | "h" | "blocks" | "toward">): { x: number; y: number }[] {
+  const { x, y, w, h } = asset;
+  if (!asset.blocks) return Array.from({ length: w * h }, (_, i) => ({ x: x + (i % w), y: y + Math.floor(i / w) }));
+  const sides: Record<Side, { x: number; y: number }[]> = {
+    n: Array.from({ length: w }, (_, i) => ({ x: x + i, y: y - 1 })),
+    s: Array.from({ length: w }, (_, i) => ({ x: x + i, y: y + h })),
+    w: Array.from({ length: h }, (_, i) => ({ x: x - 1, y: y + i })),
+    e: Array.from({ length: h }, (_, i) => ({ x: x + w, y: y + i })),
+  };
+  // (the foot first, then its sides; never the top, where the flight meets the floor above)
+  if (asset.toward) return [...sides[OPPOSITE[asset.toward]], ...(["n", "s", "e", "w"] as Side[]).filter((s) => s !== asset.toward && s !== OPPOSITE[asset.toward!]).flatMap((s) => sides[s])];
+  return (["s", "n", "e", "w"] as Side[]).flatMap((s) => sides[s]);
+}
+
+// Where someone coming into a room from another room of the building stands first, in the room's squares: at the way that
+// joins the two (a door's own square, the foot of stairs nobody stands on), the one nearest to where they were (`last`, on the
+// building's grid) if there are several; nothing when no way joins them (the map then puts them at the open square nearest `last`)
+export function arrivalSquares(layout: RoomLayout, fromId: string, last: { x: number; y: number }): { x: number; y: number }[] {
+  const ways = layout.assets.filter((a) => a.to === fromId && (a.kind === "door" || a.kind === "exit" || a.kind === "secret" || a.kind === "stairs"));
+  const near = (a: RoomAsset) => Math.hypot(layout.x + a.x - last.x, layout.y + a.y - last.y);
+  const way = [...ways].sort((p, q) => near(p) - near(q))[0];
+  if (!way) return [];
+  return way.kind === "stairs" ? stairsApproach(way) : [{ x: way.x, y: way.y }];
+}
+
 // The square inside a room that touches the given wall at the given step along it
-const wallSquare = (layout: RoomLayout, side: Side, along: number) =>
+const wallSquare =(layout: RoomLayout, side: Side, along: number) =>
   side === "n" ? { x: along, y: 0 } : side === "s" ? { x: along, y: layout.height - 1 } : side === "w" ? { x: 0, y: along } : { x: layout.width - 1, y: along };
 
 // Somewhere for an asset of the given size, where nothing stands and no way in is blocked
@@ -3238,7 +3269,7 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
         world.paths.splice(world.paths.indexOf(path), 1);
         continue;
       }
-      lh.assets.push({ id: `${host.id}-${lh.assets.length + 1}`, kind: "stairs", name: "Stairs up", x: spot.x, y: lg.y - lh.y + lg.height, w: 1, h: 2, blocks: true, ref: path.id, to: gallery.id });
+      lh.assets.push({ id: `${host.id}-${lh.assets.length + 1}`, kind: "stairs", name: "Stairs up", x: spot.x, y: lg.y - lh.y + lg.height, w: 1, h: 2, blocks: true, toward: "n", ref: path.id, to: gallery.id });
       lg.assets.push({ id: `${gallery.id}-${lg.assets.length + 1}`, kind: "stairs", name: "Stairs down", x: spot.x - (lg.x - lh.x), y: lg.height - 1, w: 1, h: 1, ref: path.id, to: host.id });
     }
   }
