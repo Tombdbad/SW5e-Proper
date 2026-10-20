@@ -25,10 +25,12 @@ Written 2026-10-20 ~09:00 UTC. Branch `revive`. `main` is at `3aa0586` (the full
 - The Run/Walk ratio is unit-tested only.
 - Accent colour makes a whole bunk or generator one colour (loud in barracks). Fix or leave? (user's call)
 
-## Next: item models
-- The Kenney packs are not on the VM any more; only the converted output in `client/public/assets/` (`kenney-blaster`, `kenney-space`, `kenney-station`, `kenney-furniture`, `kenney-kitbash`, about 2.4 MB). Downloads go to `~/asset-sources/<pack>/`, outside the repo, with licences recorded.
-- Pipeline to reuse: `tools/convert-assets.mjs` (`npm run convert:assets`), `tools/kitbash.mjs` and `tools/kitbash-recipes.mjs`, `tools/inspect-glb.mjs`, palettes in `shared/art/tones.json`, buckets in `interiors/gear.ts`, `npm run coverage:models`.
-- Keep: hero and low detail (under 120 triangles for low), no textures, the 10 MB budget (`test:assets`), a CREDITS.md entry for every pack.
+## Next: item models (in progress, nothing in the repo yet)
+- Blender 4.0.2 is installed (apt, headless, numpy added). The user-level skill `blender-sw5e` (`~/.claude/skills/blender-sw5e/`: SKILL.md + `scripts/sw5e_bpy.py`, `convert_pack.py`) holds the conventions, the library and the animation rules. Read it before touching models.
+- Sources: `~/asset-sources/` (MANIFEST.md, SELECTION.md = which asset becomes which Star Wars item, reference/ = 10 Databank images; Wookieepedia images are behind a Cloudflare bot check, do not retry). Kenney packs are CC0 glb; Quaternius medieval weapons are CC0 FBX.
+- Staged (outside the repo): `staged/quaternius-weapons-raw/` (24 converted, tips +z), `staged/built/sabers/` (8 hilt variants with separate `blade` + sockets), `staged/built/gear/` (bowcaster, vibroshield, thermal detonator, camtono, datapad, 2 holocrons, electrowhip, bolas, jetpack). Builders: `~/asset-sources/builders/{sabers,gear}.py` (copy into `tools/` when wired).
+- Animation later: models keep moving parts as separate named nodes (`blade`, `wire`, `limbs`, `orb_L`...), pivots at hinges, sockets `grip`/`off_hand`/`tip`/`muzzle`, positions in `<name>.rig.json`. `tools/convert-assets.mjs` flattens and joins everything: it needs a keep-parts mode for these before they ship.
+- Still to do: wire models into `interiors/gear.ts` and `kitbash.ts` (catalogue, `.lod.glb`, credits, `test:assets`), more builders (belts, pouches, packs, instruments, suits, mines, ammunition: see SELECTION.md), then e2e on a test copy. Nothing was changed in the repo or on the live service.
 
 ## Decisions from the user
 - Speeder race is opt-in (`RACE=1`).
