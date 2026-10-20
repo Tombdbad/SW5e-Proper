@@ -8441,6 +8441,68 @@ function doorBetween(a: Area, b: Area, path: Path): boolean {
   return true;
 }
 
+// The stairs up to a roof (2026-10-20): where a building's roof stands on the top of a column, its stair block climbs one floor more,
+// a switchback over the others from the top floor to the roof, with a doorway at its foot in the top floor's wall and one at its
+// head onto the roof (the "Roof door": locked in a hostile building, now and then elsewhere). A way in for those who come up the
+// ladder from the street, and a way out onto the roof from inside. Nothing is made where the switchback would stand in another
+// room, or its doorways on something that cannot be moved (a way); furniture against the wall there is taken away.
+function roofStairs(world: World, building: Area, top: Area, roof: Area, all: Area[]) {
+  let host = top;
+  for (let guard = 0; guard < 8 && tagId(host, "stack"); guard++) host = world.areas[tagId(host, "stack")!] ?? host;
+  const parts = all.filter((a) => tagId(a, "block") === host.id);
+  const hall = parts.find((a) => tagId(a, "lane") === "hall");
+  const geo = hall?.tags.find((t) => t.startsWith("geo:"))?.slice(4).split(":");
+  if (!hall || !geo || !host.layout || !top.layout || !roof.layout) return;
+  const [side, at, mirror] = [geo[0] as Side, Number(geo[1]), geo[2] === "1"];
+  const ups = parts.filter((a) => (tagNumber(a, "storey") ?? -1) >= 0).length;
+  const downs = parts.filter((a) => (tagNumber(a, "storey") ?? 0) < 0).length;
+  // (the switchback from the top floor: the next one up the block's lanes, one floor over the top room)
+  if (ups !== (top.layout.level ?? 0)) return;
+  const block = stairBlock(host.layout, side, at, mirror, ups + 1, downs);
+  const layout = block.ups[ups];
+  // (the block's own switchbacks stand under it, a floor apart)
+  if (all.some((o) => o.layout && tagId(o, "block") !== host.id && layoutsClash(layout, o.layout))) return;
+  const foot = block.doors.filter((d) => d.key === `foot-up${ups}`);
+  const head = block.doors.filter((d) => d.key === `head-up${ups}`);
+  const onFootprint = (list: typeof foot) => list.find((d) => d.room === "host")!;
+  const [inTop, inRoof] = [onFootprint(foot), onFootprint(head)];
+  // The doorways' squares in the top room and on the roof: no way there, and any furniture against the wall is taken away
+  const clear = (l: RoomLayout, q: { x: number; y: number }) => !l.assets.some((a) => (a.side || a.kind === "stairs") && a.x <= q.x && q.x < a.x + a.w && a.y <= q.y && q.y < a.y + a.h);
+  if (!clear(top.layout, inTop) || !clear(roof.layout, inRoof)) return;
+  const covering = (l: RoomLayout, q: { x: number; y: number }) => l.assets.filter((a) => !a.side && a.kind !== "npc" && a.x <= q.x && q.x < a.x + a.w && a.y <= q.y && q.y < a.y + a.h);
+  const moved = covering(top.layout, inTop);
+  const template = BUILDINGS[building.type];
+  const hostile = !!template?.hostile;
+  const r = createRandom(Math.floor(unitOf(`${building.id}|roof stairs`) * 1e9));
+  const locked = hostile ? 10 + 5 * Math.min(3, Math.max(1, building.danger)) : r.chance(0.4) ? 12 : undefined;
+  const stairs: Area = {
+    id: nextId(world, "a"), kind: "room", parentId: building.id, name: "Stairs up to the roof", type: "stairs up to the roof", description: "",
+    tags: ["form:stairs", `block:${host.id}`, `storey:${ups}`, `low:${ups}`, "rise:1"], position: { x: 0, y: 0, z: 0 }, danger: 0, occupants: [], ships: [], loot: [], faction: building.faction,
+    layout: { ...layout, assets: [] },
+  };
+  world.areas[stairs.id] = stairs;
+  const up: Path = { id: nextId(world, "p"), from: top.id, to: stairs.id, kind: "door", label: "Doorway", travel: "10 ft." };
+  const out: Path = { id: nextId(world, "p"), from: stairs.id, to: roof.id, kind: "door", label: locked ? "Locked roof door" : "Roof door", travel: "10 ft.", ...(locked ? { locked } : {}) };
+  world.paths.push(up, out);
+  top.layout.assets = top.layout.assets.filter((a) => !moved.includes(a));
+  const set = (room: Area, d: { x: number; y: number; side: Side }, path: Path, to: Area) => {
+    const l = room.layout!;
+    l.assets.push({ id: `${room.id}-${l.assets.length + 1}-r`, kind: "door", name: path.label, x: d.x, y: d.y, w: 1, h: 1, side: d.side, ref: path.id, to: to.id });
+  };
+  set(top, inTop, up, stairs);
+  set(stairs, foot.find((d) => d.room !== "host")!, up, top);
+  set(stairs, head.find((d) => d.room !== "host")!, out, roof);
+  set(roof, inRoof, out, stairs);
+  // (the top room's floor stays whole: if the doorway would cut it, the furniture goes back and there are no stairs to the roof)
+  if (floorFaults(top.layout)) {
+    top.layout.assets = [...top.layout.assets.filter((a) => a.ref !== up.id), ...moved];
+    roof.layout.assets = roof.layout.assets.filter((a) => a.ref !== out.id);
+    world.paths.splice(world.paths.indexOf(up), 1);
+    world.paths.splice(world.paths.indexOf(out), 1);
+    delete world.areas[stairs.id];
+  }
+}
+
 export function planDistrict(ctx: Context, district: District): DistrictPlan | undefined {
   const { world } = ctx;
   const existing = world.districtPlans?.[district.id];
@@ -8565,13 +8627,14 @@ export function planDistrict(ctx: Context, district: District): DistrictPlan | u
     && px >= 0 && py >= 0 && px < width && py < height;
 
   // A roof for each building, on the highest room that has a wall to the street to set a ladder
-  // against (hangars have their own sky)
+  // against (hangars have their own sky); the top of a column first, whose stair block then climbs on to the roof (roofStairs)
   const roofs: { roof: Area; building: Area }[] = [];
   for (const b of members) {
     // (a palace has no roof to climb to by a ladder: its towers are manned from inside)
     if (b.type === "palace") continue;
     const real = roomsOf(b).filter((a) => !formOf(a) && (a.layout!.level ?? 0) >= 0 && !a.layout!.roof);
-    const ranked = [...real].sort((p, q) => (q.layout!.level ?? 0) - (p.layout!.level ?? 0) || q.layout!.width * q.layout!.height - p.layout!.width * p.layout!.height);
+    const columnTop = (a: Area) => !!tagId(a, "stack") && !real.some((u) => u.tags.includes(`stack:${a.id}`));
+    const ranked = [...real].sort((p, q) => Number(columnTop(q)) - Number(columnTop(p)) || (q.layout!.level ?? 0) - (p.layout!.level ?? 0) || q.layout!.width * q.layout!.height - p.layout!.width * p.layout!.height);
     for (const room of ranked) {
       const l = room.layout!;
       let spot: { side: Side; along: number } | undefined;
@@ -8595,6 +8658,7 @@ export function planDistrict(ctx: Context, district: District): DistrictPlan | u
       layout.assets[0].id = `${roof.id}-1`;
       roof.gateway = true;
       roofs.push({ roof, building: b });
+      if (columnTop(room)) roofStairs(world, b, room, roof, everyRoom());
       break;
     }
   }

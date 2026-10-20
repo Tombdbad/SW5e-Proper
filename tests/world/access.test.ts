@@ -101,18 +101,19 @@ test("a switchback climbs a floor: up one lane to the landing at half, back alon
   assert.equal(climbAt(n, 1.5, 0.5), 0.5, "the landing is the north row");
 });
 
-test("the walk finds what cannot be reached: a door taken away, a flight's foot blocked", () => {
+test("the walk finds what cannot be reached: a doorway taken away", () => {
   const world = structuredClone(worldOf(5));
   const building = Object.values(world.areas).find((b) => b.kind === "building" && Object.values(world.areas).some((h) => h.parentId === b.id && h.tags.includes("lane:hall")))!;
   assert.ok(building, "a building with a stair block");
   assert.deepEqual(walkBuilding(world, building.id).problems, []);
-  // Take away the doorway from the host to the stairs up: the switchback and the floors over it cannot be walked to
+  // Take away the doorway from the host to the stairs down: the switchback down and the basements under it cannot be walked to
+  // (the floors over the host could still be: from the roof, down its stairs)
   const hall = Object.values(world.areas).find((a) => a.parentId === building.id && a.tags.includes("lane:hall"))!;
   const host = world.areas[hall.tags.find((t) => t.startsWith("block:"))!.slice(6)];
-  const up = Object.values(world.areas).find((a) => a.parentId === building.id && a.tags.includes(`block:${host.id}`) && a.tags.includes("storey:0"))!;
-  host.layout!.assets = host.layout!.assets.filter((a) => a.to !== up.id);
+  const down = Object.values(world.areas).find((a) => a.parentId === building.id && a.tags.includes(`block:${host.id}`) && a.tags.includes("storey:-1"))!;
+  host.layout!.assets = host.layout!.assets.filter((a) => a.to !== down.id);
   const lost = walkBuilding(world, building.id).problems;
-  assert.ok(lost.some((p) => p.includes(up.name) && /cannot be walked to/.test(p)), lost.join("\n"));
+  assert.ok(lost.some((p) => p.includes(down.name) && /cannot be walked to/.test(p)), lost.join("\n"));
 });
 
 test("every building of the worlds can be walked into every room, through every door and up and down every flight", () => {
@@ -129,7 +130,7 @@ test("every building of the worlds can be walked into every room, through every 
 });
 
 test("every room over or under the ground is in a column with a five-lane block; towers, both lane orders, halls that go on and dead ends", () => {
-  let columns = 0, towers = 0, mirrored = 0, plain = 0, onward = 0, deadEnd = 0, lifts = 0, highest = 0, deepest = 0;
+  let columns = 0, towers = 0, mirrored = 0, plain = 0, onward = 0, deadEnd = 0, lifts = 0, highest = 0, deepest = 0, roofWays = 0;
   for (const seed of SEEDS) {
     const world = worldOf(seed);
     const areas = Object.values(world.areas);
@@ -162,6 +163,15 @@ test("every room over or under the ground is in a column with a five-lane block;
       else deadEnd++;
     }
     lifts += areas.filter((a) => a.kind === "room" && a.name === "Lift" && formOf(a) === "lift").length;
+    // A roof whose stairs lead down into the building: the ladder from the street, the roof door, the stairs to the top floor
+    for (const roof of areas.filter((a) => formOf(a) === "roof" && a.layout)) {
+      const stairs = roof.layout!.assets.find((a) => a.kind === "door" && world.areas[a.to ?? ""]?.name === "Stairs up to the roof");
+      if (!stairs) continue;
+      roofWays++;
+      assert.ok(roof.layout!.assets.some((a) => a.kind === "exit"), `${roof.name}: no ladder from the street`);
+      const flight = world.areas[stairs.to!];
+      assert.ok(flight.layout!.switchback && flight.layout!.assets.some((a) => a.kind === "door" && a.to !== roof.id), "the roof stairs lead down to the top floor");
+    }
   }
   assert.ok(columns >= 20, `${columns} columns`);
   assert.ok(towers > 0, "no tower of more than two floors over the ground");
@@ -171,4 +181,5 @@ test("every room over or under the ground is in a column with a five-lane block;
   // City towers rise past the third floor, and some columns go down to a sub-basement
   assert.ok(highest >= 4, `the highest floor is ${highest}`);
   assert.ok(deepest <= -2, `the deepest floor is ${deepest}`);
+  assert.ok(roofWays > 0, "no roof with stairs down into its building");
 });
