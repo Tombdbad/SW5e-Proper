@@ -801,6 +801,8 @@ export function gearOf(character: any): Gear {
     bodyClass: body?.armorClassification === "Light" || body?.armorClassification === "Medium" || body?.armorClassification === "Heavy" ? (body.armorClassification.toLowerCase() as "light" | "medium" | "heavy") : undefined,
     shield: item(worn.shield),
     carried,
+    // What is put on (a suit, a mask, goggles), of what is carried
+    worn: ((character?.playState?.wearing ?? []) as string[]).filter((n) => ((character?.equipment ?? []) as any[]).some((e) => String(e?.name ?? e) === n)),
   };
 }
 

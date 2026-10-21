@@ -6,6 +6,7 @@ import { KITBASH, type KitLook } from "./kitbash";
 import { KENNEY_BLASTER } from "./weapons";
 import { assetPath, itemRef, modelInfo, needsBlade, socketCentred } from "./items";
 import { POOLS } from "./stock";
+import { HEAD_PLACE, TORSO_PLACE } from "./anchors";
 
 export interface Item {
   name: string;
@@ -96,11 +97,13 @@ export interface Gear {
   shield?: GearItem;
   // Everything else carried: kits, tools, medical supplies, prostheses
   carried: GearItem[];
+  // The names of what is put on (the character's `wearing`): a suit, a mask, goggles
+  worn?: string[];
 }
 export type Hand = "" | "pistol" | "rifle" | "saber" | "saber2" | "pike" | "gaffi" | "vibro" | "axe" | "bowcaster" | "tool" | "tray" | "datapad" | "staff" | "play";
 // Where on the body a model goes: the main hand, the other arm (a shield), either hip, the back, the right arm or the left leg (prostheses),
 // the front of the belt (a buckle, a power pack), the right shoulder (a pauldron, a cannon), the right wrist (a wristpad)
-export type Slot = "weapon" | "shield" | "hipR" | "hipL" | "back" | "armR" | "legL" | "belt" | "shoulder" | "wrist";
+export type Slot = "weapon" | "shield" | "hipR" | "hipL" | "back" | "armR" | "legL" | "belt" | "shoulder" | "wrist" | "head" | "neck" | "torso" | "finger";
 export interface Want {
   slot: Slot;
   // Under /assets, without ".glb"
@@ -134,6 +137,32 @@ export function lookOfModel(model: string): KitLook {
 }
 // What the slot of a catalogue model's `meta.slot` means on a figure, if it is worn at all
 const SLOT_OF: Record<string, Slot> = { hipR: "hipR", hipL: "hipL", back: "back", belt: "belt", shoulder: "shoulder", wrist: "wrist" };
+// What goes on the head, neck, trunk and fingers is placed by what it is (anchors.ts HEAD_PLACE, TORSO_PLACE): one of each place
+const BODY_SLOTS = ["head", "neck", "torso", "finger"];
+
+// A sealed suit a figure wears is drawn as one (2026-10-21; the rules data's suits: gear.ts `suitOf`): a space suit with a bubble helmet and
+// a life-support pack, a diving or water suit with a brass dome, any other (hazard, chemical, flame-proof ...) with a hood and a filter
+export type SuitStyle = "space" | "hazard" | "diving";
+export function suitStyleOf(name: string): SuitStyle | undefined {
+  if (!/suit$/i.test(name)) return undefined;
+  if (/^space suit/i.test(name)) return "space";
+  if (/^(diving|water) suit/i.test(name)) return "diving";
+  return /^(hazard|chemical|flame-proof|stabilizer|dampening|conductive|mind-shielding) suit/i.test(name) ? "hazard" : undefined;
+}
+// The suit a figure has on, if any (only what is put on counts)
+export const suitWorn = (gear: Gear | undefined): SuitStyle | undefined => gear?.worn?.map(suitStyleOf).find(Boolean);
+// Gloves and boots drawn on the hands and feet: shock gloves and handwraps; boots, and rocket boots with their thrusters
+export function glovesOf(gear: Gear | undefined): "plain" | "shock" | undefined {
+  const names = (gear?.carried ?? []).map((i) => i.name);
+  if (names.some((n) => /shock gloves/i.test(n))) return "shock";
+  return names.some((n) => /gloves|handwraps/i.test(n)) ? "plain" : undefined;
+}
+export function bootsOf(gear: Gear | undefined): "plain" | "rocket" | undefined {
+  const names = (gear?.carried ?? []).map((i) => i.name);
+  if (names.some((n) => /rocket boots/i.test(n))) return "rocket";
+  return names.some((n) => /boots|kickers/i.test(n)) ? "plain" : undefined;
+}
+export const hasBandolier = (gear: Gear | undefined) => (gear?.carried ?? []).some((i) => /^bandolier$/i.test(i.name));
 
 // The pose a weapon is held in, from its kind: a blaster pistol at the side, a rifle across the body, a blade up and forward
 export function handOf(item: GearItem | undefined): Hand | undefined {
@@ -204,12 +233,24 @@ export function wantsOf(hand: Hand, gear?: Gear, role = "", name = ""): Want[] {
     else out.push(/generator/i.test(gear.shield.name) ? { slot: "shield", model: kit("shield-generator"), look: "armour", scale: 0.5 } : { slot: "shield", model: kit("shield-physical"), look: "armour", scale: 0.5 });
   }
   const free: Slot[] = ["hipR", "hipL", "back", "belt", "shoulder", "wrist"];
+  const placed: string[] = [];
   for (const item of gear.carried) {
     // An item with a model made for it that is worn (a holster, a quiver, a pack, a buckle, a pauldron, a wristpad) goes where its model says,
     // or on the other hip when that one is taken
     const ref = itemRef(item.name);
     const info = ref && !ref.model.includes(":") ? modelInfo(ref.model) : undefined;
     const worn = info ? SLOT_OF[info.meta.slot ?? ""] : undefined;
+    // Head, neck, trunk and fingers: one of each place, a mask or goggles only when put on
+    if (ref && info && BODY_SLOTS.includes(info.meta.slot ?? "")) {
+      const slotName = info.meta.slot as Slot;
+      const place = slotName === "head" ? HEAD_PLACE[ref.model] : slotName === "finger" ? "finger" : TORSO_PLACE[ref.model];
+      const key = `${slotName}:${place}${slotName === "finger" ? `:${placed.filter((x) => x.startsWith("finger")).length}` : ""}`;
+      if (place && !placed.includes(key) && (slotName !== "head" || !!gear.worn?.includes(item.name)) && (slotName !== "finger" || placed.filter((x) => x.startsWith("finger")).length < 2)) {
+        placed.push(key);
+        out.push({ slot: slotName, model: assetPath(ref.model)!, look: lookOfModel(ref.model), scale: 1, name: ref.model });
+      }
+      continue;
+    }
     if (ref && info && worn) {
       const slot = free.includes(worn) ? worn : worn === "hipR" && free.includes("hipL") ? "hipL" : worn === "hipL" && free.includes("hipR") ? "hipR" : undefined;
       if (slot) {

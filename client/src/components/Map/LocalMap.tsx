@@ -1319,7 +1319,7 @@ function Follower({ companion, index, feet, open, height, onTap }: { companion: 
   return (
     <group ref={group}>
       <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, 0, 0]} position={[0, down ? 0.14 : 0, 0]}>
-        <Figure kind={tokenOf({ name: companion.name, role: companion.kind === "droid" ? "utility droid" : companion.kind === "beast" ? "wildlife" : companion.role, creature: companion.creature })} ring={SIDE_COLORS.friendly} name={companion.name} large={isLarge(companion.size)} species={companion.species} role={companion.role} creature={companion.creature} size={companion.size} />
+        <Figure kind={tokenOf({ name: companion.name, role: companion.kind === "droid" ? "utility droid" : companion.kind === "beast" ? "wildlife" : companion.role, creature: companion.creature })} ring={SIDE_COLORS.friendly} name={companion.name} large={isLarge(companion.size)} species={companion.species} role={companion.role} creature={companion.creature} size={companion.size} modules={companion.kind === "droid" ? companion.custom : undefined} />
       </group>
       <Label at={[0, isLarge(companion.size) ? 2.2 : 1.6, 0]} size={0.26} color={SIDE_COLORS.friendly}>{companion.name}</Label>
       {onTap && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={onTap} label={companion.name} />}

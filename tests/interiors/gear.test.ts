@@ -33,7 +33,9 @@ test("every model a coverage names exists", () => {
   }
 });
 
-import { handOf, wantsOf, type Gear } from "../../client/src/components/Map/interiors/gear";
+import { handOf, wantsOf, suitStyleOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear } from "../../client/src/components/Map/interiors/gear";
+import { headFit, torsoFit, HEAD_PLACE, TORSO_PLACE } from "../../client/src/components/Map/interiors/anchors";
+import { ITEM_MODELS } from "../../client/src/components/Map/interiors/items";
 test("a character's weapon sets their pose and their model; a saber has its own", () => {
   assert.equal(handOf(named("Blaster pistol")), "pistol");
   assert.equal(handOf(named("Blaster rifle")), "rifle");
@@ -101,7 +103,9 @@ test("a character's gear is read from what they wield and wear, by the rules dat
   assert.equal(gear.shield?.name, "Medium physical shield");
   assert.deepEqual(gear.carried.map((c) => c.name).sort(), ["Arm prosthesis", "Blaster pistol", "Mechanic's kit", "Medpac"].sort());
   assert.equal(gearOf({ equipment: ["Battle armor"], abilityScores: {} }).bodyClass, "heavy");
-  assert.deepEqual(gearOf({ equipment: [] }), { weapons: [], bodyClass: undefined, shield: undefined, carried: [] });
+  assert.deepEqual(gearOf({ equipment: [] }), { weapons: [], bodyClass: undefined, shield: undefined, carried: [], worn: [] });
+  // What is put on, of what is carried
+  assert.deepEqual(gearOf({ equipment: ["Respirator", "Backpack"], playState: { wearing: ["Respirator", "Boots"] } }).worn, ["Respirator"]);
 });
 
 test("a weapon with a model says where the hand closes on it, and an enhanced weapon takes its base weapon's design", () => {
@@ -133,4 +137,72 @@ test("a musician plays an instrument of the catalogue, the same one each time, a
   }
   assert.ok(played.size >= 4, `${played.size} instruments among seven musicians`);
   assert.deepEqual(wantsOf("play", { weapons: [], carried: [] }, "musician", "x"), [], "the player is not a musician");
+});
+
+const named2 = (n: string) => ({ name: n, equipmentCategory: "Enhanced" });
+test("what is put on the head, neck, trunk and fingers: goggles and masks only when worn, one of each place, rings two at most", () => {
+  const base: Gear = { weapons: [], carried: [named2("Darkvision Goggles"), named("Respirator"), named2("Ring of Novice Force Storing"), named2("Ring of Adept Force Storing"), named2("Ring of Master Force Storing"), named2("Tracker utility vest"), named2("Taozin Amulet"), named2("Throat prosthesis")] as any };
+  const none = wantsOf("", base, "", "x").map((w) => w.name);
+  assert.ok(!none.includes("goggles") && !none.includes("respirator"), "not worn, not drawn");
+  const on = wantsOf("", { ...base, worn: ["Darkvision Goggles", "Respirator"] }, "", "x");
+  const names = on.map((w) => w.name);
+  assert.ok(names.includes("goggles") && names.includes("respirator") && names.includes("tracker-utility-vest") && names.includes("amulet") && names.includes("throat-prosthesis"));
+  assert.equal(on.filter((w) => w.slot === "finger").length, 2, "two rings on the fingers");
+  assert.equal(on.filter((w) => w.slot === "torso").length, 1);
+  // Two things for the same place: the first is drawn
+  const two = wantsOf("", { weapons: [], carried: [named2("Darkvision Goggles"), named2("Sunshades")] as any, worn: ["Darkvision Goggles", "Sunshades"] }, "", "x").filter((w) => w.slot === "head");
+  assert.equal(two.length, 1);
+  for (const w of on) assert.ok(fs.existsSync(`client/public/assets/${w.model}.glb`), w.model);
+});
+
+test("a suit put on is drawn as a space suit, a diving suit or a hazard suit; gloves, boots and a bandolier carried show on the figure", () => {
+  const names: [string, string][] = [["Space suit", "space"], ["Diving suit", "diving"], ["Water suit", "diving"], ["Hazard suit", "hazard"], ["Chemical suit", "hazard"], ["Flame-proof suit", "hazard"], ["Stabilizer suit", "hazard"], ["Dampening suit", "hazard"], ["Conductive suit", "hazard"], ["Mind-shielding suit", "hazard"]];
+  for (const [n, style] of names) {
+    assert.equal(suitStyleOf(n), style, n);
+    assert.ok(ITEM_MODELS[n.toLowerCase().replace(/ /g, "-")], `${n} has a model`);
+  }
+  assert.equal(suitStyleOf("Combat suit"), undefined);
+  assert.equal(suitStyleOf("Respirator"), undefined);
+  const gear = (carried: string[], worn?: string[]): Gear => ({ weapons: [], carried: carried.map(named2) as any, worn });
+  assert.equal(suitWorn(gear(["Space suit"], ["Space suit"])), "space");
+  assert.equal(suitWorn(gear(["Space suit"], [])), undefined, "only what is put on");
+  assert.equal(glovesOf(gear(["Shock gloves"])), "shock");
+  assert.equal(glovesOf(gear(["Handwraps (Fine)"])), "plain");
+  assert.equal(glovesOf(gear(["Backpack"])), undefined);
+  assert.equal(bootsOf(gear(["Rocket boots"])), "rocket");
+  assert.equal(bootsOf(gear(["Boots of Hiding"])), "plain");
+  assert.equal(hasBandolier(gear(["Bandolier"])), true);
+  assert.equal(hasBandolier(gear(["Pouch"])), false);
+});
+
+test("worn things are fitted to the skull and the build: every head model lands on the head, a mask in front of a snout, an ear piece at its ear", () => {
+  const heads = Object.keys(HEAD_PLACE);
+  assert.ok(heads.length >= 9);
+  for (const model of heads) {
+    assert.ok(ITEM_MODELS[model], `${model} is in the catalogue`);
+    for (const t of [{ skull: 0.82 }, { skull: 1 }, { skull: 1.25, lift: 0.01 }, { skull: 1.08, snout: true }]) {
+      const box = ITEM_MODELS[model].box;
+      const fit = headFit(model, box, t)!;
+      assert.ok(fit && fit.scale > 0.5 && fit.scale < 3.2, `${model}: scale ${fit?.scale}`);
+      // What it covers lies within a head and a little more
+      const reach = [(box[3] - box[0]) / 2, (box[4] - box[1]) / 2, (box[5] - box[2]) / 2].map((h) => h * fit.scale);
+      assert.ok(Math.abs(fit.at[0]) + reach[0] < 0.26 * t.skull + 0.05, `${model} x`);
+      assert.ok(Math.abs(fit.at[1]) + reach[1] < 0.27, `${model} y ${fit.at[1]} + ${reach[1]}`);
+      assert.ok(fit.at[2] + reach[2] < 0.34 && fit.at[2] - reach[2] > -0.2, `${model} z ${fit.at[2]} + ${reach[2]}`);
+    }
+  }
+  const [eyes, mouth, plain, snouted] = [headFit("goggles", ITEM_MODELS.goggles.box, { skull: 1 })!, headFit("respirator", ITEM_MODELS.respirator.box, { skull: 1 })!, headFit("respirator", ITEM_MODELS.respirator.box, { skull: 1 })!, headFit("respirator", ITEM_MODELS.respirator.box, { skull: 1, snout: true })!];
+  assert.ok(mouth.at[1] < eyes.at[1], "a mask is below the eyes");
+  assert.ok(snouted.at[2] > plain.at[2], "a snout carries the mask forward");
+  assert.ok(headFit("commlink-hands-free", ITEM_MODELS["commlink-hands-free"].box, { skull: 1 })!.at[0] < 0, "an earpiece on the right ear");
+  assert.ok(headFit("ear-prosthesis", ITEM_MODELS["ear-prosthesis"].box, { skull: 1 })!.at[0] > 0, "a prosthesis on the left");
+  assert.equal(headFit("backpack", ITEM_MODELS.backpack.box, { skull: 1 }), undefined);
+  // The trunk: a vest wide as the body, an amulet hanging in front of the chest, a collar at the throat
+  for (const model of Object.keys(TORSO_PLACE)) for (const bulk of [0.7, 1, 1.5]) {
+    const fit = torsoFit(model, ITEM_MODELS[model].box, bulk)!;
+    assert.ok(fit.at[1] > 0.1 && fit.at[1] < 0.5 && fit.scale >= 1, `${model} at ${fit.at[1]}`);
+    if (TORSO_PLACE[model] === "neck") assert.ok(fit.at[2] > 0.05, "in front of the chest");
+  }
+  const [wide, narrow] = [torsoFit("tracker-utility-vest", ITEM_MODELS["tracker-utility-vest"].box, 1.5)!, torsoFit("tracker-utility-vest", ITEM_MODELS["tracker-utility-vest"].box, 0.7)!];
+  assert.ok(wide.scale > narrow.scale, "a bulkier body takes a bigger vest");
 });

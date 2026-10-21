@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { LEAN, WAIST, ARM_REACH, bodyAnchor, holdAt, offHandAt, type WornSlot } from "../../client/src/components/Map/interiors/anchors";
+import { LEAN, WAIST, ARM_REACH, bodyAnchor, holdAt, offHandAt, moduleAnchor, bodyOfSeries, type WornSlot } from "../../client/src/components/Map/interiors/anchors";
 
 const SLOTS: WornSlot[] = ["hipR", "hipL", "back", "belt", "shoulder"];
 const human = { bulk: 1 };
@@ -74,4 +74,27 @@ test("the second hand of a two-handed weapon closes exactly on its off_hand sock
   assert.equal(offHandAt([-0.1, 0.07, 0.17], toLeft, 0.9, 1, 0.3, grip, [0, 0, 1.2], [0.2, 0.34, 0]), null);
   assert.ok(offHandAt([-0.1, 0.07, 0.17], toLeft, 0.9, 1, 0.3, grip, off, [0.2, 0.34, 0]) !== null, "a rifle held as the pose holds it reaches");
   assert.ok(ARM_REACH > 0.3 && ARM_REACH < 0.7);
+});
+
+test("a droid's customizations sit on its body: the sentry's dome on top, lifts underneath, the rest in a ring facing out, a row of six at each height", () => {
+  assert.equal(bodyOfSeries("astromech"), "barrel");
+  assert.equal(bodyOfSeries("protocol"), "biped");
+  for (const series of ["astromech", "protocol", "b1", "bb"]) {
+    const height = bodyOfSeries(series) === "barrel" ? 0.8 : 1.25;
+    const dome = moduleAnchor(series, "droid-sentry", 0);
+    assert.ok(dome.at[1] > height && dome.at[0] === 0, `${series}: dome on top`);
+    assert.ok(moduleAnchor(series, "droid-repulsor-lifts-fine", 0).at[1] < 0.1, `${series}: lifts under`);
+    const ring = Array.from({ length: 12 }, (_, i) => moduleAnchor(series, "droid-dura-plating-mk-1", i));
+    assert.equal(new Set(ring.map((a) => a.at.map((v) => v.toFixed(3)).join())).size, 12, `${series}: twelve places, none twice`);
+    for (const [i, a] of ring.entries()) {
+      assert.ok(Math.hypot(a.at[0], a.at[2]) > 0.1 && Math.hypot(a.at[0], a.at[2]) < 0.3, `${series} ${i}: on the surface of the body`);
+      assert.ok(a.at[1] > 0.2 && a.at[1] < height, `${series} ${i}: at ${a.at[1]}`);
+      // Facing out: its front (+z, turned by the angle) points away from the axis
+      const front = [Math.sin(a.rot[1]), Math.cos(a.rot[1])];
+      assert.ok(front[0] * a.at[0] + front[1] * a.at[2] > 0.09, `${series} ${i}: faces out`);
+    }
+    // Six to a row; the seventh is above the first
+    assert.ok(ring[6].at[1] > ring[0].at[1]);
+    assert.ok(Math.abs(ring[6].at[0] - ring[0].at[0]) < 1e-9);
+  }
 });

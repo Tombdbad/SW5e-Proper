@@ -11,9 +11,9 @@ import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
 import { advance, bob, LIMB, limbMaterial, pose as poseLimbs, standing } from "./interiors/limbs";
-import { handOf, wantsOf, type Gear, type Want, type Slot } from "./interiors/gear";
-import { bodyAnchor, holdAt, offHandAt } from "./interiors/anchors";
-import { composeSaber, tintGlow, withHalo } from "./interiors/items";
+import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
+import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
+import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
 import { toneNameOf, type KitLook } from "./interiors/kitbash";
 import { TONES } from "./interiors/tones";
 
@@ -1855,6 +1855,8 @@ export interface Attach {
   // The point of the model's own frame the hand closes on (its `grip` socket), where it has one, and where the second hand does
   grip?: [number, number, number];
   offHand?: [number, number, number];
+  // The model's name in the catalogue, for what is fitted to the body (a mask, an amulet)
+  name?: string;
 }
 export interface Outfit {
   // The weight of armour worn (pauldrons, a heavier plate): from what the character wears
@@ -1863,7 +1865,7 @@ export interface Outfit {
   top: string;
   bottom: string;
   accent: string;
-  head: "" | "trooper" | "scout" | "pilot" | "tiepilot" | "hood" | "cap" | "bounty" | "guard" | "helmet" | "deathtrooper" | "navy";
+  head: "" | "trooper" | "scout" | "pilot" | "tiepilot" | "hood" | "cap" | "bounty" | "guard" | "helmet" | "deathtrooper" | "navy" | "bubble" | "hazmat" | "dive";
   hand: "" | "pistol" | "rifle" | "saber" | "saber2" | "pike" | "gaffi" | "vibro" | "axe" | "bowcaster" | "tool" | "tray" | "datapad" | "staff" | "play";
   blade?: string;
   armor?: string;
@@ -1871,6 +1873,10 @@ export interface Outfit {
   belt?: boolean;
   pack?: boolean;
   bandolier?: boolean;
+  // A sealed suit worn (a flightsuit's cut with its own helmet, pack and fittings), gloves, and boots (2026-10-21)
+  suit?: SuitStyle;
+  gloves?: "plain" | "shock";
+  boots?: "plain" | "rocket";
 }
 
 const TOPS = ["#7a4b2a", "#5b6b8a", "#8a7a62", "#4f6b4a", "#7d3b4a", "#3d4856", "#a0826a", "#6a5a7a", "#9a6a3a", "#4a6a7a"];
@@ -1955,9 +1961,14 @@ export function buildHumanoid(k: Kit, look: Look, o: Outfit, skin: string, hair:
       // A leg of metal where there is a prosthesis, drawn over with the model
       if (prosLeg && s > 0) alongLimb(k, prosLeg, [s * hipW, 0.56, 0], [s * hipW, 0.05, 0.01], "x");
       k.tube([[s * hipW, 0.56, 0], [s * hipW * 1.05, 0.31, 0.025], [s * hipW, 0.08, -0.01]], (t) => (0.064 - t * 0.02) * b, prosLeg && s > 0 ? "#8a949e" : legs, { along: 6, around: 7, finish: armored ? "sheen" : "matte" });
-      const boot = bare ? flesh : armored ? plate : o.garment === "uniform" ? "#15171b" : "#2a2420";
-      k.box([0.1 * b, 0.09, 0.2], boot, { at: [s * hipW, 0.045, 0.03], round: 0.035, finish: armored || o.garment === "uniform" ? "sheen" : "matte" });
-      if (o.garment === "uniform") k.cyl(0.05 * b, 0.2, boot, { at: [s * hipW, 0.16, 0], seg: 10, finish: "sheen" });
+      const boot = o.boots ? "#2b2f36" : bare ? flesh : armored ? plate : o.garment === "uniform" ? "#15171b" : "#2a2420";
+      k.box([0.1 * b, 0.09, 0.2], boot, { at: [s * hipW, 0.045, 0.03], round: 0.035, finish: armored || o.garment === "uniform" || o.boots ? "sheen" : "matte" });
+      if (o.garment === "uniform" || o.boots) k.cyl(0.05 * b, 0.2, boot, { at: [s * hipW, 0.16, 0], seg: 10, finish: "sheen" });
+      // Rocket boots: a thruster at each heel, glowing
+      if (o.boots === "rocket") {
+        k.cyl(0.032 * b, 0.07, "#59636d", { at: [s * hipW, 0.06, -0.09], rot: [Math.PI / 2, 0, 0], seg: 8, finish: "sheen" });
+        k.sphere(0.022 * b, "#ffb347", { at: [s * hipW, 0.06, -0.13], finish: "glow", seg: [6, 5] });
+      }
       if (armored) {
         k.capsule(0.056 * b, 0.1, plate, { at: [s * hipW, 0.43, 0.014], finish: "sheen", seg: 8 });
         k.sphere(0.046 * b, under, { at: [s * hipW * 1.05, 0.31, 0.03], seg: [8, 6] });
@@ -2064,7 +2075,21 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
     k.torus(0.2 * b, 0.022, "#4a3626", { at: [0, 0.22, 0], rot: [Math.PI / 2, 0.7, 0], scale: [1, 0.62, 1], seg: [5, 20] });
     for (let i = 0; i < 4; i++) k.box([0.03, 0.035, 0.02], "#9aa3ad", { at: [-0.08 + i * 0.055, 0.12 + i * 0.06, front + 0.01], rot: [0, 0, -0.7], finish: "sheen" });
   }
-  if (o.pack) k.box([0.22 * b, 0.26, 0.1], armored ? shade(p.plate, 0.85) : "#4a4f3a", { at: [0, 0.24, -0.13 * b], round: 0.04, finish: "sheen" });
+  if (o.pack) k.box([0.22 * b, 0.26, 0.1], armored ? shade(p.plate, 0.85) : o.suit ? shade(o.accent, 0.8) : "#4a4f3a", { at: [0, 0.24, -0.13 * b], round: 0.04, finish: "sheen" });
+  // A sealed suit's fittings: a control panel on the chest; the tanks of a space suit, the hoses of a diving suit, a hazard suit's filter
+  if (o.suit) {
+    k.box([0.12 * b, 0.09, 0.03], "#2b2f36", { at: [0, 0.27, front + 0.012], round: 0.01, finish: "sheen" });
+    k.box([0.08 * b, 0.02, 0.02], C.glow, { at: [0, 0.285, front + 0.03], finish: "glow" });
+    if (o.suit === "space") k.pair((s) => k.cyl(0.05, 0.28, "#c9ccd2", { at: [s * 0.08 * b, 0.3, -0.19 * b], seg: 10, finish: "sheen" }));
+    if (o.suit === "diving") k.pair((s) => k.tube([[s * 0.05 * b, 0.42, 0.0], [s * 0.13 * b, 0.32, front + 0.05], [s * 0.07 * b, 0.18, front + 0.05]], 0.012, "#b9893a", { along: 8, around: 5, finish: "sheen" }));
+    if (o.suit === "hazard") k.cyl(0.035, 0.12, "#59636d", { at: [0.08 * b, 0.36, front + 0.02], seg: 8, finish: "sheen" });
+  }
+  // What is worn on the trunk and at the throat (a vest, an amulet, a collar), fitted to the build (interiors/anchors.ts)
+  for (const a of p.attach) {
+    if ((a.slot !== "torso" && a.slot !== "neck") || !a.name) continue;
+    const fit = torsoFit(a.name, modelInfo(a.name)?.box ?? [-0.05, -0.05, -0.05, 0.05, 0.05, 0.05], b);
+    if (fit) k.addModel(a.geometry, { at: fit.at, rot: fit.rot, scale: fit.scale * a.scale });
+  }
   if (look.wings) k.pair((s) => {
     const wing = new THREE.Shape();
     wing.moveTo(0, 0);
@@ -2096,7 +2121,7 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
     const off = offHandAt(right, [left[0] - right[0], left[1] - right[1], left[2] - right[2]], length, wielded.scale, 0.3, wielded.grip, wielded.offHand, pose.l[0]);
     if (off) pose = { r: pose.r, l: [pose.l[0], pose.l[1], off] };
   }
-  const glove = armored ? p.under : p.bare || o.garment !== "uniform" ? flesh : "#15171b";
+  const glove = o.gloves ? "#2b2f36" : armored ? p.under : p.bare || o.garment !== "uniform" ? flesh : "#15171b";
   for (const [i, arm] of [pose.r, pose.l].entries()) {
     const s = i ? 1 : -1;
     // An arm that hangs swings with the stride; one that holds something stays where it is
@@ -2108,7 +2133,9 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
     k.sphere(0.062 * b, armored ? plate : sleeve, { at: [s * 0.19 * b, sh, 0], seg: [8, 6], finish: armored ? "sheen" : "matte" });
     k.tube(arm, (t) => (0.05 - t * 0.014) * b, metal ? "#8a949e" : sleeve, { along: 6, around: 6, finish: armored || metal ? "sheen" : "matte" });
     if (armored) k.sphere(0.042 * b, p.under, { at: arm[1], seg: [8, 6] });
-    k.sphere(0.044 * b, metal ? "#59636d" : glove, { at: arm[2], scale: [0.85, 1.1, 0.95], seg: [7, 5] });
+    k.sphere((o.gloves ? 0.05 : 0.044) * b, metal ? "#59636d" : glove, { at: arm[2], scale: [0.85, 1.1, 0.95], seg: [7, 5], finish: o.gloves ? "sheen" : undefined });
+    // Shock gloves crackle at the knuckles
+    if (o.gloves === "shock") k.sphere(0.02 * b, "#7fe3ff", { at: [arm[2][0], arm[2][1], arm[2][2] + 0.04], finish: "glow", seg: [6, 4] });
     // What the hands hold: the weapon in the right, a shield on the left forearm
     for (const a of p.attach) {
       if (!i && a.slot === "weapon") {
@@ -2125,6 +2152,9 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
         const at = from.clone().add(dir.clone().multiplyScalar(0.8));
         const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.normalize()));
         k.addModel(a.geometry, { at: [at.x, at.y, at.z], rot: [e.x, e.y, e.z], scale: a.scale * b });
+      } else if (i && a.slot === "finger") {
+        // A ring on the left hand, small as it is: drawn large enough to be seen
+        k.addModel(a.geometry, { at: [arm[2][0], arm[2][1] - 0.012, arm[2][2] + 0.02], rot: [0, 0, 0], scale: 3 });
       } else if (i && a.slot === "shield") {
         // A generator is worn on the forearm with its emitter forward; a physical shield is carried on the arm's outer side
         if (/generator/.test(a.id)) k.addModel(a.geometry, { at: [arm[1][0] + 0.07 * b, arm[1][1] - 0.02, arm[1][2] + 0.06], rot: [Math.PI / 2, 0, 0], scale: a.scale * 0.7 });
@@ -2248,6 +2278,21 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
     k.pair((s) => k.tube([[s * 0.02, -0.07, 0.12], [s * 0.05, -0.16, 0.13], [s * 0.04, -0.24, 0.12]], 0.012, "#3a3f46", { along: 6, around: 5 }));
     return;
   }
+  // A sealed suit's helmet: a bubble over the face (a space suit), a brass dome with a window (diving), a hood with a visor and a filter
+  // (hazard); the face shows through the bubble, not through the others
+  if (helmet === "dive") {
+    k.sphere(0.145, "#b9893a", { scale: [1, 1.05, 1.05], finish: "sheen", seg: [18, 14] });
+    k.sphere(0.06, "#bfe8f5", { at: [0, 0.01, 0.1], scale: [1.15, 1, 0.5], finish: "glass", seg: [12, 8] });
+    k.pair((s) => k.cyl(0.018, 0.02, "#8a6a2a", { at: [s * 0.1, 0.01, 0.07], rot: [Math.PI / 2, 0, 0], seg: 8, finish: "sheen" }));
+    k.torus(0.13, 0.02, "#8a6a2a", { at: [0, -0.1, 0], rot: [Math.PI / 2, 0, 0], seg: [6, 18], finish: "sheen" });
+    return;
+  }
+  if (helmet === "hazmat") {
+    k.sphere(0.138, o.top, { scale: [0.98, 1.06, 1.06], finish: "cloth", seg: [16, 12] });
+    k.box([0.15, 0.06, 0.03], "#1b2a38", { at: [0, 0.02, 0.118], round: 0.02, finish: "glass" });
+    k.cyl(0.03, 0.06, "#59636d", { at: [0, -0.06, 0.13], rot: [Math.PI / 2, 0, 0], seg: 10, finish: "sheen" });
+    return;
+  }
   if (helmet === "guard") {
     k.lathe([[0.13, -0.12], [0.135, -0.05], [0.13, 0.05], [0.1, 0.15], [0.05, 0.22], [0, 0.24]], o.top, { seg: 18, finish: "sheen" });
     k.box([0.09, 0.012, 0.02], "#0b0d10", { at: [0, 0.02, 0.128] });
@@ -2367,6 +2412,18 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
     if (style === 1) k.tube([[0, 0.02, -0.11], [0, -0.1, -0.14], [0, -0.2, -0.12]], (t) => 0.03 * (1 - t * 0.6), hairColor, { along: 6, around: 6 });
     if (style === 2) k.blob(0.1, hairColor, { at: [0, -0.07, -0.07], smooth: true, rough: 0.15, seed: p.seed, squash: [1.1, 1.4, 0.7] });
     if (style === 4) k.sphere(0.05, hairColor, { at: [0, 0.07, -0.1], seg: [10, 8] });
+  }
+  // A space suit's bubble over the whole head, on its collar ring
+  if (helmet === "bubble") {
+    k.sphere(0.17, "#cfeaf7", { scale: [1, 1.05, 1.05], finish: "glass", seg: [16, 12] });
+    k.torus(0.13, 0.022, "#c9ccd2", { at: [0, -0.1, 0], rot: [Math.PI / 2, 0, 0], seg: [6, 18], finish: "sheen" });
+  }
+  // What is put on the head (goggles, a mask, an earpiece, a helmet): fitted to the skull this species has (interiors/anchors.ts)
+  const traits: HeadTraits = { skull: sk.scale[0], lift: sk.at[1], snout: !!look.snout };
+  for (const a of p.attach) {
+    if (a.slot !== "head" || !a.name) continue;
+    const fit = headFit(a.name, modelInfo(a.name)?.box ?? [-0.05, -0.05, -0.05, 0.05, 0.05, 0.05], traits);
+    if (fit) k.addModel(a.geometry, { at: fit.at, rot: fit.rot, scale: fit.scale * a.scale });
   }
 }
 
@@ -3232,14 +3289,23 @@ const HUMAN = lookOf({ name: "Human", skinColorOptions: "Light to dark tones", h
 // `wants` are the models this figure carries (interiors/gear.ts), which Figure loads and bakes in
 export interface FigureSpec { key: string; build: (k: Kit) => void; height: number; wants?: Want[]; blade?: string }
 
-export function figureSpec(kind: string, name: string, opts: { role?: string; creature?: string; species?: string; size?: string; looks: Record<string, Look>; party?: { species?: string; name?: string; force?: boolean; blade?: string; gear?: Gear }; player?: boolean; attach?: Attach[]; gear?: Gear }): FigureSpec {
+export function figureSpec(kind: string, name: string, opts: { role?: string; creature?: string; species?: string; size?: string; looks: Record<string, Look>; party?: { species?: string; name?: string; force?: boolean; blade?: string; gear?: Gear }; player?: boolean; attach?: Attach[]; gear?: Gear; modules?: { name: string; geometry: THREE.BufferGeometry }[] }): FigureSpec {
   const { role = "", creature = "", size = "", looks, party } = opts;
   const seed = hue(name || kind);
   const machine = constructKind(name);
   if (machine) return { key: `con:${machine}`, build: (k) => buildConstruct(k, machine), height: 1.3 };
   if (kind === "astromech" || kind === "battledroid" || kind === "droid") {
     const series = droidKind(name || kind) === "generic" && kind === "astromech" ? "astromech" : droidKind(name || kind) === "generic" && kind === "battledroid" ? "b1" : droidKind(name || kind);
-    return { key: `droid:${series}:${pickOf(["a", "b", "c", "d", "e", "f"], name)}`, build: (k) => buildDroid(k, series, name), height: series === "astromech" || series === "r5" || series === "bb" || series === "mouse" || series === "gonk" || series === "pit" ? 0.8 : 1.25 };
+    // The customizations it carries are fixed to its body where each belongs (interiors/anchors.ts moduleAnchor)
+    const modules = opts.modules ?? [];
+    const build = (k: Kit) => {
+      buildDroid(k, series, name);
+      modules.forEach((m, i) => {
+        const a = moduleAnchor(series, m.name, i);
+        k.addModel(m.geometry, { at: a.at, rot: a.rot, scale: a.scale });
+      });
+    };
+    return { key: `droid:${series}:${pickOf(["a", "b", "c", "d", "e", "f"], name)}${modules.length ? `:m${modules.map((m) => m.name).join("+")}` : ""}`, build, height: series === "astromech" || series === "r5" || series === "bb" || series === "mouse" || series === "gonk" || series === "pit" ? 0.8 : 1.25 };
   }
   if (kind === "beast" || kind === "horror") {
     const plan = creaturePlan(name, creature, size);
@@ -3285,9 +3351,20 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
     if (hand) outfit = { ...outfit, hand };
     if (gear.bodyClass) outfit = { ...outfit, garment: gear.bodyClass === "light" ? "vest" : "armor", armor: gear.bodyClass === "heavy" ? "#59636d" : "#7b8794", weight: gear.bodyClass, cape: gear.bodyClass === "light" ? outfit.cape : undefined };
   }
+  // A suit put on is drawn as one; gloves, boots and a bandolier carried are drawn on the figure (the models are pairs and sashes, which a
+  // limb that swings could not carry)
+  if (gear) {
+    const suit = suitWorn(gear);
+    if (suit) {
+      const colours = { space: ["#e9edf0", "#d9752b"], hazard: ["#d9b324", "#2b2f36"], diving: ["#2f4a63", "#b9893a"] }[suit];
+      outfit = { ...outfit, garment: "flightsuit", top: colours[0], bottom: colours[0], accent: colours[1], head: suit === "space" ? "bubble" : suit === "diving" ? "dive" : "hazmat", suit, pack: true, belt: true, armor: undefined, weight: undefined, cape: undefined };
+    }
+    const [gloves, boots] = [glovesOf(gear), bootsOf(gear) ?? (suit ? "plain" : undefined)];
+    outfit = { ...outfit, ...(gloves || suit ? { gloves: gloves ?? "plain" } : {}), ...(boots ? { boots } : {}), ...(hasBandolier(gear) ? { bandolier: true } : {}) };
+  }
   const wants = wantsOf(outfit.hand, gear, role || name, name);
   const attach = opts.attach ?? [];
-  const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.weight ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}:${seed & 28}${attach.length ? `:g${attach.map((a) => `${a.slot}=${a.id}@${a.scale}`).join("+")}` : ""}`;
+  const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.weight ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}${outfit.suit ?? ""}${outfit.gloves ?? ""}${outfit.boots ?? ""}:${seed & 28}${attach.length ? `:g${attach.map((a) => `${a.slot}=${a.id}@${a.scale}`).join("+")}` : ""}`;
   return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, seed, attach), height: 1.25 * look.scale, wants, blade: outfit.blade };
 }
 
@@ -3345,7 +3422,7 @@ function Gait({ children }: { children: ReactNode }) {
 // Sabers made of a hilt and another blade (a model of the hilt and one of the blade, joined once)
 const COMPOSED = new Map<string, THREE.BufferGeometry>();
 
-export function Figure({ kind, ring, name = "", large, marker, species, role, creature, size, player, gear }: { kind: string; ring: string; name?: string; large?: boolean; marker?: boolean; species?: string; role?: string; creature?: string; size?: string; player?: boolean; gear?: Gear }) {
+export function Figure({ kind, ring, name = "", large, marker, species, role, creature, size, player, gear, modules }: { kind: string; ring: string; name?: string; large?: boolean; marker?: boolean; species?: string; role?: string; creature?: string; size?: string; player?: boolean; gear?: Gear; modules?: string[] }) {
   const looks = useSpecies();
   const party = usePartyLook();
   const me = player ?? kind === "player";
@@ -3385,10 +3462,16 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
     }
     return made;
   };
+  // A droid's customizations (the items fitted to it) are models of the catalogue, loaded and fixed to its body
+  const moduleFiles = (modules ?? []).map((n) => { const ref = itemRef(n); const path = ref && !ref.model.includes(":") ? assetPath(ref.model) : undefined; return path && ref ? { name: ref.model, url: `/assets/${path}.glb` } : undefined; }).filter((m): m is { name: string; url: string } => !!m);
+  const moduleGeo = useModels(moduleFiles.map((m) => m.url), "centre");
+  const modulesReady = moduleFiles.length > 0 && moduleFiles.every((m) => moduleGeo[m.url]);
   const ready = wants.length > 0 && wants.every((w) => geometryOfWant(w));
   const spec = ready
-    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, attach: wants.map((w) => ({ id: (w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model) + (base.blade && w.name?.startsWith("saber-") ? `~${base.blade}` : ""), slot: w.slot, scale: w.scale, grip: w.grip, offHand: w.offHand, geometry: geometryOfWant(w)! })) })
-    : base;
+    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, attach: wants.map((w) => ({ id: (w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model) + (base.blade && w.name?.startsWith("saber-") ? `~${base.blade}` : ""), slot: w.slot, scale: w.scale, grip: w.grip, offHand: w.offHand, name: w.name, geometry: geometryOfWant(w)! })) })
+    : modulesReady
+      ? figureSpec(kind, name, { role, creature, species, size, looks, modules: moduleFiles.map((m) => ({ name: m.name, geometry: moduleGeo[m.url]! })) })
+      : base;
   return (
     <group scale={large ? 1.5 : 1}>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
