@@ -116,6 +116,8 @@ test("blueprints: modifications and chassis can be learned and made (only timed 
   const chassisRarity = (facts.find((f) => f.chassis) as any).rarity.toLowerCase();
   assert.ok(blueprintPool(facts, chassisRarity, []).some((f) => f.chassis), "a chassis");
   assert.ok(!pool.some((f) => f.timed));
+  // A blueprint item is not a blueprint of itself
+  assert.ok(!pool.some((f) => /^Blueprint \(/.test(f.name)));
   assert.ok(!blueprintPool(facts, "standard", [pool[0].name]).some((f) => f.name === pool[0].name), "one already known is not offered");
 });
 

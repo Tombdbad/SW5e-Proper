@@ -8,6 +8,8 @@ import { itemFactsOf, enhancedConsumableUse, describeEffects, waterSpeed } from 
 import enhanced from "../../shared/data/sw5e/enhancedItems.json";
 import equipment from "../../shared/data/sw5e/equipment.json";
 
+// Every d20 shows 11 and every die its middle: a natural 20 would beat a DC 14 against a -5 save and make a test flaky
+Math.random = () => 0.5;
 const player = { id: 1, name: "Rigger", currentHp: 30, maxHp: 30, armorClass: 14, level: 5, abilityScores: { strength: 10, dexterity: 16, constitution: 12, intelligence: 10, wisdom: 10, charisma: 10 }, speed: 30, conditions: [] } as any;
 const foe = (id: number, x: number, y = 3, extra: Partial<Combatant> = {}): any => ({ id, name: `Trooper ${id}`, hp: 40, maxHp: 40, armorClass: 5, initiative: 0, x, y, attackBonus: 1, damageDice: "1d4", rangedAttacker: false, saves: { dexterity: -5, constitution: -5, wisdom: -5 }, ...extra });
 const kit = (extra: Partial<Combatant> = {}): Partial<Combatant> => ({
@@ -262,4 +264,14 @@ test("in water a creature moves at half speed unless it has a swimming speed", (
   assert.equal(waterSpeed(5), 5);
   assert.equal(waterSpeed(30, 30), 30, "a propulsion pack running");
   assert.equal(waterSpeed(25, 40), 40);
+});
+
+test("a refused burst does not use the free draw: out of range, the interaction is still there", () => {
+  start({ rangedProps: ["burst 3", "range 50/200"], inHand: "melee", ammo: { weapon: "Blaster pistol", family: "cell", left: 16, max: 16, plain: "Power cell", riders: { "Power cell": {} }, reserves: {}, free: false, shotsPer: { "Power cell": 1 } } } as any, [foe(2, 12)]);
+  // (the trooper is 11 squares off: 55 feet is within the 200 long range, so shorten the range to refuse the shot)
+  useCombat.setState({ combatants: useCombat.getState().combatants.map((c) => (c.isPlayer ? { ...c, range: [20, 30] as [number, number] } : c)) });
+  useCombat.getState().spray("burst");
+  assert.ok(!me().usedTurn!.includes("interact"), "nothing drawn");
+  assert.equal(me().inHand, "melee");
+  assert.match(log().at(-1)!, /Cannot fire/);
 });

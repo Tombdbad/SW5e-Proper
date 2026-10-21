@@ -10791,7 +10791,7 @@ export function modFitProblem(mod: { name: string; rarity: string; modKind?: str
 }
 // The blueprints one can learn from a find of this rarity: any enhanced item that is made, including modifications and chassis
 export const blueprintPool = <T extends { name: string; rarity: string; timed?: unknown }>(facts: T[], rarity: string, known: string[]): T[] =>
-  facts.filter((f) => f.rarity.toLowerCase() === rarity && !f.timed && !known.includes(f.name));
+  facts.filter((f) => f.rarity.toLowerCase() === rarity && !f.timed && !known.includes(f.name) && !/^Blueprint \(/i.test(f.name));
 
 // The cost of mending a droid to full: a hit point is 5 credits and 5 for each point of challenge
 export const droidRepairPrice = (cr: string | number | undefined, missing: number) => Math.max(0, Math.ceil(missing * (5 + 5 * crNumber(cr))));

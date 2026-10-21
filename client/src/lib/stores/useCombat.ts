@@ -2323,7 +2323,6 @@ export const useCombat = create<CombatState>((set, get) => ({
         w.log.push(`${mode === "burst" ? "Burst" : "Rapid"} fire needs Strength ${str}.`);
         return patchOf(w);
       }
-      if (!takeDraw(w, mi, "ranged")) return patchOf(w);
       const a = me.ammo;
       const left = a ? (a.max > 0 ? a.left : a.reserves[a.round ?? a.plain] ?? 0) : n;
       if (a && left < n) {
@@ -2335,6 +2334,8 @@ export const useCombat = create<CombatState>((set, get) => ({
         w.log.push(`Cannot fire: ${plan.why}.`);
         return patchOf(w);
       }
+      // (the weapon is drawn once the shot is certain: a refused burst leaves the turn's free interaction alone)
+      if (!takeDraw(w, mi, "ranged")) return patchOf(w);
       spendRound(w, mi, n);
       const rider = a ? a.riders[a.round ?? a.plain] : undefined;
       const dc = 8 + spec.bonus;

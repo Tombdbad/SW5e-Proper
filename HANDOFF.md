@@ -16,11 +16,11 @@ Work through ALL of `ITEM_TODO.md`: every item does what the SW5e rules say. GO 
 
 ## NOT done / not verified
 - Nothing visual was seen in a browser: halo, off_hand hand placement, head/torso/neck fits, suits, gloves, boots, droid modules, bins and racks stock, the new panels (surgeon list, mod shop, notes, translator, hands/mines row in the fight panel). Do a look with `e2e/interiors.mjs` (Vite dev server; `/dev/models?section=gear|items|interiors`) and one run of `e2e/works.mjs` (BASE=http://127.0.0.1:5002) before trusting them. The user wants the full e2e (`sh deploy/test-plain.sh`, then the unit in "Things learned") only when they say so.
-- `tests/world/layouts.test.ts` and the other `tests/world/*` were started as the user unit `sw5e-worldtests` (script in the session scratchpad; result below if it finished). The Dance floor got `L:stage` (a new cache), which changes new worlds' layouts.
+- `tests/world/*` (layouts, access, caves, city-planets, decks, expand, stairs) all PASS on the Dance floor `L:stage` change (a user unit, 19 min of CPU). That cache still changes what a seed builds: if an e2e map step on seed 7 (or the seed-34 showcase) fails, suspect the new layouts first.
 - Left in ITEM_TODO (the list is the truth): weapon animation, thrown-weapon projectiles, weapon mods shown on the weapon, named armour tint, shield actives, mines drawn on the map, a game scene for gaming sets and instruments, chandler shop, item viewer, enhanced rows with a rule of their own (47 gear, 18 weapons, ...).
 
 ## Tests (run on this commit)
-- `npm run test:items`: all pass (80 tests before the last two additions; run again). `npm run test:interiors`: pass (115+). `tests/items/fieldgear|comms|vendors|armor.test.ts` are new.
+- `npm run test:items`: 84 pass (run three times, stable); `npm run test:interiors`: 115 pass. `tests/items/fieldgear|comms|vendors|armor.test.ts` are new.
 - `npm test` takes >10 min (layouts); use the per-folder scripts; layouts alone as a unit: `systemd-run --user --unit sw5e-worldtests --working-directory=$HOME/SW5e-Proper sh <script>` (a script of `node --import tsx --test tests/world/<name>.test.ts` lines).
 
 ## Standing rules from the user
