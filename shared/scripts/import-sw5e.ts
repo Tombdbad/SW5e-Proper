@@ -523,6 +523,68 @@ function deriveShips(sizes: any[], starshipChapters: any[]) {
   return out;
 }
 
+// Gear whose rules are in the books' chapters rather than in the equipment data (2026-10-21): the text of every item the equipment data
+// leaves without a description (environmental suits, oxygen tank, emergency rations, field rations, bedroll ...), the environmental
+// suits' shared text, the Expanded Content's droid prices, the lifestyle expenses, and the rules the gear answers to (food and water,
+// suffocating, high and low pressure, falling, vision and light, climbing and jumping, lifting and carrying, the encumbrance variant)
+function deriveGear(handbook: any[], expanded: any[], equipment: any[]) {
+  const chapter = (book: any[], name: string): string => book.find((c) => c.chapterName === name)?.contentMarkdown ?? "";
+  // Each heading's text, up to the next heading, without its tables
+  const blocks = (md: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const part of md.replace(/^> ?/gm, "").split(/\n(?=#{2,6} )/)) {
+      const head = part.match(/^#{2,6} ([^\n]+)/);
+      if (!head) continue;
+      const body = part.split("\n").slice(1).filter((l) => !l.trim().startsWith("|")).join(" ").replace(/\s+/g, " ").trim();
+      if (body) out[head[1].replace(/[*_]/g, "").trim().toLowerCase()] = body;
+    }
+    return out;
+  };
+  const phEquipment = chapter(handbook, "Equipment");
+  const ecEquipment = chapter(expanded, "Equipment");
+  const ph = blocks(phEquipment);
+  const ec = blocks(ecEquipment);
+  const texts: Record<string, string> = {};
+  // A heading that names the item, or nearly (the data spells "Oyxgen tank")
+  const near = (a: string, b: string) => {
+    if (Math.abs(a.length - b.length) > 2 || a.length < 8) return false;
+    const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    return d[a.length][b.length] <= 2;
+  };
+  const lookup = (book: Record<string, string>, key: string) => book[key] ?? book[key.replace(/ \(.*\)$/, "")] ?? Object.entries(book).find(([k]) => near(k, key))?.[1];
+  for (const item of equipment) {
+    if ((item.description ?? "").trim()) continue;
+    const key = String(item.name).toLowerCase();
+    const found = lookup(ec, key) ?? lookup(ph, key);
+    if (found) texts[item.name] = found;
+  }
+  // The environmental suits: what they share, and each suit's own sentence
+  const suitsBlock = ecEquipment.split(/#### Environmental Suits\n/)[1]?.split(/\n#### /)[0] ?? "";
+  const common = suitsBlock.split("***")[0].replace(/\s+/g, " ").trim();
+  for (const m of suitsBlock.matchAll(/\*\*\*([^*]+?)\.\*\*\*\s*([^\n]+)/g)) {
+    const name = equipment.find((e) => e.name.toLowerCase() === m[1].trim().toLowerCase())?.name ?? m[1].trim();
+    texts[name] = `${m[2].trim()} ${common}`;
+  }
+  if (!Object.keys(texts).some((n) => /space suit/i.test(n))) throw new Error("could not read the environmental suits of the Expanded Content");
+  const droidTable = tables(ecEquipment).find((t) => /Droid Designation/i.test(t.header[0] ?? ""));
+  const droids = (droidTable?.rows ?? []).map((r) => ({ designation: r[0].trim(), cost: number(r[1]) ?? 0 }));
+  const lifestyle = (tables(phEquipment).find((t) => /Lifestyle Expenses/i.test(t.title))?.rows ?? []).map((r) => ({ name: r[0].trim(), cost: number(r[1]) ?? 0 }));
+  const adventuring = blocks(chapter(handbook, "Adventuring"));
+  const abilities = blocks(chapter(handbook, "Using Ability Scores"));
+  const rules: Record<string, string> = {
+    falling: adventuring["falling"], suffocating: adventuring["suffocating"], pressure: adventuring["high and low pressure environs"],
+    foodAndWater: adventuring["food and water"], food: adventuring["food"], water: adventuring["water"],
+    light: adventuring["vision and light"], darkvision: adventuring["darkvision"], climbing: adventuring["climbing, swimming and crawling"], jumping: adventuring["jumping"],
+    carrying: abilities["lifting and carrying"], encumbrance: abilities["variant: encumberance"] ?? abilities["variant: encumbrance"],
+    restingInArmor: adventuring["variant: resting in armor"], selfSufficiency: blocks(phEquipment)["self-sufficiency"] ?? "",
+  };
+  for (const [k, v] of Object.entries(rules)) if (!v && k !== "selfSufficiency") throw new Error(`could not read the rule "${k}" of the Player's Handbook`);
+  if (droids.length < 5 || lifestyle.length < 6) throw new Error("could not read the droid prices or the lifestyle expenses");
+  return { texts, droids, lifestyle, rules };
+}
+
 // What each tool is for, from Wretched Hives' Tool Proficiencies chapter: the three skills it helps
 // (with proficiency in both, advantage), its special use (once a rest), and sample activities
 // with their DCs. Entries the book left as a template are kept with what they do have.
@@ -634,6 +696,8 @@ async function main() {
   manifest.datasets.lookups = { derivedFrom: "rulesPlayersHandbook", languages: lookups.languages.length, bytes: write("lookups", lookups) };
   const transport = deriveTransport(loaded.rulesExpandedContent, loaded.rulesPlayersHandbook);
   manifest.datasets.transport = { derivedFrom: "rulesExpandedContent", mounts: transport.mounts.length, vehicles: transport.vehicles.length, bytes: write("transport", transport) };
+  const gear = deriveGear(loaded.rulesPlayersHandbook, loaded.rulesExpandedContent, loaded.equipment);
+  manifest.datasets.gear = { derivedFrom: "rulesPlayersHandbook, rulesExpandedContent", texts: Object.keys(gear.texts).length, bytes: write("gear", gear) };
   const tools = deriveTools(loaded.rulesWretchedHives, loaded.equipment);
   manifest.datasets.tools = { derivedFrom: "rulesWretchedHives", count: tools.length, bytes: write("tools", tools) };
   const downtime = deriveDowntime(loaded.rulesWretchedHives);
@@ -652,6 +716,8 @@ async function deriveOnly() {
   const manifest = read("manifest");
   const transport = deriveTransport(read("rulesExpandedContent"), read("rulesPlayersHandbook"));
   manifest.datasets.transport = { derivedFrom: "rulesExpandedContent", mounts: transport.mounts.length, vehicles: transport.vehicles.length, bytes: write("transport", transport) };
+  const gear = deriveGear(read("rulesPlayersHandbook"), read("rulesExpandedContent"), read("equipment"));
+  manifest.datasets.gear = { derivedFrom: "rulesPlayersHandbook, rulesExpandedContent", texts: Object.keys(gear.texts).length, bytes: write("gear", gear) };
   const tools = deriveTools(read("rulesWretchedHives"), read("equipment"));
   manifest.datasets.tools = { derivedFrom: "rulesWretchedHives", count: tools.length, bytes: write("tools", tools) };
   const downtime = deriveDowntime(read("rulesWretchedHives"));

@@ -4,7 +4,8 @@ import { rollDice, sumDiceResults } from "@/lib/sw5e/dice";
 import { conditionMechanics, motionFeet, sizeRank, type PowerMotion } from "@/lib/sw5e/rules";
 import { conditions as conditionList } from "@/lib/sw5e/conditions";
 import type { RoomAsset, StatProfile, StatAttack, StatSpecial, StatSave, ShipFight as ShipFightData, ShipSheet as ShipSheetData, ShipHelmAction, ShipBoost } from "@shared/logic";
-import { shipCombatant, startShipFight, shipMove, shipTurn, shipFire, shipHelm, shipBoost, shipPatch, shipRegenerate, shipDirect, shipInterfere, shipFlee, endShipTurn, shipAi, shoveAsset, bulkOf, type Bulk } from "@shared/logic";
+import type { AmmoRider } from "@shared/logic";
+import { shipCombatant, startShipFight, shipMove, shipTurn, shipFire, shipHelm, shipBoost, shipPatch, shipRegenerate, shipDirect, shipInterfere, shipSpecial, shipFlee, endShipTurn, shipAi, shoveAsset, bulkOf, type Bulk } from "@shared/logic";
 import { minimumRoll, type CombatFeature, type Amount } from "@/lib/sw5e/characterCalculation";
 import {
   StarshipCombatManager,
@@ -180,6 +181,14 @@ export interface Combatant {
   queue?: string[];
   // Its Dexterity (Stealth) bonus, for the Hide action
   stealth?: number;
+  // ---- The character's ammunition (2026-10-21; shared/logic gear.ts): the ranged weapon it feeds, the shots left in it (a bow draws
+  // from the reserves, `max` 0), the round loaded (an ammunition item's name; none for the plain one), what each kind of round does, the
+  // rounds carried by name, and whether an accessory reloads it for free once a turn. What a fight spends is counted in `spentAmmo`.
+  ammo?: { weapon: string; family: string; left: number; max: number; round?: string; plain: string; riders: Record<string, AmmoRider>; reserves: Record<string, number>; free: boolean; shotsPer: Record<string, number> };
+  spentAmmo?: Record<string, number>;
+  // A bipod carried, and deployed: the weapon's Strength requirement is ignored, speed 0
+  bipod?: boolean;
+  braced?: boolean;
 }
 
 // Which side a combatant is on: the player's (with companions) or the enemy's
@@ -326,6 +335,8 @@ export function coverBetween(arena: Arena, from: { x?: number; y?: number; z?: n
 export interface WeaponReach {
   reach?: number;
   range?: [number, number];
+  // The weapon's properties, for a Strength or Dexterity it needs
+  props?: string[];
 }
 
 // Whether a creature can act at all: standing, and not held by a condition
@@ -388,6 +399,16 @@ export function attackPlan(arena: Arena, combatants: Combatant[], attacker: Comb
   if (attacker.helped) {
     up = true;
     reasons.push("helped");
+  }
+  // A weapon's Strength or Dexterity requirement (Player's Handbook weapon properties): disadvantage unless the wielder meets it; a
+  // braced bipod or tripod lifts the Strength one
+  for (const [property, ability] of [["strength", "strength"], ["dexterity", "dexterity"]] as const) {
+    const need = propertyNumber(weapon.props, property);
+    const score = attacker.abilities?.[ability] ?? 10;
+    if (need > 1 && score < need && !(property === "strength" && attacker.braced)) {
+      down = true;
+      reasons.push(`${property === "strength" ? "Strength" : "Dexterity"} ${need} needed`);
+    }
   }
   const guard = combatants.find((c) => c.id !== target.id && c.guarding === target.id && upright(c) && squaresApart(c, target) <= 1);
   if (guard) {
@@ -554,7 +575,9 @@ export type ItemEffect =
   | { kind: "stabilize"; label: string; targetId: number | string; to: number }
   | { kind: "explosive"; label: string; targetId: number | string; radius: number; maxFeet: number; dc: number; save: string; damage: { dice: string; type: string }[]; conditions: string[]; conditionRounds: number }
   | { kind: "substance"; label: string; ability?: string; temp?: string; rounds: number }
-  | { kind: "poison"; label: string; dice: string; dc: number };
+  | { kind: "poison"; label: string; dice: string; dc: number }
+  // A calibrator or collimator applied to the melee weapon (gear.ts calibratorOf): +N damage and a property for the fight
+  | { kind: "calibrate"; label: string; damage: number; property?: string };
 
 // ---------------------------------------------------------------------------------------------
 // Dice and damage
@@ -752,6 +775,10 @@ export interface PendingHit {
   // The saving throw and extra damage that come with the hit
   save?: StatSave;
   extra?: { dice: string; type?: string };
+  // More saving throws a hit brings (a weapon's shocking, sonorous or neuralizing property, a round's), and what a fall to 0 hit points
+  // does (disintegrate: a Constitution save or dust; a cryo round: frozen in carbonite)
+  more?: StatSave[];
+  finish?: { dc: number; what: "disintegrated" | "frozen" };
   options: { key: string; label: string; kind: "halve" | "reduce" | "ac" | "acDie"; feature: string }[];
 }
 
@@ -767,6 +794,7 @@ interface Work {
   turnDone: boolean;
   currentTurn: number;
   spent: ("attack" | "damage" | "ac" | "poison")[];
+  zones: Zone[];
 }
 
 const idx = (w: Work, id: number | string) => w.combatants.findIndex((c) => c.id === id);
@@ -912,6 +940,104 @@ function landHit(w: Work, hit: Omit<PendingHit, "options">, choice: PendingHit["
   }
   const now = w.combatants[ti];
   if (hit.save && now.hp > 0 && w.inCombat) riderSave(w, ti, hit.save, attacker?.id, hit.attackName);
+  for (const more of hit.more ?? []) if (w.combatants[ti].hp > 0 && w.inCombat) riderSave(w, ti, more, attacker?.id, hit.attackName);
+  // Brought to 0 hit points by a disintegrating weapon or round: a Constitution save or dust; by a cryo round: frozen in carbonite
+  if (hit.finish && w.combatants[ti].hp <= 0 && after.hp >= 0 && target.hp > 0) {
+    if (hit.finish.what === "frozen") w.log.push(`${target.name} is frozen in carbonite for an hour.`);
+    else if (!savingThrow(w.combatants[ti], "constitution", hit.finish.dc)) w.log.push(`${target.name} fails a DC ${hit.finish.dc} Constitution save and is disintegrated: a pile of fine gray dust.`);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Weapon riders and ammunition (2026-10-21). A weapon's shocking, sonorous or neuralizing property (or one a calibrator gives) forces a
+// save on a hit (Player's Handbook / Expanded Content weapon properties): DC the property's number, 1d4 more and a condition until the
+// end of the target's next turn. A round carries its own rider (shared/logic gear.ts `ammoRider`).
+// ---------------------------------------------------------------------------------------------
+
+const PROPERTY_RIDERS: { name: string; ability: string; type: string; condition: string }[] = [
+  { name: "shocking", ability: "dexterity", type: "lightning", condition: "shocked" },
+  { name: "sonorous", ability: "constitution", type: "sonic", condition: "deafened" },
+  { name: "neuralizing", ability: "wisdom", type: "psychic", condition: "frightened" },
+];
+export function propertyRiders(props: string[] | undefined): StatSave[] {
+  const out: StatSave[] = [];
+  for (const r of PROPERTY_RIDERS) {
+    const n = propertyNumber(props, r.name);
+    if (n > 1) out.push({ dc: n, ability: r.ability, damage: "1d4", damageType: r.type, conditions: [r.condition], rounds: 1 });
+  }
+  return out;
+}
+// A round's rider on a hit, as a saving throw
+export function roundSave(rider: AmmoRider | undefined): StatSave | undefined {
+  if (!rider?.save || !rider.dc) return undefined;
+  return { dc: rider.dc, ability: rider.save, damage: rider.dice, damageType: rider.type, half: rider.half, conditions: rider.condition ? [rider.condition] : undefined, rounds: rider.rounds ?? 1 };
+}
+// Ground on fire (an incendiary round or mine): those who start their turn in it save or burn
+export interface Zone {
+  x: number;
+  y: number;
+  z: number;
+  // Squares from the middle
+  radius: number;
+  save: string;
+  dc: number;
+  dice: string;
+  type: string;
+  rounds: number;
+  source: string;
+}
+// Everyone within some squares of a point makes a saving throw (an explosion): damage, half on a save where it says so, and a condition
+function areaSave(w: Work, centre: { x?: number; y?: number; z?: number }, squares: number, save: StatSave, by: number | string, source: string) {
+  for (let i = 0; i < w.combatants.length; i++) {
+    const c = w.combatants[i];
+    if (c.hp <= 0 || squaresApart(c, centre) > squares) continue;
+    riderSave(w, i, save, by, source);
+  }
+  w.combatants = breakGang(w.combatants, w.log);
+}
+// Those in a line (5 feet wide) or a cone from the attacker toward a point, `feet` long
+function inShape(from: Combatant, toward: { x?: number; y?: number }, shape: "line" | "cone", feet: number, c: Combatant): boolean {
+  const dx = (toward.x ?? 0) - (from.x ?? 0);
+  const dy = (toward.y ?? 0) - (from.y ?? 0);
+  const len = Math.hypot(dx, dy) || 1;
+  const cx = (c.x ?? 0) - (from.x ?? 0);
+  const cy = (c.y ?? 0) - (from.y ?? 0);
+  const along = (cx * dx + cy * dy) / len;
+  if (along <= 0 || along * 5 > feet + 2.5) return false;
+  const across = Math.abs(cx * dy - cy * dx) / len;
+  return shape === "line" ? across <= 0.5 : across <= along * 0.5 + 0.01;
+}
+// Rounds fired: from the weapon's load, or (a bow) straight from the rounds carried; counted for the party to lose after the fight
+function spendRound(w: Work, ai: number, n: number) {
+  const c = w.combatants[ai];
+  const a = c.ammo;
+  if (!a) return;
+  if (a.max > 0) {
+    w.combatants[ai] = { ...c, ammo: { ...a, left: Math.max(0, a.left - n) } };
+    return;
+  }
+  const round = a.round ?? a.plain;
+  const used = Math.min(n, a.reserves[round] ?? 0);
+  w.combatants[ai] = { ...c, ammo: { ...a, reserves: { ...a.reserves, [round]: (a.reserves[round] ?? 0) - used } }, spentAmmo: { ...(c.spentAmmo ?? {}), [round]: (c.spentAmmo?.[round] ?? 0) + used } };
+}
+// Reloading (Player's Handbook, Reload): an action or a bonus action; free once a turn with an ammo pouch, power belt, bandolier,
+// quiver or feed belt for the round. A power cell or generator fills the weapon; cartridges, bolts, darts and rockets go in one a shot
+// up to the reload number; a flechette clip or projector canister is three shots (the book: three attacks in a line). Returns why not.
+export function reloadPlan(c: Combatant, round?: string): { why: string; take: number; shots: number; cost: "free" | "bonus" | "action" } {
+  const a = c.ammo;
+  if (!a || a.max <= 0) return { why: "nothing to reload", take: 0, shots: 0, cost: "action" };
+  const want = round ?? a.round ?? a.plain;
+  const have = a.reserves[want] ?? 0;
+  if (have <= 0) return { why: `no ${want.toLowerCase()} left`, take: 0, shots: 0, cost: "action" };
+  if (a.left >= a.max && (a.round ?? a.plain) === want) return { why: "it is fully loaded", take: 0, shots: 0, cost: "action" };
+  const per = a.shotsPer[want] ?? 1;
+  const fills = ["cell", "generator"].includes(a.family);
+  const take = fills ? 1 : Math.min(have, Math.ceil(a.max / per));
+  const shots = fills ? a.max : Math.min(a.max, take * per);
+  const free = a.free && !(c.usedTurn ?? []).includes("reload-free");
+  const cost = free ? "free" : (c.bonus ?? 0) > 0 ? "bonus" : "action";
+  if (cost === "action" && (c.actions ?? 0) <= 0) return { why: "no action or bonus action left", take, shots, cost };
+  return { why: "", take, shots, cost };
 }
 
 // A saving throw that comes with a hit or an area action: damage on a failure (half on a success
@@ -967,7 +1093,17 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
   const attacker = w.combatants[ai];
   const target = w.combatants[ti];
   if (!attacker || !target || target.hp <= 0) return false;
-  const plan = attackPlan(w.arena, w.combatants, attacker, target, spec.type, { reach: spec.reach, range: spec.range });
+  const plan = attackPlan(w.arena, w.combatants, attacker, target, spec.type, { reach: spec.reach, range: spec.range, props: spec.statBlock ? undefined : spec.properties });
+  // The character's rounds: none left, no shot; a special round changes the weapon's damage and brings its own rider
+  const fed = !spec.statBlock && spec.type === "ranged" && attacker.ammo && attacker.ammo.weapon === spec.name ? attacker.ammo : undefined;
+  const loaded = fed ? (fed.max > 0 ? fed.left : fed.reserves[fed.round ?? fed.plain] ?? 0) : 1;
+  if (fed && loaded <= 0) {
+    w.log.push(`${spec.name} is out of ammunition: reload${fed.max > 0 ? "" : ` (no ${(fed.round ?? fed.plain).toLowerCase()} left)`}.`);
+    return false;
+  }
+  const rider = fed ? fed.riders[fed.round ?? fed.plain] : undefined;
+  if (rider?.base) spec = { ...spec, dice: rider.base.dice, damageType: rider.base.type };
+  if (rider?.becomes) spec = { ...spec, damageType: rider.becomes };
   if (plan.barred) {
     w.log.push(`${attacker.name} is ${plan.barred.toLowerCase()} and cannot attack ${target.name}.`);
     return false;
@@ -975,6 +1111,15 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
   if (!plan.possible) {
     w.log.push(`${attacker.name} cannot attack: ${plan.why}.`);
     return false;
+  }
+  if (fed) spendRound(w, ai, 1);
+  // A flechette clip or a projector: no attack roll, a line or a cone toward the target, a save for everyone in it
+  if (rider?.area) {
+    w.log.push(`${attacker.name} fires ${fed!.round} from ${spec.name} in a ${rider.area.length}-foot ${rider.area.shape}.`);
+    const save: StatSave = { dc: rider.area.dc, ability: rider.area.save, damage: rider.area.dice, damageType: rider.area.type, half: rider.area.half, conditions: rider.condition ? [rider.condition] : undefined, rounds: 1 };
+    for (let i = 0; i < w.combatants.length; i++) if (i !== ai && w.combatants[i].hp > 0 && inShape(attacker, target, rider.area.shape, rider.area.length, w.combatants[i])) riderSave(w, i, save, attacker.id, fed!.round ?? spec.name);
+    w.combatants = breakGang(w.combatants, w.log);
+    return true;
   }
   const notes: string[] = [];
   if (plan.mode) notes.push(`${plan.mode > 0 ? "advantage" : "disadvantage"}: ${plan.reasons.join(", ")}`);
@@ -1041,8 +1186,20 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
   };
   if (revealed.length) w.log.push(`${attacker.name} is no longer ${revealed.map((c) => c.name.toLowerCase()).join(" or ")}.`);
   if (parried) return true;
+  // A missile, a rocket or a combustive arrow explodes where it strikes, hit or miss; incendiary rounds leave the ground burning
+  const explode = () => {
+    if (rider?.burst) {
+      w.log.push(`${fed!.round} explodes (${rider.burst.radius} ft.).`);
+      areaSave(w, target, Math.max(1, Math.round(rider.burst.radius / 5)), { dc: rider.burst.dc, ability: rider.burst.save, damage: rider.burst.dice, damageType: rider.burst.type, half: rider.burst.half }, attacker.id, fed!.round ?? spec.name);
+    }
+    if (rider?.fire) {
+      w.zones.push({ x: target.x ?? 0, y: target.y ?? 0, z: target.z ?? 0, radius: Math.max(0, Math.round(rider.fire.radius / 5) - 1), save: "dexterity", dc: rider.fire.dc, dice: rider.fire.dice, type: "fire", rounds: 10, source: fed!.round ?? spec.name });
+      w.log.push(`The ground round ${target.name} is ablaze for a minute.`);
+    }
+  };
   if (!hit) {
     w.log.push(`${attacker.name} attacks ${target.name} with ${spec.name}${notes.length ? ` (${notes.join("; ")})` : ""} but misses${d === 1 ? " (a natural 1)" : ` (${total} against ${ac})`}.`);
+    if (rider?.burst?.hitOrMiss) explode();
     return true;
   }
 
@@ -1195,7 +1352,11 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
     note: hitNote,
     save: spec.save ?? maneuverSave,
     extra: spec.extra,
+    // A round's rider and the weapon's shocking, sonorous or neuralizing number (a calibrator's too); disintegrating weapons and rounds
+    more: [roundSave(rider), ...(spec.statBlock ? [] : propertyRiders(spec.properties))].filter((x): x is StatSave => !!x),
+    finish: rider?.finish ?? (!spec.statBlock && propertyNumber(spec.properties, "disintegrate") > 1 ? { dc: propertyNumber(spec.properties, "disintegrate"), what: "disintegrated" as const } : undefined),
   };
+  explode();
   const options = reactionOptions(target, bare);
   if (options.length) {
     w.pending = { ...bare, options };
@@ -1349,8 +1510,15 @@ function endTurn(w: Work, current: number): number {
   if (wrapped) {
     w.round += 1;
     w.log.push(`Round ${w.round} begins!`);
+    // Fire and the like burn down a round at a time
+    w.zones = w.zones.map((z) => ({ ...z, rounds: z.rounds - 1 })).filter((z) => z.rounds > 0);
   }
   beginTurn(w, next);
+  // Starting a turn in burning ground: a saving throw against it (a construct with disadvantage is not tracked)
+  const starter = w.combatants[next];
+  for (const z of w.zones) {
+    if (starter && starter.hp > 0 && (starter.z ?? 0) === z.z && squaresApart(starter, z) <= z.radius) riderSave(w, next, { dc: z.dc, ability: z.save, damage: z.dice, damageType: z.type, half: true }, undefined, z.source);
+  }
   if (!wrapped) w.log.push(`${w.combatants[next]?.name}'s turn`);
   return next;
 }
@@ -1491,6 +1659,10 @@ interface CombatState {
   objectId: string | null;
   // Prepared boons and doses of poison that were used up in this fight
   spent: ("attack" | "damage" | "ac" | "poison")[];
+  // Ground on fire and the like, that hurts those who start their turn in it
+  zones: Zone[];
+  // The character's weapon load and the rounds spent, kept when a fight is left (the fighters are cleared then)
+  ammoAfter: { weapon: string; left: number; round?: string; spent: Record<string, number> } | null;
   // A hit on the character waiting for them to choose a reaction (or none)
   pending: PendingHit | null;
   // The turn ends by itself when nothing is left to do with it
@@ -1540,6 +1712,10 @@ interface CombatState {
   aiStep: () => void;
   // The creature whose turn it is does nothing, and why
   pass: (reason: string) => void;
+  // Ammunition (2026-10-21): reload the ranged weapon (a round named, or what it had), fire it in burst or rapid mode, brace a bipod
+  reload: (round?: string) => void;
+  spray: (mode: "burst" | "rapid") => void;
+  brace: () => void;
   // Casts one of the character's powers; a power that moves things is told what to move and which way
   castPower: (index: number, choice?: MotionChoice) => void;
   deathSave: () => void;
@@ -1578,6 +1754,7 @@ const patchOf = (w: Work): Partial<CombatState> => ({
   currentTurn: w.currentTurn,
   round: w.round,
   spent: w.spent,
+  zones: w.zones,
 });
 
 const workOf = (s: CombatState): Work => ({
@@ -1592,6 +1769,7 @@ const workOf = (s: CombatState): Work => ({
   turnDone: false,
   spent: [...s.spent],
   currentTurn: s.currentTurn,
+  zones: [...(s.zones ?? [])],
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -1769,6 +1947,8 @@ export const useCombat = create<CombatState>((set, get) => ({
   setObject: (id) => set({ objectId: id }),
 
   spent: [],
+  zones: [],
+  ammoAfter: null,
 
   spend: (what) => set((state) => ({ spent: state.spent.includes(what) ? state.spent : [...state.spent, what] })),
 
@@ -1844,6 +2024,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       pending: null,
       turnDone: false,
       spent: [],
+      zones: [],
       currentTurn: 0,
     };
     beginTurn(w, 0);
@@ -1854,11 +2035,16 @@ export const useCombat = create<CombatState>((set, get) => ({
       targetId: null,
       objectId: null,
       remains: [],
+      ammoAfter: null,
     });
   },
 
   endCombat: () => {
     set((state) => ({
+      ammoAfter: (() => {
+        const p = state.combatants.find((c) => c.isPlayer);
+        return p?.ammo ? { weapon: p.ammo.weapon, left: p.ammo.left, round: p.ammo.round, spent: p.spentAmmo ?? {} } : null;
+      })(),
       remains: state.combatants.filter((c) => !onPartySide(c)).map((c) => ({ id: c.id, hp: c.hp })),
       allyRemains: state.combatants.filter((c) => c.ally).map((c) => ({ id: c.id, hp: c.hp })),
       inCombat: false,
@@ -1883,6 +2069,112 @@ export const useCombat = create<CombatState>((set, get) => ({
     set((state) => ({ combatLog: [...state.combatLog, `${state.combatants[state.currentTurn]?.name} ${reason}.`] }));
     get().nextTurn();
   },
+
+  reload: (round) =>
+    set((state) => {
+      if (!state.inCombat || state.pending) return state;
+      const w = workOf(state);
+      const mi = state.currentTurn;
+      const me = w.combatants[mi];
+      if (!me?.isPlayer || !me.ammo || me.hp <= 0 || cannotAct(me)) return state;
+      const plan = reloadPlan(me, round);
+      if (plan.why) {
+        w.log.push(`Cannot reload: ${plan.why}.`);
+        return patchOf(w);
+      }
+      const want = round ?? me.ammo.round ?? me.ammo.plain;
+      const a = me.ammo;
+      w.combatants[mi] = {
+        ...me,
+        ...(plan.cost === "free" ? { usedTurn: [...(me.usedTurn ?? []), "reload-free"] } : plan.cost === "bonus" ? { bonus: (me.bonus ?? 1) - 1 } : { actions: (me.actions ?? 1) - 1 }),
+        ammo: { ...a, left: plan.shots, round: want === a.plain ? undefined : want, reserves: { ...a.reserves, [want]: (a.reserves[want] ?? 0) - plan.take } },
+        spentAmmo: { ...(me.spentAmmo ?? {}), [want]: (me.spentAmmo?.[want] ?? 0) + plan.take },
+      };
+      w.log.push(`${me.name} reloads ${a.weapon} with ${plan.take > 1 ? `${plan.take} x ` : ""}${want.toLowerCase()}${plan.cost === "free" ? " (from a pouch or belt: no action)" : plan.cost === "bonus" ? " (a bonus action)" : ""}: ${plan.shots} shots.`);
+      settle(w, state.autoEnd);
+      return patchOf(w);
+    }),
+
+  // Burst: a 10-foot cube round the target, everyone in it saves (Dexterity, DC 8 + the attack bonus) or takes the weapon's damage, the
+  // target the hit's riders too; rapid: the target saves or takes the damage dice twice. Each spends its number of rounds (Player's
+  // Handbook weapon properties); a weapon with a Strength requirement needs it met
+  spray: (mode) =>
+    set((state) => {
+      if (!state.inCombat || state.pending) return state;
+      const w = workOf(state);
+      const mi = state.currentTurn;
+      const me = w.combatants[mi];
+      if (!me?.isPlayer || me.hp <= 0 || cannotAct(me)) return state;
+      const spec = playerSpec(me, "ranged");
+      const foe = pickTarget(w.combatants, me, state.targetId);
+      if (!spec || !foe) return state;
+      const n = propertyNumber(spec.properties, mode);
+      if (n <= 0) return state;
+      if ((me.actions ?? 0) <= 0 && (me.attacksLeft ?? 0) <= 0) {
+        w.log.push("No action left this turn.");
+        return patchOf(w);
+      }
+      const str = propertyNumber(spec.properties, "strength");
+      if (str > 1 && (me.abilities?.strength ?? 10) < str && !me.braced) {
+        w.log.push(`${mode === "burst" ? "Burst" : "Rapid"} fire needs Strength ${str}.`);
+        return patchOf(w);
+      }
+      const a = me.ammo;
+      const left = a ? (a.max > 0 ? a.left : a.reserves[a.round ?? a.plain] ?? 0) : n;
+      if (a && left < n) {
+        w.log.push(`${mode === "burst" ? "Burst" : "Rapid"} fire takes ${n} rounds; ${left} left.`);
+        return patchOf(w);
+      }
+      const plan = attackPlan(w.arena, w.combatants, me, foe, "ranged", { reach: spec.reach, range: spec.range, props: spec.properties });
+      if (!plan.possible) {
+        w.log.push(`Cannot fire: ${plan.why}.`);
+        return patchOf(w);
+      }
+      spendRound(w, mi, n);
+      const rider = a ? a.riders[a.round ?? a.plain] : undefined;
+      const dc = 8 + spec.bonus;
+      const type = rider?.becomes ?? spec.damageType;
+      const hits = mode === "burst" ? w.combatants.map((c, i) => ({ c, i })).filter(({ c }) => c.hp > 0 && squaresApart(c, foe) <= 1 && c.id !== me.id) : [{ c: foe, i: idx(w, foe.id) }];
+      w.log.push(`${me.name} ${mode === "burst" ? "sprays the area round" : "unloads on"} ${foe.name} with ${spec.name} (${n} rounds, DC ${dc} Dexterity).`);
+      for (const { c, i } of hits) {
+        const mod = c.id === foe.id ? -plan.mode : 0;
+        const roll20 = rollD20(mod) + (c.saves?.dexterity ?? Math.floor(((c.abilities?.dexterity ?? 10) - 10) / 2));
+        if (roll20 >= dc) {
+          w.log.push(`${c.name} saves (${roll20}).`);
+          continue;
+        }
+        const dice = mode === "rapid" ? spec.dice.replace(/^(\d+)d/, (_, k) => `${Number(k) * 2}d`) : spec.dice;
+        const amount = Math.max(1, rollDamage(dice, false) + spec.damageBonus);
+        const taken = damageCreature(w, i, amount, type, me.name);
+        w.log.push(`${c.name} fails (${roll20}) and takes ${taken} ${type ?? ""} damage.`.replace("  ", " "));
+        if (c.id === foe.id) for (const more of [roundSave(rider), ...propertyRiders(spec.properties)].filter((x): x is StatSave => !!x)) if (w.combatants[i].hp > 0 && w.inCombat) riderSave(w, i, more, me.id, spec.name);
+      }
+      w.combatants = breakGang(w.combatants, w.log);
+      const cur = w.combatants[mi];
+      const fresh = (me.attacksLeft ?? 0) <= 0;
+      w.combatants[mi] = { ...cur, actions: fresh ? (cur.actions ?? 1) - 1 : cur.actions, attacksLeft: 0, attackKind: "ranged", hidden: false };
+      if (!w.combatants.some((c) => !onPartySide(c) && c.hp > 0)) {
+        w.inCombat = false;
+        w.outcome = "victory";
+        w.log.push("Victory! All enemies defeated.");
+      }
+      settle(w, state.autoEnd);
+      return patchOf(w);
+    }),
+
+  // A bipod deployed takes an action (a tripod takes a minute: set up before a fight, house reading); braced, the speed is 0
+  brace: () =>
+    set((state) => {
+      if (!state.inCombat || state.pending) return state;
+      const w = workOf(state);
+      const mi = state.currentTurn;
+      const me = w.combatants[mi];
+      if (!me?.isPlayer || (me.actions ?? 0) <= 0) return state;
+      w.combatants[mi] = { ...me, braced: !me.braced, actions: (me.actions ?? 1) - 1, speed: me.braced ? (me as any).baseSpeed ?? me.speed : 0, ...(me.braced ? {} : { baseSpeed: me.speed } as any) };
+      w.log.push(me.braced ? `${me.name} folds the bipod.` : `${me.name} deploys a bipod and goes prone behind the weapon: its Strength requirement no longer bites; speed 0.`);
+      settle(w, state.autoEnd);
+      return patchOf(w);
+    }),
 
   rollInitiative: (dexModifier) => {
     const result = roll(1, 20) + dexModifier;
@@ -2155,6 +2447,9 @@ export const useCombat = create<CombatState>((set, get) => ({
     } else if (effect.kind === "substance") {
       combatants = combatants.map((c) => (c.id === user.id ? { ...c, high: { name: effect.label, ability: effect.ability, rounds: effect.rounds, temp: effect.temp } } : c));
       log.push(`${user.name} takes ${effect.label}: a high for ${effect.rounds} turns.`);
+    } else if (effect.kind === "calibrate") {
+      combatants = combatants.map((c) => (c.id === user.id ? { ...c, meleeDamage: (c.meleeDamage ?? 0) + effect.damage, meleeProps: [...(c.meleeProps ?? []), ...(effect.property ? [effect.property] : [])] } : c));
+      log.push(`${user.name} applies ${effect.label} to ${user.meleeWeapon ?? "the weapon"}: +${effect.damage} damage${effect.property ? ` and ${effect.property}` : ""} for the fight.`);
     } else if (effect.kind === "poison") {
       combatants = combatants.map((c) => (c.id === user.id ? { ...c, boons: { ...c.boons, poison: { dice: effect.dice, dc: effect.dc } } } : c));
       log.push(`${user.name} coats their weapon with ${effect.label}.`);
@@ -2384,6 +2679,8 @@ interface ShipFightState {
   regenerate: () => void;
   direct: () => void;
   interfere: () => void;
+  // A crew action of one of the ship's modifications, at the target
+  special: (index: number) => void;
   flee: () => void;
   endTurn: () => void;
   // One step of a computer-run ship's turn; false when it is the character's
@@ -2448,6 +2745,12 @@ export const useShipFight = create<ShipFightState>((set, get) => {
     direct: () => {
       const me = mine(get());
       if (me) update((f) => shipDirect(f, me.id, me.id));
+    },
+    special: (index) => {
+      const s = get();
+      const me = mine(s);
+      const target = s.targetId ?? s.fight?.ships.find((x) => x.side === "foe" && !x.destroyed && !x.fled)?.id ?? "";
+      if (me) update((f) => shipSpecial(f, me.id, index, target, rng));
     },
     interfere: () => {
       const s = get();

@@ -18,11 +18,14 @@
 import { radiiOf as shapeRadii, standing, waysStand, type Shape } from "./footprint";
 import { caveMask, caveStyleOf, describeMask, MAX_WIDTH, MIN_WIDTH, type CaveWay } from "./caves";
 export { caveMask, caveStyleOf, describeMask, MIN_WIDTH, MAX_WIDTH } from "./caves";
-import { shipModEffects, shipModNamed, makeshiftLoss, type ShipModInstance, type ShipSpecial, type ShipConditionName, type ShipAbilityName, type EnhancedShipPart, type PartsPlace } from "./shipyard";
+import { gearText, ammoItemFamily, ammoRider, calibratorOf, accessoryOf, containerOf, suitOf, airOf, foodOf, lightOf, generatorOf, type AmmoFamily, type AmmoRider, type AccessoryFacts, type SuitFacts, type EnvHazard } from "./gear";
+export * from "./gear";
+import { shipModEffects, shipModNamed, makeshiftLoss, equipmentCost, type ShipModInstance, type ShipSpecial, type ShipConditionName, type ShipAbilityName, type EnhancedShipPart, type PartsPlace, type ShipPart } from "./shipyard";
 export * from "./shipyard";
 import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eRecord } from "../data";
 import conditionData from "../data/sw5e/conditions.json";
 import downtimeData from "../data/sw5e/downtime.json";
+import gearData from "../data/sw5e/gear.json";
 import shipData from "../data/sw5e/ships.json";
 import powerData from "../data/sw5e/powers.json";
 
@@ -318,8 +321,8 @@ const ROUTE_LABEL: Record<string, string[]> = {
 
 // Settlement types and the buildings they are made of. "*" marks a gateway; "?" an optional one.
 const SETTLEMENTS: Record<string, { buildings: string[]; street: string[] }> = {
-  city: { buildings: ["spaceport*", "city gate*", "cantina", "market", "garrison", "medcenter", "workshop?", "residences", "palace?", "estates", "warehouse", "archive?", "hideout?", "tenements", "junkyard", "droid dealer?", "vehicle dealer?"], street: ["Avenue", "Skywalk", "Alley", "Transit tube"] },
-  town: { buildings: ["landing field*", "town gate*", "cantina", "market", "workshop", "residences?", "garrison?", "medcenter?", "hideout?", "tenements?", "junkyard?", "warehouse?", "vehicle dealer?"], street: ["Street", "Alley", "Dirt road"] },
+  city: { buildings: ["spaceport*", "city gate*", "cantina", "market", "garrison", "medcenter", "workshop?", "residences", "palace?", "estates", "warehouse", "archive?", "hideout?", "tenements", "junkyard", "droid dealer", "vehicle dealer?"], street: ["Avenue", "Skywalk", "Alley", "Transit tube"] },
+  town: { buildings: ["landing field*", "town gate*", "cantina", "market", "workshop", "residences?", "garrison?", "medcenter?", "hideout?", "tenements?", "junkyard?", "warehouse?", "droid dealer?", "vehicle dealer?"], street: ["Street", "Alley", "Dirt road"] },
   outpost: { buildings: ["landing pad*", "command post", "garrison", "warehouse", "workshop?"], street: ["Perimeter path", "Covered walkway"] },
   station: { buildings: ["docking ring*", "promenade", "operations center", "engineering", "habitat ring", "cargo bay?"], street: ["Ring corridor", "Turbolift", "Maintenance shaft"] },
   "cave system": { buildings: ["trailhead*", "cave", "cave?"], street: ["Trail", "Scree slope"] },
@@ -1838,6 +1841,10 @@ const ROOM_PLANS: RoomPlan[] = [
   { match: /stall|market|promenade|trade|shopfront/i, size: [10, 13, 7, 9], items: [["Market stall", "rows", "2x1", "4-7", "bcs"], ["Crate", "wall", "1x1", "2-4", "bc"], ["Awning post", "corner", "1x1", "0-2", "b"]] },
   { match: /dance floor|gambling|gaming floor|high-stakes|lounge|salon|dining/i, size: [9, 12, 7, 9], items: [["Sabacc table", "center", "2x2", "1-3", "bct"], ["Table", "center", "1x1", "2-4", "bct"], ["Couch", "wall", "2x1", "1-2", "bt"], ["Drink dispenser", "corner", "1x1", "1", "b"], ["Security camera", "wall", "1x1", "1"]] },
   { match: /sales floor|upgrade showroom/i, size: [8, 11, 6, 8], items: [["Sales counter", "far", "4x1", "1", "bcs"], ["Display shelf", "wall", "3x1", "2-4", "bc"], ["Display table", "center", "2x1", "1-2", "bc"], ["Wares rack", "corner", "1x1", "1-2", "bc"], ["Security camera", "wall", "1x1", "1"]] },
+  // A droid dealer's shop (2026-10-21, the user's design): the droids for sale stand on plinths in rows, the customizations it sells on
+  // its parts shelves, a counter, a charging station; the repair bay has a rig to work on a droid
+  { match: /^droid showroom$/i, size: [9, 12, 8, 10], items: [["Sales counter", "far", "4x1", "1", "bcs"], ["Droid plinth", "rows", "1x1", "4-6", "bc"], ["Droid parts shelf", "wall", "3x1", "2", "bc"], ["Display case", "center", "2x1", "1", "bc"], ["Charging station", "corner", "1x1", "1-2", "b"], ["Security camera", "wall", "1x1", "1"]] },
+  { match: /^droid repair bay$/i, size: [7, 9, 6, 8], items: [["Droid repair rig", "center", "2x2", "1", "bcs"], ["Workbench", "wall", "3x1", "1", "bs"], ["Droid parts shelf", "wall", "3x1", "1", "bc"], ["Parts bin", "corner", "1x1", "1-2", "bc"], ["Charging station", "corner", "1x1", "1", "b"]] },
   { match: /kitchen|pantry|dispensary|forge room|tailor|repair counter/i, size: [6, 8, 5, 7], items: [["Workbench", "wall", "3x1", "1-2", "bs"], ["Shelving", "wall", "3x1", "1-2", "b"], ["Parts bin", "center", "1x1", "1-2", "bc"]] },
   { match: /parade yard/i, size: [9, 12, 7, 9], items: [["Barricade", "center", "2x1", "1-2", "bc"], ["Weapon rack", "wall", "2x1", "1", "b"], ["Bench", "wall", "2x1", "1-2", "t"]] },
   { match: /bedchambers|guest rooms|palatial suite|grand hall|^hall$/i, size: [8, 11, 6, 8], items: [["Bed", "wall", "2x1", "2-4", "b"], ["Couch", "wall", "2x1", "1-2", "bt"], ["Low table", "center", "1x1", "1-2", "bct"], ["Cabinet", "corner", "1x1", "1-2", "b"], ["Pillar", "center", "1x1", "0-2", "bc"]] },
@@ -1857,7 +1864,9 @@ const ROOM_PLANS: RoomPlan[] = [
 
 // Caves, ruins and trails are rock and rubble whatever a chamber is called
 const planFor = (room: Area, buildingType: string): RoomPlan => {
-  const plan = ROOM_PLANS.find((p) => p.match.test(/^(cave|ruin|trailhead)$/.test(buildingType) && !/crypt|sanctum/i.test(room.name) ? "cave" : room.name))!;
+  // A droid dealer's showroom and repair bay are a shop's, whatever older worlds call them
+  const named = buildingType === "droid dealer" && /^(showroom|repair bay)$/i.test(room.name) ? `droid ${room.name.toLowerCase()}` : room.name;
+  const plan = ROOM_PLANS.find((p) => p.match.test(/^(cave|ruin|trailhead)$/.test(buildingType) && !/crypt|sanctum/i.test(room.name) ? "cave" : named))!;
   // A shop shows its wares: pieces of its own line stand on its sales floor
   const wares = /sales floor|upgrade showroom/i.test(room.name) ? SHOP_WARES[buildingType] : undefined;
   return wares ? { ...plan, items: [...plan.items, ...wares] } : plan;
@@ -2736,10 +2745,34 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
   }
   // Resource nodes (life 11): caves, ruins and wrecks of worlds made before them get their veins, patches and salvage
   if ((next.life ?? 0) < 11) addNodes(next, ctx.random);
-  // Ship parts (life 13): the dealers of scrapyards sell salvage
+  // Ship parts and droid shops (life 13): the dealers of scrapyards sell salvage; a droid dealer's showroom and repair bay are fitted
+  // out as a shop (plinths for the droids on sale, parts shelves, a repair rig); a built city or town with no droid dealer sells droids
+  // at its tech shop's repair counter, with plinths for them
   if ((next.life ?? 0) < 13) {
     for (const room of Object.values(next.areas).filter((a) => a.kind === "room" && ["junkyard", "scrap dealer"].includes(next.areas[a.parentId ?? ""]?.type)))
       for (const o of room.occupants) if (o.role === "merchant") o.trade = "salvage";
+    for (const room of Object.values(next.areas).filter((a) => a.kind === "room" && a.layout && next.areas[a.parentId ?? ""]?.type === "droid dealer" && /^(showroom|repair bay)$/i.test(a.name))) {
+      room.layout!.assets = room.layout!.assets.filter((a) => a.kind !== "furniture" && a.kind !== "npc" && a.kind !== "loot" && a.kind !== "ship");
+      furnishRoom(room, ctx.random, "droid dealer");
+      placeContents(room);
+    }
+    for (const settlement of Object.values(next.areas).filter((a) => a.kind === "settlement" && ["city", "town"].includes(a.type))) {
+      const buildings = childrenOf(next, settlement.id).filter((b) => b.kind === "building");
+      if (buildings.some((b) => b.type === "droid dealer")) continue;
+      const counter = buildings.filter((b) => b.type === "tech shop").flatMap((b) => childrenOf(next, b.id)).find((r) => /repair counter/i.test(r.name) && r.layout);
+      if (!counter) continue;
+      let shown = 0;
+      for (let i = 0; i < 3; i++) {
+        const spot = findSpot(counter.layout!, ctx.random, "center", 1, 1) ?? findSpot(counter.layout!, ctx.random, "wall", 1, 1);
+        if (!spot) break;
+        counter.layout!.assets.push({ id: `${counter.id}-plinth${i}`, kind: "furniture", name: "Droid plinth", ...spot, blocks: true, cover: true });
+        if (floorFaults(counter.layout!)) counter.layout!.assets.pop();
+        else shown++;
+      }
+      if (!shown) continue;
+      for (const o of counter.occupants) if (["merchant", "mechanic"].includes(o.role) && o.disposition !== "hostile") o.trade = "droids";
+      placeContents(counter);
+    }
   }
   next.life = LIFE;
   return next;
@@ -5569,6 +5602,61 @@ export function fitting<T extends { name: string; type: string; cost: number }>(
   return { equipment: [...equipment, item.name], price: item.cost };
 }
 
+// Fitting a part to a ship (2026-10-21; Starships of the Galaxy, chapters 4 and 5): a modification goes in (a weapon system on the weapon
+// named); a piece of equipment replaces the one of its kind (armor, shield, reactor, power coupling, hyperdrive), or takes a free
+// hardpoint (a weapon: four stock hardpoints, house rule, and one more for each Hardpoint modification); an enhanced ship part replaces
+// the enhanced one of its slot. What comes out goes back to the hold as a part, worth its material cost.
+export function fitShipPart(
+  ship: Ship,
+  part: ShipPart,
+  rows: { name: string; type: string; cost: number; weaponCategory?: string }[],
+  weapon?: string,
+): { ship: Ship; returned: ShipPart[]; error?: string } {
+  const returned: ShipPart[] = [];
+  const back = (name: string, kind: ShipPart["kind"], extra: Partial<ShipPart> = {}): ShipPart => ({ id: `part-${ship.id}-${name}-${(ship.equipment.length + (ship.mods ?? []).length).toString(36)}`, kind, name, worth: 0, ...extra });
+  if (part.kind === "mod") {
+    const row = shipModNamed(part.name);
+    if (!row) return { ship, returned, error: `${part.name} is not a modification of the book.` };
+    const next: Ship = { ...ship, mods: [...(ship.mods ?? []), { name: row.name, ...(weapon ? { weapon } : {}) }] };
+    // A hyperdrive slot comes with a class 15 hyperdrive
+    const hyper = shipModEffects(row).hyperdrive;
+    if (hyper && !next.hyperdriveClass) next.hyperdriveClass = hyper.replace(/^Class\s*/i, "");
+    return { ship: next, returned };
+  }
+  if (part.kind === "enhanced") {
+    const e = { ...(ship.enhanced ?? {}), weapons: { ...(ship.enhanced?.weapons ?? {}) } };
+    const fitted = { name: part.name, bonus: part.bonus ?? 0 };
+    const old = (p: EnhancedShipPart | undefined, type: string) => p && returned.push(back(p.name, "enhanced", { type, bonus: p.bonus, worth: part.worth }));
+    if (part.type === "ShipArmor") { old(e.armor, "ShipArmor"); e.armor = fitted; }
+    else if (part.type === "ShipShield") { old(e.shield, "ShipShield"); e.shield = fitted; }
+    else {
+      const on = weapon ?? ship.equipment.find((n) => rows.find((r) => r.name === n)?.type === "Weapon");
+      if (!on) return { ship, returned, error: "The ship has no weapon for it." };
+      old(e.weapons[on], "ShipWeapon");
+      e.weapons[on] = fitted;
+    }
+    return { ship: { ...ship, enhanced: e }, returned };
+  }
+  const row = rows.find((r) => r.name === part.name);
+  if (!row) return { ship, returned, error: `${part.name} is not starship equipment.` };
+  const typeOf = (name: string) => rows.find((r) => r.name === name)?.type;
+  if (row.type === "Weapon") {
+    const weapons = ship.equipment.filter((n) => typeOf(n) === "Weapon").length;
+    const max = 4 + (ship.mods ?? []).filter((m) => /^Hardpoint$/i.test(m.name)).length;
+    if (weapons >= max) return { ship, returned, error: "No free hardpoint: install a Hardpoint modification first." };
+    return { ship: { ...ship, equipment: [...ship.equipment, row.name] }, returned };
+  }
+  const old = ship.equipment.find((n) => typeOf(n) === row.type);
+  if (old === row.name) return { ship, returned, error: `${row.name} is fitted already.` };
+  if (old) {
+    const oldRow = rows.find((r) => r.name === old)!;
+    returned.push(back(old, "equipment", { type: oldRow.type, size: ship.size, worth: equipmentCost(oldRow, ship.size).material }));
+  }
+  const next: Ship = { ...ship, equipment: [...ship.equipment.filter((n) => n !== old), row.name] };
+  if (row.type === "Hyperdrive") next.hyperdriveClass = row.name.match(/class\s*([\d.]+)/i)?.[1] ?? next.hyperdriveClass;
+  return { ship: next, returned };
+}
+
 // The party's ship that can make a trip from here, or what stops them
 export function shipForTrip(ships: PartyShip[] | undefined, hereId: string, exit: Exit): { ship?: PartyShip; reason: string } {
   const berthed = (ships ?? []).filter((ship) => ship.areaId === hereId);
@@ -6198,7 +6286,28 @@ export type GearUse =
   | { kind: "call" }
   | { kind: "game" }
   | { kind: "instrument" }
-  | { kind: "tool" };
+  | { kind: "tool" }
+  // Everything else the equipment data holds (2026-10-21; read in gear.ts): what feeds a weapon and what a round adds to a hit, a
+  // calibrator or collimator, an accessory, a container, a sealed suit, an air supply, food, camping gear, clothes, a light, a hook and a
+  // line, an extinguisher, a belt generator, the small tools, data and comms devices, a prosthesis
+  | { kind: "ammo"; family: AmmoFamily; rider: AmmoRider }
+  | { kind: "calibrator"; weapon: "vibroweapon" | "lightweapon"; damage: number; property?: string; rounds: number }
+  | { kind: "accessory"; facts: AccessoryFacts }
+  | { kind: "container"; lb?: number; pints?: number; hidden?: number; hiddenDc?: number; lock?: number; speed?: number }
+  | { kind: "suit"; suit: SuitFacts }
+  | { kind: "air"; hours: number; refill?: boolean; underwater?: boolean; perCell?: boolean }
+  | { kind: "food"; days: number }
+  | { kind: "camp"; what: "bedroll" | "blanket" | "tent" | "shelter" | "raft" }
+  | { kind: "clothing"; style: "common" | "costume" | "uniform" | "fine" | "traveler" | "clandestine" | "sunshades"; pockets?: { lb: number; dc: number } }
+  | { kind: "light"; bright: number; dim: number; hours: number }
+  | { kind: "grapple"; feet: number }
+  | { kind: "rope"; feet: number }
+  | { kind: "extinguisher"; uses: number; cone: number; dc: number }
+  | { kind: "generator"; answers: EnvHazard; minutes: number }
+  | { kind: "clock" } | { kind: "mirror" } | { kind: "dig" } | { kind: "cook" } | { kind: "spanner" }
+  | { kind: "pad" } | { kind: "stylus" } | { kind: "record" } | { kind: "access" } | { kind: "focus" }
+  | { kind: "trace" } | { kind: "translate"; languages: number } | { kind: "scramble" }
+  | { kind: "prosthesis"; part: string };
 
 export interface GearFacts {
   name: string;
@@ -6254,7 +6363,7 @@ export function gearUse(item: GearFacts): GearUse | undefined {
     if (/emergency battery/.test(name)) return { kind: "stabilize", target: "droid", uses: countOf(text, /(\w+) uses/i) || 10 };
     if (/antitoxkit/.test(name)) return { kind: "antidote", uses: countOf(text, /(\w+) charges/i) || 5 };
     if (/^poison/.test(name)) return { kind: "poison", dc: Number((text.match(/DC (\d+)/i) ?? [])[1]) || 14, dice: (text.match(/(\d+d\d+) poison damage/i) ?? [])[1] ?? "2d4" };
-    return undefined;
+    return gearRole(item);
   }
   if (category === "DataRecordingAndStorage") {
     if (/^credit chip/.test(name)) return { kind: "data", form: "chip", dc: Number((text.match(/DC (\d+)/i) ?? [])[1]) || 15 };
@@ -6272,6 +6381,107 @@ export function gearUse(item: GearFacts): GearUse | undefined {
   if (/fusion cutter/.test(name)) return { kind: "cutter" };
   if (/comm jammer/.test(name)) return { kind: "jammer" };
   if (/homing beacon/.test(name)) return { kind: "beacon" };
+  return gearRole(item);
+}
+
+// The hazards of a place (2026-10-21; house rules for where, the gear that answers them is the books': gear.ts `exposure`): the cold of
+// an ice world and the heat of a desert by day or a volcanic world out of doors, no air at the open sites of a barren world, sewer gas
+// and volcanic fumes underground, the dark of caves, sewers and ruins (and of the wilds at night), radiation by a reactor, the gravity of a
+// gas giant's platforms, and the water over a sunken wreck or ruin of an ocean world
+const WILD_PLACES = ["cave system", "ruins", "crash site", "raider camp", "sewer system"];
+export function hazardsAt(world: World, areaId: string, minute: number): { hazard: EnvHazard; why: string }[] {
+  const area = world.areas[areaId];
+  if (!area) return [];
+  const planet = ancestor(world, areaId, "planet");
+  const settlement = ancestor(world, areaId, "settlement");
+  const building = area.kind === "building" ? area : ancestor(world, areaId, "building");
+  if (!planet || building?.type === "starship") return [];
+  const land = planet.type;
+  const wild = !!settlement && WILD_PLACES.includes(settlement.type);
+  const outdoors = area.kind === "settlement" || area.kind === "planet" || area.kind === "building" || (area.kind === "room" && (openAir(area) || /^(roof|walkway|balcony)$/.test(formOf(area) ?? "")));
+  const hour = hourOf(minute);
+  const night = hour < 6 || hour >= 20;
+  const out: { hazard: EnvHazard; why: string }[] = [];
+  if (outdoors && land === "ice") out.push({ hazard: "cold", why: `the cold of ${planet.name}` });
+  if (outdoors && ((land === "desert" && hour >= 10 && hour < 18) || land === "volcanic")) out.push({ hazard: "heat", why: `the heat of ${planet.name}${land === "desert" ? " by day" : ""}` });
+  if (outdoors && wild && land === "barren") out.push({ hazard: "vacuum", why: `the thin, airless open of ${planet.name}` });
+  if (outdoors && land === "gas giant") out.push({ hazard: "gravity", why: `the pull of ${planet.name}` });
+  if (building && /^(sewer|sewer access)$/.test(building.type) && area.kind === "room") out.push({ hazard: "toxic", why: "sewer gas" });
+  if (building?.type === "cave" && land === "volcanic" && area.kind === "room") out.push({ hazard: "toxic", why: "volcanic fumes" });
+  if (area.kind === "room" && ((building && /^(cave|sewer|ruin)$/.test(building.type)) || /crypt|cellar|tunnel/i.test(area.name)) && !openAir(area)) out.push({ hazard: "dark", why: `the dark of ${area.name}` });
+  else if (outdoors && wild && night) out.push({ hazard: "dark", why: "the night in the wilds" });
+  if (area.kind === "room" && /reactor/i.test(area.name)) out.push({ hazard: "radiation", why: `the ${area.name.toLowerCase()}` });
+  if (area.kind === "room" && wild && land === "ocean" && building && /^(wreck|ruin)$/.test(building.type) && !/hull breach|broken gate/i.test(area.name)) out.push({ hazard: "underwater", why: `${building.name} lies under the sea` });
+  return out;
+}
+
+// The uses of the rest of the equipment (2026-10-21), read from the text where it has a rule (gear.ts), named where the books give the
+// item none (a bedroll, a mirror, a shovel: house rules where the game applies them)
+function gearRole(item: GearFacts): GearUse | undefined {
+  const name = item.name.toLowerCase();
+  const category = item.equipmentCategory ?? "";
+  const facts = { name: item.name, description: item.description };
+  const text = gearText(facts);
+  if (category === "Ammunition") {
+    const cal = calibratorOf(facts);
+    if (cal) return { kind: "calibrator", ...cal };
+    const family = ammoItemFamily(item.name);
+    return family ? { kind: "ammo", family, rider: ammoRider(facts) } : undefined;
+  }
+  if (category === "WeaponOrArmorAccessory") return { kind: "accessory", facts: accessoryOf(facts) };
+  if (category === "Storage") return { kind: "container", ...(containerOf(facts) ?? {}) };
+  if (category === "LifeSupport") {
+    const suit = suitOf(facts);
+    if (/suit$/.test(name) && suit) return { kind: "suit", suit };
+    const air = airOf(facts);
+    if (air) return { kind: "air", ...air };
+    const food = foodOf(facts);
+    if (food) return { kind: "food", ...food };
+    if (/raft/.test(name)) return { kind: "camp", what: "raft" };
+    if (/shelter/.test(name)) return { kind: "camp", what: "shelter" };
+    return suit ? { kind: "suit", suit } : undefined;
+  }
+  if (category === "Clothing") {
+    const style = /sunshades/.test(name) ? "sunshades" : /clandestine/.test(name) ? "clandestine" : /costume/.test(name) ? "costume" : /uniform/.test(name) ? "uniform" : /fine/.test(name) ? "fine" : /traveler/.test(name) ? "traveler" : "common";
+    const box = containerOf(facts);
+    return { kind: "clothing", style, ...(box?.hidden ? { pockets: { lb: box.hidden, dc: box.hiddenDc ?? 15 } } : {}) };
+  }
+  if (category === "Utility") {
+    if (/bedroll/.test(name)) return { kind: "camp", what: "bedroll" };
+    if (/blanket/.test(name)) return { kind: "camp", what: "blanket" };
+    if (/tent/.test(name)) return { kind: "camp", what: "tent" };
+    if (/chronometer/.test(name)) return { kind: "clock" };
+    if (/fibercord/.test(name)) return { kind: "rope", feet: Number(name.match(/(\d+) ft/)?.[1] ?? 50) };
+    const food = foodOf(facts);
+    if (food) return { kind: "food", ...food };
+    if (/fire extinguisher/.test(name)) return { kind: "extinguisher", uses: Number(text.match(/used (\d+) times/i)?.[1] ?? 5), cone: Number(text.match(/(\d+) foot cone/i)?.[1] ?? 15), dc: Number(text.match(/DC (\d+)/)?.[1] ?? 14) };
+    const light = lightOf(facts);
+    if (light) return { kind: "light", ...light };
+    if (/grappling hook/.test(name)) return { kind: "grapple", feet: Number(text.match(/(\d+)-foot length/i)?.[1] ?? 50) };
+    const generator = generatorOf(facts);
+    if (generator) return { kind: "generator", ...generator };
+    if (/hydrospanner/.test(name)) return { kind: "spanner" };
+    if (/mess kit/.test(name)) return { kind: "cook" };
+    if (/mirror/.test(name)) return { kind: "mirror" };
+    if (/shovel/.test(name)) return { kind: "dig" };
+    return undefined;
+  }
+  if (category === "DataRecordingAndStorage") {
+    if (/datapad|wristpad/.test(name)) return { kind: "pad" };
+    if (/stylus/.test(name)) return { kind: "stylus" };
+    if (/holorecorder/.test(name)) return { kind: "record" };
+    if (/code cylinder/.test(name)) return { kind: "access" };
+    if (/focus generator/.test(name)) return { kind: "focus" };
+    return undefined;
+  }
+  if (category === "Communications") {
+    if (/commlink/.test(name)) return { kind: "call" };
+    if (/holotrace/.test(name)) return { kind: "trace" };
+    if (/translator|vocoder/.test(name)) return { kind: "translate", languages: Number(text.match(/between up to (\w+) languages/i)?.[1]?.replace(/^five$/i, "5").replace(/^fifteen$/i, "15") ?? 5) || 5 };
+    if (/scrambler/.test(name)) return { kind: "scramble" };
+    return undefined;
+  }
+  if (category === "Medical" && /prosthesis$/.test(name)) return { kind: "prosthesis", part: name.replace(/ prosthesis$/, "") };
   return undefined;
 }
 
@@ -10239,7 +10449,35 @@ export interface DroidLine {
   quantity: number;
 }
 export const COMBAT_DROIDS = /security|battle|destroyer|assassin|enforcer|tactical|probe|tracker|seeker|interrog|sabotage|hailfire|vulture|spider|persuader|bomber|remote|weaponized|blastromech|behemoth|DSD1|^B[12] series|^BX series|^HK|^IG|^IT-O|^T-Series|^Z-58|^KX/i;
-export const droidPrice = (xp: number) => Math.max(150, Math.round(xp * 6));
+// Droid prices (2026-10-21): the Expanded Content's Droids table where it names the droid (an R2 astromech 2,800 cr, a 3PO protocol
+// droid 5,500 ...); for the others, a curve through that table by experience points (house rule: price = a x XP^b, fitted in the log
+// of both), at least 150 credits
+const DROID_TABLE = ((gearData as { droids?: { designation: string; cost: number }[] }).droids ?? []).filter((d) => d.cost > 0);
+const tableDroid = (name: string) => DROID_TABLE.find((d) => {
+  const key = d.designation.split(/\s+/)[0].toLowerCase();
+  return new RegExp(`(^|[\\s,(-])${key.replace(/[-]/g, "\\-")}(\\b|[\\s,-])`, "i").test(name) || name.toLowerCase().startsWith(key);
+});
+let DROID_CURVE: { a: number; b: number } | null = null;
+export function droidCurve(points: { xp: number; cost: number }[]): { a: number; b: number } {
+  const pts = points.filter((p) => p.xp > 0 && p.cost > 0).map((p) => [Math.log(p.xp), Math.log(p.cost)]);
+  if (pts.length < 2) return { a: 6, b: 1 };
+  const mx = pts.reduce((n, p) => n + p[0], 0) / pts.length;
+  const my = pts.reduce((n, p) => n + p[1], 0) / pts.length;
+  const b = pts.reduce((n, p) => n + (p[0] - mx) * (p[1] - my), 0) / Math.max(1e-9, pts.reduce((n, p) => n + (p[0] - mx) ** 2, 0));
+  return { a: Math.exp(my - b * mx), b };
+}
+// The curve is fitted once, from the droids of the table that have a stat block (the caller gives the stat blocks)
+export function fitDroidPrices(droids: { name: string; experiencePoints: number }[]) {
+  const pts = droids.map((d) => ({ xp: d.experiencePoints, cost: tableDroid(d.name)?.cost ?? 0 })).filter((p) => p.cost > 0);
+  DROID_CURVE = droidCurve(pts);
+}
+export const droidPrice = (xp: number, name = "") => {
+  const listed = name ? tableDroid(name) : undefined;
+  if (listed) return listed.cost;
+  const c = DROID_CURVE ?? { a: 6, b: 1 };
+  return Math.max(150, Math.round((c.a * Math.pow(Math.max(1, xp), c.b)) / 10) * 10);
+};
+export const droidListed = (name: string) => !!tableDroid(name);
 export const crNumber = (cr: string | number | undefined): number => {
   if (typeof cr === "number") return cr;
   if (!cr) return 0;
@@ -10256,16 +10494,53 @@ export function droidStock(world: World, trader: Occupant, placeId: string, day:
   const black = !!WARES[trader.trade ?? ""]?.black;
   const r = createRandom(hashOf(trader.id) + day * 104729);
   const legal = (d: DroidStat) => !COMBAT_DROIDS.test(d.name) || market.law <= 1 || black;
-  const pool = droids.filter((d) => d.experiencePoints > 0 && legal(d) && droidPrice(d.experiencePoints) <= market.cap);
+  if (!DROID_CURVE) fitDroidPrices(droids);
+  const pool = droids.filter((d) => d.experiencePoints > 0 && legal(d) && droidPrice(d.experiencePoints, d.name) <= market.cap);
   const picked = r.shuffle(pool).slice(0, r.int(WARES.droids.lines[0], WARES.droids.lines[1]));
   return picked
     .filter((d) => !(bought[`droid:${d.id}`] > 0))
-    .map((d) => ({ id: d.id, name: d.name, xp: d.experiencePoints, cr: String(d.challengeRating ?? "0"), price: Math.round(droidPrice(d.experiencePoints) * (black ? 1.6 : 1) * (0.92 + (hashOf(`${d.id}:${day}`) % 17) / 100)), combat: COMBAT_DROIDS.test(d.name), quantity: 1 }))
+    .map((d) => ({ id: d.id, name: d.name, xp: d.experiencePoints, cr: String(d.challengeRating ?? "0"), price: Math.round(droidPrice(d.experiencePoints, d.name) * (black ? 1.6 : 1) * (0.92 + (hashOf(`${d.id}:${day}`) % 17) / 100)), combat: COMBAT_DROIDS.test(d.name), quantity: 1 }))
     .sort((a, b) => a.price - b.price);
 }
 
 // What the dealer pays for one of the party's droids, by what it would sell for and how hurt it is
-export const droidOffer = (xp: number, hp: number, maxHp: number) => Math.round(droidPrice(xp) * 0.4 * Math.max(0.25, hp / Math.max(1, maxHp)));
+export const droidOffer = (xp: number, hp: number, maxHp: number, name = "") => Math.round(droidPrice(xp, name) * 0.4 * Math.max(0.25, hp / Math.max(1, maxHp)));
+
+// The droid customizations a droid dealer sells (2026-10-21; house rule: Wretched Hives has them found, made or installed, the user wants
+// them on sale): six to nine a day of the Droid Customization items, up to a rarity that rises with the wealth of the place (standard and
+// premium in a town, prototype in a city, advanced too in a city of the Core worlds), at their value (Wretched Hives' random value of the
+// rarity); a scrapyard's dealer has salvaged ones, standard and premium only, at 60%
+export interface DroidPartLine {
+  name: string;
+  rarity: string;
+  price: number;
+  quantity: number;
+}
+export function droidPartsStock(world: World, trader: Occupant, placeId: string, day: number, rows: { id?: string; name: string; type: string; searchableRarity: string }[], bought: Record<string, number> = {}): DroidPartLine[] {
+  const salvage = trader.trade === "salvage";
+  if (trader.trade !== "droids" && !salvage) return [];
+  const market = marketAt(world, placeId);
+  const region = ancestor(world, placeId, "region");
+  const rich = ["Deep Core", "Core", "Colonies", "Inner Rim"].includes(region?.type ?? region?.name ?? "");
+  const settlement = market.settlement?.type ?? "outpost";
+  const top = salvage ? 1 : settlement === "city" ? (rich ? 3 : 2) : settlement === "station" ? 2 : 1;
+  const r = createRandom(hashOf(`${trader.id}|parts`) + day * 31337);
+  const pool = rows.filter((x) => x.type === "DroidCustomization" && rarityRank(x.searchableRarity) <= top);
+  return r.shuffle(pool).slice(0, salvage ? r.int(2, 4) : r.int(6, 9))
+    .filter((x) => !(bought[x.name] > 0))
+    .map((x) => ({ name: x.name, rarity: x.searchableRarity, price: Math.max(10, Math.round(enhancedValue(x) * market.regionFactor * market.settlementFactor * (salvage ? 0.6 : 1))), quantity: 1 }))
+    .sort((a, b) => a.price - b.price);
+}
+
+// What stands on a droid dealer's plinths today: the droids of the day's stock, one to a plinth, in the order of the plinths
+export function droidDisplay(world: World, roomId: string, day: number, droids: DroidStat[], bought: Record<string, number> = {}): { plinth: string; line: DroidLine }[] {
+  const room = world.areas[roomId];
+  const trader = room?.occupants.find((o) => o.trade === "droids");
+  if (!room?.layout || !trader) return [];
+  const plinths = room.layout.assets.filter((a) => a.kind === "furniture" && /droid plinth/i.test(a.name)).sort((a, b) => a.y - b.y || a.x - b.x);
+  const lines = droidStock(world, trader, roomId, day, droids, bought);
+  return plinths.slice(0, lines.length).map((p, i) => ({ plinth: p.id, line: lines[i] }));
+}
 // The cost of mending a droid to full: a hit point is 5 credits and 5 for each point of challenge
 export const droidRepairPrice = (cr: string | number | undefined, missing: number) => Math.max(0, Math.ceil(missing * (5 + 5 * crNumber(cr))));
 

@@ -21,6 +21,7 @@ import { ViewRig } from "./interiors/ViewRig";
 import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
+import { useDisplay } from "./interiors/display";
 import { CurtainWall, GardenGround, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { Figure, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, RoundedFloor, CornerWall, DomeRoof, Opening, styleOf, hue, type Style } from "./models";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
@@ -509,6 +510,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   onAsset?: (asset: RoomAsset) => void;
   children?: ReactNode;
 }) {
+  // What the shop shows today (a droid dealer's droids and parts), set by Play
+  const onShow = useDisplay();
   // A cave has walls of rock and a rim of formations; every room has the light, the air and the stock its kind of place would
   // (interiors/): its wealth turns the furniture's browns, steels and golds into its own woods, metal and trim
   const detail = useQuality((q) => q.tier);
@@ -638,7 +641,13 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             : (
               <>
                 <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={pack} tone={packLook} face={facing(a, width, height)} bare={!!mood && !!holdsOf(a.name, mood.buildingType, mood.roomName)} />
-                {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} tone={packLook} />}
+                {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} tone={packLook} wares={onShow.shelves[a.id]} />}
+                {/* A droid for sale on its plinth (the dealer's stock of the day) */}
+                {onShow.droids[a.id] && (
+                  <group position={[a.w / 2, 0.14, a.h / 2]}>
+                    <Figure kind="droid" ring="#fbbf24" name={onShow.droids[a.id].name} creature="droid" />
+                  </group>
+                )}
               </>
             )}
           {/* Furniture that can be stood on (a bench, the stage) leaves the tap to the floor beneath, so it walks to that square */}

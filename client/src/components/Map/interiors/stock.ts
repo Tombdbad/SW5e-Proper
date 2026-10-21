@@ -69,7 +69,9 @@ export function holdsOf(furniture: string, buildingType: string, roomName = ""):
   if (/display case|display table/.test(n) && /armsmith|pawnshop/.test(b)) return "case";
   // A tech shop's display table keeps devices under glass; its display case, a medcentre's and a droid dealer's, the prostheses
   if (/display table/.test(n) && /tech shop/.test(b)) return "devices";
-  if (/display case|display table/.test(n) && /tech shop|droid dealer|medcenter|apothecary/.test(b)) return "prosthetics";
+  // A droid dealer's case keeps the customizations it sells, as its shelves do
+  if (/display case/.test(n) && /droid dealer/.test(b)) return "droidparts";
+  if (/display case|display table/.test(n) && /tech shop|medcenter|apothecary/.test(b)) return "prosthetics";
   if (/display shelf|wares rack/.test(n) && /armsmith/.test(b)) return "shelf";
   if (/droid parts shelf/.test(n) && /tech shop|droid dealer/.test(b)) return "droidparts";
   if (/goods shelf|display shelf|wares rack/.test(n) && /general store|pawnshop|curio/.test(b)) return /curio/.test(b) ? null : "goods";
@@ -145,7 +147,8 @@ function shelfRows(pool: string[], L: number, ys: number[], next: () => number, 
 }
 
 // The items of a piece of furniture, `L` long and `D` deep, in the frame it is built in
-export function stockLayout(holds: Holds, L: number, D: number, buildingType: string, roomName: string, seed: number, name = ""): Item[] {
+// `wares`: the catalogue's models the shop really has today (a droid dealer's customizations), in place of the shelf's usual pool
+export function stockLayout(holds: Holds, L: number, D: number, buildingType: string, roomName: string, seed: number, name = "", wares?: string[]): Item[] {
   if (!holds) return [];
   const next = stream(hashOf(`${buildingType}/${roomName}`) + seed * 977);
   const arms = armsFor(buildingType, roomName);
@@ -225,7 +228,7 @@ export function stockLayout(holds: Holds, L: number, D: number, buildingType: st
     items.push(...shelfRows(POOLS[holds], L, shelves, next, { scale: holds === "instruments" ? 0.9 : 1, maxLong: holds === "instruments" ? 0.95 : 0.4 }));
   } else if (holds === "droidparts") {
     // The modules of a droid dealer's shelf: small, many
-    items.push(...shelfRows(POOLS.droidparts, L, [0.4, 0.78, 1.14], next, { scale: 0.85, gap: 0.04, maxLong: 0.2 }));
+    items.push(...shelfRows(wares?.length ? wares : POOLS.droidparts, L, [0.4, 0.78, 1.14], next, { scale: 0.85, gap: 0.04, maxLong: 0.2 }));
   } else if (holds === "devices") {
     // On the glass top of a display: devices
     items.push(...shelfRows(POOLS.devices, L, [0.72], next, { scale: 1, gap: 0.08, margin: 0.2, z: 0, maxLong: 0.25 }));

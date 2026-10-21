@@ -670,6 +670,30 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number, b
     k.sphere(0.09, C.glow, { at: [0, 1.12, 0], finish: "glow" });
     return;
   }
+  if (/droid plinth/.test(n)) {
+    // A low round display stand with a lit rim: a droid for sale stands on it (drawn by the map, not baked in)
+    k.lathe([[0.42, 0], [0.42, 0.06], [0.38, 0.12], [0.36, 0.14], [0, 0.14]], C.steelDark, { seg: 20, finish: "sheen" });
+    k.torus(0.4, 0.015, C.glow, { at: [0, 0.1, 0], rot: [Math.PI / 2, 0, 0], seg: [4, 28], finish: "glow" });
+    k.box([0.26, 0.05, 0.02], C.amber, { at: [0, 0.08, 0.41], finish: "glow" });
+    return;
+  }
+  if (/charging station/.test(n)) {
+    k.box([0.5, 1.3, 0.32], C.steelDark, { at: [0, 0.65, -0.05], round: 0.05, finish: "sheen" });
+    screen(k, [0, 1.0, 0.12], 0.32, 0.18, 0.6, C.glow);
+    k.capsule(0.03, 0.5, C.black, { at: [0.18, 0.5, 0.18], rot: [0.3, 0, 0] });
+    k.box([0.6, 0.06, 0.5], C.steel, { at: [0, 0.03, 0.05], round: 0.02, finish: "sheen" });
+    return;
+  }
+  if (/droid repair rig/.test(n)) {
+    // A frame with arms over a cradle, a droid's work-stand
+    k.box([L - 0.3, 0.3, D - 0.4], C.steelDark, { at: [0, 0.15, 0], round: 0.04, finish: "sheen" });
+    for (const [x, z] of corners(0.25)) k.capsule(0.035, 1.6, C.steel, { at: [x, 0.8, z], finish: "sheen" });
+    k.box([L - 0.4, 0.06, 0.06], C.steel, { at: [0, 1.6, -D / 2 + 0.25], finish: "sheen" });
+    k.box([L - 0.4, 0.06, 0.06], C.steel, { at: [0, 1.6, D / 2 - 0.25], finish: "sheen" });
+    k.pair((s) => k.capsule(0.03, 0.5, C.amber, { at: [s * 0.3, 1.32, 0], rot: [0, 0, s * 0.5], finish: "sheen" }));
+    k.sphere(0.05, C.red, { at: [0, 1.06, 0], finish: "glow" });
+    return;
+  }
   if (/statuette plinth/.test(n)) {
     k.box([0.5, 0.6, 0.5], "#b8b2a4", { at: [0, 0.3, 0], round: 0.04 });
     k.capsule(0.07, 0.22, C.gold, { at: [0, 0.82, 0], finish: "sheen" });

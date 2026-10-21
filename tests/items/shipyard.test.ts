@@ -210,3 +210,37 @@ test("the party's own work needs the workforce, takes the book's time, twice awa
   assert.deepEqual([wild.days, wild.dc], [12, 15]);
   assert.deepEqual(enhancedShipPart({ name: "Ship Armor (Superior)", type: "ShipArmor", text: "Your ship has a +3 bonus to AC while this armor is installed." }), { name: "Ship Armor (Superior)", bonus: 3, slot: "armor" });
 });
+
+test("fitting a part: modifications go in, equipment replaces its kind or takes a hardpoint, the old part goes to the hold", async () => {
+  const { fitShipPart } = await import("../../shared/logic/index");
+  const base = { id: "s9", name: "Hauler", size: "Small", role: "Interceptor", tier: 0, status: "landed" as const, owner: "party", value: 1, equipment: ["Deflection armor", "Assault laser cannon"] };
+  const armor = fitShipPart(base, { id: "p1", kind: "equipment", name: "Reinforced armor", size: "Small", type: "Armor", worth: 1850 }, rows);
+  assert.deepEqual(armor.ship.equipment.sort(), ["Assault laser cannon", "Reinforced armor"]);
+  assert.equal(armor.returned[0].name, "Deflection armor");
+  assert.equal(armor.returned[0].worth, Math.round(3450 / 2));
+  const drive = fitShipPart(base, { id: "p2", kind: "equipment", name: "Hyperdrive, class 2", size: "Small", type: "Hyperdrive", worth: 5000 }, rows);
+  assert.equal(drive.ship.hyperdriveClass, "2");
+  const slot = fitShipPart(base, { id: "p3", kind: "mod", name: "Hyperdrive Slot", size: "Small", grade: 0, type: "Operation", worth: 1750 }, rows);
+  assert.equal(slot.ship.hyperdriveClass, "15");
+  const full = { ...base, equipment: ["Deflection armor", "Assault laser cannon", "Assault laser cannon", "Assault laser cannon", "Assault laser cannon"] };
+  assert.match(fitShipPart(full, { id: "p4", kind: "equipment", name: "Assault laser cannon", type: "Weapon", worth: 1 }, rows).error ?? "", /hardpoint/);
+  const withMount = { ...full, mods: [{ name: "Hardpoint" }] };
+  assert.equal(fitShipPart(withMount, { id: "p5", kind: "equipment", name: "Assault laser cannon", type: "Weapon", worth: 1 }, rows).error, undefined);
+  const enh = fitShipPart(base, { id: "p6", kind: "enhanced", name: "Ship Weapon (Fine)", type: "ShipWeapon", bonus: 1, worth: 900 }, rows, "Assault laser cannon");
+  assert.deepEqual(enh.ship.enhanced?.weapons?.["Assault laser cannon"], { name: "Ship Weapon (Fine)", bonus: 1 });
+});
+
+test("a wreck gives up a piece of its equipment one time in two, salvaged, the same each time", async () => {
+  const { wreckParts } = await import("../../shared/logic/index");
+  let some = 0;
+  for (let i = 0; i < 40; i++) {
+    const wreck = { id: `w${i}`, size: "Small", equipment: ["Deflection armor", "Assault laser cannon"] };
+    const parts = wreckParts(wreck, rows);
+    assert.deepEqual(parts, wreckParts(wreck, rows));
+    if (parts.length) {
+      some++;
+      assert.ok(parts[0].salvaged && wreck.equipment.includes(parts[0].name));
+    }
+  }
+  assert.ok(some > 8 && some < 32, `${some} of 40`);
+});

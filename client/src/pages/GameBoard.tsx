@@ -25,6 +25,9 @@ import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCo
 import { getStarshipSize } from "@/lib/sw5e/starships";
 import { SKILLS } from "@/lib/sw5e/constants";
 import CheckDialog, { autoChecks, type CheckOption, type CheckRequest, type CheckRoller } from "@/components/Play/CheckDialog";
+import { PartsCounter, ShipSystems, partLabel } from "@/components/Play/ShipWorks";
+import { useDisplay } from "@/components/Map/interiors/display";
+import { itemRef } from "@/components/Map/interiors/items";
 import { feats } from "@/lib/sw5e/feats";
 import lookupData from "@shared/data/sw5e/lookups.json";
 import { MinigamePage, type Minigame, type MinigameResult } from "@/components/Map/FlightScene";
@@ -60,6 +63,10 @@ import {
   modKindOf, augmentSlots, MOD_BASE_SLOTS, rarityRank, INSTALL_DC, SIZE_TIME, crystalModifier, crystalFor, crystalsUpTo, DROID_MOTOR_COST, DROID_BASE_SLOTS, droidPlan,
   readOutcome, blueprintRarity, readCredits, RARITY_ORDER, type Fitted,
   FAMILIES, MATERIALS, REFINE_UNITS, tierOfCr, makeRemains, haulOf, withCacheAsset, familiesForTool, familiesForEnhanced, ALL_FAMILIES, type MaterialFamily, crNumber, RARITY_TIERS, NODE_RESPAWN, HARVEST_MINUTES, harvestDc, harvestYield, materialsOf, materialsWorth, spendMaterials, nodeAt, type ResourceNode,
+  partsPlaceAt, partsStock, fitShipPart, wreckParts, droidPartsStock, droidDisplay, droidListed,
+  ammoFamilyOf, ammoItemFamily, ammoRider, accessoryOf, reloadOf, GENERATOR_SHOTS, type AmmoRider,
+  passDays, FORAGE_DC, HOT_LANDS, liquidOf, foodOf, GEAR, type Supplies, shipModNamed, shipModEffects, modCost, modDays, crewModPlan, crewEquipmentPlan, tierUpgrade, yardWorkforce, equipmentCost, equipmentDays, equipmentWorkforce,
+  type ShipPart, type PartLine, type ShipModInstance,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship, type Rect,
 } from "@shared/logic";
 
@@ -100,6 +107,23 @@ interface PlayState {
   tinkerUntil?: number;
   // The day each allied contact was last called
   called?: Record<string, number>;
+  // Ship parts in the hold (see shipyard.ts): bought, salvaged or taken out of the ship
+  shipParts?: ShipPart[];
+  // What each ranged weapon has in it (2026-10-21): shots left, and the special round loaded (none: the plain one). A weapon never
+  // fired comes loaded with its plain round (house rule)
+  loads?: Record<string, { left: number; round?: string }>;
+  // A tripod set up (a minute, out of a fight) under the two-handed blaster: braced in the next fight
+  tripodSet?: boolean;
+  // Food and water by the day (shared/logic gear.ts `passDays`) and the lifestyle paid in settlements
+  supplies?: Supplies;
+  // Gear put on (2026-10-21): sealed suits, clothes, a respirator or mask, sunshades, belts and packs worn; and the minutes of air left
+  // in each suit or respirator (by name; a full one is its capacity)
+  wearing?: string[];
+  air?: Record<string, number>;
+  // From a long rest aboard a ship with an armory, a recreation room and the like: advantage on the first attack roll, and on the first
+  // ability check (of the skills named, or any)
+  firstAttack?: boolean;
+  firstCheck?: string[] | "any";
 }
 
 // What each level of the watch means for the party (house rule, see shared/logic)
@@ -314,6 +338,11 @@ export default function GameBoard() {
     });
     queryClient.invalidateQueries({ queryKey: ["game-character"] });
   };
+  // Change a few fields of the play state as it stands now (not as this render saw it)
+  const patchPlay = (changes: Record<string, any>) => {
+    const current = (queryClient.getQueryData<any>(["game-character", gameCharacterId])?.playState ?? {}) as Record<string, any>;
+    return saveCharacter({ playState: { ...current, ...changes } });
+  };
 
   // The campaign clock (shared/logic "Time"): read once when the campaign opens, then one game
   // minute passes every real second on the map (not in a fight, not while the tab is hidden).
@@ -404,9 +433,12 @@ export default function GameBoard() {
   // Roll it: d20 (two, the higher, with advantage) + the chosen bonus (+ the substance's d3 for the character)
   const performCheck = (plan: CheckPlan, rollerId: string, skill: string | null): CheckResult => {
     const option = optionsFor(rollerId, plan).find((o) => o.skill === skill) ?? optionsFor(rollerId, plan)[0];
-    const first = d20();
-    const roll = option.edge ? Math.max(first, d20()) : first;
     const mine = rollerId === "me";
+    // A long rest aboard a ship with a recreation room, laboratory or investigation suite: advantage on the first check (of those skills)
+    const rested = mine && !!play.firstCheck && (play.firstCheck === "any" || (!!option.skill && play.firstCheck.includes(option.skill)) || (!!plan.tool && play.firstCheck.includes("tool")));
+    if (rested) setTimeout(() => patchPlay({ firstCheck: undefined }), 0);
+    const first = d20();
+    const roll = option.edge || rested ? Math.max(first, d20()) : first;
     const s = mine ? (play.substance?.ability === option.ability ? (play.substance.phase === "high" ? 1 : -1) : 0) * die(3) : 0;
     if (s > 0) setTimeout(() => endHigh("used on a check"), 0);
     const bonus = option.bonus + s + (plan.extra ?? 0);
@@ -486,6 +518,11 @@ export default function GameBoard() {
     setViewId(null);
     setPicked(null);
   }, [hereId]);
+  // For test scripts: pick someone or something out as a tap on the map would (e2e/works.mjs, when a moving person is hard to hit)
+  useEffect(() => {
+    (window as any).__play = { pick: (kind: "occupant" | "asset" | "ship", id: string) => setPicked({ kind, id }) };
+    return () => { delete (window as any).__play; };
+  }, []);
 
   // The watch (house rule): how far the hostile creatures here have noticed the party. Where
   // nothing was recorded (an older save, enemies the game master added) they stand ready.
@@ -851,6 +888,16 @@ export default function GameBoard() {
     queryFn: async () => (await fetch("/api/sw5e/starshipEquipment")).json(),
     staleTime: Infinity,
   });
+  // The enhanced ship armor, shields and weapons (with their text, for the bonus they give)
+  const { data: enhancedShipRows = [] } = useQuery<any[]>({
+    queryKey: ["enhanced-ship-parts"],
+    queryFn: async () => ((await (await fetch("/api/sw5e/enhancedItems?search=Ship&fields=id,name,type,searchableRarity,text")).json()) as any[]).filter((e) => /^Ship(Armor|Shield|Weapon)$/.test(e.type)),
+    staleTime: Infinity,
+  });
+  // A ship's fuel capacity: its size's, half again with an extra fuel tank
+  const fuelCap = (ship: Pick<PartyShip, "size" | "mods" | "fuel">) => Math.floor((getStarshipSize(ship.size)?.fuelCapacity ?? ship.fuel) * (shipRows.length ? shipSheet({ ...(ship as any), name: "", role: "", tier: 0, equipment: [] }, shipRows).fuelFactor ?? 1 : 1));
+  // Work under way at a yard or by the crew keeps a ship on the ground
+  const shipBusy = (ship: Pick<PartyShip, "work">) => (ship.work && ship.work.ready > useClock.getState().minutes ? ship.work : undefined);
   // The party as a ship's crew: the character, and every companion that is not a beast
   const crewMembers = (): CrewMember[] => [{ id: "self", hp: character?.currentHp ?? 0 }, ...party.map((c) => ({ id: c.id, hp: c.hp, kind: c.kind }))];
   const engage = () => {
@@ -909,9 +956,19 @@ export default function GameBoard() {
       for (const [id, n] of Object.entries(parts)) stock[id] = (stock[id] ?? 0) + n;
       changes.playState = { ...(character.playState ?? {}), materials: stock };
     }
-    if (mineNow?.destroyed) {
+    // A lost ship: the crew gets away in a pod with 1 hit point (house rule); with escape pods or an ejection pod fitted, whole
+    if (mineNow?.destroyed && !mineNow.sheet.escape) {
       changes.currentHp = 1;
       lastSavedHp.current = 1;
+    }
+    // A wreck may give up a piece of its equipment, salvaged, into the hold
+    const pulled = foesNow.filter((f) => f.destroyed).flatMap((f) => {
+      const wreck = (area?.ships ?? []).find((s) => s.id === f.id);
+      return wreck ? wreckParts(wreck, shipRows) : [];
+    });
+    if (pulled.length) {
+      changes.playState = { ...(changes.playState ?? character.playState ?? {}), shipParts: [...shipParts, ...pulled] };
+      setTimeout(() => toast.info(`Salvaged from the wreck: ${pulled.map((x) => x.name).join(", ")} (in your hold).`), 400);
     }
     if (Object.keys(changes).length) saveCharacter(changes);
     toast[outcome === "victory" || outcome === "fled" ? "success" : "error"](
@@ -920,7 +977,7 @@ export default function GameBoard() {
         : outcome === "fled"
           ? "You jump away from the fight."
           : outcome === "destroyed"
-            ? "Your ship is lost; you get away in an escape pod with 1 hit point (house rule)."
+            ? mineNow?.sheet.escape ? "Your ship is lost; you get away in its escape pod, unhurt." : "Your ship is lost; you get away in an escape pod with 1 hit point (house rule)."
             : "Your ship is disabled and drifts; it will need repairs.",
     );
     state.leave();
@@ -930,7 +987,7 @@ export default function GameBoard() {
   const refuel = (ship: PartyShip) => {
     const size = getStarshipSize(ship.size);
     const price = size?.fuelCost ?? passageRate;
-    const units = Math.min((size?.fuelCapacity ?? ship.fuel) - ship.fuel, Math.floor((character.credits ?? 0) / price));
+    const units = Math.min(fuelCap(ship) - ship.fuel, Math.floor((character.credits ?? 0) / price));
     if (units <= 0) {
       toast.error(`Fuel is ${price} credits a unit here and you have ${character.credits ?? 0}.`);
       return;
@@ -1300,6 +1357,43 @@ export default function GameBoard() {
     toast.success(`${name}: ${on ? (kind === "weapon" ? "in hand" : "on") : kind === "weapon" ? "put away" : "taken off"}${change ? `; armor class ${change > 0 ? "+" : ""}${change}` : ""}.`);
   };
 
+  // The ranged weapon's ammunition (shared/logic gear.ts): what feeds it, the rounds carried, what each does, the shots left in it, and
+  // whether an ammo pouch, power belt, bandolier, quiver or feed belt reloads it for free
+  const PLAIN_ROUND: Record<string, string> = { cell: "Power cell", cartridge: "Slug cartridge", arrow: "Arrow", bolt: "Bolt", wrist: "Dart", generator: "Power generator", rocket: "Rocket, fragmentation", torpedo: "Torpedo, fragmentation", mag: "Flechette mag, fragmentation", tank: "Projector tank, incendiary" };
+  const ammoKit = (w?: { name: string; properties: string[] }) => {
+    if (!w) return undefined;
+    const family = ammoFamilyOf({ name: w.name, properties: w.properties });
+    if (!family) return undefined;
+    const carried = ((character.equipment ?? []) as string[]).filter((n) => ammoItemFamily(n) === family && factsOf(n)?.equipmentCategory === "Ammunition");
+    const reserves: Record<string, number> = {};
+    for (const n of carried) reserves[n] = (reserves[n] ?? 0) + 1;
+    const plain = PLAIN_ROUND[family] ?? carried[0];
+    const max = family === "generator" ? GENERATOR_SHOTS : reloadOf({ properties: w.properties });
+    const saved = play.loads?.[w.name];
+    const riders: Record<string, AmmoRider> = {};
+    const shotsPer: Record<string, number> = {};
+    for (const n of new Set([plain, ...carried])) {
+      const f = factsOf(n);
+      riders[n] = f ? ammoRider({ name: n, description: f.description }) : {};
+      shotsPer[n] = riders[n].area ? 3 : 1;
+    }
+    const free = ((character.equipment ?? []) as string[]).some((n) => factsOf(n)?.equipmentCategory === "WeaponOrArmorAccessory" && accessoryOf({ name: n, description: factsOf(n)?.description }).reload?.families.includes(family));
+    return { weapon: w.name, family, max, left: max > 0 ? Math.min(max, saved ? saved.left : max) : 0, round: saved?.round, plain, riders, reserves, free, shotsPer };
+  };
+  // After a fight: the rounds fired come out of the pack, and the weapon keeps what is left in it
+  const settleAmmo = (after: { weapon: string; left: number; round?: string; spent: Record<string, number> } | null | undefined) => {
+    if (!after) return;
+    setTimeout(() => {
+      const current = queryClient.getQueryData<any>(["game-character", gameCharacterId]);
+      if (!current) return;
+      const equipment = [...((current.equipment ?? []) as string[])];
+      for (const [name, n] of Object.entries(after.spent)) for (let i = 0; i < n; i++) {
+        const at = equipment.indexOf(name);
+        if (at >= 0) equipment.splice(at, 1);
+      }
+      saveCharacter({ equipment, playState: { ...(current.playState ?? {}), loads: { ...(current.playState?.loads ?? {}), [after.weapon]: { left: after.left, round: after.round } } } });
+    }, 2500);
+  };
   const combatKit = () => {
     // Of the weapons carried, the one with the best attack for each kind; unarmed otherwise
     const weapons = carriedWeapons(character).sort((a, b) => Number(!!a.natural) - Number(!!b.natural) || b.attackBonus - a.attackBonus);
@@ -1316,7 +1410,12 @@ export default function GameBoard() {
     // The class table's focus points, and what has been spent of them since the last rest
     const focusMax = getClassLevelValue(character.class, level, "Focus Points");
     const uses = play.featureUses ?? {};
+    const ammo = ammoKit(ranged);
     return {
+      ammo,
+      // A bipod for a two-handed blaster; a tripod deployed beforehand (it takes a minute: house reading) counts as braced from the start
+      bipod: (character.equipment ?? []).includes("Bipod") && !!ranged?.properties.some((p) => /two-handed/i.test(p)),
+      braced: (character.equipment ?? []).includes("Tripod") && !!ranged?.properties.some((p) => /two-handed/i.test(p)) && !!play.tripodSet,
       meleeDice: melee?.dice,
       meleeWeapon: melee?.name,
       meleeAttack: melee?.attackBonus,
@@ -1336,6 +1435,8 @@ export default function GameBoard() {
         : { name: "Unarmed strike", dice: "1", attack: scoreMod("strength") + proficiency + (character.itemUnarmed?.attack ?? 0), damage: scoreMod("strength") + (character.itemUnarmed?.damage ?? 0), type: "kinetic" },
       // A barrier's hit points, taken before real ones; the body's side effects of augmentation
       tempHp: character.itemTempHp || undefined,
+      // Advantage on the first attack after a long rest aboard a ship with an armory
+      helped: play.firstAttack || undefined,
       vulnerable: (play.augments?.length ?? 0) >= 4 ? ["ion"] : undefined,
       // Saving throws: the ability modifier, and the proficiency bonus where the class is proficient
       saves: Object.fromEntries(["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"].map((a) => [a, scoreMod(a) + (savedAbilities.includes(a) ? proficiency : 0)])),
@@ -1660,6 +1761,14 @@ export default function GameBoard() {
   useEffect(() => {
     if (inCombat || !outcome || !character || !fightBegun.current) return;
     fightBegun.current = false;
+    // The first attack's advantage from a rest aboard is spent with the fight
+    if (play.firstAttack) setTimeout(() => patchPlay({ firstAttack: undefined }), 1500);
+    // The rounds fired are gone from the pack; the weapon keeps its load
+    {
+      const fighters = useCombat.getState();
+      const me = fighters.combatants.find((c) => c.isPlayer);
+      settleAmmo(me?.ammo ? { weapon: me.ammo.weapon, left: me.ammo.left, round: me.ammo.round, spent: me.spentAmmo ?? {} } : fighters.ammoAfter);
+    }
     const areaId = fightArea.current;
     const areaIds = fightAreas.current.length ? [...fightAreas.current] : areaId ? [areaId] : [];
     fightArea.current = null;
@@ -2050,17 +2159,54 @@ export default function GameBoard() {
     const clean = detox();
     if (clean.playState) state.addiction = clean.playState.addiction;
     const healed = restParty(true, work);
+    // Sleeping in the wild (house rules; the books leave camping to the GM): without a bedroll, a tent or a shelter only a quarter of
+    // the spent Hit Dice come back (as the book's Resting in Armor variant); on an ice world the night's cold calls for a DC 10
+    // Constitution save or a level of exhaustion (the DMG's extreme cold, once a rest), unless a tent or shelter, a heat generator with a
+    // cell to run it, or resistance to cold keeps it off (a blanket gives advantage)
+    const camp = dayPlace().where === "wild";
+    const gear = (pattern: RegExp) => ((character.equipment ?? []) as string[]).some((n) => pattern.test(n));
+    const sheltered = gear(/^tent|^emergency shelter/i);
+    const bedded = sheltered || gear(/^bedroll/i);
+    const land = world && here ? trailOf(world, here.id).find((a) => a.kind === "planet")?.type : undefined;
+    let coldLevel = 0;
+    const campNotes: string[] = [];
+    if (camp && !bedded) campNotes.push("Sleeping rough (no bedroll, tent or shelter): a quarter of the Hit Dice back (house rule)");
+    if (camp && land === "ice" && !sheltered && !gear(/^heat generator/i) && !(play.wearing ?? []).some((n) => /diving suit/i.test(n))) {
+      const a = d20();
+      const roll = gear(/^blanket/i) ? Math.max(a, d20()) : a;
+      const total = roll + modifier(character.abilityScores?.constitution);
+      if (total < 10) {
+        coldLevel = 1;
+        campNotes.push(`The cold of the night: Constitution ${total} against DC 10, a level of exhaustion`);
+      } else campNotes.push(`The cold of the night: Constitution ${total} against DC 10, you keep warm`);
+    }
+    // Aboard the party's ship, its suites give the rest more (Starships of the Galaxy, suite systems; see shipyard.ts SuiteRest)
+    const suites = aboardShip ? (aboardShip.mods ?? []).map((m) => shipModNamed(m.name)).filter(Boolean).map((row) => ({ name: row!.name, rest: shipModEffects(row!).rest })).filter((x) => x.rest) : [];
+    const allDice = suites.some((x) => x.rest!.hitDice === "all");
+    const moreDice = suites.reduce((n, x) => n + (typeof x.rest!.hitDice === "number" ? x.rest!.hitDice : 0), 0);
+    const lessTired = Math.max(1, ...suites.map((x) => x.rest!.exhaustion ?? (x.rest!.biobed ? 4 : 1)));
+    if (suites.some((x) => x.rest!.firstAttack)) state.firstAttack = true;
+    const firstCheck = suites.map((x) => x.rest!.firstCheck).filter(Boolean) as (string[] | "any")[];
+    if (firstCheck.length) state.firstCheck = firstCheck.includes("any") ? "any" : [...new Set(firstCheck.flat() as string[])];
+    const forceUser = (character.forcePowers ?? []).length > 0;
+    const topLevel = Math.max(0, ...knownPowers.map((p: any) => Number(p.level) || 0));
+    const tempPoints = suites.some((x) => (forceUser ? x.rest!.tempForce : x.rest!.tempTech)) && knownPowers.length
+      ? Math.max(1, topLevel + (forceUser ? Math.max(modifier(character.abilityScores?.wisdom), modifier(character.abilityScores?.charisma)) : modifier(character.abilityScores?.intelligence)))
+      : 0;
+    const roughDice = camp && !bedded ? Math.max(1, Math.floor(level / 4)) : regained;
+    // Exhaustion from hunger and thirst stays until the character has eaten and drunk (the book)
+    const floorTired = Math.max(0, play.supplies?.lack ?? 0);
     await saveCharacter({
       currentHp: character.maxHp,
-      currentForcePoints: character.maxForcePoints,
-      hitDiceUsed: Math.max(0, (character.hitDiceUsed ?? 0) - regained),
-      ...((character.exhaustionLevel ?? 0) > 0 ? { exhaustionLevel: (character.exhaustionLevel ?? 0) - 1 } : {}),
+      currentForcePoints: character.maxForcePoints + tempPoints,
+      hitDiceUsed: allDice ? 0 : Math.max(0, (character.hitDiceUsed ?? 0) - roughDice - moreDice),
+      ...((character.exhaustionLevel ?? 0) > 0 || coldLevel ? { exhaustionLevel: Math.max(floorTired, Math.min(floorTired > 0 ? character.exhaustionLevel ?? 0 : 6, (character.exhaustionLevel ?? 0) - lessTired + coldLevel)) } : {}),
       playState: state,
       ...(party.length ? { companionData: { ...(character.companionData ?? {}), party: healed.party } } : {}),
       ...extra,
     });
     saveCampaign({ ...pass(8 * 60), ...(world && Object.values(world.areas).some((a) => a.alarm) ? { galaxyMap: clearAlarms(world) } : {}) });
-    toast.info(`Long rest (8 hours): hit points and power points restored, ${regained} Hit Dice regained.${work?.note ? ` ${work.note}.` : ""}${party.length ? " Your companions are back to full." : ""} Alarms have died down.`);
+    toast.info(`Long rest (8 hours): hit points and power points restored, ${allDice ? "all" : roughDice + moreDice} Hit Dice regained.${work?.note ? ` ${work.note}.` : ""}${party.length ? " Your companions are back to full." : ""} Alarms have died down.${suites.length ? ` Aboard: ${suites.map((x) => x.name).join(", ")}${tempPoints ? ` (${tempPoints} temporary points)` : ""}.` : ""}${campNotes.length ? ` ${campNotes.join(". ")}.` : ""}${floorTired ? " Hunger and thirst keep their exhaustion until you eat and drink." : ""}`);
   };
 
   // Wait: an hour, or until the next morning (07:00) or evening (18:00)
@@ -2536,6 +2682,44 @@ export default function GameBoard() {
     }
   }, [today, party.length, inCombat]);
 
+  // Food and water as the days pass (Player's Handbook, Food and Water; lifestyle expenses): where the party is decides how it is fed
+  const WILD_TYPES = ["cave system", "ruins", "crash site", "raider camp", "sewer system"];
+  const dayPlace = () => {
+    const settlement = world && here ? trailOf(world, here.id).find((a) => a.kind === "settlement") : undefined;
+    const planet = world && here ? trailOf(world, here.id).find((a) => a.kind === "planet") : undefined;
+    const land = planet?.type ?? "";
+    const capacity = ((character?.equipment ?? []) as string[]).reduce((n, name) => n + (factsOf(name)?.equipmentCategory === "Storage" ? liquidOf({ name, description: factsOf(name)?.description }) : 0), 0);
+    const where: "settlement" | "ship" | "wild" = aboardShip ? (settlement && hasPort(world!, settlement.id) ? "settlement" : "ship") : settlement && !WILD_TYPES.includes(settlement.type) ? "settlement" : "wild";
+    const survival = modifier(character?.abilityScores?.wisdom) + (skilled("survival") ? proficiency : 0);
+    return { where, hot: HOT_LANDS.includes(land), capacity, conMod: modifier(character?.abilityScores?.constitution), survival, forageDc: planet ? FORAGE_DC[land] ?? 15 : 99, garden: !!aboardShip?.mods?.some((m) => /hydroponics/i.test(m.name)) };
+  };
+  const supplies: Supplies = play.supplies ?? { day: today, hungry: 0, water: 0, lack: 0, lifestyle: "Modest" };
+  useEffect(() => {
+    if (!character || !world || inCombat || dead) return;
+    if (!play.supplies) return void patchPlay({ supplies: { ...supplies, water: dayPlace().capacity } });
+    if (today <= supplies.day) return;
+    const place = dayPlace();
+    const rations = ((character.equipment ?? []) as string[]).filter((n) => !!foodOf({ name: n, description: factsOf(n)?.description }));
+    const r = passDays(supplies, today, place, character.credits ?? 0, rations, Math.random);
+    const equipment = [...((character.equipment ?? []) as string[])];
+    for (const n of r.eaten) equipment.splice(equipment.indexOf(n), 1);
+    const exhausted = Math.min(6, (character.exhaustionLevel ?? 0) + r.exhaustion);
+    saveCharacter({
+      credits: (character.credits ?? 0) - r.cost,
+      ...(r.eaten.length ? { equipment } : {}),
+      ...(r.exhaustion ? { exhaustionLevel: exhausted, ...(exhausted >= 6 ? { conditions: Array.from(new Set([...(character.conditions ?? []), "Dead"])) } : {}) } : {}),
+      playState: { ...((queryClient.getQueryData<any>(["game-character", gameCharacterId])?.playState ?? play) as PlayState), supplies: r.supplies },
+    });
+    const days = today - supplies.day;
+    const said = [
+      r.cost ? `${r.supplies.lifestyle ?? "Modest"} lifestyle: ${r.cost} credits for ${days} day${days > 1 ? "s" : ""}` : "",
+      r.eaten.length ? `${r.eaten.length} day${r.eaten.length > 1 ? "s'" : "'s"} rations eaten` : "",
+      ...r.notes.slice(-3),
+      exhausted >= 6 ? "Six levels of exhaustion: death (the book)." : r.exhaustion ? `Exhaustion ${exhausted}.` : "",
+    ].filter(Boolean).join(" ");
+    if (said) (r.exhaustion ? toast.warning : toast.info)(said);
+  }, [today, inCombat, !!world, !!character]);
+
   // Freeing those held in bonds: the lock or the collar's circuit (Security kit, Slicer's kit),
   // or the strength to break chains (Binders: DC 20 Strength). Each try takes ten minutes.
   const freeCaptive = async (o: Occupant, how: "kit" | "break") => {
@@ -2932,6 +3116,21 @@ export default function GameBoard() {
             return true;
           },
         });
+      } else if (use.kind === "calibrator") {
+        // A calibrator (vibroweapons, handwraps) or collimator (lightweapons): as an action, +1 damage and its property for the fight
+        const fits = carriedWeapons(character).some((w) => !w.ranged && w.type.toLowerCase().includes(use.weapon));
+        if (!fits) continue;
+        out.push({
+          key: name,
+          label,
+          hint: `+${use.damage} damage${use.property ? `, ${use.property}` : ""} on your ${use.weapon}`,
+          target: "none",
+          use: () => {
+            if (!useCombat.getState().itemEffect({ kind: "calibrate", label: name, damage: use.damage, property: use.property })) return false;
+            saveCharacter({ equipment: consume(name).equipment });
+            return true;
+          },
+        });
       } else if (use.kind === "antidote") {
         out.push({
           key: name,
@@ -3051,7 +3250,16 @@ export default function GameBoard() {
       else travelTo(action.areaId, action.secret, action.squares);
     }
     else if (action.type === "exit") leaveBy(action.exit);
-    else if (action.type === "use") setPicked({ kind: "asset", id: `${action.areaId}|${action.id}`, name: action.name });
+    else if (action.type === "use") {
+      // A droid on a dealer's plinth: the dealer comes to the counter
+      const room = (scene ?? world)?.areas[action.areaId];
+      const dealer = /droid plinth/i.test(action.name ?? "") ? room?.occupants.find((o) => o.trade === "droids") : undefined;
+      if (dealer) {
+        const shown = useDisplay.getState().droids[action.id];
+        if (shown) toast.info(`${shown.name}: ${shown.price.toLocaleString("en-GB")} credits. ${dealer.name} comes over.`);
+        setPicked({ kind: "occupant", id: dealer.id });
+      } else setPicked({ kind: "asset", id: `${action.areaId}|${action.id}`, name: action.name });
+    }
     else if (action.type === "window") setPicked({ kind: "window", id: `${action.areaId}|${action.id}`, name: action.outside ? "outside" : "inside" });
     else if (action.type === "station") {
       if (action.id === "helm") setHelmOpen(true);
@@ -3197,6 +3405,8 @@ export default function GameBoard() {
   const flyShip = (exit: Exit) => {
     if (!world || !aboardShip || inCombat || dead || exploring) return;
     const ship = aboardShip;
+    const busy = shipBusy(ship);
+    if (busy) return void toast.error(`${ship.name} cannot fly: ${busy.what} is under way, ready ${clockText(busy.ready)}.`);
     if (ship.fuel < (exit.fuel ?? 0)) return void toast.error(`${ship.name} needs ${exit.fuel} fuel and has ${ship.fuel}.`);
     if (exit.jump && !ship.hyperdriveClass) return void toast.error(`${ship.name} has no hyperdrive.`);
     const took = tripMinutes(exit, Number(ship.hyperdriveClass) || 1);
@@ -3331,6 +3541,69 @@ export default function GameBoard() {
     saveCampaign(pass(plan.hours * 60));
     toast.success(`${f.name} fitted to ${c.name} by the dealer's technician (${money(plan.cost)}, ${plan.hours} hours).`);
   };
+  // The droid customizations a dealer (or a scrapyard) sells today; bought, one is carried as an item, to fit later or at once
+  const { data: droidPartRows = [] } = useQuery<any[]>({
+    queryKey: ["droid-part-rows"],
+    queryFn: async () => ((await (await fetch("/api/sw5e/enhancedItems?fields=id,name,type,searchableRarity")).json()) as any[]).filter((e) => e.type === "DroidCustomization"),
+    staleTime: Infinity,
+  });
+  // What the shop the party is in shows today: the droids of the day on its plinths, the customizations it sells on its shelves
+  const showroomKey = `${here?.id}|${today}|${droidStats.length}|${droidPartRows.length}|${JSON.stringify(here?.occupants.filter((o) => o.trade === "droids").map((o) => traderLedger(o.id).bought) ?? [])}`;
+  useEffect(() => {
+    const room = world && here?.kind === "room" ? world.areas[here.id] : undefined;
+    const trader = room?.occupants.find((o) => o.trade === "droids");
+    if (!world || !room || !trader || !droidStats.length) {
+      useDisplay.getState().set({ droids: {}, shelves: {} });
+      return;
+    }
+    const bought = traderLedger(trader.id).bought;
+    const droids = Object.fromEntries(droidDisplay(world, room.id, today, droidStats, bought).map(({ plinth, line }) => [plinth, { name: line.name, price: line.price }]));
+    const parts = droidPartsStock(world, trader, room.id, today, droidPartRows, bought).map((l) => itemRef(l.name)?.model).filter((m): m is string => !!m);
+    const shelves = Object.fromEntries((room.layout?.assets ?? []).filter((a) => /droid parts shelf|display case/i.test(a.name)).map((a) => [a.id, parts]));
+    useDisplay.getState().set({ droids, shelves });
+  }, [showroomKey]);
+  const buyDroidPart = (trader: Occupant, line: { name: string; price: number }, fitTo?: Companion) => {
+    if (!world || inCombat || dead) return;
+    const fee = fitTo ? droidPlan(factsOfItem(line.name)?.rarity ?? "Standard", fitTo.size ?? "medium").cost : 0;
+    const total = line.price + fee;
+    if (total > (character.credits ?? 0)) return toast.error(`That comes to ${total.toLocaleString()} credits.`);
+    recordDeal(trader.id, (e) => ({ ...e, bought: { ...e.bought, [line.name]: (e.bought[line.name] ?? 0) + 1 } }));
+    if (fitTo) {
+      const f = factsOfItem(line.name);
+      if (!f?.droid) return toast.error("The facts of that part are still loading.");
+      if ((fitTo.custom ?? []).length >= (fitTo.motor ?? DROID_BASE_SLOTS)) return toast.error(`${fitTo.name}'s motor is full: upgrade it first.`);
+      const plan = droidPlan(f.rarity, fitTo.size ?? "medium");
+      const stock = fitTo.stock ?? { armorClass: fitTo.armorClass, speed: fitTo.speed };
+      saveParty(party.map((x) => (x.id === fitTo.id ? droidWith({ ...x, stock, custom: [...(x.custom ?? []), f.name] }) : x)), { credits: character.credits - total });
+      saveCampaign(pass(plan.hours * 60));
+      return toast.success(`${line.name} bought and fitted to ${fitTo.name} by the dealer's technician (${total.toLocaleString()} credits, ${plan.hours} hours).`);
+    }
+    saveCharacter({ credits: character.credits - line.price, equipment: [...(character.equipment ?? []), line.name] });
+    toast.success(`${line.name} bought for ${line.price.toLocaleString()} credits; fit it from your droid's card or here.`);
+  };
+  const droidPartsPanel = (trader: Occupant, placeId: string) => {
+    if (!world) return null;
+    const lines = droidPartsStock(world, trader, placeId, today, droidPartRows, traderLedger(trader.id).bought);
+    const droids = party.filter((c) => c.kind === "droid");
+    if (!lines.length) return null;
+    return (
+      <div className="space-y-0.5" data-testid="droid-parts">
+        <p className="font-semibold text-gray-300">{trader.trade === "salvage" ? "Salvaged droid parts" : "Customizations for sale"}</p>
+        <ul className="max-h-40 space-y-0.5 overflow-y-auto">
+          {lines.map((l) => (
+            <li key={l.name} className="flex flex-wrap items-center gap-1" data-testid="droid-part-line">
+              <span className="flex-1">{l.name} <span className="text-gray-400">{l.rarity}</span></span>
+              <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || l.price > (character.credits ?? 0)} onClick={() => buyDroidPart(trader, l)} data-testid="droid-part-buy">Buy {l.price.toLocaleString("en-GB")} cr</Button>
+              {trader.trade === "droids" && droids.map((c) => (
+                <Button key={c.id} size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead} onClick={() => buyDroidPart(trader, l, c)} data-testid="droid-part-fit">and fit to {c.name}</Button>
+              ))}
+            </li>
+          ))}
+        </ul>
+        <p className="text-gray-500">House rule: customizations are sold over the counter here (Wretched Hives has them found or made), at their value; fitting them yourself takes astrotech's implements and a check by whoever does it, the technician does it for a fee with no check.</p>
+      </div>
+    );
+  };
   const droidShop = (trader: Occupant, placeId: string, label: string) => {
     if (!world) return null;
     const traded = traderLedger(trader.id);
@@ -3340,12 +3613,12 @@ export default function GameBoard() {
     const fits = carried.filter((n) => factsOfItem(n)?.droid);
     return (
       <div className="mt-2 space-y-1 border-t border-gray-600 pt-2 text-xs" data-testid="droid-shop">
-        <p><span className="font-semibold text-amber-200">{label}</span> <span className="text-gray-400">Credits: {character.credits ?? 0}. Priced by experience (house rule).</span></p>
+        <p><span className="font-semibold text-amber-200">{label}</span> <span className="text-gray-400">Credits: {character.credits ?? 0}. Prices from the Expanded Content's droid table; droids it does not list on a curve through it (house rule).</span></p>
         <p className="font-semibold text-gray-300">For sale</p>
         <ul className="max-h-40 space-y-0.5 overflow-y-auto">
           {stock.map((d) => (
             <li key={d.id} className="flex items-center gap-1">
-              <span className="flex-1">{d.name} <span className="text-gray-400">CR {d.cr}{d.combat ? ", built for war" : ""}</span></span>
+              <span className="flex-1">{d.name} <span className="text-gray-400">CR {d.cr}{d.combat ? ", built for war" : ""}{droidListed(d.name) ? ", the book's price" : ""}</span></span>
               <span className="text-amber-200">{d.price} cr</span>
               <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || d.price > (character.credits ?? 0) || partyFull} onClick={() => buyDroid(trader, d)} data-testid={`droid-buy-${d.id}`}>Buy</Button>
             </li>
@@ -3354,7 +3627,7 @@ export default function GameBoard() {
         </ul>
         {droids.length > 0 && <p className="font-semibold text-gray-300">Your droids</p>}
         {droids.map((c) => {
-          const offer = droidOffer(c.xp ?? 50, c.hp, c.maxHp);
+          const offer = droidOffer(c.xp ?? 50, c.hp, c.maxHp, c.name);
           const mend = droidRepairPrice(c.cr, c.maxHp - c.hp);
           return (
             <div key={c.id} className="space-y-0.5" data-testid={`droid-mine-${c.id}`}>
@@ -3381,7 +3654,8 @@ export default function GameBoard() {
           );
         })}
         {!droids.length && <p className="text-gray-400">You have no droids to sell, mend or fit. A disabled droid is mended and bolted from its card.</p>}
-        <p className="text-gray-500">A droid's base price is {droidPrice(200)} credits for CR 1; the dealer pays two fifths of it for yours.</p>
+        {droidPartsPanel(trader, placeId)}
+        <p className="text-gray-500">The dealer pays two fifths of a droid's price for yours.</p>
       </div>
     );
   };
@@ -3395,6 +3669,194 @@ export default function GameBoard() {
     saveCampaign({ starships: ships.map((s) => (s.id === ship.id ? { ...s, hangar: h.buildingId } : s)), ...(moved ? pass(10) : {}) });
     toast.info(`${ship.name} puts down in ${h.name}${moved ? " (ten minutes)" : ""}. ${h.note}`);
   };
+  // ---- Ship parts and the work on a ship (2026-10-21; shipyard.ts): bought from a scrapyard or a shipyard, carried in the hold
+  // (playState.shipParts), fitted by a shipyard (its fee, no check) or by the crew (the material cost already paid, a workforce, days of
+  // the clock and an Intelligence (Mechanic's Kit) check by whoever leads)
+  const shipParts: ShipPart[] = play.shipParts ?? [];
+  const [yardWeapon, setYardWeapon] = useState<Record<string, string>>({});
+  const saveParts = (next: ShipPart[], extra: Record<string, any> = {}) => saveCharacter({ playState: { ...play, shipParts: next }, ...extra });
+  const shipsAt = (settlementId?: string) => ships.filter((x) => x.areaId === settlementId);
+  const partSize = (settlementId?: string) => shipsAt(settlementId)[0]?.size ?? ships[0]?.size ?? "Small";
+  const partRow = (part: Pick<ShipPart, "kind" | "name">) => (part.kind === "mod" ? shipModNamed(part.name) : undefined);
+  const enhancedValueOf = (e: any) => enhancedValue({ id: e.id, name: e.name, searchableRarity: e.searchableRarity, type: e.type });
+  // A part needs a weapon chosen when it is a weapon system for one weapon, or an enhanced ship weapon
+  const needsWeapon = (part: Pick<ShipPart, "kind" | "name" | "type">) => {
+    const row = partRow(part);
+    return (!!row && row.type === "Weapon" && !/^Hardpoint$/i.test(row.name) && !shipModEffects(row).weapon?.allPrimary) || (part.kind === "enhanced" && part.type === "ShipWeapon");
+  };
+  // The yard's fee and days for fitting a part the party brings: the installation half of the book's cost; for an enhanced part,
+  // house rule: a tenth of its worth and a day
+  const yardFee = (ship: PartyShip, part: ShipPart): { fee: number; days: number } => {
+    const row = partRow(part);
+    if (row) return { fee: modCost(row, ship.size).installed - modCost(row, ship.size).material, days: modDays(row, ship.size, yardWorkforce(ship.size, "mod")) };
+    const eq = shipRows.find((r: any) => r.name === part.name);
+    if (eq) return { fee: equipmentCost(eq, ship.size).installed - equipmentCost(eq, ship.size).material, days: equipmentDays(eq, ship.size, 2 * equipmentWorkforce(ship.size)) };
+    return { fee: Math.round(part.worth / 10), days: 1 };
+  };
+  const workUntil = (days: number) => clockNow() + Math.round(days * DAY);
+  const buyPart = (holderId: string, line: PartLine, install: boolean, shipId?: string) => {
+    const credits = character.credits ?? 0;
+    const cost = install ? line.installed ?? line.price : line.price;
+    if (cost > credits) return void toast.error(`That costs ${cost} credits; you have ${credits}.`);
+    const part: ShipPart = { ...line.part, id: newId("part") };
+    if (install && shipId) {
+      const ship = ships.find((x) => x.id === shipId);
+      if (!ship) return;
+      const fit = fitShipPart(ship, part, shipRows);
+      if (fit.error) return void toast.error(fit.error);
+      const days = line.days ?? 1;
+      saveParts([...shipParts, ...fit.returned], { credits: credits - cost });
+      saveCampaign({ starships: ships.map((x) => (x.id === ship.id ? { ...fit.ship, work: { what: `fitting ${part.name}`, ready: workUntil(days), by: "yard" } } : x)) });
+      toast.success(`The yard fits ${part.name} to ${ship.name} for ${cost} credits: ${days} days of work.${fit.returned.length ? ` ${fit.returned.map((x) => x.name).join(", ")} goes to your hold.` : ""}`);
+      return;
+    }
+    saveParts([...shipParts, part], { credits: credits - cost });
+    toast.success(`${part.name} bought for ${cost} credits; it is in your hold.`);
+  };
+  const sellPart = (part: ShipPart, offer: number) => {
+    saveParts(shipParts.filter((x) => x.id !== part.id), { credits: (character.credits ?? 0) + offer });
+    toast.success(`${part.name} sold for ${offer} credits.`);
+  };
+  // The yard fits a part from the hold
+  const yardInstall = (ship: PartyShip, part: ShipPart, weapon?: string) => {
+    const { fee, days } = yardFee(ship, part);
+    const credits = character.credits ?? 0;
+    if (fee > credits) return void toast.error(`The yard asks ${fee} credits; you have ${credits}.`);
+    const fit = fitShipPart(ship, part, shipRows, weapon);
+    if (fit.error) return void toast.error(fit.error);
+    saveParts([...shipParts.filter((x) => x.id !== part.id), ...fit.returned], { credits: credits - fee });
+    saveCampaign({ starships: ships.map((x) => (x.id === ship.id ? { ...fit.ship, work: { what: `fitting ${part.name}`, ready: workUntil(days), by: "yard" } } : x)) });
+    toast.success(`The yard fits ${part.name} for ${fee} credits: ready in ${days} days.`);
+  };
+  const yardTier = (ship: PartyShip) => {
+    const to = (ship.tier ?? 0) + 1;
+    const plan = tierUpgrade(ship.size, to, yardWorkforce(ship.size, "tier"));
+    const credits = character.credits ?? 0;
+    if (plan.cost > credits) return void toast.error(`Tier ${to} costs ${plan.cost} credits; you have ${credits}.`);
+    saveCharacter({ credits: credits - plan.cost });
+    saveCampaign({ starships: ships.map((x) => (x.id === ship.id ? { ...x, tier: to, work: { what: `the upgrade to tier ${to}`, ready: workUntil(plan.days), by: "yard" } } : x)) });
+    toast.success(`${ship.name} goes up to tier ${to} for ${plan.cost} credits: ${plan.days} days in the yard.`);
+  };
+  // The crew's own work: the workers chosen, a check by whoever leads (the dialog asks who and with what), days on the clock
+  const mechanicsKit = () => (character.equipment ?? []).find((n: string) => /^mechanic's kit$/i.test(n));
+  const crewInstall = async (ship: PartyShip, part: ShipPart, workers: string[], weapon?: string) => {
+    if (!world || inCombat || dead) return;
+    const kit = mechanicsKit();
+    if (!kit) return void toast.error("Installing needs a mechanic's kit.");
+    const atPort = hasPort(world, ship.areaId);
+    const row = partRow(part);
+    const eq = shipRows.find((r: any) => r.name === part.name);
+    const plan = row ? crewModPlan(ship, row, workers.length, atPort) : eq ? crewEquipmentPlan(ship, eq, workers.length, atPort) : { days: 1, dc: 10 + (atPort ? 0 : 5), workforce: 1, enough: workers.length > 0, reason: workers.length ? "" : "Pick who works." };
+    if (!plan.enough) return void toast.error(plan.reason);
+    // A mechanic's shop suite aboard: its integrated tools add the proficiency bonus (the book: proficiency, or double it)
+    const shop = (ship.mods ?? []).some((m) => /^Mechanic's Shop$/i.test(m.name));
+    const r = await toolRoll(kit, plan.dc, `Installing ${part.name}`, "intelligence", shop ? proficiency : 0);
+    if (r.cancelled) return;
+    if (r.success) {
+      const fit = fitShipPart(ship, part, shipRows, weapon);
+      if (fit.error) return void toast.error(fit.error);
+      saveParts([...shipParts.filter((x) => x.id !== part.id), ...fit.returned]);
+      saveCampaign({ starships: ships.map((x) => (x.id === ship.id ? fit.ship : x)), ...pass(Math.round(plan.days * DAY)) });
+      toast.success(`${part.name} is installed in ${ship.name} after ${plan.days} days of work.`);
+    } else {
+      // The book: on a failure half the time and cost is incurred and it is not installed
+      const lost = Math.min(character.credits ?? 0, Math.round(part.worth / 2));
+      saveCharacter({ credits: (character.credits ?? 0) - lost });
+      saveCampaign({ ...pass(Math.round((plan.days / 2) * DAY)) });
+      toast.error(`The installation fails: ${plan.days / 2} days lost and ${lost} credits of spoiled components. The part is still in the hold.`);
+    }
+  };
+  const crewTier = (ship: PartyShip, workers: string[]) => {
+    const to = (ship.tier ?? 0) + 1;
+    const plan = tierUpgrade(ship.size, to, workers.length);
+    const credits = character.credits ?? 0;
+    if (workers.length < plan.workforce) return void toast.error(`A ${ship.size} ship needs a workforce of ${plan.workforce} for a tier.`);
+    if (plan.own > credits) return void toast.error(`The materials cost ${plan.own} credits; you have ${credits}.`);
+    saveCharacter({ credits: credits - plan.own });
+    saveCampaign({ starships: ships.map((x) => (x.id === ship.id ? { ...x, tier: to } : x)), ...pass(Math.round(plan.days * DAY)) });
+    toast.success(`${ship.name} is tier ${to} after ${plan.days} days of your own work, for ${plan.own} credits of materials.`);
+  };
+  // Taking a modification out (the book: half the cost and half the time); house rule: the crew gets the part back, salvaged
+  const removeShipMod = (ship: PartyShip, mod: ShipModInstance, index: number) => {
+    const row = shipModNamed(mod.name);
+    if (!row) return;
+    const cost = Math.round(modCost(row, ship.size).material / 2);
+    const days = modDays(row, ship.size, Math.max(1, 1 + party.filter((c) => c.kind !== "beast").length)) / 2;
+    if (cost > (character.credits ?? 0)) return void toast.error(`Removing it costs ${cost} credits.`);
+    const part: ShipPart = { id: newId("part"), kind: "mod", name: row.name, size: ship.size, grade: row.grade, type: row.type, worth: Math.round(modCost(row, ship.size).material / 2), salvaged: true };
+    saveParts([...shipParts, part], { credits: (character.credits ?? 0) - cost });
+    saveCampaign({ starships: ships.map((x) => (x.id === ship.id ? { ...x, mods: (x.mods ?? []).filter((_, i) => i !== index) } : x)), ...pass(Math.round(days * DAY)) });
+    toast.info(`${row.name} comes out of ${ship.name} in ${days} days, for ${cost} credits; the part is in the hold (salvaged).`);
+  };
+  // The parts counter of a scrapyard's dealer or a shipyard's outfitter
+  const partsCounter = (o: Occupant, holderId: string) => {
+    if (!world) return null;
+    const place = partsPlaceAt(world, o, holderId, today);
+    if (!place) return null;
+    const settlement = trailOf(world, holderId).find((a) => a.kind === "settlement");
+    const building = trailOf(world, holderId).find((a) => a.kind === "building");
+    const size = partSize(settlement?.id);
+    const lines = shipRows.length ? partsStock(place, size, shipRows, enhancedShipRows.map((e) => ({ ...e, value: enhancedValueOf(e) }))) : [];
+    const inYard = place.kind === "yard" ? shipsAt(settlement?.id).find((x) => x.hangar === building?.id) : undefined;
+    return (
+      <PartsCounter
+        kind={place.kind}
+        lines={lines}
+        owned={shipParts}
+        credits={character.credits ?? 0}
+        disabled={inCombat || dead}
+        size={size}
+        shipHere={inYard?.name}
+        installBlocked={(line) => (!inYard ? "Put your ship down in this shipyard's hangar first." : inYard.size !== size ? "Priced for another size." : needsWeapon(line.part) ? "Buy it, then have the mechanic fit it to a weapon." : shipBusy(inYard) ? "The yard is busy with your ship." : "")}
+        onBuy={(line, install) => buyPart(holderId, line, install, inYard?.id)}
+        onSell={sellPart}
+      />
+    );
+  };
+
+  // What a shipyard's mechanics do for the party's ship in their hangar: the next tier (the book's cost with the yard's workforce) and
+  // fitting the parts the party brings (the installation half of the cost; no check)
+  const yardWork = (ship: PartyShip) => {
+    const weaponFor = yardWeapon;
+    const setWeaponFor = setYardWeapon;
+    const sheet = shipSheet(ship, shipRows, proficiency);
+    const busy = shipBusy(ship);
+    const credits = character.credits ?? 0;
+    const to = (ship.tier ?? 0) + 1;
+    const tier = to <= 5 ? tierUpgrade(ship.size, to, yardWorkforce(ship.size, "tier")) : undefined;
+    const damaged = ship.hull !== undefined && ship.hull < sheet.hullMax;
+    return (
+      <div className="space-y-1" data-testid="yard-work">
+        {busy && <p className="text-amber-300">The yard is at work: {busy.what}, ready {clockText(busy.ready)}.</p>}
+        {tier && (
+          <div className="flex items-center gap-1">
+            <span className="flex-1">Upgrade to tier {to}: {tier.cost.toLocaleString("en-GB")} cr, {tier.days} days (the book's cost and time)</span>
+            <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || !!busy || damaged || tier.cost > credits} title={damaged ? "Mend the hull first" : ""} onClick={() => yardTier(ship)} data-testid="yard-tier">Upgrade</Button>
+          </div>
+        )}
+        {shipParts.map((part) => {
+          const { fee, days } = yardFee(ship, part);
+          const weapons = sheet.weapons.map((w) => w.name);
+          const weapon = weaponFor[part.id] ?? weapons[0];
+          const wrongSize = part.size && part.size !== ship.size && part.type !== "Weapon" && part.kind !== "enhanced";
+          return (
+            <div key={part.id} className="flex items-center gap-1" data-testid="yard-fit">
+              <span className="flex-1">{part.name} <span className="text-gray-400">{partLabel(part)}</span></span>
+              {needsWeapon(part) && weapons.length > 0 && (
+                <select className="bg-gray-800 text-xs" value={weapon} onChange={(e) => setWeaponFor((m) => ({ ...m, [part.id]: e.target.value }))}>
+                  {weapons.map((w) => <option key={w} value={w}>{w}</option>)}
+                </select>
+              )}
+              <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || !!busy || !!wrongSize || fee > credits} title={wrongSize ? `Assembled for a ${part.size} ship` : ""} onClick={() => yardInstall(ship, part, needsWeapon(part) ? weapon : undefined)} data-testid="yard-fit-part">
+                Fit ({fee.toLocaleString("en-GB")} cr, {days} days)
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   const shipServices = (o: Occupant, holderId: string) => {
     if (!world) return null;
     const building = trailOf(world, holderId).find((a) => a.kind === "building");
@@ -3412,7 +3874,7 @@ export default function GameBoard() {
     return (
       <div className="mt-1 space-y-2 border-t border-gray-600 pt-1 text-xs" data-testid="ship-services">
         {mine.map((ship) => {
-          const cap = getStarshipSize(ship.size)?.fuelCapacity ?? ship.fuel;
+          const cap = fuelCap(ship);
           const price = getStarshipSize(ship.size)?.fuelCost ?? passageRate;
           const sheet = shipRows.length ? shipSheet(ship, shipRows, prof) : undefined;
           const missing = sheet ? Math.max(0, sheet.hullMax - (ship.hull ?? sheet.hullMax)) : 0;
@@ -3437,6 +3899,7 @@ export default function GameBoard() {
                   {missing > 0 ? `Mend the hull (${missing} points, ${mend} cr)` : "The hull is sound"}
                 </Button>
               )}
+              {repairs && sheet && yardWork(ship)}
               {upgrades && shipRows.length > 0 && (
                 <div className="space-y-0.5" data-testid="service-upgrades">
                   {outfitterStock(shipRows, o.id).map((item) => {
@@ -3761,10 +4224,73 @@ export default function GameBoard() {
   // The plain item whose modification slots are open, and the droid companion being customized
   const [modding, setModding] = useState<string | null>(null);
   const [customizing, setCustomizing] = useState<string | null>(null);
+  // Loading a ranged weapon out of a fight (a minute): a cell or generator fills it (a partly spent cell is swapped out and lost);
+  // cartridges, bolts, darts and the like go in one a shot, and those of another kind come back out to the pack
+  const loadWeapon = (weapon: string, round: string) => {
+    const w = carriedWeapons(character).find((x) => x.name === weapon);
+    const kit = ammoKit(w);
+    if (!kit || kit.max <= 0) return;
+    const equipment = [...((character.equipment ?? []) as string[])];
+    const fills = ["cell", "generator"].includes(kit.family);
+    const have = equipment.filter((n) => n === round).length;
+    if (!have) return void toast.error(`You carry no ${round.toLowerCase()}.`);
+    const per = kit.shotsPer[round] ?? 1;
+    const take = fills ? 1 : Math.min(have, Math.ceil(kit.max / per));
+    const old = kit.round ?? kit.plain;
+    if (!fills && kit.left > 0 && old !== round) for (let i = 0; i < Math.ceil(kit.left / (kit.shotsPer[old] ?? 1)); i++) equipment.push(old);
+    for (let i = 0; i < take; i++) equipment.splice(equipment.indexOf(round), 1);
+    const shots = fills ? kit.max : Math.min(kit.max, take * per) + (old === round ? kit.left : 0);
+    saveCharacter({ equipment, playState: { ...play, loads: { ...(play.loads ?? {}), [weapon]: { left: Math.min(kit.max, shots), round: round === kit.plain ? undefined : round } } } });
+    saveCampaign(pass(1));
+    toast.success(`${weapon} loaded with ${round.toLowerCase()}: ${Math.min(kit.max, shots)} shots.`);
+  };
+  // What a round, an accessory or a piece of gear does, in words, for the item's panel
+  const riderText = (r: AmmoRider) => [
+    r.base && `${r.base.dice} ${r.base.type} a hit`,
+    r.becomes && `the damage becomes ${r.becomes}`,
+    r.save && `a DC ${r.dc} ${r.save} save${r.dice ? ` against ${r.dice} ${r.type}` : ""}${r.condition ? `, or ${r.condition}` : ""}`,
+    r.burst && `explodes ${r.burst.hitOrMiss ? "hit or miss " : ""}(${r.burst.radius} ft., DC ${r.burst.dc} ${r.burst.save}, ${r.burst.dice} ${r.burst.type})`,
+    r.area && `a ${r.area.length}-foot ${r.area.shape} (DC ${r.area.dc} ${r.area.save}, ${r.area.dice} ${r.area.type}), three shots`,
+    r.fire && `sets the ground ablaze (${r.fire.dice} fire a turn)`,
+    r.finish && (r.finish.what === "frozen" ? "freezes the fallen in carbonite" : `disintegrates the fallen (DC ${r.finish.dc})`),
+    r.restrains && `restrains until freed (DC ${r.restrains.dc})`,
+  ].filter(Boolean).join("; ");
   const usePanel = (name: string) => {
     const use = gearOf(name);
     const facts = factsOf(name);
     if (!use) return null;
+    if (use.kind === "ammo") {
+      const weapons = carriedWeapons(character).filter((w) => !w.natural && ammoKit(w)?.family === use.family && (ammoKit(w)?.max ?? 0) > 0);
+      return (
+        <div className="mt-1 space-y-1 text-xs" data-testid="ammo-panel">
+          <p className="text-gray-300">{riderText(use.rider) || "Plain rounds."} {facts?.description ? "" : ""}</p>
+          {weapons.map((w) => {
+            const kit = ammoKit(w)!;
+            return (
+              <div key={w.name} className="flex items-center gap-1">
+                <span className="flex-1">{w.name}: {kit.left}/{kit.max} ({(kit.round ?? kit.plain).toLowerCase()})</span>
+                <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => loadWeapon(w.name, name)} data-testid="ammo-load">Load it (a minute)</Button>
+              </div>
+            );
+          })}
+          {!weapons.length && <p className="text-gray-400">{use.family === "arrow" ? "A bow draws these one at a time in a fight." : "No weapon you carry takes these."}</p>}
+          <p className="text-gray-500">In a fight each shot spends a round; reloading is an action or a bonus action (free with an ammo pouch, power belt, bandolier, quiver or feed belt). A weapon never fired comes loaded (house rule).</p>
+        </div>
+      );
+    }
+    if (use.kind === "calibrator") {
+      const fits = carriedWeapons(character).find((w) => !w.ranged && w.type.toLowerCase().includes(use.weapon));
+      return (
+        <div className="mt-1 space-y-1 text-xs" data-testid="calibrator-panel">
+          <p className="text-gray-300">+{use.damage} damage{use.property ? ` and the ${use.property} property` : ""} on a {use.weapon}, for a minute (the next fight).</p>
+          <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || !fits} onClick={() => {
+            const spent = consume(name);
+            saveCharacter({ equipment: spent.equipment, playState: { ...play, buffs: [...(play.buffs ?? []).filter((b) => b.kind !== "collimator"), { name, kind: "collimator", effects: { damage: use.damage, properties: use.property ? [use.property] : [] }, weapon: use.weapon, fight: true }] } });
+            toast.success(`${name} applied to your ${fits!.name}: +${use.damage} damage${use.property ? `, ${use.property}` : ""} for the next fight.`);
+          }} data-testid="calibrator-apply">{fits ? `Apply to ${fits.name}` : `Wield a ${use.weapon} first`}</Button>
+        </div>
+      );
+    }
     const people: { id: string; label: string }[] = [{ id: "self", label: "you" }, ...party.map((c) => ({ id: c.id, label: c.name }))];
     const text = facts?.description ? <p className="text-gray-400">{facts.description}</p> : null;
     if (use.kind === "tool") return <>{toolPanel(name)}{text}</>;
@@ -4069,10 +4595,12 @@ export default function GameBoard() {
   const writeFit = (name: string, fit: Fitted & { crystalMax?: string }, extra: Record<string, any> = {}) =>
     saveCharacter({ ...extra, playState: { ...((extra.playState as any) ?? play), fitted: { ...(play.fitted ?? {}), [name]: fit } } });
   const tinkerWait = () => (play.tinkerUntil ?? 0) > clockNow();
+  // The check of a fitting: whoever does the work (the dialog asks who, and with what) rolls Intelligence with the tool
   const modCheck = async (what: string, rarity: string, tool: string) => {
     const trained = trainedWith(tool);
     const dc = (INSTALL_DC[rarity.toLowerCase()] ?? 10) + (trained ? 0 : 5);
-    return { ok: await abilityCheck(what, dc, ["intelligence"], trained), dc };
+    const r = await toolRoll(tool, dc, what);
+    return { ok: !!r.success && !r.cancelled, dc };
   };
   const installMod = async (item: string, mod: string) => {
     const f = factsOfItem(mod);
@@ -4673,6 +5201,8 @@ export default function GameBoard() {
               <p className="text-xs text-gray-400">To talk with them, say what you do on the GM Interface tab.</p>
               {waresOf(o) && tradePanel(o, holderId)}
               {shipServices(o, holderId)}
+              {partsCounter(o, holderId)}
+              {o.trade === "salvage" && droidPartsPanel(o, holderId)}
               {scriptPanel(o, holderId)}
               {o.role === "medic" && augmentPanel(o)}
               {(o.role === "ticket agent" || (o.role === "smuggler" && o.disposition !== "hostile")) && passagePanel(o)}
@@ -4881,6 +5411,18 @@ export default function GameBoard() {
   };
   const restButtons = character && (
     <div className="flex flex-wrap gap-2" data-testid="play-rest">
+      <div className="flex w-full flex-wrap items-center gap-1 text-xs" data-testid="supplies">
+        <span className="text-gray-300">
+          Food and water: {supplies.hungry ? `${supplies.hungry} day${supplies.hungry > 1 ? "s" : ""} without food, ` : ""}{supplies.water} pints carried
+          {" "}({((character.equipment ?? []) as string[]).filter((n) => !!foodOf({ name: n, description: factsOf(n)?.description })).length} days' rations)
+        </span>
+        <label className="flex items-center gap-1">
+          Lifestyle in settlements:
+          <select className="h-6 rounded bg-gray-700 px-1" value={supplies.lifestyle ?? "Modest"} onChange={(e) => patchPlay({ supplies: { ...supplies, lifestyle: e.target.value } })} data-testid="lifestyle">
+            {GEAR.lifestyle.map((l) => <option key={l.name} value={l.name}>{l.name} ({l.cost} cr/day)</option>)}
+          </select>
+        </label>
+      </div>
       <Button size="sm" variant="outline" onClick={shortRest} disabled={inCombat || dead || hostiles.length > 0}>
         Short rest
       </Button>
@@ -5168,7 +5710,7 @@ export default function GameBoard() {
               <div className="mb-4 space-y-2 rounded border border-sky-500/60 p-2 text-xs" data-testid="helm">
                 <h3 className="font-semibold text-sky-300">Aboard {aboardShip.name}</h3>
                 <p className="text-gray-300">
-                  {aboardShip.size} {aboardShip.role.toLowerCase()}, fuel {aboardShip.fuel}/{getStarshipSize(aboardShip.size)?.fuelCapacity ?? "?"}
+                  {aboardShip.size} {aboardShip.role.toLowerCase()}, fuel {aboardShip.fuel}/{fuelCap(aboardShip)}
                   {aboardShip.hyperdriveClass ? `, hyperdrive class ${aboardShip.hyperdriveClass}` : ", no hyperdrive"}; {world.areas[aboardShip.areaId]?.kind === "settlement" ? "landed at" : "in the space of"} {world.areas[aboardShip.areaId]?.name}.
                 </p>
                 <div className="flex flex-wrap gap-1">
@@ -5180,6 +5722,23 @@ export default function GameBoard() {
                   </Button>
                 </div>
                 {crewPanel(aboardShip)}
+                {shipRows.length > 0 && (
+                  <ShipSystems
+                    ship={aboardShip}
+                    sheet={shipSheet(aboardShip, shipRows, proficiency)}
+                    parts={shipParts}
+                    workers={[{ id: "self", name: character.name }, ...party.filter((c) => c.kind !== "beast" && c.hp > 0).map((c) => ({ id: c.id, name: c.name }))]}
+                    hasKit={!!mechanicsKit()}
+                    atPort={hasPort(world, aboardShip.areaId)}
+                    credits={character.credits ?? 0}
+                    disabled={inCombat || dead}
+                    minutesNow={clockMinutes}
+                    shipRows={shipRows}
+                    onCrewInstall={(part, workers, weapon) => crewInstall(aboardShip, part, workers, weapon)}
+                    onCrewTier={(workers) => crewTier(aboardShip, workers)}
+                    onRemove={(m, i) => removeShipMod(aboardShip, m, i)}
+                  />
+                )}
                 {world.areas[aboardShip.areaId]?.kind === "settlement" && hangarsOf(world, aboardShip.areaId).length > 0 && (
                   <div className="space-y-1" data-testid="hangars">
                     <p className="font-semibold">{aboardShip.hangar ? "Put down in" : "Choose a hangar to put down in"}</p>
@@ -5200,7 +5759,7 @@ export default function GameBoard() {
                 {helmOpen && (
                   <div className="space-y-1" data-testid="helm-courses">
                     {helmExits(world, aboardShip.areaId).map((exit, i) => {
-                      const short = (exit.fuel ?? 0) > aboardShip.fuel || (exit.jump && !aboardShip.hyperdriveClass);
+                      const short = (exit.fuel ?? 0) > aboardShip.fuel || (exit.jump && !aboardShip.hyperdriveClass) || !!shipBusy(aboardShip);
                       const minutes = tripMinutes(exit, Number(aboardShip.hyperdriveClass) || 1);
                       return (
                         <div key={`${exit.to}-${i}`} className="flex items-center justify-between gap-2">
@@ -5532,7 +6091,7 @@ export default function GameBoard() {
                         <span>
                           {ship.name}{" "}
                           <span className="text-gray-400">
-                            {ship.size} {ship.role.toLowerCase()}, fuel {ship.fuel}/{getStarshipSize(ship.size)?.fuelCapacity ?? "?"}
+                            {ship.size} {ship.role.toLowerCase()}, fuel {ship.fuel}/{fuelCap(ship)}
                             {ship.hyperdriveClass ? `, hyperdrive class ${ship.hyperdriveClass}` : ", no hyperdrive"}
                             {ship.areaId === here.id ? ", here" : `, at ${world.areas[ship.areaId]?.name ?? "an unknown berth"}`}
                           </span>
@@ -5553,7 +6112,7 @@ export default function GameBoard() {
                             </Button>
                           );
                         })()}
-                        {ship.areaId === here.id && hasPort(world, here.id) && !sellsFuelAt(world, here.id) && ship.fuel < (getStarshipSize(ship.size)?.fuelCapacity ?? 0) && (
+                        {ship.areaId === here.id && hasPort(world, here.id) && !sellsFuelAt(world, here.id) && ship.fuel < fuelCap(ship) && (
                           <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => refuel(ship)}>
                             Refuel ({getStarshipSize(ship.size)?.fuelCost} cr a unit)
                           </Button>

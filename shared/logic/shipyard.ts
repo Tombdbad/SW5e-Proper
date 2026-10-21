@@ -648,3 +648,14 @@ export function crewEquipmentPlan(ship: { size: string }, row: { type: string; c
   // House rule: fitting equipment yourself is an Intelligence (Mechanic's Kit) check of DC 10 (the book names no DC for equipment)
   return { days: equipmentDays(row, ship.size, workers) * (atPort ? 1 : 2), dc: 10 + (atPort ? 0 : 5), workforce: need, enough, reason: enough ? "" : `A ${ship.size} ship takes a workforce of ${need} for its equipment; you have ${workers}.` };
 }
+
+// What can be taken from a ship beaten in a fight (house rule, 2026-10-21): of a wreck, one piece of its equipment in two, salvaged
+// (half its material cost); of a disabled ship nothing (it can be taken whole). The same wreck gives the same piece.
+export function wreckParts(ship: { id: string; size: string; equipment: string[] }, rows: { name: string; type: string; cost: number }[]): ShipPart[] {
+  const r = stream(`wreck|${ship.id}`);
+  if (r() < 0.5) return [];
+  const pieces = ship.equipment.map((n) => rows.find((x) => x.name === n)).filter((x): x is { name: string; type: string; cost: number } => !!x && x.cost > 0 && x.type !== "Ammunition");
+  if (!pieces.length) return [];
+  const row = pieces[Math.floor(r() * pieces.length)];
+  return [{ id: `salvage-${ship.id}`, kind: "equipment", name: row.name, type: row.type, size: ship.size, worth: Math.round(equipmentCost(row, ship.size).material / 2), salvaged: true }];
+}

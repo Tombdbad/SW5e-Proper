@@ -890,7 +890,7 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
   };
   const buffed = (e: { weaponClassification?: string }) => {
     const buff = (character?.playState?.buffs ?? []).find((b: any) => b.kind === "collimator" && String(e.weaponClassification ?? "").toLowerCase().includes(String(b.weapon ?? "")));
-    return buff ? { attack: buff.effects?.attack ?? 0, damage: buff.effects?.damage ?? 0 } : { attack: 0, damage: 0 };
+    return buff ? { attack: buff.effects?.attack ?? 0, damage: buff.effects?.damage ?? 0, props: (buff.effects?.properties ?? []) as string[] } : { attack: 0, damage: 0, props: [] as string[] };
   };
   // What modifications fitted in a plain weapon give (once attuned): bonuses and properties
   const modded = (name: string): { attack: number; damage: number; props: string[] } => {
@@ -900,8 +900,8 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
     return { attack: list.reduce((n, f) => n + (f.effects.attack ?? 0), 0), damage: list.reduce((n, f) => n + (f.effects.damage ?? 0), 0), props: list.flatMap((f) => f.properties ?? []) };
   };
   const weapons: CarriedWeapon[] = [
-    ...owned.map((e) => ({ e, name: e.name, bonus: { ...buffed(e), attack: buffed(e).attack + modded(e.name).attack, damage: buffed(e).damage + modded(e.name).damage, props: modded(e.name).props } })),
-    ...enhanced.map((x) => ({ e: x.base as typeof owned[number], name: x.name, bonus: { attack: bonusOf(x.name).attack + buffed(x.base!).attack, damage: bonusOf(x.name).damage + buffed(x.base!).damage } })),
+    ...owned.map((e) => ({ e, name: e.name, bonus: { ...buffed(e), attack: buffed(e).attack + modded(e.name).attack, damage: buffed(e).damage + modded(e.name).damage, props: [...modded(e.name).props, ...buffed(e).props] } })),
+    ...enhanced.map((x) => ({ e: x.base as typeof owned[number], name: x.name, bonus: { attack: bonusOf(x.name).attack + buffed(x.base!).attack, damage: bonusOf(x.name).damage + buffed(x.base!).damage, props: buffed(x.base!).props } })),
   ].map(({ e, name, bonus }: { e: typeof owned[number]; name: string; bonus: { attack: number; damage: number; props?: string[] } }) => {
     const ranged = /blaster/i.test(e.weaponClassification ?? "");
     const finesse = (e.properties ?? []).some((p) => /^finesse/i.test(p));

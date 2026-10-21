@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import TranslucentPane from "@/components/ui/TranslucentPane";
 import {
   useCombat, attackPlan, cannotAct, movementLeft, pickTarget, powerOutOfRange, squaresApart, onPartySide, LASTING,
-  playerSpec, bonusAttackKinds, bonusFeatures, attacksPerAction, objectReach, squaresToAsset,
+  playerSpec, bonusAttackKinds, bonusFeatures, attacksPerAction, objectReach, squaresToAsset, reloadPlan, propertyNumber,
 } from "@/lib/stores/useCombat";
 import { conditionSummary, motionFeet } from "@/lib/sw5e/rules";
 
@@ -21,7 +21,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
   const {
     combatants, currentTurn, round, combatLog, endCombat, deathSaves, castPower, deathSave, pass, arena, targetId, setTarget,
     pending, resolvePending, attack, standard, useFeature, setEmpower, setManeuver, autoEnd, setAutoEnd, aiStep, nextTurn,
-    objectId, setObject,
+    objectId, setObject, reload, spray, brace,
   } = useCombat();
   // A power that moves things waiting to be told what to move and which way
   const [aiming, setAiming] = useState<number | null>(null);
@@ -67,7 +67,12 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
   const target = player ? pickTarget(combatants, player, targetId) : undefined;
   const rangedSpec = player ? playerSpec(player, "ranged") : undefined;
   const meleeSpec = player ? playerSpec(player, "melee") : undefined;
-  const ranged = player && target && rangedSpec ? attackPlan(arena, combatants, player, target, "ranged", { range: rangedSpec.range }) : undefined;
+  const ranged = player && target && rangedSpec ? attackPlan(arena, combatants, player, target, "ranged", { range: rangedSpec.range, props: rangedSpec.properties }) : undefined;
+  // The ranged weapon's load: shots left (a bow: the rounds carried), the round in it, and what can be loaded
+  const ammo = player?.ammo;
+  const loadedNow = ammo ? (ammo.max > 0 ? ammo.left : ammo.reserves[ammo.round ?? ammo.plain] ?? 0) : 0;
+  const burstN = rangedSpec ? propertyNumber(rangedSpec.properties, "burst") : 0;
+  const rapidN = rangedSpec ? propertyNumber(rangedSpec.properties, "rapid") : 0;
   const meleePlan = player && target && meleeSpec ? attackPlan(arena, combatants, player, target, "melee", { reach: meleeSpec.reach }) : undefined;
   const hasAction = (player?.actions ?? 0) > 0 || (player?.attacksLeft ?? 0) > 0;
   const perAction = player ? attacksPerAction(player) : 1;
@@ -184,6 +189,25 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
             End turn
           </Button>
         </div>
+        {ammo && (
+          <div className="mb-2 flex flex-wrap items-center gap-1 text-xs" data-testid="combat-ammo">
+            <span className={loadedNow > 0 ? "text-gray-300" : "text-red-300"} data-testid="combat-ammo-left" data-value={loadedNow}>
+              {ammo.weapon}: {ammo.max > 0 ? `${ammo.left}/${ammo.max} shots` : `${loadedNow} rounds`} ({(ammo.round ?? ammo.plain).toLowerCase()})
+            </span>
+            {ammo.max > 0 && Object.entries(ammo.reserves).filter(([, n]) => n > 0).map(([round, n]) => {
+              const plan = reloadPlan(player!, round);
+              return (
+                <Button key={round} size="sm" variant="outline" className="h-6 px-2" disabled={!playerTurn || !!plan.why} title={plan.why || (plan.cost === "free" ? "No action (a pouch or belt)" : plan.cost === "bonus" ? "A bonus action" : "An action")} onClick={() => reload(round)} data-testid="combat-reload">
+                  Reload: {round} ({n})
+                </Button>
+              );
+            })}
+            {ammo.max > 0 && !Object.values(ammo.reserves).some((n) => n > 0) && <span className="text-gray-500">No rounds carried to reload with.</span>}
+            {burstN > 0 && <Button size="sm" variant="outline" className="h-6 px-2" disabled={!playerTurn || !hasAction || loadedNow < burstN || !ranged?.possible} onClick={() => spray("burst")} data-testid="combat-burst">Burst ({burstN})</Button>}
+            {rapidN > 0 && <Button size="sm" variant="outline" className="h-6 px-2" disabled={!playerTurn || !hasAction || loadedNow < rapidN || !ranged?.possible} onClick={() => spray("rapid")} data-testid="combat-rapid">Rapid ({rapidN})</Button>}
+          </div>
+        )}
+        {player?.bipod && <Button size="sm" variant="outline" className="mb-2 h-6 px-2" disabled={!playerTurn || !hasAction} onClick={brace}>{player.braced ? "Fold the bipod" : "Deploy the bipod (prone, speed 0)"}</Button>}
         {playerTurn && (
           <div className="flex flex-wrap gap-1 mb-2" data-testid="combat-standard">
             {(["dash", "disengage", "dodge", "hide"] as const).map((a) => (
@@ -433,11 +457,11 @@ function ItemList({ items, disabled }: { items: CombatItemOption[]; disabled: bo
 // turn, an attack run), boost, patch the hull, regenerate shields; tap the map to fly.
 // ---------------------------------------------------------------------------------------------
 
-import { shipFeet, bearingOff, shipSpeed } from "@shared/logic";
+import { shipFeet, bearingOff, shipSpeed, shipSpecialUses } from "@shared/logic";
 import { useShipFight } from "@/lib/stores/useCombat";
 
 export function ShipCombatPanel({ onFinish }: { onFinish: (outcome: NonNullable<ReturnType<typeof useShipFight.getState>["fight"]>["outcome"]) => void }) {
-  const { fight, partyShipId, targetId, setTarget, fire, helm, boost, patch, regenerate, direct, interfere, flee, endTurn, aiStep, turn } = useShipFight();
+  const { fight, partyShipId, targetId, setTarget, fire, helm, boost, patch, regenerate, direct, interfere, special, flee, endTurn, aiStep, turn } = useShipFight();
   const me = fight?.ships.find((s) => s.id === partyShipId);
   const current = fight?.ships[fight.turn];
   const myTurn = !!fight && !!me && current?.id === me.id && !fight.outcome && !me.disabled && !me.destroyed;
@@ -474,6 +498,8 @@ export function ShipCombatPanel({ onFinish }: { onFinish: (outcome: NonNullable<
   };
   const feet = target ? shipFeet(me, target) : 0;
   const bar = (now: number, max: number) => (max > 0 ? `${now}/${max}` : "-");
+  // A tuned or computer-aided system acts without an action once a turn
+  const free = (kind: "helm" | "boost" | "patch") => (me.sheet.bonusActions ?? []).includes(kind) && !me.bonusUsed;
 
   return (
     <div className="absolute inset-x-0 bottom-0 z-20 h-[54dvh] overflow-y-auto bg-gray-900 md:inset-x-auto md:bottom-auto md:left-2 md:top-2 md:h-auto md:w-80 md:max-h-[82vh] md:bg-transparent" data-testid="ship-combat">
@@ -501,11 +527,12 @@ export function ShipCombatPanel({ onFinish }: { onFinish: (outcome: NonNullable<
                   {s.sheet.shieldMax ? <span className="text-sky-300"> +{s.shield}</span> : ""}
                 </span>
               </div>
-              {(s.disabled || s.systemDamage > 0 || s.evading || s.stable) && (
-                <div className="flex flex-wrap gap-1 text-xs">
+              {(s.disabled || s.systemDamage > 0 || s.evading || s.stable || (s.conds ?? []).length > 0) && (
+                <div className="flex flex-wrap gap-1 text-xs" data-testid="ship-conditions">
                   {s.disabled && <span className="rounded bg-red-900/70 px-1">disabled{s.stable ? ", stable" : ""}</span>}
                   {s.systemDamage > 0 && <span className="rounded bg-purple-900/60 px-1">system damage {s.systemDamage}</span>}
                   {s.evading && <span className="rounded bg-sky-900/70 px-1">evading</span>}
+                  {(s.conds ?? []).map((c, ci) => <span key={`${c.name}-${ci}`} className="rounded bg-amber-900/70 px-1">{c.name}</span>)}
                 </div>
               )}
             </li>
@@ -550,8 +577,8 @@ export function ShipCombatPanel({ onFinish }: { onFinish: (outcome: NonNullable<
               </div>
             </div>
             <div className="flex flex-wrap gap-1 mb-2" data-testid="ship-helm">
-              <Button size="sm" variant="outline" disabled={!myTurn || me.helmUsed || me.actions <= 0} onClick={() => helm("evade")}>Evade</Button>
-              <Button size="sm" variant="outline" disabled={!myTurn || me.helmUsed || me.actions <= 0} onClick={() => helm("fly")}>Fly</Button>
+              <Button size="sm" variant="outline" disabled={!myTurn || me.helmUsed || (me.actions <= 0 && !free("helm"))} onClick={() => helm("evade")}>Evade</Button>
+              <Button size="sm" variant="outline" disabled={!myTurn || me.helmUsed || (me.actions <= 0 && !free("helm"))} onClick={() => helm("fly")}>Fly</Button>
               <Button size="sm" variant="outline" disabled={!myTurn || me.helmUsed || me.actions <= 0} onClick={() => helm("hardTurn")}>Hard turn</Button>
               <Button size="sm" variant="outline" disabled={!myTurn || me.helmUsed || me.actions <= 0 || me.movedToward < 150} onClick={() => helm("attackRun")} title="Needs 150 ft. of flying toward the target first">Attack run</Button>
               <Button size="sm" variant="outline" disabled={!myTurn} onClick={() => turn(-1)}>Turn ↶</Button>
@@ -559,15 +586,29 @@ export function ShipCombatPanel({ onFinish }: { onFinish: (outcome: NonNullable<
             </div>
             <div className="flex flex-wrap gap-1 mb-2" data-testid="ship-actions">
               {(["engines", "shields", "weapons"] as const).map((b) => (
-                <Button key={b} size="sm" variant="secondary" disabled={!myTurn || me.actions <= 0 || me.boosts[b] > 0 || (b === "shields" && !me.sheet.hasShield)} onClick={() => boost(b)}>
+                <Button key={b} size="sm" variant="secondary" disabled={!myTurn || (me.actions <= 0 && !free("boost")) || me.boosts[b] > 0 || (b === "shields" && !me.sheet.hasShield)} onClick={() => boost(b)}>
                   Boost {b}
                 </Button>
               ))}
-              <Button size="sm" variant="secondary" disabled={!myTurn || me.actions <= 0 || me.hullDiceLeft <= 0 || me.hull >= me.sheet.hullMax} onClick={patch}>Patch ({me.hullDiceLeft})</Button>
+              <Button size="sm" variant="secondary" disabled={!myTurn || (me.actions <= 0 && !free("patch")) || me.hullDiceLeft <= 0 || me.hull >= me.sheet.hullMax} onClick={patch}>Patch ({me.hullDiceLeft})</Button>
               <Button size="sm" variant="secondary" disabled={!myTurn || me.actions <= 0 || !me.sheet.hasShield || me.shieldDiceLeft <= 0 || me.shield >= me.sheet.shieldMax} onClick={regenerate}>Regenerate shields</Button>
               <Button size="sm" variant="secondary" disabled={!myTurn || me.actions <= 0} onClick={direct}>Direct</Button>
               <Button size="sm" variant="secondary" disabled={!myTurn || me.actions <= 0 || !target} onClick={interfere}>Interfere</Button>
             </div>
+            {(me.sheet.specials ?? []).length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-2" data-testid="ship-specials">
+                {(me.sheet.specials ?? []).map((sp, i) => {
+                  const left = shipSpecialUses(me, sp);
+                  const far = sp.area !== "self" && target ? shipFeet(me, target) > sp.range : false;
+                  return (
+                    <Button key={sp.name} size="sm" variant="secondary" disabled={!myTurn || me.actions <= 0 || left <= 0 || far || (sp.area !== "self" && !target)} onClick={() => special(i)} title={`${sp.save} save${sp.damage.length ? `, ${sp.damage.map((d) => `${d.dice} ${d.type}`).join(" + ")}` : ""}${sp.condition ? `, ${sp.condition}` : ""}; ${sp.area === "self" ? `within ${sp.radius} ft.${sp.forward ? " ahead" : ""}` : `up to ${sp.range} ft.`}`} data-testid={`ship-special-${i}`}>
+                      {sp.name} ({left})
+                    </Button>
+                  );
+                })}
+              </div>
+            )}
+            {((me.sheet.bonusActions ?? []).length > 0) && <p className="text-[11px] text-gray-500 mb-1">Without an action once a turn ({me.bonusUsed ? "used" : "ready"}): {(me.sheet.bonusActions ?? []).map((b) => (b === "helm" ? "Fly or Evade" : b === "boost" ? "a Boost" : "a Patch")).join(", ")} (house rule: a bonus action of the book).</p>}
             <Button className="mb-2" variant="outline" disabled={!myTurn} onClick={endTurn} data-testid="ship-end-turn">End turn</Button>
             <p className="text-xs text-gray-400 mb-2">On the map, tap a green square to fly there (a square is 50 ft.; turning costs half the turning speed for each 45 degrees) and an enemy to pick it out.</p>
           </>

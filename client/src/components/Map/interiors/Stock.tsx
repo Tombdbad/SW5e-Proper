@@ -57,11 +57,12 @@ export function stockGeometry(items: Item[], files: Record<string, THREE.BufferG
 
 // The stock of one piece of furniture, in the frame of the furniture's footprint (`w` by `h` squares, corner at the origin;
 // the furniture is built lying along its longer side, turned a quarter if it stands the other way)
-export function Stock({ name, w, h, seed, buildingType, roomName, tone }: { name: string; w: number; h: number; seed: number; buildingType: string; roomName: string; tone?: Tone }) {
+export function Stock({ name, w, h, seed, buildingType, roomName, tone, wares }: { name: string; w: number; h: number; seed: number; buildingType: string; roomName: string; tone?: Tone; wares?: string[] }) {
   const holds = holdsOf(name, buildingType, roomName);
   const L = Math.max(w, h);
   const D = Math.min(w, h);
-  const items = useMemo(() => stockLayout(holds, L, D, buildingType, roomName, seed, name), [holds, L, D, buildingType, roomName, seed, name]);
+  const key = (wares ?? []).join("|");
+  const items = useMemo(() => stockLayout(holds, L, D, buildingType, roomName, seed, name, wares), [holds, L, D, buildingType, roomName, seed, name, key]);
   // Weapons are set on their middles, props (crates, clips, grenades) and the kits' models on their undersides. The Blaster Kit's
   // pieces keep their steel; the kits' models take the room's palette, or their own where the room has none
   const [weaponUrls, propUrls, kitUrls, itemUrls] = useMemo(() => {

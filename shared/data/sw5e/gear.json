@@ -1,0 +1,102 @@
+{
+ "texts": {
+  "Artist's implements": "Artisan's implements are predominantly designed for building and crafting things of permanent nature. Each set of implements focuses on a specific craft. ***Armormech's Implements.*** Armormech's implements are for crafting and repairing armor and shields. ***Armstech's Implements.*** Armstech's implements are for crafting and repairing blasters and vibroweapons. ***Artificer's Implements.*** Artificer's implements are for creating lightweapons. ***Astrotech's Implements.*** Astrotech's implements are for crafting and modifying droids. ***Biotech's Implements.*** Biotech's implements are used to create cybernetic augmentations. ***Cybertech's Implements.*** Cybertech's implements are used for crafting and modifying wristpads. ***Gadgeteer's Implements.*** Gadgeteer's implements are used for crafting many types of adventuring gear, such as jet packs or friction-grip gear. ***Tinker's Implements.*** Tinker's implements are general use tools that can craft small and versatile trinkets.",
+  "Emergency rations (one day's)": "Emergency rations come in small pill form, provide all the necessary nourishment for one person for one day, and take up roughly one-tenth the space of field rations.",
+  "Field rations (one day's)": "Ration packs consist of dry foods suitable for extended travel, and are used when other food is scarce. Each pack is divided into portions and can provide enough food for one person per day.",
+  "Oyxgen tank": "Oxygen tanks include 8 hours' capacity of oxygen. They can be connected to an environmental suit or respirator to feed it directly or replenish any reduced capacity at a rate of one hour's oxygen per ten minutes connected. Only one oxygen tank can be connected at a time.",
+  "Vibrolance": "You have disadvantage when you use a vibrolance to attack a target within 5 feet of you. Also, a lance requires two hands to wield when you aren’t mounted.",
+  "Chemical suit": "Chemical suits are sealed suits that repel corrosive acids. While wearing a chemical suit, you have resistance to acid damage, and you are immune to the corroded condition. Environmental suits are heavy duty completely sealed suits that can be worn over other clothing and armor. Each suit is tailored to a certain environment, and has no effect on environments to which it is not tailored. Due to their encompassing and cumbersome nature, while wearing an environmental suit, a creature's speed is reduced by 15. Environmental suits include 8 hours' capacity of oxygen, which can be replenished by an oxygen tank or directly connected to a source of oxygen such as a life support system on a vehicle or starship.",
+  "Conductive suit": "Conductive suits help prevent electrocution by grounding electrical sources. While wearing a conductive suit, you have resistance to lightning damage, and you are immune to the shocked condition. Environmental suits are heavy duty completely sealed suits that can be worn over other clothing and armor. Each suit is tailored to a certain environment, and has no effect on environments to which it is not tailored. Due to their encompassing and cumbersome nature, while wearing an environmental suit, a creature's speed is reduced by 15. Environmental suits include 8 hours' capacity of oxygen, which can be replenished by an oxygen tank or directly connected to a source of oxygen such as a life support system on a vehicle or starship.",
+  "Dampening suit": "Dampening suits modulate sounds that come from outside the suit. While wearing a dampening suit, you have resistance to sonic damage, you are immune to the deafened condition, and you can't have disadvantage on Wisdom (Perception) and Intelligence (Investigation) checks that rely on sound. Environmental suits are heavy duty completely sealed suits that can be worn over other clothing and armor. Each suit is tailored to a certain environment, and has no effect on environments to which it is not tailored. Due to their encompassing and cumbersome nature, while wearing an environmental suit, a creature's speed is reduced by 15. Environmental suits include 8 hours' capacity of oxygen, which can be replenished by an oxygen tank or directly connected to a source of oxygen such as a life support system on a vehicle or starship.",
+  "Diving suit": "Diving suits are sealed suits that help regulate body temperature while underwater. While wearing a diving suit, you have resistance to cold damage, and are protected from the hazards associated with high pressure environments. Environmental suits are heavy duty completely sealed suits that can be worn over other clothing and armor. Each suit is tailored to a certain environment, and has no effect on environments to which it is not tailored. Due to their encompassing and cumbersome nature, while wearing an environmental suit, a creature's speed is reduced by 15. Environmental suits include 8 hours' capacity of oxygen, which can be replenished by an oxygen tank or directly connected to a source of oxygen such as a life support system on a vehicle or starship.",
+  "Flame-proof suit": "Flame-proof suits prevent flames from reaching the wearer's body. While wearing a flame-proof suit, you have resistance to fire damage, and you are immune to the ignited condition. Environmental suits are heavy duty completely sealed suits that can be worn over other clothing and armor. Each suit is tailored to a certain environment, and has no effect on environments to which it is not tailored. Due to their encompassing and cumbersome nature, while wearing an environmental suit, a creature's speed is reduced by 15. Environmental suits include 8 hours' capacity of oxygen, which can be replenished by an oxygen tank or directly connected to a source of oxygen such as a life support system on a vehicle or starship.",
+  "Hazard suit": "Hazard suits are made to seal the wearer away from noxious gases. While wearing a hazard suit, you have resistance to poison damage, and you are immune to the poisoned condition. Environmental suits are heavy duty completely sealed suits that can be worn over other clothing and armor. Each suit is tailored to a certain environment, and has no effect on environments to which it is not tailored. Due to their encompassing and cumbersome nature, while wearing an environmental suit, a creature's speed is reduced by 15. Environmental suits include 8 hours' capacity of oxygen, which can be replenished by an oxygen tank or directly connected to a source of oxygen such as a life support system on a vehicle or starship.",
+  "Mind-shielding suit": "Mind-shielding suits help protect the wearer's mind—and body—from outside influence. While wearing a mind-shielding suit, you have resistance to psychic damage, you have advantage on saving throws to avoid being frightened, and you have advantage on saving throws to avoid having your mind read or affected. Environmental suits are heavy duty completely sealed suits that can be worn over other clothing and armor. Each suit is tailored to a certain environment, and has no effect on environments to which it is not tailored. Due to their encompassing and cumbersome nature, while wearing an environmental suit, a creature's speed is reduced by 15. Environmental suits include 8 hours' capacity of oxygen, which can be replenished by an oxygen tank or directly connected to a source of oxygen such as a life support system on a vehicle or starship.",
+  "Stabilizer suit": "Stabilizer suits help to keep the bearer from being battered by powerful forces. While wearing a stabilizer suit, you have resistance to force damage, and you have advantage on ability checks and saving throws to avoid being moved. Environmental suits are heavy duty completely sealed suits that can be worn over other clothing and armor. Each suit is tailored to a certain environment, and has no effect on environments to which it is not tailored. Due to their encompassing and cumbersome nature, while wearing an environmental suit, a creature's speed is reduced by 15. Environmental suits include 8 hours' capacity of oxygen, which can be replenished by an oxygen tank or directly connected to a source of oxygen such as a life support system on a vehicle or starship.",
+  "Space suit": "Space suits are suits that enabled wearers to survive and operate in the vacuum of space. While wearing a space suit, you have resistance to necrotic damage, and are protected from the hazards associated with low pressure environments. Environmental suits are heavy duty completely sealed suits that can be worn over other clothing and armor. Each suit is tailored to a certain environment, and has no effect on environments to which it is not tailored. Due to their encompassing and cumbersome nature, while wearing an environmental suit, a creature's speed is reduced by 15. Environmental suits include 8 hours' capacity of oxygen, which can be replenished by an oxygen tank or directly connected to a source of oxygen such as a life support system on a vehicle or starship."
+ },
+ "droids": [
+  {
+   "designation": "3PO Series Protocol Droid",
+   "cost": 5500
+  },
+  {
+   "designation": "B1-A Battle Droid",
+   "cost": 1300
+  },
+  {
+   "designation": "B1-X Battle Droid",
+   "cost": 2600
+  },
+  {
+   "designation": "Destroyer Droid",
+   "cost": 84000
+  },
+  {
+   "designation": "DUM Series Pit Droid",
+   "cost": 650
+  },
+  {
+   "designation": "ID9 Seeker Droid",
+   "cost": 150
+  },
+  {
+   "designation": "IG-86 Assassin Droid",
+   "cost": 22400
+  },
+  {
+   "designation": "HK Series Assassin Droid",
+   "cost": 212000
+  },
+  {
+   "designation": "R2 Series Astromech Droid",
+   "cost": 2800
+  }
+ ],
+ "lifestyle": [
+  {
+   "name": "Wretched",
+   "cost": 0
+  },
+  {
+   "name": "Squalid",
+   "cost": 1
+  },
+  {
+   "name": "Poor",
+   "cost": 2
+  },
+  {
+   "name": "Modest",
+   "cost": 10
+  },
+  {
+   "name": "Comfortable",
+   "cost": 20
+  },
+  {
+   "name": "Wealthy",
+   "cost": 40
+  },
+  {
+   "name": "Aristocratic",
+   "cost": 100
+  }
+ ],
+ "rules": {
+  "falling": "A fall from a great height is one of the most common hazards facing an adventurer. At the end of a fall, a creature takes 1d6 kinetic damage for every 10 feet it fell, to a maximum of 20d6. The creature lands prone, unless it avoids taking damage from the fall.",
+  "suffocating": "A creature can hold its breath for a number of minutes equal to 1 + its Constitution modifier (minimum of 30 seconds). When a creature runs out of breath, it can survive for a number of rounds equal to its Constitution modifier (minimum 1 round). At the start of its next turn, it drops to 0 hit points and is dying.",
+  "pressure": "If a creature is exposed a high or low pressure environ such as the vacuum of space or the deep ocean, it can survive for a number of rounds equal to its Constitution modifier (minimum 1 round). At the start of its next turn, it immediately dies without making death saving throws.",
+  "foodAndWater": "Characters who don't eat or drink suffer the effects of exhaustion (see appendix A). Exhaustion caused by lack of food or water can't be removed until the character eats and drinks the full required amount.",
+  "food": "A character needs one pound of food per day and can make food last longer by subsisting on half rations. Eating half a pound of food in a day counts as half a day without food. A character can go without food for a number of days equal to 3 + his or her Constitution modifier (minimum 1). At the end of each day beyond that limit, a character automatically suffers one level of exhaustion. A normal day of eating resets the count of days without food to zero.",
+  "water": "A character needs one gallon of water per day, or two gallons per day if the weather is hot. A character who drinks only half that much water must succeed on a DC 15 Constitution saving throw or suffer one level of exhaustion at the end of the day. A character with access to less water automatically suffers one level of exhaustion at the end of the day. If the character already has one or more levels of exhaustion, the character takes two levels in either case.",
+  "light": "The most fundamental tasks of adventuring—noticing danger, finding hidden objects, hitting an enemy in combat, and targeting a power, to name just a few—rely heavily on a character's ability to see. Darkness and other effects that obscure vision can prove a significant hindrance. A given area might be lightly or heavily obscured. In a **lightly obscured** area, such as dim light, patchy fog, or moderate foliage, creatures have disadvantage on Wisdom (Perception) checks that rely on sight. A **heavily obscured** area-such as darkness, opaque fog, or dense foliage-blocks vision entirely. A creature in or looking in a heavily obscured area effectively suffers from the blinded condition (see appendix A). The presence or absence of light in an environment creates three categories of illumination: bright light, dim light, and darkness. **Bright light** lets most creatures see normally. Even gloomy days provide bright light, as do torches, lanterns, fires, and other sources of illumination within a specific radius. **Dim light**, also called shadows, creates a lightly obscured area. An area of dim light is usually a boundary between a source of bright light, such as a torch, and surrounding darkness. The soft light of twilight and dawn also counts as dim light. A particularly brilliant full moon might bathe the land in dim light. **Darkness** creates a heavily obscured area. Characters face darkness outdoors at night (even most moonlit nights), or within the confines of an unlit dungeon or a subterranean vault.",
+  "darkvision": "Many creatures in the worlds of Star Wars, especially those that dwell underground, have darkvision. Within a specified range, a creature with darkvision can see in darkness as if the darkness were dim light, so areas of darkness are only lightly obscured as far as that creature is concerned. However, the creature can't discern color in darkness, only shades of gray.",
+  "climbing": "While climbing, swimming, or crawling, each foot of movement costs 1 extra foot (2 extra feet in difficult terrain), unless a creature has a climbing or swimming speed. At the GM's option, climbing a slippery vertical surface or one with few handholds requires a successful Strength (Athletics) check. Similarly, gaining any distance in rough water might require a successful Strength (Athletics) check.",
+  "jumping": "Your Strength determines how far you can jump. ***Long Jump.*** When you make a long jump, you cover a number of feet up to your Strength score if you move at least 10 feet on foot immediately before the jump. When you make a standing long jump, you can leap only half that distance. Either way, each foot you clear on the jump costs a foot of movement. This rule assumes that the height of your jump doesn't matter, such as a jump across a stream or chasm. At your GM's option, you must succeed on a DC 10 Strength (Athletics) check to clear a low obstacle (no taller than a quarter of the jump's distance), such as a hedge or low wall. Otherwise, you hit it. When you land in difficult terrain, you must succeed on a DC 10 Dexterity (Acrobatics) check to land on your feet. Otherwise, you land prone. ***High Jump.*** When you make a high jump, you leap into the air a number of feet equal to 3 + your Strength modifier if you move at least 10 feet on foot immediately before the jump. When you make a standing high jump, you can jump only half that distance. Either way, each foot you clear on the jump costs a foot of movement. In some circumstances, your GM might allow you to make a Strength (Athletics) check to jump higher than you normally can. You can extend your arms half your height above yourself during the jump. Thus, you can reach above you a distance equal to the height of the jump plus 1 1/2 times your height.",
+  "carrying": "Your Strength score determines the amount of weight you can bear. The following terms define what you can lift or carry. ***Carrying Capacity.*** Your carrying capacity is your Strength score multiplied by 15. This is the weight (in pounds) that you can carry, which is high enough that most characters don't usually have to worry about it. ***Push, Drag, or Lift.*** You can push, drag, or lift a weight in pounds up to twice your carrying capacity (or 30 times your Strength score). While pushing or dragging weight in excess of your carrying capacity, your speed drops to 5 feet. ***Size and Strength.*** Larger creatures can bear more weight, whereas Tiny creatures can carry less. For each size category above Medium, double the creature' carrying capacity and the amount it can push. drag, or lift. For a Tiny creature, halve these weights.",
+  "encumbrance": "The rules for lifting and carrying are intentionally simple. Here is a variant if you are looking for more detailed rules for determining how a character is hindered by the weight of equipment. When you use this variant, ignore the Strength column of the Armor table in chapter 5. If you carry weight in excess of 5 times your Strength score, you are ***encumbered***, which means your speed drops by 10 feet. If you carry weight in excess of 10 times your Strength score, up to your maximum carrying capacity, you are instead ***heavily encumbered***, which means your speed drops by 20 feet and you have disadvantage on ability checks, attack rolls, and saving throws that use Strength, Dexterity, or Constitution.",
+  "restingInArmor": "Resting in armor makes it difficult to recover fully. At the end of a long rest, if you wore your armor, you only recover one-quarter your spent Hit Dice (minimum of one), instead of half.",
+  "selfSufficiency": "The expenses and lifestyles described in this chapter assume that you are spending your time between adventures in cities, availing yourself of whatever services you can afford— paying for food and shelter, paying townspeople to repair your equipment, and so on. Some characters, though, might prefer to spend their time away from civilization, sustaining themselves in the wild by hunting, foraging, and repairing their own gear. Maintaining this kind of lifestyle doesn't require you to spend any coin, but it is time-consuming. If you spend your time between adventures practicing a profession, as described in chapter 8, you can eke out the equivalent of a poor lifestyle. Proficiency in the Survival skill lets you live at the equivalent of a comfortable lifestyle."
+ }
+}

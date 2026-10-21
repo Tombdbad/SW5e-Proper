@@ -316,6 +316,11 @@
    "derivedFrom": "starshipBaseSize",
    "sizes": 6,
    "bytes": 24141
+  },
+  "gear": {
+   "derivedFrom": "rulesPlayersHandbook, rulesExpandedContent",
+   "texts": 14,
+   "bytes": 18516
   }
  },
  "features": {
