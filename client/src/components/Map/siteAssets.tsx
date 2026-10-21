@@ -958,6 +958,7 @@ export function GardenGround({ rects, biome }: { rects: NonNullable<SiteGrounds[
 // The ground round a building (2026-10-21): a Poly Haven texture (public/textures/ground, see the README there), lit by its normal
 // map and shifted toward the viewer by its height map (single-step offset parallax). The city has none of it: it keeps the plain ground
 export const GROUND_TILE = 8; // squares of ground in one repeat of a texture
+const EARTH_LIGHT = 1.2; // how bright the bare earth is (1 leaves the texture as photographed)
 const PARALLAX = 0.05; // how far the height map moves the texture, in repeats of GROUND_TILE squares
 
 // Which texture a building's ground gets, by its world's biome and the building's type (null: plain ground, as on Coruscant)
@@ -965,9 +966,34 @@ export function groundTexture(biome: string, buildingType: string, base: string)
   if (buildingType === "sewer system") return { set: "brown_mud_03", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
   if (biome === "urban") return null;
   if (biome === "desert") return { set: "dense_sand", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
-  if (biome === "volcanic") return { set: "dark_rock", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
-  // Forest, jungle and the rest: bare earth, recoloured to the world's ground
-  return { set: "dirt_floor", tint: new THREE.Color(base).multiplyScalar(2.5), parallax: PARALLAX };
+  if (biome === "volcanic") return { set: "dark_rock", tint: new THREE.Color(3, 3, 3), parallax: PARALLAX };
+  // Forest, jungle and the rest: bare earth in the hue of the world's ground. The texture is dark already, so the tint keeps the hue at
+  // full strength (half washed toward white) instead of darkening it with the ground colour, which made it black
+  const hue = new THREE.Color(base);
+  hue.multiplyScalar(1 / Math.max(hue.r, hue.g, hue.b, 0.001)).lerp(new THREE.Color("#ffffff"), 0.5);
+  return { set: "dirt_floor", tint: hue.multiplyScalar(EARTH_LIGHT), parallax: PARALLAX };
+}
+
+// Patches a Phong material's shader (onBeforeCompile) so that the diffuse and normal maps are sampled at a point shifted toward the
+// viewer by the height map (single-step offset parallax)
+export function groundShader(shader: THREE.WebGLProgramParametersWithUniforms, heightMap: THREE.Texture, parallax: number) {
+  shader.uniforms.heightMap = { value: heightMap };
+  shader.uniforms.parallax = { value: parallax };
+  shader.vertexShader = shader.vertexShader
+    .replace("#include <common>", "#include <common>\nvarying vec3 vWorld;")
+    .replace("#include <project_vertex>", "#include <project_vertex>\n  vWorld = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;");
+  shader.fragmentShader = shader.fragmentShader
+    .replace("#include <common>", "#include <common>\nuniform sampler2D heightMap;\nuniform float parallax;\nvarying vec3 vWorld;")
+    .replace("#include <map_fragment>", `
+  // Offset parallax: the height here (0.5 is level) moves the texture toward the viewer
+  vec3 toEye = normalize( cameraPosition - vWorld );
+  vec2 shift = - toEye.xz / max( toEye.y, 0.2 ) * ( texture2D( heightMap, vMapUv ).r - 0.5 ) * parallax;
+  vec4 sampledDiffuseColor = texture2D( map, vMapUv + shift );
+  diffuseColor *= sampledDiffuseColor;`)
+    .replace("#include <normal_fragment_maps>", `
+  vec3 mapN = texture2D( normalMap, vNormalMapUv + shift ).xyz * 2.0 - 1.0;
+  mapN.xy *= normalScale;
+  normal = normalize( tbn * mapN );`);
 }
 
 export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: string; tint: THREE.Color; parallax: number; w: number; h: number; at: [number, number, number]; onTap?: (e: ThreeEvent<MouseEvent>) => void }) {
@@ -985,25 +1011,7 @@ export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: s
     d.colorSpace = THREE.SRGBColorSpace;
     return { diffuse: d, normal: repeat(normal), height: repeat(height) };
   }, [diffuse, normal, height, w, h]);
-  const compile = (shader: THREE.WebGLProgramParametersWithUniforms) => {
-    shader.uniforms.heightMap = { value: maps.height };
-    shader.uniforms.parallax = { value: parallax };
-    shader.vertexShader = shader.vertexShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vWorld;")
-      .replace("#include <project_vertex>", "#include <project_vertex>\n  vWorld = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;");
-    shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nuniform sampler2D heightMap;\nuniform float parallax;\nvarying vec3 vWorld;")
-      .replace("#include <map_fragment>", `
-  // Offset parallax: the height here (0.5 is level) moves the texture toward the viewer
-  vec3 toEye = normalize( cameraPosition - vWorld );
-  vec2 shift = - toEye.xz / max( toEye.y, 0.2 ) * ( texture2D( heightMap, vMapUv ).r - 0.5 ) * parallax;
-  vec4 sampledDiffuseColor = texture2D( map, vMapUv + shift );
-  diffuseColor *= sampledDiffuseColor;`)
-      .replace("#include <normal_fragment_maps>", `
-  vec3 mapN = texture2D( normalMap, vNormalMapUv + shift ).xyz * 2.0 - 1.0;
-  mapN.xy *= normalScale;
-  normal = normalize( tbn * mapN );`);
-  };
+  const compile = (shader: THREE.WebGLProgramParametersWithUniforms) => groundShader(shader, maps.height, parallax);
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={at} receiveShadow onClick={onTap}>
       <planeGeometry args={[w, h]} />
