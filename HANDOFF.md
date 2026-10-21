@@ -15,10 +15,16 @@ Written 2026-10-21, branch `revive`. Last commit before this fix: `eb97d15` (set
 
 - Black patches left after that fix (user): the building lots were opaque near-black planes over the bright ground, and a dark base plane showed round the textured rectangle. Lots are now a 22% black shade over the texture; the textured plane covers the whole base area (taps outside the walkable rectangle are ignored). Parallax and normal strength raised 30% on the user's request (`PARALLAX` 0.065, `NORMAL_SCALE` 1.3, both in `siteAssets.tsx`). 5002 rebuilt with these.
 
+## Done later 2026-10-21 (user asked: black interior/rooftop floors; textures for ship and speeder damage, age, wear)
+- Floors (commit 836db47): Poly Haven floor sets in `client/public/textures/floor/`, `floorLook`/`FloorSurface` in `siteAssets.tsx`, wired in `RoomShell`. Seen in a browser on 5002 (cantina, armory, palace, hangar, roof).
+- Hull wear and panels (committed after): `tools/build-hull-textures.mjs` makes `textures/hull/{wear,damage,panels_normal,panels_height}.png` from the sets in `textures/wear/`; `Model wear=` in `models.tsx`; `interiors/wear.ts` (+ `tests/interiors/wear.test.ts`). Seen in `/dev/models?section=ships` on 5002. Details in REVIVAL_NOTES.md "Floors, hull wear and panels".
+- 5002 is rebuilt from the working tree (not 5000). Nothing is promoted to the 5000 service.
+- Not looked at: a party ship with `hull` set (scorch step 1) in the game; hull wear on a ship inside a hangar in the game (only the gallery).
+
 ## Next (in order)
 1. Look at the ground on 5002 (hard reload; a new settlement, then a forest, a desert, a volcanic world, a sewer and Coruscant). Things to look for: a black ground (a shader compile error blanks the plane; check the browser console); swimming (lower `PARALLAX`); bare earth too bright or too dark (tint in `groundTexture`).
 2. Once the ground looks right, promote with `npm run build && sudo systemctl restart sw5e` (the 5000 service). Not done yet.
-3. Ship and speeder wear, damage and age (masked overlay, edge wear baked in Blender, age as a per-ship seed, damage from HP; parallax only on hero ships). Needs a check of ship UVs and a search for metal wear sets. Not started.
+3. (done, see above) Ship and speeder wear. Left: parallax on hero ships, wear on buildings, damage by hull ratio.
 4. Carried over from the dice work: click through the table-roll overlay on 5002 (a check and an attack in Play); convert `stealthRoll` and the hazard saves to the table; the e2e play-through once the overlay is checked by hand.
 
 ## Open questions for the user

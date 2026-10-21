@@ -16,6 +16,7 @@ import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type He
 import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
 import { toneNameOf, type KitLook } from "./interiors/kitbash";
 import { TONES } from "./interiors/tones";
+import { hullWear, speederWear, type Wear } from "./interiors/wear";
 
 // ---------------------------------------------------------------------------------------------
 // The 3D models of the map: people, droids, creatures, furniture, ships, vehicles and buildings.
@@ -330,20 +331,53 @@ export class Kit {
     return this.add(geo, color, o);
   }
 
-  bake(): Baked {
+  // `uv` gives the painted finishes (matte, sheen) the box-projected coordinates that the hull textures are laid by
+  bake(uv = 0): Baked {
     const out: Baked = {};
     for (const finish of FINISHES) {
       const geos = this.parts.filter((p) => p.finish === finish).map((p) => p.geo);
       if (!geos.length) continue;
-      const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
+      let merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
       if (!merged) continue;
+      if (geos.length > 1) for (const g of geos) g.dispose();
+      if (uv && (finish === "matte" || finish === "sheen")) {
+        const flat = boxUV(merged, uv);
+        merged.dispose();
+        merged = flat;
+      }
       merged.computeBoundingSphere();
       merged.computeBoundingBox();
-      if (geos.length > 1) for (const g of geos) g.dispose();
       out[finish] = merged;
     }
     return out;
   }
+}
+
+// Texture coordinates for a baked model, none of whose parts has any: each triangle is projected along the axis its normal points most
+// along (a box mapping), in model units times `grain` (a small model has finer wear). The triangles are unjoined (the seams between the faces of the box show as breaks in the wear,
+// which wear can hide; a smooth hull has no seams where it matters).
+function boxUV(source: THREE.BufferGeometry, grain: number): THREE.BufferGeometry {
+  const geo = source.index ? source.toNonIndexed() : source.clone();
+  const p = geo.attributes.position as THREE.BufferAttribute;
+  const n = geo.attributes.normal as THREE.BufferAttribute;
+  const uv = new Float32Array(p.count * 2);
+  for (let t = 0; t < p.count; t += 3) {
+    let nx = 0, ny = 0, nz = 0;
+    for (let k = 0; k < 3; k++) {
+      nx += n.getX(t + k);
+      ny += n.getY(t + k);
+      nz += n.getZ(t + k);
+    }
+    const ax = Math.abs(nx), ay = Math.abs(ny), az = Math.abs(nz);
+    for (let k = 0; k < 3; k++) {
+      const i = t + k;
+      const [u, v] = ax >= ay && ax >= az ? [p.getZ(i), p.getY(i)] : ay >= az ? [p.getX(i), p.getZ(i)] : [p.getX(i), p.getY(i)];
+      uv[i * 2] = u * grain;
+      uv[i * 2 + 1] = v * grain;
+    }
+  }
+  geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  return geo;
 }
 
 export type Baked = Partial<Record<Finish, THREE.BufferGeometry>>;
@@ -351,13 +385,13 @@ export type Baked = Partial<Record<Finish, THREE.BufferGeometry>>;
 const CACHE = new Map<string, { model: Baked; users: number; idle?: ReturnType<typeof setTimeout> }>();
 
 // A model by its key, built the first time it is wanted and shared after that
-export function useModel(key: string, build: (k: Kit) => void): Baked {
+export function useModel(key: string, build: (k: Kit) => void, uv = 0): Baked {
   const entry = useMemo(() => {
     let e = CACHE.get(key);
     if (!e) {
       const kit = new Kit();
       build(kit);
-      e = { model: kit.bake(), users: 0 };
+      e = { model: kit.bake(uv), users: 0 };
       CACHE.set(key, e);
     }
     return e;
@@ -379,12 +413,15 @@ export function useModel(key: string, build: (k: Kit) => void): Baked {
 }
 
 // The meshes of a baked model; `shadow` says whether it casts one
-export function Model({ id, build, shadow = true, position, rotation, scale, children }: { id: string; build: (k: Kit) => void; shadow?: boolean; position?: V3; rotation?: V3; scale?: number | V3; children?: ReactNode }) {
-  const m = useModel(id, build);
+// With `wear` the painted finishes (matte, sheen) are drawn as a hull: panel plates in a normal map, and grime, rust, scratches and scorching
+// by the wear's steps (see hullMaterials); plain until the textures are in
+export function Model({ id, build, shadow = true, position, rotation, scale, wear, children }: { id: string; build: (k: Kit) => void; shadow?: boolean; position?: V3; rotation?: V3; scale?: number | V3; wear?: Wear; children?: ReactNode }) {
+  const m = useModel(wear ? `${id}|uv${wear.grain ?? 1}` : id, build, wear ? wear.grain ?? 1 : 0);
+  const hull = useHull(wear);
   return (
     <group position={position} rotation={rotation} scale={scale}>
-      {m.matte && <mesh geometry={m.matte} material={MATERIALS.matte} castShadow={shadow} receiveShadow />}
-      {m.sheen && <mesh geometry={m.sheen} material={MATERIALS.sheen} castShadow={shadow} receiveShadow />}
+      {m.matte && <mesh geometry={m.matte} material={hull?.matte ?? MATERIALS.matte} castShadow={shadow} receiveShadow />}
+      {m.sheen && <mesh geometry={m.sheen} material={hull?.sheen ?? MATERIALS.sheen} castShadow={shadow} receiveShadow />}
       {m.glow && <mesh geometry={m.glow} material={MATERIALS.glow} />}
       {m.glass && <mesh geometry={m.glass} material={MATERIALS.glass} renderOrder={1} />}
       {m.haze && <mesh geometry={m.haze} material={MATERIALS.haze} renderOrder={2} />}
@@ -392,6 +429,91 @@ export function Model({ id, build, shadow = true, position, rotation, scale, chi
       {children}
     </group>
   );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Hull materials (2026-10-21). The textures are generated by tools/build-hull-textures.mjs: `wear` (R grime, G scratches and chips,
+// B rust), `damage` (scorch) and `panels_normal`. A material is one of the 3 x 3 steps of age and damage, made once and shared (its
+// program is the same for all of them: only the level in its uniform differs). Phong for both finishes, as Lambert takes no normal map.
+// ---------------------------------------------------------------------------------------------
+
+type HullMaps = { wear: THREE.Texture; damage: THREE.Texture; panels: THREE.Texture };
+const PANEL_TILE = 3; // model units in one repeat of the plates
+let hullMaps: HullMaps | undefined;
+let hullLoading: Promise<HullMaps> | undefined;
+function loadHullMaps(): Promise<HullMaps> {
+  hullLoading ??= Promise.all(["wear.png", "damage.png", "panels_normal.png"].map((f) => new THREE.TextureLoader().loadAsync(`/textures/hull/${f}`))).then(([wear, damage, panels]) => {
+    for (const t of [wear, damage, panels]) {
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.anisotropy = 4;
+    }
+    panels.repeat.set(1 / PANEL_TILE, 1 / PANEL_TILE);
+    hullMaps = { wear, damage, panels };
+    return hullMaps;
+  });
+  return hullLoading;
+}
+
+const HULLS = new Map<string, Record<"matte" | "sheen", THREE.Material>>();
+function hullMaterials(maps: HullMaps, { age, damage }: Wear) {
+  const key = `${age}${damage}`;
+  let set = HULLS.get(key);
+  if (!set) {
+    const make = (finish: "matte" | "sheen") => {
+      const m = new THREE.MeshPhongMaterial({
+        vertexColors: true,
+        shininess: finish === "sheen" ? 55 : 8,
+        specular: new THREE.Color(finish === "sheen" ? "#5a5a5a" : "#111111"),
+        emissive: new THREE.Color("#0a0a0a"),
+        normalMap: maps.panels,
+        normalScale: new THREE.Vector2(0.8, 0.8),
+      });
+      m.onBeforeCompile = (shader) => {
+        shader.uniforms.wearMap = { value: maps.wear };
+        shader.uniforms.damageMap = { value: maps.damage };
+        shader.uniforms.wearLevel = { value: new THREE.Vector2(age / 2, damage / 2) };
+        shader.vertexShader = shader.vertexShader
+          .replace("#include <common>", "#include <common>\nvarying vec2 vWearUv;")
+          .replace("#include <begin_vertex>", "#include <begin_vertex>\n  vWearUv = uv;");
+        shader.fragmentShader = shader.fragmentShader
+          .replace("#include <common>", `#include <common>
+uniform sampler2D wearMap;
+uniform sampler2D damageMap;
+uniform vec2 wearLevel;
+varying vec2 vWearUv;
+// How much of a mask a level of wear covers (the masks are ranked, so a level covers about that share)
+float cover( float m, float amount ) { return smoothstep( 1.0 - amount, 1.2 - amount, m ); }`)
+          .replace("#include <color_fragment>", `#include <color_fragment>
+  {
+    vec3 wm = texture2D( wearMap, vWearUv * 0.5 ).rgb;
+    float dm = texture2D( damageMap, vWearUv * 0.35 ).r;
+    float age = wearLevel.x;
+    diffuseColor.rgb *= 1.0 - 0.5 * cover( wm.r, 0.1 * age + 0.75 * age * age );
+    diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.42, 0.2, 0.1 ) * ( 0.7 + 0.6 * wm.r ), cover( wm.b, 0.26 * age * age ) * 0.7 );
+    diffuseColor.rgb = mix( diffuseColor.rgb, vec3( 0.66, 0.68, 0.7 ), cover( wm.g, age * 0.7 ) * 0.7 );
+    diffuseColor.rgb *= 1.0 - 0.9 * cover( dm, wearLevel.y * 0.9 );
+  }`);
+      };
+      return m;
+    };
+    set = { matte: make("matte"), sheen: make("sheen") };
+    HULLS.set(key, set);
+  }
+  return set;
+}
+
+// The hull materials for a wear, once the textures have come (undefined before, and for a model that has no wear)
+function useHull(wear?: Wear) {
+  const [maps, setMaps] = useState(hullMaps);
+  useEffect(() => {
+    if (!wear || maps) return;
+    let live = true;
+    loadHullMaps().then((m) => live && setMaps(m)).catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [!!wear, maps]);
+  return wear && maps ? hullMaterials(maps, wear) : undefined;
 }
 
 // How many models are baked now (for the play-through test and the gallery)
@@ -1433,7 +1555,7 @@ function buildDecor(k: Kit, kind: string, v: number) {
 // in their own manner. A speeder's front is +z.
 // ---------------------------------------------------------------------------------------------
 
-export type ShipLook = { size: string; role: string; status: string; owner?: string; name?: string };
+export type ShipLook = { size: string; role: string; status: string; owner?: string; name?: string; hull?: number; disabled?: boolean };
 const IMPERIAL = /empire|imperial|first order|sith/i;
 
 export function shipClass(ship: Pick<ShipLook, "size" | "role">): "fighter" | "shuttle" | "freighter" | "capital" {
@@ -1449,7 +1571,7 @@ export function ShipBody({ ship }: { ship: ShipLook }) {
   const imperial = IMPERIAL.test(ship.owner ?? "");
   const wrecked = ship.status === "wrecked";
   const tone = kind === "freighter" && !imperial ? pickOf(["#b9b1a0", "#a9b0b5", "#c2b8a3"], ship.name ?? ship.role) : "";
-  return <Model id={`ship:${kind}:${imperial ? "imp" : "std"}:${wrecked ? 1 : 0}:${tone}`} build={(k) => buildShip(k, kind, imperial, wrecked, tone)} />;
+  return <Model id={`ship:${kind}:${imperial ? "imp" : "std"}:${wrecked ? 1 : 0}:${tone}`} build={(k) => buildShip(k, kind, imperial, wrecked, tone)} wear={hullWear(ship, imperial)} />;
 }
 
 // A hull turned round the x axis: points are [radius, x] from stern to bow
@@ -1639,7 +1761,7 @@ export function SpeederModel({ model, wrecked }: { model: string; wrecked?: bool
   const kind = speederKind(model);
   return (
     <group position={[0, wrecked ? 0.05 : 0.28, 0]} rotation={wrecked ? [0.12, 0.5, 0.18] : [0, 0, 0]}>
-      <Model id={`speeder:${kind}:${wrecked ? 1 : 0}:${pickOf(["a", "b", "c"], model)}`} build={(k) => buildSpeeder(k, kind, !!wrecked, model)} />
+      <Model id={`speeder:${kind}:${wrecked ? 1 : 0}:${pickOf(["a", "b", "c"], model)}`} build={(k) => buildSpeeder(k, kind, !!wrecked, model)} wear={speederWear(model, wrecked)} />
     </group>
   );
 }
