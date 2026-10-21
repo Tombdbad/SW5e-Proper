@@ -554,12 +554,21 @@ const playerD20 = (mode: number, label: string): number => {
 
 // Runs a store action with the player's dice thrown on the dice-roller overlay (the attack roll, the
 // damage dice, the saving throws of the character). Enemy dice are not thrown: they stay random.
-export const onTable = (act: () => void): Promise<void> =>
-  throwFor(act, {
-    save: () => structuredClone(dataOf(useCombat.getState())),
-    restore: (saved) => useCombat.setState(structuredClone(saved)),
-    request: (label: string, dice: TableDie[]) => rollOnTable(label, dice),
-  });
+// One at a time: a call made while the overlay is up (a second tap, a second enemy step) is ignored
+let tableBusy = false;
+export const onTable = async (act: () => void): Promise<void> => {
+  if (tableBusy) return;
+  tableBusy = true;
+  try {
+    await throwFor(act, {
+      save: () => structuredClone(dataOf(useCombat.getState())),
+      restore: (saved) => useCombat.setState(structuredClone(saved)),
+      request: (label: string, dice: TableDie[]) => rollOnTable(label, dice),
+    });
+  } finally {
+    tableBusy = false;
+  }
+};
 
 // The state without its actions, which cannot be copied
 const dataOf = (s: CombatState) => Object.fromEntries(Object.entries(s).filter(([, v]) => typeof v !== "function"));
@@ -668,15 +677,16 @@ export function rollDamage(expression: string, isCritical: boolean, extraDice = 
       const count = Number(dice[1]) * (isCritical ? 2 : 1) + (isCritical && first ? extraDice : 0);
       first = false;
       const sides = Number(dice[2]);
-      const die = (s: number) => (label === undefined ? dieRoll(s) : playerRoll(1, s, label)[0]);
-      // A minimum roll threshold: a die cannot roll below it (Player's Handbook, chapter 7)
-      // Regulated armour: a die that rolls its maximum is rolled again, and the new roll stands
-      const one = () => {
-        const r = threshold ? Math.max(die(sides), minimumRoll(sides)) : die(sides);
-        return regulated && r === sides ? (threshold ? Math.max(die(sides), minimumRoll(sides)) : die(sides)) : r;
-      };
-      if (threshold || regulated) for (let i = 0; i < count; i++) total += sign * one();
-      else total += sign * (label === undefined ? roll(count, sides) : sumDiceResults(playerRoll(count, sides, label)));
+      const thrown = (n: number) => (label === undefined ? rollDice(n, sides) : playerRoll(n, sides, label));
+      if (threshold || regulated) {
+        // A minimum roll threshold: a die cannot roll below it (Player's Handbook, chapter 7)
+        // Regulated armour: a die that rolls its maximum is rolled again, and the new roll stands; the
+        // rerolls are thrown together with the dice, in one go
+        const low = (r: number) => (threshold ? Math.max(r, minimumRoll(sides)) : r);
+        const rolled = thrown(count).map(low);
+        const rerolls = regulated ? thrown(rolled.filter((r) => r === sides).length).map(low) : [];
+        for (const r of rolled) total += sign * (regulated && r === sides ? rerolls.shift()! : r);
+      } else total += sign * sumDiceResults(thrown(count));
     } else total += sign * (Number(body) || 0);
   }
   return Math.max(1, total);
@@ -2932,7 +2942,7 @@ export const useCombat = create<CombatState>((set, get) => ({
         return { ...state, ...patchOf(w), objectId: null };
       }
       if (power.kind === "heal") {
-        const amount = Math.max(1, rollDamage(power.dice!, false) + power.modifier + (power.bonus ?? 0));
+        const amount = Math.max(1, rollDamage(power.dice!, false, 0, false, false, caster.isPlayer ? `${power.name} (healing)` : undefined) + power.modifier + (power.bonus ?? 0));
         combatants[selfIndex] = { ...combatants[selfIndex], hp: Math.min(combatants[selfIndex].maxHp, combatants[selfIndex].hp + amount) };
         log.push(`${caster.name} casts ${power.name} and regains ${amount} hit points.`);
       } else if (power.kind === "condition" && power.onSelf) {
@@ -2948,10 +2958,10 @@ export const useCombat = create<CombatState>((set, get) => ({
         } else if (power.kind === "attack") {
           // A touch power is a melee attack; any other is made at range, with all that goes with it
           const odds = attackPlan(state.arena, combatants, { ...combatants[selfIndex], reach: 5, range: [power.range ?? 1000, power.range ?? 1000] }, target, power.range === 5 ? "melee" : "ranged");
-          const d = rollD20(odds.mode);
+          const d = caster.isPlayer ? playerD20(odds.mode, `${power.name} (attack roll)`) : rollD20(odds.mode);
           const note = `${odds.mode ? ` with ${odds.mode > 0 ? "advantage" : "disadvantage"}` : ""}${odds.cover.bonus ? ` (${odds.cover.name})` : ""}`;
           if (d !== 1 && (d === 20 || d + power.attack >= armorClassNow(target) + odds.cover.bonus)) {
-            const amount = rollDamage(power.dice!, d === 20) + (power.bonus ?? 0);
+            const amount = rollDamage(power.dice!, d === 20, 0, false, false, caster.isPlayer ? `${power.name} (damage)` : undefined) + (power.bonus ?? 0);
             log.push(`${caster.name} casts ${power.name} at ${target.name}${note} and hits for ${amount} damage${d === 20 ? " (critical)" : ""}.`);
             hit(targetIndex, amount);
             pushed = targetIndex;
@@ -2998,7 +3008,7 @@ export const useCombat = create<CombatState>((set, get) => ({
     set((state) => {
       const player = state.combatants.find((c) => c.isPlayer);
       if (!player || player.hp > 0) return state;
-      const d = roll(1, 20);
+      const d = playerRoll(1, 20, "Death save")[0];
       if (d === 20) {
         return {
           ...state,

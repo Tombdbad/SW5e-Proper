@@ -56,3 +56,32 @@ test("throwFor runs the action again with the thrown faces, and only the last ru
   assert.deepEqual(results, [15, 4, 6]);
   assert.equal(state.hp, 9);
 });
+
+test("the other random draws replay too, so every run takes the branch the thrown dice were for", async () => {
+  // An enemy's choice is drawn before the player's dice; a run that drew differently would throw different dice
+  const branches: string[] = [];
+  let state = { hp: 10 };
+  const requests: Array<[string, TableDie[]]> = [];
+  const thrown: number[][] = [[9], [4]];
+  const act = () => {
+    state.hp -= 1;
+    const special = Math.random() < 0.5;
+    branches.push(special ? "special" : "plain");
+    const [attack] = playerRoll(1, 20, "Attack roll");
+    if (special && attack >= 1) playerRoll(1, 6, "Save");
+  };
+  await throwFor(act, {
+    save: () => ({ ...state }),
+    restore: (saved) => {
+      state = { ...saved };
+    },
+    request: async (label, dice) => {
+      requests.push([label, dice]);
+      return thrown.shift() ?? [1];
+    },
+  });
+  assert.ok(branches.length >= 2);
+  assert.ok(branches.every((b) => b === branches[0]), `branches differ: ${branches.join(",")}`);
+  assert.equal(requests.length, branches[0] === "special" ? 2 : 1);
+  assert.equal(state.hp, 9);
+});

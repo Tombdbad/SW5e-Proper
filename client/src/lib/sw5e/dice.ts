@@ -210,6 +210,32 @@ export function playerRoll(quantity: number, sides: number, label: string): numb
   return table.faces.slice(from, to);
 }
 
+// One synchronous run of the action. Math.random is replayed from `randoms` (the values drawn so far, in
+// order), so a run that goes on from where the last one stopped sees the same draws; the other dice a
+// run reads (enemy AI, the prepared dice) therefore do not change between runs. Returns the missing dice.
+function runOnce(act: () => void, faces: number[], randoms: number[]): NeedDice | undefined {
+  table = { faces, cursor: 0 };
+  const real = Math.random;
+  let at = 0;
+  Math.random = () => {
+    if (at < randoms.length) return randoms[at++];
+    const r = real();
+    randoms.push(r);
+    at++;
+    return r;
+  };
+  try {
+    act();
+    return undefined;
+  } catch (e) {
+    if (e instanceof NeedDice) return e;
+    throw e;
+  } finally {
+    table = null;
+    Math.random = real;
+  }
+}
+
 /**
  * Runs `act` with the player's dice thrown on the table. `save` copies the store's data, `restore`
  * puts a copy back, and `request` throws the dice a roll needs (its promise gives their faces).
@@ -220,18 +246,12 @@ export async function throwFor<S>(
 ): Promise<void> {
   const saved = state.save();
   let faces: number[] = [];
+  const randoms: number[] = [];
   for (;;) {
-    table = { faces, cursor: 0 };
-    try {
-      act();
-      return;
-    } catch (e) {
-      if (!(e instanceof NeedDice)) throw e;
-      state.restore(saved);
-      faces = [...faces, ...(await state.request(e.label, e.dice))];
-    } finally {
-      table = null;
-    }
+    const missing = runOnce(act, faces, randoms);
+    if (!missing) return;
+    state.restore(saved);
+    faces = [...faces, ...(await state.request(missing.label, missing.dice))];
   }
 }
 

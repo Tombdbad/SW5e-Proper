@@ -1169,7 +1169,7 @@ export default function GameBoard() {
   // Forcing a door instead (house rule: DC 5 over the lock's for a Strength check; a ram gives +4 and
   // advantage with a helper (Ram, portable); a fusion cutter takes ten minutes for each 5 of the DC
   // and no check; a charge, mine or grenade simply opens it). Noise brings the watch down on the room.
-  const forceDoor = (exit: Exit, how: "strength" | "ram" | "cutter" | "blast") => {
+  const forceDoor = async (exit: Exit, how: "strength" | "ram" | "cutter" | "blast") => {
     if (!world || !here || !exit.pathId) return;
     if (here.danger === 0 && lawmenAt(world, here.id).length) {
       toast.error("Forcing a door under the guards' eyes: they see it, and turn on you.");
@@ -1195,8 +1195,8 @@ export default function GameBoard() {
     }
     const ram = how === "ram";
     const helper = party.some((c) => c.hp > 0 && c.kind !== "beast");
-    const first = d20();
-    const roll = ram && helper ? Math.max(first, d20()) : first;
+    const [first, second] = await rollOnTable("Force the door (Strength)", (ram && helper ? ["d20", "d20"] : ["d20"]) as TableDie[]);
+    const roll = ram && helper ? Math.max(first, second) : first;
     const bonus = modifier(character.abilityScores?.strength) + (ram ? 4 : 0) + (substanceFor("strength") || 0);
     const ok = roll + bonus >= dc;
     toast[ok ? "success" : "error"](`${ram ? "Portable ram" : "Shoulder it"} (Strength${ram && helper ? ", helped: advantage" : ""}): ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${roll + bonus} against DC ${dc}. ${ok ? "It gives." : "It holds."} Noisy.`);
@@ -2193,13 +2193,14 @@ export default function GameBoard() {
     const native = row?.languages.find((l) => OWN_TONGUE_ONLY.includes(l));
     return languageBarrier(native, (character?.languages ?? []) as string[], translatedNow());
   };
-  const haggle = (trader: Occupant, placeId: string) => {
+  const haggle = async (trader: Occupant, placeId: string) => {
     const attitude = attitudeOf(world!, trader, placeId, customer).score;
     const dc = haggleDC(trader, attitude);
-    const first = d20();
     // No common language: disadvantage (cancelling an advantage), unless a translator or vocoder covers it
     const barrier = languageBarrierWith(trader);
-    const roll = haggling.advantage && !barrier ? Math.max(first, d20()) : !haggling.advantage && barrier ? Math.min(first, d20()) : first;
+    const twice = (haggling.advantage && !barrier) || (!haggling.advantage && barrier);
+    const [first, second] = await rollOnTable("Haggling (Persuasion)", (twice ? ["d20", "d20"] : ["d20"]) as TableDie[]);
+    const roll = haggling.advantage && !barrier ? Math.max(first, second) : !haggling.advantage && barrier ? Math.min(first, second) : first;
     const bonus = modifier(character.abilityScores?.charisma) + (haggling.expertise ? 2 * proficiency : skilled("persuasion") ? proficiency : 0);
     const won = roll + bonus >= dc;
     const how = [haggling.advantage && `advantage from ${haggling.advantage}`, haggling.expertise && `expertise from ${haggling.expertise}`, barrier && "no common language: a translator would help (house rule)"].filter(Boolean).join(", ");
@@ -2357,8 +2358,9 @@ export default function GameBoard() {
     const campNotes: string[] = [];
     if (camp && !bedded) campNotes.push("Sleeping rough (no bedroll, tent or shelter): a quarter of the Hit Dice back (house rule)");
     if (camp && land === "ice" && !sheltered && !gear(/^heat generator/i) && !(play.wearing ?? []).some((n) => /diving suit/i.test(n))) {
-      const a = d20();
-      const roll = gear(/^blanket/i) || wearingNow.some((n) => /traveler/i.test(n)) ? Math.max(a, d20()) : a;
+      const twice = gear(/^blanket/i) || wearingNow.some((n) => /traveler/i.test(n));
+      const [a, b] = await rollOnTable("The cold of the night (Constitution)", (twice ? ["d20", "d20"] : ["d20"]) as TableDie[]);
+      const roll = twice ? Math.max(a, b) : a;
       const total = roll + modifier(character.abilityScores?.constitution);
       if (total < 10) {
         coldLevel = 1;
@@ -2779,16 +2781,18 @@ export default function GameBoard() {
 
   // ---- Playing an instrument for a room (house rule: Musical Instruments give Performance and
   // the book's sample DCs, tune 10 / manipulate the audience 15 / improvise 20; it prices no tips)
-  const perform = (instrument: string) => {
+  const perform = async (instrument: string) => {
     if (!here || !world || inCombat || dead) return;
     const audience = Math.min(12, (hereNow ?? here).occupants.filter((o) => o.disposition !== "hostile" && !o.disabled && !o.captive).reduce((n, o) => n + (o.count ?? 1), 0));
     if (hostiles.length) return speed("Not with armed enemies in the room.");
     if (!audience) return speed("There is nobody here to play to.");
     const dc = /cantina|bar|booth/i.test(here.name) ? 12 : 15;
     const trained = trainedWith(instrument);
-    const tuned = play.boon?.kind === "check" ? die(play.boon.die || 2) : 0;
+    // The d20, and the tool's prepared die on the check when it has one, are thrown on the table
+    const tuning = play.boon?.kind === "check" ? play.boon.die || 2 : 0;
+    const [roll, tunedRoll] = await rollOnTable("Play for the room (Performance)", (tuning ? ["d20", `d${tuning}`] : ["d20"]) as TableDie[]);
+    const tuned = tuning ? tunedRoll : 0;
     const bonus = modifier(character.abilityScores?.charisma) + (skilled("performance") ? proficiency : 0) + (trained ? proficiency : 0) + tuned + substanceFor("charisma");
-    const roll = die(20);
     const total = roll + bonus;
     const margin = total - dc;
     const tips = margin >= 0 ? Array.from({ length: audience }, () => die(4)).reduce((a, b) => a + b, 0) * (1 + (margin >= 5 ? 1 : 0) + (margin >= 10 ? 1 : 0)) : 0;
@@ -3118,7 +3122,8 @@ export default function GameBoard() {
         result = await toolRoll(name, dc, `${spec.label} (rerolled)`, "intelligence");
       }
     } else {
-      const roll = die(20) + modifier(character.abilityScores?.strength) + substanceFor("strength");
+      const [face] = await rollOnTable("Break the chains (Strength)", ["d20"]);
+      const roll = face + modifier(character.abilityScores?.strength) + substanceFor("strength");
       result = { success: roll >= 20 };
       toast[result.success ? "success" : "error"](`Break the ${restraint === "collar" ? "collar" : "chains"} (Strength): ${roll} against DC 20. ${result.success ? "It gives." : "It holds."} (Binders: Breaking them requires a DC 20 Strength check.)`);
     }
@@ -3248,15 +3253,15 @@ export default function GameBoard() {
 
   // Gentling a wild creature (house rule for the DC): Wisdom (Animal Handling); rations in hand
   // give advantage; it takes an hour; a failure by 5 or more is an attack
-  const gentle = (o: Occupant) => {
+  const gentle = async (o: Occupant) => {
     if (!world || !here || inCombat) return;
     if (partyFull) return toast.error(`You can lead ${COMPANION_LIMIT} companions at most (house rule).`);
     if (crOf(o) > gentleLimit(level)) return toast.error(`${o.name} (CR ${o.cr}) is too fierce for a character of level ${level} to gentle (house rule: up to CR ${gentleLimit(level)}).`);
     const hurt = (o.wounds?.[0] ?? o.hitPoints ?? 0) < (o.hitPoints ?? 0);
     const dc = gentleDC(o, hurt);
     const food = (character.equipment ?? []).find((n: string) => /rations/i.test(n));
-    const first = die(20);
-    const roll = food ? Math.max(first, die(20)) : first;
+    const [first, second] = await rollOnTable("Gentle the beast (Animal Handling)", (food ? ["d20", "d20"] : ["d20"]) as TableDie[]);
+    const roll = food ? Math.max(first, second) : first;
     const bonus = modifier(character.abilityScores?.wisdom) + (skilled("animal handling") ? proficiency : 0) + substanceFor("wisdom");
     const total = roll + bonus;
     const success = total >= dc;

@@ -142,7 +142,7 @@ function release(v){held=false;const sp=Math.hypot(v.x,v.z);
 const ray=new THREE.Raycaster(),plane=new THREE.Plane(V(0,1,0),-4);
 function world3(e){const r=cvs.getBoundingClientRect();ray.setFromCamera({x:(e.clientX-r.left)/r.width*2-1,y:-((e.clientY-r.top)/r.height*2-1)},cam);
  const p=V(0,0,0);return ray.ray.intersectPlane(plane,p)?p:null}
-cvs.addEventListener('pointerdown',e=>{const p=world3(e);if(!p)return;pickUp();ptr.copy(p);trail=[{t:performance.now(),x:p.x,z:p.z}];cvs.setPointerCapture(e.pointerId);setText('…','')});
+cvs.addEventListener('pointerdown',e=>{if(locked)return;const p=world3(e);if(!p)return;pickUp();ptr.copy(p);trail=[{t:performance.now(),x:p.x,z:p.z}];cvs.setPointerCapture(e.pointerId);setText('…','')});
 cvs.addEventListener('pointermove',e=>{if(!held||!trail.length)return;const p=world3(e);if(!p)return;ptr.copy(p);trail.push({t:performance.now(),x:p.x,z:p.z});if(trail.length>40)trail.shift()});
 const up=()=>{if(!held||!trail.length)return;const now=performance.now(),rec=trail.filter(s=>now-s.t<120);let v=V(0,0,0);
  if(rec.length>1){const a=rec[0],b=rec[rec.length-1],dt=(b.t-a.t)/1000;if(dt>.016)v.set((b.x-a.x)/dt,0,(b.z-a.z)/dt)}
@@ -163,8 +163,8 @@ function read(d){tq.set(d.b.quaternion.x,d.b.quaternion.y,d.b.quaternion.z,d.b.q
  let best=-9,val=1;d.D.faces.forEach(f=>{const y=tmp.copy(f.n).applyQuaternion(tq).y;if(y>best){best=y;val=f.val}});return val}
 function setText(t,c){document.getElementById('total').textContent=t;document.getElementById('chips').textContent=c}
 // The host reads the faces in the order of the dice (each type in turn, d4 first); a d10 face 0 is sent as 0
-let reqId=null,fallback=0;
-function report(){let tot=0;const parts=dice.map(d=>{const v=read(d);tot+=(d.D.type==='d10'&&v===0)?10:v;return d.D.type.toUpperCase()+': '+v});
+let reqId=null,fallback=0,locked=false;
+function report(){locked=true;let tot=0;const parts=dice.map(d=>{const v=read(d);tot+=(d.D.type==='d10'&&v===0)?10:v;return d.D.type.toUpperCase()+': '+v});
  setText(dice.length?'Total: '+tot:'No dice selected',parts.join('  ·  ')+(counts.d10?'   (D10 “0” counts as 10)':''));
  parent.postMessage({type:'result',id:reqId,values:dice.map(d=>read(d))},'*')}
 
@@ -198,7 +198,7 @@ rebuild();requestAnimationFrame(frame);
 
 // ---------- the host's rolls: the dice a roll needs, thrown at once; the faces go back when they settle ----------
 addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='roll')return;
- reqId=m.id;resize();Object.keys(counts).forEach(t=>counts[t]=0);m.dice.forEach(t=>counts[t]++);
- rebuild();clearTimeout(fallback);fallback=setTimeout(()=>{if(!reported){reported=true;report()}},8000)});
+ reqId=m.id;locked=false;resize();Object.keys(counts).forEach(t=>counts[t]=0);m.dice.forEach(t=>counts[t]++);
+ rebuild();clearTimeout(fallback);fallback=setTimeout(()=>{if(!reported&&!held){reported=true;report()}},8000)});
 parent.postMessage({type:'ready'},'*');
 </script></body></html>

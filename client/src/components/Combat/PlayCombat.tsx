@@ -19,8 +19,8 @@ export interface CombatItemOption {
 
 export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] }) {
   const {
-    combatants, currentTurn, round, combatLog, endCombat, deathSaves, castPower, deathSave, pass, arena, targetId, setTarget,
-    pending, standard, useFeature, setEmpower, setManeuver, autoEnd, setAutoEnd,
+    combatants, currentTurn, round, combatLog, endCombat, deathSaves, pass, arena, targetId, setTarget,
+    pending, standard, setEmpower, setManeuver, autoEnd, setAutoEnd,
     objectId, setObject, reload, spray, brace, draw, stow, detonate, mines,
   } = useCombat();
   // The character's attacks and the end of its turn throw the dice the roll needs on the table (onTable)
@@ -84,11 +84,11 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
   const bonusUses = player ? bonusFeatures(player) : [];
   const bonusStandard = (player?.features ?? []).filter((f) => f.actions?.length && (player?.bonus ?? 0) > 0).flatMap((f) => f.actions!.map((a) => ({ a: a.toLowerCase() as "dash" | "disengage" | "hide" | "dodge" | "help", from: f.name })));
   const friends = combatants.filter((c) => onPartySide(c) && !c.isPlayer && c.hp > 0);
-  const cast = (index: number) => castPower(index);
-  const rollDeathSave = () => {
-    deathSave();
-    if (useCombat.getState().inCombat) endOfTurn();
-  };
+  const cast = (index: number) => onTable(() => useCombat.getState().castPower(index));
+  const rollDeathSave = () =>
+    onTable(() => useCombat.getState().deathSave()).then(() => {
+      if (useCombat.getState().inCombat) endOfTurn();
+    });
   // Features that are used by choice (not a reaction offered when a hit lands, not always on)
   const chosen = (player?.features ?? []).filter((f) => f.activation !== "passive" || f.uses);
   const usesLeft = (key: string) => {
@@ -265,7 +265,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
                 </Button>
               ))}
               {bonusUses.map((f) => (
-                <Button key={f.key} size="sm" variant="secondary" className="h-auto whitespace-normal justify-start text-left" onClick={() => useFeature(f.key, player?.id)} data-testid={`combat-feature-${f.name}`}>
+                <Button key={f.key} size="sm" variant="secondary" className="h-auto whitespace-normal justify-start text-left" onClick={() => onTable(() => useCombat.getState().useFeature(f.key, player?.id))} data-testid={`combat-feature-${f.name}`}>
                   {player?.stance && f.stance ? `End ${f.stance.label.replace(/ing$/, "e")}` : f.name}
                   <span className="text-gray-400 ml-1">
                     {usesLeft(f.key) !== null ? `(${usesLeft(f.key)} left` : "("}
@@ -287,7 +287,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
                   const left = usesLeft(f.key);
                   const blocked = (left !== null && left <= 0) || (f.activation === "action" && !hasAction) || (f.cost && (f.cost.pool === "focus" ? (player?.focus ?? 0) : (player?.powerPoints ?? 0)) < f.cost.points);
                   return (
-                    <Button key={f.key} size="sm" variant="outline" className="h-auto whitespace-normal justify-start text-left" disabled={!!blocked} onClick={() => useFeature(f.key, target?.id)} data-testid={`combat-feature-${f.name}`}>
+                    <Button key={f.key} size="sm" variant="outline" className="h-auto whitespace-normal justify-start text-left" disabled={!!blocked} onClick={() => onTable(() => useCombat.getState().useFeature(f.key, target?.id))} data-testid={`combat-feature-${f.name}`}>
                       {f.name}
                       <span className="text-gray-400 ml-1">
                         ({[f.activation === "action" ? "action" : "no action", left !== null ? `${left} left` : "", f.cost ? `${f.cost.points} ${f.cost.pool === "focus" ? "focus" : "point"}` : "", f.automated ? "" : "you apply it"].filter(Boolean).join("; ")})
@@ -365,7 +365,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
           const foeFar = powerOutOfRange(combatants, player, power, targetId);
           const go = (choice: { mode: "away" | "toward" | "at"; objectId?: string }) => {
             setAiming(null);
-            castPower(aiming, choice);
+            onTable(() => useCombat.getState().castPower(aiming, choice));
           };
           const thing = piece?.name.toLowerCase();
           return (

@@ -48,7 +48,7 @@ export default function DiceRoller() {
   }, [finishTable]);
 
   return (
-    <div className="fixed inset-0 z-[60]" style={{ display: table ? "block" : "none" }}>
+    <div className="fixed inset-0 z-[80]" style={{ display: table ? "block" : "none" }}>
       {mounted && <iframe ref={frame} src="/dice/roller.html" title="Dice roller" className="w-full h-full border-0" />}
       {table && (
         <div className="pointer-events-none fixed bottom-4 inset-x-0 text-center text-sm text-gray-200">{table.label}</div>
