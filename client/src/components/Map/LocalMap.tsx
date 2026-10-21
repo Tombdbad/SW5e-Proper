@@ -3068,6 +3068,8 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
   const wall = trail.some((a) => a.type === "station") ? STEEL : WALLS[biome] ?? "#b9ad96";
   const system = view.kind === "system";
   const globe = view.kind === "planet";
+  // The open ground of a settlement: a textured plane where the world has one (siteAssets groundTexture)
+  const groundTex = groundTexture(biome, "", GROUND[biome] ?? "#0b1220");
 
   // Fit the places into the view, whatever scale they were generated at. Planets keep their
   // orbits round the star in the middle; a planet's sites lie on the top of its globe.
@@ -3151,11 +3153,14 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
       )}
       {!system && !globe && (
         <>
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.6, 0]}>
-            <planeGeometry args={[600, 600]} />
-            <meshBasicMaterial color={GROUND[biome] ?? "#0b1220"} />
-          </mesh>
-          <gridHelper args={[300, 60, "#1f2a44", "#162036"]} position={[0, -0.5, 0]} />
+          {groundTex ? (
+            <GroundSurface set={groundTex.set} tint={groundTex.tint} parallax={groundTex.parallax} w={600} h={600} at={[0, -0.6, 0]} />
+          ) : (
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.6, 0]}>
+              <planeGeometry args={[600, 600]} />
+              <meshBasicMaterial color={GROUND[biome] ?? "#0b1220"} />
+            </mesh>
+          )}
         </>
       )}
 

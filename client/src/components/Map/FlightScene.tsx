@@ -67,7 +67,6 @@ function Sky({ mode }: { mode: FlightMode }) {
             <planeGeometry args={[900, 900]} />
             <meshLambertMaterial color="#26361f" />
           </mesh>
-          <gridHelper args={[900, 90, "#3c5a33", "#2c4327"]} />
         </>
       ) : (
         <Stars radius={300} depth={80} count={2500} factor={4} fade speed={0} />

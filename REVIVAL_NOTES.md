@@ -356,10 +356,11 @@ Every item of the rules data has a model: 507 equipment items (286 of their own,
 - Tests: `tests/dice/tableRolls.test.ts` (the mapping and the replay engine). The page was run headless with a host frame and posted the faces back; the overlay in the app has not been clicked through in a browser yet.
 
 ## Ground textures and no grids (2026-10-21; `components/Map/siteAssets.tsx`: `groundTexture`, `GroundSurface`; textures in `client/public/textures/ground/`)
-- No grid lines on the 3D map (user, 2026-10-21): the squares of the rooms, the squares of the outdoor ground, and the coordinate grid of `LocalAreaMap` are removed. The starship fight's 50-foot grid (`SpaceScene`) stays: it is space, not a place.
+- No grid lines on the 3D map (user, 2026-10-21): the squares of the rooms, the squares of the outdoor ground, the settlement's grid in `WorldLayer` (the view a new campaign opens on), the speeder flight's grid (`FlightScene`), and the coordinate grid of `LocalAreaMap` are removed. The starship fight's 50-foot grid (`SpaceScene`) stays: it is space, not a place.
 - The ground round a building is a Poly Haven texture (CC0, 1K; credits in the folder's README): bare earth (`dirt_floor`, recoloured to the world's ground colour) for most worlds, `dense_sand` for desert, `dark_rock` for volcanic, `brown_mud_03` (sludge) for a sewer system. Urban (Coruscant) keeps the plain ground: no texture, no parallax (the user's rule).
+- The settlement view (`WorldLayer`) uses the same textured ground, 600 units across; a planet's globe and a system's view are not ground.
 - Hybrid: a Phong material with the normal map, and the diffuse and normal samples shifted toward the viewer by the height map (single-step offset parallax, `PARALLAX` 0.05, one repeat = 8 squares). Lambert takes no normal map, hence Phong with black specular.
-- Not seen in a browser yet (no e2e was run on purpose). Check on 5002 for a black ground (a shader compile error blanks the plane), a swimming ground (lower `PARALLAX`) and the brightness of the recoloured bare earth (tint is 2.5 times the biome colour).
+- Deployed to 5002 at 63788ad + the WorldLayer/FlightScene fix (`sh deploy/test-plain.sh`); the served chunk has the shader and no grid colours. Not seen in a browser yet (no e2e was run on purpose; a hard reload may be needed to drop the old page). Check on 5002 for a black ground (a shader compile error blanks the plane), a swimming ground (lower `PARALLAX`) and the brightness of the recoloured bare earth (tint is 2.5 times the biome colour).
 - Not done: the room floors and walls; ship and speeder wear (see HANDOFF).
 
 ## Play-through test (e2e/)
