@@ -967,5 +967,171 @@
    "Huge": 168,
    "Gargantuan": 720
   }
+ },
+ "modifications": {
+  "baseCost": {
+   "Engineering": 3500,
+   "Operation": 3500,
+   "Suite": 5000,
+   "Universal": 4000,
+   "Weapon": 3000
+  },
+  "sizeCost": {
+   "Tiny": 0.5,
+   "Small": 1,
+   "Medium": 2,
+   "Large": 5,
+   "Huge": 50,
+   "Gargantuan": 500
+  },
+  "workforce": {
+   "Tiny": 1,
+   "Small": 2,
+   "Medium": 4,
+   "Large": 10,
+   "Huge": 100,
+   "Gargantuan": 1000
+  },
+  "slots": {
+   "Tiny": 10,
+   "Small": 20,
+   "Medium": 30,
+   "Large": 50,
+   "Huge": 60,
+   "Gargantuan": 70
+  },
+  "suiteCapacity": {
+   "Tiny": 0,
+   "Small": 1,
+   "Medium": 4,
+   "Large": 400,
+   "Huge": 4000,
+   "Gargantuan": 40000
+  },
+  "installDc": [
+   [
+    10,
+    9,
+    8,
+    7,
+    6,
+    5
+   ],
+   [
+    17,
+    12,
+    11,
+    10,
+    9,
+    8
+   ],
+   [
+    24,
+    19,
+    14,
+    13,
+    12,
+    11
+   ],
+   [
+    31,
+    26,
+    21,
+    16,
+    15,
+    14
+   ],
+   [
+    38,
+    33,
+    28,
+    23,
+    18,
+    17
+   ],
+   [
+    45,
+    40,
+    35,
+    30,
+    25,
+    20
+   ]
+  ],
+  "maxSuites": {
+   "Tiny": null,
+   "Small": {
+    "base": -1,
+    "con": 1
+   },
+   "Medium": {
+    "base": 3,
+    "con": 1
+   },
+   "Large": {
+    "base": 3,
+    "con": 2
+   },
+   "Huge": {
+    "base": 6,
+    "con": 3
+   },
+   "Gargantuan": {
+    "base": 10,
+    "con": 4
+   }
+  }
+ },
+ "upgrade": {
+  "tierCost": [
+   0,
+   3900,
+   77500,
+   297000,
+   620000,
+   1150000
+  ],
+  "sizeCost": {
+   "Tiny": 0.5,
+   "Small": 1,
+   "Medium": 2,
+   "Large": 10,
+   "Huge": 100,
+   "Gargantuan": 1000
+  },
+  "workforce": {
+   "Tiny": 1,
+   "Small": 1,
+   "Medium": 5,
+   "Large": 50,
+   "Huge": 500,
+   "Gargantuan": 5000
+  }
+ },
+ "equipment": {
+  "sizeCost": {
+   "Tiny": 0.5,
+   "Small": 1,
+   "Medium": 2,
+   "Large": 5,
+   "Huge": 50,
+   "Gargantuan": 500
+  },
+  "workforce": {
+   "Tiny": 1,
+   "Small": 1,
+   "Medium": 2,
+   "Large": 5,
+   "Huge": 50,
+   "Gargantuan": 500
+  },
+  "cargoTons": {
+   "Tiny": 0,
+   "Small": 2,
+   "Medium": 25,
+   "Large": 500,
+   "Huge": 10000,
+   "Gargantuan": 200000
+  }
  }
 }

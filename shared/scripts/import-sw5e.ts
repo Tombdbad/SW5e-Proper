@@ -482,6 +482,44 @@ function deriveShips(sizes: any[], starshipChapters: any[]) {
     hours: Object.fromEntries((timeTable?.rows ?? []).map((r) => [r[0].trim(), hours(r[1])])),
   };
   if (!Object.keys(out.refit.cost).length || !Object.keys(out.refit.hours).length) throw new Error("could not read the refitting tables of Starships of the Galaxy");
+  // Modifications (chapter 4): the base cost by category, the cost modifier, workforce and slots by size, the
+  // installation DC by the modification's grade and the ship's tier, and the most suites a size takes
+  const chapter4: string = starshipChapters.find((c) => c.chapterName === "Modifications")?.contentMarkdown ?? "";
+  const bySize = (title: RegExp, from: string) => Object.fromEntries((tables(from).find((t) => title.test(t.title))?.rows ?? []).map((r) => [r[0].trim(), number(r[1].replace(/^x\s*/i, "")) ?? 0]));
+  const dcTable = tables(chapter4).find((t) => /Installation by Ship Tier/i.test(t.title));
+  const suites = tables(chapter4).find((t) => /Maximum Suites/i.test(t.title));
+  out.modifications = {
+    baseCost: Object.fromEntries((tables(chapter4).find((t) => /Category Base Cost/i.test(t.title))?.rows ?? []).map((r) => [r[0].trim(), number(r[1]) ?? 0])),
+    sizeCost: bySize(/Size Modification Cost/i, chapter4),
+    workforce: bySize(/Size Modification Workforce/i, chapter4),
+    slots: bySize(/Capacity by Ship Size/i, chapter4),
+    suiteCapacity: bySize(/Suite Capacity/i, chapter4),
+    // Grade 0 to 5, tier 0 to 5
+    installDc: (dcTable?.rows ?? []).map((r) => r.slice(1, 7).map((c) => number(c) ?? 0)),
+    // "3 + con. mod.": a base and the multiple of the Constitution modifier; none for a Tiny ship
+    maxSuites: Object.fromEntries((suites?.rows ?? []).map((r) => {
+      const m = r[1].replace(/\s/g, "").match(/^(-?\d+)\+(\d*)x?con/i);
+      return [r[0].trim(), m ? { base: Number(m[1]), con: Number(m[2] || 1) } : null];
+    })),
+  };
+  // Upgrading a ship's tier (chapter 3): the base cost of each tier, the size's cost modifier and the least workforce
+  out.upgrade = {
+    tierCost: (tables(chapter3).find((t) => /Base Upgrade Cost by Tier/i.test(t.title))?.rows ?? []).map((r) => number(r[1]) ?? 0),
+    sizeCost: bySize(/Starship Size Upgrade Cost/i, chapter3),
+    workforce: bySize(/Starship Size Upgrade Workforce/i, chapter3),
+  };
+  // Equipment (chapter 5): the cost modifier and least workforce by size (weapons and ammunition cost the same for any size), and the
+  // cargo capacity in tons; each table is printed in two halves
+  const bySizeAll = (title: RegExp, from: string) =>
+    Object.fromEntries(tables(from).filter((t) => title.test(t.title)).flatMap((t) => t.rows).map((r) => [r[0].trim(), r[1].trim() === "—" ? 0 : number(r[1].replace(/^x\s*/i, "")) ?? 0]));
+  out.equipment = {
+    sizeCost: bySizeAll(/Size Equipment Cost/i, equipment),
+    workforce: bySizeAll(/Size Equipment Workforce/i, equipment),
+    cargoTons: bySizeAll(/Size Cargo Capacity/i, equipment),
+  };
+  if (Object.keys(out.equipment.sizeCost).length !== 6 || Object.keys(out.equipment.workforce).length !== 6) throw new Error("could not read the equipment cost and workforce tables of Starships of the Galaxy");
+  const mods = out.modifications;
+  if (Object.keys(mods.baseCost).length !== 5 || mods.installDc.length !== 6 || Object.keys(mods.slots).length !== 6 || out.upgrade.tierCost.length !== 6) throw new Error("could not read the modification and upgrade tables of Starships of the Galaxy");
   return out;
 }
 
@@ -601,7 +639,7 @@ async function main() {
   const downtime = deriveDowntime(loaded.rulesWretchedHives);
   manifest.datasets.downtime = { derivedFrom: "rulesWretchedHives", activities: downtime.activities.length, bytes: write("downtime", downtime) };
   const ships = deriveShips(loaded.starshipSizes, loaded.rulesStarships);
-  manifest.datasets.ships = { derivedFrom: "starshipBaseSize", sizes: Object.keys(ships).filter((k) => !/^(ammunition|armor|shields|refit)$/.test(k)).length, bytes: write("ships", ships) };
+  manifest.datasets.ships = { derivedFrom: "starshipBaseSize", sizes: Object.keys(ships).filter((k) => !/^(ammunition|armor|shields|refit|modifications|upgrade|equipment)$/.test(k)).length, bytes: write("ships", ships) };
   write("manifest", manifest);
   const total = Object.values(manifest.datasets).reduce((sum: number, d: any) => sum + d.bytes, 0);
   console.log(`\n${Object.keys(manifest.datasets).length} datasets, ${(total / 1048576).toFixed(1)} MB, data version ${manifest.dataVersion} -> ${OUT}`);
@@ -619,7 +657,7 @@ async function deriveOnly() {
   const downtime = deriveDowntime(read("rulesWretchedHives"));
   manifest.datasets.downtime = { derivedFrom: "rulesWretchedHives", activities: downtime.activities.length, bytes: write("downtime", downtime) };
   const ships = deriveShips(read("starshipSizes"), read("rulesStarships"));
-  manifest.datasets.ships = { derivedFrom: "starshipBaseSize", sizes: Object.keys(ships).filter((k) => !/^(ammunition|armor|shields|refit)$/.test(k)).length, bytes: write("ships", ships) };
+  manifest.datasets.ships = { derivedFrom: "starshipBaseSize", sizes: Object.keys(ships).filter((k) => !/^(ammunition|armor|shields|refit|modifications|upgrade|equipment)$/.test(k)).length, bytes: write("ships", ships) };
   const lookups = deriveLookups(read("rulesPlayersHandbook"), { referenceTables: read("referenceTables") });
   manifest.datasets.lookups = { derivedFrom: "rulesPlayersHandbook", languages: lookups.languages.length, bytes: write("lookups", lookups) };
   write("manifest", manifest);

@@ -315,7 +315,7 @@
   "ships": {
    "derivedFrom": "starshipBaseSize",
    "sizes": 6,
-   "bytes": 22139
+   "bytes": 24141
   }
  },
  "features": {
