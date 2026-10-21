@@ -10,4 +10,4 @@ From Poly Haven (https://polyhaven.com), licensed CC0: no attribution required, 
 | `brown_mud_03/` | https://polyhaven.com/a/brown_mud_03 | sewer sludge (Coruscant, the only place parallax is used there) |
 
 Each folder holds `diffuse.jpg`, `normal.jpg` (OpenGL convention, `nor_gl` on Poly Haven), `height.jpg` (displacement) and `rough.jpg`, all 1K JPEGs.
-Not wired into the game yet.
+Wired in `siteAssets.tsx` (`groundTexture`). The floors of rooms and the hull wear textures are in `../floor` and `../hull` (see CREDITS.md).

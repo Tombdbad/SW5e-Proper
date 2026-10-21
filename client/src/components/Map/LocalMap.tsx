@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useLayoutEffect, useMemo, type ReactNode } from "react";
+import { Suspense, useRef, useState, useEffect, useLayoutEffect, useMemo, type ReactNode } from "react";
 import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Text, useTexture, OrbitControls, PerspectiveCamera, Billboard, Line, Stars, Html } from "@react-three/drei";
 import * as THREE from "three";
@@ -23,7 +23,7 @@ import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
-import { CurtainWall, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
+import { CurtainWall, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { Figure, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, RoundedFloor, CornerWall, DomeRoof, Opening, styleOf, hue, type Style } from "./models";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
 
@@ -542,6 +542,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   const packLook = useMemo(() => (pack ? packTone(PACKS[pack], wall) : undefined), [pack, wall]);
   const [nw, ne, se, sw] = rocky ? [0, 0, 0, 0] : corners ?? [0, 0, 0, 0];
   const rounded = nw + ne + se + sw > 0;
+  const floorTexture = floorLook(floor, mood?.buildingType, plan?.form === "roof");
   // The rounded corners, each a quarter ring
   const cornerList = ([[nw, 0], [ne, 1], [se, 2], [sw, 3]] as const).filter(([r]) => r > 0).map(([r, corner]) => ({ r, corner }));
   // Each wall runs between its corners, stopping short of a rounded one
@@ -574,6 +575,12 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
           <boxGeometry args={[width, 0.2, height]} />
           <meshLambertMaterial color={FLOORS[floor]} />
         </mesh>
+      )}
+      {/* Over the slab, its texture (siteAssets floorLook); the slab shows until the maps are in */}
+      {!mask && floorTexture && (
+        <Suspense fallback={null}>
+          <FloorSurface look={floorTexture} w={width} h={height} radii={[nw, ne, se, sw]} onTap={floorTap} />
+        </Suspense>
       )}
       {plan?.climb && plan.form && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} onTap={onFloor} />}
       {walls && mask

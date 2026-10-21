@@ -5,7 +5,7 @@ import type { ThreeEvent } from "@react-three/fiber";
 import { create } from "zustand";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, type V3, type Finish } from "./models";
+import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, type V3, type Finish } from "./models";
 import { createRandom, unitOf, packedness, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery } from "@shared/logic";
 
 // ---------------------------------------------------------------------------------------------
@@ -1016,6 +1016,59 @@ export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: s
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={at} receiveShadow onClick={onTap}>
       <planeGeometry args={[w, h]} />
+      <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} onBeforeCompile={compile} />
+    </mesh>
+  );
+}
+
+// The floors of rooms and roofs (2026-10-21): the same lit, shifted texture as the ground, from public/textures/floor, laid over the
+// flat slab of a room (which stays as what shows while the maps load). `tile` is the squares in one repeat; `tint` multiplies the
+// photograph (dark sets are brought up, plating is turned toward steel blue)
+export type FloorLook = { set: string; tint: THREE.Color; tile: number; parallax: number };
+const FLOOR_PARALLAX = 0.04;
+const floorSet = (set: string, tile: number, tint: string | THREE.Color = "#ffffff", parallax = FLOOR_PARALLAX): FloorLook => ({ set, tile, tint: new THREE.Color(tint), parallax });
+
+// What a room's floor is made of, by the floor kind its building gives it (sprites.tsx floorOf), the building's type and whether it is a roof
+export function floorLook(kind: string, buildingType = "", roof = false): FloorLook | null {
+  if (roof) return floorSet("concrete_floor_worn_02", 6, "#ffffff", 0.03);
+  switch (kind) {
+    case "plating": return floorSet("metal_plate", 3, new THREE.Color(1.9, 2.5, 4.2));
+    case "hangar": return floorSet("hangar_concrete_floor", 6, new THREE.Color(2.4, 2.4, 2.5), 0.03);
+    case "sand": return floorSet("dense_sand", GROUND_TILE, "#ffffff", PARALLAX);
+    case "rock": return floorSet("dark_rock", GROUND_TILE, new THREE.Color(3, 3, 3), PARALLAX);
+    case "stone": return /ruin/.test(buildingType) ? floorSet("stone_tiles", 4, new THREE.Color(1.6, 1.6, 1.6)) : floorSet("marble_tiles", 4, "#d8d2c6", 0.02);
+    case "clay": return /market|gate/.test(buildingType) ? floorSet("terracotta_floor_tiles", 4, new THREE.Color(1.5, 1.5, 1.5), 0.02) : floorSet("dirty_carpet", 3, new THREE.Color(2.3, 2.1, 1.9), 0.05);
+    default: return null;
+  }
+}
+
+// A floor of a room laid flat at `y` over its footprint (w by h squares, corners rounded by `radii`, centred on the point it stands at,
+// so that a tap lands as it does on the slab under it)
+export function FloorSurface({ look: { set, tint, tile, parallax }, w, h, radii, y = 0.004, onTap }: { look: FloorLook; w: number; h: number; radii: [number, number, number, number]; y?: number; onTap?: (e: ThreeEvent<MouseEvent>) => void }) {
+  const [diffuse, normal, height] = useTexture([`/textures/floor/${set}/diffuse.jpg`, `/textures/floor/${set}/normal.jpg`, `/textures/floor/${set}/height.jpg`]);
+  // (the outline's own coordinates are the texture's, so a repeat is 1 / tile)
+  const maps = useMemo(() => {
+    const repeat = (t: THREE.Texture) => {
+      const c = t.clone();
+      c.wrapS = c.wrapT = THREE.RepeatWrapping;
+      c.repeat.set(1 / tile, 1 / tile);
+      c.anisotropy = 4;
+      c.needsUpdate = true;
+      return c;
+    };
+    const d = repeat(diffuse);
+    d.colorSpace = THREE.SRGBColorSpace;
+    return { diffuse: d, normal: repeat(normal), height: repeat(height) };
+  }, [diffuse, normal, height, tile]);
+  const geometry = useMemo(() => {
+    const g = new THREE.ShapeGeometry(planRect(w, h, radii));
+    g.rotateX(-Math.PI / 2);
+    return g;
+  }, [w, h, radii.join(",")]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  const compile = (shader: THREE.WebGLProgramParametersWithUniforms) => groundShader(shader, maps.height, parallax);
+  return (
+    <mesh geometry={geometry} position={[w / 2, y, h / 2]} receiveShadow onClick={onTap}>
       <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} onBeforeCompile={compile} />
     </mesh>
   );

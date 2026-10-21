@@ -38,6 +38,17 @@ under `client/public/assets`; the downloads themselves are not kept (fetch the t
 The `sw5e-*` packs (2026-10-20) are the models of the rules data's items (shared/art/itemModels.json is their catalogue, shared/art/itemIndex.json says which item has which). They were built headless in Blender from primitives and from pieces of Kenney's Survival Kit, Food Kit and Pirate Kit and Quaternius' LowPoly Medieval Weapons (all CC0), and converted by `tools/build-item-assets.mjs` (vertex colours, a finish and a part number for every vertex, a low-detail file beside each). Their `License.txt` offers the models as CC0; the owner of the project can change that for the parts that are original.
 CC0 asks for no credit; Kenney is credited here because the work is theirs.
 
+## Textures (downloaded)
+
+Poly Haven (https://polyhaven.com), CC0 1.0, 1K maps fetched with `tools/fetch-polyhaven.mjs` into `client/public/textures`; each folder has `diffuse.jpg`, `normal.jpg` (OpenGL) and `height.jpg`.
+
+| Folder | Sets | Used for |
+|---|---|---|
+| `ground/` | `dirt_floor`, `dense_sand`, `dark_rock`, `brown_mud_03` | the ground round a building (`siteAssets.tsx` `groundTexture`) |
+| `floor/` | `metal_plate`, `hangar_concrete_floor`, `dirty_carpet`, `marble_tiles`, `stone_tiles`, `terracotta_floor_tiles`, `concrete_floor_worn_02` | the floors of rooms and rooftops (`siteAssets.tsx` `floorLook`) |
+| `wear/` | `rusty_painted_metal`, `rust_coarse_01`, `peeling_painted_wall`, `painted_metal_shutter`, `metal_plate_02` | not drawn: the sources of the hull wear masks |
+| `hull/` | made here by `tools/build-hull-textures.mjs` from `wear/` and drawn patterns (CC0) | the wear, scorch and panel plates of ships and speeders (`models.tsx` `hullMaterials`) |
+
 ## Libraries
 
 three.js, @react-three/fiber, @react-three/drei, @react-three/postprocessing (MIT); glTF Transform and meshoptimizer
