@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { useTexture } from "@react-three/drei";
+import type { ThreeEvent } from "@react-three/fiber";
 import { create } from "zustand";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
@@ -950,5 +952,62 @@ export function GardenGround({ rects, biome }: { rects: NonNullable<SiteGrounds[
         </mesh>
       ))}
     </>
+  );
+}
+
+// The ground round a building (2026-10-21): a Poly Haven texture (public/textures/ground, see the README there), lit by its normal
+// map and shifted toward the viewer by its height map (single-step offset parallax). The city has none of it: it keeps the plain ground
+export const GROUND_TILE = 8; // squares of ground in one repeat of a texture
+const PARALLAX = 0.05; // how far the height map moves the texture, in repeats of GROUND_TILE squares
+
+// Which texture a building's ground gets, by its world's biome and the building's type (null: plain ground, as on Coruscant)
+export function groundTexture(biome: string, buildingType: string, base: string): { set: string; tint: THREE.Color; parallax: number } | null {
+  if (buildingType === "sewer system") return { set: "brown_mud_03", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
+  if (biome === "urban") return null;
+  if (biome === "desert") return { set: "dense_sand", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
+  if (biome === "volcanic") return { set: "dark_rock", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
+  // Forest, jungle and the rest: bare earth, recoloured to the world's ground
+  return { set: "dirt_floor", tint: new THREE.Color(base).multiplyScalar(2.5), parallax: PARALLAX };
+}
+
+export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: string; tint: THREE.Color; parallax: number; w: number; h: number; at: [number, number, number]; onTap?: (e: ThreeEvent<MouseEvent>) => void }) {
+  const [diffuse, normal, height] = useTexture([`/textures/ground/${set}/diffuse.jpg`, `/textures/ground/${set}/normal.jpg`, `/textures/ground/${set}/height.jpg`]);
+  // The three maps share one repeat, so a shift found in the height map lines up on the others
+  const maps = useMemo(() => {
+    const repeat = (t: THREE.Texture) => {
+      const c = t.clone();
+      c.wrapS = c.wrapT = THREE.RepeatWrapping;
+      c.repeat.set(w / GROUND_TILE, h / GROUND_TILE);
+      c.needsUpdate = true;
+      return c;
+    };
+    const d = repeat(diffuse);
+    d.colorSpace = THREE.SRGBColorSpace;
+    return { diffuse: d, normal: repeat(normal), height: repeat(height) };
+  }, [diffuse, normal, height, w, h]);
+  const compile = (shader: THREE.WebGLProgramParametersWithUniforms) => {
+    shader.uniforms.heightMap = { value: maps.height };
+    shader.uniforms.parallax = { value: parallax };
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec3 vWorld;")
+      .replace("#include <project_vertex>", "#include <project_vertex>\n  vWorld = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nuniform sampler2D heightMap;\nuniform float parallax;\nvarying vec3 vWorld;")
+      .replace("#include <map_fragment>", `
+  // Offset parallax: the height here (0.5 is level) moves the texture toward the viewer
+  vec3 toEye = normalize( cameraPosition - vWorld );
+  vec2 shift = - toEye.xz / max( toEye.y, 0.2 ) * ( texture2D( heightMap, vMapUv ).r - 0.5 ) * parallax;
+  vec4 sampledDiffuseColor = texture2D( map, vMapUv + shift );
+  diffuseColor *= sampledDiffuseColor;`)
+      .replace("#include <normal_fragment_maps>", `
+  vec3 mapN = texture2D( normalMap, vNormalMapUv + shift ).xyz * 2.0 - 1.0;
+  mapN.xy *= normalScale;
+  normal = normalize( tbn * mapN );`);
+  };
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={at} receiveShadow onClick={onTap}>
+      <planeGeometry args={[w, h]} />
+      <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} onBeforeCompile={compile} />
+    </mesh>
   );
 }
