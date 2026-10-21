@@ -18,6 +18,7 @@ import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
 import { PackWalls, cornerCentre, type WallRun } from "./interiors/Walls";
 import { AIM, useView, type AimPlan } from "./interiors/aim";
 import { ViewRig } from "./interiors/ViewRig";
+import { stickWalk } from "./interiors/stick";
 import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
@@ -641,7 +642,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             : (
               <>
                 <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={pack} tone={packLook} face={facing(a, width, height)} bare={!!mood && !!holdsOf(a.name, mood.buildingType, mood.roomName)} />
-                {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} tone={packLook} wares={onShow.shelves[a.id]} />}
+                {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} tone={packLook} wares={onShow.shelves[a.id]} face={facing(a, width, height)} />}
                 {/* A droid for sale on its plinth (the dealer's stock of the day) */}
                 {onShow.droids[a.id] && (
                   <group position={[a.w / 2, 0.14, a.h / 2]}>
@@ -2099,23 +2100,11 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     else walk.current = { path, then, total: path.length };
   };
   // A step the way a stick or key points, queued into the walk (so that flagstones, secret ways and arrivals all still happen): the
-  // eight directions of the grid, a diagonal only past two open squares, a blocked one slid along a wall
+  // eight directions of the grid (nearest the push first), a diagonal only past two open squares, a blocked one slid along a
+  // wall; the rules are in interiors/stick.ts `stickWalk`
   const stepToward = (dx: number, dz: number, speed = 1) => {
     if (!active) return;
-    const queued = walk.current;
-    if (queued && queued.path.length > 1) return;
-    const from = queued ? queued.path[queued.path.length - 1] : { x: Math.round(feet.current.x), y: Math.round(feet.current.y) };
-    const octant = ((Math.round(Math.atan2(dx, dz) / (Math.PI / 4)) % 8) + 8) % 8;
-    const [sx, sy] = [[0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1]][octant];
-    const tries = sx && sy ? [[sx, sy], [sx, 0], [0, sy]] : [[sx, sy]];
-    for (const [mx, my] of tries) {
-      const next = { x: from.x + mx, y: from.y + my };
-      if (!open(next.x, next.y) || (mx && my && !(open(from.x + mx, from.y) && open(from.x, from.y + my)))) continue;
-      const step = stepRule();
-      if (step && (!step(from, next) || (mx && my && !(step(from, { x: from.x + mx, y: from.y }) && step(from, { x: from.x, y: from.y + my }))))) continue;
-      walk.current = { path: [...(queued?.path ?? []), next], then: queued?.then, total: (queued?.total ?? 0) + 1, pace: speed };
-      return;
-    }
+    walk.current = stickWalk(walk.current, feet.current, dx, dz, speed, open, stepRule());
   };
   // Which way to look on starting the eye views: into the room if the party has only just come in by a way (not at the door they came through),
   // else the way the figure faces

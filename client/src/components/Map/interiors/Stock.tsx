@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Kit, MATERIALS, type Baked } from "../models";
 import { holdsOf, stockLayout, type Item } from "./stock";
+import { codeTurn } from "./packs";
 import { buildWeapon, hungWeapon, KENNEY_BLASTER, LENGTH } from "./weapons";
 import { useModels, splitByFinish } from "./assets";
 import { modelUrl } from "./items";
@@ -57,7 +58,7 @@ export function stockGeometry(items: Item[], files: Record<string, THREE.BufferG
 
 // The stock of one piece of furniture, in the frame of the furniture's footprint (`w` by `h` squares, corner at the origin;
 // the furniture is built lying along its longer side, turned a quarter if it stands the other way)
-export function Stock({ name, w, h, seed, buildingType, roomName, tone, wares }: { name: string; w: number; h: number; seed: number; buildingType: string; roomName: string; tone?: Tone; wares?: string[] }) {
+export function Stock({ name, w, h, seed, buildingType, roomName, tone, wares, face = 0 }: { name: string; w: number; h: number; seed: number; buildingType: string; roomName: string; tone?: Tone; wares?: string[]; face?: number }) {
   const holds = holdsOf(name, buildingType, roomName);
   const L = Math.max(w, h);
   const D = Math.min(w, h);
@@ -115,7 +116,7 @@ export function Stock({ name, w, h, seed, buildingType, roomName, tone, wares }:
   useEffect(() => () => { for (const g of Object.values(baked)) g?.dispose(); }, [baked]);
   if (!items.length) return null;
   return (
-    <group ref={group} position={[w / 2, 0, h / 2]} rotation={[0, w >= h ? 0 : Math.PI / 2, 0]}>
+    <group ref={group} position={[w / 2, 0, h / 2]} rotation={[0, codeTurn(face, w, h), 0]}>
       {baked.matte && <mesh geometry={baked.matte} material={MATERIALS.matte} castShadow receiveShadow raycast={() => null} />}
       {baked.sheen && <mesh geometry={baked.sheen} material={MATERIALS.sheen} castShadow receiveShadow raycast={() => null} />}
       {baked.glow && <mesh geometry={baked.glow} material={MATERIALS.glow} raycast={() => null} />}

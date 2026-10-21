@@ -133,6 +133,15 @@ export function facing(a: { x: number; y: number; w: number; h: number }, width:
   return gap <= 0.5 ? turn : 0;
 }
 
+// The turn about the upright axis of a piece the code draws (CodeFurniture, and the stock on it: Stock.tsx), which is built lying along x with
+// its back to -z and its front to +z, and stood a quarter turn (front to +x) where its footprint is taller than wide. A piece against a wall
+// has its back to it (`face`, from `facing`): where the wall is behind the front's side, the piece is turned half a turn. A wall at an end of
+// a piece (the piece's front is neither toward nor away from it) and open floor leave the piece as drawn.
+export function codeTurn(face: number, w: number, h: number): number {
+  const drawn = w >= h ? 0 : Math.PI / 2;
+  return Math.cos(face - drawn) < -1e-6 ? drawn + Math.PI : drawn;
+}
+
 export interface Fit {
   // About the upright axis, from the model's own frame, and the uniform scale
   turn: number;

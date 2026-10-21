@@ -8,7 +8,7 @@ import { ImprovedNoise } from "three/examples/jsm/math/ImprovedNoise.js";
 import { speederKind } from "@shared/logic";
 import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
-import { fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
+import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
 import { advance, bob, LIMB, limbMaterial, pose as poseLimbs, standing } from "./interiors/limbs";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
@@ -501,7 +501,7 @@ function screen(k: Kit, at: V3, w: number, h: number, tilt: number, color = C.gl
 export function Furniture({ name, w, h, seed = 0, look, pack, tone, face = 0, bare }: { name: string; w: number; h: number; seed?: number; look?: RoomLook; pack?: PackId; tone?: Tone; face?: number; bare?: boolean }) {
   const file = pieceOf(pack, name);
   if (file) return <PackPiece file={file} name={name} w={w} h={h} seed={seed} look={look} tone={tone} face={face} />;
-  return <CodeFurniture name={name} w={w} h={h} seed={seed} look={look} bare={bare} />;
+  return <CodeFurniture name={name} w={w} h={h} seed={seed} look={look} bare={bare} face={face} />;
 }
 
 function PackPiece({ file, name, w, h, seed, look, tone, face }: { file: string; name: string; w: number; h: number; seed: number; look?: RoomLook; tone?: Tone; face: number }) {
@@ -535,14 +535,22 @@ function PackPiece({ file, name, w, h, seed, look, tone, face }: { file: string;
 }
 
 // `bare` is a piece that carries stock drawn on it (interiors/Stock.tsx): a shelf without the generic wares, a stand without its dummy
-function CodeFurniture({ name, w, h, seed = 0, look, bare = false }: { name: string; w: number; h: number; seed?: number; look?: RoomLook; bare?: boolean }) {
+function CodeFurniture({ name, w, h, seed = 0, look, bare = false, face = 0 }: { name: string; w: number; h: number; seed?: number; look?: RoomLook; bare?: boolean; face?: number }) {
   const n = name.toLowerCase();
   const varied = /boulder|rubble|rock|crate|pallet|parts bin/.test(n) ? seed % 4 : 0;
-  return (
+  const piece = (
     <Model id={`furn:${n}:${w}x${h}:${varied}${bare ? ":bare" : ""}${look ? `:${look.wood}${look.cloth}${look.metal}` : ""}`} build={(k) => { if (look) k.skin = skinOf(look); k.group([w / 2, 0, h / 2], w >= h ? undefined : [0, Math.PI / 2, 0], undefined, () => buildFurniture(k, n, Math.max(w, h), Math.min(w, h), varied, bare)); }}>
       {furnitureLights(n, w, h)}
     </Model>
   );
+  // (the piece is drawn once for all that stand alike, its back to -z; one against a wall on the other side is turned half a turn about
+  // its middle out here, not in what is drawn: interiors/packs.ts `codeTurn`)
+  const half = Math.abs(codeTurn(face, w, h) - (w >= h ? 0 : Math.PI / 2)) > 1;
+  return half ? (
+    <group position={[w / 2, 0, h / 2]} rotation={[0, Math.PI, 0]}>
+      <group position={[-w / 2, 0, -h / 2]}>{piece}</group>
+    </group>
+  ) : piece;
 }
 
 // The lights and holograms that go with a piece (not baked: they shine or turn)

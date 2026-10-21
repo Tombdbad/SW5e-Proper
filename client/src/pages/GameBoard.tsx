@@ -6,7 +6,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
 import { useQuality } from "@/components/Map/siteAssets";
@@ -14,6 +13,8 @@ import { useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
 import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, whereNow, useClock, noEncounters } from "@/components/Map/LocalMap";
 import { usePartyLook } from "@/components/Map/models";
 import { NotesPanel, TranslatorPanel } from "@/components/Play/GearPanels";
+import { TestMenu } from "@/components/Play/TestMenu";
+import { Compass, CompassRig } from "@/components/Map/Compass";
 import PlayCombat, { ShipCombatPanel, type CombatItemOption } from "@/components/Combat/PlayCombat";
 import { useCombat, useShipFight, rollDamage, onPartySide } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
@@ -183,9 +184,17 @@ function ClockLine({ after }: { after: string }) {
   );
 }
 
+type HudTab = "here" | "party" | "trade" | "quests" | "pack" | "downtime" | "gm" | "test";
+// A test copy is built with VITE_TEST_MENU=1 (deploy/test-plain.sh) and has a god-mode menu; the build the game is played on never does
+const TEST_MENU = import.meta.env.VITE_TEST_MENU === "1";
+
 export default function GameBoard() {
   const { campaignId } = useParams<{ campaignId: string }>();
   const [showSidebar, setShowSidebar] = useState(true);
+  // Which part of the HUD is open (the HUD is in tabs: what is here, the party, a trader's wares, quests, the pack, downtime, the GM, and on a test copy a test menu)
+  const [hudTab, setHudTab] = useState<HudTab>("here");
+  // (whether what is picked out on the map is somebody who deals with the party: set where the HUD is drawn, read when the pick changes)
+  const dealerRef = useRef(false);
   const [activeMapTab, setActiveMapTab] = useState<"galaxy" | "local">("galaxy");
   const [showCombat, setShowCombat] = useState(false);
   // The pit arena (a dedicated page): open, and the credits and equipment the party had when it opened
@@ -547,6 +556,12 @@ export default function GameBoard() {
     setViewId(null);
     setPicked(null);
   }, [hereId]);
+  // Picking out someone who deals with the party opens their wares and dealings in the HUD, not over the map
+  useEffect(() => {
+    if (picked?.kind !== "occupant" || !dealerRef.current) return;
+    setShowSidebar(true);
+    setHudTab("trade");
+  }, [picked?.id, picked?.kind]);
   // For test scripts: pick someone or something out as a tap on the map would (e2e/works.mjs, when a moving person is hard to hit)
   useEffect(() => {
     (window as any).__play = { pick: (kind: "occupant" | "asset" | "ship", id: string) => setPicked({ kind, id }) };
@@ -4422,7 +4437,7 @@ export default function GameBoard() {
             {haggled === "won" ? "Haggled: -10%" : haggled === "lost" ? "Offended" : haggled ? "Haggled" : "Haggle"}
           </Button>
         </div>
-        <ul className="mt-1 max-h-48 overflow-y-auto space-y-0.5 text-xs" data-testid={tradeTab === "buy" ? "trade-stock" : "trade-offers"}>
+        <ul className="mt-1 max-h-72 overflow-y-auto space-y-0.5 text-xs" data-testid={tradeTab === "buy" ? "trade-stock" : "trade-offers"}>
           {tradeTab === "buy" &&
             (lines.length ? lines.map((line) => (
               <li key={line.name}>
@@ -5705,6 +5720,86 @@ export default function GameBoard() {
     toast.info(`Through the macrobinoculars: ${lines.join("; ") || "nothing of interest"}.`);
   };
 
+  // Who was picked out on the map, and the building whose counter or stall they stand at (a stallholder of the market in the district stands at a
+  // stall, not at the building the party is in front of); `gate` is a sentry keeping the way into a room
+  const occupantPick = (id: string) => {
+    if (!here) return { o: undefined, holderId: "", gate: undefined };
+    const ownO = (hereNow ?? here).occupants.find((x) => x.id === id);
+    const nearB = !ownO && here.kind === "building" && world ? (districtAt(world, here.id)?.buildingIds ?? []).map((bid) => (scene ?? world).areas[bid]).find((b) => b?.occupants.some((x) => x.id === id)) : undefined;
+    const o = ownO ?? nearB?.occupants.find((x) => x.id === id);
+    const holderId = nearB?.id ?? here.id;
+    const gate = !o && here.kind === "building" && world ? childrenOf(world, here.id).find((room) => room.occupants.some((x) => x.id === id)) : undefined;
+    return { o, holderId, gate };
+  };
+  // What a friendly person here does for the party: sells (their stock, and what they would pay for the party's), fits ships, parts, scripts,
+  // modifications, passage, hires, plays. Shown in the HUD's Trade tab
+  const dealings = (o: Occupant, holderId: string) => (
+    <>
+      {waresOf(o) && tradePanel(o, holderId)}
+      {shipServices(o, holderId)}
+      {partsCounter(o, holderId)}
+      {o.trade === "salvage" && droidPartsPanel(o, holderId)}
+      {scriptPanel(o, holderId)}
+      {o.role === "medic" && augmentPanel(o, holderId)}
+      {(o.trade ? !!MOD_TRADES[o.trade] || !!WARES[o.trade]?.black : ["mechanic", "fence", "smuggler"].includes(o.role)) && modsPanel(o, holderId)}
+      {(o.role === "ticket agent" || (o.role === "smuggler" && o.disposition !== "hostile")) && passagePanel(o)}
+      {canHire(o) && hireSection(o, here?.id ?? holderId)}
+      {!isDroid(o) && o.species && o.role !== "guard" && o.role !== "freed" && gamblePanel(o.id, o.name, o.role === "gambler" ? 4 : 2)}
+    </>
+  );
+  const dealingNow = (() => {
+    if (picked?.kind !== "occupant" || !world || !here) return null;
+    const { o, holderId } = occupantPick(picked.id);
+    if (!o || (o.disposition === "hostile" && !!o.hitPoints) || o.captive || o.disabled || o.role === "freed") return null;
+    return { o, holderId };
+  })();
+  dealerRef.current = !!dealingNow;
+  // The test menu (a test copy only: TEST_MENU, see TestMenu.tsx): what the game makes you earn, set directly
+  const testMenu = () => {
+    if (!TEST_MENU || !world || !character || !here) return null;
+    const areas = Object.values(world.areas)
+      .filter((a) => ["planet", "settlement", "building", "room"].includes(a.kind))
+      .map((a) => ({ id: a.id, label: [...trailOf(world, a.id).slice(2).map((t) => t.name)].join(" \u203a ") }));
+    const weapons = equipmentData.filter((e) => e.equipmentCategory === "Weapon").map((e) => e.name);
+    return (
+      <TestMenu
+        areas={areas}
+        items={equipmentData.map((e) => e.name)}
+        weapons={weapons}
+        here={here.id}
+        credits={character.credits ?? 0}
+        level={level}
+        dead={dead}
+        act={{
+          heal: () => {
+            lastSavedHp.current = character.maxHp;
+            lastSavedPoints.current = character.maxForcePoints;
+            saveCharacter({ currentHp: character.maxHp, currentForcePoints: character.maxForcePoints, hitDiceUsed: 0, conditions: [] });
+            toast.success("Test menu: healed.");
+          },
+          revive,
+          credits: (n) => saveCharacter({ credits: (character.credits ?? 0) + n }),
+          nextLevel: () => saveCharacter({ experience: Math.max(character.experience ?? 0, calculateExperienceForLevel(Math.min(20, level + 1))) }),
+          give: (names) => {
+            saveCharacter({ equipment: [...(character.equipment ?? []), ...names] });
+            toast.success(`Test menu: ${names.length === 1 ? names[0] : `${names.length} items`} given.`);
+          },
+          teleport: (id) => {
+            const target = world.areas[id];
+            if (!target) return;
+            if (childrenOf(world, id).length === 0 && ["system", "planet", "settlement", "building"].includes(target.kind)) explore(id, { currentLocation: id });
+            else saveCampaign({ currentLocation: id });
+            toast.success(`Test menu: gone to ${target.name}.`);
+          },
+          clock: (when) => {
+            const now = useClock.getState().minutes;
+            const to = when === "+hour" ? now + 60 : when === "+8hours" ? now + 480 : Math.floor(now / 1440) * 1440 + when + (Math.floor(now / 1440) * 1440 + when < now ? 1440 : 0);
+            saveCampaign(pass(to - now));
+          },
+        }}
+      />
+    );
+  };
   const pickedCard = () => {
     if (!picked || !world || !here || inCombat) return null;
     const close = (
@@ -5937,12 +6032,7 @@ export default function GameBoard() {
     }
     if (picked.kind === "occupant") {
       // Someone here, or a sentry standing out in front of the building the party is outside
-      const ownO = (hereNow ?? here).occupants.find((x) => x.id === picked.id);
-      // (a stallholder of the market in the district stands at a stall, not at the building the party is in front of)
-      const nearB = !ownO && here.kind === "building" && world ? (districtAt(world, here.id)?.buildingIds ?? []).map((id) => (scene ?? world).areas[id]).find((b) => b?.occupants.some((x) => x.id === picked.id)) : undefined;
-      const o = ownO ?? nearB?.occupants.find((x) => x.id === picked.id);
-      const holderId = nearB?.id ?? here.id;
-      const gate = !o && here.kind === "building" && world ? childrenOf(world, here.id).find((room) => room.occupants.some((x) => x.id === picked.id)) : undefined;
+      const { o, holderId, gate } = occupantPick(picked.id);
       if (gate) {
         const sentry = gate.occupants.find((x) => x.id === picked.id)!;
         return (
@@ -5992,16 +6082,10 @@ export default function GameBoard() {
           ) : (
             <>
               <p className="text-xs text-gray-400">To talk with them, say what you do on the GM Interface tab.</p>
-              {waresOf(o) && tradePanel(o, holderId)}
-              {shipServices(o, holderId)}
-              {partsCounter(o, holderId)}
-              {o.trade === "salvage" && droidPartsPanel(o, holderId)}
-              {scriptPanel(o, holderId)}
-              {o.role === "medic" && augmentPanel(o, holderId)}
-              {(o.trade ? !!MOD_TRADES[o.trade] || !!WARES[o.trade]?.black : ["mechanic", "fence", "smuggler"].includes(o.role)) && modsPanel(o, holderId)}
-              {(o.role === "ticket agent" || (o.role === "smuggler" && o.disposition !== "hostile")) && passagePanel(o)}
-              {canHire(o) && hireSection(o, here.id)}
-              {!isDroid(o) && o.species && o.role !== "guard" && o.role !== "freed" && gamblePanel(o.id, o.name, o.role === "gambler" ? 4 : 2)}
+              {/* Their wares and what else they do are in the HUD's Trade tab, not over the map (the card has no room for a stock list) */}
+              {showSidebar ? (
+                <Button size="sm" variant="outline" className="h-6 px-2" onClick={() => setHudTab("trade")} data-testid="open-trade">Wares and dealings: Trade tab</Button>
+              ) : dealings(o, holderId)}
             </>
           )}
         </>
@@ -6315,6 +6399,7 @@ export default function GameBoard() {
           }}
         >
           <color attach="background" args={["#000000"]} />
+          <CompassRig />
           {/* A slow device draws fewer pixels: the render scale steps down while frames are below
               30 a second, and back up when there is room */}
           <PerformanceMonitor
@@ -6350,6 +6435,7 @@ export default function GameBoard() {
             <LocalMap />
           )}
         </Canvas>
+        <Compass />
         </div>
 
         {/* Where the map is looking: the way down from the galaxy, each step a tap away. Only the
@@ -6500,6 +6586,46 @@ export default function GameBoard() {
               </div>
             )}
 
+            {dead && (
+              <div className="mb-4 p-2 rounded bg-red-900/50 text-sm" data-testid="play-dead">
+                <p className="font-semibold">{character.name} is dead.</p>
+                <p className="text-gray-300">By the rules this character's story is over. As a house rule you can bring them back.</p>
+                <Button size="sm" variant="outline" className="mt-1" onClick={revive}>
+                  Revive (house rule)
+                </Button>
+              </div>
+            )}
+            <p className="text-sm text-gray-300 mb-4" data-testid="play-hit-dice">
+              Level {level} · Hit Dice {hitDiceLeft}/{level} (d{hitDie}) · {character.experience ?? 0} XP
+              {level < 20 && (character.experience ?? 0) >= calculateExperienceForLevel(level + 1) && !inCombat && (
+                <Link to={`/characters/${character.id}`} className="block text-yellow-400 underline" data-testid="play-level-up">
+                  Level up available: open the character sheet
+                </Link>
+              )}
+            </p>
+
+            <div className="mb-4">
+              <div className="flex justify-between mb-1">
+                <span>{pointsName}</span>
+                <span>{character.currentForcePoints}/{character.maxForcePoints}</span>
+              </div>
+              <div className="w-full bg-gray-700 rounded-full h-2.5">
+                <div 
+                  className="bg-blue-600 h-2.5 rounded-full" 
+                  style={{ width: `${character.maxForcePoints ? (character.currentForcePoints / character.maxForcePoints) * 100 : 0}%` }}
+                ></div>
+              </div>
+            </div>
+
+            <div className="mb-3 flex flex-wrap gap-1" data-testid="hud-tabs">
+              {(["here", "party", "trade", "quests", "pack", "downtime", "gm", ...(TEST_MENU ? ["test"] : [])] as HudTab[]).map((tab) => (
+                <Button key={tab} role="tab" aria-selected={hudTab === tab} size="sm" variant={hudTab === tab ? "default" : "outline"} className="h-7 px-2 text-xs" onClick={() => setHudTab(tab)} data-testid={`hud-tab-${tab}`}>
+                  {{ here: "Here", party: "Party", trade: "Trade", quests: "Quests", pack: "Inventory", downtime: "Downtime", gm: "GM Interface", test: "Test" }[tab]}
+                  {tab === "trade" && dealingNow && hudTab !== "trade" && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-300" />}
+                </Button>
+              ))}
+            </div>
+            <div className={hudTab === "here" ? "" : "hidden"} data-testid="hud-here">
             {aboardShip && world && (
               <div className="mb-4 space-y-2 rounded border border-sky-500/60 p-2 text-xs" data-testid="helm">
                 <h3 className="font-semibold text-sky-300">Aboard {aboardShip.name}</h3>
@@ -6591,97 +6717,6 @@ export default function GameBoard() {
                 skilled={skilled}
               />
             )}
-
-            {(party.length > 0 || roster.some((r: any) => r.id !== character.id)) && (
-              <div className="mb-4 space-y-2" data-testid="play-party">
-                <h3 className="font-semibold">Companions ({party.length}/{COMPANION_LIMIT})</h3>
-                {party.map((c) => (
-                  <div key={c.id} className="text-sm" data-testid="party-member">
-                    <div className="flex justify-between">
-                      <span>
-                        {c.name}{" "}
-                        <span className="text-xs text-gray-400">
-                          {c.kind === "hireling" ? `hired, ${c.wage} cr/day` : c.kind === "droid" ? (c.bolt === "reprogrammed" ? "droid, reprogrammed" : "droid, restraining bolt") : c.kind === "beast" ? (c.mount ? "beast, mount" : "beast") : c.kind === "character" ? "your character" : "freed"}
-                        </span>
-                      </span>
-                      <span>{c.hp > 0 ? `${c.hp}/${c.maxHp}` : c.kind === "droid" ? "powered down" : "down"}</span>
-                    </div>
-                    <div className="h-1.5 w-full rounded-full bg-gray-700">
-                      <div className="h-1.5 rounded-full bg-green-600" style={{ width: `${Math.max(0, Math.min(100, (c.hp / c.maxHp) * 100))}%` }} />
-                    </div>
-                    <div className="mt-0.5 flex gap-1 text-xs text-gray-400">
-                      <span>AC {c.armorClass}{c.attack ? `, ${c.attack.name} ${c.attack.bonus >= 0 ? "+" : ""}${c.attack.bonus} (${c.attack.damage})` : ""}</span>
-                      {c.kind === "droid" && (
-                        <Button size="sm" variant="ghost" className="ml-auto h-5 px-1 text-xs" data-testid={`customize-open-${c.id}`} onClick={() => setCustomizing(customizing === c.id ? null : c.id)}>Customize</Button>
-                      )}
-                      <Button size="sm" variant="ghost" className={`${c.kind === "droid" ? "" : "ml-auto "}h-5 px-1 text-xs`} disabled={inCombat} onClick={() => dismiss(c)}>Dismiss</Button>
-                    </div>
-                    {customizing === c.id && droidPanel(c)}
-                  </div>
-                ))}
-                <p className="text-xs text-gray-500">{party.length ? "They fight at your side and heal on rests. Wages are paid each day (house rule)." : "No companions yet: hire someone, free a captive, mend a droid or gentle a beast."}</p>
-                {!partyFull && roster.filter((r: any) => r.id !== character.id && !(r.conditions ?? []).includes("Dead") && !party.some((c) => c.name === r.name && c.kind === "character")).length > 0 && (
-                  <label className="flex items-center gap-1 text-xs" data-testid="recruit-character">
-                    Bring one of your characters:
-                    <select
-                      className="h-7 min-w-0 flex-1 rounded bg-gray-700 px-1"
-                      value=""
-                      disabled={inCombat}
-                      onChange={(e) => {
-                        const other = roster.find((r: any) => String(r.id) === e.target.value);
-                        if (other) recruitCharacter(other);
-                      }}
-                    >
-                      <option value="">choose</option>
-                      {roster
-                        .filter((r: any) => r.id !== character.id && !(r.conditions ?? []).includes("Dead") && !party.some((c) => c.name === r.name && c.kind === "character"))
-                        .map((r: any) => (
-                          <option key={r.id} value={r.id}>{r.name} (level {r.level} {r.class})</option>
-                        ))}
-                    </select>
-                  </label>
-                )}
-              </div>
-            )}
-
-            {dead && (
-              <div className="mb-4 p-2 rounded bg-red-900/50 text-sm" data-testid="play-dead">
-                <p className="font-semibold">{character.name} is dead.</p>
-                <p className="text-gray-300">By the rules this character's story is over. As a house rule you can bring them back.</p>
-                <Button size="sm" variant="outline" className="mt-1" onClick={revive}>
-                  Revive (house rule)
-                </Button>
-              </div>
-            )}
-            {(play.tracked ?? []).length > 0 && (
-              <div className="mb-4 text-xs" data-testid="play-tracked">
-                <h3 className="text-sm font-semibold">Tracked by beacon</h3>
-                {(play.tracked ?? []).map((t) => (
-                  <p key={t.id} className="text-gray-300">{t.name}: {shipWhere(t.id)}</p>
-                ))}
-              </div>
-            )}
-            <p className="text-sm text-gray-300 mb-4" data-testid="play-hit-dice">
-              Level {level} · Hit Dice {hitDiceLeft}/{level} (d{hitDie}) · {character.experience ?? 0} XP
-              {level < 20 && (character.experience ?? 0) >= calculateExperienceForLevel(level + 1) && !inCombat && (
-                <Link to={`/characters/${character.id}`} className="block text-yellow-400 underline" data-testid="play-level-up">
-                  Level up available: open the character sheet
-                </Link>
-              )}
-            </p>
-
-            <div className="mb-4">
-              <div className="flex justify-between mb-1">
-                <span>{pointsName}</span>
-                <span>{character.currentForcePoints}/{character.maxForcePoints}</span>
-              </div>
-              <div className="w-full bg-gray-700 rounded-full h-2.5">
-                <div 
-                  className="bg-blue-600 h-2.5 rounded-full" 
-                  style={{ width: `${character.maxForcePoints ? (character.currentForcePoints / character.maxForcePoints) * 100 : 0}%` }}
-                ></div>
-              </div>
-            </div>
 
             {world && here ? (
               <div className="mb-4 space-y-2" data-testid="play-location">
@@ -6939,16 +6974,82 @@ export default function GameBoard() {
               <div className="mt-2">{restButtons}</div>
             </div>
             )}
+            </div>
+            <div className={hudTab === "party" ? "" : "hidden"} data-testid="hud-party">
+            {(party.length > 0 || roster.some((r: any) => r.id !== character.id)) && (
+              <div className="mb-4 space-y-2" data-testid="play-party">
+                <h3 className="font-semibold">Companions ({party.length}/{COMPANION_LIMIT})</h3>
+                {party.map((c) => (
+                  <div key={c.id} className="text-sm" data-testid="party-member">
+                    <div className="flex justify-between">
+                      <span>
+                        {c.name}{" "}
+                        <span className="text-xs text-gray-400">
+                          {c.kind === "hireling" ? `hired, ${c.wage} cr/day` : c.kind === "droid" ? (c.bolt === "reprogrammed" ? "droid, reprogrammed" : "droid, restraining bolt") : c.kind === "beast" ? (c.mount ? "beast, mount" : "beast") : c.kind === "character" ? "your character" : "freed"}
+                        </span>
+                      </span>
+                      <span>{c.hp > 0 ? `${c.hp}/${c.maxHp}` : c.kind === "droid" ? "powered down" : "down"}</span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-gray-700">
+                      <div className="h-1.5 rounded-full bg-green-600" style={{ width: `${Math.max(0, Math.min(100, (c.hp / c.maxHp) * 100))}%` }} />
+                    </div>
+                    <div className="mt-0.5 flex gap-1 text-xs text-gray-400">
+                      <span>AC {c.armorClass}{c.attack ? `, ${c.attack.name} ${c.attack.bonus >= 0 ? "+" : ""}${c.attack.bonus} (${c.attack.damage})` : ""}</span>
+                      {c.kind === "droid" && (
+                        <Button size="sm" variant="ghost" className="ml-auto h-5 px-1 text-xs" data-testid={`customize-open-${c.id}`} onClick={() => setCustomizing(customizing === c.id ? null : c.id)}>Customize</Button>
+                      )}
+                      <Button size="sm" variant="ghost" className={`${c.kind === "droid" ? "" : "ml-auto "}h-5 px-1 text-xs`} disabled={inCombat} onClick={() => dismiss(c)}>Dismiss</Button>
+                    </div>
+                    {customizing === c.id && droidPanel(c)}
+                  </div>
+                ))}
+                <p className="text-xs text-gray-500">{party.length ? "They fight at your side and heal on rests. Wages are paid each day (house rule)." : "No companions yet: hire someone, free a captive, mend a droid or gentle a beast."}</p>
+                {!partyFull && roster.filter((r: any) => r.id !== character.id && !(r.conditions ?? []).includes("Dead") && !party.some((c) => c.name === r.name && c.kind === "character")).length > 0 && (
+                  <label className="flex items-center gap-1 text-xs" data-testid="recruit-character">
+                    Bring one of your characters:
+                    <select
+                      className="h-7 min-w-0 flex-1 rounded bg-gray-700 px-1"
+                      value=""
+                      disabled={inCombat}
+                      onChange={(e) => {
+                        const other = roster.find((r: any) => String(r.id) === e.target.value);
+                        if (other) recruitCharacter(other);
+                      }}
+                    >
+                      <option value="">choose</option>
+                      {roster
+                        .filter((r: any) => r.id !== character.id && !(r.conditions ?? []).includes("Dead") && !party.some((c) => c.name === r.name && c.kind === "character"))
+                        .map((r: any) => (
+                          <option key={r.id} value={r.id}>{r.name} (level {r.level} {r.class})</option>
+                        ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+            )}
 
-              <Tabs defaultValue="quests">
-                <TabsList className="grid grid-cols-4 mb-4 h-auto">
-                  <TabsTrigger value="quests" className="px-1 text-xs">Quests</TabsTrigger>
-                  <TabsTrigger value="inventory" className="px-1 text-xs">Inventory</TabsTrigger>
-                  <TabsTrigger value="downtime" className="px-1 text-xs">Downtime</TabsTrigger>
-                  <TabsTrigger value="gm" className="px-1 text-xs">GM Interface</TabsTrigger>
-                </TabsList>
-              
-              <TabsContent value="quests">
+            {(play.tracked ?? []).length > 0 && (
+              <div className="mb-4 text-xs" data-testid="play-tracked">
+                <h3 className="text-sm font-semibold">Tracked by beacon</h3>
+                {(play.tracked ?? []).map((t) => (
+                  <p key={t.id} className="text-gray-300">{t.name}: {shipWhere(t.id)}</p>
+                ))}
+              </div>
+            )}
+            </div>
+            <div className={hudTab === "trade" ? "" : "hidden"} data-testid="hud-trade">
+              {dealingNow ? (
+                <div className="space-y-1" data-testid="trade-hud">
+                  <p className="font-semibold text-amber-200">{dealingNow.o.name}</p>
+                  <p className="text-xs text-gray-300">{[dealingNow.o.species, dealingNow.o.role, dealingNow.o.disposition].filter(Boolean).join(", ")}</p>
+                  {dealings(dealingNow.o, dealingNow.holderId)}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400" data-testid="trade-none">Tap a trader, dealer or stallholder on the map and what they sell, buy and do comes up here.</p>
+              )}
+            </div>
+            {hudTab === "quests" && (
+              <div>
                 <h3 className="font-semibold mb-2">Active Quests</h3>
                 <div className="space-y-2" data-testid="play-quests">
                   {quests.filter((q) => q.status === "active").map((quest) => (
@@ -6989,36 +7090,10 @@ export default function GameBoard() {
                   )}
                   {world && here && factionAt(world, here.id) && <p className="text-xs text-gray-400">This place is held by {factionAt(world, here.id)}.</p>}
                 </div>
-              </TabsContent>
-              
-              <TabsContent value="downtime">
-                {character && (
-                  <DowntimePanel
-                    character={character}
-                    level={level}
-                    day={dayOf(clock)}
-                    settlement={settlementHere ? { id: settlementHere.id, name: settlementHere.name, type: String(settlementHere.type ?? ""), faction: factionAt(world!, settlementHere.id) } : null}
-                    blocked={downtimeBlocked}
-                    equipment={equipmentData}
-                    tools={toolData}
-                    people={downtimePeople}
-                    hasVehicle={Array.isArray(campaign?.vehicles) && campaign.vehicles.length > 0}
-                    hasShip={ships.length > 0}
-                    vehicleModel={campaign?.vehicles?.[0]?.model}
-                    shipSpec={ships[0] ? { size: ships[0].size, role: ships[0].role } : undefined}
-                    biome={world && hereId ? trailOf(world, hereId).find((a) => a.kind === "planet")?.type : undefined}
-                    state={downtime}
-                    check={checkFor}
-                    ask={askCheck}
-                    commit={commitDowntime}
-                    spendBlackmail={spendBlackmail}
-                    spendLore={spendLore}
-                    openPit={openPit}
-                  />
-                )}
-              </TabsContent>
-
-              <TabsContent value="inventory">
+              </div>
+            )}
+            {hudTab === "pack" && (
+              <div>
                 <h3 className="font-semibold mb-1">Inventory</h3>
                 <p className="text-sm text-yellow-300 mb-2" data-testid="inventory-credits">Credits: {(character.credits ?? 0).toLocaleString()}</p>
                 {(attuned.length > 0 || Object.values(itemFacts ?? {}).length > 0) && (
@@ -7165,9 +7240,38 @@ export default function GameBoard() {
                     </div>
                   );
                 })()}
-              </TabsContent>
-
-          <TabsContent value="gm">
+              </div>
+            )}
+            {hudTab === "downtime" && (
+              <div>
+                {character && (
+                  <DowntimePanel
+                    character={character}
+                    level={level}
+                    day={dayOf(clock)}
+                    settlement={settlementHere ? { id: settlementHere.id, name: settlementHere.name, type: String(settlementHere.type ?? ""), faction: factionAt(world!, settlementHere.id) } : null}
+                    blocked={downtimeBlocked}
+                    equipment={equipmentData}
+                    tools={toolData}
+                    people={downtimePeople}
+                    hasVehicle={Array.isArray(campaign?.vehicles) && campaign.vehicles.length > 0}
+                    hasShip={ships.length > 0}
+                    vehicleModel={campaign?.vehicles?.[0]?.model}
+                    shipSpec={ships[0] ? { size: ships[0].size, role: ships[0].role } : undefined}
+                    biome={world && hereId ? trailOf(world, hereId).find((a) => a.kind === "planet")?.type : undefined}
+                    state={downtime}
+                    check={checkFor}
+                    ask={askCheck}
+                    commit={commitDowntime}
+                    spendBlackmail={spendBlackmail}
+                    spendLore={spendLore}
+                    openPit={openPit}
+                  />
+                )}
+              </div>
+            )}
+            {hudTab === "gm" && (
+              <div>
             <GMReportManager
               character={character}
               campaign={campaign}
@@ -7178,8 +7282,13 @@ export default function GameBoard() {
               saveCampaign={saveCampaign}
               disabled={inCombat || dead}
             />
-          </TabsContent>
-        </Tabs>
+              </div>
+            )}
+            {TEST_MENU && hudTab === "test" && (
+              <div>
+              {testMenu()}
+              </div>
+            )}
       </div>
         )}
 

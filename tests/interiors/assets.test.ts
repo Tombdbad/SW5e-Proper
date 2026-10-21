@@ -24,6 +24,31 @@ test("every pack has its licence beside it, and the credits name it", () => {
     assert.ok(credits.includes(d), `CREDITS.md does not name ${d}`);
   }
 });
+// The game holds, hangs and aims every weapon with its barrel to +z. The Blaster Kit's blasters came with it to -z (seen on renders: the grips rake
+// back toward +z), so they were turned half a turn with tools/turn-models.mjs; the root nodes of the files carry that turn
+test("the Blaster Kit's blasters are turned to point their barrels along +z, in both detail levels, and the grips rake back", async () => {
+  let raked = 0;
+  const all = Object.values(BLASTER_FILES).flat();
+  for (const d of all) {
+    for (const file of [`${d.file}.glb`, `${d.file}.lod.glb`]) {
+      const data = fs.readFileSync(path.join(ASSETS, "kenney-blaster", file));
+      const json = JSON.parse(data.subarray(20, 20 + data.readUInt32LE(12)).toString("utf8"));
+      const roots: number[] = json.scenes[json.scene ?? 0].nodes;
+      for (const n of roots) {
+        const q: number[] = json.nodes[n].rotation ?? [0, 0, 0, 1];
+        assert.ok(Math.abs(q[1]) > 0.99, `${file}: root node ${n} is turned half a turn about the upright axis`);
+      }
+    }
+    // The pistol grip is the lowest part: its foot lies behind its top (toward -z), as a grip rakes
+    const g = await loadGlb(path.join(ASSETS, "kenney-blaster", `${d.file}.glb`));
+    const p = g.attributes.position;
+    const pts = Array.from({ length: p.count }, (_, i) => [p.getY(i), p.getZ(i)]).sort((a, b) => a[0] - b[0]);
+    const mean = (rows: number[][]) => rows.reduce((sum, r) => sum + r[1], 0) / rows.length;
+    const n = pts.length;
+    if (mean(pts.slice(0, Math.floor(n * 0.08))) < mean(pts.slice(Math.floor(n * 0.08), Math.floor(n * 0.3)))) raked++;
+  }
+  assert.ok(raked >= all.length - 4, `${raked} of ${all.length} have their grips raked back`);
+});
 test("every model of the catalogue exists in both detail levels, with the right length", async () => {
   for (const [kind, list] of Object.entries(BLASTER_FILES)) for (const d of list) {
     const hero = path.join(ROOT, "client/public", KENNEY_BLASTER, `${d.file}.glb`);

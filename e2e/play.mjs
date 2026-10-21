@@ -836,7 +836,7 @@ await step(ctx, "play: credits are shown; weapons and armor are wielded and worn
   });
 
   await step(ctx, "trade: the bartender's menu, buying and selling a drink, haggling", async () => {
-    const card = page.getByTestId("map-card");
+    const card = page.locator("[data-testid=map-card], [data-testid=hud-trade]");
     await card.getByTestId("trade").waitFor({ timeout: 10000 });
     const stock = card.getByTestId("trade-stock");
     const first = stock.locator("li").first();
@@ -1069,7 +1069,8 @@ if (process.env.FORCE !== "0") {
     throw new Error(key + " cannot be brought into view");
   };
   const tap = async (key) => { const p = await inView(key); await poke(p.x, p.y); };
-  const card = () => page.getByTestId("map-card");
+  // (a trader's wares and dealings are in the HUD's Trade tab, which opens by itself when one is picked; the rest is on the map card)
+  const card = () => page.locator("[data-testid=map-card], [data-testid=hud-trade]");
   const stat = async (statBlock) => (await api("POST", "/api/world/occupant", { statBlock })).json;
   const named = async (search) => (await api("GET", `/api/sw5e/monsters?search=${encodeURIComponent(search)}&fields=id,name`)).json[0];
   const GEAR = "Gear " + TAG;
@@ -1932,7 +1933,7 @@ if (process.env.FORCE !== "0") {
     const attendant = Object.values(camp.galaxyMap.areas).filter((a) => a.id === hangar.id).flatMap((r) => r.layout.assets.filter((a) => a.kind === "npc").map((a) => ({ asset: a, o: r.occupants.find((o) => o.id === a.ref) }))).find((x) => x.o?.role === "fuel attendant");
     if (!attendant) throw new Error("no fuel attendant in the hangar");
     await tap(`asset:${attendant.asset.id}`);
-    const card = page.getByTestId("map-card");
+    const card = page.locator("[data-testid=map-card], [data-testid=hud-trade]");
     await card.getByTestId("service-refuel").waitFor({ timeout: 10000 });
     const before = await getChar(h.id);
     await card.getByTestId("service-refuel").click();

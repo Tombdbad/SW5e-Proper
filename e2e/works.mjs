@@ -16,7 +16,8 @@ let failed = false;
 const sleep = (ms) => page.waitForTimeout(ms);
 const getChar = async () => (await api("GET", `/api/characters/${charId}`)).json;
 const getCamp = async (id) => (await api("GET", `/api/campaigns/${id}`)).json;
-const card = () => page.getByTestId("map-card");
+// (a trader's wares and dealings are in the HUD's Trade tab, which opens by itself when one is picked; the rest is on the map card)
+const card = () => page.locator("[data-testid=map-card], [data-testid=hud-trade]");
 // Open a person's card: a tap where they are drawn (they move about), checked by their name on the card; else a double tap on the
 // counter they serve at, which calls them over
 const openPerson = async (room, who) => {

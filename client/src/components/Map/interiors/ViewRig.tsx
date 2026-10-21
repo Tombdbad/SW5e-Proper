@@ -6,8 +6,8 @@ import { useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { paceOf, STICK, useRun } from "./stick";
-import { AIM, aimAt, FEET_PER_SQUARE, lookDirection, PITCH, poseOf, rightOf, useReticle, useView, type Aimed, type ViewMode } from "./aim";
+import { groundPush, paceOf, STICK, stickOf, useRun } from "./stick";
+import { AIM, aimAt, FEET_PER_SQUARE, PITCH, poseOf, useReticle, useView, type Aimed, type ViewMode } from "./aim";
 
 type V3 = [number, number, number];
 
@@ -20,10 +20,9 @@ function Overlay({ stick, use }: { stick: { current: [number, number] }; use: ()
   const move = (e: React.PointerEvent) => {
     const box = pad.current!.getBoundingClientRect();
     const [dx, dy] = [e.clientX - (box.left + box.width / 2), e.clientY - (box.top + box.height / 2)];
-    const k = Math.min(1, Math.hypot(dx, dy) / STICK.travel);
-    const a = Math.atan2(dy, dx);
-    stick.current = [Math.cos(a) * k, -Math.sin(a) * k];
-    thumb.current!.style.transform = `translate(${Math.cos(a) * k * STICK.travel}px, ${Math.sin(a) * k * STICK.travel}px)`;
+    stick.current = stickOf(dx, dy);
+    const [sx, sy] = [stick.current[0] * STICK.travel, -stick.current[1] * STICK.travel];
+    thumb.current!.style.transform = `translate(${sx}px, ${sy}px)`;
   };
   const release = () => {
     stick.current = [0, 0];
@@ -184,7 +183,14 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
     parent.appendChild(host);
     const root = createRoot(host);
     root.render(<Overlay stick={stick} use={() => useNow.current()} />);
+    // The canvas's events (a tap on the map) are heard on the element this one is inside, so a touch of the stick or of a button would
+    // arrive there as a tap on the map, aimed from the pad's own corner: the party walked off to wherever that landed, and a walk begun by
+    // a tap kept the stick out. The stick's own drag (pointermove) is not stopped, nor is the canvas's look-drag, which is on the canvas
+    const stop = (e: Event) => e.stopPropagation();
+    const kinds = ["pointerdown", "pointerup", "pointercancel", "click", "dblclick", "contextmenu"];
+    for (const kind of kinds) host.addEventListener(kind, stop);
     return () => {
+      for (const kind of kinds) host.removeEventListener(kind, stop);
       root.unmount();
       host.remove();
     };
@@ -201,9 +207,8 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
     const deflection = Math.min(1, Math.hypot(forward, strafe));
     const pace = paceOf(deflection, useRun.getState().run);
     if (pace > 0) {
-      const f = lookDirection(yaw.current, 0);
-      const r = rightOf(yaw.current);
-      step(f.x * forward + r.x * strafe, f.z * forward + r.z * strafe, pace);
+      const [px, pz] = groundPush(forward, strafe, yaw.current);
+      step(px, pz, pace);
     }
     const at = feet();
     const pose = poseOf(mode, new THREE.Vector3(...at), yaw.current, pitch.current, AIM.solids);

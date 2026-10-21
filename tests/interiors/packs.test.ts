@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { PACKS, WALL_FILES, facing, fitPiece, maxHeightOf, packOf, pieceOf, stretches, wallTiles } from "../../client/src/components/Map/interiors/packs";
+import { PACKS, WALL_FILES, codeTurn, facing, fitPiece, maxHeightOf, packOf, pieceOf, stretches, wallTiles } from "../../client/src/components/Map/interiors/packs";
 import { TONES } from "../../client/src/components/Map/interiors/tones";
 
 test("a room takes its pack by its name, then by its building, one pack at most", () => {
@@ -45,6 +45,28 @@ test("a piece faces away from the wall it stands against", () => {
   assert.equal(facing({ x: 0, y: 3, w: 1, h: 2 }, ...room), Math.PI / 2, "west wall: faces east");
   assert.equal(facing({ x: 9, y: 3, w: 1, h: 2 }, ...room), -Math.PI / 2, "east wall: faces west");
   assert.equal(facing({ x: 4, y: 3, w: 1, h: 1 }, ...room), 0, "in the open: south");
+});
+
+// The front of a piece the code draws (shelves, racks, counters, cabinets) as a direction on the floor (x, z) for a turn about the upright axis
+const frontOf = (turn: number): [number, number] => [Math.round(Math.sin(turn)) || 0, Math.round(Math.cos(turn)) || 0];
+test("a shelf the code draws has its back to the wall on every side of the room, with its front to the room", () => {
+  const room = [10, 8] as const;
+  // [the piece's footprint, the wall it stands at, the way into the room from that wall (x, z)]
+  const cases: [{ x: number; y: number; w: number; h: number }, string, [number, number]][] = [
+    [{ x: 3, y: 0, w: 3, h: 1 }, "north", [0, 1]],
+    [{ x: 3, y: 7, w: 3, h: 1 }, "south", [0, -1]],
+    [{ x: 0, y: 2, w: 1, h: 3 }, "west", [1, 0]],
+    [{ x: 9, y: 2, w: 1, h: 3 }, "east", [-1, 0]],
+  ];
+  for (const [piece, wall, into] of cases) {
+    const front = frontOf(codeTurn(facing(piece, ...room), piece.w, piece.h));
+    assert.deepEqual(front, into, `a shelf on the ${wall} wall faces the room`);
+  }
+  // In the open, and with a wall at its end, a piece is as drawn: wide ones front to the south, tall ones to the east
+  assert.deepEqual(frontOf(codeTurn(facing({ x: 4, y: 3, w: 3, h: 1 }, ...room), 3, 1)), [0, 1]);
+  assert.deepEqual(frontOf(codeTurn(facing({ x: 4, y: 3, w: 1, h: 3 }, ...room), 1, 3)), [1, 0]);
+  assert.equal(codeTurn(facing({ x: 4, y: 0, w: 1, h: 3 }, ...room), 1, 3), Math.PI / 2, "a tall piece at the north wall by its end is left as drawn");
+  assert.equal(codeTurn(0, 1, 1), 0, "a square one is drawn facing south");
 });
 
 test("a piece is turned to the long side of its footprint, kept inside it and under its height, and repeated along a long side", () => {
