@@ -147,3 +147,37 @@ test("things on a shelf do not overlap along it, and an armour stand holds a nam
   }
   assert.deepEqual([...kinds].sort(), ["kit", "named"]);
 });
+
+test("bins, racks, curio shelves, plinths and part stands hold what a place of that kind keeps (2026-10-21)", () => {
+  assert.equal(holdsOf("Produce bin", "general store", "Sales floor"), "produce");
+  assert.equal(holdsOf("Parts bin", "workshop", "Workfloor"), "parts");
+  assert.equal(holdsOf("Parts bin", "tech shop", "Sales floor"), "parts");
+  assert.equal(holdsOf("Parts bin", "droid dealer", "Repair bay"), "droidparts");
+  assert.equal(holdsOf("Tool rack", "workshop", "Workfloor"), "toolrack");
+  assert.equal(holdsOf("Curio shelf", "curio shop", "Sales floor"), "curios");
+  assert.equal(holdsOf("Curio shelf", "pawnshop", "Sales floor"), "curios");
+  assert.equal(holdsOf("Statuette plinth", "curio shop", "Sales floor"), "relic");
+  assert.equal(holdsOf("Starship part", "shipyard", "Upgrade showroom"), "shipparts");
+  assert.equal(holdsOf("Parts bin", "tenements", "Apartments"), null);
+  assert.equal(holdsOf("Produce bin", "garrison", "Barracks"), null);
+  assert.equal(holdsOf("Tool rack", "cantina", "Main bar"), null);
+  for (const [holds, L, D, b, r, name] of [["produce", 1, 1, "general store", "Sales floor", "Produce bin"], ["parts", 1, 1, "workshop", "Workfloor", "Parts bin"], ["toolrack", 2, 1, "workshop", "Workfloor", "Tool rack"],
+    ["curios", 2, 1, "curio shop", "Sales floor", "Curio shelf"], ["relic", 1, 1, "curio shop", "Sales floor", "Statuette plinth"], ["shipparts", 2, 1, "shipyard", "Upgrade showroom", "Starship part"]] as const) {
+    for (const seed of [0, 1, 2, 3]) {
+      const items = stockLayout(holds, L, D, b, r, seed, name);
+      assert.ok(items.length >= 1, `${holds} seed ${seed} is empty`);
+      assert.deepEqual(items, stockLayout(holds, L, D, b, r, seed, name));
+      for (const it of items) {
+        assert.ok(it.item && ITEM_MODELS[it.item], `${holds}: ${it.item}`);
+        assert.ok(Math.abs(it.x) <= L / 2 + 0.01, `${holds}: ${it.item} at ${it.x} on ${L}`);
+        assert.ok(it.y >= 0 && it.y <= 1.5, `${holds}: ${it.item} at height ${it.y}`);
+      }
+    }
+  }
+  // A plinth holds the one relic; a tool rack hangs tools at the back
+  assert.equal(stockLayout("relic", 1, 1, "curio shop", "Sales floor", 1).length, 1);
+  assert.ok(stockLayout("toolrack", 2, 1, "workshop", "Workfloor", 1).every((i) => i.z < 0));
+  // What a dealer really has (the wares given) is what a bin shows
+  const wares = ["droid-astromech-plating", "mod-scope"].filter((m) => ITEM_MODELS[m]);
+  assert.ok(stockLayout("parts", 1, 1, "workshop", "Workfloor", 1, "Parts bin", wares).every((i) => wares.includes(i.item!)));
+});

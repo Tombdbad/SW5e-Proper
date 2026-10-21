@@ -65,7 +65,7 @@ import {
   modKindOf, augmentSlots, MOD_BASE_SLOTS, rarityRank, INSTALL_DC, SIZE_TIME, crystalModifier, crystalFor, crystalsUpTo, DROID_MOTOR_COST, DROID_BASE_SLOTS, droidPlan,
   readOutcome, blueprintRarity, readCredits, RARITY_ORDER, type Fitted,
   FAMILIES, MATERIALS, REFINE_UNITS, tierOfCr, makeRemains, haulOf, withCacheAsset, familiesForTool, familiesForEnhanced, ALL_FAMILIES, type MaterialFamily, crNumber, RARITY_TIERS, NODE_RESPAWN, HARVEST_MINUTES, harvestDc, harvestKit, kitAlias, notesAllowed, addNote, addRecording, languageBarrier, OWN_TONGUE_ONLY, translatorSlots, setLanguages, tracedCalls, callOverheard, RECORD_MINUTES, RECORD_LIMIT, type Note, type Recording, harvestYield, materialsOf, materialsWorth, spendMaterials, nodeAt, type ResourceNode,
-  partsPlaceAt, partsStock, fitShipPart, wreckParts, droidPartsStock, droidDisplay, droidListed,
+  partsPlaceAt, partsStock, fitShipPart, wreckParts, droidPartsStock, droidDisplay, droidListed, surgeonStock, modStock, MOD_TRADES, WARES, modFee, modFitProblem, MOD_FIT_HOURS, blueprintPool, type SurgeonLine, type ModLine,
   ammoFamilyOf, ammoItemFamily, ammoRider, accessoryOf, reloadOf, GENERATOR_SHOTS, waterSpeed, type AmmoRider,
   passDays, FORAGE_DC, HOT_LANDS, liquidOf, foodOf, GEAR, type Supplies,
   hazardsAt, exposure, HAZARD_HOUR, suitOf, airOf, breathRule, type Protections, type EnvHazard,
@@ -3917,24 +3917,34 @@ export default function GameBoard() {
     toast.success(`${f.name} fitted to ${c.name} by the dealer's technician (${money(plan.cost)}, ${plan.hours} hours).`);
   };
   // The droid customizations a dealer (or a scrapyard) sells today; bought, one is carried as an item, to fit later or at once
-  const { data: droidPartRows = [] } = useQuery<any[]>({
-    queryKey: ["droid-part-rows"],
-    queryFn: async () => ((await (await fetch("/api/sw5e/enhancedItems?fields=id,name,type,searchableRarity")).json()) as any[]).filter((e) => e.type === "DroidCustomization"),
+  // Every enhanced item's name, type, rarity and subtype: what the droid dealers, surgeons and technicians draw their stock from
+  const { data: enhancedRows = [] } = useQuery<any[]>({
+    queryKey: ["enhanced-rows-all"],
+    queryFn: async () => (await (await fetch("/api/sw5e/enhancedItems?fields=id,name,type,searchableRarity,subtype")).json()) as any[],
     staleTime: Infinity,
   });
+  const droidPartRows = useMemo(() => enhancedRows.filter((e) => e.type === "DroidCustomization"), [enhancedRows]);
   // What the shop the party is in shows today: the droids of the day on its plinths, the customizations it sells on its shelves
-  const showroomKey = `${here?.id}|${today}|${droidStats.length}|${droidPartRows.length}|${JSON.stringify(here?.occupants.filter((o) => o.trade === "droids").map((o) => traderLedger(o.id).bought) ?? [])}`;
+  const showroomKey = `${here?.id}|${today}|${droidStats.length}|${droidPartRows.length}|${enhancedRows.length}|${JSON.stringify(here?.occupants.map((o) => traderLedger(o.id).bought) ?? [])}`;
   useEffect(() => {
     const room = world && here?.kind === "room" ? world.areas[here.id] : undefined;
-    const trader = room?.occupants.find((o) => o.trade === "droids");
-    if (!world || !room || !trader || !droidStats.length) {
+    if (!world || !room) {
       useDisplay.getState().set({ droids: {}, shelves: {} });
       return;
     }
-    const bought = traderLedger(trader.id).bought;
-    const droids = Object.fromEntries(droidDisplay(world, room.id, today, droidStats, bought).map(({ plinth, line }) => [plinth, { name: line.name, price: line.price }]));
-    const parts = droidPartsStock(world, trader, room.id, today, droidPartRows, bought).map((l) => itemRef(l.name)?.model).filter((m): m is string => !!m);
-    const shelves = Object.fromEntries((room.layout?.assets ?? []).filter((a) => /droid parts shelf|display case/i.test(a.name)).map((a) => [a.id, parts]));
+    const trader = room.occupants.find((o) => o.trade === "droids");
+    let droids: Record<string, { name: string; price: number }> = {};
+    let shelves: Record<string, string[]> = {};
+    if (trader && droidStats.length) {
+      const bought = traderLedger(trader.id).bought;
+      droids = Object.fromEntries(droidDisplay(world, room.id, today, droidStats, bought).map(({ plinth, line }) => [plinth, { name: line.name, price: line.price }]));
+      const parts = droidPartsStock(world, trader, room.id, today, droidPartRows, bought).map((l) => itemRef(l.name)?.model).filter((m): m is string => !!m);
+      shelves = Object.fromEntries((room.layout?.assets ?? []).filter((a) => /droid parts shelf|display case/i.test(a.name)).map((a) => [a.id, parts]));
+    }
+    // The parts bins show the models of the modifications the room's seller has today
+    const seller = room.occupants.map((o) => modStock(world, o, room.id, today, enhancedRows, traderLedger(o.id).bought)).find((lines) => lines.length);
+    const mods = (seller ?? []).map((l) => itemRef(l.name)?.model).filter((m): m is string => !!m);
+    if (mods.length) for (const a of room.layout?.assets ?? []) if (/parts bin/i.test(a.name) && !shelves[a.id]) shelves[a.id] = mods;
     useDisplay.getState().set({ droids, shelves });
   }, [showroomKey]);
   const buyDroidPart = (trader: Occupant, line: { name: string; price: number }, fitTo?: Companion) => {
@@ -5069,23 +5079,27 @@ export default function GameBoard() {
   const SURGEON_BONUS = 5;
   const sizeOfPatient = "medium";
   const partsTaken = (play.augments ?? []).flatMap((a) => a.parts);
-  const installAugment = (name: string) => {
-    if (inCombat || dead || !world) return;
+  // `price`: bought from the surgeon at that price and fitted at once (the part is not in the pack yet)
+  const installAugment = (name: string, price = 0) => {
+    if (inCombat || dead || !world) return false;
+    const refuse = (what: string) => { speed(what); return false; };
     const f = factsOfItem(name);
     const prosthesis = PROSTHESES[name.toLowerCase()];
     const parts = f?.parts ?? prosthesis ?? [];
     const rarity = f?.rarity ?? "Standard";
-    if (!f && !prosthesis) return;
+    if (!f && !prosthesis) return false;
     const counted = (play.augments ?? []).filter((a) => !a.prosthesis).length;
-    if (!prosthesis && counted >= augmentationLimit(level)) return speed(`Your body supports ${augmentationLimit(level)} augmentations (your proficiency bonus; prostheses are extra).`);
-    if (!partsFree(partsTaken, parts)) return speed("That part of the body already has a replacement.");
+    if (!prosthesis && counted >= augmentationLimit(level)) return refuse(`Your body supports ${augmentationLimit(level)} augmentations (your proficiency bonus; prostheses are extra).`);
+    if (!partsFree(partsTaken, parts)) return refuse("That part of the body already has a replacement.");
     const plan = augmentPlan(rarity, sizeOfPatient);
-    if ((character.credits ?? 0) < plan.cost) return speed(`The surgeon wants ${money(plan.cost)} (${plan.hours} hours at 100 credits).`);
+    if ((character.credits ?? 0) < plan.cost + price) return refuse(`The surgeon wants ${money(plan.cost + price)} (${plan.hours} hours at 100 credits${price ? `, and ${money(price)} for the part` : ""}).`);
     const roll = die(20);
     const total = roll + SURGEON_BONUS;
     const ok = total >= plan.dc;
-    const spent = consume(name);
-    const changes: Record<string, any> = { credits: (character.credits ?? 0) - plan.cost };
+    const spent = price ? { equipment: [...((character.equipment ?? []) as string[])], charges: play.charges ?? {} } : consume(name);
+    const changes: Record<string, any> = { credits: (character.credits ?? 0) - plan.cost - price };
+    // (a part bought and not fitted by a failed operation is yours to try again with)
+    if (!ok && price) changes.equipment = [...spent.equipment, name];
     if (ok) {
       changes.equipment = spent.equipment;
       changes.playState = { ...play, charges: spent.charges, augments: [...(play.augments ?? []), { name, parts, ...(prosthesis ? { prosthesis: true } : {}) }], sides: f ? withSide(f) : play.sides };
@@ -5097,6 +5111,7 @@ export default function GameBoard() {
         ? `${name} fitted (surgeon ${roll} + ${SURGEON_BONUS} = ${total} against DC ${plan.dc}; ${plan.hours} hours, ${money(plan.cost)}).${f?.effects.falls ? " A side effect lowers another ability score by 1." : ""}`
         : `The work on ${name} failed (${roll} + ${SURGEON_BONUS} = ${total} against DC ${plan.dc}); the time and ${money(plan.cost)} are spent.${f?.augment === "enhancement" ? " A level of exhaustion." : f?.augment === "replacement" ? ` You are without that part for ${plan.hours} hours (house rule: shown, not enforced).` : ""}`,
     );
+    return true;
   };
   const removeAugment = (index: number) => {
     if (inCombat || dead) return;
@@ -5179,13 +5194,43 @@ export default function GameBoard() {
     );
   };
 
-  const augmentPanel = (surgeon: Occupant) => {
+  // What the surgeon sells today (the prostheses the place can afford, three to five augmentations by the wealth of the place); bought, the
+  // part is carried, to be fitted now or later
+  const buyOfSurgeon = (surgeon: Occupant, line: SurgeonLine, fit: boolean) => {
+    if (inCombat || dead) return;
+    if (line.price > (character.credits ?? 0)) return void toast.error(`${line.name} costs ${money(line.price)}.`);
+    const sold = () => recordDeal(surgeon.id, (e) => ({ ...e, bought: { ...e.bought, [line.name]: (e.bought[line.name] ?? 0) + 1 } }));
+    if (fit) return void (installAugment(line.name, line.price) && sold());
+    sold();
+    saveCharacter({ credits: character.credits - line.price, equipment: [...(character.equipment ?? []), line.name] });
+    toast.success(`${line.name} bought for ${money(line.price)}; have it fitted here or later.`);
+  };
+  const augmentPanel = (surgeon: Occupant, placeId: string) => {
     const waiting = Array.from(new Set<string>((character.equipment ?? []).filter((n: string) => factsOfItem(n)?.type === "CyberneticAugmentation" || PROSTHESES[n.toLowerCase()])));
     const installed = play.augments ?? [];
-    if (!waiting.length && !installed.length) return null;
+    const sale = world ? surgeonStock(world, surgeon, placeId, today, enhancedRows, equipmentData as any, traderLedger(surgeon.id).bought) : [];
+    if (!waiting.length && !installed.length && !sale.length) return null;
     return (
       <div className="mt-1 space-y-1 text-xs" data-testid={`augment-${surgeon.id}`}>
-        <p className="font-semibold text-gray-200">Surgery</p>
+        {sale.length > 0 && (
+          <div className="space-y-0.5" data-testid="surgeon-stock">
+            <p className="font-semibold text-gray-200">For sale</p>
+            <ul className="max-h-40 space-y-0.5 overflow-y-auto">
+              {sale.map((l) => {
+                const plan = augmentPlan(l.rarity, sizeOfPatient);
+                return (
+                  <li key={l.name} className="flex flex-wrap items-center gap-1" data-testid="surgeon-line">
+                    <span className="flex-1">{l.name} <span className="text-gray-400">{l.kind === "prosthesis" ? "prosthesis" : l.rarity}, surgery DC {plan.dc}</span></span>
+                    <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || l.price > (character.credits ?? 0)} onClick={() => buyOfSurgeon(surgeon, l, false)} data-testid="surgeon-buy">Buy {l.price.toLocaleString("en-GB")} cr</Button>
+                    <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || l.price + plan.cost > (character.credits ?? 0)} onClick={() => buyOfSurgeon(surgeon, l, true)} data-testid="surgeon-fit">and fit it (+{plan.cost.toLocaleString("en-GB")} cr)</Button>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="text-gray-500">House rule: Wretched Hives has augmentations found, made or installed; here the surgeon sells them at their value, as many as the wealth of the place allows (never legendary or artifact).</p>
+          </div>
+        )}
+        {(waiting.length > 0 || installed.length > 0) && <p className="font-semibold text-gray-200">Surgery</p>}
         <p className="text-gray-400">8 hours (a Medium patient) at 100 credits an hour, a check against the item's rarity (DC 10 to 30); the surgeon rolls d20 + {SURGEON_BONUS} (house rule). Your body supports {augmentationLimit(level)} augmentations; prostheses are extra.</p>
         {waiting.map((name) => {
           const f = factsOfItem(name);
@@ -5237,10 +5282,8 @@ export default function GameBoard() {
     if (!f?.modKind || !kind || inCombat || dead) return;
     const fit = fitOf(item);
     const augment = f.modKind === "augment";
-    const used = fit.mods.map((m) => factsOfItem(m)).filter(Boolean) as ItemFacts[];
-    if (rarityRank(f.rarity) > rarityRank(fit.rarity)) return speed(`This ${fit.rarity.toLowerCase()} item cannot hold ${f.rarity.toLowerCase()} modifications (fit a better chassis).`);
-    if (augment ? used.filter((u) => u.modKind === "augment").length >= augmentSlots(fit.rarity) : used.filter((u) => u.modKind !== "augment").length >= MOD_BASE_SLOTS) return speed(augment ? "No augment slot is free." : "All four slots are taken.");
-    if (augment && used.some((u) => u.name === f.name)) return speed("An item cannot have two of the same augment.");
+    const problem = modFitProblem(f, kind, fit, factsOfItem);
+    if (problem) return speed(problem);
     if (tinkerWait()) return speed("A failed fitting waits a day before the next try (the book).");
     const { tool, owned } = kitFor(augment ? "augment" : kind);
     if (!owned) return speed(`You need ${tool ?? "the right tools"} for this.`);
@@ -5310,6 +5353,72 @@ export default function GameBoard() {
     writeFit(item, { ...fitOf(item), crystal: color, crystalMax: color });
     saveCampaign(pass(60));
     toast.success(`Crystal for ${item}: check ${roll + bonus} (${mod >= 0 ? "+" : ""}${mod} to the d100), rolled ${d100}: ${color}. You may choose a lower one.`);
+  };
+  // A technician fits a modification for a fee (an hour, no check, no kit: house rule); `price` is what a part just bought costs
+  const fitAtShop = (trader: Occupant | null, item: string, mod: string, price = 0) => {
+    if (inCombat || dead) return;
+    const f = factsOfItem(mod);
+    const base = factsOf(item);
+    const kind = base ? modKindOf({ name: item, equipmentCategory: base.equipmentCategory, weaponClassification: (base as any).weaponClassification }) : undefined;
+    if (!f?.modKind) return void toast.error("The facts of that modification are still loading.");
+    const fit = fitOf(item);
+    const problem = modFitProblem(f, kind, fit, factsOfItem);
+    if (problem) return speed(problem);
+    const fee = modFee(f.rarity);
+    if ((character.credits ?? 0) < fee + price) return speed(`That comes to ${money(fee + price)}.`);
+    if (price && trader) recordDeal(trader.id, (e) => ({ ...e, bought: { ...e.bought, [mod]: (e.bought[mod] ?? 0) + 1 } }));
+    const spent = price ? { equipment: [...((character.equipment ?? []) as string[])], charges: play.charges ?? {} } : consume(mod);
+    writeFit(item, { ...fit, mods: [...fit.mods, f.name] }, { credits: (character.credits ?? 0) - fee - price, equipment: spent.equipment, playState: { ...play, charges: spent.charges } });
+    saveCampaign(pass(MOD_FIT_HOURS * 60));
+    toast.success(`${f.name} fitted in ${item} by the technician (${money(fee + price)}, an hour, no check).${(play.attuned ?? []).includes(item) ? "" : " It works once the item is attuned."}`);
+  };
+  // What the party's items would take of a modification: those it fits (the kind, rarity and slots)
+  const itemsFor = (mod: string, limit = 3): string[] => {
+    const f = factsOfItem(mod);
+    if (!f?.modKind) return [];
+    return Array.from(new Set<string>((character.equipment ?? []) as string[])).filter((n) => {
+      const base = factsOf(n);
+      const kind = base ? modKindOf({ name: n, equipmentCategory: base.equipmentCategory, weaponClassification: (base as any).weaponClassification }) : undefined;
+      return !!kind && !modFitProblem(f, kind, fitOf(n), factsOfItem);
+    }).slice(0, limit);
+  };
+  const buyMod = (trader: Occupant, line: ModLine, fitTo?: string) => {
+    if (inCombat || dead) return;
+    if (line.price > (character.credits ?? 0)) return void toast.error(`${line.name} costs ${money(line.price)}.`);
+    if (fitTo) return fitAtShop(trader, fitTo, line.name, line.price);
+    recordDeal(trader.id, (e) => ({ ...e, bought: { ...e.bought, [line.name]: (e.bought[line.name] ?? 0) + 1 } }));
+    saveCharacter({ credits: character.credits - line.price, equipment: [...(character.equipment ?? []), line.name] });
+    toast.success(`${line.name} bought for ${money(line.price)}; fit it yourself with the right tools, or have a technician do it for a fee.`);
+  };
+  const modsPanel = (trader: Occupant, placeId: string) => {
+    if (!world) return null;
+    const lines = modStock(world, trader, placeId, today, enhancedRows, traderLedger(trader.id).bought);
+    const carriedMods = Array.from(new Set<string>((character.equipment ?? []) as string[])).filter((n) => !!factsOfItem(n)?.modKind);
+    if (!lines.length) return null;
+    return (
+      <div className="space-y-0.5" data-testid="mod-shop">
+        <p className="font-semibold text-gray-300">{trader.trade === "salvage" ? "Used modifications" : "Modifications for sale"}</p>
+        <ul className="max-h-40 space-y-0.5 overflow-y-auto">
+          {lines.map((l) => (
+            <li key={l.name} className="flex flex-wrap items-center gap-1" data-testid="mod-line">
+              <span className="flex-1">{l.name} <span className="text-gray-400">{l.kind}, {l.rarity.toLowerCase()}</span></span>
+              <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || l.price > (character.credits ?? 0)} onClick={() => buyMod(trader, l)} data-testid="mod-buy">Buy {l.price.toLocaleString("en-GB")} cr</Button>
+              {itemsFor(l.name).map((item) => (
+                <Button key={item} size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || l.price + modFee(l.rarity) > (character.credits ?? 0)} onClick={() => buyMod(trader, l, item)} data-testid="mod-buy-fit">and fit in {item} (+{modFee(l.rarity)} cr)</Button>
+              ))}
+            </li>
+          ))}
+        </ul>
+        {carriedMods.length > 0 && <p className="font-semibold text-gray-300">Have the technician fit what you carry</p>}
+        {carriedMods.map((mod) => itemsFor(mod, 2).map((item) => (
+          <div key={`${mod}-${item}`} className="flex items-center gap-1 pl-2" data-testid="mod-fit-line">
+            <span className="flex-1 text-gray-300">{mod} in {item}</span>
+            <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || modFee(factsOfItem(mod)!.rarity) > (character.credits ?? 0)} onClick={() => fitAtShop(trader, item, mod)} data-testid="mod-fit">Fit ({modFee(factsOfItem(mod)!.rarity)} cr)</Button>
+          </div>
+        )))}
+        <p className="text-gray-500">House rule: modifications are sold over the counter here (Wretched Hives has them found or made), at their value; the technician fits one in an hour for a hundred credits a rarity step, with no check and no kit. A modified item needs attunement.</p>
+      </div>
+    );
   };
   const modPanel = (item: string) => {
     const base = factsOf(item);
@@ -5409,7 +5518,7 @@ export default function GameBoard() {
       toast.success(`${name}: you learn what is kept at ${place.name} (see Downtime, lore).`);
     } else {
       const rarity = blueprintRarity(level, die(100));
-      const pool = Object.values(itemFacts ?? {}).filter((f) => f.rarity.toLowerCase() === rarity && !f.timed && !f.chassis && !downtime.blueprints.includes(f.name));
+      const pool = blueprintPool(Object.values(itemFacts ?? {}), rarity, downtime.blueprints);
       const pick = pool[Math.floor(Math.random() * pool.length)];
       if (!pick) return void saveCampaign(time);
       commitDowntime({ character: changes, downtime: { blueprints: [...downtime.blueprints, pick.name] }, days: 0, log: [`${name} read: the blueprint of ${pick.name}.`] });
@@ -5852,7 +5961,8 @@ export default function GameBoard() {
               {partsCounter(o, holderId)}
               {o.trade === "salvage" && droidPartsPanel(o, holderId)}
               {scriptPanel(o, holderId)}
-              {o.role === "medic" && augmentPanel(o)}
+              {o.role === "medic" && augmentPanel(o, holderId)}
+              {(o.trade ? !!MOD_TRADES[o.trade] || !!WARES[o.trade]?.black : ["mechanic", "fence", "smuggler"].includes(o.role)) && modsPanel(o, holderId)}
               {(o.role === "ticket agent" || (o.role === "smuggler" && o.disposition !== "hostile")) && passagePanel(o)}
               {canHire(o) && hireSection(o, here.id)}
               {!isDroid(o) && o.species && o.role !== "guard" && o.role !== "freed" && gamblePanel(o.id, o.name, o.role === "gambler" ? 4 : 2)}

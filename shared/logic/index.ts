@@ -396,7 +396,7 @@ const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "h
   "city gate": { rooms: ["Gate|g", "Guard room|g L:armory K"] },
   "town gate": { rooms: ["Gate|g", "Watch post|L:armory K"] },
   trailhead: { rooms: ["Trailhead|", "Old shelter|L:remains"] },
-  cantina: { rooms: ["Entrance|", "Main bar|s p p m D", "Dance floor|p p", "Private booth|p @1", "Gambling room|p p s @1", "Back room|p g K X @1", "Cellar|L:stash H"] },
+  cantina: { rooms: ["Entrance|", "Main bar|s p p m D", "Dance floor|p p L:stage", "Private booth|p @1", "Gambling room|p p s @1", "Back room|p g K X @1", "Cellar|L:stash H"] },
   // What stands round a cantina (see SITES)
   cookshop: { rooms: ["Dining room|s p p", "Kitchen|s d @0", "Pantry|L:cargo K @1"] },
   "rooming house": { rooms: ["Lobby|s", "Guest rooms|p p @0", "Common room|p p s @0", "Attic store|L:stash K @1"] },
@@ -624,10 +624,11 @@ export function lawAt(world: World, areaId: string): number {
 // expected to earn over the party's current level. `rare` caches reach one rarity higher.
 export const LOOT: Record<string, { names: string[]; equipment: string[]; only?: RegExp; enhanced: string[]; enhancedChance: number; credits: number; rare?: boolean }> = {
   armory: { names: ["Weapons locker", "Arms rack"], equipment: ["Weapon", "Armor", "Ammunition", "Explosive"], enhanced: ["Weapon", "Armor", "Shield", "ItemModification"], enhancedChance: 0.25, credits: 0 },
-  medical: { names: ["Medical cabinet", "Supply cart"], equipment: ["Medical", "Kit"], only: /medpac|traumakit|antitoxkit|emergency battery|repair kit|bioanalysis|biochemist/i, enhanced: ["Consumable"], enhancedChance: 0.4, credits: 0 },
+  medical: { names: ["Medical cabinet", "Supply cart"], equipment: ["Medical", "Kit"], only: /medpac|traumakit|antitoxkit|emergency battery|repair kit|bioanalysis|biochemist|prosthesis/i, enhanced: ["Consumable", "Consumable", "CyberneticAugmentation"], enhancedChance: 0.4, credits: 0 },
   workshop: { names: ["Parts bin", "Tool chest"], equipment: ["Tool", "Kit", "Utility"], enhanced: ["ItemModification", "DroidCustomization"], enhancedChance: 0.3, credits: 0.005 },
   cargo: { names: ["Cargo crate", "Shipping container"], equipment: ["Storage", "LifeSupport", "Utility", "AlcoholicBeverage", "Clothing", "Ammunition"], enhanced: ["Consumable"], enhancedChance: 0.1, credits: 0.01 },
-  stash: { names: ["Hidden stash", "False-bottomed crate"], equipment: ["Spice", "Explosive", "GamingSet", "WeaponOrArmorAccessory"], enhanced: ["Consumable", "AdventuringGear"], enhancedChance: 0.3, credits: 0.04 },
+  stash: { names: ["Hidden stash", "False-bottomed crate"], equipment: ["Spice", "Explosive", "GamingSet", "MusicalInstrument", "WeaponOrArmorAccessory"], enhanced: ["Consumable", "AdventuringGear"], enhancedChance: 0.3, credits: 0.04 },
+  stage: { names: ["Instrument case", "Amp locker"], equipment: ["MusicalInstrument"], enhanced: [], enhancedChance: 0, credits: 0.005 },
   coin: { names: ["Strongbox", "Till"], equipment: ["DataRecordingAndStorage"], only: /credit chip|datapad|datacard/i, enhanced: [], enhancedChance: 0, credits: 0.03 },
   vault: { names: ["Vault", "Wall safe"], equipment: [], enhanced: ["Weapon", "Armor", "Shield", "Focus", "CyberneticAugmentation"], enhancedChance: 0.8, credits: 0.15, rare: true },
   relic: { names: ["Reliquary", "Sealed casket"], equipment: [], enhanced: ["Focus", "Weapon", "Armor", "Shield"], enhancedChance: 0.9, credits: 0.02, rare: true },
@@ -10703,6 +10704,79 @@ export function droidDisplay(world: World, roomId: string, day: number, droids: 
   const lines = droidStock(world, trader, roomId, day, droids, bought);
   return plinths.slice(0, lines.length).map((p, i) => ({ plinth: p.id, line: lines[i] }));
 }
+// ---------------------------------------------------------------------------------------------
+// Surgeons' and technicians' shops (2026-10-21; house rules: Wretched Hives has cybernetic augmentations and modifications found, made or
+// installed, the user wants them on sale). How good the stock is follows the wealth of the place, as a droid dealer's does: standard in
+// a village or outpost, premium in a town, prototype in a city or a station, advanced too in a city of the Core worlds (never legendary or
+// artifact). Prices are the item's value (Wretched Hives' random value of its rarity, half for a modification) moved by the region and the
+// settlement like any other price. A surgeon (a medic) lists every prosthesis the place can afford and three to five augmentations a day;
+// an armsmith, a tech shop, an outfitter or a mechanic sells the modifications of what they trade in (five to eight a day), a scrapyard
+// used ones at 60%, the black market any at 1.6 times and a rarity more.
+// ---------------------------------------------------------------------------------------------
+export interface EnhancedRow { id?: string; name: string; type: string; searchableRarity: string; subtype?: string }
+export function shopTier(world: World, placeId: string): number {
+  const market = marketAt(world, placeId);
+  const region = ancestor(world, placeId, "region");
+  const rich = ["Deep Core", "Core", "Colonies", "Inner Rim"].includes(region?.type ?? region?.name ?? "");
+  const settlement = market.settlement?.type ?? "outpost";
+  return settlement === "city" ? (rich ? 3 : 2) : settlement === "station" ? 2 : settlement === "town" ? 1 : 0;
+}
+export interface SurgeonLine { name: string; kind: "augment" | "prosthesis"; rarity: string; price: number; parts: string[] }
+export function surgeonStock(world: World, trader: Occupant, placeId: string, day: number, rows: EnhancedRow[], equipment: { name: string; equipmentCategory: string; cost: number }[], bought: Record<string, number> = {}): SurgeonLine[] {
+  if (trader.role !== "medic" || trader.disposition === "hostile") return [];
+  const market = marketAt(world, placeId);
+  const top = shopTier(world, placeId);
+  const r = createRandom(hashOf(`${trader.id}|surgery`) + day * 15485863);
+  const factor = market.regionFactor * market.settlementFactor;
+  const augments = r.shuffle(rows.filter((x) => x.type === "CyberneticAugmentation" && rarityRank(x.searchableRarity) <= top)).slice(0, r.int(3, 5))
+    .map((x): SurgeonLine => ({ name: x.name, kind: "augment", rarity: x.searchableRarity, price: Math.max(10, Math.round(enhancedValue(x) * factor)), parts: [] }));
+  const prostheses = equipment
+    .filter((e) => e.equipmentCategory === "Medical" && PROSTHESES[e.name.toLowerCase()] && e.cost > 0 && e.cost <= market.cap)
+    .map((e): SurgeonLine => ({ name: e.name, kind: "prosthesis", rarity: "Standard", price: Math.max(1, Math.round(e.cost * factor)), parts: PROSTHESES[e.name.toLowerCase()] }));
+  return [...prostheses, ...augments].filter((l) => !(bought[l.name] > 0)).sort((a, b) => Number(a.kind === "augment") - Number(b.kind === "augment") || a.price - b.price);
+}
+// What kinds of modification each trade sells (an item's `subtype`)
+export const MOD_TRADES: Record<string, string[]> = {
+  arms: ["blaster", "vibroweapon", "armor"],
+  tech: ["wristpad", "focus generator", "augment"],
+  outfit: ["clothing", "armor"],
+  salvage: ["blaster", "vibroweapon", "armor", "clothing", "wristpad"],
+};
+export interface ModLine { name: string; rarity: string; kind: string; price: number }
+export function modStock(world: World, trader: Occupant, placeId: string, day: number, rows: EnhancedRow[], bought: Record<string, number> = {}): ModLine[] {
+  if (trader.disposition === "hostile") return [];
+  const trade = trader.trade ?? ROLE_WARES[trader.role] ?? "";
+  const black = !!WARES[trade]?.black;
+  const kinds = black ? undefined : MOD_TRADES[trade];
+  if (!black && !kinds) return [];
+  const market = marketAt(world, placeId);
+  const top = trade === "salvage" ? 1 : Math.min(3, shopTier(world, placeId) + (black ? 1 : 0));
+  const r = createRandom(hashOf(`${trader.id}|mods`) + day * 49979687);
+  const pool = rows.filter((x) => x.type === "ItemModification" && rarityRank(x.searchableRarity) <= top && (!kinds || kinds.includes(String(x.subtype ?? "").toLowerCase())));
+  const factor = market.regionFactor * market.settlementFactor * (black ? 1.6 : trade === "salvage" ? 0.6 : 1);
+  return r.shuffle(pool).slice(0, r.int(5, 8))
+    .filter((x) => !(bought[x.name] > 0))
+    .map((x) => ({ name: x.name, rarity: x.searchableRarity, kind: String(x.subtype ?? "").toLowerCase(), price: Math.max(10, Math.round(enhancedValue(x) * factor)) }))
+    .sort((a, b) => a.price - b.price);
+}
+// What a technician charges to fit a modification (an hour, no check, no kit: house rule, as a droid dealer's technician does)
+export const MOD_FIT_HOURS = 1;
+export const modFee = (rarity: string) => 100 * (rarityRank(rarity) + 1);
+// Why a modification cannot go in an item (undefined when it can): the kind, the chassis's rarity, free slots, and no two of one augment
+export function modFitProblem(mod: { name: string; rarity: string; modKind?: string }, itemKind: string | undefined, fit: { rarity: string; mods: string[] }, factsOf: (name: string) => { modKind?: string; name: string } | undefined): string | undefined {
+  if (!mod.modKind || !itemKind) return "That is not a modification for this item.";
+  const augment = mod.modKind === "augment";
+  if (!augment && mod.modKind !== itemKind) return `That is a ${mod.modKind} modification.`;
+  if (rarityRank(mod.rarity) > rarityRank(fit.rarity)) return `This ${fit.rarity.toLowerCase()} item cannot hold ${mod.rarity.toLowerCase()} modifications (fit a better chassis).`;
+  const used = fit.mods.map((m) => factsOf(m)).filter(Boolean) as { modKind?: string; name: string }[];
+  if (augment ? used.filter((u) => u.modKind === "augment").length >= augmentSlots(fit.rarity) : used.filter((u) => u.modKind !== "augment").length >= MOD_BASE_SLOTS) return augment ? "No augment slot is free." : "All four slots are taken.";
+  if (augment && used.some((u) => u.name === mod.name)) return "An item cannot have two of the same augment.";
+  return undefined;
+}
+// The blueprints one can learn from a find of this rarity: any enhanced item that is made, including modifications and chassis
+export const blueprintPool = <T extends { name: string; rarity: string; timed?: unknown }>(facts: T[], rarity: string, known: string[]): T[] =>
+  facts.filter((f) => f.rarity.toLowerCase() === rarity && !f.timed && !known.includes(f.name));
+
 // The cost of mending a droid to full: a hit point is 5 credits and 5 for each point of challenge
 export const droidRepairPrice = (cr: string | number | undefined, missing: number) => Math.max(0, Math.ceil(missing * (5 + 5 * crNumber(cr))));
 

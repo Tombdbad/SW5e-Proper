@@ -59,7 +59,7 @@ export function armsFor(buildingType: string, roomName = ""): string[] {
 
 // Does the furniture hold stock, and how: weapons hung on a rack, laid on shelves or in a glass case; crates; armour on its stand;
 // kits and tools on shelves and benches; medical cases; prostheses laid out under glass
-export type Holds = "rack" | "shelf" | "case" | "crates" | "armour" | "kits" | "medical" | "prosthetics" | "tools" | "goods" | "devices" | "droidparts" | "clothing" | "instruments" | "vials" | "bar" | null;
+export type Holds = "rack" | "shelf" | "case" | "crates" | "armour" | "kits" | "medical" | "prosthetics" | "tools" | "goods" | "devices" | "droidparts" | "clothing" | "instruments" | "vials" | "bar" | "produce" | "parts" | "toolrack" | "curios" | "relic" | "shipparts" | null;
 export function holdsOf(furniture: string, buildingType: string, roomName = ""): Holds {
   const n = furniture.toLowerCase();
   const b = buildingType.toLowerCase();
@@ -76,6 +76,16 @@ export function holdsOf(furniture: string, buildingType: string, roomName = ""):
   if (/droid parts shelf/.test(n) && /tech shop|droid dealer/.test(b)) return "droidparts";
   if (/goods shelf|display shelf|wares rack/.test(n) && /general store|pawnshop|curio/.test(b)) return /curio/.test(b) ? null : "goods";
   if (/instrument rack/.test(n) && /curio shop|pawnshop/.test(b)) return "instruments";
+  // A curio shop's and a pawnshop's curio shelves keep games, relics and trinkets; a statuette plinth, one relic
+  if (/curio shelf/.test(n) && /curio shop|pawnshop/.test(b)) return "curios";
+  if (/statuette plinth/.test(n) && /curio shop|pawnshop/.test(b)) return "relic";
+  // A general store's produce bin keeps provisions; a parts bin of a workshop or a tech shop, modification components; of a droid dealer's
+  // repair bay, droid modules; a tool rack of a workshop, tools; a shipyard's part stands, power and machinery
+  if (/produce bin/.test(n) && /general store|market|cookshop/.test(b)) return "produce";
+  if (/parts bin/.test(n) && /droid dealer/.test(b)) return "droidparts";
+  if (/parts bin/.test(n) && /workshop|engineering|tech shop|shipyard|junk|scrap|machine shop|workfloor|maintenance/.test(where)) return "parts";
+  if (/tool rack/.test(n) && /workshop|engineering|tech shop|shipyard|junk|scrap|machine shop|workfloor|maintenance|hangar/.test(where)) return "toolrack";
+  if (/starship part/.test(n) && /shipyard/.test(b)) return "shipparts";
   if (/herb rack/.test(n) && /apothecary|medcenter/.test(b)) return "vials";
   if (/clothing rack/.test(n) && /outfitter/.test(b)) return "clothing";
   if (/bar counter/.test(n) && /cantina|gambling|rooming|cookshop|promenade/.test(b)) return "bar";
@@ -118,6 +128,18 @@ export const POOLS: Record<string, string[]> = {
   bar: ["deuterium-pyro", "mummergy", "novanian-grog", "raava", "spicebrew", "tihaar", "tsiraki", "vayerbok", "tankard", "jug", "flask"],
   ammo: ["arrow", "arrow-combustive", "arrow-electroshock", "arrow-noisemaker", "bolt", "bolt-deafening", "bolt-electrifying", "bolt-panic", "dart", "deafening-dart", "electrifying-dart", "panic-dart", "grenade-fragmentation", "grenade-stun", "grenade-flash", "grenade-plasma", "grenade-ion", "grenade-gas", "cartridge-slug", "cartridge-electrifying", "cell-cryo", "cell-incendiary", "flechette-clip-ion", "flechette-clip-plasma", "missile-ion", "mine-stun", "mine-flash", "charge-fragmentation", "thermal-detonator", "power-generator", "snare"],
   droidparts: Object.keys(ITEM_MODELS).filter((m) => m.startsWith("droid-")),
+  // A general store's produce bin: provisions and vessels
+  produce: ["field-rations", "emergency-rations", "canteen", "jug", "flask", "pitcher", "pot", "bucket", "tankard", "mess-kit", "field-rations", "pouch"],
+  // A parts bin: the components of item modifications (19 kinds), a cell or two
+  parts: Object.keys(ITEM_MODELS).filter((m) => m.startsWith("mod-")).concat(["power-generator", "repair-kit"]),
+  // A tool rack: what hangs on a hook
+  toolrack: ["hydrospanner", "shovel", "fusion-cutter", "grappling-hook", "fibercord-cable", "security-spike", "computer-spike", "portable-ram", "macrobinoculars", "binders"],
+  // A curio shelf: gaming sets, a datacron, a trinket or two
+  curios: ["dejarik-set", "pazaak-deck", "sabacc-deck", "chance-cubes", "kirgatz-set", "chatta-ragul-set", "datacron", "ring-force", "ring-tech", "amulet", "goggles", "gadget", "blueprint"],
+  // The one thing on a statuette plinth: a relic
+  relic: ["holocron-jedi", "holocron-sith", "datacron", "amulet", "ring-force", "ring-tech", "goggles", "blueprint"],
+  // A shipyard's part stand: power and machinery
+  shipparts: ["power-generator", "power-belt", "repair-kit", "emergency-battery", "mod-core", "mod-board", "mod-cell", "mod-conductor", "mod-emitter", "mod-plate", "mod-armoring", "remote-detonator"],
 };
 
 // How far a catalogue model reaches along x and z (so that it can be laid along a shelf), and how tall it is, at a scale
@@ -226,6 +248,36 @@ export function stockLayout(holds: Holds, L: number, D: number, buildingType: st
     // Open shelves: a general store's goods, an apothecary's vials, a curio shop's instruments
     const shelves = [0.4, 0.78, 1.14];
     items.push(...shelfRows(POOLS[holds], L, shelves, next, { scale: holds === "instruments" ? 0.9 : 1, maxLong: holds === "instruments" ? 0.95 : 0.4 }));
+  } else if (holds === "curios") {
+    // Open shelves, a few things each
+    items.push(...shelfRows(wares?.length ? wares : POOLS.curios, L, [0.4, 0.78, 1.14], next, { scale: 1, gap: 0.1, maxLong: 0.4 }));
+  } else if (holds === "relic") {
+    // One relic on the plinth (0.6 up), turned a little
+    const pool = (wares?.length ? wares : POOLS.relic).filter((m) => ITEM_MODELS[m]);
+    items.push({ item: pool[Math.floor(next() * pool.length)], x: 0, y: 0.6, z: 0, turn: next() * 6, scale: 1.2 });
+  } else if (holds === "produce" || holds === "parts" || holds === "shipparts") {
+    // Heaped in a bin or on a stand: scattered over its top, a few at a time (the bin's top: 0.3 produce, 0.56 parts, 0.18 a part stand)
+    const top = holds === "produce" ? 0.3 : holds === "parts" ? 0.58 : 0.2;
+    const pool = (wares?.length ? wares : POOLS[holds]).filter((m) => ITEM_MODELS[m]);
+    const count = Math.max(3, Math.min(8, Math.round(L * D * 4 + 2)));
+    const span = Math.max(0.1, L - 0.6);
+    for (let i = 0; i < count; i++) {
+      const model = pool[Math.floor(next() * pool.length)];
+      items.push({ item: model, x: (next() - 0.5) * span, y: top + (i % 3) * 0.05, z: (next() - 0.5) * Math.max(0.1, D - 0.6), turn: next() * 6, scale: holds === "produce" ? 0.8 : 0.75 });
+    }
+  } else if (holds === "toolrack") {
+    // Hung on the rack's hooks along its back, two tiers
+    const pool = POOLS.toolrack.filter((m) => ITEM_MODELS[m]);
+    for (const y of [1.0, 0.62]) {
+      let x = -L / 2 + 0.3;
+      for (let tries = 0; tries < 12; tries++) {
+        const model = pool[Math.floor(next() * pool.length)];
+        const r = reach(model, 1);
+        if (r.along > 0.5 || x + r.along > L / 2 - 0.25) continue;
+        items.push({ item: model, x: x + r.along / 2, y, z: back + 0.32, turn: r.turn + (next() - 0.5) * 0.3, scale: 1 });
+        x += r.along + 0.08;
+      }
+    }
   } else if (holds === "droidparts") {
     // The modules of a droid dealer's shelf: small, many
     items.push(...shelfRows(wares?.length ? wares : POOLS.droidparts, L, [0.4, 0.78, 1.14], next, { scale: 0.85, gap: 0.04, maxLong: 0.2 }));

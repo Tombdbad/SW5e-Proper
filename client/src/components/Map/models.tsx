@@ -635,7 +635,7 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number, b
   }
   if (/produce bin/.test(n)) {
     k.box([L - 0.2, 0.28, D - 0.2], C.wood, { at: [0, 0.14, 0], round: 0.03 });
-    for (let i = 0; i < 6; i++) k.blob(0.11, ["#c8663a", "#9fbf5a", "#d6a85a", "#a1495a"][(i + seed) % 4], { at: [(i % 3 - 1) * 0.24, 0.32, (Math.floor(i / 3) - 0.5) * 0.24], smooth: true, rough: 0.15, seed: i, squash: [1, 0.85, 1] });
+    for (let i = 0; i < (bare ? 0 : 6); i++) k.blob(0.11, ["#c8663a", "#9fbf5a", "#d6a85a", "#a1495a"][(i + seed) % 4], { at: [(i % 3 - 1) * 0.24, 0.32, (Math.floor(i / 3) - 0.5) * 0.24], smooth: true, rough: 0.15, seed: i, squash: [1, 0.85, 1] });
     return;
   }
   if (/cloth bolts/.test(n)) {
@@ -696,14 +696,16 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number, b
   }
   if (/statuette plinth/.test(n)) {
     k.box([0.5, 0.6, 0.5], "#b8b2a4", { at: [0, 0.3, 0], round: 0.04 });
+    if (bare) return;
     k.capsule(0.07, 0.22, C.gold, { at: [0, 0.82, 0], finish: "sheen" });
     k.sphere(0.06, C.gold, { at: [0, 1.04, 0], finish: "sheen" });
     return;
   }
   if (/starship part/.test(n)) {
     k.box([L - 0.2, 0.18, D - 0.3], C.steelDark, { at: [0, 0.09, 0], round: 0.03, finish: "sheen" });
+    if (bare) return;
     k.lathe([[0.16, -0.5], [0.3, -0.3], [0.32, 0.1], [0.2, 0.5], [0.1, 0.7]], C.steel, { at: [0, 0.5, 0], rot: [0, 0, Math.PI / 2], seg: 16, finish: "sheen" });
-    k.torus(0.3, 0.03, C.glow, { at: [-0.3, 0.5, 0], rot: [0, Math.PI / 2, 0], seg: [5, 18], finish: "glow" });
+    if (!bare) k.torus(0.3, 0.03, C.glow, { at: [-0.3, 0.5, 0], rot: [0, Math.PI / 2, 0], seg: [5, 18], finish: "glow" });
     return;
   }
   if (/bandstand/.test(n)) {
@@ -1026,7 +1028,7 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number, b
   if (/crate|footlocker|parts bin|equipment/.test(n)) {
     const low = /footlocker/.test(n);
     crate(k, [0, 0, 0], [L - 0.32, low ? 0.36 : 0.56, D - 0.32], /parts/.test(n) ? C.steelDark : /equipment/.test(n) ? "#4f6b8a" : C.olive, /parts/.test(n) ? C.green : C.amber);
-    if (/parts/.test(n)) for (let i = 0; i < 4; i++) k.box([0.1, 0.06, 0.08], [C.amber, C.steel, C.red, C.glow][i], { at: [-0.12 + i * 0.08, 0.6, (i % 2) * 0.08 - 0.04], rot: [0, i, 0.3], finish: "sheen" });
+    if (/parts/.test(n) && !bare) for (let i = 0; i < 4; i++) k.box([0.1, 0.06, 0.08], [C.amber, C.steel, C.red, C.glow][i], { at: [-0.12 + i * 0.08, 0.6, (i % 2) * 0.08 - 0.04], rot: [0, i, 0.3], finish: "sheen" });
     return;
   }
   if (/weapon rack|tool rack|restraint rack/.test(n)) {
@@ -1035,7 +1037,7 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number, b
     const count = Math.round(L * 2.4);
     for (let i = 0; i < count; i++) {
       const x = -L / 2 + 0.3 + (i * (L - 0.6)) / Math.max(1, count - 1);
-      if (/tool/.test(n)) k.box([0.05, 0.36, 0.04], [C.amber, C.steel, C.red][i % 3], { at: [x, 0.95 - (i % 2) * 0.3, back + 0.24], finish: "sheen" });
+      if (/tool/.test(n)) { if (!bare) k.box([0.05, 0.36, 0.04], [C.amber, C.steel, C.red][i % 3], { at: [x, 0.95 - (i % 2) * 0.3, back + 0.24], finish: "sheen" }); }
       else if (/restraint/.test(n)) k.torus(0.06, 0.015, C.steel, { at: [x, 0.95, back + 0.24], finish: "sheen", seg: [5, 12] });
       else {
         k.box([0.05, 0.9, 0.07], C.black, { at: [x, 0.7, back + 0.25], finish: "sheen" });
