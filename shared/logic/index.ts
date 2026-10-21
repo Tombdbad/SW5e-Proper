@@ -2253,6 +2253,64 @@ export function setPane(world: World, roomId: string, assetId: string, change: P
   return { ...world, areas: { ...world.areas, [roomId]: { ...room, layout: { ...room.layout, assets } } } };
 }
 
+// ---- Climbing the outside of a building (2026-10-21; the user: a balcony is not climbed to as standard, a grappling hook reaches it).
+// A balcony, or a window above the ground floor, is reached from the street (and left for it) only with gear: flying (a jetpack or
+// rocket boots running) or friction-grip gear worn (a climbing speed, the book) need no check; a grappling hook thrown up and its line
+// climbed is a Strength (Athletics) check, DC 10, a minute a try (house rule). Its line is 50 ft. (the book) and each fibercord cable
+// carried adds its own; a storey is 10 ft. (house rule), so the line reaches its feet / 10 floors up. Down again: the same gear, or a
+// repulsor pack's slow fall. Roofs have their ladders.
+export const STOREY_FEET = 10;
+export const GRAPPLE_DC = 10;
+export interface ClimbGear {
+  // The gear running or worn that does it (an item's name)
+  flying?: string;
+  grips?: string;
+  descent?: string;
+  // Feet of line: the hook's and the cables'
+  hookFeet?: number;
+  lineFeet?: number;
+}
+export type ClimbWay = { how: "fly" | "grips" | "hook" | "descent"; by: string; dc?: number } | { how: "none"; why: string };
+export function climbWay(levels: number, gear: ClimbGear, down = false): ClimbWay {
+  if (gear.flying) return { how: "fly", by: gear.flying };
+  if (gear.grips) return { how: "grips", by: gear.grips };
+  if (down && gear.descent) return { how: "descent", by: gear.descent };
+  const feet = levels * STOREY_FEET;
+  if (gear.hookFeet) {
+    if ((gear.hookFeet + (gear.lineFeet ?? 0)) >= feet) return { how: "hook", by: "Grappling hook", dc: GRAPPLE_DC };
+    return { how: "none", why: `${feet} ft. up: the hook's line is ${gear.hookFeet + (gear.lineFeet ?? 0)} ft.` };
+  }
+  return { how: "none", why: `${feet} ft. up a sheer wall: a grappling hook, friction-grip gear or a jetpack would get you there` };
+}
+// The climbing gear of what a character carries, wears and has running (each read from the item's text: gear.ts accessoryOf, gearUse)
+export function climbGearOf(items: { name: string; description?: string; equipmentCategory?: string }[], worn: string[], isRunning: (name: string) => boolean): ClimbGear {
+  const gear: ClimbGear = {};
+  for (const item of items) {
+    const use = gearUse({ name: item.name, equipmentCategory: item.equipmentCategory, description: item.description });
+    const facts = use?.kind === "accessory" ? use.facts : undefined;
+    if (facts?.fly && isRunning(item.name)) gear.flying = item.name;
+    if (facts?.climb && worn.includes(item.name)) gear.grips = item.name;
+    if (facts?.descent && isRunning(item.name)) gear.descent = item.name;
+    if (use?.kind === "grapple") gear.hookFeet = Math.max(gear.hookFeet ?? 0, use.feet);
+    if (use?.kind === "rope") gear.lineFeet = (gear.lineFeet ?? 0) + use.feet;
+  }
+  return gear;
+}
+export const climbLabel = (way: ClimbWay, down: boolean) =>
+  way.how === "fly" ? (down ? "Fly down to" : "Fly up to") : way.how === "grips" ? (down ? "Climb down (friction grips) to" : "Climb up (friction grips) to") : way.how === "descent" ? "Drop slowly (repulsor pack) to" : way.how === "hook" ? (down ? "Climb down the line to" : "Throw the grappling hook up to") : "";
+// The ways up the outside of the building the party stands in front of (its balconies), or down from the balcony they stand on
+export function outsideClimbs(world: World, areaId: string, gear: ClimbGear): Exit[] {
+  const area = world.areas[areaId];
+  if (!area) return [];
+  const exit = (to: string, levels: number, down: boolean): Exit[] => {
+    const way = climbWay(levels, gear, down);
+    return way.how === "none" ? [] : [{ to, via: down ? "leave" : "enter", label: climbLabel(way, down), travel: "", scale: way, ...(down ? {} : { secret: true }) }];
+  };
+  if (area.kind === "building") return childrenOf(world, area.id).filter((r) => formOf(r) === "balcony").flatMap((b) => exit(b.id, b.layout?.level ?? 1, false));
+  if (area.kind === "room" && formOf(area) === "balcony" && area.parentId) return exit(area.parentId, area.layout?.level ?? 1, true);
+  return [];
+}
+
 // The square inside a room that touches the given wall at the given step along it
 const wallSquare = (layout: RoomLayout, side: Side, along: number) =>
   side === "n" ? { x: along, y: 0 } : side === "s" ? { x: along, y: layout.height - 1 } : side === "w" ? { x: 0, y: along } : { x: layout.width - 1, y: along };
@@ -4655,6 +4713,8 @@ export interface Exit {
   jump?: boolean;
   // A way that has to be climbed (out of a pit): the DC of the check
   climb?: number;
+  // A way up or down the outside of a building, by the gear that does it (see outsideClimbs)
+  scale?: ClimbWay;
   // A sensor on the way (see Path)
   alarmed?: boolean;
 }

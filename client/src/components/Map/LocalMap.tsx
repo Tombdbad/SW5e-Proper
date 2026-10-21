@@ -2436,7 +2436,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   {lift > 0.01 && [[0.1, 0.1], [l.width - 0.1, 0.1], [0.1, l.height - 0.1], [l.width - 0.1, l.height - 0.1]].map(([px, pz], i) => <Box key={i} at={[px, -lift / 2, pz]} size={[0.1, lift, 0.1]} color="#59636d" />)}
                 </group>
               ) : form === "balcony" ? (
-                // A balcony over the street (shared/logic "Balconies"): its floor and balustrade (it is reached by its patio doors only)
+                // A balcony over the street (shared/logic "Balconies"): its floor and balustrade (reached by its patio doors, or from the street with climbing gear: outsideClimbs)
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                   {slab("#6b6f78")}
                   {rail(0.55)}

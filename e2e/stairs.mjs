@@ -4,7 +4,9 @@
 // Each tap is on the thing itself, where the map draws it (window.__map3d), and the HUD must then say the party is in the next room.
 // Self-contained (makes and deletes its own character and campaigns). Not the play-through: one building of each, a few minutes.
 // Then the ways in from outside (2026-10-20): down from a roof by its stairs; in through a window from the street; and out onto a
-// balcony by its patio doors and back (a balcony is not climbed to from the street: grapple hooks will, once they have rules).
+// balcony by its patio doors and back; and (2026-10-21) up to the balcony from the street with a grappling hook and down its line
+// again (a balcony is reached from the street only with climbing gear: shared/logic outsideClimbs; the climb is rolled in the check
+// dialog, a few tries).
 // Usage: BASE=http://127.0.0.1:5002 node e2e/stairs.mjs   (ONLY=outside for the second part alone)
 import { open, api, BASE, OUT } from "./lib.mjs";
 
@@ -48,7 +50,7 @@ try {
     name: NAME, species: "human", class: "fighter", background: "soldier", alignment: "Neutral Balanced", level: 3,
     abilityScores: { strength: 16, dexterity: 14, constitution: 14, intelligence: 14, wisdom: 14, charisma: 14 },
     maxHp: 30, currentHp: 30, maxForcePoints: 0, currentForcePoints: 0, armorClass: 14, speed: 30, credits: 5000,
-    startingLocation: "Unknown", skillProficiencies: ["Athletics"], savingThrowProficiencies: ["strength"], equipment: ["Blaster pistol"],
+    startingLocation: "Unknown", skillProficiencies: ["Athletics"], savingThrowProficiencies: ["strength"], equipment: ["Blaster pistol", "Grappling hook"],
   })).json;
   made.push(c.id);
   // A main bar with a gallery, and a stair block whose ways into the rooms over and under its host are neither locked nor hidden
@@ -180,6 +182,27 @@ try {
   await play(balconyWay.world, balconyWay.room);
   await tap(doorTo(balconyWay.room, balconyWay.balcony), balconyWay.balcony.name);
   await tap(doorTo(balconyWay.balcony, balconyWay.room), balconyWay.room.name);
+
+  // Up from the street with the grappling hook the character carries, and down its line again (the ways list on the HUD)
+  console.log(`grapple: up to the balcony of ${balconyWay.building.name} from the street`);
+  await play(balconyWay.world, balconyWay.building);
+  const climbBy = async (label, expect) => {
+    const t0 = Date.now();
+    let ok = false;
+    for (let n = 0; n < 6 && !ok; n++) {
+      const way = page.getByRole("button", { name: label }).first();
+      if (!(await way.waitFor({ timeout: 30000 }).then(() => true).catch(() => false))) throw new Error(`no way "${label}" on the list (the party is in "${await here()}")`);
+      await way.click();
+      const roll = page.locator('[data-testid="check-roll"]');
+      if (await roll.waitFor({ timeout: 15000 }).then(() => true).catch(() => false)) await roll.click();
+      ok = await page.waitForFunction((name) => document.querySelector('[data-testid="play-here"] .font-semibold')?.textContent === name, expect, { timeout: 30000 }).then(() => true).catch(() => false);
+    }
+    if (!ok) throw new Error(`${label}: the party is in "${await here()}", not ${expect}`);
+    console.log(`  ${label.source.replace(/[\^]/g, "")} -> ${expect} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
+    await page.waitForTimeout(Number(process.env.SETTLE || 45000));
+  };
+  await climbBy(new RegExp(`^Throw the grappling hook up to ${balconyWay.balcony.name}`), balconyWay.balcony.name);
+  await climbBy(new RegExp(`^Climb down the line to ${balconyWay.building.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`), balconyWay.building.name);
   console.log("PASS: every flight and door taken by tapping it, and the ways in from outside");
 } catch (e) {
   failed = true;

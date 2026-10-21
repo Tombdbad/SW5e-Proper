@@ -45,7 +45,7 @@ import {
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
-  setPane, climbable, PANE_LATCH_DC, PANE_BREAK_DC, PANE_SENSOR_DC, PANE_SENSOR_SEEN, PATIO_SENSOR_DC, type Pane,
+  setPane, climbable, PANE_LATCH_DC, PANE_BREAK_DC, PANE_SENSOR_DC, PANE_SENSOR_SEEN, PATIO_SENSOR_DC, type Pane, climbWay, climbGearOf, outsideClimbs,
   START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText,
   withPresence, withPartyShips, bulkOf, shoveAsset, moveRoomAssets,
   gearUse, toolFor, toolTrained, boonOf, gambleMode, gambleResult, GAMBLE_ROUNDS, GAMBLE_HOUSE_DC, GAMBLE_STAKE, GAMBLE_COMPLICATION, GAMBLE_COMPLICATIONS,
@@ -798,6 +798,19 @@ export default function GameBoard() {
     const shutDC = door?.kind === "room" && world ? afterHoursLock(world, door.parentId ?? "", clockNow()) : undefined;
     const picked = door ? afterHours.current.get(door.parentId ?? "") : undefined;
     if (shutDC !== undefined && door && !(picked !== undefined && clockNow() - picked < 780)) return breakIn(door.parentId!, shutDC);
+    if (exit.scale && exit.scale.how !== "none") {
+      // Up or down the outside of a building (shared/logic outsideClimbs): seen from the street where the law is about; a grappling
+      // hook's line is climbed with Strength (Athletics), a minute a try (house rule); flying or friction grips need no check
+      if (exit.via === "enter" && here?.danger === 0 && !lawUnseen("Climbing up the outside of a building", "trespass")) return;
+      if (exit.scale.how === "hook") {
+        const ok = await abilityCheck(`${exit.via === "enter" ? "Up" : "Down"} the grappling hook's line (house rule)`, exit.scale.dc ?? 10, ["strength"], skilled("athletics"));
+        if (cancelledCheck.current) return;
+        if (!ok) {
+          toast.error(exit.via === "enter" ? "The hook will not hold, or you slip back down: a minute gone." : "You lose your grip and climb back up: a minute gone.");
+          return void saveCampaign(pass(1));
+        }
+      } else toast.info(`${exit.scale.by}: ${exit.via === "enter" ? "up" : "down"} without a check.`);
+    }
     if (exit.climb) {
       // Out of a pit: Athletics, or Dexterity, a minute for each try. Friction-grip gear worn gives a climbing speed: no check (the
       // book); a grappling hook or fibercord line makes it a DC 5 easier climb (house rule)
@@ -2814,6 +2827,10 @@ export default function GameBoard() {
   };
   const breather = () => wearingNow.filter((n) => airCapacity(n) > 0).sort((a, b) => (play.air?.[b] ?? airCapacity(b)) - (play.air?.[a] ?? airCapacity(a)))[0];
   const running = (n: string) => (play.running?.[n] ?? 0) > clockNow();
+  // Up the outside of a building and down again with climbing gear (shared/logic outsideClimbs): added to the ways from here (the
+  // list is only read by the handlers and the panels below, which run after this)
+  const climbGear = climbGearOf(((character?.equipment ?? []) as string[]).map((n) => ({ name: n, ...(factsOf(n) ?? {}) })), wearingNow, running);
+  if (world && here) exits.push(...outsideClimbs(world, here.id, climbGear));
   const protections = (): Protections => ({
     wearing: wearingNow,
     carried: (character?.equipment ?? []) as string[],
@@ -5300,6 +5317,10 @@ export default function GameBoard() {
           </p>
           {place.description && <p className="text-xs text-gray-300">{place.description}</p>}
           {trailOf(world, here.id).some((a) => a.id === place.id) && <p className="text-xs text-yellow-300">You are {place.id === here.id ? "here" : "in here"}.</p>}
+          {!exit && place.parentId === here.id && place.tags.includes("form:balcony") && (() => {
+            const way = climbWay(place.layout?.level ?? 1, climbGear);
+            return way.how === "none" ? <p className="text-xs text-gray-400" data-testid="climb-note">Out of reach: {way.why} (house rule).</p> : null;
+          })()}
           {unmapped && <p className="text-xs text-gray-400">Nobody has mapped it yet.</p>}
           {way && way.length > 2 && <p className="text-xs text-gray-400">Way there: {way.slice(1).map((id) => world.areas[id].name).join(" \u203a ")}</p>}
           <div className="mt-1 flex flex-wrap gap-2">
@@ -5335,8 +5356,10 @@ export default function GameBoard() {
       if (!room?.layout || !a || !building) return close;
       const passive = 10 + modifier(character.abilityScores?.wisdom) + (skilled("perception") ? proficiency : 0);
       const sensor = !!pane?.alarmed && passive >= PANE_SENSOR_SEEN;
-      // (from the street only a window on the ground floor is in reach; from inside any window opens without a check)
-      const reach = (room.layout.level ?? 0) === 0 && climbable(pane);
+      // (from inside any window opens without a check; one above the ground floor is climbed to from the street, or out of and down,
+      // only with climbing gear: shared/logic climbWay)
+      const scale = (room.layout.level ?? 0) > 0 ? climbWay(room.layout.level ?? 0, climbGear, !outside) : undefined;
+      const reach = climbable(pane) && scale?.how !== "none";
       const open = !!pane && (!outside || pane.latch === "open" || !!pane.broken);
       const kit = lockKit();
       const trained = !!kit && trainedWith(kit);
@@ -5351,8 +5374,16 @@ export default function GameBoard() {
         saveCampaign({ galaxyMap: next });
         toast.error("The window's sensor trips: the alarm goes up through the building (house rule).");
       }, 80);
-      const climb = () => {
+      const climb = async () => {
         if (outside && here.danger === 0 && !lawUnseen("Climbing in through a window", "trespass")) return;
+        if (scale?.how === "hook") {
+          const ok = await abilityCheck(`${outside ? "Up" : "Down"} the grappling hook's line (house rule)`, scale.dc ?? 10, ["strength"], skilled("athletics"));
+          if (cancelledCheck.current) return;
+          if (!ok) {
+            toast.error("The hook will not hold, or you slip: a minute gone.");
+            return void saveCampaign(pass(1));
+          }
+        }
         setPicked(null);
         travel(outside ? { to: room.id, via: "enter", label: "Climb in through the window", travel: "", secret: true } : { to: building.id, via: "leave", label: "Climb out through the window", travel: "" });
         if (pane?.alarmed) trip();
@@ -5399,7 +5430,7 @@ export default function GameBoard() {
         const seen = [...room.occupants.map((o) => `${o.count > 1 ? `${o.count} x ` : ""}${o.name} (${o.disposition})`), ...room.ships.map((ship) => ship.name)];
         toast.info(outside ? `Through the window of ${room.name}: ${seen.join(", ") || "nobody"}. (House rule: looking in needs no check.)` : `Outside the window: the street by ${building.name}.`);
       };
-      const what = !pane ? "A window." : `${{ slit: "A slit, too narrow for anyone to get through", small: "A small window, too small to climb through", large: "A window big enough to climb through", wide: "A great window, easily climbed through" }[pane.size]}${pane.broken ? ", its glass broken" : pane.latch === "open" ? ", open" : pane.latch === "latched" ? ", latched from inside" : `, locked (DC ${pane.dc ?? 12})`}.${sensor ? ` A sensor on the frame: going through it trips the alarm (seen with passive Perception ${passive}).` : ""}${climbable(pane) && outside && (room.layout.level ?? 0) > 0 ? " It is out of reach from the street." : ""}`;
+      const what = !pane ? "A window." : `${{ slit: "A slit, too narrow for anyone to get through", small: "A small window, too small to climb through", large: "A window big enough to climb through", wide: "A great window, easily climbed through" }[pane.size]}${pane.broken ? ", its glass broken" : pane.latch === "open" ? ", open" : pane.latch === "latched" ? ", latched from inside" : `, locked (DC ${pane.dc ?? 12})`}.${sensor ? ` A sensor on the frame: going through it trips the alarm (seen with passive Perception ${passive}).` : ""}${climbable(pane) && scale ? (scale.how === "none" ? ` ${scale.why}.` : ` ${outside ? "Up to it" : "Down from it"} by ${scale.by.toLowerCase()}${scale.dc ? ` (Strength (Athletics), DC ${scale.dc}: house rule)` : ""}.`) : ""}`;
       return (
         <>
           {close}
