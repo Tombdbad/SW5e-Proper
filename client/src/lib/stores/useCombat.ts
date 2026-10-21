@@ -198,6 +198,14 @@ export interface Combatant {
   // A bipod carried, and deployed: the weapon's Strength requirement is ignored, speed 0
   bipod?: boolean;
   braced?: boolean;
+  // The weapon in hand (the first attack is made with whichever was drawn on the way in; "none" after it was stowed), and a holster
+  // that is ready (a weapon drawn from it takes no action; a stowed weapon makes it ready again): see `drawPlan`
+  inHand?: "melee" | "ranged" | "none";
+  holster?: { ready: boolean };
+  // A remote detonator carried (the feet it reaches), and the mines paired with it (names, as the pack holds them)
+  detonator?: { range: number; paired: string[] };
+  // Effects of a device it has saved against and is immune to for the fight (a fire extinguisher's mist)
+  immuneTo?: string[];
 }
 
 // Which side a combatant is on: the player's (with companions) or the enemy's
@@ -216,6 +224,8 @@ export interface ActiveCondition {
   // Ends when the creature attacks or casts (invisibility from a power), or when it is hurt (sleep)
   endsOnAttack?: boolean;
   endsOnDamage?: boolean;
+  // Ends at the start of the creature's next turn ("blinded until the start of their next turn")
+  untilStart?: boolean;
 }
 
 export const LASTING = 100;
@@ -593,7 +603,12 @@ export type ItemEffect =
   | { kind: "substance"; label: string; ability?: string; temp?: string; rounds: number }
   | { kind: "poison"; label: string; dice: string; dc: number }
   // A calibrator or collimator applied to the melee weapon (gear.ts calibratorOf): +N damage and a property for the fight
-  | { kind: "calibrate"; label: string; damage: number; attack?: number; dice?: string; property?: string };
+  | { kind: "calibrate"; label: string; damage: number; attack?: number; dice?: string; property?: string }
+  // A fire extinguisher: a cone toward the creature picked out snuffs unenhanced fires and blinds those who fail the save
+  | { kind: "extinguish"; label: string; targetId: number | string; cone: number; dc: number; save?: string }
+  // A mine set where the character stands: it arms at the start of their next turn, and goes off for anyone who comes within its radius
+  // (or when its detonator is used, if it was paired)
+  | { kind: "mine"; label: string; radius: number; dc: number; save: string; damage: { dice: string; type: string }[]; conditions: string[]; conditionRounds: number; paired: boolean; lingers?: boolean };
 
 // ---------------------------------------------------------------------------------------------
 // Dice and damage
@@ -812,6 +827,7 @@ interface Work {
   currentTurn: number;
   spent: ("attack" | "damage" | "ac" | "poison")[];
   zones: Zone[];
+  mines: Mine[];
 }
 
 const idx = (w: Work, id: number | string) => w.combatants.findIndex((c) => c.id === id);
@@ -1012,6 +1028,68 @@ function areaSave(w: Work, centre: { x?: number; y?: number; z?: number }, squar
   }
   w.combatants = breakGang(w.combatants, w.log);
 }
+// ---- Mines (2026-10-21; the books' text: "set to detonate when a creature comes within up to 15 feet of it or paired with a remote
+// detonator. As an action, you can prime and set a mine on a surface you can reach, which arms at the start of your next turn").
+// House rules: the party (the one who set it and those with them) knows where it lies and does not set it off; a mine not set off is
+// picked up again when the fight is over; a paired mine goes off only to the detonator.
+export interface Mine {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  z: number;
+  // Feet (the radius within which it goes off and its blast)
+  radius: number;
+  dc: number;
+  save: string;
+  damage: { dice: string; type: string }[];
+  conditions: string[];
+  conditionRounds: number;
+  by: number | string;
+  // Which side set it (the party's mines do not trip for the party)
+  party: boolean;
+  armed: boolean;
+  paired: boolean;
+  // Leaves the ground burning for a minute (an incendiary mine)
+  lingers?: boolean;
+}
+// A blast of a mine: everyone within its radius saves; the damage in full or in half on a save (each kind of damage as its type is
+// resisted), conditions on a failed one
+function explodeMine(w: Work, mine: Mine) {
+  const centre = { x: mine.x, y: mine.y, z: mine.z };
+  w.mines = w.mines.filter((m) => m.id !== mine.id);
+  for (let i = 0; i < w.combatants.length; i++) {
+    const c = w.combatants[i];
+    if (c.hp <= 0 || squaresApart(c, centre) * 5 > mine.radius || !w.inCombat) continue;
+    const saved = savingThrow(c, mine.save, mine.dc);
+    const rolled = mine.damage.map((d) => ({ ...d, amount: rollDamage(d.dice, false) }));
+    const total = rolled.reduce((n, d) => n + (saved ? Math.floor(d.amount / 2) : d.amount), 0);
+    w.log.push(`${c.name} ${saved ? "saves" : "fails the save"}${total > 0 ? ` and takes ${total} damage` : ""}.`);
+    for (const d of rolled) damageCreature(w, i, saved ? Math.floor(d.amount / 2) : d.amount, d.type, mine.label);
+    const after = w.combatants[i];
+    if (!saved && mine.conditions.length && after.hp > 0 && !(after.conditionImmune ?? []).some((n) => mine.conditions.includes(n))) {
+      w.combatants[i] = withConditions(after, mine.conditions.filter((n) => !(after.conditionImmune ?? []).includes(n)).map((name) => ({ name, rounds: mine.conditionRounds, save: { ability: mine.save, dc: mine.dc }, source: mine.label })));
+      w.log.push(`${c.name} is ${mine.conditions.join(" and ").toLowerCase()}.`);
+    }
+  }
+  w.combatants = breakGang(w.combatants, w.log);
+  // Ground set ablaze burns for a minute (10 rounds), as the ground an incendiary round leaves does
+  if (mine.lingers && mine.damage[0]) {
+    w.zones.push({ x: mine.x, y: mine.y, z: mine.z, radius: Math.max(0, Math.round(mine.radius / 5) - 1), save: mine.save, dc: mine.dc, dice: mine.damage[0].dice, type: mine.damage[0].type, rounds: 10, source: mine.label });
+    w.log.push(`The ground round the ${mine.label} is ablaze.`);
+  }
+}
+// A creature that has come to a square: any armed mine of the other side within its radius that is not paired goes off
+function tripMines(w: Work, mi: number) {
+  const mover = w.combatants[mi];
+  for (const mine of [...w.mines]) {
+    if (!mine.armed || mine.paired || mine.party === onPartySide(mover) || mover.hp <= 0 || !w.inCombat) continue;
+    if (squaresApart(mover, mine) * 5 > mine.radius) continue;
+    w.log.push(`${mover.name} comes within ${mine.radius} ft. of the ${mine.label} set there: it goes off!`);
+    explodeMine(w, mine);
+  }
+}
+
 // Those in a line (5 feet wide) or a cone from the attacker toward a point, `feet` long
 function inShape(from: Combatant, toward: { x?: number; y?: number }, shape: "line" | "cone", feet: number, c: Combatant): boolean {
   const dx = (toward.x ?? 0) - (from.x ?? 0);
@@ -1037,6 +1115,30 @@ function spendRound(w: Work, ai: number, n: number) {
   const used = Math.min(n, a.reserves[round] ?? 0);
   w.combatants[ai] = { ...c, ammo: { ...a, reserves: { ...a.reserves, [round]: (a.reserves[round] ?? 0) - used } }, spentAmmo: { ...(c.spentAmmo ?? {}), [round]: (c.spentAmmo?.[round] ?? 0) + used } };
 }
+// Drawing a weapon (Player's Handbook, Equipping and Unequipping Weapons: one object interaction a turn is free, the rest take the action).
+// The first attack of a fight is made with the weapon the character came in with; changing to the other kind takes the turn's free
+// interaction, a second change the action. A holster (Expanded Content: "draw a weapon stored in a holster without using an action; once
+// you've done so, you can't do so again until you store a weapon in the holster as an action") makes one draw free of both.
+export function drawPlan(c: Combatant, kind: "melee" | "ranged"): { cost: "none" | "holster" | "interaction" | "action" } {
+  if (c.inHand === undefined || c.inHand === kind) return { cost: "none" };
+  if (c.holster?.ready) return { cost: "holster" };
+  return { cost: (c.usedTurn ?? []).includes("interact") ? "action" : "interaction" };
+}
+// Takes the draw for an attack of `kind` (the free kinds only; false when it would cost the action and there is no stopping for it)
+function takeDraw(w: Work, mi: number, kind: "melee" | "ranged"): boolean {
+  const me = w.combatants[mi];
+  const plan = drawPlan(me, kind);
+  if (plan.cost === "action") {
+    w.log.push(`Changing weapons again this turn takes your action: use Switch weapon first.`);
+    return false;
+  }
+  if (plan.cost === "holster") w.combatants[mi] = { ...me, holster: { ready: false }, inHand: kind };
+  else if (plan.cost === "interaction") w.combatants[mi] = { ...me, usedTurn: [...(me.usedTurn ?? []), "interact"], inHand: kind };
+  else w.combatants[mi] = { ...me, inHand: kind };
+  if (plan.cost !== "none") w.log.push(`${me.name} draws ${(kind === "melee" ? me.meleeWeapon : me.rangedWeapon) ?? `the ${kind} weapon`}${plan.cost === "holster" ? " from the holster (no action)" : " (the turn's free object interaction)"}.`);
+  return true;
+}
+
 // Reloading (Player's Handbook, Reload): an action or a bonus action; free once a turn with an ammo pouch, power belt, bandolier,
 // quiver or feed belt for the round. A power cell or generator fills the weapon; cartridges, bolts, darts and rockets go in one a shot
 // up to the reload number; a flechette clip or projector canister is three shots (the book: three attacks in a line). Returns why not.
@@ -1433,6 +1535,15 @@ function walk(w: Work, mi: number, x: number, y: number, z = 0): number {
     // (a ladder or stair costs ten feet a level; the cost of the whole walk is what the map said)
     feet += Math.abs((path[i].z ?? 0) - (at.z ?? 0)) > 0 ? 10 * Math.abs((path[i].z ?? 0) - (at.z ?? 0)) : 5;
     at = path[i];
+    // A mine of the other side that this step comes within the range of goes off, with the mover standing there
+    if (w.mines.length) {
+      w.combatants[mi] = { ...w.combatants[mi], x: at.x, y: at.y, z: at.z ?? 0 };
+      tripMines(w, mi);
+      if (w.combatants[mi].hp <= 0 || !w.inCombat) {
+        w.combatants[mi] = { ...w.combatants[mi], moved: (mover.moved ?? 0) + feet };
+        return feet;
+      }
+    }
   }
   w.combatants[mi] = { ...w.combatants[mi], x, y, z, moved: (mover.moved ?? 0) + target.cost };
   w.log.push(`${mover.name} moves ${target.cost} ft.`);
@@ -1469,6 +1580,17 @@ function beginTurn(w: Work, i: number) {
     queue: undefined,
     turnStart: { x: c.x ?? 0, y: c.y ?? 0 },
   };
+  // What was "until the start of its next turn" ends now; the mines this creature set arm
+  if (c.conditions?.some((x) => x.untilStart)) {
+    next.conditions = c.conditions.filter((x) => !x.untilStart);
+    for (const gone of c.conditions.filter((x) => x.untilStart)) w.log.push(`${c.name} is no longer ${gone.name.toLowerCase()}.`);
+  }
+  for (const mine of w.mines) {
+    if (!mine.armed && mine.by === c.id) {
+      mine.armed = true;
+      w.log.push(`The ${mine.label} ${c.name} set arms${mine.paired ? " (paired with the detonator)" : ""}.`);
+    }
+  }
   const temp = c.high?.temp && !c.high.low && c.hp > 0 ? rollDamage(c.high.temp, false) : 0;
   if (temp) {
     w.log.push(`${c.name} gains ${temp} temporary hit points.`);
@@ -1680,6 +1802,8 @@ interface CombatState {
   spent: ("attack" | "damage" | "ac" | "poison")[];
   // Ground on fire and the like, that hurts those who start their turn in it
   zones: Zone[];
+  // Mines set in this fight (the ones left are picked up when it is over)
+  mines: Mine[];
   // The character's weapon load and the rounds spent, kept when a fight is left (the fighters are cleared then)
   ammoAfter: { weapon: string; left: number; round?: string; spent: Record<string, number> } | null;
   // A hit on the character waiting for them to choose a reaction (or none)
@@ -1735,6 +1859,11 @@ interface CombatState {
   reload: (round?: string) => void;
   spray: (mode: "burst" | "rapid") => void;
   brace: () => void;
+  // Switch to the other kind of weapon (free by the plan, else the action), put the weapon in hand into the holster (an action), and set
+  // off the mines paired with a remote detonator (an action)
+  draw: (kind: "melee" | "ranged") => void;
+  stow: () => void;
+  detonate: () => void;
   // Casts one of the character's powers; a power that moves things is told what to move and which way
   castPower: (index: number, choice?: MotionChoice) => void;
   deathSave: () => void;
@@ -1774,6 +1903,7 @@ const patchOf = (w: Work): Partial<CombatState> => ({
   round: w.round,
   spent: w.spent,
   zones: w.zones,
+  mines: w.mines,
 });
 
 const workOf = (s: CombatState): Work => ({
@@ -1789,6 +1919,7 @@ const workOf = (s: CombatState): Work => ({
   spent: [...s.spent],
   currentTurn: s.currentTurn,
   zones: [...(s.zones ?? [])],
+  mines: (s.mines ?? []).map((m) => ({ ...m })),
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -1969,6 +2100,7 @@ export const useCombat = create<CombatState>((set, get) => ({
 
   spent: [],
   zones: [],
+  mines: [],
   ammoAfter: null,
 
   spend: (what) => set((state) => ({ spent: state.spent.includes(what) ? state.spent : [...state.spent, what] })),
@@ -2046,6 +2178,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       turnDone: false,
       spent: [],
       zones: [],
+      mines: [],
       currentTurn: 0,
     };
     beginTurn(w, 0);
@@ -2140,6 +2273,7 @@ export const useCombat = create<CombatState>((set, get) => ({
         w.log.push(`${mode === "burst" ? "Burst" : "Rapid"} fire needs Strength ${str}.`);
         return patchOf(w);
       }
+      if (!takeDraw(w, mi, "ranged")) return patchOf(w);
       const a = me.ammo;
       const left = a ? (a.max > 0 ? a.left : a.reserves[a.round ?? a.plain] ?? 0) : n;
       if (a && left < n) {
@@ -2197,6 +2331,70 @@ export const useCombat = create<CombatState>((set, get) => ({
       return patchOf(w);
     }),
 
+  draw: (kind) =>
+    set((state) => {
+      if (!state.inCombat || state.pending) return state;
+      const w = workOf(state);
+      const mi = state.currentTurn;
+      const me = w.combatants[mi];
+      if (!me?.isPlayer || me.hp <= 0 || cannotAct(me)) return state;
+      if (kind === "melee" ? !me.meleeWeapon : !me.rangedWeapon) return state;
+      const plan = drawPlan(me, kind);
+      if (plan.cost === "none") return state;
+      if (plan.cost === "action") {
+        if ((me.actions ?? 0) <= 0 || (me.attacksLeft ?? 0) > 0) {
+          w.log.push("Changing weapons again takes your action, and you have none to spare.");
+          return patchOf(w);
+        }
+        w.combatants[mi] = { ...me, actions: (me.actions ?? 1) - 1, inHand: kind };
+        w.log.push(`${me.name} uses their action to draw ${(kind === "melee" ? me.meleeWeapon : me.rangedWeapon) ?? `the ${kind} weapon`}.`);
+      } else takeDraw(w, mi, kind);
+      settle(w, state.autoEnd);
+      return patchOf(w);
+    }),
+
+  stow: () =>
+    set((state) => {
+      if (!state.inCombat || state.pending) return state;
+      const w = workOf(state);
+      const mi = state.currentTurn;
+      const me = w.combatants[mi];
+      if (!me?.isPlayer || !me.holster || me.holster.ready || me.inHand === "none" || (me.actions ?? 0) <= 0 || (me.attacksLeft ?? 0) > 0) return state;
+      w.combatants[mi] = { ...me, actions: (me.actions ?? 1) - 1, inHand: "none", holster: { ready: true } };
+      w.log.push(`${me.name} stows their weapon in the holster (an action): the next draw from it is free.`);
+      settle(w, state.autoEnd);
+      return patchOf(w);
+    }),
+
+  detonate: () =>
+    set((state) => {
+      if (!state.inCombat || state.pending) return state;
+      const w = workOf(state);
+      const mi = state.currentTurn;
+      const me = w.combatants[mi];
+      if (!me?.isPlayer || !me.detonator || me.hp <= 0 || cannotAct(me)) return state;
+      if ((me.actions ?? 0) <= 0 && (me.attacksLeft ?? 0) <= 0) {
+        w.log.push("No action left this turn.");
+        return patchOf(w);
+      }
+      const paired = w.mines.filter((m) => m.paired && m.armed && m.by === me.id);
+      const near = paired.filter((m) => squaresApart(me, m) * 5 <= me.detonator!.range);
+      if (!near.length) {
+        w.log.push(paired.length ? `The paired mines are beyond ${me.detonator.range} ft.: the detonator does not reach them.` : "No paired mine is armed.");
+        return patchOf(w);
+      }
+      w.combatants[mi] = { ...me, actions: (me.actions ?? 1) - 1, attacksLeft: 0 };
+      w.log.push(`${me.name} presses the detonator: ${near.length} mine${near.length > 1 ? "s" : ""} go${near.length > 1 ? "" : "es"} off.`);
+      for (const mine of near) explodeMine(w, mine);
+      if (w.inCombat && !w.combatants.some((x) => !onPartySide(x) && x.hp > 0)) {
+        w.log.push("Victory! All enemies defeated.");
+        w.inCombat = false;
+        w.outcome = "victory";
+      }
+      settle(w, state.autoEnd);
+      return patchOf(w);
+    }),
+
   rollInitiative: (dexModifier) => {
     const result = roll(1, 20) + dexModifier;
     return result;
@@ -2219,8 +2417,15 @@ export const useCombat = create<CombatState>((set, get) => ({
       }
       if (!viaAction && !bonusAttackKinds(me).some((o) => o.kind === kind)) return state;
       const before = w.log.length;
+      // Another kind of weapon than the one in hand is drawn first (a free interaction, or the holster; a second change is refused)
+      const hand = me.inHand;
+      if (viaAction && !takeDraw(w, mi, kind as "melee" | "ranged")) return patchOf(w);
       const made = makeAttack(w, mi, idx(w, foe.id), spec, { viaAction });
-      if (!made) return { ...patchOf(w), combatLog: w.log.length === before ? [...w.log, "That attack cannot be made from here."] : w.log };
+      if (!made) {
+        // (an attack that could not be made leaves the weapon where it was)
+        w.combatants[mi] = { ...w.combatants[mi], inHand: hand, usedTurn: me.usedTurn, holster: me.holster };
+        return { ...patchOf(w), combatLog: w.log.length === before ? [...w.log, "That attack cannot be made from here."] : w.log };
+      }
       const cur = w.combatants[mi];
       if (viaAction) {
         const fresh = (me.attacksLeft ?? 0) <= 0;
@@ -2474,6 +2679,42 @@ export const useCombat = create<CombatState>((set, get) => ({
     } else if (effect.kind === "poison") {
       combatants = combatants.map((c) => (c.id === user.id ? { ...c, boons: { ...c.boons, poison: { dice: effect.dice, dc: effect.dc } } } : c));
       log.push(`${user.name} coats their weapon with ${effect.label}.`);
+    } else if (effect.kind === "extinguish") {
+      // A cone of misty air toward the one picked out: unenhanced fires in it go out; each creature in it saves (Constitution) or is
+      // blinded until the start of its next turn, and one that saves is immune to the mist for the rest of the fight
+      if (at < 0) return false;
+      const aim = combatants[at];
+      const inCone = (p: { x?: number; y?: number }) => squaresApart(user, p) > 0 && inShape(user, aim, "cone", effect.cone, p as Combatant);
+      log.push(`${user.name} sprays ${effect.label} toward ${aim.name}: a ${effect.cone}-foot cone of misty air.`);
+      const zones = state.zones.filter((z) => z.type === "fire" && !/\(|Mk /.test(z.source) && inCone(z));
+      if (zones.length) log.push(`${zones.length === 1 ? "The fire" : "The fires"} in the mist go${zones.length === 1 ? "es" : ""} out.`);
+      combatants = combatants.map((c) => {
+        if (c.hp <= 0 || c.id === user.id || !inCone(c) || (c.immuneTo ?? []).includes("extinguisher")) return c;
+        if ((c.conditionImmune ?? []).includes("Blinded")) return c;
+        if (savingThrow(c, effect.save ?? "constitution", effect.dc)) {
+          log.push(`${c.name} saves against the mist and is immune to it now.`);
+          return { ...c, immuneTo: [...(c.immuneTo ?? []), "extinguisher"] };
+        }
+        log.push(`${c.name} fails the save and is blinded until the start of their next turn.`);
+        return withConditions(c, [{ name: "Blinded", rounds: LASTING, untilStart: true, by: user.id, source: effect.label }]);
+      });
+      commit({ zones: state.zones.filter((z) => !zones.includes(z)) });
+      return true;
+    } else if (effect.kind === "mine") {
+      const at2 = combatants.findIndex((c) => c.id === user.id);
+      const mine: Mine = {
+        id: `mine-${state.mines.length + 1}-${state.round}-${Math.floor(Math.random() * 1e6)}`, label: effect.label, x: user.x ?? 0, y: user.y ?? 0, z: user.z ?? 0, radius: effect.radius, dc: effect.dc, save: effect.save,
+        damage: effect.damage, conditions: effect.conditions, conditionRounds: effect.conditionRounds, by: user.id, party: onPartySide(user), armed: false, paired: effect.paired, lingers: effect.lingers,
+      };
+      log.push(`${user.name} primes and sets ${effect.label} where they stand${effect.paired ? ", paired with the detonator" : ""}: it arms at the start of their next turn, and goes off within ${effect.radius} ft. of it${effect.paired ? " only when the detonator is used" : " for anyone but the party"}.`);
+      if (at2 >= 0 && effect.paired && user.detonator) {
+        const pairs = [...user.detonator.paired];
+        const k = pairs.indexOf(effect.label);
+        if (k >= 0) pairs.splice(k, 1);
+        combatants[at2] = { ...combatants[at2], detonator: { ...user.detonator, paired: pairs } };
+      }
+      commit({ mines: [...state.mines, mine] });
+      return true;
     }
     commit();
     return true;

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import TranslucentPane from "@/components/ui/TranslucentPane";
 import {
   useCombat, attackPlan, cannotAct, movementLeft, pickTarget, powerOutOfRange, squaresApart, onPartySide, LASTING,
-  playerSpec, bonusAttackKinds, bonusFeatures, attacksPerAction, objectReach, squaresToAsset, reloadPlan, propertyNumber,
+  playerSpec, bonusAttackKinds, bonusFeatures, attacksPerAction, objectReach, squaresToAsset, reloadPlan, propertyNumber, drawPlan,
 } from "@/lib/stores/useCombat";
 import { conditionSummary, motionFeet } from "@/lib/sw5e/rules";
 
@@ -21,7 +21,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
   const {
     combatants, currentTurn, round, combatLog, endCombat, deathSaves, castPower, deathSave, pass, arena, targetId, setTarget,
     pending, resolvePending, attack, standard, useFeature, setEmpower, setManeuver, autoEnd, setAutoEnd, aiStep, nextTurn,
-    objectId, setObject, reload, spray, brace,
+    objectId, setObject, reload, spray, brace, draw, stow, detonate, mines,
   } = useCombat();
   // A power that moves things waiting to be told what to move and which way
   const [aiming, setAiming] = useState<number | null>(null);
@@ -207,6 +207,30 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
             {rapidN > 0 && <Button size="sm" variant="outline" className="h-6 px-2" disabled={!playerTurn || !hasAction || loadedNow < rapidN || !ranged?.possible} onClick={() => spray("rapid")} data-testid="combat-rapid">Rapid ({rapidN})</Button>}
           </div>
         )}
+        {player && (player.holster || player.detonator || (player.meleeWeapon && player.rangedWeapon)) && (
+          <div className="mb-2 flex flex-wrap items-center gap-1 text-xs" data-testid="combat-hands">
+            <span className="text-gray-300" data-testid="combat-inhand">In hand: {player.inHand === "none" ? "nothing" : player.inHand === "melee" ? player.meleeWeapon : player.inHand === "ranged" ? player.rangedWeapon : "the weapon you came in with"}</span>
+            {(["melee", "ranged"] as const).map((kind) => {
+              const weapon = kind === "melee" ? player.meleeWeapon : player.rangedWeapon;
+              const plan = drawPlan(player, kind);
+              if (!weapon || plan.cost === "none") return null;
+              return (
+                <Button key={kind} size="sm" variant="outline" className="h-6 px-2" disabled={!playerTurn || (plan.cost === "action" && (!hasAction || midAttack))} onClick={() => draw(kind)} data-testid={`combat-draw-${kind}`}>
+                  Switch to {weapon} ({plan.cost === "holster" ? "from the holster: no action" : plan.cost === "interaction" ? "free, once a turn" : "your action"})
+                </Button>
+              );
+            })}
+            {player.holster && player.inHand !== "none" && !player.holster.ready && (
+              <Button size="sm" variant="outline" className="h-6 px-2" disabled={!playerTurn || !hasAction || midAttack} onClick={stow} data-testid="combat-stow">Holster it (an action)</Button>
+            )}
+            {player.detonator && (
+              <Button size="sm" variant="outline" className="h-6 px-2" disabled={!playerTurn || !hasAction || !mines.some((m) => m.paired && m.armed)} onClick={detonate} data-testid="combat-detonate">
+                Detonate ({mines.filter((m) => m.paired).length} paired mine{mines.filter((m) => m.paired).length === 1 ? "" : "s"}{mines.some((m) => m.paired && !m.armed) ? ", not yet armed" : ""})
+              </Button>
+            )}
+          </div>
+        )}
+        {mines.length > 0 && <p className="mb-2 text-xs text-amber-300" data-testid="combat-mines">Mines set: {mines.map((m) => `${m.label} (${m.armed ? "armed" : "arms next turn"}${m.paired ? ", paired" : ""})`).join("; ")}</p>}
         {player?.bipod && <Button size="sm" variant="outline" className="mb-2 h-6 px-2" disabled={!playerTurn || !hasAction} onClick={brace}>{player.braced ? "Fold the bipod" : "Deploy the bipod (prone, speed 0)"}</Button>}
         {playerTurn && (
           <div className="flex flex-wrap gap-1 mb-2" data-testid="combat-standard">

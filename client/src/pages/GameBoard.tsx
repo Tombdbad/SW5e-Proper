@@ -132,6 +132,8 @@ interface PlayState {
   // hidden in a smugglepack's compartment or clandestine clothes' pockets (item name: count)
   encumbrance?: "variant" | "basic";
   hidden?: Record<string, number>;
+  // Mines paired with a remote detonator (item names; the book: a minute to pair up to two within 10 feet)
+  paired?: string[];
   // From a long rest aboard a ship with an armory, a recreation room and the like: advantage on the first attack roll, and on the first
   // ability check (of the skills named, or any)
   firstAttack?: boolean;
@@ -1510,6 +1512,13 @@ export default function GameBoard() {
         const slowFall = ((character.equipment ?? []) as string[]).some((n) => /repulsor pack/i.test(n) && running(n));
         return { ...(fly ? { fly, speed: Math.max(Number(character.speed) || 30, fly) } : {}), ...(slowFall ? { slowFall } : {}) };
       })(),
+      // A holster worn (a weapon drawn from it takes no action), a remote detonator carried and the mines paired with it
+      ...(() => {
+        const accessoryFor = (n: string) => accessoryOf({ name: n, description: factsOf(n)?.description });
+        const holster = wearingNow.some((n) => accessoryFor(n).draw);
+        const det = ((character.equipment ?? []) as string[]).map(accessoryFor).find((a) => a.detonator)?.detonator;
+        return { ...(holster ? { holster: { ready: true } } : {}), ...(det ? { detonator: { range: det.range, paired: [...(play.paired ?? [])] } } : {}) };
+      })(),
       // Shock gloves worn: unarmed strikes deal their lightning too (the item's text)
       ...(() => {
         const gloves = wearingNow.find((n) => accessoryOf({ name: n, description: factsOf(n)?.description }).unarmed);
@@ -1855,6 +1864,22 @@ export default function GameBoard() {
       const fighters = useCombat.getState();
       const me = fighters.combatants.find((c) => c.isPlayer);
       settleAmmo(me?.ammo ? { weapon: me.ammo.weapon, left: me.ammo.left, round: me.ammo.round, spent: me.spentAmmo ?? {} } : fighters.ammoAfter);
+    }
+    // Mines not set off are picked up again (house rule), the paired ones still paired
+    {
+      const left = useCombat.getState().mines;
+      if (left.length) {
+        setTimeout(() => {
+          const current = queryClient.getQueryData<any>(["game-character", gameCharacterId]);
+          if (!current) return;
+          saveCharacter({
+            equipment: [...((current.equipment ?? []) as string[]), ...left.map((m) => m.label)],
+            playState: { ...(current.playState ?? {}), paired: [...(current.playState?.paired ?? []), ...left.filter((m) => m.paired).map((m) => m.label)] },
+          });
+          toast.info(`You pick up the ${left.map((m) => m.label.toLowerCase()).join(" and ")} that did not go off.`);
+        }, 3000);
+        useCombat.setState({ mines: [] });
+      }
     }
     const areaId = fightArea.current;
     const areaIds = fightAreas.current.length ? [...fightAreas.current] : areaId ? [areaId] : [];
@@ -3385,6 +3410,41 @@ export default function GameBoard() {
             return true;
           },
         });
+      } else if (use.kind === "explosive" && use.form === "mine") {
+        // A mine: as an action, set where the character stands; arms at the start of their next turn (the book). Paired with the
+        // remote detonator beforehand (a minute, from the detonator's card), it goes off only to it.
+        const paired = (play.paired ?? []).includes(name);
+        out.push({
+          key: name,
+          label: `${label}${paired ? " (paired)" : ""}`,
+          hint: `set here, arms next turn; ${use.radius} ft., DC ${use.dc} ${use.save}${use.damage.length ? `, ${use.damage.map((d) => `${d.dice} ${d.type}`).join(" + ")}` : ""}${use.conditions.length ? `, ${use.conditions.join("/").toLowerCase()}` : ""}${use.lingers ? ", sets the ground ablaze" : ""}`,
+          target: "none",
+          use: () => {
+            const ok = useCombat.getState().itemEffect({
+              kind: "mine", label: name, radius: use.radius, dc: use.dc, save: use.save, damage: use.damage, conditions: use.conditions, conditionRounds: EXPLOSIVE_CONDITION_ROUNDS, lingers: use.lingers, paired,
+            });
+            if (!ok) return false;
+            const spent = consume(name);
+            const pairs = [...(play.paired ?? [])];
+            if (paired) pairs.splice(pairs.indexOf(name), 1);
+            saveCharacter({ equipment: spent.equipment, playState: { ...play, paired: pairs } });
+            return true;
+          },
+        });
+      } else if (use.kind === "extinguisher") {
+        out.push({
+          key: name,
+          label,
+          hint: `${use.cone}-ft. cone toward the enemy picked out: puts out fires; DC ${use.dc} Constitution or blinded`,
+          target: "foe",
+          use: (id) => {
+            if (id === undefined) return !!speed("There is nobody to spray toward.");
+            if (!useCombat.getState().itemEffect({ kind: "extinguish", label: name, targetId: id, cone: use.cone, dc: use.dc })) return false;
+            const spent = consume(name, use.uses);
+            saveCharacter({ equipment: spent.equipment, playState: { ...play, charges: spent.charges } });
+            return true;
+          },
+        });
       } else if (use.kind === "calibrator") {
         // A calibrator (vibroweapons, handwraps) or collimator (lightweapons): as an action, +1 damage and its property for the fight
         const fits = carriedWeapons(character).some((w) => !w.ranged && w.type.toLowerCase().includes(use.weapon));
@@ -4647,6 +4707,26 @@ export default function GameBoard() {
           <p className="text-gray-300">{accessoryText(use.facts)}</p>
           {rating(name) > 0 && powerRow(name)}
           {use.facts.brace?.minutes ? <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => { patchPlay({ tripodSet: !play.tripodSet }); saveCampaign(pass(1)); }}>{play.tripodSet ? "Fold the tripod" : "Set up the tripod (a minute)"}</Button> : null}
+          {use.facts.detonator && (() => {
+            const det = use.facts.detonator!;
+            const pairs = play.paired ?? [];
+            const mineNames = Array.from(new Set(carriedNames.filter((n) => { const u = gearOf(n); return u?.kind === "explosive" && u.form === "mine"; })));
+            return (
+              <div className="space-y-1" data-testid="detonator-pairs">
+                <p className="text-gray-300">Paired: {pairs.length ? pairs.join(", ") : "none"} ({pairs.length} of {det.mines}). Pairing takes a minute (the book); a paired mine goes off only to the detonator, within {det.range} ft.</p>
+                {mineNames.map((mine) => {
+                  const have = carriedNames.filter((n) => n === mine).length;
+                  const pairedN = pairs.filter((n) => n === mine).length;
+                  return (
+                    <div key={mine} className="flex flex-wrap gap-1">
+                      {pairedN < have && <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || pairs.length >= det.mines} data-testid={`pair-${mine}`} onClick={() => { patchPlay({ paired: [...pairs, mine] }); saveCampaign(pass(1)); }}>Pair {mine} (a minute)</Button>}
+                      {pairedN > 0 && <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`unpair-${mine}`} onClick={() => { const rest = [...pairs]; rest.splice(rest.indexOf(mine), 1); patchPlay({ paired: rest }); }}>Unpair {mine}</Button>}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
           {(use.facts.carryFree || use.facts.climb || use.facts.fly || /holster|bandolier|belt|pouch|quiver|vest/i.test(name)) && wearRow(name, "Wear")}
         </>);
       default:
