@@ -4840,6 +4840,44 @@ export function contrabandFrom(item: Pick<Sw5eEquipment, "name" | "equipmentCate
 }
 export const isContraband = (item: Parameters<typeof contrabandFrom>[0], law: number) => law >= contrabandFrom(item);
 
+// ---- A search by the law (2026-10-21; house rules: the books give a smugglepack's compartment and clandestine clothes' pockets their
+// Investigation DC, not when the law looks). Going through a customs post or a security checkpoint where there is any law, and landing
+// at a port where it is policed or strict, the party is searched: contraband carried openly is seized; what is hidden is found only if
+// the searcher's Investigation check (d20 + 1, 3 or 5 by the law, one roll) meets the hiding place's DC, and then it is seized too.
+export const SEARCH_BONUS = [0, 1, 3, 5];
+export const searchedAt = (area: Pick<Area, "kind" | "name">) => area.kind === "room" && /^customs (office|lock)|checkpoint/i.test(area.name);
+export interface HidingPlace { item: string; lb: number; dc: number }
+// Where things can be hidden: a smugglepack's compartment carried, clandestine clothes' pockets worn (their texts: gear.ts containerOf)
+export function hidingPlaces(items: GearFacts[], worn: string[]): HidingPlace[] {
+  const out: HidingPlace[] = [];
+  for (const item of items) {
+    const use = gearUse(item);
+    if (use?.kind === "container" && use.hidden) out.push({ item: item.name, lb: use.hidden, dc: use.hiddenDc ?? 15 });
+    if (use?.kind === "clothing" && use.pockets && worn.includes(item.name)) out.push({ item: item.name, lb: use.pockets.lb, dc: use.pockets.dc });
+  }
+  return out;
+}
+// Pounds of hiding room left
+export const hidingRoom = (places: HidingPlace[], hidden: Record<string, number>, weight: (name: string) => number) =>
+  places.reduce((n, p) => n + p.lb, 0) - Object.entries(hidden).reduce((n, [name, count]) => n + weight(name) * count, 0);
+export interface SearchResult { seized: string[]; found: boolean; roll: number; total: number; dc: number }
+// The search itself: `carried` is every item carried (a name once a piece), `hidden` the pieces hidden of each; `d20` the searcher's die
+export function lawSearch(carried: { name: string; contraband: boolean }[], hidden: Record<string, number>, places: HidingPlace[], law: number, d20: number): SearchResult {
+  const tucked = { ...hidden };
+  const open: string[] = [];
+  const kept: string[] = [];
+  for (const item of carried) {
+    if ((tucked[item.name] ?? 0) > 0 && places.length) {
+      tucked[item.name]--;
+      if (item.contraband) kept.push(item.name);
+    } else if (item.contraband) open.push(item.name);
+  }
+  const dc = places.length ? Math.max(...places.map((p) => p.dc)) : 0;
+  const total = d20 + (SEARCH_BONUS[Math.max(0, Math.min(3, law))] ?? 0);
+  const found = kept.length > 0 && total >= dc;
+  return { seized: [...open, ...(found ? kept : [])], found, roll: d20, total, dc };
+}
+
 // The party's dealings, as kept in the campaign
 export interface Standing {
   // Renown with each faction, -10 to 10 (Wretched Hives: renown is earned by acting for a faction)
@@ -6417,7 +6455,8 @@ export function gearUse(item: GearFacts): GearUse | undefined {
   if (category === "Explosive") {
     const form = /^grenade/.test(name) ? "grenade" : /^mine/.test(name) ? "mine" : /^charge/.test(name) ? "charge" : "detonator";
     const cone = /(\d+)-foot cone/i.exec(text);
-    const radius = cone ? Number(cone[1]) : Number((text.match(/within (\d+) feet/i) ?? text.match(/(\d+)-foot[- ]radius/i) ?? text.match(/in a (\d+)-foot radius/i) ?? [])[1]) || 10;
+    // (a grenade's "within 30 feet + your Strength modifier x 5" is how far it is thrown, not its blast)
+    const radius = cone ? Number(cone[1]) : Number((text.match(/creature within (\d+) feet/i) ?? text.match(/(\d+)-foot[- ]radius/i) ?? text.match(/in a (\d+)-foot radius/i) ?? [])[1]) || 10;
     const save = (text.match(/DC \d+ (Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) saving throw/i) ?? [])[1]?.toLowerCase() ?? "dexterity";
     const dc = Number((text.match(/DC (\d+) \w+ saving throw/i) ?? [])[1]) || 14;
     const clause = (text.match(/(?:takes|taking) ([^.]*?) damage on a failed save/i) ?? [])[1] ?? "";

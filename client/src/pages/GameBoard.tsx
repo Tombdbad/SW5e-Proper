@@ -46,6 +46,7 @@ import {
   districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
   setPane, climbable, PANE_LATCH_DC, PANE_BREAK_DC, PANE_SENSOR_DC, PANE_SENSOR_SEEN, PATIO_SENSOR_DC, type Pane, climbWay, climbGearOf, outsideClimbs,
+  hidingPlaces, hidingRoom, lawSearch, searchedAt,
   START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText,
   withPresence, withPartyShips, bulkOf, shoveAsset, moveRoomAssets,
   gearUse, toolFor, toolTrained, boonOf, gambleMode, gambleResult, GAMBLE_ROUNDS, GAMBLE_HOUSE_DC, GAMBLE_STAKE, GAMBLE_COMPLICATION, GAMBLE_COMPLICATIONS,
@@ -758,6 +759,10 @@ export default function GameBoard() {
     }
     setCameFrom(here.id);
     const target = world.areas[exit.to];
+    // Searched going through customs or a checkpoint (any law), and on landing at a port where the law is policed or strict
+    if (!exit.secret && ((searchedAt(target) && lawAt(world, target.id) >= 1) || (exit.needsShip && target.kind === "settlement" && lawAt(world, target.id) >= 2))) {
+      setTimeout(() => searchParty(target.id, searchedAt(target) ? target.name : `Customs at ${target.name}`), 150);
+    }
     if (childrenOf(world, target.id).length === 0 && ["system", "planet", "settlement", "building"].includes(target.kind)) {
       explore(target.id, changes);
     } else {
@@ -2831,6 +2836,47 @@ export default function GameBoard() {
   // list is only read by the handlers and the panels below, which run after this)
   const climbGear = climbGearOf(((character?.equipment ?? []) as string[]).map((n) => ({ name: n, ...(factsOf(n) ?? {}) })), wearingNow, running);
   if (world && here) exits.push(...outsideClimbs(world, here.id, climbGear));
+  // Hidden from the law's search (shared/logic lawSearch): a smugglepack's compartment carried, clandestine pockets worn; what is in
+  // them (play.hidden, never more than is carried), and the room left
+  const carriedNames = (character?.equipment ?? []) as string[];
+  const hiding = hidingPlaces(carriedNames.map((n) => ({ name: n, ...(factsOf(n) ?? {}) })), wearingNow);
+  const hiddenNow: Record<string, number> = Object.fromEntries(Object.entries(play.hidden ?? {}).map(([n, c]) => [n, Math.min(c, carriedNames.filter((x) => x === n).length)] as const).filter(([, c]) => c > 0));
+  const pounds = (n: string) => weightOf(factsOf(n)?.weight);
+  const hideRoom = hidingRoom(hiding, hiddenNow, pounds);
+  const hide = (name: string, into: boolean) => {
+    patchPlay({ hidden: { ...hiddenNow, [name]: Math.max(0, (hiddenNow[name] ?? 0) + (into ? 1 : -1)) } });
+    toast.info(into ? `${name} hidden in your ${hiding.map((h) => h.item.toLowerCase()).join(" and ")} (found only with an Investigation check against DC ${Math.max(...hiding.map((h) => h.dc))}).` : `${name} taken out of hiding.`);
+  };
+  // Searched by the law at a customs post or checkpoint, or landing at a port where it is policed (house rule): contraband carried
+  // openly is seized, what is hidden only if the searcher's Investigation finds it
+  const searchParty = (areaId: string, why: string) => {
+    const latest = latestWorld() ?? world;
+    // (the character as it is now, after the trip was saved)
+    const now = queryClient.getQueryData<any>(["game-character", gameCharacterId]) ?? character;
+    if (!latest || !now) return;
+    const law = lawAt(latest, areaId);
+    const names = (now.equipment ?? []) as string[];
+    const state = (now.playState ?? {}) as PlayState;
+    const places = hidingPlaces(names.map((n) => ({ name: n, ...(factsOf(n) ?? {}) })), (state.wearing ?? []).filter((n) => names.includes(n)));
+    const tucked: Record<string, number> = Object.fromEntries(Object.entries(state.hidden ?? {}).map(([n, c]) => [n, Math.min(c, names.filter((x) => x === n).length)] as const).filter(([, c]) => c > 0));
+    const carried = names.map((n) => {
+      const row = factsOf(n);
+      // (a smugglepack or clandestine clothes look like any other: not seized for what they are)
+      return { name: n, contraband: !!row && isContraband(row, law) && !places.some((p) => p.item === n) };
+    });
+    const result = lawSearch(carried, tucked, places, law, 1 + Math.floor(Math.random() * 20));
+    const kept = places.length > 0 && Object.values(tucked).reduce((n, c) => n + c, 0) > 0;
+    const note = kept ? ` The searcher's Investigation ${result.total} against your hiding place's DC ${result.dc}: ${result.found ? "found" : "it holds"}.` : "";
+    if (!result.seized.length) return void toast.info(`${why}: the law searches you and finds nothing it seizes (house rule).${note}`);
+    const equipment = [...names];
+    const hidden = { ...tucked };
+    for (const name of result.seized) {
+      equipment.splice(equipment.indexOf(name), 1);
+      if (result.found && hidden[name]) hidden[name]--;
+    }
+    saveCharacter({ equipment, playState: { ...state, hidden } });
+    toast.error(`${why}: the law searches you and seizes ${result.seized.join(", ")} as contraband here (house rule).${note}`);
+  };
   const protections = (): Protections => ({
     wearing: wearingNow,
     carried: (character?.equipment ?? []) as string[],
@@ -6670,6 +6716,11 @@ export default function GameBoard() {
                   const rank = { weapon: 0, armor: 1, shield: 2, gear: 3 };
                   return (
                     <div className="space-y-1" data-testid="inventory-list">
+                      {hiding.length > 0 && (
+                        <p className="text-xs text-gray-400" data-testid="hiding-line">
+                          Hiding places: {hiding.map((h) => `${h.item} (${h.lb} lb, DC ${h.dc})`).join(", ")}; {Math.max(0, Math.round(hideRoom * 10) / 10)} lb free. The law searches you at customs and checkpoints, and on landing where it is policed: what it finds of its contraband it seizes (house rule).
+                        </p>
+                      )}
                       {[...counts.entries()]
                         .filter(([name]) => {
                           const k = itemKind(name, character);
@@ -6692,6 +6743,7 @@ export default function GameBoard() {
                                   {name}
                                   {count > 1 ? ` ×${count}` : ""}
                                   {left !== undefined && <span className="ml-1 text-xs text-gray-400">{left} uses left</span>}
+                                  {hiddenNow[name] ? <span className="ml-1 text-xs text-amber-300">{hiddenNow[name]} hidden</span> : null}
                                   {kind !== "gear" && <span className="ml-1 text-xs text-gray-400">{kind === "weapon" ? "weapon" : kind === "shield" ? "shield" : "armor"}{on ? ", " + (kind === "weapon" ? "in hand" : "worn") : ""}</span>}
                                 </span>
                                 {kind !== "gear" && (
@@ -6713,6 +6765,12 @@ export default function GameBoard() {
                                   <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`take-${name}`} onClick={() => takeTimed(name)}>
                                     {enhanced.timed.kind === "collimator" ? "Apply" : "Use"}
                                   </Button>
+                                )}
+                                {hiding.length > 0 && !hiding.some((h) => h.item === name) && (hiddenNow[name] ?? 0) < count && pounds(name) <= hideRoom && (
+                                  <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`hide-${name}`} onClick={() => hide(name, true)}>Hide</Button>
+                                )}
+                                {(hiddenNow[name] ?? 0) > 0 && (
+                                  <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`unhide-${name}`} onClick={() => hide(name, false)}>Take out</Button>
                                 )}
                                 {use && (
                                   <Button size="sm" variant={using === name ? "default" : "outline"} className="h-6 px-2" data-testid={`use-${name}`} onClick={() => setUsing(using === name ? null : name)}>
