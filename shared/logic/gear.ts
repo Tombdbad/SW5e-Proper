@@ -225,6 +225,10 @@ export function accessoryOf(item: { name: string; description?: string }): Acces
   return out;
 }
 
+// Speed in water (Player's Handbook, Swimming: each foot of movement costs 1 extra foot unless the creature has a swimming speed): half
+// the walking speed, at least 5 ft., or the swimming speed of gear running (a propulsion pack)
+export const waterSpeed = (walking: number, swim = 0) => swim || Math.max(5, Math.floor(walking / 2));
+
 // ---- Life support, survival and the environment --------------------------------------------------------------------------------------
 
 // The hazards of a place (house rule for where they are: see index.ts `hazardsAt`; what answers them is the books'): no air (vacuum),

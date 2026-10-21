@@ -13,13 +13,14 @@ import { useQuality } from "@/components/Map/siteAssets";
 import { useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
 import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, whereNow, useClock, noEncounters } from "@/components/Map/LocalMap";
 import { usePartyLook } from "@/components/Map/models";
+import { NotesPanel, TranslatorPanel } from "@/components/Play/GearPanels";
 import PlayCombat, { ShipCombatPanel, type CombatItemOption } from "@/components/Combat/PlayCombat";
 import { useCombat, useShipFight, rollDamage, onPartySide } from "@/lib/stores/useCombat";
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
 import { gearOf as figureGearOf, carriedWeapons, characterFeatures, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, withItemEffects, isAttuned, type Equipped } from "@/lib/sw5e/characterCalculation";
-import { getSpeciesById } from "@/lib/sw5e/species";
+import { getSpeciesById, species as speciesList } from "@/lib/sw5e/species";
 import { getClassById, getClassLevelValue } from "@/lib/sw5e/classes";
 import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect, powerMotion, motionFeet, motionSummary } from "@/lib/sw5e/rules";
 import { getStarshipSize } from "@/lib/sw5e/starships";
@@ -63,9 +64,9 @@ import {
   attunementLimit, augmentationLimit, augmentPlan, partsFree, sideEffectsOf, describeEffects, PROSTHESES, ITEM_ABILITIES, type ItemFacts,
   modKindOf, augmentSlots, MOD_BASE_SLOTS, rarityRank, INSTALL_DC, SIZE_TIME, crystalModifier, crystalFor, crystalsUpTo, DROID_MOTOR_COST, DROID_BASE_SLOTS, droidPlan,
   readOutcome, blueprintRarity, readCredits, RARITY_ORDER, type Fitted,
-  FAMILIES, MATERIALS, REFINE_UNITS, tierOfCr, makeRemains, haulOf, withCacheAsset, familiesForTool, familiesForEnhanced, ALL_FAMILIES, type MaterialFamily, crNumber, RARITY_TIERS, NODE_RESPAWN, HARVEST_MINUTES, harvestDc, harvestYield, materialsOf, materialsWorth, spendMaterials, nodeAt, type ResourceNode,
+  FAMILIES, MATERIALS, REFINE_UNITS, tierOfCr, makeRemains, haulOf, withCacheAsset, familiesForTool, familiesForEnhanced, ALL_FAMILIES, type MaterialFamily, crNumber, RARITY_TIERS, NODE_RESPAWN, HARVEST_MINUTES, harvestDc, harvestKit, kitAlias, notesAllowed, addNote, addRecording, languageBarrier, OWN_TONGUE_ONLY, translatorSlots, setLanguages, tracedCalls, callOverheard, RECORD_MINUTES, RECORD_LIMIT, type Note, type Recording, harvestYield, materialsOf, materialsWorth, spendMaterials, nodeAt, type ResourceNode,
   partsPlaceAt, partsStock, fitShipPart, wreckParts, droidPartsStock, droidDisplay, droidListed,
-  ammoFamilyOf, ammoItemFamily, ammoRider, accessoryOf, reloadOf, GENERATOR_SHOTS, type AmmoRider,
+  ammoFamilyOf, ammoItemFamily, ammoRider, accessoryOf, reloadOf, GENERATOR_SHOTS, waterSpeed, type AmmoRider,
   passDays, FORAGE_DC, HOT_LANDS, liquidOf, foodOf, GEAR, type Supplies,
   hazardsAt, exposure, HAZARD_HOUR, suitOf, airOf, breathRule, type Protections, type EnvHazard,
   loadOf, containerOf, weightOf, isContraband, shipModNamed, shipModEffects, modCost, modDays, crewModPlan, crewEquipmentPlan, tierUpgrade, yardWorkforce, equipmentCost, equipmentDays, equipmentWorkforce,
@@ -134,6 +135,11 @@ interface PlayState {
   hidden?: Record<string, number>;
   // Mines paired with a remote detonator (item names; the book: a minute to pair up to two within 10 feet)
   paired?: string[];
+  // Notes written on a datapad, wristpad or stylus pen, recordings made with a holorecorder, and the languages set on a translator or a
+  // vocoder mask (item name: languages); see shared/logic comms.ts
+  notes?: Note[];
+  recordings?: Recording[];
+  translators?: Record<string, string[]>;
   // From a long rest aboard a ship with an armory, a recreation room and the like: advantage on the first attack roll, and on the first
   // ability check (of the skills named, or any)
   firstAttack?: boolean;
@@ -1234,7 +1240,7 @@ export default function GameBoard() {
       return void toast.info(`${cache.name} is worked out; it recovers in about ${days} day${days > 1 ? "s" : ""}. (House rule.)`);
     }
     const family = FAMILIES[node.family];
-    const kit: string | undefined = (character.equipment ?? []).find((n: string) => family.kits.test(n));
+    const kit: string | undefined = harvestKit(node.family, node.tier, (character.equipment ?? []) as string[]);
     if (!kit && node.tier > 0) return void toast.error(`It takes ${family.kitNames} to work this ${RARITY_TIERS[node.tier].toLowerCase()} find. (House rule: bare hands only manage the lowest tier.)`);
     const dc = harvestDc(node.tier) + (kit ? 0 : 5);
     const r = await toolRoll(kit ?? "bare hands", dc, `${family.verb[0].toUpperCase()}${family.verb.slice(1)} ${cache.name} (${family.skill})`, family.ability);
@@ -1533,6 +1539,14 @@ export default function GameBoard() {
         if (!suits.length) return {};
         return { resist: [...new Set(suits.flatMap((x) => x!.resist))], conditionImmune: [...new Set(suits.flatMap((x) => x!.immune))], speed: Math.max(5, (Number(character.speed) || 30) + Math.min(...suits.map((x) => x!.speed))) };
       })(),
+      // In water (Player's Handbook, Swimming): each foot costs an extra foot unless the creature has a swimming speed (a propulsion
+      // pack running gives its own: the item's text)
+      ...(() => {
+        if (!exposures.some((e) => e.hazard === "underwater")) return {};
+        const pack = ((character.equipment ?? []) as string[]).find((n) => running(n) && accessoryOf({ name: n, description: factsOf(n)?.description }).swim);
+        const swim = pack ? accessoryOf({ name: pack, description: factsOf(pack)?.description }).swim! : 0;
+        return { speed: waterSpeed(Number(character.speed) || 30, swim) };
+      })(),
       vulnerable: (play.augments?.length ?? 0) >= 4 ? ["ion"] : undefined,
       // Saving throws: the ability modifier, and the proficiency bonus where the class is proficient
       saves: Object.fromEntries(["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"].map((a) => [a, scoreMod(a) + (savedAbilities.includes(a) ? proficiency : 0)])),
@@ -1566,7 +1580,13 @@ export default function GameBoard() {
           const castTime: "bonus" | "reaction" | "action" | "long" = /bonus action/.test(time) ? "bonus" : /reaction/.test(time) ? "reaction" : /^1 action/.test(time) ? "action" : "long";
           // A power that moves a creature or an object (Force Push/Pull, Force Throw, Telekinesis, the push of Force Repulse)
           const motion = powerMotion({ level: power.level, description: power.description ?? facts.description, range: power.range ?? facts.range }, level);
-          return { name: power.name as string, level: power.level as number, cost: powerCost(power), range: rangeFeet(power.range ?? facts.range), castTime, ...effect, motion, ...(motion && !motion.rider ? { summary: motionSummary(motion) } : {}), ...castingStats(character.abilityScores, level, power) };
+          // A machinist's catalyzer taken for the fight: tech powers gain its bonuses (a tech power is one with no Force alignment)
+          const stats = castingStats(character.abilityScores, level, power);
+          const cat = !("forceAlignment" in power) ? (play.buffs ?? []).find((b) => b.kind === "catalyzer")?.effects : undefined;
+          return {
+            name: power.name as string, level: power.level as number, cost: powerCost(power), range: rangeFeet(power.range ?? facts.range), castTime, ...effect, motion, ...(motion && !motion.rider ? { summary: motionSummary(motion) } : {}),
+            ...stats, ...(cat ? { attack: stats.attack + (cat.techAttack ?? 0), dc: stats.dc + (cat.techDc ?? 0), bonus: cat.techDamage ?? 0 } : {}),
+          };
         })
         .sort((a, b) => order[a.kind] - order[b.kind] || a.level - b.level),
     };
@@ -2122,14 +2142,24 @@ export default function GameBoard() {
   // Haggling (house rule for the DC): Charisma (Persuasion), with what the character's features
   // give for it; once a day with each trader. Made, prices are 10% better today; missed by 5 or
   // more, a little worse.
+  // The languages a translator carried or a vocoder mask worn gives (house rule: comms.ts)
+  const translatedNow = (): string[] => ((character?.equipment ?? []) as string[]).filter((n) => translatorSlots(n) > 0 && (!/^vocoder/i.test(n) || (play.wearing ?? []).includes(n))).flatMap((n) => play.translators?.[n] ?? []);
+  // Whether someone who speaks only their own people's tongue can be understood by the party
+  const languageBarrierWith = (o: { species?: string }) => {
+    const row = o.species ? speciesList.find((s) => s.name.toLowerCase() === o.species!.toLowerCase()) : undefined;
+    const native = row?.languages.find((l) => OWN_TONGUE_ONLY.includes(l));
+    return languageBarrier(native, (character?.languages ?? []) as string[], translatedNow());
+  };
   const haggle = (trader: Occupant, placeId: string) => {
     const attitude = attitudeOf(world!, trader, placeId, customer).score;
     const dc = haggleDC(trader, attitude);
     const first = d20();
-    const roll = haggling.advantage ? Math.max(first, d20()) : first;
+    // No common language: disadvantage (cancelling an advantage), unless a translator or vocoder covers it
+    const barrier = languageBarrierWith(trader);
+    const roll = haggling.advantage && !barrier ? Math.max(first, d20()) : !haggling.advantage && barrier ? Math.min(first, d20()) : first;
     const bonus = modifier(character.abilityScores?.charisma) + (haggling.expertise ? 2 * proficiency : skilled("persuasion") ? proficiency : 0);
     const won = roll + bonus >= dc;
-    const how = [haggling.advantage && `advantage from ${haggling.advantage}`, haggling.expertise && `expertise from ${haggling.expertise}`].filter(Boolean).join(", ");
+    const how = [haggling.advantage && `advantage from ${haggling.advantage}`, haggling.expertise && `expertise from ${haggling.expertise}`, barrier && "no common language: a translator would help (house rule)"].filter(Boolean).join(", ");
     toast[won ? "success" : "error"](`Haggling (Persuasion${how ? `, ${how}` : ""}): ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${roll + bonus} against DC ${dc}. ${won ? "Prices 10% better today." : roll + bonus <= dc - 5 ? "They take offence: prices a little worse today." : "They will not budge."}`);
     recordDeal(trader.id, (e) => ({ ...e, haggle: won ? "won" : roll + bonus <= dc - 5 ? "lost" : "tried" }), false);
   };
@@ -2575,7 +2605,7 @@ export default function GameBoard() {
   // ---- Tools (Wretched Hives, "Tool Proficiencies")
   const toolInfo = (name: string) => toolFor(name, factsOf(name)?.equipmentCategory, toolData);
   const trainedWith = (name: string) => toolTrained(character, name, factsOf(name)?.equipmentCategory);
-  const toolsCarried: string[] = Array.from(new Set<string>((character?.equipment ?? []).filter((n: string) => ["Kit", "Tool", "GamingSet", "MusicalInstrument"].includes(factsOf(n)?.equipmentCategory ?? ""))));
+  const toolsCarried: string[] = Array.from(new Set<string>((character?.equipment ?? []).filter((n: string) => ["Kit", "Tool", "GamingSet", "MusicalInstrument"].includes(factsOf(n)?.equipmentCategory ?? "") || kitAlias(n) !== n)));
   const setsCarried = toolsCarried.filter((n) => factsOf(n)?.equipmentCategory === "GamingSet");
   const instrumentsCarried = toolsCarried.filter((n) => factsOf(n)?.equipmentCategory === "MusicalInstrument");
   // A check with a tool: the ability (Intelligence unless said), with proficiency when trained with
@@ -3089,7 +3119,7 @@ export default function GameBoard() {
       Object.assign(changes, { equipment: spent.equipment, playState: { ...play, charges: spent.charges } });
       toast.success(`Emergency battery: ${unit.name} is stable, with ${hp} hit point${hp === 1 ? "" : "s"}.`);
     } else {
-      const check = await toolRoll(toolsCarried.find((n) => /astrotech|mechanic|tinker/i.test(n)) ?? "Toolkit", 10, `Stabilize ${unit.name}`, "intelligence", 0);
+      const check = await toolRoll(toolsCarried.find((n) => /astrotech|mechanic|tinker/i.test(kitAlias(n))) ?? "Toolkit", 10, `Stabilize ${unit.name}`, "intelligence", 0);
       if (!check.success) return void saveCampaign(pass(10));
       hp = Math.max(1, hp);
     }
@@ -3103,7 +3133,7 @@ export default function GameBoard() {
     if (!area) return;
     const tier = tierOfCr(crNumber(o.cr));
     const family = FAMILIES.salvage;
-    const kit: string | undefined = (character.equipment ?? []).find((n: string) => family.kits.test(n));
+    const kit: string | undefined = harvestKit("salvage", tier, (character.equipment ?? []) as string[]);
     if (!kit && tier > 0) return void toast.error(`It takes ${family.kitNames} to strip this ${RARITY_TIERS[tier].toLowerCase()} droid. (House rule.)`);
     const dc = harvestDc(tier) + (kit ? 0 : 5);
     const r = await toolRoll(kit ?? "bare hands", dc, `Strip ${o.name} for parts`, "intelligence");
@@ -3257,8 +3287,8 @@ export default function GameBoard() {
   };
   const mendVehicle = async (building: Area | null, vehicle: Vehicle) => {
     if (!world) return;
-    const kit = toolsCarried.find((n) => /^mechanic's kit$/i.test(n));
-    if (!kit) return toast.error("You need a mechanic's kit.");
+    const kit = toolsCarried.find((n) => /^mechanic's kit$/i.test(kitAlias(n)));
+    if (!kit) return toast.error("You need a mechanic's kit (or a hydrospanner).");
     const check = await toolRoll(kit, 15, `Restore power to ${vehicle.name}`, "intelligence");
     const time = pass(60);
     if (!check.success) return void saveCampaign(time);
@@ -3428,6 +3458,20 @@ export default function GameBoard() {
             const pairs = [...(play.paired ?? [])];
             if (paired) pairs.splice(pairs.indexOf(name), 1);
             saveCharacter({ equipment: spent.equipment, playState: { ...play, paired: pairs } });
+            return true;
+          },
+        });
+      } else if (use.kind === "teleport") {
+        // A portable teleporter: step through to the enemy picked out, or away from the fight
+        for (const mode of ["toward", "away"] as const) out.push({
+          key: `${name}:${mode}`,
+          label: `${label}: ${mode === "toward" ? "to the enemy picked out" : "away from the enemy"}`,
+          hint: `a free square in sight within ${use.feet} ft.; no opportunity attacks`,
+          target: mode === "toward" ? "foe" : "none",
+          use: (id) => {
+            if (mode === "toward" && id === undefined) return !!speed("There is nobody to step to.");
+            if (!useCombat.getState().itemEffect({ kind: "teleport", label: name, feet: use.feet, mode, targetId: id })) return false;
+            saveCharacter({ equipment: consume(name).equipment });
             return true;
           },
         });
@@ -4069,7 +4113,7 @@ export default function GameBoard() {
     toast.success(`${ship.name} goes up to tier ${to} for ${plan.cost} credits: ${plan.days} days in the yard.`);
   };
   // The crew's own work: the workers chosen, a check by whoever leads (the dialog asks who and with what), days on the clock
-  const mechanicsKit = () => (character.equipment ?? []).find((n: string) => /^mechanic's kit$/i.test(n));
+  const mechanicsKit = () => (character.equipment ?? []).find((n: string) => /^mechanic's kit$/i.test(kitAlias(n)));
   const crewInstall = async (ship: PartyShip, part: ShipPart, workers: string[], weapon?: string, hands = 0) => {
     if (!world || inCombat || dead) return;
     const kit = mechanicsKit();
@@ -4702,6 +4746,94 @@ export default function GameBoard() {
         return box(<><p className="text-gray-300">Bright light {use.bright} ft. and dim {use.dim} ft. beyond: darkness no longer blinds you.</p>{powerRow(name)}</>);
       case "generator":
         return box(<><p className="text-gray-300">{use.answers === "cold" ? "Adapted to the cold while it runs." : "Standard gravity while it runs."}</p>{powerRow(name)}</>);
+      case "mirror": {
+        const beyond = world ? exits.filter((x) => x.via === "path" && !x.hidden && !x.needsShip && scene?.areas[x.to]?.kind === "room") : [];
+        const peek = (x: Exit) => {
+          const room = scene?.areas[x.to];
+          if (!room) return;
+          const seen = [...room.occupants.map((o) => `${o.count > 1 ? `${o.count} x ` : ""}${o.name} (${o.disposition})`), ...room.ships.map((ship) => ship.name)];
+          toast.info(`In the mirror, round the doorway of ${room.name}: ${seen.join(", ") || "nobody"}. (House rule: no check, and they do not see you.)`);
+        };
+        return box(<>
+          <p className="text-gray-300">Held round the edge of a doorway, it shows who is in the next room without your stepping in. The books give a mirror no rules: house rule, no check.</p>
+          {beyond.length === 0 ? <p className="text-gray-400">No door here leads to another room.</p> : <div className="flex flex-wrap gap-1">{beyond.map((x) => <Button key={x.to} size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => peek(x)} data-testid="mirror-peek">Look into {world?.areas[x.to]?.name}</Button>)}</div>}
+        </>);
+      }
+      case "clock": {
+        const now = clockNow();
+        const hour = hourOf(now);
+        const hm = (m: number) => (m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`);
+        const toDawn = Math.round(((7 - hour + 24) % 24) * 60) || 1440;
+        const toDusk = Math.round(((18 - hour + 24) % 24) * 60) || 1440;
+        const search = world ? pursuitAt(world, now, here?.id) : null;
+        const lines = [
+          `It is ${clockText(now)}, day ${dayOf(now)}.`,
+          toDawn < toDusk ? `Dawn (07:00) in ${hm(toDawn)}.` : `Dusk (18:00) in ${hm(toDusk)}.`,
+          world?.heist?.takeoffAt ? `${world.heist.shipName} lifts off in ${hm(Math.max(0, world.heist.takeoffAt - now))}.` : "",
+          search ? (search.phase === "coming" ? `The officers arrive in ${hm(search.minutes)}.` : `The search is called off in ${hm(search.minutes)}.`) : "",
+        ].filter(Boolean);
+        return box(<>
+          <ul className="space-y-0.5 text-gray-200" data-testid="clock-report">{lines.map((l) => <li key={l}>{l}</li>)}</ul>
+          <p className="text-gray-400">Keeps exact time and the timers running (house rule; the book: it measures and keeps linear time).</p>
+        </>);
+      }
+      case "dig":
+        return box(<p className="text-gray-300">Digs: it serves as the kit for ore and plant finds of the first two tiers (standard and premium), without proficiency. Work a vein or a patch from its card. House rule; the books give a shovel no rules.</p>);
+      case "pad":
+      case "stylus": {
+        const allowed = notesAllowed(carriedNames);
+        const notes = (play.notes ?? []) as Note[];
+        return box(<NotesPanel notes={notes} allowed={allowed} where={here?.name} onAdd={(t) => { const r = addNote(notes, t, dayOf(clockNow()), here?.name, allowed); if (r.error) return void toast.error(r.error); patchPlay({ notes: r.notes }); }} onDelete={(i) => patchPlay({ notes: notes.filter((_, k) => k !== i) })} />);
+      }
+      case "record": {
+        const recs = (play.recordings ?? []) as Recording[];
+        const record = () => {
+          if (!world || !here || inCombat || dead) return;
+          if (hostiles.length > 0) return void toast.error("Not with hostile eyes on you.");
+          const room = hereNow ?? here;
+          const rec: Recording = { id: dtId("rec"), areaId: here.id, where: here.name, day: dayOf(clockNow()), people: room.occupants.map((o) => `${o.count > 1 ? `${o.count} x ` : ""}${o.name}`) };
+          const limit = Math.max(1, 1 + Math.floor(((character.abilityScores?.intelligence ?? 10) - 10) / 2));
+          commitDowntime({
+            character: { playState: { ...play, recordings: addRecording(recs, rec) } },
+            downtime: { lore: [...downtime.lore.filter((l) => l.where !== here.id || !l.topic.startsWith("Recording of")), { id: dtId("l"), topic: `Recording of ${here.name}`, where: here.id, whereName: here.name }].slice(-limit) },
+            days: 0,
+            log: [`Recorded ${here.name} with a holorecorder: lore of the place.`],
+          });
+          saveCampaign(pass(RECORD_MINUTES));
+          toast.success(`${here.name} recorded: lore of the place (see Downtime), and the scene is kept.`);
+        };
+        return box(<>
+          <p className="text-gray-300">Record this room ({RECORD_MINUTES} minutes): the scene is kept (the last {RECORD_LIMIT} places) and counts as a piece of lore of the place, spent in Downtime to find what is hidden there. House rule.</p>
+          <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || !here} onClick={record} data-testid="record-room">Record {here?.name ?? "here"}</Button>
+          {recs.map((r) => (
+            <div key={r.id} className="flex items-center justify-between gap-2" data-testid="recording">
+              <span>{r.where} <span className="text-gray-400">day {r.day}</span></span>
+              <Button size="sm" variant="outline" className="h-5 px-2" onClick={() => toast.info(`${r.where}, day ${r.day}: ${r.people.join(", ") || "nobody"}.`)}>Play</Button>
+            </div>
+          ))}
+        </>);
+      }
+      case "access":
+        return box(<p className="text-gray-300">Opens a lock of DC 15 or less at once, with no check (house rule: the book says only that it grants access to secure areas).</p>);
+      case "trace": {
+        const calls = world ? tracedCalls(world.pursuit?.reports, (id) => world.areas[id]?.name ?? id, clockNow()) : [];
+        return box(<>
+          <p className="text-gray-300">Follows a transmission back to where it was made. Calls to security from anywhere in the district are listed with where they come from and when they are put through: get there first to stop them. Without one you only know of the calls made in the room you stand in. House rule.</p>
+          {calls.length ? calls.map((c) => <p key={`${c.area}-${c.who}`} className="text-red-300" data-testid="traced-call">{c.who}, in {c.where}: put through in {c.minutes} min.</p>) : <p className="text-gray-400">No call is being made.</p>}
+        </>);
+      }
+      case "teleport":
+        return box(<p className="text-gray-300">Used in a fight, from Items (an action): step through a pair of linked portals to a free square in sight within {use.feet} ft., out beside the enemy picked out or away from every enemy; nothing provokes. The book lets anyone pass through the portals until the start of your next turn: not played (no one follows).</p>);
+      case "scramble":
+        return box(<p className="text-gray-300">Encodes what your commlink sends. While the law is searching, a call to a contact is overheard and tells the search where you are; a scrambled one is not (house rule). A jammer still cuts every call.</p>);
+      case "translate": {
+        const device = translatorSlots(name);
+        const chosen = (play.translators?.[name] ?? []) as string[];
+        const protocol = party.some((c) => /protocol|3po|c-3po/i.test(`${c.name} ${c.statBlock ?? ""}`));
+        return box(<TranslatorPanel name={name} slots={device || use.languages} chosen={chosen} languages={lookupData.languages as string[]} known={(character.languages ?? []) as string[]} canChange={atPowerSource() || protocol} onChange={(next) => patchPlay({ translators: { ...(play.translators ?? {}), [name]: setLanguages(name, next) } })} />);
+      }
+      case "extinguisher":
+        return box(<p className="text-gray-300">Used in a fight, from Items: a {use.cone}-foot cone of misty air puts out unenhanced fires and blinds (DC {use.dc} Constitution) until the start of their next turn those who fail; one who saves is immune to the mist. {usesLeft(name, use.uses)} of {use.uses} uses left.</p>);
       case "accessory":
         return box(<>
           <p className="text-gray-300">{accessoryText(use.facts)}</p>
@@ -4821,7 +4953,7 @@ export default function GameBoard() {
       return (
         <div className="mt-1 text-xs space-y-1">
           {text}
-          <p className="text-gray-300">{use.form === "grenade" || use.form === "detonator" ? "Thrown in a fight (Items, in the combat panel)." : "Set against a locked door to blow it (Forcing a door)."} Radius {use.radius} ft., DC {use.dc} {use.save}{use.damage.length ? `, ${use.damage.map((d) => `${d.dice} ${d.type}`).join(" and ")}` : ""}.</p>
+          <p className="text-gray-300">{use.form === "grenade" || use.form === "detonator" ? "Thrown in a fight (Items, in the combat panel)." : use.form === "mine" ? "Set where you stand in a fight (Items, in the combat panel): it arms at the start of your next turn and goes off for anyone but the party who comes within its radius, or to a remote detonator it was paired with. Also blows a locked door." : "Set against a locked door to blow it (Forcing a door)."} Radius {use.radius} ft., DC {use.dc} {use.save}{use.damage.length ? `, ${use.damage.map((d) => `${d.dice} ${d.type}`).join(" and ")}` : ""}.</p>
         </div>
       );
     }
@@ -5300,6 +5432,12 @@ export default function GameBoard() {
       log: [`${contact.name} (${contact.whereName}) tipped you off about ${place.name} over the commlink.`],
     });
     toast.success(`${contact.name} tells you what is kept at ${place.name}.`);
+    // While the law searches the district a plain call is overheard and tells the search where the party is (house rule); a scrambled one is not
+    const searching = !!world && !!here && pursuitAt(world, clockNow(), here.id)?.here && pursuitAt(world, clockNow(), here.id)?.phase === "searching";
+    if (searching && world?.pursuit && callOverheard(true, (character.equipment ?? []) as string[])) {
+      saveCampaign({ galaxyMap: { ...world, pursuit: { ...world.pursuit, known: here!.id } } });
+      toast.warning("The call was overheard: the search knows where you are. A pocket scrambler would have kept it secret. (House rule.)");
+    }
   };
 
   // ---- Droid customizations (Wretched Hives): a droid's motor supports two, upgraded to six; the

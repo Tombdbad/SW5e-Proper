@@ -4,6 +4,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { useCombat, drawPlan, type Combatant } from "../../client/src/lib/stores/useCombat";
+import { itemFactsOf, enhancedConsumableUse, describeEffects, waterSpeed } from "../../shared/logic/index";
+import enhanced from "../../shared/data/sw5e/enhancedItems.json";
+import equipment from "../../shared/data/sw5e/equipment.json";
 
 const player = { id: 1, name: "Rigger", currentHp: 30, maxHp: 30, armorClass: 14, level: 5, abilityScores: { strength: 10, dexterity: 16, constitution: 12, intelligence: 10, wisdom: 10, charisma: 10 }, speed: 30, conditions: [] } as any;
 const foe = (id: number, x: number, y = 3, extra: Partial<Combatant> = {}): any => ({ id, name: `Trooper ${id}`, hp: 40, maxHp: 40, armorClass: 5, initiative: 0, x, y, attackBonus: 1, damageDice: "1d4", rangedAttacker: false, saves: { dexterity: -5, constitution: -5, wisdom: -5 }, ...extra });
@@ -206,4 +209,57 @@ test("the detonator does not reach a mine beyond its range", () => {
   useCombat.getState().detonate();
   assert.match(log().at(-1)!, /beyond 30 ft/);
   assert.equal(useCombat.getState().mines.length, 1);
+});
+
+test("a machinist's catalyzer: tech damage and healing, and from the second grade attack and save DC; a minute, so it waits for a fight", () => {
+  const facts = (name: string) => itemFactsOf((enhanced as any[]).find((r) => r.name === name))!;
+  assert.deepEqual(facts("Machinist's Catalyzer Mk I").timed, { kind: "catalyzer", minutes: 1, effects: { techDamage: 1 } });
+  assert.deepEqual(facts("Machinist's Catalyzer Mk II").timed!.effects, { techDamage: 1, techAttack: 1, techDc: 1 });
+  assert.deepEqual(facts("Machinist's Catalyzer Mk IV").timed!.effects, { techDamage: 3, techAttack: 3, techDc: 3 });
+  assert.match(describeEffects(facts("Machinist's Catalyzer Mk III").timed!.effects), /tech powers \+2 damage and healing, \+2 attack, \+2 save DC/);
+});
+
+test("a tech power's bonus adds to its damage and its healing", () => {
+  const power = { name: "Electrocute", level: 1, cost: 2, kind: "save", dice: "1d1", save: "dexterity", halfOnSave: false, summary: "", modifier: 0, attack: 5, dc: 99, bonus: 4, castTime: "action" } as any;
+  start({ powers: [power], powerPoints: 5 } as any, [foe(2, 4, 3, { saves: { dexterity: -50 } })]);
+  const hp = them(2).hp;
+  useCombat.getState().castPower(0);
+  assert.equal(hp - them(2).hp, 1 + 4, "1d1 and the bonus of 4");
+  const heal = { name: "Medical Aid", level: 1, cost: 2, kind: "heal", dice: "1d1", summary: "", modifier: 2, attack: 0, dc: 0, bonus: 3, castTime: "action", onSelf: true } as any;
+  start({ powers: [heal], powerPoints: 5 } as any, [foe(2, 9)]);
+  useCombat.setState({ combatants: useCombat.getState().combatants.map((c) => (c.isPlayer ? { ...c, hp: 10 } : c)) });
+  useCombat.getState().castPower(0);
+  assert.equal(me().hp, 10 + 1 + 2 + 3);
+});
+
+test("a portable teleporter reads as a use with its range in feet (all six grades)", () => {
+  const rows = (enhanced as any[]).filter((r) => /^Portable Teleporter/.test(r.name));
+  assert.equal(rows.length, 6);
+  const feet = rows.map((r) => (enhancedConsumableUse(r, equipment as any) as any).feet);
+  assert.deepEqual(feet, [30, 60, 90, 150, 300, 1000]);
+});
+
+test("a teleporter steps through to the enemy picked out, or away from them, in sight; the action is spent and nothing provokes", () => {
+  start({}, [foe(2, 10, 3)], { x: 1, y: 3 });
+  assert.ok(useCombat.getState().itemEffect({ kind: "teleport", label: "Portable Teleporter Mk II", feet: 60, mode: "toward", targetId: 2 }));
+  const gap = Math.max(Math.abs((me().x ?? 0) - 10), Math.abs((me().y ?? 0) - 3));
+  assert.equal(gap, 1, "out beside the trooper");
+  assert.equal(me().actions, 0);
+  // Out of range: 30 feet is six squares, five more beyond: the trooper at ten is too far from one
+  start({}, [foe(2, 12, 3)], { x: 1, y: 3 });
+  assert.equal(useCombat.getState().itemEffect({ kind: "teleport", label: "Portable Teleporter Mk I", feet: 30, mode: "toward", targetId: 2 }), false);
+  assert.equal(me().actions, 1, "nothing spent");
+  assert.match(log().at(-1)!, /no square in sight/);
+  // Away: the farthest square in range from the enemy
+  start({}, [foe(2, 3, 3)], { x: 2, y: 3 });
+  assert.ok(useCombat.getState().itemEffect({ kind: "teleport", label: "Portable Teleporter Mk I", feet: 30, mode: "away" }));
+  const after = Math.max(Math.abs((me().x ?? 0) - 3), Math.abs((me().y ?? 0) - 3));
+  assert.ok(after > 1, `ended ${after} squares from the trooper`);
+});
+
+test("in water a creature moves at half speed unless it has a swimming speed", () => {
+  assert.equal(waterSpeed(30), 15);
+  assert.equal(waterSpeed(5), 5);
+  assert.equal(waterSpeed(30, 30), 30, "a propulsion pack running");
+  assert.equal(waterSpeed(25, 40), 40);
 });

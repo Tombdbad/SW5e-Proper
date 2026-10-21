@@ -30,5 +30,5 @@ test("grades: a grenade's DC and dice, a medpac's dice, a round's bonus, a spice
 test("every enhanced consumable has a use: read as its plain item, or a timed effect (stims, adrenals, barriers, collimators)", () => {
   const consumables = rows.filter((r) => r.type === "Consumable");
   const left = consumables.filter((r) => !enhancedConsumableUse(r, eq) && !itemFactsOf(r)?.timed).map((r) => r.name);
-  assert.deepEqual(left.filter((n) => !/catalyzer|teleporter/i.test(n)), []);
+  assert.deepEqual(left, []);
 });

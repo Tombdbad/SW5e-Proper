@@ -590,6 +590,8 @@ export interface CombatPower {
   modifier: number;
   attack: number;
   dc: number;
+  // A flat bonus to its damage and healing rolls (a machinist's catalyzer on a tech power)
+  bonus?: number;
 }
 
 export type CombatOutcome = "victory" | "stable" | "dead" | "left" | null;
@@ -608,6 +610,10 @@ export type ItemEffect =
   | { kind: "extinguish"; label: string; targetId: number | string; cone: number; dc: number; save?: string }
   // A mine set where the character stands: it arms at the start of their next turn, and goes off for anyone who comes within its radius
   // (or when its detonator is used, if it was paired)
+  // A portable teleporter: the character steps through a portal pair to a free square in sight, up to `feet` (and five beyond: they come
+  // out within 5 feet of the far portal), either to the one picked out or away from every enemy; the portals are not drawn and nobody else
+  // uses them (the book lets anyone pass until the start of the user's next turn: not played)
+  | { kind: "teleport"; label: string; feet: number; mode: "toward" | "away"; targetId?: number | string }
   | { kind: "mine"; label: string; radius: number; dc: number; save: string; damage: { dice: string; type: string }[]; conditions: string[]; conditionRounds: number; paired: boolean; lingers?: boolean };
 
 // ---------------------------------------------------------------------------------------------
@@ -2700,6 +2706,35 @@ export const useCombat = create<CombatState>((set, get) => ({
       });
       commit({ zones: state.zones.filter((z) => !zones.includes(z)) });
       return true;
+    } else if (effect.kind === "teleport") {
+      const me = user;
+      const z = me.z ?? 0;
+      const reach = Math.floor((effect.feet + 5) / 5);
+      const taken = new Set(combatants.filter((c) => c.hp > 0 && c.id !== me.id).map((c) => key(c.x ?? -1, c.y ?? -1, c.z ?? 0)));
+      const foes = combatants.filter((c) => !onPartySide(c) && c.hp > 0);
+      const aim = effect.targetId !== undefined ? combatants.find((c) => c.id === effect.targetId) : undefined;
+      if (effect.mode === "toward" && !aim) return false;
+      let best: { x: number; y: number; score: number } | undefined;
+      for (let x = (me.x ?? 0) - reach; x <= (me.x ?? 0) + reach; x++) for (let y = (me.y ?? 0) - reach; y <= (me.y ?? 0) + reach; y++) {
+        if ((x === me.x && y === me.y) || solid(state.arena, x, y, z) || taken.has(key(x, y, z))) continue;
+        if (coverBetween(state.arena, me, { x, y, z }).blocked) continue;
+        const spot = { x, y, z };
+        const score = effect.mode === "toward"
+          ? (squaresApart(spot, aim!) < 1 ? 99 : squaresApart(spot, aim!)) * 10 + squaresApart(spot, me) / 100
+          // away: the most room from the nearest enemy wins (negated, so the lowest score is best), then the shortest hop
+          : -Math.min(...foes.map((f) => squaresApart(spot, f)), 99) * 10 + squaresApart(spot, me) / 100;
+        if (!best || score < best.score) best = { x, y, score };
+      }
+      if (!best || (effect.mode === "toward" && squaresApart(best, aim!) > 1) || (effect.mode === "away" && best && foes.length && Math.min(...foes.map((f) => squaresApart(best!, f))) <= Math.min(...foes.map((f) => squaresApart(me, f))))) {
+        log.push(`${user.name} finds no square in sight within ${effect.feet} ft. to step to.`);
+        set({ combatLog: log });
+        return false;
+      }
+      const at3 = combatants.findIndex((c) => c.id === me.id);
+      combatants[at3] = { ...combatants[at3], x: best.x, y: best.y, z };
+      log.push(`${user.name} opens ${effect.label}'s portals and steps through, ${effect.mode === "toward" ? `out beside ${aim!.name}` : "away from the enemy"} (no opportunity attacks: nothing was walked).`);
+      commit();
+      return true;
     } else if (effect.kind === "mine") {
       const at2 = combatants.findIndex((c) => c.id === user.id);
       const mine: Mine = {
@@ -2830,7 +2865,7 @@ export const useCombat = create<CombatState>((set, get) => ({
         return { ...state, ...patchOf(w), objectId: null };
       }
       if (power.kind === "heal") {
-        const amount = Math.max(1, rollDamage(power.dice!, false) + power.modifier);
+        const amount = Math.max(1, rollDamage(power.dice!, false) + power.modifier + (power.bonus ?? 0));
         combatants[selfIndex] = { ...combatants[selfIndex], hp: Math.min(combatants[selfIndex].maxHp, combatants[selfIndex].hp + amount) };
         log.push(`${caster.name} casts ${power.name} and regains ${amount} hit points.`);
       } else if (power.kind === "condition" && power.onSelf) {
@@ -2849,7 +2884,7 @@ export const useCombat = create<CombatState>((set, get) => ({
           const d = rollD20(odds.mode);
           const note = `${odds.mode ? ` with ${odds.mode > 0 ? "advantage" : "disadvantage"}` : ""}${odds.cover.bonus ? ` (${odds.cover.name})` : ""}`;
           if (d !== 1 && (d === 20 || d + power.attack >= armorClassNow(target) + odds.cover.bonus)) {
-            const amount = rollDamage(power.dice!, d === 20);
+            const amount = rollDamage(power.dice!, d === 20) + (power.bonus ?? 0);
             log.push(`${caster.name} casts ${power.name} at ${target.name}${note} and hits for ${amount} damage${d === 20 ? " (critical)" : ""}.`);
             hit(targetIndex, amount);
             pushed = targetIndex;
@@ -2860,7 +2895,7 @@ export const useCombat = create<CombatState>((set, get) => ({
           } else log.push(`${caster.name} casts ${power.name} at ${target.name}${note} but misses.`);
         } else {
           const saved = savingThrow(target, power.save ?? "", power.dc);
-          const full = power.dice ? rollDamage(power.dice, false) : 0;
+          const full = power.dice ? rollDamage(power.dice, false) + (power.bonus ?? 0) : 0;
           const amount = saved ? (power.halfOnSave ? Math.floor(full / 2) : 0) : full;
           log.push(`${caster.name} casts ${power.name}: ${target.name} ${saved ? "saves" : "fails the save"}${power.dice ? ` and takes ${amount} damage` : ""}.`);
           if (amount > 0) hit(targetIndex, amount);

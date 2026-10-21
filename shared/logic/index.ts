@@ -20,6 +20,7 @@ import { caveMask, caveStyleOf, describeMask, MAX_WIDTH, MIN_WIDTH, type CaveWay
 export { caveMask, caveStyleOf, describeMask, MIN_WIDTH, MAX_WIDTH } from "./caves";
 import { gearText, ammoItemFamily, ammoRider, calibratorOf, accessoryOf, containerOf, suitOf, airOf, foodOf, lightOf, generatorOf, type AmmoFamily, type AmmoRider, type AccessoryFacts, type SuitFacts, type EnvHazard } from "./gear";
 export * from "./gear";
+export * from "./comms";
 import { shipModEffects, shipModNamed, makeshiftLoss, equipmentCost, enhancedShipPart, type ShipModInstance, type ShipSpecial, type ShipConditionName, type ShipAbilityName, type EnhancedShipPart, type PartsPlace, type ShipPart } from "./shipyard";
 export * from "./shipyard";
 import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eRecord } from "../data";
@@ -6407,7 +6408,9 @@ export type GearUse =
   | { kind: "clock" } | { kind: "mirror" } | { kind: "dig" } | { kind: "cook" } | { kind: "spanner" }
   | { kind: "pad" } | { kind: "stylus" } | { kind: "record" } | { kind: "access" } | { kind: "focus" }
   | { kind: "trace" } | { kind: "translate"; languages: number } | { kind: "scramble" }
-  | { kind: "prosthesis"; part: string };
+  | { kind: "prosthesis"; part: string }
+  // A portable teleporter (an enhanced consumable): a pair of linked portals, the far one up to `feet` away
+  | { kind: "teleport"; feet: number };
 
 export interface GearFacts {
   name: string;
@@ -6502,6 +6505,8 @@ export function enhancedConsumableUse(row: { name: string; text?: string; consum
   if (row.type && row.type !== "Consumable") return undefined;
   const text = (row.text ?? "").replace(/\s+/g, " ");
   const base = equipment.find((e) => e.name.toLowerCase() === baseNameOf(row.name).toLowerCase());
+  const portal = /^portable teleporter/i.test(row.name) ? text.match(/up to ([\d,]+) feet away/i) : undefined;
+  if (portal) return { kind: "teleport", feet: Number(portal[1].replace(/,/g, "")) };
   const hitDice = text.match(/regains (\w+) Hit Dice/i);
   if (/^vitapac/i.test(row.name) && hitDice) return { kind: "vitapac", hitDice: NUMBER_WORDS[hitDice[1].toLowerCase()] ?? (Number(hitDice[1]) || 1) };
   const category = base?.equipmentCategory ?? (row.consumableType === "Explosives" ? "Explosive" : row.consumableType === "Poisons" ? "Medical" : undefined);
@@ -6591,8 +6596,7 @@ function gearRole(item: GearFacts): GearUse | undefined {
     if (/grappling hook/.test(name)) return { kind: "grapple", feet: Number(text.match(/(\d+)-foot length/i)?.[1] ?? 50) };
     const generator = generatorOf(facts);
     if (generator) return { kind: "generator", ...generator };
-    if (/hydrospanner/.test(name)) return { kind: "spanner" };
-    if (/mess kit/.test(name)) return { kind: "cook" };
+    if (/hydrospanner|mess kit/.test(name)) return { kind: "tool" };
     if (/mirror/.test(name)) return { kind: "mirror" };
     if (/shovel/.test(name)) return { kind: "dig" };
     return undefined;
@@ -6629,19 +6633,23 @@ export interface ToolFacts {
 }
 
 const squash = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+// Gear that does a kit's work (house rule, 2026-10-21; the books give a hydrospanner and a mess kit no rules): a hydrospanner is a
+// mechanic's kit, a mess kit a chef's kit, with the proficiency of that kit
+export const KIT_STAND_IN: [RegExp, string][] = [[/^hydrospanner$/i, "Mechanic's kit"], [/^mess kit$/i, "Chef's kit"]];
+export const kitAlias = (name: string) => KIT_STAND_IN.find(([re]) => re.test(name))?.[1] ?? name;
 // The tool entry for an item the character carries (a Dejarik set is a gaming set)
 export function toolFor(itemName: string, category: string | undefined, tools: ToolFacts[]): ToolFacts | undefined {
   if (category === "GamingSet") return tools.find((t) => t.kind === "gaming");
   if (category === "MusicalInstrument") return tools.find((t) => t.kind === "instrument");
-  const wanted = squash(itemName);
+  const wanted = squash(kitAlias(itemName));
   return tools.find((t) => squash(t.name) === wanted);
 }
 
 // Whether a character is trained with a tool (the tool itself, or its gaming set / instrument group)
 export function toolTrained(character: { toolProficiencies?: string[] | null }, itemName: string, category?: string): boolean {
   const known = (character.toolProficiencies ?? []).map(squash);
-  const wanted = squash(itemName);
-  if (known.includes(wanted)) return true;
+  const wanted = squash(kitAlias(itemName));
+  if (known.includes(wanted) || known.includes(squash(itemName))) return true;
   if (category === "GamingSet") return known.some((k) => /gamingset|dejarik|pazaak|sabacc|chancecubes|kirgatz|chattaragul/.test(k));
   if (category === "MusicalInstrument") return known.some((k) => /instrument|bandfill|horn|drum|fanfar|fizzz|flute|lute|mandoviol|ommni|shawm|traz|valahorn|xantha|slitherhorn/.test(k));
   return false;
@@ -10002,6 +10010,10 @@ export interface ItemEffects {
   // Speed gained, in feet, and temporary hit points given (adrenals, barriers)
   speed?: number;
   tempHp?: number;
+  // A machinist's catalyzer: bonuses to tech attack rolls, tech save DCs and damage and healing rolls with tech powers
+  techAttack?: number;
+  techDc?: number;
+  techDamage?: number;
   // Side effect: one other ability score falls by 1
   falls?: boolean;
 }
@@ -10010,7 +10022,7 @@ export interface ItemEffects {
 // the minute of a fight (ten rounds) and wait for the next one when taken outside it (house
 // rule, like a substance's high)
 export interface TimedEffect {
-  kind: "stimpac" | "adrenal" | "barrier" | "collimator";
+  kind: "stimpac" | "adrenal" | "barrier" | "collimator" | "catalyzer";
   minutes: number;
   effects: ItemEffects;
   // A collimator is applied to one kind of weapon
@@ -10090,6 +10102,16 @@ export function parseTimedEffect(name: string, consumableType: string | undefine
   const minutes = length ? Number(length[1]) * (/hour/i.test(length[2]) ? 60 : 1) : 1;
   const collimator = text.match(/apply this \w+ to one (\w+)(?: or \w+)? within 5 feet, granting it a \+(\d+) bonus to attack and damage rolls for 1 minute/i);
   if (collimator) return { kind: "collimator", minutes: 1, weapon: collimator[1].toLowerCase(), effects: { attack: Number(collimator[2]), damage: Number(collimator[2]) } };
+  // A machinist's catalyzer: "+N bonus to its tech attack rolls, tech save DC, and damage and healing rolls with tech powers" (the first
+  // grade only the damage and healing); a minute, so it waits for a fight like a collimator
+  const catalyzer = /catalyzer/i.test(name) ? text.match(/\+(\d+) bonus to its ([^.]*?) with tech powers/i) : undefined;
+  if (catalyzer) {
+    const n = Number(catalyzer[1]);
+    const effects: ItemEffects = { techDamage: n };
+    if (/tech attack rolls/i.test(catalyzer[2])) effects.techAttack = n;
+    if (/tech save DC/i.test(catalyzer[2])) effects.techDc = n;
+    return { kind: "catalyzer", minutes: 1, effects };
+  }
   if (consumableType === "Stimpacs") return { kind: "stimpac", minutes, effects: parseItemEffects(text) };
   if (consumableType === "Barriers") {
     const hp = Number((text.match(/barrier has (\d+) hit points/i) ?? [])[1]);
@@ -10275,6 +10297,7 @@ export function describeEffects(e: ItemEffects): string {
   for (const [a, r] of Object.entries(e.raiseScores ?? {})) parts.push(`${a.slice(0, 3)} +${r.by} (max ${r.max})`);
   if (e.speed) parts.push(`+${e.speed} ft. speed`);
   if (e.tempHp) parts.push(`${e.tempHp} temporary hit points`);
+  if (e.techDamage) parts.push(`tech powers +${e.techDamage} damage and healing${e.techAttack ? `, +${e.techAttack} attack` : ""}${e.techDc ? `, +${e.techDc} save DC` : ""}`);
   if (e.falls) parts.push("side effect: another score -1");
   return parts.join(", ");
 }
@@ -10719,8 +10742,8 @@ export const NODE_RESPAWN = 3 * 24 * 60;
 export const HARVEST_MINUTES = 10;
 
 export const FAMILIES: Record<MaterialFamily, { label: string; verb: string; kits: RegExp; kitNames: string; ability: string; skill: string; refiners: RegExp }> = {
-  ore: { kitNames: "a scavenging kit", label: "Ore and metal", verb: "mine", kits: /scavenging kit/i, ability: "intelligence", skill: "Investigation", refiners: /armormech|armstech|scavenging kit/i },
-  plant: { kitNames: "a bioanalysis kit or biochemist's kit", label: "Plants and herbs", verb: "gather", kits: /bioanalysis kit|biochemist's kit/i, ability: "wisdom", skill: "Nature", refiners: /biochemist|bioanalysis|chef/i },
+  ore: { kitNames: "a scavenging kit (a shovel serves for the first two tiers)", label: "Ore and metal", verb: "mine", kits: /scavenging kit/i, ability: "intelligence", skill: "Investigation", refiners: /armormech|armstech|scavenging kit/i },
+  plant: { kitNames: "a bioanalysis kit or biochemist's kit (a shovel serves for the first two tiers)", label: "Plants and herbs", verb: "gather", kits: /bioanalysis kit|biochemist's kit/i, ability: "wisdom", skill: "Nature", refiners: /biochemist|bioanalysis|chef/i },
   crystal: { kitNames: "an archaeologist kit or jeweler's implements", label: "Crystals and gems", verb: "cut free", kits: /archaeologist kit|jeweler's implements/i, ability: "intelligence", skill: "Investigation", refiners: /jeweler|artificer|archaeologist/i },
   hide: { kitNames: "a scavenging kit, bioanalysis kit or poisoner's kit", label: "Hides and parts", verb: "skin", kits: /scavenging kit|bioanalysis kit|poisoner's kit/i, ability: "wisdom", skill: "Survival", refiners: /scavenging kit|synthweaver|poisoner|bioanalysis/i },
   salvage: { kitNames: "a scavenging kit, tinker's or astrotech's implements or a mechanic's kit", label: "Salvage and parts", verb: "strip", kits: /scavenging kit|tinker's implements|mechanic's kit|astrotech's implements/i, ability: "intelligence", skill: "Technology", refiners: /tinker|mechanic|astrotech|cybertech/i },
@@ -10748,6 +10771,13 @@ export const materialsOf = (character: { playState?: any } | null | undefined): 
 export const materialsWorth = (stock: Materials) => Object.entries(stock).reduce((sum, [id, n]) => sum + (MATERIALS[id]?.value ?? 0) * n, 0);
 
 export const harvestDc = (tier: number) => [10, 14, 18, 22][Math.min(3, Math.max(0, tier))];
+// The kit that works a node: one of the family's kits, else (house rule) a shovel for the first two tiers of ore and plants (digging)
+export const SHOVEL_TIER = 1;
+export function harvestKit(family: MaterialFamily, tier: number, equipment: string[]): string | undefined {
+  const real = equipment.find((n) => FAMILIES[family].kits.test(kitAlias(n)));
+  if (real) return real;
+  return (family === "ore" || family === "plant") && tier <= SHOVEL_TIER ? equipment.find((n) => /^shovel$/i.test(n)) : undefined;
+}
 
 export function makeNode(r: Random, id: string, family: MaterialFamily, danger: number): LootCache {
   const tier = Math.min(3, Math.floor(danger / 2) + (danger > 0 && r.chance(0.25) ? 1 : 0));
