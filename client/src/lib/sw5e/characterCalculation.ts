@@ -796,13 +796,15 @@ export function gearOf(character: any): Gear {
   const body = item(worn.body);
   const used = new Set([...worn.weapons, worn.body, worn.shield].map((n) => String(n ?? "").toLowerCase()));
   const carried = ((character?.equipment ?? []) as any[]).map((e) => String(e?.name ?? e)).filter((n) => !used.has(n.toLowerCase())).map(item).filter((i): i is GearItem => !!i);
+  const installed = ((character?.playState?.augments ?? []) as { name: string }[]).filter((a) => a?.name);
   return {
     weapons: worn.weapons.map(item).filter((i): i is GearItem => !!i).slice(0, 2),
     bodyClass: body?.armorClassification === "Light" || body?.armorClassification === "Medium" || body?.armorClassification === "Heavy" ? (body.armorClassification.toLowerCase() as "light" | "medium" | "heavy") : undefined,
     shield: item(worn.shield),
-    carried,
-    // What is put on (a suit, a mask, goggles), of what is carried
-    worn: ((character?.playState?.wearing ?? []) as string[]).filter((n) => ((character?.equipment ?? []) as any[]).some((e) => String(e?.name ?? e) === n)),
+    // (an augmentation or a prosthesis fitted by a surgeon has left the pack but is on the body: drawn like what is worn)
+    carried: [...carried, ...installed.map((a) => item(a.name)).filter((i): i is GearItem => !!i)],
+    // What is put on (a suit, a mask, goggles), of what is carried, and what the surgeon has fitted
+    worn: [...((character?.playState?.wearing ?? []) as string[]).filter((n) => ((character?.equipment ?? []) as any[]).some((e) => String(e?.name ?? e) === n)), ...installed.map((a) => a.name)],
   };
 }
 

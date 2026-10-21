@@ -17,7 +17,7 @@ Every item of the rules data now has a model (`REVIVAL_NOTES.md`, "Item models")
 | Ammunition | 50 | 28 / 22 | 50/50 | arms | armory, cargo |
 | Armor | 26 | 26 / 0 | 26/26 (fight) | arms, outfit, black | armory |
 | Storage | 17 | 17 / 0 | 17/17 | general, spacer, salvage | cargo |
-| MusicalInstrument | 15 | 15 / 0 | 15/15 | leisure | **nowhere** |
+| MusicalInstrument | 15 | 15 / 0 | 15/15 | leisure | stash, stage |
 | Utility | 23 | 23 / 0 | 23/23 | general, black, salvage | workshop, cargo, remains |
 | GamingSet | 6 | 6 / 0 | 6/6 | leisure | stash |
 | Explosive | 27 | 14 / 13 | 27/27 | black | armory, stash |
@@ -47,11 +47,11 @@ Contraband (seized where the law is at that level or above, `contrabandFrom`): 2
 |---|---|---|---|---|---|
 | Weapon | 58 | 58: effects 22, chassis 18, text only 18 | 0 | 58/58 | armory, vault, relic |
 | ItemModification | 1025 | 1025: modification 1025 | 0 | 1025/1025 | armory, workshop |
-| CyberneticAugmentation | 46 | 46: augment enhancement 28, augment replacement 18 | 0 | 46/46 | vault |
+| CyberneticAugmentation | 46 | 46: augment enhancement 28, augment replacement 18 | 0 | 46/46 | medical, vault |
 | Armor | 18 | 18: text only 5, effects 7, chassis 6 | 0 | 18/18 | armory, vault, relic |
-| Consumable | 528 | 518: timed 78, use substance 80, use explosive 135, use spike 6, use ammo 170, use calibrator 28, none 10, use heal 5, use poison 5, use repair 5, use vitapac 6 | 10 | 528/528 | medical, cargo, stash, remains |
+| Consumable | 528 | 528: timed 82, use substance 80, use explosive 135, use spike 6, use ammo 170, use calibrator 28, use heal 5, use poison 5, use teleport 6, use repair 5, use vitapac 6 | 0 | 528/528 | medical, cargo, stash, remains |
 | DroidCustomization | 48 | 48: droid protocol 18, droid part 30 | 0 | 48/48 | workshop |
-| AdventuringGear | 156 | 156: text only 110, effects 22, chassis 24 | 0 | 156/156 | stash |
+| AdventuringGear | 156 | 156: text only 47, effects 17, use binders 5, use data 23, use container 10, chassis 24, use clothing 5, use accessory 20, use bolt 5 | 0 | 156/156 | stash |
 | Focus | 18 | 18: text only 6, chassis 12 | 0 | 18/18 | vault, relic |
 | Shield | 12 | 12: effects 5, chassis 6, text only 1 | 0 | 12/12 | armory, vault, relic |
 | ShipArmor | 3 | 3: ship part 3 | 0 | 0/3 | **nowhere** |
@@ -63,142 +63,122 @@ Types no cache offers: ShipArmor, ShipShield, ShipWeapon.
 
 ### Enhanced rows with nothing for the game to apply
 
-- **Consumable** (10): Machinist's Catalyzer Mk I; Machinist's Catalyzer Mk II; Machinist's Catalyzer Mk III; Machinist's Catalyzer Mk IV; Portable Teleporter Mk I; Portable Teleporter Mk II; Portable Teleporter Mk III; Portable Teleporter Mk IV; Portable Teleporter Mk V; Portable Teleporter Mk VI
 
 ### Enhanced rows that are text only (the game shows the rule but applies none of it)
 
 - **Weapon** (18): Bolas (Champion); Bolas (Exceptional); Bolas (Fine); Bolas (Improved); Bolas (Superior); Flashy; Grenade Launcher (Champion); Grenade Launcher (Exceptional); Grenade Launcher (Fine); Grenade Launcher (Improved); Grenade Launcher (Superior); Net (Champion); Net (Exceptional); Net (Fine); Net (Improved); Net (Superior); Shotgun Axe; Sparkles
 - **Armor** (5): Adapted Armor; Matrix Armor; Orbalisk Armor; Reactive Ultrachrome Armor; Viir Agathys's Armor
-- **AdventuringGear** (110): Aratech Echo Belt; Aratech Sound Dampening Boots; Atmospheric Decanting Vessel; Baragwin Stealth Unit; Binders (Champion); Binders (Exceptional); Binders (Fine); Binders (Improved); Binders (Superior); Blueprint (Advanced); Blueprint (Artifact); Blueprint (Legendary); Blueprint (Premium); Blueprint (Prototype); Blueprint (Standard); Boots of Bounding; Boots of Hiding; Camtono (Champion); Camtono (Exceptional); Camtono (Fine); Camtono (Improved); Camtono (Superior); Cape of the Orator; Circlet of Persistence; Clothes, Clandestine (Champion); Clothes, Clandestine (Exceptional); Clothes, Clandestine (Fine); Clothes, Clandestine (Improved); Clothes, Clandestine (Superior); Cowl of the Professional; ... (110)
+- **AdventuringGear** (47): Aratech Echo Belt; Aratech Sound Dampening Boots; Atmospheric Decanting Vessel; Baragwin Stealth Unit; Boots of Bounding; Boots of Hiding; Cape of the Orator; Circlet of Persistence; Cowl of the Professional; Darkvision Goggles; Defel Mimicker; Flightsuit; Gauntlets of the Warrior; Goggles of the Tinkerer; Jensaarai Cloak; Jensaarai Headgear; Mag-lock Boots; Mandalorian Helmet; Mantle of the Anomic; Necklace of Determination; Pauldron of Retribution; Respiration Facilitator; Ring of Adept Force Storing; Ring of Ancient Force Storing; Ring of Apprentice Force Storing; Ring of Journeyman Force Storing; Ring of Master Force Storing; Ring of Novice Force Storing; Ring of Tech Storing Mk I; Ring of Tech Storing Mk II; ... (47)
 - **Focus** (6): Focus Generator (Fine); Focus Generator (Improved); Focus Generator (Superior); Wristpad (Fine); Wristpad (Improved); Wristpad (Superior)
 - **Shield** (1): Verpine Auto-Shielding Unit
 
 ## Gaps by group
 
-Each group: what the game has for it today, then what is missing. `file:function` names are where to start. Written 2026-10-20 from the code as it stands; the counts above are the check.
+Each group: what the game has for it today, then what is missing. `file:function` names are where to start. Rewritten 2026-10-21 after the gear work (steps A-L of HANDOFF.md); the counts above are the check.
 
 ### Weapons (217) and what they fire
 
-**Today:** stats, properties, proficiency and attack bonus from the rules data (`characterCalculation`, `useCombat`); a model for each (the Blaster Kit designs by kind, the melee kitbash models, and the new sabers, bows, whips and thrown weapons by name); the held pose by kind (`handOf`); ship weapons spend ammunition (`shared/logic` ship fights).
+**Today:** stats, properties, proficiency and attack bonus from the rules data (`characterCalculation`, `useCombat`); personal ammunition in a fight (loads, reloading as an action, a bonus action or free with a pouch or belt, special and enhanced rounds with their riders, burst and rapid fire, burning ground, calibrators: `useCombat` `ammo`, `reload`, `spray`; `shared/logic/gear.ts`); drawing a weapon (`drawPlan`: the turn's free interaction, a second change takes the action, a holster draws free once); a model for each, held by its `grip` socket with the second hand on its `off_hand` socket (`holdAt`, `offHandAt`); a saber's blade has its haze halo (`withHalo`); ship weapons spend ammunition.
 
-- [ ] Personal ammunition is not tracked: ammunition (50 items: cells, clips, cartridges, arrows, bolts, darts, missiles, rockets, torpedoes, projector canisters) is sold and found but no weapon consumes it. Add a count per weapon, the `reload`/`ammunition` properties (`weaponProperties.json`), reloading as an action, and ammunition items spent from the pack.
-- [ ] Special ammunition (combustive, electroshock, noisemaker, deafening, panic, ion, plasma, cryo, corrosive, incendiary, fragmentation) has effects in its text; none applies. Read them like `gearUse` reads explosives (damage dice, save, conditions, radius) and apply them in `useCombat` as the shot's rider.
-- [ ] A saber's blade is a thin glowing line: the code-built one had a soft halo (a `haze` finish rod round the glow rod, `held()` in `models.tsx`). Add a halo part to the blade models (a wider cylinder in a `haze` finish) or draw one beside the figure.
-- [ ] Held weapons are placed by their `grip` socket (done: `holdAt`, `Want.grip`), but a two-handed weapon's second hand does not follow the `off_hand` socket: the left hand sits where the pose puts it. Move the pose's left hand to the socket (rifle, bowcaster, staff, bo-rifle, instruments).
+- [ ] Weapon properties the fight does not read: auto, penetrating, dire, piercing, thrown and versatile two-hand damage (`weaponProperties.json`; keen, brutal, vicious, heavy, light, reload, burst and rapid are played).
 - [ ] Weapons are not animated (swing, thrust, draw, recoil, ignite): the models keep named parts, pivots and `grip`/`off_hand`/`tip`/`muzzle` sockets for it (`itemModels.json` `parts`, `sockets`, `_MARK` part numbers); the figure's limb animation (`interiors/limbs.ts`) has no weapon channel (a `part` attribute and a shader like the limb one would swing a blade or a bow limb about its pivot).
 - [ ] Thrown weapons (bolas, net, chakram, vibrodart, grenades) have no projectile in the fight scene: the throw is a roll and a log line (`FightScene` in `LocalMap.tsx`). Draw the model flying to the target.
 - [ ] Weapon modifications (scopes, guards, hilts, barrels) are items in a chassis, never shown on the weapon: the weapon models have no `rail`/`mod` sockets.
 
 ### Armour (26) and shields
 
-**Today:** armour class by the rules data's class and the character's features (`armorClassOf`); equip and wear (`equippedNow`); a figure's armour is drawn by code from the weight (`bodyClass`: plates, pauldrons); every named armour and shield has a model, shown on stands in shops (`stock.ts` `armourFor`) and a held shield or generator on the arm.
+**Today:** armour class by the rules data's class and the character's features (`armorClassOf`); equip and wear (`equippedNow`); a figure's armour is drawn by code from the weight (`bodyClass`: plates, pauldrons); every named armour and shield has a model, shown on stands in shops (`stock.ts` `armourFor`, `namedArmourFor`) and a held shield or generator on the arm. The properties are played (`armorTraits` in `shared/logic/gear.ts`, `wornTraits` in `GameBoard.tsx`, the fight in `useCombat`): the Strength requirement (speed -10) and Cumbersome (-5), Bulky, Obtrusive, Silent and the stealth flag on Stealth and on hiding, Absorptive (also an enhanced shield's `damage you take is reduced by N`), Regulated, Rigid, Reactive, Avoidant, Insulated and Imbalanced.
 
 - [ ] A worn named armour looks the same as any of its weight on the figure: tint the plates by the named suit's material (the models carry the colours: beskar, neutronium, plastoid...) or draw the model's torso parts on the figure.
-- [ ] `stock.ts` `ARMOUR_BY_PLACE` picks the old three suits by weight; show the 17 named armours and 9 shields (and the new suits) on stands by what the shop sells.
-- [ ] Shield generators and physical shields have no active use (a reaction, bash, or the generator's charge/cooldown): check `armorProperties.json` and implement the properties that matter in a fight.
-- [ ] Stealth disadvantage and strength requirements of armour (`stealthDisadvantage`, properties) are data the fight does not read.
+- [ ] Shield properties that need actions or states the fight does not have: Anchor (cover), Lambent (light), Versatile (two hands), Interlocking, Magnetic, Responsive, Spiked and Charging, and Obscured against cameras, Impermeable's environmental functions and Reinforced jumps.
+- [ ] The Strength requirement and Cumbersome cost speed in a fight only: the overland pace (`journeyMinutes`) does not read them.
 
 ### Life support (16), clothing (7) and survival gear
 
-**Today:** bought from spacers, general stores and found in cargo and remains; the biome changes their price (desert, ice, volcanic... `DEMAND`); models for all. No use in play for any of the sixteen life-support items. Rations are spent by a cook's meal and to gentle a beast (`GameBoard.tsx`, any carried item whose name matches /rations/); exhaustion exists as a level (`exhaustionLevel`: downtime and failed augmentation raise it, a long rest lowers it).
+**Today:** bought from spacers, general stores and found in cargo and remains; models for all; hazards by place (`hazardsAt`: cold, heat, no air, bad air, water, radiation, gravity, darkness), answered by suits, respirators, air supplies, generators and lights (`gear.ts` `exposure`; air timers, powered gear that charges); food and water on the campaign's days (`passDays`), lodging and camp gear on rests; clothing's social effects (house rules); a suit put on is drawn as a space, diving or hazard suit with its helmet, pack and fittings (`suitStyleOf`).
 
-- [ ] There are no environmental hazards for a suit to answer: vacuum, toxic or thin air, extreme cold and heat, deep water, radiation, disease. Add hazards by biome and area (planet biome, hostile-air buildings with `hangar` roofs, sewers, volcanic sites), each an hourly save or damage, and let respirators, oxygen tanks, hazard/chemical/flame-proof/diving/water/space suits, thermal gear negate them (PH: suffocation, extreme temperatures; Wretched Hives environmental rules).
-- [ ] Oxygen tank and underwater respirator are air supplies: a timer (minutes of air) spent while in a hostile place, refilled at a port.
-- [ ] No hunger or thirst clock: nothing is eaten or drunk on the campaign's days, so canteens, bottles, flasks, jugs, the mess kit and the emergency rations have nothing to feed (field rations are only spent on a meal boon and on gentling). A days-of-supplies clock with a level of exhaustion when it runs out is the rule the books give (PH: food and water), tied to the campaign clock (`time_elapsed`); the exhaustion level already exists to reuse.
-- [ ] Emergency raft and shelter, tent, bedroll, blanket: no effect on rests (a tent or bedroll could make a rest in the wilds safe or restful; `rest` rules in `GameBoard.tsx`).
-- [ ] Clothing: clandestine clothes, dress uniforms, costumes and fine clothes have no social or stealth effect (disguise, access to a palace, reputation with the law); sunshades give no protection from flash grenades or glare.
-- [ ] The new suit models stand on stands; a figure wearing a space or hazard suit is not drawn in it (the figure builder has no garment for them): add garments `spacesuit`, `hazard`, `diving` in `models.tsx`.
+- [ ] Disease is not a hazard (the books give none beyond the substances' addiction): only the hazards `hazardsAt` lists exist.
+- [ ] A carried light does not change the 3D map's own lighting (`atmosphere.ts` moods have ambient light): darkness is a fight and an exposure rule, not a view.
 
 ### Storage (17), weight and carrying
 
-**Today:** items have a `weight` in the data; crates exist as furniture and cache models; nothing counts weight.
+**Today:** weight counts (PH Strength x 15 pounds and the Variant: Encumbrance as a toggle: `loadOf`, `carryRule`); what a pack, pouch, sack, smugglepack, chest, camtono, hovercart, beast of burden, companion or tracker vest carries; a smugglepack's compartment and clandestine clothes' pockets hide contraband from the law's search (`hidingPlaces`, `lawSearch`).
 
-- [ ] No encumbrance or carrying capacity (PH: Strength x 15 pounds, or the variant): weight is ignored. Add a total and a limit with the standard variant, and a rule for what a backpack, pouch, sack, smugglepack, chest, camtono, hovercart, droid porter or beast of burden adds.
-- [ ] Containers do not contain: a backpack or camtono could hold a set of items, hide contraband from a search (`contrabandFrom`, the law's search) or protect a datacard.
-- [ ] A hovercart or beast of burden should carry what the party cannot (ties to `transport.json` capacity).
+- [ ] A container does not protect what is in it from fire, acid or a thief's hand (a datacard in a camtono): only the law's search is played.
 
 ### Utility (23) and kits/tools
 
-**Today:** kits and tools: a use and boons from the tools data (`tools.json`, `boonOf`); `gearUse` covers restraining bolt, binders, computer spike, security spike, portable ram, macrobinoculars, fusion cutter, comm jammer and homing beacon.
+**Today:** every item has a use (`gearUse`, `tests/items/classify.test.ts` fails on one without): kits and tools by the tools data (`tools.json`, `boonOf`), a hydrospanner is a mechanic's kit and a mess kit a chef's kit (`kitAlias`), a shovel digs ore and plants of the first two tiers (`harvestKit`), a mirror shows the next room, a chronometer keeps exact time and the timers, the fire extinguisher's cone in a fight, grappling hooks and fibercord for the climb (`outsideClimbs`), lights, belt generators and rations by their texts.
 
-- [ ] No use for: bedroll, blanket, tent, mess kit, chronometer, mirror, fibercord cable, field rations, fire extinguisher, glowrod, gravity generator, heat generator, hydrospanner, grappling hook (the map has catwalks, ladders and roofs: a grapple could be a way up, `LocalMap.tsx` routing), shovel.
-- [ ] Glowrod and other lights should matter in dark rooms and caves: `atmosphere.ts` moods have ambient light; a carried light could extend the visible radius and answer darkvision/darkness rules.
-- [ ] Fire extinguisher against incendiary hazards and burning (no fire spreads on the map yet).
-- [ ] Hydrospanner and fusion cutter as repair or breaching tools tie to the `repair` and `cutter` kinds that exist for droids and doors; hydrospanner has no kind.
+- [ ] Fire does not spread on the map: the extinguisher puts out the ground an incendiary round or mine sets ablaze in a fight, nothing else burns.
 
 ### Weapon and armour accessories (18): holsters, packs, boots, gloves, generators
 
-**Today:** sold by arms dealers, found in stashes; models for all (holster, ammo pouch, bandolier, quiver, power belt, jetpack family, rocket boots, shock gloves, stealth field generator, bipod, tripod, friction grips, remote detonator, tracker vest). `gearUse` and `itemFactsOf` read none of them.
+**Today:** all read by their texts (`accessoryOf`): reloading without an action, flight and swimming for a time, a slow fall, climbing, shock gloves, the stealth field, braced weapons, the tracker vest, the remote detonator (paired with mines for a minute, set off as an action), holsters; drawn on the hip, back, belt and shoulder (`bodyAnchor`), the head, neck, chest and fingers fitted to the skull and build (`headFit`, `torsoFit`: goggles, masks, earpieces, helmets, amulets, collars, vests, rings), and gloves, boots (rocket boots with thrusters) and the bandolier's sash by code.
 
-- [ ] Every one is inert. Read the rule from each item's description and implement: Ammo Pouch/Ammo-feed belt/Bandolier/Quiver (reload without an action, depends on personal ammunition above), Power belt (powers a weapon), Holster (draw as part of an attack), Jetpack/Rocketpack/Propulsion/Repulsor pack and Rocket boots (flight or jump speed for a time, fuel: ties to the speeder/flight code), Shock gloves (unarmed shock damage), Stealth field generator (invisibility for a time), Tracker utility vest, Bipod/Tripod (braced heavy weapons), Friction-grip gear (climb, advantage against falls), Remote detonator (set off mines and charges at a distance: `explosive` kind `detonator` exists in `gearUse`).
-- [ ] The figure draws the new models on the hip, back, belt and shoulder (`interiors/anchors.ts`); the other slots are not drawn yet: head (helmets, goggles, masks, respirators: they need per-species fitting, horns, lekku, snouts), neck, finger (rings), feet (boots, rocket boots), hands (gloves), torso (vests). Extend `bodyAnchor` and the figure builder and test it on every species (`/dev/models?section=gear`).
-- [ ] Worn straps that wrap the body (bandolier sash, belts) are already drawn by code from the body width; the item should switch the code's `bandolier`/`belt` flag on instead of drawing a model.
+- [ ] Gloves and boots are drawn by code (a darker hand, a boot shaft): their models are single pairs that a swinging limb could not carry.
 
 ### Medical (16), kits and prostheses
 
-**Today:** medpac heals, repair kit, traumakit, emergency battery and antitoxkit have uses (`gearUse`); poison has a use; prostheses replace body parts (`PROSTHESES`, `BODY_PARTS`) with no numbers (house rule); all have models.
+**Today:** medpac heals, repair kit, traumakit, emergency battery and antitoxkit have uses (`gearUse`); poison has a use; prostheses replace body parts (`PROSTHESES`, `BODY_PARTS`) with no numbers (house rule); all have models; a surgeon lists every prosthesis the place can afford (`surgeonStock`) and one fitted is drawn on the figure (arm, leg, ear, face, throat, torso).
 
-- [ ] Ear, facial, throat and torso prostheses have models but the figure draws only the arm and the leg (`wantsOf` slots `armR`, `legL`). Draw a mask, a collar and a chest plate on the figure.
-- [ ] Medcentre and apothecary sell medical wares and show cases of prostheses (`stock.ts` `prosthetics`), but nobody sells prostheses as items: add them to a clinic's stock or to the surgeon's list.
 
 ### Explosives (27) and grenades
 
-**Today:** grenades, mines, charges and detonators are read by `gearUse` (radius, save, damage, conditions, lingering) and thrown or placed in fights (`useCombat`); sold on the black market and found in armories and stashes; models for all (thermal detonator, 12 grenade colours, 12 mines, 2 charges).
+**Today:** grenades and thermal detonators are thrown in a fight and enhanced ones read by grade (DC and dice); mines are set where the character stands (an action), arm at the start of their next turn, go off for the other side as it comes within 15 feet or to a remote detonator they were paired with, and are picked up again after the fight (`Mine`, `tripMines`, `explodeMine`); breaching charges blow doors; sold on the black market, found in armories and stashes; models for all.
 
-- [ ] Enhanced grenades, mines and charges (135 rows, grades Average to Devastating) are explosives to the player but `itemFactsOf` treats a consumable as timed-effect only: they have no use. Parse them with the explosive reader (the grade sets the DC and the dice).
-- [ ] A placed mine or charge is invisible on the map: draw the model where it is set, hidden until noticed (Perception/Investigation) and flashing when armed.
-- [ ] Remote detonators (above) and proximity triggers.
+- [ ] A placed mine is invisible on the map: draw the model where it is set, hidden until noticed (Perception/Investigation) and flashing when armed.
+- [ ] Breaching charges (a minute to install) are not set in a fight, and enemies set no mines of their own.
+- [ ] `Mine, gas`'s text is cut short in the rules data (102 characters): it has no damage or save to read.
 
 ### Spice (8), drinks (8) and consumables
 
-**Today:** spice and alcohol are `substance` uses with the high and the low, addiction saves and temporary hit points (`gearUse`); black market, bars and stashes sell and hold them; models for all.
+**Today:** spice and alcohol are `substance` uses with the high and the low, addiction saves and temporary hit points (`gearUse`); enhanced spice, drinks, medpacs, vitapacs, repair kits, grenades, mines and rounds read as their plain item at their grade (`enhancedConsumableUse`); stimpacs, adrenals, barriers, collimators and machinist's catalyzers have timed effects (`parseTimedEffect`) and a portable teleporter steps through to a free square in a fight.
 
-- [ ] Enhanced spice and drinks ('Glitterstim (Pure)', 'Vayerbok (Matured)': 100+ rows) are consumables with no facts: parse the grade into the dice and the DC like the base items.
-- [ ] Stimpacs (36), adrenals (18) and barriers (12) have timed effects (`parseTimedEffect`) and the party can use them one of each kind at a time; their models are in place, but a used injector leaves nothing and the barrier is not drawn on the map (a slab or dome at the party's square).
-- [ ] Medpacs/vitapacs/repair kits as enhanced consumables ('Vitapac (Fine)', 'Repair Kit Mk II'): no uses.
-- [ ] Power cells, cartridges, cells, collimators, calibrators and flechette clips (about 130 rows) are ammunition variants: they wait on the personal ammunition system.
+- [ ] A used injector leaves nothing and a barrier is not drawn on the map (a slab or dome at the party's square).
+- [ ] A teleporter's portals are not drawn and nobody else passes through them (the book lets anyone pass until the start of the user's next turn).
 
 ### Data (11), communications (8), gaming (6) and instruments (15)
 
-**Today:** credit chips, datacards, datacrons and holocrons are read once with a check; commlinks and holocomms call a contact; gaming sets and instruments are tools with a downtime use (`gamble`, `perform`: `tools.json`, `downtime.json`); vendors sell music and games (`leisure`), electronics (`general`), and loot caches hold data (`coin`, `intel`).
+**Today:** credit chips, datacards, datacrons and holocrons are read once with a check; commlinks and holocomms call a contact (overheard in a search unless a pocket scrambler is carried); a datapad, wristpad or stylus pen keeps notes; a holorecorder records the room (lore of it); a code cylinder opens a lock of DC 15 or less; a holotrace device lists the calls to security from anywhere; a translator or vocoder mask covers languages against a people that speaks only its own (`languageBarrier`, in haggling); gaming sets and instruments are tools with a downtime use; musicians hold an instrument of the catalogue; instruments are found in stashes and a cantina's instrument case.
 
-- [ ] Inert: datapad, wristpad, repelling wristpad, holorecorder, code cylinder, stylus pen, focus generator, hands-free commlink, holotrace device, personal translator, pocket scrambler, vocoder mask, comm jammer (has a kind), holocomm (a call). Ideas: datapad stores notes and quest data, personal translator and vocoder give languages (`characterLanguageProcessor` knows languages), holotrace tracks, code cylinder opens access panels (`useKindOf` access), holorecorder records a scene for a quest.
-- [ ] Instruments and gaming sets sit on shelves in curio shops and `Sabacc table`s, but the party playing a hand or a tune is a roll and a toast: no game scene, and the instrument is never drawn in a performer's hands (cantina musicians hold one now: `outfitOf` hand `play`). Cantina musicians now hold an instrument of the catalogue (chosen by name, one generic two-handed `play` pose in `models.tsx`), but the pose is the same for every instrument: horns belong at the mouth, a drum on the lap or belly, a lute strummed, a keyed box on a stand (`sits` in its meta); and they do not play (no sound, no animation).
+- [ ] The party playing a hand or a tune is a roll and a toast: no game scene, and the instrument is never drawn in the party's hands; a performer's instrument has one generic two-handed pose (horns belong at the mouth, a drum on the lap, a lute strummed) and nobody plays (no sound, no animation).
 - [ ] Dejarik, pazaak, sabacc, kirgatz and chatta-ragul sets are tools; the models exist, a table could show the set in play.
+- [ ] A focus generator's and wristpad's force and tech bonuses are shown, not applied.
 
 ### Droid customizations (48) and droids
 
-**Today:** a droid dealer sells droids and fits customizations the party carries (`droidStock`, `droidPlan`, GameBoard fit, `DROID_MOTOR_COST`, `DROID_BASE_SLOTS`); `itemFactsOf` reads their effects ('part' or 'protocol'); loot caches in workshops hold DroidCustomization rows; all 48 have a module model.
+**Today:** a droid dealer sells droids and the customizations at their value (a scrapyard salvaged ones), shows them on plinths and shelves, and fits them for a fee with no check; the party can fit what it carries with astrotech's implements; `itemFactsOf` reads their effects ('part' or 'protocol'); every installed customization is drawn on the droid (`moduleAnchor`: a sentry's dome on top, lifts under, the rest in a ring on the body).
 
-- [ ] Installed customizations are not drawn on the droid (the companion figure, `droidKind` models in `models.tsx`): plating as plates, lifts as a disc, a vocoder grille, the four-armed combatant's second arms, a sentry dome.
-- [ ] Droid customization rows are only found in workshop caches: a droid dealer should sell them (the party cannot buy them, only fit what it finds), and a mechanic could install for a fee.
-- [ ] Models are shown nowhere in play (no shelf holds them): add a `droids` shelf holder (`stock.ts` `droid parts shelf`) with the module models.
+- [ ] Powers and protocols that cast are shown only (see REVIVAL_NOTES, Enhanced items).
 
 ### Cybernetic augmentations (46)
 
-**Today:** a medic installs and removes them with a surgeon's check, a cost and hours (`installAugment`, `augmentationParts`, `BODY_PARTS`); their effects are parsed; attunement slots; all have a model (prosthetics from the kitbash set, an implant device, a torso, face, ear prosthesis).
+**Today:** a medic installs and removes them with a surgeon's check, a cost and hours (`installAugment`, `augmentationParts`, `BODY_PARTS`); the surgeon sells them by the wealth of the place (`surgeonStock`) and fits what is bought (buy and fit in one go); medical cabinets and vaults hold them; their effects are parsed; attunement slots; all have a model, and a fitted one is drawn on the figure.
 
-- [ ] No loot cache or vendor offers them (`CyberneticAugmentation` is in no `LOOT.enhanced` and no `WARES`): they can only be handed out. Add them to medcentre loot and a clinic's stock, with the rarity and price rule.
-- [ ] An installed arm, leg, eye, face, ear, throat or torso is not drawn on the figure except the arm and leg prostheses; draw the models.
 
 ### Item modifications (1,025), augments and chassis
 
-**Today:** the Common Modifications variant is the house rule: every plain weapon, armour, shield, wristpad, focus generator and piece of clothing is a chassis with four slots (`MOD_BASE_SLOTS`, `modKindOf`, `augmentSlots`); modifications read gained properties and effects (`itemFactsOf`); the workshop and armory caches hold them; 19 component models stand for them by kind.
+**Today:** the Common Modifications variant is the house rule: every plain weapon, armour, shield, wristpad, focus generator and piece of clothing is a chassis with four slots (`MOD_BASE_SLOTS`, `modKindOf`, `augmentSlots`, `modFitProblem`); modifications read gained properties and effects (`itemFactsOf`); armsmiths, tech shops, outfitters, mechanics, scrapyards and the black market sell them by trade and the wealth of the place (`modStock`), a technician fits one for a fee in an hour (`modFee`, `fitAtShop`); crafting covers modifications and chassis by blueprint (`blueprintPool`); the workshop and armory caches hold them; 19 component models stand for them by kind, and the parts bins show what the seller has.
 
 - [ ] Modifications are not shown on the item or on the person: a scope on a rifle, a guard on a saber. Needs `mod` sockets on the weapon models and a composer like `composeSaber`.
-- [ ] Modifications cannot be bought or made: no workshop service installs one for a fee, no crafting recipe (`downtime.json` has crafting; check it covers modifications and chassis).
 - [ ] Chassis rows ('Armor Chassis (Advanced)') have a model (the finished item's) with a `chassis` flag in the index meant for a dull, unfinished look: the figure and shelves do not read it.
 - [ ] The grade (Fine, Superior, Mk III) is in the index (`grade`) and should tint or mark the model (a rarity glow); no code reads it yet.
 
+### Enhanced items with a rule of their own (no plain item to read them as)
+
+**Today:** graded plain gear reads as its plain item at the grade's numbers (binders, camtonos, clandestine clothes, smugglepacks, jetpacks, rocket boots, remote detonators, restraining bolts, credit chips, datacrons, holocrons) and a blueprint item is learned over an hour (`enhancedConsumableUse`, `itemFactsOf`); the rest are listed above as text only and are shown with their rule, not applied.
+
+- [ ] Enhanced weapons, armour, shields, focuses and adventuring gear whose text is a rule of their own (Boots of Bounding, Cape of the Orator, Jensaarai Cloak, the Mandalorian helmet's and goggles' sight, Matrix Armor, Orbalisk Armor, Focus Generators and Wristpads of a grade: their force and tech attack and save bonuses, the Bolas, Net and Grenade Launcher grades): read each text like `parseItemEffects` reads the +N ones, one at a time, as the game gets the rule they change.
+- [ ] Ship armour, shields and weapons (9 enhanced rows) are fitted at a shipyard (`shipyard.ts`) but found in no cache: a wreck gives up equipment, not enhanced parts.
+
 ### Vendors, locations and loot
 
-**Today:** traders sell by kind of wares (`WARES`, `ROLE_WARES`, `MERCHANT_WARES`) with prices moved by region, planet needs, reputation and haggling; caches by room purpose (`LOOT`); contraband by law level. Shops show their stock (`stock.ts` `holdsOf`, `stockLayout`, `POOLS`; `Stock.tsx`): weapons on racks, shelves and cases (with ammunition and grenades of the catalogue), named armours and life-support suits on stands, kits, medical cases, prostheses and tools as before, and now a general store's goods shelf, a curio shop's instrument rack, an apothecary's vials, an outfitter's robes and coats on the clothing rack, devices on a tech shop's display table, a droid dealer's parts shelf, and bottles and tankards on a cantina's bar counter. Seen in the gallery (`/dev/models?section=interiors`, row of shops) and verified in a browser.
+**Today:** traders sell by kind of wares (`WARES`, `ROLE_WARES`, `MERCHANT_WARES`) with prices moved by region, planet needs, reputation and haggling; caches by room purpose (`LOOT`, with an instrument case on a cantina's dance floor and cybernetics in medical cabinets); contraband by law level and the law's search. Shops show their stock (`stock.ts` `holdsOf`, `stockLayout`, `POOLS`; `Stock.tsx`): weapons on racks, shelves and cases, named armours and life-support suits on stands, kits, medical cases, prostheses, tools, a general store's goods shelf and produce bin, a curio shop's instrument rack, curio shelves and plinth relic, an apothecary's vials, an outfitter's clothing rack, devices on a tech shop's display table, droid parts on shelves and in the repair bay's bin, modification components in parts bins, tools on tool racks, power and machinery on a shipyard's part stands, and a cantina's bar bottles.
 
-- [ ] Furniture that holds nothing yet: curio shelf and statuette plinth (curio shop), produce bin, parts bin (workshop, tech shop: modification components and droid modules would stand in it), tool rack, the pawnshop's display case, the vehicle dealer and shipyard's `Starship part` and `Upgrade showroom`, a medcentre's pharmacy shelving. Add holders in `holdsOf`/`stockLayout` with pools from `POOLS`.
 - [ ] No shop shows life-support suits and tanks except the outfitter's stands: `SHOP_WARES` gives a general store and no spaceport shop an `Armor stand`, and the spacer's chandler is a trader role (`ROLE_WARES` dockmaster, ticket agent) with no building of its own. Add a chandler's shop type or a stand to the general store (this changes new worlds' layouts: check `tests/world/layouts.test.ts`).
 - [ ] Ammunition by type colour is on the armsmith's shelves only (half of the clips and grenades there); the armory's crate stacks are the Blaster Kit's crates. Show ammunition cartons by type on an armory's shelving and a garrison's racks, and mines and charges (black market stock) in a hideout's stash.
-- [ ] Not every vendor kind is placed in a building: check that each `WARES` kind has a shop type whose sales floor shows it (`SHOP_WARES`), and that each sells what its shelves show (the shelf and the trader's list should agree: today a shelf is drawn from its pool, not from the trader's actual stock).
-- [ ] Musical instruments are found in no loot cache (only `leisure` merchants sell them): add them to stash, cantina stage and performer caches. Ship armour, ship shields and ship weapons (9 enhanced rows) are offered by no cache or shipyard stock; decide whether the shipyard sells upgrades (`SHOP_WARES.shipyard`, `starshipModifications.json`).
+- [ ] Not every shelf is drawn from the trader's actual stock (only the droid dealer's and the parts bins are): a shelf is otherwise drawn from its pool, not from the trader's list.
 - [ ] A map card for a cache lists its contents as text; show the items as small models on the cache or in a viewer (`itemModels.json` has them all, `interiors/ItemModel.tsx` draws one).
 - [ ] An inventory item viewer: tap an item in the inventory and see its model turn (a small 3D card using `ItemModel`), with its grade tint and chassis look.
 - [ ] Shelf stock loads lazily and a full shelf is up to 50 files: in software rendering it took about 30 seconds to show (the e2e does not assert shop stock; any step that does needs a long wait). Load only the hero detail for the shelf in front of the camera and the low detail elsewhere.

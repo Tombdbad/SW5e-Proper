@@ -290,7 +290,9 @@ export function containerOf(item: { name: string; description?: string }): { lb?
   const lb = t.match(/stores ([\d,.]+) ?lb/i) ?? t.match(/can store ([\d,.]+) lb/i);
   const oz = t.match(/stores (\d+) ounces, not exceeding/i);
   const pints = liquidOf(item);
-  const hidden = t.match(/hidden (?:storage )?compartment that stores ([\d.]+) lb|two hidden pockets, each of which can store up to ([\d.]+) lb/i);
+  const hidden = t.match(/hidden (?:storage )?compartment that stores ([\d.]+) lb|(\w+) hidden pockets, each of which can store up to ([\d.]+) lb/i);
+  // ("two hidden pockets", "three hidden pockets" of the better grades)
+  const COUNT: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 };
   const dc = t.match(/requires a DC (\d+) Investigation check/i);
   const lock = t.match(/requires a DC (\d+) security kit to force open/i);
   const speed = t.match(/has a speed of (\d+) feet/i);
@@ -298,7 +300,7 @@ export function containerOf(item: { name: string; description?: string }): { lb?
   return {
     ...(lb ? { lb: Number(lb[1].replace(/,/g, "")) } : oz ? { lb: Number(oz[1]) / 16 } : {}),
     ...(pints ? { pints } : {}),
-    ...(hidden ? { hidden: Number(hidden[1] ?? hidden[2]) * (hidden[2] ? 2 : 1), hiddenDc: Number(dc?.[1] ?? 15) } : {}),
+    ...(hidden ? { hidden: hidden[1] ? Number(hidden[1]) : (COUNT[hidden[2].toLowerCase()] ?? 2) * Number(hidden[3]), hiddenDc: Number(dc?.[1] ?? 15) } : {}),
     ...(lock ? { lock: Number(lock[1]) } : {}),
     ...(speed ? { speed: Number(speed[1]) } : {}),
   };

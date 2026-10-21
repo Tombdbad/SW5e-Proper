@@ -106,6 +106,12 @@ test("a character's gear is read from what they wield and wear, by the rules dat
   assert.deepEqual(gearOf({ equipment: [] }), { weapons: [], bodyClass: undefined, shield: undefined, carried: [], worn: [] });
   // What is put on, of what is carried
   assert.deepEqual(gearOf({ equipment: ["Respirator", "Backpack"], playState: { wearing: ["Respirator", "Boots"] } }).worn, ["Respirator"]);
+  // A prosthesis the surgeon fitted has left the pack but is on the body: it is drawn (and worn)
+  const fitted = gearOf({ equipment: ["Backpack"], playState: { augments: [{ name: "Ear prosthesis", parts: ["ear"], prosthesis: true }, { name: "Arm prosthesis", parts: ["arm"], prosthesis: true }] } });
+  assert.deepEqual(fitted.carried.map((c) => c.name).sort(), ["Arm prosthesis", "Backpack", "Ear prosthesis"]);
+  assert.deepEqual(fitted.worn, ["Ear prosthesis", "Arm prosthesis"]);
+  const drawn = wantsOf("", fitted, "", "x").map((w) => [w.slot, w.name ?? w.model]);
+  assert.ok(drawn.some(([slot]) => slot === "armR") && drawn.some(([slot, name]) => slot === "head" && name === "ear-prosthesis"), JSON.stringify(drawn));
 });
 
 test("a weapon with a model says where the hand closes on it, and an enhanced weapon takes its base weapon's design", () => {

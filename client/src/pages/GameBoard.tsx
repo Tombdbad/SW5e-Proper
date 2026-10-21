@@ -65,7 +65,7 @@ import {
   modKindOf, augmentSlots, MOD_BASE_SLOTS, rarityRank, INSTALL_DC, SIZE_TIME, crystalModifier, crystalFor, crystalsUpTo, DROID_MOTOR_COST, DROID_BASE_SLOTS, droidPlan,
   readOutcome, blueprintRarity, readCredits, RARITY_ORDER, type Fitted,
   FAMILIES, MATERIALS, REFINE_UNITS, tierOfCr, makeRemains, haulOf, withCacheAsset, familiesForTool, familiesForEnhanced, ALL_FAMILIES, type MaterialFamily, crNumber, RARITY_TIERS, NODE_RESPAWN, HARVEST_MINUTES, harvestDc, harvestKit, kitAlias, notesAllowed, addNote, addRecording, languageBarrier, OWN_TONGUE_ONLY, translatorSlots, setLanguages, tracedCalls, callOverheard, RECORD_MINUTES, RECORD_LIMIT, type Note, type Recording, harvestYield, materialsOf, materialsWorth, spendMaterials, nodeAt, type ResourceNode,
-  partsPlaceAt, partsStock, fitShipPart, wreckParts, droidPartsStock, droidDisplay, droidListed, surgeonStock, modStock, MOD_TRADES, WARES, modFee, modFitProblem, MOD_FIT_HOURS, blueprintPool, type SurgeonLine, type ModLine,
+  partsPlaceAt, partsStock, fitShipPart, wreckParts, droidPartsStock, droidDisplay, droidListed, surgeonStock, modStock, MOD_TRADES, WARES, baseNameOf, modFee, modFitProblem, MOD_FIT_HOURS, blueprintPool, type SurgeonLine, type ModLine,
   ammoFamilyOf, ammoItemFamily, ammoRider, accessoryOf, reloadOf, GENERATOR_SHOTS, waterSpeed, armorTraits, stealthMode, rigidDex, type AmmoRider,
   passDays, FORAGE_DC, HOT_LANDS, liquidOf, foodOf, GEAR, type Supplies,
   hazardsAt, exposure, HAZARD_HOUR, suitOf, airOf, breathRule, type Protections, type EnvHazard,
@@ -135,6 +135,8 @@ interface PlayState {
   hidden?: Record<string, number>;
   // Mines paired with a remote detonator (item names; the book: a minute to pair up to two within 10 feet)
   paired?: string[];
+  // A blueprint missed: the minute before the next try (the book: wait 24 hours)
+  blueprintUntil?: number;
   // Notes written on a datapad, wristpad or stylus pen, recordings made with a holorecorder, and the languages set on a translator or a
   // vocoder mask (item name: languages); see shared/logic comms.ts
   notes?: Note[];
@@ -2408,9 +2410,17 @@ export default function GameBoard() {
   // ---------------------------------------------------------------------------------------------
   const play: PlayState = (character?.playState ?? {}) as PlayState;
   const party: Companion[] = Array.isArray(character?.companionData?.party) ? character.companionData.party : [];
-  const factsOf = (name: string) => equipmentData.find((e) => e.name === name);
+  // A graded piece of adventuring gear (binders, a camtono, a jetpack "(Fine)") is its plain item with the grade's text, so that all that reads
+  // an item's rules (accessories, containers, suits, weight, the law's search) reads it the same
+  const gradedAsPlain = (name: string) => {
+    const f = itemFacts?.[name.toLowerCase()];
+    if (f?.type !== "AdventuringGear" || !f.use) return undefined;
+    const base = equipmentData.find((e) => e.name.toLowerCase() === baseNameOf(name).toLowerCase());
+    return base ? { ...base, name, description: f.text } : undefined;
+  };
+  const factsOf = (name: string) => equipmentData.find((e) => e.name === name) ?? gradedAsPlain(name);
   // What an item does: a plain item's from its description; an enhanced consumable's as the plain item it is a grade of
-  const gearOf = (name: string): GearUse | undefined => (factsOf(name) ? gearUse({ name, equipmentCategory: factsOf(name)?.equipmentCategory, description: factsOf(name)?.description }) : factsOfItem(name)?.use);
+  const gearOf = (name: string): GearUse | undefined => itemFacts?.[name.toLowerCase()]?.use ?? (factsOf(name) ? gearUse({ name, equipmentCategory: factsOf(name)?.equipmentCategory, description: factsOf(name)?.description }) : undefined);
   const die = (sides: number) => Math.floor(Math.random() * sides) + 1;
   const clockNow = () => useClock.getState().minutes;
   const speed = (what: string) => toast.info(what);
@@ -5010,7 +5020,7 @@ export default function GameBoard() {
         <div className="mt-1 space-y-1 text-xs" data-testid="data-panel">
           {text}
           <p className="text-gray-300">
-            {use.form === "chip" ? `Crack it (Intelligence, a slicer's kit, DC ${use.dc}; +5 without one): credits.` : use.form === "card" ? "Read it on a datapad, wristpad or holocomm (Intelligence, DC 12): lore of a place, a blueprint or credits." : use.form === "cron" ? `Crack it (Intelligence, DC ${use.dc}): lore, a blueprint or credits.` : "Open it with the Force (Wisdom, DC 15): lore or a blueprint."} Ten minutes; house rule.
+            {use.form === "chip" ? `Crack it (Intelligence, a slicer's kit, DC ${use.dc}; +5 without one): credits.` : use.form === "card" ? "Read it on a datapad, wristpad or holocomm (Intelligence, DC 12): lore of a place, a blueprint or credits." : use.form === "cron" ? `Crack it (Intelligence, DC ${use.dc}): lore, a blueprint or credits.` : use.form === "blueprint" ? `Learn it (Intelligence with the right tools, DC ${use.dc}, an hour): the blueprint of an item of ${(use.rarity ?? "standard").toLowerCase()} rarity; a miss waits 24 hours (the book).` : "Open it with the Force (Wisdom, DC 15): lore or a blueprint."}${use.form === "blueprint" ? "" : " Ten minutes; house rule."}
           </p>
           <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid="read-data" onClick={() => readData(name, use)}>{use.form === "chip" ? "Crack it" : "Read it"}</Button>
         </div>
@@ -5512,6 +5522,7 @@ export default function GameBoard() {
   };
   const readData = async (name: string, use: Extract<GearUse, { kind: "data" }>) => {
     if (!world || inCombat || dead) return;
+    if (use.form === "blueprint" && (play.blueprintUntil ?? 0) > clockNow()) return speed("A failed try waits 24 hours before the next (the book).");
     if (use.form === "card" && !carries(/^(datapad|wristpad|holocomm)/i)) return speed("A datacard is read on a datapad, a wristpad or a holocomm.");
     if (use.form === "holocron" && !(character.forcePowers ?? []).length) return speed("A holocron answers only to the Force.");
     const kit = (character.equipment ?? []).find((n: string) => /^slicer's kit$/i.test(n)) as string | undefined;
@@ -5521,8 +5532,12 @@ export default function GameBoard() {
     const dc = use.dc + (use.form === "chip" || use.form === "cron" ? (kit ? 0 : 5) : 0);
     const ok = await abilityCheck(`${name}`, dc, ability, trained);
     if (cancelledCheck.current) return;
-    const time = pass(10);
-    if (!ok) return void saveCampaign(time);
+    // A blueprint takes an hour (the book), the rest ten minutes; a blueprint missed waits a day before the next try
+    const time = pass(use.form === "blueprint" ? 60 : 10);
+    if (!ok) {
+      if (use.form === "blueprint") patchPlay({ blueprintUntil: clockNow() + 24 * 60 });
+      return void saveCampaign(time);
+    }
     const what = readOutcome(use.form, die(100));
     const spent = consume(name);
     const changes: Record<string, any> = { equipment: spent.equipment };
@@ -5537,7 +5552,8 @@ export default function GameBoard() {
       commitDowntime({ character: changes, downtime: { lore: [...downtime.lore, { id: dtId("l"), topic: `${name}: what is kept at ${place.name}`, where: place.id, whereName: place.name }].slice(-Math.max(1, 1 + Math.floor(((character.abilityScores?.intelligence ?? 10) - 10) / 2))) }, days: 0, log: [`${name} read: lore of ${place.name}.`] });
       toast.success(`${name}: you learn what is kept at ${place.name} (see Downtime, lore).`);
     } else {
-      const rarity = blueprintRarity(level, die(100));
+      // (a blueprint item is of its own rarity; a find by the level's)
+      const rarity = use.form === "blueprint" && use.rarity ? use.rarity.toLowerCase() : blueprintRarity(level, die(100));
       const pool = blueprintPool(Object.values(itemFacts ?? {}), rarity, downtime.blueprints);
       const pick = pool[Math.floor(Math.random() * pool.length)];
       if (!pick) return void saveCampaign(time);

@@ -6384,7 +6384,7 @@ export type GearUse =
   | { kind: "beacon" }
   // Information gear (house rule): a credit chip, a datacard, a datacron or a holocron is read once
   // (a check against `dc`); a commlink or holocomm calls an allied contact
-  | { kind: "data"; form: "chip" | "card" | "cron" | "holocron"; dc: number }
+  | { kind: "data"; form: "chip" | "card" | "cron" | "holocron" | "blueprint"; dc: number; rarity?: string }
   | { kind: "call" }
   | { kind: "game" }
   | { kind: "instrument" }
@@ -6503,8 +6503,12 @@ export function gearUse(item: GearFacts): GearUse | undefined {
 // gives Hit Dice back. `equipment` is the equipment data (for the plain item's category).
 export const baseNameOf = (name: string) => name.replace(/\s*\((?:[^()]*)\)\s*$/, "").replace(/\s+Mk\s+[IVX]+$/i, "").trim();
 export function enhancedConsumableUse(row: { name: string; text?: string; consumableType?: string; type?: string }, equipment: { name: string; equipmentCategory: string }[]): GearUse | undefined {
-  if (row.type && row.type !== "Consumable") return undefined;
+  // (a graded piece of adventuring gear, binders or a jetpack of a better grade, reads as its plain item the same way)
+  if (row.type && row.type !== "Consumable" && row.type !== "AdventuringGear") return undefined;
   const text = (row.text ?? "").replace(/\s+/g, " ");
+  // A blueprint (an item): learned over an hour with an Intelligence check, its DC by the rarity it is of (the item's text)
+  const blueprint = /^Blueprint \(/i.test(row.name) ? text.match(/DC (\d+) Intelligence check/i) : undefined;
+  if (blueprint) return { kind: "data", form: "blueprint", dc: Number(blueprint[1]), rarity: (row.name.match(/\((\w+)\)/) ?? [])[1] ?? "Standard" };
   const base = equipment.find((e) => e.name.toLowerCase() === baseNameOf(row.name).toLowerCase());
   const portal = /^portable teleporter/i.test(row.name) ? text.match(/up to ([\d,]+) feet away/i) : undefined;
   if (portal) return { kind: "teleport", feet: Number(portal[1].replace(/,/g, "")) };
@@ -10193,7 +10197,12 @@ export function itemFactsOf(row: { name: string; type: string; subtype?: string;
   if (row.type === "CyberneticAugmentation") {
     return { ...base, effects: parseItemEffects(text), augment: /replacement/i.test(row.cyberneticAugmentationType ?? row.subtype ?? "") ? "replacement" : "enhancement", parts: augmentationParts(text) };
   }
-  if (["Weapon", "Armor", "Shield", "Focus", "AdventuringGear"].includes(row.type)) return { ...base, effects: parseItemEffects(text) };
+  if (["Weapon", "Armor", "Shield", "Focus", "AdventuringGear"].includes(row.type)) {
+    // Graded plain gear (binders, a camtono, clandestine clothes, a jetpack, rocket boots, a restraining bolt, a smugglepack, a credit chip, a
+    // datacron) is its plain item at the grade's numbers, and a blueprint can be learned
+    const use = row.type === "AdventuringGear" && equipment ? enhancedConsumableUse(row, equipment) : undefined;
+    return { ...base, effects: parseItemEffects(text), ...(use ? { use } : {}) };
+  }
   return undefined;
 }
 
@@ -10257,8 +10266,9 @@ export const droidPlan = (rarity: string, size = "medium", removing = false) => 
 
 // ---- Information gear (house rule): what reading a credit chip, datacard, datacron or holocron
 // gives. A chip is credits; the others, a d100: lore of a place, a blueprint, or credits.
-export function readOutcome(form: "chip" | "card" | "cron" | "holocron", d100: number): "credits" | "lore" | "blueprint" {
+export function readOutcome(form: "chip" | "card" | "cron" | "holocron" | "blueprint", d100: number): "credits" | "lore" | "blueprint" {
   if (form === "chip") return "credits";
+  if (form === "blueprint") return "blueprint";
   if (form === "holocron") return d100 <= 60 ? "lore" : "blueprint";
   return d100 <= 40 ? "lore" : d100 <= 75 ? "blueprint" : "credits";
 }
