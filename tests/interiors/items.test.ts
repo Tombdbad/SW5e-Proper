@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { ROOT, ASSETS, loadGlb, trianglesOf } from "../helpers";
 import { FINISH_OF_MARK, geometryOf, splitByFinish } from "../../client/src/components/Map/interiors/assets";
-import { ITEM_MODELS, assetPath, composeSaber, itemRef, modelUrl, needsBlade, pivotOf, socketCentred, socketOf, tintGlow, toned, withoutParts } from "../../client/src/components/Map/interiors/items";
+import { ITEM_MODELS, assetPath, composeSaber, withHalo, HALO_SCALE, itemRef, modelUrl, needsBlade, pivotOf, socketCentred, socketOf, tintGlow, toned, withoutParts } from "../../client/src/components/Map/interiors/items";
 import { KIT_MODELS } from "../../client/src/components/Map/interiors/kitbash";
 import { LENGTH } from "../../client/src/components/Map/interiors/weapons";
 
@@ -148,4 +148,40 @@ test("a saber's blade can take another colour, and only what glows changes; a so
   const b = ITEM_MODELS["saber-straight"].box;
   assert.ok(Math.abs(c[2] - (s[2] - (b[2] + b[5]) / 2)) < 1e-9);
   assert.equal(socketCentred("saber-straight", "nothing"), undefined);
+});
+
+test("a saber gets a halo: a paler, wider copy of each glowing part in the haze finish, as long as the blade, and nothing else changes", async () => {
+  for (const name of ["saber-straight", "saber-double"]) {
+    const g = await loaded(name);
+    const haloed = withHalo(g);
+    const [mark, now] = [g.getAttribute("mark"), haloed.getAttribute("mark")];
+    let glow = 0;
+    for (let i = 0; i < mark.count; i += 3) if (Math.round(mark.getX(i)) === 2) glow++;
+    assert.ok(glow > 0, `${name} has a blade that glows`);
+    // The halo is added after the saber's own triangles, a copy of the glowing ones
+    assert.equal(haloed.getAttribute("position").count, g.getAttribute("position").count + glow * 3);
+    let haze = 0;
+    for (let i = 0; i < now.count; i += 3) if (Math.round(now.getX(i)) === 4) haze++;
+    assert.equal(haze, glow);
+    // Every original vertex is where it was
+    for (let i = 0; i < g.getAttribute("position").count; i += 7) assert.equal(haloed.getAttribute("position").getX(i), g.getAttribute("position").getX(i));
+    // The haze is wider than the blade, no longer than it
+    const blade = new THREE.Box3(), around = new THREE.Box3();
+    for (let i = 0; i < now.count; i++) {
+      const p = new THREE.Vector3(haloed.getAttribute("position").getX(i), haloed.getAttribute("position").getY(i), haloed.getAttribute("position").getZ(i));
+      if (Math.round(now.getX(i)) === 2) blade.expandByPoint(p);
+      if (Math.round(now.getX(i)) === 4) around.expandByPoint(p);
+    }
+    const [bw, aw] = [blade.max.x - blade.min.x, around.max.x - around.min.x];
+    assert.ok(aw > bw * (HALO_SCALE - 0.4), `halo ${aw.toFixed(3)} wide on a blade ${bw.toFixed(3)}`);
+    assert.ok(Math.abs((around.max.z - around.min.z) - (blade.max.z - blade.min.z)) < 1e-6, "the halo is as long as the blade");
+    // Paler: the colours move to white
+    const [was, paler] = [g.getAttribute("color"), haloed.getAttribute("color")];
+    const firstGlow = Array.from({ length: mark.count }, (_, i) => i).find((i) => Math.round(mark.getX(i)) === 2)!;
+    const haloAt = g.getAttribute("position").count + 0;
+    assert.ok(paler.getX(haloAt) >= was.getX(firstGlow) - 1e-6 && paler.getY(haloAt) >= was.getY(firstGlow) - 1e-6);
+  }
+  // No glow, no halo: a holster comes back as it was
+  const holster = await loaded("holster");
+  assert.equal(withHalo(holster), holster);
 });

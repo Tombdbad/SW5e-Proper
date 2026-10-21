@@ -10,7 +10,8 @@ import { retone, type Tone } from "./tones";
 // What a vertex of an item model (tools/build-item-assets.mjs) says in its `_MARK` attribute: [finish, part]. The finish is how that
 // part is drawn (metal shines, an emissive material glows); the part says which named piece of the model it belongs to (a saber's blade,
 // a bow's limb), whose pivots the catalogue (itemModels.json) keeps
-export const FINISH_OF_MARK = ["sheen", "matte", "glow", "cloth"] as const;
+// (4, haze, is made in code, not in Blender: the soft halo round a saber's blade, items.ts withHalo)
+export const FINISH_OF_MARK = ["sheen", "matte", "glow", "cloth", "haze"] as const;
 export type MarkFinish = (typeof FINISH_OF_MARK)[number];
 
 // Where the model's origin goes: its middle (a weapon on a peg), the middle of its underside (a crate on a floor)

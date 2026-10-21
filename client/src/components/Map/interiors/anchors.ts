@@ -58,3 +58,16 @@ export function holdAt(hand: V3, dir: V3, length: number, scale: number, fractio
   else at.add(d.clone().multiplyScalar(length * scale * (0.5 - fraction)));
   return { at: [at.x, at.y, at.z], rot: [e.x, e.y, e.z] };
 }
+
+// Where the second hand of a two-handed weapon closes (2026-10-21): the weapon's `off_hand` socket, in the frame the figure holds it in (the
+// same placement as `holdAt`, so the right hand stays on the grip). Null when the point is farther than an arm reaches from `shoulder`,
+// when the hand stays where the pose puts it
+export const ARM_REACH = 0.5;
+export function offHandAt(hand: V3, dir: V3, length: number, scale: number, fraction: number, grip: V3 | undefined, offHand: V3, shoulder?: V3): V3 | null {
+  const d = new THREE.Vector3(...dir).normalize();
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), d);
+  const placed = holdAt(hand, dir, length, scale, fraction, grip);
+  const at = new THREE.Vector3(...placed.at).add(new THREE.Vector3(...offHand).multiplyScalar(scale).applyQuaternion(q));
+  if (shoulder && at.distanceTo(new THREE.Vector3(...shoulder)) > ARM_REACH) return null;
+  return [at.x, at.y, at.z];
+}

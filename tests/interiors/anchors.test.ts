@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { LEAN, WAIST, bodyAnchor, holdAt, type WornSlot } from "../../client/src/components/Map/interiors/anchors";
+import { LEAN, WAIST, ARM_REACH, bodyAnchor, holdAt, offHandAt, type WornSlot } from "../../client/src/components/Map/interiors/anchors";
 
 const SLOTS: WornSlot[] = ["hipR", "hipL", "back", "belt", "shoulder"];
 const human = { bulk: 1 };
@@ -52,4 +52,26 @@ test("a hand closes exactly on a model's grip socket, whichever way the weapon p
   const mid = holdAt([0, 1, 0], [0, 0, 1], 0.4, 1, 0.5);
   assert.deepEqual(mid.at.map((v) => +v.toFixed(9)), [0, 1, 0]);
   assert.ok(holdAt([0, 1, 0], [0, 0, 1], 0.4, 1, 0.2).at[2] > 0, "the rear is in the hand: the weapon sits forward of it");
+});
+
+test("the second hand of a two-handed weapon closes exactly on its off_hand socket, whichever way it points, and only where an arm reaches", () => {
+  const [grip, off]: [[number, number, number], [number, number, number]] = [[0, 0.01, -0.2], [0.01, -0.02, 0.15]];
+  for (const dir of [[0, 0, 1], [0.3, -0.2, 0.9], [-0.4, 0.1, 0.8]] as [number, number, number][]) for (const scale of [0.85, 1]) {
+    const hand: [number, number, number] = [-0.1, 0.07, 0.17];
+    const at = offHandAt(hand, dir, 0.9, scale, 0.3, grip, off)!;
+    // The same transform as the right hand's: the off_hand point of the model lands where the function says
+    const placed = holdAt(hand, dir, 0.9, scale, 0.3, grip);
+    const m = new THREE.Matrix4().compose(new THREE.Vector3(...placed.at), new THREE.Quaternion().setFromEuler(new THREE.Euler(...placed.rot)), new THREE.Vector3().setScalar(scale));
+    const p = new THREE.Vector3(...off).applyMatrix4(m);
+    assert.ok(p.distanceTo(new THREE.Vector3(...at)) < 1e-6, `${dir} x${scale}`);
+    // The right hand still holds the grip
+    assert.ok(new THREE.Vector3(...grip).applyMatrix4(m).distanceTo(new THREE.Vector3(...hand)) < 1e-6);
+    // The two hands are as far apart as the sockets are, along the weapon
+    assert.ok(Math.abs(new THREE.Vector3(...at).distanceTo(new THREE.Vector3(...hand)) - new THREE.Vector3(...off).sub(new THREE.Vector3(...grip)).length() * scale) < 1e-6);
+  }
+  // Out of reach of the shoulder: the pose's own hand stays
+  const toLeft: [number, number, number] = [0.15, 0.12, 0.09];
+  assert.equal(offHandAt([-0.1, 0.07, 0.17], toLeft, 0.9, 1, 0.3, grip, [0, 0, 1.2], [0.2, 0.34, 0]), null);
+  assert.ok(offHandAt([-0.1, 0.07, 0.17], toLeft, 0.9, 1, 0.3, grip, off, [0.2, 0.34, 0]) !== null, "a rifle held as the pose holds it reaches");
+  assert.ok(ARM_REACH > 0.3 && ARM_REACH < 0.7);
 });

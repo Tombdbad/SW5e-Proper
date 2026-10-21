@@ -112,8 +112,10 @@ export interface Want {
   // of its own, that blade (the file under /assets, its catalogue name, and how long against the shape's own length)
   name?: string;
   blade?: { model: string; name: string; scale: number };
-  // Where the hand closes on it, in the model's own (centred) frame: its `grip` socket
+  // Where the hand closes on it, in the model's own (centred) frame: its `grip` socket; and where the second hand of a two-handed
+  // weapon closes: its `off_hand` socket
   grip?: [number, number, number];
+  offHand?: [number, number, number];
 }
 
 // How a catalogue model is looked at: left in its own colours when they mean something (a blade, a grenade's type, a suit's use), else in
@@ -154,7 +156,7 @@ const weaponWant = (name: string, classification?: string): Want | undefined => 
   const own = ref && !ref.model.startsWith("weapon:") ? assetPath(ref.model) : undefined;
   if (ref && own && modelInfo(ref.model)?.meta.slot === "weapon") {
     const blade = needsBlade(ref) && assetPath(`blade-${ref.blade}`) ? { model: assetPath(`blade-${ref.blade}`)!, name: `blade-${ref.blade}`, scale: ref.bladeScale ?? 1 } : undefined;
-    return { slot: "weapon", model: own, look: lookOfModel(ref.model), scale: 0.85, name: ref.model, grip: socketCentred(ref.model, "grip"), ...(blade ? { blade } : {}) };
+    return { slot: "weapon", model: own, look: lookOfModel(ref.model), scale: 0.85, name: ref.model, grip: socketCentred(ref.model, "grip"), offHand: socketCentred(ref.model, "off_hand"), ...(blade ? { blade } : {}) };
   }
   // An enhanced weapon built on a base weapon takes that weapon's design
   if (ref?.model.startsWith("weapon:")) {
@@ -183,7 +185,7 @@ export function wantsOf(hand: Hand, gear?: Gear, role = "", name = ""): Want[] {
   if (hand === "play" && !gear) {
     const model = POOLS.instruments[hashName(name || role) % POOLS.instruments.length];
     const own = assetPath(model);
-    return own ? [{ slot: "weapon", model: own, look: lookOfModel(model), scale: 1, name: model, grip: socketCentred(model, "grip") }] : [];
+    return own ? [{ slot: "weapon", model: own, look: lookOfModel(model), scale: 1, name: model, grip: socketCentred(model, "grip"), offHand: socketCentred(model, "off_hand") }] : [];
   }
   const main = gear ? gear.weapons[0] : undefined;
   // A person with no weapon of their own wielded holds what their pose says (an NPC's blaster, a Force user's saber)

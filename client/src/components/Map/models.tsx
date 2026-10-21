@@ -12,8 +12,8 @@ import { fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interi
 import type { Tone } from "./interiors/tones";
 import { advance, bob, LIMB, limbMaterial, pose as poseLimbs, standing } from "./interiors/limbs";
 import { handOf, wantsOf, type Gear, type Want, type Slot } from "./interiors/gear";
-import { bodyAnchor, holdAt } from "./interiors/anchors";
-import { composeSaber, tintGlow } from "./interiors/items";
+import { bodyAnchor, holdAt, offHandAt } from "./interiors/anchors";
+import { composeSaber, tintGlow, withHalo } from "./interiors/items";
 import { toneNameOf, type KitLook } from "./interiors/kitbash";
 import { TONES } from "./interiors/tones";
 
@@ -1852,8 +1852,9 @@ export interface Attach {
   slot: Slot;
   geometry: THREE.BufferGeometry;
   scale: number;
-  // The point of the model's own frame the hand closes on (its `grip` socket), where it has one
+  // The point of the model's own frame the hand closes on (its `grip` socket), where it has one, and where the second hand does
   grip?: [number, number, number];
+  offHand?: [number, number, number];
 }
 export interface Outfit {
   // The weight of armour worn (pauldrons, a heavier plate): from what the character wears
@@ -2085,7 +2086,16 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
     play: { r: [[-0.2 * b, sh, 0], [-0.21 * b, 0.17, 0.07], [-0.07, 0.2, 0.2]], l: [[0.2 * b, sh, 0], [0.2 * b, 0.2, 0.11], [0.09, 0.22, 0.25]] },
   };
   const hang = { r: [[-0.2 * b, sh, 0], [-0.25 * b, 0.12, -0.02], [-0.25 * b, -0.06, 0.06]] as V3[], l: [[0.2 * b, sh, 0], [0.25 * b, 0.12, -0.02], [0.25 * b, -0.06, 0.06]] as V3[] };
-  const pose = poses[o.hand] ?? hang;
+  let pose = poses[o.hand] ?? hang;
+  // The second hand of a two-handed weapon closes on the weapon's own `off_hand` socket, where an arm can reach it
+  const wielded = p.attach.find((a) => a.slot === "weapon");
+  if (wielded?.offHand && (o.hand === "rifle" || o.hand === "bowcaster" || o.hand === "play")) {
+    const [right, left] = [pose.r[2], pose.l[2]];
+    wielded.geometry.boundingBox ?? wielded.geometry.computeBoundingBox();
+    const length = wielded.geometry.boundingBox!.max.z - wielded.geometry.boundingBox!.min.z;
+    const off = offHandAt(right, [left[0] - right[0], left[1] - right[1], left[2] - right[2]], length, wielded.scale, 0.3, wielded.grip, wielded.offHand, pose.l[0]);
+    if (off) pose = { r: pose.r, l: [pose.l[0], pose.l[1], off] };
+  }
   const glove = armored ? p.under : p.bare || o.garment !== "uniform" ? flesh : "#15171b";
   for (const [i, arm] of [pose.r, pose.l].entries()) {
     const s = i ? 1 : -1;
@@ -3366,11 +3376,18 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
       if (!tinted) { tinted = tintGlow(made, base.blade); COMPOSED.set(key, tinted); }
       made = tinted;
     }
+    // ... and a soft halo (a paler, wider haze round each blade)
+    if (w.slot === "weapon" && w.name?.startsWith("saber-")) {
+      const key = `halo:${base.blade ?? ""}|${w.look}|${w.model}|${w.blade?.model ?? ""}|${w.blade?.scale ?? 1}`;
+      let haloed = COMPOSED.get(key);
+      if (!haloed) { haloed = withHalo(made); COMPOSED.set(key, haloed); }
+      made = haloed;
+    }
     return made;
   };
   const ready = wants.length > 0 && wants.every((w) => geometryOfWant(w));
   const spec = ready
-    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, attach: wants.map((w) => ({ id: (w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model) + (base.blade && w.name?.startsWith("saber-") ? `~${base.blade}` : ""), slot: w.slot, scale: w.scale, grip: w.grip, geometry: geometryOfWant(w)! })) })
+    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, attach: wants.map((w) => ({ id: (w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model) + (base.blade && w.name?.startsWith("saber-") ? `~${base.blade}` : ""), slot: w.slot, scale: w.scale, grip: w.grip, offHand: w.offHand, geometry: geometryOfWant(w)! })) })
     : base;
   return (
     <group scale={large ? 1.5 : 1}>

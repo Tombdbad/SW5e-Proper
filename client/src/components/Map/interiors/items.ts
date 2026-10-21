@@ -157,6 +157,49 @@ function mergeAligned(list: THREE.BufferGeometry[]): THREE.BufferGeometry {
   return out;
 }
 
+// A saber's blade is a thin glowing line: this adds the soft halo round it (2026-10-21), a wider, paler copy of each glowing part in the
+// translucent `haze` finish (mark 4), widened about the part's own axis (a blade lies along z) and no longer. A geometry with no glow, or
+// no marks, comes back as it was
+export const HALO_SCALE = 2.6;
+export function withHalo(geometry: THREE.BufferGeometry, factor = HALO_SCALE): THREE.BufferGeometry {
+  const mark = geometry.getAttribute("mark");
+  const pos = geometry.getAttribute("position");
+  if (!mark || !pos) return geometry;
+  const parts = new Map<number, number[]>();
+  for (let t = 0; t + 2 < pos.count; t += 3) {
+    if (Math.round(mark.getX(t)) !== 2) continue;
+    const p = partOf(geometry, t);
+    if (!parts.has(p)) parts.set(p, []);
+    parts.get(p)!.push(t);
+  }
+  if (!parts.size) return geometry;
+  const total = [...parts.values()].reduce((n, l) => n + l.length * 3, 0);
+  const names = Object.keys(geometry.attributes).filter((n) => ["position", "normal", "color", "mark"].includes(n));
+  const arrays = Object.fromEntries(names.map((n) => [n, new Float32Array(total * geometry.getAttribute(n).itemSize)]));
+  let at = 0;
+  for (const triangles of parts.values()) {
+    // The part's axis: the middle of its box in x and y
+    const box = new THREE.Box3();
+    for (const t of triangles) for (let v = 0; v < 3; v++) box.expandByPoint(new THREE.Vector3(pos.getX(t + v), pos.getY(t + v), pos.getZ(t + v)));
+    const [cx, cy] = [(box.min.x + box.max.x) / 2, (box.min.y + box.max.y) / 2];
+    for (const t of triangles) for (let v = 0; v < 3; v++, at++) {
+      for (const n of names) {
+        const a = geometry.getAttribute(n);
+        for (let c = 0; c < a.itemSize; c++) {
+          let value = [a.getX, a.getY, a.getZ, a.getW][c].call(a, t + v);
+          if (n === "position") value = c === 0 ? cx + (value - cx) * factor : c === 1 ? cy + (value - cy) * factor : value;
+          else if (n === "color") value = value + (1 - value) * 0.5;
+          else if (n === "mark" && c === 0) value = 4;
+          arrays[n][at * a.itemSize + c] = value;
+        }
+      }
+    }
+  }
+  const halo = new THREE.BufferGeometry();
+  for (const n of names) halo.setAttribute(n, new THREE.BufferAttribute(arrays[n], geometry.getAttribute(n).itemSize));
+  return mergeAligned([geometry, halo]);
+}
+
 // A copy of a geometry whose glowing vertices (a saber's blade, a lamp) are `hex` coloured: the wielder's blade colour. The marks say which
 // vertices glow; nothing else changes
 export function tintGlow(geometry: THREE.BufferGeometry, hex: string): THREE.BufferGeometry {
