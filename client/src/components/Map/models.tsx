@@ -1566,12 +1566,12 @@ export function shipClass(ship: Pick<ShipLook, "size" | "role">): "fighter" | "s
   return "capital";
 }
 
-export function ShipBody({ ship }: { ship: ShipLook }) {
+export function ShipBody({ ship, grain }: { ship: ShipLook; grain?: number }) {
   const kind = shipClass(ship);
   const imperial = IMPERIAL.test(ship.owner ?? "");
   const wrecked = ship.status === "wrecked";
   const tone = kind === "freighter" && !imperial ? pickOf(["#b9b1a0", "#a9b0b5", "#c2b8a3"], ship.name ?? ship.role) : "";
-  return <Model id={`ship:${kind}:${imperial ? "imp" : "std"}:${wrecked ? 1 : 0}:${tone}`} build={(k) => buildShip(k, kind, imperial, wrecked, tone)} wear={hullWear(ship, imperial)} />;
+  return <Model id={`ship:${kind}:${imperial ? "imp" : "std"}:${wrecked ? 1 : 0}:${tone}`} build={(k) => buildShip(k, kind, imperial, wrecked, tone)} wear={{ ...hullWear(ship, imperial), grain }} />;
 }
 
 // A hull turned round the x axis: points are [radius, x] from stern to bow
@@ -1746,11 +1746,15 @@ function buildShip(k: Kit, kind: string, imperial: boolean, wrecked: boolean, to
 // A ship on the floor, built on 6 by 4 squares with the bow to +x and stretched to its footprint;
 // `ceiling` (squares) is the roof it stands under, which the hull is kept below
 const HULL_HEIGHT = 2.4;
+// (the wear's texture is laid in model units and the hull is stretched to its footprint, so the density is raised by the stretch, in a few
+// steps: each step is another baked copy of the hull)
+const GRAINS = [1, 1.5, 2.5, 4, 6, 9];
+const grainFor = (stretch: number) => GRAINS.reduce((best, g) => (Math.abs(Math.log(g / stretch)) < Math.abs(Math.log(best / stretch)) ? g : best), 1);
 export function ShipModel({ ship, w, h, ceiling }: { ship: ShipLook; w: number; h: number; ceiling?: number }) {
   const wrecked = ship.status === "wrecked";
   return (
     <group position={[w / 2, 0, h / 2]} scale={[w / 6, Math.min(w / 6, h / 4, ceiling ? ceiling / HULL_HEIGHT : Infinity), h / 4]} rotation={wrecked ? [0.12, 0, 0.16] : undefined}>
-      <ShipBody ship={ship} />
+      <ShipBody ship={ship} grain={grainFor(Math.sqrt((w / 6) * (h / 4)))} />
     </group>
   );
 }

@@ -4,9 +4,11 @@
 //   damage.png         scorch and soot blotches (grey), laid at a scale of their own so that they do not repeat with the wear
 //   panels_normal.png  plates, grooves, rivets, hatches and vents (OpenGL normal map: green up)
 //   panels_height.png  the same as a height map (not used by the game yet: parallax shifts wrongly on curved hulls)
+// and floor/deck_plate, the diamond plate of floor/metal_plate drawn in neutral steel (the photograph is dark, brown and green, and a tint
+// cannot take a colour out), its normal and height maps copied
 // Usage: node tools/build-hull-textures.mjs
 import sharp from "sharp";
-import { mkdir } from "node:fs/promises";
+import { mkdir, copyFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -200,3 +202,18 @@ await save("damage.png", 1, blotches(9, 41));
 const height = panels(7);
 await save("panels_height.png", 1, height);
 await save("panels_normal.png", 3, ...normalOf(height, 7));
+
+// ---- the deck plate: metal_plate in steel -------------------------------------------------------------------------------------
+{
+  const from = path.join(root, "floor", "metal_plate"), to = path.join(root, "floor", "deck_plate");
+  await mkdir(to, { recursive: true });
+  const { data, info } = await sharp(path.join(from, "diffuse.jpg")).greyscale().raw().toBuffer({ resolveWithObject: true });
+  // Lifted by a curve (a straight scale would clip the highlights), then to a mean of about 150 and tinted toward steel blue
+  const lifted = Float32Array.from(data, (v) => (v / 255) ** 0.55);
+  const k = 150 / 255 / (lifted.reduce((a, b) => a + b, 0) / lifted.length);
+  const rgb = Buffer.alloc(lifted.length * 3);
+  lifted.forEach((v, i) => [0.9, 1.0, 1.15].forEach((t, c) => (rgb[i * 3 + c] = Math.round(Math.min(1, v * k * t) * 255))));
+  await sharp(rgb, { raw: { width: info.width, height: info.height, channels: 3 } }).jpeg({ quality: 88 }).toFile(path.join(to, "diffuse.jpg"));
+  for (const f of ["normal.jpg", "height.jpg"]) await copyFile(path.join(from, f), path.join(to, f));
+  console.log("wrote floor/deck_plate");
+}

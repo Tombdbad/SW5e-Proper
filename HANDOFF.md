@@ -19,6 +19,7 @@ Written 2026-10-21, branch `revive`. Last commit before this fix: `eb97d15` (set
 - Floors (commit 836db47): Poly Haven floor sets in `client/public/textures/floor/`, `floorLook`/`FloorSurface` in `siteAssets.tsx`, wired in `RoomShell`. Seen in a browser on 5002 (cantina, armory, palace, hangar, roof).
 - Hull wear and panels (committed after): `tools/build-hull-textures.mjs` makes `textures/hull/{wear,damage,panels_normal,panels_height}.png` from the sets in `textures/wear/`; `Model wear=` in `models.tsx`; `interiors/wear.ts` (+ `tests/interiors/wear.test.ts`). Seen in `/dev/models?section=ships` on 5002. Details in REVIVAL_NOTES.md "Floors, hull wear and panels".
 - 5002 is rebuilt from the working tree (not 5000). Nothing is promoted to the 5000 service.
+- Open: the e2e step "3D map: no 2D plan; a tap on the floor walks ..." fails (the character does not move) on the build BEFORE my floors too, as a slice; find out why. Damage step 1 fires after any fight (see REVIVAL_NOTES). Plating floor is now `floor/deck_plate`.
 - Not looked at: a party ship with `hull` set (scorch step 1) in the game; hull wear on a ship inside a hangar in the game (only the gallery).
 
 ## Next (in order)

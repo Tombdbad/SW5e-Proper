@@ -1023,7 +1023,7 @@ export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: s
 
 // The floors of rooms and roofs (2026-10-21): the same lit, shifted texture as the ground, from public/textures/floor, laid over the
 // flat slab of a room (which stays as what shows while the maps load). `tile` is the squares in one repeat; `tint` multiplies the
-// photograph (dark sets are brought up, plating is turned toward steel blue)
+// photograph (dark sets are brought up, the plating is a steel version of the metal plate, made by tools/build-hull-textures.mjs)
 export type FloorLook = { set: string; tint: THREE.Color; tile: number; parallax: number };
 const FLOOR_PARALLAX = 0.04;
 const floorSet = (set: string, tile: number, tint: string | THREE.Color = "#ffffff", parallax = FLOOR_PARALLAX): FloorLook => ({ set, tile, tint: new THREE.Color(tint), parallax });
@@ -1032,7 +1032,7 @@ const floorSet = (set: string, tile: number, tint: string | THREE.Color = "#ffff
 export function floorLook(kind: string, buildingType = "", roof = false): FloorLook | null {
   if (roof) return floorSet("concrete_floor_worn_02", 6, "#ffffff", 0.03);
   switch (kind) {
-    case "plating": return floorSet("metal_plate", 3, new THREE.Color(1.9, 2.5, 4.2));
+    case "plating": return floorSet("deck_plate", 3);
     case "hangar": return floorSet("hangar_concrete_floor", 6, new THREE.Color(2.4, 2.4, 2.5), 0.03);
     case "sand": return floorSet("dense_sand", GROUND_TILE, "#ffffff", PARALLAX);
     case "rock": return floorSet("dark_rock", GROUND_TILE, new THREE.Color(3, 3, 3), PARALLAX);
