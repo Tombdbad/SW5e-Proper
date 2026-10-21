@@ -10015,6 +10015,8 @@ export interface ItemEffects {
   techAttack?: number;
   techDc?: number;
   techDamage?: number;
+  // "Damage you take is reduced by N" while wielding an enhanced shield or wearing armor (at least 1 of it stays)
+  absorb?: number;
   // Side effect: one other ability score falls by 1
   falls?: boolean;
 }
@@ -10079,6 +10081,8 @@ export function parseItemEffects(source: string): ItemEffects {
     }
     const ac = sentence.match(/\+(\d+) bonus to AC/i);
     if (ac && effects.ac === undefined) effects.ac = Number(ac[1]);
+    const absorb = sentence.match(/damage you take is reduced by (\d+)/i);
+    if (absorb && effects.absorb === undefined) effects.absorb = Number(absorb[1]);
     const plating = sentence.match(/base AC becomes (\d+)/i);
     if (plating) effects.acSet = Number(plating[1]);
     const quick = sentence.match(/(?:your|its) speed increases by (\d+) feet/i);
@@ -10273,6 +10277,7 @@ export function sumEffects(list: ItemEffects[]): ItemEffects {
     if (e.ac) total.ac = (total.ac ?? 0) + e.ac;
     if (e.speed) total.speed = (total.speed ?? 0) + e.speed;
     if (e.tempHp) total.tempHp = Math.max(total.tempHp ?? 0, e.tempHp);
+    if (e.absorb) total.absorb = (total.absorb ?? 0) + e.absorb;
     if (e.acBase && (!total.acBase || e.acBase.base > total.acBase.base)) total.acBase = e.acBase;
   }
   return total;
@@ -10298,6 +10303,7 @@ export function describeEffects(e: ItemEffects): string {
   for (const [a, r] of Object.entries(e.raiseScores ?? {})) parts.push(`${a.slice(0, 3)} +${r.by} (max ${r.max})`);
   if (e.speed) parts.push(`+${e.speed} ft. speed`);
   if (e.tempHp) parts.push(`${e.tempHp} temporary hit points`);
+  if (e.absorb) parts.push(`damage taken -${e.absorb} (at least 1)`);
   if (e.techDamage) parts.push(`tech powers +${e.techDamage} damage and healing${e.techAttack ? `, +${e.techAttack} attack` : ""}${e.techDc ? `, +${e.techDc} save DC` : ""}`);
   if (e.falls) parts.push("side effect: another score -1");
   return parts.join(", ");

@@ -606,3 +606,61 @@ export function loadOf(
   if (shared) notes.push(`${Math.round(shared)} lb carried by the others`);
   return { weight, capacity, level, speed, disadvantage: level >= 2, packed, awkward, shared, notes };
 }
+
+// ---- Armour and shield properties (2026-10-21; the books' armor properties, derived in armorProperties.json) ----------------------------
+// What worn armour and a wielded shield do beyond their class, from the property words on the item (`properties`: "Bulky", "strength 15",
+// "Absorptive 1", "reactive 1" ...) and the `stealthDisadvantage` flag. A Strength requirement not met costs 10 feet of speed, Cumbersome 5;
+// Bulky (sound) and Obtrusive (sight) are disadvantage on Stealth, Silent and Concealing advantage on it, the flag is disadvantage too;
+// Absorptive takes damage from weapons down (at least 1 of it stays), Regulated rerolls the best roll of a damage die, Rigid halves the Dexterity
+// bonus to Dexterity saves, Reactive adds to AC against the next attack of whoever hit, Avoidant narrows a critical range, Insulated lifts a
+// low d20 against ion and lightning, Imbalanced leaves the wielder open after a critical hit. Not played: Charging, Obscured, Impermeable,
+// Reinforced, Spiked, Magnetic and the rest of the shield properties (they need things the game has no rules for).
+export interface ArmorTraits {
+  speed: number;
+  stealthDisadvantage: boolean;
+  stealthAdvantage: boolean;
+  absorb: number;
+  regulated: boolean;
+  rigid: boolean;
+  reactive: number;
+  avoidant: number;
+  insulated: number;
+  imbalanced: boolean;
+  // The AC a shield gives, lost when Imbalanced leaves it open
+  shield: number;
+  notes: string[];
+}
+export function armorTraits(items: { name: string; properties?: string[] | null; stealthDisadvantage?: boolean; shieldBonus?: number; absorb?: number }[], strength: number): ArmorTraits {
+  const t: ArmorTraits = { speed: 0, stealthDisadvantage: false, stealthAdvantage: false, absorb: 0, regulated: false, rigid: false, reactive: 0, avoidant: 0, insulated: 0, imbalanced: false, shield: 0, notes: [] };
+  for (const item of items) {
+    const words = (item.properties ?? []).map((p) => String(p).trim().toLowerCase());
+    const number = (word: string) => Number(words.find((w) => w.startsWith(word))?.match(/\d+/)?.[0] ?? 0);
+    const has = (word: string) => words.some((w) => w.startsWith(word));
+    const need = number("strength");
+    if (need && strength < need) {
+      t.speed -= 10;
+      t.notes.push(`${item.name} wants Strength ${need}: speed -10`);
+    }
+    if (has("cumbersome")) {
+      t.speed -= 5;
+      t.notes.push(`${item.name} is cumbersome: speed -5`);
+    }
+    if (item.stealthDisadvantage || has("bulky") || has("obtrusive")) t.stealthDisadvantage = true;
+    if (has("silent") || has("concealing")) t.stealthAdvantage = true;
+    t.absorb += number("absorptive") + (item.absorb ?? 0);
+    if (has("regulated")) t.regulated = true;
+    if (has("rigid")) t.rigid = true;
+    t.reactive = Math.max(t.reactive, number("reactive"));
+    t.avoidant = Math.max(t.avoidant, number("avoidant"));
+    t.insulated = Math.max(t.insulated, number("insulated"));
+    if (has("imbalanced")) {
+      t.imbalanced = true;
+      t.shield = Math.max(t.shield, item.shieldBonus ?? 0);
+    }
+  }
+  return t;
+}
+// Stealth with the armour on: disadvantage and advantage cancel (the books' rule for any mix)
+export const stealthMode = (t: Pick<ArmorTraits, "stealthDisadvantage" | "stealthAdvantage">): -1 | 0 | 1 => (t.stealthDisadvantage === t.stealthAdvantage ? 0 : t.stealthAdvantage ? 1 : -1);
+// The Dexterity modifier a Rigid suit lets through to Dexterity saves: half of a bonus (rounded down), a penalty in full
+export const rigidDex = (modifier: number) => (modifier > 0 ? Math.floor(modifier / 2) : modifier);

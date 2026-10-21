@@ -66,7 +66,7 @@ import {
   readOutcome, blueprintRarity, readCredits, RARITY_ORDER, type Fitted,
   FAMILIES, MATERIALS, REFINE_UNITS, tierOfCr, makeRemains, haulOf, withCacheAsset, familiesForTool, familiesForEnhanced, ALL_FAMILIES, type MaterialFamily, crNumber, RARITY_TIERS, NODE_RESPAWN, HARVEST_MINUTES, harvestDc, harvestKit, kitAlias, notesAllowed, addNote, addRecording, languageBarrier, OWN_TONGUE_ONLY, translatorSlots, setLanguages, tracedCalls, callOverheard, RECORD_MINUTES, RECORD_LIMIT, type Note, type Recording, harvestYield, materialsOf, materialsWorth, spendMaterials, nodeAt, type ResourceNode,
   partsPlaceAt, partsStock, fitShipPart, wreckParts, droidPartsStock, droidDisplay, droidListed, surgeonStock, modStock, MOD_TRADES, WARES, modFee, modFitProblem, MOD_FIT_HOURS, blueprintPool, type SurgeonLine, type ModLine,
-  ammoFamilyOf, ammoItemFamily, ammoRider, accessoryOf, reloadOf, GENERATOR_SHOTS, waterSpeed, type AmmoRider,
+  ammoFamilyOf, ammoItemFamily, ammoRider, accessoryOf, reloadOf, GENERATOR_SHOTS, waterSpeed, armorTraits, stealthMode, rigidDex, type AmmoRider,
   passDays, FORAGE_DC, HOT_LANDS, liquidOf, foodOf, GEAR, type Supplies,
   hazardsAt, exposure, HAZARD_HOUR, suitOf, airOf, breathRule, type Protections, type EnvHazard,
   loadOf, containerOf, weightOf, isContraband, shipModNamed, shipModEffects, modCost, modDays, crewModPlan, crewEquipmentPlan, tierUpgrade, yardWorkforce, equipmentCost, equipmentDays, equipmentWorkforce,
@@ -569,15 +569,28 @@ export default function GameBoard() {
     if (level === ALERT.attacking && parent && !world.areas[parent]?.alarm && (character?.playState?.jammerUntil ?? 0) > useClock.getState().minutes) next = updateArea(next, parent, { alarm: undefined }).world;
     saveCampaign({ galaxyMap: next });
   };
-  const stealthRoll = () => {
-    // A stealth field generator running: advantage on Stealth that relies on sight (its text); armor with the bulky property or a
-    // shield with the obtrusive property: disadvantage (the book's armor properties)
-    const field = ((character.equipment ?? []) as string[]).some((n) => /stealth field generator/i.test(n) && running(n));
+  // What the armour worn and the shield wielded do besides their class (shared/logic gear.ts armorTraits: the Strength requirement and
+  // Cumbersome cost speed, Bulky, Obtrusive and Silent steer Stealth, Absorptive, Regulated, Reactive, Avoidant, Insulated and Imbalanced
+  // are played in a fight, Rigid halves the Dexterity bonus to Dexterity saves)
+  const wornTraits = () => {
     const worn = equippedNow(character);
-    const props = [worn.body, worn.shield].filter(Boolean).flatMap((n) => (factsOf(n as string) as any)?.properties ?? []).join(" ").toLowerCase();
-    const clumsy = /bulky|obtrusive/.test(props) || (worn.body ? !!(factsOf(worn.body) as any)?.stealthDisadvantage : false);
+    const rows: { name: string; properties?: string[]; stealthDisadvantage?: boolean; shieldBonus?: number; absorb?: number }[] = [worn.body, worn.shield].filter(Boolean).map((n) => {
+      const name = n as string;
+      const row: any = factsOf(name) ?? factsOf(name.replace(/\s*\([^)]*\)\s*$/, ""));
+      return { name, properties: row?.properties, stealthDisadvantage: !!row?.stealthDisadvantage, shieldBonus: row?.armorClassification === "Shield" ? Number(String(row?.ac ?? "").match(/\d+/)?.[0] ?? 0) : 0 };
+    });
+    // An enhanced shield's or armor's "damage you take is reduced by N"
+    if ((character as any)?.itemAbsorb) rows.push({ name: "enhanced item", absorb: (character as any).itemAbsorb });
+    return armorTraits(rows, Number(character?.abilityScores?.strength) || 10);
+  };
+  const stealthRoll = () => {
+    // A stealth field generator running: advantage on Stealth that relies on sight (its text); armor that is bulky or flagged, a shield that
+    // is obtrusive: disadvantage; silent armor: advantage; a mix cancels (the book's armor properties)
+    const field = ((character.equipment ?? []) as string[]).some((n) => /stealth field generator/i.test(n) && running(n));
+    const traits = wornTraits();
+    const mode = stealthMode({ stealthDisadvantage: traits.stealthDisadvantage, stealthAdvantage: traits.stealthAdvantage || field });
     const a = d20();
-    const roll = field && !clumsy ? Math.max(a, d20()) : clumsy && !field ? Math.min(a, d20()) : a;
+    const roll = mode > 0 ? Math.max(a, d20()) : mode < 0 ? Math.min(a, d20()) : a;
     const bonus = modifier(character.abilityScores?.dexterity) + (skilled("stealth") ? proficiency : 0);
     return { roll, bonus, total: roll + bonus };
   };
@@ -1479,8 +1492,13 @@ export default function GameBoard() {
     const focusMax = getClassLevelValue(character.class, level, "Focus Points");
     const uses = play.featureUses ?? {};
     const ammo = ammoKit(ranged);
-    return {
+    const armorNow = wornTraits();
+    const kit = {
       ammo,
+      // Stealth to hide with this armour and a stealth field running (see stealthRoll)
+      hideMode: stealthMode({ stealthDisadvantage: armorNow.stealthDisadvantage, stealthAdvantage: armorNow.stealthAdvantage || ((character.equipment ?? []) as string[]).some((n) => /stealth field generator/i.test(n) && running(n)) }),
+      // What the armour and shield do in the fight (see wornTraits)
+      armorProps: { absorb: armorNow.absorb, regulated: armorNow.regulated || undefined, reactive: armorNow.reactive || undefined, avoidant: armorNow.avoidant || undefined, insulated: armorNow.insulated || undefined, imbalanced: armorNow.imbalanced || undefined, shield: armorNow.shield || undefined },
       // A bipod for a two-handed blaster; a tripod deployed beforehand (it takes a minute: house reading) counts as braced from the start
       bipod: (character.equipment ?? []).includes("Bipod") && !!ranged?.properties.some((p) => /two-handed/i.test(p)),
       braced: (character.equipment ?? []).includes("Tripod") && !!ranged?.properties.some((p) => /two-handed/i.test(p)) && !!play.tripodSet,
@@ -1549,7 +1567,7 @@ export default function GameBoard() {
       })(),
       vulnerable: (play.augments?.length ?? 0) >= 4 ? ["ion"] : undefined,
       // Saving throws: the ability modifier, and the proficiency bonus where the class is proficient
-      saves: Object.fromEntries(["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"].map((a) => [a, scoreMod(a) + (savedAbilities.includes(a) ? proficiency : 0)])),
+      saves: Object.fromEntries(["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"].map((a) => [a, (a === "dexterity" && armorNow.rigid ? rigidDex(scoreMod(a)) : scoreMod(a)) + (savedAbilities.includes(a) ? proficiency : 0)])),
       stealth: scoreMod("dexterity") + (skilled("stealth") ? proficiency : 0),
       // What the class, archetype and species features can do, their uses spent since the last rest, and the focus left
       features: combatFeatures(character),
@@ -1590,6 +1608,8 @@ export default function GameBoard() {
         })
         .sort((a, b) => order[a.kind] - order[b.kind] || a.level - b.level),
     };
+    // A Strength requirement not met, Cumbersome armour: speed lost (a speed already changed by load, a suit or water counts from there)
+    return armorNow.speed ? { ...kit, speed: Math.max(5, ((kit as any).speed ?? (Number(character.speed) || 30)) + armorNow.speed) } : kit;
   };
 
   // A hostile occupant as someone to fight: its stat block's armor, hit points, attack, speed and reach

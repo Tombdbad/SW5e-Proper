@@ -206,6 +206,16 @@ export interface Combatant {
   detonator?: { range: number; paired: string[] };
   // Effects of a device it has saved against and is immune to for the fight (a fire extinguisher's mist)
   immuneTo?: string[];
+  // What its armour and shield do (shared/logic gear.ts armorTraits): damage from weapons taken down by `absorb` (at least 1 of it stays),
+  // the best of a weapon die rerolled (regulated), an AC bonus against the next attack of whoever hit it (reactive), a narrower critical
+  // range against it (avoidant), a low d20 lifted against ion and lightning (insulated), the shield lost for an attack after a critical
+  // hit (imbalanced, with the AC it gives)
+  armorProps?: { absorb: number; regulated?: boolean; reactive?: number; avoidant?: number; insulated?: number; imbalanced?: boolean; shield?: number };
+  // Who hit it since its turn began (reactive armour), and whether a critical hit has left its shield open until its next turn
+  reactiveFrom?: (number | string)[];
+  open?: boolean;
+  // Advantage (1) or disadvantage (-1) on its Stealth to hide, from its armour and gear
+  hideMode?: -1 | 0 | 1;
 }
 
 // Which side a combatant is on: the player's (with companions) or the enemy's
@@ -536,12 +546,15 @@ export const rollD20 = (mode = 0): number => {
 };
 
 // A saving throw against a DC, as the creature's conditions allow it
-function savingThrow(c: Combatant, ability: string, dc: number): boolean {
+// `type`: the damage type of the effect, for Insulated armour (a d20 below its number counts as its number against ion and lightning)
+function savingThrow(c: Combatant, ability: string, dc: number, type?: string): boolean {
   const all = mechanicsOf(c);
   if (all.some((x) => x.m.autoFailSaves.includes(ability))) return false;
   const high = c.high && c.high.ability === ability ? roll(1, c.high.die ?? 3) * (c.high.low ? -1 : 1) : 0;
   const burdened = !!c.burden && ["strength", "dexterity", "constitution"].includes(ability);
-  return rollD20(all.some((x) => x.m.disadvantageSaves.includes(ability)) || burdened ? -1 : 0) + (c.saves?.[ability] ?? 0) + high >= dc;
+  const d = rollD20(all.some((x) => x.m.disadvantageSaves.includes(ability)) || burdened ? -1 : 0);
+  const insulated = type && /^(ion|lightning)$/i.test(type) ? c.armorProps?.insulated ?? 0 : 0;
+  return Math.max(d, insulated) + (c.saves?.[ability] ?? 0) + high >= dc;
 }
 
 // Adds conditions to a creature; one it already has is replaced
@@ -622,7 +635,7 @@ export type ItemEffect =
 
 // Rolls "2d6 + 1" or "1d8 + 1d4 - 1": a critical hit rolls the dice twice, and `extraDice` more of
 // the first die besides (Brutal Critical); a hit always does at least 1
-export function rollDamage(expression: string, isCritical: boolean, extraDice = 0, threshold = false): number {
+export function rollDamage(expression: string, isCritical: boolean, extraDice = 0, threshold = false, regulated = false): number {
   const terms = expression.replace(/\s+/g, "").match(/[+-]?[^+-]+/g) ?? [];
   let total = 0;
   let first = true;
@@ -635,7 +648,12 @@ export function rollDamage(expression: string, isCritical: boolean, extraDice = 
       first = false;
       const sides = Number(dice[2]);
       // A minimum roll threshold: a die cannot roll below it (Player's Handbook, chapter 7)
-      if (threshold) for (let i = 0; i < count; i++) total += sign * Math.max(dieRoll(sides), minimumRoll(sides));
+      // Regulated armour: a die that rolls its maximum is rolled again, and the new roll stands
+      const one = () => {
+        const r = threshold ? Math.max(dieRoll(sides), minimumRoll(sides)) : dieRoll(sides);
+        return regulated && r === sides ? (threshold ? Math.max(dieRoll(sides), minimumRoll(sides)) : dieRoll(sides)) : r;
+      };
+      if (threshold || regulated) for (let i = 0; i < count; i++) total += sign * one();
       else total += sign * roll(count, sides);
     } else total += sign * (Number(body) || 0);
   }
@@ -885,7 +903,11 @@ function damageCreature(w: Work, at: number, amount: number, type?: string, atta
 
 // A creature's armor class now: what it wears, a tool's prepared die (spent once), and what it
 // holds up until its next turn (Force Shield)
-const armorClassNow = (c: Combatant) => c.armorClass + (c.acUntil ?? 0);
+const armorClassNow = (c: Combatant, attackerId?: number | string) =>
+  c.armorClass + (c.acUntil ?? 0)
+  // Reactive armour: more AC against the next attack of whoever hit it; an Imbalanced shield, none after a critical hit
+  + (attackerId !== undefined && c.reactiveFrom?.includes(attackerId) ? c.armorProps?.reactive ?? 0 : 0)
+  - (c.open ? c.armorProps?.shield ?? 0 : 0);
 
 // Feature uses left in a pool, and whether a feature can be paid for now
 const usesLeft = (c: Combatant, f: CombatFeature) => (f.uses ? f.uses.max - (c.uses?.[f.pool] ?? 0) : Infinity);
@@ -1067,7 +1089,7 @@ function explodeMine(w: Work, mine: Mine) {
   for (let i = 0; i < w.combatants.length; i++) {
     const c = w.combatants[i];
     if (c.hp <= 0 || squaresApart(c, centre) * 5 > mine.radius || !w.inCombat) continue;
-    const saved = savingThrow(c, mine.save, mine.dc);
+    const saved = savingThrow(c, mine.save, mine.dc, mine.damage[0]?.type);
     const rolled = mine.damage.map((d) => ({ ...d, amount: rollDamage(d.dice, false) }));
     const total = rolled.reduce((n, d) => n + (saved ? Math.floor(d.amount / 2) : d.amount), 0);
     w.log.push(`${c.name} ${saved ? "saves" : "fails the save"}${total > 0 ? ` and takes ${total} damage` : ""}.`);
@@ -1171,8 +1193,8 @@ function riderSave(w: Work, at: number, save: StatSave, by: number | string | un
   const c = w.combatants[at];
   if (c.hp <= 0) return;
   // A creature that can choose to pass a saving throw does so against a damaging effect
-  const passed = c.resistanceLeft && c.resistanceLeft > 0 && (save.damage || save.conditions) && !savingThrow(c, save.ability, save.dc);
-  let saved = passed ? true : savingThrow(c, save.ability, save.dc);
+  const passed = c.resistanceLeft && c.resistanceLeft > 0 && (save.damage || save.conditions) && !savingThrow(c, save.ability, save.dc, save.damageType);
+  let saved = passed ? true : savingThrow(c, save.ability, save.dc, save.damageType);
   if (passed) w.combatants[at] = { ...c, resistanceLeft: (c.resistanceLeft ?? 0) - 1 };
   // Evasion: no damage on a successful save and half on a failed one (Dexterity)
   const evasive = save.ability === "dexterity" && ((c.features ?? []).some((f) => f.evasion) || (c.profile?.traits ?? []).some((t) => t.kind === "evasion"));
@@ -1284,9 +1306,12 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
     notes.push(`armor work +${guardBonus} AC`);
     w.spent.push("ac");
   }
-  const ac = armorClassNow(target) + plan.cover.bonus + guardBonus;
+  const ac = armorClassNow(target, attacker.id) + plan.cover.bonus + guardBonus;
+  if (target.reactiveFrom?.includes(attacker.id) && target.armorProps?.reactive) notes.push(`reactive armor +${target.armorProps.reactive} AC`);
+  if (target.open && target.armorProps?.shield) notes.push(`shield open (-${target.armorProps.shield} AC)`);
   const total = d === 1 ? 0 : d + bonus;
-  const critRange = 20 - propertyNumber(spec.properties, "keen");
+  // The critical range is 20, or wider by a keen weapon; avoidant armour narrows it (never below 20 alone)
+  const critRange = 21 - Math.max(1, propertyNumber(spec.properties, "keen") + 1 - (target.armorProps?.avoidant ?? 0));
   const critHit = d >= critRange && d !== 1;
   const hit = d !== 1 && (total >= ac || critHit);
   const crit = d !== 1 && (critHit || (hit && plan.crit));
@@ -1339,7 +1364,7 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
   const attackerUsed = [...(w.combatants[ai].usedTurn ?? [])];
   // A fighting style's minimum roll threshold on weapon dice (a two-handed weapon, a blaster up close)
   const threshold = (attacker.features ?? []).some((f) => f.minRoll && (f.minRoll.weapon === "any" || (f.minRoll.weapon === "twoHanded" && hasProperty(spec.properties, "two-handed")) || (f.minRoll.weapon === "blaster" && spec.type === "ranged" && plan.feet <= 30)));
-  let damage = rollDamage(spec.dice, crit, extraWeaponDice, threshold);
+  let damage = rollDamage(spec.dice, crit, extraWeaponDice, threshold, !!target.armorProps?.regulated);
   damage = Math.max(1, damage + spec.damageBonus);
   const additions: string[] = [];
   const note = (label: string, amount: number) => additions.push(`${label} +${amount}`);
@@ -1465,6 +1490,23 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
     usedTurn: Array.from(new Set([...attackerUsed, ...(flags.viaAction ? ["did:attack"] : []), ...(flags.viaAction && hasProperty(spec.properties, "light") ? ["did:attack-light"] : [])])),
     marked: attacker.features?.some((f) => f.marks) && !attacker.marked ? target.id : w.combatants[ai].marked,
   };
+  // Absorptive armor or shield: the damage of a weapon is lowered by its number, but a hit always leaves at least 1
+  const absorbed = target.armorProps?.absorb ?? 0;
+  if (absorbed > 0 && damage > 0) {
+    const was = damage;
+    damage = Math.max(1, damage - absorbed);
+    if (damage !== was) note("absorbed", damage - was);
+  }
+  // Reactive armor remembers whoever hit it; a critical hit on an Imbalanced shield leaves it open, and no reaction, until its turn
+  const struck = w.combatants[ti];
+  if (struck.armorProps?.reactive || (crit && struck.armorProps?.imbalanced)) {
+    w.combatants[ti] = {
+      ...struck,
+      ...(struck.armorProps?.reactive ? { reactiveFrom: [...(struck.reactiveFrom ?? []), attacker.id] } : {}),
+      ...(crit && struck.armorProps?.imbalanced ? { open: true, reactions: 0 } : {}),
+    };
+    if (crit && struck.armorProps?.imbalanced) w.log.push(`${struck.name}'s shield is knocked wide by the critical hit: no reactions, and its bonus is lost against the next attack.`);
+  }
   const hitNote = [notes.join("; "), additions.join(", "), `${plan.feet} ft.`].filter(Boolean).join("; ");
   const bare: Omit<PendingHit, "options"> = {
     attackerId: attacker.id,
@@ -1582,6 +1624,8 @@ function beginTurn(w: Work, i: number) {
     reckless: false,
     guarding: undefined,
     acUntil: 0,
+    reactiveFrom: undefined,
+    open: false,
     usedTurn: [],
     queue: undefined,
     turnStart: { x: c.x ?? 0, y: c.y ?? 0 },
@@ -2472,7 +2516,7 @@ export const useCombat = create<CombatState>((set, get) => ({
         w.log.push(`${me.name} dodges: attacks against them have disadvantage until their next turn.`);
       } else if (what === "hide") {
         const sight = Math.max(0, ...w.combatants.filter((c) => c.hp > 0 && onPartySide(c) !== onPartySide(me)).map((c) => 10 + (c.saves?.wisdom ?? 0)));
-        const d = rollD20(0);
+        const d = rollD20(me.hideMode ?? 0);
         const total = d + (me.stealth ?? Math.floor(((me.abilities?.dexterity ?? 10) - 10) / 2));
         next.hidden = total >= sight;
         w.log.push(`${me.name} tries to hide: Stealth ${total} against ${sight}${next.hidden ? ", unseen: the next attack has advantage and attacks against them have disadvantage" : ", seen"}.`);
@@ -2662,7 +2706,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       log.push(`${user.name} throws ${effect.label} at ${centre.name}.`);
       combatants = combatants.map((c) => {
         if (c.hp <= 0 || squaresApart(c, centre) * 5 > effect.radius) return c;
-        const saved = savingThrow(c, effect.save, effect.dc);
+        const saved = savingThrow(c, effect.save, effect.dc, effect.damage[0]?.type);
         const full = effect.damage.reduce((sum, d) => sum + rollDamage(d.dice, false), 0);
         const amount = saved ? Math.floor(full / 2) : full;
         let next = amount > 0 ? hurt(c, amount) : c;

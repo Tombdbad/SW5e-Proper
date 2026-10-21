@@ -1166,6 +1166,8 @@ export function withItemEffects(character: any, facts: Record<string, ItemFacts>
     ...scored,
     armorClass: Math.max(0, (character.armorClass ?? 10) + change),
     itemTempHp: sumEffects(active.map((a) => a.effects)).tempHp,
+    // An enhanced shield's or armor's "damage you take is reduced by N"
+    itemAbsorb: sumEffects(active.map((a) => a.effects)).absorb ?? 0,
     // Handwraps and the like: a bonus to unarmed strikes
     itemUnarmed: { attack: unarmed.reduce((n, a) => n + (a.effects.attack ?? 0), 0), damage: unarmed.reduce((n, a) => n + (a.effects.damage ?? 0), 0) },
   };
