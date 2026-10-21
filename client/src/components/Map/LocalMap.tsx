@@ -2190,7 +2190,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const sizeOfGround = Math.max(240, ground.w + 80, ground.h + 80);
   // The ground round the building: a textured plane where the world has one (siteAssets groundTexture), else the plain colour
   const groundTex = groundTexture(biome, building.type, GROUND[biome] ?? "#1c222b");
-  const walkHere = (e: ThreeEvent<MouseEvent>) => { e.stopPropagation(); if (e.delta <= 8) walkTo([{ x: Math.floor(e.point.x + cx), y: Math.floor(e.point.z + cz) }]); };
+  // (the textured plane runs past the ground that can be walked on, so a tap beyond it walks nowhere)
+  const walkHere = (e: ThreeEvent<MouseEvent>) => {
+    e.stopPropagation();
+    const x = Math.floor(e.point.x + cx), y = Math.floor(e.point.z + cz);
+    if (e.delta <= 8 && x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h) walkTo([{ x, y }]);
+  };
   // The look of the building's walls by the world it stands on (models.tsx styleOf)
   const style = styleOf(wall === STEEL ? "station" : biome, building.type);
   // How far each outside corner of a room is rounded (north-west, north-east, south-east, south-
@@ -2228,14 +2233,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           <planeGeometry args={[sizeOfGround, sizeOfGround]} />
           <meshBasicMaterial color="#14100c" />
         </mesh>
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.06, cz]} visible={!underground}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.06, cz]} visible={!underground && !groundTex}>
           <planeGeometry args={[sizeOfGround, sizeOfGround]} />
           <meshBasicMaterial color={GROUND[biome] ?? "#1c222b"} />
         </mesh>
-        {/* The ground round the building: a tap walks there */}
+        {/* The ground round the building: a tap walks there. The textured plane covers the whole of the ground, so no dark rim shows round it */}
         {groundTex ? (
           <group visible={!underground}>
-            <GroundSurface set={groundTex.set} tint={groundTex.tint} parallax={groundTex.parallax} w={ground.w} h={ground.h} at={[cx, -0.02, cz]} onTap={tappable ? walkHere : undefined} />
+            <GroundSurface set={groundTex.set} tint={groundTex.tint} parallax={groundTex.parallax} w={sizeOfGround} h={sizeOfGround} at={[cx, -0.02, cz]} onTap={tappable ? walkHere : undefined} />
           </group>
         ) : (
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.02, cz]} visible={!underground} receiveShadow onClick={tappable ? walkHere : undefined}>
@@ -2248,7 +2253,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           return box ? (
             <mesh key={`lot-${b.id}`} rotation={[-Math.PI / 2, 0, 0]} position={[box.x + box.width / 2, -0.005, box.y + box.height / 2]} visible={!underground} raycast={() => null}>
               <planeGeometry args={[box.width + 1, box.height + 1]} />
-              <meshLambertMaterial color={new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(0.9)} />
+              {groundTex
+                ? <meshBasicMaterial color="#000000" transparent opacity={0.22} depthWrite={false} />
+                : <meshLambertMaterial color={new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(0.9)} />}
             </mesh>
           ) : null;
         })}

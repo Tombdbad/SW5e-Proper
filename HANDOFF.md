@@ -13,6 +13,8 @@ Written 2026-10-21, branch `revive`. Last commit before this fix: `eb97d15` (set
 
 - Black ground (user, after the first deploy): the shader compiled fine; the bare-earth tint was the biome ground colour times 2.5 on an already dark texture. Tint now keeps the biome hue at full strength (`EARTH_LIGHT` 1.2, rock tint 3). Found by rendering the real `groundShader` in headless Chromium (scratch harness in the session scratchpad, not in the repo): earth about RGB (125,108,63), desert (103,90,69), rock (45,39,33), sewer mud (54,48,38), no shader errors. From the settlement camera the texture detail is faint; if it looks flat, lower `GROUND_TILE`.
 
+- Black patches left after that fix (user): the building lots were opaque near-black planes over the bright ground, and a dark base plane showed round the textured rectangle. Lots are now a 22% black shade over the texture; the textured plane covers the whole base area (taps outside the walkable rectangle are ignored). Parallax and normal strength raised 30% on the user's request (`PARALLAX` 0.065, `NORMAL_SCALE` 1.3, both in `siteAssets.tsx`). 5002 rebuilt with these.
+
 ## Next (in order)
 1. Look at the ground on 5002 (hard reload; a new settlement, then a forest, a desert, a volcanic world, a sewer and Coruscant). Things to look for: a black ground (a shader compile error blanks the plane; check the browser console); swimming (lower `PARALLAX`); bare earth too bright or too dark (tint in `groundTexture`).
 2. Once the ground looks right, promote with `npm run build && sudo systemctl restart sw5e` (the 5000 service). Not done yet.

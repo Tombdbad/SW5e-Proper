@@ -959,7 +959,8 @@ export function GardenGround({ rects, biome }: { rects: NonNullable<SiteGrounds[
 // map and shifted toward the viewer by its height map (single-step offset parallax). The city has none of it: it keeps the plain ground
 export const GROUND_TILE = 8; // squares of ground in one repeat of a texture
 const EARTH_LIGHT = 1.2; // how bright the bare earth is (1 leaves the texture as photographed)
-const PARALLAX = 0.05; // how far the height map moves the texture, in repeats of GROUND_TILE squares
+const PARALLAX = 0.065; // how far the height map moves the texture, in repeats of GROUND_TILE squares (0.05 and then 30% more, the user, 2026-10-21)
+const NORMAL_SCALE = new THREE.Vector2(1.3, 1.3); // how steep the normal map reads (1 as photographed, 30% more)
 
 // Which texture a building's ground gets, by its world's biome and the building's type (null: plain ground, as on Coruscant)
 export function groundTexture(biome: string, buildingType: string, base: string): { set: string; tint: THREE.Color; parallax: number } | null {
@@ -1015,7 +1016,7 @@ export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: s
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={at} receiveShadow onClick={onTap}>
       <planeGeometry args={[w, h]} />
-      <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} onBeforeCompile={compile} />
+      <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} onBeforeCompile={compile} />
     </mesh>
   );
 }
