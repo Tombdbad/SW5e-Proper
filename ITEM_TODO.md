@@ -10,21 +10,21 @@ Every item of the rules data now has a model (`REVIVAL_NOTES.md`, "Item models")
 |---|---|---|---|---|---|
 | Weapon | 217 | 69 / 148 | 217/217 (fight) | arms, black | armory, remains |
 | Kit | 18 | 0 / 18 | 18/18 | tech, black | workshop, medical |
-| WeaponOrArmorAccessory | 18 | 18 / 0 | 0/18 | arms | stash |
+| WeaponOrArmorAccessory | 18 | 18 / 0 | 18/18 | arms | stash |
 | Spice | 8 | 8 / 0 | 8/8 | black | stash |
-| Medical | 16 | 12 / 4 | 6/16 | medical, black | medical, remains |
-| Tool | 16 | 0 / 16 | 16/16 | tech | workshop |
-| Ammunition | 50 | 28 / 22 | 0/50 | arms | armory, cargo |
+| Medical | 16 | 12 / 4 | 16/16 | medical, black | medical, remains |
+| Tool | 16 | 0 / 16 | 16/16 | tech, salvage | workshop |
+| Ammunition | 50 | 28 / 22 | 50/50 | arms | armory, cargo |
 | Armor | 26 | 26 / 0 | 26/26 (fight) | arms, outfit, black | armory |
-| Storage | 17 | 17 / 0 | 0/17 | general, spacer | cargo |
+| Storage | 17 | 17 / 0 | 17/17 | general, spacer, salvage | cargo |
 | MusicalInstrument | 15 | 15 / 0 | 15/15 | leisure | **nowhere** |
-| Utility | 23 | 23 / 0 | 8/23 | general, black | workshop, cargo, remains |
+| Utility | 23 | 23 / 0 | 23/23 | general, black, salvage | workshop, cargo, remains |
 | GamingSet | 6 | 6 / 0 | 6/6 | leisure | stash |
 | Explosive | 27 | 14 / 13 | 27/27 | black | armory, stash |
-| LifeSupport | 16 | 16 / 0 | 0/16 | general, spacer | cargo, remains |
-| Clothing | 7 | 7 / 0 | 0/7 | general, outfit, black | cargo |
-| DataRecordingAndStorage | 11 | 11 / 0 | 4/11 | general | intel, coin |
-| Communications | 8 | 8 / 0 | 4/8 | general, spacer, black | intel |
+| LifeSupport | 16 | 16 / 0 | 16/16 | general, spacer | cargo, remains |
+| Clothing | 7 | 7 / 0 | 7/7 | general, outfit, black | cargo |
+| DataRecordingAndStorage | 11 | 11 / 0 | 11/11 | general | intel, coin |
+| Communications | 8 | 8 / 0 | 8/8 | general, spacer, black | intel |
 | AlcoholicBeverage | 8 | 8 / 0 | 8/8 | bar | cargo |
 
 A use is whatever `gearUse` (shared/logic) knows how to do with the item: use a tool, take a substance, throw an explosive, heal, read data, call. A weapon or armour is
@@ -33,22 +33,13 @@ surgeon, a chassis or modification installed in a workshop: those flows are not 
 
 ### Equipment with no use in play (by category)
 
-- **WeaponOrArmorAccessory** (18 of 18): Ammo Pouch; Ammo-feed belt; Bandolier; Bipod; Friction-grip gear; Holster; Jetpack; Power belt; Propulsion pack; Quiver; Remote detonator; Repulsor pack; Rocket boots; Rocketpack; Shock gloves; Stealth field generator; Tracker utility vest; Tripod
-- **Medical** (10 of 16): Arm prosthesis; Ear prosthesis; Eye prosthesis; Facial prosthesis; Foot prosthesis; Forearm prosthesis; Hand prosthesis; Leg prosthesis; Throat prosthesis; Torso prosthesis
-- **Ammunition** (50 of 50): Arrow; Arrow, Combustive; Arrow, Electroshock; Arrow, Noisemaker; Bolt; Bolt, Deafening; Bolt, Electrifying; Bolt, Panic; Corrosive cartridge; Cryo cell; Dart; Deafening calibrator; Deafening cell; Deafening collimator; Deafening dart; Electrifying calibrator; Electrifying cartridge; Electrifying collimator; Electrifying dart; Flechette clip, fragmentation; Flechette clip, ion; Flechette clip, plasma; Flechette mag, fragmentation; Flechette mag, ion; Flechette mag, plasma; Flux collimator; Gas cartridge; Incendiary cell; Missile, fragmentation; Missile, incendiary; Missile, ion; Oscillation calibrator; Panic calibrator; Panic collimator; Panic dart; Power cell; Power generator; Projector canister, corrosive; Projector canister, cryo; Projector canister, incendiary; Projector tank, corrosive; Projector tank, cryo; Projector tank, incendiary; Rocket, fragmentation; Rocket, incendiary; Rocket, ion; Slug cartridge; Snare; Torpedo, fragmentation; Torpedo, plasma
-- **Storage** (17 of 17): Backpack; Bottle; Bucket; Camtono; Canteen; Chest; Crate; Flask; Hovercart; Jug; Pitcher; Pot; Pouch; Sack; Smugglepack; Tankard; Vial
-- **Utility** (15 of 23): Bedroll; Blanket; Chronometer; Fibercord cable, 50 ft (rolled); Field rations (one day's); Fire extinguisher; Glowrod; Grappling hook; Gravity generator; Heat generator; Hydrospanner; Mess kit; Mirror; Shovel; Tent, two-person
-- **LifeSupport** (16 of 16): Chemical suit; Conductive suit; Dampening suit; Diving suit; Emergency raft; Emergency rations (one day's); Emergency shelter; Flame-proof suit; Hazard suit; Mind-shielding suit; Oyxgen tank; Respirator; Space suit; Stabilizer suit; Underwater respirator; Water suit
-- **Clothing** (7 of 7): Clothes, clandestine; Clothes, common; Clothes, costume; Clothes, dress uniform; Clothes, fine; Clothes, traveler's; Sunshades
-- **DataRecordingAndStorage** (7 of 11): Code cylinder; Datapad; Focus generator; Holorecorder; Repelling wristpad; Stylus pen; Wristpad
-- **Communications** (4 of 8): Holotrace device; Personal translator; Pocket scrambler; Vocoder mask
 
 ### Equipment that nobody sells or that turns up nowhere
 
 - **Spice**: only on the black market (black)
 - **Explosive**: only on the black market (black)
 
-Contraband (seized where the law is at that level or above, `contrabandFrom`): 220 items. Vendors with stock: bar, general, arms, tech, outfit, medical, leisure, spacer, black, vehicles, mounts, droids; a merchant takes one of: general, arms, tech, medical, leisure.
+Contraband (seized where the law is at that level or above, `contrabandFrom`): 220 items. Vendors with stock: bar, general, arms, tech, outfit, medical, leisure, spacer, black, vehicles, mounts, droids, salvage; a merchant takes one of: general, arms, tech, medical, leisure.
 
 ## Enhanced items (1,918 rows): what each type has
 
@@ -58,24 +49,21 @@ Contraband (seized where the law is at that level or above, `contrabandFrom`): 2
 | ItemModification | 1025 | 1025: modification 1025 | 0 | 1025/1025 | armory, workshop |
 | CyberneticAugmentation | 46 | 46: augment enhancement 28, augment replacement 18 | 0 | 46/46 | vault |
 | Armor | 18 | 18: text only 5, effects 7, chassis 6 | 0 | 18/18 | armory, vault, relic |
-| Consumable | 528 | 78: timed 78, none 450 | 450 | 528/528 | medical, cargo, stash, remains |
+| Consumable | 528 | 518: timed 78, use substance 80, use explosive 135, use spike 6, use ammo 170, use calibrator 28, none 10, use heal 5, use poison 5, use repair 5, use vitapac 6 | 10 | 528/528 | medical, cargo, stash, remains |
 | DroidCustomization | 48 | 48: droid protocol 18, droid part 30 | 0 | 48/48 | workshop |
 | AdventuringGear | 156 | 156: text only 110, effects 22, chassis 24 | 0 | 156/156 | stash |
 | Focus | 18 | 18: text only 6, chassis 12 | 0 | 18/18 | vault, relic |
 | Shield | 12 | 12: effects 5, chassis 6, text only 1 | 0 | 12/12 | armory, vault, relic |
-| ShipArmor | 3 | 0: none 3 | 3 | 0/3 | **nowhere** |
-| ShipShield | 3 | 0: none 3 | 3 | 0/3 | **nowhere** |
-| ShipWeapon | 3 | 0: none 3 | 3 | 0/3 | **nowhere** |
+| ShipArmor | 3 | 3: ship part 3 | 0 | 0/3 | **nowhere** |
+| ShipShield | 3 | 3: ship part 3 | 0 | 0/3 | **nowhere** |
+| ShipWeapon | 3 | 3: ship part 3 | 0 | 0/3 | **nowhere** |
 
 Enhanced items are not sold over a counter (Wretched Hives: they are found, made or installed), so a type that no loot cache lists can never reach a character except by a GM or the wizard.
 Types no cache offers: ShipArmor, ShipShield, ShipWeapon.
 
 ### Enhanced rows with nothing for the game to apply
 
-- **Consumable** (450): Andris (Fine); Andris (High Quality); Andris (Potent); Andris (Pure); Andris (Uncut); Charge, Fragmentation (Average); Charge, Fragmentation (Deadly); Charge, Fragmentation (Devastating); Charge, Fragmentation (Lethal); Charge, Fragmentation (Major); Charge, Plasma (Average); Charge, Plasma (Deadly); Charge, Plasma (Devastating); Charge, Plasma (Lethal); Charge, Plasma (Major); Cilona (Fine); Cilona (High Quality); Cilona (Potent); Cilona (Pure); Cilona (Uncut); Computer Spike (Champion); Computer Spike (Fine); Computer Spike (Superior); Corrosive Cartridge (Average); Corrosive Cartridge (Deadly); Corrosive Cartridge (Devastating); Corrosive Cartridge (Lethal); Corrosive Cartridge (Major); Cryo Cell (Average); Cryo Cell (Deadly); ... (450)
-- **ShipArmor** (3): Ship Armor (Fine); Ship Armor (Improved); Ship Armor (Superior)
-- **ShipShield** (3): Ship Shield (Fine); Ship Shield (Improved); Ship Shield (Superior)
-- **ShipWeapon** (3): Ship Weapon (Fine); Ship Weapon (Improved); Ship Weapon (Superior)
+- **Consumable** (10): Machinist's Catalyzer Mk I; Machinist's Catalyzer Mk II; Machinist's Catalyzer Mk III; Machinist's Catalyzer Mk IV; Portable Teleporter Mk I; Portable Teleporter Mk II; Portable Teleporter Mk III; Portable Teleporter Mk IV; Portable Teleporter Mk V; Portable Teleporter Mk VI
 
 ### Enhanced rows that are text only (the game shows the rule but applies none of it)
 
