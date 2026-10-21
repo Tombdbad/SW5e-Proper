@@ -18,12 +18,12 @@ Work through ALL of `ITEM_TODO.md`: every item must do what the SW5e rules say. 
 Progress log for this task: "Item logic progress" just below (tick after each commit). GO covers `revive` and the test copies only: ask before any merge/restart of live 5000.
 
 ## Item logic progress (steps in order; advisor-reviewed plan)
-- [ ] A. Ship upgrades: SotG modifications (cost = base x size x grade, install DC by grade/tier, workforce and days), ship equipment, enhanced ShipArmor/Shield/Weapon; scrap dealers/junkyards sell low grade where a port is; shipyard showroom higher grades in rich places; install by shipyard (fee, no check) or party (half cost, workforce, Int (mechanic's kit) check); effects in `shipSheet`.
-- [ ] B. Droid shop: droid dealer a shop in every city (LIFE bump for old worlds), today's `droidStock` drawn on display, parts shelf = what it sells, sells DroidCustomization rows, install by dealer fee or a party member (CheckDialog).
-- [ ] C. Every equipment row classified (a use the game applies or a labelled house use); test fails on unclassified; item-audit reads it.
-- [ ] D. Ammunition (loaded at start), reload, special ammo riders, pouches/belts/quiver/bandolier, calibrators/collimators.
-- [ ] E. Food and water (wild only; lifestyle covers settlements), rests with bedroll/tent/shelter.
-- [ ] F. Hazards (derived suit rules; climate = labelled house rule), air timers, light/darkness.
+- [x] A. Ship upgrades (rules 28bb931, play def9090; browser check e2e/works.mjs ONLY=ships pending a rerun: first run failed on the test's own night start and a tap that hit a rack, both fixed in the script): SotG modifications (cost = base x size x grade, install DC by grade/tier, workforce and days), ship equipment, enhanced ShipArmor/Shield/Weapon; scrap dealers/junkyards sell low grade where a port is; shipyard showroom higher grades in rich places; install by shipyard (fee, no check) or party (half cost, workforce, Int (mechanic's kit) check); effects in `shipSheet`.
+- [x] B. Droid shop (def9090; browser steps in e2e/works.mjs): droid dealer a shop in every city (LIFE bump for old worlds), today's `droidStock` drawn on display, parts shelf = what it sells, sells DroidCustomization rows, install by dealer fee or a party member (CheckDialog).
+- [x] C. Every equipment row classified (gear.ts, gear.json; tests/items/classify.test.ts) (a use the game applies or a labelled house use); test fails on unclassified; item-audit reads it.
+- [x] D. Ammunition in the fight (def9090: loads, reload, riders, burst/rapid, zones; out-of-fight Load panel), reload, special ammo riders, pouches/belts/quiver/bandolier, calibrators/collimators.
+- [x] E. Food and water (def9090: passDays, lifestyle select, rests with camp gear) (wild only; lifestyle covers settlements), rests with bedroll/tent/shelter.
+- [ ] F. Hazards: rules done (hazardsAt, exposure, HAZARD_HOUR; tests/items/hazards.test.ts); NEXT: play wiring (hourly effect, air timers, deadly-entry refusal, wear/put on suits, darkness in fights, lights) (derived suit rules; climate = labelled house rule), air timers, light/darkness.
 - [ ] G. Encumbrance (Str x 15 base, variant tiers), containers, hidden compartments, mounts/hovercart.
 - [ ] H. Accessories, explosives (enhanced, mines, detonator), consumables, data/comms.
 - [ ] I. Cybernetics/prostheses vendors, item mods bought/installed, vendors/loot holders.
