@@ -186,6 +186,10 @@ export interface Combatant {
   // rounds carried by name, and whether an accessory reloads it for free once a turn. What a fight spends is counted in `spentAmmo`.
   ammo?: { weapon: string; family: string; left: number; max: number; round?: string; plain: string; riders: Record<string, AmmoRider>; reserves: Record<string, number>; free: boolean; shotsPer: Record<string, number> };
   spentAmmo?: Record<string, number>;
+  // Conditions it cannot be given (a sealed suit's)
+  conditionImmune?: string[];
+  // Heavily encumbered: disadvantage on Strength, Dexterity and Constitution attacks and saves
+  burden?: boolean;
   // A bipod carried, and deployed: the weapon's Strength requirement is ignored, speed 0
   bipod?: boolean;
   braced?: boolean;
@@ -400,6 +404,10 @@ export function attackPlan(arena: Arena, combatants: Combatant[], attacker: Comb
     up = true;
     reasons.push("helped");
   }
+  if (attacker.burden) {
+    down = true;
+    reasons.push("heavily encumbered");
+  }
   // A weapon's Strength or Dexterity requirement (Player's Handbook weapon properties): disadvantage unless the wielder meets it; a
   // braced bipod or tripod lifts the Strength one
   for (const [property, ability] of [["strength", "strength"], ["dexterity", "dexterity"]] as const) {
@@ -515,7 +523,8 @@ function savingThrow(c: Combatant, ability: string, dc: number): boolean {
   const all = mechanicsOf(c);
   if (all.some((x) => x.m.autoFailSaves.includes(ability))) return false;
   const high = c.high && c.high.ability === ability ? roll(1, 3) * (c.high.low ? -1 : 1) : 0;
-  return rollD20(all.some((x) => x.m.disadvantageSaves.includes(ability)) ? -1 : 0) + (c.saves?.[ability] ?? 0) + high >= dc;
+  const burdened = !!c.burden && ["strength", "dexterity", "constitution"].includes(ability);
+  return rollD20(all.some((x) => x.m.disadvantageSaves.includes(ability)) || burdened ? -1 : 0) + (c.saves?.[ability] ?? 0) + high >= dc;
 }
 
 // Adds conditions to a creature; one it already has is replaced
@@ -1059,7 +1068,7 @@ function riderSave(w: Work, at: number, save: StatSave, by: number | string | un
   const taken = amount > 0 ? damageCreature(w, at, amount, save.damageType) : 0;
   const after = w.combatants[at];
   let landed = "";
-  if (!saved && save.conditions?.length && after.hp > 0 && !save.conditions.some((n) => (after.profile?.conditionImmunities ?? []).includes(n))) {
+  if (!saved && save.conditions?.length && after.hp > 0 && !save.conditions.some((n) => (after.profile?.conditionImmunities ?? []).includes(n) || (after.conditionImmune ?? []).includes(n.toLowerCase()))) {
     w.combatants[at] = withConditions(after, save.conditions.map((name) => ({
       name: conditionList.find((x) => x.name.toLowerCase() === name)?.name ?? name,
       rounds: save.rounds ?? 1,

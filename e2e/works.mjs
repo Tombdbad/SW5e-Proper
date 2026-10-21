@@ -144,6 +144,9 @@ try {
 
     await step("the showroom sells new parts, of grades a far city has, and installed ones", async () => {
       // The yard's work done: let the clock pass it
+      // (the page saves its own clock as it goes: leave it first, or it writes the old time back)
+      await page.goto("about:blank");
+      await sleep(1500);
       const s = (await getCamp(camp.id)).starships[0];
       await api("PATCH", `/api/campaigns/${camp.id}`, { timeElapsed: { total: (s.work?.ready ?? 0) + 60 } });
       await goTo(camp.id, showroom.id);
@@ -172,6 +175,11 @@ try {
       await page.getByTestId("ship-systems-open").click();
       const install = page.getByTestId("hold-install").first();
       await install.waitFor({ timeout: 10000 });
+      // Alone, the character is short of the workforce a Small ship needs (2): a skilled hand is hired at the port (the book's Services)
+      const short = await page.getByTestId("hold-part").first().innerText();
+      if (!/workforce of 2/.test(short)) throw new Error(`expected the workforce rule, got: ${short}`);
+      await page.getByTestId("hire-hands").fill("1");
+      await sleep(500);
       if (await install.isDisabled()) throw new Error(`install is disabled: ${await page.getByTestId("hold-part").first().innerText()}`);
       await install.click();
       await sleep(3000);

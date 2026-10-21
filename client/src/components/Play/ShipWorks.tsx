@@ -109,21 +109,24 @@ export function ShipSystems(props: {
   disabled: boolean;
   minutesNow: number;
   shipRows: { name: string; type: string; cost: number }[];
-  onCrewInstall: (part: ShipPart, workers: string[], weapon?: string) => void;
-  onCrewTier: (workers: string[]) => void;
+  onCrewInstall: (part: ShipPart, workers: string[], weapon?: string, hands?: number) => void;
+  onCrewTier: (workers: string[], hands?: number) => void;
   onRemove: (mod: ShipModInstance, index: number) => void;
 }) {
   const { ship, sheet, parts, workers } = props;
   const [picked, setPicked] = useState<string[]>(() => workers.map((w) => w.id));
   const [weaponFor, setWeaponFor] = useState<Record<string, string>>({});
   const [open, setOpen] = useState(false);
+  // Skilled hands hired at a port to make up the workforce (Player's Handbook, Services: a skilled hireling 20 cr a day)
+  const [hands, setHands] = useState(0);
   const crew = workers.filter((w) => picked.includes(w.id)).map((w) => w.id);
+  const workforce = crew.length + (props.atPort ? hands : 0);
   const slots = slotsOf(ship);
   const suites = (ship.mods ?? []).filter((m) => shipModNamed(m.name)?.type === "Suite").length;
   const busy = ship.work && ship.work.ready > props.minutesNow ? ship.work : undefined;
   const weapons = sheet.weapons.map((w) => w.name);
   const nextTier = (ship.tier ?? 0) + 1;
-  const tier = nextTier <= 5 ? tierUpgrade(ship.size, nextTier, crew.length) : undefined;
+  const tier = nextTier <= 5 ? tierUpgrade(ship.size, nextTier, workforce) : undefined;
   const fittedFor = (part: ShipPart) => (part.kind === "mod" || part.kind === "equipment") && part.size && part.size !== ship.size && part.type !== "Weapon";
   return (
     <div className="space-y-1" data-testid="ship-systems">
@@ -164,6 +167,12 @@ export function ShipSystems(props: {
                 </label>
               ))}
             </div>
+            {props.atPort && (
+              <label className="flex items-center gap-1">
+                Hire skilled hands (20 cr a day each, the book's Services):
+                <input type="number" min={0} max={20} value={hands} onChange={(e) => setHands(Math.max(0, Math.min(20, Number(e.target.value) || 0)))} className="w-12 rounded bg-gray-800 px-1" data-testid="hire-hands" />
+              </label>
+            )}
             {!props.hasKit && <p className="text-amber-300">Installing needs a mechanic's kit (an Intelligence (Mechanic's Kit) check by whoever leads the work).</p>}
             {!props.atPort && <p className="text-amber-300">Away from a port the work takes twice as long and the check is 5 harder (house rule; the book allows up to twice the time).</p>}
           </div>
@@ -174,7 +183,8 @@ export function ShipSystems(props: {
                 const eq = part.kind === "equipment" ? props.shipRows.find((r) => r.name === part.name) : undefined;
                 const needsWeapon = (row?.type === "Weapon" && !/^Hardpoint$/i.test(row.name) && !shipModEffects(row).weapon?.allPrimary) || (part.kind === "enhanced" && part.type === "ShipWeapon");
                 const weapon = weaponFor[part.id] ?? weapons[0];
-                const plan = row ? crewModPlan(ship, row, crew.length, props.atPort) : eq ? crewEquipmentPlan(ship, eq, crew.length, props.atPort) : { days: 0.5, dc: 10, workforce: 1, enough: crew.length >= 1, reason: crew.length ? "" : "Pick who works." };
+                const plan = row ? crewModPlan(ship, row, workforce, props.atPort) : eq ? crewEquipmentPlan(ship, eq, workforce, props.atPort) : { days: 0.5, dc: 10, workforce: 1, enough: workforce >= 1, reason: workforce ? "" : "Pick who works." };
+                const wages = (props.atPort ? hands : 0) * 20 * Math.ceil(plan.days);
                 const why = fittedFor(part) ? `Assembled for a ${part.size} ship, not this ${ship.size} one.` : row ? canInstall(ship, row, sheet.abilities as any, needsWeapon ? weapon : undefined) || plan.reason : plan.reason;
                 return (
                   <li key={part.id} data-testid="hold-part">
@@ -185,8 +195,8 @@ export function ShipSystems(props: {
                           {weapons.map((w) => <option key={w} value={w}>{w}</option>)}
                         </select>
                       )}
-                      <Button size="sm" variant="outline" className="h-5 px-2" disabled={props.disabled || !!busy || !props.hasKit || !!why || (needsWeapon && !weapons.length)} title={why} onClick={() => props.onCrewInstall(part, crew, needsWeapon ? weapon : undefined)} data-testid="hold-install">
-                        Install ({dayText(plan.days)}, DC {plan.dc})
+                      <Button size="sm" variant="outline" className="h-5 px-2" disabled={props.disabled || !!busy || !props.hasKit || !!why || (needsWeapon && !weapons.length) || wages > props.credits} title={why} onClick={() => props.onCrewInstall(part, crew, needsWeapon ? weapon : undefined, props.atPort ? hands : 0)} data-testid="hold-install">
+                        Install ({dayText(plan.days)}, DC {plan.dc}{wages ? `, ${money(wages)} wages` : ""})
                       </Button>
                     </div>
                     {why && <p className="text-gray-400">{why}</p>}
@@ -198,7 +208,7 @@ export function ShipSystems(props: {
           {tier && (
             <div className="flex items-center gap-1" data-testid="ship-tier">
               <span className="flex-1">Tier {nextTier}: {money(tier.own)} of materials with your own workforce ({tier.workforce} at least), {dayText(tier.days)}; no check (the book's cost halved).</span>
-              <Button size="sm" variant="outline" className="h-5 px-2" disabled={props.disabled || !!busy || !props.atPort || crew.length < tier.workforce || tier.own > props.credits || (ship.hull !== undefined && ship.hull < sheet.hullMax)} title={!props.atPort ? "Only docked at a port" : ship.hull !== undefined && ship.hull < sheet.hullMax ? "Mend the hull first" : ""} onClick={() => props.onCrewTier(crew)} data-testid="ship-tier-up">
+              <Button size="sm" variant="outline" className="h-5 px-2" disabled={props.disabled || !!busy || !props.atPort || workforce < tier.workforce || tier.own + hands * 20 * Math.ceil(tier.days) > props.credits || (ship.hull !== undefined && ship.hull < sheet.hullMax)} title={!props.atPort ? "Only docked at a port" : ship.hull !== undefined && ship.hull < sheet.hullMax ? "Mend the hull first" : ""} onClick={() => props.onCrewTier(crew, hands)} data-testid="ship-tier-up">
                 Upgrade
               </Button>
             </div>

@@ -539,3 +539,61 @@ export const HAZARD_HOUR: Record<EnvHazard, { save?: string; dc?: number; damage
   underwater: { text: "Underwater: hold your breath (1 + Constitution modifier minutes), or breathe from a water suit, diving suit or respirator." },
   fire: { save: "dexterity", dc: 14, damage: "1d8", type: "fire", text: "Fire: a Dexterity save or burn." },
 };
+
+// ---- Weight and carrying (Player's Handbook, Lifting and Carrying, and its Variant: Encumbrance) ----------------------------------
+
+export const SIZE_CARRY: Record<string, number> = { Tiny: 0.5, Small: 1, Medium: 1, Large: 2, Huge: 4, Gargantuan: 8 };
+export const weightOf = (w: string | number | undefined) => (typeof w === "number" ? w : Number(String(w ?? "").replace(/[^\d.]/g, "")) || 0);
+export interface Load {
+  // Pounds the character carries (what others carry for the party left out)
+  weight: number;
+  capacity: number;
+  // 0 unburdened, 1 encumbered, 2 heavily encumbered, 3 over capacity (speed 5: pushing and dragging)
+  level: 0 | 1 | 2 | 3;
+  speed: number;
+  // Disadvantage on Strength, Dexterity and Constitution checks, attacks and saves (heavily encumbered)
+  disadvantage: boolean;
+  // Packed in containers, and what is carried loose beyond them (house rule: gear beyond what the containers hold and 20 lb loose is
+  // carried awkwardly, as if encumbered)
+  packed: number;
+  awkward: boolean;
+  // What the party's other carriers take (a hovercart, beasts of burden, companions)
+  shared: number;
+  notes: string[];
+}
+export const LOOSE_POUNDS = 20;
+export function loadOf(
+  items: { name: string; weight?: string | number; containerLb?: number }[],
+  o: { strength: number; size?: string; variant: boolean; others?: number; freeItems?: { items: number; each: number } },
+): Load {
+  const notes: string[] = [];
+  const rule = carryRule();
+  const factor = SIZE_CARRY[o.size ?? "Medium"] ?? 1;
+  const capacity = Math.round(o.strength * rule.capacity * factor);
+  // A utility vest carries its light items without counting
+  let free = o.freeItems ? o.freeItems.items : 0;
+  let total = 0;
+  for (const it of [...items].sort((a, b) => weightOf(a.weight) - weightOf(b.weight))) {
+    const w = weightOf(it.weight);
+    if (free > 0 && o.freeItems && w > 0 && w <= o.freeItems.each) {
+      free--;
+      continue;
+    }
+    total += w;
+  }
+  const shared = Math.min(o.others ?? 0, Math.max(0, total - capacity / 2));
+  const weight = Math.round((total - shared) * 10) / 10;
+  const packed = items.reduce((n, it) => n + (it.containerLb ?? 0), 0);
+  const awkward = weight > packed + LOOSE_POUNDS;
+  let level: Load["level"] = 0;
+  if (weight > capacity) level = 3;
+  else if (o.variant && weight > o.strength * rule.heavily * factor) level = 2;
+  else if (o.variant && weight > o.strength * rule.encumbered * factor) level = 1;
+  if (awkward && level === 0) {
+    level = 1;
+    notes.push(`More than your containers and ${LOOSE_POUNDS} lb loose hold: carried awkwardly, as if encumbered (house rule)`);
+  }
+  const speed = level === 3 ? -999 : level === 2 ? -rule.heavilySpeed : level === 1 ? -rule.encumberedSpeed : 0;
+  if (shared) notes.push(`${Math.round(shared)} lb carried by the others`);
+  return { weight, capacity, level, speed, disadvantage: level >= 2, packed, awkward, shared, notes };
+}
