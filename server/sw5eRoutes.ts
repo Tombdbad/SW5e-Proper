@@ -24,10 +24,10 @@ export function registerSw5eRoutes(app: Express) {
   let itemFacts: Promise<Record<string, ItemFacts>> | undefined;
   app.get("/api/sw5e/itemFacts", async (_req: Request, res: Response) => {
     try {
-      itemFacts ??= getDataset("enhancedItems").then((rows: any[]) => {
+      itemFacts ??= Promise.all([getDataset("enhancedItems"), getDataset("equipment")]).then(([rows, equipment]: any[][]) => {
         const out: Record<string, ItemFacts> = {};
         for (const row of rows) {
-          const facts = itemFactsOf(row);
+          const facts = itemFactsOf(row, equipment);
           if (facts) out[row.name.toLowerCase()] = facts;
         }
         return out;

@@ -20,7 +20,7 @@ import { caveMask, caveStyleOf, describeMask, MAX_WIDTH, MIN_WIDTH, type CaveWay
 export { caveMask, caveStyleOf, describeMask, MIN_WIDTH, MAX_WIDTH } from "./caves";
 import { gearText, ammoItemFamily, ammoRider, calibratorOf, accessoryOf, containerOf, suitOf, airOf, foodOf, lightOf, generatorOf, type AmmoFamily, type AmmoRider, type AccessoryFacts, type SuitFacts, type EnvHazard } from "./gear";
 export * from "./gear";
-import { shipModEffects, shipModNamed, makeshiftLoss, equipmentCost, type ShipModInstance, type ShipSpecial, type ShipConditionName, type ShipAbilityName, type EnhancedShipPart, type PartsPlace, type ShipPart } from "./shipyard";
+import { shipModEffects, shipModNamed, makeshiftLoss, equipmentCost, enhancedShipPart, type ShipModInstance, type ShipSpecial, type ShipConditionName, type ShipAbilityName, type EnhancedShipPart, type PartsPlace, type ShipPart } from "./shipyard";
 export * from "./shipyard";
 import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eRecord } from "../data";
 import conditionData from "../data/sw5e/conditions.json";
@@ -6265,16 +6265,18 @@ const countOf = (text: string, pattern: RegExp): number => {
 // What using an item does, read from its description (and its category, for those with none).
 // `uses` is how many times a kit can be used before it is spent (undefined: once, and it is gone).
 export type GearUse =
-  | { kind: "heal"; uses?: number }
-  | { kind: "repair"; uses?: number }
+  | { kind: "heal"; uses?: number; dice?: number }
+  | { kind: "repair"; uses?: number; dice?: number }
+  // A vitapac: Hit Dice back (an enhanced consumable)
+  | { kind: "vitapac"; hitDice: number }
   | { kind: "stabilize"; target: "organic" | "droid"; uses?: number }
   | { kind: "antidote"; uses?: number }
-  | { kind: "substance"; ability?: string; pool?: "tech" | "force"; temp?: string; poolDice?: string; lowDice?: string; wisdomDc: number; constitutionDc: number; alcohol?: boolean }
+  | { kind: "substance"; ability?: string; pool?: "tech" | "force"; temp?: string; poolDice?: string; lowDice?: string; wisdomDc: number; constitutionDc: number; alcohol?: boolean; die?: number; highMinutes?: number; lowMinutes?: number }
   | { kind: "explosive"; form: "grenade" | "mine" | "charge" | "detonator"; radius: number; cone?: boolean; dc: number; save: string; damage: { dice: string; type: string }[]; conditions: string[]; lingers?: boolean }
   | { kind: "poison"; dc: number; dice: string }
   | { kind: "bolt"; dc: number }
   | { kind: "binders"; dc: number }
-  | { kind: "spike"; tool: string }
+  | { kind: "spike"; tool: string; advantage?: boolean }
   | { kind: "ram"; bonus: number }
   | { kind: "scout" }
   | { kind: "cutter" }
@@ -6291,7 +6293,7 @@ export type GearUse =
   // calibrator or collimator, an accessory, a container, a sealed suit, an air supply, food, camping gear, clothes, a light, a hook and a
   // line, an extinguisher, a belt generator, the small tools, data and comms devices, a prosthesis
   | { kind: "ammo"; family: AmmoFamily; rider: AmmoRider }
-  | { kind: "calibrator"; weapon: "vibroweapon" | "lightweapon"; damage: number; property?: string; rounds: number }
+  | { kind: "calibrator"; weapon: "vibroweapon" | "lightweapon"; damage: number; attack?: number; dice?: string; property?: string; rounds: number }
   | { kind: "accessory"; facts: AccessoryFacts }
   | { kind: "container"; lb?: number; pints?: number; hidden?: number; hiddenDc?: number; lock?: number; speed?: number }
   | { kind: "suit"; suit: SuitFacts }
@@ -6332,8 +6334,16 @@ export function gearUse(item: GearFacts): GearUse | undefined {
     const pool = /tech points/i.test(text) ? "tech" : /force points/i.test(text) ? "force" : undefined;
     const wis = Number((text.match(/DC (\d+) Wisdom saving throw or experience a low/i) ?? text.match(/DC (\d+) Wisdom saving throw to resist addiction/i) ?? [])[1]) || 14;
     const con = Number((text.match(/DC (\d+) Constitution saving throw (?:to resist addiction|or experience a low)/i) ?? [])[1]) || 14;
+    const word = (x?: string) => (x ? ({ minute: 1, hour: 60 } as Record<string, number>)[x.toLowerCase()] : undefined);
+    const lasts = (re: RegExp) => {
+      const m = text.match(re);
+      return m ? (Number(m[1]) || 1) * (word(m[2]) ?? 1) : undefined;
+    };
     return {
       kind: "substance",
+      die: Number(text.match(/roll an additional d(\d+)/i)?.[1] ?? 3),
+      highMinutes: lasts(/For the next (\d+ )?(minute|hour)s?/i),
+      lowMinutes: lasts(/low that lasts (\d+ |an? )?(minute|hour)s?/i),
       ability,
       pool,
       temp: (text.match(/gains (\d+d\d+) temporary hit points/i) ?? [])[1],
@@ -6357,8 +6367,9 @@ export function gearUse(item: GearFacts): GearUse | undefined {
     return { kind: "explosive", form, radius, cone: !!cone, dc, save, damage, conditions, lingers: /for 1 minute/i.test(text) && /enters|starts its turn/i.test(text) };
   }
   if (category === "Medical") {
-    if (/medpac/.test(name)) return { kind: "heal" };
-    if (/repair kit/.test(name)) return { kind: "repair", uses: countOf(text, /(\w+) uses/i) || 3 };
+    const rolled = countOf(text, /rolls (\w+) dice equal to the size/i) || undefined;
+    if (/medpac/.test(name)) return { kind: "heal", ...(rolled ? { dice: rolled } : {}) };
+    if (/repair kit/.test(name)) return { kind: "repair", uses: countOf(text, /(\w+) uses/i) || 3, ...(rolled ? { dice: rolled } : {}) };
     if (/traumakit/.test(name)) return { kind: "stabilize", target: "organic", uses: countOf(text, /(\w+) uses/i) || 5 };
     if (/emergency battery/.test(name)) return { kind: "stabilize", target: "droid", uses: countOf(text, /(\w+) uses/i) || 10 };
     if (/antitoxkit/.test(name)) return { kind: "antidote", uses: countOf(text, /(\w+) charges/i) || 5 };
@@ -6382,6 +6393,27 @@ export function gearUse(item: GearFacts): GearUse | undefined {
   if (/comm jammer/.test(name)) return { kind: "jammer" };
   if (/homing beacon/.test(name)) return { kind: "beacon" };
   return gearRole(item);
+}
+
+// What an enhanced consumable does (2026-10-21): it is written like the plain item it is a grade of (a grenade, a spice, a medpac, a
+// cartridge, a spike), so it is read as that item with its own text: the grade's DC and dice, a medpac's dice, a round's bonus; a vitapac
+// gives Hit Dice back. `equipment` is the equipment data (for the plain item's category).
+export const baseNameOf = (name: string) => name.replace(/\s*\((?:[^()]*)\)\s*$/, "").replace(/\s+Mk\s+[IVX]+$/i, "").trim();
+export function enhancedConsumableUse(row: { name: string; text?: string; consumableType?: string; type?: string }, equipment: { name: string; equipmentCategory: string }[]): GearUse | undefined {
+  if (row.type && row.type !== "Consumable") return undefined;
+  const text = (row.text ?? "").replace(/\s+/g, " ");
+  const base = equipment.find((e) => e.name.toLowerCase() === baseNameOf(row.name).toLowerCase());
+  const hitDice = text.match(/regains (\w+) Hit Dice/i);
+  if (/^vitapac/i.test(row.name) && hitDice) return { kind: "vitapac", hitDice: NUMBER_WORDS[hitDice[1].toLowerCase()] ?? (Number(hitDice[1]) || 1) };
+  const category = base?.equipmentCategory ?? (row.consumableType === "Explosives" ? "Explosive" : row.consumableType === "Poisons" ? "Medical" : undefined);
+  if (!category) return undefined;
+  const use = gearUse({ name: base?.name ?? row.name, equipmentCategory: category, description: text });
+  if (use?.kind === "ammo") {
+    const bonus = Number(text.match(/\+(\d+) bonus to attack and damage rolls made with this enhanced/i)?.[1] ?? 0);
+    return { ...use, rider: { ...use.rider, ...(bonus ? { bonus } : {}) } };
+  }
+  if (use?.kind === "spike" && /to gain advantage on the check/i.test(text)) return { ...use, advantage: true };
+  return use;
 }
 
 // The hazards of a place (2026-10-21; house rules for where, the gear that answers them is the books': gear.ts `exposure`): the cold of
@@ -9907,6 +9939,9 @@ export interface ItemFacts {
   chassis?: string;
   // A droid customization: a part (replaces a physical part) or a protocol
   droid?: "part" | "protocol";
+  // A consumable read as the plain item it is a grade of (enhancedConsumableUse), and an enhanced ship part's slot and bonus
+  use?: GearUse;
+  shipPart?: { slot: "armor" | "shield" | "weapon"; bonus: number };
 }
 
 export const ATTUNEMENT_LIMIT_NOTE = "A creature can be attuned to as many items as its proficiency bonus; standard, premium and prototype items take one, advanced, legendary and artifact two.";
@@ -10006,13 +10041,18 @@ export const PROSTHESES: Record<string, string[]> = {
 export const BODY_PARTS: Record<string, number> = { arm: 2, leg: 2, eye: 2, ear: 2, face: 1, torso: 1, throat: 1 };
 
 // What an enhanced item row amounts to in play; undefined for those with nothing to apply
-export function itemFactsOf(row: { name: string; type: string; subtype?: string; searchableRarity: string; requiresAttunement?: boolean; text?: string; consumableType?: string; cyberneticAugmentationType?: string }): ItemFacts | undefined {
+export function itemFactsOf(row: { name: string; type: string; subtype?: string; searchableRarity: string; requiresAttunement?: boolean; text?: string; consumableType?: string; cyberneticAugmentationType?: string }, equipment?: { name: string; equipmentCategory: string }[]): ItemFacts | undefined {
   const text = row.text ?? "";
   const base = { name: row.name, type: row.type, subtype: row.subtype, rarity: row.searchableRarity, attune: attunementSlots(!!row.requiresAttunement, row.searchableRarity), text: plainText(text) };
   if (row.type === "Consumable") {
     const timed = parseTimedEffect(row.name, row.consumableType, text);
-    return timed ? { ...base, effects: {}, timed } : undefined;
+    if (timed) return { ...base, effects: {}, timed };
+    // (2026-10-21) the rest are graded plain items: a grenade, a spice, a medpac, a round
+    const use = equipment ? enhancedConsumableUse(row, equipment) : undefined;
+    return use ? { ...base, effects: {}, use } : undefined;
   }
+  const part = enhancedShipPart(row);
+  if (part) return { ...base, effects: {}, shipPart: { slot: part.slot, bonus: part.bonus } };
   if (row.type === "ItemModification") {
     const properties = Array.from(plainText(text).matchAll(/gains? the ([a-z\-]+(?: \d+)?) property/gi)).map((m) => m[1].toLowerCase());
     return { ...base, text: base.text.slice(0, 320), effects: parseItemEffects(text), modKind: String(row.subtype ?? "").toLowerCase(), properties };

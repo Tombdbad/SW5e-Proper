@@ -88,6 +88,8 @@ export interface AmmoRider {
   restrains?: { dc: number; max: string };
   // A weapon's own damage per round (a dart 1d6, a bolt 2d6, a torpedo 20d4)
   base?: { dice: string; type: string };
+  // An enhanced round's bonus to the attack and damage of its shot
+  bonus?: number;
 }
 const firstSave = (t: string) => t.match(/DC (\d+) (Strength|Dexterity|Constitution|Intelligence|Wisdom|Charisma) saving throw/i);
 export function ammoRider(item: { name: string; description?: string }): AmmoRider {
@@ -141,12 +143,15 @@ export function ammoRider(item: { name: string; description?: string }): AmmoRid
 
 // A calibrator or collimator: applied to a weapon of its kind as an action, +1 to damage for a minute and a property (sonorous,
 // shocking, neuralizing 13)
-export function calibratorOf(item: { name: string; description?: string }): { weapon: "vibroweapon" | "lightweapon"; damage: number; property?: string; rounds: number } | undefined {
+export function calibratorOf(item: { name: string; description?: string }): { weapon: "vibroweapon" | "lightweapon"; damage: number; attack?: number; dice?: string; property?: string; rounds: number } | undefined {
   const t = gearText(item);
-  const m = t.match(/apply this (calibrator|collimator) to one (vibroweapon|lightweapon)[^,]*, granting it a \+(\d+) bonus to damage rolls for 1 minute/i);
-  if (!m) return undefined;
+  const m = t.match(/apply this (calibrator|collimator) to one (vibroweapon|lightweapon)[^,]*, granting it a \+(\d+) bonus to (attack and )?damage rolls for 1 minute/i);
+  // The top grades: "+3 bonus to attack rolls and dealing an additional 1d8 damage"
+  const top = t.match(/apply this (calibrator|collimator) to one (vibroweapon|lightweapon)[^,]*, granting it a \+(\d+) bonus to attack rolls and dealing an additional (\d+d\d+) damage for 1 minute/i);
+  if (!m && !top) return undefined;
   const prop = t.match(/gains the (\w+ \d+) property/i)?.[1];
-  return { weapon: m[2].toLowerCase() as "vibroweapon" | "lightweapon", damage: Number(m[3]), property: prop, rounds: 10 };
+  if (top) return { weapon: top[2].toLowerCase() as "vibroweapon" | "lightweapon", damage: 0, attack: Number(top[3]), dice: top[4], property: prop, rounds: 10 };
+  return { weapon: m![2].toLowerCase() as "vibroweapon" | "lightweapon", damage: Number(m![3]), ...(m![4] ? { attack: Number(m![3]) } : {}), property: prop, rounds: 10 };
 }
 
 // ---- Accessories -----------------------------------------------------------------------------------------------------------------

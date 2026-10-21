@@ -81,7 +81,7 @@ interface PlayState {
   // A dose of poison on the weapon
   poison?: { dice: string; dc: number };
   // A substance in the blood: a high until `ends` (clock minutes) or until it is used, then a low
-  substance?: { name: string; ability?: string; pool?: "tech" | "force"; phase: "high" | "low"; ends: number; lowMinutes: number; boost: number; reduce: number; temp?: string; wisdomDc: number; constitutionDc: number };
+  substance?: { name: string; ability?: string; pool?: "tech" | "force"; phase: "high" | "low"; ends: number; lowMinutes: number; boost: number; reduce: number; temp?: string; wisdomDc: number; constitutionDc: number; die?: number };
   addiction?: number;
   lastSubstance?: number;
   protectedUntil?: number;
@@ -457,7 +457,7 @@ export default function GameBoard() {
     const burdened = mine && loadNow().disadvantage && ["strength", "dexterity", "constitution"].includes(option.ability);
     const up = option.edge || rested;
     const roll = up && !burdened ? Math.max(first, d20()) : burdened && !up ? Math.min(first, d20()) : first;
-    const s = mine ? (play.substance?.ability === option.ability ? (play.substance.phase === "high" ? 1 : -1) : 0) * die(3) : 0;
+    const s = mine ? (play.substance?.ability === option.ability ? (play.substance.phase === "high" ? 1 : -1) : 0) * die(play.substance?.die ?? 3) : 0;
     if (s > 0) setTimeout(() => endHigh("used on a check"), 0);
     const bonus = option.bonus + s + (plan.extra ?? 0);
     const total = roll + bonus;
@@ -561,7 +561,14 @@ export default function GameBoard() {
     saveCampaign({ galaxyMap: next });
   };
   const stealthRoll = () => {
-    const roll = d20();
+    // A stealth field generator running: advantage on Stealth that relies on sight (its text); armor with the bulky property or a
+    // shield with the obtrusive property: disadvantage (the book's armor properties)
+    const field = ((character.equipment ?? []) as string[]).some((n) => /stealth field generator/i.test(n) && running(n));
+    const worn = equippedNow(character);
+    const props = [worn.body, worn.shield].filter(Boolean).flatMap((n) => (factsOf(n as string) as any)?.properties ?? []).join(" ").toLowerCase();
+    const clumsy = /bulky|obtrusive/.test(props) || (worn.body ? !!(factsOf(worn.body) as any)?.stealthDisadvantage : false);
+    const a = d20();
+    const roll = field && !clumsy ? Math.max(a, d20()) : clumsy && !field ? Math.min(a, d20()) : a;
     const bonus = modifier(character.abilityScores?.dexterity) + (skilled("stealth") ? proficiency : 0);
     return { roll, bonus, total: roll + bonus };
   };
@@ -792,10 +799,16 @@ export default function GameBoard() {
     const picked = door ? afterHours.current.get(door.parentId ?? "") : undefined;
     if (shutDC !== undefined && door && !(picked !== undefined && clockNow() - picked < 780)) return breakIn(door.parentId!, shutDC);
     if (exit.climb) {
-      // Out of a pit: Athletics, or Dexterity, a minute for each try
-      const ok = await abilityCheck("Climbing out", exit.climb, ["strength", "dexterity"], skilled("athletics"));
-      if (cancelledCheck.current) return;
-      if (!ok) return void saveCampaign(pass(1));
+      // Out of a pit: Athletics, or Dexterity, a minute for each try. Friction-grip gear worn gives a climbing speed: no check (the
+      // book); a grappling hook or fibercord line makes it a DC 5 easier climb (house rule)
+      const grips = wearingNow.some((n) => /friction-grip/i.test(n));
+      const line = carries(/^grappling hook|^fibercord/i);
+      if (grips) toast.info("Friction-grip gear: you climb out without a check.");
+      else {
+        const ok = await abilityCheck(`Climbing out${line ? " (a line helps: DC -5, house rule)" : ""}`, Math.max(5, exit.climb - (line ? 5 : 0)), ["strength", "dexterity"], skilled("athletics"));
+        if (cancelledCheck.current) return;
+        if (!ok) return void saveCampaign(pass(1));
+      }
     }
     // A sensor on the way (patio doors, house rule): slipped past (Intelligence, a security or slicer's kit helps), else the alarm
     // goes up through the building; either way the party goes through
@@ -1472,6 +1485,21 @@ export default function GameBoard() {
         const base = Number(character.speed) || 30;
         return load.level ? { speed: load.level === 3 ? 5 : Math.max(5, base + load.speed), burden: load.disadvantage } : {};
       })(),
+      // Powered flight running (a jetpack, rocket boots, a rocketpack: their flying speed), a repulsor pack's slowed fall
+      ...(() => {
+        const flyer = ((character.equipment ?? []) as string[]).find((n) => running(n) && accessoryOf({ name: n, description: factsOf(n)?.description }).fly);
+        const fly = flyer ? accessoryOf({ name: flyer, description: factsOf(flyer)?.description }).fly : undefined;
+        const slowFall = ((character.equipment ?? []) as string[]).some((n) => /repulsor pack/i.test(n) && running(n));
+        return { ...(fly ? { fly, speed: Math.max(Number(character.speed) || 30, fly) } : {}), ...(slowFall ? { slowFall } : {}) };
+      })(),
+      // Shock gloves worn: unarmed strikes deal their lightning too (the item's text)
+      ...(() => {
+        const gloves = wearingNow.find((n) => accessoryOf({ name: n, description: factsOf(n)?.description }).unarmed);
+        const u = gloves ? accessoryOf({ name: gloves, description: factsOf(gloves)?.description }).unarmed! : undefined;
+        if (!u) return {};
+        const base = natural ? { name: natural.name, dice: natural.dice, attack: natural.attackBonus, damage: natural.damageBonus, type: natural.damageType } : { name: "Unarmed strike", dice: "1", attack: scoreMod("strength") + proficiency, damage: scoreMod("strength"), type: "kinetic" };
+        return { unarmed: { ...base, name: `${base.name} (${gloves})`, extra: { dice: u.dice, type: u.type } } };
+      })(),
       // Sealed suits worn: their resistances and condition immunities, and 15 feet less speed
       ...(() => {
         const suits = wearingNow.map((n) => suitFacts(n)).filter(Boolean);
@@ -1498,7 +1526,7 @@ export default function GameBoard() {
         ac: play.boon?.kind === "ac" ? play.boon.die : undefined,
         poison: play.poison,
       },
-      high: play.substance?.ability || play.substance?.temp ? { name: play.substance.name, ability: play.substance.ability, rounds: addictionLevel >= 2 ? 5 : 10, temp: play.substance.temp, low: play.substance.phase === "low" } : undefined,
+      high: play.substance?.ability || play.substance?.temp ? { name: play.substance.name, ability: play.substance.ability, rounds: addictionLevel >= 2 ? 5 : 10, temp: play.substance.temp, low: play.substance.phase === "low", die: play.substance.die } : undefined,
       // Armor picked up since the sheet was last worked out counts too
       // (once armor has been put on or taken off by choice, the sheet's class is what counts)
       armorClass: equippedOf(character) ? character.armorClass : Math.max(character.armorClass, calculateArmorClass(character.abilityScores, character.equipment ?? [])),
@@ -2288,7 +2316,8 @@ export default function GameBoard() {
   const play: PlayState = (character?.playState ?? {}) as PlayState;
   const party: Companion[] = Array.isArray(character?.companionData?.party) ? character.companionData.party : [];
   const factsOf = (name: string) => equipmentData.find((e) => e.name === name);
-  const gearOf = (name: string): GearUse | undefined => gearUse({ name, equipmentCategory: factsOf(name)?.equipmentCategory, description: factsOf(name)?.description });
+  // What an item does: a plain item's from its description; an enhanced consumable's as the plain item it is a grade of
+  const gearOf = (name: string): GearUse | undefined => (factsOf(name) ? gearUse({ name, equipmentCategory: factsOf(name)?.equipmentCategory, description: factsOf(name)?.description }) : factsOfItem(name)?.use);
   const die = (sides: number) => Math.floor(Math.random() * sides) + 1;
   const clockNow = () => useClock.getState().minutes;
   const speed = (what: string) => toast.info(what);
@@ -2316,10 +2345,13 @@ export default function GameBoard() {
 
   // What the character can do for a creature with an item: whom, and how much a die gives
   const hitDieOfCharacter = hitDie;
-  const healFor = (who: "self" | Companion, max = false) => {
+  const healFor = (who: "self" | Companion, max = false, dice = 1) => {
     const sides = who === "self" ? hitDieOfCharacter : hitDieOfSize(who.size);
     const bonus = who === "self" ? modifier(character.abilityScores?.constitution) : who.saves?.constitution ?? 0;
-    return Math.max(1, (max ? sides : die(sides)) + bonus);
+    // An enhanced medpac or repair kit rolls more dice (its text: "rolls four dice equal to the size of their Hit Die")
+    let rolled = 0;
+    for (let i = 0; i < Math.max(1, dice); i++) rolled += max ? sides : die(sides);
+    return Math.max(1, rolled + bonus);
   };
 
   // A boon is for one thing and ends with the next rest
@@ -2340,7 +2372,7 @@ export default function GameBoard() {
       if (use.kind === "heal" && droidTarget) return speed("A medpac works on beasts and humanoids, not on droids or constructs.");
       if (use.kind === "repair" && !droidTarget) return speed("A repair kit is for droids and constructs.");
       const maxed = use.kind === "heal" && play.boon?.kind === "medpac";
-      const amount = healFor(companion ?? "self", maxed);
+      const amount = healFor(companion ?? "self", maxed, use.dice ?? 1);
       if (maxed) changes.playState = { ...state, boon: undefined };
       if (companion) {
         saveParty(party.map((c) => (c.id === companion.id ? { ...c, hp: Math.min(c.maxHp, c.hp + amount) } : c)), changes);
@@ -2351,6 +2383,12 @@ export default function GameBoard() {
         saveCharacter({ ...changes, currentHp: lastSavedHp.current, playState: changes.playState ?? state });
         note = `${amount} hit points regained${maxed ? " (the prepared medpac gives the most it can)" : ""}`;
       }
+    } else if (use.kind === "vitapac") {
+      // A vitapac: spent Hit Dice back (an enhanced consumable's text)
+      if (companion) return speed("A vitapac gives back Hit Dice: the character's own.");
+      if (!(character.hitDiceUsed ?? 0)) return speed("You have spent no Hit Dice.");
+      saveCharacter({ ...changes, hitDiceUsed: Math.max(0, (character.hitDiceUsed ?? 0) - use.hitDice), playState: state });
+      note = `${Math.min(use.hitDice, character.hitDiceUsed ?? 0)} Hit Dice back`;
     } else if (use.kind === "stabilize") {
       if (!companion) return speed("That is for someone who has fallen: use it on a companion.");
       if ((use.target === "droid") === isOrganic(companion)) return speed(use.target === "droid" ? "An emergency battery is for droids." : "A traumakit is for beasts and people, not droids.");
@@ -2394,14 +2432,16 @@ export default function GameBoard() {
     const lowMinutes = 10 * (addiction >= 3 ? 4 : addiction >= 1 ? 2 : 1) + carriedLow;
     const boost = use.poolDice ? Math.max(1, rollDamage(use.poolDice, false) >> (addiction >= 4 ? 1 : 0)) : 0;
     const reduce = use.lowDice ? rollDamage(use.lowDice, false) : 0;
-    const high = { name, ability: use.ability, pool: use.pool, phase: "high" as const, ends: now + 10, lowMinutes, boost, reduce, temp: use.temp, wisdomDc: use.wisdomDc, constitutionDc: use.constitutionDc };
+    // A graded spice's die and hours (its text: "an additional d12 ... For the next hour ... a low that lasts 8 hours")
+    const graded = (use.lowMinutes ?? 10) * (addiction >= 3 ? 4 : addiction >= 1 ? 2 : 1) + carriedLow;
+    const high = { name, ability: use.ability, pool: use.pool, phase: "high" as const, ends: now + (use.highMinutes ?? 10), lowMinutes: use.lowMinutes ? graded : lowMinutes, boost, reduce, temp: use.temp, wisdomDc: use.wisdomDc, constitutionDc: use.constitutionDc, die: use.die ?? 3 };
     if (boost) {
       // Current and maximum tech or force points rise together
       changes.maxForcePoints = (character.maxForcePoints ?? 0) + boost;
       changes.currentForcePoints = (character.currentForcePoints ?? 0) + boost;
       lastSavedPoints.current = changes.currentForcePoints;
     }
-    note += `a high${use.ability ? ` (+d3 on ${use.ability} checks, attacks and saves)` : ""}${boost ? ` (+${boost} points)` : ""}${use.temp ? ` (${use.temp} temporary hit points each turn in a fight)` : ""}, until your next check or fight`;
+    note += `a high${use.ability ? ` (+d${use.die ?? 3} on ${use.ability} checks, attacks and saves)` : ""}${boost ? ` (+${boost} points)` : ""}${use.temp ? ` (${use.temp} temporary hit points each turn in a fight)` : ""}, until your next check or fight`;
     return { state: { ...state, addiction, substance: high, lastSubstance: now }, changes, note };
   };
 
@@ -2460,7 +2500,7 @@ export default function GameBoard() {
   const substanceFor = (ability: string): number => {
     const s = play.substance;
     if (!s || s.ability !== ability) return 0;
-    return s.phase === "high" ? die(3) : -die(3);
+    return s.phase === "high" ? die(s.die ?? 3) : -die(s.die ?? 3);
   };
 
   // Abstaining for a day and a long rest: a Wisdom save to lower the level of addiction (see rest)
@@ -3217,7 +3257,7 @@ export default function GameBoard() {
             if (use.kind === "heal" && droid) return !!speed("A medpac works on beasts and humanoids, not on droids.");
             if (use.kind === "repair" && !droid) return !!speed("A repair kit is for droids and constructs.");
             const maxed = use.kind === "heal" && play.boon?.kind === "medpac";
-            const amount = healFor(ally ?? "self", maxed);
+            const amount = healFor(ally ?? "self", maxed, "dice" in use ? use.dice ?? 1 : 1);
             if (!useCombat.getState().itemEffect({ kind: "heal", label: name, targetId: id ?? character.id, amount })) return false;
             const spent = consume(name, use.uses);
             saveCharacter({ equipment: spent.equipment, playState: { ...play, charges: spent.charges, ...(maxed ? { boon: undefined } : {}) } });
@@ -3397,7 +3437,9 @@ export default function GameBoard() {
       const trap = room?.layout?.assets.find((a) => a.id === action.id);
       const pit = trap?.ref ? world.areas[trap.ref] : undefined;
       if (!room?.layout || !trap || !pit) return;
-      const fall = die(6);
+      // A repulsor pack running slows the fall: no damage (its text: descent slowed to 60 feet a round)
+      const slowed = ((character.equipment ?? []) as string[]).some((n) => /repulsor pack/i.test(n) && running(n));
+      const fall = slowed ? 0 : die(6);
       const hp = Math.max(1, (character.currentHp ?? 0) - fall);
       const galaxyMap: World = {
         ...world,
@@ -3409,7 +3451,7 @@ export default function GameBoard() {
       saveCharacter({ currentHp: hp });
       saveCampaign({ galaxyMap, currentLocation: pit.id, ...pass(1) });
       setCameFrom(room.id);
-      toast.error(`The flagstone gives way and you fall into a pit: ${fall} damage. Climb out (Athletics or Dexterity, DC ${PIT_CLIMB_DC}).`);
+      toast.error(`The flagstone gives way and you fall into a pit: ${slowed ? "your repulsor pack sets you down gently" : `${fall} damage`}. Climb out (Athletics or Dexterity, DC ${PIT_CLIMB_DC}).`);
     }
     else if (action.type === "go") {
       if (gangHolds) toast.warning("The gang has you. There is no slipping through a door with them on you.");
@@ -4614,14 +4656,14 @@ export default function GameBoard() {
         </div>
       );
     }
-    if (use.kind === "heal" || use.kind === "repair" || use.kind === "stabilize" || use.kind === "antidote" || use.kind === "substance") {
+    if (use.kind === "heal" || use.kind === "repair" || use.kind === "stabilize" || use.kind === "antidote" || use.kind === "substance" || use.kind === "vitapac") {
       const droid = use.kind === "repair" || (use.kind === "stabilize" && use.target === "droid");
       return (
         <div className="mt-1 space-y-1 text-xs" data-testid="use-panel">
           {text}
           {use.kind === "substance" && <p className="text-yellow-300">A high waits for your next check or fight; a low follows (a Wisdom save), then a Constitution save against addiction. Addiction level {addictionLevel}.</p>}
           <div className="flex flex-wrap gap-1">
-            {people.filter((p) => (use.kind === "substance" || use.kind === "antidote" ? p.id === "self" : droid ? p.id !== "self" : true)).map((p) => (
+            {people.filter((p) => (use.kind === "substance" || use.kind === "antidote" || use.kind === "vitapac" ? p.id === "self" : droid ? p.id !== "self" : true)).map((p) => (
               <Button key={p.id} size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => useOn(name, p.id)} data-testid={`use-on-${p.id}`}>
                 {p.id === "self" ? "Use on yourself" : `Use on ${p.label}`}
               </Button>

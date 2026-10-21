@@ -80,10 +80,12 @@ export interface Combatant {
   rangedType?: string;
   // The ability the melee weapon is used with (Strength, or Dexterity for a finesse weapon the character is better with)
   meleeAbility?: "strength" | "dexterity";
+  // More damage dice on each melee hit (a top-grade calibrator), and on an unarmed strike (shock gloves)
+  meleeExtra?: { dice: string; type?: string };
   // A second light weapon in the other hand, and the character's unarmed strike (a Martial Arts
   // die or a species' natural weapon), for the bonus action attacks
   offhand?: { name: string; dice: string; attack: number; damage: number; type?: string; props?: string[] };
-  unarmed?: { name: string; dice: string; attack: number; damage: number; type?: string };
+  unarmed?: { name: string; dice: string; attack: number; damage: number; type?: string; extra?: { dice: string; type?: string } };
   // The player's powers, ready to cast, and the points left to cast them with
   powers?: CombatPower[];
   powerPoints?: number;
@@ -116,7 +118,7 @@ export interface Combatant {
   tempHp?: number;
   // A substance's high: the ability the extra d3 goes to, the turns it has left and what it gives
   // at the start of each turn
-  high?: { name: string; ability?: string; rounds: number; temp?: string; low?: boolean };
+  high?: { name: string; ability?: string; rounds: number; temp?: string; low?: boolean; die?: number };
   // What the character has prepared or coated: a tool's die for one attack, one damage roll and one
   // attack against the character, and a dose of poison on the weapon (the dice, the DC, and whether
   // it has been spent). Spent ones are listed in the fight's `spent`.
@@ -190,6 +192,9 @@ export interface Combatant {
   conditionImmune?: string[];
   // Heavily encumbered: disadvantage on Strength, Dexterity and Constitution attacks and saves
   burden?: boolean;
+  // A flying speed (a jetpack, rocket boots, a rocketpack running: it moves over what stands on the floor) and a slowed fall (a repulsor pack)
+  fly?: number;
+  slowFall?: boolean;
   // A bipod carried, and deployed: the weapon's Strength requirement is ignored, speed 0
   bipod?: boolean;
   braced?: boolean;
@@ -274,7 +279,9 @@ export function movementLeft(c: Combatant): number {
 // Furniture that blocks and other creatures are walked around; no cutting corners.
 export function reachable(arena: Arena, combatants: Combatant[], mover: Combatant, limit = movementLeft(mover)): Map<string, { cost: number; from?: string }> {
   const taken = new Set(combatants.filter((c) => c.id !== mover.id && c.hp > 0).map((c) => key(c.x ?? -1, c.y ?? -1, c.z ?? 0)));
-  const open = (x: number, y: number, z: number) => !solid(arena, x, y, z) && !taken.has(key(x, y, z));
+  // A flyer passes over what stands on the floor (only the edge of the ground stops it)
+  const blocked = (x: number, y: number, z: number) => (mover.fly && !z ? x < 0 || y < 0 || x >= arena.width || y >= arena.height : solid(arena, x, y, z));
+  const open = (x: number, y: number, z: number) => !blocked(x, y, z) && !taken.has(key(x, y, z));
   const start = { x: mover.x ?? 0, y: mover.y ?? 0, z: mover.z ?? 0 };
   const found = new Map<string, { cost: number; from?: string }>([[key(start.x, start.y, start.z), { cost: 0 }]]);
   const queue: { x: number; y: number; z: number }[] = [start];
@@ -288,7 +295,7 @@ export function reachable(arena: Arena, combatants: Combatant[], mover: Combatan
         const x = at.x + dx;
         const y = at.y + dy;
         if ((!dx && !dy) || found.has(key(x, y, at.z)) || !open(x, y, at.z)) continue;
-        if (dx && dy && (solid(arena, at.x + dx, at.y, at.z) || solid(arena, at.x, at.y + dy, at.z))) continue;
+        if (dx && dy && (blocked(at.x + dx, at.y, at.z) || blocked(at.x, at.y + dy, at.z))) continue;
         found.set(key(x, y, at.z), { cost: here + 5, from: key(at.x, at.y, at.z) });
         queue.push({ x, y, z: at.z });
       }
@@ -522,7 +529,7 @@ export const rollD20 = (mode = 0): number => {
 function savingThrow(c: Combatant, ability: string, dc: number): boolean {
   const all = mechanicsOf(c);
   if (all.some((x) => x.m.autoFailSaves.includes(ability))) return false;
-  const high = c.high && c.high.ability === ability ? roll(1, 3) * (c.high.low ? -1 : 1) : 0;
+  const high = c.high && c.high.ability === ability ? roll(1, c.high.die ?? 3) * (c.high.low ? -1 : 1) : 0;
   const burdened = !!c.burden && ["strength", "dexterity", "constitution"].includes(ability);
   return rollD20(all.some((x) => x.m.disadvantageSaves.includes(ability)) || burdened ? -1 : 0) + (c.saves?.[ability] ?? 0) + high >= dc;
 }
@@ -586,7 +593,7 @@ export type ItemEffect =
   | { kind: "substance"; label: string; ability?: string; temp?: string; rounds: number }
   | { kind: "poison"; label: string; dice: string; dc: number }
   // A calibrator or collimator applied to the melee weapon (gear.ts calibratorOf): +N damage and a property for the fight
-  | { kind: "calibrate"; label: string; damage: number; property?: string };
+  | { kind: "calibrate"; label: string; damage: number; attack?: number; dice?: string; property?: string };
 
 // ---------------------------------------------------------------------------------------------
 // Dice and damage
@@ -670,6 +677,7 @@ export function playerSpec(c: Combatant, kind: "melee" | "ranged" | "unarmed" | 
       reach: c.reach ?? 5,
       properties: c.meleeProps ?? [],
       ability: c.meleeAbility ?? "strength",
+      extra: c.meleeDice ? c.meleeExtra : c.unarmed?.extra,
     };
   }
   if (kind === "ranged") {
@@ -689,7 +697,7 @@ export function playerSpec(c: Combatant, kind: "melee" | "ranged" | "unarmed" | 
   }
   if (kind === "unarmed") {
     const u = c.unarmed ?? { name: "Unarmed strike", dice: "1", attack: Math.floor(((c.abilities?.strength ?? 10) - 10) / 2) + (c.attackBonus ?? 2), damage: Math.floor(((c.abilities?.strength ?? 10) - 10) / 2), type: "kinetic" };
-    return { name: u.name, type: "melee", bonus: u.attack, dice: u.dice, damageBonus: u.damage, damageType: u.type, reach: 5, properties: ["finesse"], ability: "strength" };
+    return { name: u.name, type: "melee", bonus: u.attack, dice: u.dice, damageBonus: u.damage, damageType: u.type, reach: 5, properties: ["finesse"], ability: "strength", extra: u.extra };
   }
   const o = c.offhand;
   // The modifier counts for the off hand's damage only when it is negative, or a style says so
@@ -1113,6 +1121,8 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
   const rider = fed ? fed.riders[fed.round ?? fed.plain] : undefined;
   if (rider?.base) spec = { ...spec, dice: rider.base.dice, damageType: rider.base.type };
   if (rider?.becomes) spec = { ...spec, damageType: rider.becomes };
+  // An enhanced round: its bonus to the shot's attack and damage
+  if (rider?.bonus) spec = { ...spec, bonus: spec.bonus + rider.bonus, damageBonus: spec.damageBonus + rider.bonus };
   if (plan.barred) {
     w.log.push(`${attacker.name} is ${plan.barred.toLowerCase()} and cannot attack ${target.name}.`);
     return false;
@@ -1137,7 +1147,7 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
   let bonus = spec.bonus;
   // A substance's extra d3 on attacks made with its ability
   if (attacker.high && attacker.high.ability === spec.ability) {
-    const d3 = dieRoll(3) * (attacker.high.low ? -1 : 1);
+    const d3 = dieRoll(attacker.high.die ?? 3) * (attacker.high.low ? -1 : 1);
     bonus += d3;
     notes.push(`${d3 > 0 ? "+" : ""}${d3} ${attacker.high.low ? "low" : "high"}`);
   }
@@ -1860,6 +1870,8 @@ function shoveCreature(w: Work, at: number, dir: { x: number; y: number }, squar
 
 // A fall of so many levels (10 feet each): 1d6 bludgeoning per 10 feet, and prone
 function fall(w: Work, at: number, levels: number): string {
+  // Flying (a jetpack) or slowed by a repulsor pack: set down without harm
+  if (w.combatants[at].fly || w.combatants[at].slowFall) return `drops ${levels * 10} feet and is set down gently`;
   const amount = damageCreature(w, at, rollDamage(`${levels}d6`, false), "bludgeoning");
   if (w.combatants[at].hp > 0) w.combatants[at] = withConditions(w.combatants[at], [{ name: "Prone", rounds: 1, source: "a fall" }]);
   return `falls ${levels * 10} feet and takes ${amount} damage${w.combatants[at].hp > 0 ? ", landing prone" : ""}`;
@@ -2457,8 +2469,8 @@ export const useCombat = create<CombatState>((set, get) => ({
       combatants = combatants.map((c) => (c.id === user.id ? { ...c, high: { name: effect.label, ability: effect.ability, rounds: effect.rounds, temp: effect.temp } } : c));
       log.push(`${user.name} takes ${effect.label}: a high for ${effect.rounds} turns.`);
     } else if (effect.kind === "calibrate") {
-      combatants = combatants.map((c) => (c.id === user.id ? { ...c, meleeDamage: (c.meleeDamage ?? 0) + effect.damage, meleeProps: [...(c.meleeProps ?? []), ...(effect.property ? [effect.property] : [])] } : c));
-      log.push(`${user.name} applies ${effect.label} to ${user.meleeWeapon ?? "the weapon"}: +${effect.damage} damage${effect.property ? ` and ${effect.property}` : ""} for the fight.`);
+      combatants = combatants.map((c) => (c.id === user.id ? { ...c, meleeDamage: (c.meleeDamage ?? 0) + effect.damage, meleeAttack: (c.meleeAttack ?? 0) + (effect.attack ?? 0), meleeExtra: effect.dice ? { dice: effect.dice, type: c.meleeType } : c.meleeExtra, meleeProps: [...(c.meleeProps ?? []), ...(effect.property ? [effect.property] : [])] } : c));
+      log.push(`${user.name} applies ${effect.label} to ${user.meleeWeapon ?? "the weapon"}: ${[effect.attack && `+${effect.attack} to hit`, effect.damage && `+${effect.damage} damage`, effect.dice && `+${effect.dice} damage`, effect.property].filter(Boolean).join(", ")} for the fight.`);
     } else if (effect.kind === "poison") {
       combatants = combatants.map((c) => (c.id === user.id ? { ...c, boons: { ...c.boons, poison: { dice: effect.dice, dc: effect.dc } } } : c));
       log.push(`${user.name} coats their weapon with ${effect.label}.`);

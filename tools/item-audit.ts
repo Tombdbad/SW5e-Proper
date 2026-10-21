@@ -31,9 +31,9 @@ const rows = equipment.map(row);
 const types = [...new Set(enhanced.map((e) => e.type))];
 const lootTypes = (t: string) => Object.entries(LOOT).filter(([, l]) => l.enhanced.includes(t)).map(([k]) => k);
 const erows = enhanced.map((e) => {
-  const facts = itemFactsOf(e);
+  const facts = itemFactsOf(e, equipment);
   const effects = facts?.effects ? Object.keys(facts.effects).length : 0;
-  const state = !facts ? "none" : facts.timed ? "timed" : facts.chassis ? "chassis" : facts.droid ? `droid ${facts.droid}` : facts.augment ? `augment ${facts.augment}` : facts.modKind !== undefined ? "modification" : effects ? "effects" : "text only";
+  const state = !facts ? "none" : facts.timed ? "timed" : facts.use ? `use ${facts.use.kind}` : facts.shipPart ? "ship part" : facts.chassis ? "chassis" : facts.droid ? `droid ${facts.droid}` : facts.augment ? `augment ${facts.augment}` : facts.modKind !== undefined ? "modification" : effects ? "effects" : "text only";
   return { e, facts, state, ref: itemRef(e.name) };
 });
 
