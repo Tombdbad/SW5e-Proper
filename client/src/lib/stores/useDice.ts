@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { useAudio } from "./useAudio";
+import type { TableDie } from "../sw5e/dice";
 
 export type DieType = 'd4' | 'd6' | 'd8' | 'd10' | 'd12' | 'd20' | 'd100';
 
@@ -33,12 +34,23 @@ export interface RollResult {
   label?: string;
 }
 
+// A roll thrown on the table (the dice-roller overlay): what the logic asked for, and how to answer it
+export interface TableRoll {
+  id: number;
+  label: string;
+  dice: TableDie[];
+  done: (faces: number[]) => void;
+}
+
 interface DiceState {
   history: RollResult[];
   rolling: boolean;
   currentRoll: RollResult | null;
-  
+  table: TableRoll | null;
+
   // Actions
+  requestTable: (label: string, dice: TableDie[]) => Promise<number[]>;
+  finishTable: (id: number, faces: number[]) => void;
   rollDie: (type: DieType) => number;
   rollDice: (
     dice: DieType[],
@@ -73,12 +85,39 @@ interface DiceState {
   clearCurrentRoll: () => void;
 }
 
+// Table rolls wait for each other: the overlay shows one at a time
+let tableIds = 0;
+let tableQueue: Promise<unknown> = Promise.resolve();
+
+// Asks for the dice on the table; resolves with each die's face once the overlay has held the result
+export const rollOnTable = (label: string, dice: TableDie[]): Promise<number[]> => useDice.getState().requestTable(label, dice);
+
 export const useDice = create<DiceState>()(
   subscribeWithSelector((set, get) => ({
     history: [],
     rolling: false,
     currentRoll: null,
-    
+    table: null,
+
+    requestTable: (label: string, dice: TableDie[]): Promise<number[]> => {
+      // An automated browser (the e2e play-through) gets its faces at once; players throw the dice
+      if (typeof navigator !== "undefined" && navigator.webdriver) {
+        return Promise.resolve(dice.map((d) => Math.floor(Math.random() * Number(d.slice(1))) + 1));
+      }
+      const show = () => new Promise<number[]>((done) => set({ table: { id: ++tableIds, label, dice, done } }));
+      const next = tableQueue.then(show);
+      tableQueue = next.catch(() => undefined);
+      return next;
+    },
+
+    // Called by the overlay once the result has been held; a stale or repeated answer is ignored
+    finishTable: (id: number, faces: number[]) => {
+      const t = get().table;
+      if (!t || t.id !== id) return;
+      set({ table: null });
+      t.done(faces);
+    },
+
     // Roll a single die of the given type
     rollDie: (type: DieType): number => {
       const sides = parseInt(type.substring(1));

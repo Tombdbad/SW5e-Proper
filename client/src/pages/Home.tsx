@@ -6,7 +6,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import TranslucentPane from "@/components/ui/TranslucentPane";
 import { Character, Campaign } from "../../../shared/schema";
-import DiceRoller from "@/components/ui/DiceRoller"; // Added import for DiceRoller
 
 export default function Home() {
   const [showIntro, setShowIntro] = useState(true);
@@ -182,9 +181,8 @@ export default function Home() {
           <TranslucentPane className="p-6" opacity="medium">
             <h3 className="text-xl font-bold mb-3 text-yellow-400">Dice Roller</h3>
             <p className="mb-4 text-gray-300">
-              Use the built-in dice roller for your skill checks and combat rolls.
+              Skill checks, saves and attacks are thrown on the table over the map, with the dice they need.
             </p>
-            <DiceRoller /> {/* Added DiceRoller component */}
           </TranslucentPane>
 
           <TranslucentPane className="p-6" opacity="medium">

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { useCharacter, Character } from "./useCharacter";
-import { rollDice, sumDiceResults } from "@/lib/sw5e/dice";
+import { rollDice, sumDiceResults, playerRoll, throwFor, type TableDie } from "@/lib/sw5e/dice";
+import { rollOnTable } from "@/lib/stores/useDice";
 import { conditionMechanics, motionFeet, sizeRank, type PowerMotion } from "@/lib/sw5e/rules";
 import { conditions as conditionList } from "@/lib/sw5e/conditions";
 import type { RoomAsset, StatProfile, StatAttack, StatSpecial, StatSave, ShipFight as ShipFightData, ShipSheet as ShipSheetData, ShipHelmAction, ShipBoost } from "@shared/logic";
@@ -545,6 +546,24 @@ export const rollD20 = (mode = 0): number => {
   return mode > 0 ? Math.max(a, b) : Math.min(a, b);
 };
 
+// The same for the player, thrown on the table (see onTable)
+const playerD20 = (mode: number, label: string): number => {
+  const faces = playerRoll(mode ? 2 : 1, 20, label);
+  return mode ? (mode > 0 ? Math.max(...faces) : Math.min(...faces)) : faces[0];
+};
+
+// Runs a store action with the player's dice thrown on the dice-roller overlay (the attack roll, the
+// damage dice, the saving throws of the character). Enemy dice are not thrown: they stay random.
+export const onTable = (act: () => void): Promise<void> =>
+  throwFor(act, {
+    save: () => structuredClone(dataOf(useCombat.getState())),
+    restore: (saved) => useCombat.setState(structuredClone(saved)),
+    request: (label: string, dice: TableDie[]) => rollOnTable(label, dice),
+  });
+
+// The state without its actions, which cannot be copied
+const dataOf = (s: CombatState) => Object.fromEntries(Object.entries(s).filter(([, v]) => typeof v !== "function"));
+
 // A saving throw against a DC, as the creature's conditions allow it
 // `type`: the damage type of the effect, for Insulated armour (a d20 below its number counts as its number against ion and lightning)
 function savingThrow(c: Combatant, ability: string, dc: number, type?: string): boolean {
@@ -552,7 +571,8 @@ function savingThrow(c: Combatant, ability: string, dc: number, type?: string): 
   if (all.some((x) => x.m.autoFailSaves.includes(ability))) return false;
   const high = c.high && c.high.ability === ability ? roll(1, c.high.die ?? 3) * (c.high.low ? -1 : 1) : 0;
   const burdened = !!c.burden && ["strength", "dexterity", "constitution"].includes(ability);
-  const d = rollD20(all.some((x) => x.m.disadvantageSaves.includes(ability)) || burdened ? -1 : 0);
+  const mode = all.some((x) => x.m.disadvantageSaves.includes(ability)) || burdened ? -1 : 0;
+  const d = c.isPlayer ? playerD20(mode, `Saving throw (${ability})`) : rollD20(mode);
   const insulated = type && /^(ion|lightning)$/i.test(type) ? c.armorProps?.insulated ?? 0 : 0;
   return Math.max(d, insulated) + (c.saves?.[ability] ?? 0) + high >= dc;
 }
@@ -634,8 +654,9 @@ export type ItemEffect =
 // ---------------------------------------------------------------------------------------------
 
 // Rolls "2d6 + 1" or "1d8 + 1d4 - 1": a critical hit rolls the dice twice, and `extraDice` more of
-// the first die besides (Brutal Critical); a hit always does at least 1
-export function rollDamage(expression: string, isCritical: boolean, extraDice = 0, threshold = false, regulated = false): number {
+// the first die besides (Brutal Critical); a hit always does at least 1. `label` (the player's roll)
+// throws the dice on the table under that name.
+export function rollDamage(expression: string, isCritical: boolean, extraDice = 0, threshold = false, regulated = false, label?: string): number {
   const terms = expression.replace(/\s+/g, "").match(/[+-]?[^+-]+/g) ?? [];
   let total = 0;
   let first = true;
@@ -647,14 +668,15 @@ export function rollDamage(expression: string, isCritical: boolean, extraDice = 
       const count = Number(dice[1]) * (isCritical ? 2 : 1) + (isCritical && first ? extraDice : 0);
       first = false;
       const sides = Number(dice[2]);
+      const die = (s: number) => (label === undefined ? dieRoll(s) : playerRoll(1, s, label)[0]);
       // A minimum roll threshold: a die cannot roll below it (Player's Handbook, chapter 7)
       // Regulated armour: a die that rolls its maximum is rolled again, and the new roll stands
       const one = () => {
-        const r = threshold ? Math.max(dieRoll(sides), minimumRoll(sides)) : dieRoll(sides);
-        return regulated && r === sides ? (threshold ? Math.max(dieRoll(sides), minimumRoll(sides)) : dieRoll(sides)) : r;
+        const r = threshold ? Math.max(die(sides), minimumRoll(sides)) : die(sides);
+        return regulated && r === sides ? (threshold ? Math.max(die(sides), minimumRoll(sides)) : die(sides)) : r;
       };
       if (threshold || regulated) for (let i = 0; i < count; i++) total += sign * one();
-      else total += sign * roll(count, sides);
+      else total += sign * (label === undefined ? roll(count, sides) : sumDiceResults(playerRoll(count, sides, label)));
     } else total += sign * (Number(body) || 0);
   }
   return Math.max(1, total);
@@ -1273,7 +1295,7 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
   const notes: string[] = [];
   if (plan.mode) notes.push(`${plan.mode > 0 ? "advantage" : "disadvantage"}: ${plan.reasons.join(", ")}`);
   if (plan.cover.name) notes.push(plan.cover.name);
-  const d = rollD20(plan.mode);
+  const d = attacker.isPlayer ? playerD20(plan.mode, "Attack roll") : rollD20(plan.mode);
   let bonus = spec.bonus;
   // A substance's extra d3 on attacks made with its ability
   if (attacker.high && attacker.high.ability === spec.ability) {
@@ -1364,7 +1386,7 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
   const attackerUsed = [...(w.combatants[ai].usedTurn ?? [])];
   // A fighting style's minimum roll threshold on weapon dice (a two-handed weapon, a blaster up close)
   const threshold = (attacker.features ?? []).some((f) => f.minRoll && (f.minRoll.weapon === "any" || (f.minRoll.weapon === "twoHanded" && hasProperty(spec.properties, "two-handed")) || (f.minRoll.weapon === "blaster" && spec.type === "ranged" && plan.feet <= 30)));
-  let damage = rollDamage(spec.dice, crit, extraWeaponDice, threshold, !!target.armorProps?.regulated);
+  let damage = rollDamage(spec.dice, crit, extraWeaponDice, threshold, !!target.armorProps?.regulated, attacker.isPlayer ? "Damage roll" : undefined);
   damage = Math.max(1, damage + spec.damageBonus);
   const additions: string[] = [];
   const note = (label: string, amount: number) => additions.push(`${label} +${amount}`);

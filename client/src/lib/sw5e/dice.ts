@@ -183,3 +183,86 @@ export function rollDiceNotation(diceNotation: string): { total: number; rolls: 
     modifier
   };
 }
+
+// ---------- Rolls thrown on the table ----------
+// A roll the player makes is thrown on the dice-roller page. The logic that needs it runs from the
+// start each time a die is not thrown yet (NeedDice); the state is put back first, so only the run
+// that finishes is kept. Each run reads the same faces in the same order, so the result matches them.
+export type TableDie = "d3" | "d4" | "d6" | "d8" | "d10" | "d12" | "d20" | "d100";
+
+export class NeedDice extends Error {
+  constructor(readonly dice: TableDie[], readonly label: string) {
+    super(`${dice.length} die(s) needed for ${label}`);
+  }
+}
+
+let table: { faces: number[]; cursor: number } | null = null;
+
+// The faces thrown for the next dice the logic reads, or a random roll when no table is in use
+export function playerRoll(quantity: number, sides: number, label: string): number[] {
+  if (!table) return rollDice(quantity, sides);
+  const from = table.cursor;
+  const to = from + quantity;
+  if (to > table.faces.length) {
+    throw new NeedDice(Array.from({ length: to - table.faces.length }, () => `d${sides}` as TableDie), label);
+  }
+  table.cursor = to;
+  return table.faces.slice(from, to);
+}
+
+/**
+ * Runs `act` with the player's dice thrown on the table. `save` copies the store's data, `restore`
+ * puts a copy back, and `request` throws the dice a roll needs (its promise gives their faces).
+ */
+export async function throwFor<S>(
+  act: () => void,
+  state: { save: () => S; restore: (saved: S) => void; request: (label: string, dice: TableDie[]) => Promise<number[]> }
+): Promise<void> {
+  const saved = state.save();
+  let faces: number[] = [];
+  for (;;) {
+    table = { faces, cursor: 0 };
+    try {
+      act();
+      return;
+    } catch (e) {
+      if (!(e instanceof NeedDice)) throw e;
+      state.restore(saved);
+      faces = [...faces, ...(await state.request(e.label, e.dice))];
+    } finally {
+      table = null;
+    }
+  }
+}
+
+// The dice-roller page throws d4 to d20 only: a d3 is thrown as a d6, a d100 as two d10s (tens, then units)
+export type PageDie = "d4" | "d6" | "d8" | "d10" | "d12" | "d20";
+const PAGE_ORDER: PageDie[] = ["d4", "d6", "d8", "d10", "d12", "d20"];
+
+export function pageDice(dice: TableDie[]): PageDie[] {
+  return dice.flatMap((d): PageDie[] => (d === "d3" ? ["d6"] : d === "d100" ? ["d10", "d10"] : [d as PageDie]));
+}
+
+// The page builds its dice by type in PAGE_ORDER, in request order within a type, and reports its faces in that order
+function pageOrder(dice: PageDie[]): number[] {
+  return dice.map((_, i) => i).sort((a, b) => PAGE_ORDER.indexOf(dice[a]) - PAGE_ORDER.indexOf(dice[b]) || a - b);
+}
+
+// The faces the page reported (in its order), read back as the dice that were asked for
+export function faceValues(dice: TableDie[], reported: number[]): number[] {
+  const raw: number[] = [];
+  pageOrder(pageDice(dice)).forEach((index, k) => {
+    raw[index] = reported[k];
+  });
+  let at = 0;
+  return dice.map((d) => {
+    if (d === "d3") return Math.ceil(raw[at++] / 2);
+    if (d === "d100") {
+      const tens = raw[at++];
+      const units = raw[at++];
+      return tens * 10 + units || 100;
+    }
+    const face = raw[at++];
+    return d === "d10" && face === 0 ? 10 : face;
+  });
+}

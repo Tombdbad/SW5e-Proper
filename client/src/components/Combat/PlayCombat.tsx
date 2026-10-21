@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import TranslucentPane from "@/components/ui/TranslucentPane";
 import {
-  useCombat, attackPlan, cannotAct, movementLeft, pickTarget, powerOutOfRange, squaresApart, onPartySide, LASTING,
+  useCombat, onTable, attackPlan, cannotAct, movementLeft, pickTarget, powerOutOfRange, squaresApart, onPartySide, LASTING,
   playerSpec, bonusAttackKinds, bonusFeatures, attacksPerAction, objectReach, squaresToAsset, reloadPlan, propertyNumber, drawPlan,
 } from "@/lib/stores/useCombat";
 import { conditionSummary, motionFeet } from "@/lib/sw5e/rules";
@@ -20,9 +20,12 @@ export interface CombatItemOption {
 export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] }) {
   const {
     combatants, currentTurn, round, combatLog, endCombat, deathSaves, castPower, deathSave, pass, arena, targetId, setTarget,
-    pending, resolvePending, attack, standard, useFeature, setEmpower, setManeuver, autoEnd, setAutoEnd, aiStep, nextTurn,
+    pending, standard, useFeature, setEmpower, setManeuver, autoEnd, setAutoEnd,
     objectId, setObject, reload, spray, brace, draw, stow, detonate, mines,
   } = useCombat();
+  // The character's attacks and the end of its turn throw the dice the roll needs on the table (onTable)
+  const strike = (kind: "melee" | "ranged" | "unarmed" | "offhand") => onTable(() => useCombat.getState().attack(kind));
+  const endOfTurn = () => onTable(() => useCombat.getState().nextTurn());
   // A power that moves things waiting to be told what to move and which way
   const [aiming, setAiming] = useState<number | null>(null);
   const current = combatants[currentTurn];
@@ -49,14 +52,14 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
       pass(`closes in on ${foe.name} but cannot reach this turn`);
       return;
     }
-    if (useCombat.getState().inCombat) useCombat.getState().attack("melee");
+    if (useCombat.getState().inCombat) strike("melee");
   };
 
   // Computer-run creatures (enemies, companions) act by themselves, a step at a time, after a short
   // pause; a reaction offered to the character holds them until it is answered
   useEffect(() => {
     if (!current || current.isPlayer || pending) return;
-    const t = setTimeout(() => aiStep(), 700);
+    const t = setTimeout(() => onTable(() => useCombat.getState().aiStep()), 700);
     return () => clearTimeout(t);
   }, [currentTurn, round, combatants.length, current?.id, pending, combatLog.length]);
 
@@ -84,7 +87,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
   const cast = (index: number) => castPower(index);
   const rollDeathSave = () => {
     deathSave();
-    if (useCombat.getState().inCombat) useCombat.getState().nextTurn();
+    if (useCombat.getState().inCombat) endOfTurn();
   };
   // Features that are used by choice (not a reaction offered when a hit lands, not always on)
   const chosen = (player?.features ?? []).filter((f) => f.activation !== "passive" || f.uses);
@@ -168,11 +171,11 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
             </p>
             <div className="mt-1 flex flex-col gap-1">
               {pending.options.map((o) => (
-                <Button key={o.key} size="sm" variant="outline" className="h-auto whitespace-normal justify-start text-left" onClick={() => resolvePending(o.key)} data-testid={`combat-reaction-${o.feature}`}>
+                <Button key={o.key} size="sm" variant="outline" className="h-auto whitespace-normal justify-start text-left" onClick={() => onTable(() => useCombat.getState().resolvePending(o.key))} data-testid={`combat-reaction-${o.feature}`}>
                   {o.label}
                 </Button>
               ))}
-              <Button size="sm" onClick={() => resolvePending(null)} data-testid="combat-reaction-none">
+              <Button size="sm" onClick={() => onTable(() => useCombat.getState().resolvePending(null))} data-testid="combat-reaction-none">
                 Take the hit
               </Button>
             </div>
@@ -182,10 +185,10 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
           <Button disabled={!playerTurn || !hasAction} onClick={melee} title={player?.meleeWeapon ?? "Unarmed"}>
             Melee
           </Button>
-          <Button disabled={!playerTurn || !hasAction || !rangedSpec || !ranged?.possible} onClick={() => attack("ranged")} title={player?.rangedWeapon ?? "No ranged weapon"}>
+          <Button disabled={!playerTurn || !hasAction || !rangedSpec || !ranged?.possible} onClick={() => strike("ranged")} title={player?.rangedWeapon ?? "No ranged weapon"}>
             Ranged
           </Button>
-          <Button variant="outline" disabled={!playerTurn} onClick={() => (midAttack || (player?.actions ?? 0) <= 0 ? nextTurn() : pass("holds"))}>
+          <Button variant="outline" disabled={!playerTurn} onClick={() => (midAttack || (player?.actions ?? 0) <= 0 ? endOfTurn() : pass("holds"))}>
             End turn
           </Button>
         </div>
@@ -257,7 +260,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
             <p className="text-xs text-gray-400 mb-1">Bonus action</p>
             <div className="flex flex-col gap-1">
               {bonusAttacks.map((b) => (
-                <Button key={`${b.kind}-${b.source}`} size="sm" variant="secondary" className="h-auto whitespace-normal justify-start text-left" onClick={() => attack(b.kind)}>
+                <Button key={`${b.kind}-${b.source}`} size="sm" variant="secondary" className="h-auto whitespace-normal justify-start text-left" onClick={() => strike(b.kind)}>
                   {b.label} <span className="text-gray-400 ml-1">({b.source})</span>
                 </Button>
               ))}

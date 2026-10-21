@@ -11,6 +11,7 @@ const CampaignView = lazy(() => import('./pages/CampaignView'));
 const GalacticMapView = lazy(() => import('./pages/GalacticMapView'));
 const GameBoard = lazy(() => import('./pages/GameBoard'));
 import { Toaster } from './components/ui/sonner';
+import DiceRoller from './components/ui/DiceRoller';
 import ErrorBoundary from './components/ui/ErrorBoundary';
 const LoadingDemo = lazy(() => import('./pages/LoadingDemo'));
 const ModelGallery = lazy(() => import('./pages/ModelGallery'));
@@ -60,7 +61,8 @@ function App() {
   return (
       <div className="flex flex-col min-h-screen bg-background">
         <Toaster position="top-right" />
-        
+        <DiceRoller />
+
         {showDevTools && (
           <div className="fixed top-0 right-0 bg-black/80 text-white p-2 text-xs z-50">
             <h3 className="font-bold mb-1">Dev Tools</h3>

@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Physics Dice Roller</title>
+<style>
+:root{--bg:rgba(255,255,255,.88);--fg:#1b1d22;--mut:#5b6170;--line:rgba(0,0,0,.15);--acc:#2e86de;box-sizing:border-box}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:rgba(22,24,29,.88);--fg:#eceef2;--mut:#9aa1b0;--line:rgba(255,255,255,.16)}}
+:root[data-theme="dark"]{--bg:rgba(22,24,29,.88);--fg:#eceef2;--mut:#9aa1b0;--line:rgba(255,255,255,.16)}
+html,body{height:100%;margin:0;overflow:hidden;background:#14181c;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--fg)}
+canvas{position:fixed;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
+.panel{position:fixed;left:50%;transform:translateX(-50%);background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:8px 12px;backdrop-filter:blur(8px);max-width:calc(100% - 16px)}
+#top{top:calc(env(safe-area-inset-top,0px) + 8px);text-align:center;min-width:220px}
+#total{font-size:22px;font-weight:700}#chips{font-size:13px;color:var(--mut);margin-top:2px}
+#ui{display:none;bottom:calc(env(safe-area-inset-bottom,0px) + 8px);gap:6px;align-items:center;padding:5px 8px;font-size:13px;white-space:nowrap}
+select{background:transparent;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:3px 5px;font-size:14px}
+option{color:#000}
+#hint{font-size:11px;color:var(--mut);margin-left:4px}
+input[type=color]{width:28px;height:28px;padding:0;border:1px solid var(--line);border-radius:8px;background:none;cursor:pointer}
+@media(max-width:520px){#hint{display:none}}
+</style></head><body>
+<canvas id="c"></canvas>
+<div id="top" class="panel"><div id="total">…</div><div id="chips"></div></div>
+<div id="ui" class="panel"><select id="selN" aria-label="Number of dice"></select>×<select id="selT" aria-label="Die type"></select><input type="color" id="cT" value="#2f8a58" title="Table colour"><input type="color" id="cD" value="#2e86de" title="Dice colour"><input type="color" id="cN" value="#ffffff" title="Number colour"><span id="hint">Drag &amp; flick to throw</span></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+<script>
+const PHI=(1+Math.sqrt(5))/2,V=(x,y,z)=>new THREE.Vector3(x,y,z);
+const cyc=(a,b)=>{const o=[];for(const s of[1,-1])for(const t of[1,-1])o.push(V(0,s*a,t*b),V(s*a,t*b,0),V(t*b,0,s*a));return o};
+const cube=[];for(const x of[1,-1])for(const y of[1,-1])for(const z of[1,-1])cube.push(V(x,y,z));
+const axes=[V(1,0,0),V(-1,0,0),V(0,1,0),V(0,-1,0),V(0,0,1),V(0,0,-1)];
+const ico=cyc(1,PHI),dod=cube.concat(cyc(1/PHI,PHI));
+const cyc2=(a,b)=>{const o=[];for(const s of[1,-1])for(const t of[1,-1])o.push(V(0,s*b,t*a),V(s*a,0,t*b),V(t*b,s*a,0));return o};
+const dod2=cube.concat(cyc2(1/PHI,PHI));
+// D10: pentagonal trapezohedron. Planar kite faces need apex height b = a(1+cos36)/(1-cos36)
+const c36=Math.cos(Math.PI/5),A10=(1-c36)/(1+c36),d10v=[V(0,1,0),V(0,-1,0)];
+for(let i=0;i<5;i++)d10v.push(V(Math.cos(i*1.2566),A10,Math.sin(i*1.2566)));
+for(let i=0;i<5;i++)d10v.push(V(Math.cos(i*1.2566+.6283),-A10,Math.sin(i*1.2566+.6283)));
+const d10f=[];for(let i=0;i<5;i++)d10f.push([0,2+i,7+i,2+(i+1)%5]);
+for(let i=0;i<5;i++)d10f.push([1,7+i,2+(i+1)%5,7+(i+1)%5]);
+const SPEC={
+ d4:{verts:[V(1,1,1),V(1,-1,-1),V(-1,1,-1),V(-1,-1,1)],normals:[V(-1,-1,-1),V(-1,1,1),V(1,-1,1),V(1,1,-1)],R:1.25,col:0xc0392b},
+ d6:{verts:cube,normals:axes,R:1.1,col:0x2e86de},
+ d8:{verts:axes,normals:cube,R:1.15,col:0x27ae60},
+ d10:{verts:d10v,faces:d10f,R:1.25,col:0x8e44ad},
+ d12:{verts:dod,normals:cyc2(1,PHI),R:1.25,col:0xe67e22},
+ d20:{verts:ico,normals:dod2,R:1.3,col:0x16a085}};
+const ang=(d,u,w)=>Math.atan2(d.dot(w),d.dot(u));
+function orient(idx,vs){const c=new THREE.Vector3();idx.forEach(i=>c.add(vs[i]));c.divideScalar(idx.length);
+ let n=new THREE.Vector3().crossVectors(vs[idx[1]].clone().sub(vs[idx[0]]),vs[idx[2]].clone().sub(vs[idx[0]])).normalize();
+ if(n.dot(c)<0)n.negate();
+ const u=vs[idx[0]].clone().sub(c).normalize(),w=new THREE.Vector3().crossVectors(n,u);
+ idx=idx.slice().sort((a,b)=>ang(vs[a].clone().sub(c),u,w)-ang(vs[b].clone().sub(c),u,w));
+ return{idx,n,c}}
+function faceByNormal(vs,n){n=n.clone().normalize();const m=Math.max(...vs.map(v=>v.dot(n)));
+ return vs.map((v,i)=>v.dot(n)>m-1e-4?i:-1).filter(i=>i>=0)}
+const cfg={num:'#ffffff',out:'rgba(0,0,0,.6)',dice:'#2e86de',table:'#2f8a58'};
+function bevel(vs,faces,t){const tris=[],P=new Map();
+ faces.forEach((f,fi)=>f.idx.forEach(vi=>P.set(fi+'_'+vi,vs[vi].clone().lerp(f.c,t))));
+ const poly=pts=>{for(let k=1;k<pts.length-1;k++)tris.push([pts[0],pts[k],pts[k+1]])};
+ faces.forEach((f,fi)=>poly(f.idx.map(vi=>P.get(fi+'_'+vi))));
+ faces.forEach((f,fi)=>f.idx.forEach((a,k)=>{const b=f.idx[(k+1)%f.idx.length];
+  const gi=faces.findIndex((g,j)=>j>fi&&g.idx.includes(a)&&g.idx.includes(b));if(gi<0)return;
+  poly([P.get(fi+'_'+a),P.get(fi+'_'+b),P.get(gi+'_'+b),P.get(gi+'_'+a)])}));
+ vs.forEach((v,vi)=>{const fl=faces.map((f,i)=>i).filter(i=>faces[i].idx.includes(vi));if(fl.length<3)return;
+  const ax=v.clone().normalize(),u=new THREE.Vector3().crossVectors(ax,Math.abs(ax.y)<.9?V(0,1,0):V(1,0,0)).normalize(),w=new THREE.Vector3().crossVectors(ax,u);
+  fl.sort((i,j)=>ang(faces[i].c.clone().sub(v),u,w)-ang(faces[j].c.clone().sub(v),u,w));
+  poly(fl.map(i=>P.get(i+'_'+vi)))});
+ return tris}
+const DEFS={};
+function def(type){if(DEFS[type])return DEFS[type];
+ const s=SPEC[type],sc=s.R/Math.max(...s.verts.map(v=>v.length())),vs=s.verts.map(v=>v.clone().multiplyScalar(sc));
+ const faces=(s.faces||s.normals.map(n=>faceByNormal(vs,n))).map(f=>orient(f,vs));
+ const N=+type.slice(1),S=type==='d10'?9:N+1;
+ if(type!=='d4'){const done=new Set();let p=0;faces.forEach((f,i)=>{if(done.has(i))return;
+  const j=faces.findIndex((g,k)=>k!==i&&g.n.dot(f.n)<-.999),a=type==='d10'?2*p+1:p+1;
+  f.val=a;faces[j].val=S-a;done.add(i);done.add(j);p++})}
+ const pos=[],nor=[];
+ bevel(vs,faces,.1).forEach(([a,b,c])=>{let n=new THREE.Vector3().crossVectors(b.clone().sub(a),c.clone().sub(a)).normalize();
+  if(n.dot(a.clone().add(b).add(c))<0){[b,c]=[c,b];n.negate()}
+  [a,b,c].forEach(v=>{pos.push(v.x,v.y,v.z);nor.push(n.x,n.y,n.z)})});
+ const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));geo.setAttribute('normal',new THREE.Float32BufferAttribute(nor,3));
+ const mat=new THREE.MeshStandardMaterial({color:cfg.dice,roughness:.35,metalness:.15});
+ const decals=faces.map(f=>{
+  const u=vs[f.idx[0]].clone().sub(f.c).normalize(),xa=new THREE.Vector3().crossVectors(u,f.n);
+  const P=f.idx.map(i=>{const d=vs[i].clone().sub(f.c);return{X:d.dot(xa),Y:d.dot(u)}});
+  const Rf=Math.max(...P.map(p=>Math.hypot(p.X,p.Y)));
+  let rin=1e9;f.idx.forEach((a,k)=>{const A=vs[a],B=vs[f.idx[(k+1)%f.idx.length]],e=B.clone().sub(A).normalize(),d=f.c.clone().sub(A);
+   rin=Math.min(rin,d.sub(e.multiplyScalar(d.dot(e))).length())});
+  const k=60/Rf,cv=document.createElement('canvas');cv.width=cv.height=128;const x=cv.getContext('2d');
+  x.textAlign='center';x.textBaseline='middle';x.lineJoin='round';const tx=new THREE.CanvasTexture(cv);
+  const draw=(t,X,Y,rot,fs)=>{x.save();x.translate(64+X*k,64-Y*k);x.rotate(rot);x.font='bold '+fs+'px sans-serif';x.lineWidth=fs*.14;
+   x.strokeText(t,0,0);x.fillText(t,0,0);if(t==='6'||t==='9')x.fillRect(-fs*.2,fs*.45,fs*.4,fs*.08);x.restore()};
+  const paint=()=>{x.clearRect(0,0,128,128);x.fillStyle=cfg.num;x.strokeStyle=cfg.out;if(type==='d4')f.idx.forEach((vi,q)=>draw(String(vi+1),P[q].X*.5,P[q].Y*.5,Math.atan2(P[q].X,P[q].Y),rin*k*.95));
+  else{const t=String(f.val);draw(t,0,0,0,rin*k*(t.length>1?1:1.3))}};paint();
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(2*Rf,2*Rf),new THREE.MeshBasicMaterial({map:tx,transparent:true,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-2}));
+  m.matrixAutoUpdate=false;m.userData.paint=()=>{paint();tx.needsUpdate=true};m.matrix.makeBasis(xa,u,f.n).setPosition(f.c.clone().add(f.n.clone().multiplyScalar(.004)));return m});
+ const shape=new CANNON.ConvexPolyhedron(vs.map(v=>new CANNON.Vec3(v.x,v.y,v.z)),faces.map(f=>f.idx));
+ return DEFS[type]={type,vs,faces,geo,mat,decals,shape,N}}
+
+// ---------- scene ----------
+const cvs=document.getElementById('c'),ren=new THREE.WebGLRenderer({canvas:cvs,antialias:true});
+ren.setPixelRatio(Math.min(devicePixelRatio,2));ren.shadowMap.enabled=true;
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x14181c);
+const cam=new THREE.PerspectiveCamera(45,1,.1,100);
+scene.add(new THREE.AmbientLight(0xffffff,.55));scene.add(new THREE.HemisphereLight(0xffffff,0x556655,.8));
+const lamp=new THREE.PointLight(0xfff2dd,.9,60);lamp.position.set(0,18,2);scene.add(lamp);
+const sun=new THREE.DirectionalLight(0xffffff,1.3);sun.position.set(6,16,8);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
+Object.assign(sun.shadow.camera,{left:-14,right:14,top:14,bottom:-14,near:1,far:40});scene.add(sun);
+const W=8.5,Z0=-6,Z1=7;
+const floorMat=new THREE.MeshBasicMaterial({color:cfg.table});
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(2*W,Z1-Z0),floorMat);floor.rotation.x=-Math.PI/2;floor.position.z=(Z0+Z1)/2;scene.add(floor);
+const shadowPlane=new THREE.Mesh(new THREE.PlaneGeometry(2*W,Z1-Z0),new THREE.ShadowMaterial({color:0x000000,opacity:.45}));
+shadowPlane.rotation.x=-Math.PI/2;shadowPlane.position.set(0,.01,(Z0+Z1)/2);shadowPlane.receiveShadow=true;scene.add(shadowPlane);
+const wood=new THREE.MeshStandardMaterial({color:0x5a3a22,roughness:.7});
+[[0,Z0-.5,2*W+2,1],[0,Z1+.5,2*W+2,1],[-W-.5,(Z0+Z1)/2,1,Z1-Z0],[W+.5,(Z0+Z1)/2,1,Z1-Z0]].forEach(([x,z,w,d])=>{
+ const m=new THREE.Mesh(new THREE.BoxGeometry(w,1.2,d),wood);m.position.set(x,.6,z);scene.add(m)});
+function resize(){const w=innerWidth,h=innerHeight,a=w/h;ren.setSize(w,h);cam.aspect=a;cam.updateProjectionMatrix();
+ const f=Math.max(1,1.7/a);cam.position.set(0,17*f,11*f);cam.lookAt(0,0,.5)}
+addEventListener('resize',resize);resize();
+
+// ---------- physics ----------
+const world=new CANNON.World();world.gravity.set(0,-40,0);world.broadphase=new CANNON.SAPBroadphase(world);
+world.solver.iterations=20;world.defaultContactMaterial.friction=.4;world.defaultContactMaterial.restitution=.25;
+[[0,0,0,1,0,0,-Math.PI/2],[0,12,0,1,0,0,Math.PI/2],[-W,0,0,0,1,0,Math.PI/2],[W,0,0,0,1,0,-Math.PI/2],[0,0,Z0,0,1,0,0],[0,0,Z1,0,1,0,Math.PI]].forEach(([x,y,z,ax,ay,az,a])=>{
+ const b=new CANNON.Body({mass:0});b.addShape(new CANNON.Plane());b.quaternion.setFromAxisAngle(new CANNON.Vec3(ax,ay,az),a);b.position.set(x,y,z);world.addBody(b)});
+
+// ---------- dice ----------
+// Game mode: no dice until the host asks for some (the counts come from its message)
+const counts={d4:0,d6:0,d8:0,d10:0,d12:0,d20:0};let dice=[],held=false,trail=[],ptr=V(0,4,4),okTime=0,reported=false;
+function rebuild(){dice.forEach(d=>{scene.remove(d.g);world.remove(d.b)});dice=[];
+ Object.keys(counts).forEach(t=>{for(let i=0;i<counts[t];i++){const D=def(t),g=new THREE.Group(),m=new THREE.Mesh(D.geo,D.mat);m.castShadow=true;g.add(m);D.decals.forEach(x=>g.add(x.clone()));
+  const b=new CANNON.Body({mass:1});b.addShape(D.shape);b.linearDamping=.12;b.angularDamping=.25;world.addBody(b);scene.add(g);dice.push({D,g,b,ok:false})}});
+ pickUp();ptr.set(0,4,4);setTimeout(()=>{if(held)return;release(V(0,0,-16))},50);setText('Rolling…','')}
+function offs(i){const n=dice.length,c=Math.ceil(Math.sqrt(n)),r=Math.ceil(n/c);return[((i%c)-(c-1)/2)*3.1,(Math.floor(i/c)-(r-1)/2)*3.1]}
+function pickUp(){held=true;reported=false;okTime=0;dice.forEach(d=>{const q=new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.random()*6,Math.random()*6,Math.random()*6));
+ d.b.quaternion.set(q.x,q.y,q.z,q.w);d.ok=false})}
+function release(v){held=false;const sp=Math.hypot(v.x,v.z);
+ if(sp<6){v=V((Math.random()-.5)*6,0,-16)}else if(sp>45){v.multiplyScalar(45/sp)}
+ const s=Math.hypot(v.x,v.z);
+ dice.forEach(d=>{d.b.velocity.set(v.x+(Math.random()-.5)*3,-2,v.z+(Math.random()-.5)*3);
+  d.b.angularVelocity.set(...[0,0,0].map(()=>(Math.random()-.5)*2*(12+s*.6)))})}
+const ray=new THREE.Raycaster(),plane=new THREE.Plane(V(0,1,0),-4);
+function world3(e){const r=cvs.getBoundingClientRect();ray.setFromCamera({x:(e.clientX-r.left)/r.width*2-1,y:-((e.clientY-r.top)/r.height*2-1)},cam);
+ const p=V(0,0,0);return ray.ray.intersectPlane(plane,p)?p:null}
+cvs.addEventListener('pointerdown',e=>{const p=world3(e);if(!p)return;pickUp();ptr.copy(p);trail=[{t:performance.now(),x:p.x,z:p.z}];cvs.setPointerCapture(e.pointerId);setText('…','')});
+cvs.addEventListener('pointermove',e=>{if(!held||!trail.length)return;const p=world3(e);if(!p)return;ptr.copy(p);trail.push({t:performance.now(),x:p.x,z:p.z});if(trail.length>40)trail.shift()});
+const up=()=>{if(!held||!trail.length)return;const now=performance.now(),rec=trail.filter(s=>now-s.t<120);let v=V(0,0,0);
+ if(rec.length>1){const a=rec[0],b=rec[rec.length-1],dt=(b.t-a.t)/1000;if(dt>.016)v.set((b.x-a.x)/dt,0,(b.z-a.z)/dt)}
+ trail=[];release(v);setText('Rolling…','')};
+cvs.addEventListener('pointerup',up);cvs.addEventListener('pointercancel',up);
+
+// ---------- settle & read ----------
+const down=V(0,-1,0),tq=new THREE.Quaternion(),tmp=V(0,0,0);
+function assist(d,dt){const b=d.b;d.ok=false;
+ if(b.velocity.length()>.9||b.angularVelocity.length()>1.4||b.position.y>3.5)return;
+ tq.set(b.quaternion.x,b.quaternion.y,b.quaternion.z,b.quaternion.w);
+ let best=null,by=9;d.D.faces.forEach(f=>{tmp.copy(f.n).applyQuaternion(tq);if(tmp.y<by){by=tmp.y;best=tmp.clone()}});
+ const err=Math.acos(Math.min(1,Math.max(-1,best.dot(down))));
+ if(err>.004){const corr=new THREE.Quaternion().setFromUnitVectors(best,down),tgt=corr.multiply(tq.clone());tq.slerp(tgt,Math.min(1,dt*9));b.quaternion.set(tq.x,tq.y,tq.z,tq.w)}
+ if(err<.012){b.angularVelocity.set(0,0,0);d.ok=true}}
+function read(d){tq.set(d.b.quaternion.x,d.b.quaternion.y,d.b.quaternion.z,d.b.quaternion.w);
+ if(d.D.type==='d4'){let best=-9,n=1;d.D.vs.forEach((v,i)=>{const y=tmp.copy(v).applyQuaternion(tq).y;if(y>best){best=y;n=i+1}});return n}
+ let best=-9,val=1;d.D.faces.forEach(f=>{const y=tmp.copy(f.n).applyQuaternion(tq).y;if(y>best){best=y;val=f.val}});return val}
+function setText(t,c){document.getElementById('total').textContent=t;document.getElementById('chips').textContent=c}
+// The host reads the faces in the order of the dice (each type in turn, d4 first); a d10 face 0 is sent as 0
+let reqId=null,fallback=0;
+function report(){let tot=0;const parts=dice.map(d=>{const v=read(d);tot+=(d.D.type==='d10'&&v===0)?10:v;return d.D.type.toUpperCase()+': '+v});
+ setText(dice.length?'Total: '+tot:'No dice selected',parts.join('  ·  ')+(counts.d10?'   (D10 “0” counts as 10)':''));
+ parent.postMessage({type:'result',id:reqId,values:dice.map(d=>read(d))},'*')}
+
+// ---------- loop ----------
+let last=performance.now();
+function frame(now){requestAnimationFrame(frame);const dt=Math.min(.05,(now-last)/1000);last=now;
+ if(held){const n=dice.length,c=Math.ceil(Math.sqrt(n)),hx=Math.max(0,(c-1)/2*3.1)+1.5;
+  dice.forEach((d,i)=>{const[ox,oz]=offs(i),b=d.b;
+   const tx=Math.max(-W+1.5,Math.min(W-1.5,Math.max(-W+hx,Math.min(W-hx,ptr.x)+0)+ox*0)),tz=Math.max(Z0+2+Math.abs(oz),Math.min(Z1-2-Math.abs(oz),ptr.z+oz));
+   const px=Math.max(-W+1.6,Math.min(W-1.6,Math.max(-W+hx,Math.min(W-hx,ptr.x))+ox));
+   b.position.set(b.position.x+(px-b.position.x)*.45,4,b.position.z+(tz-b.position.z)*.45);b.velocity.set(0,0,0);b.angularVelocity.set(3,4,2)})}
+ world.step(1/120,dt,4);
+ if(!held){let all=dice.length>0;dice.forEach(d=>{assist(d,dt);if(!d.ok)all=false});
+  okTime=all?okTime+dt:0;if(okTime>.5&&!reported){reported=true;report()}}
+ dice.forEach(d=>{const b=d.b;if(b.position.y<-3||Math.abs(b.position.x)>W+2){b.position.set(0,4,2);b.velocity.set(0,0,0)}
+  d.g.position.set(b.position.x,b.position.y,b.position.z);d.g.quaternion.set(b.quaternion.x,b.quaternion.y,b.quaternion.z,b.quaternion.w)});
+ ren.render(scene,cam)}
+
+// ---------- UI ----------
+const selT=document.getElementById('selT'),selN=document.getElementById('selN');
+selT.innerHTML=Object.keys(SPEC).map(t=>`<option value="${t}">${t.toUpperCase()}</option>`).join('');
+selN.innerHTML=Array.from({length:12},(_,i)=>`<option>${i+1}</option>`).join('');
+selT.value='d6';selN.value='2';
+const apply=()=>{Object.keys(counts).forEach(t=>counts[t]=0);counts[selT.value]=+selN.value;rebuild()};
+selT.onchange=selN.onchange=apply;
+const lum=h=>{const n=parseInt(h.slice(1),16);return(.299*(n>>16)+.587*((n>>8)&255)+.114*(n&255))/255};
+document.getElementById('cT').oninput=e=>{cfg.table=e.target.value;floorMat.color.set(cfg.table)};
+document.getElementById('cD').oninput=e=>{cfg.dice=e.target.value;Object.values(DEFS).forEach(D=>D.mat.color.set(cfg.dice))};
+document.getElementById('cN').oninput=e=>{cfg.num=e.target.value;cfg.out=lum(cfg.num)>.5?'rgba(0,0,0,.6)':'rgba(255,255,255,.6)';Object.values(DEFS).forEach(D=>D.decals.forEach(m=>m.userData.paint()))};
+rebuild();requestAnimationFrame(frame);
+
+// ---------- the host's rolls: the dice a roll needs, thrown at once; the faces go back when they settle ----------
+addEventListener('message',e=>{const m=e.data;if(!m||m.type!=='roll')return;
+ reqId=m.id;resize();Object.keys(counts).forEach(t=>counts[t]=0);m.dice.forEach(t=>counts[t]++);
+ rebuild();clearTimeout(fallback);fallback=setTimeout(()=>{if(!reported){reported=true;report()}},8000)});
+parent.postMessage({type:'ready'},'*');
+</script></body></html>

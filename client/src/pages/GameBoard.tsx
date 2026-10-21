@@ -36,6 +36,8 @@ import { MinigamePage, type Minigame, type MinigameResult } from "@/components/M
 import PitArena, { type PitSummary } from "@/components/Map/PitArena";
 import monsterData from "@shared/data/sw5e/monsters.json";
 import type { Sw5eMonster } from "@shared/data";
+import { rollOnTable } from "@/lib/stores/useDice";
+import type { TableDie } from "@/lib/sw5e/dice";
 import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
@@ -466,18 +468,22 @@ export default function GameBoard() {
     return new Promise((resolve) => setCheckAsk({ request: { what: plan.what, dc: plan.dc, rollers, best: { roller: best.roller, skill: best.skill } }, plan, resolve }));
   };
   // Roll it: d20 (two, the higher, with advantage) + the chosen bonus (+ the substance's d3 for the character)
-  const performCheck = (plan: CheckPlan, rollerId: string, skill: string | null): CheckResult => {
+  const performCheck = async (plan: CheckPlan, rollerId: string, skill: string | null): Promise<CheckResult> => {
     const option = optionsFor(rollerId, plan).find((o) => o.skill === skill) ?? optionsFor(rollerId, plan)[0];
     const mine = rollerId === "me";
     // A long rest aboard a ship with a recreation room, laboratory or investigation suite: advantage on the first check (of those skills)
     const rested = mine && !!play.firstCheck && (play.firstCheck === "any" || (!!option.skill && play.firstCheck.includes(option.skill)) || (!!plan.tool && play.firstCheck.includes("tool")));
     if (rested) setTimeout(() => patchPlay({ firstCheck: undefined }), 0);
-    const first = d20();
     // Heavily encumbered: disadvantage on Strength, Dexterity and Constitution checks (the variant)
     const burdened = mine && loadNow().disadvantage && ["strength", "dexterity", "constitution"].includes(option.ability);
     const up = option.edge || rested;
-    const roll = up && !burdened ? Math.max(first, d20()) : burdened && !up ? Math.min(first, d20()) : first;
-    const s = mine ? (play.substance?.ability === option.ability ? (play.substance.phase === "high" ? 1 : -1) : 0) * die(play.substance?.die ?? 3) : 0;
+    // The d20s (two with advantage or disadvantage) and the substance's die are thrown on the table, and read from it
+    const twice = (up && !burdened) || (burdened && !up);
+    const subDie = mine && play.substance?.ability === option.ability ? play.substance.die ?? 3 : 0;
+    const thrown = await rollOnTable(plan.what, [...(twice ? (["d20", "d20"] as TableDie[]) : (["d20"] as TableDie[])), ...(subDie ? [`d${subDie}` as TableDie] : [])]);
+    const first = thrown[0];
+    const roll = up && !burdened ? Math.max(first, thrown[1]) : burdened && !up ? Math.min(first, thrown[1]) : first;
+    const s = mine ? (play.substance?.ability === option.ability ? (play.substance.phase === "high" ? 1 : -1) : 0) * (subDie ? thrown[twice ? 2 : 1] : 0) : 0;
     if (s > 0) setTimeout(() => endHigh("used on a check"), 0);
     const bonus = option.bonus + s + (plan.extra ?? 0);
     const total = roll + bonus;
@@ -486,11 +492,11 @@ export default function GameBoard() {
     toast[success ? "success" : "error"](`${who}${plan.what}${option.skill ? ` (${option.label}${option.edge ? ", advantage" : ""})` : ""}: ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against DC ${plan.dc}. ${success ? "Success." : "Failed."}`);
     return { success, total, roll, bonus };
   };
-  const finishCheck = (rollerId: string | null, skill: string | null) => {
+  const finishCheck = async (rollerId: string | null, skill: string | null) => {
     if (!checkAsk) return;
     const { plan, resolve } = checkAsk;
     setCheckAsk(null);
-    resolve(rollerId === null ? null : performCheck(plan, rollerId, skill));
+    resolve(rollerId === null ? null : await performCheck(plan, rollerId, skill));
   };
   // An ability check against a DC: asks who rolls and with which skill; false if it is called off
   const abilityCheck = async (what: string, dc: number, abilities: string[], _trained?: boolean, more: Partial<CheckPlan> = {}): Promise<boolean> => {
