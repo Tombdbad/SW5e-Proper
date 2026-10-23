@@ -76,7 +76,7 @@ app.use((req, res, next) => {
   server.listen({
     port,
     host: process.env.HOST || "127.0.0.1",
-    reusePort: true,
+//    reusePort: true,
   }, () => {
     log(`serving on port ${port}`);
   });

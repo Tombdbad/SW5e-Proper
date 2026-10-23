@@ -10,8 +10,8 @@ import { standsAt, stairsGoals, arrivalSquares, climbAt, canStep, floorsOf, type
 import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind } from "./sprites";
-import { Atmosphere } from "./interiors/Atmosphere";
-import { Stock } from "./interiors/Stock";
+import { Atmosphere } from "./interiors/Atmosphere.tsx";
+import { Stock } from "./interiors/Stock.tsx";
 import { CaveDressing, CaveMound, CaveWalls, MaskFloor, RockWall } from "./interiors/CaveRoom";
 import { moodOf } from "./interiors/atmosphere";
 import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
