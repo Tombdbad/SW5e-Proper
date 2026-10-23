@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useLayoutEffect, useMemo, type ReactNode } from "react";
+import { Suspense, useRef, useState, useEffect, useLayoutEffect, useMemo, type ReactNode } from "react";
 import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { Text, useTexture, OrbitControls, PerspectiveCamera, Billboard, Line, Stars, Html } from "@react-three/drei";
 import * as THREE from "three";
@@ -23,7 +23,7 @@ import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
-import { CurtainWall, GardenGround, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
+import { CurtainWall, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { Figure, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, RoundedFloor, CornerWall, DomeRoof, Opening, styleOf, hue, type Style } from "./models";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
 
@@ -532,23 +532,6 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
     }
     return [...set].sort().join(";");
   }, [assets]);
-  // The lines between the squares, as one piece of geometry (of the standing squares only, in a cave that winds)
-  const grid = useMemo(() => {
-    const points: number[] = [];
-    if (mask) {
-      const stands = (x: number, y: number) => mask[y]?.[x] === "#";
-      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
-        if (!stands(x, y)) continue;
-        points.push(x, 0.012, y, x + 1, 0.012, y, x, 0.012, y, x, 0.012, y + 1);
-        if (!stands(x + 1, y)) points.push(x + 1, 0.012, y, x + 1, 0.012, y + 1);
-        if (!stands(x, y + 1)) points.push(x, 0.012, y + 1, x + 1, 0.012, y + 1);
-      }
-      return new Float32Array(points);
-    }
-    for (let x = 1; x < width; x++) points.push(x, 0.012, 0, x, 0.012, height);
-    for (let y = 1; y < height; y++) points.push(0, 0.012, y, width, 0.012, y);
-    return new Float32Array(points);
-  }, [width, height, mask]);
   // A shaft's walls run up with the floor
   const climbs = plan?.climb ? rise(plan as RoomLayout) : 0;
   // (seen from overhead, a switchback's walls stop at its landing, so that both flights can be looked into)
@@ -559,6 +542,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   const packLook = useMemo(() => (pack ? packTone(PACKS[pack], wall) : undefined), [pack, wall]);
   const [nw, ne, se, sw] = rocky ? [0, 0, 0, 0] : corners ?? [0, 0, 0, 0];
   const rounded = nw + ne + se + sw > 0;
+  const floorTexture = floorLook(floor, mood?.buildingType, plan?.form === "roof");
   // The rounded corners, each a quarter ring
   const cornerList = ([[nw, 0], [ne, 1], [se, 2], [sw, 3]] as const).filter(([r]) => r > 0).map(([r, corner]) => ({ r, corner }));
   // Each wall runs between its corners, stopping short of a rounded one
@@ -592,12 +576,12 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
           <meshLambertMaterial color={FLOORS[floor]} />
         </mesh>
       )}
-      <lineSegments>
-        <bufferGeometry>
-          <bufferAttribute attach="attributes-position" count={grid.length / 3} array={grid} itemSize={3} />
-        </bufferGeometry>
-        <lineBasicMaterial color="#ffffff" transparent opacity={0.12} />
-      </lineSegments>
+      {/* Over the slab, its texture (siteAssets floorLook); the slab shows until the maps are in */}
+      {!mask && floorTexture && (
+        <Suspense fallback={null}>
+          <FloorSurface look={floorTexture} w={width} h={height} radii={[nw, ne, se, sw]} onTap={floorTap} />
+        </Suspense>
+      )}
       {plan?.climb && plan.form && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} onTap={onFloor} />}
       {walls && mask
         ? <CaveWalls mask={mask} ways={assets.filter((a) => a.side).map((a) => ({ x: a.x, y: a.y }))} w={width} h={height} biome={mood!.biome} tier={detail} seed={width * 31 + height} tall={fullWalls} />
@@ -2202,13 +2186,6 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // The ground hides a cellar: it is taken away while one is looked into
   const underground = !!opened?.layout && (opened.layout.level ?? 0) < 0;
   const reach = duel ? 22 : opened?.layout ? Math.max(opened.layout.width, opened.layout.height) * 1.1 + 6 : outside && planned ? 17 : plan ? Math.max(plan.width, plan.height) * 0.9 + 12 : 22;
-  // The squares of the ground, as faint lines
-  const squares = useMemo(() => {
-    const points: number[] = [];
-    for (let x = 0; x <= ground.w; x++) points.push(ground.x + x, 0, ground.y, ground.x + x, 0, ground.y + ground.h);
-    for (let y = 0; y <= ground.h; y++) points.push(ground.x, 0, ground.y + y, ground.x + ground.w, 0, ground.y + y);
-    return new Float32Array(points);
-  }, [ground.x, ground.y, ground.w, ground.h]);
   const floor = floorOf((opened ? world.areas[opened.parentId ?? ""] : me)?.type ?? building.type);
   // The rooms that have a roof of their own over them (a platform to climb to, shown on top of them)
   const roofed = new Set<string>();
@@ -2218,6 +2195,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (under) roofed.add(under.id);
   }
   const sizeOfGround = Math.max(240, ground.w + 80, ground.h + 80);
+  // The ground round the building: a textured plane where the world has one (siteAssets groundTexture), else the plain colour
+  const groundTex = groundTexture(biome, building.type, GROUND[biome] ?? "#1c222b");
+  // (the textured plane runs past the ground that can be walked on, so a tap beyond it walks nowhere)
+  const walkHere = (e: ThreeEvent<MouseEvent>) => {
+    e.stopPropagation();
+    const x = Math.floor(e.point.x + cx), y = Math.floor(e.point.z + cz);
+    if (e.delta <= 8 && x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h) walkTo([{ x, y }]);
+  };
   // The look of the building's walls by the world it stands on (models.tsx styleOf)
   const style = styleOf(wall === STEEL ? "station" : biome, building.type);
   // How far each outside corner of a room is rounded (north-west, north-east, south-east, south-
@@ -2255,30 +2240,32 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           <planeGeometry args={[sizeOfGround, sizeOfGround]} />
           <meshBasicMaterial color="#14100c" />
         </mesh>
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.06, cz]} visible={!underground}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.06, cz]} visible={!underground && !groundTex}>
           <planeGeometry args={[sizeOfGround, sizeOfGround]} />
           <meshBasicMaterial color={GROUND[biome] ?? "#1c222b"} />
         </mesh>
-        {/* The ground round the building: a tap walks there */}
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.02, cz]} visible={!underground} receiveShadow onClick={tappable ? (e) => { e.stopPropagation(); if (e.delta <= 8) walkTo([{ x: Math.floor(e.point.x + cx), y: Math.floor(e.point.z + cz) }]); } : undefined}>
-          <planeGeometry args={[ground.w, ground.h]} />
-          <meshLambertMaterial color={new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(1.5)} />
-        </mesh>
+        {/* The ground round the building: a tap walks there. The textured plane covers the whole of the ground, so no dark rim shows round it */}
+        {groundTex ? (
+          <group visible={!underground}>
+            <GroundSurface set={groundTex.set} tint={groundTex.tint} parallax={groundTex.parallax} w={sizeOfGround} h={sizeOfGround} at={[cx, -0.02, cz]} onTap={tappable ? walkHere : undefined} />
+          </group>
+        ) : (
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.02, cz]} visible={!underground} receiveShadow onClick={tappable ? walkHere : undefined}>
+            <planeGeometry args={[ground.w, ground.h]} />
+            <meshLambertMaterial color={new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(1.5)} />
+          </mesh>
+        )}
         {districtPlan && buildings.map((b) => {
           const box = districtPlan.boxes[b.id];
           return box ? (
             <mesh key={`lot-${b.id}`} rotation={[-Math.PI / 2, 0, 0]} position={[box.x + box.width / 2, -0.005, box.y + box.height / 2]} visible={!underground} raycast={() => null}>
               <planeGeometry args={[box.width + 1, box.height + 1]} />
-              <meshLambertMaterial color={new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(0.9)} />
+              {groundTex
+                ? <meshBasicMaterial color="#000000" transparent opacity={0.22} depthWrite={false} />
+                : <meshLambertMaterial color={new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(0.9)} />}
             </mesh>
           ) : null;
         })}
-        <lineSegments visible={!underground}>
-          <bufferGeometry>
-            <bufferAttribute attach="attributes-position" count={squares.length / 3} array={squares} itemSize={3} />
-          </bufferGeometry>
-          <lineBasicMaterial color="#ffffff" transparent opacity={0.07} />
-        </lineSegments>
 
         {!planned && (
           <group position={[cx, 0, cz]} onClick={(e) => tapPlace(e, building.id)}>
@@ -3095,6 +3082,8 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
   const wall = trail.some((a) => a.type === "station") ? STEEL : WALLS[biome] ?? "#b9ad96";
   const system = view.kind === "system";
   const globe = view.kind === "planet";
+  // The open ground of a settlement: a textured plane where the world has one (siteAssets groundTexture)
+  const groundTex = groundTexture(biome, "", GROUND[biome] ?? "#0b1220");
 
   // Fit the places into the view, whatever scale they were generated at. Planets keep their
   // orbits round the star in the middle; a planet's sites lie on the top of its globe.
@@ -3178,11 +3167,14 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
       )}
       {!system && !globe && (
         <>
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.6, 0]}>
-            <planeGeometry args={[600, 600]} />
-            <meshBasicMaterial color={GROUND[biome] ?? "#0b1220"} />
-          </mesh>
-          <gridHelper args={[300, 60, "#1f2a44", "#162036"]} position={[0, -0.5, 0]} />
+          {groundTex ? (
+            <GroundSurface set={groundTex.set} tint={groundTex.tint} parallax={groundTex.parallax} w={600} h={600} at={[0, -0.6, 0]} />
+          ) : (
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.6, 0]}>
+              <planeGeometry args={[600, 600]} />
+              <meshBasicMaterial color={GROUND[biome] ?? "#0b1220"} />
+            </mesh>
+          )}
         </>
       )}
 

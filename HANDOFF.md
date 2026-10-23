@@ -1,41 +1,39 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-21. Branch `revive`. The commit that carries this file is the one after `8067be6` (`git log -1`). `main` and the live service (5000) are not touched: nothing was built into `dist/` or restarted on 5000. 5001 and 5002 run older builds.
+Written 2026-10-21, branch `revive`. Last commit before this fix: `eb97d15` (settlement view and speeder flight). `main` is at `a251506`.
 
-## The task (user, 2026-10-21): replace the dice roller with the pasted physics roller
-The overlay covers the map whenever a roll is needed; the die comes from the roll (equipped weapon, check, save); the result is held 2 s before the logic uses it.
+## Done this session
+- Grids removed from the 3D map: the room squares (`LocalMap.tsx`), the outdoor ground squares (`LocalMap.tsx`), and the coordinate grid in `LocalAreaMap.tsx`. The starship fight's 50-ft grid (`SpaceScene`) is kept: it is space, not a place. Confirm with the user if they meant that one too.
+- Textured ground (`siteAssets.tsx`: `groundTexture`, `GroundSurface`; `LocalMap.tsx` ground block): bare earth for most worlds, recoloured; `dense_sand` for desert; `dark_rock` for volcanic; `brown_mud_03` for sewer systems. Urban (Coruscant) keeps the plain ground.
+- Hybrid shader: Phong with the normal map, plus single-step offset parallax from the height map (`PARALLAX` 0.05). Shader injected with `onBeforeCompile`, Three.js 0.170 chunk names checked in `node_modules`.
+- Checks: `npx tsc --noEmit` reports no errors in `LocalMap.tsx`, `siteAssets.tsx` or `LocalAreaMap.tsx` (the project has ~600 legacy errors elsewhere). No tests cover these files, so no modular tests were run.
+- The first pass missed `WorldLayer` (the settlement view a new campaign opens on: its flat ground and grid were not touched) and the speeder flight grid (`FlightScene`). Both are fixed now: `WorldLayer` has the textured ground, and both grids are gone.
+- 5002 rebuilt and restarted with `sh deploy/test-plain.sh` (serving `index-CU2995CR.js` and `LocalMap-DpsDQAkY.js`; grep finds no grid colours in the map code). Not seen in a browser: a hard reload may be needed. Not run: e2e (on purpose). The 5000 service still runs the `a251506` build.
+- REVIVAL_NOTES.md has a new section "Ground textures and no grids (2026-10-21)".
 
-## Done (REVIVAL_NOTES "Dice on the table")
-- `client/public/dice/roller.html`: the pasted page, changed only to take dice from a message, post the faces back (`ready`, `result`), lock after a result, and hide its selector bar.
-- `components/ui/DiceRoller.tsx`: overlay, mounted once in `App.tsx` (z-80). 2 s hold. The Home roller is removed.
-- `lib/stores/useDice.ts`: `rollOnTable`, queued requests; `navigator.webdriver` gets faces at once (e2e bypass).
-- `lib/sw5e/dice.ts`: `playerRoll`, `NeedDice`, `runOnce` and `throwFor` (replay with Math.random recorded), `pageDice`/`faceValues` (d3 as d6, d100 as 2×d10).
-- `lib/stores/useCombat.ts`: `onTable` (busy flag); player attack d20, weapon damage, saves, death save, power attack/damage/heal. `rollDamage` takes a label.
-- `PlayCombat.tsx`: attack, end of turn, enemy step, reactions, casting, features, death save go through `onTable`.
-- `GameBoard.tsx`: `performCheck` (ability checks, companion checks too), haggling, forcing a door, gentling, play for the room, breaking chains, cold-night save.
-- Tests: `tests/dice/tableRolls.test.ts`, 7 pass (run it with `node --import tsx --test tests/dice/tableRolls.test.ts`).
-- Checks: `npx vite build` to a scratch folder OK; `tsc` no new errors in touched files; headless check of the page alone (scratch harness, not in the repo) got 3 faces in range with no errors.
+- Black ground (user, after the first deploy): the shader compiled fine; the bare-earth tint was the biome ground colour times 2.5 on an already dark texture. Tint now keeps the biome hue at full strength (`EARTH_LIGHT` 1.2, rock tint 3). Found by rendering the real `groundShader` in headless Chromium (scratch harness in the session scratchpad, not in the repo): earth about RGB (125,108,63), desert (103,90,69), rock (45,39,33), sewer mud (54,48,38), no shader errors. From the settlement camera the texture detail is faint; if it looks flat, lower `GROUND_TILE`.
 
-## NOT verified
-- The overlay inside the app: not opened in a browser, no click-through. Check on 5002: `sh deploy/test-plain.sh`, then a check and an attack in Play. Expect the overlay, a 2 s hold, and a log that matches the faces.
-- The replay in combat: only the unit test (a fake action) covers it. Check one hit and one miss: each die is thrown once, the log matches.
-- The e2e play-through was not run (it takes about 25 min). Its clicks will pass through the webdriver bypass.
+- Black patches left after that fix (user): the building lots were opaque near-black planes over the bright ground, and a dark base plane showed round the textured rectangle. Lots are now a 22% black shade over the texture; the textured plane covers the whole base area (taps outside the walkable rectangle are ignored). Parallax and normal strength raised 30% on the user's request (`PARALLAX` 0.065, `NORMAL_SCALE` 1.3, both in `siteAssets.tsx`). 5002 rebuilt with these.
 
-## Still random (REVIVAL_NOTES "Not on the table yet")
-`stealthRoll` (lying low, sneaking); hazard saves (`deadlyAt`); gamble; forcecasting d100 (`findCrystal`); Hit Dice and healing in rests and items; `checkFor`; augment fitting; combat boons, maneuvers and the enemies' dice; ship fights.
+## Done later 2026-10-21 (user asked: black interior/rooftop floors; textures for ship and speeder damage, age, wear)
+- Floors (commit 836db47): Poly Haven floor sets in `client/public/textures/floor/`, `floorLook`/`FloorSurface` in `siteAssets.tsx`, wired in `RoomShell`. Seen in a browser on 5002 (cantina, armory, palace, hangar, roof).
+- Hull wear and panels (committed after): `tools/build-hull-textures.mjs` makes `textures/hull/{wear,damage,panels_normal,panels_height}.png` from the sets in `textures/wear/`; `Model wear=` in `models.tsx`; `interiors/wear.ts` (+ `tests/interiors/wear.test.ts`). Seen in `/dev/models?section=ships` on 5002. Details in REVIVAL_NOTES.md "Floors, hull wear and panels".
+- 5002 is rebuilt from the working tree (not 5000). Nothing is promoted to the 5000 service.
+- Open: the e2e step "3D map: no 2D plan; a tap on the floor walks ..." fails (the character does not move) on the build BEFORE my floors too, as a slice; find out why. Damage step 1 fires after any fight (see REVIVAL_NOTES). Plating floor is now `floor/deck_plate`.
+- Not looked at: a party ship with `hull` set (scorch step 1) in the game; hull wear on a ship inside a hangar in the game (only the gallery).
 
 ## Next (in order)
-1. Click through the overlay on 5002 (above). Fix the phone layout if the label or iframe overlaps.
-2. Convert `stealthRoll` (five sync callers, so it needs them made async) and the hazard saves.
-3. Run the e2e play-through once the overlay is checked by hand.
+1. Look at the ground on 5002 (hard reload; a new settlement, then a forest, a desert, a volcanic world, a sewer and Coruscant). Things to look for: a black ground (a shader compile error blanks the plane; check the browser console); swimming (lower `PARALLAX`); bare earth too bright or too dark (tint in `groundTexture`).
+2. Once the ground looks right, promote with `npm run build && sudo systemctl restart sw5e` (the 5000 service). Not done yet.
+3. (done, see above) Ship and speeder wear. Left: parallax on hero ships, wear on buildings, damage by hull ratio.
+4. Carried over from the dice work: click through the table-roll overlay on 5002 (a check and an attack in Play); convert `stealthRoll` and the hazard saves to the table; the e2e play-through once the overlay is checked by hand.
 
 ## Open questions for the user
-- Should the physics dice also show for NPC and enemy rolls? Now they stay instant (each enemy attack would otherwise cost two overlays).
-- A d3 is thrown as a d6 (the page has no d3). OK?
-- Companion checks throw physical dice too (the player picks the companion). Keep?
+- Keep the starship fight's grid, or remove it too?
+- Dice: show physics dice for NPC and enemy rolls? A d3 thrown as a d6? Companion checks throw physical dice, keep?
 
-## Learned (so the next agent does not rediscover it)
-- Combat store actions run inside zustand `set` updaters. `workOf` copies arrays only, so `onTable` restores a structured-clone snapshot before every re-run.
-- Each re-run calls `Math.random` again. Without the recording, an enemy's choice can change between runs (`runOnce` replays it).
-- The page reports its faces in its own build order (d4, d6, d8, d10, d12, d20, then request order within a type). `faceValues` reverses that order.
-- The iframe must receive the `roll` message after its `ready`. Listen for `ready` from mount on (the overlay does).
+## Learned
+- `deploy/test-plain.sh` copies the working tree into `~/sw5e-plain` and builds it there, so it is a snapshot, not a link.
+- Poly Haven API: `https://api.polyhaven.com/files/<slug>` gives the 1K URLs. The download script is in `~/sw5e-assets-scratch/` (not in the repo).
+- Lambert takes no normal map in Three.js 0.170; the ground is Phong for that reason.
+- `sudo systemctl restart sw5e` works without a password on this VM.

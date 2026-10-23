@@ -1,9 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { useTexture } from "@react-three/drei";
+import type { ThreeEvent } from "@react-three/fiber";
 import { create } from "zustand";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, type V3, type Finish } from "./models";
+import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, type V3, type Finish } from "./models";
 import { createRandom, unitOf, packedness, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery } from "@shared/logic";
 
 // ---------------------------------------------------------------------------------------------
@@ -950,5 +952,124 @@ export function GardenGround({ rects, biome }: { rects: NonNullable<SiteGrounds[
         </mesh>
       ))}
     </>
+  );
+}
+
+// The ground round a building (2026-10-21): a Poly Haven texture (public/textures/ground, see the README there), lit by its normal
+// map and shifted toward the viewer by its height map (single-step offset parallax). The city has none of it: it keeps the plain ground
+export const GROUND_TILE = 8; // squares of ground in one repeat of a texture
+const EARTH_LIGHT = 1.2; // how bright the bare earth is (1 leaves the texture as photographed)
+const PARALLAX = 0.065; // how far the height map moves the texture, in repeats of GROUND_TILE squares (0.05 and then 30% more, the user, 2026-10-21)
+const NORMAL_SCALE = new THREE.Vector2(1.3, 1.3); // how steep the normal map reads (1 as photographed, 30% more)
+
+// Which texture a building's ground gets, by its world's biome and the building's type (null: plain ground, as on Coruscant)
+export function groundTexture(biome: string, buildingType: string, base: string): { set: string; tint: THREE.Color; parallax: number } | null {
+  if (buildingType === "sewer system") return { set: "brown_mud_03", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
+  if (biome === "urban") return null;
+  if (biome === "desert") return { set: "dense_sand", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
+  if (biome === "volcanic") return { set: "dark_rock", tint: new THREE.Color(3, 3, 3), parallax: PARALLAX };
+  // Forest, jungle and the rest: bare earth in the hue of the world's ground. The texture is dark already, so the tint keeps the hue at
+  // full strength (half washed toward white) instead of darkening it with the ground colour, which made it black
+  const hue = new THREE.Color(base);
+  hue.multiplyScalar(1 / Math.max(hue.r, hue.g, hue.b, 0.001)).lerp(new THREE.Color("#ffffff"), 0.5);
+  return { set: "dirt_floor", tint: hue.multiplyScalar(EARTH_LIGHT), parallax: PARALLAX };
+}
+
+// Patches a Phong material's shader (onBeforeCompile) so that the diffuse and normal maps are sampled at a point shifted toward the
+// viewer by the height map (single-step offset parallax)
+export function groundShader(shader: THREE.WebGLProgramParametersWithUniforms, heightMap: THREE.Texture, parallax: number) {
+  shader.uniforms.heightMap = { value: heightMap };
+  shader.uniforms.parallax = { value: parallax };
+  shader.vertexShader = shader.vertexShader
+    .replace("#include <common>", "#include <common>\nvarying vec3 vWorld;")
+    .replace("#include <project_vertex>", "#include <project_vertex>\n  vWorld = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;");
+  shader.fragmentShader = shader.fragmentShader
+    .replace("#include <common>", "#include <common>\nuniform sampler2D heightMap;\nuniform float parallax;\nvarying vec3 vWorld;")
+    .replace("#include <map_fragment>", `
+  // Offset parallax: the height here (0.5 is level) moves the texture toward the viewer
+  vec3 toEye = normalize( cameraPosition - vWorld );
+  vec2 shift = - toEye.xz / max( toEye.y, 0.2 ) * ( texture2D( heightMap, vMapUv ).r - 0.5 ) * parallax;
+  vec4 sampledDiffuseColor = texture2D( map, vMapUv + shift );
+  diffuseColor *= sampledDiffuseColor;`)
+    .replace("#include <normal_fragment_maps>", `
+  vec3 mapN = texture2D( normalMap, vNormalMapUv + shift ).xyz * 2.0 - 1.0;
+  mapN.xy *= normalScale;
+  normal = normalize( tbn * mapN );`);
+}
+
+export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: string; tint: THREE.Color; parallax: number; w: number; h: number; at: [number, number, number]; onTap?: (e: ThreeEvent<MouseEvent>) => void }) {
+  const [diffuse, normal, height] = useTexture([`/textures/ground/${set}/diffuse.jpg`, `/textures/ground/${set}/normal.jpg`, `/textures/ground/${set}/height.jpg`]);
+  // The three maps share one repeat, so a shift found in the height map lines up on the others
+  const maps = useMemo(() => {
+    const repeat = (t: THREE.Texture) => {
+      const c = t.clone();
+      c.wrapS = c.wrapT = THREE.RepeatWrapping;
+      c.repeat.set(w / GROUND_TILE, h / GROUND_TILE);
+      c.needsUpdate = true;
+      return c;
+    };
+    const d = repeat(diffuse);
+    d.colorSpace = THREE.SRGBColorSpace;
+    return { diffuse: d, normal: repeat(normal), height: repeat(height) };
+  }, [diffuse, normal, height, w, h]);
+  const compile = (shader: THREE.WebGLProgramParametersWithUniforms) => groundShader(shader, maps.height, parallax);
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={at} receiveShadow onClick={onTap}>
+      <planeGeometry args={[w, h]} />
+      <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} onBeforeCompile={compile} />
+    </mesh>
+  );
+}
+
+// The floors of rooms and roofs (2026-10-21): the same lit, shifted texture as the ground, from public/textures/floor, laid over the
+// flat slab of a room (which stays as what shows while the maps load). `tile` is the squares in one repeat; `tint` multiplies the
+// photograph (dark sets are brought up, the plating is a steel version of the metal plate, made by tools/build-hull-textures.mjs)
+export type FloorLook = { set: string; tint: THREE.Color; tile: number; parallax: number };
+const FLOOR_PARALLAX = 0.04;
+const floorSet = (set: string, tile: number, tint: string | THREE.Color = "#ffffff", parallax = FLOOR_PARALLAX): FloorLook => ({ set, tile, tint: new THREE.Color(tint), parallax });
+
+// What a room's floor is made of, by the floor kind its building gives it (sprites.tsx floorOf), the building's type and whether it is a roof
+export function floorLook(kind: string, buildingType = "", roof = false): FloorLook | null {
+  if (roof) return floorSet("concrete_floor_worn_02", 6, "#ffffff", 0.03);
+  switch (kind) {
+    case "plating": return floorSet("deck_plate", 3);
+    case "hangar": return floorSet("hangar_concrete_floor", 6, new THREE.Color(2.4, 2.4, 2.5), 0.03);
+    case "sand": return floorSet("dense_sand", GROUND_TILE, "#ffffff", PARALLAX);
+    case "rock": return floorSet("dark_rock", GROUND_TILE, new THREE.Color(3, 3, 3), PARALLAX);
+    case "stone": return /ruin/.test(buildingType) ? floorSet("stone_tiles", 4, new THREE.Color(1.6, 1.6, 1.6)) : floorSet("marble_tiles", 4, "#d8d2c6", 0.02);
+    case "clay": return /market|gate/.test(buildingType) ? floorSet("terracotta_floor_tiles", 4, new THREE.Color(1.5, 1.5, 1.5), 0.02) : floorSet("dirty_carpet", 3, new THREE.Color(2.3, 2.1, 1.9), 0.05);
+    default: return null;
+  }
+}
+
+// A floor of a room laid flat at `y` over its footprint (w by h squares, corners rounded by `radii`, centred on the point it stands at,
+// so that a tap lands as it does on the slab under it)
+export function FloorSurface({ look: { set, tint, tile, parallax }, w, h, radii, y = 0.004, onTap }: { look: FloorLook; w: number; h: number; radii: [number, number, number, number]; y?: number; onTap?: (e: ThreeEvent<MouseEvent>) => void }) {
+  const [diffuse, normal, height] = useTexture([`/textures/floor/${set}/diffuse.jpg`, `/textures/floor/${set}/normal.jpg`, `/textures/floor/${set}/height.jpg`]);
+  // (the outline's own coordinates are the texture's, so a repeat is 1 / tile)
+  const maps = useMemo(() => {
+    const repeat = (t: THREE.Texture) => {
+      const c = t.clone();
+      c.wrapS = c.wrapT = THREE.RepeatWrapping;
+      c.repeat.set(1 / tile, 1 / tile);
+      c.anisotropy = 4;
+      c.needsUpdate = true;
+      return c;
+    };
+    const d = repeat(diffuse);
+    d.colorSpace = THREE.SRGBColorSpace;
+    return { diffuse: d, normal: repeat(normal), height: repeat(height) };
+  }, [diffuse, normal, height, tile]);
+  const geometry = useMemo(() => {
+    const g = new THREE.ShapeGeometry(planRect(w, h, radii));
+    g.rotateX(-Math.PI / 2);
+    return g;
+  }, [w, h, radii.join(",")]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  const compile = (shader: THREE.WebGLProgramParametersWithUniforms) => groundShader(shader, maps.height, parallax);
+  return (
+    <mesh geometry={geometry} position={[w / 2, y, h / 2]} receiveShadow onClick={onTap}>
+      <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} onBeforeCompile={compile} />
+    </mesh>
   );
 }

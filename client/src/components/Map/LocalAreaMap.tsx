@@ -418,8 +418,6 @@ const LocalAreaMap: React.FC<LocalAreaMapProps> = ({
             />
           ))}
           
-          {/* Coordinate grid */}
-          <gridHelper args={[100, 20, '#606060', '#404040']} />
           
           <OrbitControls 
             enablePan={true} 
