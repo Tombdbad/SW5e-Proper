@@ -933,6 +933,37 @@ export function MinigamePage({ game, onDone, onExit }: { game: Minigame; onDone:
     const timer = setInterval(() => setHud({ ...latest.current }), 100);
     return () => clearInterval(timer);
   }, []);
+  // Keyboard, for a race: W speeds up, S slows down, A and D turn left and right, Right Shift boosts. Each key writes only
+  // its own control, so the drag pad's steering and the buttons still work alongside it.
+  useEffect(() => {
+    if (game.kind !== "race") return;
+    const held = new Set<string>();
+    const press = (e: KeyboardEvent, on: boolean) => {
+      if (!["KeyW", "KeyS", "KeyA", "KeyD", "ShiftRight"].includes(e.code)) return;
+      if (on) held.add(e.code);
+      else held.delete(e.code);
+      const c = input.current;
+      if (e.code === "KeyW" || e.code === "KeyS") c.throttle = held.has("KeyW") ? 1 : held.has("KeyS") ? -1 : 0;
+      if (e.code === "KeyA" || e.code === "KeyD") c.steer = { ...c.steer, x: (held.has("KeyD") ? 1 : 0) - (held.has("KeyA") ? 1 : 0) };
+      if (e.code === "ShiftRight") c.boost = on;
+    };
+    const keyDown = (e: KeyboardEvent) => press(e, true);
+    const keyUp = (e: KeyboardEvent) => press(e, false);
+    const lostFocus = () => {
+      held.clear();
+      input.current.steer = { ...input.current.steer, x: 0 };
+      input.current.throttle = 0;
+      input.current.boost = false;
+    };
+    window.addEventListener("keydown", keyDown);
+    window.addEventListener("keyup", keyUp);
+    window.addEventListener("blur", lostFocus);
+    return () => {
+      window.removeEventListener("keydown", keyDown);
+      window.removeEventListener("keyup", keyUp);
+      window.removeEventListener("blur", lostFocus);
+    };
+  }, [game.kind]);
   const [finished, setFinished] = useState<MinigameResult | null>(null);
 
   // Five seconds, then GO, then the game starts
