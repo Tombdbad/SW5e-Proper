@@ -5,7 +5,7 @@ import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 import type { ThreeEvent } from "@react-three/fiber";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { Model, type Kit } from "../models";
+import { Model, type Kit, type V3 } from "../models";
 import { caveFeatures, column, crystals, kitPieceOf, pool, rockPaletteOf, rockRun, rockSurfaces, stalagmite, stream, type CaveFeature } from "./cave";
 import { useModels } from "./assets";
 import { toneOfColours } from "./tones";
@@ -134,6 +134,16 @@ export function MaskFloor({ mask, width, height, color, onClick, y = -0.1, recei
 // The rock round a winding floor: along every edge of a standing square that meets rock (or the room's own boundary, but not at a way), a few
 // shaped rocks, low at the foot and rising to a lip, in the colours of the world's stone; and a slab of dark rock under the whole room, so
 // that what is not floor reads as rock. `ways` are the squares of doors and exits, kept open.
+// A stairwell's step, tread or wall in a cave (LocalMap `Ascent`, `Switchback`, `StairsAsset`): a lump of the cave's rock scaled to the box
+// it takes, drawn with the stone texture. `onTap` makes a tap on it (a tread walks to its square).
+export function CaveSlab({ at, size, biome, variant, onTap }: { at: V3; size: V3; biome: string; variant: number; onTap?: () => void }) {
+  const palette = rockPaletteOf(biome);
+  const slab = (
+    <Model id={`caveslab:${variant % 4}:${biome}`} position={at} scale={size} build={(k) => { k.surfaces = rockSurfaces(palette); k.blob(0.5, palette.rock, { seed: (variant % 4) + 1, rough: 0.25, smooth: true }); }} />
+  );
+  return onTap ? <group onClick={(e) => { e.stopPropagation(); if (e.delta <= 8) onTap(); }}>{slab}</group> : slab;
+}
+
 export function CaveWalls({ mask, ways, w, h, biome, tier, seed, tall = false }: { mask: string[]; ways: { x: number; y: number }[]; w: number; h: number; biome: string; tier: Tier; seed: number; tall?: boolean }) {
   const palette = rockPaletteOf(biome);
   const key = `${mask.join("|")}:${ways.map((a) => `${a.x},${a.y}`).join(";")}:${biome}:${tier}:${seed}:${tall ? "t" : "l"}`;

@@ -89,19 +89,20 @@ function loadMap(url: string, colour: boolean): Promise<THREE.Texture | null> {
 export interface SurfaceOptions {
   vertexColors?: boolean; // the colours of the vertices multiply the photograph (a model's parts, a room's walls)
   tint?: string; // else the photograph as it is
+  lift?: number; // brightens the photograph (a dark one, such as leaf litter, reads as a plant's green)
   parallax: number; // how far the height map shifts the maps (in repeats; see parallaxShader)
   shininess?: number;
 }
 const SURFACES = new Map<string, THREE.MeshPhongMaterial>();
 // The material of a texture set (public/textures/<folder>/<set>): shared by everyone asking for the same one
 export function surfaceMaterial(folder: string, set: string, o: SurfaceOptions): THREE.MeshPhongMaterial {
-  const key = [folder, set, o.vertexColors ? "v" : "", o.tint ?? "", o.parallax, o.shininess ?? 8].join("|");
+  const key = [folder, set, o.vertexColors ? "v" : "", o.tint ?? "", o.lift ?? 1, o.parallax, o.shininess ?? 8].join("|");
   const have = SURFACES.get(key);
   if (have) return have;
   const height = { value: flat([128, 128, 128]) as THREE.Texture | null };
   const m = new THREE.MeshPhongMaterial({
     vertexColors: o.vertexColors ?? false,
-    color: o.tint ?? "#ffffff",
+    color: new THREE.Color(o.tint ?? "#ffffff").multiplyScalar(o.lift ?? 1),
     map: flat([255, 255, 255]),
     normalMap: flat([128, 128, 255]),
     normalScale: NORMAL_SCALE,

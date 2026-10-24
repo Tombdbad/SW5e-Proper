@@ -39,7 +39,7 @@ import type { Sw5eMonster } from "@shared/data";
 import { rollOnTable } from "@/lib/stores/useDice";
 import type { TableDie } from "@/lib/sw5e/dice";
 import {
-  exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare,
+  exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare, isLowFuel, fuelAfter, LIMP_FACTOR, tankerCall,
   planBuilding, afterFight, safeHarbour, arrivalAlert, setAlert, watchDC, watchersOf, clearAlarms, skirmishGround, ALERT, ALERT_LEVELS, LIFE,
   reportCrime, pursuitAt, lieLow, lieLowDC, CRIME_NAMES, type Crime,
   advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
@@ -785,14 +785,14 @@ export default function GameBoard() {
       toast.info(`Ride paid: ${ride.fare} credits (house rule: the books price no fares).`);
     }
     if (ride?.vehicleId) changes.vehicles = vehicles.map((v) => (v.id === ride.vehicleId ? { ...v, areaId: exit.to } : v));
-    const took = ride ? ride.minutes : tripMinutes(exit, Number(flying?.hyperdriveClass) || 1);
+    const took = ride ? ride.minutes : tripMinutes(exit, Number(flying?.hyperdriveClass) || 1) * (flying && isLowFuel(flying) ? LIMP_FACTOR : 1);
     Object.assign(changes, pass(took));
     if (ride) toast.info(`${ride.label}: ${rideText(took)} to ${world.areas[exit.to]?.name}; it is ${clockText(useClock.getState().minutes)}.`);
     else if (took >= 60) toast.info(`${Math.round(took / 6) / 10} hours on the way${exit.needsShip && !exit.travel ? " (house rule: an hour between the surface and orbit)" : ""}: it is ${clockText(useClock.getState().minutes)}.`);
     if (exit.needsShip) {
       const { ship, fare } = tripBy(exit);
       if (ship) {
-        changes.starships = ships.map((s) => (s.id === ship.id ? { ...s, fuel: s.fuel - (exit.fuel ?? 0), areaId: exit.to, hangar: undefined } : s));
+        changes.starships = ships.map((s) => (s.id === ship.id ? { ...s, fuel: fuelAfter(s, exit.fuel ?? 0), areaId: exit.to, hangar: undefined } : s));
       } else if (fare > (character.credits ?? 0)) {
         toast.error(`Passage costs ${fare} credits and you have ${character.credits ?? 0}.`);
         return;
@@ -3833,17 +3833,28 @@ export default function GameBoard() {
     saveCampaign({ currentLocation: to });
     toast.info(`You step off ${aboardShip.name} into ${world.areas[to]?.name}.`);
   };
+  // A tanker from the nearest depot, called to a ship that has run dry (house rule, see tankerCall): it sells the ship TANKER.units of
+  // fuel at the size's price, and the call-out is the same again
+  const callTanker = (ship: PartyShip) => {
+    if (!world) return;
+    const price = getStarshipSize(ship.size)?.fuelCost ?? passageRate;
+    const { fee, units, minutes } = tankerCall(price, fuelCap(ship));
+    if (fee > (character.credits ?? 0)) return void toast.error(`A tanker costs ${fee} credits (house rule) and you have ${character.credits ?? 0}.`);
+    saveCharacter({ credits: character.credits - fee });
+    saveCampaign({ ...pass(minutes), starships: ships.map((s) => (s.id === ship.id ? { ...s, fuel: s.fuel + units } : s)) });
+    toast.success(`A tanker reaches ${ship.name} in ${minutes / 60} hours and sells ${units} units of fuel for ${fee} credits (house rule).`);
+  };
   const flyShip = (exit: Exit) => {
     if (!world || !aboardShip || inCombat || dead || exploring) return;
     const ship = aboardShip;
     const busy = shipBusy(ship);
     if (busy) return void toast.error(`${ship.name} cannot fly: ${busy.what} is under way, ready ${clockText(busy.ready)}.`);
-    if (ship.fuel < (exit.fuel ?? 0)) return void toast.error(`${ship.name} needs ${exit.fuel} fuel and has ${ship.fuel}.`);
+    if (ship.fuel < (exit.fuel ?? 0) && !isLowFuel(ship)) return void toast.error(`${ship.name} needs ${exit.fuel} fuel and has ${ship.fuel}.`);
     if (exit.jump && !ship.hyperdriveClass) return void toast.error(`${ship.name} has no hyperdrive.`);
-    const took = tripMinutes(exit, Number(ship.hyperdriveClass) || 1);
-    const changes = { ...pass(took), starships: ships.map((s) => (s.id === ship.id ? { ...s, fuel: s.fuel - (exit.fuel ?? 0), areaId: exit.to, hangar: undefined } : s)) };
+    const took = tripMinutes(exit, Number(ship.hyperdriveClass) || 1) * (isLowFuel(ship) ? LIMP_FACTOR : 1);
+    const changes = { ...pass(took), starships: ships.map((s) => (s.id === ship.id ? { ...s, fuel: fuelAfter(s, exit.fuel ?? 0), areaId: exit.to, hangar: undefined } : s)) };
     const target = world.areas[exit.to];
-    toast.info(`${ship.name}: ${exit.label} ${target?.name}, ${Math.round(took / 6) / 10} h; it is ${clockText(useClock.getState().minutes)}.`);
+    toast.info(`${ship.name}: ${exit.label} ${target?.name}, ${Math.round(took / 6) / 10} h${isLowFuel(ship) ? " (LOW FUEL: limping, house rule)" : ""}; it is ${clockText(useClock.getState().minutes)}.`);
     const land = (w: World) => moveShipInterior(w, ship.id, exit.to);
     if (target && childrenOf(world, target.id).length === 0 && ["system", "planet", "settlement", "building"].includes(target.kind)) explore(target.id, changes, land);
     else saveCampaign({ ...changes, galaxyMap: land(world) });
@@ -4441,6 +4452,7 @@ export default function GameBoard() {
         <p className="text-xs text-gray-400">
           {[lawText(market.law), ...market.notes].join("; ")}. Credits: {character.credits ?? 0}.
         </p>
+        {shipServices(trader, placeId)}
         <div className="mt-1 flex gap-1">
           <Button size="sm" variant={tradeTab === "buy" ? "default" : "outline"} className="h-6 px-2" onClick={() => setTradeTab("buy")}>Buy</Button>
           <Button size="sm" variant={tradeTab === "sell" ? "default" : "outline"} className="h-6 px-2" onClick={() => setTradeTab("sell")}>Sell</Button>
@@ -5747,7 +5759,7 @@ export default function GameBoard() {
   const dealings = (o: Occupant, holderId: string) => (
     <>
       {waresOf(o) && tradePanel(o, holderId)}
-      {shipServices(o, holderId)}
+      {!waresOf(o) && shipServices(o, holderId)}
       {partsCounter(o, holderId)}
       {o.trade === "salvage" && droidPartsPanel(o, holderId)}
       {scriptPanel(o, holderId)}
@@ -6689,9 +6701,15 @@ export default function GameBoard() {
                 )}
                 {helmOpen && (
                   <div className="space-y-1" data-testid="helm-courses">
+                    {isLowFuel(aboardShip) && (
+                      <div className="flex items-center justify-between gap-2 rounded bg-amber-900/40 px-2 py-1" data-testid="low-fuel">
+                        <span><b>LOW FUEL</b>: the ship limps at {LIMP_FACTOR} times the time and burns nothing (house rule). Call a tanker to fill it.</span>
+                        <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || exploring} onClick={() => callTanker(aboardShip)} data-testid="call-tanker">Call a tanker</Button>
+                      </div>
+                    )}
                     {helmExits(world, aboardShip.areaId).map((exit, i) => {
-                      const short = (exit.fuel ?? 0) > aboardShip.fuel || (exit.jump && !aboardShip.hyperdriveClass) || !!shipBusy(aboardShip);
-                      const minutes = tripMinutes(exit, Number(aboardShip.hyperdriveClass) || 1);
+                      const short = (!isLowFuel(aboardShip) && (exit.fuel ?? 0) > aboardShip.fuel) || (exit.jump && !aboardShip.hyperdriveClass) || !!shipBusy(aboardShip);
+                      const minutes = tripMinutes(exit, Number(aboardShip.hyperdriveClass) || 1) * (isLowFuel(aboardShip) ? LIMP_FACTOR : 1);
                       return (
                         <div key={`${exit.to}-${i}`} className="flex items-center justify-between gap-2">
                           <span>

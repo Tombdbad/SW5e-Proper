@@ -12,7 +12,7 @@ import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./Galax
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind } from "./sprites";
 import { Atmosphere } from "./interiors/Atmosphere.tsx";
 import { Stock } from "./interiors/Stock.tsx";
-import { CaveDressing, CaveMound, CaveWalls, MaskFloor, RockWall } from "./interiors/CaveRoom";
+import { CaveDressing, CaveMound, CaveSlab, CaveWalls, MaskFloor, RockWall } from "./interiors/CaveRoom";
 import { moodOf } from "./interiors/atmosphere";
 import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
 import { PackWalls, cornerCentre, type WallRun } from "./interiors/Walls";
@@ -259,8 +259,9 @@ const sameFootprint = (a: RoomLayout, b: RoomLayout) => a.x < b.x + b.width && b
 
 // The steps of a stairwell, or the rungs of a ladder, rising from one end of a room to the other;
 // they are looked at, not tapped (the floor under them takes the tap)
-function Ascent({ w, h, toward, up, form, switchback, onTap }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; form: string; switchback?: RoomLayout["switchback"]; onTap?: (x: number, y: number) => void }) {
-  if (switchback) return <Switchback w={w} h={h} toward={toward} up={up} low={switchback.low} onTap={onTap} />;
+// `rock` (a cave's stairs) draws the steps as the cave's rock instead of boxes
+function Ascent({ w, h, toward, up, form, switchback, onTap, rock }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; form: string; switchback?: RoomLayout["switchback"]; onTap?: (x: number, y: number) => void; rock?: { biome: string } }) {
+  if (switchback) return <Switchback w={w} h={h} toward={toward} up={up} low={switchback.low} onTap={onTap} rock={rock} />;
   const along = toward === "e" || toward === "w" ? w : h;
   const across = toward === "e" || toward === "w" ? h : w;
   const count = Math.max(4, Math.round(along * (form === "ladder" ? 3 : 2.4)));
@@ -284,6 +285,7 @@ function Ascent({ w, h, toward, up, form, switchback, onTap }: { w: number; h: n
           );
         }
         const size: V3 = toward === "e" || toward === "w" ? [along / count + 0.01, Math.max(0.05, top), across * 0.92] : [across * 0.92, Math.max(0.05, top), along / count + 0.01];
+        if (rock) return <CaveSlab key={i} at={place(t, top / 2)} size={size} biome={rock.biome} variant={i} />;
         return (
           <mesh key={i} position={place(t, top / 2)} raycast={none} receiveShadow castShadow>
             <boxGeometry args={size} />
@@ -298,7 +300,7 @@ function Ascent({ w, h, toward, up, form, switchback, onTap }: { w: number; h: n
 // The two flights of a switchback and its landing (a stair block's way up or down a floor, see shared/logic "Stair blocks"): treads
 // along each lane at the height the floor is there (climbAt), the landing flat across the far row, and a wall between the flights
 // with a rail along it, up to the landing
-function Switchback({ w, h, toward, up, low, onTap }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; low: 0 | 1; onTap?: (x: number, y: number) => void }) {
+function Switchback({ w, h, toward, up, low, onTap, rock }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; low: 0 | 1; onTap?: (x: number, y: number) => void; rock?: { biome: string } }) {
   const none = () => null;
   const plan = { width: w, height: h, climb: { toward, levels: 1 }, switchback: { low } };
   const ew = toward === "e" || toward === "w";
@@ -325,13 +327,15 @@ function Switchback({ w, h, toward, up, low, onTap }: { w: number; h: number; to
   });
   return (
     <group>
-      {treads.map((t, i) => (
+      {treads.map((t, i) => (rock ? (
+        <CaveSlab key={i} at={t.at} size={t.size} biome={rock.biome} variant={i} onTap={onTap ? () => onTap(t.sq[0], t.sq[1]) : undefined} />
+      ) : (
         <mesh key={i} position={t.at} raycast={onTap ? undefined : none} receiveShadow castShadow onClick={onTap ? (e) => { e.stopPropagation(); if (e.delta <= 8) onTap(t.sq[0], t.sq[1]); } : undefined}>
           <boxGeometry args={t.size} />
           <meshLambertMaterial color={i % 2 ? "#8b8f96" : "#9aa0a8"} />
         </mesh>
-      ))}
-      {wall.map((p, i) => <Box key={`w${i}`} at={p.at} size={p.size} color="#c8ccd2" />)}
+      )))}
+      {wall.map((p, i) => (rock ? <CaveSlab key={`w${i}`} at={p.at} size={p.size} biome={rock.biome} variant={i + 1} /> : <Box key={`w${i}`} at={p.at} size={p.size} color="#c8ccd2" />))}
     </group>
   );
 }
@@ -364,7 +368,7 @@ function HangarRoof({ width, height, y, door }: { width: number; height: number;
 // A flight of stairs set in a room's floor, up to a gallery or down from it; where the stairwell is wide enough for two flights (2 by 3
 // or more), a switchback: up the first half, round a landing, and back along the second to the floor above. The stairwell lies along its
 // longer side (a quarter turn for one that is wider than it is deep)
-function StairsAsset({ w, h, up }: { w: number; h: number; up: boolean }) {
+function StairsAsset({ w, h, up, rock }: { w: number; h: number; up: boolean; rock?: { biome: string } }) {
   const none = () => null;
   const turned = w > h;
   const [C, L] = turned ? [h, w] : [w, h];
@@ -375,6 +379,7 @@ function StairsAsset({ w, h, up }: { w: number; h: number; up: boolean }) {
     Array.from({ length: n }, (_, i) => {
       const top = up ? low + (high - low) * ((i + 1) / n) : 0.04;
       const z = from + (to - from) * ((i + 0.5) / n);
+      if (rock) return <CaveSlab key={`${key}${i}`} at={[x0 + width / 2, top / 2 + 0.02, z]} size={[width * 0.9, Math.max(0.04, top), Math.abs(to - from) / n + 0.01]} biome={rock.biome} variant={i} />;
       return (
         <mesh key={`${key}${i}`} position={[x0 + width / 2, top / 2 + 0.02, z]} raycast={none}>
           <boxGeometry args={[width * 0.9, Math.max(0.04, top), Math.abs(to - from) / n + 0.01]} />
@@ -418,6 +423,8 @@ const FLOORS: Record<FloorKind, string> = { plating: "#1d2530", hangar: "#232a31
 const WAY_COLORS = { door: "#f59e0b", locked: "#f87171", exit: "#4ade80", secret: "#c084fc", window: "#7dd3fc" };
 const WALL_HEIGHT = 0.8;
 const FULL_WALL_HEIGHT = 2.4;
+// A gallery's balustrade: waist high to a figure, so that the floor below stays open to the ceiling
+const BALUSTRADE_HEIGHT = 1.0;
 const WALL_THICK = 0.16;
 const isWay = (a: RoomAsset) => !!a.side && a.kind !== "window";
 
@@ -485,7 +492,7 @@ function wallRuns(length: number, gaps: number[]): [number, number][] {
   return runs;
 }
 
-export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, ceiling = false, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, children }: {
+export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = false, ceiling = false, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, children }: {
   width: number;
   height: number;
   // How far each outside corner is rounded: north-west, north-east, south-east, south-west
@@ -506,6 +513,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   walls?: boolean;
   // Walls as high as a room's, for the views from the character's eyes (the overhead view keeps them low to look over)
   fullWalls?: boolean;
+  // A gallery's walls are its balustrade (BALUSTRADE_HEIGHT)
+  railing?: boolean;
   // A ceiling over the room, for those views too: what is overhead there is the room's own roof, not the sky
   ceiling?: boolean;
   looted?: (asset: RoomAsset) => boolean;
@@ -542,7 +551,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // A shaft's walls run up with the floor
   const climbs = plan?.climb ? rise(plan as RoomLayout) : 0;
   // (seen from overhead, a switchback's walls stop at its landing, so that both flights can be looked into)
-  const wallH = (fullWalls ? FULL_WALL_HEIGHT : WALL_HEIGHT) + (plan?.switchback && !fullWalls ? climbs / 2 : climbs);
+  const wallH = (railing ? BALUSTRADE_HEIGHT : fullWalls ? FULL_WALL_HEIGHT : WALL_HEIGHT) + (plan?.switchback && !fullWalls ? climbs / 2 : climbs);
   const ramp = (x: number, y: number) => (plan?.climb ? rampAt(plan as RoomLayout, x + 0.5, y + 0.5) : 0);
   // The kit this room is furnished and walled from, and its palette
   const pack = mood && !rocky ? packOf(mood.roomName, mood.buildingType) : undefined;
@@ -590,7 +599,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
           <FloorSurface look={floorTexture} w={width} h={height} radii={[nw, ne, se, sw]} onTap={floorTap} />
         </Suspense>
       )}
-      {plan?.climb && plan.form && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} onTap={onFloor} />}
+      {plan?.climb && plan.form && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} onTap={onFloor} rock={rocky ? { biome: mood!.biome } : undefined} />}
       {walls && mask
         ? <CaveWalls mask={mask} ways={assets.filter((a) => a.side).map((a) => ({ x: a.x, y: a.y }))} w={width} h={height} biome={mood!.biome} tier={detail} seed={width * 31 + height} tall={fullWalls} />
         : walls
@@ -629,7 +638,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
       {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
         <Glide key={a.id} x={a.x} y={a.y} z={(a.z ?? 0) * LEVEL_H}>
           {a.kind === "ship" ? (bay ? <BayBerth room={bay.room} asset={a} based={bay.based} /> : ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} /> : <Berth w={a.w} h={a.h} name={a.name} note="away on a voyage" />)
-            : a.kind === "stairs" ? <StairsAsset w={a.w} h={a.h} up={/up/i.test(a.name)} />
+            : a.kind === "stairs" ? <StairsAsset w={a.w} h={a.h} up={/up/i.test(a.name)} rock={rocky ? { biome: mood!.biome } : undefined} />
             : a.kind === "loot" ? (nodeOf?.(a) ? <NodeModel node={nodeOf(a)!} empty={looted?.(a)} /> : <Chest looted={looted?.(a)} />)
             : (
               <>
@@ -2304,6 +2313,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   ships={room.ships}
                   bay={{ room, based: based[room.id] }}
                   fullWalls={viewing}
+                  railing={formOf(room) === "gallery"}
                   ceiling={viewing && !openAir(room)}
                   looted={(a) => { const c = room.loot.find((c) => c.id === a.ref); return !!c && (c.node ? nodeAt(c.node, minutes).charges === 0 : !!c.looted); }}
                   nodeOf={(a) => room.loot.find((c) => c.id === a.ref)?.node}

@@ -43,9 +43,9 @@ export const MATERIALS: Record<Finish, THREE.Material> = {
   glass: new THREE.MeshPhongMaterial({ vertexColors: true, transparent: true, opacity: 0.5, shininess: 110, specular: new THREE.Color("#ffffff"), depthWrite: false }),
   haze: new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide }),
   cloth: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, emissive: new THREE.Color("#0a0a0a") }),
-  stone: surfaceMaterial("stone", "rock_face_03", { vertexColors: true, parallax: 0.04 }),
-  bark: surfaceMaterial("bark", "bark_brown_02", { vertexColors: true, parallax: 0.03 }),
-  leaf: surfaceMaterial("leaves", "forest_leaves_02", { vertexColors: true, parallax: 0.02, shininess: 4 }),
+  stone: surfaceMaterial("stone", "rock_face_03", { vertexColors: true, lift: 1.25, parallax: 0.04 }),
+  bark: surfaceMaterial("bark", "bark_brown_02", { vertexColors: true, lift: 1.5, parallax: 0.03 }),
+  leaf: surfaceMaterial("leaves", "forest_leaves_02", { vertexColors: true, lift: 1.9, parallax: 0.02, shininess: 4 }),
 };
 
 interface PartOptions {
@@ -149,6 +149,25 @@ export function archShape(w: number, h: number): THREE.Shape {
   return s;
 }
 
+// The finish a colour is drawn with by a builder's `surfaces`: its own, or a shade of one (`shade` scales a colour in linear light, so
+// a shade keeps the ratios of its channels to its base colour)
+function surfaceOf(surfaces: Kit["surfaces"], color: string | THREE.Color): Finish | undefined {
+  if (!surfaces || typeof color !== "string") return undefined;
+  if (surfaces[color]) return surfaces[color];
+  const c = new THREE.Color(color);
+  const [r, g, b] = [c.r, c.g, c.b];
+  for (const [base, finish] of Object.entries(surfaces)) {
+    if (!finish) continue;
+    const s = new THREE.Color(base);
+    const lit = [[r, s.r], [g, s.g], [b, s.b]].filter(([, sv]) => sv > 0.02);
+    if (!lit.length) continue;
+    const k = lit[0][0] / lit[0][1];
+    const dark = [[r, s.r], [g, s.g], [b, s.b]].filter(([, sv]) => sv <= 0.02);
+    if (k > 0 && lit.every(([cv, sv]) => Math.abs(cv / sv - k) < 0.03 * k) && dark.every(([cv]) => cv <= 0.03)) return finish;
+  }
+  return undefined;
+}
+
 export class Kit {
   // Built for a walking figure: every vertex is given the limb it belongs to and the point that limb swings about (interiors/limbs.ts)
   animated = false;
@@ -183,7 +202,7 @@ export class Kit {
 
   add(source: THREE.BufferGeometry, color: string | THREE.Color, { at, rot, scale, finish: asked }: PartOptions = {}) {
     // A part takes the finish its builder asked for, else the one its colour is named for in `surfaces` (a palette's bark, leaf or stone), else matte
-    const finish = asked ?? (typeof color === "string" ? this.surfaces?.[color] : undefined) ?? "matte";
+    const finish = asked ?? surfaceOf(this.surfaces, color) ?? "matte";
     let geo = source;
     for (const name of Object.keys(geo.attributes)) if (name !== "position" && name !== "normal") geo.deleteAttribute(name);
     if (!geo.index) {
@@ -1349,7 +1368,8 @@ export function CornerWall({ r, h, thick, corner, color, wall }: { r: number; h:
   }, [wall, r, h, thick, corner, color]);
   useEffect(() => () => curve?.dispose(), [curve]);
   if (!wall) return <Model id={`cornerwall:${r2(r)}:${r2(h)}:${thick}:${corner}:${color}`} build={build} />;
-  return curve ? <mesh geometry={curve} material={wallMaterial(wall, { vertexColors: true })} castShadow receiveShadow /> : null;
+  // The same tint as the straight walls of the room (a plain room's walls are tinted by their colour, see LocalMap)
+  return curve ? <mesh geometry={curve} material={wallMaterial(wall, { tint: color })} castShadow receiveShadow /> : null;
 }
 
 // A dome over a room: a turned dome with a rim and a lantern on top

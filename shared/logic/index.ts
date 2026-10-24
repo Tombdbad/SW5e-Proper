@@ -4806,6 +4806,8 @@ export interface Wares {
   black?: boolean;
 }
 export const WARES: Record<string, Wares> = {
+  // The fuel attendant sells no goods: the trade panel carries the refuelling (GameBoard shipServices)
+  fuel: { label: "Fuel and ship service", categories: [], lines: [0, 0], each: [0, 0] },
   bar: { label: "Drinks", categories: ["AlcoholicBeverage"], lines: [5, 8], each: [4, 12] },
   general: { label: "General goods", categories: ["Utility", "Storage", "Clothing", "Communications", "DataRecordingAndStorage", "LifeSupport"], lines: [9, 14], each: [1, 5] },
   arms: { label: "Arms and armor", categories: ["Weapon", "Armor", "Ammunition", "WeaponOrArmorAccessory"], lines: [8, 12], each: [1, 4] },
@@ -4824,7 +4826,7 @@ export const WARES: Record<string, Wares> = {
   salvage: { label: "Salvage and used gear", categories: ["Utility", "Tool", "Storage"], lines: [5, 8], each: [1, 3] },
 };
 export const MERCHANT_WARES = ["general", "general", "arms", "tech", "medical", "leisure"];
-const ROLE_WARES: Record<string, string> = { bartender: "bar", mechanic: "tech", medic: "medical", dockmaster: "spacer", "ticket agent": "spacer", fence: "black", smuggler: "black" };
+const ROLE_WARES: Record<string, string> = { bartender: "bar", mechanic: "tech", medic: "medical", dockmaster: "spacer", "ticket agent": "spacer", fence: "black", smuggler: "black", "fuel attendant": "fuel" };
 // What someone sells, if anything
 export const waresOf = (o: Pick<Occupant, "role" | "trade" | "disposition">): Wares | undefined =>
   o.disposition === "hostile" ? undefined : WARES[o.trade ?? ROLE_WARES[o.role] ?? (o.role === "merchant" ? "general" : "")];
@@ -5763,8 +5765,21 @@ export function shipForTrip(ships: PartyShip[] | undefined, hereId: string, exit
   if (!berthed.length) return { reason: ships?.length ? "your ship is berthed elsewhere" : "you have no ship" };
   const fitted = berthed.filter((ship) => !exit.jump || !!ship.hyperdriveClass);
   if (!fitted.length) return { reason: "your ship has no hyperdrive" };
-  const ship = fitted.find((candidate) => candidate.fuel >= (exit.fuel ?? 0));
+  const ship = fitted.find((candidate) => candidate.fuel >= (exit.fuel ?? 0)) ?? fitted.find(isLowFuel);
   return ship ? { ship, reason: "" } : { reason: "your ship is out of fuel" };
+}
+
+// LOW FUEL (house rule: the books give no rule for a ship that runs dry). A ship with no fuel left limps: it flies a trip on reserve
+// power at LIMP_FACTOR times the time, and burns nothing. A tanker is called to it (`tankerCall`), and fills it to TANKER.units.
+export const LIMP_FACTOR = 3;
+export const isLowFuel = (ship: Pick<PartyShip, "fuel">) => ship.fuel <= 0;
+// The fuel a trip leaves a ship with (a limping ship has none to burn)
+export const fuelAfter = (ship: Pick<PartyShip, "fuel">, need: number) => Math.max(0, ship.fuel - need);
+export const TANKER = { units: 2, hours: 4, callOut: 2 };
+// What a tanker costs to a ship with no fuel: its call-out (in units of fuel at the depot's price), then the fuel it brings
+export function tankerCall(price: number, capacity: number): { fee: number; units: number; minutes: number } {
+  const units = Math.min(TANKER.units, capacity);
+  return { fee: (TANKER.callOut + units) * price, units, minutes: TANKER.hours * 60 };
 }
 
 // House rule: the rules data has no price for a seat on someone else's ship. A fare is the fuel the

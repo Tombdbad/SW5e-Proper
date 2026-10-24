@@ -759,11 +759,35 @@ export function Scatter({ placed, biome }: { placed: Placed[]; biome: string }) 
 }
 // The parts of a plant or stone in its palette's bark, leaves and stone are drawn with their textures (surfaces.tsx); its flowers stay flat
 const plantSurfaces = (p: Palette): Partial<Record<string, Finish>> => ({ [p.bark]: "bark", [p.leaf]: "leaf", [p.leaf2]: "leaf", [p.stone]: "stone" });
+// What makes each kind of plant its own green or bark (a colour mixed into the palette's, by how much), so that a conifer is blue-green,
+// a palm yellow-green, a fern bright and a dead tree dry; the plants of a kind vary a little more by their variant (v)
+const KIND_TINT: Record<string, { leaf?: [string, number]; leaf2?: [string, number]; bark?: [string, number] }> = {
+  tree_broad: { leaf: ["#3f7a34", 0.2] },
+  tree_conifer: { leaf: ["#1f4a33", 0.45], leaf2: ["#16392a", 0.4] },
+  tree_pine: { leaf: ["#24503a", 0.4], leaf2: ["#183c2c", 0.4] },
+  tree_palm: { leaf: ["#8cae3c", 0.35], leaf2: ["#6f9a34", 0.3], bark: ["#7a6a4a", 0.3] },
+  tree_dry: { leaf: ["#8a7a3a", 0.45], leaf2: ["#6e5f2a", 0.4], bark: ["#6a5a44", 0.3] },
+  tree_birch: { leaf: ["#9cc84a", 0.25], bark: ["#d8d2c4", 0.55] },
+  tree_tall: { leaf: ["#2e6b3a", 0.2] },
+  shrub: { leaf: ["#4f7a3a", 0.25] },
+  hedge: { leaf: ["#3d6a32", 0.25] },
+  fern: { leaf: ["#5fae4a", 0.35], leaf2: ["#4f9a3c", 0.3] },
+  grass_tuft: { leaf: ["#9bbf5a", 0.4] },
+  reeds: { leaf: ["#8c9a4a", 0.35] },
+  cactus: { leaf: ["#5e8a4a", 0.35] },
+};
+export function pieceColours(name: string, v: number, p: Palette): Palette {
+  const kind = KIND_TINT[name] ?? {};
+  const vary = [0.88, 1, 1.12][v % 3];
+  const tone = (c: string, t?: [string, number]) => shade(t ? mix(c, t[0], t[1]) : c, vary);
+  return { ...p, leaf: tone(p.leaf, kind.leaf), leaf2: tone(p.leaf2, kind.leaf2 ?? kind.leaf), bark: tone(p.bark, kind.bark) };
+}
 const SOLID_FINISHES = new Set<Finish>(["matte", "sheen", "stone", "bark", "leaf"]);
 function Group({ name, v, items, biome, palette }: { name: string; v: number; items: Placed[]; biome: string; palette: Palette }) {
   const piece = LIBRARY[name];
   const file = useFile(piece.gltf);
-  return <Instanced id={`site:${name}:${v}:${biome}`} build={(k) => { k.surfaces = plantSurfaces(palette); piece.build(k, palette, v); }} items={items} file={file} />;
+  const colours = pieceColours(name, v, palette);
+  return <Instanced id={`site:${name}:${v}:${biome}`} build={(k) => { k.surfaces = plantSurfaces(colours); piece.build(k, colours, v); }} items={items} file={file} />;
 }
 
 // ---------------------------------------------------------------------------------------------
