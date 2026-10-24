@@ -356,7 +356,7 @@ export class Kit {
 // Texture coordinates for a baked model, none of whose parts has any: each triangle is projected along the axis its normal points most
 // along (a box mapping), in model units times `grain` (a small model has finer wear). The triangles are unjoined (the seams between the faces of the box show as breaks in the wear,
 // which wear can hide; a smooth hull has no seams where it matters).
-function boxUV(source: THREE.BufferGeometry, grain: number): THREE.BufferGeometry {
+export function boxUV(source: THREE.BufferGeometry, grain: number): THREE.BufferGeometry {
   const geo = source.index ? source.toNonIndexed() : source.clone();
   const p = geo.attributes.position as THREE.BufferAttribute;
   const n = geo.attributes.normal as THREE.BufferAttribute;

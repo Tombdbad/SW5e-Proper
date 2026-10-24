@@ -5,7 +5,8 @@ import type { ThreeEvent } from "@react-three/fiber";
 import { create } from "zustand";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, type V3, type Finish } from "./models";
+import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, boxUV, type V3, type Finish } from "./models";
+import type { PackId } from "./interiors/packs";
 import { createRandom, unitOf, packedness, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery } from "@shared/logic";
 
 // ---------------------------------------------------------------------------------------------
@@ -968,6 +969,8 @@ export function groundTexture(biome: string, buildingType: string, base: string)
   if (biome === "urban") return null;
   if (biome === "desert") return { set: "dense_sand", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
   if (biome === "volcanic") return { set: "dark_rock", tint: new THREE.Color(3, 3, 3), parallax: PARALLAX };
+  if (biome === "ice") return { set: "snow_02", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
+  if (biome === "barren") return { set: "rocks_ground_02", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
   // Forest, jungle and the rest: bare earth in the hue of the world's ground. The texture is dark already, so the tint keeps the hue at
   // full strength (half washed toward white) instead of darkening it with the ground colour, which made it black
   const hue = new THREE.Color(base);
@@ -1019,6 +1022,47 @@ export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: s
       <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} onBeforeCompile={compile} />
     </mesh>
   );
+}
+
+// The walls of plain rooms (2026-10-24): a Poly Haven wall set (public/textures/wall), projected on each wall's box so that one repeat is
+// WALL_TILE squares, lit by its normal map. The room's wall colour tints it, lightened toward white so that the photograph still shows.
+// The kit's walls (interiors/Walls.tsx) keep their own look.
+export const WALL_TILE = 2;
+export type WallSet = "painted_plaster_wall" | "brick_wall_001" | "concrete_wall_003" | "corrugated_iron_02" | "rusty_metal_02" | "sandstone_blocks_05";
+// Which wall set a room's plain walls get: by its pack style, else by its world (sandstone on the desert, plaster elsewhere)
+export function wallSet(pack: PackId | undefined, biome: string): WallSet {
+  switch (pack) {
+    case "industrial": return "corrugated_iron_02";
+    case "hull": return "rusty_metal_02";
+    case "criminal": return "brick_wall_001";
+    case "station":
+    case "military": return "concrete_wall_003";
+    case "medical":
+    case "furniture": return biome === "desert" ? "sandstone_blocks_05" : "painted_plaster_wall";
+    default: return biome === "desert" ? "sandstone_blocks_05" : "painted_plaster_wall";
+  }
+}
+// A wall's box with texture coordinates projected from its world-space sides (the box is built in squares)
+export function WallGeometry({ size }: { size: V3 }) {
+  const geo = useMemo(() => boxUV(new THREE.BoxGeometry(...size), 1 / WALL_TILE), [size.join(",")]);
+  useEffect(() => () => geo.dispose(), [geo]);
+  return <primitive attach="geometry" object={geo} />;
+}
+export function WallMaterial({ set, tint }: { set: WallSet; tint: string }) {
+  const [diffuse, normal] = useTexture([`/textures/wall/${set}/diffuse.jpg`, `/textures/wall/${set}/normal.jpg`]);
+  const maps = useMemo(() => {
+    const repeat = (t: THREE.Texture) => {
+      const c = t.clone();
+      c.wrapS = c.wrapT = THREE.RepeatWrapping;
+      c.needsUpdate = true;
+      return c;
+    };
+    const d = repeat(diffuse);
+    d.colorSpace = THREE.SRGBColorSpace;
+    return { diffuse: d, normal: repeat(normal) };
+  }, [diffuse, normal]);
+  const color = useMemo(() => new THREE.Color(tint).lerp(new THREE.Color("#ffffff"), 0.5), [tint]);
+  return <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={color} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} />;
 }
 
 // The floors of rooms and roofs (2026-10-21): the same lit, shifted texture as the ground, from public/textures/floor, laid over the

@@ -23,7 +23,7 @@ import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
-import { CurtainWall, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
+import { CurtainWall, GardenGround, GroundSurface, Scatter, StallModel, WallGeometry, WallMaterial, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, wallSet, type Placed, type WallSet } from "./siteAssets";
 import { Figure, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, RoundedFloor, CornerWall, DomeRoof, Opening, styleOf, hue, type Style } from "./models";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
 
@@ -105,7 +105,7 @@ function Sky({ shadow = 30, cast = true, indoors = 0 }: { shadow?: number; cast?
 // ---------------------------------------------------------------------------------------------
 
 type V3 = [number, number, number];
-const Solid = ({ at, color, glow, rot, solid, children }: { at: V3; color: string; glow?: number; rot?: V3; solid?: boolean; children: ReactNode }) => {
+const Solid = ({ at, color, glow, rot, solid, material, children }: { at: V3; color: string; glow?: number; rot?: V3; solid?: boolean; material?: ReactNode; children: ReactNode }) => {
   const mesh = useRef<THREE.Mesh>(null);
   useEffect(() => {
     const m = mesh.current;
@@ -116,11 +116,17 @@ const Solid = ({ at, color, glow, rot, solid, children }: { at: V3; color: strin
   return (
     <mesh ref={mesh} position={at} rotation={rot} castShadow>
       {children}
-      <meshLambertMaterial color={color} emissive={color} emissiveIntensity={glow ?? 0.08} />
+      {material ?? <meshLambertMaterial color={color} emissive={color} emissiveIntensity={glow ?? 0.08} />}
     </mesh>
   );
 };
-const Box = ({ at, size, color, glow, rot, solid }: { at: V3; size: V3; color: string; glow?: number; rot?: V3; solid?: boolean }) => <Solid at={at} color={color} glow={glow} rot={rot} solid={solid}><boxGeometry args={size} /></Solid>;
+// A box; with `wall` it is a plain room's wall, textured from its wall set (siteAssets `wallSet`)
+const Box = ({ at, size, color, glow, rot, solid, wall }: { at: V3; size: V3; color: string; glow?: number; rot?: V3; solid?: boolean; wall?: WallSet }) =>
+  wall ? (
+    <Solid at={at} color={color} rot={rot} solid={solid} material={<WallMaterial set={wall} tint={color} />}><WallGeometry size={size} /></Solid>
+  ) : (
+    <Solid at={at} color={color} glow={glow} rot={rot} solid={solid}><boxGeometry args={size} /></Solid>
+  );
 const Cyl = ({ at, r, h, color, glow, top = r }: { at: V3; r: number; h: number; color: string; glow?: number; top?: number }) => <Solid at={at} color={color} glow={glow}><cylinderGeometry args={[top, r, h, 18]} /></Solid>;
 const Mast = ({ at, h = 2.2 }: { at: V3; h?: number }) => (
   <>
@@ -540,6 +546,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // The kit this room is furnished and walled from, and its palette
   const pack = mood && !rocky ? packOf(mood.roomName, mood.buildingType) : undefined;
   const packLook = useMemo(() => (pack ? packTone(PACKS[pack], wall) : undefined), [pack, wall]);
+  const wallTexture = wallSet(pack, mood?.biome ?? "");
   const [nw, ne, se, sw] = rocky ? [0, 0, 0, 0] : corners ?? [0, 0, 0, 0];
   const rounded = nw + ne + se + sw > 0;
   const floorTexture = floorLook(floor, mood?.buildingType, plan?.form === "roof");
@@ -596,7 +603,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             const plain = runs.map(({ side, a, b, at, run }) => {
               if (rocky) return <RockWall key={`${side}${run[0]}`} side={side} a={a} b={b} w={width} h={height} height={1.1} seed={Math.round(a * 10) + side.charCodeAt(0) + width} biome={mood!.biome} tier={detail} />;
               const [position, size] = at(a, b);
-              return <Box key={`${side}${run[0]}`} at={position} size={size} color={wall} solid />;
+              return <Box key={`${side}${run[0]}`} at={position} size={size} color={wall} solid wall={wallTexture} />;
             });
             // A room of a pack with walls has the kit's, straight and bent round its corners, in its palette; the plain ones stand until the kit is in
             const corner = cornerList.map((c) => {
