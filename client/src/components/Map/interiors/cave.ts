@@ -3,7 +3,7 @@
 // and the floor between holds a few rocks and pools. Built from the Kit, from a seed, with no volume
 // to evaluate: a wall run is a row of noise-shaped rocks, which is what a phone can afford (the cost
 // is counted by tests/interiors/cave.test.ts). Pure: nothing here draws.
-import type { Kit } from "../models";
+import type { Finish, Kit } from "../models";
 
 export interface RockPalette {
   rock: string;
@@ -135,3 +135,6 @@ export function caveFeatures(w: number, h: number, seed: number, open: (x: numbe
   if (w * h >= 40 && next() < 0.5 && !rim) out.push({ kind: "pool", x: w / 2 + (next() - 0.5) * (w / 3), y: h / 2 + (next() - 0.5) * (h / 3), size: 0.9 + next() * 0.7 });
   return out;
 }
+
+// The rock of a cave's palette is drawn with the stone texture (surfaces.tsx, the finish stone): the rock, its shadow and its light
+export const rockSurfaces = (p: RockPalette): Partial<Record<string, Finish>> => ({ [p.rock]: "stone", [p.rockDark]: "stone", [p.rockLight]: "stone" });

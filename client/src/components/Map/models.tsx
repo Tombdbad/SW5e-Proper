@@ -6,6 +6,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { ImprovedNoise } from "three/examples/jsm/math/ImprovedNoise.js";
 import { speederKind } from "@shared/logic";
+import { boxUV, surfaceMaterial, SURFACE_GRAIN, WALL_TILE, wallMaterial, type WallSet } from "./surfaces";
 import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
@@ -30,9 +31,10 @@ import { hullWear, speederWear, type Wear } from "./interiors/wear";
 export type V3 = [number, number, number];
 // matte: stone, plaster, skin, fur; sheen: metal, armor, polished hulls, carapace; glow: lights,
 // screens, blades, eyes; glass: canopies and tanks; haze: force fields, holograms, steam;
-// cloth: thin sheets seen from both sides (awnings, capes, sails, wings)
-export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth";
-export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth"];
+// cloth: thin sheets seen from both sides (awnings, capes, sails, wings); stone, bark, leaf: the same parts drawn with a texture
+// (rock, tree bark, leaves; surfaces.tsx), for the palette colours a builder names as those (Kit.surfaces)
+export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth" | "stone" | "bark" | "leaf";
+export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth", "stone", "bark", "leaf"];
 
 export const MATERIALS: Record<Finish, THREE.Material> = {
   matte: new THREE.MeshLambertMaterial({ vertexColors: true, emissive: new THREE.Color("#0a0a0a") }),
@@ -41,6 +43,9 @@ export const MATERIALS: Record<Finish, THREE.Material> = {
   glass: new THREE.MeshPhongMaterial({ vertexColors: true, transparent: true, opacity: 0.5, shininess: 110, specular: new THREE.Color("#ffffff"), depthWrite: false }),
   haze: new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide }),
   cloth: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, emissive: new THREE.Color("#0a0a0a") }),
+  stone: surfaceMaterial("stone", "rock_face_03", { vertexColors: true, parallax: 0.04 }),
+  bark: surfaceMaterial("bark", "bark_brown_02", { vertexColors: true, parallax: 0.03 }),
+  leaf: surfaceMaterial("leaves", "forest_leaves_02", { vertexColors: true, parallax: 0.02, shininess: 4 }),
 };
 
 interface PartOptions {
@@ -151,6 +156,8 @@ export class Kit {
   readonly parts: { geo: THREE.BufferGeometry; finish: Finish }[] = [];
   // Turns every colour drawn into another (a room's own woods, cloth and metal; see interiors/wealth.ts `skinOf`)
   skin?: (color: THREE.Color, finish: Finish) => THREE.Color;
+  // The finish of the parts drawn in each colour, for the colours a builder names as textured (stone, bark, leaf)
+  surfaces?: Partial<Record<string, Finish>>;
   private frames: THREE.Matrix4[] = [new THREE.Matrix4()];
 
   // Draws what `draw` draws moved, turned and scaled together
@@ -174,7 +181,9 @@ export class Kit {
     draw(-1);
   }
 
-  add(source: THREE.BufferGeometry, color: string | THREE.Color, { at, rot, scale, finish = "matte" }: PartOptions = {}) {
+  add(source: THREE.BufferGeometry, color: string | THREE.Color, { at, rot, scale, finish: asked }: PartOptions = {}) {
+    // A part takes the finish its builder asked for, else the one its colour is named for in `surfaces` (a palette's bark, leaf or stone), else matte
+    const finish = asked ?? (typeof color === "string" ? this.surfaces?.[color] : undefined) ?? "matte";
     let geo = source;
     for (const name of Object.keys(geo.attributes)) if (name !== "position" && name !== "normal") geo.deleteAttribute(name);
     if (!geo.index) {
@@ -340,8 +349,10 @@ export class Kit {
       let merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
       if (!merged) continue;
       if (geos.length > 1) for (const g of geos) g.dispose();
-      if (uv && (finish === "matte" || finish === "sheen")) {
-        const flat = boxUV(merged, uv);
+      // The textured finishes are projected at their own scale; the painted ones at the hull's, when a hull asks for it
+      const grain = finish === "stone" || finish === "bark" || finish === "leaf" ? SURFACE_GRAIN[finish] : uv && (finish === "matte" || finish === "sheen") ? uv : 0;
+      if (grain) {
+        const flat = boxUV(merged, grain);
         merged.dispose();
         merged = flat;
       }
@@ -353,32 +364,6 @@ export class Kit {
   }
 }
 
-// Texture coordinates for a baked model, none of whose parts has any: each triangle is projected along the axis its normal points most
-// along (a box mapping), in model units times `grain` (a small model has finer wear). The triangles are unjoined (the seams between the faces of the box show as breaks in the wear,
-// which wear can hide; a smooth hull has no seams where it matters).
-export function boxUV(source: THREE.BufferGeometry, grain: number): THREE.BufferGeometry {
-  const geo = source.index ? source.toNonIndexed() : source.clone();
-  const p = geo.attributes.position as THREE.BufferAttribute;
-  const n = geo.attributes.normal as THREE.BufferAttribute;
-  const uv = new Float32Array(p.count * 2);
-  for (let t = 0; t < p.count; t += 3) {
-    let nx = 0, ny = 0, nz = 0;
-    for (let k = 0; k < 3; k++) {
-      nx += n.getX(t + k);
-      ny += n.getY(t + k);
-      nz += n.getZ(t + k);
-    }
-    const ax = Math.abs(nx), ay = Math.abs(ny), az = Math.abs(nz);
-    for (let k = 0; k < 3; k++) {
-      const i = t + k;
-      const [u, v] = ax >= ay && ax >= az ? [p.getZ(i), p.getY(i)] : ay >= az ? [p.getX(i), p.getZ(i)] : [p.getX(i), p.getY(i)];
-      uv[i * 2] = u * grain;
-      uv[i * 2 + 1] = v * grain;
-    }
-  }
-  geo.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
-  return geo;
-}
 
 export type Baked = Partial<Record<Finish, THREE.BufferGeometry>>;
 
@@ -426,6 +411,9 @@ export function Model({ id, build, shadow = true, position, rotation, scale, wea
       {m.glass && <mesh geometry={m.glass} material={MATERIALS.glass} renderOrder={1} />}
       {m.haze && <mesh geometry={m.haze} material={MATERIALS.haze} renderOrder={2} />}
       {m.cloth && <mesh geometry={m.cloth} material={MATERIALS.cloth} castShadow={shadow} receiveShadow />}
+      {m.stone && <mesh geometry={m.stone} material={MATERIALS.stone} castShadow={shadow} receiveShadow />}
+      {m.bark && <mesh geometry={m.bark} material={MATERIALS.bark} castShadow={shadow} receiveShadow />}
+      {m.leaf && <mesh geometry={m.leaf} material={MATERIALS.leaf} castShadow={shadow} receiveShadow />}
       {children}
     </group>
   );
@@ -1347,11 +1335,21 @@ export function RoundedFloor({ w, d, radii, color, y = -0.2, thick = 0.2 }: { w:
 // A curved piece of wall at a rounded corner of an opened room: a quarter ring of radius `r`
 // whose centre is `r` in from the corner, `h` high. `corner` 0 north-west, 1 north-east,
 // 2 south-east, 3 south-west.
-export function CornerWall({ r, h, thick, corner, color }: { r: number; h: number; thick: number; corner: 0 | 1 | 2 | 3; color: string }) {
+// With `wall` the curve is textured with that wall set, projected on the curve (the wall's colour multiplies it through the vertices)
+export function CornerWall({ r, h, thick, corner, color, wall }: { r: number; h: number; thick: number; corner: 0 | 1 | 2 | 3; color: string; wall?: WallSet }) {
   // Turned angles run from south (0) through east (pi/2) and north (pi) to west: each corner's
   // quarter turns outwards from the centre it curves round
   const start = [Math.PI, Math.PI / 2, 0, -Math.PI / 2][corner];
-  return <Model id={`cornerwall:${r2(r)}:${r2(h)}:${thick}:${corner}:${color}`} build={(k) => shell(k, r - thick / 2, thick, h, color, { start, arc: Math.PI / 2 })} />;
+  const build = (k: Kit) => shell(k, r - thick / 2, thick, h, color, { start, arc: Math.PI / 2 });
+  const curve = useMemo(() => {
+    if (!wall) return null;
+    const k = new Kit();
+    build(k);
+    return k.bake(1 / WALL_TILE).matte ?? null;
+  }, [wall, r, h, thick, corner, color]);
+  useEffect(() => () => curve?.dispose(), [curve]);
+  if (!wall) return <Model id={`cornerwall:${r2(r)}:${r2(h)}:${thick}:${corner}:${color}`} build={build} />;
+  return curve ? <mesh geometry={curve} material={wallMaterial(wall, { vertexColors: true })} castShadow receiveShadow /> : null;
 }
 
 // A dome over a room: a turned dome with a rim and a lantern on top

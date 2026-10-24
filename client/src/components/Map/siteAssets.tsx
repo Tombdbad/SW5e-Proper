@@ -5,7 +5,8 @@ import type { ThreeEvent } from "@react-three/fiber";
 import { create } from "zustand";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, boxUV, type V3, type Finish } from "./models";
+import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, type V3, type Finish } from "./models";
+import { groundShader, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
 import type { PackId } from "./interiors/packs";
 import { createRandom, unitOf, packedness, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery } from "@shared/logic";
 
@@ -730,7 +731,7 @@ function Instanced({ id, build, items, file }: { id: string; build: (k: Kit) => 
     <>
       {FINISHES.map((f) =>
         baked[f] ? (
-          <instancedMesh key={`${f}-${items.length}`} ref={(mesh) => { refs.current[f] = mesh; }} args={[baked[f]!, MATERIALS[f], items.length]} castShadow={f === "matte" || f === "sheen"} receiveShadow={f === "matte" || f === "sheen"} frustumCulled={false} raycast={() => null} />
+          <instancedMesh key={`${f}-${items.length}`} ref={(mesh) => { refs.current[f] = mesh; }} args={[baked[f]!, MATERIALS[f], items.length]} castShadow={SOLID_FINISHES.has(f)} receiveShadow={SOLID_FINISHES.has(f)} frustumCulled={false} raycast={() => null} />
         ) : null,
       )}
     </>
@@ -756,10 +757,13 @@ export function Scatter({ placed, biome }: { placed: Placed[]; biome: string }) 
     </>
   );
 }
+// The parts of a plant or stone in its palette's bark, leaves and stone are drawn with their textures (surfaces.tsx); its flowers stay flat
+const plantSurfaces = (p: Palette): Partial<Record<string, Finish>> => ({ [p.bark]: "bark", [p.leaf]: "leaf", [p.leaf2]: "leaf", [p.stone]: "stone" });
+const SOLID_FINISHES = new Set<Finish>(["matte", "sheen", "stone", "bark", "leaf"]);
 function Group({ name, v, items, biome, palette }: { name: string; v: number; items: Placed[]; biome: string; palette: Palette }) {
   const piece = LIBRARY[name];
   const file = useFile(piece.gltf);
-  return <Instanced id={`site:${name}:${v}:${biome}`} build={(k) => piece.build(k, palette, v)} items={items} file={file} />;
+  return <Instanced id={`site:${name}:${v}:${biome}`} build={(k) => { k.surfaces = plantSurfaces(palette); piece.build(k, palette, v); }} items={items} file={file} />;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -814,10 +818,10 @@ export function CurtainWall({ wall, biome }: { wall: NonNullable<SiteGrounds["wa
   return (
     <>
       {runs.map((run, i) => (
-        <Model key={i} id={`cwall:${Math.round(run.len * 10)}:${stone}`} build={(k) => wallRun(k, run.len, stone)} position={[run.x, 0, run.y]} rotation={[0, run.turn ? -Math.PI / 2 : 0, 0]} />
+        <Model key={i} id={`cwall:${Math.round(run.len * 10)}:${stone}`} build={(k) => { k.surfaces = { [stone]: "stone" }; wallRun(k, run.len, stone); }} position={[run.x, 0, run.y]} rotation={[0, run.turn ? -Math.PI / 2 : 0, 0]} />
       ))}
       {towers.map((t, i) => (
-        <Model key={`t${i}`} id={`ctower:${stone}:${roof}`} build={(k) => wallTower(k, stone, roof)} position={[t.x, 0, t.y]} />
+        <Model key={`t${i}`} id={`ctower:${stone}:${roof}`} build={(k) => { k.surfaces = { [stone]: "stone" }; wallTower(k, stone, roof); }} position={[t.x, 0, t.y]} />
       ))}
     </>
   );
@@ -978,28 +982,6 @@ export function groundTexture(biome: string, buildingType: string, base: string)
   return { set: "dirt_floor", tint: hue.multiplyScalar(EARTH_LIGHT), parallax: PARALLAX };
 }
 
-// Patches a Phong material's shader (onBeforeCompile) so that the diffuse and normal maps are sampled at a point shifted toward the
-// viewer by the height map (single-step offset parallax)
-export function groundShader(shader: THREE.WebGLProgramParametersWithUniforms, heightMap: THREE.Texture, parallax: number) {
-  shader.uniforms.heightMap = { value: heightMap };
-  shader.uniforms.parallax = { value: parallax };
-  shader.vertexShader = shader.vertexShader
-    .replace("#include <common>", "#include <common>\nvarying vec3 vWorld;")
-    .replace("#include <project_vertex>", "#include <project_vertex>\n  vWorld = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;");
-  shader.fragmentShader = shader.fragmentShader
-    .replace("#include <common>", "#include <common>\nuniform sampler2D heightMap;\nuniform float parallax;\nvarying vec3 vWorld;")
-    .replace("#include <map_fragment>", `
-  // Offset parallax: the height here (0.5 is level) moves the texture toward the viewer
-  vec3 toEye = normalize( cameraPosition - vWorld );
-  vec2 shift = - toEye.xz / max( toEye.y, 0.2 ) * ( texture2D( heightMap, vMapUv ).r - 0.5 ) * parallax;
-  vec4 sampledDiffuseColor = texture2D( map, vMapUv + shift );
-  diffuseColor *= sampledDiffuseColor;`)
-    .replace("#include <normal_fragment_maps>", `
-  vec3 mapN = texture2D( normalMap, vNormalMapUv + shift ).xyz * 2.0 - 1.0;
-  mapN.xy *= normalScale;
-  normal = normalize( tbn * mapN );`);
-}
-
 export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: string; tint: THREE.Color; parallax: number; w: number; h: number; at: [number, number, number]; onTap?: (e: ThreeEvent<MouseEvent>) => void }) {
   const [diffuse, normal, height] = useTexture([`/textures/ground/${set}/diffuse.jpg`, `/textures/ground/${set}/normal.jpg`, `/textures/ground/${set}/height.jpg`]);
   // The three maps share one repeat, so a shift found in the height map lines up on the others
@@ -1022,47 +1004,6 @@ export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: s
       <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} onBeforeCompile={compile} />
     </mesh>
   );
-}
-
-// The walls of plain rooms (2026-10-24): a Poly Haven wall set (public/textures/wall), projected on each wall's box so that one repeat is
-// WALL_TILE squares, lit by its normal map. The room's wall colour tints it, lightened toward white so that the photograph still shows.
-// The kit's walls (interiors/Walls.tsx) keep their own look.
-export const WALL_TILE = 2;
-export type WallSet = "painted_plaster_wall" | "brick_wall_001" | "concrete_wall_003" | "corrugated_iron_02" | "rusty_metal_02" | "sandstone_blocks_05";
-// Which wall set a room's plain walls get: by its pack style, else by its world (sandstone on the desert, plaster elsewhere)
-export function wallSet(pack: PackId | undefined, biome: string): WallSet {
-  switch (pack) {
-    case "industrial": return "corrugated_iron_02";
-    case "hull": return "rusty_metal_02";
-    case "criminal": return "brick_wall_001";
-    case "station":
-    case "military": return "concrete_wall_003";
-    case "medical":
-    case "furniture": return biome === "desert" ? "sandstone_blocks_05" : "painted_plaster_wall";
-    default: return biome === "desert" ? "sandstone_blocks_05" : "painted_plaster_wall";
-  }
-}
-// A wall's box with texture coordinates projected from its world-space sides (the box is built in squares)
-export function WallGeometry({ size }: { size: V3 }) {
-  const geo = useMemo(() => boxUV(new THREE.BoxGeometry(...size), 1 / WALL_TILE), [size.join(",")]);
-  useEffect(() => () => geo.dispose(), [geo]);
-  return <primitive attach="geometry" object={geo} />;
-}
-export function WallMaterial({ set, tint }: { set: WallSet; tint: string }) {
-  const [diffuse, normal] = useTexture([`/textures/wall/${set}/diffuse.jpg`, `/textures/wall/${set}/normal.jpg`]);
-  const maps = useMemo(() => {
-    const repeat = (t: THREE.Texture) => {
-      const c = t.clone();
-      c.wrapS = c.wrapT = THREE.RepeatWrapping;
-      c.needsUpdate = true;
-      return c;
-    };
-    const d = repeat(diffuse);
-    d.colorSpace = THREE.SRGBColorSpace;
-    return { diffuse: d, normal: repeat(normal) };
-  }, [diffuse, normal]);
-  const color = useMemo(() => new THREE.Color(tint).lerp(new THREE.Color("#ffffff"), 0.5), [tint]);
-  return <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={color} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} />;
 }
 
 // The floors of rooms and roofs (2026-10-21): the same lit, shifted texture as the ground, from public/textures/floor, laid over the

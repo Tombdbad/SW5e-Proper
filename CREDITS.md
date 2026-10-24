@@ -40,7 +40,7 @@ CC0 asks for no credit; Kenney is credited here because the work is theirs.
 
 ## Textures (downloaded)
 
-Poly Haven (https://polyhaven.com), CC0 1.0, 1K maps fetched with `tools/fetch-polyhaven.mjs` into `client/public/textures`; each folder has `diffuse.jpg`, `normal.jpg` (OpenGL) and `height.jpg`. The sets: `floor/` (concrete_floor_worn_02, deck_plate, dirty_carpet, hangar_concrete_floor, marble_tiles, metal_plate, stone_tiles, terracotta_floor_tiles), `ground/` (brown_mud_03, dark_rock, dense_sand, dirt_floor, snow_02, rocks_ground_02), `wall/` (painted_plaster_wall, brick_wall_001, concrete_wall_003, corrugated_iron_02, rusty_metal_02, sandstone_blocks_05), `wear/` (the sources of the hull textures, see `tools/build-hull-textures.mjs`).
+Poly Haven (https://polyhaven.com), CC0 1.0, 1K maps fetched with `tools/fetch-polyhaven.mjs` into `client/public/textures`; each folder has `diffuse.jpg`, `normal.jpg` (OpenGL) and `height.jpg`. The sets: `floor/` (concrete_floor_worn_02, deck_plate, dirty_carpet, hangar_concrete_floor, marble_tiles, metal_plate, stone_tiles, terracotta_floor_tiles), `ground/` (brown_mud_03, dark_rock, dense_sand, dirt_floor, snow_02, rocks_ground_02), `wall/` (painted_plaster_wall, brick_wall_001, concrete_wall_003, corrugated_iron_02, rusty_metal_02, sandstone_blocks_05), `wear/` (the sources of the hull textures, see `tools/build-hull-textures.mjs`), `stone/` (rock_face_03: cave rock, boulders and stone walls), `bark/` (bark_brown_02: trunks and logs), `leaves/` (forest_leaves_02: canopies, fronds and shrubs).
 
 | Folder | Sets | Used for |
 |---|---|---|

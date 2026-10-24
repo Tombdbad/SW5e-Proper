@@ -6,7 +6,7 @@ import * as THREE from "three";
 import type { ThreeEvent } from "@react-three/fiber";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Model, type Kit } from "../models";
-import { caveFeatures, column, crystals, kitPieceOf, pool, rockPaletteOf, rockRun, stalagmite, stream, type CaveFeature } from "./cave";
+import { caveFeatures, column, crystals, kitPieceOf, pool, rockPaletteOf, rockRun, rockSurfaces, stalagmite, stream, type CaveFeature } from "./cave";
 import { useModels } from "./assets";
 import { toneOfColours } from "./tones";
 import type { Tier } from "./atmosphere";
@@ -28,7 +28,7 @@ export function RockWall({ side, a, b, w, h, height, seed, biome, tier }: { side
   const palette = rockPaletteOf(biome);
   return (
     <group position={spot.at} rotation={[0, spot.turn, 0]}>
-      <Model id={`rockrun:${length.toFixed(1)}:${height.toFixed(1)}:${seed}:${biome}:${tier}`} build={(k) => rockRun(k, length, height, seed, palette, 0.5, tier === "lite" ? 0 : 1)} />
+      <Model id={`rockrun:${length.toFixed(1)}:${height.toFixed(1)}:${seed}:${biome}:${tier}`} build={(k) => { k.surfaces = rockSurfaces(palette); rockRun(k, length, height, seed, palette, 0.5, tier === "lite" ? 0 : 1); }} />
     </group>
   );
 }
@@ -90,6 +90,7 @@ export function CaveDressing({ w, h, seed, biome, tier, takenKey, mask }: { w: n
       <Model
         id={`cavedress:${biome}:${tier}:${key.length}:${seed}:${kitIn ? "k" : "c"}`}
         build={(k: Kit) => {
+          k.surfaces = rockSurfaces(palette);
           const next = stream(seed);
           drawn.forEach((f, i) => {
             k.group([f.x, 0, f.y], [0, next() * 6.28, 0], undefined, () => {
@@ -145,6 +146,7 @@ export function CaveWalls({ mask, ways, w, h, biome, tier, seed, tall = false }:
       <Model
         id={`caverock:${key.length}:${hashOf(key)}`}
         build={(k: Kit) => {
+          k.surfaces = rockSurfaces(palette);
           const next = stream(seed + 5);
           const stands = (x: number, y: number) => mask[y]?.[x] === "#";
           const way = (x: number, y: number) => ways.some((a) => a.x === x && a.y === y);
@@ -185,6 +187,7 @@ export function CaveMound({ mask, exits, w, h, biome, tier, seed }: { mask: stri
         id={`cavemound:${key.length}:${hashOf(key)}`}
         position={[0, 0, 0]}
         build={(k: Kit) => {
+          k.surfaces = rockSurfaces(palette);
           const next = stream(seed + 11);
           const mouth = (x: number, y: number) => exits.some((a) => Math.abs(a.x - x) + Math.abs(a.y - y) <= 2);
           mask.forEach((row, y) => Array.from(row).forEach((c, x) => {

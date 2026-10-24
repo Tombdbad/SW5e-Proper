@@ -23,7 +23,8 @@ import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
-import { CurtainWall, GardenGround, GroundSurface, Scatter, StallModel, WallGeometry, WallMaterial, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, wallSet, type Placed, type WallSet } from "./siteAssets";
+import { CurtainWall, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
+import { WallGeometry, WallMaterial, wallSet, type WallSet } from "./surfaces";
 import { Figure, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, RoundedFloor, CornerWall, DomeRoof, Opening, styleOf, hue, type Style } from "./models";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
 
@@ -610,11 +611,11 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
               const [x, z] = cornerCentre(c, width, height);
               return (
                 <group key={`corner${c.corner}`} position={[x, 0, z]}>
-                  <Solids><CornerWall r={c.r} h={wallH} thick={WALL_THICK} corner={c.corner} color={packLook && pack && hasWalls(pack) ? toneColour(packLook) : wall} /></Solids>
+                  <Solids><CornerWall r={c.r} h={wallH} thick={WALL_THICK} corner={c.corner} color={packLook && pack && hasWalls(pack) ? toneColour(packLook) : wall} wall={wallTexture} /></Solids>
                 </group>
               );
             });
-            return packLook && hasWalls(pack!) && !rocky ? <PackWalls runs={runs} corners={cornerList} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={packLook} fallback={<>{plain}{corner}</>} /> : <>{plain}{corner}</>;
+            return packLook && hasWalls(pack!) && !rocky ? <PackWalls runs={runs} corners={cornerList} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={packLook} wall={wallTexture} fallback={<>{plain}{corner}</>} /> : <>{plain}{corner}</>;
           })()
         : [[0, 0], [width, 0], [0, height], [width, height]].map(([x, z], i) => <Cyl key={i} at={[x, 0.3, z]} r={0.08} h={0.6} color={wall} />)}
       {assets.filter((a) => a.side && (walls || a.kind !== "window")).map((a) => {
