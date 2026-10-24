@@ -1024,9 +1024,10 @@ export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: s
 // The floors of rooms and roofs (2026-10-21): the same lit, shifted texture as the ground, from public/textures/floor, laid over the
 // flat slab of a room (which stays as what shows while the maps load). `tile` is the squares in one repeat; `tint` multiplies the
 // photograph (dark sets are brought up, the plating is a steel version of the metal plate, made by tools/build-hull-textures.mjs)
-export type FloorLook = { set: string; tint: THREE.Color; tile: number; parallax: number };
+// `dir` is the folder under public/textures the set is in: the floors ("floor") or the ground's sets ("ground"), which the sand and rock floors share
+export type FloorLook = { set: string; tint: THREE.Color; tile: number; parallax: number; dir: "floor" | "ground" };
 const FLOOR_PARALLAX = 0.04;
-const floorSet = (set: string, tile: number, tint: string | THREE.Color = "#ffffff", parallax = FLOOR_PARALLAX): FloorLook => ({ set, tile, tint: new THREE.Color(tint), parallax });
+const floorSet = (set: string, tile: number, tint: string | THREE.Color = "#ffffff", parallax = FLOOR_PARALLAX, dir: "floor" | "ground" = "floor"): FloorLook => ({ set, tile, tint: new THREE.Color(tint), parallax, dir });
 
 // What a room's floor is made of, by the floor kind its building gives it (sprites.tsx floorOf), the building's type and whether it is a roof
 export function floorLook(kind: string, buildingType = "", roof = false): FloorLook | null {
@@ -1034,8 +1035,8 @@ export function floorLook(kind: string, buildingType = "", roof = false): FloorL
   switch (kind) {
     case "plating": return floorSet("deck_plate", 3);
     case "hangar": return floorSet("hangar_concrete_floor", 6, new THREE.Color(2.4, 2.4, 2.5), 0.03);
-    case "sand": return floorSet("dense_sand", GROUND_TILE, "#ffffff", PARALLAX);
-    case "rock": return floorSet("dark_rock", GROUND_TILE, new THREE.Color(3, 3, 3), PARALLAX);
+    case "sand": return floorSet("dense_sand", GROUND_TILE, "#ffffff", PARALLAX, "ground");
+    case "rock": return floorSet("dark_rock", GROUND_TILE, new THREE.Color(3, 3, 3), PARALLAX, "ground");
     case "stone": return /ruin/.test(buildingType) ? floorSet("stone_tiles", 4, new THREE.Color(1.6, 1.6, 1.6)) : floorSet("marble_tiles", 4, "#d8d2c6", 0.02);
     case "clay": return /market|gate/.test(buildingType) ? floorSet("terracotta_floor_tiles", 4, new THREE.Color(1.5, 1.5, 1.5), 0.02) : floorSet("dirty_carpet", 3, new THREE.Color(2.3, 2.1, 1.9), 0.05);
     default: return null;
@@ -1044,8 +1045,8 @@ export function floorLook(kind: string, buildingType = "", roof = false): FloorL
 
 // A floor of a room laid flat at `y` over its footprint (w by h squares, corners rounded by `radii`, centred on the point it stands at,
 // so that a tap lands as it does on the slab under it)
-export function FloorSurface({ look: { set, tint, tile, parallax }, w, h, radii, y = 0.004, onTap }: { look: FloorLook; w: number; h: number; radii: [number, number, number, number]; y?: number; onTap?: (e: ThreeEvent<MouseEvent>) => void }) {
-  const [diffuse, normal, height] = useTexture([`/textures/floor/${set}/diffuse.jpg`, `/textures/floor/${set}/normal.jpg`, `/textures/floor/${set}/height.jpg`]);
+export function FloorSurface({ look: { set, tint, tile, parallax, dir }, w, h, radii, y = 0.004, onTap }: { look: FloorLook; w: number; h: number; radii: [number, number, number, number]; y?: number; onTap?: (e: ThreeEvent<MouseEvent>) => void }) {
+  const [diffuse, normal, height] = useTexture([`/textures/${dir}/${set}/diffuse.jpg`, `/textures/${dir}/${set}/normal.jpg`, `/textures/${dir}/${set}/height.jpg`]);
   // (the outline's own coordinates are the texture's, so a repeat is 1 / tile)
   const maps = useMemo(() => {
     const repeat = (t: THREE.Texture) => {
