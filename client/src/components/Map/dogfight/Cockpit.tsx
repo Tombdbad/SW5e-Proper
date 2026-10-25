@@ -545,8 +545,9 @@ export function CockpitLayer({ sim, input, view }: { sim: { current: ArenaSim };
   const cam = useMemo(() => new THREE.PerspectiveCamera(70, 1.78, 0.05, 80), []);
   const style = useMemo(() => cockpitStyle(partyOf(sim.current.state)), [sim]);
   useFrame(({ gl, scene: world, camera, size }) => {
-    gl.autoClear = false;
-    gl.clear();
+    // The world is drawn as the loop would draw it (three clears just before it draws, so that a frame that throws leaves the last one on the
+    // screen and not a black one); the cockpit goes over it with the depth cleared
+    gl.autoClear = true;
     gl.render(world, camera);
     if (view.current !== "cockpit") return;
     const shake = sim.current.shake;
@@ -554,8 +555,10 @@ export function CockpitLayer({ sim, input, view }: { sim: { current: ArenaSim };
     cam.aspect = size.width / size.height;
     cam.fov = (camera as THREE.PerspectiveCamera).fov;
     cam.updateProjectionMatrix();
+    gl.autoClear = false;
     gl.clearDepth();
     gl.render(scene, cam);
+    gl.autoClear = true;
   }, 1);
   return createPortal(<Cockpit sim={sim} input={input} style={style} />, scene);
 }

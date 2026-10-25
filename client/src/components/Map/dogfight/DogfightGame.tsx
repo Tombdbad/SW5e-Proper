@@ -1,8 +1,8 @@
 // The dogfight's game body (MinigamePage in FlightScene.tsx supplies the page, the countdown and the end screen): the 3D scene, the HUD,
 // the steering pad and the buttons (fire, missile, bomb, faster, slower, target, part), the keys, and the mouse. Start the fight from the rules
 // with a seed, a scenario and the party's ship sheet; the fight's rules are shared/logic/dogfight.ts and dogfightSim.ts.
-import { Canvas } from "@react-three/fiber";
-import { useEffect, useRef, useState } from "react";
+import { Canvas, useThree } from "@react-three/fiber";
+import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createRandom } from "@shared/logic";
 import { dogfightStart, type Dogfight, type DogfightInput, type ScenarioId, type StarshipRow } from "@shared/logic/dogfight";
 import type { ShipSheet } from "@shared/logic";
@@ -39,6 +39,70 @@ const remember = (key: string, value: string) => {
 const clamp1 = (v: number) => Math.max(-1, Math.min(1, v));
 type Source = { x: number; y: number };
 
+// The arena is drawn from a frame loop of its own. React Three Fiber runs every canvas of the page from one loop, and a canvas that throws in a
+// frame (the map's did, every frame, when a room's motes changed in number) ends that frame for the canvases after it: the arena stood black
+// and still, its clock stopped, with the HUD drawn over it. Here each frame is guarded, so that nothing else's fault stops this canvas and a
+// fault of its own costs a frame; a canvas that has faulted for a second on end is built again (the fight is in `sim`, not in the canvas).
+function OwnLoop({ onFault }: { onFault: (e: unknown, run: number) => void }) {
+  const advance = useThree((s) => s.advance);
+  useEffect(() => {
+    let raf = 0;
+    let run = 0;
+    const tick = (t: number) => {
+      raf = requestAnimationFrame(tick);
+      try {
+        advance(t / 1000, false);
+        run = 0;
+      } catch (err) {
+        onFault(err, ++run);
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [advance, onFault]);
+  return null;
+}
+// A lost WebGL context (a device short of graphics memory, a driver reset) leaves a black canvas that three may or may not get back: a new canvas
+// is made after a moment, or at once when the browser says the context is back. (This is a component so that its listeners are gone before the
+// canvas is disposed on purpose, which makes the browser say the context is lost.)
+function ContextWatch({ onLost }: { onLost: (why: string) => void }) {
+  const gl = useThree((s) => s.gl);
+  useEffect(() => {
+    const el = gl.domElement;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const lost = () => {
+      timer = setTimeout(() => onLost("the WebGL context was lost"), 1500);
+    };
+    const back = () => {
+      clearTimeout(timer);
+      onLost("the WebGL context was restored");
+    };
+    el.addEventListener("webglcontextlost", lost);
+    el.addEventListener("webglcontextrestored", back);
+    return () => {
+      clearTimeout(timer);
+      el.removeEventListener("webglcontextlost", lost);
+      el.removeEventListener("webglcontextrestored", back);
+    };
+  }, [gl, onLost]);
+  return null;
+}
+// Catches what the scene's own rendering throws, so that it is built again and not the whole page lost
+class SceneGuard extends Component<{ onCrash: (e: unknown) => void; children: ReactNode }, { crashed: boolean }> {
+  state = { crashed: false };
+  static getDerivedStateFromError() {
+    return { crashed: true };
+  }
+  componentDidCatch(error: unknown) {
+    this.props.onCrash(error);
+  }
+  render() {
+    return this.state.crashed ? null : this.props.children;
+  }
+}
+// What the pilot is told when the view had to be built again, and how many times it is (a fight that keeps failing is left, not looped on)
+const REBUILDS = 4;
+
 export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightSpec; go: { current: boolean }; controls: boolean; onFinish: (s: Dogfight) => void }) {
   const sim = useRef<ArenaSim>(null as unknown as ArenaSim);
   if (!sim.current) {
@@ -62,6 +126,29 @@ export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightS
   const [mouse, setMouseState] = useState<boolean>(() => saved("mouse") !== "0");
   const mouseRef = useRef(mouse);
   const [god, setGodState] = useState(false);
+  // The canvas is built again when its WebGL context is lost or it keeps faulting: `epoch` is its key
+  const [epoch, setEpoch] = useState(0);
+  const [notice, setNotice] = useState("");
+  const rebuilds = useRef(0);
+  const rebuild = useCallback((why: string) => {
+    if (rebuilds.current >= REBUILDS) {
+      setNotice("The 3D view keeps failing on this device: leave the fight and come back, or lower the detail.");
+      return;
+    }
+    rebuilds.current++;
+    console.warn("dogfight: rebuilding the view,", why);
+    setNotice("The view was lost and has been drawn again.");
+    setEpoch((n) => n + 1);
+  }, []);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice((n) => (n.startsWith("The 3D view keeps failing") ? n : "")), 4000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  const fault = useCallback((e: unknown, run: number) => {
+    if (run === 1) console.warn("dogfight: a frame failed:", e);
+    if (run === 60) rebuild("a second of failed frames");
+  }, [rebuild]);
   const setView = (v: View) => {
     viewRef.current = v;
     setViewState(v);
@@ -218,21 +305,31 @@ export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightS
 
   return (
     <div ref={root} className="absolute inset-0" style={{ cursor: mouse && controls ? "none" : undefined }} data-testid="dogfight-root" data-view={view} data-mouse={mouse ? "on" : "off"}>
-      <Canvas camera={{ position: [0, 6, -22], fov: 65, near: 1, far: 16000 }} dpr={[1, 1.5]} onCreated={({ gl }) => gl.setClearColor("#02040a")}>
-        <ArenaScene
-          sim={sim}
-          go={go}
-          input={input}
-          overlay={overlay}
-          view={viewRef}
-          onFrame={() => {}}
-          onFinish={(s) => {
-            if (finished.current) return;
-            finished.current = true;
-            onFinish(s);
-          }}
-        />
-      </Canvas>
+      <SceneGuard key={epoch} onCrash={(e) => rebuild(`the scene threw: ${String((e as Error)?.message ?? e).slice(0, 120)}`)}>
+        <Canvas
+          frameloop="never"
+          camera={{ position: [0, 6, -22], fov: 65, near: 1, far: 16000 }}
+          dpr={[1, 1.5]}
+          onCreated={({ gl }) => gl.setClearColor("#02040a")}
+        >
+          <OwnLoop onFault={fault} />
+          <ContextWatch onLost={rebuild} />
+          <ArenaScene
+            sim={sim}
+            go={go}
+            input={input}
+            overlay={overlay}
+            view={viewRef}
+            onFrame={() => {}}
+            onFinish={(s) => {
+              if (finished.current) return;
+              finished.current = true;
+              onFinish(s);
+            }}
+          />
+        </Canvas>
+      </SceneGuard>
+      {notice && <div className="pointer-events-none absolute left-1/2 top-16 -translate-x-1/2 rounded bg-amber-900/80 px-3 py-1 text-xs font-semibold text-amber-100" data-testid="dogfight-notice">{notice}</div>}
       <MarkerLayer overlay={overlay} />
       <Reticule locked={hud.onTarget} />
       <div ref={cursor} className="pointer-events-none absolute left-0 top-0 hidden" data-testid="aim-cursor">

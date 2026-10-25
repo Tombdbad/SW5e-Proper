@@ -1,6 +1,6 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-25 (third round), branch `main` (CLAUDE.md says `revive`; this PC works on `main`). Last commit: `7c67ce4`, pushed to `origin/main` at the user's request (it holds the dogfight arena and the earlier dogfight-related work: the new `shared/logic/dogfight*.ts`, `tunnel.ts`, `components/Map/dogfight/`, `DogfightLab.tsx`, `tests/ships/dogfight*`, the wood textures and the model changes). **Not committed: the user's own `client/src/components/ui/Alert.tsx` change** (left alone; still an open question whether it should go out).
+Written 2026-10-25 (third round), branch `main` (CLAUDE.md says `revive`; this PC works on `main`). Last commits: `7c67ce4` (the dogfight arena and the earlier dogfight-related work: `shared/logic/dogfight*.ts`, `tunnel.ts`, `components/Map/dogfight/`, `DogfightLab.tsx`, `tests/ships/dogfight*`, the wood textures and the model changes) and the black-screen fix on top of it (see "Learned"), both pushed to `origin/main` at the user's request. **Not committed: the user's own `client/src/components/ui/Alert.tsx` change** (left alone; still an open question whether it should go out).
 
 ## Done this round (the user's list; details in REVIVAL_NOTES "Dogfight, second round")
 - Upgrades: the picked ship's sheet already had its mods and enhanced parts; the arena dropped some. Now in: weapon damage bonus (it was multiplied by 0), attack bonus, rerolled 1s and 2s, flares, feedback shields. The picker line and the countdown list the upgrades fitted. A ship with no shield is lent one (as before).
@@ -12,6 +12,7 @@ Written 2026-10-25 (third round), branch `main` (CLAUDE.md says `revive`; this P
 
 ## Running now
 - Test copy rebuilt and restarted at the user's request (2026-10-25 17:15, `deploy/windows-start.ps1 -Mode test`, working tree snapshot, test flag so the dogfight test button is there): `http://127.0.0.1:5002/`, tailnet `https://desktop-dqdsn3q.tailb1e5d7.ts.net:10000` (pid 1444 at the time). It has the roll that eases to a stop and everything above.
+- The black-screen fix (committed and pushed; see "Learned" and REVIVAL_NOTES "Dogfight black screen") was rebuilt into the 5002 test copy at the user's request (2026-10-25, same script). Check `deploy/` logs or `Get-NetTCPConnection -LocalPort 5002` for the current pid.
 - Production (5000, pid 10664, started 10-23) is NOT rebuilt: it does not have the dogfight arena. Promote with `deploy/windows-start.ps1 -Mode prod` when the user says so.
 - My private servers on 5056 and 5057 are shut down.
 
@@ -32,5 +33,5 @@ Written 2026-10-25 (third round), branch `main` (CLAUDE.md says `revive`; this P
 ## Learned
 - Long heredocs in the Bash tool sometimes fail with "unexpected EOF while looking for matching quote": write the script with the Write tool and run it, or use the Edit tool. Source files are mixed CRLF/LF (scripted edits: use `scratchpad/edit.cjs`-style matching that tries both, or the Edit tool).
 - A distance sort of a pair of turrets flips with every step; anything that cycles through parts must use a stable order.
-- The game map's own 3D canvas throws "THREE.WebGLAttributes: ... Resizing buffer attributes is not supported" a few hundred times in the first seconds of the e2e (also on the older 5002 build); e2e steps that act right then must wait for the effect rather than sleep. Cause not looked for.
+- The "THREE.WebGLAttributes: ... Resizing buffer attributes is not supported" flood was the map's `Motes` (a `<points>` whose count changed); fixed (keyed by count), and because R3F runs every canvas from one loop it had also starved the dogfight canvas (black scene, HUD alive). The arena now has its own guarded loop and rebuilds itself after a lost context. The race and the delivery run still use the shared loop.
 - `ONLY=<regex>` runs single e2e steps; `FORCE=0` skips the second character; `VITE_TEST_MENU=1 npx vite --port N` serves `/dev/dogfight` with the test button, `PORT=N npm run dev` is what the e2e needs.

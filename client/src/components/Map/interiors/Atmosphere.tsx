@@ -66,7 +66,9 @@ function Motes({ count, w, h, color }: { count: number; w: number; h: number; co
   });
   if (!count) return null;
   return (
-    <points ref={points} frustumCulled={false} raycast={() => null}>
+    // (keyed by the count: a buffer cannot be resized, so a room with another number of motes is another set of points. Without the key the old
+    // buffer was handed an array of another size and drawing threw on every frame, which stopped the page's other canvases drawing too.)
+    <points key={count} ref={points} frustumCulled={false} raycast={() => null}>
       <bufferGeometry>
         <bufferAttribute attach="attributes-position" count={count} array={position} itemSize={3} />
       </bufferGeometry>

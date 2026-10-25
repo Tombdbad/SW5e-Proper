@@ -1469,6 +1469,14 @@ if (process.env.FORCE !== "0") {
     if (!/Deflector shield lent for the sortie/.test(await page.getByTestId("dogfight-briefing").innerText())) throw new Error("the lent shield is not in the briefing");
     // The shield is beside the hull bar, and the right button makes the next weapon the active one
     await page.getByTestId("countdown").waitFor({ state: "detached", timeout: 30000 });
+    // The arena is being drawn and stepped: another canvas of the page that throws in its frame (the map's did) used to stop it, black, with the HUD
+    // over it. Its sim clock and its frame count must both move.
+    const drawn = () => page.evaluate(() => ({ t: window.__dogfight.state().t, frame: window.__arena.gl.info.render.frame }));
+    await page.waitForFunction(() => !!window.__arena && window.__arena.gl.info.render.frame > 0, null, { timeout: 60000 });
+    const d0 = await drawn();
+    await page.waitForTimeout(3000);
+    const d1 = await drawn();
+    if (!(d1.t > d0.t + 0.5 && d1.frame > d0.frame + 5)) throw new Error(`the arena is not running: sim ${d0.t.toFixed(1)} -> ${d1.t.toFixed(1)}, frames ${d0.frame} -> ${d1.frame}`);
     const shield = await page.getByTestId("dogfight-shield").getAttribute("data-max");
     if (!(Number(shield) > 0)) throw new Error("no shield on the bars: " + shield);
     const first = await page.getByTestId("dogfight-weapons").locator("[data-active=true]").innerText();

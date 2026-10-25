@@ -384,14 +384,18 @@ export function ArenaScene({ sim, go, input, overlay, view, onFinish, onFrame }:
 const _c = new THREE.Color();
 const BLAST_COLOR: Record<string, string> = { boom: "#ff9a3c", spark: "#ffd27a", shield: "#6ec8ff", launch: "#ffffff", pd: "#9fe0ff", wreck: "#ff7a2c", port: "#7dffc0" };
 interface Blast { p: THREE.Vector3; size: number; t: number; life: number; color: THREE.Color; shell?: boolean }
+// (three declares `instanceColor` itself for an instanced mesh that has colours: declaring it again was a compile error, and the shell never showed)
 const FLASH_VERT = `
-attribute vec3 instanceColor;
 varying vec3 vN; varying vec3 vView; varying vec3 vCol;
 void main() {
   vec4 mv = modelViewMatrix * instanceMatrix * vec4( position, 1.0 );
   vN = normalize( normalMatrix * mat3( instanceMatrix ) * normal );
   vView = normalize( - mv.xyz );
+#ifdef USE_INSTANCING_COLOR
   vCol = instanceColor;
+#else
+  vCol = vec3( 1.0 );
+#endif
   gl_Position = projectionMatrix * mv;
 }`;
 const FLASH_FRAG = `
