@@ -1,6 +1,6 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-25 (second round), branch `main` (CLAUDE.md says `revive`; this PC works on `main`). Last commit: `b465c2a`. **Nothing from either session today is committed**: the tree also holds the earlier, uncommitted dogfight work (`shared/logic/dogfight*.ts`, `tunnel.ts`, `components/Map/dogfight/`, `DogfightLab.tsx`, `tests/ships/dogfight*`) and the user's own `Alert.tsx` change, so a commit would sweep all of it in. Ask the user before committing or pushing.
+Written 2026-10-25 (third round), branch `main` (CLAUDE.md says `revive`; this PC works on `main`). Last commit: `7c67ce4`, pushed to `origin/main` at the user's request (it holds the dogfight arena and the earlier dogfight-related work: the new `shared/logic/dogfight*.ts`, `tunnel.ts`, `components/Map/dogfight/`, `DogfightLab.tsx`, `tests/ships/dogfight*`, the wood textures and the model changes). **Not committed: the user's own `client/src/components/ui/Alert.tsx` change** (left alone; still an open question whether it should go out).
 
 ## Done this round (the user's list; details in REVIVAL_NOTES "Dogfight, second round")
 - Upgrades: the picked ship's sheet already had its mods and enhanced parts; the arena dropped some. Now in: weapon damage bonus (it was multiplied by 0), attack bonus, rerolled 1s and 2s, flares, feedback shields. The picker line and the countdown list the upgrades fitted. A ship with no shield is lent one (as before).
@@ -11,7 +11,9 @@ Written 2026-10-25 (second round), branch `main` (CLAUDE.md says `revive`; this 
 - Tests: `tests/ships` 33 of 33 pass (new: upgrades, roll and lean, throttle, test tools, turrets). `e2e/play.mjs` dogfight step passes on a dev server (`ONLY=dogfight FORCE=0 BASE=http://127.0.0.1:5057 node e2e/play.mjs`). Looked at in a browser: HUD, roll, wheel and keys, test button, turret marks, the kill and the wreck.
 
 ## Running now
-- Nothing of mine: the private servers on 5056 and 5057 are shut down at the end of the session. 5000 (production) and 5002 (test copy) are the user's and do NOT have any of this until `npm run build` and a restart / a new test snapshot (`deploy/windows-start.ps1 -Mode test` builds with the test flag).
+- Test copy rebuilt and restarted at the user's request (2026-10-25 17:15, `deploy/windows-start.ps1 -Mode test`, working tree snapshot, test flag so the dogfight test button is there): `http://127.0.0.1:5002/`, tailnet `https://desktop-dqdsn3q.tailb1e5d7.ts.net:10000` (pid 1444 at the time). It has the roll that eases to a stop and everything above.
+- Production (5000, pid 10664, started 10-23) is NOT rebuilt: it does not have the dogfight arena. Promote with `deploy/windows-start.ps1 -Mode prod` when the user says so.
+- My private servers on 5056 and 5057 are shut down.
 
 ## Not verified
 - The feel: roll rate (turn rate x 1.4, a Small fighter does a full roll in about 2.4 s), mouse reach, throttle rate and wheel step are guesses to tune by playing.
