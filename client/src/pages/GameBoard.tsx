@@ -13,7 +13,7 @@ import { useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
 import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, whereNow, useClock, noEncounters } from "@/components/Map/LocalMap";
 import { usePartyLook } from "@/components/Map/models";
 import { NotesPanel, TranslatorPanel } from "@/components/Play/GearPanels";
-import { TestMenu } from "@/components/Play/TestMenu";
+import { TestMenu, type TestCategory, type TestItem } from "@/components/Play/TestMenu";
 import { Compass, CompassRig } from "@/components/Map/Compass";
 import PlayCombat, { ShipCombatPanel, type CombatItemOption } from "@/components/Combat/PlayCombat";
 import { useCombat, useShipFight, rollDamage, onPartySide } from "@/lib/stores/useCombat";
@@ -76,7 +76,7 @@ import {
   passDays, FORAGE_DC, HOT_LANDS, liquidOf, foodOf, GEAR, type Supplies,
   hazardsAt, exposure, HAZARD_HOUR, suitOf, airOf, breathRule, type Protections, type EnvHazard,
   loadOf, containerOf, weightOf, isContraband, shipModNamed, shipModEffects, modCost, modDays, crewModPlan, crewEquipmentPlan, tierUpgrade, yardWorkforce, equipmentCost, equipmentDays, equipmentWorkforce,
-  type ShipPart, type PartLine, type ShipModInstance,
+  roleShip, enhancedShipPart, type ShipPart, type PartLine, type ShipModInstance,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship, type Rect,
 } from "@shared/logic";
 
@@ -2138,6 +2138,16 @@ export default function GameBoard() {
     queryFn: async () => {
       const rows: any[] = await (await fetch("/api/sw5e/monsters?fields=id,name,types,experiencePoints,challengeRating,hitPoints,size")).json();
       return rows.filter((m) => /droid/i.test(String(m.types)) && !/swarm/i.test(String(m.types))).map((m) => ({ id: m.id, name: m.name, experiencePoints: Number(m.experiencePoints) || 0, challengeRating: m.challengeRating, hitPoints: m.hitPoints, size: m.size }));
+    },
+    staleTime: Infinity,
+  });
+  // The beast stat blocks, for the test menu's list of beasts to give (a test copy only; the live build never asks)
+  const { data: beastStats = [] } = useQuery<{ id: string; name: string; challengeRating?: string }[]>({
+    queryKey: ["beast-stats"],
+    enabled: TEST_MENU,
+    queryFn: async () => {
+      const rows: any[] = await (await fetch("/api/sw5e/monsters?fields=id,name,types,challengeRating")).json();
+      return rows.filter((m) => /beast/i.test(String(m.types)) && !/swarm/i.test(String(m.types))).map((m) => ({ id: m.id, name: m.name, challengeRating: m.challengeRating }));
     },
     staleTime: Infinity,
   });
@@ -5826,12 +5836,59 @@ export default function GameBoard() {
     const areas = Object.values(world.areas)
       .filter((a) => ["planet", "settlement", "building", "room"].includes(a.kind))
       .map((a) => ({ id: a.id, label: [...trailOf(world, a.id).slice(2).map((t) => t.name)].join(" \u203a ") }));
-    const weapons = equipmentData.filter((e) => e.equipmentCategory === "Weapon").map((e) => e.name);
+    // What each kind of thing is, to the game: items are carried by name, a ship stands at the berth, a ship part waits in the hold, a speeder is
+    // parked, a droid or beast joins the party (as a bought one does, so the party's limit holds)
+    const berth = berthOf(world, here.id);
+    const give = async (category: TestCategory, item: TestItem) => {
+      const said = (what: string) => toast.success(`Test menu: ${what}.`);
+      if (category === "speederMods") return;
+      if (category === "ships") {
+        const [size, role] = item.id.split("|");
+        const named = ships.filter((s) => s.name.startsWith(`Test ${role}`)).length;
+        const ship = roleShip(size, role, shipRows, newId("s"), `Test ${role}${named ? ` ${named + 1}` : ""}`, getStarshipSize(size)?.stockCost ?? 0, Math.min(5, Math.floor(level / 4)));
+        const mine: PartyShip = { ...ship, status: world.areas[berth]?.kind === "settlement" ? "landed" : "orbiting", owner: character.name, fuel: getStarshipSize(size)?.fuelCapacity ?? 5, areaId: berth };
+        saveCampaign({ starships: [...ships, mine] });
+        return said(`${mine.name} (${item.name}) stands at ${world.areas[berth]?.name ?? "the berth"}`);
+      }
+      if (category === "shipMods") {
+        const kind = item.id.slice(0, item.id.indexOf("|"));
+        const name = item.id.slice(item.id.indexOf("|") + 1);
+        const size = partSize(berth);
+        const mod = kind === "mod" ? shipModNamed(name) : undefined;
+        const piece = kind === "equipment" ? shipRows.find((r: any) => r.name === name) : undefined;
+        const enhanced = kind === "enhanced" ? enhancedShipRows.find((r: any) => r.name === name) : undefined;
+        const part: ShipPart | undefined = mod
+          ? { id: newId("part"), kind: "mod", name, size, grade: mod.grade, type: mod.type, worth: modCost(mod, size).material }
+          : piece
+            ? { id: newId("part"), kind: "equipment", name, size, type: piece.type, worth: equipmentCost(piece, size).material }
+            : enhanced
+              ? { id: newId("part"), kind: "enhanced", name, type: enhanced.type, rarity: enhanced.searchableRarity, bonus: enhancedShipPart(enhanced)?.bonus ?? 0, worth: enhancedValueOf(enhanced) }
+              : undefined;
+        if (!part) return void toast.error("Test menu: the ship data is still loading.");
+        saveParts([...shipParts, part]);
+        return said(`${name} is in the hold, to fit to a ship at a shipyard or by the crew`);
+      }
+      if (category === "speeders") {
+        const model = transport?.vehicles.find((v) => v.name === item.id);
+        if (!model) return;
+        saveCampaign({ vehicles: [...vehicles, { id: newId("v"), name: model.name, model: model.name, mph: model.mph, value: model.cost, status: "parked", owner: character.name, seats: SEATS[model.name] ?? 2, areaId: berth } as PartyVehicle] });
+        return said(`${model.name} is parked at ${world.areas[berth]?.name ?? "the settlement"}`);
+      }
+      if (category === "droids" || category === "beasts") {
+        if (partyFull) return void toast.error(`Test menu: you already lead ${COMPANION_LIMIT} companions (the game's limit); dismiss one first.`);
+        const response = await fetch("/api/world/occupant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ statBlock: item.id }) });
+        if (!response.ok) return void toast.error("Test menu: could not load that creature.");
+        const o: Occupant = { ...(await response.json()), disposition: "neutral", role: category === "droids" ? "droid" : "wildlife" };
+        saveParty([...party, companionFrom(o, category === "droids" ? "droid" : "beast", clockNow(), newId("c"), { how: "test menu", name: item.name }, mountsTable)]);
+        return said(`${item.name} follows you`);
+      }
+      saveCharacter({ equipment: [...(character.equipment ?? []), item.name] });
+      said(`${item.name} given`);
+    };
     return (
       <TestMenu
         areas={areas}
-        items={equipmentData.map((e) => e.name)}
-        weapons={weapons}
+        data={{ equipment: equipmentData, enhanced: enhancedRows, shipRows, enhancedShip: enhancedShipRows, vehicles: transport?.vehicles ?? [], droids: droidStats, beasts: beastStats }}
         here={here.id}
         credits={character.credits ?? 0}
         level={level}
@@ -5846,10 +5903,7 @@ export default function GameBoard() {
           revive,
           credits: (n) => saveCharacter({ credits: (character.credits ?? 0) + n }),
           nextLevel: () => saveCharacter({ experience: Math.max(character.experience ?? 0, calculateExperienceForLevel(Math.min(20, level + 1))) }),
-          give: (names) => {
-            saveCharacter({ equipment: [...(character.equipment ?? []), ...names] });
-            toast.success(`Test menu: ${names.length === 1 ? names[0] : `${names.length} items`} given.`);
-          },
+          give,
           teleport: (id) => {
             const target = world.areas[id];
             if (!target) return;

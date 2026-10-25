@@ -7521,6 +7521,29 @@ export function bookRole(size: string, roleName: string): ShipRole {
 }
 export const shipRoleNames = (size: string): string[] => (SHIPS[size]?.roles ?? []).map((r) => r.name);
 
+// A ship of a size and role fitted as the book's role table has it: the role's armor, shield, reactor and power coupling, a class 1 hyperdrive from
+// Small up, and the weapons its size mounts (two primary, then a secondary, then tertiary). The test menu hands the party ships this way; `stock` is
+// the price of the bare hull (the size table), and the ship's value is that and its fittings.
+export function roleShip(
+  size: string,
+  role: string,
+  rows: { name: string; type: string; cost: number; weaponSize?: string; weaponCategory?: string; hyperDriveClass?: string }[],
+  id: string,
+  name: string,
+  stock = 0,
+  tier = 0,
+): Ship {
+  const book = bookRole(size, role);
+  const mount = ["Tiny", "Small", "Medium"].includes(size) ? "Small" : "Huge";
+  const named = (n: string) => rows.find((x) => x.name.toLowerCase() === n.toLowerCase());
+  const gun = (category: string) => rows.filter((x) => x.type === "Weapon" && x.weaponSize === mount && x.weaponCategory === category && x.cost > 0).sort((a, b) => a.cost - b.cost)[0];
+  const order = mount === "Huge" ? ["Primary", "Primary", "Secondary", "Tertiary"] : ["Primary", "Primary", "Tertiary"];
+  const weapons = Array.from({ length: SHIP_ROLES[size]?.weapons ?? 1 }, (_, i) => gun(order[i % order.length]) ?? gun("Primary")).filter(Boolean).map((x) => x!.name);
+  const drive = size === "Tiny" ? undefined : rows.find((x) => x.type === "Hyperdrive" && Number(x.hyperDriveClass) === 1);
+  const equipment = [`${book.armor} armor`, ...(book.shields ? [`${book.shields} shield`] : []), `${book.reactor} reactor`, `${book.coupling} power coupling`, ...(drive ? [drive.name] : []), ...weapons].map((n) => named(n)).filter((x): x is NonNullable<ReturnType<typeof named>> => !!x);
+  return { id, name, size, role: book.name, tier, status: "landed", owner: "", equipment: equipment.map((x) => x.name), hyperdriveClass: drive?.hyperDriveClass, value: stock + equipment.reduce((sum, x) => sum + x.cost, 0) };
+}
+
 export interface ShipWeapon {
   name: string;
   category: "Primary" | "Secondary" | "Tertiary" | "Quaternary";

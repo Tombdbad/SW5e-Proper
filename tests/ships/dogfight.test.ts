@@ -2,7 +2,7 @@
 // generators, ordnance counted from the sheet, hangars that launch, a station that is destroyed from inside, and a bot that plays it through.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createRandom } from "../../shared/logic/index";
+import { createRandom, SHIP_SIZE_ORDER, bookRole, roleShip, shipRoleNames, shipSheet } from "../../shared/logic/index";
 import {
   ARENA, CLASSES, SCENARIOS, STATION, classIndex, dogfightStart, foeSheet, gunsOf, isCapital, toWorld, vadd, vdist, vmul,
   type Dogfight,
@@ -608,4 +608,22 @@ test("turrets are targets: seen only from where the hull lets them be, chosen wi
     }
   }
   assert.equal(fromIt, 0, "a destroyed turret fires nothing");
+});
+
+test("a ship of a size and role is fitted as the book's role table has it (the test menu's ships)", () => {
+  for (const size of SHIP_SIZE_ORDER) {
+    for (const role of shipRoleNames(size)) {
+      const ship = roleShip(size, role, rows as never, "s-1", "Test", 1000, 1);
+      const book = bookRole(size, role);
+      const has = (n: string) => ship.equipment.some((e) => e.toLowerCase() === n.toLowerCase());
+      assert.ok(has(`${book.armor} armor`) && has(`${book.reactor} reactor`) && has(`${book.coupling} power coupling`), `${size} ${role} has its role's armor, reactor and coupling`);
+      assert.equal(has(`${book.shields} shield`), !!book.shields, `${size} ${role} has a shield only where the role has one`);
+      assert.equal(ship.equipment.some((n) => /^Hyperdrive/.test(n)), size !== "Tiny", `${size} ${role} has a hyperdrive from Small up`);
+      assert.ok(ship.equipment.every((n) => rows.some((r) => r.name === n)), `${size} ${role} carries only equipment of the data`);
+      assert.ok(ship.equipment.some((n) => rows.find((r) => r.name === n)?.type === "Weapon"), `${size} ${role} is armed`);
+      assert.ok(ship.value > 1000, "its value is the hull's and its fittings");
+      const sheet = shipSheet(ship, rows, 2);
+      assert.ok(sheet.hullMax > 0 && sheet.weapons.length > 0, `${size} ${role} makes a sheet`);
+    }
+  }
 });
