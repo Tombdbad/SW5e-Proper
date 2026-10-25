@@ -25,7 +25,7 @@ import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
 import { CurtainWall, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallGeometry, WallMaterial, wallSet, type WallSet } from "./surfaces";
-import { Figure, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, RoundedFloor, CornerWall, DomeRoof, Opening, styleOf, hue, type Style } from "./models";
+import { Figure, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, RoundedFloor, CornerWall, DomeRoof, Opening, styleOf, hue, type Style } from "./models";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
 
 // The flying games draw the same ships and speeders
@@ -343,24 +343,38 @@ function Switchback({ w, h, toward, up, low, onTap, rock }: { w: number; h: numb
 // Two panels of a roof that slide apart and together: the door of a hangar on a world whose air is no good
 // to breathe, over the ships inside. They are open only for a ship coming or going (`door`, from 0 to 1, is
 // read each frame from the clock).
+// The roof of a hangar opens from its middle. Each half is three telescoping sections: as it opens the sections slide toward the wall
+// and each rises a little over the one below, so they nest and no section reaches past the building. (`door` is how open the roof is:
+// 0 shut, 1 open.)
 function HangarRoof({ width, height, y, door }: { width: number; height: number; y: number; door: () => number }) {
-  const left = useRef<THREE.Group>(null);
-  const right = useRef<THREE.Group>(null);
+  const sections = useRef<(THREE.Group | null)[]>([]);
+  const span = width / 2 / 3;
   useFrame(() => {
-    const slide = door() * (width / 2 - 0.2);
-    if (left.current) left.current.position.x = width / 4 - slide;
-    if (right.current) right.current.position.x = (3 * width) / 4 + slide;
+    const open = door();
+    for (let side = 0; side < 2; side++) {
+      const wall = side === 0 ? 0 : width;
+      const sign = side === 0 ? 1 : -1;
+      for (let k = 0; k < 3; k++) {
+        const g = sections.current[side * 3 + k];
+        if (!g) continue;
+        // shut, a section sits in its third of the half (k 0 at the wall, 2 at the middle); open, all three are at the wall's third
+        const shut = wall + sign * (k + 0.5) * span;
+        const opened = wall + sign * span / 2;
+        g.position.x = shut + (opened - shut) * open;
+        g.position.y = y + k * 0.16 * open;
+      }
+    }
   });
   return (
     <>
-      <group ref={left} position={[width / 4, y, height / 2]}>
-        <Box at={[0, 0, 0]} size={[width / 2 - 0.05, 0.14, height + 0.1]} color="#59636d" />
-        <Box at={[0, 0.1, 0]} size={[width / 2 - 0.4, 0.06, height - 0.3]} color="#3a434c" />
-      </group>
-      <group ref={right} position={[(3 * width) / 4, y, height / 2]}>
-        <Box at={[0, 0, 0]} size={[width / 2 - 0.05, 0.14, height + 0.1]} color="#59636d" />
-        <Box at={[0, 0.1, 0]} size={[width / 2 - 0.4, 0.06, height - 0.3]} color="#3a434c" />
-      </group>
+      {[0, 1].map((side) =>
+        [0, 1, 2].map((k) => (
+          <group key={`${side}-${k}`} ref={(el) => { sections.current[side * 3 + k] = el; }} position={[(side === 0 ? 1 : -1) * (k + 0.5) * span + (side === 0 ? 0 : width), y, height / 2]}>
+            <Box at={[0, 0, 0]} size={[span - 0.03, 0.14, height + 0.1]} color="#59636d" />
+            <Box at={[0, 0.1, 0]} size={[span - 0.2, 0.06, height - 0.3]} color="#3a434c" />
+          </group>
+        )),
+      )}
     </>
   );
 }
@@ -426,7 +440,22 @@ const FULL_WALL_HEIGHT = 2.4;
 // A gallery's balustrade: waist high to a figure, so that the floor below stays open to the ceiling
 const BALUSTRADE_HEIGHT = 1.0;
 const WALL_THICK = 0.16;
+// The top of a doorway's leaf (1.42) and its lamp: the wall above it is lintel from here up
+const DOOR_TOP = 1.5;
 const isWay = (a: RoomAsset) => !!a.side && a.kind !== "window";
+// Which sides of a gallery are its balustrade: the one opposite the wall it stands against (it runs flush with its host's wall there), so
+// that the rail overlooks the room below. A gallery that stands clear of every wall rails its south side.
+const railingOf = (gallery: Area, rooms: Area[]): string => {
+  const host = rooms.find((r) => r.id === gallery.tags.find((t) => t.startsWith("host:"))?.slice(5));
+  if (formOf(gallery) !== "gallery" || !gallery.layout || !host?.layout) return "";
+  const g = gallery.layout;
+  const h = host.layout;
+  if (g.y === h.y) return "s";
+  if (g.y + g.height === h.y + h.height) return "n";
+  if (g.x === h.x) return "e";
+  if (g.x + g.width === h.x + h.width) return "w";
+  return "s";
+};
 
 // Where on a room's wall line something set in the wall sits (in the room's own squares), and
 // how it is turned
@@ -437,12 +466,21 @@ const onWall = (layout: { width: number; height: number }, a: RoomAsset): { x: n
 // building's style (arched, rounded or square; round windows in hulls)
 // (a window by its size: a slit, a small pane, a window one climbs through, a great window; shared/logic "Windows")
 const PANE_SCALE: Record<string, V3> = { slit: [0.3, 1.35, 1], small: [0.6, 0.75, 1], large: [1, 1.5, 1], wide: [1.15, 1.8, 1] };
-function Doorway({ kind, color, label, onTap, style, pane }: { kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"] }) {
+// The top of a window's frame (a window is drawn low in the wall; its size scales it, see PANE_SCALE) and of a doorway's leaf
+const openingTop = (a: RoomAsset) => (a.kind === "window" ? 0.6 * (PANE_SCALE[a.pane?.size ?? "small"]?.[1] ?? 1) : DOOR_TOP);
+// A doorway's leaf swings (or rolls up, for a hangar) when it is tapped, and shuts again when it is tapped once more
+function Doorway({ kind, color, label, onTap, style, pane, name = "" }: { kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string }) {
+  const [open, setOpen] = useState(false);
+  const isDoor = kind === "door" || kind === "exit";
+  const mode = /hangar|bay|dock/i.test(name) ? "rise" : "hinge";
+  const metal = /hangar|bay|dock|gate|vault|cell|airlock/i.test(name);
+  const tap = onTap ? () => { setOpen((o) => !o); onTap(); } : undefined;
   return (
     <>
       {kind === "window" && pane ? <group scale={PANE_SCALE[pane.size]}><Opening kind={kind} color={color} style={style} /></group> : <Opening kind={kind} color={color} style={style} />}
+      {isDoor && <DoorLeaf open={open} mode={mode} metal={metal} tint={metal ? "#9aa4ae" : "#c9a878"} />}
       {label && <Label at={[0, kind === "window" || kind === "secret" ? 1.2 : 1.9, 0]} size={0.3} color={color}>{label}</Label>}
-      {onTap && <Hit at={[0, 0.75, 0]} size={[1, 1.5, 0.9]} onTap={onTap} label={label ?? kind} />}
+      {tap && <Hit at={[0, 0.75, 0]} size={[1, 1.5, 0.9]} onTap={tap} label={label ?? kind} />}
     </>
   );
 }
@@ -492,7 +530,7 @@ function wallRuns(length: number, gaps: number[]): [number, number][] {
   return runs;
 }
 
-export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = false, ceiling = false, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, children }: {
+export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = "", tallWalls = false, ceiling = false, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, children }: {
   width: number;
   height: number;
   // How far each outside corner is rounded: north-west, north-east, south-east, south-west
@@ -514,7 +552,10 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // Walls as high as a room's, for the views from the character's eyes (the overhead view keeps them low to look over)
   fullWalls?: boolean;
   // A gallery's walls are its balustrade (BALUSTRADE_HEIGHT)
-  railing?: boolean;
+  // The sides that are a balustrade ("n", "e", "s", "w"): a gallery's edge that overlooks the room below
+  railing?: string;
+  // A two-storey room is its full height when it is looked into (so that a gallery over it has room above its rail)
+  tallWalls?: boolean;
   // A ceiling over the room, for those views too: what is overhead there is the room's own roof, not the sky
   ceiling?: boolean;
   looted?: (asset: RoomAsset) => boolean;
@@ -551,7 +592,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // A shaft's walls run up with the floor
   const climbs = plan?.climb ? rise(plan as RoomLayout) : 0;
   // (seen from overhead, a switchback's walls stop at its landing, so that both flights can be looked into)
-  const wallH = (railing ? BALUSTRADE_HEIGHT : fullWalls ? FULL_WALL_HEIGHT : WALL_HEIGHT) + (plan?.switchback && !fullWalls ? climbs / 2 : climbs);
+  const wallH = (tallWalls ? LEVEL_H * 2 - 0.2 : fullWalls ? FULL_WALL_HEIGHT : WALL_HEIGHT) + (plan?.switchback && !fullWalls ? climbs / 2 : climbs);
+  // The ceiling stays at the room's height where the walls are a balustrade (a gallery)
   const ramp = (x: number, y: number) => (plan?.climb ? rampAt(plan as RoomLayout, x + 0.5, y + 0.5) : 0);
   // The kit this room is furnished and walled from, and its palette
   const pack = mood && !rocky ? packOf(mood.roomName, mood.buildingType) : undefined;
@@ -605,16 +647,26 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         : walls
         ? (() => {
             const runs = sides.flatMap(({ side, length, at, along, ends }) =>
-              wallRuns(length, assets.filter((a) => a.side === side && isWay(a)).map(along)).flatMap((run) => {
+              wallRuns(length, assets.filter((a) => a.side === side && (isWay(a) || a.kind === "window")).map(along)).flatMap((run) => {
                 const [a, b] = trim(run, length, ends);
                 return b - a < 0.01 ? [] : [{ side: side as WallRun["side"], a, b, at, run }];
               }),
             );
-            const plain = runs.map(({ side, a, b, at, run }) => {
+            // Above each doorway and window the wall stands again, from the top of the opening to the wall's top (the wall run stops at the opening itself)
+            const lintels = rocky ? [] : sides.flatMap(({ side, at, along }) =>
+              assets.filter((a) => a.side === side && (isWay(a) || a.kind === "window")).flatMap((a) => {
+                const bottom = openingTop(a);
+                if (bottom >= wallH) return [];
+                const [position, size] = at(along(a), along(a) + 1);
+                return [<Box key={`lintel${a.id}`} at={[position[0], (bottom + wallH) / 2, position[2]]} size={[size[0], wallH - bottom, size[2]]} color={wall} solid wall={wallTexture} />];
+              }),
+            );
+            const plain = [...runs.map(({ side, a, b, at, run }) => {
               if (rocky) return <RockWall key={`${side}${run[0]}`} side={side} a={a} b={b} w={width} h={height} height={1.1} seed={Math.round(a * 10) + side.charCodeAt(0) + width} biome={mood!.biome} tier={detail} />;
               const [position, size] = at(a, b);
-              return <Box key={`${side}${run[0]}`} at={position} size={size} color={wall} solid wall={wallTexture} />;
-            });
+              const high = railing.includes(side) ? BALUSTRADE_HEIGHT : wallH;
+              return <Box key={`${side}${run[0]}`} at={[position[0], high / 2, position[2]]} size={[size[0], high, size[2]]} color={wall} solid wall={wallTexture} />;
+            }), ...lintels];
             // A room of a pack with walls has the kit's, straight and bent round its corners, in its palette; the plain ones stand until the kit is in
             const corner = cornerList.map((c) => {
               const [x, z] = cornerCentre(c, width, height);
@@ -631,7 +683,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         const spot = onWall({ width, height }, a);
         return (
           <group key={a.id} position={[spot.x, ramp(a.x, a.y), spot.z]} rotation={[0, spot.turn, 0]}>
-            <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} />
+            <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} />
           </group>
         );
       })}
@@ -2313,7 +2365,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   ships={room.ships}
                   bay={{ room, based: based[room.id] }}
                   fullWalls={viewing}
-                  railing={formOf(room) === "gallery"}
+                  railing={railingOf(room, rooms)}
+                  tallWalls={!!l.tall}
                   ceiling={viewing && !openAir(room)}
                   looted={(a) => { const c = room.loot.find((c) => c.id === a.ref); return !!c && (c.node ? nodeAt(c.node, minutes).charges === 0 : !!c.looted); }}
                   nodeOf={(a) => room.loot.find((c) => c.id === a.ref)?.node}
@@ -2490,7 +2543,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     {building.type === "cave" && l.mask && !form ? (
                       <CaveMound mask={l.mask} exits={l.assets.filter((a) => a.kind === "exit").map((a) => ({ x: a.x, y: a.y }))} w={l.width} h={l.height} biome={biome} tier={tierNow} seed={l.width * 31 + l.height} />
                     ) : (
-                    <RoomBlock w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} />
+                    <RoomBlock w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} set={wallSet(packOf(room.name, building.type), biome)} />
                     )}
                   </group>
                   {!opened && !form && !roofed.has(room.id) && !(building.type === "cave" && l.mask) && (
@@ -2519,7 +2572,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     </mesh>
                   )}
                   <group position={[at.x, 0, at.z]} rotation={[0, at.turn, 0]}>
-                    <Doorway pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} />
+                    <Doorway name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} />
                   </group>
                   </group>
                 );

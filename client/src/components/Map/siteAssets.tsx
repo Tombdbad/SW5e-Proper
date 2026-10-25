@@ -321,7 +321,8 @@ const LIBRARY: Record<string, Piece> = {
       k.blob(0.85, p.stone, { at: [0, 0.5, 0], seed: v + 2, rough: 0.32, squash: [1.05, 0.8, 1] });
       k.blob(0.5, shade(p.stone, 0.9), { at: [0.7, 0.25, -0.3], seed: v + 8, rough: 0.35, squash: [1, 0.75, 1] });
       k.blob(0.3, shade(p.stone, 1.08), { at: [-0.6, 0.12, 0.5], seed: v + 5, rough: 0.4 });
-      k.blob(0.42, mix(p.stone, p.lawn, 0.55), { at: [0.05, 1.08, 0.05], seed: v + 3, rough: 0.2, smooth: true, squash: [1.2, 0.25, 1.1] });
+      // Moss on the crown: a green cap that hugs the dome, drawn with the leaf texture
+      k.blob(0.6, "#4f7a32", { at: [0.05, 1.0, 0.05], seed: v + 3, rough: 0.2, smooth: true, squash: [1.15, 0.3, 1.1], finish: "leaf" });
     },
   },
   rock_small: {
@@ -762,7 +763,7 @@ const plantSurfaces = (p: Palette): Partial<Record<string, Finish>> => ({ [p.bar
 // What makes each kind of plant its own green or bark (a colour mixed into the palette's, by how much), so that a conifer is blue-green,
 // a palm yellow-green, a fern bright and a dead tree dry; the plants of a kind vary a little more by their variant (v)
 const KIND_TINT: Record<string, { leaf?: [string, number]; leaf2?: [string, number]; bark?: [string, number] }> = {
-  tree_broad: { leaf: ["#3f7a34", 0.2] },
+  tree_broad: { leaf: ["#7fb34a", 0.3] },
   tree_conifer: { leaf: ["#1f4a33", 0.45], leaf2: ["#16392a", 0.4] },
   tree_pine: { leaf: ["#24503a", 0.4], leaf2: ["#183c2c", 0.4] },
   tree_palm: { leaf: ["#8cae3c", 0.35], leaf2: ["#6f9a34", 0.3], bark: ["#7a6a4a", 0.3] },

@@ -4,13 +4,17 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Stars } from "@react-three/drei";
 import * as THREE from "three";
 import {
-  createRandom, dogfightStart, flightCourse, flightStart, groundAt, inRing, raceCourse, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, stepDogfight, stepFlight, stepRace, targetOf,
+  createRandom, flightCourse, flightStart, groundAt, inRing, raceCourse, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, stepFlight, stepRace,
   RACE, RACE_MODEL_SCALE, SPEEDER_BODY,
-  type Craft, type Dogfight, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type RaceRamp, type RaceTrack, type SpeederKind, type Vec3,
+  type Craft, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type RaceRamp, type RaceTrack, type SpeederKind, type Vec3,
 } from "@shared/logic";
 import { ShipModel, SpeederModel } from "./LocalMap";
 import { Model, shade, type Kit } from "./models";
 import { Scatter, raceScenery, useQuality, type Placed } from "./siteAssets";
+import type { Dogfight } from "@shared/logic/dogfight";
+import { dogfightPayout } from "@shared/logic/dogfightSim";
+import { SCENARIOS, sortieNotes } from "@shared/logic/dogfight";
+import { DogfightGame, type DogfightSpec } from "./dogfight/DogfightGame";
 
 // The flying games, the speeder race and the pilot's route, each on a dedicated page (MinigamePage): a
 // five-second countdown, then the run. The drag pad steers (yaw, and pitch where the craft can climb);
@@ -19,13 +23,11 @@ import { Scatter, raceScenery, useQuality, type Placed } from "./siteAssets";
 
 const PAD = STICK.radius; // pixels from the pad's centre to its edge (the pad is the same size as the walking stick: interiors/stick.ts)
 const RACE_RIVAL_MODELS = ["Landspeeder", "Speederbike", "Landspeeder", "Speederbike"];
-const TRACERS = 40;
-const TRACER_TIME = 0.18;
 
 export type Minigame =
   | { kind: "run"; title: string; seed: number; mode: FlightMode; count?: number; vehicle?: string; ship?: { size: string; role: string } }
   | { kind: "race"; title: string; seed: number; vehicle: string; biome?: string }
-  | { kind: "dogfight"; title: string; seed: number; ship?: { size: string; role: string } };
+  | ({ kind: "dogfight" } & DogfightSpec);
 
 export type MinigameResult =
   | { kind: "run"; course: FlightCourse; collected: number; timeLeft: number }
@@ -698,68 +700,6 @@ function RaceGame({ track, race0, biome, go, input, onFinish, onFrame }: { track
   );
 }
 
-// A dogfight: the party's ship and the foes (ship models), laser tracers for every shot, and the foes' fire
-function Fight({ ship, go, input, fire, sim, onFinish, onFrame }: { ship: { size: string; role: string }; go: { current: boolean }; input: { current: FlightInput }; fire: { current: boolean }; sim: { current: { state: Dogfight; roll: () => number; tracers: { from: Vec3; to: Vec3; hit: boolean; by: string; ttl: number }[] } }; onFinish: (state: Dogfight) => void; onFrame: (state: Dogfight) => void }) {
-  const craftRef = useRef<THREE.Group>(null);
-  const foeRefs = useRef<Map<number, THREE.Group>>(new Map());
-  const tracerRefs = useRef<(THREE.Mesh | null)[]>([]);
-  const { camera } = useThree();
-  const ahead = useMemo(() => new THREE.Vector3(), []);
-  const behind = useMemo(() => new THREE.Vector3(), []);
-  const [ids, setIds] = useState(sim.current.state.foes.map((f) => f.id));
-  const countRef = useRef(ids.length);
-  useFrame((_, delta) => {
-    const s = sim.current;
-    if (s.state.over || !go.current) return;
-    const dt = Math.min(delta, 0.25);
-    s.state = stepDogfight(s.state, input.current, fire.current, dt, s.roll);
-    // New shots start a tracer each; old tracers fade
-    for (const e of s.state.events) s.tracers.push({ from: e.from, to: e.to, hit: e.hit, by: e.by, ttl: TRACER_TIME });
-    s.tracers = s.tracers.filter((tr) => (tr.ttl -= dt) > 0).slice(-TRACERS);
-    s.tracers.forEach((tr, i) => {
-      const mesh = tracerRefs.current[i];
-      if (!mesh) return;
-      mesh.visible = true;
-      const mid = [(tr.from[0] + tr.to[0]) / 2, (tr.from[1] + tr.to[1]) / 2, (tr.from[2] + tr.to[2]) / 2];
-      mesh.position.set(mid[0], mid[1], mid[2]);
-      mesh.lookAt(tr.to[0], tr.to[1], tr.to[2]);
-      const len = Math.hypot(tr.to[0] - tr.from[0], tr.to[1] - tr.from[1], tr.to[2] - tr.from[2]);
-      mesh.scale.set(1, 1, len);
-      (mesh.material as THREE.MeshBasicMaterial).color.set(tr.by === "player" ? (tr.hit ? "#ffffff" : "#7fe0ff") : "#ff5a5a");
-    });
-    for (let i = s.tracers.length; i < TRACERS; i++) if (tracerRefs.current[i]) tracerRefs.current[i]!.visible = false;
-    place(craftRef.current, s.state.craft);
-    chase(camera, s.state.craft, 22, 6, dt, ahead, behind);
-    for (const foe of s.state.foes) foeRefs.current.get(foe.id)?.position.set(foe.p[0], foe.p[1], foe.p[2]);
-    onFrame(s.state);
-    if (s.state.over) onFinish(s.state);
-    if (s.state.foes.length !== countRef.current) {
-      countRef.current = s.state.foes.length;
-      setIds(s.state.foes.map((f) => f.id));
-    }
-  });
-  return (
-    <>
-      <Sky mode="ship" />
-      <group ref={craftRef}><Ship size={ship.size} role={ship.role} /></group>
-      {ids.map((id) => {
-        const foe = sim.current.state.foes.find((f) => f.id === id);
-        return (
-          <group key={id} ref={(el) => { if (el) foeRefs.current.set(id, el); else foeRefs.current.delete(id); }} position={foe?.p ?? [0, 0, 0]}>
-            <Ship size="Small" role="fighter" />
-          </group>
-        );
-      })}
-      {Array.from({ length: TRACERS }, (_, i) => (
-        <mesh key={i} ref={(el) => { tracerRefs.current[i] = el; }} visible={false}>
-          <boxGeometry args={[0.2, 0.2, 1]} />
-          <meshBasicMaterial color="#7fe0ff" />
-        </mesh>
-      ))}
-    </>
-  );
-}
-
 // The drag pad, and the buttons: throttle (boost, brake), in a race Boost on its meter, and in a dogfight
 // fire. Each button holds its pointer, so that a thumb that slides a little off it does not let go.
 function Controls({ input, onThrottle, onFire, onBoost, meter }: { input: { current: FlightInput }; onThrottle?: (value: -1 | 0 | 1) => void; onFire?: (down: boolean) => void; onBoost?: (down: boolean) => void; meter?: number }) {
@@ -863,42 +803,20 @@ function RaceHud({ race, toast }: { race: Race; toast: string }) {
   );
 }
 
-// The reticule in the middle of the view, red when a foe is on it
-function Reticule({ locked }: { locked: boolean }) {
-  return (
-    <div className="pointer-events-none absolute left-1/2 top-1/2 h-10 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full border-2" style={{ borderColor: locked ? "#ff3b3b" : "#d6f3ff", boxShadow: locked ? "0 0 8px #ff3b3b" : "none" }} data-testid="reticule" data-locked={locked ? "true" : "false"}>
-      <div className="absolute left-1/2 top-0 h-2 w-0.5 -translate-x-1/2 bg-current" style={{ color: locked ? "#ff3b3b" : "#d6f3ff" }} />
-      <div className="absolute bottom-0 left-1/2 h-2 w-0.5 -translate-x-1/2" style={{ background: locked ? "#ff3b3b" : "#d6f3ff" }} />
-    </div>
-  );
-}
-
-// Pips at the edge of the view for each foe that is not on screen, pointing to where it is
-function Pips({ state }: { state: Dogfight }) {
-  const { p, yaw, pitch } = state.craft;
-  const [cy, sy] = [Math.cos(yaw), Math.sin(yaw)];
-  return (
-    <>
-      {state.foes.map((foe) => {
-        const d: Vec3 = [foe.p[0] - p[0], foe.p[1] - p[1], foe.p[2] - p[2]];
-        const forward = d[0] * cy + d[2] * sy;
-        const lateral = -d[0] * sy + d[2] * cy;
-        const planar = Math.hypot(forward, lateral) || 1;
-        const elevation = Math.atan2(d[1], planar) - pitch;
-        const onScreen = forward > 0 && Math.abs(Math.atan2(lateral, forward)) < 0.6 && Math.abs(elevation) < 0.4;
-        if (onScreen) return null;
-        const len = Math.hypot(lateral, elevation * 40) || 1;
-        const [dx, dy] = [lateral / len, -(elevation * 40) / len];
-        const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-        return (
-          <div key={foe.id} className="pointer-events-none absolute h-0 w-0" style={{ left: `${50 + dx * 44}%`, top: `${50 + dy * 40}%` }} data-testid="foe-pip">
-            <div className="-translate-x-1/2 -translate-y-1/2 text-base leading-none text-red-400" style={{ transform: `translate(-50%, -50%) rotate(${angle + 90}deg)` }}>▲</div>
-          </div>
-        );
-      })}
-    </>
-  );
-}
+// What a dogfight's end screen says, and what the briefing tells the pilot before it begins
+const dogfightHeadline = (s: Dogfight) =>
+  s.outcome === "station" ? "The station is destroyed!" :
+  s.outcome === "clear" ? "The sky is clear." :
+  s.outcome === "shot-down" ? "Your ship is shot down." :
+  s.outcome === "lost-in-station" ? "The reactor takes you with it." :
+  s.outcome === "fled" ? "You broke off the fight." : "Time is up: the fight is over.";
+const briefing = (g: Extract<Minigame, { kind: "dogfight" }>) => [
+  scenarioIntro(g),
+  ...sortieNotes(g.ship.sheet, g.scenario),
+  "Mouse (V): it turns the nose, left click fires the active weapon, right click (E) switches weapon · A and D roll · W and S, or the wheel, set the throttle (it holds) · C: cockpit view",
+  "Pad turns the nose · Fire guns · Missile and Bomb are limited · Target (T) locks the next foe, Part (Y) the next turret, generator or bay of it",
+];
+const scenarioIntro = (g: Extract<Minigame, { kind: "dogfight" }>) => SCENARIOS.find((x) => x.id === g.scenario)?.intro ?? "";
 
 // The dedicated page of a minigame: a five-second countdown, then the game. Calls onDone with how it ended.
 export function MinigamePage({ game, onDone, onExit }: { game: Minigame; onDone: (result: MinigameResult) => void; onExit: () => void }) {
@@ -906,14 +824,11 @@ export function MinigamePage({ game, onDone, onExit }: { game: Minigame; onDone:
   const biome = game.kind === "race" ? game.biome ?? "temperate" : "temperate";
   const track = useMemo(() => (game.kind === "race" ? raceCourse(game.seed, raceScenery(biome)) : null), [game, biome]);
   const race0 = useMemo(() => (game.kind === "race" && track ? raceStart(track, game.seed, game.vehicle, RACE_RIVAL_MODELS) : null), [game, track]);
-  const dogfight0 = useMemo(() => (game.kind === "dogfight" ? dogfightStart(game.seed) : null), [game]);
   const [count, setCount] = useState(5);
   const go = useRef(false);
   const input = useRef<RaceInput>({ steer: { x: 0, y: 0 }, throttle: 0, auto: (() => { try { return localStorage.getItem("sw5e.autopilot") === "1"; } catch { return false; } })() });
-  const fire = useRef(false);
-  const fightSim = useRef({ state: dogfight0 ?? dogfightStart(1), roll: createRandom((game.seed | 0) + 1).next, seen: 0, tracers: [] as { from: Vec3; to: Vec3; hit: boolean; by: string; ttl: number }[] });
   // The games write their latest snapshot here each frame; the HUD copies it ten times a second
-  const latest = useRef<{ race?: Race; fight?: Dogfight; run?: { next: number; speed: number } }>({});
+  const latest = useRef<{ race?: Race; run?: { next: number; speed: number } }>({});
   const [hud, setHud] = useState<typeof latest.current>({});
   // What the race says of the party, shown for two seconds; the last lap is announced
   const toast = useRef({ text: "", until: 0, lap: 1 });
@@ -1000,18 +915,7 @@ export function MinigamePage({ game, onDone, onExit }: { game: Minigame; onDone:
             <RaceGame track={track} race0={race0} biome={biome} go={go} input={input} onFinish={(race) => finish({ kind: "race", race })} onFrame={onRace} />
           </Canvas>
         )}
-        {game.kind === "dogfight" && (
-          <Canvas camera={{ position: [0, 6, -22], fov: 65, far: 2000 }} onCreated={({ gl }) => gl.setClearColor("#02040a")}>
-            <Fight ship={game.ship ?? { size: "Small", role: "fighter" }} go={go} input={input} fire={fire} sim={fightSim} onFinish={(state) => finish({ kind: "dogfight", state })} onFrame={(state) => (latest.current.fight = state)} />
-          </Canvas>
-        )}
-        {game.kind === "dogfight" && hud.fight && <Reticule locked={!!targetOf(hud.fight)} />}
-        {game.kind === "dogfight" && hud.fight && <Pips state={hud.fight} />}
-        {game.kind === "dogfight" && hud.fight && (
-          <div className="pointer-events-none absolute left-2 top-2 rounded bg-gray-900/70 px-2 py-1 text-xs text-sky-100" data-testid="dogfight-hud">
-            hull {hud.fight.hull} · foes {hud.fight.foes.length} left, {hud.fight.kills} down · {Math.round(hud.fight.t)} s
-          </div>
-        )}
+        {game.kind === "dogfight" && <DogfightGame spec={game} go={go} controls={!counting && !finished} onFinish={(state) => finish({ kind: "dogfight", state })} />}
         {game.kind === "race" && hud.race && <RaceHud race={hud.race} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
         {game.kind === "run" && hud.run && (
           <div className="pointer-events-none absolute left-2 top-2 rounded bg-gray-900/70 px-2 py-1 text-xs text-sky-100" data-testid="flight-hud">
@@ -1019,22 +923,27 @@ export function MinigamePage({ game, onDone, onExit }: { game: Minigame; onDone:
           </div>
         )}
         {counting && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/50" data-testid="countdown">
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-black/50" data-testid="countdown">
             <span className="text-8xl font-bold text-yellow-300">{headline}</span>
+            {game.kind === "dogfight" && (
+              <div className="max-w-md space-y-1 px-4 text-center text-sm text-sky-100" data-testid="dogfight-briefing">
+                {briefing(game).map((l, i) => <p key={i}>{l}</p>)}
+              </div>
+            )}
           </div>
         )}
-        {!counting && !finished && (
+        {!counting && !finished && game.kind !== "dogfight" && (
           <Controls
             input={input}
             onThrottle={(v) => (input.current.throttle = game.kind === "race" ? (v < 0 ? -1 : 0) : v)}
             onBoost={game.kind === "race" ? (down) => (input.current.boost = down) : undefined}
             meter={hud.race?.racers.find((r) => r.party)?.boost}
-            onFire={game.kind === "dogfight" ? (down) => (fire.current = down) : undefined}
           />
         )}
         {finished && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/70 p-4 text-center" data-testid="minigame-over">
-            <p className="text-lg font-semibold text-yellow-300">{finished.kind === "race" ? "The race is over." : finished.kind === "dogfight" ? (finished.state.foes.length === 0 ? "The sky is clear." : finished.state.hull <= 0 ? "Your ship is shot down." : "The fight is over.") : "The run is over."}</p>
+            <p className="text-lg font-semibold text-yellow-300">{finished.kind === "race" ? "The race is over." : finished.kind === "dogfight" ? dogfightHeadline(finished.state) : "The run is over."}</p>
+            {finished.kind === "dogfight" && <p className="max-w-md text-sm text-sky-100" data-testid="dogfight-result">{dogfightPayout(finished.state).note}: {dogfightPayout(finished.state).credits} cr</p>}
             {finished.kind === "race" && (
               <div className="text-sm text-sky-100" data-testid="race-result">
                 <p className="mb-1">{raceResult(finished.race).note}{raceResult(finished.race).credits ? `: ${raceResult(finished.race).credits} cr` : ""}</p>

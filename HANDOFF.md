@@ -1,36 +1,34 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-23, branch `main` (CLAUDE.md says `revive`; this PC works on `main`). Last commit: `1ec9f67` (race keyboard controls).
+Written 2026-10-25 (second round), branch `main` (CLAUDE.md says `revive`; this PC works on `main`). Last commit: `b465c2a`. **Nothing from either session today is committed**: the tree also holds the earlier, uncommitted dogfight work (`shared/logic/dogfight*.ts`, `tunnel.ts`, `components/Map/dogfight/`, `DogfightLab.tsx`, `tests/ships/dogfight*`) and the user's own `Alert.tsx` change, so a commit would sweep all of it in. Ask the user before committing or pushing.
 
-## Done this session
-- `989b216`: `deploy/windows-start.ps1 -Mode prod|test` and desktop shortcuts "SW5e Production" and "SW5e Test" (details in REVIVAL_NOTES.md "Environment and ops").
-- `c52d557`: handoff for that.
-- `1ec9f67`: speeder race keyboard controls in `MinigamePage` (`client/src/components/Map/FlightScene.tsx`): W throttle up, S throttle down (brake), A/D steer left/right (`steer.x`), Right Shift boost. The drag pad and buttons still work. Lost focus clears the keys.
+## Done this round (the user's list; details in REVIVAL_NOTES "Dogfight, second round")
+- Upgrades: the picked ship's sheet already had its mods and enhanced parts; the arena dropped some. Now in: weapon damage bonus (it was multiplied by 0), attack bonus, rerolled 1s and 2s, flares, feedback shields. The picker line and the countdown list the upgrades fitted. A ship with no shield is lent one (as before).
+- Test button "unlimited hull and weapons": only in a `VITE_TEST_MENU=1` build (the 5002 test copy), so production never has it; no commenting out needed (see `TEST_TOOLS` in `DogfightGame.tsx`).
+- A and D roll (real roll that eases to a stop about a quarter of a second after the key is let go, `ARENA.rollEase`, and holds; HUD indicator); the mouse and arrow keys turn the nose in the craft's frame; mouse steering is on by default. The lean into a yaw had the wrong sign: fixed.
+- Throttle is a setting that holds: W/S and the wheel; HUD throttle bar + m/s; cockpit screen.
+- Turrets: marked, targetable (Y / Part button, hidden ones are not targets), shot-out turrets are silent and look it (head blown off, burning wreck, muzzle glow before a shot).
+- Tests: `tests/ships` 33 of 33 pass (new: upgrades, roll and lean, throttle, test tools, turrets). `e2e/play.mjs` dogfight step passes on a dev server (`ONLY=dogfight FORCE=0 BASE=http://127.0.0.1:5057 node e2e/play.mjs`). Looked at in a browser: HUD, roll, wheel and keys, test button, turret marks, the kill and the wreck.
 
 ## Running now
-- Test server on 5002, built from the snapshot with `1ec9f67` (`%USERPROFILE%\sw5e-test`). Tailscale Serve 10000 -> 5002. The hidden node process is pid 3340 at the time of writing.
-- Production: not started (nothing on 5000). The prod shortcut has not been run.
+- Nothing of mine: the private servers on 5056 and 5057 are shut down at the end of the session. 5000 (production) and 5002 (test copy) are the user's and do NOT have any of this until `npm run build` and a restart / a new test snapshot (`deploy/windows-start.ps1 -Mode test` builds with the test flag).
 
 ## Not verified
-- The race keys were type-checked (no errors in FlightScene.tsx) and the test build passes, but NOT played in a browser. Nobody has driven the race with the keyboard yet.
-- W does nothing to speed in the rules yet: `drive()` in `shared/logic/index.ts` accelerates toward top speed whenever throttle is not negative, so W (throttle +1) and no key feel the same. Decision needed (below).
-
-## Uncommitted in the working tree
-- `client/src/components/ui/Alert.tsx`: the user's change, not ours. Left alone.
+- The feel: roll rate (turn rate x 1.4, a Small fighter does a full roll in about 2.4 s), mouse reach, throttle rate and wheel step are guesses to tune by playing.
+- Roll on a phone: there is no roll control on touch (the pad is yaw and pitch only).
+- The cockpit on a real phone or GPU (software rendering only so far).
+- The full `npm test` (only `tests/ships` was run; the full run sticks in long interiors tests).
 
 ## Next (in order)
-1. Try the race on the test server (https://<this PC>:10000, a race in Play): A/D, W/S, Right Shift.
-2. Decide what W should do (below), then change `drive()` if so.
-3. Click "SW5e Production" once and check it.
+1. The user plays it on the test copy (mouse, wheel, A/D, a capital ship's turrets with Y) and says what to tune.
+2. Decide about committing (top).
+3. Not done: the picked ship's hull is not worn down by the fight (`ship.hull` ignored); the delivery run flies the first ship; no crew actions in the arena; a roll button for touch.
 
 ## Open questions for the user
-- W "speed up": the car already accelerates to top speed with no key held. Should W make the pull to top speed faster (a rules change in `drive()`), or is W only meant to be a placeholder?
-- S: brake (current behaviour) or reverse?
-- Is the `Alert.tsx` change meant to go out?
-- Keep the starship fight's grid? (REVIVAL_NOTES "Ground textures and no grids")
-- Branch: CLAUDE.md says `revive`; the work is on `main` here.
+- Earlier ones still open: the lent deflector (3/4 hull) as the shield they meant, W/S in the speeder race, the `Alert.tsx` change, `revive` vs `main`.
 
 ## Learned
-- No psql on this PC; use `node` with `pg` from node_modules to query.
-- `windows-start.ps1` piped into `Select-Object` never returns (the hidden node server holds the pipe). Run it from the shortcut or with no pipe.
-- `tailscale serve --bg --https=<port> http://127.0.0.1:<port>` works here; `tailscale serve status` also lists the 3000 and 3001 entries (not ours).
+- Long heredocs in the Bash tool sometimes fail with "unexpected EOF while looking for matching quote": write the script with the Write tool and run it, or use the Edit tool. Source files are mixed CRLF/LF (scripted edits: use `scratchpad/edit.cjs`-style matching that tries both, or the Edit tool).
+- A distance sort of a pair of turrets flips with every step; anything that cycles through parts must use a stable order.
+- The game map's own 3D canvas throws "THREE.WebGLAttributes: ... Resizing buffer attributes is not supported" a few hundred times in the first seconds of the e2e (also on the older 5002 build); e2e steps that act right then must wait for the effect rather than sleep. Cause not looked for.
+- `ONLY=<regex>` runs single e2e steps; `FORCE=0` skips the second character; `VITE_TEST_MENU=1 npx vite --port N` serves `/dev/dogfight` with the test button, `PORT=N npm run dev` is what the e2e needs.

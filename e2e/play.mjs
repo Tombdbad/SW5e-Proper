@@ -1447,17 +1447,38 @@ if (process.env.FORCE !== "0") {
     return `${log.split("\n").find((l) => /Taxi run/.test(l))?.slice(0, 110)}; credits ${before} -> ${after}`;
   });
 
-  await step(ctx, "flying games: a dogfight in the space of a planet: the ship fires on the foes and flies to the end of the fight, which is paid", async () => {
+  await step(ctx, "flying games: a dogfight in the space of a planet: the pilot chooses one of two ships, which is lent a shield; the ship fires on the foes and flies to the end of the fight, which is paid", async () => {
     const dg = await newChar({ credits: 1000, equipment: ["Blaster pistol"] });
     const dgc = await newCamp(dg, 7, async () => {});
-    await api("PATCH", `/api/campaigns/${dgc.id}`, { starships: [{ id: "s-dog", name: "Wing", size: "Small", role: "fighter", tier: 1, equipment: [], hyperdriveClass: "1", owner: GEAR, fuel: 6, areaId: dgc.world.areas[dgc.start.parentId]?.parentId ?? dgc.world.startId, value: 50000, hull: undefined, crew: {} }] });
+    await api("PATCH", `/api/campaigns/${dgc.id}`, { starships: [{ id: "s-dog", name: "Wing", size: "Small", role: "fighter", tier: 1, equipment: ["Laser cannon", "Missile launcher"], hyperdriveClass: "1", owner: GEAR, fuel: 6, areaId: dgc.world.areas[dgc.start.parentId]?.parentId ?? dgc.world.startId, value: 50000, hull: undefined, crew: {} },
+      { id: "s-dog2", name: "Hauler", size: "Medium", role: "freighter", tier: 1, equipment: [], hyperdriveClass: "1", owner: GEAR, fuel: 6, areaId: dgc.world.areas[dgc.start.parentId]?.parentId ?? dgc.world.startId, value: 90000, hull: undefined, crew: {} }] });
     await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
     await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
     await page.getByRole("tab", { name: "Downtime" }).click();
     await page.getByTestId("downtime-dogfight").click();
+    // Two ships: the pilot is asked which to fly, and the line below says which was chosen
+    await page.getByTestId("dogfight-fleet").waitFor();
+    await page.getByTestId("dogfight-pick-s-dog2").click();
+    if (!/Hauler.*Medium/.test(await page.getByTestId("dogfight-ship").innerText())) throw new Error("the second ship was not chosen: " + (await page.getByTestId("dogfight-ship").innerText()));
+    await page.getByTestId("dogfight-pick-s-dog").click();
+    const flown = await page.getByTestId("dogfight-ship").innerText();
+    if (!/Wing.*Small/.test(flown) || !/deflector is lent/.test(flown)) throw new Error("the first ship was not chosen, or its lent shield is not said: " + flown);
     await page.getByTestId("flight-start-dogfight").click();
     await page.getByTestId("minigame-dogfight").waitFor({ timeout: 30000 });
     await page.getByTestId("countdown").waitFor({ timeout: 20000 }); // software rendering can stall the page for 5 s as the 3D scene starts; the countdown lasts 5.7 s from the first frame
+    if (!/Deflector shield lent for the sortie/.test(await page.getByTestId("dogfight-briefing").innerText())) throw new Error("the lent shield is not in the briefing");
+    // The shield is beside the hull bar, and the right button makes the next weapon the active one
+    await page.getByTestId("countdown").waitFor({ state: "detached", timeout: 30000 });
+    const shield = await page.getByTestId("dogfight-shield").getAttribute("data-max");
+    if (!(Number(shield) > 0)) throw new Error("no shield on the bars: " + shield);
+    const first = await page.getByTestId("dogfight-weapons").locator("[data-active=true]").innerText();
+    // (the page can be slow in these first seconds, so the change is waited for)
+    const activeWeapon = (was) => page.waitForFunction((w) => { const el = document.querySelector("[data-testid=dogfight-weapons] [data-active=true]"); return !!el && el.textContent !== w; }, was, { timeout: 30000 });
+    await page.mouse.click(640, 420, { button: "right" });
+    await activeWeapon(first).catch(() => { throw new Error("the right button did not change the weapon from " + first); });
+    const second = await page.getByTestId("dogfight-weapons").locator("[data-active=true]").innerText();
+    await page.mouse.click(640, 420, { button: "right" });
+    await activeWeapon(second).catch(() => { throw new Error("the right button did not move on from " + second); });
     await page.getByTestId("flight-fire").boundingBox().then(async (b) => {
       await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
       await page.mouse.down();

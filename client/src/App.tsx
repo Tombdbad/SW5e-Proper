@@ -15,6 +15,7 @@ import DiceRoller from './components/ui/DiceRoller';
 import ErrorBoundary from './components/ui/ErrorBoundary';
 const LoadingDemo = lazy(() => import('./pages/LoadingDemo'));
 const ModelGallery = lazy(() => import('./pages/ModelGallery'));
+const DogfightLab = lazy(() => import('./pages/DogfightLab'));
 
 // A character is edited on its own page (the sheet, the inventory, levelling up)
 function CharacterPageRedirect() {
@@ -99,6 +100,7 @@ function App() {
             <Route path="/game/:campaignId" element={<GameBoard />} />
             <Route path="/dev/loading" element={<LoadingDemo />} />
             <Route path="/dev/models" element={<ModelGallery />} />
+            <Route path="/dev/dogfight" element={<DogfightLab />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
           </Suspense>

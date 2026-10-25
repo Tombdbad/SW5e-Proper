@@ -33,6 +33,9 @@ import { itemRef } from "@/components/Map/interiors/items";
 import { feats } from "@/lib/sw5e/feats";
 import lookupData from "@shared/data/sw5e/lookups.json";
 import { MinigamePage, type Minigame, type MinigameResult } from "@/components/Map/FlightScene";
+import { dogfightPayout } from "@shared/logic/dogfightSim";
+import { SCENARIOS, scenarioAdvice, classOf, type ScenarioId } from "@shared/logic/dogfight";
+import type { ShipSheet } from "@shared/logic";
 import PitArena, { type PitSummary } from "@/components/Map/PitArena";
 import monsterData from "@shared/data/sw5e/monsters.json";
 import type { Sw5eMonster } from "@shared/data";
@@ -45,7 +48,7 @@ import {
   advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
   heatAt, heatLevel, kindLabel, settlementOf, useKindOf, camerasIn, seatsOf, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
-  boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf, flightPayout, raceResult, dogfightPayout, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
+  boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf, flightPayout, raceResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
@@ -2158,6 +2161,8 @@ export default function GameBoard() {
   };
   const haggling = useMemo(() => (character ? hagglingEdge(characterFeatures(character)) : {}), [character?.species, character?.feats]);
   const [tradeTab, setTradeTab] = useState<"buy" | "sell">("buy");
+  // A ticket agent's passage to one of the party's ships: whether the ship list is open
+  const [shipPick, setShipPick] = useState(false);
   const [itemShown, setItemShown] = useState<string | null>(null);
   const traderLedger = (id: string) => ledger.traders[id] ?? { bought: {}, sold: {} };
   const recordDeal = (traderId: string, change: (entry: Ledger["traders"][string]) => Ledger["traders"][string], dealt = true) =>
@@ -4314,6 +4319,28 @@ export default function GameBoard() {
     );
   };
 
+  // Where a ship is: its hangar's settlement, or the settlement it sits in, or the planet it is in orbit over
+  const shipPlace = (sh: PartyShip) => {
+    if (!world) return "";
+    const at = sh.hangar ?? sh.areaId;
+    const settlement = [...trailOf(world, at)].reverse().find((a) => a.kind === "settlement");
+    if (settlement) return `berthed at ${settlement.name}`;
+    const planet = [...trailOf(world, at)].reverse().find((a) => a.kind === "planet");
+    return planet ? `in orbit over ${planet.name}` : "berthed at a port";
+  };
+  // Passage to a ship of the party in this settlement (house rule: the books give no fare for a shuttle): the fare and the walk to its berth
+  const PASSAGE_FARE = 25;
+  const passageTo = (sh: PartyShip) => {
+    if (!world || !here) return;
+    const settlement = berthOf(world, here.id);
+    if (!trailOf(world, sh.areaId).some((a) => a.id === settlement)) return void toast.error(`${sh.name} is ${shipPlace(sh)}: fly there.`);
+    if ((character.credits ?? 0) < PASSAGE_FARE) return void toast.error(`Passage costs ${PASSAGE_FARE} credits (house rule) and you have ${character.credits ?? 0}.`);
+    const destination = sh.hangar ?? sh.areaId;
+    saveCharacter({ credits: character.credits - PASSAGE_FARE });
+    saveCampaign({ ...pass(20), currentLocation: destination });
+    setShipPick(false);
+    toast.info(`A shuttle takes you to ${sh.name} (${PASSAGE_FARE} credits, house rule).`);
+  };
   const shipServices = (o: Occupant, holderId: string) => {
     if (!world) return null;
     const building = trailOf(world, holderId).find((a) => a.kind === "building");
@@ -4453,6 +4480,22 @@ export default function GameBoard() {
           {[lawText(market.law), ...market.notes].join("; ")}. Credits: {character.credits ?? 0}.
         </p>
         {shipServices(trader, placeId)}
+        {trader.role === "ticket agent" && ships.length > 0 && (
+          <div className="mt-1" data-testid="passage-options">
+            <Button size="sm" variant="outline" className="h-6 px-2" onClick={() => setShipPick((v) => !v)} data-testid="passage-to-ship">Passage to your ship</Button>
+            {shipPick && (
+              <div className="mt-1 space-y-1 text-xs" data-testid="select-ship">
+                <p className="text-gray-400">Select which ship (a shuttle fare of {PASSAGE_FARE} credits, house rule):</p>
+                {ships.map((sh) => (
+                  <div key={sh.id} className="flex items-center justify-between gap-2">
+                    <span>{sh.name} <span className="text-gray-400">({shipPlace(sh)})</span></span>
+                    <Button size="sm" variant="outline" className="h-6 px-2" onClick={() => passageTo(sh)} data-testid={`passage-${sh.id}`}>Go</Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div className="mt-1 flex gap-1">
           <Button size="sm" variant={tradeTab === "buy" ? "default" : "outline"} className="h-6 px-2" onClick={() => setTradeTab("buy")}>Buy</Button>
           <Button size="sm" variant={tradeTab === "sell" ? "default" : "outline"} className="h-6 px-2" onClick={() => setTradeTab("sell")}>Sell</Button>
@@ -7160,7 +7203,7 @@ export default function GameBoard() {
                   <div className="space-y-1 text-sm" data-testid="inventory-ships">
                     {ships.map((sh) => (
                       <p key={sh.id}>
-                        {sh.name} <span className="text-xs text-gray-400">{sh.size} {sh.role}, hull {sh.hull ?? "undamaged"}, fuel {sh.fuel}, {world && here && sh.areaId === berthOf(world, here.id) ? "berthed here" : `berthed at ${world?.areas[sh.areaId]?.name ?? "a port"}`}</span>
+                        {sh.name} <span className="text-xs text-gray-400">{sh.size} {sh.role}, hull {sh.hull ?? "undamaged"}, fuel {sh.fuel}, {world && here && sh.areaId === berthOf(world, here.id) ? "berthed here" : shipPlace(sh)}</span>
                       </p>
                     ))}
                     {ships.length === 0 && <p className="text-gray-400">No ships acquired yet.</p>}
@@ -7287,6 +7330,8 @@ export default function GameBoard() {
                     hasShip={ships.length > 0}
                     vehicleModel={campaign?.vehicles?.[0]?.model}
                     shipSpec={ships[0] ? { size: ships[0].size, role: ships[0].role } : undefined}
+                    partyShips={shipRows.length ? ships.map((sh) => ({ id: sh.id, name: sh.name, sheet: shipSheet(sh, shipRows, proficiency), owner: sh.owner, where: world?.areas[sh.areaId]?.name, busy: shipBusy(sh) ? `${shipBusy(sh)!.what} at the yard` : sh.status === "wrecked" ? "wrecked" : undefined })) : []}
+                    shipRows={shipRows}
                     biome={world && hereId ? trailOf(world, hereId).find((a) => a.kind === "planet")?.type : undefined}
                     state={downtime}
                     check={checkFor}
@@ -7356,6 +7401,10 @@ interface DowntimeProps {
   // and the kind of world the settlement is on (the speeder race's ground and what grows on it)
   vehicleModel?: string;
   shipSpec?: { size: string; role: string };
+  // The party's ships as sheets (for the dogfight: the pilot chooses which to fly), where each is berthed, whether it cannot fly (and why),
+  // and the starship equipment they were made from
+  partyShips?: DogfightShip[];
+  shipRows?: any[];
   biome?: string;
   state: DowntimeState;
   // A check of the character: the roll and what is added to it
@@ -7369,6 +7418,7 @@ interface DowntimeProps {
   spendLore: (id: string) => void;
 }
 
+interface DogfightShip { id: string; name: string; sheet: ShipSheet; owner?: string; where?: string; busy?: string }
 const CLASS_NAMES = { lower: "lower class", middle: "middle class", upper: "upper class" } as const;
 const roll = (sides: number) => Math.floor(Math.random() * sides) + 1;
 const rollExpr = (expr: string) => {
@@ -7395,7 +7445,7 @@ const FLYING: { id: string; name: string; kind: "run" | "race" | "dogfight"; mod
   { id: "taxi-run", name: "Taxi run", kind: "run", mode: "speeder", needs: "vehicle", intro: "Fly your landspeeder through the rings of a course over the settlement's ground, for a fare." },
   { id: "speeder-race", name: "Speeder race", kind: "race", mode: "speeder", needs: "vehicle", intro: "Race your speeder over three laps of a long course against four rivals: gates to pass in order, jumps, shortcuts down a trail with a ravine to clear, mines and oil. Boost draws on a meter that refills; the hull bar is what you can still take. Paid by the place you finish." },
   { id: "delivery-run", name: "Delivery run", kind: "run", mode: "ship", needs: "ship", intro: "Fly your ship through the rings of a course in the space of its planet, against the clock." },
-  { id: "dogfight", name: "Dogfight", kind: "dogfight", mode: "ship", needs: "ship", intro: "Fly your ship in the space of its planet against four foes who fly at you and fire back. Boost to keep up, fire to hit." },
+  { id: "dogfight", name: "Dogfight", kind: "dogfight", mode: "ship", needs: "ship", intro: "Fly your ship in the space of its planet against fighters, a cruiser, a carrier, a battleship, a dreadnought or a battle station. Guns, missiles and bombs (a few for a small ship, more for a large one); the largest ships are shielded by generators, and a station is destroyed from inside." },
 ];
 
 function DowntimePanel(props: DowntimeProps) {
@@ -7536,6 +7586,9 @@ function applyComplication(props: DowntimeProps, activity: DowntimeActivityData,
 function FlightActivity(props: DowntimeProps & { flying: (typeof FLYING)[number] }) {
   const { character, commit, flying } = props;
   const [game, setGame] = useState<Minigame | null>(null);
+  const [scenario, setScenario] = useState<ScenarioId>("skirmish");
+  // The ship the pilot flies in a dogfight: the one chosen, else the first that can fly
+  const [shipId, setShipId] = useState<string | null>(null);
   const credits = Number(character?.credits) || 0;
   const pay = (result: MinigameResult) => {
     const won = result.kind === "run" ? flightPayout(result.course, result.collected, result.timeLeft) : result.kind === "race" ? raceResult(result.race) : dogfightPayout(result.state);
@@ -7543,16 +7596,70 @@ function FlightActivity(props: DowntimeProps & { flying: (typeof FLYING)[number]
     setGame(null);
   };
   if (!game) {
+    const fleet = props.partyShips ?? [];
+    const flyable = fleet.filter((x) => !x.busy);
+    const chosen = flyable.find((x) => x.id === shipId) ?? flyable[0];
+    const sheet = chosen?.sheet;
+    const cls = sheet ? classOf(sheet.size) : null;
+    const loading = flying.kind === "dogfight" && !fleet.length;
     return (
-      <Button size="sm" variant="outline" onClick={() => {
-        const seed = Math.floor(Math.random() * 1e9) + 1;
-        const vehicle = props.vehicleModel ?? "Landspeeder";
-        if (flying.kind === "race") setGame({ kind: "race", title: flying.name, seed, vehicle, biome: props.biome });
-        else if (flying.kind === "dogfight") setGame({ kind: "dogfight", title: flying.name, seed, ship: props.shipSpec });
-        else setGame({ kind: "run", title: flying.name, seed, mode: flying.mode, vehicle, ship: props.shipSpec });
-      }} data-testid={`flight-start-${flying.id}`}>
-        Start the {flying.name.toLowerCase()} (a day)
-      </Button>
+      <div className="space-y-2">
+        {flying.kind === "dogfight" && (
+          <div className="space-y-1.5" data-testid="dogfight-setup">
+            {fleet.length > 1 && (
+              <div className="space-y-1" data-testid="dogfight-fleet">
+                <p className="text-xs font-semibold text-sky-100">Which ship do you fly?</p>
+                {fleet.map((x) => (
+                  <button
+                    key={x.id}
+                    type="button"
+                    disabled={!!x.busy}
+                    data-testid={`dogfight-pick-${x.id}`}
+                    aria-pressed={chosen?.id === x.id}
+                    onClick={() => setShipId(x.id)}
+                    className={`block w-full rounded border px-2 py-1 text-left text-xs disabled:opacity-50 ${chosen?.id === x.id ? "border-yellow-400 bg-yellow-400/10 text-yellow-100" : "border-gray-600 text-gray-200"}`}
+                  >
+                    <span className="font-semibold">{x.name}</span> <span className="text-gray-400">({x.sheet.size} {x.sheet.role}, tier {x.sheet.tier})</span>
+                    <span className="block text-gray-400">
+                      hull {x.sheet.hullMax}, {x.sheet.hasShield ? `shield ${x.sheet.shieldMax}` : "no shield (one is lent)"}{x.sheet.mods?.length ? ` · ${x.sheet.mods.length} upgrade${x.sheet.mods.length > 1 ? "s" : ""}` : ""}{x.where ? ` · at ${x.where}` : ""}{x.busy ? ` · cannot fly: ${x.busy}` : ""}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {sheet && (
+              <p className="text-xs text-sky-200" data-testid="dogfight-ship">
+                You fly {sheet.name}: a {sheet.size} {sheet.role}, hull {sheet.hullMax}, {sheet.hasShield ? `shield ${sheet.shieldMax}` : "no shield fitted (a deflector is lent)"}, {sheet.weapons.length ? sheet.weapons.map((w) => w.name + (w.ammo ? " x" + w.ammo : "")).join(", ") : "no weapons fitted (a cannon is lent)"}.{sheet.mods?.length ? ` Upgrades fitted: ${sheet.mods.join(", ")}.` : ""}
+              </p>
+            )}
+            {fleet.length > 0 && !chosen && <p className="text-xs text-amber-300" data-testid="dogfight-nofly">None of your ships can fly just now.</p>}
+            <div className="grid grid-cols-1 gap-1">
+              {SCENARIOS.map((sc) => (
+                <button
+                  key={sc.id}
+                  type="button"
+                  data-testid={`dogfight-scenario-${sc.id}`}
+                  onClick={() => setScenario(sc.id)}
+                  className={`rounded border px-2 py-1 text-left text-xs ${scenario === sc.id ? "border-yellow-400 bg-yellow-400/10 text-yellow-100" : "border-gray-600 text-gray-200"}`}
+                >
+                  <span className="font-semibold">{sc.name}</span> <span className="text-gray-400">({sc.tag})</span>
+                  <span className="block text-gray-300">{sc.intro}</span>
+                  {cls && scenario === sc.id && <span className="block text-sky-300">{scenarioAdvice(sc.id, cls)}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <Button size="sm" variant="outline" disabled={loading || (flying.kind === "dogfight" && !chosen)} onClick={() => {
+          const seed = Math.floor(Math.random() * 1e9) + 1;
+          const vehicle = props.vehicleModel ?? "Landspeeder";
+          if (flying.kind === "race") setGame({ kind: "race", title: flying.name, seed, vehicle, biome: props.biome });
+          else if (flying.kind === "dogfight" && chosen) setGame({ kind: "dogfight", title: flying.name, seed, scenario, rows: props.shipRows ?? [], ship: { sheet: chosen.sheet, owner: chosen.owner } });
+          else setGame({ kind: "run", title: flying.name, seed, mode: flying.mode, vehicle, ship: props.shipSpec });
+        }} data-testid={`flight-start-${flying.id}`}>
+          {loading ? "The ship data is loading..." : `Start the ${flying.kind === "dogfight" ? SCENARIOS.find((x) => x.id === scenario)!.name.toLowerCase() : flying.name.toLowerCase()} (a day)`}
+        </Button>
+      </div>
     );
   }
   return <MinigamePage game={game} onExit={() => setGame(null)} onDone={pay} />;

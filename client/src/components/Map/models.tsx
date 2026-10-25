@@ -44,7 +44,7 @@ export const MATERIALS: Record<Finish, THREE.Material> = {
   haze: new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide }),
   cloth: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, emissive: new THREE.Color("#0a0a0a") }),
   stone: surfaceMaterial("stone", "rock_face_03", { vertexColors: true, lift: 1.25, parallax: 0.04 }),
-  bark: surfaceMaterial("bark", "bark_brown_02", { vertexColors: true, lift: 1.5, parallax: 0.03 }),
+  bark: surfaceMaterial("bark", "bark_brown_02", { vertexColors: true, lift: 1.9, parallax: 0.03 }),
   leaf: surfaceMaterial("leaves", "forest_leaves_02", { vertexColors: true, lift: 1.9, parallax: 0.02, shininess: 4 }),
 };
 
@@ -1324,24 +1324,41 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 // A closed room seen from outside: walls rising from a rounded footprint (`radii` for the north-
 // west, north-east, south-east and south-west corners), a roof slab and, if asked, a parapet
 // round it. Drawn with its corner at the origin, w by d squares.
-export function RoomBlock({ w, d, height, radii, wall, roof, parapet, band, dim }: { w: number; d: number; height: number; radii: [number, number, number, number]; wall: string; roof?: string; parapet?: boolean; band?: boolean; dim?: boolean }) {
+// The body of a room's block drawn with a wall set (surfaces.tsx): its matte part, the texture coordinates projected on it. `id` names the
+// shape, so that it is built once.
+function TexturedBody({ id, set, tint, build, position }: { id: string; set: WallSet; tint: string; build: (k: Kit) => void; position: V3 }) {
+  const geo = useMemo(() => {
+    const k = new Kit();
+    build(k);
+    return k.bake(1 / WALL_TILE).matte ?? null;
+  }, [id, set]);
+  useEffect(() => () => geo?.dispose(), [geo]);
+  return geo ? <mesh geometry={geo} position={position} material={wallMaterial(set, { tint })} castShadow receiveShadow /> : null;
+}
+
+export function RoomBlock({ w, d, height, radii, wall, roof, parapet, band, dim, set }: { w: number; d: number; height: number; radii: [number, number, number, number]; wall: string; roof?: string; parapet?: boolean; band?: boolean; dim?: boolean; set?: WallSet }) {
   const r = radii.map(r2) as [number, number, number, number];
   const body = dim ? shade(wall, 0.45) : wall;
+  const shell = (k: Kit) => upright(k, planRect(w, d, r), height, body, { bevel: 0.04 });
+  const shape = `block:${w}x${d}:${r2(height)}:${r.join(",")}:${body}`;
   return (
-    <Model
-      id={`block:${w}x${d}:${r2(height)}:${r.join(",")}:${body}:${roof}:${parapet ? 1 : 0}${band ? 1 : 0}`}
-      position={[w / 2, 0, d / 2]}
-      build={(k) => {
-        upright(k, planRect(w, d, r), height, body, { bevel: 0.04 });
-        if (band) upright(k, planRect(w + 0.06, d + 0.06, r.map((x) => (x ? x + 0.03 : 0)) as typeof r), 0.12, shade(body, 0.72), { y: height - 0.3, bevel: 0.02 });
-        if (roof) upright(k, planRect(w + 0.2, d + 0.2, r.map((x) => (x ? x + 0.1 : 0)) as typeof r), 0.1, roof, { y: height, bevel: 0.02 });
-        if (parapet) {
-          const ring = planRect(w + 0.2, d + 0.2, r.map((x) => (x ? x + 0.1 : 0)) as typeof r);
-          ring.holes.push(planRect(w - 0.04, d - 0.04, r.map((x) => Math.max(0, x - 0.12)) as typeof r));
-          upright(k, ring, 0.3, wall, { y: height + 0.05, bevel: 0.02 });
-        }
-      }}
-    />
+    <>
+      {set && <TexturedBody id={shape} set={set} tint={body} build={shell} position={[w / 2, 0, d / 2]} />}
+      <Model
+        id={`${shape}:${roof}:${parapet ? 1 : 0}${band ? 1 : 0}:${set ?? ""}`}
+        position={[w / 2, 0, d / 2]}
+        build={(k) => {
+          if (!set) shell(k);
+          if (band) upright(k, planRect(w + 0.06, d + 0.06, r.map((x) => (x ? x + 0.03 : 0)) as typeof r), 0.12, shade(body, 0.72), { y: height - 0.3, bevel: 0.02 });
+          if (roof) upright(k, planRect(w + 0.2, d + 0.2, r.map((x) => (x ? x + 0.1 : 0)) as typeof r), 0.1, roof, { y: height, bevel: 0.02 });
+          if (parapet) {
+            const ring = planRect(w + 0.2, d + 0.2, r.map((x) => (x ? x + 0.1 : 0)) as typeof r);
+            ring.holes.push(planRect(w - 0.04, d - 0.04, r.map((x) => Math.max(0, x - 0.12)) as typeof r));
+            upright(k, ring, 0.3, wall, { y: height + 0.05, bevel: 0.02 });
+          }
+        }}
+      />
+    </>
   );
 }
 
@@ -1392,6 +1409,42 @@ export function DomeRoof({ r, color, lit = true }: { r: number; color: string; l
   );
 }
 
+// A door's leaf (1.5 seconds to open, 2.2 m-wide frames in squares: W 1.0, H 1.42): a hinged leaf swings open on its left edge, and a
+// rising one (a hangar's or a gate's) rolls up into the frame. A wooden leaf is planks; a hangar's or a gate's is painted metal (the
+// wear set of public/textures/wear). `open` is set by the tap that uses the door.
+export const DOOR_OPEN_SECONDS = 1.5;
+export function DoorLeaf({ open, mode, metal = false, tint }: { open: boolean; mode: "hinge" | "rise"; metal?: boolean; tint: string }) {
+  const leaf = useRef<THREE.Group>(null);
+  const t = useRef(0);
+  const W = 1.0;
+  const H = 1.42;
+  const geo = useMemo(() => boxUV(new THREE.BoxGeometry(W - 0.2, H - 0.1, 0.07), 2), []);
+  useEffect(() => () => geo.dispose(), [geo]);
+  const material = metal ? surfaceMaterial("wear", "painted_metal_shutter", { tint, lift: 1.1, parallax: 0.02 }) : surfaceMaterial("wood", "brown_planks_03", { tint, lift: 1.3, parallax: 0.02 });
+  useFrame((_, dt) => {
+    const target = open ? 1 : 0;
+    t.current += Math.sign(target - t.current) * Math.min(Math.abs(target - t.current), dt / DOOR_OPEN_SECONDS);
+    const e = t.current * t.current * (3 - 2 * t.current); // eased: a slow start and a slow stop
+    if (!leaf.current) return;
+    if (mode === "rise") leaf.current.position.y = e * (H - 0.1);
+    else leaf.current.rotation.y = -e * (Math.PI / 2);
+  });
+  if (mode === "rise") {
+    return (
+      <group ref={leaf}>
+        <mesh geometry={geo} material={material} position={[0, H / 2, 0]} castShadow receiveShadow />
+      </group>
+    );
+  }
+  return (
+    <group position={[-W / 2 + 0.12, 0.02, 0]}>
+      <group ref={leaf}>
+        <mesh geometry={geo} material={material} position={[(W - 0.2) / 2, H / 2 - 0.05, 0]} castShadow receiveShadow />
+      </group>
+    </group>
+  );
+}
+
 // A door, way out, secret way or window set in a wall, drawn along x about the origin. Doors
 // and windows take the shape of the building's style.
 export function Opening({ kind, color, style }: { kind: string; color: string; style?: Pick<Style, "arch" | "porthole"> }) {
@@ -1412,7 +1465,7 @@ export function Opening({ kind, color, style }: { kind: string; color: string; s
           const inner = arch ? archShape(0.7, 0.48) : roundedRect(0.7, 0.36, [0.05, 0.05, 0.05, 0.05], -0.35, 0.06);
           outer.holes.push(inner);
           k.extrude(outer, depth, shade(color, 0.35), { at: [0, 0.3, -depth / 2], bevel: 0.015, finish: "sheen" });
-          k.extrude(arch ? archShape(0.7, 0.48) : roundedRect(0.7, 0.36, [0.05, 0.05, 0.05, 0.05], -0.35, 0.06), 0.1, mix(color, "#ffffff", 0.15), { at: [0, 0.3, -0.05], finish: "glow" });
+          k.extrude(arch ? archShape(0.7, 0.48) : roundedRect(0.7, 0.36, [0.05, 0.05, 0.05, 0.05], -0.35, 0.06), 0.1, mix(color, "#ffffff", 0.15), { at: [0, 0.3, -0.05], finish: "glass" }); // the pane is glass: the wall shows through the frame
           return;
         }
         if (kind === "secret") {
@@ -1427,8 +1480,7 @@ export function Opening({ kind, color, style }: { kind: string; color: string; s
         const inner = arch ? archShape(W - 0.2, H - 0.1) : roundedRect(W - 0.2, H - 0.1, [0, 0, port ? 0.24 : 0.06, port ? 0.24 : 0.06], -(W - 0.2) / 2, 0);
         outer.holes.push(inner);
         k.extrude(outer, depth, C.steelDark, { at: [0, 0, -depth / 2], bevel: 0.02, finish: "sheen" });
-        const panel = arch ? archShape(W - 0.2, H - 0.1) : roundedRect(W - 0.2, H - 0.1, [0, 0, port ? 0.24 : 0.06, port ? 0.24 : 0.06], -(W - 0.2) / 2, 0);
-        k.extrude(panel, 0.12, mix(color, "#0b0f14", 0.35), { at: [0, 0, -0.06], finish: "glow" });
+        // (the leaf that shuts the doorway is DoorLeaf, which moves; with it open, the room beyond shows through the frame)
         k.box([0.3, 0.06, 0.3], color, { at: [0, H + 0.06, 0], round: 0.025, finish: "glow" });
       }}
     />

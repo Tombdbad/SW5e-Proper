@@ -140,7 +140,7 @@ export function wallSet(pack: string | undefined, biome: string): WallSet {
 // A wall's material: the photograph in the room's wall colour (lightened toward white so the photograph shows), or the kit's own colours
 export function wallMaterial(set: WallSet, o: { tint?: string; vertexColors?: boolean } = {}): THREE.MeshPhongMaterial {
   const tint = o.tint ? new THREE.Color(o.tint).lerp(new THREE.Color("#ffffff"), 0.5).getStyle() : undefined;
-  return surfaceMaterial("wall", set, { vertexColors: o.vertexColors, tint, parallax: 0.03 });
+  return surfaceMaterial("wall", set, { vertexColors: o.vertexColors, tint, lift: 1.5, parallax: 0.03 });
 }
 // A plain wall's box, with texture coordinates in squares
 export function WallGeometry({ size }: { size: V3 }) {
