@@ -1,10 +1,10 @@
 // /dev/dogfight: the dogfight on its own page, for looking at it in a browser without a campaign (as /dev/models does for the models).
-// Query: scenario (skirmish, cruiser, carrier, battleship, dreadnought, station), size and role of the party's ship, tier, seed, owner (the
+// Query: scenario (skirmish, cruiser, carrier, battleship, dreadnought, station; in the air: defend, raid, escort, strike, with biome and g), size and role of the party's ship, tier, seed, owner (the
 // Empire for the Imperial looks), view=cockpit to begin in the pilot's seat, noshield to take the shield off the ship (a deflector is lent).
 // `window.__dogfight` (state(), input) lets a script move things, as the race's window.__race does.
 import { useMemo, useState } from "react";
 import { shipSheet } from "@shared/logic";
-import { SCENARIOS, type ScenarioId, type StarshipRow } from "@shared/logic/dogfight";
+import { SCENARIOS, scenarioOf, type ScenarioId, type StarshipRow } from "@shared/logic/dogfight";
 import starshipEquipment from "@shared/data/sw5e/starshipEquipment.json";
 import { MinigamePage, type Minigame } from "@/components/Map/FlightScene";
 
@@ -39,6 +39,7 @@ export default function DogfightLab() {
       rows,
       ship: { sheet: labShip(q.get("size") ?? "Small", q.get("role") ?? "Attack Fighter", Number(q.get("tier") ?? 1), !q.has("noshield")), owner: q.get("owner") ?? "the party" },
       view: q.get("view") === "cockpit" ? "cockpit" : undefined,
+      air: scenarioOf(scenario).air ? { biome: q.get("biome") ?? "temperate", g: Number(q.get("g") ?? 1), owner: q.get("owner") ?? undefined } : undefined,
     }),
     [scenario],
   );

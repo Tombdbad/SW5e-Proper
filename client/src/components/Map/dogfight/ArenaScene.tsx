@@ -1,14 +1,18 @@
 // The dogfight's 3D scene: every vessel of the fight from a Tiny drone to a battle station (the fighters with the map's ship models, the
 // big ships with the paneled hulls of CapitalShip), the shots in the air (turret bolts, missiles, torpedoes, rockets, bombs), the
 // tracers, the blasts, the planet and stars behind, and the chase camera. It steps the rules each frame (shared/logic/dogfightSim.ts),
-// and while the party's craft is inside a station it shows StationInterior instead.
+// and while the party's craft is inside a station it shows StationInterior instead. In the air of a planet (2026-10-26) the stars give way to
+// the sky and the ground of the land, and the buildings, flak turrets and convoys of the fight stand and drive on it.
 import { useFrame, useThree } from "@react-three/fiber";
 import { Stars } from "@react-three/drei";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { ARENA, CLASSES, classIndex, frameOf, isCapital, type Dogfight, type DogfightInput, type Fx, type Projectile, type Vessel } from "@shared/logic/dogfight";
-import { hullPoint, isDown, partVisible, partWorld, stepDogfight } from "@shared/logic/dogfightSim";
+import { bombFall, bombRelease, hullPoint, isDown, partVisible, partWorld, stepDogfight } from "@shared/logic/dogfightSim";
+import { AIR } from "@shared/logic/dogfight";
 import { ShipModel } from "../LocalMap";
+import { SpeederModel } from "../models";
+import { raceLook } from "../FlightScene";
 import { CapitalShip, type CapitalRig } from "./CapitalShip";
 import { StationInterior } from "./StationInterior";
 import type { Livery } from "./hullSurface";
@@ -111,6 +115,141 @@ function Backdrop({ focus }: { focus: { current: THREE.Vector3 } }) {
   );
 }
 
+// The air of a planet: a dome of sky from the horizon's haze to the zenith, kept round the camera, the ground of the land far out to the
+// fog, and the roads the convoys drive
+function AirBackdrop({ biome, roads }: { biome: string; roads: [number, number, number][][] }) {
+  const group = useRef<THREE.Group>(null);
+  const look = raceLook(biome);
+  const sky = useMemo(() => {
+    const g = new THREE.SphereGeometry(7000, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+    const [low, high] = [new THREE.Color(look.sky), new THREE.Color(look.zenith)];
+    const pos = g.attributes.position;
+    const colors: number[] = [];
+    for (let i = 0; i < pos.count; i++) {
+      const c = low.clone().lerp(high, Math.min(1, Math.max(0, pos.getY(i) / 7000)) ** 0.6);
+      colors.push(c.r, c.g, c.b);
+    }
+    g.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+    return g;
+  }, [look]);
+  const ground = useMemo(() => {
+    const c = document.createElement("canvas");
+    c.width = c.height = 256;
+    const g = c.getContext("2d")!;
+    g.fillStyle = look.ground;
+    g.fillRect(0, 0, 256, 256);
+    let seed = 7;
+    const r = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+    for (let i = 0; i < 90; i++) {
+      g.fillStyle = look.ground2;
+      g.globalAlpha = 0.25 + r() * 0.5;
+      g.beginPath();
+      g.ellipse(r() * 256, r() * 256, 6 + r() * 30, 4 + r() * 18, r() * 3, 0, Math.PI * 2);
+      g.fill();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(60, 60);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }, [look]);
+  useFrame(({ camera }) => {
+    group.current?.position.set(camera.position.x, 0, camera.position.z);
+  });
+  return (
+    <>
+      <group ref={group}>
+        <mesh geometry={sky}>
+          <meshBasicMaterial vertexColors side={THREE.BackSide} fog={false} depthWrite={false} />
+        </mesh>
+      </group>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]}>
+        <planeGeometry args={[14000, 14000]} />
+        <meshLambertMaterial map={ground} />
+      </mesh>
+      {roads.map((route, i) =>
+        route.slice(1).map((to, k) => {
+          const from = route[k];
+          const len = Math.hypot(to[0] - from[0], to[2] - from[2]);
+          return (
+            <mesh key={`${i}-${k}`} position={[(from[0] + to[0]) / 2, 0.05, (from[2] + to[2]) / 2]} rotation={[-Math.PI / 2, 0, -Math.atan2(to[2] - from[2], to[0] - from[0])]}>
+              <planeGeometry args={[len + 14, 14]} />
+              <meshLambertMaterial color={look.track} />
+            </mesh>
+          );
+        }),
+      )}
+    </>
+  );
+}
+
+// A piece on the ground: a building (a block with a parapet and lit windows), a flak turret (a armoured base and twin barrels raised at
+// the sky), a ground vehicle (a cargo skiff of the party's, an Imperial troop transport or a skiff of the enemy's, scaled up to its size)
+function GroundPiece({ v }: { v: Vessel }) {
+  const role = v.ground!;
+  if (role.kind === "building") {
+    const [hx, hy, hz] = v.half;
+    const wall = role.target ? "#8a7a6a" : v.side === "party" ? "#9aa4ae" : "#7a7470";
+    return (
+      <group>
+        <mesh position={[0, 0, 0]}>
+          <boxGeometry args={[hx * 2, hy * 2, hz * 2]} />
+          <meshLambertMaterial color={wall} />
+        </mesh>
+        <mesh position={[0, hy + 0.6, 0]}>
+          <boxGeometry args={[hx * 2 + 0.6, 1.2, hz * 2 + 0.6]} />
+          <meshLambertMaterial color="#5a5550" />
+        </mesh>
+        {[-1, 1].map((s) => (
+          <mesh key={s} position={[s * (hx + 0.05), hy * 0.3, 0]}>
+            <boxGeometry args={[0.1, hy * 0.25, hz * 1.4]} />
+            <meshBasicMaterial color="#ffd27a" toneMapped={false} />
+          </mesh>
+        ))}
+        {role.target && (
+          <mesh position={[0, hy + 1.4, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[Math.max(hx, hz) * 0.5, Math.max(hx, hz) * 0.62, 32]} />
+            <meshBasicMaterial color="#ff3b3b" toneMapped={false} />
+          </mesh>
+        )}
+      </group>
+    );
+  }
+  if (role.kind === "flak" && !role.route) {
+    return (
+      <group>
+        <mesh position={[0, -1, 0]}>
+          <cylinderGeometry args={[3, 3.6, 3, 10]} />
+          <meshLambertMaterial color="#5c6166" />
+        </mesh>
+        <mesh position={[0, 1.2, 0]}>
+          <sphereGeometry args={[2.2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
+          <meshLambertMaterial color="#6d7378" />
+        </mesh>
+        {[-0.8, 0.8].map((s) => (
+          <mesh key={s} position={[2.4, 2.8, s]} rotation={[0, 0, -Math.PI / 2 + 0.7]}>
+            <cylinderGeometry args={[0.3, 0.3, 6, 8]} />
+            <meshLambertMaterial color="#2b2f36" />
+          </mesh>
+        ))}
+      </group>
+    );
+  }
+  // A vehicle: the speeder models are drawn along +z; the vessel's nose is +x
+  const look = role.kind === "flak" ? "itt" : v.side === "party" ? "skiff" : v.imperial ? "itt" : "skiff";
+  return (
+    <group rotation={[0, Math.PI / 2, 0]} position={[0, -v.half[1], 0]} scale={role.kind === "flak" ? 2.2 : 3.2}>
+      <SpeederModel model="Landspeeder" look={look} name={v.name} />
+      {role.kind === "flak" && (
+        <mesh position={[0, 1.4, 0]} rotation={[0.7, 0, 0]}>
+          <cylinderGeometry args={[0.12, 0.12, 2.4, 8]} />
+          <meshLambertMaterial color="#2b2f36" />
+        </mesh>
+      )}
+    </group>
+  );
+}
+
 // Specks of dust around the craft, wrapped about it, so that the speed shows
 function Dust() {
   const ref = useRef<THREE.Points>(null);
@@ -150,12 +289,14 @@ const _q = new THREE.Quaternion();
 const _v = new THREE.Vector3();
 const _s = new THREE.Vector3();
 const _p = new THREE.Vector3();
+const _a = new THREE.Vector3();
 const Z = new THREE.Vector3(0, 0, 1);
 
 // The field of view in each view: the chase camera's and the pilot's, wider to take in the dash
 const FOV: Record<View, number> = { chase: 65, cockpit: 75 };
 
-export function ArenaScene({ sim, go, input, overlay, view, onFinish, onFrame }: { sim: { current: ArenaSim }; go: { current: boolean }; input: { current: DogfightInput }; overlay: { current: OverlayData }; view: { current: View }; onFinish: (s: Dogfight) => void; onFrame: (s: Dogfight) => void }) {
+// `cursor`: where the pilot's cursor is on the screen (-1 to 1 each way, y up) when the guns follow it, else null, and they follow the reticule
+export function ArenaScene({ sim, go, input, overlay, view, cursor, onFinish, onFrame }: { sim: { current: ArenaSim }; go: { current: boolean }; input: { current: DogfightInput }; overlay: { current: OverlayData }; view: { current: View }; cursor: { current: { x: number; y: number } | null }; onFinish: (s: Dogfight) => void; onFrame: (s: Dogfight) => void }) {
   const { camera, scene, gl } = useThree();
   const groups = useRef(new Map<number, THREE.Group>());
   const rigs = useRef(new Map<number, CapitalRig>());
@@ -181,8 +322,9 @@ export function ArenaScene({ sim, go, input, overlay, view, onFinish, onFrame }:
     camera.updateProjectionMatrix();
     gl.toneMappingExposure = 1.05;
   }, [camera, gl]);
+  const air = sim.current.state.air;
   useEffect(() => {
-    scene.fog = null;
+    scene.fog = air ? new THREE.Fog(raceLook(air.biome).sky, 1400, 6500) : null;
     // For test scripts, as the map's window.__map3d: the scene and camera, to look at what is drawn
     (window as unknown as { __arena?: unknown }).__arena = { scene, camera, gl };
   }, [scene, camera, gl]);
@@ -191,6 +333,13 @@ export function ArenaScene({ sim, go, input, overlay, view, onFinish, onFrame }:
     const s = sim.current;
     const st = s.state;
     const dt = Math.min(delta, 0.1);
+    // The cursor's ray: from the camera as it was drawn, through the cursor (in the tunnel the guns are always on the reticule)
+    const at = cursor.current;
+    if (at && !st.interior) {
+      camera.updateMatrixWorld();
+      _a.set(at.x, at.y, 0.5).unproject(camera).sub(camera.position).normalize();
+      input.current.aim = { o: [camera.position.x, camera.position.y, camera.position.z], d: [_a.x, _a.y, _a.z] };
+    } else input.current.aim = undefined;
     if (go.current && !st.over) stepDogfight(st, input.current, dt, s.roll);
     const me = st.vessels.find((v) => v.id === st.me)!;
     // Membership of the scene
@@ -212,7 +361,12 @@ export function ArenaScene({ sim, go, input, overlay, view, onFinish, onFrame }:
       if (!g) continue;
       g.visible = !(pilot && v.id === st.me);
       g.position.set(v.p[0], v.p[1], v.p[2]);
-      g.rotation.set(v.roll + v.bank, -v.yaw, v.pitch, "YZX");
+      if (v.ground) {
+        g.rotation.set(0, -v.yaw, 0);
+        if (isDown(v)) g.scale.set(1, v.ground.kind === "building" ? 0.35 : 0.5, 1);
+        continue;
+      }
+      g.rotation.set(v.roll, -v.yaw, v.pitch, "YZX");
       // A wreck goes dark and breaks up
       if (v.dying > 0) {
         const k = Math.max(0, v.dying) / 3;
@@ -237,11 +391,11 @@ export function ArenaScene({ sim, go, input, overlay, view, onFinish, onFrame }:
       else chase(camera, c.p, c.yaw, c.pitch, 14 + me.reach * 1.6, 4.5 + me.reach * 0.3, dt, ahead, behind);
       focus.current.set(c.p[0], c.p[1], c.p[2]);
     } else {
-      if (pilot) placeEye(camera, me, me.p, me.yaw, me.pitch, me.roll + me.bank);
+      if (pilot) placeEye(camera, me, me.p, me.yaw, me.pitch, me.roll);
       else {
         const back = Math.max(22, CLASSES[me.cls].length * 1.5);
-        // The chase camera rolls with the craft (and a little with its lean), so that up is the craft's up
-        chase(camera, me.p, me.yaw, me.pitch, back, back * 0.27, dt, ahead, behind, me.roll + me.bank * 0.5);
+        // The chase camera rolls with the craft, so that up is the craft's up
+        chase(camera, me.p, me.yaw, me.pitch, back, back * 0.27, dt, ahead, behind, me.roll);
       }
       focus.current.set(me.p[0], me.p[1], me.p[2]);
     }
@@ -342,14 +496,14 @@ export function ArenaScene({ sim, go, input, overlay, view, onFinish, onFrame }:
       <hemisphereLight args={["#8fb0e0", "#1a1d26", 0.9]} />
       <directionalLight position={SUN.toArray().map((x) => x * 800) as [number, number, number]} intensity={2.4} color="#fff2dc" />
       <directionalLight position={[-300, -120, 200]} intensity={1.0} color="#7aa0dc" />
-      <Backdrop focus={focus} />
+      {air ? <AirBackdrop biome={air.biome} roads={roadsOf(sim.current.state)} /> : <Backdrop focus={focus} />}
       <Dust />
       {!inside && ids.map((id) => {
         const v = vesselOf.current.get(id) ?? sim.current.state.vessels.find((x) => x.id === id);
         if (!v) return null;
         return (
           <group key={id} ref={(el) => { if (el) groups.current.set(id, el); else groups.current.delete(id); }} position={v.p}>
-            {isCapital(v.cls) || classIndex(v.cls) >= classIndex("Large") ? <CapitalShip vessel={v} livery={liveryOf(v)} sim={sim} rigs={rigs} /> : <Fighter v={v} />}
+            {v.ground ? <GroundPiece v={v} /> : isCapital(v.cls) || classIndex(v.cls) >= classIndex("Large") ? <CapitalShip vessel={v} livery={liveryOf(v)} sim={sim} rigs={rigs} /> : <Fighter v={v} />}
           </group>
         );
       })}
@@ -382,6 +536,18 @@ export function ArenaScene({ sim, go, input, overlay, view, onFinish, onFrame }:
 }
 
 const _c = new THREE.Color();
+// The roads of the fight's convoys (each route once)
+function roadsOf(st: Dogfight): [number, number, number][][] {
+  const seen = new Set<string>();
+  const out: [number, number, number][][] = [];
+  for (const v of st.vessels) {
+    const r = v.ground?.route;
+    if (!r || seen.has(JSON.stringify(r))) continue;
+    seen.add(JSON.stringify(r));
+    out.push(r);
+  }
+  return out;
+}
 const BLAST_COLOR: Record<string, string> = { boom: "#ff9a3c", spark: "#ffd27a", shield: "#6ec8ff", launch: "#ffffff", pd: "#9fe0ff", wreck: "#ff7a2c", port: "#7dffc0" };
 interface Blast { p: THREE.Vector3; size: number; t: number; life: number; color: THREE.Color; shell?: boolean }
 // (three declares `instanceColor` itself for an instanced mesh that has colours: declaring it again was a compile error, and the shell never showed)
@@ -451,6 +617,10 @@ function markers(camera: THREE.Camera, st: Dogfight, me: Vessel, out: OverlayDat
   // Turrets are marked apart from the rest, so that a ship bristling with them does not crowd the other marks out
   const turrets: Mark[] = [];
   out.hullDist = null;
+  // Where the nose points on the screen: the reticule sits there (the chase camera is above the craft, so it is not the middle of the view)
+  const at = st.interior ? st.interior.craft : me;
+  const nose = frameOf(at.yaw, at.pitch).f;
+  out.nose = project(camera, [at.p[0] + nose[0] * 600, at.p[1] + nose[1] * 600, at.p[2] + nose[2] * 600]);
   if (st.interior) {
     const I = st.interior;
     const c = I.craft.p;
@@ -466,13 +636,26 @@ function markers(camera: THREE.Camera, st: Dogfight, me: Vessel, out: OverlayDat
     out.aim = st.aim ? { ...project(camera, st.aim.point), kind: "locked", label: st.aim.part === -2 ? "TARGET" : "", dist: st.aim.dist, frac: 1 } : null;
     return;
   }
+  // In the air: what the party has to keep standing, and where a bomb let go now would fall
+  if (st.air) {
+    for (const v of st.vessels) {
+      if (!v.ground || v.side !== "party" || isDown(v)) continue;
+      marks.push({ ...project(camera, v.p), kind: "ally", label: v.name.toUpperCase(), dist: dist3(v.p, me.p), frac: v.c.hull / v.c.sheet.hullMax });
+    }
+    const bomb = me.guns.find((g) => g.kind === "bomb" && g.ammo > 0);
+    if (bomb && me.p[1] > 10) {
+      const rel = bombRelease(me);
+      const fall = bombFall(rel.p, rel.vel, AIR.gravity * st.air.g);
+      if (fall.t < 30) marks.push({ ...project(camera, fall.at), kind: "drop", label: "BOMB", dist: dist3(fall.at, me.p), frac: 1 });
+    }
+  }
   for (const v of st.vessels) {
     if (v.side !== "foe" || isDown(v)) continue;
     const d = dist3(v.p, me.p);
     const big = isCapital(v.cls) || v.cls === "Large";
     if (d > 2600 && !big) continue;
     const surface = Math.max(0, d - v.reach);
-    marks.push({ ...project(camera, v.p), kind: st.lock === v.id ? "locked" : big ? "big" : "foe", label: v.name, dist: big ? surface : d, frac: v.c.hull / v.c.sheet.hullMax });
+    marks.push({ ...project(camera, v.p), kind: st.lock === v.id ? "locked" : big ? "big" : "foe", label: v.ground?.target ? `TARGET ${v.name}` : v.name, dist: big ? surface : d, frac: v.c.hull / v.c.sheet.hullMax });
     if (big) {
       const hp = hullPoint(v, me.p, 0);
       if (!hp.inside && hp.depth < 0) out.hullDist = Math.min(out.hullDist ?? Infinity, -hp.depth);

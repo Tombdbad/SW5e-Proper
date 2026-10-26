@@ -10,7 +10,7 @@ import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
 import { useQuality } from "@/components/Map/siteAssets";
 import { useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
-import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, whereNow, useClock, noEncounters } from "@/components/Map/LocalMap";
+import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whereNow, useClock, noEncounters } from "@/components/Map/LocalMap";
 import { usePartyLook } from "@/components/Map/models";
 import { NotesPanel, TranslatorPanel } from "@/components/Play/GearPanels";
 import { TestMenu, type TestCategory, type TestItem } from "@/components/Play/TestMenu";
@@ -34,7 +34,7 @@ import { feats } from "@/lib/sw5e/feats";
 import lookupData from "@shared/data/sw5e/lookups.json";
 import { MinigamePage, type Minigame, type MinigameResult } from "@/components/Map/FlightScene";
 import { dogfightPayout } from "@shared/logic/dogfightSim";
-import { SCENARIOS, scenarioAdvice, classOf, type ScenarioId } from "@shared/logic/dogfight";
+import { SCENARIOS, scenarioAdvice, scenarioOf, classOf, type ScenarioId } from "@shared/logic/dogfight";
 import type { ShipSheet } from "@shared/logic";
 import PitArena, { type PitSummary } from "@/components/Map/PitArena";
 import monsterData from "@shared/data/sw5e/monsters.json";
@@ -57,8 +57,8 @@ import {
   START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText,
   withPresence, withPartyShips, bulkOf, shoveAsset, moveRoomAssets,
   gearUse, toolFor, toolTrained, boonOf, gambleMode, gambleResult, GAMBLE_ROUNDS, GAMBLE_HOUSE_DC, GAMBLE_STAKE, GAMBLE_COMPLICATION, GAMBLE_COMPLICATIONS,
-  companionFrom, hireFee, wageFor, canHire, COMPANION_LIMIT, crOf, gentleDC, gentleLimit, isDroid, reprogramDC, FREEING, hitDieOfSize,
-  groundRides, kmOf, hasRidesForHire, SEATS, EXPLOSIVE_CONDITION_ROUNDS,
+  companionFrom, hireFee, wageFor, canHire, COMPANION_LIMIT, BEAST_LIMIT, carryingCapacity, VEHICLE_MAKES, makeOf, makesSold, cartCapacity, isCartItem, cartHandler, type Cart, claimableSite, pieceTypeOf, setDown, takeDown, store, unstore, claimBase, renameBase, baseAt, piecesWith, storedPounds, type Base, type BasePiece, crOf, gentleDC, gentleLimit, isDroid, reprogramDC, FREEING, hitDieOfSize,
+  groundRides, kmOf, hasRidesForHire, SEATS, EXPLOSIVE_CONDITION_ROUNDS, roadAmbush, roadAmbushers, chaseResult, type RoadAmbush,
   type GearUse, type ToolFacts, type Boon, type GambleApproach, type Companion, type CompanionKind, type PartyVehicle, type Vehicle, type Transport, type Ride,
   waresOf, stockOf, offerFor, attitudeOf, attitudeName, marketAt, haggleDC, isOpen, openingHours, addRenown, emptyStanding, ledgerFor, factionAt,
   hangarsOf, hangarOpen, sellsFuelAt, repairPrice, outfitterStock, fitting, scriptsFor, afterHoursLock, hoursOfBuilding, type RoleScript, type Hangar,
@@ -74,7 +74,7 @@ import {
   partsPlaceAt, partsStock, fitShipPart, wreckParts, droidPartsStock, droidDisplay, droidListed, surgeonStock, modStock, MOD_TRADES, WARES, baseNameOf, modFee, modFitProblem, MOD_FIT_HOURS, blueprintPool, type SurgeonLine, type ModLine,
   ammoFamilyOf, ammoItemFamily, ammoRider, accessoryOf, reloadOf, GENERATOR_SHOTS, waterSpeed, armorTraits, stealthMode, rigidDex, type AmmoRider,
   passDays, FORAGE_DC, HOT_LANDS, liquidOf, foodOf, GEAR, type Supplies,
-  hazardsAt, exposure, HAZARD_HOUR, suitOf, airOf, breathRule, type Protections, type EnvHazard,
+  hazardsAt, gravityOf, fallPlan, fallOutcome, type FallGear, exposure, HAZARD_HOUR, suitOf, airOf, breathRule, type Protections, type EnvHazard,
   loadOf, containerOf, weightOf, isContraband, shipModNamed, shipModEffects, modCost, modDays, crewModPlan, crewEquipmentPlan, tierUpgrade, yardWorkforce, equipmentCost, equipmentDays, equipmentWorkforce,
   roleShip, enhancedShipPart, type ShipPart, type PartLine, type ShipModInstance,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship, type Rect,
@@ -210,7 +210,10 @@ export default function GameBoard() {
     queryFn: async () => (await fetch("/api/sw5e/enhancedItems?fields=id,name,type,searchableRarity,subtype")).json(),
     staleTime: Infinity,
   });
-  const { inCombat, initiateCombat, endCombat } = useCombat();
+  const { inCombat, initiateCombat: startCombat, endCombat } = useCombat();
+  // Every fight is fought in the pull of the world it is on (shared/logic gravityOf; house rule)
+  const initiateCombat: typeof startCombat = (player, enemies, kit, surprise, arena, at, allies) =>
+    startCombat(player, enemies, kit, surprise, arena ? { ...arena, gravity: gravityNow().g } : arena, at, allies);
   const fightArena = useCombat((s) => s.arena);
   // The map's render scale: full on a device that keeps up, lower on one that does not. It is
   // remembered, so that a reload starts where the device settled and not with a full-size first frame
@@ -314,6 +317,8 @@ export default function GameBoard() {
   const fightAreas = useRef<string[]>([]);
   // The encounter whose gang is being fought (it is not in the area's own people: see startGangFight)
   const gangFight = useRef<Encounter | null>(null);
+  // The riders of an ambush on the road being fought (see roadFight)
+  const roadFightRef = useRef<{ riders: Occupant[]; who: string } | null>(null);
 
   // Load campaign data when available
   useEffect(() => {
@@ -402,7 +407,8 @@ export default function GameBoard() {
     if (!world) return null;
     // The party's own ships stand in the berths they have left empty
     const present = withPartyShips(withPresence(world, clock), Array.isArray(campaign?.starships) ? campaign.starships : []);
-    return Object.assign(present, { party: character?.companionData?.party ?? [], parked: campaign?.vehicles ?? [] });
+    const all: Companion[] = character?.companionData?.party ?? [];
+    return Object.assign(present, { party: all.filter((c) => c.kind !== "beast"), beasts: [...(character?.companionData?.beasts ?? []), ...all.filter((c) => c.kind === "beast")], riding: character?.companionData?.riding as string | undefined, parked: campaign?.vehicles ?? [], carts: ((character?.companionData?.carts ?? []) as Cart[]).map((c) => ({ ...c, handler: c.parked ? null : cartHandler(c, [...all, ...(character?.companionData?.beasts ?? [])]) })) });
   }, [world, clock, character?.companionData, campaign?.vehicles, campaign?.starships]);
   const hereNow: Area | null = scene && hereId ? scene.areas[hereId] ?? null : null;
 
@@ -477,8 +483,9 @@ export default function GameBoard() {
     // A long rest aboard a ship with a recreation room, laboratory or investigation suite: advantage on the first check (of those skills)
     const rested = mine && !!play.firstCheck && (play.firstCheck === "any" || (!!option.skill && play.firstCheck.includes(option.skill)) || (!!plan.tool && play.firstCheck.includes("tool")));
     if (rested) setTimeout(() => patchPlay({ firstCheck: undefined }), 0);
-    // Heavily encumbered: disadvantage on Strength, Dexterity and Constitution checks (the variant)
-    const burdened = mine && loadNow().disadvantage && ["strength", "dexterity", "constitution"].includes(option.ability);
+    // Heavily encumbered: disadvantage on Strength, Dexterity and Constitution checks (the variant); exhaustion (level 1 and up):
+    // disadvantage on every ability check (the rules data; 2026-10-26, it was applied to downtime checks only)
+    const burdened = mine && ((loadNow().disadvantage && ["strength", "dexterity", "constitution"].includes(option.ability)) || (character.exhaustionLevel ?? 0) >= 1);
     const up = option.edge || rested;
     // The d20s (two with advantage or disadvantage) and the substance's die are thrown on the table, and read from it
     const twice = (up && !burdened) || (burdened && !up);
@@ -547,12 +554,12 @@ export default function GameBoard() {
   // The 3D map: the place being looked at (the party's own, unless another was opened), and
   // whatever was last picked out on it
   const [viewId, setViewId] = useState<string | null>(null);
-  const [picked, setPickedNow] = useState<{ kind: "area" | "occupant" | "ship" | "vehicle" | "companion" | "asset" | "window"; id: string; name?: string } | null>(null);
+  const [picked, setPickedNow] = useState<{ kind: "area" | "occupant" | "ship" | "vehicle" | "companion" | "asset" | "window" | "piece" | "cart"; id: string; name?: string } | null>(null);
   // The card for what was picked lets taps through for a moment: it comes up over the lower part
   // of the map, where the second tap of a double tap would otherwise land on it. (Closed in the
   // same step as the pick, so that not even the next tap in the queue finds it open.)
   const [cardOpen, setCardOpen] = useState(true);
-  const setPicked = (next: { kind: "area" | "occupant" | "ship" | "vehicle" | "companion" | "asset" | "window"; id: string; name?: string } | null) => {
+  const setPicked = (next: { kind: "area" | "occupant" | "ship" | "vehicle" | "companion" | "asset" | "window" | "piece" | "cart"; id: string; name?: string } | null) => {
     setPickedNow(next);
     setCardOpen(false);
   };
@@ -605,9 +612,14 @@ export default function GameBoard() {
       const row: any = factsOf(name) ?? factsOf(name.replace(/\s*\([^)]*\)\s*$/, ""));
       return { name, properties: row?.properties, stealthDisadvantage: !!row?.stealthDisadvantage, shieldBonus: row?.armorClassification === "Shield" ? Number(String(row?.ac ?? "").match(/\d+/)?.[0] ?? 0) : 0 };
     });
-    // An enhanced shield's or armor's "damage you take is reduced by N"
+    // An enhanced shield's or armor's "damage you take is reduced by N"; headgear's "by your proficiency bonus" (from weapons: the
+    // books say unenhanced weapons, and the fight does not tell them apart, so all of them: house reading)
     if ((character as any)?.itemAbsorb) rows.push({ name: "enhanced item", absorb: (character as any).itemAbsorb });
-    return armorTraits(rows, Number(character?.abilityScores?.strength) || 10);
+    if ((character as any)?.itemSenses?.weaponGuard) rows.push({ name: "enhanced item", absorb: proficiency });
+    const traits = armorTraits(rows, Number(character?.abilityScores?.strength) || 10);
+    // An item's own advantage or disadvantage on Stealth (an echo belt, dampening boots, cybernetic legs)
+    const sneak = (character as any)?.itemSenses?.stealth ?? 0;
+    return { ...traits, stealthAdvantage: traits.stealthAdvantage || sneak > 0, stealthDisadvantage: traits.stealthDisadvantage || sneak < 0 };
   };
   const stealthRoll = () => {
     // A stealth field generator running: advantage on Stealth that relies on sight (its text); armor that is bulky or flagged, a shield that
@@ -765,7 +777,11 @@ export default function GameBoard() {
   // Walk, drive or fly along an exit. A place nobody has been to is built on arrival.
   // A pilot's route being flown, between two settlements (see travel)
   const [pilot, setPilot] = useState<{ exit: Exit; ride: Ride; mode: FlightMode; seed: number } | null>(null);
-  const travel = (exit: Exit, chosen?: Ride) => {
+  // An ambush on the road (shared/logic "On the road", house rules): the trip it stopped, who and why, the riders as people to fight, and
+  // whether the party is running for it (the chase)
+  const [roadHit, setRoadHit] = useState<{ exit: Exit; ride: Ride; a: RoadAmbush; riders: Occupant[]; seed: number; chase?: boolean } | null>(null);
+  // `cleared`: the trip goes on without a roll for an ambush (one was rolled and dealt with)
+  const travel = (exit: Exit, chosen?: Ride, cleared = false) => {
     if (!here || !world) return;
     // A place that kills without protection (no air, the crushing deep) is not walked into (the book: a few rounds)
     const deadly = deadlyAt(exit.to);
@@ -780,6 +796,20 @@ export default function GameBoard() {
     const rides = exit.needsShip ? [] : ridesFor(exit);
     const ride = chosen ?? defaultRide(rides);
     if (ride?.blocked) return void toast.error(`${ride.label}: ${ride.blocked}.`);
+    // In the party's own speeder between places a road joins, the riders of whoever hunts the party may be waiting (seeded by the trip and
+    // the minute; the Light- or Dark-sided by the character's Force alignment, else by their alignment)
+    if (!cleared && ride?.vehicleId && (kmOf(exit.travel) ?? 0) > 0) {
+      const force = forceAlignOf(character?.forceAlignment);
+      const side = force !== "None" ? force : /good/i.test(character?.alignment ?? "") ? "Light" : /evil/i.test(character?.alignment ?? "") ? "Dark" : "None";
+      const seed = (Math.floor(useClock.getState().minutes) * 2654435761 + Array.from(exit.to).reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) | 0, 7)) >>> 0;
+      // (the test build's switch: localStorage sw5e.ambush = 1 ambushes every trip)
+      const always = TEST_MENU && (() => { try { return localStorage.getItem("sw5e.ambush") === "1"; } catch { return false; } })();
+      const a = roadAmbush(world, exit.to, { alignment: side, wanted: !!world.pursuit, seed, always });
+      if (a) {
+        const riders = roadAmbushers(monsterData as unknown as Sw5eMonster[], equipmentData as any, a, level, String(seed));
+        if (riders.length) return void setRoadHit({ exit, ride, a, riders, seed });
+      }
+    }
     // Over the carrying capacity the speed is 5 feet (pushing and dragging): no journey on foot
     if (!exit.needsShip && (!ride || /foot/i.test(ride.label)) && exit.via === "path" && loadNow().level === 3) return void toast.error(`You carry ${loadNow().weight} lb, more than your ${loadNow().capacity} lb: leave something, or get a hovercart or a beast of burden.`);
     if (ride?.fare) {
@@ -789,6 +819,10 @@ export default function GameBoard() {
     }
     if (ride?.vehicleId) changes.vehicles = vehicles.map((v) => (v.id === ride.vehicleId ? { ...v, areaId: exit.to } : v));
     const took = ride ? ride.minutes : tripMinutes(exit, Number(flying?.hyperdriveClass) || 1) * (flying && isLowFuel(flying) ? LIMP_FACTOR : 1);
+    // The days on the way are lived as the party travels them (see liveDays): aboard its own ship, as passengers (a fare, a hired ride),
+    // or on the roads
+    const arrival = dayOf(useClock.getState().minutes + took);
+    if (arrival > supplies.day) liveDays(arrival, exit.needsShip ? (flying ? "ship" : "passenger") : ride?.fare ? "passenger" : "wild");
     Object.assign(changes, pass(took));
     if (ride) toast.info(`${ride.label}: ${rideText(took)} to ${world.areas[exit.to]?.name}; it is ${clockText(useClock.getState().minutes)}.`);
     else if (took >= 60) toast.info(`${Math.round(took / 6) / 10} hours on the way${exit.needsShip && !exit.travel ? " (house rule: an hour between the surface and orbit)" : ""}: it is ${clockText(useClock.getState().minutes)}.`);
@@ -855,12 +889,17 @@ export default function GameBoard() {
       // hook's line is climbed with Strength (Athletics), a minute a try (house rule); flying or friction grips need no check
       if (exit.via === "enter" && here?.danger === 0 && !lawUnseen("Climbing up the outside of a building", "trespass")) return;
       if (exit.scale.how === "hook") {
-        const ok = await abilityCheck(`${exit.via === "enter" ? "Up" : "Down"} the grappling hook's line (house rule)`, exit.scale.dc ?? 10, ["strength"], skilled("athletics"));
-        if (cancelledCheck.current) return;
-        if (!ok) {
-          toast.error(exit.via === "enter" ? "The hook will not hold, or you slip back down: a minute gone." : "You lose your grip and climb back up: a minute gone.");
+        const r = await askCheck({ what: `${exit.via === "enter" ? "Up" : "Down"} the grappling hook's line (house rule)`, dc: exit.scale.dc ?? 10, abilities: ["strength"], skills: ["athletics"] });
+        if (!r) return;
+        if (!r.success) {
+          // Missed by 5 or more on the way up: a slip from halfway (house rule), a fall
+          const level = (world?.areas[exit.to]?.layout?.level ?? 1) * 10;
+          if (exit.via === "enter" && r.total <= (exit.scale.dc ?? 10) - 5) await fallOutside(Math.max(5, Math.round(level / 2)), false);
+          else toast.error(exit.via === "enter" ? "The hook will not hold, or you slip back down: a minute gone." : "You lose your grip and climb back up: a minute gone.");
           return void saveCampaign(pass(1));
         }
+      } else if (exit.scale.how === "jump") {
+        if ((await fallOutside(exit.scale.feet, true)) === null) return;
       } else toast.info(`${exit.scale.by}: ${exit.via === "enter" ? "up" : "down"} without a check.`);
     }
     if (exit.climb) {
@@ -1511,6 +1550,11 @@ export default function GameBoard() {
     // A second light weapon in the other hand (Two-Weapon Fighting)
     const other = isLight(melee) ? weapons.find((w) => !w.ranged && !w.natural && w !== melee && isLight(w)) : undefined;
     const natural = weapons.find((w) => w.natural);
+    // A versatile weapon is used two-handed when the other hand is free: no shield, no second weapon in it (its damage in parentheses)
+    const twoHands = !!melee?.versatile && !equippedNow(character).shield && !other;
+    // A melee weapon with the thrown property can be thrown at its range, as many times as there are of it carried (a returning one
+    // comes back each time); what was thrown is picked up after the fight (house rule)
+    const throwable = weapons.filter((w) => w.thrown && w.range && !w.natural).sort((a, b) => b.attackBonus - a.attackBonus)[0];
     const proficiency = Math.ceil(1 + level / 4);
     const scoreMod = (a: string) => modifier(character.abilityScores?.[a]);
     const savedAbilities = (character.savingThrowProficiencies ?? []).map((a: string) => String(a).toLowerCase());
@@ -1522,17 +1566,18 @@ export default function GameBoard() {
     const kit = {
       ammo,
       // Stealth to hide with this armour and a stealth field running (see stealthRoll)
-      hideMode: stealthMode({ stealthDisadvantage: armorNow.stealthDisadvantage, stealthAdvantage: armorNow.stealthAdvantage || ((character.equipment ?? []) as string[]).some((n) => /stealth field generator/i.test(n) && running(n)) }),
+      hideMode: stealthMode({ stealthDisadvantage: armorNow.stealthDisadvantage || !!melee?.properties.some((p) => /^luminous/i.test(p)), stealthAdvantage: armorNow.stealthAdvantage || ((character.equipment ?? []) as string[]).some((n) => /stealth field generator/i.test(n) && running(n)) }),
       // What the armour and shield do in the fight (see wornTraits)
       armorProps: { absorb: armorNow.absorb, regulated: armorNow.regulated || undefined, reactive: armorNow.reactive || undefined, avoidant: armorNow.avoidant || undefined, insulated: armorNow.insulated || undefined, imbalanced: armorNow.imbalanced || undefined, shield: armorNow.shield || undefined },
       // A bipod for a two-handed blaster; a tripod deployed beforehand (it takes a minute: house reading) counts as braced from the start
       bipod: (character.equipment ?? []).includes("Bipod") && !!ranged?.properties.some((p) => /two-handed/i.test(p)),
       braced: (character.equipment ?? []).includes("Tripod") && !!ranged?.properties.some((p) => /two-handed/i.test(p)) && !!play.tripodSet,
-      meleeDice: melee?.dice,
+      meleeDice: twoHands ? melee!.versatile : melee?.dice,
       meleeWeapon: melee?.name,
       meleeAttack: melee?.attackBonus,
       meleeDamage: melee?.damageBonus,
-      meleeProps: melee?.properties,
+      meleeProps: twoHands ? [...melee!.properties, "two-handed"] : melee?.properties,
+      thrown: throwable ? { name: throwable.name, dice: throwable.dice, attack: throwable.attackBonus, damage: throwable.damageBonus, type: throwable.damageType, props: throwable.properties, range: throwable.range!, ability: throwable.ability, returning: !!throwable.returning, left: throwable.returning ? 99 : Math.max(1, ((character.equipment ?? []) as string[]).filter((n) => n === throwable.name).length) } : undefined,
       meleeType: melee?.damageType,
       meleeAbility: melee?.ability,
       rangedDice: ranged?.dice,
@@ -1541,6 +1586,11 @@ export default function GameBoard() {
       rangedDamage: ranged?.damageBonus,
       rangedProps: ranged?.properties,
       rangedType: ranged?.damageType,
+      // A switch weapon's alternate damage ("switch (2d4 acid/cold/fire/lightning)"): its dice and the types it can turn to
+      rangedSwitch: (() => {
+        const m = ranged?.properties.map((p) => p.match(/^switch \((\d+d\d+) ([a-z/ ]+)\)/i)).find(Boolean);
+        return m ? { dice: m[1], types: m[2].split("/").map((t) => t.trim().toLowerCase()) } : undefined;
+      })(),
       offhand: other ? { name: other.name, dice: other.dice, attack: other.attackBonus, damage: other.damageBonus, type: other.damageType, props: other.properties } : undefined,
       unarmed: natural
         ? { name: natural.name, dice: natural.dice, attack: natural.attackBonus, damage: natural.damageBonus, type: natural.damageType }
@@ -1555,12 +1605,34 @@ export default function GameBoard() {
         const base = Number(character.speed) || 30;
         return load.level ? { speed: load.level === 3 ? 5 : Math.max(5, base + load.speed), burden: load.disadvantage } : {};
       })(),
+      // Exhaustion's levels in the fight (useCombat speedFactor, attackPlan, savingThrow), and the hit point maximum it halves at 4
+      exhaustion: character.exhaustionLevel || undefined,
+      // A decoy shadow (a Defel mimicker): attacks against the character at disadvantage until they are hurt
+      decoy: (character as any).itemSenses?.decoy || undefined,
+      // For grappling and shoving (useCombat contest): Strength (Athletics) and Dexterity (Acrobatics), with proficiency where trained
+      athletics: scoreMod("strength") + (skilled("athletics") ? proficiency : 0),
+      acrobatics: scoreMod("dexterity") + (skilled("acrobatics") ? proficiency : 0),
+      ...(hpCap() < character.maxHp ? { maxHp: hpCap(), hp: Math.min(character.currentHp, hpCap()) } : {}),
       // Powered flight running (a jetpack, rocket boots, a rocketpack: their flying speed), a repulsor pack's slowed fall
       ...(() => {
         const flyer = ((character.equipment ?? []) as string[]).find((n) => running(n) && accessoryOf({ name: n, description: factsOf(n)?.description }).fly);
         const fly = flyer ? accessoryOf({ name: flyer, description: factsOf(flyer)?.description }).fly : undefined;
         const slowFall = ((character.equipment ?? []) as string[]).some((n) => /repulsor pack/i.test(n) && running(n));
         return { ...(fly ? { fly, speed: Math.max(Number(character.speed) || 30, fly) } : {}), ...(slowFall ? { slowFall } : {}) };
+      })(),
+      // Jumping, climbing and falling (useCombat reachable and fall; 2026-10-26): friction grips' climbing speed, a grappling hook's line
+      // and the cables carried, heavy armour worn (a fall's dice are d8s), a jetpack or rocket boots carried but not running (a burst
+      // before the ground)
+      ...(() => {
+        const carried = (character.equipment ?? []) as string[];
+        const gear = climbGearOf(carried.map((n) => ({ name: n, ...(factsOf(n) ?? {}) })), wearingNow, running);
+        const body = equippedNow(character).body;
+        const burst = carried.find((n) => !running(n) && accessoryOf({ name: n, description: factsOf(n)?.description }).fly);
+        return {
+          ...(gear.grips || gear.hookFeet ? { climber: { speed: !!gear.grips || undefined, hookFeet: gear.hookFeet ? gear.hookFeet + (gear.lineFeet ?? 0) : undefined } } : {}),
+          ...(body && /heavy/i.test(String(factsOf(body)?.armorClassification ?? "")) ? { heavyArmor: true } : {}),
+          ...(burst ? { burst } : {}),
+        };
       })(),
       // A holster worn (a weapon drawn from it takes no action), a remote detonator carried and the mines paired with it
       ...(() => {
@@ -1687,6 +1759,27 @@ export default function GameBoard() {
       character: {}, downtime: {}, days: 1,
       log: [`Pit arena: ${summary.bouts} bout${summary.bouts === 1 ? "" : "s"} won, ${summary.credits.toLocaleString()} cr${summary.items.length ? `, ${summary.items.join(", ")}` : ""}${summary.knockedOut ? "; knocked out in the last bout" : ""}.`],
     });
+  };
+
+  // An ambush on the road stood and fought, or a chase lost: the trip is finished (the party is at its end) and the riders still after it
+  // close in at the roadside, on open ground with a few rocks for cover; their leader down, the rest ride off (the gang's rule)
+  const roadFight = (amb: NonNullable<typeof roadHit>, riders: Occupant[]) => {
+    setRoadHit(null);
+    travel(amb.exit, amb.ride, true);
+    if (!riders.length || !character) return;
+    toast.error(`The ${amb.a.who} close in at the roadside.`);
+    setTimeout(() => {
+      const enemies = riders.map((o, i) => ({ ...foe(o, o.id, o.name), x: 10 + (i % 2) * 2, y: 3 + i * 2, z: 0, gang: "road", leader: i === 0 }));
+      const rocks = [[6, 4], [7, 8], [12, 6], [4, 10], [13, 1]].map(([x, y], i) => ({ id: `rock-${i}`, kind: "furniture" as const, name: "Rock", x, y, w: 1, h: 1, blocks: true, cover: true }));
+      fightArea.current = null;
+      fightAreas.current = [];
+      roadFightRef.current = { riders, who: amb.a.who };
+      lastSavedHp.current = character.currentHp;
+      lastSavedPoints.current = character.currentForcePoints;
+      lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
+      fightBegun.current = true;
+      initiateCombat(fighterNow(), enemies as any, combatKit(), false, { width: 16, height: 12, assets: rocks as any, open: true, floor: world ? trailOf(world, amb.exit.to).find((a) => a.kind === "planet")?.type : undefined }, { x: 3, y: 6 }, party.filter((c) => c.hp > 0).map(allyOf));
+    }, 600);
   };
 
   // The gang of an alley that has the party surrounded is fought on the district's own map, in the alley: the
@@ -1959,6 +2052,17 @@ export default function GameBoard() {
     // alley is open again. Left alone (the fight left), the gang is still there; left for dead, the gang takes its toll.
     const gang = gangFight.current;
     gangFight.current = null;
+    // Riders of an ambush on the road: those struck down are worth their experience, and what they carried is the party's
+    const road = roadFightRef.current;
+    roadFightRef.current = null;
+    if (road) {
+      const down = fightNow.combatants.filter((c) => c.gang === "road" && c.hp <= 0 && !c.fled);
+      xp += down.reduce((sum, c) => sum + (road.riders.find((o) => o.id === String(c.id))?.xp ?? 0), 0);
+      if (outcome === "victory") {
+        saveCharacter({ credits: (character.credits ?? 0) + gangPurse(level) });
+        toast.success(`The ${road.who} are beaten off. Their leader's purse is yours: ${gangPurse(level)} credits.`);
+      }
+    }
     if (gang?.gang) {
       const down = fightNow.combatants.filter((c) => c.gang === gang.id && c.hp <= 0 && !c.fled);
       xp += down.reduce((sum, c) => sum + (gang.gang!.find((o) => o.id === String(c.id))?.xp ?? 0), 0);
@@ -2106,9 +2210,11 @@ export default function GameBoard() {
   // Trade (shared/logic "Trade"): the equipment data with prices and descriptions, who the party
   // is to a trader, its renown and dealings (factionInfluence) and today's purchases and sales
   // (availableResources)
+  // (with each item's weight: without it everything weighed nothing, so the pack never counted toward the load, a hiding place or a
+  // beast's; the user, 2026-10-26: "the encumbrance ... currently ignores the weight of the player inventory")
   const { data: equipmentData = [] } = useQuery<any[]>({
-    queryKey: ["equipment-for-trade"],
-    queryFn: async () => (await fetch("/api/sw5e/equipment?fields=name,cost,equipmentCategory,weaponClassification,armorClassification,description")).json(),
+    queryKey: ["equipment-for-trade", "weight"],
+    queryFn: async () => (await fetch("/api/sw5e/equipment?fields=name,cost,weight,equipmentCategory,weaponClassification,armorClassification,description")).json(),
     staleTime: Infinity,
   });
   const { data: toolData = [] } = useQuery<ToolFacts[]>({
@@ -2275,17 +2381,17 @@ export default function GameBoard() {
   // What a rest does for the companions: each spends a Hit Die on a short rest (the fallen are
   // brought round with 1 hit point), all hit points back on a long one; a meal adds to a short
   // rest's healing, and droids mended by astrotech's implements get a die more
-  const restParty = (long: boolean, work: Awaited<ReturnType<typeof workTool>>): { party: Companion[]; notes: string[] } => {
+  const restParty = (long: boolean, work: Awaited<ReturnType<typeof workTool>>): { party: Companion[]; beasts: Companion[]; notes: string[] } => {
     const notes: string[] = [];
-    const next = party.map((c) => {
+    const tend = (c: Companion) => {
       if (long) return { ...c, hp: c.maxHp };
       if (c.hp >= c.maxHp && c.hp > 0) return c;
       const base = Math.max(1, die(hitDieOfSize(c.size)) + (c.saves?.constitution ?? 0));
       const extra = (work?.mealHp ?? 0) + (work?.repairDie && !isOrganic(c) ? die(work.repairDie) : 0);
       return { ...c, hp: Math.min(c.maxHp, Math.max(c.hp, 0) + base + extra) };
-    });
+    };
     if (party.length) notes.push(long ? "companions back to full" : "companions tended");
-    return { party: next, notes };
+    return { party: party.map(tend), beasts: beasts.map(tend), notes };
   };
   // Uses of features a rest gives back: a short rest those that come back on one (and the focus
   // points), a long rest all of them
@@ -2296,6 +2402,8 @@ export default function GameBoard() {
     delete used.focus;
     return used;
   };
+  // The hit point maximum as exhaustion leaves it (the rules data: level 4 and up halves it; 2026-10-26, it was not applied)
+  const hpCap = (tired: number = character?.exhaustionLevel ?? 0): number => (!character ? 0 : tired >= 4 ? Math.max(1, Math.floor(character.maxHp / 2)) : character.maxHp);
   const shortRest = async () => {
     if (!character || inCombat) return;
     const changes: Record<string, any> = {};
@@ -2306,9 +2414,9 @@ export default function GameBoard() {
     }
     const work = await workTool("short");
     let spentDie = false;
-    if (hitDiceLeft > 0 && character.currentHp < character.maxHp) {
+    if (hitDiceLeft > 0 && character.currentHp < hpCap()) {
       const healed = Math.max(0, rollDamage(`1d${hitDie}`, false) + modifier(character.abilityScores?.constitution)) + (work?.mealHp ?? 0);
-      changes.currentHp = lastSavedHp.current = Math.min(character.maxHp, character.currentHp + healed);
+      changes.currentHp = lastSavedHp.current = Math.min(hpCap(), character.currentHp + healed);
       changes.hitDiceUsed = (character.hitDiceUsed ?? 0) + 1;
       spentDie = true;
       notes.push(`a Hit Die (d${hitDie}) restores ${healed} hit points`);
@@ -2335,7 +2443,7 @@ export default function GameBoard() {
     const healed = restParty(false, work);
     notes.push(...healed.notes);
     if (spentDie || Object.keys(changes).length || party.length || state.boon !== play.boon || play.poison || JSON.stringify(state.featureUses) !== JSON.stringify(play.featureUses ?? {})) {
-      saveCharacter({ ...changes, playState: state, ...(party.length ? { companionData: { ...(character.companionData ?? {}), party: healed.party } } : {}) });
+      saveCharacter({ ...changes, playState: state, ...(party.length || beasts.length ? { companionData: { ...(character.companionData ?? {}), party: healed.party, beasts: healed.beasts } } : {}) });
     }
     saveCampaign(pass(60));
     toast.info(`Short rest (1 hour): ${notes.filter(Boolean).join("; ") || (hitDiceLeft ? "nothing to recover" : "no Hit Dice left")}.`);
@@ -2366,7 +2474,8 @@ export default function GameBoard() {
     // cell to run it, or resistance to cold keeps it off (a blanket gives advantage)
     const camp = dayPlace().where === "wild";
     const gear = (pattern: RegExp) => ((character.equipment ?? []) as string[]).some((n) => pattern.test(n));
-    const sheltered = gear(/^tent|^emergency shelter/i);
+    // (a tent or shelter in the pack, or one pitched at the base here)
+    const sheltered = gear(/^tent|^emergency shelter/i) || piecesWith(baseHere, "shelter").length > 0;
     const bedded = sheltered || gear(/^bedroll/i);
     const land = world && here ? trailOf(world, here.id).find((a) => a.kind === "planet")?.type : undefined;
     let coldLevel = 0;
@@ -2398,13 +2507,15 @@ export default function GameBoard() {
     const roughDice = camp && !bedded ? Math.max(1, Math.floor(level / 4)) : regained;
     // Exhaustion from hunger and thirst stays until the character has eaten and drunk (the book)
     const floorTired = Math.max(0, play.supplies?.lack ?? 0);
+    const tiredAfter = (character.exhaustionLevel ?? 0) > 0 || coldLevel ? Math.max(floorTired, Math.min(floorTired > 0 ? character.exhaustionLevel ?? 0 : 6, (character.exhaustionLevel ?? 0) - lessTired + coldLevel)) : 0;
+    lastSavedHp.current = hpCap(tiredAfter);
     await saveCharacter({
-      currentHp: character.maxHp,
+      currentHp: hpCap(tiredAfter),
       currentForcePoints: character.maxForcePoints + tempPoints,
       hitDiceUsed: allDice ? 0 : Math.max(0, (character.hitDiceUsed ?? 0) - roughDice - moreDice),
-      ...((character.exhaustionLevel ?? 0) > 0 || coldLevel ? { exhaustionLevel: Math.max(floorTired, Math.min(floorTired > 0 ? character.exhaustionLevel ?? 0 : 6, (character.exhaustionLevel ?? 0) - lessTired + coldLevel)) } : {}),
+      ...((character.exhaustionLevel ?? 0) > 0 || coldLevel ? { exhaustionLevel: tiredAfter } : {}),
       playState: state,
-      ...(party.length ? { companionData: { ...(character.companionData ?? {}), party: healed.party } } : {}),
+      ...(party.length || beasts.length ? { companionData: { ...(character.companionData ?? {}), party: healed.party, beasts: healed.beasts } } : {}),
       ...extra,
     });
     saveCampaign({ ...pass(8 * 60), ...(world && Object.values(world.areas).some((a) => a.alarm) ? { galaxyMap: clearAlarms(world) } : {}) });
@@ -2435,7 +2546,7 @@ export default function GameBoard() {
     const cost = powerCost(power);
     if (!character || (character.currentForcePoints ?? 0) < cost) return;
     const healed = Math.max(1, rollDamage(powerEffect(power, level).dice!, false) + castingStats(character.abilityScores, level, power).modifier);
-    lastSavedHp.current = Math.min(character.maxHp, character.currentHp + healed);
+    lastSavedHp.current = Math.min(hpCap(), character.currentHp + healed);
     lastSavedPoints.current = character.currentForcePoints - cost;
     saveCharacter({ currentHp: lastSavedHp.current, currentForcePoints: lastSavedPoints.current });
     toast.success(`${power.name}: ${healed} hit points regained.`);
@@ -2447,7 +2558,13 @@ export default function GameBoard() {
   // house rule and says so where it is used.
   // ---------------------------------------------------------------------------------------------
   const play: PlayState = (character?.playState ?? {}) as PlayState;
-  const party: Companion[] = Array.isArray(character?.companionData?.party) ? character.companionData.party : [];
+  const partyList: Companion[] = Array.isArray(character?.companionData?.party) ? character.companionData.party : [];
+  // Beasts are not companions (2026-10-26, the user's ask): they follow, can be ridden and loaded, and keep out of fights. They are kept
+  // apart (`companionData.beasts`); a beast saved among the companions before is read as one of the beasts (and moved there on the next save)
+  const party: Companion[] = partyList.filter((c) => c.kind !== "beast");
+  const beasts: Companion[] = [...(Array.isArray(character?.companionData?.beasts) ? character.companionData.beasts : []), ...partyList.filter((c) => c.kind === "beast")];
+  // The beast the character rides (none on foot)
+  const riding: Companion | undefined = beasts.find((b) => b.id === character?.companionData?.riding && b.hp > 0);
   // A graded piece of adventuring gear (binders, a camtono, a jetpack "(Fine)") is its plain item with the grade's text, so that all that reads
   // an item's rules (accessories, containers, suits, weight, the law's search) reads it the same
   const gradedAsPlain = (name: string) => {
@@ -2480,8 +2597,31 @@ export default function GameBoard() {
   };
   const usesLeft = (name: string, uses?: number) => (uses && uses > 1 ? uses - (play.charges?.[name] ?? 0) : undefined);
 
+  // (a beast in the list goes to the beasts: those who add one write `[...party, beast]`)
   const saveParty = (next: Companion[], extra: Record<string, any> = {}) =>
-    saveCharacter({ companionData: { ...(character.companionData ?? {}), party: next }, ...extra });
+    saveCharacter({ companionData: { ...(character.companionData ?? {}), party: next.filter((c) => c.kind !== "beast"), beasts: [...beasts, ...next.filter((c) => c.kind === "beast" && !beasts.some((b) => b.id === c.id))] }, ...extra });
+  // `ridden`: the beast ridden after this save; null gets down (undefined would take the default and keep the rider in the saddle)
+  const saveBeasts = (next: Companion[], extra: Record<string, any> = {}, ridden: string | null | undefined = character.companionData?.riding) =>
+    saveCharacter({ companionData: { ...(character.companionData ?? {}), party, beasts: next, riding: ridden && next.some((b) => b.id === ridden && b.hp > 0) ? ridden : null }, ...extra });
+  // Carts (shared/logic `Cart`, 2026-10-26): a hovercart is not carried in the pack but stands on the map, pushed or pulled by someone of
+  // the party, holding what is loaded into it; a hovercart that comes into the pack (bought, given, found) is set on the map at once
+  const carts: Cart[] = Array.isArray(character?.companionData?.carts) ? character.companionData.carts : [];
+  const saveCarts = (next: Cart[], extra: Record<string, any> = {}) => saveCharacter({ companionData: { ...(character.companionData ?? {}), carts: next }, ...extra });
+  // (one packed away on purpose stays in the pack, folded: `play.foldedCarts` of them)
+  const cartItems = ((character?.equipment ?? []) as string[]).filter(isCartItem);
+  const folded = Math.min(cartItems.length, Number((character?.playState as any)?.foldedCarts ?? 0));
+  // Put right once, in one save (two saves of the companion data made together lost one another): beasts saved among the companions
+  // before are moved to the beasts, and hovercarts in the pack are set on the map
+  const strayBeasts = partyList.some((c) => c.kind === "beast");
+  useEffect(() => {
+    if (!character || (!strayBeasts && cartItems.length <= folded)) return;
+    const out = cartItems.slice(folded);
+    const equipment = [...(character.equipment as string[])];
+    for (const name of out) equipment.splice(equipment.lastIndexOf(name), 1);
+    const nextCarts = [...carts, ...out.map((name) => ({ id: newId("cart"), name, pack: [], handler: "me", mode: "pull" as const, parked: null }))];
+    saveCharacter({ companionData: { ...(character.companionData ?? {}), party, beasts, carts: nextCarts }, ...(out.length ? { equipment, playState: { ...(character.playState ?? {}), foldedCarts: folded } } : {}) });
+    if (out.length) toast.info(`${out.join(", ")}: set on the map, pulled behind you. Load it from the Pack tab; push, pull or park it from the Party tab or by tapping it.`);
+  }, [character?.id, partyList.length, cartItems.length, folded]);
   const isOrganic = (c: { creature?: string }) => !/droid|construct/i.test(c.creature ?? "");
 
   // What the character can do for a creature with an item: whom, and how much a die gives
@@ -2520,7 +2660,7 @@ export default function GameBoard() {
         note = `${companion.name} regains ${amount} hit points${companion.hp <= 0 ? " and is back on their feet" : ""}`;
       } else {
         if (use.kind === "repair") return speed("You are not a droid.");
-        lastSavedHp.current = Math.min(character.maxHp, character.currentHp + amount);
+        lastSavedHp.current = Math.min(hpCap(), character.currentHp + amount);
         saveCharacter({ ...changes, currentHp: lastSavedHp.current, playState: changes.playState ?? state });
         note = `${amount} hit points regained${maxed ? " (the prepared medpac gives the most it can)" : ""}`;
       }
@@ -2553,7 +2693,9 @@ export default function GameBoard() {
 
   // Substances (Wretched Hives, "Substances"): a high for a minute, then a Wisdom save against a
   // low of ten minutes, then a Constitution save against addiction. House rule: out of a fight the
-  // high waits for the next ability check, and ends with it (the map clock would run it out unused).
+  // high waits for the next ability check, and ends with it (the map clock would run it out unused),
+  // or after ten minutes at least (a graded spice's hour, where it says so; 2026-10-26: a high "for the
+  // next minute" ran out in the minute that taking it passes, before it could be used)
   const addictionLevel = play.addiction ?? 0;
   const takeSubstance = (name: string, use: Extract<GearUse, { kind: "substance" }>, state: PlayState) => {
     const now = clockNow();
@@ -2575,7 +2717,7 @@ export default function GameBoard() {
     const reduce = use.lowDice ? rollDamage(use.lowDice, false) : 0;
     // A graded spice's die and hours (its text: "an additional d12 ... For the next hour ... a low that lasts 8 hours")
     const graded = (use.lowMinutes ?? 10) * (addiction >= 3 ? 4 : addiction >= 1 ? 2 : 1) + carriedLow;
-    const high = { name, ability: use.ability, pool: use.pool, phase: "high" as const, ends: now + (use.highMinutes ?? 10), lowMinutes: use.lowMinutes ? graded : lowMinutes, boost, reduce, temp: use.temp, wisdomDc: use.wisdomDc, constitutionDc: use.constitutionDc, die: use.die ?? 3 };
+    const high = { name, ability: use.ability, pool: use.pool, phase: "high" as const, ends: now + Math.max(10, use.highMinutes ?? 10), lowMinutes: use.lowMinutes ? graded : lowMinutes, boost, reduce, temp: use.temp, wisdomDc: use.wisdomDc, constitutionDc: use.constitutionDc, die: use.die ?? 3 };
     if (boost) {
       // Current and maximum tech or force points rise together
       changes.maxForcePoints = (character.maxForcePoints ?? 0) + boost;
@@ -2824,6 +2966,7 @@ export default function GameBoard() {
   const baseOf = (id: string): Area | undefined => (world ? Object.values(world.areas).find((a) => a.occupants.some((o) => o.id === id)) : undefined);
   const newId = (prefix: string) => `${prefix}-${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
   const partyFull = party.length >= COMPANION_LIMIT;
+  const beastsFull = beasts.length >= BEAST_LIMIT;
   const mountsTable = transport?.mounts ?? [];
   // Edit the occupants of the area an occupant belongs to
   const editBase = (occupantId: string, change: (list: Occupant[]) => Occupant[], extra: Record<string, any> = {}) => {
@@ -2833,7 +2976,7 @@ export default function GameBoard() {
   };
   // One of a group takes up with the party (the rest of the group stays)
   const recruit = (o: Occupant, kind: CompanionKind, how: string, extra: Partial<Companion> = {}, changes: Record<string, any> = {}, campaign: Record<string, any> = {}) => {
-    if (partyFull) return toast.error(`You can lead ${COMPANION_LIMIT} companions at most (house rule).`);
+    if (kind === "beast" ? beastsFull : partyFull) return toast.error(kind === "beast" ? `${BEAST_LIMIT} beasts follow you at most (house rule).` : `You can lead ${COMPANION_LIMIT} companions at most (house rule).`);
     const companion = companionFrom(o, kind, clockNow(), newId("c"), { how, ...extra }, mountsTable);
     editBase(
       o.id,
@@ -2844,12 +2987,307 @@ export default function GameBoard() {
     toast.success(`${companion.name} ${kind === "hireling" ? "joins you for hire" : kind === "droid" ? "is yours now" : kind === "beast" ? "follows you" : "comes with you"}${companion.mount ? " (it can be ridden)" : ""}.`);
   };
   const dismiss = (c: Companion) => {
-    saveParty(party.filter((x) => x.id !== c.id));
+    // What they carried for the party comes back to the pack
+    const back = c.pack?.length ? { equipment: [...(character.equipment ?? []), ...c.pack] } : {};
+    if (c.kind === "beast") saveBeasts(beasts.filter((x) => x.id !== c.id), back);
+    else saveParty(party.filter((x) => x.id !== c.id), back);
+    if (c.pack?.length) toast.info(`You take back what ${c.name} carried: ${c.pack.join(", ")}.`);
     // They stay where the party is (a droid or beast waits; a hireling goes about their business)
     if (world && here) saveCampaign({ galaxyMap: updateArea(world, here.id, { occupants: [...here.occupants, { id: newId("o"), name: c.name, role: c.kind === "hireling" ? c.role : c.kind === "droid" ? "utility droid" : c.kind === "beast" ? "wildlife" : "local", disposition: "neutral", count: 1, species: c.species, statBlock: c.statBlock, cr: c.cr, xp: c.xp, armorClass: c.armorClass, hitPoints: c.maxHp, attack: c.attack, profile: c.profile, speed: c.speed, size: c.size, creature: c.creature, saves: c.saves, loadout: c.loadout, wounds: c.hp < c.maxHp ? [c.hp] : undefined }] }).world });
     toast.info(`${c.name} stays behind.`);
   };
+  // Riding a beast (one that can be ridden): it carries the character, and a journey on the roads goes at its pace (the ride is chosen
+  // for a tap on the map). House rule: a mount shies away from a fight; the rider fights on foot and is back in the saddle afterwards
+  const mountBeast = (b: Companion) => {
+    if (inCombat || dead) return;
+    if (!b.mount) return toast.error(`${b.name} cannot carry a rider.`);
+    if (b.hp <= 0) return toast.error(`${b.name} is in no state to be ridden.`);
+    saveBeasts(beasts, {}, b.id);
+    toast.success(`You climb onto ${b.name}.`);
+  };
+  const dismount = () => {
+    if (!riding) return;
+    saveBeasts(beasts, {}, null);
+    toast.info(`You get down from ${riding.name}.`);
+  };
+  // Load an item from the pack onto a companion or a beast (it no longer counts toward the character's load, and is not to hand until it
+  // is taken back), and take it back
+  const carrierOf = (id: string) => party.find((c) => c.id === id) ?? beasts.find((c) => c.id === id);
+  const withCarrier = (c: Companion, next: Companion, extra: Record<string, any>) =>
+    c.kind === "beast" ? saveBeasts(beasts.map((x) => (x.id === c.id ? next : x)), extra) : saveParty(party.map((x) => (x.id === c.id ? next : x)), extra);
+  const loadOnto = (carrierId: string, name: string) => {
+    if (cartOf(carrierId)) return loadCart(carrierId, name);
+    const c = carrierOf(carrierId);
+    if (!c || inCombat || dead) return;
+    const worn = equippedNow(character);
+    if ([...worn.weapons, worn.body, worn.shield, ...(play.wearing ?? [])].some((n) => n && n.toLowerCase() === name.toLowerCase()) && (character.equipment ?? []).filter((n: string) => n === name).length < 2) return toast.error(`Take off or put away ${name} first.`);
+    const load = carrierLoad(c);
+    if (load.weight + pounds(name) > load.capacity) return toast.error(`${c.name} carries ${load.weight} lb of ${load.capacity}: no room for ${name} (${pounds(name)} lb).`);
+    const equipment = [...(character.equipment ?? [])];
+    const at = equipment.indexOf(name);
+    if (at < 0) return;
+    equipment.splice(at, 1);
+    withCarrier(c, { ...c, pack: [...(c.pack ?? []), name] }, { equipment });
+  };
+  const unloadFrom = (carrierId: string, name: string) => {
+    if (cartOf(carrierId)) return unloadCart(carrierId, name);
+    const c = carrierOf(carrierId);
+    if (!c || inCombat || dead) return;
+    const pack = [...(c.pack ?? [])];
+    const at = pack.indexOf(name);
+    if (at < 0) return;
+    pack.splice(at, 1);
+    withCarrier(c, { ...c, pack }, { equipment: [...(character.equipment ?? []), name] });
+  };
+  // A cart: with the party (someone pushes or pulls it) or parked somewhere; what it holds and how much it can
+  const cartOf = (id: string) => carts.find((c) => c.id === id);
+  const cartLoad = (c: Cart) => ({ weight: Math.round(c.pack.reduce((n, name) => n + pounds(name), 0) * 10) / 10, capacity: cartCapacity(factsOf(c.name)?.description) });
+  const cartAtHand = (c: Cart) => !c.parked || c.parked.areaId === hereId;
+  const handlerName = (c: Cart) => { const h = cartHandler(c, [...party, ...beasts]); return h === "me" ? character.name : carrierOf(h)?.name ?? character.name; };
+  const patchCart = (c: Cart, next: Partial<Cart>, extra: Record<string, any> = {}) => saveCarts(carts.map((x) => (x.id === c.id ? { ...x, ...next } : x)), extra);
+  const loadCart = (id: string, name: string) => {
+    const c = cartOf(id);
+    if (!c || inCombat || dead) return;
+    if (!cartAtHand(c)) return toast.error(`${c.name} is parked elsewhere.`);
+    const worn = equippedNow(character);
+    if ([...worn.weapons, worn.body, worn.shield, ...(play.wearing ?? [])].some((n) => n && n.toLowerCase() === name.toLowerCase()) && (character.equipment ?? []).filter((n: string) => n === name).length < 2) return toast.error(`Take off or put away ${name} first.`);
+    const load = cartLoad(c);
+    if (load.weight + pounds(name) > load.capacity) return toast.error(`${c.name} holds ${load.weight} lb of ${load.capacity}: no room for ${name} (${pounds(name)} lb).`);
+    const equipment = [...(character.equipment ?? [])];
+    const at = equipment.indexOf(name);
+    if (at < 0) return;
+    equipment.splice(at, 1);
+    patchCart(c, { pack: [...c.pack, name] }, { equipment });
+  };
+  const unloadCart = (id: string, name: string) => {
+    const c = cartOf(id);
+    if (!c || inCombat || dead) return;
+    if (!cartAtHand(c)) return toast.error(`${c.name} is parked elsewhere.`);
+    const pack = [...c.pack];
+    const at = pack.indexOf(name);
+    if (at < 0) return;
+    pack.splice(at, 1);
+    patchCart(c, { pack }, { equipment: [...(character.equipment ?? []), name] });
+  };
+  // Who pushes or pulls it (house rule: a beast only pulls, in harness), and setting it down where the party stands, or taking it again
+  const handleCart = (c: Cart, who: string, mode: Cart["mode"] = c.mode) => {
+    if (inCombat || dead) return;
+    if (!cartAtHand(c)) return toast.error(`${c.name} is parked elsewhere: go there to take it.`);
+    const beast = beasts.find((b) => b.id === who);
+    const next: Cart["mode"] = beast ? "pull" : mode;
+    patchCart(c, { handler: who, mode: next, parked: null });
+    toast.info(`${who === "me" ? "You" : carrierOf(who)?.name ?? "You"} ${next === "push" ? "push" : "pull"} ${c.name}${beast && mode === "push" ? " (a beast pulls it in harness)" : ""}.`);
+  };
+  const parkCart = (c: Cart) => {
+    if (inCombat || dead || !hereId || c.parked) return;
+    const spot = usePartySpot.getState();
+    patchCart(c, { handler: null, parked: { areaId: hereId, x: spot.areaId === hereId ? spot.x : 0, y: spot.areaId === hereId ? spot.y : 0 } });
+    toast.info(`${c.name} is left here${c.pack.length ? ` with what is in it` : ""}.`);
+  };
+  // Back into the pack (to sell it, or to carry it folded: its 150 lb counts then), what it held with it
+  const stowCart = (c: Cart) => {
+    if (inCombat || dead) return;
+    if (!cartAtHand(c)) return toast.error(`${c.name} is parked elsewhere.`);
+    saveCarts(carts.filter((x) => x.id !== c.id), { equipment: [...(character.equipment ?? []), ...c.pack, c.name], playState: { ...(character.playState ?? {}), foldedCarts: folded + 1 } });
+    toast.info(`${c.name} is packed away${c.pack.length ? `, and what it held is back in your pack` : ""}.`);
+  };
+  // A folded cart from the pack set on the map again
+  const unfoldCart = () => {
+    if (inCombat || dead || folded <= 0) return;
+    saveCharacter({ playState: { ...(character.playState ?? {}), foldedCarts: folded - 1 } });
+  };
+  // A cart's controls (the Party tab and its card on the map)
+  const cartPanel = (c: Cart) => {
+    const load = cartLoad(c);
+    const atHand = cartAtHand(c);
+    const counts = new Map<string, number>();
+    for (const n of c.pack) counts.set(n, (counts.get(n) ?? 0) + 1);
+    const handlers = [{ id: "me", name: "You" }, ...party.filter((p) => p.hp > 0).map((p) => ({ id: p.id, name: p.name })), ...beasts.filter((b) => b.hp > 0).map((b) => ({ id: b.id, name: `${b.name} (pulls)` }))];
+    const where = c.parked ? world?.areas[c.parked.areaId]?.name ?? "somewhere" : undefined;
+    return (
+      <div className="mt-1 space-y-1 text-xs" data-testid={`cart-${c.id}`}>
+        <p className="text-gray-300">{c.parked ? `Parked at ${where}.` : `${handlerName(c)} ${c.mode === "push" ? "pushes" : "pulls"} it.`} Holds {load.weight} of {load.capacity} lb (the book's 2,000 lb; house rule: someone has to push or pull it).</p>
+        {atHand && (
+          <div className="flex flex-wrap items-center gap-1">
+            <select className="h-6 rounded bg-gray-700 px-1" value={c.parked ? "" : cartHandler(c, [...party, ...beasts])} disabled={inCombat || dead} onChange={(e) => e.target.value && handleCart(c, e.target.value)} data-testid={`cart-handler-${c.id}`}>
+              {c.parked && <option value="">take it: who?</option>}
+              {handlers.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+            </select>
+            {!c.parked && <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || !!beasts.find((b) => b.id === c.handler)} onClick={() => handleCart(c, cartHandler(c, [...party, ...beasts]), c.mode === "push" ? "pull" : "push")} data-testid={`cart-mode-${c.id}`}>{c.mode === "push" ? "Pull instead" : "Push instead"}</Button>}
+            {!c.parked && <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => parkCart(c)} data-testid={`cart-park-${c.id}`}>Park here</Button>}
+            <Button size="sm" variant="ghost" className="h-6 px-2" disabled={inCombat || dead} onClick={() => stowCart(c)} data-testid={`cart-stow-${c.id}`}>Pack it away</Button>
+          </div>
+        )}
+        {[...counts.entries()].map(([n, k]) => (
+          <div key={n} className="flex items-center justify-between gap-2">
+            <span>{n}{k > 1 ? ` x${k}` : ""} <span className="text-gray-500">{pounds(n)} lb</span></span>
+            <Button size="sm" variant="outline" className="h-5 px-1 text-xs" disabled={!atHand || inCombat || dead} onClick={() => unloadCart(c.id, n)} data-testid={`cart-unload-${c.id}-${n}`}>Take</Button>
+          </div>
+        ))}
+        {!counts.size && <p className="text-gray-500">Empty: load it from the Pack tab.</p>}
+      </div>
+    );
+  };
+  // What a companion or beast carries, with a button to take each back
+  const packPanel = (c: Companion) => {
+    const load = carrierLoad(c);
+    const counts = new Map<string, number>();
+    for (const n of c.pack ?? []) counts.set(n, (counts.get(n) ?? 0) + 1);
+    return (
+      <div className="mt-1 space-y-0.5 text-xs" data-testid={`pack-${c.id}`}>
+        <p className={load.weight > load.capacity ? "text-amber-300" : "text-gray-400"} data-testid={`carrier-load-${c.id}`}>Carrying {load.weight} lb of {load.capacity} (house rule: Strength x 15 by size{c.mount ? ", a mount one size larger" : ""}, or the mount table's).</p>
+        {[...counts.entries()].map(([n, k]) => (
+          <div key={n} className="flex items-center justify-between gap-2">
+            <span>{n}{k > 1 ? ` x${k}` : ""} <span className="text-gray-500">{pounds(n)} lb</span></span>
+            <Button size="sm" variant="outline" className="h-5 px-1 text-xs" disabled={inCombat || dead} onClick={() => unloadFrom(c.id, n)} data-testid={`unload-${c.id}-${n}`}>Take back</Button>
+          </div>
+        ))}
+        {!counts.size && <p className="text-gray-500">Nothing loaded: load things from the Pack tab.</p>}
+      </div>
+    );
+  };
 
+  // ---- Bases (shared/logic bases.ts; all house rules): a camp pitched where the party stands, a hostile site claimed once cleared, and
+  // what is set down and kept in them. A base is kept in the world, so it stays put for the campaign.
+  const buildingHere = world && here ? (here.kind === "room" ? world.areas[here.parentId ?? ""] : here.kind === "building" ? here : undefined) : undefined;
+  const baseHere = world && buildingHere ? baseAt(world, buildingHere.id) : undefined;
+  const pieceTypeFor = (name: string) => pieceTypeOf({ name, lb: containerOf({ name, description: factsOf(name)?.description })?.lb });
+  // The items in the pack that can be set down as a piece
+  const settable = Array.from(new Set<string>((character?.equipment ?? []) as string[])).filter((n) => pieceTypeFor(n));
+  const startPlacing = (name: string) => {
+    const type = pieceTypeFor(name);
+    if (!type || inCombat || dead) return;
+    if (!buildingHere) return toast.error("A base is set up on a local map: in front of or inside a building, a camp, a cave or a ruin.");
+    if (hostiles.length) return toast.error("Not with armed enemies about.");
+    usePlacing.getState().set({ item: name, name: type.name, w: type.w, h: type.h, places: type.places, look: type.look });
+    toast.info(`Tap an open square on the map to set down the ${type.name.toLowerCase()} (${type.places.join(" or ")}).`);
+  };
+  const placePiece = (areaId: string, x: number, y: number, face: number, indoors: boolean) => {
+    const placing = usePlacing.getState().piece;
+    usePlacing.getState().set(null);
+    if (!placing || !world || !buildingHere) return;
+    const type = pieceTypeFor(placing.item);
+    const equipment = [...(character.equipment ?? [])];
+    const at = equipment.indexOf(placing.item);
+    if (!type || at < 0) return;
+    const done = setDown(world, { buildingId: buildingHere.id, settlementId: settlementOf(world, buildingHere.id), type, item: placing.item, areaId, x, y, face, place: indoors ? "indoors" : "outdoors", minute: clockNow() });
+    if (done.error) return toast.error(done.error);
+    equipment.splice(at, 1);
+    saveCharacter({ equipment });
+    saveCampaign({ galaxyMap: done.world, ...pass(type.minutes) });
+    toast.success(`${type.name} set down${baseHere ? ` at ${baseHere.name}` : ": a camp is made here"} (${type.minutes} min${type.lb ? `; holds ${type.lb} lb` : ""}${type.shelter ? "; a shelter to sleep in" : ""}).`);
+  };
+  const strikePiece = (piece: BasePiece) => {
+    if (!world || inCombat || dead) return;
+    const done = takeDown(world, piece.id);
+    if (done.error) return toast.error(done.error);
+    const back = [...(done.made!.item ? [done.made!.item] : []), ...done.made!.items];
+    saveCharacter({ equipment: [...(character.equipment ?? []), ...back] });
+    saveCampaign({ galaxyMap: done.world, ...pass(pieceTypeFor(piece.item ?? "")?.minutes ?? 1) });
+    setPicked(null);
+    toast.info(`${piece.name} taken down${back.length ? `: ${back.join(", ")} back in your pack` : ""}.`);
+  };
+  const storeIn = (piece: BasePiece, name: string) => {
+    if (!world || inCombat || dead) return;
+    const done = store(world, piece.id, [name], pounds);
+    if (done.error) return toast.error(done.error);
+    const equipment = [...(character.equipment ?? [])];
+    equipment.splice(equipment.indexOf(name), 1);
+    saveCharacter({ equipment });
+    saveCampaign({ galaxyMap: done.world });
+  };
+  const takeOut = (piece: BasePiece, name: string) => {
+    if (!world || inCombat || dead) return;
+    const done = unstore(world, piece.id, [name]);
+    if (done.error || !done.made?.taken.length) return;
+    saveCharacter({ equipment: [...(character.equipment ?? []), ...done.made.taken] });
+    saveCampaign({ galaxyMap: done.world });
+  };
+  const claimHere = () => {
+    if (!world || !buildingHere || inCombat || dead) return;
+    const can = claimableSite(world, buildingHere.id);
+    if (!can.ok) return toast.error(can.why ?? "It cannot be claimed.");
+    const done = claimBase(world, { areaId: buildingHere.id, settlementId: settlementOf(world, buildingHere.id), name: `${buildingHere.name}`, minute: clockNow() });
+    if (done.error) return toast.error(done.error);
+    saveCampaign({ galaxyMap: done.world, ...pass(10) });
+    toast.success(`${buildingHere.name} is yours: a base to set down storage and shelters in, kept for the campaign (house rule).`);
+  };
+  // A piece's card: what it is, what is kept in it, and what the pack can put in it
+  const pieceCard = (piece: BasePiece) => {
+    const base = (world?.bases ?? []).find((b) => b.pieces.some((p) => p.id === piece.id));
+    const counts = new Map<string, number>();
+    for (const n of piece.items) counts.set(n, (counts.get(n) ?? 0) + 1);
+    const room = piece.lb !== undefined ? Math.round((piece.lb - storedPounds(piece, pounds)) * 10) / 10 : undefined;
+    const atHand = base && buildingHere && base.areaId === buildingHere.id;
+    return (
+      <div className="space-y-1 text-xs" data-testid={`piece-${piece.id}`}>
+        <p className="text-sm font-semibold text-amber-200">{piece.name}{base ? <span className="text-xs text-gray-400"> at {base.name}</span> : null}</p>
+        <p className="text-gray-300">{piece.role === "storage" ? `Storage: ${storedPounds(piece, pounds)} of ${piece.lb} lb kept.` : `A shelter for ${piece.beds ?? 2}: a long rest here is a sheltered one.`}</p>
+        {piece.role === "storage" && [...counts.entries()].map(([n, k]) => (
+          <div key={n} className="flex items-center justify-between gap-2">
+            <span>{n}{k > 1 ? ` x${k}` : ""} <span className="text-gray-500">{pounds(n)} lb</span></span>
+            <Button size="sm" variant="outline" className="h-5 px-1 text-xs" disabled={!atHand || inCombat || dead} onClick={() => takeOut(piece, n)} data-testid={`take-out-${n}`}>Take</Button>
+          </div>
+        ))}
+        {piece.role === "storage" && atHand && (
+          <label className="flex items-center gap-1">
+            Put in:
+            <select className="h-6 min-w-0 flex-1 rounded bg-gray-700 px-1" value="" disabled={inCombat || dead} onChange={(e) => e.target.value && storeIn(piece, e.target.value)} data-testid="store-item">
+              <option value="">choose from your pack ({room} lb free)</option>
+              {Array.from(new Set<string>((character.equipment ?? []) as string[])).filter((n) => pounds(n) <= (room ?? Infinity)).sort().map((n) => <option key={n} value={n}>{n} ({pounds(n)} lb)</option>)}
+            </select>
+          </label>
+        )}
+        {/* A shelter is where the party rests and waits (the same rests as the Here tab; a long rest by a pitched shelter is a sheltered one) */}
+        {piece.role === "shelter" && atHand && (
+          <div className="flex flex-wrap gap-1" data-testid="piece-rest">
+            {([["Short rest", shortRest], ["Long rest", rest], ["Wait 1 h", () => waitFor(60, "Waited an hour")], ["Until evening", () => waitFor(until(18), "Waited until evening")], ["Until morning", () => waitFor(until(7), "Waited until morning")]] as [string, () => void][]).map(([label, act]) => (
+              <Button key={label} size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || hostiles.length > 0} onClick={act} data-testid={`piece-${label.toLowerCase().replace(/ /g, "-")}`}>{label}</Button>
+            ))}
+            {hostiles.length > 0 && <p className="w-full text-gray-500">Not with enemies about.</p>}
+          </div>
+        )}
+        {atHand && <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => strikePiece(piece)} data-testid="piece-take-down">Take it down{piece.items.length ? " (and what is in it)" : ""}</Button>}
+        {!atHand && <p className="text-gray-500">Go there to use it.</p>}
+      </div>
+    );
+  };
+  // The base panel of the party tab: the base here, claiming a cleared site, setting down what the pack holds, and the other bases
+  const basePanel = () => {
+    if (!world) return null;
+    const claim = buildingHere ? claimableSite(world, buildingHere.id) : undefined;
+    const others = (world.bases ?? []).filter((b) => b.id !== baseHere?.id);
+    if (!baseHere && !settable.length && !others.length && !claim?.ok) return null;
+    return (
+      <div className="mb-4 space-y-1 text-sm" data-testid="play-base">
+        <h3 className="font-semibold">Base</h3>
+        {placingNow && (
+          <div className="flex flex-wrap items-center gap-1 rounded bg-amber-900/40 p-1 text-xs" data-testid="placing">
+            <span>Setting down the {placingNow.name.toLowerCase()}: tap an open square on the map.</span>
+            {placingNow.w !== placingNow.h && <Button size="sm" variant="outline" className="h-5 px-1 text-xs" onClick={() => usePlacing.getState().turn()} data-testid="placing-turn">Turn</Button>}
+            <Button size="sm" variant="ghost" className="h-5 px-1 text-xs" onClick={() => usePlacing.getState().set(null)} data-testid="placing-cancel">Cancel</Button>
+          </div>
+        )}
+        {baseHere ? (
+          <>
+            <p className="text-xs text-gray-300" data-testid="base-here">{baseHere.name} ({baseHere.kind === "site" ? "a claimed site" : "a camp"}): {baseHere.pieces.length ? baseHere.pieces.map((p) => p.name).join(", ") : "nothing set down yet"}.</p>
+            <div className="flex flex-wrap gap-1">
+              {baseHere.pieces.map((p) => <Button key={p.id} size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={() => setPicked({ kind: "piece", id: p.id })} data-testid={`base-piece-${p.id}`}>{p.name}{p.role === "storage" ? ` (${p.items.length})` : ""}</Button>)}
+            </div>
+          </>
+        ) : buildingHere ? <p className="text-xs text-gray-400">No base here. Set something down to make camp{claim?.ok ? ", or claim this place" : ""}.</p> : null}
+        {claim?.ok && baseHere?.kind !== "site" && <Button size="sm" className="h-6 px-2 text-xs" disabled={inCombat || dead} onClick={claimHere} data-testid="base-claim">Claim {buildingHere!.name} as a base</Button>}
+        {settable.length > 0 && buildingHere && (
+          <div className="flex flex-wrap items-center gap-1 text-xs">
+            <span className="text-gray-400">Set down:</span>
+            {settable.map((n) => <Button key={n} size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={inCombat || dead} onClick={() => startPlacing(n)} data-testid={`set-down-${n}`}>{n}</Button>)}
+          </div>
+        )}
+        {others.length > 0 && <p className="text-xs text-gray-500">Elsewhere: {others.map((b) => `${b.name} (${world.areas[b.areaId]?.name ?? "?"}${b.settlementId && world.areas[b.settlementId] ? `, ${world.areas[b.settlementId].name}` : ""}; ${b.pieces.length} piece${b.pieces.length === 1 ? "" : "s"})`).join("; ")}.</p>}
+        <p className="text-xs text-gray-500">House rules: tents and shelters are pitched outdoors (an emergency shelter anywhere), chests and crates anywhere; what is kept in them stays for the campaign.</p>
+      </div>
+    );
+  };
   // Another of the user's characters, brought along as a companion: they fight as they are on
   // their sheet (armor class, hit points and their best weapon) and do not level or rest apart
   // (house rule); the sheet itself is left as it was
@@ -2915,25 +3353,42 @@ export default function GameBoard() {
     const capacity = ((character?.equipment ?? []) as string[]).reduce((n, name) => n + (factsOf(name)?.equipmentCategory === "Storage" ? liquidOf({ name, description: factsOf(name)?.description }) : 0), 0);
     const where: "settlement" | "ship" | "wild" = aboardShip ? (settlement && hasPort(world!, settlement.id) ? "settlement" : "ship") : settlement && !WILD_TYPES.includes(settlement.type) ? "settlement" : "wild";
     const survival = modifier(character?.abilityScores?.wisdom) + (skilled("survival") ? proficiency : 0);
-    return { where, hot: HOT_LANDS.includes(land), capacity, conMod: modifier(character?.abilityScores?.constitution), survival, forageDc: planet ? FORAGE_DC[land] ?? 15 : 99, garden: !!aboardShip?.mods?.some((m) => /hydroponics/i.test(m.name)) };
+    return { where, water: !!(character as any)?.itemSenses?.water, hot: HOT_LANDS.includes(land), capacity, conMod: modifier(character?.abilityScores?.constitution), survival, forageDc: planet ? FORAGE_DC[land] ?? 15 : 99, garden: !!aboardShip?.mods?.some((m) => /hydroponics/i.test(m.name)) };
   };
   const supplies: Supplies = play.supplies ?? { day: today, hungry: 0, water: 0, lack: 0, lifestyle: "Modest" };
-  useEffect(() => {
-    if (!character || !world || inCombat || dead) return;
-    if (!play.supplies) return void patchPlay({ supplies: { ...supplies, water: dayPlace().capacity } });
-    if (today <= supplies.day) return;
-    const place = dayPlace();
+  // The days up to `upTo` lived out (passDays). By default where the party is now; a journey says how it was spent (2026-10-26: all the
+  // days of a five-day passage were judged by the place it ended at, outside a settlement, so a passenger with no water of their own
+  // died of thirst on the way): a paying passenger is fed and watered aboard (house rule: the fare includes board), the party's own
+  // ship has its water and the pack's rations (or its hydroponics), and days on the roads are days in the wild
+  const liveDays = (upTo: number, how?: "passenger" | "ship" | "wild") => {
+    if (!character || upTo <= supplies.day) return;
+    const latestPlay = (queryClient.getQueryData<any>(["game-character", gameCharacterId])?.playState ?? play) as PlayState;
+    if (how === "passenger") {
+      saveCharacter({ playState: { ...latestPlay, supplies: { ...supplies, day: upTo, hungry: 0, water: Math.max(supplies.water, dayPlace().capacity) } } });
+      return;
+    }
+    const place = how ? { ...dayPlace(), where: how === "ship" ? ("ship" as const) : ("wild" as const) } : dayPlace();
     const rations = ((character.equipment ?? []) as string[]).filter((n) => !!foodOf({ name: n, description: factsOf(n)?.description }));
-    const r = passDays(supplies, today, place, character.credits ?? 0, rations, Math.random);
+    const r = passDays(supplies, upTo, place, character.credits ?? 0, rations, Math.random);
     const equipment = [...((character.equipment ?? []) as string[])];
     for (const n of r.eaten) equipment.splice(equipment.indexOf(n), 1);
     const exhausted = Math.min(6, (character.exhaustionLevel ?? 0) + r.exhaustion);
     saveCharacter({
-      credits: (character.credits ?? 0) - r.cost,
+      // (credits only when something was paid: a journey's own save of a fare must not be undone by a stale figure)
+      ...(r.cost ? { credits: (character.credits ?? 0) - r.cost } : {}),
       ...(r.eaten.length ? { equipment } : {}),
       ...(r.exhaustion ? { exhaustionLevel: exhausted, ...(exhausted >= 6 ? { conditions: Array.from(new Set([...(character.conditions ?? []), "Dead"])) } : {}) } : {}),
-      playState: { ...((queryClient.getQueryData<any>(["game-character", gameCharacterId])?.playState ?? play) as PlayState), supplies: r.supplies },
+      playState: { ...latestPlay, supplies: r.supplies },
     });
+    return { r, exhausted };
+  };
+  useEffect(() => {
+    if (!character || !world || inCombat || dead) return;
+    if (!play.supplies) return void patchPlay({ supplies: { ...supplies, water: dayPlace().capacity } });
+    if (today <= supplies.day) return;
+    const lived = liveDays(today);
+    if (!lived) return;
+    const { r, exhausted } = lived;
     const days = today - supplies.day;
     const said = [
       r.cost ? `${r.supplies.lifestyle ?? "Modest"} lifestyle: ${r.cost} credits for ${days} day${days > 1 ? "s" : ""}` : "",
@@ -3002,11 +3457,58 @@ export default function GameBoard() {
     saveCharacter({ equipment, playState: { ...state, hidden } });
     toast.error(`${why}: the law searches you and seizes ${result.seized.join(", ")} as contraband here (house rule).${note}`);
   };
+  // The world's pull here (shared/logic gravityOf, house rule): a gravity generator running makes it standard
+  const gravityNow = () => (world && here ? gravityOf(world, here.id, protections().generators.includes("gravity")) : { g: 1, label: "standard" });
+  // A fall outside a fight (shared/logic fallPlan and fallOutcome; the book's 1d6 a 10 ft., and the house rules: the world's pull, heavy
+  // armour's d8s, flight or a repulsor pack running sets down, a jetpack or rocket boots carried fired in a burst, a jump's landing).
+  // As with a pit trap, a fall outside a fight never takes the last hit point (house rule). Null when a check was cancelled.
+  const fallGear = (jumped: boolean): FallGear => {
+    const carried = (character?.equipment ?? []) as string[];
+    const flies = (n: string) => !!accessoryOf({ name: n, description: factsOf(n)?.description }).fly;
+    const flying = carried.find((n) => running(n) && flies(n));
+    const body = character ? equippedNow(character).body : undefined;
+    return {
+      heavy: !!body && /heavy/i.test(String(factsOf(body)?.armorClassification ?? "")),
+      flying,
+      descent: carried.find((n) => /repulsor pack/i.test(n) && running(n)),
+      burst: flying ? undefined : carried.find((n) => !running(n) && flies(n)),
+      jumped,
+    };
+  };
+  const fallDamage = (dice: number, sides: number, half: boolean) => {
+    const rolled = Array.from({ length: dice }, () => die(sides)).reduce((a, b) => a + b, 0);
+    return half ? Math.floor(rolled / 2) : rolled;
+  };
+  const fallOutside = async (feet: number, jumped: boolean): Promise<number | null> => {
+    if (!character) return null;
+    const plan = fallPlan(feet, gravityNow().g, fallGear(jumped));
+    const checks: { burst?: number; jump?: number } = {};
+    if (plan.jump) {
+      const r = await askCheck({ what: `Landing the jump (Acrobatics, DC ${plan.jump.dc}: one die less; house rule)`, dc: plan.jump.dc, abilities: ["dexterity"], skills: ["acrobatics"] });
+      if (!r) return null;
+      checks.jump = r.total;
+    }
+    if (plan.burst && plan.dice - (checks.jump !== undefined && checks.jump >= (plan.jump?.dc ?? 99) ? 1 : 0) > 0) {
+      const r = await askCheck({ what: `A burst of the ${plan.burst.by} before the ground (house rule)`, dc: plan.burst.dc, abilities: ["dexterity"], skills: ["acrobatics"] });
+      if (!r) return null;
+      checks.burst = r.total;
+    }
+    const out = fallOutcome(plan, checks);
+    const damage = out.dice ? fallDamage(out.dice, plan.die, out.half) : 0;
+    const hp = Math.max(1, (character.currentHp ?? 0) - damage);
+    if (damage) {
+      lastSavedHp.current = hp;
+      saveCharacter({ currentHp: hp });
+    }
+    const pull = gravityNow();
+    toast[damage ? "error" : "success"](`You ${out.text.replace(/\btheir\b/g, "your").replace(/\bthem\b/g, "you")}${damage ? ` and take ${damage} damage${plan.die === 8 ? " (heavy armour: d8s)" : ""}` : ""}.${pull.g !== 1 ? ` The pull here is ${pull.label} (house rule).` : ""}`);
+    return damage;
+  };
   const protections = (): Protections => ({
     wearing: wearingNow,
     carried: (character?.equipment ?? []) as string[],
     resist: [...wearingNow.flatMap((n) => suitFacts(n)?.resist ?? []), ...speciesTraits.flatMap((t) => Array.from(String(t.description ?? "").matchAll(/resistance to (\w+) damage/gi)).map((m) => m[1].toLowerCase()))],
-    darkvision: speciesTraits.some((t) => /^darkvision/i.test(t.name)),
+    darkvision: speciesTraits.some((t) => /^darkvision/i.test(t.name)) || ((character as any)?.itemSenses?.darkvision ?? 0) > 0,
     light: ((character?.equipment ?? []) as string[]).some((n) => /^glowrod/i.test(n) && running(n)) || (character ? carriedWeapons(character).some((w) => w.properties.some((p) => /^(luminous|bright)/i.test(p))) : false),
     generators: ((character?.equipment ?? []) as string[]).filter((n) => running(n)).map((n) => (/heat generator/i.test(n) ? "cold" : /gravity generator/i.test(n) ? "gravity" : "")).filter(Boolean) as EnvHazard[],
     water: supplies.water > 0,
@@ -3014,19 +3516,17 @@ export default function GameBoard() {
     gills: speciesTraits.some((t) => /breathe air and water|can breathe water|breathe underwater/i.test(String(t.description ?? ""))),
     suits: Object.fromEntries(wearingNow.map((n) => [n, suitFacts(n)?.protects ?? []])),
   });
-  // ---- What the character carries (Player's Handbook, Lifting and Carrying; the Variant: Encumbrance on by default): the party's other
-  // carriers take what they can (a hovercart 2,000 lb, a beast of burden its carrying capacity, a companion Strength x 15: house rule)
+  // ---- What the character carries (Player's Handbook, Lifting and Carrying; the Variant: Encumbrance on by default): everything in the
+  // pack counts. Before 2026-10-26 the companions and beasts silently took whatever went over half the capacity, so the pack's weight
+  // hardly ever told (the user: "it ignores the weight of the player inventory"); now only a hovercart pushed along takes its 2,000 lb (since then a cart on the map, `carts`),
+  // and companions and beasts carry what is loaded onto them (`loadOnto`), up to their own capacity (`carryingCapacity`)
   const variantOn = play.encumbrance !== "basic";
-  const otherCarriers = () => {
-    let n = ((character?.equipment ?? []) as string[]).filter((x) => /^hovercart$/i.test(x)).length * (containerOf({ name: "Hovercart", description: factsOf("Hovercart")?.description })?.lb ?? 2000);
-    for (const c of party) {
-      if (c.mount) n += Number((transport?.mounts ?? []).find((m) => m.name.toLowerCase() === c.name.toLowerCase())?.capacity ?? 0) || 300;
-      else if (c.kind !== "beast" && c.hp > 0) n += 150;
-    }
-    return n;
-  };
+  // (a hovercart is a cart on the map since 2026-10-26, holding what is loaded into it: `carts`; one folded in the pack weighs its 150 lb)
+  const otherCarriers = () => 0;
+  // What a companion or a beast carries for the party, and what it can
+  const carrierLoad = (c: Companion) => ({ weight: Math.round((c.pack ?? []).reduce((n, name) => n + pounds(name), 0) * 10) / 10, capacity: carryingCapacity(c, transport?.mounts ?? []) });
   const loadNow = () => {
-    const names = ((character?.equipment ?? []) as string[]).filter((n) => !/^hovercart$/i.test(n));
+    const names = (character?.equipment ?? []) as string[];
     const items = names.map((n) => {
       const f = factsOf(n);
       return { name: n, weight: f?.weight, containerLb: f?.equipmentCategory === "Storage" ? containerOf({ name: n, description: f?.description })?.lb : undefined };
@@ -3270,7 +3770,7 @@ export default function GameBoard() {
   // give advantage; it takes an hour; a failure by 5 or more is an attack
   const gentle = async (o: Occupant) => {
     if (!world || !here || inCombat) return;
-    if (partyFull) return toast.error(`You can lead ${COMPANION_LIMIT} companions at most (house rule).`);
+    if (beastsFull) return toast.error(`${BEAST_LIMIT} beasts follow you at most (house rule).`);
     if (crOf(o) > gentleLimit(level)) return toast.error(`${o.name} (CR ${o.cr}) is too fierce for a character of level ${level} to gentle (house rule: up to CR ${gentleLimit(level)}).`);
     const hurt = (o.wounds?.[0] ?? o.hitPoints ?? 0) < (o.hitPoints ?? 0);
     const dc = gentleDC(o, hurt);
@@ -3303,7 +3803,7 @@ export default function GameBoard() {
     if (!km || !transport || !world || !here || exit.needsShip || exit.via !== "path") return [];
     const settlement = world.areas[berthOf(world, here.id)];
     const riders = 1 + party.filter((c) => c.kind !== "beast").length;
-    const rides = groundRides({ km, vehicles: parkedHere, companions: party, riders, transport, hire: settlement ? hasRidesForHire(world, settlement.id) : false, transit: exit.label === "Transit line" });
+    const rides = groundRides({ km, vehicles: parkedHere, companions: [...party, ...beasts], riders, transport, hire: settlement ? hasRidesForHire(world, settlement.id) : false, transit: exit.label === "Transit line" });
     // The party's own vehicle can be flown by its pilot, in 3D, for the route (house rule)
     for (const ride of rides.filter((r) => r.vehicleId && !r.blocked)) rides.push({ ...ride, id: `pilot-${ride.id}`, label: `Fly it yourself (${ride.label})`, pilot: true });
     // Lifts: someone going where the party is going offers a seat (they leave when they leave)
@@ -3317,7 +3817,8 @@ export default function GameBoard() {
     return rides;
   };
   // The ride a trip takes when none was chosen (a tap on the map): the quickest that costs nothing
-  const defaultRide = (rides: Ride[]) => [...rides].filter((r) => !r.blocked && !r.fare && !r.pilot).sort((a, b) => a.minutes - b.minutes)[0];
+  // (in the saddle, the beast ridden)
+  const defaultRide = (rides: Ride[]) => (riding && rides.find((r) => r.mountId === riding.id && !r.blocked)) || [...rides].filter((r) => !r.blocked && !r.fare && !r.pilot).sort((a, b) => a.minutes - b.minutes)[0];
   const rideText = (minutes: number) => (minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.round(minutes / 6) / 10} h` : `${Math.floor(minutes / 1440)} d ${Math.round((minutes % 1440) / 60)} h`);
 
   // A speeder taken from a base, or mended where it stands (Mechanic's kit: "Restoring power to a
@@ -3373,14 +3874,15 @@ export default function GameBoard() {
     if (!world || !here || !transport) return;
     if (line.price > (character.credits ?? 0)) return toast.error(`${line.name} costs ${line.price.toLocaleString()} credits and you have ${(character.credits ?? 0).toLocaleString()}.`);
     if (line.category === "Vehicle") {
-      const model = transport.vehicles.find((v) => v.name === line.name);
+      const make = makeOf(line.name);
+      const model = transport.vehicles.find((v) => v.name === (make?.model ?? line.name));
       if (!model) return;
-      const mine: PartyVehicle = { id: newId("v"), name: model.name, model: model.name, mph: model.mph, value: line.price, status: "parked", owner: character.name, seats: SEATS[model.name] ?? 2, areaId: berthOf(world, here.id) };
+      const mine: PartyVehicle = { id: newId("v"), name: make?.name ?? model.name, model: model.name, mph: model.mph, value: line.price, status: "parked", owner: character.name, seats: make?.seats ?? SEATS[model.name] ?? 2, look: make?.look, areaId: berthOf(world, here.id) };
       saveCharacter({ credits: character.credits - line.price });
       saveCampaign({ vehicles: [...vehicles, mine], availableResources: { ...ledger, traders: { ...ledger.traders, [trader.id]: { ...traderLedger(trader.id), bought: { ...traderLedger(trader.id).bought, [line.name]: (traderLedger(trader.id).bought[line.name] ?? 0) + 1 } } } } });
-      return void toast.success(`${model.name} bought for ${line.price.toLocaleString()} credits. It is parked at ${world.areas[mine.areaId]?.name ?? "the settlement"}; ${model.mph} mph.`);
+      return void toast.success(`${mine.name} bought for ${line.price.toLocaleString()} credits. It is parked at ${world.areas[mine.areaId]?.name ?? "the settlement"}; ${model.mph} mph.`);
     }
-    if (partyFull) return toast.error(`You can lead ${COMPANION_LIMIT} companions at most (house rule).`);
+    if (beastsFull) return toast.error(`${BEAST_LIMIT} beasts follow you at most (house rule).`);
     const stat = mountStat(line.name);
     if (!stat) return toast.error("That mount is not in the rules data.");
     const response = await fetch("/api/world/occupant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ statBlock: stat.id }) });
@@ -3675,9 +4177,11 @@ export default function GameBoard() {
       const trap = room?.layout?.assets.find((a) => a.id === action.id);
       const pit = trap?.ref ? world.areas[trap.ref] : undefined;
       if (!room?.layout || !trap || !pit) return;
-      // A repulsor pack running slows the fall: no damage (its text: descent slowed to 60 feet a round)
-      const slowed = ((character.equipment ?? []) as string[]).some((n) => /repulsor pack/i.test(n) && running(n));
-      const fall = slowed ? 0 : die(6);
+      // A repulsor pack running slows the fall: no damage (its text: descent slowed to 60 feet a round); so does flight running. The
+      // world's pull and heavy armour as for any fall (fallPlan, house rules)
+      const plan = fallPlan(10, gravityNow().g, fallGear(false));
+      const slowed = !!plan.safe;
+      const fall = slowed ? 0 : fallDamage(plan.dice, plan.die, false);
       const hp = Math.max(1, (character.currentHp ?? 0) - fall);
       const galaxyMap: World = {
         ...world,
@@ -3689,7 +4193,7 @@ export default function GameBoard() {
       saveCharacter({ currentHp: hp });
       saveCampaign({ galaxyMap, currentLocation: pit.id, ...pass(1) });
       setCameFrom(room.id);
-      toast.error(`The flagstone gives way and you fall into a pit: ${slowed ? "your repulsor pack sets you down gently" : `${fall} damage`}. Climb out (Athletics or Dexterity, DC ${PIT_CLIMB_DC}).`);
+      toast.error(`The flagstone gives way and you fall into a pit: ${slowed ? `${plan.safe} sets you down gently` : `${fall} damage`}. Climb out (Athletics or Dexterity, DC ${PIT_CLIMB_DC}).`);
     }
     else if (action.type === "go") {
       if (gangHolds) toast.warning("The gang has you. There is no slipping through a door with them on you.");
@@ -3712,6 +4216,9 @@ export default function GameBoard() {
       else if (action.id === "ramp") disembarkNow();
       else toast.info(stationNote[action.id] ?? action.id);
     } else if (action.type === "occupant" || action.type === "ship" || action.type === "vehicle" || action.type === "companion") setPicked({ kind: action.type, id: action.id });
+    else if (action.type === "piece") setPicked({ kind: "piece", id: action.id });
+    else if (action.type === "cart") setPicked({ kind: "cart", id: action.id });
+    else if (action.type === "place") placePiece(action.areaId, action.x, action.y, action.face, action.indoors);
     else if (action.type === "loot") {
       const cache = here.loot.find((c) => c.id === action.id);
       if (!cache) return;
@@ -4469,7 +4976,8 @@ export default function GameBoard() {
     // Speeders and mounts are for sale beside the equipment (they come from the transport set)
     const stockPool = [
       ...equipmentData,
-      ...(transport?.vehicles ?? []).map((v) => ({ name: v.name, cost: v.cost, equipmentCategory: "Vehicle", description: `${v.mph} mph; seats ${SEATS[v.name] ?? 2} (house rule).` })),
+      // (the makes of speeder this world sees, each at its class's price and speed: house rule, shared/logic VEHICLE_MAKES)
+      ...makesSold(trailOf(world, placeId).find((a) => a.kind === "planet")?.type).flatMap((m) => { const v = transport?.vehicles.find((x) => x.name === m.model); return v ? [{ name: m.name, cost: v.cost, equipmentCategory: "Vehicle", description: `A ${m.model.toLowerCase()} (${m.from}): ${v.mph} mph; seats ${m.seats} (house rule).` }] : []; }),
       ...(transport?.mounts ?? []).filter((m) => !!mountStat(m.name)).map((m) => ({ name: m.name, cost: m.cost, equipmentCategory: "Mount", description: `${m.speed} ft. a round; carries ${m.capacity} lb.` })),
     ];
     const lines = equipmentData.length ? stockOf(world, trader, placeId, stockPool, today, customer, ledger) : [];
@@ -4629,8 +5137,8 @@ export default function GameBoard() {
           {tooFierce ? `Too fierce for a character of level ${level} to gentle (CR ${o.cr}).` : `Gentle it: Wisdom (Animal Handling) against DC ${gentleDC(o, hurt)}, an hour${food ? "; rations in hand give advantage" : "; rations would give advantage"}. A miss by 5 or more and it attacks. (House rule.)`}
         </p>
         {!tooFierce && (
-          <Button size="sm" variant="outline" disabled={partyFull || inCombat || dead} onClick={() => gentle(o)} data-testid="gentle-beast">
-            Gentle it {partyFull ? `(${COMPANION_LIMIT} companions at most)` : ""}
+          <Button size="sm" variant="outline" disabled={beastsFull || inCombat || dead} onClick={() => gentle(o)} data-testid="gentle-beast">
+            Gentle it {beastsFull ? `(${BEAST_LIMIT} beasts at most)` : ""}
           </Button>
         )}
       </div>
@@ -4735,6 +5243,11 @@ export default function GameBoard() {
   // The plain item whose modification slots are open, and the droid companion being customized
   const [modding, setModding] = useState<string | null>(null);
   const [customizing, setCustomizing] = useState<string | null>(null);
+  // The companion or beast whose load is open in the party tab, and the one the pack's Load buttons load onto
+  const [packOpen, setPackOpen] = useState<string | null>(null);
+  const [loadTarget, setLoadTarget] = useState<string>("");
+  // A base piece being set down on the map
+  const placingNow = usePlacing((s) => s.piece);
   // Loading a ranged weapon out of a fight (a minute): a cell or generator fills it (a partly spent cell is swapped out and lost);
   // cartridges, bolts, darts and the like go in one a shot, and those of another kind come back out to the pack
   const loadWeapon = (weapon: string, round: string) => {
@@ -5271,6 +5784,9 @@ export default function GameBoard() {
       saveCharacter({ credits: (character.credits ?? 0) - fare });
       toast.info(`${how === "smuggler" ? "Passage paid under the table" : "Ticket bought"}: ${fare} credits (house rule: the books price no fares).`);
     }
+    // (a ticket or a smuggler's passage is fed aboard; a stowaway lives on their own rations and the ship's water: see liveDays)
+    const arrival = dayOf(useClock.getState().minutes + offer.minutes);
+    if (arrival > supplies.day) liveDays(arrival, how === "stowaway" ? "ship" : "passenger");
     const changes: Record<string, any> = { currentLocation: offer.to, ...pass(offer.minutes) };
     setCameFrom(here.id);
     toast.info(`${Math.round(offer.minutes / 6) / 10} hours to ${offer.name}: it is ${clockText(useClock.getState().minutes)}.`);
@@ -5869,13 +6385,14 @@ export default function GameBoard() {
         return said(`${name} is in the hold, to fit to a ship at a shipyard or by the crew`);
       }
       if (category === "speeders") {
-        const model = transport?.vehicles.find((v) => v.name === item.id);
+        const make = makeOf(item.id);
+        const model = transport?.vehicles.find((v) => v.name === (make?.model ?? item.id));
         if (!model) return;
-        saveCampaign({ vehicles: [...vehicles, { id: newId("v"), name: model.name, model: model.name, mph: model.mph, value: model.cost, status: "parked", owner: character.name, seats: SEATS[model.name] ?? 2, areaId: berth } as PartyVehicle] });
-        return said(`${model.name} is parked at ${world.areas[berth]?.name ?? "the settlement"}`);
+        saveCampaign({ vehicles: [...vehicles, { id: newId("v"), name: make?.name ?? model.name, model: model.name, mph: model.mph, value: model.cost, status: "parked", owner: character.name, seats: make?.seats ?? SEATS[model.name] ?? 2, look: make?.look, areaId: berth } as PartyVehicle] });
+        return said(`${make?.name ?? model.name} is parked at ${world.areas[berth]?.name ?? "the settlement"}`);
       }
       if (category === "droids" || category === "beasts") {
-        if (partyFull) return void toast.error(`Test menu: you already lead ${COMPANION_LIMIT} companions (the game's limit); dismiss one first.`);
+        if (category === "droids" ? partyFull : beastsFull) return void toast.error(category === "droids" ? `Test menu: you already lead ${COMPANION_LIMIT} companions (the game's limit); dismiss one first.` : `Test menu: ${BEAST_LIMIT} beasts already follow you (the game's limit); let one go first.`);
         const response = await fetch("/api/world/occupant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ statBlock: item.id }) });
         if (!response.ok) return void toast.error("Test menu: could not load that creature.");
         const o: Occupant = { ...(await response.json()), disposition: "neutral", role: category === "droids" ? "droid" : "wildlife" };
@@ -5888,7 +6405,7 @@ export default function GameBoard() {
     return (
       <TestMenu
         areas={areas}
-        data={{ equipment: equipmentData, enhanced: enhancedRows, shipRows, enhancedShip: enhancedShipRows, vehicles: transport?.vehicles ?? [], droids: droidStats, beasts: beastStats }}
+        data={{ equipment: equipmentData, enhanced: enhancedRows, shipRows, enhancedShip: enhancedShipRows, vehicles: VEHICLE_MAKES.flatMap((m) => { const v = transport?.vehicles.find((x) => x.name === m.model); return v ? [{ ...v, name: m.name }] : []; }), droids: droidStats, beasts: beastStats }}
         here={here.id}
         credits={character.credits ?? 0}
         level={level}
@@ -6008,6 +6525,7 @@ export default function GameBoard() {
             return void saveCampaign(pass(1));
           }
         }
+        if (scale?.how === "jump" && (await fallOutside(scale.feet, true)) === null) return;
         setPicked(null);
         travel(outside ? { to: room.id, via: "enter", label: "Climb in through the window", travel: "", secret: true } : { to: building.id, via: "leave", label: "Climb out through the window", travel: "" });
         if (pane?.alarmed) trip();
@@ -6054,7 +6572,7 @@ export default function GameBoard() {
         const seen = [...room.occupants.map((o) => `${o.count > 1 ? `${o.count} x ` : ""}${o.name} (${o.disposition})`), ...room.ships.map((ship) => ship.name)];
         toast.info(outside ? `Through the window of ${room.name}: ${seen.join(", ") || "nobody"}. (House rule: looking in needs no check.)` : `Outside the window: the street by ${building.name}.`);
       };
-      const what = !pane ? "A window." : `${{ slit: "A slit, too narrow for anyone to get through", small: "A small window, too small to climb through", large: "A window big enough to climb through", wide: "A great window, easily climbed through" }[pane.size]}${pane.broken ? ", its glass broken" : pane.latch === "open" ? ", open" : pane.latch === "latched" ? ", latched from inside" : `, locked (DC ${pane.dc ?? 12})`}.${sensor ? ` A sensor on the frame: going through it trips the alarm (seen with passive Perception ${passive}).` : ""}${climbable(pane) && scale ? (scale.how === "none" ? ` ${scale.why}.` : ` ${outside ? "Up to it" : "Down from it"} by ${scale.by.toLowerCase()}${scale.dc ? ` (Strength (Athletics), DC ${scale.dc}: house rule)` : ""}.`) : ""}`;
+      const what = !pane ? "A window." : `${{ slit: "A slit, too narrow for anyone to get through", small: "A small window, too small to climb through", large: "A window big enough to climb through", wide: "A great window, easily climbed through" }[pane.size]}${pane.broken ? ", its glass broken" : pane.latch === "open" ? ", open" : pane.latch === "latched" ? ", latched from inside" : `, locked (DC ${pane.dc ?? 12})`}.${sensor ? ` A sensor on the frame: going through it trips the alarm (seen with passive Perception ${passive}).` : ""}${climbable(pane) && scale ? (scale.how === "none" ? ` ${scale.why}.` : scale.how === "jump" ? ` Down from it only by a jump of ${scale.feet} ft.: a fall (house rule)` : ` ${outside ? "Up to it" : "Down from it"} by ${scale.by.toLowerCase()}${"dc" in scale && scale.dc ? ` (Strength (Athletics), DC ${scale.dc}: house rule)` : ""}.`) : ""}`;
       return (
         <>
           {close}
@@ -6229,9 +6747,47 @@ export default function GameBoard() {
         </>
       );
     }
+    if (picked.kind === "cart") {
+      const cart = cartOf(picked.id);
+      if (!cart) return null;
+      return (
+        <>
+          {close}
+          <p className="text-sm font-semibold text-amber-200">{cart.name}</p>
+          {cartPanel(cart)}
+        </>
+      );
+    }
+    if (picked.kind === "piece") {
+      const piece = (world?.bases ?? []).flatMap((b) => b.pieces).find((p) => p.id === picked.id);
+      if (!piece) return null;
+      return (
+        <>
+          {close}
+          {pieceCard(piece)}
+        </>
+      );
+    }
     if (picked.kind === "companion") {
-      const c = party.find((x) => x.id === picked.id);
+      const c = carrierOf(picked.id);
       if (!c) return null;
+      if (c.kind === "beast") {
+        return (
+          <>
+            {close}
+            <p className="font-semibold text-green-300">{c.name}</p>
+            <p className="text-xs text-gray-300">{[c.size, c.creature, c.cr && `CR ${c.cr}`, `AC ${c.armorClass}`, `${c.hp}/${c.maxHp} hit points`, `speed ${c.speed} ft.`, c.mount ? "can be ridden" : "too small to ride", riding?.id === c.id && "you ride it"].filter(Boolean).join(", ")}</p>
+            {c.how && <p className="text-xs text-gray-400">Follows you: {c.how}. It keeps out of fights (house rule).</p>}
+            <div className="mt-1 flex flex-wrap gap-1">
+              {c.mount && (riding?.id === c.id
+                ? <Button size="sm" variant="outline" disabled={inCombat} onClick={dismount} data-testid="beast-dismount">Dismount</Button>
+                : <Button size="sm" disabled={inCombat || dead || c.hp <= 0} onClick={() => mountBeast(c)} data-testid="beast-mount">Mount</Button>)}
+              <Button size="sm" variant="outline" disabled={inCombat} onClick={() => { dismiss(c); setPicked(null); }}>Let go</Button>
+            </div>
+            {packPanel(c)}
+          </>
+        );
+      }
       return (
         <>
           {close}
@@ -6242,6 +6798,7 @@ export default function GameBoard() {
           <div className="mt-1 flex flex-wrap gap-1">
             <Button size="sm" variant="outline" disabled={inCombat} onClick={() => { dismiss(c); setPicked(null); }}>Dismiss</Button>
           </div>
+          {packPanel(c)}
         </>
       );
     }
@@ -6332,14 +6889,17 @@ export default function GameBoard() {
     const roll = exhausted ? Math.min(first, d20()) : first;
     return { roll, bonus, total: roll + bonus, note: `${note}${exhausted ? "; exhausted: disadvantage" : ""}`.replace(/^; /, "") };
   };
-  const commitDowntime = (what: { character?: Record<string, any>; downtime: Partial<DowntimeState>; days: number; log?: string[]; renown?: number }) => {
+  // `lived`: days whose living the activity itself paid for (Work: "you earn enough to support a ... lifestyle for the week"), which the
+  // daily lifestyle and food (passDays) then skip; before 2026-10-26 a workweek's lifestyle was charged on top of what the work paid for it
+  const commitDowntime = (what: { character?: Record<string, any>; downtime: Partial<DowntimeState>; days: number; log?: string[]; renown?: number; lived?: number }) => {
     if (!character) return;
     const next: DowntimeState = { ...downtime, ...what.downtime };
     const today2 = dayOf(useClock.getState().minutes);
     next.log = [...downtime.log, ...(what.log ?? []).map((text) => ({ day: today2, text }))].slice(-40);
     const charChanges: Record<string, any> = { ...(what.character ?? {}) };
     const basePlay = (charChanges.playState ?? character.playState ?? {}) as any;
-    charChanges.playState = { ...basePlay, downtime: next };
+    const fed = what.lived && basePlay.supplies ? { supplies: { ...basePlay.supplies, day: Math.max(basePlay.supplies.day ?? today2, today2) + what.lived } } : {};
+    charChanges.playState = { ...basePlay, ...fed, downtime: next };
     saveCharacter(charChanges);
     const campaignChanges: Record<string, any> = {};
     // Rivals do not rest while the character does (Wretched Hives): in each workweek one of them may act
@@ -6398,9 +6958,9 @@ export default function GameBoard() {
     ? parsedFeatures.filter((f) => f.heal && f.heal.target === "self" && (!f.uses || (play.featureUses?.[f.pool] ?? 0) < f.uses.max))
     : [];
   const useOutside = (f: ReturnType<typeof combatFeatures>[number]) => {
-    if (!character || !f.heal || character.currentHp >= character.maxHp) return;
+    if (!character || !f.heal || character.currentHp >= hpCap()) return;
     const amount = Math.max(1, (f.heal.amount.dice ? rollDamage(f.heal.amount.dice, false) : 0) + f.heal.amount.flat);
-    lastSavedHp.current = Math.min(character.maxHp, character.currentHp + amount);
+    lastSavedHp.current = Math.min(hpCap(), character.currentHp + amount);
     saveCharacter({
       currentHp: lastSavedHp.current,
       playState: { ...play, featureUses: { ...(play.featureUses ?? {}), [f.pool]: (play.featureUses?.[f.pool] ?? 0) + 1 } },
@@ -6448,7 +7008,7 @@ export default function GameBoard() {
         </label>
       )}
       {outsideFeatures.map((f) => (
-        <Button key={f.key} size="sm" variant="outline" onClick={() => useOutside(f)} disabled={character.currentHp >= character.maxHp} data-testid={`feature-${f.name}`}>
+        <Button key={f.key} size="sm" variant="outline" onClick={() => useOutside(f)} disabled={character.currentHp >= hpCap()} data-testid={`feature-${f.name}`}>
           {f.name}{f.uses ? ` (${f.uses.max - (play.featureUses?.[f.pool] ?? 0)} left)` : ""}
         </Button>
       ))}
@@ -6458,7 +7018,7 @@ export default function GameBoard() {
           size="sm"
           variant="outline"
           onClick={() => castHealing(power)}
-          disabled={inCombat || dead || character.currentHp >= character.maxHp || character.currentForcePoints < powerCost(power)}
+          disabled={inCombat || dead || character.currentHp >= hpCap() || character.currentForcePoints < powerCost(power)}
         >
           {power.name} ({powerCost(power)} pts)
         </Button>
@@ -6488,6 +7048,35 @@ export default function GameBoard() {
   return (
     <div className="relative h-[100dvh] w-screen bg-black overflow-hidden">
       {checkAsk && <CheckDialog request={checkAsk.request} onRoll={(roller, skill) => finishCheck(roller, skill)} onCancel={() => finishCheck(null, null)} />}
+      {roadHit && !roadHit.chase && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" data-testid="road-ambush">
+          <div className="max-w-md space-y-2 rounded border border-red-500/60 bg-gray-900 p-4 text-sm text-gray-100">
+            <p className="text-base font-semibold text-red-300">Ambush on the road!</p>
+            <p>
+              On the way to {world?.areas[roadHit.exit.to]?.name ?? "the next settlement"}, {roadHit.riders.length} riders of the {roadHit.a.who} come out of cover behind you on {roadHit.a.model === "Swoop bike" ? "swoops" : "speeder bikes"}.
+            </p>
+            <p className="text-xs text-gray-400">Why: {roadHit.a.why}. (House rule: the books give no encounters on the road.)</p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => setRoadHit({ ...roadHit, chase: true })} data-testid="ambush-run">Run for it (you drive; Fire shoots back)</Button>
+              <Button size="sm" variant="outline" onClick={() => roadFight(roadHit, roadHit.riders)} data-testid="ambush-fight">Stop and fight</Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {roadHit?.chase && (
+        <MinigamePage
+          game={{ kind: "chase", title: `Chased by the ${roadHit.a.who}`, seed: roadHit.seed, vehicle: String(vehicles.find((v) => v.id === roadHit.ride.vehicleId)?.model ?? "Landspeeder"), biome: world ? trailOf(world, roadHit.exit.to).find((a) => a.kind === "planet")?.type : undefined, riders: roadHit.riders.map((o) => ({ name: o.name, model: roadHit.a.model })), who: roadHit.a.who }}
+          onExit={() => roadFight(roadHit, roadHit.riders)}
+          onDone={(r) => {
+            if (r.kind !== "chase") return;
+            const end = chaseResult(r.race);
+            if (end.outcome === "caught") return roadFight(roadHit, roadHit.riders.filter((o) => end.left.includes(o.name)));
+            setRoadHit(null);
+            toast.success(`${end.note.charAt(0).toUpperCase()}${end.note.slice(1)}.`);
+            travel(roadHit.exit, roadHit.ride, true);
+          }}
+        />
+      )}
       {pilot && (
         <MinigamePage
           game={{ kind: "run", title: `Route to ${world?.areas[pilot.exit.to]?.name ?? "the next settlement"}`, seed: pilot.seed, mode: pilot.mode, count: routeCount(kmOf(pilot.exit.travel) ?? 0), vehicle: String(vehicles.find((v) => v.id === pilot.ride.vehicleId)?.model ?? "Landspeeder") }}
@@ -6664,12 +7253,12 @@ export default function GameBoard() {
             <div className="mb-4">
               <div className="flex justify-between mb-1">
                 <span>HP</span>
-                <span>{character.currentHp}/{character.maxHp}</span>
+                <span>{character.currentHp}/{hpCap()}{hpCap() < character.maxHp ? " (max halved: exhaustion)" : ""}</span>
               </div>
               <div className="w-full bg-gray-700 rounded-full h-2.5">
                 <div 
                   className="bg-red-600 h-2.5 rounded-full" 
-                  style={{ width: `${(character.currentHp / character.maxHp) * 100}%` }}
+                  style={{ width: `${Math.min(100, (character.currentHp / hpCap()) * 100)}%` }}
                 ></div>
               </div>
             </div>
@@ -6872,7 +7461,10 @@ export default function GameBoard() {
                   <ul className="text-sm space-y-1" data-testid="play-occupants">
                     {(hereNow ?? here).occupants.map((o) => (
                       <li key={o.id} className={o.disposition === "hostile" ? "text-red-400" : o.disposition === "friendly" ? "text-green-300" : ""}>
-                        {o.count > 1 ? `${o.count} x ` : ""}{o.name}
+                        {/* a name picks them out as a tap on the map does (2026-10-26: in a crowded room someone walking past took the tap) */}
+                        <button type="button" className="underline decoration-dotted underline-offset-2" onClick={() => setPicked({ kind: "occupant", id: o.id })} data-testid={`pick-${o.id}`}>
+                          {o.count > 1 ? `${o.count} x ` : ""}{o.name}
+                        </button>
                         <span className="text-gray-400">
                           {" "}{[o.species, o.role, o.disposition, o.cr && `CR ${o.cr}`].filter(Boolean).join(", ")}
                         </span>
@@ -7124,9 +7716,11 @@ export default function GameBoard() {
                       {c.kind === "droid" && (
                         <Button size="sm" variant="ghost" className="ml-auto h-5 px-1 text-xs" data-testid={`customize-open-${c.id}`} onClick={() => setCustomizing(customizing === c.id ? null : c.id)}>Customize</Button>
                       )}
-                      <Button size="sm" variant="ghost" className={`${c.kind === "droid" ? "" : "ml-auto "}h-5 px-1 text-xs`} disabled={inCombat} onClick={() => dismiss(c)}>Dismiss</Button>
+                      <Button size="sm" variant="ghost" className={`${c.kind === "droid" ? "" : "ml-auto "}h-5 px-1 text-xs`} onClick={() => setPackOpen(packOpen === c.id ? null : c.id)} data-testid={`pack-open-${c.id}`}>Load ({carrierLoad(c).weight} lb)</Button>
+                      <Button size="sm" variant="ghost" className="h-5 px-1 text-xs" disabled={inCombat} onClick={() => dismiss(c)}>Dismiss</Button>
                     </div>
                     {customizing === c.id && droidPanel(c)}
+                    {packOpen === c.id && packPanel(c)}
                   </div>
                 ))}
                 <p className="text-xs text-gray-500">{party.length ? "They fight at your side and heal on rests. Wages are paid each day (house rule)." : "No companions yet: hire someone, free a captive, mend a droid or gentle a beast."}</p>
@@ -7153,6 +7747,41 @@ export default function GameBoard() {
                 )}
               </div>
             )}
+            {beasts.length > 0 && (
+              <div className="mb-4 space-y-2" data-testid="play-beasts">
+                <h3 className="font-semibold">Beasts ({beasts.length}/{BEAST_LIMIT})</h3>
+                {beasts.map((b) => (
+                  <div key={b.id} className="text-sm" data-testid="beast-row">
+                    <div className="flex justify-between">
+                      <span>{b.name} <span className="text-xs text-gray-400">{[b.mount ? "mount" : "beast", riding?.id === b.id && "ridden", b.size].filter(Boolean).join(", ")}</span></span>
+                      <span>{b.hp > 0 ? `${b.hp}/${b.maxHp}` : "down"}</span>
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap gap-1 text-xs">
+                      {b.mount && (riding?.id === b.id
+                        ? <Button size="sm" variant="outline" className="h-5 px-1 text-xs" disabled={inCombat} onClick={dismount} data-testid={`dismount-${b.id}`}>Dismount</Button>
+                        : <Button size="sm" variant="outline" className="h-5 px-1 text-xs" disabled={inCombat || dead || b.hp <= 0} onClick={() => mountBeast(b)} data-testid={`mount-${b.id}`}>Mount</Button>)}
+                      <Button size="sm" variant="ghost" className="h-5 px-1 text-xs" onClick={() => setPackOpen(packOpen === b.id ? null : b.id)} data-testid={`pack-open-${b.id}`}>Load ({carrierLoad(b).weight}/{carrierLoad(b).capacity} lb)</Button>
+                      <Button size="sm" variant="ghost" className="ml-auto h-5 px-1 text-xs" disabled={inCombat} onClick={() => dismiss(b)}>Let go</Button>
+                    </div>
+                    {packOpen === b.id && packPanel(b)}
+                  </div>
+                ))}
+                <p className="text-xs text-gray-500">Beasts follow you but are not companions: they keep out of fights (house rule), can be ridden if big enough, and carry what you load onto them (the Pack tab).</p>
+              </div>
+            )}
+            {(carts.length > 0 || folded > 0) && (
+              <div className="mb-4 text-sm" data-testid="play-carts">
+                <h3 className="font-semibold">Carts</h3>
+                {carts.map((c) => (
+                  <div key={c.id} className="mb-1 rounded bg-gray-800/60 p-1">
+                    <span>{c.name} <span className="text-xs text-gray-400">{c.parked ? "parked" : c.mode === "push" ? "pushed" : "pulled"}</span></span>
+                    {cartPanel(c)}
+                  </div>
+                ))}
+                {folded > 0 && <Button size="sm" variant="outline" className="h-6 px-2 text-xs" disabled={inCombat || dead} onClick={unfoldCart} data-testid="cart-unfold">Set a hovercart from the pack on the map ({folded} folded)</Button>}
+              </div>
+            )}
+            {basePanel()}
 
             {(play.tracked ?? []).length > 0 && (
               <div className="mb-4 text-xs" data-testid="play-tracked">
@@ -7243,6 +7872,16 @@ export default function GameBoard() {
                         <input type="checkbox" checked={variantOn} onChange={(e) => patchPlay({ encumbrance: e.target.checked ? "variant" : "basic" })} data-testid="encumbrance-variant" />
                         Variant: Encumbrance (the book's; off, only the capacity counts and armor's Strength requirement applies)
                       </label>
+                      {[...party, ...beasts, ...carts.filter(cartAtHand)].length > 0 && (
+                        <label className="flex items-center gap-1 text-gray-300">
+                          Load onto:
+                          <select className="h-6 min-w-0 flex-1 rounded bg-gray-700 px-1" value={carrierOf(loadTarget) || (cartOf(loadTarget) && cartAtHand(cartOf(loadTarget)!)) ? loadTarget : ""} onChange={(e) => setLoadTarget(e.target.value)} data-testid="load-target">
+                            <option value="">nobody (the buttons stay hidden)</option>
+                            {carts.filter(cartAtHand).map((c) => <option key={c.id} value={c.id}>{c.name} ({cartLoad(c).weight}/{cartLoad(c).capacity} lb)</option>)}
+                            {[...beasts, ...party].map((c) => <option key={c.id} value={c.id}>{c.name} ({carrierLoad(c).weight}/{carrierLoad(c).capacity} lb)</option>)}
+                          </select>
+                        </label>
+                      )}
                     </div>
                   );
                 })()}
@@ -7311,6 +7950,9 @@ export default function GameBoard() {
                                   {hiddenNow[name] ? <span className="ml-1 text-xs text-amber-300">{hiddenNow[name]} hidden</span> : null}
                                   {kind !== "gear" && <span className="ml-1 text-xs text-gray-400">{kind === "weapon" ? "weapon" : kind === "shield" ? "shield" : "armor"}{on ? ", " + (kind === "weapon" ? "in hand" : "worn") : ""}</span>}
                                 </span>
+                                {(carrierOf(loadTarget) || cartOf(loadTarget)) && (
+                                  <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`load-${name}`} onClick={() => loadOnto(loadTarget, name)}>Load</Button>
+                                )}
                                 {kind !== "gear" && (
                                   <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} data-testid={`equip-${name}`} onClick={() => setEquipped(name, !on)}>
                                     {on ? (kind === "weapon" ? "Put away" : "Take off") : kind === "weapon" ? "Wield" : "Wear"}
@@ -7387,6 +8029,8 @@ export default function GameBoard() {
                     partyShips={shipRows.length ? ships.map((sh) => ({ id: sh.id, name: sh.name, sheet: shipSheet(sh, shipRows, proficiency), owner: sh.owner, where: world?.areas[sh.areaId]?.name, busy: shipBusy(sh) ? `${shipBusy(sh)!.what} at the yard` : sh.status === "wrecked" ? "wrecked" : undefined })) : []}
                     shipRows={shipRows}
                     biome={world && hereId ? trailOf(world, hereId).find((a) => a.kind === "planet")?.type : undefined}
+                    gravity={gravityNow().g}
+                    foeFaction={world?.antagonist}
                     state={downtime}
                     check={checkFor}
                     ask={askCheck}
@@ -7460,13 +8104,16 @@ interface DowntimeProps {
   partyShips?: DogfightShip[];
   shipRows?: any[];
   biome?: string;
+  // The world's pull here and the faction whose forces are hostile, for a fight in the air of the planet (dogfight.ts airStart)
+  gravity?: number;
+  foeFaction?: string;
   state: DowntimeState;
   // A check of the character: the roll and what is added to it
   check: (c: { ability: string; using: string }) => { roll: number; bonus: number; total: number; note: string };
   // The player picks who rolls and with which skill
   ask: (plan: CheckPlan) => Promise<CheckResult | null>;
   // Keeps the result: changes to the character, the downtime record, days that pass, a line for the log
-  commit: (what: { character?: Record<string, any>; downtime: Partial<DowntimeState>; days: number; log?: string[]; renown?: number }) => void;
+  commit: (what: { character?: Record<string, any>; downtime: Partial<DowntimeState>; days: number; log?: string[]; renown?: number; lived?: number }) => void;
   // Unlocks nothing here; blackmail and lore are spent from the panel through these
   spendBlackmail: (id: string) => void;
   spendLore: (id: string) => void;
@@ -7499,7 +8146,7 @@ const FLYING: { id: string; name: string; kind: "run" | "race" | "dogfight"; mod
   { id: "taxi-run", name: "Taxi run", kind: "run", mode: "speeder", needs: "vehicle", intro: "Fly your landspeeder through the rings of a course over the settlement's ground, for a fare." },
   { id: "speeder-race", name: "Speeder race", kind: "race", mode: "speeder", needs: "vehicle", intro: "Race your speeder over three laps of a long course against four rivals: gates to pass in order, jumps, shortcuts down a trail with a ravine to clear, mines and oil. Boost draws on a meter that refills; the hull bar is what you can still take. Paid by the place you finish." },
   { id: "delivery-run", name: "Delivery run", kind: "run", mode: "ship", needs: "ship", intro: "Fly your ship through the rings of a course in the space of its planet, against the clock." },
-  { id: "dogfight", name: "Dogfight", kind: "dogfight", mode: "ship", needs: "ship", intro: "Fly your ship in the space of its planet against fighters, a cruiser, a carrier, a battleship, a dreadnought or a battle station. Guns, missiles and bombs (a few for a small ship, more for a large one); the largest ships are shielded by generators, and a station is destroyed from inside." },
+  { id: "dogfight", name: "Dogfight", kind: "dogfight", mode: "ship", needs: "ship", intro: "Fly your ship in the space of its planet against fighters, a cruiser, a carrier, a battleship, a dreadnought or a battle station, or in its air: defend the settlement from a bombing raid, bomb a hostile one, escort a convoy or strike one. Guns, missiles and bombs (a few for a small ship, more for a large one); the largest ships are shielded by generators, and a station is destroyed from inside." },
 ];
 
 function DowntimePanel(props: DowntimeProps) {
@@ -7645,7 +8292,7 @@ function FlightActivity(props: DowntimeProps & { flying: (typeof FLYING)[number]
   const [shipId, setShipId] = useState<string | null>(null);
   const credits = Number(character?.credits) || 0;
   const pay = (result: MinigameResult) => {
-    const won = result.kind === "run" ? flightPayout(result.course, result.collected, result.timeLeft) : result.kind === "race" ? raceResult(result.race) : dogfightPayout(result.state);
+    const won = result.kind === "run" ? flightPayout(result.course, result.collected, result.timeLeft) : result.kind === "race" ? raceResult(result.race) : result.kind === "dogfight" ? dogfightPayout(result.state) : { credits: 0, note: chaseResult(result.race).note };
     commit({ character: { credits: credits + won.credits }, downtime: {}, days: 1, log: [`${flying.name}: ${won.note}.`] });
     setGame(null);
   };
@@ -7708,7 +8355,7 @@ function FlightActivity(props: DowntimeProps & { flying: (typeof FLYING)[number]
           const seed = Math.floor(Math.random() * 1e9) + 1;
           const vehicle = props.vehicleModel ?? "Landspeeder";
           if (flying.kind === "race") setGame({ kind: "race", title: flying.name, seed, vehicle, biome: props.biome });
-          else if (flying.kind === "dogfight" && chosen) setGame({ kind: "dogfight", title: flying.name, seed, scenario, rows: props.shipRows ?? [], ship: { sheet: chosen.sheet, owner: chosen.owner } });
+          else if (flying.kind === "dogfight" && chosen) setGame({ kind: "dogfight", title: flying.name, seed, scenario, rows: props.shipRows ?? [], ship: { sheet: chosen.sheet, owner: chosen.owner }, air: scenarioOf(scenario).air ? { biome: props.biome ?? "temperate", g: props.gravity ?? 1, owner: props.foeFaction } : undefined });
           else setGame({ kind: "run", title: flying.name, seed, mode: flying.mode, vehicle, ship: props.shipSpec });
         }} data-testid={`flight-start-${flying.id}`}>
           {loading ? "The ship data is loading..." : `Start the ${flying.kind === "dogfight" ? SCENARIOS.find((x) => x.id === scenario)!.name.toLowerCase() : flying.name.toLowerCase()} (a day)`}
@@ -7869,7 +8516,7 @@ function WeekActivity(props: DowntimeProps & { activity: DowntimeActivityData; s
     charChanges.credits = Math.max(0, money2);
     setReport(lines);
     setPhase("done");
-    props.commit({ character: charChanges, downtime, days, log: [`${activity.name}: ${lines.join(" ")}`], renown });
+    props.commit({ character: charChanges, downtime, days, log: [`${activity.name}: ${lines.join(" ")}`], renown, lived: activity.id === "work" && !failure ? WORKWEEK : undefined });
   };
 
   const tierNote = spec.tiers ? `${CLASS_NAMES[cls]}: ${money(tier!.cost)}` : "";

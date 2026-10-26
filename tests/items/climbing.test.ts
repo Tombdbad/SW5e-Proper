@@ -25,6 +25,9 @@ test("the way up: none bare-handed; a hook's line within reach (a check); grips 
   assert.deepEqual(climbWay(3, { flying: "Jetpack", hookFeet: 50 }), { how: "fly", by: "Jetpack" });
   assert.equal(climbWay(2, { descent: "Repulsor pack" }).how, "none");
   assert.equal(climbWay(2, { descent: "Repulsor pack" }, true).how, "descent");
+  // Down without gear, or past the end of the line: a jump
+  assert.deepEqual(climbWay(2, {}, true), { how: "jump", by: "a jump", feet: 20 });
+  assert.equal(climbWay(6, { hookFeet: 50 }, true).how, "jump");
 });
 
 test("the gear read from the items: the hook's length, a cable's, flight only while running, grips only while worn", () => {
@@ -45,7 +48,8 @@ test("a balcony: no way up from the street without gear; with a hook a climb up 
       assert.ok(up && up.via === "enter" && up.scale?.how === "hook" && up.scale.dc === GRAPPLE_DC && up.secret, JSON.stringify(up));
       const down = outsideClimbs(world, balcony.id, { hookFeet: 50 });
       assert.deepEqual(down.map((e) => [e.to, e.via, e.scale?.how]), [[street, "leave", "hook"]]);
-      assert.deepEqual(outsideClimbs(world, balcony.id, {}), []);
+      // Bare-handed, down is a jump: a fall (2026-10-26)
+      assert.deepEqual(outsideClimbs(world, balcony.id, {}).map((e) => [e.to, e.scale?.how, e.label]), [[street, "jump", `Jump down (${(balcony.layout?.level ?? 1) * 10} ft.) to`]]);
       assert.equal(outsideClimbs(world, balcony.id, { descent: "Repulsor pack" })[0]?.scale?.how, "descent");
       checked++;
     }

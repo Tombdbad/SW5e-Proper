@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import TranslucentPane from "@/components/ui/TranslucentPane";
 import {
   useCombat, onTable, attackPlan, cannotAct, movementLeft, pickTarget, powerOutOfRange, squaresApart, onPartySide, LASTING,
-  playerSpec, bonusAttackKinds, bonusFeatures, attacksPerAction, objectReach, squaresToAsset, reloadPlan, propertyNumber, drawPlan,
+  playerSpec, bonusAttackKinds, bonusFeatures, attacksPerAction, objectReach, squaresToAsset, reloadPlan, propertyNumber, drawPlan, grappledBy,
+  type GrappleMove,
 } from "@/lib/stores/useCombat";
 import { conditionSummary, motionFeet } from "@/lib/sw5e/rules";
 
@@ -24,7 +25,7 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
     objectId, setObject, reload, spray, brace, draw, stow, detonate, mines,
   } = useCombat();
   // The character's attacks and the end of its turn throw the dice the roll needs on the table (onTable)
-  const strike = (kind: "melee" | "ranged" | "unarmed" | "offhand") => onTable(() => useCombat.getState().attack(kind));
+  const strike = (kind: "melee" | "ranged" | "unarmed" | "offhand" | "thrown") => onTable(() => useCombat.getState().attack(kind));
   const endOfTurn = () => onTable(() => useCombat.getState().nextTurn());
   // A power that moves things waiting to be told what to move and which way
   const [aiming, setAiming] = useState<number | null>(null);
@@ -103,6 +104,19 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
   const empowerFeature = (player?.features ?? []).find((f) => f.extraDamage?.perPoint);
   const empowerMax = empowerFeature ? Math.min(empowerFeature.extraDamage!.maxDice ?? 9, player?.powerPoints ?? 0) : 0;
   const attacker = pending ? combatants.find((c) => c.id === pending.attackerId) : undefined;
+  // An auto weapon fires only in its burst or rapid mode (Expanded Content; a single penetrating shot is played as a plain shot)
+  const autoOnly = !!player?.rangedProps?.some((p) => /^auto\b/i.test(p)) && (propertyNumber(player.rangedProps, "burst") > 0 || propertyNumber(player.rangedProps, "rapid") > 0 || player.rangedProps.some((p) => /^(burst|rapid)$/i.test(p)));
+  const thrownSpec = player ? playerSpec(player, "thrown") : undefined;
+  const thrownPlan = player && thrownSpec && target ? attackPlan(arena, combatants, player, target, "ranged", { range: thrownSpec.range, props: thrownSpec.properties }) : undefined;
+  // The trades the weapons in hand allow: dire and piercing (to hit against damage), defensive (to hit and damage against AC)
+  const handProps = [...(player?.meleeProps ?? []), ...(player?.rangedProps ?? [])];
+  const direN = propertyNumber(handProps, "dire");
+  const piercingN = propertyNumber(handProps, "piercing");
+  const defensiveN = propertyNumber(player?.meleeProps, "defensive");
+  // A melee weapon that can strike for a saving throw instead (bright, biting, corruption), a ranged one that penetrates, a switch weapon
+  const strikeProp = ["bright", "biting", "corruption"].find((k) => propertyNumber(player?.meleeProps, k) > 0);
+  const penN = propertyNumber(player?.rangedProps, "penetrating");
+  const switches = player?.rangedSwitch;
 
   return (
     <div className="absolute inset-x-0 bottom-0 z-20 h-[54dvh] overflow-y-auto bg-gray-900 md:inset-x-auto md:bottom-auto md:left-2 md:top-2 md:h-auto md:w-80 md:max-h-[82vh] md:bg-transparent">
@@ -185,13 +199,32 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
           <Button disabled={!playerTurn || !hasAction} onClick={melee} title={player?.meleeWeapon ?? "Unarmed"}>
             Melee
           </Button>
-          <Button disabled={!playerTurn || !hasAction || !rangedSpec || !ranged?.possible} onClick={() => strike("ranged")} title={player?.rangedWeapon ?? "No ranged weapon"}>
+          <Button disabled={!playerTurn || !hasAction || !rangedSpec || !ranged?.possible || autoOnly} onClick={() => strike("ranged")} title={autoOnly ? `${player?.rangedWeapon}: an auto weapon fires only in burst or rapid mode` : player?.rangedWeapon ?? "No ranged weapon"}>
             Ranged
           </Button>
+          {player?.thrown && player.thrown.left > 0 && (
+            <Button variant="outline" disabled={!playerTurn || !hasAction || !thrownPlan?.possible} onClick={() => strike("thrown")} title={thrownPlan && !thrownPlan.possible ? thrownPlan.why : `Range ${player.thrown.range.join("/")} ft.`} data-testid="combat-throw">
+              Throw {player.thrown.name}{player.thrown.returning ? "" : ` (${player.thrown.left})`}
+            </Button>
+          )}
           <Button variant="outline" disabled={!playerTurn} onClick={() => (midAttack || (player?.actions ?? 0) <= 0 ? endOfTurn() : pass("holds"))}>
             End turn
           </Button>
         </div>
+        {player && (direN > 0 || piercingN > 0 || defensiveN > 0) && (
+          <div className="mb-2 flex flex-wrap items-center gap-1 text-xs" data-testid="combat-trade">
+            {direN > 0 && <Button size="sm" variant={(player.trade ?? 0) < 0 ? "secondary" : "outline"} className="h-6 px-2" onClick={() => useCombat.getState().setTrade((player.trade ?? 0) < 0 ? 0 : -direN, player.defend ?? 0)} title="Dire: a penalty to hit, as much more damage on a hit">Dire: -{direN} to hit, +{direN} damage{(player.trade ?? 0) < 0 ? " (on)" : ""}</Button>}
+            {piercingN > 0 && <Button size="sm" variant={(player.trade ?? 0) > 0 ? "secondary" : "outline"} className="h-6 px-2" onClick={() => useCombat.getState().setTrade((player.trade ?? 0) > 0 ? 0 : piercingN, player.defend ?? 0)} title="Piercing: a bonus to hit, as much less damage on a hit">Piercing: +{piercingN} to hit, -{piercingN} damage{(player.trade ?? 0) > 0 ? " (on)" : ""}</Button>}
+            {defensiveN > 0 && <Button size="sm" variant={(player.defend ?? 0) > 0 ? "secondary" : "outline"} className="h-6 px-2" onClick={() => useCombat.getState().setTrade(player.trade ?? 0, (player.defend ?? 0) > 0 ? 0 : defensiveN)} title="Defensive: the turn's first attack -N to hit and damage, +N AC until your next turn">Defensive: +{defensiveN} AC{(player.defend ?? 0) > 0 ? " (on)" : ""}</Button>}
+          </div>
+        )}
+        {player && (strikeProp || penN > 0 || switches) && (
+          <div className="mb-2 flex flex-wrap items-center gap-1 text-xs" data-testid="combat-modes">
+            {strikeProp && <Button size="sm" variant={player.saveStrike ? "secondary" : "outline"} className="h-6 px-2" onClick={() => useCombat.getState().setWeaponMode({ saveStrike: !player.saveStrike })} title={`${strikeProp[0].toUpperCase()}${strikeProp.slice(1)}: the target makes a saving throw instead of your attack roll`} data-testid="combat-save-strike">Strike for a save ({strikeProp} {propertyNumber(player.meleeProps, strikeProp)}){player.saveStrike ? " (on)" : ""}</Button>}
+            {penN > 0 && <Button size="sm" variant={player.penetrate ? "secondary" : "outline"} className="h-6 px-2" onClick={() => useCombat.getState().setWeaponMode({ penetrate: !player.penetrate })} title={`Penetrating: ${penN} rounds a shot; cover a step less, and the creature behind the target is hit too`} data-testid="combat-penetrate">Penetrate ({penN} rounds){player.penetrate ? " (on)" : ""}</Button>}
+            {switches && <Button size="sm" variant={player.switched ? "secondary" : "outline"} className="h-6 px-2" onClick={() => useCombat.getState().setWeaponMode({ switched: ((player.switched ?? 0) + 1) % (switches.types.length + 1) })} title="Switch: the weapon's alternate damage (an object interaction)" data-testid="combat-switch">Damage: {player.switched ? `${switches.dice} ${switches.types[(player.switched - 1) % switches.types.length]}` : `${player.rangedDice} ${player.rangedType ?? ""}`}</Button>}
+          </div>
+        )}
         {ammo && (
           <div className="mb-2 flex flex-wrap items-center gap-1 text-xs" data-testid="combat-ammo">
             <span className={loadedNow > 0 ? "text-gray-300" : "text-red-300"} data-testid="combat-ammo-left" data-value={loadedNow}>
@@ -242,6 +275,23 @@ export default function PlayCombat({ items = [] }: { items?: CombatItemOption[] 
                 {a[0].toUpperCase() + a.slice(1)}
               </Button>
             ))}
+            {/* The special melee attacks (they take the place of one attack) and the way out of a hold (Player's Handbook) */}
+            {(() => {
+              const foe = player ? pickTarget(combatants, player, targetId) : undefined;
+              const near = !!foe && !!player && squaresApart(player, foe) <= Math.max(1, Math.floor((player.reach ?? 5) / 5));
+              const grip = (move: GrappleMove) => onTable(() => useCombat.getState().grapple(move));
+              const held = player ? grappledBy(player) : undefined;
+              const holding = combatants.some((c) => grappledBy(c)?.by === player?.id && c.hp > 0);
+              return (
+                <>
+                  <Button size="sm" variant="outline" disabled={!hasAction || !near} title={near ? "Athletics against the target's Athletics or Acrobatics: its speed becomes 0" : "Out of reach"} onClick={() => grip("grapple")} data-testid="combat-grapple">Grapple</Button>
+                  <Button size="sm" variant="outline" disabled={!hasAction || !near} title="Athletics contest: knock it prone" onClick={() => grip("shove-prone")} data-testid="combat-shove-prone">Shove: prone</Button>
+                  <Button size="sm" variant="outline" disabled={!hasAction || !near} title="Athletics contest: push it 5 feet away" onClick={() => grip("shove-away")} data-testid="combat-shove-away">Shove: away</Button>
+                  {held && <Button size="sm" variant="outline" disabled={!hasAction || midAttack} title={held.escape ? `Escape DC ${held.escape}` : "Athletics or Acrobatics against the grappler's Athletics"} onClick={() => grip("escape")} data-testid="combat-escape">Escape the grapple</Button>}
+                  {holding && <Button size="sm" variant="ghost" onClick={() => useCombat.getState().grapple("release")} data-testid="combat-release">Let go</Button>}
+                </>
+              );
+            })()}
             {friends.length > 0 && (
               <>
                 <Button size="sm" variant="outline" disabled={!hasAction} onClick={() => standard("help")}>Help</Button>

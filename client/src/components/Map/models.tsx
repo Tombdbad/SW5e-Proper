@@ -11,13 +11,14 @@ import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
-import { advance, bob, LIMB, limbMaterial, pose as poseLimbs, standing } from "./interiors/limbs";
+import { advance, LIMB, limbMaterial, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, type Gait, type Stride } from "./interiors/limbs";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
 import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
 import { toneNameOf, type KitLook } from "./interiors/kitbash";
 import { TONES } from "./interiors/tones";
 import { hullWear, speederWear, type Wear } from "./interiors/wear";
+import type { Bend } from "./interiors/Walls";
 
 // ---------------------------------------------------------------------------------------------
 // The 3D models of the map: people, droids, creatures, furniture, ships, vehicles and buildings.
@@ -32,9 +33,14 @@ export type V3 = [number, number, number];
 // matte: stone, plaster, skin, fur; sheen: metal, armor, polished hulls, carapace; glow: lights,
 // screens, blades, eyes; glass: canopies and tanks; haze: force fields, holograms, steam;
 // cloth: thin sheets seen from both sides (awnings, capes, sails, wings); stone, bark, leaf: the same parts drawn with a texture
-// (rock, tree bark, leaves; surfaces.tsx), for the palette colours a builder names as those (Kit.surfaces)
-export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth" | "stone" | "bark" | "leaf";
-export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth", "stone", "bark", "leaf"];
+// (rock, tree bark, leaves; surfaces.tsx), for the palette colours a builder names as those (Kit.surfaces). The figures' own textured
+// finishes (2026-10-26; tools/build-figure-textures.mjs): skin, face (the finer pores of a face), fabric (a weave, seen from both sides),
+// leather, plate (armour and droid plating), scales, hair, and fur (hair drawn with shells of strands over it: FurShells), for the colours
+// a figure's builder names as those (Kit.dress)
+export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth" | "stone" | "bark" | "leaf" | "skin" | "face" | "fabric" | "leather" | "plate" | "scales" | "hair" | "fur";
+export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth", "stone", "bark", "leaf", "skin", "face", "fabric", "leather", "plate", "scales", "hair", "fur"];
+// The finishes a figure's colours may be dressed in, over the plain ones they were drawn in
+export const FIGURE_FINISHES: Finish[] = ["skin", "face", "fabric", "leather", "plate", "scales", "hair", "fur"];
 
 export const MATERIALS: Record<Finish, THREE.Material> = {
   matte: new THREE.MeshLambertMaterial({ vertexColors: true, emissive: new THREE.Color("#0a0a0a") }),
@@ -46,6 +52,15 @@ export const MATERIALS: Record<Finish, THREE.Material> = {
   stone: surfaceMaterial("stone", "rock_face_03", { vertexColors: true, lift: 1.25, parallax: 0.04 }),
   bark: surfaceMaterial("bark", "bark_brown_02", { vertexColors: true, lift: 1.9, parallax: 0.03 }),
   leaf: surfaceMaterial("leaves", "forest_leaves_02", { vertexColors: true, lift: 1.9, parallax: 0.02, shininess: 4 }),
+  // (the detail maps are pale, about 0.9 on average: `lift` brings the vertex colours back to what they were drawn in)
+  skin: surfaceMaterial("figure", "skin", { vertexColors: true, lift: 1.1, parallax: 0, shininess: 12, specular: "#1e1b18", normalScale: 0.55 }),
+  face: surfaceMaterial("figure", "face", { vertexColors: true, lift: 1.07, parallax: 0, shininess: 14, specular: "#1e1b18", normalScale: 0.45 }),
+  fabric: surfaceMaterial("figure", "fabric", { vertexColors: true, lift: 1.18, parallax: 0, shininess: 3, specular: "#0c0c0c", side: THREE.DoubleSide, normalScale: 0.9 }),
+  leather: surfaceMaterial("figure", "leather", { vertexColors: true, lift: 1.18, parallax: 0, shininess: 26, specular: "#2e2a26", normalScale: 0.8 }),
+  plate: surfaceMaterial("figure", "plate", { vertexColors: true, lift: 1.1, parallax: 0, shininess: 60, specular: "#5a5a5a", normalScale: 0.7 }),
+  scales: surfaceMaterial("figure", "scales", { vertexColors: true, lift: 1.22, parallax: 0, shininess: 30, specular: "#303028", normalScale: 1 }),
+  hair: surfaceMaterial("figure", "fur", { vertexColors: true, lift: 1.25, parallax: 0, shininess: 10, specular: "#202020", normalScale: 0.8 }),
+  fur: surfaceMaterial("figure", "fur", { vertexColors: true, lift: 1.25, parallax: 0, shininess: 6, specular: "#141414", normalScale: 0.8 }),
 };
 
 interface PartOptions {
@@ -177,6 +192,11 @@ export class Kit {
   skin?: (color: THREE.Color, finish: Finish) => THREE.Color;
   // The finish of the parts drawn in each colour, for the colours a builder names as textured (stone, bark, leaf)
   surfaces?: Partial<Record<string, Finish>>;
+  // A figure's colours dressed in its textured finishes (a person's skin, clothes, leather and armour; a beast's hide, fur or scales):
+  // a part drawn plain (matte, sheen or cloth) in one of these colours, or a shade of one, takes that finish instead. `restyle` turns
+  // a plain finish into another whatever the colour (a droid's sheen into plating)
+  dress?: Partial<Record<string, Finish>>;
+  restyle?: Partial<Record<Finish, Finish>>;
   private frames: THREE.Matrix4[] = [new THREE.Matrix4()];
 
   // Draws what `draw` draws moved, turned and scaled together
@@ -202,7 +222,8 @@ export class Kit {
 
   add(source: THREE.BufferGeometry, color: string | THREE.Color, { at, rot, scale, finish: asked }: PartOptions = {}) {
     // A part takes the finish its builder asked for, else the one its colour is named for in `surfaces` (a palette's bark, leaf or stone), else matte
-    const finish = asked ?? surfaceOf(this.surfaces, color) ?? "matte";
+    const plain = asked ?? surfaceOf(this.surfaces, color) ?? "matte";
+    const finish = plain === "matte" || plain === "sheen" || plain === "cloth" ? surfaceOf(this.dress, color) ?? this.restyle?.[plain] ?? plain : plain;
     let geo = source;
     for (const name of Object.keys(geo.attributes)) if (name !== "position" && name !== "normal") geo.deleteAttribute(name);
     if (!geo.index) {
@@ -369,7 +390,7 @@ export class Kit {
       if (!merged) continue;
       if (geos.length > 1) for (const g of geos) g.dispose();
       // The textured finishes are projected at their own scale; the painted ones at the hull's, when a hull asks for it
-      const grain = finish === "stone" || finish === "bark" || finish === "leaf" ? SURFACE_GRAIN[finish] : uv && (finish === "matte" || finish === "sheen") ? uv : 0;
+      const grain = SURFACE_GRAIN[finish] ?? (uv && (finish === "matte" || finish === "sheen") ? uv : 0);
       if (grain) {
         const flat = boxUV(merged, grain);
         merged.dispose();
@@ -424,18 +445,80 @@ export function Model({ id, build, shadow = true, position, rotation, scale, wea
   const hull = useHull(wear);
   return (
     <group position={position} rotation={rotation} scale={scale}>
-      {m.matte && <mesh geometry={m.matte} material={hull?.matte ?? MATERIALS.matte} castShadow={shadow} receiveShadow />}
-      {m.sheen && <mesh geometry={m.sheen} material={hull?.sheen ?? MATERIALS.sheen} castShadow={shadow} receiveShadow />}
-      {m.glow && <mesh geometry={m.glow} material={MATERIALS.glow} />}
-      {m.glass && <mesh geometry={m.glass} material={MATERIALS.glass} renderOrder={1} />}
-      {m.haze && <mesh geometry={m.haze} material={MATERIALS.haze} renderOrder={2} />}
-      {m.cloth && <mesh geometry={m.cloth} material={MATERIALS.cloth} castShadow={shadow} receiveShadow />}
-      {m.stone && <mesh geometry={m.stone} material={MATERIALS.stone} castShadow={shadow} receiveShadow />}
-      {m.bark && <mesh geometry={m.bark} material={MATERIALS.bark} castShadow={shadow} receiveShadow />}
-      {m.leaf && <mesh geometry={m.leaf} material={MATERIALS.leaf} castShadow={shadow} receiveShadow />}
+      <Meshes model={m} materials={hull ? { ...MATERIALS, ...hull } : MATERIALS} shadow={shadow} />
       {children}
     </group>
   );
+}
+
+// How each finish is drawn: the solid ones cast and take shadows, the see-through ones come after (glass, then haze), light casts none
+const SEE_THROUGH: Partial<Record<Finish, number>> = { glass: 1, haze: 2 };
+const UNSHADOWED = new Set<Finish>(["glow", "glass", "haze"]);
+// The meshes of a baked model, one a finish, in the given materials (a moving figure's own copies); fur also gets its shells
+export function Meshes({ model, materials, shadow = true, fur }: { model: Baked; materials: Record<Finish, THREE.Material>; shadow?: boolean; fur?: { shells: number; material: THREE.Material } }) {
+  return (
+    <>
+      {FINISHES.map((f) => {
+        const g = model[f];
+        if (!g) return null;
+        const solid = shadow && !UNSHADOWED.has(f);
+        return (
+          <group key={f}>
+            <mesh geometry={g} material={materials[f]} castShadow={solid} receiveShadow={!UNSHADOWED.has(f)} renderOrder={SEE_THROUGH[f] ?? 0} />
+            {f === "fur" && fur && <FurShells geometry={g} material={fur.material} shells={fur.shells} />}
+          </group>
+        );
+      })}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fur (2026-10-26, asked by the user: "give hairy creatures a more realistic look"). A furry body is drawn again in shells, each pushed
+// out along the surface a little further than the last and drooping a little, and each keeps only the texels of the strand map
+// (textures/figure/fur/strands.png) whose hair reaches that high: hairs that thin to their tips, darker at the roots. The shells are
+// one instanced draw (the instance is the shell); on a moving figure the shells' material swings with the limbs (interiors/limbs.ts).
+// ---------------------------------------------------------------------------------------------
+export const FUR_SHELLS = { full: 12, lite: 6 };
+const strandsMap: { value: THREE.Texture | null } = { value: null };
+if (typeof document !== "undefined") {
+  new THREE.TextureLoader().load("/textures/figure/fur/strands.png", (t) => {
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = THREE.NoColorSpace;
+    strandsMap.value = t;
+  });
+}
+// The shells' material: the fur's own colours and detail, `length` how long the hair is (model units); its program is shared
+export function furShellMaterial(length: number, shells: number): THREE.MeshLambertMaterial {
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, emissive: new THREE.Color("#0a0a0a") });
+  // (a map, so that the shader has the texture coordinates the box projection gave the fur)
+  m.map = (MATERIALS.fur as THREE.MeshPhongMaterial).map;
+  m.color = new THREE.Color(1.05, 1.05, 1.05);
+  // (in the closure, not `userData`: a copy clones that)
+  const uniforms = { uFurLength: { value: length }, uShells: { value: shells }, uStrands: strandsMap };
+  m.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nuniform float uFurLength;\nuniform float uShells;\nvarying float vShell;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvShell = (float(gl_InstanceID) + 1.0) / uShells;\ntransformed += normalize(objectNormal) * vShell * uFurLength;\ntransformed.y -= vShell * vShell * uFurLength * 0.35;");
+    shader.fragmentShader = shader.fragmentShader
+      .replace("#include <common>", "#include <common>\nuniform sampler2D uStrands;\nvarying float vShell;")
+      .replace("#include <map_fragment>", "#include <map_fragment>\nfloat strand = texture2D(uStrands, vMapUv * 3.0).r;\nif (strand < vShell * 0.92 + 0.04) discard;\ndiffuseColor.rgb *= mix(0.6, 1.08, vShell);");
+  };
+  m.customProgramCacheKey = () => "fur-shells";
+  return m;
+}
+function FurShells({ geometry, material, shells }: { geometry: THREE.BufferGeometry; material: THREE.Material; shells: number }) {
+  // The instances all stand where the body does: the shell is the instance's number, read by the shader
+  const mesh = useMemo(() => {
+    const m = new THREE.InstancedMesh(geometry, material, shells);
+    for (let i = 0; i < shells; i++) m.setMatrixAt(i, new THREE.Matrix4());
+    m.frustumCulled = false;
+    m.raycast = () => null;
+    return m;
+  }, [geometry, material, shells]);
+  useEffect(() => () => { mesh.dispose(); }, [mesh]);
+  return <primitive object={mesh} />;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1372,19 +1455,23 @@ export function RoundedFloor({ w, d, radii, color, y = -0.2, thick = 0.2 }: { w:
 // whose centre is `r` in from the corner, `h` high. `corner` 0 north-west, 1 north-east,
 // 2 south-east, 3 south-west.
 // With `wall` the curve is textured with that wall set, projected on the curve (the wall's colour multiplies it through the vertices)
-export function CornerWall({ r, h, thick, corner, color, wall }: { r: number; h: number; thick: number; corner: 0 | 1 | 2 | 3; color: string; wall?: WallSet }) {
+// `from` and `to` (angles about the centre, 0 east and a quarter turn to the south, as `outline` in shared/logic footprint gives them) draw
+// only that part of the quarter, where a door or window takes the rest
+export function CornerWall({ r, h, thick, corner, color, wall, from, to }: { r: number; h: number; thick: number; corner: 0 | 1 | 2 | 3; color: string; wall?: WallSet; from?: number; to?: number }) {
   // Turned angles run from south (0) through east (pi/2) and north (pi) to west: each corner's
-  // quarter turns outwards from the centre it curves round
-  const start = [Math.PI, Math.PI / 2, 0, -Math.PI / 2][corner];
-  const build = (k: Kit) => shell(k, r - thick / 2, thick, h, color, { start, arc: Math.PI / 2 });
+  // quarter turns outwards from the centre it curves round (an angle a of the outline is pi/2 - a turned, and runs the other way)
+  const part = from !== undefined && to !== undefined;
+  const start = part ? Math.PI / 2 - to : [Math.PI, Math.PI / 2, 0, -Math.PI / 2][corner];
+  const arc = part ? to - from : Math.PI / 2;
+  const build = (k: Kit) => shell(k, r - thick / 2, thick, h, color, { start, arc });
   const curve = useMemo(() => {
     if (!wall) return null;
     const k = new Kit();
     build(k);
     return k.bake(1 / WALL_TILE).matte ?? null;
-  }, [wall, r, h, thick, corner, color]);
+  }, [wall, r, h, thick, corner, color, from, to]);
   useEffect(() => () => curve?.dispose(), [curve]);
-  if (!wall) return <Model id={`cornerwall:${r2(r)}:${r2(h)}:${thick}:${corner}:${color}`} build={build} />;
+  if (!wall) return <Model id={`cornerwall:${r2(r)}:${r2(h)}:${thick}:${corner}:${color}:${part ? `${r2(start)}+${r2(arc)}` : ""}`} build={build} />;
   // The same tint as the straight walls of the room (a plain room's walls are tinted by their colour, see LocalMap)
   return curve ? <mesh geometry={curve} material={wallMaterial(wall, { tint: color })} castShadow receiveShadow /> : null;
 }
@@ -1410,49 +1497,121 @@ export function DomeRoof({ r, color, lit = true }: { r: number; color: string; l
 }
 
 // A door's leaf (1.5 seconds to open, 2.2 m-wide frames in squares: W 1.0, H 1.42): a hinged leaf swings open on its left edge, and a
-// rising one (a hangar's or a gate's) rolls up into the frame. A wooden leaf is planks; a hangar's or a gate's is painted metal (the
-// wear set of public/textures/wear). `open` is set by the tap that uses the door.
+// rising one (a hangar's or a gate's) rolls up into the frame. The leaf is the shape of its frame's opening (an arched frame has an arched
+// leaf, a rounded one a rounded leaf: 2026-10-26, it was a plain board in every frame) and is made of what the settlement builds with
+// (`DOOR_LOOKS` by the room's wall set: planks where the walls are plaster or sandstone, plate where they are concrete, rusted panels in
+// brick slums and old hulls); a hangar's, a gate's or a vault's is painted metal (the wear set of public/textures/wear). `open` is set by
+// the tap that uses the door. `bend` lays it on a curved wall (interiors/Walls.tsx `bendOf`).
 export const DOOR_OPEN_SECONDS = 1.5;
-export function DoorLeaf({ open, mode, metal = false, tint }: { open: boolean; mode: "hinge" | "rise"; metal?: boolean; tint: string }) {
+const DOOR_W = 1.0;
+const DOOR_H = 1.42;
+const DOOR_LOOKS: Record<WallSet, { folder: string; set: string; tint: string; lift: number }> = {
+  painted_plaster_wall: { folder: "wood", set: "brown_planks_03", tint: "#c9a878", lift: 1.3 },
+  sandstone_blocks_05: { folder: "wood", set: "brown_planks_03", tint: "#e0c294", lift: 1.45 },
+  concrete_wall_003: { folder: "wear", set: "metal_plate_02", tint: "#b4bcc6", lift: 1.2 },
+  corrugated_iron_02: { folder: "wear", set: "painted_metal_shutter", tint: "#a9b2ba", lift: 1.1 },
+  brick_wall_001: { folder: "wear", set: "rusty_painted_metal", tint: "#b09888", lift: 1.2 },
+  rusty_metal_02: { folder: "wear", set: "rust_coarse_01", tint: "#b8a090", lift: 1.2 },
+};
+// The outline of a doorway's opening (inside its frame), `inset` in from it all round but at the floor
+function doorShape(style: Pick<Style, "arch" | "porthole"> | undefined, inset = 0): THREE.Shape {
+  const [w, h] = [DOOR_W - 0.2 - inset * 2, DOOR_H - 0.1 - inset];
+  if (style?.arch) return archShape(w, h);
+  const r = (style?.porthole ? 0.24 : 0.06) - inset;
+  return roundedRect(w, h, [0, 0, r, r], -w / 2, 0);
+}
+export function DoorLeaf({ open, mode, metal = false, tint, style, wall, bend }: { open: boolean; mode: "hinge" | "rise"; metal?: boolean; tint?: string; style?: Pick<Style, "arch" | "porthole">; wall?: WallSet; bend?: Bend }) {
   const leaf = useRef<THREE.Group>(null);
   const t = useRef(0);
-  const W = 1.0;
-  const H = 1.42;
-  const geo = useMemo(() => boxUV(new THREE.BoxGeometry(W - 0.2, H - 0.1, 0.07), 2), []);
+  // The hinge (on the leaf's left edge) and the leaf's foot, in the doorway's frame
+  const hinge: V3 = mode === "rise" ? [0, 0, 0] : [-DOOR_W / 2 + 0.11, 0.02, 0];
+  const geo = useMemo(() => {
+    const shape = doorShape(mode === "rise" ? undefined : style, 0.01);
+    const g = new THREE.ExtrudeGeometry(shape, { depth: 0.07, bevelEnabled: false, curveSegments: 10 });
+    // centred across the wall, the hinge edge at x 0 (a hinged leaf), from the floor up
+    g.translate(mode === "rise" ? 0 : (DOOR_W - 0.22) / 2, 0, -0.035);
+    // bent onto the wall where it curves (in the doorway's frame, so about the hinge), then back about the hinge
+    if (bend) {
+      g.translate(hinge[0], hinge[1], hinge[2]);
+      const bent = bend.apply(g);
+      g.dispose();
+      bent.translate(-hinge[0], -hinge[1], -hinge[2]);
+      return boxUV(bent, 2);
+    }
+    const uv = boxUV(g, 2);
+    g.dispose();
+    return uv;
+  }, [mode, style?.arch, style?.porthole, bend?.key]);
   useEffect(() => () => geo.dispose(), [geo]);
-  const material = metal ? surfaceMaterial("wear", "painted_metal_shutter", { tint, lift: 1.1, parallax: 0.02 }) : surfaceMaterial("wood", "brown_planks_03", { tint, lift: 1.3, parallax: 0.02 });
+  const look = wall ? DOOR_LOOKS[wall] : DOOR_LOOKS.painted_plaster_wall;
+  const material = metal ? surfaceMaterial("wear", "painted_metal_shutter", { tint: tint ?? "#9aa4ae", lift: 1.1, parallax: 0.02 }) : surfaceMaterial(look.folder, look.set, { tint: tint ?? look.tint, lift: look.lift, parallax: 0.02 });
   useFrame((_, dt) => {
     const target = open ? 1 : 0;
     t.current += Math.sign(target - t.current) * Math.min(Math.abs(target - t.current), dt / DOOR_OPEN_SECONDS);
     const e = t.current * t.current * (3 - 2 * t.current); // eased: a slow start and a slow stop
     if (!leaf.current) return;
-    if (mode === "rise") leaf.current.position.y = e * (H - 0.1);
+    if (mode === "rise") leaf.current.position.y = e * (DOOR_H - 0.1);
     else leaf.current.rotation.y = -e * (Math.PI / 2);
   });
-  if (mode === "rise") {
-    return (
-      <group ref={leaf}>
-        <mesh geometry={geo} material={material} position={[0, H / 2, 0]} castShadow receiveShadow />
-      </group>
-    );
-  }
   return (
-    <group position={[-W / 2 + 0.12, 0.02, 0]}>
+    <group position={hinge}>
       <group ref={leaf}>
-        <mesh geometry={geo} material={material} position={[(W - 0.2) / 2, H / 2 - 0.05, 0]} castShadow receiveShadow />
+        <mesh geometry={geo} material={material} castShadow receiveShadow />
       </group>
     </group>
   );
 }
 
+// The outer edge of an opening's frame, in the wall's own coordinates (x along it about the middle, y up from the floor), for the hole it
+// takes out of its square of wall (interiors/Walls.tsx `piercedWall`): a window by its size (`scale`, the PANE_SCALE of the map), a
+// doorway, a way out or a secret way the doorway's shape
+export function openingOutline(kind: string, style?: Pick<Style, "arch" | "porthole">, scale: V3 = [1, 1, 1]): [number, number][] {
+  const arch = !!style?.arch;
+  const port = !!style?.porthole;
+  let points: THREE.Vector2[];
+  if (kind === "window") {
+    if (port) points = Array.from({ length: 24 }, (_, i) => new THREE.Vector2(Math.cos((i / 24) * Math.PI * 2) * 0.265, 0.66 + Math.sin((i / 24) * Math.PI * 2) * 0.265));
+    else points = (arch ? archShape(0.84, 0.56) : roundedRect(0.84, 0.48, [0.08, 0.08, 0.08, 0.08], -0.42, 0)).getPoints(8).map((p) => new THREE.Vector2(p.x, p.y + 0.3));
+  } else points = (arch ? archShape(DOOR_W, DOOR_H) : roundedRect(DOOR_W, DOOR_H, [0, 0, port ? 0.3 : 0.1, port ? 0.3 : 0.1], -DOOR_W / 2, 0)).getPoints(8);
+  const out = points.map((p) => [p.x * scale[0], p.y * scale[1]] as [number, number]);
+  // (getPoints closes the outline by repeating the first point)
+  const [a, b] = [out[0], out[out.length - 1]];
+  return Math.abs(a[0] - b[0]) < 1e-9 && Math.abs(a[1] - b[1]) < 1e-9 ? out.slice(0, -1) : out;
+}
+
+// A model bent onto a curved wall (see `bend`), else as it is; `scale` is applied first (a window's size)
+function BentModel({ id, build, bend, scale }: { id: string; build: (k: Kit) => void; bend?: Bend; scale?: V3 }) {
+  const model = useModel(id, build);
+  const bent = useMemo(() => {
+    if (!bend && !scale) return model;
+    const out: Baked = {};
+    for (const f of FINISHES) {
+      const g = model[f];
+      if (!g) continue;
+      const sized = g.clone();
+      if (scale) sized.scale(scale[0], scale[1], scale[2]);
+      out[f] = bend ? bend.apply(sized) : sized;
+      if (bend) sized.dispose();
+    }
+    return out;
+  }, [model, bend?.key, scale?.join(",")]);
+  useEffect(() => () => {
+    if (bent !== model) for (const g of Object.values(bent)) g?.dispose();
+  }, [bent]);
+  return <Meshes model={bent} materials={MATERIALS} />;
+}
+
 // A door, way out, secret way or window set in a wall, drawn along x about the origin. Doors
-// and windows take the shape of the building's style.
-export function Opening({ kind, color, style }: { kind: string; color: string; style?: Pick<Style, "arch" | "porthole"> }) {
+// and windows take the shape of the building's style. `scale` sizes a window (it used to be a group round this, which a bend could not
+// see), `bend` lays it on a curved wall.
+export function Opening({ kind, color, style, scale, bend }: { kind: string; color: string; style?: Pick<Style, "arch" | "porthole">; scale?: V3; bend?: Bend }) {
   const arch = !!style?.arch;
   const port = !!style?.porthole;
   return (
-    <Model
+    <BentModel
       id={`opening:${kind}:${color}:${arch ? 1 : 0}${port ? 1 : 0}`}
+      scale={scale}
+      bend={bend}
       build={(k) => {
         const depth = 0.26;
         if (kind === "window") {
@@ -1465,7 +1624,7 @@ export function Opening({ kind, color, style }: { kind: string; color: string; s
           const inner = arch ? archShape(0.7, 0.48) : roundedRect(0.7, 0.36, [0.05, 0.05, 0.05, 0.05], -0.35, 0.06);
           outer.holes.push(inner);
           k.extrude(outer, depth, shade(color, 0.35), { at: [0, 0.3, -depth / 2], bevel: 0.015, finish: "sheen" });
-          k.extrude(arch ? archShape(0.7, 0.48) : roundedRect(0.7, 0.36, [0.05, 0.05, 0.05, 0.05], -0.35, 0.06), 0.1, mix(color, "#ffffff", 0.15), { at: [0, 0.3, -0.05], finish: "glass" }); // the pane is glass: the wall shows through the frame
+          k.extrude(arch ? archShape(0.7, 0.48) : roundedRect(0.7, 0.36, [0.05, 0.05, 0.05, 0.05], -0.35, 0.06), 0.1, mix(color, "#ffffff", 0.15), { at: [0, 0.3, -0.05], finish: "glass" }); // the pane is glass: the room shows through it
           return;
         }
         if (kind === "secret") {
@@ -1474,14 +1633,11 @@ export function Opening({ kind, color, style }: { kind: string; color: string; s
           return;
         }
         // A door: a frame of the building's shape round a lit panel
-        const W = 1.0;
-        const H = 1.42;
-        const outer = arch ? archShape(W, H) : roundedRect(W, H, [0, 0, port ? 0.3 : 0.1, port ? 0.3 : 0.1], -W / 2, 0);
-        const inner = arch ? archShape(W - 0.2, H - 0.1) : roundedRect(W - 0.2, H - 0.1, [0, 0, port ? 0.24 : 0.06, port ? 0.24 : 0.06], -(W - 0.2) / 2, 0);
-        outer.holes.push(inner);
+        const outer = arch ? archShape(DOOR_W, DOOR_H) : roundedRect(DOOR_W, DOOR_H, [0, 0, port ? 0.3 : 0.1, port ? 0.3 : 0.1], -DOOR_W / 2, 0);
+        outer.holes.push(doorShape(style));
         k.extrude(outer, depth, C.steelDark, { at: [0, 0, -depth / 2], bevel: 0.02, finish: "sheen" });
         // (the leaf that shuts the doorway is DoorLeaf, which moves; with it open, the room beyond shows through the frame)
-        k.box([0.3, 0.06, 0.3], color, { at: [0, H + 0.06, 0], round: 0.025, finish: "glow" });
+        k.box([0.3, 0.06, 0.3], color, { at: [0, DOOR_H + 0.06, 0], round: 0.025, finish: "glow" });
       }}
     />
   );
@@ -1831,11 +1987,13 @@ export function ShipModel({ ship, w, h, ceiling }: { ship: ShipLook; w: number; 
 
 // A speeder standing on the ground, hovering a hand's breadth up: a bike, a landspeeder with its
 // windscreen, or an airspeeder with its canopy. A wreck lies tilted and dark, smoking.
-export function SpeederModel({ model, wrecked }: { model: string; wrecked?: boolean }) {
+// `look`: the make's model (shared/logic VEHICLE_MAKES), else the plain one of the class `model` names; `name` picks among a make's paints
+export function SpeederModel({ model, wrecked, look, name = model }: { model: string; wrecked?: boolean; look?: string; name?: string }) {
   const kind = speederKind(model);
+  const made = !!look && !!MAKE_PAINT[look];
   return (
     <group position={[0, wrecked ? 0.05 : 0.28, 0]} rotation={wrecked ? [0.12, 0.5, 0.18] : [0, 0, 0]}>
-      <Model id={`speeder:${kind}:${wrecked ? 1 : 0}:${pickOf(["a", "b", "c"], model)}`} build={(k) => buildSpeeder(k, kind, !!wrecked, model)} wear={speederWear(model, wrecked)} />
+      <Model id={made ? `speeder:${look}:${wrecked ? 1 : 0}:${pickOf(MAKE_PAINT[look!], name)}` : `speeder:${kind}:${wrecked ? 1 : 0}:${pickOf(["a", "b", "c"], model)}`} build={(k) => (made ? buildMake(k, look!, !!wrecked, name) : buildSpeeder(k, kind, !!wrecked, model))} wear={made ? (MILITARY_LOOKS.has(look!) && !wrecked ? { age: 0, damage: 0, grain: speederWear(name).grain } : speederWear(name, wrecked)) : speederWear(model, wrecked)} />
     </group>
   );
 }
@@ -1886,6 +2044,183 @@ function buildSpeeder(k: Kit, kind: string, wrecked: boolean, model: string) {
     }
   }
   if (wrecked) k.blob(0.22, "#6b6862", { at: [0.1, 0.9, 0], smooth: true, seed: 3, rough: 0.3, finish: "haze" });
+}
+
+// The makes of speeder beyond the three plain ones (shared/logic VEHICLE_MAKES, 2026-10-26): each drawn after the machine of the films and
+// series it is named for, at the scale of the plain ones (the nose to +z, the body hovering at the height SpeederModel lifts it to).
+// False when the look is not one of them (the plain bike, landspeeder and airspeeder stand for the rest)
+// (the Empire's and the Republic's machines are kept clean; the others are aged by their name)
+const MILITARY_LOOKS = new Set(["barc", "ava", "itt"]);
+const MAKE_PAINT: Record<string, string[]> = {
+  swoop: ["#c8462f", "#2f6fae", "#d8a23a"], barc: ["#8a8f78", "#b7b9b3"], ava: ["#33363b"], v35: ["#5e8a86", "#b0a48a", "#7b6f9a"], flash: ["#c9b98f", "#9a3a32"],
+  skiff: ["#8a7a5a"], itt: ["#d8dbe0"], t47: ["#e6e2d8"], cloudcar: ["#d9752b"], koro: ["#4f6e4c", "#6e5a8a"], xj6: ["#e8c23a"],
+};
+function buildMake(k: Kit, look: string, wrecked: boolean, name: string): boolean {
+  const palette = MAKE_PAINT[look];
+  if (!palette) return false;
+  const paint = wrecked ? "#4b4742" : pickOf(palette, name);
+  const dark = wrecked ? "#2b2926" : "#2b2f36";
+  const lit: Finish = wrecked ? "matte" : "glow";
+  const glass: Finish = wrecked ? "matte" : "glass";
+  const glowColor = wrecked ? dark : C.glow;
+  // A turbine along z: its body from `back` to `front` (z) about (x, y), with a lit nozzle at the back
+  const engine = (x: number, y: number, back: number, front: number, r: number, color = dark) => {
+    const mid = (back + front) / 2;
+    const half = (front - back) / 2;
+    k.group([x, y, mid], [Math.PI / 2, 0, 0], undefined, () => k.lathe([[0, -half], [r * 0.85, -half * 0.95], [r, -half * 0.5], [r, half * 0.6], [r * 0.8, half * 0.95], [0, half]], color, { seg: 12, finish: "sheen" }));
+    k.cyl(r * 0.7, 0.02, glowColor, { at: [x, y, back - 0.01], rot: [Math.PI / 2, 0, 0], seg: 12, finish: lit });
+  };
+  // A body seen from above (a shape in x and z, +z the nose), `depth` deep from `top` down
+  const slab = (points: [number, number][], top: number, depth: number, color = paint, bevel = 0.05) => {
+    const s = new THREE.Shape(points.map(([x, z]) => new THREE.Vector2(x, z)));
+    k.extrude(s, depth, color, { at: [0, top, 0], rot: [Math.PI / 2, 0, 0], bevel, finish: "sheen" });
+  };
+  switch (look) {
+    case "swoop": {
+      // A great engine with its intake at the front, the rider sitting low behind it on a short tail (Solo, The Clone Wars)
+      engine(0, 0.24, -0.2, 0.95, 0.22, paint);
+      k.torus(0.2, 0.035, dark, { at: [0, 0.24, 0.95], seg: [6, 18], finish: "sheen" });
+      k.cyl(0.17, 0.02, "#111317", { at: [0, 0.24, 0.96], rot: [Math.PI / 2, 0, 0], seg: 16 });
+      k.box([0.22, 0.14, 0.9], paint, { at: [0, 0.2, -0.6], round: 0.05, finish: "sheen" });
+      k.box([0.2, 0.07, 0.45], "#2a2420", { at: [0, 0.31, -0.55], round: 0.03 });
+      k.rod([-0.26, 0.46, 0.05], [0.26, 0.46, 0.05], 0.016, dark, { seg: 5 });
+      k.pair((s) => {
+        k.rod([s * 0.1, 0.3, 0.12], [s * 0.2, 0.46, 0.05], 0.014, dark, { seg: 5 });
+        k.box([0.02, 0.2, 0.32], paint, { at: [s * 0.13, 0.32, -0.95], rot: [-0.3, 0, 0], finish: "sheen" });
+        engine(s * 0.12, 0.12, -1.15, -0.75, 0.05);
+      });
+      return true;
+    }
+    case "barc": {
+      // The Republic's heavy scout bike: a bulky body, a long prong forward with blaster cannons, cannons at the back (Revenge of the Sith)
+      k.group(undefined, [Math.PI / 2, 0, 0], undefined, () => k.lathe([[0, -1.0], [0.14, -0.95], [0.22, -0.6], [0.23, 0.15], [0.17, 0.55], [0.07, 0.8], [0, 0.82]], paint, { seg: 14, finish: "sheen", scale: [1.3, 1, 0.85] }));
+      k.box([0.14, 0.08, 0.8], dark, { at: [0, 0.1, 1.15], round: 0.02, finish: "sheen" });
+      k.box([0.56, 0.035, 0.18], paint, { at: [0, 0.14, 1.5], round: 0.01, finish: "sheen" });
+      k.pair((s) => {
+        k.rod([s * 0.08, 0.1, 0.9], [s * 0.08, 0.1, 1.65], 0.018, dark, { seg: 5 });
+        k.cyl(0.12, 0.42, dark, { at: [s * 0.2, 0.04, -0.85], rot: [Math.PI / 2, 0, 0], seg: 12, finish: "sheen" });
+        k.cyl(0.09, 0.02, glowColor, { at: [s * 0.2, 0.04, -1.07], rot: [Math.PI / 2, 0, 0], seg: 12, finish: lit });
+        k.rod([s * 0.3, 0.12, -0.6], [s * 0.3, 0.12, -0.1], 0.02, dark, { seg: 5 });
+      });
+      k.box([0.26, 0.08, 0.5], "#3a2c20", { at: [0, 0.22, -0.35], round: 0.04 });
+      k.torus(0.13, 0.016, dark, { at: [0, 0.33, 0.3], rot: [0.3, 0, 0], arc: Math.PI, seg: [5, 12] });
+      return true;
+    }
+    case "ava": {
+      // The Empire's later bike: long, slim and dark, a cannon under the nose and two upright vanes either side of it (Rebels, Andor)
+      k.group(undefined, [Math.PI / 2, 0, 0], undefined, () => k.lathe([[0, -0.95], [0.1, -0.9], [0.15, -0.55], [0.14, 0.3], [0.09, 0.75], [0.03, 0.95], [0, 0.97]], paint, { seg: 14, finish: "sheen", scale: [0.95, 1, 0.75] }));
+      k.cyl(0.028, 0.55, dark, { at: [0, -0.02, 0.95], rot: [Math.PI / 2, 0, 0], seg: 6, finish: "sheen" });
+      k.pair((s) => k.box([0.02, 0.3, 0.42], paint, { at: [s * 0.15, 0.14, 0.72], round: 0.008, finish: "sheen" }));
+      k.box([0.2, 0.07, 0.45], "#1c1e22", { at: [0, 0.18, -0.35], round: 0.03 });
+      k.torus(0.12, 0.015, dark, { at: [0, 0.3, 0.25], rot: [0.3, 0, 0], arc: Math.PI, seg: [5, 12] });
+      engine(0, 0.04, -1.15, -0.7, 0.12);
+      return true;
+    }
+    case "v35": {
+      // A closed courier speeder: a long rounded body, a bubble canopy over its seats, two big engines either side at the back
+      k.extrude(roundedRect(1.3, 2.3, [0.3, 0.3, 0.45, 0.45], -0.65, -1.1), 0.34, paint, { at: [0, 0.4, 0], rot: [Math.PI / 2, 0, 0], bevel: 0.07, finish: "sheen" });
+      k.capsule(0.42, 0.75, "#1b2a38", { at: [0, 0.5, 0.2], rot: [Math.PI / 2, 0, 0], scale: [1.25, 0.65, 1], finish: glass });
+      k.box([1.1, 0.06, 0.12], dark, { at: [0, 0.2, 1.22], round: 0.03, finish: "sheen" });
+      k.pair((s) => engine(s * 0.62, 0.38, -1.5, -0.55, 0.19));
+      k.box([0.9, 0.18, 0.6], shade(paint, 0.8), { at: [0, 0.5, -0.7], round: 0.06, finish: "sheen" });
+      return true;
+    }
+    case "flash": {
+      // Naboo's flash speeder: low and long with a pointed nose, a small windscreen, two seats and a pod either side
+      slab([[0, 1.5], [0.35, 1.1], [0.55, 0.3], [0.55, -1.1], [-0.55, -1.1], [-0.55, 0.3], [-0.35, 1.1]], 0.36, 0.22);
+      k.box([0.7, 0.1, 0.8], "#1f1a16", { at: [0, 0.32, -0.25], round: 0.04 });
+      k.pair((s) => k.box([0.28, 0.18, 0.26], "#5a3a2a", { at: [s * 0.17, 0.38, -0.45], round: 0.06 }));
+      k.cyl(0.45, 0.2, "#9fd4ea", { at: [0, 0.46, 0.25], arc: Math.PI * 0.6, start: -Math.PI * 0.3, open: true, seg: 12, finish: glass, scale: [1, 1, 0.45] });
+      k.pair((s) => {
+        k.capsule(0.12, 1.3, shade(paint, 0.85), { at: [s * 0.66, 0.26, -0.2], rot: [Math.PI / 2, 0, 0], finish: "sheen" });
+        k.cyl(0.09, 0.02, glowColor, { at: [s * 0.66, 0.26, -0.98], rot: [Math.PI / 2, 0, 0], seg: 12, finish: lit });
+      });
+      return true;
+    }
+    case "skiff": {
+      // A cargo skiff (Jabba's, Boba Fett's): a long open deck with rails, a raised bow, a helm at the stern and engines under it
+      k.box([1.6, 0.16, 3.4], paint, { at: [0, 0.32, 0], round: 0.04, finish: "sheen" });
+      k.box([1.3, 0.14, 3.0], shade(paint, 0.65), { at: [0, 0.18, 0], round: 0.04 });
+      for (let i = 0; i < 7; i++) k.box([1.5, 0.012, 0.02], shade(paint, 0.8), { at: [0, 0.405, -1.5 + i * 0.5] });
+      k.box([1.4, 0.24, 0.5], paint, { at: [0, 0.42, 1.78], rot: [-0.35, 0, 0], round: 0.04, finish: "sheen" });
+      k.pair((s) => {
+        for (let i = 0; i < 6; i++) k.cyl(0.018, 0.5, dark, { at: [s * 0.76, 0.65, -1.5 + i * 0.6], seg: 5, finish: "sheen" });
+        k.rod([s * 0.76, 0.9, -1.55], [s * 0.76, 0.9, 1.55], 0.02, dark, { seg: 5 });
+        engine(s * 0.45, 0.12, -1.95, -1.2, 0.13);
+      });
+      k.box([0.36, 0.55, 0.3], dark, { at: [0, 0.68, -1.4], round: 0.04, finish: "sheen" });
+      k.torus(0.13, 0.02, "#59636d", { at: [0, 1.0, -1.25], rot: [-0.4, 0, 0], seg: [5, 14], finish: "sheen" });
+      k.box([0.2, 0.04, 0.12], C.amber, { at: [0, 0.92, -1.28], finish: lit });
+      return true;
+    }
+    case "itt": {
+      // The Empire's troop transport: an armoured box on repulsors, a sloped cab with a dark window band, doors down its sides, a turret
+      k.box([1.3, 0.75, 2.1], paint, { at: [0, 0.62, -0.15], round: 0.06, finish: "sheen" });
+      k.box([1.24, 0.55, 0.62], paint, { at: [0, 0.5, 1.1], rot: [-0.4, 0, 0], round: 0.06, finish: "sheen" });
+      k.box([1.0, 0.12, 0.04], "#14181d", { at: [0, 0.68, 1.33], rot: [-0.4, 0, 0], finish: glass });
+      k.pair((s) => {
+        for (const z of [-0.75, 0.1]) k.box([0.03, 0.5, 0.55], shade(paint, 0.72), { at: [s * 0.66, 0.6, z], finish: "sheen" });
+        k.box([0.08, 0.1, 2.0], "#3a3f46", { at: [s * 0.62, 0.22, -0.1], round: 0.02, finish: "sheen" });
+        engine(s * 0.42, 0.45, -1.45, -1.15, 0.14);
+      });
+      k.cyl(0.22, 0.14, shade(paint, 0.85), { at: [0, 1.06, 0.15], seg: 14, finish: "sheen" });
+      k.rod([0, 1.09, 0.25], [0, 1.09, 0.85], 0.025, dark, { seg: 6 });
+      k.box([1.0, 0.04, 0.08], "#3a3f46", { at: [0, 1.0, -1.0] });
+      return true;
+    }
+    case "t47": {
+      // The snowspeeder: a flat wedge, a notch between its two engine housings at the back, the cockpit forward, cannons either side of
+      // the nose, orange bands (The Empire Strikes Back)
+      slab([[0, 1.4], [0.32, 1.3], [0.9, -0.55], [0.9, -1.1], [0.22, -1.1], [0.16, -0.7], [-0.16, -0.7], [-0.22, -1.1], [-0.9, -1.1], [-0.9, -0.55], [-0.32, 1.3]], 0.36, 0.24);
+      k.capsule(0.26, 0.5, "#1b2a38", { at: [0, 0.4, 0.15], rot: [Math.PI / 2, 0, 0], scale: [1, 0.55, 1], finish: glass });
+      k.pair((s) => {
+        k.box([0.12, 0.012, 1.0], wrecked ? dark : "#d9752b", { at: [s * 0.5, 0.367, -0.35], rot: [0, s * 0.27, 0] });
+        k.cyl(0.15, 0.6, shade(paint, 0.82), { at: [s * 0.6, 0.27, -0.85], rot: [Math.PI / 2, 0, 0], seg: 12, finish: "sheen" });
+        k.cyl(0.11, 0.02, glowColor, { at: [s * 0.6, 0.27, -1.16], rot: [Math.PI / 2, 0, 0], seg: 12, finish: lit });
+        k.rod([s * 0.42, 0.2, 0.55], [s * 0.42, 0.2, 1.2], 0.025, dark, { seg: 6 });
+      });
+      return true;
+    }
+    case "cloudcar": {
+      // Bespin's twin-pod cloud car: two round pods side by side, a wing between them and an ion engine in the middle
+      k.pair((s) => {
+        k.capsule(0.34, 0.75, paint, { at: [s * 0.7, 0.55, 0.05], rot: [Math.PI / 2, 0, 0], finish: "sheen" });
+        k.sphere(0.27, "#1b2a38", { at: [s * 0.7, 0.62, 0.48], seg: [12, 8], scale: [1, 0.8, 0.8], finish: glass });
+        k.rod([s * 0.75, 0.3, 0.3], [s * 0.75, 0.3, 0.9], 0.025, dark, { seg: 5 });
+        k.box([0.03, 0.3, 0.3], shade(paint, 0.8), { at: [s * 0.7, 0.95, -0.4], finish: "sheen" });
+      });
+      k.box([1.0, 0.12, 0.6], shade(paint, 0.85), { at: [0, 0.55, -0.1], round: 0.04, finish: "sheen" });
+      engine(0, 0.55, -0.8, 0.2, 0.18);
+      return true;
+    }
+    case "koro": {
+      // Zam Wesell's Koro-2: a teardrop body with the cockpit at its back and two long prongs reaching forward (Attack of the Clones)
+      k.capsule(0.28, 0.7, paint, { at: [0, 0.42, -0.45], rot: [Math.PI / 2, 0, 0], scale: [1, 0.75, 1], finish: "sheen" });
+      k.sphere(0.22, "#1b2a38", { at: [0, 0.58, -0.55], seg: [12, 8], half: true, finish: glass });
+      k.pair((s) => {
+        k.rod([s * 0.2, 0.38, -0.15], [s * 0.28, 0.36, 1.35], 0.07, paint, { seg: 8, finish: "sheen" });
+        k.sphere(0.05, glowColor, { at: [s * 0.28, 0.36, 1.4], seg: [8, 6], finish: lit });
+        k.box([0.02, 0.22, 0.3], shade(paint, 0.8), { at: [s * 0.16, 0.6, -0.95], rot: [-0.3, 0, s * 0.3], finish: "sheen" });
+      });
+      k.cyl(0.08, 0.02, glowColor, { at: [0, 0.42, -1.12], rot: [Math.PI / 2, 0, 0], seg: 10, finish: lit });
+      return true;
+    }
+    case "xj6": {
+      // Anakin's yellow airspeeder: two long turbojets out in front, joined by a glowing binder, towing the open cockpit behind them
+      k.pair((s) => {
+        engine(s * 0.32, 0.42, 0.2, 1.8, 0.15, paint);
+        k.cyl(0.11, 0.02, "#111317", { at: [s * 0.32, 0.42, 1.81], rot: [Math.PI / 2, 0, 0], seg: 12 });
+        k.rod([s * 0.32, 0.42, 0.3], [s * 0.14, 0.42, -0.2], 0.03, dark, { seg: 5 });
+      });
+      k.rod([-0.3, 0.42, 1.3], [0.3, 0.42, 1.3], 0.012, glowColor, { seg: 5, finish: lit });
+      k.capsule(0.24, 0.95, paint, { at: [0, 0.4, -0.65], rot: [Math.PI / 2, 0, 0], scale: [1.2, 0.7, 1], finish: "sheen" });
+      k.box([0.32, 0.1, 0.4], "#2a2420", { at: [0, 0.5, -0.6], round: 0.03 });
+      k.cyl(0.3, 0.14, "#9fd4ea", { at: [0, 0.56, -0.38], arc: Math.PI * 0.6, start: -Math.PI * 0.3, open: true, seg: 10, finish: glass, scale: [1, 1, 0.45] });
+      k.box([0.02, 0.22, 0.3], paint, { at: [0, 0.6, -1.2], rot: [-0.4, 0, 0], finish: "sheen" });
+      return true;
+    }
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2159,6 +2494,17 @@ export function buildHumanoid(k: Kit, look: Look, o: Outfit, skin: string, hair:
   const sleeve = armored ? plate : bare || o.garment === "vest" ? flesh : o.top;
   const hipW = 0.085 * b;
   const prosLeg = attach.find((a) => a.slot === "legL");
+  // The textured finishes this person's colours are dressed in (Kit.dress): skin (fur, scales, a carapace, a droid's plating), the weave
+  // of the clothes, leather boots, belts and straps, and armour plate
+  const before = k.dress;
+  const LEATHER = ["#2a2420", "#2b2522", "#4a3626", "#8a7356", "#3a2c20"];
+  k.dress = {
+    ...Object.fromEntries([o.top, o.bottom, o.accent, o.cape, armored ? under : undefined].filter((c): c is string => !!c).map((c) => [c, "fabric" as Finish])),
+    ...Object.fromEntries(LEATHER.map((c) => [c, "leather" as Finish])),
+    ...(armored ? { [plate]: "plate" as Finish } : {}),
+    ...(hair ? { [hair]: (fur ? "fur" : "hair") as Finish } : {}),
+    [skin]: look.machine || look.carapace ? "plate" : look.scales ? "scales" : "skin",
+  };
   k.group(undefined, undefined, look.scale, () => {
     // Legs and feet
     k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * hipW, 0.56, 0], () => {
@@ -2194,6 +2540,7 @@ export function buildHumanoid(k: Kit, look: Look, o: Outfit, skin: string, hair:
       }
     }
   });
+  k.dress = before;
 }
 
 // A model lying along a limb: its `axis` end (the hand or foot, +x for the prostheses) at `to`, its other end at `from`, scaled to the
@@ -2377,7 +2724,11 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
   // The neck and the head
   const neckH = look.longNeck ? 0.18 : 0.08;
   k.cyl(0.045 * b, neckH + 0.02, armored && o.head ? p.under : flesh, { at: [0, 0.43 + neckH / 2, 0], seg: 10 });
+  // A face is dressed in the finer pores of a face (not fur, scales or plating)
+  const body = k.dress;
+  if (body && body[p.flesh] === "skin") k.dress = { [p.flesh]: "face", ...Object.fromEntries(Object.entries(body).filter(([c]) => c !== p.flesh)) };
   k.group([0, 0.525 + (neckH - 0.08), 0.005], undefined, undefined, () => head(k, look, o, p));
+  k.dress = body;
 }
 
 // What someone holds: a blaster, a rifle across the body, a lit blade, a staff
@@ -2543,7 +2894,16 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
   else if (look.eyeCount >= 4) eyes([[-0.04, 0.02, 0.1], [0.04, 0.02, 0.1], [-0.07, 0.05, 0.08], [0.07, 0.05, 0.08], ...(look.eyeCount > 4 ? ([[-0.02, 0.06, 0.1], [0.02, 0.06, 0.1]] as V3[]) : [])], 0.016);
   else if (look.eyeSize === "side") eyes([[-0.088, 0.03, 0.05], [0.088, 0.03, 0.05]], 0.042);
   else if (look.eyeSize === "big") eyes([[-0.052, 0.018, 0.085], [0.052, 0.018, 0.085]], 0.036);
-  else eyes([[-0.04, 0.015, 0.1], [0.04, 0.015, 0.1]], 0.016);
+  else if (look.glowEyes) eyes([[-0.04, 0.015, 0.1], [0.04, 0.015, 0.1]], 0.016);
+  else k.pair((s) => {
+    // An eye: its white, the iris in the eye's colour and the pupil, under a brow in the hair's colour (or a darker skin), set in a lid
+    const at: V3 = [s * 0.04, 0.015, 0.098];
+    k.sphere(0.019, "#ece6dc", { at, scale: [1.2, 0.85, 0.6], finish: "sheen", seg: [8, 6] });
+    k.sphere(0.0105, p.eye && p.eye !== "#2a2a2e" ? p.eye : "#4e3420", { at: [at[0], at[1], at[2] + 0.009], scale: [1, 1, 0.5], finish: "sheen", seg: [8, 6] });
+    k.sphere(0.005, "#0b0b0d", { at: [at[0], at[1], at[2] + 0.0125], scale: [1, 1, 0.5], finish: "sheen", seg: [6, 4] });
+    k.sphere(0.021, face, { at: [at[0], at[1] + 0.006, at[2] - 0.002], scale: [1.2, 0.5, 0.62], theta: [0, 1.2], seg: [8, 4] });
+    if (!look.fur) k.box([0.034, 0.007, 0.012], p.hair || shade(face, 0.6), { at: [s * 0.042, 0.04, 0.104], rot: [0.1, 0, s * -0.12], round: 0.003 });
+  });
   // The middle of the face: a snout, a trunk, a beak, a muzzle, or a nose and a mouth
   const fore = shade(face, 1.1);
   if (look.snout === "pig") {
@@ -2555,8 +2915,14 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
   else if (look.snout === "long") k.capsule(0.035, 0.07, fore, { at: [0, -0.04, 0.12], rot: [Math.PI / 2 + 0.3, 0, 0], seg: 8 });
   else if (look.snout === "short") k.capsule(0.032, 0.03, fore, { at: [0, -0.035, 0.11], rot: [Math.PI / 2, 0, 0], seg: 8 });
   else if (!look.mask) {
-    k.sphere(0.017, fore, { at: [0, -0.012, 0.112], scale: [1, 1.2, 1], seg: [8, 6] });
-    k.box([0.04, 0.007, 0.01], shade(face, 0.55), { at: [0, -0.052, 0.104] });
+    // A nose with a bridge and nostrils, lips, and the line of the cheekbones
+    k.box([0.016, 0.04, 0.02], face, { at: [0, 0.0, 0.108], rot: [-0.25, 0, 0], round: 0.007 });
+    k.sphere(0.017, fore, { at: [0, -0.016, 0.114], scale: [1.05, 0.9, 0.95], seg: [8, 6] });
+    k.pair((s) => k.sphere(0.0045, shade(face, 0.45), { at: [s * 0.007, -0.026, 0.117], seg: [5, 4] }));
+    const lip = mix(face, "#b5524a", 0.32);
+    k.capsule(0.0048, 0.022, lip, { at: [0, -0.047, 0.106], rot: [0, 0, Math.PI / 2], scale: [1, 1, 0.7], seg: 6 });
+    k.capsule(0.0058, 0.018, shade(lip, 0.92), { at: [0, -0.055, 0.105], rot: [0, 0, Math.PI / 2], scale: [1, 1, 0.7], seg: 6 });
+    k.box([0.03, 0.0025, 0.004], shade(face, 0.45), { at: [0, -0.051, 0.11] });
   }
   if (look.mask === "rebreather") {
     k.pair((s) => k.cyl(0.026, 0.03, "#101318", { at: [s * 0.042, 0.02, 0.1], rot: [Math.PI / 2, 0, 0], seg: 10, finish: "glass" }));
@@ -2580,6 +2946,11 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
   if (look.antennae) k.pair((s) => {
     k.tube([[s * 0.035, 0.1, 0], [s * 0.06, 0.18, 0.02], [s * 0.075, 0.24, 0.06]], 0.007, face, { along: 6, around: 4 });
     k.sphere(0.014, face, { at: [s * 0.075, 0.245, 0.065], seg: [6, 4] });
+  });
+  // Plain ears where the species has none of its own and nothing covers them
+  if (!look.ears && !look.fur && !look.headTentacles && !look.lekku && !look.montrals && helmet !== "hood" && look.head !== "hammer") k.pair((s) => {
+    k.sphere(0.026, face, { at: [s * 0.108, 0.005, -0.01], scale: [0.35, 1, 0.7], seg: [8, 6] });
+    k.sphere(0.01, shade(face, 0.75), { at: [s * 0.114, 0.0, -0.006], scale: [0.4, 1, 0.8], seg: [5, 4] });
   });
   if (look.ears === "pointed") k.pair((s) => k.cone(0.025, 0.08, face, { at: [s * 0.115, 0.01, -0.01], rot: [0, 0, s * -1.3], seg: 6 }));
   else if (look.ears === "large") k.pair((s) => k.sphere(0.06, face, { at: [s * 0.12, 0.03, -0.01], scale: [0.25, 1, 0.75], seg: [10, 8] }));
@@ -2660,7 +3031,17 @@ export function droidKind(name: string): string {
   return "generic";
 }
 
+// The limb of a leg that stands out from a body at an angle round it (x = sin, z = cos): fore or hind, left or right
+const quarterLeg = (a: number) => (Math.cos(a) > 0 ? (Math.sin(a) > 0 ? LIMB.legL : LIMB.legR) : Math.sin(a) > 0 ? LIMB.hindL : LIMB.hindR);
+
+// A droid's plating is drawn in the plate finish (scratched, dented metal); its limbs are marked for its gait (figureSpec)
 export function buildDroid(k: Kit, kind: string, name: string) {
+  const before = k.restyle;
+  k.restyle = { ...before, sheen: "plate" };
+  droidBody(k, kind, name);
+  k.restyle = before;
+}
+function droidBody(k: Kit, kind: string, name: string) {
   const accent = pickOf(["#3b6fb5", "#b8473e", "#3f8f5a", "#d9752b", "#7a4fa8", "#2b2f36"], name);
   const white = "#e3e6e8";
   const metal = "#9aa3ad";
@@ -2689,8 +3070,12 @@ export function buildDroid(k: Kit, kind: string, name: string) {
       return;
     }
     case "bb": {
-      k.sphere(0.2, white, { at: [0, 0.2, 0], seg: [20, 14], finish: "sheen" });
-      for (const [rx, ry] of [[0, 0], [Math.PI / 2, 0], [0.8, 1.2]]) k.torus(0.2, 0.012, "#d9752b", { at: [0, 0.2, 0], rot: [rx, ry, 0], seg: [5, 24] });
+      // The ball rolls (LIMB.roll) under a head that stays level on top of it
+      k.limb(LIMB.roll, [0, 0.2, 0], () => {
+        k.sphere(0.2, white, { at: [0, 0.2, 0], seg: [20, 14], finish: "sheen" });
+        for (const [rx, ry] of [[0, 0], [Math.PI / 2, 0], [0.8, 1.2]]) k.torus(0.2, 0.012, "#d9752b", { at: [0, 0.2, 0], rot: [rx, ry, 0], seg: [5, 24] });
+        for (const [x, y, z] of [[0, 0.2, 0.2], [0.2, 0.2, 0], [-0.2, 0.2, 0], [0, 0.2, -0.2]] as V3[]) k.cyl(0.07, 0.008, "#9aa3ad", { at: [x * 0.98, y, z * 0.98], rot: [z ? Math.PI / 2 : 0, 0, x ? Math.PI / 2 : 0], seg: 14, finish: "sheen" });
+      });
       k.sphere(0.11, white, { at: [0, 0.42, 0], half: true, seg: [16, 8], finish: "sheen" });
       k.cyl(0.11, 0.02, "#d9752b", { at: [0, 0.425, 0], seg: 16 });
       k.sphere(0.03, "#101318", { at: [0, 0.47, 0.08], finish: "sheen", seg: [8, 6] });
@@ -2710,8 +3095,10 @@ export function buildDroid(k: Kit, kind: string, name: string) {
       const tan = kind === "bx" ? "#4a4a42" : kind === "tactical" ? "#5a6f9a" : "#c9b48a";
       const thick = kind === "bx" ? 1.5 : 1;
       k.pair((s) => {
-        k.tube([[s * 0.07, 0.56, 0], [s * 0.08, 0.3, 0.03], [s * 0.07, 0.06, -0.01]], 0.022 * thick, tan, { along: 6, around: 6, finish: "sheen" });
-        k.box([0.06, 0.04, 0.16], tan, { at: [s * 0.07, 0.03, 0.03], round: 0.015, finish: "sheen" });
+        k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.07, 0.56, 0], () => {
+          k.tube([[s * 0.07, 0.56, 0], [s * 0.08, 0.3, 0.03], [s * 0.07, 0.06, -0.01]], 0.022 * thick, tan, { along: 6, around: 6, finish: "sheen" });
+          k.box([0.06, 0.04, 0.16], tan, { at: [s * 0.07, 0.03, 0.03], round: 0.015, finish: "sheen" });
+        });
         k.tube([[s * 0.15, 0.86, 0], [s * 0.18, 0.66, 0.05], [s * 0.12, 0.55, 0.2]], 0.02 * thick, tan, { along: 6, around: 6, finish: "sheen" });
       });
       k.box([0.14, 0.12, 0.1], tan, { at: [0, 0.6, 0], round: 0.03, finish: "sheen" });
@@ -2728,8 +3115,10 @@ export function buildDroid(k: Kit, kind: string, name: string) {
     case "b2": {
       const blue = "#5a6a7f";
       k.pair((s) => {
-        k.tube([[s * 0.1, 0.56, 0], [s * 0.12, 0.3, 0.04], [s * 0.1, 0.06, 0]], 0.045, blue, { along: 6, around: 7, finish: "sheen" });
-        k.box([0.1, 0.06, 0.2], blue, { at: [s * 0.1, 0.03, 0.04], round: 0.02, finish: "sheen" });
+        k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.1, 0.56, 0], () => {
+          k.tube([[s * 0.1, 0.56, 0], [s * 0.12, 0.3, 0.04], [s * 0.1, 0.06, 0]], 0.045, blue, { along: 6, around: 7, finish: "sheen" });
+          k.box([0.1, 0.06, 0.2], blue, { at: [s * 0.1, 0.03, 0.04], round: 0.02, finish: "sheen" });
+        });
         k.tube([[s * 0.24, 0.92, 0], [s * 0.28, 0.72, 0.05], [s * 0.24, 0.58, 0.16]], 0.05, blue, { along: 6, around: 7, finish: "sheen" });
         k.box([0.1, 0.12, 0.22], shade(blue, 0.8), { at: [s * 0.24, 0.56, 0.2], round: 0.03, finish: "sheen" });
       });
@@ -2742,17 +3131,36 @@ export function buildDroid(k: Kit, kind: string, name: string) {
     case "destroyer": {
       // Three legs under a curved body, the head between its arms, a shield's shimmer round it
       const bronze = "#7a6a4a";
+      // The legs: the one behind, the right and the left (they step in turn: the tripod gait)
       for (let i = 0; i < 3; i++) {
         const a = i * 2.094 + Math.PI;
-        k.tube([[Math.sin(a) * 0.05, 0.62, Math.cos(a) * 0.05], [Math.sin(a) * 0.25, 0.42, Math.cos(a) * 0.25], [Math.sin(a) * 0.32, 0.02, Math.cos(a) * 0.32]], 0.03, bronze, { along: 8, around: 6, finish: "sheen" });
+        k.limb([LIMB.hindR, LIMB.legR, LIMB.legL][i], [Math.sin(a) * 0.05, 0.62, Math.cos(a) * 0.05], () => {
+          k.tube([[Math.sin(a) * 0.05, 0.62, Math.cos(a) * 0.05], [Math.sin(a) * 0.25, 0.42, Math.cos(a) * 0.25], [Math.sin(a) * 0.32, 0.02, Math.cos(a) * 0.32]], 0.03, bronze, { along: 8, around: 6, finish: "sheen" });
+          k.cone(0.045, 0.06, shade(bronze, 0.7), { at: [Math.sin(a) * 0.32, 0.03, Math.cos(a) * 0.32], seg: 8, finish: "sheen" });
+        });
       }
       k.torus(0.18, 0.08, bronze, { at: [0, 0.8, -0.02], rot: [0, Math.PI / 2, 0], arc: Math.PI * 1.3, finish: "sheen", seg: [10, 18] });
       k.capsule(0.09, 0.14, bronze, { at: [0, 0.82, 0.12], rot: [Math.PI / 2, 0, 0], finish: "sheen" });
-      k.pair((s) => {
+      k.pair((s) => k.limb(s > 0 ? LIMB.armL : LIMB.armR, [s * 0.12, 0.85, 0], () => {
         k.tube([[s * 0.12, 0.85, 0], [s * 0.2, 0.75, 0.12], [s * 0.16, 0.7, 0.3]], 0.03, bronze, { along: 6, around: 6, finish: "sheen" });
         k.cyl(0.025, 0.14, "#15171b", { at: [s * 0.16, 0.7, 0.38], rot: [Math.PI / 2, 0, 0], seg: 8 });
-      });
+      }));
       k.sphere(0.6, "#7fd0ff", { at: [0, 0.55, 0.05], finish: "haze", seg: [16, 10] });
+      return;
+    }
+    case "destroyer-ball": {
+      // Rolled up (the book's ball form): a bronze wheel on its edge, the curved back plate outside, the head and arms folded in; it
+      // rolls on (LIMB.roll, about its axle)
+      const bronze = "#7a6a4a";
+      k.limb(LIMB.roll, [0, 0.34, 0], () => {
+        k.torus(0.27, 0.075, bronze, { at: [0, 0.34, 0], rot: [0, Math.PI / 2, 0], seg: [10, 28], finish: "sheen" });
+        k.pair((s) => {
+          k.cyl(0.25, 0.04, shade(bronze, 0.82), { at: [s * 0.06, 0.34, 0], rot: [0, 0, Math.PI / 2], seg: 22, finish: "sheen" });
+          k.cyl(0.08, 0.05, shade(bronze, 0.6), { at: [s * 0.08, 0.34, 0], rot: [0, 0, Math.PI / 2], seg: 12, finish: "sheen" });
+          for (let i = 0; i < 6; i++) k.box([0.02, 0.05, 0.16], shade(bronze, 0.7), { at: [s * 0.085, 0.34 + Math.sin(i * 1.047) * 0.16, Math.cos(i * 1.047) * 0.16], rot: [i * 1.047, 0, 0], finish: "sheen" });
+        });
+        for (let i = 0; i < 8; i++) k.box([0.13, 0.02, 0.05], shade(bronze, 0.9), { at: [0, 0.34 + Math.sin(i * 0.785) * 0.34, Math.cos(i * 0.785) * 0.34], rot: [-i * 0.785, 0, 0], finish: "sheen" });
+      });
       return;
     }
     case "probe": {
@@ -2760,9 +3168,10 @@ export function buildDroid(k: Kit, kind: string, name: string) {
       k.sphere(0.2, dark, { at: [0, 1.0, 0], seg: [16, 12], finish: "sheen" });
       k.torus(0.2, 0.025, metal, { at: [0, 1.0, 0], rot: [Math.PI / 2, 0, 0], finish: "sheen", seg: [6, 20] });
       for (let i = 0; i < 3; i++) k.sphere(0.03, i ? C.amber : C.red, { at: [Math.sin(i * 0.6 - 0.6) * 0.19, 1.03, Math.cos(i * 0.6 - 0.6) * 0.19], finish: "glow", seg: [8, 6] });
+      // (the arms hang and sway as it floats)
       for (let i = 0; i < 5; i++) {
         const a = i * 1.256;
-        k.tube([[Math.sin(a) * 0.12, 0.86, Math.cos(a) * 0.12], [Math.sin(a) * 0.2, 0.6, Math.cos(a) * 0.2], [Math.sin(a) * 0.16, 0.32, Math.cos(a) * 0.16]], 0.012, metal, { along: 6, around: 4, finish: "sheen" });
+        k.limb([LIMB.armR, LIMB.armL, LIMB.legR, LIMB.legL, LIMB.armR][i], [Math.sin(a) * 0.12, 0.86, Math.cos(a) * 0.12], () => k.tube([[Math.sin(a) * 0.12, 0.86, Math.cos(a) * 0.12], [Math.sin(a) * 0.2, 0.6, Math.cos(a) * 0.2], [Math.sin(a) * 0.16, 0.32, Math.cos(a) * 0.16]], 0.012, metal, { along: 6, around: 4, finish: "sheen" }));
       }
       k.pair((s) => k.cyl(0.006, 0.4, metal, { at: [s * 0.08, 1.35, -0.04], rot: [0, 0, s * 0.3], seg: 4 }));
       return;
@@ -2770,10 +3179,10 @@ export function buildDroid(k: Kit, kind: string, name: string) {
     case "gonk": {
       k.box([0.34, 0.42, 0.3], "#8a8f86", { at: [0, 0.5, 0], round: 0.08, finish: "sheen" });
       k.box([0.36, 0.06, 0.32], "#5a5f58", { at: [0, 0.73, 0], round: 0.02 });
-      k.pair((s) => {
+      k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.12, 0.3, 0], () => {
         k.box([0.08, 0.3, 0.12], "#5a5f58", { at: [s * 0.12, 0.15, 0], round: 0.03, finish: "sheen" });
         k.box([0.12, 0.05, 0.18], "#3a3f38", { at: [s * 0.12, 0.025, 0.02], round: 0.02 });
-      });
+      }));
       k.sphere(0.02, C.green, { at: [0.08, 0.6, 0.155], finish: "glow", seg: [6, 4] });
       return;
     }
@@ -2783,7 +3192,7 @@ export function buildDroid(k: Kit, kind: string, name: string) {
       k.sphere(0.02, C.red, { at: [0, 0.13, 0.19], finish: "glow", seg: [6, 4] });
       return;
     case "pit":
-      k.pair((s) => k.tube([[s * 0.06, 0.36, 0], [s * 0.1, 0.18, 0.05], [s * 0.08, 0.02, 0]], 0.02, "#a8763a", { along: 6, around: 5, finish: "sheen" }));
+      k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.06, 0.36, 0], () => k.tube([[s * 0.06, 0.36, 0], [s * 0.1, 0.18, 0.05], [s * 0.08, 0.02, 0]], 0.02, "#a8763a", { along: 6, around: 5, finish: "sheen" })));
       k.box([0.12, 0.18, 0.1], "#a8763a", { at: [0, 0.44, 0], round: 0.03, finish: "sheen" });
       k.cyl(0.16, 0.04, "#a8763a", { at: [0, 0.6, 0.02], rot: [0.3, 0, 0], seg: 18, finish: "sheen" });
       k.sphere(0.03, C.red, { at: [0, 0.6, 0.12], finish: "glow", seg: [6, 4] });
@@ -2793,7 +3202,7 @@ export function buildDroid(k: Kit, kind: string, name: string) {
       k.cyl(0.11, 0.3, "#9fe7ff", { at: [0, 0.78, 0.02], seg: 14, finish: "glass" });
       k.sphere(0.1, "#c9cdd2", { at: [0, 1.1, 0], scale: [0.9, 1.2, 0.9], finish: "sheen", seg: [12, 10] });
       k.pair((s) => {
-        k.tube([[s * 0.15, 0.88, 0], [s * 0.25, 0.7, 0.05], [s * 0.22, 0.55, 0.18]], 0.02, metal, { along: 6, around: 5, finish: "sheen" });
+        k.limb(s > 0 ? LIMB.armL : LIMB.armR, [s * 0.15, 0.88, 0], () => k.tube([[s * 0.15, 0.88, 0], [s * 0.25, 0.7, 0.05], [s * 0.22, 0.55, 0.18]], 0.02, metal, { along: 6, around: 5, finish: "sheen" }));
         k.sphere(0.022, "#58c98b", { at: [s * 0.04, 1.12, 0.09], finish: "glow", seg: [6, 4] });
       });
       return;
@@ -2805,9 +3214,11 @@ export function buildDroid(k: Kit, kind: string, name: string) {
       const frame = kind === "ig" ? "#5a5f66" : kind === "hk" ? "#8a4a3a" : "#24272b";
       k.group(undefined, undefined, kind === "kx" ? 1.2 : 1.1, () => {
         k.pair((s) => {
-          k.tube([[s * 0.07, 0.56, 0], [s * 0.09, 0.3, 0.04], [s * 0.07, 0.06, 0]], 0.025, frame, { along: 6, around: 6, finish: "sheen" });
-          k.box([0.06, 0.04, 0.16], frame, { at: [s * 0.07, 0.02, 0.03], round: 0.015, finish: "sheen" });
-          k.tube([[s * 0.17, 0.9, 0], [s * 0.21, 0.66, 0.0], [s * 0.2, 0.46, 0.06]], 0.022, frame, { along: 6, around: 6, finish: "sheen" });
+          k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.07, 0.56, 0], () => {
+            k.tube([[s * 0.07, 0.56, 0], [s * 0.09, 0.3, 0.04], [s * 0.07, 0.06, 0]], 0.025, frame, { along: 6, around: 6, finish: "sheen" });
+            k.box([0.06, 0.04, 0.16], frame, { at: [s * 0.07, 0.02, 0.03], round: 0.015, finish: "sheen" });
+          });
+          k.limb(s > 0 ? LIMB.armL : LIMB.armR, [s * 0.17, 0.9, 0], () => k.tube([[s * 0.17, 0.9, 0], [s * 0.21, 0.66, 0.0], [s * 0.2, 0.46, 0.06]], 0.022, frame, { along: 6, around: 6, finish: "sheen" }));
         });
         k.lathe([[0.1, 0.52], [0.12, 0.6], [0.16, 0.78], [0.19, 0.9], [0.06, 0.96]], frame, { seg: 12, finish: "sheen", scale: [1, 1, 0.65] });
         if (kind === "ig") {
@@ -2826,7 +3237,7 @@ export function buildDroid(k: Kit, kind: string, name: string) {
       k.sphere(0.24, "#5a5f58", { at: [0, 0.7, 0], seg: [16, 12], finish: "sheen" });
       for (let i = 0; i < 4; i++) {
         const a = i * 1.571 + 0.785;
-        k.tube([[Math.sin(a) * 0.15, 0.65, Math.cos(a) * 0.15], [Math.sin(a) * 0.4, 0.75, Math.cos(a) * 0.4], [Math.sin(a) * 0.5, 0.02, Math.cos(a) * 0.5]], 0.03, "#3a3f38", { along: 8, around: 6, finish: "sheen" });
+        k.limb(quarterLeg(a), [Math.sin(a) * 0.15, 0.65, Math.cos(a) * 0.15], () => k.tube([[Math.sin(a) * 0.15, 0.65, Math.cos(a) * 0.15], [Math.sin(a) * 0.4, 0.75, Math.cos(a) * 0.4], [Math.sin(a) * 0.5, 0.02, Math.cos(a) * 0.5]], 0.03, "#3a3f38", { along: 8, around: 6, finish: "sheen" }));
       }
       k.cyl(0.03, 0.5, "#15171b", { at: [0, 0.7, 0.35], rot: [Math.PI / 2, 0, 0], seg: 8 });
       k.sphere(0.04, C.red, { at: [0, 0.78, 0.2], finish: "glow", seg: [6, 4] });
@@ -2853,7 +3264,7 @@ export function buildDroid(k: Kit, kind: string, name: string) {
       k.sphere(0.028, C.amber, { at: [0.09, 0.84, 0.2], finish: "glow", seg: [8, 6] });
       for (let i = 0; i < 4; i++) {
         const a = i * 1.571 + 0.785;
-        k.tube([[Math.sin(a) * 0.1, 0.7, Math.cos(a) * 0.1], [Math.sin(a) * 0.24, 0.4, Math.cos(a) * 0.24], [Math.sin(a) * 0.26, 0.02, Math.cos(a) * 0.26]], 0.022, metal, { along: 6, around: 5, finish: "sheen" });
+        k.limb(quarterLeg(a), [Math.sin(a) * 0.1, 0.7, Math.cos(a) * 0.1], () => k.tube([[Math.sin(a) * 0.1, 0.7, Math.cos(a) * 0.1], [Math.sin(a) * 0.24, 0.4, Math.cos(a) * 0.24], [Math.sin(a) * 0.26, 0.02, Math.cos(a) * 0.26]], 0.022, metal, { along: 6, around: 5, finish: "sheen" }));
       }
       k.cyl(0.008, 0.3, metal, { at: [0.06, 1.15, 0], seg: 4 });
     }
@@ -2880,7 +3291,7 @@ type Plan =
   | { plan: "plant"; kind: "tree" | "shrub" | "vines" | "flytrap"; color: string };
 
 const BEASTS: [RegExp, Plan][] = [
-  [/bantha/, { plan: "quad", len: 0.8, h: 0.45, girth: 0.34, head: "blunt", horns: "curl", tail: 0.25, fur: true, color: "#5a4632" }],
+  [/bantha/, { plan: "quad", len: 0.8, h: 0.45, girth: 0.34, head: "blunt", horns: "curl", tail: 0.25, fur: true, color: "#7a5c40" }],
   [/dewback/, { plan: "quad", len: 0.9, h: 0.22, girth: 0.24, head: "reptile", tail: 0.8, color: "#6f7a5a", belly: "#a9a07a" }],
   [/reek/, { plan: "quad", len: 0.85, h: 0.42, girth: 0.32, head: "rhino", horns: "forward", tail: 0.3, color: "#8a6a5a", belly: "#b09a7a" }],
   [/ronto|fambaa|ghest|scrange/, { plan: "quad", len: 0.9, h: 0.5, girth: 0.36, head: "reptile", tail: 0.6, color: "#8a7a6a", belly: "#b5a890", neck: 1.4 }],
@@ -2943,7 +3354,30 @@ export function creaturePlan(name: string, creature = "", size = ""): Plan {
   return { plan: "quad", len: 0.7, h: 0.32, girth: 0.22, head: heads[hue(name) % heads.length], tail: 0.4, fur: hue(name) % 3 === 0, color };
 }
 
+// What a creature's hide is drawn in (Kit.dress): fur with its shells, scales, a carapace's plate, a thick hide's leather, or skin
+export function hideOf(p: Plan): Finish {
+  if ("fur" in p && p.fur) return "fur";
+  switch (p.plan) {
+    case "quad": return p.head === "reptile" ? "scales" : p.head === "rhino" || p.head === "boar" || p.head === "blunt" ? "leather" : "skin";
+    case "brute": return "leather";
+    case "runner": return p.head === "lizard" ? "scales" : "skin";
+    case "serpent": return p.head === "fish" ? "skin" : "scales";
+    case "bug": return "plate";
+    case "critter": return p.kind === "rat" || p.kind === "rabbit" || p.kind === "monkey" || p.kind === "bird" ? "fur" : p.kind === "lizard" ? "scales" : p.kind === "bug" ? "plate" : "skin";
+    case "flyer": return p.head === "bird" ? "fur" : "leather";
+    case "slug":
+    case "tentacles": return "skin";
+    default: return "matte";
+  }
+}
 function buildCreature(k: Kit, p: Plan, seed: number) {
+  const before = k.dress;
+  const hide = hideOf(p);
+  if (hide !== "matte") k.dress = { ...before, [p.color]: hide, ...("belly" in p && p.belly ? { [p.belly]: hide === "fur" ? "fur" : "skin" } : {}) };
+  creatureBody(k, p, seed);
+  k.dress = before;
+}
+function creatureBody(k: Kit, p: Plan, seed: number) {
   switch (p.plan) {
     case "quad": return quadruped(k, p, seed);
     case "brute": return brute(k, p, seed);
@@ -2976,11 +3410,15 @@ function quadruped(k: Kit, p: Extract<Plan, { plan: "quad" }>, seed: number) {
   const rows = legs / 2;
   for (let r = 0; r < rows; r++) {
     const z = rows === 1 ? 0 : front * 0.85 * (1 - (2 * r) / (rows - 1));
+    // The front legs, the hind legs and any between, each swinging from its hip (the quad gait)
+    const [right, left] = r === 0 ? [LIMB.legR, LIMB.legL] : r === rows - 1 ? [LIMB.hindR, LIMB.hindL] : [LIMB.midR, LIMB.midL];
     k.pair((s) => {
       const x = s * girth * 0.72;
       const knee: V3 = [x * 1.05, h * 0.5, z + (r === 0 ? 0.03 : -0.05)];
-      k.tube([[x, y - girth * 0.2, z], knee, [x, 0.05, z]], (t) => girth * (0.36 - t * 0.18), r === 0 ? color : shade(color, 0.95), { along: 8, around: 7 });
-      k.cyl(girth * 0.2, 0.06, shade(color, 0.5), { at: [x, 0.03, z + 0.01], seg: 8 });
+      k.limb(s > 0 ? left : right, [x, y - girth * 0.2, z], () => {
+        k.tube([[x, y - girth * 0.2, z], knee, [x, 0.05, z]], (t) => girth * (0.36 - t * 0.18), r === 0 ? color : shade(color, 0.95), { along: 8, around: 7 });
+        k.cyl(girth * 0.2, 0.06, "#2a2420", { at: [x, 0.03, z + 0.01], seg: 8 });
+      });
     });
   }
   // The neck and the head
@@ -2989,7 +3427,7 @@ function quadruped(k: Kit, p: Extract<Plan, { plan: "quad" }>, seed: number) {
   k.tube([[0, y + girth * 0.2, front], [0, y + girth * 0.45 * neck, front + girth * 0.5], headAt], girth * 0.45, color, { along: 6, around: 8 });
   k.group(headAt, undefined, girth / 0.3, () => quadHead(k, p, color));
   // The tail
-  if (p.tail > 0) k.tube([[0, y, -front - girth * 0.6], [0, y * 0.75, -front - girth * 0.6 - p.tail * 0.4], [0.05, y * 0.35, -front - girth * 0.6 - p.tail * 0.85], [0.1, 0.06, -front - girth * 0.6 - p.tail]], (t) => girth * 0.35 * (1 - t * 0.85), color, { along: 10, around: 6 });
+  if (p.tail > 0) k.limb(LIMB.tail, [0, y, -front - girth * 0.6], () => k.tube([[0, y, -front - girth * 0.6], [0, y * 0.75, -front - girth * 0.6 - p.tail * 0.4], [0.05, y * 0.35, -front - girth * 0.6 - p.tail * 0.85], [0.1, 0.06, -front - girth * 0.6 - p.tail]], (t) => girth * 0.35 * (1 - t * 0.85), color, { along: 10, around: 6 }));
 }
 
 // The head of a four-legged beast, built for a body 0.3 thick
@@ -3051,21 +3489,21 @@ function brute(k: Kit, p: Extract<Plan, { plan: "brute" }>, seed: number) {
   const c = p.color;
   const skin = shade(c, 0.9);
   const hunch = p.head === "rancor" ? 0.55 : 0.25;
-  k.pair((s) => {
+  k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.16 * b, 0.42, -0.05], () => {
     k.tube([[s * 0.16 * b, 0.42, -0.05], [s * 0.19 * b, 0.24, 0.07], [s * 0.17 * b, 0.05, -0.02]], (t) => (0.1 - t * 0.04) * b, c, { along: 8, around: 8 });
     k.box([0.14 * b, 0.07, 0.22 * b], skin, { at: [s * 0.17 * b, 0.035, 0.04], round: 0.03 });
     for (let i = -1; i <= 1; i++) k.cone(0.018, 0.06, "#e8dcc0", { at: [s * 0.17 * b + i * 0.04, 0.03, 0.16 * b], rot: [Math.PI / 2, 0, 0], seg: 4 });
-  });
+  }));
   k.group([0, 0.42, 0], [hunch, 0, 0], undefined, () => {
     if (p.fur) k.blob(0.3 * b, c, { at: [0, 0.3, 0], smooth: true, rough: 0.2, seed, squash: [1, 1.15, 0.85] });
     else k.lathe([[0.2 * b, 0], [0.24 * b, 0.12], [0.3 * b, 0.3], [0.32 * b, 0.42], [0.24 * b, 0.56], [0, 0.6]], c, { scale: [1, 1, 0.75], seg: 16 });
     const arms = p.arms === 4 ? [0.42, 0.24] : [0.42];
-    for (const ay of arms) k.pair((s) => {
+    for (const ay of arms) k.pair((s) => k.limb(s > 0 ? LIMB.armL : LIMB.armR, [s * 0.28 * b, ay, 0], () => {
       const hand: V3 = [s * 0.36 * b, ay - (p.head === "rancor" ? 0.72 : 0.5), 0.2];
       k.tube([[s * 0.28 * b, ay, 0], [s * 0.4 * b, ay - 0.25, 0.04], hand], (t) => (0.085 - t * 0.03) * b, c, { along: 8, around: 8 });
       k.sphere(0.07 * b, skin, { at: hand, seg: [10, 8] });
       for (let i = -1; i <= 1; i++) k.cone(0.016, 0.1, "#e8dcc0", { at: [hand[0] + i * 0.035, hand[1] - 0.06, hand[2] + 0.04], rot: [Math.PI - 0.4, 0, 0], seg: 4 });
-    });
+    }));
     k.group([0, 0.62, 0.12], [-hunch * 0.8, 0, 0], undefined, () => {
       if (p.head === "rancor") {
         k.blob(0.18, c, { smooth: true, rough: 0.12, seed: seed + 1, squash: [1.05, 0.9, 1.1] });
@@ -3098,13 +3536,15 @@ function runner(k: Kit, p: Extract<Plan, { plan: "runner" }>, seed: number) {
   if (p.fur) k.blob(0.22, c, { at: [0, y, -0.02], smooth: true, rough: 0.14, seed, squash: [0.85, 0.9, 1.35] });
   else k.capsule(0.18, 0.32, c, { at: [0, y, -0.02], rot: [Math.PI / 2 - 0.2, 0, 0], seg: 12 });
   k.pair((s) => {
-    k.tube([[s * 0.11, y - 0.05, 0], [s * 0.13, 0.36, 0.12], [s * 0.12, 0.16, -0.06], [s * 0.11, 0.04, 0.02]], (t) => 0.07 * (1 - t * 0.55), shade(c, 0.95), { along: 10, around: 7 });
-    k.box([0.06, 0.03, 0.16], shade(c, 0.5), { at: [s * 0.11, 0.015, 0.06], round: 0.01 });
+    k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.11, y - 0.05, 0], () => {
+      k.tube([[s * 0.11, y - 0.05, 0], [s * 0.13, 0.36, 0.12], [s * 0.12, 0.16, -0.06], [s * 0.11, 0.04, 0.02]], (t) => 0.07 * (1 - t * 0.55), shade(c, 0.95), { along: 10, around: 7 });
+      k.box([0.06, 0.03, 0.16], "#2a2420", { at: [s * 0.11, 0.015, 0.06], round: 0.01 });
+    });
     k.tube([[s * 0.1, y + 0.02, 0.16], [s * 0.12, y - 0.1, 0.24], [s * 0.1, y - 0.16, 0.3]], 0.025, c, { along: 6, around: 5 });
   });
   const headAt: V3 = [0, y + 0.42, 0.34];
   k.tube([[0, y + 0.08, 0.14], [0, y + 0.26, 0.2], headAt], (t) => 0.09 - t * 0.03, c, { along: 8, around: 8 });
-  k.tube([[0, y, -0.2], [0, y - 0.05, -0.4], [0, y - 0.15, -0.62]], (t) => 0.1 * (1 - t * 0.8), c, { along: 8, around: 7 });
+  k.limb(LIMB.tail, [0, y, -0.2], () => k.tube([[0, y, -0.2], [0, y - 0.05, -0.4], [0, y - 0.15, -0.62]], (t) => 0.1 * (1 - t * 0.8), c, { along: 8, around: 7 }));
   k.group(headAt, undefined, undefined, () => {
     if (p.head === "bird") {
       k.sphere(0.09, c, { seg: [12, 10] });
@@ -3183,9 +3623,10 @@ function flyer(k: Kit, p: Extract<Plan, { plan: "flyer" }>) {
     wing.quadraticCurveTo(span * 0.2, -0.06, span * 0.12, -0.16);
     wing.quadraticCurveTo(0.06, -0.08, 0, -0.12);
   }
-  k.pair((s) => k.extrude(wing, 0.01, shade(c, p.head === "bird" ? 1.15 : 0.85), { at: [s * 0.05, y, 0], rot: [-Math.PI / 2, 0, 0], scale: [s, 1, 1], finish: "cloth" }));
+  // The wings beat from the shoulders (the wings gait), the tail trails
+  k.pair((s) => k.limb(s > 0 ? LIMB.wingL : LIMB.wingR, [s * 0.05, y, 0], () => k.extrude(wing, 0.01, shade(c, p.head === "bird" ? 1.15 : 0.85), { at: [s * 0.05, y, 0], rot: [-Math.PI / 2, 0, 0], scale: [s, 1, 1], finish: "cloth" })));
   k.capsule(0.07 * (span / 0.9) ** 0.5, 0.2, c, { at: [0, y, 0], rot: [Math.PI / 2, 0, 0], seg: 10 });
-  k.tube([[0, y, -0.15], [0, y - 0.02, -0.32], [0.03, y - 0.05, -0.5]], (t) => 0.025 * (1 - t * 0.7), c, { along: 6, around: 5 });
+  k.limb(LIMB.tail, [0, y, -0.15], () => k.tube([[0, y, -0.15], [0, y - 0.02, -0.32], [0.03, y - 0.05, -0.5]], (t) => 0.025 * (1 - t * 0.7), c, { along: 6, around: 5 }));
   k.group([0, y + 0.02, 0.18], undefined, (span / 0.9) ** 0.5, () => {
     if (p.head === "bird") {
       k.sphere(0.06, c, { seg: [10, 8] });
@@ -3211,17 +3652,19 @@ function bug(k: Kit, p: Extract<Plan, { plan: "bug" }>) {
   k.blob(0.16, c, { at: [0, y, -0.05], smooth: true, rough: 0.08, seed: 1, squash: [1, 0.8, 1.3], finish: "sheen" });
   k.blob(0.2, shade(c, 0.85), { at: [0, y + 0.02, -0.3], smooth: true, rough: 0.1, seed: 2, squash: [1, 0.9, 1.3], finish: "sheen" });
   const legs = p.legs - (p.mantis ? 2 : 0);
+  // The legs in threes (the hexa gait): the first pair, the last, and those between
   for (let i = 0; i < legs / 2; i++) {
     const z = 0.05 - i * 0.12;
-    k.pair((s) => k.tube([[s * 0.1, y, z], [s * (0.3 + y * 0.3), y + 0.12, z + 0.04], [s * (0.42 + y * 0.2), 0.02, z + 0.08]], 0.02, shade(c, 0.8), { along: 6, around: 5, finish: "sheen" }));
+    const [right, left] = i === 0 ? [LIMB.legR, LIMB.legL] : i === legs / 2 - 1 ? [LIMB.hindR, LIMB.hindL] : [LIMB.midR, LIMB.midL];
+    k.pair((s) => k.limb(s > 0 ? left : right, [s * 0.1, y, z], () => k.tube([[s * 0.1, y, z], [s * (0.3 + y * 0.3), y + 0.12, z + 0.04], [s * (0.42 + y * 0.2), 0.02, z + 0.08]], 0.02, shade(c, 0.8), { along: 6, around: 5, finish: "sheen" })));
   }
   const headAt: V3 = p.mantis ? [0, y + 0.4, 0.2] : [0, y, 0.15];
   if (p.mantis) {
     k.tube([[0, y + 0.05, 0.05], [0, y + 0.25, 0.12], headAt], 0.07, c, { along: 6, around: 7, finish: "sheen" });
-    k.pair((s) => {
+    k.pair((s) => k.limb(s > 0 ? LIMB.armL : LIMB.armR, [s * 0.08, y + 0.3, 0.15], () => {
       k.tube([[s * 0.08, y + 0.3, 0.15], [s * 0.18, y + 0.55, 0.25], [s * 0.2, y + 0.2, 0.45]], 0.03, c, { along: 8, around: 6, finish: "sheen" });
       k.cone(0.03, 0.3, "#e8dcc0", { at: [s * 0.2, y + 0.08, 0.5], rot: [Math.PI - 0.4, 0, 0], seg: 5 });
-    });
+    }));
   }
   k.group(headAt, undefined, undefined, () => {
     k.sphere(0.08, c, { scale: [1.1, 0.9, 1.1], seg: [10, 8], finish: "sheen" });
@@ -3266,7 +3709,8 @@ function critter(k: Kit, p: Extract<Plan, { plan: "critter" }>, seed: number) {
       k.pair((s) => k.sphere(0.04, shade(c, 1.2), { at: [s * 0.06, 0.22, 0.14], scale: [0.4, 1, 0.8], seg: [8, 6] }));
       k.tube([[0, 0.12, -0.18], [0.05, 0.08, -0.35], [0.12, 0.03, -0.5]], 0.012, "#c9a0a0", { along: 6, around: 4 });
       k.pair((s) => eye([s * 0.04, 0.17, 0.2]));
-      k.pair((s) => k.tube([[s * 0.06, 0.08, 0.08], [s * 0.07, 0.02, 0.1]], 0.014, c, { along: 2, around: 4 }));
+      k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.06, 0.08, 0.08], () => k.tube([[s * 0.06, 0.08, 0.08], [s * 0.07, 0.02, 0.1]], 0.014, c, { along: 2, around: 4 })));
+      k.pair((s) => k.limb(s > 0 ? LIMB.hindL : LIMB.hindR, [s * 0.06, 0.08, -0.1], () => k.tube([[s * 0.06, 0.08, -0.1], [s * 0.07, 0.02, -0.08]], 0.016, c, { along: 2, around: 4 })));
       return;
     case "frog":
       k.blob(0.18, c, { at: [0, 0.15, 0], smooth: true, rough: 0.12, seed, squash: [1.1, 0.75, 1] });
@@ -3277,7 +3721,7 @@ function critter(k: Kit, p: Extract<Plan, { plan: "critter" }>, seed: number) {
       k.capsule(0.06, 0.24, c, { at: [0, 0.08, 0], rot: [Math.PI / 2, 0, 0], seg: 8 });
       k.tube([[0, 0.07, -0.15], [0.06, 0.05, -0.3], [0.02, 0.03, -0.45]], (t) => 0.04 * (1 - t * 0.8), c, { along: 6, around: 5 });
       k.capsule(0.045, 0.06, c, { at: [0, 0.09, 0.2], rot: [Math.PI / 2, 0, 0], seg: 8 });
-      for (const z of [0.08, -0.08]) k.pair((s) => k.tube([[s * 0.05, 0.07, z], [s * 0.1, 0.05, z + 0.02], [s * 0.11, 0.01, z + 0.04]], 0.015, c, { along: 3, around: 4 }));
+      for (const z of [0.08, -0.08]) k.pair((s) => k.limb(z > 0 ? (s > 0 ? LIMB.legL : LIMB.legR) : s > 0 ? LIMB.hindL : LIMB.hindR, [s * 0.05, 0.07, z], () => k.tube([[s * 0.05, 0.07, z], [s * 0.1, 0.05, z + 0.02], [s * 0.11, 0.01, z + 0.04]], 0.015, c, { along: 3, around: 4 })));
       k.pair((s) => eye([s * 0.03, 0.12, 0.23], 0.012));
       return;
     case "rabbit":
@@ -3290,7 +3734,7 @@ function critter(k: Kit, p: Extract<Plan, { plan: "critter" }>, seed: number) {
       k.blob(0.1, c, { at: [0, 0.3, 0], smooth: true, rough: 0.1, seed, squash: [1, 1.3, 0.9] });
       k.sphere(0.08, c, { at: [0, 0.46, 0.02], seg: [10, 8] });
       k.pair((s) => k.capsule(0.02, 0.14, c, { at: [s * 0.1, 0.52, 0], rot: [0, 0, s * -0.9], seg: 6 }));
-      k.pair((s) => k.tube([[s * 0.06, 0.24, 0], [s * 0.08, 0.12, 0.04], [s * 0.06, 0.02, 0]], 0.02, c, { along: 4, around: 4 }));
+      k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.06, 0.24, 0], () => k.tube([[s * 0.06, 0.24, 0], [s * 0.08, 0.12, 0.04], [s * 0.06, 0.02, 0]], 0.02, c, { along: 4, around: 4 })));
       k.tube([[0, 0.24, -0.08], [0.08, 0.32, -0.2], [0.1, 0.46, -0.18]], 0.016, c, { along: 6, around: 4 });
       k.pair((s) => eye([s * 0.03, 0.48, 0.08], 0.014));
       return;
@@ -3298,17 +3742,17 @@ function critter(k: Kit, p: Extract<Plan, { plan: "critter" }>, seed: number) {
       k.blob(0.13, c, { at: [0, 0.2, 0], smooth: true, rough: 0.06, seed, squash: [1, 0.9, 1.2] });
       k.sphere(0.06, c, { at: [0, 0.3, 0.12], seg: [10, 8] });
       k.cone(0.02, 0.06, "#e8a03a", { at: [0, 0.29, 0.19], rot: [Math.PI / 2, 0, 0], seg: 5 });
-      k.pair((s) => k.cyl(0.01, 0.12, "#e8a03a", { at: [s * 0.04, 0.06, 0], seg: 4 }));
+      k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.04, 0.12, 0], () => k.cyl(0.01, 0.12, "#e8a03a", { at: [s * 0.04, 0.06, 0], seg: 4 })));
       return;
     case "hippo":
       k.blob(0.24, c, { at: [0, 0.24, 0], smooth: true, rough: 0.08, seed, squash: [1, 0.85, 1.35] });
       k.box([0.24, 0.16, 0.18], shade(c, 1.1), { at: [0, 0.22, 0.32], round: 0.07 });
-      for (const z of [0.18, -0.18]) k.pair((s) => k.cyl(0.05, 0.12, shade(c, 0.9), { at: [s * 0.14, 0.06, z], seg: 8 }));
+      for (const z of [0.18, -0.18]) k.pair((s) => k.limb(z > 0 ? (s > 0 ? LIMB.legL : LIMB.legR) : s > 0 ? LIMB.hindL : LIMB.hindR, [s * 0.14, 0.12, z], () => k.cyl(0.05, 0.12, shade(c, 0.9), { at: [s * 0.14, 0.06, z], seg: 8 })));
       k.pair((s) => eye([s * 0.08, 0.32, 0.3], 0.018));
       return;
     case "bug":
       k.blob(0.1, c, { at: [0, 0.08, 0], smooth: true, rough: 0.1, seed, squash: [1, 0.6, 1.3], finish: "sheen" });
-      for (let i = 0; i < 3; i++) k.pair((s) => k.tube([[s * 0.05, 0.07, 0.05 - i * 0.05], [s * 0.12, 0.08, 0.06 - i * 0.05], [s * 0.15, 0.01, 0.07 - i * 0.05]], 0.01, shade(c, 0.7), { along: 3, around: 4 }));
+      for (let i = 0; i < 3; i++) k.pair((s) => k.limb([[LIMB.legR, LIMB.legL], [LIMB.midR, LIMB.midL], [LIMB.hindR, LIMB.hindL]][i][s > 0 ? 1 : 0], [s * 0.05, 0.07, 0.05 - i * 0.05], () => k.tube([[s * 0.05, 0.07, 0.05 - i * 0.05], [s * 0.12, 0.08, 0.06 - i * 0.05], [s * 0.15, 0.01, 0.07 - i * 0.05]], 0.01, shade(c, 0.7), { along: 3, around: 4 })));
       k.pair((s) => k.sphere(0.014, C.red, { at: [s * 0.03, 0.1, 0.12], finish: "glow", seg: [6, 4] }));
       return;
   }
@@ -3491,13 +3935,36 @@ function speciesInName(name: string, looks: Record<string, Look>): string | unde
 const HUMAN = lookOf({ name: "Human", skinColorOptions: "Light to dark tones", hairColorOptions: "Black, blond, orange, brown, gray to white", heightAverage: "4'8\"", heightRollMod: "+2d10\"" });
 
 // `wants` are the models this figure carries (interiors/gear.ts), which Figure loads and bakes in
-export interface FigureSpec { key: string; build: (k: Kit) => void; height: number; wants?: Want[]; blade?: string }
+// `gait` is how it moves (interiors/limbs.ts GAITS), `ball` the radius of a ball it rolls on (a BB unit; `wheel`: a wheel that rolls only
+// the way it faces), `fur` how long its hair is where it is furry (FurShells), `form` a droideka's (it rolls up to run: Droideka), `seat`
+// how high a rider sits on it (a beast that can be ridden)
+export interface FigureSpec { key: string; build: (k: Kit) => void; height: number; wants?: Want[]; blade?: string; gait: Gait; ball?: number; wheel?: boolean; fur?: number; form?: "droideka"; seat?: number }
+
+// How each series of droid moves: battle and protocol droids, assassins and power droids walk; a BB unit rolls; an astromech glides on its
+// treads (a little waddle), as do mouse, service, medical and junk droids; a probe floats; spider and sensor droids go on four legs
+const DROID_GAIT: Record<string, Gait> = { bb: "roll", astromech: "glide", r5: "glide", protocol: "walk", b1: "walk", bx: "walk", tactical: "walk", b2: "walk", ig: "walk", hk: "walk", kx: "walk", pit: "walk", gonk: "walk", destroyer: "tripod", probe: "hover", mouse: "glide", service: "glide", junk: "glide", medical: "glide", spider: "quad", generic: "quad" };
+// How each body plan of a creature moves
+function creatureGait(p: Plan): Gait {
+  switch (p.plan) {
+    case "quad": return "quad";
+    case "brute":
+    case "runner": return "walk";
+    case "flyer": return p.perch ? "walk" : "wings";
+    case "bug": return "hexa";
+    case "critter": return p.kind === "lizard" || p.kind === "hippo" || p.kind === "rat" ? "quad" : p.kind === "bug" ? "hexa" : p.kind === "frog" ? "glide" : "walk";
+    case "spirit": return "hover";
+    default: return "glide";
+  }
+}
+// How long a creature's fur is, and how high a rider sits on its back
+const furOf = (p: Plan): number | undefined => (hideOf(p) !== "fur" ? undefined : p.plan === "quad" ? p.girth * 0.16 : p.plan === "brute" ? 0.035 * p.bulk : p.plan === "critter" ? 0.012 : 0.022);
+const seatOf = (p: Plan): number => (p.plan === "quad" ? p.h + p.girth * 1.5 : p.plan === "runner" ? 0.8 : p.plan === "brute" ? 0.42 + 0.55 * p.bulk : p.plan === "serpent" ? p.r * 2 + 0.1 : 0.5);
 
 export function figureSpec(kind: string, name: string, opts: { role?: string; creature?: string; species?: string; size?: string; looks: Record<string, Look>; party?: { species?: string; name?: string; force?: boolean; blade?: string; gear?: Gear }; player?: boolean; attach?: Attach[]; gear?: Gear; modules?: { name: string; geometry: THREE.BufferGeometry }[] }): FigureSpec {
   const { role = "", creature = "", size = "", looks, party } = opts;
   const seed = hue(name || kind);
   const machine = constructKind(name);
-  if (machine) return { key: `con:${machine}`, build: (k) => buildConstruct(k, machine), height: 1.3 };
+  if (machine) return { key: `con:${machine}`, build: (k) => buildConstruct(k, machine), height: 1.3, gait: "glide" };
   if (kind === "astromech" || kind === "battledroid" || kind === "droid") {
     const series = droidKind(name || kind) === "generic" && kind === "astromech" ? "astromech" : droidKind(name || kind) === "generic" && kind === "battledroid" ? "b1" : droidKind(name || kind);
     // The customizations it carries are fixed to its body where each belongs (interiors/anchors.ts moduleAnchor)
@@ -3509,11 +3976,11 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
         k.addModel(m.geometry, { at: a.at, rot: a.rot, scale: a.scale });
       });
     };
-    return { key: `droid:${series}:${pickOf(["a", "b", "c", "d", "e", "f"], name)}${modules.length ? `:m${modules.map((m) => m.name).join("+")}` : ""}`, build, height: series === "astromech" || series === "r5" || series === "bb" || series === "mouse" || series === "gonk" || series === "pit" ? 0.8 : 1.25 };
+    return { key: `droid:${series}:${pickOf(["a", "b", "c", "d", "e", "f"], name)}${modules.length ? `:m${modules.map((m) => m.name).join("+")}` : ""}`, build, height: series === "astromech" || series === "r5" || series === "bb" || series === "mouse" || series === "gonk" || series === "pit" ? 0.8 : 1.25, gait: DROID_GAIT[series] ?? "glide", ...(series === "bb" ? { ball: 0.2 } : {}), ...(series === "destroyer" ? { form: "droideka" as const } : {}) };
   }
   if (kind === "beast" || kind === "horror") {
     const plan = creaturePlan(name, creature, size);
-    return { key: `beast:${plan.plan}:${JSON.stringify(plan)}:${seed % 4}`, build: (k) => buildCreature(k, plan, seed % 4), height: plan.plan === "brute" ? 1.4 : plan.plan === "flyer" && !plan.perch ? 1.3 : 1.0 };
+    return { key: `beast:${plan.plan}:${JSON.stringify(plan)}:${seed % 4}`, build: (k) => buildCreature(k, plan, seed % 4), height: plan.plan === "brute" ? 1.4 : plan.plan === "flyer" && !plan.perch ? 1.3 : 1.0, gait: creatureGait(plan), fur: furOf(plan), seat: seatOf(plan) };
   }
   if (kind === "swarm") {
     const plan = creaturePlan(name.replace(/swarm of /i, ""), creature, "tiny");
@@ -3524,14 +3991,16 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
         for (let i = 0; i < 6; i++) k.group([Math.sin(i * 2.3) * 0.28, tiny.plan === "flyer" ? -0.6 + (i % 3) * 0.15 : 0, Math.cos(i * 1.7) * 0.28], [0, i * 1.1, 0], 0.45, () => buildCreature(k, tiny, i));
       },
       height: 0.8,
+      gait: tiny.plan === "flyer" ? "wings" : "hexa",
     };
   }
-  if (kind === "hutt" || /hutt/i.test(name)) return { key: "beast:hutt", build: (k) => slug(k, { plan: "slug", color: "#7c8a4a", hutt: true }), height: 1.2 };
+  if (kind === "hutt" || /hutt/i.test(name)) return { key: "beast:hutt", build: (k) => slug(k, { plan: "slug", color: "#7c8a4a", hutt: true }), height: 1.2, gait: "glide" };
   if (kind === "crowd") {
     return {
       key: `crowd:${seed % 6}`,
       build: (k) => [[-0.2, -0.12], [0.2, -0.06], [0, 0.2]].forEach(([x, z], i) => k.group([x, 0, z], [0, i * 0.8, 0], 0.72, () => buildHumanoid(k, HUMAN, outfitOf(`${name}${i}`), pickOf(HUMAN_TONES, `${name}${i}`), pickOf(HUMAN.hair, `${name}${i}`), ""))),
       height: 1.0,
+      gait: "walk",
     };
   }
   // People (the character is told apart from others who use the Force by `player`)
@@ -3569,64 +4038,123 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
   const wants = wantsOf(outfit.hand, gear, role || name, name);
   const attach = opts.attach ?? [];
   const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.weight ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}${outfit.suit ?? ""}${outfit.gloves ?? ""}${outfit.boots ?? ""}:${seed & 28}${attach.length ? `:g${attach.map((a) => `${a.slot}=${a.id}@${a.scale}`).join("+")}` : ""}`;
-  return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, seed, attach), height: 1.25 * look.scale, wants, blade: outfit.blade };
+  return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, seed, attach), height: 1.25 * look.scale, wants, blade: outfit.blade, gait: "walk", ...(look.fur && hair ? { fur: 0.02 * look.scale } : {}) };
 }
 
-// How far this figure walks: the stride follows how far the group itself moves along the ground between frames, so whoever moves it
-// (the party, a follower, a stroller in a street, a fighter) walks without being told (interiors/limbs.ts)
-function useStride(group: React.RefObject<THREE.Group>, apply: (stride: ReturnType<typeof standing>, g: THREE.Group) => void) {
+// How far this figure moves: the stride follows how far the group itself moves along the ground between frames, so whoever moves it
+// (the party, a follower, a stroller in a street, a fighter) moves it without being told (interiors/limbs.ts). `apply` is given the
+// stride, the group, what it moved along the ground this frame (world units), the seconds it has been about, and the frame's seconds
+function useStride(group: React.RefObject<THREE.Group>, apply: (stride: Stride, g: THREE.Group, moved: { x: number; z: number }, t: number, dt: number) => void, cycle = 1) {
   const stride = useRef(standing());
   const last = useRef<THREE.Vector3 | null>(null);
   const here = useMemo(() => new THREE.Vector3(), []);
+  const clock = useRef(Math.random() * 10);
   useFrame((_, delta) => {
     const g = group.current;
     if (!g) return;
+    const dt = Math.min(delta, 0.1);
+    clock.current += dt;
     g.getWorldPosition(here);
     // Only along the ground: a figure that rises onto a stair or a stage is not striding
-    const moved = last.current ? Math.hypot(here.x - last.current.x, here.z - last.current.z) : 0;
+    const moved = last.current ? { x: here.x - last.current.x, z: here.z - last.current.z } : { x: 0, z: 0 };
     (last.current ??= new THREE.Vector3()).copy(here);
-    stride.current = advance(stride.current, moved, Math.min(delta, 0.1));
-    apply(stride.current, g);
+    stride.current = advance(stride.current, Math.hypot(moved.x, moved.z), dt, cycle);
+    apply(stride.current, g, moved, clock.current, dt);
   });
 }
 
-// A person who walks: the same body as `Model` bakes, built with its limbs marked (Kit.animated), drawn with materials of its own that
-// swing them by the stride
-function Walker({ id, build }: { id: string; build: (k: Kit) => void }) {
-  const m = useModel(`${id}:walk`, (k) => { k.animated = true; build(k); });
+// How many shells a furry figure is drawn with: fewer on a phone
+const FUR_DETAIL = typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches ? FUR_SHELLS.lite : FUR_SHELLS.full;
+
+// Anything that moves (2026-10-26; people since 2026-10-19): the same body as `Model` bakes, built with its limbs marked (Kit.animated),
+// drawn with materials of its own that move its limbs by its gait and the stride (interiors/limbs.ts). A person or a battle droid walks,
+// a beast trots on four legs and a bug on six, a bird beats its wings, a BB unit rolls its ball under its head, a probe floats, and what
+// rolls or glides does not bob. `ball` is the radius of a ball it rolls on (`wheel`: one that only rolls the way it faces); `fur` the
+// length of its hair, drawn in shells that move with it
+function Mover({ id, build, gait, ball, wheel, fur }: { id: string; build: (k: Kit) => void; gait: Gait; ball?: number; wheel?: boolean; fur?: number }) {
+  const m = useModel(`${id}:anim`, (k) => { k.animated = true; build(k); });
   const mats = useMemo(() => Object.fromEntries(FINISHES.map((f) => [f, limbMaterial(MATERIALS[f])])) as Record<Finish, THREE.Material>, []);
+  const furMat = useMemo(() => (fur ? limbMaterial(furShellMaterial(fur, FUR_DETAIL)) : null), [fur]);
   useEffect(() => () => { Object.values(mats).forEach((x) => x.dispose()); }, [mats]);
+  useEffect(() => () => furMat?.dispose(), [furMat]);
   const group = useRef<THREE.Group>(null);
-  useStride(group, (stride, g) => {
-    poseLimbs(Object.values(mats), stride);
-    g.position.y = bob(stride);
-  });
+  const body = useRef<THREE.Group>(null);
+  const work = useMemo(() => ({ pose: restPose(), world: new THREE.Quaternion(), turn: new THREE.Quaternion(), out: new THREE.Quaternion(), scale: new THREE.Vector3(), forward: new THREE.Vector3(), angle: 0 }), []);
+  const all = useMemo(() => [...Object.values(mats), ...(furMat ? [furMat] : [])], [mats, furMat]);
+  useStride(group, (stride, g, moved, t) => {
+    const w = work;
+    gaitPose(gait, stride, t, w.pose);
+    if (ball) {
+      g.getWorldQuaternion(w.turn);
+      g.getWorldScale(w.scale);
+      const r = ball * w.scale.x;
+      if (wheel) {
+        // A wheel turns about its axle by the ground covered the way it faces
+        w.forward.set(0, 0, 1).applyQuaternion(w.turn);
+        w.angle += (moved.x * w.forward.x + moved.z * w.forward.z) / r;
+        setLimbQuaternion(w.pose, LIMB.roll, w.out.setFromAxisAngle(AXIS_X, w.angle));
+      } else setLimbQuaternion(w.pose, LIMB.roll, rollBall(w.world, moved, r, w.turn, w.out));
+    }
+    applyPose(all, w.pose);
+    const b = bodyOf(gait, stride, t);
+    if (body.current) {
+      body.current.position.y = b.y;
+      body.current.rotation.z = b.roll;
+      body.current.rotation.x = b.pitch;
+    }
+  }, GAITS[gait].cycle);
   return (
     <group ref={group}>
-      {m.matte && <mesh geometry={m.matte} material={mats.matte} castShadow receiveShadow />}
-      {m.sheen && <mesh geometry={m.sheen} material={mats.sheen} castShadow receiveShadow />}
-      {m.glow && <mesh geometry={m.glow} material={mats.glow} />}
-      {m.glass && <mesh geometry={m.glass} material={mats.glass} renderOrder={1} />}
-      {m.haze && <mesh geometry={m.haze} material={mats.haze} renderOrder={2} />}
-      {m.cloth && <mesh geometry={m.cloth} material={mats.cloth} castShadow receiveShadow />}
+      <group ref={body}>
+        <Meshes model={m} materials={mats} fur={furMat ? { shells: FUR_DETAIL, material: furMat } : undefined} />
+      </group>
+    </group>
+  );
+}
+const AXIS_X = new THREE.Vector3(1, 0, 0);
+
+// A droideka (destroyer droid, 2026-10-26; the book's Ball Form: "15 ft. (attack form) or 60 ft. (ball form)"): it rolls up into a wheel
+// to run and unfolds onto its three legs once it stops, to stand guard, deal with someone or fight; standing, it steps about slowly on
+// its legs. `deployed` keeps it unfolded (in a fight, where it can only attack standing). The change takes under half a second: the
+// legs fold up as the wheel closes round it.
+const FOLD_SECONDS = 0.45;
+function Droideka({ id, build, name, deployed }: { id: string; build: (k: Kit) => void; name: string; deployed?: boolean }) {
+  const outer = useRef<THREE.Group>(null);
+  const upright = useRef<THREE.Group>(null);
+  const rolled = useRef<THREE.Group>(null);
+  const state = useRef({ form: 0, still: 0 });
+  useStride(outer, (stride, _g, _moved, _t, dt) => {
+    const s = state.current;
+    // Rolls up to go faster than a careful step; unfolds once it has stood still a moment
+    s.still = stride.speed < 0.4 ? s.still + dt : 0;
+    const target = deployed ? 0 : stride.speed > 1.1 ? 1 : s.still > 0.25 ? 0 : Math.round(s.form);
+    s.form += Math.max(-dt / FOLD_SECONDS, Math.min(dt / FOLD_SECONDS, target - s.form));
+    const f = s.form * s.form * (3 - 2 * s.form);
+    if (upright.current) {
+      upright.current.visible = f < 0.98;
+      upright.current.scale.set(1 - f * 0.45, Math.max(0.05, 1 - f * 0.7), 1 - f * 0.45);
+    }
+    if (rolled.current) {
+      rolled.current.visible = f > 0.02;
+      rolled.current.scale.setScalar(Math.max(0.05, f));
+    }
+  });
+  return (
+    <group ref={outer}>
+      <group ref={upright}><Mover id={id} build={build} gait="tripod" /></group>
+      <group ref={rolled} visible={false}><Mover id={`${id}:rolled`} build={(k) => buildDroid(k, "destroyer-ball", name)} gait="roll" ball={0.34} wheel /></group>
     </group>
   );
 }
 
-// Anything else that moves (a droid, a beast, a war machine) has no limbs to swing in its baked body: it bobs and rocks with its stride
-function Gait({ children }: { children: ReactNode }) {
-  const group = useRef<THREE.Group>(null);
-  useStride(group, (stride, g) => {
-    g.position.y = bob(stride) * 1.3;
-    g.rotation.z = Math.sin(stride.phase) * stride.amp * 0.04;
-  });
-  return <group ref={group}>{children}</group>;
-}
+// How high a rider sits on a beast (its back), in model units at a scale of 1
+export const seatFor = (name: string, creature = "", size = "") => seatOf(creaturePlan(name, creature, size));
 
 // Sabers made of a hilt and another blade (a model of the hilt and one of the blade, joined once)
 const COMPOSED = new Map<string, THREE.BufferGeometry>();
 
-export function Figure({ kind, ring, name = "", large, marker, species, role, creature, size, player, gear, modules }: { kind: string; ring: string; name?: string; large?: boolean; marker?: boolean; species?: string; role?: string; creature?: string; size?: string; player?: boolean; gear?: Gear; modules?: string[] }) {
+// `fighting`: drawn in a fight (a droideka stays unfolded); `riding`: sitting on a mount (the legs keep still)
+export function Figure({ kind, ring, name = "", large, marker, species, role, creature, size, player, gear, modules, fighting, riding }: { kind: string; ring: string; name?: string; large?: boolean; marker?: boolean; species?: string; role?: string; creature?: string; size?: string; player?: boolean; gear?: Gear; modules?: string[]; fighting?: boolean; riding?: boolean }) {
   const looks = useSpecies();
   const party = usePartyLook();
   const me = player ?? kind === "player";
@@ -3678,11 +4206,14 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
       : base;
   return (
     <group scale={large ? 1.5 : 1}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
-        <ringGeometry args={[0.34, 0.44, 24]} />
-        <meshBasicMaterial color={ring} />
-      </mesh>
-      {spec.key.startsWith("hum:") ? <Walker id={spec.key} build={spec.build} /> : <Gait><Model id={spec.key} build={spec.build} /></Gait>}
+      {/* a rider's ring is the mount's */}
+      {!riding && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
+          <ringGeometry args={[0.34, 0.44, 24]} />
+          <meshBasicMaterial color={ring} />
+        </mesh>
+      )}
+      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} name={name} deployed={fighting} /> : <Mover id={spec.key} build={spec.build} gait={riding ? "ride" : spec.gait} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} />}
       {marker && (
         <mesh position={[0, Math.max(1.55, spec.height + 0.3), 0]}>
           <octahedronGeometry args={[0.12]} />

@@ -869,6 +869,10 @@ export interface CarriedWeapon {
   // Feet: the reach of a melee weapon, or the normal and long range of a ranged or thrown one
   reach: number;
   range?: [number, number];
+  // The damage with two hands of a versatile weapon ("versatile (1d10)"), and whether a melee weapon can be thrown (and comes back)
+  versatile?: string;
+  thrown?: boolean;
+  returning?: boolean;
 }
 
 // "Power cell (range 50/200)", "thrown (range 20/60)" and "reach" among a weapon's properties
@@ -903,14 +907,29 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
     const list = fit.mods.map((m: string) => factsFor(character, m)).filter(Boolean) as ItemFacts[];
     return { attack: list.reduce((n, f) => n + (f.effects.attack ?? 0), 0), damage: list.reduce((n, f) => n + (f.effects.damage ?? 0), 0), props: list.flatMap((f) => f.properties ?? []) };
   };
+  // A modal weapon (2026-10-26): the weapons named with the property ("modal (blaster rifle and techstaff)"), each carried as a mode of it
+  // (switched by an object interaction: house reading, both are at hand; each mode by its own numbers and proficiency)
+  const modes = equipment
+    .filter((e) => e.category === "Weapon" && !e.damage && carried.includes(e.name.toLowerCase()))
+    .flatMap((e) => (e.properties ?? []).map((p) => p.match(/^modal \((.+)\)/i)?.[1]).filter(Boolean).flatMap((list) => list!.split(/,\s*|\s+and\s+/)).map((mode) => ({ of: e, mode: equipment.find((x) => x.category === "Weapon" && x.damage && x.name.toLowerCase() === mode.trim().toLowerCase()) })))
+    .filter((x): x is { of: (typeof equipment)[number]; mode: (typeof equipment)[number] } => !!x.mode)
+    // (the rules data has a modal weapon in two rows of one name)
+    .filter((x, i, all) => all.findIndex((y) => y.of.name === x.of.name && y.mode.name === x.mode.name) === i);
   const weapons: CarriedWeapon[] = [
+    ...modes.map(({ of, mode }) => ({ e: mode, name: `${of.name} (${mode.name.toLowerCase()})`, bonus: { attack: 0, damage: 0 } })),
     ...owned.map((e) => ({ e, name: e.name, bonus: { ...buffed(e), attack: buffed(e).attack + modded(e.name).attack, damage: buffed(e).damage + modded(e.name).damage, props: [...modded(e.name).props, ...buffed(e).props] } })),
     ...enhanced.map((x) => ({ e: x.base as typeof owned[number], name: x.name, bonus: { attack: bonusOf(x.name).attack + buffed(x.base!).attack, damage: bonusOf(x.name).damage + buffed(x.base!).damage, props: buffed(x.base!).props } })),
   ].map(({ e, name, bonus }: { e: typeof owned[number]; name: string; bonus: { attack: number; damage: number; props?: string[] } }) => {
     const ranged = /blaster/i.test(e.weaponClassification ?? "");
     const finesse = (e.properties ?? []).some((p) => /^finesse/i.test(p));
-    const ability = ranged || (finesse && dex > str) ? "dexterity" : "strength";
-    const modifier = ability === "dexterity" ? dex : str;
+    // Mighty (a bow): Strength or Dexterity, whichever is better, for both rolls (2026-10-26: was read as Dexterity only)
+    const mighty = (e.properties ?? []).some((p) => /^mighty/i.test(p));
+    const ability = mighty ? (str > dex ? "strength" : "dexterity") : ranged || (finesse && dex > str) ? "dexterity" : "strength";
+    const versatile = (e.properties ?? []).map((p) => p.match(/^versatile \((\d+d\d+)\)/i)?.[1]).find(Boolean);
+    const thrown = !ranged && (e.properties ?? []).some((p) => /^thrown/i.test(p));
+    // Smart ("smart (15/+2)"): the weapon's own Dexterity score and proficiency bonus in place of the wielder's
+    const smart = (e.properties ?? []).map((p) => p.match(/^smart \((\d+)\/\+?(\d+)\)/i)).find(Boolean);
+    const modifier = smart ? getAbilityModifier(Number(smart[1])) : ability === "dexterity" ? dex : str;
     const proficient = hasWeaponProficiency(String(character?.class ?? ""), e);
     const [dice, damageType = ""] = e.damage!.split(" ");
     return {
@@ -923,8 +942,10 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
       proficient,
       properties: [...(e.properties ?? []), ...(bonus.props ?? [])],
       ...weaponReach([...(e.properties ?? []), ...(bonus.props ?? [])]),
-      attackBonus: modifier + (proficient ? proficiency : 0) + bonus.attack,
+      attackBonus: modifier + (proficient ? (smart ? Number(smart[2]) : proficiency) : 0) + bonus.attack,
       damageBonus: modifier + bonus.damage,
+      ...(versatile ? { versatile } : {}),
+      ...(thrown ? { thrown, returning: (e.properties ?? []).some((p) => /^returning/i.test(p)) } : {}),
     };
   });
   const natural: CarriedWeapon[] = (character?.weapons ?? [])
@@ -1172,5 +1193,13 @@ export function withItemEffects(character: any, facts: Record<string, ItemFacts>
     itemAbsorb: sumEffects(active.map((a) => a.effects)).absorb ?? 0,
     // Handwraps and the like: a bonus to unarmed strikes
     itemUnarmed: { attack: unarmed.reduce((n, a) => n + (a.effects.attack ?? 0), 0), damage: unarmed.reduce((n, a) => n + (a.effects.damage ?? 0), 0) },
+    // Darkvision, stealth, a decoy shadow, a guard against weapons, water at will (parseItemEffects)
+    itemSenses: {
+      darkvision: Math.max(0, ...active.map((a) => a.effects.darkvision ?? 0)),
+      stealth: Math.sign(active.reduce((n, a) => n + (a.effects.stealth ?? 0), 0)),
+      decoy: active.some((a) => a.effects.decoy),
+      weaponGuard: active.some((a) => a.effects.weaponGuard),
+      water: active.some((a) => a.effects.water),
+    },
   };
 }

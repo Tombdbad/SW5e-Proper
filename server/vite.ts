@@ -7,7 +7,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { type Server } from "http";
 import viteConfig from "../vite.config";
-import { nanoid } from "nanoid";
 
 const viteLogger = createLogger();
 
@@ -56,11 +55,11 @@ export async function setupVite(app: Express, server: Server) {
       );
 
       // always reload the index.html file from disk incase it changes
-      let template = await fs.promises.readFile(clientTemplate, "utf-8");
-      template = template.replace(
-        `src="/src/main.tsx"`,
-        `src="/src/main.tsx?v=${nanoid()}"`,
-      );
+      // (no cache-busting query on main.tsx: Vite carried it into main's own imports, so that the modules main.tsx and App.tsx
+      // import were loaded twice, once with it and once without, and the pages loaded later used other copies: a second query
+      // client whose invalidations never reached the one the app reads, found 2026-10-26 by a level-up that never showed. Vite
+      // serves its dev modules uncached, so nothing is lost)
+      const template = await fs.promises.readFile(clientTemplate, "utf-8");
       const page = await vite.transformIndexHtml(url, template);
       res.status(200).set({ "Content-Type": "text/html" }).end(page);
     } catch (e) {

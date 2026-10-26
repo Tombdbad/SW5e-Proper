@@ -669,8 +669,10 @@ await step(ctx, "play: credits are shown; weapons and armor are wielded and worn
     if (await page.locator("[data-testid=room-plan], [data-testid=floor-plan], [data-testid=room-grid]").count()) throw new Error("the 2D room plan is still shown");
     const l = start.layout;
     const blocked = (x, y) => l.assets.some((a) => !a.side && (a.blocks || a.kind === "npc") && a.x <= x && x < a.x + a.w && a.y <= y && y < a.y + a.h);
+    // (along the middle row toward the far wall: a round room has no floor in its corners)
     let goal;
-    for (let y = l.height - 1; y >= 0 && !goal; y--) for (let x = l.width - 1; x >= 0 && !goal; x--) if (!blocked(x, y)) goal = { x, y };
+    const mid = Math.floor(l.height / 2);
+    for (const y of [mid, mid - 1, mid + 1]) for (let x = l.width - 2; x >= 1 && !goal; x--) if (!blocked(x, y)) goal = { x, y };
     const square = `sq:${l.x + goal.x},${l.y + goal.y}`;
     const before = await at("me");
     await tap(square);
@@ -1062,6 +1064,12 @@ if (process.env.FORCE !== "0") {
     for (let i = 0; i < 15; i++) {
       const p = await at(key);
       if (p.x > box.x + 10 && p.x < box.x + box.width - 10 && p.y > box.y + 50 && p.y < box.y + box.height - 10) return p;
+      // Zooming out does not pan: after a few tries the camera is aimed at the thing from above (the map probe's look)
+      if (i >= 4) {
+        await page.evaluate((k) => { const m = window.__map3d; const w = m?.world(k); if (w) m.look([w[0], w[1] + 18, w[2] + 12], w); }, key);
+        await sleep(800);
+        continue;
+      }
       await page.mouse.move(box.x + 100, box.y + box.height / 2);
       for (let n = 0; n < 6; n++) { await page.mouse.wheel(0, 400); await sleep(60); }
       await sleep(500);
@@ -1071,6 +1079,22 @@ if (process.env.FORCE !== "0") {
   const tap = async (key) => { const p = await inView(key); await poke(p.x, p.y); };
   // (a trader's wares and dealings are in the HUD's Trade tab, which opens by itself when one is picked; the rest is on the map card)
   const card = () => page.locator("[data-testid=map-card], [data-testid=hud-trade]");
+  // Taps someone until their card shows `testId`: the people of the room walk about, and one passing in front of them takes the tap
+  const tapFor = async (key, testId, pickId = key.startsWith("npc:") ? key.slice(4) : undefined) => {
+    for (let i = 0; i < 6; i++) {
+      // (from the third try, by their name in the Here tab, which picks them out as a tap does)
+      if (i >= 2 && pickId) {
+        await page.getByRole("tab", { name: "Here" }).click();
+        await page.getByTestId(`pick-${pickId}`).click();
+      } else await tap(key);
+      if (await card().getByTestId(testId).first().waitFor({ timeout: 4000 }).then(() => true).catch(() => false)) return;
+      await page.getByTestId("map-card").getByRole("button", { name: "Close" }).first().click().catch(() => {});
+      await sleep(800);
+    }
+    const toasts = await page.locator("[data-sonner-toast]").allInnerTexts().catch(() => []);
+    const claims = await page.evaluate(() => window.__claims?.() ?? {});
+    throw new Error(`no ${testId} card for ${key} after six taps; toasts: ${toasts.join(" | ").slice(0, 200)}; claims ${JSON.stringify(claims)}`);
+  };
   const stat = async (statBlock) => (await api("POST", "/api/world/occupant", { statBlock })).json;
   const named = async (search) => (await api("GET", `/api/sw5e/monsters?search=${encodeURIComponent(search)}&fields=id,name`)).json[0];
   const GEAR = "Gear " + TAG;
@@ -1145,24 +1169,34 @@ if (process.env.FORCE !== "0") {
     await panel.waitFor();
     if (!/trained with it/i.test(await panel.innerText())) throw new Error("tool panel: " + (await panel.innerText()).slice(0, 200));
     await panel.getByRole("button", { name: "Try" }).first().click();
+    // (the try is a check: it is rolled before the substance is taken, or the high would be spent on it, as the rules have it)
+    if (await page.getByTestId("check-roll").waitFor({ timeout: 4000 }).then(() => true).catch(() => false)) await page.getByTestId("check-roll").click();
+    await page.getByText(/against DC/).first().waitFor({ timeout: 10000 }).catch(() => {});
+    await sleep(800);
     await page.getByTestId("use-Glitterstim").click();
     await page.getByTestId("use-on-self").click();
     await sleep(800);
     c = await getChar(g.id);
-    if (c.playState?.substance?.phase !== "high" || c.equipment.includes("Glitterstim")) throw new Error(JSON.stringify(c.playState));
+    if (c.playState?.substance?.phase !== "high" || c.equipment.includes("Glitterstim")) throw new Error(JSON.stringify(c.playState?.substance));
     return `medpac healed to ${c.currentHp}; mechanic's kit panel; Glitterstim: ${c.playState.substance.phase}`;
   });
 
   await step(ctx, "droid: a disabled droid is stabilized, mended and bolted, and joins the party", async () => {
-    await tap("npc:ox-droid");
-    await card().getByTestId("disabled-droid").waitFor();
-    await card().getByTestId("droid-stabilize").click();
+    // (a button of the card is enabled once what was done before it is saved)
+    const press = async (id) => {
+      const b = card().getByTestId(id).first();
+      for (let i = 0; i < 20 && (await b.isDisabled().catch(() => true)); i++) await sleep(500);
+      if (await b.isDisabled().catch(() => true)) throw new Error(`${id} stays disabled: ${(await card().first().innerText()).replace(/\s+/g, " ").slice(0, 300)} | HUD: ${(await page.locator("body").innerText()).match(/(Watch|Combat)[^\n]*/g)?.join(" | ")}`);
+      await b.click();
+    };
+    await tapFor("npc:ox-droid", "droid-stabilize");
+    await press("droid-stabilize");
     await sleep(1200);
-    await tap("npc:ox-droid");
-    await card().getByTestId("droid-mend").click();
+    await tapFor("npc:ox-droid", "droid-mend");
+    await press("droid-mend");
     await sleep(1200);
-    await tap("npc:ox-droid");
-    await card().getByTestId("droid-bolt").click();
+    await tapFor("npc:ox-droid", "droid-bolt");
+    await press("droid-bolt");
     await sleep(1500);
     const c = await getChar(g.id);
     const droid = (c.companionData?.party ?? []).find((p) => p.kind === "droid");
@@ -1173,19 +1207,17 @@ if (process.env.FORCE !== "0") {
   await step(ctx, "captive and hire: shackles opened with a kit, the freed come along; a bounty hunter is hired for a fee and a wage", async () => {
     let freed = false;
     for (let i = 0; i < 6 && !freed; i++) {
-      await tap("npc:ox-captive");
-      await card().getByTestId("captive").waitFor();
+      await tapFor("npc:ox-captive", "captive");
       await card().getByTestId("free-kit").click();
       await sleep(1200);
       freed = (await campOf(gc.id)).galaxyMap.areas[gc.world.startId].occupants.find((x) => x.id === "ox-captive")?.role === "freed";
     }
     if (!freed) throw new Error("six tries and the shackles held");
-    await tap("npc:ox-captive");
+    await tapFor("npc:ox-captive", "freed-join");
     await card().getByTestId("freed-join").click();
     await sleep(1200);
     const before = await getChar(g.id);
-    await tap("npc:ox-hire");
-    await card().getByTestId("hire").waitFor();
+    await tapFor("npc:ox-hire", "hire");
     await card().getByTestId("hire-button").click();
     await sleep(1200);
     const after = await getChar(g.id);
@@ -1193,6 +1225,8 @@ if (process.env.FORCE !== "0") {
     if (!hired || !(after.credits < before.credits) || !(hired.wage > 0) || !after.companionData.party.some((p) => p.kind === "freed")) throw new Error(JSON.stringify(after.companionData));
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+    // (the party is on the HUD's Party tab since 2026-10-21)
+    await page.getByRole("tab", { name: "Party" }).click();
     await page.getByTestId("play-party").waitFor();
     if ((await page.getByTestId("party-member").count()) !== 3) throw new Error("party shown: " + (await page.getByTestId("party-member").count()));
     return `party of 3 kept after a reload; hire: credits ${before.credits} -> ${after.credits}, wage ${hired.wage}`;
@@ -1443,7 +1477,9 @@ if (process.env.FORCE !== "0") {
     const log = await page.getByTestId("downtime-log").innerText();
     if (!/Taxi run:.*rings/.test(log)) throw new Error("no taxi run in the log: " + log.replace(/\s+/g, " "));
     const after = (await getChar(fl.id)).credits;
-    if (!(after >= before)) throw new Error(`credits fell: ${before} -> ${after}`);
+    // (the run takes a day, and the day's Modest lifestyle, 10 cr, is paid as any day in a settlement is)
+    const fare = Number((log.match(/Taxi run:[^\n]*?paid (\d+) cr/) ?? [])[1] ?? NaN);
+    if (after !== before + fare - 10) throw new Error(`credits ${before} -> ${after}: not the fare of ${fare} less a day's lifestyle (10)`);
     return `${log.split("\n").find((l) => /Taxi run/.test(l))?.slice(0, 110)}; credits ${before} -> ${after}`;
   });
 
@@ -1579,7 +1615,8 @@ if (process.env.FORCE !== "0") {
     const log = await page.getByTestId("downtime-log").innerText();
     if (!/Pit arena: 1 bout won, 200 cr/.test(log)) throw new Error("no pit in the log: " + log.replace(/\s+/g, " "));
     const after = (await getChar(pc.id)).credits;
-    if (after < 1200) throw new Error(`prize not paid: credits ${after}`);
+    // (the 200 prize, less the day's Modest lifestyle of 10 cr: a bout takes a day)
+    if (after !== 1190) throw new Error(`prize not paid: credits ${after}`);
     return `${result.slice(0, 100)}; credits ${after}`;
   });
 
@@ -1677,7 +1714,8 @@ if (process.env.FORCE !== "0") {
     await tap("npc:ox-dealer");
     const stock = card().getByTestId("trade-stock");
     await stock.waitFor();
-    const line = stock.locator("li").filter({ hasText: /Landspeeder|Speederbike|Airspeeder/ }).first();
+    // (since 2026-10-26 a dealer sells makes of the three classes: "X-34 landspeeder", "Swoop bike" ...)
+    const line = stock.locator("li").filter({ hasText: /landspeeder|speeder bike|swoop|courier|skiff|snowspeeder|cloud car|airspeeder/i }).first();
     await line.getByRole("button", { name: "Buy" }).click();
     await sleep(1500);
     const bought = (await campOf(bc.id)).vehicles?.[0];
@@ -1685,11 +1723,12 @@ if (process.env.FORCE !== "0") {
     // the dealer's card covers the stable on a phone: close it first
     await card().getByRole("button", { name: "Close" }).click();
     await tap("npc:ox-stable");
-    await card().getByText("Hanna Stablehand").waitFor({ timeout: 30000 });
+    await card().getByText("Hanna Stablehand").first().waitFor({ timeout: 30000 });
     const mounts = card().getByTestId("trade-stock").locator("li").filter({ hasText: /Tauntaun|Kaadu|Dewback|Varactyl|Bantha|Rancor/ }).first();
     await mounts.getByRole("button", { name: "Buy" }).click();
     await sleep(2000);
-    let party = (await getChar(b.id)).companionData?.party ?? [];
+    // (beasts are kept apart from the companions since 2026-10-26: `companionData.beasts`)
+    let party = (await getChar(b.id)).companionData?.beasts ?? [];
     if (!party.some((p) => p.kind === "beast" && p.mount)) throw new Error(JSON.stringify(party));
     // a wild creature, hurt, in the room
     const camp = await campOf(bc.id);
@@ -1705,7 +1744,7 @@ if (process.env.FORCE !== "0") {
       await tap("npc:ox-beast");
       await card().getByTestId("gentle-beast").click();
       await sleep(1500);
-      party = (await getChar(b.id)).companionData?.party ?? [];
+      party = (await getChar(b.id)).companionData?.beasts ?? [];
       joined = party.filter((p) => p.kind === "beast").length >= 2;
     }
     if (!joined) throw new Error("six tries and the creature would not settle");
@@ -1763,6 +1802,8 @@ if (process.env.FORCE !== "0") {
     const lead = await newChar({ equipment: ["Blaster pistol", "Vibroblade", "Combat suit"] });
     const friend = await newChar({ name: "Friend " + TAG, class: "scout", equipment: ["Blaster pistol", "Vibroblade", "Combat suit"] });
     await newCamp(lead, 3, async () => {});
+    // (the party is on the HUD's Party tab since 2026-10-21)
+    await page.getByRole("tab", { name: "Party" }).click();
     const sel = page.getByTestId("recruit-character").locator("select");
     await sel.waitFor();
     await sel.selectOption({ index: (await sel.locator("option").allInnerTexts()).findIndex((t) => t.startsWith("Friend " + TAG)) });
@@ -1961,9 +2002,8 @@ if (process.env.FORCE !== "0") {
     if (camp.currentLocation !== hangar.id) throw new Error("the ramp led to " + camp.currentLocation + ", not the refuelling hangar");
     const attendant = Object.values(camp.galaxyMap.areas).filter((a) => a.id === hangar.id).flatMap((r) => r.layout.assets.filter((a) => a.kind === "npc").map((a) => ({ asset: a, o: r.occupants.find((o) => o.id === a.ref) }))).find((x) => x.o?.role === "fuel attendant");
     if (!attendant) throw new Error("no fuel attendant in the hangar");
-    await tap(`asset:${attendant.asset.id}`);
+    await tapFor(`asset:${attendant.asset.id}`, "service-refuel", attendant.o.id);
     const card = page.locator("[data-testid=map-card], [data-testid=hud-trade]");
-    await card.getByTestId("service-refuel").waitFor({ timeout: 10000 });
     const before = await getChar(h.id);
     await card.getByTestId("service-refuel").click();
     await sleep(1500);
@@ -2166,7 +2206,7 @@ if (process.env.FORCE !== "0") {
     const bc = await newCamp(bh, 17, async (world, start) => addNode(start, "e2e-rich", "Glittering seam", { family: "ore", tier: 1, material: "ore-1", charges: 3, max: 3 }));
     await page.getByTestId("play-node").waitFor();
     await page.getByTestId("play-node").getByRole("button", { name: /^Mine/ }).click();
-    await page.getByText(/It takes a scavenging kit to work this premium find/).waitFor();
+    await page.getByText(/It takes a scavenging kit.* to work this premium find/).first().waitFor();
     await sleep(800);
     const node = await veinIn(bc.id, "e2e-rich");
     if (node.charges !== 3) throw new Error("a refused harvest used the vein: " + node.charges);

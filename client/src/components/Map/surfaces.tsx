@@ -92,11 +92,17 @@ export interface SurfaceOptions {
   lift?: number; // brightens the photograph (a dark one, such as leaf litter, reads as a plant's green)
   parallax: number; // how far the height map shifts the maps (in repeats; see parallaxShader)
   shininess?: number;
+  specular?: string;
+  side?: THREE.Side;
+  // How steep the normal map reads (default NORMAL_SCALE's)
+  normalScale?: number;
 }
 const SURFACES = new Map<string, THREE.MeshPhongMaterial>();
+// A surface's material, with the copies of it that wait for its maps
+export type SurfaceMaterial = THREE.MeshPhongMaterial & { followers?: Set<THREE.Material> };
 // The material of a texture set (public/textures/<folder>/<set>): shared by everyone asking for the same one
 export function surfaceMaterial(folder: string, set: string, o: SurfaceOptions): THREE.MeshPhongMaterial {
-  const key = [folder, set, o.vertexColors ? "v" : "", o.tint ?? "", o.lift ?? 1, o.parallax, o.shininess ?? 8].join("|");
+  const key = [folder, set, o.vertexColors ? "v" : "", o.tint ?? "", o.lift ?? 1, o.parallax, o.shininess ?? 8, o.specular ?? "", o.side ?? 0, o.normalScale ?? ""].join("|");
   const have = SURFACES.get(key);
   if (have) return have;
   const height = { value: flat([128, 128, 128]) as THREE.Texture | null };
@@ -105,19 +111,26 @@ export function surfaceMaterial(folder: string, set: string, o: SurfaceOptions):
     color: new THREE.Color(o.tint ?? "#ffffff").multiplyScalar(o.lift ?? 1),
     map: flat([255, 255, 255]),
     normalMap: flat([128, 128, 255]),
-    normalScale: NORMAL_SCALE,
-    specular: new THREE.Color("#202020"),
+    normalScale: o.normalScale !== undefined ? new THREE.Vector2(o.normalScale, o.normalScale) : NORMAL_SCALE,
+    specular: new THREE.Color(o.specular ?? "#202020"),
     shininess: o.shininess ?? 8,
+    side: o.side ?? THREE.FrontSide,
   });
   m.onBeforeCompile = (shader) => parallaxShader(shader, height, o.parallax);
+  m.customProgramCacheKey = () => `surface:${o.parallax}`;
+  // Copies made of it before its maps came (a moving figure's limb materials, interiors/limbs.ts) are given them too (kept off
+  // `userData`, which a copy clones)
+  (m as SurfaceMaterial).followers = new Set();
   // The maps come in a browser only: the tests import this module without a document, and there the surfaces stay flat
   if (typeof document !== "undefined") {
     const base = `/textures/${folder}/${set}`;
     Promise.all([loadMap(`${base}/diffuse.jpg`, true), loadMap(`${base}/normal.jpg`, false), loadMap(`${base}/height.jpg`, false)]).then(([d, n, h]) => {
-      if (d) m.map = d;
-      if (n) m.normalMap = n;
+      for (const target of [m, ...((m as SurfaceMaterial).followers as Set<THREE.MeshPhongMaterial>)]) {
+        if (d) target.map = d;
+        if (n) target.normalMap = n;
+        target.needsUpdate = true;
+      }
       if (h) height.value = h;
-      m.needsUpdate = true;
     });
   }
   SURFACES.set(key, m);
@@ -154,4 +167,4 @@ export function WallMaterial({ set, tint }: { set: WallSet; tint: string }) {
 
 // The finishes that are drawn with a texture (models.tsx MATERIALS): the stone of rock, the bark of trees and logs, the leaves of
 // canopies and fronds. Their texture coordinates are box-projected at this many repeats per model unit.
-export const SURFACE_GRAIN = { stone: 1, bark: 1.5, leaf: 1.5 } as const;
+export const SURFACE_GRAIN: Record<string, number> = { stone: 1, bark: 1.5, leaf: 1.5, skin: 3, face: 5, fabric: 4, leather: 3, plate: 2, scales: 3.5, hair: 4, fur: 3 };

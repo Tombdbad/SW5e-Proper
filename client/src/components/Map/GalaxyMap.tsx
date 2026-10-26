@@ -25,7 +25,12 @@ export type MapAction =
   // need has been taken where they had to go (delivered), the party has walked into an alley (alley), and the gang
   // has closed in and surrounds it (surrounded); talk asks for the words again
   | { type: "encounter"; step: "met" | "delivered" | "surrounded" | "talk" }
-  | { type: "alley"; alley: { x: number; y: number; width: number; height: number } };
+  | { type: "alley"; alley: { x: number; y: number; width: number; height: number } }
+  // A base piece set down on a square of the map the party is on (usePlacing), and one of the base's pieces tapped
+  | { type: "place"; areaId: string; x: number; y: number; face: number; indoors: boolean }
+  | { type: "piece"; id: string }
+  // A cart (a hovercart) tapped on the map
+  | { type: "cart"; id: string };
 
 // When the finger last came down (or the mouse button went down). A busy phone delivers the
 // click of a tap late, so two taps are timed from when they began, not from their clicks.
@@ -65,6 +70,15 @@ export function Probe({ locate }: { locate: (key: string) => [number, number, nu
       world: (key: string) => locate(key) ?? null,
       // What the last frame cost, for judging how heavy a scene is
       info: () => ({ calls: gl.info.render.calls, triangles: gl.info.render.triangles, geometries: gl.info.memory.geometries }),
+      // Puts the camera at a point looking at another, for a close look at something (it stays until the map is turned or flies on)
+      look: (from: [number, number, number], to: [number, number, number]) => {
+        camera.position.set(...from);
+        camera.lookAt(...to);
+        // (the orbit controls aim the camera at their target every frame)
+        rigControls.current?.target.set(...to);
+        rigControls.current?.update();
+        rigControls.hold = true;
+      },
     };
     return () => {
       delete (window as any).__map3d;
@@ -76,6 +90,8 @@ export function Probe({ locate }: { locate: (key: string) => [number, number, nu
 // The camera: it flies in to each new view, then the map can be turned, moved and zoomed by
 // hand. A view that follows someone (the party on foot) keeps them in the middle as they walk.
 type V3 = [number, number, number];
+// The controls of the camera that is up, for the probe's close looks
+const rigControls: { current: any; hold?: boolean } = { current: null };
 export function Rig({ target, offset, min, max, fov = 75, follow }: { target: V3; offset: V3; min: number; max: number; fov?: number; follow?: { current: V3 | null } }) {
   const controls = useRef<any>(null);
   const camera = useThree((state) => state.camera) as THREE.PerspectiveCamera;
@@ -102,13 +118,17 @@ export function Rig({ target, offset, min, max, fov = 75, follow }: { target: V3
     if (fly.current > 0) {
       fly.current = Math.max(0, fly.current - delta * 1.8);
       place(1 + 1.2 * fly.current * fly.current);
-    } else if (follow?.current && controls.current) {
+    } else if (follow?.current && controls.current && !rigControls.hold) {
       const [dx, dy, dz] = [follow.current[0] - controls.current.target.x, follow.current[1] - controls.current.target.y, follow.current[2] - controls.current.target.z];
       if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) < 0.0005) return;
       camera.position.set(camera.position.x + dx, camera.position.y + dy, camera.position.z + dz);
       controls.current.target.set(...follow.current);
       controls.current.update();
     }
+  });
+  useEffect(() => {
+    rigControls.current = controls.current;
+    return () => { if (rigControls.current === controls.current) rigControls.current = null; };
   });
   return <OrbitControls ref={controls} enableZoom enablePan enableRotate minDistance={min} maxDistance={max} maxPolarAngle={Math.PI / 2.15} />;
 }

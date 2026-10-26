@@ -39,7 +39,7 @@ surgeon, a chassis or modification installed in a workshop: those flows are not 
 - **Spice**: only on the black market (black)
 - **Explosive**: only on the black market (black)
 
-Contraband (seized where the law is at that level or above, `contrabandFrom`): 220 items. Vendors with stock: bar, general, arms, tech, outfit, medical, leisure, spacer, black, vehicles, mounts, droids, salvage; a merchant takes one of: general, arms, tech, medical, leisure.
+Contraband (seized where the law is at that level or above, `contrabandFrom`): 220 items. Vendors with stock: fuel, bar, general, arms, tech, outfit, medical, leisure, spacer, black, vehicles, mounts, droids, salvage; a merchant takes one of: general, arms, tech, medical, leisure.
 
 ## Enhanced items (1,918 rows): what each type has
 
@@ -51,7 +51,7 @@ Contraband (seized where the law is at that level or above, `contrabandFrom`): 2
 | Armor | 18 | 18: text only 5, effects 7, chassis 6 | 0 | 18/18 | armory, vault, relic |
 | Consumable | 528 | 528: timed 82, use substance 80, use explosive 135, use spike 6, use ammo 170, use calibrator 28, use heal 5, use poison 5, use teleport 6, use repair 5, use vitapac 6 | 0 | 528/528 | medical, cargo, stash, remains |
 | DroidCustomization | 48 | 48: droid protocol 18, droid part 30 | 0 | 48/48 | workshop |
-| AdventuringGear | 156 | 156: text only 47, effects 17, use binders 5, use data 23, use container 10, chassis 24, use clothing 5, use accessory 20, use bolt 5 | 0 | 156/156 | stash |
+| AdventuringGear | 156 | 156: effects 24, text only 40, use binders 5, use data 23, use container 10, chassis 24, use clothing 5, use accessory 20, use bolt 5 | 0 | 156/156 | stash |
 | Focus | 18 | 18: text only 6, chassis 12 | 0 | 18/18 | vault, relic |
 | Shield | 12 | 12: effects 5, chassis 6, text only 1 | 0 | 12/12 | armory, vault, relic |
 | ShipArmor | 3 | 3: ship part 3 | 0 | 0/3 | **nowhere** |
@@ -68,7 +68,7 @@ Types no cache offers: ShipArmor, ShipShield, ShipWeapon.
 
 - **Weapon** (18): Bolas (Champion); Bolas (Exceptional); Bolas (Fine); Bolas (Improved); Bolas (Superior); Flashy; Grenade Launcher (Champion); Grenade Launcher (Exceptional); Grenade Launcher (Fine); Grenade Launcher (Improved); Grenade Launcher (Superior); Net (Champion); Net (Exceptional); Net (Fine); Net (Improved); Net (Superior); Shotgun Axe; Sparkles
 - **Armor** (5): Adapted Armor; Matrix Armor; Orbalisk Armor; Reactive Ultrachrome Armor; Viir Agathys's Armor
-- **AdventuringGear** (47): Aratech Echo Belt; Aratech Sound Dampening Boots; Atmospheric Decanting Vessel; Baragwin Stealth Unit; Boots of Bounding; Boots of Hiding; Cape of the Orator; Circlet of Persistence; Cowl of the Professional; Darkvision Goggles; Defel Mimicker; Flightsuit; Gauntlets of the Warrior; Goggles of the Tinkerer; Jensaarai Cloak; Jensaarai Headgear; Mag-lock Boots; Mandalorian Helmet; Mantle of the Anomic; Necklace of Determination; Pauldron of Retribution; Respiration Facilitator; Ring of Adept Force Storing; Ring of Ancient Force Storing; Ring of Apprentice Force Storing; Ring of Journeyman Force Storing; Ring of Master Force Storing; Ring of Novice Force Storing; Ring of Tech Storing Mk I; Ring of Tech Storing Mk II; ... (47)
+- **AdventuringGear** (40): Baragwin Stealth Unit; Boots of Bounding; Boots of Hiding; Cape of the Orator; Circlet of Persistence; Cowl of the Professional; Flightsuit; Gauntlets of the Warrior; Goggles of the Tinkerer; Jensaarai Cloak; Mag-lock Boots; Mantle of the Anomic; Necklace of Determination; Pauldron of Retribution; Respiration Facilitator; Ring of Adept Force Storing; Ring of Ancient Force Storing; Ring of Apprentice Force Storing; Ring of Journeyman Force Storing; Ring of Master Force Storing; Ring of Novice Force Storing; Ring of Tech Storing Mk I; Ring of Tech Storing Mk II; Ring of Tech Storing Mk III; Ring of Tech Storing Mk IV; Ring of Tech Storing Mk V; Ring of Tech Storing Mk VI; Sith Acolyte's Robe; Sith Lord's Robe; Sith Warrior's Robe; ... (40)
 - **Focus** (6): Focus Generator (Fine); Focus Generator (Improved); Focus Generator (Superior); Wristpad (Fine); Wristpad (Improved); Wristpad (Superior)
 - **Shield** (1): Verpine Auto-Shielding Unit
 

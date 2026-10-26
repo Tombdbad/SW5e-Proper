@@ -6,6 +6,7 @@ import { conditionMechanics, motionFeet, sizeRank, type PowerMotion } from "@/li
 import { conditions as conditionList } from "@/lib/sw5e/conditions";
 import type { RoomAsset, StatProfile, StatAttack, StatSpecial, StatSave, ShipFight as ShipFightData, ShipSheet as ShipSheetData, ShipHelmAction, ShipBoost } from "@shared/logic";
 import type { AmmoRider } from "@shared/logic";
+import { jumpReach, fallPlan, fallOutcome } from "@shared/logic";
 import { shipCombatant, startShipFight, shipMove, shipTurn, shipFire, shipHelm, shipBoost, shipPatch, shipRegenerate, shipDirect, shipInterfere, shipSpecial, shipFlee, endShipTurn, shipAi, shoveAsset, bulkOf, type Bulk } from "@shared/logic";
 import { minimumRoll, type CombatFeature, type Amount } from "@/lib/sw5e/characterCalculation";
 import {
@@ -83,6 +84,26 @@ export interface Combatant {
   meleeAbility?: "strength" | "dexterity";
   // More damage dice on each melee hit (a top-grade calibrator), and on an unarmed strike (shock gloves)
   meleeExtra?: { dice: string; type?: string };
+  // A melee weapon to throw (the thrown property): how many are left to throw this fight (a returning one always comes back)
+  thrown?: { name: string; dice: string; attack: number; damage: number; type?: string; props: string[]; range: [number, number]; ability?: "strength" | "dexterity"; returning: boolean; left: number };
+  // The trade chosen for the next attacks (2026-10-26): a dire weapon's penalty to hit for as much more damage (negative), a piercing
+  // weapon's bonus to hit for as much less damage (positive); and a defensive weapon's penalty to its first attack and damage of the turn
+  // for as much AC until the next turn
+  trade?: number;
+  defend?: number;
+  // Weapon properties chosen for the attacks to come (2026-10-26; Wretched Hives and Expanded Content weapon properties): a bright, biting
+  // or corruption weapon's strike that forces a saving throw instead of the attack roll; a penetrating weapon's shot through cover and
+  // into the creature behind; a switch weapon's alternate damage (its dice and the types it turns to, and which one is chosen: 0 its own)
+  saveStrike?: boolean;
+  penetrate?: boolean;
+  rangedSwitch?: { dice: string; types: string[] };
+  switched?: number;
+  // What such a strike leaves: a bright weapon's burn (its damage again at the start of the creature's next turn), a biting weapon's
+  // (the creature's first attack before the end of its next turn at disadvantage), a corruption weapon's blight (no hit points regained
+  // until the striker's next turn begins: the striker's id)
+  afterburn?: { amount: number; type: string };
+  shaken?: boolean;
+  blighted?: number | string;
   // A second light weapon in the other hand, and the character's unarmed strike (a Martial Arts
   // die or a species' natural weapon), for the bonus action attacks
   offhand?: { name: string; dice: string; attack: number; damage: number; type?: string; props?: string[] };
@@ -193,9 +214,21 @@ export interface Combatant {
   conditionImmune?: string[];
   // Heavily encumbered: disadvantage on Strength, Dexterity and Constitution attacks and saves
   burden?: boolean;
+  // Levels of exhaustion (the rules data's Exhaustion: 2 halves the speed, 3 gives disadvantage on attack rolls and saving throws, 5 takes
+  // the speed to 0; 1, disadvantage on ability checks, is the checks' own; 2026-10-26, levels had no effect in a fight before)
+  exhaustion?: number;
+  // A decoy shadow (an item: "disadvantage on attack rolls against you"), and whether it is down until the creature's next turn (hurt)
+  decoy?: boolean;
+  decoyDown?: boolean;
   // A flying speed (a jetpack, rocket boots, a rocketpack running: it moves over what stands on the floor) and a slowed fall (a repulsor pack)
   fly?: number;
   slowFall?: boolean;
+  // Jumping, climbing and falling (2026-10-26; shared/logic jumpReach, fallPlan): a climbing speed (friction grips) and the feet of a
+  // grappling hook's line carried; heavy armour worn (a fall's dice are d8s); a jetpack or rocket boots carried but not running, to fire
+  // in a burst before the ground
+  climber?: { speed?: boolean; hookFeet?: number };
+  heavyArmor?: boolean;
+  burst?: string;
   // A bipod carried, and deployed: the weapon's Strength requirement is ignored, speed 0
   bipod?: boolean;
   braced?: boolean;
@@ -228,6 +261,8 @@ export interface ActiveCondition {
   rounds: number;
   // The saving throw that ends it, made at the end of each of the creature's turns
   save?: { ability: string; dc: number };
+  // A grapple's escape DC (a stat block's; the Escape action is made against it)
+  escape?: number;
   // Who caused it and with what; a concentration power's conditions end when its caster casts another
   by?: number | string;
   source?: string;
@@ -256,6 +291,8 @@ export interface Arena {
   platforms?: ArenaPlatform[];
   links?: ArenaLink[];
   district?: string;
+  // The world's pull (1 standard; shared/logic gravityOf): jumps go as far divided by it, falls hurt as much more
+  gravity?: number;
 }
 export interface ArenaPlatform {
   z: number;
@@ -290,44 +327,108 @@ const solid = (arena: Arena, x: number, y: number, z = 0) => {
   return !floor || arena.assets.some((a) => a.blocks && a.z === z && covers(a, x, y));
 };
 
+// What is left of a creature's speed by its conditions and its exhaustion (1 all of it, 0.5 half, 0 none)
+export function speedFactor(c: Pick<Combatant, "conditions" | "exhaustion">): number {
+  const tired = c.exhaustion ?? 0;
+  return Math.min(1, tired >= 5 ? 0 : tired >= 2 ? 0.5 : 1, ...(c.conditions ?? []).map((x) => conditionMechanics(x.name).speed));
+}
+
 // Feet a creature can still move this turn, as its conditions allow
 export function movementLeft(c: Combatant): number {
-  const factor = Math.min(1, ...(c.conditions ?? []).map((x) => conditionMechanics(x.name).speed));
+  const factor = speedFactor(c);
   return Math.max(0, Math.floor(((c.speed ?? 30) * factor) / 5) * 5 + (c.extraMove ?? 0) - (c.moved ?? 0));
 }
 
-// Every square a creature can walk to with the movement it has left, and the feet it costs.
-// Furniture that blocks and other creatures are walked around; no cutting corners.
-export function reachable(arena: Arena, combatants: Combatant[], mover: Combatant, limit = movementLeft(mover)): Map<string, { cost: number; from?: string }> {
+// Every square a creature can get to with the movement it has left, the feet it costs and how the last step of the way is made.
+// Furniture that blocks and other creatures are walked around; no cutting corners. Besides walking and the ladders and stairs
+// (2026-10-26, Player's Handbook "Jumping" and "Climbing"; house rules in shared/logic "Jumping, falling and gravity"):
+// - a flyer goes up or down to any height beside it, 10 ft. of movement a level;
+// - a wall is climbed to the floor over a square beside the creature (a roof's edge, a catwalk) at twice the feet when the creature
+//   reaches it at the top of a high jump, at the feet with a climbing speed, or higher with a grappling hook's line (thrown with the
+//   action); down again the same way;
+// - off a raised floor: a long jump over a gap to the same height (each foot jumped costs a foot), or a jump down that is a fall
+//   (`fall`: levels; it ends the move). A way without a fall is always taken before one with.
+export type StepHow = "walk" | "stairs" | "fly" | "climb" | "hook" | "jump" | "drop";
+export interface Step {
+  cost: number;
+  from?: string;
+  how?: StepHow;
+  fall?: number;
+}
+export function reachable(arena: Arena, combatants: Combatant[], mover: Combatant, limit = movementLeft(mover)): Map<string, Step> {
   const taken = new Set(combatants.filter((c) => c.id !== mover.id && c.hp > 0).map((c) => key(c.x ?? -1, c.y ?? -1, c.z ?? 0)));
   // A flyer passes over what stands on the floor (only the edge of the ground stops it)
   const blocked = (x: number, y: number, z: number) => (mover.fly && !z ? x < 0 || y < 0 || x >= arena.width || y >= arena.height : solid(arena, x, y, z));
   const open = (x: number, y: number, z: number) => !blocked(x, y, z) && !taken.has(key(x, y, z));
+  const inside = (x: number, y: number) => x >= 0 && y >= 0 && x < arena.width && y < arena.height;
+  const floorAt = (x: number, y: number, z: number) => (z === 0 ? inside(x, y) : (arena.platforms ?? []).some((p) => p.z === z && x >= p.x && x < p.x + p.width && y >= p.y && y < p.y + p.height));
+  // The heights there are floors at, highest first
+  const heights = Array.from(new Set([0, ...(arena.platforms ?? []).map((p) => p.z)])).sort((a, b) => b - a);
+  const g = arena.gravity ?? 1;
+  const hook = (mover.actions ?? 1) > 0 ? mover.climber?.hookFeet ?? 0 : 0;
   const start = { x: mover.x ?? 0, y: mover.y ?? 0, z: mover.z ?? 0 };
-  const found = new Map<string, { cost: number; from?: string }>([[key(start.x, start.y, start.z), { cost: 0 }]]);
+  const found = new Map<string, Step>([[key(start.x, start.y, start.z), { cost: 0 }]]);
   const queue: { x: number; y: number; z: number }[] = [start];
+  // A way is kept when it is the first found, or better: without a fall, then cheaper
+  const offer = (x: number, y: number, z: number, step: Step) => {
+    if (step.cost > limit) return;
+    const k = key(x, y, z);
+    const had = found.get(k);
+    if (had && (had.cost === 0 || (had.fall ? 1 : 0) < (step.fall ? 1 : 0) || ((had.fall ? 1 : 0) === (step.fall ? 1 : 0) && had.cost <= step.cost))) return;
+    found.set(k, step);
+    if (!step.fall) queue.push({ x, y, z });
+  };
   // A ladder or a flight of stairs is walked either way, at 10 feet for each level it rises
   const links = (arena.links ?? []).flatMap((l) => [l, { from: l.to, to: l.from }]);
   while (queue.length) {
     const at = queue.shift()!;
-    const here = found.get(key(at.x, at.y, at.z))!.cost;
-    if (here + 5 <= limit) {
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const x = at.x + dx;
-        const y = at.y + dy;
-        if ((!dx && !dy) || found.has(key(x, y, at.z)) || !open(x, y, at.z)) continue;
-        if (dx && dy && (blocked(at.x + dx, at.y, at.z) || blocked(at.x, at.y + dy, at.z))) continue;
-        found.set(key(x, y, at.z), { cost: here + 5, from: key(at.x, at.y, at.z) });
-        queue.push({ x, y, z: at.z });
-      }
+    const from = key(at.x, at.y, at.z);
+    const here = found.get(from)!.cost;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const x = at.x + dx;
+      const y = at.y + dy;
+      if ((!dx && !dy) || !open(x, y, at.z)) continue;
+      if (dx && dy && (blocked(at.x + dx, at.y, at.z) || blocked(at.x, at.y + dy, at.z))) continue;
+      offer(x, y, at.z, { cost: here + 5, from, how: "walk" });
     }
     for (const link of links) {
-      if (link.from.x !== at.x || link.from.y !== at.y || link.from.z !== at.z) continue;
-      const cost = here + 10 * Math.max(1, Math.abs(link.to.z - link.from.z));
-      const to = link.to;
-      if (cost > limit || found.has(key(to.x, to.y, to.z)) || !open(to.x, to.y, to.z)) continue;
-      found.set(key(to.x, to.y, to.z), { cost, from: key(at.x, at.y, at.z) });
-      queue.push({ ...to });
+      if (link.from.x !== at.x || link.from.y !== at.y || link.from.z !== at.z || !open(link.to.x, link.to.y, link.to.z)) continue;
+      offer(link.to.x, link.to.y, link.to.z, { cost: here + 10 * Math.max(1, Math.abs(link.to.z - link.from.z)), from, how: "stairs" });
+    }
+    if (mover.fly) {
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        for (const z of heights) if (z !== at.z && floorAt(at.x + dx, at.y + dy, z) && open(at.x + dx, at.y + dy, z)) offer(at.x + dx, at.y + dy, z, { cost: here + Math.max(5, 10 * Math.abs(z - at.z)), from, how: "fly" });
+      }
+      continue;
+    }
+    const jump = jumpReach(mover.abilities?.strength ?? 10, (mover.moved ?? 0) + here >= 10, g, mover.size ?? "Medium");
+    // How a wall of so many feet is climbed, if it can be, and what it costs
+    const climbing = (feet: number): Step | undefined =>
+      mover.climber?.speed ? { cost: here + feet, from, how: "climb" } : feet <= jump.reach ? { cost: here + 2 * feet, from, how: "climb" } : feet <= hook ? { cost: here + 2 * feet, from, how: "hook" } : undefined;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if (!dx && !dy) continue;
+      // Up: to the lowest floor over the square beside
+      const up = heights.filter((z) => z > at.z && floorAt(at.x + dx, at.y + dy, z)).pop();
+      if (up !== undefined && open(at.x + dx, at.y + dy, up)) {
+        const step = climbing((up - at.z) * 10);
+        if (step) offer(at.x + dx, at.y + dy, up, step);
+      }
+      if (!at.z) continue;
+      // Off the edge: over a gap to the same height, or down to the floor below, climbed when it can be, jumped otherwise
+      const most = Math.floor(jump.long / 5) + 1;
+      for (let d = 1; d <= Math.max(1, most); d++) {
+        const x = at.x + dx * d;
+        const y = at.y + dy * d;
+        if (!inside(x, y)) break;
+        if (floorAt(x, y, at.z)) {
+          if (d > 1 && open(x, y, at.z)) offer(x, y, at.z, { cost: here + 5 * d, from, how: "jump" });
+          break;
+        }
+        const below = heights.find((z) => z < at.z && floorAt(x, y, z));
+        if (below === undefined || !open(x, y, below)) continue;
+        const climb = d === 1 ? climbing((at.z - below) * 10) : undefined;
+        offer(x, y, below, climb ?? { cost: here + 5 * d, from, how: "drop", fall: at.z - below });
+      }
     }
   }
   return found;
@@ -436,6 +537,18 @@ export function attackPlan(arena: Arena, combatants: Combatant[], attacker: Comb
     down = true;
     reasons.push("heavily encumbered");
   }
+  if (target.decoy && !target.decoyDown) {
+    down = true;
+    reasons.push(`${target.name}'s decoy shadow`);
+  }
+  if ((attacker.exhaustion ?? 0) >= 3) {
+    down = true;
+    reasons.push(`exhaustion ${attacker.exhaustion}`);
+  }
+  if (attacker.shaken) {
+    down = true;
+    reasons.push("shaken by a biting strike");
+  }
   // A weapon's Strength or Dexterity requirement (Player's Handbook weapon properties): disadvantage unless the wielder meets it; a
   // braced bipod or tripod lifts the Strength one
   for (const [property, ability] of [["strength", "strength"], ["dexterity", "dexterity"]] as const) {
@@ -490,7 +603,9 @@ function stepTowards(arena: Arena, combatants: Combatant[], mover: Combatant, ta
     const { x, y, z } = parseKey(k);
     const apart = squaresApart({ x, y, z }, target) * 5;
     // Close enough is best, and of those the nearest to walk to; otherwise whatever gets nearest
-    const score = apart <= withinFeet ? step.cost / 1000 : 100 + (field.get(k)?.cost ?? 9999) + step.cost / 1000;
+    // (a fall is worth avoiding: one of more than a level is never taken)
+    if ((step as Step).fall && (step as Step).fall! > 1) return;
+    const score = (apart <= withinFeet ? step.cost / 1000 : 100 + (field.get(k)?.cost ?? 9999) + step.cost / 1000) + ((step as Step).fall ?? 0) * 40;
     if (score < best.score) best = { x, y, z, cost: step.cost, score };
   });
   return best;
@@ -580,10 +695,48 @@ function savingThrow(c: Combatant, ability: string, dc: number, type?: string): 
   if (all.some((x) => x.m.autoFailSaves.includes(ability))) return false;
   const high = c.high && c.high.ability === ability ? roll(1, c.high.die ?? 3) * (c.high.low ? -1 : 1) : 0;
   const burdened = !!c.burden && ["strength", "dexterity", "constitution"].includes(ability);
-  const mode = all.some((x) => x.m.disadvantageSaves.includes(ability)) || burdened ? -1 : 0;
+  const mode = all.some((x) => x.m.disadvantageSaves.includes(ability)) || burdened || (c.exhaustion ?? 0) >= 3 ? -1 : 0;
   const d = c.isPlayer ? playerD20(mode, `Saving throw (${ability})`) : rollD20(mode);
   const insulated = type && /^(ion|lightning)$/i.test(type) ? c.armorProps?.insulated ?? 0 : 0;
   return Math.max(d, insulated) + (c.saves?.[ability] ?? 0) + high >= dc;
+}
+
+// ---- Grappling and shoving (Player's Handbook, Making an Attack: Grappling, Shoving a Creature; 2026-10-26: the fight had neither, and
+// a creature grappled by a stat block's attack could not get out). Each is an ability check contest: Strength (Athletics) against the
+// target's Strength (Athletics) or Dexterity (Acrobatics), whichever is better; a grapple or shove takes the place of one attack and
+// works on a creature no more than one size larger within reach. A grapple ends when the grappler lets go, is incapacitated, or the two
+// are no longer within reach of each other (the book's dragging is not played: walking away lets go, house rule).
+export interface Athletic {
+  athletics?: number;
+  acrobatics?: number;
+}
+const abilityMod = (c: Combatant, ability: "strength" | "dexterity") => Math.floor(((c.abilities?.[ability] ?? 10) - 10) / 2);
+const athleticsOf = (c: Combatant & Athletic) => c.athletics ?? abilityMod(c, "strength");
+const acrobaticsOf = (c: Combatant & Athletic) => c.acrobatics ?? abilityMod(c, "dexterity");
+// One side's d20 for a contest: the player's on the table; exhaustion gives disadvantage on ability checks
+const contestD20 = (c: Combatant, label: string) => {
+  const mode = (c.exhaustion ?? 0) >= 1 ? -1 : 0;
+  return c.isPlayer ? playerD20(mode, label) : rollD20(mode);
+};
+export function contest(attacker: Combatant & Athletic, defender: Combatant & Athletic, label: string): { won: boolean; text: string } {
+  const a = contestD20(attacker, `${label}: Athletics`) + athleticsOf(attacker);
+  const useAcro = acrobaticsOf(defender) > athleticsOf(defender);
+  const d = contestD20(defender, `${label}: ${useAcro ? "Acrobatics" : "Athletics"}`) + (useAcro ? acrobaticsOf(defender) : athleticsOf(defender));
+  // A tie leaves things as they were (the book: the situation remains the same)
+  return { won: a > d, text: `Athletics ${a} against ${useAcro ? "Acrobatics" : "Athletics"} ${d}` };
+}
+// The grapple holding a creature, if any
+export const grappledBy = (held: Combatant) => (held.conditions ?? []).find((c) => c.name === "Grappled");
+// Grapples that no longer hold: the grappler down, unable to act, or out of reach of the one held
+function looseGrapples(w: { combatants: Combatant[]; log: string[] }) {
+  w.combatants = w.combatants.map((c) => {
+    const g = grappledBy(c);
+    if (!g || g.by === undefined) return c;
+    const holder = w.combatants.find((x) => x.id === g.by);
+    if (holder && holder.hp > 0 && !cannotAct(holder) && squaresApart(holder, c) <= Math.max(1, Math.floor((holder.reach ?? 5) / 5))) return c;
+    w.log.push(`${c.name} is no longer grappled.`);
+    return { ...c, conditions: (c.conditions ?? []).filter((x) => !(x.source === "a grapple" && x.by === g.by)) };
+  });
 }
 
 // Adds conditions to a creature; one it already has is replaced
@@ -703,6 +856,32 @@ const dieSize = (expression: string) => Number(expression.match(/\d+d(\d+)/)?.[1
 
 const dieRoll = (sides: number) => roll(1, sides);
 
+// What the character's chosen trade does to this attack: dire (up to its number: less to hit, as much more damage), piercing (more to
+// hit, less damage), defensive (less to hit and to damage on the turn's first attack, as much AC until the next turn)
+export function tradeOf(c: Combatant, spec: AttackSpec): { attack: number; damage: number; ac: number } {
+  const out = { attack: 0, damage: 0, ac: 0 };
+  const t = c.trade ?? 0;
+  const dire = propertyNumber(spec.properties, "dire");
+  const piercing = propertyNumber(spec.properties, "piercing");
+  if (t < 0 && dire) {
+    const n = Math.min(dire, -t);
+    out.attack -= n;
+    out.damage += n;
+  } else if (t > 0 && piercing) {
+    const n = Math.min(piercing, t);
+    out.attack += n;
+    out.damage -= n;
+  }
+  const defensive = propertyNumber(spec.properties, "defensive");
+  if ((c.defend ?? 0) > 0 && defensive && !(c.usedTurn ?? []).includes("did:attack")) {
+    const n = Math.min(defensive, c.defend!);
+    out.attack -= n;
+    out.damage -= n;
+    out.ac = n;
+  }
+  return out;
+}
+
 // A property's number: "keen 1" is 1, "vicious 2" is 2; 0 when the weapon lacks it
 export const propertyNumber = (props: string[] | undefined, name: string): number => {
   const found = (props ?? []).map((p) => p.match(new RegExp(`^${name}(?:\\s+(\\d+))?`, "i"))).find(Boolean);
@@ -727,16 +906,22 @@ export interface AttackSpec {
   properties: string[];
   // Strength or Dexterity, for what a rage adds
   ability?: "strength" | "dexterity";
-  // From a stat block: its extra damage and the saving throw that comes with the hit
+  // From a stat block: its extra damage and the saving throw that comes with the hit, and a grapple it makes (escape DC)
   extra?: { dice: string; type?: string };
   save?: StatSave;
+  grapple?: { dc: number; maxSize?: string; restrains?: boolean };
   statBlock?: boolean;
   // A bonus action attack with the weapon in the other hand: no modifier to damage unless negative
   offhand?: boolean;
 }
 
 // What the character attacks with, for each kind of attack
-export function playerSpec(c: Combatant, kind: "melee" | "ranged" | "unarmed" | "offhand"): AttackSpec | undefined {
+export function playerSpec(c: Combatant, kind: "melee" | "ranged" | "unarmed" | "offhand" | "thrown"): AttackSpec | undefined {
+  if (kind === "thrown") {
+    const t = c.thrown;
+    if (!t || t.left <= 0) return undefined;
+    return { name: t.name, type: "ranged", bonus: t.attack, dice: t.dice, damageBonus: t.damage, damageType: t.type, reach: 5, range: t.range, properties: t.props, ability: t.ability ?? "strength" };
+  }
   if (kind === "melee") {
     return {
       name: c.meleeWeapon ?? c.unarmed?.name ?? "Unarmed strike",
@@ -757,9 +942,9 @@ export function playerSpec(c: Combatant, kind: "melee" | "ranged" | "unarmed" | 
       name: c.rangedWeapon ?? "Ranged weapon",
       type: "ranged",
       bonus: c.rangedAttack ?? Math.floor(((c.abilities?.dexterity ?? 10) - 10) / 2) + (c.attackBonus ?? 2),
-      dice: c.rangedDice,
+      dice: c.switched && c.rangedSwitch ? c.rangedSwitch.dice : c.rangedDice,
       damageBonus: c.rangedDamage ?? Math.floor(((c.abilities?.dexterity ?? 10) - 10) / 2),
-      damageType: c.rangedType,
+      damageType: c.switched && c.rangedSwitch ? c.rangedSwitch.types[(c.switched - 1) % c.rangedSwitch.types.length] : c.rangedType,
       reach: 5,
       range: c.range ?? [80, 320],
       properties: c.rangedProps ?? [],
@@ -791,6 +976,7 @@ export function statSpecs(c: Combatant): AttackSpec[] {
     properties: [],
     extra: a.extra,
     save: a.save,
+    grapple: a.grapple,
     statBlock: true,
   }));
   if (fromProfile.length) return fromProfile;
@@ -867,6 +1053,7 @@ export interface PendingHit {
   // does (disintegrate: a Constitution save or dust; a cryo round: frozen in carbonite)
   more?: StatSave[];
   finish?: { dc: number; what: "disintegrated" | "frozen" };
+  grapple?: { dc: number; maxSize?: string; restrains?: boolean };
   options: { key: string; label: string; kind: "halve" | "reduce" | "ac" | "acDie"; feature: string }[];
 }
 
@@ -906,11 +1093,17 @@ function breakGang(list: Combatant[], log: string[]): Combatant[] {
 // Takes hit points off a creature (damage types resisted or doubled, temporary hit points first),
 // and settles what that does to the fight: a fallen creature, the party's victory, the character
 // down or dead outright. Returns the damage taken.
+// Damage to a dying character: a failed death save (two on a critical hit), or death if it is at least the hit point maximum
+export function dyingDamage(saves: { successes: number; failures: number }, damage: number, maxHp: number, crit = false): { saves: { successes: number; failures: number }; dead: boolean } {
+  if (damage >= maxHp) return { saves, dead: true };
+  const next = { ...saves, failures: saves.failures + (crit ? 2 : 1) };
+  return { saves: next, dead: next.failures >= 3 };
+}
 function damageCreature(w: Work, at: number, amount: number, type?: string, attackerName?: string): number {
   const c = w.combatants[at];
   const adjusted = Math.floor(amount * damageFactor(c, type));
   const before = c.hp;
-  w.combatants[at] = { ...hurt(c, adjusted), stance: c.stance ? { ...c.stance, active: true } : c.stance };
+  w.combatants[at] = { ...hurt(c, adjusted), stance: c.stance ? { ...c.stance, active: true } : c.stance, ...(c.decoy && adjusted > 0 ? { decoyDown: true } : {}) };
   const now = w.combatants[at];
   if (before > 0 && now.hp === 0) {
     w.log.push(`${c.name} is ${c.isPlayer ? "down" : "defeated"}!`);
@@ -927,6 +1120,17 @@ function damageCreature(w: Work, at: number, amount: number, type?: string, atta
         w.inCombat = false;
         w.outcome = "dead";
       }
+    }
+  }
+  // Hurt while dying (Player's Handbook, Damage at 0 Hit Points): a death saving throw failure, or death outright if the damage is at
+  // least the hit point maximum (2026-10-26: such damage was ignored)
+  if (before <= 0 && c.isPlayer && adjusted > 0 && w.inCombat) {
+    const after = dyingDamage(w.deathSaves, adjusted, c.maxHp);
+    w.deathSaves = after.saves;
+    w.log.push(after.dead && after.saves.failures < 3 ? `${c.name} takes ${adjusted} damage while dying: it kills them outright.` : `${c.name} takes damage while dying: a death saving throw failure (${Math.min(3, after.saves.failures)} of 3).${after.dead ? " You die." : ""}`);
+    if (after.dead) {
+      w.inCombat = false;
+      w.outcome = "dead";
     }
   }
   void attackerName;
@@ -1032,6 +1236,12 @@ function landHit(w: Work, hit: Omit<PendingHit, "options">, choice: PendingHit["
     damageCreature(w, ti, extra, hit.extra.type, attacker?.name);
   }
   const now = w.combatants[ti];
+  // A stat block's grapple on a hit: held until it escapes (its escape DC), and restrained too where the text says so
+  if (hit.grapple && now.hp > 0 && w.inCombat && attacker && (!hit.grapple.maxSize || sizeRank(now.size ?? "Medium") <= sizeRank(hit.grapple.maxSize)) && !(now.conditionImmune ?? []).some((c) => /grappled/i.test(c))) {
+    const hold = { rounds: LASTING, by: attacker.id, source: "a grapple", escape: hit.grapple.dc };
+    w.combatants[ti] = withConditions(now, [{ name: "Grappled", ...hold }, ...(hit.grapple.restrains ? [{ name: "Restrained", ...hold }] : [])]);
+    w.log.push(`${target.name} is grappled${hit.grapple.restrains ? " and restrained" : ""} by ${attacker.name} (escape DC ${hit.grapple.dc}).`);
+  }
   if (hit.save && now.hp > 0 && w.inCombat) riderSave(w, ti, hit.save, attacker?.id, hit.attackName);
   for (const more of hit.more ?? []) if (w.combatants[ti].hp > 0 && w.inCombat) riderSave(w, ti, more, attacker?.id, hit.attackName);
   // Brought to 0 hit points by a disintegrating weapon or round: a Constitution save or dust; by a cryo round: frozen in carbonite
@@ -1268,6 +1478,51 @@ interface AttackFlags {
 // range, cover, advantage), the roll, prepared dice, the weapon's properties, a rage, sneak attack
 // and other extra damage, then the target's reactions before the damage lands.
 // Returns false when the attack cannot be made (nothing was spent).
+// The strikes that force a saving throw instead of the attack roll (Wretched Hives): the property, the save, and what a failed save adds
+const SAVE_STRIKES: { prop: string; ability: "dexterity" | "constitution" | "wisdom" }[] = [
+  { prop: "bright", ability: "dexterity" },
+  { prop: "biting", ability: "constitution" },
+  { prop: "corruption", ability: "wisdom" },
+];
+// The DC is 8 + the attack bonus with the weapon or the property's number, whichever is lower (a specialized weapon's number stands
+// alone: house reading of "bypasses the base and cap"); advantage on the attack is disadvantage on the save and the other way round; a
+// failed save takes the weapon's damage (house reading: its dice and modifier, not what features add to a hit) and the property's rider
+function saveStrike(w: Work, ai: number, ti: number, spec: AttackSpec, attackMode: number, s: (typeof SAVE_STRIKES)[number]): boolean {
+  const attacker = w.combatants[ai];
+  const target = w.combatants[ti];
+  const n = propertyNumber(spec.properties, s.prop);
+  const specialized = (spec.properties ?? []).some((p) => new RegExp(`^specialized \\(${s.prop}\\)`, "i").test(p));
+  const dc = specialized ? n : Math.min(8 + spec.bonus, n);
+  const mode = Math.sign(-attackMode) as -1 | 0 | 1;
+  const d = target.isPlayer ? playerD20(mode, `Saving throw (${s.ability})`) : rollD20(mode);
+  const total = d + (target.saves?.[s.ability] ?? 0);
+  w.combatants[ai] = { ...w.combatants[ai], hidden: false, helped: false };
+  const what = `${attacker.name} strikes at ${target.name} with ${spec.name} (${s.prop} ${n}): ${s.ability.slice(0, 3).toUpperCase()} save ${total} against DC ${dc}`;
+  if (total >= dc) {
+    w.log.push(`${what}, saved.`);
+    return true;
+  }
+  const amount = damageCreature(w, ti, Math.max(1, rollDamage(spec.dice, false, 0, false, false, attacker.isPlayer ? "Damage roll" : undefined) + spec.damageBonus), spec.damageType, attacker.name);
+  const after = w.combatants[ti];
+  let rider = "";
+  if (after.hp > 0) {
+    if (s.prop === "bright") {
+      const burn = Math.max(1, abilityMod(attacker, spec.ability === "dexterity" ? "dexterity" : "strength"));
+      w.combatants[ti] = { ...after, afterburn: { amount: burn, type: spec.damageType ?? "fire" } };
+      rider = `; it burns for ${burn} more at the start of its turn`;
+    } else if (s.prop === "biting") {
+      w.combatants[ti] = { ...after, shaken: true };
+      rider = "; its next attack is at disadvantage";
+    } else {
+      w.combatants[ti] = { ...after, blighted: attacker.id };
+      rider = `; it cannot regain hit points until ${attacker.name}'s next turn`;
+    }
+  }
+  w.log.push(`${what}, failed: ${amount} ${spec.damageType ?? ""} damage${rider}.`);
+  w.combatants = breakGang(w.combatants, w.log);
+  return true;
+}
+
 function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: AttackFlags = {}): boolean {
   const attacker = w.combatants[ai];
   const target = w.combatants[ti];
@@ -1294,6 +1549,12 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
     return false;
   }
   if (fed) spendRound(w, ai, 1);
+  // A bright, biting or corruption weapon's strike: the target saves instead of the attack roll
+  const saving = !spec.statBlock && attacker.isPlayer && attacker.saveStrike && spec.type === "melee" ? SAVE_STRIKES.find((s) => propertyNumber(spec.properties, s.prop) > 0) : undefined;
+  if (saving) return saveStrike(w, ai, ti, spec, plan.mode, saving);
+  // A penetrating shot: the ammunition of the penetrating number, cover a step less, and the creature behind the target hit as well
+  const pen = !spec.statBlock && attacker.isPlayer && attacker.penetrate && spec.type === "ranged" ? propertyNumber(spec.properties, "penetrating") : 0;
+  if (pen > 1 && fed) spendRound(w, ai, Math.max(0, Math.min(pen - 1, loaded - 1)));
   // A flechette clip or a projector: no attack roll, a line or a cone toward the target, a save for everyone in it
   if (rider?.area) {
     w.log.push(`${attacker.name} fires ${fed!.round} from ${spec.name} in a ${rider.area.length}-foot ${rider.area.shape}.`);
@@ -1338,9 +1599,19 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
     notes.push(`armor work +${guardBonus} AC`);
     w.spent.push("ac");
   }
-  const ac = armorClassNow(target, attacker.id) + plan.cover.bonus + guardBonus;
+  const coverBonus = pen ? (plan.cover.bonus >= 5 ? 3 : 0) : plan.cover.bonus;
+  if (pen && plan.cover.bonus) notes.push(`penetrating: cover a step less`);
+  const ac = armorClassNow(target, attacker.id) + coverBonus + guardBonus;
   if (target.reactiveFrom?.includes(attacker.id) && target.armorProps?.reactive) notes.push(`reactive armor +${target.armorProps.reactive} AC`);
   if (target.open && target.armorProps?.shield) notes.push(`shield open (-${target.armorProps.shield} AC)`);
+  // A dire or piercing weapon's trade, and a defensive weapon's penalty on the first attack of the turn (Expanded Content weapon
+  // properties; the character's choice, see setTrade)
+  const trade = !spec.statBlock && attacker.isPlayer ? tradeOf(attacker, spec) : { attack: 0, damage: 0, ac: 0 };
+  if (trade.attack) {
+    bonus += trade.attack;
+    notes.push(`${trade.attack > 0 ? "+" : ""}${trade.attack} ${trade.ac ? "defensive" : trade.attack > 0 ? "piercing" : "dire"}`);
+  }
+  if (trade.ac) w.combatants[ai] = { ...w.combatants[ai], acUntil: (w.combatants[ai].acUntil ?? 0) + trade.ac };
   const total = d === 1 ? 0 : d + bonus;
   // The critical range is 20, or wider by a keen weapon; avoidant armour narrows it (never below 20 alone)
   const critRange = 21 - Math.max(1, propertyNumber(spec.properties, "keen") + 1 - (target.armorProps?.avoidant ?? 0));
@@ -1365,6 +1636,7 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
     ...(maneuverUsed ? { ...pay(cur, maneuverUsed), maneuver: undefined } : {}),
     hidden: false,
     helped: false,
+    shaken: false,
     stance: cur.stance ? { ...cur.stance, active: true } : cur.stance,
     conditions: revealed.length ? cur.conditions!.filter((x) => !x.endsOnAttack) : cur.conditions,
   };
@@ -1387,6 +1659,20 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
     return true;
   }
 
+  // The creature behind a target a penetrating shot hits: within 15 feet past it on the line of the shot, hit if the roll would hit it
+  if (pen) {
+    const [dx, dy] = [(target.x ?? 0) - (attacker.x ?? 0), (target.y ?? 0) - (attacker.y ?? 0)];
+    const len = Math.hypot(dx, dy) || 1;
+    const behind = w.combatants
+      .map((c, i) => ({ c, i }))
+      .filter(({ c, i }) => i !== ti && i !== ai && c.hp > 0 && squaresApart(target, c) <= 3 && (((c.x ?? 0) - (target.x ?? 0)) * dx + ((c.y ?? 0) - (target.y ?? 0)) * dy) / (len * (Math.hypot((c.x ?? 0) - (target.x ?? 0), (c.y ?? 0) - (target.y ?? 0)) || 1)) >= 0.8)
+      .sort((a, b) => squaresApart(target, a.c) - squaresApart(target, b.c))[0];
+    if (behind && (critHit || total >= armorClassNow(behind.c, attacker.id))) {
+      const through = damageCreature(w, behind.i, Math.max(1, rollDamage(spec.dice, false) + spec.damageBonus), spec.damageType, attacker.name);
+      w.log.push(`The shot goes through ${target.name} into ${behind.c.name}: ${through} damage.`);
+    }
+  }
+
   // ---- Damage
   let extraWeaponDice = 0;
   if (crit) {
@@ -1397,7 +1683,7 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
   // A fighting style's minimum roll threshold on weapon dice (a two-handed weapon, a blaster up close)
   const threshold = (attacker.features ?? []).some((f) => f.minRoll && (f.minRoll.weapon === "any" || (f.minRoll.weapon === "twoHanded" && hasProperty(spec.properties, "two-handed")) || (f.minRoll.weapon === "blaster" && spec.type === "ranged" && plan.feet <= 30)));
   let damage = rollDamage(spec.dice, crit, extraWeaponDice, threshold, !!target.armorProps?.regulated, attacker.isPlayer ? "Damage roll" : undefined);
-  damage = Math.max(1, damage + spec.damageBonus);
+  damage = Math.max(1, damage + spec.damageBonus + trade.damage);
   const additions: string[] = [];
   const note = (label: string, amount: number) => additions.push(`${label} +${amount}`);
   // Vicious: the maximum on a weapon die adds its number
@@ -1556,6 +1842,7 @@ function makeAttack(w: Work, ai: number, ti: number, spec: AttackSpec, flags: At
     // A round's rider and the weapon's shocking, sonorous or neuralizing number (a calibrator's too); disintegrating weapons and rounds
     more: [roundSave(rider), ...(spec.statBlock ? [] : propertyRiders(spec.properties))].filter((x): x is StatSave => !!x),
     finish: rider?.finish ?? (!spec.statBlock && propertyNumber(spec.properties, "disintegrate") > 1 ? { dc: propertyNumber(spec.properties, "disintegrate"), what: "disintegrated" as const } : undefined),
+    grapple: spec.grapple,
   };
   explode();
   const options = reactionOptions(target, bare);
@@ -1607,14 +1894,29 @@ function walk(w: Work, mi: number, x: number, y: number, z = 0): number {
   for (let k: string | undefined = key(x, y, z); k; k = map.get(k)?.from) path.unshift(parseKey(k));
   let at = path[0];
   let feet = 0;
+  const notes: string[] = [];
   for (let i = 1; i < path.length; i++) {
     if (!provoke(w, mi, at, path[i])) {
       w.combatants[mi] = { ...w.combatants[mi], x: at.x, y: at.y, z: at.z ?? 0, moved: (mover.moved ?? 0) + feet };
       return feet;
     }
-    // (a ladder or stair costs ten feet a level; the cost of the whole walk is what the map said)
-    feet += Math.abs((path[i].z ?? 0) - (at.z ?? 0)) > 0 ? 10 * Math.abs((path[i].z ?? 0) - (at.z ?? 0)) : 5;
+    const step = map.get(key(path[i].x, path[i].y, path[i].z ?? 0))!;
+    const rise = ((path[i].z ?? 0) - (at.z ?? 0)) * 10;
+    const across = Math.max(Math.abs(path[i].x - at.x), Math.abs(path[i].y - at.y)) * 5;
+    feet = step.cost;
+    if (step.how === "hook") {
+      w.combatants[mi] = { ...w.combatants[mi], actions: Math.max(0, (w.combatants[mi].actions ?? 1) - 1) };
+      notes.push(`throws the grappling hook ${rise > 0 ? "up" : "over the edge"} and climbs ${Math.abs(rise)} ft. ${rise > 0 ? "up" : "down"} the line (an action)`);
+    } else if (step.how === "climb") notes.push(`climbs ${Math.abs(rise)} ft. ${rise > 0 ? "up" : "down"}${mover.climber?.speed ? "" : rise > 0 ? " (a jump to the edge, then the climb at double cost)" : " (at double cost)"}`);
+    else if (step.how === "jump") notes.push(`jumps ${across - 5} ft. across the gap`);
+    else if (step.how === "fly") notes.push(`flies ${Math.abs(rise)} ft. ${rise > 0 ? "up" : "down"}`);
     at = path[i];
+    if (step.fall) {
+      w.combatants[mi] = { ...w.combatants[mi], x: at.x, y: at.y, z: at.z ?? 0, moved: (mover.moved ?? 0) + feet };
+      w.log.push(`${mover.name} moves ${feet} ft.${notes.length ? ` ${mover.name} ${notes.join(", ")}.` : ""}`);
+      w.log.push(`${mover.name} jumps down: ${fall(w, mi, step.fall, true)}.`);
+      return feet;
+    }
     // A mine of the other side that this step comes within the range of goes off, with the mover standing there
     if (w.mines.length) {
       w.combatants[mi] = { ...w.combatants[mi], x: at.x, y: at.y, z: at.z ?? 0 };
@@ -1626,7 +1928,7 @@ function walk(w: Work, mi: number, x: number, y: number, z = 0): number {
     }
   }
   w.combatants[mi] = { ...w.combatants[mi], x, y, z, moved: (mover.moved ?? 0) + target.cost };
-  w.log.push(`${mover.name} moves ${target.cost} ft.`);
+  w.log.push(`${mover.name} moves ${target.cost} ft.${notes.length ? ` ${mover.name} ${notes.join(", ")}.` : ""}`);
   return target.cost;
 }
 
@@ -1656,6 +1958,7 @@ function beginTurn(w: Work, i: number) {
     reckless: false,
     guarding: undefined,
     acUntil: 0,
+    decoyDown: false,
     reactiveFrom: undefined,
     open: false,
     usedTurn: [],
@@ -1680,7 +1983,7 @@ function beginTurn(w: Work, i: number) {
   }
   // A stat block's regeneration, and its area actions that recharge
   const regen = (c.profile?.traits ?? []).find((t) => t.kind === "regeneration");
-  if (regen?.amount && c.hp > 0 && c.hp < c.maxHp) {
+  if (regen?.amount && c.hp > 0 && c.hp < c.maxHp && c.blighted === undefined) {
     next.hp = Math.min(c.maxHp, c.hp + regen.amount);
     w.log.push(`${c.name} regains ${next.hp - c.hp} hit points.`);
   }
@@ -1695,11 +1998,20 @@ function beginTurn(w: Work, i: number) {
     });
   }
   w.combatants[i] = next;
+  // A bright weapon's strike burns on; the blight of the creature's own corruption strikes lifts
+  const burn = next.afterburn;
+  if (burn) {
+    w.combatants[i] = { ...w.combatants[i], afterburn: undefined };
+    if (w.combatants[i].hp > 0) w.log.push(`${c.name} burns on: ${damageCreature(w, i, burn.amount, burn.type)} ${burn.type} damage.`);
+  }
+  w.combatants = w.combatants.map((o) => (o.blighted !== undefined && o.blighted === c.id ? { ...o, blighted: undefined } : o));
 }
 
 // Ends the turn of whoever's it is: conditions run down, a high wears off, a rage that nothing has
 // fed ends; then the next creature's turn begins (and the round, when everyone has had theirs)
 function endTurn(w: Work, current: number): number {
+  // (a biting strike's disadvantage lasts until the end of the creature's next turn)
+  if (w.combatants[current]?.shaken) w.combatants[current] = { ...w.combatants[current], shaken: false };
   const ending = w.combatants[current];
   if (ending?.conditions?.length && ending.hp > 0) {
     const kept: ActiveCondition[] = [];
@@ -1859,6 +2171,7 @@ function aiStep(w: Work, surprise: boolean, aimedAt: number | string | null) {
 // ---------------------------------------------------------------------------------------------
 
 export type StandardAction = "dash" | "disengage" | "dodge" | "help" | "guard" | "hide";
+export type GrappleMove = "grapple" | "shove-prone" | "shove-away" | "escape" | "release";
 
 interface CombatState {
   inCombat: boolean;
@@ -1922,9 +2235,16 @@ interface CombatState {
   nextTurn: () => void;
   rollInitiative: (dexModifier: number) => number;
   // The character attacks: part of the Attack action (melee, ranged), or a bonus action attack
-  attack: (kind: "melee" | "ranged" | "unarmed" | "offhand") => void;
+  attack: (kind: "melee" | "ranged" | "unarmed" | "offhand" | "thrown") => void;
+  // The dire or piercing trade and the defensive penalty chosen for the attacks to come (see Combatant.trade, defend)
+  setTrade: (trade: number, defend: number) => void;
+  // A save strike, a penetrating shot or a switch weapon's damage chosen for the attacks to come (see Combatant.saveStrike)
+  setWeaponMode: (change: Partial<Pick<Combatant, "saveStrike" | "penetrate" | "switched">>) => void;
   // A standard action of the Player's Handbook, as an action or, where a feature allows, a bonus action
   standard: (what: StandardAction, asBonus?: boolean, allyId?: number | string) => void;
+  // The Player's Handbook's special melee attacks and the way out of a hold (see `contest`): grapple the target, shove it prone or 5
+  // feet away, escape a grapple, or let go of one
+  grapple: (what: GrappleMove) => void;
   // A class, archetype or species feature with a use, a cost or an effect
   useFeature: (key: string, targetId?: number | string) => void;
   // Force points set aside for the next hit (Force-Empowered Strikes)
@@ -2081,13 +2401,31 @@ function shoveCreature(w: Work, at: number, dir: { x: number; y: number }, squar
   return { squares: moved, struck, fell };
 }
 
-// A fall of so many levels (10 feet each): 1d6 bludgeoning per 10 feet, and prone
-function fall(w: Work, at: number, levels: number): string {
-  // Flying (a jetpack) or slowed by a repulsor pack: set down without harm
-  if (w.combatants[at].fly || w.combatants[at].slowFall) return `drops ${levels * 10} feet and is set down gently`;
-  const amount = damageCreature(w, at, rollDamage(`${levels}d6`, false), "bludgeoning");
+// A fall of so many levels (10 feet each; Player's Handbook, Falling: 1d6 kinetic for every 10 feet, prone unless unhurt), as the
+// world's pull, the armour, the gear running or carried and a jump on purpose make it (shared/logic fallPlan, house rules)
+function fall(w: Work, at: number, levels: number, jumped = false): string {
+  const c = w.combatants[at];
+  const able = c.hp > 0 && !cannotAct(c);
+  const plan = fallPlan(levels * 10, w.arena.gravity ?? 1, {
+    heavy: c.heavyArmor,
+    flying: c.fly ? "their jets" : undefined,
+    descent: c.slowFall ? "the repulsor pack" : undefined,
+    burst: c.burst && able && (c.reactions ?? 1) > 0 ? c.burst : undefined,
+    jumped: jumped && able,
+  });
+  const checks: { burst?: number; jump?: number } = {};
+  if (plan.jump) checks.jump = contestD20(c, "Landing: Acrobatics") + acrobaticsOf(c);
+  const left = plan.dice - (checks.jump !== undefined && checks.jump >= (plan.jump?.dc ?? 99) ? 1 : 0);
+  if (plan.burst && left > 0) {
+    checks.burst = contestD20(c, `A burst of the ${plan.burst.by}: Acrobatics`) + acrobaticsOf(c);
+    w.combatants[at] = { ...w.combatants[at], reactions: Math.max(0, (c.reactions ?? 1) - 1) };
+  }
+  const out = fallOutcome(plan, checks);
+  if (!out.dice) return `${out.text}${plan.safe || checks.burst !== undefined ? "" : ", unhurt"}`;
+  const rolled = rollDamage(`${out.dice}d${plan.die}`, false);
+  const amount = damageCreature(w, at, out.half ? Math.floor(rolled / 2) : rolled, "kinetic");
   if (w.combatants[at].hp > 0) w.combatants[at] = withConditions(w.combatants[at], [{ name: "Prone", rounds: 1, source: "a fall" }]);
-  return `falls ${levels * 10} feet and takes ${amount} damage${w.combatants[at].hp > 0 ? ", landing prone" : ""}`;
+  return `${out.text} and takes ${amount} damage${plan.die === 8 ? " (heavy armour: d8s)" : ""}${w.combatants[at].hp > 0 ? ", landing prone" : ""}`;
 }
 
 // What happens when a moved creature or object strikes someone at the end of its move: both
@@ -2133,6 +2471,7 @@ function sweepObjects(w: Work, caster: Combatant, motion: PowerMotion): string[]
 // When the character's action leaves nothing worth doing, the turn passes
 function settle(w: Work, autoEnd: boolean) {
   if (!w.inCombat || w.pending) return;
+  looseGrapples(w);
   const me = w.combatants[w.currentTurn];
   if (autoEnd && me?.isPlayer && me.hp > 0 && turnSpent(me)) w.currentTurn = endTurn(w, w.currentTurn);
 }
@@ -2162,6 +2501,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       const w = workOf(state);
       const moved = walk(w, state.currentTurn, x, y, z);
       if (!moved && w.log.length === state.combatLog.length) return state;
+      looseGrapples(w);
       return patchOf(w);
     }),
 
@@ -2250,7 +2590,10 @@ export const useCombat = create<CombatState>((set, get) => ({
     }));
     const w: Work = {
       combatants: allCombatants,
-      log: [surprise ? "You strike first: the enemy is surprised." : "Combat initiated! Roll for initiative!"],
+      log: [
+        surprise ? "You strike first: the enemy is surprised." : "Combat initiated! Roll for initiative!",
+        ...(arena.gravity && arena.gravity !== 1 ? [`The pull here is ${arena.gravity}× standard: jumps go ${arena.gravity > 1 ? "less far" : "further"}, falls hurt ${arena.gravity > 1 ? "more" : "less"} (house rule).`] : []),
+      ],
       arena,
       round: 1,
       inCombat: true,
@@ -2493,7 +2836,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       const spec = playerSpec(me, kind);
       const foe = pickTarget(w.combatants, me, state.targetId);
       if (!spec || !foe) return state;
-      const viaAction = kind === "melee" || kind === "ranged";
+      const viaAction = kind === "melee" || kind === "ranged" || kind === "thrown";
       if (viaAction && (me.attacksLeft ?? 0) <= 0 && (me.actions ?? 0) <= 0) {
         w.log.push("No action left this turn.");
         return patchOf(w);
@@ -2502,12 +2845,20 @@ export const useCombat = create<CombatState>((set, get) => ({
       const before = w.log.length;
       // Another kind of weapon than the one in hand is drawn first (a free interaction, or the holster; a second change is refused)
       const hand = me.inHand;
-      if (viaAction && !takeDraw(w, mi, kind as "melee" | "ranged")) return patchOf(w);
+      if (viaAction && !takeDraw(w, mi, kind === "thrown" ? "melee" : (kind as "melee" | "ranged"))) return patchOf(w);
       const made = makeAttack(w, mi, idx(w, foe.id), spec, { viaAction });
       if (!made) {
         // (an attack that could not be made leaves the weapon where it was)
         w.combatants[mi] = { ...w.combatants[mi], inHand: hand, usedTurn: me.usedTurn, holster: me.holster };
         return { ...patchOf(w), combatLog: w.log.length === before ? [...w.log, "That attack cannot be made from here."] : w.log };
+      }
+      // A weapon thrown is gone from the hand until the fight is over, unless it returns; the last one thrown leaves the hand empty
+      if (kind === "thrown" && w.combatants[mi].thrown && !w.combatants[mi].thrown!.returning) {
+        const t = w.combatants[mi].thrown!;
+        const left = t.left - 1;
+        const lastInHand = left <= 0 && w.combatants[mi].meleeWeapon === t.name;
+        w.combatants[mi] = { ...w.combatants[mi], thrown: { ...t, left }, ...(lastInHand ? { meleeWeapon: undefined, meleeDice: undefined, meleeAttack: undefined, meleeDamage: undefined, meleeProps: undefined } : {}) };
+        w.log.push(left > 0 ? `${t.name}: ${left} left to throw.` : `${t.name}: none left in hand (picked up after the fight)${lastInHand ? "; melee attacks are unarmed now" : ""}.`);
       }
       const cur = w.combatants[mi];
       if (viaAction) {
@@ -2515,6 +2866,83 @@ export const useCombat = create<CombatState>((set, get) => ({
         w.combatants[mi] = { ...cur, actions: fresh ? (cur.actions ?? 1) - 1 : cur.actions, attacksLeft: (fresh ? attacksPerAction(me) : me.attacksLeft ?? 0) - 1, attackKind: spec.type };
       } else {
         w.combatants[mi] = { ...cur, bonus: (cur.bonus ?? 1) - 1 };
+      }
+      settle(w, state.autoEnd);
+      return patchOf(w);
+    }),
+
+  grapple: (what) =>
+    set((state) => {
+      if (!state.inCombat || state.pending) return state;
+      const w = workOf(state);
+      const mi = state.currentTurn;
+      const me = w.combatants[mi] as Combatant & Athletic;
+      if (!me || me.hp <= 0 || cannotAct(me)) return state;
+      if (what === "release") {
+        const held = w.combatants.findIndex((c) => grappledBy(c)?.by === me.id);
+        if (held < 0) return state;
+        w.combatants[held] = { ...w.combatants[held], conditions: (w.combatants[held].conditions ?? []).filter((c) => !(c.name === "Grappled" && c.by === me.id)) };
+        w.log.push(`${me.name} lets go of ${w.combatants[held].name}.`);
+        return patchOf(w);
+      }
+      // A grapple or shove takes the place of one attack of the Attack action; an escape takes the whole action
+      const fresh = (me.attacksLeft ?? 0) <= 0;
+      if ((fresh || what === "escape") && (me.actions ?? 0) <= 0) {
+        w.log.push("No action left this turn.");
+        return patchOf(w);
+      }
+      if (what === "escape") {
+        const hold = grappledBy(me);
+        if (!hold) return state;
+        if (!fresh) {
+          w.log.push("Escaping a grapple takes a whole action.");
+          return patchOf(w);
+        }
+        const holder = w.combatants.find((c) => c.id === hold.by) as (Combatant & Athletic) | undefined;
+        // Against a stat block's escape DC where it gives one, else the grappler's Athletics
+        const dc = hold.escape;
+        let won: boolean;
+        let text: string;
+        if (dc || !holder) {
+          const useAcro = acrobaticsOf(me) > athleticsOf(me);
+          const total = contestD20(me, "Escaping the grapple") + (useAcro ? acrobaticsOf(me) : athleticsOf(me));
+          won = total >= (dc ?? 10);
+          text = `${useAcro ? "Acrobatics" : "Athletics"} ${total} against DC ${dc ?? 10}`;
+        } else ({ won, text } = contest(me, holder, "Escaping the grapple"));
+        const after: Combatant = { ...me, actions: (me.actions ?? 1) - 1, attacksLeft: 0, usedTurn: [...(me.usedTurn ?? []), "did:escape"] };
+        w.combatants[mi] = won ? { ...after, conditions: (after.conditions ?? []).filter((c) => !(c.source === "a grapple" && c.by === hold.by)) } : after;
+        w.log.push(`${me.name} tries to break free (${text}): ${won ? "free" : "still held"}.`);
+        settle(w, state.autoEnd);
+        return patchOf(w);
+      }
+      const foe = pickTarget(w.combatants, me, state.targetId) as (Combatant & Athletic) | undefined;
+      if (!foe) return state;
+      if (squaresApart(me, foe) > Math.max(1, Math.floor((me.reach ?? 5) / 5))) {
+        w.log.push(`${foe.name} is out of reach.`);
+        return patchOf(w);
+      }
+      if (sizeRank(foe.size ?? "Medium") > sizeRank(me.size ?? "Medium") + 1) {
+        w.log.push(`${foe.name} is too big to ${what === "grapple" ? "grapple" : "shove"} (more than one size larger).`);
+        return patchOf(w);
+      }
+      if (what === "grapple" && grappledBy(foe)?.by === me.id) {
+        w.log.push(`${me.name} already holds ${foe.name}.`);
+        return patchOf(w);
+      }
+      const { won, text } = contest(me, foe, what === "grapple" ? "Grapple" : "Shove");
+      w.combatants[mi] = { ...me, actions: fresh ? (me.actions ?? 1) - 1 : me.actions, attacksLeft: (fresh ? attacksPerAction(me) : me.attacksLeft ?? 0) - 1, usedTurn: [...(me.usedTurn ?? []), `did:${what}`, "did:attack"] };
+      const fi = idx(w, foe.id);
+      if (!won) w.log.push(`${me.name} tries to ${what === "grapple" ? "grapple" : "shove"} ${foe.name} (${text}): it fails.`);
+      else if (what === "grapple") {
+        w.combatants[fi] = withConditions(w.combatants[fi], [{ name: "Grappled", rounds: LASTING, by: me.id, source: "a grapple" }]);
+        w.log.push(`${me.name} grapples ${foe.name} (${text}): its speed is 0 until it breaks free or is let go.`);
+      } else if (what === "shove-prone") {
+        w.combatants[fi] = withConditions(w.combatants[fi], [{ name: "Prone", rounds: 1, by: me.id, source: "a shove" }]);
+        w.log.push(`${me.name} shoves ${foe.name} to the ground (${text}): prone.`);
+      } else {
+        const res = shoveCreature(w, fi, way(me, foe), 1);
+        w.log.push(`${me.name} shoves ${foe.name} (${text}): ${res.squares ? "5 feet back" : "it cannot be pushed further"}${res.fell ? `, and it falls ${res.fell * 10} feet` : ""}.`);
+        looseGrapples(w);
       }
       settle(w, state.autoEnd);
       return patchOf(w);
@@ -2537,7 +2965,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       let next: Combatant = { ...me, usedTurn: [...(me.usedTurn ?? []), `did:${what}`] };
       if (asBonus) next.bonus = (me.bonus ?? 1) - 1;
       else next = { ...next, actions: (me.actions ?? 1) - 1, attacksLeft: 0 };
-      const speed = Math.floor(((me.speed ?? 30) * Math.min(1, ...(me.conditions ?? []).map((x) => conditionMechanics(x.name).speed))) / 5) * 5;
+      const speed = Math.floor(((me.speed ?? 30) * speedFactor(me)) / 5) * 5;
       if (what === "dash") {
         next.extraMove = (me.extraMove ?? 0) + speed;
         w.log.push(`${me.name} dashes: ${speed} ft. more movement this turn.`);
@@ -2572,6 +3000,16 @@ export const useCombat = create<CombatState>((set, get) => ({
       settle(w, state.autoEnd);
       return patchOf(w);
     }),
+
+  setTrade: (trade, defend) =>
+    set((state) => ({
+      combatants: state.combatants.map((c) => (c.isPlayer ? { ...c, trade, defend } : c)),
+    })),
+
+  setWeaponMode: (change) =>
+    set((state) => ({
+      combatants: state.combatants.map((c) => (c.isPlayer ? { ...c, ...change } : c)),
+    })),
 
   setEmpower: (points) =>
     set((state) => ({

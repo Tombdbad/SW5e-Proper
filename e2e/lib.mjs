@@ -147,7 +147,16 @@ export async function pick(page, triggerText, optionText) {
 const stamp = () => new Date().toISOString().slice(11, 23);
 const read = (f) => { try { return fs.readFileSync(f, "utf8").trim(); } catch { return ""; } };
 const psi = (n) => (read(`/proc/pressure/${n}`).match(/some avg10=([\d.]+)/) || [])[1] || "?";
-const sh = (c) => { try { return execSync(c, { timeout: 3000 }).toString().trim(); } catch { return ""; } };
+const sh = (c) => { try { return execSync(c, { timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch { return ""; } };
+// On Windows (2026-10-26: `ps` and /proc are not there, so every sample printed ps's usage to the log and measured nothing): the
+// processes by memory from tasklist, and the free memory from node
+function windowsSnapshot() {
+  const rows = sh("tasklist /fo csv /nh").split(/\r?\n/).map((l) => l.split('","').map((x) => x.replace(/"/g, ""))).filter((r) => r.length >= 5);
+  const kb = (r) => Number(r[4].replace(/[^\d]/g, "")) || 0;
+  const chrome = rows.filter((r) => /chrome/i.test(r[0])).reduce((n, r) => n + kb(r), 0);
+  const top = [...rows].sort((a, b) => kb(b) - kb(a)).slice(0, 3).map((r) => `${r[0]} ${Math.round(kb(r) / 1024)}MB`).join(";");
+  return `memAvail=${Math.round(os.freemem() / 1048576)}MB chromeRSS=${Math.round(chrome / 1024)}MB top=${top}`;
+}
 
 async function ping() {
   const t = Date.now();
@@ -161,6 +170,7 @@ async function ping() {
 }
 
 function snapshot() {
+  if (process.platform === "win32") return windowsSnapshot();
   const mem = read("/proc/meminfo");
   const avail = Math.round(Number((mem.match(/MemAvailable:\s+(\d+)/) || [])[1] || 0) / 1024);
   const top = sh("ps -eo pcpu,rss,comm --sort=-pcpu | sed -n 2,4p | tr -s ' ' | tr '\\n' ';'");

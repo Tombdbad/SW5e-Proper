@@ -21,6 +21,8 @@ export { caveMask, caveStyleOf, describeMask, MIN_WIDTH, MAX_WIDTH } from "./cav
 import { gearText, ammoItemFamily, ammoRider, calibratorOf, accessoryOf, containerOf, suitOf, airOf, foodOf, lightOf, generatorOf, type AmmoFamily, type AmmoRider, type AccessoryFacts, type SuitFacts, type EnvHazard } from "./gear";
 export * from "./gear";
 export * from "./comms";
+import type { Base } from "./bases";
+export * from "./bases";
 import { shipModEffects, shipModNamed, makeshiftLoss, equipmentCost, enhancedShipPart, type ShipModInstance, type ShipSpecial, type ShipConditionName, type ShipAbilityName, type EnhancedShipPart, type PartsPlace, type ShipPart } from "./shipyard";
 export * from "./shipyard";
 import type { Sw5eMonster, Sw5eEquipment, Sw5eEnhancedItem, Sw5eTravel, Sw5eRecord } from "../data";
@@ -219,6 +221,8 @@ export interface World {
   encounterNext?: number;
   // How the buildings of each district stand on its grid (see planDistrict)
   districtPlans?: Record<string, DistrictPlan>;
+  // The party's bases: camps pitched and hostile sites claimed, and what stands and is kept in them (see bases.ts)
+  bases?: Base[];
 }
 
 export interface WorldOptions {
@@ -869,6 +873,8 @@ export interface StatAttack {
   // What the hit brings with it: extra damage and a saving throw
   extra?: { dice: string; type?: string };
   save?: StatSave;
+  // "the target is grappled (escape DC 16) if it is Large or smaller", and restrained while it lasts (2026-10-26: read, it was ignored)
+  grapple?: { dc: number; maxSize?: string; restrains?: boolean };
 }
 
 export interface StatSpecial extends Partial<StatSave> {
@@ -1005,6 +1011,8 @@ function attackFrom(b: NonNullable<Sw5eMonster["behaviors"]>[number]): StatAttac
   const feet = attackRange(typed ? b.range : text.match(/(?:reach|range) [^,]*ft/i)?.[0]);
   const extra = hit.match(new RegExp(`(?:plus|and|an extra|additional)\\s+(?:an extra |an additional )?\\d+ \\((${DICE})\\) (\\w+) damage`, "i"));
   const save = saveIn(hit);
+  const held = hit.match(/target is grappled \(escape DC (\d+)\)/i);
+  const grapple = held ? { dc: Number(held[1]), ...(hit.match(/if it is (tiny|small|medium|large|huge|gargantuan) or smaller/i) ? { maxSize: hit.match(/if it is (tiny|small|medium|large|huge|gargantuan) or smaller/i)![1].replace(/^./, (c) => c.toUpperCase()) } : {}), ...(/(?:until|while) (?:this|the) grapple[^.]*restrained|grappled and restrained|restrained until/i.test(hit) ? { restrains: true } : {}) } : undefined;
   return {
     name: b.name,
     bonus: typed ? b.attackBonus ?? 0 : Number(written![2]),
@@ -1015,6 +1023,7 @@ function attackFrom(b: NonNullable<Sw5eMonster["behaviors"]>[number]): StatAttac
     ...(feet.long ? { long: feet.long } : ranged && feet.range ? { long: feet.range * 4 } : {}),
     ...(extra && !/saving throw[^.]*taking/i.test(extra[0]) ? { extra: { dice: compactDice(extra[1]), type: extra[2].toLowerCase() } } : {}),
     ...(save ? { save } : {}),
+    ...(grapple ? { grapple } : {}),
   };
 }
 
@@ -2272,16 +2281,16 @@ export interface ClimbGear {
   hookFeet?: number;
   lineFeet?: number;
 }
-export type ClimbWay = { how: "fly" | "grips" | "hook" | "descent"; by: string; dc?: number } | { how: "none"; why: string };
+// Down without any of it (2026-10-26): a jump, which is a fall (see "Jumping, falling and gravity")
+export type ClimbWay = { how: "fly" | "grips" | "hook" | "descent"; by: string; dc?: number } | { how: "jump"; by: string; feet: number } | { how: "none"; why: string };
 export function climbWay(levels: number, gear: ClimbGear, down = false): ClimbWay {
   if (gear.flying) return { how: "fly", by: gear.flying };
   if (gear.grips) return { how: "grips", by: gear.grips };
   if (down && gear.descent) return { how: "descent", by: gear.descent };
   const feet = levels * STOREY_FEET;
-  if (gear.hookFeet) {
-    if ((gear.hookFeet + (gear.lineFeet ?? 0)) >= feet) return { how: "hook", by: "Grappling hook", dc: GRAPPLE_DC };
-    return { how: "none", why: `${feet} ft. up: the hook's line is ${gear.hookFeet + (gear.lineFeet ?? 0)} ft.` };
-  }
+  if (gear.hookFeet && gear.hookFeet + (gear.lineFeet ?? 0) >= feet) return { how: "hook", by: "Grappling hook", dc: GRAPPLE_DC };
+  if (down) return { how: "jump", by: "a jump", feet };
+  if (gear.hookFeet) return { how: "none", why: `${feet} ft. up: the hook's line is ${gear.hookFeet + (gear.lineFeet ?? 0)} ft.` };
   return { how: "none", why: `${feet} ft. up a sheer wall: a grappling hook, friction-grip gear or a jetpack would get you there` };
 }
 // The climbing gear of what a character carries, wears and has running (each read from the item's text: gear.ts accessoryOf, gearUse)
@@ -2299,7 +2308,7 @@ export function climbGearOf(items: { name: string; description?: string; equipme
   return gear;
 }
 export const climbLabel = (way: ClimbWay, down: boolean) =>
-  way.how === "fly" ? (down ? "Fly down to" : "Fly up to") : way.how === "grips" ? (down ? "Climb down (friction grips) to" : "Climb up (friction grips) to") : way.how === "descent" ? "Drop slowly (repulsor pack) to" : way.how === "hook" ? (down ? "Climb down the line to" : "Throw the grappling hook up to") : "";
+  way.how === "jump" ? `Jump down (${way.feet} ft.) to` : way.how === "fly" ? (down ? "Fly down to" : "Fly up to") : way.how === "grips" ? (down ? "Climb down (friction grips) to" : "Climb up (friction grips) to") : way.how === "descent" ? "Drop slowly (repulsor pack) to" : way.how === "hook" ? (down ? "Climb down the line to" : "Throw the grappling hook up to") : "";
 // The ways up the outside of the building the party stands in front of (its balconies), or down from the balcony they stand on
 export function outsideClimbs(world: World, areaId: string, gear: ClimbGear): Exit[] {
   const area = world.areas[areaId];
@@ -2311,6 +2320,103 @@ export function outsideClimbs(world: World, areaId: string, gear: ClimbGear): Ex
   if (area.kind === "building") return childrenOf(world, area.id).filter((r) => formOf(r) === "balcony").flatMap((b) => exit(b.id, b.layout?.level ?? 1, false));
   if (area.kind === "room" && formOf(area) === "balcony" && area.parentId) return exit(area.parentId, area.layout?.level ?? 1, true);
   return [];
+}
+
+// ---- Jumping, falling and gravity (2026-10-26; the user: "a jumping mechanic and gravity ... jet packs, climbing, grapple hooks ...
+// relevant falling damage (depends on armour, and falling speed, jet packs need a burst before hitting the ground)").
+// The books (Player's Handbook, Movement and Position; Environment, Falling): a long jump covers up to the Strength score in feet after
+// 10 ft. on foot, half that standing; a high jump rises 3 + the Strength modifier feet, half that standing; a jumper reaches up the
+// height of the jump plus 1½ times their own height; each foot jumped costs a foot of movement. Climbing costs a foot more each foot,
+// unless the creature has a climbing speed. A fall does 1d6 kinetic damage for every 10 ft., at most 20d6, and the creature lands prone
+// unless it took no damage. House rules (the books give no gravity, falling speed or armour on a fall; see REVIVAL_NOTES "Play rules"):
+// - A world's pull: standard on most worlds, a little more or less by the world (0.9 or 1.1), light (0.7) on a barren world, heavy (1.5)
+//   out of doors on a gas giant's platforms (the gravity hazard there; indoors the plating keeps it standard); aboard a ship, or with a
+//   gravity generator running, standard. Jumps go as far divided by the pull; a fall does damage for its height times the pull.
+// - Falling speed: 500 ft. a round times the pull.
+// - Armour: heavy armour lands harder: the dice are d8s.
+// - Flying (a jetpack, rocket boots running) or a repulsor pack's slowed descent sets the creature down unhurt. A jetpack or rocket boots
+//   carried but not running can be fired in a burst before the ground (its reaction): a Dexterity (Acrobatics) check, DC 10, + 1 for
+//   every 10 ft. of the fall (times the pull) past the first 30; on a success the fall does no damage, on a failure half.
+// - A deliberate jump down: a Dexterity (Acrobatics) check, DC 10, takes the first 10 ft. off the fall.
+// - A creature's height for its reach: Tiny 1½ ft., Small 3, Medium 6, Large 12, Huge 24, Gargantuan 48.
+export interface Pull {
+  g: number;
+  label: string;
+}
+export function gravityOf(world: World, areaId: string, generator = false): Pull {
+  const planet = ancestor(world, areaId, "planet");
+  const area = world.areas[areaId];
+  const building = area?.kind === "building" ? area : ancestor(world, areaId, "building");
+  if (!planet || building?.type === "starship") return { g: 1, label: "standard (artificial)" };
+  if (generator) return { g: 1, label: "standard (gravity generator)" };
+  if (planet.type === "gas giant") return hazardsAt(world, areaId, 12 * 60).some((h) => h.hazard === "gravity") ? { g: 1.5, label: `heavy (${planet.name})` } : { g: 1, label: "standard (the platform's plating)" };
+  if (planet.type === "barren") return { g: 0.7, label: `light (${planet.name})` };
+  const g = [0.9, 1, 1, 1.1][hashOf(planet.id) % 4];
+  return { g, label: g < 1 ? `a little light (${planet.name})` : g > 1 ? `a little heavy (${planet.name})` : "standard" };
+}
+export const SIZE_HEIGHT_FEET: Record<string, number> = { Tiny: 1.5, Small: 3, Medium: 6, Large: 12, Huge: 24, Gargantuan: 48 };
+// How far a creature jumps: the long jump and the high jump in feet, and how high it reaches with its hands at the top of a high jump
+export function jumpReach(strength: number, runUp: boolean, g = 1, size = "Medium"): { long: number; high: number; reach: number } {
+  const mod = Math.floor((strength - 10) / 2);
+  const long = Math.max(0, Math.floor((runUp ? strength : strength / 2) / g));
+  const high = Math.max(0, Math.floor((runUp ? 3 + mod : (3 + mod) / 2) / g));
+  return { long, high, reach: high + 1.5 * (SIZE_HEIGHT_FEET[size] ?? 6) };
+}
+export const FALL_FEET_PER_ROUND = 500;
+export interface FallGear {
+  heavy?: boolean;
+  // Running: flight, a slowed descent (the item's or the gear's name)
+  flying?: string;
+  descent?: string;
+  // A jetpack or rocket boots carried, not running, and a reaction to fire it with
+  burst?: string;
+  // Jumped down on purpose
+  jumped?: boolean;
+}
+export interface FallPlan {
+  feet: number;
+  g: number;
+  // Feet a round it falls, and the rounds the fall lasts
+  speed: number;
+  rounds: number;
+  dice: number;
+  die: 6 | 8;
+  // Set down unhurt by what is running
+  safe?: string;
+  // The checks that soften it
+  burst?: { by: string; dc: number };
+  jump?: { dc: number };
+}
+export function fallPlan(feet: number, g = 1, gear: FallGear = {}): FallPlan {
+  const speed = Math.round(FALL_FEET_PER_ROUND * g);
+  const base = { feet, g, speed, rounds: Math.max(1, Math.ceil(feet / speed)), die: (gear.heavy ? 8 : 6) as 6 | 8 };
+  const safe = gear.flying ?? gear.descent;
+  if (safe) return { ...base, dice: 0, safe };
+  const dice = Math.min(20, Math.floor((feet * g) / 10));
+  return {
+    ...base,
+    dice,
+    ...(gear.burst && dice ? { burst: { by: gear.burst, dc: 10 + Math.max(0, Math.floor((feet * g - 30) / 10)) } } : {}),
+    ...(gear.jumped && dice ? { jump: { dc: 10 } } : {}),
+  };
+}
+// What a fall comes to, given the checks made (their totals): the dice to roll, whether halved, and how it reads
+export function fallOutcome(plan: FallPlan, checks: { burst?: number; jump?: number } = {}): { dice: number; half: boolean; text: string } {
+  const how = plan.g !== 1 ? ` in ${plan.g}× gravity` : "";
+  if (plan.safe) return { dice: 0, half: false, text: `drops ${plan.feet} feet${how} and ${plan.safe} sets them down gently` };
+  let dice = plan.dice;
+  const notes: string[] = [];
+  if (plan.jump && checks.jump !== undefined) {
+    if (checks.jump >= plan.jump.dc) {
+      dice = Math.max(0, dice - 1);
+      notes.push(`lands well (Acrobatics ${checks.jump})`);
+    } else notes.push(`lands badly (Acrobatics ${checks.jump})`);
+  }
+  if (plan.burst && checks.burst !== undefined && dice) {
+    if (checks.burst >= plan.burst.dc) return { dice: 0, half: false, text: `falls ${plan.feet} feet${how}, fires the ${plan.burst.by.toLowerCase()} in a burst just above the ground and lands on their feet (Acrobatics ${checks.burst}, DC ${plan.burst.dc})` };
+    return { dice, half: true, text: `falls ${plan.feet} feet${how}; a late burst of the ${plan.burst.by.toLowerCase()} (Acrobatics ${checks.burst}, DC ${plan.burst.dc}) halves the blow` };
+  }
+  return { dice, half: false, text: `falls ${plan.feet} feet${how}${notes.length ? ` and ${notes.join(", ")}` : ""}` };
 }
 
 // The square inside a room that touches the given wall at the given step along it
@@ -5392,9 +5498,10 @@ export function visitorAt(key: string, minutes: number): { ship: VisitingShip; t
 const smooth = (x: number) => x * x * (3 - 2 * x);
 // What a berth's cycle shows at this minute: whether its ship is there, how far up it is (0 on the floor,
 // 1 clear of the roof) and how far open the hangar's doors are for it (0 shut, 1 wide)
-export function bayStage(t: BerthTimes): { present: boolean; lift: number; door: number } {
+export function bayStage(t: BerthTimes): { present: boolean; lift: number; door: number; leaving: boolean } {
   let lift = 0;
   let door = 0;
+  let leaving = false;
   if (t.home) {
     if (t.sinceArrival < BAY_MOVE) {
       lift = 1 - smooth(t.sinceArrival / BAY_MOVE);
@@ -5403,12 +5510,13 @@ export function bayStage(t: BerthTimes): { present: boolean; lift: number; door:
     if (t.untilDeparture <= BAY_MOVE) {
       lift = Math.max(lift, smooth(1 - t.untilDeparture / BAY_MOVE));
       door = 1;
+      leaving = true;
     } else if (t.untilDeparture <= BAY_MOVE + BAY_DOOR) door = Math.max(door, (BAY_MOVE + BAY_DOOR - t.untilDeparture) / BAY_DOOR);
   } else {
     if (t.sinceDeparture < BAY_DOOR) door = 1 - t.sinceDeparture / BAY_DOOR;
     if (t.untilArrival <= BAY_DOOR) door = Math.max(door, 1 - t.untilArrival / BAY_DOOR);
   }
-  return { present: t.home, lift, door };
+  return { present: t.home, lift, door, leaving };
 }
 
 // One berth of a hangar at a minute. The ship of a voyage (listed in `based`) or a visitor comes and
@@ -5421,19 +5529,21 @@ export interface BayBerth {
   away: boolean;
   lift: number;
   door: number;
+  // Going out (rather than coming in), while it moves
+  leaving?: boolean;
 }
 export function bayBerth(room: Pick<Area, "id" | "ships">, asset: Pick<RoomAsset, "id" | "ref">, based: Ship[] | undefined, minutes: number): BayBerth {
   const flying = based?.find((s) => s.id === asset.ref && s.voyage?.ports.length);
   if (flying) {
     const stage = bayStage(voyageTimes(flying.voyage!, minutes));
-    return { ship: stage.present ? (room.ships.find((s) => s.id === flying.id) ?? flying) : undefined, visitor: false, away: !stage.present, lift: stage.lift, door: stage.door };
+    return { ship: stage.present ? (room.ships.find((s) => s.id === flying.id) ?? flying) : undefined, visitor: false, away: !stage.present, lift: stage.lift, door: stage.door, leaving: stage.leaving };
   }
   const own = room.ships.find((s) => s.id === asset.ref);
   if (own) return { ship: own, visitor: false, away: false, lift: 0, door: 0 };
   if (asset.ref?.startsWith(`${room.id}-berth`)) {
     const { ship, times } = visitorAt(`${room.id}|${asset.id}`, minutes);
     const stage = bayStage(times);
-    return { ship: stage.present ? ship : undefined, visitor: true, away: false, lift: stage.lift, door: stage.door };
+    return { ship: stage.present ? ship : undefined, visitor: true, away: false, lift: stage.lift, door: stage.door, leaving: stage.leaving };
   }
   return { visitor: false, away: !!asset.ref, lift: 0, door: 0 };
 }
@@ -6790,9 +6900,70 @@ export interface Companion {
   custom?: string[];
   motor?: number;
   stock?: { armorClass: number; speed: number };
+  // What has been loaded onto them to carry (item names, one entry each, as the character's equipment): it does not count toward the
+  // character's load, and cannot be used until it is taken back
+  pack?: string[];
 }
 
 export const COMPANION_LIMIT = 4;
+// Beasts are not companions (2026-10-26, the user: "beasts should NOT be party members, they should follow"): they follow the party, can
+// be ridden and loaded, and keep out of fights. House rule: four at most, as companions.
+export const BEAST_LIMIT = 4;
+
+// What a companion or a beast can carry, in pounds (house rule, after the Player's Handbook's Lifting and Carrying): the mount table's
+// capacity where the book gives one (transport.json), else a Strength score of 10 + twice the stat block's Strength save, times 15,
+// doubled for each size above Medium (the book's Size and Strength); a beast that can be ridden carries as one size larger (house rule:
+// it is built to bear a load)
+export function carryingCapacity(c: Pick<Companion, "name" | "kind" | "size" | "saves" | "mount">, mounts: { name: string; capacity?: string | number }[] = []): number {
+  const listed = mounts.find((m) => m.name.toLowerCase() === c.name.toLowerCase())?.capacity;
+  const book = Number(String(listed ?? "").replace(/[^\d.]/g, ""));
+  if (book) return book;
+  const SIZES = ["Tiny", "Small", "Medium", "Large", "Huge", "Gargantuan"];
+  const FACTOR = [0.5, 1, 1, 2, 4, 8];
+  const at = Math.max(0, SIZES.indexOf(c.size ?? "Medium"));
+  const size = FACTOR[Math.min(FACTOR.length - 1, at + (c.kind === "beast" && c.mount ? 1 : 0))] ?? 1;
+  return Math.round((10 + 2 * (c.saves?.strength ?? 0)) * 15 * size);
+}
+
+// Carts (2026-10-26, the user: "The hover cart needs a physical entity that players or party members can push/pull"). A hovercart (the
+// Expanded Content's: "a speed of 30 feet and can store 2,000 lb.") is not carried in the pack: it hovers on the map beside whoever
+// handles it, pushed ahead of them or pulled behind, and holds what is loaded into it. House rules: someone of the party has to push
+// or pull it (the character, a companion or a beast; a beast pulls); it goes where they go, and with the party on any ride; left parked,
+// it stays where it was left, with what is in it, until someone takes it again.
+export interface Cart {
+  id: string;
+  name: string;
+  // What is loaded into it, by item name
+  pack: string[];
+  // Who pushes or pulls it ("me" for the character, else a companion's or a beast's id); none while it is parked
+  handler?: string | null;
+  mode: "push" | "pull";
+  // Where it was left: the area and the square of the map (the building's plan, as the party's feet)
+  parked?: { areaId: string; x: number; y: number } | null;
+}
+// What a cart holds, from the item's text ("can store 2,000 lb.")
+export const cartCapacity = (description = "", fallback = 2000): number => {
+  const m = description.match(/store\s+([\d,]+)\s*lb/i);
+  return m ? Number(m[1].replace(/,/g, "")) : fallback;
+};
+// The items of a pack that are carts (they are taken out of the pack and set on the map)
+export const isCartItem = (name: string) => /^hovercart\b/i.test(name);
+// A cart's handler, if they are still with the party (else the character takes it over)
+export function cartHandler(cart: Cart, present: { id: string; kind?: string; hp?: number }[]): string {
+  if (!cart.handler || cart.handler === "me") return "me";
+  return present.some((c) => c.id === cart.handler && (c.hp ?? 1) > 0) ? cart.handler : "me";
+}
+
+// A hostile site that can be claimed as a base (bases.ts): a building whose kind houses enemies (a hideout, a camp, a cave, a ruin, a
+// wreck, a sewer), once none of them is left standing in it (house rule)
+export function claimableSite(world: World, buildingId: string): { ok: boolean; why?: string } {
+  const building = world.areas[buildingId];
+  if (!building || building.kind !== "building") return { ok: false, why: "Only a building can be claimed." };
+  if (!BUILDINGS[building.type]?.hostile) return { ok: false, why: `A ${building.type} is not a hostile site: pitch a camp instead.` };
+  const standing = [building, ...childrenOf(world, buildingId)].flatMap((a) => a.occupants).filter((o) => o.disposition === "hostile" && (o.hitPoints ?? 1) > 0 && !o.captive && !o.disabled);
+  if (standing.length) return { ok: false, why: `${standing.reduce((n, o) => n + (o.count ?? 1), 0)} of its holders still stand in it.` };
+  return { ok: true };
+}
 
 // House rule: a share of what a creature is worth in experience, for each day of its service.
 // CR 1/8 and 1/2 cost 10 credits a day, CR 1 20, CR 2 45, CR 5 180.
@@ -6898,6 +7069,8 @@ export interface Vehicle {
   owner: string;
   // House rule: the Vehicles table has no seats
   seats: number;
+  // Its make's look (`VEHICLE_MAKES`), for the map; none for one made before makes
+  look?: string;
   // Belongs to the people of the settlement, not to an enemy: taking it is theft
   civil?: boolean;
 }
@@ -6976,6 +7149,52 @@ export function modelOf(name: string, vehicles: Transport["vehicles"]): Transpor
   return vehicles.find((v) => n.includes(v.name.toLowerCase()));
 }
 
+// Makes of speeder (2026-10-26, the user: "extend the vehicles to include other types of star wars machines", from the films and the
+// live-action and animated series). House rule: the Expanded Content's Vehicles table prices three classes (Airspeeder, Landspeeder,
+// Speederbike: cost and mph); each make here is a name and a look of one class, at that class's price and speed, with seats of its own
+// (the table has none). Where a make belongs to a kind of world or a side it is only found there (a snowspeeder on ice, a cloud car over
+// gas giants and oceans, a skiff in the deserts; the Empire's and the Republic's own machines are prizes taken from their garrisons and
+// posts, never sold). `look` names its model on the map (models.tsx `SpeederModel`).
+export interface VehicleMake {
+  name: string;
+  model: "Speederbike" | "Landspeeder" | "Airspeeder";
+  look: string;
+  seats: number;
+  // Where it is seen (planet types), and whether a shop sells it (military makes are only taken)
+  worlds?: string[];
+  military?: boolean;
+  from: string;
+}
+export const VEHICLE_MAKES: VehicleMake[] = [
+  { name: "74-Z speeder bike", model: "Speederbike", look: "74z", seats: 2, military: true, from: "Return of the Jedi" },
+  { name: "Speederbike", model: "Speederbike", look: "74z", seats: 2, from: "the Vehicles table" },
+  { name: "Swoop bike", model: "Speederbike", look: "swoop", seats: 1, from: "Solo, The Clone Wars" },
+  { name: "BARC speeder", model: "Speederbike", look: "barc", seats: 2, military: true, from: "Revenge of the Sith, The Clone Wars" },
+  { name: "614-AvA speeder bike", model: "Speederbike", look: "ava", seats: 1, military: true, from: "Rebels, The Mandalorian, Andor" },
+  { name: "X-34 landspeeder", model: "Landspeeder", look: "x34", seats: 2, from: "A New Hope" },
+  { name: "Landspeeder", model: "Landspeeder", look: "x34", seats: 6, from: "the Vehicles table" },
+  { name: "V-35 Courier", model: "Landspeeder", look: "v35", seats: 4, from: "A New Hope" },
+  { name: "Flash speeder", model: "Landspeeder", look: "flash", seats: 2, from: "The Phantom Menace" },
+  { name: "Bantha-II cargo skiff", model: "Landspeeder", look: "skiff", seats: 12, worlds: ["desert", "barren", "volcanic"], from: "Return of the Jedi, The Book of Boba Fett" },
+  { name: "Imperial troop transport", model: "Landspeeder", look: "itt", seats: 8, military: true, from: "Rebels" },
+  { name: "Airspeeder", model: "Airspeeder", look: "air", seats: 4, from: "the Vehicles table" },
+  { name: "T-47 snowspeeder", model: "Airspeeder", look: "t47", seats: 2, worlds: ["ice", "temperate", "barren"], from: "The Empire Strikes Back" },
+  { name: "Storm IV cloud car", model: "Airspeeder", look: "cloudcar", seats: 2, worlds: ["gas giant", "ocean", "urban"], from: "The Empire Strikes Back" },
+  { name: "Koro-2 airspeeder", model: "Airspeeder", look: "koro", seats: 1, worlds: ["urban", "temperate", "ocean", "forest", "jungle"], from: "Attack of the Clones" },
+  { name: "XJ-6 airspeeder", model: "Airspeeder", look: "xj6", seats: 2, worlds: ["urban"], from: "Attack of the Clones" },
+];
+export const makeOf = (name = ""): VehicleMake | undefined => {
+  const n = name.toLowerCase();
+  return VEHICLE_MAKES.find((m) => m.name.toLowerCase() === n) ?? VEHICLE_MAKES.find((m) => n.includes(m.name.toLowerCase()) && m.name.length > 10);
+};
+// The makes a dealer on a world of this type sells
+export const makesSold = (planetType = ""): VehicleMake[] => VEHICLE_MAKES.filter((m) => !m.military && (!m.worlds || m.worlds.includes(planetType)) && m.name !== m.model);
+// A make for a vehicle of a class, picked by a number (a hash of its id, so that a world's dice are not drawn again)
+export function makeFor(model: string, pick: number, planetType = "", military = false): VehicleMake | undefined {
+  const pool = VEHICLE_MAKES.filter((m) => m.model === model && m.name !== m.model && !!m.military === military && (!m.worlds || m.worlds.includes(planetType)));
+  return pool.length ? pool[Math.abs(pick) % pool.length] : undefined;
+}
+
 // The line of goods each shop sells (a WARES key)
 export const SHOP_TRADE: Record<string, string> = {
   "general store": "general", armsmith: "arms", "tech shop": "tech", apothecary: "medical", outfitter: "outfit", "curio shop": "leisure",
@@ -7022,9 +7241,16 @@ function placeVehicles(ctx: Context, building: Area) {
     return v ? { id: nextId(ctx.world, "v"), name, model: v.name, mph: v.mph, value: v.cost, status, owner, seats: SEATS[v.name] ?? 2 } : undefined;
   };
   const bikeName = ctx.catalog.monsters.find((m) => /speeder bike/i.test(m.name))?.name ?? "Speederbike";
+  // Each gets a make of its class (VEHICLE_MAKES), picked by its id so that the world's dice are drawn as they were before makes
+  const planetType = ancestor(ctx.world, building.id, "planet")?.type ?? "";
+  const withMake = (v: Vehicle | undefined, military = false, named = (m: VehicleMake) => m.name): Vehicle | undefined => {
+    const m = v && makeFor(v.model, hashOf(v.id + building.id), planetType, military);
+    return v && m ? { ...v, name: named(m), look: m.look, seats: m.seats } : v;
+  };
   let found: Vehicle | undefined;
-  if (building.type === "wreck") found = make(r.pick(["Landspeeder", "Airspeeder", "Speederbike"]), "Wrecked speeder", "wrecked");
-  else if (["camp", "hideout", "garrison", "command post"].includes(building.type) && r.chance(0.45)) found = make("Speederbike", bikeName, "parked");
+  if (building.type === "wreck") found = withMake(make(r.pick(["Landspeeder", "Airspeeder", "Speederbike"]), "Wrecked speeder", "wrecked"), false, (m) => `Wrecked ${m.name}`);
+  // (a garrison's or a command post's is a military bike: a 74-Z, a BARC, a 614-AvA; a gang's a swoop or a plain bike)
+  else if (["camp", "hideout", "garrison", "command post"].includes(building.type) && r.chance(0.45)) found = withMake(make("Speederbike", bikeName, "parked"), ["garrison", "command post"].includes(building.type));
   if (found) building.vehicles = [found];
   // Rides parked at the buildings of a settlement belong to its people (house rule): one at a
   // house, shop or port in about half of them, and a showroom's worth at a vehicle dealer
@@ -7032,8 +7258,10 @@ function placeVehicles(ctx: Context, building: Area) {
     const models = building.type === "vehicle dealer" ? ["Landspeeder", "Speederbike", "Airspeeder", r.pick(["Landspeeder", "Speederbike"])] : [r.pick(["Landspeeder", "Landspeeder", "Speederbike", "Airspeeder"])];
     const owners = ["Dren", "Mala", "Orrin", "Teva", "Kell", "Sorra", "Bram", "Iska"];
     const vehicles = models.flatMap((m, i) => {
-      const v = make(m, `${r.pick(owners)}'s ${m.toLowerCase()}`, "parked");
-      return v ? [{ ...v, civil: true, owner: building.type === "vehicle dealer" ? "the dealer" : v.name.split("'")[0], name: building.type === "vehicle dealer" ? `${m} for sale` : v.name, id: v.id + i }] : [];
+      const plain = make(m, `${r.pick(owners)}'s ${m.toLowerCase()}`, "parked");
+      const who = plain?.name.split("'")[0] ?? "";
+      const v = plain && withMake({ ...plain, id: plain.id + i });
+      return v ? [{ ...v, civil: true, owner: building.type === "vehicle dealer" ? "the dealer" : who, name: building.type === "vehicle dealer" ? `${v.name} for sale` : `${who}'s ${v.name}` }] : [];
     });
     if (vehicles.length) building.vehicles = vehicles;
   }
@@ -10061,6 +10289,14 @@ export interface ItemEffects {
   absorb?: number;
   // Side effect: one other ability score falls by 1
   falls?: boolean;
+  // Senses and the like, read from the text (2026-10-26; they were shown, not applied): darkvision in feet; advantage (1) or
+  // disadvantage (-1) on Dexterity (Stealth) checks; attack rolls against the wearer at disadvantage (a decoy shadow, lost until the
+  // wearer's next turn when they are hurt); damage from weapons reduced by the proficiency bonus; water to be had at will
+  darkvision?: number;
+  stealth?: number;
+  decoy?: boolean;
+  weaponGuard?: boolean;
+  water?: boolean;
 }
 
 // What a stimpac, an adrenal, a barrier or a collimator does for how long; `fight` ones last for
@@ -10114,6 +10350,15 @@ export function parseItemEffects(source: string): ItemEffects {
   const text = plainText(source);
   for (const sentence of text.split(/(?<=\.)\s+/)) {
     if (/\binstead of\b|\bwhen you do so\b|\blose the\b|\bfor each saving throw\b/i.test(sentence)) continue;
+    // (a set's bonus, "while wearing and attuned to this cloak and Jensaarai Armor", needs the other piece: not read)
+    if (/while wearing and attuned to this \w+ and /i.test(sentence)) continue;
+    const dark = sentence.match(/you have darkvision (?:to a range of|out to) (\d+) feet/i);
+    if (dark) effects.darkvision = Math.max(effects.darkvision ?? 0, Number(dark[1]));
+    const sneak = sentence.match(/(advantage|disadvantage) on Dexterity \(Stealth\) checks/i);
+    if (sneak) effects.stealth = /^dis/i.test(sneak[1]) ? -1 : 1;
+    if (/disadvantage on attack rolls against you/i.test(sentence)) effects.decoy = true;
+    if (/damage that you take from (?:unenhanced )?weapons is reduced by an amount equal to your proficiency bonus/i.test(sentence)) effects.weaponGuard = true;
+    if (/produce the chosen liquid/i.test(sentence) || /liquid from the table/i.test(sentence)) effects.water = true;
     const bonus = sentence.match(/\+(\d+) bonus to (attack and damage rolls|attack rolls and damage rolls|attack rolls|damage rolls)/i);
     if (bonus && !/force attack|tech attack|force powers|grenade|save DC|wrist launcher|dart/i.test(sentence) && effects.attack === undefined && effects.damage === undefined) {
       const n = Number(bonus[1]);
@@ -11150,7 +11395,7 @@ export function flightPayout(course: FlightCourse, collected: number, timeLeft: 
   const all = collected === rings ? cfg.bonus : 0;
   const time = collected === rings ? Math.round((cfg.perRing * rings * 0.5 * Math.max(0, timeLeft)) / Math.max(1, course.limit)) : 0;
   const credits = perRing + all + time;
-  const note = `${collected} of ${rings} rings${all ? ", all of them" : ""}${time ? `, ${time} cr for the time to spare` : ""} (house rule: the books give no fares for flying)`;
+  const note = `${collected} of ${rings} rings${all ? ", all of them" : ""}${time ? `, ${time} cr for the time to spare` : ""}: paid ${credits} cr (house rule: the books give no fares for flying)`;
   return { credits, note };
 }
 
@@ -11799,7 +12044,8 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
 
 // `boost` is held on the Boost button; `throttle` -1 brakes and backs up, otherwise the speeder drives;
 // `auto` hands the party's speeder to the rivals' driving (a test hook: localStorage sw5e.autopilot)
-export interface RaceInput extends FlightInput { boost?: boolean; auto?: boolean }
+// `fire`: in a chase, the party's blaster (see "On the road")
+export interface RaceInput extends FlightInput { boost?: boolean; auto?: boolean; fire?: boolean }
 export interface Racer {
   id: number; name: string; party: boolean; model: string; kind: SpeederKind; pace: number; daring: number;
   // The middle of its box at hover height, heading, nose pitch, forward speed
@@ -11814,10 +12060,14 @@ export interface Racer {
   // A rival's line: metres right of the centre, the track point and trail point it is at, the trail it is on (-1 none)
   lane: number; home: number; at: number; tat: number; trail: number;
   stuck: number; off: number; backing: number; ghost: number;
+  // In a chase: one of the riders after the party, and the seconds to its next shot (the party's own too)
+  hostile?: boolean; reload?: number;
 }
-export interface RaceEvent { kind: "hit" | "smash" | "mine" | "land" | "tow" | "gate" | "wreck" | "finish"; p: Vec3; by: number; power: number }
+// (`shot`: a blaster bolt from `p` to `to`; `power` 1 when it hit)
+export interface RaceEvent { kind: "hit" | "smash" | "mine" | "land" | "tow" | "gate" | "wreck" | "finish" | "shot"; p: Vec3; by: number; power: number; to?: Vec3 }
 // `events` and `said` are what happened in the last step (for sparks and the HUD's messages); `first` is the winner's time
-export interface Race { t: number; limit: number; laps: number; gateCount: number; racers: Racer[]; hazards: Hazard[]; broken: number[]; over: boolean; log: string[]; events: RaceEvent[]; said: string[]; first: number | null }
+// `chase`: a race that is a chase on the road (who is after the party, and the state of the chase's own dice)
+export interface Race { t: number; limit: number; laps: number; gateCount: number; racers: Racer[]; hazards: Hazard[]; broken: number[]; over: boolean; log: string[]; events: RaceEvent[]; said: string[]; first: number | null; chase?: { who: string; seed: number } }
 const RIVALS = [["Rhys", 0.95, 0.5], ["Tavi", 0.97, 0.8], ["the Hutt's runner", 0.92, 0.3], ["Kessa", 0.99, 0.9], ["Doro", 0.93, 0.4], ["Vex", 0.98, 0.7], ["Brann", 0.94, 0.6]] as const;
 
 export const raceLap = (race: Race, racer: Racer) => Math.min(race.laps, Math.max(1, Math.floor((racer.gates - 1) / race.gateCount) + 1));
@@ -12197,7 +12447,7 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
   const before = race.racers.map((rc) => [rc.craft.p[0], rc.craft.p[2]] as [number, number]);
   for (const rc of race.racers) {
     const own = rc.party && rc.finish === null && !rc.wrecked && !input.auto;
-    const steer = rc.wrecked ? { steer: { x: 0, y: 0 }, throttle: 0 as const } : own ? input : rivalInput(rc, track, race, h);
+    const steer = rc.wrecked ? { steer: { x: 0, y: 0 }, throttle: 0 as const } : own ? input : rc.hostile ? chaseInput(rc, track, race, h) : rivalInput(rc, track, race, h);
     drive(rc, steer, track, race, h);
     rc.ghost = Math.max(0, rc.ghost - h);
     if (rc.trail < 0 || rc.party) rc.at = nearestPoint(track.points, rc.craft.p[0], rc.craft.p[2], resync ? 0 : rc.at, resync ? track.points.length : 8, true);
@@ -12274,6 +12524,7 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
       }
     }
   }
+  if (race.chase) chaseFire(race, input, h);
   // Racers against each other: boxes, the impulse between them by their masses, and each one's hull by
   // the blow it took (a bike knocked by a landspeeder takes more); one passing high over another is clear
   for (let a = 0; a < race.racers.length; a++) {
@@ -12332,6 +12583,12 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
   const total = race.laps * race.gateCount + 1;
   race.racers.forEach((rc, i) => {
     if (rc.finish !== null || rc.wrecked) return;
+    // A pursuer passes no gates: it is only towed back when it is stuck or lost
+    if (rc.hostile) {
+      rc.stuck = Math.hypot(rc.v[0], rc.v[2]) < 2 && !rc.air && race.t > 1 ? rc.stuck + h : 0;
+      if (rc.stuck > RACE.stuck || rc.off > RACE.offTime) tow(rc, track, race);
+      return;
+    }
     const gate = track.gates[rc.gates % race.gateCount];
     const [gx, gz] = [Math.cos(gate.yaw), Math.sin(gate.yaw)];
     const [x0, z0] = before[i];
@@ -12368,6 +12625,8 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
   });
   const party = race.racers.find((rc) => rc.party);
   if ((party && (party.finish !== null || party.wrecked)) || (race.first !== null && race.t >= race.first + RACE.grace) || race.t >= race.limit || race.racers.every((rc) => rc.finish !== null || rc.wrecked)) race.over = true;
+  // A chase is over too when every rider after the party is down
+  if (race.chase && race.racers.filter((rc) => rc.hostile).every((rc) => rc.wrecked)) race.over = true;
 }
 
 // One step of a race, in ticks of RACE.tick: the party's racer is steered by `input`, the rivals by
@@ -12409,6 +12668,169 @@ export function raceResult(race: Race): { place: number; credits: number; note: 
   const hull = `hull ${mine.hull} of ${mine.hullMax}`;
   if (mine.finish === null) return { place: race.racers.length, credits: 0, note: `you did not finish the race (${mine.wrecked ? "out with no hull" : race.first !== null ? "the winner was home " + RACE.grace + " s before you" : "out of time"}; ${hull}; house rule)` };
   return { place, credits: RACE_PRIZES[place - 1] ?? 0, note: `${place}${["st", "nd", "rd"][place - 1] ?? "th"} of ${race.racers.length} in ${time(mine.finish)} over ${race.laps} laps, ${hull}` };
+}
+
+// ---- On the road (2026-10-26; the user: "procedural attacks against hunted players (empire (depending on alignment), pirates, enemy
+// factions) while travelling on speeders between planet settlement locations - extend the existing speeder race mechanic to speeder
+// travel"). All house rules (the books give no encounters on the road): a trip in the party's own speeder between settlements may be
+// ambushed (`roadAmbush`); the party runs for it (a chase: the race's course and driving, one lap to safety, the riders after it
+// shoot and ram, and the party fires back) or stands and fights (the fight of the combat engine, with the riders' stat blocks:
+// `roadAmbushers`). A chase lost (the speeder wrecked) is the fight, with the riders still mounted.
+export const CHASE = {
+  // A rider's blaster: the reach (m), the seconds between shots, the chance to hit at point blank (less with distance), the hull a hit costs
+  range: 55, every: 2.4, hit: 0.27, damage: 1,
+  // The party's: reach, seconds between shots, the cone it is aimed in (radians off the nose, or off the tail when it fires back over its
+  // shoulder at a rider behind it, at `back` of the chance), chance, damage
+  partyRange: 75, partyEvery: 0.5, cone: 0.35, back: 0.35, partyHit: 0.5, partyDamage: 2,
+  // Where the riders start behind the party (m) and how much faster than a plain racer they drive
+  behind: 70, pace: 1.1,
+};
+const chaseRoll = (race: Race) => {
+  const c = race.chase!;
+  c.seed = (Math.imul(c.seed, 1664525) + 1013904223) >>> 0;
+  return c.seed / 4294967296;
+};
+// A rider's driving: the race's line, held level with the party (alongside it to shoot, onto it to ram), boost to catch up
+function chaseInput(rc: Racer, track: RaceTrack, race: Race, h: number): RaceInput {
+  const me = race.racers.find((r) => r.party)!;
+  const n = track.points.length;
+  const gap = ((((me.at - rc.at) % n) + n) % n) * track.step;
+  const behind = gap < track.length / 2 ? gap : gap - track.length;
+  const yaw = track.yaws[me.at];
+  const lat = -(me.craft.p[0] - track.points[me.at][0]) * Math.sin(yaw) + (me.craft.p[2] - track.points[me.at][2]) * Math.cos(yaw);
+  rc.home = within(behind < 20 && behind > -4 ? lat : lat + (rc.id % 2 ? 3 : -3), -5, 5);
+  const input = rivalInput(rc, track, race, h);
+  // Far behind: boost; close: hold the party's pace (off the throttle when faster); past it: drop back, never to a stop
+  const u = rc.craft.speed;
+  const pace = Math.max(12, me.craft.speed);
+  if (behind > 25) input.boost = rc.boost > 0.1;
+  else if (behind > -6) {
+    input.boost = false;
+    if (u > pace + (behind > 8 ? 4 : 0)) input.throttle = -1;
+  } else {
+    input.boost = false;
+    if (u > pace * 0.75) input.throttle = -1;
+  }
+  return input;
+}
+const bearing = (from: Racer, to: Vec3) => Math.abs(angleWrap(Math.atan2(to[2] - from.craft.p[2], to[0] - from.craft.p[0]) - from.craft.yaw));
+const flatDist = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[2] - b[2]);
+function knockOut(race: Race, rc: Racer, by: string) {
+  rc.wrecked = true;
+  rc.boosting = false;
+  race.events.push({ kind: "wreck", p: rc.craft.p, by: rc.id, power: 0 });
+  race.log.push(rc.party ? `Your speeder is shot out from under you by ${by}` : `You shoot down ${rc.name}`);
+}
+// The blasters of a chase: each rider fires at the party when it is near and ahead of it; the party fires (Fire held) at the rider nearest
+// its nose
+function chaseFire(race: Race, input: RaceInput, h: number) {
+  const me = race.racers.find((r) => r.party)!;
+  if (me.wrecked || me.finish !== null) return;
+  for (const rc of race.racers) {
+    if (!rc.hostile || rc.wrecked) continue;
+    rc.reload = (rc.reload ?? 0) - h;
+    const d = flatDist(rc.craft.p, me.craft.p);
+    if (rc.reload > 0 || d > CHASE.range || bearing(rc, me.craft.p) > 0.6) continue;
+    rc.reload = CHASE.every * (0.8 + chaseRoll(race) * 0.5);
+    const hit = chaseRoll(race) < CHASE.hit * (1 - (d / CHASE.range) * 0.5);
+    const to: Vec3 = hit ? [me.craft.p[0], me.craft.p[1] + 0.6, me.craft.p[2]] : [me.craft.p[0] + (chaseRoll(race) - 0.5) * 6, me.craft.p[1] + 1 + chaseRoll(race) * 2, me.craft.p[2] + (chaseRoll(race) - 0.5) * 6];
+    race.events.push({ kind: "shot", p: [rc.craft.p[0], rc.craft.p[1] + 0.8, rc.craft.p[2]], to, by: rc.id, power: hit ? 1 : 0 });
+    if (!hit) continue;
+    me.hull = Math.max(0, me.hull - CHASE.damage);
+    race.log.push(`${rc.name} hits you (${CHASE.damage} hull)`);
+    if (me.hull <= 0) return knockOut(race, me, rc.name);
+  }
+  me.reload = (me.reload ?? 0) - h;
+  if (!input.fire || me.reload > 0) return;
+  me.reload = CHASE.partyEvery;
+  const inReach = race.racers.filter((rc) => rc.hostile && !rc.wrecked && flatDist(rc.craft.p, me.craft.p) <= CHASE.partyRange).sort((a, b) => flatDist(a.craft.p, me.craft.p) - flatDist(b.craft.p, me.craft.p));
+  const ahead = inReach.find((rc) => bearing(me, rc.craft.p) <= CHASE.cone);
+  const target = ahead ?? inReach.find((rc) => bearing(me, rc.craft.p) >= Math.PI - CHASE.cone * 2);
+  const from: Vec3 = [me.craft.p[0], me.craft.p[1] + 0.8, me.craft.p[2]];
+  if (!target) {
+    race.events.push({ kind: "shot", p: from, to: [from[0] + Math.cos(me.craft.yaw) * CHASE.partyRange, from[1], from[2] + Math.sin(me.craft.yaw) * CHASE.partyRange], by: me.id, power: 0 });
+    return;
+  }
+  const hit = chaseRoll(race) < CHASE.partyHit * (ahead ? 1 : CHASE.back);
+  race.events.push({ kind: "shot", p: from, to: [target.craft.p[0], target.craft.p[1] + 0.5, target.craft.p[2]], by: me.id, power: hit ? 1 : 0 });
+  if (!hit) return;
+  target.hull = Math.max(0, target.hull - CHASE.partyDamage);
+  if (target.hull <= 0) knockOut(race, target, "you");
+}
+// A chase: the party at the start line of a one-lap course (the last stretch to safety), the riders after it some way behind
+export function chaseStart(track: RaceTrack, seed: number, model: string, riders: { name: string; model: string }[], who: string): Race {
+  const race = raceStart(track, seed, model, []);
+  const n = track.points.length;
+  race.racers.push(
+    ...riders.map((r, i): Racer => {
+      const at = (n - Math.round((7 + CHASE.behind + Math.floor(i / 2) * 9) / track.step)) % n;
+      const yaw = track.yaws[at];
+      const lat = i % 2 === 0 ? -3.4 : 3.4;
+      const [px, pz] = [track.points[at][0] - Math.sin(yaw) * lat, track.points[at][2] + Math.cos(yaw) * lat];
+      const kind = speederKind(r.model);
+      return {
+        id: i + 1, name: r.name, party: false, model: r.model, kind, pace: CHASE.pace + (i % 3) * 0.015, daring: 0,
+        craft: { p: [px, groundAt(track, px, pz) + RACE.hover, pz], yaw, pitch: 0, speed: 0 }, v: [0, 0, 0], spin: 0, bank: 0,
+        boost: 1, boosting: false, rest: 0, air: false, rough: false, onTrail: false, gates: 0, toGate: 0, hull: SPEEDER_BODY[kind].hull, hullMax: SPEEDER_BODY[kind].hull, finish: null, wrecked: false,
+        lane: lat, home: lat, at, tat: 0, trail: -1, stuck: 0, off: 0, backing: 0, ghost: 0, hostile: true, reload: 2 + i * 0.7,
+      };
+    }),
+  );
+  return { ...race, chase: { who, seed: (seed * 2654435761) >>> 0 || 1 } };
+}
+// How a chase ended: through to safety, the riders all down, or caught (the speeder wrecked, or the time run out); who is still after the party
+export function chaseResult(race: Race): { outcome: "escaped" | "beaten" | "caught"; left: string[]; note: string } {
+  const me = race.racers.find((r) => r.party)!;
+  const riders = race.racers.filter((r) => r.hostile);
+  const left = riders.filter((r) => !r.wrecked).map((r) => r.name);
+  const down = riders.length - left.length;
+  const outcome = riders.every((r) => r.wrecked) && !me.wrecked ? "beaten" : me.finish !== null ? "escaped" : "caught";
+  const hull = `hull ${me.hull} of ${me.hullMax}`;
+  const note =
+    outcome === "beaten" ? `every rider of the ${race.chase?.who ?? "ambush"} shot down (${hull})` :
+    outcome === "escaped" ? `you got away from the ${race.chase?.who ?? "ambush"}${down ? `, ${down} of them shot down` : ""} (${hull})` :
+    `the ${race.chase?.who ?? "ambush"} caught you${me.wrecked ? ": your speeder is wrecked" : ""}; ${left.length} close in`;
+  return { outcome, left, note: `${note} (house rule)` };
+}
+
+// Whether a trip in the party's own speeder is ambushed, and by whom (seeded: the same trip at the same minute rolls the same). The
+// chance grows where there is less law; the authority's patrols hunt the party when it is wanted, or for its alignment (an Imperial
+// authority, the Empire or the First Order, hunts the light-sided; the Republic the dark-sided); pirates work the lawless roads; else the
+// world's antagonist sends riders.
+export interface RoadAmbush { by: "patrol" | "pirates" | "faction"; who: string; why: string; model: string }
+// (`always`: a test build's switch, every trip ambushed)
+export function roadAmbush(world: World, toId: string, o: { alignment?: string; wanted?: boolean; seed: number; always?: boolean }): RoadAmbush | null {
+  const era = eraOf(world);
+  const law = lawAt(world, toId);
+  const light = /light/i.test(o.alignment ?? "");
+  const dark = /dark/i.test(o.alignment ?? "");
+  const imperial = /empire|first order/i.test(era.authority);
+  const hunted = (imperial && light) || (!imperial && dark);
+  const r = createRandom(o.seed);
+  const chance = Math.min(0.6, 0.06 + 0.05 * (3 - law) + (hunted && law >= 1 ? 0.12 : 0) + (o.wanted ? 0.3 : 0));
+  if (!r.chance(chance) && !o.always) return null;
+  if ((o.wanted || hunted) && law >= 1 && r.chance(0.7)) {
+    return { by: "patrol", who: `${era.authority} patrol`, model: "Speederbike", why: o.wanted ? "you are wanted" : `the ${era.authority} hunts the ${light ? "light" : "dark"}-sided (house rule: by alignment)` };
+  }
+  if (law <= 1 && r.chance(0.6)) return { by: "pirates", who: "swoop gang", model: "Swoop bike", why: "the roads out here are lawless" };
+  return { by: "faction", who: `${world.antagonist} riders`, model: "Speederbike", why: `${world.antagonist} is hostile to you` };
+}
+// The riders of an ambush as people to fight: troopers of a patrol or of an army (a scout trooper each; leading them a shore trooper, a
+// mounted trooper from the party's 5th level, a captain from its 9th), a gang's otherwise
+export function roadAmbushers(monsters: Sw5eMonster[], equipment: Sw5eEquipment[], ambush: RoadAmbush, level: number, seed: string): Occupant[] {
+  const military = ambush.by === "patrol" || /empire|first order|imperial|republic|separatist|federation/i.test(ambush.who);
+  if (!military) {
+    return makeGang(monsters, equipment, level, seed).map((o, i) => ({ ...o, name: i === 0 ? `Leader of the ${ambush.who}` : `Rider ${String.fromCharCode(64 + i)}` }));
+  }
+  const byId = new Map(monsters.map((m) => [m.id, m]));
+  const leader = byId.get(level >= 9 ? "trooper-captain" : level >= 5 ? "trooper-mounted" : "trooper-shore");
+  const rider = byId.get("trooper-scout");
+  if (!leader || !rider) return [];
+  const count = Math.max(2, Math.min(4, 2 + Math.floor((level - 1) / 4)));
+  return [
+    { ...statBlockOccupant(leader, equipment, `road-${seed}-lead`, 1, "patrol leader", "hostile"), name: "Patrol leader", species: undefined },
+    ...Array.from({ length: count }, (_, i) => ({ ...statBlockOccupant(rider, equipment, `road-${seed}-${i + 1}`, 1, "scout trooper", "hostile"), name: `Scout trooper ${String.fromCharCode(65 + i)}`, species: undefined })),
+  ];
 }
 
 // ---- Dogfight: moved to dogfight.ts (the vessels, sizes, scenarios), dogfightSim.ts (the steps) and tunnel.ts (the station's inside); they import this

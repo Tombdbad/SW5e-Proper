@@ -20,6 +20,11 @@
 //                    the generators down the port opens, and a craft small enough flies in, down the
 //                    tunnel and into the reactor chamber, puts ordnance into the core and flies out up the
 //                    exhaust shaft before it goes (tunnel.ts, and the race's rules for the run).
+// In the air of a planet (2026-10-26, the user: "in-atmosphere flying and air battles (defend settlement against bombing raids, conduct bombing
+// raids against settlements, protect/destroy ground vehicles)"): the same fight over the ground of a world. The ground is y = 0 and cannot
+// be flown through (a craft that strikes it takes damage by how fast it came down); bombs fall under the world's pull; a ceiling stands
+// where the air thins. Buildings, flak turrets and ground vehicles are vessels with a `ground` role (they do not fly): a settlement's
+// buildings to be defended from bombers or bombed, a convoy to be escorted or struck.
 // The foes' numbers (damage, rates of fire, accuracy) are labelled house rules below; the bot in
 // tests/ships/dogfight.test.ts plays the fight to keep them honest.
 // ---------------------------------------------------------------------------------------------
@@ -70,6 +75,23 @@ export function toLocal(at: { p: Vec3; yaw: number; pitch: number }, world: Vec3
   const d = vsub(world, at.p);
   return [vdot(d, f), vdot(d, u), vdot(d, r)];
 }
+// A craft's yaw to starboard (`dyaw`, about its own up) and then pitch up (`dpitch`, about its own starboard), both small angles, and the
+// angles read back from the new axes. Turned like this the nose goes the way the stick says in any attitude: raising the heading's angles
+// instead turns a craft that is pointing up at the sky about the vertical, which spins the view about the nose and barely moves it sideways,
+// and stops it at a limit. Nothing is turned about the nose, so the roll is the pilot's (it changes a little only as it must when the nose
+// swings round a rolled craft's frame).
+export function turned(yaw: number, pitch: number, roll: number, dyaw: number, dpitch: number): { yaw: number; pitch: number; roll: number } {
+  if (!dyaw && !dpitch) return { yaw, pitch, roll };
+  const { f, u, r } = frameOf(yaw, pitch, roll);
+  const [cy, sy, cp, sp] = [Math.cos(dyaw), Math.sin(dyaw), Math.cos(dpitch), Math.sin(dpitch)];
+  const f1 = vadd(vmul(f, cy), vmul(r, sy));
+  const f2 = vnorm(vadd(vmul(f1, cp), vmul(u, sp)));
+  const u2 = vsub(vmul(u, cp), vmul(f1, sp));
+  const pitch2 = Math.asin(clamp(f2[1], -1, 1));
+  const yaw2 = Math.hypot(f2[0], f2[2]) > 1e-9 ? Math.atan2(f2[2], f2[0]) : yaw;
+  const level = frameOf(yaw2, pitch2);
+  return { yaw: yaw2, pitch: pitch2, roll: Math.atan2(vdot(u2, level.r), vdot(u2, level.u)) };
+}
 
 // ---- The arena's scale (house rules)
 export const ARENA = {
@@ -102,7 +124,7 @@ export const ARENA = {
   partyRegen: 0.3,
   lentShield: 0.75,
   // The throttle is a setting that holds: W and S move it by `throttleRate` of its range a second, a notch of the wheel by `dialStep`. The
-  // craft rolls at its turn rate times `roll` (held between the two), and leans into a yaw by `lean` radians for show.
+  // craft rolls at its turn rate times `roll` (held between the two); the mouse and the pad never roll it, only A and D do.
   throttleRate: 0.5,
   dialStep: 0.1,
   roll: 1.4,
@@ -111,7 +133,9 @@ export const ARENA = {
   // The roll is a turning speed that eases to what the keys ask for (seconds to take up the difference): let go, it dies away in a moment and
   // the craft stays where it is turned
   rollEase: 0.12,
-  lean: 0.5,
+  // Aimed with the mouse's cursor (the guns follow it, so the cone it picks a target from is small: it is as exact as a pointer), the pick of
+  // what is under the cursor is this many radians wide, besides the target's own size
+  cursorAssist: 0.05,
   // A part chosen as the target is aimed at from this wide a cone round the nose (the cone for any other part is a share of `assist`)
   subAssist: 0.8,
   // How far from the craft the parts of a ship can be chosen as the target
@@ -190,6 +214,28 @@ export interface Gun {
 }
 
 export interface Bay { part: number; stock: number }
+// A vessel on the ground (in the air of a planet): a building, a flak turret, or a ground vehicle that drives along a route (its points, the
+// leg it is on, and whether it has got to the end)
+export type GroundKind = "building" | "flak" | "vehicle";
+export interface GroundRole { kind: GroundKind; target?: boolean; route?: Vec3[]; leg?: number; arrived?: boolean }
+// The air of a planet: the land (for the scene), the pull (bombs fall at 9.8 m/s² times it), the ceiling, the goal, and the count of what the
+// party has to save or destroy, lost, got through; `why` says how a failed fight was lost
+export interface AirField { biome: string; g: number; ceiling: number; goal: "defend" | "raid" | "escort" | "strike"; total: number; lost: number; arrived: number; why: string }
+export const AIR = {
+  gravity: 9.8,
+  ceiling: 1300,
+  // A craft that strikes the ground: no harm below this speed into it, and damage by the speed above it
+  graze: 6,
+  crash: 0.6,
+  // Foes keep above this height, and bombers make their runs at this one
+  floor: 45,
+  bombRun: 140,
+  // A bomb in the air lives this long; a building's, a flak turret's and a vehicle's hull points (house rules)
+  bombLife: 14,
+  hull: { building: 50, flak: 30, vehicle: 40 } as Record<GroundKind, number>,
+  // How fast a convoy drives (m/s)
+  convoy: 14,
+};
 export interface Vessel {
   id: number;
   side: "party" | "foe";
@@ -202,11 +248,10 @@ export interface Vessel {
   p: Vec3;
   yaw: number;
   pitch: number;
-  // A foe's roll is its lean into a turn; the party's is the roll the pilot has put on the craft, and its lean into a yaw is `bank` (for show)
+  // A foe's roll is its lean into a turn; the party's is the roll the pilot has put on the craft
   roll: number;
   // The party's rolling speed (radians a second, to the right positive)
   rollVel: number;
-  bank: number;
   speed: number;
   top: number;
   turn: number;
@@ -227,6 +272,8 @@ export interface Vessel {
   dying: number;
   // What it pays when it goes down
   bounty: number;
+  // On the ground (in the air of a planet): what it is
+  ground?: GroundRole;
 }
 
 // ---- Shots in the air: a turret's bolt, a missile or torpedo, a rocket, a bomb
@@ -258,8 +305,9 @@ export interface Projectile {
 export interface Shot { from: Vec3; to: Vec3; by: "player" | "foe"; hit: boolean; at: number; heavy?: boolean }
 export interface Fx { kind: "boom" | "spark" | "shield" | "launch" | "pd" | "wreck" | "port"; p: Vec3; size: number; by?: number }
 
-export type ScenarioId = "skirmish" | "cruiser" | "carrier" | "battleship" | "dreadnought" | "station";
-export interface Scenario { id: ScenarioId; name: string; intro: string; limit: number; interior: boolean; tag: string }
+export type ScenarioId = "skirmish" | "cruiser" | "carrier" | "battleship" | "dreadnought" | "station" | "defend" | "raid" | "escort" | "strike";
+// `air`: fought in the air of the planet, over its ground (house rule)
+export interface Scenario { id: ScenarioId; name: string; intro: string; limit: number; interior: boolean; tag: string; air?: boolean }
 export const SCENARIOS: Scenario[] = [
   { id: "skirmish", name: "Skirmish", tag: "fighters", limit: 120, interior: false, intro: "A patrol of fighters and a bomber close on your craft. Shoot them down; boost to get onto them, and keep the shields up." },
   { id: "cruiser", name: "Cruiser hunt", tag: "Large", limit: 210, interior: false, intro: "A cruiser with its fighter escort. Its batteries are slow and its point defense shoots down missiles: fly in close, and put your ordnance into the hull." },
@@ -267,6 +315,10 @@ export const SCENARIOS: Scenario[] = [
   { id: "battleship", name: "Battleship assault", tag: "Huge", limit: 330, interior: false, intro: "A battleship: all hull and guns. No shot touches the hull while a shield generator stands; the batteries can be left alone, if you can stay clear of them." },
   { id: "dreadnought", name: "Dreadnought", tag: "Gargantuan", limit: 420, interior: false, intro: "The largest ship in the sky: four generators, a forest of turrets and a hangar deck. It barely moves; its fighters do." },
   { id: "station", name: "Station raid", tag: "Station", limit: 480, interior: true, intro: "A battle station. Shoot out its shield generators, find the port, and fly in: down the tunnel, torpedo the reactor core, and out up the shaft before it goes. Its armor will not break from outside." },
+  { id: "defend", name: "Air raid: defend the settlement", tag: "in the air", limit: 240, interior: false, air: true, intro: "Bombers and their escort come in low over the settlement. Shoot the bombers down before they are over the buildings: each building lost is pay lost, and half of them lost is the raid won." },
+  { id: "raid", name: "Air raid: bomb a settlement", tag: "in the air", limit: 270, interior: false, air: true, intro: "Bomb the marked buildings of a hostile settlement. Bombs fall: release them ahead of the target, on the sight. Flak turrets and fighters defend it; a bomb rack is lent if your ship carries none." },
+  { id: "escort", name: "Convoy escort", tag: "in the air", limit: 260, interior: false, air: true, intro: "A convoy of ground vehicles crosses open country to the far side. Keep the fighters and bombers off it until it gets there." },
+  { id: "strike", name: "Convoy strike", tag: "in the air", limit: 230, interior: false, air: true, intro: "Destroy a convoy of ground vehicles before it gets away; a flak speeder rides with it and fighters fly cover. A bomb rack is lent if your ship carries none." },
 ];
 export const scenarioOf = (id: string): Scenario => SCENARIOS.find((s) => s.id === id) ?? SCENARIOS[0];
 
@@ -300,8 +352,10 @@ export interface Interior {
 // presses, makes the next weapon the active one (the right button). `retarget` and `pick` are counts of presses too.
 // `steer` is yaw (x, to the right) and pitch (y, down) in the craft's own frame, `roll` the roll to starboard, `throttle` the throttle's
 // setting being moved up or down while it is held and `dial` a count of notches (the wheel); `subtarget` moves the target on to the next
-// part of the locked ship; `god` is the test build's unlimited hull and weapons.
-export interface DogfightInput { steer: { x: number; y: number }; throttle: -1 | 0 | 1; roll?: number; dial?: number; fire?: boolean; missile?: boolean; bomb?: boolean; trigger?: boolean; retarget?: number; subtarget?: number; pick?: number; cycle?: number; god?: boolean }
+// part of the locked ship; `god` is the test build's unlimited hull and weapons. `aim` is where the pilot's cursor points, as a ray in the
+// world (the camera's place and the way it looks through the cursor): the guns are aimed along it, and without it they are aimed along the
+// nose (the reticule).
+export interface DogfightInput { steer: { x: number; y: number }; throttle: -1 | 0 | 1; aim?: { o: Vec3; d: Vec3 }; roll?: number; dial?: number; fire?: boolean; missile?: boolean; bomb?: boolean; trigger?: boolean; retarget?: number; subtarget?: number; pick?: number; cycle?: number; god?: boolean }
 
 export interface Dogfight {
   seed: number;
@@ -355,7 +409,9 @@ export interface Dogfight {
   fighter: ShipSheet | null;
   interior: Interior | null;
   stationDown: boolean;
-  outcome: null | "clear" | "shot-down" | "time" | "fled" | "station" | "lost-in-station";
+  outcome: null | "clear" | "shot-down" | "time" | "fled" | "station" | "lost-in-station" | "failed";
+  // In the air of a planet (null in space)
+  air: AirField | null;
   over: boolean;
   tier: number;
   // Weapons the party's craft was given because the ship had none fitted, or for the raid (house rules), named for the report
@@ -428,6 +484,10 @@ export function gunsOf(sheet: ShipSheet, cls: ArenaClass): Gun[] {
 export function fallbackWeapon(size: string): ShipWeapon {
   const big = SHIP_SIZE_ORDER.indexOf(size) >= SHIP_SIZE_ORDER.indexOf("Large");
   return { name: big ? "Ship's battery" : "Ship's cannon", category: big ? "Secondary" : "Primary", dice: big ? "3d8" : "2d6", damageType: "energy", near: 1200, far: 4800, arc: big ? "turret" : "forward", keen: 0, heavy: false, ionizing: false, properties: "Power (house rule)" };
+}
+// A bomb rack lent for a raid on the ground (house rule): the sheet's bomb deployer, four bombs
+export function bombRack(): ShipWeapon {
+  return { name: "Bomb deployer", category: "Quaternary", dice: "4d10", damageType: "energy", near: 0, far: 0, arc: "forward", ammo: 4, ammoName: "Proton bomb", keen: 0, heavy: false, ionizing: false, properties: "Lent for the raid (house rule)", save: { ability: "dexterity", dc: 15 } };
 }
 export function breachTorpedo(): ShipWeapon {
   return { name: "Breaching torpedo", category: "Tertiary", dice: "4d10", damageType: "energy", near: 1200, far: 4800, arc: "forward", ammo: 2, ammoName: "Breaching torpedo", keen: 0, heavy: true, ionizing: false, properties: "Proton warhead for a reactor (house rule)", save: { ability: "dexterity" } };
@@ -629,7 +689,6 @@ export function makeVessel(sheet: ShipSheet, input: ShipInput, side: "party" | "
     pitch: at.pitch ?? 0,
     roll: 0,
     rollVel: 0,
-    bank: 0,
     speed: cls === "Station" ? 0 : top * (foe ? 0.7 : 0),
     top,
     turn: turnRate(sheet, cls, foe),
@@ -650,7 +709,7 @@ export function makeVessel(sheet: ShipSheet, input: ShipInput, side: "party" | "
 
 // ---- Foes: what each kind of ship carries, from the starship equipment data
 export type StarshipRow = Parameters<typeof shipSheet>[1][number];
-export type FoeKind = "droid" | "interceptor" | "fighter" | "bomber" | "gunship" | "cruiser" | "carrier" | "battleship" | "warship" | "station";
+export type FoeKind = "droid" | "interceptor" | "fighter" | "bomber" | "gunship" | "cruiser" | "carrier" | "battleship" | "warship" | "station" | "flak" | "hauler" | "building";
 interface FoeKit { size: string; role: string; cls?: ArenaClass; primary: [RegExp, number]; secondary?: [RegExp, number]; tertiary?: RegExp; quaternary?: RegExp; shield: boolean; armor: string }
 const KITS: Record<FoeKind, FoeKit> = {
   droid: { size: "Tiny", role: "Droid", primary: [/^(Light laser cannon|Blaster cannon|Laser cannon)$/, 1], shield: false, armor: "Deflection" },
@@ -664,6 +723,10 @@ const KITS: Record<FoeKind, FoeKit> = {
   battleship: { size: "Huge", role: "Battleship", primary: [/^(Blaster point-defense|Laser cannon point-defense)$/, 2], secondary: [/^(Heavy turbolaser battery|Assault turbolaser battery)$/, 2], tertiary: /^Assault missile launcher$/, quaternary: /^Bomb layer$/, shield: true, armor: "Reinforced" },
   warship: { size: "Gargantuan", role: "Warship", primary: [/^(Laser cannon point-defense|Blaster point-defense)$/, 2], secondary: [/^(Heavy turbolaser battery|Assault turbolaser battery)$/, 2], tertiary: /^Assault torpedo launcher$/, shield: true, armor: "Reinforced" },
   station: { size: "Gargantuan", role: "Industrial Center", cls: "Station", primary: [/^(Laser cannon point-defense|Blaster point-defense)$/, 2], secondary: [/^(Heavy turbolaser battery|Assault turbolaser battery)$/, 2], tertiary: /^Assault torpedo launcher$/, shield: true, armor: "Reinforced" },
+  // On the ground (house rules): a flak turret's guns and missiles, a hauler and a building with none
+  flak: { size: "Small", role: "Flak", primary: [/^(Laser cannon|Twin laser cannon|Assault laser cannon|Light laser cannon)$/, 2], tertiary: /^Missile launcher$/, shield: false, armor: "Reinforced" },
+  hauler: { size: "Medium", role: "Hauler", primary: [/^$/, 0], shield: false, armor: "Reinforced" },
+  building: { size: "Large", role: "Building", primary: [/^$/, 0], shield: false, armor: "Reinforced" },
 };
 export const FOE_NAMES: Record<FoeKind, string[]> = {
   droid: ["Vulture", "Needle", "Buzzer", "Sting"],
@@ -676,6 +739,9 @@ export const FOE_NAMES: Record<FoeKind, string[]> = {
   battleship: ["Retribution", "Annihilator", "Thunderhead"],
   warship: ["Executor", "Leviathan", "Juggernaut"],
   station: ["Starfall Citadel", "The Anvil", "Bastion Prime"],
+  flak: ["Flak turret", "Flak battery"],
+  hauler: ["Hauler", "Cargo crawler", "Fuel tanker", "Supply transport"],
+  building: ["Barracks", "Fuel depot", "Comms tower", "Warehouse", "Power station", "Command post", "Hangar", "Armory", "Refinery"],
 };
 
 // The equipment of a foe, by name: the first row that matches a pattern in each category and mount (the rows are the book's; the
@@ -729,6 +795,10 @@ export function partySheet(sheet: ShipSheet, scenario: ScenarioId): { sheet: Shi
     weapons = [...weapons, breachTorpedo()];
     loaned.push("Breaching torpedo");
   }
+  if ((scenario === "raid" || scenario === "strike") && !weapons.some((w) => w.category === "Quaternary" && (w.ammo ?? 0) > 0)) {
+    weapons = [...weapons, bombRack()];
+    loaned.push("Bomb deployer");
+  }
   if (!sheet.hasShield) loaned.push("Deflector shield");
   return { sheet: { ...sheet, ...(sheet.hasShield ? {} : lentShield(sheet)), weapons }, loaned };
 }
@@ -740,11 +810,18 @@ export interface StartOptions {
   rows: StarshipRow[];
   // The party's ship, as a sheet, and what it is called and who owns it (for the model)
   ship: { sheet: ShipSheet; owner?: string };
+  // In the air of a planet: its land, its pull and who the foe is (see airStart)
+  air?: AirOptions;
 }
 // Distance ahead the capital target lies, and who defends it
 const SETUPS: Record<ScenarioId, { foe: FoeKind; at: number; escorts: (cls: ArenaClass) => FoeKind[] }> = {
   skirmish: { foe: "fighter", at: 0, escorts: (cls) => skirmishFoes(cls) },
   cruiser: { foe: "cruiser", at: 520, escorts: () => ["fighter", "fighter"] },
+  // (the air's fights are laid out by airStart)
+  defend: { foe: "bomber", at: 0, escorts: () => [] },
+  raid: { foe: "building", at: 0, escorts: () => [] },
+  escort: { foe: "fighter", at: 0, escorts: () => [] },
+  strike: { foe: "hauler", at: 0, escorts: () => [] },
   carrier: { foe: "carrier", at: 760, escorts: () => ["fighter"] },
   battleship: { foe: "battleship", at: 820, escorts: () => ["fighter"] },
   dreadnought: { foe: "warship", at: 1300, escorts: () => ["fighter"] },
@@ -781,10 +858,19 @@ export function scenarioAdvice(id: ScenarioId, cls: ArenaClass): string {
       return i > classIndex(STATION.port)
         ? "Your ship is too big for the station's port: one of its strike craft flies the run in."
         : "Shoot out the generators, fly in through the port, torpedo the reactor and get out up the shaft. Two breaching torpedoes are lent if you carry none.";
+    case "defend":
+      return "The bombers first: their escort can wait. Keep off the ground.";
+    case "raid":
+      return i >= classIndex("Large") ? "A big ship makes a slow bomber: the flak will find you." : "Come in low and fast, release on the sight, and pull up.";
+    case "escort":
+      return "Stay over the convoy: the bombers make for it, the fighters for you.";
+    case "strike":
+      return "Bombs or guns on the haulers; the flak speeder shoots back.";
   }
 }
 
 export function dogfightStart(o: StartOptions): Dogfight {
+  if (scenarioOf(o.scenario).air) return airStart(o);
   const rand = createRandom(o.seed);
   const scenario = scenarioOf(o.scenario);
   const setup = SETUPS[scenario.id];
@@ -796,7 +882,7 @@ export function dogfightStart(o: StartOptions): Dogfight {
   const s: Dogfight = {
     seed: o.seed, scenario: scenario.id, t: 0, acc: 0, limit: scenario.limit, bound: ARENA.bound, vessels: [], shots: [], nextId: 1, me: 0, lock: null, lockPart: -1, retargetSeen: 0, subSeen: 0, pickSeen: 0, cycleSeen: 0, sel: 0, slot: 0, throttle: ARENA.cruise, dialSeen: 0, flares: Math.max(1, tier), god: false,
     aim: null, kills: {}, partsDown: {}, taken: {}, foesTotal: 0, fired: 0, hits: 0, bumps: 0, bumpWait: 0, events: [], fx: [], said: [], log: [], warnings: { missile: 0, outside: 0 },
-    fighter: null, interior: null, stationDown: false, outcome: null, over: false, tier, loaned, briefing: [scenario.intro],
+    fighter: null, interior: null, stationDown: false, outcome: null, over: false, tier, loaned, briefing: [scenario.intro], air: null,
   };
   const party = makeVessel(mine, { name: mine.name, owner: o.ship.owner }, "party", { p: [0, 0, 0], yaw: 0 }, o.seed, s.nextId++);
   party.speed = party.top * ARENA.cruise;
@@ -840,6 +926,123 @@ const sortieLines = (name: string, tooBig: boolean, loaned: string[]) => [
   ...(tooBig ? [`${name} is too big for the station's port: you fly one of its strike craft.`] : []),
   ...(loaned.length ? [`${loaned.join(" and ")} lent for the sortie (house rule).`] : []),
 ];
+// ---- In the air of a planet (house rules; see the head of the file)
+export interface AirOptions { biome?: string; g?: number; owner?: string }
+// A box for a building's hull: the planes of its six faces
+const boxVolume = (half: Vec3): HullVolume => ({ kind: "convex", planes: [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]].map((n, i) => ({ n: n as Vec3, d: half[Math.floor(i / 2)] })) });
+// A piece on the ground: a building (a box of the size given), a flak turret, a ground vehicle on a route
+export function groundVessel(rows: StarshipRow[], kind: GroundKind, side: "party" | "foe", at: Vec3, yaw: number, tier: number, rand: ReturnType<typeof createRandom>, id: number, extra: { half?: Vec3; name?: string; owner?: string; route?: Vec3[]; target?: boolean } = {}): Vessel {
+  const kit: FoeKind = kind === "building" ? "building" : kind === "flak" ? "flak" : "hauler";
+  const base = foeSheet(rows, kit, tier, rand, extra.name);
+  const hull = AIR.hull[kind] + tier * 6;
+  const sheet: ShipSheet = { ...base, hullMax: hull, ac: kind === "building" ? 8 : kind === "flak" ? 13 : 11, hasShield: false, shieldMax: 0 };
+  const v = makeVessel(sheet, { name: sheet.name, owner: extra.owner ?? (side === "party" ? "the settlement" : "the enemy"), cls: kind === "building" ? "Large" : kind === "flak" ? "Small" : "Medium" }, side, { p: at, yaw }, id * 7, id);
+  v.c = { ...v.c, hull, shield: 0 };
+  v.speed = 0;
+  v.top = kind === "vehicle" ? AIR.convoy : 0;
+  v.turn = kind === "flak" ? 2.5 : 0.8;
+  if (kind === "building") {
+    const half = extra.half ?? [14, 8, 14];
+    v.half = half;
+    v.volume = boxVolume(half);
+    v.reach = Math.max(...half);
+    v.p = [at[0], half[1], at[2]];
+  } else {
+    v.half = kind === "flak" ? [3, 2.5, 3] : [9, 3, 4];
+    v.volume = { kind: "ellipsoid" };
+    v.reach = Math.max(...v.half);
+    v.p = [at[0], v.half[1], at[2]];
+  }
+  v.ground = { kind, ...(extra.target ? { target: true } : {}), ...(extra.route ? { route: extra.route, leg: 0 } : {}) };
+  v.bounty = kind === "building" ? 300 : kind === "flak" ? 150 : 250;
+  return v;
+}
+export function airStart(o: StartOptions): Dogfight {
+  const rand = createRandom(o.seed);
+  const scenario = scenarioOf(o.scenario);
+  const goal = scenario.id as AirField["goal"];
+  const tier = clamp(o.ship.sheet.tier, 0, 5);
+  const { sheet: mine, loaned } = partySheet(o.ship.sheet, scenario.id);
+  const g = o.air?.g ?? 1;
+  const s: Dogfight = {
+    seed: o.seed, scenario: scenario.id, t: 0, acc: 0, limit: scenario.limit, bound: ARENA.bound, vessels: [], shots: [], nextId: 1, me: 0, lock: null, lockPart: -1, retargetSeen: 0, subSeen: 0, pickSeen: 0, cycleSeen: 0, sel: 0, slot: 0, throttle: 0.6, dialSeen: 0, flares: Math.max(1, tier), god: false,
+    aim: null, kills: {}, partsDown: {}, taken: {}, foesTotal: 0, fired: 0, hits: 0, bumps: 0, bumpWait: 0, events: [], fx: [], said: [], log: [], warnings: { missile: 0, outside: 0 },
+    fighter: null, interior: null, stationDown: false, outcome: null, over: false, tier, loaned, briefing: [scenario.intro],
+    air: { biome: o.air?.biome ?? "temperate", g, ceiling: AIR.ceiling, goal, total: 0, lost: 0, arrived: 0, why: "" },
+  };
+  const imperial = /empire|imperial/i.test(o.air?.owner ?? "") || (!o.air?.owner && rand.chance(0.5));
+  const owner = o.air?.owner ?? (imperial ? "the Empire" : rand.pick(["pirates", "the Black Sun", "a warlord", "the Hutts"]));
+  const foe = (kind: FoeKind, p: Vec3, yaw: number, speedShare = 0.8) => {
+    const kit = KITS[kind];
+    const sheet = foeSheet(o.rows, kind, tier, rand);
+    const v = makeVessel(sheet, { name: sheet.name, owner, imperial, cls: kit.cls }, "foe", { p, yaw }, o.seed + s.nextId, s.nextId++);
+    v.speed = v.top * speedShare;
+    s.vessels.push(v);
+    return v;
+  };
+  // The settlement: a ring of buildings round its middle, their sizes varied
+  const town = (side: "party" | "foe", count: number, targets: number) => {
+    const names = [...FOE_NAMES.building].sort(() => rand.next() - 0.5);
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + rand.next() * 0.4;
+      const r = 70 + rand.next() * 170;
+      const half: Vec3 = [10 + rand.next() * 14, 6 + rand.next() * 14, 10 + rand.next() * 14];
+      s.vessels.push(groundVessel(o.rows, "building", side, [Math.cos(a) * r, 0, Math.sin(a) * r], rand.next() * Math.PI, tier, rand, s.nextId++, { half, name: names[i % names.length], owner: side === "foe" ? owner : "the settlement", target: i < targets }));
+    }
+  };
+  const road = (from: Vec3, to: Vec3): Vec3[] => [from, [(from[0] + to[0]) / 2, 0, (from[2] + to[2]) / 2 + (rand.next() - 0.5) * 300], to];
+  const convoy = (side: "party" | "foe", count: number, route: Vec3[], flak: boolean) => {
+    for (let i = 0; i < count + (flak ? 1 : 0); i++) {
+      const at: Vec3 = [route[0][0] - i * 45, 0, route[0][2]];
+      const piece = groundVessel(o.rows, flak && i === 1 ? "flak" : "vehicle", side, at, 0, tier, rand, s.nextId++, { owner: side === "foe" ? owner : "the convoy", route, target: true });
+      piece.top = AIR.convoy;
+      s.vessels.push(piece);
+    }
+  };
+  let start: { p: Vec3; yaw: number } = { p: [-900, 260, 0], yaw: 0 };
+  if (goal === "defend") {
+    town("party", 7, 7);
+    start = { p: [-250, 230, 0], yaw: 0 };
+    const bombers = 3 + Math.floor(tier / 2);
+    for (let i = 0; i < bombers; i++) foe("bomber", [1900 + i * 60, AIR.bombRun + rand.next() * 40, (i - (bombers - 1) / 2) * 140], Math.PI, 0.9);
+    foe("fighter", [1700, 260, -260], Math.PI);
+    foe("fighter", [1700, 260, 260], Math.PI);
+  } else if (goal === "raid") {
+    town("foe", 8, 4);
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * Math.PI * 2 + 0.5;
+      s.vessels.push(groundVessel(o.rows, "flak", "foe", [Math.cos(a) * 130, 0, Math.sin(a) * 130], 0, tier, rand, s.nextId++, { owner }));
+    }
+    start = { p: [-1300, 260, 0], yaw: 0 };
+    foe("fighter", [300, 300, -400], Math.PI);
+    foe("fighter", [300, 300, 400], Math.PI);
+  } else if (goal === "escort") {
+    convoy("party", 3, road([-1500, 0, 0], [1500, 0, 0]), false);
+    start = { p: [-1450, 200, 120], yaw: 0 };
+    for (let i = 0; i < 2; i++) foe("bomber", [400 + i * 120, AIR.bombRun + 30, 1500], -Math.PI / 2, 0.9);
+    foe("fighter", [300, 280, 1500], -Math.PI / 2);
+    foe("fighter", [500, 280, -1500], Math.PI / 2);
+  } else {
+    convoy("foe", 3, road([-600, 0, 0], [2000, 0, 0]), true);
+    start = { p: [-1900, 260, 500], yaw: 0 };
+    foe("fighter", [-300, 300, 300], Math.PI);
+    foe("fighter", [-300, 300, -300], Math.PI);
+  }
+  const party = makeVessel(mine, { name: mine.name, owner: o.ship.owner }, "party", { p: start.p, yaw: start.yaw }, o.seed, s.nextId++);
+  party.speed = party.top * 0.6;
+  party.calm = 99;
+  s.me = party.id;
+  s.vessels.unshift(party);
+  s.fighter = foeSheet(o.rows, "interceptor", tier, rand, "Interceptor");
+  const theirs = s.vessels.filter((v) => v.ground && (goal === "defend" || goal === "escort" ? v.side === "party" : v.side === "foe" && v.ground.target));
+  s.air!.total = theirs.length;
+  s.foesTotal = s.vessels.filter((v) => v.side === "foe").length;
+  s.bound = 3600;
+  s.briefing.push(...sortieLines(o.ship.sheet.name, false, loaned));
+  if (g !== 1) s.briefing.push(`The pull here is ${g}× standard: bombs fall ${g > 1 ? "faster" : "slower"} (house rule).`);
+  return s;
+}
+
 export function sortieNotes(sheet: ShipSheet, scenario: ScenarioId): string[] {
   const tooBig = scenarioOf(scenario).interior && classIndex(classOf(sheet.size)) > classIndex(STATION.port);
   // (what the shipyard has fitted to the ship is in the fight: its numbers, its weapons' bonuses, flares and feedback)

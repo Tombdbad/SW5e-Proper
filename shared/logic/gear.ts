@@ -379,6 +379,8 @@ export interface DayPlace {
   forageDc: number;
   // Aboard a ship with a hydroponics garden: food
   garden?: boolean;
+  // Water to be had at will (an item that makes it, such as an atmospheric decanting vessel)
+  water?: boolean;
 }
 export interface DayResult {
   supplies: Supplies;
@@ -414,7 +416,7 @@ export function passDays(start: Supplies, upTo: number, place: DayPlace, credits
       s.water = place.capacity;
       watered = true;
     } else {
-      if (place.where === "ship") {
+      if (place.where === "ship" || place.water) {
         s.water = place.capacity;
         watered = true;
         if (place.garden) fed = true;

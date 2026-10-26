@@ -1,17 +1,19 @@
 // The dogfight's game body (MinigamePage in FlightScene.tsx supplies the page, the countdown and the end screen): the 3D scene, the HUD,
-// the steering pad and the buttons (fire, missile, bomb, faster, slower, target, part), the keys, and the mouse. Start the fight from the rules
+// the steering pad and the buttons (fire, missile, bomb, faster, slower, target, part), the keys, and the mouse (steering, a cursor the guns
+// follow or the reticule instead, the mouse captured so that it cannot leave the screen, and fullscreen). Start the fight from the rules
 // with a seed, a scenario and the party's ship sheet; the fight's rules are shared/logic/dogfight.ts and dogfightSim.ts.
 import { Canvas, useThree } from "@react-three/fiber";
 import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createRandom } from "@shared/logic";
-import { dogfightStart, type Dogfight, type DogfightInput, type ScenarioId, type StarshipRow } from "@shared/logic/dogfight";
+import { dogfightStart, type AirOptions, type Dogfight, type DogfightInput, type ScenarioId, type StarshipRow } from "@shared/logic/dogfight";
 import type { ShipSheet } from "@shared/logic";
 import { shaped, STICK } from "../interiors/stick";
 import { ArenaScene, type ArenaSim } from "./ArenaScene";
 import type { View } from "./Cockpit";
 import { emptyOverlay, HudPanels, hudOf, MarkerLayer, Reticule, weaponLabel, type HudData } from "./DogfightHud";
 
-export interface DogfightSpec { title: string; seed: number; scenario: ScenarioId; rows: StarshipRow[]; ship: { sheet: ShipSheet; owner?: string }; view?: View }
+// `air`: the land, the pull and the foe of a fight in the air of a planet (dogfight.ts airStart)
+export interface DogfightSpec { title: string; seed: number; scenario: ScenarioId; rows: StarshipRow[]; ship: { sheet: ShipSheet; owner?: string }; view?: View; air?: AirOptions }
 
 // TEST BUILD ONLY: the button for unlimited hull and weapons. It exists only in a page built with VITE_TEST_MENU=1 (deploy/test-plain.sh, as the
 // game's test menu), never in the build the game is played on, so nothing here needs commenting out for production. To take it out by hand as
@@ -22,7 +24,8 @@ const PAD = STICK.radius;
 const BUTTON = "h-12 min-w-[4.6rem] rounded-full border border-sky-400/60 bg-gray-900/70 px-3 text-sm font-semibold text-sky-100 select-none touch-none disabled:opacity-40";
 const PILL = "h-7 rounded-full border border-sky-400/60 bg-gray-900/70 px-3 text-xs font-semibold text-sky-100 select-none touch-none";
 
-// What a pilot chose last time (the view, and whether the mouse steers), kept in the browser; the mouse steers by default
+// What a pilot chose last time (the view, whether the mouse steers, and what the guns follow), kept in the browser; the mouse steers by default
+// and the guns follow the cursor
 const saved = (key: string): string | null => {
   try {
     return localStorage.getItem(`sw5e.dogfight.${key}`);
@@ -38,6 +41,13 @@ const remember = (key: string, value: string) => {
 
 const clamp1 = (v: number) => Math.max(-1, Math.min(1, v));
 type Source = { x: number; y: number };
+type Aim = "cursor" | "reticle";
+
+// Fullscreen, with the older WebKit's names (iPhones have none: there the button is not shown)
+type FullDoc = Document & { webkitFullscreenElement?: Element | null; webkitFullscreenEnabled?: boolean; webkitExitFullscreen?: () => void };
+type FullEl = HTMLElement & { webkitRequestFullscreen?: () => void };
+const fullscreenOn = () => typeof document !== "undefined" && !!((document as FullDoc).fullscreenEnabled || (document as FullDoc).webkitFullscreenEnabled);
+const fullscreenNow = () => !!(document.fullscreenElement ?? (document as FullDoc).webkitFullscreenElement);
 
 // The arena is drawn from a frame loop of its own. React Three Fiber runs every canvas of the page from one loop, and a canvas that throws in a
 // frame (the map's did, every frame, when a room's motes changed in number) ends that frame for the canvases after it: the arena stood black
@@ -103,10 +113,11 @@ class SceneGuard extends Component<{ onCrash: (e: unknown) => void; children: Re
 // What the pilot is told when the view had to be built again, and how many times it is (a fight that keeps failing is left, not looped on)
 const REBUILDS = 4;
 
-export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightSpec; go: { current: boolean }; controls: boolean; onFinish: (s: Dogfight) => void }) {
+// `shell`: the page the fight is in, which is what goes fullscreen (so that the countdown and the end screen go with it)
+export function DogfightGame({ spec, go, controls, shell, onFinish }: { spec: DogfightSpec; go: { current: boolean }; controls: boolean; shell?: { current: HTMLElement | null }; onFinish: (s: Dogfight) => void }) {
   const sim = useRef<ArenaSim>(null as unknown as ArenaSim);
   if (!sim.current) {
-    const state = dogfightStart({ seed: spec.seed, scenario: spec.scenario, rows: spec.rows, ship: spec.ship });
+    const state = dogfightStart({ seed: spec.seed, scenario: spec.scenario, rows: spec.rows, ship: spec.ship, air: spec.air });
     sim.current = { state, roll: createRandom((spec.seed | 0) + 1).next, shake: 0, lastHull: state.vessels[0].c.hull + state.vessels[0].c.shield };
   }
   const input = useRef<DogfightInput>({ steer: { x: 0, y: 0 }, throttle: 0, roll: 0, dial: 0, retarget: 0, subtarget: 0, pick: 0, cycle: 0 });
@@ -125,6 +136,22 @@ export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightS
   const viewRef = useRef<View>(view);
   const [mouse, setMouseState] = useState<boolean>(() => saved("mouse") !== "0");
   const mouseRef = useRef(mouse);
+  // What the guns follow: the cursor, or the reticule (the nose). Where the cursor is on the screen goes to the scene (`aimAt`, -1 to 1 each way,
+  // y up) while the guns follow it; `follows` says so for what is drawn. The cursor is a point in the arena's pixels (`spot`) that the pointer
+  // moves: with the mouse captured (pointer lock) by its movement, so that it never leaves the screen; otherwise it is the pointer, held at the
+  // edge when the pointer goes past it.
+  const [aim, setAimState] = useState<Aim>(() => (saved("aim") === "reticle" ? "reticle" : "cursor"));
+  const aimRef = useRef(aim);
+  const aimAt = useRef<{ x: number; y: number } | null>(null);
+  const spot = useRef<{ x: number; y: number } | null>(null);
+  const [follows, setFollows] = useState(false);
+  const followsRef = useRef(false);
+  const [captured, setCaptured] = useState(false);
+  const [mouseSeen, setMouseSeen] = useState(false);
+  const [full, setFull] = useState(false);
+  const controlsRef = useRef(controls);
+  controlsRef.current = controls;
+  const place = useRef(() => {});
   const [god, setGodState] = useState(false);
   // The canvas is built again when its WebGL context is lost or it keeps faulting: `epoch` is its key
   const [epoch, setEpoch] = useState(0);
@@ -161,7 +188,28 @@ export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightS
     if (!on) {
       sources.current.mouse = { x: 0, y: 0 };
       mix();
-      if (cursor.current) cursor.current.style.display = "none";
+      releaseMouse();
+    }
+    place.current();
+  };
+  const setAim = (a: Aim) => {
+    aimRef.current = a;
+    setAimState(a);
+    remember("aim", a);
+    place.current();
+  };
+  const releaseMouse = () => {
+    if (document.pointerLockElement) document.exitPointerLock();
+  };
+  const toggleFull = () => {
+    const d = document as FullDoc;
+    const target = (shell?.current ?? root.current) as FullEl | null;
+    if (fullscreenNow()) (document.exitFullscreen ?? d.webkitExitFullscreen)?.call(document);
+    else if (target) {
+      try {
+        const asked = (target.requestFullscreen ?? target.webkitRequestFullscreen)?.call(target) as Promise<void> | undefined;
+        asked?.catch?.(() => {});
+      } catch {}
     }
   };
   const setGod = (on: boolean) => {
@@ -170,18 +218,24 @@ export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightS
   };
   const bump = (key: "cycle" | "retarget" | "subtarget" | "pick") => (input.current[key] = (input.current[key] ?? 0) + 1);
   // The latest of these for the key handler, which is set up once
-  const act = useRef({ toggleView: () => {}, toggleMouse: () => {} });
-  act.current = { toggleView: () => setView(viewRef.current === "cockpit" ? "chase" : "cockpit"), toggleMouse: () => setMouse(!mouseRef.current) };
+  const act = useRef({ toggleView: () => {}, toggleMouse: () => {}, toggleAim: () => {}, toggleFull: () => {} });
+  act.current = {
+    toggleView: () => setView(viewRef.current === "cockpit" ? "chase" : "cockpit"),
+    toggleMouse: () => setMouse(!mouseRef.current),
+    toggleAim: () => setAim(aimRef.current === "cursor" ? "reticle" : "cursor"),
+    toggleFull,
+  };
 
   useEffect(() => {
     const timer = setInterval(() => setHud(hudOf(sim.current.state, overlay.current.hullDist)), 100);
     // For test scripts, as the map's window.__map3d and the race's window.__race
-    (window as unknown as { __dogfight?: unknown }).__dogfight = { state: () => sim.current.state, input, setView: (v: View) => setView(v), view: viewRef, sources };
+    (window as unknown as { __dogfight?: unknown }).__dogfight = { state: () => sim.current.state, input, setView: (v: View) => setView(v), view: viewRef, sources, aimAt, spot, aim: aimRef };
     return () => clearInterval(timer);
   }, []);
 
   // The keys: W and S the throttle (it holds where it is left), A and D roll, the arrows yaw and pitch (up climbs), space fires, M a missile, B a
-  // bomb, T the next target, Y the next part of the target, Q the next ordnance, E the next weapon, C the view (chase or cockpit), V the mouse
+  // bomb, T the next target, Y the next part of the target, Q the next ordnance, E the next weapon, C the view (chase or cockpit), V the mouse,
+  // X what the guns follow (cursor or reticule), F fullscreen
   useEffect(() => {
     const held = new Set<string>();
     const KEYS = ["KeyW", "KeyS", "KeyA", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space", "KeyM", "KeyB"];
@@ -205,6 +259,8 @@ export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightS
       if (e.code === "KeyE") bump("cycle");
       if (!e.repeat && e.code === "KeyC") act.current.toggleView();
       if (!e.repeat && e.code === "KeyV") act.current.toggleMouse();
+      if (!e.repeat && e.code === "KeyX") act.current.toggleAim();
+      if (!e.repeat && e.code === "KeyF") act.current.toggleFull();
       if (!KEYS.includes(e.code)) return;
       if (e.code === "Space" || e.code.startsWith("Arrow")) e.preventDefault();
       held.add(e.code);
@@ -234,9 +290,12 @@ export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightS
     };
   }, []);
 
-  // The mouse: where it is on the screen is where the craft's nose turns toward, in yaw and pitch (a stick that is the whole screen: the middle
-  // is straight on, 40% of the shorter side is full turn); the left button fires the active weapon, the right button makes the next weapon the
-  // active one, the wheel moves the throttle (up for more). Over the buttons it does none of that.
+  // The mouse: where the cursor is on the screen is where the craft's nose turns toward, in yaw and pitch and never roll (a stick that is the
+  // whole screen: the middle is straight on, 40% of the shorter side is full turn), however far the cursor goes (it is held at the screen's
+  // edge, over the buttons and the page's title bar too, and when the mouse is captured it cannot go past it); and, while the guns follow the
+  // cursor, it is where they fire. The left button fires the active weapon (and the first click captures the mouse: Esc lets go), the right
+  // button makes the next weapon the active one, the wheel moves the throttle (up for more). Over the buttons the buttons are what a click
+  // reaches, and the guns are on the reticule.
   useEffect(() => {
     const el = root.current;
     if (!el) return;
@@ -247,31 +306,80 @@ export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightS
         mix();
       }
     };
+    // The pointer is somewhere over a button, or outside the arena (its title bar, say): the cursor is not drawn there and does not aim
+    let away = false;
+    const held = () => document.pointerLockElement === el;
+    // Everything that follows from where the cursor is: where it is drawn, the steering and the aim
+    const here = () => {
+      const p = spot.current;
+      const box = el.getBoundingClientRect();
+      if (p) {
+        p.x = Math.max(0, Math.min(box.width, p.x));
+        p.y = Math.max(0, Math.min(box.height, p.y));
+      }
+      const drawn = !!p && controlsRef.current && (mouseRef.current || aimRef.current === "cursor") && (held() || !away);
+      if (cursor.current) {
+        cursor.current.style.display = drawn ? "block" : "none";
+        if (p) cursor.current.style.transform = `translate(${p.x}px, ${p.y}px)`;
+      }
+      if (p && mouseRef.current) {
+        const reach = Math.min(box.width, box.height) * 0.4;
+        const dx = (p.x - box.width / 2) / reach;
+        const dy = (p.y - box.height / 2) / reach;
+        const d = Math.hypot(dx, dy);
+        const mag = d > 0 ? shaped(Math.min(1, d), 0.35, 0.04, 1) / d : 0;
+        sources.current.mouse = { x: dx * mag, y: dy * mag };
+        mix();
+      } else steerOff();
+      const aimed = drawn && aimRef.current === "cursor" && p && box.width > 0 && box.height > 0 ? { x: (p.x / box.width) * 2 - 1, y: 1 - (p.y / box.height) * 2 } : null;
+      aimAt.current = aimed;
+      if (!!aimed !== followsRef.current) {
+        followsRef.current = !!aimed;
+        setFollows(!!aimed);
+      }
+    };
+    place.current = here;
     const move = (e: PointerEvent) => {
       if (e.pointerType !== "mouse") return;
       const box = el.getBoundingClientRect();
-      const over = onUi(e.target);
-      if (cursor.current) {
-        cursor.current.style.transform = `translate(${e.clientX - box.left}px, ${e.clientY - box.top}px)`;
-        cursor.current.style.display = mouseRef.current && !over ? "block" : "none";
+      if (held()) {
+        // (the first movement after the capture can be a wild jump)
+        if (Math.abs(e.movementX) > 400 || Math.abs(e.movementY) > 400) return;
+        const p = spot.current ?? { x: box.width / 2, y: box.height / 2 };
+        spot.current = { x: p.x + e.movementX, y: p.y + e.movementY };
+        away = false;
+      } else {
+        spot.current = { x: e.clientX - box.left, y: e.clientY - box.top };
+        away = onUi(e.target) || e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom;
       }
-      if (!mouseRef.current || over) return steerOff();
-      const reach = Math.min(box.width, box.height) * 0.4;
-      const dx = (e.clientX - (box.left + box.width / 2)) / reach;
-      const dy = (e.clientY - (box.top + box.height / 2)) / reach;
-      const d = Math.hypot(dx, dy);
-      const mag = d > 0 ? shaped(Math.min(1, d), 0.35, 0.04, 1) / d : 0;
-      sources.current.mouse = { x: dx * mag, y: dy * mag };
-      mix();
+      setMouseSeen(true);
+      here();
     };
-    const leave = () => {
-      if (cursor.current) cursor.current.style.display = "none";
-      steerOff();
+    // The mouse is captured by a click while it steers (a pointer that leaves the window stops sending its place): it goes when the browser
+    // lets go (Esc), when the fight is over and the buttons are needed, and when the mouse is turned off
+    const capture = () => {
+      if (held() || !mouseRef.current || !controlsRef.current || typeof el.requestPointerLock !== "function") return;
+      try {
+        (el.requestPointerLock() as unknown as Promise<void> | undefined)?.catch?.(() => {});
+      } catch {}
+    };
+    const lockChange = () => {
+      setCaptured(held());
+      here();
     };
     const down = (e: PointerEvent) => {
       if (e.pointerType !== "mouse" || onUi(e.target)) return;
-      if (e.button === 0) input.current.trigger = true;
-      else if (e.button === 2) bump("cycle");
+      if (e.button === 0) {
+        // A captured mouse has no pointer to click with: a click on a button under the cursor (drawn there) presses it, and does not fire
+        const p = spot.current;
+        if (held() && p) {
+          const box = el.getBoundingClientRect();
+          const tap = document.elementsFromPoint(box.left + p.x, box.top + p.y).find((n) => n instanceof HTMLElement && n.dataset.tap !== undefined) as HTMLElement | undefined;
+          if (tap) return tap.click();
+        }
+        input.current.trigger = true;
+        capture();
+      } else if (e.button === 2) bump("cycle");
     };
     const up = (e: PointerEvent) => {
       if (e.pointerType === "mouse" && e.button === 0) input.current.trigger = false;
@@ -287,24 +395,53 @@ export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightS
       notches -= whole;
       input.current.dial = (input.current.dial ?? 0) - whole;
     };
-    el.addEventListener("pointermove", move);
-    el.addEventListener("pointerleave", leave);
+    const fullChange = () => {
+      setFull(fullscreenNow());
+      here();
+    };
+    // (on the window and not the arena: the cursor goes on steering over the buttons and the title bar)
+    window.addEventListener("pointermove", move);
     el.addEventListener("pointerdown", down);
     el.addEventListener("contextmenu", menu);
     el.addEventListener("wheel", wheel, { passive: false });
     window.addEventListener("pointerup", up);
+    window.addEventListener("resize", here);
+    document.addEventListener("pointerlockchange", lockChange);
+    document.addEventListener("fullscreenchange", fullChange);
+    document.addEventListener("webkitfullscreenchange", fullChange);
     return () => {
-      el.removeEventListener("pointermove", move);
-      el.removeEventListener("pointerleave", leave);
+      window.removeEventListener("pointermove", move);
       el.removeEventListener("pointerdown", down);
       el.removeEventListener("contextmenu", menu);
       el.removeEventListener("wheel", wheel);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("resize", here);
+      document.removeEventListener("pointerlockchange", lockChange);
+      document.removeEventListener("fullscreenchange", fullChange);
+      document.removeEventListener("webkitfullscreenchange", fullChange);
+      place.current = () => {};
+      if (document.pointerLockElement === el) document.exitPointerLock();
     };
   }, []);
+  // The end screen and the countdown need the pointer (their buttons): the mouse is let go
+  useEffect(() => {
+    if (!controls) releaseMouse();
+    place.current();
+  }, [controls]);
 
+  // The guns are on the cursor (in the station's tunnel they never are: the craft is flown straight and fires at the reticule)
+  const guns = follows && !hud.interior;
   return (
-    <div ref={root} className="absolute inset-0" style={{ cursor: mouse && controls ? "none" : undefined }} data-testid="dogfight-root" data-view={view} data-mouse={mouse ? "on" : "off"}>
+    <div
+      ref={root}
+      className="absolute inset-0"
+      style={{ cursor: (mouse || aim === "cursor") && controls && mouseSeen ? "none" : undefined }}
+      data-testid="dogfight-root"
+      data-view={view}
+      data-mouse={mouse ? "on" : "off"}
+      data-aim={follows ? "cursor" : "reticle"}
+      data-captured={captured ? "true" : "false"}
+    >
       <SceneGuard key={epoch} onCrash={(e) => rebuild(`the scene threw: ${String((e as Error)?.message ?? e).slice(0, 120)}`)}>
         <Canvas
           frameloop="never"
@@ -320,6 +457,7 @@ export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightS
             input={input}
             overlay={overlay}
             view={viewRef}
+            cursor={aimAt}
             onFrame={() => {}}
             onFinish={(s) => {
               if (finished.current) return;
@@ -331,11 +469,24 @@ export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightS
       </SceneGuard>
       {notice && <div className="pointer-events-none absolute left-1/2 top-16 -translate-x-1/2 rounded bg-amber-900/80 px-3 py-1 text-xs font-semibold text-amber-100" data-testid="dogfight-notice">{notice}</div>}
       <MarkerLayer overlay={overlay} />
-      <Reticule locked={hud.onTarget} />
-      <div ref={cursor} className="pointer-events-none absolute left-0 top-0 hidden" data-testid="aim-cursor">
-        <div className="absolute -left-4 -top-4 h-8 w-8 rounded-full border-2 border-sky-300/90" style={{ boxShadow: "0 0 6px #7dd3fc" }} />
-        <div className="absolute -left-0.5 -top-0.5 h-1 w-1 rounded-full bg-sky-200" />
+      <Reticule overlay={overlay} locked={hud.onTarget} guns={!guns} />
+      <div ref={cursor} className="pointer-events-none absolute left-0 top-0 hidden" data-testid="aim-cursor" data-guns={guns ? "true" : "false"} data-locked={guns && hud.onTarget ? "true" : "false"}>
+        <div className="absolute -left-4 -top-4 h-8 w-8 rounded-full border-2" style={{ borderColor: guns && hud.onTarget ? "#ff3b3b" : "#7dd3fc", boxShadow: `0 0 6px ${guns && hud.onTarget ? "#ff3b3b" : "#7dd3fc"}` }} />
+        <div className="absolute -left-0.5 -top-0.5 h-1 w-1 rounded-full" style={{ background: guns && hud.onTarget ? "#ff9a9a" : "#bae6fd" }} />
+        {guns && (
+          <>
+            <div className="absolute -top-6 -left-px h-2 w-0.5" style={{ background: hud.onTarget ? "#ff3b3b" : "#7dd3fc" }} />
+            <div className="absolute -left-px top-4 h-2 w-0.5" style={{ background: hud.onTarget ? "#ff3b3b" : "#7dd3fc" }} />
+            <div className="absolute -left-6 -top-px h-0.5 w-2" style={{ background: hud.onTarget ? "#ff3b3b" : "#7dd3fc" }} />
+            <div className="absolute -top-px left-4 h-0.5 w-2" style={{ background: hud.onTarget ? "#ff3b3b" : "#7dd3fc" }} />
+          </>
+        )}
       </div>
+      {mouse && controls && mouseSeen && !captured && typeof document !== "undefined" && "pointerLockElement" in document && (
+        <div className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded bg-gray-900/70 px-2 py-0.5 text-[11px] text-sky-100" data-testid="dogfight-capture">
+          Click the view to capture the mouse (Esc lets go)
+        </div>
+      )}
       <HudPanels hud={hud} high={view === "cockpit"} />
       {controls && (
         <DogfightControls
@@ -345,9 +496,14 @@ export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightS
           hud={hud}
           view={view}
           mouse={mouse}
+          captured={captured}
+          aim={aim}
+          full={full}
           god={god}
           onView={() => act.current.toggleView()}
           onMouse={() => act.current.toggleMouse()}
+          onAim={() => act.current.toggleAim()}
+          onFull={() => act.current.toggleFull()}
           onWeapon={() => bump("cycle")}
           onPart={() => bump("subtarget")}
           onGod={() => setGod(!god)}
@@ -357,16 +513,21 @@ export function DogfightGame({ spec, go, controls, onFinish }: { spec: DogfightS
   );
 }
 
-function DogfightControls({ input, sources, mix, hud, view, mouse, god, onView, onMouse, onWeapon, onPart, onGod }: {
+function DogfightControls({ input, sources, mix, hud, view, mouse, captured, aim, full, god, onView, onMouse, onAim, onFull, onWeapon, onPart, onGod }: {
   input: { current: DogfightInput };
   sources: { current: { pad: Source } };
   mix: () => void;
   hud: HudData;
   view: View;
   mouse: boolean;
+  captured: boolean;
+  aim: Aim;
+  full: boolean;
   god: boolean;
   onView: () => void;
   onMouse: () => void;
+  onAim: () => void;
+  onFull: () => void;
   onWeapon: () => void;
   onPart: () => void;
   onGod: () => void;
@@ -402,15 +563,17 @@ function DogfightControls({ input, sources, mix, hud, view, mouse, god, onView, 
     <>
       <div data-hud-ui className="absolute left-4 flex flex-col items-start gap-1" style={{ bottom: STICK.size + 28 }}>
         {TEST_TOOLS && (
-          <button type="button" data-testid="dogfight-god" aria-pressed={god} className={`${PILL} ${god ? "border-fuchsia-300 bg-fuchsia-900/70 text-fuchsia-100" : "border-fuchsia-400/60"}`} onClick={onGod} title="Test build only">
+          <button type="button" data-testid="dogfight-god" data-tap aria-pressed={god} className={`${PILL} ${god ? "border-fuchsia-300 bg-fuchsia-900/70 text-fuchsia-100" : "border-fuchsia-400/60"}`} onClick={onGod} title="Test build only">
             Test: unlimited hull and weapons {god ? "on" : "off"}
           </button>
         )}
-        <button type="button" data-testid="dogfight-weapon" className={PILL} onClick={onWeapon} title="Right click or E">
+        <button type="button" data-testid="dogfight-weapon" data-tap className={PILL} onClick={onWeapon} title="Right click or E">
           Weapon: {active ? `${weaponLabel(active.name, active.kind)}${active.ammo !== null ? " " + active.ammo : ""}` : "none"}
         </button>
-        <button type="button" data-testid="dogfight-view" className={PILL} onClick={onView} title="C">{view === "cockpit" ? "Cockpit view" : "Chase view"}</button>
-        <button type="button" data-testid="dogfight-mouse" aria-pressed={mouse} className={`${PILL} ${mouse ? "border-yellow-300 text-yellow-100" : ""}`} onClick={onMouse} title="V">Mouse steering {mouse ? "on" : "off"}</button>
+        <button type="button" data-testid="dogfight-view" data-tap className={PILL} onClick={onView} title="C">{view === "cockpit" ? "Cockpit view" : "Chase view"}</button>
+        <button type="button" data-testid="dogfight-mouse" data-tap aria-pressed={mouse} className={`${PILL} ${mouse ? "border-yellow-300 text-yellow-100" : ""}`} onClick={onMouse} title="V">Mouse steering {mouse ? (captured ? "on (captured)" : "on") : "off"}</button>
+        <button type="button" data-testid="dogfight-aim" data-tap data-aim={aim} className={PILL} onClick={onAim} title="X: the guns fire at the cursor, or along the nose at the reticule">Aim: {aim === "cursor" ? "cursor" : "reticule"}</button>
+        {fullscreenOn() && <button type="button" data-testid="dogfight-full" data-tap aria-pressed={full} className={PILL} onClick={onFull} title="F">{full ? "Leave fullscreen" : "Fullscreen"}</button>}
       </div>
       <div
         ref={pad}
@@ -437,10 +600,10 @@ function DogfightControls({ input, sources, mix, hud, view, mouse, god, onView, 
         {hud.bombs ? (
           <button type="button" data-testid="flight-bomb" disabled={hud.bombs.ammo === 0} className={BUTTON} {...hold((d) => (input.current.bomb = d))}>Bomb {hud.bombs.ammo}</button>
         ) : <span />}
-        <button type="button" data-testid="flight-target" className={`${BUTTON} ${hud.lockOn ? "border-red-400 text-red-200" : ""}`} onClick={() => (input.current.retarget = (input.current.retarget ?? 0) + 1)}>Target</button>
-        <button type="button" data-testid="flight-part" className={BUTTON} title="The next turret, generator or bay of the target (Y)" onClick={onPart}>Part</button>
+        <button type="button" data-testid="flight-target" data-tap className={`${BUTTON} ${hud.lockOn ? "border-red-400 text-red-200" : ""}`} onClick={() => (input.current.retarget = (input.current.retarget ?? 0) + 1)}>Target</button>
+        <button type="button" data-testid="flight-part" data-tap className={BUTTON} title="The next turret, generator or bay of the target (Y)" onClick={onPart}>Part</button>
         {hud.ord.length > 1 ? (
-          <button type="button" data-testid="flight-pick" className={`${BUTTON} h-12 text-xs`} onClick={() => (input.current.pick = (input.current.pick ?? 0) + 1)}>Switch ordnance</button>
+          <button type="button" data-testid="flight-pick" data-tap className={`${BUTTON} h-12 text-xs`} onClick={() => (input.current.pick = (input.current.pick ?? 0) + 1)}>Switch ordnance</button>
         ) : <span />}
       </div>
     </>

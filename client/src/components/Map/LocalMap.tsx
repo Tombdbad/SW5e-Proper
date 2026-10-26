@@ -5,8 +5,10 @@ import * as THREE from "three";
 import { useKeyboardControls } from "@react-three/drei";
 import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
-import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey, squaresApart, type Combatant } from "@/lib/stores/useCombat";
-import { standsAt, stairsGoals, arrivalSquares, climbAt, canStep, floorsOf, type Companion, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
+import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey, squaresApart, type Combatant, type Step } from "@/lib/stores/useCombat";
+// A lit square's colour by how it is reached: walked (green), jumped, climbed or flown to (blue), or a fall at the end (orange)
+const stepColor = (step: Step) => (step.fall ? "#fb923c" : step.how && /^(jump|climb|hook|fly)$/.test(step.how) ? "#38bdf8" : "#4ade80");
+import { standsAt, stairsGoals, arrivalSquares, climbAt, canStep, floorsOf, piecesIn, squaresOf, type Companion, type Cart, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
 import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind } from "./sprites";
@@ -15,7 +17,7 @@ import { Stock } from "./interiors/Stock.tsx";
 import { CaveDressing, CaveMound, CaveSlab, CaveWalls, MaskFloor, RockWall } from "./interiors/CaveRoom";
 import { moodOf } from "./interiors/atmosphere";
 import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
-import { PackWalls, cornerCentre, type WallRun } from "./interiors/Walls";
+import { PackWalls, cornerCentre, bendOf, holeOf, piercedWall, type Bend, type WallRun } from "./interiors/Walls";
 import { AIM, useView, type AimPlan } from "./interiors/aim";
 import { ViewRig } from "./interiors/ViewRig";
 import { stickWalk } from "./interiors/stick";
@@ -23,10 +25,10 @@ import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
-import { CurtainWall, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
-import { WallGeometry, WallMaterial, wallSet, type WallSet } from "./surfaces";
-import { Figure, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, RoundedFloor, CornerWall, DomeRoof, Opening, styleOf, hue, type Style } from "./models";
-import { radiiOf as shapeRadii } from "@shared/logic/footprint";
+import { BasePieceModel, CartModel, CurtainWall, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
+import { WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
+import { Figure, seatFor, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
 // The flying games draw the same ships and speeders
 export { ShipModel, SpeederModel } from "./models";
@@ -66,6 +68,15 @@ export const usePartySpot = create<{ areaId: string | null; x: number; y: number
   stand: (areaId, x, y) => set({ areaId, x, y }),
 }));
 
+// A base piece being set down (shared/logic bases.ts): Play picks the item, the map shows where it would stand by the party and a tap on
+// an open square puts it there (MapAction "place"); `face` is turned by Play's Turn button
+export const usePlacing = create<{ piece: { item: string; name: string; w: number; h: number; places: ("outdoors" | "indoors")[]; look: string } | null; face: number; set: (piece: { item: string; name: string; w: number; h: number; places: ("outdoors" | "indoors")[]; look: string } | null) => void; turn: () => void }>((set) => ({
+  piece: null,
+  face: 0,
+  set: (piece) => set({ piece, face: 0 }),
+  turn: () => set((s) => ({ face: (s.face + 1) % 4 })),
+}));
+
 // The campaign clock, in minutes (shared/logic "Time"). Play keeps it; the map lights the scene by it.
 export const useClock = create<{ minutes: number; set: (minutes: number) => void }>((set) => ({
   minutes: START_TIME,
@@ -75,7 +86,8 @@ export const useClock = create<{ minutes: number; set: (minutes: number) => void
 // drawn moving by the clock: a ship coming down into its berth, the doors of its hangar
 let tickedAt = performance.now();
 useClock.subscribe((state, before) => { if (state.minutes !== before.minutes) tickedAt = performance.now(); });
-const minuteNow = () => useClock.getState().minutes + Math.min(1, (performance.now() - tickedAt) / 1000);
+// (a test may hold it at a minute of its own, `window.__minuteAt`, to look at a ship coming or going a step at a time)
+const minuteNow = () => (typeof window !== "undefined" ? (window as unknown as { __minuteAt?: number }).__minuteAt : undefined) ?? useClock.getState().minutes + Math.min(1, (performance.now() - tickedAt) / 1000);
 
 // The sky and the light over a place on a planet's surface, by the hour: a blue sky by day, warm
 // light at dawn and dusk, and a dark sky with faint blue moonlight at night
@@ -142,6 +154,8 @@ const GROUND: Record<string, string> = { desert: "#4a3a22", ice: "#39505c", urba
 const STEEL = "#7b8794";
 
 const isLarge = (size?: string) => /large|huge|gargantuan/i.test(size ?? "");
+// How far a person's seat is over their feet (the legs turn at 0.56 in `buildHumanoid`; the seat is a little under the hip joint)
+const RIDER_HIPS = 0.5;
 
 // A name that turns to face whoever is looking
 // Names are sized to be read from above; from the character's eyes they are a third as large (the crosshair names what it is on)
@@ -159,17 +173,24 @@ const Label = ({ at, size = 0.34, color = "white", children }: { at: V3; size?: 
 
 // Something to tap that is easier to hit than what is drawn. It is also what the crosshair of the first-person and shoulder views can
 // aim at (interiors/aim.ts): `label` says what it is, and the action key calls `onTap` as a tap does
-const Hit = ({ at, size, onTap, label, plan }: { at: V3; size: V3; onTap: () => void; label?: string; plan?: () => AimPlan }) => {
+// `person`: someone standing there; a tap under the pointer goes to them before anything else it passes through (2026-10-26: a bench in
+// front of a disabled droid took every tap meant for the droid, and the party walked to the bench instead)
+const Hit = ({ at, size, onTap, label, plan, person = false }: { at: V3; size: V3; onTap: () => void; label?: string; plan?: () => AimPlan; person?: boolean }) => {
   const mesh = useRef<THREE.Mesh>(null);
   useEffect(() => {
     const m = mesh.current;
     if (!m) return;
     m.userData.aim = { label, onTap, plan };
+    m.userData.person = person;
     AIM.targets.add(m);
     return () => { AIM.targets.delete(m); };
   });
   return (
-    <mesh ref={mesh} position={at} onClick={(e) => { e.stopPropagation(); if (e.delta <= 8) onTap(); }}>
+    <mesh ref={mesh} position={at} onClick={(e) => {
+      if (!person && e.intersections.some((i) => i.object !== mesh.current && i.object.userData?.person)) return;
+      e.stopPropagation();
+      if (e.delta <= 8) onTap();
+    }}>
       <boxGeometry args={size} />
       <meshBasicMaterial transparent opacity={0} depthWrite={false} />
     </mesh>
@@ -216,22 +237,45 @@ function Berth({ w, h, name, note }: { w: number; h: number; name: string; note:
   );
 }
 
-// What a berth of a hangar shows: its ship, which comes down from above or rises out by the clock (the minute
-// between ticks, see `bayBerth`), or the painted berth. `rise` is how high it goes to be clear of the roof.
+// What a berth of a hangar shows: its ship, which comes in or goes out by the clock (the minute between ticks, see `bayBerth`), or the
+// painted berth. `rise` is how high it goes to be clear of the roof. Going out it lifts clear of the roof, then pitches its bow (+x) up
+// and climbs away, faster and faster, until it is out of sight; coming in it is the same flight the other way: in from far off astern,
+// bow down, levelling out over its berth and settling (2026-10-26, the user: ships vanished once they were over the building)
+const BAY_CLIMB = 0.35; // the share of the move spent straight up out of the roof
+const BAY_FAR = 260; // how far off (squares) a ship is when it is gone from sight
 function BayBerth({ room, asset, based, ceiling, rise: up = 8 }: { room: Pick<Area, "id" | "ships">; asset: RoomAsset; based?: Ship[]; ceiling?: number; rise?: number }) {
   const group = useRef<THREE.Group>(null);
+  const pivot = useRef<THREE.Group>(null);
   const [shown, setShown] = useState(() => bayBerth(room, asset, based, minuteNow()));
   const was = useRef("");
   const keyOf = (b: ReturnType<typeof bayBerth>) => `${b.ship?.id ?? ""}|${b.away}`;
   useFrame(() => {
     const b = bayBerth(room, asset, based, minuteNow());
-    if (group.current) group.current.position.y = b.lift * up;
+    const g = group.current;
+    if (g) {
+      if (b.lift <= BAY_CLIMB) {
+        g.position.set(0, (b.lift / BAY_CLIMB) * up, 0);
+        if (pivot.current) pivot.current.rotation.z = 0;
+      } else {
+        const t = (b.lift - BAY_CLIMB) / (1 - BAY_CLIMB);
+        const away = t * t * BAY_FAR;
+        // out along the bow going, in from astern coming
+        g.position.set((b.leaving ? 1 : -1) * away, up + away * 0.45, 0);
+        if (pivot.current) pivot.current.rotation.z = (b.leaving ? 1 : -1) * Math.min(0.55, t * 2.2);
+      }
+      g.visible = b.lift < 0.97;
+    }
     if (keyOf(b) !== (was.current || keyOf(shown))) setShown(b);
     was.current = keyOf(b);
   });
   return (
     <>
-      <group ref={group}>{shown.ship && <ShipModel ship={shown.ship} w={asset.w} h={asset.h} ceiling={ceiling} />}</group>
+      <group ref={group}>
+        {/* the ship turns about its middle */}
+        <group ref={pivot} position={[asset.w / 2, 0, asset.h / 2]}>
+          <group position={[-asset.w / 2, 0, -asset.h / 2]}>{shown.ship && <ShipModel ship={shown.ship} w={asset.w} h={asset.h} ceiling={ceiling} />}</group>
+        </group>
+      </group>
       {!shown.ship && <Berth w={asset.w} h={asset.h} name={asset.name} note={shown.away ? "away on a voyage" : "free for visiting ships"} />}
     </>
   );
@@ -440,8 +484,6 @@ const FULL_WALL_HEIGHT = 2.4;
 // A gallery's balustrade: waist high to a figure, so that the floor below stays open to the ceiling
 const BALUSTRADE_HEIGHT = 1.0;
 const WALL_THICK = 0.16;
-// The top of a doorway's leaf (1.42) and its lamp: the wall above it is lintel from here up
-const DOOR_TOP = 1.5;
 const isWay = (a: RoomAsset) => !!a.side && a.kind !== "window";
 // Which sides of a gallery are its balustrade: the one opposite the wall it stands against (it runs flush with its host's wall there), so
 // that the rail overlooks the room below. A gallery that stands clear of every wall rails its south side.
@@ -466,10 +508,114 @@ const onWall = (layout: { width: number; height: number }, a: RoomAsset): { x: n
 // building's style (arched, rounded or square; round windows in hulls)
 // (a window by its size: a slit, a small pane, a window one climbs through, a great window; shared/logic "Windows")
 const PANE_SCALE: Record<string, V3> = { slit: [0.3, 1.35, 1], small: [0.6, 0.75, 1], large: [1, 1.5, 1], wide: [1.15, 1.8, 1] };
-// The top of a window's frame (a window is drawn low in the wall; its size scales it, see PANE_SCALE) and of a doorway's leaf
-const openingTop = (a: RoomAsset) => (a.kind === "window" ? 0.6 * (PANE_SCALE[a.pane?.size ?? "small"]?.[1] ?? 1) : DOOR_TOP);
-// A doorway's leaf swings (or rolls up, for a hangar) when it is tapped, and shuts again when it is tapped once more
-function Doorway({ kind, color, label, onTap, style, pane, name = "" }: { kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string }) {
+// Where a door, way out or window of a room's wall stands (2026-10-26): on the wall line (`outline`) across from its square, so on the
+// curve of a round room; turned along the line there (the turn `onWall` gives on a straight side), and bent onto it where it curves
+interface WayPlace {
+  a: RoomAsset;
+  s: number;
+  at: [number, number];
+  turn: number;
+  bend?: Bend;
+}
+function wayPlace(line: Outline, width: number, height: number, a: RoomAsset): WayPlace {
+  const side = a.side as FootSide;
+  const s = outlineOf(line, width, height, side, side === "n" || side === "s" ? a.x : a.y);
+  // the way the wall's own x runs along the line: the north and west sides with it, the south and east against it
+  const sigma = side === "n" || side === "w" ? 1 : -1;
+  const point = outlineAt(line, s);
+  return { a, s, at: point.p, turn: Math.atan2(-sigma * point.t[1], sigma * point.t[0]), bend: bendOf(line, s, sigma) };
+}
+// Where a room stands against a round or oval room of its floor (a corridor to it, 2026-10-26, the user: "Corridors for round/oval
+// buildings should meet the curved wall with a matching radius"): the stretch [a, b] of the room's side that the round room's bounding
+// square shares (in the room's own squares), how far beyond that side the round room's curve lies at each point along it (`depth`), and
+// where a door of the room on that stretch stands: on the round room's curve, as the round room's own door there does
+interface Meet {
+  side: FootSide;
+  a: number;
+  b: number;
+  depth: (u: number) => number;
+  place: (a: RoomAsset) => WayPlace | undefined;
+}
+const OPPOSITE: Record<FootSide, FootSide> = { n: "s", s: "n", e: "w", w: "e" };
+function meetsOf(room: Area, rooms: Area[]): Meet[] {
+  const l = room.layout;
+  if (!l || l.shape || formOf(room) || l.mask) return [];
+  const out: Meet[] = [];
+  for (const other of rooms) {
+    const m = other.layout;
+    if (!m?.shape || other === room || (m.level ?? 0) !== (l.level ?? 0)) continue;
+    const radii = shapeRadii(m.shape, m.width, m.height);
+    const line = outline(m.width, m.height, radii);
+    const sides: [FootSide, boolean][] = [["e", m.x === l.x + l.width], ["w", m.x + m.width === l.x], ["s", m.y === l.y + l.height], ["n", m.y + m.height === l.y]];
+    for (const [side, touching] of sides) {
+      if (!touching) continue;
+      const across = side === "e" || side === "w";
+      const [lo, hi] = across ? [Math.max(l.y, m.y), Math.min(l.y + l.height, m.y + m.height)] : [Math.max(l.x, m.x), Math.min(l.x + l.width, m.x + m.width)];
+      if (hi - lo <= 0) continue;
+      const start = across ? l.y : l.x;
+      const otherStart = across ? m.y : m.x;
+      const depth = (u: number) => insetAt(m.width, m.height, radii, OPPOSITE[side], u + start - otherStart);
+      const shift: [number, number] = [m.x - l.x, m.y - l.y];
+      const place = (a: RoomAsset): WayPlace | undefined => {
+        if (a.side !== side) return undefined;
+        const along = across ? a.y : a.x;
+        if (along < lo - start || along >= hi - start) return undefined;
+        const theirs = across ? { ...a, side: OPPOSITE[side], x: 0, y: along + start - otherStart } : { ...a, side: OPPOSITE[side], x: along + start - otherStart, y: 0 };
+        const p = wayPlace(line, m.width, m.height, theirs as RoomAsset);
+        return { ...p, a, at: [p.at[0] + shift[0], p.at[1] + shift[1]] };
+      };
+      out.push({ side, a: lo - start, b: hi - start, depth, place });
+    }
+  }
+  return out;
+}
+// What fills the room out to the round room's curve beyond its side: a slab `height` high from `y` (the floor of the room looked into,
+// or the body of its closed block), the room's side on one edge and the curve on the other
+function MeetFill({ meet, width, height, y, h, color, wall }: { meet: Meet; width: number; height: number; y: number; h: number; color: string; wall?: WallSet }) {
+  const geometry = useMemo(() => {
+    const n = 16;
+    const us = Array.from({ length: n + 1 }, (_, i) => meet.a + ((meet.b - meet.a) * i) / n);
+    if (Math.max(...us.map(meet.depth)) < 0.01) return null;
+    // points (x, z) of the room's plan: along its side, then back along the curve
+    const at = (u: number, d: number): [number, number] => (meet.side === "e" ? [width + d, u] : meet.side === "w" ? [-d, u] : meet.side === "s" ? [u, height + d] : [u, -d]);
+    const points = [...us.map((u) => at(u, 0)), ...[...us].reverse().map((u) => at(u, meet.depth(u)))];
+    const g = new THREE.ExtrudeGeometry(new THREE.Shape(points.map(([x, z]) => new THREE.Vector2(x, z))), { depth: h, bevelEnabled: false, curveSegments: 1 });
+    g.rotateX(Math.PI / 2);
+    g.translate(0, h, 0);
+    const uv = boxUV(g, 1 / WALL_TILE);
+    g.dispose();
+    return uv;
+  }, [meet.side, meet.a, meet.b, width, height, h]);
+  useEffect(() => () => geometry?.dispose(), [geometry]);
+  if (!geometry) return null;
+  return (
+    <mesh geometry={geometry} position={[0, y, 0]} castShadow receiveShadow>
+      {wall ? <primitive attach="material" object={wallMaterial(wall, { tint: color })} /> : <meshLambertMaterial color={color} />}
+    </mesh>
+  );
+}
+// The square of wall a door or window is set in: whole but for the frame's outer outline (models.tsx `openingOutline`), so that only
+// what is inside the frame is open (a window's square was open from the floor up, beside and under the frame, and an arched doorway's
+// square open over the arch); bent onto a curved wall; `lift` raises the opening in a room whose floor climbs
+function PiercedWall({ kind, pane, style, wallH, lift = 0, bend, color, wall }: { kind: RoomAsset["kind"]; pane?: RoomAsset["pane"]; style?: Style; wallH: number; lift?: number; bend?: Bend; color: string; wall: WallSet }) {
+  const scale = kind === "window" ? PANE_SCALE[pane?.size ?? "small"] ?? [1, 1, 1] : undefined;
+  const geometry = useMemo(() => {
+    const hole = holeOf(openingOutline(kind, style, scale).map(([x, y]) => [x, y + lift] as [number, number]));
+    const flat = piercedWall(hole, wallH, WALL_THICK);
+    if (!flat) return null;
+    const shaped = bend ? bend.apply(flat) : flat;
+    if (shaped !== flat) flat.dispose();
+    const textured = boxUV(shaped, 1 / WALL_TILE);
+    shaped.dispose();
+    return textured;
+  }, [kind, style?.arch, style?.porthole, scale?.join(","), wallH, lift, bend?.key]);
+  useEffect(() => () => geometry?.dispose(), [geometry]);
+  if (!geometry) return null;
+  return <Solids><mesh geometry={geometry} material={wallMaterial(wall, { tint: color })} castShadow receiveShadow /></Solids>;
+}
+// A doorway's leaf swings (or rolls up, for a hangar) when it is tapped, and shuts again when it is tapped once more. Its leaf is of what
+// the room's walls are (`wall`, the room's wall set); `bend` lays it and its frame on a curved wall
+function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, bend }: { kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string; wall?: WallSet; bend?: Bend }) {
   const [open, setOpen] = useState(false);
   const isDoor = kind === "door" || kind === "exit";
   const mode = /hangar|bay|dock/i.test(name) ? "rise" : "hinge";
@@ -477,8 +623,8 @@ function Doorway({ kind, color, label, onTap, style, pane, name = "" }: { kind: 
   const tap = onTap ? () => { setOpen((o) => !o); onTap(); } : undefined;
   return (
     <>
-      {kind === "window" && pane ? <group scale={PANE_SCALE[pane.size]}><Opening kind={kind} color={color} style={style} /></group> : <Opening kind={kind} color={color} style={style} />}
-      {isDoor && <DoorLeaf open={open} mode={mode} metal={metal} tint={metal ? "#9aa4ae" : "#c9a878"} />}
+      <Opening kind={kind} color={color} style={style} scale={kind === "window" && pane ? PANE_SCALE[pane.size] : undefined} bend={bend} />
+      {isDoor && <DoorLeaf open={open} mode={mode} metal={metal} style={style} wall={wall} bend={bend} />}
       {label && <Label at={[0, kind === "window" || kind === "secret" ? 1.2 : 1.9, 0]} size={0.3} color={color}>{label}</Label>}
       {tap && <Hit at={[0, 0.75, 0]} size={[1, 1.5, 0.9]} onTap={tap} label={label ?? kind} />}
     </>
@@ -518,20 +664,35 @@ function Glide({ x, y, z = 0, children }: { x: number; y: number; z?: number; ch
   return <group ref={group}>{children}</group>;
 }
 
-// The squares of a wall that are solid, as runs between the gaps for doors
-function wallRuns(length: number, gaps: number[]): [number, number][] {
-  const runs: [number, number][] = [];
-  let from = 0;
-  for (const gap of [...gaps].sort((a, b) => a - b)) {
-    if (gap > from) runs.push([from, gap]);
-    from = gap + 1;
-  }
-  if (from < length) runs.push([from, length]);
-  return runs;
+// A fighter who moves walks to the new square (2026-10-26; before, they were put there at once and never took a step): at `pace` squares
+// a second, turned the way they go, then back to `face`; their legs move with it (models.tsx Mover). A deployed droideka steps slowly.
+// One put far away (a fight starting, a jump) is set there at once.
+function Stepper({ x, y, z = 0, pace = 4, face = 0, turn: turns = true, children }: { x: number; y: number; z?: number; pace?: number; face?: number; turn?: boolean; children: ReactNode }) {
+  const group = useRef<THREE.Group>(null);
+  const turn = useRef<THREE.Group>(null);
+  const to = useMemo(() => new THREE.Vector3(), []);
+  useFrame((_, delta) => {
+    const g = group.current;
+    if (!g) return;
+    to.set(x, z, y);
+    const far = g.position.distanceTo(to);
+    if (far > 12 || !g.userData.placed) {
+      g.position.copy(to);
+      g.userData.placed = true;
+    } else if (far > 0.001) g.position.lerp(to, Math.min(1, (Math.min(delta, 0.1) * pace) / far));
+    const r = turn.current;
+    if (!r || !turns) return;
+    const want = far > 0.05 ? Math.atan2(to.x - g.position.x, to.z - g.position.z) : face;
+    r.rotation.y += Math.atan2(Math.sin(want - r.rotation.y), Math.cos(want - r.rotation.y)) * Math.min(1, delta * 10);
+  });
+  return <group ref={group}><group ref={turn} rotation={[0, face, 0]}>{children}</group></group>;
 }
+const isDroideka = (name = "") => /droideka|destroyer droid/i.test(name);
 
-export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = "", tallWalls = false, ceiling = false, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, children }: {
+export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = "", tallWalls = false, ceiling = false, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, meets = [], children }: {
   width: number;
+  // Where the room stands against a round room's curve (`meetsOf`): it is filled out to the curve, and its doors there stand on it
+  meets?: Meet[];
   height: number;
   // How far each outside corner is rounded: north-west, north-east, south-east, south-west
   corners?: [number, number, number, number];
@@ -602,8 +763,22 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   const [nw, ne, se, sw] = rocky ? [0, 0, 0, 0] : corners ?? [0, 0, 0, 0];
   const rounded = nw + ne + se + sw > 0;
   const floorTexture = floorLook(floor, mood?.buildingType, plan?.form === "roof");
-  // The rounded corners, each a quarter ring
-  const cornerList = ([[nw, 0], [ne, 1], [se, 2], [sw, 3]] as const).filter(([r]) => r > 0).map(([r, corner]) => ({ r, corner }));
+  // The wall line round the room (straight sides, a quarter circle at each rounded corner: shared/logic footprint `outline`), where each
+  // door, way out and window stands on it (on the curve of a round room), and the wall that is left round them: straight runs and arcs
+  const wallLine = useMemo(() => outline(width, height, [nw, ne, se, sw]), [width, height, nw, ne, se, sw]);
+  const setIn = useMemo(() => assets.filter((a) => a.side).map((a) => meets.map((m) => m.place(a)).find(Boolean) ?? wayPlace(wallLine, width, height, a)), [assets, wallLine, meets]);
+  // (a stretch against a round room has no wall of its own: the round room's curve is the wall there)
+  const onLine = (side: FootSide, u: number) => {
+    const piece = wallLine.pieces.find((p) => p.kind === "line" && p.side === side);
+    if (!piece || piece.kind !== "line") return 0;
+    const [px, pz] = side === "n" ? [u, 0] : side === "s" ? [u, height] : side === "w" ? [0, u] : [width, u];
+    return piece.start + Math.max(0, Math.min(piece.length, (px - piece.from[0]) * piece.dir[0] + (pz - piece.from[1]) * piece.dir[1]));
+  };
+  const meetGaps = meets.map((m) => [onLine(m.side, m.a), onLine(m.side, m.b)].sort((x, y) => x - y) as [number, number]);
+  const met = (p: WayPlace) => meets.some((m) => m.place(p.a));
+  const cut = wallStretches(wallLine, width, height, [...setIn.filter((p) => (isWay(p.a) || p.a.kind === "window") && !met(p)).map((p) => [p.s - 0.5, p.s + 0.5] as [number, number]), ...meetGaps]);
+  // The rounded corners, each a quarter ring (or what is left of it beside a door or window)
+  const cornerList = cut.arcs.map((c) => ({ corner: c.corner, r: c.r, from: c.from, to: c.to }));
   // Each wall runs between its corners, stopping short of a rounded one
   const sides = [
     { side: "n", length: width, ends: [nw, ne], at: (a: number, b: number): [V3, V3] => [[(a + b) / 2, wallH / 2, 0], [b - a + (a === 0 ? WALL_THICK / 2 : 0) + (b === width ? WALL_THICK / 2 : 0), wallH, WALL_THICK]], along: (a: RoomAsset) => a.x },
@@ -611,7 +786,6 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
     { side: "w", length: height, ends: [nw, sw], at: (a: number, b: number): [V3, V3] => [[0, wallH / 2, (a + b) / 2], [WALL_THICK, wallH, b - a]], along: (a: RoomAsset) => a.y },
     { side: "e", length: height, ends: [ne, se], at: (a: number, b: number): [V3, V3] => [[width, wallH / 2, (a + b) / 2], [WALL_THICK, wallH, b - a]], along: (a: RoomAsset) => a.y },
   ];
-  const trim = ([a, b]: [number, number], length: number, [first, last]: number[]): [number, number] => [a === 0 && first ? first : a, b === length && last ? length - last : b];
   const floorTap = onFloor
     ? (e: ThreeEvent<MouseEvent>) => {
         e.stopPropagation();
@@ -646,47 +820,61 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         ? <CaveWalls mask={mask} ways={assets.filter((a) => a.side).map((a) => ({ x: a.x, y: a.y }))} w={width} h={height} biome={mood!.biome} tier={detail} seed={width * 31 + height} tall={fullWalls} />
         : walls
         ? (() => {
-            const runs = sides.flatMap(({ side, length, at, along, ends }) =>
-              wallRuns(length, assets.filter((a) => a.side === side && (isWay(a) || a.kind === "window")).map(along)).flatMap((run) => {
-                const [a, b] = trim(run, length, ends);
-                return b - a < 0.01 ? [] : [{ side: side as WallRun["side"], a, b, at, run }];
-              }),
-            );
-            // Above each doorway and window the wall stands again, from the top of the opening to the wall's top (the wall run stops at the opening itself)
-            const lintels = rocky ? [] : sides.flatMap(({ side, at, along }) =>
-              assets.filter((a) => a.side === side && (isWay(a) || a.kind === "window")).flatMap((a) => {
-                const bottom = openingTop(a);
-                if (bottom >= wallH) return [];
-                const [position, size] = at(along(a), along(a) + 1);
-                return [<Box key={`lintel${a.id}`} at={[position[0], (bottom + wallH) / 2, position[2]]} size={[size[0], wallH - bottom, size[2]]} color={wall} solid wall={wallTexture} />];
-              }),
-            );
-            const plain = [...runs.map(({ side, a, b, at, run }) => {
-              if (rocky) return <RockWall key={`${side}${run[0]}`} side={side} a={a} b={b} w={width} h={height} height={1.1} seed={Math.round(a * 10) + side.charCodeAt(0) + width} biome={mood!.biome} tier={detail} />;
+            const runs = cut.runs.filter((r) => r.b - r.a >= 0.01).map((r) => ({ ...r, at: sides.find((s) => s.side === r.side)!.at }));
+            // Round each doorway and window the wall stands whole but for the frame's own outline (beside it, under a window and over
+            // both), bent onto the curve where the wall curves
+            const tint = packLook && pack && hasWalls(pack) ? toneColour(packLook) : wall;
+            const pierced = rocky ? [] : setIn.filter((p) => (isWay(p.a) || p.a.kind === "window") && !met(p)).map((p) => (
+              <group key={`pierced${p.a.id}`} position={[p.at[0], 0, p.at[1]]} rotation={[0, p.turn, 0]}>
+                <PiercedWall kind={p.a.kind} pane={p.a.pane} style={style} wallH={railing.includes(p.a.side!) ? BALUSTRADE_HEIGHT : wallH} lift={ramp(p.a.x, p.a.y)} bend={p.bend} color={tint} wall={wallTexture} />
+              </group>
+            ));
+            const plain = [...runs.map(({ side, a, b, at }) => {
+              if (rocky) return <RockWall key={`${side}${a}`} side={side} a={a} b={b} w={width} h={height} height={1.1} seed={Math.round(a * 10) + side.charCodeAt(0) + width} biome={mood!.biome} tier={detail} />;
               const [position, size] = at(a, b);
               const high = railing.includes(side) ? BALUSTRADE_HEIGHT : wallH;
-              return <Box key={`${side}${run[0]}`} at={[position[0], high / 2, position[2]]} size={[size[0], high, size[2]]} color={wall} solid wall={wallTexture} />;
-            }), ...lintels];
+              return <Box key={`${side}${a}`} at={[position[0], high / 2, position[2]]} size={[size[0], high, size[2]]} color={wall} solid wall={wallTexture} />;
+            })];
             // A room of a pack with walls has the kit's, straight and bent round its corners, in its palette; the plain ones stand until the kit is in
             const corner = cornerList.map((c) => {
               const [x, z] = cornerCentre(c, width, height);
               return (
-                <group key={`corner${c.corner}`} position={[x, 0, z]}>
-                  <Solids><CornerWall r={c.r} h={wallH} thick={WALL_THICK} corner={c.corner} color={packLook && pack && hasWalls(pack) ? toneColour(packLook) : wall} wall={wallTexture} /></Solids>
+                <group key={`corner${c.corner}:${c.from}`} position={[x, 0, z]}>
+                  <Solids><CornerWall r={c.r} h={wallH} thick={WALL_THICK} corner={c.corner} from={c.from} to={c.to} color={tint} wall={wallTexture} /></Solids>
                 </group>
               );
             });
-            return packLook && hasWalls(pack!) && !rocky ? <PackWalls runs={runs} corners={cornerList} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={packLook} wall={wallTexture} fallback={<>{plain}{corner}</>} /> : <>{plain}{corner}</>;
+            return (
+              <>
+                {packLook && hasWalls(pack!) && !rocky ? <PackWalls runs={runs} corners={cornerList} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={packLook} wall={wallTexture} fallback={<>{plain}{corner}</>} /> : <>{plain}{corner}</>}
+                {pierced}
+                {/* Out to a round room's curve: the floor, and the side walls carried on to meet it */}
+                {meets.map((m, i) => {
+                  const across = m.side === "e" || m.side === "w";
+                  const length = across ? height : width;
+                  const ends = [m.a === 0 ? 0 : undefined, m.b === length ? length : undefined].filter((u): u is number => u !== undefined && m.depth(u) > 0.01);
+                  return (
+                    <group key={`meet${i}`}>
+                      <MeetFill meet={m} width={width} height={height} y={-0.2} h={0.2} color={FLOORS[floor]} />
+                      {ends.map((u) => {
+                        const d = m.depth(u);
+                        const out = m.side === "e" ? width + d / 2 : m.side === "w" ? -d / 2 : m.side === "s" ? height + d / 2 : -d / 2;
+                        const at: V3 = across ? [out, wallH / 2, u] : [u, wallH / 2, out];
+                        const size: V3 = across ? [d + WALL_THICK / 2, wallH, WALL_THICK] : [WALL_THICK, wallH, d + WALL_THICK / 2];
+                        return <Box key={u} at={at} size={size} color={tint} solid wall={wallTexture} />;
+                      })}
+                    </group>
+                  );
+                })}
+              </>
+            );
           })()
         : [[0, 0], [width, 0], [0, height], [width, height]].map(([x, z], i) => <Cyl key={i} at={[x, 0.3, z]} r={0.08} h={0.6} color={wall} />)}
-      {assets.filter((a) => a.side && (walls || a.kind !== "window")).map((a) => {
-        const spot = onWall({ width, height }, a);
-        return (
-          <group key={a.id} position={[spot.x, ramp(a.x, a.y), spot.z]} rotation={[0, spot.turn, 0]}>
-            <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} />
-          </group>
-        );
-      })}
+      {setIn.filter((p) => walls || p.a.kind !== "window").map(({ a, at, turn, bend }) => (
+        <group key={a.id} position={[at[0], ramp(a.x, a.y), at[1]]} rotation={[0, turn, 0]}>
+          <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} bend={bend} />
+        </group>
+      ))}
       {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
         <Glide key={a.id} x={a.x} y={a.y} z={(a.z ?? 0) * LEVEL_H}>
           {a.kind === "ship" ? (bay ? <BayBerth room={bay.room} asset={a} based={bay.based} /> : ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} /> : <Berth w={a.w} h={a.h} name={a.name} note="away on a voyage" />)
@@ -911,6 +1099,8 @@ interface Agent {
   phase: number;
   // Their day takes them elsewhere: they are on their way out
   leaving?: boolean;
+  // Seconds they have stood on a square the party or a follower stands on (they step aside)
+  crowded?: number;
 }
 
 export interface LifeApi {
@@ -926,6 +1116,41 @@ const between = (low: number, high: number) => low + Math.random() * (high - low
 const anyOf = <T,>(items: T[]): T | undefined => items[Math.floor(Math.random() * items.length)];
 const squareOf = (a: { x: number; y: number }): Sq => ({ x: Math.round(a.x), y: Math.round(a.y) });
 const ring = (s: Sq) => [-1, 0, 1].flatMap((dy) => [-1, 0, 1].map((dx) => ({ x: s.x + dx, y: s.y + dy }))).filter((q) => q.x !== s.x || q.y !== s.y);
+
+// Who stands where on the map the party is on (2026-10-26, the user: "followers and party members should be at least one square away
+// from the party leader when stationary; npcs, droids, party members should NEVER share the same square when stationary"). The leader,
+// the companions and beasts following, the people of the room or street and those of an encounter each claim, by id, the square they
+// stand on or the one they are walking to, in the party's squares; a follower or someone going about their day takes a square nobody
+// else has claimed, and someone standing where the leader stops steps aside.
+const claims = new Map<string, string>();
+export const LEADER = "leader";
+const claimSquare = (id: string, sq: Sq | null) => (sq ? claims.set(id, sqKey(sq)) : claims.delete(id));
+const claimedBy = (sq: Sq, self?: string): string | undefined => {
+  const key = sqKey(sq);
+  for (const [id, at] of claims) if (id !== self && at === key) return id;
+  return undefined;
+};
+// (read by the play-through test and the tests: who stands on each square)
+if (typeof window !== "undefined") (window as unknown as { __claims?: () => Record<string, string> }).__claims = () => Object.fromEntries(claims);
+// The squares a follower may stand on round the leader: open, nobody else's, at least `gap` squares from the leader (one clear square
+// between them), the nearest to where the follower is now, a little behind the leader; closer in only where the room leaves no such square
+function followSpot(open: (x: number, y: number) => boolean, lead: Sq, from: Sq, self: string, behind: Sq, gap = 2): Sq {
+  for (const min of [gap, 1]) {
+    let best: Sq | null = null;
+    let bestScore = Infinity;
+    for (let r = min; r <= min + 3; r++) {
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const q = { x: lead.x + dx, y: lead.y + dy };
+        if (!open(q.x, q.y) || claimedBy(q, self)) continue;
+        const score = Math.hypot(q.x - from.x, q.y - from.y) * 0.6 + r * 1.2 - (dx * behind.x + dy * behind.y) * 0.5;
+        if (score < bestScore) [best, bestScore] = [q, score];
+      }
+      if (best) return best;
+    }
+  }
+  return nearestOpen((x, y) => open(x, y) && !claimedBy({ x, y }, self) && (x !== lead.x || y !== lead.y), lead);
+}
 
 // Where everyone in the room the party is in is drawn just now, by plan asset, in the room's squares
 const drawnAt = new Map<string, Sq>();
@@ -952,7 +1177,7 @@ function brainOf(o: Occupant, home: Sq, setting: Setting, guards: number): { bra
   return counter ? { brain: "staff", counter: counter.asset.id } : { brain: "still" };
 }
 
-function Life({ people, setting, party, frozen, onTap, api, record }: {
+function Life({ people, setting, party, frozen, onTap, api, record, origin = { x: 0, y: 0 } }: {
   // Who is here; `at` is their place in the plan, or none for someone visiting (they take a free seat)
   people: { key: string; occupant: Occupant; at: Sq | null }[];
   setting: Setting;
@@ -964,6 +1189,8 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
   api?: { current: LifeApi | null };
   // Keep where everyone is drawn, for a fight that starts here
   record?: boolean;
+  // Where the scene's squares start in the party's (a room's corner on its building's grid), for the squares claimed (`claims`)
+  origin?: Sq;
 }) {
   const signature = people.map((p) => `${p.key}:${p.occupant.id}`).join();
   // Everyone drawn: those here, and those on their way out. Newcomers once the scene is up walk
@@ -1018,7 +1245,9 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
     saying.current[a.key] = still.current.clock + seconds;
     setBubbles((b) => ({ ...b, [a.key]: text }));
   };
-  const claimed = (s: Sq, self: Agent) => agents.some((o) => o !== self && ((o.goal && o.goal.x === s.x && o.goal.y === s.y) || (!o.path.length && squareOf(o).x === s.x && squareOf(o).y === s.y)));
+  const mapSq = (s: Sq): Sq => ({ x: s.x + origin.x, y: s.y + origin.y });
+  // (a square someone else here is going to or standing on, or that the party or a follower has claimed)
+  const claimed = (s: Sq, self: Agent) => agents.some((o) => o !== self && ((o.goal && o.goal.x === s.x && o.goal.y === s.y) || (!o.path.length && squareOf(o).x === s.x && squareOf(o).y === s.y))) || !!claimedBy(mapSq(s), `life:${self.key}`);
   const homeOfOther = (s: Sq, self: Agent) => agents.some((o) => o !== self && o.home.x === s.x && o.home.y === s.y);
   // Set off for the nearest free one of the given squares, to do something there for a while
   const goTo = (a: Agent, goals: Sq[], doing: string, wait: number, face?: Agent["face"], then?: () => void) => {
@@ -1221,6 +1450,7 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
   }, [agents]);
   useEffect(() => () => {
     if (record) agents.forEach((a) => drawnAt.delete(a.key));
+    agents.forEach((a) => claims.delete(`life:${a.key}`));
   }, [agents]);
 
   useFrame((state, delta) => {
@@ -1283,6 +1513,20 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
         }
       } else {
         a.wait -= dt;
+        // Standing where the party or a follower stands still: step aside to a free square close by
+        const crowd = claimedBy(mapSq(squareOf(a)), `life:${a.key}`);
+        if (crowd && !a.occupant.disabled && !a.occupant.captive && !frozen(a.occupant)) {
+          a.crowded = (a.crowded ?? 0) + dt;
+          if (a.crowded > 0.4) {
+            a.crowded = 0;
+            const aside = ring(squareOf(a)).concat(ring(squareOf(a)).flatMap(ring)).filter((q) => setting.open(q.x, q.y) && !claimed(q, a));
+            const step = aside.sort((p, q) => apart(p, squareOf(a)) - apart(q, squareOf(a)))[0];
+            if (step) {
+              const keep = { doing: a.doing, face: a.face };
+              goTo(a, [step], keep.doing, between(4, 8), keep.face);
+            }
+          }
+        } else a.crowded = 0;
         // Someone attending to the party goes back to work once the party walks off
         if (a.doing === "attending" && (!me || apart(me, squareOf(a)) > 3)) a.wait = Math.min(a.wait, 0);
         if (a.wait <= 0) think(a);
@@ -1301,6 +1545,7 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
       // A droid wiping a table turns on the spot
       if (a.brain === "droid" && a.doing === "cleaning" && !a.path.length) group.rotation.y += dt * 3;
       if (record) drawnAt.set(a.key, squareOf(a));
+      claimSquare(`life:${a.key}`, a.doing === "gone" ? null : mapSq(a.goal ?? squareOf(a)));
     }
     if (agents.some((a) => a.doing === "gone")) {
       for (let i = agents.length - 1; i >= 0; i--) {
@@ -1336,7 +1581,7 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
               <div className="whitespace-nowrap rounded-lg bg-gray-900/90 px-2 py-0.5 text-xs text-amber-200 shadow">{bubbles[a.key]}</div>
             </Html>
           )}
-          {onTap && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onTap({ key: a.key, occupant: a.occupant, at: squareOf(a), counter: a.brain === "staff" ? a.counter : undefined })} label={a.occupant.name} />}
+          {onTap && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onTap({ key: a.key, occupant: a.occupant, at: squareOf(a), counter: a.brain === "staff" ? a.counter : undefined })} label={a.occupant.name} person />}
         </group>
       ))}
       {setting.stage.length > 0 && (
@@ -1348,36 +1593,81 @@ function Life({ people, setting, party, frozen, onTap, api, record }: {
   );
 }
 
-// A companion follows the party: a step or two behind, keeping to open squares
-function Follower({ companion, index, feet, open, height, onTap }: { companion: Companion; index: number; feet: React.MutableRefObject<{ x: number; y: number }>; open: (x: number, y: number) => boolean; height: () => number; onTap?: () => void }) {
+// A companion or a beast follows the party (2026-10-26: spaced out): it trails the leader and, when the leader stops, stands on a square
+// of its own at least a square clear of the leader (one between them, where the room allows), never on anyone else's (`claims`). It turns
+// smoothly toward where it goes. A droideka shuffles on its legs over a short step and rolls up to go further (models.tsx Droideka).
+function Follower({ companion, index, feet, open, height, onTap, carts = [], biome = "", onCart }: { companion: Companion; index: number; feet: React.MutableRefObject<{ x: number; y: number }>; open: (x: number, y: number) => boolean; height: () => number; onTap?: () => void; carts?: Cart[]; biome?: string; onCart?: (id: string) => void }) {
   const group = useRef<THREE.Group>(null);
   const at = useRef<{ x: number; y: number } | null>(null);
-  const goal = useRef({ x: 0, y: 0 });
-  const offsets = [[-1, 1], [1, 1], [-2, 0], [2, 0]];
+  const goal = useRef<Sq>({ x: 0, y: 0 });
+  // The leader's square when the goal was chosen, and which way the leader was going (to stand behind them)
+  const anchor = useRef<Sq | null>(null);
+  const heading = useRef<Sq>({ x: 0, y: -1 });
+  const recheck = useRef(0);
+  const id = `follow:${companion.id}`;
+  const droideka = /droideka|destroyer droid/i.test(`${companion.name} ${companion.statBlock ?? ""}`);
+  useEffect(() => () => { claims.delete(id); }, [id]);
   useFrame((_, delta) => {
-    const [dx, dy] = offsets[index % offsets.length];
-    const want = { x: Math.round(feet.current.x) + dx, y: Math.round(feet.current.y) + dy };
-    // Only look for a free square when the party has moved on
-    if (Math.abs(goal.current.x - want.x) + Math.abs(goal.current.y - want.y) > 2 || !at.current) goal.current = nearestOpen(open, want);
+    const lead = { x: Math.round(feet.current.x), y: Math.round(feet.current.y) };
+    const was = anchor.current;
+    if (was && (was.x !== lead.x || was.y !== lead.y)) heading.current = { x: Math.sign(lead.x - was.x), y: Math.sign(lead.y - was.y) };
+    const here = at.current ? squareOf(at.current) : lead;
+    // A new square when the leader has moved on two squares, or the one chosen is someone else's now, or the leader has come up to it
+    // (looked at twice a second: where the room is tight, a square next to the leader may be the only one)
+    recheck.current -= delta;
+    const near = Math.max(Math.abs(goal.current.x - lead.x), Math.abs(goal.current.y - lead.y));
+    const tooClose = near < 1 || (near < 2 && recheck.current <= 0);
+    if (recheck.current <= 0) recheck.current = 0.5;
+    if (!at.current || !was || Math.max(Math.abs(was.x - lead.x), Math.abs(was.y - lead.y)) >= 2 || tooClose || claimedBy(goal.current, id)) {
+      // (the order they were in keeps them from all going for the same square in one frame)
+      goal.current = followSpot(open, lead, here, id, { x: -heading.current.x, y: -heading.current.y }, index >= 6 ? 1 : 2);
+      anchor.current = lead;
+    }
+    claimSquare(id, goal.current);
     if (!at.current) at.current = { ...goal.current };
     const [mx, my] = [goal.current.x - at.current.x, goal.current.y - at.current.y];
     const far = Math.hypot(mx, my);
-    const step = Math.min(far, Math.min(delta, 0.5) * 6.5);
+    // A droideka on its legs is slow (15 ft. to the ball's 60): it walks a short step and rolls up for a longer one
+    const pace = droideka && far < 2.5 ? 0.9 : 6.5;
+    const step = Math.min(far, Math.min(delta, 0.5) * pace);
     if (far > 0.02) {
       at.current = { x: at.current.x + (mx / far) * step, y: at.current.y + (my / far) * step };
-      if (group.current) group.current.rotation.y = Math.atan2(mx, my);
+      if (group.current) {
+        const want = Math.atan2(mx, my);
+        const turn = Math.atan2(Math.sin(want - group.current.rotation.y), Math.cos(want - group.current.rotation.y));
+        group.current.rotation.y += turn * Math.min(1, delta * 10);
+      }
     }
     if (group.current) group.current.position.set(at.current.x + 0.5, height(), at.current.y + 0.5);
   });
   const down = companion.hp <= 0;
+  const beast = companion.kind === "beast";
   return (
     <group ref={group}>
       <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, 0, 0]} position={[0, down ? 0.14 : 0, 0]}>
-        <Figure kind={tokenOf({ name: companion.name, role: companion.kind === "droid" ? "utility droid" : companion.kind === "beast" ? "wildlife" : companion.role, creature: companion.creature })} ring={SIDE_COLORS.friendly} name={companion.name} large={isLarge(companion.size)} species={companion.species} role={companion.role} creature={companion.creature} size={companion.size} modules={companion.kind === "droid" ? companion.custom : undefined} />
+        <Figure kind={tokenOf({ name: companion.name, role: companion.kind === "droid" ? "utility droid" : beast ? "wildlife" : companion.role, creature: companion.creature })} ring={beast ? "#a3e635" : SIDE_COLORS.friendly} name={companion.name} large={isLarge(companion.size)} species={companion.species} role={companion.role} creature={companion.creature} size={companion.size} modules={companion.kind === "droid" ? companion.custom : undefined} />
       </group>
-      <Label at={[0, isLarge(companion.size) ? 2.2 : 1.6, 0]} size={0.26} color={SIDE_COLORS.friendly}>{companion.name}</Label>
-      {onTap && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={onTap} label={companion.name} />}
+      <Label at={[0, isLarge(companion.size) ? 2.2 : 1.6, 0]} size={0.26} color={beast ? "#a3e635" : SIDE_COLORS.friendly}>{companion.name}</Label>
+      {onTap && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={onTap} label={companion.name} person />}
+      <HandledCarts carts={carts} biome={biome} reach={isLarge(companion.size) ? 1.7 : 1.05} onTap={onCart} />
     </group>
+  );
+}
+// The carts someone pushes (ahead of them, the push bar toward them) or pulls (behind them, turned about so the bar is toward them), in
+// their own turned frame; a second one goes further out
+function HandledCarts({ carts, biome, reach = 1.05, onTap }: { carts: Cart[]; biome: string; reach?: number; onTap?: (id: string) => void }) {
+  return (
+    <>
+      {carts.map((c, i) => {
+        const z = (c.mode === "push" ? reach - 0.05 : -reach) * (1 + i * 1.35);
+        return (
+          <group key={c.id} position={[0, 0, z]} rotation={[0, c.mode === "push" ? 0 : Math.PI, 0]}>
+            <CartModel full={Math.min(1, c.pack.length / 8)} biome={biome} />
+            {onTap && <Hit at={[0, 0.5, 0]} size={[0.8, 0.8, 1.3]} onTap={() => onTap(c.id)} label={c.name} />}
+          </group>
+        );
+      })}
+    </>
   );
 }
 
@@ -1409,7 +1699,7 @@ function Wanderer({ id, start, goal, open, stop = 1.6, speed = 3.6, warp = false
     const w = window as unknown as { __folk?: Record<string, number> };
     w.__folk = w.__folk ?? {};
     w.__folk[id] = (w.__folk[id] ?? 0) + 1;
-    return () => { w.__folk![id] = (w.__folk![id] ?? 1) - 1; };
+    return () => { w.__folk![id] = (w.__folk![id] ?? 1) - 1; claims.delete(`folk:${id}`); };
   }, [id]);
   useFrame((_, delta) => {
     const g = latest.current.goal();
@@ -1433,7 +1723,8 @@ function Wanderer({ id, start, goal, open, stop = 1.6, speed = 3.6, warp = false
         if (routedTo.current !== `${gx},${gy}`) {
           routedTo.current = `${gx},${gy}`;
           // (one that is to stand on a square goes to that square; one that is to come up to someone, to any square by them)
-          const goals = stop < 1 && latest.current.open(gx, gy) ? [{ x: gx, y: gy }] : [{ x: gx, y: gy }, ...aroundSquares(gx, gy)].filter((q) => latest.current.open(q.x, q.y));
+          // (not a square the party or a follower stands on)
+          const goals = stop < 1 && latest.current.open(gx, gy) ? [{ x: gx, y: gy }] : [{ x: gx, y: gy }, ...aroundSquares(gx, gy)].filter((q) => latest.current.open(q.x, q.y) && !claimedBy(q, `folk:${id}`));
           path.current = route(latest.current.open, { x: Math.round(p.x), y: Math.round(p.y) }, goals) ?? [];
         }
         let step = Math.min(delta, 1.5) * speed;
@@ -1454,6 +1745,7 @@ function Wanderer({ id, start, goal, open, stop = 1.6, speed = 3.6, warp = false
       }
     }
     at.current[id] = pos.current;
+    claimSquare(`folk:${id}`, path.current.length ? path.current[path.current.length - 1] : squareOf(pos.current));
     if (group.current) group.current.position.set(pos.current.x + 0.5, 0, pos.current.y + 0.5);
   });
   return <group ref={group} position={[start.x + 0.5, 0, start.y + 0.5]}>{children}</group>;
@@ -1872,10 +2164,15 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   }, [enc?.id, enc?.kind, enc?.alley?.x, enc?.alley?.y]);
   const barred = useMemo(() => new Set([...barricades.flatMap((b) => b.squares), ...gangRing].map((q) => `${q.x},${q.y}`)), [barricades, gangRing]);
 
+  // The party's base pieces here (shared/logic bases.ts): those set down out in front of the district's buildings, and those in the room
+  // the party is in; they stand in the way, as furniture does
+  const piecesHere = piecesIn(world, new Set([...buildingIds, ...rooms.map((r) => r.id)])).filter(({ piece }) => (inside ? piece.areaId === inside.id : buildingIds.has(piece.areaId)));
+  const pieceSquares = new Set(piecesHere.flatMap(({ piece }) => squaresOf(piece).map((q) => `${q.x},${q.y}`)));
+  const pieceFloor = (p: { x: number; y: number; w: number; h: number }) => (inside?.layout ? floorAt(inside.layout, p.x - inside.layout.x + p.w / 2, p.y - inside.layout.y + p.h / 2) : 0);
   // Where the party can stand: the free floor of the room they are in, or the open ground outside.
-  // People step aside, so only furniture stands in the way.
+  // People step aside, so only furniture (and what the party has set down) stands in the way.
   const outdoors = (x: number, y: number) =>
-    x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !barred.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`) && !street.ambientBlocked.has(`${x},${y}`)
+    x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !barred.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`) && !street.ambientBlocked.has(`${x},${y}`) && !pieceSquares.has(`${x},${y}`)
     && ![...street.signs, ...street.decor, ...street.folk, ...street.caches, ...street.rigs].some((thing) => thing.x === x && thing.y === y);
   // Where the people of an encounter are (their squares), where one comes in from (a way out of the district, or
   // the edge of the ground), and the squares a gang stands on round the party in its alley
@@ -1910,9 +2207,39 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (inside) {
       const l = inside.layout!;
       const [lx, ly] = [x - l.x, y - l.y];
-      return lx >= 0 && ly >= 0 && lx < l.width && ly < l.height && standsAt(l, lx, ly) && !shown.some((a) => !a.side && a.blocks && a.x <= lx && lx < a.x + a.w && a.y <= ly && ly < a.y + a.h);
+      return lx >= 0 && ly >= 0 && lx < l.width && ly < l.height && standsAt(l, lx, ly) && !shown.some((a) => !a.side && a.blocks && a.x <= lx && lx < a.x + a.w && a.y <= ly && ly < a.y + a.h) && !pieceSquares.has(`${x},${y}`);
     }
     return outdoors(x, y);
+  };
+  // The companions and beasts that follow (a beast ridden is under the character), and the beast ridden
+  const scene = world as World & { party?: Companion[]; beasts?: Companion[]; riding?: string; carts?: Cart[] };
+  // The party's carts (shared/logic `Cart`): with whoever pushes or pulls them, or parked
+  const carts = scene.carts ?? [];
+  const cartsOf = (handler: string) => carts.filter((c) => !c.parked && (c.handler ?? "me") === handler);
+  const ridden = (scene.beasts ?? []).find((b) => b.id === scene.riding && b.hp > 0);
+  const followers = [...(scene.party ?? []), ...(scene.beasts ?? []).filter((b) => b.id !== ridden?.id)];
+  // A base piece being set down (usePlacing): where it would stand by the party, and putting it on a tapped square
+  const pieceWanted = usePlacing((s) => s.piece);
+  const placing = present && !locked && !duel ? pieceWanted : null;
+  const placingFace = usePlacing((s) => s.face);
+  const fits = (x: number, y: number) => {
+    if (!placing || !placing.places.includes(inside ? "indoors" : "outdoors")) return false;
+    const me = squareOf(feet.current);
+    return squaresOf({ x, y, w: placing.w, h: placing.h, face: placingFace }).every((q) => open(q.x, q.y) && (q.x !== me.x || q.y !== me.y) && !claimedBy(q, LEADER));
+  };
+  const ghostSpot = (): Sq | null => {
+    if (!placing) return null;
+    const me = squareOf(feet.current);
+    for (let r = 1; r <= 4; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (Math.max(Math.abs(dx), Math.abs(dy)) === r && fits(me.x + dx, me.y + dy)) return { x: me.x + dx, y: me.y + dy };
+    return null;
+  };
+  const placeAt = (x: number, y: number) => {
+    if (!placing) return;
+    const ghost = ghostSpot();
+    // A tap on a square the piece does not fit puts it where the outline shows, if that is close
+    const at = fits(x, y) ? { x, y } : ghost && Math.max(Math.abs(ghost.x - x), Math.abs(ghost.y - y)) <= 1 ? ghost : null;
+    if (!at) return onAct?.({ type: "note", text: placing.places.includes(inside ? "indoors" : "outdoors") ? `The ${placing.name.toLowerCase()} does not fit there: it needs ${placing.w} by ${placing.h} open squares, clear of everyone.` : `A ${placing.name.toLowerCase()} is set up ${placing.places.join(" or ")} only.` });
+    onAct?.({ type: "place", areaId: hereId, x: at.x, y: at.y, face: placingFace, indoors: !!inside });
   };
 
   // Where they stand on arriving: where they stood, if they came from another part of this
@@ -1968,7 +2295,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     const l = inside?.layout;
     return l ? floorAt(l, feet.current.x - l.x + 0.5, feet.current.y - l.y + 0.5) : 0;
   };
+  // The leader claims the square they stand on (`claims`): followers keep clear of it, and whoever stands there steps aside
+  useEffect(() => () => { claims.delete(LEADER); }, []);
   useFrame((_, delta) => {
+    claimSquare(LEADER, present && !duel ? squareOf(feet.current) : null);
     const going = walk.current;
     if (token.current) {
       token.current.position.set(feet.current.x + 0.5, heightNow(), feet.current.y + 0.5);
@@ -2270,7 +2600,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const walkHere = (e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
     const x = Math.floor(e.point.x + cx), y = Math.floor(e.point.z + cz);
-    if (e.delta <= 8 && x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h) walkTo([{ x, y }]);
+    if (e.delta <= 8 && x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h) {
+      if (placing) placeAt(x, y);
+      else walkTo([{ x, y }]);
+    }
   };
   // The look of the building's walls by the world it stands on (models.tsx styleOf)
   const style = styleOf(wall === STEEL ? "station" : biome, building.type);
@@ -2366,13 +2699,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   bay={{ room, based: based[room.id] }}
                   fullWalls={viewing}
                   railing={railingOf(room, rooms)}
+                  meets={meetsOf(room, rooms)}
                   tallWalls={!!l.tall}
                   ceiling={viewing && !openAir(room)}
                   looted={(a) => { const c = room.loot.find((c) => c.id === a.ref); return !!c && (c.node ? nodeAt(c.node, minutes).charges === 0 : !!c.looted); }}
                   nodeOf={(a) => room.loot.find((c) => c.id === a.ref)?.node}
                   wayColor={wayColor}
                   wayLabel={wayLabel}
-                  onFloor={inside ? (x, y) => walkTo([{ x: l.x + x, y: l.y + y }]) : undefined}
+                  onFloor={inside ? (x, y) => (placing ? placeAt(l.x + x, l.y + y) : walkTo([{ x: l.x + x, y: l.y + y }])) : undefined}
                   onAsset={inside ? actOn : undefined}
                 >
                   {roomSetting && !duel && (
@@ -2384,6 +2718,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                       ]}
                       setting={roomSetting}
                       party={() => (inside ? { x: Math.round(feet.current.x) - l.x, y: Math.round(feet.current.y) - l.y } : null)}
+                      origin={{ x: l.x, y: l.y }}
                       frozen={(o) => watching(inside ?? undefined, o) || !!o.captive || !!o.disabled}
                       onTap={inside ? tapPerson : undefined}
                       api={lifeApi}
@@ -2448,7 +2783,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                       <group key={a.id} position={[a.x + 0.5, 0, a.y + 0.5]}>
                         <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} species={o.species} role={o.role} creature={o.creature} size={o.size} />
                         <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS[o.disposition]}>{o.name}</Label>
-                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} label={o.name} />
+                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} label={o.name} person />
                       </group>
                     ) : null;
                   })}
@@ -2502,7 +2837,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                       <group key={a.id} position={[a.x + 0.5, 0.12, a.y + 0.5]}>
                         <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} species={o.species} role={o.role} creature={o.creature} size={o.size} />
                         <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS[o.disposition]}>{o.name}</Label>
-                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} label={o.name} />
+                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} label={o.name} person />
                       </group>
                     ) : null;
                   })}
@@ -2519,7 +2854,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                       <group key={a.id} position={[a.x + 0.5, 0, a.y + 0.5]}>
                         <Figure kind={tokenOf(o)} ring={SIDE_COLORS[o.disposition]} name={o.name} large={isLarge(o.size)} species={o.species} role={o.role} creature={o.creature} size={o.size} />
                         <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS[o.disposition]}>{o.name}</Label>
-                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} label={o.name} />
+                        <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onAct?.({ type: "occupant", id: o.id })} label={o.name} person />
                       </group>
                     ) : null;
                   })}
@@ -2545,6 +2880,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     ) : (
                     <RoomBlock w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} set={wallSet(packOf(room.name, building.type), biome)} />
                     )}
+                    {/* out to the curve of a round room it stands against */}
+                    {!(building.type === "cave" && l.mask) && meetsOf(room, rooms).map((m, i) => <MeetFill key={`meet${i}`} meet={m} width={l.width} height={l.height} y={0} h={body} color={wallColor} wall={wallSet(packOf(room.name, building.type), biome)} />)}
                   </group>
                   {!opened && !form && !roofed.has(room.id) && !(building.type === "cave" && l.mask) && (
                     <>
@@ -2561,7 +2898,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 </>
               )}
               {!opened && form !== "roof" && form !== "balcony" && l.assets.filter((a) => a.side && (a.kind === "exit" || a.kind === "window" || (a.kind === "secret" && room.secretEntry?.found) || (a.kind === "door" && !inRoom(beyond(l, a).x, beyond(l, a).y)))).map((a) => {
-                const at = onWall(l, a);
+                // on the block's own wall line: the curve of a round room's block, not the square round it
+                const place = wayPlace(outline(l.width, l.height, form ? [0, 0, 0, 0] : radiiOf(room)), l.width, l.height, a);
+                const at = { x: place.at[0], z: place.at[1], turn: place.turn };
                 const step = beyond(l, a);
                 return (
                   <group key={a.id}>
@@ -2572,7 +2911,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     </mesh>
                   )}
                   <group position={[at.x, 0, at.z]} rotation={[0, at.turn, 0]}>
-                    <Doorway name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} />
+                    <Doorway name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={wallSet(packOf(room.name, building.type), biome)} bend={place.bend} />
                   </group>
                   </group>
                 );
@@ -2692,7 +3031,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             {!duel && <Strollers strolls={strolls} />}
             {street.rigs.map(({ v, mine, outward, x, y }) => (
               <group key={v.id} position={[x + 0.5, 0, y + 0.5]} rotation={[0, Math.atan2(outward.x || 0.0001, outward.y || 0.0001), 0]}>
-                <SpeederModel model={v.model} wrecked={v.status === "wrecked"} />
+                <SpeederModel model={v.model} wrecked={v.status === "wrecked"} look={v.look} name={v.name} />
                 <Label at={[0, 1.5, 0]} size={0.26} color={mine ? SIDE_COLORS.player : SIDE_COLORS.neutral}>{`${v.name}${v.status === "wrecked" ? " (wreck)" : ""}`}</Label>
                 {tappable && <Hit at={[0, 0.5, 0]} size={[1.6, 1.2, 2.4]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "vehicle", id: v.id }))} label={v.name} />}
               </group>
@@ -2713,12 +3052,42 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         {duel && <DuelPieces />}
         {present && !duel && (
           <group ref={token} position={[standing.x + 0.5, 0, standing.y + 0.5]}>
-            <Figure kind="player" ring={SIDE_COLORS.player} marker />
+            {/* In the saddle: the beast under the character, who sits on its back */}
+            {ridden && <Figure kind="beast" ring={SIDE_COLORS.player} name={ridden.name} large={isLarge(ridden.size)} creature={ridden.creature} size={ridden.size} />}
+            {/* the rider's seat (not the feet) on the beast's back: a figure's hips are RIDER_HIPS over its feet */}
+            <group position={[0, ridden ? seatFor(ridden.name, ridden.creature, ridden.size) * (isLarge(ridden.size) ? 1.5 : 1) - RIDER_HIPS : 0, 0]}>
+              <Figure kind="player" ring={SIDE_COLORS.player} marker riding={!!ridden} />
+            </group>
+            <HandledCarts carts={cartsOf("me")} biome={biome} reach={ridden && isLarge(ridden.size) ? 1.7 : 1.05} onTap={active ? (id) => onAct?.({ type: "cart", id }) : undefined} />
           </group>
         )}
-        {present && !duel && (((world as World & { party?: Companion[] }).party ?? []) as Companion[]).map((c, i) => (
-          <Follower key={c.id} companion={c} index={i} feet={feet} open={open} height={heightNow} onTap={active ? () => onAct?.({ type: "companion", id: c.id }) : undefined} />
+        {present && !duel && followers.map((c, i) => (
+          <Follower key={c.id} companion={c} index={i} feet={feet} open={open} height={heightNow} onTap={active ? () => onAct?.({ type: "companion", id: c.id }) : undefined} carts={cartsOf(c.id)} biome={biome} onCart={active ? (id) => onAct?.({ type: "cart", id }) : undefined} />
         ))}
+        {/* The party's carts left here */}
+        {present && !duel && carts.filter((c) => c.parked && (inside ? c.parked.areaId === inside.id : buildingIds.has(c.parked.areaId))).map((c) => (
+          <group key={c.id} position={[c.parked!.x + 0.5, pieceFloor({ x: c.parked!.x, y: c.parked!.y, w: 1, h: 1 }), c.parked!.y + 0.5]}>
+            <CartModel full={Math.min(1, c.pack.length / 8)} biome={biome} />
+            <Label at={[0, 1.2, 0]} size={0.22} color="#fde68a">{c.name}</Label>
+            {active && !placing && <Hit at={[0, 0.5, 0]} size={[0.9, 1, 1.3]} onTap={() => walkTo(around(c.parked!.x, c.parked!.y), () => onAct?.({ type: "cart", id: c.id }))} label={c.name} />}
+          </group>
+        ))}
+        {/* The party's base: what it has set down here (shared/logic bases.ts), tapped to be opened */}
+        {present && !duel && piecesHere.map(({ piece }) => {
+          const [sx, sy] = piece.face % 2 ? [piece.h, piece.w] : [piece.w, piece.h];
+          return (
+            <group key={piece.id} position={[piece.x, pieceFloor(piece), piece.y]}>
+              <BasePieceModel look={piece.look} biome={biome} w={piece.w} h={piece.h} face={piece.face} />
+              <Label at={[sx / 2, piece.role === "shelter" ? 1.7 : 1.0, sy / 2]} size={0.22} color="#fde68a">{piece.name}</Label>
+              {active && !placing && <Hit at={[sx / 2, 0.5, sy / 2]} size={[sx, 1, sy]} onTap={() => walkTo(around(piece.x, piece.y, sx, sy), () => onAct?.({ type: "piece", id: piece.id }))} label={piece.name} />}
+            </group>
+          );
+        })}
+        {present && !duel && placing && ghostSpot() && (
+          <group position={[ghostSpot()!.x, inside?.layout ? floorAt(inside.layout, ghostSpot()!.x - inside.layout.x + 0.5, ghostSpot()!.y - inside.layout.y + 0.5) : 0, ghostSpot()!.y]}>
+            <BasePieceModel look={placing.look} biome={biome} w={placing.w} h={placing.h} face={placingFace} ghost />
+          </group>
+        )}
       </group>
 
       <Probe
@@ -2804,7 +3173,7 @@ function DuelPieces() {
   const player = combatants.find((c) => c.isPlayer);
   const playerTurn = !!current?.isPlayer && (player?.hp ?? 0) > 0 && !cannotAct(player!);
   const target = player ? pickTarget(combatants, player, targetId) : undefined;
-  const steps = playerTurn && player ? reachable(arena, combatants, player) : new Map<string, { cost: number }>();
+  const steps = playerTurn && player ? reachable(arena, combatants, player) : new Map<string, Step>();
   const plan = player && target ? attackPlan(arena, combatants, player, target, player.rangedDice ? "ranged" : "melee") : undefined;
   const high = (z?: number) => (z ?? 0) * LEVEL_H;
   return (
@@ -2817,12 +3186,12 @@ function DuelPieces() {
         </Glide>
       ))}
       {picked && <Picked asset={picked} high={high(picked.z)} />}
-      {Array.from(steps.entries()).filter(([, step]) => step.cost > 0).map(([k]) => {
+      {Array.from(steps.entries()).filter(([, step]) => step.cost > 0).map(([k, step]) => {
         const { x, y, z } = parseKey(k);
         return (
           <mesh key={k} rotation={[-Math.PI / 2, 0, 0]} position={[x + 0.5, high(z) + 0.05, y + 0.5]} onClick={(e) => { e.stopPropagation(); if (e.delta <= 8) moveTo(x, y, z); }}>
             <planeGeometry args={[0.9, 0.9]} />
-            <meshBasicMaterial color="#4ade80" transparent opacity={0.35} depthWrite={false} />
+            <meshBasicMaterial color={stepColor(step)} transparent opacity={0.35} depthWrite={false} />
           </mesh>
         );
       })}
@@ -2841,9 +3210,9 @@ function DuelPieces() {
         const large = isLarge(c.size);
         const side = c.isPlayer ? SIDE_COLORS.player : c.ally ? SIDE_COLORS.friendly : SIDE_COLORS.hostile;
         return (
-          <group key={String(c.id)} position={[(c.x ?? 0) + 0.5, high(c.z), (c.y ?? 0) + 0.5]}>
+          <Stepper key={String(c.id)} x={(c.x ?? 0) + 0.5} y={(c.y ?? 0) + 0.5} z={high(c.z)} pace={isDroideka(c.name) ? 1.2 : 4} turn={false}>
             <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : 0, 0]}>
-              <Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} />
+              <Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} fighting />
             </group>
             {!down && current?.id === c.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}><ringGeometry args={[0.5, 0.58, 28]} /><meshBasicMaterial color="#fde047" /></mesh>}
             {!down && target?.id === c.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.07, 0]}><ringGeometry args={[0.62, 0.7, 4]} /><meshBasicMaterial color="#f87171" /></mesh>}
@@ -2855,7 +3224,7 @@ function DuelPieces() {
               </Billboard>
             )}
             {!down && !onPartySide(c) && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => setTarget(c.id)} label={c.name} />}
-          </group>
+          </Stepper>
         );
       })}
     </>
@@ -2868,6 +3237,26 @@ function DuelPieces() {
 // there and a tap on an enemy picks it out.
 // ---------------------------------------------------------------------------------------------
 
+// On a wide screen the combat panel (PlayCombat: 20rem at the left, 0.5rem in) lies over the left of the map, where the party usually
+// comes in: the fight is drawn centred in the part of the map beside it (a view offset, so that taps and the probe stay exact).
+// 2026-10-26: taps on the character's squares landed on the panel.
+const COMBAT_PANEL_PX = 336;
+function BesidePanel() {
+  const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera;
+  const size = useThree((s) => s.size);
+  useEffect(() => {
+    const wide = typeof window !== "undefined" && window.innerWidth >= 768 && size.width > COMBAT_PANEL_PX * 1.6;
+    if (!wide) return;
+    camera.setViewOffset(size.width + COMBAT_PANEL_PX, size.height, 0, 0, size.width, size.height);
+    camera.updateProjectionMatrix();
+    return () => {
+      camera.clearViewOffset();
+      camera.updateProjectionMatrix();
+    };
+  }, [camera, size.width, size.height]);
+  return null;
+}
+
 export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; areaId?: string | null; origin?: { x: number; y: number } }) {
   const { combatants, currentTurn, arena, targetId, moveTo, setTarget, objectId, setObject } = useCombat();
   const pickable = usePickable();
@@ -2876,7 +3265,7 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
   const player = combatants.find((c) => c.isPlayer);
   const playerTurn = !!current?.isPlayer && (player?.hp ?? 0) > 0 && !cannotAct(player!);
   const target = player ? pickTarget(combatants, player, targetId) : undefined;
-  const steps = playerTurn && player ? reachable(arena, combatants, player) : new Map<string, { cost: number }>();
+  const steps = playerTurn && player ? reachable(arena, combatants, player) : new Map<string, Step>();
   const covered = player && target && player.rangedDice ? attackPlan(arena, combatants, player, target, "ranged").cover.bonus > 0 : false;
   const cx = arena.width / 2;
   const cz = arena.height / 2;
@@ -2936,12 +3325,12 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
               <Box at={[p.width - 0.04, 0.45, p.height / 2]} size={[0.05, 0.04, p.height]} color="#c8ccd2" />
             </group>
           ))}
-          {Array.from(steps.entries()).filter(([, step]) => step.cost > 0).map(([k]) => {
+          {Array.from(steps.entries()).filter(([, step]) => step.cost > 0).map(([k, step]) => {
             const { x, y, z } = parseKey(k);
             return (
               <mesh key={k} rotation={[-Math.PI / 2, 0, 0]} position={[x + 0.5, z * LEVEL_H + 0.1, y + 0.5]}>
                 <planeGeometry args={[0.9, 0.9]} />
-                <meshBasicMaterial color="#4ade80" transparent opacity={0.28} depthWrite={false} />
+                <meshBasicMaterial color={stepColor(step)} transparent opacity={0.28} depthWrite={false} />
               </mesh>
             );
           })}
@@ -2953,11 +3342,11 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
             const large = isLarge(c.size);
             const side = c.isPlayer ? SIDE_COLORS.player : c.ally ? SIDE_COLORS.friendly : SIDE_COLORS.hostile;
             return (
-              <group key={String(c.id)} position={[(c.x ?? 0) + 0.5, (c.z ?? 0) * LEVEL_H + ((c.z ?? 0) ? 0.12 : 0), (c.y ?? 0) + 0.5]}>
+              <Stepper key={String(c.id)} x={(c.x ?? 0) + 0.5} y={(c.y ?? 0) + 0.5} z={(c.z ?? 0) * LEVEL_H + ((c.z ?? 0) ? 0.12 : 0)} pace={isDroideka(c.name) ? 1.2 : 4} turn={false}>
                 {/* The fallen lie where they fell */}
                 <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : 0, 0]}>
                   <Turner facing={facing} on={viewing && !!c.isPlayer && !down} base={Math.PI / 2} hide={viewing && mode === "first" && !!c.isPlayer}>
-                  <Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} />
+                  <Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} fighting />
                   </Turner>
                 </group>
                 {!down && current?.id === c.id && (
@@ -2974,7 +3363,7 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
                   </Billboard>
                 )}
                 {!down && !onPartySide(c) && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => setTarget(c.id)} label={c.name} plan={aimPlan(c)} />}
-              </group>
+              </Stepper>
             );
           })}
         </RoomShell>
@@ -2998,7 +3387,10 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
       {viewing && player ? (
         <ViewRig mode={mode} start={Math.PI / 2} feet={() => [(player.x ?? 0) + 0.5 - cx, (player.z ?? 0) * LEVEL_H + ((player.z ?? 0) ? 0.12 : 0), (player.y ?? 0) + 0.5 - cz]} facing={facing} step={() => {}} />
       ) : (
-        <Rig target={[0, 0, 0]} offset={[0, reach * 0.95, reach * 0.75]} min={4} max={90} fov={45} />
+        <>
+          <Rig target={[0, 0, 0]} offset={[0, reach * 0.95, reach * 0.75]} min={4} max={90} fov={45} />
+          <BesidePanel />
+        </>
       )}
       <ambientLight intensity={0.75} />
       <directionalLight position={[10, 26, 12]} intensity={0.9} castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-20} shadow-camera-right={20} shadow-camera-top={20} shadow-camera-bottom={-20} />
@@ -3286,7 +3678,7 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
             {/* The party's speeders parked at this place */}
             {parkedAt(area.id).map((v, i) => (
               <group key={v.id} position={[-4 + i * 1.8, area.kind === "planet" ? 0 : -0.3, 3]} scale={1.3}>
-                <SpeederModel model={v.model} wrecked={v.status === "wrecked"} />
+                <SpeederModel model={v.model} wrecked={v.status === "wrecked"} look={v.look} name={v.name} />
               </group>
             ))}
             {/* A wider target than the model, for a finger */}
@@ -3316,7 +3708,7 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
           ))}
           {parkedAt(view.id).map((v, i) => (
             <group key={v.id} position={[-6 - i * 3.4, 0, 1]} scale={2.2}>
-              <SpeederModel model={v.model} wrecked={v.status === "wrecked"} />
+              <SpeederModel model={v.model} wrecked={v.status === "wrecked"} look={v.look} name={v.name} />
             </group>
           ))}
           <Label at={[0, 5.4, 0]} size={1.1} color="#facc15">{`${PARTY_AT[view.kind] ?? "Here"} (you are here)`}</Label>

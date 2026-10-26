@@ -2,9 +2,9 @@
 // generators, ordnance counted from the sheet, hangars that launch, a station that is destroyed from inside, and a bot that plays it through.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createRandom, SHIP_SIZE_ORDER, bookRole, roleShip, shipRoleNames, shipSheet } from "../../shared/logic/index";
+import { createRandom, headingOf, SHIP_SIZE_ORDER, bookRole, roleShip, shipRoleNames, shipSheet } from "../../shared/logic/index";
 import {
-  ARENA, CLASSES, SCENARIOS, STATION, classIndex, dogfightStart, foeSheet, gunsOf, isCapital, toWorld, vadd, vdist, vmul,
+  ARENA, CLASSES, SCENARIOS, STATION, classIndex, dogfightStart, foeSheet, frameOf, gunsOf, isCapital, toWorld, vadd, vdist, vmul, vnorm,
   type Dogfight,
 } from "../../shared/logic/dogfight";
 import { damageVessel, dogfightPayout, hostiles, hullPoint, hullRay, isDown, partWorld, partyOf, shielded, stepDogfight, weaponSlots, partVisible, rolled, savesAgainst, subTargets } from "../../shared/logic/dogfightSim";
@@ -361,7 +361,7 @@ test("a skirmish is won by the bot, paid, and reported as foes down", () => {
 });
 
 test("every scenario starts with its target ahead, its foes counted, and a limit", () => {
-  for (const sc of SCENARIOS) {
+  for (const sc of SCENARIOS.filter((x) => !x.air)) {
     const s = start(sc.id, 1);
     assert.equal(s.limit, sc.limit);
     assert.ok(s.foesTotal >= 2, `${sc.id} has foes`);
@@ -427,7 +427,7 @@ test("what the shipyard has done to a ship is in the arena: speed, armor, weapon
   assert.ok(withFeedback > without, `the foe took ${withFeedback} with a feedback shield and ${without} without`);
 });
 
-test("A and D roll the craft; a yaw to the right leans it to the right; a rolled craft turns its heading by both yaw and pitch", () => {
+test("A and D roll the craft; the mouse and pad never do (a yaw does not lean it); a rolled craft turns its heading by both yaw and pitch", () => {
   const rollTest = start("skirmish", 1);
   far(rollTest);
   step(rollTest, 1, { ...idle, roll: 1 });
@@ -435,17 +435,14 @@ test("A and D roll the craft; a yaw to the right leans it to the right; a rolled
   const rolledRight = partyOf(rollTest).roll;
   step(rollTest, 1, { ...idle, roll: -1 });
   assert.ok(partyOf(rollTest).roll < rolledRight - 1.5, `and back with the other key: ${rolledRight.toFixed(2)} to ${partyOf(rollTest).roll.toFixed(2)}`);
-  // The old way round was wrong: a yaw to the right leaned the craft to the left. Now it leans into the yaw.
-  const turning = start("skirmish", 1);
-  far(turning);
-  step(turning, 1, { steer: { x: 1, y: 0 }, throttle: 0 });
-  assert.ok(partyOf(turning).yaw > 0.3, "turned to the right");
-  assert.ok(partyOf(turning).bank > 0.2, `leaning to the right: ${partyOf(turning).bank}`);
-  assert.equal(partyOf(turning).roll, 0, "no roll was put on it");
-  const left = start("skirmish", 1);
-  far(left);
-  step(left, 1, { steer: { x: -1, y: 0 }, throttle: 0 });
-  assert.ok(partyOf(left).bank < -0.2, "and to the left for a yaw to the left");
+  // A yaw is a yaw and a pitch a pitch: no lean into a turn, which the mouse and pad (yaw and pitch only) must never put on the craft
+  for (const [x, y] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const turning = start("skirmish", 1);
+    far(turning);
+    step(turning, 0.5, { steer: { x, y }, throttle: 0 });
+    assert.ok(Math.abs(partyOf(turning).yaw) + Math.abs(partyOf(turning).pitch) > 0.3, `turned for (${x}, ${y})`);
+    assert.ok(Math.abs(partyOf(turning).roll) < 1e-9, `no roll was put on it by (${x}, ${y}): ${partyOf(turning).roll}`);
+  }
   // Rolled a quarter turn to the right, the craft's up is the world's right: pitch up turns the heading to the right, and a yaw to the right
   // (the craft's right is the world's down) points the nose down
   const up = start("skirmish", 1);
@@ -464,6 +461,90 @@ test("A and D roll the craft; a yaw to the right leans it to the right; a rolled
   far(level);
   step(level, 0.5, { steer: { x: 0, y: -1 }, throttle: 0 });
   assert.ok(partyOf(level).pitch > 0.2 && Math.abs(partyOf(level).yaw) < 0.01);
+});
+
+test("the nose turns at the stick's rate in any attitude and the pitch has no limit: steeply up a yaw still swings it, and a pull goes on over the top", () => {
+  const angleOf = (a: number[], b: number[]) => Math.acos(Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2])));
+  // A yaw swings the nose by the same angle level and pointing steeply up (turning the heading's angle instead moved it a third as far there,
+  // and spun the view about the nose)
+  const swing = (pitch: number) => {
+    const s = start("skirmish", 1);
+    far(s);
+    const me = partyOf(s);
+    me.pitch = pitch;
+    const f0 = headingOf(me.yaw, me.pitch);
+    const up0 = frameOf(me.yaw, me.pitch, me.roll).u;
+    step(s, 0.3, { steer: { x: 1, y: 0 }, throttle: 0 });
+    return { angle: angleOf(f0, headingOf(me.yaw, me.pitch)), twist: angleOf(up0, frameOf(me.yaw, me.pitch, me.roll).u) };
+  };
+  const level = swing(0);
+  const steep = swing(1.3);
+  assert.ok(level.angle > 0.2, `it turned: ${level.angle.toFixed(2)} rad`);
+  assert.ok(Math.abs(steep.angle / level.angle - 1) < 0.02, `the same swing steeply up: ${steep.angle.toFixed(3)} against ${level.angle.toFixed(3)}`);
+  // (the craft's own up is the axis of a yaw, so it does not move; the roll against the horizon, which the HUD shows, does change up there)
+  assert.ok(steep.twist < 1e-6 && level.twist < 1e-6, `nothing is turned about the nose: ${steep.twist}`);
+  // Held back, the stick takes it over the top: the nose is behind where it began, the craft upside down, and the pitch went past the old limit
+  const s = start("skirmish", 1);
+  far(s);
+  const me = partyOf(s);
+  const f0 = headingOf(me.yaw, me.pitch);
+  const r = roll();
+  let most = 0;
+  for (let t = 0; t < Math.PI / Math.max(me.turn, 0.3); t += 1 / 60) {
+    stepDogfight(s, { steer: { x: 0, y: -1 }, throttle: 0 }, 1 / 60, r);
+    most = Math.max(most, me.pitch);
+  }
+  assert.ok(most > ARENA.pitchLimit + 0.2, `the pitch went on past ${ARENA.pitchLimit}: ${most.toFixed(2)}`);
+  assert.ok(angleOf(f0, headingOf(me.yaw, me.pitch)) > 2.9, "the nose came round to the other way");
+  assert.ok(Math.abs(Math.abs(me.roll) - Math.PI) < 0.1, `upside down: ${me.roll.toFixed(2)}`);
+});
+
+test("the guns follow the cursor: a foe far off the nose is picked out, shot and fired along the cursor's ray; the reticule decides without it", () => {
+  const s = start("skirmish", 1);
+  far(s);
+  const me = partyOf(s);
+  const other = s.vessels.find((v) => v.side === "foe")!;
+  me.p = [0, 0, 0];
+  me.yaw = 0;
+  me.pitch = 0;
+  me.speed = 0;
+  s.throttle = 0;
+  me.c = { ...me.c, hull: 9999, shield: 9999 };
+  // The camera is behind and above, and looks along the nose: the cursor's ray goes from it to the foe, 40 degrees off the nose
+  const place = (angle: number) => {
+    other.p = [300 * Math.cos(angle), 0, 300 * Math.sin(angle)];
+    other.speed = 0;
+  };
+  const ray = (at: number[], off = 0) => {
+    const o: [number, number, number] = [-30, 8, 0];
+    const d = vnorm([at[0] - o[0], at[1] - o[1], at[2] - o[2] + off * 300]);
+    return { o, d };
+  };
+  place(0.7);
+  step(s, 0.05, idle);
+  assert.equal(s.aim, null, "the reticule is nowhere near it");
+  step(s, 0.05, { ...idle, aim: ray(other.p) });
+  assert.equal(s.aim?.vessel, other.id, "the cursor is on it");
+  assert.ok(Math.abs((s.aim?.dist ?? 0) - vdist(me.p, other.p)) < 3, `its distance is the craft's own: ${s.aim?.dist}`);
+  // A cursor a little way off it (more than a pointer's slack, less than the reticule's) is on nothing
+  step(s, 0.05, { ...idle, aim: ray(other.p, 0.2) });
+  assert.equal(s.aim, null, "a cursor beside it is on nothing");
+  // Fire along the ray: the shot is drawn from the muzzle to the foe, and hurts it
+  other.c = { ...other.c, shield: 0 };
+  const before = other.c.hull;
+  const sure = () => 0;
+  stepDogfight(s, { ...idle, fire: true, aim: ray(other.p) }, 1 / 30, sure);
+  const shot = s.events.find((e) => e.by === "player");
+  assert.ok(shot && shot.hit && vdist(shot.to, other.p) < 3, "a shot hit the foe where the cursor was");
+  assert.ok(other.c.hull < before || other.c.shield < 0, "and hurt it");
+  // Fired at the sky under the cursor, a shot goes where the cursor points (not along the nose)
+  me.guns.forEach((g) => (g.wait = 0));
+  const sky = { o: [-30, 8, 0] as [number, number, number], d: vnorm([0.5, 0.3, -0.8]) };
+  stepDogfight(s, { ...idle, fire: true, aim: sky }, 1 / 30, sure);
+  const miss = s.events.find((e) => e.by === "player");
+  assert.ok(miss && !miss.hit, "nothing there");
+  const along = vnorm([miss!.to[0] - miss!.from[0], miss!.to[1] - miss!.from[1], miss!.to[2] - miss!.from[2]]);
+  assert.ok(along[0] * sky.d[0] + along[1] * sky.d[1] + along[2] * sky.d[2] > 0.98, `it went along the cursor's ray: ${along.map((x) => x.toFixed(2))}`);
 });
 
 test("letting go of A or D stops the roll: it dies away in a moment, and the craft stays where it was turned", () => {

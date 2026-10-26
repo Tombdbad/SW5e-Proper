@@ -6,10 +6,11 @@ import { useEffect, useRef } from "react";
 import { ARENA, CLASSES, isCapital, scenarioOf, type Dogfight, type Vessel } from "@shared/logic/dogfight";
 import { isDown, partyOf, shielded, weaponSlots } from "@shared/logic/dogfightSim";
 
-export type MarkKind = "foe" | "big" | "gen" | "bay" | "port" | "locked" | "core" | "turret";
+export type MarkKind = "foe" | "big" | "gen" | "bay" | "port" | "locked" | "core" | "turret" | "ally" | "drop";
 export interface Mark { x: number; y: number; behind: boolean; kind: MarkKind; label: string; dist: number; frac: number }
-export interface OverlayData { marks: Mark[]; aim: Mark | null; hullDist: number | null }
-export const emptyOverlay = (): OverlayData => ({ marks: [], aim: null, hullDist: null });
+// `nose`: where the craft's nose points on the screen (-1 to 1 each way, y up), for the reticule
+export interface OverlayData { marks: Mark[]; aim: Mark | null; hullDist: number | null; nose: { x: number; y: number; behind: boolean } | null }
+export const emptyOverlay = (): OverlayData => ({ marks: [], aim: null, hullDist: null, nose: null });
 
 export interface HudData {
   title: string;
@@ -55,7 +56,22 @@ export function hudOf(s: Dogfight, hullDist: number | null = null): HudData {
   const big = foes.filter((v) => isCapital(v.cls) || v.cls === "Large").sort((a, b) => CLASSES[b.cls].length - CLASSES[a.cls].length)[0];
   const objective: string[] = [];
   const warn: string[] = [];
-  if (I) {
+  const A = s.air;
+  if (A) {
+    const pieces = s.vessels.filter((v) => v.ground);
+    const standing = (side: string, kind?: string) => pieces.filter((v) => v.side === side && (!kind || v.ground!.kind === kind) && !isDown(v));
+    if (A.goal === "defend") {
+      objective.push(`Buildings standing: ${A.total - A.lost} of ${A.total} (half lost loses the fight)`);
+      objective.push(`Bombers left: ${foes.filter((v) => v.guns.some((g) => g.kind === "bomb" && g.ammo > 0)).length}`);
+    } else if (A.goal === "raid") {
+      objective.push(`Targets left: ${pieces.filter((v) => v.side === "foe" && v.ground!.target && !isDown(v)).length} of ${A.total}`);
+      objective.push(`Flak: ${standing("foe", "flak").length}`);
+    } else if (A.goal === "escort") {
+      objective.push(`Convoy: ${A.total - A.lost} of ${A.total} rolling, ${A.arrived} through`);
+    } else objective.push(`Convoy: ${A.total - standing("foe", "vehicle").length} of ${A.total} destroyed, ${A.arrived} got away`);
+    objective.push(`Altitude ${Math.round(me.p[1])} m`);
+    if (me.p[1] < 60 && me.pitch < -0.1) warn.push("PULL UP");
+  } else if (I) {
     objective.push(I.phase === "escape" ? "Out through the exhaust shaft!" : `Gate ${Math.min(I.gates, I.tunnel.gates.length)} of ${I.tunnel.gates.length}`);
     if (I.core.hp > 0) objective.push(`Reactor core ${Math.max(0, Math.round((I.core.hp / I.core.hpMax) * 100))}%: put ordnance into it`);
   } else if (big) {
@@ -73,7 +89,7 @@ export function hudOf(s: Dogfight, hullDist: number | null = null): HudData {
     objective.push(`${foes.length - 1} other foe${foes.length === 2 ? "" : "s"} aloft`);
   } else objective.push(`${foes.length} foe${foes.length === 1 ? "" : "s"} left`);
   if (s.warnings.missile > 0) warn.push(`MISSILE ${Math.round(s.warnings.missile)} m: break hard`);
-  if (s.warnings.outside > 0) warn.push(`Leaving the arena: turn back (${Math.max(0, Math.ceil(8 - s.warnings.outside))} s)`);
+  if (s.warnings.outside > 0) warn.push(`${A && me.p[1] > A.ceiling ? "The air is too thin" : "Leaving the arena"}: turn back (${Math.max(0, Math.ceil(8 - s.warnings.outside))} s)`);
   if (!I && hullDist !== null && hullDist < 90) warn.push(`Hull ahead ${Math.round(hullDist)} m: pull away`);
   if (me.c.hull / sheet.hullMax < 0.3 && me.c.hull > 0) warn.push("Hull critical");
   // The target card: the locked ship, else what the reticule is on
@@ -217,20 +233,52 @@ export function HudPanels({ hud, high }: { hud: HudData; high?: boolean }) {
   );
 }
 
-// The reticule in the middle of the view, red when something is on it
-export function Reticule({ locked }: { locked: boolean }) {
-  const c = locked ? "#ff3b3b" : "#d6f3ff";
+// The reticule, where the craft's nose points (the chase camera is above the craft, so that is a little above the middle of the view), red when
+// something is on it. When the guns follow the cursor (`guns` false) it only marks the nose, small and dim: the cursor is what the guns are on.
+export function Reticule({ overlay, locked, guns }: { overlay: { current: OverlayData }; locked: boolean; guns: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let frame = 0;
+    const tick = () => {
+      frame = requestAnimationFrame(tick);
+      const el = ref.current;
+      const n = overlay.current.nose;
+      if (!el) return;
+      if (!n || n.behind) {
+        el.style.display = "none";
+        return;
+      }
+      el.style.display = "block";
+      el.style.left = `${50 + Math.max(-0.95, Math.min(0.95, n.x)) * 50}%`;
+      el.style.top = `${50 - Math.max(-0.9, Math.min(0.9, n.y)) * 50}%`;
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [overlay]);
+  const hot = locked && guns;
+  const c = hot ? "#ff3b3b" : "#d6f3ff";
   return (
-    <div className="pointer-events-none absolute left-1/2 top-1/2 h-10 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full border-2" style={{ borderColor: c, boxShadow: locked ? "0 0 8px #ff3b3b" : "none" }} data-testid="reticule" data-locked={locked ? "true" : "false"}>
-      <div className="absolute left-1/2 top-0 h-2 w-0.5 -translate-x-1/2" style={{ background: c }} />
-      <div className="absolute bottom-0 left-1/2 h-2 w-0.5 -translate-x-1/2" style={{ background: c }} />
-      <div className="absolute left-0 top-1/2 h-0.5 w-2 -translate-y-1/2" style={{ background: c }} />
-      <div className="absolute right-0 top-1/2 h-0.5 w-2 -translate-y-1/2" style={{ background: c }} />
+    <div
+      ref={ref}
+      className={`pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full ${guns ? "h-10 w-10 border-2" : "h-5 w-5 border opacity-60"}`}
+      style={{ borderColor: c, boxShadow: hot ? "0 0 8px #ff3b3b" : "none" }}
+      data-testid="reticule"
+      data-locked={locked ? "true" : "false"}
+      data-guns={guns ? "true" : "false"}
+    >
+      {guns && (
+        <>
+          <div className="absolute left-1/2 top-0 h-2 w-0.5 -translate-x-1/2" style={{ background: c }} />
+          <div className="absolute bottom-0 left-1/2 h-2 w-0.5 -translate-x-1/2" style={{ background: c }} />
+          <div className="absolute left-0 top-1/2 h-0.5 w-2 -translate-y-1/2" style={{ background: c }} />
+          <div className="absolute right-0 top-1/2 h-0.5 w-2 -translate-y-1/2" style={{ background: c }} />
+        </>
+      )}
     </div>
   );
 }
 
-const COLORS: Record<MarkKind, string> = { foe: "#ff6a5a", big: "#ff9a5a", gen: "#6fe6ff", bay: "#ffcf66", port: "#7dffc0", locked: "#ff3b3b", core: "#ffb04a", turret: "#ff8a3a" };
+const COLORS: Record<MarkKind, string> = { foe: "#ff6a5a", big: "#ff9a5a", gen: "#6fe6ff", bay: "#ffcf66", port: "#7dffc0", locked: "#ff3b3b", core: "#ffb04a", turret: "#ff8a3a", ally: "#5ee08a", drop: "#ffe066" };
 const POOL = 36;
 
 // The markers: moved every frame from `overlay`, with no React render. Off the screen a mark is a pip at its edge pointing the way.
@@ -289,7 +337,7 @@ export function MarkerLayer({ overlay }: { overlay: { current: OverlayData } }) 
           body.style.height = `${size}px`;
           body.style.fontSize = "0";
           body.style.border = m.kind === "locked" || m.kind === "foe" || m.kind === "big" ? "2px solid currentColor" : "2px solid currentColor";
-          body.style.borderRadius = m.kind === "gen" || m.kind === "bay" || m.kind === "port" || m.kind === "core" ? "0" : m.kind === "turret" ? "50%" : "2px";
+          body.style.borderRadius = m.kind === "gen" || m.kind === "bay" || m.kind === "port" || m.kind === "core" ? "0" : m.kind === "turret" || m.kind === "drop" ? "50%" : "2px";
           body.style.transform = m.kind === "gen" || m.kind === "bay" || m.kind === "port" || m.kind === "core" ? "translate(-50%, -50%) rotate(45deg)" : "translate(-50%, -50%)";
           // Far marks stay unlabelled but for the nearest few, so that a crowded sky stays readable
           label.textContent = m.kind === "turret" ? "" : i < 5 || m.dist < 600 ? `${m.label} ${m.dist >= 1000 ? (m.dist / 1000).toFixed(1) + " km" : Math.round(m.dist) + " m"}` : "";

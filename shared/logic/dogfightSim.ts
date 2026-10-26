@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------------------------
 import { headingOf, shipDamage, type Vec3 } from "./index";
 import {
-  ARENA, CLASSES, STATION, classIndex, clamp, foeSheet, frameOf, isCapital, makeVessel, toLocal, toWorld, vadd, vdist, vdot, vlen, vmul, vnorm, vsub, wrapAngle,
+  AIR, ARENA, CLASSES, STATION, classIndex, clamp, foeSheet, frameOf, isCapital, makeVessel, toLocal, toWorld, turned, vadd, vdist, vdot, vlen, vmul, vnorm, vsub, wrapAngle,
   type Dogfight, type DogfightInput, type Fx, type Gun, type HullVolume, type Interior, type Part, type Projectile, type Vessel,
 } from "./dogfight";
 import { TUNNEL, clearanceAt, crossAxes, doorHole, doorOpen, makeTunnel } from "./tunnel";
@@ -49,7 +49,7 @@ const PD = { kill: { missile: 0.34, torpedo: 0.2, rocket: 0.42 } as Record<strin
 const HANGAR = { alert: 900, every: 9, cap: { Huge: 2, Gargantuan: 3, Station: 3 } as Record<string, number> };
 
 export const partyOf = (s: Dogfight): Vessel => s.vessels.find((v) => v.id === s.me)!;
-export const isDown = (v: Vessel) => v.dying > 0 || v.c.destroyed || (v.side === "foe" && v.c.disabled);
+export const isDown = (v: Vessel) => v.dying > 0 || v.c.destroyed || (v.side === "foe" && v.c.disabled) || (!!v.ground && v.c.hull <= 0);
 export const hostiles = (s: Dogfight, v: Vessel) => s.vessels.filter((o) => o.side !== v.side && !isDown(o));
 const generatorsUp = (v: Vessel) => v.parts.some((p) => p.kind === "generator" && p.alive);
 // A foe capital ship is shielded by its generators; the party's own big ship keeps the sheet's shield pool
@@ -158,8 +158,12 @@ function destroy(s: Dogfight, v: Vessel, by: number) {
   v.dying = DYING[v.cls] ?? 1;
   const mine = by === s.me || by < 0;
   if (v.side === "foe") {
-    s.kills[v.cls] = (s.kills[v.cls] ?? 0) + 1;
-    say(s, v.c.destroyed ? `${v.name} is destroyed.` : `${v.name} is disabled and drifts.`);
+    const key = v.ground ? v.ground.kind : v.cls;
+    s.kills[key] = (s.kills[key] ?? 0) + 1;
+    say(s, v.ground || v.c.destroyed ? `${v.name} is destroyed.` : `${v.name} is disabled and drifts.`);
+  } else if (v.ground && s.air) {
+    s.air.lost++;
+    say(s, `${v.name} is destroyed!`);
   }
   void mine;
   boom(s, v.p, CLASSES[v.cls].length * 0.35, "wreck", by);
@@ -201,41 +205,45 @@ export function subTargets(v: Vessel, from: Vec3, range: number): Part[] {
     .sort((a, b) => band(a) - band(b) || a.id - b.id);
 }
 export interface AimPoint { vessel: number; part: number; dist: number; point: Vec3 }
-export function aimFrom(s: Dogfight, from: Vessel, range: number, lockOnly = true): AimPoint | null {
-  const f = headingOf(from.yaw, from.pitch);
+// What is on the reticule (along the nose) or, with `ray`, under the cursor (along the ray from the camera through it: `dist` is then from the
+// ray's origin, and `range` should allow for the camera standing behind the craft)
+export function aimFrom(s: Dogfight, from: Vessel, range: number, lockOnly = true, ray?: { o: Vec3; d: Vec3 }): AimPoint | null {
+  const f = ray ? vnorm(ray.d) : headingOf(from.yaw, from.pitch);
+  const origin = ray ? ray.o : from.p;
+  const assist = ray ? ARENA.cursorAssist : ARENA.assist;
   let best: { score: number; aim: AimPoint } | null = null;
   const candidates = s.lock !== null && lockOnly ? hostiles(s, from).filter((o) => o.id === s.lock) : hostiles(s, from);
   for (const o of candidates) {
-    const d = vsub(o.p, from.p);
+    const d = vsub(o.p, origin);
     const dist = vlen(d);
     if (dist > range + o.reach) continue;
     // Parts first: a turret, generator or bay the reticule is on
     for (const part of o.parts) {
       if (!part.alive || part.kind === "port") continue;
       const wp = partWorld(o, part);
-      const dp = vsub(wp, from.p);
+      const dp = vsub(wp, origin);
       const dd = vlen(dp);
       if (dd > range) continue;
       const ang = Math.acos(clamp(vdot(f, dp) / (dd || 1), -1, 1));
       const size = Math.asin(Math.min(1, part.r / (dd || 1)));
       const chosen = o.id === s.lock && s.lockPart === part.id;
-      if (ang - size <= ARENA.assist * (chosen ? ARENA.subAssist : 0.45) && partVisible(o, part, from.p)) {
+      if (ang - size <= assist * (chosen ? ARENA.subAssist : 0.45) && partVisible(o, part, from.p)) {
         const score = Math.max(0, ang - size) + dd * 1e-5 - (chosen ? 1 : 0);
         if (!best || score < best.score) best = { score, aim: { vessel: o.id, part: part.id, dist: dd, point: wp } };
       }
     }
     if (isCapital(o.cls) || o.cls === "Large") {
-      const t = hullRay(o, from.p, f);
+      const t = hullRay(o, origin, f);
       if (t !== null && t <= range) {
         const score = 0.4 + t * 1e-5;
-        if (!best || score < best.score) best = { score, aim: { vessel: o.id, part: -1, dist: t, point: vadd(from.p, vmul(f, t)) } };
+        if (!best || score < best.score) best = { score, aim: { vessel: o.id, part: -1, dist: t, point: vadd(origin, vmul(f, t)) } };
       }
       continue;
     }
     // A small craft: within the assist cone, wider by the craft's own size
     const ang = Math.acos(clamp(vdot(f, d) / (dist || 1), -1, 1));
     const size = Math.asin(Math.min(1, o.reach / (dist || 1)));
-    if (dist <= range && ang - size <= ARENA.assist) {
+    if (dist <= range && ang - size <= assist) {
       const score = 0.1 + Math.max(0, ang - size) + dist * 1e-5;
       if (!best || score < best.score) best = { score, aim: { vessel: o.id, part: -1, dist, point: o.p } };
     }
@@ -261,7 +269,17 @@ function strikeBack(s: Dogfight, me: Vessel, by: number, roll: () => number) {
 }
 const sheetAttack = (v: Vessel) => v.c.sheet.proficiency + abilityMod(v.c.sheet.abilities.dexterity);
 
-// The party's guns: lasers fire along the nose at what the reticule is on; batteries and point defense are turrets that pick their own targets
+// Where a laser that hits nothing ends: `range` on from the muzzle, toward where the cursor's ray is `range` beyond the craft, or straight
+// ahead of the nose when the guns are aimed by the reticule
+function farPoint(me: Vessel, input: DogfightInput, from: Vec3, range: number): Vec3 {
+  if (!input.aim) return vadd(me.p, vmul(headingOf(me.yaw, me.pitch), range));
+  const d = vnorm(input.aim.d);
+  const beyond = vadd(input.aim.o, vmul(d, Math.max(0, vdot(vsub(me.p, input.aim.o), d)) + range));
+  return vadd(from, vmul(vnorm(vsub(beyond, from)), range));
+}
+
+// The party's guns: lasers fire at what the reticule is on, or at what is under the cursor (the guns follow it: house rule, `input.aim`);
+// batteries and point defense are turrets that pick their own targets
 function fireParty(s: Dogfight, me: Vessel, input: DogfightInput, h: number, roll: () => number) {
   const aim = s.aim;
   let side = 1;
@@ -275,7 +293,7 @@ function fireParty(s: Dogfight, me: Vessel, input: DogfightInput, h: number, rol
       side = -side;
       const from = muzzle(me, side);
       if (!aim || aim.dist > g.range) {
-        s.events.push({ from, to: vadd(me.p, vmul(headingOf(me.yaw, me.pitch), g.range)), by: "player", hit: false, at: s.t });
+        s.events.push({ from, to: farPoint(me, input, from, g.range), by: "player", hit: false, at: s.t });
         continue;
       }
       const target = s.vessels.find((v) => v.id === aim.vessel)!;
@@ -320,10 +338,8 @@ function fireParty(s: Dogfight, me: Vessel, input: DogfightInput, h: number, rol
   if (bomb && input.bomb && bomb.wait <= 0) {
     bomb.ammo--;
     bomb.wait = bomb.reload;
-    const f = headingOf(me.yaw, me.pitch);
-    spawn(s, { kind: "bomb", by: me.id, side: "party", p: vadd(me.p, vmul(f, me.reach + 3)), v: vmul(f, Math.max(me.speed, 8)), life: ORD.bomb.life, dice: bomb.dice, type: bomb.type, radius: bomb.radius, target: null, part: -1, turn: 0, fuse: ORD.bomb.fuse, bonus: bomb.plus, reroll: bomb.reroll, dc: bomb.dc });
+    spawnBomb(s, me, bomb, bombRelease(me));
     s.events.push({ from: me.p, to: me.p, by: "player", hit: false, at: s.t });
-    boom(s, vadd(me.p, vmul(f, me.reach)), 1, "launch", me.id);
   }
 }
 function launch(s: Dogfight, from: Vessel, g: Gun, aim: { vessel: number; part: number } | null, roll: () => number, at?: Vec3) {
@@ -395,17 +411,124 @@ function advance(v: Vessel, h: number) {
   v.p = [v.p[0] + f[0] * v.speed * h, v.p[1] + f[1] * v.speed * h, v.p[2] + f[2] * v.speed * h];
 }
 
-function moveFoe(s: Dogfight, v: Vessel, me: Vessel, h: number) {
-  if (isDown(v)) {
-    // A wreck drifts on and slows
-    v.speed *= 1 - Math.min(1, 0.4 * h);
-    advance(v, h);
+// ---- In the air of a planet (house rules, dogfight.ts): the ground, bombs that fall, the pieces on the ground and the bombers' runs
+// Where a bomb let go at `p` with velocity `vel` meets the ground, and when
+export function bombFall(p: Vec3, vel: Vec3, gravity: number): { at: Vec3; t: number } {
+  const t = (vel[1] + Math.sqrt(Math.max(0, vel[1] * vel[1] + 2 * gravity * Math.max(0, p[1])))) / gravity;
+  return { at: [p[0] + vel[0] * t, 0, p[2] + vel[2] * t], t };
+}
+const fallOf = (s: Dogfight) => AIR.gravity * (s.air?.g ?? 1);
+// A bomb as it leaves the craft: just ahead of the nose, at the craft's own velocity
+export function bombRelease(v: Vessel): { p: Vec3; vel: Vec3 } {
+  const f = headingOf(v.yaw, v.pitch);
+  return { p: vadd(v.p, vmul(f, v.reach + 3)), vel: vmul(f, Math.max(v.speed, 8)) };
+}
+// What a bomber goes for: one of the other side's pieces on the ground that stands, each bomber its own (by its place among the bombers),
+// the nearest first
+const bombTarget = (s: Dogfight, v: Vessel) => {
+  const left = s.vessels.filter((o) => o.ground && o.side !== v.side && !isDown(o)).sort((a, b) => a.id - b.id);
+  if (!left.length) return undefined;
+  const bombers = s.vessels.filter((o) => o.side === v.side && !o.ground && !isDown(o) && o.guns.some((g) => g.kind === "bomb" && g.ammo > 0));
+  const k = Math.max(0, bombers.indexOf(v));
+  return left[k % left.length];
+};
+// A heading that keeps a flyer off the ground: up, the harder the lower it is
+function keepUp(s: Dogfight, v: Vessel, aim: Vec3): Vec3 {
+  if (!s.air) return aim;
+  const len = vlen(aim) || 1;
+  const low = AIR.floor + v.reach - v.p[1];
+  return low > 0 ? [aim[0], Math.max(aim[1], (len * low) / 25), aim[2]] : aim;
+}
+// A bomber with bombs left flies at its run height toward where its bombs must leave to fall on the target, and lets them go there
+function bomberRun(s: Dogfight, v: Vessel, h: number): boolean {
+  const bomb = v.guns.find((g) => g.kind === "bomb" && g.ammo > 0);
+  const target = s.air && bomb ? bombTarget(s, v) : undefined;
+  if (!bomb || !target) return false;
+  const rel = bombRelease(v);
+  const fall = bombFall(rel.p, rel.vel, fallOf(s));
+  const miss = vsub(target.p, fall.at);
+  const flat = Math.hypot(miss[0], miss[2]);
+  // Over the release point: a bomb goes (one a pass: the blast reaches a building it falls beside)
+  bomb.wait = Math.max(0, bomb.wait - h);
+  if (flat < Math.max(14, target.reach + bomb.radius * 0.4) && bomb.wait <= 0) {
+    bomb.ammo--;
+    bomb.wait = 4;
+    spawnBomb(s, v, bomb, rel);
+    say(s, `${v.name} is bombing ${target.name}!`);
+    v.ai.breakUntil = s.t + 7;
+  }
+  // Past the target, or just bombed: on out for a while, then round for another run (it cannot turn tight enough to circle it)
+  const to = vsub(target.p, v.p);
+  const ahead = vdot(headingOf(v.yaw, 0), vnorm([to[0], 0, to[2]]));
+  if (v.ai.breakUntil <= s.t && ahead < 0 && Math.hypot(to[0], to[2]) < 450) v.ai.breakUntil = s.t + 6;
+  if (v.ai.breakUntil > s.t) {
+    flyToward(v, keepUp(s, v, [Math.cos(v.yaw), clamp((AIR.bombRun - v.p[1]) / 60, -0.4, 0.4), Math.sin(v.yaw)]), h, v.top * 0.9);
+    return true;
+  }
+  // Toward the target, at the height of the run (the lead: where the bombs would land is put on it)
+  const dx = target.p[0] - v.p[0] + miss[0] * 0.3;
+  const dz = target.p[2] - v.p[2] + miss[2] * 0.3;
+  const across = Math.hypot(dx, dz) || 1;
+  flyToward(v, keepUp(s, v, [dx, clamp((AIR.bombRun - v.p[1]) / 60, -0.4, 0.4) * across, dz]), h, v.top * 0.9);
+  return true;
+}
+function spawnBomb(s: Dogfight, v: Vessel, bomb: Gun, rel: { p: Vec3; vel: Vec3 }) {
+  spawn(s, { kind: "bomb", by: v.id, side: v.side, p: rel.p, v: rel.vel, life: s.air ? AIR.bombLife : ORD.bomb.life, dice: bomb.dice, type: bomb.type, radius: bomb.radius, target: null, part: -1, turn: 0, fuse: ORD.bomb.fuse, bonus: bomb.plus, reroll: bomb.reroll, dc: bomb.dc });
+  boom(s, vadd(v.p, vmul(headingOf(v.yaw, v.pitch), v.reach)), 1, "launch", v.id);
+}
+// A piece on the ground: a vehicle drives its route (the leg's end, then the next), a flak turret turns its guns on the party's craft
+function stepGround(s: Dogfight, v: Vessel, me: Vessel, h: number) {
+  const role = v.ground!;
+  if (isDown(v)) return;
+  if (role.kind === "flak" && !role.route) {
+    const to = vsub(me.p, v.p);
+    const len = vlen(to) || 1;
+    v.yaw = Math.atan2(to[2], to[0]);
+    v.pitch = Math.asin(clamp(to[1] / len, -1, 1));
+  }
+  if (!role.route || role.arrived) return;
+  const leg = role.leg ?? 0;
+  const goal = role.route[Math.min(leg + 1, role.route.length - 1)];
+  const to = vsub([goal[0], v.p[1], goal[2]], v.p);
+  const dist = Math.hypot(to[0], to[2]);
+  if (dist < 8) {
+    if (leg + 2 >= role.route.length) {
+      role.arrived = true;
+      v.speed = 0;
+      if (s.air) {
+        s.air.arrived++;
+        say(s, `${v.name} ${v.side === "party" ? "gets through" : "gets away"}.`);
+      }
+      return;
+    }
+    role.leg = leg + 1;
     return;
   }
+  v.yaw = Math.atan2(to[2], to[0]);
+  v.pitch = 0;
+  v.speed = v.top;
+  advance(v, h);
+  // a flak speeder in a convoy keeps its guns on the party's craft as it drives (the guns turn, not the hull: `aimYaw` for the scene)
+}
+
+function moveFoe(s: Dogfight, v: Vessel, me: Vessel, h: number) {
+  if (isDown(v)) {
+    // A wreck drifts on and slows (in the air it falls, and stops on the ground)
+    v.speed *= 1 - Math.min(1, 0.4 * h);
+    if (s.air && !v.ground) {
+      v.pitch = Math.max(-1.2, v.pitch - 0.8 * h);
+      if (v.p[1] <= v.half[1]) v.speed = 0;
+    }
+    if (!v.ground) advance(v, h);
+    if (s.air) v.p[1] = Math.max(v.half[1] * 0.5, v.p[1]);
+    return;
+  }
+  if (v.ground) return stepGround(s, v, me, h);
   if (v.cls === "Station") return;
   if (classIndex(v.cls) <= classIndex("Medium")) {
-    flyToward(v, foeAim(s, v, me), h, v.top);
+    if (!bomberRun(s, v, h)) flyToward(v, keepUp(s, v, foeAim(s, v, me)), h, v.top);
     advance(v, h);
+    if (s.air) v.p[1] = Math.max(v.reach, v.p[1]);
     return;
   }
   // The larger ships hold course; they turn toward the party only when it is behind them, and back toward the arena if they stray
@@ -434,9 +557,11 @@ function foeFire(s: Dogfight, v: Vessel, me: Vessel, h: number, roll: () => numb
   // Lasers: a shot when in range and facing; the chance is d20 + attack against AC, spoiled by the foe's aim
   if (v.ai.fire <= 0 && classIndex(v.cls) <= classIndex("Medium")) {
     const guns = v.guns.filter((g) => g.kind === "laser" || (g.kind === "battery" && g.turret));
+    // (flak turns its guns on the craft wherever it is: it need not face it, and it reaches further)
+    const flak = v.ground?.kind === "flak";
     for (const g of guns) {
-      const range = Math.min(g.range, 240);
-      if (g.wait > 0 || dist > range || facing < Math.cos(0.5)) continue;
+      const range = flak ? Math.max(g.range, 420) : Math.min(g.range, 240);
+      if (g.wait > 0 || dist > range || (!flak && facing < Math.cos(0.5))) continue;
       g.wait = Math.max(g.reload, ARENA.foeReload) * (1 + roll() * 0.4);
       const hit = roll() < toHit(sheetAttack(v) + g.bonus, me.ac) * ARENA.aimFoe;
       s.events.push({ from: muzzle(v, roll() < 0.5 ? -1 : 1), to: me.p, by: "foe", hit, at: s.t });
@@ -448,7 +573,7 @@ function foeFire(s: Dogfight, v: Vessel, me: Vessel, h: number, roll: () => numb
     v.ai.fire = 0.25;
   }
   // Ordnance: a homing missile or torpedo at the party now and then (a big ship's tubes need no facing)
-  const arc = classIndex(v.cls) >= classIndex("Large") ? -1 : 0.8;
+  const arc = classIndex(v.cls) >= classIndex("Large") || v.ground?.kind === "flak" ? -1 : 0.8;
   if (v.ai.missile <= 0 && dist > 140 && dist < (arc < 0 ? 700 : 420) && facing > arc) {
     const g = v.guns.find((x) => (x.kind === "missile" || x.kind === "torpedo" || x.kind === "rocket") && x.ammo > 0);
     if (g) {
@@ -538,24 +663,22 @@ function stepParts(s: Dogfight, v: Vessel, me: Vessel, h: number, roll: () => nu
 }
 
 // ---- The party's craft
-// The craft turns in its own frame: yaw to the right and pitch up turn the nose to the craft's right and up, which, once it has been rolled,
-// is a turn of the heading by both. The speed goes to the throttle's setting and stays there.
+// The craft turns about its own axes (`turned`): yaw to the right and pitch up turn the nose to the craft's right and up, in whatever
+// attitude it is in, with no limit on the pitch, and nothing but A and D rolls it (the mouse and the pad are yaw and pitch only). The speed
+// goes to the throttle's setting and stays there.
 function flyParty(s: Dogfight, me: Vessel, input: DogfightInput, h: number) {
   const turn = Math.max(me.turn, 0.3);
   const want = (input.roll ?? 0) * clamp(me.turn * ARENA.roll, ARENA.rollMin, ARENA.rollMax);
   me.rollVel += (want - me.rollVel) * Math.min(1, h / ARENA.rollEase);
   if (!want && Math.abs(me.rollVel) < 0.02) me.rollVel = 0;
   me.roll = wrapAngle(me.roll + me.rollVel * h);
-  const [c, sn] = [Math.cos(me.roll), Math.sin(me.roll)];
-  const right = input.steer.x;
-  const up = -input.steer.y;
-  me.yaw += (right * c + up * sn) * turn * h;
-  me.pitch = clamp(me.pitch + (up * c - right * sn) * turn * h, -ARENA.pitchLimit, ARENA.pitchLimit);
+  const to = turned(me.yaw, me.pitch, me.roll, input.steer.x * turn * h, -input.steer.y * turn * h);
+  me.yaw = to.yaw;
+  me.pitch = to.pitch;
+  me.roll = to.roll;
   const target = s.throttle * me.top;
   const step = me.accel * h * (target < me.speed ? 1.6 : 1);
   me.speed += clamp(target - me.speed, -step, step);
-  // It leans into a yaw, the way a craft banks into a turn (a yaw to the right leans it to the right)
-  me.bank += (clamp(right * ARENA.lean, -ARENA.lean, ARENA.lean) - me.bank) * Math.min(1, 4 * h);
   advance(me, h);
 }
 
@@ -634,7 +757,15 @@ function stepShots(s: Dogfight, me: Vessel, h: number, roll: () => number) {
         b.v = vmul(vnorm(vadd(vmul(have, 1 - k), vmul(want, k))), Math.min(speed + 140 * h, ORD[b.kind]?.speed ?? speed));
       } else b.target = null;
     }
+    if (s.air && b.kind === "bomb") b.v = [b.v[0] * (1 - 0.02 * h), b.v[1] - fallOf(s) * h, b.v[2] * (1 - 0.02 * h)];
     b.p = vadd(b.p, vmul(b.v, h));
+    if (s.air && b.p[1] <= 0) {
+      // The ground: a bolt ends, a warhead or a bomb goes off where it strikes
+      b.p = [b.p[0], 0, b.p[2]];
+      if (b.kind !== "bolt") detonate(s, b, null, -1, roll);
+      else boom(s, b.p, 0.8, "spark", b.by);
+      continue;
+    }
     let spent = false;
     for (const o of s.vessels) {
       if (o.side === b.side || isDown(o)) continue;
@@ -833,24 +964,33 @@ function tick(s: Dogfight, raw: DogfightInput, h: number, roll: () => number) {
     s.dialSeen = input.dial;
   }
   flyParty(s, me, input, h);
-  // The edge of the arena
-  if (vlen(me.p) > s.bound) {
+  if (s.air) groundStrike(s, me);
+  // The edge of the arena (in the air, the ceiling too)
+  const high = !!s.air && me.p[1] > s.air.ceiling;
+  if (vlen([me.p[0], s.air ? 0 : me.p[1], me.p[2]]) > s.bound || high) {
     s.warnings.outside += h;
     const home = vnorm(vmul(me.p, -1));
     me.yaw += clamp(wrapAngle(Math.atan2(home[2], home[0]) - me.yaw), -0.4 * h, 0.4 * h);
+    if (high) me.pitch = Math.max(-0.6, me.pitch - 0.5 * h);
   } else s.warnings.outside = Math.max(0, s.warnings.outside - h);
   collide(s, me, h, roll);
   const range = Math.max(...me.guns.filter((g) => g.kind === "laser").map((g) => g.range), 160);
-  s.aim = aimFrom(s, me, range, true) ?? (s.lock !== null ? aimFrom(s, me, range, false) : null);
+  // What the guns are aimed at: what is under the cursor if there is one (the ray starts at the camera, which stands behind the craft), else
+  // what the reticule is on. The distance is the craft's own, which is what the guns' range is measured from.
+  const ray = input.aim;
+  const reach = ray ? range + vdist(ray.o, me.p) : range;
+  s.aim = aimFrom(s, me, reach, true, ray) ?? (s.lock !== null ? aimFrom(s, me, reach, false, ray) : null);
+  if (s.aim && ray) s.aim.dist = vdist(me.p, s.aim.point);
   fireParty(s, me, input, h, roll);
   followOrdnance(s, me);
   // (a vessel launched this tick is stepped in the same loop)
   for (const v of s.vessels) {
-    if (v.side === "party") continue;
+    if (v.id === s.me) continue;
     moveFoe(s, v, me, h);
+    if (v.side === "party") continue;
     foeFire(s, v, me, h, roll);
     stepParts(s, v, me, h, roll);
-    if (v.dying > 0) {
+    if (v.dying > 0 && !v.ground) {
       v.dying -= h;
       if (v.dying <= 0) v.dying = -1;
       else if (roll() < h * 10) boom(s, toWorld(v, [(roll() - 0.5) * v.half[0] * 1.4, (roll() - 0.5) * v.half[1], (roll() - 0.5) * v.half[2]]), CLASSES[v.cls].length * 0.1, "boom");
@@ -890,8 +1030,54 @@ function tick(s: Dogfight, raw: DogfightInput, h: number, roll: () => number) {
   finish(s, me);
 }
 
+// The party's craft strikes the ground: pushed back up, levelled, and hurt by how fast it came down (a graze costs nothing)
+function groundStrike(s: Dogfight, me: Vessel) {
+  const floor = me.half[1] + 1;
+  if (me.p[1] >= floor) return;
+  const down = -headingOf(me.yaw, me.pitch)[1] * me.speed;
+  me.p = [me.p[0], floor, me.p[2]];
+  if (me.pitch < 0.08) me.pitch = 0.08;
+  if (down > AIR.graze && s.bumpWait <= 0) {
+    s.bumps++;
+    s.bumpWait = 0.9;
+    me.speed *= 0.6;
+    damageVessel(s, me, Math.round((down - AIR.graze * 0.5) * AIR.crash), "kinetic", me.p, -1, "ground");
+    say(s, "You strike the ground!");
+    boom(s, me.p, 2, "spark");
+  }
+}
+// How an air fight ends: the goal met (the bombers down, the targets bombed, the convoy through or destroyed), or lost
+function airFinish(s: Dogfight, me: Vessel): boolean {
+  const a = s.air!;
+  const ground = (side: "party" | "foe") => s.vessels.filter((v) => v.ground && v.side === side && (side === "party" || v.ground.target));
+  let won = false;
+  let why = "";
+  if (a.goal === "defend") {
+    const bombers = s.vessels.filter((v) => v.side === "foe" && !isDown(v) && v.guns.some((g) => g.kind === "bomb" && g.ammo > 0));
+    if (a.lost * 2 >= a.total) why = `${a.lost} of ${a.total} buildings lost`;
+    else won = !bombers.length;
+  } else if (a.goal === "raid") {
+    won = ground("foe").every(isDown);
+  } else if (a.goal === "escort") {
+    const mine = ground("party");
+    if (mine.every(isDown)) why = "the convoy was destroyed";
+    else won = mine.every((v) => isDown(v) || v.ground?.arrived);
+  } else {
+    const theirs = s.vessels.filter((v) => v.ground && v.side === "foe" && v.ground.kind === "vehicle");
+    won = theirs.every(isDown);
+    if (!won && theirs.every((v) => isDown(v) || v.ground?.arrived)) why = `${a.arrived} of the convoy got away`;
+  }
+  void me;
+  if (why) {
+    a.why = why;
+    end(s, "failed");
+  } else if (won) end(s, "clear");
+  return won || !!why;
+}
+
 function finish(s: Dogfight, me: Vessel) {
   if (s.over) return;
+  if (s.air && me.c.hull > 0 && airFinish(s, me)) return;
   const foes = s.vessels.filter((v) => v.side === "foe" && !isDown(v));
   const station = s.vessels.find((v) => v.cls === "Station");
   if (me.c.hull <= 0) end(s, "shot-down");
@@ -943,7 +1129,6 @@ function enterStation(s: Dogfight, me: Vessel, station: Vessel) {
   // (the tunnel is flown level)
   me.roll = 0;
   me.rollVel = 0;
-  me.bank = 0;
   say(s, "You fly into the station: gates, mines and doors ahead. Torpedo the core!");
   boom(s, partWorld(station, station.parts.find((p) => p.kind === "port")!), 60, "port");
 }
@@ -1276,14 +1461,19 @@ function interiorBlast(s: Dogfight, me: Vessel, b: Projectile, roll: () => numbe
 // What the fight pays (house rule)
 // ---------------------------------------------------------------------------------------------
 export const PART_PAY: Record<string, number> = { generator: 150, hangar: 120, battery: 40, pd: 20 };
+// What a piece on the ground pays when it is destroyed (house rule)
+export const GROUND_PAY: Record<string, number> = { building: 300, flak: 150, vehicle: 250 };
 export function dogfightPayout(s: Dogfight): { credits: number; note: string } {
   const me = partyOf(s);
   const kills = Object.entries(s.kills);
   const total = kills.reduce((n, [, k]) => n + k, 0);
-  const pay = kills.reduce((n, [cls, k]) => n + k * (CLASSES[cls as keyof typeof CLASSES]?.bounty ?? 0), 0);
+  const pay = kills.reduce((n, [cls, k]) => n + k * (CLASSES[cls as keyof typeof CLASSES]?.bounty ?? GROUND_PAY[cls] ?? 0), 0);
+  // In the air: what the party kept standing (a building, a vehicle of the convoy) pays as well
+  const a = s.air;
+  const saved = a && (a.goal === "defend" || a.goal === "escort") && s.outcome === "clear" ? (a.total - a.lost) * 250 : 0;
   const parts = Object.entries(s.partsDown).reduce((n, [kind, k]) => n + k * (PART_PAY[kind] ?? 0), 0);
   const cleared = s.outcome === "clear" || s.outcome === "station";
-  const bonus = cleared ? 500 + (s.outcome === "station" ? 3000 : 0) : 0;
+  const bonus = (cleared ? 500 + (s.outcome === "station" ? 3000 : 0) : 0) + saved;
   const names = kills.map(([cls, k]) => `${k} ${cls}`).join(", ");
   const partNote = Object.keys(s.partsDown).length ? `, ${Object.entries(s.partsDown).map(([k, n]) => `${n} ${k}${n > 1 ? "s" : ""}`).join(" and ")} shot out` : "";
   const end =
@@ -1291,7 +1481,9 @@ export function dogfightPayout(s: Dogfight): { credits: number; note: string } {
     s.outcome === "clear" ? ", the sky clear" :
     s.outcome === "shot-down" ? ", shot down" :
     s.outcome === "lost-in-station" ? ", lost with the station" :
-    s.outcome === "fled" ? ", broke off" : "";
-  const note = `${total} of ${s.foesTotal} foes down${names ? ` (${names})` : ""}${partNote}, ${Math.max(0, Math.round(me.c.hull))} hull left${end} (house rule: the books give no dogfight)`;
+    s.outcome === "fled" ? ", broke off" :
+    s.outcome === "failed" ? `, failed: ${a?.why ?? "the goal was lost"}` : "";
+  const keptNote = a && (a.goal === "defend" || a.goal === "escort") ? `, ${a.total - a.lost} of ${a.total} ${a.goal === "defend" ? "buildings" : "vehicles"} kept` : "";
+  const note = `${total} of ${s.foesTotal} foes down${names ? ` (${names})` : ""}${partNote}${keptNote}, ${Math.max(0, Math.round(me.c.hull))} hull left${end} (house rule: the books give no dogfight)`;
   return { credits: pay + parts + bonus, note };
 }

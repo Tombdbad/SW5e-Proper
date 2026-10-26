@@ -48,6 +48,7 @@ Poly Haven (https://polyhaven.com), CC0 1.0, 1K maps fetched with `tools/fetch-p
 | `floor/` | `metal_plate`, `hangar_concrete_floor`, `dirty_carpet`, `marble_tiles`, `stone_tiles`, `terracotta_floor_tiles`, `concrete_floor_worn_02` | the floors of rooms and rooftops (`siteAssets.tsx` `floorLook`) |
 | `wear/` | `rusty_painted_metal`, `rust_coarse_01`, `peeling_painted_wall`, `painted_metal_shutter`, `metal_plate_02` | not drawn: the sources of the hull wear masks |
 | `hull/` | made here by `tools/build-hull-textures.mjs` from `wear/` and drawn patterns (CC0) | the wear, scorch and panel plates of ships and speeders (`models.tsx` `hullMaterials`) |
+| `figure/` | `skin`, `face`, `fabric`, `leather`, `plate`, `scales`, `fur` (+ `fur/strands.png`): made here from noise by `tools/build-figure-textures.mjs` (CC0, nothing downloaded) | the skin, faces, clothes, leather, armour, droid plating, scales and fur of the figures, and the strands of the shell fur (`models.tsx` `MATERIALS`, `FurShells`) |
 
 ## Libraries
 

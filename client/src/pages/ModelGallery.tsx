@@ -19,7 +19,7 @@ import { TONES, TONE_NAMES, type Tone } from "@/components/Map/interiors/tones";
 import { KIT_MODELS, kitUrl } from "@/components/Map/interiors/kitbash";
 import { floorOf } from "@/components/Map/sprites";
 import { gearOf } from "@/lib/sw5e/characterCalculation";
-import { furnishRoom, createRandom, type Area } from "@shared/logic";
+import { furnishRoom, createRandom, VEHICLE_MAKES, type Area } from "@shared/logic";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
 
 // `rounds` shows the first round and oval rooms (2026-10-19): furnished by the planner (furnishRoom) on their curve.
@@ -198,6 +198,13 @@ function Walk() {
       ))}
       <Pacer z={4.2} speed={1}><Figure kind="droid" ring={SIDE_COLORS.hostile} name="R2 Series Astromech Droid" /></Pacer>
       <Pacer z={5.8} speed={1}><Figure kind="beast" ring={SIDE_COLORS.hostile} name="Dewback, Adult" creature="beast" /></Pacer>
+      {/* The gaits (2026-10-26): a BB unit rolls under its head, a droideka rolls up to run and unfolds at each end, a battle droid walks,
+          a probe floats; a bantha and a tauntaun trot, an acklay goes on its legs in threes, a mynock beats its wings */}
+      {([["droid", "BB Series Astromech Droid"], ["droid", "Destroyer Droid"], ["battledroid", "B1 Series Battle Droid"], ["droid", "Probe Droid"], ["beast", "Bantha"], ["beast", "Tauntaun"], ["beast", "Acklay"], ["beast", "Mynock"]] as const).map(([kind, name], i) => (
+        <Pacer key={name} z={7.4 + i * 1.7} speed={0.8 + (i % 3) * 0.1}>
+          <Figure kind={kind} ring={SIDE_COLORS.hostile} name={name} creature={kind === "beast" ? "beast" : "droid"} large={/bantha|acklay/i.test(name)} />
+        </Pacer>
+      ))}
     </>
   );
 }
@@ -300,6 +307,8 @@ export default function ModelGallery() {
           <>
             <Rows items={["fighter", "shuttle", "light freighter", "corvette"].flatMap((role) => [{ role, owner: "Rebel Alliance" }, { role, owner: "Galactic Empire" }])} per={4} gap={7} name={(s) => `${s.role} (${s.owner.split(" ")[1]})`} draw={(s) => <group position={[-3, 0, -2]}><ShipModel ship={{ size: s.role === "fighter" ? "Tiny" : s.role === "shuttle" ? "Small" : s.role === "corvette" ? "Large" : "Medium", role: s.role, status: "landed", owner: s.owner, name: s.role }} w={6} h={4} /></group>} />
             <Rows z={14} items={["Speederbike", "Landspeeder", "Airspeeder", "Landspeeder wreck"]} per={4} gap={3} name={(s) => s} draw={(s) => <SpeederModel model={s} wrecked={/wreck/.test(s)} />} />
+            {/* the makes of speeder (shared/logic VEHICLE_MAKES) */}
+            <Rows z={20} items={VEHICLE_MAKES.filter((m) => m.name !== m.model)} per={5} gap={4} name={(m) => m.name} draw={(m) => <SpeederModel model={m.model} look={m.look} name={m.name} />} />
           </>
         )}
         {section === "places" && (

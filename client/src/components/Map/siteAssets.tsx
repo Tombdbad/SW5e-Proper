@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { useTexture } from "@react-three/drei";
-import type { ThreeEvent } from "@react-three/fiber";
+import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { create } from "zustand";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
@@ -463,7 +463,110 @@ const LIBRARY: Record<string, Piece> = {
       k.sphere(0.05, "#ffd24a", { at: [0, 2.64, 0], seg: [6, 5], finish: "glow" });
     },
   },
+  // ---- The pieces of a base (shared/logic bases.ts `look`), drawn where the party set them down by BasePieceModel; centred on their
+  // footprint, the door or lid to +z
+  base_tent: {
+    tags: ["base", "shelter"], size: [2, 2], blocks: true,
+    build: (k, p, v) => {
+      const canvas = p.canvas[(v + 1) % p.canvas.length];
+      // An A-frame: two sheets from the ridge pole (RIDGE high) down to the ground at +-HALF, a back wall, the front flaps rolled up and
+      // tied at the front edges, the poles at the ends of the ridge, guy lines from the sheets to stakes. Every piece meets the next:
+      // a sheet is as long as the slope, so it touches the ridge and the ground
+      const [RIDGE, HALF, LONG] = [1.22, 0.82, 1.8];
+      const slope = Math.hypot(RIDGE, HALF);
+      const tilt = Math.atan2(RIDGE, HALF);
+      const onSheet = (y: number) => HALF * (1 - y / RIDGE);
+      k.pair((s) => k.box([slope, 0.03, LONG], canvas, { at: [(s * HALF) / 2, RIDGE / 2, 0], rot: [0, 0, -s * tilt], finish: "cloth" }));
+      k.extrude(new THREE.Shape([new THREE.Vector2(-HALF, 0), new THREE.Vector2(HALF, 0), new THREE.Vector2(0, RIDGE)]), 0.03, shade(canvas, 0.85), { at: [0, 0, -LONG / 2], finish: "cloth" });
+      k.pair((s) => k.rod([s * onSheet(RIDGE - 0.12), RIDGE - 0.12, LONG / 2 - 0.02], [s * onSheet(0.06), 0.06, LONG / 2 - 0.02], 0.045, shade(canvas, 0.9), { seg: 6, finish: "cloth" }));
+      k.cyl(0.025, LONG + 0.06, "#6b4a2e", { at: [0, RIDGE, 0], rot: [Math.PI / 2, 0, 0], seg: 6 });
+      for (const z of [-LONG / 2, LONG / 2]) k.cyl(0.022, RIDGE + 0.04, "#6b4a2e", { at: [0, (RIDGE + 0.04) / 2, z], seg: 6 });
+      k.box([HALF * 2 - 0.08, 0.015, LONG - 0.04], shade(canvas, 0.55), { at: [0, 0.008, 0], finish: "cloth" });
+      k.pair((s) => {
+        for (const z of [-0.55, 0.55]) {
+          k.rod([s * onSheet(0.55), 0.55, z], [s * 0.96, 0.02, z * 1.45], 0.006, "#d8d2c4", { seg: 3 });
+          k.cyl(0.02, 0.12, "#4a3a28", { at: [s * 0.96, 0.04, z * 1.45], seg: 5 });
+        }
+      });
+      k.box([0.55, 0.1, 1.2], "#5a4a3a", { at: [0.22, 0.06, -0.15], round: 0.04, finish: "cloth" });
+    },
+  },
+  // A hovercart (shared/logic `Cart`): a flat repulsor sled with a rail round its bed, a push bar at its back (-z) and glowing repulsor
+  // pads under it, drawn at the height it floats at; `v` is how many crates are on it (0 to 4, by how full it is)
+  cart_hover: {
+    tags: ["cart", "vehicle", "cargo"], size: [1, 2], blocks: false,
+    build: (k, p, v) => {
+      const body = "#7d858e";
+      k.box([0.78, 0.1, 1.3], body, { at: [0, 0.42, 0], round: 0.03, finish: "sheen" });
+      k.box([0.7, 0.02, 1.2], "#4b5259", { at: [0, 0.48, 0] });
+      k.pair((s) => {
+        k.box([0.03, 0.12, 1.26], "#c8a23a", { at: [s * 0.38, 0.53, 0], finish: "sheen" });
+        k.box([0.06, 0.08, 1.2], "#3a3f46", { at: [s * 0.36, 0.34, 0], round: 0.02, finish: "sheen" });
+      });
+      for (const z of [-0.45, 0.45]) {
+        k.cyl(0.13, 0.05, "#2b2f36", { at: [0, 0.33, z], seg: 14, finish: "sheen" });
+        k.cyl(0.1, 0.02, C.glow, { at: [0, 0.3, z], seg: 14, finish: "glow" });
+      }
+      // the push bar: two uprights and a grip at the back
+      k.pair((s) => k.rod([s * 0.3, 0.46, -0.62], [s * 0.3, 0.95, -0.72], 0.018, "#3a3f46", { seg: 6 }));
+      k.rod([-0.32, 0.95, -0.72], [0.32, 0.95, -0.72], 0.025, "#1f2328", { seg: 6 });
+      k.box([0.12, 0.05, 0.03], C.amber, { at: [0, 0.47, 0.66], finish: "glow" });
+      const crates: [number, number, number][] = [[-0.17, 0.21, 0.3], [0.17, 0.21, 0.3], [0, 0.21, -0.2], [0, 0.55, 0.3]];
+      crates.slice(0, Math.max(0, Math.min(4, v))).forEach(([x, y, z], i) => {
+        const wood = ["#8b6a43", "#5f6b4a", "#7a5a38", "#6d7680"][i];
+        k.box([0.32, 0.32, 0.36], wood, { at: [x, 0.5 + y - 0.05, z], rot: [0, (i % 2 ? 0.08 : -0.06), 0], round: 0.02 });
+      });
+    },
+  },
+  base_dome: {
+    tags: ["base", "shelter"], size: [2, 2], blocks: true,
+    build: (k) => {
+      // A deployed emergency shelter: a ribbed dome of reflective cloth over a ring, a lit hatch
+      k.sphere(0.95, "#d9dde2", { at: [0, 0, 0], half: true, seg: [20, 10], finish: "cloth" });
+      for (let i = 0; i < 6; i++) k.torus(0.955, 0.018, "#d9752b", { rot: [0, (i * Math.PI) / 6, 0], arc: Math.PI, seg: [5, 20], finish: "sheen" });
+      k.torus(0.95, 0.04, "#59636d", { rot: [Math.PI / 2, 0, 0], seg: [6, 28], finish: "sheen" });
+      k.extrude(roundedShape(0.5, 0.62), 0.04, "#3a3f46", { at: [0, 0, 0.86], finish: "sheen" });
+      k.box([0.36, 0.05, 0.02], "#9fe7ff", { at: [0, 0.55, 0.92], finish: "glow" });
+    },
+  },
+  base_chest: {
+    tags: ["base", "storage"], size: [1, 1], blocks: true,
+    build: (k) => {
+      k.box([0.7, 0.4, 0.46], "#6b4a2e", { at: [0, 0.2, 0], round: 0.03 });
+      k.box([0.72, 0.12, 0.48], "#5a3e26", { at: [0, 0.46, 0], round: 0.05 });
+      for (const x of [-0.25, 0.25]) k.box([0.05, 0.54, 0.5], "#59636d", { at: [x, 0.27, 0], finish: "sheen" });
+      k.box([0.09, 0.1, 0.03], C.gold, { at: [0, 0.38, 0.24], finish: "sheen" });
+    },
+  },
+  base_crate: {
+    tags: ["base", "storage"], size: [1, 1], blocks: true,
+    build: (k) => {
+      k.box([0.78, 0.66, 0.78], "#8a6a42", { at: [0, 0.33, 0], round: 0.02 });
+      for (const y of [0.08, 0.58]) k.box([0.8, 0.07, 0.8], "#6b4a2e", { at: [0, y, 0] });
+      k.pair((s) => k.box([0.08, 0.6, 0.8], "#6b4a2e", { at: [s * 0.36, 0.33, 0] }));
+      k.box([0.3, 0.12, 0.01], "#e8dcc0", { at: [0, 0.4, 0.4] });
+    },
+  },
+  base_locker: {
+    tags: ["base", "storage"], size: [1, 1], blocks: true,
+    build: (k) => {
+      k.box([0.74, 0.44, 0.48], "#3d4856", { at: [0, 0.22, 0], round: 0.04, finish: "sheen" });
+      k.box([0.76, 0.06, 0.5], "#2b2f36", { at: [0, 0.46, 0], round: 0.02, finish: "sheen" });
+      k.box([0.12, 0.08, 0.02], C.amber, { at: [0, 0.32, 0.245], finish: "glow" });
+      k.pair((s) => k.box([0.1, 0.04, 0.06], "#9aa3ad", { at: [s * 0.4, 0.3, 0], finish: "sheen" }));
+    },
+  },
 };
+// A door outline with a rounded top
+function roundedShape(w: number, h: number): THREE.Shape {
+  const s = new THREE.Shape();
+  s.moveTo(-w / 2, 0);
+  s.lineTo(w / 2, 0);
+  s.lineTo(w / 2, h - w / 2);
+  s.absarc(0, h - w / 2, w / 2, 0, Math.PI, false);
+  s.lineTo(-w / 2, 0);
+  return s;
+}
 
 // A glTF file as one geometry with vertex colours, loaded once; nothing if it cannot be had
 const FILES = new Map<string, Promise<THREE.BufferGeometry | null>>();
@@ -1083,4 +1186,29 @@ export function FloorSurface({ look: { set, tint, tile, parallax, dir }, w, h, r
       <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} onBeforeCompile={compile} />
     </mesh>
   );
+}
+
+// A hovercart (`cart_hover`), floating: it bobs a little on its repulsors. `full` is how laden it is (0 to 1)
+export function CartModel({ full, biome }: { full: number; biome: string }) {
+  const group = useRef<THREE.Group>(null);
+  const crates = full <= 0 ? 0 : Math.min(4, Math.ceil(full * 4));
+  useFrame(({ clock }) => {
+    if (group.current) group.current.position.y = Math.sin(clock.elapsedTime * 2.1) * 0.025;
+  });
+  return (
+    <group ref={group}>
+      <Model id={`cart:${crates}:${biome}`} build={(k) => LIBRARY.cart_hover.build(k, paletteOf(biome), crates)} />
+    </group>
+  );
+}
+
+// A piece of the party's base (shared/logic bases.ts), drawn on its own (it is tapped to be opened): its library entry by its `look`
+// ("tent" is `base_tent`), centred on the squares it covers and turned by its quarter turns; `ghost` draws it see-through where it
+// would stand while it is being set down
+export function BasePieceModel({ look, biome, w, h, face, ghost = false }: { look: string; biome: string; w: number; h: number; face: number; ghost?: boolean }) {
+  const name = LIBRARY[`base_${look}`] ? `base_${look}` : "base_crate";
+  const colours = paletteOf(biome);
+  const [sx, sy] = face % 2 ? [h, w] : [w, h];
+  if (ghost) return <group position={[sx / 2, 0, sy / 2]} rotation={[0, (face * Math.PI) / 2, 0]}><mesh position={[0, 0.5, 0]}><boxGeometry args={[w * 0.96, 1, h * 0.96]} /><meshBasicMaterial color="#facc15" transparent opacity={0.35} depthWrite={false} /></mesh></group>;
+  return <Model id={`base:${name}:${biome}`} build={(k) => LIBRARY[name].build(k, colours, 0)} position={[sx / 2, 0, sy / 2]} rotation={[0, (face * Math.PI) / 2, 0]} />;
 }
