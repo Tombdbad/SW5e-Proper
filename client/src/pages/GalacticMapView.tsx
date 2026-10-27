@@ -19,9 +19,11 @@ type MapLevel = 'galactic' | 'system' | 'planet';
 // same 3D map. A tap picks a place out, a double tap opens it; here every room can be opened.
 function WorldAtlas({ campaign, campaigns, onPick }: { campaign: any; campaigns: any[]; onPick: (id: string) => void }) {
   const world: World = campaign.galaxyMap;
-  const party = world.areas[campaign.currentLocation] ? campaign.currentLocation : world.startId;
+  // (?here=<area> puts the party somewhere else and ?view=<area> opens a place, for looking at a view from a script)
+  const asked = new URLSearchParams(window.location.search);
+  const party = world.areas[asked.get('here') ?? ''] ? asked.get('here')! : world.areas[campaign.currentLocation] ? campaign.currentLocation : world.startId;
   const [focusId, setFocusId] = useState<string>(party);
-  const [viewId, setViewId] = useState<string>(viewOf(world, party));
+  const [viewId, setViewId] = useState<string>(world.areas[asked.get('view') ?? ''] ? asked.get('view')! : viewOf(world, party));
   const focus = world.areas[focusId] ?? world.areas[party];
   const trail = trailOf(world, focus.id);
   const children = childrenOf(world, focus.id);

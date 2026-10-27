@@ -496,7 +496,11 @@ export function breachTorpedo(): ShipWeapon {
 // ---- Layouts: the shape of a capital ship's hull and where its parts stand. Positions are in the hull's own frame (x ahead, y up, z to
 // starboard) from the hull's measures; the scene builds the model from the same numbers, so a turret is where its model is and a shot
 // that touches the model touches the hull.
-export type HullStyle = "cutter" | "frigate" | "carrier" | "wedge" | "citadel" | "station";
+// A big ship (Large and up) has the shape the map draws it with (models.tsx buildShip, 2026-10-26; the user: "the larger ships do not
+// match their assets style and shape in the dogfighting mode"): the Empire's, the First Order's and the Sith's a wedge with a smaller
+// upper tier and its tower astern, everyone else's a corvette with a hammerhead bow, a slim neck and a block of engines astern. The map
+// builds them on 6 by 4 squares; here they are stretched to the class's measures (`CLASSES`).
+export type HullStyle = "small" | "corvette" | "wedge" | "station";
 export interface HullSpec {
   style: HullStyle;
   length: number;
@@ -506,32 +510,73 @@ export interface HullSpec {
   deck: number;
   tower: [number, number];
 }
-export function hullSpec(cls: ArenaClass, role: string): HullSpec {
+// The corvette's three blocks as shares of the half sizes: from `x[0]` to `x[1]` along (-1 the stern, 1 the bow), `y` and `z` their half
+// height and half width. The neck is round (a lathe on the map) and tapers: `neck` gives its radius (as a share of the bow block's) along it.
+export const CORVETTE = {
+  bow: { x: [0.661, 1] as [number, number], y: 0.692, z: 0.923 },
+  neck: { x: [-0.356, 0.729] as [number, number], y: 0.646, z: 0.323 },
+  engines: { x: [-1, -0.288] as [number, number], y: 1, z: 1 },
+  // The neck's radius along it (0 at the stern end, 1 at the bow end), as a share of its widest
+  taper: [[0, 1], [0.062, 1], [0.312, 0.81], [0.812, 0.714], [0.938, 0.857], [1, 0.857]] as [number, number][],
+};
+// The wedge: the lower tier is the whole plan from the keel up to `step` (a share of the half height above the middle), the upper tier
+// stands on it from `upper.bow` to `upper.stern` along and `upper.z` wide at the stern; the tower is at `tower` along
+export const WEDGE = { step: 0.25, upper: { bow: 0.745, stern: -0.82, z: 0.686 }, tower: -0.527 };
+const big = (cls: ArenaClass) => classIndex(cls) >= classIndex("Large") && cls !== "Station";
+export function hullSpec(cls: ArenaClass, role: string, imperial = false): HullSpec {
   const [hx, hy, hz] = CLASSES[cls].half;
-  const carrier = /carrier|tender|mobile|industrial/i.test(role);
   const base = { length: hx * 2, beam: hz * 2, height: hy * 2, deck: hy };
-  switch (cls) {
-    case "Station":
-      return { style: "station", ...base, tower: [0, 0] };
-    case "Gargantuan":
-      return { style: "citadel", ...base, tower: [-hx * 0.22, 70] };
-    case "Huge":
-      return carrier ? { style: "carrier", ...base, tower: [-hx * 0.2, 40] } : { style: "wedge", ...base, tower: [-hx * 0.22, 34] };
-    case "Large":
-      return { style: /frigate|corvette|cruiser|ambassador|explorer|picket/i.test(role) ? "frigate" : "cutter", ...base, tower: [-hx * 0.15, 8] };
-    default:
-      return { style: "cutter", ...base, tower: [0, 0] };
-  }
+  void role;
+  if (cls === "Station") return { style: "station", ...base, tower: [0, 0] };
+  if (!big(cls)) return { style: "small", ...base, tower: [0, 0] };
+  // The wedge's tower is built at the beam's scale (the map's tower stands 0.86 of its squares over the deck, the wedge is 3.5 wide)
+  if (imperial) return { style: "wedge", ...base, tower: [hx * WEDGE.tower, ((hz * 2) / 3.5) * 0.86] };
+  return { style: "corvette", ...base, deck: hy * CORVETTE.bow.y, tower: [hx * 0.9, 2] };
+}
+// The corvette's neck: its half height and half width at a place along it (null off the neck)
+function neckAt(half: Vec3, x: number): [number, number] | null {
+  const [hx, hy, hz] = half;
+  const [a, b] = CORVETTE.neck.x;
+  const t = (x / hx - a) / (b - a);
+  if (t < 0 || t > 1) return null;
+  const k = CORVETTE.taper.findIndex((p) => p[0] >= t);
+  const [p, q] = [CORVETTE.taper[Math.max(0, k - 1)], CORVETTE.taper[Math.max(0, k)]];
+  const share = p[1] + (q[1] - p[1]) * ((t - p[0]) / (q[0] - p[0] || 1));
+  return [CORVETTE.neck.y * hy * share, CORVETTE.neck.z * hz * share];
+}
+// The upper tier of a wedge: its half width at a place along it (0 off it)
+const upperHalf = (half: Vec3, x: number) => {
+  const { bow, stern, z } = WEDGE.upper;
+  const u = x / half[0];
+  return u < stern || u > bow ? 0 : z * half[2] * ((bow - u) / (bow - stern));
+};
+// The top and the bottom of the hull at a point of its plan (x along, z across), for standing parts on it and looking out from its bridge;
+// where the point is off the hull, those of the deck nearest it
+export function hullSpan(cls: ArenaClass, role: string, imperial: boolean, x: number, z = 0): [number, number] {
+  const half = CLASSES[cls].half;
+  const [hx, hy, hz] = half;
+  const spec = hullSpec(cls, role, imperial);
+  if (spec.style === "wedge") return [Math.abs(z) < upperHalf(half, x) ? hy : hy * WEDGE.step, -hy];
+  if (spec.style !== "corvette") return [hy, -hy];
+  const u = x / hx;
+  let top = 0;
+  for (const block of [CORVETTE.bow, CORVETTE.engines]) if (u >= block.x[0] && u <= block.x[1] && Math.abs(z) <= block.z * hz) top = Math.max(top, block.y * hy);
+  const neck = neckAt(half, x);
+  if (neck) top = Math.max(top, neck[0] * Math.sqrt(Math.max(0, 1 - (z / neck[1]) ** 2)));
+  return [top || CORVETTE.neck.y * hy * 0.7, -(top || CORVETTE.neck.y * hy * 0.7)];
 }
 
-// What a hull occupies: an ellipsoid of the class's half sizes, or a convex solid given by planes (n·p <= d) in the hull's frame. A wedge
-// narrows to the bow, the blocky hulls have cut corners at the bow.
+// What a hull occupies: an ellipsoid of the class's half sizes, a convex solid given by planes (n·p <= d) in the hull's frame, or several
+// convex solids together (the corvette's blocks). A wedge narrows to the bow.
 export interface HullPlane { n: Vec3; d: number }
-export type HullVolume = { kind: "ellipsoid" } | { kind: "convex"; planes: HullPlane[] };
-export function hullVolume(cls: ArenaClass, role: string): HullVolume {
-  const spec = hullSpec(cls, role);
+export type HullVolume = { kind: "ellipsoid" } | { kind: "convex"; planes: HullPlane[] } | { kind: "compound"; parts: HullPlane[][] };
+// A box from `lo` to `hi` (corners in the hull's frame) as six planes
+const boxPlanes = (lo: Vec3, hi: Vec3): HullPlane[] => [
+  { n: [1, 0, 0], d: hi[0] }, { n: [-1, 0, 0], d: -lo[0] }, { n: [0, 1, 0], d: hi[1] }, { n: [0, -1, 0], d: -lo[1] }, { n: [0, 0, 1], d: hi[2] }, { n: [0, 0, -1], d: -lo[2] },
+];
+export function hullVolume(cls: ArenaClass, role: string, imperial = false): HullVolume {
+  const spec = hullSpec(cls, role, imperial);
   const [hx, hy, hz] = CLASSES[cls].half;
-  const box: HullPlane[] = [{ n: [0, 1, 0], d: hy }, { n: [0, -1, 0], d: hy }, { n: [-1, 0, 0], d: hx }];
   // A plane through two points of the plan (x, z) on the starboard side, facing out; mirrored for port
   const edge = (ax: number, az: number, bx: number, bz: number, side: 1 | -1): HullPlane => {
     const ex = bx - ax;
@@ -549,72 +594,88 @@ export function hullVolume(cls: ArenaClass, role: string): HullVolume {
   };
   switch (spec.style) {
     case "wedge":
-      return { kind: "convex", planes: [...box, edge(hx, 0, -hx, hz, 1), edge(hx, 0, -hx, hz, -1)] };
-    case "carrier":
-      return { kind: "convex", planes: [...box, { n: [1, 0, 0], d: hx }, { n: [0, 0, 1], d: hz }, { n: [0, 0, -1], d: hz }] };
-    case "citadel":
-      return { kind: "convex", planes: [...box, { n: [0, 0, 1], d: hz }, { n: [0, 0, -1], d: hz }, edge(hx, hz * 0.4, hx * 0.65, hz, 1), edge(hx, hz * 0.4, hx * 0.65, hz, -1), { n: [1, 0, 0], d: hx }] };
-    case "frigate":
-    case "cutter":
-      return cls === "Large"
-        ? { kind: "convex", planes: [...box, { n: [0, 0, 1], d: hz }, { n: [0, 0, -1], d: hz }, edge(hx, hz * 0.25, hx * 0.7, hz, 1), edge(hx, hz * 0.25, hx * 0.7, hz, -1), { n: [1, 0, 0], d: hx }] }
-        : { kind: "ellipsoid" };
+      return { kind: "convex", planes: [{ n: [0, 1, 0], d: hy }, { n: [0, -1, 0], d: hy }, { n: [-1, 0, 0], d: hx }, edge(hx, 0, -hx, hz, 1), edge(hx, 0, -hx, hz, -1)] };
+    case "corvette": {
+      const block = (b: { x: [number, number]; y: number; z: number }) => boxPlanes([b.x[0] * hx, -b.y * hy, -b.z * hz], [b.x[1] * hx, b.y * hy, b.z * hz]);
+      return { kind: "compound", parts: [block(CORVETTE.bow), block(CORVETTE.neck), block(CORVETTE.engines)] };
+    }
     default:
       return { kind: "ellipsoid" };
   }
 }
-// The width of the hull's deck at a station along its length, for placing turrets on it (a wedge narrows to the bow)
-export function deckHalfWidth(cls: ArenaClass, role: string, x: number): number {
-  const spec = hullSpec(cls, role);
-  const [hx, , hz] = CLASSES[cls].half;
+// The width of the hull's deck at a station along its length, for placing turrets on it (a wedge narrows to the bow; a corvette is as wide
+// as the block or the neck there)
+export function deckHalfWidth(cls: ArenaClass, role: string, x: number, imperial = false): number {
+  const spec = hullSpec(cls, role, imperial);
+  const half = CLASSES[cls].half;
+  const [hx, , hz] = half;
   if (spec.style === "wedge") return Math.max(2, (hz * (hx - x)) / (2 * hx));
-  if (x > hx * 0.7) return Math.max(2, hz * (1 - ((x - hx * 0.7) / (hx * 0.3)) * 0.75));
+  if (spec.style === "corvette") {
+    const u = x / hx;
+    const block = [CORVETTE.bow, CORVETTE.engines].find((b) => u >= b.x[0] && u <= b.x[1]);
+    if (block) return block.z * hz;
+    return Math.max(2, neckAt(half, x)?.[1] ?? 2);
+  }
   return hz;
 }
 
 interface PartSeed { kind: PartKind; at: Vec3; r: number }
-// Turrets along the deck in pairs, generators on the tower's shoulders and the stern, hangar bays at the bow or under the flight deck. Offsets
-// across the hull are shares of the deck's half width where it is, so that a wedge's turrets stand on the wedge.
-export function partSeeds(cls: ArenaClass, role: string, seed: number): PartSeed[] {
+// Turrets along the deck in pairs, generators where the map's model has its domes (the wedge's tower) or on the corvette's bow block and astern,
+// hangar bays under the hull. Offsets across the hull are shares of the deck's half width where it is, so that a wedge's turrets stand on the
+// wedge, and heights are the hull's own there (`hullSpan`), so that a corvette's turrets stand on its neck.
+export function partSeeds(cls: ArenaClass, role: string, seed: number, imperial = false): PartSeed[] {
   const rand = createRandom(seed + 31);
-  const spec = hullSpec(cls, role);
-  const [, hy] = CLASSES[cls].half;
+  const spec = hullSpec(cls, role, imperial);
   const L = spec.length;
-  const w = (x: number, share: number) => deckHalfWidth(cls, role, x) * share;
+  const carrier = /carrier|tender|mobile|industrial/i.test(role);
+  const w = (x: number, share: number) => deckHalfWidth(cls, role, x, imperial) * share;
   const out: PartSeed[] = [];
-  const pair = (kind: PartKind, x: number, y: number, share: number, r: number) => {
+  // A pair either side of the middle, `lift` over the deck there (under the keel when `keel`)
+  const pair = (kind: PartKind, x: number, share: number, r: number, lift = 1, keel = false) => {
     const z = w(x, share);
+    const [top, bottom] = hullSpan(cls, role, imperial, x, z);
+    const y = keel ? bottom - lift : top + lift;
     out.push({ kind, at: [x, y, z], r }, { kind, at: [x, y, -z], r });
+  };
+  const one = (kind: PartKind, x: number, r: number, lift = 1, keel = false) => {
+    const [top, bottom] = hullSpan(cls, role, imperial, x, 0);
+    out.push({ kind, at: [x, keel ? bottom - lift : top + lift, 0], r });
+  };
+  // The shield generators where the model has its domes: either side of the wedge's tower, on the corvette's bow block
+  const domes = (r: number) => {
+    if (spec.style === "wedge") {
+      const unit = spec.beam / 3.5;
+      const [top] = hullSpan(cls, role, imperial, spec.tower[0], 0);
+      for (const s of [1, -1]) out.push({ kind: "generator", at: [spec.tower[0], top + unit * 0.73, s * unit * 0.42], r });
+    } else pair("generator", spec.tower[0] - L * 0.08, 0.45, r, r * 0.3);
   };
   switch (cls) {
     case "Large": {
-      pair("battery", L * 0.12, spec.deck + 1, 0.5, 4.5);
-      pair("pd", L * 0.3, spec.deck + 1, 0.4, 3);
-      if (rand.chance(0.5)) out.push({ kind: "pd", at: [-L * 0.3, spec.deck + 1, 0], r: 3 });
+      pair("battery", L * 0.12, 0.5, 4.5);
+      pair("pd", L * 0.3, 0.4, 3);
+      if (rand.chance(0.5)) one("pd", -L * 0.3, 3);
       break;
     }
     case "Huge": {
-      const carrier = spec.style === "carrier";
-      // Generators: domes on the tower's flanks and one aft
-      pair("generator", spec.tower[0], spec.deck + spec.tower[1] * 0.55, 0.3, 9);
-      out.push({ kind: "generator", at: [-L * 0.38, spec.deck + 4, 0], r: 8 });
-      for (let i = 0; i < 3; i++) pair("battery", L * (0.3 - i * 0.12), spec.deck + 1.5, 0.55 + i * 0.1, 7);
-      pair("battery", L * 0.05, -hy - 1.5, 0.5, 7);
-      for (let i = 0; i < 4; i++) pair("pd", L * (0.4 - i * 0.2), spec.deck + 1, 0.3 + (i % 2) * 0.35, 4.5);
+      domes(9);
+      one("generator", -L * 0.38, 8, 4);
+      for (let i = 0; i < 3; i++) pair("battery", L * (0.3 - i * 0.12), 0.55 + i * 0.1, 7, 1.5);
+      pair("battery", L * 0.05, 0.5, 7, 1.5, true);
+      for (let i = 0; i < 4; i++) pair("pd", L * (0.4 - i * 0.2), 0.3 + (i % 2) * 0.35, 4.5);
       if (carrier) {
-        out.push({ kind: "hangar", at: [L * 0.3, -hy * 0.6, 0], r: 14 });
-        out.push({ kind: "hangar", at: [-L * 0.02, -hy - 1, 0], r: 14 });
-      } else if (rand.chance(0.5)) out.push({ kind: "hangar", at: [L * 0.42, -hy * 0.4, 0], r: 11 });
+        one("hangar", L * 0.3, 14, 1, true);
+        one("hangar", -L * 0.02, 14, 1, true);
+      } else if (rand.chance(0.5)) one("hangar", L * 0.42, 11, 1, true);
       break;
     }
     case "Gargantuan": {
-      pair("generator", spec.tower[0], spec.deck + spec.tower[1] * 0.6, 0.18, 14);
-      pair("generator", spec.tower[0] + L * 0.2, spec.deck + 12, 0.45, 12);
-      for (let i = 0; i < 5; i++) pair("battery", L * (0.38 - i * 0.14), spec.deck + 2, 0.5 + (i % 2) * 0.3, 10);
-      for (let i = 0; i < 4; i++) pair("battery", L * (0.3 - i * 0.18), -hy - 2, 0.45, 10);
-      for (let i = 0; i < 6; i++) pair("pd", L * (0.42 - i * 0.15), spec.deck + 1, 0.2 + (i % 3) * 0.28, 6);
-      out.push({ kind: "hangar", at: [L * 0.32, -hy * 0.7, 0], r: 20 });
-      out.push({ kind: "hangar", at: [-L * 0.1, -hy - 2, 0], r: 20 });
+      domes(14);
+      pair("generator", spec.tower[0] + L * (spec.style === "wedge" ? 0.2 : -0.62), 0.45, 12, 12);
+      for (let i = 0; i < 5; i++) pair("battery", L * (0.38 - i * 0.14), 0.5 + (i % 2) * 0.3, 10, 2);
+      for (let i = 0; i < 4; i++) pair("battery", L * (0.3 - i * 0.18), 0.45, 10, 2, true);
+      for (let i = 0; i < 6; i++) pair("pd", L * (0.42 - i * 0.15), 0.2 + (i % 3) * 0.28, 6);
+      one("hangar", L * 0.32, 20, 2, true);
+      one("hangar", -L * 0.1, 20, 2, true);
       break;
     }
     case "Station": {
@@ -642,8 +703,8 @@ export function partSeeds(cls: ArenaClass, role: string, seed: number): PartSeed
 }
 
 // A part's health from the ship: generators are worth the shields they replace (spread over the generators), turrets by size
-export function buildParts(cls: ArenaClass, role: string, sheet: ShipSheet, seed: number): Part[] {
-  const seeds = partSeeds(cls, role, seed);
+export function buildParts(cls: ArenaClass, role: string, sheet: ShipSheet, seed: number, imperial = false): Part[] {
+  const seeds = partSeeds(cls, role, seed, imperial);
   const gens = seeds.filter((s) => s.kind === "generator").length || 1;
   const scale = Math.max(1, sheet.hullMax / 60);
   return seeds.map((s, id) => {
@@ -664,7 +725,8 @@ export function makeVessel(sheet: ShipSheet, input: ShipInput, side: "party" | "
   const spec = CLASSES[cls];
   const foe = side === "foe";
   const c = shipCombatant(`v${id}`, side, sheet, { x: 0, y: 0, facing: 0 });
-  const parts = isCapital(cls) ? buildParts(cls, sheet.role, sheet, seed) : [];
+  const imperial = input.imperial ?? /empire|imperial|first order|sith/i.test(input.owner ?? "");
+  const parts = isCapital(cls) ? buildParts(cls, sheet.role, sheet, seed, imperial) : [];
   // A capital ship's shield is its generators: the sheet's shield pool is theirs, so the hull starts with none of its own
   if (isCapital(cls) && foe) c.shield = 0;
   const guns = gunsOf(sheet, cls);
@@ -682,7 +744,7 @@ export function makeVessel(sheet: ShipSheet, input: ShipInput, side: "party" | "
     cls,
     role: sheet.role,
     owner: input.owner ?? (foe ? "pirates" : "the party"),
-    imperial: input.imperial ?? /empire|imperial|first order|sith/i.test(input.owner ?? ""),
+    imperial,
     c,
     p: at.p,
     yaw: at.yaw,
@@ -694,7 +756,7 @@ export function makeVessel(sheet: ShipSheet, input: ShipInput, side: "party" | "
     turn: turnRate(sheet, cls, foe),
     accel: Math.max(0.5, top * 0.5),
     half: spec.half,
-    volume: hullVolume(cls, sheet.role),
+    volume: hullVolume(cls, sheet.role, imperial),
     reach,
     ac: sheet.ac,
     guns,

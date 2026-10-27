@@ -8,7 +8,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, type V3, type Finish } from "./models";
 import { groundShader, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
 import type { PackId } from "./interiors/packs";
-import { createRandom, unitOf, packedness, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery } from "@shared/logic";
+import { biomeSky, createRandom, unitOf, packedness, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery } from "@shared/logic";
 
 // ---------------------------------------------------------------------------------------------
 // The asset library of the sites (2026-10-18). A site's open ground is laid out by the shared logic
@@ -629,7 +629,8 @@ const WILD: Record<string, { trees: string[]; shrubs: string[]; boulders: string
 export function raceScenery(biome: string): RaceScenery & { cover: string[] } {
   const wild = WILD[biome] ?? WILD.temperate;
   const hits = Object.fromEntries(Object.entries(LIBRARY).filter(([, piece]) => piece.hit).map(([key, piece]) => [key, piece.hit!]));
-  return { ...wild, hits };
+  // (and what the world's land puts across the course: shared/logic "Skies and landforms")
+  return { ...wild, hits, crossings: biomeSky(biome).crossings };
 }
 
 // Which trees a world grows
@@ -1130,6 +1131,27 @@ export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: s
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={at} receiveShadow onClick={onTap}>
       <planeGeometry args={[w, h]} />
       <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} onBeforeCompile={compile} />
+    </mesh>
+  );
+}
+
+// The ground beyond the walkable ground, out to the horizon under an open sky (2026-10-26, scenery.tsx WorldSky): the same photograph and
+// tint, but plainly lit (no normal map, no parallax: it is far off and a phone draws a lot of it), drawn before everything else and under it,
+// so the near ground and whatever stands on it cover it where they are; the fog fades it into the horizon's haze
+export function FarGround({ set, tint, size, at }: { set: string; tint: THREE.Color; size: number; at: [number, number, number] }) {
+  const diffuse = useTexture(`/textures/ground/${set}/diffuse.jpg`);
+  const map = useMemo(() => {
+    const c = diffuse.clone();
+    c.wrapS = c.wrapT = THREE.RepeatWrapping;
+    c.repeat.set(size / GROUND_TILE, size / GROUND_TILE);
+    c.colorSpace = THREE.SRGBColorSpace;
+    c.needsUpdate = true;
+    return c;
+  }, [diffuse, size]);
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={at} renderOrder={-7} raycast={() => null}>
+      <planeGeometry args={[size, size]} />
+      <meshLambertMaterial map={map} color={tint} depthWrite={false} />
     </mesh>
   );
 }

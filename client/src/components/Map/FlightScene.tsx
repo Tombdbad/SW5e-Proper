@@ -4,13 +4,14 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Stars } from "@react-three/drei";
 import * as THREE from "three";
 import {
-  createRandom, flightCourse, flightStart, groundAt, inRing, raceCourse, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, stepFlight, stepRace, chaseStart, chaseResult,
-  RACE, RACE_MODEL_SCALE, SPEEDER_BODY,
+  createRandom, flightCourse, flightStart, groundAt, inRing, raceCourse, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, raceWater, skyLook, stepFlight, stepRace, chaseStart, chaseResult,
+  CROSSING, RACE, RACE_MODEL_SCALE, SPEEDER_BODY,
   type Craft, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type RaceRamp, type RaceTrack, type SpeederKind, type Vec3,
 } from "@shared/logic";
 import { ShipModel, SpeederModel } from "./LocalMap";
 import { Model, shade, type Kit } from "./models";
 import { Scatter, raceScenery, useQuality, type Placed } from "./siteAssets";
+import { WorldSky } from "./scenery";
 import type { Dogfight } from "@shared/logic/dogfight";
 import { dogfightPayout } from "@shared/logic/dogfightSim";
 import { SCENARIOS, sortieNotes } from "@shared/logic/dogfight";
@@ -161,39 +162,21 @@ export const raceLook = (biome: string) => RACE_LOOKS[biome] ?? RACE_LOOKS.tempe
 const GATE_POST = { r: 0.45, h: 8 };
 const SPARKS = 48;
 
-// The sky: a dome shading from the horizon (the fog's colour) to the zenith
-function RaceSky({ look }: { look: RaceLook }) {
-  const geo = useMemo(() => {
-    const g = new THREE.SphereGeometry(1500, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2);
-    const [low, high] = [new THREE.Color(look.sky), new THREE.Color(look.zenith)];
-    const p = g.attributes.position;
-    const colors = new Float32Array(p.count * 3);
-    const c = new THREE.Color();
-    for (let i = 0; i < p.count; i++) {
-      c.copy(low).lerp(high, Math.pow(Math.max(0, p.getY(i) / 1500), 0.6));
-      colors.set([c.r, c.g, c.b], i * 3);
-    }
-    g.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    return g;
-  }, [look]);
-  return (
-    <mesh geometry={geo} raycast={() => null}>
-      <meshBasicMaterial vertexColors side={THREE.BackSide} fog={false} depthWrite={false} />
-    </mesh>
-  );
-}
 
 // The ground: one mesh over the course and well past it (the fog hides its edge), mottled, its
 // verges worn to the colour of the track, lighter on the heights
 function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
+  // (finer where the device can draw it: a gorge's walls and a river's banks are a few metres across)
+  const lite = useQuality((q) => q.tier === "lite");
   const geo = useMemo(() => {
     const size = track.extent + 220;
-    const segs = 200;
+    const segs = lite ? 200 : 300;
     const step = (size * 2) / segs;
     const row = segs + 1;
     const pos = new Float32Array(row * row * 3);
     const col = new Float32Array(row * row * 3);
     const [a, b, verge] = [new THREE.Color(look.ground), new THREE.Color(look.ground2), new THREE.Color(look.track)];
+    const [mud, scorched] = [new THREE.Color("#4d4234"), new THREE.Color("#1e1512")];
     const c = new THREE.Color();
     for (let j = 0; j < row; j++) {
       for (let i = 0; i < row; i++) {
@@ -206,6 +189,9 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
         const d = raceDistance(track, x, z);
         if (d < track.width / 2 + 6) c.lerp(verge, 0.6 * (1 - Math.max(0, d - track.width / 2) / 6));
         c.multiplyScalar(0.92 + Math.max(-0.1, Math.min(0.16, y * 0.012)));
+        // A river's banks are wet mud; a lava flow's are scorched black
+        const water = track.rivers?.length ? raceWater(track, x, z) : null;
+        if (water) c.lerp(water.lava ? scorched : mud, water.inside ? 0.9 : 0.6);
         col.set([c.r, c.g, c.b], k);
       }
     }
@@ -224,11 +210,129 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
     g.setIndex(new THREE.BufferAttribute(index, 1));
     g.computeVertexNormals();
     return g;
-  }, [track, look]);
+  }, [track, look, lite]);
   return (
     <mesh geometry={geo} raycast={() => null}>
       <meshLambertMaterial vertexColors />
     </mesh>
+  );
+}
+
+// A flowing texture for a river or lava: streaks along it (water) or glowing cracks in a crust (lava), scrolled along the flow
+const FLOWS = new Map<string, THREE.Texture>();
+function flowTexture(lava: boolean): THREE.Texture {
+  const key = lava ? "lava" : "water";
+  const have = FLOWS.get(key);
+  if (have) return have;
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const g = c.getContext("2d")!;
+  g.fillStyle = lava ? "#ff5a14" : "#2f6f9e";
+  g.fillRect(0, 0, 128, 128);
+  const r = createRandom(lava ? 3 : 5);
+  for (let i = 0; i < (lava ? 34 : 60); i++) {
+    const [x, y] = [r.next() * 128, r.next() * 128];
+    if (lava) {
+      // Dark crust plates between the glowing cracks
+      g.fillStyle = `rgba(${40 + r.next() * 30},${18 + r.next() * 12},12,0.85)`;
+      g.beginPath();
+      g.ellipse(x, y, 6 + r.next() * 14, 4 + r.next() * 9, r.next() * 3, 0, Math.PI * 2);
+      g.fill();
+    } else {
+      g.fillStyle = `rgba(220,240,255,${0.08 + r.next() * 0.18})`;
+      g.fillRect(x, y, 10 + r.next() * 30, 1 + r.next() * 1.5);
+    }
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  FLOWS.set(key, t);
+  return t;
+}
+// The rivers and flows of lava across a course (shared/logic "Skies and landforms"), and the bridges that carry the track and the trails
+// over them: a deck under the way with piers down into the channel (the rails along the deck are struck pieces, drawn with the props)
+function RaceRivers({ track }: { track: RaceTrack }) {
+  const strips = useMemo(
+    () =>
+      (track.rivers ?? []).map((rv) => {
+        const bound = track.extent + 220;
+        const line = rv.line.filter(([x, z]) => Math.abs(x) < bound && Math.abs(z) < bound);
+        const pos: number[] = [];
+        const uv: number[] = [];
+        const idx: number[] = [];
+        let along = 0;
+        line.forEach(([x, z], i) => {
+          const [p, q] = [line[Math.max(0, i - 1)], line[Math.min(line.length - 1, i + 1)]];
+          const yaw = Math.atan2(q[1] - p[1], q[0] - p[0]);
+          const [nx, nz] = [-Math.sin(yaw), Math.cos(yaw)];
+          if (i) along += Math.hypot(x - line[i - 1][0], z - line[i - 1][1]);
+          const level = (raceWater(track, x, z)?.level ?? groundAt(track, x, z, false)) + 0.06;
+          const w = rv.half + rv.bank * 0.55;
+          pos.push(x - nx * w, level, z - nz * w, x + nx * w, level, z + nz * w);
+          uv.push(along / 40, 0, along / 40, 1);
+          if (i) idx.push(i * 2 - 2, i * 2 - 1, i * 2, i * 2 - 1, i * 2 + 1, i * 2);
+        });
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+        g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+        g.setIndex(idx);
+        g.computeVertexNormals();
+        return { g, lava: rv.lava };
+      }),
+    [track],
+  );
+  // The bridges: a slab under the deck between each pair of the way's points, piers under its edges
+  const spans = useMemo(
+    () =>
+      (track.bridges ?? []).flatMap((b) =>
+        b.points.slice(1).map((q, k) => {
+          const p = b.points[k];
+          const [mx, mz] = [(p[0] + q[0]) / 2, (p[2] + q[2]) / 2];
+          const top = groundAt(track, mx, mz, false);
+          const yaw = Math.atan2(q[2] - p[2], q[0] - p[0]);
+          const level = raceWater(track, mx, mz)?.level ?? top - CROSSING.riverDrop;
+          return { at: [mx, top - 0.55, mz] as Vec3, len: Math.hypot(q[0] - p[0], q[2] - p[2]) + 0.3, wide: b.width + CROSSING.deck * 2, yaw, drop: top - level + 2, lava: b.lava, pier: k % 2 === 1 };
+        }),
+      ),
+    [track],
+  );
+  const mats = useMemo(() => ({ water: flowTexture(false).clone(), lava: flowTexture(true).clone() }), []);
+  useEffect(() => {
+    for (const t of [mats.water, mats.lava]) t.needsUpdate = true;
+  }, [mats]);
+  useFrame((_, dt) => {
+    mats.water.offset.x -= dt * 0.12;
+    mats.lava.offset.x -= dt * 0.03;
+  });
+  return (
+    <>
+      {strips.map((s, i) =>
+        s.lava ? (
+          <mesh key={i} geometry={s.g} raycast={() => null}>
+            <meshBasicMaterial map={mats.lava} toneMapped={false} />
+          </mesh>
+        ) : (
+          <mesh key={i} geometry={s.g} raycast={() => null}>
+            <meshStandardMaterial map={mats.water} roughness={0.15} metalness={0.25} transparent opacity={0.88} />
+          </mesh>
+        ),
+      )}
+      {spans.map((s, i) => (
+        <group key={i} position={s.at} rotation={[0, -s.yaw, 0]}>
+          <mesh>
+            <boxGeometry args={[s.len, 1.0, s.wide]} />
+            <meshLambertMaterial color={s.lava ? "#3a3f46" : "#8a8070"} />
+          </mesh>
+          {s.pier &&
+            [-1, 1].map((side) => (
+              <mesh key={side} position={[0, -s.drop / 2, side * (s.wide / 2 - 1)]}>
+                <cylinderGeometry args={[0.8, 1.1, s.drop, 10]} />
+                <meshLambertMaterial color={s.lava ? "#2b2f36" : "#7a7266"} />
+              </mesh>
+            ))}
+        </group>
+      ))}
+    </>
   );
 }
 
@@ -237,7 +341,10 @@ function RaceGround({ track, look }: { track: RaceTrack; look: RaceLook }) {
 function ribbon(track: RaceTrack, points: Vec3[], width: number, closed: boolean, surface: string, kerbs: boolean): THREE.BufferGeometry {
   const n = points.length;
   const rows = closed ? n + 1 : n;
-  const strips: [number, number][] = kerbs ? [[-width / 2 - 1, -width / 2], [-width / 2, width / 2], [width / 2, width / 2 + 1]] : [[-width / 2, width / 2]];
+  // (the way itself in strips 4 m across or less, so that it follows the ground over a hill's crest rather than cutting through it)
+  const parts = Math.max(1, Math.ceil(width / 4));
+  const way: [number, number][] = Array.from({ length: parts }, (_, k) => [-width / 2 + (width * k) / parts, -width / 2 + (width * (k + 1)) / parts]);
+  const strips: [number, number][] = kerbs ? [[-width / 2 - 1, -width / 2], ...way, [width / 2, width / 2 + 1]] : way;
   const edges = (r: number) => {
     const i = r % n;
     const [a, b] = [points[closed ? (i - 1 + n) % n : Math.max(0, i - 1)], points[closed ? (i + 1) % n : Math.min(n - 1, i + 1)]];
@@ -257,7 +364,7 @@ function ribbon(track: RaceTrack, points: Vec3[], width: number, closed: boolean
     const next = edges(r + 1);
     const bend = closed ? track.bends[r % n] : 0;
     strips.forEach(([from, to], k) => {
-      const kerb = kerbs && k !== 1;
+      const kerb = kerbs && (k === 0 || k === strips.length - 1);
       if (kerb) c.copy(bend > 1 / 90 ? (r % 2 ? red : white) : edge);
       else c.copy(base).multiplyScalar(0.95 + 0.06 * Math.sin(r * 0.7));
       const [a, b, d, e] = [here(from), here(to), next(from), next(to)];
@@ -427,6 +534,7 @@ function RaceProps({ track, biome, broken, cover }: { track: RaceTrack; biome: s
       const z = (r.next() * 2 - 1) * (track.extent - 20);
       const d = raceDistance(track, x, z);
       if (d < track.width / 2 + 1.6 || d > 150 || (d > 60 && r.next() < 0.6)) continue;
+      if (track.rivers?.length && raceWater(track, x, z)) continue;
       out.push({ key: r.pick(cover), x, y: z, h: groundAt(track, x, z, false), rot: r.next() * Math.PI * 2, scale: 1.6 + r.next() * 1.2, v: Math.floor(r.next() * 6) });
     }
     return out;
@@ -610,6 +718,9 @@ function RaceGame({ track, race0, biome, go, input, onFinish, onFrame }: { track
   const [snap, setSnap] = useState<Race>(race0);
   const { camera } = useThree();
   const look = raceLook(biome);
+  // The world's sky and horizon over the course (scenery.tsx), by day
+  const sky = useMemo(() => skyLook(biome, track.seed), [biome, track.seed]);
+  const lite = useQuality((q) => q.tier === "lite");
   const chequer = useChequer();
   const cover = useMemo(() => raceScenery(biome).cover, [biome]);
   const ahead = useMemo(() => new THREE.Vector3(), []);
@@ -617,6 +728,19 @@ function RaceGame({ track, race0, biome, go, input, onFinish, onFrame }: { track
   const party = race0.racers.findIndex((racer) => racer.party);
   useFrame((_, delta) => {
     let now = raceRef.current;
+    // For test scripts: window.__raceTrack is the course, and window.__raceWarp = s puts the party's speeder on the track s metres round the
+    // lap (to look at a bridge, the gorge or a hill), at rest
+    const hook = window as unknown as { __raceTrack?: RaceTrack; __raceWarp?: number };
+    hook.__raceTrack = track;
+    if (hook.__raceWarp !== undefined) {
+      const i = Math.round(hook.__raceWarp / track.step) % track.points.length;
+      const p = track.points[i];
+      delete hook.__raceWarp;
+      // (with the gates before it counted as passed, so that it is not towed back to them)
+      const gates = track.gates.filter((g) => g.s <= i * track.step).length;
+      now = { ...now, racers: now.racers.map((r) => (r.party ? { ...r, craft: { ...r.craft, p: [p[0], groundAt(track, p[0], p[2]) + RACE.hover, p[2]], yaw: track.yaws[i], speed: 0 }, v: [0, 0, 0], gates, at: i, home: i } : r)) };
+      raceRef.current = now;
+    }
     if (go.current && !now.over) {
       // Up to half a second a frame (a slow device runs the race slower, never through anything: it steps at 1/60 s)
       now = stepRace(now, track, input.current, Math.min(delta, 0.5));
@@ -704,12 +828,12 @@ function RaceGame({ track, race0, biome, go, input, onFinish, onFrame }: { track
   const next = raceNextGate(snap, snap.racers[party]);
   return (
     <>
-      <RaceSky look={look} />
-      <fog attach="fog" args={[look.sky, 140, 760]} />
+      <WorldSky look={sky} light={1} hour={13} radius={1500} fog={[140, 760]} lite={lite} />
       <hemisphereLight args={[look.zenith, look.ground, 0.55]} />
       <ambientLight intensity={0.35} />
       <directionalLight position={[120, 220, 80]} intensity={1.1} />
       <RaceGround track={track} look={look} />
+      <RaceRivers track={track} />
       <RaceRibbons track={track} look={look} />
       {track.gates.map((g, i) => <Gate key={i} gate={g} first={i === 0} lit={i === next} chequer={chequer} track={track} />)}
       {track.ramps.map((ramp, i) => <RampModel key={i} ramp={ramp} track={track} />)}

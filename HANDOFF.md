@@ -1,45 +1,42 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-26 (night), branch `main`. Last commit: `5f9ca7e`. **Nothing of today is committed** (the user has not asked).
-Also uncommitted from the sessions before: dogfight controls, figures/fur/gaits, beasts, carrying, bases, spacing, and the user's own
-`client/src/components/ui/Alert.tsx` (leave it unless told).
+Written 2026-10-26 (late night), branch `main`. Last commit: `c1495fe` (the earlier work of the day). **This session's work is not
+committed** (the user has not asked). The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told.
 
-## Done today (details in REVIVAL_NOTES, all under "Play rules" unless said)
-1. The user's list with screenshots (carts, speeder makes, walls/doors on curves) and "investigate all failures" (see "Failures and
-   missing rules hunted").
-2. Third request, all five parts:
-   a. Ships leave/arrive in hangars by rising, pitching up and flying off ("Ships leaving and coming into a hangar"; `BayBerth`).
-   b. Jumping, climbing, grappling hooks, jetpack bursts, gravity per world, falls by armour and pull ("Jumping, climbing, falling
-      and gravity"; shared/logic `jumpReach/fallPlan/fallOutcome/gravityOf`, useCombat `reachable/walk/fall`, GameBoard `fallOutside`).
-   c. Air battles: defend/bomb a settlement, escort/strike a convoy ("Air battles"; dogfight.ts `airStart`, dogfightSim ground and bombs,
-      ArenaScene `AirBackdrop/GroundPiece`; /dev/dogfight?scenario=defend|raid|escort|strike&biome=desert).
-   d. Ambushes on speeder trips with a chase on the race course ("On the road"; shared/logic `roadAmbush/roadAmbushers/chaseStart`,
-      FlightScene kind `chase`, GameBoard `roadHit`/`roadFight`; test switch localStorage sw5e.ambush=1).
-   e. Weapon properties bright, biting, corruption, specialized, penetrating, switch, smart, modal, luminous ("The rest of the weapon
-      properties").
+## Done this session (details in REVIVAL_NOTES, "Skies, horizons, globes and the land across a course")
+The user's request: geographical features in distant views from settlements, clouds, suns/moons/planets in the sky, features met on
+the way and in speeder races (gorges, hills, bridges over water/lava), the globe from orbit showing the land, the party drawn as its
+ship in space (not standing), and the dogfight's big ships matching the map models.
+- shared/logic "Skies and landforms" (`skyLook`, `worldLook`, `landformsOf`, `biomeSky`) + new `components/Map/scenery.tsx`
+  (`WorldSky`, `PlanetGlobe`, `PlanetBall`). Used by LocalMap `Sky` (street + settlement, with fog), the planet view's globe,
+  FlightScene race/chase, ArenaScene air and space backdrops.
+- LocalMap `PartyCraft`: the party in orbit/at a jump point is its ship (campaign `starships` passed in GameBoard's `scene`) or a shuttle.
+- Race courses: `layCrossings` (gorge, hill, river/lava + bridges with rails, lava burns), `groundAt` = `landAt` + rivers, `raceWater`.
+- Dogfight: `hullSpec(cls, role, imperial)` styles "corvette"/"wedge" after models.tsx; compound hull volume; new capitalGeometry;
+  calmer liveries (`busy`), vertex-colour paint, `worldUV` keeps normals.
+- Test hooks: atlas `?here=&view=`, `/dev/dogfight?game=race|chase&biome=&seed=`, `window.__raceTrack`, `window.__raceWarp`.
 
 ## Checked
-- Unit: items+ships+dice 166/166 (new: jumping 7, airfight 8, roadchase 4, weaponprops 6), world 26/26.
-- tsc: no new errors in touched files (pre-existing ones in useCombat.ts(2), src/stores/useCombat.ts, CharacterCreator, lib/game).
-- Full `e2e/play.mjs` on the dev server: 75/75 after (b); 74/75 after (c)+(d) — the failure ("beast and stable", a stable keeper's
-  card) passed when run alone (people wander: a timing flake). Not rerun after (e) (unit tests + a browser fight check only).
-- Browser checks with scratchpad scripts: depart.mjs (hangar), airshot.mjs (air fights), roadhit.mjs (ambush, chase, roadside
-  fight), modes.mjs (weapon buttons). Screens in e2e/out/{depart,air,road}.
-- Test rows of the slice runs deleted (tagged " mvp....."); a few rows of others remain in sw5e_test.
+- `npm test`: 346/346 (new tests/world/skies.test.ts 4; dogfight hull tests rewritten for wedge + corvette).
+- tsc: no errors in touched files.
+- Screens (scratchpad scripts, dev server 5057): dogfight cruiser/battleship both looks, orbit globes (volcanic, forest), settlement and
+  street horizons (forest, volcanic, swamp), races (volcanic lava bridge, forest river bridge, desert gorge, forest hill), air battles.
+- Bot races over the new courses: rivals finish 2:34-2:48.
+- e2e on the dev server (5057): 86/88. The two failures (cantina: the bartender called to the bar; trade, which needs it) also fail on the
+  pre-session build (5002 baseline: 85/88, the same two plus "a tap on the way out"): frame-rate-bound under software rendering, not new.
+  A first run had 83/88 (droid, captive, allies too) before the sky was made cheaper (vertex-coloured dome, fewer clouds, FarGround).
+- Frame-rate checks on the dev server are noisy: the first (cold) runs after a change read 3 fps where warm runs read 11-17.
 
 ## Processes
-- My dev server on 5057 (sw5e_test, VITE_TEST_MENU=1) is still running; stop it when done. 5000 (prod) and 5002 untouched.
-- Vite once served a stale shared module after scripted edits: restart the dev server if a page says an export is missing.
+- Dev server on 5057 (sw5e_test, VITE_TEST_MENU=1) still running (from the session before). 5000 (prod) and 5002 untouched.
+- No e2e running.
 
 ## Next
-1. The user looks; rebuild 5002 (`deploy/windows-start.ps1 -Mode test`) when asked. Commit/push only when asked.
-2. Still not done: Mag-lock Boots and Boots of Bounding (fit the new jump/gravity rules), the other text-only gear (force/tech
-   storing rings, class charge items), set bonuses, Respiration Facilitator, shield properties (Anchor, Lambent ...).
+1. The user looks; rebuild 5002 (`deploy/windows-start.ps1 -Mode test`) when asked. Commit only when asked.
+2. Not done (in the notes): the street's own ground stays flat (no river or hill on the street map); the horizon is not placed from the
+   globe's mountains; the pilot's route and taxi run fly the old flight model over flat ground.
 
 ## Learned
-- Do NOT edit client/shared code while an e2e runs on the dev server: Vite hot-reloads the page under test.
-- An e2e script must close its browser in `finally`; ONLY= slices skip cleanup (delete rows tagged " mvp.....").
-- Working files have mixed CRLF/LF; edit with the scratchpad's exact-match rep.cjs (shell escaping of regexes in node -e breaks: write
-  scripts to files).
-- `reachable` relaxes (a fall-free or cheaper way replaces one found first); entries carry `how` and `fall`.
-- LocalMap `window.__minuteAt` holds the bay clock for a test; `window.__dogfight`/`__race` expose the minigames.
+- Bash heredocs/`node -e` mangle backticks and `${}`: write patches with the scratchpad `patch.cjs` (blocks @@@ FILE/OLD/NEW/END, CRLF-safe).
+- `<fog attach="fog">` inside a group attaches to the group: set `scene.fog` (WorldSky does, and restores it).
+- A ShaderMaterial needs `#include <tonemapping_fragment>` and `<colorspace_fragment>` or its colours come out unconverted.

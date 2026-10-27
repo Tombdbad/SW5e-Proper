@@ -2,6 +2,7 @@
 // Query: scenario (skirmish, cruiser, carrier, battleship, dreadnought, station; in the air: defend, raid, escort, strike, with biome and g), size and role of the party's ship, tier, seed, owner (the
 // Empire for the Imperial looks), view=cockpit to begin in the pilot's seat, noshield to take the shield off the ship (a deflector is lent).
 // `window.__dogfight` (state(), input) lets a script move things, as the race's window.__race does.
+// game=race or game=chase (with biome, seed, vehicle) plays the speeder race or the chase on the road instead, to look at a world's course.
 import { useMemo, useState } from "react";
 import { shipSheet } from "@shared/logic";
 import { SCENARIOS, scenarioOf, type ScenarioId, type StarshipRow } from "@shared/logic/dogfight";
@@ -30,8 +31,11 @@ function labShip(size: string, role: string, tier: number, shield = true) {
 export default function DogfightLab() {
   const q = new URLSearchParams(window.location.search);
   const scenario = (SCENARIOS.find((s) => s.id === q.get("scenario"))?.id ?? "skirmish") as ScenarioId;
+  const course = q.get("game");
   const game = useMemo<Minigame>(
-    () => ({
+    () => course === "race" || course === "chase" ? (course === "race"
+      ? { kind: "race", title: "Race lab", seed: Number(q.get("seed") ?? 1), vehicle: q.get("vehicle") ?? "Landspeeder", biome: q.get("biome") ?? "temperate" }
+      : { kind: "chase", title: "Chase lab", seed: Number(q.get("seed") ?? 1), vehicle: q.get("vehicle") ?? "Landspeeder", biome: q.get("biome") ?? "temperate", riders: [{ name: "Raider", model: "Speeder bike" }, { name: "Raider", model: "Speeder bike" }], who: "a swoop gang" }) : ({
       kind: "dogfight",
       title: "Dogfight lab",
       seed: Number(q.get("seed") ?? 1),
@@ -40,8 +44,9 @@ export default function DogfightLab() {
       ship: { sheet: labShip(q.get("size") ?? "Small", q.get("role") ?? "Attack Fighter", Number(q.get("tier") ?? 1), !q.has("noshield")), owner: q.get("owner") ?? "the party" },
       view: q.get("view") === "cockpit" ? "cockpit" : undefined,
       air: scenarioOf(scenario).air ? { biome: q.get("biome") ?? "temperate", g: Number(q.get("g") ?? 1), owner: q.get("owner") ?? undefined } : undefined,
+      planet: q.get("biome") ?? undefined,
     }),
-    [scenario],
+    [scenario, course],
   );
   const [done, setDone] = useState<string | null>(null);
   return (

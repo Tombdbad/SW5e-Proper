@@ -13,7 +13,8 @@ import type { View } from "./Cockpit";
 import { emptyOverlay, HudPanels, hudOf, MarkerLayer, Reticule, weaponLabel, type HudData } from "./DogfightHud";
 
 // `air`: the land, the pull and the foe of a fight in the air of a planet (dogfight.ts airStart)
-export interface DogfightSpec { title: string; seed: number; scenario: ScenarioId; rows: StarshipRow[]; ship: { sheet: ShipSheet; owner?: string }; view?: View; air?: AirOptions }
+// `planet`: the biome of the planet whose space or air it is (the world drawn below the fight in space; in the air `air.biome`)
+export interface DogfightSpec { title: string; seed: number; scenario: ScenarioId; rows: StarshipRow[]; ship: { sheet: ShipSheet; owner?: string }; view?: View; air?: AirOptions; planet?: string }
 
 // TEST BUILD ONLY: the button for unlimited hull and weapons. It exists only in a page built with VITE_TEST_MENU=1 (deploy/test-plain.sh, as the
 // game's test menu), never in the build the game is played on, so nothing here needs commenting out for production. To take it out by hand as
@@ -452,6 +453,8 @@ export function DogfightGame({ spec, go, controls, shell, onFinish }: { spec: Do
           <OwnLoop onFault={fault} />
           <ContextWatch onLost={rebuild} />
           <ArenaScene
+            planet={spec.planet}
+            seed={spec.seed}
             sim={sim}
             go={go}
             input={input}

@@ -4,7 +4,8 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { createRandom } from "@shared/logic";
-import { CLASSES, deckHalfWidth, hullSpec, type ArenaClass } from "@shared/logic/dogfight";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { CLASSES, WEDGE, hullSpec, isCapital, type ArenaClass } from "@shared/logic/dogfight";
 import { worldUV } from "./hullSurface";
 
 export interface Engine { at: V3; r: number }
@@ -27,8 +28,9 @@ function prism(plan: [number, number][], y0: number, y1: number, bevel = 0): THR
   g.translate(0, y0 + bevel, 0);
   return g;
 }
-const mirrored = (pts: [number, number][]): [number, number][] => [...pts, ...[...pts].reverse().map(([x, z]) => [x, -z] as [number, number])];
+// (an empty list merges to an empty geometry)
 const merge = (parts: THREE.BufferGeometry[], tile: number) => {
+  if (!parts.length) return new THREE.BufferGeometry();
   const g = parts.map((p) => worldUV(p, tile));
   for (const p of parts) p.dispose();
   const merged = mergeGeometries(g.map((x) => (x.index ? x.toNonIndexed() : x)), false);
@@ -36,6 +38,7 @@ const merge = (parts: THREE.BufferGeometry[], tile: number) => {
   return merged ?? new THREE.BufferGeometry();
 };
 const flat = (parts: THREE.BufferGeometry[]) => {
+  if (!parts.length) return new THREE.BufferGeometry();
   const g = parts.map((p) => (p.index ? p.toNonIndexed() : p.clone()));
   for (const p of g) {
     for (const name of Object.keys(p.attributes)) if (name !== "position" && name !== "normal") p.deleteAttribute(name);
@@ -44,115 +47,122 @@ const flat = (parts: THREE.BufferGeometry[]) => {
   return merged ?? new THREE.BufferGeometry();
 };
 
-// Small blocks scattered over a deck, inside its outline: the machinery of a big ship
-function greebles(rand: () => number, count: number, inside: (x: number, z: number) => boolean, ext: { x: [number, number]; z: [number, number] }, y: number, size: number): THREE.BufferGeometry[] {
-  const out: THREE.BufferGeometry[] = [];
-  for (let i = 0, tries = 0; i < count && tries < count * 8; tries++) {
-    const x = ext.x[0] + rand() * (ext.x[1] - ext.x[0]);
-    const z = ext.z[0] + rand() * (ext.z[1] - ext.z[0]);
-    if (!inside(x, z)) continue;
-    const w = size * (0.3 + rand() * 1.1);
-    const d = size * (0.3 + rand() * 1.1);
-    const h = size * (0.12 + rand() * 0.5);
-    if (!inside(x + w / 2, z + d / 2) || !inside(x - w / 2, z - d / 2)) continue;
-    out.push(box(w, h, d, [x, y + h / 2 - 0.3, z], [0, rand() < 0.2 ? 0.4 : 0, 0]));
-    i++;
+// Paint over the livery, as vertex colours the hull material multiplies its plates by (the map model's colours: the plain hull, its dark engine
+// block and seams, its red stripe, and the wedge's upper tier a shade darker)
+const PAINT = { hull: [1, 1, 1], dark: [0.5, 0.53, 0.57], stripe: [0.95, 0.36, 0.3], shade: [0.92, 0.92, 0.92] } as const;
+const painted = (g: THREE.BufferGeometry, rgb: readonly number[]) => {
+  const n = g.attributes.position.count;
+  const c = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) c.set(rgb, i * 3);
+  g.setAttribute("color", new THREE.BufferAttribute(c, 3));
+  return g;
+};
+// A hull turned round the x axis, as the map's `hullAlongX`: points are [radius, x] from stern to bow; `phi` limits it to a band round the axis
+// (the top is at 3π/2)
+const alongX = (profile: [number, number][], at: V3, seg = 40, phi?: [number, number]) => {
+  const g = new THREE.LatheGeometry(profile.map(([r, a]) => new THREE.Vector2(r, a)), seg, phi?.[0], phi?.[1]);
+  g.rotateZ(-Math.PI / 2);
+  g.translate(...at);
+  return g;
+};
+const rounded = (size: V3, r: number, at: V3) => place(new RoundedBoxGeometry(size[0], size[1], size[2], 3, r), at);
+
+// The corvette (models.tsx buildShip, the last kind): built in the map model's units (6 by 4 squares, bow to +x) and stretched to the class
+function corvette(half: V3, hull: THREE.BufferGeometry[], dark: THREE.BufferGeometry[], glow: THREE.BufferGeometry[], engines: Engine[]) {
+  const [hx, hy, hz] = half;
+  const [sx, sy, sz] = [hx / 2.95, hy / 0.65, hz / 1.3];
+  const m = new THREE.Matrix4().makeScale(sx, sy, sz).multiply(new THREE.Matrix4().makeTranslation(0.15, -1, 0));
+  const fit = (g: THREE.BufferGeometry, paint: readonly number[] = PAINT.hull) => painted(g.applyMatrix4(m), paint);
+  const at = (p: V3): V3 => {
+    const v = new THREE.Vector3(...p).applyMatrix4(m);
+    return [v.x, v.y, v.z];
+  };
+  // The hammerhead bow, the neck and the engine block
+  hull.push(fit(rounded([1.0, 0.9, 2.4], 0.3, [2.3, 1.0, 0])));
+  const neck: [number, number][] = [[0.42, 0], [0.42, 0.2], [0.34, 1.0], [0.3, 2.6], [0.36, 3.0], [0.36, 3.2]];
+  hull.push(fit(alongX(neck, [-1.2, 1.0, 0])));
+  hull.push(fit(rounded([1.8, 1.3, 2.6], 0.25, [-1.9, 1.0, 0]), PAINT.dark));
+  // The red stripe along the top of the neck (a band of a hull a little wider than it), and seams round the blocks
+  const stripe: [number, number][] = [[0.39 * 1.02, 0.5], [0.34 * 1.02, 1.0], [0.3 * 1.02, 2.6], [0.36 * 1.02, 3.0], [0.36 * 1.02, 3.1]];
+  hull.push(fit(alongX(stripe, [-1.2, 1.0, 0], 8, [Math.PI * 1.5 - 0.35, 0.7]), PAINT.stripe));
+  for (const x of [-1.45, -2.35]) hull.push(fit(rounded([0.06, 1.32, 2.62], 0.03, [x, 1.0, 0]), PAINT.dark));
+  hull.push(fit(rounded([0.05, 0.92, 2.42], 0.03, [2.0, 1.0, 0]), PAINT.dark));
+  // Eight engines in two rows, their housings in the hull and their flares drawn by the component
+  for (let i = 0; i < 8; i++) {
+    const [y, z] = [0.68 + (i % 2) * 0.62, -0.95 + Math.floor(i / 2) * 0.63];
+    hull.push(fit(alongX([[0, 0], [0.2, 0], [0.24, 0.12], [0.24, 0.3], [0.3, 0.4]], [-3.1, y, z], 16), PAINT.dark));
+    engines.push({ at: at([-3.13, y, z]), r: 0.2 * (sy + sz) / 2 });
   }
-  return out;
+  // The bridge's glass across the bow, and rows of lit ports along the bow block and the neck
+  dark.push(box(0.06, 0.24, 1.2, [2.82, 1.12, 0]).applyMatrix4(m));
+  for (const s of [1, -1]) {
+    for (let i = 0; i < 7; i++) for (const y of [0.82, 1.18]) glow.push(box(0.05, 0.03, 0.01, [1.92 + i * 0.12, y, s * 1.203]).applyMatrix4(m));
+    for (let i = 0; i < 14; i++) {
+      const x = -0.9 + i * 0.2;
+      const r = 0.3 + 0.04 * Math.abs(Math.sin(i));
+      glow.push(box(0.06, 0.025, 0.01, [x, 1.0, s * (r + 0.006)]).applyMatrix4(m));
+    }
+  }
 }
 
-export function capitalGeometry(cls: ArenaClass, role: string, seed: number): CapitalGeometry {
-  const spec = hullSpec(cls, role);
-  const [hx, hy, hz] = CLASSES[cls].half;
+// The Empire's wedge (models.tsx buildShip, `imperial`): the lower tier and the upper one in the map model's units stretched to the class; the
+// tower, the bridge and its domes at the beam's scale so that they keep their shape. `domes`: draw the domes (a ship with shield generators
+// has them as its parts, which go dark when they are shot out)
+function wedge(half: V3, domes: boolean, hull: THREE.BufferGeometry[], dark: THREE.BufferGeometry[], glow: THREE.BufferGeometry[], engines: Engine[]) {
+  const [hx, hy, hz] = half;
+  const [sx, sy, sz] = [hx / 2.75, hy / 0.4, hz / 1.75];
+  const m = new THREE.Matrix4().makeScale(sx, sy, sz).multiply(new THREE.Matrix4().makeTranslation(-0.15, -1.05, 0));
+  const fit = (g: THREE.BufferGeometry, paint: readonly number[] = PAINT.hull) => painted(g.applyMatrix4(m), paint);
+  const at = (p: V3): V3 => {
+    const v = new THREE.Vector3(...p).applyMatrix4(m);
+    return [v.x, v.y, v.z];
+  };
+  hull.push(fit(prism([[2.9, 0], [-2.6, 1.75], [-2.45, 0], [-2.6, -1.75]], 0.65, 1.15, 0.015)));
+  hull.push(fit(prism([[2.2, 0], [-2.1, 1.2], [-2.2, 0], [-2.1, -1.2]], 1.15, 1.45, 0.025), PAINT.shade));
+  // Rows of lit ports along the lower tier's flanks
+  const edge = Math.atan2(-1.75, -5.5);
+  for (const s of [1, -1]) {
+    for (let i = 0; i < 30; i++) {
+      const t = 0.12 + i * 0.026;
+      const [x, z] = [2.9 - 5.5 * t, 1.75 * t * s];
+      for (const y of [0.8, 0.98]) glow.push(place(new THREE.BoxGeometry(0.06, 0.012, 0.01), [x + 0.0067, y, z + 0.021 * s], [0, edge * s, 0]).applyMatrix4(m));
+    }
+  }
+  // The tower astern, at the beam's scale on the deck of the upper tier
+  const u = sz;
+  const tower = new THREE.Matrix4().makeTranslation(WEDGE.tower * hx, hy, 0).multiply(new THREE.Matrix4().makeScale(u, u, u));
+  const raise = (g: THREE.BufferGeometry, paint: readonly number[] = PAINT.hull) => painted(g.applyMatrix4(tower), paint);
+  hull.push(raise(rounded([0.7, 0.58, 0.5], 0.06, [0, 0.27, 0])));
+  hull.push(raise(rounded([0.3, 0.12, 1.1], 0.04, [0, 0.6, 0]), PAINT.dark));
+  if (domes) for (const z of [-0.42, 0.42]) hull.push(raise(sphere(0.13, [0, 0.73, z], undefined, 16)));
+  glow.push(box(0.01, 0.03, 0.9, [0.152, 0.6, 0]).applyMatrix4(tower));
+  // Three engines across the stern
+  for (const z of [-0.6, 0, 0.6]) {
+    const p = at([-2.62, 0.95, z]);
+    hull.push(painted(cyl(0.26 * u, 0.3 * u, 0.14 * u, p, [0, 0, Math.PI / 2], 20), PAINT.dark));
+    engines.push({ at: [p[0] - 0.1 * u, p[1], p[2]], r: 0.24 * u });
+  }
+}
+
+export function capitalGeometry(cls: ArenaClass, role: string, seed: number, imperial = false): CapitalGeometry {
+  const spec = hullSpec(cls, role, imperial);
+  const half = CLASSES[cls].half;
   const rand = createRandom(seed + 11).next;
   const hull: THREE.BufferGeometry[] = [];
   const dark: THREE.BufferGeometry[] = [];
   const glow: THREE.BufferGeometry[] = [];
   const engines: Engine[] = [];
-  // A nozzle: a dark housing in the hull geometry, and the engine's flare drawn by the component
-  const nozzle = (x: number, y: number, z: number, r: number) => {
-    hull.push(cyl(r * 1.18, r * 1.35, r * 0.9, [x + r * 0.2, y, z], [0, 0, Math.PI / 2], 24));
-    engines.push({ at: [x - r * 0.3, y, z], r });
-  };
   const tile = cls === "Station" ? 260 : cls === "Gargantuan" ? 170 : cls === "Huge" ? 110 : 36;
 
   switch (spec.style) {
-    case "wedge": {
-      const wedge = (s: number, sz: number): [number, number][] => [[hx * s, 0], [-hx * s, hz * sz], [-hx * s, -hz * sz]];
-      hull.push(prism(wedge(1, 1), -hy * 0.1, hy, 1.2));
-      hull.push(prism(wedge(0.86, 0.72), -hy, -hy * 0.1, 1.2));
-      // The tower and bridge
-      const [tx, th] = spec.tower;
-      hull.push(box(18, th * 0.8, 20, [tx, hy + th * 0.4, 0]));
-      hull.push(box(52, 8, 22, [tx - 2, hy + th * 0.8 + 3, 0]));
-      hull.push(box(6, 9, 30, [tx - 6, hy + th * 0.8 + 10, 0]));
-      for (const z of [-17, 17]) hull.push(sphere(3.2, [tx - 4, hy + th * 0.8 + 11, z]));
-      // Engines
-      hull.push(box(10, hy * 1.7, hz * 1.5, [-hx - 4, -hy * 0.1, 0]));
-      for (let i = 0; i < 5; i++) nozzle(-hx - 10, -hy * 0.1, (i - 2) * hz * 0.32, i === 2 ? 11 : 8);
-      // The trench down the deck and the lit slots along it
-      dark.push(box(hx * 1.3, 1.6, 6, [-hx * 0.1, hy + 0.2, 0]));
-      for (let i = 0; i < 12; i++) glow.push(box(4, 0.4, 1.4, [-hx * 0.7 + i * hx * 0.1, hy + 1.1, 4.2]));
-      // The deck's machinery
-      const half = (x: number) => deckHalfWidth(cls, role, x) * 0.96;
-      hull.push(...greebles(rand, 520, (x, z) => x > -hx * 0.96 && x < hx * 0.94 && Math.abs(z) < half(x) && Math.abs(z) > 4, { x: [-hx, hx], z: [-hz, hz] }, hy, 7));
+    case "corvette":
+      corvette(half, hull, dark, glow, engines);
       break;
-    }
-    case "carrier": {
-      const plan: [number, number][] = [[hx, hz * 0.5], [hx * 0.92, hz], [-hx, hz], [-hx, -hz], [hx * 0.92, -hz], [hx, -hz * 0.5]];
-      hull.push(prism(plan, -hy, hy, 1.4));
-      // The island, the flight deck's lit edges and the bays' mouths
-      const [tx, th] = spec.tower;
-      hull.push(box(22, th, 16, [tx, hy + th / 2, 0]));
-      hull.push(box(30, 8, 40, [tx - 3, hy + th + 3, 0]));
-      dark.push(box(hx * 1.1, 0.6, hz * 1.2, [hx * 0.05, hy + 0.15, 0]));
-      for (let i = 0; i < 16; i++) for (const z of [-hz * 0.62, hz * 0.62]) glow.push(box(3, 0.5, 1.2, [-hx * 0.5 + i * hx * 0.07, hy + 0.7, z]));
-      hull.push(box(10, hy * 1.8, hz * 1.7, [-hx - 4, 0, 0]));
-      for (let i = 0; i < 4; i++) nozzle(-hx - 10, 0, (i - 1.5) * hz * 0.4, 9);
-      // Hangar mouths under the bow and amidships
-      for (const x of [hx * 0.3, -hx * 0.02]) {
-        dark.push(box(36, 0.8, 40, [x, -hy - 0.1, 0]));
-        glow.push(box(30, 0.5, 34, [x, -hy - 0.5, 0]));
-      }
-      hull.push(...greebles(rand, 360, (x, z) => x > -hx * 0.94 && x < hx * 0.9 && Math.abs(z) < hz * 0.9 && !(Math.abs(z) < 24 && Math.abs(x - tx) < 22), { x: [-hx, hx], z: [-hz, hz] }, hy, 6));
+    case "wedge":
+      wedge(half, !isCapital(cls), hull, dark, glow, engines);
       break;
-    }
-    case "citadel": {
-      const plan: [number, number][] = [[hx, hz * 0.4], [hx * 0.65, hz], [-hx, hz], [-hx, -hz], [hx * 0.65, -hz], [hx, -hz * 0.4]];
-      const small = plan.map(([x, z]) => [x * 0.82, z * 0.74] as [number, number]);
-      hull.push(prism(plan, -hy * 0.3, hy, 2));
-      hull.push(prism(small, -hy, -hy * 0.3, 2));
-      const [tx, th] = spec.tower;
-      hull.push(box(46, th * 0.9, 46, [tx, hy + th * 0.45, 0]));
-      hull.push(box(110, 14, 52, [tx - 6, hy + th * 0.9 + 6, 0]));
-      hull.push(box(10, 36, 10, [tx - 12, hy + th * 0.9 + 28, 0]));
-      for (const z of [-0.78, 0.78]) hull.push(box(40, 24, 24, [-hx * 0.2, hy + 10, hz * z]));
-      hull.push(box(16, hy * 1.8, hz * 1.5, [-hx - 6, -hy * 0.15, 0]));
-      for (let i = 0; i < 7; i++) nozzle(-hx - 14, -hy * 0.15, (i - 3) * hz * 0.28, 15);
-      dark.push(box(hx * 1.5, 2, 12, [-hx * 0.1, hy + 0.3, hz * 0.5]), box(hx * 1.5, 2, 12, [-hx * 0.1, hy + 0.3, -hz * 0.5]));
-      for (let i = 0; i < 24; i++) for (const z of [-hz * 0.5, hz * 0.5]) glow.push(box(6, 0.6, 2, [-hx * 0.8 + i * hx * 0.065, hy + 1.2, z + 7.5]));
-      for (const x of [hx * 0.32, -hx * 0.1]) {
-        dark.push(box(60, 1, 70, [x, -hy - 0.1, 0]));
-        glow.push(box(50, 0.6, 58, [x, -hy - 0.6, 0]));
-      }
-      hull.push(...greebles(rand, 760, (x, z) => x > -hx * 0.96 && x < hx * 0.8 && Math.abs(z) < hz * 0.94 && !(Math.abs(z) < 30 && Math.abs(x - tx) < 40), { x: [-hx, hx], z: [-hz, hz] }, hy, 12));
-      break;
-    }
-    case "frigate":
-    case "cutter": {
-      const plan: [number, number][] = [[hx, hz * 0.25], [hx * 0.7, hz], [-hx, hz], [-hx, -hz], [hx * 0.7, -hz], [hx, -hz * 0.25]];
-      hull.push(prism(plan, -hy, hy, 0.6));
-      hull.push(box(hx * 0.5, 7, hz * 0.8, [spec.tower[0], hy + 3.5, 0]));
-      hull.push(box(12, 9, 14, [spec.tower[0] - 8, hy + 10, 0]));
-      hull.push(cyl(hz * 0.55, hz * 0.7, 14, [-hx - 6, 0, 0], [0, 0, Math.PI / 2], 20));
-      for (const z of [-hz * 0.4, 0, hz * 0.4]) nozzle(-hx - 12, 0, z, 3.4);
-      dark.push(box(hx * 1.3, 0.5, 2.4, [0, hy + 0.1, 0]));
-      for (let i = 0; i < 14; i++) glow.push(box(1.6, 0.3, 0.7, [-hx * 0.8 + i * hx * 0.11, hy + 0.5, 2.2]));
-      hull.push(...greebles(rand, 90, (x, z) => x > -hx * 0.9 && x < hx * 0.6 && Math.abs(z) < hz * 0.8, { x: [-hx, hx], z: [-hz, hz] }, hy, 2.6));
-      break;
-    }
     case "station": {
-      const R = hx;
+      const R = half[0];
       hull.push(place(new THREE.SphereGeometry(R, 128, 96), [0, 0, 0]));
       // The equatorial trench: a dark band set into the shell, lit along both lips
       dark.push(place(new THREE.CylinderGeometry(R * 1.001, R * 1.001, 70, 160, 1, true), [0, 0, 0]));

@@ -9,7 +9,7 @@ import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, 
 // A lit square's colour by how it is reached: walked (green), jumped, climbed or flown to (blue), or a fall at the end (orange)
 const stepColor = (step: Step) => (step.fall ? "#fb923c" : step.how && /^(jump|climb|hook|fly)$/.test(step.how) ? "#38bdf8" : "#4ade80");
 import { standsAt, stairsGoals, arrivalSquares, climbAt, canStep, floorsOf, piecesIn, squaresOf, type Companion, type Cart, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
-import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt } from "@shared/logic";
+import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt, worldLook, type WorldLook, type PartyShip } from "@shared/logic";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind } from "./sprites";
 import { Atmosphere } from "./interiors/Atmosphere.tsx";
@@ -25,9 +25,10 @@ import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
-import { BasePieceModel, CartModel, CurtainWall, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
+import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { Figure, seatFor, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
 // The flying games draw the same ships and speeders
@@ -94,7 +95,10 @@ const minuteNow = () => (typeof window !== "undefined" ? (window as unknown as {
 const NIGHT_SKY = new THREE.Color("#05070c");
 const DAY_SKY = new THREE.Color("#5d7fa3");
 const DUSK_SKY = new THREE.Color("#b8683f");
-function Sky({ shadow = 30, cast = true, indoors = 0 }: { shadow?: number; cast?: boolean; indoors?: number }) {
+// With the look of the place (scenery.tsx WorldSky): the dome, the suns, moons and clouds, and the land on the horizon, in place of a plain
+// background colour; `ground` is the height of the ground the horizon's land stands on
+function Sky({ shadow = 30, cast = true, indoors = 0, look, ground = 0, fog, floor = true }: { shadow?: number; cast?: boolean; indoors?: number; look?: WorldLook | null; ground?: number; fog?: [number, number]; floor?: boolean }) {
+  const lite = useQuality((q) => q.tier === "lite");
   const minutes = useClock((c) => Math.round(c.minutes / 5) * 5);
   const light = daylight(minutes);
   const twilight = light > 0 && light < 1;
@@ -105,6 +109,7 @@ function Sky({ shadow = 30, cast = true, indoors = 0 }: { shadow?: number; cast?
   return (
     <>
       <color attach="background" args={[background]} />
+      {look && <WorldSky look={look} light={light} hour={(minutes / 60) % 24} ground={ground} lite={lite} fog={fog} floor={floor} />}
       <ambientLight intensity={(0.32 + 0.43 * light) * (1 - 0.5 * indoors)} color={light < 0.3 ? "#a9b8ff" : "#ffffff"} />
       <directionalLight position={sun} intensity={(0.14 + 0.76 * light) * (1 - 0.6 * indoors)} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow={cast} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
     </>
@@ -1805,7 +1810,8 @@ function AlleyBlock({ squares }: { squares: Sq[] }) {
   );
 }
 
-type Walker = { key: string; from: V3; to: V3; progress: number; kind: "person" | "speeder" | "airspeeder" | "mount" | "hauler" | "ship"; name: string; arc?: number; scale?: number; note?: string };
+// (`hover`: kept that far over the ground the view gives, rather than on the straight line between the ends: over a globe's hills)
+type Walker = { key: string; from: V3; to: V3; progress: number; kind: "person" | "speeder" | "airspeeder" | "mount" | "hauler" | "ship"; name: string; arc?: number; scale?: number; note?: string; hover?: number };
 // People about the street of a district, going between the doors of its buildings by the open
 // ground and back again, at a walking pace (purely for life on the street: nobody to talk to)
 type Stroll = { key: string; path: { x: number; y: number }[]; length: number; offset: number };
@@ -1852,7 +1858,7 @@ const pickMount = (name: string) => ["Dewback", "Eopie", "Bantha", "Tauntaun", "
 
 // People and ships on the way between places (shared/logic withPresence: `moving`), drawn where
 // they are on the way and eased there between the clock's minutes. Not tappable.
-function Walkers({ walkers }: { walkers: Walker[] }) {
+function Walkers({ walkers, ground }: { walkers: Walker[]; ground?: (x: number, z: number) => number }) {
   const groups = useRef<Record<string, THREE.Group | null>>({});
   useFrame((_, delta) => {
     for (const w of walkers) {
@@ -1860,6 +1866,7 @@ function Walkers({ walkers }: { walkers: Walker[] }) {
       if (!g) continue;
       const want = new THREE.Vector3(...w.from).lerp(new THREE.Vector3(...w.to), Math.max(0, Math.min(1, w.progress)));
       want.y += (w.arc ?? 0) * Math.sin(Math.PI * Math.max(0, Math.min(1, w.progress)));
+      if (ground && w.hover !== undefined) want.y = ground(want.x, want.z) + w.hover;
       if (g.position.distanceTo(want) > 8) g.position.copy(want);
       else g.position.lerp(want, Math.min(1, delta * 3));
       g.rotation.y = Math.atan2(w.to[0] - w.from[0], w.to[2] - w.from[2]);
@@ -1986,6 +1993,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const trail = trailOf(world, building.id);
   const biome = trail.find((a) => a.kind === "planet")?.type ?? "";
   const wall = trail.some((a) => a.type === "station") || building.type === "starship" ? STEEL : WALLS[biome] ?? "#b9ad96";
+  // The sky and the horizon over the street (none aboard a ship or on a station in space); kept by the building, not rebuilt with the world
+  const look = useMemo(() => (building.type === "starship" || (trail.some((a) => a.type === "station") && biome !== "gas giant") ? null : worldLook(world, building.id)), [building.id]);
   const here = world.areas[hereId];
   // The room the party is in, or whether it stands outside; a room opened up to look at (the atlas)
   const inside = planned && here?.kind === "room" && buildingIds.has(here.parentId ?? "") ? here : null;
@@ -2650,6 +2659,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         {groundTex ? (
           <group visible={!underground}>
             <GroundSurface set={groundTex.set} tint={groundTex.tint} parallax={groundTex.parallax} w={sizeOfGround} h={sizeOfGround} at={[cx, -0.02, cz]} onTap={tappable ? walkHere : undefined} />
+            {/* Under an open sky the ground goes on, plainly, to the horizon's haze */}
+            {look && <FarGround set={groundTex.set} tint={groundTex.tint} size={1000} at={[cx, -0.05, cz]} />}
           </group>
         ) : (
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.02, cz]} visible={!underground} receiveShadow onClick={tappable ? walkHere : undefined}>
@@ -3138,7 +3149,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       ) : (
         <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} />
       )}
-      <Sky cast={!districtPlan || !!opened} indoors={opened && !openAir(opened) && !formOf(opened) ? 1 : 0} />
+      <Sky cast={!districtPlan || !!opened} indoors={opened && !openAir(opened) && !formOf(opened) ? 1 : 0} look={look} ground={-0.05} fog={[150, 480]} floor={!groundTex} />
     </>
   );
 }
@@ -3563,10 +3574,19 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
     const [x, z] = [(a.position.x - centre.x) * scale, (a.position.z - centre.z) * scale];
     return [x, lift(x, z), z];
   };
-  // A road over the ground between two places (bent over the curve of a globe)
-  const road = (from: V3, to: V3): V3[] => Array.from({ length: 13 }, (_, i) => {
-    const [x, z] = [from[0] + ((to[0] - from[0]) * i) / 12, from[2] + ((to[2] - from[2]) * i) / 12];
-    return [x, lift(x, z) + 0.12, z];
+  // The look of the world here (scenery.tsx): a settlement's sky and horizon, a planet's clouds; kept by the view, not rebuilt with the world
+  const lite = useQuality((q) => q.tier === "lite");
+  const look = useMemo(() => (system ? null : worldLook(world, view.id)), [view.id]);
+  // A planet's globe has its land on it (scenery.tsx PlanetGlobe), flattened round the places the map stands on it
+  const placeKey = places.map((a) => a.id).join(",");
+  const land = useMemo(() => (globe ? globeOf(view.type, hashText(view.id), 2.4, places.map((a) => { const p = at(a); return new THREE.Vector3(p[0], p[1] + GLOBE, p[2]); })) : null), [view.id, placeKey]);
+  // The ground's height at a point of the view: the globe's curve and its land
+  const surface = (x: number, z: number) => { const y = lift(x, z); return land ? y + globeLift(land, new THREE.Vector3(x, y + GLOBE, z).normalize()) : y; };
+  // A road over the ground between two places (bent over the curve of a globe and over its hills)
+  const road = (from: V3, to: V3): V3[] => Array.from({ length: globe ? 25 : 13 }, (_, i) => {
+    const k = i / (globe ? 24 : 12);
+    const [x, z] = [from[0] + (to[0] - from[0]) * k, from[2] + (to[2] - from[2]) * k];
+    return [x, surface(x, z) + 0.12, z];
   });
   const partySpot: V3 = system ? [extent * scale * 0.5 + 6, 0, 0] : globe ? [0, 13, 0] : [-22 * span, 0, 24 * span];
   // The party's speeders parked at a place
@@ -3585,7 +3605,7 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
       // Between settlements a person rides what their outing goes by (shared logic "Traffic")
       const kind: Walker["kind"] = m.kind === "ship" ? "ship" : globe ? (m.vehicle === "mount" || m.vehicle === "hauler" || m.vehicle === "airspeeder" ? m.vehicle : "speeder") : "person";
       const lift: V3 = kind === "person" ? [0, 0.2, 0] : kind === "speeder" || kind === "mount" || kind === "hauler" ? [0, 0.6, 0] : kind === "airspeeder" ? [0, 1.4, 0] : [0, 2.5, 0];
-      return [{ key: `${m.kind}-${m.id}`, from: [pa[0] + lift[0], pa[1] + lift[1], pa[2] + lift[2]] as V3, to: [pb[0] + lift[0], pb[1] + lift[1], pb[2] + lift[2]] as V3, progress: m.progress, kind, name: m.name, arc: kind === "ship" ? 6 : 0, scale: kind === "person" ? 1.6 * span : kind === "ship" ? 1.4 : 1.5 }];
+      return [{ key: `${m.kind}-${m.id}`, from: [pa[0] + lift[0], pa[1] + lift[1], pa[2] + lift[2]] as V3, to: [pb[0] + lift[0], pb[1] + lift[1], pb[2] + lift[2]] as V3, progress: m.progress, kind, name: m.name, arc: kind === "ship" ? 6 : 0, scale: kind === "person" ? 1.6 * span : kind === "ship" ? 1.4 : 1.5, hover: globe && kind !== "ship" ? lift[1] : undefined }];
     });
   }, [moving, view.id, world]);
 
@@ -3612,10 +3632,7 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
       )}
       {globe && (
         <>
-          <mesh position={[0, -GLOBE, 0]}>
-            <sphereGeometry args={[GLOBE - 0.05, 64, 48]} />
-            <meshLambertMaterial color={new THREE.Color(BIOME_COLOR[view.type] ?? "#5fa56a").multiplyScalar(0.5)} />
-          </mesh>
+          {land && <PlanetGlobe globe={land} radius={GLOBE - 0.05} position={[0, -GLOBE, 0]} detail={lite ? 40 : 64} clouds={look?.clouds ?? 0.4} cloudColor={look?.cloudColor} />}
           <mesh position={[0, -GLOBE, 0]}>
             <sphereGeometry args={[GLOBE + 1.6, 48, 32]} />
             <meshBasicMaterial color={BIOME_COLOR[view.type] ?? "#5fa56a"} transparent opacity={0.12} side={THREE.BackSide} depthWrite={false} />
@@ -3631,10 +3648,13 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
       {!system && !globe && (
         <>
           {groundTex ? (
-            <GroundSurface set={groundTex.set} tint={groundTex.tint} parallax={groundTex.parallax} w={600} h={600} at={[0, -0.6, 0]} />
+            <>
+              <GroundSurface set={groundTex.set} tint={groundTex.tint} parallax={groundTex.parallax} w={600} h={600} at={[0, -0.6, 0]} />
+              <FarGround set={groundTex.set} tint={groundTex.tint} size={1400} at={[0, -0.65, 0]} />
+            </>
           ) : (
             <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.6, 0]}>
-              <planeGeometry args={[600, 600]} />
+              <planeGeometry args={[1400, 1400]} />
               <meshBasicMaterial color={GROUND[biome] ?? "#0b1220"} />
             </mesh>
           )}
@@ -3698,7 +3718,12 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
       })}
 
       {/* The party, when it is at this place but in none of the places inside it */}
-      {hereId === view.id && (
+      {/* In orbit or at the jump point the party is aboard: its own ship if one of its ships is here, else the ride it came by (nobody
+          stands in space) */}
+      {hereId === view.id && (system || globe) && (
+        <PartyCraft at={partySpot} ship={(((world as World & { starships?: PartyShip[] }).starships ?? []) as PartyShip[]).find((s) => s.areaId === view.id && s.status !== "wrecked")} where={PARTY_AT[view.kind] ?? "Here"} />
+      )}
+      {hereId === view.id && !system && !globe && (
         <group position={partySpot}>
           <group scale={2.6}><Figure kind="player" ring={SIDE_COLORS.player} marker /></group>
           {(((world as World & { party?: Companion[] }).party ?? []) as Companion[]).map((c, i) => (
@@ -3714,7 +3739,7 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
           <Label at={[0, 5.4, 0]} size={1.1} color="#facc15">{`${PARTY_AT[view.kind] ?? "Here"} (you are here)`}</Label>
         </group>
       )}
-      <Walkers walkers={walkers} />
+      <Walkers walkers={walkers} ground={globe ? surface : undefined} />
       {!places.length && <Label at={[0, 6, 0]} size={1.6} color="#aabbdd">{`Nobody has mapped ${view.name} yet`}</Label>}
       <Label at={[0, globe ? 20 : 0.5, globe ? -30 : -34 * span - 6]} size={2 * span} color="#aabbdd">{`${LAYER_NAME[view.kind] ?? ""} ${view.name}`}</Label>
 
@@ -3729,13 +3754,43 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
           <directionalLight position={[10, 30, 10]} intensity={0.8} />
         </>
       ) : (
-        <Sky shadow={60} />
+        <Sky shadow={60} look={look} ground={-0.6} fog={[220, 640]} floor={!groundTex} />
       )}
     </>
   );
 }
 
 const LAYER_NAME: Record<string, string> = { settlement: "Streets of", planet: "Surface of", system: "Orbits of" };
+
+// The party's craft in orbit or at a jump point: its own ship, or a shuttle when it travels as passengers or on a hired ride; it rides
+// a little up and down and turns slowly, its engines lit, with a marker ring under it
+function PartyCraft({ at, ship, where }: { at: V3; ship?: PartyShip; where: string }) {
+  const group = useRef<THREE.Group>(null);
+  const look = ship ?? { size: "Small", role: "shuttle", status: "orbiting", name: "Passage shuttle" };
+  // Drawn at the size the orbiting ships are, a little larger for a small craft so that it can be picked out
+  const scale = /tiny|small/i.test(look.size) ? 1.5 : /medium/i.test(look.size) ? 1.3 : 1.1;
+  useFrame((state) => {
+    if (!group.current) return;
+    const t = state.clock.elapsedTime;
+    group.current.position.set(at[0], at[1] + Math.sin(t * 0.7) * 0.35, at[2]);
+    group.current.rotation.set(Math.sin(t * 0.5) * 0.04, 0.5 + Math.sin(t * 0.08) * 0.25, Math.sin(t * 0.6) * 0.05);
+  });
+  return (
+    <>
+      <group ref={group} position={at}>
+        <group scale={scale}>
+          <group position={[-3, -1.2, -2]}><ShipModel ship={look} w={6} h={4} /></group>
+          <pointLight position={[-3.6, 0, 0]} color="#7fd8ff" intensity={6} distance={8} decay={2} />
+        </group>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -2.6, 0]}>
+          <ringGeometry args={[4.6, 5.2, 48]} />
+          <meshBasicMaterial color="#facc15" transparent opacity={0.7} side={THREE.DoubleSide} depthWrite={false} />
+        </mesh>
+      </group>
+      <Label at={[at[0], at[1] + 5.4, at[2]]} size={1.1} color="#facc15">{ship ? `${where} aboard the ${ship.name} (you are here)` : `${where}, aboard a passage shuttle (you are here)`}</Label>
+    </>
+  );
+}
 
 // The map of the campaign's world: the galaxy, a system, a planet, a settlement, or a building
 // and the ground round it, whichever is being looked at; stock scenery for a campaign that has

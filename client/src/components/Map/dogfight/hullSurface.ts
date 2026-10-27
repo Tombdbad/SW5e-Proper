@@ -19,13 +19,15 @@ interface LiverySpec {
   hazard: boolean;
   // How much of the hull is windows
   windows: number;
+  // How busy the plating is (1 the station's machinery; the ships' liveries are calmer, after the map's models: clean plates with rivets)
+  busy: number;
 }
 const LIVERIES: Record<Livery, LiverySpec> = {
-  imperial: { base: [128, 134, 142], accent: [64, 70, 80], light: [196, 224, 255], hazard: false, windows: 0.16 },
-  republic: { base: [206, 206, 200], accent: [168, 52, 46], light: [255, 238, 184], hazard: true, windows: 0.12 },
-  pirate: { base: [124, 108, 92], accent: [196, 112, 42], light: [255, 190, 110], hazard: true, windows: 0.07 },
-  station: { base: [94, 102, 114], accent: [150, 162, 176], light: [200, 228, 255], hazard: true, windows: 0.2 },
-  tunnel: { base: [70, 78, 92], accent: [40, 190, 200], light: [150, 240, 255], hazard: true, windows: 0.04 },
+  imperial: { base: [141, 148, 155], accent: [64, 70, 80], light: [196, 224, 255], hazard: false, windows: 0.12, busy: 0.3 },
+  republic: { base: [195, 200, 204], accent: [184, 71, 62], light: [255, 238, 184], hazard: false, windows: 0.08, busy: 0.3 },
+  pirate: { base: [176, 174, 168], accent: [196, 112, 42], light: [255, 190, 110], hazard: true, windows: 0.06, busy: 0.55 },
+  station: { base: [94, 102, 114], accent: [150, 162, 176], light: [200, 228, 255], hazard: true, windows: 0.2, busy: 1 },
+  tunnel: { base: [70, 78, 92], accent: [40, 190, 200], light: [150, 240, 255], hazard: true, windows: 0.04, busy: 1 },
 };
 
 export interface HullMaps {
@@ -121,11 +123,12 @@ export function drawHullMaps(livery: Livery, size: number, seed: number): { colo
     H.fillRect(p.x + inset, p.y + inset, Math.max(1, k), p.h - inset * 2);
     // Paint: each plate a little different; now and then an accent plate or a dark one
     const roll = rnd();
-    const paint = roll < 0.07 ? tint(0.95, L.accent) : roll < 0.13 ? tint(0.7) : tint(0.9 + rnd() * 0.2);
+    const paint = roll < 0.07 * L.busy ? tint(0.95, L.accent) : roll < 0.13 * L.busy ? tint(0.7) : tint(1 - 0.1 * L.busy + rnd() * 0.2 * L.busy);
     C.fillStyle = paint;
     C.fillRect(p.x, p.y, p.w, p.h);
 
-    const feature = rnd();
+    // (a calm livery leaves most plates plain but for their rivets)
+    const feature = rnd() < L.busy ? rnd() : rnd() < 0.5 ? 0.5 : 1;
     const ix = p.x + 10 * k;
     const iy = p.y + 10 * k;
     const iw = p.w - 20 * k;
@@ -238,7 +241,7 @@ export function drawHullMaps(livery: Livery, size: number, seed: number): { colo
     }
   }
   // Greebles: small blocks scattered over the plates
-  for (let i = 0; i < 160 * k * k + 60; i++) {
+  for (let i = 0; i < (160 * k * k + 60) * L.busy; i++) {
     const w = (4 + rnd() * 14) * k;
     const h = (3 + rnd() * 10) * k;
     const x = rnd() * size;
@@ -320,11 +323,13 @@ export interface HullMaterialOptions {
   side?: THREE.Side;
   size?: number;
   seed?: number;
+  // The hull carries paint as vertex colours (capitalGeometry's PAINT), multiplied into the plates
+  vertexColors?: boolean;
 }
 const MATERIALS = new Map<string, THREE.MeshStandardMaterial>();
 export function hullMaterial(o: HullMaterialOptions): THREE.MeshStandardMaterial {
   const size = o.size ?? 1024;
-  const key = [o.livery, size, o.seed ?? 7, o.parallax ?? 0.03, o.steps ?? 10, o.emissive ?? 1.2, o.metalness ?? 0.35, o.roughness ?? 0.55, o.side ?? 0].join("|");
+  const key = [o.livery, size, o.seed ?? 7, o.parallax ?? 0.03, o.steps ?? 10, o.emissive ?? 1.2, o.metalness ?? 0.35, o.roughness ?? 0.55, o.side ?? 0, o.vertexColors ? 1 : 0].join("|");
   const have = MATERIALS.get(key);
   if (have) return have;
   const maps = hullMaps(o.livery, size, o.seed ?? 7);
@@ -338,6 +343,7 @@ export function hullMaterial(o: HullMaterialOptions): THREE.MeshStandardMaterial
     metalness: o.metalness ?? 0.35,
     roughness: o.roughness ?? 0.55,
     side: o.side ?? THREE.FrontSide,
+    vertexColors: !!o.vertexColors,
   });
   const uniforms = { uHeight: { value: maps.height }, uParallax: { value: o.parallax ?? 0.03 }, uSteps: { value: o.steps ?? 10 } };
   m.onBeforeCompile = (shader) => parallaxHull(shader, uniforms);
@@ -412,7 +418,8 @@ export function parallaxHull(shader: THREE.WebGLProgramParametersWithUniforms, u
 // (a box mapping; the triangles are unjoined, so a seam between faces reads as a panel line)
 export function worldUV(source: THREE.BufferGeometry, tile: number): THREE.BufferGeometry {
   const geo = source.index ? source.toNonIndexed() : source.clone();
-  geo.computeVertexNormals();
+  // (a part's own normals are kept, so that a round hull is lit round; the box mapping still goes by each triangle's facing)
+  if (!geo.attributes.normal) geo.computeVertexNormals();
   const p = geo.attributes.position as THREE.BufferAttribute;
   const n = geo.attributes.normal as THREE.BufferAttribute;
   const uv = new Float32Array(p.count * 2);

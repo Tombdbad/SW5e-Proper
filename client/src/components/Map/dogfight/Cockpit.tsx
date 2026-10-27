@@ -7,7 +7,7 @@
 import { createPortal, useFrame } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { ARENA, CLASSES, classIndex, hullSpec, type Dogfight, type DogfightInput, type Vessel } from "@shared/logic/dogfight";
+import { ARENA, CLASSES, classIndex, hullSpan, hullSpec, type Dogfight, type DogfightInput, type Vessel } from "@shared/logic/dogfight";
 import { isDown, partyOf, weaponSlots } from "@shared/logic/dogfightSim";
 import { pickOf, shipClass } from "../models";
 import type { ArenaSim } from "./ArenaScene";
@@ -38,8 +38,10 @@ const MODEL_EYE: Record<string, [number, number, number]> = {
 export function eyeOf(v: Pick<Vessel, "cls" | "role" | "imperial">): [number, number, number] {
   const style = cockpitStyle(v);
   if (style.startsWith("capital")) {
-    const spec = hullSpec(v.cls, v.role);
-    return [spec.tower[0] + 6, spec.deck + spec.tower[1] + 3, 0];
+    // On the corvette's bow block behind its glass, or on the wedge's bridge (the bar across its tower)
+    const spec = hullSpec(v.cls, v.role, v.imperial);
+    if (spec.style === "corvette") return [CLASSES[v.cls].half[0] * 0.94, spec.deck + 3, 0];
+    return [spec.tower[0] + spec.tower[1] * 0.25, hullSpan(v.cls, v.role, v.imperial, spec.tower[0])[0] + spec.tower[1] * 0.75, 0];
   }
   const s = CLASSES[v.cls].length / 6;
   const e = MODEL_EYE[style];

@@ -11472,7 +11472,8 @@ export const HAZARD_STATS = { mine: { r: 0.8, trigger: 2.2, blast: 8, damage: 3,
 export interface PropHit { r?: number; box?: [number, number]; h: number; base?: number; soft?: number; breaks?: boolean; mass?: number }
 export interface RaceProp { id: number; key: string; p: Vec3; yaw: number; scale: number; v: number; hit?: PropHit }
 // What a course is dressed with: the library's pieces for the world's trees, shrubs and boulders, and the shapes of every piece
-export interface RaceScenery { trees: string[]; shrubs: string[]; boulders: string[]; hits: Record<string, PropHit> }
+// `crossings`: what the land of the world puts across the course (see "Skies and landforms": a gorge, a hill, a river or lava under bridges)
+export interface RaceScenery { trees: string[]; shrubs: string[]; boulders: string[]; hits: Record<string, PropHit>; crossings?: CrossingKind[] }
 export interface RaceGate { p: Vec3; yaw: number; half: number; s: number }
 export interface RaceRamp { p: Vec3; yaw: number; len: number; wid: number; h: number }
 // A ravine across a trail: `yaw` along the trail
@@ -11487,10 +11488,27 @@ export interface RaceTrack {
   points: Vec3[]; yaws: number[]; bends: number[]; length: number;
   gates: RaceGate[]; ramps: RaceRamp[]; dips: RaceDip[]; trails: RaceTrail[]; props: RaceProp[]; hazards: Hazard[]; marks: RaceMark[];
   hills: number[];
-  // Distance to the nearest centre line (track or trail) on a grid of `cell` metres, for the lie of the ground
-  field: { x0: number; z0: number; cell: number; n: number; d: Float32Array };
+  // Distance to the nearest centre line (track or trail) on a grid of `cell` metres, for the lie of the ground, and how far round the lap
+  // the nearest point of the main track is (-1 where a trail is nearer)
+  field: { x0: number; z0: number; cell: number; n: number; d: Float32Array; s?: Float32Array };
+  // The land's features across the course (2026-10-26, see "Skies and landforms"): a gorge the track drops into and climbs out of, a hill it
+  // goes over, rivers or flows of lava it crosses on bridges
+  features?: RaceFeature[];
+  rivers?: RaceRiver[];
+  bridges?: RaceBridge[];
   extent: number; limit: number;
 }
+
+// A gorge: the track drops `depth` metres into a slot between walls from `at - len / 2` to `at + len / 2` round the lap (`ramp` metres down
+// and as many up); a hill: a rise of `depth` metres round the track point `p`, `len` across, that the track goes over
+export interface RaceFeature { kind: "gorge" | "hill"; at: number; len: number; depth: number; p: Vec3; ramp: number }
+// A river (or a flow of lava) across the ground: its line, half its width, its banks' width, how far its surface lies under the land, the
+// box it is in
+export interface RaceRiver { lava: boolean; line: [number, number][]; half: number; bank: number; drop: number; box: [number, number, number, number] }
+// A bridge where the course crosses a river: its deck's centre line (the course's own points) and the width of the way it carries
+export interface RaceBridge { points: Vec3[]; width: number; lava: boolean }
+// The deck reaches `deck` metres past the way's edge, its rails stand `rail` past it; lava burns a hull point each `lavaBurn` seconds
+export const CROSSING = { gorgeDepth: 9, gorgeLen: 250, gorgeRamp: 70, hillHeight: 12, hillRadius: 55, riverHalf: 10, riverBank: 7, riverDrop: 2.6, lavaBurn: 0.5, deck: 2.4, rail: 1.7 };
 
 // ---- The course
 
@@ -11588,12 +11606,85 @@ function fieldAt(track: RaceTrack, x: number, z: number): number {
 // How far a point is from the nearest centre line, track or trail (from the grid; for scenery and the look of the ground)
 export const raceDistance = (track: RaceTrack, x: number, z: number) => fieldAt(track, x, z);
 
-// The height of the ground: the swells, hills rising away from the course on either side, the ravines of
-// the trails, and (unless left out, for drawing the ground under them) the ramps
+// How far round the lap the nearest point of the main track is (from the grid: blended between its cells, or the nearest cell's where
+// they disagree, by the start line or between two stretches of track), -1 where a trail is nearer
+function fieldS(track: RaceTrack, x: number, z: number): number {
+  const f = track.field;
+  if (!f.s) return -1;
+  const fx = (x - f.x0) / f.cell;
+  const fz = (z - f.z0) / f.cell;
+  const ix = Math.floor(fx);
+  const iz = Math.floor(fz);
+  if (ix < 0 || iz < 0 || ix >= f.n - 1 || iz >= f.n - 1) return -1;
+  const [wx, wz] = [fx - ix, fz - iz];
+  const c = [f.s[iz * f.n + ix], f.s[iz * f.n + ix + 1], f.s[(iz + 1) * f.n + ix], f.s[(iz + 1) * f.n + ix + 1]];
+  if (c.some((v) => v < 0) || Math.max(...c) - Math.min(...c) > 40) return c[(wz > 0.5 ? 2 : 0) + (wx > 0.5 ? 1 : 0)];
+  return (c[0] * (1 - wx) + c[1] * wx) * (1 - wz) + (c[2] * (1 - wx) + c[3] * wx) * wz;
+}
+// A river's segments by cell of 24 m (each listed in the cells its channel reaches), so a point tests only those near it
+const RIVER_CELLS = new WeakMap<RaceRiver, Map<number, [number, number, number, number, number][]>>();
+function riverCells(rv: RaceRiver) {
+  let cells = RIVER_CELLS.get(rv);
+  if (cells) return cells;
+  cells = new Map();
+  const reach = rv.half + rv.bank;
+  for (let i = 1; i < rv.line.length; i++) {
+    const seg: [number, number, number, number, number] = [rv.line[i - 1][0], rv.line[i - 1][1], rv.line[i][0], rv.line[i][1], 0];
+    for (let cx = Math.floor((Math.min(seg[0], seg[2]) - reach) / SEG_CELL); cx <= Math.floor((Math.max(seg[0], seg[2]) + reach) / SEG_CELL); cx++) {
+      for (let cz = Math.floor((Math.min(seg[1], seg[3]) - reach) / SEG_CELL); cz <= Math.floor((Math.max(seg[1], seg[3]) + reach) / SEG_CELL); cz++) {
+        const key = cellKey(cx, cz);
+        const list = cells.get(key);
+        if (list) list.push(seg);
+        else cells.set(key, [seg]);
+      }
+    }
+  }
+  RIVER_CELLS.set(rv, cells);
+  return cells;
+}
+// The river whose channel a point is in: how far from its middle, and how far down its banks (0 at the top, 1 at the water)
+function riverAt(track: RaceTrack, x: number, z: number): { rv: RaceRiver; dr: number; sink: number } | null {
+  for (const rv of track.rivers ?? []) {
+    const [x0, z0, x1, z1] = rv.box;
+    if (x < x0 || x > x1 || z < z0 || z > z1) continue;
+    let dr = Infinity;
+    for (const seg of riverCells(rv).get(cellKey(Math.floor(x / SEG_CELL), Math.floor(z / SEG_CELL))) ?? []) dr = Math.min(dr, segDistance(x, z, seg));
+    if (dr < rv.half + rv.bank) return { rv, dr, sink: easeStep(rv.half + rv.bank, rv.half, dr) };
+  }
+  return null;
+}
+// The height of the ground: the land (below), cut by the rivers' channels down to their surface (which a speeder hovers over), except
+// where the course crosses one on a bridge, whose deck is level with the land
 export function groundAt(track: RaceTrack, x: number, z: number, ramps = true): number {
+  const y = landAt(track, x, z, ramps);
+  const river = track.rivers?.length ? riverAt(track, x, z) : null;
+  if (!river || river.sink <= 0) return y;
+  if (onCourse(track, nearCentre(track, x, z), CROSSING.deck)) return y;
+  return y - river.rv.drop * river.sink;
+}
+// The surface of a river or of lava at a point, for drawing it: its height and whether it is lava (null off every channel)
+export function raceWater(track: RaceTrack, x: number, z: number): { level: number; lava: boolean; inside: boolean } | null {
+  const river = track.rivers?.length ? riverAt(track, x, z) : null;
+  return river ? { level: landAt(track, x, z, false) - river.rv.drop, lava: river.rv.lava, inside: river.dr < river.rv.half } : null;
+}
+// The land: the swells, hills rising away from the course on either side, a gorge's slot and a hill on the track, the ravines of the
+// trails, and (unless left out, for drawing the ground under them) the ramps
+function landAt(track: RaceTrack, x: number, z: number, ramps = true): number {
   let y = hillsAt(track.hills, x, z);
   const d = fieldAt(track, x, z);
   y += easeStep(track.width / 2 + 8, track.width / 2 + 98, d) * (8 + 5 * Math.sin(x * 0.009 + track.hills[4]) * Math.cos(z * 0.008 + track.hills[5]));
+  for (const f of track.features ?? []) {
+    if (f.kind === "hill") {
+      const r2 = ((x - f.p[0]) ** 2 + (z - f.p[2]) ** 2) / (f.len / 2) ** 2;
+      if (r2 < 9) y += f.depth * Math.exp(-r2);
+    } else if (d < track.width / 2 + 20) {
+      // The gorge's walls stand from 4 m off the track's edge to 20 m (the land beyond rises as it does anywhere)
+      const s = fieldS(track, x, z);
+      if (s < 0) continue;
+      const a = easeStep(f.at - f.len / 2, f.at - f.len / 2 + f.ramp, s) * easeStep(f.at + f.len / 2, f.at + f.len / 2 - f.ramp, s);
+      if (a > 0) y -= f.depth * a * (1 - easeStep(track.width / 2 + 4, track.width / 2 + 20, d));
+    }
+  }
   for (const dip of track.dips) {
     const [dx, dz] = [x - dip.p[0], z - dip.p[2]];
     const u = Math.abs(dx * Math.cos(dip.yaw) + dz * Math.sin(dip.yaw)) / (dip.len / 2);
@@ -11738,6 +11829,86 @@ function shortcutsOf(flat: [number, number][], yaws: number[], step: number, W: 
   }
   return cuts;
 }
+// The land's features across a course (shared/logic "Skies and landforms": the world's `crossings`): a gorge on a stretch with no hairpin,
+// a hill, and a river (or lava) whose line across the ground crosses the track, and any trail it meets, near square, where bridges carry the
+// way over it. Each is kept clear of the start, the gates, the shortcuts' ends and their jumps, and the others. Returns the stretches of the
+// lap they take, for the jumps and hazards to keep off.
+function layCrossings(track: RaceTrack, kinds: CrossingKind[], r: ReturnType<typeof createRandom>, gateAt: number[]): [number, number][] {
+  const { step, length } = track;
+  const flat = track.points;
+  const n = flat.length;
+  const taken: [number, number][] = [];
+  const clear = (a: number, b: number) => a > 140 && b < length - 90 && !taken.some(([p, q]) => a < q + 60 && b > p - 60) && !track.trails.some((t) => a < t.to + 70 && b > t.from - 70) && !gateAt.some((g) => g > a - 30 && g < b + 30);
+  track.features = [];
+  track.rivers = [];
+  track.bridges = [];
+  for (const kind of kinds) {
+    if (kind === "gorge" || kind === "hill") {
+      const len = kind === "gorge" ? CROSSING.gorgeLen : CROSSING.hillRadius * 2;
+      for (let tries = 0; tries < 40; tries++) {
+        const at = 160 + r.next() * (length - 300);
+        // (a gate inside a gorge or on a hill is no harm: only the start and the shortcuts are kept clear)
+        const [a, b] = [at - len / 2 - 20, at + len / 2 + 20];
+        if (a <= 140 || b >= length - 90 || taken.some(([p, q]) => a < q + 60 && b > p - 60) || track.trails.some((t) => a < t.to + 70 && b > t.from - 70)) continue;
+        if (kind === "gorge" && !Array.from({ length: Math.ceil(len / step) }, (_, k) => Math.round(a / step + k) % n).every((i) => track.bends[i] < 1 / 45)) continue;
+        const p = flat[Math.round(at / step) % n];
+        track.features.push({ kind, at, len, depth: kind === "gorge" ? CROSSING.gorgeDepth : CROSSING.hillHeight, p: [p[0], 0, p[2]], ramp: CROSSING.gorgeRamp });
+        taken.push([a, b]);
+        break;
+      }
+      continue;
+    }
+    const reach = CROSSING.riverHalf + CROSSING.riverBank;
+    for (let tries = 0; tries < 30; tries++) {
+      const i0 = Math.round((160 + r.next() * (length - 300)) / step) % n;
+      const dir = track.yaws[i0] + Math.PI / 2 + (r.next() - 0.5) * 0.6;
+      const [dx, dz] = [Math.cos(dir), Math.sin(dir)];
+      const [amp, k, ph] = [18 + r.next() * 24, 0.006 + r.next() * 0.006, r.next() * Math.PI * 2];
+      // It winds, but passes through the track point it was laid from
+      const off = (t: number) => amp * (Math.sin(t * k + ph) - Math.sin(ph));
+      const line: [number, number][] = [];
+      for (let t = -track.extent * 1.5; t <= track.extent * 1.5; t += 16) line.push([flat[i0][0] + dx * t - dz * off(t), flat[i0][2] + dz * t + dx * off(t)]);
+      const dist = (x: number, z: number) => {
+        let best = Infinity;
+        for (let q = 1; q < line.length; q++) best = Math.min(best, segDistance(x, z, [line[q - 1][0], line[q - 1][1], line[q][0], line[q][1], 0]));
+        return best;
+      };
+      // Where it crosses the main track: runs of track points in its channel, each short (near square) and clear
+      const wet = flat.map((p) => dist(p[0], p[2]) < reach);
+      const runs: [number, number][] = [];
+      for (let q = 0; q < n; q++) {
+        if (!wet[q] || wet[(q - 1 + n) % n]) continue;
+        let e = q;
+        while (wet[(e + 1) % n] && e - q < n) e++;
+        runs.push([q, e]);
+      }
+      if (!runs.length || !runs.every(([a, b]) => (b - a + 1) * step < reach * 3.2 && clear(a * step - 20, b * step + 20))) continue;
+      // Not across a shortcut's jump (its ramp and the ravine past it)
+      if (track.trails.some((t) => dist(track.ramps[t.ramp].p[0], track.ramps[t.ramp].p[2]) < reach + 20 || dist(track.dips[t.dip].p[0], track.dips[t.dip].p[2]) < reach + 20)) continue;
+      const xs = line.map((p) => p[0]);
+      const zs = line.map((p) => p[1]);
+      const lava = kind === "lava";
+      track.rivers.push({ lava, line, half: CROSSING.riverHalf, bank: CROSSING.riverBank, drop: CROSSING.riverDrop, box: [Math.min(...xs) - reach, Math.min(...zs) - reach, Math.max(...xs) + reach, Math.max(...zs) + reach] });
+      // The bridges: the course's own points over the channel and one either side (their heights are the land's, set after)
+      for (const [a, b] of runs) {
+        taken.push([a * step - 20, b * step + 20]);
+        track.bridges.push({ points: Array.from({ length: b - a + 3 }, (_, q) => flat[(a - 1 + q + n) % n]), width: track.width, lava });
+      }
+      for (const t of track.trails) {
+        const tw = t.points.map((p) => dist(p[0], p[2]) < reach);
+        for (let q = 0; q < tw.length; q++) {
+          if (!tw[q] || (q > 0 && tw[q - 1])) continue;
+          let e = q;
+          while (e + 1 < tw.length && tw[e + 1]) e++;
+          track.bridges.push({ points: t.points.slice(Math.max(0, q - 1), Math.min(t.points.length, e + 2)), width: t.width, lava });
+        }
+      }
+      break;
+    }
+  }
+  return taken;
+}
+
 // The loop turned to start on its straightest stretch (40 m behind the line for the grid, 100 m ahead)
 function fromStart(points: [number, number][], step: number): [number, number][] {
   const n = points.length;
@@ -11821,16 +11992,22 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
   track.extent = extent;
   const index = trackIndexOf(track);
   const reach = 104;
-  for (const s of index.seg) {
+  // (with how far round the lap the nearest point of the main track is: its segments are the index's first, in order)
+  const along = new Float32Array(fn * fn).fill(-1);
+  track.field.s = along;
+  index.seg.forEach((s, id) => {
     const [x0, x1] = [Math.max(0, Math.floor((Math.min(s[0], s[2]) - reach + extent) / cell)), Math.min(fn - 1, Math.ceil((Math.max(s[0], s[2]) + reach + extent) / cell))];
     const [z0, z1] = [Math.max(0, Math.floor((Math.min(s[1], s[3]) - reach + extent) / cell)), Math.min(fn - 1, Math.ceil((Math.max(s[1], s[3]) + reach + extent) / cell))];
+    const [sx, sz] = [s[2] - s[0], s[3] - s[1]];
     for (let j = z0; j <= z1; j++) for (let i = x0; i <= x1; i++) {
-      const d = segDistance(i * cell - extent, j * cell - extent, s);
-      if (d < field[j * fn + i]) field[j * fn + i] = d;
+      const [px, pz] = [i * cell - extent, j * cell - extent];
+      const d = segDistance(px, pz, s);
+      if (d < field[j * fn + i]) {
+        field[j * fn + i] = d;
+        along[j * fn + i] = s[4] < 0 ? (id + within(((px - s[0]) * sx + (pz - s[1]) * sz) / (sx * sx + sz * sz || 1), 0, 1)) * step : -1;
+      }
     }
-  }
-  for (const p of points) p[1] = groundAt(track, p[0], p[2], false);
-  for (const t of track.trails) for (const p of t.points) p[1] = groundAt(track, p[0], p[2], false);
+  });
 
   // Gates: evenly round the lap, the first on the start line; one that would fall where a shortcut
   // leaves the track is moved 90 m past where it joins (time to settle onto the track), so that both ways
@@ -11850,6 +12027,11 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
     const i = atS(s);
     return { p: points[i], yaw: yaws[i], half: W / 2 + 0.8, s };
   });
+  // The land's features across the course, then the heights of the course over the ground they make (the gates' feet are the track's points)
+  const crossings = layCrossings(track, scenery.crossings ?? [], r, gateAt);
+  const crossed = (s: number, margin: number) => crossings.some(([a, b]) => s > a - margin && s < b + margin);
+  for (const p of points) p[1] = groundAt(track, p[0], p[2], false);
+  for (const t of track.trails) for (const p of t.points) p[1] = groundAt(track, p[0], p[2], false);
   const near = (s: number, list: number[], gap: number) => list.some((q) => Math.abs(q - s) < gap || Math.abs(q - s) > loop.length - gap);
   const used: number[] = [...gateAt];
   // Two ramps on the main track, on the straight, on one half of it (the other half drives by)
@@ -11861,7 +12043,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
   for (let tries = 0; tries < 400 && rampAt.length < 2; tries++) {
     const s = 220 + r.next() * (loop.length - 360);
     const i = atS(s);
-    if (inTrail(s, 40) || near(s, used, 50) || near(s, rampAt, 300) || !straight(i, -Math.ceil(20 / step), Math.ceil(70 / step))) continue;
+    if (inTrail(s, 40) || near(s, used, 50) || near(s, rampAt, 300) || crossed(s, 60) || !straight(i, -Math.ceil(20 / step), Math.ceil(70 / step))) continue;
     const side = r.next() < 0.5 ? -1 : 1;
     const [x, z] = pointAt(i, (side * W) / 4);
     track.ramps.push({ p: [x, 0, z], yaw: yaws[i], len: 12, wid: 7, h: 2.2 });
@@ -11909,7 +12091,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
   const spot = (minGap: number, test: (i: number) => boolean = () => true) => {
     for (let tries = 0; tries < 200; tries++) {
       const s = 160 + r.next() * (loop.length - 230);
-      if (inTrail(s, 20) || near(s, reserved, 40) || near(s, onTrackAt, minGap) || !test(atS(s))) continue;
+      if (inTrail(s, 20) || near(s, reserved, 40) || near(s, onTrackAt, minGap) || crossed(s, 25) || !test(atS(s))) continue;
       onTrackAt.push(s);
       return atS(s);
     }
@@ -11968,6 +12150,17 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
       put("barrier", x, z, yaws[i], 1.8, { radius: 0.6, force: true });
     }
   }
+  // The bridges' rails, on the deck along both edges
+  for (const b of track.bridges ?? []) {
+    for (let k = 1; k < b.points.length - 1; k++) {
+      const [p, q] = [b.points[k - 1], b.points[k + 1]];
+      const yaw = Math.atan2(q[2] - p[2], q[0] - p[0]);
+      for (const side of [-1, 1]) {
+        const off = side * (b.width / 2 + CROSSING.rail);
+        put("barrier", b.points[k][0] - Math.sin(yaw) * off, b.points[k][2] + Math.cos(yaw) * off, yaw, 1.8, { radius: 0.6, force: true });
+      }
+    }
+  }
   // By the start: grandstands on the outside of the straight, banners and lamps along it, and on the
   // inside a formal garden of hedges, clipped trees, statues and a fountain
   {
@@ -12010,6 +12203,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
       if (d < from || d > to) continue;
       const exact = nearCentre(track, x, z);
       if (exact.d < from - 0.5) continue;
+      if (riverAt(track, x, z)) continue;
       if (wooded && woods(x, z) < 0.15 && r.next() < 0.75) continue;
       if (!clearOfJumps(x, z, 4)) continue;
       if (put(r.pick(keys), x, z, r.next() * Math.PI * 2, scaleFrom + r.next() * (scaleTo - scaleFrom), { radius: spacing })) placed++;
@@ -12026,7 +12220,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
         if (r.next() < 0.35) continue;
         const off = t.width / 2 + 1.8 + r.next() * 3;
         const [px, pz] = [x - Math.sin(yaw) * side * off, z + Math.cos(yaw) * side * off];
-        if (nearCentre(track, px, pz).d < t.width / 2 + 1.2) continue;
+        if (nearCentre(track, px, pz).d < t.width / 2 + 1.2 || riverAt(track, px, pz)) continue;
         const tree = r.next() < 0.45;
         put(r.pick(tree ? scenery.trees : scenery.boulders.length ? scenery.boulders : scenery.trees), px, pz, r.next() * 6, tree ? 2.6 + r.next() * 0.8 : 1.4 + r.next() * 0.8, { radius: 1.6 });
       }
@@ -12062,6 +12256,8 @@ export interface Racer {
   stuck: number; off: number; backing: number; ghost: number;
   // In a chase: one of the riders after the party, and the seconds to its next shot (the party's own too)
   hostile?: boolean; reload?: number;
+  // How long it has been over lava since the hull last burned
+  burn?: number;
 }
 // (`shot`: a blaster bolt from `p` to `to`; `power` 1 when it hit)
 export interface RaceEvent { kind: "hit" | "smash" | "mine" | "land" | "tow" | "gate" | "wreck" | "finish" | "shot"; p: Vec3; by: number; power: number; to?: Vec3 }
@@ -12338,6 +12534,15 @@ function drive(rc: Racer, input: RaceInput, track: RaceTrack, race: Race, h: num
   rc.rough = rough;
   rc.onTrail = near.owner >= 0 && !rough;
   const live = !rc.wrecked;
+  // Down in a flow of lava (off a bridge, low over it): the hull burns, a point each half second
+  const river = live && !air && track.rivers?.length ? riverAt(track, x, z) : null;
+  if (river?.rv.lava && river.sink > 0.6 && !onCourse(track, near, CROSSING.deck)) {
+    rc.burn = (rc.burn ?? 0) + h;
+    if (rc.burn >= CROSSING.lavaBurn) {
+      rc.burn -= CROSSING.lavaBurn;
+      hurt(rc, RACE.hitSpeed, race, "the lava", [x, y, z]);
+    }
+  } else rc.burn = 0;
   const boosting = live && !!input.boost && rc.boost > 0.02 && !air && rc.finish === null;
   if (boosting) {
     rc.boost = Math.max(0, rc.boost - RACE.drain * h);
@@ -12870,4 +13075,144 @@ export function pitItem(enhanced: { name: string; searchableRarity: string }[], 
   const pool = enhanced.filter((e) => rarities.includes(e.searchableRarity));
   const from = pool.length ? pool : enhanced;
   return from.length ? from[Math.floor(roll() * from.length)].name : null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Skies and landforms (2026-10-26; the user: "distant views from settlements show relevant geographical features hills, mountains,
+// volcanoes, also add clouds ... add sun/s, moon/s, and celestial bodies to the skies"). What is seen from a world's surface: its sun or
+// suns (the system's star; a few systems have two), its moons, the other planets of its system (a gas giant it circles hangs large),
+// how cloudy and hazy it is, and the land on the horizon round a place by the world's biome: dunes and mesas in the desert, snowy
+// ridges on ice, volcanoes smoking over a volcanic world, the towers of a city world, a sea with its stacks and islands. A route over
+// the land (the speeder race, the chase on the road) meets the world's `crossings`: a gorge to drop into, a hill to go over, a river or
+// a flow of lava crossed by a bridge (raceCourse). Nothing here is a rule or is stored: a look, the same for a place every time because
+// it is seeded from the place's id.
+// ---------------------------------------------------------------------------------------------
+export type LandformKind = "mountains" | "hills" | "volcano" | "mesas" | "dunes" | "ridges" | "spires" | "towers" | "sea" | "cliffs" | "cloudsea";
+// A landform on the horizon: where round the place (azimuth, radians), how wide (radians of the horizon) and how high (radians above
+// it), how far (a share of the horizon's distance: near ones stand in front of far ones), snow on its tops, a volcano that is active
+export interface Landform { kind: LandformKind; az: number; width: number; height: number; dist: number; seed: number; snow?: boolean; active?: boolean }
+// A body in the sky: its colour, its size (radians, half across), where it stands (azimuth, elevation) and how far it moves in a day
+export interface SkyBody { kind: "sun" | "moon" | "planet"; color: string; size: number; az: number; el: number; drift: number; biome?: string; ring?: boolean }
+export type CrossingKind = "gorge" | "hill" | "river" | "lava";
+export interface WorldLook {
+  biome: string;
+  seed: number;
+  suns: SkyBody[];
+  moons: SkyBody[];
+  planets: SkyBody[];
+  // Cloud cover (0 clear to 1 overcast) and the clouds' colour; haze (dust, mist, smog, ash: 0 to 1) and its colour
+  clouds: number;
+  cloudColor: string;
+  haze: number;
+  hazeColor: string;
+  // The sky by day at the zenith and at the horizon, and the colour of the land far off
+  zenith: string;
+  horizon: string;
+  land: string;
+  landforms: Landform[];
+  crossings: CrossingKind[];
+}
+interface BiomeSky { zenith: string; horizon: string; land: string; clouds: [number, number]; cloudColor: string; haze: number; hazeColor: string; base: LandformKind; forms: [LandformKind, number][]; crossings: CrossingKind[]; snow: number; volcano: number }
+const BIOME_SKY: Record<string, BiomeSky> = {
+  desert: { zenith: "#4f86c8", horizon: "#ead6ae", land: "#c9a36a", clouds: [0, 0.15], cloudColor: "#fbf3e6", haze: 0.3, hazeColor: "#e2c79c", base: "dunes", forms: [["dunes", 3], ["mesas", 3], ["mountains", 2]], crossings: ["gorge", "hill"], snow: 0, volcano: 0 },
+  ice: { zenith: "#7aa3d0", horizon: "#e6eef5", land: "#dfe8ef", clouds: [0.3, 0.8], cloudColor: "#f1f5f9", haze: 0.3, hazeColor: "#e4ecf3", base: "ridges", forms: [["ridges", 3], ["mountains", 3], ["hills", 1]], crossings: ["river", "gorge", "hill"], snow: 1, volcano: 0 },
+  forest: { zenith: "#4a80c0", horizon: "#c3d6e3", land: "#3f6a3c", clouds: [0.3, 0.7], cloudColor: "#f6f8fa", haze: 0.25, hazeColor: "#c6d4dc", base: "hills", forms: [["hills", 3], ["mountains", 3]], crossings: ["river", "hill", "gorge"], snow: 0.6, volcano: 0 },
+  jungle: { zenith: "#3f86b8", horizon: "#cfe2d9", land: "#2f6a38", clouds: [0.4, 0.85], cloudColor: "#f4f7f5", haze: 0.45, hazeColor: "#cadcd2", base: "hills", forms: [["spires", 3], ["hills", 2], ["mountains", 1]], crossings: ["river", "gorge", "hill"], snow: 0, volcano: 0.4 },
+  swamp: { zenith: "#6a8a8a", horizon: "#b9c2a8", land: "#4b5a3c", clouds: [0.6, 0.95], cloudColor: "#d9ddd2", haze: 0.6, hazeColor: "#aab49c", base: "hills", forms: [["hills", 3], ["spires", 1]], crossings: ["river", "hill"], snow: 0, volcano: 0 },
+  ocean: { zenith: "#3f86c8", horizon: "#cfe5f0", land: "#4d7a52", clouds: [0.3, 0.7], cloudColor: "#f6f9fb", haze: 0.3, hazeColor: "#cfe2ec", base: "sea", forms: [["cliffs", 3], ["hills", 1]], crossings: ["river", "hill"], snow: 0, volcano: 0.3 },
+  volcanic: { zenith: "#4a3533", horizon: "#a06a52", land: "#3a2e2a", clouds: [0.5, 0.9], cloudColor: "#5d4c47", haze: 0.55, hazeColor: "#86574a", base: "ridges", forms: [["volcano", 3], ["mountains", 2], ["ridges", 2]], crossings: ["lava", "gorge"], snow: 0, volcano: 1 },
+  urban: { zenith: "#5a7aa0", horizon: "#c4ced8", land: "#5c6470", clouds: [0.2, 0.6], cloudColor: "#e9ecf0", haze: 0.4, hazeColor: "#b8bcc4", base: "towers", forms: [["towers", 4], ["mountains", 1]], crossings: ["river", "hill"], snow: 0.4, volcano: 0 },
+  temperate: { zenith: "#4f86c6", horizon: "#c8dbe8", land: "#4d7a3e", clouds: [0.25, 0.65], cloudColor: "#f8fafc", haze: 0.25, hazeColor: "#c9d8e2", base: "hills", forms: [["hills", 3], ["mountains", 3]], crossings: ["river", "hill", "gorge"], snow: 0.7, volcano: 0.1 },
+  barren: { zenith: "#33405a", horizon: "#c9bca6", land: "#8a7f6c", clouds: [0, 0.1], cloudColor: "#e8e2d8", haze: 0.15, hazeColor: "#c4b8a2", base: "ridges", forms: [["mesas", 2], ["mountains", 3], ["ridges", 2]], crossings: ["gorge", "hill"], snow: 0, volcano: 0.15 },
+  "gas giant": { zenith: "#c98a4a", horizon: "#f0c890", land: "#e7c79a", clouds: [0.6, 1], cloudColor: "#f2dcc0", haze: 0.4, hazeColor: "#eac79a", base: "cloudsea", forms: [["cloudsea", 1]], crossings: [], snow: 0, volcano: 0 },
+};
+export const biomeSky = (biome: string) => BIOME_SKY[biome] ?? BIOME_SKY.temperate;
+// How high and wide each kind stands on the horizon (radians), and how far off (share of the horizon)
+const LANDFORM_SIZE: Record<LandformKind, { h: [number, number]; w: [number, number]; d: [number, number] }> = {
+  mountains: { h: [0.07, 0.15], w: [0.5, 1.2], d: [0.8, 1] },
+  hills: { h: [0.025, 0.055], w: [0.6, 1.4], d: [0.55, 0.85] },
+  volcano: { h: [0.09, 0.17], w: [0.28, 0.5], d: [0.75, 1] },
+  mesas: { h: [0.035, 0.07], w: [0.2, 0.5], d: [0.6, 0.95] },
+  dunes: { h: [0.012, 0.03], w: [0.8, 1.6], d: [0.5, 0.75] },
+  ridges: { h: [0.04, 0.09], w: [0.4, 0.9], d: [0.65, 0.95] },
+  spires: { h: [0.06, 0.12], w: [0.15, 0.35], d: [0.6, 0.9] },
+  towers: { h: [0.05, 0.15], w: [0.5, 1.3], d: [0.55, 0.95] },
+  sea: { h: [0, 0], w: [Math.PI * 2, Math.PI * 2], d: [1, 1] },
+  cliffs: { h: [0.025, 0.06], w: [0.1, 0.3], d: [0.6, 0.95] },
+  cloudsea: { h: [0, 0], w: [Math.PI * 2, Math.PI * 2], d: [1, 1] },
+};
+// The horizon round a place: a low band of the biome's own land all the way round, and landforms of its kinds in front of it
+export function landformsOf(biome: string, seed: number): Landform[] {
+  const sky = biomeSky(biome);
+  const r = createRandom(seed * 13 + 5);
+  const between = ([a, b]: [number, number]) => a + r.next() * (b - a);
+  const out: Landform[] = [{ kind: sky.base, az: 0, width: Math.PI * 2, height: between(LANDFORM_SIZE[sky.base].h) * 0.6, dist: 1, seed: Math.floor(r.next() * 1e6) }];
+  if (sky.base === "cloudsea") return out;
+  const total = sky.forms.reduce((n, [, w]) => n + w, 0);
+  const count = 6 + Math.floor(r.next() * 6);
+  for (let i = 0; i < count; i++) {
+    let roll = r.next() * total;
+    let kind = sky.forms[0][0];
+    for (const [k, w] of sky.forms) {
+      roll -= w;
+      if (roll < 0) {
+        kind = k;
+        break;
+      }
+    }
+    // A volcano now and then on worlds that have them (always on a volcanic one)
+    if (kind !== "volcano" && i === 0 && r.next() < sky.volcano) kind = "volcano";
+    const s = LANDFORM_SIZE[kind];
+    out.push({
+      kind, az: r.next() * Math.PI * 2, width: between(s.w), height: between(s.h), dist: between(s.d), seed: Math.floor(r.next() * 1e6),
+      snow: (kind === "mountains" || kind === "ridges" || kind === "volcano") && r.next() < sky.snow,
+      active: kind === "volcano" && (biome === "volcanic" || r.next() < 0.3),
+    });
+  }
+  // Far first, so that what is nearer is drawn over it
+  return out.sort((a, b) => b.dist - a.dist);
+}
+const SUN_COLOR: Record<string, string> = { O: "#9bb0ff", B: "#aabfff", A: "#cad7ff", F: "#f8f7ff", G: "#fff4c8", K: "#ffd2a1", M: "#ffa07a" };
+const SUN_SIZE: Record<string, number> = { O: 0.022, B: 0.025, A: 0.028, F: 0.03, G: 0.032, K: 0.036, M: 0.045 };
+const MOON_TONES = ["#c9c6c0", "#b8b0a2", "#d6d2c8", "#a8a4a0", "#c2b49a", "#b9c4cc"];
+// The look of a biome's sky and horizon by itself (a seed for the place; the star's class, a second sun, the planet's moons and the
+// system's other worlds when they are known)
+export function skyLook(biome: string, seed: number, system: { star?: string; binary?: boolean; worlds?: { biome: string; id: string }[]; moons?: number } = {}): WorldLook {
+  const sky = biomeSky(biome);
+  const r = createRandom(seed * 7 + 11);
+  const star = system.star && SUN_COLOR[system.star] ? system.star : "G";
+  const suns: SkyBody[] = [{ kind: "sun", color: SUN_COLOR[star], size: SUN_SIZE[star], az: 0, el: 0, drift: 1 }];
+  if (system.binary) suns.push({ kind: "sun", color: SUN_COLOR[star === "M" ? "K" : "M"], size: SUN_SIZE[star] * 0.7, az: 0.22, el: -0.06, drift: 1 });
+  const moonCount = system.moons ?? (biome === "gas giant" ? 4 : [0, 1, 1, 2, 2, 3][Math.floor(r.next() * 6)]);
+  const moons: SkyBody[] = Array.from({ length: moonCount }, (_, i) => ({
+    kind: "moon" as const, color: MOON_TONES[Math.floor(r.next() * MOON_TONES.length)], size: 0.012 + r.next() * (i === 0 ? 0.04 : 0.02), az: r.next() * Math.PI * 2, el: 0.15 + r.next() * 0.55, drift: 0.6 + r.next() * 0.8,
+  }));
+  // The system's other worlds: small discs, but a gas giant this world circles hangs large, ringed or not
+  const planets: SkyBody[] = (system.worlds ?? []).slice(0, 4).map((w) => {
+    const giant = w.biome === "gas giant";
+    const near = giant && biome !== "gas giant" && hashOf(w.id) % 3 === 0;
+    return { kind: "planet" as const, color: "#ffffff", biome: w.biome, size: near ? 0.16 + r.next() * 0.08 : (giant ? 0.012 : 0.006) + r.next() * 0.006, az: r.next() * Math.PI * 2, el: near ? 0.2 + r.next() * 0.3 : 0.1 + r.next() * 0.6, drift: 0.1, ring: giant && hashOf(w.id) % 2 === 0 };
+  });
+  return {
+    biome, seed, suns, moons, planets,
+    clouds: sky.clouds[0] + r.next() * (sky.clouds[1] - sky.clouds[0]), cloudColor: sky.cloudColor, haze: sky.haze, hazeColor: sky.hazeColor,
+    zenith: sky.zenith, horizon: sky.horizon, land: sky.land,
+    landforms: landformsOf(biome, seed),
+    crossings: sky.crossings,
+  };
+}
+// The look of the sky over an area of the world: its planet's biome, its system's star and other worlds, the horizon of its settlement
+// (every building of a settlement shares it); the moons are the planet's, the same from every place on it
+export function worldLook(world: World, areaId: string): WorldLook | null {
+  const trail = trailOf(world, areaId);
+  const planet = trail.find((a) => a.kind === "planet");
+  if (!planet) return null;
+  const system = trail.find((a) => a.kind === "system");
+  const place = trail.find((a) => a.kind === "settlement") ?? trail[trail.length - 1];
+  const worlds = system ? childrenOf(world, system.id).filter((a) => a.kind === "planet" && a.id !== planet.id).map((a) => ({ biome: a.type, id: a.id })) : [];
+  const moons = planet.type === "gas giant" ? 4 : [0, 1, 1, 2, 2, 3][hashOf(planet.id) % 6];
+  const look = skyLook(planet.type, hashOf(place.id), { star: system?.type, binary: !!system && hashOf(system.id) % 5 === 0, worlds, moons });
+  const r = createRandom(hashOf(planet.id));
+  look.moons = look.moons.map((m) => ({ ...m, color: MOON_TONES[Math.floor(r.next() * MOON_TONES.length)], size: 0.012 + r.next() * 0.035, az: r.next() * Math.PI * 2, el: 0.15 + r.next() * 0.55, drift: 0.6 + r.next() * 0.8 }));
+  return look;
 }

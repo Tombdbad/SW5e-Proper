@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createRandom, headingOf, SHIP_SIZE_ORDER, bookRole, roleShip, shipRoleNames, shipSheet } from "../../shared/logic/index";
 import {
-  ARENA, CLASSES, SCENARIOS, STATION, classIndex, dogfightStart, foeSheet, frameOf, gunsOf, isCapital, toWorld, vadd, vdist, vmul, vnorm,
+  ARENA, CLASSES, CORVETTE, SCENARIOS, WEDGE, STATION, classIndex, dogfightStart, foeSheet, frameOf, gunsOf, hullSpan, isCapital, toWorld, vadd, vdist, vmul, vnorm,
   type Dogfight,
 } from "../../shared/logic/dogfight";
 import { damageVessel, dogfightPayout, hostiles, hullPoint, hullRay, isDown, partWorld, partyOf, shielded, stepDogfight, weaponSlots, partVisible, rolled, savesAgainst, subTargets } from "../../shared/logic/dogfightSim";
@@ -203,12 +203,33 @@ test("the port opens when the generators are gone, and not before", () => {
   assert.ok(s.log.some((l) => /port is open/.test(l)));
 });
 
-test("hull volumes: a wedge narrows to the bow, a ray meets it where the model is, and a point inside is pushed out to the surface", () => {
-  const s = start("battleship", 1);
-  const ship = foe(s, "Huge");
-  ship.p = [0, 0, 0];
-  ship.yaw = 0;
-  ship.pitch = 0;
+// A battleship of each look: the scenario picks the Empire or someone else by its seed
+const battleship = (imperial: boolean) => {
+  for (let seed = 1; seed < 40; seed++) {
+    const s = start("battleship", seed);
+    const ship = foe(s, "Huge");
+    if (ship.imperial === imperial) {
+      ship.p = [0, 0, 0];
+      ship.yaw = 0;
+      ship.pitch = 0;
+      return { s, ship };
+    }
+  }
+  throw new Error("no battleship of that look");
+};
+// Every part stands over the hull's footprint, on its deck or its keel (not floating beside it): straight down to the deck where it stands it is in the hull
+const partsOnHull = (ship: Dogfight["vessels"][number]) => {
+  for (const p of ship.parts) {
+    if (p.kind === "hangar") continue;
+    const [top, bottom] = hullSpan(ship.cls, ship.role, ship.imperial, p.at[0], p.at[2]);
+    const onHull = toWorld(ship, [p.at[0], Math.max(bottom + 1, Math.min(p.at[1], top - 1)), p.at[2]]);
+    assert.ok(hullPoint(ship, onHull, 2).inside, `${p.kind} ${p.id} at ${p.at.map(Math.round)} stands on the hull`);
+    assert.ok(p.at[1] <= top + 60 && p.at[1] >= bottom - 60, `${p.kind} ${p.id} is no more than a tower's height off the deck`);
+  }
+};
+
+test("hull volumes: an Imperial wedge narrows to the bow, a ray meets it where the model is, and a point inside is pushed out to the surface", () => {
+  const { s, ship } = battleship(true);
   const [hx, , hz] = ship.half;
   assert.equal(ship.volume.kind, "convex");
   // Along the hull at 50 m to starboard, from ahead: the wedge is wide enough there only back from x = hx - 2 hx z / hz
@@ -229,13 +250,33 @@ test("hull volumes: a wedge narrows to the bow, a ray meets it where the model i
   // Ellipsoids for small craft and the station
   assert.equal(partyOf(s).volume.kind, "ellipsoid");
   assert.equal(foe(start("station", 1), "Station").volume.kind, "ellipsoid");
-  // Every part stands over the hull's footprint, on its deck or its keel (not floating beside it): straight down to the deck it is in the hull
-  for (const p of ship.parts) {
-    if (p.kind === "hangar") continue;
-    const onHull = toWorld(ship, [p.at[0], Math.max(-ship.half[1] + 1, Math.min(p.at[1], ship.half[1] - 1)), p.at[2]]);
-    assert.ok(hullPoint(ship, onHull, 2).inside, `${p.kind} ${p.id} at ${p.at.map(Math.round)} stands on the hull`);
-    assert.ok(Math.abs(p.at[1]) <= ship.half[1] + 60, `${p.kind} ${p.id} is no more than a tower's height off the deck`);
+  partsOnHull(ship);
+  // The shield generators are the map model's two domes, either side of the tower
+  const gens = ship.parts.filter((p) => p.kind === "generator" && Math.abs(p.at[0] - hx * WEDGE.tower) < 1);
+  assert.equal(gens.length, 2);
+  assert.ok(gens.every((g) => g.at[1] > ship.half[1] && Math.abs(g.at[2]) < hz * 0.3), "on the tower, over the deck");
+});
+
+test("hull volumes: anyone else's big ship is the map's corvette, a hammerhead bow and a block of engines joined by a slim neck", () => {
+  const { ship } = battleship(false);
+  const [hx, hy, hz] = ship.half;
+  assert.equal(ship.volume.kind, "compound");
+  // Across the hull amidships at the bow block's width: only the neck is there, so the ray goes most of the way before it meets it
+  const mid = hx * 0.2;
+  const neck = hullRay(ship, [mid, 0, hz + 100], [0, 0, -1]);
+  assert.ok(neck !== null && neck > 100 + hz * 0.6, `the neck is slim: met at ${neck}`);
+  // The same at the bow block and at the engines: met at once
+  for (const x of [hx * 0.8, -hx * 0.6]) {
+    const t = hullRay(ship, [x, 0, hz + 100], [0, 0, -1]);
+    assert.ok(t !== null && Math.abs(t - 100 - hz * (x > 0 ? 1 - CORVETTE.bow.z : 0)) < 1, `the block at ${Math.round(x)} is met at ${t}`);
   }
+  // Over the neck the deck is low, over the blocks high
+  assert.ok(hullSpan(ship.cls, ship.role, false, mid)[0] < hy * 0.7 && hullSpan(ship.cls, ship.role, false, -hx * 0.6)[0] === hy);
+  // A point in the neck is pushed out of it, and just off it is outside
+  const inside = hullPoint(ship, [mid, 2, 1]);
+  assert.ok(inside.inside);
+  assert.ok(!hullPoint(ship, vadd(inside.surface, vmul(inside.normal, 0.4))).inside);
+  partsOnHull(ship);
 });
 
 test("the tunnel is wide enough to fly, the free space is connected and its parts are where the arrays say", () => {

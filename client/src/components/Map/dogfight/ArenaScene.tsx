@@ -13,6 +13,9 @@ import { AIR } from "@shared/logic/dogfight";
 import { ShipModel } from "../LocalMap";
 import { SpeederModel } from "../models";
 import { raceLook } from "../FlightScene";
+import { PlanetBall, WorldSky } from "../scenery";
+import { useQuality } from "../siteAssets";
+import { skyLook } from "@shared/logic";
 import { CapitalShip, type CapitalRig } from "./CapitalShip";
 import { StationInterior } from "./StationInterior";
 import type { Livery } from "./hullSurface";
@@ -50,47 +53,10 @@ function Fighter({ v }: { v: Vessel }) {
   );
 }
 
-// The planet behind the fight: banded and cloudy, with a glow of atmosphere, and the sun that lights the scene
-function planetTexture(): THREE.Texture {
-  const c = document.createElement("canvas");
-  c.width = 1024;
-  c.height = 512;
-  const g = c.getContext("2d")!;
-  const sea = g.createLinearGradient(0, 0, 0, 512);
-  sea.addColorStop(0, "#9cc4e8");
-  sea.addColorStop(0.3, "#2d6aa8");
-  sea.addColorStop(0.55, "#1d4f86");
-  sea.addColorStop(1, "#a8cce8");
-  g.fillStyle = sea;
-  g.fillRect(0, 0, 1024, 512);
-  let a = 17;
-  const r = () => ((a = (a * 1664525 + 1013904223) >>> 0) / 4294967296);
-  for (let i = 0; i < 70; i++) {
-    g.fillStyle = r() < 0.5 ? "rgba(70,120,70,0.8)" : "rgba(150,130,90,0.7)";
-    g.beginPath();
-    g.ellipse(r() * 1024, 120 + r() * 280, 20 + r() * 80, 10 + r() * 40, r() * 3, 0, Math.PI * 2);
-    g.fill();
-  }
-  for (let i = 0; i < 160; i++) {
-    g.fillStyle = `rgba(255,255,255,${0.08 + r() * 0.2})`;
-    g.beginPath();
-    g.ellipse(r() * 1024, r() * 512, 30 + r() * 120, 4 + r() * 18, (r() - 0.5) * 0.4, 0, Math.PI * 2);
-    g.fill();
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-const ATMOSPHERE_FRAG = `
-varying vec3 vN; varying vec3 vView;
-void main() { float f = pow( 1.0 - abs( dot( normalize( vN ), normalize( vView ) ) ), 3.0 ); gl_FragColor = vec4( vec3( 0.35, 0.62, 1.0 ) * f * 1.6, f ); }`;
-const ATMOSPHERE_VERT = `
-varying vec3 vN; varying vec3 vView;
-void main() { vec4 mv = modelViewMatrix * vec4( position, 1.0 ); vN = normalize( normalMatrix * normal ); vView = normalize( - mv.xyz ); gl_Position = projectionMatrix * mv; }`;
-
-function Backdrop({ focus }: { focus: { current: THREE.Vector3 } }) {
+// The planet behind the fight (scenery.tsx PlanetBall: the world's own land, seas and ice, lit by the sun from its side, with a rim of
+// atmosphere), its moon, and the sun that lights the scene
+function Backdrop({ focus, planet, seed }: { focus: { current: THREE.Vector3 }; planet: string; seed: number }) {
   const group = useRef<THREE.Group>(null);
-  const planet = useMemo(planetTexture, []);
   useFrame(({ camera }) => {
     // The sky is far: it stays put on the screen however the craft flies
     group.current?.position.copy(camera.position);
@@ -99,14 +65,8 @@ function Backdrop({ focus }: { focus: { current: THREE.Vector3 } }) {
   return (
     <group ref={group}>
       <Stars radius={7000} depth={900} count={6000} factor={22} saturation={0.1} fade speed={0} />
-      <mesh position={[-7600, -3400, 9600]}>
-        <sphereGeometry args={[2900, 64, 48]} />
-        <meshStandardMaterial map={planet} roughness={0.95} metalness={0} />
-      </mesh>
-      <mesh position={[-7600, -3400, 9600]}>
-        <sphereGeometry args={[2990, 64, 48]} />
-        <shaderMaterial vertexShader={ATMOSPHERE_VERT} fragmentShader={ATMOSPHERE_FRAG} transparent depthWrite={false} blending={THREE.AdditiveBlending} side={THREE.BackSide} toneMapped={false} />
-      </mesh>
+      <PlanetBall biome={planet} seed={seed} radius={2900} sun={[SUN.x, SUN.y, SUN.z]} position={[-7600, -3400, 9600]} rotation={[0.4, seed % 7, 0.2]} ring={planet === "gas giant"} />
+      <PlanetBall biome="barren" moon seed={seed + 1} radius={260} sun={[SUN.x, SUN.y, SUN.z]} position={[5200, 2600, 9800]} />
       <mesh position={SUN.clone().multiplyScalar(11000)}>
         <circleGeometry args={[520, 32]} />
         <meshBasicMaterial color="#fff6dc" toneMapped={false} />
@@ -115,23 +75,12 @@ function Backdrop({ focus }: { focus: { current: THREE.Vector3 } }) {
   );
 }
 
-// The air of a planet: a dome of sky from the horizon's haze to the zenith, kept round the camera, the ground of the land far out to the
-// fog, and the roads the convoys drive
-function AirBackdrop({ biome, roads }: { biome: string; roads: [number, number, number][][] }) {
-  const group = useRef<THREE.Group>(null);
+// The air of a planet: the world's sky (scenery.tsx WorldSky: the dome, the sun, its moons, clouds, and the land on the horizon), kept round
+// the camera, with its haze as the fog; the ground of the land far out to the fog, and the roads the convoys drive
+function AirBackdrop({ biome, roads, seed }: { biome: string; roads: [number, number, number][][]; seed: number }) {
   const look = raceLook(biome);
-  const sky = useMemo(() => {
-    const g = new THREE.SphereGeometry(7000, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2);
-    const [low, high] = [new THREE.Color(look.sky), new THREE.Color(look.zenith)];
-    const pos = g.attributes.position;
-    const colors: number[] = [];
-    for (let i = 0; i < pos.count; i++) {
-      const c = low.clone().lerp(high, Math.min(1, Math.max(0, pos.getY(i) / 7000)) ** 0.6);
-      colors.push(c.r, c.g, c.b);
-    }
-    g.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-    return g;
-  }, [look]);
+  const sky = useMemo(() => skyLook(biome, seed), [biome, seed]);
+  const lite = useQuality((q) => q.tier === "lite");
   const ground = useMemo(() => {
     const c = document.createElement("canvas");
     c.width = c.height = 256;
@@ -153,16 +102,9 @@ function AirBackdrop({ biome, roads }: { biome: string; roads: [number, number, 
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
   }, [look]);
-  useFrame(({ camera }) => {
-    group.current?.position.set(camera.position.x, 0, camera.position.z);
-  });
   return (
     <>
-      <group ref={group}>
-        <mesh geometry={sky}>
-          <meshBasicMaterial vertexColors side={THREE.BackSide} fog={false} depthWrite={false} />
-        </mesh>
-      </group>
+      <WorldSky look={sky} light={1} hour={11} radius={7000} fog={[1400, 6500]} floor={false} lite={lite} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]}>
         <planeGeometry args={[14000, 14000]} />
         <meshLambertMaterial map={ground} />
@@ -296,7 +238,7 @@ const Z = new THREE.Vector3(0, 0, 1);
 const FOV: Record<View, number> = { chase: 65, cockpit: 75 };
 
 // `cursor`: where the pilot's cursor is on the screen (-1 to 1 each way, y up) when the guns follow it, else null, and they follow the reticule
-export function ArenaScene({ sim, go, input, overlay, view, cursor, onFinish, onFrame }: { sim: { current: ArenaSim }; go: { current: boolean }; input: { current: DogfightInput }; overlay: { current: OverlayData }; view: { current: View }; cursor: { current: { x: number; y: number } | null }; onFinish: (s: Dogfight) => void; onFrame: (s: Dogfight) => void }) {
+export function ArenaScene({ sim, go, input, overlay, view, cursor, onFinish, onFrame, planet, seed = 1 }: { sim: { current: ArenaSim }; go: { current: boolean }; input: { current: DogfightInput }; overlay: { current: OverlayData }; view: { current: View }; cursor: { current: { x: number; y: number } | null }; onFinish: (s: Dogfight) => void; onFrame: (s: Dogfight) => void; planet?: string; seed?: number }) {
   const { camera, scene, gl } = useThree();
   const groups = useRef(new Map<number, THREE.Group>());
   const rigs = useRef(new Map<number, CapitalRig>());
@@ -324,7 +266,8 @@ export function ArenaScene({ sim, go, input, overlay, view, cursor, onFinish, on
   }, [camera, gl]);
   const air = sim.current.state.air;
   useEffect(() => {
-    scene.fog = air ? new THREE.Fog(raceLook(air.biome).sky, 1400, 6500) : null;
+    // (in the air the fog is the sky's haze, which AirBackdrop's WorldSky sets)
+    if (!air) scene.fog = null;
     // For test scripts, as the map's window.__map3d: the scene and camera, to look at what is drawn
     (window as unknown as { __arena?: unknown }).__arena = { scene, camera, gl };
   }, [scene, camera, gl]);
@@ -496,7 +439,7 @@ export function ArenaScene({ sim, go, input, overlay, view, cursor, onFinish, on
       <hemisphereLight args={["#8fb0e0", "#1a1d26", 0.9]} />
       <directionalLight position={SUN.toArray().map((x) => x * 800) as [number, number, number]} intensity={2.4} color="#fff2dc" />
       <directionalLight position={[-300, -120, 200]} intensity={1.0} color="#7aa0dc" />
-      {air ? <AirBackdrop biome={air.biome} roads={roadsOf(sim.current.state)} /> : <Backdrop focus={focus} />}
+      {air ? <AirBackdrop biome={air.biome} roads={roadsOf(sim.current.state)} seed={seed} /> : <Backdrop focus={focus} planet={planet ?? "temperate"} seed={seed} />}
       <Dust />
       {!inside && ids.map((id) => {
         const v = vesselOf.current.get(id) ?? sim.current.state.vessels.find((x) => x.id === id);

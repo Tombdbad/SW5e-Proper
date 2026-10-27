@@ -7,7 +7,7 @@
 import { headingOf, shipDamage, type Vec3 } from "./index";
 import {
   AIR, ARENA, CLASSES, STATION, classIndex, clamp, foeSheet, frameOf, isCapital, makeVessel, toLocal, toWorld, turned, vadd, vdist, vdot, vlen, vmul, vnorm, vsub, wrapAngle,
-  type Dogfight, type DogfightInput, type Fx, type Gun, type HullVolume, type Interior, type Part, type Projectile, type Vessel,
+  type Dogfight, type DogfightInput, type Fx, type Gun, type HullPlane, type HullVolume, type Interior, type Part, type Projectile, type Vessel,
 } from "./dogfight";
 import { TUNNEL, clearanceAt, crossAxes, doorHole, doorOpen, makeTunnel } from "./tunnel";
 
@@ -62,8 +62,28 @@ const say = (s: Dogfight, line: string) => {
 };
 const boom = (s: Dogfight, p: Vec3, size: number, kind: Fx["kind"] = "boom", by?: number) => s.fx.push({ kind, p, size, by });
 
-// ---- Hulls: an ellipsoid (small craft, the station) or a convex solid of planes (the capital ships), in the vessel's own frame
+// ---- Hulls: an ellipsoid (small craft, the station), a convex solid of planes (the wedges) or several of them (the corvettes' blocks), in the
+// vessel's own frame
 export interface HullBody { p: Vec3; yaw: number; pitch: number; half: Vec3; volume: HullVolume }
+const solidsOf = (volume: HullVolume): HullPlane[][] => (volume.kind === "convex" ? [volume.planes] : volume.kind === "compound" ? volume.parts : []);
+// A convex solid: the ray is clipped by each plane (n.p <= d); it enters at the last entry and leaves at the first exit
+function convexRay(planes: HullPlane[], lo: Vec3, ld: Vec3): number | null {
+  let enter = 0;
+  let leave = Infinity;
+  for (const pl of planes) {
+    const slope = vdot(pl.n, ld);
+    const room = pl.d - vdot(pl.n, lo);
+    if (Math.abs(slope) < 1e-9) {
+      if (room < 0) return null;
+      continue;
+    }
+    const t = room / slope;
+    if (slope < 0) enter = Math.max(enter, t);
+    else leave = Math.min(leave, t);
+    if (enter > leave) return null;
+  }
+  return leave < 0 ? null : enter;
+}
 // Where a ray meets a vessel's hull: the distance along it, 0 when it starts inside, null when it misses
 export function hullRay(v: HullBody, origin: Vec3, dir: Vec3): number | null {
   const { f, u, r } = frameOf(v.yaw, v.pitch);
@@ -83,26 +103,17 @@ export function hullRay(v: HullBody, origin: Vec3, dir: Vec3): number | null {
     const t = (-b - Math.sqrt(disc)) / (2 * a);
     return t >= 0 ? t : null;
   }
-  // A convex solid: the ray is clipped by each plane (n.p <= d); it enters at the last entry and leaves at the first exit
-  let enter = 0;
-  let leave = Infinity;
-  for (const pl of v.volume.planes) {
-    const slope = vdot(pl.n, ld);
-    const room = pl.d - vdot(pl.n, lo);
-    if (Math.abs(slope) < 1e-9) {
-      if (room < 0) return null;
-      continue;
-    }
-    const t = room / slope;
-    if (slope < 0) enter = Math.max(enter, t);
-    else leave = Math.min(leave, t);
-    if (enter > leave) return null;
+  // The nearest of the solids it meets
+  let best: number | null = null;
+  for (const planes of solidsOf(v.volume)) {
+    const t = convexRay(planes, lo, ld);
+    if (t !== null && (best === null || t < best)) best = t;
   }
-  return leave < 0 ? null : enter;
+  return best;
 }
 export interface HullHit { inside: boolean; depth: number; normal: Vec3; surface: Vec3 }
 // Whether a point is inside the hull grown by `grow` metres, how deep, the surface's normal there (out of the hull) and the point on the surface
-// that the point is pushed to
+// that the point is pushed to (of several solids, the one it is deepest in, or nearest)
 export function hullPoint(v: HullBody, p: Vec3, grow = 0): HullHit {
   const { f, u, r } = frameOf(v.yaw, v.pitch);
   const d = vsub(p, v.p);
@@ -115,16 +126,24 @@ export function hullPoint(v: HullBody, p: Vec3, grow = 0): HullHit {
     const normal: Vec3 = vlen(l) < 1e-6 ? [0, 1, 0] : g;
     return { inside: k < 1, depth: (1 - k) * Math.min(hx, hy, hz), normal: world(normal), surface: vadd(v.p, world(vmul(l, 1 / Math.max(k, 0.01)))) };
   }
-  let best = Infinity;
+  let deepest = -Infinity;
   let n: Vec3 = [0, 1, 0];
-  for (const pl of v.volume.planes) {
-    const room = pl.d + grow - vdot(pl.n, l);
-    if (room < best) {
-      best = room;
-      n = pl.n;
+  for (const planes of solidsOf(v.volume)) {
+    let best = Infinity;
+    let bn: Vec3 = [0, 1, 0];
+    for (const pl of planes) {
+      const room = pl.d + grow - vdot(pl.n, l);
+      if (room < best) {
+        best = room;
+        bn = pl.n;
+      }
+    }
+    if (best > deepest) {
+      deepest = best;
+      n = bn;
     }
   }
-  return { inside: best > 0, depth: best, normal: world(n), surface: vadd(v.p, world(vadd(l, vmul(n, best)))) };
+  return { inside: deepest > 0, depth: deepest, normal: world(n), surface: vadd(v.p, world(vadd(l, vmul(n, deepest)))) };
 }
 
 // ---- Damage

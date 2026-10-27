@@ -113,9 +113,9 @@ const newRig = (): PartRig => ({ group: null, wreck: null, turret: null, dome: n
 export function CapitalShip({ vessel, livery, sim, rigs }: { vessel: Vessel; livery: Livery; sim: { current: { state: { vessels: Vessel[]; me: number } } }; rigs: { current: Map<number, CapitalRig> } }) {
   const tier = useQuality((q) => q.tier);
   const size = tier === "lite" ? 512 : 1024;
-  const geo = useMemo(() => capitalGeometry(vessel.cls, vessel.role, vessel.id * 31 + 7), [vessel.cls, vessel.role, vessel.id]);
+  const geo = useMemo(() => capitalGeometry(vessel.cls, vessel.role, vessel.id * 31 + 7, vessel.imperial), [vessel.cls, vessel.role, vessel.id, vessel.imperial]);
   useEffect(() => () => { geo.hull.dispose(); geo.dark.dispose(); geo.glow.dispose(); }, [geo]);
-  const mat = useMemo(() => hullMaterial({ livery, size, parallax: tier === "lite" ? 0.0 : 0.03, steps: tier === "lite" ? 4 : 10, emissive: 1.4, side: THREE.FrontSide }), [livery, size, tier]);
+  const mat = useMemo(() => hullMaterial({ livery, size, parallax: tier === "lite" ? 0.0 : 0.03, steps: tier === "lite" ? 4 : 10, emissive: 1.4, side: THREE.FrontSide, vertexColors: vessel.cls !== "Station" }), [livery, size, tier, vessel.cls]);
   const bubbleMat = useMemo(shieldMaterial, []);
   const bubble = useRef<THREE.Mesh>(null);
   const partRigs = useRef<PartRig[]>(vessel.parts.map(newRig));

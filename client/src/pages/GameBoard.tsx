@@ -408,7 +408,7 @@ export default function GameBoard() {
     // The party's own ships stand in the berths they have left empty
     const present = withPartyShips(withPresence(world, clock), Array.isArray(campaign?.starships) ? campaign.starships : []);
     const all: Companion[] = character?.companionData?.party ?? [];
-    return Object.assign(present, { party: all.filter((c) => c.kind !== "beast"), beasts: [...(character?.companionData?.beasts ?? []), ...all.filter((c) => c.kind === "beast")], riding: character?.companionData?.riding as string | undefined, parked: campaign?.vehicles ?? [], carts: ((character?.companionData?.carts ?? []) as Cart[]).map((c) => ({ ...c, handler: c.parked ? null : cartHandler(c, [...all, ...(character?.companionData?.beasts ?? [])]) })) });
+    return Object.assign(present, { party: all.filter((c) => c.kind !== "beast"), beasts: [...(character?.companionData?.beasts ?? []), ...all.filter((c) => c.kind === "beast")], riding: character?.companionData?.riding as string | undefined, parked: campaign?.vehicles ?? [], starships: Array.isArray(campaign?.starships) ? campaign.starships : [], carts: ((character?.companionData?.carts ?? []) as Cart[]).map((c) => ({ ...c, handler: c.parked ? null : cartHandler(c, [...all, ...(character?.companionData?.beasts ?? [])]) })) });
   }, [world, clock, character?.companionData, campaign?.vehicles, campaign?.starships]);
   const hereNow: Area | null = scene && hereId ? scene.areas[hereId] ?? null : null;
 
@@ -8355,7 +8355,7 @@ function FlightActivity(props: DowntimeProps & { flying: (typeof FLYING)[number]
           const seed = Math.floor(Math.random() * 1e9) + 1;
           const vehicle = props.vehicleModel ?? "Landspeeder";
           if (flying.kind === "race") setGame({ kind: "race", title: flying.name, seed, vehicle, biome: props.biome });
-          else if (flying.kind === "dogfight" && chosen) setGame({ kind: "dogfight", title: flying.name, seed, scenario, rows: props.shipRows ?? [], ship: { sheet: chosen.sheet, owner: chosen.owner }, air: scenarioOf(scenario).air ? { biome: props.biome ?? "temperate", g: props.gravity ?? 1, owner: props.foeFaction } : undefined });
+          else if (flying.kind === "dogfight" && chosen) setGame({ kind: "dogfight", title: flying.name, seed, scenario, rows: props.shipRows ?? [], ship: { sheet: chosen.sheet, owner: chosen.owner }, planet: props.biome, air: scenarioOf(scenario).air ? { biome: props.biome ?? "temperate", g: props.gravity ?? 1, owner: props.foeFaction } : undefined });
           else setGame({ kind: "run", title: flying.name, seed, mode: flying.mode, vehicle, ship: props.shipSpec });
         }} data-testid={`flight-start-${flying.id}`}>
           {loading ? "The ship data is loading..." : `Start the ${flying.kind === "dogfight" ? SCENARIOS.find((x) => x.id === scenario)!.name.toLowerCase() : flying.name.toLowerCase()} (a day)`}
