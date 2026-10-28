@@ -8,6 +8,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { groundPush, paceOf, STICK, stickOf, useRun } from "./stick";
 import { AIM, aimAt, FEET_PER_SQUARE, PITCH, poseOf, useReticle, useView, type Aimed, type ViewMode } from "./aim";
+import { AirButtons } from "./AirButtons";
 
 type V3 = [number, number, number];
 
@@ -38,7 +39,7 @@ function Overlay({ stick, use }: { stick: { current: [number, number] }; use: ()
         {tick({ left: 6, top: -1, width: 8, height: 2 })}
         {tick({ left: -1, top: -14, width: 2, height: 8 })}
         {tick({ left: -1, top: 6, width: 2, height: 8 })}
-        {r.kind === "target" && <div style={{ position: "absolute", left: -11, top: -11, width: 22, height: 22, border: `2px solid ${colour}`, borderRadius: 12, boxShadow: "0 0 3px #000" }} />}
+
         {r.blocked && <div style={{ position: "absolute", left: -10, top: -10, width: 20, height: 20, color: colour, font: "bold 22px/20px sans-serif", textAlign: "center", textShadow: "0 0 3px #000" }}>×</div>}
         {(r.label || r.feet !== undefined) && (
           <div style={{ position: "absolute", left: -90, top: 18, width: 180, textAlign: "center", color: colour, font: "600 12px/1.2 sans-serif", textShadow: "0 0 3px #000, 0 0 3px #000" }}>
@@ -62,6 +63,7 @@ function Overlay({ stick, use }: { stick: { current: [number, number] }; use: ()
       >
         Use
       </button>
+      <AirButtons right={112} bottom={22} />
       <button
         data-testid="run-toggle" onPointerDown={(e) => { e.preventDefault(); useRun.getState().toggle(); }}
         style={{ position: "absolute", right: 24, bottom: 124, width: 68, height: 44, borderRadius: 22, background: run ? "rgba(250,204,21,0.55)" : "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.5)", color: "#fff", font: "600 13px sans-serif", pointerEvents: "auto", touchAction: "none" }}
@@ -152,12 +154,12 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
     };
   }, [gl, mode]);
 
-  // Keys: W A S D and up and down walk, left and right turn, E, Space and Enter act
+  // Keys: W A S D and up and down walk, left and right turn, E and Enter activate (Space jumps: interiors/air.ts)
   useEffect(() => {
     const typing = (e: KeyboardEvent) => /^(input|textarea|select)$/i.test((e.target as HTMLElement)?.tagName ?? "");
     const down = (e: KeyboardEvent) => {
       if (typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (["KeyE", "Space", "Enter"].includes(e.code)) { if (!e.repeat) useNow.current(); e.preventDefault(); return; }
+      if (["KeyE", "Enter"].includes(e.code)) { if (!e.repeat) useNow.current(); e.preventDefault(); return; }
       if (e.code === "KeyR" && !e.repeat) { useRun.getState().toggle(); return; }
       if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) { keys.current.add(e.code); e.preventDefault(); }
     };

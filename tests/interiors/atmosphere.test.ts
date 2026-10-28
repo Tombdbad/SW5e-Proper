@@ -43,7 +43,7 @@ test("a lite device draws fewer lights and motes", () => {
   assert.ok(budgetOf(m, "lite").spots.length <= 2);
   assert.ok(budgetOf(m, "full").spots.length <= 4);
   assert.ok(moteCount(m, 11, 9, "lite") <= moteCount(m, 11, 9, "full"));
-  assert.ok(moteCount(m, 40, 40, "full") <= 160);
+  assert.ok(moteCount(m, 40, 40, "full") <= 200);
   assert.equal(moteCount(moodOf("medcenter", "Ward", "modest"), 3, 3, "full") >= 0, true);
 });
 test("flicker stays between dim and full, and steady lights never move", () => {

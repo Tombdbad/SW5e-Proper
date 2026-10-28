@@ -75,4 +75,11 @@ Read for the interiors overhaul (2026-10-19); nothing of it is copied.
 - Asset sources surveyed: https://app.cinevva.com/guides/game-assets-guide.html, https://opengameart.org/content/lowpoly-modular-sci-fi-environments
   (Quaternius; not used) and https://opengameart.org/content/furniture-low-poly (not used)
 
+- Dejarik rules (shared/logic/dejarik.ts): "Dejarik Holochess" v1.0 by No Name Publishing, copyleft 2017 ("may be freely reproduced or distributed so long
+  as original authorship credit is provided to No Name Publishing"), revised from HOLOCHESS by Mike Kelly (starwars-rpg.net). The board, the
+  eight creatures' ratings, the two actions a turn, flanking, push and kill, and the Corellian and Imperial variants are theirs; the play is ours.
+- Sabacc (shared/logic/sabacc.ts): the procedure of M. Brent Sleeper's 1995 rules for the 76-card deck (pagat.com/docs/sabacc_instructions.txt),
+  with the face-card values agreed by Sleeper, Ryan B. (pagat.com/invented/sabacc.html) and Star Wars Report. Pazaak (shared/logic/pazaak.ts): the
+  rules of Knights of the Old Republic as the project owner wrote them out. No card art or text from any of them is used.
+
 Star Wars and its settings belong to Lucasfilm; the rules data come from the SW5e project (sw5e.com).

@@ -10,6 +10,8 @@ import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, 
 const stepColor = (step: Step) => (step.fall ? "#fb923c" : step.how && /^(jump|climb|hook|fly)$/.test(step.how) ? "#38bdf8" : "#4ade80");
 import { standsAt, stairsGoals, arrivalSquares, climbAt, canStep, floorsOf, piecesIn, squaresOf, type Companion, type Cart, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
 import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt, worldLook, type WorldLook, type PartyShip } from "@shared/logic";
+import type { VerticalMove } from "@shared/logic";
+import { transitMs, transitAt, geomOf, type TransitKind, type TransitGeom, type Edge as TransitEdge } from "./interiors/transit";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind } from "./sprites";
 import { Atmosphere } from "./interiors/Atmosphere.tsx";
@@ -18,7 +20,8 @@ import { CaveDressing, CaveMound, CaveSlab, CaveWalls, MaskFloor, RockWall } fro
 import { moodOf } from "./interiors/atmosphere";
 import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
 import { PackWalls, cornerCentre, bendOf, holeOf, piercedWall, type Bend, type WallRun } from "./interiors/Walls";
-import { AIM, useView, type AimPlan } from "./interiors/aim";
+import { AIM, aimAt, aimFrom, useView, type Aimed, type AimPlan } from "./interiors/aim";
+import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, AIR, FEET, type JumpStats } from "./interiors/air";
 import { ViewRig } from "./interiors/ViewRig";
 import { stickWalk } from "./interiors/stick";
 import { packTone, toneColour } from "./interiors/tones";
@@ -27,7 +30,8 @@ import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
 import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
-import { Figure, seatFor, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { seatState, easeSit, smooth, type SeatState, type Shot } from "./interiors/limbs";
+import { Figure, seatFor, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -69,6 +73,51 @@ export const usePartySpot = create<{ areaId: string | null; x: number; y: number
   stand: (areaId, x, y) => set({ areaId, x, y }),
 }));
 
+// The party going up to a roof or down from it (shared/logic verticalMove; the path is interiors/transit.ts): Play asks for it and waits
+// until it is over, the scene carries the figure along it, and only then does Play move the party to the roof or the street
+export interface TransitRun { id: number; kind: TransitKind; up: boolean; area: string; levels: number; start: number; ms: number }
+let transitCount = 0;
+// `ask` is the request, which the scene answers by walking the party to the foot of the way and beginning (`now`); the animation is timed by
+// the wall clock, not the frames (a slow device still gets on with the game). Where nothing answers (no scene is drawn) the party goes at once.
+export const useTransit = create<{ ask: (VerticalMove & { id: number }) | null; now: TransitRun | null; play: (move: VerticalMove) => Promise<void>; claim: (id: number) => void; begin: (id: number) => TransitRun | null; end: () => void }>((set, get) => {
+  let finish: (() => void) | null = null;
+  let claimTimer: ReturnType<typeof setTimeout> | undefined;
+  let capTimer: ReturnType<typeof setTimeout> | undefined;
+  let endTimer: ReturnType<typeof setTimeout> | undefined;
+  const done = () => {
+    clearTimeout(claimTimer);
+    clearTimeout(capTimer);
+    clearTimeout(endTimer);
+    set({ ask: null, now: null });
+    const f = finish;
+    finish = null;
+    f?.();
+  };
+  return {
+    ask: null,
+    now: null,
+    play: (move) => new Promise<void>((resolve) => {
+      if (get().ask || get().now) return resolve();
+      finish = resolve;
+      set({ ask: { ...move, id: ++transitCount } });
+      claimTimer = setTimeout(done, 700);
+      capTimer = setTimeout(done, 25000);
+    }),
+    claim: (id) => { if (get().ask?.id === id) clearTimeout(claimTimer); },
+    begin: (id) => {
+      const a = get().ask;
+      if (!a || a.id !== id) return null;
+      // (test builds: localStorage sw5e.transitSlow = 8 makes it eight times slower, to look at a frame of it)
+      const slow = (() => { try { return import.meta.env.VITE_TEST_MENU === "1" ? Math.max(1, Number(localStorage.getItem("sw5e.transitSlow")) || 1) : 1; } catch { return 1; } })();
+      const run: TransitRun = { id, kind: a.kind, up: a.up, area: a.area, levels: a.levels, start: performance.now(), ms: transitMs(a.kind, a.levels) * slow };
+      set({ now: run });
+      endTimer = setTimeout(done, run.ms + 40);
+      return run;
+    },
+    end: done,
+  };
+});
+
 // A base piece being set down (shared/logic bases.ts): Play picks the item, the map shows where it would stand by the party and a tap on
 // an open square puts it there (MapAction "place"); `face` is turned by Play's Turn button
 export const usePlacing = create<{ piece: { item: string; name: string; w: number; h: number; places: ("outdoors" | "indoors")[]; look: string } | null; face: number; set: (piece: { item: string; name: string; w: number; h: number; places: ("outdoors" | "indoors")[]; look: string } | null) => void; turn: () => void }>((set) => ({
@@ -103,15 +152,23 @@ function Sky({ shadow = 30, cast = true, indoors = 0, look, ground = 0, fog, flo
   const light = daylight(minutes);
   const twilight = light > 0 && light < 1;
   const background = NIGHT_SKY.clone().lerp(DAY_SKY, light).lerp(DUSK_SKY, twilight ? 0.35 * (1 - Math.abs(light - 0.5) * 2) : 0);
+  // The sun's light moves with the instant, not with the five minutes the rest of the sky is drawn for (the user, 2026-10-28: the sun and moon
+  // jumped from place to place)
+  const sunLight = useRef<THREE.DirectionalLight>(null);
+  useFrame(() => {
+    if (!sunLight.current || !(light > 0)) return;
+    const a = ((hourOf(minuteNow()) - 6) / 12) * Math.PI;
+    sunLight.current.position.set(Math.cos(a) * 30, Math.max(6, Math.sin(a) * 30), 14);
+  });
   // The sun crosses from east to west over the day; at night the moon stands high
   const angle = ((hourOf(minutes) - 6) / 12) * Math.PI;
   const sun: V3 = light > 0 ? [Math.cos(angle) * 30, Math.max(6, Math.sin(angle) * 30), 14] : [-10, 30, 8];
   return (
     <>
       <color attach="background" args={[background]} />
-      {look && <WorldSky look={look} light={light} hour={(minutes / 60) % 24} ground={ground} lite={lite} fog={fog} floor={floor} />}
-      <ambientLight intensity={(0.32 + 0.43 * light) * (1 - 0.5 * indoors)} color={light < 0.3 ? "#a9b8ff" : "#ffffff"} />
-      <directionalLight position={sun} intensity={(0.14 + 0.76 * light) * (1 - 0.6 * indoors)} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow={cast} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
+      {look && <WorldSky look={look} light={light} hour={(minutes / 60) % 24} now={() => hourOf(minuteNow())} ground={ground} lite={lite} fog={fog} floor={floor} />}
+      <ambientLight intensity={(0.42 + 0.33 * light) * (1 - 0.5 * indoors)} color={light < 0.3 ? "#a9b8ff" : "#ffffff"} />
+      <directionalLight ref={sunLight} position={sun} intensity={(0.24 + 0.66 * light) * (1 - 0.6 * indoors)} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow={cast} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
     </>
   );
 }
@@ -137,6 +194,17 @@ const Solid = ({ at, color, glow, rot, solid, material, children }: { at: V3; co
       {material ?? <meshLambertMaterial color={color} emissive={color} emissiveIntensity={glow ?? 0.08} />}
     </mesh>
   );
+};
+// An unseen box that the crosshair and the hook's line strike (a closed room's block seen from outside: what is drawn of it has no hit-box of its own)
+const AimBox = ({ at, size }: { at: V3; size: V3 }) => {
+  const mesh = useRef<THREE.Mesh>(null);
+  useEffect(() => {
+    const m = mesh.current;
+    if (!m) return;
+    AIM.solids.add(m);
+    return () => { AIM.solids.delete(m); };
+  }, []);
+  return <mesh ref={mesh} position={at} visible={false}><boxGeometry args={size} /></mesh>;
 };
 // A box; with `wall` it is a plain room's wall, textured from its wall set (siteAssets `wallSet`)
 const Box = ({ at, size, color, glow, rot, solid, wall }: { at: V3; size: V3; color: string; glow?: number; rot?: V3; solid?: boolean; wall?: WallSet }) =>
@@ -295,7 +363,7 @@ function BayBerth({ room, asset, based, ceiling, rise: up = 8 }: { room: Pick<Ar
 // so that the tallest species stands in a room); a room stands on the floor of its level
 // (a gallery on half of one), and a stairwell, lift or ladder rises from its lower level.
 // A room with a mezzanine (`layout.tall`) is two floors high
-const LEVEL_H = 2.8;
+export const LEVEL_H = 2.8;
 const levelY = (l?: Pick<RoomLayout, "level">) => (l?.level ?? 0) * LEVEL_H;
 const rise = (l?: Pick<RoomLayout, "climb">) => (l?.climb ? l.climb.levels * LEVEL_H : 0);
 // How far up the floor of a way between floors is at a point of it (squares from the room's
@@ -620,7 +688,7 @@ function PiercedWall({ kind, pane, style, wallH, lift = 0, bend, color, wall }: 
 }
 // A doorway's leaf swings (or rolls up, for a hangar) when it is tapped, and shuts again when it is tapped once more. Its leaf is of what
 // the room's walls are (`wall`, the room's wall set); `bend` lays it and its frame on a curved wall
-function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, bend }: { kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string; wall?: WallSet; bend?: Bend }) {
+function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint, bend }: { kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string; wall?: WallSet; tint?: string; bend?: Bend }) {
   const [open, setOpen] = useState(false);
   const isDoor = kind === "door" || kind === "exit";
   const mode = /hangar|bay|dock/i.test(name) ? "rise" : "hinge";
@@ -629,7 +697,8 @@ function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, bend
   return (
     <>
       <Opening kind={kind} color={color} style={style} scale={kind === "window" && pane ? PANE_SCALE[pane.size] : undefined} bend={bend} />
-      {isDoor && <DoorLeaf open={open} mode={mode} metal={metal} style={style} wall={wall} bend={bend} />}
+      {isDoor && <DoorVoid style={style} bend={bend} />}
+      {isDoor && <DoorLeaf open={open} mode={mode} metal={metal} style={style} wall={wall} tint={tint} bend={bend} />}
       {label && <Label at={[0, kind === "window" || kind === "secret" ? 1.2 : 1.9, 0]} size={0.3} color={color}>{label}</Label>}
       {tap && <Hit at={[0, 0.75, 0]} size={[1, 1.5, 0.9]} onTap={tap} label={label ?? kind} />}
     </>
@@ -694,8 +763,13 @@ function Stepper({ x, y, z = 0, pace = 4, face = 0, turn: turns = true, children
 }
 const isDroideka = (name = "") => /droideka|destroyer droid/i.test(name);
 
-export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = "", tallWalls = false, ceiling = false, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, meets = [], children }: {
+export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = "", tallWalls = false, ceiling = false, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, biome, like, meets = [], children }: {
   width: number;
+  // The world's biome, for the wall set of a room with no mood (a roof, a gallery, a room looked down into): the walls were plaster there,
+  // whatever the building was of (2026-10-27, the user: texture clashes on walls)
+  biome?: string;
+  // A room whose walls are another room's (a gallery's balustrade is its host's, a roof's parapet is the room under it): its pack and wall set
+  like?: { buildingType: string; roomName: string };
   // Where the room stands against a round room's curve (`meetsOf`): it is filled out to the curve, and its doors there stand on it
   meets?: Meet[];
   height: number;
@@ -758,13 +832,17 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // A shaft's walls run up with the floor
   const climbs = plan?.climb ? rise(plan as RoomLayout) : 0;
   // (seen from overhead, a switchback's walls stop at its landing, so that both flights can be looked into)
-  const wallH = (tallWalls ? LEVEL_H * 2 - 0.2 : fullWalls ? FULL_WALL_HEIGHT : WALL_HEIGHT) + (plan?.switchback && !fullWalls ? climbs / 2 : climbs);
+  // (a roof terrace or a balcony keeps its waist-high parapet in the eye views too: 2026-10-27, the user)
+  const parapet = plan?.form === "roof" || plan?.form === "balcony";
+  const wallH = (tallWalls ? LEVEL_H * 2 - 0.2 : fullWalls && !parapet ? FULL_WALL_HEIGHT : WALL_HEIGHT) + (plan?.switchback && !fullWalls ? climbs / 2 : climbs);
   // The ceiling stays at the room's height where the walls are a balustrade (a gallery)
   const ramp = (x: number, y: number) => (plan?.climb ? rampAt(plan as RoomLayout, x + 0.5, y + 0.5) : 0);
   // The kit this room is furnished and walled from, and its palette
-  const pack = mood && !rocky ? packOf(mood.roomName, mood.buildingType) : undefined;
-  const packLook = useMemo(() => (pack ? packTone(PACKS[pack], wall) : undefined), [pack, wall]);
-  const wallTexture = wallSet(pack, mood?.biome ?? "");
+  // (a room that is `like` another has that room's walls but none of its furniture, light or air: `pack` is for the walls only)
+  const wallPack = mood && !rocky ? packOf(mood.roomName, mood.buildingType) : like ? packOf(like.roomName, like.buildingType) : undefined;
+  const pack = mood && !rocky ? wallPack : undefined;
+  const packLook = useMemo(() => (wallPack ? packTone(PACKS[wallPack], wall) : undefined), [wallPack, wall]);
+  const wallTexture = wallSet(wallPack, mood?.biome ?? biome ?? "");
   const [nw, ne, se, sw] = rocky ? [0, 0, 0, 0] : corners ?? [0, 0, 0, 0];
   const rounded = nw + ne + se + sw > 0;
   const floorTexture = floorLook(floor, mood?.buildingType, plan?.form === "roof");
@@ -828,18 +906,22 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             const runs = cut.runs.filter((r) => r.b - r.a >= 0.01).map((r) => ({ ...r, at: sides.find((s) => s.side === r.side)!.at }));
             // Round each doorway and window the wall stands whole but for the frame's own outline (beside it, under a window and over
             // both), bent onto the curve where the wall curves
-            const tint = packLook && pack && hasWalls(pack) ? toneColour(packLook) : wall;
+            const tint = packLook && wallPack && hasWalls(wallPack) ? toneColour(packLook) : wall;
             const pierced = rocky ? [] : setIn.filter((p) => (isWay(p.a) || p.a.kind === "window") && !met(p)).map((p) => (
               <group key={`pierced${p.a.id}`} position={[p.at[0], 0, p.at[1]]} rotation={[0, p.turn, 0]}>
                 <PiercedWall kind={p.a.kind} pane={p.a.pane} style={style} wallH={railing.includes(p.a.side!) ? BALUSTRADE_HEIGHT : wallH} lift={ramp(p.a.x, p.a.y)} bend={p.bend} color={tint} wall={wallTexture} />
               </group>
             ));
-            const plain = [...runs.map(({ side, a, b, at }) => {
+            const solid = (list: typeof runs) => list.map(({ side, a, b, at }) => {
               if (rocky) return <RockWall key={`${side}${a}`} side={side} a={a} b={b} w={width} h={height} height={1.1} seed={Math.round(a * 10) + side.charCodeAt(0) + width} biome={mood!.biome} tier={detail} />;
               const [position, size] = at(a, b);
               const high = railing.includes(side) ? BALUSTRADE_HEIGHT : wallH;
               return <Box key={`${side}${a}`} at={[position[0], high / 2, position[2]]} size={[size[0], high, size[2]]} color={wall} solid wall={wallTexture} />;
-            })];
+            });
+            const plain = solid(runs);
+            // (a gallery's balustrade is the kit's wall too, at its own height: it was plaster beside the room's sandstone)
+            const railed = runs.filter((r) => railing.includes(r.side));
+            const standing = runs.filter((r) => !railing.includes(r.side));
             // A room of a pack with walls has the kit's, straight and bent round its corners, in its palette; the plain ones stand until the kit is in
             const corner = cornerList.map((c) => {
               const [x, z] = cornerCentre(c, width, height);
@@ -851,7 +933,12 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             });
             return (
               <>
-                {packLook && hasWalls(pack!) && !rocky ? <PackWalls runs={runs} corners={cornerList} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={packLook} wall={wallTexture} fallback={<>{plain}{corner}</>} /> : <>{plain}{corner}</>}
+                {packLook && wallPack && hasWalls(wallPack) && !rocky ? (
+                  <>
+                    <PackWalls runs={standing} corners={cornerList} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={packLook} wall={wallTexture} fallback={<>{solid(standing)}{corner}</>} />
+                    {railed.length > 0 && <PackWalls runs={railed} width={width} height={height} wallH={BALUSTRADE_HEIGHT} thick={WALL_THICK} tone={packLook} wall={wallTexture} fallback={<>{solid(railed)}</>} />}
+                  </>
+                ) : <>{plain}{corner}</>}
                 {pierced}
                 {/* Out to a round room's curve: the floor, and the side walls carried on to meet it */}
                 {meets.map((m, i) => {
@@ -877,7 +964,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         : [[0, 0], [width, 0], [0, height], [width, height]].map(([x, z], i) => <Cyl key={i} at={[x, 0.3, z]} r={0.08} h={0.6} color={wall} />)}
       {setIn.filter((p) => walls || p.a.kind !== "window").map(({ a, at, turn, bend }) => (
         <group key={a.id} position={[at[0], ramp(a.x, a.y), at[1]]} rotation={[0, turn, 0]}>
-          <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} bend={bend} />
+          <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} tint={packLook && wallPack && hasWalls(wallPack) ? toneColour(packLook) : wall} bend={bend} />
         </group>
       ))}
       {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
@@ -887,7 +974,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             : a.kind === "loot" ? (nodeOf?.(a) ? <NodeModel node={nodeOf(a)!} empty={looted?.(a)} /> : <Chest looted={looted?.(a)} />)
             : (
               <>
-                <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={pack} tone={packLook} face={facing(a, width, height)} bare={!!mood && !!holdsOf(a.name, mood.buildingType, mood.roomName)} />
+                <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={pack} tone={pack ? packLook : undefined} face={facing(a, width, height)} bare={!!mood && !!holdsOf(a.name, mood.buildingType, mood.roomName)} />
                 {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} tone={packLook} wares={onShow.shelves[a.id]} face={facing(a, width, height)} />}
                 {/* A droid for sale on its plinth (the dealer's stock of the day) */}
                 {onShow.droids[a.id] && (
@@ -1062,13 +1149,15 @@ const aroundSquares = (x: number, y: number, w = 1, h = 1) => {
 // ---------------------------------------------------------------------------------------------
 
 type Sq = { x: number; y: number };
-type Brain = "patron" | "staff" | "musician" | "droid" | "post" | "round" | "still";
+type Brain = "patron" | "staff" | "musician" | "droid" | "post" | "round" | "still" | "dealer";
 
 // What a scene offers the people in it, in its own squares
 interface Setting {
   open: (x: number, y: number) => boolean;
   // Where people sit, by the table or booth they sit at
-  seats: { id: string; centre: V3; spots: Sq[] }[];
+  // (a table with stools of its own, a Sabacc table's: the square each stands nearest, where it is and the way it faces, in the squares'
+  // own coordinates: whoever sits there sits on it)
+  seats: { id: string; centre: V3; spots: Sq[]; stools?: { spot: Sq; x: number; y: number; face: number }[] }[];
   // Counters: the side customers come up to and the side staff stand on
   counters: { asset: RoomAsset; front: Sq[]; behind: Sq[] }[];
   // The band's stage and how high it stands
@@ -1106,9 +1195,39 @@ interface Agent {
   leaving?: boolean;
   // Seconds they have stood on a square the party or a follower stands on (they step aside)
   crowded?: number;
+  // Kept in the seat for a game that is on (nothing else takes them away from it)
+  held?: boolean;
+  // At a table: what the figure is told (sitting, what the hands do), how far down on the stool it is (0 to 1), the stool, and seconds to the next gesture
+  pose: { current: SeatState };
+  stool?: { spot: Sq; x: number; y: number; face: number };
+  sitK: number;
+  gesture: number;
+  shots: number;
 }
 
+// The party at a card table (2026-10-27): where it is to sit (a Sabacc table's stool), whether it has sat, and the gesture its hands make. Play
+// asks to sit (the map walks the party there and sits it down), plays the game, and asks to stand.
+export const useTable = create<{ at: { areaId: string; assetId: string; stool: number } | null; seated: boolean; shot?: Shot; shotKey: number; sit: (at: { areaId: string; assetId: string; stool: number }) => void; arrived: () => void; stand: () => void; gesture: (shot: Shot) => void }>((set) => ({
+  at: null,
+  seated: false,
+  shotKey: 0,
+  sit: (at) => set({ at, seated: false }),
+  arrived: () => set({ seated: true }),
+  stand: () => set({ at: null, seated: false }),
+  gesture: (shot) => set((s) => ({ shot, shotKey: s.shotKey + 1 })),
+}));
+// What Play may ask of the people of the room the party is in (set while a Life is drawn)
+export const lifeLink: { current: LifeApi | null } = { current: null };
+
 export interface LifeApi {
+  // The people at a card table's stools and who deals, and which stools are free (in the table's own order)
+  table: (assetId: string) => { players: { id: string; name: string; note?: string }[]; dealer?: { id: string; name: string }; free: number[] };
+  // Patrons not seated are asked to take free stools of a table, up to `count` of them
+  recruit: (assetId: string, count: number) => void;
+  // A person at a table makes a gesture, says something, or is kept in their seat while a game is on
+  gesture: (occupantId: string, shot: Shot) => void;
+  say: (occupantId: string, text: string) => void;
+  hold: (occupantIds: string[], on: boolean) => void;
   // The member of staff at a counter, if anyone serves there
   servedBy: (counterId: string) => Occupant | undefined;
   // Ask them over to the side of the counter nearest the party; `done` when they are there
@@ -1173,6 +1292,8 @@ function Instrument({ name = "" }: { name?: string }) {
 
 // Which way of life someone has, from who they are and what stands near them
 function brainOf(o: Occupant, home: Sq, setting: Setting, guards: number): { brain: Brain; counter?: string } {
+  // The croupier of a house with a Sabacc table sits at it and deals
+  if (o.role === "croupier" && setting.seats.some((s) => s.stools?.length)) return { brain: "dealer" };
   if (o.role === "guard") return { brain: guards === 0 ? "post" : guards === 1 ? "round" : "still" };
   if (o.disposition === "hostile") return { brain: "still" };
   if (o.role === "musician" && setting.stage.length) return { brain: "musician" };
@@ -1221,13 +1342,23 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
         continue;
       }
       const seat = setting.seats.flatMap((s) => s.spots).find((q) => !taken.has(sqKey(q)));
-      const spot = p.at ?? seat ?? nearestOpen((x, y) => setting.open(x, y) && !taken.has(`${x},${y}`), setting.watch);
+      let spot = p.at ?? seat ?? nearestOpen((x, y) => setting.open(x, y) && !taken.has(`${x},${y}`), setting.watch);
+      const { brain, counter } = brainOf(p.occupant, spot, setting, guards);
+      // (the dealer's stool is the first of a table's, kept for them)
+      if (brain === "dealer") {
+        const mine = setting.seats.flatMap((s) => (s.stools?.length ? [s.stools[0].spot] : [])).find((q) => !taken.has(sqKey(q)));
+        if (mine) spot = mine;
+      }
+      // Those already in the room when the scene opens are at the tables, most of them (a Sabacc table's stools fill)
+      if (brain === "patron" && !(shown.current && setting.doors.length) && Math.random() < 0.8) {
+        const free = setting.seats.flatMap((s) => (s.stools ?? []).slice(1).map((t) => t.spot)).filter((q) => !taken.has(sqKey(q)));
+        if (free.length) spot = free[Math.floor(Math.random() * free.length)];
+      }
       taken.add(sqKey(spot));
       const door = shown.current && setting.doors.length ? [...setting.doors].sort((a, b) => apart(a, spot) - apart(b, spot))[0] : undefined;
-      const { brain, counter } = brainOf(p.occupant, spot, setting, guards);
       if (p.occupant.role === "guard") guards++;
       const start = door ?? spot;
-      const a: Agent = { key: p.key, occupant: p.occupant, brain, counter, home: spot, x: start.x, y: start.y, path: [], wait: door ? 0 : between(1, 12), doing: brain === "patron" ? (door ? "arriving" : "seated") : brain === "musician" ? "playing" : brain, leg: 0, phase: Math.random() * 6 };
+      const a: Agent = { key: p.key, occupant: p.occupant, brain, counter, home: spot, x: start.x, y: start.y, path: [], wait: door ? 0 : between(1, 12), doing: brain === "patron" ? (door ? "arriving" : "seated") : brain === "musician" ? "playing" : brain === "dealer" ? (door ? "arriving" : "dealing") : brain, leg: 0, phase: Math.random() * 6, pose: { current: { ...seatState(), act: brain === "dealer" ? "deal" : "hold", cards: brain === "dealer" ? 0 : 2 } }, sitK: 0, gesture: between(1, 6), shots: 0 };
       if (door) a.path = route(setting.open, door, [spot]) ?? [];
       list.push(a);
     }
@@ -1279,6 +1410,14 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
     if (seat && agents.some((o) => o.brain === "droid")) dirty.current.add(seat.id);
   };
   const freeSeats = (a: Agent) => setting.seats.flatMap((seat) => seat.spots).filter((s) => !homeOfOther(s, a) && !claimed(s, a));
+  // A stool of a Sabacc table (2026-10-27): whoever stands at its square sits on it; those who like a game choose one now and then
+  const stoolAt = (s: Sq) => setting.seats.flatMap((t) => t.stools ?? []).find((t) => t.spot.x === s.x && t.spot.y === s.y);
+  const pickSeat = (a: Agent) => {
+    const all = freeSeats(a);
+    const stools = all.filter((s) => !!stoolAt(s));
+    return stools.length && Math.random() < 0.6 ? anyOf(stools) : anyOf(all);
+  };
+  const tabled = setting.seats.some((s) => s.stools?.length);
   const facing = (seat?: Setting["seats"][number]): Sq | undefined => (seat ? { x: seat.centre[0] - 0.5, y: seat.centre[2] - 0.5 } : undefined);
   const fronts = setting.counters.flatMap((c) => c.front);
   const counterAt = (s: Sq) => setting.counters.find((c) => c.front.some((f) => f.x === s.x && f.y === s.y));
@@ -1294,7 +1433,10 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
   };
 
   const think = (a: Agent) => {
-    const r = Math.random();
+    // (kept in their seat by a game that is on)
+    if (a.held) return void (a.wait = 3);
+    const roll = Math.random();
+    const r = roll;
     if (a.leaving) {
       // Taken off the roster after this frame's round
       const gone = () => {
@@ -1307,6 +1449,8 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
       if (a.doing === "seated") {
         const atBar = agents.filter((o) => o.doing === "at the bar").length;
         const others = agents.filter((o) => o !== a && o.brain === "patron" && o.doing === "seated" && !o.path.length);
+        // (one at a Sabacc table keeps to the game: they get up much more rarely)
+        const r = stoolAt(squareOf(a)) ? 0.45 + Math.random() * 0.55 : roll;
         if (r < 0.3 && fronts.length && atBar < 2) {
           leaveSeat(a);
           goTo(a, fronts, "at the bar", between(8, 16), undefined, order(a));
@@ -1315,17 +1459,26 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
           leaveSeat(a);
           goTo(a, ring(squareOf(other)), "visiting", between(10, 20), () => squareOf(other));
         } else if (r < 0.55) {
-          const seat = anyOf(freeSeats(a));
+          const seat = pickSeat(a);
           if (seat) {
             leaveSeat(a);
             a.home = seat;
-            goTo(a, [seat], "seated", between(15, 40), facing(seatOf(seat)));
+            goTo(a, [seat], "seated", stoolAt(seat) ? between(40, 100) : between(15, 40), facing(seatOf(seat)));
           } else a.wait = between(10, 25);
         } else a.wait = between(10, 30);
       } else {
         // Back to a seat, sometimes another one
-        if (Math.random() < 0.25) a.home = anyOf(freeSeats(a)) ?? a.home;
-        if (!goTo(a, [a.home], "seated", between(15, 40), facing(seatOf(a.home)))) a.home = anyOf(freeSeats(a)) ?? a.home;
+        if (Math.random() < 0.25) a.home = pickSeat(a) ?? a.home;
+        if (!goTo(a, [a.home], "seated", stoolAt(a.home) ? between(40, 100) : between(15, 40), facing(seatOf(a.home)))) a.home = pickSeat(a) ?? a.home;
+      }
+    } else if (a.brain === "dealer") {
+      // The croupier sits at the table and deals; now and then they call the game
+      if (apart(squareOf(a), a.home) > 0) goTo(a, [a.home], "dealing", between(6, 12), facing(seatOf(a.home)));
+      else {
+        a.doing = "dealing";
+        a.face = facing(seatOf(a.home));
+        a.wait = between(8, 16);
+        if (Math.random() < 0.5) say(a, anyOf(["Place your bets.", "Cards are down.", "Ante up, friends.", "The shift is on.", "Sabacc!", "Last call for bets."])!, 3);
       }
     } else if (a.brain === "staff") {
       const counter = setting.counters.find((c) => c.asset.id === a.counter);
@@ -1436,7 +1589,46 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
   // Called over by the party
   useEffect(() => {
     if (!api) return;
+    const stoolsOfTable = (assetId: string) => setting.seats.find((s) => s.id === assetId)?.stools ?? [];
+    const sitsAt = (a: Agent, t: { spot: Sq }) => !a.leaving && (apart(squareOf(a), t.spot) === 0 || (a.goal && apart(a.goal, t.spot) === 0));
     api.current = {
+      table: (assetId) => {
+        const stools = stoolsOfTable(assetId);
+        const players: { id: string; name: string; note?: string }[] = [];
+        let dealer: { id: string; name: string } | undefined;
+        const free: number[] = [];
+        stools.forEach((t, i) => {
+          const who = agents.find((a) => sitsAt(a, t));
+          if (!who) return void free.push(i);
+          if (who.brain === "dealer") dealer = { id: who.occupant.id, name: who.occupant.name };
+          else players.push({ id: who.occupant.id, name: who.occupant.name, note: [who.occupant.species, who.occupant.role].filter(Boolean).join(", ") });
+        });
+        return { players, dealer, free };
+      },
+      recruit: (assetId, count) => {
+        const stools = stoolsOfTable(assetId);
+        let need = count;
+        for (const t of stools.slice(1)) {
+          if (need <= 0) break;
+          if (agents.some((a) => sitsAt(a, t) || (a.home.x === t.spot.x && a.home.y === t.spot.y && !a.leaving))) continue;
+          const who = agents.filter((a) => a.brain === "patron" && !a.leaving && !a.held && !stoolAt(squareOf(a))).sort((p, q) => apart(squareOf(p), t.spot) - apart(squareOf(q), t.spot))[0];
+          if (!who) break;
+          who.home = t.spot;
+          goTo(who, [t.spot], "seated", between(80, 140), facing(setting.seats.find((s) => s.id === assetId)));
+          need--;
+        }
+      },
+      gesture: (occupantId, shot) => {
+        const a = agents.find((o) => o.occupant.id === occupantId);
+        if (a) Object.assign(a.pose.current, { shot, shotKey: ++a.shots });
+      },
+      say: (occupantId, text) => {
+        const a = agents.find((o) => o.occupant.id === occupantId);
+        if (a) say(a, text, 3);
+      },
+      hold: (ids, on) => {
+        for (const a of agents) if (ids.includes(a.occupant.id)) { a.held = on; if (on) a.wait = Math.max(a.wait, 3); }
+      },
       servedBy: (counterId) => agents.find((a) => a.brain === "staff" && a.counter === counterId && !a.leaving)?.occupant,
       summon: (counterId, near, done) => {
         const staff = agents.find((a) => a.brain === "staff" && a.counter === counterId && !a.leaving);
@@ -1449,7 +1641,10 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
         return true;
       },
     };
+    lifeLink.current = api.current;
+    const mine = api.current;
     return () => {
+      if (lifeLink.current === mine) lifeLink.current = null;
       api.current = null;
     };
   }, [agents]);
@@ -1487,13 +1682,31 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
 
     for (const a of agents) {
       const group = groups.current[a.key];
+      // At a table: down onto the stool once they have sat, up off it before they go (the figure eases by the same clock: interiors/limbs.ts)
+      const atStool = !a.leaving && !a.path.length && (a.doing === "seated" || a.doing === "sitting in" || a.doing === "dealing") ? stoolAt(squareOf(a)) : undefined;
+      if (atStool) a.stool = atStool;
+      a.pose.current.sit = !!atStool;
+      a.sitK = easeSit(a.sitK, !!atStool, dt);
+      if (!atStool && a.sitK <= 0) a.stool = undefined;
+      if (a.sitK > 0.9) {
+        const p = a.pose.current;
+        p.act = a.brain === "dealer" ? "deal" : "hold";
+        p.cards = a.brain === "dealer" ? 0 : 2;
+        // a player draws, bets, thinks, calls or folds now and then
+        if (a.brain !== "dealer" && !a.held && (a.gesture -= dt) <= 0) {
+          a.gesture = between(3.5, 9);
+          p.shot = anyOf<Shot>(["draw", "draw", "bet", "think", "think", "call", "fold"]);
+          p.shotKey = ++a.shots;
+        }
+      }
       if (frozen(a.occupant) && me) {
         // Noticed: they stop where they are and watch the party
         a.path = [];
         a.goal = undefined;
         a.face = me;
       } else if (a.path.length) {
-        let step = dt * (a.brain === "droid" ? 1.6 : 2.2);
+        // (off the stool first)
+        let step = a.sitK > 0.02 ? 0 : dt * (a.brain === "droid" ? 1.6 : 2.2);
         while (step > 0 && a.path.length) {
           const next = a.path[0];
           const [dx, dy] = [next.x - a.x, next.y - a.y];
@@ -1538,15 +1751,19 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
       }
       if (!group) continue;
       const face = typeof a.face === "function" ? a.face() : a.face;
-      if (!a.path.length && face && (face.x !== a.x || face.y !== a.y)) {
-        const want = Math.atan2(face.x - a.x, face.y - a.y);
+      const toStool = !!a.stool && a.sitK > 0.3 && !a.path.length;
+      if (!a.path.length && (toStool || (face && (face.x !== a.x || face.y !== a.y)))) {
+        const want = toStool ? a.stool!.face : Math.atan2(face!.x - a.x, face!.y - a.y);
         let turn = want - group.rotation.y;
         turn = Math.atan2(Math.sin(turn), Math.cos(turn));
         group.rotation.y += turn * Math.min(1, dt * 6);
       }
       const onStage = setting.stage.some((s) => s.x === Math.round(a.x) && s.y === Math.round(a.y));
       const playingNow = a.brain === "musician" && b.playing && !a.path.length && apart(squareOf(a), a.home) === 0;
-      group.position.set(a.x + 0.5, (onStage ? setting.stageHeight : 0) + (playingNow ? Math.abs(Math.sin(state.clock.elapsedTime * 5 + a.phase)) * 0.07 : 0), a.y + 0.5);
+      // (on a stool, their square is the one beside it: they are carried onto it as they sit)
+      const into = a.stool ? smooth(a.sitK) : 0;
+      const [px, py] = a.stool ? [a.x + (a.stool.x - a.x) * into, a.y + (a.stool.y - a.y) * into] : [a.x, a.y];
+      group.position.set(px + 0.5, (onStage ? setting.stageHeight : 0) + (playingNow ? Math.abs(Math.sin(state.clock.elapsedTime * 5 + a.phase)) * 0.07 : 0), py + 0.5);
       // A droid wiping a table turns on the spot
       if (a.brain === "droid" && a.doing === "cleaning" && !a.path.length) group.rotation.y += dt * 3;
       if (record) drawnAt.set(a.key, squareOf(a));
@@ -1575,7 +1792,7 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
       {agents.map((a) => (
         <group key={a.key} ref={(g) => { groups.current[a.key] = g; }} position={[a.x + 0.5, 0, a.y + 0.5]} rotation={[0, hue(a.key) % 6, 0]}>
           <group rotation={a.occupant.disabled ? [-Math.PI / 2, 0, 0.4] : [0, 0, 0]} position={[0, a.occupant.disabled ? 0.14 : 0, 0]}>
-            <Figure kind={tokenOf(a.occupant)} ring={a.occupant.disabled ? "#6b7280" : SIDE_COLORS[a.occupant.disposition]} name={a.occupant.name} large={isLarge(a.occupant.size)} species={a.occupant.species} role={a.occupant.role} creature={a.occupant.creature} size={a.occupant.size} />
+            <Figure kind={tokenOf(a.occupant)} ring={a.occupant.disabled ? "#6b7280" : SIDE_COLORS[a.occupant.disposition]} name={a.occupant.name} large={isLarge(a.occupant.size)} species={a.occupant.species} role={a.occupant.role} creature={a.occupant.creature} size={a.occupant.size} seat={a.pose} unarmed={tabled && (a.brain === "patron" || a.brain === "dealer")} />
           </group>
           {a.occupant.captive && <><Box at={[-0.2, 0.15, 0]} size={[0.14, 0.1, 0.14]} color="#59636d" /><Box at={[0.2, 0.15, 0]} size={[0.14, 0.1, 0.14]} color="#59636d" /></>}
           {a.brain === "musician" && <Instrument name={a.occupant.loadout[0]} />}
@@ -2275,6 +2492,64 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const duelRef = useRef(duel ? duelist : undefined);
   duelRef.current = duel ? duelist : undefined;
   const feet = useRef({ x: standing.x, y: standing.y });
+  // Going up to a roof or down from it: the figure is carried along a path (interiors/transit.ts) with a line or a flame where the way
+  // has one; where it ends is where the party stands on arriving (`spot` is set for the new place when the way begins)
+  const transit = useTransit((s) => s.now);
+  const rope = useRef<THREE.Group>(null);
+  const hook = useRef<THREE.Mesh>(null);
+  const flame = useRef<THREE.Mesh>(null);
+  const carried = useRef<{ id: number; g: TransitGeom; start: [number, number] } | null>(null);
+  // Where the way up or down is made: a ladder where the roof has its ladder, else (a leap, a line, grips, flight, a jump down) the edge of
+  // the roof nearest the party that has open ground under it
+  const transitGeom = (run: TransitRun): TransitGeom | null => {
+    const roof = world.areas[run.area];
+    const l = roof?.layout;
+    if (!l) return null;
+    const near: [number, number] = [feet.current.x + 0.5, feet.current.y + 0.5];
+    const ladder = l.assets.find((a) => a.kind === "exit" && a.side);
+    const top = floorAt(l, (ladder?.x ?? 0) + 0.5, (ladder?.y ?? 0) + 0.5) + 0.02;
+    if (run.kind === "ladder" && ladder) return geomOf(l, top, { side: ladder.side as TransitEdge, x: ladder.x, y: ladder.y }, near);
+    let best: { side: TransitEdge; x: number; y: number; far: number } | null = null;
+    const consider = (side: TransitEdge, i: number) => {
+      const [wx, wz] = side === "n" ? [l.x + i + 0.5, l.y] : side === "s" ? [l.x + i + 0.5, l.y + l.height] : side === "w" ? [l.x, l.y + i + 0.5] : [l.x + l.width, l.y + i + 0.5];
+      const [ox, oz] = side === "n" ? [l.x + i, l.y - 1] : side === "s" ? [l.x + i, l.y + l.height] : side === "w" ? [l.x - 1, l.y + i] : [l.x + l.width, l.y + i];
+      if (!outdoors(ox, oz)) return;
+      const far = Math.hypot(wx - near[0], wz - near[1]);
+      if (!best || far < best.far) best = { side, x: side === "n" || side === "s" ? i : 0, y: side === "w" || side === "e" ? i : 0, far };
+    };
+    for (let i = 0; i < l.width; i++) { consider("n", i); consider("s", i); }
+    for (let i = 0; i < l.height; i++) { consider("w", i); consider("e", i); }
+    const pick = best as { side: TransitEdge; x: number; y: number } | null;
+    if (pick) return geomOf(l, top, pick, near);
+    return ladder ? geomOf(l, top, { side: ladder.side as TransitEdge, x: ladder.x, y: ladder.y }, near) : geomOf(l, top, undefined, near);
+  };
+  // The figure stays where the way ended until the party is moved to the roof or the street (a few frames; never longer than three seconds)
+  const held = useRef<{ from: string; pose: ReturnType<typeof transitAt>; until: number } | null>(null);
+  const asked = useTransit((s) => s.ask);
+  useEffect(() => {
+    if (!asked) return;
+    if (!present) return void useTransit.getState().end();
+    useTransit.getState().claim(asked.id);
+    const g = transitGeom({ ...asked, start: 0, ms: 0 });
+    if (!g) return void useTransit.getState().end();
+    const begin = () => {
+      // The party will stand where the way ends: on the roof's square it climbs onto, or the street square at the foot
+      const [to, at] = asked.up ? [asked.area, g.roof] : [world.areas[asked.area]?.parentId ?? "", g.pad];
+      carried.current = { id: asked.id, g, start: [feet.current.x + 0.5, feet.current.y + 0.5] };
+      if (useTransit.getState().begin(asked.id) && to) usePartySpot.getState().stand(to, Math.floor(at[0]), Math.floor(at[1]));
+    };
+    // Walked to the foot of the way first (the street's squares, or the roof's), not carried across it
+    const foot = asked.up ? g.pad : g.roof;
+    if (Math.hypot(feet.current.x + 0.5 - foot[0], feet.current.y + 0.5 - foot[1]) < 0.9) return begin();
+    walkTo([{ x: Math.floor(foot[0]), y: Math.floor(foot[1]) }], begin);
+    if (!walk.current) begin();
+  }, [asked?.id]);
+  // At a card table (useTable): the party walks to a stool and sits on it; `sit` is how far down it is (0 to 1) and where the stool is, in the
+  // building's squares
+  const table = useTable((s) => s.at);
+  const partySeat = useRef<SeatState>(seatState());
+  const sit = useRef<{ k: number; x: number; y: number; face: number } | null>(null);
+  const shotSeen = useRef(0);
   // Where the camera looks when the party is out of doors: at the party
   const eye = useRef<V3 | null>(null);
   // (cleared at once on leaving the street, not at the next frame: the camera is set on the new place in the same step, and with the
@@ -2292,6 +2567,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   useEffect(() => {
     if (!present) return;
     walk.current = null;
+    // (the air is left behind with the place: a flight that sets down on a roof is standing on it)
+    Object.assign(air.current, { mode: "ground", y: 0, vy: 0, burst: null, reel: null, drop: 0, landed: performance.now() });
     feet.current = { x: entry.x, y: entry.y };
     spot.stand(hereId, entry.x, entry.y);
   }, [hereId, present]);
@@ -2304,19 +2581,466 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     const l = inside?.layout;
     return l ? floorAt(l, feet.current.x - l.x + 0.5, feet.current.y - l.y + 0.5) : 0;
   };
+  // ---- Jumping, the hook and the jetpack in real time (interiors/air.ts). Space jumps (held with a pack, it lights it and climbs), F fires the hook
+  // where the crosshair or the mouse points, Left Shift fires the pack's burst the same way; their buttons are the phone's; E, Enter and a click activate.
+  // A jump is the Handbook's (shared/logic jumpReach) made a hop of that height; what stands low (furniture) is hopped over, a wall is not; the hook
+  // reels the party along its line to where it bit (a roof's edge, where there is a way up for its line, is the climb of that way); a running pack flies
+  // over what stands low, with its own pace, climb and burst; falling from the air when it gives out is a fall (the game rolls it).
+  const sceneGl = useThree((s) => s.gl);
+  const sceneCamera = useThree((s) => s.camera);
+  const sceneMouse = useThree((s) => s.pointer);
+  const mouseAt = useRef(0);
+  useEffect(() => {
+    const el = sceneGl.domElement;
+    const moved = () => { mouseAt.current = performance.now(); };
+    el.addEventListener("pointermove", moved);
+    return () => el.removeEventListener("pointermove", moved);
+  }, [sceneGl]);
+  useEffect(() => {
+    if (!present || locked || duel) return;
+    return bindAirKeys();
+  }, [present, locked, !!duel]);
+  const air = useRef({
+    mode: "ground" as "ground" | "jump" | "fly" | "reel" | "perch", y: 0, vy: 0, t: 0, peak: 0, drop: 0, dir: [0, 0] as [number, number], jump: jumpOf(10) as JumpStats,
+    seen: { jump: 0, hook: 0, boost: 0 }, cool: { hook: 0, boost: 0 }, burst: null as { v: [number, number, number]; left: number } | null,
+    reel: null as { from: { x: number; y: number }; to: { x: number; y: number }; t: number; length: number; base: number } | null,
+    landed: 0, auto: false, ignited: 0, climbing: 0, shot: { until: 0, to: [0, 0, 0] as V3, hit: false },
+  });
+  const pushAt = useRef({ t: 0, dx: 0, dz: 0 });
+  const burstStopped = useRef(false);
+  const shotG = useRef<THREE.Group>(null);
+  const shotRope = useRef<THREE.Mesh>(null);
+  const shotHook = useRef<THREE.Mesh>(null);
+  // A square that is blocked by what stands on it (furniture, a bench, a crate) and not by a wall or the edge of the ground: hopped or flown over
+  const hoppable = (x: number, y: number) => {
+    if (open(x, y)) return false;
+    if (inside) {
+      const l = inside.layout!;
+      const [lx, ly] = [x - l.x, y - l.y];
+      return lx >= 0 && ly >= 0 && lx < l.width && ly < l.height && standsAt(l, lx, ly);
+    }
+    return x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !barred.has(`${x},${y}`);
+  };
+  // How high what stands on a square of the street reaches: the block of the rooms over it (a storey each, two for a room with a mezzanine) and the
+  // balustrade of a roof or balcony at the top; flown over once the party is higher than that
+  const topAt = (x: number, y: number) => {
+    let top = 0;
+    for (const a of rooms) {
+      const l = a.layout;
+      if (!l || x < l.x || x >= l.x + l.width || y < l.y || y >= l.y + l.height || floorsOf(l)[1] < 0) continue;
+      const form = formOf(a);
+      top = Math.max(top, form === "roof" || form === "balcony" ? levelY(l) + 0.6 : levelY(l) + LEVEL_H * (l.tall ? 2 : 1) + 0.35);
+    }
+    return top;
+  };
+  const overRoof = (x: number, y: number) => !inside && x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && inRoom(x, y) && air.current.y >= topAt(x, y) + 0.1;
+  const airPassable = (x: number, y: number) => open(x, y) || (air.current.y >= AIR.hop && hoppable(x, y)) || overRoof(x, y);
+  // What is under a square, to come down onto: the top of a building's block (a roof that is not a room of its own is stood on as well: 2026-10-28,
+  // the user: the party fell through such a roof and stuck in it), else the ground
+  const surfaceAt = (x: number, y: number) => (!inside && x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && inRoom(x, y) ? topAt(x, y) : 0);
+  // Walking on such a roof: onto squares of about the height stood at (a step of a hand's breadth up or down); a higher block is a wall, a lower
+  // square, the street or the edge is a fall
+  const perchPass = (x: number, y: number) => !inside && x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && inRoom(x, y) && Math.abs(topAt(x, y) - air.current.y) <= 0.4;
+  const perchDrop = (x: number, y: number) => open(x, y) || (!inside && inRoom(x, y) && topAt(x, y) < air.current.y - 0.4);
+  // The roof or balcony room over a square of the street, and the nearest square of it that can be stood on
+  const roofAt = (x: number, y: number) => rooms.find((a) => a.layout && (formOf(a) === "roof" || formOf(a) === "balcony") && x >= a.layout.x && x < a.layout.x + a.layout.width && y >= a.layout.y && y < a.layout.y + a.layout.height);
+  const standOn = (room: Area, x: number, y: number) => {
+    const l = room.layout!;
+    const free = (lx: number, ly: number) => lx >= 0 && ly >= 0 && lx < l.width && ly < l.height && standsAt(l, lx, ly) && !l.assets.some((a) => !a.side && a.blocks && a.x <= lx && lx < a.x + a.w && a.y <= ly && ly < a.y + a.h);
+    let best: { x: number; y: number } | null = null;
+    for (let ly = 0; ly < l.height; ly++) for (let lx = 0; lx < l.width; lx++) if (free(lx, ly) && (!best || Math.hypot(l.x + lx - x, l.y + ly - y) < Math.hypot(best.x - x, best.y - y))) best = { x: l.x + lx, y: l.y + ly };
+    return best;
+  };
+  // A step in the air, slid along what stops it
+  const moveBy = (dx: number, dy: number) => {
+    const f = feet.current;
+    for (const [ax, ay] of [[dx, dy], [dx, 0], [0, dy]] as [number, number][]) {
+      if (!ax && !ay) continue;
+      const [nx, ny] = [f.x + ax, f.y + ay];
+      if (airPassable(Math.round(nx), Math.round(ny))) {
+        feet.current = { x: nx, y: ny };
+        return true;
+      }
+    }
+    return false;
+  };
+  const nearBox = (p: { x: number; y: number }, box: { x: number; y: number; width: number; height: number }, margin: number) =>
+    Math.hypot(Math.max(box.x - p.x, 0, p.x - (box.x + box.width)), Math.max(box.y - p.y, 0, p.y - (box.y + box.height))) <= margin;
+  const frontBox = () => districtPlan?.boxes[me.id] ?? plan;
+  // What the crosshair (the eye views), the mouse (overhead, if it has moved) or the way the figure faces points at, as the shot's aim
+  const aimNow = (hand: V3): Aimed => {
+    const floorY = heightNow();
+    const muzzle = new THREE.Vector3(...hand);
+    if (viewing) return aimAt(sceneCamera, floorY, muzzle);
+    if (performance.now() - mouseAt.current < 6000) return aimAt(sceneCamera, floorY, muzzle, undefined, undefined, sceneMouse.clone());
+    const yaw = token.current?.rotation.y ?? 0;
+    return aimFrom(muzzle, new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)), floorY, muzzle);
+  };
+  const handNow = (): V3 => [feet.current.x + 0.5 - cx, heightNow() + air.current.y + 1.0, feet.current.y + 0.5 - cz];
+  // The way the stick or keys point, from the walk they have queued
+  const heading = (): [number, number] | null => {
+    for (const p of walk.current?.path ?? []) {
+      const [dx, dy] = [p.x - feet.current.x, p.y - feet.current.y];
+      const length = Math.hypot(dx, dy);
+      if (length > 0.3) return [dx / length, dy / length];
+    }
+    return null;
+  };
+  const land = (floor = 0) => {
+    const A = air.current;
+    const fell = Math.max(0, A.drop - floor) * FEET;
+    const perched = floor > 0.05;
+    A.mode = perched ? "perch" : "ground";
+    A.y = floor;
+    A.vy = 0;
+    A.t = 0;
+    A.drop = 0;
+    A.burst = null;
+    A.reel = null;
+    A.landed = performance.now();
+    // Down on the top of a block: it is stood on where it is (no square of the street is its own)
+    if (perched) return void (fell >= 10 && onAct?.({ type: "fall", feet: Math.round(fell) }));
+    const q = { x: Math.round(feet.current.x), y: Math.round(feet.current.y) };
+    if (!open(q.x, q.y)) {
+      const n = nearestOpen(open, q);
+      feet.current = { x: n.x, y: n.y };
+    }
+    spot.stand(hereId, feet.current.x, feet.current.y);
+    if (fell >= 10) onAct?.({ type: "fall", feet: Math.round(fell) });
+  };
+  const ignite = () => {
+    const A = air.current;
+    const gear = useAir.getState().gear;
+    if (!gear?.fly) return;
+    if (!gear.fly.on) {
+      A.auto = true;
+      onAct?.({ type: "power", name: gear.fly.name, on: true });
+    }
+    A.ignited = performance.now();
+    A.mode = "fly";
+    A.drop = 0;
+  };
+  const beginJump = () => {
+    const A = air.current;
+    const gear = useAir.getState().gear;
+    if (!active || useTransit.getState().now || useTable.getState().seated) return;
+    const dir = heading();
+    // Before a building with a way up that a leap reaches, a jump at its wall is the leap
+    const box = frontBox();
+    const yaw = token.current?.rotation.y ?? 0;
+    const ahead = dir ?? [Math.sin(yaw), Math.cos(yaw)];
+    if (!inside && A.mode !== "perch" && box && gear?.ways.leap && nearBox({ x: feet.current.x + 0.5 + ahead[0] * 1.3, y: feet.current.y + 0.5 + ahead[1] * 1.3 }, box, 0.3)) return void onAct?.({ type: "climb", how: "leap" });
+    const jump = jumpOf(gear?.strength ?? 10, gear?.g ?? 1, gear?.size ?? "Medium", !!dir);
+    A.y = (A.mode === "perch" ? A.y : 0) + 0.01;
+    A.mode = "jump";
+    A.jump = jump;
+    A.vy = jump.rise;
+    A.t = 0;
+    A.peak = 0;
+    A.drop = 0;
+    A.dir = dir ?? [0, 0];
+    walk.current = null;
+  };
+  const fireHook = () => {
+    const A = air.current;
+    const gear = useAir.getState().gear;
+    if (!active || useTransit.getState().now || useTable.getState().seated) return;
+    if (!gear?.hook) return void onAct?.({ type: "note", text: "You carry no grappling hook to fire." });
+    if (A.cool.hook > 0 || A.mode === "reel") return;
+    const hand = handNow();
+    const aim = aimNow(hand);
+    const from = new THREE.Vector3(...hand);
+    const line = (aim.blocked ?? aim.point).clone().sub(from);
+    const dist = line.length();
+    const target = from.clone().add(line.clone().normalize().multiplyScalar(Math.min(dist, gear.hook.long)));
+    A.cool.hook = AIR.hookCooldown;
+    const grid = (v: THREE.Vector3): V3 => [v.x + cx, v.y, v.z + cz];
+    if (aim.kind === "none" || dist > gear.hook.long || aim.person) {
+      A.shot = { until: performance.now() + 450, to: grid(target), hit: false };
+      return void onAct?.({ type: "note", text: aim.person ? "The hook is for ledges and walls: at a person it is a weapon, and weapons are drawn in a fight." : `Nothing to bite on within ${Math.round(gear.hook.long * FEET)} ft.` });
+    }
+    A.shot = { until: performance.now() + 900, to: grid(target), hit: true };
+    // A building's wall or roof edge: the way up for the line, if there is one (the game asks for its check and shows the climb)
+    const box = frontBox();
+    if (!inside && box && nearBox({ x: target.x + cx, y: target.z + cz }, box, 1.8)) {
+      if (gear.ways.hook) return void onAct?.({ type: "climb", how: "hook" });
+      onAct?.({ type: "note", text: "The hook bites the wall, but its line is too short for the roof." });
+    }
+    const to = reelTo({ ...feet.current }, { x: target.x + cx - 0.5, y: target.z + cz - 0.5 }, open, hoppable);
+    if (!to) return void onAct?.({ type: "note", text: "The hook bites, but there is nowhere to be pulled to." });
+    walk.current = null;
+    const base = (A.mode as string) === "perch" ? A.y : 0;
+    A.mode = "reel";
+    A.reel = { from: { ...feet.current }, to, t: 0, length: Math.hypot(to.x - feet.current.x, to.y - feet.current.y), base };
+  };
+  const fireBurst = () => {
+    const A = air.current;
+    const gear = useAir.getState().gear;
+    if (!active || useTransit.getState().now || useTable.getState().seated) return;
+    if (!gear?.fly) return void onAct?.({ type: "note", text: "You carry no jetpack or rocket boots." });
+    if (A.cool.boost > 0 || A.mode === "reel") return;
+    const hand = handNow();
+    const aim = aimNow(hand);
+    const d = (aim.blocked ?? aim.point).clone().sub(new THREE.Vector3(...hand)).normalize();
+    // From above (overhead) the mouse points along the ground, and the burst climbs a little; from the eyes the pitch of the look counts
+    if (!viewing) d.set(d.x, 0, d.z).normalize().setY(0.35).normalize();
+    const f = flightOf(gear.fly.feet);
+    ignite();
+    A.y = Math.max(A.y, 0.05);
+    A.burst = { v: [d.x * f.burst.speed, THREE.MathUtils.clamp(d.y * f.burst.speed, -5, 7), d.z * f.burst.speed], left: f.burst.time };
+    A.cool.boost = AIR.boostCooldown;
+  };
+  // One frame of the air: the keys and buttons pressed since the last, then the jump, the flight or the reel in progress
+  const airStep = (dt: number) => {
+    const A = air.current;
+    const store = useAir.getState();
+    const gear = store.gear;
+    A.cool.hook = Math.max(0, A.cool.hook - dt);
+    A.cool.boost = Math.max(0, A.cool.boost - dt);
+    if (store.taps.jump !== A.seen.jump) {
+      A.seen.jump = store.taps.jump;
+      if (A.mode === "ground" || A.mode === "perch") beginJump();
+    }
+    if (store.taps.hook !== A.seen.hook) {
+      A.seen.hook = store.taps.hook;
+      fireHook();
+    }
+    if (store.taps.boost !== A.seen.boost) {
+      A.seen.boost = store.taps.boost;
+      fireBurst();
+    }
+    const face = (dx: number, dy: number) => { if (token.current && !viewing && (dx || dy)) token.current.rotation.y = Math.atan2(dx, dy); };
+    // Stuck in a block (put there by a fall through a roof, or a hook's reel that ended in it): out to the nearest open square of the street
+    if (A.mode === "ground" && !inside) {
+      const q = { x: Math.round(feet.current.x), y: Math.round(feet.current.y) };
+      if (!open(q.x, q.y) && inRoom(q.x, q.y)) {
+        const n = nearestOpen(open, q);
+        feet.current = { x: n.x, y: n.y };
+        walk.current = null;
+        spot.stand(hereId, n.x, n.y);
+      }
+    }
+    if (A.mode === "jump") {
+      A.t += dt;
+      A.vy -= (A.drop ? 9.8 : A.jump.gravity) * dt;
+      A.y += A.vy * dt;
+      A.peak = Math.max(A.peak, A.y);
+      if (A.jump.carry && !A.drop) {
+        moveBy(A.dir[0] * A.jump.carry * dt, A.dir[1] * A.jump.carry * dt);
+        face(A.dir[0], A.dir[1]);
+      }
+      // A pack lit by a Space still held once the jump has risen a little
+      if (gear?.fly && store.held.jump && A.t > 0.22 && !A.drop) ignite();
+      const floor = surfaceAt(Math.round(feet.current.x), Math.round(feet.current.y));
+      if (A.y <= floor && A.vy <= 0) land(floor);
+    } else if (A.mode === "fly" && gear?.fly) {
+      const f = flightOf(gear.fly.feet);
+      if (!gear.fly.on && performance.now() - A.ignited > 1500) {
+        // The pack has run dry: down from where it was
+        A.mode = "jump";
+        A.drop = A.y;
+        A.vy = Math.min(A.vy, 0);
+        A.burst = null;
+      } else {
+        burstStopped.current = false;
+        if (A.burst) {
+          A.burst.left -= dt;
+          burstStopped.current = !moveBy(A.burst.v[0] * dt, A.burst.v[2] * dt);
+          face(A.burst.v[0], A.burst.v[2]);
+          A.vy = A.burst.v[1];
+          if (A.burst.left <= 0) A.burst = null;
+        } else A.vy += ((store.held.jump ? f.climb : -f.sink) - A.vy) * Math.min(1, (store.held.jump ? 7 : 3) * dt);
+        // (under a ceiling, the pack stops at it)
+        const ceiling = inside && !openAir(inside) ? Math.min(f.ceiling, LEVEL_H - 0.45) : f.ceiling;
+        const floorHere = surfaceAt(Math.round(feet.current.x), Math.round(feet.current.y));
+        A.y = Math.min(ceiling, Math.max(floorHere, A.y + A.vy * dt));
+        if (A.y >= ceiling && A.vy > 0) A.vy = 0;
+        // Over a roof or a balcony and down to its height: set down on it (any roof of the district, as high as the balustrade is cleared)
+        if (!inside && performance.now() - A.climbing > 1500) {
+          const sq = { x: Math.round(feet.current.x), y: Math.round(feet.current.y) };
+          const roof = roofAt(sq.x, sq.y);
+          if (roof?.layout && A.y >= levelY(roof.layout) - 0.1 && A.y <= levelY(roof.layout) + 0.9) {
+            const at = standOn(roof, sq.x, sq.y);
+            if (at) {
+              A.climbing = performance.now();
+              onAct?.({ type: "alight", areaId: roof.id, x: at.x, y: at.y });
+            }
+          }
+        }
+        // Off the edge of a roof, flying: down to the street
+        if (inside && (formOf(inside) === "roof" || formOf(inside) === "balcony") && performance.now() - A.climbing > 4000) {
+          const push = pushAt.current;
+          const pushing = performance.now() - push.t < 250 && Math.hypot(push.dx, push.dz) > 0.2;
+          const next = { x: Math.round(feet.current.x + (push.dx / (Math.hypot(push.dx, push.dz) || 1)) * 0.9), y: Math.round(feet.current.y + (push.dz / (Math.hypot(push.dx, push.dz) || 1)) * 0.9) };
+          const beyond = !open(next.x, next.y) && !hoppable(next.x, next.y);
+          if ((pushing && beyond) || (A.burst && burstStopped.current)) {
+            A.climbing = performance.now();
+            onAct?.({ type: "climb", how: "fly", down: true });
+          }
+        }
+        if (A.y <= floorHere + 0.001 && A.vy <= 0) land(floorHere);
+      }
+    } else if (A.mode === "fly") {
+      A.mode = "jump";
+      A.drop = A.y;
+    } else if (A.mode === "reel" && A.reel) {
+      const R = A.reel;
+      R.t = Math.min(1, R.t + (dt * AIR.reel) / Math.max(1, R.length));
+      feet.current = { x: R.from.x + (R.to.x - R.from.x) * R.t, y: R.from.y + (R.to.y - R.from.y) * R.t };
+      A.y = R.base + Math.sin(Math.PI * R.t) * 0.6;
+      face(R.to.x - R.from.x, R.to.y - R.from.y);
+      A.shot.until = Math.max(A.shot.until, performance.now() + 120);
+      if (R.t >= 1) land(surfaceAt(Math.round(feet.current.x), Math.round(feet.current.y)));
+    } else if (A.mode === "perch") {
+      // On the top of a block: the height follows the roof under the feet; off its edge (pushed over it) is a fall
+      const sq = { x: Math.round(feet.current.x), y: Math.round(feet.current.y) };
+      const s = surfaceAt(sq.x, sq.y);
+      if (s <= 0.05) {
+        A.mode = "jump";
+        A.drop = A.y;
+        A.vy = 0;
+      } else {
+        A.y += (s - A.y) * Math.min(1, 12 * dt);
+        const push = pushAt.current;
+        const length = Math.hypot(push.dx, push.dz);
+        if (performance.now() - push.t < 150 && length > 0.2) {
+          const next = { x: Math.round(feet.current.x + (push.dx / length) * 0.9), y: Math.round(feet.current.y + (push.dz / length) * 0.9) };
+          if (!perchPass(next.x, next.y) && perchDrop(next.x, next.y)) {
+            walk.current = null;
+            feet.current = { x: next.x, y: next.y };
+            A.mode = "jump";
+            A.drop = A.y;
+            A.vy = 0;
+            A.dir = [0, 0];
+          }
+        }
+        if (A.auto && gear?.fly?.on && performance.now() - A.landed > 2500) {
+          A.auto = false;
+          onAct?.({ type: "power", name: gear.fly.name, on: false });
+        }
+      }
+    } else if (A.mode === "ground" && A.auto && gear?.fly?.on && performance.now() - A.landed > 2500) {
+      // A pack that was lit for the flight is put out again once the party has stood a while (what charge is left is kept)
+      A.auto = false;
+      onAct?.({ type: "power", name: gear.fly.name, on: false });
+    }
+    // The pack's flame and the hook's line
+    if (flame.current) {
+      const burning = A.mode === "fly" && (!!A.burst || store.held.jump);
+      flame.current.visible = burning;
+      if (burning) flame.current.scale.y = 0.8 + 0.5 * Math.abs(Math.sin(performance.now() / 45));
+    }
+    if (shotG.current && shotRope.current && shotHook.current) {
+      const now = performance.now() < A.shot.until;
+      shotG.current.visible = now;
+      if (now) {
+        const [hx, hy, hz] = [feet.current.x + 0.5, heightNow() + A.y + 1.0, feet.current.y + 0.5];
+        const [tx, ty, tz] = A.shot.to;
+        const v = new THREE.Vector3(tx - hx, ty - hy, tz - hz);
+        const length = Math.max(0.05, v.length());
+        shotRope.current.position.set((hx + tx) / 2, (hy + ty) / 2, (hz + tz) / 2);
+        shotRope.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), v.normalize());
+        shotRope.current.scale.set(1, length, 1);
+        shotHook.current.position.set(tx, ty, tz);
+        shotHook.current.visible = A.shot.hit;
+      }
+    }
+  };
+  const sceneRoot = useThree((s) => s.scene);
+  useEffect(() => {
+    (window as unknown as { __air?: unknown }).__air = () => ({ ...air.current, feet: { ...feet.current }, height: heightNow() });
+    // (a test puts the party in the air over a square, as if the pack had carried it there)
+    (window as unknown as { __airAt?: unknown }).__airAt = (x: number, y: number, altitude: number) => {
+      feet.current = { x, y };
+      Object.assign(air.current, { mode: "fly", y: altitude, vy: 0, ignited: performance.now() + 60000 });
+    };
+    (window as unknown as { __aimInfo?: unknown }).__aimInfo = () => ({ solids: AIM.solids.size, targets: AIM.targets.size, boxes: [...AIM.solids].filter((o) => (o as THREE.Mesh).isMesh && !o.visible).map((o) => { const b = new THREE.Box3().setFromObject(o); return [b.min.x + cx, b.min.y, b.min.z + cz, b.max.x + cx, b.max.y, b.max.z + cz].map((v) => Math.round(v)); }) });
+    // For test scripts: the big meshes of the scene, with what they are drawn with (a wall that shows a flat colour has no `map`)
+    (window as unknown as { __bigMeshes?: unknown }).__bigMeshes = () => {
+      const out: unknown[] = [];
+      sceneRoot.updateMatrixWorld(true);
+      sceneRoot.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh || !m.visible) return;
+        const box = new THREE.Box3().setFromObject(m);
+        const size = box.getSize(new THREE.Vector3());
+        if (size.y < 2 || Math.max(size.x, size.z) < 4) return;
+        const mat = (Array.isArray(m.material) ? m.material[0] : m.material) as THREE.MeshPhongMaterial;
+        out.push({ min: [box.min.x + cx, box.min.y, box.min.z + cz].map((v) => Math.round(v * 10) / 10), size: [size.x, size.y, size.z].map((v) => Math.round(v * 10) / 10), mat: mat?.type, map: !!mat?.map, color: mat?.color?.getHexString?.(), solid: AIM.solids.has(m) });
+      });
+      return out;
+    };
+  });
   // The leader claims the square they stand on (`claims`): followers keep clear of it, and whoever stands there steps aside
   useEffect(() => () => { claims.delete(LEADER); }, []);
   useFrame((_, delta) => {
     claimSquare(LEADER, present && !duel ? squareOf(feet.current) : null);
     const going = walk.current;
+    // Up to a roof or down from it: the figure is carried along its path, with a line or a flame where the way has one
+    const run = useTransit.getState().now;
+    const lift = run && carried.current?.id === run.id ? carried.current : null;
+    if (run && lift && token.current && present) {
+      walk.current = null;
+      Object.assign(air.current, { mode: "ground", y: 0, vy: 0, burst: null, reel: null, drop: 0 });
+      const pose = transitAt(run.kind, run.up, lift.g, lift.start, Math.min(1, (performance.now() - run.start) / run.ms));
+      token.current.position.set(pose.x, pose.y, pose.z);
+      token.current.rotation.y = pose.yaw;
+      token.current.visible = true;
+      feet.current = { x: pose.x - 0.5, y: pose.z - 0.5 };
+      held.current = { from: hereId, pose, until: performance.now() + 3000 };
+      if (rope.current && hook.current) {
+        const line = run.kind === "hook";
+        rope.current.visible = hook.current.visible = line;
+        if (line) {
+          const length = Math.max(0.2, lift.g.top - pose.y + 0.12);
+          rope.current.scale.y = length;
+          hook.current.position.set(0, 1.05 + length, 0.2);
+        }
+      }
+      if (flame.current) {
+        flame.current.visible = pose.burning;
+        if (pose.burning) flame.current.scale.y = 0.8 + 0.5 * Math.abs(Math.sin(performance.now() / 45));
+      }
+      eye.current = outside && planned ? [feet.current.x + 0.5 - cx, 0, feet.current.y + 0.5 - cz] : null;
+      return;
+    }
+    if (rope.current?.visible || flame.current?.visible) {
+      rope.current && (rope.current.visible = false);
+      hook.current && (hook.current.visible = false);
+      flame.current && (flame.current.visible = false);
+    }
+    if (held.current) {
+      if (held.current.from === hereId && performance.now() < held.current.until && token.current) {
+        const { pose } = held.current;
+        token.current.position.set(pose.x, pose.y, pose.z);
+        return;
+      }
+      held.current = null;
+    }
+    airStep(Math.min(delta, 0.1));
+    // Down onto the stool they have walked to, and up off it when they leave the table; the hands gesture as the game does
+    const tb = useTable.getState();
+    if (sit.current) {
+      const down = tb.seated && !!tb.at;
+      sit.current.k = easeSit(sit.current.k, down, Math.min(delta, 0.1));
+      partySeat.current.sit = down;
+      if (tb.shotKey !== shotSeen.current) {
+        shotSeen.current = tb.shotKey;
+        partySeat.current.shot = tb.shot;
+        partySeat.current.shotKey = tb.shotKey;
+      }
+      if (!down && sit.current.k <= 0) sit.current = null;
+    }
     if (token.current) {
-      token.current.position.set(feet.current.x + 0.5, heightNow(), feet.current.y + 0.5);
+      const into = sit.current ? smooth(sit.current.k) : 0;
+      token.current.position.set(feet.current.x + 0.5 + (sit.current ? (sit.current.x - feet.current.x) * into : 0), heightNow() + air.current.y, feet.current.y + 0.5 + (sit.current ? (sit.current.y - feet.current.y) * into : 0));
       // From the eyes the character is not drawn; over the shoulder they face where the camera looks
       token.current.visible = !(viewing && mode === "first");
       if (viewing && facing.current !== null) token.current.rotation.y = facing.current;
+      if (sit.current && into > 0.3) token.current.rotation.y = sit.current.face;
     }
     eye.current = duelRef.current ? [(duelRef.current.x ?? 0) + 0.5 - cx, (duelRef.current.z ?? 0) * LEVEL_H, (duelRef.current.y ?? 0) + 0.5 - cz] : outside && planned ? [feet.current.x + 0.5 - cx, 0, feet.current.y + 0.5 - cz] : null;
-    if (!going) return;
+    if (!going || air.current.mode === "jump" || air.current.mode === "reel") return;
     let step = Math.min(delta, 0.5) * 7 * Math.max(0.05, going.pace ?? 1);
     while (step > 0 && going.path.length) {
       const next = going.path[0];
@@ -2368,7 +3092,19 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     const uses = opened!.tags.filter((t) => t.startsWith("use:")).map((t) => t.slice(4));
     return {
       open: free,
-      seats: l.assets.filter((a) => a.kind === "furniture" && uses.includes(a.name) && !isCounter(a)).map((a) => ({ id: a.id, centre: [a.x + a.w / 2, 0, a.y + a.h / 2] as V3, spots: spots(aroundSquares(a.x, a.y, a.w, a.h)) })),
+      seats: l.assets.filter((a) => a.kind === "furniture" && uses.includes(a.name) && !isCounter(a)).map((a) => {
+        const around = spots(aroundSquares(a.x, a.y, a.w, a.h));
+        // A Sabacc table: each of its stools, with the free square beside the table that is nearest it (no two stools take one)
+        const used = new Set<string>();
+        const stools = stoolsOf(a.name, a.w, a.h).flatMap((s) => {
+          const [x, y] = [a.x + s.x - 0.5, a.y + s.y - 0.5];
+          const spot = around.filter((q) => !used.has(sqKey(q))).sort((p, q) => Math.hypot(p.x - x, p.y - y) - Math.hypot(q.x - x, q.y - y))[0];
+          if (!spot) return [];
+          used.add(sqKey(spot));
+          return [{ spot, x, y, face: s.face }];
+        });
+        return { id: a.id, centre: [a.x + a.w / 2, 0, a.y + a.h / 2] as V3, spots: stools.length ? stools.map((s) => s.spot) : around, ...(stools.length ? { stools } : {}) };
+      }),
       counters: l.assets.filter(isCounter).map((a) => ({ asset: a, front: spots(counterSides(l, a).front), behind: spots(counterSides(l, a).behind) })),
       stage: l.assets.filter((a) => a.name === "Bandstand").flatMap((a) => Array.from({ length: a.w * a.h }, (_, i) => ({ x: a.x + (i % a.w), y: a.y + Math.floor(i / a.w) }))),
       stageHeight: 0.22,
@@ -2481,7 +3217,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     return l?.switchback ? (a: { x: number; y: number }, b: { x: number; y: number }) => canStep(l, { x: a.x - l.x, y: a.y - l.y }, { x: b.x - l.x, y: b.y - l.y }) : undefined;
   };
   const walkTo = (goals: { x: number; y: number }[], then?: (squares: number) => void) => {
-    if (!active) return;
+    if (!active || useTransit.getState().now || useTable.getState().seated || air.current.mode === "jump" || air.current.mode === "reel" || air.current.mode === "perch") return;
     const from = { x: Math.round(feet.current.x), y: Math.round(feet.current.y) };
     // Loose flagstones have to be stepped on to be felt, so the path is not pulled straight over them
     const traps = inside ? new Set(trapsIn(inside, false).map((t) => `${inside.layout!.x + t.x},${inside.layout!.y + t.y}`)) : undefined;
@@ -2495,9 +3231,44 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // eight directions of the grid (nearest the push first), a diagonal only past two open squares, a blocked one slid along a
   // wall; the rules are in interiors/stick.ts `stickWalk`
   const stepToward = (dx: number, dz: number, speed = 1) => {
-    if (!active) return;
-    walk.current = stickWalk(walk.current, feet.current, dx, dz, speed, open, stepRule());
+    if (!active || useTransit.getState().now || useTable.getState().seated) return;
+    const A = air.current;
+    pushAt.current = { t: performance.now(), dx, dz };
+    if (A.mode === "jump" || A.mode === "reel") return;
+    // Under a running pack the party flies over what stands low, at the pack's pace
+    const gear = useAir.getState().gear;
+    const flying = A.mode === "fly";
+    walk.current = stickWalk(walk.current, feet.current, dx, dz, speed * (flying && gear?.fly ? flightOf(gear.fly.feet).pace : 1), A.mode === "perch" ? perchPass : flying ? airPassable : open, stepRule());
   };
+  // Sitting down at a card table: walk to the square beside the chosen stool, sit on it, ask the table's patrons to fill the other stools, and
+  // hand Play the people who sit there (it opens the game); standing up is Play's `useTable.stand()`
+  useEffect(() => {
+    const at = useTable.getState().at;
+    if (!at || !inside || inside.id !== at.areaId || !inside.layout) return;
+    const l = inside.layout;
+    const stool = roomSetting?.seats.find((s) => s.id === at.assetId)?.stools?.[at.stool];
+    if (!stool) return void useTable.getState().stand();
+    const name = l.assets.find((a) => a.id === at.assetId)?.name ?? "Sabacc table";
+    const go = () => {
+      sit.current = { k: 0, x: l.x + stool.x, y: l.y + stool.y, face: stool.face };
+      useTable.getState().arrived();
+      lifeApi.current?.recruit(at.assetId, 2);
+      // (a moment for those asked to cross the room)
+      setTimeout(() => {
+        if (useTable.getState().at?.assetId !== at.assetId) return;
+        const info = lifeApi.current?.table(at.assetId);
+        onAct?.({ type: "table", areaId: inside.id, id: at.assetId, name, players: info?.players ?? [], croupier: info?.dealer });
+      }, 2400);
+    };
+    const goal = { x: l.x + stool.spot.x, y: l.y + stool.spot.y };
+    if (apart(squareOf(feet.current), goal) === 0) go();
+    else {
+      walkTo([goal], go);
+      if (!walk.current) go();
+    }
+  }, [table?.assetId, table?.stool]);
+  // Leaving the room stands the party up from the table
+  useEffect(() => () => { if (useTable.getState().at) useTable.getState().stand(); }, [hereId]);
   // Which way to look on starting the eye views: into the room if the party has only just come in by a way (not at the door they came through),
   // else the way the figure faces
   const startYaw = () => {
@@ -2538,6 +3309,15 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const actOn = (a: RoomAsset) => {
     const l = inside!.layout!;
     if (a.kind === "furniture" && a.ref?.startsWith("station:")) walkTo(around(l.x + a.x, l.y + a.y, a.w, a.h), () => onAct?.({ type: "station", id: a.ref!.slice(8) }));
+    // A Sabacc table: the party takes the free stool nearest it (never the dealer's), and sits; Play opens the game once it has
+    else if (a.kind === "furniture" && /sabacc/i.test(a.name) && lifeApi.current && !useTable.getState().at) {
+      const info = lifeApi.current.table(a.id);
+      const stools = roomSetting?.seats.find((s) => s.id === a.id)?.stools ?? [];
+      const me = squareOf(feet.current);
+      const free = info.free.filter((i) => i > 0 || !info.dealer).sort((p, q) => apart({ x: l.x + stools[p].spot.x, y: l.y + stools[p].spot.y }, me) - apart({ x: l.x + stools[q].spot.x, y: l.y + stools[q].spot.y }, me));
+      if (!free.length) onAct?.({ type: "note", text: "Every stool at the table is taken. Wait for a seat." });
+      else useTable.getState().sit({ areaId: inside!.id, assetId: a.id, stool: free[0] });
+    }
     else if (a.kind === "furniture" && useKindOf(a.name)) walkTo(around(l.x + a.x, l.y + a.y, a.w, a.h), () => onAct?.({ type: "use", areaId: inside!.id, id: a.id, name: a.name }));
     else if (isCounter(a)) {
       // A double tap on a counter calls whoever serves there; a tap only says who that is
@@ -2642,6 +3422,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   };
   // Inside a room the curve is kept small, so that the corner square stays a square to stand on
   const insideRadii = (room: Area) => (room.layout?.shape ? radiiOf(room) : radiiOf(room).map((r) => Math.min(r, 1.1))) as [number, number, number, number];
+  // The room whose walls a roof or a gallery shares (2026-10-27): the roof's is the room under it (same footprint), the gallery's its host
+  const roofUnder = (l: RoomLayout) => rooms.find((o) => roofed.has(o.id) && o.layout!.x === l.x && o.layout!.y === l.y && o.layout!.width === l.width && o.layout!.height === l.height);
+  const likeOf = (room: Area): { buildingType: string; roomName: string } | undefined => {
+    const f = formOf(room);
+    const from = f === "gallery" ? rooms.find((r) => room.tags.includes(`host:${r.id}`)) : f === "roof" && room.layout ? roofUnder(room.layout) : undefined;
+    return from ? { buildingType: building.type, roomName: from.name } : undefined;
+  };
 
   return (
     <>
@@ -2701,6 +3488,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   corners={formOf(room) || openAir(room) ? undefined : insideRadii(room)}
                   style={style}
                   mood={formOf(room) || openAir(room) ? undefined : { buildingType: building.type, roomName: room.name, biome }}
+                  biome={biome}
+                  like={likeOf(room)}
                   width={l.width}
                   height={l.height}
                   assets={shown}
@@ -2772,21 +3561,25 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               <Box at={[l.width - 0.04, h, l.height / 2]} size={[0.05, 0.04, l.height]} color="#c8ccd2" />
             </>
           );
+          // (the four walls of an open-topped room: of the room's wall set, and not overlapping at the corners or the floor, where their faces lay in
+          // one plane with another box's and flashed: 2026-10-27, the user's hangar exterior)
+          const hollowSet = wallSet(packOf(room.name, building.type), biome);
           const hollow = (h: number, color: string) => (
             <>
-              <Box at={[l.width / 2, h / 2, 0.08]} size={[l.width, h, 0.16]} color={color} />
-              <Box at={[l.width / 2, h / 2, l.height - 0.08]} size={[l.width, h, 0.16]} color={color} />
-              <Box at={[0.08, h / 2, l.height / 2]} size={[0.16, h, l.height]} color={color} />
-              <Box at={[l.width - 0.08, h / 2, l.height / 2]} size={[0.16, h, l.height]} color={color} />
+              <Box at={[l.width / 2, h / 2, 0.08]} size={[l.width, h, 0.16]} color={color} solid wall={hollowSet} />
+              <Box at={[l.width / 2, h / 2, l.height - 0.08]} size={[l.width, h, 0.16]} color={color} solid wall={hollowSet} />
+              <Box at={[0.08, h / 2, l.height / 2]} size={[0.16, h, l.height - 0.32]} color={color} solid wall={hollowSet} />
+              <Box at={[l.width - 0.08, h / 2, l.height / 2]} size={[0.16, h, l.height - 0.32]} color={color} solid wall={hollowSet} />
             </>
           );
           return (
             <group key={room.id} position={[l.x, lift, l.y]}>
               {/* What an upper floor stands on */}
-              {lift > 0.01 && form !== "gallery" && form !== "walkway" && <Box at={[l.width / 2, -lift / 2, l.height / 2]} size={[l.width - 0.1, lift, l.height - 0.1]} color={new THREE.Color(wall).multiplyScalar(0.7).getStyle()} />}
+              {/* What a raised room stands on, in the wall set of the room (it was a plain colour: the flat wall in the middle of the user's street) */}
+              {lift > 0.01 && form !== "gallery" && form !== "walkway" && <Box at={[l.width / 2, -lift / 2, l.height / 2]} size={[l.width - 0.1, lift, l.height - 0.1]} color={new THREE.Color(wall).multiplyScalar(0.7).getStyle()} wall={wallSet(packOf(room.name, building.type), biome)} solid={!opened} />}
               {form === "roof" ? (
                 <group position={[0, 0.02, 0]} onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
-                  <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} wayColor={wayColor} wayLabel={() => undefined} style={style} corners={(() => { const under = rooms.find((o) => roofed.has(o.id) && o.layout!.x === l.x && o.layout!.y === l.y && o.layout!.width === l.width && o.layout!.height === l.height); return under ? radiiOf(under) : undefined; })()} />
+                  <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} wayColor={wayColor} wayLabel={() => undefined} style={style} biome={biome} like={likeOf(room)} corners={(() => { const under = roofUnder(l); return under ? radiiOf(under) : undefined; })()} />
                   {/* Who stands on it, to be seen from the street */}
                   {!duel && l.assets.filter((a) => a.kind === "npc").map((a) => {
                     const o = room.occupants.find((x) => x.id === a.ref);
@@ -2858,7 +3651,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               ) : lookedFrom ? (
                 // The room under a mezzanine is looked down into, not boxed in: its floor, low walls and what is in it
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
-                  <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} ships={room.ships} bay={{ room, based: based[room.id] }} wayColor={wayColor} wayLabel={() => undefined} />
+                  <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} ships={room.ships} bay={{ room, based: based[room.id] }} wayColor={wayColor} wayLabel={() => undefined} biome={biome} like={{ buildingType: building.type, roomName: room.name }} />
                   {!duel && l.assets.filter((a) => a.kind === "npc").map((a) => {
                     const o = room.occupants.find((x) => x.id === a.ref);
                     return o ? (
@@ -2873,7 +3666,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               ) : l.roof ? (
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                   {/* Open to the sky, the ships inside it to be seen; where the air is no good, doors in the roof slide back */}
-                  <Box at={[l.width / 2, 0.04, l.height / 2]} size={[l.width, 0.08, l.height]} color={FLOORS.hangar} />
+                  <Box at={[l.width / 2, 0.04, l.height / 2]} size={[l.width - 0.1, 0.08, l.height - 0.1]} color={FLOORS.hangar} />
                   {hollow(tall, wallColor)}
                   {l.assets.filter((a) => a.kind === "ship").map((a) => (
                     <group key={a.id} position={[a.x, 0, a.y]}>
@@ -2891,6 +3684,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     ) : (
                     <RoomBlock w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} set={wallSet(packOf(room.name, building.type), biome)} />
                     )}
+                    {!opened && !form && !(building.type === "cave" && l.mask) && <AimBox at={[l.width / 2, body / 2, l.height / 2]} size={[l.width, body, l.height]} />}
                     {/* out to the curve of a round room it stands against */}
                     {!(building.type === "cave" && l.mask) && meetsOf(room, rooms).map((m, i) => <MeetFill key={`meet${i}`} meet={m} width={l.width} height={l.height} y={0} h={body} color={wallColor} wall={wallSet(packOf(room.name, building.type), biome)} />)}
                   </group>
@@ -2899,8 +3693,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                       {/* What stands on the roof */}
                       {/* (a tower of a palace is capped with a spire, its great hall with a dome) */}
                       {/tower/i.test(room.name) ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><Cyl at={[0, 1.4, 0]} r={Math.min(l.width, l.height) * 0.42} h={2.8} color={paletteOf(biome).canvas[0]} top={0.03} /><Cyl at={[0, 3.0, 0]} r={0.04} h={0.8} color="#d8b45a" /></group>
-                        : /audience chamber/i.test(room.name) && building.type === "palace" ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.4} color={wall} /></group>
-                        : room.gateway ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.3} color={wall} /></group>
+                        : /audience chamber/i.test(room.name) && building.type === "palace" ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.4} color={wall} set={wallSet(packOf(room.name, building.type), biome)} /></group>
+                        : room.gateway ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.3} color={wall} set={wallSet(packOf(room.name, building.type), biome)} /></group>
                         : roof % 3 === 0 ? <><Box at={[l.width * 0.3, tall + 0.35, l.height * 0.35]} size={[1, 0.5, 0.8]} color="#59636d" /><Cyl at={[l.width * 0.3, tall + 0.65, l.height * 0.35]} r={0.25} h={0.1} color="#2b2f36" /></>
                         : roof % 3 === 1 ? <Mast at={[l.width * 0.7, tall + 0.1, l.height * 0.6]} h={1.8} />
                         : <Cyl at={[l.width * 0.6, tall + 0.4, l.height * 0.4]} r={0.5} h={0.6} color="#59636d" />}
@@ -2922,7 +3716,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     </mesh>
                   )}
                   <group position={[at.x, 0, at.z]} rotation={[0, at.turn, 0]}>
-                    <Doorway name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={wallSet(packOf(room.name, building.type), biome)} bend={place.bend} />
+                    <Doorway name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={wallSet(packOf(room.name, building.type), biome)} tint={wallColor} bend={place.bend} />
                   </group>
                   </group>
                 );
@@ -3067,9 +3861,22 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             {ridden && <Figure kind="beast" ring={SIDE_COLORS.player} name={ridden.name} large={isLarge(ridden.size)} creature={ridden.creature} size={ridden.size} />}
             {/* the rider's seat (not the feet) on the beast's back: a figure's hips are RIDER_HIPS over its feet */}
             <group position={[0, ridden ? seatFor(ridden.name, ridden.creature, ridden.size) * (isLarge(ridden.size) ? 1.5 : 1) - RIDER_HIPS : 0, 0]}>
-              <Figure kind="player" ring={SIDE_COLORS.player} marker riding={!!ridden} />
+              <Figure kind="player" ring={SIDE_COLORS.player} marker riding={!!ridden} seat={partySeat} unarmed={!!table} />
             </group>
             <HandledCarts carts={cartsOf("me")} biome={biome} reach={ridden && isLarge(ridden.size) ? 1.7 : 1.05} onTap={active ? (id) => onAct?.({ type: "cart", id }) : undefined} />
+            {/* A hook's line, held in the hands up to the hook on the edge, and a jetpack's flame at the back (only while a way up or down is made) */}
+            <group ref={rope} visible={false} position={[0, 1.05, 0.2]} raycast={() => null}>
+              <mesh position={[0, 0.5, 0]} raycast={() => null}><cylinderGeometry args={[0.012, 0.012, 1, 5]} /><meshBasicMaterial color="#d8d2c0" /></mesh>
+            </group>
+            <mesh ref={hook} visible={false} raycast={() => null}><boxGeometry args={[0.16, 0.06, 0.1]} /><meshBasicMaterial color="#6b7280" /></mesh>
+            <mesh ref={flame} visible={false} position={[0, 0.55, -0.18]} rotation={[Math.PI, 0, 0]} raycast={() => null}><coneGeometry args={[0.09, 0.45, 8]} /><meshBasicMaterial color="#ffb347" transparent opacity={0.85} depthWrite={false} blending={THREE.AdditiveBlending} /></mesh>
+          </group>
+        )}
+        {/* The hook fired in the air: its line from the hand, and the hook where it bit */}
+        {present && !duel && (
+          <group ref={shotG} visible={false}>
+            <mesh ref={shotRope} raycast={() => null}><cylinderGeometry args={[0.014, 0.014, 1, 5]} /><meshBasicMaterial color="#d8d2c0" /></mesh>
+            <mesh ref={shotHook} raycast={() => null}><boxGeometry args={[0.18, 0.08, 0.12]} /><meshBasicMaterial color="#9ca3af" /></mesh>
           </group>
         )}
         {present && !duel && followers.map((c, i) => (
@@ -3145,7 +3952,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         }}
       />
       {mode !== "overhead" && viewing ? (
-        <ViewRig mode={mode} start={startYaw()} feet={() => [feet.current.x + 0.5 - cx, heightNow(), feet.current.y + 0.5 - cz]} facing={facing} step={stepToward} />
+        <ViewRig mode={mode} start={startYaw()} feet={() => [feet.current.x + 0.5 - cx, heightNow() + air.current.y, feet.current.y + 0.5 - cz]} facing={facing} step={stepToward} />
       ) : (
         <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} />
       )}

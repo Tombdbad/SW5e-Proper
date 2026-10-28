@@ -273,13 +273,13 @@ void main() {
   gl_Position = projectionMatrix * viewMatrix * wp;
 }`;
 const BALL_FRAG = `
-uniform sampler2D uMap; uniform vec3 uSun; uniform vec3 uRim; uniform float uOpacity; uniform float uNight; uniform float uDark;
+uniform sampler2D uMap; uniform vec3 uSun; uniform vec3 uRim; uniform float uOpacity; uniform float uNight; uniform float uDark; uniform float uGain;
 varying vec3 vN; varying vec2 vUv; varying vec3 vView;
 void main() {
   vec3 n = normalize( vN );
   float lit = max( dot( n, normalize( uSun ) ), 0.0 );
   vec3 col = texture2D( uMap, vUv ).rgb;
-  vec3 c = col * ( uNight + lit * 1.1 );
+  vec3 c = col * ( uNight + lit * 1.1 ) * uGain;
   float rim = pow( 1.0 - max( dot( n, normalize( vView ) ), 0.0 ), 3.0 );
   c += uRim * rim * ( 0.25 + lit );
   // (in a day sky the dark side is the sky's own colour: only the lit side shows)
@@ -289,7 +289,7 @@ void main() {
 }`;
 function ballMaterial(map: THREE.Texture, rim: string, night = 0.04) {
   return new THREE.ShaderMaterial({
-    uniforms: { uMap: { value: map }, uSun: { value: new THREE.Vector3(1, 0.4, 0.3) }, uRim: { value: new THREE.Color(rim) }, uOpacity: { value: 1 }, uNight: { value: night }, uDark: { value: 1 } },
+    uniforms: { uMap: { value: map }, uSun: { value: new THREE.Vector3(1, 0.4, 0.3) }, uRim: { value: new THREE.Color(rim) }, uOpacity: { value: 1 }, uNight: { value: night }, uDark: { value: 1 }, uGain: { value: 1 } },
     vertexShader: BALL_VERT,
     fragmentShader: BALL_FRAG,
     transparent: true,
@@ -308,6 +308,9 @@ export function PlanetBall({ biome, seed, radius, sun, moon = false, ring = fals
   mat.uniforms.uSun.value.set(...sun);
   mat.uniforms.uOpacity.value = opacity;
   mat.uniforms.uDark.value = dark;
+  // (a moon is brighter than its photograph: it is the night's light, and a world's moon shows a good part of its face even when it is a crescent)
+  mat.uniforms.uGain.value = moon ? 2.1 : 1;
+  mat.uniforms.uNight.value = moon ? 0.16 : 0.04;
   return (
     <group position={position} rotation={rotation}>
       <mesh material={mat} raycast={() => null} renderOrder={-8}>
@@ -573,10 +576,17 @@ export interface SkyProps {
   land?: boolean;
   // Fog over the scene's own ground, from `fog[0]` to `fog[1]` off (scene units), in the haze of the horizon: the ground fades into the far land
   fog?: [number, number];
+  // The hour as it is this instant (a fraction: the clock's minute and how far through it we are), read each frame, so that the suns and moons
+  // sweep across the sky and do not step from place to place with the clock's ticks; without it they stand where `hour` puts them
+  now?: () => number;
 }
+// A moon is drawn this many times larger than its size says (the user, 2026-10-28: "the moon is not big or bright enough")
+const MOON_SCALE = 2.6;
 // A sky that stays round the camera: everything in it is far off, so it moves with the camera across the ground (not up and down)
-export function WorldSky({ look, light, hour, radius = 650, ground = 0, lite = false, floor = true, land = true, fog }: SkyProps) {
+export function WorldSky({ look, light, hour, radius = 650, ground = 0, lite = false, floor = true, land = true, fog, now }: SkyProps) {
   const group = useRef<THREE.Group>(null);
+  const sunRefs = useRef<(THREE.Group | null)[]>([]);
+  const moonRefs = useRef<(THREE.Group | null)[]>([]);
   const camera = useThree((s) => s.camera);
   const R = radius;
   const colors = skyColors(look, light);
@@ -679,6 +689,25 @@ export function WorldSky({ look, light, hour, radius = 650, ground = 0, lite = f
 
   useFrame((state, dt) => {
     if (group.current) group.current.position.set(camera.position.x, ground, camera.position.z);
+    // The suns and moons at this instant's hour
+    if (now) {
+      const h = now();
+      const base = sunDirection(h);
+      look.suns.forEach((s, i) => {
+        const g = sunRefs.current[i];
+        if (!g) return;
+        const d = base.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), s.az).add(new THREE.Vector3(0, s.el, 0)).normalize().multiplyScalar(R * 0.98);
+        g.position.set(d.x, d.y, d.z);
+        g.visible = d.y >= -R * 0.05;
+      });
+      const turn = ((h % 24) / 24) * Math.PI * 2;
+      [...look.planets, ...look.moons].forEach((b, i) => {
+        const g = moonRefs.current[i];
+        if (!g) return;
+        const d = toDir(b.az + turn * b.drift, b.el).multiplyScalar(R * 0.98);
+        g.position.set(d.x, d.y, d.z);
+      });
+    }
     if (cloudSpin.current) cloudSpin.current.rotation.y += dt * 0.0035;
     if (smoke.current) {
       const t = state.clock.elapsedTime;
@@ -709,10 +738,9 @@ export function WorldSky({ look, light, hour, radius = 650, ground = 0, lite = f
       {/* The suns, up by day */}
       {look.suns.map((s, i) => {
         const d = sun.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), s.az).add(new THREE.Vector3(0, s.el, 0)).normalize().multiplyScalar(R * 0.98);
-        if (d.y < -R * 0.05) return null;
         const size = R * 0.98 * s.size;
         return (
-          <group key={`sun${i}`} position={[d.x, d.y, d.z]}>
+          <group key={`sun${i}`} ref={(g) => { sunRefs.current[i] = g; }} position={[d.x, d.y, d.z]} visible={d.y >= -R * 0.05}>
             <sprite scale={[size * 7, size * 7, 1]} renderOrder={-8} raycast={() => null}>
               <spriteMaterial map={glowTexture()} color={s.color} transparent opacity={0.6} blending={THREE.AdditiveBlending} depthWrite={false} fog={false} />
             </sprite>
@@ -725,7 +753,11 @@ export function WorldSky({ look, light, hour, radius = 650, ground = 0, lite = f
       {/* The moons and the system's other worlds, lit by the sun (a moon shows its phase), faint by day */}
       {[...look.planets, ...look.moons].map((b, i) => {
         const d = body(b).multiplyScalar(R * 0.98);
-        return <PlanetBall key={`b${i}`} biome={b.biome ?? "barren"} seed={hashText(`${b.kind}${b.color}${b.biome ?? ""}`) + i} moon={b.kind === "moon"} ring={b.ring} radius={R * 0.98 * b.size} sun={[sun.x, sun.y, sun.z]} opacity={b.size > 0.1 ? 0.7 + 0.3 * night : bodyOpacity} dark={0.08 + 0.9 * night} position={[d.x, d.y, d.z]} />;
+        return (
+          <group key={`b${i}`} ref={(g) => { moonRefs.current[i] = g; }} position={[d.x, d.y, d.z]}>
+            <PlanetBall biome={b.biome ?? "barren"} seed={hashText(`${b.kind}${b.color}${b.biome ?? ""}`) + i} moon={b.kind === "moon"} ring={b.ring} radius={R * 0.98 * b.size * (b.kind === "moon" ? MOON_SCALE : 1)} sun={[sun.x, sun.y, sun.z]} opacity={b.size > 0.1 ? 0.7 + 0.3 * night : bodyOpacity} dark={0.08 + 0.9 * night} position={[0, 0, 0]} />
+          </group>
+        );
       })}
       <group ref={cloudSpin}>
         {clouds.map((c, i) => (

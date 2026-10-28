@@ -15,10 +15,13 @@ import {
 import { ZodError } from "zod";
 import { formatError } from "./utils";
 import { registerSw5eRoutes } from "./sw5eRoutes";
+import { registerDialogueRoutes } from "./dialogue";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Rules data (shared/data/sw5e) and world generation
   registerSw5eRoutes(app);
+  // Spoken replies from the local model (Ollama)
+  registerDialogueRoutes(app);
 
   // All routes are prefixed with /api
 

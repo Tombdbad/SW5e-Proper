@@ -11,7 +11,7 @@ import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
-import { advance, LIMB, limbMaterial, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, type Gait, type Stride } from "./interiors/limbs";
+import { advance, LIMB, limbMaterial, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, type Gait, type Stride, type SeatState } from "./interiors/limbs";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
 import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
@@ -806,6 +806,18 @@ function buildSeat(k: Kit, n: string) {
   });
 }
 
+// Where the stools of a table stand, in squares from the corner of its footprint, and the way each faces (toward the middle): a Sabacc table has
+// five (2026-10-27: the people who play at it sit on them: LocalMap Life, the gallery's `table`)
+export const SABACC_STOOLS = 5;
+export function stoolsOf(name: string, w: number, h: number): { x: number; y: number; face: number }[] {
+  if (!/sabacc/i.test(name)) return [];
+  const r = Math.min(w, h) * 0.5;
+  return Array.from({ length: SABACC_STOOLS }, (_, i) => {
+    const a = i * ((Math.PI * 2) / SABACC_STOOLS) + 0.6;
+    return { x: w / 2 + Math.cos(a) * r, y: h / 2 + Math.sin(a) * r, face: Math.atan2(-Math.cos(a), -Math.sin(a)) };
+  });
+}
+
 function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number, bare = false) {
   const back = -D / 2;
   // Posts at the corners of a footprint, inset by `m`
@@ -1424,9 +1436,16 @@ export function RoomBlock({ w, d, height, radii, wall, roof, parapet, band, dim,
   const body = dim ? shade(wall, 0.45) : wall;
   const shell = (k: Kit) => upright(k, planRect(w, d, r), height, body, { bevel: 0.04 });
   const shape = `block:${w}x${d}:${r2(height)}:${r.join(",")}:${body}`;
+  // The parapet round the roof is of the wall too (2026-10-27: it was a plain colour over the textured walls)
+  const rim = (k: Kit) => {
+    const ring = planRect(w + 0.2, d + 0.2, r.map((x) => (x ? x + 0.1 : 0)) as typeof r);
+    ring.holes.push(planRect(w - 0.04, d - 0.04, r.map((x) => Math.max(0, x - 0.12)) as typeof r));
+    upright(k, ring, 0.3, wall, { y: height + 0.05, bevel: 0.02 });
+  };
   return (
     <>
       {set && <TexturedBody id={shape} set={set} tint={body} build={shell} position={[w / 2, 0, d / 2]} />}
+      {set && parapet && <TexturedBody id={`rim:${shape}:${wall}`} set={set} tint={wall} build={rim} position={[w / 2, 0, d / 2]} />}
       <Model
         id={`${shape}:${roof}:${parapet ? 1 : 0}${band ? 1 : 0}:${set ?? ""}`}
         position={[w / 2, 0, d / 2]}
@@ -1434,11 +1453,7 @@ export function RoomBlock({ w, d, height, radii, wall, roof, parapet, band, dim,
           if (!set) shell(k);
           if (band) upright(k, planRect(w + 0.06, d + 0.06, r.map((x) => (x ? x + 0.03 : 0)) as typeof r), 0.12, shade(body, 0.72), { y: height - 0.3, bevel: 0.02 });
           if (roof) upright(k, planRect(w + 0.2, d + 0.2, r.map((x) => (x ? x + 0.1 : 0)) as typeof r), 0.1, roof, { y: height, bevel: 0.02 });
-          if (parapet) {
-            const ring = planRect(w + 0.2, d + 0.2, r.map((x) => (x ? x + 0.1 : 0)) as typeof r);
-            ring.holes.push(planRect(w - 0.04, d - 0.04, r.map((x) => Math.max(0, x - 0.12)) as typeof r));
-            upright(k, ring, 0.3, wall, { y: height + 0.05, bevel: 0.02 });
-          }
+          if (parapet && !set) rim(k);
         }}
       />
     </>
@@ -1477,22 +1492,30 @@ export function CornerWall({ r, h, thick, corner, color, wall, from, to }: { r: 
 }
 
 // A dome over a room: a turned dome with a rim and a lantern on top
-export function DomeRoof({ r, color, lit = true }: { r: number; color: string; lit?: boolean }) {
+// With `set` the shell is textured with that wall set (the room's own, so the dome is of what the building is built of: 2026-10-27, the
+// user: domed roof textures were not applied), its coordinates projected on the curve as the walls' are
+export function DomeRoof({ r, color, lit = true, set }: { r: number; color: string; lit?: boolean; set?: WallSet }) {
+  const shell = (k: Kit) => {
+    const profile: [number, number][] = [];
+    for (let i = 0; i <= 10; i++) {
+      const t = (i / 10) * (Math.PI / 2);
+      profile.push([Math.cos(t) * r, Math.sin(t) * r * 0.85]);
+    }
+    k.lathe([[r + 0.08, 0], [r + 0.08, 0.08], ...profile.slice(1)], color, { seg: 28 });
+  };
   return (
-    <Model
-      id={`dome:${r2(r)}:${color}:${lit ? 1 : 0}`}
-      build={(k) => {
-        const profile: [number, number][] = [];
-        for (let i = 0; i <= 10; i++) {
-          const t = (i / 10) * (Math.PI / 2);
-          profile.push([Math.cos(t) * r, Math.sin(t) * r * 0.85]);
-        }
-        k.lathe([[r + 0.08, 0], [r + 0.08, 0.08], ...profile.slice(1)], color, { seg: 28 });
-        k.torus(r + 0.04, 0.05, shade(color, 0.75), { at: [0, 0.08, 0], rot: [Math.PI / 2, 0, 0], seg: [6, 32] });
-        k.lathe([[0.12, 0], [0.12, 0.1], [0.06, 0.16], [0.08, 0.3], [0, 0.34]], shade(color, 0.8), { at: [0, r * 0.85 - 0.02, 0], seg: 12 });
-        if (lit) k.sphere(0.05, C.amber, { at: [0, r * 0.85 + 0.36, 0], finish: "glow", seg: [8, 6] });
-      }}
-    />
+    <>
+      {set && <TexturedBody id={`domeshell:${r2(r)}:${color}`} set={set} tint={color} build={shell} position={[0, 0, 0]} />}
+      <Model
+        id={`dome:${r2(r)}:${color}:${lit ? 1 : 0}:${set ?? ""}`}
+        build={(k) => {
+          if (!set) shell(k);
+          k.torus(r + 0.04, 0.05, shade(color, 0.75), { at: [0, 0.08, 0], rot: [Math.PI / 2, 0, 0], seg: [6, 32] });
+          k.lathe([[0.12, 0], [0.12, 0.1], [0.06, 0.16], [0.08, 0.3], [0, 0.34]], shade(color, 0.8), { at: [0, r * 0.85 - 0.02, 0], seg: 12 });
+          if (lit) k.sphere(0.05, C.amber, { at: [0, r * 0.85 + 0.36, 0], finish: "glow", seg: [8, 6] });
+        }}
+      />
+    </>
   );
 }
 
@@ -1520,6 +1543,25 @@ function doorShape(style: Pick<Style, "arch" | "porthole"> | undefined, inset = 
   const r = (style?.porthole ? 0.24 : 0.06) - inset;
   return roundedRect(w, h, [0, 0, r, r], -w / 2, 0);
 }
+// What shows through an open doorway (2026-10-27, the user: the door opens and the wall texture is displayed within the door frame): the room
+// beyond is not drawn (its block stands right behind the wall, so its own wall face was seen in the frame), so the frame's opening is filled with
+// the dark of the way beyond, on the plane of the wall (the neighbour's face is on it too: the fill is drawn in front by a polygon offset).
+// The leaf shuts it while it is closed.
+export function DoorVoid({ style, bend }: { style?: Pick<Style, "arch" | "porthole">; bend?: Bend }) {
+  const geo = useMemo(() => {
+    const g = new THREE.ShapeGeometry(doorShape(style, 0), 10);
+    if (!bend) return g;
+    const bent = bend.apply(g);
+    g.dispose();
+    return bent;
+  }, [style?.arch, style?.porthole, bend?.key]);
+  useEffect(() => () => geo.dispose(), [geo]);
+  return (
+    <mesh geometry={geo} raycast={() => null}>
+      <meshBasicMaterial color="#06080c" side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={-4} polygonOffsetUnits={-4} />
+    </mesh>
+  );
+}
 export function DoorLeaf({ open, mode, metal = false, tint, style, wall, bend }: { open: boolean; mode: "hinge" | "rise"; metal?: boolean; tint?: string; style?: Pick<Style, "arch" | "porthole">; wall?: WallSet; bend?: Bend }) {
   const leaf = useRef<THREE.Group>(null);
   const t = useRef(0);
@@ -1536,15 +1578,17 @@ export function DoorLeaf({ open, mode, metal = false, tint, style, wall, bend }:
       const bent = bend.apply(g);
       g.dispose();
       bent.translate(-hinge[0], -hinge[1], -hinge[2]);
-      return boxUV(bent, 2);
+      return boxUV(bent, wall ? 1 / WALL_TILE : 2);
     }
-    const uv = boxUV(g, 2);
+    const uv = boxUV(g, wall ? 1 / WALL_TILE : 2);
     g.dispose();
     return uv;
-  }, [mode, style?.arch, style?.porthole, bend?.key]);
+  }, [mode, style?.arch, style?.porthole, bend?.key, !!wall]);
   useEffect(() => () => geo.dispose(), [geo]);
-  const look = wall ? DOOR_LOOKS[wall] : DOOR_LOOKS.painted_plaster_wall;
-  const material = metal ? surfaceMaterial("wear", "painted_metal_shutter", { tint: tint ?? "#9aa4ae", lift: 1.1, parallax: 0.02 }) : surfaceMaterial(look.folder, look.set, { tint: tint ?? look.tint, lift: look.lift, parallax: 0.02 });
+  // The leaf is of the same texture as the walls it is set in (2026-10-27, the user: the door panel's texture differed from the wall tiles), a little
+  // darker so that it reads as a panel in its frame; with no wall set (a plain room) the old looks by set stay
+  const look = DOOR_LOOKS.painted_plaster_wall;
+  const material = wall ? wallMaterial(wall, { tint: shade(tint ?? "#ffffff", 0.7) }) : metal ? surfaceMaterial("wear", "painted_metal_shutter", { tint: tint ?? "#9aa4ae", lift: 1.1, parallax: 0.02 }) : surfaceMaterial(look.folder, look.set, { tint: tint ?? look.tint, lift: look.lift, parallax: 0.02 });
   useFrame((_, dt) => {
     const target = open ? 1 : 0;
     t.current += Math.sign(target - t.current) * Math.min(Math.abs(target - t.current), dt / DOOR_OPEN_SECONDS);
@@ -3960,7 +4004,7 @@ function creatureGait(p: Plan): Gait {
 const furOf = (p: Plan): number | undefined => (hideOf(p) !== "fur" ? undefined : p.plan === "quad" ? p.girth * 0.16 : p.plan === "brute" ? 0.035 * p.bulk : p.plan === "critter" ? 0.012 : 0.022);
 const seatOf = (p: Plan): number => (p.plan === "quad" ? p.h + p.girth * 1.5 : p.plan === "runner" ? 0.8 : p.plan === "brute" ? 0.42 + 0.55 * p.bulk : p.plan === "serpent" ? p.r * 2 + 0.1 : 0.5);
 
-export function figureSpec(kind: string, name: string, opts: { role?: string; creature?: string; species?: string; size?: string; looks: Record<string, Look>; party?: { species?: string; name?: string; force?: boolean; blade?: string; gear?: Gear }; player?: boolean; attach?: Attach[]; gear?: Gear; modules?: { name: string; geometry: THREE.BufferGeometry }[] }): FigureSpec {
+export function figureSpec(kind: string, name: string, opts: { role?: string; creature?: string; species?: string; size?: string; looks: Record<string, Look>; party?: { species?: string; name?: string; force?: boolean; blade?: string; gear?: Gear }; player?: boolean; attach?: Attach[]; gear?: Gear; modules?: { name: string; geometry: THREE.BufferGeometry }[]; unarmed?: boolean }): FigureSpec {
   const { role = "", creature = "", size = "", looks, party } = opts;
   const seed = hue(name || kind);
   const machine = constructKind(name);
@@ -4035,7 +4079,9 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
     const [gloves, boots] = [glovesOf(gear), bootsOf(gear) ?? (suit ? "plain" : undefined)];
     outfit = { ...outfit, ...(gloves || suit ? { gloves: gloves ?? "plain" } : {}), ...(boots ? { boots } : {}), ...(hasBandolier(gear) ? { bandolier: true } : {}) };
   }
-  const wants = wantsOf(outfit.hand, gear, role || name, name);
+  // (someone at a card table has left their weapon at the door: nothing in the hand, no blaster on the hip)
+  if (opts.unarmed) outfit = { ...outfit, hand: "" };
+  const wants = wantsOf(outfit.hand, gear, role || name, name).filter((w) => !opts.unarmed || w.slot !== "weapon");
   const attach = opts.attach ?? [];
   const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.weight ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}${outfit.suit ?? ""}${outfit.gloves ?? ""}${outfit.boots ?? ""}:${seed & 28}${attach.length ? `:g${attach.map((a) => `${a.slot}=${a.id}@${a.scale}`).join("+")}` : ""}`;
   return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, seed, attach), height: 1.25 * look.scale, wants, blade: outfit.blade, gait: "walk", ...(look.fur && hair ? { fur: 0.02 * look.scale } : {}) };
@@ -4071,7 +4117,7 @@ const FUR_DETAIL = typeof matchMedia !== "undefined" && matchMedia("(pointer: co
 // a beast trots on four legs and a bug on six, a bird beats its wings, a BB unit rolls its ball under its head, a probe floats, and what
 // rolls or glides does not bob. `ball` is the radius of a ball it rolls on (`wheel`: one that only rolls the way it faces); `fur` the
 // length of its hair, drawn in shells that move with it
-function Mover({ id, build, gait, ball, wheel, fur }: { id: string; build: (k: Kit) => void; gait: Gait; ball?: number; wheel?: boolean; fur?: number }) {
+function Mover({ id, build, gait, ball, wheel, fur, seat, ring }: { id: string; build: (k: Kit) => void; gait: Gait; ball?: number; wheel?: boolean; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh> }) {
   const m = useModel(`${id}:anim`, (k) => { k.animated = true; build(k); });
   const mats = useMemo(() => Object.fromEntries(FINISHES.map((f) => [f, limbMaterial(MATERIALS[f])])) as Record<Finish, THREE.Material>, []);
   const furMat = useMemo(() => (fur ? limbMaterial(furShellMaterial(fur, FUR_DETAIL)) : null), [fur]);
@@ -4079,11 +4125,28 @@ function Mover({ id, build, gait, ball, wheel, fur }: { id: string; build: (k: K
   useEffect(() => () => furMat?.dispose(), [furMat]);
   const group = useRef<THREE.Group>(null);
   const body = useRef<THREE.Group>(null);
-  const work = useMemo(() => ({ pose: restPose(), world: new THREE.Quaternion(), turn: new THREE.Quaternion(), out: new THREE.Quaternion(), scale: new THREE.Vector3(), forward: new THREE.Vector3(), angle: 0 }), []);
+  const work = useMemo(() => ({ pose: restPose(), seated: restPose(), shot: restPose(), sit: 0, shotKey: undefined as number | undefined, shotAt: -99, world: new THREE.Quaternion(), turn: new THREE.Quaternion(), out: new THREE.Quaternion(), scale: new THREE.Vector3(), forward: new THREE.Vector3(), angle: 0 }), []);
+  const cards = useRef<THREE.Group>(null);
   const all = useMemo(() => [...Object.values(mats), ...(furMat ? [furMat] : [])], [mats, furMat]);
-  useStride(group, (stride, g, moved, t) => {
+  useStride(group, (stride, g, moved, t, dt) => {
     const w = work;
     gaitPose(gait, stride, t, w.pose);
+    // At a table (people only): the body eases down onto the seat and the seated pose is laid over the walking one; a gesture swells over the arms
+    const s = gait === "walk" ? seat?.current : undefined;
+    w.sit = s ? easeSit(w.sit, s.sit, dt) : 0;
+    if (s && w.sit > 0.001) {
+      seatedPose(s.act, t, w.seated);
+      if (s.shot && s.shotKey !== w.shotKey) { w.shotKey = s.shotKey; w.shotAt = t; }
+      const e = s.shot ? envelope(t - w.shotAt) : 0;
+      if (e > 0.001) blendPose(w.seated, shotPose(s.shot!, w.shot), e, w.seated);
+      blendPose(w.pose, w.seated, smooth(w.sit), w.pose);
+    }
+    // (the ring that marks a standing figure is not drawn under one on a stool)
+    if (ring?.current) ring.current.visible = w.sit < 0.3;
+    if (cards.current) {
+      cards.current.visible = !!s && s.cards > 0 && w.sit > 0.85;
+      if (cards.current.visible) cards.current.children.forEach((c, i) => { c.visible = i < s!.cards; });
+    }
     if (ball) {
       g.getWorldQuaternion(w.turn);
       g.getWorldScale(w.scale);
@@ -4098,15 +4161,26 @@ function Mover({ id, build, gait, ball, wheel, fur }: { id: string; build: (k: K
     applyPose(all, w.pose);
     const b = bodyOf(gait, stride, t);
     if (body.current) {
-      body.current.position.y = b.y;
+      body.current.position.y = b.y - smooth(w.sit) * (s?.drop ?? 0);
       body.current.rotation.z = b.roll;
-      body.current.rotation.x = b.pitch;
+      body.current.rotation.x = b.pitch + smooth(w.sit) * 0.06;
     }
   }, GAITS[gait].cycle);
   return (
     <group ref={group}>
       <group ref={body}>
         <Meshes model={m} materials={mats} fur={furMat ? { shells: FUR_DETAIL, material: furMat } : undefined} />
+        {/* The cards a seated player holds up before the chest: a fan of backs, toward the table */}
+        {seat && (
+          <group ref={cards} visible={false} position={[0, 0.94, 0.3]} rotation={[-0.45, 0, 0]}>
+            {[-0.16, 0, 0.16].map((a, i) => (
+              <mesh key={i} position={[a * 0.55, 0, i * 0.004]} rotation={[0, 0, -a]} raycast={() => null}>
+                <boxGeometry args={[0.1, 0.15, 0.006]} />
+                <meshLambertMaterial color={i === 1 ? "#e8e0cc" : "#d9d1bd"} />
+              </mesh>
+            ))}
+          </group>
+        )}
       </group>
     </group>
   );
@@ -4154,11 +4228,13 @@ export const seatFor = (name: string, creature = "", size = "") => seatOf(creatu
 const COMPOSED = new Map<string, THREE.BufferGeometry>();
 
 // `fighting`: drawn in a fight (a droideka stays unfolded); `riding`: sitting on a mount (the legs keep still)
-export function Figure({ kind, ring, name = "", large, marker, species, role, creature, size, player, gear, modules, fighting, riding }: { kind: string; ring: string; name?: string; large?: boolean; marker?: boolean; species?: string; role?: string; creature?: string; size?: string; player?: boolean; gear?: Gear; modules?: string[]; fighting?: boolean; riding?: boolean }) {
+// `seat`: a ref the map keeps for a person at a table (interiors/limbs.ts SeatState): sitting down, standing up, what the arms do
+export function Figure({ kind, ring, name = "", large, marker, species, role, creature, size, player, gear, modules, fighting, riding, seat, unarmed }: { kind: string; ring: string; name?: string; large?: boolean; marker?: boolean; species?: string; role?: string; creature?: string; size?: string; player?: boolean; gear?: Gear; modules?: string[]; fighting?: boolean; riding?: boolean; seat?: { current: SeatState }; unarmed?: boolean }) {
+  const ringMesh = useRef<THREE.Mesh>(null);
   const looks = useSpecies();
   const party = usePartyLook();
   const me = player ?? kind === "player";
-  const base = figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear });
+  const base = figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, unarmed });
   // What a person holds, wears and carries is loaded (one set of hooks per kind of model, in its own palette) and baked into the body
   // once it is all in; until then the code's own weapon is in the hand
   const wants = base.wants ?? [];
@@ -4200,7 +4276,7 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
   const modulesReady = moduleFiles.length > 0 && moduleFiles.every((m) => moduleGeo[m.url]);
   const ready = wants.length > 0 && wants.every((w) => geometryOfWant(w));
   const spec = ready
-    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, attach: wants.map((w) => ({ id: (w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model) + (base.blade && w.name?.startsWith("saber-") ? `~${base.blade}` : ""), slot: w.slot, scale: w.scale, grip: w.grip, offHand: w.offHand, name: w.name, geometry: geometryOfWant(w)! })) })
+    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, unarmed, attach: wants.map((w) => ({ id: (w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model) + (base.blade && w.name?.startsWith("saber-") ? `~${base.blade}` : ""), slot: w.slot, scale: w.scale, grip: w.grip, offHand: w.offHand, name: w.name, geometry: geometryOfWant(w)! })) })
     : modulesReady
       ? figureSpec(kind, name, { role, creature, species, size, looks, modules: moduleFiles.map((m) => ({ name: m.name, geometry: moduleGeo[m.url]! })) })
       : base;
@@ -4208,12 +4284,12 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
     <group scale={large ? 1.5 : 1}>
       {/* a rider's ring is the mount's */}
       {!riding && (
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
+        <mesh ref={ringMesh} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
           <ringGeometry args={[0.34, 0.44, 24]} />
           <meshBasicMaterial color={ring} />
         </mesh>
       )}
-      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} name={name} deployed={fighting} /> : <Mover id={spec.key} build={spec.build} gait={riding ? "ride" : spec.gait} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} />}
+      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} name={name} deployed={fighting} /> : <Mover id={spec.key} build={spec.build} gait={riding ? "ride" : spec.gait} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} />}
       {marker && (
         <mesh position={[0, Math.max(1.55, spec.height + 0.3), 0]}>
           <octahedronGeometry args={[0.12]} />

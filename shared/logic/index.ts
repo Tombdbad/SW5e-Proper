@@ -92,6 +92,8 @@ export interface Occupant {
   disabled?: boolean;
   // The outdoor stall of a market that they keep (see SiteGrounds); they pack up at closing time
   stall?: string;
+  // Put in the world for a job (shared/logic/contracts.ts): the contract's id
+  contract?: string;
 }
 
 export interface Ship {
@@ -2272,6 +2274,7 @@ export function setPane(world: World, roomId: string, assetId: string, change: P
 // repulsor pack's slow fall. Roofs have their ladders.
 export const STOREY_FEET = 10;
 export const GRAPPLE_DC = 10;
+export const LEAP_DC = 10;
 export interface ClimbGear {
   // The gear running or worn that does it (an item's name)
   flying?: string;
@@ -2280,14 +2283,21 @@ export interface ClimbGear {
   // Feet of line: the hook's and the cables'
   hookFeet?: number;
   lineFeet?: number;
+  // The hook that is fired (real-time aim and fire on the map): its name, ranges and cable, in feet
+  shot?: { name: string; range: number; long: number; cable: number };
+  // How high the climber reaches with a running jump (jumpReach's `reach`, in feet; 2026-10-27, the user: jumping outside a fight too)
+  reach?: number;
 }
 // Down without any of it (2026-10-26): a jump, which is a fall (see "Jumping, falling and gravity")
-export type ClimbWay = { how: "fly" | "grips" | "hook" | "descent"; by: string; dc?: number } | { how: "jump"; by: string; feet: number } | { how: "none"; why: string };
+// Up without gear (2026-10-27): a running leap at the edge, when the jump's reach (jumpReach: the high jump plus 1½ times the climber's
+// height) is as high as the edge; the climber hauls themselves over it with Strength (Athletics), DC 10 (house rule)
+export type ClimbWay = { how: "fly" | "grips" | "hook" | "descent"; by: string; dc?: number } | { how: "leap"; by: string; dc: number; feet: number } | { how: "jump"; by: string; feet: number } | { how: "none"; why: string };
 export function climbWay(levels: number, gear: ClimbGear, down = false): ClimbWay {
   if (gear.flying) return { how: "fly", by: gear.flying };
   if (gear.grips) return { how: "grips", by: gear.grips };
   if (down && gear.descent) return { how: "descent", by: gear.descent };
   const feet = levels * STOREY_FEET;
+  if (!down && gear.reach !== undefined && gear.reach >= feet) return { how: "leap", by: "a running leap", dc: LEAP_DC, feet };
   if (gear.hookFeet && gear.hookFeet + (gear.lineFeet ?? 0) >= feet) return { how: "hook", by: "Grappling hook", dc: GRAPPLE_DC };
   if (down) return { how: "jump", by: "a jump", feet };
   if (gear.hookFeet) return { how: "none", why: `${feet} ft. up: the hook's line is ${gear.hookFeet + (gear.lineFeet ?? 0)} ft.` };
@@ -2302,13 +2312,16 @@ export function climbGearOf(items: { name: string; description?: string; equipme
     if (facts?.fly && isRunning(item.name)) gear.flying = item.name;
     if (facts?.climb && worn.includes(item.name)) gear.grips = item.name;
     if (facts?.descent && isRunning(item.name)) gear.descent = item.name;
-    if (use?.kind === "grapple") gear.hookFeet = Math.max(gear.hookFeet ?? 0, use.feet);
+    if (use?.kind === "grapple") {
+      gear.hookFeet = Math.max(gear.hookFeet ?? 0, use.feet);
+      if (use.shot && (!gear.shot || use.shot.long > gear.shot.long)) gear.shot = { name: item.name, ...use.shot, cable: use.feet };
+    }
     if (use?.kind === "rope") gear.lineFeet = (gear.lineFeet ?? 0) + use.feet;
   }
   return gear;
 }
 export const climbLabel = (way: ClimbWay, down: boolean) =>
-  way.how === "jump" ? `Jump down (${way.feet} ft.) to` : way.how === "fly" ? (down ? "Fly down to" : "Fly up to") : way.how === "grips" ? (down ? "Climb down (friction grips) to" : "Climb up (friction grips) to") : way.how === "descent" ? "Drop slowly (repulsor pack) to" : way.how === "hook" ? (down ? "Climb down the line to" : "Throw the grappling hook up to") : "";
+  way.how === "jump" ? `Jump down (${way.feet} ft.) to` : way.how === "leap" ? `Leap up (${way.feet} ft.) to` : way.how === "fly" ? (down ? "Fly down to" : "Fly up to") : way.how === "grips" ? (down ? "Climb down (friction grips) to" : "Climb up (friction grips) to") : way.how === "descent" ? "Drop slowly (repulsor pack) to" : way.how === "hook" ? (down ? "Climb down the line to" : "Throw the grappling hook up to") : "";
 // The ways up the outside of the building the party stands in front of (its balconies), or down from the balcony they stand on
 export function outsideClimbs(world: World, areaId: string, gear: ClimbGear): Exit[] {
   const area = world.areas[areaId];
@@ -2317,9 +2330,34 @@ export function outsideClimbs(world: World, areaId: string, gear: ClimbGear): Ex
     const way = climbWay(levels, gear, down);
     return way.how === "none" ? [] : [{ to, via: down ? "leave" : "enter", label: climbLabel(way, down), travel: "", scale: way, ...(down ? {} : { secret: true }) }];
   };
-  if (area.kind === "building") return childrenOf(world, area.id).filter((r) => formOf(r) === "balcony").flatMap((b) => exit(b.id, b.layout?.level ?? 1, false));
-  if (area.kind === "room" && formOf(area) === "balcony" && area.parentId) return exit(area.parentId, area.layout?.level ?? 1, true);
+  // (a roof too, whether or not it has a ladder: 2026-10-27, the user: every roof is reached by jumping, a hook, grips or flight)
+  const high = (r: Area) => formOf(r) === "balcony" || formOf(r) === "roof";
+  if (area.kind === "building") return childrenOf(world, area.id).filter(high).flatMap((b) => exit(b.id, b.layout?.level ?? 1, false));
+  if (area.kind === "room" && high(area) && area.parentId) return exit(area.parentId, area.layout?.level ?? 1, true);
   return [];
+}
+// A way that goes up to a roof, or down from one, by a ladder or by gear (2026-10-27): what the map draws the party doing on the way
+// instead of setting them on the roof or the street at once (client interiors/transit.ts). A balcony is walked onto through its doors:
+// only gear (a leap, a line, flight) takes the party up the wall to it.
+export interface VerticalMove {
+  // The roof or balcony
+  area: string;
+  up: boolean;
+  levels: number;
+  kind: "ladder" | "grips" | "hook" | "fly" | "leap" | "jump" | "descent";
+}
+export function verticalMove(world: World, fromId: string, exit: Exit): VerticalMove | null {
+  const from = world.areas[fromId];
+  const to = world.areas[exit.to];
+  const high = (a?: Area) => !!a && a.kind === "room" && (formOf(a) === "roof" || formOf(a) === "balcony");
+  const up = exit.via === "enter" && high(to) && to.parentId === fromId;
+  const down = exit.via === "leave" && high(from) && from.parentId === exit.to;
+  if (!up && !down) return null;
+  const high_ = up ? to : from;
+  const how = exit.scale?.how;
+  if (how === "none") return null;
+  if (!how && formOf(high_) !== "roof") return null;
+  return { area: high_.id, up, levels: high_.layout?.level ?? 1, kind: how ?? "ladder" };
 }
 
 // ---- Jumping, falling and gravity (2026-10-26; the user: "a jumping mechanic and gravity ... jet packs, climbing, grapple hooks ...
@@ -6527,7 +6565,8 @@ export type GearUse =
   | { kind: "camp"; what: "bedroll" | "blanket" | "tent" | "shelter" | "raft" }
   | { kind: "clothing"; style: "common" | "costume" | "uniform" | "fine" | "traveler" | "clandestine" | "sunshades"; pockets?: { lb: number; dc: number } }
   | { kind: "light"; bright: number; dim: number; hours: number }
-  | { kind: "grapple"; feet: number }
+  // `shot`: a hook that is fired (the wrist-mounted hook, a gauntlet's harpoon: range normal and long, in feet) and not only thrown by hand
+  | { kind: "grapple"; feet: number; shot?: { range: number; long: number; damage?: string } }
   | { kind: "rope"; feet: number }
   | { kind: "extinguisher"; uses: number; cone: number; dc: number }
   | { kind: "generator"; answers: EnvHazard; minutes: number }
@@ -6553,6 +6592,16 @@ export function gearUse(item: GearFacts): GearUse | undefined {
   const name = item.name.toLowerCase();
   const text = (item.description ?? "").replace(/\s+/g, " ");
   const category = item.equipmentCategory ?? "";
+  // A grappling hook or harpoon, whatever its category (2026-10-27, the user: the Wrist-Mounted Grappling Hook of their pack was not read as a hook): its
+  // cable, and for the ones that are fired "a range of 30/60"
+  if (/grappling (hook|harpoon)/.test(name)) {
+    const range = text.match(/range of (\d+)\/(\d+)/i);
+    return {
+      kind: "grapple",
+      feet: Number(text.match(/(\d+) ?-?foot (?:cable|length)/i)?.[1] ?? (/wrist|harpoon/.test(name) ? 60 : 50)),
+      shot: range ? { range: Number(range[1]), long: Number(range[2]), damage: text.match(/deals (\d+d\d+)/i)?.[1] } : { range: 30, long: 50 },
+    };
+  }
   if (category === "Kit" || category === "Tool") return { kind: "tool" };
   if (category === "GamingSet") return { kind: "game" };
   if (category === "MusicalInstrument") return { kind: "instrument" };
@@ -11496,8 +11545,13 @@ export interface RaceTrack {
   features?: RaceFeature[];
   rivers?: RaceRiver[];
   bridges?: RaceBridge[];
+  // A road (2026-10-27, "On the road: the trip"): the course is a way from here to there, not a lap. `finish`: how far round the loop the last
+  // gate (the end of the road) is; `block`: a roadblock across it, where (round the loop) and which props make it
+  road?: { finish: number; block?: { at: number; props: number[] } };
   extent: number; limit: number;
 }
+// The spec of a road: how far round the loop it runs (a share of its length) and whether a roadblock stands across it
+export interface RoadSpec { share?: number; block?: boolean }
 
 // A gorge: the track drops `depth` metres into a slot between walls from `at - len / 2` to `at + len / 2` round the lap (`ramp` metres down
 // and as many up); a hill: a rise of `depth` metres round the track point `p`, `len` across, that the track goes over
@@ -11833,8 +11887,10 @@ function shortcutsOf(flat: [number, number][], yaws: number[], step: number, W: 
 // a hill, and a river (or lava) whose line across the ground crosses the track, and any trail it meets, near square, where bridges carry the
 // way over it. Each is kept clear of the start, the gates, the shortcuts' ends and their jumps, and the others. Returns the stretches of the
 // lap they take, for the jumps and hazards to keep off.
-function layCrossings(track: RaceTrack, kinds: CrossingKind[], r: ReturnType<typeof createRandom>, gateAt: number[]): [number, number][] {
-  const { step, length } = track;
+function layCrossings(track: RaceTrack, kinds: CrossingKind[], r: ReturnType<typeof createRandom>, gateAt: number[], upTo?: number): [number, number][] {
+  // (a road is laid only as far as its end)
+  const { step } = track;
+  const length = upTo ?? track.length;
   const flat = track.points;
   const n = flat.length;
   const taken: [number, number][] = [];
@@ -11926,7 +11982,9 @@ function fromStart(points: [number, number][], step: number): [number, number][]
 }
 
 // The course of a race: the loop, its shortcuts, gates, ramps, hazards, what lines it and the ground it runs over
-export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps): RaceTrack {
+// `solid`: what stands by the course is struck (trees, boulders, logs, barriers, crates). Roads and chases are laid solid; a race is not: its rivals
+// were tuned without it (they steer round what is on the track, not round the trees beside it, and a solid wood wrecks one in five of them).
+export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps, road?: RoadSpec, solid = !!road): RaceTrack {
   const r = createRandom(seed * 7 + 3);
   const W = RACE.width;
   // A loop that fits, with a shortcut if one of a few tries gives one
@@ -12022,13 +12080,21 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
     if (s > loop.length - 70) continue;
     gateAt.push(s);
   }
+  // A road ends where its last gate stands (clear of a shortcut's ends), with the gates before it as they were
+  let roadEnd = 0;
+  if (road) {
+    roadEnd = within(Math.round(loop.length * (road.share ?? 0.78)), 600, loop.length - 130);
+    const cut = track.trails.find((t) => roadEnd > t.from - 40 && roadEnd < t.to + 90);
+    if (cut) roadEnd = cut.from - 90 > 520 ? cut.from - 90 : Math.min(loop.length - 100, cut.to + 90);
+    gateAt.splice(0, gateAt.length, ...gateAt.filter((s) => s < roadEnd - 90), roadEnd);
+  }
   const atS = (s: number) => Math.round(s / step) % n;
   track.gates = gateAt.map((s) => {
     const i = atS(s);
     return { p: points[i], yaw: yaws[i], half: W / 2 + 0.8, s };
   });
   // The land's features across the course, then the heights of the course over the ground they make (the gates' feet are the track's points)
-  const crossings = layCrossings(track, scenery.crossings ?? [], r, gateAt);
+  const crossings = layCrossings(track, scenery.crossings ?? [], r, gateAt, road ? roadEnd : undefined);
   const crossed = (s: number, margin: number) => crossings.some(([a, b]) => s > a - margin && s < b + margin);
   for (const p of points) p[1] = groundAt(track, p[0], p[2], false);
   for (const t of track.trails) for (const p of t.points) p[1] = groundAt(track, p[0], p[2], false);
@@ -12041,7 +12107,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
   };
   const rampAt: number[] = [];
   for (let tries = 0; tries < 400 && rampAt.length < 2; tries++) {
-    const s = 220 + r.next() * (loop.length - 360);
+    const s = 220 + r.next() * ((road ? roadEnd - 60 : loop.length) - 360);
     const i = atS(s);
     if (inTrail(s, 40) || near(s, used, 50) || near(s, rampAt, 300) || crossed(s, 60) || !straight(i, -Math.ceil(20 / step), Math.ceil(70 / step))) continue;
     const side = r.next() < 0.5 ? -1 : 1;
@@ -12090,7 +12156,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
   const onTrackAt: number[] = [];
   const spot = (minGap: number, test: (i: number) => boolean = () => true) => {
     for (let tries = 0; tries < 200; tries++) {
-      const s = 160 + r.next() * (loop.length - 230);
+      const s = 160 + r.next() * ((road ? roadEnd - 40 : loop.length) - 230);
       if (inTrail(s, 20) || near(s, reserved, 40) || near(s, onTrackAt, minGap) || crossed(s, 25) || !test(atS(s))) continue;
       onTrackAt.push(s);
       return atS(s);
@@ -12098,7 +12164,8 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
     return -1;
   };
   const mark = (at: number, lat: number, half: number, ref: { prop?: number; hazard?: number }) => track.marks.push({ at, lat, half, ...ref });
-  for (let k = 0; k < 3; k++) {
+  // (a road has no mines or pylons: a public way, with oil, spilled cargo and its bends' barriers)
+  for (let k = 0; k < (road ? 0 : 3); k++) {
     const i = spot(70);
     if (i < 0) continue;
     const lat = (r.next() - 0.5) * 10;
@@ -12113,7 +12180,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
     const [x, z] = pointAt(i, lat);
     track.hazards.push({ id: track.hazards.length, kind: "slick", p: [x, groundAt(track, x, z, false), z], r: HAZARD_STATS.slick.r, spent: false });
   }
-  for (let k = 0; k < 3; k++) {
+  for (let k = 0; k < (road ? 2 : 3); k++) {
     const i = spot(70, (q) => bends[q] < 1 / 120);
     if (i < 0) continue;
     const lat = (r.next() < 0.5 ? -1 : 1) * (2.5 + r.next() * 3);
@@ -12121,7 +12188,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
     if (put("crate_stack", x, z, yaws[i] + (r.next() - 0.5) * 0.6, 1.6, { radius: 1, force: true })) mark(i, lat, 1.4, { prop: track.props.length - 1 });
   }
   // A slalom of pylons, five of them from side to side
-  {
+  if (!road) {
     const i = spot(120, (q) => straight(q, 0, Math.ceil(64 / step)));
     if (i >= 0) {
       for (let k = 0; k < 5; k++) {
@@ -12163,7 +12230,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
   }
   // By the start: grandstands on the outside of the straight, banners and lamps along it, and on the
   // inside a formal garden of hedges, clipped trees, statues and a fountain
-  {
+  if (!road) {
     const [sx, sz] = flat[0];
     const outward = Math.sign(-Math.sin(yaws[0]) * sx + Math.cos(yaws[0]) * sz) || 1;
     for (const s of [-24, 24]) {
@@ -12189,6 +12256,47 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
       const [x, z] = pointAt(i, -outward * (W / 2 + lat));
       put(key, x, z, yaws[i], scale, { radius: key === "fountain" ? 5 : 1.5 });
     }
+  }
+  // A road: lamps and a banner at its two ends, and the roadblock if it has one: crates across the way (a speeder going fast
+  // enough breaks through them), barriers to the sides, and the guards' tent and lamps by it
+  if (road) {
+    for (const s of [0, roadEnd]) {
+      for (let d = -36; d <= 36; d += 18) {
+        const i = atS((s + d + loop.length) % loop.length);
+        for (const side of [-1, 1]) {
+          const [x, z] = pointAt(i, side * (W / 2 + 3.2));
+          put(d === 0 ? "banner" : "lamp", x, z, yaws[i], d === 0 ? 2.2 : 2.4, { radius: 0.8 });
+        }
+      }
+    }
+    if (road.block) {
+      let at = roadEnd - 200;
+      for (let d = 180; d <= 460; d += 10) {
+        const s = roadEnd - d;
+        const i = atS(s);
+        const [x, , z] = points[i];
+        if (s < 200 || inTrail(s, 40) || crossed(s, 70) || near(s, reserved, 50) || near(s, onTrackAt, 40) || !straight(i, -Math.ceil(30 / step), Math.ceil(30 / step)) || track.ramps.some((ramp) => Math.hypot(ramp.p[0] - x, ramp.p[2] - z) < 70)) continue;
+        at = s;
+        break;
+      }
+      const i = atS(at);
+      const props: number[] = [];
+      for (let lat = -(W / 2 - 1); lat <= W / 2 - 0.9; lat += 2) {
+        const [x, z] = pointAt(i, lat);
+        if (put("crate_stack", x, z, yaws[i] + (r.next() - 0.5) * 0.3, 1.9, { radius: 0.9, force: true })) props.push(track.props.length - 1);
+      }
+      for (const side of [-1, 1]) {
+        for (let k = 0; k < 3; k++) {
+          const [x, z] = pointAt(i, side * (W / 2 + 1.8 + k * 3.6));
+          put("barrier", x, z, yaws[i] + Math.PI / 2, 1.8, { radius: 0.9, force: true });
+        }
+        const [tx, tz] = pointAt(atS(at - 14), side * (W / 2 + 10));
+        put("base_tent", tx, tz, yaws[i] + (side > 0 ? Math.PI : 0), 2, { radius: 3, force: true });
+        const [lx, lz] = pointAt(i, side * (W / 2 + 0.8));
+        put("lamp", lx, lz, yaws[i], 2.4, { radius: 0.5, force: true });
+      }
+      track.road = { finish: roadEnd, block: { at, props } };
+    } else track.road = { finish: roadEnd };
   }
   // Trees, boulders and shrubs: woods where a slow pattern says so, scattered elsewhere, kept off the
   // running surface and the jumps' landings; trails are lined close, so that a shortcut is a narrow way
@@ -12230,7 +12338,10 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
   scatter(scenery.boulders, 110, W / 2 + 3.5, W / 2 + 130, 1.4, 2.8, 2.5, false);
   scatter(scenery.shrubs, 240, W / 2 + 2.5, W / 2 + 110, 1.8, 2.8, 1.8, false);
   // Rivals' marks for the hazards and props on the track were set above; the time allowed is generous
-  track.limit = Math.ceil((laps * loop.length) / 22) + 60;
+  track.limit = Math.ceil(((road ? roadEnd : laps * loop.length)) / 22) + 60 + (road?.block ? 60 : 0);
+  // (the index of what stands by the course is first made before its props are placed, and so holds none: made again, with them, the next time it is
+  // asked for, if they are to be struck)
+  if (solid) INDEXES.delete(track);
   return track;
 }
 
@@ -12239,7 +12350,8 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps)
 // `boost` is held on the Boost button; `throttle` -1 brakes and backs up, otherwise the speeder drives;
 // `auto` hands the party's speeder to the rivals' driving (a test hook: localStorage sw5e.autopilot)
 // `fire`: in a chase, the party's blaster (see "On the road")
-export interface RaceInput extends FlightInput { boost?: boolean; auto?: boolean; fire?: boolean }
+// `aim`: the party at the gun while a crewmate drives (`auto`): where the blaster points, radians off the speeder's nose
+export interface RaceInput extends FlightInput { boost?: boolean; auto?: boolean; fire?: boolean; aim?: number }
 export interface Racer {
   id: number; name: string; party: boolean; model: string; kind: SpeederKind; pace: number; daring: number;
   // The middle of its box at hover height, heading, nose pitch, forward speed
@@ -12260,14 +12372,21 @@ export interface Racer {
   burn?: number;
 }
 // (`shot`: a blaster bolt from `p` to `to`; `power` 1 when it hit)
-export interface RaceEvent { kind: "hit" | "smash" | "mine" | "land" | "tow" | "gate" | "wreck" | "finish" | "shot"; p: Vec3; by: number; power: number; to?: Vec3 }
+export interface RaceEvent { kind: "hit" | "smash" | "mine" | "land" | "tow" | "gate" | "wreck" | "finish" | "shot" | "stop"; p: Vec3; by: number; power: number; to?: Vec3 }
 // `events` and `said` are what happened in the last step (for sparks and the HUD's messages); `first` is the winner's time
 // `chase`: a race that is a chase on the road (who is after the party, and the state of the chase's own dice)
-export interface Race { t: number; limit: number; laps: number; gateCount: number; racers: Racer[]; hazards: Hazard[]; broken: number[]; over: boolean; log: string[]; events: RaceEvent[]; said: string[]; first: number | null; chase?: { who: string; seed: number } }
+// `block`: a road's roadblock, `ahead`, the party `stopped` at it, `open` (waved through, its crates gone), `run` (the party chose to ram it) or
+// `ran` (gone past it); `mate`: a crewmate who drives, or fires from the gun when the party drives (their pace at the wheel), `mateReload` their gun's
+export interface Race { t: number; limit: number; laps: number; gateCount: number; racers: Racer[]; hazards: Hazard[]; broken: number[]; over: boolean; log: string[]; events: RaceEvent[]; said: string[]; first: number | null; chase?: { who: string; seed: number }; block?: { state: "ahead" | "stopped" | "open" | "run" | "ran" }; mate?: { name: string; pace: number }; mateReload?: number }
 const RIVALS = [["Rhys", 0.95, 0.5], ["Tavi", 0.97, 0.8], ["the Hutt's runner", 0.92, 0.3], ["Kessa", 0.99, 0.9], ["Doro", 0.93, 0.4], ["Vex", 0.98, 0.7], ["Brann", 0.94, 0.6]] as const;
 
 export const raceLap = (race: Race, racer: Racer) => Math.min(race.laps, Math.max(1, Math.floor((racer.gates - 1) / race.gateCount) + 1));
 export const raceNextGate = (race: Race, racer: Racer) => racer.gates % race.gateCount;
+// How far along a road a racer is, in metres (negative on the grid behind the start line)
+export const roadAt = (track: RaceTrack, rc: Racer) => {
+  const s = rc.at * track.step;
+  return s > track.length - 80 ? s - track.length : s;
+};
 
 // The grid: two abreast, rows back from the start line, all facing along the track; the party in the second row
 export function raceStart(track: RaceTrack, seed: number, model: string, rivalModels: string[]): Race {
@@ -12652,7 +12771,18 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
   const before = race.racers.map((rc) => [rc.craft.p[0], rc.craft.p[2]] as [number, number]);
   for (const rc of race.racers) {
     const own = rc.party && rc.finish === null && !rc.wrecked && !input.auto;
-    const steer = rc.wrecked ? { steer: { x: 0, y: 0 }, throttle: 0 as const } : own ? input : rc.hostile ? chaseInput(rc, track, race, h) : rivalInput(rc, track, race, h);
+    let steer: RaceInput = rc.wrecked ? { steer: { x: 0, y: 0 }, throttle: 0 as const } : own ? input : rc.hostile ? chaseInput(rc, track, race, h) : rivalInput(rc, track, race, h);
+    // A crewmate at the wheel drives at their own pace, safely, and stops short of a roadblock (a speed to be at by each distance from it)
+    if (rc.party && input.auto && race.mate && !rc.wrecked) {
+      rc.pace = race.mate.pace;
+      rc.daring = 0.1;
+      const blk = track.road?.block;
+      if (blk && race.block?.state === "ahead") {
+        const ahead = blk.at - roadAt(track, rc);
+        const target = ahead > 70 ? 99 : Math.max(0, (ahead - 12) * 0.6);
+        if (ahead > -4 && rc.craft.speed > target) steer = { ...steer, boost: false, throttle: -1 };
+      }
+    } else if (rc.party) rc.pace = 1;
     drive(rc, steer, track, race, h);
     rc.ghost = Math.max(0, rc.ghost - h);
     if (rc.trail < 0 || rc.party) rc.at = nearestPoint(track.points, rc.craft.p[0], rc.craft.p[2], resync ? 0 : rc.at, resync ? track.points.length : 8, true);
@@ -12784,8 +12914,8 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
       hurt(B, j / mB / (1 + e), race, A.party ? "you" : A.name, at);
     }
   }
-  // Gates, crossed in order through their opening; the finish is the start line once the laps are run
-  const total = race.laps * race.gateCount + 1;
+  // Gates, crossed in order through their opening; the finish is the start line once the laps are run (on a road, its last gate)
+  const total = track.road ? race.gateCount : race.laps * race.gateCount + 1;
   race.racers.forEach((rc, i) => {
     if (rc.finish !== null || rc.wrecked) return;
     // A pursuer passes no gates: it is only towed back when it is stuck or lost
@@ -12828,6 +12958,22 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
     if (rc.trail < 0 && !rc.onTrail && past > 60 && past < 400) tow(rc, track, race, gateAt);
     else if (rc.stuck > RACE.stuck || rc.off > RACE.offTime) tow(rc, track, race);
   });
+  // A roadblock: a party that comes to rest short of it is stopped (the page asks what it does: `settleBlock`); one that goes by it ran it
+  const blocked = track.road?.block;
+  if (blocked && race.block?.state === "ahead") {
+    const me = race.racers.find((rc) => rc.party);
+    if (me && !me.wrecked && me.finish === null) {
+      const ahead = blocked.at - roadAt(track, me);
+      if (ahead < -6) {
+        race.block.state = "ran";
+        race.log.push("You run the roadblock");
+      } else if (ahead < 60 && race.t > 2 && !me.air && Math.abs(me.craft.speed) < 2.5) {
+        race.block.state = "stopped";
+        race.events.push({ kind: "stop", p: me.craft.p, by: me.id, power: ahead });
+        race.log.push("You are stopped at the roadblock");
+      }
+    }
+  }
   const party = race.racers.find((rc) => rc.party);
   if ((party && (party.finish !== null || party.wrecked)) || (race.first !== null && race.t >= race.first + RACE.grace) || race.t >= race.limit || race.racers.every((rc) => rc.finish !== null || rc.wrecked)) race.over = true;
   // A chase is over too when every rider after the party is down
@@ -12846,9 +12992,10 @@ export function stepRace(race: Race, track: RaceTrack, input: RaceInput, dt: num
     log: [...race.log],
     events: [],
     said: [],
+    block: race.block && { ...race.block },
   };
   const ticks = Math.max(1, Math.ceil(dt / RACE.tick - 1e-6));
-  for (let i = 0; i < ticks && !next.over; i++) raceTick(next, track, input, dt / ticks);
+  for (let i = 0; i < ticks && !next.over && next.block?.state !== "stopped"; i++) raceTick(next, track, input, dt / ticks);
   next.said = next.log.slice(race.log.length);
   next.log = next.log.slice(-60);
   return next;
@@ -12887,6 +13034,8 @@ export const CHASE = {
   // The party's: reach, seconds between shots, the cone it is aimed in (radians off the nose, or off the tail when it fires back over its
   // shoulder at a rider behind it, at `back` of the chance), chance, damage
   partyRange: 75, partyEvery: 0.5, cone: 0.35, back: 0.35, partyHit: 0.5, partyDamage: 2,
+  // A crewmate's gun while the party drives (seconds between shots, chance), and how much steadier the party's aim is at the gun than at the wheel
+  mate: { every: 1.3, hit: 0.3 }, gunner: 1.25,
   // Where the riders start behind the party (m) and how much faster than a plain racer they drive
   behind: 70, pace: 1.1,
 };
@@ -12946,17 +13095,36 @@ function chaseFire(race: Race, input: RaceInput, h: number) {
     if (me.hull <= 0) return knockOut(race, me, rc.name);
   }
   me.reload = (me.reload ?? 0) - h;
+  const reach = race.racers.filter((rc) => rc.hostile && !rc.wrecked && flatDist(rc.craft.p, me.craft.p) <= CHASE.partyRange).sort((a, b) => flatDist(a.craft.p, me.craft.p) - flatDist(b.craft.p, me.craft.p));
+  const from: Vec3 = [me.craft.p[0], me.craft.p[1] + 0.8, me.craft.p[2]];
+  // The crewmate at the gun while the party drives: the nearest rider in reach, in any direction, at a worse chance than the party's own aim
+  if (race.mate && !input.auto) {
+    race.mateReload = (race.mateReload ?? 1.5) - h;
+    const near = reach[0];
+    if (near && race.mateReload <= 0) {
+      race.mateReload = CHASE.mate.every * (0.8 + chaseRoll(race) * 0.5);
+      const d = flatDist(near.craft.p, me.craft.p);
+      const hit = chaseRoll(race) < CHASE.mate.hit * (1 - (d / CHASE.partyRange) * 0.5);
+      race.events.push({ kind: "shot", p: from, to: hit ? [near.craft.p[0], near.craft.p[1] + 0.5, near.craft.p[2]] : [near.craft.p[0] + (chaseRoll(race) - 0.5) * 5, near.craft.p[1] + 1, near.craft.p[2] + (chaseRoll(race) - 0.5) * 5], by: me.id, power: hit ? 1 : 0 });
+      if (hit) {
+        near.hull = Math.max(0, near.hull - CHASE.partyDamage);
+        if (near.hull <= 0) knockOut(race, near, race.mate.name);
+      }
+    }
+  }
   if (!input.fire || me.reload > 0) return;
   me.reload = CHASE.partyEvery;
-  const inReach = race.racers.filter((rc) => rc.hostile && !rc.wrecked && flatDist(rc.craft.p, me.craft.p) <= CHASE.partyRange).sort((a, b) => flatDist(a.craft.p, me.craft.p) - flatDist(b.craft.p, me.craft.p));
-  const ahead = inReach.find((rc) => bearing(me, rc.craft.p) <= CHASE.cone);
-  const target = ahead ?? inReach.find((rc) => bearing(me, rc.craft.p) >= Math.PI - CHASE.cone * 2);
-  const from: Vec3 = [me.craft.p[0], me.craft.p[1] + 0.8, me.craft.p[2]];
+  // At the gun (a crewmate drives): the blaster points where `aim` says, round the whole circle, with a steadier hand than a driver's
+  const gunner = input.aim !== undefined;
+  const aimYaw = me.craft.yaw + (input.aim ?? 0);
+  const off = (rc: Racer) => Math.abs(angleWrap(Math.atan2(rc.craft.p[2] - me.craft.p[2], rc.craft.p[0] - me.craft.p[0]) - aimYaw));
+  const ahead = gunner ? reach.find((rc) => off(rc) <= CHASE.cone * 1.4) : reach.find((rc) => bearing(me, rc.craft.p) <= CHASE.cone);
+  const target = ahead ?? (gunner ? undefined : reach.find((rc) => bearing(me, rc.craft.p) >= Math.PI - CHASE.cone * 2));
   if (!target) {
-    race.events.push({ kind: "shot", p: from, to: [from[0] + Math.cos(me.craft.yaw) * CHASE.partyRange, from[1], from[2] + Math.sin(me.craft.yaw) * CHASE.partyRange], by: me.id, power: 0 });
+    race.events.push({ kind: "shot", p: from, to: [from[0] + Math.cos(aimYaw) * CHASE.partyRange, from[1], from[2] + Math.sin(aimYaw) * CHASE.partyRange], by: me.id, power: 0 });
     return;
   }
-  const hit = chaseRoll(race) < CHASE.partyHit * (ahead ? 1 : CHASE.back);
+  const hit = chaseRoll(race) < CHASE.partyHit * (gunner ? CHASE.gunner : ahead ? 1 : CHASE.back);
   race.events.push({ kind: "shot", p: from, to: [target.craft.p[0], target.craft.p[1] + 0.5, target.craft.p[2]], by: me.id, power: hit ? 1 : 0 });
   if (!hit) return;
   target.hull = Math.max(0, target.hull - CHASE.partyDamage);
@@ -12982,6 +13150,20 @@ export function chaseStart(track: RaceTrack, seed: number, model: string, riders
     }),
   );
   return { ...race, chase: { who, seed: (seed * 2654435761) >>> 0 || 1 } };
+}
+// A leg of a road trip (see "The trip"): the party at the start of a road, alone or with riders after it, its crewmate if it has one, and the hull it
+// carries from the legs before
+export function roadStart(track: RaceTrack, seed: number, model: string, o: { riders?: { name: string; model: string }[]; who?: string; mate?: { name: string; pace: number }; hull?: number } = {}): Race {
+  const race = o.riders?.length ? chaseStart(track, seed, model, o.riders, o.who ?? "riders") : raceStart(track, seed, model, []);
+  const me = race.racers.find((rc) => rc.party)!;
+  if (o.hull !== undefined) me.hull = within(Math.round(o.hull), 1, me.hullMax);
+  return { ...race, block: track.road?.block ? { state: "ahead" } : undefined, mate: o.mate };
+}
+// What the party does at the roadblock it is stopped at: the barrier is opened (its crates cleared away), or it runs at it
+export function settleBlock(race: Race, track: RaceTrack, how: "open" | "run"): Race {
+  const blk = track.road?.block;
+  if (!blk || race.block?.state !== "stopped") return race;
+  return { ...race, block: { state: how }, broken: how === "open" ? [...race.broken, ...blk.props.filter((id) => !race.broken.includes(id))] : race.broken, log: [...race.log, how === "open" ? "The barrier is opened" : "You gun it at the barrier"] };
 }
 // How a chase ended: through to safety, the riders all down, or caught (the speeder wrecked, or the time run out); who is still after the party
 export function chaseResult(race: Race): { outcome: "escaped" | "beaten" | "caught"; left: string[]; note: string } {

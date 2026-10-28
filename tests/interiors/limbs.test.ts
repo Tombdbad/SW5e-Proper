@@ -232,3 +232,45 @@ test("a limb material carries its own pose, the program is shared by the copies,
   copy.dispose();
   assert.ok(!base.followers.has(copy), "a copy let go is let go");
 });
+
+// ---- Sitting, standing and playing at a table (2026-10-27) ----
+import { seatedPose, shotPose, blendPose, easeSit, envelope, seatState, SIT_SECONDS, STAND_SECONDS, SIT_LEG } from "../../client/src/components/Map/interiors/limbs";
+
+test("sitting down takes 0.7 s and standing up 0.55 s, easing between 0 and 1 and no further", () => {
+  let a = 0;
+  for (let i = 0; i < 100; i++) a = easeSit(a, true, SIT_SECONDS / 100);
+  assert.ok(Math.abs(a - 1) < 1e-6);
+  assert.equal(easeSit(1, true, 1), 1);
+  let b = 1;
+  for (let i = 0; i < 100; i++) b = easeSit(b, false, STAND_SECONDS / 100);
+  assert.ok(Math.abs(b) < 1e-6);
+  assert.equal(easeSit(0, false, 1), 0);
+  assert.ok(easeSit(0.5, true, 0.1) > 0.5 && easeSit(0.5, false, 0.1) < 0.5);
+});
+
+test("seated: both legs forward about a quarter turn, the arms by the act; the gestures differ from the rest and from each other", () => {
+  const rest = seatedPose("rest", 0);
+  assert.ok(Math.abs(angleOf(rest, LIMB.legR, "x") - SIT_LEG) < 0.02 && Math.abs(angleOf(rest, LIMB.legL, "x") - SIT_LEG) < 0.02, "thighs forward");
+  const hold = seatedPose("hold", 0);
+  assert.ok(angleOf(hold, LIMB.armR, "x") < angleOf(rest, LIMB.armR, "x") - 0.3, "the hands come up before the chest to hold cards");
+  // the dealing arm sweeps over time
+  const swing = [0, 0.2, 0.4, 0.6].map((t) => angleOf(seatedPose("deal", t), LIMB.armR, "z"));
+  assert.ok(Math.max(...swing) - Math.min(...swing) > 0.3);
+  const shots = (["draw", "bet", "call", "fold", "think"] as const).map((s) => Array.from(shotPose(s)).join());
+  assert.equal(new Set(shots).size, 5);
+  assert.ok(angleOf(shotPose("call"), LIMB.armR, "x") < -2, "a hand raised to come down on the table");
+});
+
+test("blending moves each limb from one pose to the other by the share asked; a gesture's strength rises and falls over its second", () => {
+  const a = seatedPose("rest", 0);
+  const b = shotPose("call");
+  assert.deepEqual(Array.from(blendPose(a, b, 0)).map((v) => Math.round(v * 1e5)), Array.from(a).map((v) => Math.round(v * 1e5)));
+  assert.deepEqual(Array.from(blendPose(a, b, 1)).map((v) => Math.round(v * 1e5)), Array.from(b).map((v) => Math.round(v * 1e5)));
+  const half = angleOf(blendPose(a, b, 0.5), LIMB.armR, "x");
+  assert.ok(half < angleOf(a, LIMB.armR, "x") && half > angleOf(b, LIMB.armR, "x"));
+  assert.equal(envelope(-0.1), 0);
+  assert.equal(envelope(1.5), 0);
+  assert.ok(envelope(0.55) > 0.95);
+  assert.ok(envelope(0.1) < envelope(0.3) && envelope(1.0) < envelope(0.7));
+  assert.deepEqual(seatState(), { sit: false, act: "rest", drop: 0.22, cards: 0 });
+});

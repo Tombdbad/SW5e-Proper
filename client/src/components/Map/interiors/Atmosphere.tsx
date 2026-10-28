@@ -46,7 +46,39 @@ const Spot = ({ spot, w, h, lamp, tier, shadow }: { spot: LightSpot; w: number; 
   );
 };
 
-// Motes in the air: a few dozen points drifting slowly up and across
+// Soft-edged sprites for the effects below (2026-10-27, the user: the effects looked weird and blocky): a point is a square on the screen and a
+// disc or slab has a hard rim, so each is given an alpha that fades to nothing at its edges. Made once, in a browser only.
+const SOFT = new Map<string, THREE.CanvasTexture>();
+function soft(kind: "dot" | "beam"): THREE.CanvasTexture | null {
+  if (typeof document === "undefined") return null;
+  const have = SOFT.get(kind);
+  if (have) return have;
+  const [w, h] = kind === "beam" ? [32, 128] : [64, 64];
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const g = canvas.getContext("2d");
+  if (!g) return null;
+  const image = g.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const u = ((x + 0.5) / w) * 2 - 1;
+      const v = ((y + 0.5) / h) * 2 - 1;
+      // a dot and a mist disc: a smooth fall from the middle; a beam: soft across, and fading out at both ends
+      const a = kind === "beam" ? Math.pow(Math.max(0, 1 - u * u), 1.6) * Math.pow(Math.max(0, 1 - v * v), 0.8) : Math.pow(Math.max(0, 1 - (u * u + v * v)), 1.5);
+      const i = (y * w + x) * 4;
+      image.data[i] = image.data[i + 1] = image.data[i + 2] = 255;
+      image.data[i + 3] = Math.round(a * 255);
+    }
+  }
+  g.putImageData(image, 0, 0);
+  const t = new THREE.CanvasTexture(canvas);
+  SOFT.set(kind, t);
+  return t;
+}
+
+// Motes in the air: a few dozen points drifting slowly up and across (a quarter of their old size: 2026-10-27, the user: 75% smaller)
+const MOTE_SIZE = 0.07 * 0.25;
 function Motes({ count, w, h, color }: { count: number; w: number; h: number; color: string }) {
   const points = useRef<THREE.Points>(null);
   const seeds = useMemo(() => {
@@ -72,7 +104,7 @@ function Motes({ count, w, h, color }: { count: number; w: number; h: number; co
       <bufferGeometry>
         <bufferAttribute attach="attributes-position" count={count} array={position} itemSize={3} />
       </bufferGeometry>
-      <pointsMaterial color={color} size={0.07} sizeAttenuation transparent opacity={0.55} depthWrite={false} blending={THREE.AdditiveBlending} />
+      <pointsMaterial color={color} size={MOTE_SIZE} map={soft("dot") ?? undefined} sizeAttenuation transparent opacity={0.85} depthWrite={false} blending={THREE.AdditiveBlending} />
     </points>
   );
 }
@@ -82,13 +114,13 @@ function Shaft({ w, h, color, strength }: { w: number; h: number; color: string;
   const slab = useRef<THREE.Mesh>(null);
   useFrame(({ clock }) => {
     const m = slab.current?.material as THREE.MeshBasicMaterial | undefined;
-    if (m) m.opacity = strength * (0.1 + 0.015 * Math.sin(clock.elapsedTime * 0.7));
+    if (m) m.opacity = strength * (0.32 + 0.05 * Math.sin(clock.elapsedTime * 0.7));
   });
   const length = Math.hypot(2.8, h * 0.45);
   return (
     <mesh ref={slab} position={[w * 0.35, 1.4, h * 0.3]} rotation={[0.9, 0.3, 0.12]} raycast={() => null} renderOrder={3}>
-      <boxGeometry args={[Math.min(2.4, w * 0.3), length, 0.02]} />
-      <meshBasicMaterial color={color} transparent opacity={strength * 0.1} depthWrite={false} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} />
+      <planeGeometry args={[Math.min(2.4, w * 0.3), length]} />
+      <meshBasicMaterial color={color} map={soft("beam") ?? undefined} transparent opacity={strength * 0.32} depthWrite={false} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} />
     </mesh>
   );
 }
@@ -107,8 +139,8 @@ function Mist({ w, h, color, density }: { w: number; h: number; color: string; d
     <group ref={group}>
       {discs.map((d, i) => (
         <mesh key={i} position={[d.x, d.y, d.z]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null} renderOrder={2}>
-          <circleGeometry args={[d.r, 20]} />
-          <meshBasicMaterial color={color} transparent opacity={d.o} depthWrite={false} side={THREE.DoubleSide} />
+          <planeGeometry args={[d.r * 2, d.r * 2]} />
+          <meshBasicMaterial color={color} map={soft("dot") ?? undefined} transparent opacity={d.o * 1.6} depthWrite={false} side={THREE.DoubleSide} />
         </mesh>
       ))}
     </group>

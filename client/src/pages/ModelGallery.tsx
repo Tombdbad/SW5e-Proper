@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Text, Billboard } from "@react-three/drei";
-import { usePartyLook, Figure, Furniture, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount } from "@/components/Map/models";
+import { usePartyLook, Figure, Furniture, stoolsOf, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount } from "@/components/Map/models";
 import { tokenOf, SIDE_COLORS } from "@/components/Map/sprites";
 import { Atmosphere } from "@/components/Map/interiors/Atmosphere.tsx";
 import { Stock } from "@/components/Map/interiors/Stock.tsx";
@@ -20,6 +20,7 @@ import { KIT_MODELS, kitUrl } from "@/components/Map/interiors/kitbash";
 import { floorOf } from "@/components/Map/sprites";
 import { gearOf } from "@/lib/sw5e/characterCalculation";
 import { furnishRoom, createRandom, VEHICLE_MAKES, type Area } from "@shared/logic";
+import { seatState, type SeatState, type Shot } from "@/components/Map/interiors/limbs";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
 
 // `rounds` shows the first round and oval rooms (2026-10-19): furnished by the planner (furnishRoom) on their curve.
@@ -209,6 +210,44 @@ function Walk() {
   );
 }
 
+// A Sabacc table with the people who play at it (2026-10-27): the croupier deals, the players hold their cards and now and then draw, bet,
+// think, call or fold, and one gets up and sits down again to show the standing and the sitting. `?section=table`; `?hold=1` freezes the gestures.
+const PLAYERS: { name: string; role: string; species: string; shots: Shot[] }[] = [
+  { name: "Vex the croupier", role: "croupier", species: "Human", shots: [] },
+  { name: "Dax", role: "gambler", species: "Rodian", shots: ["draw", "bet", "think", "call"] },
+  { name: "Mira", role: "smuggler", species: "Twi'lek", shots: ["think", "draw", "fold"] },
+  { name: "Gor", role: "patron", species: "Wookiee", shots: ["bet", "draw", "call"] },
+];
+function Seated({ at, face, who, index, cycle }: { at: [number, number]; face: number; who: (typeof PLAYERS)[number]; index: number; cycle: boolean }) {
+  const seat = useRef<SeatState>({ ...seatState(), sit: true, act: who.role === "croupier" ? "deal" : "hold", cards: who.role === "croupier" ? 0 : 2 });
+  const key = useRef(0);
+  useFrame(({ clock }) => {
+    if (!cycle) return;
+    const t = clock.elapsedTime + index * 1.7;
+    // one gets up and sits down again, slowly, to show the standing (Gor)
+    if (who.name === "Gor") seat.current.sit = Math.floor(t / 4) % 2 === 0;
+    // a gesture every few seconds
+    if (who.shots.length) {
+      const n = Math.floor(t / 3.2);
+      if (n !== key.current) { key.current = n; seat.current.shot = who.shots[n % who.shots.length]; seat.current.shotKey = n; }
+    }
+  });
+  return (
+    <group position={[at[0], 0, at[1]]} rotation={[0, face, 0]}>
+      <Figure kind="humanoid" ring={SIDE_COLORS.neutral} name={who.name} role={who.role} species={who.species} seat={seat} />
+    </group>
+  );
+}
+function Table({ cycle }: { cycle: boolean }) {
+  const stools = stoolsOf("Sabacc table", 2, 2);
+  return (
+    <group position={[0, 0, 4]}>
+      <group position={[-1, 0, -1]}><Furniture name="Sabacc table" w={2} h={2} seed={3} /></group>
+      {PLAYERS.map((who, i) => <Seated key={who.name} at={[stools[i].x - 1, stools[i].y - 1]} face={stools[i].face} who={who} index={i} cycle={cycle} />)}
+    </group>
+  );
+}
+
 function Packs() {
   return (
     <>
@@ -351,6 +390,7 @@ export default function ModelGallery() {
         {section === "rounds" && <Rounds />}
         {section === "packs" && <Packs />}
         {section === "walk" && <Walk />}
+        {section === "table" && <Table cycle={query.get("hold") !== "1"} />}
         {section === "gear" && <Gear loadout={query.get("loadout") ?? "heavy"} />}
         {section === "worn" && <Worn loadout={query.get("loadout") ?? "worn"} />}
         {section === "hands" && <Hands />}

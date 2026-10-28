@@ -80,15 +80,25 @@ export interface Aimed {
   distance: number;
   // A wall between the muzzle and the aimed point (a shot from where the character stands would not arrive), and where it stops
   blocked?: THREE.Vector3;
+  // The target is someone (see `Hit person` in LocalMap)
+  person?: boolean;
 }
 
 const RANGE = 40;
 // What is under the crosshair of `camera`. `floorY` is the height of the floor being walked; `muzzle` (over the shoulder) is where
 // a shot leaves from, and a wall between it and the aimed point marks the aim blocked. Matrices are as of the last frame
-export function aimAt(camera: THREE.Camera, floorY: number, muzzle?: THREE.Vector3, targets: Iterable<THREE.Object3D> = AIM.targets, solids: Iterable<THREE.Object3D> = AIM.solids): Aimed {
+// (`ndc`: where on the screen it is asked, the middle by default; the overhead view's mouse is aimed with its own)
+export function aimAt(camera: THREE.Camera, floorY: number, muzzle?: THREE.Vector3, targets: Iterable<THREE.Object3D> = AIM.targets, solids: Iterable<THREE.Object3D> = AIM.solids, ndc = new THREE.Vector2(0, 0)): Aimed {
   camera.updateMatrixWorld();
   const ray = new THREE.Raycaster();
-  ray.setFromCamera(new THREE.Vector2(0, 0), camera);
+  ray.setFromCamera(ndc, camera);
+  return castAim(ray, floorY, muzzle, targets, solids);
+}
+// What is along a ray from a point, as a crosshair would say (the hook's shot with nothing on the screen to aim by: straight ahead of the figure)
+export function aimFrom(origin: THREE.Vector3, direction: THREE.Vector3, floorY: number, muzzle?: THREE.Vector3, targets: Iterable<THREE.Object3D> = AIM.targets, solids: Iterable<THREE.Object3D> = AIM.solids): Aimed {
+  return castAim(new THREE.Raycaster(origin, direction.clone().normalize()), floorY, muzzle, targets, solids);
+}
+function castAim(ray: THREE.Raycaster, floorY: number, muzzle: THREE.Vector3 | undefined, targets: Iterable<THREE.Object3D>, solids: Iterable<THREE.Object3D>): Aimed {
   ray.far = RANGE;
   const nearest = (list: Iterable<THREE.Object3D>, deep: boolean) => ray.intersectObjects([...list], deep)[0];
   const [target, wall] = [nearest(targets, false), nearest(solids, true)];
@@ -99,7 +109,7 @@ export function aimAt(camera: THREE.Camera, floorY: number, muzzle?: THREE.Vecto
   if (!isFinite(distance) || distance > RANGE) return { kind: "none", point: ray.ray.at(RANGE, new THREE.Vector3()), distance: RANGE };
   const point = ray.ray.at(distance, new THREE.Vector3());
   const info = object && aimInfoOf(object);
-  const out: Aimed = { kind, point, distance, ...(info ? { label: info.label, onTap: info.onTap, plan: info.plan } : {}) };
+  const out: Aimed = { kind, point, distance, ...(info ? { label: info.label, onTap: info.onTap, plan: info.plan } : {}), ...(object?.userData?.person ? { person: true } : {}) };
   if (muzzle) {
     const to = point.clone().sub(muzzle);
     const length = to.length();

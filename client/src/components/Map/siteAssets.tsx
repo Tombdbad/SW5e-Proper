@@ -1099,7 +1099,8 @@ const NORMAL_SCALE = new THREE.Vector2(1.3, 1.3); // how steep the normal map re
 // Which texture a building's ground gets, by its world's biome and the building's type (null: plain ground, as on Coruscant)
 export function groundTexture(biome: string, buildingType: string, base: string): { set: string; tint: THREE.Color; parallax: number } | null {
   if (buildingType === "sewer system") return { set: "brown_mud_03", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
-  if (biome === "urban") return null;
+  // A city: paving (2026-10-28, the user: the street was a black plane; the concrete of the floors, as ground)
+  if (biome === "urban") return { set: "concrete_floor_worn_02", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
   if (biome === "desert") return { set: "dense_sand", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };
   if (biome === "volcanic") return { set: "dark_rock", tint: new THREE.Color(3, 3, 3), parallax: PARALLAX };
   if (biome === "ice") return { set: "snow_02", tint: new THREE.Color("#ffffff"), parallax: PARALLAX };

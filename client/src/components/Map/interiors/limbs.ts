@@ -246,3 +246,113 @@ export function applyPose(materials: Iterable<THREE.Material>, p: Pose) {
 export function pose(materials: Iterable<THREE.Material>, s: Stride) {
   applyPose(materials, gaitPose("walk", s));
 }
+
+// ---- Sitting, standing and playing at a table (2026-10-27; the user: "we need seated NPC assets and the animations for sitting and standing and
+// playing the game") ----------------------------------------------------------------------------------------------------------------
+// A person at a card table sits on a stool: the whole body drops to the seat, the legs come forward, and the arms do what the game asks.
+// `SeatState` is what the map says about a figure (a ref the figure reads each frame, so the map need not redraw); the figure eases
+// into the seat (`easeSit`) and out of it, and blends the seated pose over its walking one (`blendPose`).
+// Pure but for THREE's quaternions: tests/interiors/limbs.test.ts.
+
+// What the arms rest in: nothing special (`rest`), cards held up before the chest (`hold`), the croupier dealing (`deal`)
+export type Act = "rest" | "hold" | "deal";
+// One-shot gestures laid over it, each over about a second: drawing a card, pushing chips in, calling (a hand slammed down), folding (the
+// hands spread), and thinking (a hand to the chin)
+export type Shot = "draw" | "bet" | "call" | "fold" | "think";
+export interface SeatState {
+  sit: boolean;
+  act: Act;
+  // The gesture and a number that changes to start it again
+  shot?: Shot;
+  shotKey?: number;
+  // How far the body drops on the seat (in the figure's own units, before its scale), and how many cards it holds up
+  drop: number;
+  cards: number;
+}
+export const seatState = (): SeatState => ({ sit: false, act: "rest", drop: 0.22, cards: 0 });
+export const SIT_SECONDS = 0.7;
+export const STAND_SECONDS = 0.55;
+export const SHOT_SECONDS = 1.1;
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+export const smooth = (v: number) => v * v * (3 - 2 * v);
+// How far into the seat a figure is after `dt` more seconds (0 standing, 1 seated)
+export const easeSit = (amount: number, sitting: boolean, dt: number) => clamp01(amount + (sitting ? 1 / SIT_SECONDS : -1 / STAND_SECONDS) * dt);
+// A one-shot's strength `since` seconds after it began: up and down in a smooth swell, nothing before or after
+export const envelope = (since: number, length = SHOT_SECONDS) => (since <= 0 || since >= length ? 0 : Math.sin((since / length) * Math.PI) ** 0.8);
+
+const E = new THREE.Euler();
+function setEuler(p: Pose, limb: number, x: number, y: number, z: number) {
+  Q.setFromEuler(E.set(x, y, z));
+  p.set([Q.x, Q.y, Q.z, Q.w], limb * 4);
+}
+// Seated: the thighs forward, the knees a little apart; the arms by what they are doing (`t` is the clock, for the small movements)
+export const SIT_LEG = -1.38;
+export function seatedPose(act: Act, t: number, out: Pose = restPose()): Pose {
+  for (let i = 1; i < LIMBS; i++) out.set([0, 0, 0, 1], i * 4);
+  setEuler(out, LIMB.legR, SIT_LEG, 0, -0.1);
+  setEuler(out, LIMB.legL, SIT_LEG, 0, 0.1);
+  const sway = Math.sin(t * 1.1) * 0.03;
+  switch (act) {
+    case "hold":
+      // Both hands up before the chest, the cards held between them
+      setEuler(out, LIMB.armR, -1.15 + sway, 0, 0.5);
+      setEuler(out, LIMB.armL, -1.15 - sway, 0, -0.5);
+      break;
+    case "deal":
+      // One hand holding the deck, the other sweeping out card after card, side to side
+      setEuler(out, LIMB.armL, -1.0, 0, -0.4);
+      setEuler(out, LIMB.armR, -1.2 + Math.sin(t * 6) * 0.16, 0, -0.1 + Math.sin(t * 3) * 0.55);
+      break;
+    default:
+      // Resting on the table's edge
+      setEuler(out, LIMB.armR, -0.62 + sway, 0, -0.12);
+      setEuler(out, LIMB.armL, -0.62 - sway, 0, 0.12);
+  }
+  return out;
+}
+// What the arms do for a one-shot at its fullest
+export function shotPose(shot: Shot, out: Pose = restPose()): Pose {
+  for (let i = 1; i < LIMBS; i++) out.set([0, 0, 0, 1], i * 4);
+  setEuler(out, LIMB.legR, SIT_LEG, 0, -0.1);
+  setEuler(out, LIMB.legL, SIT_LEG, 0, 0.1);
+  switch (shot) {
+    case "draw":
+      // Reaching out over the table for a card, the other hand holding the rest
+      setEuler(out, LIMB.armR, -1.85, 0, 0.12);
+      setEuler(out, LIMB.armL, -1.15, 0, -0.5);
+      break;
+    case "bet":
+      // Pushing chips into the middle
+      setEuler(out, LIMB.armR, -1.7, 0, 0.18);
+      setEuler(out, LIMB.armL, -0.7, 0, 0.12);
+      break;
+    case "call":
+      // A hand raised, to come down on the table
+      setEuler(out, LIMB.armR, -2.65, 0, -0.35);
+      setEuler(out, LIMB.armL, -0.7, 0, 0.12);
+      break;
+    case "fold":
+      // The hands spread, the cards laid down
+      setEuler(out, LIMB.armR, -0.9, 0, -0.75);
+      setEuler(out, LIMB.armL, -0.9, 0, 0.75);
+      break;
+    case "think":
+      // A hand to the chin
+      setEuler(out, LIMB.armR, -2.0, 0, 0.5);
+      setEuler(out, LIMB.armL, -0.62, 0, 0.12);
+      break;
+  }
+  return out;
+}
+const QA = new THREE.Quaternion();
+const QB = new THREE.Quaternion();
+// Each limb of `a` turned toward `b` by `k` (0 to 1) into `out` (which may be `a`)
+export function blendPose(a: Pose, b: Pose, k: number, out: Pose = restPose()): Pose {
+  for (let i = 0; i < LIMBS; i++) {
+    QA.set(a[i * 4], a[i * 4 + 1], a[i * 4 + 2], a[i * 4 + 3]);
+    QB.set(b[i * 4], b[i * 4 + 1], b[i * 4 + 2], b[i * 4 + 3]);
+    QA.slerp(QB, k);
+    out.set([QA.x, QA.y, QA.z, QA.w], i * 4);
+  }
+  return out;
+}

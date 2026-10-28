@@ -20,7 +20,16 @@ export type MapAction =
   | { type: "window"; areaId: string; id: string; outside: boolean }
   | { type: "trap"; areaId: string; id: string }
   | { type: "use"; areaId: string; id: string; name: string }
+  // The party has sat down at a card table (2026-10-27): who else sits at it (the people on its stools) and who deals
+  | { type: "table"; areaId: string; id: string; name: string; players: { id: string; name: string; note?: string }[]; croupier?: { id: string; name: string } }
   | { type: "note"; text: string }
+  // Real-time moves of the party (interiors/air.ts): a way up the front building by a leap, the hook's line or flight (Play asks for its check and shows
+  // it); a pack lit or put out for a flight; a fall from the air, in feet
+  | { type: "climb"; how: "leap" | "hook" | "fly"; down?: boolean }
+  // Flown down onto a roof or balcony of the street, at a square of it
+  | { type: "alight"; areaId: string; x: number; y: number }
+  | { type: "power"; name: string; on: boolean }
+  | { type: "fall"; feet: number }
   // The people of a street encounter (see "The people in a district"): one has walked up to the party (met), the one in
   // need has been taken where they had to go (delivered), the party has walked into an alley (alley), and the gang
   // has closed in and surrounds it (surrounded); talk asks for the words again

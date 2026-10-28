@@ -49,7 +49,7 @@ const RECIPES: Recipe[] = [
     name: "cave",
     match: /(cave|den|tunnel|crypt|cellar|basement|pit|sewer)/,
     make: (_w, biome) => ({
-      ambient: { color: biome === "ice" ? "#6f93b8" : "#3a4a66", intensity: 0.22 },
+      ambient: { color: biome === "ice" ? "#6f93b8" : "#3a4a66", intensity: 0.15 },
       key: { color: "#7f9ccc", intensity: 0 },
       fog: { color: biome === "volcanic" ? "#4a2a22" : "#1c2433", density: 0.04 },
       dust: 0.5,
@@ -62,7 +62,7 @@ const RECIPES: Recipe[] = [
     name: "ruin",
     match: /(ruin|sanctum|temple|sealed vault|relic)/,
     make: () => ({
-      ambient: { color: "#26405a", intensity: 0.26 },
+      ambient: { color: "#26405a", intensity: 0.18 },
       key: { color: "#7ad6c9", intensity: 0.15 },
       fog: { color: "#13222b", density: 0.03 },
       dust: 0.6,
@@ -75,7 +75,7 @@ const RECIPES: Recipe[] = [
     name: "detention",
     match: /(detention|holding cell|cells|slave pens|brig)/,
     make: () => ({
-      ambient: { color: "#3a4a4a", intensity: 0.3 },
+      ambient: { color: "#3a4a4a", intensity: 0.22 },
       key: { color: "#9fc4c4", intensity: 0.18 },
       fog: null,
       dust: 0.15,
@@ -101,7 +101,7 @@ const RECIPES: Recipe[] = [
     name: "reactor",
     match: /(reactor|engine|engineering|coolant)/,
     make: () => ({
-      ambient: { color: "#243a52", intensity: 0.3 },
+      ambient: { color: "#243a52", intensity: 0.22 },
       key: { color: "#6fd0ff", intensity: 0 },
       fog: { color: "#16222f", density: 0.015 },
       dust: 0.3,
@@ -179,7 +179,7 @@ const RECIPES: Recipe[] = [
     name: "slum",
     match: /(tenement|apartments|quarters|junk|scrap|hideout|camp|tents|shack|lean-to)/,
     make: () => ({
-      ambient: { color: "#6a5040", intensity: 0.28 },
+      ambient: { color: "#6a5040", intensity: 0.2 },
       key: { color: "#ffb070", intensity: 0.05 },
       fog: { color: "#2a1f1a", density: 0.012 },
       dust: 0.4,
@@ -220,7 +220,7 @@ export function budgetOf(mood: Mood, tier: Tier): Mood {
 }
 
 // Motes to draw for a room of this size
-export const moteCount = (mood: Mood, w: number, h: number, tier: Tier): number => Math.round(Math.min(160, Math.max(0, mood.dust * w * h * 0.6)) * (tier === "lite" ? 0.5 : 1));
+export const moteCount = (mood: Mood, w: number, h: number, tier: Tier): number => Math.round(Math.min(200, Math.max(0, mood.dust * w * h * 0.75)) * (tier === "lite" ? 0.5 : 1));
 
 // The brightness of a flickering light at a time, from 1 (steady) down to 1 - flicker/2 at the dimmest;
 // pure, so a test can read it

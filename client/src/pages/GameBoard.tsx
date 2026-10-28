@@ -5,12 +5,20 @@ import { KeyboardControls, PerformanceMonitor } from "@react-three/drei";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { TalkPanel } from "@/components/Play/TalkPanel";
 import { Loader2 } from "lucide-react";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
 import { useQuality } from "@/components/Map/siteAssets";
 import { useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
-import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whereNow, useClock, noEncounters } from "@/components/Map/LocalMap";
+import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whereNow, useClock, useTransit, useTable, lifeLink, noEncounters, LEVEL_H } from "@/components/Map/LocalMap";
+import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
+import { AirButtons } from "@/components/Map/interiors/AirButtons";
+import { SabaccTable, BUY_IN_CHIPS, type TableOpponent } from "@/components/Games/SabaccTable";
+import { PazaakGame } from "@/components/Games/PazaakGame";
+import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, kindsOf, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, type Contract, type Offer } from "@shared/logic/contracts";
+import { DejarikGame } from "@/components/Games/DejarikGame";
+import { PitBets } from "@/components/Games/PitBets";
 import { usePartyLook } from "@/components/Map/models";
 import { NotesPanel, TranslatorPanel } from "@/components/Play/GearPanels";
 import { TestMenu, type TestCategory, type TestItem } from "@/components/Play/TestMenu";
@@ -33,6 +41,7 @@ import { itemRef } from "@/components/Map/interiors/items";
 import { feats } from "@/lib/sw5e/feats";
 import lookupData from "@shared/data/sw5e/lookups.json";
 import { MinigamePage, type Minigame, type MinigameResult } from "@/components/Map/FlightScene";
+import { planTrip, driveMinutes, legPar, crewmate, blockPursuit, metText, type Leg, type LegTime } from "@shared/logic/roadtrip";
 import { dogfightPayout } from "@shared/logic/dogfightSim";
 import { SCENARIOS, scenarioAdvice, scenarioOf, classOf, type ScenarioId } from "@shared/logic/dogfight";
 import type { ShipSheet } from "@shared/logic";
@@ -52,7 +61,7 @@ import {
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
-  setPane, climbable, PANE_LATCH_DC, PANE_BREAK_DC, PANE_SENSOR_DC, PANE_SENSOR_SEEN, PATIO_SENSOR_DC, type Pane, climbWay, climbGearOf, outsideClimbs,
+  setPane, climbable, PANE_LATCH_DC, PANE_BREAK_DC, PANE_SENSOR_DC, PANE_SENSOR_SEEN, PATIO_SENSOR_DC, type Pane, climbWay, climbGearOf, outsideClimbs, verticalMove,
   hidingPlaces, hidingRoom, lawSearch, searchedAt,
   START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText,
   withPresence, withPartyShips, bulkOf, shoveAsset, moveRoomAssets,
@@ -74,7 +83,7 @@ import {
   partsPlaceAt, partsStock, fitShipPart, wreckParts, droidPartsStock, droidDisplay, droidListed, surgeonStock, modStock, MOD_TRADES, WARES, baseNameOf, modFee, modFitProblem, MOD_FIT_HOURS, blueprintPool, type SurgeonLine, type ModLine,
   ammoFamilyOf, ammoItemFamily, ammoRider, accessoryOf, reloadOf, GENERATOR_SHOTS, waterSpeed, armorTraits, stealthMode, rigidDex, type AmmoRider,
   passDays, FORAGE_DC, HOT_LANDS, liquidOf, foodOf, GEAR, type Supplies,
-  hazardsAt, gravityOf, fallPlan, fallOutcome, type FallGear, exposure, HAZARD_HOUR, suitOf, airOf, breathRule, type Protections, type EnvHazard,
+  hazardsAt, gravityOf, jumpReach, fallPlan, fallOutcome, type FallGear, exposure, HAZARD_HOUR, suitOf, airOf, breathRule, type Protections, type EnvHazard,
   loadOf, containerOf, weightOf, isContraband, shipModNamed, shipModEffects, modCost, modDays, crewModPlan, crewEquipmentPlan, tierUpgrade, yardWorkforce, equipmentCost, equipmentDays, equipmentWorkforce,
   roleShip, enhancedShipPart, type ShipPart, type PartLine, type ShipModInstance,
   type World, type Area, type Exit, type LootCache, type PartyShip, type Quest, type Ship, type Rect,
@@ -341,12 +350,13 @@ export default function GameBoard() {
     setShowCombat(inCombat);
   }, [inCombat]);
 
-  // Time passes on the map
+  // Time passes on the map (not while a trip is being driven: the trip takes the time of its ride, when it ends)
   const clockRunning = !!campaign?.galaxyMap && !inCombat && (character?.currentHp ?? 0) > 0;
+  const driving = useRef(false);
   useEffect(() => {
     if (!clockRunning) return;
     const tick = setInterval(() => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible" || driving.current) return;
       const now = useClock.getState().minutes + 1;
       useClock.getState().set(now);
       if (now % 60 === 0) saveClock(now);
@@ -775,8 +785,11 @@ export default function GameBoard() {
   };
 
   // Walk, drive or fly along an exit. A place nobody has been to is built on arrival.
-  // A pilot's route being flown, between two settlements (see travel)
-  const [pilot, setPilot] = useState<{ exit: Exit; ride: Ride; mode: FlightMode; seed: number } | null>(null);
+  // A pilot's route being driven, between two settlements, as a trip of legs of open road (shared/logic/roadtrip.ts; see travel): the legs, the one
+  // being driven, the hull carried on, the time each took, the riders of the ambushes of its legs (and of a roadblock that was run, after the party on
+  // the next leg), and whether the party is being asked what it does about an ambush before the leg begins
+  const [trip, setTrip] = useState<{ exit: Exit; ride: Ride; legs: Leg[]; i: number; hull: number; took: LegTime[]; riders: Occupant[][]; pursuit: { a: RoadAmbush; riders: Occupant[] } | null; phase: "ask" | "drive"; vehicle: string; seed: number } | null>(null);
+  driving.current = !!trip;
   // An ambush on the road (shared/logic "On the road", house rules): the trip it stopped, who and why, the riders as people to fight, and
   // whether the party is running for it (the chase)
   const [roadHit, setRoadHit] = useState<{ exit: Exit; ride: Ride; a: RoadAmbush; riders: Occupant[]; seed: number; chase?: boolean } | null>(null);
@@ -786,9 +799,20 @@ export default function GameBoard() {
     // A place that kills without protection (no air, the crushing deep) is not walked into (the book: a few rounds)
     const deadly = deadlyAt(exit.to);
     if (deadly) return void toast.error(`${deadly.why}: ${HAZARD_HOUR[deadly.hazard].text}`);
-    if (chosen?.pilot) {
+    // The party's own speeder over a road is always driven, never skipped (the trip minigame opens); `cleared` is the trip arriving
+    const driven = exit.needsShip || cleared ? undefined : chosen ?? defaultRide(ridesFor(exit));
+    if (driven?.vehicleId && !driven.blocked && (kmOf(exit.travel) ?? 0) > 0) {
+      const chosen = driven;
       const vehicle = vehicles.find((v) => v.id === chosen.vehicleId);
-      return void setPilot({ exit, ride: chosen, mode: /air/i.test(String(vehicle?.model ?? "")) ? "airspeeder" : "speeder", seed: Math.floor(Math.random() * 1e9) + 1 });
+      const force = forceAlignOf(character?.forceAlignment);
+      const side = force !== "None" ? force : /good/i.test(character?.alignment ?? "") ? "Light" : /evil/i.test(character?.alignment ?? "") ? "Dark" : "None";
+      const seed = (Math.floor(useClock.getState().minutes) * 2654435761 + Array.from(exit.to).reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) | 0, 7)) >>> 0;
+      // (the test build's switches: localStorage sw5e.ambush = 1 ambushes every trip, sw5e.roadblock = 1 puts a roadblock on every one)
+      const flag = (key: string) => TEST_MENU && (() => { try { return localStorage.getItem(key) === "1"; } catch { return false; } })();
+      const always = flag("sw5e.ambush") && flag("sw5e.roadblock") ? "both" : flag("sw5e.ambush") ? "ambush" : flag("sw5e.roadblock") ? "block" : undefined;
+      const legs = planTrip(world, exit.to, { km: kmOf(exit.travel) ?? 0, biome: String(trailOf(world, exit.to).find((a) => a.kind === "planet")?.type ?? "temperate"), level, alignment: side, wanted: !!world.pursuit, seed, always });
+      const riders = legs.map((leg, i) => (leg.ambush ? roadAmbushers(monsterData as unknown as Sw5eMonster[], equipmentData as any, leg.ambush, level, `${seed}-${i}`) : []));
+      return void setTrip({ exit, ride: chosen, legs, i: 0, hull: 99, took: [], riders, pursuit: null, phase: riders[0].length ? "ask" : "drive", vehicle: String(vehicle?.model ?? "Landspeeder"), seed });
     }
     const changes: Record<string, any> = { currentLocation: exit.to };
     const { ship: flying } = exit.needsShip ? tripBy(exit) : { ship: undefined };
@@ -866,10 +890,47 @@ export default function GameBoard() {
     }
   };
 
+  // A leg of the trip driven: the party's time and hull are kept; a roadblock rammed sends its riders after the party on the next leg; a chase lost
+  // (or a speeder shot out from under the party with riders still on it) is the fight at the roadside, which ends the trip; the end of the last leg
+  // is the arrival, in the time of the whole drive (house rules, shared/logic/roadtrip.ts)
+  const tripLegDone = (r: MinigameResult) => {
+    if (!trip || r.kind !== "road" || !world || !character) return;
+    const leg = trip.legs[trip.i];
+    const me = r.race.racers.find((x) => x.party)!;
+    const riders = [...(leg.ambush ? trip.riders[trip.i] : []), ...(trip.pursuit?.riders ?? [])];
+    const a = trip.pursuit?.a ?? leg.ambush;
+    const times: LegTime[] = [...trip.took, { par: legPar(r.metres), took: me.finish }];
+    if (r.stop?.paid) saveCharacter({ credits: Math.max(0, (character.credits ?? 0) - r.stop.paid) });
+    const ride = { ...trip.ride, pilot: false, minutes: driveMinutes(trip.ride.minutes, times) };
+    if (r.race.chase && a) {
+      const end = chaseResult(r.race);
+      if (end.outcome === "caught") {
+        setTrip(null);
+        return roadFight({ exit: trip.exit, ride, a, riders, seed: trip.seed }, riders.filter((o) => end.left.includes(o.name)));
+      }
+      toast.success(`${end.note.charAt(0).toUpperCase()}${end.note.slice(1)}.`);
+    } else if (me.wrecked) toast.error("Your speeder gave out on the road and was towed on, patched (house rule: a wreck costs time, not the trip).");
+    const hull = me.wrecked || me.hull < 1 ? 4 : me.hull;
+    if (trip.i + 1 < trip.legs.length) {
+      let pursuit: { a: RoadAmbush; riders: Occupant[] } | null = null;
+      if (r.stop?.outcome === "run" && leg.block) {
+        const chase = blockPursuit(world, leg.block);
+        pursuit = { a: chase, riders: roadAmbushers(monsterData as unknown as Sw5eMonster[], equipmentData as any, chase, level, `${trip.seed}-block${trip.i}`) };
+        if (!pursuit.riders.length) pursuit = null;
+      }
+      const next = trip.i + 1;
+      return void setTrip({ ...trip, i: next, hull, took: times, pursuit, phase: !pursuit && trip.riders[next].length ? "ask" : "drive" });
+    }
+    setTrip(null);
+    travel(trip.exit, ride, true);
+  };
+
   // Take an exit, as the watch allows: those who have stopped the party bar every way but the
   // way back; past those who have not, it takes a Stealth check
   const leaveBy = async (exit: Exit, ride?: Ride) => {
-    const blocked = world && here ? blockedExit(world, here.id, exit, clockMinutes) : undefined;
+    // (someone already going up or down a wall is not sent anywhere else until they are there)
+    if (useTransit.getState().now) return;
+    const blocked =world && here ? blockedExit(world, here.id, exit, clockMinutes) : undefined;
     if (blocked) return void toast.error(`Blockade: ${blocked}.`);
     // Only those who can see the party (see SIGHT_SQUARES) get a say: a Stealth check to slip past.
     // A miss puts their watch up a step and the party may still go; it stops them only where they
@@ -898,6 +959,16 @@ export default function GameBoard() {
           else toast.error(exit.via === "enter" ? "The hook will not hold, or you slip back down: a minute gone." : "You lose your grip and climb back up: a minute gone.");
           return void saveCampaign(pass(1));
         }
+      } else if (exit.scale.how === "leap") {
+        // A running leap at the edge and a haul over it (house rule, 2026-10-27): Strength (Athletics); missed by 5 or more, a slip from
+        // the top of the jump (a fall), else the climber drops back and loses a minute
+        const r = await askCheck({ what: `Leap at the edge (${exit.scale.feet} ft.) and haul yourself over it (house rule)`, dc: exit.scale.dc, abilities: ["strength"], skills: ["athletics"] });
+        if (!r) return;
+        if (!r.success) {
+          if (r.total <= exit.scale.dc - 5) await fallOutside(Math.max(5, Math.round(exit.scale.feet / 2)), false);
+          else toast.error("You fall short of the edge and drop back: a minute gone.");
+          return void saveCampaign(pass(1));
+        }
       } else if (exit.scale.how === "jump") {
         if ((await fallOutside(exit.scale.feet, true)) === null) return;
       } else toast.info(`${exit.scale.by}: ${exit.via === "enter" ? "up" : "down"} without a check.`);
@@ -906,7 +977,7 @@ export default function GameBoard() {
       // Out of a pit: Athletics, or Dexterity, a minute for each try. Friction-grip gear worn gives a climbing speed: no check (the
       // book); a grappling hook or fibercord line makes it a DC 5 easier climb (house rule)
       const grips = wearingNow.some((n) => /friction-grip/i.test(n));
-      const line = carries(/^grappling hook|^fibercord/i);
+      const line = carries(/grappling (hook|harpoon)|^fibercord/i);
       if (grips) toast.info("Friction-grip gear: you climb out without a check.");
       else {
         const ok = await abilityCheck(`Climbing out${line ? " (a line helps: DC -5, house rule)" : ""}`, Math.max(5, exit.climb - (line ? 5 : 0)), ["strength", "dexterity"], skilled("athletics"));
@@ -914,6 +985,10 @@ export default function GameBoard() {
         if (!ok) return void saveCampaign(pass(1));
       }
     }
+    // Up to a roof or down from one, by its ladder or by gear: the party is seen going up or down (the map carries the figure) before it
+    // is on the roof or the street (2026-10-27, the user: it was jarring to appear on a roof). The fall of a jump down is dealt with above.
+    const vertical = world && here ? verticalMove(world, here.id, exit) : null;
+    if (vertical) await useTransit.getState().play(vertical);
     // A sensor on the way (patio doors, house rule): slipped past (Intelligence, a security or slicer's kit helps), else the alarm
     // goes up through the building; either way the party goes through
     if (exit.alarmed && exit.pathId) {
@@ -2879,6 +2954,215 @@ export default function GameBoard() {
     return result;
   };
 
+  // ---- The house table (2026-10-27): real hands of Sabacc at a table, with chips bought in at a stake (a chip is `unit` credits, a buy-in 20 chips)
+  const [tableGame, setTableGame] = useState<{ areaId: string; id: string; name: string; place: string; players: TableOpponent[]; croupier?: { id: string; name: string }; unit: number | null; chips: number } | null>(null);
+  const tableRef = useRef(tableGame);
+  tableRef.current = tableGame;
+  // Chips cashed in: the credits go to the character as they are now (not as they were when the table opened)
+  const cashOut = (chips: number) => {
+    const t = tableRef.current;
+    if (!t) return;
+    if (t.unit && chips > 0) {
+      const now = queryClient.getQueryData<any>(["game-character", gameCharacterId]) ?? character;
+      saveCharacter({ credits: (now.credits ?? 0) + chips * t.unit });
+      toast[chips >= BUY_IN_CHIPS ? "success" : "info"](`You cash out ${chips} chips: ${(chips * t.unit).toLocaleString()} credits (you bought in for ${(BUY_IN_CHIPS * t.unit).toLocaleString()}).`);
+    }
+    lifeLink.current?.hold([...t.players.map((p) => p.id)], false);
+    useTable.getState().stand();
+    setTableGame(null);
+  };
+  const buyIn = (unit: number) => {
+    const t = tableRef.current;
+    if (!t) return;
+    saveCharacter({ credits: Math.max(0, (character.credits ?? 0) - BUY_IN_CHIPS * unit) });
+    lifeLink.current?.hold(t.players.map((p) => p.id), true);
+    setTableGame({ ...t, unit, chips: BUY_IN_CHIPS });
+  };
+  // A party moved away from the table (a way taken from the panel, a fight) cashes out what it has
+  useEffect(() => {
+    if (tableGame && (inCombat || here?.id !== tableGame.areaId)) cashOut(tableGame.unit ? tableGame.chips : 0);
+  }, [here?.id, inCombat]);
+
+  // ---- Contracts (2026-10-27; shared/logic/contracts.ts): the jobs the people of a place give, now that the downtime activities are work for them
+  // (the Downtime tab is for test builds only). They live in the character's play state: the jobs taken, the jobs done for each giver, the jobs
+  // finished (so that a day's offers are not offered twice)
+  type ContractState = { active: Contract[]; done: Record<string, number>; finished: string[] };
+  const cState: ContractState = { active: [], done: {}, finished: [], ...(((character?.playState as any)?.contracts) ?? {}) };
+  const writeContracts = (next: Partial<ContractState>, extra: Record<string, any> = {}) => {
+    const current = (queryClient.getQueryData<any>(["game-character", gameCharacterId])?.playState ?? {}) as Record<string, any>;
+    const merged: ContractState = { active: cState.active, done: cState.done, finished: cState.finished, ...next };
+    return saveCharacter({ ...extra, playState: { ...current, contracts: { ...merged, finished: merged.finished.slice(-80) } } });
+  };
+  const takeContract = (offer: Offer) => {
+    if (!world) return;
+    if (cState.active.length >= 4) return void toast.error("Four jobs at a time is plenty: finish or drop one.");
+    const placed = acceptContract(world, offer, level, monsterData as unknown as Sw5eMonster[], equipmentData as any, clockNow());
+    if ("error" in placed) return void toast.error(placed.error);
+    saveCampaign({ galaxyMap: placed.world });
+    writeContracts({ active: [...cState.active, placed.contract] });
+    toast.success(`Job taken from ${offer.giverName}: ${offer.title}. It pays ${offer.reward.toLocaleString()} credits.`);
+  };
+  const reportContract = (c: Contract) => {
+    if (!world || contractProgress(world, c).status !== "ready") return;
+    const pay = contractPayout(c, c.captured ? 0.25 : 0);
+    const xp = Math.round(c.reward / 5);
+    const before = cState.done[c.giver] ?? 0;
+    writeContracts({ active: cState.active.filter((x) => x.id !== c.id), done: { ...cState.done, [c.giver]: before + 1 }, finished: [...cState.finished, c.id] }, { credits: (character.credits ?? 0) + pay, experience: (character.experience ?? 0) + xp });
+    toast.success(`${c.giverName} pays ${pay.toLocaleString()} credits${c.captured ? " (a quarter more: taken alive)" : ""} and ${xp} XP.${tierFor(before + 1) > tierFor(before) ? ` They trust you with ${TIER_NAME[tierFor(before + 1)].toLowerCase()} work now.` : ""}`);
+  };
+  const dropContract = (c: Contract) => writeContracts({ active: cState.active.filter((x) => x.id !== c.id), finished: [...cState.finished, c.id] });
+  // Asking round for the target of a bounty: a check against the tier's DC tells one more of where they are
+  const askAbout = async (c: Contract) => {
+    if (!world || inCombat || dead) return;
+    const r = await askCheck({ what: `Ask round about ${c.title.replace(/^[^:]*: /, "")} (Persuasion, Insight or Investigation)`, dc: askDC(c), abilities: ["charisma", "wisdom", "intelligence"], skills: ["persuasion", "insight", "investigation"] });
+    if (!r) return;
+    const res = askAround(c, r.total);
+    saveCampaign(pass(60));
+    writeContracts({ active: cState.active.map((x) => (x.id === c.id ? res.contract : x)) });
+    toast[res.learned ? "success" : "info"](res.learned ? `Someone knows: ${whereabouts(world, res.contract, here?.id ?? "")}.` : "Nobody tells you anything useful. An hour gone.");
+  };
+  // A bounty's target talked into giving up (taken alive: a quarter more)
+  const demandSurrender = async (o: Occupant, areaId: string) => {
+    const c = cState.active.find((x) => x.id === o.contract);
+    if (!c || !world || inCombat || dead) return;
+    const r = await askCheck({ what: `Demand ${o.name}'s surrender (Intimidation)`, dc: c.surrender ?? 15, abilities: ["charisma"], skills: ["intimidation"] });
+    if (!r) return;
+    if (r.success) {
+      const area = world.areas[areaId];
+      saveCampaign({ galaxyMap: updateArea(world, areaId, { occupants: area.occupants.filter((x) => x.id !== o.id) }).world });
+      writeContracts({ active: cState.active.map((x) => (x.id === c.id ? { ...x, captured: true } : x)) });
+      toast.success(`${o.name} gives up and is bound: taken alive. Report to ${c.giverName}.`);
+    } else {
+      toast.error(`${o.name} laughs at you, and reaches for a weapon.`);
+      fight();
+    }
+  };
+  const contractPanel = (o: Occupant, areaId: string) => {
+    if (!world || !character) return null;
+    const building = trailOf(world, areaId).find((a) => a.kind === "building");
+    if (!kindsOf(o, building?.type ?? "").length) return null;
+    const done = cState.done[o.id] ?? 0;
+    const mine = cState.active.filter((c) => c.giver === o.id);
+    const offers = makeOffers(world, o, areaId, done, dayOf(clockNow())).filter((x) => !cState.active.some((c) => c.id === x.id) && !cState.finished.includes(x.id));
+    return (
+      <div className="mt-2 border-t border-gray-600 pt-2 text-xs" data-testid="contracts">
+        <p className="font-semibold text-amber-200">Work for {o.name}</p>
+        <p className="text-gray-400">{done} job{done === 1 ? "" : "s"} done for them: they offer {TIER_NAME[tierFor(done)].toLowerCase()} work{tierFor(done) < 3 ? ` (more trust after ${[1, 3, 6][tierFor(done)]} done)` : ""}.</p>
+        {mine.map((c) => {
+          const p = contractProgress(world, c);
+          return (
+            <div key={c.id} className="mt-1 rounded border border-amber-700/60 p-1" data-testid="contract-mine">
+              <p className="font-semibold">{c.title}</p>
+              <p className={p.status === "ready" ? "text-green-300" : "text-gray-300"}>{p.text}</p>
+              {p.status === "ready" && <Button size="sm" className="mt-1 h-6 px-2" onClick={() => reportContract(c)} data-testid="contract-report">Report and be paid ({contractPayout(c, c.captured ? 0.25 : 0).toLocaleString()} cr)</Button>}
+            </div>
+          );
+        })}
+        {offers.map((offer) => (
+          <div key={offer.id} className="mt-1 rounded border border-gray-600 p-1" data-testid="contract-offer">
+            <p><b>{KIND_LABEL[offer.kind]}</b>: {offer.title} <span className="text-amber-200">{offer.reward.toLocaleString()} cr</span></p>
+            <p className="text-gray-400">{offer.brief}</p>
+            <Button size="sm" variant="outline" className="mt-1 h-6 px-2" disabled={inCombat || dead} onClick={() => takeContract(offer)} data-testid="contract-take">Take the job</Button>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  // The Downtime panel, for the whole of it (the test menu) or for one person's own activities (`only`; the Trade tab)
+  const downtimeFor = (only?: string[]) => (
+    <DowntimePanel
+      only={only}
+      character={character}
+      level={level}
+      day={dayOf(clock)}
+      settlement={settlementHere ? { id: settlementHere.id, name: settlementHere.name, type: String(settlementHere.type ?? ""), faction: factionAt(world!, settlementHere.id) } : null}
+      blocked={downtimeBlocked}
+      equipment={equipmentData}
+      tools={toolData}
+      people={downtimePeople}
+      hasVehicle={Array.isArray(campaign?.vehicles) && campaign.vehicles.length > 0}
+      hasShip={ships.length > 0}
+      vehicleModel={campaign?.vehicles?.[0]?.model}
+      shipSpec={ships[0] ? { size: ships[0].size, role: ships[0].role } : undefined}
+      partyShips={shipRows.length ? ships.map((sh) => ({ id: sh.id, name: sh.name, sheet: shipSheet(sh, shipRows, proficiency), owner: sh.owner, where: world?.areas[sh.areaId]?.name, busy: shipBusy(sh) ? `${shipBusy(sh)!.what} at the yard` : sh.status === "wrecked" ? "wrecked" : undefined })) : []}
+      shipRows={shipRows}
+      biome={world && hereId ? trailOf(world, hereId).find((a) => a.kind === "planet")?.type : undefined}
+      gravity={gravityNow().g}
+      foeFaction={world?.antagonist}
+      state={downtime}
+      check={checkFor}
+      ask={askCheck}
+      commit={commitDowntime}
+      spendBlackmail={spendBlackmail}
+      spendLore={spendLore}
+      openPit={openPit}
+    />
+  );
+  // What else this person does with the party: the activities of the Downtime panel that are theirs (a pit boss's pit, a dockmaster's races), shown
+  // when asked for
+  const [jobsFor, setJobsFor] = useState<string | null>(null);
+  // (the Downtime tab is for test builds: a tab remembered from one is not shown in the game)
+  useEffect(() => { if (!TEST_MENU && hudTab === "downtime") setHudTab("here"); }, [hudTab]);
+  const jobsPanel = (o: Occupant, areaId: string) => {
+    if (!world || !character) return null;
+    const building = trailOf(world, areaId).find((a) => a.kind === "building");
+    const ids = jobsOf(o, building?.type ?? "");
+    if (!ids.length) return null;
+    return (
+      <div className="mt-2 border-t border-gray-600 pt-2 text-xs" data-testid="odd-jobs">
+        <Button size="sm" variant="outline" className="h-6 px-2" onClick={() => setJobsFor(jobsFor === o.id ? null : o.id)} data-testid="odd-jobs-toggle">
+          {jobsFor === o.id ? "Never mind" : `Ask ${o.name} about ${ids.slice(0, 4).map((id) => JOB_NAMES[id] ?? id).join(", ")}${ids.length > 4 ? " and more" : ""}`}
+        </Button>
+        {jobsFor === o.id && ids.includes("pit-arena") && (
+          <div className="mt-1">
+            <PitBets
+              monsters={monsterData as unknown as Sw5eMonster[]}
+              level={level}
+              day={dayOf(clockNow())}
+              boss={o.id}
+              credits={character.credits ?? 0}
+              done={((play as any).pitBets?.day === dayOf(clockNow()) ? (play as any).pitBets.ids : []) as string[]}
+              onSettled={(bout, stake, back) => {
+                const today = dayOf(clockNow());
+                const had = (play as any).pitBets?.day === today ? ((play as any).pitBets.ids as string[]) : [];
+                const current = (queryClient.getQueryData<any>(["game-character", gameCharacterId])?.playState ?? {}) as Record<string, any>;
+                saveCharacter({ credits: Math.max(0, (character.credits ?? 0) - stake + back), playState: { ...current, pitBets: { day: today, ids: [...had, bout] } } });
+                saveCampaign(pass(30));
+                toast[back ? "success" : "info"](back ? `The bout goes your way: ${back.toLocaleString()} credits.` : `The bout goes the other way: ${stake} credits lost.`);
+              }}
+            />
+          </div>
+        )}
+        {jobsFor === o.id && <div className="mt-1">{downtimeFor(ids)}</div>}
+      </div>
+    );
+  };
+
+  // ---- A game of Pazaak, Dejarik or Sabacc with someone (2026-10-27): the rules of the game itself, the stake put up and the winner paid
+  type Duel = { game: "pazaak" | "dejarik" | "sabacc"; against: string; stake: number; unit: number; skill: number };
+  const [duel, setDuel] = useState<Duel | null>(null);
+  const realGameOf = (set: string): Duel["game"] | undefined => (/pazaak/i.test(set) ? "pazaak" : /dejarik/i.test(set) ? "dejarik" : /sabacc/i.test(set) ? "sabacc" : undefined);
+  const startDuel = (game: Duel["game"], against: string, bonus: number) => {
+    const unit = Math.max(1, Math.round(stake / BUY_IN_CHIPS));
+    const cost = game === "sabacc" ? unit * BUY_IN_CHIPS : stake;
+    if (stake < GAMBLE_STAKE[0] || cost > (character.credits ?? 0)) return void toast.error(`The stake is ${GAMBLE_STAKE[0]} to ${GAMBLE_STAKE[1].toLocaleString()} credits, and no more than you have (${character.credits ?? 0}).`);
+    saveCharacter({ credits: (character.credits ?? 0) - cost });
+    setDuel({ game, against, stake: cost, unit, skill: Math.max(0, Math.min(3, Math.round(bonus / 2))) });
+  };
+  const endDuel = (paid: number, won: boolean) => {
+    const d = duel;
+    if (!d) return;
+    if (paid > 0) {
+      const now = queryClient.getQueryData<any>(["game-character", gameCharacterId]) ?? character;
+      saveCharacter({ credits: (now.credits ?? 0) + paid });
+    }
+    if (d.game !== "sabacc") toast[won ? "success" : paid ? "info" : "error"](won ? `You beat ${d.against} and take ${paid} credits.` : paid ? `Stake returned: ${paid} credits.` : `${d.against} takes your ${d.stake} credits.`);
+    else toast.info(`You leave the table with ${paid} credits.`);
+    saveCampaign(pass(20));
+    setDuel(null);
+  };
+
   // ---- Games (Wretched Hives, "Gambling (Uptime)"): five checks, stake 20 to 2,000 credits
   type Gamble = { against: string; label: string; set: string; stake: number; round: number; wins: number; log: string[]; opponentBonus: number; house: boolean; result?: { change: number; debt: number; text: string; complications: string[] } };
   const [gamble, setGamble] = useState<Gamble | null>(null);
@@ -3415,7 +3699,35 @@ export default function GameBoard() {
   // Up the outside of a building and down again with climbing gear (shared/logic outsideClimbs): added to the ways from here (the
   // list is only read by the handlers and the panels below, which run after this)
   const climbGear = climbGearOf(((character?.equipment ?? []) as string[]).map((n) => ({ name: n, ...(factsOf(n) ?? {}) })), wearingNow, running);
+  // A running leap at an edge (2026-10-27, the user: jumping outside a fight too): as high as the character's jump reaches in the world's pull
+  // (shared/logic jumpReach; a gravity generator running makes it standard)
+  if (world && here && character) {
+    const pull = gravityOf(world, here.id, ((character.equipment ?? []) as string[]).some((n) => /gravity generator/i.test(n) && running(n))).g;
+    climbGear.reach = jumpReach(character.abilityScores?.strength ?? 10, true, pull, String((speciesFacts as any)?.size ?? "Medium")).reach;
+  }
   if (world && here) exits.push(...outsideClimbs(world, here.id, climbGear));
+  // What the party has for the real-time moves of the map (interiors/air.ts: Space jumps, F fires the hook, Left Shift fires a pack's burst): the hook
+  // that is fired and the pack that flies (the one running, else the best carried), and which ways up the building in front of them each would give
+  const airFlyer = ((character?.equipment ?? []) as string[]).map((n) => ({ n, f: accessoryOf({ name: n, description: factsOf(n)?.description }).fly })).filter((x) => x.f).sort((a, b) => (running(b.n) ? 1 : 0) - (running(a.n) ? 1 : 0) || (b.f ?? 0) - (a.f ?? 0))[0];
+  const upWays = (gear: typeof climbGear) => (world && here ? outsideClimbs(world, here.id, gear).filter((e) => e.via === "enter") : []);
+  const airGear: AirGear | null = world && here && character ? (() => {
+    const fly = airFlyer ? upWays({ flying: airFlyer.n }) : [];
+    return {
+      strength: character.abilityScores?.strength ?? 10,
+      size: String((speciesFacts as any)?.size ?? "Medium"),
+      g: gravityOf(world, here.id, ((character.equipment ?? []) as string[]).some((n) => /gravity generator/i.test(n) && running(n))).g,
+      hook: climbGear.shot ? hookStats(climbGear.shot) : undefined,
+      fly: airFlyer ? { name: airFlyer.n, feet: airFlyer.f!, on: running(airFlyer.n) } : undefined,
+      ways: {
+        leap: upWays({ reach: climbGear.reach }).length > 0,
+        hook: upWays({ hookFeet: climbGear.hookFeet, lineFeet: climbGear.lineFeet }).length > 0,
+        fly: fly.length > 0,
+        up: fly.length ? Math.min(...fly.map((e) => (world!.areas[e.to]?.layout?.level ?? 1) * LEVEL_H)) : undefined,
+      },
+    };
+  })() : null;
+  const airKey = JSON.stringify(airGear);
+  useEffect(() => { useAir.getState().setGear(airGear); }, [airKey]);
   // Hidden from the law's search (shared/logic lawSearch): a smugglepack's compartment carried, clandestine pockets worn; what is in
   // them (play.hidden, never more than is carried), and the room left
   const carriedNames = (character?.equipment ?? []) as string[];
@@ -3804,8 +4116,7 @@ export default function GameBoard() {
     const settlement = world.areas[berthOf(world, here.id)];
     const riders = 1 + party.filter((c) => c.kind !== "beast").length;
     const rides = groundRides({ km, vehicles: parkedHere, companions: [...party, ...beasts], riders, transport, hire: settlement ? hasRidesForHire(world, settlement.id) : false, transit: exit.label === "Transit line" });
-    // The party's own vehicle can be flown by its pilot, in 3D, for the route (house rule)
-    for (const ride of rides.filter((r) => r.vehicleId && !r.blocked)) rides.push({ ...ride, id: `pilot-${ride.id}`, label: `Fly it yourself (${ride.label})`, pilot: true });
+    // The party's own vehicle is driven by the party, in 3D, for the route (house rule; `travel` opens the trip for any ride with a vehicle)
     // Lifts: someone going where the party is going offers a seat (they leave when they leave)
     if (settlement) {
       for (const lift of liftsBetween(world, settlement.id, exit.to, clockNow())) {
@@ -3815,6 +4126,20 @@ export default function GameBoard() {
     // A blockade stops vehicles and hired rides until the search is called off (on foot is still open)
     if (blockadeAt(world, settlementOf(world, here.id), clockNow())) return rides.map((r) => (r.id === "foot" ? r : { ...r, blocked: "blockade: no vehicles until the search is called off" }));
     return rides;
+  };
+  // Who is talking and where, for the spoken replies (components/Play/TalkPanel.tsx; the local model sees only this card)
+  const talkPlayer = { name: String(character?.name ?? "The player"), species: character?.species, class: klass?.name ?? character?.class, alignment: character?.alignment };
+  const talkScene = (): string => {
+    if (!world || !here) return "";
+    const trail = trailOf(world, here.id);
+    const planet = trail.find((a) => a.kind === "planet");
+    const town = trail.find((a) => a.kind === "settlement");
+    const law = lawAt(world, here.id);
+    return [
+      `${here.name}${town && town.id !== here.id ? `, in ${town.name}` : ""}${planet ? `, on ${planet.name}${planet.type ? ` (a ${planet.type} world)` : ""}` : ""}. It is ${clockText(useClock.getState().minutes)}.`,
+      law >= 2 ? "The law is strict here." : law === 0 ? "There is little law here." : "",
+      here.description ? String(here.description).slice(0, 160) : "",
+    ].filter(Boolean).join(" ");
   };
   // The ride a trip takes when none was chosen (a tap on the map): the quickest that costs nothing
   // (in the saddle, the beast ridden)
@@ -4147,6 +4472,25 @@ export default function GameBoard() {
       if (exit && !inCombat && !dead && !exploring) leaveBy(exit);
       else if (place && OPENS.includes(place.kind)) setViewId(place.id);
     } else if (action.type === "note") toast.info(action.text);
+    // The real-time moves (interiors/air.ts): a pack lit or put out for a flight, a fall out of the air (rolled as any fall), and a way up the
+    // building in front: the leap, the hook's line or flight, as the exit of that way (its check and its climb as before)
+    else if (action.type === "power") { if (action.on) switchOn(action.name); else switchOff(action.name); }
+    else if (action.type === "fall") void fallOutside(action.feet, false);
+    // Flown down onto a roof or a balcony of the street (the pack carried the party over its edge, higher than its balustrade): it stands there
+    else if (action.type === "alight") {
+      if (inCombat || dead || exploring) return;
+      if (!lawUnseen("Flying onto a roof", "trespass")) return;
+      usePartySpot.getState().stand(action.areaId, action.x, action.y);
+      travel({ to: action.areaId, via: "enter", label: "Fly down onto", travel: "" } as Exit);
+    }
+    else if (action.type === "climb") {
+      if (inCombat || dead || exploring) return;
+      const gear = action.how === "leap" ? { reach: climbGear.reach } : action.how === "hook" ? { hookFeet: climbGear.hookFeet, lineFeet: climbGear.lineFeet } : { flying: airFlyer?.n };
+      // (off the edge of a roof or balcony: down to the street)
+      const way = outsideClimbs(world, here.id, gear).find((e) => e.via === (action.down ? "leave" : "enter"));
+      if (way) void leaveBy(way);
+      else toast.error(action.how === "hook" ? "The hook's line is too short for that." : action.how === "fly" ? "No way up there by flight." : "That is beyond your jump.");
+    }
     else if (action.type === "alley") void ambush(action.alley);
     else if (action.type === "encounter") {
       const open = world?.encounter;
@@ -4200,6 +4544,11 @@ export default function GameBoard() {
       else travelTo(action.areaId, action.secret, action.squares);
     }
     else if (action.type === "exit") leaveBy(action.exit);
+    // Sat at a card table: the stake is asked for before a card is dealt
+    else if (action.type === "table") {
+      if (inCombat || dead) return void useTable.getState().stand();
+      setTableGame({ areaId: action.areaId, id: action.id, name: action.name, place: (scene ?? world)?.areas[action.areaId]?.name ?? action.name, players: action.players, croupier: action.croupier, unit: null, chips: 0 });
+    }
     else if (action.type === "use") {
       // A droid on a dealer's plinth: the dealer comes to the counter
       const room = (scene ?? world)?.areas[action.areaId];
@@ -5176,8 +5525,13 @@ export default function GameBoard() {
               </select>
               <input type="number" className="h-7 w-20 rounded bg-gray-700 px-1" min={GAMBLE_STAKE[0]} max={Math.min(GAMBLE_STAKE[1], character.credits ?? 0)} value={stake} onChange={(e) => setStake(Number(e.target.value))} aria-label="Stake" data-testid="gamble-stake" />
               <Button size="sm" disabled={inCombat || dead || watched} onClick={() => startGamble(against, label, gambleSet || setsCarried[0], opponentBonus, house)} data-testid="gamble-start">
-                Play for {stake} cr
+                {realGameOf(gambleSet || setsCarried[0]) ? "Quick game" : "Play"} for {stake} cr
               </Button>
+              {!house && realGameOf(gambleSet || setsCarried[0]) && (
+                <Button size="sm" variant="outline" disabled={inCombat || dead || watched} onClick={() => startDuel(realGameOf(gambleSet || setsCarried[0])!, label, opponentBonus)} data-testid="gamble-real">
+                  Play it properly ({realGameOf(gambleSet || setsCarried[0])})
+                </Button>
+              )}
             </div>
             <p className="text-gray-400">Five checks; {house ? `the house wants ${GAMBLE_HOUSE_DC}` : "a contest: bluffing beats the game, the game beats reading, reading beats bluffing"}. Stake {GAMBLE_STAKE[0]} to {GAMBLE_STAKE[1].toLocaleString()}.</p>
           </>
@@ -6327,6 +6681,8 @@ export default function GameBoard() {
   // modifications, passage, hires, plays. Shown in the HUD's Trade tab
   const dealings = (o: Occupant, holderId: string) => (
     <>
+      {contractPanel(o, holderId)}
+      {jobsPanel(o, holderId)}
       {waresOf(o) && tradePanel(o, holderId)}
       {!waresOf(o) && shipServices(o, holderId)}
       {partsCounter(o, holderId)}
@@ -6709,6 +7065,11 @@ export default function GameBoard() {
                 <span className="font-semibold text-red-300">Watch: {allowed ? "letting you pass" : ALERT_LEVELS[alert]}.</span> {allowed ? "They let you through, and watch what you do." : WATCH_NOTE[alert]}
               </p>
               {watchButtons}
+              {o.contract && o.role === "bounty target" && cState.active.some((c) => c.id === o.contract) && (
+                <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => demandSurrender(o, holderId)} data-testid="contract-surrender">
+                  Demand surrender (Intimidation DC {cState.active.find((c) => c.id === o.contract)?.surrender ?? 15}): taken alive pays a quarter more
+                </Button>
+              )}
               {o.role === "wildlife" && o.creature === "beast" && gentleSection(o)}
             </div>
           ) : o.captive ? (
@@ -6719,7 +7080,12 @@ export default function GameBoard() {
             freedSection(o)
           ) : (
             <>
-              <p className="text-xs text-gray-400">To talk with them, say what you do on the GM Interface tab.</p>
+              <TalkPanel
+                speaker={{ id: o.id, name: o.name, species: o.species, role: o.role, disposition: o.disposition }}
+                player={talkPlayer}
+                scene={talkScene()}
+                disabled={inCombat || dead}
+              />
               {/* Their wares and what else they do are in the HUD's Trade tab, not over the map (the card has no room for a stock list) */}
               {showSidebar ? (
                 <Button size="sm" variant="outline" className="h-6 px-2" onClick={() => setHudTab("trade")} data-testid="open-trade">Wares and dealings: Trade tab</Button>
@@ -6795,6 +7161,12 @@ export default function GameBoard() {
           <p className="text-xs text-gray-300">{[c.species, c.role, c.kind === "hireling" ? `hired, ${c.wage} cr/day` : c.kind, c.cr && `CR ${c.cr}`, `AC ${c.armorClass}`, `${c.hp}/${c.maxHp} hit points`, c.mount && "can be ridden"].filter(Boolean).join(", ")}</p>
           {c.attack && <p className="text-xs text-gray-400">{c.attack.name} {c.attack.bonus >= 0 ? "+" : ""}{c.attack.bonus}, {c.attack.damage}</p>}
           {c.how && <p className="text-xs text-gray-400">Joined: {c.how}.</p>}
+          <TalkPanel
+            speaker={{ id: c.id, name: c.name, species: c.species, role: c.role, kind: "party", notes: [c.kind === "hireling" ? "Hired for the pay." : c.how ? `Joined the party: ${c.how}.` : "", c.bolt ? "A restraining bolt limits what it may do." : "", c.hp < c.maxHp ? "Hurt." : ""].filter(Boolean).join(" ") }}
+            player={talkPlayer}
+            scene={talkScene()}
+            disabled={inCombat || dead}
+          />
           <div className="mt-1 flex flex-wrap gap-1">
             <Button size="sm" variant="outline" disabled={inCombat} onClick={() => { dismiss(c); setPicked(null); }}>Dismiss</Button>
           </div>
@@ -7048,6 +7420,44 @@ export default function GameBoard() {
   return (
     <div className="relative h-[100dvh] w-screen bg-black overflow-hidden">
       {checkAsk && <CheckDialog request={checkAsk.request} onRoll={(roller, skill) => finishCheck(roller, skill)} onCancel={() => finishCheck(null, null)} />}
+      {duel && (
+        <div className="pointer-events-none fixed bottom-2 left-2 right-2 z-[55] flex justify-end md:left-auto md:w-[460px]" data-testid="duel-game">
+          {duel.game === "pazaak" && <PazaakGame player={character.name} rival={duel.against} stake={duel.stake} skill={duel.skill} onDone={endDuel} />}
+          {duel.game === "dejarik" && <DejarikGame player={character.name} rival={duel.against} stake={duel.stake} onDone={endDuel} />}
+          {duel.game === "sabacc" && <SabaccTable place={`a game with ${duel.against}`} player={character.name} opponents={[{ id: "duel", name: duel.against }]} unit={duel.unit} trained={trainedWith("Sabacc deck")} onChips={() => {}} onClose={(chips) => endDuel(chips * duel.unit, chips >= BUY_IN_CHIPS)} />}
+        </div>
+      )}
+      {tableGame && (
+        <div className="pointer-events-none fixed bottom-2 left-2 right-2 z-[55] flex justify-end md:left-auto md:w-[460px]" data-testid="table-game">
+          {tableGame.unit === null ? (
+            <div className="pointer-events-auto w-full rounded-lg border border-amber-700/60 bg-gray-950/95 p-3 text-sm text-gray-100 shadow-xl" data-testid="table-stake">
+              <div className="font-bold text-amber-300">{tableGame.name}: take a seat</div>
+              <div className="text-xs text-gray-400">At the table: {tableGame.players.length ? tableGame.players.map((p) => p.name).join(", ") : "nobody yet"}{tableGame.croupier ? `, dealt by ${tableGame.croupier.name}` : ""}. Classic Sabacc, the 76-card deck; you buy in for {BUY_IN_CHIPS} chips and cash out what you have left.</div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {[1, 5, 10, 25, 50].map((u) => (
+                  <button key={u} className="rounded bg-amber-700 px-2 py-1 hover:bg-amber-600 disabled:opacity-40" disabled={(character.credits ?? 0) < BUY_IN_CHIPS * u} onClick={() => buyIn(u)} data-testid={`table-stake-${u}`}>{u} cr a chip (buy in {(BUY_IN_CHIPS * u).toLocaleString()})</button>
+                ))}
+                <button className="rounded border border-gray-600 px-2 py-1 hover:bg-gray-800" onClick={() => cashOut(0)} data-testid="table-stake-no">Not now</button>
+              </div>
+              <div className="mt-1 text-xs text-gray-400">You have {(character.credits ?? 0).toLocaleString()} credits.</div>
+            </div>
+          ) : (
+            <SabaccTable
+              place={tableGame.place}
+              player={character.name}
+              opponents={tableGame.players.length ? tableGame.players : [{ id: "house1", name: "A stranger" }, { id: "house2", name: "A card sharp" }]}
+              croupier={tableGame.croupier}
+              unit={tableGame.unit}
+              trained={trainedWith("Sabacc deck")}
+              onGesture={(who, shot) => (who === "me" ? useTable.getState().gesture(shot) : lifeLink.current?.gesture(who, shot))}
+              onSay={(who, text) => lifeLink.current?.say(who, text)}
+              onHand={() => saveCampaign(pass(4))}
+              onChips={(chips) => setTableGame((t) => (t && t.chips !== chips ? { ...t, chips } : t))}
+              onClose={cashOut}
+            />
+          )}
+        </div>
+      )}
       {roadHit && !roadHit.chase && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" data-testid="road-ambush">
           <div className="max-w-md space-y-2 rounded border border-red-500/60 bg-gray-900 p-4 text-sm text-gray-100">
@@ -7077,15 +7487,44 @@ export default function GameBoard() {
           }}
         />
       )}
-      {pilot && (
+      {trip && trip.phase === "ask" && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" data-testid="road-ambush">
+          <div className="max-w-md space-y-2 rounded border border-red-500/60 bg-gray-900 p-4 text-sm text-gray-100">
+            <p className="text-base font-semibold text-red-300">Ambush on the road!</p>
+            <p>
+              On the way to {world?.areas[trip.exit.to]?.name ?? "the next settlement"} (leg {trip.i + 1} of {trip.legs.length}), {trip.riders[trip.i].length} riders of the {trip.legs[trip.i].ambush?.who} come out of cover behind you on {trip.legs[trip.i].ambush?.model === "Swoop bike" ? "swoops" : "speeder bikes"}.
+            </p>
+            <p className="text-xs text-gray-400">Why: {trip.legs[trip.i].ambush?.why}. (House rule: the books give no encounters on the road.)</p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => setTrip({ ...trip, phase: "drive" })} data-testid="ambush-run">Run for it (you drive, or take the gun; Fire shoots back)</Button>
+              <Button size="sm" variant="outline" onClick={() => { const t = trip; setTrip(null); roadFight({ exit: t.exit, ride: { ...t.ride, pilot: false, minutes: driveMinutes(t.ride.minutes, t.took) }, a: t.legs[t.i].ambush!, riders: t.riders[t.i], seed: t.seed }, t.riders[t.i]); }} data-testid="ambush-fight">Stop and fight</Button>
+            </div>
+          </div>
+        </div>
+      )}
+      {trip && trip.phase === "drive" && character && world && (
         <MinigamePage
-          game={{ kind: "run", title: `Route to ${world?.areas[pilot.exit.to]?.name ?? "the next settlement"}`, seed: pilot.seed, mode: pilot.mode, count: routeCount(kmOf(pilot.exit.travel) ?? 0), vehicle: String(vehicles.find((v) => v.id === pilot.ride.vehicleId)?.model ?? "Landspeeder") }}
-          onExit={() => setPilot(null)}
-          onDone={(r) => {
-            setPilot(null);
-            if (r.kind !== "run") return;
-            travel(pilot.exit, { ...pilot.ride, pilot: false, minutes: pilotMinutes(pilot.ride.minutes, r.collected, r.course.rings.length) });
-          }}
+          key={`${trip.seed}-${trip.i}`}
+          game={(() => {
+            const leg = trip.legs[trip.i];
+            const riders = [...(leg.ambush ? trip.riders[trip.i] : []), ...(trip.pursuit?.riders ?? [])];
+            const a = trip.pursuit?.a ?? leg.ambush;
+            const km = kmOf(trip.exit.travel) ?? 0;
+            const intro = [
+              trip.i === 0 ? `${world.areas[trip.exit.to]?.name ?? "The next settlement"} lies ${km} km off: ${trip.legs.length} legs of road.` : "",
+              metText(trip.legs[trip.i - 1]?.biome, leg.biome),
+              trip.pursuit ? `The ${trip.pursuit.a.who} you ran past are after you!` : riders.length ? `${riders.length} riders of the ${a?.who} are after you!` : "",
+              party.some((c) => c.kind !== "beast" && c.hp > 0) ? "A crewmate can drive while you take the gun: Swap seats." : "",
+            ].filter(Boolean);
+            return {
+              kind: "road" as const, title: `Road to ${world.areas[trip.exit.to]?.name ?? "the next settlement"}`, seed: leg.seed, vehicle: trip.vehicle, biome: leg.biome, leg: { i: trip.i, n: trip.legs.length }, intro, hull: trip.hull,
+              mate: crewmate(party.map((c) => ({ name: c.name, kind: c.kind, hp: c.hp }))), block: leg.block, riders: riders.length ? riders.map((o) => ({ name: o.name, model: a?.model ?? "Speederbike" })) : undefined, who: a?.who,
+              talk: { persuasion: modifier(character.abilityScores?.charisma) + (skilled("persuasion") ? proficiency : 0), deception: modifier(character.abilityScores?.charisma) + (skilled("deception") ? proficiency : 0) },
+              credits: character.credits ?? 0,
+            };
+          })()}
+          onExit={() => setTrip(null)}
+          onDone={tripLegDone}
         />
       )}
       <KeyboardControls map={controls}>
@@ -7146,6 +7585,12 @@ export default function GameBoard() {
         </Canvas>
         <Compass />
         </div>
+        {/* The real-time moves' buttons over the overhead view (the eye views draw their own beside the stick) */}
+        {world && airGear && viewMode === "overhead" && !inCombat && !shipFight && !dead && (
+          <div className="pointer-events-none absolute inset-0 z-10" data-testid="air-pad">
+            <AirButtons right={12} bottom={12} />
+          </div>
+        )}
 
         {/* Where the map is looking: the way down from the galaxy, each step a tap away. Only the
             buttons take taps; the rest of the strip lets them through to the map. */}
@@ -7327,7 +7772,7 @@ export default function GameBoard() {
             </div>
 
             <div className="mb-3 flex flex-wrap gap-1" data-testid="hud-tabs">
-              {(["here", "party", "trade", "quests", "pack", "downtime", "gm", ...(TEST_MENU ? ["test"] : [])] as HudTab[]).map((tab) => (
+              {(["here", "party", "trade", "quests", "pack", ...(TEST_MENU ? ["downtime"] : []), "gm", ...(TEST_MENU ? ["test"] : [])] as HudTab[]).map((tab) => (
                 <Button key={tab} role="tab" aria-selected={hudTab === tab} size="sm" variant={hudTab === tab ? "default" : "outline"} className="h-7 px-2 text-xs" onClick={() => setHudTab(tab)} data-testid={`hud-tab-${tab}`}>
                   {{ here: "Here", party: "Party", trade: "Trade", quests: "Quests", pack: "Inventory", downtime: "Downtime", gm: "GM Interface", test: "Test" }[tab]}
                   {tab === "trade" && dealingNow && hudTab !== "trade" && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-300" />}
@@ -7560,7 +8005,7 @@ export default function GameBoard() {
                     // Enemies who have stopped the party bar every way but the way back
                     const rides = exit.locked ? [] : ridesFor(exit);
                     return (
-                      <div key={`${exit.via}-${exit.to}`} className="flex flex-col gap-1">
+                      <div key={`${exit.via}-${exit.to}-${exit.label}`} className="flex flex-col gap-1">
                         <Button
                           size="sm"
                           variant="outline"
@@ -7834,6 +8279,25 @@ export default function GameBoard() {
                     <p className="text-sm text-green-300">Completed: {quests.filter((q) => q.status === "completed").map((q) => q.title).join("; ")}</p>
                   )}
                 </div>
+                <h3 className="font-semibold mt-3 mb-1">Jobs</h3>
+                <div className="space-y-2" data-testid="play-contracts">
+                  {!cState.active.length && <p className="text-sm text-gray-400">No jobs taken. The people of a place give them (bartenders, officers, bounty hunters, smugglers): ask them in the Trade tab.</p>}
+                  {cState.active.map((c) => {
+                    const p = world ? contractProgress(world, c) : null;
+                    return (
+                      <div key={c.id} className="bg-gray-700 p-2 rounded text-sm" data-testid="play-contract">
+                        <div className="font-semibold">{KIND_LABEL[c.kind]}: {c.title}</div>
+                        <div className="text-xs text-gray-300">For {c.giverName} at {world?.areas[c.at]?.name ?? "town"}. Pays {c.reward.toLocaleString()} cr.</div>
+                        <div className="text-xs mt-1">Where: {world && here ? whereabouts(world, c, here.id) : "unknown"}</div>
+                        <div className={`text-xs ${p?.status === "ready" ? "text-green-300" : "text-gray-300"}`}>{p?.text}</div>
+                        <div className="mt-1 flex gap-2">
+                          {c.reveal < 3 && <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => askAbout(c)} data-testid="contract-ask">Ask around (DC {askDC(c)})</Button>}
+                          <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => dropContract(c)} data-testid="contract-drop">Drop it</Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
                 <h3 className="font-semibold mt-3 mb-1">Standing</h3>
                 <div className="text-sm space-y-0.5" data-testid="play-standing">
                   {Object.entries(standing.renown).filter(([, n]) => n).length ? (
@@ -8010,36 +8474,9 @@ export default function GameBoard() {
                 })()}
               </div>
             )}
-            {hudTab === "downtime" && (
+            {hudTab === "downtime" && TEST_MENU && (
               <div>
-                {character && (
-                  <DowntimePanel
-                    character={character}
-                    level={level}
-                    day={dayOf(clock)}
-                    settlement={settlementHere ? { id: settlementHere.id, name: settlementHere.name, type: String(settlementHere.type ?? ""), faction: factionAt(world!, settlementHere.id) } : null}
-                    blocked={downtimeBlocked}
-                    equipment={equipmentData}
-                    tools={toolData}
-                    people={downtimePeople}
-                    hasVehicle={Array.isArray(campaign?.vehicles) && campaign.vehicles.length > 0}
-                    hasShip={ships.length > 0}
-                    vehicleModel={campaign?.vehicles?.[0]?.model}
-                    shipSpec={ships[0] ? { size: ships[0].size, role: ships[0].role } : undefined}
-                    partyShips={shipRows.length ? ships.map((sh) => ({ id: sh.id, name: sh.name, sheet: shipSheet(sh, shipRows, proficiency), owner: sh.owner, where: world?.areas[sh.areaId]?.name, busy: shipBusy(sh) ? `${shipBusy(sh)!.what} at the yard` : sh.status === "wrecked" ? "wrecked" : undefined })) : []}
-                    shipRows={shipRows}
-                    biome={world && hereId ? trailOf(world, hereId).find((a) => a.kind === "planet")?.type : undefined}
-                    gravity={gravityNow().g}
-                    foeFaction={world?.antagonist}
-                    state={downtime}
-                    check={checkFor}
-                    ask={askCheck}
-                    commit={commitDowntime}
-                    spendBlackmail={spendBlackmail}
-                    spendLore={spendLore}
-                    openPit={openPit}
-                  />
-                )}
+                {character && downtimeFor()}
               </div>
             )}
             {hudTab === "gm" && (
@@ -8081,6 +8518,8 @@ export default function GameBoard() {
 // ---------------------------------------------------------------------------------------------
 
 interface DowntimeProps {
+  // Only these activities (a person's own, in the Trade tab): the whole panel is for test builds
+  only?: string[];
   character: any;
   level: number;
   day: number;
@@ -8198,7 +8637,8 @@ function DowntimePanel(props: DowntimeProps) {
       </div>
       {!mine && !flying && (
         <div className="space-y-3" data-testid="downtime-menu">
-          {DOWNTIME_GROUPS.map(([group, ids]) => {
+          {DOWNTIME_GROUPS.map(([group, all]) => {
+            const ids = props.only ? all.filter((id) => props.only!.includes(id)) : all;
             const items = [
               ...specs.filter(({ a }) => ids.includes(a.id)).map(({ a }) => ({ key: a.id, name: a.name, intro: a.intro, disabled: /enhanced items/i.test(a.name) && !city, reason: "", pick: () => setOpen(a.id), testId: `downtime-${a.id}` })),
               ...ARENA.filter((x) => ids.includes(x.id)).map((x) => ({ key: x.id, name: x.name, intro: x.intro, disabled: false, reason: "", pick: props.openPit, testId: `downtime-${x.id}` })),

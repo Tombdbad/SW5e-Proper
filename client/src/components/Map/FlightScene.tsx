@@ -4,7 +4,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Stars } from "@react-three/drei";
 import * as THREE from "three";
 import {
-  createRandom, flightCourse, flightStart, groundAt, inRing, raceCourse, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, raceWater, skyLook, stepFlight, stepRace, chaseStart, chaseResult,
+  createRandom, flightCourse, flightStart, groundAt, inRing, raceCourse, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, raceWater, skyLook, stepFlight, stepRace, chaseStart, chaseResult, roadStart, roadAt, settleBlock,
   CROSSING, RACE, RACE_MODEL_SCALE, SPEEDER_BODY,
   type Craft, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type RaceRamp, type RaceTrack, type SpeederKind, type Vec3,
 } from "@shared/logic";
@@ -12,6 +12,7 @@ import { ShipModel, SpeederModel } from "./LocalMap";
 import { Model, shade, type Kit } from "./models";
 import { Scatter, raceScenery, useQuality, type Placed } from "./siteAssets";
 import { WorldSky } from "./scenery";
+import { settleStop, type Block, type StopChoice } from "@shared/logic/roadtrip";
 import type { Dogfight } from "@shared/logic/dogfight";
 import { dogfightPayout } from "@shared/logic/dogfightSim";
 import { SCENARIOS, sortieNotes } from "@shared/logic/dogfight";
@@ -30,9 +31,14 @@ export type Minigame =
   | { kind: "race"; title: string; seed: number; vehicle: string; biome?: string }
   // A chase on the road (shared/logic "On the road"): the race's course, one lap to safety, riders after the party
   | { kind: "chase"; title: string; seed: number; vehicle: string; biome?: string; riders: { name: string; model: string }[]; who: string }
+  // A leg of a road trip (shared/logic/roadtrip.ts): open road to its last gate, in the ground of its own biome; `intro` is what the countdown says,
+  // `hull` what the party carries from the legs before, `mate` its crewmate (who drives while the party is at the gun), `block` a roadblock across it
+  // (and what the party can say to it: the bonuses of Persuasion and Deception), `riders` the riders after the party
+  | { kind: "road"; title: string; seed: number; vehicle: string; biome: string; leg: { i: number; n: number }; intro: string[]; hull?: number; mate?: { name: string; pace: number }; block?: Block; riders?: { name: string; model: string }[]; who?: string; talk: { persuasion: number; deception: number }; credits: number }
   | ({ kind: "dogfight" } & DogfightSpec);
 
 export type MinigameResult =
+  | { kind: "road"; race: Race; metres: number; stop?: { outcome: "open" | "run"; paid: number; note: string } }
   | { kind: "run"; course: FlightCourse; collected: number; timeLeft: number }
   | { kind: "race"; race: Race }
   | { kind: "chase"; race: Race }
@@ -382,7 +388,14 @@ function ribbon(track: RaceTrack, points: Vec3[], width: number, closed: boolean
   return g;
 }
 function RaceRibbons({ track, look }: { track: RaceTrack; look: RaceLook }) {
-  const geos = useMemo(() => [ribbon(track, track.points, track.width, true, look.track, true), ...track.trails.map((t) => ribbon(track, t.points, t.width, false, look.trail, false))], [track, look]);
+  // (a road is the loop only from the grid behind its start to a little past its last gate)
+  const main = useMemo(() => {
+    if (!track.road) return ribbon(track, track.points, track.width, true, look.track, true);
+    const n = track.points.length;
+    const end = Math.min(n - 1, Math.round(track.road.finish / track.step) + 14);
+    return ribbon(track, [...track.points.slice(n - 4), ...track.points.slice(0, end + 1)], track.width, false, look.track, true);
+  }, [track, look]);
+  const geos = useMemo(() => [main, ...track.trails.map((t) => ribbon(track, t.points, t.width, false, look.trail, false))], [main, track, look]);
   return (
     <>
       {geos.map((g, i) => (
@@ -704,8 +717,14 @@ function Sparks({ queue }: { queue: { current: RaceEvent[] } }) {
 
 // A race: the world, the racers on the grid, the race stepped each frame once the countdown is done, and
 // the chase camera (wider while boosting, shaken by a hit)
-function RaceGame({ track, race0, biome, go, input, onFinish, onFrame }: { track: RaceTrack; race0: Race; biome: string; go: { current: boolean }; input: { current: RaceInput }; onFinish: (race: Race) => void; onFrame: (race: Race) => void }) {
+function RaceGame({ track, race0, biome, go, input, onFinish, onFrame, pause, act, onStop }: { track: RaceTrack; race0: Race; biome: string; go: { current: boolean }; input: { current: RaceInput }; onFinish: (race: Race) => void; onFrame: (race: Race) => void; pause?: { current: boolean }; act?: { current: ((how: "open" | "run") => void) | null }; onStop?: (race: Race) => void }) {
   const raceRef = useRef<Race>(race0);
+  // The page's say at a roadblock (the barrier opened, or run at) is done to the race that is running
+  useEffect(() => {
+    if (act) act.current = (how) => { raceRef.current = settleBlock(raceRef.current, track, how); };
+    return () => { if (act) act.current = null; };
+  }, [track]);
+  const aimRef = useRef<THREE.Group>(null);
   const racerRefs = useRef<(THREE.Group | null)[]>([]);
   const shadowRefs = useRef<(THREE.Group | null)[]>([]);
   const flameRefs = useRef<(THREE.Mesh | null)[]>([]);
@@ -741,10 +760,15 @@ function RaceGame({ track, race0, biome, go, input, onFinish, onFrame }: { track
       now = { ...now, racers: now.racers.map((r) => (r.party ? { ...r, craft: { ...r.craft, p: [p[0], groundAt(track, p[0], p[2]) + RACE.hover, p[2]], yaw: track.yaws[i], speed: 0 }, v: [0, 0, 0], gates, at: i, home: i } : r)) };
       raceRef.current = now;
     }
-    if (go.current && !now.over) {
+    if (go.current && !now.over && !pause?.current) {
       // Up to half a second a frame (a slow device runs the race slower, never through anything: it steps at 1/60 s)
       now = stepRace(now, track, input.current, Math.min(delta, 0.5));
       raceRef.current = now;
+      // Stopped at a roadblock: the race waits for the page's answer
+      if (now.block?.state === "stopped" && pause) {
+        pause.current = true;
+        onStop?.(now);
+      }
       for (const e of now.events) {
         if (e.kind === "hit" || e.kind === "smash" || e.kind === "mine") sparks.current.push(e);
         if (e.kind === "shot") {
@@ -791,6 +815,15 @@ function RaceGame({ track, race0, biome, go, input, onFinish, onFrame }: { track
       }
     });
     const mine = now.racers[party];
+    // The blaster's aim, when the party is at the gun: a flame-coloured arrow round the speeder
+    if (aimRef.current) {
+      const aim = input.current.aim;
+      aimRef.current.visible = aim !== undefined && mine.finish === null && !mine.wrecked;
+      if (aim !== undefined) {
+        aimRef.current.position.set(mine.craft.p[0], mine.craft.p[1] + 1.1, mine.craft.p[2]);
+        aimRef.current.rotation.set(0, -(mine.craft.yaw + aim), 0);
+      }
+    }
     // The chevron over the party's speeder, toward the next gate
     if (chevron.current) {
       const gate = track.gates[raceNextGate(now, mine)];
@@ -835,7 +868,7 @@ function RaceGame({ track, race0, biome, go, input, onFinish, onFrame }: { track
       <RaceGround track={track} look={look} />
       <RaceRivers track={track} />
       <RaceRibbons track={track} look={look} />
-      {track.gates.map((g, i) => <Gate key={i} gate={g} first={i === 0} lit={i === next} chequer={chequer} track={track} />)}
+      {track.gates.map((g, i) => <Gate key={i} gate={g} first={i === 0 || (!!track.road && i === track.gates.length - 1)} lit={i === next} chequer={chequer} track={track} />)}
       {track.ramps.map((ramp, i) => <RampModel key={i} ramp={ramp} track={track} />)}
       <Hazards track={track} hazards={snap.hazards} />
       <RaceProps track={track} biome={biome} broken={snap.broken} cover={cover} />
@@ -864,6 +897,16 @@ function RaceGame({ track, race0, biome, go, input, onFinish, onFrame }: { track
           )}
         </group>
       ))}
+      <group ref={aimRef} visible={false}>
+        <mesh position={[4.2, 0, 0]} rotation={[0, 0, -Math.PI / 2]}>
+          <coneGeometry args={[0.45, 1.5, 8]} />
+          <meshBasicMaterial color="#ff5a3c" />
+        </mesh>
+        <mesh position={[2.6, 0, 0]} rotation={[0, 0, -Math.PI / 2]}>
+          <cylinderGeometry args={[0.07, 0.07, 2.4, 6]} />
+          <meshBasicMaterial color="#ff5a3c" transparent opacity={0.7} />
+        </mesh>
+      </group>
       <group ref={chevron}>
         <mesh position={[0.5, 0, 0]} rotation={[-Math.PI / 2, 0, -Math.PI / 2]} scale={[1, 1, 0.35]}>
           <coneGeometry args={[0.32, 0.95, 3]} />
@@ -878,18 +921,21 @@ function RaceGame({ track, race0, biome, go, input, onFinish, onFrame }: { track
 
 // The drag pad, and the buttons: throttle (boost, brake), in a race Boost on its meter, and in a dogfight
 // fire. Each button holds its pointer, so that a thumb that slides a little off it does not let go.
-function Controls({ input, onThrottle, onFire, onBoost, meter }: { input: { current: FlightInput }; onThrottle?: (value: -1 | 0 | 1) => void; onFire?: (down: boolean) => void; onBoost?: (down: boolean) => void; meter?: number }) {
+function Controls({ input, onThrottle, onFire, onBoost, meter, aiming }: { input: { current: RaceInput }; onThrottle?: (value: -1 | 0 | 1) => void; onFire?: (down: boolean) => void; onBoost?: (down: boolean) => void; meter?: number; aiming?: boolean }) {
   const pad = useRef<HTMLDivElement>(null);
   const [knob, setKnob] = useState({ x: 0, y: 0 });
   const steer = (e: React.PointerEvent) => {
     const box = pad.current!.getBoundingClientRect();
     const dx = Math.max(-1, Math.min(1, (e.clientX - (box.left + box.width / 2)) / PAD));
     const dy = Math.max(-1, Math.min(1, (e.clientY - (box.top + box.height / 2)) / PAD));
-    input.current.steer = { x: dx, y: dy };
+    // At the gun the pad points the blaster (up: ahead, right: to the right, down: behind) and the crewmate drives
+    if (aiming) {
+      if (Math.hypot(dx, dy) > 0.2) input.current.aim = Math.atan2(dx, -dy);
+    } else input.current.steer = { x: dx, y: dy };
     setKnob({ x: dx, y: dy });
   };
   const release = () => {
-    input.current.steer = { x: 0, y: 0 };
+    if (!aiming) input.current.steer = { x: 0, y: 0 };
     setKnob({ x: 0, y: 0 });
   };
   const hold = (set: (down: boolean) => void) => ({
@@ -906,8 +952,8 @@ function Controls({ input, onThrottle, onFire, onBoost, meter }: { input: { curr
     <>
       <div
         ref={pad}
-        data-testid="flight-pad"
-        className="absolute bottom-4 left-4 touch-none rounded-full border-2 border-sky-400/60 bg-gray-900/50"
+        data-testid={aiming ? "flight-pad-aim" : "flight-pad"}
+        className={`absolute bottom-4 left-4 touch-none rounded-full border-2 bg-gray-900/50 ${aiming ? "border-orange-400/70" : "border-sky-400/60"}`}
         style={{ width: STICK.size, height: STICK.size }}
         onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); steer(e); }}
         onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) steer(e); }}
@@ -965,6 +1011,48 @@ function ChaseHud({ race, toast }: { race: Race; toast: string }) {
     </>
   );
 }
+// A leg of a trip: its place in the trip and its ground, how far down the road, the hull and boost, the riders after the party if there are any, the
+// roadblock ahead, and who is at the wheel
+function RoadHud({ race, game, track, seat, toast }: { race: Race; game: Extract<Minigame, { kind: "road" }>; track: RaceTrack; seat: "driver" | "gunner"; toast: string }) {
+  const me = race.racers.find((r) => r.party)!;
+  const riders = race.racers.filter((r) => r.hostile);
+  const hull = me.hull / me.hullMax;
+  const done = Math.max(0, Math.min(1, roadAt(track, me) / track.road!.finish));
+  const block = track.road?.block;
+  const toBlock = block && race.block?.state === "ahead" ? Math.round(block.at - roadAt(track, me)) : null;
+  return (
+    <>
+      <div className="pointer-events-none absolute left-2 top-2 w-56 space-y-1 rounded bg-gray-900/75 px-2 py-1.5 text-xs text-sky-100" data-testid="road-hud">
+        <div className="flex justify-between font-semibold">
+          <span>Leg {game.leg.i + 1} of {game.leg.n}</span>
+          <span className="capitalize text-sky-200/80">{game.biome}</span>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-gray-700/80" data-testid="road-progress" data-value={Math.round(done * 100)}>
+          <div className="h-full rounded-full bg-emerald-400" style={{ width: `${done * 100}%` }} />
+        </div>
+        <div className="flex justify-between text-[11px] text-sky-200/80">
+          <span>{Math.max(0, Math.round(track.road!.finish - roadAt(track, me)))} m to go</span>
+          <span>{Math.round(Math.abs(me.craft.speed) * 3.6)} km/h</span>
+        </div>
+        <Bar label="Hull" value={me.hull} max={me.hullMax} color={hull > 0.6 ? "#4ade80" : hull > 0.3 ? "#facc15" : "#ef4444"} testid="race-hull" />
+        <Bar label="Boost" value={me.boost} max={1} color="#38bdf8" testid="race-boost" lit={me.boosting} />
+        {riders.length > 0 && <div className="text-[11px] text-red-300" data-testid="chase-riders">{riders.filter((r) => !r.wrecked).length} of {riders.length} {race.chase?.who ?? "riders"} still after you</div>}
+        {game.mate && <div className="text-[11px]" data-testid="road-seat">{seat === "gunner" ? `${game.mate.name} drives; you are at the gun` : `You drive${riders.length ? `; ${game.mate.name} fires` : ""}`}</div>}
+      </div>
+      {toBlock !== null && toBlock < 260 && me.finish === null && <div className="pointer-events-none absolute left-1/2 top-14 -translate-x-1/2 rounded bg-red-900/75 px-3 py-1 text-xs font-semibold text-red-100" data-testid="road-block-warning">Roadblock ahead, {Math.max(0, toBlock)} m: slow down and stop, or ram it</div>}
+      {toast && <div className="pointer-events-none absolute left-1/2 top-1/3 -translate-x-1/2 rounded bg-gray-900/70 px-3 py-1 text-sm font-semibold text-yellow-200" data-testid="race-toast">{toast}</div>}
+    </>
+  );
+}
+const roadHeadline = (r: Extract<MinigameResult, { kind: "road" }>) => {
+  const me = r.race.racers.find((x) => x.party)!;
+  if (r.race.chase && chaseResult(r.race).outcome === "caught") return "They have caught you.";
+  return me.finish !== null ? "The road ends here: you are through." : me.wrecked ? "Your speeder is wrecked." : "Out of time on the road.";
+};
+const roadNote = (r: Extract<MinigameResult, { kind: "road" }>) => {
+  const me = r.race.racers.find((x) => x.party)!;
+  return [me.finish !== null ? `${raceClock(me.finish)} on the road` : "", `hull ${me.hull} of ${me.hullMax}`, r.stop?.note ?? "", r.race.chase ? chaseResult(r.race).note : ""].filter(Boolean).join("; ");
+};
 function RaceHud({ race, toast }: { race: Race; toast: string }) {
   const me = race.racers.find((r) => r.party)!;
   const order = raceOrder(race);
@@ -1020,12 +1108,20 @@ const scenarioIntro = (g: Extract<Minigame, { kind: "dogfight" }>) => SCENARIOS.
 
 // The dedicated page of a minigame: a five-second countdown, then the game. Calls onDone with how it ended.
 export function MinigamePage({ game, onDone, onExit }: { game: Minigame; onDone: (result: MinigameResult) => void; onExit: () => void }) {
-  const course = useMemo(() => (game.kind === "run" ? flightCourse(game.seed, game.mode, { count: game.count }) : null), [game]);
-  const biome = game.kind === "race" || game.kind === "chase" ? game.biome ?? "temperate" : "temperate";
-  const track = useMemo(() => (game.kind === "race" ? raceCourse(game.seed, raceScenery(biome)) : game.kind === "chase" ? raceCourse(game.seed, raceScenery(biome), 1) : null), [game, biome]);
-  const race0 = useMemo(() => (game.kind === "race" && track ? raceStart(track, game.seed, game.vehicle, RACE_RIVAL_MODELS) : game.kind === "chase" && track ? chaseStart(track, game.seed, game.vehicle, game.riders, game.who) : null), [game, track]);
-  const driven = game.kind === "race" || game.kind === "chase";
-  const [count, setCount] = useState(5);
+  // (the page is given a new `game` object each time its parent draws: what is built from it is built again only for another game)
+  const gameKey = game.kind === "dogfight" ? "dogfight" : `${game.kind}|${game.seed}|${game.kind === "road" ? `${game.leg.i}|${game.hull}|${game.riders?.length ?? 0}` : ""}`;
+  const course = useMemo(() => (game.kind === "run" ? flightCourse(game.seed, game.mode, { count: game.count }) : null), [gameKey]);
+  const biome = game.kind === "race" || game.kind === "chase" || game.kind === "road" ? game.biome ?? "temperate" : "temperate";
+  const track = useMemo(() => (game.kind === "race" ? raceCourse(game.seed, raceScenery(biome)) : game.kind === "chase" ? raceCourse(game.seed, raceScenery(biome), 1, undefined, true) : game.kind === "road" ? raceCourse(game.seed, raceScenery(biome), 1, { block: !!game.block }) : null), [gameKey, biome]);
+  const race0 = useMemo(() => (game.kind === "race" && track ? raceStart(track, game.seed, game.vehicle, RACE_RIVAL_MODELS) : game.kind === "chase" && track ? chaseStart(track, game.seed, game.vehicle, game.riders, game.who) : game.kind === "road" && track ? roadStart(track, game.seed, game.vehicle, { riders: game.riders, who: game.who, mate: game.mate, hull: game.hull }) : null), [gameKey, track]);
+  const driven = game.kind === "race" || game.kind === "chase" || game.kind === "road";
+  const [count, setCount] = useState(game.kind === "road" ? 4 : 5);
+  // A roadblock: the race waits while the page asks what the party does (`pause`); `act` carries the answer to the race
+  const pause = useRef(false);
+  const act = useRef<((how: "open" | "run") => void) | null>(null);
+  const [stopped, setStopped] = useState<{ note: string; raised: boolean; talked: boolean } | null>(null);
+  const stopResult = useRef<{ outcome: "open" | "run"; paid: number; note: string } | undefined>(undefined);
+  const [seat, setSeat] = useState<"driver" | "gunner">("driver");
   const go = useRef(false);
   // The page, which the dogfight's fullscreen button takes fullscreen (the countdown and the end screen are in it)
   const page = useRef<HTMLDivElement>(null);
@@ -1103,6 +1199,26 @@ export function MinigamePage({ game, onDone, onExit }: { game: Minigame; onDone:
   }, [count]);
 
   const finish = (result: MinigameResult) => setFinished(result);
+  // Swapping seats with the crewmate: at the gun the pad aims (and the crewmate drives), at the wheel it steers
+  const swap = () => {
+    const next = seat === "driver" ? "gunner" : "driver";
+    setSeat(next);
+    input.current.auto = next === "gunner";
+    input.current.aim = next === "gunner" ? 0 : undefined;
+    input.current.steer = { x: 0, y: 0 };
+    input.current.throttle = 0;
+    input.current.boost = false;
+  };
+  // What the party does at the roadblock it is stopped at: a fee, a word (Persuasion or Deception against the barrier's DC), or the ram
+  const deal = (choice: StopChoice, skill?: "persuasion" | "deception") => {
+    if (game.kind !== "road" || !game.block || !stopped) return;
+    const stop = settleStop(game.block, choice, { roll: 1 + Math.floor(Math.random() * 20), bonus: skill ? game.talk[skill] : 0, credits: game.credits, raised: stopped.raised });
+    if (stop.outcome === "refused") return setStopped({ note: stop.note, raised: stopped.raised || choice === "talk", talked: stopped.talked || choice === "talk" });
+    stopResult.current = { outcome: stop.outcome, paid: stop.paid, note: stop.note };
+    act.current?.(stop.outcome);
+    pause.current = false;
+    setStopped(null);
+  };
 
   const title = game.title;
   const counting = count >= 0;
@@ -1121,12 +1237,33 @@ export function MinigamePage({ game, onDone, onExit }: { game: Minigame; onDone:
         )}
         {driven && track && race0 && (
           <Canvas camera={{ position: [0, 6, -12], fov: 62, near: 0.3, far: 2400 }} dpr={[1, 1.5]} onCreated={({ gl }) => gl.setClearColor(raceLook(biome).sky)}>
-            <RaceGame track={track} race0={race0} biome={biome} go={go} input={input} onFinish={(race) => finish(game.kind === "chase" ? { kind: "chase", race } : { kind: "race", race })} onFrame={onRace} />
+            <RaceGame track={track} race0={race0} biome={biome} go={go} input={input} onFinish={(race) => finish(game.kind === "chase" ? { kind: "chase", race } : game.kind === "road" ? { kind: "road", race, metres: track.road?.finish ?? 0, stop: stopResult.current ?? (race.block?.state === "ran" || race.block?.state === "run" ? { outcome: "run", paid: 0, note: "You ran the roadblock" } : undefined) } : { kind: "race", race })} onFrame={onRace} pause={pause} act={act} onStop={() => game.kind === "road" && game.block && setStopped({ note: "", raised: false, talked: false })} />
           </Canvas>
         )}
         {game.kind === "dogfight" && <DogfightGame spec={game} go={go} controls={!counting && !finished} shell={page} onFinish={(state) => finish({ kind: "dogfight", state })} />}
         {game.kind === "race" && hud.race && <RaceHud race={hud.race} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
         {game.kind === "chase" && hud.race && <ChaseHud race={hud.race} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
+        {game.kind === "road" && hud.race && track && <RoadHud race={hud.race} game={game} track={track} seat={seat} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
+        {game.kind === "road" && game.mate && !finished && (
+          <button type="button" className="absolute right-2 top-2 z-10 rounded border border-sky-400/70 bg-gray-900/80 px-3 py-1 text-xs text-sky-100" onClick={swap} data-testid="road-swap">
+            {seat === "driver" ? `Swap seats: ${game.mate.name} drives, you take the gun` : `Swap seats: you drive, ${game.mate.name} takes the gun`}
+          </button>
+        )}
+        {game.kind === "road" && game.block && stopped && !finished && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/55 p-4" data-testid="road-stop">
+            <div className="max-w-md space-y-2 rounded border border-yellow-500/60 bg-gray-900 p-4 text-sm text-gray-100">
+              <p className="text-base font-semibold text-yellow-300">{game.block.by === "checkpoint" ? "A checkpoint" : "A toll gate"}: {game.block.who}</p>
+              <p>{game.block.by === "checkpoint" ? "Guards wave you down at a barrier of crates across the road. Papers, and a fee, they say." : "Riders of a gang hold a barrier across the road. A toll, they say, or you do not pass."}</p>
+              {stopped.note && <p className="text-red-300" data-testid="road-stop-note">{stopped.note}</p>}
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className="rounded border border-emerald-400/70 px-3 py-1 text-xs disabled:opacity-40" disabled={game.block.wanted && game.block.by === "checkpoint"} onClick={() => deal("pay")} data-testid="stop-pay">Pay {stopped.raised ? Math.ceil(game.block.fee * 1.5) : game.block.fee} credits (you have {game.credits})</button>
+                {!stopped.talked && <button type="button" className="rounded border border-sky-400/70 px-3 py-1 text-xs" onClick={() => deal("talk", "persuasion")} data-testid="stop-persuade">Persuasion {game.talk.persuasion >= 0 ? "+" : ""}{game.talk.persuasion} (DC {game.block.dc})</button>}
+                {!stopped.talked && <button type="button" className="rounded border border-sky-400/70 px-3 py-1 text-xs" onClick={() => deal("talk", "deception")} data-testid="stop-deceive">Deception {game.talk.deception >= 0 ? "+" : ""}{game.talk.deception} (DC {game.block.dc})</button>}
+                <button type="button" className="rounded border border-red-400/70 px-3 py-1 text-xs" onClick={() => deal("run")} data-testid="stop-run">Ram it (they will come after you)</button>
+              </div>
+            </div>
+          </div>
+        )}
         {game.kind === "run" && hud.run && (
           <div className="pointer-events-none absolute left-2 top-2 rounded bg-gray-900/70 px-2 py-1 text-xs text-sky-100" data-testid="flight-hud">
             {title} · rings {hud.run.next} of {course?.rings.length ?? 0} · {hud.run.speed} {game.mode === "ship" ? "km/s" : "m/s"}
@@ -1135,6 +1272,11 @@ export function MinigamePage({ game, onDone, onExit }: { game: Minigame; onDone:
         {counting && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-black/50" data-testid="countdown">
             <span className="text-8xl font-bold text-yellow-300">{headline}</span>
+            {game.kind === "road" && (
+              <div className="max-w-md space-y-1 px-4 text-center text-sm text-sky-100" data-testid="road-briefing">
+                {game.intro.map((l, i) => <p key={i}>{l}</p>)}
+              </div>
+            )}
             {game.kind === "dogfight" && (
               <div className="max-w-md space-y-1 px-4 text-center text-sm text-sky-100" data-testid="dogfight-briefing">
                 {briefing(game).map((l, i) => <p key={i}>{l}</p>)}
@@ -1147,14 +1289,16 @@ export function MinigamePage({ game, onDone, onExit }: { game: Minigame; onDone:
             input={input}
             onThrottle={(v) => (input.current.throttle = driven ? (v < 0 ? -1 : 0) : v)}
             onBoost={driven ? (down) => (input.current.boost = down) : undefined}
-            onFire={game.kind === "chase" ? (down) => (input.current.fire = down) : undefined}
+            onFire={game.kind === "chase" || (game.kind === "road" && !!game.riders?.length) ? (down) => (input.current.fire = down) : undefined}
+            aiming={game.kind === "road" && seat === "gunner"}
             meter={hud.race?.racers.find((r) => r.party)?.boost}
           />
         )}
         {finished && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/70 p-4 text-center" data-testid="minigame-over">
-            <p className="text-lg font-semibold text-yellow-300">{finished.kind === "race" ? "The race is over." : finished.kind === "chase" ? (chaseResult(finished.race).outcome === "caught" ? "They have caught you." : "You are clear of them.") : finished.kind === "dogfight" ? dogfightHeadline(finished.state) : "The run is over."}</p>
+            <p className="text-lg font-semibold text-yellow-300">{finished.kind === "road" ? roadHeadline(finished) : finished.kind === "race" ? "The race is over." : finished.kind === "chase" ? (chaseResult(finished.race).outcome === "caught" ? "They have caught you." : "You are clear of them.") : finished.kind === "dogfight" ? dogfightHeadline(finished.state) : "The run is over."}</p>
             {finished.kind === "chase" && <p className="max-w-md text-sm text-sky-100" data-testid="chase-result">{chaseResult(finished.race).note}</p>}
+            {finished.kind === "road" && <p className="max-w-md text-sm text-sky-100" data-testid="road-result">{roadNote(finished)}</p>}
             {finished.kind === "dogfight" && <p className="max-w-md text-sm text-sky-100" data-testid="dogfight-result">{dogfightPayout(finished.state).note}: {dogfightPayout(finished.state).credits} cr</p>}
             {finished.kind === "race" && (
               <div className="text-sm text-sky-100" data-testid="race-result">

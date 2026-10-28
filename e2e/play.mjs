@@ -1798,6 +1798,106 @@ if (process.env.FORCE !== "0") {
     return `${text.slice(0, 160)} => ${after.galaxyMap.areas[after.currentLocation].name}, the speeder with them`;
   });
 
+  await step(ctx, "road trip: a pilot's route is driven in legs; a roadblock is rammed, the next leg is chased by its guards, and the trip ends at the far settlement", async () => {
+    const t = await newChar({ credits: 300, equipment: ["Blaster pistol"] });
+    let route = null;
+    const tc = await newCamp(t, 3, async (world) => {
+      route = world.paths.find((p) => p.kind === "route" && world.areas[p.from]?.kind === "settlement" && world.areas[p.to]?.kind === "settlement");
+      if (!route) throw new Error("no speeder route between two settlements in the world");
+      // (14 km: two legs of road)
+      route.travel = "14 km (1 h by speeder)";
+    });
+    await api("PATCH", `/api/campaigns/${tc.id}`, { currentLocation: route.from, vehicles: [{ id: "v-trip", name: "Landspeeder", model: "Landspeeder", mph: 220, value: 10000, status: "parked", owner: GEAR, seats: 2, areaId: route.from }] });
+    // The test build's switches: the autopilot drives, and the trip has a roadblock (which the autopilot, with no crewmate, rams)
+    await page.evaluate(() => { localStorage.setItem("sw5e.autopilot", "1"); localStorage.setItem("sw5e.roadblock", "1"); });
+    try {
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+      await sleep(3000);
+      const rides = page.getByTestId("rides").first();
+      await rides.waitFor({ timeout: 60000 });
+      await rides.getByRole("button").filter({ hasText: /Fly it yourself/ }).first().click();
+      const briefs = [];
+      const results = [];
+      for (let n = 0; n < 80 && results.length < 2; n++) {
+        await sleep(1500);
+        if (await page.getByTestId("road-ambush").count()) { await page.getByTestId("ambush-run").click(); continue; }
+        if (!(await page.getByTestId("minigame-page").count())) continue;
+        const brief = await page.getByTestId("road-briefing").innerText({ timeout: 4000 }).catch(() => "");
+        if (brief) briefs.push(brief.replace(/\s+/g, " "));
+        await page.getByTestId("countdown").waitFor({ state: "detached", timeout: 30000 }).catch(() => {});
+        await page.getByTestId("minigame-over").waitFor({ timeout: 240000 }).catch((e) => { throw new Error("a leg did not end: " + e.message.split("\n")[0]); });
+        results.push((await page.getByTestId("road-result").innerText()).replace(/\s+/g, " "));
+        await page.getByTestId("minigame-land").click();
+      }
+      if (results.length < 2) throw new Error("only " + results.length + " legs were driven: " + results.join(" | "));
+      if (!/ran the roadblock/.test(results.join(" "))) throw new Error("the roadblock was not met: " + results.join(" | "));
+      if (!/after you/.test(briefs[1] ?? "") ) throw new Error("the guards did not give chase on the next leg: " + briefs.join(" | "));
+      await sleep(3000);
+      const after = await campOf(tc.id);
+      if (after.currentLocation !== route.to) throw new Error("not at the far settlement: " + after.currentLocation);
+      return `${briefs.join(" || ").slice(0, 200)}; ${results.join(" || ").slice(0, 200)} => ${after.galaxyMap.areas[after.currentLocation]?.name}`;
+    } finally {
+      await page.evaluate(() => { localStorage.removeItem("sw5e.autopilot"); localStorage.removeItem("sw5e.roadblock"); }).catch(() => {});
+    }
+  });
+
+  await step(ctx, "real-time moves: Space jumps, F fires the wrist hook and reels the party along it, a held Space lights the jetpack and climbs; the buttons are there for a phone", async () => {
+    const a = await newChar({ credits: 100, equipment: ["Blaster pistol", "Wrist-Mounted Grappling Hook", "Jetpack", "Power cell", "Power cell"] });
+    const ac = await newCamp(a, 3, async () => {});
+    // First person, where the crosshair aims the hook
+    await page.evaluate(() => localStorage.setItem("sw5e.view", "first"));
+    try {
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.getByRole("heading", { name: GEAR }).waitFor({ timeout: 60000 });
+      await sleep(9000);
+      for (const id of ["jump-button", "hook-button", "boost-button"]) if (!(await page.getByTestId(id).count())) throw new Error("no " + id);
+      const air = () => page.evaluate(() => { const s = window.__air?.(); return s && { mode: s.mode, y: s.y, x: s.feet.x, z: s.feet.y, peak: s.peak, shot: s.shot.hit }; });
+      const first = await air();
+      if (!first) throw new Error("the map has no air state");
+      // A jump on the spot, by the key
+      await page.keyboard.down("Space");
+      await sleep(100);
+      await page.keyboard.up("Space");
+      let peak = 0;
+      for (let i = 0; i < 60; i++) { const s = await air(); peak = Math.max(peak, s.y); if (s.mode === "ground" && peak > 0.05) break; await sleep(100); }
+      if (peak < 0.1) throw new Error("Space did not lift the character: " + peak);
+      if ((await air()).mode !== "ground") throw new Error("it did not come down: " + JSON.stringify(await air()));
+      // The jump button does the same (a touch)
+      const jump = await page.getByTestId("jump-button").boundingBox();
+      await page.mouse.move(jump.x + jump.width / 2, jump.y + jump.height / 2);
+      await page.mouse.down();
+      await sleep(100);
+      await page.mouse.up();
+      let peak2 = 0;
+      for (let i = 0; i < 60; i++) { const s = await air(); peak2 = Math.max(peak2, s.y); if (s.mode === "ground" && peak2 > 0.05) break; await sleep(100); }
+      if (peak2 < 0.1) throw new Error("the jump button did not lift the character: " + peak2);
+      // The hook: F fires it at what the crosshair is on, and the line reels the party along it
+      let reeled = false;
+      const from = await air();
+      for (let turn = 0; turn < 12 && !reeled; turn++) {
+        await page.keyboard.press("KeyF");
+        await sleep(1700);
+        const s = await air();
+        if (s.shot && Math.hypot(s.x - from.x, s.z - from.z) > 1.5) reeled = true;
+        else { await page.keyboard.down("ArrowRight"); await sleep(300); await page.keyboard.up("ArrowRight"); await sleep(1300); }
+      }
+      if (!reeled) throw new Error("the hook did not take hold anywhere in a full turn");
+      // The jetpack: a held Space climbs, and it comes down on its own when released
+      await sleep(1500);
+      await page.keyboard.down("Space");
+      let high = 0;
+      for (let i = 0; i < 8; i++) { await sleep(180); const s = await air(); high = Math.max(high, s.y); }
+      await page.keyboard.up("Space");
+      if (high < 1.2) throw new Error("the jetpack did not climb: " + high);
+      for (let i = 0; i < 30 && (await air()).mode !== "ground"; i++) await sleep(300);
+      if ((await air()).mode !== "ground") throw new Error("the pack did not set it down: " + JSON.stringify(await air()));
+      return `jump ${peak.toFixed(2)} and ${peak2.toFixed(2)} squares; the hook reeled the party ${Math.hypot((await air()).x - from.x, (await air()).z - from.z).toFixed(1)} squares; the jetpack climbed ${high.toFixed(1)}`;
+    } finally {
+      await page.evaluate(() => localStorage.setItem("sw5e.view", "overhead")).catch(() => {});
+    }
+  });
+
   await step(ctx, "roster: another saved character is brought along as a companion", async () => {
     const lead = await newChar({ equipment: ["Blaster pistol", "Vibroblade", "Combat suit"] });
     const friend = await newChar({ name: "Friend " + TAG, class: "scout", equipment: ["Blaster pistol", "Vibroblade", "Combat suit"] });
