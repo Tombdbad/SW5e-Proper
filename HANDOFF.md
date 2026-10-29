@@ -1,6 +1,6 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-30 (Windows PC), branch `main`, last commit e55d59a. EVERYTHING BELOW IS UNCOMMITTED (the user has not asked to commit yet). Nothing is pushed.
+Written 2026-10-30 (Windows PC), branch `main`. The co-op work is committed (5f2761e); the second batch (walk/run, crouch/prone, facing, kick, full screen) is the commit after it. Nothing is pushed.
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told.
 
 ## 2026-10-30: the first real co-op play on two devices (REVIVAL_NOTES "Co-op, the first real play")
@@ -18,6 +18,13 @@ speeder hit box; the gunner got a menu and could cancel and be left behind; road
 - 5002 (test copy) was last built BEFORE all of this. The user restarts it themselves with an administrator PowerShell:
   `powershell -ExecutionPolicy Bypass -File deploy\windows-start.ps1 -Mode test -Lan` (my own run with -Lan was refused by the permission check; without -Lan it would turn the wi-fi off again).
 - Process: dev server on 5099 (sw5e_test) is Claude's; stop it (Stop-Process on the pid listening on 5099) when done.
+
+## 2026-10-30, second batch (the user: full screen, kick, facing, followers fight, crouch, run)
+- Walk is the default, HALF the old speed; Run restores it (tap walks too). Key `sw5e.run2` (the old setting does not carry). Crouch (C, 0.6x) and Prone (Z, 0.3x) buttons in the eye views and in the top bar (overhead). `stance.k/p`, `useRun` in interiors/stick.ts.
+- Peers are drawn facing the way they face and crouched/prone (`pos` message carries f and s; `partyHeight.f/s`; `Posture` in LocalMap). Fight combatants with a Prone condition (or a deployed bipod) lie down.
+- Host-only Kick in the co-op dialog (`kick` message; the kicked cannot rejoin that game). Full screen button in the top bar (Fullscreen API; iPhone: Add to Home Screen, meta tags added).
+- Followers attacking: in a fight companions are allies and already attack (turn-based and shooter); NOT changed. If the user means something else (free roam), ask for the case.
+- Checked: npm test 469 pass; e2e/coop-posture.mjs (posture seen by the host, kick) passes; NOT checked on screen: the prone/crouch look, full screen on a phone.
 
 ## Next, in order
 1. The user tries 5002 on two devices (gunner on the road, guards, followers, jump). 2. Real roles on SHIPS (a gunner in a starship fight). 3. The co-op shooter fight (a fight everyone is in).

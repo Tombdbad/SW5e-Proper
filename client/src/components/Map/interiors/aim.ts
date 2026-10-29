@@ -55,7 +55,8 @@ export const rightOf = (yaw: number) => new THREE.Vector3(-Math.cos(yaw), 0, Mat
 export const EYE = 1.15;
 // How the party stands in a shooter fight: `k` is how far down it has crouched (0 standing, 1 crouched; eased by the fight's frame) and `lunge` a lean
 // into a saber's swing; the camera, the muzzle and the figure follow them
-export const stance = { k: 0, lunge: 0 };
+// (`p` is how far it has gone prone, 0 to 1: lying on the ground, the eyes a hand's breadth above it)
+export const stance = { k: 0, p: 0, lunge: 0 };
 export const PITCH: Record<Exclude<ViewMode, "overhead">, [number, number]> = { first: [-1.3, 1.3], shoulder: [-0.7, 1.0] };
 
 export interface Pose {
@@ -70,7 +71,7 @@ export interface Pose {
 export function poseOf(mode: Exclude<ViewMode, "overhead">, feet: THREE.Vector3, yaw: number, pitch: number, solids: Iterable<THREE.Object3D> = []): Pose {
   const dir = lookDirection(yaw, pitch);
   const right = rightOf(yaw);
-  const head = feet.clone().add(new THREE.Vector3(0, EYE - 0.4 * stance.k, 0));
+  const head = feet.clone().add(new THREE.Vector3(0, EYE - 0.4 * stance.k - (EYE - 0.3) * stance.p, 0));
   const muzzle = head.clone().add(right.clone().multiplyScalar(0.18)).add(new THREE.Vector3(0, -0.12, 0));
   if (mode === "first") return { position: head, look: head.clone().add(dir.clone().multiplyScalar(20)), muzzle };
   const pivot = head.clone().add(right.clone().multiplyScalar(0.18));

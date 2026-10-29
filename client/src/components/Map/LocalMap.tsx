@@ -27,7 +27,7 @@ import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, 
 import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
 import { useShoot } from "./interiors/shoot";
-import { stickWalk } from "./interiors/stick";
+import { CROUCH_FACTOR, PRONE_FACTOR, stickWalk, useRun, WALK_FACTOR } from "./interiors/stick";
 import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
@@ -237,8 +237,25 @@ const RIDER_HIPS = 0.5;
 // A name that turns to face whoever is looking
 // Names are sized to be read from above; from the character's eyes they are a third as large (the crosshair names what it is on)
 // The other members of a co-op game who stand in this place, as figures that walk to where they were last seen (lib/coop shares where each stands)
+// A figure that goes down into a crouch or onto its belly, and gets up again, eased (`to`: 0 standing, 1 crouched, 2 prone; the head the way it faces)
+function Posture({ to, children }: { to: number; children: ReactNode }) {
+  const group = useRef<THREE.Group>(null);
+  const was = useRef({ k: 0, p: 0 });
+  useFrame((_, dt) => {
+    const g = group.current;
+    if (!g) return;
+    const ease = Math.min(1, dt * 8);
+    was.current.k += ((to === 1 ? 1 : 0) - was.current.k) * ease;
+    was.current.p += ((to === 2 ? 1 : 0) - was.current.p) * ease;
+    g.rotation.x = (Math.PI / 2) * was.current.p;
+    g.position.y = 0.14 * was.current.p;
+    g.scale.y = 1 - 0.3 * was.current.k;
+  });
+  return <group ref={group}>{children}</group>;
+}
 function PeerFigure({ name, color, peer, here }: { name: string; color: string; peer?: Peer; here: string }) {
   const group = useRef<THREE.Group>(null);
+  const yaw = useRef<number | null>(null);
   const at = useRef<{ x: number; y: number; h: number } | null>(null);
   useFrame((_, dt) => {
     if (!group.current || !peer || peer.a !== here) return void (group.current && (group.current.visible = false));
@@ -249,10 +266,18 @@ function PeerFigure({ name, color, peer, here }: { name: string; color: string; 
     at.current.h += ((peer.h ?? 0) - at.current.h) * Math.min(1, dt * 16);
     group.current.visible = true;
     group.current.position.set(at.current.x + 0.5, at.current.h, at.current.y + 0.5);
+    // turns the short way round to the way they face
+    const want = peer.f || 0;
+    if (yaw.current === null) yaw.current = want;
+    const turn = Math.atan2(Math.sin(want - yaw.current), Math.cos(want - yaw.current));
+    yaw.current += turn * Math.min(1, dt * 14);
+    group.current.rotation.y = yaw.current;
   });
   return (
     <group ref={group} visible={false} raycast={() => null}>
-      <Figure kind="player" ring={color} name={name} marker />
+      <Posture to={peer?.s ?? 0}>
+        <Figure kind="player" ring={color} name={name} marker />
+      </Posture>
     </group>
   );
 }
@@ -3176,7 +3201,18 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       token.current.position.set(feet.current.x + 0.5 + (sit.current ? (sit.current.x - feet.current.x) * into : 0), heightNow() + air.current.y, feet.current.y + 0.5 + (sit.current ? (sit.current.y - feet.current.y) * into : 0));
       // (crouched behind cover, and leaning into a saber's swing: a shooter fight's stance)
       token.current.rotation.order = "YXZ";
-      token.current.rotation.x = stance.lunge;
+      // (outside a fight, the Crouch button's)
+      if (!shootSession) {
+        const ease = Math.min(1, Math.min(delta, 0.1) * 8);
+        const g = useRun.getState();
+        stance.k += ((g.crouch ? 1 : 0) - stance.k) * ease;
+        stance.p += ((g.prone ? 1 : 0) - stance.p) * ease;
+      }
+      // (prone: laid forward onto the ground, head the way they face)
+      token.current.rotation.x = stance.lunge + (Math.PI / 2) * stance.p;
+      token.current.position.y += 0.14 * stance.p;
+      partyHeight.f = token.current.rotation.y;
+      partyHeight.s = stance.p > 0.5 ? 2 : stance.k > 0.5 ? 1 : 0;
       token.current.scale.y = 1 - 0.3 * stance.k;
       // From the eyes the character is not drawn; over the shoulder they face where the camera looks
       token.current.visible = !(viewing && mode === "first");
@@ -3185,7 +3221,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     }
     eye.current = duelRef.current ? [(duelRef.current.x ?? 0) + 0.5 - cx, (duelRef.current.z ?? 0) * LEVEL_H, (duelRef.current.y ?? 0) + 0.5 - cz] : outside && planned ? [feet.current.x + 0.5 - cx, 0, feet.current.y + 0.5 - cz] : null;
     if (!going || air.current.mode === "jump" || air.current.mode === "reel") return;
-    let step = Math.min(delta, 0.5) * 7 * Math.max(0.05, going.pace ?? 1);
+    // (a tap's walk is a walk, half the pace, unless Run is on; the stick sets its own; crouched is slower still)
+    const gait = useRun.getState();
+    let step = Math.min(delta, 0.5) * 7 * Math.max(0.05, going.pace ?? (gait.run ? 1 : WALK_FACTOR)) * (shootSession ? 1 : gait.prone ? PRONE_FACTOR : gait.crouch ? CROUCH_FACTOR : 1);
     while (step > 0 && going.path.length) {
       const next = going.path[0];
       const [dx, dy] = [next.x - feet.current.x, next.y - feet.current.y];
@@ -4176,7 +4214,7 @@ function DuelPieces() {
         return (
           <Stepper key={String(c.id)} x={(c.x ?? 0) + 0.5} y={(c.y ?? 0) + 0.5} z={high(c.z)} pace={isDroideka(c.name) ? 1.2 : 4} turn={false}>
             <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : 0, 0]}>
-              <Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} fighting />
+              <Posture to={!down && (c.braced || (c.conditions ?? []).some((x) => /^prone$/i.test(x.name))) ? 2 : 0}><Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} fighting /></Posture>
             </group>
             {!down && current?.id === c.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}><ringGeometry args={[0.5, 0.58, 28]} /><meshBasicMaterial color="#fde047" /></mesh>}
             {!down && target?.id === c.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.07, 0]}><ringGeometry args={[0.62, 0.7, 4]} /><meshBasicMaterial color="#f87171" /></mesh>}
@@ -4310,7 +4348,7 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
                 {/* The fallen lie where they fell */}
                 <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : 0, 0]}>
                   <Turner facing={facing} on={viewing && !!c.isPlayer && !down} base={Math.PI / 2} hide={viewing && mode === "first" && !!c.isPlayer}>
-                  <Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} fighting />
+                  <Posture to={!down && (c.braced || (c.conditions ?? []).some((x) => /^prone$/i.test(x.name))) ? 2 : 0}><Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} fighting /></Posture>
                   </Turner>
                 </group>
                 {!down && current?.id === c.id && (

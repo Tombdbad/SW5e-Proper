@@ -31,15 +31,15 @@ test("the response is dead in the middle, nearly straight, and full a little bef
   assert.ok(EXPO >= 0 && EXPO < 0.5);
 });
 
-test("walking is a little slower than running, and running is the party's old speed", () => {
+test("walking is half the speed of running, and running is the party's old speed", () => {
   assert.equal(RUN_SPEED, 7);
   assert.equal(paceOf(1, true), 1);
   assert.ok(Math.abs(paceOf(1, false) - WALK_FACTOR) < 1e-9);
-  assert.ok(WALK_FACTOR > 0.7 && WALK_FACTOR < 1);
+  assert.equal(WALK_FACTOR, 0.5);
   assert.ok(Math.abs(paceOf(0.5, false) - paceOf(0.5, true) * WALK_FACTOR) < 1e-9);
   assert.equal(paceOf(0.05, true), 0);
-  // A thumb at ordinary pressure (half the pad) walks at least two squares a second even on Walk, and runs at three or more
-  assert.ok(paceOf(0.5, false) * RUN_SPEED >= 2.5, `${paceOf(0.5, false) * RUN_SPEED} squares a second`);
+  // A thumb at ordinary pressure (half the pad) walks at least a square and a half a second even on Walk, and runs at three or more
+  assert.ok(paceOf(0.5, false) * RUN_SPEED >= 1.5, `${paceOf(0.5, false) * RUN_SPEED} squares a second`);
   assert.ok(paceOf(0.5, true) * RUN_SPEED >= 3, `${paceOf(0.5, true) * RUN_SPEED} squares a second`);
 });
 

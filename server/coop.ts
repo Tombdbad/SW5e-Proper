@@ -33,6 +33,8 @@ interface Session {
   room: TravelRoom | null;
   rooms: number;
   idle?: NodeJS.Timeout;
+  // Characters the host has removed: they cannot come back into this game
+  banned?: Set<string>;
 }
 
 const byCode = new Map<string, Session>();
@@ -209,6 +211,7 @@ async function hello(socket: WebSocket, msg: any): Promise<{ s: Session; id: str
   }
   if (s.campaignId !== campaignId) return void fail("That code is for another campaign");
   const id = String(characterId);
+  if (s.banned?.has(id)) return void fail("The host has removed you from this game");
   const mine = s.members.get(id);
   // (the same character coming back, from a dropped connection or another tab, takes its place again)
   if (!mine && s.members.size >= MAX_PLAYERS) return void fail(`The game is full (${MAX_PLAYERS} players)`);
@@ -283,7 +286,7 @@ function handle(s: Session, id: string, msg: any) {
     }
     case "pos": {
       me.spot = { a: String(msg.a ?? ""), x: Number(msg.x) || 0, y: Number(msg.y) || 0 };
-      broadcast(s, { t: "pos", id, ...me.spot, f: Number(msg.f) || 0, h: Math.max(0, Math.min(40, Number(msg.h) || 0)) }, id);
+      broadcast(s, { t: "pos", id, ...me.spot, f: Number(msg.f) || 0, h: Math.max(0, Math.min(40, Number(msg.h) || 0)), s: Math.max(0, Math.min(2, Math.round(Number(msg.s) || 0))) }, id);
       return;
     }
     case "arrived": {
@@ -365,6 +368,13 @@ function handle(s: Session, id: string, msg: any) {
     case "leave": {
       return void leave(s, id);
     }
+    case "kick": {
+      // Only the host removes someone (never themselves); the one removed is told why and cannot rejoin this game
+      const target = s.members.get(String(msg.id ?? ""));
+      if (!me.host || !target || target.id === id) return;
+      (s.banned ??= new Set()).add(target.id);
+      return void leave(s, target.id, `${me.name} removed you from the game`);
+    }
   }
 }
 
@@ -378,10 +388,10 @@ function persistHost(s: Session) {
   }
 }
 
-function leave(s: Session, id: string) {
+function leave(s: Session, id: string, reason?: string) {
   const m = s.members.get(id);
   if (!m) return;
-  send(m.socket, { t: "ended" });
+  send(m.socket, { t: "ended", reason });
   m.socket?.close();
   removeFromRoom(s, id);
   s.members.delete(id);

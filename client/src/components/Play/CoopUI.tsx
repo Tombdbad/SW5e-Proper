@@ -10,7 +10,7 @@ import { usePartySpot, useClock } from "@/components/Map/LocalMap";
 import { partyHeight } from "@/components/Map/interiors/air";
 import { RoadRide } from "@/components/Map/FlightScene";
 import {
-  cancelTravel, chooseSeat, joinTravel, leaveCoop, readyTravel, sharePosition, startCoop, useCoop, coopMe,
+  cancelTravel, chooseSeat, joinTravel, kickPlayer, leaveCoop, readyTravel, sharePosition, startCoop, useCoop, coopMe,
 } from "@/lib/coop";
 import { MAX_PLAYERS, crewIssues, rolesOf, unitsOf, type Craft, type TravelRoom } from "@shared/logic/coop";
 
@@ -23,7 +23,7 @@ export function CoopLink({ campaignId }: { campaignId: string | undefined }) {
     if (status !== "on") return;
     const id = setInterval(() => {
       const spot = usePartySpot.getState();
-      if (spot.areaId) sharePosition(spot.areaId, partyHeight.at?.x ?? spot.x, partyHeight.at?.y ?? spot.y, 0, partyHeight.y);
+      if (spot.areaId) sharePosition(spot.areaId, partyHeight.at?.x ?? spot.x, partyHeight.at?.y ?? spot.y, partyHeight.f, partyHeight.y, partyHeight.s);
     }, 80);
     return () => clearInterval(id);
   }, [status]);
@@ -109,6 +109,14 @@ export function CoopDialog({ campaignId, characterId, areaName, onClose, onGoTo 
                   </span>
                   {m.id !== me && m.connected && coopMe()?.areaId !== m.areaId && (
                     <Button size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={() => { onGoTo(m.areaId, m.name); onClose(); }}>Go to them</Button>
+                  )}
+                  {m.id !== me && coopMe()?.host && (
+                    <Button
+                      size="sm" variant="destructive" className="h-6 px-2 text-xs" data-testid={`coop-kick-${m.id}`}
+                      onClick={() => { if (window.confirm(`Remove ${m.name} from the game? They cannot rejoin it.`)) kickPlayer(m.id); }}
+                    >
+                      Kick
+                    </Button>
                   )}
                 </li>
               ))}

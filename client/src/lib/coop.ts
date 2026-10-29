@@ -10,7 +10,7 @@ import { queryClient } from "@/lib/queryClient";
 import { roadBus, resetRoad } from "@/lib/roadBus";
 import { applyChanges, changesBetween, type Changes, type CoopMember, type Craft, type TravelRoom } from "@shared/logic/coop";
 
-export interface Peer { a: string; x: number; y: number; f: number; h?: number }
+export interface Peer { a: string; x: number; y: number; f: number; h?: number; s?: number }
 
 interface CoopStore {
   status: "off" | "connecting" | "on";
@@ -135,7 +135,7 @@ function receive(msg: any) {
     }
     case "pos": {
       const peers = { ...useCoop.getState().peers };
-      if (msg.a) peers[msg.id] = { a: msg.a, x: msg.x, y: msg.y, f: msg.f, h: Number(msg.h) || 0 };
+      if (msg.a) peers[msg.id] = { a: msg.a, x: msg.x, y: msg.y, f: Number(msg.f) || 0, h: Number(msg.h) || 0, s: Number(msg.s) || 0 };
       else delete peers[msg.id];
       return void set({ peers });
     }
@@ -217,6 +217,10 @@ export function resumeCoop() {
   } catch {}
 }
 
+// The host removes a player from the game (the server ignores anyone else's)
+export function kickPlayer(id: string) {
+  transmit({ t: "kick", id });
+}
 export function leaveCoop() {
   transmit({ t: "leave" });
   setTimeout(stop, 50);
@@ -268,13 +272,14 @@ export function sharePets(pets: unknown[]) {
 let lastPos = "";
 let lastPosAt = 0;
 // (called from a timer of the link, so the last place stood at is always sent; a change in height counts, so a jump is seen)
-export function sharePosition(areaId: string, x: number, y: number, f = 0, h = 0) {
+export function sharePosition(areaId: string, x: number, y: number, f = 0, h = 0, s = 0) {
   if (!coopActive() || useCoop.getState().members.length < 2) return;
-  const text = `${areaId}|${x.toFixed(2)}|${y.toFixed(2)}|${h.toFixed(2)}`;
+  f = +f.toFixed(2);
+  const text = `${areaId}|${x.toFixed(2)}|${y.toFixed(2)}|${h.toFixed(2)}|${f}|${s}`;
   if (text === lastPos) return;
   lastPos = text;
   lastPosAt = Date.now();
-  transmit({ t: "pos", a: areaId, x, y, f, h: +h.toFixed(2) });
+  transmit({ t: "pos", a: areaId, x, y, f, h: +h.toFixed(2), s });
 }
 
 // ---------------------------------------------------------------------------------------------

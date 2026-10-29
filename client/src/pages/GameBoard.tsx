@@ -13,6 +13,7 @@ import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
 import { useQuality } from "@/components/Map/siteAssets";
 import { useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
+import { useRun } from "@/components/Map/interiors/stick";
 import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whereNow, useClock, useTransit, useTable, lifeLink, noEncounters, LEVEL_H } from "@/components/Map/LocalMap";
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
@@ -264,6 +265,22 @@ export default function GameBoard() {
   }, [sharpness]);
   const detailFixed = useQuality((q) => q.fixed);
   const viewMode = useView((v) => v.mode);
+  const gait = useRun();
+  // Full screen (2026-10-30): the page fills the display, no address bar, tabs or borders. An iPhone's browser has no such mode for a web page: there the
+  // way is Share, then Add to Home Screen, which opens the game without the browser's bars (the page says so)
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    const on = () => setFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", on);
+    return () => document.removeEventListener("fullscreenchange", on);
+  }, []);
+  const toggleFullscreen = () => {
+    const root = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
+    if (document.fullscreenElement) return void document.exitFullscreen?.();
+    const ask = root.requestFullscreen ? () => root.requestFullscreen({ navigationUI: "hide" }) : root.webkitRequestFullscreen ? () => root.webkitRequestFullscreen!() : null;
+    if (!ask) return void window.alert("This browser cannot show a web page full screen. On an iPhone or iPad: tap Share, then Add to Home Screen, and open the game from that icon: it fills the screen.");
+    Promise.resolve(ask()).catch(() => window.alert("The browser would not go full screen. Try again, or press F11 on a computer."));
+  };
   // V cycles the view on foot (overhead, over the shoulder, first person); the mode only matters where the party walks
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
@@ -7996,6 +8013,22 @@ export default function GameBoard() {
                   View: {VIEW_LABEL[viewMode]}
                 </Button>
               )}
+              {onFoot && viewMode === "overhead" && (
+                <>
+                  <Button size="sm" variant="outline" className={`pointer-events-auto h-6 shrink-0 px-2 text-xs ${gait.run ? "border-yellow-400 text-yellow-300" : ""}`} data-testid="run-toggle-bar" title="Walk or run (R). Walking is half the speed" onClick={() => gait.toggle()}>
+                    {gait.run ? "Run" : "Walk"}
+                  </Button>
+                  <Button size="sm" variant="outline" className={`pointer-events-auto h-6 shrink-0 px-2 text-xs ${gait.crouch ? "border-yellow-400 text-yellow-300" : ""}`} data-testid="crouch-toggle-bar" title="Crouch (C)" onClick={() => gait.toggleCrouch()}>
+                    Crouch
+                  </Button>
+                  <Button size="sm" variant="outline" className={`pointer-events-auto h-6 shrink-0 px-2 text-xs ${gait.prone ? "border-yellow-400 text-yellow-300" : ""}`} data-testid="prone-toggle-bar" title="Go prone (Z)" onClick={() => gait.toggleProne()}>
+                    Prone
+                  </Button>
+                </>
+              )}
+              <Button size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" data-testid="fullscreen-toggle" title="Fill the whole screen: no address bar, buttons or borders (F11 on a computer)" onClick={toggleFullscreen}>
+                {fullscreen ? "Exit full screen" : "Full screen"}
+              </Button>
               <Button size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" onClick={toggleSidebar}>
                 {showSidebar ? "Hide HUD" : "Show HUD"}
               </Button>

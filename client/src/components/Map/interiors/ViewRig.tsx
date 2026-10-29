@@ -18,6 +18,9 @@ type V3 = [number, number, number];
 function Overlay({ stick, use }: { stick: { current: [number, number] }; use: () => void }) {
   const r = useReticle();
   const run = useRun((x) => x.run);
+  const crouch = useRun((x) => x.crouch);
+  const prone = useRun((x) => x.prone);
+  const fighting = useShoot((x) => !!x.session);
   const pad = useRef<HTMLDivElement>(null);
   const thumb = useRef<HTMLDivElement>(null);
   const move = (e: React.PointerEvent) => {
@@ -74,6 +77,18 @@ function Overlay({ stick, use }: { stick: { current: [number, number] }; use: ()
       >
         {run ? "Run" : "Walk"}
       </button>
+      {!fighting && <button
+        data-testid="crouch-toggle" onPointerDown={(e) => { e.preventDefault(); useRun.getState().toggleCrouch(); }}
+        style={{ position: "absolute", right: 24, bottom: 176, width: 68, height: 44, borderRadius: 22, background: crouch ? "rgba(250,204,21,0.55)" : "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.5)", color: "#fff", font: "600 13px sans-serif", pointerEvents: "auto", touchAction: "none" }}
+      >
+        Crouch
+      </button>}
+      {!fighting && <button
+        data-testid="prone-toggle" onPointerDown={(e) => { e.preventDefault(); useRun.getState().toggleProne(); }}
+        style={{ position: "absolute", right: 24, bottom: 228, width: 68, height: 44, borderRadius: 22, background: prone ? "rgba(250,204,21,0.55)" : "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.5)", color: "#fff", font: "600 13px sans-serif", pointerEvents: "auto", touchAction: "none" }}
+      >
+        Prone
+      </button>}
     </div>
   );
 }
@@ -211,6 +226,9 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
       if (["KeyE", "Enter"].includes(e.code)) { if (!e.repeat) useNow.current(); e.preventDefault(); return; }
       // (R is the run toggle, and in a shooter fight the reload: interiors/shoot.ts)
       if (e.code === "KeyR" && !e.repeat && !useShoot.getState().session) { useRun.getState().toggle(); return; }
+      // (C is the crouch toggle; in a shooter fight it is the fight's own, behind cover)
+      if (e.code === "KeyC" && !e.repeat && !useShoot.getState().session) { useRun.getState().toggleCrouch(); return; }
+      if (e.code === "KeyZ" && !e.repeat && !useShoot.getState().session) { useRun.getState().toggleProne(); return; }
       if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) { keys.current.add(e.code); e.preventDefault(); }
     };
     const up = (e: KeyboardEvent) => keys.current.delete(e.code);

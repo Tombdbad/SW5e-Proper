@@ -18,26 +18,35 @@ export function shaped(deflection: number, expo = EXPO, dead = DEAD, full = FULL
   return (1 - expo) * u + expo * u * u * u;
 }
 
-// Squares a second on the map: running is the full speed the party has always walked at, walking is 15% slower
+// Squares a second on the map: running is the full speed the party has always walked at, walking is half of it
 export const RUN_SPEED = 7;
-export const WALK_FACTOR = 0.85;
+export const WALK_FACTOR = 0.5;
+// Crouched, the party moves at three fifths of the pace it would have otherwise
+export const CROUCH_FACTOR = 0.6;
+// Prone, a crawl: three tenths
+export const PRONE_FACTOR = 0.3;
 export const paceOf = (deflection: number, run: boolean): number => shaped(deflection) * (run ? 1 : WALK_FACTOR);
 
-// The Run button: on at the start (the speed the party has always had), remembered
+// The Run button: off at the start (a walk, half the speed the party had before), remembered; Crouch is not remembered
 const saved = (): boolean => {
   try {
-    return localStorage.getItem("sw5e.run") !== "0";
+    return localStorage.getItem("sw5e.run2") === "1";
   } catch {
-    return true;
+    return false;
   }
 };
-export const useRun = create<{ run: boolean; toggle: () => void }>((set, get) => ({
+// (the walk is the default now, 2026-10-30: the key is new so that an old "run" setting does not carry over)
+export const useRun = create<{ run: boolean; crouch: boolean; prone: boolean; toggle: () => void; toggleCrouch: () => void; toggleProne: () => void }>((set, get) => ({
   run: saved(),
+  crouch: false,
+  prone: false,
+  toggleProne: () => set({ prone: !get().prone, crouch: false }),
   toggle: () => {
     const run = !get().run;
-    try { localStorage.setItem("sw5e.run", run ? "1" : "0"); } catch {}
+    try { localStorage.setItem("sw5e.run2", run ? "1" : "0"); } catch {}
     set({ run });
   },
+  toggleCrouch: () => set({ crouch: !get().crouch, prone: false }),
 }));
 
 // Where a thumb is on the pad (pixels from its middle, y down) as the stick's (strafe, forward), each from -1 to 1 within the unit disc: the
