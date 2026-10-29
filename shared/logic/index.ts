@@ -11563,9 +11563,13 @@ export interface RaceTrack {
   bridges?: RaceBridge[];
   // A road (2026-10-27, "On the road: the trip"): the course is a way from here to there, not a lap. `finish`: how far round the loop the last
   // gate (the end of the road) is; `block`: a roadblock across it, where (round the loop) and which props make it
-  road?: { finish: number; block?: { at: number; props: number[] } };
+  road?: { finish: number; block?: RoadBlockSite };
   extent: number; limit: number;
 }
+// A roadblock's place on its course: the props that make the barrier, the guards who stand by it (x, z, heading) and the speeders they keep at the
+// roadside (2026-10-30, the user: guards that fire at a speeder crashing through, and sometimes ride after it); `chase` says whether this
+// block's guards ride after a party that breaks through (seeded by the course, so the same road always does)
+export interface RoadBlockSite { at: number; props: number[]; guards: { x: number; z: number; yaw: number }[]; rigs: { x: number; z: number; yaw: number }[]; chase: boolean }
 // The spec of a road: how far round the loop it runs (a share of its length) and whether a roadblock stands across it
 export interface RoadSpec { share?: number; block?: boolean }
 
@@ -12311,7 +12315,20 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps,
         const [lx, lz] = pointAt(i, side * (W / 2 + 0.8));
         put("lamp", lx, lz, yaws[i], 2.4, { radius: 0.5, force: true });
       }
-      track.road = { finish: roadEnd, block: { at, props } };
+      // The guards: two stand by the speeders kept on either side before the barrier, two beyond it at the road's edges
+      const guards: RoadBlockSite["guards"] = [];
+      const rigs: RoadBlockSite["rigs"] = [];
+      for (const side of [-1, 1]) {
+        const [rx, rz] = pointAt(atS(at - 8), side * (W / 2 + 4.2));
+        rigs.push({ x: rx, z: rz, yaw: yaws[atS(at - 8)] });
+        const [ax, az] = pointAt(atS(at - 8), side * (W / 2 + 2.4));
+        guards.push({ x: ax, z: az, yaw: yaws[atS(at - 8)] + (side > 0 ? -1 : 1) * 1.2 });
+      }
+      for (const side of [-1, 1]) {
+        const [gx, gz] = pointAt(atS(at + 5), side * (W / 2 + 2.6));
+        guards.push({ x: gx, z: gz, yaw: yaws[atS(at + 5)] + (side > 0 ? -1 : 1) * 1.5 });
+      }
+      track.road = { finish: roadEnd, block: { at, props, guards, rigs, chase: ((Math.imul(track.seed | 0, 2654435761) >>> 0) % 100) < 55 } };
     } else track.road = { finish: roadEnd };
   }
   // Trees, boulders and shrubs: woods where a slow pattern says so, scattered elsewhere, kept off the
@@ -12384,6 +12401,8 @@ export interface Racer {
   stuck: number; off: number; backing: number; ghost: number;
   // In a chase: one of the riders after the party, and the seconds to its next shot (the party's own too)
   hostile?: boolean; reload?: number;
+  // A speeder kept at a roadside, its rider not yet on it (a roadblock's): it does not move, and nothing strikes it
+  idle?: boolean;
   // How long it has been over lava since the hull last burned
   burn?: number;
 }
@@ -12393,7 +12412,9 @@ export interface RaceEvent { kind: "hit" | "smash" | "mine" | "land" | "tow" | "
 // `chase`: a race that is a chase on the road (who is after the party, and the state of the chase's own dice)
 // `block`: a road's roadblock, `ahead`, the party `stopped` at it, `open` (waved through, its crates gone), `run` (the party chose to ram it) or
 // `ran` (gone past it); `mate`: a crewmate who drives, or fires from the gun when the party drives (their pace at the wheel), `mateReload` their gun's
-export interface Race { t: number; limit: number; laps: number; gateCount: number; racers: Racer[]; hazards: Hazard[]; broken: number[]; over: boolean; log: string[]; events: RaceEvent[]; said: string[]; first: number | null; chase?: { who: string; seed: number }; block?: { state: "ahead" | "stopped" | "open" | "run" | "ran" }; mate?: { name: string; pace: number }; mateReload?: number }
+export interface Race { t: number; limit: number; laps: number; gateCount: number; racers: Racer[]; hazards: Hazard[]; broken: number[]; over: boolean; log: string[]; events: RaceEvent[]; said: string[]; first: number | null; chase?: { who: string; seed: number }; block?: { state: "ahead" | "stopped" | "open" | "run" | "ran"; who?: string; mounted?: boolean }; mate?: { name: string; pace: number }; mateReload?: number;
+  // The roadblock's guards' guns (seconds to the next shot of each; `gone`: it has gone to its speeder)
+  guards?: { reload: number; gone: boolean }[] }
 const RIVALS = [["Rhys", 0.95, 0.5], ["Tavi", 0.97, 0.8], ["the Hutt's runner", 0.92, 0.3], ["Kessa", 0.99, 0.9], ["Doro", 0.93, 0.4], ["Vex", 0.98, 0.7], ["Brann", 0.94, 0.6]] as const;
 
 export const raceLap = (race: Race, racer: Racer) => Math.min(race.laps, Math.max(1, Math.floor((racer.gates - 1) / race.gateCount) + 1));
@@ -12786,6 +12807,7 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
   const resync = Math.floor(race.t / 0.5) !== Math.floor((race.t - h) / 0.5);
   const before = race.racers.map((rc) => [rc.craft.p[0], rc.craft.p[2]] as [number, number]);
   for (const rc of race.racers) {
+    if (rc.idle) continue;
     const own = rc.party && rc.finish === null && !rc.wrecked && !input.auto;
     let steer: RaceInput = rc.wrecked ? { steer: { x: 0, y: 0 }, throttle: 0 as const } : own ? input : rc.hostile ? chaseInput(rc, track, race, h) : rivalInput(rc, track, race, h);
     // A crewmate at the wheel drives at their own pace, safely, and stops short of a roadblock (a speed to be at by each distance from it)
@@ -12805,6 +12827,7 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
   }
   // What stands by the track: struck by shape, dragged through, or broken
   for (const rc of race.racers) {
+    if (rc.idle) continue;
     let box = boxOf(rc);
     const body = SPEEDER_BODY[rc.kind];
     const [x, y, z] = rc.craft.p;
@@ -12875,6 +12898,7 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
       }
     }
   }
+  blockGuards(race, track, h);
   if (race.chase) chaseFire(race, input, h);
   // Racers against each other: boxes, the impulse between them by their masses, and each one's hull by
   // the blow it took (a bike knocked by a landspeeder takes more); one passing high over another is clear
@@ -12933,7 +12957,7 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
   // Gates, crossed in order through their opening; the finish is the start line once the laps are run (on a road, its last gate)
   const total = track.road ? race.gateCount : race.laps * race.gateCount + 1;
   race.racers.forEach((rc, i) => {
-    if (rc.finish !== null || rc.wrecked) return;
+    if (rc.finish !== null || rc.wrecked || rc.idle) return;
     // A pursuer passes no gates: it is only towed back when it is stuck or lost
     if (rc.hostile) {
       rc.stuck = Math.hypot(rc.v[0], rc.v[2]) < 2 && !rc.air && race.t > 1 ? rc.stuck + h : 0;
@@ -12993,7 +13017,7 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
   const party = race.racers.find((rc) => rc.party);
   if ((party && (party.finish !== null || party.wrecked)) || (race.first !== null && race.t >= race.first + RACE.grace) || race.t >= race.limit || race.racers.every((rc) => rc.finish !== null || rc.wrecked)) race.over = true;
   // A chase is over too when every rider after the party is down
-  if (race.chase && race.racers.filter((rc) => rc.hostile).every((rc) => rc.wrecked)) race.over = true;
+  if (race.chase && race.racers.some((rc) => rc.hostile) && race.racers.filter((rc) => rc.hostile).every((rc) => rc.wrecked)) race.over = true;
 }
 
 // One step of a race, in ticks of RACE.tick: the party's racer is steered by `input`, the rivals by
@@ -13009,6 +13033,7 @@ export function stepRace(race: Race, track: RaceTrack, input: RaceInput, dt: num
     events: [],
     said: [],
     block: race.block && { ...race.block },
+    guards: race.guards?.map((g) => ({ ...g })),
   };
   const ticks = Math.max(1, Math.ceil(dt / RACE.tick - 1e-6));
   for (let i = 0; i < ticks && !next.over && next.block?.state !== "stopped"; i++) raceTick(next, track, input, dt / ticks);
@@ -13169,11 +13194,68 @@ export function chaseStart(track: RaceTrack, seed: number, model: string, riders
 }
 // A leg of a road trip (see "The trip"): the party at the start of a road, alone or with riders after it, its crewmate if it has one, and the hull it
 // carries from the legs before
-export function roadStart(track: RaceTrack, seed: number, model: string, o: { riders?: { name: string; model: string }[]; who?: string; mate?: { name: string; pace: number }; hull?: number } = {}): Race {
+export function roadStart(track: RaceTrack, seed: number, model: string, o: { riders?: { name: string; model: string }[]; who?: string; mate?: { name: string; pace: number }; hull?: number; block?: { who: string; model: string } } = {}): Race {
   const race = o.riders?.length ? chaseStart(track, seed, model, o.riders, o.who ?? "riders") : raceStart(track, seed, model, []);
   const me = race.racers.find((rc) => rc.party)!;
   if (o.hull !== undefined) me.hull = within(Math.round(o.hull), 1, me.hullMax);
-  return { ...race, block: track.road?.block ? { state: "ahead" } : undefined, mate: o.mate };
+  const site = track.road?.block;
+  // The speeders kept at the roadside, with nobody on them yet (the guards ride them after a party that breaks through, if the block's do)
+  if (site?.chase) {
+    const model = o.block?.model ?? "Speederbike";
+    site.rigs.forEach((rig, i) => {
+      const kind = speederKind(model);
+      const at = nearestPoint(track.points, rig.x, rig.z, 0, track.points.length, true);
+      race.racers.push({
+        id: race.racers.length, name: `${o.block?.who ?? "Guard"} ${i + 1}`, party: false, model, kind, pace: CHASE.pace + (i % 3) * 0.015, daring: 0,
+        craft: { p: [rig.x, groundAt(track, rig.x, rig.z) + RACE.hover, rig.z], yaw: rig.yaw, pitch: 0, speed: 0 }, v: [0, 0, 0], spin: 0, bank: 0,
+        boost: 1, boosting: false, rest: 0, air: false, rough: false, onTrail: false, gates: 0, toGate: 0, hull: SPEEDER_BODY[kind].hull, hullMax: SPEEDER_BODY[kind].hull, finish: null, wrecked: false,
+        lane: 0, home: 0, at, tat: 0, trail: -1, stuck: 0, off: 0, backing: 0, ghost: 9999, idle: true,
+      });
+    });
+  }
+  return { ...race, block: site ? { state: "ahead", who: o.block?.who } : undefined, mate: o.mate, guards: site ? site.guards.map((_, i) => ({ reload: 1.2 + i * 0.55, gone: false })) : undefined };
+}
+// The roadblock's guards fire at a party that crashes through (rams the barrier, or comes at it too fast to stop). If this block's do, the two
+// at the speeders get on them and ride after the party as a chase (the idle speeders come alive where they stand)
+function blockGuards(race: Race, track: RaceTrack, h: number) {
+  const site = track.road?.block;
+  const me = race.racers.find((r) => r.party);
+  if (!site || !race.guards || !race.block || !me || me.wrecked || me.finish !== null) return;
+  const state = race.block.state;
+  const ahead = site.at - roadAt(track, me);
+  const crashing = state === "run" || state === "ran" || (state === "ahead" && ahead < 45 && ahead > -10 && me.craft.speed > 12);
+  if (!crashing) return;
+  if (!race.chase) race.chase = { who: race.block.who ?? "the guards", seed: (track.seed * 2654435761) >>> 0 || 1 };
+  if (site.chase && !race.block.mounted && (state === "run" || state === "ran")) {
+    race.block.mounted = true;
+    let k = 0;
+    for (const rc of race.racers) {
+      if (!rc.idle) continue;
+      rc.idle = false;
+      rc.hostile = true;
+      rc.ghost = 0;
+      rc.reload = 2.2 + k++ * 0.7;
+    }
+    race.guards[0].gone = true;
+    race.guards[1].gone = true;
+    race.log.push(`The ${race.block.who ?? "guards"} board their speeders`);
+  }
+  race.guards.forEach((g, i) => {
+    if (g.gone) return;
+    g.reload -= h;
+    const post = site.guards[i];
+    const d = Math.hypot(post.x - me.craft.p[0], post.z - me.craft.p[2]);
+    if (g.reload > 0 || d > 70) return;
+    g.reload = 1.3 * (0.8 + chaseRoll(race) * 0.5);
+    const hit = chaseRoll(race) < 0.3 * (1 - (d / 70) * 0.5);
+    const from: Vec3 = [post.x, groundAt(track, post.x, post.z) + 1.4, post.z];
+    const to: Vec3 = hit ? [me.craft.p[0], me.craft.p[1] + 0.6, me.craft.p[2]] : [me.craft.p[0] + (chaseRoll(race) - 0.5) * 6, me.craft.p[1] + 1 + chaseRoll(race) * 2, me.craft.p[2] + (chaseRoll(race) - 0.5) * 6];
+    race.events.push({ kind: "shot", p: from, to, by: -2, power: hit ? 1 : 0 });
+    if (!hit) return;
+    me.hull = Math.max(0, me.hull - CHASE.damage);
+    race.log.push(`A guard hits you (${CHASE.damage} hull)`);
+    if (me.hull <= 0) knockOut(race, me, "the guards");
+  });
 }
 // What the party does at the roadblock it is stopped at: the barrier is opened (its crates cleared away), or it runs at it
 export function settleBlock(race: Race, track: RaceTrack, how: "open" | "run"): Race {

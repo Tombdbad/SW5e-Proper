@@ -76,6 +76,9 @@ export interface AirGear {
   ways: { leap: boolean; hook: boolean; fly: boolean; up?: number };
 }
 export type AirKey = "jump" | "hook" | "boost";
+// How high the party's figure is off its floor now (a jump, a flight, a hook's reel), for the co-op link to show the others
+// (`at`: where the feet are while in the air, when the map's shared spot is only set on landing)
+export const partyHeight = { y: 0, at: null as { x: number; y: number } | null };
 interface AirStore {
   gear: AirGear | null;
   setGear: (gear: AirGear | null) => void;

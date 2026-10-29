@@ -43,9 +43,9 @@ try {
   await host.getByRole("heading", { name: ann.name }).waitFor({ timeout: 120000 });
   await sleep(4000);
   await host.getByTestId("coop-toggle").click();
+  await host.getByTestId("coop-host").click();
   await host.getByTestId("coop-lan-off").waitFor({ timeout: 15000 });
   say("lan notice shown (server on loopback): yes");
-  await host.getByTestId("coop-host").click();
   await host.waitForFunction(() => /^[A-Z]{4}$/.test(document.querySelector('[data-testid="coop-code"]')?.textContent?.trim() ?? ""), null, { timeout: 15000 });
   const code = (await host.getByTestId("coop-code").innerText()).trim();
   say("code:", code);
@@ -96,7 +96,16 @@ try {
   await guest.getByTestId("room-ready").click();
 
   // ---- the pilot drives; the gunner waits and then arrives
-  say("guest covered while the pilot drives:", await guest.getByText(/On the way to/).count());
+  // The gunner is not left at a menu: they ride the road from their own seat, on the pilot's streamed leg, and have no way to call the journey off
+  await guest.getByTestId("road-ride").waitFor({ timeout: 30000 });
+  say("guest rides as:", (await guest.getByTestId("road-ride-role").innerText()).trim(), "| call-off buttons on the guest:", await guest.getByTestId("room-abandon").count());
+  // (the pilot's page begins after its countdown; the leg then reaches the gunner's screen, which stops saying it waits)
+  const streamed = await guest.waitForFunction(() => document.querySelector('[data-testid="road-ride"]') && !document.querySelector('[data-testid="road-ride-wait"]'), null, { timeout: 120000 }).then(() => true, () => false);
+  say("the pilot's leg reaches the gunner's screen:", streamed);
+  await sleep(2500);
+  await guest.screenshot({ path: `${OUT}/coop-4b-gunner.png`, timeout: 120000 }).catch(() => {});
+  await host.screenshot({ path: `${OUT}/coop-4c-pilot.png`, timeout: 120000 }).catch(() => {});
+  if (!streamed) throw new Error("the road never reached the gunner");
   for (let n = 0; n < 120; n++) {
     await sleep(2000);
     if (await host.getByTestId("minigame-page").count()) {
@@ -107,7 +116,7 @@ try {
     if (at.every((s) => s.endsWith(`@${route.to}`))) break;
   }
   const finalPlaces = await place(host);
-  say("final places:", JSON.stringify(finalPlaces), "route.to", route.to);
+  say("final places:", JSON.stringify(finalPlaces), "route.to", route.to, "| streamed to the gunner:", streamed);
   if (!finalPlaces.every((s) => s.endsWith(`@${route.to}`))) throw new Error("not everyone arrived");
   await sleep(2500);
   say("room gone on both:", (await host.getByTestId("travel-room").count()) + (await guest.getByTestId("travel-room").count()) === 0);

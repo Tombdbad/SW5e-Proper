@@ -6,6 +6,7 @@ import { useKeyboardControls } from "@react-three/drei";
 import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
 import { useCoop, type Peer } from "@/lib/coop";
+import type { Pet } from "@shared/logic/coop";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey, squaresApart, type Combatant, type Step } from "@/lib/stores/useCombat";
 // A lit square's colour by how it is reached: walked (green), jumped, climbed or flown to (blue), or a fall at the end (orange)
 const stepColor = (step: Step) => (step.fall ? "#fb923c" : step.how && /^(jump|climb|hook|fly)$/.test(step.how) ? "#38bdf8" : "#4ade80");
@@ -22,7 +23,7 @@ import { moodOf } from "./interiors/atmosphere";
 import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
 import { PackWalls, cornerCentre, bendOf, holeOf, piercedWall, type Bend, type WallRun } from "./interiors/Walls";
 import { AIM, aimAt, aimFrom, stance, useView, type Aimed, type AimPlan } from "./interiors/aim";
-import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, AIR, FEET, type JumpStats } from "./interiors/air";
+import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, type JumpStats } from "./interiors/air";
 import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
 import { useShoot } from "./interiors/shoot";
@@ -238,15 +239,16 @@ const RIDER_HIPS = 0.5;
 // The other members of a co-op game who stand in this place, as figures that walk to where they were last seen (lib/coop shares where each stands)
 function PeerFigure({ name, color, peer, here }: { name: string; color: string; peer?: Peer; here: string }) {
   const group = useRef<THREE.Group>(null);
-  const at = useRef<{ x: number; y: number } | null>(null);
+  const at = useRef<{ x: number; y: number; h: number } | null>(null);
   useFrame((_, dt) => {
     if (!group.current || !peer || peer.a !== here) return void (group.current && (group.current.visible = false));
-    if (!at.current) at.current = { x: peer.x, y: peer.y };
-    const k = Math.min(1, dt * 8);
+    if (!at.current) at.current = { x: peer.x, y: peer.y, h: peer.h ?? 0 };
+    const k = Math.min(1, dt * 12);
     at.current.x += (peer.x - at.current.x) * k;
     at.current.y += (peer.y - at.current.y) * k;
+    at.current.h += ((peer.h ?? 0) - at.current.h) * Math.min(1, dt * 16);
     group.current.visible = true;
-    group.current.position.set(at.current.x + 0.5, 0, at.current.y + 0.5);
+    group.current.position.set(at.current.x + 0.5, at.current.h, at.current.y + 0.5);
   });
   return (
     <group ref={group} visible={false} raycast={() => null}>
@@ -254,14 +256,32 @@ function PeerFigure({ name, color, peer, here }: { name: string; color: string; 
     </group>
   );
 }
-function CoopPeers({ hereId }: { hereId: string }) {
+// The companions and beasts of another member, walking behind them on this screen (their owner's screen draws them for real)
+function PeerPets({ pets, who, here, open, height }: { pets: Pet[]; who: string; here: string; open: (x: number, y: number) => boolean; height: () => number }) {
+  const feet = useRef({ x: 0, y: 0 });
+  useFrame(() => {
+    const spot = useCoop.getState().peers[who];
+    if (spot && spot.a === here) feet.current = { x: spot.x, y: spot.y };
+  });
+  return (
+    <>
+      {pets.map((p, i) => (
+        <Follower key={`${here}:${who}:${p.id}`} companion={{ ...p, id: `${who}-${p.id}` } as unknown as Companion} index={i + 3} feet={feet} open={open} height={height} />
+      ))}
+    </>
+  );
+}
+function CoopPeers({ hereId, open, height }: { hereId: string; open: (x: number, y: number) => boolean; height: () => number }) {
   const members = useCoop((s) => s.members);
   const me = useCoop((s) => s.me);
   const peers = useCoop((s) => s.peers);
   return (
     <>
       {members.filter((m) => m.id !== me && m.connected && m.areaId === hereId).map((m) => (
-        <PeerFigure key={m.id} name={m.name} color={m.color} peer={peers[m.id]} here={hereId} />
+        <group key={m.id}>
+          <PeerFigure name={m.name} color={m.color} peer={peers[m.id]} here={hereId} />
+          {peers[m.id]?.a === hereId && !!m.pets?.length && <PeerPets pets={m.pets} who={m.id} here={hereId} open={open} height={height} />}
+        </group>
       ))}
     </>
   );
@@ -2445,8 +2465,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const pieceFloor = (p: { x: number; y: number; w: number; h: number }) => (inside?.layout ? floorAt(inside.layout, p.x - inside.layout.x + p.w / 2, p.y - inside.layout.y + p.h / 2) : 0);
   // Where the party can stand: the free floor of the room they are in, or the open ground outside.
   // People step aside, so only furniture (and what the party has set down) stands in the way.
+  // (a parked speeder is some two squares long and a square wide: all of it is solid, not the one square it is set on)
+  const rigSquares = useMemo(() => new Set(street.rigs.flatMap((r) => [-1, 0, 1].map((k) => `${r.x + Math.round(r.outward.x) * k},${r.y + Math.round(r.outward.y) * k}`))), [street]);
   const outdoors = (x: number, y: number) =>
-    x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !barred.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`) && !street.ambientBlocked.has(`${x},${y}`) && !pieceSquares.has(`${x},${y}`)
+    x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !barred.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`) && !street.ambientBlocked.has(`${x},${y}`) && !pieceSquares.has(`${x},${y}`) && !rigSquares.has(`${x},${y}`)
     && ![...street.signs, ...street.decor, ...street.folk, ...street.caches, ...street.rigs].some((thing) => thing.x === x && thing.y === y);
   // Where the people of an encounter are (their squares), where one comes in from (a way out of the district, or
   // the edge of the ground), and the squares a gang stands on round the party in its alley
@@ -2492,6 +2514,26 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const cartsOf = (handler: string) => carts.filter((c) => !c.parked && (c.handler ?? "me") === handler);
   const ridden = (scene.beasts ?? []).find((b) => b.id === scene.riding && b.hp > 0);
   const followers = [...(scene.party ?? []), ...(scene.beasts ?? []).filter((b) => b.id !== ridden?.id)];
+  // Co-op (2026-10-30; the user: a stranger who came to offer a job followed both players, each on their own screen only): a stranger of an
+  // encounter belongs to the whole party, and walks behind ONE member of those standing here, the host if they are here, else the first by id.
+  // Every screen picks the same one, so it is in the same place on all. (A player's own companions and beasts follow that player; the others see
+  // them as `PeerPets`.)
+  const coopWho = useCoop((s) => s.me);
+  const coopAll = useCoop((s) => s.members);
+  const coopSpots = useCoop((s) => s.peers);
+  const leader = (() => {
+    if (!coopWho) return null;
+    const here = coopAll.filter((m) => m.connected && (m.id === coopWho || coopSpots[m.id]?.a === hereId)).sort((a, b) => (b.host ? 1 : 0) - (a.host ? 1 : 0) || (a.id < b.id ? -1 : 1));
+    return here.length > 1 && here[0].id !== coopWho ? here[0].id : null;
+  })();
+  const leaderRef = useRef<string | null>(null);
+  leaderRef.current = leader;
+  const followFeet = useRef({ x: 0, y: 0 });
+  useFrame(() => {
+    const id = leaderRef.current;
+    const spot = id ? useCoop.getState().peers[id] : undefined;
+    followFeet.current = spot ? { x: spot.x, y: spot.y } : feet.current;
+  });
   // A base piece being set down (usePlacing): where it would stand by the party, and putting it on a tapped square
   const pieceWanted = usePlacing((s) => s.piece);
   const placing = present && !locked && !duel ? pieceWanted : null;
@@ -2540,6 +2582,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const duelRef = useRef(duel ? duelist : undefined);
   duelRef.current = duel ? duelist : undefined;
   const feet = useRef({ x: standing.x, y: standing.y });
+  const leadFeet = leader ? followFeet : feet;
   // Going up to a roof or down from it: the figure is carried along a path (interiors/transit.ts) with a line or a flame where the way
   // has one; where it ends is where the party stands on arriving (`spot` is set for the new place when the way begins)
   const transit = useTransit((s) => s.now);
@@ -3113,6 +3156,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       held.current = null;
     }
     airStep(Math.min(delta, 0.1));
+    partyHeight.y = air.current.y;
+    partyHeight.at = air.current.mode === "ground" ? null : { ...feet.current };
     // Down onto the stool they have walked to, and up off it when they leave the table; the hands gesture as the game does
     const tb = useTable.getState();
     if (sit.current) {
@@ -3895,14 +3940,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               <Wanderer
                 key={`${enc.id}|person`}
                 id={enc.id}
-                start={enc.phase === "approach" ? encounterSpawn() : nearestOpen(outdoors, { x: squareOf(feet.current).x + 1, y: squareOf(feet.current).y + 1 })}
-                goal={() => squareOf(feet.current)}
+                start={enc.phase === "approach" ? encounterSpawn() : nearestOpen(outdoors, { x: squareOf(leadFeet.current).x + 1, y: squareOf(leadFeet.current).y + 1 })}
+                goal={() => squareOf(leadFeet.current)}
                 stop={enc.phase === "follow" ? 1.9 : 1.6}
                 speed={enc.phase === "follow" ? 6.2 : 3.6}
                 warp={enc.phase === "follow"}
                 open={outdoors}
                 at={folkAt}
-                onArrive={enc.phase === "approach" ? () => onAct?.({ type: "encounter", step: "met" }) : undefined}
+                onArrive={enc.phase === "approach" && !leader ? () => onAct?.({ type: "encounter", step: "met" }) : undefined}
               >
                 <Figure kind="person" ring={SIDE_COLORS.friendly} name={enc.person} />
                 <Label at={[0, 1.7, 0]} size={0.28} color="#facc15">{enc.person}</Label>
@@ -3953,7 +3998,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           </>
         )}
 
-        {present && <CoopPeers hereId={hereId} />}
+        {present && <CoopPeers hereId={hereId} open={open} height={heightNow} />}
         {duel && <DuelPieces />}
         {present && !duel && (
           <group ref={token} position={[standing.x + 0.5, 0, standing.y + 0.5]}>

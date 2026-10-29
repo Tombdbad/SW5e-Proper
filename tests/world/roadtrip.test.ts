@@ -201,3 +201,49 @@ test("the trip's time: quicker for a clean drive, slower for a wrecked leg, neve
   assert.equal(driveMinutes(100, [{ par, took: null }]), 150);
   assert.equal(driveMinutes(100, []), 100);
 });
+
+// Guards at the roadblock (2026-10-30, the user: no one was guarding it): they stand by it, shoot at a speeder that crashes through, and where the
+// course says so the two by the speeders at the roadside get on them and ride after it
+const blockFor = (chase: boolean) => {
+  for (let seed = 1; seed < 80; seed++) {
+    const track = raceCourse(seed, scenery, 1, { block: true });
+    if (track.road?.block && track.road.block.chase === chase) return { track, seed };
+  }
+  throw new Error("no such roadblock");
+};
+
+test("a roadblock has guards by it, who fire at a party that rams through", () => {
+  const { track, seed } = blockFor(false);
+  const site = track.road!.block!;
+  assert.equal(site.guards.length, 4);
+  assert.equal(site.rigs.length, 2);
+  const race = roadStart(track, seed, "Landspeeder", undefined);
+  assert.equal(race.guards?.length, 4);
+  assert.ok(!race.racers.some((r) => r.idle), "a block whose guards do not give chase keeps no speeders ready");
+  let now = race;
+  const shots: number[] = [];
+  for (let t = 0; t < 120 && !now.over; t += 0.1) {
+    now = stepRace(now, track, auto, 0.1);
+    for (const e of now.events) if (e.kind === "shot" && e.by === -2) shots.push(t);
+  }
+  assert.ok(shots.length >= 2, `the guards fired as the party crashed through (${shots.length} shots)`);
+  assert.ok(!now.racers.some((r) => r.hostile), "and none came after it");
+});
+
+test("where the guards ride, their speeders stand idle until the party runs the block, and then come after it", () => {
+  const { track, seed } = blockFor(true);
+  const race = roadStart(track, seed, "Landspeeder", { block: { who: "Imperial checkpoint", model: "Speederbike" } });
+  const parked = race.racers.filter((r) => r.idle);
+  assert.equal(parked.length, 2, "two speeders at the roadside");
+  const at = parked.map((r) => [...r.craft.p]);
+  let now = race;
+  for (let t = 0; t < 6; t += 0.1) now = stepRace(now, track, auto, 0.1);
+  parked.forEach((r, i) => assert.deepEqual(now.racers.find((x) => x.id === r.id)!.craft.p, at[i], "they do not move before the party comes"));
+  now = run(now, track, auto, 200, (r) => r.racers.some((x) => x.hostile));
+  const riders = now.racers.filter((x) => x.hostile);
+  assert.equal(riders.length, 2, "the guards at the speeders ride after it");
+  assert.equal(now.chase?.who, "Imperial checkpoint");
+  assert.ok(!now.over, "a chase with riders is a chase, not an end");
+  const after = run(now, track, auto, 120);
+  assert.ok(after.racers.find((r) => r.party)!.finish !== null || after.racers.find((r) => r.party)!.wrecked, "and the road goes on to its end");
+});

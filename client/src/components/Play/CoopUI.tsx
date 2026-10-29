@@ -7,6 +7,8 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { usePartySpot, useClock } from "@/components/Map/LocalMap";
+import { partyHeight } from "@/components/Map/interiors/air";
+import { RoadRide } from "@/components/Map/FlightScene";
 import {
   cancelTravel, chooseSeat, joinTravel, leaveCoop, readyTravel, sharePosition, startCoop, useCoop, coopMe,
 } from "@/lib/coop";
@@ -15,11 +17,16 @@ import { MAX_PLAYERS, crewIssues, rolesOf, unitsOf, type Craft, type TravelRoom 
 // Shares where this player stands (a few times a second, when it changes) and keeps the shared clock: time never runs backward
 export function CoopLink({ campaignId }: { campaignId: string | undefined }) {
   const status = useCoop((s) => s.status);
-  const spot = usePartySpot();
   const { data } = useQuery<any>({ queryKey: [`/api/campaigns/${campaignId}`], enabled: false });
+  // (twelve times a second, read from the map's own stores: a walk, a jump or a flight is seen as it goes, and the last place stood at is never missed)
   useEffect(() => {
-    if (status === "on" && spot.areaId) sharePosition(spot.areaId, spot.x, spot.y);
-  }, [status, spot.areaId, spot.x, spot.y]);
+    if (status !== "on") return;
+    const id = setInterval(() => {
+      const spot = usePartySpot.getState();
+      if (spot.areaId) sharePosition(spot.areaId, partyHeight.at?.x ?? spot.x, partyHeight.at?.y ?? spot.y, 0, partyHeight.y);
+    }, 80);
+    return () => clearInterval(id);
+  }, [status]);
   const total = Number(data?.timeElapsed?.total) || 0;
   useEffect(() => {
     if (status === "on" && total > useClock.getState().minutes) useClock.getState().set(total);
@@ -64,11 +71,6 @@ export function CoopDialog({ campaignId, characterId, areaName, onClose, onGoTo 
         {status === "off" && (
           <>
             <p className="text-gray-300">Play this campaign with up to {MAX_PLAYERS} people on the same network. Each plays a character of their own. You walk the settlement alone or together; leaving it for another settlement, a planet or a system is done as a party.</p>
-            {info && !info.lan && (
-              <p className="rounded border border-amber-500 p-2 text-amber-200" data-testid="coop-lan-off">
-                The game is only reachable from this computer. To let friends on your Wi-Fi in, start it with <code>deploy\windows-start.ps1 -Mode prod -Lan</code> (it listens on the network; the game has no login, so only do this on a network you trust). Friends over Tailscale can already join.
-              </p>
-            )}
             <Button onClick={host} disabled={busy} data-testid="coop-host">Host a game with this character</Button>
             {error && <p className="text-red-300">{error}</p>}
           </>
@@ -79,11 +81,24 @@ export function CoopDialog({ campaignId, characterId, areaName, onClose, onGoTo 
               <div className="text-xs text-gray-300">Code</div>
               <div className="text-3xl font-bold tracking-widest text-emerald-300" data-testid="coop-code">{code || "…"}</div>
             </div>
-            <p className="text-gray-300">
-              Friends open{" "}
-              {info?.urls?.length ? info.urls.map((u) => <code key={u} className="mx-1 text-sky-300">{u}/coop</code>) : <code className="text-sky-300">this address/coop</code>}
-              {" "}in a browser, type the code and pick their character.
-            </p>
+            {info && !info.lan ? (
+              <p className="rounded border border-amber-500 p-2 text-amber-200" data-testid="coop-lan-off">
+                The Wi-Fi addresses will not work yet: this game is only reachable from this computer. To let friends on your Wi-Fi in, restart it with <code>deploy\windows-start.ps1 -Mode prod -Lan</code> (the game has no login, so only do this on a network you trust). Friends who use Tailscale can open this game's Tailscale address followed by <code>/coop</code> instead.
+              </p>
+            ) : (
+              <div className="space-y-1 text-gray-300">
+                <p>Friends open one of these in a browser (one address, not both), type the code and pick their character:</p>
+                {(info?.urls ?? []).map((u) => {
+                  const tailscale = /^http:\/\/100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(u);
+                  return (
+                    <div key={u} className="rounded border border-gray-700 p-2">
+                      <div className="text-xs text-gray-400">{tailscale ? "Friends using Tailscale" : "Friends on the same Wi-Fi"}</div>
+                      <code className="select-all break-all text-sky-300">{u}/coop</code>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             <ul className="space-y-1" data-testid="coop-members">
               {members.map((m) => (
                 <li key={m.id} className="flex items-center gap-2 rounded border border-gray-700 p-2">
@@ -143,10 +158,15 @@ export function TravelRoomPanel({ room, nameOf }: { room: TravelRoom; nameOf: (i
         <div className="pointer-events-none fixed inset-x-0 top-8 z-40 flex justify-center px-2" data-testid="travel-room">
           <div className="pointer-events-auto flex items-center gap-2 rounded border border-sky-500 bg-gray-900/95 px-3 py-1 text-xs text-sky-200">
             <span>Journey to {room.title}: waiting for {waiting.map((w) => nameOf(w.id)).join(", ") || "the others"}</span>
-            <Button size="sm" variant="outline" className="h-5 px-2 text-[11px]" onClick={cancelTravel} data-testid="room-abandon">Call it off</Button>
+            {leading && <Button size="sm" variant="outline" className="h-5 px-2 text-[11px]" onClick={cancelTravel} data-testid="room-abandon">Call it off</Button>}
           </div>
         </div>
       );
+    }
+    // A speeder's crew sees the road from their own seat: the gunner mans the gun, a passenger watches (the pilot streams the leg to them)
+    if (myCraft?.kind === "vehicle" && (mine?.role === "gunner" || mine?.role === "passenger")) {
+      const gunnerAboard = !!myUnit?.crew.some((id) => room.seats[id]?.role === "gunner");
+      return <RoadRide gunner={mine.role === "gunner"} gunnerAboard={gunnerAboard} pilotName={nameOf(myUnit?.leader ?? room.by)} />;
     }
     return (
       <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/80 p-4" data-testid="travel-room">
@@ -163,7 +183,7 @@ export function TravelRoomPanel({ room, nameOf }: { room: TravelRoom; nameOf: (i
               </li>
             ))}
           </ul>
-          <Button variant="outline" onClick={cancelTravel} data-testid="room-abandon">Call the journey off</Button>
+          <p className="text-xs text-gray-400">You are in the craft until it arrives: only its pilot can turn back.</p>
         </div>
       </div>
     );

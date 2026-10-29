@@ -141,6 +141,21 @@ test("a co-op game: host, join by code, patches shared, places apart, a journey 
   await guest.send({ t: "ready", on: true });
   const going = await guest.next("room", (m) => m.room?.phase === "underway");
   assert.deepEqual(going.room.pending, [hostId]);
+  // the gunner's aim goes to the pilot, the pilot's leg of the road to the gunner, and a rider cannot call a journey under way off (they would be
+  // left behind while their craft went on)
+  await guest.send({ t: "gun", aim: 0.5, fire: true });
+  const gun = await host.next("gun");
+  assert.deepEqual([gun.aim, gun.fire], [0.5, true]);
+  await host.send({ t: "road", spec: { seed: 7 }, race: { t: 1 }, events: [] });
+  const leg = await guest.next("road");
+  assert.equal(leg.spec.seed, 7);
+  await guest.send({ t: "cancel" });
+  await quiet();
+  assert.equal(guest.seen.some((m) => m.t === "room" && m.room === null), false, "the journey goes on");
+  // who follows a member is told to the others
+  await guest.send({ t: "pets", pets: [{ id: "c1", name: "Rex", kind: "beast", hp: 9, size: "Medium" }] });
+  const told = await host.next("members", (m) => !!m.members.find((x: any) => x.id === guestId)?.pets?.length);
+  assert.equal(told.members.find((x: any) => x.id === guestId).pets[0].name, "Rex");
   // the gunner cannot walk off while the pilot flies
   await guest.send({ t: "move", areaId: start });
   await quiet();

@@ -7,9 +7,10 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 import { queryClient } from "@/lib/queryClient";
+import { roadBus, resetRoad } from "@/lib/roadBus";
 import { applyChanges, changesBetween, type Changes, type CoopMember, type Craft, type TravelRoom } from "@shared/logic/coop";
 
-export interface Peer { a: string; x: number; y: number; f: number }
+export interface Peer { a: string; x: number; y: number; f: number; h?: number }
 
 interface CoopStore {
   status: "off" | "connecting" | "on";
@@ -50,6 +51,9 @@ const remember = (next: Saved | null) => {
 export const coopActive = () => useCoop.getState().status !== "off" && useCoop.getState().campaignId !== null;
 export const coopMe = (): CoopMember | undefined => useCoop.getState().members.find((m) => m.id === useCoop.getState().me);
 export const coopOthers = (): CoopMember[] => useCoop.getState().members.filter((m) => m.id !== useCoop.getState().me);
+
+// (the road's stream is not held back for a connection that is down: it is stale in a second)
+roadBus.send = (message) => { if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)); };
 
 function transmit(message: unknown) {
   const text = JSON.stringify(message);
@@ -131,9 +135,20 @@ function receive(msg: any) {
     }
     case "pos": {
       const peers = { ...useCoop.getState().peers };
-      if (msg.a) peers[msg.id] = { a: msg.a, x: msg.x, y: msg.y, f: msg.f };
+      if (msg.a) peers[msg.id] = { a: msg.a, x: msg.x, y: msg.y, f: msg.f, h: Number(msg.h) || 0 };
       else delete peers[msg.id];
       return void set({ peers });
+    }
+    case "road": {
+      // From the pilot of the craft I ride: the leg they drive, and the race as it runs
+      if (msg.spec) roadBus.spec = { game: msg.spec, at: performance.now() };
+      if (msg.race) roadBus.snap = { race: msg.race, events: Array.isArray(msg.events) ? msg.events : [], at: performance.now() };
+      return;
+    }
+    case "gun": {
+      // From the gunner of the craft I pilot
+      roadBus.gun = { aim: Number(msg.aim) || 0, fire: !!msg.fire, at: performance.now() };
+      return;
     }
     case "room": {
       const before = useCoop.getState().room;
@@ -169,6 +184,8 @@ function stop() {
   base = null;
   early = [];
   queued = [];
+  resetRoad();
+  lastPets = "";
   set({ status: "off", code: "", me: null, members: [], room: null, peers: {} });
 }
 
@@ -239,16 +256,25 @@ export function saveShared(changes: Record<string, any>): boolean {
   return true;
 }
 
+// Who follows this player (companions and beasts), told to the others once it changes
+let lastPets = "";
+export function sharePets(pets: unknown[]) {
+  if (!coopActive()) return;
+  const text = JSON.stringify(pets.map((p: any) => [p.id, p.name, p.kind, p.hp > 0, p.role, p.species, p.creature, p.size, p.statBlock]));
+  if (text === lastPets) return;
+  lastPets = text;
+  transmit({ t: "pets", pets });
+}
 let lastPos = "";
 let lastPosAt = 0;
-export function sharePosition(areaId: string, x: number, y: number, f = 0) {
+// (called from a timer of the link, so the last place stood at is always sent; a change in height counts, so a jump is seen)
+export function sharePosition(areaId: string, x: number, y: number, f = 0, h = 0) {
   if (!coopActive() || useCoop.getState().members.length < 2) return;
-  const text = `${areaId}|${x.toFixed(1)}|${y.toFixed(1)}`;
-  const now = Date.now();
-  if (text === lastPos || now - lastPosAt < 150) return;
+  const text = `${areaId}|${x.toFixed(2)}|${y.toFixed(2)}|${h.toFixed(2)}`;
+  if (text === lastPos) return;
   lastPos = text;
-  lastPosAt = now;
-  transmit({ t: "pos", a: areaId, x, y, f });
+  lastPosAt = Date.now();
+  transmit({ t: "pos", a: areaId, x, y, f, h: +h.toFixed(2) });
 }
 
 // ---------------------------------------------------------------------------------------------

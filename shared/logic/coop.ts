@@ -125,6 +125,16 @@ export function applyChanges<T extends Record<string, any>>(campaign: T, changes
 // People
 // ---------------------------------------------------------------------------------------------
 
+// What the others need to draw a member's follower: who it is and what it looks like (the rest of a companion is its owner's)
+export interface Pet { id: string; name: string; kind: string; hp: number; role?: string; species?: string; creature?: string; size?: string; statBlock?: string }
+export function cleanPets(list: unknown): Pet[] {
+  if (!Array.isArray(list)) return [];
+  const text = (v: unknown, n = 60) => (typeof v === "string" && v ? v.slice(0, n) : undefined);
+  return list.slice(0, 12).filter((p) => p && typeof p === "object").map((p: any) => ({
+    id: String(p.id ?? "").slice(0, 60), name: String(p.name ?? "").slice(0, 60), kind: String(p.kind ?? "").slice(0, 20), hp: Number(p.hp) || 0,
+    role: text(p.role), species: text(p.species), creature: text(p.creature), size: text(p.size, 20), statBlock: text(p.statBlock),
+  })).filter((p) => p.id);
+}
 export interface CoopMember {
   // the character's id as text: a character is in a session once
   id: string;
@@ -136,6 +146,8 @@ export interface CoopMember {
   connected: boolean;
   host?: boolean;
   color: string;
+  // The companions and beasts that follow this member (a character's own: shown on the others' screens, walking behind them)
+  pets?: Pet[];
 }
 
 export const MEMBER_COLORS = ["#38bdf8", "#f472b6", "#a3e635", "#fbbf24"];

@@ -33,7 +33,7 @@ import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
 import { realtimePowers } from "@/lib/sw5e/realtimePowers";
-import { useCoop, saveShared, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers } from "@/lib/coop";
+import { useCoop, saveShared, sharePets, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers } from "@/lib/coop";
 import { CoopButton, CoopDialog, CoopLink, TravelRoomPanel } from "@/components/Play/CoopUI";
 import { isGroupExit, shipSeats, unitsOf, type Craft } from "@shared/logic/coop";
 import { gearOf as figureGearOf, carriedWeapons, characterFeatures, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, withItemEffects, isAttuned, type Equipped } from "@/lib/sw5e/characterCalculation";
@@ -1032,7 +1032,8 @@ export default function GameBoard() {
     const hull = me.wrecked || me.hull < 1 ? 4 : me.hull;
     if (trip.i + 1 < trip.legs.length) {
       let pursuit: { a: RoadAmbush; riders: Occupant[] } | null = null;
-      if (r.stop?.outcome === "run" && leg.block) {
+      // (guards who rode after the party in the leg itself have had their chase)
+      if (r.stop?.outcome === "run" && leg.block && !r.race.block?.mounted) {
         const chase = blockPursuit(world, leg.block);
         pursuit = { a: chase, riders: roadAmbushers(monsterData as unknown as Sw5eMonster[], equipmentData as any, chase, level, `${trip.seed}-block${trip.i}`) };
         if (!pursuit.riders.length) pursuit = null;
@@ -5032,6 +5033,18 @@ export default function GameBoard() {
     forceShip.current = craft.kind === "ship" ? craft.shipId : craft.rideId === "passage" ? "passage" : undefined;
     try { travel(exit, ride); } finally { fromRoom.current = false; forceShip.current = undefined; }
   }, [coopRoom, coopMe, aboardShip?.id, !!world]);
+  // The companions and beasts that follow this player are told to the others, who draw them walking behind their owner
+  useEffect(() => {
+    if (!coopHere) return;
+    sharePets([...party, ...beasts.filter((b) => b.id !== riding?.id)].map(({ id, name, kind, hp, role, species, creature, size, statBlock }) => ({ id, name, kind, hp, role, species, creature, size, statBlock })));
+  }, [coopHere, JSON.stringify([...party, ...beasts].map((c) => [c.id, c.name, c.hp > 0, c.kind])), riding?.id]);
+  // A pilot's crew in a speeder (co-op): the road leg is streamed to them, and a gunner among them fires the speeder's gun instead of a crewmate
+  const roadCrew = (() => {
+    if (!coopHere || !coopRoom || coopRoom.phase !== "underway" || !coopMe) return null;
+    const unit = unitsOf(coopRoom).find((u) => u.leader === coopMe);
+    const others = unit ? unit.crew.filter((id) => id !== coopMe) : [];
+    return unit && others.length ? { pilot: true, gunner: others.some((id) => coopRoom.seats[id]?.role === "gunner") } : null;
+  })();
   // Walking to a party member in the same settlement (the map would take about five minutes; house rule, said in the dialog)
   const goToMember = (areaId: string, who: string) => {
     if (!world || !here || !world.areas[areaId]) return;
@@ -7827,12 +7840,13 @@ export default function GameBoard() {
             ].filter(Boolean);
             return {
               kind: "road" as const, title: `Road to ${world.areas[trip.exit.to]?.name ?? "the next settlement"}`, seed: leg.seed, vehicle: trip.vehicle, biome: leg.biome, leg: { i: trip.i, n: trip.legs.length }, intro, hull: trip.hull,
-              mate: crewmate(party.map((c) => ({ name: c.name, kind: c.kind, hp: c.hp }))), block: leg.block, riders: riders.length ? riders.map((o) => ({ name: o.name, model: a?.model ?? "Speederbike" })) : undefined, who: a?.who,
+              mate: roadCrew?.gunner ? undefined : crewmate(party.map((c) => ({ name: c.name, kind: c.kind, hp: c.hp }))), block: leg.block, riders: riders.length ? riders.map((o) => ({ name: o.name, model: a?.model ?? "Speederbike" })) : undefined, who: a?.who,
               talk: { persuasion: modifier(character.abilityScores?.charisma) + (skilled("persuasion") ? proficiency : 0), deception: modifier(character.abilityScores?.charisma) + (skilled("deception") ? proficiency : 0) },
               credits: character.credits ?? 0,
             };
           })()}
-          onExit={() => setTrip(null)}
+          coop={roadCrew ?? undefined}
+          onExit={() => { setTrip(null); if (coopHere && coopRoom?.phase === "underway" && coopMe && coopRoom.pending.includes(coopMe)) cancelTravel(); }}
           onDone={tripLegDone}
         />
       )}

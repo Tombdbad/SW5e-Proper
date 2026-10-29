@@ -12,7 +12,7 @@ import { eq } from "drizzle-orm";
 import { db } from "./db";
 import { campaigns, characters, insertCampaignSchema } from "../shared/schema";
 import {
-  MAX_PLAYERS, MEMBER_COLORS, PERSONAL, applyChanges, crewIssues, defaultSeat, makeCode, rolesOf, unitsOf, withoutMember,
+  MAX_PLAYERS, MEMBER_COLORS, PERSONAL, applyChanges, cleanPets, crewIssues, defaultSeat, makeCode, rolesOf, unitsOf, withoutMember,
   type Changes, type CoopMember, type Craft, type TravelRoom,
 } from "../shared/logic/coop";
 
@@ -283,7 +283,7 @@ function handle(s: Session, id: string, msg: any) {
     }
     case "pos": {
       me.spot = { a: String(msg.a ?? ""), x: Number(msg.x) || 0, y: Number(msg.y) || 0 };
-      broadcast(s, { t: "pos", id, ...me.spot, f: Number(msg.f) || 0 }, id);
+      broadcast(s, { t: "pos", id, ...me.spot, f: Number(msg.f) || 0, h: Math.max(0, Math.min(40, Number(msg.h) || 0)) }, id);
       return;
     }
     case "arrived": {
@@ -332,8 +332,32 @@ function handle(s: Session, id: string, msg: any) {
       launch(s);
       return void pushRoom(s);
     }
+    case "pets": {
+      // Who follows this member, for the others to draw (a character's companions and beasts are its own)
+      me.pets = cleanPets(msg.pets);
+      return void pushMembers(s);
+    }
+    case "road": {
+      // The pilot of a craft streams its leg of the road to the crew riding in it (the gunner and the passengers see it on their screens)
+      const room = s.room;
+      if (!room || room.phase !== "underway") return;
+      const unit = unitsOf(room).find((u) => u.leader === id);
+      if (!unit || JSON.stringify(msg).length > 160000) return;
+      for (const other of unit.crew) if (other !== id) send(s.members.get(other)?.socket, { t: "road", spec: msg.spec, race: msg.race, events: msg.events });
+      return;
+    }
+    case "gun": {
+      // The gunner of a craft aims and fires for its pilot
+      const room = s.room;
+      if (!room || room.phase !== "underway" || room.seats[id]?.role !== "gunner") return;
+      const unit = unitsOf(room).find((u) => u.crew.includes(id) && u.leader !== id);
+      if (unit) send(s.members.get(unit.leader)?.socket, { t: "gun", aim: Number(msg.aim) || 0, fire: !!msg.fire });
+      return;
+    }
     case "cancel": {
       if (!s.room) return;
+      // A journey under way is the pilots' to call off: a rider who could would be left behind while their craft went on (the user, 2026-10-30)
+      if (s.room.phase === "underway" && !s.room.pending.includes(id)) return;
       const was = s.room;
       s.room = null;
       return void pushRoom(s, was.phase === "underway" ? `${me.name} called the journey off` : `${me.name} called off the journey to ${was.title}`);
