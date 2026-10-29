@@ -4,8 +4,11 @@
 #         built with the test menu, tailnet HTTPS on port 10000. The snapshot lives in %USERPROFILE%\sw5e-test.
 # Starts Tailscale and PostgreSQL if they are stopped, installs packages if missing, stops the old server on the port,
 # builds, applies migrations, starts the server hidden (it keeps running when the window closes), sets up Tailscale Serve.
-# Logs: %LOCALAPPDATA%\sw5e\logs. Usage: powershell -ExecutionPolicy Bypass -File deploy\windows-start.ps1 -Mode prod|test
-param([Parameter(Mandatory = $true)][ValidateSet('prod', 'test')][string]$Mode)
+# -Lan (co-op with friends on the same Wi-Fi): the server listens on the local network too (HOST=0.0.0.0) and the Windows Firewall is opened
+# for its port on PRIVATE networks. The game has no login: anyone on that network can open it, so use it only on a network you trust.
+# Without -Lan the server listens on this PC only (friends can still join over Tailscale).
+# Logs: %LOCALAPPDATA%\sw5e\logs. Usage: powershell -ExecutionPolicy Bypass -File deploy\windows-start.ps1 -Mode prod|test [-Lan]
+param([Parameter(Mandatory = $true)][ValidateSet('prod', 'test')][string]$Mode, [switch]$Lan)
 
 $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent $PSScriptRoot
@@ -110,6 +113,7 @@ try {
   $env:DATABASE_URL = $dbUrl
   $env:PORT = "$port"
   $env:NODE_ENV = 'production'
+  if ($Lan) { $env:HOST = '0.0.0.0' } else { Remove-Item Env:HOST -ErrorAction SilentlyContinue }
 
   Step "Stopping the $name server if it runs"
   Stop-GameServer $port
@@ -138,6 +142,16 @@ try {
 
   Step 'Opening the browser'
   Write-Host "The $name server is at $url (this PC: http://127.0.0.1:$port/)"
+  if ($Lan) {
+    # Windows Firewall: allow the port on private networks (needs an administrator window; the rule is made once)
+    $rule = "SW5e game port $port"
+    if (-not (Get-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue)) {
+      try { New-NetFirewallRule -DisplayName $rule -Direction Inbound -Protocol TCP -LocalPort $port -Action Allow -Profile Private -ErrorAction Stop | Out-Null; Write-Host "Firewall: opened port $port on private networks" }
+      catch { Write-Host "Firewall: could not open port $port (run this script from an administrator window once, or add an inbound TCP rule for it on private networks)" -ForegroundColor Yellow }
+    }
+    $addresses = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' -and $_.InterfaceAlias -notmatch 'Tailscale|Loopback|vEthernet' } | ForEach-Object { $_.IPAddress }
+    foreach ($a in $addresses) { Write-Host "Friends on your Wi-Fi open  http://${a}:${port}/coop  and type the code from the Co-op button in Play" -ForegroundColor Green }
+  }
   Start-Process $url
 } catch {
   Write-Host "`nFAILED: $($_.Exception.Message)" -ForegroundColor Red

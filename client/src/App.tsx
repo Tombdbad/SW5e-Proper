@@ -10,6 +10,7 @@ const CharacterManagement = lazy(() => import('./pages/CharacterManagement'));
 const CampaignView = lazy(() => import('./pages/CampaignView'));
 const GalacticMapView = lazy(() => import('./pages/GalacticMapView'));
 const GameBoard = lazy(() => import('./pages/GameBoard'));
+const CoopJoin = lazy(() => import('./pages/CoopJoin'));
 import { Toaster } from './components/ui/sonner';
 import DiceRoller from './components/ui/DiceRoller';
 import ErrorBoundary from './components/ui/ErrorBoundary';
@@ -98,6 +99,7 @@ function App() {
             <Route path="/campaigns/:id" element={<CampaignView />} />
             <Route path="/map" element={<GalacticMapView />} />
             <Route path="/game/:campaignId" element={<GameBoard />} />
+            <Route path="/coop" element={<CoopJoin />} />
             <Route path="/dev/loading" element={<LoadingDemo />} />
             <Route path="/dev/models" element={<ModelGallery />} />
             <Route path="/dev/dogfight" element={<DogfightLab />} />

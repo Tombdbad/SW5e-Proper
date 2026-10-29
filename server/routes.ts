@@ -16,12 +16,15 @@ import { ZodError } from "zod";
 import { formatError } from "./utils";
 import { registerSw5eRoutes } from "./sw5eRoutes";
 import { registerDialogueRoutes } from "./dialogue";
+import { registerCoopRoutes, attachCoop, liveCampaign, mergeLive } from "./coop";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Rules data (shared/data/sw5e) and world generation
   registerSw5eRoutes(app);
   // Spoken replies from the local model (Ollama)
   registerDialogueRoutes(app);
+  // Co-op sessions: who is playing, and (below) the live campaign while a session has it open
+  registerCoopRoutes(app);
 
   // All routes are prefixed with /api
 
@@ -336,6 +339,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/campaigns/:id", async (req, res) => {
     try {
       const campaignId = parseInt(req.params.id);
+      // A co-op game keeps the campaign live in memory and writes it a moment after each change
+      const live = liveCampaign(campaignId);
+      if (live) return res.json(live);
       const campaign = await db
         .select()
         .from(campaigns)
@@ -395,6 +401,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!result || result.length === 0) {
         return res.status(404).json({ message: "Campaign not found" });
       }
+      mergeLive(campaignId, campaignData);
       res.json(result[0]);
     } catch (error) {
       if (error instanceof ZodError) {
@@ -498,6 +505,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const httpServer = createServer(app);
+  attachCoop(httpServer);
 
   return httpServer;
 }

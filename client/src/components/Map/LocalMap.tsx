@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { useKeyboardControls } from "@react-three/drei";
 import { create } from "zustand";
 import { useMap } from "@/lib/stores/useMap";
+import { useCoop, type Peer } from "@/lib/coop";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey, squaresApart, type Combatant, type Step } from "@/lib/stores/useCombat";
 // A lit square's colour by how it is reached: walked (green), jumped, climbed or flown to (blue), or a fall at the end (orange)
 const stepColor = (step: Step) => (step.fall ? "#fb923c" : step.how && /^(jump|climb|hook|fly)$/.test(step.how) ? "#38bdf8" : "#4ade80");
@@ -234,6 +235,38 @@ const RIDER_HIPS = 0.5;
 // Names are sized to be read from above; from the character's eyes they are a third as large (the crosshair names what it is on)
 const Label = ({ at, size = 0.34, color = "white", children }: { at: V3; size?: number; color?: string; children: string }) => {
   const eyes = useView((v) => v.eyes);
+// The other members of a co-op game who stand in this place, as figures that walk to where they were last seen (lib/coop shares where each stands)
+function PeerFigure({ name, color, peer, here }: { name: string; color: string; peer?: Peer; here: string }) {
+  const group = useRef<THREE.Group>(null);
+  const at = useRef<{ x: number; y: number } | null>(null);
+  useFrame((_, dt) => {
+    if (!group.current || !peer || peer.a !== here) return void (group.current && (group.current.visible = false));
+    if (!at.current) at.current = { x: peer.x, y: peer.y };
+    const k = Math.min(1, dt * 8);
+    at.current.x += (peer.x - at.current.x) * k;
+    at.current.y += (peer.y - at.current.y) * k;
+    group.current.visible = true;
+    group.current.position.set(at.current.x + 0.5, 0, at.current.y + 0.5);
+  });
+  return (
+    <group ref={group} visible={false} raycast={() => null}>
+      <Figure kind="player" ring={color} name={name} marker />
+    </group>
+  );
+}
+function CoopPeers({ hereId }: { hereId: string }) {
+  const members = useCoop((s) => s.members);
+  const me = useCoop((s) => s.me);
+  const peers = useCoop((s) => s.peers);
+  return (
+    <>
+      {members.filter((m) => m.id !== me && m.connected && m.areaId === hereId).map((m) => (
+        <PeerFigure key={m.id} name={m.name} color={m.color} peer={peers[m.id]} here={hereId} />
+      ))}
+    </>
+  );
+}
+
   const fontSize = eyes ? size * 0.32 : size;
   return (
     <Billboard position={at}>
@@ -3904,6 +3937,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         {present && !duel && placing && ghostSpot() && (
           <group position={[ghostSpot()!.x, inside?.layout ? floorAt(inside.layout, ghostSpot()!.x - inside.layout.x + 0.5, ghostSpot()!.y - inside.layout.y + 0.5) : 0, ghostSpot()!.y]}>
             <BasePieceModel look={placing.look} biome={biome} w={placing.w} h={placing.h} face={placingFace} ghost />
+        {present && <CoopPeers hereId={hereId} />}
           </group>
         )}
       </group>

@@ -165,6 +165,12 @@ export default function Home() {
           </section>
         </div>
 
+        <div className="mt-8 text-center">
+          <Link to="/coop">
+            <Button variant="outline" className="border-emerald-400 text-emerald-300" data-testid="home-coop">Join a co-op game</Button>
+          </Link>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-12">
           <TranslucentPane className="p-6" opacity="medium">
             <h3 className="text-xl font-bold mb-3 text-cyan-400">Galactic Map</h3>
