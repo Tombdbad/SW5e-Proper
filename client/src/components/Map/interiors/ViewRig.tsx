@@ -9,6 +9,8 @@ import * as THREE from "three";
 import { groundPush, paceOf, STICK, stickOf, useRun } from "./stick";
 import { AIM, aimAt, FEET_PER_SQUARE, PITCH, poseOf, useReticle, useView, type Aimed, type ViewMode } from "./aim";
 import { AirButtons } from "./AirButtons";
+import { ShootButtons, ShooterHud } from "./ShooterHud";
+import { useShoot } from "./shoot";
 
 type V3 = [number, number, number];
 
@@ -64,6 +66,8 @@ function Overlay({ stick, use }: { stick: { current: [number, number] }; use: ()
         Use
       </button>
       <AirButtons right={112} bottom={22} />
+      <ShooterHud />
+      <ShootButtons />
       <button
         data-testid="run-toggle" onPointerDown={(e) => { e.preventDefault(); useRun.getState().toggle(); }}
         style={{ position: "absolute", right: 24, bottom: 124, width: 68, height: 44, borderRadius: 22, background: run ? "rgba(250,204,21,0.55)" : "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.5)", color: "#fff", font: "600 13px sans-serif", pointerEvents: "auto", touchAction: "none" }}
@@ -122,6 +126,11 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
   };
   const useNow = useRef(use);
   useNow.current = use;
+  // (test hook: turn the view to a yaw and pitch, as a mouse would)
+  useEffect(() => {
+    (window as any).__look = (y: number, p = 0) => { yaw.current = y; pitch.current = p; };
+    return () => { delete (window as any).__look; };
+  }, []);
 
   // Drag to look; a short touch is a tap and goes to what is under the finger as before
   useEffect(() => {
@@ -141,12 +150,52 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
       pitch.current = Math.max(lo, Math.min(hi, pitch.current - dy * 0.005));
     };
     const up = () => { drag = null; };
+    // In a shooter fight (shared/logic/shooter.ts) a mouse looks by pointer lock (the first click takes the pointer; Esc gives it back), the
+    // left button fires and the right holds the saber up; neither reaches the map as a tap (no walking to where the pointer was, no using
+    // what it was on: E and Enter still do). A touch keeps the drag to look, and the buttons.
+    const fighting = () => !!useShoot.getState().session;
+    const mouse = (e: PointerEvent) => e.pointerType === "mouse";
+    const shooterDown = (e: PointerEvent) => {
+      if (!fighting() || !mouse(e)) return;
+      e.stopPropagation();
+      if (document.pointerLockElement !== el) return void el.requestPointerLock?.();
+      if (e.button === 0) useShoot.getState().down("fire");
+      else if (e.button === 2) useShoot.getState().down("block");
+    };
+    const shooterUp = (e: PointerEvent) => {
+      if (!fighting() || !mouse(e)) return;
+      e.stopPropagation();
+      if (e.button === 0) useShoot.getState().up("fire");
+      else if (e.button === 2) useShoot.getState().up("block");
+    };
+    const shooterLook = (e: PointerEvent) => {
+      if (!fighting() || document.pointerLockElement !== el) return;
+      yaw.current -= e.movementX * 0.0024;
+      const [lo, hi] = PITCH[mode];
+      pitch.current = Math.max(lo, Math.min(hi, pitch.current - e.movementY * 0.002));
+    };
+    const swallow = (e: Event) => { if (fighting() && (e as PointerEvent).pointerType !== "touch") e.stopPropagation(); };
+    const unlocked = () => { if (document.pointerLockElement !== el) { useShoot.getState().up("fire"); useShoot.getState().up("block"); } };
+    const stopped = ["click", "dblclick", "contextmenu"];
+    el.addEventListener("pointerdown", shooterDown, true);
+    el.addEventListener("pointerup", shooterUp, true);
+    for (const kind of stopped) el.addEventListener(kind, swallow, true);
+    el.addEventListener("pointermove", shooterLook);
+    document.addEventListener("pointerlockchange", unlocked);
+    const unsubscribe = useShoot.subscribe((s) => { if (!s.session && document.pointerLockElement === el) document.exitPointerLock?.(); });
     el.addEventListener("pointerdown", down);
     window.addEventListener("pointermove", moved);
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
     return () => {
       el.style.touchAction = oldTouch;
+      el.removeEventListener("pointerdown", shooterDown, true);
+      el.removeEventListener("pointerup", shooterUp, true);
+      for (const kind of stopped) el.removeEventListener(kind, swallow, true);
+      el.removeEventListener("pointermove", shooterLook);
+      document.removeEventListener("pointerlockchange", unlocked);
+      unsubscribe();
+      if (document.pointerLockElement === el) document.exitPointerLock?.();
       el.removeEventListener("pointerdown", down);
       window.removeEventListener("pointermove", moved);
       window.removeEventListener("pointerup", up);
@@ -160,7 +209,8 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
     const down = (e: KeyboardEvent) => {
       if (typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
       if (["KeyE", "Enter"].includes(e.code)) { if (!e.repeat) useNow.current(); e.preventDefault(); return; }
-      if (e.code === "KeyR" && !e.repeat) { useRun.getState().toggle(); return; }
+      // (R is the run toggle, and in a shooter fight the reload: interiors/shoot.ts)
+      if (e.code === "KeyR" && !e.repeat && !useShoot.getState().session) { useRun.getState().toggle(); return; }
       if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) { keys.current.add(e.code); e.preventDefault(); }
     };
     const up = (e: KeyboardEvent) => keys.current.delete(e.code);

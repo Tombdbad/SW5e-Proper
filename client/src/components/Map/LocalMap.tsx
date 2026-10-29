@@ -24,6 +24,8 @@ import { PackWalls, cornerCentre, bendOf, holeOf, piercedWall, type Bend, type W
 import { AIM, aimAt, aimFrom, useView, type Aimed, type AimPlan } from "./interiors/aim";
 import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, AIR, FEET, type JumpStats } from "./interiors/air";
 import { ViewRig } from "./interiors/ViewRig";
+import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
+import { useShoot } from "./interiors/shoot";
 import { stickWalk } from "./interiors/stick";
 import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
@@ -233,8 +235,6 @@ const RIDER_HIPS = 0.5;
 
 // A name that turns to face whoever is looking
 // Names are sized to be read from above; from the character's eyes they are a third as large (the crosshair names what it is on)
-const Label = ({ at, size = 0.34, color = "white", children }: { at: V3; size?: number; color?: string; children: string }) => {
-  const eyes = useView((v) => v.eyes);
 // The other members of a co-op game who stand in this place, as figures that walk to where they were last seen (lib/coop shares where each stands)
 function PeerFigure({ name, color, peer, here }: { name: string; color: string; peer?: Peer; here: string }) {
   const group = useRef<THREE.Group>(null);
@@ -267,6 +267,8 @@ function CoopPeers({ hereId }: { hereId: string }) {
   );
 }
 
+const Label = ({ at, size = 0.34, color = "white", children }: { at: V3; size?: number; color?: string; children: string }) => {
+  const eyes = useView((v) => v.eyes);
   const fontSize = eyes ? size * 0.32 : size;
   return (
     <Billboard position={at}>
@@ -2255,8 +2257,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const me = buildings.find((b) => b.id === (inside?.parentId ?? hereId)) ?? building;
   const tapPlace = useTaps(onAct);
   // A fight in the open of this district is fought here, on its streets, roofs and catwalks
-  const duel = useCombat((state) => state.inCombat && !!district && state.arena.district === district.id);
-  const duelist = useCombat((state) => (state.inCombat ? state.combatants.find((c) => c.isPlayer) : undefined));
+  // (a shooter fight, shared/logic/shooter.ts, is fought while walking: the map stays the walking map)
+  const duel = useCombat((state) => state.inCombat && !state.realtime && !!district && state.arena.district === district.id);
+  const duelist = useCombat((state) => (state.inCombat && !state.realtime ? state.combatants.find((c) => c.isPlayer) : undefined));
   // The street can be tapped (to walk, to go in, to pick someone out) when not in a fight
   const tappable = outside && !duel;
 
@@ -2710,6 +2713,53 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     return aimFrom(muzzle, new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)), floorY, muzzle);
   };
   const handNow = (): V3 => [feet.current.x + 0.5 - cx, heightNow() + air.current.y + 1.0, feet.current.y + 0.5 - cz];
+  // ---- The shooter mode's fight (interiors/Shooter.tsx, rules in shared/logic/shooter.ts) is played on this map: it asks here what stops a
+  // bolt (a wall; low furniture only below the height of its top, so that a counter is cover), where a body can stand, how high the floor is,
+  // and where the muzzle and the crosshair are
+  const shootSession = useShoot((s) => s.session);
+  const shootFloor = (x: number, y: number) => {
+    if (inside?.layout) return floorAt(inside.layout, x - inside.layout.x, y - inside.layout.y);
+    let top = 0;
+    for (const a of rooms) {
+      const l = a.layout;
+      if (!l || x < l.x || x >= l.x + l.width || y < l.y || y >= l.y + l.height) continue;
+      const form = formOf(a);
+      if (form === "roof" || form === "balcony" || form === "walkway" || form === "gallery") top = Math.max(top, levelY(l));
+    }
+    return top;
+  };
+  const shootCtx = useRef<ShooterCtx>(null as unknown as ShooterCtx);
+  const shotCache = useRef({ at: 0, shot: null as ReturnType<ShooterCtx["shot"]> });
+  shootCtx.current = {
+    cx, cz,
+    env: {
+      blocks: (x, y, h) => {
+        const [i, j] = [Math.floor(x), Math.floor(y)];
+        if (open(i, j)) return false;
+        const floor = shootFloor(x, y);
+        if (hoppable(i, j)) return h < floor + 0.9;
+        return h < Math.max(floor + 4, inside ? 0 : topAt(i, j) + 0.1);
+      },
+      walkable: (x, y) => open(Math.floor(x), Math.floor(y)),
+      floorAt: shootFloor,
+    },
+    feet: () => feet.current,
+    altitude: () => heightNow() + air.current.y,
+    facing: () => facing.current ?? token.current?.rotation.y ?? 0,
+    moving: () => !!walk.current,
+    airborne: () => ["jump", "fly", "reel"].includes(air.current.mode),
+    shot: (fresh = false) => {
+      const c = shotCache.current;
+      const t = performance.now();
+      if (!fresh && c.shot && t - c.at < 70) return c.shot;
+      const hand = handNow();
+      const aim = aimNow(hand);
+      const to = aim.blocked ?? aim.point;
+      c.at = t;
+      c.shot = { from: { x: hand[0] + cx, y: hand[2] + cz, h: hand[1] }, to: { x: to.x + cx, y: to.z + cz, h: to.y } };
+      return c.shot;
+    },
+  };
   // The way the stick or keys point, from the walk they have queued
   const heading = (): [number, number] | null => {
     for (const p of walk.current?.path ?? []) {
@@ -3887,6 +3937,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           </>
         )}
 
+        {present && <CoopPeers hereId={hereId} />}
         {duel && <DuelPieces />}
         {present && !duel && (
           <group ref={token} position={[standing.x + 0.5, 0, standing.y + 0.5]}>
@@ -3937,7 +3988,6 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         {present && !duel && placing && ghostSpot() && (
           <group position={[ghostSpot()!.x, inside?.layout ? floorAt(inside.layout, ghostSpot()!.x - inside.layout.x + 0.5, ghostSpot()!.y - inside.layout.y + 0.5) : 0, ghostSpot()!.y]}>
             <BasePieceModel look={placing.look} biome={biome} w={placing.w} h={placing.h} face={placingFace} ghost />
-        {present && <CoopPeers hereId={hereId} />}
           </group>
         )}
       </group>
@@ -3985,6 +4035,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           return undefined;
         }}
       />
+      {shootSession && <ShooterLayer key={shootSession.id} session={shootSession} ctx={shootCtx} />}
       {mode !== "overhead" && viewing ? (
         <ViewRig mode={mode} start={startYaw()} feet={() => [feet.current.x + 0.5 - cx, heightNow() + air.current.y, feet.current.y + 0.5 - cz]} facing={facing} step={stepToward} />
       ) : (

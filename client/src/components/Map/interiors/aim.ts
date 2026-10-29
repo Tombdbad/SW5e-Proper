@@ -17,15 +17,26 @@ const saved = (): ViewMode => {
     return "overhead";
   }
 };
+// The views the campaign's mode allows: all three on the tabletop; in the shooter mode (shared/logic/shooter.ts) there is no top-down view (the user,
+// 2026-10-29), only over the shoulder and first person
+export const viewsFor = (shooter: boolean): ViewMode[] => (shooter ? VIEW_MODES.filter((m) => m !== "overhead") : VIEW_MODES);
+export const coerceView = (mode: ViewMode, shooter: boolean): ViewMode => (viewsFor(shooter).includes(mode) ? mode : "shoulder");
 // `eyes` is true while the camera is at the character (ViewRig is mounted), for what is drawn to be read from above (name labels)
-export const useView = create<{ mode: ViewMode; eyes: boolean; set: (mode: ViewMode) => void; next: () => void }>((set, get) => ({
+export const useView = create<{ mode: ViewMode; eyes: boolean; shooter: boolean; set: (mode: ViewMode) => void; next: () => void; setShooter: (on: boolean) => void }>((set, get) => ({
   mode: saved(),
   eyes: false,
+  shooter: false,
   set: (mode) => {
-    try { localStorage.setItem("sw5e.view", mode); } catch {}
-    set({ mode });
+    const next = coerceView(mode, get().shooter);
+    if (!get().shooter) try { localStorage.setItem("sw5e.view", next); } catch {}
+    set({ mode: next });
   },
-  next: () => get().set(VIEW_MODES[(VIEW_MODES.indexOf(get().mode) + 1) % VIEW_MODES.length]),
+  next: () => {
+    const views = viewsFor(get().shooter);
+    get().set(views[(views.indexOf(get().mode) + 1) % views.length]);
+  },
+  // Entering the shooter mode takes the view off the overhead at once; leaving it keeps what was chosen
+  setShooter: (on) => set({ shooter: on, mode: coerceView(get().mode, on) }),
 }));
 
 // What can be aimed at: meshes that carry `userData.aim` ({ label, onTap }), and what blocks the view and the shot (walls)

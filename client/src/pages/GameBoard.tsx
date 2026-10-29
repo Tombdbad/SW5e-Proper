@@ -6,6 +6,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { TalkPanel } from "@/components/Play/TalkPanel";
+import { NemesisPanel } from "@/components/Play/NemesisPanel";
+import { beginHunt, emptyNemeses, huntParty, pickHunter, resolveMercy, settleFight, tickNemeses, type FightFoe, type MercyChoice, type NemesisEvent } from "@shared/logic/nemesis";
 import { Loader2 } from "lucide-react";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
@@ -14,6 +16,8 @@ import { useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
 import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whereNow, useClock, useTransit, useTable, lifeLink, noEncounters, LEVEL_H } from "@/components/Map/LocalMap";
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
+import { useShoot } from "@/components/Map/interiors/shoot";
+import { avgDice, blankUnit, bladeOf, grenadeOf, gunOf, modeOf, type PlayMode, type Unit } from "@shared/logic/shooter";
 import { SabaccTable, BUY_IN_CHIPS, type TableOpponent } from "@/components/Games/SabaccTable";
 import { PazaakGame } from "@/components/Games/PazaakGame";
 import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, kindsOf, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, type Contract, type Offer } from "@shared/logic/contracts";
@@ -28,13 +32,13 @@ import { useCombat, useShipFight, rollDamage, onPartySide } from "@/lib/stores/u
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
+import { useCoop, saveShared, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers } from "@/lib/coop";
+import { CoopButton, CoopDialog, CoopLink, TravelRoomPanel } from "@/components/Play/CoopUI";
+import { isGroupExit, shipSeats, unitsOf, type Craft } from "@shared/logic/coop";
 import { gearOf as figureGearOf, carriedWeapons, characterFeatures, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, withItemEffects, isAttuned, type Equipped } from "@/lib/sw5e/characterCalculation";
 import { getSpeciesById, species as speciesList } from "@/lib/sw5e/species";
 import { getClassById, getClassLevelValue } from "@/lib/sw5e/classes";
 import { calculateArmorClass, calculateExperienceForLevel, castingStats, powerCost, powerEffect, powerMotion, motionFeet, motionSummary } from "@/lib/sw5e/rules";
-import { useCoop, saveShared, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers } from "@/lib/coop";
-import { CoopButton, CoopDialog, CoopLink, TravelRoomPanel } from "@/components/Play/CoopUI";
-import { isGroupExit, shipSeats, unitsOf, type Craft } from "@shared/logic/coop";
 import { getStarshipSize } from "@/lib/sw5e/starships";
 import { SKILLS } from "@/lib/sw5e/constants";
 import CheckDialog, { autoChecks, type CheckOption, type CheckRequest, type CheckRoller } from "@/components/Play/CheckDialog";
@@ -66,7 +70,7 @@ import {
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
   setPane, climbable, PANE_LATCH_DC, PANE_BREAK_DC, PANE_SENSOR_DC, PANE_SENSOR_SEEN, PATIO_SENSOR_DC, type Pane, climbWay, climbGearOf, outsideClimbs, verticalMove,
   hidingPlaces, hidingRoom, lawSearch, searchedAt,
-  START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText,
+  START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText, unitOf as hashUnit, nemesisAmbush,
   withPresence, withPartyShips, bulkOf, shoveAsset, moveRoomAssets,
   gearUse, toolFor, toolTrained, boonOf, gambleMode, gambleResult, GAMBLE_ROUNDS, GAMBLE_HOUSE_DC, GAMBLE_STAKE, GAMBLE_COMPLICATION, GAMBLE_COMPLICATIONS,
   companionFrom, hireFee, wageFor, canHire, COMPANION_LIMIT, BEAST_LIMIT, carryingCapacity, VEHICLE_MAKES, makeOf, makesSold, cartCapacity, isCartItem, cartHandler, type Cart, claimableSite, pieceTypeOf, setDown, takeDown, store, unstore, claimBase, renameBase, baseAt, piecesWith, storedPounds, type Base, type BasePiece, crOf, gentleDC, gentleLimit, isDroid, reprogramDC, FREEING, hitDieOfSize,
@@ -84,7 +88,7 @@ import {
   readOutcome, blueprintRarity, readCredits, RARITY_ORDER, type Fitted,
   FAMILIES, MATERIALS, REFINE_UNITS, tierOfCr, makeRemains, haulOf, withCacheAsset, familiesForTool, familiesForEnhanced, ALL_FAMILIES, type MaterialFamily, crNumber, RARITY_TIERS, NODE_RESPAWN, HARVEST_MINUTES, harvestDc, harvestKit, kitAlias, notesAllowed, addNote, addRecording, languageBarrier, OWN_TONGUE_ONLY, translatorSlots, setLanguages, tracedCalls, callOverheard, RECORD_MINUTES, RECORD_LIMIT, type Note, type Recording, harvestYield, materialsOf, materialsWorth, spendMaterials, nodeAt, type ResourceNode,
   partsPlaceAt, partsStock, fitShipPart, wreckParts, droidPartsStock, droidDisplay, droidListed, surgeonStock, modStock, MOD_TRADES, WARES, baseNameOf, modFee, modFitProblem, MOD_FIT_HOURS, blueprintPool, type SurgeonLine, type ModLine,
-  ammoFamilyOf, ammoItemFamily, ammoRider, accessoryOf, reloadOf, GENERATOR_SHOTS, waterSpeed, armorTraits, stealthMode, rigidDex, type AmmoRider,
+  ammoFamilyOf, ammoItemFamily, ammoRider, accessoryOf, reloadOf, GENERATOR_SHOTS, PLAIN_ROUND, waterSpeed, armorTraits, stealthMode, rigidDex, type AmmoRider,
   passDays, FORAGE_DC, HOT_LANDS, liquidOf, foodOf, GEAR, type Supplies,
   hazardsAt, gravityOf, jumpReach, fallPlan, fallOutcome, type FallGear, exposure, HAZARD_HOUR, suitOf, airOf, breathRule, type Protections, type EnvHazard,
   loadOf, containerOf, weightOf, isContraband, shipModNamed, shipModEffects, modCost, modDays, crewModPlan, crewEquipmentPlan, tierUpgrade, yardWorkforce, equipmentCost, equipmentDays, equipmentWorkforce,
@@ -201,16 +205,12 @@ function ClockLine({ after }: { after: string }) {
   );
 }
 
-type HudTab = "here" | "party" | "trade" | "quests" | "pack" | "downtime" | "gm" | "test";
+type HudTab = "here" | "party" | "trade" | "quests" | "nemeses" | "pack" | "downtime" | "gm" | "test";
 // A test copy is built with VITE_TEST_MENU=1 (deploy/test-plain.sh) and has a god-mode menu; the build the game is played on never does
 const TEST_MENU = import.meta.env.VITE_TEST_MENU === "1";
 
 export default function GameBoard() {
   const { campaignId } = useParams<{ campaignId: string }>();
-  const [showSidebar, setShowSidebar] = useState(true);
-  // Which part of the HUD is open (the HUD is in tabs: what is here, the party, a trader's wares, quests, the pack, downtime, the GM, and on a test copy a test menu)
-  const [hudTab, setHudTab] = useState<HudTab>("here");
-  // (whether what is picked out on the map is somebody who deals with the party: set where the HUD is drawn, read when the pick changes)
   // Co-op (lib/coop.ts): in a game of this campaign each member plays their own character and stands in a place of their own; the campaign is shared
   const coopHere = useCoop((s) => s.status !== "off" && s.campaignId === Number(campaignId));
   const coopCharacter = useCoop((s) => (s.status !== "off" && s.campaignId === Number(campaignId) ? s.members.find((m) => m.id === s.me)?.characterId : undefined));
@@ -225,6 +225,10 @@ export default function GameBoard() {
   const launched = useRef(0);
   const boarding = useRef(0);
   useEffect(() => { resumeCoop(); }, []);
+  const [showSidebar, setShowSidebar] = useState(true);
+  // Which part of the HUD is open (the HUD is in tabs: what is here, the party, a trader's wares, quests, the pack, downtime, the GM, and on a test copy a test menu)
+  const [hudTab, setHudTab] = useState<HudTab>("here");
+  // (whether what is picked out on the map is somebody who deals with the party: set where the HUD is drawn, read when the pick changes)
   const dealerRef = useRef(false);
   const [activeMapTab, setActiveMapTab] = useState<"galaxy" | "local">("galaxy");
   const [showCombat, setShowCombat] = useState(false);
@@ -241,6 +245,9 @@ export default function GameBoard() {
   const initiateCombat: typeof startCombat = (player, enemies, kit, surprise, arena, at, allies) =>
     startCombat(player, enemies, kit, surprise, arena ? { ...arena, gravity: gravityNow().g } : arena, at, allies);
   const fightArena = useCombat((s) => s.arena);
+  // A fight played in real time (the shooter mode): the map stays the walking map, and the turn-based scene and panel are not shown
+  const realtime = useCombat((s) => s.realtime);
+  const shooterAt = useRef<string | null>(null);
   // The map's render scale: full on a device that keeps up, lower on one that does not. It is
   // remembered, so that a reload starts where the device settled and not with a full-size first frame
   const [sharpness, setSharpness] = useState(() => {
@@ -275,6 +282,64 @@ export default function GameBoard() {
     enabled: !!campaignId,
   });
   const campaign: any = data;
+  // How the campaign is played (shared/logic/shooter.ts), chosen once it has a world: the tabletop (dice, turns) or the real-time shooter, which
+  // has no top-down view. `askMode` shows the choice.
+  const playMode: PlayMode = modeOf(campaign?.specialRules);
+  const modeChosen = !!campaign?.specialRules?.mode;
+  const [askMode, setAskMode] = useState(false);
+  useEffect(() => { useView.getState().setShooter(playMode === "shooter"); }, [playMode]);
+  useEffect(() => { if (campaign?.galaxyMap && !modeChosen) setAskMode(true); }, [!!campaign?.galaxyMap, modeChosen]);
+  const chooseMode = (mode: PlayMode) => {
+    setAskMode(false);
+    if (mode === playMode && modeChosen) return;
+    queryClient.setQueryData([`/api/campaigns/${campaignId}`], (old: any) => ({ ...old, specialRules: { ...(old?.specialRules ?? {}), mode } }));
+    fetch(`/api/campaigns/${campaignId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ specialRules: { ...(campaign?.specialRules ?? {}), mode } }) })
+      .then((r) => { if (!r.ok) toast.error("Could not save the mode"); });
+  };
+  // A fight on the walkable map: turn by turn on the tabletop, and in the shooter mode in real time on this same map (interiors/Shooter.tsx).
+  // The combatants are made as ever (so that the end of the fight settles loot, experience, ammunition, companions and nemeses the same way);
+  // the shooter then plays them. `origin` is where the fight's squares start on the map's grid (a room's are relative to the room).
+  const startFight = (player: any, enemies: any[], kit: any, surprise: boolean, arena: any, at: { x: number; y: number } | undefined, allies: any[], origin = { x: 0, y: 0 }) => {
+    initiateCombat(player, enemies, kit, surprise, arena, at, allies);
+    if (playMode !== "shooter") return;
+    const me = useCombat.getState().combatants.find((c) => c.isPlayer);
+    if (!me) return;
+    const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+    const spot = (c: any) => ({ x: c.x === undefined ? NaN : c.x + origin.x + 0.5, y: c.y === undefined ? NaN : c.y + origin.y + 0.5 });
+    const asUnit = (c: any): Unit => {
+      const ranged = !!c.rangedAttacker;
+      const dmg = Math.max(1, avgDice(c.damageDice ?? "1d4"));
+      const text = `${c.name} ${c.role ?? ""}`;
+      return blankUnit({
+        id: String(c.id), name: c.name, side: c.ally ? "ally" : "foe", ...spot(c), hp: c.hp, maxHp: c.maxHp, ac: c.armorClass ?? 10,
+        speed: clamp(((c.speed ?? 30) / 30) * 4, 1.5, 6.5), bonus: c.attackBonus ?? 2, volley: clamp(c.profile?.multiattack?.length ?? 1, 1, 3), reach: Math.max(1, (c.reach ?? 5) / 5),
+        leader: c.leader, gang: c.gang,
+        // stands its ground: a leader, a nemesis, a soldier or hunter or the like; the rest run at a fifth of their hit points
+        brave: !!c.leader || String(c.id).startsWith("nem-") || /soldier|trooper|guard|officer|hunter|mercenary|assassin|jedi|sith|inquisitor|knight|captain|marauder|droid|beast|wildlife/i.test(text),
+        gun: ranged ? { name: "Blaster", damage: dmg, type: "energy", interval: 1, auto: false, range: (c.range?.[0] ?? 80) / 5, long: (c.range?.[1] ?? 320) / 5, mag: 99, left: 99, reserve: 0, spent: 0, reload: 1 } : undefined,
+        blade: ranged ? undefined : { name: c.name, damage: dmg, type: "kinetic", saber: /lightsaber|sith|jedi|inquisitor|dark side/i.test(text) },
+      });
+    };
+    const unarmed = kit.unarmed ? { meleeWeapon: kit.unarmed.name, meleeDice: kit.unarmed.dice, meleeDamage: kit.unarmed.damage, meleeType: kit.unarmed.type } : {};
+    const party: Unit = blankUnit({
+      id: "me", name: me.name, side: "player", ...spot(me), hp: me.hp, maxHp: me.maxHp, ac: me.armorClass ?? 10, mode: "engage",
+      gun: gunOf(kit), blade: bladeOf(kit) ?? bladeOf(unarmed),
+    });
+    const others = useCombat.getState().combatants.filter((c) => !c.isPlayer && c.hp > 0);
+    const counts = new Map<string, number>();
+    for (const n of (character?.equipment ?? []) as string[]) if (/grenade/i.test(n)) counts.set(n, (counts.get(n) ?? 0) + 1);
+    const grenades = [...counts]
+      .map(([name, count]) => ({ kind: grenadeOf({ name, description: factsOf(name)?.description }), count }))
+      .filter((g): g is { kind: NonNullable<typeof g.kind>; count: number } => !!g.kind)
+      .sort((a, b) => Number(b.kind.damage > 0) - Number(a.kind.damage > 0));
+    shooterAt.current = hereId;
+    useCombat.getState().beginRealtime();
+    useShoot.getState().begin({
+      units: [party, ...others.map(asUnit)],
+      meta: Object.fromEntries(others.map((c) => [String(c.id), { role: c.role, species: c.species, creature: c.creature, size: c.size }])),
+      seed: Math.floor(Math.random() * 1e9), surprise, grenades,
+    });
+  };
 
   // The character is the one the campaign belongs to
   const gameCharacterId = (coopCharacter ?? (data as any)?.characterId) as number | undefined;
@@ -338,6 +403,27 @@ export default function GameBoard() {
   const placeId: string | undefined = coopPlace ?? campaign?.currentLocation;
   const hereId: string | null = world ? (placeId && world.areas[placeId] ? placeId : world.startId) : null;
   const here: Area | null = world && hereId ? world.areas[hereId] : null;
+  // Walking out of the place ends a shooter fight as one the party left; and if the real-time scene never starts (the map is not showing the
+  // place), the fight is not left running with nothing playing it
+  useEffect(() => {
+    if (useCombat.getState().realtime && shooterAt.current && hereId !== shooterAt.current) {
+      useShoot.getState().end();
+      useCombat.getState().finishRealtime("left", 1);
+    }
+  }, [hereId]);
+  const shootBegan = useShoot((s) => s.session?.id);
+  useEffect(() => {
+    if (!shootBegan) return;
+    const t = setTimeout(() => {
+      const s = useShoot.getState();
+      if (s.session?.id === shootBegan && s.hud.maxHp <= 1 && useCombat.getState().realtime) {
+        s.end();
+        useCombat.getState().finishRealtime("left", 1);
+        toast.error("The shooter view could not start here. Set the mode to Tabletop to fight this place turn by turn.");
+      }
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [shootBegan]);
   const [cameFrom, setCameFrom] = useState<string | null>(null);
   const [exploring, setExploring] = useState(false);
   const fightArea = useRef<string | null>(null);
@@ -365,8 +451,8 @@ export default function GameBoard() {
 
   // Show combat UI when in combat
   useEffect(() => {
-    setShowCombat(inCombat);
-  }, [inCombat]);
+    setShowCombat(inCombat && !realtime);
+  }, [inCombat, realtime]);
 
   // Time passes on the map (not while a trip is being driven: the trip takes the time of its ride, when it ends)
   const clockRunning = !!campaign?.galaxyMap && !inCombat && (character?.currentHp ?? 0) > 0;
@@ -390,6 +476,12 @@ export default function GameBoard() {
 
   // Save campaign fields; the page shows them at once
   const saveCampaign = async (changes: Record<string, any>) => {
+    // In a co-op game the change goes to the others as a patch (and the party's place is this member's own); the page shows it at once
+    if (coopHere && saveShared(changes)) {
+      const { currentLocation: _own, ...shared } = changes;
+      queryClient.setQueryData([`/api/campaigns/${campaignId}`], (old: any) => ({ ...old, ...shared }));
+      return;
+    }
     queryClient.setQueryData([`/api/campaigns/${campaignId}`], (old: any) => ({ ...old, ...changes }));
     const response = await fetch(`/api/campaigns/${campaignId}`, {
       method: "PATCH",
@@ -422,6 +514,7 @@ export default function GameBoard() {
   const clockFor = useRef<string | null>(null);
   const clockValue = (total: number) => ({ total, days: dayOf(total) - 1, hours: Math.floor(hourOf(total)), minutes: Math.floor(total % 60) });
   const saveClock = (total = useClock.getState().minutes) =>
+    coopHere && saveShared({ timeElapsed: clockValue(total) }) ? Promise.resolve() :
     fetch(`/api/campaigns/${campaignId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ timeElapsed: clockValue(total) }), keepalive: true }).catch(() => {});
   useEffect(() => {
     if (!campaign || clockFor.current === String(campaignId)) return;
@@ -476,12 +569,6 @@ export default function GameBoard() {
         const clothesEdge = (sk === "persuasion" && genteel && dressed(/clothes, fine|dress uniform/i)) || (sk === "deception" && dressed(/clothes, costume/i));
         const prof = dt.expertise.includes(sk) ? 2 * proficiency : skilled(sk) ? proficiency : dt.trained.includes(sk) ? Math.floor(proficiency / 2) : 0;
         const note = dt.expertise.includes(sk) ? "expertise" : skilled(sk) ? "trained" : dt.trained.includes(sk) ? "half proficiency" : "untrained";
-    // In a co-op game the change goes to the others as a patch (and the party's place is this member's own); the page shows it at once
-    if (coopHere && saveShared(changes)) {
-      const { currentLocation: _own, ...shared } = changes;
-      queryClient.setQueryData([`/api/campaigns/${campaignId}`], (old: any) => ({ ...old, ...shared }));
-      return;
-    }
         rows.push({ skill: sk, label: cap(sk), ability: ab, bonus: mod(ab) + Math.max(prof, toolProf), note: `${toolProf && toolProf >= prof ? `${note}, ${plan.tool}` : note}${clothesEdge ? ", dressed for it" : ""}`, edge: (!!toolProf && skilled(sk)) || clothesEdge });
       }
       return rows;
@@ -514,7 +601,6 @@ export default function GameBoard() {
   const performCheck = async (plan: CheckPlan, rollerId: string, skill: string | null): Promise<CheckResult> => {
     const option = optionsFor(rollerId, plan).find((o) => o.skill === skill) ?? optionsFor(rollerId, plan)[0];
     const mine = rollerId === "me";
-    coopHere && saveShared({ timeElapsed: clockValue(total) }) ? Promise.resolve() :
     // A long rest aboard a ship with a recreation room, laboratory or investigation suite: advantage on the first check (of those skills)
     const rested = mine && !!play.firstCheck && (play.firstCheck === "any" || (!!option.skill && play.firstCheck.includes(option.skill)) || (!!plan.tool && play.firstCheck.includes("tool")));
     if (rested) setTimeout(() => patchPlay({ firstCheck: undefined }), 0);
@@ -823,6 +909,8 @@ export default function GameBoard() {
   // `cleared`: the trip goes on without a roll for an ambush (one was rolled and dealt with)
   const travel = (exit: Exit, chosen?: Ride, cleared = false) => {
     if (!here || !world) return;
+    // In a co-op game leaving the settlement is the party's: a room opens on every member's screen (CoopUI), and the trip is taken from it
+    if (!cleared && !fromRoom.current && coopHere && isGroupExit(exit) && coopOthers().some((m) => m.connected)) return void openRoom(exit, false);
     // A place that kills without protection (no air, the crushing deep) is not walked into (the book: a few rounds)
     const deadly = deadlyAt(exit.to);
     if (deadly) return void toast.error(`${deadly.why}: ${HAZARD_HOUR[deadly.hazard].text}`);
@@ -909,8 +997,6 @@ export default function GameBoard() {
       }
       // Out of the sight of those who watched this place, their watch calms down (WATCH_COOLDOWN);
       // a search the party is in is seen by whoever is there, and called by those with a comm
-    // In a co-op game leaving the settlement is the party's: a room opens on every member's screen (CoopUI), and the trip is taken from it
-    if (!cleared && !fromRoom.current && coopHere && isGroupExit(exit) && coopOthers().some((m) => m.connected)) return void openRoom(exit, false);
       let next: World = (changes.galaxyMap as World | undefined) ?? world;
       next = leaveSight(next, here.id, exit.to, clockNow());
       next = noteArrival(next, exit.to, clockNow(), (character?.playState?.jammerUntil ?? 0) > clockNow());
@@ -1488,8 +1574,30 @@ export default function GameBoard() {
     }
   }, [hereId, here?.kind, Math.floor(hourOf(clockMinutes)), world?.encounter?.id, inCombat, dead, exploring, character?.credits]);
 
+  // What the nemeses did (shared/logic/nemesis.ts) is said on screen: a new enemy, a scar, a rank, a chair filled
+  const sayNemesis = (events: NemesisEvent[]) => {
+    for (const e of events) (e.kind === "rises" || e.kind === "returns" || e.kind === "rank" ? toast.warning : toast.info)(e.text);
+  };
+  // The party decides the fate of one it has beaten
+  const showMercy = (id: string, choice: MercyChoice) => {
+    const current = latestWorld();
+    if (!current?.nemeses) return;
+    const out = resolveMercy(current.nemeses, id, choice, clockNow());
+    saveCampaign({ galaxyMap: { ...current, nemeses: out.state } });
+    sayNemesis(out.events);
+  };
+  // A day passes: grudges cool and the rested and the "dead" get up
+  useEffect(() => {
+    const current = latestWorld();
+    if (!current?.nemeses) return;
+    const out = tickNemeses(current.nemeses, clockNow());
+    if (out.state === current.nemeses) return;
+    saveCampaign({ galaxyMap: { ...current, nemeses: out.state } });
+    sayNemesis(out.events);
+  }, [dayOf(clockMinutes)]);
+
   // An encounter is over: it is cleared, and the next waits some hours
-  const closeEncounter = (w: World): World => ({ ...w, encounter: undefined, encounterSeen: w.encounter?.id ?? w.encounterSeen, encounterNext: clockNow() + ENCOUNTER_GAP * 60 });
+  const closeEncounter =(w: World): World => ({ ...w, encounter: undefined, encounterSeen: w.encounter?.id ?? w.encounterSeen, encounterNext: clockNow() + ENCOUNTER_GAP * 60 });
 
   // The party has walked into an alley: in a lawless place a gang may be waiting in it (see ambushIn). It starts
   // at the ends of the alley; the map brings it to the party, bars the ways out and has it stand round them.
@@ -1498,6 +1606,18 @@ export default function GameBoard() {
     if (clockMinutes < (world.encounterNext ?? 0)) return;
     const day = dayOf(clockMinutes);
     const hour = Math.floor(hourOf(clockMinutes));
+    // One who holds a grudge may be the one waiting in the alley (shared/logic/nemesis.ts): in the law's eye they are slower to come
+    const bold = lawAt(world, districtHere.settlementId) === 0 || hashUnit(`${districtHere.id}|${day}|${hour}|nemesis-law`) < 0.5;
+    const hunter = world.nemeses && bold ? pickHunter(world.nemeses, { now: clockNow(), settlementId: districtHere.settlementId, level }) : undefined;
+    if (hunter && world.nemeses) {
+      const current = latestWorld() ?? world;
+      if (current.encounter) return;
+      const hunt = huntParty(hunter);
+      const encounter = nemesisAmbush(current, districtHere, alley, hunt, hunter.id, day, hour, clockNow());
+      saveCampaign({ galaxyMap: { ...current, nemeses: beginHunt(current.nemeses ?? world.nemeses, hunter.id, clockNow()), encounter, encounterSeen: encounter.id } });
+      toast.warning(`${hunter.name} has found you!`);
+      return;
+    }
     if (!ambushIn(world, districtHere, alley, day, hour)) return;
     try {
       const response = await fetch("/api/world/gang", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ level, seed: `${day}-${hour}-${alley.x}-${alley.y}` }) });
@@ -1603,7 +1723,6 @@ export default function GameBoard() {
 
   // The ranged weapon's ammunition (shared/logic gear.ts): what feeds it, the rounds carried, what each does, the shots left in it, and
   // whether an ammo pouch, power belt, bandolier, quiver or feed belt reloads it for free
-  const PLAIN_ROUND: Record<string, string> = { cell: "Power cell", cartridge: "Slug cartridge", arrow: "Arrow", bolt: "Bolt", wrist: "Dart", generator: "Power generator", rocket: "Rocket, fragmentation", torpedo: "Torpedo, fragmentation", mag: "Flechette mag, fragmentation", tank: "Projector tank, incendiary" };
   const ammoKit = (w?: { name: string; properties: string[] }) => {
     if (!w) return undefined;
     const family = ammoFamilyOf({ name: w.name, properties: w.properties });
@@ -1905,7 +2024,7 @@ export default function GameBoard() {
     lastSavedPoints.current = character.currentForcePoints;
     lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
     fightBegun.current = true;
-    initiateCombat(
+    startFight(
       fighterNow(), enemies as any, combatKit(), false,
       { width: field.width, height: field.height, assets: field.assets, platforms: field.platforms, links: field.links, district: field.district, open: true, floor: world.areas[here?.parentId ?? ""]?.type },
       start,
@@ -1958,7 +2077,7 @@ export default function GameBoard() {
       lastSavedPoints.current = character.currentForcePoints;
       lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
       fightBegun.current = true;
-      initiateCombat(
+      startFight(
         fighterNow(), enemies, combatKit(), surprise,
         { width: field.width, height: field.height, assets: field.assets, platforms: field.platforms, links: field.links, district: field.district, open: true, floor: world.areas[here.parentId ?? ""]?.type },
         start,
@@ -2005,7 +2124,7 @@ export default function GameBoard() {
       lastSavedPoints.current = character.currentForcePoints;
       lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
       fightBegun.current = true;
-      initiateCombat(
+      startFight(
         fighterNow(), enemies, combatKit(), surprise,
         {
           width: base.width,
@@ -2017,6 +2136,7 @@ export default function GameBoard() {
         },
         start,
         party.filter((c) => c.hp > 0).map(allyOf),
+        { x: base.x, y: base.y },
       );
       return;
     }
@@ -2052,7 +2172,7 @@ export default function GameBoard() {
     lastSavedPoints.current = character.currentForcePoints;
     lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
     fightBegun.current = true;
-    initiateCombat(
+    startFight(
       fighterNow(), enemies, combatKit(), surprise,
       {
         width: ground.width,
@@ -2063,6 +2183,7 @@ export default function GameBoard() {
       },
       cameIn ? { x: cameIn.x, y: cameIn.y } : undefined,
       party.filter((c) => c.hp > 0).map(allyOf),
+      here.layout ? { x: here.layout.x, y: here.layout.y } : { x: 0, y: 0 },
     );
   };
 
@@ -2128,6 +2249,23 @@ export default function GameBoard() {
       const me = fighters.combatants.find((c) => c.isPlayer);
       settleAmmo(me?.ammo ? { weapon: me.ammo.weapon, left: me.ammo.left, round: me.ammo.round, spent: me.spentAmmo ?? {} } : fighters.ammoAfter);
     }
+    // Grenades thrown in a shooter fight are used up
+    {
+      const used = useShoot.getState().last?.used;
+      useShoot.setState({ last: null });
+      if (used && Object.keys(used).length) {
+        setTimeout(() => {
+          const current = queryClient.getQueryData<any>(["game-character", gameCharacterId]);
+          if (!current) return;
+          const equipment = [...((current.equipment ?? []) as string[])];
+          for (const [name, n] of Object.entries(used)) for (let i = 0; i < n; i++) {
+            const at = equipment.indexOf(name);
+            if (at >= 0) equipment.splice(at, 1);
+          }
+          saveCharacter({ equipment });
+        }, 2600);
+      }
+    }
     // Mines not set off are picked up again (house rule), the paired ones still paired
     {
       const left = useCombat.getState().mines;
@@ -2189,7 +2327,10 @@ export default function GameBoard() {
       for (const id of areaIds) {
         const part = galaxyMap.areas[id];
         if (!part) continue;
-        const { occupants, gear, remains, kept, slain: down, xp: earned, people, changed } = afterFight(part, remaining);
+        const { occupants, gear, remains, kept, slain: down, xp: earned, people, changed } = afterFight(part, remaining, (n) => {
+          const f = factsOf(n);
+          return f?.equipmentCategory === "Weapon" ? { name: n, properties: (f as any).properties } : undefined;
+        });
         slain += down;
         xp += earned;
         fallenKind ||= people;
@@ -2228,6 +2369,29 @@ export default function GameBoard() {
         let renown = addRenown(standing, losers, -1);
         if (holder && holder !== losers) renown = addRenown(renown, holder, 1);
         saveCampaign({ factionInfluence: renown });
+      }
+    }
+    // The enemies who got away, were left for dead or brought the party down hold a grudge from now on (shared/logic/nemesis.ts)
+    {
+      const current = latestWorld() ?? world;
+      if (current && fightNow.combatants.length) {
+        const bodies = [...(gang?.gang ?? []), ...areaIds.flatMap((id) => world?.areas[id]?.occupants ?? [])];
+        const bodyOf = (id: string) => bodies.find((o) => o.id === id) ?? bodies.find((o) => id.replace(/-\d+$/, "") === o.id);
+        const foes: FightFoe[] = [];
+        for (const c of fightNow.combatants) {
+          const body = onPartySide(c) ? undefined : bodyOf(String(c.id));
+          if (body) foes.push({ id: String(c.id), name: c.name, body, hp: c.hp, maxHp: c.maxHp, fled: c.fled, leader: c.leader, struck: c.struck });
+        }
+        if (foes.length) {
+          const me = fightNow.combatants.find((c) => c.isPlayer);
+          const settled = settleFight(current.nemeses ?? emptyNemeses(current.seed), {
+            outcome: outcome === "left" ? "fled" : outcome === "victory" || outcome === "stable" || outcome === "dead" ? outcome : "fled",
+            foes, now: clockNow(), settlementId: districtHere?.settlementId, areaId: areaId ?? undefined, downedBy: me?.lastHitBy,
+            faction: factionAt(current, areaId ?? hereId ?? "") ?? current.antagonist,
+          });
+          if (settled.state !== current.nemeses) saveCampaign({ galaxyMap: { ...(latestWorld() ?? current), nemeses: settled.state } });
+          sayNemesis(settled.events);
+        }
       }
     }
     // Companions keep the hit points they ended with; those of flesh and blood who fell make death
@@ -4763,6 +4927,78 @@ export default function GameBoard() {
     const land = (w: World) => moveShipInterior(w, ship.id, exit.to);
     if (target && childrenOf(world, target.id).length === 0 && ["system", "planet", "settlement", "building"].includes(target.kind)) explore(target.id, changes, land);
     else saveCampaign({ ...changes, galaxyMap: land(world) });
+    return true;
+  };
+
+  // ---- Co-op: the travel room (components/Play/CoopUI.tsx). The craft each member may take, the room opened for a way off the settlement,
+  // and the trips the room sends off: a pilot flies their craft (on their own screen), their crew rides with them
+  const craftsFor = (exit: Exit, aboard: boolean): Craft[] => {
+    if (!world || !here) return [];
+    const out: Craft[] = [];
+    const berth = aboard && aboardShip ? aboardShip.areaId : here.id;
+    if (aboard || exit.needsShip) {
+      for (const s of ships.filter((x) => x.areaId === berth)) {
+        const busy = shipBusy(s);
+        const blocked = busy ? `${busy.what} is under way` : !isLowFuel(s) && s.fuel < (exit.fuel ?? 0) ? `needs ${exit.fuel} fuel, has ${s.fuel}` : exit.jump && !s.hyperdriveClass ? "no hyperdrive" : undefined;
+        out.push({ id: `ship-${s.id}`, kind: "ship", label: s.name, seats: shipSeats(s.size), shipId: s.id, deck: deckIdOf(s.id), ...(blocked ? { blocked } : {}) });
+      }
+      if (!aboard) out.push({ id: "passage", kind: "solo", label: `Passage on a liner (${tripBy(exit).fare} cr)`, seats: 99, rideId: "passage" });
+      return out;
+    }
+    for (const r of ridesFor(exit)) {
+      if (r.mountId) continue;
+      if (r.vehicleId) {
+        const v = vehicles.find((x) => x.id === r.vehicleId);
+        // (the vehicle's seats are for the party; its companions ride along: house rule)
+        out.push({ id: r.id, kind: "vehicle", label: r.label, seats: v?.seats ?? SEATS[String(v?.model)] ?? 2, rideId: r.id, ...(r.blocked && !/^seats/.test(r.blocked) ? { blocked: r.blocked } : {}) });
+      } else out.push({ id: r.id, kind: "solo", label: r.label + (r.fare ? ` (${r.fare} cr)` : ""), seats: 99, rideId: r.id, ...(r.blocked ? { blocked: r.blocked } : {}) });
+    }
+    return out;
+  };
+  const openRoom = (exit: Exit, aboard: boolean) => {
+    if (!world) return;
+    const crafts = craftsFor(exit, aboard);
+    if (!crafts.some((c) => !c.blocked)) return void toast.error("Nothing can take the party there just now.");
+    proposeTravel({ exit, crafts, title: world.areas[exit.to]?.name ?? "the next place", ship: !!exit.needsShip, aboard });
+  };
+  useEffect(() => {
+    const room = coopRoom;
+    if (!coopHere || !room || room.phase !== "underway" || !coopMe || !room.pending.includes(coopMe) || !world) return;
+    const unit = unitsOf(room).find((u) => u.leader === coopMe);
+    const craft = unit && room.crafts.find((c) => c.id === unit.craft);
+    if (!unit || !craft) return;
+    const exit = room.exit as Exit;
+    if (room.aboard) {
+      const ship = craft.shipId ? ships.find((s) => s.id === craft.shipId) : undefined;
+      if (!ship) return;
+      if (aboardShip?.id !== ship.id) {
+        // Its deck stands already: the server puts the crew aboard. Else the pilot makes the deck by boarding, and the crew follows.
+        if (!(craft.deck && world.areas[craft.deck]) && boarding.current !== room.id) {
+          boarding.current = room.id;
+          boardNow(ship);
+        }
+        return;
+      }
+      if (launched.current === room.id) return;
+      launched.current = room.id;
+      fromRoom.current = true;
+      try { if (flyShip(exit)) arrivedTravel(); else cancelTravel(); } finally { fromRoom.current = false; }
+      return;
+    }
+    if (launched.current === room.id) return;
+    launched.current = room.id;
+    const found = ridesFor(exit).find((r) => r.id === craft.rideId);
+    const ride = found ? { ...found, ...(found.blocked && /^seats/.test(found.blocked) ? { blocked: undefined } : {}) } : undefined;
+    fromRoom.current = true;
+    forceShip.current = craft.kind === "ship" ? craft.shipId : craft.rideId === "passage" ? "passage" : undefined;
+    try { travel(exit, ride); } finally { fromRoom.current = false; forceShip.current = undefined; }
+  }, [coopRoom, coopMe, aboardShip?.id, !!world]);
+  // Walking to a party member in the same settlement (the map would take about five minutes; house rule, said in the dialog)
+  const goToMember = (areaId: string, who: string) => {
+    if (!world || !here || !world.areas[areaId]) return;
+    if (settlementOf(world, areaId) !== settlementOf(world, here.id)) return void toast.error(`${who} is in another settlement: leaving one is done together, from the party's room.`);
+    saveCampaign({ ...pass(5), currentLocation: areaId });
+    toast.info(`You walk to ${who} (five minutes).`);
   };
   const stationNote: Record<string, string> = {
     nav: "Navigation console: the courses open from here are listed at the helm.",
@@ -4927,78 +5163,6 @@ export default function GameBoard() {
     recordDeal(trader.id, (e) => ({ ...e, bought: { ...e.bought, [line.name]: (e.bought[line.name] ?? 0) + 1 } }));
     if (fitTo) {
       const f = factsOfItem(line.name);
-    return true;
-  };
-
-  // ---- Co-op: the travel room (components/Play/CoopUI.tsx). The craft each member may take, the room opened for a way off the settlement,
-  // and the trips the room sends off: a pilot flies their craft (on their own screen), their crew rides with them
-  const craftsFor = (exit: Exit, aboard: boolean): Craft[] => {
-    if (!world || !here) return [];
-    const out: Craft[] = [];
-    const berth = aboard && aboardShip ? aboardShip.areaId : here.id;
-    if (aboard || exit.needsShip) {
-      for (const s of ships.filter((x) => x.areaId === berth)) {
-        const busy = shipBusy(s);
-        const blocked = busy ? `${busy.what} is under way` : !isLowFuel(s) && s.fuel < (exit.fuel ?? 0) ? `needs ${exit.fuel} fuel, has ${s.fuel}` : exit.jump && !s.hyperdriveClass ? "no hyperdrive" : undefined;
-        out.push({ id: `ship-${s.id}`, kind: "ship", label: s.name, seats: shipSeats(s.size), shipId: s.id, deck: deckIdOf(s.id), ...(blocked ? { blocked } : {}) });
-      }
-      if (!aboard) out.push({ id: "passage", kind: "solo", label: `Passage on a liner (${tripBy(exit).fare} cr)`, seats: 99, rideId: "passage" });
-      return out;
-    }
-    for (const r of ridesFor(exit)) {
-      if (r.mountId) continue;
-      if (r.vehicleId) {
-        const v = vehicles.find((x) => x.id === r.vehicleId);
-        // (the vehicle's seats are for the party; its companions ride along: house rule)
-        out.push({ id: r.id, kind: "vehicle", label: r.label, seats: v?.seats ?? SEATS[String(v?.model)] ?? 2, rideId: r.id, ...(r.blocked && !/^seats/.test(r.blocked) ? { blocked: r.blocked } : {}) });
-      } else out.push({ id: r.id, kind: "solo", label: r.label + (r.fare ? ` (${r.fare} cr)` : ""), seats: 99, rideId: r.id, ...(r.blocked ? { blocked: r.blocked } : {}) });
-    }
-    return out;
-  };
-  const openRoom = (exit: Exit, aboard: boolean) => {
-    if (!world) return;
-    const crafts = craftsFor(exit, aboard);
-    if (!crafts.some((c) => !c.blocked)) return void toast.error("Nothing can take the party there just now.");
-    proposeTravel({ exit, crafts, title: world.areas[exit.to]?.name ?? "the next place", ship: !!exit.needsShip, aboard });
-  };
-  useEffect(() => {
-    const room = coopRoom;
-    if (!coopHere || !room || room.phase !== "underway" || !coopMe || !room.pending.includes(coopMe) || !world) return;
-    const unit = unitsOf(room).find((u) => u.leader === coopMe);
-    const craft = unit && room.crafts.find((c) => c.id === unit.craft);
-    if (!unit || !craft) return;
-    const exit = room.exit as Exit;
-    if (room.aboard) {
-      const ship = craft.shipId ? ships.find((s) => s.id === craft.shipId) : undefined;
-      if (!ship) return;
-      if (aboardShip?.id !== ship.id) {
-        // Its deck stands already: the server puts the crew aboard. Else the pilot makes the deck by boarding, and the crew follows.
-        if (!(craft.deck && world.areas[craft.deck]) && boarding.current !== room.id) {
-          boarding.current = room.id;
-          boardNow(ship);
-        }
-        return;
-      }
-      if (launched.current === room.id) return;
-      launched.current = room.id;
-      fromRoom.current = true;
-      try { if (flyShip(exit)) arrivedTravel(); else cancelTravel(); } finally { fromRoom.current = false; }
-      return;
-    }
-    if (launched.current === room.id) return;
-    launched.current = room.id;
-    const found = ridesFor(exit).find((r) => r.id === craft.rideId);
-    const ride = found ? { ...found, ...(found.blocked && /^seats/.test(found.blocked) ? { blocked: undefined } : {}) } : undefined;
-    fromRoom.current = true;
-    forceShip.current = craft.kind === "ship" ? craft.shipId : craft.rideId === "passage" ? "passage" : undefined;
-    try { travel(exit, ride); } finally { fromRoom.current = false; forceShip.current = undefined; }
-  }, [coopRoom, coopMe, aboardShip?.id, !!world]);
-  // Walking to a party member in the same settlement (the map would take about five minutes; house rule, said in the dialog)
-  const goToMember = (areaId: string, who: string) => {
-    if (!world || !here || !world.areas[areaId]) return;
-    if (settlementOf(world, areaId) !== settlementOf(world, here.id)) return void toast.error(`${who} is in another settlement: leaving one is done together, from the party's room.`);
-    saveCampaign({ ...pass(5), currentLocation: areaId });
-    toast.info(`You walk to ${who} (five minutes).`);
       if (!f?.droid) return toast.error("The facts of that part are still loading.");
       if ((fitTo.custom ?? []).length >= (fitTo.motor ?? DROID_BASE_SLOTS)) return toast.error(`${fitTo.name}'s motor is full: upgrade it first.`);
       const plan = droidPlan(f.rarity, fitTo.size ?? "medium");
@@ -7679,7 +7843,7 @@ export default function GameBoard() {
           {/* A fight is shown on the floor it is fought on; otherwise the place being looked at */}
           {shipFight ? (
             <SpaceScene />
-          ) : inCombat && !fightArena.district ? (
+          ) : inCombat && !realtime && !fightArena.district ? (
             <FightScene areaId={here?.layout ? here.id : null} origin={here?.layout} />
           ) : world ? (
             <LocalMap world={scene} hereId={hereId} viewId={viewId} selectedId={picked?.kind === "area" ? picked.id : null} onAct={act} locked={dead || exploring} />
@@ -7689,6 +7853,30 @@ export default function GameBoard() {
             <LocalMap />
           )}
         </Canvas>
+        {coopHere && <CoopLink campaignId={campaignId} />}
+        {coopOpen && world && character && (
+          <CoopDialog campaignId={Number(campaignId)} characterId={character.id} areaName={(id) => world.areas[id]?.name ?? id} onClose={() => setCoopOpen(false)} onGoTo={goToMember} />
+        )}
+        {coopHere && coopRoom && <TravelRoomPanel room={coopRoom} nameOf={(id) => coopMembers.find((m) => m.id === id)?.name ?? id} />}
+        {askMode && world && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" data-testid="mode-dialog" role="dialog" aria-label="How to play this campaign">
+            <div className="max-h-full w-full max-w-2xl space-y-3 overflow-y-auto rounded border border-gray-600 bg-gray-900 p-4 text-sm">
+              <h2 className="text-lg font-semibold text-yellow-300">How will this campaign be played?</h2>
+              <p className="text-gray-300">The world is ready. Choose how fights are played. You can change it later from the Mode button.</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button className={`rounded border p-3 text-left hover:bg-gray-800 ${playMode === "tabletop" && modeChosen ? "border-yellow-400" : "border-gray-600"}`} data-testid="mode-tabletop" onClick={() => chooseMode("tabletop")}>
+                  <div className="font-semibold text-sky-300">Tabletop RPG</div>
+                  <div className="text-gray-300">Dice and turn-based combat on the grid, as the books play: initiative, actions, bonus actions, saving throws. The map can be seen from above, over the shoulder or from the eyes.</div>
+                </button>
+                <button className={`rounded border p-3 text-left hover:bg-gray-800 ${playMode === "shooter" && modeChosen ? "border-yellow-400" : "border-gray-600"}`} data-testid="mode-shooter" onClick={() => chooseMode("shooter")}>
+                  <div className="font-semibold text-red-300">Real-time shooter</div>
+                  <div className="text-gray-300">First or third person, no dice and no turns. Aim and fire your blaster, throw grenades, take cover, swing and guard with a lightsaber, with the jumping, grappling hook and jetpack you already have. There is no top-down view.</div>
+                </button>
+              </div>
+              <p className="text-xs text-gray-400">Shooter keys: mouse to look (click the view to capture it, Esc to release), left button fires, right button guards with a saber, G grenade, R reload, Q swap gun and blade, W A S D walk, Space jump, F hook, E use. On a phone: the buttons beside the stick. Road ambushes and the pit arena are still turn-based.</p>
+            </div>
+          </div>
+        )}
         <Compass />
         </div>
         {/* The real-time moves' buttons over the overhead view (the eye views draw their own beside the stick) */}
@@ -7742,6 +7930,10 @@ export default function GameBoard() {
               >
                 Detail: {detailFixed ? (detailFixed === "lite" ? "Lite" : "Full") : "Auto"}
               </Button>
+              <Button size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" data-testid="mode-toggle" title="How the campaign is played: the tabletop (dice, turns) or the real-time shooter" onClick={() => setAskMode(true)}>
+                Mode: {playMode === "shooter" ? "Shooter" : "Tabletop"}
+              </Button>
+              {world && character && <CoopButton onOpen={() => setCoopOpen(true)} />}
               {onFoot && (
                 <Button
                   size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" data-testid="view-toggle"
@@ -7853,30 +8045,6 @@ export default function GameBoard() {
                 <Button size="sm" variant="outline" className="mt-1" onClick={revive}>
                   Revive (house rule)
                 </Button>
-        {coopHere && <CoopLink campaignId={campaignId} />}
-        {coopOpen && world && character && (
-          <CoopDialog campaignId={Number(campaignId)} characterId={character.id} areaName={(id) => world.areas[id]?.name ?? id} onClose={() => setCoopOpen(false)} onGoTo={goToMember} />
-        )}
-        {coopHere && coopRoom && <TravelRoomPanel room={coopRoom} nameOf={(id) => coopMembers.find((m) => m.id === id)?.name ?? id} />}
-        {askMode && world && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" data-testid="mode-dialog" role="dialog" aria-label="How to play this campaign">
-            <div className="max-h-full w-full max-w-2xl space-y-3 overflow-y-auto rounded border border-gray-600 bg-gray-900 p-4 text-sm">
-              <h2 className="text-lg font-semibold text-yellow-300">How will this campaign be played?</h2>
-              <p className="text-gray-300">The world is ready. Choose how fights are played. You can change it later from the Mode button.</p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <button className={`rounded border p-3 text-left hover:bg-gray-800 ${playMode === "tabletop" && modeChosen ? "border-yellow-400" : "border-gray-600"}`} data-testid="mode-tabletop" onClick={() => chooseMode("tabletop")}>
-                  <div className="font-semibold text-sky-300">Tabletop RPG</div>
-                  <div className="text-gray-300">Dice and turn-based combat on the grid, as the books play: initiative, actions, bonus actions, saving throws. The map can be seen from above, over the shoulder or from the eyes.</div>
-                </button>
-                <button className={`rounded border p-3 text-left hover:bg-gray-800 ${playMode === "shooter" && modeChosen ? "border-yellow-400" : "border-gray-600"}`} data-testid="mode-shooter" onClick={() => chooseMode("shooter")}>
-                  <div className="font-semibold text-red-300">Real-time shooter</div>
-                  <div className="text-gray-300">First or third person, no dice and no turns. Aim and fire your blaster, throw grenades, take cover, swing and guard with a lightsaber, with the jumping, grappling hook and jetpack you already have. There is no top-down view.</div>
-                </button>
-              </div>
-              <p className="text-xs text-gray-400">Shooter keys: mouse to look (click the view to capture it, Esc to release), left button fires, right button guards with a saber, G grenade, R reload, Q swap gun and blade, W A S D walk, Space jump, F hook, E use. On a phone: the buttons beside the stick. Road ambushes and the pit arena are still turn-based.</p>
-            </div>
-          </div>
-        )}
               </div>
             )}
             <p className="text-sm text-gray-300 mb-4" data-testid="play-hit-dice">
@@ -7902,9 +8070,10 @@ export default function GameBoard() {
             </div>
 
             <div className="mb-3 flex flex-wrap gap-1" data-testid="hud-tabs">
-              {(["here", "party", "trade", "quests", "pack", ...(TEST_MENU ? ["downtime"] : []), "gm", ...(TEST_MENU ? ["test"] : [])] as HudTab[]).map((tab) => (
+              {(["here", "party", "trade", "quests", "nemeses", "pack", ...(TEST_MENU ? ["downtime"] : []), "gm", ...(TEST_MENU ? ["test"] : [])] as HudTab[]).map((tab) => (
                 <Button key={tab} role="tab" aria-selected={hudTab === tab} size="sm" variant={hudTab === tab ? "default" : "outline"} className="h-7 px-2 text-xs" onClick={() => setHudTab(tab)} data-testid={`hud-tab-${tab}`}>
-                  {{ here: "Here", party: "Party", trade: "Trade", quests: "Quests", pack: "Inventory", downtime: "Downtime", gm: "GM Interface", test: "Test" }[tab]}
+                  {{ here: "Here", party: "Party", trade: "Trade", quests: "Quests", nemeses: "Enemies", pack: "Inventory", downtime: "Downtime", gm: "GM Interface", test: "Test" }[tab]}
+                  {tab === "nemeses" && (world?.nemeses?.mercy.length ?? 0) > 0 && hudTab !== "nemeses" && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-red-400" />}
                   {tab === "trade" && dealingNow && hudTab !== "trade" && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-300" />}
                 </Button>
               ))}
@@ -7930,10 +8099,6 @@ export default function GameBoard() {
                   <ShipSystems
                     ship={aboardShip}
                     sheet={shipSheet(aboardShip, shipRows, proficiency)}
-              <Button size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" data-testid="mode-toggle" title="How the campaign is played: the tabletop (dice, turns) or the real-time shooter" onClick={() => setAskMode(true)}>
-                Mode: {playMode === "shooter" ? "Shooter" : "Tabletop"}
-              </Button>
-              {world && character && <CoopButton onOpen={() => setCoopOpen(true)} />}
                     parts={shipParts}
                     workers={[{ id: "self", name: character.name }, ...party.filter((c) => c.kind !== "beast" && c.hp > 0).map((c) => ({ id: c.id, name: c.name }))]}
                     hasKit={!!mechanicsKit()}
@@ -8382,6 +8547,7 @@ export default function GameBoard() {
                 <p className="text-sm text-gray-400" data-testid="trade-none">Tap a trader, dealer or stallholder on the map and what they sell, buy and do comes up here.</p>
               )}
             </div>
+            {hudTab === "nemeses" && <NemesisPanel state={world?.nemeses} onMercy={showMercy} disabled={inCombat || dead} />}
             {hudTab === "quests" && (
               <div>
                 <h3 className="font-semibold mb-2">Active Quests</h3>

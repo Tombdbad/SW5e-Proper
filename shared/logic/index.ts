@@ -18,8 +18,9 @@
 import { radiiOf as shapeRadii, standing, waysStand, type Shape } from "./footprint";
 import { caveMask, caveStyleOf, describeMask, MAX_WIDTH, MIN_WIDTH, type CaveWay } from "./caves";
 export { caveMask, caveStyleOf, describeMask, MIN_WIDTH, MAX_WIDTH } from "./caves";
-import { gearText, ammoItemFamily, ammoRider, calibratorOf, accessoryOf, containerOf, suitOf, airOf, foodOf, lightOf, generatorOf, type AmmoFamily, type AmmoRider, type AccessoryFacts, type SuitFacts, type EnvHazard } from "./gear";
+import { gearText, ammoDrops, ammoItemFamily, ammoRider, calibratorOf, accessoryOf, containerOf, suitOf, airOf, foodOf, lightOf, generatorOf, type AmmoFamily, type AmmoRider, type AccessoryFacts, type SuitFacts, type EnvHazard } from "./gear";
 export * from "./gear";
+import type { NemesisState } from "./nemesis";
 export * from "./comms";
 import type { Base } from "./bases";
 export * from "./bases";
@@ -225,6 +226,8 @@ export interface World {
   districtPlans?: Record<string, DistrictPlan>;
   // The party's bases: camps pitched and hostile sites claimed, and what stands and is kept in them (see bases.ts)
   bases?: Base[];
+  // The enemies the party has made: those who ran, were left for dead or brought the party down, and now hold a grudge (see nemesis.ts)
+  nemeses?: NemesisState;
 }
 
 export interface WorldOptions {
@@ -3014,7 +3017,8 @@ export function safeHarbour(world: World, id: string): string | undefined {
 // character knocked out): the fallen are gone and leave their gear, and those still standing keep
 // the hit points they have, so that leaving or losing never gives the enemy its strength back.
 // `standing` says how each enemy of the fight (id `<occupant id>-<index>`) ended up.
-export function afterFight(area: Pick<Area, "occupants">, standing: { id: string | number; hp: number }[]) {
+// `weaponOf` (optional) gives the weapon facts of a loadout name: the fallen then leave spare ammunition for their ranged weapons too.
+export function afterFight(area: Pick<Area, "occupants">, standing: { id: string | number; hp: number }[], weaponOf?: (name: string) => { name: string; properties?: string[] | null } | undefined) {
   const gear: { name: string; quantity: number; source: "equipment" }[] = [];
   // Beasts and horrors that fell leave a carcass to be skinned (house rule, see "Gathering and materials")
   const remains: { name: string; cr?: string; count: number }[] = [];
@@ -3036,7 +3040,11 @@ export function afterFight(area: Pick<Area, "occupants">, standing: { id: string
       xp += (o.xp ?? 0) * down;
       if (!["wildlife", "horror"].includes(o.role)) people = true;
       gear.push(...o.loadout.map((name) => ({ name, quantity: down, source: "equipment" as const })));
-      if (!droid && !["humanoid"].includes((o.creature ?? "").toLowerCase()) && ["wildlife", "horror"].includes(o.role)) remains.push({ name: o.name, cr: o.cr, count: down });
+      if (weaponOf && !droid) {
+        const weapons = o.loadout.map(weaponOf).filter((w): w is NonNullable<typeof w> => !!w);
+        for (let i = 0; i < down; i++) for (const a of ammoDrops(weapons, unitOf, `${o.id}-${i}`)) gear.push({ ...a, source: "equipment" as const });
+      }
+      if (!droid &&!["humanoid"].includes((o.creature ?? "").toLowerCase()) && ["wildlife", "horror"].includes(o.role)) remains.push({ name: o.name, cr: o.cr, count: down });
       if (droid) disabled.push({ ...o, id: alive.length ? `${o.id}-down` : o.id, count: down, disposition: "neutral", role: "disabled droid", disabled: true, wounds: Array(down).fill(0), loadout: [], routine: undefined, ship: undefined });
     }
     if (!(droid && !alive.length)) kept.set(o.id, alive.length);
@@ -9051,6 +9059,8 @@ export interface Encounter {
   // A gang: the alley it waits in, and its members (the leader first)
   alley?: Rect;
   gang?: Occupant[];
+  // The id of the nemesis (see nemesis.ts) who leads this gang: they have come for revenge, not a toll
+  nemesis?: string;
 }
 
 // Hours between one encounter ending and the next being able to begin
@@ -9104,6 +9114,7 @@ export const tollOf = (credits: number) => Math.max(0, Math.floor(credits * 0.1)
 
 export function optionsOf(enc: Encounter, level: number, path?: "force" | "tech" | null, credits = 0): EncounterOption[] {
   if (enc.kind === "help") return enc.phase === "follow" ? [{ label: "Send them on their way" }] : [{ label: "Help them" }, { label: "Walk on" }];
+  if (enc.kind === "robbery" && enc.nemesis) return [{ label: "Face them" }];
   if (enc.kind === "robbery") return [{ label: "Fight the gang" }, { label: `Pay the toll (${tollOf(credits)} credits)`, cost: tollOf(credits) }];
   if (enc.kind === "fixer") return [{ label: "Hear the job" }, { label: "Walk on" }];
   const cost = 200 * level;
@@ -9222,6 +9233,11 @@ export function rollEncounter(world: World, district: District, day: number, hou
 }
 
 // Whether a gang is waiting in an alley the party has walked into, in a lawless place
+// A nemesis (nemesis.ts) has found the party in an alley: the same ambush, led by the one with the grudge. Nothing is demanded.
+export function nemesisAmbush(world: World, district: District, alley: Rect, hunt: { gang: Occupant[]; text: string }, id: string, day: number, hour: number, begun: number): Encounter {
+  return { ...ambushEncounter(world, district, alley, hunt.gang, day, hour, begun), id: `${district.id}|${day}|${hour}|alley${alley.x},${alley.y}|nemesis`, title: "Someone has come for you", text: hunt.text, person: hunt.gang[0]?.name ?? "a nemesis", nemesis: id };
+}
+
 export function ambushIn(world: World, district: District, alley: Rect, day: number, hour: number): boolean {
   if (lawAt(world, district.settlementId) !== 0) return false;
   return unitOf(`${district.id}|${day}|${hour}|alley${alley.x},${alley.y}`) < AMBUSH_CHANCE;

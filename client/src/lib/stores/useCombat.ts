@@ -136,6 +136,10 @@ export interface Combatant {
   gang?: string;
   leader?: boolean;
   fled?: boolean;
+  // For the Nemesis system (shared/logic/nemesis.ts): what the party's blows did to this enemy, by damage type, and (on the character)
+  // the combat id of the enemy who last struck them
+  struck?: Record<string, number>;
+  lastHitBy?: string;
   // Temporary hit points, taken before real ones
   tempHp?: number;
   // A substance's high: the ability the extra d3 goes to, the turns it has left and what it gives
@@ -1180,6 +1184,20 @@ function reactionOptions(target: Combatant, hit: Omit<PendingHit, "options">): P
   return out;
 }
 
+// Keeps the tally the Nemesis system reads after the fight (see `struck` and `lastHitBy` on a Combatant)
+function tally(w: Work, ti: number, attacker: Combatant | undefined, dealt: number, type?: string) {
+  const t = w.combatants[ti];
+  if (!attacker || dealt <= 0 || !t) return;
+  if (t.isPlayer) {
+    if (!onPartySide(attacker)) w.combatants[ti] = { ...t, lastHitBy: String(attacker.id) };
+    return;
+  }
+  if (onPartySide(attacker) && !onPartySide(t)) {
+    const kind = (type ?? "kinetic").toLowerCase();
+    w.combatants[ti] = { ...t, struck: { ...(t.struck ?? {}), [kind]: (t.struck?.[kind] ?? 0) + dealt } };
+  }
+}
+
 // Lands a hit that has been rolled: the character's chosen reaction (or none) is applied first,
 // then damage, then what comes with the hit
 function landHit(w: Work, hit: Omit<PendingHit, "options">, choice: PendingHit["options"][number] | null) {
@@ -1227,6 +1245,7 @@ function landHit(w: Work, hit: Omit<PendingHit, "options">, choice: PendingHit["
     `${attacker?.name ?? "Something"} hits ${target.name}${hit.note ? ` (${hit.note})` : ""} with ${hit.attackName} for ${dealt} damage${hit.crit ? " (critical hit)" : ""}${factor === 0.5 ? ", resisted" : factor === 2 ? ", vulnerable" : factor === 0 ? ", immune" : ""}${parts.length ? `; ${parts.join("; ")}` : ""}.`,
   );
   damageCreature(w, ti, damage, hit.damageType, attacker?.name);
+  tally(w, ti, attacker, dealt, hit.damageType);
   const after = w.combatants[ti];
   if (!w.inCombat) return;
   // Extra damage and a saving throw that come with the hit (a stat block's stinger, a poison)
@@ -2175,6 +2194,9 @@ export type GrappleMove = "grapple" | "shove-prone" | "shove-away" | "escape" | 
 
 interface CombatState {
   inCombat: boolean;
+  // The fight is played in real time (the shooter mode, shared/logic/shooter.ts): the combatants are the roll of who is in it and how they stand,
+  // kept up to date from the live fight, and it ends through `finishRealtime` the way a turn-based fight ends
+  realtime: boolean;
   combatants: Combatant[];
   currentTurn: number;
   round: number;
@@ -2232,6 +2254,9 @@ interface CombatState {
   setObject: (id: string | null) => void;
   setAutoEnd: (on: boolean) => void;
   endCombat: () => void;
+  beginRealtime: () => void;
+  syncRealtime: (patch: Record<string, Partial<Combatant>>) => void;
+  finishRealtime: (outcome: Exclude<CombatOutcome, null>, rounds: number, patch?: Record<string, Partial<Combatant>>) => void;
   nextTurn: () => void;
   rollInitiative: (dexModifier: number) => number;
   // The character attacks: part of the Attack action (melee, ranged), or a bonus action attack
@@ -2478,6 +2503,7 @@ function settle(w: Work, autoEnd: boolean) {
 
 export const useCombat = create<CombatState>((set, get) => ({
   inCombat: false,
+  realtime: false,
   combatants: [],
   currentTurn: 0,
   round: 1,
@@ -2627,6 +2653,7 @@ export const useCombat = create<CombatState>((set, get) => ({
       remains: state.combatants.filter((c) => !onPartySide(c)).map((c) => ({ id: c.id, hp: c.hp })),
       allyRemains: state.combatants.filter((c) => c.ally).map((c) => ({ id: c.id, hp: c.hp })),
       inCombat: false,
+      realtime: false,
       combatants: [],
       currentTurn: 0,
       round: 1,
@@ -2635,6 +2662,20 @@ export const useCombat = create<CombatState>((set, get) => ({
       pending: null,
     }));
   },
+
+  beginRealtime: () => set({ realtime: true }),
+  // The live fight's numbers go into the combatants (by id): hit points, who fled, what the party did to each, the ammunition
+  syncRealtime: (patch) =>
+    set((state) => (state.realtime ? { combatants: state.combatants.map((c) => (patch[String(c.id)] ? { ...c, ...patch[String(c.id)] } : c)) } : state)),
+  finishRealtime: (outcome, rounds, patch = {}) =>
+    set((state) => ({
+      combatants: state.combatants.map((c) => (patch[String(c.id)] ? { ...c, ...patch[String(c.id)] } : c)),
+      inCombat: false,
+      realtime: false,
+      outcome,
+      round: Math.max(1, rounds),
+      pending: null,
+    })),
 
   nextTurn: () =>
     set((state) => {

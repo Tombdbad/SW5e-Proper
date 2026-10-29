@@ -318,6 +318,8 @@ export const insertCampaignSchema = z.object({
   factionInfluence: z.any().optional(),
   // What the party has bought from and sold to each trader, by day (shared/logic, "Trade")
   availableResources: z.any().optional(),
+  // Campaign-specific mechanics: { mode: "tabletop" | "shooter" } is how fights are played (shared/logic/shooter.ts, chosen once the world is made)
+  specialRules: z.any().optional(),
 });
 
 export type InsertCampaign = z.infer<typeof insertCampaignSchema>;

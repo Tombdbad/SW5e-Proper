@@ -55,6 +55,23 @@ export function ammoItemFamily(name: string): AmmoFamily | undefined {
   return undefined;
 }
 export const fillsWeapon = (family: AmmoFamily) => family === "cell" || family === "generator";
+// The round a weapon of each family comes loaded with, and is reloaded with when no other kind is carried (house rule)
+export const PLAIN_ROUND: Record<AmmoFamily, string> = { cell: "Power cell", cartridge: "Slug cartridge", arrow: "Arrow", bolt: "Bolt", wrist: "Dart", generator: "Power generator", rocket: "Rocket, fragmentation", torpedo: "Torpedo, fragmentation", mag: "Flechette mag, fragmentation", tank: "Projector tank, incendiary" };
+// House rule (2026-10-29; the user: "NPC corpses drop ammo along with their weapons"): a fallen creature leaves spare rounds for each
+// ranged weapon it carried, beside the weapon itself: one or two spare cells or cartridges, a handful of arrows, bolts or darts, and a
+// round for the heavy launchers half the time. A power generator is not spare (it sits in the cannon). `unit` is a seeded 0..1 so that the
+// same creature always leaves the same: key it by the creature's id.
+export function ammoDrops(weapons: { name: string; properties?: string[] | null }[], unit: (key: string) => number, key: string): { name: string; quantity: number }[] {
+  const out = new Map<string, number>();
+  weapons.forEach((w, i) => {
+    const family = ammoFamilyOf(w);
+    if (!family || family === "generator") return;
+    const u = unit(`${key}|${i}|${w.name}|ammo`);
+    const n = family === "cell" || family === "cartridge" ? 1 + (u < 0.5 ? 1 : 0) : family === "arrow" || family === "bolt" || family === "wrist" ? 3 + Math.floor(u * 6) : u < 0.5 ? 1 : 0;
+    if (n) out.set(PLAIN_ROUND[family], (out.get(PLAIN_ROUND[family]) ?? 0) + n);
+  });
+  return [...out].map(([name, quantity]) => ({ name, quantity }));
+}
 // Shots of a load: the weapon's reload number (a weapon with none, a bow, draws a round at a time: 1)
 export const reloadOf = (weapon: { properties?: string[] | null }) => Number((weapon.properties ?? []).join(";").match(/reload (\d+)/i)?.[1] ?? 0);
 export const burstOf = (weapon: { properties?: string[] | null }) => Number((weapon.properties ?? []).join(";").match(/burst (\d+)/i)?.[1] ?? 0);
