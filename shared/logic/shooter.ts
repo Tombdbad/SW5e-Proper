@@ -30,6 +30,15 @@ export const SHOOT = {
   focus: { max: 20, perBolt: 4, perStrike: 7, regen: 5, broken: 1.2 },
   grenade: { fuse: 1.6, speed: 12, lift: 6, gravity: 18, bounce: 0.45, friction: 0.55, near: 0.4, edge: 0.5, blind: 5 },
   flash: 0.6,
+  // At most this many of a side aim at once (a crowd takes turns: a fight against many is a fight, not a wall of bolts)
+  maxShooters: 3,
+  // Crouching behind cover (house rule): a smaller body, a steadier aim, and a lower mark for those who shoot at it
+  crouch: { height: 0.8, spread: 0.6 },
+  // How often a foe looks for its way round a wall (seconds), and how many squares it will search
+  path: { every: 0.6, limit: 1500 },
+  // Powers (house rule: the books' turns do not exist here): how wide the cone is that a power finds its target in (half angle), the pause after
+  // one, how fast something pushed or pulled flies (squares a second), and the longest a condition lasts
+  power: { cone: 0.5, pause: 0.9, knock: 9, longest: 8 },
 };
 
 // ---- Dice, read as their average ---------------------------------------------------------------------------------------------------------
@@ -148,6 +157,37 @@ export interface Unit {
   // A swing has landed its blow / a reload is under way (so each happens once)
   landed: boolean;
   wasReloading: boolean;
+  // Crouching behind cover (the party's)
+  crouch?: boolean;
+  // The party's force or tech points and the powers it can use in real time (keys 1 to 4), and the pause before the next
+  points?: number;
+  powers?: RtPower[];
+  powerCd?: number;
+  // Being pushed or pulled: a velocity (squares a second), for how long, and the damage if it strikes a wall
+  knock?: { vx: number; vy: number; t: number; strike: number; type: string };
+  // The squares a foe is walking to get round a wall, how long until it looks again, and how long until it checks it is not stuck in one
+  path?: { x: number; y: number }[];
+  pathT: number;
+  stuckT: number;
+}
+// A power as the fight plays it (the game reads these from the power's text: client/src/lib/sw5e/realtimePowers.ts). The dice are taken at
+// their average, a condition lasts seconds, a push or a pull sends a creature a distance.
+export type PowerKind = "damage" | "heal" | "stun" | "fear" | "blind" | "push" | "pull";
+export interface RtPower {
+  id: string;
+  name: string;
+  cost: number;
+  kind: PowerKind;
+  // damage dealt (or hit points healed), and its type
+  damage: number;
+  type: string;
+  // how far it reaches (squares), the radius round its target that it also takes (squares), how long a condition lasts, how far a creature is moved (squares)
+  range: number;
+  radius: number;
+  seconds: number;
+  distance: number;
+  // the damage when what is pushed strikes a wall
+  strike: number;
 }
 export interface Bolt { id: number; owner: string; side: Side; x: number; y: number; h: number; vx: number; vy: number; vh: number; damage: number; type: string; life: number; reflected?: boolean; cell: [number, number] }
 export interface Grenade { id: number; owner: string; side: Side; x: number; y: number; h: number; vx: number; vy: number; vh: number; fuse: number; kind: GrenadeKind; bounces: number }
@@ -161,7 +201,11 @@ export type Event =
   | { type: "alert"; id: string }
   | { type: "swing"; id: string }
   | { type: "reload"; id: string }
-  | { type: "blocked"; id: string };
+  | { type: "blocked"; id: string }
+  // a bolt stopped by a wall or the floor
+  | { type: "impact"; x: number; y: number; h: number }
+  // a power cast: from the party's hand to where it takes hold
+  | { type: "power"; id: string; kind: PowerKind; name: string; x: number; y: number; h: number; tx: number; ty: number; th: number };
 
 export interface Env {
   // Whether a bolt, or a thrown thing, is stopped at this point (a wall, or something higher than it flies)
@@ -203,7 +247,7 @@ export function blankUnit(base: Pick<Unit, "id" | "name" | "side" | "x" | "y" | 
   return {
     h: 0, facing: 0, ac: 10, speed: 4, bonus: 2, volley: 1, reach: 1.2, brave: true, struck: {}, mode: base.side === "foe" ? "idle" : "engage", dead: false, fled: false,
     wait: 0, fire: 0, volleyLeft: 0, strafe: 0, strafeDir: 1, flee: 0, blind: 0, stagger: 0, burst: 0, swing: 0, chain: 0, combo: 0, recoil: 0, reloading: 0, focusLock: 0, aiming: 0,
-    focus: SHOOT.focus.max, blocking: false, landed: false, wasReloading: false, ...base,
+    focus: SHOOT.focus.max, blocking: false, landed: false, wasReloading: false, pathT: 0, stuckT: 0, ...base,
   };
 }
 export function newSim(units: Unit[], opts: { seed?: number; surprise?: boolean } = {}): Sim {
@@ -223,14 +267,78 @@ export function sees(env: Env, from: { x: number; y: number; h: number }, to: { 
   }
   return true;
 }
+// Whether a body fits at a point: all four of its corners stand on ground
+export const fitsAt = (env: Env, x: number, y: number) => [[-1, -1], [1, -1], [-1, 1], [1, 1]].every(([a, b]) => env.walkable(x + a * SHOOT.radius * 0.8, y + b * SHOOT.radius * 0.8));
+// How tall a body is just now
+export const heightOf = (u: Pick<Unit, "crouch">) => (u.crouch ? SHOOT.crouch.height : SHOOT.height);
+
+// A body in a wall (put there by a map that changed under it: the party went through a door, a room was drawn again) is brought out to
+// the nearest square it fits in. Without this a unit in a wall can never move again, for every step it tries ends in the wall.
+export function unstick(u: Unit, env: Env): boolean {
+  if (fitsAt(env, u.x, u.y)) return false;
+  for (let r = 0.5; r <= 9; r += 0.5) {
+    for (let k = 0; k < 16; k++) {
+      const a = (k / 16) * Math.PI * 2 + r;
+      const [x, y] = [Math.floor(u.x + Math.sin(a) * r) + 0.5, Math.floor(u.y + Math.cos(a) * r) + 0.5];
+      if (fitsAt(env, x, y)) {
+        u.x = x;
+        u.y = y;
+        u.h = env.floorAt(x, y);
+        u.path = undefined;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// The way round a wall: the squares from one point to another over ground a body can stand on (eight ways, never cutting a corner), or
+// null when there is none within `limit` squares searched
+export function route(env: Env, from: { x: number; y: number }, to: { x: number; y: number }, limit: number = SHOOT.path.limit): { x: number; y: number }[] | null {
+  const a = { x: Math.floor(from.x), y: Math.floor(from.y) };
+  const b = { x: Math.floor(to.x), y: Math.floor(to.y) };
+  if (a.x === b.x && a.y === b.y) return [];
+  const key = (x: number, y: number) => `${x},${y}`;
+  const prev = new Map<string, { x: number; y: number }>([[key(a.x, a.y), a]]);
+  const queue = [a];
+  let found = false;
+  for (let head = 0, n = 0; head < queue.length && n < limit; head++, n++) {
+    const c = queue[head];
+    if (c.x === b.x && c.y === b.y) { found = true; break; }
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      const [nx, ny] = [c.x + dx, c.y + dy];
+      if (prev.has(key(nx, ny))) continue;
+      if (!(env.walkable(nx + 0.5, ny + 0.5) || (nx === b.x && ny === b.y))) continue;
+      if (dx && dy && !(env.walkable(c.x + dx + 0.5, c.y + 0.5) && env.walkable(c.x + 0.5, c.y + dy + 0.5))) continue;
+      prev.set(key(nx, ny), c);
+      queue.push({ x: nx, y: ny });
+    }
+  }
+  if (!found) return null;
+  const out: { x: number; y: number }[] = [];
+  for (let c = b; !(c.x === a.x && c.y === a.y); c = prev.get(key(c.x, c.y))!) out.unshift({ x: c.x + 0.5, y: c.y + 0.5 });
+  return out;
+}
+// Whether the way straight from one point to another is ground a body can walk
+function lineWalkable(env: Env, from: { x: number; y: number }, to: { x: number; y: number }): boolean {
+  const d = Math.hypot(to.x - from.x, to.y - from.y);
+  for (let i = 1, n = Math.ceil(d / 0.3); i < n; i++) {
+    const t = i / n;
+    if (!fitsAt(env, from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)) return false;
+  }
+  return true;
+}
+
 // Moves a unit by (dx, dy) if its body fits there, sliding along a wall on the axis that is free
 export function walk(u: Unit, dx: number, dy: number, env: Env): boolean {
-  const fits = (x: number, y: number) => [[-1, -1], [1, -1], [-1, 1], [1, 1]].every(([a, b]) => env.walkable(x + a * SHOOT.radius * 0.8, y + b * SHOOT.radius * 0.8));
-  let moved = false;
-  if (fits(u.x + dx, u.y)) { u.x += dx; moved = true; }
-  if (fits(u.x, u.y + dy)) { u.y += dy; moved = true; }
-  if (moved) u.h = env.floorAt(u.x, u.y);
-  return moved;
+  const fits = (x: number, y: number) => fitsAt(env, x, y);
+  const [ox, oy] = [u.x, u.y];
+  if (fits(u.x + dx, u.y)) u.x += dx;
+  if (fits(u.x, u.y + dy)) u.y += dy;
+  u.h = env.floorAt(u.x, u.y);
+  // (it counts as a step only if it went a fair part of the way: a push straight at a wall "fits" along the wall by nothing at all, which made
+  // a foe at a wall think it was walking, and never try another way)
+  return Math.hypot(u.x - ox, u.y - oy) > Math.hypot(dx, dy) * 0.3;
 }
 
 // ---- Hurting -----------------------------------------------------------------------------------------------------------------------
@@ -298,7 +406,7 @@ export function firePlayer(sim: Sim, from: { x: number; y: number; h: number }, 
   p.fire = g.interval;
   const far = Math.hypot(to.x - from.x, to.y - from.y) > g.range ? 1.5 : 1;
   sim.spread = clamp(Math.max(sim.spread, SHOOT.spread.base) + SHOOT.spread.perShot * (g.auto ? 1.4 : 1), 0, SHOOT.spread.max);
-  const spread = clamp((sim.spread + (moving ? SHOOT.spread.moving : 0) + (airborne ? SHOOT.spread.air : 0)) * far, 0, SHOOT.spread.max * 1.5);
+  const spread = clamp((sim.spread + (moving ? SHOOT.spread.moving : 0) + (airborne ? SHOOT.spread.air : 0)) * far * (p.crouch ? SHOOT.crouch.spread : 1), 0, SHOOT.spread.max * 1.5);
   p.facing = Math.atan2(to.x - from.x, to.y - from.y);
   launch(sim, p, g, from, to, spread, events);
   return true;
@@ -317,6 +425,64 @@ export function setBlock(sim: Sim, on: boolean) {
   const p = playerOf(sim);
   p.blocking = on && !!p.blade?.saber && p.focusLock <= 0 && p.swing <= 0 && !p.dead;
 }
+// The party casts the power in slot `index`. Returns "" when it was cast, else why not (the scene says it).
+export function castPower(sim: Sim, index: number, env: Env, events: Event[]): string {
+  const p = playerOf(sim);
+  const power = p.powers?.[index];
+  if (!power) return "";
+  if (p.dead || p.stagger > 0) return "Cannot cast now";
+  if ((p.powerCd ?? 0) > 0) return "";
+  if ((p.points ?? 0) < power.cost) return `Not enough points for ${power.name} (${power.cost})`;
+  const from = { x: p.x, y: p.y, h: p.h + 1.0 };
+  let at = { x: p.x, y: p.y, h: p.h + 1.0 };
+  if (power.kind === "heal") {
+    if (p.hp >= p.maxHp) return `${power.name}: already unhurt`;
+    p.hp = Math.min(p.maxHp, p.hp + power.damage);
+  } else {
+    // The foe nearest the line of the aim, within the power's reach and the cone, and in sight
+    const [fx, fy] = dirOf(p.facing);
+    let target: Unit | undefined;
+    let best = Infinity;
+    for (const u of sim.units) {
+      if (u.side !== "foe" || !alive(u) || u.mode === "gone") continue;
+      const d = dist(p, u);
+      // (reach is measured from the body: a power with a reach of one square takes whoever stands next to the party)
+      if (d > power.range + 0.8) continue;
+      const off = Math.acos(clamp(((u.x - p.x) * fx + (u.y - p.y) * fy) / (d || 1), -1, 1));
+      if (off > SHOOT.power.cone || !sees(env, { x: p.x, y: p.y, h: p.h }, { x: u.x, y: u.y, h: u.h })) continue;
+      const score = off * 6 + d * 0.1;
+      if (score < best) [target, best] = [u, score];
+    }
+    if (!target) return `${power.name}: nothing in its reach`;
+    at = { x: target.x, y: target.y, h: target.h + SHOOT.height * 0.6 };
+    for (const u of sim.units) {
+      if (u.side !== "foe" || !alive(u) || u.mode === "gone") continue;
+      if (u !== target && dist(u, target) > power.radius) continue;
+      if (u.mode === "idle") alertFoe(sim, u, events);
+      if (power.kind === "damage") {
+        hurt(sim, u, power.damage, power.type, p, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 });
+        u.stagger = Math.max(u.stagger, 0.3);
+      } else if (power.kind === "stun") u.stagger = Math.max(u.stagger, Math.min(SHOOT.power.longest, power.seconds));
+      else if (power.kind === "blind") u.blind = Math.max(u.blind, Math.min(SHOOT.power.longest, power.seconds));
+      else if (power.kind === "fear") {
+        // (the brave do not run: they are shaken for a moment)
+        if (u.brave || u.leader) u.stagger = Math.max(u.stagger, Math.min(2, power.seconds));
+        else { u.mode = "flee"; u.flee = Math.min(SHOOT.power.longest, power.seconds); }
+      } else {
+        const way = power.kind === "push" ? 1 : -1;
+        const d = dist(p, u) || 1;
+        const secs = Math.max(0.15, power.distance / SHOOT.power.knock);
+        u.knock = { vx: ((u.x - p.x) / d) * SHOOT.power.knock * way, vy: ((u.y - p.y) / d) * SHOOT.power.knock * way, t: secs, strike: power.strike, type: power.type };
+        u.stagger = Math.max(u.stagger, secs + 0.2);
+      }
+    }
+  }
+  p.points = (p.points ?? 0) - power.cost;
+  p.powerCd = SHOOT.power.pause;
+  events.push({ type: "power", id: p.id, kind: power.kind, name: power.name, ...from, tx: at.x, ty: at.y, th: at.h });
+  return "";
+}
+
 // A swing of the party's blade; chained within a second of the last it hits harder (the combo)
 export function swingPlayer(sim: Sim, events: Event[]): boolean {
   const p = playerOf(sim);
@@ -364,6 +530,29 @@ export function step(sim: Sim, dt: number, env: Env, player: { x: number; y: num
   }
   if (p.swing === 0) p.landed = false;
 
+  p.powerCd = Math.max(0, (p.powerCd ?? 0) - dt);
+  // Something pushed or pulled flies until its time is up, or a wall stops it (and hurts it, if the power said so)
+  for (const u of sim.units) {
+    if (!u.knock || !alive(u)) continue;
+    const k = u.knock;
+    const h = Math.min(dt, k.t);
+    if (!walk(u, k.vx * h, k.vy * h, env)) {
+      if (k.strike > 0) hurt(sim, u, k.strike, k.type, p, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 });
+      u.knock = undefined;
+    } else {
+      k.t -= h;
+      if (k.t <= 1e-6) u.knock = undefined;
+    }
+  }
+  // (every half second each unit is made sure it is not standing in a wall)
+  for (const u of sim.units) {
+    if (u.side === "player" || !alive(u) || u.mode === "gone") continue;
+    u.stuckT -= dt;
+    if (u.stuckT <= 0) {
+      u.stuckT = 0.5;
+      unstick(u, env);
+    }
+  }
   for (const u of sim.units) if (u.side !== "player" && alive(u)) think(sim, u, dt, env, events);
   stepBolts(sim, dt, env, events);
   stepGrenades(sim, dt, env, events);
@@ -415,6 +604,21 @@ function nearest(sim: Sim, u: Unit, list: Unit[]) {
   }
   return best;
 }
+// Goes for a target: straight at it where the way is clear, else along the way round the wall (looked for again every so often)
+function chase(u: Unit, target: { x: number; y: number }, speed: number, dt: number, env: Env, plain: boolean): boolean {
+  u.pathT -= dt;
+  if (plain && lineWalkable(env, u, target)) {
+    u.path = undefined;
+    return steer(u, target, speed, dt, env);
+  }
+  if (!u.path || !u.path.length || u.pathT <= 0) {
+    u.path = route(env, u, target) ?? undefined;
+    u.pathT = SHOOT.path.every;
+  }
+  while (u.path && u.path.length && Math.hypot(u.path[0].x - u.x, u.path[0].y - u.y) < 0.3) u.path.shift();
+  const next = u.path?.[0];
+  return steer(u, next ?? target, speed, dt, env);
+}
 function steer(u: Unit, goal: { x: number; y: number }, speed: number, dt: number, env: Env, away = false) {
   const angle = Math.atan2(goal.x - u.x, goal.y - u.y) + (away ? Math.PI : 0);
   // Try the straight way, then either side, so a wall is gone round and not walked into
@@ -448,7 +652,7 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
   const ranged = !!u.gun && u.gun.range > 1.6;
   if (ranged) {
     const want = clamp(u.gun!.range * 0.55, 4, 10);
-    if (!seen || d > want + 2.5) steer(u, target, u.speed, dt, env);
+    if (!seen || d > want + 2.5) chase(u, target, u.speed, dt, env, seen);
     else if (d < want - 2.5) steer(u, target, u.speed * 0.8, dt, env, true);
     else {
       if (u.strafe <= 0) { u.strafe = between(sim, [0.9, 2.2]); u.strafeDir = rand(sim) < 0.5 ? -1 : 1; }
@@ -462,15 +666,20 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
         u.aiming -= dt;
         if (u.aiming <= 0) u.volleyLeft = u.volley;
       } else if (u.volleyLeft === 0 && u.fire <= 0) {
-        u.aiming = SHOOT.telegraph;
-        u.fire = between(sim, SHOOT.volley);
+        // A crowd takes turns: when enough of its side are aiming or firing, this one waits a moment
+        const busy = sim.units.filter((o) => o !== u && o.side === u.side && alive(o) && (o.aiming > 0 || o.volleyLeft > 0)).length;
+        if (busy >= SHOOT.maxShooters && !u.leader) u.fire = between(sim, [0.3, 0.7]);
+        else {
+          u.aiming = SHOOT.telegraph;
+          u.fire = between(sim, SHOOT.volley);
+        }
       }
       if (u.volleyLeft > 0 && u.burst <= 0 && u.aiming <= 0) {
         // One shot of the volley: the aim is off by more for a high Armor Class, a low bonus, a long way, or a blinding flash
         const err = (SHOOT.aimError - u.bonus * SHOOT.aimPerBonus + Math.max(0, target.ac - 12) * SHOOT.aimPerArmor * 0.1) * (d > u.gun!.range ? 1.5 : 1) * (blind ? 4 : 1);
         const spread = clamp(err, 0.012, 0.3);
         const from = { x: u.x, y: u.y, h: u.h + SHOOT.eye * 0.85 };
-        const to = { x: target.x, y: target.y, h: target.h + SHOOT.height * 0.55 };
+        const to = { x: target.x, y: target.y, h: target.h + heightOf(target) * 0.55 };
         launch(sim, u, u.gun!, from, to, spread, events);
         u.volleyLeft--;
         u.burst = SHOOT.burstGap;
@@ -480,7 +689,7 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
   }
   // In close: run at it, wind up, strike
   const reach = u.reach + SHOOT.radius;
-  if (d > reach * 0.9) steer(u, target, u.speed, dt, env);
+  if (d > reach * 0.9) chase(u, target, u.speed, dt, env, seen);
   if (u.swing > 0) {
     if (u.swing - dt <= 0 && d <= reach + 0.4) meleeBlow(sim, u, target, events);
   } else if (d <= reach + 0.2 && u.fire <= 0 && !blind) {
@@ -527,7 +736,11 @@ function stepBolts(sim: Sim, dt: number, env: Env, events: Event[]) {
       b.x += b.vx * sdt; b.y += b.vy * sdt; b.h += b.vh * sdt; b.life -= sdt;
       // (the square it was fired from does not stop it: a sentry on a roof shoots from a square the street calls a wall)
       const home = Math.floor(b.x) === b.cell[0] && Math.floor(b.y) === b.cell[1];
-      if ((!home && env.blocks(b.x, b.y, b.h)) || b.h < env.floorAt(b.x, b.y) - 0.05) { b.life = 0; break; }
+      if ((!home && env.blocks(b.x, b.y, b.h)) || b.h < env.floorAt(b.x, b.y) - 0.05) {
+        b.life = 0;
+        events.push({ type: "impact", x: b.x, y: b.y, h: Math.max(b.h, env.floorAt(b.x, b.y)) });
+        break;
+      }
       // The party's saber, held up in front, turns a bolt from the front back along the aim
       if (b.side === "foe" && p.blocking && !p.dead && dist(b, p) < 0.85 && Math.abs(b.h - (p.h + 0.8)) < 0.9) {
         const [fx, fy] = dirOf(p.facing);
@@ -547,7 +760,7 @@ function stepBolts(sim: Sim, dt: number, env: Env, events: Event[]) {
       for (const u of sim.units) {
         if (!alive(u) || u.side === b.side || u.id === b.owner) continue;
         if (b.side === "ally" && u.side === "player") continue;
-        if (dist(b, u) > SHOOT.radius || b.h < u.h || b.h > u.h + SHOOT.height) continue;
+        if (dist(b, u) > SHOOT.radius || b.h < u.h || b.h > u.h + heightOf(u)) continue;
         // A saber in an enemy's hands turns the odd bolt aside
         if (u.side === "foe" && u.blade?.saber && b.side !== "foe" && rand(sim) < 0.35 && !b.reflected) { events.push({ type: "blocked", id: u.id }); b.life = 0; hit = true; break; }
         const head = b.h > u.h + SHOOT.head;

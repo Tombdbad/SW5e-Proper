@@ -2,8 +2,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  SHOOT, avgDice, blankUnit, bladeOf, firePlayer, foesLeft, grenadeOf, gunOf, modeOf, newSim, playerOf, reloadPlayer, resultOf, setBlock, step, swingPlayer, throwGrenade,
-  type Env, type Event, type Gun, type Sim, type Unit,
+  SHOOT, avgDice, blankUnit, bladeOf, castPower, firePlayer, fitsAt, foesLeft, heightOf, route, unstick, grenadeOf, gunOf, modeOf, newSim, playerOf, reloadPlayer, resultOf, setBlock, step, swingPlayer, throwGrenade,
+  type Env, type Event, type Gun, type RtPower, type Sim, type Unit,
 } from "../../shared/logic/shooter";
 
 // An open field, with a wall across x = 10 if asked
@@ -360,4 +360,118 @@ test("everyone starts on ground a body can stand on: the unplaced ahead of the p
   const sim2 = newSim([player(), trooper("t", NaN, NaN)]);
   placeUnits(sim2, shut, { x: 1, y: 1, facing: 0 });
   assert.ok(Number.isFinite(sim2.units[1].x));
+});
+
+// ---- Walls, doors and crowds (2026-10-29, after the user's report: foes stuck in a wall, no way round it) ---------------------------------
+// A wall across x = 10 with a doorway at y in [10, 11)
+const door = (): Env => ({
+  blocks: (x, y, h) => Math.floor(x) === 10 && !(y >= 10 && y < 11) && h < 3,
+  walkable: (x, y) => !(Math.floor(x) === 10 && !(y >= 10 && y < 11)) && x > -40 && x < 80 && y > -40 && y < 40,
+  floorAt: () => 0,
+});
+
+test("a foe on the far side of a wall finds the doorway and comes through it", () => {
+  const env = door();
+  const sim = newSim([player({ x: 14.5, y: 0.5 }), trooper("t", 5.5, 0.5, { mode: "engage", gun: undefined, blade: { name: "Claws", damage: 3, type: "kinetic", saber: false } })]);
+  run(sim, env, 14, [], 1 / 30);
+  const t = sim.units[1];
+  assert.ok(t.x > 10, `got through the doorway: at ${t.x.toFixed(1)}, ${t.y.toFixed(1)}`);
+});
+
+test("route finds the way round, and says so when there is none", () => {
+  const env = door();
+  const path = route(env, { x: 5.5, y: 0.5 }, { x: 14.5, y: 0.5 })!;
+  assert.ok(path.length > 9 && path.some((p) => p.x >= 10 && p.x < 11 && p.y >= 10 && p.y < 11), "through the doorway");
+  const shut: Env = { ...env, walkable: (x, y) => Math.floor(x) !== 10 && x > -40 && x < 80 && y > -40 && y < 40 };
+  assert.equal(route(shut, { x: 5.5, y: 0.5 }, { x: 14.5, y: 0.5 }), null);
+});
+
+test("a unit left inside a wall by a map that changed is brought out to open ground, and fights on", () => {
+  const env = door();
+  const sim = newSim([player({ x: 4.5, y: 0.5 }), trooper("t", 10.5, 3.5, { mode: "engage" })]);
+  assert.equal(fitsAt(env, 10.5, 3.5), false);
+  run(sim, env, 1);
+  const t = sim.units[1];
+  assert.equal(fitsAt(env, t.x, t.y), true, `now at ${t.x},${t.y}`);
+  // a unit in the open is left where it is
+  const free = trooper("f", 2.5, 2.5);
+  assert.equal(unstick(free, env), false);
+  assert.deepEqual([free.x, free.y], [2.5, 2.5]);
+});
+
+test("a crowd takes turns: no more than three aim or fire at once", () => {
+  const env = field();
+  const foes = Array.from({ length: 8 }, (_, i) => trooper(`t${i}`, 12 + (i % 4), -3 + i, { mode: "engage", wait: 0 }));
+  const sim = newSim([player({ hp: 9999, maxHp: 9999 }), ...foes]);
+  let most = 0;
+  for (let t = 0; t < 12; t += 1 / 30) {
+    step(sim, 1 / 30, env, me(sim));
+    most = Math.max(most, sim.units.filter((u) => u.side === "foe" && (u.aiming > 0 || u.volleyLeft > 0)).length);
+  }
+  assert.ok(most >= 1 && most <= SHOOT.maxShooters, `at most ${most} at once`);
+});
+
+test("crouching makes a smaller mark and a steadier aim", () => {
+  const env = field();
+  const high = player({ x: 0.5, y: 0.5 });
+  const low = player({ x: 0.5, y: 0.5, crouch: true });
+  assert.ok(heightOf(low) < heightOf(high));
+  // a bolt at head height passes over a crouching party
+  const sim = newSim([low, trooper("t", 12.5, 0.5, { gun: undefined })]);
+  sim.bolts.push({ id: 99, owner: "t", side: "foe", x: 3, y: 0.5, h: 1.0, vx: -24, vy: 0, vh: 0, damage: 5, type: "energy", life: 1, cell: [3, 0] } as never);
+  run(sim, env, 0.5);
+  assert.equal(playerOf(sim).hp, 50, "the bolt went over");
+  const standing = newSim([high, trooper("t", 12.5, 0.5, { gun: undefined })]);
+  standing.bolts.push({ id: 99, owner: "t", side: "foe", x: 3, y: 0.5, h: 1.0, vx: -24, vy: 0, vh: 0, damage: 5, type: "energy", life: 1, cell: [3, 0] } as never);
+  run(standing, env, 0.5);
+  assert.ok(playerOf(standing).hp < 50, "and hit a standing one");
+});
+
+// ---- Powers in real time -------------------------------------------------------------------------------------------------------------
+const power = (extra: Partial<RtPower> = {}): RtPower => ({ id: "p", name: "Force Lightning", cost: 2, kind: "damage", damage: 9, type: "energy", range: 12, radius: 0, seconds: 0, distance: 0, strike: 0, ...extra });
+const caster = (powers: RtPower[], extra: Partial<Unit> = {}) => player({ gun: undefined, powers, points: 6, facing: Math.PI / 2, ...extra });
+
+test("a damage power strikes the foe in front of the party for its dice at their average, and costs its points", () => {
+  const env = field();
+  const sim = newSim([caster([power()]), trooper("t", 6.5, 0.5, { gun: undefined })]);
+  const events: Event[] = [];
+  assert.equal(castPower(sim, 0, env, events), "");
+  assert.equal(sim.units[1].hp, 11);
+  assert.equal(playerOf(sim).points, 4);
+  assert.ok(events.some((e) => e.type === "power"));
+  // not again at once, and not behind the party
+  assert.equal(castPower(sim, 0, env, []), "");
+  assert.equal(playerOf(sim).points, 4, "the pause");
+  const behind = newSim([caster([power()]), trooper("t", -6.5, 0.5, { gun: undefined })]);
+  assert.match(castPower(behind, 0, env, []), /nothing in its reach/);
+  assert.equal(playerOf(behind).points, 6, "nothing is spent on nothing");
+});
+
+test("a power needs its points, and healing stops at full health", () => {
+  const env = field();
+  const poor = newSim([caster([power({ cost: 5 })], { points: 2 }), trooper("t", 6.5, 0.5)]);
+  assert.match(castPower(poor, 0, env, []), /Not enough points/);
+  const heal = newSim([caster([power({ kind: "heal", damage: 12, name: "Heal" })], { hp: 20, maxHp: 50 })]);
+  assert.equal(castPower(heal, 0, env, []), "");
+  assert.equal(playerOf(heal).hp, 32);
+  const full = newSim([caster([power({ kind: "heal", damage: 12, name: "Heal" })])]);
+  assert.match(castPower(full, 0, env, []), /unhurt/);
+});
+
+test("a push flings a foe away and hurts it if a wall stops it; a stun holds it, a scare sends the timid running", () => {
+  const env = door();
+  const sim = newSim([caster([power({ kind: "push", distance: 6, strike: 7, name: "Force Push" })], { x: 8.5, y: 0.5 }), trooper("t", 9.5, 0.5, { gun: undefined })]);
+  assert.equal(castPower(sim, 0, env, []), "");
+  const before = sim.units[1].hp;
+  run(sim, env, 1);
+  assert.ok(sim.units[1].x < 10 && sim.units[1].hp < before, `stopped by the wall and hurt: ${sim.units[1].x.toFixed(2)}, ${sim.units[1].hp}`);
+  const stun = newSim([caster([power({ kind: "stun", seconds: 4 })]), trooper("t", 6.5, 0.5, { mode: "engage" })]);
+  castPower(stun, 0, field(), []);
+  assert.ok(stun.units[1].stagger > 3);
+  const scare = newSim([caster([power({ kind: "fear", seconds: 5 })]), trooper("t", 6.5, 0.5, { brave: false, mode: "engage" })]);
+  castPower(scare, 0, field(), []);
+  assert.equal(scare.units[1].mode, "flee");
+  const steady = newSim([caster([power({ kind: "fear", seconds: 5 })]), trooper("b", 6.5, 0.5, { brave: true, mode: "engage" })]);
+  castPower(steady, 0, field(), []);
+  assert.notEqual(steady.units[1].mode, "flee");
 });

@@ -8,13 +8,14 @@ import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Billboard, Text } from "@react-three/drei";
 import {
-  SHOOT, firePlayer, newSim, placeUnits, playerOf, reloadPlayer, resultOf, roundsOf, setBlock, step, swingPlayer, throwGrenade,
+  SHOOT, castPower, firePlayer, newSim, placeUnits, playerOf, reloadPlayer, resultOf, roundsOf, setBlock, step, swingPlayer, throwGrenade,
   type Env, type Event, type Sim, type Unit,
 } from "@shared/logic/shooter";
 import { Figure, usePartyLook } from "../models";
 import { SIDE_COLORS, tokenOf } from "../sprites";
-import { AIM, rightOf, useView } from "./aim";
+import { AIM, rightOf, stance, useView } from "./aim";
 import { bindShootKeys, useShoot, type Session } from "./shoot";
+import { sfx } from "./fx";
 import { useCombat } from "@/lib/stores/useCombat";
 
 export interface Spot { x: number; y: number; h: number }
@@ -33,7 +34,9 @@ export interface ShooterCtx {
   airborne: () => boolean;
 }
 
-const POOL = { bolts: 72, grenades: 6, blasts: 6 };
+const POOL = { bolts: 72, grenades: 6, blasts: 16 };
+// What a power looks like where it takes hold
+const POWER_COLOR: Record<string, string> = { damage: "#9ad0ff", heal: "#4ade80", stun: "#fde047", fear: "#a78bfa", blind: "#ffffff", push: "#e5e7eb", pull: "#c4b5fd" };
 const BOLT_COLOR = { foe: "#ff3b30", ally: "#5ac8fa", player: "#7dd3fc", reflected: "#ffd60a" };
 const isLarge = (size?: string) => /large|huge|gargantuan/i.test(size ?? "");
 
@@ -43,11 +46,19 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
   if (!sim.current || (sim.current as any)._session !== session.id) {
     sim.current = newSim(session.units, { seed: session.seed, surprise: session.surprise });
     (sim.current as any)._session = session.id;
+    // (the powers on the keys, and the points to cast them with)
+    const me = playerOf(sim.current);
+    me.powers = session.powers ?? [];
+    me.points = session.points ?? 0;
     // (test hook: the live fight, for a script to look at or to bring to its end)
     if (typeof window !== "undefined") (window as any).__shooter = sim.current;
   }
   const state = useRef({
-    seen: { fire: 0, grenade: 0, reload: 0, block: 0, swap: 0 },
+    seen: { fire: 0, grenade: 0, reload: 0, block: 0, swap: 0, crouch: 0, power0: 0, power1: 0, power2: 0, power3: 0 },
+    crouch: false,
+    // when each fallen unit went down, and when each unit last swung (the figures fall and swing over a moment, not at once)
+    died: {} as Record<string, number>,
+    swung: {} as Record<string, number>,
     weapon: (session.units.find((u) => u.side === "player")?.gun ? "gun" : "blade") as "gun" | "blade",
     grenades: session.grenades.map((g) => ({ ...g })),
     placed: false,
@@ -58,7 +69,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     firedAt: 0,
     swungAt: -9,
     swingCombo: 0,
-    blasts: [] as { x: number; y: number; h: number; t: number; r: number }[],
+    blasts: [] as { x: number; y: number; h: number; t: number; r: number; life: number; c: string }[],
     note: "",
   });
   const group = useRef<Record<string, THREE.Group | null>>({});
@@ -68,6 +79,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
   const grenadeMeshes = useRef<(THREE.Mesh | null)[]>([]);
   const blastMeshes = useRef<(THREE.Mesh | null)[]>([]);
   const flash = useRef<THREE.Mesh>(null);
+  const foeSabers = useRef<Record<string, THREE.Group | null>>({});
   const saber = useRef<THREE.Group>(null);
   const saberBlade = useRef<THREE.Group>(null);
   const blaster = useRef<THREE.Group>(null);
@@ -109,6 +121,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       const a = mine.ammo;
       patch[String(mine.id)] = {
         hp: Math.max(0, Math.round(p.hp)), lastHitBy: s.lastHitOnPlayer,
+        ...(p.points !== undefined && mine.powerPoints !== undefined ? { powerPoints: Math.max(0, p.points) } : {}),
         ...(a && p.gun ? { ammo: { ...a, left: p.gun.left }, spentAmmo: { ...(mine.spentAmmo ?? {}), [a.round ?? a.plain]: (mine.spentAmmo?.[a.round ?? a.plain] ?? 0) + p.gun.spent } } : {}),
       };
     }
@@ -134,7 +147,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       placeUnits(s, c.env, { x: me.x, y: me.y, facing: me.facing });
     }
     // What was pressed since the last frame
-    const edge = (k: "grenade" | "reload" | "swap") => {
+    const edge = (k: "grenade" | "reload" | "swap" | "crouch" | "power0" | "power1" | "power2" | "power3") => {
       const n = store.taps[k];
       const fresh = n !== st.seen[k];
       st.seen[k] = n;
@@ -150,6 +163,16 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         st.note = st.weapon === "gun" ? `${p.gun.name} drawn` : `${p.blade.name} drawn`;
       }
       if (edge("reload") && st.weapon === "gun" && !reloadPlayer(s, events)) st.note = p.gun && p.gun.left >= p.gun.mag ? "" : p.gun && p.gun.reserve <= 0 && p.gun.left < p.gun.mag ? "No ammunition left to reload with" : "";
+      if (edge("crouch")) {
+        st.crouch = !st.crouch;
+        p.crouch = st.crouch;
+      }
+      for (const [i, key] of (["power0", "power1", "power2", "power3"] as const).entries()) {
+        if (!edge(key)) continue;
+        const why = castPower(s, i, c.env, events);
+        if (why) st.note = why;
+        else if (p.powers?.[i]) st.note = "";
+      }
       if (edge("grenade")) {
         const g = st.grenades.find((x) => x.count > 0);
         if (g && shot) {
@@ -184,12 +207,28 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     }
     for (const e of events) {
       if (e.type === "hit") {
-        if (e.target === "me") store.setHud({ hurtAt: now });
-        else if (e.by === "me") store.setHud({ hitAt: now, ...(e.head ? { headAt: now } : {}) });
-      } else if (e.type === "down" && e.id !== "me" && e.by === "me") store.setHud({ killAt: now });
-      else if (e.type === "deflect") store.setHud({ deflectAt: now });
-      else if (e.type === "explode") st.blasts.push({ x: e.x, y: e.y, h: e.h, t: 0, r: e.radius });
+        if (e.target === "me") { store.setHud({ hurtAt: now }); sfx.hurt(); }
+        else if (e.by === "me") { store.setHud({ hitAt: now, ...(e.head ? { headAt: now } : {}) }); sfx.hit(); }
+        else sfx.hit();
+        st.blasts.push({ x: e.x, y: e.y, h: e.h, t: 0, r: 0.2, life: 0.16, c: e.target === "me" ? "#ff5a4a" : "#ffe9a8" });
+      } else if (e.type === "down" && e.id !== "me" && e.by === "me") { store.setHud({ killAt: now }); sfx.hit(true); }
+      else if (e.type === "deflect") { store.setHud({ deflectAt: now }); sfx.deflect(); }
+      else if (e.type === "explode") { st.blasts.push({ x: e.x, y: e.y, h: e.h, t: 0, r: e.radius, life: 0.5, c: "#ffb347" }); sfx.boom(); }
+      else if (e.type === "shot") sfx.shot(e.from === "me", Math.max(-1, Math.min(1, Math.sin(Math.atan2(e.x - me.x, e.y - me.y) - me.facing) * 0.8)));
+      else if (e.type === "impact") { st.blasts.push({ x: e.x, y: e.y, h: e.h, t: 0, r: 0.18, life: 0.14, c: "#ffd27a" }); sfx.impact(); }
+      else if (e.type === "swing") { st.swung[e.id] = now; sfx.swing(); }
+      else if (e.type === "blocked") sfx.deflect();
+      else if (e.type === "reload") sfx.reload();
+      else if (e.type === "power") {
+        sfx.power(e.kind);
+        st.blasts.push({ x: e.tx, y: e.ty, h: e.th, t: 0, r: 0.6, life: 0.4, c: POWER_COLOR[e.kind] ?? "#ffffff" });
+        if (e.kind === "damage") for (let i = 1; i <= 4; i++) st.blasts.push({ x: e.x + (e.tx - e.x) * (i / 5), y: e.y + (e.ty - e.y) * (i / 5), h: e.h + (e.th - e.h) * (i / 5), t: 0, r: 0.3, life: 0.3, c: POWER_COLOR.damage });
+        store.setHud({ note: `${e.name}` });
+      }
     }
+    // The party's stance: down behind cover, leaning into a swing (the camera, the muzzle and the figure follow it: interiors/aim.ts)
+    stance.k += ((st.crouch && !p.dead ? 1 : 0) - stance.k) * Math.min(1, dt * 10);
+    stance.lunge = p.swing > 0 ? Math.sin(Math.PI * (1 - p.swing / SHOOT.saber.swing)) * 0.32 : 0;
 
     // ---- what is seen
     for (const u of s.units) {
@@ -199,10 +238,22 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       g.visible = u.mode !== "gone";
       g.position.set(u.x - c.cx, u.h, u.y - c.cz);
       if (u.dead) {
-        g.rotation.set(-Math.PI / 2, 0, 0.4);
-        g.position.y = u.h + 0.14;
+        // (it falls over in about a third of a second, and does not snap flat)
+        st.died[u.id] ??= now;
+        const k = Math.min(1, (now - st.died[u.id]) / 340);
+        const ease = k * k * (3 - 2 * k);
+        g.rotation.set(-Math.PI / 2 * ease, u.facing * (1 - ease), 0.4 * ease, "YXZ");
+        g.position.y = u.h + 0.14 * ease;
       } else {
-        g.rotation.set(0, u.facing, 0);
+        g.rotation.set(0, u.facing, 0, "YXZ");
+      }
+      // A foe's saber: carried low, and swung across in an arc when it strikes (its blow is felt at the same moment: shooter.ts)
+      const fs = foeSabers.current[u.id];
+      if (fs) {
+        const since = (now - (st.swung[u.id] ?? -9999)) / 450;
+        fs.visible = !u.dead;
+        const swinging = since >= 0 && since < 1;
+        fs.rotation.set(swinging ? 1.35 : 1.0, swinging ? 1.25 - 2.5 * since : 0, 0);
       }
       const bar = bars.current[u.id];
       if (bar) {
@@ -233,15 +284,17 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       m.visible = !!g;
       if (g) m.position.set(g.x - c.cx, g.h, g.y - c.cz);
     });
-    st.blasts = st.blasts.filter((b) => (b.t += dt) < 0.5);
+    st.blasts = st.blasts.filter((b) => (b.t += dt) < b.life).slice(-POOL.blasts);
     blastMeshes.current.forEach((m, i) => {
       if (!m) return;
       const b = st.blasts[i];
       m.visible = !!b;
       if (!b) return;
       m.position.set(b.x - c.cx, b.h, b.y - c.cz);
-      m.scale.setScalar(Math.max(0.05, b.r * (0.3 + 1.6 * (b.t / 0.5))));
-      (m.material as THREE.MeshBasicMaterial).opacity = 0.75 * (1 - b.t / 0.5);
+      m.scale.setScalar(Math.max(0.05, b.r * (0.3 + 1.6 * (b.t / b.life))));
+      const mat = m.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.75 * (1 - b.t / b.life);
+      mat.color.set(b.c);
     });
 
     // ---- what the party holds
@@ -279,10 +332,12 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         hp: Math.max(0, Math.round(p.hp)), maxHp: p.maxHp, weapon: st.weapon, hasGun: !!g, hasBlade: !!p.blade, saber: !!p.blade?.saber, gun: g?.name,
         left: g?.left ?? 0, mag: g?.mag ?? 0, reserve: g?.reserve ?? 0, reloading: p.reloading > 0, grenade: gr?.kind.name, grenades: st.grenades.reduce((n, x) => n + x.count, 0),
         focus: Math.round(p.focus), focusMax: SHOOT.focus.max, blocking: p.blocking, foes: s.units.filter((u) => u.side === "foe" && !u.dead && u.mode !== "gone").length, note: st.note,
+        points: p.points ?? 0, crouching: st.crouch,
+        powers: (p.powers ?? []).map((w) => ({ name: w.name, cost: w.cost, ready: (p.points ?? 0) >= w.cost && (p.powerCd ?? 0) <= 0 })),
       });
       useCombat.getState().syncRealtime({
         ...Object.fromEntries(s.units.filter((u) => u.side !== "player").map((u) => [u.id, { hp: u.fled ? 0 : Math.max(0, Math.round(u.hp)) }])),
-        ...(useCombat.getState().combatants.find((x) => x.isPlayer) ? { [String(useCombat.getState().combatants.find((x) => x.isPlayer)!.id)]: { hp: Math.max(0, Math.round(p.hp)) } } : {}),
+        ...(useCombat.getState().combatants.find((x) => x.isPlayer) ? { [String(useCombat.getState().combatants.find((x) => x.isPlayer)!.id)]: { hp: Math.max(0, Math.round(p.hp)), ...(p.points !== undefined && useCombat.getState().combatants.find((x) => x.isPlayer)!.powerPoints !== undefined ? { powerPoints: Math.max(0, p.points) } : {}) } } : {}),
       });
     }
     // The fight is over a moment after its last blow
@@ -299,6 +354,8 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     mounted.current = true;
     return () => {
       mounted.current = false;
+      stance.k = 0;
+      stance.lunge = 0;
       setTimeout(() => { if (!mounted.current && !state.current.done && useCombat.getState().realtime) finish(sim.current, true); }, 60);
     };
   }, []);
@@ -312,6 +369,12 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         return (
           <group key={u.id} ref={(g) => { group.current[u.id] = g; }}>
             <Figure kind={tokenOf({ name: u.name, role: meta.role ?? "", creature: meta.creature, isPlayer: false, forceUser: meta.role === "force" })} ring={meta.ring ?? (u.side === "ally" ? SIDE_COLORS.friendly : SIDE_COLORS.hostile)} name={u.name} large={large} species={meta.species} role={meta.role} creature={meta.creature} size={meta.size} fighting />
+            {u.blade?.saber && (
+              <group position={[0.28, 0.95, 0.12]} ref={(g) => { foeSabers.current[u.id] = g; }} rotation={[1.0, 0, 0]}>
+                <mesh position={[0, 0.06, 0]}><cylinderGeometry args={[0.022, 0.026, 0.2, 8]} /><meshStandardMaterial color="#8a8f98" metalness={0.8} roughness={0.3} /></mesh>
+                <mesh position={[0, 0.62, 0]}><cylinderGeometry args={[0.018, 0.018, 1.08, 8]} /><meshBasicMaterial color={u.name && /sith|inquisitor|dark/i.test(`${u.name} ${meta.role ?? ""}`) ? "#ff3030" : "#5aa9ff"} toneMapped={false} /></mesh>
+              </group>
+            )}
             <mesh ref={(m) => { hitBoxes.current[u.id] = m; }} position={[0, 0.65, 0]}>
               <boxGeometry args={[0.7, 1.3, 0.7]} />
               <meshBasicMaterial transparent opacity={0} depthWrite={false} />

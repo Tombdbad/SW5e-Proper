@@ -1,7 +1,17 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-29 (Windows PC), branch `main`, last commit `4ba6d38`. NOTHING of the two sessions below is committed or pushed (commit only at the user's word).
+Written 2026-10-29 (Windows PC), branch `main`. Commits of that day: 867effa co-op, b7c47e2 shooter/nemesis/ammo, dc73724 notes; the work below is the commit after them. Nothing is pushed.
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told.
+
+## Session 3 of 2026-10-29: the shooter's stuck defeat, walls, powers (REVIVAL_NOTES "Shooter: the stuck defeat ...")
+The user: after dying and waking, the enemy did not attack or take damage and the doors did nothing; enemies stuck in walls after following into another room; do the "not done" list.
+- Root cause of the stuck state: watch stayed "attacking" with no fight (autoFought spent, doors barred silently, Fight button only). Fixed in GameBoard (watch down to suspicious when left for dead,
+  autoFought re-armed, shooter: no barred doors, weapons-out starts the fight, X starts one). Walls: `walk()` falsely reported steps (the real "stuck at a wall" bug), `unstick`, `route`/`chase` in
+  shared/logic/shooter.ts; Follower (LocalMap) keyed by place + A* route. Added: crowd turns, crouch (C), powers on 1-4 (client/src/lib/sw5e/realtimePowers.ts), sounds (interiors/fx.ts), impacts, fall, foe sabers.
+- Checked: `npm test` 467 pass / 3 skipped (DB tests); vite build to a scratch dir; browser (dev server PORT=5099 on sw5e_test, stopped again): e2e/shooter.mjs, shooter-extras.mjs, shooter-defeat.mjs (CROWD=1), followers.mjs.
+- NOT done (all listed in the notes): class features/maneuvers in real time, companion/enemy casting, prone/sneak, road ambushes and the pit arena (turn-based), a co-op fight. The dist/ build and
+  5000/5002/5057 do NOT have any of today's work. Fire sounds, saber swing and crouch were checked by state/screenshot, not by ear.
+- Next: ask the user to try it on a fresh build (npm run build; restart), then the co-op fight, then real roles in the road minigame.
 
 ## Session 2 of 2026-10-29: CO-OP (REVIVAL_NOTES "Co-op"), uncommitted
 The user: co-op for up to 4 on the local wi-fi; each walks the settlement alone or together; leaving the settlement/planet/system is the party's, through a "room"

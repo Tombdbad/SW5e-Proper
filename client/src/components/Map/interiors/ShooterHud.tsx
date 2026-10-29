@@ -31,7 +31,15 @@ export function ShooterHud() {
             <div style={{ width: `${(hud.focus / Math.max(1, hud.focusMax)) * 100}%`, height: "100%", background: hud.blocking ? "#7dd3fc" : "#38bdf8" }} />
           </div>
         )}
-        <div style={{ fontSize: 12, opacity: 0.85 }}>Hostiles: {hud.foes}</div>
+        <div style={{ fontSize: 12, opacity: 0.85 }}>Hostiles: {hud.foes}{hud.crouching ? " · crouching" : ""}</div>
+        {hud.powers.length > 0 && (
+          <div style={{ marginTop: 4, fontSize: 12 }} data-testid="shooter-powers">
+            <div style={{ opacity: 0.8 }}>Points: {hud.points}</div>
+            {hud.powers.map((w, i) => (
+              <div key={`${w.name}-${i}`} style={{ opacity: w.ready ? 1 : 0.45 }}>[{i + 1}] {w.name}{w.cost ? ` (${w.cost})` : ""}</div>
+            ))}
+          </div>
+        )}
       </div>
       <div style={{ position: "absolute", left: "50%", bottom: 150, transform: "translateX(-50%)", textAlign: "center", minWidth: 180 }} data-testid="shooter-ammo">
         {hud.weapon === "gun" && hud.hasGun ? (
@@ -66,6 +74,10 @@ export function ShootButtons() {
       {hud.hasGun && <button data-testid="reload-button" {...hold("reload")} style={{ ...base, width: 70, height: 40, background: "rgba(255,255,255,0.2)" }}>Reload</button>}
       {hud.hasGun && hud.hasBlade && <button data-testid="swap-button" {...hold("swap")} style={{ ...base, width: 70, height: 40, background: "rgba(255,255,255,0.2)" }}>{hud.weapon === "gun" ? "Saber" : "Gun"}</button>}
       {hud.saber && <button data-testid="block-button" {...hold("block")} style={{ ...base, width: 70, height: 40, background: "rgba(56,189,248,0.45)" }}>Guard</button>}
+      <button data-testid="crouch-button" {...hold("crouch")} style={{ ...base, width: 70, height: 40, background: hud.crouching ? "rgba(250,204,21,0.55)" : "rgba(255,255,255,0.2)" }}>Crouch</button>
+      {hud.powers.map((w, i) => (
+        <button key={`${w.name}-${i}`} data-testid={`power-button-${i}`} {...hold(`power${i}` as ShootKey)} style={{ ...base, width: 70, height: 40, opacity: w.ready ? 1 : 0.5, background: "rgba(167,139,250,0.5)", font: "600 10px sans-serif" }}>{w.name.length > 12 ? `${w.name.slice(0, 11)}…` : w.name}</button>
+      ))}
     </div>
   );
 }

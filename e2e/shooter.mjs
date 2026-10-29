@@ -45,13 +45,14 @@ try {
     window.__look(Math.atan2(foe.x - me.x, foe.y - me.y), -0.05); return +d.toFixed(2);
   });
 
-  say("mode dialog shown:", await page.getByTestId("mode-dialog").count(), "| mode button:", (await page.getByTestId("mode-toggle").textContent())?.trim());
+  say("mode dialog shown:", await page.getByTestId("mode-dialog").count(), "| mode button:", (await page.getByTestId("mode-toggle").textContent({ timeout: 1500 }).catch(() => "in the fight (the strip is hidden)"))?.trim());
   const view = () => page.evaluate(async () => { const s = (await import("/src/components/Map/interiors/aim.ts")).useView.getState(); return `${s.mode}${s.shooter ? " (shooter: no overhead)" : ""}`; });
   say("view with an 'overhead' preference stored:", await view());
   for (let i = 0; i < 3; i++) await page.keyboard.press("KeyV");
   say("after three V presses:", await view());
 
-  await page.getByRole("button", { name: /^(Fight|Ambush)$/ }).first().click();
+  // (in the shooter mode a hostile with its weapons out starts the fight by itself: the button is only there when it has not)
+  if (await page.getByRole("button", { name: /^(Fight|Ambush)$/ }).count()) await page.getByRole("button", { name: /^(Fight|Ambush)$/ }).first().click({ timeout: 3000 }).catch(() => {});
   await page.waitForTimeout(3000);
   say("fight started:", JSON.stringify({ ...(await state()), hud: await hud() }));
   // a long fight: the party cannot die, the foe is tanky and still

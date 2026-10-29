@@ -3,9 +3,10 @@
 // for the blade; W A S D walk, Space jumps, F fires the hook, Left Shift the pack's burst (interiors/air.ts) and E or Enter use what the
 // crosshair is on, all as before. On a phone the same are buttons beside the stick.
 import { create } from "zustand";
-import type { GrenadeKind, Unit } from "@shared/logic/shooter";
+import type { GrenadeKind, RtPower, Unit } from "@shared/logic/shooter";
 
-export type ShootKey = "fire" | "grenade" | "reload" | "block" | "swap";
+// (the digits 1 to 4 cast the party's powers, C crouches behind cover)
+export type ShootKey = "fire" | "grenade" | "reload" | "block" | "swap" | "crouch" | "power0" | "power1" | "power2" | "power3";
 export interface UnitMeta { role?: string; species?: string; creature?: string; size?: string; ring?: string }
 // Everything a fight needs to begin: who is in it (the party's unit is the one of side "player"), what they look like, and the grenades carried
 export interface Session {
@@ -15,6 +16,9 @@ export interface Session {
   seed: number;
   surprise: boolean;
   grenades: { kind: GrenadeKind; count: number }[];
+  // The powers that can be cast in real time (keys 1 to 4), and the force or tech points the party has for them
+  powers?: RtPower[];
+  points?: number;
 }
 export interface Hud {
   hp: number; maxHp: number;
@@ -23,11 +27,15 @@ export interface Hud {
   grenade?: string; grenades: number;
   focus: number; focusMax: number; blocking: boolean;
   foes: number;
+  // the points left and the powers on the keys (what each costs, and whether it can be cast now)
+  points: number;
+  powers: { name: string; cost: number; ready: boolean }[];
+  crouching: boolean;
   // when (performance.now) the last hit landed, the party was last hurt, a foe fell, a bolt was turned: the overlay flashes for a moment after each
   hitAt: number; headAt: number; hurtAt: number; killAt: number; deflectAt: number;
   note?: string;
 }
-export const blankHud = (): Hud => ({ hp: 0, maxHp: 1, weapon: "gun", hasGun: false, hasBlade: false, saber: false, left: 0, mag: 0, reserve: 0, reloading: false, grenades: 0, focus: 0, focusMax: 1, blocking: false, foes: 0, hitAt: 0, headAt: 0, hurtAt: 0, killAt: 0, deflectAt: 0 });
+export const blankHud = (): Hud => ({ hp: 0, maxHp: 1, weapon: "gun", hasGun: false, hasBlade: false, saber: false, left: 0, mag: 0, reserve: 0, reloading: false, grenades: 0, focus: 0, focusMax: 1, blocking: false, foes: 0, points: 0, powers: [], crouching: false, hitAt: 0, headAt: 0, hurtAt: 0, killAt: 0, deflectAt: 0 });
 
 interface ShootStore {
   session: Session | null;
@@ -43,20 +51,23 @@ interface ShootStore {
   setHud: (hud: Partial<Hud>) => void;
 }
 let counter = 0;
+const KEY_LIST: ShootKey[] = ["fire", "grenade", "reload", "block", "swap", "crouch", "power0", "power1", "power2", "power3"];
+const noKeys = () => Object.fromEntries(KEY_LIST.map((k) => [k, false])) as Record<ShootKey, boolean>;
+const noTaps = () => Object.fromEntries(KEY_LIST.map((k) => [k, 0])) as Record<ShootKey, number>;
 export const useShoot = create<ShootStore>((set, get) => ({
   session: null,
   last: null,
-  begin: (s) => set({ session: { ...s, id: ++counter }, last: null, hud: blankHud(), held: { fire: false, grenade: false, reload: false, block: false, swap: false } }),
+  begin: (s) => set({ session: { ...s, id: ++counter }, last: null, hud: blankHud(), held: noKeys() }),
   end: (used = {}) => set({ session: null, last: { used }, hud: blankHud() }),
-  taps: { fire: 0, grenade: 0, reload: 0, block: 0, swap: 0 },
-  held: { fire: false, grenade: false, reload: false, block: false, swap: false },
+  taps: noTaps(),
+  held: noKeys(),
   down: (key) => set({ taps: { ...get().taps, [key]: get().taps[key] + 1 }, held: { ...get().held, [key]: true } }),
   up: (key) => set({ held: { ...get().held, [key]: false } }),
   hud: blankHud(),
   setHud: (hud) => set({ hud: { ...get().hud, ...hud } }),
 }));
 
-const KEYS: Record<string, ShootKey> = { KeyX: "fire", KeyG: "grenade", KeyR: "reload", KeyB: "block", KeyQ: "swap" };
+const KEYS: Record<string, ShootKey> = { KeyX: "fire", KeyG: "grenade", KeyR: "reload", KeyB: "block", KeyQ: "swap", KeyC: "crouch", Digit1: "power0", Digit2: "power1", Digit3: "power2", Digit4: "power3" };
 // Bound while a fight is on. Not while typing or in a dialog, nor with a modifier
 export function bindShootKeys(): () => void {
   const typing = (e: KeyboardEvent) => {

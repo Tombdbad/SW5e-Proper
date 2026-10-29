@@ -32,6 +32,7 @@ import { useCombat, useShipFight, rollDamage, onPartySide } from "@/lib/stores/u
 import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
+import { realtimePowers } from "@/lib/sw5e/realtimePowers";
 import { useCoop, saveShared, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers } from "@/lib/coop";
 import { CoopButton, CoopDialog, CoopLink, TravelRoomPanel } from "@/components/Play/CoopUI";
 import { isGroupExit, shipSeats, unitsOf, type Craft } from "@shared/logic/coop";
@@ -338,6 +339,9 @@ export default function GameBoard() {
       units: [party, ...others.map(asUnit)],
       meta: Object.fromEntries(others.map((c) => [String(c.id), { role: c.role, species: c.species, creature: c.creature, size: c.size }])),
       seed: Math.floor(Math.random() * 1e9), surprise, grenades,
+      // The powers the character knows that a real-time fight can play (keys 1 to 4), read from their texts, and the points to cast them with
+      powers: realtimePowers([...(character?.forcePowers ?? []), ...(character?.techPowers ?? [])], Number(character?.level) || 1, character?.abilityScores),
+      points: me.powerPoints ?? character?.currentForcePoints ?? 0,
     });
   };
 
@@ -1050,9 +1054,14 @@ export default function GameBoard() {
     // Only those who can see the party (see SIGHT_SQUARES) get a say: a Stealth check to slip past.
     // A miss puts their watch up a step and the party may still go; it stops them only where they
     // attack, and then the fight begins where they stand.
-    if (hostiles.length > 0 && !allowed && exit.to !== cameFrom) {
+    // (in the shooter mode nobody bars a door: the party runs, and a fight it runs from ends as one it left)
+    if (hostiles.length > 0 && !allowed && exit.to !== cameFrom && playMode !== "shooter") {
       const spotted = !unseen("Slipping past");
-      if (spotted && alert + 1 >= ALERT.attacking) return;
+      if (spotted && alert + 1 >= ALERT.attacking) {
+        // (said, not silent: a door that does nothing looks broken; and a fight that is not on is begun, the way a miss at "attacking" does)
+        toast.error("They have you in their sights and bar the way: fight, talk, or go back the way you came.");
+        return;
+      }
     }
     if (exit.locked) return unlock(exit);
     // A shop that is shut for the night is locked (shared logic afterHoursLock)
@@ -2189,13 +2198,31 @@ export default function GameBoard() {
 
   // Once they attack, the fight begins by itself (once for each time the party walks into it)
   const autoFought = useRef<string | null>(null);
+  const partyStoodAt = usePartySpot((s) => s.areaId);
+  // In the shooter mode the party can open fire first: X (the fire key of a fight) with hostiles here and no fight on begins one, as the Fight button does
+  // (an unnoticed party strikes with surprise)
+  useEffect(() => {
+    if (playMode !== "shooter") return;
+    const h = (e: KeyboardEvent) => {
+      if (e.code !== "KeyX" || e.repeat || e.ctrlKey || e.metaKey || e.altKey || /^(input|textarea|select)$/i.test((e.target as HTMLElement)?.tagName ?? "") || (e.target as HTMLElement)?.closest?.("[role=dialog]")) return;
+      if (!here || !character || !hostiles.length || useCombat.getState().inCombat || dead || character.currentHp <= 0 || partyStoodAt !== here.id) return;
+      autoFought.current = here.id;
+      fight();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  });
   useEffect(() => {
     if (autoFought.current && autoFought.current !== here?.id) autoFought.current = null;
-    if (!here || !character || alert !== ALERT.attacking || !hostiles.length || inCombat || dead || character.currentHp <= 0 || autoFought.current === here.id) return;
+    // (the shooter mode has no "talk them round" step to wait for: once their weapons are out, it is a fight)
+    const engaged = playMode === "shooter" ? alert >= ALERT.confronting : alert === ALERT.attacking;
+    // (a real-time fight is played on the map, so it waits until the map has the party standing in the place)
+    if (playMode === "shooter" && partyStoodAt !== here?.id) return;
+    if (!here || !character || !engaged || !hostiles.length || inCombat || dead || character.currentHp <= 0 || autoFought.current === here.id) return;
     autoFought.current = here.id;
     toast.error("They attack!");
     fight();
-  }, [here?.id, alert, hostiles.length, !!character]);
+  }, [here?.id, alert, hostiles.length, !!character, playMode, partyStoodAt]);
 
   // The search walks the district (see advanceSearch in shared logic): its squads move a room every
   // couple of minutes, question the people they pass, and where one walks in on the party it rolls to
@@ -2241,6 +2268,8 @@ export default function GameBoard() {
   useEffect(() => {
     if (inCombat || !outcome || !character || !fightBegun.current) return;
     fightBegun.current = false;
+    // (a fight that is over may be begun again where the party stands: "They attack" must not stay spent for the room)
+    autoFought.current = null;
     // The first attack's advantage from a rest aboard is spent with the fight
     if (play.firstAttack) setTimeout(() => patchPlay({ firstAttack: undefined }), 1500);
     // The rounds fired are gone from the pack; the weapon keeps its load
@@ -2461,6 +2490,16 @@ export default function GameBoard() {
         // Not into the same fight again: in the nearest room with nobody hostile in it
         const refuge = (world && areaId && safeHarbour(world, areaId)) || cameFrom;
         if (world && refuge && world.areas[refuge]) saveCampaign({ currentLocation: refuge });
+        // House rule (the books give none): left for dead, the party comes to hours later and those who stood over it have lost interest, so a
+        // fight is not begun again at once, with 1 hit point, in a room where nowhere is safe; their watch is only "suspicious" (they will notice
+        // the party again, and the doors are not barred). Without this the fight did not start again and the doors stayed shut.
+        {
+          let calmed = latestWorld();
+          if (calmed) {
+            for (const id of areaIds) if (calmed.areas[id] && (calmed.areas[id].alert ?? ALERT.confronting) > ALERT.suspicious) calmed = setAlert(calmed, id, ALERT.suspicious);
+            if (calmed !== latestWorld()) saveCampaign({ galaxyMap: calmed });
+          }
+        }
         toast.info(`Left for dead, you come to hours later with 1 hit point${refuge && world?.areas[refuge] ? `, in ${world.areas[refuge].name}.` : "."}`);
       } else if (outcome === "victory") {
         const me = fightNow.combatants.find((c) => c.isPlayer);

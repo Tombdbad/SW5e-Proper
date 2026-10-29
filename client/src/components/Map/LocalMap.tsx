@@ -21,7 +21,7 @@ import { CaveDressing, CaveMound, CaveSlab, CaveWalls, MaskFloor, RockWall } fro
 import { moodOf } from "./interiors/atmosphere";
 import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
 import { PackWalls, cornerCentre, bendOf, holeOf, piercedWall, type Bend, type WallRun } from "./interiors/Walls";
-import { AIM, aimAt, aimFrom, useView, type Aimed, type AimPlan } from "./interiors/aim";
+import { AIM, aimAt, aimFrom, stance, useView, type Aimed, type AimPlan } from "./interiors/aim";
 import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, AIR, FEET, type JumpStats } from "./interiors/air";
 import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
@@ -1861,6 +1861,8 @@ function Follower({ companion, index, feet, open, height, onTap, carts = [], bio
   const anchor = useRef<Sq | null>(null);
   const heading = useRef<Sq>({ x: 0, y: -1 });
   const recheck = useRef(0);
+  // The squares it walks to its goal (round what stands in the way: a follower used to glide in a straight line and went through walls)
+  const path = useRef<Sq[]>([]);
   const id = `follow:${companion.id}`;
   const droideka = /droideka|destroyer droid/i.test(`${companion.name} ${companion.statBlock ?? ""}`);
   useEffect(() => () => { claims.delete(id); }, [id]);
@@ -1879,10 +1881,18 @@ function Follower({ companion, index, feet, open, height, onTap, carts = [], bio
       // (the order they were in keeps them from all going for the same square in one frame)
       goal.current = followSpot(open, lead, here, id, { x: -heading.current.x, y: -heading.current.y }, index >= 6 ? 1 : 2);
       anchor.current = lead;
+      path.current = at.current && open(here.x, here.y) ? route(open, here, [goal.current]) ?? [] : [];
     }
     claimSquare(id, goal.current);
     if (!at.current) at.current = { ...goal.current };
-    const [mx, my] = [goal.current.x - at.current.x, goal.current.y - at.current.y];
+    // (put in a wall by a room that changed, or left too far from the goal to find a way: it is set down at its goal)
+    if (!open(Math.round(at.current.x), Math.round(at.current.y))) {
+      at.current = { ...goal.current };
+      path.current = [];
+    }
+    while (path.current.length && Math.hypot(path.current[0].x - at.current.x, path.current[0].y - at.current.y) < 0.12) path.current.shift();
+    const way = path.current[0] ?? goal.current;
+    const [mx, my] = [way.x - at.current.x, way.y - at.current.y];
     const far = Math.hypot(mx, my);
     // A droideka on its legs is slow (15 ft. to the ball's 60): it walks a short step and rolls up for a longer one
     const pace = droideka && far < 2.5 ? 0.9 : 6.5;
@@ -1896,6 +1906,8 @@ function Follower({ companion, index, feet, open, height, onTap, carts = [], bio
       }
     }
     if (group.current) group.current.position.set(at.current.x + 0.5, height(), at.current.y + 0.5);
+    // (read by the play-through tests: where each follower is drawn)
+    ((window as unknown as { __followers?: Record<string, Sq> }).__followers ??= {})[companion.id] = { x: at.current.x, y: at.current.y };
   });
   const down = companion.hp <= 0;
   const beast = companion.kind === "beast";
@@ -2712,7 +2724,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     const yaw = token.current?.rotation.y ?? 0;
     return aimFrom(muzzle, new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)), floorY, muzzle);
   };
-  const handNow = (): V3 => [feet.current.x + 0.5 - cx, heightNow() + air.current.y + 1.0, feet.current.y + 0.5 - cz];
+  const handNow = (): V3 => [feet.current.x + 0.5 - cx, heightNow() + air.current.y + 1.0 - 0.4 * stance.k, feet.current.y + 0.5 - cz];
   // ---- The shooter mode's fight (interiors/Shooter.tsx, rules in shared/logic/shooter.ts) is played on this map: it asks here what stops a
   // bolt (a wall; low furniture only below the height of its top, so that a counter is cover), where a body can stand, how high the floor is,
   // and where the muzzle and the crosshair are
@@ -3117,6 +3129,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (token.current) {
       const into = sit.current ? smooth(sit.current.k) : 0;
       token.current.position.set(feet.current.x + 0.5 + (sit.current ? (sit.current.x - feet.current.x) * into : 0), heightNow() + air.current.y, feet.current.y + 0.5 + (sit.current ? (sit.current.y - feet.current.y) * into : 0));
+      // (crouched behind cover, and leaning into a saber's swing: a shooter fight's stance)
+      token.current.rotation.order = "YXZ";
+      token.current.rotation.x = stance.lunge;
+      token.current.scale.y = 1 - 0.3 * stance.k;
       // From the eyes the character is not drawn; over the shoulder they face where the camera looks
       token.current.visible = !(viewing && mode === "first");
       if (viewing && facing.current !== null) token.current.rotation.y = facing.current;
@@ -3964,7 +3980,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           </group>
         )}
         {present && !duel && followers.map((c, i) => (
-          <Follower key={c.id} companion={c} index={i} feet={feet} open={open} height={heightNow} onTap={active ? () => onAct?.({ type: "companion", id: c.id }) : undefined} carts={cartsOf(c.id)} biome={biome} onCart={active ? (id) => onAct?.({ type: "cart", id }) : undefined} />
+          <Follower key={`${hereId}:${c.id}`} companion={c} index={i} feet={feet} open={open} height={heightNow} onTap={active ? () => onAct?.({ type: "companion", id: c.id }) : undefined} carts={cartsOf(c.id)} biome={biome} onCart={active ? (id) => onAct?.({ type: "cart", id }) : undefined} />
         ))}
         {/* The party's carts left here */}
         {present && !duel && carts.filter((c) => c.parked && (inside ? c.parked.areaId === inside.id : buildingIds.has(c.parked.areaId))).map((c) => (
