@@ -6,7 +6,8 @@ import * as THREE from "three";
 import type { ThreeEvent } from "@react-three/fiber";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Model, type Kit, type V3 } from "../models";
-import { caveFeatures, column, crystals, kitPieceOf, pool, rockPaletteOf, rockRun, rockSurfaces, stalagmite, stream, type CaveFeature } from "./cave";
+import { caveFeatures, column, crystals, kitPieceOf, pool, rockPaletteOf, rockRun, rockSurfaces, stalagmite, stream, type CaveFeature, type RockPalette } from "./cave";
+import { boxUV, SURFACE_GRAIN, surfaceMaterial } from "../surfaces";
 import { useModels } from "./assets";
 import { toneOfColours } from "./tones";
 import type { Tier } from "./atmosphere";
@@ -144,80 +145,266 @@ export function CaveSlab({ at, size, biome, variant, onTap }: { at: V3; size: V3
   return onTap ? <group onClick={(e) => { e.stopPropagation(); if (e.delta <= 8) onTap(); }}>{slab}</group> : slab;
 }
 
-export function CaveWalls({ mask, ways, w, h, biome, tier, seed, tall = false }: { mask: string[]; ways: { x: number; y: number }[]; w: number; h: number; biome: string; tier: Tier; seed: number; tall?: boolean }) {
+// The rock of a cave room as one surface (2026-10-30; the user: "there are gaps between the stones that make up cave walls so we can
+// see the surroundings - this is WRONG!"). The walls were lumps of rock set along each edge of the floor, and the world showed between
+// them. Now the rock is a sheet over the room and a margin round it: level with the floor where the floor is, rising steeply from its
+// edge to over the roof, with a wavering lip and a rough face (smooth noise, and the stone texture). A roof of the same rock hangs over
+// it in the eye views, lower towards the walls and lumpy, and the walls rise through it, so there is no seam to see through. The ways
+// (doors to the next room, the way out) open a throat through the rock out to the margin. `lift` raises the rock with the floor of a
+// sloping passage. Pure geometry, made once per room.
+export interface Throat { x: number; y: number; side?: Side }
+const smooth01 = (t: number) => { const u = Math.max(0, Math.min(1, t)); return u * u * (3 - 2 * u); };
+const hash2 = (seed: number, x: number, z: number) => {
+  let n = Math.imul(x | 0, 374761393) ^ Math.imul(z | 0, 668265263) ^ Math.imul(seed | 0, 1442695041);
+  n = Math.imul(n ^ (n >>> 13), 1274126177);
+  return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+};
+const valueNoise = (seed: number, x: number, z: number) => {
+  const [xi, zi] = [Math.floor(x), Math.floor(z)];
+  const [u, v] = [smooth01(x - xi), smooth01(z - zi)];
+  const [a, b, c, d] = [hash2(seed, xi, zi), hash2(seed, xi + 1, zi), hash2(seed, xi, zi + 1), hash2(seed, xi + 1, zi + 1)];
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+};
+// Smooth noise in [0, 1] with three octaves: the rock's bulges, its knobs and its grain
+export const rockNoise = (seed: number, x: number, z: number) => valueNoise(seed, x * 1.1, z * 1.1) * 0.58 + valueNoise(seed + 1, x * 2.7, z * 2.7) * 0.3 + valueNoise(seed + 2, x * 6.5, z * 6.5) * 0.12;
+const sideOf = (t: Throat, w: number, h: number): Side => t.side ?? (t.x === 0 ? "w" : t.x === w - 1 ? "e" : t.y === 0 ? "n" : "s");
+const STEP: Record<Side, [number, number]> = { w: [-1, 0], e: [1, 0], n: [0, -1], s: [0, 1] };
+
+// For each point of a grid over the room and its margin: how far it is from the floor (0 on it) and, on the floor, how far from the rock
+function fieldOf(mask: string[], ways: Throat[], w: number, h: number, margin: number) {
+  const floor = new Set<string>();
+  mask.forEach((row, y) => Array.from(row).forEach((c, x) => { if (c === "#") floor.add(`${x},${y}`); }));
+  for (const t of ways) {
+    const [dx, dy] = STEP[sideOf(t, w, h)];
+    for (let k = 1; k <= margin + 2; k++) floor.add(`${t.x + dx * k},${t.y + dy * k}`);
+  }
+  return (px: number, pz: number): [number, number] => {
+    let d = 9;
+    let e = 9;
+    const [cx, cz] = [Math.floor(px), Math.floor(pz)];
+    for (let sz = cz - 3; sz <= cz + 3; sz++)
+      for (let sx = cx - 3; sx <= cx + 3; sx++) {
+        const dd = Math.hypot(Math.max(sx - px, 0, px - (sx + 1)), Math.max(sz - pz, 0, pz - (sz + 1)));
+        if (floor.has(`${sx},${sz}`)) d = Math.min(d, dd);
+        else e = Math.min(e, dd);
+      }
+    return [d, e];
+  };
+}
+
+const colourAt = (p: RockPalette, t: number, n: number) => {
+  const c = new THREE.Color(p.rockDark).lerp(new THREE.Color(p.rock), smooth01(t * 1.7));
+  if (t > 0.45 && n > 0.62) c.lerp(new THREE.Color(p.rockLight), smooth01((n - 0.62) * 4) * 0.7);
+  return c;
+};
+
+export function caveShellGeometry(o: { mask: string[]; ways: Throat[]; w: number; h: number; seed: number; wall: number; ceiling?: number; lift?: (x: number, z: number) => number; detail: 0 | 1; palette: RockPalette }): { walls: THREE.BufferGeometry; roof?: THREE.BufferGeometry } {
+  const M = 2;
+  const res = o.detail ? 4 : 2;
+  const field = fieldOf(o.mask, o.ways, o.w, o.h, M);
+  const lift = o.lift ?? (() => 0);
+  const [nx, nz] = [(o.w + 2 * M) * res + 1, (o.h + 2 * M) * res + 1];
+  const count = nx * nz;
+  const dist = new Float32Array(count);
+  const deep = new Float32Array(count);
+  const wallPos = new Float32Array(count * 3);
+  const wallCol = new Float32Array(count * 3);
+  const roofPos = o.ceiling ? new Float32Array(count * 3) : undefined;
+  const roofCol = o.ceiling ? new Float32Array(count * 3) : undefined;
+  for (let gz = 0; gz < nz; gz++)
+    for (let gx = 0; gx < nx; gx++) {
+      const i = gz * nx + gx;
+      const [px, pz] = [-M + gx / res, -M + gz / res];
+      const [d, e] = field(px, pz);
+      dist[i] = d;
+      deep[i] = e;
+      const n = rockNoise(o.seed, px, pz);
+      const base = lift(Math.max(0, Math.min(o.w, px)), Math.max(0, Math.min(o.h, pz)));
+      // (level with the floor, a hair under it, where the floor is; up from its edge to the lip, and on up beyond it)
+      // (and at the foot of the rock, on the floor's own edge, a little rubble, which rounds off the corners of its squares)
+      const up = d <= 0 ? (e < 0.45 ? (0.45 - e) * (0.35 + 0.9 * n) : -0.03) : o.wall * (smooth01(d / 0.9) * (0.78 + 0.44 * n) + Math.max(0, d - 0.9) * 0.45) + 0.45 * (0.35 + 0.9 * n) * (1 - smooth01(d / 0.5));
+      // (the face is pushed about a little across, so that the grid of the sheet does not show)
+      const j = d > 0 ? Math.min(1, d * 2) * 0.22 : 0;
+      const [jx, jz] = [(rockNoise(o.seed + 17, px * 2, pz * 2) - 0.5) * j, (rockNoise(o.seed + 29, px * 2, pz * 2) - 0.5) * j];
+      wallPos.set([px + jx, base + up, pz + jz], i * 3);
+      const c = colourAt(o.palette, up / o.wall, n);
+      wallCol.set([c.r, c.g, c.b], i * 3);
+      if (roofPos && roofCol && o.ceiling) {
+        // The roof: highest over the middle of a chamber, coming down towards the walls and into them, hung with knobs of rock
+        const knob = rockNoise(o.seed + 41, px * 1.4, pz * 1.4);
+        const down = (d <= 0 ? 0.55 * (1 - smooth01(e / 1.6)) : 0.55 + d * 0.7) + knob * 0.4;
+        roofPos.set([px + jx, base + o.ceiling - down, pz + jz], i * 3);
+        const r = new THREE.Color(o.palette.rockDark).lerp(new THREE.Color(o.palette.rock), 0.25 + knob * 0.45);
+        roofCol.set([r.r, r.g, r.b], i * 3);
+      }
+    }
+  const wallIdx: number[] = [];
+  const roofIdx: number[] = [];
+  for (let gz = 0; gz + 1 < nz; gz++)
+    for (let gx = 0; gx + 1 < nx; gx++) {
+      const [a, b, c, d] = [gz * nx + gx, gz * nx + gx + 1, (gz + 1) * nx + gx, (gz + 1) * nx + gx + 1];
+      // (the floor itself is drawn by the room; the sheet starts at its edge)
+      if (!(dist[a] <= 0 && dist[b] <= 0 && dist[c] <= 0 && dist[d] <= 0) || Math.min(deep[a], deep[b], deep[c], deep[d]) < 0.45) wallIdx.push(a, c, b, b, c, d);
+      if (roofPos && Math.max(dist[a], dist[b], dist[c], dist[d]) < 1.7) roofIdx.push(a, b, c, b, d, c);
+    }
+  const make = (pos: Float32Array, col: Float32Array, idx: number[]) => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    const out = boxUV(g, SURFACE_GRAIN.stone);
+    g.dispose();
+    return out;
+  };
+  return { walls: make(wallPos, wallCol, wallIdx), roof: roofPos && roofCol ? make(roofPos, roofCol, roofIdx) : undefined };
+}
+
+const rockMaterial = () => surfaceMaterial("stone", "rock_face_03", { vertexColors: true, lift: 1.25, parallax: 0.04, side: THREE.DoubleSide });
+
+// The rock round a winding floor (and the roof over it, `ceiling` high, in the eye views): one sheet, see caveShellGeometry. `ways` are
+// the squares of doors and ways out, where the rock opens. It blocks the view and the shot (`solid`, AIM.solids, given by the room).
+export function CaveWalls({ mask, ways, w, h, biome, tier, seed, tall = false, ceiling, lift, liftKey = "", solid }: { mask: string[]; ways: Throat[]; w: number; h: number; biome: string; tier: Tier; seed: number; tall?: boolean; ceiling?: number; lift?: (x: number, z: number) => number; liftKey?: string; solid?: (o: THREE.Object3D | null) => void }) {
   const palette = rockPaletteOf(biome);
-  const key = `${mask.join("|")}:${ways.map((a) => `${a.x},${a.y}`).join(";")}:${biome}:${tier}:${seed}:${tall ? "t" : "l"}`;
+  const key = `${mask.join("|")}:${ways.map((a) => `${a.x},${a.y}${a.side ?? ""}`).join(";")}:${biome}:${tier}:${seed}:${tall ? "t" : "l"}:${ceiling ?? ""}:${liftKey}`;
+  const shell = useMemo(
+    () => caveShellGeometry({ mask, ways, w, h, seed, wall: tall ? (ceiling ?? 3) + 0.7 : 1.25, ceiling, lift, detail: tier === "lite" ? 0 : 1, palette }),
+    [key],
+  );
+  useEffect(() => () => { shell.walls.dispose(); shell.roof?.dispose(); }, [shell]);
+  return (
+    <group ref={solid}>
+      <mesh geometry={shell.walls} material={rockMaterial()} receiveShadow castShadow={tier !== "lite"} raycast={solid ? undefined : () => null} />
+      {shell.roof && <mesh geometry={shell.roof} material={rockMaterial()} receiveShadow raycast={solid ? undefined : () => null} />}
+    </group>
+  );
+}
+
+// The floor of a sloping passage of a cave: its squares, each as high as the slope is there (`lift`), smooth from end to end; set where
+// the plain floor would be (its middle at the room's), so that a tap on it is read by the same arithmetic
+export function RampFloor({ mask, width, height, color, lift, liftKey, onClick }: { mask: string[]; width: number; height: number; color: string; lift: (x: number, z: number) => number; liftKey: string; onClick?: (e: ThreeEvent<MouseEvent>) => void }) {
+  const geometry = useMemo(() => {
+    const g = new THREE.PlaneGeometry(width, height, width * 2, height * 2);
+    g.rotateX(-Math.PI / 2);
+    const p = g.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < p.count; i++) p.setY(i, lift(p.getX(i) + width / 2, p.getZ(i) + height / 2) + (rockNoise(7, p.getX(i), p.getZ(i)) - 0.5) * 0.06);
+    g.computeVertexNormals();
+    const out = boxUV(g, SURFACE_GRAIN.stone);
+    g.dispose();
+    return out;
+  }, [mask.join("|"), width, height, liftKey]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  const material = useMemo(() => surfaceMaterial("stone", "rock_face_03", { tint: color, lift: 2.2, parallax: 0.03 }), [color]);
+  return <mesh geometry={geometry} material={material} position={[width / 2, 0, height / 2]} receiveShadow onClick={onClick} raycast={onClick ? undefined : () => null} />;
+}
+
+
+// The mouth of a cave as it is seen from outside (2026-10-30; the user: "The entry to caves (a standard door) looks all wrong - it is a
+// CAVE, it should have a proper organic looking entrance"): an arch of piled, weathered rock, wider at the foot, with a dark throat inside
+// it going into the hill. It stands on the wall line where a door would, in the doorway's frame (x along the wall, +z into the room).
+// `dark` (seen from outside) puts the dark of the cave inside it; from inside the light of day shows through it.
+export function RockArch({ biome, tier, seed, wide = 1.7, high = 2.5, dark = false }: { biome: string; tier: Tier; seed: number; wide?: number; high?: number; dark?: boolean }) {
+  const palette = rockPaletteOf(biome);
+  const throat = useMemo(() => {
+    // the dark of the passage beyond: an arch-shaped hole, a little inside
+    const s = new THREE.Shape();
+    s.moveTo(-wide / 2, 0);
+    for (let i = 0; i <= 16; i++) {
+      const a = Math.PI - (i / 16) * Math.PI;
+      s.lineTo(Math.cos(a) * wide / 2, Math.sin(a) ** 0.8 * high * 0.92);
+    }
+    s.lineTo(wide / 2, 0);
+    return new THREE.ShapeGeometry(s, 8);
+  }, [wide, high]);
+  useEffect(() => () => throat.dispose(), [throat]);
   return (
     <>
-      <mesh position={[w / 2, -0.12, h / 2]} raycast={() => null}>
-        <boxGeometry args={[w, 0.1, h]} />
-        <meshLambertMaterial color={palette.rockDark} />
-      </mesh>
       <Model
-        id={`caverock:${key.length}:${hashOf(key)}`}
+        id={`rockarch:${biome}:${tier}:${seed % 7}:${wide.toFixed(1)}:${high.toFixed(1)}`}
         build={(k: Kit) => {
           k.surfaces = rockSurfaces(palette);
-          const next = stream(seed + 5);
-          const stands = (x: number, y: number) => mask[y]?.[x] === "#";
-          const way = (x: number, y: number) => ways.some((a) => a.x === x && a.y === y);
-          mask.forEach((row, y) => Array.from(row).forEach((c, x) => {
-            if (c !== "#") return;
-            for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-              const [nx, ny] = [x + dx, y + dy];
-              if (stands(nx, ny)) continue;
-              // The room's own boundary is open at a way (the door stands on that square) and rock elsewhere
-              if (!(nx >= 0 && ny >= 0 && nx < w && ny < h) && way(x, y)) continue;
-              const count = tier === "lite" ? 1 : 2;
-              for (let i = 0; i < count; i++) {
-                const along = (i + 0.5) / count - 0.5 + (next() - 0.5) * 0.2;
-                const [ex, ey] = [x + 0.5 + dx * 0.5 + (dy ? along : 0), y + 0.5 + dy * 0.5 + (dx ? along : 0)];
-                const r = 0.34 + next() * 0.2;
-                const high = tall ? 1.7 + next() * 0.8 : 0.7 + next() * 0.9;
-                k.blob(r * 0.95, palette.rockDark, { at: [ex + dx * r * 0.5, r * 0.4, ey + dy * r * 0.5], seed: seed + x * 7 + y * 13 + i, rough: 0.3, detail: 0, squash: [1.1, 0.8, 1.1] });
-                k.blob(r * 0.8, (x + y + i) % 3 ? palette.rock : palette.rockLight, { at: [ex + dx * r * 0.7, high * 0.5, ey + dy * r * 0.7], seed: seed * 3 + x + y * 5 + i, rough: 0.34, detail: tier === "lite" ? 0 : 1, squash: [0.95, high / (r * 1.6), 0.95] });
-              }
-            }
-          }));
+          const next = stream(seed * 13 + 3);
+          const detail = tier === "lite" ? 0 : 1;
+          // The jambs and the lintel: rocks close along an arch (each overlapping the next), larger and darker at the foot
+          const n = tier === "lite" ? 12 : 20;
+          for (let i = 0; i <= n; i++) {
+            const a = Math.PI - (i / n) * Math.PI;
+            const foot = 1 - Math.sin(a);
+            const r = 0.3 + foot * 0.22 + next() * 0.12;
+            const [x, y] = [Math.cos(a) * (wide / 2 + r * 0.7), Math.sin(a) ** 0.8 * high + r * 0.35];
+            k.blob(r, foot > 0.5 ? palette.rockDark : i % 3 ? palette.rock : palette.rockLight, { at: [x, Math.max(r * 0.6, y), (next() - 0.5) * 0.25], seed: seed + i, rough: 0.34, detail, squash: [1, 1.1, 0.9 + next() * 0.3] });
+            // a second, outer course, so that the arch is thick and the hill closes round it
+            k.blob(r * 1.2, palette.rock, { at: [x * 1.25, Math.max(r * 0.7, y * 1.1 + 0.2), 0.35 + next() * 0.2], seed: seed + 50 + i, rough: 0.3, detail: 0, squash: [1, 1, 1] });
+          }
+          // Fallen rocks at the foot, out in front
+          for (let i = 0; i < 4; i++) k.blob(0.12 + next() * 0.14, palette.rockDark, { at: [(next() - 0.5) * (wide + 1.4), 0.06, -0.3 - next() * 0.6], seed: seed + 90 + i, rough: 0.35, detail: 0, squash: [1.2, 0.6, 1] });
         }}
       />
+      {dark && (
+        <>
+          <mesh geometry={throat} position={[0, 0.01, 0.55]} raycast={() => null}>
+            <meshBasicMaterial color="#050608" side={THREE.DoubleSide} />
+          </mesh>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0.9]} raycast={() => null}>
+            <planeGeometry args={[wide, 1.2]} />
+            <meshBasicMaterial color="#0b0c0e" />
+          </mesh>
+        </>
+      )}
     </>
   );
 }
 
-const hashOf = (text: string) => Array.from(text).reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 7);
-
-// A cave seen from outside: a mound of rock over the squares of its winding floor, low rocks round its foot, and its mouth left open where
-// the way out is (the squares within two of an exit are bare floor). `exits` are the squares of ways out of the building.
-export function CaveMound({ mask, exits, w, h, biome, tier, seed }: { mask: string[]; exits: { x: number; y: number }[]; w: number; h: number; biome: string; tier: Tier; seed: number }) {
+// A cave seen from outside: a hill of rock over its mouth's floor (its foot running out a little round it), one surface with a rough
+// face, low and broken where the way in is so that the arch (RockArch, drawn by the map on the wall line) stands in a hollow of it.
+// The rooms under the ground are not drawn from outside. `exits` are the squares of ways out of the building.
+export function CaveMound({ mask, exits, w, h, biome, tier, seed }: { mask: string[]; exits: Throat[]; w: number; h: number; biome: string; tier: Tier; seed: number }) {
   const palette = rockPaletteOf(biome);
   const key = `${mask.join("|")}:${exits.map((a) => `${a.x},${a.y}`).join(";")}:${biome}:${tier}:${seed}`;
-  return (
-    <>
-      <Model
-        id={`cavemound:${key.length}:${hashOf(key)}`}
-        position={[0, 0, 0]}
-        build={(k: Kit) => {
-          k.surfaces = rockSurfaces(palette);
-          const next = stream(seed + 11);
-          const mouth = (x: number, y: number) => exits.some((a) => Math.abs(a.x - x) + Math.abs(a.y - y) <= 2);
-          mask.forEach((row, y) => Array.from(row).forEach((c, x) => {
-            if (c !== "#") return;
-            if (mouth(x, y)) {
-              // The mouth: bare, dark floor, with a few fallen rocks
-              k.box([1, 0.06, 1], palette.rockDark, { at: [x + 0.5, 0.03, y + 0.5] });
-              if (next() < 0.3) k.blob(0.18, palette.rock, { at: [x + 0.3 + next() * 0.4, 0.12, y + 0.3 + next() * 0.4], seed: x * 5 + y, rough: 0.35, detail: 0, squash: [1.2, 0.6, 1] });
-              return;
-            }
-            const high = 0.9 + next() * 0.9 + (c === "#" ? 0 : 0);
-            const r = 0.6 + next() * 0.25;
-            k.blob(r, (x + y) % 3 ? palette.rock : palette.rockLight, { at: [x + 0.5 + (next() - 0.5) * 0.3, high * 0.45, y + 0.5 + (next() - 0.5) * 0.3], seed: seed + x * 7 + y * 13, rough: 0.3, detail: tier === "lite" ? 0 : 1, squash: [1, high / (r * 1.5), 1] });
-          }));
-        }}
-      />
-      <mesh position={[w / 2, 0.01, h / 2]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
-        <planeGeometry args={[w, h]} />
-        <meshLambertMaterial color={palette.rockDark} transparent opacity={0.0} />
-      </mesh>
-    </>
-  );
+  const geometry = useMemo(() => {
+    const M = 2;
+    const res = tier === "lite" ? 2 : 3;
+    const field = fieldOf(mask, [], w, h, M);
+    const [nx, nz] = [(w + 2 * M) * res + 1, (h + 2 * M) * res + 1];
+    const pos = new Float32Array(nx * nz * 3);
+    const col = new Float32Array(nx * nz * 3);
+    const top = 2.6 + Math.min(w, h) * 0.18;
+    for (let gz = 0; gz < nz; gz++)
+      for (let gx = 0; gx < nx; gx++) {
+        const i = gz * nx + gx;
+        const [px, pz] = [-M + gx / res, -M + gz / res];
+        const [d, e] = field(px, pz);
+        // signed: how far inside the floor (towards its middle), less how far outside it
+        const signed = d > 0 ? -d : e;
+        const n = rockNoise(seed, px, pz);
+        let y = top * smooth01((signed + 1.4) / 3.4) * (0.75 + 0.5 * n) + (n - 0.5) * 0.25;
+        // the hollow the mouth stands in: low in front of the way and just inside it
+        for (const x of exits) {
+          const [dx, dy] = STEP[sideOf(x, w, h)];
+          const [mx, mz] = [x.x + 0.5 + dx * 0.5, x.y + 0.5 + dy * 0.5];
+          const m = Math.hypot(px - mx, pz - mz);
+          y *= 0.15 + 0.85 * smooth01((m - 0.9) / 1.8);
+        }
+        pos.set([px, Math.max(0, y), pz], i * 3);
+        const c = colourAt(palette, y / top, n);
+        col.set([c.r, c.g, c.b], i * 3);
+      }
+    const idx: number[] = [];
+    for (let gz = 0; gz + 1 < nz; gz++)
+      for (let gx = 0; gx + 1 < nx; gx++) {
+        const [a, b, c, d] = [gz * nx + gx, gz * nx + gx + 1, (gz + 1) * nx + gx, (gz + 1) * nx + gx + 1];
+        if (Math.max(pos[a * 3 + 1], pos[b * 3 + 1], pos[c * 3 + 1], pos[d * 3 + 1]) <= 0.001) continue;
+        idx.push(a, c, b, b, c, d);
+      }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    const out = boxUV(g, SURFACE_GRAIN.stone);
+    g.dispose();
+    return out;
+  }, [key]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  return <mesh geometry={geometry} material={rockMaterial()} castShadow={tier !== "lite"} receiveShadow />;
 }

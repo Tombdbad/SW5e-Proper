@@ -8,10 +8,10 @@ import { Atmosphere } from "@/components/Map/interiors/Atmosphere.tsx";
 import { Stock } from "@/components/Map/interiors/Stock.tsx";
 import { ItemModel, lookScale } from "@/components/Map/interiors/ItemModel";
 import { ITEM_MODELS } from "@/components/Map/interiors/items";
-import { CaveDressing, RockWall } from "@/components/Map/interiors/CaveRoom";
+import { CaveDressing, CaveMound, RockArch, RockWall } from "@/components/Map/interiors/CaveRoom";
 import { moodOf } from "@/components/Map/interiors/atmosphere";
 import { WEALTH, lookOf, wealthOf } from "@/components/Map/interiors/wealth";
-import { CurtainWall, GardenGround, Scatter, StallModel, paletteOf, plantGarden, type StallState } from "@/components/Map/siteAssets";
+import { CurtainWall, GardenGround, Scatter, StallModel, paletteOf, plantGarden, Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UnderSea, type StallState } from "@/components/Map/siteAssets";
 import { RoomShell } from "@/components/Map/LocalMap";
 import { useModels } from "@/components/Map/interiors/assets";
 import { packOf } from "@/components/Map/interiors/packs";
@@ -19,13 +19,89 @@ import { TONES, TONE_NAMES, type Tone } from "@/components/Map/interiors/tones";
 import { KIT_MODELS, kitUrl } from "@/components/Map/interiors/kitbash";
 import { floorOf } from "@/components/Map/sprites";
 import { gearOf } from "@/lib/sw5e/characterCalculation";
-import { furnishRoom, createRandom, VEHICLE_MAKES, type Area } from "@shared/logic";
+import { furnishRoom, createRandom, VEHICLE_MAKES, caveMask, deckSquares, type Area, type RoomAsset } from "@shared/logic";
 import { seatState, motion, nowSeconds, SABER_STYLES, type Motion, type SaberStyle, type SeatState, type Shot } from "@/components/Map/interiors/limbs";
 import { MotionContext } from "@/components/Map/models";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
 
 // `rounds` shows the first round and oval rooms (2026-10-19): furnished by the planner (furnishRoom) on their curve.
 const ROUNDS: [string, number, number, string, string][] = [["round", 9, 9, "cantina", "Main bar"], ["oval", 11, 7, "guardhouse", "Guard post"], ["round", 7, 7, "scrap dealer", "Back room"], ["round", 9, 9, "palace", "Audience chamber"], ["oval", 11, 7, "medcenter", "Ward"]];
+// Caves (2026-10-30): a chamber and a tunnel in one sheet of rock each (walls to the roof, here without it so as to look in), a sloping
+// passage between floors, and a cave's mouth seen from outside: a hill of rock with an arch. `?section=caves`
+function Caves() {
+  const way = (id: string, x: number, y: number, side: "n" | "s" | "e" | "w", kind: RoomAsset["kind"] = "door"): RoomAsset => ({ id, kind, name: kind === "exit" ? "Way out" : "Passage", x, y, w: 1, h: 1, side });
+  const chamber = useMemo(() => caveMask(12, 9, [{ x: 0, y: 4, side: "w" }, { x: 11, y: 5, side: "e" }], "chamber", 5), []);
+  const tunnel = useMemo(() => caveMask(11, 8, [{ x: 0, y: 2, side: "w" }, { x: 10, y: 6, side: "e" }], "tunnel", 9), []);
+  const mouth = useMemo(() => caveMask(10, 8, [{ x: 0, y: 4, side: "w" }, { x: 9, y: 3, side: "e" }], "mouth", 3), []);
+  return (
+    <>
+      <group position={[-14, 0, -4]}>
+        <RoomShell width={12} height={9} plan={{ width: 12, height: 9, mask: chamber }} mood={{ buildingType: "cave", roomName: "Deep chamber", biome: "temperate" }} assets={[way("a", 0, 4, "w"), way("b", 11, 5, "e")]} floor="rock" wall="#555" fullWalls ceiling={!!new URLSearchParams(window.location.search).get("roof")} />
+        <Label at={[6, 0.1, 10.5]} text="chamber (temperate)" />
+      </group>
+      <group position={[1, 0, -4]}>
+        <RoomShell width={11} height={8} plan={{ width: 11, height: 8, mask: tunnel }} mood={{ buildingType: "cave", roomName: "Winding tunnel", biome: "ice" }} assets={[way("a", 0, 2, "w"), way("b", 10, 6, "e")]} floor="rock" wall="#555" fullWalls />
+        <Label at={[5, 0.1, 9.5]} text="tunnel (ice)" />
+      </group>
+      <group position={[-14, 0, 10]}>
+        <RoomShell width={14} height={3} plan={{ width: 14, height: 3, form: "stairs", climb: { toward: "w", levels: 1 } }} mood={{ buildingType: "cave", roomName: "Sloping passage down to Den", biome: "desert" }} assets={[way("a", 0, 1, "w"), way("b", 13, 1, "e")]} floor="rock" wall="#555" fullWalls />
+        <Label at={[7, 0.1, 4.5]} text="sloping passage (desert)" />
+      </group>
+      <group position={[4, 0, 10]}>
+        <CaveMound mask={mouth} exits={[{ x: 0, y: 4, side: "w" }]} w={10} h={8} biome="volcanic" tier="full" seed={10 * 31 + 8} />
+        <group position={[0, 0, 4.5]} rotation={[0, Math.PI / 2, 0]}><RockArch biome="volcanic" tier="full" seed={4} dark /></group>
+        <Label at={[5, 0.1, 9.5]} text="cave mouth from outside (volcanic)" />
+      </group>
+    </>
+  );
+}
+
+// Water worlds (2026-10-30): a place on the sea (round towers on their gantries, catwalks between, the sea round them, a swimmer and a
+// treader off the decking, the water craft), and beside it a place under the sea (domes, kelp, bubbles, fish). `?section=water`
+function Water() {
+  const boxes = { a: { x: 0, y: 0, width: 7, height: 7 }, b: { x: 14, y: 2, width: 6, height: 6 }, c: { x: 4, y: 14, width: 8, height: 8 } };
+  const deck = useMemo(() => deckSquares({ boxes }, [{ x: 24, y: 10 }]), []);
+  const swim = useMemo(() => ({ current: motion({ posture: 3 }) }), []);
+  const ground = { x: -6, y: -6, w: 34, h: 34 };
+  return (
+    <>
+      <group position={[-30, 0, -10]}>
+        <Sea at={[11, SEA_Y, 11]} size={70} lite={false} />
+        <Decks deck={deck} boxes={Object.values(boxes)} lite={false} />
+        {Object.values(boxes).map((b, i) => (
+          <group key={i} position={[b.x, 0, b.y]}><RoomBlock w={b.width} d={b.height} height={3.4 * (2 + i)} radii={shapeRadii("round", b.width, b.height)} wall="#e4e8ec" roof="#9aa6b2" parapet={false} band={false} /></group>
+        ))}
+        <FishSchools ground={ground} depth={SEA_Y - 0.45} count={3} lite={false} />
+        {/* a swimmer going along, and one treading water */}
+        <Walker at={[9, SWIM_Y, 11]} motionRef={swim} />
+        <group position={[11, SWIM_Y, 9]}><MotionContext.Provider value={swim}><Figure kind="humanoid" ring={SIDE_COLORS.neutral} name="Treader" role="settler" species="Human" /></MotionContext.Provider></group>
+        {["bongo", "aquadon", "hydro"].map((look, i) => (
+          <group key={look} position={[22 + i * 3, SEA_Y - 0.1, 13]}><SpeederModel model={look === "hydro" ? "Speederbike" : "Landspeeder"} look={look} name={look} /></group>
+        ))}
+      </group>
+      <group position={[18, 0, -10]}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[11, 0.01, 11]}><planeGeometry args={[60, 60]} /><meshLambertMaterial color="#8fc0b4" /></mesh>
+        <UnderSea boxes={Object.values(boxes)} ground={ground} lite={false} />
+        {Object.values(boxes).map((b, i) => (
+          <group key={i} position={[b.x, 0, b.y]}><RoomBlock w={b.width} d={b.height} height={3.4} radii={shapeRadii("round", b.width, b.height)} wall="#c9b48a" roof="#8a7a5a" parapet={false} band={false} /></group>
+        ))}
+        <FishSchools ground={ground} depth={2.6} count={5} lite={false} />
+      </group>
+    </>
+  );
+}
+// A figure going round a small ring with its motion (for the swimmer)
+function Walker({ at, motionRef }: { at: [number, number, number]; motionRef: { current: Motion } }) {
+  const g = useRef<THREE.Group>(null);
+  useFrame((state) => {
+    const t = state.clock.elapsedTime * 0.35;
+    if (!g.current) return;
+    g.current.position.set(at[0] + Math.cos(t) * 2.5, at[1], at[2] + Math.sin(t) * 2.5);
+    g.current.rotation.y = -t;
+  });
+  return <group ref={g}><MotionContext.Provider value={motionRef}><Figure kind="humanoid" ring={SIDE_COLORS.neutral} name="Swimmer" role="settler" species="Human" /></MotionContext.Provider></group>;
+}
+
 function Rounds() {
   return (
     <>
@@ -192,7 +268,7 @@ function Items({ pack }: { pack: string | null }) {
 // `moves` (2026-10-30): how people move and fight, a row for each thing held (nothing, a pistol, a rifle, a saber, a vibroblade, a pike)
 // and a column for each thing done (standing, walking, running, crouched, prone, jumping, ready, firing or striking, a parry), then a row of
 // a Jedi for each lightsaber style striking in turn. `?act=fire` (or another column) shows only that column, larger.
-const MOVE_COLUMNS = ["stand", "walk", "run", "crouch", "prone", "jump", "ready", "attack", "block"] as const;
+const MOVE_COLUMNS = ["stand", "walk", "run", "crouch", "prone", "jump", "ready", "attack", "block", "tread", "swim"] as const;
 type MoveColumn = (typeof MOVE_COLUMNS)[number];
 const MOVE_ROWS: { name: string; role: string; kind: string; species: string; wield?: "pistol" | "rifle" | "saber" | "vibro" | "pike" | "" }[] = [
   { name: "Tam", role: "settler", kind: "humanoid", species: "Human", wield: "" },
@@ -210,7 +286,7 @@ function Acting({ act, speed = 0, style, index, children }: { act: MoveColumn | 
     const t = clock.getElapsedTime() + index * 0.37;
     const mo = m.current;
     const now = nowSeconds();
-    mo.posture = act === "crouch" ? 1 : act === "prone" ? 2 : 0;
+    mo.posture = act === "crouch" ? 1 : act === "prone" ? 2 : act === "tread" || act === "swim" ? 3 : 0;
     mo.ready = act === "ready" || act === "attack" || act === "block" || act === "forms" || act === "prone";
     mo.blocking = act === "block";
     mo.pitch = act === "ready" ? Math.sin(t * 0.8) * 0.3 : 0;
@@ -237,7 +313,7 @@ function Moves({ only }: { only?: string }) {
       {MOVE_ROWS.map((r, i) =>
         cols.map((c, j) => (
           <group key={`${r.name}-${c}`} position={[(j - (cols.length - 1) / 2) * 1.7, 0, i * 2.4 - 6]}>
-            <Acting act={c} index={i * 9 + j} speed={c === "walk" ? 1.4 : c === "run" ? 3.2 : 0}>
+            <Acting act={c} index={i * 9 + j} speed={c === "walk" ? 1.4 : c === "run" ? 3.2 : c === "swim" ? 1.2 : 0}>
               <Figure kind={r.kind} ring={SIDE_COLORS.neutral} name={r.name} role={r.role} species={r.species} wield={r.wield} />
             </Acting>
             {i === 0 && <Label at={[0, 0.05, -1.4]} text={c} />}
@@ -398,7 +474,7 @@ export default function ModelGallery() {
         <ambientLight intensity={0.6} />
         <hemisphereLight args={["#cfe0ff", "#3a3020", 0.5]} />
         <directionalLight position={[8, 14, 10]} intensity={0.95} castShadow shadow-mapSize-width={2048} shadow-mapSize-height={2048} shadow-camera-left={-20} shadow-camera-right={20} shadow-camera-top={20} shadow-camera-bottom={-20} />
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 6]} receiveShadow>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.01, 6]} receiveShadow visible={section !== "water"}>
           <planeGeometry args={[80, 80]} />
           <meshLambertMaterial color="#39424e" />
         </mesh>
@@ -456,6 +532,8 @@ export default function ModelGallery() {
           </>
         )}
         {section === "rounds" && <Rounds />}
+        {section === "caves" && <Caves />}
+        {section === "water" && <Water />}
         {section === "packs" && <Packs />}
         {section === "walk" && <Walk />}
         {section === "moves" && <Moves only={query.get("act") ?? undefined} />}

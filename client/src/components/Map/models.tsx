@@ -2113,6 +2113,8 @@ const MILITARY_LOOKS = new Set(["barc", "ava", "itt"]);
 const MAKE_PAINT: Record<string, string[]> = {
   swoop: ["#c8462f", "#2f6fae", "#d8a23a"], barc: ["#8a8f78", "#b7b9b3"], ava: ["#33363b"], v35: ["#5e8a86", "#b0a48a", "#7b6f9a"], flash: ["#c9b98f", "#9a3a32"],
   skiff: ["#8a7a5a"], itt: ["#d8dbe0"], t47: ["#e6e2d8"], cloudcar: ["#d9752b"], koro: ["#4f6e4c", "#6e5a8a"], xj6: ["#e8c23a"],
+  // the water craft (2026-10-30, shared/logic WATER_LOOKS)
+  bongo: ["#c9a24a", "#b8763c"], aquadon: ["#d8dde2", "#5f7f96"], hydro: ["#2f7fa8", "#d04a3a", "#e0e2e4"],
 };
 function buildMake(k: Kit, look: string, wrecked: boolean, name: string): boolean {
   const palette = MAKE_PAINT[look];
@@ -2262,6 +2264,38 @@ function buildMake(k: Kit, look: string, wrecked: boolean, name: string): boolea
         k.box([0.02, 0.22, 0.3], shade(paint, 0.8), { at: [s * 0.16, 0.6, -0.95], rot: [-0.3, 0, s * 0.3], finish: "sheen" });
       });
       k.cyl(0.08, 0.02, glowColor, { at: [0, 0.42, -1.12], rot: [Math.PI / 2, 0, 0], seg: 10, finish: lit });
+      return true;
+    }
+    case "bongo": {
+      // A Gungan bongo (The Phantom Menace): a body like a squid's, three bubble canopies along its back, fins round it like a
+      // cuttlefish's, and the tentacle-fins that drive it trailing behind
+      k.capsule(0.42, 1.5, paint, { at: [0, 0.45, 0], rot: [Math.PI / 2, 0, 0], scale: [1, 0.72, 1], finish: "sheen" });
+      [-0.55, 0, 0.55].forEach((z, i) => k.sphere(i === 1 ? 0.27 : 0.23, "#9fd8e8", { at: [0, 0.68, z], seg: [12, 8], half: true, finish: glass }));
+      k.pair((s) => {
+        k.box([0.5, 0.03, 1.4], shade(paint, 0.85), { at: [s * 0.55, 0.4, 0], rot: [0, 0, s * -0.15], round: 0.012, finish: "sheen" });
+        for (let i = 0; i < 3; i++) k.rod([s * 0.12 * (i - 1), 0.42, -1.05], [s * (0.18 + 0.2 * i), 0.36 - 0.05 * i, -2.1 - 0.15 * i], 0.05 - i * 0.01, shade(paint, 0.75), { seg: 6, finish: "sheen" });
+      });
+      k.sphere(0.12, glowColor, { at: [0, 0.4, 1.12], seg: [8, 6], finish: lit });
+      return true;
+    }
+    case "aquadon": {
+      // A submersible (house rule): a fat round hull, a broad window at its nose, a fin on its back, a lit screw behind
+      k.capsule(0.45, 1.2, paint, { at: [0, 0.5, 0], rot: [Math.PI / 2, 0, 0], finish: "sheen" });
+      k.sphere(0.36, "#7fc4e0", { at: [0, 0.55, 0.85], seg: [12, 8], scale: [1, 0.8, 0.6], finish: glass });
+      k.box([0.04, 0.4, 0.55], shade(paint, 0.7), { at: [0, 1.0, -0.25], round: 0.02, finish: "sheen" });
+      k.pair((s) => k.box([0.5, 0.04, 0.3], shade(paint, 0.7), { at: [s * 0.5, 0.42, -0.75], round: 0.012, finish: "sheen" }));
+      k.torus(0.26, 0.04, dark, { at: [0, 0.5, -1.15], seg: [6, 16], finish: "sheen" });
+      k.cyl(0.18, 0.02, glowColor, { at: [0, 0.5, -1.16], rot: [Math.PI / 2, 0, 0], seg: 12, finish: lit });
+      return true;
+    }
+    case "hydro": {
+      // A hydrospeeder (house rule): a speeder bike's body on a hull that skims the water, a spray vane at the stern
+      k.box([0.55, 0.16, 1.7], paint, { at: [0, 0.14, 0], round: 0.07, finish: "sheen" });
+      k.capsule(0.16, 0.9, shade(paint, 0.9), { at: [0, 0.3, 0.15], rot: [Math.PI / 2, 0, 0], finish: "sheen" });
+      k.box([0.24, 0.08, 0.5], "#2a2420", { at: [0, 0.38, -0.3], round: 0.03 });
+      k.rod([-0.25, 0.55, 0.35], [0.25, 0.55, 0.35], 0.016, dark, { seg: 5 });
+      engine(0, 0.2, -1.1, -0.6, 0.13);
+      k.box([0.5, 0.2, 0.03], shade(paint, 0.8), { at: [0, 0.28, -1.0], round: 0.01, finish: "sheen" });
       return true;
     }
     case "xj6": {

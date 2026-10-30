@@ -1235,3 +1235,237 @@ export function BasePieceModel({ look, biome, w, h, face, ghost = false }: { loo
   if (ghost) return <group position={[sx / 2, 0, sy / 2]} rotation={[0, (face * Math.PI) / 2, 0]}><mesh position={[0, 0.5, 0]}><boxGeometry args={[w * 0.96, 1, h * 0.96]} /><meshBasicMaterial color="#facc15" transparent opacity={0.35} depthWrite={false} /></mesh></group>;
   return <Model id={`base:${name}:${biome}`} build={(k) => LIBRARY[name].build(k, colours, 0)} position={[sx / 2, 0, sy / 2]} rotation={[0, (face * Math.PI) / 2, 0]} />;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Water worlds (2026-10-30; house rules in shared/logic "Water worlds"). A place on the sea: the sea round it (waves moved in the
+// vertex shader of a lit material, so it takes the sun, the specular and the fog), the decking of its gantries and catwalks on piles,
+// with a rail along the water, and its buildings' footings going down into the water. A place under the sea: the domes of air over its
+// buildings, kelp, rising bubbles, shafts of light from the face of the sea far above, and the sea's own colour round it all.
+// The life of the water (both): schools of fish, and the great beasts of the rules data (an opee sea killer, a sando aqua monster)
+// cruising beyond the buildings.
+// ---------------------------------------------------------------------------------------------
+export const SEA_Y = -0.55; // the face of the water, a step under the decking (0)
+export const SWIM_Y = -0.72; // a swimmer's feet: a crawl lies along the face of the water, one treading water has its head and shoulders out
+export const UNDER_SWIM_Y = 0.5; // a swimmer under the sea, over the sea floor
+
+function waterMaterial(color: string, opacity: number) {
+  const time = { value: 0 };
+  const m = new THREE.MeshPhongMaterial({ color, shininess: 110, specular: new THREE.Color("#d8ecff"), transparent: opacity < 1, opacity, depthWrite: opacity >= 1 });
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = time;
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", `#include <common>
+uniform float uTime;
+float waveH(vec2 p) { return 0.07 * sin(p.x * 0.85 + uTime * 1.25) + 0.05 * sin(p.y * 1.21 - uTime * 1.05) + 0.03 * sin((p.x + p.y) * 2.2 + uTime * 2.0) + 0.015 * sin((p.x - p.y) * 4.1 - uTime * 2.9); }`)
+      .replace("#include <beginnormal_vertex>", `vec2 wp = (modelMatrix * vec4(position, 1.0)).xz;
+  float h0 = waveH(wp);
+  vec3 objectNormal = normalize(vec3(-(waveH(wp + vec2(0.06, 0.0)) - h0) / 0.06, 1.0, -(waveH(wp + vec2(0.0, 0.06)) - h0) / 0.06));`)
+      .replace("#include <begin_vertex>", `vec3 transformed = vec3(position);
+  transformed.y += h0;`);
+  };
+  m.customProgramCacheKey = () => "sea-waves";
+  return { m, time };
+}
+
+// The sea: a wide sheet of water at its face, the waves running over it; a tap on it walks (or swims) there
+export function Sea({ at, size, lite, onTap }: { at: V3; size: number; lite: boolean; onTap?: (e: ThreeEvent<MouseEvent>) => void }) {
+  const { m, time } = useMemo(() => waterMaterial("#3a8fb2", 0.88), []);
+  const geometry = useMemo(() => {
+    const g = new THREE.PlaneGeometry(size, size, lite ? 90 : 200, lite ? 90 : 200);
+    g.rotateX(-Math.PI / 2);
+    return g;
+  }, [size, lite]);
+  useEffect(() => () => { geometry.dispose(); m.dispose(); }, [geometry, m]);
+  useFrame((state) => { time.value = state.clock.elapsedTime; });
+  return (
+    <>
+      <mesh geometry={geometry} material={m} position={at} receiveShadow onClick={onTap} />
+      {/* the deep under it: dark, so that the water reads as deep */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[at[0], at[1] - 7, at[2]]} raycast={() => null}>
+        <planeGeometry args={[size, size]} />
+        <meshBasicMaterial color="#0d3d52" />
+      </mesh>
+      {/* and out to the horizon */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[at[0], at[1] - 0.03, at[2]]} raycast={() => null}>
+        <ringGeometry args={[size * 0.49, 1200, 48, 1]} />
+        <meshPhongMaterial color="#1d6384" shininess={60} specular="#9cc8e8" />
+      </mesh>
+    </>
+  );
+}
+
+// The decking of a place on the sea: a plate for each square of `deck` ("x,y"), a lip where it meets the water, a rail along the water
+// on posts, and piles down into it; and the footings of the buildings (`boxes`). One mesh for each.
+export function Decks({ deck, boxes, lite, onTap }: { deck: Set<string>; boxes: { x: number; y: number; width: number; height: number }[]; lite: boolean; onTap?: (e: ThreeEvent<MouseEvent>) => void }) {
+  const key = useMemo(() => [...deck].sort().join(";"), [deck]);
+  const [plates, metal] = useMemo(() => {
+    const plate: THREE.BufferGeometry[] = [];
+    const steel: THREE.BufferGeometry[] = [];
+    const has = (x: number, y: number) => deck.has(`${x},${y}`);
+    const put = (list: THREE.BufferGeometry[], size: V3, at: V3, colour: string) => {
+      const g = new THREE.BoxGeometry(...size).toNonIndexed();
+      g.translate(...at);
+      const c = new THREE.Color(colour);
+      const col = new Float32Array(g.attributes.position.count * 3);
+      for (let i = 0; i < g.attributes.position.count; i++) col.set([c.r, c.g, c.b], i * 3);
+      g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+      g.deleteAttribute("uv");
+      list.push(g);
+    };
+    for (const k of deck) {
+      const [x, y] = k.split(",").map(Number);
+      // (the plates alternate a little in shade, the seams dark between them)
+      put(plate, [0.96, 0.14, 0.96], [x + 0.5, -0.07, y + 0.5], (x + y) % 2 ? "#c6cdd4" : "#bcc4cc");
+      if (x % 3 === 0 && y % 3 === 0) put(steel, [0.18, 6.5, 0.18], [x + 0.5, -3.3, y + 0.5], "#5d6872");
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        if (has(x + dx, y + dy)) continue;
+        // the lip and the rail along the water's side of the square
+        const [ex, ey] = [x + 0.5 + dx * 0.48, y + 0.5 + dy * 0.48];
+        const size: V3 = dx ? [0.06, 0.3, 1] : [1, 0.3, 0.06];
+        put(steel, size, [ex, -0.15, ey], "#8c98a4");
+        if (!lite) {
+          put(steel, dx ? [0.05, 0.05, 1] : [1, 0.05, 0.05], [ex, 0.95, ey], "#dfe6ec");
+          put(steel, dx ? [0.04, 0.04, 1] : [1, 0.04, 0.04], [ex, 0.5, ey], "#aab4be");
+          put(steel, [0.06, 0.95, 0.06], [ex - (dy ? 0.47 : 0), 0.47, ey - (dx ? 0.47 : 0)], "#dfe6ec");
+        }
+      }
+    }
+    // The footings: each building stands on a plinth going down into the water
+    for (const b of boxes) put(steel, [b.width - 0.2, 7, b.height - 0.2], [b.x + b.width / 2, -3.65, b.y + b.height / 2], "#4f5a64");
+    const merge = (list: THREE.BufferGeometry[]) => {
+      const m = list.length ? mergeGeometries(list, false) : new THREE.BufferGeometry();
+      list.forEach((g) => g.dispose());
+      return m;
+    };
+    return [merge(plate), merge(steel)];
+  }, [key, boxes.map((b) => `${b.x},${b.y},${b.width},${b.height}`).join(";"), lite]);
+  useEffect(() => () => { plates.dispose(); metal.dispose(); }, [plates, metal]);
+  return (
+    <>
+      <mesh geometry={plates} receiveShadow castShadow={!lite} onClick={onTap}>
+        <meshPhongMaterial vertexColors shininess={40} specular="#6a7480" />
+      </mesh>
+      <mesh geometry={metal} castShadow={!lite} raycast={() => null}>
+        <meshPhongMaterial vertexColors shininess={50} specular="#8a96a2" />
+      </mesh>
+    </>
+  );
+}
+
+// A place under the sea: the dome of air over each building, kelp swaying over the sea floor, bubbles rising, shafts of light and the
+// face of the sea far above. `boxes` are the buildings' boxes, `ground` the place's ground.
+export function UnderSea({ boxes, ground, lite }: { boxes: { x: number; y: number; width: number; height: number }[]; ground: { x: number; y: number; w: number; h: number }; lite: boolean }) {
+  const kelp = useRef<THREE.InstancedMesh>(null);
+  const bubbles = useRef<THREE.InstancedMesh>(null);
+  const spots = useMemo(() => {
+    const r = createRandom(boxes.length * 977 + ground.w);
+    const inBox = (x: number, y: number) => boxes.some((b) => x > b.x - 1.5 && x < b.x + b.width + 1.5 && y > b.y - 1.5 && y < b.y + b.height + 1.5);
+    const out: { x: number; y: number; h: number; phase: number }[] = [];
+    for (let i = 0; out.length < (lite ? 60 : 160) && i < 2000; i++) {
+      const [x, y] = [ground.x - 10 + r.next() * (ground.w + 20), ground.y - 10 + r.next() * (ground.h + 20)];
+      if (!inBox(x, y)) out.push({ x, y, h: 1.5 + r.next() * 4, phase: r.next() * 6.28 });
+    }
+    return out;
+  }, [boxes.length, ground.w, ground.h, lite]);
+  const rising = useMemo(() => Array.from({ length: lite ? 40 : 120 }, (_, i) => ({ x: ground.x + ((i * 7919) % 1000) / 1000 * ground.w, y: ground.y + ((i * 104729) % 1000) / 1000 * ground.h, speed: 0.6 + ((i * 31) % 10) / 10, at: (i * 37) % 30 })), [ground.w, ground.h, lite]);
+  const blade = useMemo(() => { const g = new THREE.ConeGeometry(0.12, 1, 4, 3); g.translate(0, 0.5, 0); return g; }, []);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  useFrame((state) => {
+    const t = state.clock.elapsedTime;
+    if (kelp.current) {
+      spots.forEach((s, i) => {
+        dummy.position.set(s.x, 0, s.y);
+        dummy.rotation.set(Math.sin(t * 0.7 + s.phase) * 0.18, s.phase, Math.cos(t * 0.5 + s.phase) * 0.14);
+        dummy.scale.set(1, s.h, 1);
+        dummy.updateMatrix();
+        kelp.current!.setMatrixAt(i, dummy.matrix);
+      });
+      kelp.current.instanceMatrix.needsUpdate = true;
+    }
+    if (bubbles.current) {
+      rising.forEach((b, i) => {
+        const y = ((t * b.speed + b.at) % 30);
+        dummy.position.set(b.x + Math.sin(t * 2 + i) * 0.15, y, b.y);
+        dummy.rotation.set(0, 0, 0);
+        const s = 0.04 + (i % 5) * 0.015;
+        dummy.scale.set(s, s, s);
+        dummy.updateMatrix();
+        bubbles.current!.setMatrixAt(i, dummy.matrix);
+      });
+      bubbles.current.instanceMatrix.needsUpdate = true;
+    }
+  });
+  const [cx, cz] = [ground.x + ground.w / 2, ground.y + ground.h / 2];
+  return (
+    <>
+      {boxes.map((b, i) => {
+        const r = Math.hypot(b.width, b.height) / 2 + 1.2;
+        return (
+          <group key={i} position={[b.x + b.width / 2, 0, b.y + b.height / 2]}>
+            {/* the dome of air (a hydrostatic bubble: walked through, the water held off) */}
+            <mesh scale={[r, r * 0.8, r]} raycast={() => null} renderOrder={2}>
+              <sphereGeometry args={[1, lite ? 20 : 36, lite ? 10 : 18, 0, Math.PI * 2, 0, Math.PI / 2]} />
+              <meshPhongMaterial color="#9fe3ff" emissive="#1e6d8a" emissiveIntensity={0.35} transparent opacity={0.2} shininess={120} specular="#ffffff" side={THREE.DoubleSide} depthWrite={false} />
+            </mesh>
+            <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]} raycast={() => null}>
+              <ringGeometry args={[r - 0.12, r + 0.05, lite ? 24 : 48]} />
+              <meshBasicMaterial color="#bff0ff" transparent opacity={0.5} />
+            </mesh>
+          </group>
+        );
+      })}
+      <instancedMesh ref={kelp} args={[blade, undefined, spots.length]} raycast={() => null}>
+        <meshLambertMaterial color="#3f7a3a" emissive="#0d2a12" />
+      </instancedMesh>
+      <instancedMesh ref={bubbles} args={[undefined, undefined, rising.length]} raycast={() => null}>
+        <sphereGeometry args={[1, 6, 4]} />
+        <meshBasicMaterial color="#d8f6ff" transparent opacity={0.55} />
+      </instancedMesh>
+      {/* the face of the sea far above, seen from under it, and shafts of light coming down */}
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[cx, 34, cz]} raycast={() => null}>
+        <planeGeometry args={[600, 600]} />
+        <meshBasicMaterial color="#4fb3d6" transparent opacity={0.85} side={THREE.DoubleSide} />
+      </mesh>
+      {!lite && [0, 1, 2, 3, 4].map((i) => (
+        <mesh key={i} position={[cx + Math.sin(i * 2.4) * ground.w * 0.35, 16, cz + Math.cos(i * 1.7) * ground.h * 0.35]} rotation={[0.18 * Math.sin(i), 0, 0.15 * Math.cos(i)]} raycast={() => null}>
+          <cylinderGeometry args={[1.2, 4.5, 34, 12, 1, true]} />
+          <meshBasicMaterial color="#bfefff" transparent opacity={0.06} depthWrite={false} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} />
+        </mesh>
+      ))}
+    </>
+  );
+}
+
+// The sea's colour all round a place under it (as fog: the far buildings fade into blue-green)
+export const UNDER_FOG: [string, number, number] = ["#0f4a5e", 8, 70];
+
+// Fish in schools: each school turns on a ring round its own centre, each fish a little off the line, wagging. `depth` is where they swim.
+export function FishSchools({ ground, depth, count = 5, lite }: { ground: { x: number; y: number; w: number; h: number }; depth: number; count?: number; lite: boolean }) {
+  const mesh = useRef<THREE.InstancedMesh>(null);
+  const per = lite ? 10 : 24;
+  const schools = useMemo(() => Array.from({ length: count }, (_, i) => ({
+    x: ground.x + ((i * 0.37 + 0.15) % 1) * ground.w, y: ground.y + ((i * 0.61 + 0.3) % 1) * ground.h, r: 3 + (i % 3) * 2, speed: 0.25 + (i % 4) * 0.08, dir: i % 2 ? 1 : -1, hue: i,
+  })), [count, ground.w, ground.h]);
+  const fish = useMemo(() => { const g = new THREE.ConeGeometry(0.06, 0.26, 4); g.rotateX(Math.PI / 2); return g; }, []);
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+  useFrame((state) => {
+    const t = state.clock.elapsedTime;
+    if (!mesh.current) return;
+    schools.forEach((s, si) => {
+      for (let k = 0; k < per; k++) {
+        const a = s.dir * t * s.speed + k * 0.09 + si;
+        const off = Math.sin(k * 12.9898) * 0.6;
+        dummy.position.set(s.x + Math.cos(a) * (s.r + off), depth + Math.sin(k * 4.1 + t) * 0.25 + ((k % 3) - 1) * 0.2, s.y + Math.sin(a) * (s.r + off));
+        dummy.rotation.set(0, -a * s.dir + (s.dir > 0 ? Math.PI : 0) + Math.sin(t * 9 + k) * 0.2, 0);
+        dummy.updateMatrix();
+        mesh.current!.setMatrixAt(si * per + k, dummy.matrix);
+      }
+    });
+    mesh.current.instanceMatrix.needsUpdate = true;
+  });
+  return (
+    <instancedMesh ref={mesh} args={[fish, undefined, schools.length * per]} raycast={() => null}>
+      <meshPhongMaterial color="#c8d8e0" emissive="#203440" shininess={80} />
+    </instancedMesh>
+  );
+}

@@ -64,6 +64,9 @@ export const partyMotion: { current: Motion } = { current: motion() };
 // The climb a shot puts on the view (radians still to come): a heavy gun throws the aim up more than a light one (ViewRig takes it in quickly)
 export const recoil = { up: 0 };
 export const PITCH: Record<Exclude<ViewMode, "overhead">, [number, number]> = { first: [-1.3, 1.3], shoulder: [-0.7, 1.0] };
+// The roof over the room being walked, as a height over the floor where the character stands (set by the room drawn with a ceiling, null
+// out of doors): over the shoulder the camera keeps under it, so that looking down does not put it through the ceiling (2026-10-30, the user)
+export const roof: { above: number | null } = { above: null };
 
 export interface Pose {
   position: THREE.Vector3;
@@ -82,6 +85,8 @@ export function poseOf(mode: Exclude<ViewMode, "overhead">, feet: THREE.Vector3,
   if (mode === "first") return { position: head, look: head.clone().add(dir.clone().multiplyScalar(20)), muzzle };
   const pivot = head.clone().add(right.clone().multiplyScalar(0.18));
   let want = pivot.clone().add(dir.clone().multiplyScalar(-2.2)).add(right.clone().multiplyScalar(0.5)).add(new THREE.Vector3(0, 0.3, 0));
+  // (under the roof: lowered to a hand below it, never below the head)
+  if (roof.above !== null) want.y = Math.max(head.y, Math.min(want.y, feet.y + roof.above - 0.22));
   const back = want.clone().sub(head);
   const length = back.length();
   const ray = new THREE.Raycaster(head, back.clone().normalize(), 0, length);

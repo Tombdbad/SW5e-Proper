@@ -3082,7 +3082,8 @@ const WILD_BUILDINGS = ["cave", "ruin", "wreck", "camp", "trailhead", "sewer", "
 const OPEN_GROUNDS = ["landing field", "landing pad", "speeder platform"];
 // Buildings that may be round or oval when they are one room (see planBuilding): the towns' guard posts, a cantina
 // or a cookshop's round hall, the shops that are one room, and any hut, shrine or tower a world may add later
-const ROUND_BUILDINGS = /^(guardhouse|gatehouse|cantina|cookshop|pawnshop|curio shop|scrap dealer|hut|shrine|temple|chapel|tower|silo|cistern|observatory|dome|lighthouse|shelter)$/i;
+// (more of them since 2026-10-30, the user: "We should try to have a greater number of circular/oval buildings")
+const ROUND_BUILDINGS = /^(guardhouse|gatehouse|cantina|cookshop|pawnshop|curio shop|scrap dealer|hut|shrine|temple|chapel|tower|silo|cistern|observatory|dome|lighthouse|shelter|medcenter|archive|market|general store|apothecary|tech shop|outfitter|armsmith|residences|estates|manor house|palace|rooming house|gambling hall|command post|promenade|habitat ring|operations center|transit hub)$/i;
 const UNDERGROUND = /cellar|basement|crypt|vault|hidden compartment|escape tunnel|detention|sewer|deep chamber/i;
 const UPSTAIRS = /apartment|quarters|offices|command room|operations room|control room|tower|rooftop|lookout|bridge|port office|guest rooms|bedchambers/i;
 // Hangars that stand on the ground, with sliding doors in the roof, for ships to put down in (see SITES)
@@ -3100,7 +3101,9 @@ function levelsOf(building: Area, rooms: Area[]): Map<string, number> {
     // A room may name its floor (code F<n>; F-1 under the ground), as the rooms of a palace do
     const named = room.tags.find((t) => /^code:F-?\d+$/.test(t));
     // (a way in from the street is on the ground, whatever it is called: a hideout's lookout, an escape tunnel)
-    const level = named ? Number(named.slice(6)) : room.gateway ? 0 : UNDERGROUND.test(room.name) ? -1 : UPSTAIRS.test(room.name) && !OPEN_GROUNDS.includes(building.type) ? 1 : 0;
+    // (a cave goes down into the ground (2026-10-30, the user: "the first room should gently slope a long way down so the rooms' ceilings
+    // cannot be seen above ground"): its mouth is on the surface, its tunnels and dens a floor under it, a deep chamber two)
+    const level = named ? Number(named.slice(6)) : room.gateway ? 0 : building.type === "cave" ? (/deep/i.test(room.name) ? -2 : -1) : UNDERGROUND.test(room.name) ? -1 : UPSTAIRS.test(room.name) && !OPEN_GROUNDS.includes(building.type) ? 1 : 0;
     levels.set(room.id, level);
     top = Math.max(top, level);
   }
@@ -3123,12 +3126,14 @@ function linkRounds(world: World, building: Area, seed: number) {
   const all = childrenOf(world, building.id).filter((a) => a.kind === "room" && !formOf(a));
   const rooms = all.filter((a) => !a.tags.some((t) => t.startsWith("stack:") || t.startsWith("under:")) && !all.some((o) => o.tags.includes(`stack:${a.id}`) || o.tags.includes(`under:${a.id}`)));
   const r = createRandom(seed + Number(building.id.replace(/\D/g, "") || 1) * 6151 + 3);
-  if (!rooms.length || !r.chance(0.6)) return;
-  const room = r.pick(rooms);
-  room.tags.push("round");
+  // (on an ocean world, Kamino's way, every building is round, up to three of its rooms; elsewhere most have one, a large building two)
+  const ocean = trailOf(world, building.id).find((a) => a.kind === "planet")?.type === "ocean";
+  if (!rooms.length || !r.chance(ocean ? 1 : 0.85)) return;
+  const picked = r.shuffle([...rooms]).slice(0, ocean ? 3 : rooms.length >= 5 ? 2 : 1);
+  for (const room of picked) room.tags.push("round");
   const levels = levelsOf(building, rooms);
   const station = trailOf(world, building.id).some((a) => a.type === "station");
-  for (const path of [...world.paths]) {
+  for (const room of picked) for (const path of [...world.paths]) {
     if (path.kind !== "door") continue;
     const a = world.areas[path.from];
     const b = world.areas[path.to];
@@ -3418,8 +3423,10 @@ function linkLevels(world: World, building: Area, seed: number) {
     }
     if (!form) continue;
     const dir = lb > la ? "up" : "down";
+    // (a cave's way between floors is a long slope of rock, not steps: the map draws it as a ramp)
     const name =
-      form === "stairs" ? `${wild ? "Rising passage" : station ? "Ladderway" : "Stairs"}${wild ? "" : ` ${dir}`} to ${b.name}`
+      form === "stairs" && building.type === "cave" ? `Sloping passage ${dir} to ${b.name}`
+      : form === "stairs" ? `${wild ? "Rising passage" : station ? "Ladderway" : "Stairs"}${wild ? "" : ` ${dir}`} to ${b.name}`
       : form === "lift" ? `Lift ${dir} to ${b.name}`
       : form === "walkway" ? `Elevated walkway to ${b.name}`
       : `Corridor to ${b.name}`;
@@ -3511,7 +3518,9 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
     // (the rooms of a stair block are laid out with it, beside its host: see placeBlock)
     else if (tagId(room, "block")) [width, height] = [formOf(room) === "corridor" ? 1 : 2, BLOCK_LENGTH];
     else if (form) {
-      const span = { cross: form === "corridor" || form === "walkway" ? 2 : form === "ladder" ? 2 : 3, length: form === "corridor" || form === "walkway" ? r.int(5, 9) : form === "lift" ? 3 : form === "ladder" ? 3 : 4 + 3 * Math.max(1, rise) };
+      // (a cave's sloping passage is long, so that its slope is gentle: about one in four)
+      const ramp = form === "stairs" && building.type === "cave";
+      const span = { cross: form === "corridor" || form === "walkway" ? 2 : form === "ladder" ? 2 : 3, length: form === "corridor" || form === "walkway" ? r.int(5, 9) : form === "lift" ? 3 : form === "ladder" ? 3 : ramp ? r.int(11, 14) + 4 * (Math.max(1, rise) - 1) : 4 + 3 * Math.max(1, rise) };
       spans.set(room.id, span);
       [width, height] = [span.cross, span.length];
     } else {
@@ -3519,6 +3528,8 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
       // (A little larger than the plans were, 2026-10-16: the districts had a good deal of empty ground)
       const [w0, w1, h0, h1] = holdsShips(room) ? hangarRange(room) : [p0 + 1, p1 + 2, q0 + 1, q1 + 1];
       [width, height] = [r.int(w0, w1), r.int(h0, h1)];
+      // (a room to be made round is at least six squares a side, so that it can be)
+      if (room.tags.includes("round")) [width, height] = [Math.max(width, 6), Math.max(height, 6)];
     }
     room.layout = {
       x: 0, y: 0, width, height, assets: [],
@@ -3988,7 +3999,8 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
   // A quiet way in: hostile places always have one, others now and then. It opens into a back
   // room that is neither the entrance nor where the leader sits.
   const hostilePlace = rooms.some((a) => a.danger > 0);
-  const candidates = rooms.filter((a) => a !== root && !a.gateway && !formOf(a) && !a.tags.includes("code:b") && anyOutside(a, []));
+  // (not into a cave's rooms under the ground: only its mouth is on the surface)
+  const candidates = rooms.filter((a) => a !== root && !a.gateway && !formOf(a) && !a.tags.includes("code:b") && !(building.type === "cave" && (a.layout?.level ?? 0) < 0) && anyOutside(a, []));
   for (const room of rooms) delete room.secretEntry;
   if (candidates.length && (hostilePlace || r.chance(0.25))) {
     const room = r.pick(candidates);
@@ -6735,6 +6747,8 @@ export function hazardsAt(world: World, areaId: string, minute: number): { hazar
   else if (outdoors && wild && night) out.push({ hazard: "dark", why: "the night in the wilds" });
   if (area.kind === "room" && /reactor/i.test(area.name)) out.push({ hazard: "radiation", why: `the ${area.name.toLowerCase()}` });
   if (area.kind === "room" && wild && land === "ocean" && building && /^(wreck|ruin)$/.test(building.type) && !/hull breach|broken gate/i.test(area.name)) out.push({ hazard: "underwater", why: `${building.name} lies under the sea` });
+  // (the streets of a place built under the sea are the sea: inside its domes there is air)
+  if (outdoors && settlement && waterOf(world, areaId) === "under") out.push({ hazard: "underwater", why: `the sea round ${settlement.name}` });
   return out;
 }
 
@@ -7239,7 +7253,15 @@ export const VEHICLE_MAKES: VehicleMake[] = [
   { name: "Storm IV cloud car", model: "Airspeeder", look: "cloudcar", seats: 2, worlds: ["gas giant", "ocean", "urban"], from: "The Empire Strikes Back" },
   { name: "Koro-2 airspeeder", model: "Airspeeder", look: "koro", seats: 1, worlds: ["urban", "temperate", "ocean", "forest", "jungle"], from: "Attack of the Clones" },
   { name: "XJ-6 airspeeder", model: "Airspeeder", look: "xj6", seats: 2, worlds: ["urban"], from: "Attack of the Clones" },
+  // Water craft (2026-10-30, the user: "water and subaquatic transports"; house rule: the books price no boat, so a craft that skims the
+  // water is priced and paced as a speeder bike and a submersible as a landspeeder; only sold on ocean and swamp worlds)
+  { name: "Gungan bongo", model: "Landspeeder", look: "bongo", seats: 3, worlds: ["ocean", "swamp"], from: "The Phantom Menace" },
+  { name: "Aquadon submersible", model: "Landspeeder", look: "aquadon", seats: 4, worlds: ["ocean"], from: "house rule" },
+  { name: "Hydrospeeder", model: "Speederbike", look: "hydro", seats: 2, worlds: ["ocean", "swamp"], from: "house rule" },
 ];
+// The makes that go on and under the water (house rule): on a world of the sea they cross it, and a submersible goes under it
+export const WATER_LOOKS = new Set(["bongo", "aquadon", "hydro"]);
+export const SUBMERSIBLE_LOOKS = new Set(["bongo", "aquadon"]);
 export const makeOf = (name = ""): VehicleMake | undefined => {
   const n = name.toLowerCase();
   return VEHICLE_MAKES.find((m) => m.name.toLowerCase() === n) ?? VEHICLE_MAKES.find((m) => n.includes(m.name.toLowerCase()) && m.name.length > 10);
@@ -13495,4 +13517,64 @@ export function worldLook(world: World, areaId: string): WorldLook | null {
   const r = createRandom(hashOf(planet.id));
   look.moons = look.moons.map((m) => ({ ...m, color: MOON_TONES[Math.floor(r.next() * MOON_TONES.length)], size: 0.012 + r.next() * 0.035, az: r.next() * Math.PI * 2, el: 0.15 + r.next() * 0.55, drift: 0.6 + r.next() * 0.8 }));
   return look;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Water worlds (2026-10-30; the user: "water planets (like Kamino) where the only ground is made up of gantry ways surrounding buildings
+// and catwalks between these gantries. Kamino should be made up of mainly circular buildings. We also need subaquatic districts (ie. the
+// gungan city on Naboo) we need swimming mechanics, water dwelling beasts, water and subaquatic transports"). House rules, all of it:
+//   - every city, town and outpost of an ocean world stands on the sea or under it; a place that is not the world's way in is under it
+//     three times in five (by its id, so a world made before this has its places the same each time), the rest stand on the sea;
+//   - on the sea, the buildings stand on piles out of the water, each ringed by a gantry two squares wide, and catwalks two wide join each
+//     building's gantry to the next and the ways out of the place (`deckSquares`); the rest of the ground is open water, to be swum;
+//   - under the sea the buildings stand on the sea floor under domes of air; the streets between them are the sea (the hazard underwater);
+//   - a creature swims at half its walking pace unless it has a swimming speed (the Handbook's rule for swimming without one); see
+//     `swimPace`. Nearly every building of an ocean world is round (linkRounds).
+// ---------------------------------------------------------------------------------------------
+export type WaterLife = "sea" | "under";
+export function waterOf(world: World, areaId: string): WaterLife | null {
+  const planet = ancestor(world, areaId, "planet");
+  if (planet?.type !== "ocean") return null;
+  const settlement = ancestor(world, areaId, "settlement");
+  if (!settlement || !["city", "town", "outpost"].includes(settlement.type)) return null;
+  return !settlement.gateway && unitOf(`${settlement.id}|under`) < 0.6 ? "under" : "sea";
+}
+// How wide a gantry round a building and a catwalk are, in squares
+export const GANTRY = 2;
+// The squares of a place on the sea that are decking: a gantry round each building's box, its site's grounds (a garden, a market's
+// stalls) decked over, and catwalks joining the buildings each to its nearest neighbour already joined (so all are joined, by the
+// shortest ways) and each of `anchors` (the ways out of the place) to its nearest building. A catwalk runs straight, then turns once.
+export function deckSquares(plan: Pick<DistrictPlan, "boxes" | "grounds">, anchors: { x: number; y: number }[] = []): Set<string> {
+  const out = new Set<string>();
+  const fill = (x0: number, y0: number, x1: number, y1: number) => { for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) out.add(`${x},${y}`); };
+  const boxes = Object.values(plan.boxes);
+  for (const b of boxes) fill(b.x - GANTRY, b.y - GANTRY, b.x + b.width + GANTRY - 1, b.y + b.height + GANTRY - 1);
+  for (const g of [...(plan.grounds?.gardens ?? []), ...(plan.grounds?.stalls ?? []).map((t) => ({ x: t.x, y: t.y, width: t.w, height: t.h }))]) fill(g.x - 1, g.y - 1, g.x + g.width, g.y + g.height);
+  const mid = (b: { x: number; y: number; width: number; height: number }) => ({ x: Math.floor(b.x + b.width / 2), y: Math.floor(b.y + b.height / 2) });
+  // (a catwalk two wide from one point to another: along x, then along y)
+  const walk = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+    fill(a.x, a.y, b.x, a.y + GANTRY - 1);
+    fill(b.x, a.y, b.x + GANTRY - 1, b.y);
+  };
+  const joined = boxes.slice(0, 1);
+  const left = boxes.slice(1);
+  while (left.length) {
+    let best = { i: 0, j: 0, d: Infinity };
+    left.forEach((b, i) => joined.forEach((a, j) => { const d = Math.abs(mid(a).x - mid(b).x) + Math.abs(mid(a).y - mid(b).y); if (d < best.d) best = { i, j, d }; }));
+    const [b] = left.splice(best.i, 1);
+    walk(mid(joined[best.j]), mid(b));
+    joined.push(b);
+  }
+  for (const p of anchors) {
+    const near = boxes.reduce<{ x: number; y: number } | null>((n, b) => (!n || Math.abs(mid(b).x - p.x) + Math.abs(mid(b).y - p.y) < Math.abs(n.x - p.x) + Math.abs(n.y - p.y) ? mid(b) : n), null);
+    if (near) walk(p, near);
+    fill(p.x - 1, p.y - 1, p.x + 1, p.y + 1);
+  }
+  return out;
+}
+// A swimmer's pace as a share of its walking pace: its own swimming speed where it has one ("swim 30 ft."), else half (house rule, from
+// the Handbook's extra foot of movement for each foot swum)
+export function swimPace(speedText = "", walk = 30): number {
+  const m = /swim(?:ming)?(?: speed)?\s*(\d+)/i.exec(speedText);
+  return m ? Math.min(1, Number(m[1]) / Math.max(1, walk)) : 0.5;
 }

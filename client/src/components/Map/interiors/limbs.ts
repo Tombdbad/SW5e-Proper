@@ -431,8 +431,9 @@ export function saberStyleOf(name: string, known: string[] = []): SaberStyle {
 
 // What the scene says a person is doing. Times are seconds on `nowSeconds()`'s clock; `swing` counts the strikes (the style's are taken in
 // turn), `kick` is how hard the weapon kicks (0 a hold-out, 1 a heavy repeater)
+// (posture: 0 standing, 1 crouched, 2 prone, 3 swimming (2026-10-30): a crawl when it moves, treading water when it does not)
 export interface Motion {
-  posture: 0 | 1 | 2;
+  posture: 0 | 1 | 2 | 3;
   ready: boolean;
   pitch: number;
   air: boolean;
@@ -450,8 +451,8 @@ export const nowSeconds = () => (typeof performance !== "undefined" ? performanc
 export const kickOf = (name: string, damage = 0): number => gunKick(name, damage).kick;
 
 // The motion's states eased over frames (0 to 1): a figure goes into a crouch, up into a guard, onto its belly, over a moment, not at once
-export interface Eased { ready: number; crouch: number; prone: number; air: number; block: number }
-export const eased = (): Eased => ({ ready: 0, crouch: 0, prone: 0, air: 0, block: 0 });
+export interface Eased { ready: number; crouch: number; prone: number; air: number; block: number; swim: number }
+export const eased = (): Eased => ({ ready: 0, crouch: 0, prone: 0, air: 0, block: 0, swim: 0 });
 export function easeMotion(e: Eased, m: Motion, dt: number): Eased {
   const k = 1 - Math.exp(-dt * 9);
   e.ready += ((m.ready || m.blocking ? 1 : 0) - e.ready) * k;
@@ -459,6 +460,7 @@ export function easeMotion(e: Eased, m: Motion, dt: number): Eased {
   e.prone += ((m.posture === 2 ? 1 : 0) - e.prone) * (1 - Math.exp(-dt * 6));
   e.air += ((m.air ? 1 : 0) - e.air) * (1 - Math.exp(-dt * 14));
   e.block += ((m.blocking ? 1 : 0) - e.block) * (1 - Math.exp(-dt * 16));
+  e.swim += ((m.posture === 3 ? 1 : 0) - e.swim) * (1 - Math.exp(-dt * 5));
   return e;
 }
 
@@ -695,10 +697,41 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
     put("foreR", [-0.9 * p * (hold === "none" ? 1 : 0), 0, 0]);
     put("foreL", [-0.9 * p * (hold === "none" || hold === "pistol" ? 1 : 0), 0, 0]);
   }
+  // Swimming (2026-10-30): moving, a front crawl, the body flat in the water, the arms reaching over in turn and pulling through under it, the
+  // legs kicking; still, treading water, upright, the arms sculling and the legs cycling. What the hands hold is held as it can be.
+  let flat = 0;
+  if (e.swim > 0.001) {
+    const k = e.swim;
+    const moving = Math.min(1, Math.max(amp * 2.5, s.speed / 0.6));
+    flat = k * moving;
+    for (const j of JOINTS) if (J[j]) J[j] = [J[j]![0] * (1 - k), J[j]![1] * (1 - k), J[j]![2] * (1 - k)];
+    const stroke = t * 3.4;
+    // (the crawl: each arm goes round, a half turn apart, the elbow bending as it pulls; the head turns to breathe every other stroke)
+    put("armR", [(-1.55 + 1.5 * Math.sin(stroke)) * flat, 0, 0.12 * flat]);
+    put("armL", [(-1.55 + 1.5 * Math.sin(stroke + Math.PI)) * flat, 0, -0.12 * flat]);
+    put("foreR", [-0.55 * Math.max(0, Math.cos(stroke)) * flat, 0, 0]);
+    put("foreL", [-0.55 * Math.max(0, Math.cos(stroke + Math.PI)) * flat, 0, 0]);
+    put("legR", [0.28 * Math.sin(stroke * 2) * flat, 0, 0]);
+    put("legL", [-0.28 * Math.sin(stroke * 2) * flat, 0, 0]);
+    put("shinR", [0.2 * Math.max(0, Math.sin(stroke * 2)) * flat, 0, 0]);
+    put("shinL", [0.2 * Math.max(0, -Math.sin(stroke * 2)) * flat, 0, 0]);
+    put("chest", [-0.15 * flat, Math.sin(stroke) * 0.18 * flat, 0]);
+    put("head", [-0.75 * flat, Math.max(0, Math.sin(stroke / 2)) ** 4 * 0.9 * flat, 0]);
+    // (treading water: the arms out, sculling to and fro, the legs pedalling)
+    const tread = k * (1 - moving);
+    put("armR", [-0.25 * tread, Math.sin(t * 3) * 0.35 * tread, 1.0 * tread]);
+    put("armL", [-0.25 * tread, -Math.sin(t * 3) * 0.35 * tread, -1.0 * tread]);
+    put("foreR", [-0.5 * tread, 0, 0]);
+    put("foreL", [-0.5 * tread, 0, 0]);
+    put("legR", [(-0.45 + 0.35 * Math.sin(t * 2.6)) * tread, 0, -0.1 * tread]);
+    put("legL", [(-0.45 - 0.35 * Math.sin(t * 2.6)) * tread, 0, 0.1 * tread]);
+    put("shinR", [(0.7 + 0.4 * Math.cos(t * 2.6)) * tread, 0, 0]);
+    put("shinL", [(0.7 - 0.4 * Math.cos(t * 2.6)) * tread, 0, 0]);
+  }
   for (const j of JOINTS) if (J[j]) setEuler(out, LIMB_OF[j], J[j]![0], J[j]![1], J[j]![2]);
   // How far the bent knees lower the body: the standing leg (the longer of the two) holds it up
   const height = (thigh: number, shin: number) => (legs.hip - legs.knee) * Math.cos(thigh) + legs.knee * Math.cos(thigh + shin);
   const stand = Math.max(height(J.legR?.[0] ?? 0, J.shinR?.[0] ?? 0), height(J.legL?.[0] ?? 0, J.shinL?.[0] ?? 0));
-  const drop = legs.hip > 0 ? Math.max(0, legs.hip - stand) * upright * (1 - a) : 0;
-  return { drop, lift, spin, tip: p };
+  const drop = legs.hip > 0 ? Math.max(0, legs.hip - stand) * upright * (1 - a) * (1 - e.swim) : 0;
+  return { drop, lift, spin, tip: Math.max(p, flat) };
 }

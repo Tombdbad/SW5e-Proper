@@ -10,19 +10,21 @@ import type { Pet } from "@shared/logic/coop";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey, squaresApart, type Combatant, type Step } from "@/lib/stores/useCombat";
 // A lit square's colour by how it is reached: walked (green), jumped, climbed or flown to (blue), or a fall at the end (orange)
 const stepColor = (step: Step) => (step.fall ? "#fb923c" : step.how && /^(jump|climb|hook|fly)$/.test(step.how) ? "#38bdf8" : "#4ade80");
+import { deckSquares, waterOf, type WaterLife } from "@shared/logic";
 import { standsAt, stairsGoals, arrivalSquares, climbAt, canStep, floorsOf, piecesIn, squaresOf, type Companion, type Cart, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
 import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt, worldLook, type WorldLook, type PartyShip } from "@shared/logic";
 import type { VerticalMove } from "@shared/logic";
 import { transitMs, transitAt, geomOf, type TransitKind, type TransitGeom, type Edge as TransitEdge } from "./interiors/transit";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
 import { floorOf, tokenOf, SIDE_COLORS, type FloorKind } from "./sprites";
+import type { Tier } from "./interiors/atmosphere";
 import { Atmosphere } from "./interiors/Atmosphere.tsx";
 import { Stock } from "./interiors/Stock.tsx";
-import { CaveDressing, CaveMound, CaveSlab, CaveWalls, MaskFloor, RockWall } from "./interiors/CaveRoom";
+import { CaveDressing, CaveMound, CaveSlab, CaveWalls, MaskFloor, RampFloor, RockArch, RockWall } from "./interiors/CaveRoom";
 import { moodOf } from "./interiors/atmosphere";
 import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
 import { PackWalls, cornerCentre, bendOf, holeOf, piercedWall, type Bend, type WallRun } from "./interiors/Walls";
-import { AIM, aimAt, aimFrom, partyMotion, stance, useView, type Aimed, type AimPlan } from "./interiors/aim";
+import { AIM, aimAt, aimFrom, partyMotion, roof as viewRoof, stance, useView, type Aimed, type AimPlan } from "./interiors/aim";
 import { kickOf, motion, nowSeconds, type Motion } from "./interiors/limbs";
 import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, type JumpStats } from "./interiors/air";
 import { ViewRig } from "./interiors/ViewRig";
@@ -33,6 +35,7 @@ import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
+import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderSea } from "./siteAssets";
 import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, type SeatState, type Shot } from "./interiors/limbs";
@@ -151,12 +154,12 @@ const DAY_SKY = new THREE.Color("#5d7fa3");
 const DUSK_SKY = new THREE.Color("#b8683f");
 // With the look of the place (scenery.tsx WorldSky): the dome, the suns, moons and clouds, and the land on the horizon, in place of a plain
 // background colour; `ground` is the height of the ground the horizon's land stands on
-function Sky({ shadow = 30, cast = true, indoors = 0, look, ground = 0, fog, floor = true }: { shadow?: number; cast?: boolean; indoors?: number; look?: WorldLook | null; ground?: number; fog?: [number, number]; floor?: boolean }) {
+function Sky({ shadow = 30, cast = true, indoors = 0, look, ground = 0, fog, floor = true, under = false }: { shadow?: number; cast?: boolean; indoors?: number; look?: WorldLook | null; ground?: number; fog?: [number, number]; floor?: boolean; under?: boolean }) {
   const lite = useQuality((q) => q.tier === "lite");
   const minutes = useClock((c) => Math.round(c.minutes / 5) * 5);
   const light = daylight(minutes);
   const twilight = light > 0 && light < 1;
-  const background = NIGHT_SKY.clone().lerp(DAY_SKY, light).lerp(DUSK_SKY, twilight ? 0.35 * (1 - Math.abs(light - 0.5) * 2) : 0);
+  const background = under ? new THREE.Color(UNDER_FOG[0]).multiplyScalar(0.35 + 0.65 * light) : NIGHT_SKY.clone().lerp(DAY_SKY, light).lerp(DUSK_SKY, twilight ? 0.35 * (1 - Math.abs(light - 0.5) * 2) : 0);
   // The sun's light moves with the instant, not with the five minutes the rest of the sky is drawn for (the user, 2026-10-28: the sun and moon
   // jumped from place to place)
   const sunLight = useRef<THREE.DirectionalLight>(null);
@@ -171,8 +174,10 @@ function Sky({ shadow = 30, cast = true, indoors = 0, look, ground = 0, fog, flo
   return (
     <>
       <color attach="background" args={[background]} />
-      {look && <WorldSky look={look} light={light} hour={(minutes / 60) % 24} now={() => hourOf(minuteNow())} ground={ground} lite={lite} fog={fog} floor={floor} />}
-      <ambientLight intensity={(0.42 + 0.33 * light) * (1 - 0.5 * indoors)} color={light < 0.3 ? "#a9b8ff" : "#ffffff"} />
+      {/* (under the sea: the water's colour closes in, the light comes down green-blue) */}
+      {under && <fog attach="fog" args={[background, UNDER_FOG[1], UNDER_FOG[2]]} />}
+      {look && !under && <WorldSky look={look} light={light} hour={(minutes / 60) % 24} now={() => hourOf(minuteNow())} ground={ground} lite={lite} fog={fog} floor={floor} />}
+      <ambientLight intensity={(0.42 + 0.33 * light) * (1 - 0.5 * indoors)} color={under ? "#9fe0e6" : light < 0.3 ? "#a9b8ff" : "#ffffff"} />
       <directionalLight ref={sunLight} position={sun} intensity={(0.24 + 0.66 * light) * (1 - 0.6 * indoors)} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow={cast} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
     </>
   );
@@ -472,7 +477,9 @@ function BayBerth({ room, asset, based, ceiling, rise: up = 8 }: { room: Pick<Ar
 // so that the tallest species stands in a room); a room stands on the floor of its level
 // (a gallery on half of one), and a stairwell, lift or ladder rises from its lower level.
 // A room with a mezzanine (`layout.tall`) is two floors high
-export const LEVEL_H = 2.8;
+// (a storey was 2.8 and a room's walls 2.4 until 2026-10-30; the user: "ceiling and roof textures are too low (when using over the shoulder
+// view, the ceiling obscures the view when the player looks down)": now 3.4 and 3.0, and the camera keeps under the ceiling, aim.ts `roof`)
+export const LEVEL_H = 3.4;
 const levelY = (l?: Pick<RoomLayout, "level">) => (l?.level ?? 0) * LEVEL_H;
 const rise = (l?: Pick<RoomLayout, "climb">) => (l?.climb ? l.climb.levels * LEVEL_H : 0);
 // How far up the floor of a way between floors is at a point of it (squares from the room's
@@ -662,7 +669,9 @@ function StairsAsset({ w, h, up, rock }: { w: number; h: number; up: boolean; ro
 const FLOORS: Record<FloorKind, string> = { plating: "#1d2530", hangar: "#232a31", sand: "#8f7447", rock: "#3a3835", stone: "#45423d", clay: "#4a3a2d" };
 const WAY_COLORS = { door: "#f59e0b", locked: "#f87171", exit: "#4ade80", secret: "#c084fc", window: "#7dd3fc" };
 const WALL_HEIGHT = 0.8;
-const FULL_WALL_HEIGHT = 2.4;
+const FULL_WALL_HEIGHT = 3.0;
+// The rock roof of a cave in the eye views: highest over the middle of a chamber, lower towards its walls (CaveRoom caveShellGeometry)
+const CAVE_ROOF = 3.5;
 // A gallery's balustrade: waist high to a figure, so that the floor below stays open to the ceiling
 const BALUSTRADE_HEIGHT = 1.0;
 const WALL_THICK = 0.16;
@@ -797,9 +806,20 @@ function PiercedWall({ kind, pane, style, wallH, lift = 0, bend, color, wall }: 
 }
 // A doorway's leaf swings (or rolls up, for a hangar) when it is tapped, and shuts again when it is tapped once more. Its leaf is of what
 // the room's walls are (`wall`, the room's wall set); `bend` lays it and its frame on a curved wall
-function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint, bend }: { kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string; wall?: WallSet; tint?: string; bend?: Bend }) {
+function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint, bend, rock }: { kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string; wall?: WallSet; tint?: string; bend?: Bend; rock?: { biome: string; tier: Tier; seed: number; outside?: boolean } }) {
   const [open, setOpen] = useState(false);
   const isDoor = kind === "door" || kind === "exit";
+  // A cave's ways (2026-10-30, the user: "The entry to caves (a standard door) looks all wrong"): no frame and no leaf; the way out is an
+  // arch of rock (with the dark of the cave behind it, seen from outside), a way between its rooms the rock's own opening
+  if (rock && (isDoor || kind === "secret")) {
+    return (
+      <>
+        {kind === "exit" && <RockArch biome={rock.biome} tier={rock.tier} seed={rock.seed} dark={!!rock.outside} />}
+        {label && <Label at={[0, kind === "exit" ? 2.9 : 1.9, 0]} size={0.3} color={color}>{label}</Label>}
+        {onTap && <Hit at={[0, 0.75, 0]} size={[1, 1.5, 0.9]} onTap={onTap} label={label ?? kind} />}
+      </>
+    );
+  }
   const mode = /hangar|bay|dock/i.test(name) ? "rise" : "hinge";
   const metal = /hangar|bay|dock|gate|vault|cell|airlock/i.test(name);
   const tap = onTap ? () => { setOpen((o) => !o); onTap(); } : undefined;
@@ -923,8 +943,10 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // (interiors/): its wealth turns the furniture's browns, steels and golds into its own woods, metal and trim
   const detail = useQuality((q) => q.tier);
   const rocky = !!mood && mood.buildingType === "cave";
-  // A cave room whose floor winds (layout.mask): floor squares, rock round them, no straight walls
-  const mask = rocky ? plan?.mask : undefined;
+  // A cave room whose floor winds (layout.mask): floor squares, rock round them, no straight walls; a cave's sloping passage (a stairs
+  // room, 2026-10-30) has the whole of its rectangle for floor, and the same rock round it
+  const fullMask = useMemo(() => Array.from({ length: height }, () => "#".repeat(width)), [width, height]);
+  const mask = rocky ? plan?.mask ?? (plan?.form ? fullMask : undefined) : undefined;
   const ceilingColour = rocky ? "#34302b" : mood && /starship/.test(mood.buildingType) ? "#3a424b" : "#8c8a84";
   const wealth = mood ? wealthOf(mood.buildingType, mood.roomName) : null;
   const look = useMemo(() => (wealth && mood ? lookOf(wealth, mood.biome) : undefined), [wealth, mood?.biome]);
@@ -943,9 +965,22 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // (seen from overhead, a switchback's walls stop at its landing, so that both flights can be looked into)
   // (a roof terrace or a balcony keeps its waist-high parapet in the eye views too: 2026-10-27, the user)
   const parapet = plan?.form === "roof" || plan?.form === "balcony";
-  const wallH = (tallWalls ? LEVEL_H * 2 - 0.2 : fullWalls && !parapet ? FULL_WALL_HEIGHT : WALL_HEIGHT) + (plan?.switchback && !fullWalls ? climbs / 2 : climbs);
+  // A grand room is two or three storeys high under a vault, in the eye views (vaultOf)
+  const vault = mood && fullWalls && ceiling && !mask && !plan?.form ? vaultOf(mood.buildingType, mood.roomName, width, height) : 0;
+  const wallH = (vault ? LEVEL_H * Math.max(vault, tallWalls ? 2 : 1) - 0.2 : tallWalls ? LEVEL_H * 2 - 0.2 : fullWalls && !parapet ? FULL_WALL_HEIGHT : WALL_HEIGHT) + (plan?.switchback && !fullWalls ? climbs / 2 : climbs);
   // The ceiling stays at the room's height where the walls are a balustrade (a gallery)
   const ramp = (x: number, y: number) => (plan?.climb ? rampAt(plan as RoomLayout, x + 0.5, y + 0.5) : 0);
+  // (a cave's way between floors is a slope of rock, not steps: the user, 2026-10-30)
+  const sloped = rocky && !!plan?.climb && !plan.switchback;
+  const slopeKey = sloped ? `${plan!.climb!.toward}:${climbs}` : "";
+  const slope = useMemo(() => (sloped ? (x: number, z: number) => climbAt(plan as RoomLayout, x, z) * climbs : undefined), [slopeKey, width, height]);
+  // The camera over the shoulder keeps under the roof (aim.ts `roof`): its height over the floor where one stands
+  const roofAbove = ceiling && walls ? (mask ? CAVE_ROOF - 0.55 : wallH - climbs) : null;
+  useEffect(() => {
+    if (roofAbove === null) return;
+    viewRoof.above = roofAbove;
+    return () => { if (viewRoof.above === roofAbove) viewRoof.above = null; };
+  }, [roofAbove]);
   // The kit this room is furnished and walled from, and its palette
   // (a room that is `like` another has that room's walls but none of its furniture, light or air: `pack` is for the walls only)
   const wallPack = mood && !rocky ? packOf(mood.roomName, mood.buildingType) : like ? packOf(like.roomName, like.buildingType) : undefined;
@@ -989,7 +1024,9 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   return (
     <>
       {/* The floor; a tap on it walks to the square (both floors are centred on the room's middle) */}
-      {mask ? (
+      {mask && slope ? (
+        <RampFloor mask={mask} width={width} height={height} color={FLOORS[floor]} lift={slope} liftKey={slopeKey} onClick={floorTap} />
+      ) : mask ? (
         <MaskFloor mask={mask} width={width} height={height} color={FLOORS[floor]} onClick={floorTap} />
       ) : rounded ? (
         <group onClick={floorTap}>
@@ -1007,9 +1044,9 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
           <FloorSurface look={floorTexture} w={width} h={height} radii={[nw, ne, se, sw]} onTap={floorTap} />
         </Suspense>
       )}
-      {plan?.climb && plan.form && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} onTap={onFloor} rock={rocky ? { biome: mood!.biome } : undefined} />}
+      {plan?.climb && plan.form && !sloped && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} onTap={onFloor} rock={rocky ? { biome: mood!.biome } : undefined} />}
       {walls && mask
-        ? <CaveWalls mask={mask} ways={assets.filter((a) => a.side).map((a) => ({ x: a.x, y: a.y }))} w={width} h={height} biome={mood!.biome} tier={detail} seed={width * 31 + height} tall={fullWalls} />
+        ? <Solids><CaveWalls mask={mask} ways={assets.filter((a) => a.side).map((a) => ({ x: a.x, y: a.y, side: a.side }))} w={width} h={height} biome={mood!.biome} tier={detail} seed={width * 31 + height} tall={fullWalls} ceiling={ceiling && fullWalls ? CAVE_ROOF : undefined} lift={slope} liftKey={slopeKey} /></Solids>
         : walls
         ? (() => {
             const runs = cut.runs.filter((r) => r.b - r.a >= 0.01).map((r) => ({ ...r, at: sides.find((s) => s.side === r.side)!.at }));
@@ -1073,7 +1110,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         : [[0, 0], [width, 0], [0, height], [width, height]].map(([x, z], i) => <Cyl key={i} at={[x, 0.3, z]} r={0.08} h={0.6} color={wall} />)}
       {setIn.filter((p) => walls || p.a.kind !== "window").map(({ a, at, turn, bend }) => (
         <group key={a.id} position={[at[0], ramp(a.x, a.y), at[1]]} rotation={[0, turn, 0]}>
-          <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} tint={packLook && wallPack && hasWalls(wallPack) ? toneColour(packLook) : wall} bend={bend} />
+          <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} tint={packLook && wallPack && hasWalls(wallPack) ? toneColour(packLook) : wall} bend={bend} rock={rocky ? { biome: mood!.biome, tier: detail, seed: a.x * 7 + a.y * 13 + width } : undefined} />
         </group>
       ))}
       {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
@@ -1099,12 +1136,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
       ))}
       {ceiling && walls && (
         // The roof seen from inside: rock over a cave, a deck head in a ship, a plain ceiling elsewhere, on the room's own footprint
-        mask ? (
-          <mesh position={[width / 2, wallH + 0.05, height / 2]} raycast={() => null}>
-            <boxGeometry args={[width + 2, 0.1, height + 2]} />
-            <meshLambertMaterial color={ceilingColour} />
-          </mesh>
-        )
+        mask ? null
+        : vault ? <Vault w={width} h={height} y={wallH} round={nw > 0 && nw === ne && ne === se && se === sw} color={/palace|estates|manor/.test(mood!.buildingType) ? "#ddd3bf" : "#c9c4b8"} rib={/palace/.test(mood!.buildingType) ? "#b8964e" : "#9a9184"} />
         : rounded ? <RoundedFloor w={width} d={height} radii={[nw, ne, se, sw]} color={ceilingColour} y={wallH} thick={0.1} />
         : (
           <mesh position={[width / 2, wallH + 0.05, height / 2]} raycast={() => null}>
@@ -1114,9 +1147,142 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         )
       )}
       {atmosphere && look && walls && <Atmosphere mood={atmosphere} look={look} w={width} h={height} tier={detail} />}
-      {rocky && <CaveDressing w={width} h={height} seed={width * 31 + height} biome={mood!.biome} tier={detail} takenKey={takenKey} mask={mask} />}
+      {/* (not in a sloping passage, which is walked from wall to wall) */}
+      {rocky && !plan?.form && <CaveDressing w={width} h={height} seed={width * 31 + height} biome={mood!.biome} tier={detail} takenKey={takenKey} mask={mask} />}
       {children}
     </>
+  );
+}
+
+// How many storeys high a grand room stands in the eye views, under a vault (2026-10-30, the user: "Palaces should have high vaulted
+// ceilings - double or even triple height in grand, large rooms"): a palace's audience chamber or throne room three, its halls and its
+// other large rooms two, a great house's hall and an archive's reading hall two; 0 for a room of the usual height. Only the view from
+// inside is raised: a room stacked over it is taken away while it is looked into, as it always was.
+export function vaultOf(buildingType: string, roomName: string, w: number, h: number): number {
+  if (buildingType === "palace") return /audience|throne/i.test(roomName) ? 3 : /hall/i.test(roomName) || w * h >= 70 ? 2 : 0;
+  if (/^(estates|manor house)$/.test(buildingType)) return /hall/i.test(roomName) && w * h >= 36 ? 2 : 0;
+  if (buildingType === "archive") return /reading hall/i.test(roomName) ? 2 : 0;
+  return 0;
+}
+
+// The vault over a grand room: a barrel along its length (a half ellipse across it, as high as a third of its span), closed at each end,
+// on ribs a little more than a square apart; over a round room a dome on a ring
+function Vault({ w, h, y, round, color, rib }: { w: number; h: number; y: number; round: boolean; color: string; rib: string }) {
+  const span = Math.min(w, h);
+  const length = Math.max(w, h);
+  const alongX = w >= h;
+  const rise = span * 0.36;
+  const barrel = useMemo(() => {
+    if (round) return null;
+    const [n, m] = [16, Math.max(2, Math.round(length * 2))];
+    const pos: number[] = [];
+    const idx: number[] = [];
+    for (let i = 0; i <= m; i++)
+      for (let j = 0; j <= n; j++) {
+        const a = (Math.PI * j) / n;
+        const [across, up, along] = [Math.cos(a) * span / 2, Math.sin(a) * rise, (i / m - 0.5) * length];
+        pos.push(alongX ? along : across, up, alongX ? across : along);
+      }
+    for (let i = 0; i < m; i++) for (let j = 0; j < n; j++) { const a = i * (n + 1) + j; idx.push(a, a + 1, a + n + 1, a + 1, a + n + 2, a + n + 1); }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    return g;
+  }, [w, h, round]);
+  // The half ellipse that closes each end of the barrel, and that each rib follows
+  const lunette = useMemo(() => {
+    const shape = new THREE.Shape();
+    shape.moveTo(span / 2, 0);
+    for (let j = 1; j <= 16; j++) shape.lineTo(Math.cos((Math.PI * j) / 16) * span / 2, Math.sin((Math.PI * j) / 16) * rise);
+    return new THREE.ShapeGeometry(shape);
+  }, [span, rise]);
+  useEffect(() => () => { barrel?.dispose(); lunette.dispose(); }, [barrel, lunette]);
+  if (round) {
+    return (
+      <group position={[w / 2, y, h / 2]}>
+        <mesh scale={[w / 2, span * 0.5, h / 2]} raycast={() => null}>
+          <sphereGeometry args={[1, 28, 10, 0, Math.PI * 2, 0, Math.PI / 2]} />
+          <meshLambertMaterial color={color} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh rotation={[Math.PI / 2, 0, 0]} scale={[w / 2, h / 2, 1]} raycast={() => null}>
+          <torusGeometry args={[0.99, 0.03, 6, 40]} />
+          <meshLambertMaterial color={rib} />
+        </mesh>
+        {/* the lantern at its crown */}
+        <mesh position={[0, span * 0.5 - 0.02, 0]} raycast={() => null}><cylinderGeometry args={[span * 0.08, span * 0.08, 0.06, 16]} /><meshBasicMaterial color="#f3e2b0" /></mesh>
+      </group>
+    );
+  }
+  const ribs = Math.max(1, Math.floor(length / 2.2));
+  return (
+    <group position={[w / 2, y, h / 2]}>
+      {barrel && <mesh geometry={barrel} raycast={() => null}><meshLambertMaterial color={color} side={THREE.DoubleSide} /></mesh>}
+      {[-1, 1].map((end) => (
+        <mesh key={end} geometry={lunette} position={alongX ? [end * length / 2, 0, 0] : [0, 0, end * length / 2]} rotation={[0, alongX ? Math.PI / 2 : 0, 0]} raycast={() => null}>
+          <meshLambertMaterial color={color} side={THREE.DoubleSide} />
+        </mesh>
+      ))}
+      {Array.from({ length: ribs }, (_, i) => {
+        const at = ((i + 1) / (ribs + 1) - 0.5) * length;
+        return (
+          <group key={i} position={alongX ? [at, 0, 0] : [0, 0, at]} rotation={[0, alongX ? Math.PI / 2 : 0, 0]}>
+            <mesh scale={[span / 2 - 0.02, rise - 0.02, 1]} raycast={() => null}>
+              <torusGeometry args={[1, 0.035, 6, 24, Math.PI]} />
+              <meshLambertMaterial color={rib} />
+            </mesh>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
+// The great beasts of the sea round a place on it or under it (2026-10-30, the user: "water dwelling beasts"): the rules data's own, an opee
+// sea killer and (under the sea) a sando aqua monster, cruising slow rings well out beyond the buildings; on the sea the opee rolls up to the
+// face of the water and down again
+function SeaBeasts({ ground, under }: { ground: { x: number; y: number; w: number; h: number }; under: boolean }) {
+  const beasts = useMemo(() => [
+    { name: "Opee Sea Killer", r: Math.max(ground.w, ground.h) * 0.62 + 6, speed: 0.05, depth: under ? 3.5 : SEA_Y - 0.9, phase: 0 },
+    ...(under ? [{ name: "Sando Aqua Monster", r: Math.max(ground.w, ground.h) * 0.9 + 14, speed: -0.025, depth: 9, phase: 2.2 }] : []),
+  ], [ground.w, ground.h, under]);
+  const refs = useRef<(THREE.Group | null)[]>([]);
+  const [cx, cz] = [ground.x + ground.w / 2, ground.y + ground.h / 2];
+  useFrame((state) => {
+    const t = state.clock.elapsedTime;
+    beasts.forEach((b, i) => {
+      const g = refs.current[i];
+      if (!g) return;
+      const a = t * b.speed + b.phase;
+      g.position.set(cx + Math.cos(a) * b.r, b.depth + (under ? Math.sin(t * 0.4 + i) * 0.8 : Math.max(0, Math.sin(t * 0.21)) * 0.7 - 0.2), cz + Math.sin(a) * b.r);
+      // (along its ring, nose first, the body undulating)
+      g.rotation.set(Math.sin(t * 0.9 + i) * 0.08, -a + (b.speed > 0 ? Math.PI : 0), Math.sin(t * 1.3 + i) * 0.06);
+    });
+  });
+  return (
+    <>
+      {beasts.map((b, i) => (
+        <group key={b.name} ref={(el) => { refs.current[i] = el; }} scale={under && i === 1 ? 3.2 : 1.6}>
+          <Figure kind="beast" ring={SIDE_COLORS.hostile} name={b.name} creature="beast" large size="Huge" />
+        </group>
+      ))}
+    </>
+  );
+}
+
+// A room of a cave next to the one stood in (2026-10-30): its floor and its rock (with its roof in the eye views), lit by what lights the
+// room stood in, so that what is seen through an opening is the cave going on and not the world outside. A sloping passage slopes.
+function CaveBeyond({ room, biome, tier, tall, floor }: { room: Area; biome: string; tier: Tier; tall: boolean; floor: FloorKind }) {
+  const l = room.layout!;
+  const mask = useMemo(() => l.mask ?? Array.from({ length: l.height }, () => "#".repeat(l.width)), [l.mask, l.width, l.height]);
+  const climbs = l.climb && !l.switchback ? rise(l) : 0;
+  const slopeKey = climbs ? `${l.climb!.toward}:${climbs}` : "";
+  const slope = useMemo(() => (climbs ? (x: number, z: number) => climbAt(l, x, z) * climbs : undefined), [slopeKey, l.width, l.height]);
+  return (
+    <group position={[l.x, levelY(l), l.y]}>
+      {slope ? <RampFloor mask={mask} width={l.width} height={l.height} color={FLOORS[floor]} lift={slope} liftKey={slopeKey} /> : <MaskFloor mask={mask} width={l.width} height={l.height} color={FLOORS[floor]} />}
+      <Solids><CaveWalls mask={mask} ways={l.assets.filter((a) => a.side).map((a) => ({ x: a.x, y: a.y, side: a.side }))} w={l.width} h={l.height} biome={biome} tier={tier} seed={l.width * 31 + l.height} tall={tall} ceiling={tall ? CAVE_ROOF : undefined} lift={slope} liftKey={slopeKey} /></Solids>
+    </group>
   );
 }
 
@@ -2521,6 +2687,11 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // People step aside, so only furniture (and what the party has set down) stands in the way.
   // (a parked speeder is some two squares long and a square wide: all of it is solid, not the one square it is set on)
   const rigSquares = useMemo(() => new Set(street.rigs.flatMap((r) => [-1, 0, 1].map((k) => `${r.x + Math.round(r.outward.x) * k},${r.y + Math.round(r.outward.y) * k}`))), [street]);
+  // A place on the sea or under it (shared/logic "Water worlds", 2026-10-30): the decking of its gantries and catwalks; off it, and
+  // everywhere out of doors under the sea, the party swims (lower in the water, flat, at half its pace)
+  const water: WaterLife | null = waterOf(world, building.id);
+  const deck = useMemo(() => (water === "sea" && districtPlan ? deckSquares(districtPlan, street.signs.map((g) => ({ x: g.x, y: g.y }))) : null), [water, districtPlan, street.signs.length]);
+  const swimsAt = (x: number, y: number) => water === "under" || (!!deck && !deck.has(`${x},${y}`));
   const outdoors = (x: number, y: number) =>
     x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !barred.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`) && !street.ambientBlocked.has(`${x},${y}`) && !pieceSquares.has(`${x},${y}`) && !rigSquares.has(`${x},${y}`)
     && ![...street.signs, ...street.decor, ...street.folk, ...street.caches, ...street.rigs].some((thing) => thing.x === x && thing.y === y);
@@ -2724,8 +2895,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // How high the party stands: on the floor of the room they are in, up the steps of a stairwell
   const heightNow = () => {
     const l = inside?.layout;
-    return l ? floorAt(l, feet.current.x - l.x + 0.5, feet.current.y - l.y + 0.5) : 0;
+    return l ? floorAt(l, feet.current.x - l.x + 0.5, feet.current.y - l.y + 0.5) : swimNow() ? (water === "under" ? UNDER_SWIM_Y : SWIM_Y) : 0;
   };
+  const swimNow = () => !inside && !!water && swimsAt(Math.round(feet.current.x), Math.round(feet.current.y));
   // ---- Jumping, the hook and the jetpack in real time (interiors/air.ts). Space jumps (held with a pack, it lights it and climbs), F fires the hook
   // where the crosshair or the mouse points, Left Shift fires the pack's burst the same way; their buttons are the phone's; E, Enter and a click activate.
   // A jump is the Handbook's (shared/logic jumpReach) made a hop of that height; what stands low (furniture) is hopped over, a wall is not; the hook
@@ -3242,7 +3414,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       // (the figure bends and lies down by itself: its joints, told by the party's motion)
       const pm = partyMotion.current;
       const gr = useRun.getState();
-      pm.posture = shootSession ? (stance.k > 0.5 ? 1 : 0) : gr.prone ? 2 : gr.crouch ? 1 : 0;
+      pm.posture = swimNow() ? 3 : shootSession ? (stance.k > 0.5 ? 1 : 0) : gr.prone ? 2 : gr.crouch ? 1 : 0;
       pm.air = air.current.mode !== "ground";
       pm.ready = !!shootSession;
       token.current.rotation.x = 0;
@@ -3258,7 +3430,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (!going || air.current.mode === "jump" || air.current.mode === "reel") return;
     // (a tap's walk is a walk, half the pace, unless Run is on; the stick sets its own; crouched is slower still)
     const gait = useRun.getState();
-    let step = Math.min(delta, 0.5) * 7 * Math.max(0.05, going.pace ?? (gait.run ? 1 : WALK_FACTOR)) * (shootSession ? 1 : gait.prone ? PRONE_FACTOR : gait.crouch ? CROUCH_FACTOR : 1);
+    // (in the water, half the pace: shared/logic swimPace)
+    let step = Math.min(delta, 0.5) * 7 * Math.max(0.05, going.pace ?? (gait.run ? 1 : WALK_FACTOR)) * (swimNow() ? 0.5 : shootSession ? 1 : gait.prone ? PRONE_FACTOR : gait.crouch ? CROUCH_FACTOR : 1);
     while (step > 0 && going.path.length) {
       const next = going.path[0];
       const [dx, dy] = [next.x - feet.current.x, next.y - feet.current.y];
@@ -3660,7 +3833,21 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           <meshBasicMaterial color={GROUND[biome] ?? "#1c222b"} />
         </mesh>
         {/* The ground round the building: a tap walks there. The textured plane covers the whole of the ground, so no dark rim shows round it */}
-        {groundTex ? (
+        {water === "sea" ? (
+          <group visible={!underground}>
+            <Sea at={[cx, SEA_Y, cz]} size={sizeOfGround} lite={tier === "lite"} onTap={tappable ? walkHere : undefined} />
+            {deck && <Decks deck={deck} boxes={districtPlan ? buildings.map((b) => districtPlan.boxes[b.id]).filter(Boolean) : []} lite={tier === "lite"} onTap={tappable ? walkHere : undefined} />}
+            <FishSchools ground={ground} depth={SEA_Y - 0.45} count={4} lite={tier === "lite"} />
+            <SeaBeasts ground={ground} under={false} />
+          </group>
+        ) : water === "under" ? (
+          <group visible={!underground}>
+            <GroundSurface set="dense_sand" tint={new THREE.Color("#8fc0b4")} parallax={groundTex?.parallax ?? 0.03} w={sizeOfGround} h={sizeOfGround} at={[cx, -0.02, cz]} onTap={tappable ? walkHere : undefined} />
+            <UnderSea boxes={districtPlan ? buildings.map((b) => districtPlan.boxes[b.id]).filter(Boolean) : []} ground={ground} lite={tier === "lite"} />
+            <FishSchools ground={ground} depth={2.6} count={7} lite={tier === "lite"} />
+            <SeaBeasts ground={ground} under />
+          </group>
+        ) : groundTex ? (
           <group visible={!underground}>
             <GroundSurface set={groundTex.set} tint={groundTex.tint} parallax={groundTex.parallax} w={sizeOfGround} h={sizeOfGround} at={[cx, -0.02, cz]} onTap={tappable ? walkHere : undefined} />
             {/* Under an open sky the ground goes on, plainly, to the horizon's haze */}
@@ -3675,7 +3862,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         {districtPlan && buildings.map((b) => {
           const box = districtPlan.boxes[b.id];
           return box ? (
-            <mesh key={`lot-${b.id}`} rotation={[-Math.PI / 2, 0, 0]} position={[box.x + box.width / 2, -0.005, box.y + box.height / 2]} visible={!underground} raycast={() => null}>
+            <mesh key={`lot-${b.id}`} rotation={[-Math.PI / 2, 0, 0]} position={[box.x + box.width / 2, -0.005, box.y + box.height / 2]} visible={!underground && water !== "sea"} raycast={() => null}>
               <planeGeometry args={[box.width + 1, box.height + 1]} />
               {groundTex
                 ? <meshBasicMaterial color="#000000" transparent opacity={0.22} depthWrite={false} />
@@ -3704,7 +3891,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   plan={l}
                   corners={formOf(room) || openAir(room) ? undefined : insideRadii(room)}
                   style={style}
-                  mood={formOf(room) || openAir(room) ? undefined : { buildingType: building.type, roomName: room.name, biome }}
+                  mood={(formOf(room) && building.type !== "cave") || openAir(room) ? undefined : { buildingType: building.type, roomName: room.name, biome }}
                   biome={biome}
                   like={likeOf(room)}
                   width={l.width}
@@ -3752,6 +3939,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           if (opened?.layout && levelY(l) > levelY(opened.layout) + 0.01 && sameFootprint(l, opened.layout) && !galleryOfOpened) return null;
           // A room seen from outside it: closed, with what is set in its outside walls
           const form = formOf(room);
+          // (a cave: its rooms under the ground are not seen from outside; from inside it, those round the one stood in are its rock)
+          if (building.type === "cave" && room.parentId === building.id && (l.mask || form)) {
+            const inCave = opened?.parentId === building.id;
+            if (!inCave && (l.level ?? 0) < 0) return null;
+            if (inCave) return <CaveBeyond key={room.id} room={room} biome={biome} tier={tierNow} tall={viewing} floor={floor} />;
+          }
           // A room looked down into from its gallery is seen low, so that the gallery shows over it; so is the room behind a balcony
           // being stood on (its patio doors), which would stand in front of the balcony as a block
           const lookedFrom = opened && ((formOf(opened) === "gallery" && opened.tags.includes(`host:${room.id}`)) || (formOf(opened) === "balcony" && !!opened.layout?.assets.some((a) => a.kind === "door" && a.to === room.id)));
@@ -3897,7 +4090,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                     {/* A cave is rock, not a building: a mound over its winding floor, open at its mouth */}
                     {building.type === "cave" && l.mask && !form ? (
-                      <CaveMound mask={l.mask} exits={l.assets.filter((a) => a.kind === "exit").map((a) => ({ x: a.x, y: a.y }))} w={l.width} h={l.height} biome={biome} tier={tierNow} seed={l.width * 31 + l.height} />
+                      <CaveMound mask={l.mask} exits={l.assets.filter((a) => a.kind === "exit").map((a) => ({ x: a.x, y: a.y, side: a.side }))} w={l.width} h={l.height} biome={biome} tier={tierNow} seed={l.width * 31 + l.height} />
                     ) : (
                     <RoomBlock w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} set={wallSet(packOf(room.name, building.type), biome)} />
                     )}
@@ -3933,7 +4126,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     </mesh>
                   )}
                   <group position={[at.x, 0, at.z]} rotation={[0, at.turn, 0]}>
-                    <Doorway name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={wallSet(packOf(room.name, building.type), biome)} tint={wallColor} bend={place.bend} />
+                    <Doorway rock={building.type === "cave" && !!l.mask ? { biome, tier: tierNow, seed: a.x * 7 + a.y * 13 + l.width, outside: true } : undefined} name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={wallSet(packOf(room.name, building.type), biome)} tint={wallColor} bend={place.bend} />
                   </group>
                   </group>
                 );
@@ -4177,7 +4370,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       ) : (
         <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} />
       )}
-      <Sky cast={!districtPlan || !!opened} indoors={opened && !openAir(opened) && !formOf(opened) ? 1 : 0} look={look} ground={-0.05} fog={[150, 480]} floor={!groundTex} />
+      <Sky cast={!districtPlan || !!opened} indoors={opened && !openAir(opened) && !formOf(opened) ? 1 : 0} look={look} ground={-0.05} fog={[150, 480]} floor={!groundTex && !water} under={water === "under" && !(opened && !openAir(opened))} />
     </>
   );
 }
