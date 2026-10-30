@@ -68,6 +68,10 @@ export interface Gun {
   // What is in the pack to reload from: cells (a power cell or generator refills the whole magazine) or single rounds (a cartridge, an arrow)
   reserve: number;
   cells?: boolean;
+  // How hard it kicks (0 to 1: a hold-out barely, a heavy repeater or a sniper rifle hard) and how steady its aim is (a share of the party's
+  // spread: a rifle's long barrel is steadier than a pistol, a scattergun wilder): see `gunKick`
+  kick?: number;
+  steady?: number;
   // What reloads have used up so far (to be taken out of the pack when the fight is over)
   spent: number;
   reload: number;
@@ -78,6 +82,15 @@ export interface Blade {
   type: string;
   // A lightsaber (or any blade that lets the wielder hold off bolts)
   saber: boolean;
+}
+// How a gun kicks and how steady it is, by its kind (its name) and how heavy a shot it fires (house rule, 2026-10-30: the user asked for "recoil
+// animations and spread depending on the weapon's fire power and type"). Each shot of a hard-kicking gun throws the aim off further, so a heavy
+// gun fired fast sprays; a rifle or a sniper rifle aimed with care groups its shots tighter than a pistol.
+export function gunKick(name: string, damage = 0): { kick: number; steady: number } {
+  const n = name.toLowerCase();
+  const [kick, steady] = /hold-?out|derringer|sporting/.test(n) ? [0.15, 1.1] : /shotgun|scatter/.test(n) ? [0.8, 1.9] : /sniper|slugthrower rifle|cycler/.test(n) ? [0.85, 0.35]
+    : /heavy|repeat|cannon|launcher|rotary/.test(n) ? [0.8, 1.3] : /carbine/.test(n) ? [0.4, 0.85] : /rifle|bowcaster/.test(n) ? [0.55, 0.65] : /pistol|blaster$/.test(n) ? [0.3, 1] : [0.4, 1];
+  return { kick: Math.max(0.1, Math.min(1, kick + Math.max(0, damage - 7) * 0.025)), steady };
 }
 const feetOf = (props: string[], re: RegExp, fallback: number) => Number(props.join(";").match(re)?.[1] ?? fallback);
 // The party's gun from the fight kit (`combatKit`): printed dice at their average, rate by how heavy the shot is, automatic weapons trade damage for volume
@@ -96,7 +109,7 @@ export function gunOf(kit: { rangedWeapon?: string; rangedDice?: string; rangedD
   const loaded = a ? a.reserves[a.round ?? a.plain ?? ""] : undefined;
   const reserve = a ? Math.max(0, loaded ?? Object.values(a.reserves).reduce((x, y) => x + Math.max(0, y), 0)) : 0;
   const cells = a ? a.family === "cell" || a.family === "generator" : false;
-  return { name: kit.rangedWeapon, damage, type: (kit.rangedType ?? "energy").toLowerCase(), interval, auto, range, long, mag, left: a ? a.left : mag, reserve, cells, spent: 0, reload: a && a.max <= 0 ? 0.7 : 1.6 };
+  return { name: kit.rangedWeapon, damage, type: (kit.rangedType ?? "energy").toLowerCase(), interval, auto, range, long, mag, left: a ? a.left : mag, reserve, cells, spent: 0, reload: a && a.max <= 0 ? 0.7 : 1.6, ...gunKick(kit.rangedWeapon, each) };
 }
 export function bladeOf(kit: { meleeWeapon?: string; meleeDice?: string; meleeDamage?: number; meleeType?: string }): Blade | undefined {
   if (!kit.meleeWeapon) return undefined;
@@ -405,8 +418,10 @@ export function firePlayer(sim: Sim, from: { x: number; y: number; h: number }, 
   g.left--;
   p.fire = g.interval;
   const far = Math.hypot(to.x - from.x, to.y - from.y) > g.range ? 1.5 : 1;
-  sim.spread = clamp(Math.max(sim.spread, SHOOT.spread.base) + SHOOT.spread.perShot * (g.auto ? 1.4 : 1), 0, SHOOT.spread.max);
-  const spread = clamp((sim.spread + (moving ? SHOOT.spread.moving : 0) + (airborne ? SHOOT.spread.air : 0)) * far * (p.crouch ? SHOOT.crouch.spread : 1), 0, SHOOT.spread.max * 1.5);
+  // (each shot opens the cone by how hard the gun kicks; the cone is narrower for a steadier gun)
+  const kick = g.kick ?? 0.4;
+  sim.spread = clamp(Math.max(sim.spread, SHOOT.spread.base) + SHOOT.spread.perShot * (g.auto ? 1.4 : 1) * (0.5 + kick * 1.25), 0, SHOOT.spread.max);
+  const spread = clamp((sim.spread * (g.steady ?? 1) + (moving ? SHOOT.spread.moving : 0) + (airborne ? SHOOT.spread.air : 0)) * far * (p.crouch ? SHOOT.crouch.spread : 1), 0, SHOOT.spread.max * 1.5);
   p.facing = Math.atan2(to.x - from.x, to.y - from.y);
   launch(sim, p, g, from, to, spread, events);
   return true;

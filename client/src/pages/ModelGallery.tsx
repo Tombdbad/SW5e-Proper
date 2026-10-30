@@ -20,7 +20,8 @@ import { KIT_MODELS, kitUrl } from "@/components/Map/interiors/kitbash";
 import { floorOf } from "@/components/Map/sprites";
 import { gearOf } from "@/lib/sw5e/characterCalculation";
 import { furnishRoom, createRandom, VEHICLE_MAKES, type Area } from "@shared/logic";
-import { seatState, type SeatState, type Shot } from "@/components/Map/interiors/limbs";
+import { seatState, motion, nowSeconds, SABER_STYLES, type Motion, type SaberStyle, type SeatState, type Shot } from "@/components/Map/interiors/limbs";
+import { MotionContext } from "@/components/Map/models";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
 
 // `rounds` shows the first round and oval rooms (2026-10-19): furnished by the planner (furnishRoom) on their curve.
@@ -184,6 +185,73 @@ function Items({ pack }: { pack: string | null }) {
           </group>
         );
       })}
+    </>
+  );
+}
+
+// `moves` (2026-10-30): how people move and fight, a row for each thing held (nothing, a pistol, a rifle, a saber, a vibroblade, a pike)
+// and a column for each thing done (standing, walking, running, crouched, prone, jumping, ready, firing or striking, a parry), then a row of
+// a Jedi for each lightsaber style striking in turn. `?act=fire` (or another column) shows only that column, larger.
+const MOVE_COLUMNS = ["stand", "walk", "run", "crouch", "prone", "jump", "ready", "attack", "block"] as const;
+type MoveColumn = (typeof MOVE_COLUMNS)[number];
+const MOVE_ROWS: { name: string; role: string; kind: string; species: string; wield?: "pistol" | "rifle" | "saber" | "vibro" | "pike" | "" }[] = [
+  { name: "Tam", role: "settler", kind: "humanoid", species: "Human", wield: "" },
+  { name: "Imperial officer", role: "officer", kind: "officer", species: "Human", wield: "pistol" },
+  { name: "Stormtrooper", role: "trooper", kind: "trooper", species: "Human", wield: "rifle" },
+  { name: "Jedi Knight", role: "jedi", kind: "force", species: "Human", wield: "saber" },
+  { name: "Gang thug", role: "thug", kind: "humanoid", species: "Rodian", wield: "vibro" },
+  { name: "Royal guard", role: "guard", kind: "humanoid", species: "Human", wield: "pike" },
+];
+function Acting({ act, speed = 0, style, index, children }: { act: MoveColumn | "forms"; speed?: number; style?: SaberStyle; index: number; children: ReactNode }) {
+  const g = useRef<THREE.Group>(null);
+  const m = useRef<Motion>(motion({ style }));
+  const base = useRef<THREE.Vector3 | null>(null);
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime() + index * 0.37;
+    const mo = m.current;
+    const now = nowSeconds();
+    mo.posture = act === "crouch" ? 1 : act === "prone" ? 2 : 0;
+    mo.ready = act === "ready" || act === "attack" || act === "block" || act === "forms" || act === "prone";
+    mo.blocking = act === "block";
+    mo.pitch = act === "ready" ? Math.sin(t * 0.8) * 0.3 : 0;
+    mo.air = act === "jump" && t % 1.6 < 0.7;
+    if ((act === "attack" || act === "forms") && now - Math.max(mo.firedAt, mo.swingAt) > (act === "forms" ? 1.1 : 0.9)) {
+      mo.firedAt = now;
+      mo.swingAt = now;
+      mo.swing++;
+      mo.kick = 0.5;
+    }
+    if (!g.current) return;
+    base.current ??= g.current.position.clone();
+    // walking and running go up and down the column; jumping goes up
+    const k = speed ? Math.sin(t * speed * 0.5) : 0;
+    g.current.position.set(base.current.x, base.current.y + (mo.air ? Math.sin(((t % 1.6) / 0.7) * Math.PI) * 0.45 : 0), base.current.z + k * 1.6);
+    g.current.rotation.y = speed ? (Math.cos(t * speed * 0.5) >= 0 ? 0 : Math.PI) : 0;
+  });
+  return <group ref={g}><MotionContext.Provider value={m}>{children}</MotionContext.Provider></group>;
+}
+function Moves({ only }: { only?: string }) {
+  const cols = MOVE_COLUMNS.filter((c) => !only || c === only);
+  return (
+    <>
+      {MOVE_ROWS.map((r, i) =>
+        cols.map((c, j) => (
+          <group key={`${r.name}-${c}`} position={[(j - (cols.length - 1) / 2) * 1.7, 0, i * 2.4 - 6]}>
+            <Acting act={c} index={i * 9 + j} speed={c === "walk" ? 1.4 : c === "run" ? 3.2 : 0}>
+              <Figure kind={r.kind} ring={SIDE_COLORS.neutral} name={r.name} role={r.role} species={r.species} wield={r.wield} />
+            </Acting>
+            {i === 0 && <Label at={[0, 0.05, -1.4]} text={c} />}
+          </group>
+        )),
+      )}
+      {SABER_STYLES.map((st, j) => (
+        <group key={st} position={[(j - (SABER_STYLES.length - 1) / 2) * 1.6, 0, MOVE_ROWS.length * 2.4 - 4]}>
+          <Acting act="forms" style={st} index={j}>
+            <Figure kind="force" ring={SIDE_COLORS.neutral} name={`${st} master`} role="jedi" species="Human" wield="saber" />
+          </Acting>
+          <Label at={[0, 0.05, 1.3]} text={st} />
+        </group>
+      ))}
     </>
   );
 }
@@ -390,6 +458,7 @@ export default function ModelGallery() {
         {section === "rounds" && <Rounds />}
         {section === "packs" && <Packs />}
         {section === "walk" && <Walk />}
+        {section === "moves" && <Moves only={query.get("act") ?? undefined} />}
         {section === "table" && <Table cycle={query.get("hold") !== "1"} />}
         {section === "gear" && <Gear loadout={query.get("loadout") ?? "heavy"} />}
         {section === "worn" && <Worn loadout={query.get("loadout") ?? "worn"} />}

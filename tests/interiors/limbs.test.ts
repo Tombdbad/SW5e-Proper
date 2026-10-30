@@ -189,7 +189,11 @@ test("figures are dressed in the textured finishes: skin, a face, cloth, leather
   const trooper = finishesOf(figureSpec("trooper", "Stormtrooper", { looks: {} }).build);
   assert.ok(trooper.has("plate"), "a trooper's armour is plate");
   const droid = finishesOf(figureSpec("battledroid", "B1 battle droid", { looks: {} }).build);
-  assert.ok(droid.has("plate") && !droid.has("sheen"), "a droid's metal is plating");
+  // (panelled plating since 2026-10-30: seams, rivets and vents)
+  assert.ok(droid.has("droid") && !droid.has("sheen"), "a droid's metal is plating");
+  // a robe is woven coarse, an armour's undersuit is ribbed
+  assert.ok(finishesOf(figureSpec("force", "Jedi Knight", { role: "jedi", looks: {} }).build).has("weave"), "a Jedi's robe is a weave");
+  assert.ok(trooper.has("mesh"), "a trooper's undersuit is ribbed");
   assert.ok(finishesOf(figureSpec("beast", "Bantha", { looks: {} }).build).has("fur"), "a bantha's hide is fur");
   assert.ok(finishesOf(figureSpec("beast", "Dewback", { looks: {} }).build).has("scales"), "a dewback's is scales");
   // A furry person: drawn in fur
@@ -214,8 +218,11 @@ test("a limb material carries its own pose, the program is shared by the copies,
   a.onBeforeCompile(shader as never, {} as never);
   assert.ok(shader.uniforms.uQ.value === a.userData.pose);
   assert.match(shader.vertexShader, /attribute float limb/);
-  assert.match(shader.vertexShader, /uniform vec4 uQ\[13\]/);
-  assert.match(shader.vertexShader, /objectNormal = objectNormal/);
+  assert.ok(shader.vertexShader.includes(`uniform vec4 uQ[${LIMBS}]`));
+  assert.ok(shader.uniforms.uP.value === a.userData.pivots);
+  // (a limb is turned about its own joint and then about each joint it hangs from: a forearm with its upper arm and the chest)
+  assert.match(shader.vertexShader, /lqParent/);
+  assert.match(shader.vertexShader, /objectNormal = lqTurn/);
   const flat = limbMaterial(new THREE.MeshBasicMaterial());
   const s2 = { uniforms: {} as Record<string, { value: unknown }>, vertexShader: "#include <common>\n#include <begin_vertex>" };
   flat.onBeforeCompile(s2 as never, {} as never);
@@ -273,4 +280,104 @@ test("blending moves each limb from one pose to the other by the share asked; a 
   assert.ok(envelope(0.55) > 0.95);
   assert.ok(envelope(0.1) < envelope(0.3) && envelope(1.0) < envelope(0.7));
   assert.deepEqual(seatState(), { sit: false, act: "rest", drop: 0.22, cards: 0 });
+});
+
+// ---- How a person moves and fights (2026-10-30) ----
+import { humanPose, eased, easeMotion, motion, holdOf, saberStyleOf, strikeSeconds, kickOf, FORM_STYLE, SABER_STYLES } from "../../client/src/components/Map/interiors/limbs";
+import { gunKick } from "../../shared/logic/shooter";
+const LEGS = { hip: 0.56, knee: 0.31 };
+const settle = (m: ReturnType<typeof motion>) => { const e = eased(); for (let i = 0; i < 120; i++) easeMotion(e, m, 1 / 30); return e; };
+const quatOf = (p: Pose, limb: number) => new THREE.Quaternion(p[limb * 4], p[limb * 4 + 1], p[limb * 4 + 2], p[limb * 4 + 3]);
+
+test("a person is built jointed: knees, elbows, a trunk, a neck and a wrist, each with its pivot kept for the joints it carries", () => {
+  const spec = figureSpec("trooper", "Stormtrooper", { role: "trooper", looks: {} });
+  const k = new Kit();
+  k.animated = true;
+  spec.build(k);
+  for (const l of [LIMB.legR, LIMB.shinR, LIMB.armR, LIMB.foreR, LIMB.chest, LIMB.head, LIMB.weapon]) assert.ok(k.jointMask & (1 << l), `limb ${l}`);
+  // the knee is below the hip, the elbow below the shoulder, the shoulder above the waist
+  assert.ok(k.pivots[LIMB.shinR * 3 + 1] < k.pivots[LIMB.legR * 3 + 1]);
+  assert.ok(k.pivots[LIMB.foreR * 3 + 1] < k.pivots[LIMB.armR * 3 + 1]);
+  assert.ok(k.pivots[LIMB.armR * 3 + 1] > k.pivots[LIMB.chest * 3 + 1]);
+  assert.equal(spec.hold, "rifle");
+  const baked = k.bake();
+  assert.ok(Object.values(baked).some((g) => g?.userData.pivots && g.userData.joints === k.jointMask));
+});
+
+test("crouched, the knees bend and the body is lowered; prone, it is tipped onto its front; in the air the legs tuck", () => {
+  const out = restPose();
+  const stand = humanPose(standing(), 0, motion(), settle(motion()), "none", "niman", 10, LEGS, out);
+  assert.ok(stand.drop < 0.01 && stand.tip === 0);
+  const crouch = humanPose(standing(), 0, motion({ posture: 1 }), settle(motion({ posture: 1 })), "none", "niman", 10, LEGS, out);
+  assert.ok(crouch.drop > 0.1, `drop ${crouch.drop}`);
+  assert.ok(angleOf(out, LIMB.shinR, "x") > 1);
+  const prone = humanPose(standing(), 0, motion({ posture: 2 }), settle(motion({ posture: 2 })), "rifle", "niman", 10, LEGS, out);
+  assert.ok(prone.tip > 0.95 && prone.drop < 0.01);
+  humanPose(standing(), 0, motion({ air: true }), settle(motion({ air: true })), "none", "niman", 10, LEGS, out);
+  assert.ok(angleOf(out, LIMB.legL, "x") < -0.8 && angleOf(out, LIMB.shinL, "x") > 0.8);
+});
+
+test("a running stride swings further and bends the knee more than a walk", () => {
+  const out = restPose();
+  const walk = { phase: Math.PI, amp: 1, speed: 3.5 };
+  const run = { phase: Math.PI, amp: 1, speed: 7 };
+  humanPose(walk, 0, motion(), eased(), "none", "niman", 10, LEGS, out);
+  const kneeWalk = angleOf(out, LIMB.shinR, "x");
+  humanPose(run, 0, motion(), eased(), "none", "niman", 10, LEGS, out);
+  assert.ok(angleOf(out, LIMB.shinR, "x") > kneeWalk + 0.3);
+});
+
+test("a long gun is held in both hands: both arms turn alike, carried low and raised to aim; a shot kicks it up, harder for a heavier gun", () => {
+  const out = restPose();
+  const carried = motion();
+  humanPose(standing(), 0, carried, settle(carried), "rifle", "niman", 10, LEGS, out);
+  assert.ok(quatOf(out, LIMB.armR).angleTo(quatOf(out, LIMB.armL)) < 2e-3);
+  const low = angleOf(out, LIMB.armR, "x");
+  const ready = motion({ ready: true });
+  humanPose(standing(), 0, ready, settle(ready), "rifle", "niman", 10, LEGS, out);
+  const up = angleOf(out, LIMB.armR, "x");
+  assert.ok(up < low - 0.5, `${up} ${low}`);
+  const kicked = (kick: number) => { const m = motion({ ready: true, firedAt: 9.95, kick }); humanPose(standing(), 0, m, settle(m), "rifle", "niman", 10, LEGS, out); return angleOf(out, LIMB.armR, "x"); };
+  assert.ok(kicked(0.9) < kicked(0.2) && kicked(0.2) < up);
+  assert.ok(quatOf(out, LIMB.armR).angleTo(quatOf(out, LIMB.armL)) < 2e-3);
+});
+
+test("a saber strike moves the arms and the trunk, each style its own guard and strikes; a parry raises the blade", () => {
+  const out = restPose();
+  const guardOf = (style: (typeof SABER_STYLES)[number]) => { const m = motion({ ready: true }); humanPose(standing(), 0, m, settle(m), "saber", style, 10, LEGS, out); return Array.from(out); };
+  const guards = SABER_STYLES.map(guardOf);
+  // no two styles stand alike
+  for (let i = 0; i < guards.length; i++) for (let j = i + 1; j < guards.length; j++) assert.ok(guards[i].some((v, n) => Math.abs(v - guards[j][n]) > 1e-3), `${SABER_STYLES[i]} ${SABER_STYLES[j]}`);
+  const m = motion({ ready: true });
+  const e = settle(m);
+  humanPose(standing(), 0, m, e, "saber", "djemso", 10, LEGS, out);
+  const rest = angleOf(out, LIMB.armR, "x");
+  m.swingAt = 10 - strikeSeconds("saber", "djemso", 0) * 0.38;
+  humanPose(standing(), 0, m, e, "saber", "djemso", 10, LEGS, out);
+  assert.ok(angleOf(out, LIMB.armR, "x") < rest - 0.8, "the overhead cut's wind-up raises the arms");
+  // both hands stay on the hilt in a two-handed style
+  assert.ok(quatOf(out, LIMB.armR).angleTo(quatOf(out, LIMB.armL)) < 2e-3);
+  const b = motion({ ready: true, blocking: true });
+  humanPose(standing(), 0, b, settle(b), "saber", "niman", 10, LEGS, out);
+  assert.ok(Math.abs(angleOf(out, LIMB.weapon, "z")) > 0.5);
+});
+
+test("the style comes from a form the character knows, else from who they are, the same each time", () => {
+  assert.equal(saberStyleOf("Kira", ["Feat: Soresu Form"]), "soresu");
+  assert.equal(saberStyleOf("Kira", ["Vaapad Form"]), "juyo");
+  assert.equal(saberStyleOf("Darth Kira"), saberStyleOf("Darth Kira"));
+  assert.ok(["djemso", "juyo", "shien", "jarkai"].includes(saberStyleOf("Sith Marauder")));
+  for (const style of Object.values(FORM_STYLE)) assert.ok(SABER_STYLES.includes(style));
+  assert.equal(holdOf("bowcaster"), "rifle");
+  assert.equal(holdOf("saber2"), "saber");
+  assert.equal(holdOf("tray"), "carry");
+});
+
+test("a gun kicks and spreads by its kind and the weight of its shot", () => {
+  assert.ok(kickOf("Hold-out blaster") < kickOf("Blaster pistol"));
+  assert.ok(kickOf("Blaster pistol") < kickOf("Blaster rifle"));
+  assert.ok(kickOf("Blaster rifle") < kickOf("Heavy repeating blaster"));
+  assert.ok(gunKick("Sniper rifle").steady < gunKick("Blaster rifle").steady && gunKick("Blaster rifle").steady < gunKick("Blaster pistol").steady);
+  assert.ok(gunKick("Shotgun").steady > 1.5);
+  assert.ok(kickOf("Blaster rifle", 14) > kickOf("Blaster rifle", 7));
 });

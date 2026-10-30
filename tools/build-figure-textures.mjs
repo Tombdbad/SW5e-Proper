@@ -72,24 +72,115 @@ const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a)); return t * t *
 
 // ---- The sets: each gives the height (0..1) and the diffuse brightness (and an optional tint) of a texel ---------------------------
 const SETS = {
+  // (2026-10-30, the user: "extend and enhance the textures/normal-maps for character faces/skin/clothing/armour/humanoid droids + prosthetics
+  // and cybernetics": skin has a cross-hatch of fine lines as well as pores and creases, a face finer lines and a blush under the mottle)
   skin: () => {
-    const n = periodicNoise(11), pores = worley(12, 96), creases = periodicNoise(13);
+    const n = periodicNoise(11), pores = worley(12, 120), creases = periodicNoise(13), fine = periodicNoise(14), freckle = worley(15, 40);
     return (u, v) => {
       const p = pores(u, v);
-      const pore = 1 - smooth(0.0, 0.35, p.f1);
-      const crease = Math.abs(fbm(creases, u, v, 6, 3) - 0.5) < 0.012 ? 0.6 : 0;
+      const pore = 1 - smooth(0.0, 0.32, p.f1);
+      const crease = 1 - smooth(0, 0.014, Math.abs(fbm(creases, u, v, 6, 3) - 0.5));
+      // the fine lines of skin: two sets of shallow grooves crossing at an angle, broken up by noise
+      const lineA = 1 - smooth(0, 0.08, Math.abs(Math.sin((u * 0.8 + v * 0.6) * Math.PI * 70 + fbm(fine, u, v, 8, 2) * 6)));
+      const lineB = 1 - smooth(0, 0.08, Math.abs(Math.sin((u * 0.6 - v * 0.8) * Math.PI * 64 + fbm(fine, v, u, 8, 2) * 6)));
+      const lines = Math.max(lineA, lineB) * fbm(fine, u, v, 4, 2);
       const mottle = fbm(n, u, v, 4, 4);
-      const h = 0.62 - pore * 0.3 - crease * 0.18 + (mottle - 0.5) * 0.12;
-      return { h, d: 0.9 + (mottle - 0.5) * 0.16 - pore * 0.05 };
+      const f = freckle(u, v);
+      const spot = (1 - smooth(0.0, 0.18, f.f1)) * (f.id % 5 === 0 ? 1 : 0);
+      const h = 0.62 - pore * 0.28 - crease * 0.16 - lines * 0.08 + (mottle - 0.5) * 0.12;
+      return { h, d: 0.9 + (mottle - 0.5) * 0.16 - pore * 0.05 - lines * 0.03 - spot * 0.06 };
     };
   },
   face: () => {
-    const n = periodicNoise(21), pores = worley(22, 160);
+    const n = periodicNoise(21), pores = worley(22, 200), fine = periodicNoise(23), blush = periodicNoise(24);
     return (u, v) => {
       const p = pores(u, v);
-      const pore = 1 - smooth(0.0, 0.3, p.f1);
+      const pore = 1 - smooth(0.0, 0.28, p.f1);
       const m = fbm(n, u, v, 5, 4);
-      return { h: 0.6 - pore * 0.22 + (m - 0.5) * 0.08, d: 0.93 + (m - 0.5) * 0.1 - pore * 0.03 };
+      const lines = (1 - smooth(0, 0.06, Math.abs(Math.sin((u + v * 0.15) * Math.PI * 90 + fbm(fine, u, v, 6, 2) * 5)))) * fbm(fine, u, v, 3, 2);
+      const warm = fbm(blush, u, v, 2, 3);
+      return { h: 0.6 - pore * 0.2 - lines * 0.06 + (m - 0.5) * 0.08, d: 0.93 + (m - 0.5) * 0.1 - pore * 0.03 - lines * 0.02 + (warm - 0.5) * 0.06 };
+    };
+  },
+  // A droid's plating (a humanoid droid's body, a prosthetic limb): panels of different sizes with recessed seams, a rivet at each corner, a
+  // vent of slots here and there, worn edges and scuffs
+  droid: () => {
+    const r = rng(91), n = periodicNoise(92), scuff = periodicNoise(93);
+    const grid = 8;
+    // each cell of the grid is joined to its right or lower neighbour or not, so panels are of different sizes
+    const joinR = Array.from({ length: grid * grid }, () => r() < 0.45);
+    const joinD = Array.from({ length: grid * grid }, () => r() < 0.35);
+    const vent = Array.from({ length: grid * grid }, () => r() < 0.12);
+    return (u, v) => {
+      const x = u * grid, y = v * grid;
+      const cx = Math.floor(x), cy = Math.floor(y);
+      const fx = x - cx, fy = y - cy;
+      const id = (cy % grid) * grid + (cx % grid);
+      const left = joinR[(cy % grid) * grid + ((cx + grid - 1) % grid)], right = joinR[id];
+      const up = joinD[(((cy + grid - 1) % grid)) * grid + (cx % grid)], down = joinD[id];
+      const w = 0.025;
+      const seamX = (!left && fx < w) || (!right && fx > 1 - w);
+      const seamY = (!up && fy < w) || (!down && fy > 1 - w);
+      const seam = seamX || seamY ? 1 : 0;
+      // rivets just inside the corners of a panel
+      let rivet = 0;
+      for (const [ax, ay] of [[0.09, 0.09], [0.91, 0.09], [0.09, 0.91], [0.91, 0.91]]) {
+        if ((ax < 0.5 ? left : right) || (ay < 0.5 ? up : down)) continue;
+        const d = Math.hypot(fx - ax, fy - ay);
+        rivet = Math.max(rivet, 1 - smooth(0.0, 0.035, d));
+      }
+      const slots = vent[id] && fx > 0.2 && fx < 0.8 && fy > 0.25 && fy < 0.75 ? (Math.sin(fy * Math.PI * 9) > 0.35 ? 1 : 0) : 0;
+      const s = fbm(scuff, u, v, 6, 4);
+      const wear = smooth(0.62, 0.8, s);
+      const m = fbm(n, u, v, 12, 3);
+      return { h: 0.6 - seam * 0.4 - slots * 0.3 + rivet * 0.3 + (m - 0.5) * 0.04 - wear * 0.05, d: 0.9 - seam * 0.35 - slots * 0.3 + rivet * 0.1 + wear * 0.12 + (m - 0.5) * 0.06 };
+    };
+  },
+  // Cybernetics (implants, a prosthesis's joints and inner works): circuit traces raised on a board, turning at right angles, with pads and vias
+  cyber: () => {
+    const r = rng(101), n = periodicNoise(102);
+    const cells = 32;
+    const dirs = Array.from({ length: cells * cells }, () => Math.floor(r() * 6));
+    const pads = Array.from({ length: cells * cells }, () => r() < 0.08);
+    return (u, v) => {
+      const x = u * cells, y = v * cells;
+      const cx = Math.floor(x), cy = Math.floor(y);
+      const fx = x - cx - 0.5, fy = y - cy - 0.5;
+      const d = dirs[(cy % cells) * cells + (cx % cells)];
+      const w = 0.09;
+      // a trace across the cell, or turning a corner in it, or none
+      const across = d === 0 ? Math.abs(fy) < w : d === 1 ? Math.abs(fx) < w : d === 2 ? (Math.abs(fy) < w && fx < 0) || (Math.abs(fx) < w && fy < 0) : d === 3 ? (Math.abs(fy) < w && fx > 0) || (Math.abs(fx) < w && fy > 0) : false;
+      const pad = pads[(cy % cells) * cells + (cx % cells)] && Math.hypot(fx, fy) < 0.28;
+      const via = pad && Math.hypot(fx, fy) < 0.1;
+      const m = fbm(n, u, v, 8, 3);
+      const t = across || pad ? 1 : 0;
+      return { h: 0.4 + t * 0.35 - (via ? 0.3 : 0) + (m - 0.5) * 0.05, d: 0.62 + t * 0.32 - (via ? 0.3 : 0) + (m - 0.5) * 0.08 };
+    };
+  },
+  // A coarse homespun weave (robes, cloaks, rags): a plain weave of thick, uneven threads with slubs along them
+  weave: () => {
+    const n = periodicNoise(111), slub = periodicNoise(112);
+    const threads = 40;
+    return (u, v) => {
+      const x = u * threads, y = v * threads;
+      const col = Math.floor(x), row = Math.floor(y);
+      const over = (col + row) % 2 === 0;
+      const fx = x - col, fy = y - row;
+      const thick = 0.75 + 0.5 * fbm(slub, over ? u * 0.25 : u, over ? v : v * 0.25, 16, 2);
+      const across = Math.pow(over ? Math.sin(fy * Math.PI) : Math.sin(fx * Math.PI), 0.7) * thick;
+      const fuzz = fbm(n, u, v, 48, 3);
+      return { h: 0.3 + across * 0.45 + (fuzz - 0.5) * 0.2, d: 0.76 + across * 0.14 + (fuzz - 0.5) * 0.16 };
+    };
+  },
+  // An armour's undersuit or a flight suit: a close rib running down it, quilted in diamonds where it pads
+  mesh: () => {
+    const n = periodicNoise(121);
+    return (u, v) => {
+      const rib = Math.pow(Math.abs(Math.sin(u * Math.PI * 96)), 0.6);
+      const qa = Math.abs(((u + v) * 8) % 1 - 0.5), qb = Math.abs(((u - v + 8) * 8) % 1 - 0.5);
+      const quilt = 1 - smooth(0, 0.05, Math.min(qa, qb));
+      const m = fbm(n, u, v, 16, 3);
+      return { h: 0.45 + rib * 0.2 - quilt * 0.3 + (m - 0.5) * 0.06, d: 0.82 + rib * 0.06 - quilt * 0.12 + (m - 0.5) * 0.06 };
     };
   },
   fabric: () => {
@@ -180,7 +271,7 @@ function normals(height, size, steep) {
   }
   return out;
 }
-const STEEP = { skin: 3, face: 2.5, fabric: 5, leather: 4, plate: 4, scales: 4.5, fur: 4 };
+const STEEP = { skin: 3, face: 2.5, fabric: 5, leather: 4, plate: 4, scales: 4.5, fur: 4, droid: 4, cyber: 3.5, weave: 5, mesh: 4 };
 
 async function build(name) {
   const texel = SETS[name]();

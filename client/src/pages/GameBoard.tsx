@@ -25,6 +25,7 @@ import { makeOffers, accept as acceptContract, progress as contractProgress, whe
 import { DejarikGame } from "@/components/Games/DejarikGame";
 import { PitBets } from "@/components/Games/PitBets";
 import { usePartyLook } from "@/components/Map/models";
+import { FORM_STYLE } from "@/components/Map/interiors/limbs";
 import { NotesPanel, TranslatorPanel } from "@/components/Play/GearPanels";
 import { TestMenu, type TestCategory, type TestItem } from "@/components/Play/TestMenu";
 import { Compass, CompassRig } from "@/components/Map/Compass";
@@ -1577,7 +1578,7 @@ export default function GameBoard() {
   // The character's figure on the map: their species, and a lit blade for one who uses the Force
   // (red on the dark side)
   useEffect(() => {
-    usePartyLook.getState().set({ species: character?.species, name: character?.name, force: learner.force, blade: learner.forceAlign === "Dark" ? "#ff4040" : (character?.name?.length ?? 0) % 2 ? "#6ef08a" : "#7fe3ff", gear: character ? figureGearOf(character) : undefined });
+    usePartyLook.getState().set({ species: character?.species, name: character?.name, force: learner.force, blade: learner.forceAlign === "Dark" ? "#ff4040" : (character?.name?.length ?? 0) % 2 ? "#6ef08a" : "#7fe3ff", gear: character ? figureGearOf(character) : undefined, forms: character ? Object.keys(FORM_STYLE).filter((f) => JSON.stringify(character).includes(f)) : [] });
   }, [character?.species, character?.name, learner.force, learner.forceAlign, JSON.stringify(character?.equipment ?? []), JSON.stringify(character?.armor ?? null)]);
   const encounterHere = world?.encounter && districtHere?.id === world.encounter.districtId ? world.encounter : null;
   // A gang is on the party once it has them surrounded (or has had time enough to: it is never left out of reach)

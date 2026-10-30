@@ -7,7 +7,7 @@ import { createRoot } from "react-dom/client";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { groundPush, paceOf, STICK, stickOf, useRun } from "./stick";
-import { AIM, aimAt, FEET_PER_SQUARE, PITCH, poseOf, useReticle, useView, type Aimed, type ViewMode } from "./aim";
+import { AIM, aimAt, FEET_PER_SQUARE, PITCH, poseOf, recoil, useReticle, useView, type Aimed, type ViewMode } from "./aim";
 import { AirButtons } from "./AirButtons";
 import { ShootButtons, ShooterHud } from "./ShooterHud";
 import { useShoot } from "./shoot";
@@ -271,6 +271,8 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
     const k = keys.current;
     const turn = (k.has("ArrowLeft") ? 1 : 0) - (k.has("ArrowRight") ? 1 : 0);
     yaw.current += turn * 2 * dt;
+    // (a shot climbs the view, taken in over a few frames)
+    if (recoil.up > 1e-4) { const take = recoil.up * Math.min(1, dt * 30); recoil.up -= take; const [lo, hi] = PITCH[mode]; pitch.current = Math.max(lo, Math.min(hi, pitch.current + take)); }
     const forward = (k.has("KeyW") || k.has("ArrowUp") ? 1 : 0) - (k.has("KeyS") || k.has("ArrowDown") ? 1 : 0) + stick.current[1];
     const strafe = (k.has("KeyD") ? 1 : 0) - (k.has("KeyA") ? 1 : 0) + stick.current[0];
     facing.current = yaw.current;

@@ -22,7 +22,8 @@ import { CaveDressing, CaveMound, CaveSlab, CaveWalls, MaskFloor, RockWall } fro
 import { moodOf } from "./interiors/atmosphere";
 import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
 import { PackWalls, cornerCentre, bendOf, holeOf, piercedWall, type Bend, type WallRun } from "./interiors/Walls";
-import { AIM, aimAt, aimFrom, stance, useView, type Aimed, type AimPlan } from "./interiors/aim";
+import { AIM, aimAt, aimFrom, partyMotion, stance, useView, type Aimed, type AimPlan } from "./interiors/aim";
+import { kickOf, motion, nowSeconds, type Motion } from "./interiors/limbs";
 import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, type JumpStats } from "./interiors/air";
 import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
@@ -35,7 +36,7 @@ import { useDisplay } from "./interiors/display";
 import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, type SeatState, type Shot } from "./interiors/limbs";
-import { Figure, seatFor, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { Figure, MotionContext, seatFor, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -238,20 +239,48 @@ const RIDER_HIPS = 0.5;
 // Names are sized to be read from above; from the character's eyes they are a third as large (the crosshair names what it is on)
 // The other members of a co-op game who stand in this place, as figures that walk to where they were last seen (lib/coop shares where each stands)
 // A figure that goes down into a crouch or onto its belly, and gets up again, eased (`to`: 0 standing, 1 crouched, 2 prone; the head the way it faces)
-function Posture({ to, children }: { to: number; children: ReactNode }) {
-  const group = useRef<THREE.Group>(null);
-  const was = useRef({ k: 0, p: 0 });
-  useFrame((_, dt) => {
-    const g = group.current;
-    if (!g) return;
-    const ease = Math.min(1, dt * 8);
-    was.current.k += ((to === 1 ? 1 : 0) - was.current.k) * ease;
-    was.current.p += ((to === 2 ? 1 : 0) - was.current.p) * ease;
-    g.rotation.x = (Math.PI / 2) * was.current.p;
-    g.position.y = 0.14 * was.current.p;
-    g.scale.y = 1 - 0.3 * was.current.k;
-  });
-  return <group ref={group}>{children}</group>;
+// (since 2026-10-30 the figure itself bends its knees and lies down: its joints, interiors/limbs.ts humanPose; this tells it which, and with
+// `act` what else it is doing: a fight's figures aim, fire, strike and flinch)
+function Posture({ to, act, children }: { to: number; act?: { current: Motion }; children: ReactNode }) {
+  const own = useRef<Motion>(motion());
+  const m = act ?? own;
+  m.current.posture = (to === 2 ? 2 : to === 1 ? 1 : 0);
+  return <MotionContext.Provider value={m}>{children}</MotionContext.Provider>;
+}
+// The motions of a turn-based fight's figures, by combatant: each is ready for the fight, and the log says who attacks (a shot's kick, a blade's
+// strike) and who is hit (a flinch). An attack's line begins with the attacker's name ("X attacks Y with ...", "X hits Y with ...")
+function useFightMotions(combatants: Combatant[]) {
+  const map = useRef(new Map<string, { current: Motion }>());
+  const of = (id: string | number) => {
+    let m = map.current.get(String(id));
+    if (!m) { m = { current: motion({ ready: true }) }; map.current.set(String(id), m); }
+    return m;
+  };
+  const people = useRef(combatants);
+  people.current = combatants;
+  useEffect(() => {
+    let seen = useCombat.getState().combatLog.length;
+    return useCombat.subscribe((st) => {
+      if (st.combatLog.length < seen) seen = 0;
+      const lines = st.combatLog.slice(seen);
+      seen = st.combatLog.length;
+      const now = nowSeconds();
+      const byLength = [...people.current].sort((a, b) => b.name.length - a.name.length);
+      for (const line of lines) {
+        const who = byLength.find((c) => line.startsWith(`${c.name} `));
+        if (!who || !/^\S.*? (attacks|hits|fires|sprays|unloads on|swings|strikes|slashes|shoots) /.test(line.slice(0, who.name.length + 16))) continue;
+        const m = of(who.id).current;
+        m.firedAt = now;
+        m.swingAt = now;
+        m.swing++;
+        m.kick = kickOf(who.rangedWeapon ?? "", 0);
+        const rest = line.slice(who.name.length);
+        const struck = / hits /.test(rest.slice(0, 7)) ? byLength.find((c) => c.id !== who.id && rest.includes(` ${c.name}`)) : undefined;
+        if (struck) of(struck.id).current.hitAt = now + 0.2;
+      }
+    });
+  }, []);
+  return of;
 }
 function PeerFigure({ name, color, peer, here }: { name: string; color: string; peer?: Peer; here: string }) {
   const group = useRef<THREE.Group>(null);
@@ -2797,6 +2826,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // bolt (a wall; low furniture only below the height of its top, so that a counter is cover), where a body can stand, how high the floor is,
   // and where the muzzle and the crosshair are
   const shootSession = useShoot((s) => s.session);
+  // (in a shooter fight the figure holds what the fight has drawn: the gun, or the blade)
+  const shootWield = useShoot((st) => (!st.session ? undefined : st.hud.weapon === "blade" ? (st.hud.saber ? "saber" : "vibro") : st.hud.gun ? (/rifle|carbine|repeat|cannon|bowcaster|launcher|shotgun|sniper|cycler/i.test(st.hud.gun) ? "rifle" : "pistol") : undefined)) as "saber" | "vibro" | "rifle" | "pistol" | undefined;
   const shootFloor = (x: number, y: number) => {
     if (inside?.layout) return floorAt(inside.layout, x - inside.layout.x, y - inside.layout.y);
     let top = 0;
@@ -3208,12 +3239,16 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         stance.k += ((g.crouch ? 1 : 0) - stance.k) * ease;
         stance.p += ((g.prone ? 1 : 0) - stance.p) * ease;
       }
-      // (prone: laid forward onto the ground, head the way they face)
-      token.current.rotation.x = stance.lunge + (Math.PI / 2) * stance.p;
-      token.current.position.y += 0.14 * stance.p;
+      // (the figure bends and lies down by itself: its joints, told by the party's motion)
+      const pm = partyMotion.current;
+      const gr = useRun.getState();
+      pm.posture = shootSession ? (stance.k > 0.5 ? 1 : 0) : gr.prone ? 2 : gr.crouch ? 1 : 0;
+      pm.air = air.current.mode !== "ground";
+      pm.ready = !!shootSession;
+      token.current.rotation.x = 0;
+      token.current.scale.y = 1;
       partyHeight.f = token.current.rotation.y;
       partyHeight.s = stance.p > 0.5 ? 2 : stance.k > 0.5 ? 1 : 0;
-      token.current.scale.y = 1 - 0.3 * stance.k;
       // From the eyes the character is not drawn; over the shoulder they face where the camera looks
       token.current.visible = !(viewing && mode === "first");
       if (viewing && facing.current !== null) token.current.rotation.y = facing.current;
@@ -4044,7 +4079,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             {ridden && <Figure kind="beast" ring={SIDE_COLORS.player} name={ridden.name} large={isLarge(ridden.size)} creature={ridden.creature} size={ridden.size} />}
             {/* the rider's seat (not the feet) on the beast's back: a figure's hips are RIDER_HIPS over its feet */}
             <group position={[0, ridden ? seatFor(ridden.name, ridden.creature, ridden.size) * (isLarge(ridden.size) ? 1.5 : 1) - RIDER_HIPS : 0, 0]}>
-              <Figure kind="player" ring={SIDE_COLORS.player} marker riding={!!ridden} seat={partySeat} unarmed={!!table} />
+              <MotionContext.Provider value={partyMotion}>
+                <Figure kind="player" ring={SIDE_COLORS.player} marker riding={!!ridden} seat={partySeat} unarmed={!!table} wield={shootWield} />
+              </MotionContext.Provider>
             </group>
             <HandledCarts carts={cartsOf("me")} biome={biome} reach={ridden && isLarge(ridden.size) ? 1.7 : 1.05} onTap={active ? (id) => onAct?.({ type: "cart", id }) : undefined} />
             {/* A hook's line, held in the hands up to the hook on the edge, and a jetpack's flame at the back (only while a way up or down is made) */}
@@ -4169,6 +4206,7 @@ function Picked({ asset, high = 0 }: { asset: RoomAsset; high?: number }) {
 
 function DuelPieces() {
   const { combatants, currentTurn, arena, targetId, moveTo, setTarget, objectId, setObject } = useCombat();
+  const motionOf = useFightMotions(combatants);
   const pickable = usePickable();
   const picked = objectId ? arena.assets.find((a) => a.id === objectId) : undefined;
   const current = combatants[currentTurn];
@@ -4214,7 +4252,7 @@ function DuelPieces() {
         return (
           <Stepper key={String(c.id)} x={(c.x ?? 0) + 0.5} y={(c.y ?? 0) + 0.5} z={high(c.z)} pace={isDroideka(c.name) ? 1.2 : 4} turn={false}>
             <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : 0, 0]}>
-              <Posture to={!down && (c.braced || (c.conditions ?? []).some((x) => /^prone$/i.test(x.name))) ? 2 : 0}><Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} fighting /></Posture>
+              <Posture to={!down && (c.braced || (c.conditions ?? []).some((x) => /^prone$/i.test(x.name))) ? 2 : 0} act={motionOf(c.id)}><Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} fighting /></Posture>
             </group>
             {!down && current?.id === c.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}><ringGeometry args={[0.5, 0.58, 28]} /><meshBasicMaterial color="#fde047" /></mesh>}
             {!down && target?.id === c.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.07, 0]}><ringGeometry args={[0.62, 0.7, 4]} /><meshBasicMaterial color="#f87171" /></mesh>}
@@ -4261,6 +4299,7 @@ function BesidePanel() {
 
 export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; areaId?: string | null; origin?: { x: number; y: number } }) {
   const { combatants, currentTurn, arena, targetId, moveTo, setTarget, objectId, setObject } = useCombat();
+  const motionOf = useFightMotions(combatants);
   const pickable = usePickable();
   const picked = objectId ? arena.assets.find((a) => a.id === objectId) : undefined;
   const current = combatants[currentTurn];
@@ -4348,7 +4387,7 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
                 {/* The fallen lie where they fell */}
                 <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : 0, 0]}>
                   <Turner facing={facing} on={viewing && !!c.isPlayer && !down} base={Math.PI / 2} hide={viewing && mode === "first" && !!c.isPlayer}>
-                  <Posture to={!down && (c.braced || (c.conditions ?? []).some((x) => /^prone$/i.test(x.name))) ? 2 : 0}><Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} fighting /></Posture>
+                  <Posture to={!down && (c.braced || (c.conditions ?? []).some((x) => /^prone$/i.test(x.name))) ? 2 : 0} act={motionOf(c.id)}><Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} fighting /></Posture>
                   </Turner>
                 </group>
                 {!down && current?.id === c.id && (

@@ -4,6 +4,7 @@
 // rules (reach, range, cover: `attackPlan`, `reachable`) are asked by whoever acts on the target, not worked out again here.
 import * as THREE from "three";
 import { create } from "zustand";
+import { motion, type Motion } from "./limbs";
 
 export type ViewMode = "overhead" | "shoulder" | "first";
 export const VIEW_MODES: ViewMode[] = ["overhead", "shoulder", "first"];
@@ -57,6 +58,11 @@ export const EYE = 1.15;
 // into a saber's swing; the camera, the muzzle and the figure follow them
 // (`p` is how far it has gone prone, 0 to 1: lying on the ground, the eyes a hand's breadth above it)
 export const stance = { k: 0, p: 0, lunge: 0 };
+// What the party is doing, for its figure (interiors/limbs.ts Motion): the map writes its posture and whether it is in the air, a shooter fight
+// its aim, shots, strikes, parries and the blows it takes
+export const partyMotion: { current: Motion } = { current: motion() };
+// The climb a shot puts on the view (radians still to come): a heavy gun throws the aim up more than a light one (ViewRig takes it in quickly)
+export const recoil = { up: 0 };
 export const PITCH: Record<Exclude<ViewMode, "overhead">, [number, number]> = { first: [-1.3, 1.3], shoulder: [-0.7, 1.0] };
 
 export interface Pose {

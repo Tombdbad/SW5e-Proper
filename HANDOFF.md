@@ -1,43 +1,34 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-30 (Windows PC), branch `main`. The co-op work is committed (5f2761e); the second batch (walk/run, crouch/prone, facing, kick, full screen) is the commit after it. Nothing is pushed.
+Written 2026-10-30 (Windows PC), branch `main`. Commits today: 5f2761e co-op fixes, 2b51591 walk/run, crouch/prone, facing, kick, full screen; the animation work below is the commit after those. Nothing is pushed.
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told.
 
-## 2026-10-30: the first real co-op play on two devices (REVIVAL_NOTES "Co-op, the first real play")
-The user played co-op over Tailscale (pixel phone + this PC) and reported: wi-fi address fails; lag; jump not seen; an NPC job-giver followed both players; a beast not seen on the other screen;
-speeder hit box; the gunner got a menu and could cancel and be left behind; roadblocks with no guards. DONE in the working tree:
-- Co-op dialog says the wi-fi needs `-Lan` and shows each address in its own box; firewall rule in windows-start.ps1 is now "local subnet, any profile". The phone on wi-fi still gets
-  ERR_TOO_MANY_RETRIES on http://192.168.0.156:5002 (cause NOT found; Tailscale works and is a direct LAN path). Suggest: phone's Tailscale off + same URL; router client isolation.
-- Position stream 12/s with height (jump/flight seen); peers' companions/beasts drawn (`pets` message, `PeerPets`); the encounter stranger follows ONE member (`leader` in LocalMap);
-  parked speeders block three squares.
-- Gunner seat is real on speeders: `RoadRide` + `lib/roadBus.ts` (the pilot streams the road race; the gunner aims/fires back via `gun`); a gunner and gun are drawn on the speeder; riders cannot cancel
-  a journey under way. Ships' co-pilot/navigator/engineer/gunner in a starship fight are NOT done.
-- Roadblock guards fire at a crashing speeder; on 55% of blocks they board speeders kept at the roadside and chase (`shared/logic/index.ts` `blockGuards`, `Racer.idle`).
-- Checked: `npm test` 469 pass/3 skipped; tests/server/coop.test.ts 3/3 on sw5e_test; browser e2e/coop.mjs, coop-followers.mjs, followers.mjs, roadblock.mjs (dev server PORT=5099 on sw5e_test).
-- NOT checked: two real phones; the encounter stranger across two screens; the 3D look of guards beyond one screenshot (e2e/out/roadblock-look.png).
-- 5002 (test copy) was last built BEFORE all of this. The user restarts it themselves with an administrator PowerShell:
-  `powershell -ExecutionPolicy Bypass -File deploy\windows-start.ps1 -Mode test -Lan` (my own run with -Lan was refused by the permission check; without -Lan it would turn the wi-fi off again).
+## 2026-10-30, third batch: jointed people, weapon holds, saber forms, recoil/spread, textures (REVIVAL_NOTES "Jointed people, ...")
+- Skeleton: `interiors/limbs.ts` LIMB now 20 limbs (chest, foreR/L, shinR/L, weapon, head added) with PARENT; shader chains each limb through its parents (uniform `uP` pivots, from `Kit.pivots`, kept on the baked geometry's userData).
+  `buildHumanoid` (models.tsx) builds thigh+shin, upper arm+forearm, weapon at the wrist, head on its neck; a rifle is built shouldered.
+- `humanPose` (limbs.ts): walk/run/crouch/prone/jump, holds (pistol, rifle, saber, melee, pole, carry), recoil, flinch, parry, keyframed strikes; 11 saber styles from the 20 forms (`FORM_STYLE`).
+  Scenes say what a figure does through `MotionContext` (models.tsx) with a `Motion` ref: party `partyMotion` (aim.ts), peers/fight `Posture` and `useFightMotions` (LocalMap), shooter `motionOf` (Shooter.tsx).
+- Shooter: figures hold the drawn weapon (`wield` on Figure; figureSpec reorders the gear's weapons); floating sabers only in first person. Saber models x2.8 in a hand (gear.ts).
+- House rule `gunKick` (shared/logic/shooter.ts): kick and steadiness by gun kind; bloom and cone use them; the view climbs (`recoil` in aim.ts).
+- Textures: `node tools/build-figure-textures.mjs skin face droid cyber weave mesh` made new sets; finishes droid/cyber/weave/mesh in models.tsx; droids panelled, prostheses plated, robes woven, undersuits ribbed.
+- Gallery `/dev/models?section=moves` (and `&act=prone` etc.) shows it all; `e2e/moves.mjs` shoots views (name=query args).
+- Checked: limbs/shooter unit tests; e2e/shooter.mjs and fight-view.mjs play. NOT checked: a phone; the shooter over the shoulder mid-swing; the full `npm test` result is in the commit message.
+
+## Earlier today
+- Co-op first play fixes (5f2761e): wi-fi notes, 12/s positions with height, peers' pets, encounter stranger follows one member, speeder gunner seat (`RoadRide`, `lib/roadBus.ts`), roadblock guards.
+  The phone on wi-fi still fails (ERR_TOO_MANY_RETRIES on 192.168.0.156:5002, cause not found); Tailscale works.
+- Second batch (2b51591): Walk default at half speed, Run restores; Crouch (C) and Prone (Z); peers face and show posture; host Kick; Full screen button.
+  Followers attacking: companions already fight as allies; not changed; ask the user for the case they saw.
+- 5002 (test copy) is still an OLD build. The user restarts it in an administrator PowerShell: `powershell -ExecutionPolicy Bypass -File deploy\windows-start.ps1 -Mode test -Lan`.
 - Process: dev server on 5099 (sw5e_test) is Claude's; stop it (Stop-Process on the pid listening on 5099) when done.
 
-## 2026-10-30, second batch (the user: full screen, kick, facing, followers fight, crouch, run)
-- Walk is the default, HALF the old speed; Run restores it (tap walks too). Key `sw5e.run2` (the old setting does not carry). Crouch (C, 0.6x) and Prone (Z, 0.3x) buttons in the eye views and in the top bar (overhead). `stance.k/p`, `useRun` in interiors/stick.ts.
-- Peers are drawn facing the way they face and crouched/prone (`pos` message carries f and s; `partyHeight.f/s`; `Posture` in LocalMap). Fight combatants with a Prone condition (or a deployed bipod) lie down.
-- Host-only Kick in the co-op dialog (`kick` message; the kicked cannot rejoin that game). Full screen button in the top bar (Fullscreen API; iPhone: Add to Home Screen, meta tags added).
-- Followers attacking: in a fight companions are allies and already attack (turn-based and shooter); NOT changed. If the user means something else (free roam), ask for the case.
-- Checked: npm test 469 pass; e2e/coop-posture.mjs (posture seen by the host, kick) passes; NOT checked on screen: the prone/crouch look, full screen on a phone.
-
 ## Next, in order
-1. The user tries 5002 on two devices (gunner on the road, guards, followers, jump). 2. Real roles on SHIPS (a gunner in a starship fight). 3. The co-op shooter fight (a fight everyone is in).
-4. The wi-fi mystery if the user needs non-Tailscale friends. 5. Open questions: can a real-time defeat be death?; road ambushes and the pit arena are still turn-based.
-
-## Earlier today (2026-10-29), condensed: see REVIVAL_NOTES
-- Commits 867effa co-op, b7c47e2 shooter/nemesis/ammo, dc73724 notes, e55d59a shooter fixes (stuck defeat, walls, powers, crouch, sounds). Co-op server/client/rules in server/coop.ts, shared/logic/coop.ts,
-  client/src/lib/coop.ts, components/Play/CoopUI.tsx, pages/CoopJoin.tsx.
+1. The user tries the new figures on 5002 (and two devices for co-op). 2. Tune poses from what the user says (keys in limbs.ts STYLES / humanPose). 3. Real roles on SHIPS. 4. The co-op shooter fight.
+5. Open: can a real-time defeat be death?; road ambushes and the pit arena are still turn-based; the followers report.
 
 ## Learned
-- Bash heredocs/`node -e` mangle backticks, `${}` and `\r\n` here: write patch scripts with the Write tool into the scratchpad (see `fs2.cjs`: CRLF-aware `rep`, exactly one match) and run them with node.
-  FlightScene.tsx and CoopUI.tsx are CRLF files. Python is not installed. `sleep` is blocked: wait with an until-loop.
-- A WebSocket test has two queues (one per socket): let each step in before the next (the test's `quiet()`).
+- Bash heredocs/`node -e` mangle backticks, `${}`, apostrophes and `\r\n`: write patch scripts with the Write tool into the scratchpad (CRLF-aware `rep`, exactly one match) and run them with node.
+  FlightScene.tsx, CoopUI.tsx, ViewRig.tsx, stick.ts are CRLF. Python is not installed. `sleep` is blocked: wait with an until-loop.
+- Rotating both arms by the same angle about x keeps a two-handed grip (the shoulders share an axis); twist the chest, not the arms, about y.
 - Vite HMR makes `import("/src/...")` from a test script return a second module instance: restart the dev server before a run.
-- Dev server on the test DB: scratchpad `dev5099.cjs` (reads .env, swaps /sw5e for /sw5e_test, spawns `npx tsx server/index.ts` with PORT=5099 VITE_TEST_MENU=1).
-- Companions are the character's (`companionData`), not the campaign's: other screens only know them through `pets`.
+- Dev server on the test DB: scratchpad `dev5099.cjs` (reads .env, swaps /sw5e for /sw5e_test, spawns `npx tsx server/index.ts` with PORT=5099 VITE_TEST_MENU=1); recreate it if the scratchpad was cleared.

@@ -167,4 +167,4 @@ export function WallMaterial({ set, tint }: { set: WallSet; tint: string }) {
 
 // The finishes that are drawn with a texture (models.tsx MATERIALS): the stone of rock, the bark of trees and logs, the leaves of
 // canopies and fronds. Their texture coordinates are box-projected at this many repeats per model unit.
-export const SURFACE_GRAIN: Record<string, number> = { stone: 1, bark: 1.5, leaf: 1.5, skin: 3, face: 5, fabric: 4, leather: 3, plate: 2, scales: 3.5, hair: 4, fur: 3 };
+export const SURFACE_GRAIN: Record<string, number> = { stone: 1, bark: 1.5, leaf: 1.5, skin: 3, face: 5, fabric: 4, leather: 3, plate: 2, scales: 3.5, hair: 4, fur: 3, droid: 1.6, cyber: 2.5, weave: 3, mesh: 3 };

@@ -11,9 +11,10 @@ import {
   SHOOT, castPower, firePlayer, newSim, placeUnits, playerOf, reloadPlayer, resultOf, roundsOf, setBlock, step, swingPlayer, throwGrenade,
   type Env, type Event, type Sim, type Unit,
 } from "@shared/logic/shooter";
-import { Figure, usePartyLook } from "../models";
+import { Figure, MotionContext, usePartyLook } from "../models";
+import { kickOf, motion, type Motion } from "./limbs";
 import { SIDE_COLORS, tokenOf } from "../sprites";
-import { AIM, rightOf, stance, useView } from "./aim";
+import { AIM, partyMotion, recoil, rightOf, stance, useView } from "./aim";
 import { bindShootKeys, useShoot, type Session } from "./shoot";
 import { sfx } from "./fx";
 import { useCombat } from "@/lib/stores/useCombat";
@@ -79,7 +80,13 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
   const grenadeMeshes = useRef<(THREE.Mesh | null)[]>([]);
   const blastMeshes = useRef<(THREE.Mesh | null)[]>([]);
   const flash = useRef<THREE.Mesh>(null);
-  const foeSabers = useRef<Record<string, THREE.Group | null>>({});
+  // What each figure is doing (interiors/limbs.ts Motion): ready to fight, the kick of each shot, each blade's strike, each blow taken
+  const motions = useRef(new Map<string, { current: Motion }>());
+  const motionOf = (u: Unit) => {
+    let m = motions.current.get(u.id);
+    if (!m) { m = { current: motion({ ready: true, kick: u.gun ? kickOf(u.name, u.gun.damage) : 0.4 }) }; motions.current.set(u.id, m); }
+    return m;
+  };
   const saber = useRef<THREE.Group>(null);
   const saberBlade = useRef<THREE.Group>(null);
   const blaster = useRef<THREE.Group>(null);
@@ -185,7 +192,13 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       }
       if (store.held.fire && shot) {
         if (st.weapon === "gun") {
-          if (firePlayer(s, shot.from, shot.to, events, me.moving, me.airborne)) st.firedAt = now;
+          if (firePlayer(s, shot.from, shot.to, events, me.moving, me.airborne)) {
+            st.firedAt = now;
+            const kick = p.gun?.kick ?? 0.4;
+            Object.assign(partyMotion.current, { firedAt: now / 1000, kick });
+            // (the view climbs with the kick, less crouched)
+            recoil.up += (0.008 + kick * 0.035) * (st.crouch ? 0.6 : 1);
+          }
           else if (p.gun && p.gun.left <= 0 && p.reloading === 0 && p.fire <= 0) {
             if (p.gun.reserve > 0) reloadPlayer(s, events);
             else st.note = "Out of ammunition";
@@ -193,10 +206,15 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         } else if (swingPlayer(s, events)) {
           st.swungAt = now;
           st.swingCombo = p.combo;
+          partyMotion.current.swingAt = now / 1000;
+          partyMotion.current.swing++;
         }
       }
       setBlock(s, store.held.block && st.weapon === "blade");
     } else setBlock(s, false);
+    partyMotion.current.blocking = p.blocking && !p.dead;
+    // (the gun is held up to where the crosshair is: its rise over the ground ahead)
+    if (shot) partyMotion.current.pitch = Math.max(-0.6, Math.min(0.6, Math.atan2(shot.to.h - shot.from.h, Math.hypot(shot.to.x - shot.from.x, shot.to.y - shot.from.y))));
 
     // The world, in steps no longer than a twentieth of a second
     let left = dt;
@@ -207,6 +225,8 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     }
     for (const e of events) {
       if (e.type === "hit") {
+        const struck = s.units.find((u) => u.id === e.target);
+        if (struck) (struck.side === "player" ? partyMotion : motionOf(struck)).current.hitAt = now / 1000;
         if (e.target === "me") { store.setHud({ hurtAt: now }); sfx.hurt(); }
         else if (e.by === "me") { store.setHud({ hitAt: now, ...(e.head ? { headAt: now } : {}) }); sfx.hit(); }
         else sfx.hit();
@@ -214,9 +234,15 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       } else if (e.type === "down" && e.id !== "me" && e.by === "me") { store.setHud({ killAt: now }); sfx.hit(true); }
       else if (e.type === "deflect") { store.setHud({ deflectAt: now }); sfx.deflect(); }
       else if (e.type === "explode") { st.blasts.push({ x: e.x, y: e.y, h: e.h, t: 0, r: e.radius, life: 0.5, c: "#ffb347" }); sfx.boom(); }
-      else if (e.type === "shot") sfx.shot(e.from === "me", Math.max(-1, Math.min(1, Math.sin(Math.atan2(e.x - me.x, e.y - me.y) - me.facing) * 0.8)));
+      else if (e.type === "shot" && e.from !== "me" && s.units.find((u) => u.id === e.from)) motionOf(s.units.find((u) => u.id === e.from)!).current.firedAt = now / 1000;
+      if (e.type === "shot") sfx.shot(e.from === "me", Math.max(-1, Math.min(1, Math.sin(Math.atan2(e.x - me.x, e.y - me.y) - me.facing) * 0.8)));
       else if (e.type === "impact") { st.blasts.push({ x: e.x, y: e.y, h: e.h, t: 0, r: 0.18, life: 0.14, c: "#ffd27a" }); sfx.impact(); }
-      else if (e.type === "swing") { st.swung[e.id] = now; sfx.swing(); }
+      else if (e.type === "swing") {
+        st.swung[e.id] = now;
+        sfx.swing();
+        const u = s.units.find((x) => x.id === e.id);
+        if (u && u.side !== "player") { const m = motionOf(u).current; m.swingAt = now / 1000; m.swing++; }
+      }
       else if (e.type === "blocked") sfx.deflect();
       else if (e.type === "reload") sfx.reload();
       else if (e.type === "power") {
@@ -246,14 +272,6 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         g.position.y = u.h + 0.14 * ease;
       } else {
         g.rotation.set(0, u.facing, 0, "YXZ");
-      }
-      // A foe's saber: carried low, and swung across in an arc when it strikes (its blow is felt at the same moment: shooter.ts)
-      const fs = foeSabers.current[u.id];
-      if (fs) {
-        const since = (now - (st.swung[u.id] ?? -9999)) / 450;
-        fs.visible = !u.dead;
-        const swinging = since >= 0 && since < 1;
-        fs.rotation.set(swinging ? 1.35 : 1.0, swinging ? 1.25 - 2.5 * since : 0, 0);
       }
       const bar = bars.current[u.id];
       if (bar) {
@@ -368,13 +386,10 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         const large = isLarge(meta.size);
         return (
           <group key={u.id} ref={(g) => { group.current[u.id] = g; }}>
-            <Figure kind={tokenOf({ name: u.name, role: meta.role ?? "", creature: meta.creature, isPlayer: false, forceUser: meta.role === "force" })} ring={meta.ring ?? (u.side === "ally" ? SIDE_COLORS.friendly : SIDE_COLORS.hostile)} name={u.name} large={large} species={meta.species} role={meta.role} creature={meta.creature} size={meta.size} fighting />
-            {u.blade?.saber && (
-              <group position={[0.28, 0.95, 0.12]} ref={(g) => { foeSabers.current[u.id] = g; }} rotation={[1.0, 0, 0]}>
-                <mesh position={[0, 0.06, 0]}><cylinderGeometry args={[0.022, 0.026, 0.2, 8]} /><meshStandardMaterial color="#8a8f98" metalness={0.8} roughness={0.3} /></mesh>
-                <mesh position={[0, 0.62, 0]}><cylinderGeometry args={[0.018, 0.018, 1.08, 8]} /><meshBasicMaterial color={u.name && /sith|inquisitor|dark/i.test(`${u.name} ${meta.role ?? ""}`) ? "#ff3030" : "#5aa9ff"} toneMapped={false} /></mesh>
-              </group>
-            )}
+            {/* (a fighter with a saber holds it, and strikes and parries with the arms and body: interiors/limbs.ts) */}
+            <MotionContext.Provider value={motionOf(u)}>
+              <Figure kind={tokenOf({ name: u.name, role: meta.role ?? "", creature: meta.creature, isPlayer: false, forceUser: meta.role === "force" })} ring={meta.ring ?? (u.side === "ally" ? SIDE_COLORS.friendly : SIDE_COLORS.hostile)} name={u.name} large={large} species={meta.species} role={meta.role} creature={meta.creature} size={meta.size} fighting wield={u.blade?.saber ? "saber" : !u.gun && u.blade ? "vibro" : undefined} />
+            </MotionContext.Provider>
             <mesh ref={(m) => { hitBoxes.current[u.id] = m; }} position={[0, 0.65, 0]}>
               <boxGeometry args={[0.7, 1.3, 0.7]} />
               <meshBasicMaterial transparent opacity={0} depthWrite={false} />
@@ -436,7 +451,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
 // held up across the front when blocking. `p` is the party's unit (its timers say where in the swing it is).
 function placeSaber(g: THREE.Group | null, blade: THREE.Group | null, at: THREE.Vector3, q: THREE.Quaternion, st: { weapon: "gun" | "blade"; swingCombo: number }, p: Unit, now: number, eyes: boolean) {
   if (!g || !blade) return;
-  const draw = st.weapon === "blade" && !!p.blade && !p.dead;
+  const draw = st.weapon === "blade" && !!p.blade && !p.dead && eyes;
   g.visible = draw;
   if (!draw) return;
   g.position.copy(at);

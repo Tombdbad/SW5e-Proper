@@ -185,7 +185,8 @@ const weaponWant = (name: string, classification?: string): Want | undefined => 
   const own = ref && !ref.model.startsWith("weapon:") ? assetPath(ref.model) : undefined;
   if (ref && own && modelInfo(ref.model)?.meta.slot === "weapon") {
     const blade = needsBlade(ref) && assetPath(`blade-${ref.blade}`) ? { model: assetPath(`blade-${ref.blade}`)!, name: `blade-${ref.blade}`, scale: ref.bladeScale ?? 1 } : undefined;
-    return { slot: "weapon", model: own, look: lookOfModel(ref.model), scale: 0.85, name: ref.model, grip: socketCentred(ref.model, "grip"), offHand: socketCentred(ref.model, "off_hand"), ...(blade ? { blade } : {}) };
+    // (a saber model is a hilt and a short blade, a third of a metre in all: in a hand it is drawn nearly three times that, a blade of a real length)
+    return { slot: "weapon", model: own, look: lookOfModel(ref.model), scale: ref.model.startsWith("saber-") ? 0.85 * 2.8 : 0.85, name: ref.model, grip: socketCentred(ref.model, "grip"), offHand: socketCentred(ref.model, "off_hand"), ...(blade ? { blade } : {}) };
   }
   // An enhanced weapon built on a base weapon takes that weapon's design
   if (ref?.model.startsWith("weapon:")) {
