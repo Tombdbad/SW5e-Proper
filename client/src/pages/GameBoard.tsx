@@ -51,6 +51,8 @@ import { itemRef } from "@/components/Map/interiors/items";
 import { feats } from "@/lib/sw5e/feats";
 import lookupData from "@shared/data/sw5e/lookups.json";
 import { MinigamePage, type Minigame, type MinigameResult } from "@/components/Map/FlightScene";
+import { tokenOf } from "@/components/Map/sprites";
+import type { CrewMember as SeatedCrew } from "@/components/Map/models";
 import { planTrip, driveMinutes, legPar, crewmate, blockPursuit, metText, type Leg, type LegTime } from "@shared/logic/roadtrip";
 import { dogfightPayout } from "@shared/logic/dogfightSim";
 import { SCENARIOS, scenarioAdvice, scenarioOf, classOf, type ScenarioId } from "@shared/logic/dogfight";
@@ -67,7 +69,7 @@ import {
   advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
   heatAt, heatLevel, kindLabel, settlementOf, useKindOf, camerasIn, seatsOf, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
   lawmenAt, lawWatchDC, turnLawmen, engageOfficers, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
-  boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf, flightPayout, raceResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
+  boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf, flightPayout, raceResult, convoyResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
@@ -93,7 +95,7 @@ import {
   partsPlaceAt, partsStock, fitShipPart, wreckParts, droidPartsStock, droidDisplay, droidListed, surgeonStock, modStock, MOD_TRADES, WARES, baseNameOf, modFee, modFitProblem, MOD_FIT_HOURS, blueprintPool, type SurgeonLine, type ModLine,
   ammoFamilyOf, ammoItemFamily, ammoRider, accessoryOf, reloadOf, GENERATOR_SHOTS, PLAIN_ROUND, waterSpeed, armorTraits, stealthMode, rigidDex, type AmmoRider,
   passDays, FORAGE_DC, HOT_LANDS, liquidOf, foodOf, GEAR, type Supplies,
-  waterOf, waterwayOf, isWaterCraft, isSubmersible,
+  waterOf, waterwayOf, isWaterCraft, isSubmersible, domeOf, swimPace,
   hazardsAt, gravityOf, jumpReach, fallPlan, fallOutcome, type FallGear, exposure, HAZARD_HOUR, suitOf, airOf, breathRule, type Protections, type EnvHazard,
   loadOf, containerOf, weightOf, isContraband, shipModNamed, shipModEffects, modCost, modDays, crewModPlan, crewEquipmentPlan, tierUpgrade, yardWorkforce, equipmentCost, equipmentDays, equipmentWorkforce,
   roleShip, enhancedShipPart, type ShipPart, type PartLine, type ShipModInstance,
@@ -927,7 +929,7 @@ export default function GameBoard() {
   // being driven, the hull carried on, the time each took, the riders of the ambushes of its legs (and of a roadblock that was run, after the party on
   // the next leg), and whether the party is being asked what it does about an ambush before the leg begins
   // (`water`: by water craft, its look)
-  const [trip, setTrip] = useState<{ exit: Exit; ride: Ride; legs: Leg[]; i: number; hull: number; took: LegTime[]; riders: Occupant[][]; pursuit: { a: RoadAmbush; riders: Occupant[] } | null; phase: "ask" | "drive"; vehicle: string; seed: number; water?: string } | null>(null);
+  const [trip, setTrip] = useState<{ exit: Exit; ride: Ride; legs: Leg[]; i: number; hull: number; took: LegTime[]; riders: Occupant[][]; pursuit: { a: RoadAmbush; riders: Occupant[] } | null; phase: "ask" | "drive"; vehicle: string; seed: number; water?: string; look?: string; seats?: number } | null>(null);
   driving.current = !!trip;
   // An ambush on the road (shared/logic "On the road", house rules): the trip it stopped, who and why, the riders as people to fight, and
   // whether the party is running for it (the chase)
@@ -955,7 +957,7 @@ export default function GameBoard() {
       const water = isWaterCraft(vehicle);
       const legs = planTrip(world, exit.to, { km: kmOf(exit.travel) ?? 0, biome: String(trailOf(world, exit.to).find((a) => a.kind === "planet")?.type ?? "temperate"), level, alignment: side, wanted: !!world.pursuit, seed, always, water });
       const riders = legs.map((leg, i) => (leg.ambush ? roadAmbushers(monsterData as unknown as Sw5eMonster[], equipmentData as any, leg.ambush, level, `${seed}-${i}`) : []));
-      return void setTrip({ exit, ride: chosen, legs, i: 0, hull: 99, took: [], riders, pursuit: null, phase: riders[0].length ? "ask" : "drive", vehicle: String(vehicle?.model ?? "Landspeeder"), seed, ...(water ? { water: vehicle?.look } : {}) });
+      return void setTrip({ exit, ride: chosen, legs, i: 0, hull: 99, took: [], riders, pursuit: null, phase: riders[0].length ? "ask" : "drive", vehicle: String(vehicle?.model ?? "Landspeeder"), seed, look: vehicle?.look, seats: vehicle?.seats, ...(water ? { water: vehicle?.look } : {}) });
     }
     const changes: Record<string, any> = { currentLocation: exit.to };
     const { ship: flying } = exit.needsShip ? tripBy(exit) : { ship: undefined };
@@ -988,11 +990,19 @@ export default function GameBoard() {
     const sub = ride?.vehicleId && waterOf(world, exit.to) === "under" ? vehicles.find((v) => v.id === ride.vehicleId && isSubmersible(v)) : undefined;
     // (going in through a way in at the helm, the map moors the craft where it was left: only leaving the place lets go of the helm)
     if (sub || (play.afloat && settlementOf(world, exit.to) !== settlementOf(world, here.id))) patchPlay({ afloat: sub?.id });
+    // Come to a place under the sea from another by anything but a submersible: set down inside its first dome (house rule, shared/logic domeOf)
+    const dome = !sub && !exit.needsShip && waterOf(world, exit.to) === "under" && world.areas[exit.to]?.kind !== "room" && settlementOf(world, exit.to) !== settlementOf(world, here.id) ? domeOf(world, exit.to) : undefined;
+    if (dome) {
+      changes.currentLocation = dome;
+      toast.info(`${ride?.label ?? "The ride"} cannot go under the water: you are taken down and in through the lock of ${world.areas[world.areas[dome]?.parentId ?? ""]?.name ?? "the first dome"} (house rule).`);
+    }
     const took = ride ? ride.minutes : tripMinutes(exit, Number(flying?.hyperdriveClass) || 1) * (flying && isLowFuel(flying) ? LIMP_FACTOR : 1);
     // The days on the way are lived as the party travels them (see liveDays): aboard its own ship, as passengers (a fare, a hired ride),
     // or on the roads
     const arrival = dayOf(useClock.getState().minutes + took);
     if (arrival > supplies.day) liveDays(arrival, exit.needsShip ? (flying ? "ship" : "passenger") : ride?.fare ? "passenger" : "wild");
+    // (the time on the way is not spent where the party set out from: see `departed`)
+    departed.current = here.id;
     Object.assign(changes, pass(took));
     if (ride) toast.info(`${ride.label}: ${rideText(took)} to ${world.areas[exit.to]?.name}; it is ${clockText(useClock.getState().minutes)}.`);
     else if (took >= 60) toast.info(`${Math.round(took / 6) / 10} hours on the way${exit.needsShip && !exit.travel ? " (house rule: an hour between the surface and orbit)" : ""}: it is ${clockText(useClock.getState().minutes)}.`);
@@ -2023,11 +2033,27 @@ export default function GameBoard() {
 
   // An ambush on the road stood and fought, or a chase lost: the trip is finished (the party is at its end) and the riders still after it
   // close in at the roadside, on open ground with a few rocks for cover; their leader down, the rest ride off (the gang's rule)
+  // A sea beast on a swimmer (LocalMap SeaBeasts, house rule): the fight is in the water, with nothing to stand behind
+  const seaBeastFight = (name: string) => {
+    const monster = (monsterData as unknown as Sw5eMonster[]).find((m) => m.name === name);
+    if (!monster || !character || inCombat || character.currentHp <= 0) return;
+    toast.error(`The ${name.toLowerCase()} is on you in the water!`);
+    const occupant = statBlockOccupant(monster, equipmentData as any, `sea-${Math.floor(useClock.getState().minutes)}`, 1, "creature", "hostile");
+    fightArea.current = null;
+    fightAreas.current = [];
+    lastSavedHp.current = character.currentHp;
+    lastSavedPoints.current = character.currentForcePoints;
+    lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
+    fightBegun.current = true;
+    initiateCombat(fighterNow(), [{ ...foe(occupant, `${occupant.id}-0`, occupant.name), x: 10, y: 4, z: 0 }] as any, combatKit(), false, { width: 16, height: 12, assets: [], open: true, floor: "sea" }, { x: 3, y: 6 }, party.filter((c) => c.hp > 0).map(allyOf));
+  };
   const roadFight = (amb: NonNullable<typeof roadHit>, riders: Occupant[]) => {
     setRoadHit(null);
+    // (caught on the water in a water craft: the fight is in the shallows of a sandbar among the rocks, house rule)
+    const atSea = !!world && !!here && !!waterwayOf(world, here.id, amb.exit.to) && isWaterCraft(vehicles.find((v) => v.id === amb.ride.vehicleId));
     travel(amb.exit, amb.ride, true);
     if (!riders.length || !character) return;
-    toast.error(`The ${amb.a.who} close in at the roadside.`);
+    toast.error(atSea ? `The ${amb.a.who} run you onto a sandbar among the rocks: you fight knee-deep in the shallows (house rule).` : `The ${amb.a.who} close in at the roadside.`);
     setTimeout(() => {
       const enemies = riders.map((o, i) => ({ ...foe(o, o.id, o.name), x: 10 + (i % 2) * 2, y: 3 + i * 2, z: 0, gang: "road", leader: i === 0 }));
       const rocks = [[6, 4], [7, 8], [12, 6], [4, 10], [13, 1]].map(([x, y], i) => ({ id: `rock-${i}`, kind: "furniture" as const, name: "Rock", x, y, w: 1, h: 1, blocks: true, cover: true }));
@@ -2038,7 +2064,7 @@ export default function GameBoard() {
       lastSavedPoints.current = character.currentForcePoints;
       lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
       fightBegun.current = true;
-      initiateCombat(fighterNow(), enemies as any, combatKit(), false, { width: 16, height: 12, assets: rocks as any, open: true, floor: world ? trailOf(world, amb.exit.to).find((a) => a.kind === "planet")?.type : undefined }, { x: 3, y: 6 }, party.filter((c) => c.hp > 0).map(allyOf));
+      initiateCombat(fighterNow(), enemies as any, combatKit(), false, { width: 16, height: 12, assets: rocks as any, open: true, floor: atSea ? "sea" : world ? trailOf(world, amb.exit.to).find((a) => a.kind === "planet")?.type : undefined }, { x: 3, y: 6 }, party.filter((c) => c.hp > 0).map(allyOf));
     }, 600);
   };
 
@@ -3344,6 +3370,9 @@ export default function GameBoard() {
       hasVehicle={Array.isArray(campaign?.vehicles) && campaign.vehicles.length > 0}
       hasShip={ships.length > 0}
       vehicleModel={campaign?.vehicles?.[0]?.model}
+      vehicle={campaign?.vehicles?.[0] ? { look: campaign.vehicles[0].look, seats: campaign.vehicles[0].seats } : undefined}
+      crew={party.filter((c) => c.kind !== "beast" && c.hp > 0 && !/large|huge|gargantuan/i.test(c.size ?? "")).slice(0, Math.max(0, (campaign?.vehicles?.[0]?.seats ?? 2) - 1)).map((c) => ({ kind: tokenOf({ name: c.name, role: c.kind === "droid" ? "utility droid" : c.role, creature: c.creature }), name: c.name, species: c.species, role: c.role, creature: c.creature, size: c.size, modules: c.kind === "droid" ? c.custom : undefined }))}
+      mate={crewmate(party.map((c) => ({ name: c.name, kind: c.kind, hp: c.hp })))}
       shipSpec={ships[0] ? { size: ships[0].size, role: ships[0].role } : undefined}
       partyShips={shipRows.length ? ships.map((sh) => ({ id: sh.id, name: sh.name, sheet: shipSheet(sh, shipRows, proficiency), owner: sh.owner, where: world?.areas[sh.areaId]?.name, busy: shipBusy(sh) ? `${shipBusy(sh)!.what} at the yard` : sh.status === "wrecked" ? "wrecked" : undefined })) : []}
       shipRows={shipRows}
@@ -3975,6 +4004,7 @@ export default function GameBoard() {
     return {
       strength: character.abilityScores?.strength ?? 10,
       size: String((speciesFacts as any)?.size ?? "Medium"),
+      swim: swimPace(speciesFacts?.speed?.swim ? `swim ${speciesFacts.speed.swim} ft.` : "", speciesFacts?.speed?.walk ?? 30),
       g: gravityOf(world, here.id, ((character.equipment ?? []) as string[]).some((n) => /gravity generator/i.test(n) && running(n))).g,
       hook: climbGear.shot ? hookStats(climbGear.shot) : undefined,
       fly: airFlyer ? { name: airFlyer.n, feet: airFlyer.f!, on: running(airFlyer.n) } : undefined,
@@ -4110,9 +4140,15 @@ export default function GameBoard() {
   const afloatIn = (Array.isArray(campaign?.vehicles) ? (campaign.vehicles as PartyVehicle[]) : []).find((v) => v.id === play.afloat);
   const hazardsHere = (world && here ? hazardsAt(world, here.id, clockMinutes) : []).filter((h) => !(h.hazard === "underwater" && isSubmersible(afloatIn)));
   const exposures = hazardsHere.map((h) => ({ why: h.why, ...exposure(h.hazard, protections()) }));
+  // The place the party has just set out from (2026-10-30: a party that left a street under the sea drowned on the way, because the trip's
+  // hours passed on the clock a moment before the new place came in): no exposure is counted there until the party is somewhere else
+  const departed = useRef<string | null>(null);
+  useEffect(() => {
+    if (departed.current && here?.id !== departed.current) departed.current = null;
+  }, [here?.id]);
   const deadlyAt = (areaId: string) => (world ? hazardsAt(world, areaId, clockNow()).map((h) => ({ why: h.why, ...exposure(h.hazard, protections()) })).find((e) => e.deadly && e.hazard !== "underwater") : undefined);
   useEffect(() => {
-    if (!character || !world || !here || inCombat || dead) return;
+    if (!character || !world || !here || inCombat || dead || departed.current === here.id) return;
     const now = clockMinutes;
     const live = exposures.filter((e) => !e.safe || e.breathing);
     const kinds = live.map((e) => e.hazard).join(",");
@@ -4833,6 +4869,10 @@ export default function GameBoard() {
     } else if (action.type === "occupant" || action.type === "ship" || action.type === "vehicle" || action.type === "companion") setPicked({ kind: action.type, id: action.id });
     else if (action.type === "piece") setPicked({ kind: "piece", id: action.id });
     else if (action.type === "cart") setPicked({ kind: "cart", id: action.id });
+    else if (action.type === "seaBeast") {
+      if (action.step === "coming") toast.error(`An ${action.name.toLowerCase()} turns toward you through the water: get out of it, onto the decking or into a craft (house rule)!`);
+      else seaBeastFight(action.name);
+    }
     else if (action.type === "moor") {
       // (shared/logic "Over the water": the craft stays where it was left, the party steps ashore)
       const boat = vehicles.find((v) => v.id === action.id);
@@ -7883,7 +7923,9 @@ export default function GameBoard() {
             ].filter(Boolean);
             return {
               kind: "road" as const, title: `${trip.water ? "Crossing" : "Road"} to ${world.areas[trip.exit.to]?.name ?? "the next settlement"}`, seed: leg.seed, vehicle: trip.vehicle, biome: leg.biome, leg: { i: trip.i, n: trip.legs.length }, intro, hull: trip.hull,
-              ...(trip.water ? { water: true, look: trip.water } : {}),
+              ...(trip.water ? { water: true } : {}), look: trip.look, seats: trip.seats,
+              // (who rides along, in the craft's seats: the companions on their feet who are not beasts, as many as it seats)
+              crew: party.filter((c) => c.kind !== "beast" && c.hp > 0 && !/large|huge|gargantuan/i.test(c.size ?? "")).slice(0, Math.max(0, (trip.seats ?? 2) - 1)).map((c) => ({ kind: tokenOf({ name: c.name, role: c.kind === "droid" ? "utility droid" : c.role, creature: c.creature }), name: c.name, species: c.species, role: c.role, creature: c.creature, size: c.size, modules: c.kind === "droid" ? c.custom : undefined })),
               mate: roadCrew?.gunner ? undefined : crewmate(party.map((c) => ({ name: c.name, kind: c.kind, hp: c.hp }))), block: leg.block, riders: riders.length ? riders.map((o) => ({ name: o.name, model: a?.model ?? "Speederbike" })) : undefined, who: a?.who,
               talk: { persuasion: modifier(character.abilityScores?.charisma) + (skilled("persuasion") ? proficiency : 0), deception: modifier(character.abilityScores?.charisma) + (skilled("deception") ? proficiency : 0) },
               credits: character.credits ?? 0,
@@ -8950,6 +8992,10 @@ interface DowntimeProps {
   // The model of the party's first vehicle and the size and role of its first ship, for the flying games,
   // and the kind of world the settlement is on (the speeder race's ground and what grows on it)
   vehicleModel?: string;
+  // (the convoy: the party's first vehicle's make and seats, and the companions who ride in it, the crewmate first)
+  vehicle?: { look?: string; seats?: number };
+  crew?: SeatedCrew[];
+  mate?: { name: string; pace: number };
   shipSpec?: { size: string; role: string };
   // The party's ships as sheets (for the dogfight: the pilot chooses which to fly), where each is berthed, whether it cannot fly (and why),
   // and the starship equipment they were made from
@@ -8985,7 +9031,7 @@ const dtId = (prefix: string) => `${prefix}-${Date.now().toString(36)}${Math.flo
 const DOWNTIME_GROUPS: [string, string[]][] = [
   ["Side quests", ["bounty-hunting", "espionage", "mercenary-contracting", "crime"]],
   ["Fighting games", ["pit-arena"]],
-  ["Racing games", ["racing", "speeder-race"]],
+  ["Racing games", ["racing", "speeder-race", "convoy-guard"]],
   ["Flying games", ["taxi-run", "delivery-run", "dogfight"]],
   ["Everyday downtime", ["carousing", "buying-enhanced-items", "selling-enhanced-items", "crafting", "gambling", "research", "training", "work"]],
 ];
@@ -8994,8 +9040,10 @@ const ARENA = [{ id: "pit-arena", name: "Pit arena", intro: "Fight creatures of 
 // The flying games (house rules, shared/logic "Flying"): flown on the 3D map for a day. A run takes rings,
 // a race is laps against rivals, a dogfight is against foes that fire back; each needs one of the party's
 // vehicles or ships.
-const FLYING: { id: string; name: string; kind: "run" | "race" | "dogfight"; mode: FlightMode; needs: "vehicle" | "ship"; intro: string }[] = [
+const FLYING: { id: string; name: string; kind: "run" | "race" | "dogfight" | "convoy"; mode: FlightMode; needs: "vehicle" | "ship"; intro: string }[] = [
   { id: "taxi-run", name: "Taxi run", kind: "run", mode: "speeder", needs: "vehicle", intro: "Fly your landspeeder through the rings of a course over the settlement's ground, for a fare." },
+  // (2026-10-30, the user: the reverse of the convoy strike, house rules: shared/logic "The convoy")
+  { id: "convoy-guard", name: "Convoy guard", kind: "convoy", mode: "speeder", needs: "vehicle", intro: "Ride guard on a convoy of haulers down a road in your own speeder. Raiders come at it from the sky in waves, fighters of the convoy's side fly cover, and each hauler's turret fires back. Drive with the column, or take your craft's gun (your crewmate, or the convoy's droid pilot, takes the wheel) and turn it on them: the pad, or W A S D, or a drag on the scene, turns it all round and up into the sky. Paid for each hauler that gets through and each raider shot down." },
   { id: "speeder-race", name: "Speeder race", kind: "race", mode: "speeder", needs: "vehicle", intro: "Race your speeder over three laps of a long course against four rivals: gates to pass in order, jumps, shortcuts down a trail with a ravine to clear, mines and oil. Boost draws on a meter that refills; the hull bar is what you can still take. Paid by the place you finish." },
   { id: "delivery-run", name: "Delivery run", kind: "run", mode: "ship", needs: "ship", intro: "Fly your ship through the rings of a course in the space of its planet, against the clock." },
   { id: "dogfight", name: "Dogfight", kind: "dogfight", mode: "ship", needs: "ship", intro: "Fly your ship in the space of its planet against fighters, a cruiser, a carrier, a battleship, a dreadnought or a battle station, or in its air: defend the settlement from a bombing raid, bomb a hostile one, escort a convoy or strike one. Guns, missiles and bombs (a few for a small ship, more for a large one); the largest ships are shielded by generators, and a station is destroyed from inside." },
@@ -9145,7 +9193,7 @@ function FlightActivity(props: DowntimeProps & { flying: (typeof FLYING)[number]
   const [shipId, setShipId] = useState<string | null>(null);
   const credits = Number(character?.credits) || 0;
   const pay = (result: MinigameResult) => {
-    const won = result.kind === "run" ? flightPayout(result.course, result.collected, result.timeLeft) : result.kind === "race" ? raceResult(result.race) : result.kind === "dogfight" ? dogfightPayout(result.state) : { credits: 0, note: chaseResult(result.race).note };
+    const won = result.kind === "run" ? flightPayout(result.course, result.collected, result.timeLeft) : result.kind === "race" ? raceResult(result.race) : result.kind === "convoy" ? convoyResult(result.race) : result.kind === "dogfight" ? dogfightPayout(result.state) : { credits: 0, note: chaseResult(result.race).note };
     commit({ character: { credits: credits + won.credits }, downtime: {}, days: 1, log: [`${flying.name}: ${won.note}.`] });
     setGame(null);
   };
@@ -9208,6 +9256,18 @@ function FlightActivity(props: DowntimeProps & { flying: (typeof FLYING)[number]
           const seed = Math.floor(Math.random() * 1e9) + 1;
           const vehicle = props.vehicleModel ?? "Landspeeder";
           if (flying.kind === "race") setGame({ kind: "race", title: flying.name, seed, vehicle, biome: props.biome });
+          else if (flying.kind === "convoy") {
+            // The convoy's side is the settlement's; its raiders the world's antagonist (a pirate gang where the antagonist holds the place).
+            // An Imperial convoy's haulers are troop transports, anyone else's cargo skiffs; one more hauler from 9th level
+            const ally = props.settlement?.faction || "the convoy's escort";
+            const who = props.foeFaction && props.foeFaction !== ally ? props.foeFaction : "a pirate gang";
+            const level = props.level;
+            setGame({
+              kind: "convoy", title: flying.name, seed, vehicle, look: props.vehicle?.look, seats: props.vehicle?.seats, crew: props.crew, mate: props.mate, biome: props.biome ?? "temperate",
+              haulers: level >= 9 ? 4 : 3, hauler: "Landspeeder", haulerLook: /empire|imperial|first order/i.test(ally) ? "itt" : "skiff", level, who, ally,
+              intro: [`A convoy of ${ally} haulers sets out down the road, your craft at the back of the column. ${who} ships will come at it from the sky.`, "Take the gun to shoot them down (Swap: your crewmate or the convoy's droid pilot drives); keep the haulers alive to the end of the road (house rules)."],
+            });
+          }
           else if (flying.kind === "dogfight" && chosen) setGame({ kind: "dogfight", title: flying.name, seed, scenario, rows: props.shipRows ?? [], ship: { sheet: chosen.sheet, owner: chosen.owner }, planet: props.biome, air: scenarioOf(scenario).air ? { biome: props.biome ?? "temperate", g: props.gravity ?? 1, owner: props.foeFaction } : undefined });
           else setGame({ kind: "run", title: flying.name, seed, mode: flying.mode, vehicle, ship: props.shipSpec });
         }} data-testid={`flight-start-${flying.id}`}>

@@ -11,7 +11,7 @@ import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
-import { advance, bob, LIMB, LIMBS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, type Gait, type Stride, type SeatState } from "./interiors/limbs";
+import { advance, bob, LIMB, LIMBS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
 import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
@@ -2047,12 +2047,165 @@ export function ShipModel({ ship, w, h, ceiling }: { ship: ShipLook; w: number; 
 // A speeder standing on the ground, hovering a hand's breadth up: a bike, a landspeeder with its
 // windscreen, or an airspeeder with its canopy. A wreck lies tilted and dark, smoking.
 // `look`: the make's model (shared/logic VEHICLE_MAKES), else the plain one of the class `model` names; `name` picks among a make's paints
-export function SpeederModel({ model, wrecked, look, name = model }: { model: string; wrecked?: boolean; look?: string; name?: string }) {
+// `seats`: how many it seats (its make's, shared/logic VEHICLE_MAKES; the seats beyond those its body has are a bench behind); `crew`: who
+// sits where, by seat (the pilot's first: craftLayout); `aims`: each gun's aim, written each frame (yaw off the nose, pitch up, radians);
+// `gunner`: a gun is lent to a craft that has none, for its gunner (2026-10-30, the road's gunner seat)
+export function SpeederModel({ model, wrecked, look, name = model, seats, crew, aims, gunner }: { model: string; wrecked?: boolean; look?: string; name?: string; seats?: number; crew?: (CrewMember | undefined)[]; aims?: { current: GunAim[] }; gunner?: boolean }) {
   const kind = speederKind(model);
   const made = !!look && !!MAKE_PAINT[look];
+  const layout = useMemo(() => craftLayout(look, model, seats, gunner), [look, model, seats, gunner]);
   return (
     <group position={[0, wrecked ? 0.05 : 0.28, 0]} rotation={wrecked ? [0.12, 0.5, 0.18] : [0, 0, 0]}>
       <Model id={made ? `speeder:${look}:${wrecked ? 1 : 0}:${pickOf(MAKE_PAINT[look!], name)}` : `speeder:${kind}:${wrecked ? 1 : 0}:${pickOf(["a", "b", "c"], model)}`} build={(k) => (made ? buildMake(k, look!, !!wrecked, name) : buildSpeeder(k, kind, !!wrecked, model))} wear={made ? (MILITARY_LOOKS.has(look!) && !wrecked ? { age: 0, damage: 0, grain: speederWear(name).grain } : speederWear(name, wrecked)) : speederWear(model, wrecked)} />
+      {!wrecked && <CraftCrew layout={layout} crew={crew} aims={aims} />}
+    </group>
+  );
+}
+
+// ---- Seats and guns aboard a craft (2026-10-30; the user: "ALL speeders and water craft have seating positions for characters (relevant to
+// the number of seats the vehicle has) ... characters drawn ACCURATELY within their seats ... Craft that have gunner positions should have
+// animated turrets/characters with weapons that follow their operators aiming vectors (rotation and elevation)"). Where each seat is on each
+// make, in the model's own units (nose to +z, the body as SpeederModel builds it): `at` the hips (`stand`: the feet), the way it faces
+// (`face`, about y), how one sits there, whether it is the pilot's, a gunner's at gun `gun` (the gunner sits on the gun's swivel and turns
+// with it) or a rider's; `hidden` inside a closed body (not drawn). A gun: its swivel (where its gunner's hips are, or feet standing), the
+// way it points at rest, where the gun itself is on the swivel (`mount`, in the swivel's turn: before the gunner's chest) and what it is
+// (a pintle blaster on a post, a turret ring with twin barrels).
+export interface CrewMember { kind: string; name?: string; species?: string; role?: string; creature?: string; size?: string; player?: boolean; modules?: string[]; ring?: string }
+export interface CrewSeat { pose: SeatPose; role: SeatRole; pitch?: { current: number } }
+export interface CraftSeat { at: V3; pose: SeatPose; role: SeatRole; face?: number; gun?: number; hidden?: boolean }
+export interface CraftGun { at: V3; face: number; kind: "pintle" | "turret"; mount: V3 }
+export interface CraftLayout { seats: CraftSeat[]; guns: CraftGun[]; bench: V3[] }
+export interface GunAim { yaw: number; pitch: number }
+// Rows of seats across a body: `across` to a row, from `z` back by `dz`, `half` from the middle to the outer seat, the pilot's on the left
+const rowsOf = (n: number, across: number, z: number, dz: number, half: number, y: number, pose: SeatPose = "seated"): CraftSeat[] =>
+  Array.from({ length: n }, (_, i) => {
+    const row = Math.floor(i / across);
+    const col = i % across;
+    const x = across === 1 ? 0 : half - (col * 2 * half) / (across - 1);
+    return { at: [x, y, z - row * dz] as V3, pose, role: i === 0 ? "pilot" : "rider" };
+  });
+// How many a make seats when nothing says (the plain ones of the Vehicles table)
+const SEATS_BY_KIND: Record<string, number> = { bike: 2, land: 2, air: 4 };
+export function craftLayout(look: string | undefined, model: string, seats?: number, lendGun = false): CraftLayout {
+  const kind = speederKind(model);
+  const n = Math.max(1, seats ?? SEATS_BY_KIND[kind] ?? 2);
+  const out: CraftLayout = { seats: [], guns: [], bench: [] };
+  switch (look) {
+    case "swoop": out.seats = [{ at: [0, 0.44, -0.5], pose: "astride", role: "pilot" }]; break;
+    case "hydro": out.seats = rowsOf(2, 1, -0.16, 0.4, 0, 0.5, "astride"); break;
+    case "v35": out.seats = rowsOf(4, 2, 0.35, 0.5, 0.25, 0.4); break;
+    case "flash": out.seats = rowsOf(2, 2, -0.45, 0.4, 0.17, 0.5); break;
+    case "koro": out.seats = [{ at: [0, 0.42, -0.55], pose: "seated", role: "pilot" }]; break;
+    case "xj6": out.seats = rowsOf(2, 1, -0.42, 0.38, 0, 0.55); break;
+    case "bongo": out.seats = rowsOf(3, 1, 0.55, 0.55, 0, 0.42); break;
+    case "aquadon": out.seats = [{ at: [0, 0.46, 0.62], pose: "seated", role: "pilot" }, { at: [0.24, 0.46, 0.08], pose: "seated", role: "rider", hidden: true }, { at: [-0.24, 0.46, 0.08], pose: "seated", role: "rider", hidden: true }, { at: [0, 0.46, -0.42], pose: "seated", role: "rider", hidden: true }]; break;
+    case "t47":
+      // The snowspeeder's rear gunner sits back to back with the pilot, at the harpoon gun
+      out.seats = [{ at: [0, 0.22, 0.32], pose: "seated", role: "pilot" }, { at: [0, 0, 0], pose: "seated", role: "gunner", gun: 0 }];
+      out.guns = [{ at: [0, 0.22, -0.12], face: Math.PI, kind: "pintle", mount: [0, 0.42, 0.36] }];
+      break;
+    case "cloudcar":
+      // The pilot in one pod, the gunner in the other with its twin cannons
+      out.seats = [{ at: [0.7, 0.36, 0.22], pose: "seated", role: "pilot" }, { at: [0, 0, 0], pose: "seated", role: "gunner", gun: 0 }];
+      out.guns = [{ at: [-0.7, 0.36, 0.22], face: 0, kind: "turret", mount: [0, 0.22, 0.46] }];
+      break;
+    case "skiff": {
+      // The helm at the stern, a deck gun at the bow, the rest along the rails facing out
+      out.seats = [{ at: [0, 0.4, -1.65], pose: "stand", role: "pilot" }, { at: [0, 0, 0], pose: "stand", role: "gunner", gun: 0 }];
+      for (const z of [-0.9, -0.35, 0.2, 0.75]) for (const x of [0.5, -0.5]) out.seats.push({ at: [x, 0.4, z], pose: "stand", role: "rider", face: x > 0 ? Math.PI / 2 : -Math.PI / 2 });
+      out.seats.push({ at: [0.3, 0.4, 1.3], pose: "stand", role: "rider" }, { at: [-0.3, 0.4, 1.3], pose: "stand", role: "rider" });
+      out.guns = [{ at: [0, 0.4, 0.95], face: 0, kind: "pintle", mount: [0, 0.85, 0.36] }];
+      break;
+    }
+    case "itt": {
+      // Two in the cab; the gunner stands in the roof hatch, turning with the turret over it; the troops on benches inside
+      out.seats = [{ at: [0.28, 0.34, 0.62], pose: "seated", role: "pilot" }, { at: [0, 0, 0], pose: "stand", role: "gunner", gun: 0 }, { at: [-0.28, 0.34, 0.62], pose: "seated", role: "rider" }];
+      for (const z of [0.25, -0.3, -0.85]) for (const x of [0.36, -0.36]) out.seats.push({ at: [x, 0.42, z], pose: "seated", role: "rider", face: x > 0 ? -Math.PI / 2 : Math.PI / 2, hidden: true });
+      out.guns = [{ at: [0, 0.3, 0.05], face: 0, kind: "turret", mount: [0, 0.78, 0.12] }];
+      break;
+    }
+    default:
+      // The plain ones, and the makes drawn as them (the 74-Z, the BARC and the 614-AvA as the plain bike, the X-34 as the plain landspeeder)
+      if (kind === "bike") out.seats = rowsOf(Math.max(2, n), 1, -0.22, 0.4, 0, 0.38, "astride");
+      else if (kind === "air") out.seats = rowsOf(Math.max(4, n), 2, 0.12, 0.5, 0.2, 0.34);
+      else out.seats = n > 4 ? rowsOf(n, 3, -0.15, 0.5, 0.32, 0.5) : rowsOf(Math.max(2, n), 2, -0.2, 0.45, 0.2, 0.5);
+  }
+  // Seats past those the body has: riders on a bench behind the last row (its cushions drawn)
+  const own = out.seats.length;
+  for (let i = own; i < n; i++) {
+    const last = out.seats.filter((x) => x.gun === undefined).at(-1)!;
+    const at: V3 = [kind === "bike" ? 0 : (i - own) % 2 ? -0.2 : 0.2, last.at[1], last.at[2] - 0.42 * (1 + Math.floor((i - own) / (kind === "bike" ? 1 : 2)))];
+    out.seats.push({ at, pose: last.pose, role: "rider" });
+    out.bench.push(at);
+  }
+  // (the plain landspeeder draws two seats: the others of its rows are cushions too)
+  if ((!look || look === "x34") && kind === "land") for (const st of out.seats.slice(2)) if (!out.bench.includes(st.at)) out.bench.push(st.at);
+  out.seats = out.seats.slice(0, n);
+  out.bench = out.bench.filter((at) => out.seats.some((st) => st.at === at));
+  // A gunner's seat lent to a craft with no gun (the road's gunner): the second seat on a swivel with a pintle blaster before it (facing
+  // back at rest on a bike, the gun up over the pilot's shoulders); a craft of one seat takes a gunner behind its pilot
+  if (lendGun && !out.guns.length) {
+    const st = out.seats[1] ?? { at: [0, out.seats[0].at[1], out.seats[0].at[2] - 0.5] as V3, pose: out.seats[0].pose, role: "rider" as SeatRole };
+    const up = st.pose === "stand" ? 0.85 : st.pose === "astride" ? 0.58 : 0.42;
+    out.guns = [{ at: st.at, face: kind === "bike" ? Math.PI : 0, kind: "pintle", mount: [0, up, 0.34] }];
+    out.seats[1] = { at: [0, 0, 0], pose: st.pose, role: "gunner", gun: 0 };
+  }
+  return out;
+}
+
+// The seats of a craft and who is in them; each gun turned to its aim (a gun with nobody at it, or no aim given, rests where it points)
+function CraftCrew({ layout, crew, aims }: { layout: CraftLayout; crew?: (CrewMember | undefined)[]; aims?: { current: GunAim[] } }) {
+  return (
+    <>
+      {layout.bench.map((at, i) => <mesh key={`b${i}`} position={[at[0], at[1] - 0.06, at[2]]}><boxGeometry args={[0.32, 0.1, 0.3]} /><meshLambertMaterial color="#5a4030" /></mesh>)}
+      {layout.seats.map((st, i) => st.gun === undefined && crew?.[i] && !st.hidden && (
+        <group key={i} position={st.at} rotation={[0, st.face ?? 0, 0]}>
+          <Figure {...crew[i]!} ring={crew[i]!.ring ?? "#38bdf8"} crew={{ pose: st.pose, role: st.role }} />
+        </group>
+      ))}
+      {layout.guns.map((g, gi) => {
+        const at = layout.seats.findIndex((st) => st.gun === gi);
+        return <GunMount key={`g${gi}`} gun={g} index={gi} aims={aims} seat={at >= 0 ? layout.seats[at] : undefined} who={at >= 0 ? crew?.[at] : undefined} />;
+      })}
+    </>
+  );
+}
+// A gun on its swivel, turned (about y) and raised (about x) to its aim, and its gunner turning with it, the arms raised as it is
+function GunMount({ gun, index, aims, seat, who }: { gun: CraftGun; index: number; aims?: { current: GunAim[] }; seat?: CraftSeat; who?: CrewMember }) {
+  const yaw = useRef<THREE.Group>(null);
+  const pitchG = useRef<THREE.Group>(null);
+  const pitch = useRef(0);
+  const crewSeat = useMemo<CrewSeat | undefined>(() => (seat ? { pose: seat.pose, role: "gunner", pitch } : undefined), [seat]);
+  useFrame(() => {
+    const aim = aims?.current[index];
+    if (yaw.current) yaw.current.rotation.y = aim ? -aim.yaw : gun.face;
+    pitch.current = aim ? aim.pitch : 0;
+    if (pitchG.current) pitchG.current.rotation.x = -pitch.current;
+  });
+  const [mx, my, mz] = gun.mount;
+  return (
+    <group position={gun.at}>
+      <group ref={yaw} rotation={[0, gun.face, 0]}>
+        {gun.kind === "pintle" && <Model id={`craft:gun:post:${mx},${my},${mz}`} build={(k) => k.rod([mx, my * 0.15, mz], [mx, my - 0.03, mz], 0.03, "#5b6470", { seg: 6 })} />}
+        {gun.kind === "turret" && <group position={gun.mount}><Model id="craft:gun:ring" build={(k) => { k.cyl(0.24, 0.16, "#7b818a", { at: [0, -0.04, 0], seg: 14, finish: "sheen" }); k.sphere(0.2, "#868c95", { at: [0, 0.03, 0], seg: [12, 6], half: true, finish: "sheen" }); }} /></group>}
+        <group ref={pitchG} position={gun.mount}>
+          <Model id={`craft:gun:${gun.kind}`} build={(k) => {
+            if (gun.kind === "turret") {
+              k.box([0.3, 0.14, 0.22], "#5d636c", { at: [0, 0.08, 0.06], round: 0.03, finish: "sheen" });
+              k.pair((sd) => k.cyl(0.03, 0.7, "#2f343b", { at: [sd * 0.08, 0.08, 0.5], rot: [Math.PI / 2, 0, 0], seg: 6, finish: "sheen" }));
+            } else {
+              k.box([0.1, 0.12, 0.2], "#444b55", { at: [0, 0, 0], round: 0.02 });
+              k.box([0.08, 0.08, 0.8], "#2f343b", { at: [0, 0.02, 0.42], round: 0.02 });
+              k.pair((sd) => k.rod([sd * 0.07, -0.02, -0.08], [sd * 0.1, -0.06, -0.2], 0.02, "#2f343b", { seg: 5 }));
+            }
+          }} />
+        </group>
+        {seat && who && (
+          <group position={seat.at}>
+            <Figure {...who} ring={who.ring ?? "#38bdf8"} crew={crewSeat} />
+          </group>
+        )}
+      </group>
     </group>
   );
 }
@@ -2083,7 +2236,7 @@ function buildSpeeder(k: Kit, kind: string, wrecked: boolean, model: string) {
     top.lineTo(-0.8, 0.2);
     top.quadraticCurveTo(-0.5, 1.2, 0, 1.5);
     k.extrude(top, 0.22, paint, { at: [0, 0.34, 0], rot: [Math.PI / 2, 0, 0], bevel: 0.06, finish: "sheen" });
-    k.capsule(0.3, 0.6, "#1b2a38", { at: [0, 0.38, -0.05], rot: [Math.PI / 2, 0, 0], scale: [1, 0.55, 1], finish: glass });
+    k.sphere(0.5, "#1b2a38", { at: [0, 0.36, -0.13], seg: [14, 8], half: true, scale: [0.8, 1.3, 1.3], finish: glass });
     k.pair((s) => {
       k.box([0.45, 0.04, 0.5], dark, { at: [s * 0.95, 0.12, -0.6], round: 0.02 });
       k.cyl(0.13, 0.5, dark, { at: [s * 0.5, 0.1, -1.25], rot: [Math.PI / 2, 0, 0], seg: 12, finish: "sheen" });
@@ -2180,7 +2333,7 @@ function buildMake(k: Kit, look: string, wrecked: boolean, name: string): boolea
     case "v35": {
       // A closed courier speeder: a long rounded body, a bubble canopy over its seats, two big engines either side at the back
       k.extrude(roundedRect(1.3, 2.3, [0.3, 0.3, 0.45, 0.45], -0.65, -1.1), 0.34, paint, { at: [0, 0.4, 0], rot: [Math.PI / 2, 0, 0], bevel: 0.07, finish: "sheen" });
-      k.capsule(0.42, 0.75, "#1b2a38", { at: [0, 0.5, 0.2], rot: [Math.PI / 2, 0, 0], scale: [1.25, 0.65, 1], finish: glass });
+      k.sphere(0.5, "#1b2a38", { at: [0, 0.45, 0.1], seg: [14, 8], half: true, scale: [1.1, 1.25, 1.4], finish: glass });
       k.box([1.1, 0.06, 0.12], dark, { at: [0, 0.2, 1.22], round: 0.03, finish: "sheen" });
       k.pair((s) => engine(s * 0.62, 0.38, -1.5, -0.55, 0.19));
       k.box([0.9, 0.18, 0.6], shade(paint, 0.8), { at: [0, 0.5, -0.7], round: 0.06, finish: "sheen" });
@@ -2224,8 +2377,8 @@ function buildMake(k: Kit, look: string, wrecked: boolean, name: string): boolea
         k.box([0.08, 0.1, 2.0], "#3a3f46", { at: [s * 0.62, 0.22, -0.1], round: 0.02, finish: "sheen" });
         engine(s * 0.42, 0.45, -1.45, -1.15, 0.14);
       });
-      k.cyl(0.22, 0.14, shade(paint, 0.85), { at: [0, 1.06, 0.15], seg: 14, finish: "sheen" });
-      k.rod([0, 1.09, 0.25], [0, 1.09, 0.85], 0.025, dark, { seg: 6 });
+      // (the roof hatch; the turret over it turns with its gunner's aim: craftLayout, GunMount)
+      k.cyl(0.27, 0.04, shade(paint, 0.7), { at: [0, 1.0, 0.15], seg: 14, finish: "sheen" });
       k.box([1.0, 0.04, 0.08], "#3a3f46", { at: [0, 1.0, -1.0] });
       return true;
     }
@@ -2233,7 +2386,7 @@ function buildMake(k: Kit, look: string, wrecked: boolean, name: string): boolea
       // The snowspeeder: a flat wedge, a notch between its two engine housings at the back, the cockpit forward, cannons either side of
       // the nose, orange bands (The Empire Strikes Back)
       slab([[0, 1.4], [0.32, 1.3], [0.9, -0.55], [0.9, -1.1], [0.22, -1.1], [0.16, -0.7], [-0.16, -0.7], [-0.22, -1.1], [-0.9, -1.1], [-0.9, -0.55], [-0.32, 1.3]], 0.36, 0.24);
-      k.capsule(0.26, 0.5, "#1b2a38", { at: [0, 0.4, 0.15], rot: [Math.PI / 2, 0, 0], scale: [1, 0.55, 1], finish: glass });
+      k.sphere(0.4, "#1b2a38", { at: [0, 0.34, 0.1], seg: [14, 8], half: true, scale: [0.8, 1.45, 1.25], finish: glass });
       k.pair((s) => {
         k.box([0.12, 0.012, 1.0], wrecked ? dark : "#d9752b", { at: [s * 0.5, 0.367, -0.35], rot: [0, s * 0.27, 0] });
         k.cyl(0.15, 0.6, shade(paint, 0.82), { at: [s * 0.6, 0.27, -0.85], rot: [Math.PI / 2, 0, 0], seg: 12, finish: "sheen" });
@@ -2245,8 +2398,8 @@ function buildMake(k: Kit, look: string, wrecked: boolean, name: string): boolea
     case "cloudcar": {
       // Bespin's twin-pod cloud car: two round pods side by side, a wing between them and an ion engine in the middle
       k.pair((s) => {
-        k.capsule(0.34, 0.75, paint, { at: [s * 0.7, 0.55, 0.05], rot: [Math.PI / 2, 0, 0], finish: "sheen" });
-        k.sphere(0.27, "#1b2a38", { at: [s * 0.7, 0.62, 0.48], seg: [12, 8], scale: [1, 0.8, 0.8], finish: glass });
+        k.capsule(0.42, 0.75, paint, { at: [s * 0.7, 0.55, 0.05], rot: [Math.PI / 2, 0, 0], finish: "sheen" });
+        k.sphere(0.32, "#1b2a38", { at: [s * 0.7, 0.62, 0.5], seg: [12, 8], scale: [1, 0.9, 0.8], finish: glass });
         k.rod([s * 0.75, 0.3, 0.3], [s * 0.75, 0.3, 0.9], 0.025, dark, { seg: 5 });
         k.box([0.03, 0.3, 0.3], shade(paint, 0.8), { at: [s * 0.7, 0.95, -0.4], finish: "sheen" });
       });
@@ -2257,7 +2410,7 @@ function buildMake(k: Kit, look: string, wrecked: boolean, name: string): boolea
     case "koro": {
       // Zam Wesell's Koro-2: a teardrop body with the cockpit at its back and two long prongs reaching forward (Attack of the Clones)
       k.capsule(0.28, 0.7, paint, { at: [0, 0.42, -0.45], rot: [Math.PI / 2, 0, 0], scale: [1, 0.75, 1], finish: "sheen" });
-      k.sphere(0.22, "#1b2a38", { at: [0, 0.58, -0.55], seg: [12, 8], half: true, finish: glass });
+      k.sphere(0.34, "#1b2a38", { at: [0, 0.58, -0.55], seg: [12, 8], half: true, scale: [1, 1.45, 1.2], finish: glass });
       k.pair((s) => {
         k.rod([s * 0.2, 0.38, -0.15], [s * 0.28, 0.36, 1.35], 0.07, paint, { seg: 8, finish: "sheen" });
         k.sphere(0.05, glowColor, { at: [s * 0.28, 0.36, 1.4], seg: [8, 6], finish: lit });
@@ -2270,7 +2423,8 @@ function buildMake(k: Kit, look: string, wrecked: boolean, name: string): boolea
       // A Gungan bongo (The Phantom Menace): a body like a squid's, three bubble canopies along its back, fins round it like a
       // cuttlefish's, and the tentacle-fins that drive it trailing behind
       k.capsule(0.42, 1.5, paint, { at: [0, 0.45, 0], rot: [Math.PI / 2, 0, 0], scale: [1, 0.72, 1], finish: "sheen" });
-      [-0.55, 0, 0.55].forEach((z, i) => k.sphere(i === 1 ? 0.27 : 0.23, "#9fd8e8", { at: [0, 0.68, z], seg: [12, 8], half: true, finish: glass }));
+      // (tall enough over a seated rider: craftLayout)
+      [-0.55, 0, 0.55].forEach((z, i) => k.sphere(i === 1 ? 0.3 : 0.27, "#9fd8e8", { at: [0, 0.68, z], seg: [12, 8], half: true, scale: [1, 1.45, 1.1], finish: glass }));
       k.pair((s) => {
         k.box([0.5, 0.03, 1.4], shade(paint, 0.85), { at: [s * 0.55, 0.4, 0], rot: [0, 0, s * -0.15], round: 0.012, finish: "sheen" });
         for (let i = 0; i < 3; i++) k.rod([s * 0.12 * (i - 1), 0.42, -1.05], [s * (0.18 + 0.2 * i), 0.36 - 0.05 * i, -2.1 - 0.15 * i], 0.05 - i * 0.01, shade(paint, 0.75), { seg: 6, finish: "sheen" });
@@ -2279,13 +2433,14 @@ function buildMake(k: Kit, look: string, wrecked: boolean, name: string): boolea
       return true;
     }
     case "aquadon": {
-      // A submersible (house rule): a fat round hull, a broad window at its nose, a fin on its back, a lit screw behind
-      k.capsule(0.45, 1.2, paint, { at: [0, 0.5, 0], rot: [Math.PI / 2, 0, 0], finish: "sheen" });
-      k.sphere(0.36, "#7fc4e0", { at: [0, 0.55, 0.85], seg: [12, 8], scale: [1, 0.8, 0.6], finish: glass });
-      k.box([0.04, 0.4, 0.55], shade(paint, 0.7), { at: [0, 1.0, -0.25], round: 0.02, finish: "sheen" });
-      k.pair((s) => k.box([0.5, 0.04, 0.3], shade(paint, 0.7), { at: [s * 0.5, 0.42, -0.75], round: 0.012, finish: "sheen" }));
-      k.torus(0.26, 0.04, dark, { at: [0, 0.5, -1.15], seg: [6, 16], finish: "sheen" });
-      k.cyl(0.18, 0.02, glowColor, { at: [0, 0.5, -1.16], rot: [Math.PI / 2, 0, 0], seg: 12, finish: lit });
+      // A submersible (house rule): a fat round hull the crew sits inside (2026-10-30: big enough to hold them seated, craftLayout), a broad
+      // window at its nose where the pilot is seen, a fin on its back, a lit screw behind
+      k.capsule(0.6, 1.3, paint, { at: [0, 0.62, -0.1], rot: [Math.PI / 2, 0, 0], finish: "sheen" });
+      k.sphere(0.5, "#7fc4e0", { at: [0, 0.7, 0.8], seg: [14, 10], scale: [1, 0.9, 0.75], finish: glass });
+      k.box([0.04, 0.4, 0.55], shade(paint, 0.7), { at: [0, 1.36, -0.35], round: 0.02, finish: "sheen" });
+      k.pair((s) => k.box([0.5, 0.04, 0.3], shade(paint, 0.7), { at: [s * 0.65, 0.5, -0.9], round: 0.012, finish: "sheen" }));
+      k.torus(0.3, 0.045, dark, { at: [0, 0.62, -1.42], seg: [6, 16], finish: "sheen" });
+      k.cyl(0.22, 0.02, glowColor, { at: [0, 0.62, -1.43], rot: [Math.PI / 2, 0, 0], seg: 12, finish: lit });
       return true;
     }
     case "hydro": {
@@ -4209,7 +4364,8 @@ const FUR_DETAIL = typeof matchMedia !== "undefined" && matchMedia("(pointer: co
 // a beast trots on four legs and a bug on six, a bird beats its wings, a BB unit rolls its ball under its head, a probe floats, and what
 // rolls or glides does not bob. `ball` is the radius of a ball it rolls on (`wheel`: one that only rolls the way it faces); `fur` the
 // length of its hair, drawn in shells that move with it
-function Mover({ id, build, gait, ball, wheel, fur, seat, ring, hold = "none", saber = "niman", fighting }: { id: string; build: (k: Kit) => void; gait: Gait; ball?: number; wheel?: boolean; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh>; hold?: Hold; saber?: SaberStyle; fighting?: boolean }) {
+// `crew`: aboard a craft (Crew): posed in its seat, the hips at the group's origin
+function Mover({ id, build, gait, ball, wheel, fur, seat, ring, hold = "none", saber = "niman", fighting, crew }: { id: string; build: (k: Kit) => void; gait: Gait; ball?: number; wheel?: boolean; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh>; hold?: Hold; saber?: SaberStyle; fighting?: boolean; crew?: CrewSeat }) {
   const m = useModel(`${id}:anim`, (k) => { k.animated = true; build(k); });
   const mats = useMemo(() => Object.fromEntries(FINISHES.map((f) => [f, limbMaterial(MATERIALS[f])])) as Record<Finish, THREE.Material>, []);
   const furMat = useMemo(() => (fur ? limbMaterial(furShellMaterial(fur, FUR_DETAIL)) : null), [fur]);
@@ -4237,6 +4393,19 @@ function Mover({ id, build, gait, ball, wheel, fur, seat, ring, hold = "none", s
   const all = useMemo(() => [...Object.values(mats), ...(furMat ? [furMat] : [])], [mats, furMat]);
   useStride(group, (stride, g, moved, t, dt) => {
     const w = work;
+    if (crew) {
+      // In a seat: the seat's pose, the hips on the seat (a person's from its joints; anything else at about half its height), shaken a
+      // little by the craft
+      crewPose(crew.pose, crew.role, t, crew.pitch?.current ?? 0, w.pose);
+      applyPose(all, w.pose);
+      if (ring?.current) ring.current.visible = false;
+      if (body.current) {
+        const hip = joints.pivots ? joints.legs.hip || 0.5 : 0.45;
+        body.current.position.set(0, -(crew.pose === "stand" ? 0 : hip) + Math.sin(t * 23 + id.length) * 0.006, 0);
+        body.current.rotation.set(0, 0, 0);
+      }
+      return;
+    }
     const mo = told?.current ?? own;
     const root = joints.jointed ? humanPose(stride, t, mo, easeMotion(ease, mo, dt), hold, mo.style ?? saber, nowSeconds(), joints.legs, w.pose) : (gaitPose(gait, stride, t, w.pose), null);
     // At a table (people only): the body eases down onto the seat and the seated pose is laid over the walking one; a gesture swells over the arms
@@ -4354,7 +4523,9 @@ export const MotionContext = createContext<{ current: Motion } | null>(null);
 // `seat`: a ref the map keeps for a person at a table (interiors/limbs.ts SeatState): sitting down, standing up, what the arms do
 // `wield`: what to put in the hand whatever the outfit has (a fight's saber). How the figure moves (crouched, aiming, firing, swinging) is
 // what the nearest MotionContext above it says
-export function Figure({ kind, ring, name = "", large, marker, species, role, creature, size, player, gear, modules, fighting, riding, seat, unarmed, wield }: { kind: string; ring: string; name?: string; large?: boolean; marker?: boolean; species?: string; role?: string; creature?: string; size?: string; player?: boolean; gear?: Gear; modules?: string[]; fighting?: boolean; riding?: boolean; seat?: { current: SeatState }; unarmed?: boolean; wield?: Outfit["hand"] }) {
+// `crew`: in a seat of a craft (CraftCrew): seated there, its hands on the controls or a gun, nothing in them
+export function Figure({ kind, ring, name = "", large, marker, species, role, creature, size, player, gear, modules, fighting, riding, seat, unarmed: bare, wield, crew }: { kind: string; ring: string; name?: string; large?: boolean; marker?: boolean; species?: string; role?: string; creature?: string; size?: string; player?: boolean; gear?: Gear; modules?: string[]; fighting?: boolean; riding?: boolean; seat?: { current: SeatState }; unarmed?: boolean; wield?: Outfit["hand"]; crew?: CrewSeat }) {
+  const unarmed = bare || !!crew;
   const ringMesh = useRef<THREE.Mesh>(null);
   const looks = useSpecies();
   const party = usePartyLook();
@@ -4408,13 +4579,13 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
   return (
     <group scale={large ? 1.5 : 1}>
       {/* a rider's ring is the mount's */}
-      {!riding && (
+      {!riding && !crew && (
         <mesh ref={ringMesh} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
           <ringGeometry args={[0.34, 0.44, 24]} />
           <meshBasicMaterial color={ring} />
         </mesh>
       )}
-      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} name={name} deployed={fighting} /> : <Mover id={spec.key} build={spec.build} gait={riding ? "ride" : spec.gait} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} hold={base.hold} saber={base.saber} fighting={fighting} />}
+      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} name={name} deployed={fighting} /> : <Mover id={spec.key} build={spec.build} gait={riding ? "ride" : spec.gait} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} hold={crew ? "none" : base.hold} saber={base.saber} fighting={fighting} crew={crew} />}
       {marker && (
         <mesh position={[0, Math.max(1.55, spec.height + 0.3), 0]}>
           <octahedronGeometry args={[0.12]} />

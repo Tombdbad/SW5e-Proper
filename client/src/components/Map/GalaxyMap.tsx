@@ -41,7 +41,9 @@ export type MapAction =
   // A cart (a hovercart) tapped on the map
   | { type: "cart"; id: string }
   // The party's water craft moored at a square of a place on the water, the party stepping ashore (shared/logic "Over the water")
-  | { type: "moor"; id: string; x: number; y: number };
+  | { type: "moor"; id: string; x: number; y: number }
+  // A sea beast comes at a swimmer, and gets there (LocalMap SeaBeasts)
+  | { type: "seaBeast"; name: string; step: "coming" | "reached" };
 
 // When the finger last came down (or the mouse button went down). A busy phone delivers the
 // click of a tap late, so two taps are timed from when they began, not from their clicks.

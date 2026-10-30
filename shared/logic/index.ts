@@ -12429,7 +12429,8 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps,
 // `auto` hands the party's speeder to the rivals' driving (a test hook: localStorage sw5e.autopilot)
 // `fire`: in a chase, the party's blaster (see "On the road")
 // `aim`: the party at the gun while a crewmate drives (`auto`): where the blaster points, radians off the speeder's nose
-export interface RaceInput extends FlightInput { boost?: boolean; auto?: boolean; fire?: boolean; aim?: number }
+// (`aim`: the gun turned this far off the nose, radians to the right; `pitch`: raised this far, for a gun that aims at the sky: the convoy's)
+export interface RaceInput extends FlightInput { boost?: boolean; auto?: boolean; fire?: boolean; aim?: number; pitch?: number }
 export interface Racer {
   id: number; name: string; party: boolean; model: string; kind: SpeederKind; pace: number; daring: number;
   // The middle of its box at hover height, heading, nose pitch, forward speed
@@ -12450,16 +12451,23 @@ export interface Racer {
   idle?: boolean;
   // How long it has been over lava since the hull last burned
   burn?: number;
+  // A vehicle of a convoy (the party's craft in it too), and one of its haulers (`convoyStart`)
+  convoy?: boolean; cargo?: boolean;
+  // Where its gun points (off the nose, radians to the right; raised), for its turret and gunner to be drawn turned to it
+  gun?: { yaw: number; pitch: number };
 }
 // (`shot`: a blaster bolt from `p` to `to`; `power` 1 when it hit)
-export interface RaceEvent { kind: "hit" | "smash" | "mine" | "land" | "tow" | "gate" | "wreck" | "finish" | "shot" | "stop"; p: Vec3; by: number; power: number; to?: Vec3 }
+// (`side`: whose shot it was in a convoy, the convoy's or the raiders')
+export interface RaceEvent { kind: "hit" | "smash" | "mine" | "land" | "tow" | "gate" | "wreck" | "finish" | "shot" | "stop"; p: Vec3; by: number; power: number; to?: Vec3; side?: "us" | "them" }
 // `events` and `said` are what happened in the last step (for sparks and the HUD's messages); `first` is the winner's time
 // `chase`: a race that is a chase on the road (who is after the party, and the state of the chase's own dice)
 // `block`: a road's roadblock, `ahead`, the party `stopped` at it, `open` (waved through, its crates gone), `run` (the party chose to ram it) or
 // `ran` (gone past it); `mate`: a crewmate who drives, or fires from the gun when the party drives (their pace at the wheel), `mateReload` their gun's
 export interface Race { t: number; limit: number; laps: number; gateCount: number; racers: Racer[]; hazards: Hazard[]; broken: number[]; over: boolean; log: string[]; events: RaceEvent[]; said: string[]; first: number | null; chase?: { who: string; seed: number }; block?: { state: "ahead" | "stopped" | "open" | "run" | "ran"; who?: string; mounted?: boolean }; mate?: { name: string; pace: number }; mateReload?: number;
   // The roadblock's guards' guns (seconds to the next shot of each; `gone`: it has gone to its speeder)
-  guards?: { reload: number; gone: boolean }[] }
+  guards?: { reload: number; gone: boolean }[];
+  // A convoy's air: the ships over it (`convoyStart`)
+  convoy?: ConvoyAir }
 const RIVALS = [["Rhys", 0.95, 0.5], ["Tavi", 0.97, 0.8], ["the Hutt's runner", 0.92, 0.3], ["Kessa", 0.99, 0.9], ["Doro", 0.93, 0.4], ["Vex", 0.98, 0.7], ["Brann", 0.94, 0.6]] as const;
 
 export const raceLap = (race: Race, racer: Racer) => Math.min(race.laps, Math.max(1, Math.floor((racer.gates - 1) / race.gateCount) + 1));
@@ -12856,8 +12864,9 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
     const own = rc.party && rc.finish === null && !rc.wrecked && !input.auto;
     let steer: RaceInput = rc.wrecked ? { steer: { x: 0, y: 0 }, throttle: 0 as const } : own ? input : rc.hostile ? chaseInput(rc, track, race, h) : rivalInput(rc, track, race, h);
     // A crewmate at the wheel drives at their own pace, safely, and stops short of a roadblock (a speed to be at by each distance from it)
-    if (rc.party && input.auto && race.mate && !rc.wrecked) {
-      rc.pace = race.mate.pace;
+    // (in a convoy with nobody else to drive, the convoy's droid pilot keeps the party's craft in the column at its pace)
+    if (rc.party && input.auto && (race.mate || race.convoy) && !rc.wrecked) {
+      rc.pace = race.convoy ? CONVOY.pace / RACE.drive : race.mate!.pace;
       rc.daring = 0.1;
       const blk = track.road?.block;
       if (blk && race.block?.state === "ahead") {
@@ -13059,6 +13068,12 @@ function raceTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
       }
     }
   }
+  // A convoy: the ships over it, and it is over when `convoyOver` says
+  if (race.convoy) {
+    convoyTick(race, track, input, h);
+    if (convoyOver(race) || race.t >= race.limit) race.over = true;
+    return;
+  }
   const party = race.racers.find((rc) => rc.party);
   if ((party && (party.finish !== null || party.wrecked)) || (race.first !== null && race.t >= race.first + RACE.grace) || race.t >= race.limit || race.racers.every((rc) => rc.finish !== null || rc.wrecked)) race.over = true;
   // A chase is over too when every rider after the party is down
@@ -13079,6 +13094,7 @@ export function stepRace(race: Race, track: RaceTrack, input: RaceInput, dt: num
     said: [],
     block: race.block && { ...race.block },
     guards: race.guards?.map((g) => ({ ...g })),
+    convoy: race.convoy && { ...race.convoy, flyers: race.convoy.flyers.map((f) => ({ ...f, p: [...f.p] as Vec3, goal: [...f.goal] as Vec3 })) },
   };
   const ticks = Math.max(1, Math.ceil(dt / RACE.tick - 1e-6));
   for (let i = 0; i < ticks && !next.over && next.block?.state !== "stopped"; i++) raceTick(next, track, input, dt / ticks);
@@ -13184,9 +13200,11 @@ function chaseFire(race: Race, input: RaceInput, h: number) {
   const reach = race.racers.filter((rc) => rc.hostile && !rc.wrecked && flatDist(rc.craft.p, me.craft.p) <= CHASE.partyRange).sort((a, b) => flatDist(a.craft.p, me.craft.p) - flatDist(b.craft.p, me.craft.p));
   const from: Vec3 = [me.craft.p[0], me.craft.p[1] + 0.8, me.craft.p[2]];
   // The crewmate at the gun while the party drives: the nearest rider in reach, in any direction, at a worse chance than the party's own aim
+  if (input.aim !== undefined) me.gun = { yaw: input.aim, pitch: input.pitch ?? 0 };
   if (race.mate && !input.auto) {
     race.mateReload = (race.mateReload ?? 1.5) - h;
     const near = reach[0];
+    if (near) me.gun = { yaw: angleWrap(Math.atan2(near.craft.p[2] - me.craft.p[2], near.craft.p[0] - me.craft.p[0]) - me.craft.yaw), pitch: 0 };
     if (near && race.mateReload <= 0) {
       race.mateReload = CHASE.mate.every * (0.8 + chaseRoll(race) * 0.5);
       const d = flatDist(near.craft.p, me.craft.p);
@@ -13613,9 +13631,326 @@ export function waterwayOf(world: World, fromId: string, toId: string): "sea" | 
   if (!planet || ancestor(world, fromId, "planet")?.id !== planet.id) return undefined;
   return planet.type === "ocean" ? "sea" : planet.type === "swamp" ? "marsh" : undefined;
 }
+// Set down in a dome (2026-10-30, the user: "a water taxi or a surface craft drops you off inside the town's first dome"; house rule): a
+// party brought to a place under the sea by anything but a submersible comes in through the lock of its first dome, the way in of the
+// first building of the place that has rooms under a roof, and does not start out in the water holding its breath
+export function domeOf(world: World, placeId: string): string | undefined {
+  const settlement = world.areas[settlementOf(world, placeId)];
+  if (!settlement) return undefined;
+  for (const b of childrenOf(world, settlement.id).filter((a) => a.kind === "building")) {
+    const rooms = childrenOf(world, b.id).filter((a) => a.kind === "room" && !openAir(a));
+    if (rooms.length) return (rooms.find((r) => r.gateway) ?? rooms[0]).id;
+  }
+  return undefined;
+}
 // A swimmer's pace as a share of its walking pace: its own swimming speed where it has one ("swim 30 ft."), else half (house rule, from
 // the Handbook's extra foot of movement for each foot swum)
 export function swimPace(speedText = "", walk = 30): number {
-  const m = /swim(?:ming)?(?: speed)?\s*(\d+)/i.exec(speedText);
+  const m = /swim(?:ming)?(?: speed)?(?: of)?\s*(\d+)/i.exec(speedText);
   return m ? Math.min(1, Number(m[1]) / Math.max(1, walk)) : 0.5;
+}
+
+// ---- The convoy (2026-10-30; the user: "a minigame for the reverse of the dogfight 'attacking a convoy' where players are piloting the convoy
+// vehicles (and firing turrets mounted on the convoy vehicles at the attacking ships), and being attacked by ships (there should also be bot
+// controlled ships to defend the convoy)"). HOUSE RULES (the books give no real-time fight). A convoy of haulers drives a road (the trip's
+// course, `raceCourse` with a road) at a steady pace, the party's own craft riding with it; fighters and bombers of the world's antagonist come
+// at it in waves and fighters of the convoy's side fly cover. The party drives (its crewmate at its gun, if it has one) or takes its gun and
+// leaves the wheel to its crewmate or to the convoy's droid pilot, who keeps it in the column; the gun turns all round and up into the sky. Each
+// hauler's turret is manned and fires at the nearest raider in reach. Won when the haulers left get to the end of the road (or the sky is
+// clear of raiders and every wave has come); lost when every hauler is destroyed or the party's craft is. Pays for each hauler through and
+// each raider shot down.
+export const CONVOY = {
+  // The convoy's pace (m/s) and the road between its vehicles (m); a hauler's hull
+  pace: 24, gap: 28, haulerHull: 30,
+  // Raiders and the convoy's own fighters: hull, speed (m/s), turn (rad/s), reach of the guns (m), seconds between shots, the cone they fire
+  // in (radians off the nose), the chance of a hit at point blank (less with distance) and its damage
+  fighter: { hull: 8, speed: 62, turn: 1.2, range: 180, every: 0.3, cone: 0.28, hit: 0.45, damage: 2 },
+  bomber: { hull: 18, speed: 44, turn: 0.75, bombs: 3, hit: 0.6, damage: 7, splash: 3, blast: 12 },
+  escort: { hull: 10, speed: 66, turn: 1.35, range: 220, every: 0.4, cone: 0.14, hit: 0.16, damage: 2 },
+  // A hauler's turret (and a crewmate's at the party's gun): reach, seconds between shots, chance, damage, how fast it turns (rad/s)
+  turret: { range: 300, every: 0.7, hit: 0.07, damage: 2, turn: 2.4 },
+  // The party's own hand at the gun: reach, seconds between shots, the cone a target counts as in the sights, chance, damage
+  party: { range: 420, every: 0.2, cone: 0.05, hit: 0.6, damage: 2 },
+  // How low a ship flies over the ground, and how high it comes in
+  floor: 14, height: 75,
+  pay: { hauler: 150, downed: 60 },
+};
+export interface Flyer {
+  id: number; side: "raider" | "escort"; kind: "fighter" | "bomber"; name: string;
+  p: Vec3; yaw: number; pitch: number; speed: number; hull: number; hullMax: number;
+  // Seconds to the next shot; the racer (or, for an escort, the raider) it goes for; what it is doing and for how long; where it heads
+  reload: number; target: number; state: "approach" | "attack" | "break"; timer: number; goal: Vec3;
+  wrecked: boolean; bombs: number;
+}
+// The air over a convoy: the ships, the waves still to come (`at`: the share of the road the party has driven), whose ships they are
+export interface ConvoyAir { flyers: Flyer[]; waves: { at: number; fighters: number; bombers: number }[]; wave: number; who: string; ally: string; seed: number; downed: number; nextId: number }
+const convoyRoll = (air: ConvoyAir) => {
+  air.seed = (Math.imul(air.seed, 1664525) + 1013904223) >>> 0;
+  return air.seed / 4294967296;
+};
+const dirOf = (yaw: number, pitch: number): Vec3 => [Math.cos(yaw) * Math.cos(pitch), Math.sin(pitch), Math.sin(yaw) * Math.cos(pitch)];
+const offAngle = (dir: Vec3, from: Vec3, to: Vec3) => {
+  const d: Vec3 = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+  const len = Math.hypot(d[0], d[1], d[2]) || 1;
+  return Math.acos(within((dir[0] * d[0] + dir[1] * d[1] + dir[2] * d[2]) / len, -1, 1));
+};
+const dist3 = (a: Vec3, b: Vec3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+// The gates a racer set down at track point `at` has already gone through (none on the grid behind the start line)
+const gatesBehind = (track: RaceTrack, at: number) => {
+  const s = at * track.step;
+  const along = s > track.length - 80 ? s - track.length : s;
+  return along < 0 ? 0 : track.gates.filter((g) => g.s <= along).length;
+};
+// The convoy: the party's craft at the back of a column of haulers on the road, the convoy's fighters over it and the first wave of raiders to come
+export function convoyStart(track: RaceTrack, seed: number, model: string, o: { haulers?: number; hauler?: string; level?: number; who?: string; ally?: string } = {}): Race {
+  const race = raceStart(track, seed, model, []);
+  const n = track.points.length;
+  const me = race.racers.find((rc) => rc.party)!;
+  me.convoy = true;
+  const count = within(o.haulers ?? 3, 1, 6);
+  const haulerModel = o.hauler ?? "Landspeeder";
+  for (let k = 0; k < count; k++) {
+    const at = (me.at + Math.round((CONVOY.gap * (k + 1)) / track.step)) % n;
+    const yaw = track.yaws[at];
+    const lat = k % 2 ? -2.2 : 2.2;
+    const [px, pz] = [track.points[at][0] - Math.sin(yaw) * lat, track.points[at][2] + Math.cos(yaw) * lat];
+    const kind = speederKind(haulerModel);
+    race.racers.push({
+      id: race.racers.length, name: `Hauler ${k + 1}`, party: false, model: haulerModel, kind, pace: CONVOY.pace / RACE.drive, daring: 0,
+      craft: { p: [px, groundAt(track, px, pz) + RACE.hover, pz], yaw, pitch: 0, speed: CONVOY.pace * 0.6 }, v: [Math.cos(yaw) * CONVOY.pace * 0.6, 0, Math.sin(yaw) * CONVOY.pace * 0.6], spin: 0, bank: 0,
+      boost: 0, boosting: false, rest: 0, air: false, rough: false, onTrail: false, gates: gatesBehind(track, at), toGate: 0, hull: CONVOY.haulerHull, hullMax: CONVOY.haulerHull, finish: null, wrecked: false,
+      lane: lat, home: lat, at, tat: 0, trail: -1, stuck: 0, off: 0, backing: 0, ghost: 0, convoy: true, cargo: true, reload: 1 + k * 0.3, gun: { yaw: 0, pitch: 0.3 },
+    });
+  }
+  const level = o.level ?? 1;
+  const air: ConvoyAir = {
+    flyers: [], wave: 0, who: o.who ?? "raiders", ally: o.ally ?? "the convoy's escort", seed: (seed * 2654435761) >>> 0 || 1, downed: 0, nextId: 100,
+    waves: [
+      { at: 0, fighters: 3 + Math.floor(level / 4), bombers: level >= 4 ? 1 : 0 },
+      { at: 0.35, fighters: 3 + Math.floor(level / 5), bombers: level >= 8 ? 2 : 1 },
+      { at: 0.7, fighters: 2 + Math.floor(level / 4), bombers: level >= 11 ? 2 : level >= 3 ? 1 : 0 },
+    ],
+  };
+  // The convoy's fighters, over the column
+  for (let i = 0; i < 2; i++) {
+    const at = me.craft.p;
+    air.flyers.push({ id: air.nextId++, side: "escort", kind: "fighter", name: `${air.ally} ${i + 1}`, p: [at[0] - Math.cos(me.craft.yaw) * 60, at[1] + 55 + i * 12, at[2] - Math.sin(me.craft.yaw) * 60 + (i ? 20 : -20)], yaw: me.craft.yaw, pitch: 0, speed: CONVOY.escort.speed, hull: CONVOY.escort.hull, hullMax: CONVOY.escort.hull, reload: 1, target: -1, state: "approach", timer: 0, goal: [0, 0, 0], wrecked: false, bombs: 0 });
+  }
+  return { ...race, limit: Math.max(race.limit, (track.road?.finish ?? 2000) / CONVOY.pace * 2.2 + 60), convoy: air };
+}
+// A wave of raiders comes in ahead of the column, high, spread across the road
+function convoyWave(race: Race, track: RaceTrack, air: ConvoyAir) {
+  const wave = air.waves[air.wave++];
+  const lead = race.racers.filter((rc) => rc.convoy && !rc.wrecked).sort((a, b) => roadAt(track, b) - roadAt(track, a))[0];
+  if (!wave || !lead) return;
+  const n = track.points.length;
+  const at = (lead.at + Math.round(650 / track.step)) % n;
+  const [cx, , cz] = track.points[at];
+  const total = wave.fighters + wave.bombers;
+  for (let i = 0; i < total; i++) {
+    const side = (i - (total - 1) / 2) * 45;
+    const yaw = track.yaws[at] + Math.PI;
+    const p: Vec3 = [cx - Math.sin(yaw) * side, groundAt(track, cx, cz) + CONVOY.height + 50 + (i % 2) * 25, cz + Math.cos(yaw) * side];
+    const bomber = i >= wave.fighters;
+    const st = bomber ? CONVOY.bomber : CONVOY.fighter;
+    air.flyers.push({ id: air.nextId++, side: "raider", kind: bomber ? "bomber" : "fighter", name: `${air.who} ${bomber ? "bomber" : "fighter"}`, p, yaw, pitch: -0.1, speed: st.speed, hull: st.hull, hullMax: st.hull, reload: 1.5 + convoyRoll(air), target: -1, state: "attack", timer: 0, goal: p, wrecked: false, bombs: bomber ? CONVOY.bomber.bombs : 0 });
+  }
+  race.log.push(air.wave === 1 ? `${air.who} ships ahead: they come for the convoy` : `More ${air.who} ships come in`);
+}
+// Flown toward a point at the ship's own speed, turning as fast as it can, never lower than the floor over the ground
+function flyToward(f: Flyer, track: RaceTrack, to: Vec3, turn: number, h: number) {
+  const [dx, dy, dz] = [to[0] - f.p[0], to[1] - f.p[1], to[2] - f.p[2]];
+  f.yaw += within(angleWrap(Math.atan2(dz, dx) - f.yaw), -turn * h, turn * h);
+  f.pitch += within(within(Math.atan2(dy, Math.hypot(dx, dz)), -0.55, 0.55) - f.pitch, -turn * h * 0.8, turn * h * 0.8);
+  const d = dirOf(f.yaw, f.pitch);
+  f.p = [f.p[0] + d[0] * f.speed * h, f.p[1] + d[1] * f.speed * h, f.p[2] + d[2] * f.speed * h];
+  const floor = groundAt(track, f.p[0], f.p[2]) + CONVOY.floor;
+  if (f.p[1] < floor) {
+    f.p[1] = floor;
+    f.pitch = Math.max(f.pitch, 0.15);
+  }
+}
+function downFlyer(race: Race, air: ConvoyAir, f: Flyer, by: string) {
+  f.wrecked = true;
+  race.events.push({ kind: "wreck", p: [...f.p] as Vec3, by: f.id, power: 0 }, { kind: "mine", p: [...f.p] as Vec3, by: f.id, power: 10 });
+  if (f.side === "raider") air.downed++;
+  race.log.push(f.side === "raider" ? `${by} ${by === "You" ? "shoot" : "shoots"} down a ${f.kind === "bomber" ? "bomber" : "raider"}` : `${f.name} is shot down`);
+}
+function hitVehicle(race: Race, rc: Racer, damage: number, by: string) {
+  if (rc.wrecked || rc.finish !== null) return;
+  rc.hull = Math.max(0, rc.hull - damage);
+  if (rc.party) race.log.push(`${by} hits you (${damage} hull)`);
+  if (rc.hull > 0) return;
+  rc.wrecked = true;
+  rc.boosting = false;
+  race.events.push({ kind: "wreck", p: rc.craft.p, by: rc.id, power: 0 }, { kind: "mine", p: rc.craft.p, by: rc.id, power: 10 });
+  race.log.push(rc.party ? `Your craft is shot out from under you by ${by}` : `${rc.name} is destroyed`);
+}
+// A gun on a vehicle, turned toward the nearest raider in reach and fired once it bears (a hauler's turret; the crewmate at the party's gun)
+function turretFire(race: Race, air: ConvoyAir, rc: Racer, h: number, who: string) {
+  const g = { ...(rc.gun ?? { yaw: 0, pitch: 0.3 }) };
+  rc.gun = g;
+  rc.reload = (rc.reload ?? 1) - h;
+  const from: Vec3 = [rc.craft.p[0], rc.craft.p[1] + 1.6, rc.craft.p[2]];
+  const target = air.flyers.filter((f) => f.side === "raider" && !f.wrecked && dist3(f.p, from) < CONVOY.turret.range).sort((a, b) => dist3(a.p, from) - dist3(b.p, from))[0];
+  const want = target ? { yaw: angleWrap(Math.atan2(target.p[2] - from[2], target.p[0] - from[0]) - rc.craft.yaw), pitch: Math.atan2(target.p[1] - from[1], Math.hypot(target.p[0] - from[0], target.p[2] - from[2])) } : { yaw: 0, pitch: 0.3 };
+  const step = CONVOY.turret.turn * h;
+  g.yaw = angleWrap(g.yaw + within(angleWrap(want.yaw - g.yaw), -step, step));
+  g.pitch += within(want.pitch - g.pitch, -step, step);
+  if (!target || rc.reload > 0 || Math.abs(angleWrap(want.yaw - g.yaw)) > 0.12 || Math.abs(want.pitch - g.pitch) > 0.12) return;
+  rc.reload = CONVOY.turret.every * (0.8 + convoyRoll(air) * 0.5);
+  const d = dist3(target.p, from);
+  const hit = convoyRoll(air) < CONVOY.turret.hit * (1 - (d / CONVOY.turret.range) * 0.6);
+  race.events.push({ kind: "shot", p: from, to: hit ? [...target.p] as Vec3 : [target.p[0] + (convoyRoll(air) - 0.5) * 14, target.p[1] + (convoyRoll(air) - 0.5) * 10, target.p[2] + (convoyRoll(air) - 0.5) * 14], by: rc.id, power: hit ? 1 : 0, side: "us" });
+  if (!hit) return;
+  target.hull -= CONVOY.turret.damage;
+  if (target.hull <= 0) downFlyer(race, air, target, who);
+}
+// One tick of the air over the convoy: the waves, each ship's flying and firing, the turrets, the party's gun
+function convoyTick(race: Race, track: RaceTrack, input: RaceInput, h: number) {
+  const air = race.convoy!;
+  const me = race.racers.find((rc) => rc.party)!;
+  const column = race.racers.filter((rc) => rc.convoy && !rc.wrecked && rc.finish === null);
+  const raiders = air.flyers.filter((f) => f.side === "raider" && !f.wrecked);
+  const share = Math.max(0, roadAt(track, me)) / (track.road?.finish ?? 1);
+  // The next wave: the first a few seconds in, the others where the road says, or as soon as the sky is clear of the last
+  const next = air.waves[air.wave];
+  if (next && race.t > 3 && (share >= next.at || (!raiders.length && air.wave > 0 && race.t > 12))) convoyWave(race, track, air);
+  const fwd = (rc: Racer): Vec3 => [Math.cos(rc.craft.yaw), 0, Math.sin(rc.craft.yaw)];
+  for (const f of air.flyers) {
+    if (f.wrecked) continue;
+    f.reload -= h;
+    f.timer += h;
+    if (f.side === "escort") {
+      // The convoy's fighters go for the nearest raider and fire when it is in their sights; with none, they fly ahead of the column
+      const foe = raiders.filter((r) => !r.wrecked).sort((a, b) => dist3(a.p, f.p) - dist3(b.p, f.p))[0];
+      if (foe) {
+        const lead: Vec3 = (() => { const d = dirOf(foe.yaw, foe.pitch); const t = dist3(foe.p, f.p) / 300; return [foe.p[0] + d[0] * foe.speed * t, foe.p[1] + d[1] * foe.speed * t, foe.p[2] + d[2] * foe.speed * t]; })();
+        flyToward(f, track, lead, CONVOY.escort.turn, h);
+        const d = dist3(foe.p, f.p);
+        if (f.reload <= 0 && d < CONVOY.escort.range && offAngle(dirOf(f.yaw, f.pitch), f.p, lead) < CONVOY.escort.cone) {
+          f.reload = CONVOY.escort.every * (0.8 + convoyRoll(air) * 0.5);
+          const hit = convoyRoll(air) < CONVOY.escort.hit * (1 - (d / CONVOY.escort.range) * 0.5);
+          race.events.push({ kind: "shot", p: [...f.p] as Vec3, to: hit ? [...foe.p] as Vec3 : [foe.p[0] + (convoyRoll(air) - 0.5) * 16, foe.p[1] + (convoyRoll(air) - 0.5) * 10, foe.p[2] + (convoyRoll(air) - 0.5) * 16], by: f.id, power: hit ? 1 : 0, side: "us" });
+          if (hit) {
+            foe.hull -= CONVOY.escort.damage;
+            if (foe.hull <= 0) downFlyer(race, air, foe, f.name);
+          }
+        }
+      } else {
+        const lead = column.sort((a, b) => roadAt(track, b) - roadAt(track, a))[0] ?? me;
+        const fw = fwd(lead);
+        flyToward(f, track, [lead.craft.p[0] + fw[0] * 140 + Math.sin(race.t * 0.4 + f.id) * 60, lead.craft.p[1] + CONVOY.height, lead.craft.p[2] + fw[2] * 140 + Math.cos(race.t * 0.4 + f.id) * 60], CONVOY.escort.turn * 0.6, h);
+      }
+      continue;
+    }
+    // A raider: picks a vehicle of the column (a bomber a hauler), comes round ahead of it, makes its run and breaks away high
+    let target = race.racers[f.target];
+    if (!target || target.wrecked || target.finish !== null || !target.convoy) {
+      const pool = f.kind === "bomber" ? column.filter((rc) => rc.cargo) : column;
+      target = (pool.length ? pool : column)[Math.floor(convoyRoll(air) * Math.max(1, (pool.length ? pool : column).length))];
+      if (!target) {
+        flyToward(f, track, [f.p[0] + Math.cos(f.yaw) * 100, f.p[1] + 20, f.p[2] + Math.sin(f.yaw) * 100], 0.5, h);
+        continue;
+      }
+      f.target = race.racers.indexOf(target);
+    }
+    const tp = target.craft.p;
+    if (f.state === "approach") {
+      const fw = fwd(target);
+      const side = f.id % 2 ? 1 : -1;
+      f.goal = [tp[0] + fw[0] * 280 - fw[2] * 90 * side, groundAt(track, tp[0], tp[2]) + CONVOY.height, tp[2] + fw[2] * 280 + fw[0] * 90 * side];
+      flyToward(f, track, f.goal, (f.kind === "bomber" ? CONVOY.bomber : CONVOY.fighter).turn, h);
+      if (Math.hypot(f.goal[0] - f.p[0], f.goal[2] - f.p[2]) < 80 || f.timer > 14) { f.state = "attack"; f.timer = 0; }
+    } else if (f.state === "attack") {
+      const aim: Vec3 = [tp[0] + target.v[0] * 0.6, tp[1] + (f.kind === "bomber" ? 42 : 1), tp[2] + target.v[2] * 0.6];
+      flyToward(f, track, aim, (f.kind === "bomber" ? CONVOY.bomber : CONVOY.fighter).turn, h);
+      const d = dist3(f.p, tp);
+      if (f.kind === "fighter") {
+        if (f.reload <= 0 && d < CONVOY.fighter.range && offAngle(dirOf(f.yaw, f.pitch), f.p, tp) < CONVOY.fighter.cone) {
+          f.reload = CONVOY.fighter.every * (0.8 + convoyRoll(air) * 0.5);
+          const hit = convoyRoll(air) < CONVOY.fighter.hit * (1 - (d / CONVOY.fighter.range) * 0.5);
+          race.events.push({ kind: "shot", p: [...f.p] as Vec3, to: hit ? [tp[0], tp[1] + 0.6, tp[2]] : [tp[0] + (convoyRoll(air) - 0.5) * 8, tp[1] + convoyRoll(air) * 2, tp[2] + (convoyRoll(air) - 0.5) * 8], by: f.id, power: hit ? 1 : 0, side: "them" });
+          if (hit) hitVehicle(race, target, CONVOY.fighter.damage, `a ${air.who} fighter`);
+        }
+        if (d < 30 || offAngle(dirOf(f.yaw, 0), f.p, tp) > 1.6) { f.state = "break"; f.timer = 0; }
+      } else {
+        // A bomber lets a bomb go over its hauler: it lands on it, or near, and the blast hurts whatever is close
+        if (f.bombs > 0 && Math.hypot(tp[0] - f.p[0], tp[2] - f.p[2]) < 9) {
+          f.bombs--;
+          const hit = convoyRoll(air) < CONVOY.bomber.hit;
+          const at: Vec3 = hit ? [tp[0], tp[1], tp[2]] : [tp[0] + (convoyRoll(air) - 0.5) * 24, groundAt(track, tp[0], tp[2]), tp[2] + (convoyRoll(air) - 0.5) * 24];
+          race.events.push({ kind: "mine", p: at, by: f.id, power: 12 });
+          race.log.push(`A bomb falls on the column`);
+          if (hit) hitVehicle(race, target, CONVOY.bomber.damage, `a ${air.who} bomber`);
+          for (const rc of column) if (rc !== target && Math.hypot(rc.craft.p[0] - at[0], rc.craft.p[2] - at[2]) < CONVOY.bomber.blast) hitVehicle(race, rc, CONVOY.bomber.splash, "a bomb's blast");
+          f.state = "break";
+          f.timer = 0;
+        } else if (f.timer > 18) { f.state = "break"; f.timer = 0; }
+      }
+    } else {
+      // Breaking away: on and up, then round for another run
+      if (f.timer < 0.05) f.goal = [f.p[0] + Math.cos(f.yaw) * 320, groundAt(track, f.p[0], f.p[2]) + CONVOY.height + 60, f.p[2] + Math.sin(f.yaw) * 320];
+      flyToward(f, track, f.goal, (f.kind === "bomber" ? CONVOY.bomber : CONVOY.fighter).turn, h);
+      if (f.timer > 4.5) { f.state = "approach"; f.timer = 0; f.target = -1; }
+    }
+    // A fighter fires at the convoy's own fighters too when one crosses its nose
+    if (f.kind === "fighter" && f.reload <= 0) {
+      const esc = air.flyers.find((e) => e.side === "escort" && !e.wrecked && dist3(e.p, f.p) < 140 && offAngle(dirOf(f.yaw, f.pitch), f.p, e.p) < CONVOY.fighter.cone);
+      if (esc) {
+        f.reload = CONVOY.fighter.every * 1.5;
+        const hit = convoyRoll(air) < 0.25;
+        race.events.push({ kind: "shot", p: [...f.p] as Vec3, to: [...esc.p] as Vec3, by: f.id, power: hit ? 1 : 0, side: "them" });
+        if (hit) {
+          esc.hull -= CONVOY.fighter.damage;
+          if (esc.hull <= 0) downFlyer(race, air, esc, f.name);
+        }
+      }
+    }
+  }
+  // The haulers' turrets
+  for (const rc of column) if (rc.cargo) turretFire(race, air, rc, h, rc.name);
+  if (me.wrecked) return;
+  // The party's gun: aimed by the party at it (`aim` and `pitch`), else by the crewmate while the party drives
+  if (input.aim === undefined) {
+    if (race.mate && !input.auto) turretFire(race, air, me, h, race.mate.name);
+    return;
+  }
+  me.gun = { yaw: input.aim, pitch: input.pitch ?? 0 };
+  me.reload = (me.reload ?? 0) - h;
+  if (!input.fire || me.reload > 0) return;
+  me.reload = CONVOY.party.every;
+  const from: Vec3 = [me.craft.p[0], me.craft.p[1] + 1.6, me.craft.p[2]];
+  const dir = dirOf(me.craft.yaw + input.aim, input.pitch ?? 0);
+  const inSights = raiders.filter((f) => !f.wrecked && dist3(f.p, from) < CONVOY.party.range).map((f) => ({ f, off: offAngle(dir, from, f.p), d: dist3(f.p, from) })).filter((x) => x.off < CONVOY.party.cone + 6 / x.d).sort((a, b) => a.off - b.off)[0];
+  if (!inSights) {
+    race.events.push({ kind: "shot", p: from, to: [from[0] + dir[0] * 300, from[1] + dir[1] * 300, from[2] + dir[2] * 300], by: me.id, power: 0, side: "us" });
+    return;
+  }
+  const hit = convoyRoll(air) < CONVOY.party.hit * (1 - (inSights.d / CONVOY.party.range) * 0.5);
+  race.events.push({ kind: "shot", p: from, to: hit ? [...inSights.f.p] as Vec3 : [inSights.f.p[0] + dir[2] * 6, inSights.f.p[1] + 3, inSights.f.p[2] - dir[0] * 6], by: me.id, power: hit ? 1 : 0, side: "us" });
+  if (!hit) return;
+  inSights.f.hull -= CONVOY.party.damage;
+  if (inSights.f.hull <= 0) downFlyer(race, air, inSights.f, "You");
+}
+// Whether the convoy is over: the party's craft down, every hauler down or through, or the sky clear with every wave come
+export function convoyOver(race: Race): boolean {
+  const air = race.convoy;
+  if (!air) return false;
+  const me = race.racers.find((rc) => rc.party)!;
+  const haulers = race.racers.filter((rc) => rc.cargo);
+  if (me.wrecked || haulers.every((rc) => rc.wrecked) || haulers.every((rc) => rc.wrecked || rc.finish !== null)) return true;
+  return air.wave >= air.waves.length && air.flyers.every((f) => f.side !== "raider" || f.wrecked) && race.t > 5;
+}
+// How a convoy ended and what it pays (house rule): each hauler that got through (or was safe under a clear sky), each raider shot down
+export function convoyResult(race: Race): { outcome: "through" | "lost" | "wrecked"; through: number; lost: number; downed: number; credits: number; note: string } {
+  const air = race.convoy!;
+  const me = race.racers.find((rc) => rc.party)!;
+  const haulers = race.racers.filter((rc) => rc.cargo);
+  const lost = haulers.filter((rc) => rc.wrecked).length;
+  const through = haulers.length - lost;
+  const outcome = me.wrecked ? "wrecked" : through > 0 ? "through" : "lost";
+  const credits = (outcome === "wrecked" ? 0 : through * CONVOY.pay.hauler) + air.downed * CONVOY.pay.downed;
+  const note = `${through} of ${haulers.length} haulers ${outcome === "lost" ? "left" : "through"}, ${air.downed} ${air.who} ship${air.downed === 1 ? "" : "s"} shot down, hull ${me.hull} of ${me.hullMax}${me.wrecked ? " (your craft was shot down: no pay for the cargo)" : ""} (house rule)`;
+  return { outcome, through: outcome === "wrecked" ? 0 : through, lost, downed: air.downed, credits, note };
 }

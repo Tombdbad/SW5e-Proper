@@ -10,7 +10,8 @@ import { queryClient } from "@/lib/queryClient";
 import { roadBus, resetRoad } from "@/lib/roadBus";
 import { applyChanges, changesBetween, type Changes, type CoopMember, type Craft, type TravelRoom } from "@shared/logic/coop";
 
-export interface Peer { a: string; x: number; y: number; f: number; h?: number; s?: number }
+// (`r`: the craft they are at the helm of, LocalMap rideKey)
+export interface Peer { a: string; x: number; y: number; f: number; h?: number; s?: number; r?: string }
 
 interface CoopStore {
   status: "off" | "connecting" | "on";
@@ -135,7 +136,7 @@ function receive(msg: any) {
     }
     case "pos": {
       const peers = { ...useCoop.getState().peers };
-      if (msg.a) peers[msg.id] = { a: msg.a, x: msg.x, y: msg.y, f: Number(msg.f) || 0, h: Number(msg.h) || 0, s: Number(msg.s) || 0 };
+      if (msg.a) peers[msg.id] = { a: msg.a, x: msg.x, y: msg.y, f: Number(msg.f) || 0, h: Number(msg.h) || 0, s: Number(msg.s) || 0, r: typeof msg.r === "string" && msg.r ? msg.r : undefined };
       else delete peers[msg.id];
       return void set({ peers });
     }
@@ -272,14 +273,14 @@ export function sharePets(pets: unknown[]) {
 let lastPos = "";
 let lastPosAt = 0;
 // (called from a timer of the link, so the last place stood at is always sent; a change in height counts, so a jump is seen)
-export function sharePosition(areaId: string, x: number, y: number, f = 0, h = 0, s = 0) {
+export function sharePosition(areaId: string, x: number, y: number, f = 0, h = 0, s = 0, r = "") {
   if (!coopActive() || useCoop.getState().members.length < 2) return;
   f = +f.toFixed(2);
-  const text = `${areaId}|${x.toFixed(2)}|${y.toFixed(2)}|${h.toFixed(2)}|${f}|${s}`;
+  const text = `${areaId}|${x.toFixed(2)}|${y.toFixed(2)}|${h.toFixed(2)}|${f}|${s}|${r}`;
   if (text === lastPos) return;
   lastPos = text;
   lastPosAt = Date.now();
-  transmit({ t: "pos", a: areaId, x, y, f, h: +h.toFixed(2), s });
+  transmit({ t: "pos", a: areaId, x, y, f, h: +h.toFixed(2), s, ...(r ? { r } : {}) });
 }
 
 // ---------------------------------------------------------------------------------------------

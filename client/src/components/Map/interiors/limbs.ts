@@ -367,6 +367,65 @@ export function shotPose(shot: Shot, out: Pose = restPose()): Pose {
   }
   return out;
 }
+// Aboard a craft (2026-10-30; the user: "characters drawn ACCURATELY within their seats"): how someone sits in a seat of a speeder or a boat
+// (`seated`: thighs forward, shins down; `astride`: a bike's saddle, the knees out and the feet back, leaning over the bars; `stand`: on a
+// deck), and what the hands do (`pilot`: on the controls, `rider`: in the lap or on a rail, `gunner`: both on the gun's grips, raised and
+// lowered with its `pitch`, radians up). The body itself is set by the map so that the hips sit on the seat (models.tsx Mover)
+export type SeatPose = "seated" | "astride" | "stand";
+export type SeatRole = "pilot" | "rider" | "gunner";
+export function crewPose(pose: SeatPose, role: SeatRole, t: number, pitch = 0, out: Pose = restPose()): Pose {
+  for (let i = 1; i < LIMBS; i++) out.set([0, 0, 0, 1], i * 4);
+  const sway = Math.sin(t * 1.3) * 0.025;
+  if (pose === "seated") {
+    setEuler(out, LIMB.legR, -1.45, 0, -0.08);
+    setEuler(out, LIMB.legL, -1.45, 0, 0.08);
+    setEuler(out, LIMB.shinR, 1.4, 0, 0);
+    setEuler(out, LIMB.shinL, 1.4, 0, 0);
+  } else if (pose === "astride") {
+    setEuler(out, LIMB.legR, -1.0, 0, -0.42);
+    setEuler(out, LIMB.legL, -1.0, 0, 0.42);
+    setEuler(out, LIMB.shinR, 1.7, 0, 0);
+    setEuler(out, LIMB.shinL, 1.7, 0, 0);
+  } else {
+    setEuler(out, LIMB.legR, 0.05, 0, -0.08);
+    setEuler(out, LIMB.legL, -0.12, 0, 0.08);
+    setEuler(out, LIMB.shinL, 0.15, 0, 0);
+  }
+  const lean = pose === "astride" ? 0.38 : 0.06;
+  if (role === "gunner") {
+    // Both hands on the grips: the arms go up and down with the gun, the head and chest follow it a little
+    const p = Math.max(-0.6, Math.min(1.2, pitch));
+    setEuler(out, LIMB.chest, lean * 0.5 - p * 0.25, 0, 0);
+    setEuler(out, LIMB.armR, -1.3 - p * 0.85, 0, 0.18);
+    setEuler(out, LIMB.armL, -1.3 - p * 0.85, 0, -0.18);
+    setEuler(out, LIMB.foreR, -0.45, 0, 0);
+    setEuler(out, LIMB.foreL, -0.45, 0, 0);
+    setEuler(out, LIMB.head, -p * 0.45 - lean * 0.5, 0, 0);
+  } else if (role === "pilot") {
+    setEuler(out, LIMB.chest, lean + sway * 0.5, 0, 0);
+    setEuler(out, LIMB.armR, pose === "astride" ? -1.15 : -0.85, 0, pose === "astride" ? -0.3 : 0.05);
+    setEuler(out, LIMB.armL, pose === "astride" ? -1.15 : -0.85, 0, pose === "astride" ? 0.3 : -0.05);
+    setEuler(out, LIMB.foreR, pose === "astride" ? -0.15 : -0.6, 0, 0);
+    setEuler(out, LIMB.foreL, pose === "astride" ? -0.15 : -0.6, 0, 0);
+    setEuler(out, LIMB.head, -lean * 0.8, 0, 0);
+  } else {
+    // A rider looks about now and then; seated, the hands in the lap; standing or astride, a hand on a rail or on the one in front
+    setEuler(out, LIMB.chest, lean * 0.6, Math.sin(t * 0.31) * 0.12, 0);
+    setEuler(out, LIMB.head, -lean * 0.5, Math.sin(t * 0.23 + 1) * 0.5, 0);
+    if (pose === "seated") {
+      setEuler(out, LIMB.armR, -0.35 + sway, 0, -0.05);
+      setEuler(out, LIMB.armL, -0.35 - sway, 0, 0.05);
+      setEuler(out, LIMB.foreR, -1.0, 0, 0);
+      setEuler(out, LIMB.foreL, -1.0, 0, 0);
+    } else {
+      setEuler(out, LIMB.armR, -0.9, 0, -0.25);
+      setEuler(out, LIMB.armL, 0.1 + sway, 0, 0.1);
+      setEuler(out, LIMB.foreR, -0.5, 0, 0);
+    }
+  }
+  return out;
+}
+
 const QA = new THREE.Quaternion();
 const QB = new THREE.Quaternion();
 // Each limb of `a` turned toward `b` by `k` (0 to 1) into `out` (which may be `a`)

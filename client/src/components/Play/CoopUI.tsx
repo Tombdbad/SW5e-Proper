@@ -23,7 +23,7 @@ export function CoopLink({ campaignId }: { campaignId: string | undefined }) {
     if (status !== "on") return;
     const id = setInterval(() => {
       const spot = usePartySpot.getState();
-      if (spot.areaId) sharePosition(spot.areaId, partyHeight.at?.x ?? spot.x, partyHeight.at?.y ?? spot.y, partyHeight.f, partyHeight.y, partyHeight.s);
+      if (spot.areaId) sharePosition(spot.areaId, partyHeight.at?.x ?? spot.x, partyHeight.at?.y ?? spot.y, partyHeight.f, partyHeight.y, partyHeight.s, partyHeight.ride);
     }, 80);
     return () => clearInterval(id);
   }, [status]);

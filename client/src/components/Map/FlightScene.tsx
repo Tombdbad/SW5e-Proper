@@ -4,12 +4,12 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Stars } from "@react-three/drei";
 import * as THREE from "three";
 import {
-  createRandom, flightCourse, flightStart, groundAt, inRing, raceCourse, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, raceWater, skyLook, stepFlight, stepRace, chaseStart, chaseResult, roadStart, roadAt, settleBlock,
+  createRandom, flightCourse, flightStart, groundAt, inRing, raceCourse, convoyStart, convoyResult, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, raceWater, skyLook, stepFlight, stepRace, chaseStart, chaseResult, roadStart, roadAt, settleBlock,
   CROSSING, RACE, RACE_MODEL_SCALE, SPEEDER_BODY,
   type Craft, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type RaceRamp, type Racer, type RaceTrack, type SpeederKind, type Vec3,
 } from "@shared/logic";
 import { ShipModel, SpeederModel } from "./LocalMap";
-import { Model, shade, type Kit } from "./models";
+import { Model, shade, type Kit, type CrewMember, type GunAim } from "./models";
 import { Scatter, Sea, raceScenery, useQuality, type Placed } from "./siteAssets";
 import { WorldSky } from "./scenery";
 import { settleStop, type Block, type StopChoice } from "@shared/logic/roadtrip";
@@ -35,8 +35,12 @@ export type Minigame =
   // A leg of a road trip (shared/logic/roadtrip.ts): open road to its last gate, in the ground of its own biome; `intro` is what the countdown says,
   // `hull` what the party carries from the legs before, `mate` its crewmate (who drives while the party is at the gun), `block` a roadblock across it
   // (and what the party can say to it: the bonuses of Persuasion and Deception), `riders` the riders after the party
-  // (`water`: a water craft's leg over open water, shared/logic "Over the water"; `look`: its make's model)
-  | { kind: "road"; title: string; seed: number; vehicle: string; biome: string; leg: { i: number; n: number }; intro: string[]; hull?: number; mate?: { name: string; pace: number }; block?: Block; riders?: { name: string; model: string }[]; who?: string; talk: { persuasion: number; deception: number }; credits: number; water?: boolean; look?: string }
+  // (`water`: a water craft's leg over open water, shared/logic "Over the water"; `look`: its make's model, `seats` how many it seats, `crew` the
+  // companions riding in it, the crewmate first)
+  | { kind: "road"; title: string; seed: number; vehicle: string; biome: string; leg: { i: number; n: number }; intro: string[]; hull?: number; mate?: { name: string; pace: number }; block?: Block; riders?: { name: string; model: string }[]; who?: string; talk: { persuasion: number; deception: number }; credits: number; water?: boolean; look?: string; seats?: number; crew?: CrewMember[] }
+  // The convoy (shared/logic "The convoy"): the party's craft rides at the back of a column of haulers (`hauler` their class, `haulerLook` their make)
+  // down a road in the ground of `biome`, raiders of `who` coming at it in waves, fighters of `ally` over it; the party drives or takes the gun
+  | { kind: "convoy"; title: string; seed: number; vehicle: string; biome: string; look?: string; seats?: number; crew?: CrewMember[]; mate?: { name: string; pace: number }; haulers: number; hauler: string; haulerLook?: string; level: number; who: string; ally: string; intro: string[] }
   | ({ kind: "dogfight" } & DogfightSpec);
 
 export type MinigameResult =
@@ -44,6 +48,7 @@ export type MinigameResult =
   | { kind: "run"; course: FlightCourse; collected: number; timeLeft: number }
   | { kind: "race"; race: Race }
   | { kind: "chase"; race: Race }
+  | { kind: "convoy"; race: Race }
   | { kind: "dogfight"; state: Dogfight };
 
 // The party's craft and its camera: behind and above, looking a little ahead
@@ -61,9 +66,9 @@ function chase(camera: THREE.Camera, craft: Craft, back: number, lift: number, d
   camera.lookAt(ahead);
 }
 
-// A speeder, drawn nose along the craft's heading
-function Speeder({ model, wrecked, look }: { model: string; wrecked?: boolean; look?: string }) {
-  return <group rotation={[0, Math.PI / 2, 0]}><SpeederModel model={model} wrecked={wrecked} look={look} /></group>;
+// A speeder, drawn nose along the craft's heading, with who is aboard in its seats and its guns turned to their aims (models.tsx craftLayout)
+function Speeder({ model, wrecked, look, seats, crew, aims, gunner }: { model: string; wrecked?: boolean; look?: string; seats?: number; crew?: (CrewMember | undefined)[]; aims?: { current: GunAim[] }; gunner?: boolean }) {
+  return <group rotation={[0, Math.PI / 2, 0]}><SpeederModel model={model} wrecked={wrecked} look={look} seats={seats} crew={crew} aims={aims} gunner={gunner} /></group>;
 }
 // A ship of the party or a foe, centred on its origin and nose along the heading
 function Ship({ size, role, scale = 0.5 }: { size: string; role: string; scale?: number }) {
@@ -562,9 +567,6 @@ function RaceProps({ track, biome, broken, cover }: { track: RaceTrack; biome: s
   );
 }
 
-// A racer's pilot in a flight suit and helmet: astride a bike leaning to the bars, at the stick of a
-// landspeeder behind its windscreen, or a helmet under an airspeeder's canopy (model units, nose to +x)
-const SUITS = ["#c8663a", "#3f6fb0", "#d0a23a", "#5a8a52", "#8a3a8a", "#2b2f36", "#b5362f"];
 // The riders of a chase: a patrol's white armour, anyone else's black
 const riderSuit = (who: string) => (/patrol|empire|first order|republic/i.test(who) ? "#e8e8e4" : "#2b2f36");
 
@@ -587,7 +589,7 @@ function Bolts({ queue, party }: { queue: { current: RaceEvent[] }; party: numbe
       mesh.position.copy(a).add(b).multiplyScalar(0.5);
       mesh.lookAt(b);
       mesh.scale.set(1, 1, Math.max(0.5, a.distanceTo(b)));
-      (mesh.material as THREE.MeshBasicMaterial).color.set(e.by === party ? "#7fe0ff" : "#ff4a3a");
+      (mesh.material as THREE.MeshBasicMaterial).color.set((e.side ? e.side === "us" : e.by === party) ? "#7fe0ff" : "#ff4a3a");
       ttl.current[k] = 0.16;
     }
     refs.current.forEach((mesh, k) => {
@@ -607,51 +609,41 @@ function Bolts({ queue, party }: { queue: { current: RaceEvent[] }; party: numbe
     </>
   );
 }
-function buildPilot(k: Kit, kind: SpeederKind, suit: string) {
-  const helmet = shade(suit, 1.25);
-  const visor = "#1b2a38";
-  if (kind === "bike") {
-    k.rod([-0.32, 0.56, 0], [-0.02, 0.95, 0], 0.13, suit, { seg: 8 });
-    k.sphere(0.12, helmet, { at: [0.06, 1.1, 0], seg: [10, 8], finish: "sheen" });
-    k.box([0.08, 0.07, 0.18], visor, { at: [0.15, 1.1, 0], round: 0.03, finish: "glass" });
-    k.pair((s) => {
-      k.rod([0, 0.92, s * 0.13], [0.3, 0.62, s * 0.12], 0.04, suit, { seg: 6 });
-      k.rod([-0.3, 0.55, s * 0.1], [-0.04, 0.42, s * 0.17], 0.055, suit, { seg: 6 });
-      k.rod([-0.04, 0.42, s * 0.17], [-0.26, 0.2, s * 0.16], 0.045, shade(suit, 0.7), { seg: 6 });
-    });
-    return;
-  }
-  if (kind === "air") {
-    k.sphere(0.12, helmet, { at: [0.05, 0.66, 0], seg: [10, 8], finish: "sheen" });
-    k.box([0.07, 0.06, 0.16], visor, { at: [0.14, 0.66, 0], round: 0.03, finish: "glass" });
-    return;
-  }
-  k.rod([-0.28, 0.66, 0.2], [-0.2, 1.0, 0.2], 0.13, suit, { seg: 8 });
-  k.sphere(0.12, helmet, { at: [-0.17, 1.16, 0.2], seg: [10, 8], finish: "sheen" });
-  k.box([0.07, 0.06, 0.16], visor, { at: [-0.08, 1.16, 0.2], round: 0.03, finish: "glass" });
-  k.pair((s) => k.rod([-0.2, 0.95, 0.2 + s * 0.12], [0.12, 0.82, 0.2 + s * 0.08], 0.04, suit, { seg: 6 }));
+// The ships over a convoy (shared/logic "The convoy"): the raiders in their side's look with a red mark over each, so that they are seen far
+// off, and the convoy's own fighters; each where the race has it, nose along its heading
+function Flyers({ race, snap }: { race: { current: Race }; snap: Race }) {
+  const refs = useRef(new Map<number, THREE.Group>());
+  useFrame(() => {
+    for (const f of race.current.convoy?.flyers ?? []) {
+      const g = refs.current.get(f.id);
+      if (!g) continue;
+      g.visible = !f.wrecked;
+      g.position.set(f.p[0], f.p[1], f.p[2]);
+      g.rotation.set(0, -f.yaw, f.pitch);
+    }
+  });
+  const air = snap.convoy;
+  return (
+    <>
+      {(air?.flyers ?? []).map((f) => (
+        <group key={f.id} ref={(el) => { if (el) { el.rotation.order = "YZX"; refs.current.set(f.id, el); } else refs.current.delete(f.id); }} visible={false}>
+          <group scale={f.kind === "bomber" ? 3 : 2}>
+            <group position={[-3, 0, -2]}><ShipModel ship={{ size: f.kind === "bomber" ? "Small" : "Tiny", role: f.kind, status: "flying", owner: f.side === "raider" ? air!.who : air!.ally }} w={6} h={4} /></group>
+          </group>
+          {f.side === "raider" && (
+            <mesh position={[0, f.kind === "bomber" ? 9 : 7, 0]}>
+              <octahedronGeometry args={[1.5]} />
+              <meshBasicMaterial color="#ff4a3a" />
+            </mesh>
+          )}
+        </group>
+      ))}
+    </>
+  );
 }
 
-// A gunner on the party's craft (2026-10-30): a second seat is lent to a craft that has none, a rider behind the pilot with a pintle blaster on a
-// swivel (`buildGun`, turned to the gunner's aim). Where on the craft they sit, by its kind (model units, nose to +x)
-const GUNNER_AT: Record<SpeederKind, { seat: [number, number, number]; mount: [number, number, number] }> = {
-  bike: { seat: [-0.78, 0, 0], mount: [-0.55, 1.02, 0] },
-  land: { seat: [0, 0, -0.42], mount: [-0.85, 0.98, 0] },
-  air: { seat: [-0.5, 0, 0], mount: [-0.95, 0.92, 0] },
-};
-function buildGunner(k: Kit, kind: SpeederKind, suit: string) {
-  const helmet = shade(suit, 1.25);
-  const base = kind === "bike" ? 0.5 : 0.62;
-  k.rod([-0.26, base, 0], [-0.16, base + 0.38, 0], 0.13, suit, { seg: 8 });
-  k.sphere(0.12, helmet, { at: [-0.12, base + 0.54, 0], seg: [10, 8], finish: "sheen" });
-  k.box([0.07, 0.06, 0.16], "#1b2a38", { at: [-0.03, base + 0.54, 0], round: 0.03, finish: "glass" });
-  k.pair((s) => k.rod([-0.16, base + 0.3, s * 0.12], [0.18, base + 0.34, s * 0.1], 0.04, suit, { seg: 6 }));
-}
-function buildGun(k: Kit) {
-  k.rod([0, -0.18, 0], [0, 0, 0], 0.035, "#5b6470", { seg: 6 });
-  k.box([0.8, 0.08, 0.08], "#2f343b", { at: [0.42, 0, 0], round: 0.02 });
-  k.box([0.18, 0.12, 0.1], "#444b55", { at: [0.02, -0.02, 0], round: 0.02 });
-}
+// Who rides a racer (2026-10-30: real people in the seats, craftLayout): a rival in a flight suit, a patrol's scout trooper, a gang's rider
+const riderOf = (racer: Racer, who: string): CrewMember => (racer.hostile || racer.idle ? (/patrol|empire|first order|republic/i.test(who) ? { kind: "trooper", name: "Scout trooper", role: "scout trooper" } : { kind: "person", name: racer.name, role: "mercenary" }) : { kind: "person", name: racer.name, role: "pilot" });
 // A guard at a roadblock, on his feet with a blaster (a patrol's white armour, anyone else's black): model units of a person, facing +x
 function buildGuard(k: Kit, suit: string) {
   const helmet = shade(suit, 1.25);
@@ -679,23 +671,14 @@ function Guards({ track, guards, who }: { track: RaceTrack; guards?: { gone: boo
   );
 }
 
-// A racer: its model and pilot (the box's middle is the racer's place, the model's origin behind or
-// ahead of it), and the flame of its engines while it boosts
-function RacerModel({ model, look, kind, wrecked, suit, flame, gunner, gun, empty }: { model: string; look?: string; kind: SpeederKind; wrecked: boolean; suit: string; flame: (el: THREE.Mesh | null) => void; gunner?: string; gun?: (el: THREE.Group | null) => void; empty?: boolean }) {
+// A racer: its model and who is aboard (the box's middle is the racer's place, the model's origin behind or ahead of it), its gun turned
+// to its aim, and the flame of its engines while it boosts. `gunner`: a gun is lent to it for a gunner
+function RacerModel({ model, look, kind, wrecked, flame, crew, aims, seats, gunner, empty }: { model: string; look?: string; kind: SpeederKind; wrecked: boolean; flame: (el: THREE.Mesh | null) => void; crew?: (CrewMember | undefined)[]; aims?: { current: GunAim[] }; seats?: number; gunner?: boolean; empty?: boolean }) {
   const body = SPEEDER_BODY[kind];
   return (
     <>
       <group position={[-body.ahead, 0, 0]} scale={RACE_MODEL_SCALE}>
-        <Speeder model={model} look={look} wrecked={wrecked} />
-        {!wrecked && !empty && <Model id={`race:pilot:${kind}:${suit}`} build={(k) => buildPilot(k, kind, suit)} />}
-        {!wrecked && gunner && (
-          <>
-            <Model id={`race:gunner:${kind}:${gunner}`} build={(k) => buildGunner(k, kind, gunner)} position={GUNNER_AT[kind].seat} />
-            <group position={GUNNER_AT[kind].mount} ref={gun}>
-              <Model id="race:gun" build={buildGun} />
-            </group>
-          </>
-        )}
+        <Speeder model={model} look={look} wrecked={wrecked} seats={seats} crew={empty ? undefined : crew} aims={aims} gunner={gunner} />
       </group>
       {!wrecked && (
         <mesh ref={flame} position={[-body.half[0] - 0.7, 0.6, 0]} rotation={[0, 0, Math.PI / 2]} visible={false}>
@@ -774,9 +757,14 @@ function Sparks({ queue }: { queue: { current: RaceEvent[] } }) {
 
 // A race: the world, the racers on the grid, the race stepped each frame once the countdown is done, and
 // the chase camera (wider while boosting, shaken by a hit)
-function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, onFrame, pause, act, onStop, gunner, remote }: { track: RaceTrack; race0: Race; biome: string; look?: string; go: { current: boolean }; input: { current: RaceInput }; onFinish: (race: Race) => void; onFrame: (race: Race) => void; pause?: { current: boolean }; act?: { current: ((how: "open" | "run") => void) | null }; onStop?: (race: Race) => void; gunner?: boolean; remote?: boolean }) {
+// `crew`: who is in the party's craft, by seat (the pilot first; the gunner's seat second when `gunner` lends it a gun); `seats` how many it seats
+// (`haulerLook`: the make of a convoy's haulers)
+function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, onFrame, pause, act, onStop, gunner, remote, crew, seats, haulerLook }: { track: RaceTrack; race0: Race; biome: string; look?: string; go: { current: boolean }; input: { current: RaceInput }; onFinish: (race: Race) => void; onFrame: (race: Race) => void; pause?: { current: boolean }; act?: { current: ((how: "open" | "run") => void) | null }; onStop?: (race: Race) => void; gunner?: boolean; remote?: boolean; crew?: (CrewMember | undefined)[]; seats?: number; haulerLook?: string }) {
   const raceRef = useRef<Race>(race0);
-  const gunRef = useRef<THREE.Group | null>(null);
+  // Each racer's guns' aims, as the race says (the party's from the pad), for its turrets and gunners to follow
+  const aimRefs = useMemo(() => race0.racers.map(() => ({ current: [{ yaw: 0, pitch: 0 }] as GunAim[] })), [race0]);
+  // (a convoy's hauler: its driver, and its gunner at its turret)
+  const rideCrew = useMemo(() => race0.racers.map((racer): CrewMember[] => (racer.party ? (crew ?? [{ kind: "player", player: true }]) as CrewMember[] : racer.cargo ? [{ kind: "person", name: racer.name, role: "pilot" }, { kind: "person", name: `${racer.name} gunner`, role: "mercenary" }] : [riderOf(racer, race0.chase?.who ?? race0.block?.who ?? "")])), [race0, crew]);
   const lastSnap = useRef<unknown>(null);
   const doneRef = useRef(false);
   // The page's say at a roadblock (the barrier opened, or run at) is done to the race that is running
@@ -803,7 +791,7 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
   const chequer = useChequer();
   const cover = useMemo(() => raceScenery(biome, !!track.sea).cover, [biome, track]);
   // Over open water the party's craft is its make, and those after it ride hydrospeeders (a bike's body) or bongos
-  const lookOf = (racer: Racer) => (racer.party ? partyLook : track.sea ? (racer.kind === "bike" ? "hydro" : "bongo") : undefined);
+  const lookOf = (racer: Racer) => (racer.party ? partyLook : racer.cargo ? haulerLook : track.sea ? (racer.kind === "bike" ? "hydro" : "bongo") : undefined);
   const ahead = useMemo(() => new THREE.Vector3(), []);
   const behind = useMemo(() => new THREE.Vector3(), []);
   const party = race0.racers.findIndex((racer) => racer.party);
@@ -897,11 +885,17 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
       }
     });
     const mine = now.racers[party];
-    if (gunRef.current) gunRef.current.rotation.y = -(input.current.aim ?? 0);
+    now.racers.forEach((rc, i) => {
+      const aim = aimRefs[i]?.current[0];
+      if (!aim) return;
+      const g = rc.party && input.current.aim !== undefined && !remote ? { yaw: input.current.aim, pitch: input.current.pitch ?? rc.gun?.pitch ?? 0 } : rc.gun;
+      aim.yaw = g?.yaw ?? 0;
+      aim.pitch = g?.pitch ?? 0;
+    });
     // The blaster's aim, when the party is at the gun: a flame-coloured arrow round the speeder
     if (aimRef.current) {
       const aim = input.current.aim;
-      aimRef.current.visible = aim !== undefined && mine.finish === null && !mine.wrecked;
+      aimRef.current.visible = aim !== undefined && mine.finish === null && !mine.wrecked && !race0.convoy;
       if (aim !== undefined) {
         aimRef.current.position.set(mine.craft.p[0], mine.craft.p[1] + 1.1, mine.craft.p[2]);
         aimRef.current.rotation.set(0, -(mine.craft.yaw + aim), 0);
@@ -914,12 +908,22 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
       chevron.current.rotation.set(0, -Math.atan2(gate.p[2] - mine.craft.p[2], gate.p[0] - mine.craft.p[0]), 0);
       chevron.current.visible = mine.finish === null && !mine.wrecked;
     }
-    // Behind and over the party's speeder, looking well down the track; lifted over a rise behind it
+    // Behind and over the party's speeder, looking well down the track; lifted over a rise behind it. At a convoy's gun: behind the gun, looking
+    // where it points (the sights are the middle of the screen)
     const dt = Math.min(delta, 0.25);
     const [cy, sy] = [Math.cos(mine.craft.yaw), Math.sin(mine.craft.yaw)];
-    behind.set(mine.craft.p[0] - cy * 11, mine.craft.p[1] + 5.2, mine.craft.p[2] - sy * 11);
-    ahead.set(mine.craft.p[0] + cy * 17, mine.craft.p[1] + 0.4, mine.craft.p[2] + sy * 17);
-    camera.position.lerp(behind, Math.min(1, dt * 5));
+    const sights = race0.convoy && !remote ? input.current.aim : remote && race0.convoy && gunner ? mine.gun?.yaw : undefined;
+    if (sights !== undefined) {
+      const pitch = (remote ? mine.gun?.pitch : input.current.pitch) ?? 0;
+      const yaw = mine.craft.yaw + sights;
+      const [dx, dy, dz] = [Math.cos(yaw) * Math.cos(pitch), Math.sin(pitch), Math.sin(yaw) * Math.cos(pitch)];
+      behind.set(mine.craft.p[0] - dx * 7, mine.craft.p[1] + 3.4 - dy * 7, mine.craft.p[2] - dz * 7);
+      ahead.set(mine.craft.p[0] + dx * 60, mine.craft.p[1] + 3.4 + dy * 60, mine.craft.p[2] + dz * 60);
+    } else {
+      behind.set(mine.craft.p[0] - cy * 11, mine.craft.p[1] + 5.2, mine.craft.p[2] - sy * 11);
+      ahead.set(mine.craft.p[0] + cy * 17, mine.craft.p[1] + 0.4, mine.craft.p[2] + sy * 17);
+    }
+    camera.position.lerp(behind, Math.min(1, dt * (sights !== undefined ? 12 : 5)));
     camera.lookAt(ahead);
     const floor = groundAt(track, camera.position.x, camera.position.z) + 1.4;
     if (camera.position.y < floor) camera.position.y = floor;
@@ -964,7 +968,7 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
       {race0.racers.map((racer, i) => (
         <group key={racer.id}>
           <group ref={(el) => { racerRefs.current[i] = el; if (el) el.rotation.order = "YZX"; }}>
-            <RacerModel model={racer.model} look={lookOf(racer)} kind={racer.kind} wrecked={snap.racers[i].wrecked} suit={racer.hostile || racer.idle ? riderSuit(race0.chase?.who ?? race0.block?.who ?? "") : SUITS[racer.id % SUITS.length]} flame={(el) => { flameRefs.current[i] = el; }} gunner={racer.party && gunner ? "#4a5a7a" : undefined} gun={racer.party ? (el) => { gunRef.current = el; } : undefined} empty={!!snap.racers[i].idle} />
+            <RacerModel model={racer.model} look={lookOf(racer)} kind={racer.kind} wrecked={snap.racers[i].wrecked} flame={(el) => { flameRefs.current[i] = el; }} crew={rideCrew[i]} aims={aimRefs[i]} seats={racer.party ? seats : undefined} gunner={racer.party ? gunner : !!racer.cargo} empty={!!snap.racers[i].idle} />
           </group>
           <group ref={(el) => { shadowRefs.current[i] = el; }}>
             <mesh rotation={[-Math.PI / 2, 0, 0]} scale={[SPEEDER_BODY[racer.kind].half[0] * 0.95, SPEEDER_BODY[racer.kind].half[1] * 1.05 + 0.15, 1]}>
@@ -1004,14 +1008,16 @@ function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, o
       </group>
       <Sparks queue={sparks} />
       {track.road?.block && <Guards track={track} guards={snap.guards} who={race0.block?.who ?? ""} />}
-      {(race0.chase || track.road?.block) && <Bolts queue={shots} party={race0.racers[party].id} />}
+      {(race0.chase || track.road?.block || race0.convoy) && <Bolts queue={shots} party={race0.racers[party].id} />}
+      {race0.convoy && <Flyers race={raceRef} snap={snap} />}
     </>
   );
 }
 
 // The drag pad, and the buttons: throttle (boost, brake), in a race Boost on its meter, and in a dogfight
 // fire. Each button holds its pointer, so that a thumb that slides a little off it does not let go.
-function Controls({ input, onThrottle, onFire, onBoost, meter, aiming }: { input: { current: RaceInput }; onThrottle?: (value: -1 | 0 | 1) => void; onFire?: (down: boolean) => void; onBoost?: (down: boolean) => void; meter?: number; aiming?: boolean }) {
+// (`rate`: at a convoy's gun the pad turns the gun, left and right, up and down, as far as it is pushed, rather than pointing it)
+function Controls({ input, onThrottle, onFire, onBoost, meter, aiming, rate }: { input: { current: RaceInput }; onThrottle?: (value: -1 | 0 | 1) => void; onFire?: (down: boolean) => void; onBoost?: (down: boolean) => void; meter?: number; aiming?: boolean; rate?: { current: { x: number; y: number } } }) {
   const pad = useRef<HTMLDivElement>(null);
   const [knob, setKnob] = useState({ x: 0, y: 0 });
   const steer = (e: React.PointerEvent) => {
@@ -1019,13 +1025,15 @@ function Controls({ input, onThrottle, onFire, onBoost, meter, aiming }: { input
     const dx = Math.max(-1, Math.min(1, (e.clientX - (box.left + box.width / 2)) / PAD));
     const dy = Math.max(-1, Math.min(1, (e.clientY - (box.top + box.height / 2)) / PAD));
     // At the gun the pad points the blaster (up: ahead, right: to the right, down: behind) and the crewmate drives
-    if (aiming) {
+    if (rate) rate.current = { x: dx, y: dy };
+    else if (aiming) {
       if (Math.hypot(dx, dy) > 0.2) input.current.aim = Math.atan2(dx, -dy);
     } else input.current.steer = { x: dx, y: dy };
     setKnob({ x: dx, y: dy });
   };
   const release = () => {
-    if (!aiming) input.current.steer = { x: 0, y: 0 };
+    if (rate) rate.current = { x: 0, y: 0 };
+    else if (!aiming) input.current.steer = { x: 0, y: 0 };
     setKnob({ x: 0, y: 0 });
   };
   const hold = (set: (down: boolean) => void) => ({
@@ -1042,8 +1050,8 @@ function Controls({ input, onThrottle, onFire, onBoost, meter, aiming }: { input
     <>
       <div
         ref={pad}
-        data-testid={aiming ? "flight-pad-aim" : "flight-pad"}
-        className={`absolute bottom-4 left-4 touch-none rounded-full border-2 bg-gray-900/50 ${aiming ? "border-orange-400/70" : "border-sky-400/60"}`}
+        data-testid={aiming || rate ? "flight-pad-aim" : "flight-pad"}
+        className={`absolute bottom-4 left-4 touch-none rounded-full border-2 bg-gray-900/50 ${aiming || rate ? "border-orange-400/70" : "border-sky-400/60"}`}
         style={{ width: STICK.size, height: STICK.size }}
         onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); steer(e); }}
         onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) steer(e); }}
@@ -1134,6 +1142,53 @@ function RoadHud({ race, game, track, seat, toast }: { race: Race; game: Extract
     </>
   );
 }
+// The convoy's HUD: the road done, the party's hull, each hauler's, the raiders in the sky and the waves to come, who drives and who guns
+function ConvoyHud({ race, track, seat, mate, toast }: { race: Race; track: RaceTrack; seat: "driver" | "gunner"; mate?: string; toast: string }) {
+  const me = race.racers.find((r) => r.party)!;
+  const air = race.convoy!;
+  const done = Math.max(0, Math.min(1, roadAt(track, me) / (track.road?.finish ?? 1)));
+  const raiders = air.flyers.filter((f) => f.side === "raider" && !f.wrecked).length;
+  const hull = me.hull / me.hullMax;
+  return (
+    <>
+      <div className="pointer-events-none absolute left-2 top-2 w-60 space-y-1 rounded bg-gray-900/75 px-2 py-1.5 text-xs text-sky-100" data-testid="convoy-hud">
+        <div className="flex justify-between font-semibold"><span>Convoy</span><span className="text-red-300" data-testid="convoy-raiders">{raiders} raider{raiders === 1 ? "" : "s"} · wave {air.wave} of {air.waves.length}</span></div>
+        <div className="h-2 overflow-hidden rounded-full bg-gray-700/80" data-testid="road-progress" data-value={Math.round(done * 100)}><div className="h-full rounded-full bg-emerald-400" style={{ width: `${done * 100}%` }} /></div>
+        <Bar label="Your hull" value={me.hull} max={me.hullMax} color={hull > 0.6 ? "#4ade80" : hull > 0.3 ? "#facc15" : "#ef4444"} testid="race-hull" />
+        {race.racers.filter((r) => r.cargo).map((h) => <Bar key={h.id} label={h.name} value={h.hull} max={h.hullMax} color={h.wrecked ? "#6b7280" : h.hull / h.hullMax > 0.4 ? "#38bdf8" : "#ef4444"} testid={`convoy-hauler-${h.id}`} />)}
+        <div className="text-[11px]" data-testid="convoy-downed">{air.downed} shot down</div>
+        <div className="text-[11px]" data-testid="road-seat">{seat === "gunner" ? `${mate ?? "The convoy's droid pilot"} drives; you are at the gun` : `You drive${mate ? `; ${mate} is at the gun` : ""}`}</div>
+      </div>
+      <ConvoyRadar race={race} seat={seat} />
+      {seat === "gunner" && (
+        <div className="pointer-events-none absolute left-1/2 top-1/2 h-10 w-10 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-orange-300/80" data-testid="convoy-sights">
+          <div className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-orange-300" />
+        </div>
+      )}
+      {toast && <div className="pointer-events-none absolute left-1/2 top-1/3 -translate-x-1/2 rounded bg-gray-900/70 px-3 py-1 text-sm font-semibold text-yellow-200" data-testid="race-toast">{toast}</div>}
+    </>
+  );
+}
+// A radar of the sky round the party's craft (400 m out): the raiders red, the convoy's fighters blue; up is the way the gun points at the
+// gun, the way the craft goes at the wheel
+function ConvoyRadar({ race, seat }: { race: Race; seat: "driver" | "gunner" }) {
+  const me = race.racers.find((r) => r.party)!;
+  const up = me.craft.yaw + (seat === "gunner" ? me.gun?.yaw ?? 0 : 0);
+  const R = 46;
+  return (
+    <div className="pointer-events-none absolute right-2 top-12 rounded-full border border-sky-400/50 bg-gray-900/60" style={{ width: R * 2, height: R * 2 }} data-testid="convoy-radar">
+      <div className="absolute left-1/2 top-0 h-full w-px bg-sky-400/20" />
+      <div className="absolute left-0 top-1/2 h-px w-full bg-sky-400/20" />
+      {race.convoy!.flyers.filter((f) => !f.wrecked).map((f) => {
+        const [dx, dz] = [f.p[0] - me.craft.p[0], f.p[2] - me.craft.p[2]];
+        const d = Math.min(1, Math.hypot(dx, dz) / 400);
+        const a = Math.atan2(dz, dx) - up;
+        return <div key={f.id} className={`absolute h-2 w-2 rounded-full ${f.side === "raider" ? "bg-red-500" : "bg-sky-300"}`} style={{ left: R + Math.sin(a) * d * (R - 4) - 4, top: R - Math.cos(a) * d * (R - 4) - 4 }} />;
+      })}
+    </div>
+  );
+}
+const convoyHeadline = (race: Race) => ({ through: "The convoy is through.", lost: "The convoy is lost.", wrecked: "Your craft is shot down." })[convoyResult(race).outcome];
 // (`water`: a crossing over open water)
 const roadHeadline = (r: Extract<MinigameResult, { kind: "road" }>, water = false) => {
   const me = r.race.racers.find((x) => x.party)!;
@@ -1202,11 +1257,15 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
   // (the page is given a new `game` object each time its parent draws: what is built from it is built again only for another game)
   const gameKey = game.kind === "dogfight" ? "dogfight" : `${game.kind}|${game.seed}|${game.kind === "road" ? `${game.leg.i}|${game.hull}|${game.riders?.length ?? 0}` : ""}`;
   const course = useMemo(() => (game.kind === "run" ? flightCourse(game.seed, game.mode, { count: game.count }) : null), [gameKey]);
-  const biome = game.kind === "race" || game.kind === "chase" || game.kind === "road" ? game.biome ?? "temperate" : "temperate";
-  const track = useMemo(() => (game.kind === "race" ? raceCourse(game.seed, raceScenery(biome)) : game.kind === "chase" ? raceCourse(game.seed, raceScenery(biome), 1, undefined, true) : game.kind === "road" ? raceCourse(game.seed, raceScenery(biome, !!game.water), 1, { block: !!game.block }) : null), [gameKey, biome]);
-  const race0 = useMemo(() => (game.kind === "race" && track ? raceStart(track, game.seed, game.vehicle, RACE_RIVAL_MODELS) : game.kind === "chase" && track ? chaseStart(track, game.seed, game.vehicle, game.riders, game.who) : game.kind === "road" && track ? roadStart(track, game.seed, game.vehicle, { riders: game.riders, who: game.who, mate: game.mate, hull: game.hull, block: game.block ? { who: game.block.who, model: game.block.model } : undefined }) : null), [gameKey, track]);
-  const driven = game.kind === "race" || game.kind === "chase" || game.kind === "road";
-  const [count, setCount] = useState(game.kind === "road" ? 4 : 5);
+  const biome = game.kind === "race" || game.kind === "chase" || game.kind === "road" || game.kind === "convoy" ? game.biome ?? "temperate" : "temperate";
+  const track = useMemo(() => (game.kind === "race" ? raceCourse(game.seed, raceScenery(biome)) : game.kind === "chase" ? raceCourse(game.seed, raceScenery(biome), 1, undefined, true) : game.kind === "road" ? raceCourse(game.seed, raceScenery(biome, !!game.water), 1, { block: !!game.block }) : game.kind === "convoy" ? raceCourse(game.seed, raceScenery(biome), 1, {}) : null), [gameKey, biome]);
+  const race0 = useMemo(() => (game.kind === "race" && track ? raceStart(track, game.seed, game.vehicle, RACE_RIVAL_MODELS) : game.kind === "chase" && track ? chaseStart(track, game.seed, game.vehicle, game.riders, game.who) : game.kind === "road" && track ? roadStart(track, game.seed, game.vehicle, { riders: game.riders, who: game.who, mate: game.mate, hull: game.hull, block: game.block ? { who: game.block.who, model: game.block.model } : undefined }) : game.kind === "convoy" && track ? { ...convoyStart(track, game.seed, game.vehicle, { haulers: game.haulers, hauler: game.hauler, level: game.level, who: game.who, ally: game.ally }), mate: game.mate } : null), [gameKey, track]);
+  const driven = game.kind === "race" || game.kind === "chase" || game.kind === "road" || game.kind === "convoy";
+  const [count, setCount] = useState(game.kind === "road" || game.kind === "convoy" ? 4 : 5);
+  // At a convoy's gun: the pad (and A, D, W and S, or a drag on the scene) turn it at a rate, all round and up into the sky
+  const aimRate = useRef({ x: 0, y: 0 });
+  const aimKeys = useRef(new Set<string>());
+  const seatNow = useRef<"driver" | "gunner">("driver");
   // A roadblock: the race waits while the page asks what the party does (`pause`); `act` carries the answer to the race
   const pause = useRef(false);
   const act = useRef<((how: "open" | "run") => void) | null>(null);
@@ -1234,8 +1293,9 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
         roadBus.send({ t: "road", race: { ...race, log: [], events: [] }, events: sent.current.events.splice(0) });
       }
     }
-    // For test scripts, as the map's window.__map3d: the race as it stands
-    (window as unknown as { __race?: Race }).__race = race;
+    // For test scripts, as the map's window.__map3d: the race as it stands, and what the party does (`__raceInput`)
+    (window as unknown as { __race?: Race; __raceInput?: RaceInput }).__race = race;
+    (window as unknown as { __raceInput?: RaceInput }).__raceInput = input.current;
     const me = race.racers.find((r) => r.party);
     if (!me) return;
     const said = race.said.filter((line) => line.startsWith("You "));
@@ -1277,6 +1337,11 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
     const held = new Set<string>();
     const press = (e: KeyboardEvent, on: boolean) => {
       if (!["KeyW", "KeyS", "KeyA", "KeyD", "ShiftRight", "Space"].includes(e.code)) return;
+      if (game.kind === "convoy" && seatNow.current === "gunner" && e.code !== "Space") {
+        if (on) aimKeys.current.add(e.code);
+        else aimKeys.current.delete(e.code);
+        return;
+      }
       if (e.code === "Space") {
         e.preventDefault();
         input.current.fire = on;
@@ -1322,12 +1387,41 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
   }, [count]);
 
   const finish = (result: MinigameResult) => setFinished(result);
+  useEffect(() => {
+    seatNow.current = seat;
+    if (seat === "driver") aimKeys.current.clear();
+  }, [seat]);
+  useEffect(() => {
+    if (game.kind !== "convoy") return;
+    let last = performance.now();
+    const timer = setInterval(() => {
+      const now = performance.now();
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      if (seatNow.current !== "gunner") return;
+      const k = aimKeys.current;
+      const x = aimRate.current.x + (k.has("KeyD") ? 1 : 0) - (k.has("KeyA") ? 1 : 0);
+      const y = aimRate.current.y + (k.has("KeyS") ? 1 : 0) - (k.has("KeyW") ? 1 : 0);
+      input.current.aim = ((input.current.aim ?? 0) + Math.max(-1, Math.min(1, x)) * 1.9 * dt + Math.PI * 3) % (Math.PI * 2) - Math.PI;
+      input.current.pitch = Math.max(-0.15, Math.min(1.35, (input.current.pitch ?? 0.3) - Math.max(-1, Math.min(1, y)) * 1.3 * dt));
+    }, 16);
+    return () => clearInterval(timer);
+  }, [game.kind]);
+  // A drag on the scene at the gun turns it too (the mouse, or a finger off the pad)
+  const dragAim = (e: React.PointerEvent) => {
+    if (game.kind !== "convoy" || seat !== "gunner" || !e.buttons || (e.target as HTMLElement).tagName !== "CANVAS") return;
+    input.current.aim = (input.current.aim ?? 0) + e.movementX * 0.005;
+    input.current.pitch = Math.max(-0.15, Math.min(1.35, (input.current.pitch ?? 0.3) - e.movementY * 0.005));
+  };
   // Swapping seats with the crewmate: at the gun the pad aims (and the crewmate drives), at the wheel it steers
   const swap = () => {
     const next = seat === "driver" ? "gunner" : "driver";
     setSeat(next);
     input.current.auto = next === "gunner";
     input.current.aim = next === "gunner" ? 0 : undefined;
+    input.current.pitch = next === "gunner" && game.kind === "convoy" ? 0.3 : undefined;
+    input.current.fire = false;
+    aimRate.current = { x: 0, y: 0 };
     input.current.steer = { x: 0, y: 0 };
     input.current.throttle = 0;
     input.current.boost = false;
@@ -1343,6 +1437,14 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
     setStopped(null);
   };
 
+  // Who is in the party's craft, seat by seat (models.tsx craftLayout): the party at the wheel and the crewmate at the gun (they change places
+  // at Swap seats), or a co-op player at the gun; the companions riding along in the other seats. A gun is lent to a craft with a gunner.
+  const me: CrewMember = { kind: "player", player: true };
+  const mates: CrewMember[] = game.kind === "road" || game.kind === "convoy" ? game.crew ?? (game.mate ? [{ kind: "person", name: game.mate.name, role: "pilot" }] : []) : [];
+  // (in a convoy with no crewmate, the convoy's droid pilot takes the wheel while the party is at the gun)
+  const wheel = mates[0] ?? (game.kind === "convoy" ? { kind: "droid", name: "RX-series pilot droid" } : undefined);
+  const partyCrew = coop?.gunner ? [me, { kind: "person", name: "Gunner", role: "pilot" }, ...mates] : seat === "gunner" && wheel ? [wheel, me, ...mates.slice(1)] : [me, ...mates];
+  const lendGun = (game.kind === "road" && (!!game.mate || !!coop?.gunner)) || game.kind === "convoy";
   const title = game.title;
   const counting = count >= 0;
   const headline = count > 0 ? String(count) : count === 0 ? "GO!" : "";
@@ -1352,7 +1454,7 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
         <span className="font-semibold" data-testid="minigame-title">{title}</span>
         <button type="button" className="rounded border border-gray-500 px-3 py-1 text-xs" onClick={onExit} data-testid="minigame-exit">Leave it</button>
       </div>
-      <div className="relative flex-1 overflow-hidden" data-testid={`minigame-${game.kind}`}>
+      <div className="relative flex-1 overflow-hidden" data-testid={`minigame-${game.kind}`} onPointerMove={dragAim}>
         {game.kind === "run" && course && (
           <Canvas camera={{ position: [0, 6, -12], fov: 65, far: 2000 }} onCreated={({ gl }) => gl.setClearColor(game.mode === "ship" ? "#02040a" : "#8fb4d8")}>
             <RunGame game={game} course={course} go={go} input={input} onFinish={({ next, t }) => finish({ kind: "run", course, collected: next, timeLeft: Math.max(0, course.limit - t) })} onFrame={(s) => (latest.current.run = { next: s.next, speed: Math.round(s.craft.speed) })} />
@@ -1360,13 +1462,19 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
         )}
         {driven && track && race0 && (
           <Canvas camera={{ position: [0, 6, -12], fov: 62, near: 0.3, far: 2400 }} dpr={[1, 1.5]} onCreated={({ gl }) => gl.setClearColor(raceLook(biome).sky)}>
-            <RaceGame track={track} race0={race0} biome={biome} look={game.kind === "road" ? game.look : undefined} go={go} input={input} onFinish={(race) => finish(game.kind === "chase" ? { kind: "chase", race } : game.kind === "road" ? { kind: "road", race, metres: track.road?.finish ?? 0, stop: stopResult.current ?? (race.block?.state === "ran" || race.block?.state === "run" ? { outcome: "run", paid: 0, note: "You ran the roadblock" } : undefined) } : { kind: "race", race })} onFrame={onRace} pause={pause} act={act} onStop={() => game.kind === "road" && game.block && setStopped({ note: "", raised: false, talked: false })} gunner={!!coop?.gunner} />
+            <RaceGame track={track} race0={race0} biome={biome} look={game.kind === "road" || game.kind === "convoy" ? game.look : undefined} haulerLook={game.kind === "convoy" ? game.haulerLook : undefined} go={go} input={input} onFinish={(race) => finish(game.kind === "chase" ? { kind: "chase", race } : game.kind === "convoy" ? { kind: "convoy", race } : game.kind === "road" ? { kind: "road", race, metres: track.road?.finish ?? 0, stop: stopResult.current ?? (race.block?.state === "ran" || race.block?.state === "run" ? { outcome: "run", paid: 0, note: "You ran the roadblock" } : undefined) } : { kind: "race", race })} onFrame={onRace} pause={pause} act={act} onStop={() => game.kind === "road" && game.block && setStopped({ note: "", raised: false, talked: false })} gunner={lendGun} crew={partyCrew} seats={game.kind === "road" || game.kind === "convoy" ? game.seats : undefined} />
           </Canvas>
         )}
         {game.kind === "dogfight" && <DogfightGame spec={game} go={go} controls={!counting && !finished} shell={page} onFinish={(state) => finish({ kind: "dogfight", state })} />}
         {game.kind === "race" && hud.race && <RaceHud race={hud.race} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
         {game.kind === "chase" && hud.race && <ChaseHud race={hud.race} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
         {game.kind === "road" && hud.race && track && <RoadHud race={hud.race} game={game} track={track} seat={seat} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
+        {game.kind === "convoy" && hud.race && track && <ConvoyHud race={hud.race} track={track} seat={seat} mate={game.mate?.name} toast={hud.race.t < toast.current.until ? toast.current.text : ""} />}
+        {game.kind === "convoy" && !finished && !counting && (
+          <button type="button" className="absolute right-28 top-2 z-10 max-w-[45vw] rounded border border-sky-400/70 bg-gray-900/80 px-3 py-1 text-xs text-sky-100" onClick={swap} data-testid="road-swap">
+            {seat === "driver" ? `Take the gun: ${game.mate?.name ?? "the convoy's droid pilot"} keeps your craft in the column` : "Take the wheel"}
+          </button>
+        )}
         {game.kind === "road" && game.mate && !finished && (
           <button type="button" className="absolute right-2 top-2 z-10 rounded border border-sky-400/70 bg-gray-900/80 px-3 py-1 text-xs text-sky-100" onClick={swap} data-testid="road-swap">
             {seat === "driver" ? `Swap seats: ${game.mate.name} drives, you take the gun` : `Swap seats: you drive, ${game.mate.name} takes the gun`}
@@ -1395,7 +1503,7 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
         {counting && (
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-black/50" data-testid="countdown">
             <span className="text-8xl font-bold text-yellow-300">{headline}</span>
-            {game.kind === "road" && (
+            {(game.kind === "road" || game.kind === "convoy") && (
               <div className="max-w-md space-y-1 px-4 text-center text-sm text-sky-100" data-testid="road-briefing">
                 {game.intro.map((l, i) => <p key={i}>{l}</p>)}
               </div>
@@ -1410,17 +1518,19 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
         {!counting && !finished && game.kind !== "dogfight" && (
           <Controls
             input={input}
-            onThrottle={(v) => (input.current.throttle = driven ? (v < 0 ? -1 : 0) : v)}
-            onBoost={driven ? (down) => (input.current.boost = down) : undefined}
-            onFire={game.kind === "chase" || (game.kind === "road" && (!!game.riders?.length || !!game.block) && !coop?.gunner) ? (down) => (input.current.fire = down) : undefined}
+            onThrottle={game.kind === "convoy" && seat === "gunner" ? undefined : (v) => (input.current.throttle = driven ? (v < 0 ? -1 : 0) : v)}
+            onBoost={driven && !(game.kind === "convoy" && seat === "gunner") ? (down) => (input.current.boost = down) : undefined}
+            onFire={game.kind === "chase" || (game.kind === "road" && (!!game.riders?.length || !!game.block) && !coop?.gunner) || (game.kind === "convoy" && seat === "gunner") ? (down) => (input.current.fire = down) : undefined}
             aiming={game.kind === "road" && seat === "gunner"}
+            rate={game.kind === "convoy" && seat === "gunner" ? aimRate : undefined}
             meter={hud.race?.racers.find((r) => r.party)?.boost}
           />
         )}
         {finished && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/70 p-4 text-center" data-testid="minigame-over">
-            <p className="text-lg font-semibold text-yellow-300">{finished.kind === "road" ? roadHeadline(finished, game.kind === "road" && !!game.water) : finished.kind === "race" ? "The race is over." : finished.kind === "chase" ? (chaseResult(finished.race).outcome === "caught" ? "They have caught you." : "You are clear of them.") : finished.kind === "dogfight" ? dogfightHeadline(finished.state) : "The run is over."}</p>
+            <p className="text-lg font-semibold text-yellow-300">{finished.kind === "convoy" ? convoyHeadline(finished.race) : finished.kind === "road" ? roadHeadline(finished, game.kind === "road" && !!game.water) : finished.kind === "race" ? "The race is over." : finished.kind === "chase" ? (chaseResult(finished.race).outcome === "caught" ? "They have caught you." : "You are clear of them.") : finished.kind === "dogfight" ? dogfightHeadline(finished.state) : "The run is over."}</p>
             {finished.kind === "chase" && <p className="max-w-md text-sm text-sky-100" data-testid="chase-result">{chaseResult(finished.race).note}</p>}
+            {finished.kind === "convoy" && <p className="max-w-md text-sm text-sky-100" data-testid="convoy-result">{convoyResult(finished.race).note}: {convoyResult(finished.race).credits} cr</p>}
             {finished.kind === "road" && <p className="max-w-md text-sm text-sky-100" data-testid="road-result">{roadNote(finished, game.kind === "road" && !!game.water)}</p>}
             {finished.kind === "dogfight" && <p className="max-w-md text-sm text-sky-100" data-testid="dogfight-result">{dogfightPayout(finished.state).note}: {dogfightPayout(finished.state).credits} cr</p>}
             {finished.kind === "race" && (
@@ -1502,7 +1612,7 @@ export function RoadRide({ gunner, gunnerAboard, pilotName }: { gunner: boolean;
       <div className="relative flex-1 overflow-hidden">
         {game && track && race0 && (
           <Canvas camera={{ position: [0, 6, -12], fov: 62, near: 0.3, far: 2400 }} dpr={[1, 1.5]} onCreated={({ gl }) => gl.setClearColor(raceLook(biome).sky)}>
-            <RaceGame key={key} track={track} race0={race0} biome={biome} look={game?.look} go={go} input={input} onFinish={() => {}} onFrame={(r) => { latest.current = r; }} gunner={gunnerAboard} remote />
+            <RaceGame key={key} track={track} race0={race0} biome={biome} look={game?.look} go={go} input={input} onFinish={() => {}} onFrame={(r) => { latest.current = r; }} gunner={gunnerAboard} remote seats={game.seats} crew={[{ kind: "person", name: pilotName, role: "pilot" }, ...(gunner ? [{ kind: "player", player: true }] : gunnerAboard ? [{ kind: "person", name: "Gunner", role: "pilot" }, { kind: "player", player: true }] : [{ kind: "player", player: true }]), ...(game.crew ?? [])]} />
           </Canvas>
         )}
         {game && track && race && <RoadHud race={race} game={{ ...game, mate: undefined }} track={track} seat="gunner" toast="" />}

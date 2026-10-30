@@ -2,7 +2,7 @@
 // Query: scenario (skirmish, cruiser, carrier, battleship, dreadnought, station; in the air: defend, raid, escort, strike, with biome and g), size and role of the party's ship, tier, seed, owner (the
 // Empire for the Imperial looks), view=cockpit to begin in the pilot's seat, noshield to take the shield off the ship (a deflector is lent).
 // `window.__dogfight` (state(), input) lets a script move things, as the race's window.__race does.
-// game=road (biome, seed, leg, with mate, block[=toll], wanted, chase) plays a leg of a road trip. game=race or game=chase (with biome, seed, vehicle) plays the speeder race or the chase on the road instead, to look at a world's course.
+// game=road (biome, seed, leg, with mate, block[=toll], wanted, chase) plays a leg of a road trip. game=convoy (biome, seed, level, look, hauler=itt|skiff, mate) rides guard on a convoy. game=race or game=chase (with biome, seed, vehicle) plays the speeder race or the chase on the road instead, to look at a world's course.
 import { useMemo, useState } from "react";
 import { shipSheet } from "@shared/logic";
 import { SCENARIOS, scenarioOf, type ScenarioId, type StarshipRow } from "@shared/logic/dogfight";
@@ -33,13 +33,21 @@ export default function DogfightLab() {
   const scenario = (SCENARIOS.find((s) => s.id === q.get("scenario"))?.id ?? "skirmish") as ScenarioId;
   const course = q.get("game");
   const game = useMemo<Minigame>(
-    () => course === "road" ? ({
+    () => course === "convoy" ? ({
+      kind: "convoy", title: "Convoy lab", seed: Number(q.get("seed") ?? 1), vehicle: q.get("vehicle") ?? "Landspeeder", look: q.get("look") ?? undefined, biome: q.get("biome") ?? "desert",
+      mate: q.has("mate") ? { name: "Mira", pace: 0.95 } : undefined, crew: q.has("mate") ? [{ kind: "person", name: "Mira", role: "pilot" }] : undefined,
+      haulers: 3, hauler: "Landspeeder", haulerLook: q.get("hauler") ?? "skiff", level: Number(q.get("level") ?? 5), who: q.get("who") ?? "Black Sun", ally: q.get("ally") ?? "Rebel Alliance",
+      intro: ["Convoy lab: ride guard on the column; Swap seats to take the gun."],
+    }) : course === "road" ? ({
       kind: "road", title: "Road lab", seed: Number(q.get("seed") ?? 1), vehicle: q.get("vehicle") ?? "Landspeeder", biome: q.get("biome") ?? "temperate", leg: { i: Number(q.get("leg") ?? 0), n: 3 }, intro: ["Road lab: open road to a last gate."],
       mate: q.has("mate") ? { name: "Mira", pace: 0.95 } : undefined,
       block: q.has("block") ? { by: q.get("block") === "toll" ? "toll" : "checkpoint", who: "an Imperial checkpoint", fee: 40, dc: 13, wanted: q.has("wanted"), model: "Speederbike" } : undefined,
       riders: q.has("chase") ? [{ name: "Raider A", model: "Swoop bike" }, { name: "Raider B", model: "Swoop bike" }] : undefined, who: "a swoop gang", talk: { persuasion: 3, deception: 1 }, credits: 200,
-      // (`water`: a water craft's leg over open water, `look` its make: ?game=road&water&look=bongo&biome=ocean)
-      ...(q.has("water") ? { water: true, look: q.get("look") ?? "bongo" } : {}),
+      // (`water`: a water craft's leg over open water, `look` its make: ?game=road&water&look=bongo&biome=ocean; `look` and `seats` on land too,
+      // and `riders=n` companions riding along in its seats)
+      ...(q.has("water") ? { water: true, look: q.get("look") ?? "bongo" } : { look: q.get("look") ?? undefined }),
+      seats: q.has("seats") ? Number(q.get("seats")) : undefined,
+      crew: Array.from({ length: Number(q.get("riders") ?? (q.has("mate") ? 1 : 0)) }, (_, i) => ({ kind: "person", name: ["Mira", "Tobb", "Kel", "Ysa", "Dorn", "Vex"][i % 6], role: i % 2 ? "mercenary" : "pilot" })),
     }) : course === "race" || course === "chase" ? (course === "race"
       ? { kind: "race", title: "Race lab", seed: Number(q.get("seed") ?? 1), vehicle: q.get("vehicle") ?? "Landspeeder", biome: q.get("biome") ?? "temperate" }
       : { kind: "chase", title: "Chase lab", seed: Number(q.get("seed") ?? 1), vehicle: q.get("vehicle") ?? "Landspeeder", biome: q.get("biome") ?? "temperate", riders: [{ name: "Raider", model: "Speeder bike" }, { name: "Raider", model: "Speeder bike" }], who: "a swoop gang" }) : ({

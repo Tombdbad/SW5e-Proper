@@ -74,12 +74,15 @@ export interface AirGear {
   fly?: { name: string; feet: number; on: boolean };
   // Which ways up to the roof or balcony of the building the party stands before the gear gives (the lowest, in squares up)
   ways: { leap: boolean; hook: boolean; fly: boolean; up?: number };
+  // The character's pace in the water, a share of their walking pace (shared/logic swimPace: their species' swimming speed, else half)
+  swim?: number;
 }
 export type AirKey = "jump" | "hook" | "boost";
 // How high the party's figure is off its floor now (a jump, a flight, a hook's reel), for the co-op link to show the others
 // (`at`: where the feet are while in the air, when the map's shared spot is only set on landing)
 // (`f` is the yaw the figure faces and `s` its posture, 0 standing, 1 crouched, 2 prone: shared so that the others see them)
-export const partyHeight = { y: 0, f: 0, s: 0, at: null as { x: number; y: number } | null };
+// (`ride`: the craft the party is at the helm of, as rideKey says it, for the other players to draw it under them)
+export const partyHeight = { y: 0, f: 0, s: 0, at: null as { x: number; y: number } | null, ride: "" };
 interface AirStore {
   gear: AirGear | null;
   setGear: (gear: AirGear | null) => void;

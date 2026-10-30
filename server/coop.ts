@@ -286,7 +286,8 @@ function handle(s: Session, id: string, msg: any) {
     }
     case "pos": {
       me.spot = { a: String(msg.a ?? ""), x: Number(msg.x) || 0, y: Number(msg.y) || 0 };
-      broadcast(s, { t: "pos", id, ...me.spot, f: Number(msg.f) || 0, h: Math.max(0, Math.min(40, Number(msg.h) || 0)), s: Math.max(0, Math.min(2, Math.round(Number(msg.s) || 0))) }, id);
+      // (`r`: the craft they are at the helm of, a short line drawn by the others)
+      broadcast(s, { t: "pos", id, ...me.spot, f: Number(msg.f) || 0, h: Math.max(0, Math.min(40, Number(msg.h) || 0)), s: Math.max(0, Math.min(2, Math.round(Number(msg.s) || 0))), ...(typeof msg.r === "string" && msg.r ? { r: msg.r.slice(0, 90) } : {}) }, id);
       return;
     }
     case "arrived": {

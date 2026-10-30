@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { deckSquares, generateWorld, groundAt, groundRides, planBuilding, raceCourse, swimPace, waterOf, waterwayOf, childrenOf, type Area, type RaceScenery, type World } from "@shared/logic";
+import { deckSquares, domeOf, generateWorld, groundAt, groundRides, planBuilding, raceCourse, swimPace, waterOf, waterwayOf, childrenOf, type Area, type RaceScenery, type World } from "@shared/logic";
 import { planTrip } from "@shared/logic/roadtrip";
 import { getWorldCatalog } from "../../server/sw5eData";
 
@@ -117,4 +117,20 @@ test("a water craft's course is open water: level, buoyed, no jumps or trails", 
     assert.ok(track.props.filter((pr) => pr.key === "buoy").length > 20, "buoys mark the way");
     assert.ok(track.road && track.road.finish > 500);
   }
+});
+
+// Set down in a dome, and a species' own swimming speed (2026-10-30, house rules: shared/logic domeOf, swimPace)
+test("a party come under the sea by anything but a submersible is set down in the way in of the first dome; a swimming speed is read from a trait", () => {
+  const area = (id: string, kind: string, type: string, parentId?: string, extra: Record<string, unknown> = {}) => ({ id, kind, type, name: id, parentId, tags: [], occupants: [], ships: [], loot: [], position: { x: 0, y: 0, z: 0 }, danger: 0, ...extra });
+  const world = {
+    era: "galactic-civil-war", antagonist: "Black Sun", paths: [],
+    areas: Object.fromEntries([
+      area("g", "galaxy", "galaxy"), area("r", "region", "Wild Space", "g"), area("y", "system", "star", "r"), area("p", "planet", "ocean", "y"),
+      area("s", "settlement", "town", "p"), area("b1", "building", "market", "s"), area("r1", "room", "hall", "b1"), area("r2", "room", "gate", "b1", { gateway: true }), area("b2", "building", "cantina", "s"), area("r3", "room", "bar", "b2", { gateway: true }),
+    ].map((a) => [a.id, a])),
+  } as unknown as World;
+  assert.equal(domeOf(world, "s"), "r2", "the first building's way in");
+  assert.equal(domeOf(world, "b2"), "r2", "from anywhere in the place");
+  assert.equal(swimPace("You have a swimming speed of 30 feet."), 1);
+  assert.equal(swimPace("You have a swimming speed of 20 feet.", 30), 20 / 30);
 });

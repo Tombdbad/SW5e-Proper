@@ -39,7 +39,7 @@ import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderS
 import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, type SeatState, type Shot } from "./interiors/limbs";
-import { Figure, MotionContext, seatFor, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { Figure, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -242,7 +242,6 @@ const RIDER_HIPS = 0.5;
 // A water craft on the water (shared/logic "Over the water"): how far its model sits under the face of the water (it is drawn standing
 // 0.28 up, on its repulsors), and the seat of whoever is at its helm
 const BOAT_FLOAT = -0.22;
-const BOAT_SEAT = 0.62;
 // How far out past the ground of a place on the water a craft can be taken (squares)
 const BOAT_REACH = 14;
 
@@ -293,10 +292,21 @@ function useFightMotions(combatants: Combatant[]) {
   }, []);
   return of;
 }
-function PeerFigure({ name, color, peer, here }: { name: string; color: string; peer?: Peer; here: string }) {
+// A companion in a seat of a craft (models.tsx CraftCrew)
+const crewOf = (c: Companion): CrewMember => ({ kind: tokenOf({ name: c.name, role: c.kind === "droid" ? "utility droid" : c.role, creature: c.creature }), name: c.name, species: c.species, role: c.role, creature: c.creature, size: c.size, modules: c.kind === "droid" ? c.custom : undefined, ring: SIDE_COLORS.friendly });
+// The craft a player is at the helm of, said in a line for the other players (co-op `pos`), and read back
+const rideKey = (v: PartyVehicle) => [v.look ?? "", v.model, v.seats ?? "", v.name].join("|").slice(0, 90);
+const rideOf = (key?: string) => {
+  if (!key) return null;
+  const [look, model, seats, name] = key.split("|");
+  return { look: look || undefined, model: model || "Landspeeder", seats: Number(seats) || undefined, name: name || model };
+};
+// (`water`: the place's water, for a player at the helm of a craft, drawn in it on the water)
+function PeerFigure({ name, color, peer, here, water }: { name: string; color: string; peer?: Peer; here: string; water?: "sea" | "under" | null }) {
   const group = useRef<THREE.Group>(null);
   const yaw = useRef<number | null>(null);
   const at = useRef<{ x: number; y: number; h: number } | null>(null);
+  const ride = useMemo(() => rideOf(peer?.r), [peer?.r]);
   useFrame((_, dt) => {
     if (!group.current || !peer || peer.a !== here) return void (group.current && (group.current.visible = false));
     if (!at.current) at.current = { x: peer.x, y: peer.y, h: peer.h ?? 0 };
@@ -305,7 +315,7 @@ function PeerFigure({ name, color, peer, here }: { name: string; color: string; 
     at.current.y += (peer.y - at.current.y) * k;
     at.current.h += ((peer.h ?? 0) - at.current.h) * Math.min(1, dt * 16);
     group.current.visible = true;
-    group.current.position.set(at.current.x + 0.5, at.current.h, at.current.y + 0.5);
+    group.current.position.set(at.current.x + 0.5, at.current.h + (ride ? (water === "under" ? UNDER_SWIM_Y : SEA_Y) + BOAT_FLOAT : 0), at.current.y + 0.5);
     // turns the short way round to the way they face
     const want = peer.f || 0;
     if (yaw.current === null) yaw.current = want;
@@ -315,9 +325,13 @@ function PeerFigure({ name, color, peer, here }: { name: string; color: string; 
   });
   return (
     <group ref={group} visible={false} raycast={() => null}>
-      <Posture to={peer?.s ?? 0}>
-        <Figure kind="player" ring={color} name={name} marker />
-      </Posture>
+      {ride ? (
+        <SpeederModel model={ride.model} look={ride.look} name={ride.name} seats={ride.seats} crew={[{ kind: "player", ring: color, name }]} />
+      ) : (
+        <Posture to={peer?.s ?? 0}>
+          <Figure kind="player" ring={color} name={name} marker />
+        </Posture>
+      )}
     </group>
   );
 }
@@ -336,7 +350,7 @@ function PeerPets({ pets, who, here, open, height }: { pets: Pet[]; who: string;
     </>
   );
 }
-function CoopPeers({ hereId, open, height }: { hereId: string; open: (x: number, y: number) => boolean; height: () => number }) {
+function CoopPeers({ hereId, open, height, water }: { hereId: string; open: (x: number, y: number) => boolean; height: () => number; water?: "sea" | "under" | null }) {
   const members = useCoop((s) => s.members);
   const me = useCoop((s) => s.me);
   const peers = useCoop((s) => s.peers);
@@ -344,7 +358,7 @@ function CoopPeers({ hereId, open, height }: { hereId: string; open: (x: number,
     <>
       {members.filter((m) => m.id !== me && m.connected && m.areaId === hereId).map((m) => (
         <group key={m.id}>
-          <PeerFigure name={m.name} color={m.color} peer={peers[m.id]} here={hereId} />
+          <PeerFigure name={m.name} color={m.color} peer={peers[m.id]} here={hereId} water={water} />
           {peers[m.id]?.a === hereId && !!m.pets?.length && <PeerPets pets={m.pets} who={m.id} here={hereId} open={open} height={height} />}
         </group>
       ))}
@@ -1247,20 +1261,63 @@ function Vault({ w, h, y, round, color, rib }: { w: number; h: number; y: number
 // The great beasts of the sea round a place on it or under it (2026-10-30, the user: "water dwelling beasts"): the rules data's own, an opee
 // sea killer and (under the sea) a sando aqua monster, cruising slow rings well out beyond the buildings; on the sea the opee rolls up to the
 // face of the water and down again
-function SeaBeasts({ ground, under }: { ground: { x: number; y: number; w: number; h: number }; under: boolean }) {
+// A swimmer long in the water draws the first of them (2026-10-30, house rule: `exposed` says the party swims, not at the helm of a craft):
+// after SEA_BAIT seconds in the water on the sea (twice that under it, where the streets are water) it leaves its ring and comes at the
+// party (`onCome` warns), faster than anyone swims; out of the water before it gets there, and it goes back; there, it is a fight
+// (`onReach`). Once a minute at most.
+const SEA_BAIT = 10;
+const SEA_HUNT = 3.6;
+function SeaBeasts({ ground, under, feet, exposed, onCome, onReach }: { ground: { x: number; y: number; w: number; h: number }; under: boolean; feet?: { current: { x: number; y: number } }; exposed?: () => boolean; onCome?: (name: string) => void; onReach?: (name: string) => void }) {
+  const hunt = useRef({ mode: "circle" as "circle" | "hunt" | "back", wet: 0, dry: 0, rest: 0, x: 0, z: 0 });
   const beasts = useMemo(() => [
     { name: "Opee Sea Killer", r: Math.max(ground.w, ground.h) * 0.62 + 6, speed: 0.05, depth: under ? 3.5 : SEA_Y - 0.9, phase: 0 },
     ...(under ? [{ name: "Sando Aqua Monster", r: Math.max(ground.w, ground.h) * 0.9 + 14, speed: -0.025, depth: 9, phase: 2.2 }] : []),
   ], [ground.w, ground.h, under]);
   const refs = useRef<(THREE.Group | null)[]>([]);
   const [cx, cz] = [ground.x + ground.w / 2, ground.y + ground.h / 2];
-  useFrame((state) => {
+  useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
+    const dt = Math.min(delta, 0.1);
+    const h = hunt.current;
+    const wet = !!exposed?.() && !!feet;
+    h.rest = Math.max(0, h.rest - dt);
+    h.wet = wet ? h.wet + dt : 0;
+    h.dry = wet ? 0 : h.dry + dt;
     beasts.forEach((b, i) => {
       const g = refs.current[i];
       if (!g) return;
       const a = t * b.speed + b.phase;
-      g.position.set(cx + Math.cos(a) * b.r, b.depth + (under ? Math.sin(t * 0.4 + i) * 0.8 : Math.max(0, Math.sin(t * 0.21)) * 0.7 - 0.2), cz + Math.sin(a) * b.r);
+      const ring = [cx + Math.cos(a) * b.r, cz + Math.sin(a) * b.r];
+      // (the first beast hunts a swimmer; the other only circles)
+      if (i === 0 && feet && onReach) {
+        if (h.mode === "circle" && h.rest <= 0 && h.wet > SEA_BAIT * (under ? 2 : 1)) {
+          h.mode = "hunt";
+          h.x = ring[0];
+          h.z = ring[1];
+          onCome?.(b.name);
+        }
+        if (h.mode === "hunt" && h.dry > 1.5) h.mode = "back";
+        if (h.mode !== "circle") {
+          const [tx, tz] = h.mode === "hunt" ? [feet.current.x + 0.5, feet.current.y + 0.5] : ring;
+          const [dx, dz] = [tx - h.x, tz - h.z];
+          const d = Math.hypot(dx, dz);
+          const step = Math.min(d, dt * (h.mode === "hunt" ? SEA_HUNT : SEA_HUNT * 1.5));
+          if (d > 0.01) {
+            h.x += (dx / d) * step;
+            h.z += (dz / d) * step;
+          }
+          g.position.set(h.x, b.depth, h.z);
+          g.rotation.set(0, Math.atan2(dx, dz), 0);
+          if (h.mode === "hunt" && d < 2.2) {
+            h.mode = "back";
+            h.rest = 60;
+            h.wet = 0;
+            onReach(b.name);
+          } else if (h.mode === "back" && d < 0.5) h.mode = "circle";
+          return;
+        }
+      }
+      g.position.set(ring[0], b.depth + (under ? Math.sin(t * 0.4 + i) * 0.8 : Math.max(0, Math.sin(t * 0.21)) * 0.7 - 0.2), ring[1]);
       // (along its ring, nose first, the body undulating)
       g.rotation.set(Math.sin(t * 0.9 + i) * 0.08, -a + (b.speed > 0 ? Math.PI : 0), Math.sin(t * 1.3 + i) * 0.06);
     });
@@ -2713,7 +2770,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       // The hours of a day in which a gang waits in the alley, in a lawless district
       ambushHours: (alley: Rect, day: number) => (district ? Array.from({ length: 24 }, (_, h) => h).filter((h) => ambushIn(world, district, alley, day, h)) : []),
       // On the water: the ground, the craft whose helm the party is at, and whether a square is open to the party, water, and open ground
-      water: () => ({ ground, afloat: afloatRef.current?.v.id ?? null, open: (x: number, y: number) => open(x, y), swims: (x: number, y: number) => swimsAt(x, y), outdoors: (x: number, y: number) => outdoors(x, y) }),
+      water: () => ({ ground, afloat: afloatRef.current?.v.id ?? null, aboard: aboard.map((c) => c.name), open: (x: number, y: number) => open(x, y), swims: (x: number, y: number) => swimsAt(x, y), outdoors: (x: number, y: number) => outdoors(x, y) }),
+      // What a tap on the map would do (a script picks out a craft, a person, ...)
+      act: (action: MapAction) => onAct?.(action),
     });
     (window as unknown as { __bay?: unknown }).__bay = (roomId: string, minutes: number) => {
       const room = world.areas[roomId];
@@ -2924,6 +2983,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   useEffect(() => setAshore(null), [scene.afloat]);
   const afloatBoat = (!inside && boats.find((b) => b.v.id === scene.afloat && b.v.id !== ashore)) || null;
   afloatRef.current = afloatBoat;
+  // Who rides in the craft with the party: the followers on their feet who are not beasts and not large, as many as its other seats hold (the
+  // rest swim after it)
+  const aboard = afloatBoat ? followers.filter((c) => c.kind !== "beast" && c.hp > 0 && !isLarge(c.size)).slice(0, Math.max(0, (afloatBoat.v.seats ?? 2) - 1)) : [];
+  partyHeight.ride = afloatBoat ? rideKey(afloatBoat.v) : "";
   const lastOut = useRef<{ x: number; y: number } | null>(null);
   const moor = (at: { x: number; y: number }, id = afloatRef.current?.v.id) => {
     if (!id) return;
@@ -3503,8 +3566,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (!going || air.current.mode === "jump" || air.current.mode === "reel") return;
     // (a tap's walk is a walk, half the pace, unless Run is on; the stick sets its own; crouched is slower still)
     const gait = useRun.getState();
-    // (in the water, half the pace: shared/logic swimPace; at the helm of a water craft, HELM_PACE)
-    let step = Math.min(delta, 0.5) * 7 * Math.max(0.05, going.pace ?? (gait.run ? 1 : WALK_FACTOR)) * (afloatRef.current ? HELM_PACE : swimNow() ? 0.5 : shootSession ? 1 : gait.prone ? PRONE_FACTOR : gait.crouch ? CROUCH_FACTOR : 1);
+    // (in the water, the character's swimming pace: shared/logic swimPace, their species' swimming speed or half; at the helm of a water craft, HELM_PACE)
+    let step = Math.min(delta, 0.5) * 7 * Math.max(0.05, going.pace ?? (gait.run ? 1 : WALK_FACTOR)) * (afloatRef.current ? HELM_PACE : swimNow() ? useAir.getState().gear?.swim ?? 0.5 : shootSession ? 1 : gait.prone ? PRONE_FACTOR : gait.crouch ? CROUCH_FACTOR : 1);
     while (step > 0 && going.path.length) {
       const next = going.path[0];
       const [dx, dy] = [next.x - feet.current.x, next.y - feet.current.y];
@@ -3919,14 +3982,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             <Sea at={[cx, SEA_Y, cz]} size={sizeOfGround} lite={tier === "lite"} onTap={tappable ? walkHere : undefined} />
             {deck && <Decks deck={deck} boxes={districtPlan ? buildings.map((b) => districtPlan.boxes[b.id]).filter(Boolean) : []} lite={tier === "lite"} onTap={tappable ? walkHere : undefined} />}
             <FishSchools ground={ground} depth={SEA_Y - 0.45} count={4} lite={tier === "lite"} />
-            <SeaBeasts ground={ground} under={false} />
+            <SeaBeasts ground={ground} under={false} feet={feet} exposed={() => swimNow() && !afloatRef.current} onCome={(name) => onAct?.({ type: "seaBeast", name, step: "coming" })} onReach={active ? (name) => onAct?.({ type: "seaBeast", name, step: "reached" }) : undefined} />
           </group>
         ) : water === "under" ? (
           <group visible={!underground}>
             <GroundSurface set="dense_sand" tint={new THREE.Color("#8fc0b4")} parallax={groundTex?.parallax ?? 0.03} w={sizeOfGround} h={sizeOfGround} at={[cx, -0.02, cz]} onTap={tappable ? walkHere : undefined} />
             <UnderSea boxes={districtPlan ? buildings.map((b) => districtPlan.boxes[b.id]).filter(Boolean) : []} ground={ground} lite={tier === "lite"} />
             <FishSchools ground={ground} depth={2.6} count={7} lite={tier === "lite"} />
-            <SeaBeasts ground={ground} under />
+            <SeaBeasts ground={ground} under feet={feet} exposed={() => swimNow() && !afloatRef.current} onCome={(name) => onAct?.({ type: "seaBeast", name, step: "coming" })} onReach={active ? (name) => onAct?.({ type: "seaBeast", name, step: "reached" }) : undefined} />
           </group>
         ) : groundTex ? (
           <group visible={!underground}>
@@ -4327,14 +4390,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             {!duel && <Strollers strolls={strolls} />}
             {street.rigs.map(({ v, mine, outward, x, y }) => (
               <group key={v.id} position={[x + 0.5, 0, y + 0.5]} rotation={[0, Math.atan2(outward.x || 0.0001, outward.y || 0.0001), 0]}>
-                <SpeederModel model={v.model} wrecked={v.status === "wrecked"} look={v.look} name={v.name} />
+                <SpeederModel model={v.model} wrecked={v.status === "wrecked"} look={v.look} name={v.name} seats={v.seats} />
                 <Label at={[0, 1.5, 0]} size={0.26} color={mine ? SIDE_COLORS.player : SIDE_COLORS.neutral}>{`${v.name}${v.status === "wrecked" ? " (wreck)" : ""}`}</Label>
                 {tappable && <Hit at={[0, 0.5, 0]} size={[1.6, 1.2, 2.4]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "vehicle", id: v.id }))} label={v.name} />}
               </group>
             ))}
             {boats.filter((b) => b.v.id !== afloatBoat?.v.id).map((b) => (
               <group key={b.v.id} position={[b.x + 0.5, (water === "under" ? UNDER_SWIM_Y : SEA_Y) + BOAT_FLOAT, b.y + 0.5]} rotation={[0, b.face, 0]}>
-                <SpeederModel model={b.v.model} wrecked={b.v.status === "wrecked"} look={b.v.look} name={b.v.name} />
+                <SpeederModel model={b.v.model} wrecked={b.v.status === "wrecked"} look={b.v.look} name={b.v.name} seats={b.v.seats} />
                 <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS.player}>{`${b.v.name}${b.v.status === "wrecked" ? " (wreck)" : ""}`}</Label>
                 {tappable && <Hit at={[0, 0.5, 0]} size={[1.6, 1.2, 2.4]} onTap={() => walkTo(around(b.x, b.y), () => onAct?.({ type: "vehicle", id: b.v.id }))} label={b.v.name} />}
               </group>
@@ -4352,18 +4415,23 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           </>
         )}
 
-        {present && <CoopPeers hereId={hereId} open={open} height={heightNow} />}
+        {present && <CoopPeers hereId={hereId} open={open} height={heightNow} water={inside ? null : water} />}
         {duel && <DuelPieces />}
         {present && !duel && (
           <group ref={token} position={[standing.x + 0.5, 0, standing.y + 0.5]}>
             {/* In the saddle: the beast under the character, who sits on its back */}
             {ridden && <Figure kind="beast" ring={SIDE_COLORS.player} name={ridden.name} large={isLarge(ridden.size)} creature={ridden.creature} size={ridden.size} />}
-            {/* At the helm of a water craft: the craft under the character, who sits in it */}
-            {afloatBoat && !ridden && <group position={[0, BOAT_FLOAT, 0]}><SpeederModel model={afloatBoat.v.model} look={afloatBoat.v.look} name={afloatBoat.v.name} /></group>}
+            {/* At the helm of a water craft: the craft under the character, who sits in its pilot's seat, the followers who fit in the others */}
+            {afloatBoat && !ridden && (
+              <group position={[0, BOAT_FLOAT, 0]}>
+                <SpeederModel model={afloatBoat.v.model} look={afloatBoat.v.look} name={afloatBoat.v.name} seats={afloatBoat.v.seats} crew={[{ kind: "player", player: true, ring: SIDE_COLORS.player }, ...aboard.map(crewOf)]} />
+                <mesh position={[0, 1.9, 0]} raycast={() => null}><octahedronGeometry args={[0.12]} /><meshBasicMaterial color="#facc15" /></mesh>
+              </group>
+            )}
             {/* the rider's seat (not the feet) on the beast's back: a figure's hips are RIDER_HIPS over its feet */}
-            <group position={[0, ridden ? seatFor(ridden.name, ridden.creature, ridden.size) * (isLarge(ridden.size) ? 1.5 : 1) - RIDER_HIPS : afloatBoat ? BOAT_SEAT - RIDER_HIPS : 0, 0]}>
+            <group position={[0, ridden ? seatFor(ridden.name, ridden.creature, ridden.size) * (isLarge(ridden.size) ? 1.5 : 1) - RIDER_HIPS : 0, 0]} visible={!afloatBoat || !!ridden}>
               <MotionContext.Provider value={partyMotion}>
-                <Figure kind="player" ring={SIDE_COLORS.player} marker riding={!!ridden || !!afloatBoat} seat={partySeat} unarmed={!!table} wield={shootWield} />
+                <Figure kind="player" ring={SIDE_COLORS.player} marker riding={!!ridden} seat={partySeat} unarmed={!!table} wield={shootWield} />
               </MotionContext.Provider>
             </group>
             <HandledCarts carts={cartsOf("me")} biome={biome} reach={ridden && isLarge(ridden.size) ? 1.7 : 1.05} onTap={active ? (id) => onAct?.({ type: "cart", id }) : undefined} />
@@ -4382,7 +4450,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             <mesh ref={shotHook} raycast={() => null}><boxGeometry args={[0.18, 0.08, 0.12]} /><meshBasicMaterial color="#9ca3af" /></mesh>
           </group>
         )}
-        {present && !duel && followers.map((c, i) => (
+        {present && !duel && followers.filter((c) => !aboard.includes(c)).map((c, i) => (
           <Follower key={`${hereId}:${c.id}`} companion={c} index={i} feet={feet} open={open} height={heightNow} onTap={active ? () => onAct?.({ type: "companion", id: c.id }) : undefined} carts={cartsOf(c.id)} biome={biome} onCart={active ? (id) => onAct?.({ type: "cart", id }) : undefined} />
         ))}
         {/* The party's carts left here */}
@@ -4592,6 +4660,7 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
   const steps = playerTurn && player ? reachable(arena, combatants, player) : new Map<string, Step>();
   const covered = player && target && player.rangedDice ? attackPlan(arena, combatants, player, target, "ranged").cover.bonus > 0 : false;
   const cx = arena.width / 2;
+  const lite = useQuality((q) => q.tier === "lite");
   const cz = arena.height / 2;
   const reach = Math.max(arena.width, arena.height) * 1.1 + 6;
   // Over the shoulder or from the eyes of the party's character (interiors/ViewRig.tsx): the fight is still taken a turn at a time, the
@@ -4627,6 +4696,8 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
           <planeGeometry args={[240, 240]} />
           <meshBasicMaterial color="#0b0f16" />
         </mesh>
+        {/* A fight at sea (an ambush on the water): knee-deep water over a sandbar, out to the horizon; a tap on it is a tap on the square under it */}
+        {arena.floor === "sea" && <Sea at={[arena.width / 2, 0.32, arena.height / 2]} size={Math.max(arena.width, arena.height) + 260} lite={lite} onTap={(e) => { e.stopPropagation(); if (e.delta <= 8) tapSquare(Math.floor(e.point.x + cx), Math.floor(e.point.z + cz)); }} />}
         <RoomShell fullWalls={viewing} ceiling={viewing && !arena.open} width={arena.width} height={arena.height} assets={arena.assets.filter((a) => a.kind !== "npc")} floor={floorOf(arena.floor)} wall={wall} walls={!arena.open} onFloor={tapSquare} onAsset={(a) => !a.side && (pickable(a) ? setObject(objectId === a.id ? null : a.id) : tapSquare(a.x, a.y))}>
           {picked && <Picked asset={picked} high={(picked.z ?? 0) * LEVEL_H} />}
           {/* Raised floors: a gallery over part of the room */}
@@ -4871,6 +4942,9 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
   const globe = view.kind === "planet";
   // The open ground of a settlement: a textured plane where the world has one (siteAssets groundTexture)
   const groundTex = groundTexture(biome, "", GROUND[biome] ?? "#0b1220");
+  // (a town of an ocean world stands on the sea or under it: its overview is open water, 2026-10-30)
+  const seaView = view.kind === "settlement" && !!waterOf(world, view.id);
+  const liteSea = useQuality((q) => q.tier === "lite");
 
   // Fit the places into the view, whatever scale they were generated at. Planets keep their
   // orbits round the star in the middle; a planet's sites lie on the top of its globe.
@@ -4958,7 +5032,16 @@ function WorldLayer({ world, view, hereId, selectedId, onAct }: { world: World; 
           ))}
         </>
       )}
-      {!system && !globe && (
+      {seaView && (
+        <>
+          <Sea at={[0, -0.6, 0]} size={900} lite={liteSea} />
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -3, 0]}>
+            <planeGeometry args={[1400, 1400]} />
+            <meshBasicMaterial color="#123848" />
+          </mesh>
+        </>
+      )}
+      {!system && !globe && !seaView && (
         <>
           {groundTex ? (
             <>

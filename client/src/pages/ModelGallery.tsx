@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Text, Billboard } from "@react-three/drei";
-import { usePartyLook, Figure, Furniture, stoolsOf, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount } from "@/components/Map/models";
+import { usePartyLook, Figure, Furniture, stoolsOf, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount, type GunAim } from "@/components/Map/models";
 import { tokenOf, SIDE_COLORS } from "@/components/Map/sprites";
 import { Atmosphere } from "@/components/Map/interiors/Atmosphere.tsx";
 import { Stock } from "@/components/Map/interiors/Stock.tsx";
@@ -442,6 +442,15 @@ function Rows<T>({ items, per, gap, name, draw, z = 0 }: { items: T[]; per: numb
   );
 }
 
+// A make with every seat taken and a gun swinging round and up and down (models.tsx craftLayout; a gun lent where it has none), to see that
+// the people sit in their seats and the gunner turns with the gun (?section=crews)
+function CrewedMake({ m }: { m: (typeof VEHICLE_MAKES)[number] }) {
+  const aims = useRef<GunAim[]>([{ yaw: 0, pitch: 0 }]);
+  useFrame(({ clock }) => { aims.current[0] = { yaw: Math.sin(clock.elapsedTime * 0.6) * 2.2, pitch: 0.35 + Math.sin(clock.elapsedTime * 0.9) * 0.45 }; });
+  const crew = useMemo(() => Array.from({ length: m.seats }, (_, i) => (i === 0 ? { kind: "player", player: true } : { kind: "person", name: `Crew ${m.name} ${i}`, role: i % 2 ? "mercenary" : "pilot" })), [m]);
+  return <SpeederModel model={m.model} look={m.look} name={m.name} seats={m.seats} crew={crew} aims={aims} gunner />;
+}
+
 // The character's own figure, as Play would set it for a species, with or without the Force
 function PlayerFigure({ force, species }: { force: boolean; species: string }) {
   return (
@@ -494,6 +503,7 @@ export default function ModelGallery() {
             <Rows z={20} items={VEHICLE_MAKES.filter((m) => m.name !== m.model)} per={5} gap={4} name={(m) => m.name} draw={(m) => <SpeederModel model={m.model} look={m.look} name={m.name} />} />
           </>
         )}
+        {section === "crews" && <Rows items={VEHICLE_MAKES.filter((m) => m.name !== m.model || m.name === "Landspeeder")} per={5} gap={4.5} name={(m) => `${m.name} (${m.seats})`} draw={(m) => <CrewedMake m={m} />} />}
         {section === "places" && (
           <>
             <Rows items={["cantina", "spaceport", "docking bay", "market", "garrison", "gate", "medcenter", "workshop", "residences", "palace", "warehouse", "archive", "hideout", "camp", "cave", "ruin", "wreck", "trailhead"]} per={6} gap={6} name={(s) => s} draw={(s) => <BuildingModel type={s} wall="#c9a56e" />} />
