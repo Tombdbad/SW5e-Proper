@@ -10,7 +10,7 @@ import type { Pet } from "@shared/logic/coop";
 import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, onPartySide, parseKey, squaresApart, type Combatant, type Step } from "@/lib/stores/useCombat";
 // A lit square's colour by how it is reached: walked (green), jumped, climbed or flown to (blue), or a fall at the end (orange)
 const stepColor = (step: Step) => (step.fall ? "#fb923c" : step.how && /^(jump|climb|hook|fly)$/.test(step.how) ? "#38bdf8" : "#4ade80");
-import { deckSquares, waterOf, type WaterLife } from "@shared/logic";
+import { deckSquares, waterOf, isWaterCraft, isSubmersible, HELM_PACE, type WaterLife } from "@shared/logic";
 import { standsAt, stairsGoals, arrivalSquares, climbAt, canStep, floorsOf, piecesIn, squaresOf, type Companion, type Cart, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
 import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt, worldLook, type WorldLook, type PartyShip } from "@shared/logic";
 import type { VerticalMove } from "@shared/logic";
@@ -239,6 +239,12 @@ const STEEL = "#7b8794";
 const isLarge = (size?: string) => /large|huge|gargantuan/i.test(size ?? "");
 // How far a person's seat is over their feet (the legs turn at 0.56 in `buildHumanoid`; the seat is a little under the hip joint)
 const RIDER_HIPS = 0.5;
+// A water craft on the water (shared/logic "Over the water"): how far its model sits under the face of the water (it is drawn standing
+// 0.28 up, on its repulsors), and the seat of whoever is at its helm
+const BOAT_FLOAT = -0.22;
+const BOAT_SEAT = 0.62;
+// How far out past the ground of a place on the water a craft can be taken (squares)
+const BOAT_REACH = 14;
 
 // A name that turns to face whoever is looking
 // Names are sized to be read from above; from the character's eyes they are a third as large (the crosshair names what it is on)
@@ -2601,7 +2607,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     // Speeders: the party's own, parked in this settlement (before the first building), and any
     // kept at a building, a few squares out from its door and to either side
     const settlementId = trail.find((a) => a.kind === "settlement")?.id;
-    const mine = (((world as World & { parked?: PartyVehicle[] }).parked ?? []) as PartyVehicle[]).filter((v) => v.areaId === settlementId);
+    const mine = (((world as World & { parked?: PartyVehicle[] }).parked ?? []) as PartyVehicle[]).filter((v) => v.areaId === settlementId && !(isWaterCraft(v) && waterOf(world, building.id)));
     const rigs = fronts.flatMap(({ b, door, outward }, n) =>
       [...(n === 0 ? mine.map((v) => ({ v: v as Vehicle, mine: true })) : []), ...(b.vehicles ?? []).map((v) => ({ v, mine: false }))].map((rig, i) => {
         const side = (i % 2 ? 1 : -1) * (1 + Math.floor(i / 2));
@@ -2624,7 +2630,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     for (const g of grounds?.gardens ?? []) markRect(g, 1);
     for (const st of grounds?.stalls ?? []) markRect({ x: st.x, y: st.y, width: st.w, height: st.h }, 1);
     const inGround = (x: number, y: number) => x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h;
-    const ambient = ambientBlockers({ x: ground.x, y: ground.y, width: ground.w, height: ground.h }, buildings[0].id, biome, (x, y) => inGround(x, y) && !inRoom(x, y) && !clear.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`));
+    // (none on or under the sea: the decking is bare, and the open water and the sea floor have their own life, `Sea` and `UnderSea`)
+    const ambient = waterOf(world, building.id) ? [] : ambientBlockers({ x: ground.x, y: ground.y, width: ground.w, height: ground.h }, buildings[0].id, biome, (x, y) => inGround(x, y) && !inRoom(x, y) && !clear.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`));
     const ambientBlocked = new Set<string>();
     for (const it of ambient) if (it.fills) for (let j = 0; j < it.fills[3]; j++) for (let i = 0; i < it.fills[2]; i++) ambientBlocked.add(`${it.fills[0] + i},${it.fills[1] + j}`);
     return { signs, decor, folk, caches, sentries, rigs, doors, ambient, ambientBlocked, clear };
@@ -2632,10 +2639,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // What grows low between them, and the belt of trees beyond the ground that can be walked on: only to be seen,
   // and fewer on a slow screen
   const cover = useMemo(
-    () => (planned ? ambientCover({ x: ground.x, y: ground.y, width: ground.w, height: ground.h }, buildings[0].id, biome, tier, (x, y) => x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !street.clear.has(`${x},${y}`) && !street.ambientBlocked.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`)) : []),
+    () => (planned && !waterOf(world, building.id) ? ambientCover({ x: ground.x, y: ground.y, width: ground.w, height: ground.h }, buildings[0].id, biome, tier, (x, y) => x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !street.clear.has(`${x},${y}`) && !street.ambientBlocked.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`)) : []),
     [street, tier, biome],
   );
-  const backdrop = useMemo(() => (planned ? ambientBackdrop({ x: ground.x, y: ground.y, width: ground.w, height: ground.h }, 40, buildings[0].id, biome, tier) : []), [street, tier, biome]);
+  const backdrop = useMemo(() => (planned && !waterOf(world, building.id) ? ambientBackdrop({ x: ground.x, y: ground.y, width: ground.w, height: ground.h }, 40, buildings[0].id, biome, tier) : []), [street, tier, biome]);
   // The way in of the building the party is in front of, and which way it faces
   const myFront = street.doors[me.id] ?? Object.values(street.doors)[0] ?? { door: { x: ground.x + 2, y: Math.round(cz) }, outward: { x: -1, y: 0 } };
 
@@ -2692,6 +2699,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const water: WaterLife | null = waterOf(world, building.id);
   const deck = useMemo(() => (water === "sea" && districtPlan ? deckSquares(districtPlan, street.signs.map((g) => ({ x: g.x, y: g.y }))) : null), [water, districtPlan, street.signs.length]);
   const swimsAt = (x: number, y: number) => water === "under" || (!!deck && !deck.has(`${x},${y}`));
+  // The party's water craft whose helm the party is at, if any (see `boats` below)
+  const afloatRef = useRef<{ v: PartyVehicle; x: number; y: number; face: number } | null>(null);
   const outdoors = (x: number, y: number) =>
     x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h && !inRoom(x, y) && !barred.has(`${x},${y}`) && !fixtures.blocked.has(`${x},${y}`) && !street.ambientBlocked.has(`${x},${y}`) && !pieceSquares.has(`${x},${y}`) && !rigSquares.has(`${x},${y}`)
     && ![...street.signs, ...street.decor, ...street.folk, ...street.caches, ...street.rigs].some((thing) => thing.x === x && thing.y === y);
@@ -2703,6 +2712,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     (window as unknown as { __street?: unknown }).__street = Object.assign(() => ({ party: { ...feet.current }, folk: { ...folkAt.current } }), {
       // The hours of a day in which a gang waits in the alley, in a lawless district
       ambushHours: (alley: Rect, day: number) => (district ? Array.from({ length: 24 }, (_, h) => h).filter((h) => ambushIn(world, district, alley, day, h)) : []),
+      // On the water: the ground, the craft whose helm the party is at, and whether a square is open to the party, water, and open ground
+      water: () => ({ ground, afloat: afloatRef.current?.v.id ?? null, open: (x: number, y: number) => open(x, y), swims: (x: number, y: number) => swimsAt(x, y), outdoors: (x: number, y: number) => outdoors(x, y) }),
     });
     (window as unknown as { __bay?: unknown }).__bay = (roomId: string, minutes: number) => {
       const room = world.areas[roomId];
@@ -2730,10 +2741,18 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       const [lx, ly] = [x - l.x, y - l.y];
       return lx >= 0 && ly >= 0 && lx < l.width && ly < l.height && standsAt(l, lx, ly) && !shown.some((a) => !a.side && a.blocks && a.x <= lx && lx < a.x + a.w && a.y <= ly && ly < a.y + a.h) && !pieceSquares.has(`${x},${y}`);
     }
+    // (at the helm of a water craft, only the water, and out past the ground)
+    if (afloatRef.current) return wetAt(x, y);
     return outdoors(x, y);
   };
+  // The water a craft goes on: open water of the ground, and the sea round it out to BOAT_REACH
+  const wetAt = (x: number, y: number) => {
+    const inGround = x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h;
+    if (inGround) return outdoors(x, y) && swimsAt(x, y);
+    return x >= ground.x - BOAT_REACH && y >= ground.y - BOAT_REACH && x < ground.x + ground.w + BOAT_REACH && y < ground.y + ground.h + BOAT_REACH;
+  };
   // The companions and beasts that follow (a beast ridden is under the character), and the beast ridden
-  const scene = world as World & { party?: Companion[]; beasts?: Companion[]; riding?: string; carts?: Cart[] };
+  const scene = world as World & { party?: Companion[]; beasts?: Companion[]; riding?: string; carts?: Cart[]; parked?: PartyVehicle[]; afloat?: string };
   // The party's carts (shared/logic `Cart`): with whoever pushes or pulls them, or parked
   const carts = scene.carts ?? [];
   const cartsOf = (handler: string) => carts.filter((c) => !c.parked && (c.handler ?? "me") === handler);
@@ -2873,6 +2892,56 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   if (!(outside && planned) && !duel) eye.current = null;
   // (`pace` is a fraction of the full pace; a tap on the map is the full pace, the stick in the eye views sets its own)
   const walk = useRef<{ path: { x: number; y: number }[]; then?: (squares: number) => void; total: number; pace?: number } | null>(null);
+  // The party's water craft here (shared/logic "Over the water", house rules): moored on the water, where it was left (`berth`) or else off the
+  // way in of the first building, its bow out from it. One whose helm the party is at (`afloat`) is under the party, who then goes only over the
+  // water, at HELM_PACE; going to the decking, or in through a way in, it moors there and the party steps ashore. Under the sea only a
+  // submersible is down there (a craft of the surface waits on the surface over the place).
+  const settlementHere = trail.find((a) => a.kind === "settlement")?.id;
+  const boatList = (scene.parked ?? []).filter((v) => v.areaId === settlementHere && isWaterCraft(v) && (water !== "under" || isSubmersible(v)));
+  const boats = useMemo(() => {
+    if (!water || !planned) return [];
+    const wet = (x: number, y: number) => outdoors(x, y) && swimsAt(x, y);
+    const taken = new Set<string>();
+    const first = Object.values(street.doors)[0];
+    const out: { v: PartyVehicle; x: number; y: number; face: number }[] = [];
+    for (const v of boatList) {
+      const berth = (v as PartyVehicle & { berth?: { x: number; y: number } }).berth;
+      let at = berth && wet(berth.x, berth.y) && !taken.has(`${berth.x},${berth.y}`) ? berth : null;
+      if (!at && first) {
+        const o = { x: first.door.x + first.outward.x * 3, y: first.door.y + first.outward.y * 3 };
+        for (let r = 0; r < 16 && !at; r++) for (let dy = -r; dy <= r && !at; dy++) for (let dx = -r; dx <= r && !at; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) === r && wet(o.x + dx, o.y + dy) && !taken.has(`${o.x + dx},${o.y + dy}`)) at = { x: o.x + dx, y: o.y + dy };
+        }
+      }
+      if (!at) continue;
+      taken.add(`${at.x},${at.y}`);
+      out.push({ v, x: at.x, y: at.y, face: first ? Math.atan2(first.outward.x || 0.0001, first.outward.y || 0.0001) : 0 });
+    }
+    return out;
+  }, [water, planned, street, deck, JSON.stringify(boatList.map((v) => [v.id, (v as { berth?: unknown }).berth, v.status]))]);
+  // (stepping ashore is seen at once, before the game has saved it)
+  const [ashore, setAshore] = useState<string | null>(null);
+  useEffect(() => setAshore(null), [scene.afloat]);
+  const afloatBoat = (!inside && boats.find((b) => b.v.id === scene.afloat && b.v.id !== ashore)) || null;
+  afloatRef.current = afloatBoat;
+  const lastOut = useRef<{ x: number; y: number } | null>(null);
+  const moor = (at: { x: number; y: number }, id = afloatRef.current?.v.id) => {
+    if (!id) return;
+    afloatRef.current = null;
+    setAshore(id);
+    onAct?.({ type: "moor", id, x: at.x, y: at.y });
+  };
+  // Taking the helm from beside the craft: aboard it; going in through a way in at the helm: moored where the party left the water
+  useEffect(() => {
+    const b = afloatBoat;
+    if (!b || Math.hypot(feet.current.x - b.x, feet.current.y - b.y) > 2.5) return;
+    feet.current = { x: b.x, y: b.y };
+    walk.current = null;
+    spot.stand(hereId, b.x, b.y);
+  }, [afloatBoat?.v.id]);
+  useEffect(() => {
+    if (inside && scene.afloat && scene.afloat !== ashore && lastOut.current && boatList.some((v) => v.id === scene.afloat)) moor(lastOut.current, scene.afloat);
+  }, [inside?.id]);
   // Over the shoulder or from the eyes (interiors/ViewRig.tsx), instead of the overhead view; `facing` is the way the character looks then
   const mode = useView((v) => v.mode);
   const tierNow = useQuality((q) => q.tier);
@@ -2886,7 +2955,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     // (the air is left behind with the place: a flight that sets down on a roof is standing on it)
     Object.assign(air.current, { mode: "ground", y: 0, vy: 0, burst: null, reel: null, drop: 0, landed: performance.now() });
     feet.current = { x: entry.x, y: entry.y };
-    spot.stand(hereId, entry.x, entry.y);
+    // (at the helm of a water craft, on the water where the craft is)
+    const boat = afloatRef.current;
+    if (boat && !wetAt(entry.x, entry.y)) feet.current = { x: boat.x, y: boat.y };
+    spot.stand(hereId, feet.current.x, feet.current.y);
   }, [hereId, present]);
   // After a fight the party stands where the fight left them
   useEffect(() => {
@@ -2895,9 +2967,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // How high the party stands: on the floor of the room they are in, up the steps of a stairwell
   const heightNow = () => {
     const l = inside?.layout;
-    return l ? floorAt(l, feet.current.x - l.x + 0.5, feet.current.y - l.y + 0.5) : swimNow() ? (water === "under" ? UNDER_SWIM_Y : SWIM_Y) : 0;
+    return l ? floorAt(l, feet.current.x - l.x + 0.5, feet.current.y - l.y + 0.5) : afloatRef.current ? (water === "under" ? UNDER_SWIM_Y : SEA_Y) : swimNow() ? (water === "under" ? UNDER_SWIM_Y : SWIM_Y) : 0;
   };
-  const swimNow = () => !inside && !!water && swimsAt(Math.round(feet.current.x), Math.round(feet.current.y));
+  const swimNow = () => !inside && !afloatRef.current && !!water && swimsAt(Math.round(feet.current.x), Math.round(feet.current.y));
   // ---- Jumping, the hook and the jetpack in real time (interiors/air.ts). Space jumps (held with a pack, it lights it and climbs), F fires the hook
   // where the crosshair or the mouse points, Left Shift fires the pack's burst the same way; their buttons are the phone's; E, Enter and a click activate.
   // A jump is the Handbook's (shared/logic jumpReach) made a hop of that height; what stands low (furniture) is hopped over, a wall is not; the hook
@@ -3414,6 +3486,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       // (the figure bends and lies down by itself: its joints, told by the party's motion)
       const pm = partyMotion.current;
       const gr = useRun.getState();
+      if (!inside) lastOut.current = { x: Math.round(feet.current.x), y: Math.round(feet.current.y) };
       pm.posture = swimNow() ? 3 : shootSession ? (stance.k > 0.5 ? 1 : 0) : gr.prone ? 2 : gr.crouch ? 1 : 0;
       pm.air = air.current.mode !== "ground";
       pm.ready = !!shootSession;
@@ -3430,8 +3503,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (!going || air.current.mode === "jump" || air.current.mode === "reel") return;
     // (a tap's walk is a walk, half the pace, unless Run is on; the stick sets its own; crouched is slower still)
     const gait = useRun.getState();
-    // (in the water, half the pace: shared/logic swimPace)
-    let step = Math.min(delta, 0.5) * 7 * Math.max(0.05, going.pace ?? (gait.run ? 1 : WALK_FACTOR)) * (swimNow() ? 0.5 : shootSession ? 1 : gait.prone ? PRONE_FACTOR : gait.crouch ? CROUCH_FACTOR : 1);
+    // (in the water, half the pace: shared/logic swimPace; at the helm of a water craft, HELM_PACE)
+    let step = Math.min(delta, 0.5) * 7 * Math.max(0.05, going.pace ?? (gait.run ? 1 : WALK_FACTOR)) * (afloatRef.current ? HELM_PACE : swimNow() ? 0.5 : shootSession ? 1 : gait.prone ? PRONE_FACTOR : gait.crouch ? CROUCH_FACTOR : 1);
     while (step > 0 && going.path.length) {
       const next = going.path[0];
       const [dx, dy] = [next.x - feet.current.x, next.y - feet.current.y];
@@ -3613,6 +3686,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     const traps = inside ? new Set(trapsIn(inside, false).map((t) => `${inside.layout!.x + t.x},${inside.layout!.y + t.y}`)) : undefined;
     // (up a switchback the way is not pulled straight: it would cut across the well from one flight to the other)
     const step = stepRule();
+    // (at the helm, to land or a way in: alongside it on the water, then moored there and ashore)
+    if (afloatRef.current && !inside && goals.length && !goals.some((g) => open(g.x, g.y))) {
+      const landing = goals.flatMap((g) => [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]].map(([dx, dy]) => ({ x: g.x + dx, y: g.y + dy }))).filter((q) => open(q.x, q.y) || (q.x === from.x && q.y === from.y));
+      const way = landing.length ? route(open, from, landing) : null;
+      if (!way) return void onAct?.({ type: "note", text: "The craft cannot come alongside there." });
+      walk.current = { path: way, total: way.length, then: () => { moor({ x: Math.round(feet.current.x), y: Math.round(feet.current.y) }); walkTo(goals, then); } };
+      return;
+    }
     const path = route(open, from, goals.filter((g) => open(g.x, g.y) || (g.x === from.x && g.y === from.y)), step ? undefined : { keep: traps }, step);
     if (!path) onAct?.({ type: "note", text: gangRing.length ? "The gang bars the way out of the alley." : "There is no way through to there." });
     else walk.current = { path, then, total: path.length };
@@ -3779,7 +3860,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const walkHere = (e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
     const x = Math.floor(e.point.x + cx), y = Math.floor(e.point.z + cz);
-    if (e.delta <= 8 && x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h) {
+    if (e.delta <= 8 && ((x >= ground.x && y >= ground.y && x < ground.x + ground.w && y < ground.y + ground.h) || (afloatRef.current && wetAt(x, y)))) {
       if (placing) placeAt(x, y);
       else walkTo([{ x, y }]);
     }
@@ -4251,6 +4332,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 {tappable && <Hit at={[0, 0.5, 0]} size={[1.6, 1.2, 2.4]} onTap={() => walkTo(around(x, y), () => onAct?.({ type: "vehicle", id: v.id }))} label={v.name} />}
               </group>
             ))}
+            {boats.filter((b) => b.v.id !== afloatBoat?.v.id).map((b) => (
+              <group key={b.v.id} position={[b.x + 0.5, (water === "under" ? UNDER_SWIM_Y : SEA_Y) + BOAT_FLOAT, b.y + 0.5]} rotation={[0, b.face, 0]}>
+                <SpeederModel model={b.v.model} wrecked={b.v.status === "wrecked"} look={b.v.look} name={b.v.name} />
+                <Label at={[0, 1.7, 0]} size={0.26} color={SIDE_COLORS.player}>{`${b.v.name}${b.v.status === "wrecked" ? " (wreck)" : ""}`}</Label>
+                {tappable && <Hit at={[0, 0.5, 0]} size={[1.6, 1.2, 2.4]} onTap={() => walkTo(around(b.x, b.y), () => onAct?.({ type: "vehicle", id: b.v.id }))} label={b.v.name} />}
+              </group>
+            ))}
             {street.caches.map(({ cache, x, y }) => (
               <group key={cache.id} position={[x, 0, y]}>
                 {cache.node ? <NodeModel node={cache.node} empty={nodeAt(cache.node, minutes).charges === 0} /> : <Chest looted={cache.looted} />}
@@ -4270,10 +4358,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           <group ref={token} position={[standing.x + 0.5, 0, standing.y + 0.5]}>
             {/* In the saddle: the beast under the character, who sits on its back */}
             {ridden && <Figure kind="beast" ring={SIDE_COLORS.player} name={ridden.name} large={isLarge(ridden.size)} creature={ridden.creature} size={ridden.size} />}
+            {/* At the helm of a water craft: the craft under the character, who sits in it */}
+            {afloatBoat && !ridden && <group position={[0, BOAT_FLOAT, 0]}><SpeederModel model={afloatBoat.v.model} look={afloatBoat.v.look} name={afloatBoat.v.name} /></group>}
             {/* the rider's seat (not the feet) on the beast's back: a figure's hips are RIDER_HIPS over its feet */}
-            <group position={[0, ridden ? seatFor(ridden.name, ridden.creature, ridden.size) * (isLarge(ridden.size) ? 1.5 : 1) - RIDER_HIPS : 0, 0]}>
+            <group position={[0, ridden ? seatFor(ridden.name, ridden.creature, ridden.size) * (isLarge(ridden.size) ? 1.5 : 1) - RIDER_HIPS : afloatBoat ? BOAT_SEAT - RIDER_HIPS : 0, 0]}>
               <MotionContext.Provider value={partyMotion}>
-                <Figure kind="player" ring={SIDE_COLORS.player} marker riding={!!ridden} seat={partySeat} unarmed={!!table} wield={shootWield} />
+                <Figure kind="player" ring={SIDE_COLORS.player} marker riding={!!ridden || !!afloatBoat} seat={partySeat} unarmed={!!table} wield={shootWield} />
               </MotionContext.Provider>
             </group>
             <HandledCarts carts={cartsOf("me")} biome={biome} reach={ridden && isLarge(ridden.size) ? 1.7 : 1.05} onTap={active ? (id) => onAct?.({ type: "cart", id }) : undefined} />

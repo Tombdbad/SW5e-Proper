@@ -433,6 +433,27 @@ const LIBRARY: Record<string, Piece> = {
       k.sphere(0.045, "#ffb347", { at: [0, 0.93, 0], seg: [6, 5], finish: "glow" });
     },
   },
+  // Over open water (a water craft's trip, shared/logic "Over the water"): a buoy marking the way, red or green, a lamp on its mast; and a stack
+  // of rock standing out of the sea, its foot in the water and weed on it
+  buoy: {
+    tags: ["buoy", "race", "marker", "sea"], size: [1, 1], blocks: true, hit: { r: 0.36, h: 1.5 },
+    build: (k, p, v) => {
+      k.lathe([[0, -0.45], [0.3, -0.36], [0.38, -0.05], [0.36, 0.18], [0.22, 0.3], [0, 0.32]], v % 2 ? "#c8372b" : "#2f7d3e", { seg: 12, finish: "sheen" });
+      k.cyl(0.385, 0.1, "#f1ede4", { at: [0, 0.06, 0], top: 0.37, seg: 12 });
+      k.cyl(0.035, 0.95, C.black, { at: [0, 0.78, 0], seg: 6, finish: "sheen" });
+      k.box([0.3, 0.05, 0.3], C.black, { at: [0, 1.1, 0] });
+      k.sphere(0.08, "#ffe7a8", { at: [0, 1.32, 0], seg: [8, 6], finish: "glow" });
+    },
+  },
+  sea_stack: {
+    tags: ["rock", "sea", "large"], size: [2, 2], blocks: true, hit: { r: 0.85, h: 2.6 },
+    build: (k, p, v) => {
+      k.blob(0.95, p.stone, { at: [0, 0.1, 0], seed: v + 2, rough: 0.3, squash: [1.1, 0.6, 1] });
+      k.blob(0.7, shade(p.stone, 0.92), { at: [0.1, 1.0, -0.05], seed: v + 6, rough: 0.34, squash: [0.85, 1.3, 0.85] });
+      k.blob(0.42, shade(p.stone, 1.06), { at: [-0.05, 1.95, 0.1], seed: v + 9, rough: 0.38, squash: [0.8, 1.2, 0.8] });
+      k.blob(0.98, "#3f5a34", { at: [0, -0.02, 0], seed: v + 4, rough: 0.25, squash: [1.12, 0.22, 1.02], finish: "leaf" });
+    },
+  },
   grandstand: {
     tags: ["stand", "seating", "race", "crowd"], size: [6, 3], blocks: true, hit: { box: [3, 1.5], h: 2.6 },
     build: (k, p, v) => {
@@ -626,9 +647,11 @@ const WILD: Record<string, { trees: string[]; shrubs: string[]; boulders: string
   urban: { trees: ["tree_broad", "tree_birch", "tree_tall"], shrubs: ["shrub"], boulders: ["rock", "boulder"], cover: ["grass_tuft", "wildflowers"] },
   ocean: { trees: ["tree_palm", "tree_broad", "tree_palm"], shrubs: ["shrub", "fern"], boulders: ["rock", "boulder"], cover: ["grass_tuft", "wildflowers", "rock_small"] },
 };
-export function raceScenery(biome: string): RaceScenery & { cover: string[] } {
+// (`water`: a water craft's course over open water, shared/logic "Over the water": no trees or shrubs, rocks and stacks out of the sea)
+export function raceScenery(biome: string, water = false): RaceScenery & { cover: string[] } {
   const wild = WILD[biome] ?? WILD.temperate;
   const hits = Object.fromEntries(Object.entries(LIBRARY).filter(([, piece]) => piece.hit).map(([key, piece]) => [key, piece.hit!]));
+  if (water) return { trees: [], shrubs: [], boulders: biome === "swamp" ? ["sea_stack", "log", "stump"] : ["sea_stack", "sea_stack", "boulder"], cover: [], hits, crossings: [], sea: true };
   // (and what the world's land puts across the course: shared/logic "Skies and landforms")
   return { ...wild, hits, crossings: biomeSky(biome).crossings };
 }
@@ -1268,8 +1291,9 @@ float waveH(vec2 p) { return 0.07 * sin(p.x * 0.85 + uTime * 1.25) + 0.05 * sin(
 }
 
 // The sea: a wide sheet of water at its face, the waves running over it; a tap on it walks (or swims) there
-export function Sea({ at, size, lite, onTap }: { at: V3; size: number; lite: boolean; onTap?: (e: ThreeEvent<MouseEvent>) => void }) {
-  const { m, time } = useMemo(() => waterMaterial("#3a8fb2", 0.88), []);
+// (`murky`: a swamp's water, brown-green, for a water craft's trip through its channels)
+export function Sea({ at, size, lite, onTap, murky }: { at: V3; size: number; lite: boolean; onTap?: (e: ThreeEvent<MouseEvent>) => void; murky?: boolean }) {
+  const { m, time } = useMemo(() => waterMaterial(murky ? "#56603e" : "#3a8fb2", murky ? 0.94 : 0.88), [murky]);
   const geometry = useMemo(() => {
     const g = new THREE.PlaneGeometry(size, size, lite ? 90 : 200, lite ? 90 : 200);
     g.rotateX(-Math.PI / 2);
@@ -1283,12 +1307,12 @@ export function Sea({ at, size, lite, onTap }: { at: V3; size: number; lite: boo
       {/* the deep under it: dark, so that the water reads as deep */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[at[0], at[1] - 7, at[2]]} raycast={() => null}>
         <planeGeometry args={[size, size]} />
-        <meshBasicMaterial color="#0d3d52" />
+        <meshBasicMaterial color={murky ? "#1f2616" : "#0d3d52"} />
       </mesh>
       {/* and out to the horizon */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[at[0], at[1] - 0.03, at[2]]} raycast={() => null}>
         <ringGeometry args={[size * 0.49, 1200, 48, 1]} />
-        <meshPhongMaterial color="#1d6384" shininess={60} specular="#9cc8e8" />
+        <meshPhongMaterial color={murky ? "#434c30" : "#1d6384"} shininess={60} specular="#9cc8e8" />
       </mesh>
     </>
   );

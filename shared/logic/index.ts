@@ -7148,6 +7148,8 @@ export interface Vehicle {
 export interface PartyVehicle extends Vehicle {
   // The settlement it is parked at
   areaId: string;
+  // A water craft: the square of the place where it was moored ("Over the water"), cleared when it goes elsewhere
+  berth?: { x: number; y: number };
 }
 export const SEATS: Record<string, number> = { Speederbike: 2, Airspeeder: 4, Landspeeder: 6 };
 
@@ -7176,20 +7178,24 @@ export interface Ride {
   blocked?: string;
 }
 
-export function groundRides(args: { km: number; vehicles: PartyVehicle[]; companions: Companion[]; riders: number; transport: Transport; hire?: boolean | "remote"; transit?: boolean }): Ride[] {
+// `waterway`: the way is over open sea (no foot, beast or speeder of the land crosses it) or a swamp's channels (a water craft may go by them);
+// without one a water craft has no water to go on ("Over the water", house rules)
+export function groundRides(args: { km: number; vehicles: PartyVehicle[]; companions: Companion[]; riders: number; transport: Transport; hire?: boolean | "remote"; transit?: boolean; waterway?: "sea" | "marsh" }): Ride[] {
   const { km, vehicles, companions, riders, transport } = args;
   const rides: Ride[] = [];
+  const sea = args.waterway === "sea";
+  const overSea = sea ? { blocked: "open sea: a water craft or a water taxi (house rule)" } : {};
   const pace = transport.pace.find((p) => p.pace === "Normal")?.milesPerHour ?? 3;
-  rides.push({ id: "foot", label: "On foot", minutes: journeyMinutes(km / (pace * KM_PER_MILE)), fare: 0 });
+  rides.push({ id: "foot", label: "On foot", minutes: journeyMinutes(km / (pace * KM_PER_MILE)), fare: 0, ...overSea });
   const mounts = companions.filter((c) => c.mount && c.hp > 0);
   mounts.forEach((mount, i) => {
     // 30 ft. a round is the walking pace of 3 miles an hour, so a speed of N feet is N / 10 mph
     const mph = Math.max(1, mount.speed / 10);
     const twin = mounts.filter((m) => m.name === mount.name).length > 1;
-    rides.push({ id: `mount-${mount.id}`, label: `Riding ${mount.name}${twin ? ` (${mount.hp}/${mount.maxHp} hp)` : ""}`, minutes: journeyMinutes(km / (mph * KM_PER_MILE)), fare: 0, mountId: mount.id });
+    rides.push({ id: `mount-${mount.id}`, label: `Riding ${mount.name}${twin ? ` (${mount.hp}/${mount.maxHp} hp)` : ""}`, minutes: journeyMinutes(km / (mph * KM_PER_MILE)), fare: 0, mountId: mount.id, ...overSea });
   });
   for (const v of vehicles) {
-    const blocked = v.status === "wrecked" ? "wrecked: needs repair" : riders > v.seats ? `seats ${v.seats}, party of ${riders}` : undefined;
+    const blocked = v.status === "wrecked" ? "wrecked: needs repair" : riders > v.seats ? `seats ${v.seats}, party of ${riders}` : sea && !isWaterCraft(v) ? "a speeder of the land does not cross open sea (house rule)" : !args.waterway && isWaterCraft(v) ? "a water craft: no water on this route" : undefined;
     rides.push({ id: `vehicle-${v.id}`, label: v.name, minutes: Math.max(5, Math.round((km / (v.mph * KM_PER_MILE)) * 60)), fare: 0, vehicleId: v.id, ...(blocked ? { blocked } : {}) });
   }
   if (args.hire) {
@@ -7197,7 +7203,7 @@ export function groundRides(args: { km: number; vehicles: PartyVehicle[]; compan
     // House rule: a town's cab or a village's hauler. The hauler (outposts, villages) is dearer and
     // slower to find, 2 credits + 1 per 10 km in a town and double that out in the sticks
     const remote = args.hire === "remote";
-    rides.push({ id: "hired", label: remote ? "Hired hauler" : "Hired ride", minutes: Math.max(10, Math.round((km / (mph * KM_PER_MILE)) * 60) + (remote ? 40 : 10)), fare: (2 + Math.ceil(km / 10)) * (remote ? 2 : 1) });
+    rides.push({ id: "hired", label: sea ? "Water taxi" : remote ? "Hired hauler" : "Hired ride", minutes: Math.max(10, Math.round((km / (mph * KM_PER_MILE)) * 60) + (remote ? 40 : 10)), fare: (2 + Math.ceil(km / 10)) * (remote ? 2 : 1) });
   }
   // The transit line between two hubs: a fast mass-transit train that anyone may take, at a fare
   // far under a hired ride's (house rule: the books price no fares)
@@ -11560,7 +11566,8 @@ export interface PropHit { r?: number; box?: [number, number]; h: number; base?:
 export interface RaceProp { id: number; key: string; p: Vec3; yaw: number; scale: number; v: number; hit?: PropHit }
 // What a course is dressed with: the library's pieces for the world's trees, shrubs and boulders, and the shapes of every piece
 // `crossings`: what the land of the world puts across the course (see "Skies and landforms": a gorge, a hill, a river or lava under bridges)
-export interface RaceScenery { trees: string[]; shrubs: string[]; boulders: string[]; hits: Record<string, PropHit>; crossings?: CrossingKind[] }
+// `sea`: the course is over open water (a water craft's trip, "Over the water"): flat, marked by buoys, with rocks standing out of the sea
+export interface RaceScenery { trees: string[]; shrubs: string[]; boulders: string[]; hits: Record<string, PropHit>; crossings?: CrossingKind[]; sea?: boolean }
 export interface RaceGate { p: Vec3; yaw: number; half: number; s: number }
 export interface RaceRamp { p: Vec3; yaw: number; len: number; wid: number; h: number }
 // A ravine across a trail: `yaw` along the trail
@@ -11586,6 +11593,8 @@ export interface RaceTrack {
   // A road (2026-10-27, "On the road: the trip"): the course is a way from here to there, not a lap. `finish`: how far round the loop the last
   // gate (the end of the road) is; `block`: a roadblock across it, where (round the loop) and which props make it
   road?: { finish: number; block?: RoadBlockSite };
+  // Over open water (`RaceScenery` `sea`): the ground is the face of the water, level everywhere
+  sea?: boolean;
   extent: number; limit: number;
 }
 // A roadblock's place on its course: the props that make the barrier, the guards who stand by it (x, z, heading) and the speeders they keep at the
@@ -11766,6 +11775,7 @@ export function raceWater(track: RaceTrack, x: number, z: number): { level: numb
 // The land: the swells, hills rising away from the course on either side, a gorge's slot and a hill on the track, the ravines of the
 // trails, and (unless left out, for drawing the ground under them) the ramps
 function landAt(track: RaceTrack, x: number, z: number, ramps = true): number {
+  if (track.sea) return 0;
   let y = hillsAt(track.hills, x, z);
   const d = fieldAt(track, x, z);
   y += easeStep(track.width / 2 + 8, track.width / 2 + 98, d) * (8 + 5 * Math.sin(x * 0.009 + track.hills[4]) * Math.cos(z * 0.008 + track.hills[5]));
@@ -12038,7 +12048,9 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps,
     const cuts = shortcutsOf(flat, loopYaws(flat), loop.step, W);
     if (!pick || cuts.length > pick.cuts.length) pick = { length: loop.length, step: loop.step, flat, cuts };
   }
-  const { flat, cuts, step } = pick!;
+  const { flat, step } = pick!;
+  // (on open water there are no trails to cut through, nor ravines and jumps)
+  const cuts = scenery.sea ? [] : pick!.cuts;
   const loop = { length: pick!.length };
   const n = flat.length;
   const yaws = loopYaws(flat);
@@ -12052,7 +12064,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps,
     return [px + rx * lat, pz + rz * lat];
   };
   const track: RaceTrack = {
-    seed, laps, width: W, step, points, yaws, bends, length: loop.length, gates: [], ramps: [], dips: [], trails: [], props: [], hazards: [], marks: [], hills,
+    seed, laps, width: W, step, points, yaws, bends, length: loop.length, gates: [], ramps: [], dips: [], trails: [], props: [], hazards: [], marks: [], hills, ...(scenery.sea ? { sea: true } : {}),
     field: { x0: 0, z0: 0, cell: 6, n: 0, d: new Float32Array(0) }, extent: 0, limit: 0,
   };
   // The shortcuts' trails, every few metres along, each with a ramp at its middle and a ravine past the
@@ -12148,7 +12160,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps,
     return true;
   };
   const rampAt: number[] = [];
-  for (let tries = 0; tries < 400 && rampAt.length < 2; tries++) {
+  for (let tries = 0; tries < (scenery.sea ? 0 : 400) && rampAt.length < 2; tries++) {
     const s = 220 + r.next() * ((road ? roadEnd - 60 : loop.length) - 360);
     const i = atS(s);
     if (inTrail(s, 40) || near(s, used, 50) || near(s, rampAt, 300) || crossed(s, 60) || !straight(i, -Math.ceil(20 / step), Math.ceil(70 / step))) continue;
@@ -12256,7 +12268,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps,
       if (run < 3.6) continue;
       run = 0;
       const [x, z] = pointAt(i, outside(i) * (W / 2 + 3));
-      put("barrier", x, z, yaws[i], 1.8, { radius: 0.6, force: true });
+      put(scenery.sea ? "buoy" : "barrier", x, z, yaws[i], scenery.sea ? 1.6 : 1.8, { radius: 0.6, force: true });
     }
   }
   // The bridges' rails, on the deck along both edges
@@ -12307,7 +12319,7 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps,
         const i = atS((s + d + loop.length) % loop.length);
         for (const side of [-1, 1]) {
           const [x, z] = pointAt(i, side * (W / 2 + 3.2));
-          put(d === 0 ? "banner" : "lamp", x, z, yaws[i], d === 0 ? 2.2 : 2.4, { radius: 0.8 });
+          put(scenery.sea ? "buoy" : d === 0 ? "banner" : "lamp", x, z, yaws[i], scenery.sea ? 2.2 : d === 0 ? 2.2 : 2.4, { radius: 0.8 });
         }
       }
     }
@@ -12390,7 +12402,18 @@ export function raceCourse(seed: number, scenery: RaceScenery, laps = RACE.laps,
     }
   }
   scatter(scenery.trees, 320, W / 2 + 6, W / 2 + 170, 2.6, 3.8, 3.5, true);
-  scatter(scenery.boulders, 110, W / 2 + 3.5, W / 2 + 130, 1.4, 2.8, 2.5, false);
+  // (over the sea, buoys along both edges of the way, every 32 metres, and the rocks are islets and stacks standing out of the water)
+  if (scenery.sea) {
+    for (let s = 40; s < (road ? roadEnd : loop.length) - 20; s += 32) {
+      const i = atS(s);
+      if (inTrail(s, 10) || near(s, gateAt, 12)) continue;
+      for (const side of [-1, 1]) {
+        const [x, z] = pointAt(i, side * (W / 2 + 1.6));
+        put("buoy", x, z, yaws[i], 1.6, { radius: 0.8 });
+      }
+    }
+  }
+  scatter(scenery.boulders, scenery.sea ? 70 : 110, W / 2 + (scenery.sea ? 9 : 3.5), W / 2 + 130, scenery.sea ? 2.5 : 1.4, scenery.sea ? 6.5 : 2.8, scenery.sea ? 6 : 2.5, false);
   scatter(scenery.shrubs, 240, W / 2 + 2.5, W / 2 + 110, 1.8, 2.8, 1.8, false);
   // Rivals' marks for the hazards and props on the track were set above; the time allowed is generous
   track.limit = Math.ceil(((road ? roadEnd : laps * loop.length)) / 22) + 60 + (road?.block ? 60 : 0);
@@ -13571,6 +13594,24 @@ export function deckSquares(plan: Pick<DistrictPlan, "boxes" | "grounds">, ancho
     fill(p.x - 1, p.y - 1, p.x + 1, p.y + 1);
   }
   return out;
+}
+// ---- Over the water (2026-10-30, the user: "water and subaquatic transports"; HOUSE RULES, the books give no travel by sea). Between two
+// places of an ocean world that stand on the sea or under it there is no road: the way is open water. Nobody walks or rides a beast over it,
+// and a speeder of the land does not cross it (its repulsors are made for the ground, not for open sea and spray); a water craft
+// (`WATER_LOOKS`) does, and a ride for hire is a water taxi. A trip by water craft is driven as legs of open water (`planTrip` `water`;
+// the course `RaceScenery` `sea`), marked by buoys, with no roadblock; on a swamp world a water craft goes by the channels and lakes the
+// same way. In a place on the sea the party's water craft is moored at the decking, and taken out and steered on the water (the party at
+// its helm, three times the walking pace); a submersible (`SUBMERSIBLE_LOOKS`) carries its crew in air under the sea, and into a place
+// under it.
+export const isWaterCraft = (v?: { look?: string } | null) => !!v?.look && WATER_LOOKS.has(v.look);
+export const isSubmersible = (v?: { look?: string } | null) => !!v?.look && SUBMERSIBLE_LOOKS.has(v.look);
+export const HELM_PACE = 3;
+// The water the way between two places of one planet goes over, if any: open sea on an ocean world (between its places on the sea, under
+// it, and its islands' wild places alike), a swamp's channels on a swamp world (only a water craft takes those)
+export function waterwayOf(world: World, fromId: string, toId: string): "sea" | "marsh" | undefined {
+  const planet = ancestor(world, toId, "planet");
+  if (!planet || ancestor(world, fromId, "planet")?.id !== planet.id) return undefined;
+  return planet.type === "ocean" ? "sea" : planet.type === "swamp" ? "marsh" : undefined;
 }
 // A swimmer's pace as a share of its walking pace: its own swimming speed where it has one ("swim 30 ft."), else half (house rule, from
 // the Handbook's extra foot of movement for each foot swum)

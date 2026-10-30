@@ -39,7 +39,9 @@ export type MapAction =
   | { type: "place"; areaId: string; x: number; y: number; face: number; indoors: boolean }
   | { type: "piece"; id: string }
   // A cart (a hovercart) tapped on the map
-  | { type: "cart"; id: string };
+  | { type: "cart"; id: string }
+  // The party's water craft moored at a square of a place on the water, the party stepping ashore (shared/logic "Over the water")
+  | { type: "moor"; id: string; x: number; y: number };
 
 // When the finger last came down (or the mouse button went down). A busy phone delivers the
 // click of a tap late, so two taps are timed from when they began, not from their clicks.

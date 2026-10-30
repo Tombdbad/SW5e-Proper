@@ -6,11 +6,11 @@ import * as THREE from "three";
 import {
   createRandom, flightCourse, flightStart, groundAt, inRing, raceCourse, raceDistance, raceLap, raceNextGate, raceOrder, raceResult, raceStart, raceWater, skyLook, stepFlight, stepRace, chaseStart, chaseResult, roadStart, roadAt, settleBlock,
   CROSSING, RACE, RACE_MODEL_SCALE, SPEEDER_BODY,
-  type Craft, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type RaceRamp, type RaceTrack, type SpeederKind, type Vec3,
+  type Craft, type FlightCourse, type FlightInput, type FlightMode, type Hazard, type Race, type RaceEvent, type RaceGate, type RaceInput, type RaceRamp, type Racer, type RaceTrack, type SpeederKind, type Vec3,
 } from "@shared/logic";
 import { ShipModel, SpeederModel } from "./LocalMap";
 import { Model, shade, type Kit } from "./models";
-import { Scatter, raceScenery, useQuality, type Placed } from "./siteAssets";
+import { Scatter, Sea, raceScenery, useQuality, type Placed } from "./siteAssets";
 import { WorldSky } from "./scenery";
 import { settleStop, type Block, type StopChoice } from "@shared/logic/roadtrip";
 import type { Dogfight } from "@shared/logic/dogfight";
@@ -35,7 +35,8 @@ export type Minigame =
   // A leg of a road trip (shared/logic/roadtrip.ts): open road to its last gate, in the ground of its own biome; `intro` is what the countdown says,
   // `hull` what the party carries from the legs before, `mate` its crewmate (who drives while the party is at the gun), `block` a roadblock across it
   // (and what the party can say to it: the bonuses of Persuasion and Deception), `riders` the riders after the party
-  | { kind: "road"; title: string; seed: number; vehicle: string; biome: string; leg: { i: number; n: number }; intro: string[]; hull?: number; mate?: { name: string; pace: number }; block?: Block; riders?: { name: string; model: string }[]; who?: string; talk: { persuasion: number; deception: number }; credits: number }
+  // (`water`: a water craft's leg over open water, shared/logic "Over the water"; `look`: its make's model)
+  | { kind: "road"; title: string; seed: number; vehicle: string; biome: string; leg: { i: number; n: number }; intro: string[]; hull?: number; mate?: { name: string; pace: number }; block?: Block; riders?: { name: string; model: string }[]; who?: string; talk: { persuasion: number; deception: number }; credits: number; water?: boolean; look?: string }
   | ({ kind: "dogfight" } & DogfightSpec);
 
 export type MinigameResult =
@@ -61,8 +62,8 @@ function chase(camera: THREE.Camera, craft: Craft, back: number, lift: number, d
 }
 
 // A speeder, drawn nose along the craft's heading
-function Speeder({ model, wrecked }: { model: string; wrecked?: boolean }) {
-  return <group rotation={[0, Math.PI / 2, 0]}><SpeederModel model={model} wrecked={wrecked} /></group>;
+function Speeder({ model, wrecked, look }: { model: string; wrecked?: boolean; look?: string }) {
+  return <group rotation={[0, Math.PI / 2, 0]}><SpeederModel model={model} wrecked={wrecked} look={look} /></group>;
 }
 // A ship of the party or a foe, centred on its origin and nose along the heading
 function Ship({ size, role, scale = 0.5 }: { size: string; role: string; scale?: number }) {
@@ -680,12 +681,12 @@ function Guards({ track, guards, who }: { track: RaceTrack; guards?: { gone: boo
 
 // A racer: its model and pilot (the box's middle is the racer's place, the model's origin behind or
 // ahead of it), and the flame of its engines while it boosts
-function RacerModel({ model, kind, wrecked, suit, flame, gunner, gun, empty }: { model: string; kind: SpeederKind; wrecked: boolean; suit: string; flame: (el: THREE.Mesh | null) => void; gunner?: string; gun?: (el: THREE.Group | null) => void; empty?: boolean }) {
+function RacerModel({ model, look, kind, wrecked, suit, flame, gunner, gun, empty }: { model: string; look?: string; kind: SpeederKind; wrecked: boolean; suit: string; flame: (el: THREE.Mesh | null) => void; gunner?: string; gun?: (el: THREE.Group | null) => void; empty?: boolean }) {
   const body = SPEEDER_BODY[kind];
   return (
     <>
       <group position={[-body.ahead, 0, 0]} scale={RACE_MODEL_SCALE}>
-        <Speeder model={model} wrecked={wrecked} />
+        <Speeder model={model} look={look} wrecked={wrecked} />
         {!wrecked && !empty && <Model id={`race:pilot:${kind}:${suit}`} build={(k) => buildPilot(k, kind, suit)} />}
         {!wrecked && gunner && (
           <>
@@ -773,7 +774,7 @@ function Sparks({ queue }: { queue: { current: RaceEvent[] } }) {
 
 // A race: the world, the racers on the grid, the race stepped each frame once the countdown is done, and
 // the chase camera (wider while boosting, shaken by a hit)
-function RaceGame({ track, race0, biome, go, input, onFinish, onFrame, pause, act, onStop, gunner, remote }: { track: RaceTrack; race0: Race; biome: string; go: { current: boolean }; input: { current: RaceInput }; onFinish: (race: Race) => void; onFrame: (race: Race) => void; pause?: { current: boolean }; act?: { current: ((how: "open" | "run") => void) | null }; onStop?: (race: Race) => void; gunner?: boolean; remote?: boolean }) {
+function RaceGame({ track, race0, biome, look: partyLook, go, input, onFinish, onFrame, pause, act, onStop, gunner, remote }: { track: RaceTrack; race0: Race; biome: string; look?: string; go: { current: boolean }; input: { current: RaceInput }; onFinish: (race: Race) => void; onFrame: (race: Race) => void; pause?: { current: boolean }; act?: { current: ((how: "open" | "run") => void) | null }; onStop?: (race: Race) => void; gunner?: boolean; remote?: boolean }) {
   const raceRef = useRef<Race>(race0);
   const gunRef = useRef<THREE.Group | null>(null);
   const lastSnap = useRef<unknown>(null);
@@ -800,7 +801,9 @@ function RaceGame({ track, race0, biome, go, input, onFinish, onFrame, pause, ac
   const sky = useMemo(() => skyLook(biome, track.seed), [biome, track.seed]);
   const lite = useQuality((q) => q.tier === "lite");
   const chequer = useChequer();
-  const cover = useMemo(() => raceScenery(biome).cover, [biome]);
+  const cover = useMemo(() => raceScenery(biome, !!track.sea).cover, [biome, track]);
+  // Over open water the party's craft is its make, and those after it ride hydrospeeders (a bike's body) or bongos
+  const lookOf = (racer: Racer) => (racer.party ? partyLook : track.sea ? (racer.kind === "bike" ? "hydro" : "bongo") : undefined);
   const ahead = useMemo(() => new THREE.Vector3(), []);
   const behind = useMemo(() => new THREE.Vector3(), []);
   const party = race0.racers.findIndex((racer) => racer.party);
@@ -945,9 +948,15 @@ function RaceGame({ track, race0, biome, go, input, onFinish, onFrame, pause, ac
       <hemisphereLight args={[look.zenith, look.ground, 0.55]} />
       <ambientLight intensity={0.35} />
       <directionalLight position={[120, 220, 80]} intensity={1.1} />
-      <RaceGround track={track} look={look} />
-      <RaceRivers track={track} />
-      <RaceRibbons track={track} look={look} />
+      {track.sea ? (
+        <Sea at={[0, 0, 0]} size={(track.extent + 220) * 2} lite={lite} murky={biome === "swamp"} />
+      ) : (
+        <>
+          <RaceGround track={track} look={look} />
+          <RaceRivers track={track} />
+          <RaceRibbons track={track} look={look} />
+        </>
+      )}
       {track.gates.map((g, i) => <Gate key={i} gate={g} first={i === 0 || (!!track.road && i === track.gates.length - 1)} lit={i === next} chequer={chequer} track={track} />)}
       {track.ramps.map((ramp, i) => <RampModel key={i} ramp={ramp} track={track} />)}
       <Hazards track={track} hazards={snap.hazards} />
@@ -955,7 +964,7 @@ function RaceGame({ track, race0, biome, go, input, onFinish, onFrame, pause, ac
       {race0.racers.map((racer, i) => (
         <group key={racer.id}>
           <group ref={(el) => { racerRefs.current[i] = el; if (el) el.rotation.order = "YZX"; }}>
-            <RacerModel model={racer.model} kind={racer.kind} wrecked={snap.racers[i].wrecked} suit={racer.hostile || racer.idle ? riderSuit(race0.chase?.who ?? race0.block?.who ?? "") : SUITS[racer.id % SUITS.length]} flame={(el) => { flameRefs.current[i] = el; }} gunner={racer.party && gunner ? "#4a5a7a" : undefined} gun={racer.party ? (el) => { gunRef.current = el; } : undefined} empty={!!snap.racers[i].idle} />
+            <RacerModel model={racer.model} look={lookOf(racer)} kind={racer.kind} wrecked={snap.racers[i].wrecked} suit={racer.hostile || racer.idle ? riderSuit(race0.chase?.who ?? race0.block?.who ?? "") : SUITS[racer.id % SUITS.length]} flame={(el) => { flameRefs.current[i] = el; }} gunner={racer.party && gunner ? "#4a5a7a" : undefined} gun={racer.party ? (el) => { gunRef.current = el; } : undefined} empty={!!snap.racers[i].idle} />
           </group>
           <group ref={(el) => { shadowRefs.current[i] = el; }}>
             <mesh rotation={[-Math.PI / 2, 0, 0]} scale={[SPEEDER_BODY[racer.kind].half[0] * 0.95, SPEEDER_BODY[racer.kind].half[1] * 1.05 + 0.15, 1]}>
@@ -1125,14 +1134,15 @@ function RoadHud({ race, game, track, seat, toast }: { race: Race; game: Extract
     </>
   );
 }
-const roadHeadline = (r: Extract<MinigameResult, { kind: "road" }>) => {
+// (`water`: a crossing over open water)
+const roadHeadline = (r: Extract<MinigameResult, { kind: "road" }>, water = false) => {
   const me = r.race.racers.find((x) => x.party)!;
   if (r.race.chase && chaseResult(r.race).outcome === "caught") return "They have caught you.";
-  return me.finish !== null ? "The road ends here: you are through." : me.wrecked ? "Your speeder is wrecked." : "Out of time on the road.";
+  return me.finish !== null ? (water ? "The last buoy: you are through." : "The road ends here: you are through.") : me.wrecked ? `Your ${water ? "craft" : "speeder"} is wrecked.` : `Out of time on the ${water ? "water" : "road"}.`;
 };
-const roadNote = (r: Extract<MinigameResult, { kind: "road" }>) => {
+const roadNote = (r: Extract<MinigameResult, { kind: "road" }>, water = false) => {
   const me = r.race.racers.find((x) => x.party)!;
-  return [me.finish !== null ? `${raceClock(me.finish)} on the road` : "", `hull ${me.hull} of ${me.hullMax}`, r.stop?.note ?? "", r.race.chase ? chaseResult(r.race).note : ""].filter(Boolean).join("; ");
+  return [me.finish !== null ? `${raceClock(me.finish)} on the ${water ? "water" : "road"}` : "", `hull ${me.hull} of ${me.hullMax}`, r.stop?.note ?? "", r.race.chase ? chaseResult(r.race).note : ""].filter(Boolean).join("; ");
 };
 function RaceHud({ race, toast }: { race: Race; toast: string }) {
   const me = race.racers.find((r) => r.party)!;
@@ -1193,7 +1203,7 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
   const gameKey = game.kind === "dogfight" ? "dogfight" : `${game.kind}|${game.seed}|${game.kind === "road" ? `${game.leg.i}|${game.hull}|${game.riders?.length ?? 0}` : ""}`;
   const course = useMemo(() => (game.kind === "run" ? flightCourse(game.seed, game.mode, { count: game.count }) : null), [gameKey]);
   const biome = game.kind === "race" || game.kind === "chase" || game.kind === "road" ? game.biome ?? "temperate" : "temperate";
-  const track = useMemo(() => (game.kind === "race" ? raceCourse(game.seed, raceScenery(biome)) : game.kind === "chase" ? raceCourse(game.seed, raceScenery(biome), 1, undefined, true) : game.kind === "road" ? raceCourse(game.seed, raceScenery(biome), 1, { block: !!game.block }) : null), [gameKey, biome]);
+  const track = useMemo(() => (game.kind === "race" ? raceCourse(game.seed, raceScenery(biome)) : game.kind === "chase" ? raceCourse(game.seed, raceScenery(biome), 1, undefined, true) : game.kind === "road" ? raceCourse(game.seed, raceScenery(biome, !!game.water), 1, { block: !!game.block }) : null), [gameKey, biome]);
   const race0 = useMemo(() => (game.kind === "race" && track ? raceStart(track, game.seed, game.vehicle, RACE_RIVAL_MODELS) : game.kind === "chase" && track ? chaseStart(track, game.seed, game.vehicle, game.riders, game.who) : game.kind === "road" && track ? roadStart(track, game.seed, game.vehicle, { riders: game.riders, who: game.who, mate: game.mate, hull: game.hull, block: game.block ? { who: game.block.who, model: game.block.model } : undefined }) : null), [gameKey, track]);
   const driven = game.kind === "race" || game.kind === "chase" || game.kind === "road";
   const [count, setCount] = useState(game.kind === "road" ? 4 : 5);
@@ -1350,7 +1360,7 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
         )}
         {driven && track && race0 && (
           <Canvas camera={{ position: [0, 6, -12], fov: 62, near: 0.3, far: 2400 }} dpr={[1, 1.5]} onCreated={({ gl }) => gl.setClearColor(raceLook(biome).sky)}>
-            <RaceGame track={track} race0={race0} biome={biome} go={go} input={input} onFinish={(race) => finish(game.kind === "chase" ? { kind: "chase", race } : game.kind === "road" ? { kind: "road", race, metres: track.road?.finish ?? 0, stop: stopResult.current ?? (race.block?.state === "ran" || race.block?.state === "run" ? { outcome: "run", paid: 0, note: "You ran the roadblock" } : undefined) } : { kind: "race", race })} onFrame={onRace} pause={pause} act={act} onStop={() => game.kind === "road" && game.block && setStopped({ note: "", raised: false, talked: false })} gunner={!!coop?.gunner} />
+            <RaceGame track={track} race0={race0} biome={biome} look={game.kind === "road" ? game.look : undefined} go={go} input={input} onFinish={(race) => finish(game.kind === "chase" ? { kind: "chase", race } : game.kind === "road" ? { kind: "road", race, metres: track.road?.finish ?? 0, stop: stopResult.current ?? (race.block?.state === "ran" || race.block?.state === "run" ? { outcome: "run", paid: 0, note: "You ran the roadblock" } : undefined) } : { kind: "race", race })} onFrame={onRace} pause={pause} act={act} onStop={() => game.kind === "road" && game.block && setStopped({ note: "", raised: false, talked: false })} gunner={!!coop?.gunner} />
           </Canvas>
         )}
         {game.kind === "dogfight" && <DogfightGame spec={game} go={go} controls={!counting && !finished} shell={page} onFinish={(state) => finish({ kind: "dogfight", state })} />}
@@ -1409,9 +1419,9 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
         )}
         {finished && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/70 p-4 text-center" data-testid="minigame-over">
-            <p className="text-lg font-semibold text-yellow-300">{finished.kind === "road" ? roadHeadline(finished) : finished.kind === "race" ? "The race is over." : finished.kind === "chase" ? (chaseResult(finished.race).outcome === "caught" ? "They have caught you." : "You are clear of them.") : finished.kind === "dogfight" ? dogfightHeadline(finished.state) : "The run is over."}</p>
+            <p className="text-lg font-semibold text-yellow-300">{finished.kind === "road" ? roadHeadline(finished, game.kind === "road" && !!game.water) : finished.kind === "race" ? "The race is over." : finished.kind === "chase" ? (chaseResult(finished.race).outcome === "caught" ? "They have caught you." : "You are clear of them.") : finished.kind === "dogfight" ? dogfightHeadline(finished.state) : "The run is over."}</p>
             {finished.kind === "chase" && <p className="max-w-md text-sm text-sky-100" data-testid="chase-result">{chaseResult(finished.race).note}</p>}
-            {finished.kind === "road" && <p className="max-w-md text-sm text-sky-100" data-testid="road-result">{roadNote(finished)}</p>}
+            {finished.kind === "road" && <p className="max-w-md text-sm text-sky-100" data-testid="road-result">{roadNote(finished, game.kind === "road" && !!game.water)}</p>}
             {finished.kind === "dogfight" && <p className="max-w-md text-sm text-sky-100" data-testid="dogfight-result">{dogfightPayout(finished.state).note}: {dogfightPayout(finished.state).credits} cr</p>}
             {finished.kind === "race" && (
               <div className="text-sm text-sky-100" data-testid="race-result">
@@ -1447,7 +1457,7 @@ export function RoadRide({ gunner, gunnerAboard, pilotName }: { gunner: boolean;
   const go = useRef(true);
   const biome = game?.biome ?? "temperate";
   const key = game ? `${game.seed}|${game.leg.i}|${game.hull}|${game.riders?.length ?? 0}` : "";
-  const track = useMemo(() => (game ? raceCourse(game.seed, raceScenery(biome), 1, { block: !!game.block }) : null), [key, biome]);
+  const track = useMemo(() => (game ? raceCourse(game.seed, raceScenery(biome, !!game.water), 1, { block: !!game.block }) : null), [key, biome]);
   const race0 = useMemo(() => (game && track ? roadStart(track, game.seed, game.vehicle, { riders: game.riders, who: game.who, mate: undefined, hull: game.hull, block: game.block ? { who: game.block.who, model: game.block.model } : undefined }) : null), [key, track]);
   const latest = useRef<Race | undefined>(undefined);
   const [race, setRace] = useState<Race | undefined>(undefined);
@@ -1492,7 +1502,7 @@ export function RoadRide({ gunner, gunnerAboard, pilotName }: { gunner: boolean;
       <div className="relative flex-1 overflow-hidden">
         {game && track && race0 && (
           <Canvas camera={{ position: [0, 6, -12], fov: 62, near: 0.3, far: 2400 }} dpr={[1, 1.5]} onCreated={({ gl }) => gl.setClearColor(raceLook(biome).sky)}>
-            <RaceGame key={key} track={track} race0={race0} biome={biome} go={go} input={input} onFinish={() => {}} onFrame={(r) => { latest.current = r; }} gunner={gunnerAboard} remote />
+            <RaceGame key={key} track={track} race0={race0} biome={biome} look={game?.look} go={go} input={input} onFinish={() => {}} onFrame={(r) => { latest.current = r; }} gunner={gunnerAboard} remote />
           </Canvas>
         )}
         {game && track && race && <RoadHud race={race} game={{ ...game, mate: undefined }} track={track} seat="gunner" toast="" />}

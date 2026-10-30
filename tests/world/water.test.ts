@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { deckSquares, generateWorld, planBuilding, swimPace, waterOf, childrenOf, type Area } from "@shared/logic";
+import { deckSquares, generateWorld, groundAt, groundRides, planBuilding, raceCourse, swimPace, waterOf, waterwayOf, childrenOf, type Area, type RaceScenery, type World } from "@shared/logic";
+import { planTrip } from "@shared/logic/roadtrip";
 import { getWorldCatalog } from "../../server/sw5eData";
 
 // Water worlds and caves under the ground (2026-10-30; shared/logic "Water worlds", levelsOf, linkLevels)
@@ -62,4 +63,58 @@ test("an ocean world's places stand on the sea or under it; a cave goes down und
   }
   assert.ok(caves > 0, "some caves were planned");
   console.log(`places on the sea ${sea}, under it ${under}, caves ${caves}`);
+});
+
+// Over the water (2026-10-30; shared/logic "Over the water", house rules): the rides over open sea, a water craft's trip, its course
+const transport = { pace: [{ pace: "Normal", milesPerHour: 3 }], vehicles: [{ name: "Landspeeder", mph: 220 }] } as unknown as Parameters<typeof groundRides>[0]["transport"];
+const craft = (id: string, look: string) => ({ id, name: id, model: "Landspeeder", mph: 220, value: 1, status: "parked" as const, owner: "party", seats: 4, look, areaId: "s" });
+
+test("over open sea only a water craft or a water taxi goes; a water craft goes on no road", () => {
+  const vehicles = [craft("bongo", "bongo"), craft("x34", "x34")];
+  const sea = groundRides({ km: 30, vehicles, companions: [], riders: 1, transport, hire: true, waterway: "sea" });
+  assert.ok(sea.find((r) => r.id === "foot")?.blocked, "nobody walks over the sea");
+  assert.equal(sea.find((r) => r.vehicleId === "bongo")?.blocked, undefined);
+  assert.match(sea.find((r) => r.vehicleId === "x34")?.blocked ?? "", /open sea/);
+  assert.equal(sea.find((r) => r.id === "hired")?.label, "Water taxi");
+  const road = groundRides({ km: 30, vehicles, companions: [], riders: 1, transport });
+  assert.match(road.find((r) => r.vehicleId === "bongo")?.blocked ?? "", /no water/);
+  assert.equal(road.find((r) => r.vehicleId === "x34")?.blocked, undefined);
+  const marsh = groundRides({ km: 30, vehicles, companions: [], riders: 1, transport, waterway: "marsh" });
+  assert.ok(marsh.every((r) => !r.blocked), "a swamp's channels: both go");
+});
+
+test("between two places of an ocean world the way is open sea, and a water craft's trip is legs of open water with no roadblock", () => {
+  // (a world of an ocean planet, its way in and another town on the water and a ruin on an island, a swamp world and a desert world, two places each)
+  const area = (id: string, kind: string, type: string, parentId?: string, extra: Record<string, unknown> = {}) => ({ id, kind, type, name: id, parentId, tags: [], occupants: [], ships: [], loot: [], position: { x: 0, y: 0, z: 0 }, danger: 0, ...extra });
+  const world = {
+    era: "galactic-civil-war", antagonist: "Black Sun", paths: [],
+    areas: Object.fromEntries([
+      area("g", "galaxy", "galaxy"), area("r", "region", "Wild Space", "g", { name: "Wild Space" }), area("y", "system", "star", "r"),
+      area("p", "planet", "ocean", "y", { faction: "Hutt Cartel" }), area("s1", "settlement", "town", "p", { gateway: true }), area("s2", "settlement", "town", "p"), area("ru", "settlement", "ruins", "p"),
+      area("w", "planet", "swamp", "y"), area("w1", "settlement", "town", "w"), area("w2", "settlement", "outpost", "w"),
+      area("d", "planet", "desert", "y"), area("d1", "settlement", "town", "d"), area("d2", "settlement", "outpost", "d"),
+    ].map((a) => [a.id, a])),
+  } as unknown as World;
+  assert.equal(waterOf(world, "s1"), "sea", "the way in is on the sea");
+  assert.ok(waterOf(world, "s2"));
+  assert.equal(waterwayOf(world, "s1", "s2"), "sea");
+  assert.equal(waterwayOf(world, "s1", "ru"), "sea", "an island's ruin is over the sea too");
+  assert.equal(waterwayOf(world, "w1", "w2"), "marsh");
+  assert.equal(waterwayOf(world, "d1", "d2"), undefined);
+  assert.equal(waterwayOf(world, "s1", "d1"), undefined, "another planet is no way over the water");
+  const legs = planTrip(world, "s2", { km: 30, biome: "ocean", level: 5, seed: 9, always: "both", water: true });
+  assert.ok(legs.every((l) => l.biome === "ocean" && !l.block), "open water, no roadblock");
+  assert.ok(legs.some((l) => l.ambush), "the ambush still comes");
+});
+
+test("a water craft's course is open water: level, buoyed, no jumps or trails", () => {
+  const scenery: RaceScenery = { trees: [], shrubs: [], boulders: ["sea_stack"], crossings: [], sea: true, hits: { buoy: { r: 0.36, h: 1.5 }, sea_stack: { r: 0.85, h: 2.6 }, crate_stack: { box: [0.55, 0.45], h: 1, breaks: true, mass: 0.15 }, gate: { r: 0.4, h: 8 } } };
+  for (const seed of [4, 17]) {
+    const track = raceCourse(seed, scenery, 1, {});
+    assert.ok(track.sea);
+    assert.equal(track.ramps.length + track.dips.length + track.trails.length, 0);
+    for (const [x, z] of [[0, 0], [120, -80], [-300, 210]]) assert.equal(groundAt(track, x, z), 0);
+    assert.ok(track.props.filter((pr) => pr.key === "buoy").length > 20, "buoys mark the way");
+    assert.ok(track.road && track.road.finish > 500);
+  }
 });

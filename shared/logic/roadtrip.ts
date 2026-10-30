@@ -9,6 +9,7 @@
 // not the last. At the roadblock the party stops (or rams it), and it pays, talks its way through or runs: running brings the roadblock's riders
 // after it on the next leg. A crewmate (a companion) either drives while the party is at the gun, or the party drives and the crewmate fires.
 // The trip's time is the ride's, quicker for a clean drive and slower for a wrecked one. Pure: the dice are `createRandom`'s.
+// By water craft (`water`, 2026-10-30, shared/logic "Over the water"): every leg is open water of the planet's own kind, with no roadblock.
 // ---------------------------------------------------------------------------------------------
 import { createRandom, eraOf, lawAt, roadAmbush, type RoadAmbush, type World } from "./index";
 
@@ -40,7 +41,7 @@ export interface Leg {
 }
 
 // The legs of a trip: ground by leg (the planet's own at both ends), the ambush on one of the later legs and a roadblock on one before the last
-export function planTrip(world: World, toId: string, o: { km: number; biome: string; level: number; alignment?: string; wanted?: boolean; seed: number; always?: "ambush" | "block" | "both" }): Leg[] {
+export function planTrip(world: World, toId: string, o: { km: number; biome: string; level: number; alignment?: string; wanted?: boolean; seed: number; always?: "ambush" | "block" | "both"; water?: boolean }): Leg[] {
   const r = createRandom(o.seed);
   const n = legCount(o.km);
   const home = BIOME_LINKS[o.biome] ? o.biome : "temperate";
@@ -49,7 +50,7 @@ export function planTrip(world: World, toId: string, o: { km: number; biome: str
   const joins = (b: string) => b === home || BIOME_LINKS[home].includes(b);
   for (let i = 0; i < n; i++) {
     const last = biomes[i - 1] ?? home;
-    if (i === 0 || (i === n - 1 && n > 2)) biomes.push(home);
+    if (i === 0 || (i === n - 1 && n > 2) || o.water) biomes.push(home);
     else {
       const next = r.next() < 0.7 ? BIOME_LINKS[last].filter((b) => b !== last) : [last];
       const fit = i === n - 2 && n > 2 ? next.filter(joins) : next;
@@ -61,7 +62,7 @@ export function planTrip(world: World, toId: string, o: { km: number; biome: str
   const ambush = roadAmbush(world, toId, { alignment: o.alignment, wanted: o.wanted, seed: o.seed ^ 0x5bd1e995, always: o.always === "ambush" || o.always === "both" });
   const law = lawAt(world, toId);
   const blockChance = Math.min(0.6, (law >= 2 ? 0.12 + 0.1 * (law - 2) : 0.08 + 0.05 * (2 - law)) + (o.wanted ? 0.3 : 0));
-  const block = o.always === "block" || o.always === "both" || r.next() < blockChance;
+  const block = !o.water && (o.always === "block" || o.always === "both" || r.next() < blockChance);
   const blockLeg = block ? Math.floor(r.next() * (n - 1)) : -1;
   if (blockLeg >= 0) {
     const authority = law >= 2 || (law === 1 && r.next() < 0.5);

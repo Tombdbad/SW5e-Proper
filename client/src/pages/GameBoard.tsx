@@ -93,6 +93,7 @@ import {
   partsPlaceAt, partsStock, fitShipPart, wreckParts, droidPartsStock, droidDisplay, droidListed, surgeonStock, modStock, MOD_TRADES, WARES, baseNameOf, modFee, modFitProblem, MOD_FIT_HOURS, blueprintPool, type SurgeonLine, type ModLine,
   ammoFamilyOf, ammoItemFamily, ammoRider, accessoryOf, reloadOf, GENERATOR_SHOTS, PLAIN_ROUND, waterSpeed, armorTraits, stealthMode, rigidDex, type AmmoRider,
   passDays, FORAGE_DC, HOT_LANDS, liquidOf, foodOf, GEAR, type Supplies,
+  waterOf, waterwayOf, isWaterCraft, isSubmersible,
   hazardsAt, gravityOf, jumpReach, fallPlan, fallOutcome, type FallGear, exposure, HAZARD_HOUR, suitOf, airOf, breathRule, type Protections, type EnvHazard,
   loadOf, containerOf, weightOf, isContraband, shipModNamed, shipModEffects, modCost, modDays, crewModPlan, crewEquipmentPlan, tierUpgrade, yardWorkforce, equipmentCost, equipmentDays, equipmentWorkforce,
   roleShip, enhancedShipPart, type ShipPart, type PartLine, type ShipModInstance,
@@ -101,6 +102,8 @@ import {
 
 // What the character is in the middle of, kept with the character (`playState`)
 interface PlayState {
+  // At the helm of the party's water craft (its id), out on the water of a place on the sea or under it (shared/logic "Over the water")
+  afloat?: string;
   // Uses of the kit that is open, by item name
   charges?: Record<string, number>;
   // The tool's special use prepared at the last rest, for one thing before the next
@@ -551,8 +554,8 @@ export default function GameBoard() {
     // The party's own ships stand in the berths they have left empty
     const present = withPartyShips(withPresence(world, clock), Array.isArray(campaign?.starships) ? campaign.starships : []);
     const all: Companion[] = character?.companionData?.party ?? [];
-    return Object.assign(present, { party: all.filter((c) => c.kind !== "beast"), beasts: [...(character?.companionData?.beasts ?? []), ...all.filter((c) => c.kind === "beast")], riding: character?.companionData?.riding as string | undefined, parked: campaign?.vehicles ?? [], starships: Array.isArray(campaign?.starships) ? campaign.starships : [], carts: ((character?.companionData?.carts ?? []) as Cart[]).map((c) => ({ ...c, handler: c.parked ? null : cartHandler(c, [...all, ...(character?.companionData?.beasts ?? [])]) })) });
-  }, [world, clock, character?.companionData, campaign?.vehicles, campaign?.starships]);
+    return Object.assign(present, { party: all.filter((c) => c.kind !== "beast"), beasts: [...(character?.companionData?.beasts ?? []), ...all.filter((c) => c.kind === "beast")], riding: character?.companionData?.riding as string | undefined, afloat: character?.playState?.afloat as string | undefined, parked: campaign?.vehicles ?? [], starships: Array.isArray(campaign?.starships) ? campaign.starships : [], carts: ((character?.companionData?.carts ?? []) as Cart[]).map((c) => ({ ...c, handler: c.parked ? null : cartHandler(c, [...all, ...(character?.companionData?.beasts ?? [])]) })) });
+  }, [world, clock, character?.companionData, character?.playState?.afloat, campaign?.vehicles, campaign?.starships]);
   const hereNow: Area | null = scene && hereId ? scene.areas[hereId] ?? null : null;
 
   // Let time pass: the clock moves on and the new time goes with the next save
@@ -923,7 +926,8 @@ export default function GameBoard() {
   // A pilot's route being driven, between two settlements, as a trip of legs of open road (shared/logic/roadtrip.ts; see travel): the legs, the one
   // being driven, the hull carried on, the time each took, the riders of the ambushes of its legs (and of a roadblock that was run, after the party on
   // the next leg), and whether the party is being asked what it does about an ambush before the leg begins
-  const [trip, setTrip] = useState<{ exit: Exit; ride: Ride; legs: Leg[]; i: number; hull: number; took: LegTime[]; riders: Occupant[][]; pursuit: { a: RoadAmbush; riders: Occupant[] } | null; phase: "ask" | "drive"; vehicle: string; seed: number } | null>(null);
+  // (`water`: by water craft, its look)
+  const [trip, setTrip] = useState<{ exit: Exit; ride: Ride; legs: Leg[]; i: number; hull: number; took: LegTime[]; riders: Occupant[][]; pursuit: { a: RoadAmbush; riders: Occupant[] } | null; phase: "ask" | "drive"; vehicle: string; seed: number; water?: string } | null>(null);
   driving.current = !!trip;
   // An ambush on the road (shared/logic "On the road", house rules): the trip it stopped, who and why, the riders as people to fight, and
   // whether the party is running for it (the chase)
@@ -947,9 +951,11 @@ export default function GameBoard() {
       // (the test build's switches: localStorage sw5e.ambush = 1 ambushes every trip, sw5e.roadblock = 1 puts a roadblock on every one)
       const flag = (key: string) => TEST_MENU && (() => { try { return localStorage.getItem(key) === "1"; } catch { return false; } })();
       const always = flag("sw5e.ambush") && flag("sw5e.roadblock") ? "both" : flag("sw5e.ambush") ? "ambush" : flag("sw5e.roadblock") ? "block" : undefined;
-      const legs = planTrip(world, exit.to, { km: kmOf(exit.travel) ?? 0, biome: String(trailOf(world, exit.to).find((a) => a.kind === "planet")?.type ?? "temperate"), level, alignment: side, wanted: !!world.pursuit, seed, always });
+      // (a water craft goes over open water, leg after leg: shared/logic "Over the water")
+      const water = isWaterCraft(vehicle);
+      const legs = planTrip(world, exit.to, { km: kmOf(exit.travel) ?? 0, biome: String(trailOf(world, exit.to).find((a) => a.kind === "planet")?.type ?? "temperate"), level, alignment: side, wanted: !!world.pursuit, seed, always, water });
       const riders = legs.map((leg, i) => (leg.ambush ? roadAmbushers(monsterData as unknown as Sw5eMonster[], equipmentData as any, leg.ambush, level, `${seed}-${i}`) : []));
-      return void setTrip({ exit, ride: chosen, legs, i: 0, hull: 99, took: [], riders, pursuit: null, phase: riders[0].length ? "ask" : "drive", vehicle: String(vehicle?.model ?? "Landspeeder"), seed });
+      return void setTrip({ exit, ride: chosen, legs, i: 0, hull: 99, took: [], riders, pursuit: null, phase: riders[0].length ? "ask" : "drive", vehicle: String(vehicle?.model ?? "Landspeeder"), seed, ...(water ? { water: vehicle?.look } : {}) });
     }
     const changes: Record<string, any> = { currentLocation: exit.to };
     const { ship: flying } = exit.needsShip ? tripBy(exit) : { ship: undefined };
@@ -978,7 +984,10 @@ export default function GameBoard() {
       saveCharacter({ credits: character.credits - ride.fare });
       toast.info(`Ride paid: ${ride.fare} credits (house rule: the books price no fares).`);
     }
-    if (ride?.vehicleId) changes.vehicles = vehicles.map((v) => (v.id === ride.vehicleId ? { ...v, areaId: exit.to } : v));
+    if (ride?.vehicleId) changes.vehicles = vehicles.map((v) => (v.id === ride.vehicleId ? { ...v, areaId: exit.to, berth: undefined } : v));
+    const sub = ride?.vehicleId && waterOf(world, exit.to) === "under" ? vehicles.find((v) => v.id === ride.vehicleId && isSubmersible(v)) : undefined;
+    // (going in through a way in at the helm, the map moors the craft where it was left: only leaving the place lets go of the helm)
+    if (sub || (play.afloat && settlementOf(world, exit.to) !== settlementOf(world, here.id))) patchPlay({ afloat: sub?.id });
     const took = ride ? ride.minutes : tripMinutes(exit, Number(flying?.hyperdriveClass) || 1) * (flying && isLowFuel(flying) ? LIMP_FACTOR : 1);
     // The days on the way are lived as the party travels them (see liveDays): aboard its own ship, as passengers (a fare, a hired ride),
     // or on the roads
@@ -4097,7 +4106,9 @@ export default function GameBoard() {
     const vest = names.some((n) => /tracker utility vest/i.test(n)) ? { items: 10, each: 1 } : undefined;
     return loadOf(items, { strength: Number(character?.abilityScores?.strength) || 10, size: (speciesFacts as any)?.size, variant: variantOn, others: otherCarriers(), freeItems: vest });
   };
-  const hazardsHere = world && here ? hazardsAt(world, here.id, clockMinutes) : [];
+  // (at the helm of a submersible the party breathes the craft's air: shared/logic "Over the water")
+  const afloatIn = (Array.isArray(campaign?.vehicles) ? (campaign.vehicles as PartyVehicle[]) : []).find((v) => v.id === play.afloat);
+  const hazardsHere = (world && here ? hazardsAt(world, here.id, clockMinutes) : []).filter((h) => !(h.hazard === "underwater" && isSubmersible(afloatIn)));
   const exposures = hazardsHere.map((h) => ({ why: h.why, ...exposure(h.hazard, protections()) }));
   const deadlyAt = (areaId: string) => (world ? hazardsAt(world, areaId, clockNow()).map((h) => ({ why: h.why, ...exposure(h.hazard, protections()) })).find((e) => e.deadly && e.hazard !== "underwater") : undefined);
   useEffect(() => {
@@ -4366,11 +4377,13 @@ export default function GameBoard() {
     if (!km || !transport || !world || !here || exit.needsShip || exit.via !== "path") return [];
     const settlement = world.areas[berthOf(world, here.id)];
     const riders = 1 + party.filter((c) => c.kind !== "beast").length;
-    const rides = groundRides({ km, vehicles: parkedHere, companions: [...party, ...beasts], riders, transport, hire: settlement ? hasRidesForHire(world, settlement.id) : false, transit: exit.label === "Transit line" });
+    const waterway = waterwayOf(world, here.id, exit.to);
+    const rides = groundRides({ km, vehicles: parkedHere, companions: [...party, ...beasts], riders, transport, hire: settlement ? hasRidesForHire(world, settlement.id) : false, transit: exit.label === "Transit line", waterway });
     // The party's own vehicle is driven by the party, in 3D, for the route (house rule; `travel` opens the trip for any ride with a vehicle)
     // Lifts: someone going where the party is going offers a seat (they leave when they leave)
     if (settlement) {
-      for (const lift of liftsBetween(world, settlement.id, exit.to, clockNow())) {
+      // (over open sea only a lift that flies: shared/logic "Over the water")
+      for (const lift of liftsBetween(world, settlement.id, exit.to, clockNow()).filter((l) => waterway !== "sea" || /air|cloud/i.test(l.vehicle))) {
         rides.push({ id: lift.id, label: `A lift with ${lift.who} (${lift.vehicle}, leaves ${clockText(lift.departs)})`, minutes: lift.minutes, fare: lift.fare });
       }
     }
@@ -4394,7 +4407,9 @@ export default function GameBoard() {
   };
   // The ride a trip takes when none was chosen (a tap on the map): the quickest that costs nothing
   // (in the saddle, the beast ridden)
-  const defaultRide = (rides: Ride[]) => (riding && rides.find((r) => r.mountId === riding.id && !r.blocked)) || [...rides].filter((r) => !r.blocked && !r.fare && !r.pilot).sort((a, b) => a.minutes - b.minutes)[0];
+  // (over open sea, where nothing free goes, the water taxi)
+  const defaultRide = (rides: Ride[]) => (riding && rides.find((r) => r.mountId === riding.id && !r.blocked)) || [...rides].filter((r) => !r.blocked && !r.fare && !r.pilot).sort((a, b) => a.minutes - b.minutes)[0]
+    || (rides.find((r) => r.id === "foot")?.blocked ? [...rides].filter((r) => !r.blocked).sort((a, b) => a.fare - b.fare)[0] : undefined);
   const rideText = (minutes: number) => (minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.round(minutes / 6) / 10} h` : `${Math.floor(minutes / 1440)} d ${Math.round((minutes % 1440) / 60)} h`);
 
   // A speeder taken from a base, or mended where it stands (Mechanic's kit: "Restoring power to a
@@ -4818,6 +4833,13 @@ export default function GameBoard() {
     } else if (action.type === "occupant" || action.type === "ship" || action.type === "vehicle" || action.type === "companion") setPicked({ kind: action.type, id: action.id });
     else if (action.type === "piece") setPicked({ kind: "piece", id: action.id });
     else if (action.type === "cart") setPicked({ kind: "cart", id: action.id });
+    else if (action.type === "moor") {
+      // (shared/logic "Over the water": the craft stays where it was left, the party steps ashore)
+      const boat = vehicles.find((v) => v.id === action.id);
+      saveCampaign({ vehicles: vehicles.map((v) => (v.id === action.id ? { ...v, berth: { x: action.x, y: action.y } } : v)) });
+      patchPlay({ afloat: undefined });
+      if (boat) toast.info(`You moor the ${boat.name} and step ashore.`);
+    }
     else if (action.type === "place") placePiece(action.areaId, action.x, action.y, action.face, action.indoors);
     else if (action.type === "loot") {
       const cache = here.loot.find((c) => c.id === action.id);
@@ -7445,10 +7467,13 @@ export default function GameBoard() {
           {close}
           <p className="font-semibold">{v.name}</p>
           <p className="text-xs text-gray-300">{v.model}, {v.mph} mph, seats {v.seats}, {v.status}{mineHere ? ", yours" : `, ${v.owner}`}.</p>
-          <p className="text-xs text-gray-400">{mineHere ? "It carries the party over the ground between settlements: pick it on the route's exits." : v.status === "wrecked" ? "A wreck. A mechanic's kit can restore its power (DC 15)." : hostiles.length ? "Someone is guarding it." : "Nobody is left to stop you taking it."}</p>
+          <p className="text-xs text-gray-400">{mineHere && isWaterCraft(v) ? "A water craft: it carries the party over open water between places on the sea (and a submersible under it), picked on the route's exits; here it is taken out on the water (house rules)." : mineHere ? "It carries the party over the ground between settlements: pick it on the route's exits." : v.status === "wrecked" ? "A wreck. A mechanic's kit can restore its power (DC 15)." : hostiles.length ? "Someone is guarding it." : "Nobody is left to stop you taking it."}</p>
           <div className="mt-1 flex flex-wrap gap-1">
             {building && v.status === "parked" && <Button size="sm" disabled={inCombat || dead || hostiles.length > 0} onClick={() => { (v.civil ? stealVehicle : takeVehicle)(building.building, v); setPicked(null); }} data-testid="vehicle-take">{v.civil ? "Steal it (hotwire)" : "Take it"}</Button>}
             {v.status === "wrecked" && <Button size="sm" variant="outline" disabled={inCombat || dead || hostiles.length > 0} onClick={() => mendVehicle(building?.building ?? null, v)} data-testid="vehicle-mend">Mend it (mechanic's kit, DC 15)</Button>}
+            {mineHere && isWaterCraft(v) && v.status !== "wrecked" && world && here && waterOf(world, here.id) && (waterOf(world, here.id) === "sea" || isSubmersible(v)) && (here.kind === "settlement" || here.kind === "building") && (
+              <Button size="sm" disabled={inCombat || dead} onClick={() => { patchPlay({ afloat: v.id }); setPicked(null); toast.info(`At the helm of the ${v.name}: tap the water to steer, the decking or a way in to moor and step ashore.`); }} data-testid="vehicle-helm">Take the helm</Button>
+            )}
           </div>
         </>
       );
@@ -7830,11 +7855,11 @@ export default function GameBoard() {
       {trip && trip.phase === "ask" && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" data-testid="road-ambush">
           <div className="max-w-md space-y-2 rounded border border-red-500/60 bg-gray-900 p-4 text-sm text-gray-100">
-            <p className="text-base font-semibold text-red-300">Ambush on the road!</p>
+            <p className="text-base font-semibold text-red-300">Ambush on the {trip.water ? "water" : "road"}!</p>
             <p>
-              On the way to {world?.areas[trip.exit.to]?.name ?? "the next settlement"} (leg {trip.i + 1} of {trip.legs.length}), {trip.riders[trip.i].length} riders of the {trip.legs[trip.i].ambush?.who} come out of cover behind you on {trip.legs[trip.i].ambush?.model === "Swoop bike" ? "swoops" : "speeder bikes"}.
+              On the way to {world?.areas[trip.exit.to]?.name ?? "the next settlement"} (leg {trip.i + 1} of {trip.legs.length}), {trip.riders[trip.i].length} riders of the {trip.legs[trip.i].ambush?.who} come out {trip.water ? "from behind the rocks after you on hydrospeeders" : `of cover behind you on ${trip.legs[trip.i].ambush?.model === "Swoop bike" ? "swoops" : "speeder bikes"}`}.
             </p>
-            <p className="text-xs text-gray-400">Why: {trip.legs[trip.i].ambush?.why}. (House rule: the books give no encounters on the road.)</p>
+            <p className="text-xs text-gray-400">Why: {trip.legs[trip.i].ambush?.why}. (House rule: the books give no encounters on the {trip.water ? "water" : "road"}.)</p>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" onClick={() => setTrip({ ...trip, phase: "drive" })} data-testid="ambush-run">Run for it (you drive, or take the gun; Fire shoots back)</Button>
               <Button size="sm" variant="outline" onClick={() => { const t = trip; setTrip(null); roadFight({ exit: t.exit, ride: { ...t.ride, pilot: false, minutes: driveMinutes(t.ride.minutes, t.took) }, a: t.legs[t.i].ambush!, riders: t.riders[t.i], seed: t.seed }, t.riders[t.i]); }} data-testid="ambush-fight">Stop and fight</Button>
@@ -7851,13 +7876,14 @@ export default function GameBoard() {
             const a = trip.pursuit?.a ?? leg.ambush;
             const km = kmOf(trip.exit.travel) ?? 0;
             const intro = [
-              trip.i === 0 ? `${world.areas[trip.exit.to]?.name ?? "The next settlement"} lies ${km} km off: ${trip.legs.length} legs of road.` : "",
-              metText(trip.legs[trip.i - 1]?.biome, leg.biome),
+              trip.i === 0 ? `${world.areas[trip.exit.to]?.name ?? "The next settlement"} lies ${km} km off: ${trip.legs.length} legs of ${trip.water ? "open water, marked by buoys (house rule)" : "road"}.` : "",
+              trip.water ? (trip.i === 0 ? "" : "Open water on, past rocks and stacks.") : metText(trip.legs[trip.i - 1]?.biome, leg.biome),
               trip.pursuit ? `The ${trip.pursuit.a.who} you ran past are after you!` : riders.length ? `${riders.length} riders of the ${a?.who} are after you!` : "",
               party.some((c) => c.kind !== "beast" && c.hp > 0) ? "A crewmate can drive while you take the gun: Swap seats." : "",
             ].filter(Boolean);
             return {
-              kind: "road" as const, title: `Road to ${world.areas[trip.exit.to]?.name ?? "the next settlement"}`, seed: leg.seed, vehicle: trip.vehicle, biome: leg.biome, leg: { i: trip.i, n: trip.legs.length }, intro, hull: trip.hull,
+              kind: "road" as const, title: `${trip.water ? "Crossing" : "Road"} to ${world.areas[trip.exit.to]?.name ?? "the next settlement"}`, seed: leg.seed, vehicle: trip.vehicle, biome: leg.biome, leg: { i: trip.i, n: trip.legs.length }, intro, hull: trip.hull,
+              ...(trip.water ? { water: true, look: trip.water } : {}),
               mate: roadCrew?.gunner ? undefined : crewmate(party.map((c) => ({ name: c.name, kind: c.kind, hp: c.hp }))), block: leg.block, riders: riders.length ? riders.map((o) => ({ name: o.name, model: a?.model ?? "Speederbike" })) : undefined, who: a?.who,
               talk: { persuasion: modifier(character.abilityScores?.charisma) + (skilled("persuasion") ? proficiency : 0), deception: modifier(character.abilityScores?.charisma) + (skilled("deception") ? proficiency : 0) },
               credits: character.credits ?? 0,

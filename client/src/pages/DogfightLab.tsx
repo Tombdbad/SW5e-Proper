@@ -38,6 +38,8 @@ export default function DogfightLab() {
       mate: q.has("mate") ? { name: "Mira", pace: 0.95 } : undefined,
       block: q.has("block") ? { by: q.get("block") === "toll" ? "toll" : "checkpoint", who: "an Imperial checkpoint", fee: 40, dc: 13, wanted: q.has("wanted"), model: "Speederbike" } : undefined,
       riders: q.has("chase") ? [{ name: "Raider A", model: "Swoop bike" }, { name: "Raider B", model: "Swoop bike" }] : undefined, who: "a swoop gang", talk: { persuasion: 3, deception: 1 }, credits: 200,
+      // (`water`: a water craft's leg over open water, `look` its make: ?game=road&water&look=bongo&biome=ocean)
+      ...(q.has("water") ? { water: true, look: q.get("look") ?? "bongo" } : {}),
     }) : course === "race" || course === "chase" ? (course === "race"
       ? { kind: "race", title: "Race lab", seed: Number(q.get("seed") ?? 1), vehicle: q.get("vehicle") ?? "Landspeeder", biome: q.get("biome") ?? "temperate" }
       : { kind: "chase", title: "Chase lab", seed: Number(q.get("seed") ?? 1), vehicle: q.get("vehicle") ?? "Landspeeder", biome: q.get("biome") ?? "temperate", riders: [{ name: "Raider", model: "Speeder bike" }, { name: "Raider", model: "Speeder bike" }], who: "a swoop gang" }) : ({
