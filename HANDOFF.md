@@ -14,11 +14,11 @@ The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it 
 - `tools/soundlab.mjs` (+ tests/world/soundlab.test.ts): render recipes and presets, `inspect`, `import` a SeptaBee WAV export into voice/nonverbal or ir with its manifest entry, `bank`, `ir`. Nothing installed into client/public yet (cues are still made in code); run `bank` only once the user can listen.
 - SeptaBee has no CLI, MIDI, OSC or socket hook; suggestions for its author are in the skill.
 
-- Piper: ../rhasspy-piper-38917ff is source only. server/speech.ts `findPiper` auto-detects a piper.exe and a model there (or PIPER_DIR); until both exist the Windows voices speak, and /api/speech/status `piper` says what is missing. The user must download a release build and a voice model (needs their go-ahead; I did not).
+- Piper is installed (user said yes): ../rhasspy-piper-38917ff/release/piper/piper.exe and voices/en_US-libritts_r-medium.onnx (904 speakers). server/speech.ts `findPiper` finds them; resident processes per pace. The server needs a restart to use it. Remove the Piper folders and the Windows voices speak again.
 - `soundlab look` makes spectrogram PNGs: how Claude "hears".
 
 ## Open questions for the user
-- Download Piper and a multi-speaker voice model (more distinct voices, American accents)? Needs their go-ahead.
+- Piper voices are random per person (seed), not matched to gender or species: should the model's speakers be sorted into low/high voices so a Hutt or a woman gets a fitting one? (needs listening)
 - People met have no gender in the world data, so their voice's register is by seed.
 - The game clock (a minute a second) makes holding one's breath last a few real seconds (from the water batch).
 

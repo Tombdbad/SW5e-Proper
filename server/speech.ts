@@ -167,13 +167,47 @@ async function speakWindows(text: string, name: string, rate: number, pitch: num
   });
 }
 
+// Piper loads its model (about 2.5 s) on every start, so one process is kept per pace (the length scale, in steps of 0.1) and fed a JSON
+// line per sentence (--json-input: it answers with the file's path). A few at most, each let go after three idle minutes. A line that
+// cannot be had from a kept process is made by a process of its own.
+type Resident = { p: ChildProcessWithoutNullStreams; buf: string; waiting: ((ok: boolean) => void) | null; idle: NodeJS.Timeout | null };
+const residents = new Map<string, Resident>();
+const MAX_RESIDENT = 3;
+function residentFor(scale: string): Resident {
+  const had = residents.get(scale);
+  if (had) return had;
+  if (residents.size >= MAX_RESIDENT) { const [oldest] = residents.keys(); residents.get(oldest)!.p.kill(); residents.delete(oldest); }
+  const p = spawn(piper().exe, ["--model", piper().model, "--length_scale", scale, "--json-input"], { windowsHide: true });
+  const r: Resident = { p, buf: "", waiting: null, idle: null };
+  residents.set(scale, r);
+  p.stdout.on("data", (d) => { r.buf += d; if (r.buf.includes("\n") && r.waiting) { const w = r.waiting; r.waiting = null; r.buf = ""; w(true); } });
+  p.stderr.on("data", () => undefined);
+  const gone = () => { if (residents.get(scale) === r) residents.delete(scale); if (r.idle) clearTimeout(r.idle); const w = r.waiting; r.waiting = null; w?.(false); };
+  p.on("exit", gone);
+  p.on("error", gone);
+  return r;
+}
+
 function speakPiper(text: string, speaker: number, rate: number, out: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const p = spawn(piper().exe, ["--model", piper().model, "--speaker", String(speaker), "--length_scale", (1 / rate).toFixed(2), "--output_file", out], { windowsHide: true });
+  const scale = Math.min(2, Math.max(0.5, Math.round(10 / rate) / 10)).toFixed(1);
+  const oneShot = () => new Promise<void>((resolve, reject) => {
+    const p = spawn(piper().exe, ["--model", piper().model, "--speaker", String(speaker), "--length_scale", scale, "--output_file", out], { windowsHide: true });
     const timer = setTimeout(() => { p.kill(); reject(new Error("speech timed out")); }, 30000);
+    p.stderr.on("data", () => undefined);
     p.on("exit", (code) => { clearTimeout(timer); code === 0 && fs.existsSync(out) ? resolve() : reject(new Error(`piper ended ${code}`)); });
     p.on("error", (e) => { clearTimeout(timer); reject(e); });
     p.stdin.end(text);
+  });
+  const r = residentFor(scale);
+  return new Promise<boolean>((resolve) => {
+    if (r.idle) clearTimeout(r.idle);
+    const timer = setTimeout(() => { r.p.kill(); resolve(false); }, 30000);
+    r.waiting = (ok) => { clearTimeout(timer); resolve(ok); };
+    r.p.stdin.write(JSON.stringify({ text, speaker_id: speaker, output_file: out }) + "\n");
+  }).then((ok) => {
+    r.idle = setTimeout(() => r.p.kill(), 180000);
+    r.idle.unref?.();
+    return ok && fs.existsSync(out) ? undefined : oneShot();
   });
 }
 
