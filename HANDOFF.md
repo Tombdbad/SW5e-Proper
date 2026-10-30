@@ -10,6 +10,10 @@ The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it 
 - `.claude/skills/septabee/SKILL.md`: SeptaBee is GUI-only (no CLI, binary .bee projects, VST3 and LV2 hosting); the user builds and exports, Claude wires files into `client/public/audio/...` and `voice/manifest.json`.
 - Tests: tests/world/voice.test.ts; full suite 490 pass, 3 skipped.
 
+## 2026-10-30, SeptaBee harness
+- `tools/soundlab.mjs` (+ tests/world/soundlab.test.ts): render recipes and presets, `inspect`, `import` a SeptaBee WAV export into voice/nonverbal or ir with its manifest entry, `bank`, `ir`. Nothing installed into client/public yet (cues are still made in code); run `bank` only once the user can listen.
+- SeptaBee has no CLI, MIDI, OSC or socket hook; suggestions for its author are in the skill.
+
 ## Open questions for the user
 - Download Piper and a multi-speaker voice model (more distinct voices, American accents)? Needs their go-ahead.
 - People met have no gender in the world data, so their voice's register is by seed.

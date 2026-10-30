@@ -18,7 +18,50 @@ labels); where a part's purpose is a guess, it says so. Check in the program bef
 - So the work is split: **Claude writes the recipe** (what to build, which devices, which settings, how long, what to export, where to put
   it) and **the user builds and exports it in SeptaBee**; then **Claude brings the files into the game** (folders, manifest, code, tests)
   and checks them in the browser.
-- Claude can inspect exported audio files (length, format, peak) with Node, and should, before wiring them in.
+- Claude can inspect exported audio files with `tools/soundlab.mjs inspect` and should, before wiring them in.
+
+## The harness (what runs without SeptaBee)
+
+SeptaBee has no hook to attach to (checked 2026-10-30 in `septabee.exe` and `septabee-sounds.exe`: `CommandLineToArgvW` is there but no
+flags, no MIDI input, no OSC, no socket or pipe; the two processes share memory). So the harness sits around it, in `tools/soundlab.mjs`
+(Node, no packages, tests in `tests/world/soundlab.test.ts`):
+
+- `node tools/soundlab.mjs render <preset|recipe.json> out.wav`: renders a **recipe** (oscillator, noise, envelope, filters, bitcrush,
+  drive, repeats; or an impulse response from a filter chain) with the same parts a SeptaBee rack would have. Claude can make and judge
+  cues, bleeps, growls, static and the helmet/mask/comms IRs alone. `presets` lists the 21 first drafts (one or more per cue).
+- `inspect file.wav...`: rate, length, peak, RMS, leading silence, clipping, DC, and what to fix.
+- `import in.wav <bank>/<cue>` (or `ir/<helmet|mask|comms>`): **the way a SeptaBee export enters the game**. Mixed to mono, resampled to
+  48 kHz, DC removed, trimmed (30 ms before, 20 after), peak -3 dBFS, 10 ms fade, saved as the next take
+  `client/public/audio/voice/nonverbal/<bank>/<cue>-<n>.wav`, and listed in `manifest.json`. Export **WAV** from SeptaBee (FLAC and
+  Ogg are not read; WAV decodes in every browser).
+- `bank <bank> <cue> [takes]` and `ir <name>`: render varied takes of a preset and install them (replaces the in-code sound for that cue
+  with the draft, so listen first: Claude cannot hear it).
+- Drop-folder habit for the user: export to one folder, e.g. `C:\Users\Admin\Documents\Septabee\exports\<bank>-<cue>.wav`, and tell Claude;
+  Claude runs `inspect` then `import` on each.
+
+SeptaBee work that stays with the user: music, designed sound effects and anything recorded. Claude's part is the recipe beforehand and
+the import and wiring after. Driving the window with computer use is possible (screenshots and clicks, needs the user's permission and
+patience: custom Vulkan UI, no accessibility tree), but nothing here depends on it.
+
+## What would make SeptaBee reachable (suggestions for its author, LostRobot, or for the user to ask for)
+
+In order of value for a scripted workflow:
+1. **A render command**: `septabee --render project.bee --out file.wav [--seconds N] [--no-gui]`. It has a Vulkan headless surface in its
+   dependencies and a separate audio process already; this alone lets Claude edit-by-recipe and render without the window.
+2. **A text project format** (JSON, TOML or Lua) beside binary `.bee`, or `--dump project.bee` to text and `--build text -> .bee`. Then
+   projects can be written, diffed and reviewed in git.
+3. **A control port**: OSC, JSON over a local socket, or stdin commands: add device, set parameter, play, stop, export. Loopback only.
+4. **A text form of Mangosteen and Pomegranate modules** (their bubble graphs are already compiled by an LLVM JIT, so a textual source
+   exists in principle): then synth patches are code Claude can write.
+5. **MIDI in** (a virtual port, or a MIDI file import) so notes can be played from outside; today notes come from the mouse, the computer
+   keyboard or the Waggleboard.
+6. **An accessibility tree** (AccessKit is a common choice for custom-drawn UIs) and written shortcut list, so a screen reader or an
+   agent can name the buttons.
+7. **Small things**: a documented export folder and file-name template, a "re-export on save" option, deterministic output (no random
+   seeds unless asked), a loudness readout on export.
+
+Without any of those, the user can still help: keep **one template project** (a sampler or Mangosteen rack on a track, a Master chain
+ending in a limiter at -3 dBFS, the export folder set), save each sound as its own clip, and name exports `<bank>-<cue>-<n>.wav`.
 
 ## Where things are
 
@@ -78,7 +121,7 @@ client/public/sounds/        # the three old Howler sounds (useAudio.tsx); leave
   ```
   Paths are relative to `client/public/audio/voice/`. Several takes of a cue are picked among by speaker, so one person keeps theirs.
 - Format: 48 kHz; cues and IRs **mono**; music and ambience stereo. Ship **Ogg (Vorbis or Opus, ~96 kbps)**, IRs as 16- or 24-bit WAV.
-  No ffmpeg on this PC: if the export dialog cannot write Ogg, export WAV/FLAC and ask the user before installing a converter.
+  No ffmpeg on this PC and none needed: `tools/soundlab.mjs import` takes **WAV** and the game plays WAV (manifest paths may end .wav); Ogg only if a converter is installed later (ask the user first).
 - Levels: cues peak at -3 dBFS, no limiter pumping, 30 ms of silence at most before the sound (they are scheduled tight); music about
   -18 LUFS integrated with peaks under -1 dBTP so voices sit over it; loops cut on a zero crossing at a bar line.
 - Only the user's own work or properly licensed material goes in. No sounds ripped from the films or games.
@@ -122,8 +165,8 @@ listed by name in the code that plays them.
 
 ## Steps after the user exports
 
-1. Put the files in the folders above with the right names; check them with Node (length, sample rate, channels, peak) and say what is
-   off (too long, clipped, leading silence).
-2. Add them to `manifest.json` (voice sounds) or to the code that plays them.
+1. `node tools/soundlab.mjs inspect <exports>` and say what is off (too long, clipped, leading silence); then `import` each one
+   (it conforms the file, puts it in the folders above with the right name and adds it to the manifest).
+2. Music and sound effects (not voice cues) are added to the code that plays them.
 3. Check in the browser on the dev server (`window` import of `/src/lib/voice.ts`, `speak(...)`), then `npm test`.
 4. Note what was added in REVIVAL_NOTES.md ("Voices") and commit with the work.
