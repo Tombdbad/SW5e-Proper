@@ -14,6 +14,9 @@ The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it 
 - `tools/soundlab.mjs` (+ tests/world/soundlab.test.ts): render recipes and presets, `inspect`, `import` a SeptaBee WAV export into voice/nonverbal or ir with its manifest entry, `bank`, `ir`. Nothing installed into client/public yet (cues are still made in code); run `bank` only once the user can listen.
 - SeptaBee has no CLI, MIDI, OSC or socket hook; suggestions for its author are in the skill.
 
+- Piper: ../rhasspy-piper-38917ff is source only. server/speech.ts `findPiper` auto-detects a piper.exe and a model there (or PIPER_DIR); until both exist the Windows voices speak, and /api/speech/status `piper` says what is missing. The user must download a release build and a voice model (needs their go-ahead; I did not).
+- `soundlab look` makes spectrogram PNGs: how Claude "hears".
+
 ## Open questions for the user
 - Download Piper and a multi-speaker voice model (more distinct voices, American accents)? Needs their go-ahead.
 - People met have no gender in the world data, so their voice's register is by seed.

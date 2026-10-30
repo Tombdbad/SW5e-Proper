@@ -3,7 +3,11 @@
 // speak Basic (gibberish)
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { speechOnly, tidy } from "../../server/dialogue";
+import { findPiper } from "../../server/speech";
 import { gibberish, partsOf, toneOf, voiceOf } from "../../client/src/lib/voice";
 
 const windows = { voices: ["George", "Hazel", "Susan"] };
@@ -58,4 +62,25 @@ test("a reply is heard as runs of speech and cues in order; its mood bends the v
   assert.equal(toneOf("Bay nine.").mood, "calm");
   assert.equal(gibberish("Hello there, friend.", 3), gibberish("Hello there, friend.", 3));
   assert.notEqual(gibberish("Hello there, friend.", 3), "Hello there, friend.");
+});
+
+test("Piper is found beside the project by its folder, its exe and a real voice model; what is missing is said", () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "piper-"));
+  const proj = path.join(base, "SW5e-Proper");
+  const lib = path.join(base, "rhasspy-piper-abc");
+  fs.mkdirSync(proj);
+  fs.mkdirSync(path.join(lib, "etc"), { recursive: true });
+  assert.match(findPiper({}, proj).note, /no piper\.exe/);
+  fs.writeFileSync(path.join(lib, "etc", "test_voice.onnx"), "x");
+  fs.writeFileSync(path.join(lib, "piper.exe"), "x");
+  assert.match(findPiper({}, proj).note, /No voice model/, "the project's test voice is not a voice");
+  fs.mkdirSync(path.join(lib, "voices"));
+  fs.writeFileSync(path.join(lib, "voices", "en_US-x.onnx"), "x");
+  assert.match(findPiper({}, proj).note, /no \.onnx\.json/);
+  fs.writeFileSync(path.join(lib, "voices", "en_US-x.onnx.json"), "{}");
+  const f = findPiper({}, proj);
+  assert.equal(f.note, "");
+  assert.ok(f.exe.endsWith("piper.exe") && f.model.endsWith("en_US-x.onnx"));
+  assert.match(findPiper({}, path.join(base, "elsewhere", "p")).note, /No Piper folder|no piper/);
+  fs.rmSync(base, { recursive: true, force: true });
 });

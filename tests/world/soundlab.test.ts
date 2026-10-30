@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 // @ts-expect-error plain JS tool
-import { BANKS, CUES, PRESETS, SR, conform, inspect, install, readWav, render, varied, writeWav } from "../../tools/soundlab.mjs";
+import { BANKS, CUES, PRESETS, SR, conform, inspect, install, picture, readWav, render, spectrogram, varied, writeWav } from "../../tools/soundlab.mjs";
 import { CUES as DIALOGUE_CUES } from "../../server/dialogue";
 
 test("the cue list is the dialogue's, and each cue has a preset to make a bank from", () => {
@@ -58,4 +58,16 @@ test("takes are installed one after another, and an impulse response keeps its o
   const ir = readWav(fs.readFileSync(path.join(dir, "ir", "helmet.wav")));
   assert.ok(ir.channels[0].length > 1000);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a picture of a sound shows where its energy is, so it can be read without hearing it", () => {
+  const x = new Float32Array(SR / 2).map((_: number, i: number) => 0.5 * Math.sin((2 * Math.PI * 1000 * i) / SR));
+  const g = spectrogram(x, SR, 40, 256);
+  const mid = g[20];
+  const row = mid.indexOf(Math.max(...mid));
+  const hz = 16000 * (50 / 16000) ** (row / 255);
+  assert.ok(Math.abs(hz - 1000) < 80, `brightest at ${hz} Hz`);
+  const png = picture(x, SR, 200);
+  assert.equal(png.subarray(1, 4).toString("ascii"), "PNG");
+  assert.equal(png.readUInt32BE(16), 200);
 });

@@ -6,8 +6,9 @@
 //   POST /api/speech          { text, voice: { name, rate, pitch } } -> audio/wav (one sentence or a short run of them)
 //
 // Engines, in order:
-//  - Piper (a small neural speech engine, one program and a voice model; not installed here: set PIPER_EXE to piper.exe and PIPER_MODEL to
-//    a voice model such as en_US-libritts_r-medium.onnx, whose 904 speakers give every character a voice of their own). A voice is
+//  - Piper (a small neural speech engine, one program and a voice model; found by findPiper: PIPER_EXE and PIPER_MODEL, or a folder beside
+//    the project with "piper" in its name, with a model such as en_US-libritts_r-medium.onnx, whose 904 speakers give every character a
+//    voice of their own). A voice is
 //    "piper:<speaker>"; rate is the length scale's inverse; pitch is the page's to change (playback).
 //  - Windows' own voices (OneCore: George, Hazel and Susan on this PC), driven by one PowerShell process kept running for speed (about
 //    80 ms a sentence once warm). SSML rate and pitch.
@@ -21,15 +22,42 @@ import os from "os";
 import path from "path";
 
 const CACHE = path.resolve(process.cwd(), ".cache", "speech");
-const PIPER_EXE = process.env.PIPER_EXE ?? "";
-const PIPER_MODEL = process.env.PIPER_MODEL ?? "";
 const MAX_TEXT = 600;
 
-const piperReady = () => !!PIPER_EXE && !!PIPER_MODEL && fs.existsSync(PIPER_EXE) && fs.existsSync(PIPER_MODEL);
+// Where Piper is: PIPER_EXE and PIPER_MODEL when set, else PIPER_DIR, else any folder beside this project (or in tools/piper) whose name
+// has "piper" in it (the user keeps it at ../rhasspy-piper-*): the first piper.exe and the first voice model (.onnx with its .onnx.json)
+// found there, three levels down. The project's own test voice (etc/test_voice.onnx, 16 kHz and rough) is not used unless PIPER_MODEL
+// names it. `note` says what is missing, for /api/speech/status.
+export type PiperFound = { exe: string; model: string; note: string };
+export function findPiper(env: Record<string, string | undefined> = process.env, cwd = process.cwd()): PiperFound {
+  const roots = [env.PIPER_DIR, path.join(cwd, "tools", "piper"), ...(() => { try { return fs.readdirSync(path.dirname(cwd)).filter((n) => /piper/i.test(n)).map((n) => path.join(path.dirname(cwd), n)); } catch { return []; } })()].filter((r): r is string => !!r && fs.existsSync(r));
+  const walk = (dir: string, depth: number, hit: (f: string) => boolean): string => {
+    let names: string[] = [];
+    try { names = fs.readdirSync(dir); } catch { return ""; }
+    for (const n of names) if (hit(n)) { try { if (fs.statSync(path.join(dir, n)).isFile()) return path.join(dir, n); } catch { /* gone */ } }
+    if (depth > 0) for (const n of names) {
+      if (n === "node_modules" || n.startsWith(".")) continue;
+      const p = path.join(dir, n);
+      try { if (fs.statSync(p).isDirectory()) { const f = walk(p, depth - 1, hit); if (f) return f; } } catch { /* unreadable */ }
+    }
+    return "";
+  };
+  const find = (hit: (f: string) => boolean) => roots.map((r) => walk(r, 3, hit)).find(Boolean) ?? "";
+  const exe = env.PIPER_EXE && fs.existsSync(env.PIPER_EXE) ? env.PIPER_EXE : find((n) => (process.platform === "win32" ? /^piper.exe$/i : /^piper$/).test(n));
+  const model = env.PIPER_MODEL && fs.existsSync(env.PIPER_MODEL) ? env.PIPER_MODEL : find((n) => /.onnx$/i.test(n) && !/test_voice/i.test(n));
+  const note = !roots.length && !env.PIPER_EXE ? "No Piper folder found (PIPER_DIR, or a folder beside the project with piper in its name)."
+    : !exe ? "Piper's folder has no piper.exe (it holds the source: download a release build, or build it)."
+    : !model ? "No voice model (.onnx and .onnx.json, e.g. en_US-libritts_r-medium) in Piper's folder."
+    : !fs.existsSync(`${model}.json`) ? "The voice model has no .onnx.json beside it." : "";
+  return { exe: note ? "" : exe, model: note ? "" : model, note };
+}
+let piperAt: { at: number; found: PiperFound } | null = null;
+const piper = () => (piperAt && Date.now() - piperAt.at < 10000 ? piperAt : (piperAt = { at: Date.now(), found: findPiper() })).found;
+const piperReady = () => !!piper().exe;
 // How many speakers the Piper model has (its .onnx.json says)
 function piperSpeakers(): number {
   try {
-    return Number(JSON.parse(fs.readFileSync(`${PIPER_MODEL}.json`, "utf8")).num_speakers) || 1;
+    return Number(JSON.parse(fs.readFileSync(`${piper().model}.json`, "utf8")).num_speakers) || 1;
   } catch {
     return 1;
   }
@@ -141,7 +169,7 @@ async function speakWindows(text: string, name: string, rate: number, pitch: num
 
 function speakPiper(text: string, speaker: number, rate: number, out: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const p = spawn(PIPER_EXE, ["--model", PIPER_MODEL, "--speaker", String(speaker), "--length_scale", (1 / rate).toFixed(2), "--output_file", out], { windowsHide: true });
+    const p = spawn(piper().exe, ["--model", piper().model, "--speaker", String(speaker), "--length_scale", (1 / rate).toFixed(2), "--output_file", out], { windowsHide: true });
     const timer = setTimeout(() => { p.kill(); reject(new Error("speech timed out")); }, 30000);
     p.on("exit", (code) => { clearTimeout(timer); code === 0 && fs.existsSync(out) ? resolve() : reject(new Error(`piper ended ${code}`)); });
     p.on("error", (e) => { clearTimeout(timer); reject(e); });
@@ -165,7 +193,7 @@ export function registerSpeechRoutes(app: Express) {
 
   app.get("/api/speech/status", async (_req: Request, res: Response) => {
     const engine = await engineNow();
-    res.json({ engine, voices: engine === "windows" ? windowsVoices : engine === "piper" ? ["piper"] : [], speakers: engine === "piper" ? piperSpeakers() : undefined });
+    res.json({ engine, voices: engine === "windows" ? windowsVoices : engine === "piper" ? ["piper"] : [], speakers: engine === "piper" ? piperSpeakers() : undefined, piper: piper().note || undefined });
   });
 
   app.post("/api/speech", async (req: Request, res: Response) => {

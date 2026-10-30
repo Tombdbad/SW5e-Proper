@@ -7,11 +7,13 @@
 //   node tools/soundlab.mjs presets
 //   node tools/soundlab.mjs render <preset|recipe.json> <out.wav> [--seed n]
 //   node tools/soundlab.mjs inspect <file.wav>...
+//   node tools/soundlab.mjs look <file.wav> [out.png]      a picture of the sound (waveform over a spectrogram) for Claude to read
 //   node tools/soundlab.mjs import <in.wav> <bank>/<cue>        a SeptaBee export becomes one take of a cue
 //   node tools/soundlab.mjs import <in.wav> ir/<helmet|mask|comms>
 //   node tools/soundlab.mjs bank <bank> <cue> [takes] [--preset name]   render varied takes and import them
 //   node tools/soundlab.mjs ir <helmet|mask|comms>                      render the impulse response and import it
 import fs from "node:fs";
+import zlib from "node:zlib";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -268,6 +270,90 @@ export function conform(wav, { ir = false } = {}) {
   return x;
 }
 
+// ---- eyes: Claude cannot hear a file, but can read a picture of one ----
+
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { [re[i], re[j]] = [re[j], re[i]]; [im[i], im[j]] = [im[j], im[i]]; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (-2 * Math.PI) / len;
+    for (let i = 0; i < n; i += len)
+      for (let k = 0; k < len / 2; k++) {
+        const c = Math.cos(ang * k), s = Math.sin(ang * k);
+        const a = i + k, b = i + k + len / 2;
+        const tr = re[b] * c - im[b] * s, ti = re[b] * s + im[b] * c;
+        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+      }
+  }
+}
+
+// dB (0 loudest, -90 floor) per column and per row: rows run 16 kHz (top) to 50 Hz on a log axis
+export function spectrogram(x, sr, cols = 640, rows = 256, size = 1024) {
+  const hop = Math.max(1, (x.length - size) / cols);
+  const grid = [];
+  const re = new Float64Array(size), im = new Float64Array(size);
+  let top = 1e-9;
+  for (let c = 0; c < cols; c++) {
+    const at = Math.floor(c * hop);
+    for (let i = 0; i < size; i++) { re[i] = (x[at + i] ?? 0) * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / size)); im[i] = 0; }
+    fft(re, im);
+    const col = new Float32Array(rows);
+    for (let r = 0; r < rows; r++) {
+      const f = 16000 * (50 / 16000) ** (r / (rows - 1));
+      const k = Math.min(size / 2 - 1, Math.round((f * size) / sr));
+      col[r] = Math.hypot(re[k], im[k]);
+      top = Math.max(top, col[r]);
+    }
+    grid.push(col);
+  }
+  return grid.map((col) => col.map((v) => Math.max(-90, db(v / top))));
+}
+
+const CRC = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+const crc = (b) => { let c = 0xffffffff; for (const v of b) c = CRC[(c ^ v) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+function chunk(type, data) {
+  const out = Buffer.alloc(12 + data.length);
+  out.writeUInt32BE(data.length, 0);
+  out.write(type, 4, "ascii");
+  data.copy(out, 8);
+  out.writeUInt32BE(crc(out.subarray(4, 8 + data.length)), 8 + data.length);
+  return out;
+}
+
+// A PNG of a sound: its waveform (top, with a line at 0 dB and -6 dB) over its spectrogram (dark to bright = quiet to loud; low
+// pitches at the bottom, ticks every octave from 100 Hz), time running left to right
+export function picture(x, sr, cols = 640) {
+  const waveH = 120, specH = 256, W = cols, H = waveH + specH;
+  const px = Buffer.alloc(W * H * 3, 18);
+  const put = (xx, yy, r, g, b) => { if (xx >= 0 && xx < W && yy >= 0 && yy < H) { const o = (yy * W + xx) * 3; px[o] = r; px[o + 1] = g; px[o + 2] = b; } };
+  for (const g of [1, 0.5, -0.5, -1]) put(0, 0, 0, 0, 0), [...Array(W).keys()].forEach((xx) => put(xx, Math.round(waveH / 2 - (g * (waveH / 2 - 2))), 60, 60, 80));
+  for (let xx = 0; xx < W; xx++) {
+    let lo = 0, hi = 0;
+    for (let i = Math.floor((xx * x.length) / W); i < Math.floor(((xx + 1) * x.length) / W); i++) { lo = Math.min(lo, x[i]); hi = Math.max(hi, x[i]); }
+    for (let yy = Math.round(waveH / 2 - hi * (waveH / 2 - 2)); yy <= Math.round(waveH / 2 - lo * (waveH / 2 - 2)); yy++) put(xx, yy, 120, 200, 255);
+  }
+  const grid = spectrogram(x, sr, W, specH);
+  for (let xx = 0; xx < W; xx++)
+    for (let r = 0; r < specH; r++) {
+      const t = Math.max(0, (grid[xx][r] + 80) / 80); // 0 quiet .. 1 loud
+      put(xx, waveH + r, Math.round(255 * Math.min(1, t * 2.2)), Math.round(255 * Math.max(0, t * 2 - 0.6)), Math.round(120 * (1 - Math.abs(t - 0.35) * 2.2 > 0 ? 1 - Math.abs(t - 0.35) * 2.2 : 0) + 255 * Math.max(0, t * 3 - 2)));
+    }
+  for (const f of [100, 200, 400, 800, 1600, 3200, 6400, 12800]) {
+    const r = Math.round(((specH - 1) * Math.log(16000 / f)) / Math.log(16000 / 50));
+    for (let xx = 0; xx < 8; xx++) put(xx, waveH + r, 255, 255, 255);
+  }
+  const raw = Buffer.alloc(H * (W * 3 + 1));
+  for (let y = 0; y < H; y++) px.copy(raw, y * (W * 3 + 1) + 1, y * W * 3, (y + 1) * W * 3);
+  const head = Buffer.alloc(13);
+  head.writeUInt32BE(W, 0); head.writeUInt32BE(H, 4); head[8] = 8; head[9] = 2;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", head), chunk("IDAT", zlib.deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+}
+
 // ---- presets: first drafts of the game's cues, to hear in the game or to replace with the user's own ----
 
 const bp = (f, q = 0.8, to) => ({ type: "bandpass", f, q, ...(to ? { to } : {}) });
@@ -353,6 +439,12 @@ function main(argv) {
     const x = render(recipe, seed);
     fs.writeFileSync(out, writeWav(x, SR, recipe.ir ? 24 : 16));
     return show(out, inspect(x, SR));
+  }
+  if (cmd === "look") {
+    const w = readWav(fs.readFileSync(rest[0]));
+    const out = rest[1] ?? rest[0].replace(/.wav$/i, "") + ".png";
+    fs.writeFileSync(out, picture(w.channels[0], w.sr));
+    return console.log("wrote", out, "(waveform on top; spectrogram below, 16 kHz at the top to 50 Hz, ticks at 100 Hz and each octave up)");
   }
   if (cmd === "inspect") for (const f of rest) { const w = readWav(fs.readFileSync(f)); show(f, inspect(w.channels[0], w.sr)); }
   else if (cmd === "import") {

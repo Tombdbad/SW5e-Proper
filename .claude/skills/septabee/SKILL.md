@@ -29,6 +29,9 @@ flags, no MIDI input, no OSC, no socket or pipe; the two processes share memory)
 - `node tools/soundlab.mjs render <preset|recipe.json> out.wav`: renders a **recipe** (oscillator, noise, envelope, filters, bitcrush,
   drive, repeats; or an impulse response from a filter chain) with the same parts a SeptaBee rack would have. Claude can make and judge
   cues, bleeps, growls, static and the helmet/mask/comms IRs alone. `presets` lists the 21 first drafts (one or more per cue).
+- `look file.wav [out.png]`: **Claude's ears**: a picture of the sound (waveform on top, spectrogram below, low pitches at the bottom).
+  Claude cannot hear audio, but reads this picture: pitch movement, noise against tone, harmonics, gating, envelope and any clipping show.
+  Use it on every sound (the user's SeptaBee exports and the presets) and say what the picture shows; it cannot tell if a sound is pleasant.
 - `inspect file.wav...`: rate, length, peak, RMS, leading silence, clipping, DC, and what to fix.
 - `import in.wav <bank>/<cue>` (or `ir/<helmet|mask|comms>`): **the way a SeptaBee export enters the game**. Mixed to mono, resampled to
   48 kHz, DC removed, trimmed (30 ms before, 20 after), peak -3 dBFS, 10 ms fade, saved as the next take
