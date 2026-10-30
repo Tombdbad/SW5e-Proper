@@ -5,7 +5,7 @@ import { KeyboardControls, PerformanceMonitor } from "@react-three/drei";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { TalkPanel } from "@/components/Play/TalkPanel";
+import { PersonSheet, TalkPanel } from "@/components/Play/TalkPanel";
 import { NemesisPanel } from "@/components/Play/NemesisPanel";
 import { beginHunt, emptyNemeses, huntParty, pickHunter, resolveMercy, settleFight, tickNemeses, type FightFoe, type MercyChoice, type NemesisEvent } from "@shared/logic/nemesis";
 import { Loader2 } from "lucide-react";
@@ -57,6 +57,9 @@ import { planTrip, driveMinutes, legPar, crewmate, blockPursuit, metText, type L
 import { dogfightPayout } from "@shared/logic/dogfightSim";
 import { SCENARIOS, scenarioAdvice, scenarioOf, classOf, type ScenarioId } from "@shared/logic/dogfight";
 import type { ShipSheet } from "@shared/logic";
+import { CAPS, CHANGE, genderOf, kinLine, kinOf, levelName, regardLevel, regardOf, reputation, sheetFor } from "@shared/logic/relations";
+import { createRandom, personIn } from "@shared/logic";
+const hashString = (t: string) => Array.from(t).reduce((n, ch) => (Math.imul(n, 31) + ch.charCodeAt(0)) | 0, 7) >>> 0;
 import PitArena, { type PitSummary } from "@/components/Map/PitArena";
 import monsterData from "@shared/data/sw5e/monsters.json";
 import type { Sw5eMonster } from "@shared/data";
@@ -1629,8 +1632,10 @@ export default function GameBoard() {
   const showMercy = (id: string, choice: MercyChoice) => {
     const current = latestWorld();
     if (!current?.nemeses) return;
-    const out = resolveMercy(current.nemeses, id, choice, clockNow());
-    saveCampaign({ galaxyMap: { ...current, nemeses: out.state } });
+    const out = resolveMercy(current.nemeses, id, choice, clockNow(), (rid) => kinOf(current, rid).map((k) => ({ id: k.id, tie: k.tie })));
+    // A death is felt by the family, nemesis or not: their regard for the party falls by the strength of the tie
+    const killed = out.events.some((e) => e.kind === "dead" && e.id === id);
+    saveCampaign({ galaxyMap: { ...current, nemeses: out.state }, ...(killed ? { factionInfluence: reputation(current, standing, id, CHANGE.killed).standing } : {}) });
     sayNemesis(out.events);
   };
   // A day passes: grudges cool and the rested and the "dead" get up
@@ -2445,14 +2450,27 @@ export default function GameBoard() {
         if (Object.keys(moves).length) galaxyMap = moveRoomAssets(galaxyMap, id, moves);
       }
       if (galaxyMap !== world) saveCampaign({ galaxyMap });
+      // The families of the named people the party killed hear of it, each by the strength of the tie (shared/logic/relations.ts)
+      let regarded: Standing = standing;
+      const mourned: string[] = [];
+      for (const id of areaIds) {
+        const after = new Set((galaxyMap.areas[id]?.occupants ?? []).map((o) => o.id));
+        for (const o of world.areas[id]?.occupants ?? []) {
+          if (!o.family || after.has(o.id)) continue;
+          const r = reputation(world, regarded, o.id, o.disposition === "hostile" ? CHANGE.attacked / 2 : CHANGE.killed);
+          regarded = r.standing;
+          mourned.push(...r.heard.filter((h) => h.delta <= -10).slice(0, 2).map((h) => h.name ?? "a relative"));
+        }
+      }
+      if (mourned.length) toast.info(`${[...new Set(mourned)].slice(0, 3).join(", ")} will hear of it: kin remember.`);
       // Renown: a fight costs standing with the side that lost it; the beasts of the wild have none
       if (slain && fallenKind && outcome !== "dead") {
         const losers = world.areas[area.parentId ?? ""]?.faction ?? world.antagonist;
         const holder = factionAt(world, areaId);
-        let renown = addRenown(standing, losers, -1);
+        let renown = addRenown(regarded, losers, -1);
         if (holder && holder !== losers) renown = addRenown(renown, holder, 1);
         saveCampaign({ factionInfluence: renown });
-      }
+      } else if (regarded !== standing) saveCampaign({ factionInfluence: regarded });
     }
     // The enemies who got away, were left for dead or brought the party down hold a grudge from now on (shared/logic/nemesis.ts)
     {
@@ -2467,12 +2485,14 @@ export default function GameBoard() {
         }
         if (foes.length) {
           const me = fightNow.combatants.find((c) => c.isPlayer);
+          const families = structuredClone(current.families ?? {});
           const settled = settleFight(current.nemeses ?? emptyNemeses(current.seed), {
             outcome: outcome === "left" ? "fled" : outcome === "victory" || outcome === "stable" || outcome === "dead" ? outcome : "fled",
             foes, now: clockNow(), settlementId: districtHere?.settlementId, areaId: areaId ?? undefined, downedBy: me?.lastHitBy,
             faction: factionAt(current, areaId ?? hereId ?? "") ?? current.antagonist,
+            person: (species, rid) => personIn(families, createRandom(current.seed + hashString(rid + species)), species, rid),
           });
-          if (settled.state !== current.nemeses) saveCampaign({ galaxyMap: { ...(latestWorld() ?? current), nemeses: settled.state } });
+          if (settled.state !== current.nemeses) saveCampaign({ galaxyMap: { ...(latestWorld() ?? current), nemeses: settled.state, families } });
           sayNemesis(settled.events);
         }
       }
@@ -2642,10 +2662,15 @@ export default function GameBoard() {
   const [shipPick, setShipPick] = useState(false);
   const [itemShown, setItemShown] = useState<string | null>(null);
   const traderLedger = (id: string) => ledger.traders[id] ?? { bought: {}, sold: {} };
+  // A deal or a favour makes a person warmer (to the cap of what it is: talk, trade, a deed), and their kin hear a little of it (shared/logic/relations.ts)
+  const dealtWith = (id: string, amount: number = CHANGE.trade, cap: number = CAPS.trade): Standing => {
+    const base = { ...standing, dealings: { ...standing.dealings, [id]: (standing.dealings[id] ?? 0) + 1 } };
+    return world ? reputation(world, base, id, amount, cap).standing : base;
+  };
   const recordDeal = (traderId: string, change: (entry: Ledger["traders"][string]) => Ledger["traders"][string], dealt = true) =>
     saveCampaign({
       availableResources: { ...ledger, traders: { ...ledger.traders, [traderId]: change(traderLedger(traderId)) } },
-      ...(dealt ? { factionInfluence: { ...standing, dealings: { ...standing.dealings, [traderId]: (standing.dealings[traderId] ?? 0) + 1 } } } : {}),
+      ...(dealt ? { factionInfluence: dealtWith(traderId) } : {}),
     });
   const buy = (trader: Occupant, line: TradeLine) => {
     if (line.category === "Vehicle" || line.category === "Mount") return void buyTransport(trader, line);
@@ -3897,7 +3922,7 @@ export default function GameBoard() {
     const attitude = attitudeOf(world, o, placeId, customer).score;
     const fee = hireFee(o.xp, attitude);
     if (fee > (character.credits ?? 0)) return toast.error(`${o.name} wants ${fee} credits to sign on and you have ${character.credits ?? 0}.`);
-    recruit(o, "hireling", "hired", { wage: wageFor(o.xp) }, { credits: (character.credits ?? 0) - fee }, { factionInfluence: { ...standing, dealings: { ...standing.dealings, [o.id]: (standing.dealings[o.id] ?? 0) + 1 } } });
+    recruit(o, "hireling", "hired", { wage: wageFor(o.xp) }, { credits: (character.credits ?? 0) - fee }, { factionInfluence: dealtWith(o.id, CHANGE.hired, CAPS.deed) });
   };
 
   // Wages come due as the days pass; a hireling not paid leaves
@@ -4254,7 +4279,7 @@ export default function GameBoard() {
     }
     const time = pass(10);
     if (!result.success) return void saveCampaign(time);
-    editBase(o.id, (list) => list.map((x) => (x.id === o.id ? { ...x, captive: undefined, role: "freed", disposition: "friendly" as const } : x)), time);
+    editBase(o.id, (list) => list.map((x) => (x.id === o.id ? { ...x, captive: undefined, role: "freed", disposition: "friendly" as const } : x)), { ...time, ...(world ? { factionInfluence: reputation(world, standing, o.id, CHANGE.freed).standing } : {}) });
     toast.success(`${o.name} is free.`);
   };
   // Freed, they can come along, or be sent home: a deed worth experience (house rule: 25 x your level)
@@ -7483,11 +7508,13 @@ export default function GameBoard() {
           ) : (
             <>
               <TalkPanel
-                speaker={{ id: o.id, name: o.name, species: o.species, role: o.role, disposition: o.disposition, creature: o.creature }}
+                speaker={{ id: o.id, name: o.name, species: o.species, role: o.role, disposition: o.disposition, creature: o.creature, gender: genderOf(o), attitude: levelName(regardLevel(regardOf(standing, o.id))), kin: world ? kinLine(world, o) : undefined }}
                 player={talkPlayer}
                 scene={talkScene()}
                 disabled={inCombat || dead}
+                onSpoke={() => { if (world) saveCampaign({ factionInfluence: reputation(world, standing, o.id, CHANGE.talk, CAPS.talk).standing }); }}
               />
+              {world && <PersonSheet name={o.name} sheet={sheetFor(world, o, regardOf(standing, o.id))} regard={regardOf(standing, o.id)} />}
               {/* Their wares and what else they do are in the HUD's Trade tab, not over the map (the card has no room for a stock list) */}
               {showSidebar ? (
                 <Button size="sm" variant="outline" className="h-6 px-2" onClick={() => setHudTab("trade")} data-testid="open-trade">Wares and dealings: Trade tab</Button>

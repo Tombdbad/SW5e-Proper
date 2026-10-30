@@ -75,7 +75,7 @@ export function speechOnly(text: string): string {
 }
 
 interface Card {
-  speaker: { name: string; species?: string; role?: string; disposition?: string; kind?: string; notes?: string };
+  speaker: { name: string; species?: string; role?: string; disposition?: string; kind?: string; notes?: string; gender?: string; attitude?: string; kin?: string };
   player: { name: string; species?: string; class?: string; alignment?: string };
   scene: string;
   line: string;
@@ -93,7 +93,9 @@ export function cardText(c: Card): string {
   const you = [clip(p.species, 40), clip(p.class, 40)].filter(Boolean).join(" ");
   return [
     `SCENE: ${clip(c.scene, 300)}`,
-    `WHO YOU ARE: ${clip(s.name, 60)}${who ? `, ${/^[aeiou]/i.test(who) ? "an" : "a"} ${who}` : ""}, ${feeling}.${s.notes ? ` ${clip(s.notes, 200)}` : ""}`,
+    `WHO YOU ARE: ${clip(s.name, 60)}${s.gender === "male" ? " (he/him)" : s.gender === "female" ? " (she/her)" : ""}${who ? `, ${/^[aeiou]/i.test(who) ? "an" : "a"} ${who}` : ""}, ${feeling}.${s.notes ? ` ${clip(s.notes, 200)}` : ""}`,
+    s.attitude && s.kind !== "party" ? `HOW YOU FEEL ABOUT THEM: ${clip(s.attitude, 12)} (on a scale of hostile, cold, wary, cool, neutral, warm, friendly, generous, devoted); let it colour how you speak.` : "",
+    s.kin ? `YOUR KIN: ${clip(s.kin, 120)}.` : "",
     `WHO IS TALKING TO YOU: ${clip(p.name, 60)}${you ? `, ${/^[aeiou]/i.test(you) ? "an" : "a"} ${you}` : ""}.`,
     c.recap ? `YOU SAID LAST: "${clip(c.recap, 300)}"` : "",
     `PLAYER SAYS: "${clip(c.line, 400)}"`,

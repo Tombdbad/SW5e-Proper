@@ -8,7 +8,7 @@
 // and the tuning numbers are our own. Everything here is a labelled HOUSE RULE (the books have no such system); see REVIVAL_NOTES "Nemeses".
 //
 // Pure: a state goes in and a new one comes out. A record is plain JSON and lives in `World.nemeses` (so it is saved with the campaign).
-import { unitOf, type Occupant } from "./index";
+import { unitOf, type Gender, type Occupant } from "./index";
 
 export type Personality = "hothead" | "coward" | "proud" | "cold" | "greedy" | "loyal" | "drifter";
 export type HateTier = "none" | "resentful" | "vengeful" | "murderous";
@@ -34,6 +34,11 @@ export interface NemesisRecord {
   name: string;
   // Earned from deeds ("the Scarred", "Hand-Taker"); see titleOf
   title?: string;
+  // Who they are to their kin (shared/logic/relations.ts): a family name is one family and one species, and a nemesis's family is in
+  // World.families under their record id
+  species?: string;
+  gender?: Gender;
+  family?: string;
   // The side they fight for (a faction name or the world's antagonist), whose leader's chair they may take
   gang: string;
   rank: number;
@@ -124,6 +129,8 @@ export const BALANCE = {
   maxRank: 5,
   maxRecords: 40,
   hatePerComrade: 15,
+  // A relative's hate when a nemesis is killed, before the strength of the tie (house rule: a spouse or a parent takes on most of it)
+  hatePerKin: 40,
   fearDecayPerDay: 3,
   notorietyPerKill: 0.25,
   notorietyPerNemesisKill: 8,
@@ -349,6 +356,8 @@ export interface FightReport {
   // The foe that brought the party down (its combat id), where that happened
   downedBy?: string;
   faction?: string;
+  // Names a new nemesis as a person of this species with a family (GameBoard gives it the world's families; see personIn in shared/logic)
+  person?: (species: string, id: string) => { name: string; gender: Gender; family: string };
 }
 // A person (not a beast, a horror or a droid) can hold a grudge
 export const isPerson = (o: Pick<Occupant, "role" | "creature">) => !["wildlife", "horror"].includes(o.role) && (o.creature ?? "humanoid").toLowerCase() !== "droid" && (o.creature ?? "humanoid").toLowerCase() !== "beast";
@@ -358,10 +367,13 @@ const totalOf = (struck?: Record<string, number>) => Object.values(struck ?? {})
 function create(s: NemesisState, roll: (t: string) => number, foe: FightFoe, origin: GrudgeOrigin, report: FightReport): NemesisRecord {
   const personality = PERSONALITIES[Math.floor(roll("personality") * PERSONALITIES.length)];
   const t = TEMPERS[personality];
-  const name = `${FIRST[Math.floor(roll("first") * FIRST.length)]} ${LAST[Math.floor(roll("last") * LAST.length)]}`;
+  const id = `nem-${s.nextId++}`;
+  const species = foe.body.species ?? "Human";
+  const who = report.person?.(species, id);
+  const name = who?.name ?? `${FIRST[Math.floor(roll("first") * FIRST.length)]} ${LAST[Math.floor(roll("last") * LAST.length)]}`;
   const body: Occupant = { ...foe.body, id: foe.id, name: foe.body.name, count: 1, wounds: undefined, disposition: "hostile" };
   const rec: NemesisRecord = {
-    id: `nem-${s.nextId++}`, name, gang: report.faction ?? "outlaws", rank: 0, rankXp: 0, personality, aggression: clamp(t.aggression + Math.round(roll("aggr") * 20 - 10), 5, 95),
+    id, name, ...(who ? { species, gender: who.gender, family: who.family } : {}), gang: report.faction ?? "outlaws", rank: 0, rankXp: 0, personality, aggression: clamp(t.aggression + Math.round(roll("aggr") * 20 - 10), 5, 95),
     hate: 0, fear: 0, body, home: report.settlementId, lastSeen: { settlementId: report.settlementId, areaId: report.areaId, at: report.now },
     status: "alive", restUntil: report.now, huntedAt: report.now, origin, scars: [], history: [], killedParty: 0, beaten: 0, fled: 0, spared: 0, cheatedDeath: 0,
   };
@@ -490,7 +502,9 @@ export type MercyChoice = "spare" | "execute" | "interrogate";
 // What the party does with one it has beaten. Executing may fail to kill (they cheat death, up to twice) and then they are scarred, a
 // Warlord's chance the highest; sparing a proud one deepens the grudge while a greedy or fearful one may turn informant; questioning
 // frightens them and may give up where others can be found.
-export function resolveMercy(state: NemesisState, id: string, choice: MercyChoice, now: number): { state: NemesisState; events: NemesisEvent[] } {
+// `kin` says who is related to a record and how closely (relations.ts kinOf): when a nemesis is killed, a relative who is a nemesis too takes
+// the grudge on, by the strength of the tie
+export function resolveMercy(state: NemesisState, id: string, choice: MercyChoice, now: number, kin?: (id: string) => { id: string; tie: number }[]): { state: NemesisState; events: NemesisEvent[] } {
   const { s, roll } = work(state);
   const events: NemesisEvent[] = [];
   const rec = s.records[id];
@@ -518,6 +532,13 @@ export function resolveMercy(state: NemesisState, id: string, choice: MercyChoic
       events.push({ kind: "dead", id, text: `${nameOf(rec)} is dead.` });
       fillSeat(s, rec, now, events, roll);
       for (const o of Object.values(s.records)) if (o.status !== "dead" && o.id !== id && o.gang === rec.gang && o.personality === "loyal") addHate(o, BALANCE.hatePerComrade);
+      for (const rel of kin?.(id) ?? []) {
+        const o = s.records[rel.id];
+        if (!o || o.status === "dead") continue;
+        addHate(o, Math.round(BALANCE.hatePerKin * rel.tie));
+        note(o, now, `Swore vengeance for ${rec.name}, of their own blood.`);
+        events.push({ kind: "mercy", id: o.id, text: `${nameOf(o)} will not forget what was done to ${rec.name}.` });
+      }
     }
   } else if (choice === "spare") {
     rec.spared++;

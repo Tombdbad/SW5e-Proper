@@ -95,6 +95,9 @@ export interface Occupant {
   stall?: string;
   // Put in the world for a job (shared/logic/contracts.ts): the contract's id
   contract?: string;
+  // Who they are to themselves and their kin (see "People": a person's gender picks their given name; a family name is a family)
+  gender?: Gender;
+  family?: string;
 }
 
 export interface Ship {
@@ -198,6 +201,8 @@ export interface World {
   areas: Record<string, Area>;
   paths: Path[];
   counter: number;
+  // The families of the people met, by family name (shared/logic/index.ts "People"); worlds made before have none
+  families?: Record<string, Family>;
   // Which upgrade of the people in it the world has had (see livenWorld); absent in older worlds
   life?: number;
   // The era it is set in (ERAS); absent in worlds made before eras (the Galactic Civil War)
@@ -683,8 +688,28 @@ const SYLLABLES = {
   middle: ["a", "e", "i", "o", "u", "an", "en", "or", "ar", "il", "ess", "oo", "at", "in"],
   end: ["dor", "tine", "ria", "nar", "wan", "sk", "th", "is", "os", "ra", "lon", "dine", "var", "meer", "to", "bah", "len", "phus", "rin", "x"],
 };
-const FIRST_NAMES = ["Jace", "Kira", "Mara", "Tycho", "Liana", "Dax", "Vex", "Zara", "Bren", "Nyra", "Kaiden", "Senn", "Rook", "Lyn", "Cass", "Juno", "Orin", "Talia", "Hesk", "Mirel", "Dorn", "Sabe", "Venn", "Ilya"];
-const LAST_NAMES = ["Antilla", "Vos", "Syndar", "Kryze", "Bane", "Vizla", "Fenn", "Cobb", "Valen", "Solus", "Wren", "Onyo", "Kestra", "Dromar", "Thul", "Organa", "Tarkas", "Maro", "Quill", "Renz"];
+// Given names by gender (2026-10-30; the user: "assign gender to NPCs and have this inform name generation"): "other" is for the few
+// who are neither, and takes the names that suit anyone
+export type Gender = "male" | "female" | "other";
+export const GIVEN_NAMES: Record<Gender, string[]> = {
+  male: ["Jace", "Tycho", "Dax", "Vex", "Bren", "Kaiden", "Rook", "Orin", "Hesk", "Dorn", "Venn", "Corran", "Dallan", "Evar", "Garen", "Harlo", "Joss", "Kellan", "Lorn", "Marek", "Niko", "Oren", "Pell", "Quinn", "Raff", "Soren", "Teric", "Ulric", "Brix", "Teodor"],
+  female: ["Kira", "Mara", "Liana", "Zara", "Nyra", "Talia", "Mirel", "Sabe", "Juno", "Ilya", "Brynn", "Cala", "Deya", "Elara", "Faye", "Greta", "Hana", "Isha", "Kessa", "Lenna", "Maris", "Neela", "Odessa", "Pria", "Rhea", "Sela", "Tamsin", "Una", "Vela", "Yara"],
+  other: ["Cass", "Lyn", "Senn", "Kit", "Ren", "Sage", "Tarn", "Vale", "Arlo", "Rowan", "Ash", "Wynn"],
+};
+const LAST_NAMES = ["Antilla", "Vos", "Syndar", "Kryze", "Bane", "Vizla", "Fenn", "Cobb", "Valen", "Solus", "Wren", "Onyo", "Kestra", "Dromar", "Thul", "Organa", "Tarkas", "Maro", "Quill", "Renz",
+  "Adare", "Brask", "Calder", "Dane", "Eres", "Falk", "Grell", "Harrow", "Idris", "Jorrin", "Kade", "Lothe", "Marsh", "Nox", "Orrin", "Pryce", "Quen", "Rask", "Sable", "Tane", "Ulaan", "Varro", "Wick", "Xan",
+  "Yarrow", "Zane", "Ardent", "Bexley", "Corso", "Dray", "Esker", "Fallow", "Garrow", "Holt", "Ives", "Jarek", "Kolb", "Lanner", "Mace", "Nara", "Ostrander", "Perrin", "Rhode", "Skiff", "Torrin", "Umber", "Verro", "Wexler"];
+
+// Families: everyone with a family name is of one family and one species. A member is related to one who was there before, and the
+// tie between any two is the strongest chain of such links (each link has a strength; a chain's is their product).
+export type Kin = "parent" | "child" | "sibling" | "spouse" | "cousin";
+export interface Family {
+  name: string;
+  species: string;
+  // `kin` is what this member is to `to` (the first member has neither)
+  members: { id: string; given: string; to?: string; kin?: Kin }[];
+}
+export const KIN_TIE: Record<Kin, number> = { spouse: 0.6, parent: 0.7, child: 0.7, sibling: 0.6, cousin: 0.35 };
 const SHIP_WORDS = [["Wandering", "Silent", "Crimson", "Lucky", "Iron", "Second", "Distant", "Broken", "Golden", "Last"], ["Star", "Kestrel", "Venture", "Horizon", "Mynock", "Gambit", "Promise", "Comet", "Nexu", "Dawn"]];
 
 // ---------------------------------------------------------------------------------------------
@@ -715,7 +740,46 @@ function uniqueName(ctx: Context, make: () => string): string {
 }
 
 const placeName = (r: Random) => r.pick(SYLLABLES.start) + (r.chance(0.6) ? r.pick(SYLLABLES.middle) : "") + r.pick(SYLLABLES.end);
-const personName = (r: Random) => `${r.pick(FIRST_NAMES)} ${r.pick(LAST_NAMES)}`;
+const pickSurname = (r: Random, taken: (name: string) => boolean): string => {
+  const free = LAST_NAMES.filter((n) => !taken(n));
+  if (free.length) return r.pick(free);
+  // Every plain family name is in use: make one
+  for (;;) {
+    const name = placeName(r);
+    if (!taken(name)) return name;
+  }
+};
+
+// A name for a new person of this species: a gender, a given name that suits it, and a family. A third of the time they are of a
+// family of that species already in the world (a family name is never shared by two species), related to one of its members.
+function personFor(ctx: Context, species: string, id: string) {
+  return personIn((ctx.world.families ??= {}), ctx.random, species, id);
+}
+// The same on a set of families of its own (a nemesis made while playing is named with the world's families; see GameBoard)
+export function personIn(families: Record<string, Family>, r: Random, species: string, id: string): { name: string; gender: Gender; family: string } {
+  const gender: Gender = r.chance(0.04) ? "other" : r.chance(0.5) ? "male" : "female";
+  const sameSpecies = Object.values(families).filter((f) => f.species === species);
+  const family = sameSpecies.length && r.chance(0.35) ? r.pick(sameSpecies) : undefined;
+  const lend = (g: Gender, used: Set<string>) => {
+    const free = GIVEN_NAMES[g].filter((n) => !used.has(n));
+    return r.pick(free.length ? free : GIVEN_NAMES[g]);
+  };
+  if (family) {
+    const f = family;
+    const to = r.pick(f.members);
+    const hasSpouse = f.members.some((m) => m.kin === "spouse" && (m.id === to.id || m.to === to.id));
+    const hasParent = f.members.some((m) => (m.id === to.id && m.kin === "child") || (m.to === to.id && m.kin === "parent"));
+    const roll = r.next();
+    const kin: Kin = roll < 0.3 ? "sibling" : roll < 0.55 ? "child" : roll < 0.75 && !hasSpouse ? "spouse" : roll < 0.85 && !hasParent ? "parent" : "cousin";
+    const given = lend(gender, new Set(f.members.map((m) => m.given)));
+    f.members.push({ id, given, to: to.id, kin });
+    return { name: `${given} ${f.name}`, gender, family: f.name };
+  }
+  const surname = pickSurname(r, (n) => !!families[n]);
+  const given = lend(gender, new Set());
+  families[surname] = { name: surname, species, members: [{ id, given }] };
+  return { name: `${given} ${surname}`, gender, family: surname };
+}
 const title = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function makeArea(ctx: Context, kind: AreaKind, parentId: string | null, fields: Partial<Area> & { name: string; type: string }): Area {
@@ -1190,7 +1254,8 @@ function speciesFor(ctx: Context, speciesNames: string[]): string {
 
 function person(ctx: Context, role: string, disposition: Occupant["disposition"], speciesNames: string[], species = speciesFor(ctx, speciesNames)): Occupant {
   const gear = (ROLE_GEAR[role] ?? []).map((pattern) => pickGear(ctx, pattern)).filter((g): g is string => !!g);
-  const one: Occupant = { id: nextId(ctx.world, "o"), name: personName(ctx.random), role, disposition, count: 1, species, loadout: gear };
+  const id = nextId(ctx.world, "o");
+  const one: Occupant = { id, ...personFor(ctx, species, id), role, disposition, count: 1, species, loadout: gear };
   return HIRE_ROLES.includes(role) ? withStats(ctx.catalog, one, ctx.random, ctx.world.partyLevel) : one;
 }
 
@@ -5052,6 +5117,8 @@ export interface Standing {
   renown: Record<string, number>;
   // Dealings with each trader, by occupant id
   dealings: Record<string, number>;
+  // What each person feels for the party, -100 to 100, by occupant id (shared/logic/relations.ts); absent in campaigns made before
+  regard?: Record<string, number>;
 }
 export interface Ledger {
   day: number;
@@ -5106,6 +5173,9 @@ export function attitudeOf(world: World, trader: Occupant, placeId: string, cust
   if (black && /lawful/i.test(customer.alignment ?? "")) add(-1, "you look like trouble with the law");
   const dealt = customer.standing.dealings[trader.id] ?? 0;
   if (dealt >= 3) add(dealt >= 10 ? 2 : 1, dealt >= 10 ? "a regular" : "a familiar face");
+  // What this person in particular feels for the party (shared/logic/relations.ts): a level for each 20 points of regard
+  const personal = Math.max(-4, Math.min(4, Math.trunc((customer.standing.regard?.[trader.id] ?? 0) / 20)));
+  if (personal) add(personal, personal > 0 ? "they like you" : "they have no love for you");
   if (customer.contacts?.allied) add(Math.min(2, customer.contacts.allied), "friends in town");
   if (customer.contacts?.hostile) add(-Math.min(2, customer.contacts.hostile), "enemies and rivals in town");
   return { score: Math.max(-4, Math.min(4, score)), reasons };
@@ -7311,7 +7381,8 @@ function captivesOf(ctx: Context, room: Area, building: Area, speciesNames: stri
   return Array.from({ length: r.int(1, 3) }, () => {
     const restraint: Captive["restraint"] = building.type === "camp" ? (r.chance(0.5) ? "collar" : "shackles") : building.type === "hideout" ? "cell" : r.chance(0.3) ? "collar" : "cell";
     const block = fromStatBlock(ctx, r.pick(pool), 1, "captive", "friendly");
-    return { ...block, name: personName(r), species: speciesFor(ctx, speciesNames), loadout: [], captive: { restraint, dc: restraint === "collar" ? 20 : 15 } };
+    const species = speciesFor(ctx, speciesNames);
+    return { ...block, ...personFor(ctx, species, block.id), species, loadout: [], captive: { restraint, dc: restraint === "collar" ? 20 : 15 } };
   });
 }
 

@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { setVoicePref, speak, stopSpeaking, voicePrefs } from "@/lib/voice";
+import { levelName, type sheetFor } from "@shared/logic/relations";
 
 export interface TalkSpeaker {
   id: string;
@@ -21,6 +22,9 @@ export interface TalkSpeaker {
   form?: string;
   creature?: string;
   gender?: string;
+  // How they feel about the party (a word from hostile to devoted) and who their kin are, for the dialogue
+  attitude?: string;
+  kin?: string;
 }
 export interface TalkPlayer {
   name: string;
@@ -37,7 +41,7 @@ const subtitle = (text: string) => text.replace(/\[([a-z]+)\]/g, (_, c: string) 
 const lastSaid = new Map<string, string>();
 
 // (`comms`: the talk is over a comlink, and sounds like it)
-export function TalkPanel({ speaker, player, scene, disabled, comms }: { speaker: TalkSpeaker; player: TalkPlayer; scene: string; disabled?: boolean; comms?: boolean }) {
+export function TalkPanel({ speaker, player, scene, disabled, comms, onSpoke }: { speaker: TalkSpeaker; player: TalkPlayer; scene: string; disabled?: boolean; comms?: boolean; onSpoke?: () => void }) {
   const [line, setLine] = useState("");
   const [heard, setHeard] = useState<{ asked: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -113,7 +117,10 @@ export function TalkPanel({ speaker, player, scene, disabled, comms }: { speaker
           }
         }
       }
-      if (text) lastSaid.set(speaker.id, text);
+      if (text) {
+        lastSaid.set(speaker.id, text);
+        onSpoke?.();
+      }
       // Heard in their own voice (the page goes on while it plays)
       if (text && voicePrefs().voice && !control.signal.aborted) {
         setSpeaking(true);
@@ -161,5 +168,32 @@ export function TalkPanel({ speaker, player, scene, disabled, comms }: { speaker
           : <Button type="submit" size="sm" variant="outline" className="h-7 px-2" disabled={disabled || !line.trim()} data-testid="talk-say">Say</Button>}
       </form>
     </div>
+  );
+}
+
+// What the party knows of a person's character sheet, as far as their regard opens it (shared/logic/relations.ts sheetFor; house rule: each
+// 20 points of regard, a level of friendliness, shows another tier). The lines still closed say what it takes.
+export function PersonSheet({ name, sheet, regard }: { name: string; sheet: ReturnType<typeof sheetFor>; regard: number }) {
+  return (
+    <details className="mt-1 rounded border border-gray-600/60 p-1 text-xs" data-testid="person-sheet">
+      <summary className="cursor-pointer text-gray-300">
+        {name}: {sheet.attitude} (regard {regard}) · knows {sheet.open.length} of {sheet.open.length + sheet.closed.length}
+      </summary>
+      <dl className="mt-1 grid grid-cols-[auto,1fr] gap-x-2 gap-y-0.5">
+        {sheet.open.map((l) => (
+          <div key={l.label} className="contents" data-testid="sheet-open">
+            <dt className="text-gray-400">{l.label}</dt>
+            <dd className="text-gray-100">{l.value}</dd>
+          </div>
+        ))}
+        {sheet.closed.map((l) => (
+          <div key={l.label} className="contents" data-testid="sheet-closed">
+            <dt className="text-gray-500">{l.label}</dt>
+            <dd className="text-gray-500">??? ({levelName(l.level)})</dd>
+          </div>
+        ))}
+      </dl>
+      {sheet.next && <p className="mt-1 text-gray-400">At regard {sheet.next.regard} ({levelName(sheet.next.level)}) you would learn {sheet.next.opens}. House rule: talk and trade warm a person only so far; favours and help go further; harm to a person is felt by their kin.</p>}
+    </details>
   );
 }
