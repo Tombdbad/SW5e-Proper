@@ -84,3 +84,15 @@ test("a shovel digs ore and plants of the first two tiers, and nothing else", ()
   assert.equal(harvestKit("salvage", 2, ["Hydrospanner"]), "Hydrospanner", "a hydrospanner is a mechanic's kit, which works salvage");
   assert.ok(FAMILIES.ore.kitNames.includes("shovel"));
 });
+
+test("calls at a distance: a commlink at each end and the same planet; everyone in the party is issued one but a droid and a beast", async () => {
+  const { COMMS_ISSUE, canCall, commsOf, needsComms } = await import("../../shared/logic/comms");
+  assert.equal(commsOf(["Blaster pistol", "Commlink, hands-free"]), "Commlink, hands-free");
+  assert.equal(commsOf(["Datapad"]), undefined);
+  assert.equal(COMMS_ISSUE, "Commlink");
+  assert.deepEqual(["character", "hireling", "freed", "droid", "beast"].map((kind) => needsComms({ kind })), [true, true, true, false, false]);
+  assert.equal(canCall({ fromPlanet: "p1", toPlanet: "p1", fromHas: true, toHas: true }).ok, true);
+  assert.match(canCall({ fromPlanet: "p1", toPlanet: "p2", fromHas: true, toHas: true }).why, /between worlds/);
+  assert.match(canCall({ fromPlanet: "p1", toPlanet: "p1", fromHas: false, toHas: true }).why, /You carry no commlink/);
+  assert.match(canCall({ fromPlanet: "p1", toPlanet: "p1", fromHas: true, toHas: false }).why, /They carry/);
+});

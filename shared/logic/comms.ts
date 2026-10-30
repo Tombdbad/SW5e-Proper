@@ -51,3 +51,19 @@ export function tracedCalls(reports: Report[] | undefined, nameOf: (areaId: stri
 
 // ---- A call over a commlink while the law is searching is overheard unless it is scrambled ---------------------------------------
 export const callOverheard = (searching: boolean, names: string[]) => searching && !names.some((n) => /^pocket scrambler/i.test(n));
+
+// ---- Calls at a distance (2026-10-30; the user: "players and party members to EACH have a comms item in their possession to allow communication
+// over distance") -------------------------------------------------------------------------------------------------------------------------
+// House rules: everyone in the party carries a commlink (one is issued free to a character or a companion without one; a droid has a
+// transceiver built in and a beast cannot carry one), and a call needs a commlink at each end. The book's commlink reaches 30 miles, less in
+// dense districts: here it reaches anyone on the same planet, and nothing between worlds without a ship's transceiver (not played yet).
+export const COMMS_ITEM = /^(commlink|holocomm)/i;
+export const COMMS_ISSUE = "Commlink";
+export const commsOf = (names: string[] | undefined): string | undefined => (names ?? []).find((n) => COMMS_ITEM.test(n));
+export const needsComms = (c: { kind: string }) => c.kind !== "beast" && c.kind !== "droid";
+export function canCall(opts: { fromPlanet?: string; toPlanet?: string; fromHas: boolean; toHas: boolean }): { ok: boolean; why: string } {
+  if (!opts.fromHas) return { ok: false, why: "You carry no commlink." };
+  if (!opts.toHas) return { ok: false, why: "They carry no commlink." };
+  if (!opts.fromPlanet || opts.fromPlanet !== opts.toPlanet) return { ok: false, why: "No signal between worlds without a ship's transceiver." };
+  return { ok: true, why: "" };
+}

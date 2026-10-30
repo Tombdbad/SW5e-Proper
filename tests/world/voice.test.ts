@@ -6,9 +6,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { speechOnly, tidy } from "../../server/dialogue";
+import { cleanTranscript, speechOnly, tidy } from "../../server/dialogue";
 import { findPiper } from "../../server/speech";
-import { gibberish, partsOf, toneOf, voiceOf } from "../../client/src/lib/voice";
+import { gibberish, partsOf, toneOf, voiceOf, wavBase64 } from "../../client/src/lib/voice";
 
 const windows = { voices: ["George", "Hazel", "Susan"] };
 
@@ -83,4 +83,20 @@ test("Piper is found beside the project by its folder, its exe and a real voice 
   assert.ok(f.exe.endsWith("piper.exe") && f.model.endsWith("en_US-x.onnx"));
   assert.match(findPiper({}, path.join(base, "elsewhere", "p")).note, /No Piper folder|no piper/);
   fs.rmSync(base, { recursive: true, force: true });
+});
+
+test("the microphone: a recording at any rate becomes a 16 kHz mono WAV for the local model, and its transcript is cleaned", () => {
+  const rate = 48000;
+  const x = new Float32Array(rate).map((_, i) => 0.5 * Math.sin((2 * Math.PI * 440 * i) / rate));
+  const wav = Buffer.from(wavBase64(x, rate), "base64");
+  assert.equal(wav.toString("ascii", 0, 4), "RIFF");
+  assert.equal(wav.toString("ascii", 8, 12), "WAVE");
+  assert.equal(wav.readUInt32LE(24), 16000, "16 kHz");
+  assert.equal(wav.readUInt16LE(22), 1, "mono");
+  assert.equal(wav.readUInt32LE(40), 16000 * 2, "one second of 16-bit samples");
+  assert.ok(Math.abs(wav.readInt16LE(44 + 2 * 100)) > 0 && wav.length === 44 + 32000);
+  assert.equal(cleanTranscript('  "Where can I find the dockmaster?"  '), "Where can I find the dockmaster?");
+  assert.equal(cleanTranscript("(no speech)"), "");
+  assert.equal(cleanTranscript("Silence."), "");
+  assert.equal(cleanTranscript("Hello there\n\nfriend"), "Hello there friend");
 });

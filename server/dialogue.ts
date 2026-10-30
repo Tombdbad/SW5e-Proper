@@ -154,7 +154,35 @@ async function prime(): Promise<boolean> {
 }
 const primeLater = () => void alone(prime);
 
+// What the player said into the microphone (2026-10-30; the user: "utilise the users mobile device microphone as an option to speak vocally to
+// NPCs and distant party members"): Gemma 4 E2B takes audio in, so the same local model that writes the replies reads the recording and nothing
+// leaves this machine. The page sends a short 16 kHz mono WAV (base64); the answer is the words, or nothing if there was no speech.
+const STT_PROMPT = "Transcribe this audio exactly. Reply with only the words spoken, nothing else. If there is no speech, reply with nothing.";
+export function cleanTranscript(text: string): string {
+  const t = text.replace(/[\u0000-\u001f]/g, " ").replace(/\s+/g, " ").replace(/^["'`\s]+|["'`\s]+$/g, "").trim();
+  return /^[\[(*]?\s*(no speech|silence|inaudible|no audio|unintelligible)\b/i.test(t) ? "" : t.slice(0, 400);
+}
+
 export function registerDialogueRoutes(app: Express) {
+  app.post("/api/stt", async (req: Request, res: Response) => {
+    const audio = String(req.body?.audio ?? "");
+    if (!audio || audio.length > 4_000_000) return void res.status(400).json({ message: "audio is required (a short WAV, base64)" });
+    try {
+      const text = await alone(async () => {
+        const r = await fetch(`${URL_BASE}/api/chat`, {
+          method: "POST",
+          body: JSON.stringify({ model: MODEL, stream: false, think: false, keep_alive: KEEP_ALIVE, messages: [{ role: "user", content: STT_PROMPT, images: [audio] }], options: { num_ctx: NUM_CTX, num_predict: 120, temperature: 0 } }),
+          signal: AbortSignal.timeout(60000),
+        });
+        if (!r.ok) throw new Error(`the model answered ${r.status}`);
+        return cleanTranscript(String(((await r.json()) as any).message?.content ?? ""));
+      });
+      res.json({ text });
+    } catch (e: any) {
+      res.status(503).json({ message: String(e?.message ?? e) });
+    }
+  });
+
   // Warm the model and the prefix while the rest of the server starts (it may not be running: then talk is simply off)
   setTimeout(primeLater, 1500);
 

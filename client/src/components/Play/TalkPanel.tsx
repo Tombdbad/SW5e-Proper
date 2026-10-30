@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { setVoicePref, speak, stopSpeaking, voicePrefs } from "@/lib/voice";
+import { micWhy, recordSpeech, setVoicePref, speak, stopSpeaking, transcribe, voicePrefs } from "@/lib/voice";
 import { levelName, type sheetFor } from "@shared/logic/relations";
 
 export interface TalkSpeaker {
@@ -31,6 +31,43 @@ export interface TalkPlayer {
   species?: string;
   class?: string;
   alignment?: string;
+}
+
+// The microphone button's logic: tap to speak (it listens until the speaker pauses, or tap again), the words come back through `onText`. With no
+// microphone (or no https) `why` says so and the keyboard is what is left.
+export function useMic(onText: (text: string) => void, onError: (message: string) => void) {
+  const [state, setState] = useState<"off" | "listening" | "reading">("off");
+  const rec = useRef<Awaited<ReturnType<typeof recordSpeech>> | null>(null);
+  useEffect(() => () => rec.current?.cancel(), []);
+  async function finish() {
+    const r = rec.current;
+    rec.current = null;
+    if (!r) return;
+    const clip = r.stop();
+    if (!clip) { setState("off"); return onError("Nothing heard: try again, or type."); }
+    setState("reading");
+    try {
+      const text = await transcribe(clip);
+      setState("off");
+      if (text) onText(text);
+      else onError("No words made out: try again, or type.");
+    } catch (e: any) {
+      setState("off");
+      onError(e?.message ?? "Could not read the recording: type instead.");
+    }
+  }
+  const toggle = async () => {
+    if (state === "listening") return void finish();
+    if (state !== "off") return;
+    stopSpeaking();
+    try {
+      rec.current = await recordSpeech({ onQuiet: () => void finish() });
+      setState("listening");
+    } catch {
+      onError("The microphone was not allowed: type instead.");
+    }
+  };
+  return { state, toggle, why: micWhy() };
 }
 
 // A cue as a subtitle shows it: [sigh] is "(sighs)"
@@ -73,8 +110,9 @@ export function TalkPanel({ speaker, player, scene, disabled, comms, onSpoke }: 
     setBusy(false);
   }, [speaker.id]);
 
-  const say = async () => {
-    const asked = line.trim();
+  const mic = useMic((text) => void say(text), setError);
+  const say = async (spoken?: string) => {
+    const asked = (spoken ?? line).trim();
     if (!asked || busy) return;
     stopSpeaking();
     const control = new AbortController();
@@ -163,6 +201,9 @@ export function TalkPanel({ speaker, player, scene, disabled, comms, onSpoke }: 
           disabled={disabled}
           data-testid="talk-input"
         />
+        <Button type="button" size="sm" variant="outline" className="h-7 px-2" disabled={disabled || busy || !!mic.why || mic.state === "reading"} title={mic.why || "Speak: the game's own model reads it, nothing leaves this PC"} onClick={() => void mic.toggle()} data-testid="talk-mic">
+          {mic.state === "listening" ? "Listening... (tap to send)" : mic.state === "reading" ? "Reading..." : "Speak"}
+        </Button>
         {busy
           ? <Button type="button" size="sm" variant="outline" className="h-7 px-2" onClick={() => stop.current?.abort()} data-testid="talk-stop">Stop</Button>
           : <Button type="submit" size="sm" variant="outline" className="h-7 px-2" disabled={disabled || !line.trim()} data-testid="talk-say">Say</Button>}

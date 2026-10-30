@@ -8,7 +8,11 @@ import { create } from "zustand";
 import { toast } from "sonner";
 import { queryClient } from "@/lib/queryClient";
 import { roadBus, resetRoad } from "@/lib/roadBus";
+import { speak, voicePrefs } from "@/lib/voice";
 import { applyChanges, changesBetween, type Changes, type CoopMember, type Craft, type TravelRoom } from "@shared/logic/coop";
+
+// A message over the commlink (components/Play/CommsPanel.tsx): what a member said, to one or to all
+export interface Say { from: string; name: string; text: string; at: number; mine?: boolean }
 
 // (`r`: the craft they are at the helm of, LocalMap rideKey)
 export interface Peer { a: string; x: number; y: number; f: number; h?: number; s?: number; r?: string }
@@ -23,9 +27,10 @@ interface CoopStore {
   room: TravelRoom | null;
   peers: Record<string, Peer>;
   error: string;
+  says: Say[];
 }
 
-export const useCoop = create<CoopStore>(() => ({ status: "off", code: "", campaignId: null, gameName: "", me: null, members: [], room: null, peers: {}, error: "" }));
+export const useCoop = create<CoopStore>(() => ({ status: "off", code: "", campaignId: null, gameName: "", me: null, members: [], room: null, peers: {}, error: "", says: [] }));
 
 const KEY = "sw5e.coop";
 interface Saved { code?: string; campaignId: number; characterId: number; host?: boolean }
@@ -140,6 +145,15 @@ function receive(msg: any) {
       else delete peers[msg.id];
       return void set({ peers });
     }
+    case "say": {
+      // A member over the commlink: shown, and spoken in their own voice (with the comlink's sound) if the player has the voice on
+      const text = String(msg.text ?? "");
+      if (!text) return;
+      set({ says: [...useCoop.getState().says, { from: String(msg.from), name: String(msg.name ?? "A member"), text, at: Date.now() }].slice(-30) });
+      toast.info(`${msg.name} (commlink): ${text}`);
+      if (voicePrefs().voice) void speak(text, { id: String(msg.from), name: String(msg.name ?? ""), species: msg.speaker?.species, role: msg.speaker?.role, gender: msg.speaker?.gender }, { comms: true });
+      return;
+    }
     case "road": {
       // From the pilot of the craft I ride: the leg they drive, and the race as it runs
       if (msg.spec) roadBus.spec = { game: msg.spec, at: performance.now() };
@@ -219,6 +233,13 @@ export function resumeCoop() {
 }
 
 // The host removes a player from the game (the server ignores anyone else's)
+// Say something over the commlink to one member (or to all of them): the others hear it in this character's voice
+export function sayToMates(text: string, speaker: { species?: string; role?: string; gender?: string }, to?: string) {
+  const clean = text.trim().slice(0, 400);
+  if (!clean) return;
+  transmit({ t: "say", text: clean, speaker, ...(to ? { to } : {}) });
+  set({ says: [...useCoop.getState().says, { from: useCoop.getState().me ?? "", name: "You", text: clean, at: Date.now(), mine: true }].slice(-30) });
+}
 export function kickPlayer(id: string) {
   transmit({ t: "kick", id });
 }

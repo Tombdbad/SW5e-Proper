@@ -336,6 +336,15 @@ function handle(s: Session, id: string, msg: any) {
       launch(s);
       return void pushRoom(s);
     }
+    case "say": {
+      // A message over the commlink (typed, or spoken and read back as text by the sender's own page): to one member or to all
+      const text = String(msg.text ?? "").replace(/\s+/g, " ").trim().slice(0, 400);
+      if (!text) return;
+      const out = { t: "say", from: id, name: me.name, text, speaker: msg.speaker && typeof msg.speaker === "object" ? { species: String(msg.speaker.species ?? "").slice(0, 40), role: String(msg.speaker.role ?? "").slice(0, 40), gender: String(msg.speaker.gender ?? "").slice(0, 10) } : undefined };
+      if (msg.to) send(s.members.get(String(msg.to))?.socket, out);
+      else broadcast(s, out, id);
+      return;
+    }
     case "pets": {
       // Who follows this member, for the others to draw (a character's companions and beasts are its own)
       me.pets = cleanPets(msg.pets);

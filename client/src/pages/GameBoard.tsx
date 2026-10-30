@@ -6,6 +6,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PersonSheet, TalkPanel } from "@/components/Play/TalkPanel";
+import { CommsPanel, type CommsContact, type CommsMate } from "@/components/Play/CommsPanel";
+import { COMMS_ISSUE, canCall, commsOf, needsComms } from "@shared/logic/comms";
 import { NemesisPanel } from "@/components/Play/NemesisPanel";
 import { beginHunt, emptyNemeses, huntParty, pickHunter, resolveMercy, settleFight, tickNemeses, type FightFoe, type MercyChoice, type NemesisEvent } from "@shared/logic/nemesis";
 import { Loader2 } from "lucide-react";
@@ -35,7 +37,7 @@ import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
 import { realtimePowers } from "@/lib/sw5e/realtimePowers";
-import { useCoop, saveShared, sharePets, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers } from "@/lib/coop";
+import { useCoop, saveShared, sharePets, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers, sayToMates } from "@/lib/coop";
 import { CoopButton, CoopDialog, CoopLink, TravelRoomPanel } from "@/components/Play/CoopUI";
 import { isGroupExit, shipSeats, unitsOf, type Craft } from "@shared/logic/coop";
 import { gearOf as figureGearOf, carriedWeapons, characterFeatures, combatFeatures, hagglingEdge, derivedStats, equippedNow, equippedOf, itemKind, withItemEffects, isAttuned, type Equipped } from "@/lib/sw5e/characterCalculation";
@@ -57,8 +59,9 @@ import { planTrip, driveMinutes, legPar, crewmate, blockPursuit, metText, type L
 import { dogfightPayout } from "@shared/logic/dogfightSim";
 import { SCENARIOS, scenarioAdvice, scenarioOf, classOf, type ScenarioId } from "@shared/logic/dogfight";
 import type { ShipSheet } from "@shared/logic";
-import { CAPS, CHANGE, genderOf, kinLine, kinOf, levelName, regardLevel, regardOf, reputation, sheetFor } from "@shared/logic/relations";
-import { createRandom, personIn } from "@shared/logic";
+import { CAPS, CHANGE, genderOf, kinLine, kinOf, levelName, personById, regardLevel, regardOf, reputation, sheetFor } from "@shared/logic/relations";
+import { ancestor, createRandom, personIn } from "@shared/logic";
+import { findOccupant } from "@shared/logic/contracts";
 const hashString = (t: string) => Array.from(t).reduce((n, ch) => (Math.imul(n, 31) + ch.charCodeAt(0)) | 0, 7) >>> 0;
 import PitArena, { type PitSummary } from "@/components/Map/PitArena";
 import monsterData from "@shared/data/sw5e/monsters.json";
@@ -216,7 +219,7 @@ function ClockLine({ after }: { after: string }) {
   );
 }
 
-type HudTab = "here" | "party" | "trade" | "quests" | "nemeses" | "pack" | "downtime" | "gm" | "test";
+type HudTab = "here" | "party" | "trade" | "quests" | "nemeses" | "comms" | "pack" | "downtime" | "gm" | "test";
 // A test copy is built with VITE_TEST_MENU=1 (deploy/test-plain.sh) and has a god-mode menu; the build the game is played on never does
 const TEST_MENU = import.meta.env.VITE_TEST_MENU === "1";
 
@@ -228,6 +231,7 @@ export default function GameBoard() {
   const coopPlace = useCoop((s) => (s.status !== "off" && s.campaignId === Number(campaignId) ? s.members.find((m) => m.id === s.me)?.areaId : undefined));
   const coopRoom = useCoop((s) => s.room);
   const coopMembers = useCoop((s) => s.members);
+  const coopSays = useCoop((s) => s.says);
   const coopMe = useCoop((s) => s.me);
   const [coopOpen, setCoopOpen] = useState(false);
   // a trip begun by the travel room (it is not sent to the room again), the ship a trip is to take, and the rooms already acted on
@@ -3924,6 +3928,21 @@ export default function GameBoard() {
     if (fee > (character.credits ?? 0)) return toast.error(`${o.name} wants ${fee} credits to sign on and you have ${character.credits ?? 0}.`);
     recruit(o, "hireling", "hired", { wage: wageFor(o.xp) }, { credits: (character.credits ?? 0) - fee }, { factionInfluence: dealtWith(o.id, CHANGE.hired, CAPS.deed) });
   };
+
+  // Everyone in the party carries a commlink (house rule, shared/logic/comms.ts): one is issued to a character or a companion without. A droid
+  // has a transceiver built in and a beast cannot carry one.
+  useEffect(() => {
+    if (!character) return;
+    if (!commsOf(character.equipment)) {
+      saveCharacter({ equipment: [...(character.equipment ?? []), COMMS_ISSUE] });
+      toast.info("A commlink was added to your pack (house rule: everyone in the party carries one).");
+    }
+    const lacking = party.filter((c) => needsComms(c) && !commsOf(c.loadout));
+    if (lacking.length) {
+      saveParty(party.map((c) => (lacking.includes(c) ? { ...c, loadout: [...(c.loadout ?? []), COMMS_ISSUE] } : c)));
+      toast.info(`${lacking.map((c) => c.name).join(", ")} ${lacking.length > 1 ? "were" : "was"} issued a commlink (house rule).`);
+    }
+  }, [character?.id, character?.equipment?.length, party.length]);
 
   // Wages come due as the days pass; a hireling not paid leaves
   const paidThrough: number = character?.companionData?.paidThrough ?? today;
@@ -8252,9 +8271,9 @@ export default function GameBoard() {
             </div>
 
             <div className="mb-3 flex flex-wrap gap-1" data-testid="hud-tabs">
-              {(["here", "party", "trade", "quests", "nemeses", "pack", ...(TEST_MENU ? ["downtime"] : []), "gm", ...(TEST_MENU ? ["test"] : [])] as HudTab[]).map((tab) => (
+              {(["here", "party", "trade", "quests", "nemeses", "comms", "pack", ...(TEST_MENU ? ["downtime"] : []), "gm", ...(TEST_MENU ? ["test"] : [])] as HudTab[]).map((tab) => (
                 <Button key={tab} role="tab" aria-selected={hudTab === tab} size="sm" variant={hudTab === tab ? "default" : "outline"} className="h-7 px-2 text-xs" onClick={() => setHudTab(tab)} data-testid={`hud-tab-${tab}`}>
-                  {{ here: "Here", party: "Party", trade: "Trade", quests: "Quests", nemeses: "Enemies", pack: "Inventory", downtime: "Downtime", gm: "GM Interface", test: "Test" }[tab]}
+                  {{ here: "Here", party: "Party", trade: "Trade", quests: "Quests", nemeses: "Enemies", comms: "Comms", pack: "Inventory", downtime: "Downtime", gm: "GM Interface", test: "Test" }[tab]}
                   {tab === "nemeses" && (world?.nemeses?.mercy.length ?? 0) > 0 && hudTab !== "nemeses" && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-red-400" />}
                   {tab === "trade" && dealingNow && hudTab !== "trade" && <span className="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-amber-300" />}
                 </Button>
@@ -8730,6 +8749,38 @@ export default function GameBoard() {
               )}
             </div>
             {hudTab === "nemeses" && <NemesisPanel state={world?.nemeses} onMercy={showMercy} disabled={inCombat || dead} />}
+            {hudTab === "comms" && world && character && (() => {
+              const planetOf = (id: string) => ancestor(world, id, "planet")?.id;
+              const mine = commsOf(character.equipment);
+              // People the party is warm to who carry a commlink, and the other players of a co-op game
+              const contacts: CommsContact[] = Object.entries(standing.regard ?? {})
+                .filter(([, r]) => r >= 20)
+                .flatMap(([id, r]) => {
+                  const found = findOccupant(world, id);
+                  if (!found || !found.occupant.loadout?.some((n) => /^(commlink|holocomm)/i.test(n))) return [];
+                  const o = found.occupant;
+                  const call = canCall({ fromPlanet: hereId ? planetOf(hereId) : undefined, toPlanet: planetOf(found.area.id), fromHas: !!mine, toHas: true });
+                  return [{ id: o.id, name: o.name, species: o.species, role: o.role, disposition: o.disposition, creature: o.creature, gender: genderOf(o), attitude: levelName(regardLevel(r)), kin: kinLine(world, o), where: found.area.name, ok: call.ok, why: call.why }];
+                });
+              const mates: CommsMate[] = coopHere
+                ? coopOthers().filter((m) => m.connected).map((m) => {
+                    const call = canCall({ fromPlanet: hereId ? planetOf(hereId) : undefined, toPlanet: planetOf(m.areaId), fromHas: !!mine, toHas: true });
+                    return { id: m.id, name: m.name, where: world.areas[m.areaId]?.name ?? "somewhere", ok: call.ok, why: call.why };
+                  })
+                : [];
+              return (
+                <CommsPanel
+                  hasComms={!!mine}
+                  contacts={contacts}
+                  mates={mates}
+                  says={coopSays}
+                  player={talkPlayer}
+                  scene={(where) => `A call over commlinks: you are at ${here?.name ?? "somewhere"}, they are at ${where}. ${talkScene()}`}
+                  onSpoke={(id) => { const o = personById(world, id); if (o) saveCampaign({ factionInfluence: reputation(world, standing, o.id, CHANGE.talk, CAPS.talk).standing }); }}
+                  onSay={(text, to) => sayToMates(text, { species: character.species, role: klass?.name ?? character.class, gender: String(character.appearance?.gender ?? "").toLowerCase() }, to)}
+                />
+              );
+            })()}
             {hudTab === "quests" && (
               <div>
                 <h3 className="font-semibold mb-2">Active Quests</h3>

@@ -17,6 +17,11 @@ The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it 
 - Piper is installed (user said yes): ../rhasspy-piper-38917ff/release/piper/piper.exe and voices/en_US-libritts_r-medium.onnx (904 speakers). server/speech.ts `findPiper` finds them; resident processes per pace. The server needs a restart to use it. Remove the Piper folders and the Windows voices speak again.
 - `soundlab look` makes spectrogram PNGs: how Claude "hears".
 
+## 2026-10-30 (later), people, families, regard, comlinks, microphone (REVIVAL_NOTES "People and regard ...")
+- Commit 1f40c6f: gender and gendered names, families (surname = one species, KIN_TIE), regard (caps by talk/trade/deed), reputation spreading to kin, the character-sheet tiers (PersonSheet), nemesis families and kin vengeance. shared/logic/relations.ts is new.
+- Next commit: comms.ts (commsOf, canCall), commlink issued to everyone, Comms HUD tab (CommsPanel.tsx), co-op `say` message, /api/stt (Gemma 4 audio in, local), recordSpeech and the Speak button.
+- Not tried: a real microphone, the co-op message between two clients, a phone. Old campaigns have no genders or families.
+
 ## Open questions for the user
 - Piper voices are random per person (seed), not matched to gender or species: should the model's speakers be sorted into low/high voices so a Hutt or a woman gets a fitting one? (needs listening)
 - People met have no gender in the world data, so their voice's register is by seed.

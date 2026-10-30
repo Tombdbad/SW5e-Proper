@@ -490,3 +490,78 @@ function browserSpeak(parts: Part[], p: VoiceProfile, tone: Tone, stopped: () =>
 const flag = (key: string, d: boolean) => { try { const v = localStorage.getItem(key); return v === null ? d : v === "1"; } catch { return d; } };
 export const voicePrefs = () => ({ voice: flag("sw5e.voice", true), subtitles: flag("sw5e.subtitles", true) });
 export const setVoicePref = (key: "voice" | "subtitles", on: boolean) => { try { localStorage.setItem(`sw5e.${key}`, on ? "1" : "0"); } catch { /* private window */ } };
+
+// ---- The microphone (2026-10-30; the user: "utilise the users mobile device microphone as an option to speak vocally to NPCs and distant party
+// members (fallback to keyboard)") ----------------------------------------------------------------------------------------------------------
+// The page records a short clip, and the game server's local model (Gemma 4 E2B takes audio in; server/dialogue.ts /api/stt) reads it back as
+// words, so nothing leaves the PC. A browser allows a microphone only on https or localhost: a phone on the wi-fi at http://192.168... cannot,
+// and the panel says so and leaves the keyboard.
+export const micWhy = (): string => {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) return "This browser cannot use a microphone here";
+  if (typeof isSecureContext !== "undefined" && !isSecureContext) return "A microphone needs an https address (the Tailscale one) or localhost; type instead";
+  return "";
+};
+
+// Samples at any rate to a 16 kHz, mono, 16-bit WAV (what the model reads), as base64
+export function wavBase64(x: Float32Array, rate: number): string {
+  const out = 16000;
+  const n = Math.max(1, Math.floor((x.length * out) / rate));
+  const pcm = new Int16Array(n);
+  for (let i = 0; i < n; i++) {
+    const at = (i * rate) / out;
+    const k = Math.floor(at);
+    const v = x[k] * (1 - (at - k)) + (x[Math.min(k + 1, x.length - 1)] ?? 0) * (at - k);
+    pcm[i] = Math.max(-1, Math.min(1, v)) * 32767;
+  }
+  const head = new DataView(new ArrayBuffer(44));
+  const text = (o: number, s: string) => [...s].forEach((c, i) => head.setUint8(o + i, c.charCodeAt(0)));
+  text(0, "RIFF"); head.setUint32(4, 36 + n * 2, true); text(8, "WAVEfmt "); head.setUint32(16, 16, true); head.setUint16(20, 1, true); head.setUint16(22, 1, true);
+  head.setUint32(24, out, true); head.setUint32(28, out * 2, true); head.setUint16(32, 2, true); head.setUint16(34, 16, true); text(36, "data"); head.setUint32(40, n * 2, true);
+  const bytes = new Uint8Array(44 + n * 2);
+  bytes.set(new Uint8Array(head.buffer), 0);
+  bytes.set(new Uint8Array(pcm.buffer), 44);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+// Records until `onQuiet` fires (1.3 s of quiet after speech, or `maxMs`); `stop()` returns the clip as base64 WAV, or "" if nothing was said
+export async function recordSpeech(opts: { onQuiet?: () => void; maxMs?: number } = {}) {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+  const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  const source = ctx.createMediaStreamSource(stream);
+  const tap = ctx.createScriptProcessor(4096, 1, 1);
+  const chunks: Float32Array[] = [];
+  const t0 = performance.now();
+  let heard = false;
+  let quietSince = 0;
+  let called = false;
+  tap.onaudioprocess = (e) => {
+    const x = new Float32Array(e.inputBuffer.getChannelData(0));
+    chunks.push(x);
+    const rms = Math.sqrt(x.reduce((a, v) => a + v * v, 0) / x.length);
+    const now = performance.now();
+    if (rms > 0.02) { heard = true; quietSince = 0; } else if (heard && !quietSince) quietSince = now;
+    if (!called && ((heard && quietSince && now - quietSince > 1300) || now - t0 > (opts.maxMs ?? 20000))) { called = true; opts.onQuiet?.(); }
+  };
+  source.connect(tap);
+  tap.connect(ctx.destination);
+  const release = () => { tap.disconnect(); source.disconnect(); stream.getTracks().forEach((t) => t.stop()); void ctx.close(); };
+  return {
+    stop: (): string => {
+      release();
+      if (!heard) return "";
+      const all = new Float32Array(chunks.reduce((n, c) => n + c.length, 0));
+      let at = 0;
+      for (const c of chunks) { all.set(c, at); at += c.length; }
+      return wavBase64(all, ctx.sampleRate);
+    },
+    cancel: release,
+  };
+}
+
+export async function transcribe(wav: string): Promise<string> {
+  const r = await fetch("/api/stt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audio: wav }) });
+  if (!r.ok) throw new Error("The local model could not read the recording (is Ollama running?)");
+  return String(((await r.json()) as { text?: string }).text ?? "");
+}
