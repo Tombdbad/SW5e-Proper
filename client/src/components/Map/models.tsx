@@ -1068,14 +1068,16 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number, b
     } else k.box([L * 0.45, 0.06, D - 0.28], "#4f5d8a", { at: [L * 0.18, 0.39, 0], round: 0.03 });
     return;
   }
-  if (/holding cell/.test(n)) {
+  if (/holding cell|slave pen/.test(n)) {
     slab(k, L - 0.1, D - 0.1, 0.08, C.black, { r: 0.12 });
     for (const [x, z] of corners(0.1)) {
       k.lathe([[0.08, 0], [0.08, 0.1], [0.05, 0.14], [0.05, 1.3], [0.08, 1.34], [0.08, 1.42], [0, 1.42]], C.steel, { at: [x, 0.04, z], seg: 10, finish: "sheen" });
       k.cyl(0.02, 1.1, C.red, { at: [x, 0.7, z], seg: 6, finish: "glow" });
     }
     slab(k, L - 0.1, D - 0.1, 0.08, C.black, { r: 0.12, y: 1.42 });
-    k.box([L - 0.22, 1.28, D - 0.22], C.red, { at: [0, 0.74, 0], finish: "haze" });
+    // An open cell has its door swung back, and nothing across the bars; a locked one is hazed with the field
+    if (/\(open\)/.test(n)) k.box([0.06, 1.28, (D - 0.22) * 0.5], C.steel, { at: [L / 2 - 0.1, 0.74, D * 0.32], rot: [0, 0.9, 0] });
+    else k.box([L - 0.22, 1.28, D - 0.22], C.red, { at: [0, 0.74, 0], finish: "haze" });
     return;
   }
   if (/pilot's seat|co-pilot's seat|gunnery seat|command chair/.test(n)) {

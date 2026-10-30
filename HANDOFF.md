@@ -1,37 +1,32 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-30 (Windows PC), branch `main`. Commits today: 2434b7d (seats, gunners, convoy, water list), then the voices commit. Nothing is pushed.
-The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told.
+Written 2026-10-30 (Windows PC), branch `main`. Nothing is pushed. Last session's commits today: 9042b8b, f6dade7, c1676ba (sound lab, Piper), 1f40c6f, 34d446f (people, regard, comlinks, microphone), then the commit for the law in person (below).
+The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told, never commit it.
 
-## 2026-10-30, voices (REVIVAL_NOTES "Spoken dialogue" > "Voices")
-- Gemma 4 E2B gives text only (audio is input only). The prompt now asks for speech alone with [cue] sounds; `speechOnly` in server/dialogue.ts strips narration.
-- server/speech.ts: Windows OneCore voices (George, Hazel, Susan) through a resident PowerShell worker; optional Piper (env PIPER_EXE, PIPER_MODEL; not installed); WAV cache in `.cache/speech` (gitignored).
-- client/src/lib/voice.ts: per-speaker voice from id/species/role (deterministic), mood, cues (manifest samples or made in code), droid/helmet/mask/comms effects, Wookiee growls, astromech bleeps, Jawa chatter. TalkPanel: Voice and Subtitles checkboxes.
-- `.claude/skills/septabee/SKILL.md`: SeptaBee is GUI-only (no CLI, binary .bee projects, VST3 and LV2 hosting); the user builds and exports, Claude wires files into `client/public/audio/...` and `voice/manifest.json`.
-- Tests: tests/world/voice.test.ts; full suite 490 pass, 3 skipped.
+## 2026-10-30, the law in person, cells, shops, errands (REVIVAL_NOTES "The law in person, cells, shops by day and night, errands")
+- The user's list: captives in physical locked cells; NPCs walking to homes, jobs, traders, the palace, the garrison to report crimes; security physically dispatched from the garrison unless a patrol is nearer; troopers not reacting to hacking and theft from locked boxes; shop stock that can be stolen (day: immediate dispatch, night: alarms and cameras to disable).
+- Done in shared/logic/index.ts (LIFE 14): `reportCrime(.., via)` dispatches squads from `lawBase` (the garrison) after a turnout, they run a room a minute (`townPath`, `Squad.to`); `nearestPatrol` goes first if closer; `ReportVia` (law/alarm/shopkeeper/camera/call/witness), a witness without a commlink walks to the garrison (`World.errands`, `errandAt`, `withPresence`); `Routine.patrol` and `Routine.visits` (palace calls, trader rounds); cells (`cellOf`, `openCells`, `RoomAsset.cell`); shops (`STOCK_PIECES`, `shelfStock`, `shopArmed`, `disarmShop`, `noteTheft`, `advanceDiscoveries`, `Ledger.stolen`); `pullPatrols`, wider `isLawman`.
+- GameBoard: `slipped()` now guards locks, caches, panels, cells, shelves and the shop door whatever the danger of the place (the troopers-do-not-react bug); cell card, shelf card (Buy / Take it), shop alarm disarm on the alarm panel, door sensor in `breakIn`, discoveries effect. LocalMap: squads seen from the muster, open cell drawn open (models.tsx), shelves show what is left of the stock (`useDisplay`).
+- Tests: tests/world/security.test.ts (8). Full suite run once during the work (see the commit message for the count); `npm run e2e` NOT run.
+- Browser-checked on dev 5099 / `sw5e_test`, campaign 498 (its world was replaced by generated seeds 3, 11): the cell card, an open cell, a shelf card with real stock, lawmen seeing the console, squads leaving the garrison, running to the scene and finding the party. The dice rolls (throttled pane) were not waited out, so pick/Sleight/door-sensor results were not seen end to end.
 
-## 2026-10-30, SeptaBee harness
-- `tools/soundlab.mjs` (+ tests/world/soundlab.test.ts): render recipes and presets, `inspect`, `import` a SeptaBee WAV export into voice/nonverbal or ir with its manifest entry, `bank`, `ir`. Nothing installed into client/public yet (cues are still made in code); run `bank` only once the user can listen.
-- SeptaBee has no CLI, MIDI, OSC or socket hook; suggestions for its author are in the skill.
-
-- Piper is installed (user said yes): ../rhasspy-piper-38917ff/release/piper/piper.exe and voices/en_US-libritts_r-medium.onnx (904 speakers). server/speech.ts `findPiper` finds them; resident processes per pace. The server needs a restart to use it. Remove the Piper folders and the Windows voices speak again.
-- `soundlab look` makes spectrogram PNGs: how Claude "hears".
-
-## 2026-10-30 (later), people, families, regard, comlinks, microphone (REVIVAL_NOTES "People and regard ...")
-- Commit 1f40c6f: gender and gendered names, families (surname = one species, KIN_TIE), regard (caps by talk/trade/deed), reputation spreading to kin, the character-sheet tiers (PersonSheet), nemesis families and kin vengeance. shared/logic/relations.ts is new.
-- Next commit: comms.ts (commsOf, canCall), commlink issued to everyone, Comms HUD tab (CommsPanel.tsx), co-op `say` message, /api/stt (Gemma 4 audio in, local), recordSpeech and the Speak button.
-- Not tried: a real microphone, the co-op message between two clients, a phone. Old campaigns have no genders or families.
-
-## Open questions for the user
-- Piper voices are random per person (seed), not matched to gender or species: should the model's speakers be sorted into low/high voices so a Hutt or a woman gets a fitting one? (needs listening)
-- People met have no gender in the world data, so their voice's register is by seed.
-- The game clock (a minute a second) makes holding one's breath last a few real seconds (from the water batch).
+- Latent bug seen, not fixed: with the dice shifted, seed 34 (detail all) puts a gambling hall's High-stakes room out of reach (its corridor stops short of it, the cashier's cage in between). Any change that draws from the generator's stream may bring it back: fittings use their own dice (`fitBuilding`).
 
 ## Running
-- No dev server of mine is running. 5002 (test copy) is an OLD build; the user restarts it (`deploy\windows-start.ps1 -Mode test -Lan`). A server restart is needed for the new dialogue prompt and /api/speech.
+- A dev server of mine on 5099 (test database) may still be running (`node --import tsx server/index.ts`, started from the scratchpad `devtest.cjs`); stop it if it is. The game server the user runs needs a restart for the new server code (patrol/visit generation lives in shared logic, so new worlds).
+- Old campaigns get patrols, visits and shop alarm panels when opened (livenWorld life 14), but no new cell furniture in rooms already built.
+
+## TODO / next, in order
+1. Run `npm run e2e` against a fresh build when the user is not playing (the captive step uses a synthetic captive with no cell: legacy path; the pursuit text now says "sent from ...").
+2. Settlements' own crimes (`rollIncident` squads) could be dispatched from the garrison too.
+3. Security tags on stock; a witness stopped on the way should stop the report.
+4. From earlier today (still open): real microphone, co-op message between two clients, a phone; Piper voices matched to gender needs listening.
+
+## Open questions for the user
+- By day an UNSEEN theft is found when the keeper counts the stock before closing (and reported then); only a SEEN theft (or a camera) sends the law at once. Say if they want every daytime theft to ring at once (security tags).
+- Piper voices are random per person (seed): should the model's speakers be sorted into low/high voices so a Hutt or a woman gets a fitting one? (needs listening)
 
 ## Learned
-- PowerShell 5.1 can drive WinRT speech: `[Windows.Media.SpeechSynthesis.SpeechSynthesizer]::AllVoices` is static; await IAsyncOperation with `WindowsRuntimeSystemExtensions.AsTask`. System.Speech ignores SSML pitch (rate works as a multiplier).
-- No `strings`, ffmpeg or Piper on this PC; a scratchpad Node script reads strings out of a binary.
-- A heredoc with an apostrophe breaks the Bash tool's quoting: write patch scripts with the Write tool.
-- The browser pane throttles timers when hidden: audio scheduling loops run slow there.
+- A heredoc with an apostrophe or backtick breaks the Bash tool's quoting: write patch scripts and text blocks with the Write tool and read them with `fs` in a `.cjs`.
+- The dice in the browser pane roll very slowly (hidden/throttled): a check dialog can take over a minute to settle; reading the state through `/api/campaigns/:id` shows the saved result.
+- Dev server on another port against the test DB: derive DATABASE_URL from `.env` in a script (never print it).

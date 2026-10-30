@@ -74,7 +74,7 @@ import {
   reportCrime, pursuitAt, lieLow, lieLowDC, CRIME_NAMES, type Crime,
   advanceSearch, retireSquad, noteArrival, interceptCall, grantShelter, shelterExits, shelterOwner, blockedExit, blockadeAt, calmedAt, leaveSight,
   heatAt, heatLevel, kindLabel, settlementOf, useKindOf, camerasIn, seatsOf, crewOf, type CrewMember, droidStock, droidOffer, droidRepairPrice, droidPrice, type DroidStat, rollIncident, advanceIncidents, closeIncident, incidentReward, liftsBetween, INCIDENT_WORDS, type Incident,
-  lawmenAt, lawWatchDC, turnLawmen, engageOfficers, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
+  lawmenAt, lawWatchDC, turnLawmen, engageOfficers, pullPatrols, openCells, cellOf, cellOpen, cellDC, reachable as cellReachable, STOCK_PIECES, LOCKED_PIECES, STOCK_LOCK_DC, shelfStock, shopArmed, disarmDC, disarmShop, tripShopAlarm, noteTheft, advanceDiscoveries, VIA_WORDS, passageOffers, passageCheckDC, stowawayFine, SMUGGLER_SHARE, type PassageOffer,
   boardShip, moveShipInterior, rampLeadsTo, helmExits, deckIdOf, flightPayout, raceResult, convoyResult, pilotMinutes, routeCount, pitOpponent, statBlockOccupant, type FlightMode,
   startHeist, heistStep, heistDC, bribeCost, HEIST_MINUTES, HEIST_COUNTDOWN, takeShip, type Heist, type HeistHow,
   districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
@@ -883,7 +883,7 @@ export default function GameBoard() {
     if (!current) return;
     const block = await lawBlock(lawAt(current, areaId) >= 3 ? "trooper" : "officer-junior");
     const base = latestWorld() ?? current;
-    saveCampaign({ galaxyMap: reportCrime(turnLawmen(base, areaId, block), areaId, crime, clockNow()) });
+    saveCampaign({ galaxyMap: reportCrime(turnLawmen(pullPatrols(base, areaId, clockNow()), areaId, block), areaId, crime, clockNow()) });
   };
   const lawUnseen = (what: string, crime: Crime): boolean => {
     // A camera sees it too, in a place of the law, unless the cameras are looped: the crime is reported
@@ -893,16 +893,25 @@ export default function GameBoard() {
       const areaId = here.id;
       setTimeout(() => {
         const latest = latestWorld();
-        if (latest) saveCampaign({ galaxyMap: reportCrime(latest, areaId, crime, clockNow()) });
+        if (latest) saveCampaign({ galaxyMap: reportCrime(latest, areaId, crime, clockNow(), "camera") });
       }, 60);
     }
-    if (!world || !here || !lawmenAt(world, here.id).length) return true;
-    const dc = lawWatchDC(world, here.id);
+    // (the lawmen on patrol who are here now count: the world shown is the world as the clock has it)
+    const live = world && here ? withPresence(latestWorld() ?? world, clockNow()) : undefined;
+    if (!world || !here || !live || !lawmenAt(live, here.id).length) return true;
+    const dc = lawWatchDC(live, here.id);
     const { roll, bonus, total } = stealthRoll();
     const made = total >= dc;
     toast[made ? "success" : "error"](`${what} (Stealth): ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against the guards' passive Perception ${dc}. ${made ? "Unnoticed." : "Seen! They turn on you."}`);
     if (!made) void callTheLaw(here.id, crime);
     return made;
+  };
+  // Whatever is done that is not meant to be seen: the enemy's watchers first (Stealth against their Perception, a miss raises the
+  // alert), then the law's own and any camera (lawUnseen), whatever the danger of the place. (Before this, only the lawmen of a safe
+  // place were asked, and the panels were never: troopers stood by while a lock was sliced or a case emptied.)
+  const slipped = (what: string, crime: Crime): boolean => {
+    if (hostiles.length > 0 && !unseen(what)) return false;
+    return lawUnseen(what, crime);
   };
   // Talking to those who stopped you: Charisma against 10 + their Wisdom + how dangerous the
   // place is; threats work on those already facing you down, but are harder
@@ -1423,13 +1432,28 @@ export default function GameBoard() {
     const [from, to] = hoursOfBuilding(b?.type ?? "") ?? [8, 20];
     toast.info(`${b?.name ?? "It"} is shut: open ${String(from % 24).padStart(2, "0")}:00 to ${String(to % 24).padStart(2, "0")}:00 (house rule). The door is locked.`);
     const kit = lockKit();
-    if (here.danger === 0 && !lawUnseen("Picking the lock", "trespass")) return;
+    if (!slipped("Picking the lock", "trespass")) return;
+    // A shop is armed at night in a place that has law at all (house rule, see shopArmed): a sensor on its door rings through to the
+    // garrison unless it is disabled first
+    let tripped = false;
+    if (shopArmed(latestWorld() ?? world, buildingId, clockNow())) {
+      const off = await abilityCheck("Door alarm", disarmDC(world, buildingId), ["intelligence", "dexterity"], !!kit && trainedWith(kit));
+      if (cancelledCheck.current) return;
+      if (off) {
+        saveCampaign({ galaxyMap: disarmShop(latestWorld() ?? world, buildingId, clockNow()) });
+        toast.success("The door sensor is dead until the shop opens.");
+      } else tripped = true;
+    }
     const ok = await abilityCheck("Lock (after hours)", dc, ["dexterity", "intelligence"], !!kit && trainedWith(kit));
-    if (cancelledCheck.current || !ok) return;
+    if (cancelledCheck.current) return;
+    if (tripped) {
+      toast.error("The door alarm rings through to the garrison.");
+      saveCampaign({ galaxyMap: tripShopAlarm(latestWorld() ?? world, buildingId, buildingId, "trespass", clockNow()) });
+    }
+    if (!ok) return;
     afterHours.current.set(buildingId, clockNow());
-    const latest = latestWorld();
-    if (latest) saveCampaign({ galaxyMap: reportCrime(latest, here.id, "trespass", clockNow()) });
     toast.success("The lock gives. Tap the door again to go in.");
+
   };
   const unlock = async (exit: Exit) => {
     if (!world || !exit.pathId) return;
@@ -1440,7 +1464,7 @@ export default function GameBoard() {
       toast.success("The code cylinder is accepted: the lock opens.");
       return void openLock(exit, {}, false);
     }
-    if (here?.danger === 0 && !lawUnseen("Picking the lock", "trespass")) return;
+    if (!slipped("Picking the lock", "trespass")) return;
     let ok = await abilityCheck("Lock", dc, ["dexterity", "intelligence"], !!kit && trainedWith(kit));
     if (!ok && kit) {
       const spike = (character.equipment ?? []).find((n: string) => { const g = gearOf(n); return g?.kind === "spike" && g.tool.toLowerCase() === kit.toLowerCase(); });
@@ -1457,7 +1481,7 @@ export default function GameBoard() {
   // and no check; a charge, mine or grenade simply opens it). Noise brings the watch down on the room.
   const forceDoor = async (exit: Exit, how: "strength" | "ram" | "cutter" | "blast") => {
     if (!world || !here || !exit.pathId) return;
-    if (here.danger === 0 && lawmenAt(world, here.id).length) {
+    if (lawmenAt(withPresence(latestWorld() ?? world, clockNow()), here.id).length) {
       toast.error("Forcing a door under the guards' eyes: they see it, and turn on you.");
       return void callTheLaw(here.id, how === "blast" ? "heinous" : "trespass");
     }
@@ -1538,9 +1562,9 @@ export default function GameBoard() {
   // Open a cache (its lock first, if it has one) and take what is in it
   const takeLoot = async (cache: LootCache) => {
     if (!world || !here) return;
-    if (hostiles.length > 0 && !unseen("Taking it")) return;
-    // Spoils of a place the enemy holds are nobody's property: only what is kept in a place of the law is theft
-    if (hostiles.length === 0 && here.danger === 0 && !lawUnseen("Taking it", "theft")) return;
+    // Spoils of a place the enemy holds are nobody's property: only what is kept in a place of the law is theft (but whoever is
+    // watching sees it, in either)
+    if (!slipped("Taking it", here.danger === 0 ? "theft" : "trespass")) return;
     if (cache.locked && !await abilityCheck("Lock", cache.locked, ["dexterity", "intelligence"], carries(/security kit|slicer's kit/i))) return;
     const gained = cache.items.flatMap((item) => Array.from({ length: item.quantity }, () => item.name));
     saveCharacter({ equipment: [...(character.equipment ?? []), ...gained], credits: (character.credits ?? 0) + cache.credits });
@@ -2286,6 +2310,13 @@ export default function GameBoard() {
     toast.error("They attack!");
     fight();
   }, [here?.id, alert, hostiles.length, !!character, playMode, partyStoodAt]);
+
+  // A theft nobody saw is found when the shopkeeper counts the stock before closing (see noteTheft in shared logic): then the report goes in
+  useEffect(() => {
+    if (!world?.discoveries?.some((d) => d.due <= clockMinutes)) return;
+    const found = advanceDiscoveries(world, clockMinutes);
+    if (found !== world) saveCampaign({ galaxyMap: found });
+  }, [clockMinutes, world?.discoveries?.length]);
 
   // The search walks the district (see advanceSearch in shared logic): its squads move a room every
   // couple of minutes, question the people they pass, and where one walks in on the party it rolls to
@@ -4272,6 +4303,7 @@ export default function GameBoard() {
   // or the strength to break chains (Binders: DC 20 Strength). Each try takes ten minutes.
   const freeCaptive = async (o: Occupant, how: "kit" | "break") => {
     if (!o.captive || !world) return;
+    if (here && !cellReachable(world.areas[here.id], o)) return void toast.error("They are behind a locked cell door.");
     // Their guards see what is done under their noses
     if (hostiles.length > 0 && !unseen("Working at the lock")) return;
     const { restraint, dc } = o.captive;
@@ -4301,6 +4333,68 @@ export default function GameBoard() {
     editBase(o.id, (list) => list.map((x) => (x.id === o.id ? { ...x, captive: undefined, role: "freed", disposition: "friendly" as const } : x)), { ...time, ...(world ? { factionInfluence: reputation(world, standing, o.id, CHANGE.freed).standing } : {}) });
     toast.success(`${o.name} is free.`);
   };
+  // Those held in a cell are behind its lock (house rule, see "Cells" in shared logic): pick it, break the door down, or open the cells
+  // from the guard console. A prisoner held in the cell alone walks free when it opens; the rest still have their shackles or collar.
+  const openCell = async (room: Area, cell: { id: string; cell?: { dc: number; open?: boolean } }, how: "pick" | "break" | "console") => {
+    if (!world) return;
+    if (!slipped("Working at the cell", "trespass")) return;
+    const dc = cell.cell?.dc ?? 15;
+    let success = false;
+    if (how === "break") {
+      const [face] = await rollOnTable("Break the cell door (Strength)", ["d20"]);
+      const roll = face + modifier(character.abilityScores?.strength) + substanceFor("strength");
+      success = roll >= dc + 5;
+      toast[success ? "success" : "error"](`Break the door (Strength): ${roll} against DC ${dc + 5}. ${success ? "It gives, with a crash." : "It holds."} (House rule.)`);
+      if (hostiles.length) setWatch(ALERT.attacking);
+    } else if (how === "console") {
+      success = await abilityCheck("Open the cells from the guard console", 12 + lawAt(world, room.id), ["intelligence"], carries(/^slicer's kit$/i));
+      if (cancelledCheck.current) return;
+    } else {
+      const kit = lockKit();
+      if (!kit) return void toast.error("You need a security kit or a slicer's kit.");
+      const r = await toolRoll(kit, dc, "Pick the cell's lock", kit.toLowerCase().startsWith("slicer") ? "intelligence" : "dexterity");
+      if (r.cancelled) return;
+      success = r.success;
+    }
+    const time = pass(10);
+    if (!success) return void saveCampaign(time);
+    let next = openCells(world, room.id, how === "console" ? undefined : cell.id);
+    const stored = next.areas[room.id];
+    const freed = stored.occupants.filter((x) => x.captive?.restraint === "cell" && (how === "console" || cellOf(stored, x)?.id === cell.id));
+    next = updateArea(next, room.id, { occupants: stored.occupants.map((x) => (freed.includes(x) ? { ...x, captive: undefined, role: "freed", disposition: "friendly" as const } : x)) }).world;
+    let influence = standing;
+    for (const x of freed) influence = reputation(next, influence, x.id, CHANGE.freed).standing;
+    saveCampaign({ galaxyMap: next, ...time, ...(freed.length ? { factionInfluence: influence } : {}) });
+    toast.success(freed.length ? `${freed.map((x) => x.name).join(", ")} ${freed.length > 1 ? "are" : "is"} free.` : "The cell is open.");
+  };
+  const cellSection = (o: Occupant, room: Area, cell: { id: string; cell?: { dc: number; open?: boolean } }) => {
+    const dc = cell.cell?.dc ?? 15;
+    const kit = lockKit();
+    const terminal = room.layout?.assets.some((a) => /guard console/i.test(a.name));
+    return (
+      <div className="mt-1 space-y-1 text-xs" data-testid="cell">
+        <p className="text-amber-200">
+          Behind the bars of a locked cell or pen (DC {dc}).
+          {hostiles.length > 0 ? " Their guards are watching: do it quietly, or deal with the guards first." : ""}
+        </p>
+        <div className="flex flex-wrap gap-1">
+          <Button size="sm" variant="outline" className="h-auto whitespace-normal text-left" disabled={!kit || inCombat || dead} onClick={() => openCell(room, cell, "pick")} data-testid="cell-pick">
+            Pick the lock {kit ? `(${kit})` : "(needs a security kit or a slicer's kit)"}
+          </Button>
+          <Button size="sm" variant="outline" className="h-auto whitespace-normal text-left" disabled={inCombat || dead} onClick={() => openCell(room, cell, "break")} data-testid="cell-break">
+            Break the door down (Strength, DC {dc + 5}; noisy)
+          </Button>
+          {terminal && (
+            <Button size="sm" variant="outline" className="h-auto whitespace-normal text-left" disabled={inCombat || dead} onClick={() => openCell(room, cell, "console")} data-testid="cell-console">
+              Open the cells from the guard console (Intelligence, DC {12 + (world ? lawAt(world, room.id) : 0)})
+            </Button>
+          )}
+        </div>
+        <p className="text-[11px] text-gray-500">House rule: the books give the DC of a lock (15) but no cells.</p>
+      </div>
+    );
+  };
+
   // Freed, they can come along, or be sent home: a deed worth experience (house rule: 25 x your level)
   const sendHome = (o: Occupant) => {
     if (!world || !here) return;
@@ -5309,7 +5403,7 @@ export default function GameBoard() {
   });
   const droidPartRows = useMemo(() => enhancedRows.filter((e) => e.type === "DroidCustomization"), [enhancedRows]);
   // What the shop the party is in shows today: the droids of the day on its plinths, the customizations it sells on its shelves
-  const showroomKey = `${here?.id}|${today}|${droidStats.length}|${droidPartRows.length}|${enhancedRows.length}|${JSON.stringify(here?.occupants.map((o) => traderLedger(o.id).bought) ?? [])}`;
+  const showroomKey = `${here?.id}|${today}|${droidStats.length}|${droidPartRows.length}|${enhancedRows.length}|${equipmentData.length}|${JSON.stringify(here?.occupants.map((o) => [traderLedger(o.id).bought, traderLedger(o.id).stolen]) ?? [])}`;
   useEffect(() => {
     const room = world && here?.kind === "room" ? world.areas[here.id] : undefined;
     if (!world || !room) {
@@ -5324,6 +5418,15 @@ export default function GameBoard() {
       droids = Object.fromEntries(droidDisplay(world, room.id, today, droidStats, bought).map(({ plinth, line }) => [plinth, { name: line.name, price: line.price }]));
       const parts = droidPartsStock(world, trader, room.id, today, droidPartRows, bought).map((l) => itemRef(l.name)?.model).filter((m): m is string => !!m);
       shelves = Object.fromEntries((room.layout?.assets ?? []).filter((a) => /droid parts shelf|display case/i.test(a.name)).map((a) => [a.id, parts]));
+    }
+    // A shop's shelves show what is left of its stock: the models of the items dealt out to each piece (see shelfStock), a few of each
+    const shopkeeper = room.occupants.find((o) => o.role === "merchant" && waresOf(o) && o.trade !== "droids");
+    if (shopkeeper && equipmentData.length && /sales floor/i.test(room.name)) {
+      const lines = stockOf(world, shopkeeper, room.id, equipmentData as any, today, customer, ledger).filter((l) => l.category !== "Vehicle" && l.category !== "Mount");
+      for (const [id, onPiece] of Object.entries(shelfStock(room, lines))) {
+        const models = onPiece.flatMap((l) => Array.from({ length: Math.min(3, l.quantity) }, () => itemRef(l.name)?.model)).filter((m): m is string => !!m);
+        if (models.length) shelves[id] = models;
+      }
     }
     // The parts bins show the models of the modifications the room's seller has today
     const seller = room.occupants.map((o) => modStock(world, o, room.id, today, enhancedRows, traderLedger(o.id).bought)).find((lines) => lines.length);
@@ -5844,6 +5947,74 @@ export default function GameBoard() {
     );
   };
 
+  // The stock of a shop is on its sales floor (house rule, see "Shops by day and by night" in shared logic): what a piece shows is dealt
+  // from the shopkeeper's stock for the day. Paid for, it is bought; taken, it is theft.
+  const takeStock = async (roomId: string, shopId: string, keeper: Occupant, line: TradeLine, locked: boolean) => {
+    if (!world || !here || !character) return;
+    const now = clockNow();
+    if (locked) {
+      const kit = lockKit();
+      const opened = await abilityCheck("Lock (case)", STOCK_LOCK_DC, ["dexterity", "intelligence"], !!kit && trainedWith(kit));
+      if (cancelledCheck.current || !opened) return;
+    }
+    // The enemy's watchers, the law and any camera see it first
+    if (!slipped(`Taking ${line.name}`, "theft")) return;
+    const live = withPresence(latestWorld() ?? world, now);
+    const watching = (live.areas[roomId]?.occupants ?? []).some((o) => o.id === keeper.id);
+    let seen = false;
+    if (watching) {
+      const dc = 10 + (keeper.saves?.wisdom ?? 0);
+      const unnoticed = await abilityCheck("Sleight of Hand (the shopkeeper's eyes)", dc, ["dexterity"], skilled("sleight of hand"));
+      if (cancelledCheck.current) return;
+      seen = !unnoticed;
+    }
+    let galaxy: World = latestWorld() ?? world;
+    if (seen) {
+      galaxy = reportCrime(galaxy, roomId, "theft", now, "shopkeeper");
+      toast.error(`Thief! ${keeper.name} hits the panic button: the law is on its way.`);
+    } else if (shopArmed(galaxy, shopId, now)) {
+      galaxy = tripShopAlarm(galaxy, shopId, roomId, "theft", now);
+      toast.error("The sensors on the stock ring through to the garrison.");
+    } else galaxy = noteTheft(galaxy, shopId, roomId, now);
+    const entry = traderLedger(keeper.id);
+    saveCharacter({ equipment: [...(character.equipment ?? []), line.name] });
+    saveCampaign({
+      galaxyMap: galaxy,
+      availableResources: { ...ledger, traders: { ...ledger.traders, [keeper.id]: { ...entry, stolen: { ...(entry.stolen ?? {}), [line.name]: (entry.stolen?.[line.name] ?? 0) + 1 } } } },
+      ...(seen ? { factionInfluence: reputation(galaxy, standing, keeper.id, -20).standing } : {}),
+      ...pass(1),
+    });
+    toast.success(`Taken: ${line.name}.${seen ? "" : " Nobody saw (the shopkeeper counts the stock before closing)."}`);
+  };
+  const stockCard = (roomId: string, pieceId: string, pieceName: string) => {
+    if (!world || !here || !STOCK_PIECES.test(pieceName)) return null;
+    const room = world.areas[roomId];
+    const shop = room && world.areas[room.parentId ?? ""];
+    const keeper = room?.occupants.find((o) => o.role === "merchant" && waresOf(o) && o.trade !== "droids");
+    if (!room || !shop || !keeper || !equipmentData.length) return null;
+    const lines = stockOf(world, keeper, room.id, equipmentData as any, today, customer, ledger).filter((l) => l.category !== "Vehicle" && l.category !== "Mount");
+    const mine = shelfStock(room, lines)[pieceId] ?? [];
+    const open = isOpen(world, keeper, room.id, clock);
+    const armed = shopArmed(world, shop.id, clock);
+    const locked = LOCKED_PIECES.test(pieceName);
+    return (
+      <div className="mt-1 space-y-1 text-xs" data-testid="shelf">
+        <p className="text-gray-300">{mine.length ? "On show:" : "Nothing on it today."}</p>
+        {mine.map((l) => (
+          <div key={l.name} className="flex items-center gap-1">
+            <span className="flex-1">{l.name} x{l.quantity} ({l.price} cr)</span>
+            {open && <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead || l.price > (character?.credits ?? 0)} onClick={() => buy(keeper, l)} data-testid="shelf-buy">Buy</Button>}
+            <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => takeStock(room.id, shop.id, keeper, l, locked)} data-testid="shelf-take">Take it</Button>
+          </div>
+        ))}
+        <p className="text-[11px] text-gray-500">
+          {open ? "Open: the shopkeeper watches the floor. Taking a piece unpaid is theft: Sleight of Hand against their Perception, and seen, the law is on its way at once. Unseen, the loss is found when the stock is counted before closing." : armed ? "Shut for the night and the alarm is armed: taking anything rings through to the garrison unless the sensors are disabled at the alarm panel." : "Shut for the night."}
+          {locked ? ` It is locked (DC ${STOCK_LOCK_DC}).` : ""} House rule.
+        </p>
+      </div>
+    );
+  };
+
   // ---- Cards and panels for companions, droids, captives, beasts, games and tools
   const watched = hostiles.length > 0;
   const carriesAny = (test: (name: string) => boolean) => (character?.equipment ?? []).some((n: string) => test(n));
@@ -5851,6 +6022,9 @@ export default function GameBoard() {
     const c = o.captive!;
     const spec = FREEING[c.restraint];
     const kit = spec.tools.find((t) => carriesAny((n) => n.toLowerCase() === t.toLowerCase()));
+    const holding = world && here ? world.areas[here.id] : undefined;
+    const cell = holding ? cellOf(holding, o) : undefined;
+    if (holding && cell && !cellOpen(cell)) return cellSection(o, holding, cell);
     return (
       <div className="mt-1 space-y-1 text-xs" data-testid="captive">
         <p className="text-amber-200">
@@ -7403,6 +7577,7 @@ export default function GameBoard() {
       const building = room && (room.kind === "building" ? room : world.areas[room.parentId ?? ""]);
       const looped = (play.loopUntil ?? 0) > clockNow();
       const loop = async () => {
+        if (!slipped("Looping the camera", "trespass")) return;
         const looped = await abilityCheck(`Loop the camera`, dcBase, ["intelligence", "dexterity"], trained);
         if (cancelledCheck.current) return;
         if (!looped) return void saveCampaign(pass(5));
@@ -7422,6 +7597,7 @@ export default function GameBoard() {
       };
       const openDoors = async () => {
         if (!building) return;
+        if (!slipped("Working the access panel", "trespass")) return;
         const ids = new Set([building.id, ...childrenOf(world, building.id).map((r) => r.id)]);
         const locked = world.paths.filter((pth) => pth.locked && (ids.has(pth.from) || ids.has(pth.to)));
         if (!locked.length) return void toast.info("Every door of this building is already open.");
@@ -7433,6 +7609,18 @@ export default function GameBoard() {
         }
         saveCampaign({ galaxyMap: { ...world, paths: world.paths.map((pth) => (locked.includes(pth) ? { ...pth, locked: undefined } : pth)) }, ...pass(5) });
         toast.success(`${locked.length} door${locked.length > 1 ? "s" : ""} unlocked.`);
+      };
+      const disarm = async () => {
+        if (!building) return;
+        if (!slipped("Working the alarm panel", "trespass")) return;
+        const off = await abilityCheck("Disable the sensors", disarmDC(world, building.id), ["intelligence"], trained);
+        if (cancelledCheck.current) return;
+        if (!off) {
+          toast.error("The panel chirps and a warning goes out to the garrison.");
+          return void saveCampaign({ galaxyMap: tripShopAlarm(world, building.id, areaId, "trespass", clockNow()), ...pass(5) });
+        }
+        saveCampaign({ galaxyMap: disarmShop(world, building.id, clockNow()), ...pass(5) });
+        toast.success("The shop's sensors are dead until it opens in the morning.");
       };
       const alarmUp = !!building?.alarm;
       return (
@@ -7449,9 +7637,15 @@ export default function GameBoard() {
             <>
               <p className="text-xs text-gray-300">{alarmUp ? "The alarm is up in this building." : "The alarm is quiet."}</p>
               <div className="mt-1 flex flex-wrap gap-1">
-                <Button size="sm" disabled={inCombat || dead || !alarmUp || !building} onClick={() => { if (building) saveCampaign({ galaxyMap: updateArea(world, building.id, { alarm: undefined }).world, ...pass(1) }); toast.success("The alarm is silenced."); setPicked(null); }}>Silence it</Button>
+                <Button size="sm" disabled={inCombat || dead || !alarmUp || !building} onClick={() => { if (!slipped("Working the alarm panel", "trespass")) return; if (building) saveCampaign({ galaxyMap: updateArea(world, building.id, { alarm: undefined }).world, ...pass(1) }); toast.success("The alarm is silenced."); setPicked(null); }}>Silence it</Button>
                 <Button size="sm" variant="outline" disabled={inCombat || dead || alarmUp || !building} onClick={() => { if (building) saveCampaign({ galaxyMap: updateArea(world, building.id, { alarm: true }).world, ...pass(1) }); toast.error("The alarm goes up through the building."); setPicked(null); }}>Trip it</Button>
               </div>
+              {building && shopArmed(world, building.id, clockNow()) && (
+                <>
+                  <p className="mt-1 text-xs text-amber-200">The shop is shut and its sensors are armed: they ring through to the garrison if anything is touched.</p>
+                  <Button size="sm" className="mt-1" disabled={inCombat || dead} onClick={() => { disarm(); setPicked(null); }} data-testid="shop-disarm">Disable the sensors until morning (Intelligence, DC {disarmDC(world, building.id)}{trained ? "" : "; a security or slicer's kit helps"})</Button>
+                </>
+              )}
             </>
           )}
           {kind === "kiosk" && (
@@ -7466,6 +7660,7 @@ export default function GameBoard() {
               <Button size="sm" className="mt-1" disabled={inCombat || dead} onClick={() => { openDoors(); setPicked(null); }} data-testid="access-open">Open the locked doors (Intelligence, DC {dcBase}{trained ? "" : "; a security or slicer's kit helps"})</Button>
             </>
           )}
+          {!kind && stockCard(areaId, assetId, name)}
           {!kind && forceMoves(areaId, assetId)}
         </>
       );
@@ -8163,7 +8358,7 @@ export default function GameBoard() {
             {pursuit && (
               <p className="mt-0.5 text-[11px] leading-tight font-semibold text-red-300 drop-shadow" data-testid="pursuit">
                 {pursuit.phase === "coming"
-                  ? `${pursuit.pursuit.cartel ? "Enforcers" : "Security"} reach the scene in ${pursuit.minutes} min: ${pursuit.pursuit.officers} ${pursuit.pursuit.heavy ? "heavy troopers" : "officers"} after ${CRIME_NAMES[pursuit.pursuit.crime]}.`
+                  ? `${pursuit.pursuit.cartel ? "Enforcers" : "Security"} reach the scene in ${pursuit.minutes} min: ${pursuit.pursuit.officers} ${pursuit.pursuit.heavy ? "heavy troopers" : "officers"} after ${CRIME_NAMES[pursuit.pursuit.crime]}${pursuit.pursuit.from ? `, sent from ${pursuit.pursuit.from}` : ""}${pursuit.pursuit.via ? ` (${VIA_WORDS[pursuit.pursuit.via]})` : ""}.`
                   : pursuit.here
                     ? `Officers are searching this district for the offenders: ${pursuit.minutes} min left. Lie low, or leave the district.`
                     : `Officers are still searching the district: ${pursuit.minutes} min left.`}

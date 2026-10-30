@@ -169,6 +169,8 @@ export interface Area {
   allowed?: boolean;
   // A building where the alarm has been raised
   alarm?: boolean;
+  // A shop whose alarm the party has disabled (until this minute, the next morning's opening; see shopArmed)
+  disarmedUntil?: number;
   // The minute the watch here calms down, set when the party leaves out of sight (see calmedAt)
   calmAt?: number;
 }
@@ -211,6 +213,11 @@ export interface World {
   pursuit?: Pursuit;
   // The criminal reputation of each settlement: points, and the minute they were last counted (see heatAt)
   heat?: Record<string, { points: number; at: number }>;
+  // People sent or sent off on an errand that is not part of their day: a witness walking to the garrison to report a crime, a patrol
+  // called away to a scene (see Errand)
+  errands?: Errand[];
+  // Thefts nobody saw, which the shopkeeper finds when they count the stock before closing (see noteTheft, advanceDiscoveries)
+  discoveries?: Discovery[];
   // Crimes done by the people of a settlement, and the search for them (see rollIncident), and the
   // last hour of the clock each settlement was rolled for
   incidents?: Incident[];
@@ -1871,6 +1878,8 @@ export interface RoomAsset {
   // The path a door is, the room it leads to, or the occupant, cache or ship the asset stands for
   ref?: string;
   to?: string;
+  // A holding cell or slave pen: the DC of its lock and whether it has been opened (see cellOf). Older ones have none: shut, DC 15.
+  cell?: { dc: number; open?: boolean };
 }
 
 export interface RoomLayout {
@@ -2711,9 +2720,12 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
         : isLocal(occupant) || NOTABLES.includes(occupant.role) ? beside(seats)
         : occupant.count === 1 ? (free(behind).length ? free(behind) : beside(stations))
         : beside(seats);
-      const spots = preferred.length ? preferred : anywhere();
+      // Those held in a cell are inside it (see cellOf)
+      const cell = cellOf(room, occupant);
+      const inside = cell ? Array.from({ length: cell.w * cell.h }, (_, k) => ({ x: cell.x + (k % cell.w), y: cell.y + Math.floor(k / cell.w) })).filter((q) => !layout.assets.some((a) => a.kind === "npc" && a.x === q.x && a.y === q.y)) : [];
+      const spots = inside.length ? inside : preferred.length ? preferred : anywhere();
       if (!spots.length) break;
-      const spot = r.pick(spots);
+      const spot = inside.length ? inside[0] : r.pick(spots);
       layout.assets.push({ id: `${room.id}-${++n}`, kind: "npc", name: occupant.count > 1 ? `${occupant.name} ${i + 1}` : occupant.name, x: spot.x, y: spot.y, w: 1, h: 1, ref: occupant.id });
     }
   }
@@ -2867,7 +2879,7 @@ function migrateSites(ctx: Context) {
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 13;
+export const LIFE = 14;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -3045,6 +3057,12 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
       for (const o of counter.occupants) if (["merchant", "mechanic"].includes(o.role) && o.disposition !== "hostile") o.trade = "droids";
       placeContents(counter);
     }
+  }
+  // The law in person (life 14): patrols walk the settlement and some of its people are called to the palace or make rounds of the
+  // shops; shops get an alarm panel on the sales floor
+  if ((next.life ?? 0) < 14) {
+    for (const settlement of Object.values(next.areas).filter((a) => a.kind === "settlement")) addPatrolsAndVisits(next, settlement);
+    for (const building of Object.values(next.areas).filter((a) => a.kind === "building")) fitBuilding(next, building);
   }
   next.life = LIFE;
   return next;
@@ -4106,6 +4124,40 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
     furnishRoom(room, r, building.type);
     placeContents(room, r);
   }
+  fitBuilding(world, building);
+}
+
+// What the law in person needs in a building (house rules; dice of their own, so the world is made as it was): a shop's sales floor
+// has an alarm panel (see shopArmed), and the rooms where people are held have their cells (see cellOf): the room's furniture is
+// replaced by cells along the walls and a restraint rack, and the people are placed again, inside them. Done again, nothing is added twice.
+const CELL_PLAN: Furnishing[] = [["Holding cell", "wall", "2x2", "2-3", "b"], ["Restraint rack", "corner", "1x1", "1", "b"]];
+function fitBuilding(world: World, building: Area) {
+  const r = createRandom(hashOf(`${world.seed}|${building.id}|fit`));
+  for (const room of childrenOf(world, building.id)) {
+    const layout = room.layout;
+    if (room.kind !== "room" || !layout || formOf(room)) continue;
+    if (/sales floor/i.test(room.name) && LOCKED_AT_NIGHT.includes(building.type) && !layout.assets.some((a) => useKindOf(a.name) === "alarm")) {
+      const spot = findSpot(layout, r, "wall", 1, 1);
+      if (spot) {
+        layout.assets.push({ id: `${room.id}-p${layout.assets.length + 1}`, kind: "furniture", name: "Alarm panel", ...spot, blocks: true });
+        if (floorFaults(layout)) layout.assets.pop();
+      }
+    }
+    if (/^(holding cells?|slave pens?)$/i.test(room.name) && room.occupants.some((o) => o.captive) && !layout.assets.some(isCellAsset)) {
+      const kept = layout.assets.filter((a) => a.kind !== "furniture" && a.kind !== "npc" && a.kind !== "loot" && a.kind !== "ship");
+      layout.assets = kept;
+      for (const [name, place, size, count] of CELL_PLAN) {
+        const [w, h] = size.split("x").map(Number);
+        for (let i = 0, wanted = range(count, r); i < wanted; i++) {
+          const spot = findSpot(layout, r, place, w, h);
+          if (!spot) break;
+          layout.assets.push({ id: `${room.id}-c${layout.assets.length + 1}`, kind: "furniture", name, ...spot, blocks: true });
+          if (floorFaults(layout)) layout.assets.pop();
+        }
+      }
+      placeContents(room, r);
+    }
+  }
 }
 
 // Somewhere to fight where there is no room plan (a street, the outskirts, open country): open
@@ -4261,6 +4313,9 @@ export interface Pursuit {
   sheltered?: string;
   // What the search last did, for the map's status line
   lastNote?: string;
+  // Where the officers set out from and how the law was told (see reportCrime), for the map's status line
+  from?: string;
+  via?: ReportVia;
 }
 
 // A squad of officers walking the district: where it is, how many it has, and when it next moves
@@ -4271,6 +4326,9 @@ export interface Squad {
   heavy: boolean;
   next: number; // the minute it next moves
   step: number; // how many squares it has walked (0 at the scene)
+  // Answering a call: the room it is running for (it searches the district once it is there), and where it set out from (see dispatchSquads)
+  to?: string;
+  from?: string;
 }
 
 // The settlement an area is in (or the area itself, out in space or where there is none)
@@ -4280,48 +4338,175 @@ export function settlementOf(world: World, areaId: string): string {
 }
 
 // The response to a crime in a place of this law (0 lawless to 3 strict), or none
-export function responseFor(law: number, crime: Crime, cartel: boolean): { delay: number; officers: number; heavy: boolean; search: number } | null {
+export function responseFor(law: number, crime: Crime, cartel: boolean): { delay: number; turnout: number; officers: number; heavy: boolean; search: number } | null {
   const serious = crime === "assault" || crime === "heinous";
-  if (cartel) return { delay: 15, officers: 3, heavy: serious, search: SEARCH_MINUTES[crime] };
+  if (cartel) return { delay: 15, turnout: 5, officers: 3, heavy: serious, search: SEARCH_MINUTES[crime] };
   if (law <= 0) return null;
   const hurry = crime === "heinous" ? 0.5 : crime === "theft" || crime === "trespass" ? 1.5 : 1;
   const delay = Math.round(({ 1: 30, 2: 10, 3: 4 } as Record<number, number>)[Math.min(3, law)] * hurry);
+  // (house rule) the minutes the duty squad takes to turn out of the garrison once it is told; the run to the scene is on top (RUN_STEP a room)
+  const turnout = Math.round(({ 1: 8, 2: 3, 3: 1 } as Record<number, number>)[Math.min(3, law)] * hurry);
   const officers = law === 1 ? 2 : law === 2 ? 3 + (crime === "heinous" ? 1 : 0) : 5 + (serious ? 2 : 0);
-  return { delay, officers, heavy: law === 3 || crime === "heinous", search: Math.round(SEARCH_MINUTES[crime] * [0, 0.5, 1, 2][Math.min(3, law)]) };
+  return { delay, turnout, officers, heavy: law === 3 || crime === "heinous", search: Math.round(SEARCH_MINUTES[crime] * [0, 0.5, 1, 2][Math.min(3, law)]) };
+}
+
+// How the law is told of a crime (house rule: the books give no police). A lawman who sees it, an alarm and a shopkeeper's panic
+// button reach the garrison at once; a camera is watched by a clerk who takes a minute; someone with a commlink calls it in; anyone
+// else walks to the garrison to report it (the witness is seen leaving, and the officers are only sent when they arrive).
+export type ReportVia = "law" | "alarm" | "shopkeeper" | "camera" | "call" | "witness";
+export const REPORT_LAG: Record<Exclude<ReportVia, "witness">, number> = { law: 0, alarm: 0, shopkeeper: 0, camera: 1, call: 2 };
+export const RUN_STEP = 1; // minutes officers answering a call take to run from one room to the next
+export const WALK_STEP = 2; // minutes a witness walking to the garrison takes for the same
+export const REPORT_STAY = 5; // minutes a witness spends at the garrison making the report
+export const VIA_WORDS: Record<ReportVia, string> = { law: "a lawman on the spot radios it in", alarm: "the alarm rings through to the garrison", shopkeeper: "the shopkeeper hits the panic button", camera: "the camera feed is watched at the garrison", call: "someone calls it in on a commlink", witness: "a witness runs to the garrison" };
+
+const LAW_BASES = ["garrison", "command post", "guardhouse", "gatehouse", "city gate", "town gate"];
+const BASE_RANK = (type: string) => (type === "garrison" ? 0 : type === "command post" ? 1 : 2);
+
+// The settlement's own garrison (or command post, or guardhouse): the building the duty squad turns out of and a witness walks to,
+// and the room of it where the squad musters. A base held by the enemy (hostile troopers) is not the settlement's law.
+export function lawBase(world: World, settlementId: string): { building: Area; room: Area } | undefined {
+  const own = childrenOf(world, settlementId)
+    .filter((b) => b.kind === "building" && LAW_BASES.includes(b.type))
+    // (held by the enemy: how the generator decides that troopers there are hostile; lawmen the party has turned on are still the law's)
+    .filter((b) => !(BUILDINGS[b.type]?.hostile === "faction" && (b.faction ?? ancestor(world, b.id, "planet")?.faction ?? world.antagonist) === world.antagonist))
+    .sort((a, b) => BASE_RANK(a.type) - BASE_RANK(b.type));
+  const building = own[0];
+  if (!building) return undefined;
+  const rooms = childrenOf(world, building.id).filter((r) => r.kind === "room");
+  const room = rooms.find((r) => /barracks|guard room|watch post|gatehouse/i.test(r.name)) ?? rooms.find((r) => !/detention|armory|command/i.test(r.name)) ?? rooms[0];
+  return room ? { building, room } : undefined;
+}
+
+// The shortest way on foot between two places of a settlement (rooms and buildings), or nothing
+export function townPath(world: World, settlementId: string, from: string, to: string): string[] | null {
+  if (!world.areas[from] || !world.areas[to]) return null;
+  if (from === to) return [from];
+  const previous = new Map<string, string | null>([[from, null]]);
+  const queue = [from];
+  while (queue.length) {
+    const current = queue.shift()!;
+    if (current === to) {
+      const route: string[] = [];
+      for (let at: string | null = to; at; at = previous.get(at) ?? null) route.unshift(at);
+      return route;
+    }
+    for (const next of searchNeighbours(world, settlementId, current)) {
+      if (previous.has(next)) continue;
+      previous.set(next, current);
+      queue.push(next);
+    }
+  }
+  return null;
+}
+
+// The lawman on patrol who is nearest the scene, and not at his barracks (those are the duty squad): where he is now and how far he is
+export function nearestPatrol(world: World, settlementId: string, scene: string, now: number): { who: Occupant; base: string; at: string; hops: number } | undefined {
+  const gone = new Set((world.errands ?? []).filter((e) => e.kind === "dispatched" && now < e.backAt).map((e) => e.who));
+  let best: { who: Occupant; base: string; at: string; hops: number } | undefined;
+  for (const { o, base } of presenceIndex(world).people) {
+    if (!o.routine?.patrol || !isLawman(o) || gone.has(o.id)) continue;
+    const at = whereAt(o, base, now).at;
+    if (!at || at === base || settlementOf(world, at) !== settlementId) continue;
+    const path = townPath(world, settlementId, at, scene);
+    if (path && (!best || path.length - 1 < best.hops)) best = { who: o, base, at, hops: path.length - 1 };
+  }
+  return best;
+}
+
+interface Dispatch {
+  squads: Squad[];
+  arrivesAt: number;
+  from?: string;
+  errands: Errand[];
+}
+
+// The squads a search sends. From the garrison: the duty squad turns out (the law's turnout) and runs to the scene a room at a
+// time. Unless a patrol is nearer and would be there before the duty squad has even left: then it goes ahead, a first responder, and
+// is not about the town while it is away. With no garrison to send from (or no way there on foot) they come to the scene in the
+// law's own time, as before the officers were sent in person.
+function dispatchSquads(world: World, d: { scene: string; district: string; now: number; lag: number; resp: NonNullable<ReturnType<typeof responseFor>>; officers: number; heavy: boolean; cartel: boolean }): Dispatch {
+  const n = Math.max(1, Math.min(d.cartel || d.heavy ? 3 : 2, d.officers));
+  const station = d.cartel ? undefined : lawBase(world, d.district);
+  const run = (from: string) => townPath(world, d.district, from, d.scene);
+  const toScene = station ? run(station.room.id) : null;
+  if (!station || !toScene) {
+    const arrivesAt = d.now + d.lag + d.resp.delay;
+    return { squads: startSquads(d.scene, arrivesAt, d.officers, n, d.heavy), arrivesAt, errands: [] };
+  }
+  const squads: Squad[] = [];
+  const errands: Errand[] = [];
+  const depart = d.now + d.lag + d.resp.turnout;
+  const hops = toScene.length - 1;
+  let main = d.officers;
+  let first = Infinity;
+  const patrol = nearestPatrol(world, d.district, d.scene, d.now + d.lag);
+  if (patrol && patrol.hops * RUN_STEP < d.resp.turnout + hops * RUN_STEP) {
+    const count = Math.max(1, Math.min(patrol.who.count || 1, 2, d.officers - 1));
+    main = Math.max(1, d.officers - count);
+    const eta = d.now + d.lag + patrol.hops * RUN_STEP;
+    first = eta;
+    squads.push({ id: `sq-${d.now}-patrol`, at: patrol.at, count, heavy: d.heavy, next: d.now + d.lag, step: 0, from: world.areas[patrol.at]?.name ?? "the street", ...(patrol.hops > 0 ? { to: d.scene } : {}) });
+    // The patrol is away from its beat until the search is called off
+    errands.push({ id: `err-${d.now}-${patrol.who.id}`, who: patrol.who.id, kind: "dispatched", from: patrol.at, to: null, leaveAt: d.now + d.lag, arriveAt: eta, stayUntil: eta, backAt: eta + d.resp.search });
+  }
+  const per = Math.max(1, Math.ceil(main / n));
+  for (let i = 0; i < n; i++) squads.push({ id: `sq-${d.now}-${i}`, at: station.room.id, count: per, heavy: d.heavy, next: depart, step: 0, from: station.building.name, ...(hops > 0 ? { to: d.scene } : {}) });
+  return { squads, arrivesAt: Math.min(first, depart + hops * RUN_STEP), from: station.building.name, errands };
 }
 
 // Raises a crime seen or reported in an area: the officers are sent for, or the search they are
 // already on is widened. A crime in a place a crime syndicate rules is against that cartel (house
-// rule: its own men are the ones there), so its enforcers come even where the law does not.
-export function reportCrime(world: World, areaId: string, crime: Crime, now: number): World {
+// rule: its own men are the ones there), so its enforcers come even where the law does not. "via" is how the law was
+// told (ReportVia); a crime that nobody saw ("witness" with no one about) is not reported at all.
+export function reportCrime(world: World, areaId: string, crime: Crime, now: number, via: ReportVia = "law"): World {
   if (!world.areas[areaId]) return world;
   const ruler = ancestor(world, areaId, "planet")?.faction ?? ancestor(world, areaId, "system")?.faction ?? "";
   const cartel = CRIME.test(ruler);
   const resp = responseFor(lawAt(world, areaId), crime, cartel);
   if (!resp) return world;
   const district = settlementOf(world, areaId);
+  let lag = via === "witness" ? 0 : REPORT_LAG[via];
+  let errands = (world.errands ?? []).filter((e) => e.backAt > now - DAY);
+  if (via === "witness") {
+    const seen = (withPresence(world, now).areas[areaId]?.occupants ?? []).filter(isCivilian);
+    if (!seen.length) return world;
+    const station = cartel ? undefined : lawBase(world, district);
+    const way = station ? townPath(world, district, areaId, station.room.id) : null;
+    if (seen.some(hasCommlink)) lag = REPORT_MINUTES;
+    else if (station && way) {
+      lag = (way.length - 1) * WALK_STEP;
+      const runner = seen[0];
+      errands.push({ id: `err-${now}-${runner.id}`, who: runner.id, kind: "report", from: areaId, to: station.room.id, leaveAt: now, arriveAt: now + lag, stayUntil: now + lag + REPORT_STAY, backAt: now + lag + REPORT_STAY + lag });
+    } else lag = 10;
+  }
   const prior = world.pursuit && world.pursuit.district === district && now < world.pursuit.searchUntil ? world.pursuit : undefined;
-  const arrivesAt = prior ? Math.min(prior.arrivesAt, now + resp.delay) : now + resp.delay;
   const heavy = !!(prior?.heavy || resp.heavy);
   const cartelled = !!(prior?.cartel || cartel);
   const officers = Math.max(prior?.officers ?? 0, resp.officers);
+  // A search already walking the district keeps its squads; a new one sends them from the garrison (or the nearest patrol)
+  const sent = prior?.squads ? undefined : dispatchSquads(world, { scene: areaId, district, now, lag, resp, officers, heavy, cartel: cartelled });
+  const arrivesAt = sent ? sent.arrivesAt : prior ? prior.arrivesAt : now + lag + resp.delay;
+  if (sent) errands = [...errands, ...sent.errands];
+  const from = sent?.from ?? prior?.from;
   const pursuit: Pursuit = {
     ...(prior ?? {}),
     crime: prior && CRIMES[prior.crime] > CRIMES[crime] ? prior.crime : crime,
     scene: areaId,
     district,
-    arrivesAt,
+    arrivesAt: prior ? Math.min(prior.arrivesAt, arrivesAt) : arrivesAt,
     searchUntil: Math.max(prior?.searchUntil ?? 0, arrivesAt + resp.search),
     officers,
     heavy,
     cartel: cartelled,
-    // A search already walking the district keeps its squads; a new one sends them from the scene
-    squads: prior?.squads ?? startSquads(areaId, arrivesAt, officers, cartelled || heavy ? 3 : 2, heavy),
+    squads: prior?.squads ?? sent!.squads,
+    via: prior?.via ?? via,
+    ...(from ? { from } : {}),
   };
-  return addHeat({ ...world, pursuit }, district, crime, now);
+  return addHeat({ ...world, pursuit, ...(errands.length ? { errands } : {}) }, district, crime, now);
 }
 
-// The squads a search sends: as many as the officers can make up, each walking from the scene
+// The squads of a search that has no garrison to come from: they come to the scene, as many as the officers can make up
 function startSquads(areaId: string, arrivesAt: number, officers: number, squads: number, heavy: boolean): Squad[] {
   const n = Math.max(1, Math.min(squads, officers));
   return Array.from({ length: n }, (_, i) => ({ id: `sq-${arrivesAt}-${i}`, at: areaId, count: Math.max(1, Math.ceil(officers / n)), heavy, next: arrivesAt, step: 0 }));
@@ -4450,7 +4635,7 @@ export interface SearchStep {
 // caller can roll for it and call again.
 export function advanceSearch(world: World, now: number, party: { area: string; jammed: boolean }): SearchStep {
   const p = world.pursuit;
-  if (!p?.squads || now < p.arrivesAt || now >= p.searchUntil) return { world };
+  if (!p?.squads || now >= p.searchUntil) return { world };
   let pur: Pursuit = { ...p, squads: p.squads.map((s) => ({ ...s })) };
   let note: string | undefined;
   // Calls put through (a jammer stops them) make the search know who the party is
@@ -4467,24 +4652,38 @@ export function advanceSearch(world: World, now: number, party: { area: string; 
   if (!due.length && !pur.squads!.some((s) => s.next <= now && s.next < pur.searchUntil)) return { world };
   for (const squad of pur.squads!) {
     while (squad.next <= now && squad.next < pur.searchUntil) {
-      if (squad.step > 0) {
-        let hop: string | undefined;
-        const path = pur.identified && pur.known ? findPath(world, squad.at, pur.known) : null;
-        if (path && path.length > 1) hop = path[1];
-        else {
-          const options = searchNeighbours(world, pur.district, squad.at);
-          if (options.length) hop = createRandom(Math.imul(pur.arrivesAt, 1009) + Math.imul(squad.step, 7919) + [...squad.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0)).pick(options);
+      if (squad.to) {
+        // Answering the call: running for the scene a room at a time (house rule), the whole way on foot
+        if (squad.at !== squad.to) {
+          const path = townPath(world, pur.district, squad.at, squad.to);
+          squad.at = path && path.length > 1 ? path[1] : squad.to;
         }
-        if (hop) squad.at = hop;
-      }
-      squad.step += 1;
-      squad.next += SEARCH_STEP;
-      const area = world.areas[squad.at];
-      if (!area) continue;
-      // Questioning: the people in the room tell what they saw, and if the party was seen here, who it is
-      if (area.occupants.some(isCivilian)) {
-        note = `${squad.count} ${squad.heavy ? "troopers" : "constables"} question the people of ${area.name}${pur.seen?.includes(area.id) ? ": they know the party's face" : ""}.`;
-        if (pur.seen?.includes(area.id) && !pur.identified) pur = { ...pur, identified: true };
+        squad.next += RUN_STEP;
+        if (squad.at === squad.to) {
+          squad.to = undefined;
+          squad.step = 0;
+          note = `${squad.count} ${squad.heavy ? "troopers" : "constables"}${squad.from ? ` from ${squad.from}` : ""} reach ${world.areas[squad.at]?.name ?? "the scene"}.`;
+        }
+      } else {
+        if (squad.step > 0) {
+          let hop: string | undefined;
+          const path = pur.identified && pur.known ? findPath(world, squad.at, pur.known) : null;
+          if (path && path.length > 1) hop = path[1];
+          else {
+            const options = searchNeighbours(world, pur.district, squad.at);
+            if (options.length) hop = createRandom(Math.imul(pur.arrivesAt, 1009) + Math.imul(squad.step, 7919) + [...squad.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0)).pick(options);
+          }
+          if (hop) squad.at = hop;
+        }
+        squad.step += 1;
+        squad.next += SEARCH_STEP;
+        const here = world.areas[squad.at];
+        if (!here) continue;
+        // Questioning: the people in the room tell what they saw, and if the party was seen here, who it is
+        if (here.occupants.some(isCivilian)) {
+          note = `${squad.count} ${squad.heavy ? "troopers" : "constables"} question the people of ${here.name}${pur.seen?.includes(here.id) ? ": they know the party's face" : ""}.`;
+          if (pur.seen?.includes(here.id) && !pur.identified) pur = { ...pur, identified: true };
+        }
       }
       // Sight: a squad walks in on the party, here or on a roof or catwalk in its sight
       if (squad.at === party.area || exposedRooms(world, party.area).some((r) => r.id === squad.at)) {
@@ -4549,7 +4748,7 @@ export function lieLow(world: World, check: number): { world: World; caught: boo
 // ---------------------------------------------------------------------------------------------
 
 export const LAW_ROLES = ["guard", "officer", "customs officer"];
-export const isLawman = (o: Occupant) => LAW_ROLES.includes(o.role) && o.disposition !== "hostile" && !o.captive && !o.disabled;
+export const isLawman = (o: Occupant) => (LAW_ROLES.includes(o.role) || /trooper|constable|sentry|sentinel|watchman|security/i.test(o.role)) && !/droid/i.test(o.role + " " + (o.creature ?? "")) && o.disposition !== "hostile" && !o.captive && !o.disabled;
 
 // The lawmen who can see what is done in a place: those in it and, in the open, on the roofs and catwalks
 export function lawmenAt(world: World, areaId: string): Occupant[] {
@@ -4580,6 +4779,22 @@ export function turnLawmen(world: World, areaId: string, block?: Occupant): Worl
     };
   }
   return setAlert({ ...world, areas }, areaId, ALERT.attacking);
+}
+
+// Lawmen on patrol who are in a place now are really there (their day puts them there, see Routines): they come off their rounds and
+// stand in it, so that the party's doing something under their eyes can be seen, and turned on
+export function pullPatrols(world: World, areaId: string, now: number): World {
+  const live = withPresence(world, now);
+  let areas = world.areas;
+  for (const id of [areaId, ...exposedRooms(world, areaId).map((r) => r.id)]) {
+    for (const o of live.areas[id]?.occupants ?? []) {
+      if (!o.routine?.patrol || !isLawman(o)) continue;
+      const home = Object.values(areas).find((a) => a.occupants.some((x) => x.id === o.id));
+      if (!home || home.id === id || !areas[id]) continue;
+      areas = { ...areas, [home.id]: { ...home, occupants: home.occupants.filter((x) => x.id !== o.id) }, [id]: { ...areas[id], occupants: [...areas[id].occupants, { ...o, routine: undefined }] } };
+    }
+  }
+  return areas === world.areas ? world : { ...world, areas };
 }
 
 export const maxSquads = (p: Pursuit) => (p.heavy || p.cartel ? 3 : 2);
@@ -5123,7 +5338,7 @@ export interface Standing {
 export interface Ledger {
   day: number;
   // Per trader: what the party bought and sold today, and whether a haggle was tried (and how it went)
-  traders: Record<string, { bought: Record<string, number>; sold: Record<string, number>; haggle?: "won" | "lost" | "tried" }>;
+  traders: Record<string, { bought: Record<string, number>; sold: Record<string, number>; haggle?: "won" | "lost" | "tried"; stolen?: Record<string, number> }>;
 }
 export const emptyLedger = (day: number): Ledger => ({ day, traders: {} });
 export const ledgerFor = (ledger: Ledger | undefined | null, day: number): Ledger => (ledger && ledger.day === day ? ledger : emptyLedger(day));
@@ -5246,7 +5461,7 @@ export function stockOf(world: World, trader: Occupant, placeId: string, equipme
   const resold = Object.entries(today?.sold ?? {}).map(([name]) => equipment.find((e) => e.name === name)).filter((e): e is Sw5eEquipment => !!e && !picked.includes(e));
   return [...picked, ...resold]
     .map((item) => {
-      const quantity = (picked.includes(item) ? r.int(wares.each[0], wares.each[1]) : 0) + (today?.sold?.[item.name] ?? 0) - (today?.bought?.[item.name] ?? 0);
+      const quantity = (picked.includes(item) ? r.int(wares.each[0], wares.each[1]) : 0) + (today?.sold?.[item.name] ?? 0) - (today?.bought?.[item.name] ?? 0) - (today?.stolen?.[item.name] ?? 0);
       return { item, quantity };
     })
     .filter(({ quantity }) => quantity > 0)
@@ -5424,6 +5639,32 @@ export interface Routine {
   // Every `every` days the day is spent elsewhere: out at 07:00, back by 21:00, `trip` hours each way
   // `by` is what carries them (a speeder, an airspeeder, a mount or a hauler)
   outing?: { at: string; every: number; phase: number; trip: number; by?: string };
+  // Every `every` days, between `from` and `to` o'clock, an hour or two at another place of the same settlement: called to the palace
+  // (an audience), or a round of the shops of a trader they deal with (see settleRoutines)
+  visits?: Visit[];
+  // A patrol: lawmen who walk the settlement's buildings by day instead of standing at one post (see lawBase, nearestPatrol)
+  patrol?: boolean;
+}
+export interface Visit {
+  at: string;
+  every: number;
+  phase: number;
+  from: number;
+  to: number;
+  why: "palace" | "trader";
+}
+// Someone on an errand that is not part of their day (house rule): they leave where they were at `leaveAt`, arrive at `to` at `arriveAt`, stay
+// until `stayUntil` and are back by `backAt`. `to: null` is a patrol called away: not about at all until `backAt`.
+export interface Errand {
+  id: string;
+  who: string;
+  kind: "report" | "dispatched";
+  from: string;
+  to: string | null;
+  leaveAt: number;
+  arriveAt: number;
+  stayUntil: number;
+  backAt: number;
 }
 export interface Voyage {
   // Area ids: the ship's own berth first, then the ports it calls at (berth rooms, or settlements,
@@ -5471,6 +5712,23 @@ export function whereAt(o: Occupant, baseId: string, minutes: number): { at: str
     if (h >= leave && h < 21) return { at: null, moving: { from: out.at, to: r.home, progress: (h - leave) / out.trip } };
     return { at: r.home };
   }
+  // A call to the palace or a round of the shops, on the days it comes round: the walk there, the hour or two, the walk back
+  for (const v of r.visits ?? []) {
+    if ((day + v.phase) % v.every !== 0) continue;
+    const walk = TRANSIT / 60;
+    if (h >= v.from && h < v.to) return { at: v.at };
+    const usual = () => whereAt({ ...o, routine: { ...r, visits: undefined } }, baseId, minutes);
+    if (h >= v.from - walk && h < v.from) {
+      const was = usual();
+      const from = was.at ?? was.moving?.to;
+      if (from && from !== v.at) return { at: null, moving: { from, to: v.at, progress: (h - (v.from - walk)) / walk } };
+    }
+    if (h >= v.to && h < v.to + walk) {
+      const will = usual();
+      const to = will.at ?? will.moving?.from;
+      if (to && to !== v.at) return { at: null, moving: { from: v.at, to, progress: (h - v.to) / walk } };
+    }
+  }
   const now = r.stops.find((s) => coversHour(s, h));
   // Within TRANSIT minutes before a stop begins: on the way to it
   const next = r.stops.find((s) => s !== now && ((s.from - h + 24) % 24) * 60 < TRANSIT && (s.from - h + 24) % 24 > 0);
@@ -5484,6 +5742,20 @@ export function whereAt(o: Occupant, baseId: string, minutes: number): { at: str
     if (ended && ended.at !== r.home) return { at: null, moving: { from: ended.at, to: r.home, progress: ((((h - (ended.to % 24)) + 24) % 24) * 60) / TRANSIT } };
   }
   return { at: now?.at ?? r.home };
+}
+
+// Where someone sent on an errand is at a minute (it comes before their routine), or nothing when they are not on one
+export function errandAt(world: World, who: string, minutes: number): ReturnType<typeof whereAt> | undefined {
+  for (const e of world.errands ?? []) {
+    if (e.who !== who || minutes < e.leaveAt || minutes >= e.backAt) continue;
+    if (e.to === null) return { at: null };
+    const out = Math.max(1, e.arriveAt - e.leaveAt);
+    const back = Math.max(1, e.backAt - e.stayUntil);
+    if (minutes < e.arriveAt) return { at: null, moving: { from: e.from, to: e.to, progress: (minutes - e.leaveAt) / out } };
+    if (minutes < e.stayUntil) return { at: e.to };
+    return { at: null, moving: { from: e.to, to: e.from, progress: (minutes - e.stayUntil) / back } };
+  }
+  return undefined;
 }
 
 // Where a ship on a voyage is at a minute: in a port, or on the way between two
@@ -5508,8 +5780,9 @@ function presenceIndex(world: World) {
   let index = presenceIndexes.get(world);
   if (index) return index;
   index = { people: [], ships: new Map() };
+  const sent = new Set((world.errands ?? []).map((e) => e.who));
   for (const area of Object.values(world.areas)) {
-    for (const o of area.occupants) if (o.routine || o.ship) index.people.push({ o, base: area.id });
+    for (const o of area.occupants) if (o.routine || o.ship || sent.has(o.id)) index.people.push({ o, base: area.id });
     for (const s of area.ships) if (s.voyage) index.ships.set(s.id, { s, base: area.id });
   }
   presenceIndexes.set(world, index);
@@ -5541,7 +5814,7 @@ export function withPresence(world: World, minutes: number): World & { moving: M
       away(base, o.id);
       continue;
     }
-    const where = whereAt(o, base, minutes);
+    const where = errandAt(world, o.id, minutes) ?? whereAt(o, base, minutes);
     if (where.at === base) continue;
     away(base, o.id);
     if (where.at && world.areas[where.at]) into(where.at).occupants.push(o);
@@ -5784,7 +6057,60 @@ function settleRoutines(world: World, settlement: Area, r: Random) {
       owner.ship = ship.id;
     }
   }
+  addPatrolsAndVisits(world, settlement);
 }
+
+// Patrols and calls (house rule; the books give the people of a settlement no days, see Routines). Some of a garrison's lawmen walk
+// the settlement's buildings by day instead of standing at one post: they are where the patrol is, which is how the nearest of them
+// reaches a crime before the duty squad has turned out (see dispatchSquads). And some of the people go out of their way now and
+// then: a call to the palace for an audience, or a round of the shops they deal with. Done again, nobody is given a second routine.
+function addPatrolsAndVisits(world: World, settlement: Area) {
+  const r = createRandom(hashOf(`${world.seed}|${settlement.id}|patrols`));
+  const buildings = childrenOf(world, settlement.id).filter((b) => b.kind === "building" && b.type !== "starship");
+  const roomsOf = (b: Area) => childrenOf(world, b.id).filter((a) => a.kind === "room");
+  const around = (h: number, spread = 0.25) => Math.round((h + (r.next() * 2 - 1) * spread) * 4) / 4;
+  const beats = buildings.filter((b) => !LAW_BASES.includes(b.type) && !BUILDINGS[b.type]?.hostile);
+  if (beats.length >= 2) {
+    for (const base of buildings.filter((b) => LAW_BASES.includes(b.type))) {
+      for (const room of roomsOf(base)) {
+        if (room.gateway || /detention|command|armory|holding/i.test(room.name)) continue;
+        for (const o of room.occupants) {
+          if (o.routine || !isLawman(o) || !r.chance(0.8)) continue;
+          const picks = r.shuffle(beats).slice(0, 3);
+          const [a, b, c] = [around(7.5), around(10.5), around(13)];
+          o.routine = {
+            home: room.id,
+            patrol: true,
+            stops: [
+              { at: picks[0].id, from: a, to: b },
+              { at: picks[1 % picks.length].id, from: b, to: c },
+              { at: room.id, from: c, to: c + 1.5 },
+              { at: picks[2 % picks.length].id, from: c + 1.5, to: c + 5.5 },
+            ],
+          };
+        }
+      }
+    }
+  }
+  const palace = buildings.find((b) => b.type === "palace");
+  const hall = palace && roomsOf(palace).find((x) => /petitioners|audience/i.test(x.name));
+  const shops = buildings.filter((b) => ["general store", "armsmith", "tech shop", "apothecary", "outfitter", "curio shop", "pawnshop"].includes(b.type)).flatMap(roomsOf).filter((x) => /sales floor/i.test(x.name)).map((x) => x.id);
+  if (!hall && !shops.length) return;
+  for (const b of buildings) {
+    if (b === palace) continue;
+    for (const room of roomsOf(b)) {
+      for (const o of room.occupants) {
+        if (!o.routine || o.routine.visits || !isCivilian(o) || !["resident", "shopper", "patron", "local", "traveller", "reader"].includes(o.role)) continue;
+        const visits: Visit[] = [];
+        if (hall && r.chance(0.12)) visits.push({ at: hall.id, every: r.int(3, 6), phase: r.int(0, 5), from: around(10, 0.5), to: around(12.5, 0.5), why: "palace" });
+        if (shops.length && ["resident", "shopper", "local"].includes(o.role) && r.chance(0.4)) visits.push({ at: r.pick(shops), every: r.int(2, 3), phase: r.int(0, 2), from: around(16, 0.5), to: around(17, 0.25), why: "trader" });
+        if (visits.length) o.routine = { ...o.routine, visits };
+      }
+    }
+  }
+}
+
+
 
 const ENTER: Partial<Record<AreaKind, string>> = { system: "Fly in to", planet: "Land at", settlement: "Go to", building: "Enter" };
 const LEAVE: Partial<Record<AreaKind, string>> = { planet: "Fly out to the jump point of", settlement: "Take off to the orbit of", building: "Leave for the outskirts of", room: "Step outside" };
@@ -7162,6 +7488,123 @@ export const FREEING: Record<Captive["restraint"], { label: string; tools: strin
   cell: { label: "Pick the cell's lock", tools: ["Security kit"], ability: ["dexterity", "intelligence"] },
   collar: { label: "Slice the collar's lock", tools: ["Slicer's kit"], ability: ["intelligence"] },
 };
+
+// ---------------------------------------------------------------------------------------------
+// Cells (house rule; the books give the DCs of locks and chains: 15 for a moderate lock, 20 for a stronger one). Those who are
+// held are held in a holding cell or slave pen of the room, a barred and locked piece of it, with the bonds of their own inside:
+// the cell has to be opened before they can be reached (its lock picked or sliced, the door broken down, or every cell of the
+// block opened from the guard console), and then their shackles or collar dealt with as before. A prisoner in a cell with
+// no bonds but the cell (restraint "cell") is free once it is open. Rooms made before cells have none: their captives are freed
+// as they always were.
+// ---------------------------------------------------------------------------------------------
+
+export const CELL_LOCK_DC = 15;
+export const isCellAsset = (a: Pick<RoomAsset, "kind" | "name">) => a.kind === "furniture" && /^(holding cell|slave pen)$/i.test(a.name);
+export const cellOpen = (a: Pick<RoomAsset, "cell">) => !!a.cell?.open;
+export const cellDC = (a: Pick<RoomAsset, "cell">) => a.cell?.dc ?? CELL_LOCK_DC;
+
+// The cell a captive is held in: the captives of a room are shared out round its cells by order of their ids
+export function cellOf(room: Pick<Area, "layout" | "occupants">, o: Pick<Occupant, "id" | "captive">): RoomAsset | undefined {
+  if (!o.captive || !room.layout) return undefined;
+  const cells = room.layout.assets.filter(isCellAsset).sort((a, b) => a.id.localeCompare(b.id));
+  if (!cells.length) return undefined;
+  const held = room.occupants.filter((x) => x.captive).sort((a, b) => a.id.localeCompare(b.id));
+  return cells[Math.max(0, held.findIndex((x) => x.id === o.id)) % cells.length];
+}
+
+// Opens a cell (or, with no id, every cell of the room: the guard console)
+export function openCells(world: World, roomId: string, assetId?: string): World {
+  const room = world.areas[roomId];
+  if (!room?.layout) return world;
+  const assets = room.layout.assets.map((a) => (isCellAsset(a) && (!assetId || a.id === assetId) ? { ...a, cell: { dc: cellDC(a), open: true } } : a));
+  return { ...world, areas: { ...world.areas, [roomId]: { ...room, layout: { ...room.layout, assets } } } };
+}
+
+// Whether the captive can be reached: no cell to open (a room made before them), or it is open
+export const reachable = (room: Pick<Area, "layout" | "occupants">, o: Pick<Occupant, "id" | "captive">): boolean => {
+  const cell = cellOf(room, o);
+  return !cell || cellOpen(cell);
+};
+
+// ---------------------------------------------------------------------------------------------
+// Shops by day and by night (house rule: the books give shops no stock to steal and no alarms). What a shop has for sale is
+// on the pieces of its sales floor (shelves, racks, cases, bins), dealt out from its trader's stock for the day (stockOf); a
+// piece behind glass or a lock (case, weapon rack, cabinet) is picked first. By day the shopkeeper is at the counter and watches:
+// taking a piece of stock is Dexterity (Sleight of Hand) against their passive Perception, and seen, they hit the panic
+// button and the law is on its way at once. Taken unseen, the missing item is found when the stock is counted before closing,
+// and reported then. By night the shop is shut, its door locked and its alarm armed (a sensor on the door, another on the
+// stock) in a place that has law at all: the sensors are disabled from the shop's alarm panel, or at the door while the lock is
+// picked, (Intelligence against 12 + the law; a security or slicer's kit helps) until the morning's opening, or the alarm rings
+// through to the garrison. A camera records what is done in front of it (see camerasIn) unless it is looped.
+// ---------------------------------------------------------------------------------------------
+
+export const STOCK_PIECES = /^(goods shelf|produce bin|cloth bolts|weapon rack|armor stand|display case|droid parts shelf|holo display|medical cabinet|herb rack|clothing rack|curio shelf|statuette plinth|instrument rack|wares rack|display shelf|display table|starship part)$/i;
+export const LOCKED_PIECES = /^(display case|weapon rack|medical cabinet|holo display)$/i;
+export const STOCK_LOCK_DC = 15;
+export const stockPieces = (room: Pick<Area, "layout">): RoomAsset[] => (room.layout?.assets ?? []).filter((a) => a.kind === "furniture" && STOCK_PIECES.test(a.name)).sort((a, b) => a.id.localeCompare(b.id));
+
+// The trader's stock dealt out round the pieces of the sales floor (the same every time for the same lines)
+export function shelfStock(room: Pick<Area, "layout">, lines: TradeLine[]): Record<string, TradeLine[]> {
+  const pieces = stockPieces(room);
+  const out: Record<string, TradeLine[]> = Object.fromEntries(pieces.map((a) => [a.id, [] as TradeLine[]]));
+  if (pieces.length) lines.forEach((line, i) => out[pieces[i % pieces.length].id].push(line));
+  return out;
+}
+
+// The minute a shop next opens
+export function nextOpening(type: string, minutes: number): number {
+  const from = (OPENING[type] ?? [8, 20])[0] % 24;
+  const today = Math.floor(minutes / DAY) * DAY + from * 60;
+  return today > minutes ? today : today + DAY;
+}
+
+// Whether a shop's alarm is armed: shut for the night, in a place that has some law, and not disabled since
+export function shopArmed(world: World, buildingId: string, minutes: number): boolean {
+  const b = world.areas[buildingId];
+  if (!b || b.kind !== "building" || !LOCKED_AT_NIGHT.includes(b.type) || openAt(b.type, minutes) || lawAt(world, buildingId) < 1) return false;
+  return !(b.disarmedUntil && b.disarmedUntil > minutes);
+}
+export const disarmDC = (world: World, buildingId: string) => 12 + lawAt(world, buildingId);
+export function disarmShop(world: World, buildingId: string, minutes: number): World {
+  const b = world.areas[buildingId];
+  return b ? { ...world, areas: { ...world.areas, [buildingId]: { ...b, disarmedUntil: nextOpening(b.type, minutes) } } } : world;
+}
+// The alarm goes up in the shop: its building is on alarm, and the garrison is told at once
+export function tripShopAlarm(world: World, buildingId: string, areaId: string, crime: Crime, now: number): World {
+  const b = world.areas[buildingId];
+  const raised = b ? { ...world, areas: { ...world.areas, [buildingId]: { ...b, alarm: true } } } : world;
+  return reportCrime(raised, areaId, crime, now, "alarm");
+}
+
+// A theft nobody saw: the shopkeeper finds out when the stock is counted, ten minutes before closing (or ten minutes on, if it is
+// near closing already)
+export interface Discovery {
+  area: string;
+  shop: string;
+  due: number;
+  items: number;
+}
+export function noteTheft(world: World, shopId: string, roomId: string, now: number, items = 1): World {
+  const b = world.areas[shopId];
+  if (!b) return world;
+  const [, to] = OPENING[b.type] ?? [8, 20];
+  const closing = Math.floor(now / DAY) * DAY + to * 60;
+  // (a shop that is shut: found when the keeper opens in the morning and sees the empty place on the shelf)
+  const due = !openAt(b.type, now) ? nextOpening(b.type, now) + 20 : closing - 10 > now + 10 ? closing - 10 : now + 10;
+  const list = world.discoveries ?? [];
+  const prior = list.find((d) => d.shop === shopId && d.due >= now);
+  return { ...world, discoveries: prior ? list.map((d) => (d === prior ? { ...d, items: d.items + items } : d)) : [...list, { area: roomId, shop: shopId, due, items }] };
+}
+// Counts the stock of every shop whose time has come: a loss is reported as a theft, by a witness (the shopkeeper, who calls it in or
+// walks to the garrison)
+export function advanceDiscoveries(world: World, now: number): World {
+  const list = world.discoveries ?? [];
+  const due = list.filter((d) => d.due <= now);
+  if (!due.length) return world;
+  let next: World = { ...world, discoveries: list.filter((d) => d.due > now) };
+  for (const d of due) next = reportCrime(next, d.area, "theft", d.due, "witness");
+  return next;
+}
 
 // A Challenge Rating as a number ("1/2" is 0.5)
 export const crOf = (o: Pick<Occupant, "cr">): number => {

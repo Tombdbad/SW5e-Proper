@@ -1140,7 +1140,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             : a.kind === "loot" ? (nodeOf?.(a) ? <NodeModel node={nodeOf(a)!} empty={looted?.(a)} /> : <Chest looted={looted?.(a)} />)
             : (
               <>
-                <Furniture name={a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={pack} tone={pack ? packLook : undefined} face={facing(a, width, height)} bare={!!mood && !!holdsOf(a.name, mood.buildingType, mood.roomName)} />
+                <Furniture name={a.cell?.open ? `${a.name} (open)` : a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={pack} tone={pack ? packLook : undefined} face={facing(a, width, height)} bare={!!mood && !!holdsOf(a.name, mood.buildingType, mood.roomName)} />
                 {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} tone={packLook} wares={onShow.shelves[a.id]} face={facing(a, width, height)} />}
                 {/* A droid for sale on its plinth (the dealer's stock of the day) */}
                 {onShow.droids[a.id] && (
@@ -3692,7 +3692,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     // The search for the party, and the searches for the people of the settlement who broke the law
     const sources: { squads: Squad[]; label?: string }[] = [];
     const p = world.pursuit;
-    if (p?.squads?.length && minutes >= p.arrivesAt && minutes < p.searchUntil) sources.push({ squads: p.squads, label: "(after the party)" });
+    // (squads sent from the garrison are in sight from the minute they muster, running to the scene; those with no garrison come when the law does)
+    if (p?.squads?.length && minutes < p.searchUntil) {
+      const running = p.squads.filter((sq) => sq.to && (sq.from || minutes >= p.arrivesAt));
+      const searching = p.squads.filter((sq) => !sq.to && (sq.from || minutes >= p.arrivesAt));
+      if (running.length) sources.push({ squads: running, label: "(answering the call)" });
+      if (searching.length) sources.push({ squads: searching, label: "(after the party)" });
+    }
     for (const i of world.incidents ?? []) if ((i.status === "open" || i.status === "fled") && minutes >= i.arrivesAt && minutes < i.searchUntil && i.squads.length) sources.push({ squads: i.squads, label: `(after ${i.name})` });
     const taken = new Map<string, number>();
     return sources.flatMap(({ squads, label }) => squads.flatMap((squad): SquadSpot[] => {
