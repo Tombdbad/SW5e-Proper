@@ -7483,7 +7483,7 @@ export default function GameBoard() {
           ) : (
             <>
               <TalkPanel
-                speaker={{ id: o.id, name: o.name, species: o.species, role: o.role, disposition: o.disposition }}
+                speaker={{ id: o.id, name: o.name, species: o.species, role: o.role, disposition: o.disposition, creature: o.creature }}
                 player={talkPlayer}
                 scene={talkScene()}
                 disabled={inCombat || dead}
@@ -7567,7 +7567,7 @@ export default function GameBoard() {
           {c.attack && <p className="text-xs text-gray-400">{c.attack.name} {c.attack.bonus >= 0 ? "+" : ""}{c.attack.bonus}, {c.attack.damage}</p>}
           {c.how && <p className="text-xs text-gray-400">Joined: {c.how}.</p>}
           <TalkPanel
-            speaker={{ id: c.id, name: c.name, species: c.species, role: c.role, kind: "party", notes: [c.kind === "hireling" ? "Hired for the pay." : c.how ? `Joined the party: ${c.how}.` : "", c.bolt ? "A restraining bolt limits what it may do." : "", c.hp < c.maxHp ? "Hurt." : ""].filter(Boolean).join(" ") }}
+            speaker={{ id: c.id, name: c.name, species: c.species, role: c.role, kind: "party", form: c.kind, creature: c.creature, notes: [c.kind === "hireling" ? "Hired for the pay." : c.how ? `Joined the party: ${c.how}.` : "", c.bolt ? "A restraining bolt limits what it may do." : "", c.hp < c.maxHp ? "Hurt." : ""].filter(Boolean).join(" ") }}
             player={talkPlayer}
             scene={talkScene()}
             disabled={inCombat || dead}

@@ -1,10 +1,12 @@
 // Talking with someone in their own words: a person the party meets, or one of its own party members. The reply is made by the local model
 // (server/dialogue.ts, Ollama) and streamed in as it is written. Each line is a fresh exchange: only the speaker's own last reply travels with
 // it, never a transcript. What is said here is colour, not a roll: it changes nothing in the game (Persuade, Deceive and the rest are the
-// buttons beside it).
+// buttons beside it). The reply is spoken in the speaker's own voice (lib/voice.ts; 2026-10-30), its words shown as subtitles if the player
+// wants them.
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { setVoicePref, speak, stopSpeaking, voicePrefs } from "@/lib/voice";
 
 export interface TalkSpeaker {
   id: string;
@@ -15,6 +17,10 @@ export interface TalkSpeaker {
   // "party" for the party's own companions
   kind?: string;
   notes?: string;
+  // For the voice: a droid, beast or humanoid companion's kind, what creature it is, and a gender where the game knows one
+  form?: string;
+  creature?: string;
+  gender?: string;
 }
 export interface TalkPlayer {
   name: string;
@@ -23,15 +29,28 @@ export interface TalkPlayer {
   alignment?: string;
 }
 
+// A cue as a subtitle shows it: [sigh] is "(sighs)"
+const CUE_WORDS: Record<string, string> = { chuckle: "chuckles", laugh: "laughs", sigh: "sighs", breath: "breathes in", groan: "groans", cough: "coughs", wheeze: "wheezes", hmm: "hmm", gasp: "gasps", growl: "growls", beep: "beeps", whistle: "whistles", static: "static" };
+const subtitle = (text: string) => text.replace(/\[([a-z]+)\]/g, (_, c: string) => `(${CUE_WORDS[c] ?? c})`);
+
 // The last thing each speaker said, kept while the page is open
 const lastSaid = new Map<string, string>();
 
-export function TalkPanel({ speaker, player, scene, disabled }: { speaker: TalkSpeaker; player: TalkPlayer; scene: string; disabled?: boolean }) {
+// (`comms`: the talk is over a comlink, and sounds like it)
+export function TalkPanel({ speaker, player, scene, disabled, comms }: { speaker: TalkSpeaker; player: TalkPlayer; scene: string; disabled?: boolean; comms?: boolean }) {
   const [line, setLine] = useState("");
   const [heard, setHeard] = useState<{ asked: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const stop = useRef<AbortController | null>(null);
+  const [prefs, setPrefs] = useState(voicePrefs);
+  const [speaking, setSpeaking] = useState(false);
+  const toggle = (key: "voice" | "subtitles") => {
+    const on = !prefs[key];
+    setVoicePref(key, on);
+    setPrefs({ ...prefs, [key]: on });
+    if (key === "voice" && !on) stopSpeaking();
+  };
 
   const status = useQuery<{ ok: boolean; model: string }>({
     queryKey: ["/api/dialogue/status"],
@@ -40,9 +59,10 @@ export function TalkPanel({ speaker, player, scene, disabled }: { speaker: TalkS
   });
 
   // Another person picked, or the panel closed: whatever was being said stops
-  useEffect(() => () => stop.current?.abort(), []);
+  useEffect(() => () => { stop.current?.abort(); stopSpeaking(); }, []);
   useEffect(() => {
     stop.current?.abort();
+    stopSpeaking();
     setHeard(null);
     setError("");
     setLine("");
@@ -52,6 +72,7 @@ export function TalkPanel({ speaker, player, scene, disabled }: { speaker: TalkS
   const say = async () => {
     const asked = line.trim();
     if (!asked || busy) return;
+    stopSpeaking();
     const control = new AbortController();
     stop.current = control;
     setBusy(true);
@@ -93,6 +114,11 @@ export function TalkPanel({ speaker, player, scene, disabled }: { speaker: TalkS
         }
       }
       if (text) lastSaid.set(speaker.id, text);
+      // Heard in their own voice (the page goes on while it plays)
+      if (text && voicePrefs().voice && !control.signal.aborted) {
+        setSpeaking(true);
+        void speak(text, { id: speaker.id, name: speaker.name, species: speaker.species, role: speaker.role, kind: speaker.form, creature: speaker.creature, gender: speaker.gender, disposition: speaker.disposition }, { comms }).finally(() => setSpeaking(false));
+      }
     } catch (e: any) {
       if (e?.name !== "AbortError") setError(e?.message ?? "Could not get a reply.");
     } finally {
@@ -109,11 +135,16 @@ export function TalkPanel({ speaker, player, scene, disabled }: { speaker: TalkS
       {heard && (
         <div className="space-y-1 rounded border border-gray-600/60 p-1 text-xs" data-testid="talk-heard">
           <p className="italic text-gray-400">You: {heard.asked}</p>
-          {heard.text
-            ? heard.text.split(/\n\s*\n/).map((p, i) => <p key={i} className="text-gray-100">{p}</p>)
-            : busy && <p className="text-gray-400">{speaker.name} is thinking...</p>}
+          {heard.text && (prefs.subtitles || !prefs.voice)
+            ? heard.text.split(/\n\s*\n/).map((p, i) => <p key={i} className="text-gray-100" data-testid="talk-subtitle">{subtitle(p)}</p>)
+            : busy ? <p className="text-gray-400">{speaker.name} is thinking...</p> : heard.text && <p className="text-gray-400">{speaker.name} {speaking ? "speaks..." : "has spoken."}</p>}
         </div>
       )}
+      <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-400">
+        <label className="flex items-center gap-1"><input type="checkbox" checked={prefs.voice} onChange={() => toggle("voice")} data-testid="talk-voice" /> Voice</label>
+        <label className="flex items-center gap-1"><input type="checkbox" checked={prefs.subtitles} onChange={() => toggle("subtitles")} data-testid="talk-subtitles" /> Subtitles</label>
+        {speaking && <button type="button" className="underline" onClick={() => { stopSpeaking(); setSpeaking(false); }} data-testid="talk-hush">Stop speaking</button>}
+      </div>
       {error && <p className="text-xs text-red-300" data-testid="talk-error">{error}</p>}
       <form className="flex gap-1" onSubmit={(e) => { e.preventDefault(); void say(); }}>
         <input

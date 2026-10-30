@@ -16,6 +16,7 @@ import { ZodError } from "zod";
 import { formatError } from "./utils";
 import { registerSw5eRoutes } from "./sw5eRoutes";
 import { registerDialogueRoutes } from "./dialogue";
+import { registerSpeechRoutes } from "./speech";
 import { registerCoopRoutes, attachCoop, liveCampaign, mergeLive } from "./coop";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -23,6 +24,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerSw5eRoutes(app);
   // Spoken replies from the local model (Ollama)
   registerDialogueRoutes(app);
+  registerSpeechRoutes(app);
   // Co-op sessions: who is playing, and (below) the live campaign while a session has it open
   registerCoopRoutes(app);
 

@@ -1,26 +1,25 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-30 (Windows PC), branch `main`. Last commit 17fc336 (sea crossings and water craft). Nothing is pushed.
+Written 2026-10-30 (Windows PC), branch `main`. Commits today: 2434b7d (seats, gunners, convoy, water list), then the voices commit. Nothing is pushed.
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told.
 
-## 2026-10-30, sixth batch (committed; REVIVAL_NOTES "Seats, gunners, the convoy, the rest of the water list")
-The user asked: dome drop-off (yes, the house rule), the whole "not done" list of batch 5, seats for every speeder and water craft by its seat
-count with characters drawn accurately in them, turrets/gunners that follow the operator's aim (yaw and pitch), and a new minigame "convoy":
-the party pilots convoy vehicles and fires their turrets at attacking ships, with bot ships defending the convoy.
-Done so far (uncommitted):
-- Dome: shared/logic `domeOf`; GameBoard `travel` sets the party down in the first dome's way in when it arrives under the sea by anything
-  but a submersible (toast says house rule).
-- Seats: models.tsx `craftLayout` (seats per make, bench seats past the body's own, lent pintle gun), `CraftCrew`, `GunMount`, Figure `crew`
-  prop, Mover crew mode (hips on the seat), limbs.ts `crewPose`. SpeederModel takes `seats`, `crew`, `aims`, `gunner`.
-- Map: the party and followers who fit sit in the craft at the helm (LocalMap `aboard`, `crewOf`); co-op `pos` carries `r` (the craft,
-  `rideKey`), PeerFigure draws the peer in it (server/coop.ts, lib/coop.ts, CoopUI).
-- Race scene: real figures in the seats (FlightScene `riderOf`, RaceGame `crew`, `aimRefs`), Racer `gun`, RaceInput `pitch`.
-Next: the user tries the convoy (Downtime > Convoy guard) and the water list; open: co-op seats in the convoy, the breath-in-seconds clock (see REVIVAL_NOTES).
+## 2026-10-30, voices (REVIVAL_NOTES "Spoken dialogue" > "Voices")
+- Gemma 4 E2B gives text only (audio is input only). The prompt now asks for speech alone with [cue] sounds; `speechOnly` in server/dialogue.ts strips narration.
+- server/speech.ts: Windows OneCore voices (George, Hazel, Susan) through a resident PowerShell worker; optional Piper (env PIPER_EXE, PIPER_MODEL; not installed); WAV cache in `.cache/speech` (gitignored).
+- client/src/lib/voice.ts: per-speaker voice from id/species/role (deterministic), mood, cues (manifest samples or made in code), droid/helmet/mask/comms effects, Wookiee growls, astromech bleeps, Jawa chatter. TalkPanel: Voice and Subtitles checkboxes.
+- `.claude/skills/septabee/SKILL.md`: SeptaBee is GUI-only (no CLI, binary .bee projects, VST3 and LV2 hosting); the user builds and exports, Claude wires files into `client/public/audio/...` and `voice/manifest.json`.
+- Tests: tests/world/voice.test.ts; full suite 490 pass, 3 skipped.
+
+## Open questions for the user
+- Download Piper and a multi-speaker voice model (more distinct voices, American accents)? Needs their go-ahead.
+- People met have no gender in the world data, so their voice's register is by seed.
+- The game clock (a minute a second) makes holding one's breath last a few real seconds (from the water batch).
 
 ## Running
-- No dev server of mine is running. 5002 (test copy) is an OLD build; the user restarts it themselves (`deploy\windows-start.ps1 -Mode test -Lan`).
+- No dev server of mine is running. 5002 (test copy) is an OLD build; the user restarts it (`deploy\windows-start.ps1 -Mode test -Lan`). A server restart is needed for the new dialogue prompt and /api/speech.
 
 ## Learned
-- A heredoc with an apostrophe in it breaks the Bash tool's quoting: write patch scripts with the Write tool into the scratchpad.
-- FlightScene.tsx is LF now (not CRLF).
-- A "detail all" world takes about a minute to generate in a test: build a small world by hand (water.test.ts) when only a few areas matter.
+- PowerShell 5.1 can drive WinRT speech: `[Windows.Media.SpeechSynthesis.SpeechSynthesizer]::AllVoices` is static; await IAsyncOperation with `WindowsRuntimeSystemExtensions.AsTask`. System.Speech ignores SSML pitch (rate works as a multiplier).
+- No `strings`, ffmpeg or Piper on this PC; a scratchpad Node script reads strings out of a binary.
+- A heredoc with an apostrophe breaks the Bash tool's quoting: write patch scripts with the Write tool.
+- The browser pane throttles timers when hidden: audio scheduling loops run slow there.

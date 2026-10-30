@@ -24,20 +24,55 @@ const SLOW_MS_PER_TOKEN = 7;
 
 const SYSTEM = `You voice characters in a Star Wars tabletop role-playing game (Star Wars 5th Edition), in the tone of the films: plain, lived-in, a little wry. Each message gives you a CARD for one exchange: the SCENE, WHO YOU ARE, WHO IS TALKING TO YOU, and sometimes what you said last. It ends with what the player says. Reply as the character you are, and only as them.
 
-Rules for every reply:
-- Write one to three short paragraphs of plain prose, 120 words at most in all. Fewer is better when a few words will do.
-- Speak in the first person. A brief action or glance may open a paragraph, but most of it is speech.
+Your reply is spoken aloud by a voice actor, so it is ONLY the words the character says. Rules for every reply:
+- One to three short paragraphs of speech, 90 words at most in all. Fewer is better when a few words will do.
+- No narration at all: never describe what anyone does, looks like or feels, no gestures, no glances, no tone of voice, no surroundings, no "she says". No quotation marks around the speech.
+- Sounds the character makes go in square brackets, from this list only, and only where they would be heard: [chuckle] [laugh] [sigh] [breath] [groan] [cough] [wheeze] [hmm] [gasp] [growl] [beep] [whistle] [static]. Use one or two at most, often none.
+- A nervous, frightened or hurt character may stutter ("I-I didn't...") or trail off ("Well... uh..."); a calm one does not.
 - Match the character: their species, trade, mood and how they feel about the party (friendly, neutral or hostile). A shopkeeper talks of trade, a guard of the law, a droid like a droid, a companion like a friend who shares the party's risks.
 - Use only what is on the card. Do not invent named people, places, prices, quests or items that are not there. If you would not know something, say so, or turn the talk back to what you do know.
-- Never speak or act for the player and never describe what the player is doing or looking like. Never decide the result of a die roll, a fight or a deal, and never mention rules, dice, stats, hit points or the game.
-- No lists, no headings, no markdown, no stage directions in brackets, no remarks outside the character. Do not start with your own name.
+- Never speak for the player. Never decide the result of a die roll, a fight or a deal, and never mention rules, dice, stats, hit points or the game.
+- No lists, no headings, no markdown, no remarks outside the character. Do not start with your own name.
 
 Example of the style.
 CARD: You are Hessa Marl, a human dock clerk, neutral to the party. The port is busy and an Imperial patrol is about.
 PLAYER SAYS: "Which berth is the Lark in?"
-REPLY: Hessa runs a thumb down a battered datapad without looking up. "Lark, Lark. Bay nine, and don't let it sit there past the evening shift. The patrol's been counting hulls all morning."
+REPLY: Lark, Lark... bay nine. And don't let it sit there past the evening shift, the patrol's been counting hulls all morning.
 
-She glances over then, and lowers her voice. "If you've something aboard you'd rather they didn't count, that's your business. Just don't make it mine."`;
+[sigh] If you've something aboard you'd rather they didn't count, that's your business. Just don't make it mine.`;
+
+// The sounds a reply may carry in square brackets (the page plays them: client/src/lib/voice.ts); anything else in brackets is dropped
+export const CUES = ["chuckle", "laugh", "sigh", "breath", "groan", "cough", "wheeze", "hmm", "gasp", "growl", "beep", "whistle", "static"];
+// Narration the model still writes now and then: a sentence that tells what someone does rather than says (third person, or "I" doing
+// something), opening with a name or a pronoun and one of these verbs
+const ACTS = "smiles?|smirks?|grins?|glances?|looks?|leans?|shrugs?|nods?|sighs?|laughs?|chuckles?|frowns?|says?|whispers?|mutters?|murmurs?|replies|replied|answers?|adds?|pauses?|gestures?|points?|turns?|steps?|crosses|taps?|runs?|lowers?|raises?|tilts?|narrows?|folds?|rubs?|scratches|waves?|eyes|studies|regards?|watches|considers?|hesitates?|winces?|snorts?|scoffs?|beeps?|whirs?|whistles?|clicks?|buzzes|growls?|rumbles?";
+const NARRATION = new RegExp(`^(?:(?:he|she|they|it|his|her|their|the [a-z ]{2,30})|[A-Z][\\w'-]+(?: [A-Z][\\w'-]+)?)\\s+(?:\\w+ly\\s+)?(?:${ACTS})\\b`, "i");
+// (a sentence with I, me, you or we in it is someone talking, not narration)
+const SPOKEN = /\b(?:I|me|my|you|your|we|us|our)\b/i;
+
+// Only what is said aloud: stage directions in asterisks or round brackets, square brackets that are not a sound cue, narrating sentences
+// (and, when the model put the speech in quotation marks, everything outside them) are taken out
+export function speechOnly(text: string): string {
+  const paragraphs = text.replace(/\r/g, "").split(/\n\s*\n/).map((para) => {
+    let p = para.replace(/\*[^*\n]{1,200}\*/g, " ").replace(/\([^)\n]{1,200}\)/g, " ");
+    // ([sighs heavily] is a sigh, [beeps] a beep)
+    p = p.replace(/\[([^\]\n]{1,40})\]/g, (_, said: string) => { const cue = CUES.find((c) => said.toLowerCase().includes(c)); return cue ? `[${cue}]` : " "; });
+    // Speech in quotation marks with narration round it: the quoted words alone
+    const quoted = [...p.matchAll(/["“]([^"”]{2,})["”]/g)].map((m) => m[1].trim());
+    if (quoted.length) {
+      const cues = [...p.matchAll(/\[[a-z]+\]/g)].map((m) => m[0]);
+      p = `${cues.length && p.trim().startsWith("[") ? `${cues[0]} ` : ""}${quoted.join(" ")}`;
+    }
+    const sentences = p.match(/[^.!?]+(?:[.!?]+["”]?|$)/g) ?? [p];
+    return sentences
+      .filter((s) => { const t = s.trim().replace(/^\[[a-z]+\]\s*/, ""); return SPOKEN.test(t) || !NARRATION.test(t); })
+      .join("")
+      .replace(/["“”]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  });
+  return paragraphs.filter((p) => p.replace(/\[[a-z]+\]/g, "").trim()).join("\n\n");
+}
 
 interface Card {
   speaker: { name: string; species?: string; role?: string; disposition?: string; kind?: string; notes?: string };
@@ -67,7 +102,7 @@ export function cardText(c: Card): string {
 
 // Whatever the model wrapped the speech in: a leading name or "REPLY:", markdown, more than three paragraphs, a sentence cut off at the cap
 export function tidy(text: string, cut: boolean): string {
-  let t = text.replace(/\r/g, "").replace(/^\s*(REPLY|Reply)\s*:\s*/, "").replace(/[*_#`]+/g, "").trim();
+  let t = speechOnly(text.replace(/\r/g, "").replace(/^\s*(REPLY|Reply)\s*:\s*/, "")).replace(/[*_#`]+/g, "").trim();
   let paragraphs = t.split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean);
   if (paragraphs.length > MAX_PARAGRAPHS) {
     paragraphs = paragraphs.slice(0, MAX_PARAGRAPHS);
@@ -180,7 +215,9 @@ export function registerDialogueRoutes(app: Express) {
           }
         }
         if (enough) stop.abort();
-        send({ done: true, text: tidy(text, last.done_reason === "length") });
+        // (a reply that opens with the speaker's own name, "Rook, ...", is said without it)
+        const own = clip(b.speaker.name, 60).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        send({ done: true, text: tidy(text, last.done_reason === "length").replace(new RegExp(`^${own}\\s*[,:]\\s*`, "i"), "") });
         // A reply that had to evaluate its whole prompt means the prefix was lost: start it again for the next one
         if (last.prompt_eval_count && last.prompt_eval_duration / 1e6 / last.prompt_eval_count > SLOW_MS_PER_TOKEN) {
           primed = false;
