@@ -20,6 +20,8 @@ import { Constants } from "@babylonjs/core/Engines/constants";
 import { Scene } from "@babylonjs/core/scene";
 import { Camera } from "@babylonjs/core/Cameras/camera";
 import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Frustum } from "@babylonjs/core/Maths/math.frustum";
+import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { SubMesh } from "@babylonjs/core/Meshes/subMesh";
@@ -33,6 +35,7 @@ import { MultiMaterial } from "@babylonjs/core/Materials/multiMaterial";
 import { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
 import { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial";
 import { MaterialPluginBase } from "@babylonjs/core/Materials/materialPluginBase";
+import { ShadowDepthWrapper } from "@babylonjs/core/Materials/shadowDepthWrapper";
 import { ImageProcessingConfiguration } from "@babylonjs/core/Materials/imageProcessingConfiguration";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import { RawTexture } from "@babylonjs/core/Materials/Textures/rawTexture";
@@ -46,6 +49,15 @@ import { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator"
 import { CascadedShadowGenerator } from "@babylonjs/core/Lights/Shadows/cascadedShadowGenerator";
 import "@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent";
 import { SceneInstrumentation } from "@babylonjs/core/Instrumentation/sceneInstrumentation";
+import { ClusteredLightContainer } from "@babylonjs/core/Lights/Clustered/clusteredLightContainer";
+import "@babylonjs/core/Lights/Clustered/clusteredLightingSceneComponent";
+import { ReflectionProbe } from "@babylonjs/core/Probes/reflectionProbe";
+import { SphericalPolynomial } from "@babylonjs/core/Maths/sphericalPolynomial";
+import { DefaultRenderingPipeline } from "@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline";
+import { SSAO2RenderingPipeline } from "@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/ssao2RenderingPipeline";
+import "@babylonjs/core/PostProcesses/RenderPipeline/postProcessRenderPipelineManagerSceneComponent";
+import "@babylonjs/core/Rendering/prePassRendererSceneComponent";
+import "@babylonjs/core/Rendering/geometryBufferRendererSceneComponent";
 import type { UniformBuffer } from "@babylonjs/core/Materials/uniformBuffer";
 
 // ---- The look and its tiers ---------------------------------------------------------------------------------------------------------
@@ -91,6 +103,19 @@ function floats(attr: THREE.BufferAttribute | THREE.InterleavedBufferAttribute):
   const out = new Float32Array(n * s);
   for (let i = 0; i < n; i++) for (let c = 0; c < s; c++) out[i * s + c] = attr.getComponent(i, c);
   return out;
+}
+// A three texture's wrapping, repeat and colour space on its Babylon copy
+const wrapOf = (w: THREE.Wrapping) => (w === THREE.RepeatWrapping ? Texture.WRAP_ADDRESSMODE : w === THREE.MirroredRepeatWrapping ? Texture.MIRROR_ADDRESSMODE : Texture.CLAMP_ADDRESSMODE);
+function settle(tex: Texture, t: THREE.Texture) {
+  tex.wrapU = wrapOf(t.wrapS);
+  tex.wrapV = wrapOf(t.wrapT);
+  tex.uScale = t.repeat.x;
+  tex.vScale = t.repeat.y;
+  tex.uOffset = t.offset.x;
+  tex.vOffset = t.offset.y;
+  tex.wAng = -t.rotation;
+  tex.anisotropicFilteringLevel = t.anisotropy;
+  tex.gammaSpace = t.colorSpace === THREE.SRGBColorSpace;
 }
 const isText = (o: THREE.Object3D): o is THREE.Mesh & { text: string; fontSize: number; color: unknown; anchorX: unknown; anchorY: unknown; outlineWidth: unknown; outlineColor: unknown; maxWidth: number } =>
   (o as THREE.Mesh).isMesh && typeof (o as unknown as { text?: unknown }).text === "string" && "fontSize" in o && "anchorX" in o;
@@ -166,6 +191,104 @@ class LimbPlugin extends MaterialPluginBase {
   }
 }
 
+// ---- Three's other shader patches, told to the renderer by whoever makes the material -----------------------------------------------
+// (kept beside the material, not in its `userData`, which a copy clones as JSON; limbMaterial hands its base's patch to its copy)
+
+export type ShaderPatch =
+  // a textured surface's height map shifting its maps toward the eye (surfaces.tsx parallaxShader, dogfight/hullSurface.ts); `steps`
+  // the hull's march through it
+  | { kind: "parallax"; height: { value: THREE.Texture | null }; parallax: number; steps?: number }
+  // fur: the instance is the shell (models.tsx furShellMaterial)
+  | { kind: "fur"; length: number; shells: number; strands: { value: THREE.Texture | null } }
+  // a hull's grime, scratches, rust and scorch (models.tsx hullMaterials), `level` its age and damage (0 to 1)
+  | { kind: "wear"; wear: THREE.Texture; damage: THREE.Texture; level: [number, number] }
+  // the sea's waves (siteAssets.tsx waterMaterial)
+  | { kind: "waves"; time: { value: number } };
+const PATCHES = new WeakMap<THREE.Material, ShaderPatch>();
+export function shaderPatch<T extends THREE.Material>(m: T, patch: ShaderPatch): T {
+  PATCHES.set(m, patch);
+  return m;
+}
+export const patchOf = (m: THREE.Material) => PATCHES.get(m);
+
+// A plugin made of its code, uniforms and samplers (passed beside it, as the limbs' joints are)
+interface PluginSpec {
+  name: string;
+  ubo: { name: string; size: number; type: string }[];
+  samplers?: string[];
+  vertex?: Record<string, string>;
+  fragment?: Record<string, string>;
+  ready?: () => boolean;
+  bind: (ubo: UniformBuffer) => void;
+}
+let SPEC: PluginSpec;
+class CodePlugin extends MaterialPluginBase {
+  private spec: PluginSpec;
+  // (before the limbs, 200: fur stands out from the body at rest, and is turned with it)
+  constructor(material: Material, spec: PluginSpec) {
+    SPEC = spec;
+    super(material, spec.name, 150, { [spec.name.toUpperCase()]: false });
+    this.spec = spec;
+    this._enable(true);
+  }
+  private get s() {
+    return this.spec ?? SPEC;
+  }
+  prepareDefines(defines: Record<string, unknown>) {
+    defines[this.s.name.toUpperCase()] = true;
+  }
+  getClassName() {
+    return `${this.s.name}Plugin`;
+  }
+  getUniforms() {
+    return { ubo: this.s.ubo };
+  }
+  getSamplers(samplers: string[]) {
+    samplers.push(...(this.s.samplers ?? []));
+  }
+  isReadyForSubMesh() {
+    return this.s.ready?.() ?? true;
+  }
+  bindForSubMesh(ubo: UniformBuffer) {
+    this.s.bind(ubo);
+  }
+  getCustomCode(shaderType: string) {
+    return (shaderType === "vertex" ? this.s.vertex : this.s.fragment) ?? null;
+  }
+}
+// The mesh's own texture coordinates, passed on to a plugin's fragment code (Babylon passes its own only for a map without repeats)
+const PATCH_UV = { definitions: "varying vec2 vPatchUV;", end: "#ifdef UV1\nvPatchUV = uvUpdated;\n#endif" };
+
+// ---- Three's own shader materials (a planet, a shield, drei's stars): their GLSL as it is, with what three declares for it ------------
+
+const declares = (src: string, kind: "attribute" | "uniform", name: string) => new RegExp(`${kind}\\s+\\w+\\s+${name}\\b`).test(src);
+// three's chunks: the colour space is written out, the rest (tone mapping, fog) left out
+const unchunk = (src: string) =>
+  src
+    .replace(/#include\s*<(colorspace|encodings)_fragment>/g, "gl_FragColor.rgb = pow(max(gl_FragColor.rgb, vec3(0.0)), vec3(1.0 / 2.2));")
+    .replace(/#include\s*<[^>]+>/g, "");
+function threeShader(m: THREE.ShaderMaterial) {
+  const vs = unchunk(m.vertexShader).replace(/\binstanceColor\b/g, "instanceColor.rgb");
+  const fs = unchunk(m.fragmentShader);
+  const vertex = [
+    "precision highp float;",
+    "attribute vec3 position;",
+    declares(vs, "attribute", "normal") ? "" : "attribute vec3 normal;",
+    declares(vs, "attribute", "uv") ? "" : "attribute vec2 uv;",
+    m.vertexColors && !declares(vs, "attribute", "color") ? "attribute vec3 color;" : "",
+    "uniform mat4 world;\nuniform mat4 view;\nuniform mat4 projection;\nuniform mat4 worldView;\nuniform vec3 cameraPosition;",
+    "#define modelMatrix world\n#define viewMatrix view\n#define projectionMatrix projection\n#define modelViewMatrix worldView\n#define normalMatrix mat3(worldView)",
+    "#ifdef INSTANCES\nattribute vec4 world0;\nattribute vec4 world1;\nattribute vec4 world2;\nattribute vec4 world3;\n#define instanceMatrix mat4(world0, world1, world2, world3)\n#define USE_INSTANCING\n#else\n#define instanceMatrix mat4(1.0)\n#endif",
+    "#ifdef INSTANCESCOLOR\nattribute vec4 instanceColor;\n#define USE_INSTANCING_COLOR\n#endif",
+    vs,
+  ].join("\n");
+  const fragment = ["precision highp float;", "uniform mat4 view;\nuniform vec3 cameraPosition;\n#define viewMatrix view", fs].join("\n");
+  const attributes = ["position", "normal", "uv", ...Array.from(vs.matchAll(/attribute\s+\w+\s+(\w+)\s*;/g), (a) => a[1])];
+  const samplers = Object.keys(m.uniforms).filter((k) => (m.uniforms[k].value as THREE.Texture | null)?.isTexture);
+  const uniforms = ["world", "view", "projection", "worldView", "cameraPosition", ...Object.keys(m.uniforms).filter((k) => !samplers.includes(k))];
+  return { vertex, fragment, attributes: Array.from(new Set(attributes)), uniforms, samplers };
+}
+
 // ---- The mirror of one three scene ---------------------------------------------------------------------------------------------------
 
 interface GeoEntry { geo: Geometry; sig: string; users: number; frame: number; gone: boolean; indexed: boolean; colors: number }
@@ -186,6 +309,7 @@ interface Node {
   colors?: number;
   label?: string;
   lineSig?: string;
+  clustered?: boolean;
 }
 
 class Mirror {
@@ -197,11 +321,20 @@ class Mirror {
   private mats = new Map<THREE.Material, MatEntry>();
   private texs = new Map<THREE.Texture, TexEntry>();
   private points = new Map<THREE.Object3D, { mat: ShaderMaterial; key: string }>();
+  private shaders = new Map<THREE.Material, { mat: ShaderMaterial; key: string }>();
+  private packs = new Map<string, Texture>();
   private frame = 0;
-  private sun?: { light: DirectionalLight; shadow: CascadedShadowGenerator };
+  private sun?: { light: DirectionalLight; shadow: ShadowGenerator };
   private casters = new Set<Mesh>();
   private noToneMapping: ImageProcessingConfiguration;
   private lampShadows = 0;
+  // The look on full detail (see look): the sky's reflections, bloom, contact shadows; and the lamps gathered into one clustered light
+  private probe?: ReflectionProbe;
+  private pipeline?: DefaultRenderingPipeline;
+  private ssao?: SSAO2RenderingPipeline;
+  private lamps?: ClusteredLightContainer | null;
+  // the brightest sun this frame (the sky's reflections are as bright as it)
+  private daylight = 0;
 
   constructor(private engine: Engine, private owner: BabylonRenderer) {
     const scene = new Scene(engine);
@@ -236,12 +369,84 @@ class Mirror {
     this.lampShadows = 0;
     for (const entry of this.mats.values()) entry.mat.maxSimultaneousLights = s.lights;
     for (const node of this.nodes.values()) node.casts = undefined;
+    this.plain();
+  }
+
+  // ---- The look ----
+
+  // On full detail: the backdrop (the sky, its suns and planets, the far land: what three draws first, rendering group 0) seen from the
+  // camera in a small cube that the surfaces reflect, as bright as the sun is; bloom round what is drawn near white; and contact shadows
+  // on a desktop. Only where the scene is drawn whole (an overlay drawn over another scene, the dogfight's cockpit, gets none).
+  private look(sun: number) {
+    const full = LOOK.tier === "full" && this.owner.autoClear && this.owner.look;
+    if (!full) return this.plain();
+    const scene = this.scene;
+    if (!this.probe) {
+      const probe = new ReflectionProbe("sky", DESKTOP ? 128 : 64, scene, true, true);
+      probe.refreshRate = 30;
+      probe.cubeTexture.renderListPredicate = (m) => m.renderingGroupId === 0 && m.isEnabled();
+      // (its ambient part is left out: three's ambient and hemisphere lights give that; only the shine is added)
+      const it = probe.cubeTexture.getInternalTexture() as unknown as { _sphericalPolynomial: SphericalPolynomial; _sphericalPolynomialComputed: boolean } | null;
+      if (it) {
+        it._sphericalPolynomial = new SphericalPolynomial();
+        it._sphericalPolynomialComputed = true;
+      }
+      scene.environmentTexture = probe.cubeTexture;
+      this.probe = probe;
+    }
+    this.probe.position.copyFrom(this.camera.position);
+    scene.environmentIntensity = Math.min(1, sun);
+    if (!this.pipeline) {
+      const p = new DefaultRenderingPipeline("look", false, scene, [this.camera]);
+      // (the materials tone-map themselves: the bloom works on what they drew)
+      p.imageProcessingEnabled = false;
+      p.samples = DESKTOP ? 4 : 1;
+      p.fxaaEnabled = !DESKTOP;
+      p.bloomEnabled = true;
+      p.bloomThreshold = 0.98;
+      p.bloomWeight = 0.25;
+      p.bloomKernel = DESKTOP ? 64 : 32;
+      p.bloomScale = 0.5;
+      this.pipeline = p;
+    }
+    if (DESKTOP && !this.ssao) {
+      const ao = new SSAO2RenderingPipeline("contact", scene, { ssaoRatio: 0.5, blurRatio: 0.5 }, [this.camera], false);
+      ao.radius = 0.6;
+      ao.totalStrength = 1.1;
+      ao.samples = 12;
+      ao.maxZ = 60;
+      ao.expensiveBlur = true;
+      this.ssao = ao;
+    }
+  }
+  private plain() {
+    this.ssao?.dispose();
+    this.ssao = undefined;
+    this.pipeline?.dispose();
+    this.pipeline = undefined;
+    if (this.probe) {
+      this.scene.environmentTexture = null;
+      this.probe.dispose();
+      this.probe = undefined;
+    }
+  }
+
+  // Lamps by the hundred (street lamps after dark: siteAssets.tsx LampLights) are lit together, clustered by where they fall on the screen,
+  // so a street of them costs about one light (none where the device cannot cluster: they are then lights of their own)
+  private cluster(): ClusteredLightContainer | null {
+    if (this.lamps === undefined) {
+      const c = new ClusteredLightContainer("lamps", [], this.scene);
+      this.lamps = c.isSupported ? c : null;
+      if (!this.lamps) c.dispose();
+    }
+    return this.lamps;
   }
 
   // ---- Each frame ----
 
   sync(scene: THREE.Scene, camera: THREE.Camera) {
     this.frame++;
+    this.daylight = 0;
     this.syncScene(scene);
     this.syncCamera(camera);
     // Everything the scene holds now, with its visibility
@@ -256,6 +461,7 @@ class Mirror {
     for (const [o, node] of this.nodes) if (node.frame !== this.frame) this.drop(o, node);
     for (const [g, entry] of this.geos) if (entry.users <= 0 && entry.gone) { entry.geo.dispose(); this.geos.delete(g); }
     for (const [m, entry] of this.mats) if (entry.users <= 0 && entry.gone) { entry.mat.dispose(); this.mats.delete(m); }
+    this.look(this.daylight);
   }
 
   private syncScene(scene: THREE.Scene) {
@@ -280,7 +486,8 @@ class Mirror {
     } else s.fogMode = Scene.FOGMODE_NONE;
     const ip = s.imageProcessingConfiguration;
     ip.toneMappingEnabled = this.owner.toneMapping !== THREE.NoToneMapping;
-    ip.exposure = this.owner.toneMappingExposure;
+    // (three's ACES brightens by 1 / 0.6 before its curve; Babylon's does not)
+    ip.exposure = this.owner.toneMappingExposure / (this.owner.toneMapping === THREE.ACESFilmicToneMapping ? 0.6 : 1);
   }
 
   private syncCamera(camera: THREE.Camera) {
@@ -343,6 +550,7 @@ class Mirror {
       this.lampShadows--;
     }
     if (node.light) {
+      if (node.clustered) this.lamps?.removeLight(node.light);
       if (this.sun && this.sun.light === node.light) {
         this.sun.shadow.dispose();
         this.sun = undefined;
@@ -436,18 +644,36 @@ class Mirror {
       }
       engine.updateDynamicTexture((entry.tex as unknown as { _texture: never })._texture, image as unknown as HTMLCanvasElement, t.flipY, false);
     }
-    const tex = entry.tex;
-    const wrap = (w: THREE.Wrapping) => (w === THREE.RepeatWrapping ? Texture.WRAP_ADDRESSMODE : w === THREE.MirroredRepeatWrapping ? Texture.MIRROR_ADDRESSMODE : Texture.CLAMP_ADDRESSMODE);
-    tex.wrapU = wrap(t.wrapS);
-    tex.wrapV = wrap(t.wrapT);
-    tex.uScale = t.repeat.x;
-    tex.vScale = t.repeat.y;
-    tex.uOffset = t.offset.x;
-    tex.vOffset = t.offset.y;
-    tex.wAng = -t.rotation;
-    tex.anisotropicFilteringLevel = t.anisotropy;
-    tex.gammaSpace = t.colorSpace === THREE.SRGBColorSpace;
+    settle(entry.tex, t);
     entry.version = t.version;
+    return entry.tex;
+  }
+
+  // A normal map with its height map in the alpha, where Babylon's parallax reads the height (made once a pair; none while either is
+  // a flat stand-in or still loading)
+  private packed(normal: THREE.Texture | null | undefined, height: THREE.Texture | null): Texture | null {
+    type Img = CanvasImageSource & { width: number; height: number; complete?: boolean };
+    const n = normal?.image as Img | undefined, h = height?.image as Img | undefined;
+    if (!normal || !height || (normal as THREE.DataTexture).isDataTexture || (height as THREE.DataTexture).isDataTexture) return null;
+    if (!n?.width || !h?.width || n.complete === false || h.complete === false || typeof document === "undefined") return null;
+    const key = `${normal.id}:${normal.version}|${height.id}:${height.version}`;
+    let tex = this.packs.get(key);
+    if (!tex) {
+      const w = n.width, hh = n.height;
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = hh;
+      const g = c.getContext("2d", { willReadFrequently: true })!;
+      g.drawImage(n, 0, 0, w, hh);
+      const data = g.getImageData(0, 0, w, hh).data;
+      g.drawImage(h, 0, 0, w, hh);
+      const heights = g.getImageData(0, 0, w, hh).data;
+      for (let i = 3; i < data.length; i += 4) data[i] = heights[i - 3];
+      tex = new RawTexture(new Uint8Array(data.buffer), w, hh, Constants.TEXTUREFORMAT_RGBA, this.scene, true, normal.flipY, Texture.TRILINEAR_SAMPLINGMODE);
+      this.packs.set(key, tex);
+      normal.addEventListener("dispose", () => { tex!.dispose(); this.packs.delete(key); });
+    }
+    settle(tex, normal);
     return tex;
   }
 
@@ -459,12 +685,20 @@ class Mirror {
       const mat = new PBRMaterial(`m${m.id}`, this.scene);
       mat.enableSpecularAntiAliasing = true;
       mat.maxSimultaneousLights = shadowSettings().lights;
+      // three's diffuse is Lambert's (Babylon's own darkens a rough surface)
+      mat.brdf.baseDiffuseModel = Constants.MATERIAL_DIFFUSE_MODEL_LAMBERT;
       entry = { mat, version: -1, frame: 0, users: 0, gone: false, maps: "" };
       this.mats.set(m, entry);
       const e = entry;
       m.addEventListener("dispose", () => { e.gone = true; });
+      const patch = PATCHES.get(m);
+      if (patch) this.plugin(mat, patch);
       const parents = m.userData.limbParents as number[] | undefined;
-      if (parents && m.userData.pose) new LimbPlugin(mat, m, parents);
+      if (parents && m.userData.pose) {
+        new LimbPlugin(mat, m, parents);
+        // its shadow falls as it stands (the shadow maps are drawn with the material's own vertex shader)
+        mat.shadowDepthWrapper = new ShadowDepthWrapper(mat, this.scene);
+      }
     }
     if (entry.frame === this.frame) return entry.mat;
     entry.frame = this.frame;
@@ -478,7 +712,9 @@ class Mirror {
     else mat.emissiveColor.set(0, 0, 0);
     mat.alpha = m.opacity;
     // The maps, when they come
-    const maps = [any.map, any.normalMap, any.emissiveMap, any.alphaMap].map((t) => (t ? `${t.id}:${t.version}` : "")).join();
+    const patch = PATCHES.get(m);
+    const height = patch?.kind === "parallax" ? patch.height.value : null;
+    const maps = [any.map, any.normalMap, any.emissiveMap, any.alphaMap, height].map((t) => (t ? `${t.id}:${t.version}` : "")).join() + LOOK.tier;
     if (entry.version === m.version && entry.maps === maps) return mat;
     entry.version = m.version;
     entry.maps = maps;
@@ -496,18 +732,27 @@ class Mirror {
       mat.roughness = 0.95;
     }
     mat.albedoTexture = this.texture(any.map);
-    mat.bumpTexture = this.texture(any.normalMap);
+    // (a height map goes in the normal map's alpha: Babylon's own parallax, marched through the height on a desktop's full detail)
+    const packed = patch?.kind === "parallax" ? this.packed(any.normalMap, height) : null;
+    mat.bumpTexture = packed ?? this.texture(any.normalMap);
     if (mat.bumpTexture) {
       mat.bumpTexture.level = any.normalScale?.x ?? 1;
       mat.invertNormalMapY = true;
     }
+    mat.useParallax = !!packed;
+    mat.useParallaxOcclusion = !!packed && DESKTOP && LOOK.tier === "full";
+    if (patch?.kind === "parallax") mat.parallaxScaleBias = patch.parallax;
     mat.emissiveTexture = this.texture(any.emissiveMap);
     mat.opacityTexture = this.texture(any.alphaMap);
     const add = m.blending === THREE.AdditiveBlending;
     mat.alphaMode = add ? Constants.ALPHA_ADD : Constants.ALPHA_COMBINE;
     mat.transparencyMode = m.transparent || add ? PBRMaterial.PBRMATERIAL_ALPHABLEND : m.alphaTest > 0 ? PBRMaterial.PBRMATERIAL_ALPHATEST : PBRMaterial.PBRMATERIAL_OPAQUE;
     mat.alphaCutOff = m.alphaTest;
-    if (mat.albedoTexture && m.transparent) mat.useAlphaFromAlbedoTexture = true;
+    // (Babylon reads a map's alpha only when told it has one)
+    if (mat.albedoTexture && (m.transparent || m.alphaTest > 0)) {
+      mat.albedoTexture.hasAlpha = true;
+      mat.useAlphaFromAlbedoTexture = true;
+    }
     mat.disableDepthWrite = !m.depthWrite;
     mat.depthFunction = m.depthTest ? 0 : Constants.ALWAYS;
     mat.backFaceCulling = m.side !== THREE.DoubleSide;
@@ -523,6 +768,133 @@ class Mirror {
   private releaseMaterial(m: THREE.Material) {
     const entry = this.mats.get(m);
     if (entry) entry.users--;
+  }
+
+  // What the three material's maker patched into its shader, as a plugin of the Babylon one (parallax is Babylon's own: see material)
+  private plugin(mat: PBRMaterial, patch: ShaderPatch) {
+    if (patch.kind === "fur") {
+      // Each shell pushed out along the surface and drooping, keeping only the strands that reach it
+      const strands = () => this.texture(patch.strands.value);
+      new CodePlugin(mat, {
+        name: "FurShells",
+        ubo: [{ name: "uFurLength", size: 1, type: "float" }, { name: "uShells", size: 1, type: "float" }],
+        samplers: ["uStrands"],
+        vertex: {
+          CUSTOM_VERTEX_DEFINITIONS: `varying float vShell;\n${PATCH_UV.definitions}`,
+          CUSTOM_VERTEX_MAIN_END: PATCH_UV.end,
+          CUSTOM_VERTEX_UPDATE_POSITION: "vShell = (float(gl_InstanceID) + 1.0) / uShells;\npositionUpdated += normalize(normal) * vShell * uFurLength;\npositionUpdated.y -= vShell * vShell * uFurLength * 0.35;",
+        },
+        fragment: {
+          CUSTOM_FRAGMENT_DEFINITIONS: `uniform sampler2D uStrands;\nvarying float vShell;\n${PATCH_UV.definitions}`,
+          CUSTOM_FRAGMENT_UPDATE_ALBEDO: "{ float strand = texture2D(uStrands, vPatchUV * 3.0).r; if (strand < vShell * 0.92 + 0.04) discard; surfaceAlbedo *= mix(0.6, 1.08, vShell); }",
+        },
+        ready: () => !!strands(),
+        bind: (ubo) => {
+          ubo.updateFloat("uFurLength", patch.length);
+          ubo.updateFloat("uShells", patch.shells);
+          const t = strands();
+          if (t) ubo.setTexture("uStrands", t);
+        },
+      });
+    } else if (patch.kind === "wear") {
+      // Grime, rust, bare metal where it is scratched and scorch, each over the share of the masks its level covers
+      const wear = () => this.texture(patch.wear), damage = () => this.texture(patch.damage);
+      new CodePlugin(mat, {
+        name: "HullWear",
+        ubo: [{ name: "wearLevel", size: 2, type: "vec2" }],
+        samplers: ["wearMap", "damageMap"],
+        vertex: { CUSTOM_VERTEX_DEFINITIONS: PATCH_UV.definitions, CUSTOM_VERTEX_MAIN_END: PATCH_UV.end },
+        fragment: {
+          CUSTOM_FRAGMENT_DEFINITIONS: `uniform sampler2D wearMap;\nuniform sampler2D damageMap;\n${PATCH_UV.definitions}\nfloat hwCover(float m, float amount) { return smoothstep(1.0 - amount, 1.2 - amount, m); }`,
+          CUSTOM_FRAGMENT_UPDATE_ALBEDO: `{
+  vec3 wm = texture2D(wearMap, vPatchUV * 0.5).rgb;
+  float dm = texture2D(damageMap, vPatchUV * 0.35).r;
+  float age = wearLevel.x;
+  surfaceAlbedo *= 1.0 - 0.5 * hwCover(wm.r, 0.1 * age + 0.75 * age * age);
+  surfaceAlbedo = mix(surfaceAlbedo, vec3(0.42, 0.2, 0.1) * (0.7 + 0.6 * wm.r), hwCover(wm.b, 0.26 * age * age) * 0.7);
+  surfaceAlbedo = mix(surfaceAlbedo, vec3(0.66, 0.68, 0.7), hwCover(wm.g, age * 0.7) * 0.7);
+  surfaceAlbedo *= 1.0 - 0.9 * hwCover(dm, wearLevel.y * 0.9);
+}`,
+        },
+        ready: () => !!wear() && !!damage(),
+        bind: (ubo) => {
+          ubo.updateFloat2("wearLevel", patch.level[0], patch.level[1]);
+          ubo.setTexture("wearMap", wear()!);
+          ubo.setTexture("damageMap", damage()!);
+        },
+      });
+    } else if (patch.kind === "waves") {
+      // The sea's face raised by its waves where it lies in the world, and turned to their slope
+      new CodePlugin(mat, {
+        name: "SeaWaves",
+        ubo: [{ name: "uTime", size: 1, type: "float" }],
+        vertex: {
+          CUSTOM_VERTEX_DEFINITIONS: "float waveH(vec2 p) { return 0.07 * sin(p.x * 0.85 + uTime * 1.25) + 0.05 * sin(p.y * 1.21 - uTime * 1.05) + 0.03 * sin((p.x + p.y) * 2.2 + uTime * 2.0) + 0.015 * sin((p.x - p.y) * 4.1 - uTime * 2.9); }",
+          CUSTOM_VERTEX_UPDATE_POSITION: "vec2 wvP = (world * vec4(position, 1.0)).xz;\nfloat wvH = waveH(wvP);\npositionUpdated.y += wvH;",
+          CUSTOM_VERTEX_UPDATE_NORMAL: "normalUpdated = normalize(vec3(-(waveH(wvP + vec2(0.06, 0.0)) - wvH) / 0.06, 1.0, -(waveH(wvP + vec2(0.0, 0.06)) - wvH) / 0.06));",
+        },
+        bind: (ubo) => ubo.updateFloat("uTime", patch.time.value),
+      });
+    }
+  }
+
+  // A three shader material drawn by its own GLSL; its uniforms are copied over each frame (it may be shared by several meshes)
+  private shaderOf(m: THREE.ShaderMaterial, points: boolean): ShaderMaterial {
+    const key = `${m.version}|${points}|${m.transparent}|${m.blending}|${m.side}|${m.depthWrite}|${m.depthTest}`;
+    let entry = this.shaders.get(m);
+    if (!entry || entry.key !== key) {
+      entry?.mat.dispose();
+      const code = threeShader(m);
+      const add = m.blending === THREE.AdditiveBlending;
+      const mat = new ShaderMaterial(`sh${m.id}`, this.scene, { vertexSource: code.vertex, fragmentSource: code.fragment }, {
+        attributes: code.attributes,
+        uniforms: code.uniforms,
+        samplers: code.samplers,
+        needAlphaBlending: m.transparent || add,
+      });
+      mat.alphaMode = add ? Constants.ALPHA_ADD : Constants.ALPHA_COMBINE;
+      mat.disableDepthWrite = !m.depthWrite;
+      mat.depthFunction = m.depthTest ? 0 : Constants.ALWAYS;
+      mat.backFaceCulling = m.side !== THREE.DoubleSide;
+      mat.cullBackFaces = m.side !== THREE.BackSide;
+      mat.pointsCloud = points;
+      if (!this.shaders.has(m)) m.addEventListener("dispose", () => { this.shaders.get(m)?.mat.dispose(); this.shaders.delete(m); });
+      entry = { mat, key };
+      this.shaders.set(m, entry);
+      entry.mat.metadata = { frame: -1 };
+    }
+    const mat = entry.mat;
+    if (mat.metadata.frame === this.frame) return mat;
+    mat.metadata.frame = this.frame;
+    const cam = this.camera.position;
+    mat.setVector3("cameraPosition", cam);
+    for (const [name, u] of Object.entries(m.uniforms)) {
+      const v = u.value as unknown;
+      if (typeof v === "number") mat.setFloat(name, v);
+      else if (typeof v === "boolean") mat.setInt(name, v ? 1 : 0);
+      else if (!v || typeof v !== "object") continue;
+      else if ((v as THREE.Texture).isTexture) {
+        const t = this.texture(v as THREE.Texture);
+        if (t) mat.setTexture(name, t);
+      } else if (Array.isArray(v)) {
+        if (!v.length) continue;
+        const first = v[0] as THREE.Vector4 & THREE.Color;
+        if (typeof first === "number") mat.setFloats(name, v as number[]);
+        else if (first.isVector4) mat.setArray4(name, (v as THREE.Vector4[]).flatMap((p) => [p.x, p.y, p.z, p.w]));
+        else if ((first as unknown as THREE.Vector3).isVector3) mat.setArray3(name, (v as THREE.Vector3[]).flatMap((p) => [p.x, p.y, p.z]));
+        else if (first.isColor) mat.setArray3(name, (v as THREE.Color[]).flatMap((c) => [c.r, c.g, c.b]));
+        else if ((first as unknown as THREE.Vector2).isVector2) mat.setArray2(name, (v as THREE.Vector2[]).flatMap((p) => [p.x, p.y]));
+      } else {
+        const o = v as THREE.Vector4 & THREE.Color & THREE.Matrix4 & { isVector2?: boolean; isVector3?: boolean; isMatrix3?: boolean };
+        if (o.isColor) mat.setArray3(name, [o.r, o.g, o.b]);
+        else if (o.isVector4) mat.setArray4(name, [o.x, o.y, o.z, o.w]);
+        else if (o.isVector3) mat.setArray3(name, [o.x, o.y, o.z]);
+        else if (o.isVector2) mat.setArray2(name, [o.x, o.y]);
+        else if (o.isMatrix4) mat.setMatrix(name, Matrix.FromArray(o.elements));
+        else if (o.isMatrix3) mat.setMatrix3x3(name, new Float32Array(o.elements));
+      }
+    }
+    return mat;
   }
   private bind(node: Node, mesh: Mesh, material: THREE.Material | THREE.Material[], g: THREE.BufferGeometry, colors: number) {
     const list = [material].flat();
@@ -572,10 +944,13 @@ class Mirror {
     const g = o.geometry;
     if (!g?.attributes.position) return;
     const { node, mesh, entry } = this.meshNode(o, "mesh", g);
-    mesh.setEnabled(visible && [o.material].flat().some((m) => m.visible));
+    // (an instanced mesh with no instances draws nothing in three; Babylon would draw its one mesh)
+    mesh.setEnabled(visible && [o.material].flat().some((m) => m.visible) && !((o as THREE.InstancedMesh).isInstancedMesh && (o as THREE.InstancedMesh).count === 0));
     if (!visible) return;
     this.place(node, o, mesh);
-    this.bind(node, mesh, o.material, g, entry.colors);
+    const shader = !Array.isArray(o.material) && (o.material as THREE.ShaderMaterial).isShaderMaterial ? (o.material as THREE.ShaderMaterial) : null;
+    if (shader) mesh.material = this.shaderOf(shader, false);
+    else this.bind(node, mesh, o.material, g, entry.colors);
     mesh.renderingGroupId = o.renderOrder < 0 ? 0 : 1;
     mesh.alphaIndex = o.renderOrder;
     mesh.receiveShadows = o.receiveShadow;
@@ -588,7 +963,8 @@ class Mirror {
         node.instances = v;
         mesh.thinInstanceSetBuffer("matrix", inst.instanceMatrix.array as Float32Array, 16, false);
         mesh.thinInstanceCount = inst.count;
-        mesh.alwaysSelectAsActiveMesh = true;
+        // (its bounds take in every instance, for the camera's culling and the shadows')
+        mesh.thinInstanceRefreshBoundingInfo(false);
       }
       if (inst.instanceColor) {
         const cv = inst.instanceColor.version;
@@ -647,7 +1023,15 @@ class Mirror {
     if (!visible) return;
     this.place(node, o, mesh);
     const m = [o.material].flat()[0] as THREE.PointsMaterial & THREE.ShaderMaterial;
-    const color = !!g.attributes.color && (m.vertexColors || m.isShaderMaterial);
+    mesh.renderingGroupId = o.renderOrder < 0 ? 0 : 1;
+    mesh.alphaIndex = o.renderOrder;
+    mesh.alwaysSelectAsActiveMesh = !o.frustumCulled;
+    // (a shader's points, drei's stars among them, are sized by the shader)
+    if (m.isShaderMaterial) {
+      mesh.material = this.shaderOf(m, true);
+      return;
+    }
+    const color = !!g.attributes.color && m.vertexColors;
     const size = !!g.attributes.size;
     const map = this.texture(m.map);
     const key = `${m.id}|${color}|${size}|${map ? "m" : ""}`;
@@ -670,18 +1054,14 @@ class Mirror {
     }
     const mat = entry.mat;
     if (map) mat.setTexture("map", map);
-    // three's sizes: a points material's in world units at half the drawing's height a unit away, or in pixels; a shader's (drei's
-    // stars) about 90 pixels a unit away
-    const scale = m.isShaderMaterial ? 90 : m.sizeAttenuation !== false ? this.engine.getRenderHeight() * 0.5 : 0;
-    mat.setFloat("pointSize", m.isShaderMaterial ? 1 : m.size ?? 1);
+    // three's sizes: in world units at half the drawing's height a unit away, or in pixels
+    const scale = m.sizeAttenuation !== false ? this.engine.getRenderHeight() * 0.5 : 0;
+    mat.setFloat("pointSize", m.size ?? 1);
     mat.setFloat("scale", scale);
     mat.setColor3("tint", m.color ? c3(m.color) : new Color3(1, 1, 1));
-    mat.setFloat("alpha", m.transparent || m.isShaderMaterial ? m.opacity ?? 1 : 1);
+    mat.setFloat("alpha", m.transparent ? m.opacity ?? 1 : 1);
     mat.alphaMode = m.blending === THREE.AdditiveBlending ? Constants.ALPHA_ADD : Constants.ALPHA_COMBINE;
     mat.disableDepthWrite = !m.depthWrite || m.blending === THREE.AdditiveBlending;
-    mesh.renderingGroupId = o.renderOrder < 0 ? 0 : 1;
-    mesh.alphaIndex = o.renderOrder;
-    mesh.alwaysSelectAsActiveMesh = !o.frustumCulled;
   }
 
   // Lines (and drei's fat lines, drawn a pixel wide for now)
@@ -841,7 +1221,12 @@ class Mirror {
     if (!node.light) {
       if (dir.isDirectionalLight) node.light = new DirectionalLight(`d${l.id}`, new Vector3(0, -1, 0), this.scene);
       else if (spot.isSpotLight) node.light = new SpotLight(`s${l.id}`, Vector3.Zero(), new Vector3(0, -1, 0), 1, 1, this.scene);
-      else if (point.isPointLight) node.light = new PointLight(`p${l.id}`, Vector3.Zero(), this.scene);
+      else if (point.isPointLight && l.userData.cluster && this.cluster()) {
+        node.light = new PointLight(`p${l.id}`, Vector3.Zero(), this.scene);
+        node.light.falloffType = Light.FALLOFF_DEFAULT;
+        this.lamps!.addLight(node.light);
+        node.clustered = true;
+      } else if (point.isPointLight) node.light = new PointLight(`p${l.id}`, Vector3.Zero(), this.scene);
       else if (hemi.isHemisphereLight || (l as THREE.AmbientLight).isAmbientLight) node.light = new HemisphericLight(`h${l.id}`, new Vector3(0, 1, 0), this.scene);
       else return;
     }
@@ -858,6 +1243,7 @@ class Mirror {
       return;
     }
     if (light instanceof DirectionalLight) {
+      this.daylight = Math.max(this.daylight, l.intensity);
       dir.target.updateMatrixWorld();
       const t = dir.target.matrixWorld.elements;
       light.position.set(e[12], e[13], e[14]);
@@ -868,6 +1254,7 @@ class Mirror {
     const pl = light as PointLight;
     pl.position.set(e[12], e[13], e[14]);
     pl.range = point.distance > 0 ? point.distance : Number.MAX_VALUE;
+    if (node.clustered) return;
     pl.falloffType = point.decay === 0 ? Light.FALLOFF_STANDARD : Light.FALLOFF_PHYSICAL;
     if (light instanceof SpotLight) {
       spot.target.updateMatrixWorld();
@@ -883,6 +1270,23 @@ class Mirror {
       gen.usePoissonSampling = true;
       gen.bias = 0.004;
       for (const mesh of this.casters) gen.addShadowCaster(mesh, false);
+      // (only what is within its reach: all six faces share the list, made once a frame)
+      const near: AbstractMesh[] = [];
+      let made = -1;
+      gen.getShadowMap()!.getCustomRenderList = (_face, list, count) => {
+        if (!list) return null;
+        if (made !== this.frame) {
+          made = this.frame;
+          near.length = 0;
+          const reach = point.distance > 0 ? point.distance : 12;
+          const at = (light as PointLight).position;
+          for (let i = 0; i < count; i++) {
+            const s = list[i].getBoundingInfo().boundingSphere;
+            if (Vector3.Distance(s.centerWorld, at) - s.radiusWorld < reach) near.push(list[i]);
+          }
+        }
+        return near;
+      };
       node.shadow = gen;
       this.lampShadows++;
     } else if (!wants && node.shadow) {
@@ -904,6 +1308,18 @@ class Mirror {
     if (this.sun && this.sun.light !== light) return;
     if (this.sun) return;
     const s = shadowSettings();
+    // (an engine that cannot draw cascades, WebGL 1, gets one map over the casters, as three had)
+    if (!CascadedShadowGenerator.IsSupported) {
+      const plain = new ShadowGenerator(s.size, light);
+      plain.usePercentageCloserFiltering = true;
+      plain.filteringQuality = s.quality;
+      plain.bias = 0.002;
+      plain.normalBias = 0.015;
+      light.autoUpdateExtends = true;
+      for (const mesh of this.casters) plain.addShadowCaster(mesh, false);
+      this.sun = { light, shadow: plain };
+      return;
+    }
     const gen = new CascadedShadowGenerator(s.size, light);
     gen.numCascades = s.cascades;
     gen.lambda = 0.85;
@@ -915,6 +1331,26 @@ class Mirror {
     gen.normalBias = 0.015;
     gen.cascadeBlendPercentage = 0.08;
     for (const mesh of this.casters) gen.addShadowCaster(mesh, false);
+    // Each cascade draws only what lies across it (Babylon draws every caster into every one), and the far ones leave out what is too
+    // small to show in them (under a 150th of their width)
+    const planes = Frustum.GetPlanes(Matrix.Identity());
+    const lists: AbstractMesh[][] = [];
+    gen.getShadowMap()!.getCustomRenderList = (layer, list, count) => {
+      const m = gen.getCascadeTransformMatrix(layer), proj = gen.getCascadeProjectionMatrix(layer);
+      if (!m || !proj || !list) return null;
+      Frustum.GetPlanesToRef(m, planes);
+      const least = layer === 0 ? 0 : 2 / Math.abs(proj.m[0]) / 150;
+      const out = (lists[layer] ??= []);
+      out.length = 0;
+      // (the planes beside the cascade only: what stands between it and the sun still casts into it)
+      next: for (let i = 0; i < count; i++) {
+        const s = list[i].getBoundingInfo().boundingSphere;
+        if (s.radiusWorld < least) continue;
+        for (let p = 2; p < 6; p++) if (planes[p].dotCoordinate(s.centerWorld) <= -s.radiusWorld) continue next;
+        out.push(list[i]);
+      }
+      return out;
+    };
     this.sun = { light, shadow: gen };
   }
 }
@@ -986,6 +1422,8 @@ export class BabylonRenderer {
   toneMappingExposure = 1;
   outputColorSpace: THREE.ColorSpace = THREE.SRGBColorSpace;
   autoClear = true;
+  // the full look (Mirror.look) where the tier allows; a small canvas turns it off
+  look = true;
   clearColor = new Color3(0, 0, 0);
   clearAlpha = 0;
   info = { autoReset: true, render: { frame: 0, calls: 0, triangles: 0, points: 0, lines: 0 }, memory: { geometries: 0, textures: 0 }, programs: null, reset() {} };
@@ -999,6 +1437,7 @@ export class BabylonRenderer {
   constructor(canvas: HTMLCanvasElement, engine?: Engine) {
     this.domElement = canvas;
     this.engine = engine ?? new Engine(canvas, true, { stencil: true, preserveDrawingBuffer: false, powerPreference: "default", audioEngine: false, alpha: true } as never, false);
+    if (engine) this.look = false;
     RENDERERS.add(this);
     // The last one made, for looking into from the console and the tests
     if (typeof window !== "undefined") (window as unknown as { __babylon?: BabylonRenderer }).__babylon = this;

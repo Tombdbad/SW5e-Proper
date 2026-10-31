@@ -5,10 +5,10 @@ import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { create } from "zustand";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, type V3, type Finish } from "./models";
+import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, LampLight, type V3, type Finish } from "./models";
 import { groundShader, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
 import type { PackId } from "./interiors/packs";
-import { setRenderTier } from "./babylon";
+import { setRenderTier, shaderPatch } from "./babylon";
 import { biomeSky, createRandom, unitOf, packedness, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery } from "@shared/logic";
 
 // ---------------------------------------------------------------------------------------------
@@ -919,7 +919,23 @@ function Group({ name, v, items, biome, palette }: { name: string; v: number; it
   const piece = LIBRARY[name];
   const file = useFile(piece.gltf);
   const colours = pieceColours(name, v, palette);
-  return <Instanced id={`site:${name}:${v}:${biome}`} build={(k) => { k.surfaces = plantSurfaces(colours); piece.build(k, colours, v); }} items={items} file={file} />;
+  return (
+    <>
+      <Instanced id={`site:${name}:${v}:${biome}`} build={(k) => { k.surfaces = plantSurfaces(colours); piece.build(k, colours, v); }} items={items} file={file} />
+      {piece.tags.includes("light") && <LampLights items={items} />}
+    </>
+  );
+}
+
+// A scatter's lamps light up after dark, each at its bulb (models.tsx LampLight)
+function LampLights({ items }: { items: Placed[] }) {
+  return (
+    <>
+      {items.map((it, i) => (
+        <LampLight key={i} at={[it.x, (it.h ?? 0) + 1.7 * it.scale, it.y]} />
+      ))}
+    </>
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1155,10 +1171,12 @@ export function GroundSurface({ set, tint, parallax, w, h, at, onTap }: { set: s
     return { diffuse: d, normal: repeat(normal), height: repeat(height) };
   }, [diffuse, normal, height, w, h]);
   const compile = (shader: THREE.WebGLProgramParametersWithUniforms) => groundShader(shader, maps.height, parallax);
+  // (the Babylon renderer's parallax, babylon.ts)
+  const patch = (mm: THREE.Material | null) => mm && shaderPatch(mm, { kind: "parallax", height: { value: maps.height }, parallax });
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={at} receiveShadow onClick={onTap}>
       <planeGeometry args={[w, h]} />
-      <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} onBeforeCompile={compile} />
+      <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} onBeforeCompile={compile} ref={patch} />
     </mesh>
   );
 }
@@ -1231,9 +1249,11 @@ export function FloorSurface({ look: { set, tint, tile, parallax, dir }, w, h, r
   }, [w, h, radii.join(",")]);
   useEffect(() => () => geometry.dispose(), [geometry]);
   const compile = (shader: THREE.WebGLProgramParametersWithUniforms) => groundShader(shader, maps.height, parallax);
+  // (the Babylon renderer's parallax, babylon.ts)
+  const patch = (mm: THREE.Material | null) => mm && shaderPatch(mm, { kind: "parallax", height: { value: maps.height }, parallax });
   return (
     <mesh geometry={geometry} position={[w / 2, y, h / 2]} receiveShadow onClick={onTap}>
-      <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} onBeforeCompile={compile} />
+      <meshPhongMaterial map={maps.diffuse} normalMap={maps.normal} color={tint} specular="#000000" shininess={0} normalScale={NORMAL_SCALE} onBeforeCompile={compile} ref={patch} />
     </mesh>
   );
 }
@@ -1291,6 +1311,7 @@ float waveH(vec2 p) { return 0.07 * sin(p.x * 0.85 + uTime * 1.25) + 0.05 * sin(
   transformed.y += h0;`);
   };
   m.customProgramCacheKey = () => "sea-waves";
+  shaderPatch(m, { kind: "waves", time });
   return { m, time };
 }
 

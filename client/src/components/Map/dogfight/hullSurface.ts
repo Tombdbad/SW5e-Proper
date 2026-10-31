@@ -10,6 +10,7 @@
 // and the vents' depth shift as the camera moves. The same march moves the color, normal and light maps, so they stay together.
 // Like the other surface modules this one is browser-only: in a test there is no document and the maps stay flat.
 import * as THREE from "three";
+import { shaderPatch } from "../babylon";
 
 export type Livery = "imperial" | "republic" | "pirate" | "station" | "tunnel";
 interface LiverySpec {
@@ -348,6 +349,7 @@ export function hullMaterial(o: HullMaterialOptions): THREE.MeshStandardMaterial
   const uniforms = { uHeight: { value: maps.height }, uParallax: { value: o.parallax ?? 0.03 }, uSteps: { value: o.steps ?? 10 } };
   m.onBeforeCompile = (shader) => parallaxHull(shader, uniforms);
   m.customProgramCacheKey = () => "hullparallax";
+  shaderPatch(m, { kind: "parallax", height: uniforms.uHeight, parallax: uniforms.uParallax.value, steps: uniforms.uSteps.value });
   m.userData.uniforms = uniforms;
   MATERIALS.set(key, m);
   return m;

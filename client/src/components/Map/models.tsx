@@ -7,6 +7,7 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import { ImprovedNoise } from "three/examples/jsm/math/ImprovedNoise.js";
 import { speederKind } from "@shared/logic";
 import { boxUV, surfaceMaterial, SURFACE_GRAIN, WALL_TILE, wallMaterial, type WallSet } from "./surfaces";
+import { shaderPatch } from "./babylon";
 import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
@@ -521,6 +522,7 @@ export function furShellMaterial(length: number, shells: number): THREE.MeshLamb
       .replace("#include <map_fragment>", "#include <map_fragment>\nfloat strand = texture2D(uStrands, vMapUv * 3.0).r;\nif (strand < vShell * 0.92 + 0.04) discard;\ndiffuseColor.rgb *= mix(0.6, 1.08, vShell);");
   };
   m.customProgramCacheKey = () => "fur-shells";
+  shaderPatch(m, { kind: "fur", length, shells, strands: strandsMap });
   return m;
 }
 function FurShells({ geometry, material, shells }: { geometry: THREE.BufferGeometry; material: THREE.Material; shells: number }) {
@@ -599,6 +601,7 @@ float cover( float m, float amount ) { return smoothstep( 1.0 - amount, 1.2 - am
     diffuseColor.rgb *= 1.0 - 0.9 * cover( dm, wearLevel.y * 0.9 );
   }`);
       };
+      shaderPatch(m, { kind: "wear", wear: maps.wear, damage: maps.damage, level: [age / 2, damage / 2] });
       return m;
     };
     set = { matte: make("matte"), sheen: make("sheen") };
@@ -1782,7 +1785,20 @@ function buildNode(k: Kit, node: NodeLook, empty: boolean) {
 
 export function Decor({ kind, seed = 0 }: { kind: string; seed?: number }) {
   const v = seed % 3;
-  return <Model id={`decor:${kind}:${v}`} position={[0.5, 0, 0.5]} build={(k) => buildDecor(k, kind, v)} />;
+  return (
+    <>
+      <Model id={`decor:${kind}:${v}`} position={[0.5, 0, 0.5]} build={(k) => buildDecor(k, kind, v)} />
+      {kind === "lamp" && <LampLight at={[0.88, 1.62, 0.5]} />}
+    </>
+  );
+}
+
+// Lamps light up after dark (2026-10-31, with the Babylon renderer): the sky (LocalMap Sky) says when, and a street lamp or a garden's is
+// then a warm light under its bulb. The renderer gathers these into one clustered light (babylon.ts), so a street of lamps costs about one.
+export const useLamps = create<{ lit: boolean }>(() => ({ lit: false }));
+export function LampLight({ at }: { at: V3 }) {
+  const lit = useLamps((s) => s.lit);
+  return lit ? <pointLight position={at} color="#ffd59a" intensity={14} distance={10} decay={2} userData={{ cluster: true }} /> : null;
 }
 
 function buildDecor(k: Kit, kind: string, v: number) {

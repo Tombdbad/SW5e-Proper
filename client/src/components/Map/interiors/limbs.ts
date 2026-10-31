@@ -10,6 +10,7 @@
 // and an astromech, a mouse droid or a slug glides without bobbing. Shadows stay in the pose the figure was built in.
 // Pure but for the materials: tests/interiors/limbs.test.ts.
 import * as THREE from "three";
+import { patchOf, shaderPatch } from "../babylon";
 import { gunKick } from "@shared/logic/shooter";
 
 // Limbs: 0 the body (still); the legs (front ones on a beast), the arms, a beast's hind and middle legs, a tail, a rolling ball or
@@ -227,6 +228,8 @@ export function limbMaterial<T extends THREE.Material>(base: T): T {
   m.userData.pivots = pivots;
   // the joints each limb hangs from, for the Babylon renderer (babylon.ts LimbPlugin), which turns the limbs in its own shader
   m.userData.limbParents = PARENT;
+  const patch = patchOf(base);
+  if (patch) shaderPatch(m, patch);
   const lit = base instanceof THREE.MeshLambertMaterial || base instanceof THREE.MeshPhongMaterial;
   const before = base.onBeforeCompile;
   const beforeKey = base.customProgramCacheKey?.();

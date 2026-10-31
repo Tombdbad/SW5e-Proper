@@ -6,6 +6,7 @@
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 import type { V3 } from "./models";
+import { shaderPatch } from "./babylon";
 
 export const NORMAL_SCALE = new THREE.Vector2(1.3, 1.3); // how steep the normal maps read (as the ground's)
 export const WALL_TILE = 2; // squares of wall in one repeat of a wall texture
@@ -118,6 +119,7 @@ export function surfaceMaterial(folder: string, set: string, o: SurfaceOptions):
   });
   m.onBeforeCompile = (shader) => parallaxShader(shader, height, o.parallax);
   m.customProgramCacheKey = () => `surface:${o.parallax}`;
+  shaderPatch(m, { kind: "parallax", height, parallax: o.parallax });
   // Copies made of it before its maps came (a moving figure's limb materials, interiors/limbs.ts) are given them too (kept off
   // `userData`, which a copy clones)
   (m as SurfaceMaterial).followers = new Set();

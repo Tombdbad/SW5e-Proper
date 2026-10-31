@@ -39,7 +39,7 @@ import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderS
 import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, type SeatState, type Shot } from "./interiors/limbs";
-import { Figure, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { useLamps, Figure, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -159,6 +159,8 @@ function Sky({ shadow = 30, cast = true, indoors = 0, look, ground = 0, fog, flo
   const minutes = useClock((c) => Math.round(c.minutes / 5) * 5);
   const light = daylight(minutes);
   const twilight = light > 0 && light < 1;
+  // (the street lamps are lit from dusk to dawn: siteAssets.tsx LampLights)
+  useEffect(() => { useLamps.setState({ lit: light < 0.3 }); }, [light < 0.3]);
   const background = under ? new THREE.Color(UNDER_FOG[0]).multiplyScalar(0.35 + 0.65 * light) : NIGHT_SKY.clone().lerp(DAY_SKY, light).lerp(DUSK_SKY, twilight ? 0.35 * (1 - Math.abs(light - 0.5) * 2) : 0);
   // The sun's light moves with the instant, not with the five minutes the rest of the sky is drawn for (the user, 2026-10-28: the sun and moon
   // jumped from place to place)

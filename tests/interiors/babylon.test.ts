@@ -5,7 +5,7 @@ import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
 import { VertexBuffer } from "@babylonjs/core/Buffers/buffer";
-import { BabylonRenderer } from "../../client/src/components/Map/babylon";
+import { BabylonRenderer, shaderPatch, patchOf } from "../../client/src/components/Map/babylon";
 import { limbMaterial } from "../../client/src/components/Map/interiors/limbs";
 
 // The renderer R3F is given (babylon.ts) mirrors a three scene into a Babylon one each frame; NullEngine draws nothing, so these check
@@ -116,4 +116,72 @@ test("lights keep their strength (an ambient light becomes a hemisphere at 1/π,
   assert.ok(dir.direction.y < -0.99, "the sun shines down at its target");
   const point = lights.find((l) => l.getClassName() === "PointLight") as unknown as { range: number };
   assert.equal(point.range, 6);
+});
+
+test("three's shader patches become Babylon's: fur, hull wear and sea waves as plugins, parallax as Babylon's own, and a copy keeps its base's", () => {
+  const { scene, draw, mirror } = make();
+  const geo = new THREE.BoxGeometry();
+  const fur = shaderPatch(new THREE.MeshLambertMaterial(), { kind: "fur", length: 0.05, shells: 6, strands: { value: null } });
+  const wear = shaderPatch(new THREE.MeshPhongMaterial(), { kind: "wear", wear: new THREE.Texture(), damage: new THREE.Texture(), level: [0.5, 0] });
+  const sea = shaderPatch(new THREE.MeshPhongMaterial(), { kind: "waves", time: { value: 0 } });
+  const wall = shaderPatch(new THREE.MeshPhongMaterial(), { kind: "parallax", height: { value: null }, parallax: 0.03 });
+  const limbs = limbMaterial(fur);
+  assert.equal(patchOf(limbs), patchOf(fur), "a moving figure's copy keeps the fur");
+  const meshes = [fur, wear, sea, wall, limbs].map((m) => new THREE.Mesh(geo, m));
+  scene.add(...meshes);
+  draw();
+  const plugins = (o: THREE.Mesh) => ((meshNamed(mirror(), o)!.material as PBRMaterial).pluginManager as unknown as { _plugins: { name: string }[] })._plugins.map((p) => p.name);
+  assert.ok(plugins(meshes[0]).includes("FurShells"));
+  assert.ok(plugins(meshes[1]).includes("HullWear"));
+  assert.ok(plugins(meshes[2]).includes("SeaWaves"));
+  assert.ok(!plugins(meshes[3]).some((n) => /Fur|Wear|Waves/.test(n)), "parallax is no plugin");
+  assert.deepEqual(plugins(meshes[4]).filter((n) => /Fur|Limbs/.test(n)).sort(), ["FurShells", "Limbs"]);
+  // (no height map loaded yet: no parallax)
+  assert.equal((meshNamed(mirror(), meshes[3])!.material as PBRMaterial).useParallax, false);
+});
+
+test("a three shader material runs its own GLSL, given what three declares, its uniforms copied each frame", () => {
+  const { scene, draw, mirror } = make();
+  const shield = new THREE.ShaderMaterial({
+    vertexShader: "varying vec3 vN; void main() { vN = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+    fragmentShader: "uniform vec3 uColor; uniform float uOpacity; varying vec3 vN; void main() { gl_FragColor = vec4(uColor, uOpacity); #include <colorspace_fragment> }",
+    uniforms: { uColor: { value: new THREE.Color(0.2, 0.6, 1) }, uOpacity: { value: 0.5 } },
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), shield);
+  scene.add(mesh);
+  draw();
+  const mat = meshNamed(mirror(), mesh)!.material as unknown as { getClassName(): string; _options: { uniforms: string[]; attributes: string[] }; _shaderPath: { vertexSource: string; fragmentSource: string }; _floats: Record<string, number>; _vectors3Arrays?: unknown; disableDepthWrite: boolean; alphaMode: number };
+  assert.equal(mat.getClassName(), "ShaderMaterial");
+  assert.ok(mat._options.uniforms.includes("uColor") && mat._options.uniforms.includes("worldView"));
+  assert.ok(mat._shaderPath.vertexSource.includes("#define modelViewMatrix worldView"));
+  assert.ok(!mat._shaderPath.fragmentSource.includes("#include"), "three's chunks are written out");
+  assert.ok(mat._shaderPath.fragmentSource.includes("pow(max(gl_FragColor.rgb"));
+  assert.equal(mat._floats.uOpacity, 0.5);
+  assert.equal(mat.disableDepthWrite, true);
+  shield.uniforms.uOpacity.value = 0.2;
+  draw();
+  assert.equal(mat._floats.uOpacity, 0.2);
+});
+
+test("the sun's shadow: cascades where the engine draws them, else one map over its casters", () => {
+  const { r, scene, draw, mirror } = make();
+  r.shadowMap.enabled = true;
+  const sun = new THREE.DirectionalLight(0xffffff, 1);
+  sun.position.set(5, 10, 5);
+  sun.castShadow = true;
+  scene.add(sun, sun.target);
+  const box = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshLambertMaterial());
+  box.castShadow = true;
+  scene.add(box);
+  draw();
+  const gen = mirror().lights.find((l) => l.getClassName() === "DirectionalLight")!.getShadowGenerator()!;
+  // (the NullEngine cannot draw cascades)
+  assert.equal(gen.getClassName(), "ShadowGenerator");
+  assert.deepEqual(gen.getShadowMap()!.renderList!.map((m) => m.name), [`o${box.id}`]);
+  box.castShadow = false;
+  draw();
+  assert.equal(gen.getShadowMap()!.renderList!.length, 0);
 });
