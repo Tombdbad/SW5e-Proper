@@ -1,6 +1,6 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-31 (Windows PC). Branch **`main`** (the checkout is on main). Nothing is pushed: main is ahead of origin/main by 29 commits plus the notes commit after this.
+Written 2026-10-31 (Windows PC). Branch **`main`** (the checkout is on main). main is pushed to origin at the user's word ("Push it", 2026-10-31); the `babylon` branch stays local (fully merged).
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told, never commit it.
 
 ## 2026-10-31: Babylon.js draws the 3D map, now on main (REVIVAL_NOTES "Babylon draws the 3D map" has it all)
@@ -17,11 +17,10 @@ The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it 
 
 ## TODO / next, in order
 1. The user checks on their phone (lite and full) over Tailscale.
-2. Push main (and babylon) to origin only when the user asks.
-3. Older e2e failures (also with three.js): cantina people not moving in 20 s, speeders "did not travel", road-trip guards not chasing.
-4. Fat lines (drei Line) with their width.
-5. The real database (`sw5e`) holds e2e leftovers (7 "Gear mvo…" fighters and "E2E gear …" campaigns from an earlier run against 5000): ask the user before deleting.
+2. Older e2e failures (also with three.js): cantina people not moving in 20 s, speeders "did not travel", road-trip guards not chasing.
+3. Fat lines (drei Line) with their width.
+4. The real database (`sw5e`) holds e2e leftovers (7 "Gear mvo…" fighters and "E2E gear …" campaigns from an earlier run against 5000): ask the user before deleting.
 
 ## Open questions for the user
-- Push to GitHub?
+- Delete the e2e leftovers in the real database?
 - (Earlier, still open) every daytime theft to ring at once (security tags)? Piper voices sorted by low/high?
