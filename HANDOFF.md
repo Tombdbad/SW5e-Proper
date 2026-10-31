@@ -1,29 +1,25 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-31 (Windows PC). Branch **`babylon`** (made from main at 379299c; main is untouched and still three.js). Last commit 549fe50 (the bridge). Nothing is pushed.
+Written 2026-10-31 (Windows PC). Branch **`babylon`** (made from main at 379299c; main is untouched and still three.js). Nothing is pushed.
+Commits this session: 549fe50 (the renderer bridge), 63c63b6 (shader ports, posed shadows, three's brightness, culled cascades, sky reflections, bloom, SSAO, street lamps; it also holds the deletion of public/dice/roller.html), 08a6987 (the dice table in the app), c8f5dfa and 92fddd4 (e2e fixes).
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told, never commit it.
 
-## 2026-10-31: Babylon.js draws the 3D map (REVIVAL_NOTES "Babylon draws the 3D map")
-- The user: overhaul graphics, shadows and lighting with Babylon.js, every 3D scene, on a branch of its own. Route: R3F builds the scenes; `client/src/components/Map/babylon.ts` is the renderer (`<Canvas gl={babylonGl}>`) that mirrors each three scene into Babylon every frame. Committed in 549fe50.
-- Then the user asked to work through the "not done yet" list. UNCOMMITTED, in progress (all in the working tree):
-  - shader ports: `shaderPatch(material, patch)` / `patchOf` in babylon.ts (a WeakMap beside the material). Parallax = Babylon's own (height packed into the normal map's alpha, `packed`), hull wear / fur shells / sea waves = `CodePlugin`s; three ShaderMaterials (planet, shields, drei Stars, galaxy) run their own GLSL (`threeShader`, `shaderOf`). Hooks in surfaces.tsx, siteAssets.tsx (ground, floors, sea), models.tsx (fur, hull wear), dogfight/hullSurface.ts, interiors/limbs.ts (copies its base's patch).
-  - posed limb shadows: `ShadowDepthWrapper` on limb materials.
-  - look fixes: three's ACES exposure is /0.6 (Babylon's is not), Lambert diffuse (Babylon 9 defaults to Oren-Nayar), a map's alpha needs `hasAlpha` (was drawing see-through cards opaque).
-  - shadow cost: per-cascade culling (`getCustomRenderList`, far cascades skip casters under 1/150 of their width), lamp cube shadows only within reach, thin-instance bounds refreshed. Sites gallery 2608 -> 1194 calls.
-  - the look (full tier, `Mirror.look`): ReflectionProbe of rendering group 0 (the sky backdrop) as environment, its spherical polynomial zeroed (shine only); DefaultRenderingPipeline bloom (threshold 0.93, image processing off); SSAO2 on desktop. Lamps: `useLamps` + `LampLight` (models.tsx), Sky sets lit at dusk, street Decor lamps and garden lamps get a pointLight with `userData.cluster`, the bridge puts these in a `ClusteredLightContainer`.
-  - dice table: public/dice/roller.html ported into `ui/dice.tsx` `diceTable()` (three geometry, cannon-es, BabylonRenderer); `ui/DiceRoller.tsx` lazy-loads it (no iframe, no CDN). Seen working. roller.html still to delete.
-  - e2e/lib.mjs: answers the newer "How will this campaign be played?" dialog (addLocatorHandler), which made every self-contained step fail.
-- Seen in the browser (dev 5099, test DB): hull wear, sea waves, fur shells, parallax, ships/player/sites gallery vs 5000; the game street (campaign 499) by day and night with probe+bloom+SSAO on. NOT yet: lamp light visibly reaching the deck (12 lamps clustered, materials have CLUSTLIGHT defines; checking), flights, pit, cockpit.
+## 2026-10-31: Babylon.js draws the 3D map (REVIVAL_NOTES "Babylon draws the 3D map" has it all)
+- The user: overhaul graphics, shadows and lighting with Babylon.js, every 3D scene, a branch of its own. R3F builds the scenes; `client/src/components/Map/babylon.ts` is the renderer (`<Canvas gl={babylonGl}>`) mirroring each three scene into Babylon every frame.
+- Then the user asked to work through the "not done yet" list: done (see the notes) except the fat lines' width and the user's phone check.
+- Learned: three's ACES is exposure/0.6 (Babylon's not); Babylon 9 PBR defaults to Oren-Nayar (use Lambert); a map's alpha needs `hasAlpha`; Babylon draws every caster into every cascade (culled per cascade now); CascadedShadowGenerator throws on WebGL 1 (falls back to one map); an InstancedMesh with count 0 must be hidden; Babylon plugin code is asked for inside the base constructor and again for every plugin when another is added (pass data beside it, `SPEC`/`JOINTS`); PBR passes vMainUV1 only for a map without repeats (plugins pass their own `vPatchUV`).
 
 ## Running
-- My dev server on 5099 (test DB, `node --import tsx server/index.ts` from scratchpad `devtest.cjs`). The user's 5000 is `node dist/index.js` (three.js PRODUCTION build): do NOT `npm run build` into dist/ (it would change what 5000 serves). Plan: build into `.babylon-dist/` (add to .git/info/exclude) and serve it on 5098 for e2e.
-- The browser pane counts as automated (no dice table via the store's request: set `useDice.setState({table})` directly). After HMR edits, import app modules by their `?t=` URL (performance resource entries) or you get a second instance.
+- My dev server on 5099 (test DB, scratchpad `devtest.cjs`) and my build server on 5098 (`.babylon-dist/`, test DB, `NODE_ENV=production`, scratchpad `prodtest.cjs`): stop both when done (Get-NetTCPConnection -LocalPort 5098,5099). The user's 5000 is `node dist/index.js` (three.js PRODUCTION build): do NOT `npm run build` into dist/.
+- A full e2e run on 5098 (desktop) was started at the end of this session; its log is in the scratchpad (`e2efull.log`), not in the repo.
+- The browser pane counts as automated (dice: set `useDice.setState({table})` directly). After HMR edits, import app modules by their `?t=` URL or you get a second instance. Night in the game: the HUD's "Until evening" then "Wait 1 h".
 
 ## TODO / next, in order
-1. Confirm the lamps light the ground; commit the work above in a few commits.
-2. Build to .babylon-dist, serve on 5098, run e2e slices (race, pit, dogfight, road trip, taxi, starship combat, streets) and look at their screenshots; the cockpit view in /dev/dogfight.
-3. Delete public/dice/roller.html; tests for the patches and the shader port in tests/interiors/babylon.test.ts; full npm test; REVIVAL_NOTES.
-4. Full e2e (desktop and VIEW=phone) on 5098, then ask the user to check on their phone, then ask before merging into main.
+1. Read the full e2e result (desktop); then `VIEW=phone` on 5098; record both in REVIVAL_NOTES.
+2. The road trip's "guards did not give chase on the next leg" (logic; check whether main fails the same way).
+3. Ask the user to check on their phone (lite and full), then ask before merging `babylon` into main (and before `npm run build` for their server).
+4. Fat lines (drei Line) with their width.
 
 ## Open questions for the user
+- Merge `babylon` into main and rebuild their server? (Only on their word.)
 - (Earlier, still open) every daytime theft to ring at once (security tags)? Piper voices sorted by low/high?
