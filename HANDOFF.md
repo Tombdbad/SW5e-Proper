@@ -1,25 +1,27 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-31 (Windows PC). Branch **`babylon`** (made from main at 379299c; main is untouched and still three.js). Nothing is pushed.
-Commits this session: 549fe50 (the renderer bridge), 63c63b6 (shader ports, posed shadows, three's brightness, culled cascades, sky reflections, bloom, SSAO, street lamps; it also holds the deletion of public/dice/roller.html), 08a6987 (the dice table), c8f5dfa and 92fddd4 (e2e fixes), cbae6ed (notes), 354d8d6 (dice canvas only after the first roll), 26f81d5 (software renderers drawn as lite), and the notes commit after it.
+Written 2026-10-31 (Windows PC). Branch **`main`** (the checkout is on main). Nothing is pushed: main is ahead of origin/main by 29 commits plus the notes commit after this.
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told, never commit it.
 
-## 2026-10-31: Babylon.js draws the 3D map (REVIVAL_NOTES "Babylon draws the 3D map" has it all)
-- R3F builds the scenes; `client/src/components/Map/babylon.ts` is the renderer (`<Canvas gl={babylonGl}>`) mirroring each three scene into Babylon every frame. The user's "not done yet" list is worked through (shader ports, posed shadows, cheaper cascades, sky reflections, bloom, SSAO, clustered street lamps, the dice table, e2e).
-- e2e compared with main (three.js) on the same test, desktop and phone view: the branch fails only steps main fails too (desktop: cantina people, trade, speeders, road trip, plus flaky travel/allies; phone adds the map trail's Galaxy click and the dogfight's right click). Details in REVIVAL_NOTES.
+## 2026-10-31: Babylon.js draws the 3D map, now on main (REVIVAL_NOTES "Babylon draws the 3D map" has it all)
+- R3F builds the scenes; `client/src/components/Map/babylon.ts` is the renderer (`<Canvas gl={babylonGl}>`), mirroring each three scene into Babylon every frame. The user's "not done yet" list is worked through (shader ports, posed shadows, cheaper cascades, sky reflections, bloom, SSAO, clustered street lamps, the dice table in the app, e2e).
+- e2e compared with three.js on the same test, desktop and phone view: Babylon fails only steps three.js fails too (cantina people, trade, speeders, road trip; phone adds the map trail's Galaxy click and the dogfight's right click).
+- The user said "Merge and rebuild": main fast-forwarded to `babylon` (4c3a8d8; no merge commit), `npm run build`, migrations (none pending), and the server on 5000 restarted as `deploy/windows-start.ps1 -Mode prod` does (hidden, logs in %LOCALAPPDATA%\sw5e\logs\prod.*.log; the old server's log kept as prod.out.2026-10-23.log). Checked on 5000: gallery drawn by Babylon, home page lists, no console errors. Tailscale Serve still sends 443 to 5000.
+- The `babylon` branch is left in place (fully merged).
 
 ## Running
-- 5098: the branch's build in `.babylon-dist/` (test DB, NODE_ENV=production, scratchpad `prodtest.cjs`), left running for the user to try on this PC; stop it when done (Get-NetTCPConnection -LocalPort 5098). 5097 and 5099 are stopped.
-- `.main-wt/` is a leftover folder of main's worktree (unregistered; could not be deleted while the session sat in it): delete it. It and `.babylon-dist/` are in .git/info/exclude. Creating that worktree copied the user's modified Alert.tsx into it (same hash): their own copy in the main checkout is untouched.
-- The user's 5000 is `node dist/index.js` (three.js PRODUCTION build): do NOT `npm run build` into dist/ without their go-ahead (that is the merge).
+- 5000: the user's server, `node dist/index.js` built from main at 4c3a8d8 (Babylon), pid at restart 14012. To restart after a build: `deploy/windows-start.ps1 -Mode prod` (also opens the browser).
+- 5098, 5097, 5099 stopped; `.babylon-dist/` and `.main-wt/` deleted (and their lines in .git/info/exclude).
+- Not ours, left alone: tsx dev servers on 3000 and 5057.
 - The browser pane counts as automated (dice: set `useDice.setState({table})` directly). Night in the game: the HUD's "Until evening" then "Wait 1 h".
 
 ## TODO / next, in order
-1. (done: phone view read and compared)
-2. Ask the user to check on their phone (lite and full), then ask before merging `babylon` into main and rebuilding their server.
-3. Older e2e failures (on main too): cantina people not moving in 20 s, speeders "did not travel", road-trip guards not chasing.
+1. The user checks on their phone (lite and full) over Tailscale.
+2. Push main (and babylon) to origin only when the user asks.
+3. Older e2e failures (also with three.js): cantina people not moving in 20 s, speeders "did not travel", road-trip guards not chasing.
 4. Fat lines (drei Line) with their width.
+5. The real database (`sw5e`) holds e2e leftovers (7 "Gear mvo…" fighters and "E2E gear …" campaigns from an earlier run against 5000): ask the user before deleting.
 
 ## Open questions for the user
-- Merge `babylon` into main and rebuild their server? (Only on their word.)
+- Push to GitHub?
 - (Earlier, still open) every daytime theft to ring at once (security tags)? Piper voices sorted by low/high?
