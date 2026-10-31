@@ -1,0 +1,1091 @@
+// ---------------------------------------------------------------------------------------------
+// Babylon.js draws the 3D map (2026-10-31; the user: "overhaul our graphics, shadows and lighting" with Babylon, every scene).
+// React Three Fiber still builds each scene as a three.js scene graph, runs the frame loop and handles taps (its raycasting on the three
+// objects, so picking, cameras and the e2e hooks are as they were); this module is the renderer it is given (`<Canvas gl={babylonGl}>`).
+// Every frame the three scene is mirrored into a Babylon scene and Babylon draws it:
+// - meshes keep their three world matrices (the Babylon scene is right-handed, so nothing is turned or flipped); geometry is shared by
+//   every mesh that uses it, with its vertex colours and the extra attributes the shaders read (limb, pivot, mark);
+// - materials become physically based ones (Lambert: rough; Phong: its shininess as roughness, its specular as a little metal; Basic:
+//   unlit), their maps with them; instanced meshes become thin instances; points, lines, sprites and drei's text get their own;
+// - lights keep their colours and strengths (an ambient light becomes a hemisphere whose ground is its sky), the sun's shadows are cascaded and follow
+//   the camera, a lamp's are a cube map, and each mesh is lit by the lights nearest it.
+// What three.js does in its own shader patches (onBeforeCompile) is done here as Babylon material plugins, keyed off `userData`.
+// three.js stays for building geometry, for raycasting and for the tests; it never draws.
+// ---------------------------------------------------------------------------------------------
+import * as THREE from "three";
+import { Engine } from "@babylonjs/core/Engines/engine";
+import "@babylonjs/core/Engines/Extensions/engine.dynamicTexture";
+import "@babylonjs/core/Engines/Extensions/engine.rawTexture";
+import { Constants } from "@babylonjs/core/Engines/constants";
+import { Scene } from "@babylonjs/core/scene";
+import { Camera } from "@babylonjs/core/Cameras/camera";
+import { Matrix, Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
+import { Mesh } from "@babylonjs/core/Meshes/mesh";
+import { SubMesh } from "@babylonjs/core/Meshes/subMesh";
+import { Geometry } from "@babylonjs/core/Meshes/geometry";
+import { LinesMesh } from "@babylonjs/core/Meshes/linesMesh";
+import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData";
+import "@babylonjs/core/Meshes/thinInstanceMesh";
+import { VertexBuffer } from "@babylonjs/core/Buffers/buffer";
+import { Material } from "@babylonjs/core/Materials/material";
+import { MultiMaterial } from "@babylonjs/core/Materials/multiMaterial";
+import { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
+import { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial";
+import { MaterialPluginBase } from "@babylonjs/core/Materials/materialPluginBase";
+import { ImageProcessingConfiguration } from "@babylonjs/core/Materials/imageProcessingConfiguration";
+import { Texture } from "@babylonjs/core/Materials/Textures/texture";
+import { RawTexture } from "@babylonjs/core/Materials/Textures/rawTexture";
+import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
+import { Light } from "@babylonjs/core/Lights/light";
+import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
+import { PointLight } from "@babylonjs/core/Lights/pointLight";
+import { SpotLight } from "@babylonjs/core/Lights/spotLight";
+import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
+import { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator";
+import { CascadedShadowGenerator } from "@babylonjs/core/Lights/Shadows/cascadedShadowGenerator";
+import "@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent";
+import { SceneInstrumentation } from "@babylonjs/core/Instrumentation/sceneInstrumentation";
+import type { UniformBuffer } from "@babylonjs/core/Materials/uniformBuffer";
+
+// ---- The look and its tiers ---------------------------------------------------------------------------------------------------------
+
+// The detail the device can carry (siteAssets.tsx `useQuality`: lite on a phone or when frames drop, else full); a desktop's full is drawn
+// finer still (more cascades, bigger shadow maps)
+export type RenderTier = "lite" | "full";
+const LOOK = { tier: "full" as RenderTier };
+const DESKTOP = typeof window !== "undefined" && !("ontouchstart" in window) && (navigator.maxTouchPoints ?? 0) === 0;
+const RENDERERS = new Set<BabylonRenderer>();
+export function setRenderTier(tier: RenderTier) {
+  if (LOOK.tier === tier) return;
+  LOOK.tier = tier;
+  for (const r of RENDERERS) r.retier();
+}
+function shadowSettings() {
+  if (LOOK.tier === "lite") return { cascades: 2, size: 1024, quality: ShadowGenerator.QUALITY_LOW, lamps: 0, lights: 4 };
+  if (!DESKTOP) return { cascades: 3, size: 1024, quality: ShadowGenerator.QUALITY_MEDIUM, lamps: 1, lights: 6 };
+  return { cascades: 4, size: 2048, quality: ShadowGenerator.QUALITY_HIGH, lamps: 2, lights: 8 };
+}
+// Both light a white surface at 1/π of a direct light's intensity; but three puts the 1/π on its ambient and hemisphere lights too,
+// and Babylon's hemisphere does not
+const AMBIENT = 1 / Math.PI;
+
+// ---- Small helpers ------------------------------------------------------------------------------------------------------------------
+
+const c3 = (c: THREE.Color, out = new Color3()) => out.set(c.r, c.g, c.b);
+// A three colour in the working (linear) space, as Babylon shows a clear colour or a line: in sRGB
+const srgb = (c: THREE.Color) => {
+  const s = c.clone().convertLinearToSRGB();
+  return new Color3(s.r, s.g, s.b);
+};
+// three's triangles are counter-clockwise from the front, which a right-handed Babylon scene has to be told (else it shows their backs)
+const FRONT = Material.CounterClockWiseSideOrientation;
+const sameMatrix = (a: Float32Array, b: number[]) => {
+  for (let i = 0; i < 16; i++) if (a[i] !== b[i]) return false;
+  return true;
+};
+// An attribute's values as floats, de-quantised and un-interleaved
+function floats(attr: THREE.BufferAttribute | THREE.InterleavedBufferAttribute): Float32Array {
+  if (!(attr as THREE.InterleavedBufferAttribute).isInterleavedBufferAttribute && attr.array instanceof Float32Array && !attr.normalized && attr.array.length === attr.count * attr.itemSize) return attr.array as Float32Array;
+  const n = attr.count, s = attr.itemSize;
+  const out = new Float32Array(n * s);
+  for (let i = 0; i < n; i++) for (let c = 0; c < s; c++) out[i * s + c] = attr.getComponent(i, c);
+  return out;
+}
+const isText = (o: THREE.Object3D): o is THREE.Mesh & { text: string; fontSize: number; color: unknown; anchorX: unknown; anchorY: unknown; outlineWidth: unknown; outlineColor: unknown; maxWidth: number } =>
+  (o as THREE.Mesh).isMesh && typeof (o as unknown as { text?: unknown }).text === "string" && "fontSize" in o && "anchorX" in o;
+
+// ---- The camera: three's matrices as they are ---------------------------------------------------------------------------------------
+
+class MirrorCamera extends Camera {
+  view = Matrix.Identity();
+  moved = true;
+  _getViewMatrix() {
+    this.moved = false;
+    return this.view;
+  }
+  _isSynchronizedViewMatrix() {
+    return !this.moved && super._isSynchronizedViewMatrix();
+  }
+}
+
+// ---- Limbs (interiors/limbs.ts `limbMaterial`): every vertex turned about its limb's pivot, then about each joint it hangs from ---------
+
+// (Babylon asks a plugin for its code while the plugin is being made, before its own fields are set: the joints are passed beside it)
+let JOINTS: number[] = [];
+class LimbPlugin extends MaterialPluginBase {
+  private q: Float32Array;
+  private p: Float32Array;
+  private parents: number[];
+  constructor(material: Material, private source: THREE.Material, parents: number[]) {
+    JOINTS = parents;
+    super(material, "Limbs", 200, { LIMBS: false });
+    this.parents = parents;
+    this.q = source.userData.pose as Float32Array;
+    this.p = new Float32Array(parents.length * 4);
+    this._enable(true);
+  }
+  private get joints() {
+    return this.parents ?? JOINTS;
+  }
+  prepareDefines(defines: Record<string, unknown>) {
+    defines.LIMBS = true;
+  }
+  getClassName() {
+    return "LimbPlugin";
+  }
+  getAttributes(attributes: string[]) {
+    attributes.push("limb", "pivot");
+  }
+  getUniforms() {
+    return { ubo: [{ name: "uQ", size: 4, type: "vec4", arraySize: this.joints.length }, { name: "uP", size: 4, type: "vec4", arraySize: this.joints.length }] };
+  }
+  bindForSubMesh(ubo: UniformBuffer) {
+    const pivots = this.source.userData.pivots as Float32Array;
+    for (let i = 0; i < this.parents.length; i++) {
+      this.p[i * 4] = pivots[i * 3];
+      this.p[i * 4 + 1] = pivots[i * 3 + 1];
+      this.p[i * 4 + 2] = pivots[i * 3 + 2];
+    }
+    ubo.updateArray("uQ", this.q as unknown as number[]);
+    ubo.updateArray("uP", this.p as unknown as number[]);
+  }
+  getCustomCode(shaderType: string) {
+    if (shaderType !== "vertex") return null;
+    const parents = this.joints.map((p, i) => (p >= 0 ? `if (i == ${i}) return ${p};` : "")).join(" ");
+    const chain = (point: boolean, v: string) => `{ int li = int(limb + 0.5); if (li > 0) {
+  ${point ? `${v} = pivot + lqTurn(uQ[li], ${v} - pivot);` : `${v} = lqTurn(uQ[li], ${v});`}
+  int pa = lqParent(li);
+  for (int s = 0; s < 3; s++) { if (pa < 0) break; ${point ? `${v} = uP[pa].xyz + lqTurn(uQ[pa], ${v} - uP[pa].xyz);` : `${v} = lqTurn(uQ[pa], ${v});`} pa = lqParent(pa); }
+} }`;
+    return {
+      CUSTOM_VERTEX_DEFINITIONS: `attribute float limb;\nattribute vec3 pivot;\nvec3 lqTurn(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }\nint lqParent(int i) { ${parents} return -1; }`,
+      CUSTOM_VERTEX_UPDATE_POSITION: chain(true, "positionUpdated"),
+      CUSTOM_VERTEX_UPDATE_NORMAL: chain(false, "normalUpdated"),
+    };
+  }
+}
+
+// ---- The mirror of one three scene ---------------------------------------------------------------------------------------------------
+
+interface GeoEntry { geo: Geometry; sig: string; users: number; frame: number; gone: boolean; indexed: boolean; colors: number }
+interface MatEntry { mat: PBRMaterial; version: number; frame: number; users: number; gone: boolean; maps: string }
+interface TexEntry { tex: Texture; version: number; users: number }
+interface Node {
+  kind: "mesh" | "lines" | "points" | "sprite" | "text" | "light";
+  mesh?: Mesh;
+  light?: Light;
+  shadow?: ShadowGenerator;
+  matrix: Float32Array;
+  world: Matrix;
+  geometry?: THREE.BufferGeometry;
+  material?: THREE.Material | THREE.Material[];
+  frame: number;
+  casts?: boolean;
+  instances?: number;
+  colors?: number;
+  label?: string;
+  lineSig?: string;
+}
+
+class Mirror {
+  readonly scene: Scene;
+  readonly camera: MirrorCamera;
+  readonly instrumentation: SceneInstrumentation;
+  private nodes = new Map<THREE.Object3D, Node>();
+  private geos = new Map<THREE.BufferGeometry, GeoEntry>();
+  private mats = new Map<THREE.Material, MatEntry>();
+  private texs = new Map<THREE.Texture, TexEntry>();
+  private points = new Map<THREE.Object3D, { mat: ShaderMaterial; key: string }>();
+  private frame = 0;
+  private sun?: { light: DirectionalLight; shadow: CascadedShadowGenerator };
+  private casters = new Set<Mesh>();
+  private noToneMapping: ImageProcessingConfiguration;
+  private lampShadows = 0;
+
+  constructor(private engine: Engine, private owner: BabylonRenderer) {
+    const scene = new Scene(engine);
+    scene.useRightHandedSystem = true;
+    // three's taps are R3F's; Babylon picks nothing
+    scene.detachControl();
+    scene.skipPointerMovePicking = true;
+    scene.requireLightSorting = true;
+    scene.clearColor = new Color4(0, 0, 0, 0);
+    scene.ambientColor = new Color3(0, 0, 0);
+    scene.imageProcessingConfiguration.toneMappingEnabled = true;
+    scene.imageProcessingConfiguration.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
+    this.noToneMapping = new ImageProcessingConfiguration();
+    this.noToneMapping.toneMappingEnabled = false;
+    this.camera = new MirrorCamera("camera", Vector3.Zero(), scene);
+    scene.activeCamera = this.camera;
+    this.instrumentation = new SceneInstrumentation(scene);
+    this.scene = scene;
+  }
+
+  dispose() {
+    this.scene.dispose();
+  }
+
+  retier() {
+    const s = shadowSettings();
+    if (this.sun) {
+      this.sun.shadow.dispose();
+      this.sun = undefined;
+    }
+    for (const node of this.nodes.values()) if (node.shadow && node.kind === "light" && !(node.light instanceof DirectionalLight)) { node.shadow.dispose(); node.shadow = undefined; }
+    this.lampShadows = 0;
+    for (const entry of this.mats.values()) entry.mat.maxSimultaneousLights = s.lights;
+    for (const node of this.nodes.values()) node.casts = undefined;
+  }
+
+  // ---- Each frame ----
+
+  sync(scene: THREE.Scene, camera: THREE.Camera) {
+    this.frame++;
+    this.syncScene(scene);
+    this.syncCamera(camera);
+    // Everything the scene holds now, with its visibility
+    const stack: [THREE.Object3D, boolean][] = [[scene, true]];
+    while (stack.length) {
+      const [o, shown] = stack.pop()!;
+      const visible = shown && o.visible;
+      if (o !== scene) this.syncObject(o, visible, camera);
+      for (let i = o.children.length - 1; i >= 0; i--) stack.push([o.children[i], visible]);
+    }
+    // What has left the scene goes
+    for (const [o, node] of this.nodes) if (node.frame !== this.frame) this.drop(o, node);
+    for (const [g, entry] of this.geos) if (entry.users <= 0 && entry.gone) { entry.geo.dispose(); this.geos.delete(g); }
+    for (const [m, entry] of this.mats) if (entry.users <= 0 && entry.gone) { entry.mat.dispose(); this.mats.delete(m); }
+  }
+
+  private syncScene(scene: THREE.Scene) {
+    const s = this.scene;
+    const bg = scene.background as THREE.Color | null;
+    const clear = bg && (bg as THREE.Color).isColor ? srgb(bg) : this.owner.clearColor;
+    const alpha = bg && (bg as THREE.Color).isColor ? 1 : this.owner.clearAlpha;
+    s.clearColor.set(clear.r, clear.g, clear.b, alpha);
+    s.autoClear = this.owner.autoClear;
+    s.autoClearDepthAndStencil = this.owner.autoClear;
+    const fog = scene.fog as (THREE.Fog & THREE.FogExp2) | null;
+    if (fog) {
+      c3(fog.color, s.fogColor);
+      if ((fog as THREE.FogExp2).isFogExp2) {
+        s.fogMode = Scene.FOGMODE_EXP2;
+        s.fogDensity = fog.density;
+      } else {
+        s.fogMode = Scene.FOGMODE_LINEAR;
+        s.fogStart = fog.near;
+        s.fogEnd = fog.far;
+      }
+    } else s.fogMode = Scene.FOGMODE_NONE;
+    const ip = s.imageProcessingConfiguration;
+    ip.toneMappingEnabled = this.owner.toneMapping !== THREE.NoToneMapping;
+    ip.exposure = this.owner.toneMappingExposure;
+  }
+
+  private syncCamera(camera: THREE.Camera) {
+    const cam = this.camera;
+    const view = camera.matrixWorldInverse.elements;
+    if (!sameMatrix(cam.view.m as unknown as Float32Array, view)) {
+      Matrix.FromArrayToRef(view, 0, cam.view);
+      cam.moved = true;
+    }
+    cam.freezeProjectionMatrix(Matrix.FromArray(camera.projectionMatrix.elements));
+    const w = camera.matrixWorld.elements;
+    cam.position.set(w[12], w[13], w[14]);
+    const persp = camera as THREE.PerspectiveCamera;
+    if (persp.isPerspectiveCamera) {
+      cam.fov = THREE.MathUtils.degToRad(persp.fov);
+      cam.minZ = persp.near;
+      cam.maxZ = persp.far;
+    }
+  }
+
+  private syncObject(o: THREE.Object3D, visible: boolean, camera: THREE.Camera) {
+    const light = o as THREE.Light;
+    if (light.isLight) return this.syncLight(light, visible);
+    const mesh = o as THREE.Mesh;
+    if (isText(o)) return this.syncText(o, visible);
+    if ((o as THREE.Sprite).isSprite) return this.syncSprite(o as THREE.Sprite, visible, camera);
+    if ((o as THREE.Points).isPoints) return this.syncPoints(o as THREE.Points, visible);
+    if ((o as THREE.Line).isLine || (o as unknown as { isLineSegments2?: boolean }).isLineSegments2) return this.syncLines(o as THREE.Line, visible);
+    if (mesh.isMesh) return this.syncMesh(mesh, visible);
+  }
+
+  private nodeOf(o: THREE.Object3D, kind: Node["kind"]): Node {
+    let node = this.nodes.get(o);
+    if (!node || node.kind !== kind) {
+      if (node) this.drop(o, node);
+      node = { kind, matrix: new Float32Array(16).fill(NaN), world: Matrix.Identity(), frame: this.frame };
+      this.nodes.set(o, node);
+    }
+    node.frame = this.frame;
+    return node;
+  }
+
+  private place(node: Node, o: THREE.Object3D, target: Mesh) {
+    const e = o.matrixWorld.elements;
+    if (sameMatrix(node.matrix, e)) return;
+    node.matrix.set(e);
+    Matrix.FromArrayToRef(e, 0, node.world);
+    target.freezeWorldMatrix(node.world);
+    (target as unknown as { _worldMatrixDeterminantIsDirty: boolean })._worldMatrixDeterminantIsDirty = true;
+  }
+
+  private drop(o: THREE.Object3D, node: Node) {
+    if (node.mesh) {
+      this.casters.delete(node.mesh);
+      if (this.sun) this.sun.shadow.removeShadowCaster(node.mesh, false);
+      node.mesh.dispose(false, node.kind === "text");
+    }
+    if (node.shadow && !(node.light instanceof DirectionalLight)) {
+      node.shadow.dispose();
+      this.lampShadows--;
+    }
+    if (node.light) {
+      if (this.sun && this.sun.light === node.light) {
+        this.sun.shadow.dispose();
+        this.sun = undefined;
+      }
+      node.light.dispose();
+    }
+    if (node.geometry) this.release(node.geometry);
+    this.points.get(o)?.mat.dispose();
+    this.points.delete(o);
+    for (const m of [node.material ?? []].flat()) this.releaseMaterial(m);
+    this.nodes.delete(o);
+  }
+
+  // ---- Geometry ----
+
+  private geometry(g: THREE.BufferGeometry): GeoEntry {
+    let entry = this.geos.get(g);
+    const sig = Object.entries(g.attributes).map(([k, a]) => `${k}${(a as THREE.BufferAttribute).version ?? 0}:${a.count}`).join() + `|${g.index?.version ?? "-"}:${g.index?.count ?? 0}`;
+    if (entry && entry.sig === sig) return entry;
+    if (!entry) {
+      entry = { geo: new Geometry(`g${g.id}`, this.scene, undefined, true), sig: "", users: 0, frame: 0, gone: false, indexed: !!g.index, colors: 0 };
+      this.geos.set(g, entry);
+      const e = entry;
+      g.addEventListener("dispose", () => { e.gone = true; });
+    }
+    const geo = entry.geo;
+    for (const kind of geo.getVerticesDataKinds()) geo.removeVerticesData(kind);
+    const pos = g.attributes.position;
+    if (pos) geo.setVerticesData(VertexBuffer.PositionKind, floats(pos), true, 3);
+    const normal = g.attributes.normal;
+    if (normal) geo.setVerticesData(VertexBuffer.NormalKind, floats(normal), true, 3);
+    else if (pos && g.index) {
+      const normals: number[] = [];
+      VertexData.ComputeNormals(floats(pos), g.index.array as Uint32Array, normals, { useRightHandedSystem: true });
+      geo.setVerticesData(VertexBuffer.NormalKind, normals, true, 3);
+    }
+    const uv = g.attributes.uv;
+    if (uv) geo.setVerticesData(VertexBuffer.UVKind, floats(uv), true, 2);
+    const color = g.attributes.color;
+    entry.colors = color ? color.itemSize : 0;
+    if (color) geo.setVerticesData(VertexBuffer.ColorKind, floats(color), true, color.itemSize);
+    for (const [name, attr] of Object.entries(g.attributes)) {
+      if (["position", "normal", "uv", "color", "uv1", "uv2", "tangent"].includes(name)) continue;
+      geo.setVerticesData(name, floats(attr), true, attr.itemSize);
+    }
+    entry.indexed = !!g.index;
+    if (g.index) geo.setIndices(g.index.array as Uint32Array, pos?.count, true);
+    entry.sig = sig;
+    return entry;
+  }
+  private use(g: THREE.BufferGeometry) {
+    const entry = this.geometry(g);
+    entry.users++;
+    return entry;
+  }
+  private release(g: THREE.BufferGeometry) {
+    const entry = this.geos.get(g);
+    if (entry) entry.users--;
+  }
+
+  // ---- Textures ----
+
+  private texture(t: THREE.Texture | null | undefined): Texture | null {
+    if (!t) return null;
+    const image = t.image as (HTMLImageElement & { data?: ArrayBufferView; width: number; height: number }) | undefined;
+    if (!image || !image.width || (typeof HTMLImageElement !== "undefined" && image instanceof HTMLImageElement && !image.complete)) return null;
+    let entry = this.texs.get(t);
+    if (entry && entry.version === t.version) return entry.tex;
+    const engine = this.engine;
+    const sampling = t.magFilter === THREE.NearestFilter ? Texture.NEAREST_SAMPLINGMODE : Texture.TRILINEAR_SAMPLINGMODE;
+    const mips = t.generateMipmaps && t.minFilter !== THREE.LinearFilter && t.minFilter !== THREE.NearestFilter;
+    if ((t as THREE.DataTexture).isDataTexture) {
+      const data = image.data as Uint8Array;
+      const format = t.format === THREE.RedFormat ? Constants.TEXTUREFORMAT_RED : t.format === THREE.RGBFormat ? Constants.TEXTUREFORMAT_RGB : Constants.TEXTUREFORMAT_RGBA;
+      const type = data instanceof Float32Array ? Constants.TEXTURETYPE_FLOAT : Constants.TEXTURETYPE_UNSIGNED_BYTE;
+      if (entry && entry.tex instanceof RawTexture && entry.tex.getSize().width === image.width) entry.tex.update(data);
+      else {
+        entry?.tex.dispose();
+        entry = { tex: new RawTexture(data, image.width, image.height, format, this.scene, mips, t.flipY, sampling, type), version: 0, users: 0 };
+        this.texs.set(t, entry);
+      }
+    } else {
+      if (!entry || entry.tex.getSize().width !== image.width || entry.tex.getSize().height !== image.height) {
+        entry?.tex.dispose();
+        const tex = new Texture(null, this.scene, !mips, t.flipY, sampling);
+        (tex as unknown as { _texture: unknown })._texture = engine.createDynamicTexture(image.width, image.height, mips, sampling);
+        entry = { tex, version: 0, users: 0 };
+        this.texs.set(t, entry);
+        const e = entry, map = this.texs;
+        t.addEventListener("dispose", () => { e.tex.dispose(); map.delete(t); });
+      }
+      engine.updateDynamicTexture((entry.tex as unknown as { _texture: never })._texture, image as unknown as HTMLCanvasElement, t.flipY, false);
+    }
+    const tex = entry.tex;
+    const wrap = (w: THREE.Wrapping) => (w === THREE.RepeatWrapping ? Texture.WRAP_ADDRESSMODE : w === THREE.MirroredRepeatWrapping ? Texture.MIRROR_ADDRESSMODE : Texture.CLAMP_ADDRESSMODE);
+    tex.wrapU = wrap(t.wrapS);
+    tex.wrapV = wrap(t.wrapT);
+    tex.uScale = t.repeat.x;
+    tex.vScale = t.repeat.y;
+    tex.uOffset = t.offset.x;
+    tex.vOffset = t.offset.y;
+    tex.wAng = -t.rotation;
+    tex.anisotropicFilteringLevel = t.anisotropy;
+    tex.gammaSpace = t.colorSpace === THREE.SRGBColorSpace;
+    entry.version = t.version;
+    return tex;
+  }
+
+  // ---- Materials ----
+
+  private material(m: THREE.Material, colors: number): PBRMaterial {
+    let entry = this.mats.get(m);
+    if (!entry) {
+      const mat = new PBRMaterial(`m${m.id}`, this.scene);
+      mat.enableSpecularAntiAliasing = true;
+      mat.maxSimultaneousLights = shadowSettings().lights;
+      entry = { mat, version: -1, frame: 0, users: 0, gone: false, maps: "" };
+      this.mats.set(m, entry);
+      const e = entry;
+      m.addEventListener("dispose", () => { e.gone = true; });
+      const parents = m.userData.limbParents as number[] | undefined;
+      if (parents && m.userData.pose) new LimbPlugin(mat, m, parents);
+    }
+    if (entry.frame === this.frame) return entry.mat;
+    entry.frame = this.frame;
+    const mat = entry.mat;
+    const any = m as THREE.MeshPhongMaterial & THREE.MeshStandardMaterial & THREE.MeshBasicMaterial & THREE.PointsMaterial;
+    // What changes from frame to frame: colour, opacity, emission
+    if (any.color) c3(any.color, mat.albedoColor);
+    else mat.albedoColor.set(1, 1, 1);
+    const emissive = any.emissive ? any.emissive.clone().multiplyScalar(any.emissiveIntensity ?? 1) : null;
+    if (emissive) c3(emissive, mat.emissiveColor);
+    else mat.emissiveColor.set(0, 0, 0);
+    mat.alpha = m.opacity;
+    // The maps, when they come
+    const maps = [any.map, any.normalMap, any.emissiveMap, any.alphaMap].map((t) => (t ? `${t.id}:${t.version}` : "")).join();
+    if (entry.version === m.version && entry.maps === maps) return mat;
+    entry.version = m.version;
+    entry.maps = maps;
+    const basic = (m as THREE.MeshBasicMaterial).isMeshBasicMaterial || (m as THREE.PointsMaterial).isPointsMaterial || (m as THREE.SpriteMaterial).isSpriteMaterial || (m as THREE.ShaderMaterial).isShaderMaterial;
+    mat.unlit = basic;
+    if ((m as THREE.MeshStandardMaterial).isMeshStandardMaterial) {
+      mat.metallic = any.metalness;
+      mat.roughness = any.roughness;
+    } else if ((m as THREE.MeshPhongMaterial).isMeshPhongMaterial) {
+      const spec = any.specular ? (any.specular.r + any.specular.g + any.specular.b) / 3 : 0.07;
+      mat.roughness = Math.min(0.95, Math.max(0.12, 1 - (any.shininess ?? 30) / 140));
+      mat.metallic = m.transparent ? 0 : Math.min(0.8, Math.max(0, (spec - 0.04) * 1.6));
+    } else {
+      mat.metallic = 0;
+      mat.roughness = 0.95;
+    }
+    mat.albedoTexture = this.texture(any.map);
+    mat.bumpTexture = this.texture(any.normalMap);
+    if (mat.bumpTexture) {
+      mat.bumpTexture.level = any.normalScale?.x ?? 1;
+      mat.invertNormalMapY = true;
+    }
+    mat.emissiveTexture = this.texture(any.emissiveMap);
+    mat.opacityTexture = this.texture(any.alphaMap);
+    const add = m.blending === THREE.AdditiveBlending;
+    mat.alphaMode = add ? Constants.ALPHA_ADD : Constants.ALPHA_COMBINE;
+    mat.transparencyMode = m.transparent || add ? PBRMaterial.PBRMATERIAL_ALPHABLEND : m.alphaTest > 0 ? PBRMaterial.PBRMATERIAL_ALPHATEST : PBRMaterial.PBRMATERIAL_OPAQUE;
+    mat.alphaCutOff = m.alphaTest;
+    if (mat.albedoTexture && m.transparent) mat.useAlphaFromAlbedoTexture = true;
+    mat.disableDepthWrite = !m.depthWrite;
+    mat.depthFunction = m.depthTest ? 0 : Constants.ALWAYS;
+    mat.backFaceCulling = m.side !== THREE.DoubleSide;
+    mat.twoSidedLighting = m.side === THREE.DoubleSide;
+    mat.cullBackFaces = m.side !== THREE.BackSide;
+    mat.fogEnabled = (m as THREE.MeshLambertMaterial).fog !== false;
+    mat.wireframe = !!(m as THREE.MeshBasicMaterial).wireframe;
+    if (m.polygonOffset) mat.zOffset = m.polygonOffsetFactor;
+    // A lamp's bulb, a screen, a blade: drawn as bright as it is (three's toneMapped: false)
+    if (!m.toneMapped) mat.imageProcessingConfiguration = this.noToneMapping;
+    return mat;
+  }
+  private releaseMaterial(m: THREE.Material) {
+    const entry = this.mats.get(m);
+    if (entry) entry.users--;
+  }
+  private bind(node: Node, mesh: Mesh, material: THREE.Material | THREE.Material[], g: THREE.BufferGeometry, colors: number) {
+    const list = [material].flat();
+    if (node.material !== material) {
+      for (const m of [node.material ?? []].flat()) this.releaseMaterial(m);
+      node.material = material;
+      for (const m of list) {
+        this.material(m, colors);
+        this.mats.get(m)!.users++;
+      }
+      if (Array.isArray(material)) {
+        const multi = new MultiMaterial(`mm${mesh.uniqueId}`, this.scene);
+        multi.subMaterials = list.map((m) => this.mats.get(m)!.mat);
+        mesh.material = multi;
+        mesh.subMeshes = [];
+        const total = g.attributes.position.count;
+        for (const group of g.groups) new SubMesh(group.materialIndex ?? 0, 0, total, group.start, group.count, mesh);
+      } else mesh.material = this.mats.get(material)!.mat;
+    } else for (const m of list) this.material(m, colors);
+    const first = list[0];
+    mesh.useVertexColors = !!(first as THREE.MeshBasicMaterial).vertexColors && colors > 0;
+    mesh.hasVertexAlpha = mesh.useVertexColors && colors === 4 && first.transparent;
+  }
+
+  // ---- Meshes ----
+
+  private meshNode(o: THREE.Object3D, kind: Node["kind"], g: THREE.BufferGeometry): { node: Node; mesh: Mesh; entry: GeoEntry } {
+    const node = this.nodeOf(o, kind);
+    if (node.geometry !== g || !node.mesh) {
+      if (node.geometry) this.release(node.geometry);
+      node.geometry = g;
+      const entry = this.use(g);
+      if (!node.mesh) {
+        node.mesh = kind === "lines" ? new LinesMesh(`l${o.id}`, this.scene) : new Mesh(`o${o.id}`, this.scene);
+        node.mesh.isPickable = false;
+        node.mesh.sideOrientation = FRONT;
+      }
+      entry.geo.applyToMesh(node.mesh);
+      node.mesh.isUnIndexed = !entry.indexed;
+      node.matrix.fill(NaN);
+    }
+    const entry = this.geometry(g);
+    return { node, mesh: node.mesh, entry };
+  }
+
+  private syncMesh(o: THREE.Mesh, visible: boolean) {
+    const g = o.geometry;
+    if (!g?.attributes.position) return;
+    const { node, mesh, entry } = this.meshNode(o, "mesh", g);
+    mesh.setEnabled(visible && [o.material].flat().some((m) => m.visible));
+    if (!visible) return;
+    this.place(node, o, mesh);
+    this.bind(node, mesh, o.material, g, entry.colors);
+    mesh.renderingGroupId = o.renderOrder < 0 ? 0 : 1;
+    mesh.alphaIndex = o.renderOrder;
+    mesh.receiveShadows = o.receiveShadow;
+    mesh.alwaysSelectAsActiveMesh = !o.frustumCulled;
+    // Instancing: three's instance matrices are already in the mesh's own frame, as Babylon's thin instances are
+    const inst = o as THREE.InstancedMesh;
+    if (inst.isInstancedMesh) {
+      const v = inst.instanceMatrix.version + inst.count * 7;
+      if (node.instances !== v) {
+        node.instances = v;
+        mesh.thinInstanceSetBuffer("matrix", inst.instanceMatrix.array as Float32Array, 16, false);
+        mesh.thinInstanceCount = inst.count;
+        mesh.alwaysSelectAsActiveMesh = true;
+      }
+      if (inst.instanceColor) {
+        const cv = inst.instanceColor.version;
+        if (node.colors !== cv) {
+          node.colors = cv;
+          const src = inst.instanceColor.array as Float32Array;
+          const rgba = new Float32Array((src.length / 3) * 4);
+          for (let i = 0, j = 0; i < src.length; i += 3, j += 4) {
+            rgba[j] = src[i];
+            rgba[j + 1] = src[i + 1];
+            rgba[j + 2] = src[i + 2];
+            rgba[j + 3] = 1;
+          }
+          mesh.thinInstanceSetBuffer("color", rgba, 4, false);
+        }
+      }
+    }
+    if (g.drawRange.count !== Infinity && mesh.subMeshes?.length === 1 && !Array.isArray(o.material)) {
+      const sm = mesh.subMeshes[0];
+      if (entry.indexed) {
+        sm.indexStart = g.drawRange.start;
+        sm.indexCount = Math.min(g.drawRange.count, g.index!.count - g.drawRange.start);
+      } else {
+        sm.verticesStart = g.drawRange.start;
+        sm.verticesCount = Math.min(g.drawRange.count, g.attributes.position.count - g.drawRange.start);
+      }
+    }
+    this.cast(node, mesh, o.castShadow);
+  }
+
+  private cast(node: Node, mesh: Mesh, casts: boolean) {
+    if (node.casts === casts) return;
+    node.casts = casts;
+    if (casts) this.casters.add(mesh);
+    else this.casters.delete(mesh);
+    if (this.sun) {
+      if (casts) this.sun.shadow.addShadowCaster(mesh, false);
+      else this.sun.shadow.removeShadowCaster(mesh, false);
+    }
+    for (const n of this.nodes.values()) {
+      if (!n.shadow || n.light instanceof DirectionalLight) continue;
+      const list = n.shadow.getShadowMap()?.renderList;
+      if (!list) continue;
+      const at = list.indexOf(mesh);
+      if (casts && at < 0) list.push(mesh);
+      if (!casts && at >= 0) list.splice(at, 1);
+    }
+  }
+
+  // Points: soft round sprites (or the material's map) each sized as three would, shrinking with distance when in world units
+  private syncPoints(o: THREE.Points, visible: boolean) {
+    const g = o.geometry;
+    if (!g?.attributes.position) return;
+    const { node, mesh } = this.meshNode(o, "points", g);
+    mesh.setEnabled(visible);
+    if (!visible) return;
+    this.place(node, o, mesh);
+    const m = [o.material].flat()[0] as THREE.PointsMaterial & THREE.ShaderMaterial;
+    const color = !!g.attributes.color && (m.vertexColors || m.isShaderMaterial);
+    const size = !!g.attributes.size;
+    const map = this.texture(m.map);
+    const key = `${m.id}|${color}|${size}|${map ? "m" : ""}`;
+    let entry = this.points.get(o);
+    if (!entry || entry.key !== key) {
+      entry?.mat.dispose();
+      const defines = [color ? "#define VCOLOR" : "", size ? "#define VSIZE" : "", map ? "#define MAP" : ""].filter(Boolean);
+      const mat = new ShaderMaterial(`pt${o.id}`, this.scene, { vertexSource: POINTS_VERTEX, fragmentSource: POINTS_FRAGMENT }, {
+        attributes: ["position", ...(color ? ["color"] : []), ...(size ? ["size"] : [])],
+        uniforms: ["world", "view", "viewProjection", "pointSize", "scale", "tint", "alpha"],
+        samplers: map ? ["map"] : [],
+        defines,
+        needAlphaBlending: true,
+      });
+      mat.pointsCloud = true;
+      mat.backFaceCulling = false;
+      entry = { mat, key };
+      this.points.set(o, entry);
+      mesh.material = mat;
+    }
+    const mat = entry.mat;
+    if (map) mat.setTexture("map", map);
+    // three's sizes: a points material's in world units at half the drawing's height a unit away, or in pixels; a shader's (drei's
+    // stars) about 90 pixels a unit away
+    const scale = m.isShaderMaterial ? 90 : m.sizeAttenuation !== false ? this.engine.getRenderHeight() * 0.5 : 0;
+    mat.setFloat("pointSize", m.isShaderMaterial ? 1 : m.size ?? 1);
+    mat.setFloat("scale", scale);
+    mat.setColor3("tint", m.color ? c3(m.color) : new Color3(1, 1, 1));
+    mat.setFloat("alpha", m.transparent || m.isShaderMaterial ? m.opacity ?? 1 : 1);
+    mat.alphaMode = m.blending === THREE.AdditiveBlending ? Constants.ALPHA_ADD : Constants.ALPHA_COMBINE;
+    mat.disableDepthWrite = !m.depthWrite || m.blending === THREE.AdditiveBlending;
+    mesh.renderingGroupId = o.renderOrder < 0 ? 0 : 1;
+    mesh.alphaIndex = o.renderOrder;
+    mesh.alwaysSelectAsActiveMesh = !o.frustumCulled;
+  }
+
+  // Lines (and drei's fat lines, drawn a pixel wide for now)
+  private syncLines(o: THREE.Line, visible: boolean) {
+    const node = this.nodeOf(o, "lines");
+    const g = o.geometry as THREE.BufferGeometry;
+    const fat = (o as unknown as { isLineSegments2?: boolean }).isLineSegments2;
+    const pos = fat ? (g.attributes as Record<string, THREE.InterleavedBufferAttribute>).instanceStart : g.attributes.position;
+    if (!pos) return;
+    const sig = `${fat ? "f" : ""}${(pos as THREE.BufferAttribute).version ?? (pos as THREE.InterleavedBufferAttribute).data.version}:${pos.count}:${g.index?.version ?? "-"}`;
+    if (!node.mesh || node.lineSig !== sig) {
+      node.lineSig = sig;
+      node.mesh?.dispose();
+      const lines = new LinesMesh(`l${o.id}`, this.scene);
+      lines.isPickable = false;
+      const points: number[] = [];
+      const indices: number[] = [];
+      if (fat) {
+        const end = (g.attributes as Record<string, THREE.InterleavedBufferAttribute>).instanceEnd;
+        for (let i = 0; i < pos.count; i++) {
+          points.push(pos.getX(i), pos.getY(i), pos.getZ(i), end.getX(i), end.getY(i), end.getZ(i));
+          indices.push(i * 2, i * 2 + 1);
+        }
+      } else {
+        for (let i = 0; i < pos.count; i++) points.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+        const count = g.index ? g.index.count : pos.count;
+        const at = (i: number) => (g.index ? g.index.getX(i) : i);
+        if ((o as THREE.LineSegments).isLineSegments) for (let i = 0; i + 1 < count; i += 2) indices.push(at(i), at(i + 1));
+        else {
+          for (let i = 0; i + 1 < count; i++) indices.push(at(i), at(i + 1));
+          if ((o as THREE.LineLoop).isLineLoop && count > 2) indices.push(at(count - 1), at(0));
+        }
+      }
+      const data = new VertexData();
+      data.positions = points;
+      data.indices = indices;
+      data.applyToMesh(lines);
+      node.mesh = lines;
+      node.matrix.fill(NaN);
+    }
+    const lines = node.mesh as LinesMesh;
+    lines.setEnabled(visible);
+    if (!visible) return;
+    this.place(node, o, lines);
+    const m = [o.material].flat()[0] as THREE.LineBasicMaterial;
+    lines.color = srgb(m.color ?? new THREE.Color(1, 1, 1));
+    lines.alpha = m.opacity;
+    lines.renderingGroupId = o.renderOrder < 0 ? 0 : 1;
+    lines.alwaysSelectAsActiveMesh = !o.frustumCulled;
+  }
+
+  // A sprite: a square facing the camera, its map on it
+  private syncSprite(o: THREE.Sprite, visible: boolean, camera: THREE.Camera) {
+    const node = this.nodeOf(o, "sprite");
+    if (!node.mesh) {
+      node.mesh = new Mesh(`s${o.id}`, this.scene);
+      SPRITE_QUAD.applyToMesh(node.mesh);
+      node.mesh.isPickable = false;
+      node.mesh.sideOrientation = FRONT;
+      this.material(o.material, 0);
+      this.mats.get(o.material)!.users++;
+      node.material = o.material;
+      node.mesh.material = this.mats.get(o.material)!.mat;
+    }
+    const mesh = node.mesh;
+    mesh.setEnabled(visible && o.material.visible);
+    if (!visible) return;
+    this.material(o.material, 0);
+    // World position and scale from the sprite, turned to face the camera
+    const e = o.matrixWorld.elements;
+    const sx = Math.hypot(e[0], e[1], e[2]), sy = Math.hypot(e[4], e[5], e[6]);
+    const r = camera.matrixWorld.elements;
+    const m = [r[0] * sx, r[1] * sx, r[2] * sx, 0, r[4] * sy, r[5] * sy, r[6] * sy, 0, r[8], r[9], r[10], 0, e[12], e[13], e[14], 1];
+    if (!sameMatrix(node.matrix, m)) {
+      node.matrix.set(m);
+      Matrix.FromArrayToRef(m, 0, node.world);
+      mesh.freezeWorldMatrix(node.world);
+    }
+    mesh.renderingGroupId = o.renderOrder < 0 ? 0 : 1;
+    mesh.alphaIndex = o.renderOrder;
+    mesh.alwaysSelectAsActiveMesh = true;
+  }
+
+  // drei's Text (troika): its words drawn on a card, in the plane of the text, as big as troika would set them
+  private syncText(o: THREE.Mesh & { text: string; fontSize: number; color: unknown; anchorX: unknown; anchorY: unknown; outlineWidth: unknown; outlineColor: unknown }, visible: boolean) {
+    const node = this.nodeOf(o, "text");
+    const color = new THREE.Color((o.color as THREE.ColorRepresentation) ?? "#ffffff").getStyle();
+    const outline = typeof o.outlineWidth === "number" ? o.outlineWidth : 0;
+    const outlineColor = new THREE.Color((o.outlineColor as THREE.ColorRepresentation) ?? 0).getStyle();
+    const label = `${o.text}|${o.fontSize}|${color}|${outline}|${outlineColor}|${o.anchorX}|${o.anchorY}`;
+    if (!node.mesh || node.label !== label) {
+      node.label = label;
+      node.mesh?.material?.dispose(true, true);
+      node.mesh?.dispose();
+      const lines = o.text.split("\n");
+      const px = 48;
+      const pad = Math.ceil((outline / o.fontSize) * px) + 2;
+      const probe = PROBE.getContext("2d")!;
+      probe.font = `600 ${px}px Inter, sans-serif`;
+      const width = Math.ceil(Math.max(1, ...lines.map((l) => probe.measureText(l).width))) + pad * 2;
+      const height = Math.ceil(lines.length * px * 1.2) + pad * 2;
+      const tex = new DynamicTexture(`t${o.id}`, { width, height }, this.scene, true);
+      tex.hasAlpha = true;
+      const ctx = tex.getContext() as CanvasRenderingContext2D;
+      ctx.clearRect(0, 0, width, height);
+      ctx.font = `600 ${px}px Inter, sans-serif`;
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "center";
+      lines.forEach((l, i) => {
+        const y = pad + (i + 0.5) * px * 1.2;
+        if (outline) {
+          ctx.lineWidth = (outline / o.fontSize) * px * 2;
+          ctx.strokeStyle = outlineColor;
+          ctx.lineJoin = "round";
+          ctx.strokeText(l, width / 2, y);
+        }
+        ctx.fillStyle = color;
+        ctx.fillText(l, width / 2, y);
+      });
+      tex.update(true);
+      const w = (width / px) * o.fontSize, h = (height / px) * o.fontSize;
+      const ox = o.anchorX === "left" ? w / 2 : o.anchorX === "right" ? -w / 2 : 0;
+      const oy = o.anchorY === "top" ? -h / 2 : o.anchorY === "bottom" || o.anchorY === "bottom-baseline" ? h / 2 : 0;
+      const mesh = new Mesh(`t${o.id}`, this.scene);
+      const quad = new VertexData();
+      quad.positions = [ox - w / 2, oy - h / 2, 0, ox + w / 2, oy - h / 2, 0, ox + w / 2, oy + h / 2, 0, ox - w / 2, oy + h / 2, 0];
+      quad.normals = [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1];
+      quad.uvs = [0, 0, 1, 0, 1, 1, 0, 1];
+      quad.indices = [0, 1, 2, 0, 2, 3];
+      quad.applyToMesh(mesh);
+      mesh.sideOrientation = FRONT;
+      const mat = new PBRMaterial(`tm${o.id}`, this.scene);
+      mat.unlit = true;
+      mat.albedoTexture = tex;
+      mat.useAlphaFromAlbedoTexture = true;
+      mat.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHABLEND;
+      mat.disableDepthWrite = true;
+      mat.backFaceCulling = false;
+      mat.imageProcessingConfiguration = this.noToneMapping;
+      mesh.material = mat;
+      mesh.isPickable = false;
+      node.mesh = mesh;
+      node.matrix.fill(NaN);
+    }
+    node.mesh.setEnabled(visible);
+    if (!visible) return;
+    this.place(node, o, node.mesh);
+    node.mesh.renderingGroupId = 1;
+    node.mesh.alphaIndex = 50 + o.renderOrder;
+  }
+
+  // ---- Lights ----
+
+  private syncLight(l: THREE.Light, visible: boolean) {
+    const node = this.nodeOf(l, "light");
+    const dir = l as THREE.DirectionalLight, point = l as THREE.PointLight, spot = l as THREE.SpotLight, hemi = l as THREE.HemisphereLight;
+    if (!node.light) {
+      if (dir.isDirectionalLight) node.light = new DirectionalLight(`d${l.id}`, new Vector3(0, -1, 0), this.scene);
+      else if (spot.isSpotLight) node.light = new SpotLight(`s${l.id}`, Vector3.Zero(), new Vector3(0, -1, 0), 1, 1, this.scene);
+      else if (point.isPointLight) node.light = new PointLight(`p${l.id}`, Vector3.Zero(), this.scene);
+      else if (hemi.isHemisphereLight || (l as THREE.AmbientLight).isAmbientLight) node.light = new HemisphericLight(`h${l.id}`, new Vector3(0, 1, 0), this.scene);
+      else return;
+    }
+    const light = node.light;
+    light.setEnabled(visible && l.intensity > 0);
+    if (!visible) return;
+    light.intensity = light instanceof HemisphericLight ? l.intensity * AMBIENT : l.intensity;
+    c3(l.color, light.diffuse);
+    const e = l.matrixWorld.elements;
+    if (light instanceof HemisphericLight) {
+      // An ambient light is the same from everywhere: a hemisphere whose ground is its sky
+      light.groundColor = hemi.isHemisphereLight ? c3(hemi.groundColor) : c3(l.color);
+      light.specular.set(0, 0, 0);
+      return;
+    }
+    if (light instanceof DirectionalLight) {
+      dir.target.updateMatrixWorld();
+      const t = dir.target.matrixWorld.elements;
+      light.position.set(e[12], e[13], e[14]);
+      light.direction.set(t[12] - e[12], t[13] - e[13], t[14] - e[14]).normalize();
+      this.sunShadow(light, dir.castShadow && this.owner.shadowMap.enabled);
+      return;
+    }
+    const pl = light as PointLight;
+    pl.position.set(e[12], e[13], e[14]);
+    pl.range = point.distance > 0 ? point.distance : Number.MAX_VALUE;
+    pl.falloffType = point.decay === 0 ? Light.FALLOFF_STANDARD : Light.FALLOFF_PHYSICAL;
+    if (light instanceof SpotLight) {
+      spot.target.updateMatrixWorld();
+      const t = spot.target.matrixWorld.elements;
+      light.direction.set(t[12] - e[12], t[13] - e[13], t[14] - e[14]).normalize();
+      light.angle = spot.angle * 2;
+      light.exponent = 1 + (1 - spot.penumbra) * 4;
+    }
+    // A lamp casts shadows only where the tier allows (the nearest few rooms' lamps)
+    const wants = point.castShadow && this.owner.shadowMap.enabled && (node.shadow ? true : this.lampShadows < shadowSettings().lamps);
+    if (wants && !node.shadow) {
+      const gen = new ShadowGenerator(Math.min(1024, point.shadow?.mapSize?.x ?? 512), light as PointLight);
+      gen.usePoissonSampling = true;
+      gen.bias = 0.004;
+      for (const mesh of this.casters) gen.addShadowCaster(mesh, false);
+      node.shadow = gen;
+      this.lampShadows++;
+    } else if (!wants && node.shadow) {
+      node.shadow.dispose();
+      node.shadow = undefined;
+      this.lampShadows--;
+    }
+  }
+
+  // The sun's shadows: cascades that follow the camera, finer near it
+  private sunShadow(light: DirectionalLight, on: boolean) {
+    if (!on) {
+      if (this.sun?.light === light) {
+        this.sun.shadow.dispose();
+        this.sun = undefined;
+      }
+      return;
+    }
+    if (this.sun && this.sun.light !== light) return;
+    if (this.sun) return;
+    const s = shadowSettings();
+    const gen = new CascadedShadowGenerator(s.size, light);
+    gen.numCascades = s.cascades;
+    gen.lambda = 0.85;
+    gen.stabilizeCascades = true;
+    gen.shadowMaxZ = Math.min(this.camera.maxZ || 200, 120);
+    gen.usePercentageCloserFiltering = true;
+    gen.filteringQuality = s.quality;
+    gen.bias = 0.002;
+    gen.normalBias = 0.015;
+    gen.cascadeBlendPercentage = 0.08;
+    for (const mesh of this.casters) gen.addShadowCaster(mesh, false);
+    this.sun = { light, shadow: gen };
+  }
+}
+
+// The points' own shader: three draws points as sprites sized in the vertex shader, which Babylon's materials do not
+const POINTS_VERTEX = `precision highp float;
+attribute vec3 position;
+#ifdef VCOLOR
+attribute vec4 color;
+#endif
+#ifdef VSIZE
+attribute float size;
+#endif
+uniform mat4 world;
+uniform mat4 view;
+uniform mat4 viewProjection;
+uniform float pointSize;
+uniform float scale;
+varying vec3 vColor;
+void main(void) {
+  vec4 wp = world * vec4(position, 1.0);
+  gl_Position = viewProjection * wp;
+  float s = pointSize;
+#ifdef VSIZE
+  s *= size;
+#endif
+  gl_PointSize = scale > 0.0 ? s * scale / max(-(view * wp).z, 0.1) : s;
+#ifdef VCOLOR
+  vColor = color.rgb;
+#else
+  vColor = vec3(1.0);
+#endif
+}`;
+const POINTS_FRAGMENT = `precision highp float;
+uniform vec3 tint;
+uniform float alpha;
+#ifdef MAP
+uniform sampler2D map;
+#endif
+varying vec3 vColor;
+void main(void) {
+#ifdef MAP
+  vec4 t = texture2D(map, vec2(gl_PointCoord.x, 1.0 - gl_PointCoord.y));
+#else
+  vec4 t = vec4(1.0, 1.0, 1.0, 1.0 - smoothstep(0.3, 0.5, length(gl_PointCoord - 0.5)));
+#endif
+  vec3 c = tint * vColor * t.rgb;
+  gl_FragColor = vec4(pow(max(c, vec3(0.0)), vec3(1.0 / 2.2)), alpha * t.a);
+}`;
+const PROBE = typeof document !== "undefined" ? document.createElement("canvas") : (null as unknown as HTMLCanvasElement);
+// A unit square about its middle (three's sprites are centred)
+const SPRITE_QUAD = (() => {
+  const q = new VertexData();
+  q.positions = [-0.5, -0.5, 0, 0.5, -0.5, 0, 0.5, 0.5, 0, -0.5, 0.5, 0];
+  q.normals = [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1];
+  q.uvs = [0, 0, 1, 0, 1, 1, 0, 1];
+  q.indices = [0, 1, 2, 0, 2, 3];
+  return q;
+})();
+
+// ---- The renderer R3F is given -------------------------------------------------------------------------------------------------------
+
+export class BabylonRenderer {
+  readonly domElement: HTMLCanvasElement;
+  readonly engine: Engine;
+  // What R3F and the scenes set on three's renderer
+  shadowMap = { enabled: false, type: THREE.PCFSoftShadowMap as THREE.ShadowMapType, autoUpdate: true, needsUpdate: false };
+  toneMapping: THREE.ToneMapping = THREE.ACESFilmicToneMapping;
+  toneMappingExposure = 1;
+  outputColorSpace: THREE.ColorSpace = THREE.SRGBColorSpace;
+  autoClear = true;
+  clearColor = new Color3(0, 0, 0);
+  clearAlpha = 0;
+  info = { autoReset: true, render: { frame: 0, calls: 0, triangles: 0, points: 0, lines: 0 }, memory: { geometries: 0, textures: 0 }, programs: null, reset() {} };
+  capabilities = { isWebGL2: true, getMaxAnisotropy: () => 4, maxTextures: 16, precision: "highp" };
+  private mirrors = new Map<THREE.Scene, Mirror>();
+  private pixelRatio = 1;
+  private width = 1;
+  private height = 1;
+
+  // (the tests pass an engine of their own: Babylon's NullEngine, which draws nothing)
+  constructor(canvas: HTMLCanvasElement, engine?: Engine) {
+    this.domElement = canvas;
+    this.engine = engine ?? new Engine(canvas, true, { stencil: true, preserveDrawingBuffer: false, powerPreference: "default", audioEngine: false, alpha: true } as never, false);
+    RENDERERS.add(this);
+    // The last one made, for looking into from the console and the tests
+    if (typeof window !== "undefined") (window as unknown as { __babylon?: BabylonRenderer }).__babylon = this;
+  }
+  // The Babylon scene a three scene is drawn into (for the tests)
+  mirrorOf(scene: THREE.Scene) {
+    return this.mirrors.get(scene)?.scene;
+  }
+
+  getContext() {
+    return this.engine._gl;
+  }
+  getPixelRatio() {
+    return this.pixelRatio;
+  }
+  setPixelRatio(dpr: number) {
+    this.pixelRatio = dpr;
+    this.setSize(this.width, this.height, false);
+  }
+  getSize(target: THREE.Vector2) {
+    return target.set(this.width, this.height);
+  }
+  getDrawingBufferSize(target: THREE.Vector2) {
+    return target.set(Math.floor(this.width * this.pixelRatio), Math.floor(this.height * this.pixelRatio));
+  }
+  setSize(width: number, height: number, updateStyle = true) {
+    this.width = width;
+    this.height = height;
+    if (updateStyle) {
+      this.domElement.style.width = `${width}px`;
+      this.domElement.style.height = `${height}px`;
+    }
+    this.engine.setHardwareScalingLevel(1 / this.pixelRatio);
+    this.engine.setSize(Math.max(1, Math.floor(width * this.pixelRatio)), Math.max(1, Math.floor(height * this.pixelRatio)));
+  }
+  setClearColor(color: THREE.ColorRepresentation, alpha = 1) {
+    this.clearColor = srgb(new THREE.Color(color));
+    this.clearAlpha = alpha;
+  }
+  getClearColor(target: THREE.Color) {
+    return target.setRGB(this.clearColor.r, this.clearColor.g, this.clearColor.b, THREE.SRGBColorSpace);
+  }
+  getClearAlpha() {
+    return this.clearAlpha;
+  }
+  clear() {
+    this.engine.clear(new Color4(this.clearColor.r, this.clearColor.g, this.clearColor.b, this.clearAlpha), true, true, true);
+  }
+  clearDepth() {
+    this.engine.clear(null, false, true, true);
+  }
+  retier() {
+    for (const m of this.mirrors.values()) m.retier();
+  }
+
+  render(scene: THREE.Scene, camera: THREE.Camera) {
+    if (this.engine.isDisposed) return;
+    if (scene.matrixWorldAutoUpdate) scene.updateMatrixWorld();
+    if (camera.parent === null && camera.matrixWorldAutoUpdate) camera.updateMatrixWorld();
+    let mirror = this.mirrors.get(scene);
+    if (!mirror) {
+      mirror = new Mirror(this.engine, this);
+      this.mirrors.set(scene, mirror);
+    }
+    mirror.sync(scene, camera);
+    this.engine.beginFrame();
+    mirror.scene.render();
+    this.engine.endFrame();
+    const r = this.info.render;
+    r.frame++;
+    r.calls = mirror.instrumentation.drawCallsCounter.current;
+    r.triangles = Math.round(mirror.scene.getActiveIndices() / 3);
+    this.info.memory.geometries = mirror.scene.geometries.length;
+    this.info.memory.textures = mirror.scene.textures.length;
+  }
+
+  compile() {}
+  forceContextLoss() {
+    this.dispose();
+  }
+  dispose() {
+    RENDERERS.delete(this);
+    for (const m of this.mirrors.values()) m.dispose();
+    this.mirrors.clear();
+    this.engine.dispose();
+  }
+}
+
+// `<Canvas gl={babylonGl}>`: R3F hands it the canvas and draws through what it returns
+export const babylonGl = (canvas: HTMLCanvasElement | OffscreenCanvas) => new BabylonRenderer(canvas as HTMLCanvasElement) as unknown as THREE.WebGLRenderer;

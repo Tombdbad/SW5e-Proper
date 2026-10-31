@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Canvas } from '@react-three/fiber';
+import { babylonGl } from "@/components/Map/babylon";
 import { useQuery } from '@tanstack/react-query';
 import GalaxyMap from '@/components/Map/GalaxyMap';
 import LocalMap, { viewOf } from '@/components/Map/LocalMap';
@@ -75,7 +76,7 @@ function WorldAtlas({ campaign, campaigns, onPick }: { campaign: any; campaigns:
 
         <TranslucentPane className="p-2" opacity="medium">
           <div className="h-[55vh]">
-            <Canvas camera={{ position: [0, 42, 30], fov: 75, near: 0.1, far: 1000 }}>
+            <Canvas gl={babylonGl} camera={{ position: [0, 42, 30], fov: 75, near: 0.1, far: 1000 }}>
               <color attach="background" args={['#000000']} />
               <ambientLight intensity={0.4} />
               <LocalMap

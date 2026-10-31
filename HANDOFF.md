@@ -1,32 +1,24 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-10-30 (Windows PC), branch `main`. Nothing is pushed. Last session's commits today: 9042b8b, f6dade7, c1676ba (sound lab, Piper), 1f40c6f, 34d446f (people, regard, comlinks, microphone), then the commit for the law in person (below).
+Written 2026-10-31 (Windows PC). Branch **`babylon`** (made from main at 379299c; main is untouched and still three.js). Nothing is pushed.
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told, never commit it.
 
-## 2026-10-30, the law in person, cells, shops, errands (REVIVAL_NOTES "The law in person, cells, shops by day and night, errands")
-- The user's list: captives in physical locked cells; NPCs walking to homes, jobs, traders, the palace, the garrison to report crimes; security physically dispatched from the garrison unless a patrol is nearer; troopers not reacting to hacking and theft from locked boxes; shop stock that can be stolen (day: immediate dispatch, night: alarms and cameras to disable).
-- Done in shared/logic/index.ts (LIFE 14): `reportCrime(.., via)` dispatches squads from `lawBase` (the garrison) after a turnout, they run a room a minute (`townPath`, `Squad.to`); `nearestPatrol` goes first if closer; `ReportVia` (law/alarm/shopkeeper/camera/call/witness), a witness without a commlink walks to the garrison (`World.errands`, `errandAt`, `withPresence`); `Routine.patrol` and `Routine.visits` (palace calls, trader rounds); cells (`cellOf`, `openCells`, `RoomAsset.cell`); shops (`STOCK_PIECES`, `shelfStock`, `shopArmed`, `disarmShop`, `noteTheft`, `advanceDiscoveries`, `Ledger.stolen`); `pullPatrols`, wider `isLawman`.
-- GameBoard: `slipped()` now guards locks, caches, panels, cells, shelves and the shop door whatever the danger of the place (the troopers-do-not-react bug); cell card, shelf card (Buy / Take it), shop alarm disarm on the alarm panel, door sensor in `breakIn`, discoveries effect. LocalMap: squads seen from the muster, open cell drawn open (models.tsx), shelves show what is left of the stock (`useDisplay`).
-- Tests: tests/world/security.test.ts (8). Full suite run once during the work (see the commit message for the count); `npm run e2e` NOT run.
-- Browser-checked on dev 5099 / `sw5e_test`, campaign 498 (its world was replaced by generated seeds 3, 11): the cell card, an open cell, a shelf card with real stock, lawmen seeing the console, squads leaving the garrison, running to the scene and finding the party. The dice rolls (throttled pane) were not waited out, so pick/Sleight/door-sensor results were not seen end to end.
-
-- Latent bug seen, not fixed: with the dice shifted, seed 34 (detail all) puts a gambling hall's High-stakes room out of reach (its corridor stops short of it, the cashier's cage in between). Any change that draws from the generator's stream may bring it back: fittings use their own dice (`fitBuilding`).
+## 2026-10-31: Babylon.js draws the 3D map (REVIVAL_NOTES "Babylon draws the 3D map")
+- The user: overhaul graphics, shadows and lighting with Babylon.js, **every 3D scene, a full move**, on a branch of its own, three.js kept for geometry, the old /map viewers and the dead 3D files ported too. Plan file: `~/.claude/plans/sequential-yawning-wombat.md` (its "own React components" route was replaced, with the user's yes, by the one below).
+- **Route**: R3F still builds the scenes, runs the loop, cameras and taps; `client/src/components/Map/babylon.ts` is the renderer given to `<Canvas gl={babylonGl}>`, mirroring the three scene into Babylon each frame (meshes, PBR materials, cascaded sun shadows, lamps, thin instances, points, lines, sprites, drei Text, a limb material plugin). Packages added (approved): `@babylonjs/core` 9.33.1, `cannon-es` 0.20.0 (for the dice page, not used yet).
+- Done so far: the bridge, with a point-sprite shader of its own; EVERY `<Canvas>` given `gl={babylonGl}` (GameBoard, ModelGallery, PitArena, GalacticMapView, GalacticMap3D, SystemMap, LocalAreaMap, FlightScene x3, DogfightGame, ui/dice, PlanetaryExploration); `limbMaterial` sets `userData.limbParents`; siteAssets.tsx hands its quality tier to `setRenderTier`; tests/interiors/babylon.test.ts (5, NullEngine). Seen in the browser: gallery (furniture, moves, walk, interiors), the game (a fight in a shop, campaign 498), the dogfight lab, /map. NOT yet seen: flight scenes, pit, cockpit view, old /map viewers.
+- Learned: Babylon 9's PBR divides direct light by π as three does (only the hemisphere needs 1/π); a right-handed Babylon scene shows three's meshes inside out unless `mesh.sideOrientation = 1`; a material plugin's code is asked for inside its base constructor (pass data beside it, `JOINTS`).
 
 ## Running
-- A dev server of mine on 5099 (test database) may still be running (`node --import tsx server/index.ts`, started from the scratchpad `devtest.cjs`); stop it if it is. The game server the user runs needs a restart for the new server code (patrol/visit generation lives in shared logic, so new worlds).
-- Old campaigns get patrols, visits and shop alarm panels when opened (livenWorld life 14), but no new cell furniture in rooms already built.
+- A dev server of mine on 5099 (test database) may be running (`node --import tsx server/index.ts`, started from the scratchpad `devtest.cjs`); stop it if it is. The user's own server on 5000 is the three.js build: compare against it.
+- The browser pane loads a gallery page slowly (10-20 s); `window.__babylon` is the last renderer made (`.mirrors`, `.mirrorOf(scene)`).
 
 ## TODO / next, in order
-1. Run `npm run e2e` against a fresh build when the user is not playing (the captive step uses a synthetic captive with no cell: legacy path; the pursuit text now says "sent from ...").
-2. Settlements' own crimes (`rollIncident` squads) could be dispatched from the garrison too.
-3. Security tags on stock; a witness stopped on the way should stop the report.
-4. From earlier today (still open): real microphone, co-op message between two clients, a phone; Piper voices matched to gender needs listening.
+1. Look at the flight scenes (race, road, chase, convoy), the pit, the dogfight's cockpit view (Cockpit draws a second scene with `autoClear` off) and a settlement street by day and by night, against 5000.
+2. Port the other shader patches as plugins: parallax (surfaces.tsx, siteAssets groundShader), hull wear (models.tsx), fur shells (gl_InstanceID), sea waves; ShaderMaterials (scenery planet, ArenaScene/CapitalShip shields, drei Stars) via a `userData` hook; limb shadows (shadow depth wrapper).
+3. The look: environment light from the sky (a reflection probe of WorldSky), bloom/glow for glow finishes, SSAO on full, clustered street lamps at night; tune against 5000.
+4. The dice roller page (public/dice/roller.html, three r128 + cannon from cdnjs) → a Babylon + cannon-es component; port the dead files; e2e (`__arena.gl.info.render.frame` is kept by the bridge's info counters).
+5. Full `npm test` + `npm run build` + `npm run e2e` (desktop and phone), then ask the user to check on their phone, then ask before merging into main.
 
 ## Open questions for the user
-- By day an UNSEEN theft is found when the keeper counts the stock before closing (and reported then); only a SEEN theft (or a camera) sends the law at once. Say if they want every daytime theft to ring at once (security tags).
-- Piper voices are random per person (seed): should the model's speakers be sorted into low/high voices so a Hutt or a woman gets a fitting one? (needs listening)
-
-## Learned
-- A heredoc with an apostrophe or backtick breaks the Bash tool's quoting: write patch scripts and text blocks with the Write tool and read them with `fs` in a `.cjs`.
-- The dice in the browser pane roll very slowly (hidden/throttled): a check dialog can take over a minute to settle; reading the state through `/api/campaigns/:id` shows the saved result.
-- Dev server on another port against the test DB: derive DATABASE_URL from `.env` in a script (never print it).
+- (Earlier, still open) every daytime theft to ring at once (security tags)? Piper voices sorted by low/high?

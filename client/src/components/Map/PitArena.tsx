@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Canvas } from "@react-three/fiber";
+import { babylonGl } from "@/components/Map/babylon";
 import { Button } from "@/components/ui/button";
 import PlayCombat from "@/components/Combat/PlayCombat";
 import { useCombat } from "@/lib/stores/useCombat";
@@ -120,7 +121,7 @@ export default function PitArena({ enhanced, opponentFor, launch, keepHp, bank, 
         <span className="text-xs text-gray-300">Won {total.bouts} · {total.credits.toLocaleString()} cr</span>
       </div>
       <div className="relative h-[46dvh] w-full bg-black" data-testid="pit-scene">
-        <Canvas camera={{ position: [0, 14, 13], fov: 50 }} onCreated={({ camera }) => camera.lookAt(0, 0, 0)}>
+        <Canvas gl={babylonGl} camera={{ position: [0, 14, 13], fov: 50 }} onCreated={({ camera }) => camera.lookAt(0, 0, 0)}>
           <FightScene wall="#c9a56e" />
         </Canvas>
       </div>

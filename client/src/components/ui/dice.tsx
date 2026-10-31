@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
+import { babylonGl } from "@/components/Map/babylon";
 import * as THREE from "three";
 import { Text } from "@react-three/drei";
 
@@ -92,7 +93,7 @@ export const Dice: React.FC<{
 }> = ({ size = 30, sides = 20, result, rolling, onRoll }) => {
   return (
     <div style={{ width: size * 3, height: size * 3 }}>
-      <Canvas camera={{ position: [0, 0, size * 3], fov: 50 }}>
+      <Canvas gl={babylonGl} camera={{ position: [0, 0, size * 3], fov: 50 }}>
         <ambientLight intensity={0.5} />
         <pointLight position={[10, 10, 10]} intensity={0.5} />
         <DiceModel 

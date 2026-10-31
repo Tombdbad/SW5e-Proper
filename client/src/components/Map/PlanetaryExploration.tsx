@@ -1,6 +1,7 @@
 
 import React, { useRef, useEffect } from 'react';
 import { Canvas, useFrame, useLoader } from '@react-three/fiber';
+import { babylonGl } from "@/components/Map/babylon";
 import { OrbitControls, Stars } from '@react-three/drei';
 import * as THREE from 'three';
 import { TextureLoader } from 'three/src/loaders/TextureLoader';
@@ -57,7 +58,7 @@ interface PlanetaryExplorationProps {
 export default function PlanetaryExploration({ planetData }: PlanetaryExplorationProps) {
   return (
     <div className="w-full h-screen">
-      <Canvas camera={{ position: [0, 50, 100], fov: 60 }}>
+      <Canvas gl={babylonGl} camera={{ position: [0, 50, 100], fov: 60 }}>
         <ambientLight intensity={0.5} />
         <pointLight position={[100, 100, 100]} intensity={1} />
         <Stars radius={300} depth={50} count={5000} factor={4} />

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Canvas } from "@react-three/fiber";
+import { babylonGl } from "@/components/Map/babylon";
 import { KeyboardControls, PerformanceMonitor } from "@react-three/drei";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -8191,10 +8192,7 @@ export default function GameBoard() {
             near: 0.1,
             far: 1000
           }}
-          gl={{
-            antialias: true,
-            powerPreference: "default"
-          }}
+          gl={babylonGl}
         >
           <color attach="background" args={["#000000"]} />
           <CompassRig />

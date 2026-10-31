@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
+import { babylonGl } from "@/components/Map/babylon";
 import { OrbitControls, Text, Stars } from '@react-three/drei';
 import * as THREE from 'three';
 import { Coordinates } from '@/lib/coordinates';
@@ -248,7 +249,7 @@ const SystemMap: React.FC<SystemMapProps> = ({ systemName, onSelectPlanet, onBac
     <div className="w-full h-full">
       {/* 3D System Map */}
       <div className="relative w-full h-[600px]">
-        <Canvas camera={{ position: [0, 30, 40], fov: 60 }}>
+        <Canvas gl={babylonGl} camera={{ position: [0, 30, 40], fov: 60 }}>
           <ambientLight intensity={0.3} />
           
           {/* Central star */}

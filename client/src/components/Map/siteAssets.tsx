@@ -8,6 +8,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, type V3, type Finish } from "./models";
 import { groundShader, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
 import type { PackId } from "./interiors/packs";
+import { setRenderTier } from "./babylon";
 import { biomeSky, createRandom, unitOf, packedness, type SiteGrounds, type DistrictPlan, type PropHit, type RaceScenery } from "@shared/logic";
 
 // ---------------------------------------------------------------------------------------------
@@ -74,6 +75,9 @@ export const useQuality = create<QualityState>((set, get) => ({
     set({ fixed: tier, tier: tier ?? detectTier() });
   },
 }));
+// The Babylon renderer draws its shadows and lights by the same tier
+setRenderTier(useQuality.getState().tier);
+useQuality.subscribe((s) => setRenderTier(s.tier));
 
 // ---------------------------------------------------------------------------------------------
 // Palettes: the colours of the plants, stone and canvas of a world

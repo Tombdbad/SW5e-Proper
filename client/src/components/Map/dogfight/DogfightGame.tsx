@@ -3,6 +3,7 @@
 // follow or the reticule instead, the mouse captured so that it cannot leave the screen, and fullscreen). Start the fight from the rules
 // with a seed, a scenario and the party's ship sheet; the fight's rules are shared/logic/dogfight.ts and dogfightSim.ts.
 import { Canvas, useThree } from "@react-three/fiber";
+import { babylonGl } from "@/components/Map/babylon";
 import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createRandom } from "@shared/logic";
 import { dogfightStart, type AirOptions, type Dogfight, type DogfightInput, type ScenarioId, type StarshipRow } from "@shared/logic/dogfight";
@@ -444,7 +445,7 @@ export function DogfightGame({ spec, go, controls, shell, onFinish }: { spec: Do
       data-captured={captured ? "true" : "false"}
     >
       <SceneGuard key={epoch} onCrash={(e) => rebuild(`the scene threw: ${String((e as Error)?.message ?? e).slice(0, 120)}`)}>
-        <Canvas
+        <Canvas gl={babylonGl}
           frameloop="never"
           camera={{ position: [0, 6, -22], fov: 65, near: 1, far: 16000 }}
           dpr={[1, 1.5]}

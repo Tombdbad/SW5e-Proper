@@ -225,6 +225,8 @@ export function limbMaterial<T extends THREE.Material>(base: T): T {
   const pivots = new Float32Array(LIMBS * 3);
   m.userData.pose = values;
   m.userData.pivots = pivots;
+  // the joints each limb hangs from, for the Babylon renderer (babylon.ts LimbPlugin), which turns the limbs in its own shader
+  m.userData.limbParents = PARENT;
   const lit = base instanceof THREE.MeshLambertMaterial || base instanceof THREE.MeshPhongMaterial;
   const before = base.onBeforeCompile;
   const beforeKey = base.customProgramCacheKey?.();

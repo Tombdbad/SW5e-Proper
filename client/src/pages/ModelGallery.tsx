@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { babylonGl } from "@/components/Map/babylon";
 import { OrbitControls, Text, Billboard } from "@react-three/drei";
 import { usePartyLook, Figure, Furniture, stoolsOf, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount, type GunAim } from "@/components/Map/models";
 import { tokenOf, SIDE_COLORS } from "@/components/Map/sprites";
@@ -477,7 +478,7 @@ export default function ModelGallery() {
   const person = (name: string, role = "", species?: string) => <Figure kind={tokenOf({ name, role })} ring={SIDE_COLORS.neutral} name={name} role={role} species={species} />;
   return (
     <div style={{ position: "fixed", inset: 0, background: "#0b0f16" }}>
-      <Canvas shadows dpr={1} camera={{ position: cam, fov: 45 }}>
+      <Canvas shadows dpr={1} camera={{ position: cam, fov: 45 }} gl={babylonGl}>
         <Stats />
         <color attach="background" args={["#1b2430"]} />
         <ambientLight intensity={0.6} />

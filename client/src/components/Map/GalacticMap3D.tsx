@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { babylonGl } from "@/components/Map/babylon";
 import { OrbitControls, Text, Stars } from '@react-three/drei';
 import * as THREE from 'three';
 import { Coordinates } from '@/lib/coordinates';
@@ -425,7 +426,7 @@ const GalacticMap3D: React.FC<GalacticMap3DProps> = ({ onSelectSystem }) => {
 
       {/* 3D Galaxy Map */}
       <div className="relative w-full h-[600px]">
-        <Canvas camera={{ position: [0, 30, 50], fov: 60 }}>
+        <Canvas gl={babylonGl} camera={{ position: [0, 30, 50], fov: 60 }}>
           <ambientLight intensity={0.2} />
           <pointLight position={[0, 0, 0]} intensity={1} color="#ffffff" />
           

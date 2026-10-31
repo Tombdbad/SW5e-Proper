@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { STICK } from "./interiors/stick";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { babylonGl } from "@/components/Map/babylon";
 import { Stars } from "@react-three/drei";
 import * as THREE from "three";
 import {
@@ -1456,12 +1457,12 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
       </div>
       <div className="relative flex-1 overflow-hidden" data-testid={`minigame-${game.kind}`} onPointerMove={dragAim}>
         {game.kind === "run" && course && (
-          <Canvas camera={{ position: [0, 6, -12], fov: 65, far: 2000 }} onCreated={({ gl }) => gl.setClearColor(game.mode === "ship" ? "#02040a" : "#8fb4d8")}>
+          <Canvas gl={babylonGl} camera={{ position: [0, 6, -12], fov: 65, far: 2000 }} onCreated={({ gl }) => gl.setClearColor(game.mode === "ship" ? "#02040a" : "#8fb4d8")}>
             <RunGame game={game} course={course} go={go} input={input} onFinish={({ next, t }) => finish({ kind: "run", course, collected: next, timeLeft: Math.max(0, course.limit - t) })} onFrame={(s) => (latest.current.run = { next: s.next, speed: Math.round(s.craft.speed) })} />
           </Canvas>
         )}
         {driven && track && race0 && (
-          <Canvas camera={{ position: [0, 6, -12], fov: 62, near: 0.3, far: 2400 }} dpr={[1, 1.5]} onCreated={({ gl }) => gl.setClearColor(raceLook(biome).sky)}>
+          <Canvas gl={babylonGl} camera={{ position: [0, 6, -12], fov: 62, near: 0.3, far: 2400 }} dpr={[1, 1.5]} onCreated={({ gl }) => gl.setClearColor(raceLook(biome).sky)}>
             <RaceGame track={track} race0={race0} biome={biome} look={game.kind === "road" || game.kind === "convoy" ? game.look : undefined} haulerLook={game.kind === "convoy" ? game.haulerLook : undefined} go={go} input={input} onFinish={(race) => finish(game.kind === "chase" ? { kind: "chase", race } : game.kind === "convoy" ? { kind: "convoy", race } : game.kind === "road" ? { kind: "road", race, metres: track.road?.finish ?? 0, stop: stopResult.current ?? (race.block?.state === "ran" || race.block?.state === "run" ? { outcome: "run", paid: 0, note: "You ran the roadblock" } : undefined) } : { kind: "race", race })} onFrame={onRace} pause={pause} act={act} onStop={() => game.kind === "road" && game.block && setStopped({ note: "", raised: false, talked: false })} gunner={lendGun} crew={partyCrew} seats={game.kind === "road" || game.kind === "convoy" ? game.seats : undefined} />
           </Canvas>
         )}
@@ -1611,7 +1612,7 @@ export function RoadRide({ gunner, gunnerAboard, pilotName }: { gunner: boolean;
       </div>
       <div className="relative flex-1 overflow-hidden">
         {game && track && race0 && (
-          <Canvas camera={{ position: [0, 6, -12], fov: 62, near: 0.3, far: 2400 }} dpr={[1, 1.5]} onCreated={({ gl }) => gl.setClearColor(raceLook(biome).sky)}>
+          <Canvas gl={babylonGl} camera={{ position: [0, 6, -12], fov: 62, near: 0.3, far: 2400 }} dpr={[1, 1.5]} onCreated={({ gl }) => gl.setClearColor(raceLook(biome).sky)}>
             <RaceGame key={key} track={track} race0={race0} biome={biome} look={game?.look} go={go} input={input} onFinish={() => {}} onFrame={(r) => { latest.current = r; }} gunner={gunnerAboard} remote seats={game.seats} crew={[{ kind: "person", name: pilotName, role: "pilot" }, ...(gunner ? [{ kind: "player", player: true }] : gunnerAboard ? [{ kind: "person", name: "Gunner", role: "pilot" }, { kind: "player", player: true }] : [{ kind: "player", player: true }]), ...(game.crew ?? [])]} />
           </Canvas>
         )}
