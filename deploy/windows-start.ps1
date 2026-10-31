@@ -2,7 +2,7 @@
 #   prod  the game the user plays: port 5000, database sw5e, tailnet HTTPS on port 443 (built from the working tree).
 #   test  a snapshot of the working tree for trying changes: port 5002, database sw5e_test (no showcase world),
 #         built with the test menu, tailnet HTTPS on port 10000. The snapshot lives in %USERPROFILE%\sw5e-test.
-# Starts Tailscale and PostgreSQL if they are stopped, installs packages if missing, stops the old server on the port,
+# Starts Tailscale and PostgreSQL if they are stopped, installs packages if missing, stops any server on ports 5000, 5001 and 5002,
 # builds, applies migrations, starts the server hidden (it keeps running when the window closes), sets up Tailscale Serve.
 # -Lan (co-op with friends on the same Wi-Fi): the server listens on the local network too (HOST=0.0.0.0) and the Windows Firewall is opened
 # for its port to the local subnet only. The game has no login: anyone on that network can open it, so use it only on a network you trust.
@@ -51,17 +51,26 @@ function Start-Tailscale {
   return $status.Self.DNSName.TrimEnd('.')
 }
 
-# Stops the server on the port, but only if it is one of ours (node dist/index.js)
-function Stop-GameServer($port) {
-  $conn = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1
-  if (-not $conn) { return }
-  $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $($conn.OwningProcess)"
-  if ($proc.CommandLine -notmatch 'dist[\\/]index\.js') {
-    throw "Port $port is used by $($proc.Name), which is not a built game server; stop it first"
+# Stops whatever listens on the game's ports (5000 prod, 5001, 5002 test), a built server or a dev one (npm run dev, tsx), with the
+# processes it started; so either shortcut leaves the three ports free for the server it starts.
+$GamePorts = 5000, 5001, 5002
+function Stop-GameServers {
+  $stopped = $false
+  foreach ($port in $GamePorts) {
+    $pids = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique
+    foreach ($id in $pids) {
+      if ($id -eq 0 -or $id -eq 4) { continue }   # System / System Idle: nothing of ours
+      $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $id"
+      Write-Host "Stopping $($proc.Name) on port $port (pid $id)"
+      # /T takes its child processes too (a tsx dev server runs under npm and node wrappers)
+      & taskkill /PID $id /T /F | Out-Null
+      $stopped = $true
+    }
   }
-  Write-Host "Stopping the old server on port $port (pid $($conn.OwningProcess))"
-  Stop-Process -Id $conn.OwningProcess -Force
-  Start-Sleep -Seconds 1
+  if ($stopped) { Start-Sleep -Seconds 1 }
+  foreach ($port in $GamePorts) {
+    if (Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue) { throw "Port $port is still in use after stopping its server" }
+  }
 }
 
 function Start-GameServer($dir, $port, $name) {
@@ -115,8 +124,8 @@ try {
   $env:NODE_ENV = 'production'
   if ($Lan) { $env:HOST = '0.0.0.0' } else { Remove-Item Env:HOST -ErrorAction SilentlyContinue }
 
-  Step "Stopping the $name server if it runs"
-  Stop-GameServer $port
+  Step 'Stopping any server on ports 5000, 5001 and 5002'
+  Stop-GameServers
 
   if ($Mode -eq 'test') { Copy-Snapshot $dir }
 

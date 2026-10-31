@@ -294,6 +294,8 @@ function threeShader(m: THREE.ShaderMaterial) {
 
 // ---- The mirror of one three scene ---------------------------------------------------------------------------------------------------
 
+// Frames a geometry stays cached after its last mesh has left the scene (a scene the party goes back to finds its shapes still there)
+const IDLE_GEOMETRY = 1800;
 interface GeoEntry { geo: Geometry; sig: string; users: number; frame: number; gone: boolean; indexed: boolean; colors: number }
 interface MatEntry { mat: PBRMaterial; version: number; frame: number; users: number; gone: boolean; maps: string }
 interface TexEntry { tex: Texture; version: number; users: number }
@@ -462,7 +464,7 @@ class Mirror {
     }
     // What has left the scene goes
     for (const [o, node] of this.nodes) if (node.frame !== this.frame) this.drop(o, node);
-    for (const [g, entry] of this.geos) if (entry.users <= 0 && entry.gone) { entry.geo.dispose(); this.geos.delete(g); }
+    for (const [g, entry] of this.geos) if (entry.users <= 0 && (entry.gone || this.frame - entry.frame > IDLE_GEOMETRY)) { entry.geo.dispose(); this.geos.delete(g); }
     for (const [m, entry] of this.mats) if (entry.users <= 0 && entry.gone) { entry.mat.dispose(); this.mats.delete(m); }
     this.look(this.daylight);
   }
@@ -546,6 +548,8 @@ class Mirror {
     if (node.mesh) {
       this.casters.delete(node.mesh);
       if (this.sun) this.sun.shadow.removeShadowCaster(node.mesh, false);
+      // (Mesh.dispose disposes its geometry with the last mesh using it; a cached one is kept for the next scene, and freed by `sync`)
+      if (node.geometry) node.mesh.geometry?.releaseForMesh(node.mesh, false);
       node.mesh.dispose(false, node.kind === "text");
     }
     if (node.shadow && !(node.light instanceof DirectionalLight)) {
@@ -572,9 +576,11 @@ class Mirror {
   private geometry(g: THREE.BufferGeometry): GeoEntry {
     let entry = this.geos.get(g);
     const sig = Object.entries(g.attributes).map(([k, a]) => `${k}${(a as THREE.BufferAttribute).version ?? 0}:${a.count}`).join() + `|${g.index?.version ?? "-"}:${g.index?.count ?? 0}`;
-    if (entry && entry.sig === sig) return entry;
-    if (!entry) {
-      entry = { geo: new Geometry(`g${g.id}`, this.scene, undefined, true), sig: "", users: 0, frame: 0, gone: false, indexed: !!g.index, colors: 0 };
+    if (entry && entry.sig === sig && !entry.geo.isDisposed()) return entry;
+    // (one whose Babylon geometry was disposed under it is made again, keeping the meshes counted as its users)
+    if (!entry || entry.geo.isDisposed()) {
+      const users = entry?.users ?? 0;
+      entry = { geo: new Geometry(`g${g.id}`, this.scene, undefined, true), sig: "", users, frame: 0, gone: false, indexed: !!g.index, colors: 0 };
       this.geos.set(g, entry);
       const e = entry;
       g.addEventListener("dispose", () => { e.gone = true; });
@@ -611,7 +617,10 @@ class Mirror {
   }
   private release(g: THREE.BufferGeometry) {
     const entry = this.geos.get(g);
-    if (entry) entry.users--;
+    if (!entry) return;
+    entry.users--;
+    // (the frame it was last used: a geometry nobody has used for a while is freed)
+    if (entry.users <= 0) entry.frame = this.frame;
   }
 
   // ---- Textures ----
@@ -940,6 +949,11 @@ class Mirror {
       node.matrix.fill(NaN);
     }
     const entry = this.geometry(g);
+    if (node.mesh.geometry !== entry.geo) {
+      entry.geo.applyToMesh(node.mesh);
+      node.mesh.isUnIndexed = !entry.indexed;
+      node.matrix.fill(NaN);
+    }
     return { node, mesh: node.mesh, entry };
   }
 

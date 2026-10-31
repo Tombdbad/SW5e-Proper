@@ -9,6 +9,11 @@ The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it 
 - The user said "Merge and rebuild": main fast-forwarded to `babylon` (4c3a8d8; no merge commit), `npm run build`, migrations (none pending), and the server on 5000 restarted as `deploy/windows-start.ps1 -Mode prod` does (hidden, logs in %LOCALAPPDATA%\sw5e\logs\prod.*.log; the old server's log kept as prod.out.2026-10-23.log). Checked on 5000: gallery drawn by Babylon, home page lists, no console errors. Tailscale Serve still sends 443 to 5000.
 - The `babylon` branch is left in place (fully merged).
 
+## 2026-10-31 (later): two things the user asked for after the push
+- **Assets vanished** going from the settlement view back to the party's local map: Babylon disposed a cached shared geometry with its last mesh (fix in `babylon.ts` `drop`/`geometry`/`meshNode`/`sync`, test in babylon.test.ts, all 524 tests pass; REVIVAL_NOTES "Assets gone after the settlement view"). Checked in the browser on a dev server (5099, stopped now).
+- **Desktop shortcuts** ("SW5e Production", "SW5e Test" run `deploy/windows-start.ps1`): now stop whatever listens on 5000, 5001 and 5002 first (`Stop-GameServers`, taskkill /T), built or dev server alike. Function tested on spare ports; the full shortcut not run (it would restart 5000 and open the browser).
+- Not rebuilt: the server on 5000 still runs the build from before the fix. Running "SW5e Production" builds and restarts it with the fix. Committed on main, not pushed.
+
 ## Running
 - 5000: the user's server, `node dist/index.js` built from main at 4c3a8d8 (Babylon), pid at restart 14012. To restart after a build: `deploy/windows-start.ps1 -Mode prod` (also opens the browser).
 - 5098, 5097, 5099 stopped; `.babylon-dist/` and `.main-wt/` deleted (and their lines in .git/info/exclude).

@@ -97,6 +97,27 @@ test("instanced meshes become thin instances; what leaves three's scene leaves B
   assert.equal(meshNamed(mirror(), many), undefined);
 });
 
+test("a shape kept by the game is drawn again when the scene that used it comes back (going from the settlement to a building)", () => {
+  const { scene, draw, mirror } = make();
+  // (the game builds its shapes once and every scene that needs one is given the same geometry)
+  const shared = new THREE.BoxGeometry(1, 1, 1);
+  const material = new THREE.MeshLambertMaterial();
+  const first = new THREE.Mesh(shared, material);
+  scene.add(first);
+  draw();
+  assert.equal(meshNamed(mirror(), first)!.getTotalVertices(), shared.attributes.position.count);
+  // The scene goes, some frames pass with nothing drawn, and a new scene uses the shape again
+  scene.remove(first);
+  for (let i = 0; i < 5; i++) draw();
+  const second = new THREE.Mesh(shared, material);
+  scene.add(second);
+  draw();
+  const mesh = meshNamed(mirror(), second)!;
+  assert.equal(mesh.getTotalVertices(), shared.attributes.position.count, "the shape still has its vertices");
+  assert.equal(mesh.getTotalIndices(), shared.index!.count);
+  assert.equal(mesh.geometry!.isDisposed(), false);
+});
+
 test("lights keep their strength (an ambient light becomes a hemisphere at 1/π, as three lights with it)", () => {
   const { scene, draw, mirror } = make();
   scene.add(new THREE.AmbientLight("#ffffff", Math.PI));
