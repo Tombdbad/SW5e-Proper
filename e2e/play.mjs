@@ -1816,7 +1816,8 @@ if (process.env.FORCE !== "0") {
       await sleep(3000);
       const rides = page.getByTestId("rides").first();
       await rides.waitFor({ timeout: 60000 });
-      await rides.getByRole("button").filter({ hasText: /Fly it yourself/ }).first().click();
+      // (the speeder's own ride opens the road trip: the "Fly it yourself" copies went in 4ba6d38)
+      await rides.getByTestId("ride-vehicle-v-trip").first().click();
       const briefs = [];
       const results = [];
       for (let n = 0; n < 80 && results.length < 2; n++) {
