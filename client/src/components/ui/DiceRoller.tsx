@@ -16,8 +16,11 @@ export default function DiceRoller() {
   const dice = useRef<Promise<DiceTable> | null>(null);
   const holding = useRef(0);
   const [text, setText] = useState({ total: "…", chips: "" });
+  // (the table's canvas is put on the page with the first roll, not before)
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    if (table) setMounted(true);
     const c = canvas.current;
     if (!table || !c) return;
     dice.current ??= import("./dice").then((m) =>
@@ -35,13 +38,13 @@ export default function DiceRoller() {
       ),
     );
     dice.current.then((d) => d.roll(table.id, pageDice(table.dice)));
-  }, [table]);
+  }, [table, mounted]);
 
   useEffect(() => () => void dice.current?.then((d) => d.dispose()), []);
 
   return (
     <div className="fixed inset-0 z-[80] bg-[#14181c]" style={{ display: table ? "block" : "none" }} data-testid="dice-table">
-      <canvas ref={canvas} className="block h-full w-full" style={{ touchAction: "none", cursor: "grab" }} />
+      {mounted && <canvas ref={canvas} className="block h-full w-full" style={{ touchAction: "none", cursor: "grab" }} />}
       <div className="pointer-events-none fixed left-1/2 top-2 min-w-[220px] max-w-[calc(100%-16px)] -translate-x-1/2 rounded-xl border border-white/15 bg-[#16181d]/90 px-3 py-2 text-center text-gray-100 backdrop-blur">
         <div className="text-[22px] font-bold">{text.total}</div>
         <div className="mt-0.5 text-[13px] text-gray-400">{text.chips}</div>
