@@ -73,8 +73,11 @@ export function setRenderTier(tier: RenderTier) {
   LOOK.tier = tier;
   for (const r of RENDERERS) r.retier();
 }
+// A device that draws in software (SwiftShader, llvmpipe: the play-through test's browser among them) is drawn as lite whatever its tier
+const SOFTWARE = { on: false };
+const lite = () => LOOK.tier === "lite" || SOFTWARE.on;
 function shadowSettings() {
-  if (LOOK.tier === "lite") return { cascades: 2, size: 1024, quality: ShadowGenerator.QUALITY_LOW, lamps: 0, lights: 4 };
+  if (lite()) return { cascades: 2, size: 1024, quality: ShadowGenerator.QUALITY_LOW, lamps: 0, lights: 4 };
   if (!DESKTOP) return { cascades: 3, size: 1024, quality: ShadowGenerator.QUALITY_MEDIUM, lamps: 1, lights: 6 };
   return { cascades: 4, size: 2048, quality: ShadowGenerator.QUALITY_HIGH, lamps: 2, lights: 8 };
 }
@@ -378,7 +381,7 @@ class Mirror {
   // camera in a small cube that the surfaces reflect, as bright as the sun is; bloom round what is drawn near white; and contact shadows
   // on a desktop. Only where the scene is drawn whole (an overlay drawn over another scene, the dogfight's cockpit, gets none).
   private look(sun: number) {
-    const full = LOOK.tier === "full" && this.owner.autoClear && this.owner.look;
+    const full = !lite() && this.owner.autoClear && this.owner.look;
     if (!full) return this.plain();
     const scene = this.scene;
     if (!this.probe) {
@@ -740,7 +743,7 @@ class Mirror {
       mat.invertNormalMapY = true;
     }
     mat.useParallax = !!packed;
-    mat.useParallaxOcclusion = !!packed && DESKTOP && LOOK.tier === "full";
+    mat.useParallaxOcclusion = !!packed && DESKTOP && !lite();
     if (patch?.kind === "parallax") mat.parallaxScaleBias = patch.parallax;
     mat.emissiveTexture = this.texture(any.emissiveMap);
     mat.opacityTexture = this.texture(any.alphaMap);
@@ -1438,6 +1441,7 @@ export class BabylonRenderer {
     this.domElement = canvas;
     this.engine = engine ?? new Engine(canvas, true, { stencil: true, preserveDrawingBuffer: false, powerPreference: "default", audioEngine: false, alpha: true } as never, false);
     if (engine) this.look = false;
+    else if (/swiftshader|llvmpipe|software|basic render/i.test(this.engine.getGlInfo().renderer)) SOFTWARE.on = true;
     RENDERERS.add(this);
     // The last one made, for looking into from the console and the tests
     if (typeof window !== "undefined") (window as unknown as { __babylon?: BabylonRenderer }).__babylon = this;
