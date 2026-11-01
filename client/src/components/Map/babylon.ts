@@ -345,7 +345,8 @@ function threeShader(m: THREE.ShaderMaterial) {
 
 // Frames a geometry stays cached after its last mesh has left the scene (a scene the party goes back to finds its shapes still there)
 const IDLE_GEOMETRY = 1800;
-interface GeoEntry { geo: Geometry; sig: unknown[]; users: number; frame: number; gone: boolean; indexed: boolean; colors: number }
+// (`spare`: copies of the shape for instanced meshes to take, see `own`)
+interface GeoEntry { geo: Geometry; sig: unknown[]; users: number; frame: number; gone: boolean; indexed: boolean; colors: number; spare: Geometry[] }
 // What a geometry was copied from: each attribute with its version and count, then the index's (checked every frame for every mesh, so
 // without making strings or arrays)
 const geometrySig = (g: THREE.BufferGeometry) => {
@@ -406,6 +407,8 @@ interface Node {
   matrix: Float32Array;
   world: Matrix;
   geometry?: THREE.BufferGeometry;
+  // an instanced mesh's own copy of the shape (see `own`)
+  own?: { geo: Geometry; sig: unknown[]; entry: GeoEntry };
   material?: THREE.Material | THREE.Material[];
   frame: number;
   casts?: boolean;
@@ -600,7 +603,7 @@ class Mirror {
     this.lightUp();
     // What has left the scene goes
     for (const [o, node] of this.nodes) if (node.frame !== this.frame) this.drop(o, node);
-    for (const [g, entry] of this.geos) if (entry.users <= 0 && (entry.gone || this.frame - entry.frame > IDLE_GEOMETRY)) { entry.geo.dispose(); this.geos.delete(g); }
+    for (const [g, entry] of this.geos) if (entry.users <= 0 && (entry.gone || this.frame - entry.frame > IDLE_GEOMETRY)) { entry.geo.dispose(); for (const spare of entry.spare) spare.dispose(); this.geos.delete(g); }
     for (const [m, entry] of this.mats) {
       if (entry.users > 0 || !entry.gone) continue;
       entry.mat?.dispose();
@@ -706,6 +709,7 @@ class Mirror {
         this.rig.pool[node.light instanceof SpotLight ? "spot" : "point"].push(node.light as PointLight & SpotLight);
       } else node.light.dispose();
     }
+    this.giveBack(node);
     if (node.geometry) this.release(node.geometry);
     this.points.get(o)?.mat.dispose();
     this.points.delete(o);
@@ -721,12 +725,22 @@ class Mirror {
     // (one whose Babylon geometry was disposed under it is made again, keeping the meshes counted as its users)
     if (!entry || entry.geo.isDisposed()) {
       const users = entry?.users ?? 0;
-      entry = { geo: new Geometry(`g${g.id}`, this.scene, undefined, true), sig: [], users, frame: 0, gone: false, indexed: !!g.index, colors: 0 };
+      entry = { geo: new Geometry(`g${g.id}`, this.scene, undefined, true), sig: [], users, frame: 0, gone: false, indexed: !!g.index, colors: 0, spare: entry?.spare ?? [] };
       this.geos.set(g, entry);
       const e = entry;
       g.addEventListener("dispose", () => { e.gone = true; });
     }
-    const geo = entry.geo;
+    this.fill(entry.geo, g);
+    entry.colors = g.attributes.color ? g.attributes.color.itemSize : 0;
+    entry.indexed = !!g.index;
+    entry.sig = geometrySig(g);
+    // (copies made from the old shape are of no use)
+    for (const spare of entry.spare) spare.dispose();
+    entry.spare.length = 0;
+    return entry;
+  }
+  // A three geometry's vertices and indices into a Babylon geometry
+  private fill(geo: Geometry, g: THREE.BufferGeometry) {
     for (const kind of geo.getVerticesDataKinds()) geo.removeVerticesData(kind);
     const pos = g.attributes.position;
     if (pos) geo.setVerticesData(VertexBuffer.PositionKind, floats(pos), true, 3);
@@ -740,16 +754,39 @@ class Mirror {
     const uv = g.attributes.uv;
     if (uv) geo.setVerticesData(VertexBuffer.UVKind, floats(uv), true, 2);
     const color = g.attributes.color;
-    entry.colors = color ? color.itemSize : 0;
     if (color) geo.setVerticesData(VertexBuffer.ColorKind, floats(color), true, color.itemSize);
     for (const [name, attr] of Object.entries(g.attributes)) {
       if (["position", "normal", "uv", "color", "uv1", "uv2", "tangent"].includes(name)) continue;
       geo.setVerticesData(name, floats(attr), true, attr.itemSize);
     }
-    entry.indexed = !!g.index;
     if (g.index) geo.setIndices(g.index.array as Uint32Array, pos?.count, true);
-    entry.sig = geometrySig(g);
-    return entry;
+  }
+
+  // Babylon keeps a thin-instanced mesh's instances on its GEOMETRY's vertex buffers, so two instanced meshes sharing a geometry share their
+  // instances: the one set last drew for both. The game draws one piece of the asset library in several places (the open ground's, the
+  // cover's and the belt beyond's: one geometry, three instanced meshes), and the ground inside lost its trees, rocks and plants to the
+  // belt outside (the user, 2026-11-01: "all rocks and trees missing from within the confines of the local 3d map, drawn OUTSIDE").
+  // So an instanced mesh has a copy of the shape of its own, taken from the entry's spares or made, and given back when it goes
+  private own(node: Node, entry: GeoEntry, g: THREE.BufferGeometry): Geometry {
+    if (node.own && node.own.sig === entry.sig && !node.own.geo.isDisposed()) return node.own.geo;
+    this.giveBack(node);
+    let geo = entry.spare.pop();
+    if (!geo || geo.isDisposed()) {
+      geo = new Geometry(`g${g.id}i`, this.scene, undefined, true);
+      this.fill(geo, g);
+    }
+    node.own = { geo, sig: entry.sig, entry };
+    return geo;
+  }
+  private giveBack(node: Node) {
+    const own = node.own;
+    if (!own) return;
+    node.own = undefined;
+    if (own.geo.isDisposed()) return;
+    // (the instances it carried go: the next mesh to take it brings its own)
+    for (const kind of own.geo.getVerticesDataKinds()) if (own.geo.getVertexBuffer(kind)?.getIsInstanced()) own.geo.removeVerticesData(kind);
+    if (own.entry.sig === own.sig) own.entry.spare.push(own.geo);
+    else own.geo.dispose();
   }
   private use(g: THREE.BufferGeometry) {
     const entry = this.geometry(g);
@@ -1195,21 +1232,22 @@ class Mirror {
     if (node.geometry !== g || !node.mesh) {
       if (node.geometry) this.release(node.geometry);
       node.geometry = g;
-      const entry = this.use(g);
+      this.use(g);
       if (!node.mesh) {
         node.mesh = kind === "lines" ? new LinesMesh(`l${o.id}`, this.scene) : new Mesh(`o${o.id}`, this.scene);
         node.mesh.isPickable = false;
         node.mesh.sideOrientation = FRONT;
       }
-      entry.geo.applyToMesh(node.mesh);
-      node.mesh.isUnIndexed = !entry.indexed;
-      node.matrix.fill(NaN);
     }
     const entry = this.geometry(g);
-    if (node.mesh.geometry !== entry.geo) {
-      entry.geo.applyToMesh(node.mesh);
+    const geo = (o as THREE.InstancedMesh).isInstancedMesh ? this.own(node, entry, g) : entry.geo;
+    if (node.mesh.geometry !== geo) {
+      geo.applyToMesh(node.mesh);
       node.mesh.isUnIndexed = !entry.indexed;
       node.matrix.fill(NaN);
+      // (a new geometry has none of the instances: they are set again)
+      node.instances = undefined;
+      node.colors = undefined;
     }
     return { node, mesh: node.mesh, entry };
   }

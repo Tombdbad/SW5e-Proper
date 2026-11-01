@@ -1,7 +1,11 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-11-01 (Windows PC). Branch **`main`**. origin has main up to e502652; f20b19e, 5df1f3e and the room-change commit after them are local, not pushed.
+Written 2026-11-01 (Windows PC). Branch **`main`**. origin has main up to e502652; f20b19e, 5df1f3e, f19d3c8 and the trees-and-rocks commit after them are local, not pushed.
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told, never commit it.
+
+## 2026-11-01 (newest): trees, rocks and plants missing inside the walkable ground (REVIVAL_NOTES "Trees, rocks and plants missing...")
+- Cause: Babylon keeps thin instances on the geometry, and instanced meshes of one piece (ground, cover, belt) shared one: the last set drew for all, the belt outside showed everything, the ground inside nothing. Fixed with a geometry copy for each instanced mesh (babylon.ts `own`). The bug is also in the build on 5000 (e502652): rebuild to see it fixed. Test added (babylon.test.ts, 12 pass; whole suite 533).
+- Checked on dev 5099, campaign 626 (a new one, Naboo, forest, test database). NOT run: `npm run e2e`. The 5099 server is stopped at the end of the turn.
 
 ## 2026-11-01 (last): room changes, district loading screen, nearest first, looks (REVIVAL_NOTES "Room changes, the district's loading screen...")
 - babylon.ts: one fixed light rig, `Effect.PersistentMode`, shadow shaders named by source, GPU textures by image, label cards kept, lamp shadow every other frame, materials shared by look, nearest-first draw order. LocalMap BuildingScene: the district loading screen (`useWarmup`, GameBoard `DistrictLoading`). Room changes 1.5 s → under 0.2 s; 52 shaders a session. Tests: babylon.test.ts (11).

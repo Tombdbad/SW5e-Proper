@@ -291,3 +291,40 @@ test("three materials that look alike share one Babylon material; one whose colo
   draw();
   assert.notEqual(mat(f1), mat(f2));
 });
+
+test("two instanced meshes of one shape keep their own instances (the open ground's trees and the belt beyond's, one piece in two places)", () => {
+  const { scene, draw, mirror } = make();
+  // (the game draws one piece of the asset library in several places: one three geometry and material, an instanced mesh each)
+  const geo = new THREE.BoxGeometry(1, 1, 1);
+  const material = new THREE.MeshLambertMaterial();
+  const make2 = (at: number[]) => {
+    const mesh = new THREE.InstancedMesh(geo, material, at.length);
+    at.forEach((x, i) => mesh.setMatrixAt(i, new THREE.Matrix4().makeTranslation(x, 0, 0)));
+    mesh.instanceMatrix.needsUpdate = true;
+    return mesh;
+  };
+  const inner = make2([1, 2, 3]);
+  const belt = make2([50, 60]);
+  scene.add(inner, belt);
+  draw();
+  const a = meshNamed(mirror(), inner)!, b = meshNamed(mirror(), belt)!;
+  assert.notEqual(a.geometry, b.geometry, "each has a geometry of its own: Babylon keeps the instances on it");
+  // (each instance is a 4 by 4 matrix: its world0..3 rows are one buffer)
+  const instancesOf = (m: Mesh) => (m.getVertexBuffer("world0")!.getData() as Float32Array).length / 16;
+  assert.equal(instancesOf(a), 3);
+  assert.equal(instancesOf(b), 2);
+  assert.equal(a.thinInstanceCount, 3);
+  assert.equal(b.thinInstanceCount, 2);
+  // the plain mesh of the shape still shares one, and a mesh going gives its copy back for the next
+  const plain = new THREE.Mesh(geo, material);
+  scene.add(plain);
+  draw();
+  scene.remove(belt);
+  draw();
+  const again = make2([7, 8, 9, 10]);
+  scene.add(again);
+  draw();
+  const c = meshNamed(mirror(), again)!;
+  assert.equal(instancesOf(c), 4, "a copy taken again carries only its new instances");
+  assert.equal(instancesOf(a), 3);
+});
