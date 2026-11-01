@@ -1,6 +1,6 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-11-01 (Windows PC). Branch **`main`** (the checkout is on main). origin has main up to 98a2178; 5f5121c and this session's commit are local, not pushed (the user has not asked).
+Written 2026-11-01 (Windows PC). Branch **`main`** (the checkout is on main). origin has main up to e502652 (pushed at the user's request).
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told, never commit it.
 
 ## 2026-11-01: the user's list (REVIVAL_NOTES "Walking, balustrades, night, moons, mounts, warm-up" has all of it)
@@ -9,10 +9,10 @@ The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it 
 - Tests: 525 pass, 3 skipped (before the last edit to ViewRig's key handler, which is covered by the browser check, not a test). New: stride rate, errand timeline, moon phases, driven walks.
 - NOT looked at in the browser: the balustrade (the test campaign is a cave hideout: no walkway), the riders (no district with strolls), the night and the moons. Look at an urban or station world at night. The warm-up cannot be measured by me (no feel for the hitch, and it does not compile shaders): ask the user whether room changes are better.
 - Both desktop shortcuts now always listen on the local network (`$Lan = $true` in windows-start.ps1), the user asked.
-- Not rebuilt: the server on 5000 runs the build from before the vanishing-assets fix and all of this. "SW5e Production" (desktop shortcut) builds and restarts it.
+- Rebuilt from e502652 and restarted by hand (not the shortcut: it stops at "Port 5002 is still in use", node pid 15424 with children, access denied, so it was started from an administrator window). 5000 listens on 0.0.0.0. No firewall rule "SW5e game port 5000" exists: it is made once by the shortcut from an administrator window. Wi-fi reachability from another device is untested.
 
 ## Running
-- 5000: the user's server, `node dist/index.js` built from main at 4c3a8d8 (Babylon). To restart after a build: `deploy/windows-start.ps1 -Mode prod` (also opens the browser).
+- 5000: the user's server, `node dist/index.js` built from main at e502652, HOST=0.0.0.0, logs in %LOCALAPPDATA%\sw5e\logs. To restart after a build: `deploy/windows-start.ps1 -Mode prod` (also opens the browser; needs 5002 free).
 - The 5099 dev server is stopped. Not ours, left alone: tsx dev servers on 3000 and 5057.
 - The browser pane counts as automated (dice: set `useDice.setState({table})` directly). Night in the game: the HUD's "Until evening" then "Wait 1 h". `window.__street()` gives the party's position, `window.__air()` its jump mode.
 
