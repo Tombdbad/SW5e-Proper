@@ -1,7 +1,12 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-11-01 (Windows PC). Branch **`main`**. origin has main up to e502652; the commit after it (wall packs, Options, effects, timing) is local, not pushed.
+Written 2026-11-01 (Windows PC). Branch **`main`**. origin has main up to e502652; f20b19e (wall packs, Options, effects, timing) and the frame-rate commit after it are local, not pushed.
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told, never commit it.
+
+## 2026-11-01 (latest): where the frames go (REVIVAL_NOTES "Where the frame goes", "Fixed", "Next")
+- Measured on dev 5099 (`/game/625`, the only campaign in `sw5e_test`) by driving frames from the console (the hidden pane makes none). The GPU is pixel-bound; the old desktop tier was too heavy for the HD 530; the mirror sync was 11 ms of garbage-making.
+- Fixed in babylon.ts: lights re-enabled every frame (Babylon walked all meshes per light), string/array signatures per mesh and material, and an `INTEGRATED` (Intel non-Arc) "auto" like a phone: 3x1024 shadows, no SSAO, no parallax occlusion. Sync 11 to 3 ms; GPU by day 26 to 17 ms at 704x720. Test added (babylon.test.ts, 10 pass). NOT rebuilt on 5000.
+- The 5099 dev server (background, `npx tsx server/index.ts` on `sw5e_test`) may still run: stop it when done. The pane localStorage has `sw5e.detail=full`, `sw5e.resolution=1` (dev origin only).
 
 ## 2026-11-01 (later): walls with two textures, resolution, Options (REVIVAL_NOTES "Wall textures, resolution, Options")
 - Walls from one pack a building (`wallPackOf`) and the pattern in the building's frame (boxUV origin, WallAnchor). Options dialog (resolution, detail, effects, display) replaces four buttons of the map strip. `__babylon.timing` splits the frame. NOT rebuilt: 5000 runs e502652; the shortcut or a build and restart brings this.

@@ -101,12 +101,17 @@ export function setRenderTier(tier: RenderTier) {
 // A device that draws in software (SwiftShader, llvmpipe: the play-through test's browser among them) is drawn as lite whatever its tier
 const SOFTWARE = { on: false };
 const lite = () => LOOK.tier === "lite" || SOFTWARE.on;
+// A desktop drawing on the processor's own graphics (Intel HD, UHD, Iris; not Arc) gets a phone's full look on "auto": measured
+// 2026-11-01 on an HD 530, at 704×720, a street by day took 53 ms on the GPU with four 2048 cascades, 26 without them, and parallax
+// occlusion and contact shadows another 5 and 3 (REVIVAL_NOTES "Where the frame goes")
+const INTEGRATED = { on: false };
+const BIG_GPU = () => DESKTOP && !INTEGRATED.on;
 function shadowSettings() {
   if (EFFECTS.shadows === "off") return { cascades: 2, size: 1024, quality: ShadowGenerator.QUALITY_LOW, lamps: 0, lights: lite() ? 4 : 6 };
   if (EFFECTS.shadows === "low") return { cascades: 2, size: 1024, quality: ShadowGenerator.QUALITY_LOW, lamps: lite() ? 0 : 1, lights: lite() ? 4 : 6 };
   if (EFFECTS.shadows === "high") return { cascades: 4, size: 2048, quality: ShadowGenerator.QUALITY_HIGH, lamps: 2, lights: 8 };
   if (lite()) return { cascades: 2, size: 1024, quality: ShadowGenerator.QUALITY_LOW, lamps: 0, lights: 4 };
-  if (!DESKTOP) return { cascades: 3, size: 1024, quality: ShadowGenerator.QUALITY_MEDIUM, lamps: 1, lights: 6 };
+  if (!BIG_GPU()) return { cascades: 3, size: 1024, quality: ShadowGenerator.QUALITY_MEDIUM, lamps: 1, lights: 6 };
   return { cascades: 4, size: 2048, quality: ShadowGenerator.QUALITY_HIGH, lamps: 2, lights: 8 };
 }
 // Both light a white surface at 1/π of a direct light's intensity; but three puts the 1/π on its ambient and hemisphere lights too,
@@ -324,8 +329,40 @@ function threeShader(m: THREE.ShaderMaterial) {
 
 // Frames a geometry stays cached after its last mesh has left the scene (a scene the party goes back to finds its shapes still there)
 const IDLE_GEOMETRY = 1800;
-interface GeoEntry { geo: Geometry; sig: string; users: number; frame: number; gone: boolean; indexed: boolean; colors: number }
-interface MatEntry { mat: PBRMaterial; version: number; frame: number; users: number; gone: boolean; maps: string }
+interface GeoEntry { geo: Geometry; sig: unknown[]; users: number; frame: number; gone: boolean; indexed: boolean; colors: number }
+// What a geometry was copied from: each attribute with its version and count, then the index's (checked every frame for every mesh, so
+// without making strings or arrays)
+const geometrySig = (g: THREE.BufferGeometry) => {
+  const sig: unknown[] = [];
+  for (const k in g.attributes) {
+    const a = g.attributes[k] as THREE.BufferAttribute;
+    sig.push(a, a.version ?? 0, a.count);
+  }
+  sig.push(g.index, g.index?.version ?? -1, g.index?.count ?? 0);
+  return sig;
+};
+function sameGeometry(sig: unknown[], g: THREE.BufferGeometry) {
+  let i = 0;
+  for (const k in g.attributes) {
+    const a = g.attributes[k] as THREE.BufferAttribute;
+    if (sig[i] !== a || sig[i + 1] !== (a.version ?? 0) || sig[i + 2] !== a.count) return false;
+    i += 3;
+  }
+  const x = g.index;
+  return i + 3 === sig.length && sig[i] === x && sig[i + 1] === (x?.version ?? -1) && sig[i + 2] === (x?.count ?? 0);
+}
+interface MatEntry { mat: PBRMaterial; version: number; frame: number; users: number; gone: boolean; maps: unknown[] }
+// The maps a material was made with (each with its version) and the tier, checked every frame the same way
+type Mapped = { map?: THREE.Texture | null; normalMap?: THREE.Texture | null; emissiveMap?: THREE.Texture | null; alphaMap?: THREE.Texture | null };
+const mapsSig = (m: Mapped, height: THREE.Texture | null) => {
+  const sig: unknown[] = [];
+  for (const t of [m.map, m.normalMap, m.emissiveMap, m.alphaMap, height]) sig.push(t ?? null, t?.version ?? -1);
+  sig.push(LOOK.tier);
+  return sig;
+};
+const sameMap = (sig: unknown[], i: number, t: THREE.Texture | null | undefined) => sig[i] === (t ?? null) && sig[i + 1] === (t?.version ?? -1);
+const sameMaps = (sig: unknown[], m: Mapped, height: THREE.Texture | null) =>
+  sig.length === 11 && sameMap(sig, 0, m.map) && sameMap(sig, 2, m.normalMap) && sameMap(sig, 4, m.emissiveMap) && sameMap(sig, 6, m.alphaMap) && sameMap(sig, 8, height) && sig[10] === LOOK.tier;
 interface TexEntry { tex: Texture; version: number; users: number }
 interface Node {
   kind: "mesh" | "lines" | "points" | "sprite" | "text" | "light";
@@ -357,6 +394,8 @@ class Mirror {
   private shaders = new Map<THREE.Material, { mat: ShaderMaterial; key: string }>();
   private packs = new Map<string, Texture>();
   private frame = 0;
+  private stack: THREE.Object3D[] = [];
+  private shownStack: boolean[] = [];
   private sun?: { light: DirectionalLight; shadow: ShadowGenerator };
   private casters = new Set<Mesh>();
   private noToneMapping: ImageProcessingConfiguration;
@@ -443,7 +482,7 @@ class Mirror {
       p.bloomScale = 0.5;
       this.pipeline = p;
     }
-    if ((EFFECTS.occlusion === "auto" ? DESKTOP : EFFECTS.occlusion === "on") && !this.ssao) {
+    if ((EFFECTS.occlusion === "auto" ? BIG_GPU() : EFFECTS.occlusion === "on") && !this.ssao) {
       const ao = new SSAO2RenderingPipeline("contact", scene, { ssaoRatio: 0.5, blurRatio: 0.5 }, [this.camera], false);
       ao.radius = 0.6;
       ao.totalStrength = 1.1;
@@ -483,14 +522,22 @@ class Mirror {
     this.daylight = 0;
     this.syncScene(scene);
     this.syncCamera(camera);
-    // Everything the scene holds now, with its visibility
-    const stack: [THREE.Object3D, boolean][] = [[scene, true]];
+    // Everything the scene holds now, with its visibility (two stacks kept from frame to frame: a scene of thousands makes no garbage)
+    const stack = this.stack, shownStack = this.shownStack;
+    stack.length = 0;
+    shownStack.length = 0;
+    stack.push(scene);
+    shownStack.push(true);
     while (stack.length) {
-      const [o, shown] = stack.pop()!;
-      const visible = shown && o.visible;
+      const o = stack.pop()!;
+      const visible = shownStack.pop()! && o.visible;
       if (o !== scene) this.syncObject(o, visible, camera);
-      for (let i = o.children.length - 1; i >= 0; i--) stack.push([o.children[i], visible]);
+      for (let i = o.children.length - 1; i >= 0; i--) {
+        stack.push(o.children[i]);
+        shownStack.push(visible);
+      }
     }
+    stack.length = 0;
     // What has left the scene goes
     for (const [o, node] of this.nodes) if (node.frame !== this.frame) this.drop(o, node);
     for (const [g, entry] of this.geos) if (entry.users <= 0 && (entry.gone || this.frame - entry.frame > IDLE_GEOMETRY)) { entry.geo.dispose(); this.geos.delete(g); }
@@ -604,12 +651,11 @@ class Mirror {
 
   private geometry(g: THREE.BufferGeometry): GeoEntry {
     let entry = this.geos.get(g);
-    const sig = Object.entries(g.attributes).map(([k, a]) => `${k}${(a as THREE.BufferAttribute).version ?? 0}:${a.count}`).join() + `|${g.index?.version ?? "-"}:${g.index?.count ?? 0}`;
-    if (entry && entry.sig === sig && !entry.geo.isDisposed()) return entry;
+    if (entry && sameGeometry(entry.sig, g) && !entry.geo.isDisposed()) return entry;
     // (one whose Babylon geometry was disposed under it is made again, keeping the meshes counted as its users)
     if (!entry || entry.geo.isDisposed()) {
       const users = entry?.users ?? 0;
-      entry = { geo: new Geometry(`g${g.id}`, this.scene, undefined, true), sig: "", users, frame: 0, gone: false, indexed: !!g.index, colors: 0 };
+      entry = { geo: new Geometry(`g${g.id}`, this.scene, undefined, true), sig: [], users, frame: 0, gone: false, indexed: !!g.index, colors: 0 };
       this.geos.set(g, entry);
       const e = entry;
       g.addEventListener("dispose", () => { e.gone = true; });
@@ -636,7 +682,7 @@ class Mirror {
     }
     entry.indexed = !!g.index;
     if (g.index) geo.setIndices(g.index.array as Uint32Array, pos?.count, true);
-    entry.sig = sig;
+    entry.sig = geometrySig(g);
     return entry;
   }
   private use(g: THREE.BufferGeometry) {
@@ -728,7 +774,7 @@ class Mirror {
       mat.maxSimultaneousLights = shadowSettings().lights;
       // three's diffuse is Lambert's (Babylon's own darkens a rough surface)
       mat.brdf.baseDiffuseModel = Constants.MATERIAL_DIFFUSE_MODEL_LAMBERT;
-      entry = { mat, version: -1, frame: 0, users: 0, gone: false, maps: "" };
+      entry = { mat, version: -1, frame: 0, users: 0, gone: false, maps: [] };
       this.mats.set(m, entry);
       const e = entry;
       m.addEventListener("dispose", () => { e.gone = true; });
@@ -748,17 +794,17 @@ class Mirror {
     // What changes from frame to frame: colour, opacity, emission
     if (any.color) c3(any.color, mat.albedoColor);
     else mat.albedoColor.set(1, 1, 1);
-    const emissive = any.emissive ? any.emissive.clone().multiplyScalar(any.emissiveIntensity ?? 1) : null;
-    if (emissive) c3(emissive, mat.emissiveColor);
-    else mat.emissiveColor.set(0, 0, 0);
+    if (any.emissive) {
+      const k = any.emissiveIntensity ?? 1;
+      mat.emissiveColor.set(any.emissive.r * k, any.emissive.g * k, any.emissive.b * k);
+    } else mat.emissiveColor.set(0, 0, 0);
     mat.alpha = m.opacity;
     // The maps, when they come
     const patch = PATCHES.get(m);
     const height = patch?.kind === "parallax" ? patch.height.value : null;
-    const maps = [any.map, any.normalMap, any.emissiveMap, any.alphaMap, height].map((t) => (t ? `${t.id}:${t.version}` : "")).join() + LOOK.tier;
-    if (entry.version === m.version && entry.maps === maps) return mat;
+    if (entry.version === m.version && sameMaps(entry.maps, any, height)) return mat;
     entry.version = m.version;
-    entry.maps = maps;
+    entry.maps = mapsSig(any, height);
     const basic = (m as THREE.MeshBasicMaterial).isMeshBasicMaterial || (m as THREE.PointsMaterial).isPointsMaterial || (m as THREE.SpriteMaterial).isSpriteMaterial || (m as THREE.ShaderMaterial).isShaderMaterial;
     mat.unlit = basic;
     if ((m as THREE.MeshStandardMaterial).isMeshStandardMaterial) {
@@ -781,7 +827,7 @@ class Mirror {
       mat.invertNormalMapY = true;
     }
     mat.useParallax = !!packed;
-    mat.useParallaxOcclusion = !!packed && DESKTOP && !lite();
+    mat.useParallaxOcclusion = !!packed && BIG_GPU() && !lite();
     if (patch?.kind === "parallax") mat.parallaxScaleBias = patch.parallax;
     mat.emissiveTexture = this.texture(any.emissiveMap);
     mat.opacityTexture = this.texture(any.alphaMap);
@@ -938,8 +984,8 @@ class Mirror {
     return mat;
   }
   private bind(node: Node, mesh: Mesh, material: THREE.Material | THREE.Material[], g: THREE.BufferGeometry, colors: number) {
-    const list = [material].flat();
     if (node.material !== material) {
+      const list = [material].flat();
       for (const m of [node.material ?? []].flat()) this.releaseMaterial(m);
       node.material = material;
       for (const m of list) {
@@ -954,8 +1000,9 @@ class Mirror {
         const total = g.attributes.position.count;
         for (const group of g.groups) new SubMesh(group.materialIndex ?? 0, 0, total, group.start, group.count, mesh);
       } else mesh.material = this.mats.get(material)!.mat;
-    } else for (const m of list) this.material(m, colors);
-    const first = list[0];
+    } else if (Array.isArray(material)) for (const m of material) this.material(m, colors);
+    else this.material(material, colors);
+    const first = Array.isArray(material) ? material[0] : material;
     mesh.useVertexColors = !!(first as THREE.MeshBasicMaterial).vertexColors && colors > 0;
     mesh.hasVertexAlpha = mesh.useVertexColors && colors === 4 && first.transparent;
   }
@@ -991,7 +1038,8 @@ class Mirror {
     if (!g?.attributes.position) return;
     const { node, mesh, entry } = this.meshNode(o, "mesh", g);
     // (an instanced mesh with no instances draws nothing in three; Babylon would draw its one mesh)
-    mesh.setEnabled(visible && [o.material].flat().some((m) => m.visible) && !((o as THREE.InstancedMesh).isInstancedMesh && (o as THREE.InstancedMesh).count === 0));
+    const shown = Array.isArray(o.material) ? o.material.some((m) => m.visible) : o.material.visible;
+    mesh.setEnabled(visible && shown && !((o as THREE.InstancedMesh).isInstancedMesh && (o as THREE.InstancedMesh).count === 0));
     if (!visible) return;
     this.place(node, o, mesh);
     const shader = !Array.isArray(o.material) && (o.material as THREE.ShaderMaterial).isShaderMaterial ? (o.material as THREE.ShaderMaterial) : null;
@@ -1277,14 +1325,16 @@ class Mirror {
       else return;
     }
     const light = node.light;
-    light.setEnabled(visible && l.intensity > 0);
+    // (only when it changes: Babylon's light goes through every mesh in the scene each time it is told, on or off)
+    const on = visible && l.intensity > 0;
+    if (light.isEnabled(false) !== on) light.setEnabled(on);
     if (!visible) return;
     light.intensity = light instanceof HemisphericLight ? l.intensity * AMBIENT : l.intensity;
     c3(l.color, light.diffuse);
     const e = l.matrixWorld.elements;
     if (light instanceof HemisphericLight) {
       // An ambient light is the same from everywhere: a hemisphere whose ground is its sky
-      light.groundColor = hemi.isHemisphereLight ? c3(hemi.groundColor) : c3(l.color);
+      c3(hemi.isHemisphereLight ? hemi.groundColor : l.color, light.groundColor);
       light.specular.set(0, 0, 0);
       return;
     }
@@ -1487,7 +1537,11 @@ export class BabylonRenderer {
     this.domElement = canvas;
     this.engine = engine ?? new Engine(canvas, true, { stencil: true, preserveDrawingBuffer: false, powerPreference: "default", audioEngine: false, alpha: true } as never, false);
     if (engine) this.look = false;
-    else if (/swiftshader|llvmpipe|software|basic render/i.test(this.engine.getGlInfo().renderer)) SOFTWARE.on = true;
+    else {
+      const gpu = this.engine.getGlInfo().renderer;
+      if (/swiftshader|llvmpipe|software|basic render/i.test(gpu)) SOFTWARE.on = true;
+      else if (/intel/i.test(gpu) && !/\barc\b/i.test(gpu)) INTEGRATED.on = true;
+    }
     RENDERERS.add(this);
     // The last one made, for looking into from the console and the tests
     if (typeof window !== "undefined") (window as unknown as { __babylon?: BabylonRenderer }).__babylon = this;

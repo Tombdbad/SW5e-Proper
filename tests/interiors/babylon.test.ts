@@ -206,3 +206,42 @@ test("the sun's shadow: cascades where the engine draws them, else one map over 
   draw();
   assert.equal(gen.getShadowMap()!.renderList!.length, 0);
 });
+
+test("each frame copies only what changed: a reshaped geometry, a new map, a light switched off and on (and a light left on goes through no meshes)", () => {
+  const { scene, draw, mirror } = make();
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3));
+  const material = new THREE.MeshLambertMaterial();
+  const mesh = new THREE.Mesh(geo, material);
+  scene.add(mesh);
+  const lamp = new THREE.PointLight("#ffffff", 1, 5);
+  scene.add(lamp);
+  draw();
+  const positions = () => Array.from(meshNamed(mirror(), mesh)!.getVerticesData(VertexBuffer.PositionKind)!);
+  assert.deepEqual(positions(), [0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  // A new shape set in its place (as the game does when a model is rebuilt) is copied once its version moves
+  geo.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0, 2, 0, 0, 0, 1, 0], 3));
+  draw();
+  assert.equal(positions()[3], 2);
+  // A map given later reaches the material
+  const babylonMat = () => meshNamed(mirror(), mesh)!.material as PBRMaterial;
+  assert.equal(babylonMat().albedoTexture, null);
+  const canvas = { width: 4, height: 4 } as unknown as HTMLCanvasElement;
+  material.map = new THREE.Texture(canvas);
+  draw();
+  assert.ok(babylonMat().albedoTexture, "the map is there");
+  // The lamp: off with no strength, on again with it; while it stays on Babylon is not asked to go through the meshes again
+  const light = () => mirror().lights.find((l) => l.getClassName() === "PointLight")!;
+  let resyncs = 0;
+  const original = (light() as unknown as { _resyncMeshes: () => void })._resyncMeshes.bind(light());
+  (light() as unknown as { _resyncMeshes: () => void })._resyncMeshes = () => { resyncs++; original(); };
+  for (let i = 0; i < 5; i++) draw();
+  assert.equal(resyncs, 0);
+  lamp.intensity = 0;
+  draw();
+  assert.equal(light().isEnabled(), false);
+  lamp.intensity = 1;
+  draw();
+  assert.equal(light().isEnabled(), true);
+  assert.ok(resyncs > 0, "a real change still reaches the meshes");
+});
