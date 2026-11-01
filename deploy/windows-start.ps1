@@ -4,11 +4,12 @@
 #         built with the test menu, tailnet HTTPS on port 10000. The snapshot lives in %USERPROFILE%\sw5e-test.
 # Starts Tailscale and PostgreSQL if they are stopped, installs packages if missing, stops any server on ports 5000, 5001 and 5002,
 # builds, applies migrations, starts the server hidden (it keeps running when the window closes), sets up Tailscale Serve.
-# -Lan (co-op with friends on the same Wi-Fi): the server listens on the local network too (HOST=0.0.0.0) and the Windows Firewall is opened
-# for its port to the local subnet only. The game has no login: anyone on that network can open it, so use it only on a network you trust.
-# Without -Lan the server listens on this PC only (friends can still join over Tailscale).
-# Logs: %LOCALAPPDATA%\sw5e\logs. Usage: powershell -ExecutionPolicy Bypass -File deploy\windows-start.ps1 -Mode prod|test [-Lan]
+# Always on the local network (co-op with friends on the same Wi-Fi, by the join code; the user, 2026-11-01): the server listens on the local
+# network too (HOST=0.0.0.0) and the Windows Firewall is opened for its port to the local subnet only. The game has no login: anyone on that
+# network can open it, so use it only on a network you trust. (-Lan is still accepted and does nothing: it is always on.)
+# Logs: %LOCALAPPDATA%\sw5e\logs. Usage: powershell -ExecutionPolicy Bypass -File deploy\windows-start.ps1 -Mode prod|test 
 param([Parameter(Mandatory = $true)][ValidateSet('prod', 'test')][string]$Mode, [switch]$Lan)
+$Lan = $true
 
 $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent $PSScriptRoot

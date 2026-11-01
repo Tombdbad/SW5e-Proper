@@ -8,6 +8,7 @@ The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it 
 - Balustrade: one `Balustrade` piece for the outside and the inside (gallery sides, a walkway's long sides). Ground parallax 0.065 → 0.045. Night ambient halved under a full moon and less under other phases; moon phases by the clock's days (shared/logic `moonlight` and co). Riders: a quarter of the district's strollers ride a beast with a dismount, shop, load, remount errand at each door. Warm-up of the district's room assets while in the street.
 - Tests: 525 pass, 3 skipped (before the last edit to ViewRig's key handler, which is covered by the browser check, not a test). New: stride rate, errand timeline, moon phases, driven walks.
 - NOT looked at in the browser: the balustrade (the test campaign is a cave hideout: no walkway), the riders (no district with strolls), the night and the moons. Look at an urban or station world at night. The warm-up cannot be measured by me (no feel for the hitch, and it does not compile shaders): ask the user whether room changes are better.
+- Both desktop shortcuts now always listen on the local network (`$Lan = $true` in windows-start.ps1), the user asked.
 - Not rebuilt: the server on 5000 runs the build from before the vanishing-assets fix and all of this. "SW5e Production" (desktop shortcut) builds and restarts it.
 
 ## Running
