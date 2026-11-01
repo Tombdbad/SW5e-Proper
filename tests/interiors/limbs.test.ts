@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { advance, angles, applyPose, bob, bodyOf, gaitPose, LIMB, LIMBS, limbMaterial, pose, restPose, rollBall, standing, type Pose } from "../../client/src/components/Map/interiors/limbs";
+import { advance, angles, applyPose, bob, bodyOf, carrying, ERRAND, errandAt, errandLength, gaitPose, LIMB, LIMBS, limbMaterial, pose, restPose, rollBall, standing, type Pose } from "../../client/src/components/Map/interiors/limbs";
 import { Kit, buildDroid, figureSpec, FINISHES, lookOf } from "../../client/src/components/Map/models";
 
 // The angle a limb's quaternion turns about an axis (signed by that axis)
@@ -380,4 +380,32 @@ test("a gun kicks and spreads by its kind and the weight of its shot", () => {
   assert.ok(gunKick("Sniper rifle").steady < gunKick("Blaster rifle").steady && gunKick("Blaster rifle").steady < gunKick("Blaster pistol").steady);
   assert.ok(gunKick("Shotgun").steady > 1.5);
   assert.ok(kickOf("Blaster rifle", 14) > kickOf("Blaster rifle", 7));
+});
+
+test("the legs cycle at a walker's pace, not a blur: a walk on the map is about a stride a second, a run about two", () => {
+  const cycles = (speed: number) => {
+    let s = standing();
+    for (let i = 0; i < 60; i++) s = advance(s, speed / 30, 1 / 30);
+    const start = s.phase;
+    for (let i = 0; i < 30; i++) s = advance(s, speed / 30, 1 / 30);
+    return (s.phase - start) / (Math.PI * 2);
+  };
+  assert.ok(cycles(3.5) > 0.8 && cycles(3.5) < 1.3, `a walk strides ${cycles(3.5)} a second`);
+  assert.ok(cycles(2.1) < cycles(3.5), "crouched is slower");
+  assert.ok(cycles(7) <= 2.2 + 1e-6, "a run is capped");
+});
+
+test("a rider's errand: the ride, down, in, a while inside, out, the load on the beast, up, and the purchases ride with them", () => {
+  const ride = 13;
+  const at = (t: number) => errandAt(t, ride);
+  assert.equal(at(0).phase, "ride");
+  assert.ok(Math.abs(at(ride / ERRAND.pace / 2).along - ride / 2) < 1e-9);
+  const order: string[] = [];
+  for (let t = 0; t < errandLength(ride); t += 0.1) if (order[order.length - 1] !== at(t).phase) order.push(at(t).phase);
+  assert.deepEqual(order, ["ride", "down", "in", "shop", "out", "load", "up"]);
+  // they are never in the saddle and in the shop at once, and the beast stays where the ride ended
+  assert.equal(at(ride / ERRAND.pace + 3).along, ride);
+  assert.ok(carrying("ride", 0.1) && carrying("down", 0.5) && carrying("up", 0.5), "the load is on for the ride and while getting down and up");
+  assert.ok(!carrying("in", 0.5) && !carrying("shop", 0.5) && !carrying("out", 0.5), "it is not on while they are in the shop");
+  assert.ok(!carrying("load", 0.2) && carrying("load", 0.8), "it goes on during the loading");
 });

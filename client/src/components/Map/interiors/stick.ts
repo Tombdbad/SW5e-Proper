@@ -96,6 +96,8 @@ export interface Walk {
   then?: (squares: number) => void;
   total: number;
   pace?: number;
+  // Begun by the stick or the keys: it ends the moment they are let go (a tap's walk goes on to its end)
+  driven?: boolean;
 }
 type Sq = { x: number; y: number };
 // A push of the stick on the ground in the direction (dx, dz), as the walk to be: the square being entered is kept and one more is queued
@@ -109,7 +111,7 @@ export function stickWalk(walk: Walk | null, feet: Sq, dx: number, dz: number, p
     const next = { x: from.x + mx, y: from.y + my };
     if (!open(next.x, next.y) || (mx && my && !(open(from.x + mx, from.y) && open(from.x, from.y + my)))) continue;
     if (rule && (!rule(from, next) || (mx && my && !(rule(from, { x: from.x + mx, y: from.y }) && rule(from, { x: from.x, y: from.y + my }))))) continue;
-    return { path: [...keep, next], total: keep.length + 1, pace };
+    return { path: [...keep, next], total: keep.length + 1, pace, driven: true };
   }
   return walk;
 }

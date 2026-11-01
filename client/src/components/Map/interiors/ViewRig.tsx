@@ -6,7 +6,7 @@ import { useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { groundPush, paceOf, STICK, stickOf, useRun } from "./stick";
+import { DEAD, groundPush, paceOf, STICK, stickOf, useRun } from "./stick";
 import { AIM, aimAt, FEET_PER_SQUARE, PITCH, poseOf, recoil, useReticle, useView, type Aimed, type ViewMode } from "./aim";
 import { AirButtons } from "./AirButtons";
 import { ShootButtons, ShooterHud } from "./ShooterHud";
@@ -110,6 +110,9 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
   const yaw = useRef(facing.current ?? start);
   const pitch = useRef(0);
   const keys = useRef(new Set<string>());
+  const pushing = useRef(false);
+  const stepNow = useRef(step);
+  stepNow.current = step;
   const stick = useRef<[number, number]>([0, 0]);
   const aimed = useRef<Aimed | null>(null);
   const since = useRef(1);
@@ -231,8 +234,15 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
       if (e.code === "KeyZ" && !e.repeat && !useShoot.getState().session) { useRun.getState().toggleProne(); return; }
       if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) { keys.current.add(e.code); e.preventDefault(); }
     };
-    const up = (e: KeyboardEvent) => keys.current.delete(e.code);
-    const blur = () => keys.current.clear();
+    // Letting go of the last key stops the walk there and then, not a frame on (the map walks before this rig's frame)
+    const halt = () => {
+      if (pushing.current && !["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown"].some((c) => keys.current.has(c)) && Math.hypot(stick.current[0], stick.current[1]) <= DEAD) {
+        pushing.current = false;
+        stepNow.current(0, 0, 0);
+      }
+    };
+    const up = (e: KeyboardEvent) => { keys.current.delete(e.code); halt(); };
+    const blur = () => { keys.current.clear(); halt(); };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("blur", blur);
@@ -281,6 +291,11 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
     if (pace > 0) {
       const [px, pz] = groundPush(forward, strafe, yaw.current);
       step(px, pz, pace);
+      pushing.current = true;
+    } else if (pushing.current) {
+      // Let go: the party stops at once, not at the end of the square it was heading for
+      pushing.current = false;
+      step(0, 0, 0);
     }
     const at = feet();
     const pose = poseOf(mode, new THREE.Vector3(...at), yaw.current, pitch.current, AIM.solids);

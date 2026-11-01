@@ -14058,6 +14058,30 @@ export function skyLook(biome: string, seed: number, system: { star?: string; bi
     crossings: sky.crossings,
   };
 }
+// The phases of a world's moons (2026-11-01, the user: "accurate phases of the moon/s"; a moon is where its phase puts it, and it was a place
+// that came round the same each day, so it was never new and never full). Each moon goes through its phases in a period of its own, 8 to 24
+// days by its drift, from a start of its own (its azimuth): its elongation from the sun is 0 when it is new (with the sun, unseen), a half turn
+// when it is full (opposite the sun: up all night, rising at dusk), and 2 pi when it has come round.
+export const moonPeriod = (moon: Pick<SkyBody, "drift">): number => 8 + Math.max(0, moon.drift - 0.6) * 18;
+export function moonElongation(minutes: number, moon: Pick<SkyBody, "drift" | "az">): number {
+  const turns = minutes / DAY / moonPeriod(moon) + moon.az / (Math.PI * 2);
+  return (turns - Math.floor(turns)) * Math.PI * 2;
+}
+// The share of a moon's face that is lit (0 new, 1 full)
+export const moonLit = (elongation: number): number => (1 - Math.cos(elongation)) / 2;
+// The light the moons give the night, 0 (none) to 1 (every moon full and high): each moon's lit share, by how far above the horizon it stands
+// (it stands on the sun's own arc, turned on by its elongation), weighted by its size
+export function moonlight(minutes: number, moons: Pick<SkyBody, "drift" | "az" | "size">[]): number {
+  const total = moons.reduce((n, m) => n + m.size, 0);
+  if (!total) return 0;
+  const h = hourOf(minutes);
+  return moons.reduce((n, m) => {
+    const e = moonElongation(minutes, m);
+    const alt = Math.sin(((h + (24 * e) / (Math.PI * 2) - 6) / 12) * Math.PI) / Math.hypot(1, 0.47);
+    const up = Math.max(0, Math.min(1, (alt + 0.05) / 0.3));
+    return n + (m.size / total) * moonLit(e) * up * up * (3 - 2 * up);
+  }, 0);
+}
 // The look of the sky over an area of the world: its planet's biome, its system's star and other worlds, the horizon of its settlement
 // (every building of a settlement shares it); the moons are the planet's, the same from every place on it
 export function worldLook(world: World, areaId: string): WorldLook | null {

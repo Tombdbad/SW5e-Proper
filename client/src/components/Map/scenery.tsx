@@ -16,6 +16,7 @@ import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { Landform, SkyBody, WorldLook } from "@shared/logic";
+import { hourOf, moonElongation } from "@shared/logic";
 
 type V3 = [number, number, number];
 
@@ -579,11 +580,20 @@ export interface SkyProps {
   // The hour as it is this instant (a fraction: the clock's minute and how far through it we are), read each frame, so that the suns and moons
   // sweep across the sky and do not step from place to place with the clock's ticks; without it they stand where `hour` puts them
   now?: () => number;
+  // The clock's minutes as it is this instant (not wrapped to the day), for the moons' phases: each is where its phase puts it, opposite the sun
+  // when full and beside it when new (shared/logic moonElongation); without it the moons stand where `hour` puts them on the first day
+  clock?: () => number;
 }
+// Where a moon is on the sky: on the sun's own arc, turned on from it by its elongation, a little off it by its own height
+const moonDir = (b: SkyBody, minutes: number): THREE.Vector3 => {
+  const d = sunDirection(hourOf(minutes) + (24 * moonElongation(minutes, b)) / (Math.PI * 2));
+  d.y += (b.el - 0.4) * 0.25;
+  return d.normalize();
+};
 // A moon is drawn this many times larger than its size says (the user, 2026-10-28: "the moon is not big or bright enough")
 const MOON_SCALE = 2.6;
 // A sky that stays round the camera: everything in it is far off, so it moves with the camera across the ground (not up and down)
-export function WorldSky({ look, light, hour, radius = 650, ground = 0, lite = false, floor = true, land = true, fog, now }: SkyProps) {
+export function WorldSky({ look, light, hour, radius = 650, ground = 0, lite = false, floor = true, land = true, fog, now, clock }: SkyProps) {
   const group = useRef<THREE.Group>(null);
   const sunRefs = useRef<(THREE.Group | null)[]>([]);
   const moonRefs = useRef<(THREE.Group | null)[]>([]);
@@ -704,7 +714,7 @@ export function WorldSky({ look, light, hour, radius = 650, ground = 0, lite = f
       [...look.planets, ...look.moons].forEach((b, i) => {
         const g = moonRefs.current[i];
         if (!g) return;
-        const d = toDir(b.az + turn * b.drift, b.el).multiplyScalar(R * 0.98);
+        const d = (b.kind === "moon" && clock ? moonDir(b, clock()) : toDir(b.az + turn * b.drift, b.el)).multiplyScalar(R * 0.98);
         g.position.set(d.x, d.y, d.z);
       });
     }
@@ -723,7 +733,7 @@ export function WorldSky({ look, light, hour, radius = 650, ground = 0, lite = f
   });
 
   const day = (hour % 24) / 24;
-  const body = (b: SkyBody) => toDir(b.az + day * Math.PI * 2 * b.drift, b.el);
+  const body = (b: SkyBody) => (b.kind === "moon" && clock ? moonDir(b, clock()) : toDir(b.az + day * Math.PI * 2 * b.drift, b.el));
   const bodyOpacity = 0.45 + 0.55 * night;
   return (
     <group ref={group}>

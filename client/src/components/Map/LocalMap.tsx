@@ -22,7 +22,8 @@ import { Atmosphere } from "./interiors/Atmosphere.tsx";
 import { Stock } from "./interiors/Stock.tsx";
 import { CaveDressing, CaveMound, CaveSlab, CaveWalls, MaskFloor, RampFloor, RockArch, RockWall } from "./interiors/CaveRoom";
 import { moodOf } from "./interiors/atmosphere";
-import { PACKS, facing, hasWalls, packOf } from "./interiors/packs";
+import { PACKS, WALL_FILES, facing, hasWalls, packOf, pieceOf } from "./interiors/packs";
+import { loadModel } from "./interiors/assets";
 import { PackWalls, cornerCentre, bendOf, holeOf, piercedWall, type Bend, type WallRun } from "./interiors/Walls";
 import { AIM, aimAt, aimFrom, partyMotion, roof as viewRoof, stance, useView, type Aimed, type AimPlan } from "./interiors/aim";
 import { kickOf, motion, nowSeconds, type Motion } from "./interiors/limbs";
@@ -30,7 +31,8 @@ import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, 
 import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
 import { useShoot } from "./interiors/shoot";
-import { CROUCH_FACTOR, PRONE_FACTOR, stickWalk, useRun, WALK_FACTOR } from "./interiors/stick";
+import { moonlight } from "@shared/logic";
+import { CROUCH_FACTOR, PRONE_FACTOR, stickWalk, useRun, WALK_FACTOR, type Walk } from "./interiors/stick";
 import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
@@ -38,7 +40,7 @@ import { useDisplay } from "./interiors/display";
 import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderSea } from "./siteAssets";
 import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
-import { seatState, easeSit, smooth, type SeatState, type Shot } from "./interiors/limbs";
+import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
 import { useLamps, Figure, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
@@ -173,14 +175,18 @@ function Sky({ shadow = 30, cast = true, indoors = 0, look, ground = 0, fog, flo
   // The sun crosses from east to west over the day; at night the moon stands high
   const angle = ((hourOf(minutes) - 6) / 12) * Math.PI;
   const sun: V3 = light > 0 ? [Math.cos(angle) * 30, Math.max(6, Math.sin(angle) * 30), 14] : [-10, 30, 8];
+  // The night's light (2026-11-01, the user: everything was too lit): half what it was under a full moon, less under the other phases down to
+  // about a third of that under a new one (the moons' phases: shared/logic moonlight); indoors the moons do not count, only the half
+  const lunar = look ? moonlight(minutes, look.moons) : 0;
+  const night = THREE.MathUtils.lerp(0.5 * (0.35 + 0.65 * lunar), 0.5, indoors);
   return (
     <>
       <color attach="background" args={[background]} />
       {/* (under the sea: the water's colour closes in, the light comes down green-blue) */}
       {under && <fog attach="fog" args={[background, UNDER_FOG[1], UNDER_FOG[2]]} />}
-      {look && !under && <WorldSky look={look} light={light} hour={(minutes / 60) % 24} now={() => hourOf(minuteNow())} ground={ground} lite={lite} fog={fog} floor={floor} />}
-      <ambientLight intensity={(0.42 + 0.33 * light) * (1 - 0.5 * indoors)} color={under ? "#9fe0e6" : light < 0.3 ? "#a9b8ff" : "#ffffff"} />
-      <directionalLight ref={sunLight} position={sun} intensity={(0.24 + 0.66 * light) * (1 - 0.6 * indoors)} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow={cast} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
+      {look && !under && <WorldSky look={look} light={light} hour={(minutes / 60) % 24} now={() => hourOf(minuteNow())} clock={minuteNow} ground={ground} lite={lite} fog={fog} floor={floor} />}
+      <ambientLight intensity={(0.42 * night + (0.75 - 0.42 * night) * light) * (1 - 0.5 * indoors)} color={under ? "#9fe0e6" : light < 0.3 ? "#a9b8ff" : "#ffffff"} />
+      <directionalLight ref={sunLight} position={sun} intensity={(0.24 * night + (0.9 - 0.24 * night) * light) * (1 - 0.6 * indoors)} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow={cast} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
     </>
   );
 }
@@ -226,6 +232,21 @@ const Box = ({ at, size, color, glow, rot, solid, wall }: { at: V3; size: V3; co
     <Solid at={at} color={color} glow={glow} rot={rot} solid={solid}><boxGeometry args={size} /></Solid>
   );
 const Cyl = ({ at, r, h, color, glow, top = r }: { at: V3; r: number; h: number; color: string; glow?: number; top?: number }) => <Solid at={at} color={color} glow={glow}><cylinderGeometry args={[top, r, h, 18]} /></Solid>;
+// A balustrade run: a top rail, a lower one and posts, in pale steel. The one a walkway, a balcony and a gallery have, seen from outside and from
+// within alike (from within it was a wall of the building's texture: 2026-11-01, the user). `at` is the middle of the run on the floor plan.
+const RAIL = "#c8ccd2";
+const Balustrade = ({ at, length, along, h = 1, base = 0 }: { at: [number, number]; length: number; along: "x" | "z"; h?: number; base?: number }) => {
+  const x = along === "x";
+  const posts = Math.max(2, Math.round(length / 0.9) + 1);
+  const on = (u: number, y: number): V3 => (x ? [u, y, 0] : [0, y, u]);
+  return (
+    <group position={[at[0], base, at[1]]}>
+      <Box at={on(0, h)} size={x ? [length, 0.05, 0.06] : [0.06, 0.05, length]} color={RAIL} />
+      <Box at={on(0, h * 0.5)} size={x ? [length, 0.03, 0.03] : [0.03, 0.03, length]} color={RAIL} />
+      {Array.from({ length: posts }, (_, i) => <Box key={i} at={on(-length / 2 + (i * length) / (posts - 1), h / 2)} size={[0.05, h, 0.05]} color={RAIL} />)}
+    </group>
+  );
+};
 const Mast = ({ at, h = 2.2 }: { at: V3; h?: number }) => (
   <>
     <Cyl at={[at[0], at[1] + h / 2, at[2]]} r={0.06} h={h} color="#d7d2c4" />
@@ -1075,21 +1096,24 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             // Round each doorway and window the wall stands whole but for the frame's own outline (beside it, under a window and over
             // both), bent onto the curve where the wall curves
             const tint = packLook && wallPack && hasWalls(wallPack) ? toneColour(packLook) : wall;
+            // (the sides that are a balustrade: a gallery's overlooking edge, and the long sides of a walkway, which has no walls)
+            const rails = plan?.form === "walkway" ? ["n", "e", "s", "w"].filter((s) => !assets.some((a) => isWay(a) && a.side === s)).join("") : railing;
             const pierced = rocky ? [] : setIn.filter((p) => (isWay(p.a) || p.a.kind === "window") && !met(p)).map((p) => (
               <group key={`pierced${p.a.id}`} position={[p.at[0], 0, p.at[1]]} rotation={[0, p.turn, 0]}>
-                <PiercedWall kind={p.a.kind} pane={p.a.pane} style={style} wallH={railing.includes(p.a.side!) ? BALUSTRADE_HEIGHT : wallH} lift={ramp(p.a.x, p.a.y)} bend={p.bend} color={tint} wall={wallTexture} />
+                <PiercedWall kind={p.a.kind} pane={p.a.pane} style={style} wallH={rails.includes(p.a.side!) ? BALUSTRADE_HEIGHT : wallH} lift={ramp(p.a.x, p.a.y)} bend={p.bend} color={tint} wall={wallTexture} />
               </group>
             ));
             const solid = (list: typeof runs) => list.map(({ side, a, b, at }) => {
               if (rocky) return <RockWall key={`${side}${a}`} side={side} a={a} b={b} w={width} h={height} height={1.1} seed={Math.round(a * 10) + side.charCodeAt(0) + width} biome={mood!.biome} tier={detail} />;
               const [position, size] = at(a, b);
-              const high = railing.includes(side) ? BALUSTRADE_HEIGHT : wallH;
+              if (rails.includes(side)) return <Balustrade key={`${side}${a}`} at={[position[0], position[2]]} length={b - a} along={side === "n" || side === "s" ? "x" : "z"} h={BALUSTRADE_HEIGHT} />;
+              const high = wallH;
               return <Box key={`${side}${a}`} at={[position[0], high / 2, position[2]]} size={[size[0], high, size[2]]} color={wall} solid wall={wallTexture} />;
             });
             const plain = solid(runs);
             // (a gallery's balustrade is the kit's wall too, at its own height: it was plaster beside the room's sandstone)
-            const railed = runs.filter((r) => railing.includes(r.side));
-            const standing = runs.filter((r) => !railing.includes(r.side));
+            const railed = runs.filter((r) => rails.includes(r.side));
+            const standing = runs.filter((r) => !rails.includes(r.side));
             // A room of a pack with walls has the kit's, straight and bent round its corners, in its palette; the plain ones stand until the kit is in
             const corner = cornerList.map((c) => {
               const [x, z] = cornerCentre(c, width, height);
@@ -1104,7 +1128,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
                 {packLook && wallPack && hasWalls(wallPack) && !rocky ? (
                   <>
                     <PackWalls runs={standing} corners={cornerList} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={packLook} wall={wallTexture} fallback={<>{solid(standing)}{corner}</>} />
-                    {railed.length > 0 && <PackWalls runs={railed} width={width} height={height} wallH={BALUSTRADE_HEIGHT} thick={WALL_THICK} tone={packLook} wall={wallTexture} fallback={<>{solid(railed)}</>} />}
+                    {solid(railed)}
                   </>
                 ) : <>{plain}{corner}</>}
                 {pierced}
@@ -2383,37 +2407,103 @@ function AlleyBlock({ squares }: { squares: Sq[] }) {
 type Walker = { key: string; from: V3; to: V3; progress: number; kind: "person" | "speeder" | "airspeeder" | "mount" | "hauler" | "ship"; name: string; arc?: number; scale?: number; note?: string; hover?: number };
 // People about the street of a district, going between the doors of its buildings by the open
 // ground and back again, at a walking pace (purely for life on the street: nobody to talk to)
-type Stroll = { key: string; path: { x: number; y: number }[]; length: number; offset: number };
+// (`mount`: one who rides, a beast of the transport data, between `doors`, the doors they stop at: the one at each end of the path)
+type Stroll = { key: string; path: { x: number; y: number }[]; length: number; offset: number; mount?: string; doors?: [{ x: number; y: number }, { x: number; y: number }] };
+// Where `rest` squares along a path is, and the way it runs there
+function along(path: { x: number; y: number }[], rest: number): { x: number; y: number; dx: number; dy: number } {
+  let [px, py] = [path[0].x, path[0].y];
+  let [dx, dy] = [0, 0];
+  for (let i = 1; i < path.length; i++) {
+    const [ax, ay, bx, by] = [path[i - 1].x, path[i - 1].y, path[i].x, path[i].y];
+    const leg = Math.hypot(bx - ax, by - ay);
+    [dx, dy] = [bx - ax, by - ay];
+    if (rest <= leg || i === path.length - 1) {
+      const k = leg ? Math.min(1, rest / leg) : 0;
+      [px, py] = [ax + (bx - ax) * k, ay + (by - ay) * k];
+      break;
+    }
+    rest -= leg;
+  }
+  return { x: px, y: py, dx, dy };
+}
+// Someone on a beast who rides between two doors (2026-11-01, the user): gets down before going in, comes out with what they bought, loads it on
+// the beast, gets up again and rides on to the other door (interiors/limbs.ts errandAt)
+function MountedStroll({ w }: { w: Stroll }) {
+  const beast = useRef<THREE.Group>(null);
+  const seated = useRef<THREE.Group>(null);
+  const foot = useRef<THREE.Group>(null);
+  const pack = useRef<THREE.Group>(null);
+  const mount = w.mount!;
+  const seat = seatFor(mount) - RIDER_HIPS;
+  const leg = errandLength(w.length);
+  const yaw = useRef(0);
+  useFrame(({ clock }) => {
+    if (!beast.current || !seated.current || !foot.current || !pack.current) return;
+    const t = (clock.elapsedTime + w.offset) % (leg * 2);
+    const back = t >= leg;
+    const { phase, k, along: ridden } = errandAt(t - (back ? leg : 0), w.length);
+    const here = along(w.path, back ? w.length - ridden : ridden);
+    const [dx, dy] = back ? [-here.dx, -here.dy] : [here.dx, here.dy];
+    if (dx || dy) yaw.current = Math.atan2(dx, dy);
+    beast.current.position.set(here.x + 0.5, 0, here.y + 0.5);
+    beast.current.rotation.y = yaw.current;
+    // The door at the end of the leg, and the way to it from where the beast stands (it walks no further than the door)
+    const door = w.doors?.[back ? 0 : 1];
+    const [tx, ty] = door ? [door.x - here.x, door.y - here.y] : [Math.sin(yaw.current) * 1.5, Math.cos(yaw.current) * 1.5];
+    const reach = Math.min(Math.hypot(tx, ty), 3);
+    const [ux, uy] = reach ? [tx / Math.hypot(tx, ty), ty / Math.hypot(tx, ty)] : [0, 1];
+    // Down off the saddle to the beast's side, then the walk to the door, out of sight inside, and back
+    const side = [-uy * 0.5, ux * 0.5];
+    // (half way through mounting, they are in the saddle again)
+    const onFoot = phase !== "ride" && !(phase === "up" && k > 0.5);
+    seated.current.visible = !onFoot;
+    foot.current.visible = onFoot && phase !== "shop";
+    if (onFoot) {
+      // How far they have gone along the way to the door (0 at the beast, 1 at the door), and how far out to its side (stepping down and up)
+      const walk = phase === "in" ? k : phase === "out" ? 1 - k : 0;
+      const out = phase === "down" ? k : phase === "up" ? 1 - k : 1;
+      foot.current.position.set(here.x + 0.5 + side[0] * out + ux * reach * walk, 0, here.y + 0.5 + side[1] * out + uy * reach * walk);
+      // Facing the door going in, the beast (the other way) on coming out and while loading it
+      foot.current.rotation.y = phase === "in" || phase === "down" ? Math.atan2(ux, uy) : Math.atan2(-side[0], -side[1]);
+    }
+    pack.current.visible = carrying(phase, k);
+  });
+  return (
+    <>
+      <group ref={beast}>
+        <Figure kind="beast" ring="#9ca3af" name={mount} />
+        <group ref={seated} position={[0, seat, 0]}>
+          <Figure kind="person" ring="#9ca3af" name={w.key} riding />
+        </group>
+        {/* What they bought, lashed on behind the saddle */}
+        <group ref={pack} visible={false} position={[0, seat + RIDER_HIPS - 0.05, -0.32]}>
+          <Box at={[0, 0.12, 0]} size={[0.5, 0.26, 0.34]} color="#8a6a43" />
+          <Box at={[0.05, 0.3, 0]} size={[0.3, 0.14, 0.26]} color="#b49a6a" />
+        </group>
+      </group>
+      <group ref={foot} visible={false}>
+        <Figure kind="person" ring="#9ca3af" name={w.key} />
+      </group>
+    </>
+  );
+}
 function Strollers({ strolls }: { strolls: Stroll[] }) {
   const groups = useRef<Record<string, THREE.Group | null>>({});
   useFrame(({ clock }) => {
     for (const w of strolls) {
       const g = groups.current[w.key];
-      if (!g || w.length < 1) continue;
+      if (!g || w.length < 1 || w.mount) continue;
       // There and back, at a square and a bit a second
-      const along = (((clock.elapsedTime + w.offset) * 1.3) % (w.length * 2));
-      const back = along > w.length;
-      let rest = back ? w.length * 2 - along : along;
-      let [px, py] = [w.path[0].x, w.path[0].y];
-      let [dx, dy] = [0, 0];
-      for (let i = 1; i < w.path.length; i++) {
-        const [ax, ay, bx, by] = [w.path[i - 1].x, w.path[i - 1].y, w.path[i].x, w.path[i].y];
-        const leg = Math.hypot(bx - ax, by - ay);
-        [dx, dy] = [bx - ax, by - ay];
-        if (rest <= leg || i === w.path.length - 1) {
-          const k = leg ? Math.min(1, rest / leg) : 0;
-          [px, py] = [ax + (bx - ax) * k, ay + (by - ay) * k];
-          break;
-        }
-        rest -= leg;
-      }
-      g.position.set(px + 0.5, 0, py + 0.5);
-      g.rotation.y = Math.atan2(back ? -dx : dx, back ? -dy : dy);
+      const run = (((clock.elapsedTime + w.offset) * 1.3) % (w.length * 2));
+      const back = run > w.length;
+      const here = along(w.path, back ? w.length * 2 - run : run);
+      g.position.set(here.x + 0.5, 0, here.y + 0.5);
+      g.rotation.y = Math.atan2(back ? -here.dx : here.dx, back ? -here.dy : here.dy);
     }
   });
   return (
     <>
-      {strolls.map((w) => (
+      {strolls.map((w) => w.mount ? <MountedStroll key={w.key} w={w} /> : (
         <group key={w.key} ref={(g) => { groups.current[w.key] = g; }} position={[w.path[0].x + 0.5, 0, w.path[0].y + 0.5]}>
           <Figure kind="person" ring="#9ca3af" name={w.key} />
         </group>
@@ -2952,7 +3042,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // street's point still here it would be aimed at the street, which put it under a balcony or a roof climbed to)
   if (!(outside && planned) && !duel) eye.current = null;
   // (`pace` is a fraction of the full pace; a tap on the map is the full pace, the stick in the eye views sets its own)
-  const walk = useRef<{ path: { x: number; y: number }[]; then?: (squares: number) => void; total: number; pace?: number } | null>(null);
+  const walk = useRef<Walk | null>(null);
   // The party's water craft here (shared/logic "Over the water", house rules): moored on the water, where it was left (`berth`) or else off the
   // way in of the first building, its bow out from it. One whose helm the party is at (`afloat`) is under the party, who then goes only over the
   // water, at HELM_PACE; going to the decking, or in through a way in, it moors there and the party steps ashore. Under the sea only a
@@ -3010,6 +3100,40 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // Over the shoulder or from the eyes (interiors/ViewRig.tsx), instead of the overhead view; `facing` is the way the character looks then
   const mode = useView((v) => v.mode);
   const tierNow = useQuality((q) => q.tier);
+  // The district's rooms are got ready while the party is in the street (2026-11-01, the user: "moving between interior rooms is jarring"): what
+  // a room asks for when it is first drawn (the maps of its floor and walls, the kit's walls and the pieces of its pack, each loaded, decoded and
+  // tinted) is asked for here, one a moment, so that going in finds it in the caches (surfaces.tsx SURFACES, interiors/assets.ts FILES, drei's
+  // texture cache) and not on the road
+  const warmKey = rooms.map((r) => r.id).join(",");
+  useEffect(() => {
+    if (!rooms.length || typeof window === "undefined") return;
+    const jobs = new Map<string, () => void>();
+    const typeOf = (r: Area) => world.areas[r.parentId ?? ""]?.type ?? building.type;
+    for (const b of buildings) {
+      for (const look of [floorLook(floorOf(b.type), b.type), floorLook(floorOf(b.type), b.type, true)]) {
+        if (look) jobs.set(`floor:${look.dir}/${look.set}`, () => useTexture.preload(["diffuse", "normal", "height"].map((m) => `/textures/${look.dir}/${look.set}/${m}.jpg`)));
+      }
+    }
+    for (const r of rooms) {
+      const pack = packOf(r.name, typeOf(r));
+      jobs.set(`wall:${wallSet(pack, biome)}`, () => void wallMaterial(wallSet(pack, biome), { vertexColors: true }));
+      if (!pack) continue;
+      const tone = packTone(PACKS[pack], wall);
+      if (hasWalls(pack)) for (const url of Object.values(WALL_FILES)) jobs.set(`file:${tone.id}|${url}`, () => void loadModel(url, "base", tone));
+      for (const a of r.layout?.assets ?? []) {
+        const file = a.kind === "furniture" ? pieceOf(pack, a.name) : undefined;
+        if (file) jobs.set(`file:${tone.id}|${file}`, () => void loadModel(file, "base", tone));
+      }
+    }
+    const todo = [...jobs.values()];
+    let timer = 0;
+    const next = () => {
+      todo.shift()?.();
+      if (todo.length) timer = window.setTimeout(next, 90);
+    };
+    timer = window.setTimeout(next, 1500);
+    return () => window.clearTimeout(timer);
+  }, [warmKey, biome]);
   const viewing = mode !== "overhead" && present && !duel;
   const facing = useRef<number | null>(null);
   // How fast the party walks, as a fraction of the pace they have always had (7 squares a second): a tap on the map is the full pace, the stick sets its own
@@ -3226,7 +3350,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const beginJump = () => {
     const A = air.current;
     const gear = useAir.getState().gear;
-    if (!active || useTransit.getState().now || useTable.getState().seated) return;
+    // (nobody jumps, or leaps at a wall, lying down)
+    if (!active || useTransit.getState().now || useTable.getState().seated || useRun.getState().prone) return;
     const dir = heading();
     // Before a building with a way up that a leap reaches, a jump at its wall is the leap
     const box = frontBox();
@@ -3736,7 +3861,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       const full = [from, ...path];
       let length = 0;
       for (let k = 1; k < full.length; k++) length += Math.hypot(full[k].x - full[k - 1].x, full[k].y - full[k - 1].y);
-      out.push({ key: `stroll-${i}`, path: full, length, offset: unitOf(`${district!.id}|stroll|${i}|t`) * length * 2 });
+      // (about one in four rides a beast, on a way long enough to be worth it: it has its errand at each door, interiors/limbs.ts errandAt)
+      const mount = length >= 5 && unitOf(`${district!.id}|stroll|${i}|mount`) < 0.25 ? pickMount(`${district!.id}|stroll|${i}`) : undefined;
+      out.push({ key: `stroll-${i}`, path: full, length, offset: unitOf(`${district!.id}|stroll|${i}|t`) * (mount ? errandLength(length) : length) * 2, mount, doors: [doors[a], doors[b]] });
     }
     return out;
   }, [world, district?.id ?? building.id, street]);
@@ -3775,6 +3902,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const stepToward = (dx: number, dz: number, speed = 1) => {
     if (!active || useTransit.getState().now || useTable.getState().seated) return;
     const A = air.current;
+    // (a push of nothing is the stick or the keys let go: what they were walking ends there, where the party stands)
+    if (Math.hypot(dx, dz) < 1e-6) {
+      if (walk.current?.driven && (A.mode === "ground" || A.mode === "perch" || A.mode === "fly")) {
+        walk.current = null;
+        spot.stand(hereId, feet.current.x, feet.current.y);
+      }
+      return;
+    }
     pushAt.current = { t: performance.now(), dx, dz };
     if (A.mode === "jump" || A.mode === "reel") return;
     // Under a running pack the party flies over what stands low, at the pack's pace
@@ -4115,12 +4250,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           const roof = hue(room.id);
           const wallColor = new THREE.Color(wall).multiplyScalar(opened ? 0.45 : 1).getStyle();
           const slab = (color: string) => <Box at={[l.width / 2, 0.06, l.height / 2]} size={[l.width, 0.12, l.height]} color={color} />;
-          const rail = (h: number) => (
+          const rail = (sides = "nesw") => (
             <>
-              <Box at={[l.width / 2, h, 0.04]} size={[l.width, 0.04, 0.05]} color="#c8ccd2" />
-              <Box at={[l.width / 2, h, l.height - 0.04]} size={[l.width, 0.04, 0.05]} color="#c8ccd2" />
-              <Box at={[0.04, h, l.height / 2]} size={[0.05, 0.04, l.height]} color="#c8ccd2" />
-              <Box at={[l.width - 0.04, h, l.height / 2]} size={[0.05, 0.04, l.height]} color="#c8ccd2" />
+              {sides.includes("n") && <Balustrade at={[l.width / 2, 0.04]} length={l.width} along="x" h={BALUSTRADE_HEIGHT} base={0.12} />}
+              {sides.includes("s") && <Balustrade at={[l.width / 2, l.height - 0.04]} length={l.width} along="x" h={BALUSTRADE_HEIGHT} base={0.12} />}
+              {sides.includes("w") && <Balustrade at={[0.04, l.height / 2]} length={l.height} along="z" h={BALUSTRADE_HEIGHT} base={0.12} />}
+              {sides.includes("e") && <Balustrade at={[l.width - 0.04, l.height / 2]} length={l.height} along="z" h={BALUSTRADE_HEIGHT} base={0.12} />}
             </>
           );
           // (the four walls of an open-topped room: of the room's wall set, and not overlapping at the corners or the floor, where their faces lay in
@@ -4179,7 +4314,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               ) : form === "walkway" ? (
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                   {slab("#59636d")}
-                  {rail(0.5)}
+                  {rail()}
                   {/* Posts it stands on, down to the street */}
                   {lift > 0.01 && [[0.1, 0.1], [l.width - 0.1, 0.1], [0.1, l.height - 0.1], [l.width - 0.1, l.height - 0.1]].map(([px, pz], i) => <Box key={i} at={[px, -lift / 2, pz]} size={[0.1, lift, 0.1]} color="#59636d" />)}
                 </group>
@@ -4187,7 +4322,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 // A balcony over the street (shared/logic "Balconies"): its floor and balustrade (reached by its patio doors, or from the street with climbing gear: outsideClimbs)
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                   {slab("#6b6f78")}
-                  {rail(0.55)}
+                  {rail()}
                 </group>
               ) : form === "gallery" ? (
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
@@ -4207,8 +4342,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                       </group>
                     ) : null;
                   })}
-                  <Box at={[l.width / 2, 0.45, l.height - 0.04]} size={[l.width, 0.04, 0.05]} color="#c8ccd2" />
-                  {[0, 1, 2, 3].map((i) => <Box key={i} at={[0.1 + (i * (l.width - 0.2)) / 3, 0.25, l.height - 0.04]} size={[0.05, 0.5, 0.05]} color="#c8ccd2" />)}
+                  {rail(railingOf(room, rooms) || "s")}
                 </group>
               ) : lookedFrom ? (
                 // The room under a mezzanine is looked down into, not boxed in: its floor, low walls and what is in it

@@ -2,7 +2,7 @@
 // its sky, the same for a place every time, and the gorges, hills, rivers and lava that a speeder race or a chase on the road meets.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateWorld, childrenOf, skyLook, worldLook, biomeSky, raceCourse, raceStart, stepRace, groundAt, raceWater, CROSSING, RACE, type Area, type RaceScenery } from "@shared/logic";
+import { moonElongation, moonLit, moonPeriod, moonlight, generateWorld, childrenOf, skyLook, worldLook, biomeSky, raceCourse, raceStart, stepRace, groundAt, raceWater, CROSSING, RACE, type Area, type RaceScenery } from "@shared/logic";
 import { getWorldCatalog } from "../../server/sw5eData";
 
 const catalog = await getWorldCatalog();
@@ -121,4 +121,24 @@ test("lava burns a hull point each half second to a speeder down in it, off the 
   for (let k = 0; k < 12; k++) race = stepRace(race, track, { steer: { x: 0, y: 0 }, throttle: -1 }, 0.1);
   assert.equal(race.racers[0].hull, me.hull - 2, "two points in 1.2 seconds");
   assert.ok(race.log.some((l) => /lava/.test(l)));
+});
+
+test("the moons go through their phases over the days: new, full, and round again; the night's light follows", () => {
+  const moons = [{ drift: 1, az: 0, size: 0.03 }];
+  const DAY = 24 * 60;
+  const period = moonPeriod(moons[0]);
+  assert.ok(period >= 8 && period <= 24, `a period of ${period} days`);
+  // new at the start (elongation 0), full half a period on, new again a period on
+  assert.ok(moonLit(moonElongation(0, moons[0])) < 1e-9);
+  assert.ok(moonLit(moonElongation((period / 2) * DAY, moons[0])) > 1 - 1e-9);
+  assert.ok(moonLit(moonElongation(period * DAY, moons[0])) < 1e-6);
+  // at midnight (a full moon stands high then, opposite the sun) over a round of phases: the light is greatest near the full moon and least
+  // near the new one, and never beyond every moon at its fullest
+  const lights = Array.from({ length: Math.ceil(period) }, (_, d) => ({ light: moonlight(d * DAY, moons), lit: moonLit(moonElongation(d * DAY, moons[0])) }));
+  const best = lights.reduce((a, b) => (b.light > a.light ? b : a));
+  const least = lights.reduce((a, b) => (b.light < a.light ? b : a));
+  assert.ok(best.lit > 0.8 && best.light > 0.7, "the most light is at the full moon: " + JSON.stringify(best));
+  assert.ok(least.lit < 0.2 && least.light < 0.05, "the least is at the new: " + JSON.stringify(least));
+  assert.ok(lights.every((l) => l.light >= 0 && l.light <= 1 + 1e-9));
+  assert.equal(moonlight(0, []), 0, "a world with no moon has none of its light");
 });

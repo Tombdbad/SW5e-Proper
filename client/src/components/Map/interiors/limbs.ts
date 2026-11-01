@@ -27,10 +27,12 @@ export const PARENT: number[] = [-1, -1, -1, 13, 13, -1, -1, -1, -1, -1, -1, -1,
 // How a stride looks: a leg swings this far forward and back at a walk, an arm a little less, against its leg
 const LEG = 0.62;
 const ARM = 0.5;
-// Squares a second at which the swing is at full, and the quickest a stride is cycled (a run on the map is seven squares a second,
+// Squares a second at which the swing is at full, the strides cycled for each square covered (a walk on the map is 3.5 squares a second, which
+// came to 3.2 strides a second at one a square, a blur: 2026-11-01, the user) and the quickest a stride is cycled (a run is seven squares a second,
 // but a figure's legs do not need to blur)
 const FULL = 1.4;
-const MAX_CYCLES = 3.2;
+const CYCLES_PER_SQUARE = 0.3;
+const MAX_CYCLES = 2.2;
 
 export interface Stride {
   // Where in the cycle (radians), how much of the swing there is now (0 standing, 1 walking), and the speed smoothed over frames
@@ -49,7 +51,7 @@ export function advance(s: Stride, distance: number, dt: number, cycle = 1): Str
   const target = Math.min(1, speed / FULL);
   const amp = s.amp + (target - s.amp) * (1 - Math.exp(-dt * 10));
   // Standing still, the legs come back to rest rather than freezing mid-stride
-  const phase = s.phase + Math.min(speed, MAX_CYCLES) * cycle * dt * Math.PI * 2;
+  const phase = s.phase + Math.min(speed * CYCLES_PER_SQUARE, MAX_CYCLES) * cycle * dt * Math.PI * 2;
   return { phase, amp, speed };
 }
 
@@ -799,3 +801,25 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
   const drop = legs.hip > 0 ? Math.max(0, legs.hip - stand) * upright * (1 - a) * (1 - e.swim) : 0;
   return { drop, lift, spin, tip: Math.max(p, flat) };
 }
+
+// ---- A rider's errand ---------------------------------------------------------------------------------------------------------------
+// Some of the people about a street come on a beast (2026-11-01, the user): they ride to a building, get down, walk in at its door, come out
+// with their purchases, load them onto the beast, get up and ride on. One leg of it by the clock, from the moment the leg begins (the ride, then
+// each step in seconds); a stroll is two legs, there and back, each ending at a door.
+export const ERRAND = { pace: 2.6, down: 1.2, in: 1.6, shop: 7, out: 1.6, load: 1.8, up: 1.2 };
+export type ErrandPhase = "ride" | "down" | "in" | "shop" | "out" | "load" | "up";
+export const errandLength = (ride: number): number => ride / ERRAND.pace + ERRAND.down + ERRAND.in + ERRAND.shop + ERRAND.out + ERRAND.load + ERRAND.up;
+// Where `t` seconds into a leg of `ride` squares it is: the phase, how far through it (0 to 1) and the squares ridden
+export function errandAt(t: number, ride: number): { phase: ErrandPhase; k: number; along: number } {
+  const riding = ride / ERRAND.pace;
+  if (t < riding) return { phase: "ride", k: riding ? t / riding : 1, along: Math.min(ride, t * ERRAND.pace) };
+  let rest = t - riding;
+  for (const phase of ["down", "in", "shop", "out", "load", "up"] as const) {
+    const span = ERRAND[phase];
+    if (rest < span) return { phase, k: rest / span, along: ride };
+    rest -= span;
+  }
+  return { phase: "up", k: 1, along: ride };
+}
+// What is loaded on the beast: the purchases go on in the loading and stay on through the mounting and the next ride until the next door
+export const carrying = (phase: ErrandPhase, k: number): boolean => phase === "ride" || phase === "down" || phase === "up" || (phase === "load" && k > 0.5);

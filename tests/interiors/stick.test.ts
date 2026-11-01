@@ -164,3 +164,10 @@ test("the stair rule is asked of every step, and of the straight ones of a diago
   const only = (a: { x: number; y: number }, b: { x: number; y: number }) => b.y === a.y;
   assert.deepEqual(stickWalk(null, { x: 3, y: 5 }, 1, 1, 1, room, only)!.path.length, 1);
 });
+
+test("a walk the stick or the keys begin is marked as theirs, so that letting go can end it; a tap's walk is not", () => {
+  const open = () => true;
+  const driven = stickWalk(null, { x: 2, y: 2 }, 1, 0, 1, open)!;
+  assert.equal(driven.driven, true);
+  assert.equal(stickWalk({ path: [{ x: 3, y: 2 }], total: 1 }, { x: 2, y: 2 }, 1, 0, 1, open)!.driven, true, "the stick takes over a tap's walk");
+});

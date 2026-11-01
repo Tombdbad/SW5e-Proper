@@ -1136,7 +1136,7 @@ export function GardenGround({ rects, biome }: { rects: NonNullable<SiteGrounds[
 // map and shifted toward the viewer by its height map (single-step offset parallax). The city has none of it: it keeps the plain ground
 export const GROUND_TILE = 8; // squares of ground in one repeat of a texture
 const EARTH_LIGHT = 1.2; // how bright the bare earth is (1 leaves the texture as photographed)
-const PARALLAX = 0.065; // how far the height map moves the texture, in repeats of GROUND_TILE squares (0.05 and then 30% more, the user, 2026-10-21)
+const PARALLAX = 0.045; // how far the height map moves the texture, in repeats of GROUND_TILE squares (0.05 and then 30% more, the user, 2026-10-21; down by 30% again, it swam: 2026-11-01)
 const NORMAL_SCALE = new THREE.Vector2(1.3, 1.3); // how steep the normal map reads (1 as photographed, 30% more)
 
 // Which texture a building's ground gets, by its world's biome and the building's type (null: plain ground, as on Coruscant)
