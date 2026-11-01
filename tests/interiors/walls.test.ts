@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
+import { boxUV } from "../../client/src/components/Map/surfaces";
 import { holeOf, piercedWall, bendAlong } from "../../client/src/components/Map/interiors/Walls";
 import { outline, outlineAt, radiiOf } from "../../shared/logic/footprint";
 
@@ -53,4 +54,17 @@ test("a piece bent onto a round room's curve stays on the curve", () => {
     const wz = base.p[1] + x * ax[1] + z * az[1];
     assert.ok(Math.abs(Math.hypot(wx - 3, wz - 3) - 3) < 1e-3, `point ${i} at ${Math.hypot(wx - 3, wz - 3)}`);
   }
+});
+
+test("a wall's texture is laid out in its building's frame: two boxes meeting in one plane get the same coordinates there", () => {
+  // a wall seen from room A (its own middle at x = 5) and from room B (its middle at x = 9) that meet at x = 7
+  const a = boxUV(new THREE.BoxGeometry(4, 2, 0.2).toNonIndexed(), 0.5, [5, 1, 0]);
+  const b = boxUV(new THREE.BoxGeometry(4, 2, 0.2).toNonIndexed(), 0.5, [9, 1, 0]);
+  const at = (g: THREE.BufferGeometry, x: number, y: number) => {
+    const [p, uv, n] = [g.getAttribute("position"), g.getAttribute("uv"), g.getAttribute("normal")];
+    for (let i = 0; i < p.count; i++) if (n.getZ(i) > 0.5 && Math.abs(p.getX(i) + (g === a ? 5 : 9) - x) < 1e-6 && Math.abs(p.getY(i) + 1 - y) < 1e-6) return [uv.getX(i), uv.getY(i)];
+    return null;
+  };
+  assert.deepEqual(at(a, 7, 2), at(b, 7, 2));
+  assert.ok(at(a, 7, 2));
 });

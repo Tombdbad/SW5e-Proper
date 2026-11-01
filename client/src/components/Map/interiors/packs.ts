@@ -107,6 +107,10 @@ export function packOf(roomName: string, buildingType = ""): PackId | undefined 
   return BUILDINGS.find(([match]) => match.test(building))?.[1];
 }
 
+// The pack a building's walls are drawn from: one for the whole building, whatever its rooms are furnished like (two rooms that
+// share a wall must not each draw it in its own texture: 2026-11-01, the user)
+export const wallPackOf = (buildingType = ""): PackId | undefined => packOf("", buildingType);
+
 // The file of a piece in a room's pack (a path under /assets), or undefined where the pack has none
 export function pieceOf(pack: PackId | undefined, name: string): string | undefined {
   if (!pack) return undefined;

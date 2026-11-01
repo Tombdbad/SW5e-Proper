@@ -22,7 +22,7 @@ import { Atmosphere } from "./interiors/Atmosphere.tsx";
 import { Stock } from "./interiors/Stock.tsx";
 import { CaveDressing, CaveMound, CaveSlab, CaveWalls, MaskFloor, RampFloor, RockArch, RockWall } from "./interiors/CaveRoom";
 import { moodOf } from "./interiors/atmosphere";
-import { PACKS, WALL_FILES, facing, hasWalls, packOf, pieceOf } from "./interiors/packs";
+import { PACKS, WALL_FILES, facing, hasWalls, packOf, pieceOf, wallPackOf } from "./interiors/packs";
 import { loadModel } from "./interiors/assets";
 import { PackWalls, cornerCentre, bendOf, holeOf, piercedWall, type Bend, type WallRun } from "./interiors/Walls";
 import { AIM, aimAt, aimFrom, partyMotion, roof as viewRoof, stance, useView, type Aimed, type AimPlan } from "./interiors/aim";
@@ -39,7 +39,7 @@ import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
 import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderSea } from "./siteAssets";
 import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
-import { WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
+import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
 import { useLamps, Figure, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
@@ -227,7 +227,7 @@ const AimBox = ({ at, size }: { at: V3; size: V3 }) => {
 // A box; with `wall` it is a plain room's wall, textured from its wall set (siteAssets `wallSet`)
 const Box = ({ at, size, color, glow, rot, solid, wall }: { at: V3; size: V3; color: string; glow?: number; rot?: V3; solid?: boolean; wall?: WallSet }) =>
   wall ? (
-    <Solid at={at} color={color} rot={rot} solid={solid} material={<WallMaterial set={wall} tint={color} />}><WallGeometry size={size} /></Solid>
+    <Solid at={at} color={color} rot={rot} solid={solid} material={<WallMaterial set={wall} tint={color} />}><WallGeometry size={size} at={at} /></Solid>
   ) : (
     <Solid at={at} color={color} glow={glow} rot={rot} solid={solid}><boxGeometry args={size} /></Solid>
   );
@@ -1026,9 +1026,10 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   }, [roofAbove]);
   // The kit this room is furnished and walled from, and its palette
   // (a room that is `like` another has that room's walls but none of its furniture, light or air: `pack` is for the walls only)
-  const wallPack = mood && !rocky ? packOf(mood.roomName, mood.buildingType) : like ? packOf(like.roomName, like.buildingType) : undefined;
-  const pack = mood && !rocky ? wallPack : undefined;
-  const packLook = useMemo(() => (wallPack ? packTone(PACKS[wallPack], wall) : undefined), [wallPack, wall]);
+  const wallPack = mood && !rocky ? wallPackOf(mood.buildingType) : like ? wallPackOf(like.buildingType) : undefined;
+  const pack = mood && !rocky ? packOf(mood.roomName, mood.buildingType) : undefined;
+  const wallLook = useMemo(() => (wallPack ? packTone(PACKS[wallPack], wall) : undefined), [wallPack, wall]);
+  const packLook = useMemo(() => (pack === wallPack ? wallLook : pack ? packTone(PACKS[pack], wall) : undefined), [pack, wallPack, wallLook, wall]);
   const wallTexture = wallSet(wallPack, mood?.biome ?? biome ?? "");
   const [nw, ne, se, sw] = rocky ? [0, 0, 0, 0] : corners ?? [0, 0, 0, 0];
   const rounded = nw + ne + se + sw > 0;
@@ -1095,7 +1096,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             const runs = cut.runs.filter((r) => r.b - r.a >= 0.01).map((r) => ({ ...r, at: sides.find((s) => s.side === r.side)!.at }));
             // Round each doorway and window the wall stands whole but for the frame's own outline (beside it, under a window and over
             // both), bent onto the curve where the wall curves
-            const tint = packLook && wallPack && hasWalls(wallPack) ? toneColour(packLook) : wall;
+            const tint = wallLook && wallPack && hasWalls(wallPack) ? toneColour(wallLook) : wall;
             // (the sides that are a balustrade: a gallery's overlooking edge, and the long sides of a walkway, which has no walls)
             const rails = plan?.form === "walkway" ? ["n", "e", "s", "w"].filter((s) => !assets.some((a) => isWay(a) && a.side === s)).join("") : railing;
             const pierced = rocky ? [] : setIn.filter((p) => (isWay(p.a) || p.a.kind === "window") && !met(p)).map((p) => (
@@ -1125,9 +1126,9 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             });
             return (
               <>
-                {packLook && wallPack && hasWalls(wallPack) && !rocky ? (
+                {wallLook && wallPack && hasWalls(wallPack) && !rocky ? (
                   <>
-                    <PackWalls runs={standing} corners={cornerList} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={packLook} wall={wallTexture} fallback={<>{solid(standing)}{corner}</>} />
+                    <PackWalls runs={standing} corners={cornerList} width={width} height={height} wallH={wallH} thick={WALL_THICK} tone={wallLook!} wall={wallTexture} fallback={<>{solid(standing)}{corner}</>} />
                     {solid(railed)}
                   </>
                 ) : <>{plain}{corner}</>}
@@ -1156,7 +1157,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         : [[0, 0], [width, 0], [0, height], [width, height]].map(([x, z], i) => <Cyl key={i} at={[x, 0.3, z]} r={0.08} h={0.6} color={wall} />)}
       {setIn.filter((p) => walls || p.a.kind !== "window").map(({ a, at, turn, bend }) => (
         <group key={a.id} position={[at[0], ramp(a.x, a.y), at[1]]} rotation={[0, turn, 0]}>
-          <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} tint={packLook && wallPack && hasWalls(wallPack) ? toneColour(packLook) : wall} bend={bend} rock={rocky ? { biome: mood!.biome, tier: detail, seed: a.x * 7 + a.y * 13 + width } : undefined} />
+          <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} tint={wallLook && wallPack && hasWalls(wallPack) ? toneColour(wallLook) : wall} bend={bend} rock={rocky ? { biome: mood!.biome, tier: detail, seed: a.x * 7 + a.y * 13 + width } : undefined} />
         </group>
       ))}
       {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
@@ -3116,10 +3117,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     }
     for (const r of rooms) {
       const pack = packOf(r.name, typeOf(r));
-      jobs.set(`wall:${wallSet(pack, biome)}`, () => void wallMaterial(wallSet(pack, biome), { vertexColors: true }));
+      const wallPack = wallPackOf(typeOf(r));
+      jobs.set(`wall:${wallSet(wallPack, biome)}`, () => void wallMaterial(wallSet(wallPack, biome), { vertexColors: true }));
+      if (wallPack && hasWalls(wallPack)) {
+        const wallTone = packTone(PACKS[wallPack], wall);
+        for (const url of Object.values(WALL_FILES)) jobs.set(`file:${wallTone.id}|${url}`, () => void loadModel(url, "base", wallTone));
+      }
       if (!pack) continue;
       const tone = packTone(PACKS[pack], wall);
-      if (hasWalls(pack)) for (const url of Object.values(WALL_FILES)) jobs.set(`file:${tone.id}|${url}`, () => void loadModel(url, "base", tone));
       for (const a of r.layout?.assets ?? []) {
         const file = a.kind === "furniture" ? pieceOf(pack, a.name) : undefined;
         if (file) jobs.set(`file:${tone.id}|${file}`, () => void loadModel(file, "base", tone));
@@ -4260,7 +4265,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           );
           // (the four walls of an open-topped room: of the room's wall set, and not overlapping at the corners or the floor, where their faces lay in
           // one plane with another box's and flashed: 2026-10-27, the user's hangar exterior)
-          const hollowSet = wallSet(packOf(room.name, building.type), biome);
+          const hollowSet = wallSet(wallPackOf(building.type), biome);
           const hollow = (h: number, color: string) => (
             <>
               <Box at={[l.width / 2, h / 2, 0.08]} size={[l.width, h, 0.16]} color={color} solid wall={hollowSet} />
@@ -4270,10 +4275,10 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             </>
           );
           return (
-            <group key={room.id} position={[l.x, lift, l.y]}>
+            <WallAnchor key={room.id} at={[l.x, lift, l.y]}><group position={[l.x, lift, l.y]}>
               {/* What an upper floor stands on */}
               {/* What a raised room stands on, in the wall set of the room (it was a plain colour: the flat wall in the middle of the user's street) */}
-              {lift > 0.01 && form !== "gallery" && form !== "walkway" && <Box at={[l.width / 2, -lift / 2, l.height / 2]} size={[l.width - 0.1, lift, l.height - 0.1]} color={new THREE.Color(wall).multiplyScalar(0.7).getStyle()} wall={wallSet(packOf(room.name, building.type), biome)} solid={!opened} />}
+              {lift > 0.01 && form !== "gallery" && form !== "walkway" && <Box at={[l.width / 2, -lift / 2, l.height / 2]} size={[l.width - 0.1, lift, l.height - 0.1]} color={new THREE.Color(wall).multiplyScalar(0.7).getStyle()} wall={wallSet(wallPackOf(building.type), biome)} solid={!opened} />}
               {form === "roof" ? (
                 <group position={[0, 0.02, 0]} onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                   <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} wayColor={wayColor} wayLabel={() => undefined} style={style} biome={biome} like={likeOf(room)} corners={(() => { const under = roofUnder(l); return under ? radiiOf(under) : undefined; })()} />
@@ -4378,19 +4383,19 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     {building.type === "cave" && l.mask && !form ? (
                       <CaveMound mask={l.mask} exits={l.assets.filter((a) => a.kind === "exit").map((a) => ({ x: a.x, y: a.y, side: a.side }))} w={l.width} h={l.height} biome={biome} tier={tierNow} seed={l.width * 31 + l.height} />
                     ) : (
-                    <RoomBlock w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} set={wallSet(packOf(room.name, building.type), biome)} />
+                    <RoomBlock w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} set={wallSet(wallPackOf(building.type), biome)} />
                     )}
                     {!opened && !form && !(building.type === "cave" && l.mask) && <AimBox at={[l.width / 2, body / 2, l.height / 2]} size={[l.width, body, l.height]} />}
                     {/* out to the curve of a round room it stands against */}
-                    {!(building.type === "cave" && l.mask) && meetsOf(room, rooms).map((m, i) => <MeetFill key={`meet${i}`} meet={m} width={l.width} height={l.height} y={0} h={body} color={wallColor} wall={wallSet(packOf(room.name, building.type), biome)} />)}
+                    {!(building.type === "cave" && l.mask) && meetsOf(room, rooms).map((m, i) => <MeetFill key={`meet${i}`} meet={m} width={l.width} height={l.height} y={0} h={body} color={wallColor} wall={wallSet(wallPackOf(building.type), biome)} />)}
                   </group>
                   {!opened && !form && !roofed.has(room.id) && !(building.type === "cave" && l.mask) && (
                     <>
                       {/* What stands on the roof */}
                       {/* (a tower of a palace is capped with a spire, its great hall with a dome) */}
                       {/tower/i.test(room.name) ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><Cyl at={[0, 1.4, 0]} r={Math.min(l.width, l.height) * 0.42} h={2.8} color={paletteOf(biome).canvas[0]} top={0.03} /><Cyl at={[0, 3.0, 0]} r={0.04} h={0.8} color="#d8b45a" /></group>
-                        : /audience chamber/i.test(room.name) && building.type === "palace" ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.4} color={wall} set={wallSet(packOf(room.name, building.type), biome)} /></group>
-                        : room.gateway ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.3} color={wall} set={wallSet(packOf(room.name, building.type), biome)} /></group>
+                        : /audience chamber/i.test(room.name) && building.type === "palace" ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.4} color={wall} set={wallSet(wallPackOf(building.type), biome)} /></group>
+                        : room.gateway ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.3} color={wall} set={wallSet(wallPackOf(building.type), biome)} /></group>
                         : roof % 3 === 0 ? <><Box at={[l.width * 0.3, tall + 0.35, l.height * 0.35]} size={[1, 0.5, 0.8]} color="#59636d" /><Cyl at={[l.width * 0.3, tall + 0.65, l.height * 0.35]} r={0.25} h={0.1} color="#2b2f36" /></>
                         : roof % 3 === 1 ? <Mast at={[l.width * 0.7, tall + 0.1, l.height * 0.6]} h={1.8} />
                         : <Cyl at={[l.width * 0.6, tall + 0.4, l.height * 0.4]} r={0.5} h={0.6} color="#59636d" />}
@@ -4412,13 +4417,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     </mesh>
                   )}
                   <group position={[at.x, 0, at.z]} rotation={[0, at.turn, 0]}>
-                    <Doorway rock={building.type === "cave" && !!l.mask ? { biome, tier: tierNow, seed: a.x * 7 + a.y * 13 + l.width, outside: true } : undefined} name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={wallSet(packOf(room.name, building.type), biome)} tint={wallColor} bend={place.bend} />
+                    <Doorway rock={building.type === "cave" && !!l.mask ? { biome, tier: tierNow, seed: a.x * 7 + a.y * 13 + l.width, outside: true } : undefined} name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={wallSet(wallPackOf(building.type), biome)} tint={wallColor} bend={place.bend} />
                   </group>
                   </group>
                 );
               })}
               {(reveal || (opened && shown.some((a) => a.to === room.id))) && <Label at={[l.width / 2, tall + 0.6, l.height / 2]} size={0.36} color="#aabbdd">{room.name}</Label>}
-            </group>
+            </group></WallAnchor>
           );
         })}
 

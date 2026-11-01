@@ -68,6 +68,31 @@ export type RenderTier = "lite" | "full";
 const LOOK = { tier: "full" as RenderTier };
 const DESKTOP = typeof window !== "undefined" && !("ontouchstart" in window) && (navigator.maxTouchPoints ?? 0) === 0;
 const RENDERERS = new Set<BabylonRenderer>();
+// What the player has set in Options for each effect ("auto" is what the tier and device give); kept in the browser
+export interface Effects {
+  shadows: "auto" | "off" | "low" | "high";
+  occlusion: "auto" | "off" | "on";
+  smoothing: "auto" | "off" | "fxaa" | "msaa";
+  bloom: "auto" | "off" | "on";
+}
+const EFFECT_KEY = "sw5e.effects";
+const loadEffects = (): Effects => {
+  const base: Effects = { shadows: "auto", occlusion: "auto", smoothing: "auto", bloom: "auto" };
+  try {
+    const saved = JSON.parse(localStorage.getItem(EFFECT_KEY) ?? "{}") as Partial<Effects>;
+    for (const k of Object.keys(base) as (keyof Effects)[]) if (typeof saved[k] === "string") (base as unknown as Record<string, string>)[k] = saved[k]!;
+  } catch {}
+  return base;
+};
+export const EFFECTS: Effects = typeof window === "undefined" ? { shadows: "auto", occlusion: "auto", smoothing: "auto", bloom: "auto" } : loadEffects();
+const effectListeners = new Set<() => void>();
+export function setEffects(change: Partial<Effects>) {
+  Object.assign(EFFECTS, change);
+  try { localStorage.setItem(EFFECT_KEY, JSON.stringify(EFFECTS)); } catch {}
+  for (const r of RENDERERS) r.retier();
+  effectListeners.forEach((f) => f());
+}
+export const onEffects = (f: () => void) => { effectListeners.add(f); return () => void effectListeners.delete(f); };
 export function setRenderTier(tier: RenderTier) {
   if (LOOK.tier === tier) return;
   LOOK.tier = tier;
@@ -77,6 +102,9 @@ export function setRenderTier(tier: RenderTier) {
 const SOFTWARE = { on: false };
 const lite = () => LOOK.tier === "lite" || SOFTWARE.on;
 function shadowSettings() {
+  if (EFFECTS.shadows === "off") return { cascades: 2, size: 1024, quality: ShadowGenerator.QUALITY_LOW, lamps: 0, lights: lite() ? 4 : 6 };
+  if (EFFECTS.shadows === "low") return { cascades: 2, size: 1024, quality: ShadowGenerator.QUALITY_LOW, lamps: lite() ? 0 : 1, lights: lite() ? 4 : 6 };
+  if (EFFECTS.shadows === "high") return { cascades: 4, size: 2048, quality: ShadowGenerator.QUALITY_HIGH, lamps: 2, lights: 8 };
   if (lite()) return { cascades: 2, size: 1024, quality: ShadowGenerator.QUALITY_LOW, lamps: 0, lights: 4 };
   if (!DESKTOP) return { cascades: 3, size: 1024, quality: ShadowGenerator.QUALITY_MEDIUM, lamps: 1, lights: 6 };
   return { cascades: 4, size: 2048, quality: ShadowGenerator.QUALITY_HIGH, lamps: 2, lights: 8 };
@@ -405,16 +433,17 @@ class Mirror {
       const p = new DefaultRenderingPipeline("look", false, scene, [this.camera]);
       // (the materials tone-map themselves: the bloom works on what they drew)
       p.imageProcessingEnabled = false;
-      p.samples = DESKTOP ? 4 : 1;
-      p.fxaaEnabled = !DESKTOP;
-      p.bloomEnabled = true;
+      const smoothing = EFFECTS.smoothing === "auto" ? (DESKTOP ? "msaa" : "fxaa") : EFFECTS.smoothing;
+      p.samples = smoothing === "msaa" ? 4 : 1;
+      p.fxaaEnabled = smoothing === "fxaa";
+      p.bloomEnabled = EFFECTS.bloom !== "off";
       p.bloomThreshold = 0.98;
       p.bloomWeight = 0.25;
       p.bloomKernel = DESKTOP ? 64 : 32;
       p.bloomScale = 0.5;
       this.pipeline = p;
     }
-    if (DESKTOP && !this.ssao) {
+    if ((EFFECTS.occlusion === "auto" ? DESKTOP : EFFECTS.occlusion === "on") && !this.ssao) {
       const ao = new SSAO2RenderingPipeline("contact", scene, { ssaoRatio: 0.5, blurRatio: 0.5 }, [this.camera], false);
       ao.radius = 0.6;
       ao.totalStrength = 1.1;
@@ -1315,7 +1344,7 @@ class Mirror {
 
   // The sun's shadows: cascades that follow the camera, finer near it
   private sunShadow(light: DirectionalLight, on: boolean) {
-    if (!on) {
+    if (!on || EFFECTS.shadows === "off") {
       if (this.sun?.light === light) {
         this.sun.shadow.dispose();
         this.sun = undefined;
@@ -1446,6 +1475,9 @@ export class BabylonRenderer {
   info = { autoReset: true, render: { frame: 0, calls: 0, triangles: 0, points: 0, lines: 0 }, memory: { geometries: 0, textures: 0 }, programs: null, reset() {} };
   capabilities = { isWebGL2: true, getMaxAnisotropy: () => 4, maxTextures: 16, precision: "highp" };
   private mirrors = new Map<THREE.Scene, Mirror>();
+  // Where a frame's time goes, in milliseconds (a running average): the three scene's matrix update, the mirror's sync into Babylon, and
+  // Babylon's draw (its culling and the GL calls); the game's own frame hooks run before this. For the console: `__babylon.timing`
+  timing = { update: 0, sync: 0, draw: 0 };
   private pixelRatio = 1;
   private width = 1;
   private height = 1;
@@ -1513,6 +1545,7 @@ export class BabylonRenderer {
 
   render(scene: THREE.Scene, camera: THREE.Camera) {
     if (this.engine.isDisposed) return;
+    const t0 = performance.now();
     if (scene.matrixWorldAutoUpdate) scene.updateMatrixWorld();
     if (camera.parent === null && camera.matrixWorldAutoUpdate) camera.updateMatrixWorld();
     let mirror = this.mirrors.get(scene);
@@ -1520,10 +1553,16 @@ export class BabylonRenderer {
       mirror = new Mirror(this.engine, this);
       this.mirrors.set(scene, mirror);
     }
+    const t1 = performance.now();
     mirror.sync(scene, camera);
+    const t2 = performance.now();
     this.engine.beginFrame();
     mirror.scene.render();
     this.engine.endFrame();
+    const t3 = performance.now();
+    this.timing.update += (t1 - t0 - this.timing.update) * 0.1;
+    this.timing.sync += (t2 - t1 - this.timing.sync) * 0.1;
+    this.timing.draw += (t3 - t2 - this.timing.draw) * 0.1;
     const r = this.info.render;
     r.frame++;
     r.calls = mirror.instrumentation.drawCallsCounter.current;

@@ -1,12 +1,12 @@
 // A room's walls as tiles of the Space Station Kit (see packs.ts `wallTiles`), merged into one mesh and in the room's palette: the
 // straight runs between the ways, and the rounded corners with the tiles bent round their radius. Doorways and windows are the map's own.
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { WALL_FILES, wallTiles } from "./packs";
 import { useModels } from "./assets";
 import { AIM } from "./aim";
-import { WALL_TILE, boxUV, wallMaterial, type WallSet } from "../surfaces";
+import { WALL_TILE, WallOrigin, boxUV, wallMaterial, type WallSet } from "../surfaces";
 import type { Tone } from "./tones";
 import { outlineAt, type Outline } from "@shared/logic/footprint";
 
@@ -109,15 +109,16 @@ export function wallsGeometry(runs: WallRun[], width: number, height: number, wa
 // The walls of a room in a pack's palette; `fallback` (the plain walls) stands until the kit has loaded
 export function PackWalls({ runs, corners = [], width, height, wallH, thick, tone, wall, fallback }: { runs: WallRun[]; corners?: WallCorner[]; width: number; height: number; wallH: number; thick: number; tone: Tone; wall: WallSet; fallback: ReactNode }) {
   const files = useModels(Object.values(WALL_FILES), "base", tone);
+  const origin = useContext(WallOrigin);
   const key = runs.map((r) => `${r.side}${r.a}-${r.b}`).join(",") + corners.map((c) => `c${c.corner}${c.r}:${c.from ?? ""}-${c.to ?? ""}`).join(",");
   // The walls (straight and curved) are projected in squares, so that the wall set repeats evenly round the room
   const geometry = useMemo(() => {
     const kit = wallsGeometry(runs, width, height, wallH, thick, files, corners);
     if (!kit) return null;
-    const textured = boxUV(kit, 1 / WALL_TILE);
+    const textured = boxUV(kit, 1 / WALL_TILE, origin);
     kit.dispose();
     return textured;
-  }, [key, width, height, wallH, thick, files]);
+  }, [key, width, height, wallH, thick, files, origin.join(",")]);
   useEffect(() => () => geometry?.dispose(), [geometry]);
   const mesh = useRef<THREE.Mesh>(null);
   // What blocks the view and the shot, for the crosshair (aim.ts)

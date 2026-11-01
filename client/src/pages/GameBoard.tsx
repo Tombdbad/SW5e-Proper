@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Canvas } from "@react-three/fiber";
-import { babylonGl } from "@/components/Map/babylon";
+import { EFFECTS, babylonGl, onEffects, setEffects, type Effects } from "@/components/Map/babylon";
 import { KeyboardControls, PerformanceMonitor } from "@react-three/drei";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -277,6 +277,24 @@ export default function GameBoard() {
   useEffect(() => {
     try { localStorage.setItem("sw5e.sharpness", String(sharpness)); } catch {}
   }, [sharpness]);
+  // The render scale the player chose in Options ("auto" follows the device, as above); a number is kept whatever the frame rate
+  const [resolution, setResolution] = useState<"auto" | number>(() => {
+    try {
+      const saved = Number(localStorage.getItem("sw5e.resolution"));
+      return saved >= 0.5 && saved <= 3 ? saved : "auto";
+    } catch {
+      return "auto";
+    }
+  });
+  useEffect(() => {
+    try {
+      if (resolution === "auto") localStorage.removeItem("sw5e.resolution");
+      else localStorage.setItem("sw5e.resolution", String(resolution));
+    } catch {}
+  }, [resolution]);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [, effectsChanged] = useState(0);
+  useEffect(() => onEffects(() => effectsChanged((n) => n + 1)), []);
   const detailFixed = useQuality((q) => q.fixed);
   const viewMode = useView((v) => v.mode);
   const gait = useRun();
@@ -8185,7 +8203,7 @@ export default function GameBoard() {
         <div className={`absolute inset-x-0 bottom-0 ${inCombat || shipFight ? "top-0" : "top-16 md:top-12"}`}>
         <Canvas
           shadows
-          dpr={sharpness}
+          dpr={resolution === "auto" ? sharpness : resolution}
           camera={{
             position: [0, 15, 15],
             fov: 75,
@@ -8201,11 +8219,13 @@ export default function GameBoard() {
           <PerformanceMonitor
             bounds={() => [30, 50]}
             onDecline={() => {
+              if (resolution !== "auto") return;
               setSharpness((s) => Math.max(0.5, Math.round((s - 0.25) * 100) / 100));
               // (and once the render scale is down, fewer plants and no flowers in the gardens of a site)
               if (sharpness <= 0.75) useQuality.getState().lower();
             }}
             onIncline={() => {
+              if (resolution !== "auto") return;
               setSharpness((s) => Math.min(1.5, Math.round((s + 0.25) * 100) / 100));
               if (sharpness >= 1.25) useQuality.getState().raise();
             }}
@@ -8255,6 +8275,65 @@ export default function GameBoard() {
             </div>
           </div>
         )}
+        {optionsOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" data-testid="options-dialog" role="dialog" aria-label="Options" onClick={() => setOptionsOpen(false)}>
+            <div className="max-h-full w-full max-w-md space-y-4 overflow-y-auto rounded border border-gray-600 bg-gray-900 p-4 text-sm" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-yellow-300">Options</h2>
+                <Button size="sm" variant="outline" className="h-6 px-2 text-xs" data-testid="options-close" onClick={() => setOptionsOpen(false)}>Close</Button>
+              </div>
+              <section className="space-y-2">
+                <h3 className="font-semibold text-sky-300">Graphics</h3>
+                <p className="text-xs text-gray-400">Resolution: how many pixels the map draws, as a share of the screen's CSS size. Auto starts high and steps down while the frame rate is under 30 (now {Math.round(sharpness * 100)}%). A fixed value stays where you put it. This device's pixels are {window.devicePixelRatio}× that size.</p>
+                <div className="flex flex-wrap gap-1" data-testid="resolution-options">
+                  {([["auto", "Auto"], [0.5, "50%"], [0.75, "75%"], [1, "100%"], [1.5, "150%"], [2, "200%"], [Math.round(window.devicePixelRatio * 100) / 100, "Native"]] as const).map(([v, label]) => (
+                    <Button key={label} size="sm" variant={resolution === v ? "default" : "outline"} className="h-7 px-2 text-xs" data-testid={`resolution-${label.toLowerCase()}`} onClick={() => setResolution(v)}>{label}</Button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400">Detail: how much the map draws. Auto follows the device (now {detailTier}), Lite draws fewer plants (phones), Full everything.</p>
+                <div className="flex gap-1">
+                  {([[undefined, "Auto"], ["lite", "Lite"], ["full", "Full"]] as const).map(([v, label]) => (
+                    <Button key={label} size="sm" variant={detailFixed === v ? "default" : "outline"} className="h-7 px-2 text-xs" data-testid={`detail-${label.toLowerCase()}`} onClick={() => useQuality.getState().fix(v)}>{label}</Button>
+                  ))}
+                </div>
+              </section>
+              <section className="space-y-2">
+                <h3 className="font-semibold text-sky-300">Effects</h3>
+                <p className="text-xs text-gray-400">Each one costs frame rate on a weaker graphics chip; Auto leaves them to the detail above and the device. They apply on Full detail.</p>
+                {([
+                  ["shadows", "Shadows", [["auto", "Auto"], ["off", "Off"], ["low", "Low"], ["high", "High"]]],
+                  ["occlusion", "Ambient occlusion", [["auto", "Auto"], ["off", "Off"], ["on", "On"]]],
+                  ["smoothing", "Edge smoothing", [["auto", "Auto"], ["off", "Off"], ["fxaa", "Fast"], ["msaa", "4× MSAA"]]],
+                  ["bloom", "Glow", [["auto", "Auto"], ["off", "Off"], ["on", "On"]]],
+                ] as [keyof Effects, string, [string, string][]][]).map(([key, label, choices]) => (
+                  <div key={key} className="flex flex-wrap items-center gap-1" data-testid={`effect-${key}`}>
+                    <span className="w-36 text-gray-300">{label}</span>
+                    {choices.map(([value, name]) => (
+                      <Button key={value} size="sm" variant={EFFECTS[key] === value ? "default" : "outline"} className="h-7 px-2 text-xs" data-testid={`effect-${key}-${value}`} onClick={() => setEffects({ [key]: value } as Partial<Effects>)}>{name}</Button>
+                    ))}
+                  </div>
+                ))}
+              </section>
+              <section className="space-y-2">
+                <h3 className="font-semibold text-sky-300">Display</h3>
+                <div className="flex flex-wrap gap-1">
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-xs" data-testid="fullscreen-toggle" title="Fill the whole screen: no address bar, buttons or borders (F11 on a computer)" onClick={toggleFullscreen}>
+                    {fullscreen ? "Exit full screen" : "Full screen"}
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={toggleSidebar}>
+                    {showSidebar ? "Hide HUD" : "Show HUD"}
+                  </Button>
+                </div>
+              </section>
+              <section className="space-y-2">
+                <h3 className="font-semibold text-sky-300">Play</h3>
+                <Button size="sm" variant="outline" className="h-7 px-2 text-xs" data-testid="mode-toggle" title="How the campaign is played: the tabletop (dice, turns) or the real-time shooter" onClick={() => { setOptionsOpen(false); setAskMode(true); }}>
+                  Mode: {playMode === "shooter" ? "Shooter" : "Tabletop"}
+                </Button>
+              </section>
+            </div>
+          </div>
+        )}
         <Compass />
         </div>
         {/* The real-time moves' buttons over the overhead view (the eye views draw their own beside the stick) */}
@@ -8301,15 +8380,8 @@ export default function GameBoard() {
                   </Button>
                 </div>
               )}
-              <Button
-                size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" data-testid="detail-toggle"
-                title={`How much the map draws: Auto follows the device (now ${detailTier}), Lite draws fewer plants (phones), Full everything`}
-                onClick={() => useQuality.getState().fix(detailFixed === undefined ? "lite" : detailFixed === "lite" ? "full" : undefined)}
-              >
-                Detail: {detailFixed ? (detailFixed === "lite" ? "Lite" : "Full") : "Auto"}
-              </Button>
-              <Button size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" data-testid="mode-toggle" title="How the campaign is played: the tabletop (dice, turns) or the real-time shooter" onClick={() => setAskMode(true)}>
-                Mode: {playMode === "shooter" ? "Shooter" : "Tabletop"}
+              <Button size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" data-testid="options-button" title="Graphics, play mode, full screen and the HUD" onClick={() => setOptionsOpen(true)}>
+                Options
               </Button>
               {world && character && <CoopButton onOpen={() => setCoopOpen(true)} />}
               {onFoot && (
@@ -8334,12 +8406,6 @@ export default function GameBoard() {
                   </Button>
                 </>
               )}
-              <Button size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" data-testid="fullscreen-toggle" title="Fill the whole screen: no address bar, buttons or borders (F11 on a computer)" onClick={toggleFullscreen}>
-                {fullscreen ? "Exit full screen" : "Full screen"}
-              </Button>
-              <Button size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" onClick={toggleSidebar}>
-                {showSidebar ? "Hide HUD" : "Show HUD"}
-              </Button>
             </div>
             {world && view && (
               <p className="mt-0.5 text-[11px] leading-tight text-gray-300 drop-shadow" data-testid="map-hint">

@@ -1,7 +1,11 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-11-01 (Windows PC). Branch **`main`** (the checkout is on main). origin has main up to e502652 (pushed at the user's request).
+Written 2026-11-01 (Windows PC). Branch **`main`**. origin has main up to e502652; the commit after it (wall packs, Options, effects, timing) is local, not pushed.
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told, never commit it.
+
+## 2026-11-01 (later): walls with two textures, resolution, Options (REVIVAL_NOTES "Wall textures, resolution, Options")
+- Walls from one pack a building (`wallPackOf`) and the pattern in the building's frame (boxUV origin, WallAnchor). Options dialog (resolution, detail, effects, display) replaces four buttons of the map strip. `__babylon.timing` splits the frame. NOT rebuilt: 5000 runs e502652; the shortcut or a build and restart brings this.
+- Not looked at in a palace (the test campaign is a cave), nor measured on the real window (the browser pane was hidden; its frames throttle). Next: the notes' "Where the frame goes" list.
 
 ## 2026-11-01: the user's list (REVIVAL_NOTES "Walking, balustrades, night, moons, mounts, warm-up" has all of it)
 - Stride slower (limbs.ts `CYCLES_PER_SQUARE`), no jump while prone (`beginJump`), keys stop the walk at once on release (`driven` walks, ViewRig `halt`, `stepToward` with a zero push). Checked in the browser on a dev server: no jump prone, a jump standing, the position at a key's release is the position later.

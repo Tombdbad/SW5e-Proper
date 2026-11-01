@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { PACKS, WALL_FILES, codeTurn, facing, fitPiece, maxHeightOf, packOf, pieceOf, stretches, wallTiles } from "../../client/src/components/Map/interiors/packs";
+import { PACKS, WALL_FILES, codeTurn, facing, fitPiece, maxHeightOf, packOf, pieceOf, stretches, wallPackOf, wallTiles } from "../../client/src/components/Map/interiors/packs";
 import { TONES } from "../../client/src/components/Map/interiors/tones";
 
 test("a room takes its pack by its name, then by its building, one pack at most", () => {
@@ -133,4 +133,14 @@ test("the kit's wall tiles bend round a rounded corner: on the ring, in its quar
   const whole = wallsGeometry(runs, width, height, wallH, thick, files, corners)!;
   assert.ok(whole.getAttribute("position").count > 0);
   assert.equal(wallsGeometry(runs, width, height, wallH, thick, {}, corners), null, "nothing until the kit is in");
+});
+
+test("a building's walls come from one pack whatever its rooms are furnished like (two rooms sharing a wall must not draw it in two textures)", () => {
+  // the rooms of a palace are furnished by their names (a servants' hall is a resident's, the audience chamber the station kit's) ...
+  assert.equal(packOf("Servants' quarters", "palace"), "furniture");
+  assert.equal(packOf("Audience chamber", "palace"), "station");
+  // ... but the walls are the building's
+  assert.equal(wallPackOf("palace"), "station");
+  assert.equal(wallPackOf("hideout"), "criminal");
+  assert.equal(wallPackOf("cantina"), undefined);
 });

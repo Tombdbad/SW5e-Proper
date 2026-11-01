@@ -3,7 +3,7 @@
 // normal map and shifted by its height map (offset parallax, as the ground is). A material is made once and shared. Its maps are put
 // in when they load: until then a surface is drawn in its vertex colour alone, and the placeholders are flat, so nothing is black.
 // This module is shared by models.tsx and siteAssets.tsx, so it imports neither.
-import { useEffect, useMemo } from "react";
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import * as THREE from "three";
 import type { V3 } from "./models";
 import { shaderPatch } from "./babylon";
@@ -13,7 +13,9 @@ export const WALL_TILE = 2; // squares of wall in one repeat of a wall texture
 
 // Texture coordinates for a mesh that has none: each triangle is projected along the axis its normal points most along (a box
 // mapping), in model units times `grain`. The triangles are unjoined, so the seams between faces show as breaks in a pattern.
-export function boxUV(source: THREE.BufferGeometry, grain: number): THREE.BufferGeometry {
+// `origin` is where the geometry's own zero stands in its building (a room's corner, a box's middle): the pattern is laid out in the
+// building's frame, so that two walls in one plane draw the same pixels and cannot be told apart where their faces fight
+export function boxUV(source: THREE.BufferGeometry, grain: number, origin: V3 = [0, 0, 0]): THREE.BufferGeometry {
   const geo = source.index ? source.toNonIndexed() : source.clone();
   const p = geo.attributes.position as THREE.BufferAttribute;
   const n = geo.attributes.normal as THREE.BufferAttribute;
@@ -28,7 +30,8 @@ export function boxUV(source: THREE.BufferGeometry, grain: number): THREE.Buffer
     const ax = Math.abs(nx), ay = Math.abs(ny), az = Math.abs(nz);
     for (let k = 0; k < 3; k++) {
       const i = t + k;
-      const [u, v] = ax >= ay && ax >= az ? [p.getZ(i), p.getY(i)] : ay >= az ? [p.getX(i), p.getZ(i)] : [p.getX(i), p.getY(i)];
+      const [x, y, z] = [p.getX(i) + origin[0], p.getY(i) + origin[1], p.getZ(i) + origin[2]];
+      const [u, v] = ax >= ay && ax >= az ? [z, y] : ay >= az ? [x, z] : [x, y];
       uv[i * 2] = u * grain;
       uv[i * 2 + 1] = v * grain;
     }
@@ -158,8 +161,13 @@ export function wallMaterial(set: WallSet, o: { tint?: string; vertexColors?: bo
   return surfaceMaterial("wall", set, { vertexColors: o.vertexColors, tint, lift: 1.5, parallax: 0.03 });
 }
 // A plain wall's box, with texture coordinates in squares
-export function WallGeometry({ size }: { size: V3 }) {
-  const geo = useMemo(() => boxUV(new THREE.BoxGeometry(...size), 1 / WALL_TILE), [size.join(",")]);
+// Where the room being drawn stands in its building (set by the building's scene), for the wall textures' frame
+export const WallOrigin = createContext<V3>([0, 0, 0]);
+export const WallAnchor = ({ at, children }: { at: V3; children: ReactNode }) => <WallOrigin.Provider value={at}>{children}</WallOrigin.Provider>;
+export function WallGeometry({ size, at = [0, 0, 0] }: { size: V3; at?: V3 }) {
+  const room = useContext(WallOrigin);
+  const origin: V3 = [room[0] + at[0], room[1] + at[1], room[2] + at[2]];
+  const geo = useMemo(() => boxUV(new THREE.BoxGeometry(...size), 1 / WALL_TILE, origin), [size.join(","), origin.join(",")]);
   useEffect(() => () => geo.dispose(), [geo]);
   return <primitive attach="geometry" object={geo} />;
 }
