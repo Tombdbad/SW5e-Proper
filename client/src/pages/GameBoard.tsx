@@ -17,7 +17,7 @@ import { type MapAction } from "@/components/Map/GalaxyMap";
 import { useQuality } from "@/components/Map/siteAssets";
 import { useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
 import { useRun } from "@/components/Map/interiors/stick";
-import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whereNow, useClock, useTransit, useTable, lifeLink, noEncounters, LEVEL_H } from "@/components/Map/LocalMap";
+import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whereNow, useClock, useTransit, useTable, lifeLink, noEncounters, useWarmup, LEVEL_H } from "@/components/Map/LocalMap";
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
 import { useShoot } from "@/components/Map/interiors/shoot";
@@ -8199,6 +8199,8 @@ export default function GameBoard() {
       <KeyboardControls map={controls}>
         {/* The 3D map. On a phone it has the top of the screen and the HUD the rest */}
         <div className={`absolute inset-x-0 top-0 md:h-full ${showSidebar ? "md:right-80" : ""} ${showSidebar || showCombat ? "h-[46dvh]" : "h-full"}`} data-testid="map-3d">
+        {/* A district being got ready the first time it is entered (LocalMap BuildingScene): its rooms are drawn behind this */}
+        <DistrictLoading />
         {/* Outside a fight the scene starts under the strip of map buttons and hint, not behind it */}
         <div className={`absolute inset-x-0 bottom-0 ${inCombat || shipFight ? "top-0" : "top-16 md:top-12"}`}>
         <Canvas
@@ -10426,6 +10428,21 @@ function TrainingActivity(props: DowntimeProps) {
       {message.map((m, i) => (
         <p key={i} className="text-xs text-gray-200">{m}</p>
       ))}
+    </div>
+  );
+}
+
+// The loading screen of a district (see BuildingScene in LocalMap): over the map while its kinds of room are got ready, once a session
+function DistrictLoading() {
+  const { total, done } = useWarmup();
+  if (!total) return null;
+  return (
+    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-gray-950 text-gray-200" data-testid="district-loading">
+      <div className="text-sm">Getting the district ready</div>
+      <div className="h-1.5 w-48 overflow-hidden rounded bg-gray-800">
+        <div className="h-full bg-blue-500 transition-all" style={{ width: `${Math.round((done / total) * 100)}%` }} />
+      </div>
+      <div className="text-xs text-gray-500">{done} of {total} kinds of room</div>
     </div>
   );
 }

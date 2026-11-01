@@ -118,7 +118,7 @@ test("a shape kept by the game is drawn again when the scene that used it comes 
   assert.equal(mesh.geometry!.isDisposed(), false);
 });
 
-test("lights keep their strength (an ambient light becomes a hemisphere at 1/π, as three lights with it)", () => {
+test("lights keep their strength in one fixed rig: ambient lights summed into one sky at 1/π, suns in their slots, and a room's lights coming and going change no shader", () => {
   const { scene, draw, mirror } = make();
   scene.add(new THREE.AmbientLight("#ffffff", Math.PI));
   const sun = new THREE.DirectionalLight("#ffeedd", 0.9);
@@ -127,16 +127,29 @@ test("lights keep their strength (an ambient light becomes a hemisphere at 1/π,
   const lamp = new THREE.PointLight("#ff8800", 2, 6);
   scene.add(lamp);
   draw();
-  const lights = mirror().lights;
-  const kinds = lights.map((l) => l.getClassName()).sort();
-  assert.deepEqual(kinds, ["DirectionalLight", "HemisphericLight", "PointLight"]);
-  const hemi = lights.find((l) => l.getClassName() === "HemisphericLight")!;
-  assert.ok(Math.abs(hemi.intensity - 1) < 1e-6);
-  const dir = lights.find((l) => l.getClassName() === "DirectionalLight") as unknown as { intensity: number; direction: { y: number } };
-  assert.ok(Math.abs(dir.intensity - 0.9) < 1e-6);
-  assert.ok(dir.direction.y < -0.99, "the sun shines down at its target");
-  const point = lights.find((l) => l.getClassName() === "PointLight") as unknown as { range: number };
+  const lights = () => mirror().lights;
+  const kinds = () => lights().map((l) => l.getClassName()).join();
+  const before = kinds();
+  const sky = lights().find((l) => l.getClassName() === "HemisphericLight") as unknown as { diffuse: { r: number }; intensity: number };
+  assert.ok(Math.abs(sky.diffuse.r * sky.intensity - 1) < 1e-6, "the sky is three's ambient at 1/π");
+  const suns = lights().filter((l) => l.getClassName() === "DirectionalLight") as unknown as { intensity: number; direction: { y: number } }[];
+  assert.ok(Math.abs(suns[0].intensity - 0.9) < 1e-6);
+  assert.ok(suns[0].direction.y < -0.99, "the sun shines down at its target");
+  assert.ok(suns.slice(1).every((d) => d.intensity === 0), "the other sun slots are dark");
+  const point = lights().find((l) => l.name === `p${lamp.id}`) as unknown as { range: number };
   assert.equal(point.range, 6);
+  // A room comes with its ambient and key light: the sky is brighter, a slot is used, and the lights are the same lights
+  const room = new THREE.Group();
+  room.add(new THREE.AmbientLight("#ffffff", Math.PI), new THREE.DirectionalLight("#ffffff", 0.5));
+  scene.add(room);
+  draw();
+  assert.equal(kinds(), before);
+  assert.ok(Math.abs(sky.diffuse.r * sky.intensity - 2) < 1e-6, "two ambient lights add up");
+  assert.ok(Math.abs(suns[1].intensity - 0.5) < 1e-6);
+  scene.remove(room);
+  draw();
+  assert.equal(kinds(), before);
+  assert.equal(suns[1].intensity, 0);
 });
 
 test("three's shader patches become Babylon's: fur, hull wear and sea waves as plugins, parallax as Babylon's own, and a copy keeps its base's", () => {
@@ -244,4 +257,37 @@ test("each frame copies only what changed: a reshaped geometry, a new map, a lig
   draw();
   assert.equal(light().isEnabled(), true);
   assert.ok(resyncs > 0, "a real change still reaches the meshes");
+});
+
+test("three materials that look alike share one Babylon material; one whose colour keeps changing gets its own", () => {
+  const { scene, draw, mirror } = make();
+  const geo = new THREE.BoxGeometry();
+  const red = () => new THREE.MeshLambertMaterial({ color: "#aa2200" });
+  const a = new THREE.Mesh(geo, red()), b = new THREE.Mesh(geo, red()), c = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: "#0022aa" }));
+  scene.add(a, b, c);
+  draw();
+  const mat = (o: THREE.Mesh) => meshNamed(mirror(), o)!.material as PBRMaterial;
+  assert.equal(mat(a), mat(b), "two alike, one material");
+  assert.notEqual(mat(a), mat(c));
+  // b turns blue: it now looks like c
+  (b.material as THREE.MeshLambertMaterial).color.set("#0022aa");
+  draw();
+  assert.equal(mat(b), mat(c));
+  assert.notEqual(mat(a), mat(b));
+  // and keeps changing (a flicker): after a third change it has a material of its own, which follows its colour each frame
+  for (const hex of ["#111111", "#222222", "#333333"]) {
+    (b.material as THREE.MeshLambertMaterial).color.set(hex);
+    draw();
+  }
+  assert.notEqual(mat(b), mat(a));
+  assert.notEqual(mat(b), mat(c));
+  (b.material as THREE.MeshLambertMaterial).color.setRGB(0.5, 0.25, 0);
+  draw();
+  assert.ok(Math.abs(mat(b).albedoColor.g - 0.25) < 1e-6);
+  // A material with a plugin of its own is never shared
+  const fur = () => shaderPatch(new THREE.MeshLambertMaterial(), { kind: "fur", length: 0.05, shells: 6, strands: { value: null } });
+  const f1 = new THREE.Mesh(geo, fur()), f2 = new THREE.Mesh(geo, fur());
+  scene.add(f1, f2);
+  draw();
+  assert.notEqual(mat(f1), mat(f2));
 });

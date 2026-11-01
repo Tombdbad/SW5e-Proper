@@ -142,6 +142,10 @@ export const useClock = create<{ minutes: number; set: (minutes: number) => void
   minutes: START_TIME,
   set: (minutes) => set({ minutes }),
 }));
+// A district's loading screen (BuildingScene): how many of its kinds of room have been got ready, of how many (none: no screen); and
+// the districts got ready this session, which do not show it again
+export const useWarmup = create<{ total: number; done: number }>(() => ({ total: 0, done: 0 }));
+const READY_DISTRICTS = new Set<string>();
 // The minute between the clock's ticks (a minute passes each real second while the clock runs), for what is
 // drawn moving by the clock: a ship coming down into its berth, the doors of its hangar
 let tickedAt = performance.now();
@@ -2660,7 +2664,23 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const inside = planned && here?.kind === "room" && buildingIds.has(here.parentId ?? "") ? here : null;
   const outside = buildingIds.has(hereId);
   const present = planned && (!!inside || outside);
-  const opened = inside ?? (reveal && planned ? rooms.find((a) => a.id === selectedId) ?? null : null);
+  // While the district is got ready behind its loading screen (see below), the room being got ready is the one opened: one of each kind
+  // of room (its building's kind, the pack it is furnished from, its form, above or below ground), which share their shaders and maps
+  const [warming, setWarming] = useState<number | null>(null);
+  const roomKey = rooms.map((r) => r.id).join(",");
+  const warmRooms = useMemo(() => {
+    const kinds = new Set<string>();
+    return rooms.filter((r) => {
+      if (!r.layout) return false;
+      const type = world.areas[r.parentId ?? ""]?.type ?? building.type;
+      const kind = `${type}|${packOf(r.name, type) ?? ""}|${formOf(r) ?? ""}|${(r.layout.level ?? 0) < 0}`;
+      if (kinds.has(kind)) return false;
+      kinds.add(kind);
+      return true;
+    });
+  }, [roomKey]);
+  const warmRoom = warming !== null ? warmRooms[warming] ?? null : null;
+  const opened = warmRoom ?? inside ?? (reveal && planned ? rooms.find((a) => a.id === selectedId) ?? null : null);
   // The building the party is in or in front of (or the one being looked at)
   const me = buildings.find((b) => b.id === (inside?.parentId ?? hereId)) ?? building;
   const tapPlace = useTaps(onAct);
@@ -3139,6 +3159,41 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     timer = window.setTimeout(next, 1500);
     return () => window.clearTimeout(timer);
   }, [warmKey, biome]);
+  // The district's loading screen (2026-11-01, the user: "an initial loading screen that does not reappear when moving between
+  // rooms/interior/exteriors"): when a district is first entered this session, each kind of room in it is opened in turn behind the
+  // screen, the renderer drawing everything whether in view or not (babylon.ts `preparing`), until all it drew is ready (its shaders
+  // compiled, its maps on the graphics card; five seconds at most a room). Babylon keeps those for the session, so going in and out
+  // afterwards compiles nothing. Not on a renderer drawing in software (the play-through test's browser), which would take minutes.
+  const gl = useThree((state) => state.gl) as unknown as { preparing?: boolean; prepared?: () => boolean; software?: boolean };
+  const districtKey = district?.id ?? building.id;
+  useEffect(() => {
+    if (!planned || !warmRooms.length || READY_DISTRICTS.has(districtKey) || !gl.prepared || gl.software) return;
+    setWarming(0);
+    useWarmup.setState({ total: warmRooms.length, done: 0 });
+    return () => {
+      gl.preparing = false;
+      setWarming(null);
+      useWarmup.setState({ total: 0, done: 0 });
+    };
+  }, [districtKey, planned]);
+  useEffect(() => {
+    gl.preparing = warming !== null;
+  }, [warming !== null]);
+  const warmTick = useRef({ at: -1, frames: 0, since: 0 });
+  useFrame(() => {
+    if (warming === null) return;
+    const t = warmTick.current;
+    if (t.at !== warming) Object.assign(t, { at: warming, frames: 0, since: performance.now() });
+    if (++t.frames < 3 || (!gl.prepared!() && performance.now() - t.since < 5000)) return;
+    if (warming + 1 < warmRooms.length) {
+      setWarming(warming + 1);
+      useWarmup.setState({ done: warming + 1 });
+      return;
+    }
+    READY_DISTRICTS.add(districtKey);
+    setWarming(null);
+    useWarmup.setState({ total: 0, done: 0 });
+  });
   const viewing = mode !== "overhead" && present && !duel;
   const facing = useRef<number | null>(null);
   // How fast the party walks, as a fraction of the pace they have always had (7 squares a second): a tap on the map is the full pace, the stick sets its own

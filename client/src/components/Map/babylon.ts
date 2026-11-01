@@ -34,12 +34,15 @@ import { Material } from "@babylonjs/core/Materials/material";
 import { MultiMaterial } from "@babylonjs/core/Materials/multiMaterial";
 import { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
 import { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial";
+import { Effect } from "@babylonjs/core/Materials/effect";
+import { RenderingGroup } from "@babylonjs/core/Rendering/renderingGroup";
 import { MaterialPluginBase } from "@babylonjs/core/Materials/materialPluginBase";
 import { ShadowDepthWrapper } from "@babylonjs/core/Materials/shadowDepthWrapper";
 import { ImageProcessingConfiguration } from "@babylonjs/core/Materials/imageProcessingConfiguration";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import { RawTexture } from "@babylonjs/core/Materials/Textures/rawTexture";
 import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
+import type { InternalTexture } from "@babylonjs/core/Materials/Textures/internalTexture";
 import { Light } from "@babylonjs/core/Lights/light";
 import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
 import { PointLight } from "@babylonjs/core/Lights/pointLight";
@@ -114,6 +117,9 @@ function shadowSettings() {
   if (!BIG_GPU()) return { cascades: 3, size: 1024, quality: ShadowGenerator.QUALITY_MEDIUM, lamps: 1, lights: 6 };
   return { cascades: 4, size: 2048, quality: ShadowGenerator.QUALITY_HIGH, lamps: 2, lights: 8 };
 }
+// A shader compiled once is kept for the session, used or not: Babylon frees one when its last material goes, and walking back into a
+// room compiled its shaders again (frames of half a second, 2026-11-01). They are few (one for each kind of surface the game draws)
+Effect.PersistentMode = true;
 // Both light a white surface at 1/π of a direct light's intensity; but three puts the 1/π on its ambient and hemisphere lights too,
 // and Babylon's hemisphere does not
 const AMBIENT = 1 / Math.PI;
@@ -153,6 +159,16 @@ function settle(tex: Texture, t: THREE.Texture) {
   tex.anisotropicFilteringLevel = t.anisotropy;
   tex.gammaSpace = t.colorSpace === THREE.SRGBColorSpace;
 }
+// A picture loaded from a file (its pixels never change); a canvas is drawn on
+const fixedImage = (image: unknown) =>
+  (typeof HTMLImageElement !== "undefined" && image instanceof HTMLImageElement) || (typeof ImageBitmap !== "undefined" && image instanceof ImageBitmap);
+// A short name for each shader source seen (the map compares the sources, natively)
+const SOURCES = new Map<string, string>();
+const sourceName = (source: string) => {
+  let name = SOURCES.get(source);
+  if (!name) SOURCES.set(source, (name = `src${SOURCES.size}`));
+  return name;
+};
 const isText = (o: THREE.Object3D): o is THREE.Mesh & { text: string; fontSize: number; color: unknown; anchorX: unknown; anchorY: unknown; outlineWidth: unknown; outlineColor: unknown; maxWidth: number } =>
   (o as THREE.Mesh).isMesh && typeof (o as unknown as { text?: unknown }).text === "string" && "fontSize" in o && "anchorX" in o;
 
@@ -351,7 +367,25 @@ function sameGeometry(sig: unknown[], g: THREE.BufferGeometry) {
   const x = g.index;
   return i + 3 === sig.length && sig[i] === x && sig[i + 1] === (x?.version ?? -1) && sig[i + 2] === (x?.count ?? 0);
 }
-interface MatEntry { mat: PBRMaterial; version: number; frame: number; users: number; gone: boolean; maps: unknown[] }
+// A three material: its own Babylon material, or the look it shares (see `material`)
+interface MatEntry { mat?: PBRMaterial; look?: Look; shared: boolean; changes: number; seen: Float32Array; version: number; frame: number; users: number; gone: boolean; maps: unknown[] }
+interface Look { key: string; mat: PBRMaterial; users: number; idle: number }
+type Painted = THREE.MeshPhongMaterial & THREE.MeshStandardMaterial & THREE.MeshBasicMaterial & THREE.PointsMaterial;
+// The colour, emission and opacity a look was found with
+const paintOf = (seen: Float32Array, m: Painted) => {
+  seen[0] = m.color?.r ?? -1;
+  seen[1] = m.color?.g ?? -1;
+  seen[2] = m.color?.b ?? -1;
+  seen[3] = m.emissive?.r ?? -1;
+  seen[4] = m.emissive?.g ?? -1;
+  seen[5] = m.emissive?.b ?? -1;
+  seen[6] = m.emissiveIntensity ?? 1;
+  seen[7] = m.opacity;
+};
+const samePaint = (seen: Float32Array, m: Painted) =>
+  seen[0] === Math.fround(m.color?.r ?? -1) && seen[1] === Math.fround(m.color?.g ?? -1) && seen[2] === Math.fround(m.color?.b ?? -1) &&
+  seen[3] === Math.fround(m.emissive?.r ?? -1) && seen[4] === Math.fround(m.emissive?.g ?? -1) && seen[5] === Math.fround(m.emissive?.b ?? -1) &&
+  seen[6] === Math.fround(m.emissiveIntensity ?? 1) && seen[7] === Math.fround(m.opacity);
 // The maps a material was made with (each with its version) and the tier, checked every frame the same way
 type Mapped = { map?: THREE.Texture | null; normalMap?: THREE.Texture | null; emissiveMap?: THREE.Texture | null; alphaMap?: THREE.Texture | null };
 const mapsSig = (m: Mapped, height: THREE.Texture | null) => {
@@ -392,19 +426,27 @@ class Mirror {
   private texs = new Map<THREE.Texture, TexEntry>();
   private points = new Map<THREE.Object3D, { mat: ShaderMaterial; key: string }>();
   private shaders = new Map<THREE.Material, { mat: ShaderMaterial; key: string }>();
-  private packs = new Map<string, Texture>();
+  // the pixels of each image on the graphics card (see gpuOf), the packed normal and height maps likewise, and the textures over them
+  private gpu = new Map<string, { tex: InternalTexture; version: number; width: number; height: number; image: unknown }>();
+  private packs = new Map<string, { tex: InternalTexture; normal: unknown; height: unknown }>();
+  private packWraps = new Map<THREE.Texture, Texture>();
   private frame = 0;
   private stack: THREE.Object3D[] = [];
   private shownStack: boolean[] = [];
-  private sun?: { light: DirectionalLight; shadow: ShadowGenerator };
+  private looks = new Map<string, Look>();
+  private cards = new Map<string, { mat: PBRMaterial; quad: VertexData; users: number; idle: number }>();
   private casters = new Set<Mesh>();
   private noToneMapping: ImageProcessingConfiguration;
-  private lampShadows = 0;
-  // The look on full detail (see look): the sky's reflections, bloom, contact shadows; and the lamps gathered into one clustered light
+  // The lights (see makeRig), and what three's lights give them this frame
+  private rig?: Rig;
+  private skyNow = new Color3();
+  private groundNow = new Color3();
+  private sunsNow: THREE.DirectionalLight[] = [];
+  private shadowLampsNow: THREE.PointLight[] = [];
+  // The look on full detail (see look): the sky's reflections, bloom, contact shadows
   private probe?: ReflectionProbe;
   private pipeline?: DefaultRenderingPipeline;
   private ssao?: SSAO2RenderingPipeline;
-  private lamps?: ClusteredLightContainer | null;
   // the brightest sun this frame (the sky's reflections are as bright as it)
   private daylight = 0;
 
@@ -425,23 +467,42 @@ class Mirror {
     scene.activeCamera = this.camera;
     this.instrumentation = new SceneInstrumentation(scene);
     this.scene = scene;
+    // The surfaces drawn nearest first (see nearFirst); the backdrop, group 0, as Babylon orders it
+    scene.setRenderingOrder(1, this.nearFirst, this.nearFirst);
   }
 
   dispose() {
     this.scene.dispose();
   }
+  ready() {
+    const active = this.scene.getActiveMeshes();
+    for (let i = 0; i < active.length; i++) if (!active.data[i].isReady(true)) return false;
+    return true;
+  }
 
   retier() {
-    const s = shadowSettings();
-    if (this.sun) {
-      this.sun.shadow.dispose();
-      this.sun = undefined;
-    }
-    for (const node of this.nodes.values()) if (node.shadow && node.kind === "light" && !(node.light instanceof DirectionalLight)) { node.shadow.dispose(); node.shadow = undefined; }
-    this.lampShadows = 0;
-    for (const entry of this.mats.values()) entry.mat.maxSimultaneousLights = s.lights;
-    for (const node of this.nodes.values()) node.casts = undefined;
+    this.dropRig();
     this.plain();
+  }
+
+  // ---- The order things are drawn in ----
+
+  // Babylon draws the solid surfaces grouped by material, so a far one is often shaded and then drawn over: nearest first, a hidden
+  // pixel is never shaded (about a fifth of the GPU's time in a street, 2026-11-01). But two surfaces in one plane show whichever is drawn
+  // last, and ordered by distance alone the two would swap as the camera moves, flickering. So the order is by bands of distance (two
+  // to each doubling, about 40% wide), a surface leaving its band only a quarter band past the edge, and in a band by material and mesh
+  // as before: two surfaces in one plane are next to each other and nearly always share a band, and swap at most once, as the camera
+  // crosses, never back and forth. (Walls in one plane draw the same pixels anyway: one wall set a building, its pattern in the
+  // building's frame; and a decal is lifted by its polygon offset.)
+  private nearFirst = (a: SubMesh, b: SubMesh) => this.band(a) - this.band(b) || RenderingGroup.PainterSortCompare(a, b);
+  private band(sm: SubMesh) {
+    const s = sm as SubMesh & { _band?: number; _bandFrame?: number };
+    if (s._bandFrame === this.frame) return s._band!;
+    s._bandFrame = this.frame;
+    const c = sm.getBoundingInfo().boundingSphere.centerWorld, p = this.camera.position;
+    const at = Math.log2(1 + Math.hypot(c.x - p.x, c.y - p.y, c.z - p.z)) * 2;
+    if (s._band === undefined || at < s._band - 0.25 || at > s._band + 1.25) s._band = Math.floor(at);
+    return s._band;
   }
 
   // ---- The look ----
@@ -504,17 +565,6 @@ class Mirror {
     }
   }
 
-  // Lamps by the hundred (street lamps after dark: siteAssets.tsx LampLights) are lit together, clustered by where they fall on the screen,
-  // so a street of them costs about one light (none where the device cannot cluster: they are then lights of their own)
-  private cluster(): ClusteredLightContainer | null {
-    if (this.lamps === undefined) {
-      const c = new ClusteredLightContainer("lamps", [], this.scene);
-      this.lamps = c.isSupported ? c : null;
-      if (!this.lamps) c.dispose();
-    }
-    return this.lamps;
-  }
-
   // ---- Each frame ----
 
   sync(scene: THREE.Scene, camera: THREE.Camera) {
@@ -522,6 +572,15 @@ class Mirror {
     this.daylight = 0;
     this.syncScene(scene);
     this.syncCamera(camera);
+    this.scene.skipFrustumClipping = this.owner.preparing;
+    // The lights, made again only when the canvas's shadows or the tier change
+    const shadows = this.owner.shadowMap.enabled && EFFECTS.shadows !== "off";
+    if (this.rig && this.rig.shadows !== shadows) this.dropRig();
+    this.rig ??= this.makeRig();
+    this.skyNow.set(0, 0, 0);
+    this.groundNow.set(0, 0, 0);
+    this.sunsNow.length = 0;
+    this.shadowLampsNow.length = 0;
     // Everything the scene holds now, with its visibility (two stacks kept from frame to frame: a scene of thousands makes no garbage)
     const stack = this.stack, shownStack = this.shownStack;
     stack.length = 0;
@@ -538,10 +597,21 @@ class Mirror {
       }
     }
     stack.length = 0;
+    this.lightUp();
     // What has left the scene goes
     for (const [o, node] of this.nodes) if (node.frame !== this.frame) this.drop(o, node);
     for (const [g, entry] of this.geos) if (entry.users <= 0 && (entry.gone || this.frame - entry.frame > IDLE_GEOMETRY)) { entry.geo.dispose(); this.geos.delete(g); }
-    for (const [m, entry] of this.mats) if (entry.users <= 0 && entry.gone) { entry.mat.dispose(); this.mats.delete(m); }
+    for (const [m, entry] of this.mats) {
+      if (entry.users > 0 || !entry.gone) continue;
+      entry.mat?.dispose();
+      if (entry.look) this.releaseLook(entry.look);
+      this.mats.delete(m);
+    }
+    // (a look nothing has used for a while goes too, as a shape does)
+    if (this.frame % 60 === 0) {
+      for (const [key, look] of this.looks) if (look.users <= 0 && this.frame - look.idle > IDLE_GEOMETRY) { look.mat.dispose(); this.looks.delete(key); }
+      for (const [key, card] of this.cards) if (card.users <= 0 && this.frame - card.idle > IDLE_GEOMETRY) { card.mat.dispose(true, true); this.cards.delete(key); }
+    }
     this.look(this.daylight);
   }
 
@@ -623,22 +693,18 @@ class Mirror {
   private drop(o: THREE.Object3D, node: Node) {
     if (node.mesh) {
       this.casters.delete(node.mesh);
-      if (this.sun) this.sun.shadow.removeShadowCaster(node.mesh, false);
+      for (const g of this.shadowMaps()) g.removeShadowCaster(node.mesh, false);
       // (Mesh.dispose disposes its geometry with the last mesh using it; a cached one is kept for the next scene, and freed by `sync`)
       if (node.geometry) node.mesh.geometry?.releaseForMesh(node.mesh, false);
-      node.mesh.dispose(false, node.kind === "text");
-    }
-    if (node.shadow && !(node.light instanceof DirectionalLight)) {
-      node.shadow.dispose();
-      this.lampShadows--;
+      // (a text's card is kept for the next label that says the same)
+      if (node.kind === "text" && node.label) this.releaseCard(node.label);
+      node.mesh.dispose(false, false);
     }
     if (node.light) {
-      if (node.clustered) this.lamps?.removeLight(node.light);
-      if (this.sun && this.sun.light === node.light) {
-        this.sun.shadow.dispose();
-        this.sun = undefined;
-      }
-      node.light.dispose();
+      if (node.clustered && this.rig?.cluster) {
+        node.light.intensity = 0;
+        this.rig.pool[node.light instanceof SpotLight ? "spot" : "point"].push(node.light as PointLight & SpotLight);
+      } else node.light.dispose();
     }
     if (node.geometry) this.release(node.geometry);
     this.points.get(o)?.mat.dispose();
@@ -700,13 +766,41 @@ class Mirror {
 
   // ---- Textures ----
 
+  // The game clones a map for each surface it covers (to set its repeat), and a room's surfaces are made again each time it is entered:
+  // each clone was a texture of its own, uploaded again (25 ms going back into a palace room, 2026-11-01). As three does, the pixels
+  // are kept once for each image (three's `Source`, which the clones share) and settings, on the graphics card for the session; each
+  // three texture is a Babylon texture over them, with its own repeat and offset.
+  private gpuOf(t: THREE.Texture, image: { width: number; height: number }, mips: boolean, sampling: number) {
+    const key = `${t.source.uuid}|${mips}|${sampling}|${t.flipY}`;
+    let gpu = this.gpu.get(key);
+    if (!gpu || gpu.width !== image.width || gpu.height !== image.height) {
+      gpu?.tex.dispose();
+      gpu = { tex: this.engine.createDynamicTexture(image.width, image.height, mips, sampling), version: -1, width: image.width, height: image.height, image: null };
+      this.gpu.set(key, gpu);
+    }
+    // (a clone told `needsUpdate` moves the version of the image it shares, 2026-11-01 the ground and floors on every visit: a loaded
+    // picture is the same pixels while it is the same picture; a canvas is drawn on, and goes up again)
+    if (gpu.version !== t.source.version && !(gpu.image === image && fixedImage(image))) {
+      this.engine.updateDynamicTexture(gpu.tex, image as unknown as HTMLCanvasElement, t.flipY, false);
+    }
+    gpu.version = t.source.version;
+    gpu.image = image;
+    return gpu.tex;
+  }
+  // A Babylon texture showing pixels already on the card (it holds them while it lives)
+  private over(gpu: InternalTexture, mips: boolean, flipY: boolean, sampling: number) {
+    const tex = new Texture(null, this.scene, !mips, flipY, sampling);
+    gpu.incrementReferences();
+    (tex as unknown as { _texture: InternalTexture })._texture = gpu;
+    return tex;
+  }
+
   private texture(t: THREE.Texture | null | undefined): Texture | null {
     if (!t) return null;
     const image = t.image as (HTMLImageElement & { data?: ArrayBufferView; width: number; height: number }) | undefined;
     if (!image || !image.width || (typeof HTMLImageElement !== "undefined" && image instanceof HTMLImageElement && !image.complete)) return null;
     let entry = this.texs.get(t);
     if (entry && entry.version === t.version) return entry.tex;
-    const engine = this.engine;
     const sampling = t.magFilter === THREE.NearestFilter ? Texture.NEAREST_SAMPLINGMODE : Texture.TRILINEAR_SAMPLINGMODE;
     const mips = t.generateMipmaps && t.minFilter !== THREE.LinearFilter && t.minFilter !== THREE.NearestFilter;
     if ((t as THREE.DataTexture).isDataTexture) {
@@ -720,32 +814,34 @@ class Mirror {
         this.texs.set(t, entry);
       }
     } else {
-      if (!entry || entry.tex.getSize().width !== image.width || entry.tex.getSize().height !== image.height) {
+      const gpu = this.gpuOf(t, image, mips, sampling);
+      if (!entry || entry.tex.getInternalTexture() !== gpu) {
         entry?.tex.dispose();
-        const tex = new Texture(null, this.scene, !mips, t.flipY, sampling);
-        (tex as unknown as { _texture: unknown })._texture = engine.createDynamicTexture(image.width, image.height, mips, sampling);
-        entry = { tex, version: 0, users: 0 };
+        entry = { tex: this.over(gpu, mips, t.flipY, sampling), version: 0, users: 0 };
+        if (!this.texs.has(t)) {
+          const map = this.texs;
+          t.addEventListener("dispose", () => { map.get(t)?.tex.dispose(); map.delete(t); });
+        }
         this.texs.set(t, entry);
-        const e = entry, map = this.texs;
-        t.addEventListener("dispose", () => { e.tex.dispose(); map.delete(t); });
       }
-      engine.updateDynamicTexture((entry.tex as unknown as { _texture: never })._texture, image as unknown as HTMLCanvasElement, t.flipY, false);
     }
     settle(entry.tex, t);
     entry.version = t.version;
     return entry.tex;
   }
 
-  // A normal map with its height map in the alpha, where Babylon's parallax reads the height (made once a pair; none while either is
-  // a flat stand-in or still loading)
+  // A normal map with its height map in the alpha, where Babylon's parallax reads the height (made once a pair of images and kept, as
+  // the maps are; none while either is a flat stand-in or still loading)
   private packed(normal: THREE.Texture | null | undefined, height: THREE.Texture | null): Texture | null {
     type Img = CanvasImageSource & { width: number; height: number; complete?: boolean };
     const n = normal?.image as Img | undefined, h = height?.image as Img | undefined;
     if (!normal || !height || (normal as THREE.DataTexture).isDataTexture || (height as THREE.DataTexture).isDataTexture) return null;
     if (!n?.width || !h?.width || n.complete === false || h.complete === false || typeof document === "undefined") return null;
-    const key = `${normal.id}:${normal.version}|${height.id}:${height.version}`;
-    let tex = this.packs.get(key);
-    if (!tex) {
+    const key = `${normal.source.uuid}|${height.source.uuid}|${normal.flipY}`;
+    const made = this.packs.get(key);
+    let gpu = made && made.normal === n && made.height === h && fixedImage(n) && fixedImage(h) ? made.tex : undefined;
+    if (!gpu) {
+      made?.tex.dispose();
       const w = n.width, hh = n.height;
       const c = document.createElement("canvas");
       c.width = w;
@@ -756,9 +852,19 @@ class Mirror {
       g.drawImage(h, 0, 0, w, hh);
       const heights = g.getImageData(0, 0, w, hh).data;
       for (let i = 3; i < data.length; i += 4) data[i] = heights[i - 3];
-      tex = new RawTexture(new Uint8Array(data.buffer), w, hh, Constants.TEXTUREFORMAT_RGBA, this.scene, true, normal.flipY, Texture.TRILINEAR_SAMPLINGMODE);
-      this.packs.set(key, tex);
-      normal.addEventListener("dispose", () => { tex!.dispose(); this.packs.delete(key); });
+      const raw = new RawTexture(new Uint8Array(data.buffer), w, hh, Constants.TEXTUREFORMAT_RGBA, this.scene, true, normal.flipY, Texture.TRILINEAR_SAMPLINGMODE);
+      gpu = raw.getInternalTexture()!;
+      // (kept by the cache when the RawTexture that made it goes)
+      gpu.incrementReferences();
+      raw.dispose();
+      this.packs.set(key, { tex: gpu, normal: n, height: h });
+    }
+    let tex = this.packWraps.get(normal);
+    if (!tex || tex.getInternalTexture() !== gpu) {
+      if (!this.packWraps.has(normal)) normal.addEventListener("dispose", () => { this.packWraps.get(normal)?.dispose(); this.packWraps.delete(normal); });
+      tex?.dispose();
+      tex = this.over(gpu, true, normal.flipY, Texture.TRILINEAR_SAMPLINGMODE);
+      this.packWraps.set(normal, tex);
     }
     settle(tex, normal);
     return tex;
@@ -766,19 +872,55 @@ class Mirror {
 
   // ---- Materials ----
 
-  private material(m: THREE.Material, colors: number): PBRMaterial {
+  // The Babylon material a three one is drawn with. The game makes a material a model, a box or a colour (about 800 for the 1235
+  // meshes of a street, measured 2026-11-01), and Babylon binds each call's own: so three materials that look alike share one Babylon
+  // material, a "look", found by what it shows (`lookKey`). A material whose colour or opacity keeps changing (a flickering lamp, a
+  // highlight) gets one of its own after its third change, as do those with a plugin of their own (fur, wear, waves, parallax, limbs).
+  private material(m: THREE.Material): PBRMaterial {
     let entry = this.mats.get(m);
     if (!entry) {
-      const mat = new PBRMaterial(`m${m.id}`, this.scene);
-      mat.enableSpecularAntiAliasing = true;
-      mat.maxSimultaneousLights = shadowSettings().lights;
-      // three's diffuse is Lambert's (Babylon's own darkens a rough surface)
-      mat.brdf.baseDiffuseModel = Constants.MATERIAL_DIFFUSE_MODEL_LAMBERT;
-      entry = { mat, version: -1, frame: 0, users: 0, gone: false, maps: [] };
+      const shared = !PATCHES.get(m) && !(m.userData.limbParents && m.userData.pose);
+      entry = { version: -1, frame: 0, users: 0, gone: false, maps: [], shared, changes: 0, seen: new Float32Array(9).fill(NaN) };
       this.mats.set(m, entry);
       const e = entry;
       m.addEventListener("dispose", () => { e.gone = true; });
-      const patch = PATCHES.get(m);
+    }
+    if (entry.frame === this.frame) return entry.look?.mat ?? entry.mat!;
+    entry.frame = this.frame;
+    const any = m as Painted;
+    const patch = PATCHES.get(m);
+    const height = patch?.kind === "parallax" ? patch.height.value : null;
+    if (entry.shared) {
+      const painted = samePaint(entry.seen, any);
+      if (entry.look && painted && entry.version === m.version && sameMaps(entry.maps, any, height)) return entry.look.mat;
+      // (a change of colour after the first look counts towards its own; a map arriving or a new version does not)
+      if (entry.look && !painted && ++entry.changes >= 3) {
+        entry.shared = false;
+        this.releaseLook(entry.look);
+        entry.look = undefined;
+      } else {
+        paintOf(entry.seen, any);
+        entry.version = m.version;
+        entry.maps = mapsSig(any, height);
+        const key = this.lookKey(m);
+        if (entry.look?.key !== key) {
+          if (entry.look) this.releaseLook(entry.look);
+          let look = this.looks.get(key);
+          if (!look) {
+            look = { key, mat: this.newMaterial(`look${this.looks.size}`), users: 0, idle: 0 };
+            this.paint(look.mat, any);
+            this.dress(look.mat, m, null);
+            this.looks.set(key, look);
+          }
+          look.users++;
+          entry.look = look;
+        }
+        return entry.look.mat;
+      }
+    }
+    // A material of its own
+    if (!entry.mat) {
+      const mat = (entry.mat = this.newMaterial(`m${m.id}`));
       if (patch) this.plugin(mat, patch);
       const parents = m.userData.limbParents as number[] | undefined;
       if (parents && m.userData.pose) {
@@ -786,25 +928,38 @@ class Mirror {
         // its shadow falls as it stands (the shadow maps are drawn with the material's own vertex shader)
         mat.shadowDepthWrapper = new ShadowDepthWrapper(mat, this.scene);
       }
+      entry.version = -1;
     }
-    if (entry.frame === this.frame) return entry.mat;
-    entry.frame = this.frame;
     const mat = entry.mat;
-    const any = m as THREE.MeshPhongMaterial & THREE.MeshStandardMaterial & THREE.MeshBasicMaterial & THREE.PointsMaterial;
-    // What changes from frame to frame: colour, opacity, emission
+    this.paint(mat, any);
+    if (entry.version === m.version && sameMaps(entry.maps, any, height)) return mat;
+    entry.version = m.version;
+    entry.maps = mapsSig(any, height);
+    this.dress(mat, m, patch);
+    return mat;
+  }
+  private newMaterial(name: string) {
+    const mat = new PBRMaterial(name, this.scene);
+    mat.enableSpecularAntiAliasing = true;
+    mat.maxSimultaneousLights = this.lightCount();
+    // three's diffuse is Lambert's (Babylon's own darkens a rough surface)
+    mat.brdf.baseDiffuseModel = Constants.MATERIAL_DIFFUSE_MODEL_LAMBERT;
+    return mat;
+  }
+  // What changes from frame to frame: colour, opacity, emission
+  private paint(mat: PBRMaterial, any: Painted) {
     if (any.color) c3(any.color, mat.albedoColor);
     else mat.albedoColor.set(1, 1, 1);
     if (any.emissive) {
       const k = any.emissiveIntensity ?? 1;
       mat.emissiveColor.set(any.emissive.r * k, any.emissive.g * k, any.emissive.b * k);
     } else mat.emissiveColor.set(0, 0, 0);
-    mat.alpha = m.opacity;
-    // The maps, when they come
-    const patch = PATCHES.get(m);
+    mat.alpha = any.opacity;
+  }
+  // The rest, when the three material changes or its maps come
+  private dress(mat: PBRMaterial, m: THREE.Material, patch: ShaderPatch | null | undefined) {
+    const any = m as Painted;
     const height = patch?.kind === "parallax" ? patch.height.value : null;
-    if (entry.version === m.version && sameMaps(entry.maps, any, height)) return mat;
-    entry.version = m.version;
-    entry.maps = mapsSig(any, height);
     const basic = (m as THREE.MeshBasicMaterial).isMeshBasicMaterial || (m as THREE.PointsMaterial).isPointsMaterial || (m as THREE.SpriteMaterial).isSpriteMaterial || (m as THREE.ShaderMaterial).isShaderMaterial;
     mat.unlit = basic;
     if ((m as THREE.MeshStandardMaterial).isMeshStandardMaterial) {
@@ -850,7 +1005,22 @@ class Mirror {
     if (m.polygonOffset) mat.zOffset = m.polygonOffsetFactor;
     // A lamp's bulb, a screen, a blade: drawn as bright as it is (three's toneMapped: false)
     if (!m.toneMapped) mat.imageProcessingConfiguration = this.noToneMapping;
-    return mat;
+  }
+  // Everything `paint` and `dress` read, as one string: two materials with the same key draw the same
+  private lookKey(m: THREE.Material) {
+    const a = m as Painted;
+    const tex = (t: THREE.Texture | null | undefined) => (t ? `${t.id}.${t.version}` : "-");
+    const col = (c: THREE.Color | undefined) => (c ? `${c.r},${c.g},${c.b}` : "-");
+    return [
+      m.type, col(a.color), col(a.emissive), a.emissiveIntensity ?? 1, m.opacity, a.metalness, a.roughness, col(a.specular), a.shininess,
+      tex(a.map), tex(a.normalMap), a.normalScale?.x ?? 1, tex(a.emissiveMap), tex(a.alphaMap),
+      m.transparent, m.blending, m.alphaTest, m.depthWrite, m.depthTest, m.side, (m as THREE.MeshLambertMaterial).fog, (m as THREE.MeshBasicMaterial).wireframe,
+      m.polygonOffset ? m.polygonOffsetFactor : "-", m.toneMapped,
+    ].join("|");
+  }
+  private releaseLook(look: Look) {
+    look.users--;
+    if (look.users <= 0) look.idle = this.frame;
   }
   private releaseMaterial(m: THREE.Material) {
     const entry = this.mats.get(m);
@@ -989,19 +1159,30 @@ class Mirror {
       for (const m of [node.material ?? []].flat()) this.releaseMaterial(m);
       node.material = material;
       for (const m of list) {
-        this.material(m, colors);
+        this.material(m);
         this.mats.get(m)!.users++;
       }
       if (Array.isArray(material)) {
         const multi = new MultiMaterial(`mm${mesh.uniqueId}`, this.scene);
-        multi.subMaterials = list.map((m) => this.mats.get(m)!.mat);
+        multi.subMaterials = list.map((m) => this.material(m));
         mesh.material = multi;
         mesh.subMeshes = [];
         const total = g.attributes.position.count;
         for (const group of g.groups) new SubMesh(group.materialIndex ?? 0, 0, total, group.start, group.count, mesh);
-      } else mesh.material = this.mats.get(material)!.mat;
-    } else if (Array.isArray(material)) for (const m of material) this.material(m, colors);
-    else this.material(material, colors);
+      }
+    }
+    // (each frame: a three material's look changes with its colour)
+    if (Array.isArray(material)) {
+      const multi = mesh.material as MultiMaterial;
+      let changed = false;
+      for (let i = 0; i < material.length; i++) if (multi.subMaterials[i] !== this.material(material[i])) changed = true;
+      if (changed) {
+        // (as Babylon does when a mesh's own material is changed: its shaders are looked up again)
+        multi.subMaterials = material.map((m) => this.material(m));
+        mesh.resetDrawCache();
+        (mesh as unknown as { _unBindEffect(): void })._unBindEffect();
+      }
+    } else mesh.material = this.material(material);
     const first = Array.isArray(material) ? material[0] : material;
     mesh.useVertexColors = !!(first as THREE.MeshBasicMaterial).vertexColors && colors > 0;
     mesh.hasVertexAlpha = mesh.useVertexColors && colors === 4 && first.transparent;
@@ -1094,18 +1275,15 @@ class Mirror {
     node.casts = casts;
     if (casts) this.casters.add(mesh);
     else this.casters.delete(mesh);
-    if (this.sun) {
-      if (casts) this.sun.shadow.addShadowCaster(mesh, false);
-      else this.sun.shadow.removeShadowCaster(mesh, false);
+    for (const g of this.shadowMaps()) {
+      if (casts) g.addShadowCaster(mesh, false);
+      else g.removeShadowCaster(mesh, false);
     }
-    for (const n of this.nodes.values()) {
-      if (!n.shadow || n.light instanceof DirectionalLight) continue;
-      const list = n.shadow.getShadowMap()?.renderList;
-      if (!list) continue;
-      const at = list.indexOf(mesh);
-      if (casts && at < 0) list.push(mesh);
-      if (!casts && at >= 0) list.splice(at, 1);
-    }
+  }
+  // The rig's shadow generators: the sun's and the lamp slots'
+  private *shadowMaps() {
+    if (this.rig?.sunShadow) yield this.rig.sunShadow;
+    for (const l of this.rig?.lamps ?? []) yield l.shadow;
   }
 
   // Points: soft round sprites (or the material's map) each sized as three would, shrinking with distance when in world units
@@ -1215,15 +1393,14 @@ class Mirror {
       SPRITE_QUAD.applyToMesh(node.mesh);
       node.mesh.isPickable = false;
       node.mesh.sideOrientation = FRONT;
-      this.material(o.material, 0);
+      this.material(o.material);
       this.mats.get(o.material)!.users++;
       node.material = o.material;
-      node.mesh.material = this.mats.get(o.material)!.mat;
     }
     const mesh = node.mesh;
     mesh.setEnabled(visible && o.material.visible);
     if (!visible) return;
-    this.material(o.material, 0);
+    mesh.material = this.material(o.material);
     // World position and scale from the sprite, turned to face the camera
     const e = o.matrixWorld.elements;
     const sx = Math.hypot(e[0], e[1], e[2]), sy = Math.hypot(e[4], e[5], e[6]);
@@ -1247,55 +1424,15 @@ class Mirror {
     const outlineColor = new THREE.Color((o.outlineColor as THREE.ColorRepresentation) ?? 0).getStyle();
     const label = `${o.text}|${o.fontSize}|${color}|${outline}|${outlineColor}|${o.anchorX}|${o.anchorY}`;
     if (!node.mesh || node.label !== label) {
+      if (node.label) this.releaseCard(node.label);
       node.label = label;
-      node.mesh?.material?.dispose(true, true);
       node.mesh?.dispose();
-      const lines = o.text.split("\n");
-      const px = 48;
-      const pad = Math.ceil((outline / o.fontSize) * px) + 2;
-      const probe = PROBE.getContext("2d")!;
-      probe.font = `600 ${px}px Inter, sans-serif`;
-      const width = Math.ceil(Math.max(1, ...lines.map((l) => probe.measureText(l).width))) + pad * 2;
-      const height = Math.ceil(lines.length * px * 1.2) + pad * 2;
-      const tex = new DynamicTexture(`t${o.id}`, { width, height }, this.scene, true);
-      tex.hasAlpha = true;
-      const ctx = tex.getContext() as CanvasRenderingContext2D;
-      ctx.clearRect(0, 0, width, height);
-      ctx.font = `600 ${px}px Inter, sans-serif`;
-      ctx.textBaseline = "middle";
-      ctx.textAlign = "center";
-      lines.forEach((l, i) => {
-        const y = pad + (i + 0.5) * px * 1.2;
-        if (outline) {
-          ctx.lineWidth = (outline / o.fontSize) * px * 2;
-          ctx.strokeStyle = outlineColor;
-          ctx.lineJoin = "round";
-          ctx.strokeText(l, width / 2, y);
-        }
-        ctx.fillStyle = color;
-        ctx.fillText(l, width / 2, y);
-      });
-      tex.update(true);
-      const w = (width / px) * o.fontSize, h = (height / px) * o.fontSize;
-      const ox = o.anchorX === "left" ? w / 2 : o.anchorX === "right" ? -w / 2 : 0;
-      const oy = o.anchorY === "top" ? -h / 2 : o.anchorY === "bottom" || o.anchorY === "bottom-baseline" ? h / 2 : 0;
+      const card = this.cardOf(o, label, color, outline, outlineColor);
+      card.users++;
       const mesh = new Mesh(`t${o.id}`, this.scene);
-      const quad = new VertexData();
-      quad.positions = [ox - w / 2, oy - h / 2, 0, ox + w / 2, oy - h / 2, 0, ox + w / 2, oy + h / 2, 0, ox - w / 2, oy + h / 2, 0];
-      quad.normals = [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1];
-      quad.uvs = [0, 0, 1, 0, 1, 1, 0, 1];
-      quad.indices = [0, 1, 2, 0, 2, 3];
-      quad.applyToMesh(mesh);
+      card.quad.applyToMesh(mesh);
       mesh.sideOrientation = FRONT;
-      const mat = new PBRMaterial(`tm${o.id}`, this.scene);
-      mat.unlit = true;
-      mat.albedoTexture = tex;
-      mat.useAlphaFromAlbedoTexture = true;
-      mat.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHABLEND;
-      mat.disableDepthWrite = true;
-      mat.backFaceCulling = false;
-      mat.imageProcessingConfiguration = this.noToneMapping;
-      mesh.material = mat;
+      mesh.material = card.mat;
       mesh.isPickable = false;
       node.mesh = mesh;
       node.matrix.fill(NaN);
@@ -1306,104 +1443,145 @@ class Mirror {
     node.mesh.renderingGroupId = 1;
     node.mesh.alphaIndex = 50 + o.renderOrder;
   }
+  // A label's words drawn on a card, kept by what it says and how (a room's signs are drawn again each time it is entered: 2.5 ms each)
+  private cardOf(o: THREE.Mesh & { text: string; fontSize: number; anchorX: unknown; anchorY: unknown }, label: string, color: string, outline: number, outlineColor: string) {
+    let card = this.cards.get(label);
+    if (card) return card;
+    const lines = o.text.split("\n");
+    const px = 48;
+    const pad = Math.ceil((outline / o.fontSize) * px) + 2;
+    const probe = PROBE.getContext("2d")!;
+    probe.font = `600 ${px}px Inter, sans-serif`;
+    const width = Math.ceil(Math.max(1, ...lines.map((l) => probe.measureText(l).width))) + pad * 2;
+    const height = Math.ceil(lines.length * px * 1.2) + pad * 2;
+    const tex = new DynamicTexture(`t${o.id}`, { width, height }, this.scene, true);
+    tex.hasAlpha = true;
+    const ctx = tex.getContext() as CanvasRenderingContext2D;
+    ctx.clearRect(0, 0, width, height);
+    ctx.font = `600 ${px}px Inter, sans-serif`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    lines.forEach((l, i) => {
+      const y = pad + (i + 0.5) * px * 1.2;
+      if (outline) {
+        ctx.lineWidth = (outline / o.fontSize) * px * 2;
+        ctx.strokeStyle = outlineColor;
+        ctx.lineJoin = "round";
+        ctx.strokeText(l, width / 2, y);
+      }
+      ctx.fillStyle = color;
+      ctx.fillText(l, width / 2, y);
+    });
+    tex.update(true);
+    const w = (width / px) * o.fontSize, h = (height / px) * o.fontSize;
+    const ox = o.anchorX === "left" ? w / 2 : o.anchorX === "right" ? -w / 2 : 0;
+    const oy = o.anchorY === "top" ? -h / 2 : o.anchorY === "bottom" || o.anchorY === "bottom-baseline" ? h / 2 : 0;
+    const quad = new VertexData();
+    quad.positions = [ox - w / 2, oy - h / 2, 0, ox + w / 2, oy - h / 2, 0, ox + w / 2, oy + h / 2, 0, ox - w / 2, oy + h / 2, 0];
+    quad.normals = [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1];
+    quad.uvs = [0, 0, 1, 0, 1, 1, 0, 1];
+    quad.indices = [0, 1, 2, 0, 2, 3];
+    const mat = new PBRMaterial(`tm${o.id}`, this.scene);
+    mat.unlit = true;
+    mat.albedoTexture = tex;
+    mat.useAlphaFromAlbedoTexture = true;
+    mat.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHABLEND;
+    mat.disableDepthWrite = true;
+    mat.backFaceCulling = false;
+    mat.imageProcessingConfiguration = this.noToneMapping;
+    card = { mat, quad, users: 0, idle: 0 };
+    this.cards.set(label, card);
+    return card;
+  }
+  private releaseCard(label: string) {
+    const card = this.cards.get(label);
+    if (card && --card.users <= 0) card.idle = this.frame;
+  }
 
-  // ---- Lights ----
+  // ---- Lights: one rig, whatever three's scene holds ----
 
-  private syncLight(l: THREE.Light, visible: boolean) {
-    const node = this.nodeOf(l, "light");
-    const dir = l as THREE.DirectionalLight, point = l as THREE.PointLight, spot = l as THREE.SpotLight, hemi = l as THREE.HemisphereLight;
-    if (!node.light) {
-      if (dir.isDirectionalLight) node.light = new DirectionalLight(`d${l.id}`, new Vector3(0, -1, 0), this.scene);
-      else if (spot.isSpotLight) node.light = new SpotLight(`s${l.id}`, Vector3.Zero(), new Vector3(0, -1, 0), 1, 1, this.scene);
-      else if (point.isPointLight && l.userData.cluster && this.cluster()) {
-        node.light = new PointLight(`p${l.id}`, Vector3.Zero(), this.scene);
-        node.light.falloffType = Light.FALLOFF_DEFAULT;
-        this.lamps!.addLight(node.light);
-        node.clustered = true;
-      } else if (point.isPointLight) node.light = new PointLight(`p${l.id}`, Vector3.Zero(), this.scene);
-      else if (hemi.isHemisphereLight || (l as THREE.AmbientLight).isAmbientLight) node.light = new HemisphericLight(`h${l.id}`, new Vector3(0, 1, 0), this.scene);
-      else return;
+  // Babylon compiles a material's shader for the lights that reach it (how many, of what kind, which cast shadows). three's scenes bring
+  // their own and take them away (a room its ambient, a key light and lamps), and each change made Babylon compile every material in
+  // sight again: walking into a palace room, 87 new shaders and frames of up to 1.5 s (measured 2026-11-01). So the Babylon scene has one
+  // set of lights, made once, that three's lights are poured into each frame (`lightUp`), and a shader made once serves every room:
+  // - the sky: every ambient and hemisphere light summed (each is the same from every side but up and down, so they add up exactly);
+  // - SUNS directional lights, the one casting shadows first; its shadow generator is kept while the tier gives one, idle when nothing casts;
+  // - the tier's lamp slots for the nearest lamps that cast shadows (unused: dark, their maps idle);
+  // - every other point and spot light, and a shadow lamp left without a slot, in one clustered light; where the device cannot cluster,
+  //   and for a light with no falloff (which clustering cannot draw), a light of its own as before: those scenes compile as they change.
+  private makeRig(): Rig {
+    const s = shadowSettings();
+    const scene = this.scene;
+    const shadows = this.owner.shadowMap.enabled && EFFECTS.shadows !== "off";
+    const sky = new HemisphericLight("sky", new Vector3(0, 1, 0), scene);
+    sky.specular.set(0, 0, 0);
+    const suns: DirectionalLight[] = [];
+    for (let i = 0; i < SUNS; i++) {
+      const d = new DirectionalLight(`sun${i}`, new Vector3(0, -1, 0), scene);
+      d.intensity = 0;
+      suns.push(d);
     }
-    const light = node.light;
-    // (only when it changes: Babylon's light goes through every mesh in the scene each time it is told, on or off)
-    const on = visible && l.intensity > 0;
-    if (light.isEnabled(false) !== on) light.setEnabled(on);
-    if (!visible) return;
-    light.intensity = light instanceof HemisphericLight ? l.intensity * AMBIENT : l.intensity;
-    c3(l.color, light.diffuse);
-    const e = l.matrixWorld.elements;
-    if (light instanceof HemisphericLight) {
-      // An ambient light is the same from everywhere: a hemisphere whose ground is its sky
-      c3(hemi.isHemisphereLight ? hemi.groundColor : l.color, light.groundColor);
-      light.specular.set(0, 0, 0);
-      return;
-    }
-    if (light instanceof DirectionalLight) {
-      this.daylight = Math.max(this.daylight, l.intensity);
-      dir.target.updateMatrixWorld();
-      const t = dir.target.matrixWorld.elements;
-      light.position.set(e[12], e[13], e[14]);
-      light.direction.set(t[12] - e[12], t[13] - e[13], t[14] - e[14]).normalize();
-      this.sunShadow(light, dir.castShadow && this.owner.shadowMap.enabled);
-      return;
-    }
-    const pl = light as PointLight;
-    pl.position.set(e[12], e[13], e[14]);
-    pl.range = point.distance > 0 ? point.distance : Number.MAX_VALUE;
-    if (node.clustered) return;
-    pl.falloffType = point.decay === 0 ? Light.FALLOFF_STANDARD : Light.FALLOFF_PHYSICAL;
-    if (light instanceof SpotLight) {
-      spot.target.updateMatrixWorld();
-      const t = spot.target.matrixWorld.elements;
-      light.direction.set(t[12] - e[12], t[13] - e[13], t[14] - e[14]).normalize();
-      light.angle = spot.angle * 2;
-      light.exponent = 1 + (1 - spot.penumbra) * 4;
-    }
-    // A lamp casts shadows only where the tier allows (the nearest few rooms' lamps)
-    const wants = point.castShadow && this.owner.shadowMap.enabled && (node.shadow ? true : this.lampShadows < shadowSettings().lamps);
-    if (wants && !node.shadow) {
-      const gen = new ShadowGenerator(Math.min(1024, point.shadow?.mapSize?.x ?? 512), light as PointLight);
-      gen.usePoissonSampling = true;
-      gen.bias = 0.004;
-      for (const mesh of this.casters) gen.addShadowCaster(mesh, false);
-      // (only what is within its reach: all six faces share the list, made once a frame)
-      const near: AbstractMesh[] = [];
-      let made = -1;
-      gen.getShadowMap()!.getCustomRenderList = (_face, list, count) => {
-        if (!list) return null;
-        if (made !== this.frame) {
-          made = this.frame;
-          near.length = 0;
-          const reach = point.distance > 0 ? point.distance : 12;
-          const at = (light as PointLight).position;
-          for (let i = 0; i < count; i++) {
-            const s = list[i].getBoundingInfo().boundingSphere;
-            if (Vector3.Distance(s.centerWorld, at) - s.radiusWorld < reach) near.push(list[i]);
+    const lamps: Rig["lamps"] = [];
+    if (shadows) {
+      for (let i = 0; i < s.lamps; i++) {
+        const light = new PointLight(`lamp${i}`, Vector3.Zero(), scene);
+        light.intensity = 0;
+        const shadow = new ShadowGenerator(512, light);
+        shadow.usePoissonSampling = true;
+        shadow.bias = 0.004;
+        const slot: Rig["lamps"][number] = { light, shadow };
+        // (only what is within its reach and not too small to show, a hand-span: all six faces share the list, made once a frame; nothing
+        // while the slot is unused)
+        const near: AbstractMesh[] = [];
+        let made = -1;
+        shadow.getShadowMap()!.getCustomRenderList = (_face, list, count) => {
+          if (!list) return null;
+          if (made !== this.frame) {
+            made = this.frame;
+            near.length = 0;
+            if (slot.source) {
+              const reach = slot.source.distance > 0 ? slot.source.distance : 12;
+              for (let k = 0; k < count; k++) {
+                const b = list[k].getBoundingInfo().boundingSphere;
+                if (b.radiusWorld > 0.08 && Vector3.Distance(b.centerWorld, light.position) - b.radiusWorld < reach) near.push(list[k]);
+              }
+            }
           }
-        }
-        return near;
-      };
-      node.shadow = gen;
-      this.lampShadows++;
-    } else if (!wants && node.shadow) {
-      node.shadow.dispose();
-      node.shadow = undefined;
-      this.lampShadows--;
+          return near;
+        };
+        lamps.push(slot);
+      }
     }
+    let cluster: ClusteredLightContainer | null = new ClusteredLightContainer("lamps", [], scene);
+    if (!cluster.isSupported) {
+      cluster.dispose();
+      cluster = null;
+    }
+    const rig: Rig = { sky, suns, lamps, cluster, shadows, casting: false, pool: { point: [], spot: [] } };
+    if (shadows) rig.sunShadow = this.makeSunShadow(suns[0], s);
+    for (const g of [rig.sunShadow, ...lamps.map((l) => l.shadow)]) if (g) for (const mesh of this.casters) g.addShadowCaster(mesh, false);
+    for (const entry of this.mats.values()) if (entry.mat) entry.mat.maxSimultaneousLights = this.lightCount(rig);
+    for (const look of this.looks.values()) look.mat.maxSimultaneousLights = this.lightCount(rig);
+    return rig;
+  }
+  // Every light of the rig reaches every material (and, where lamps cannot be clustered, as many of them as the tier gives)
+  private lightCount(rig = this.rig) {
+    return Math.max(rig ? 1 + SUNS + rig.lamps.length + (rig.cluster ? 1 : 0) : 0, shadowSettings().lights);
+  }
+  private dropRig() {
+    const rig = this.rig;
+    if (!rig) return;
+    rig.sunShadow?.dispose();
+    for (const l of rig.lamps) l.shadow.dispose();
+    for (const l of [rig.sky, ...rig.suns, ...rig.lamps.map((l) => l.light)]) l.dispose();
+    // (the clustered lamps go with their container; their nodes make them again)
+    for (const [o, node] of this.nodes) if (node.clustered) this.drop(o, node);
+    rig.cluster?.dispose();
+    this.rig = undefined;
   }
 
   // The sun's shadows: cascades that follow the camera, finer near it
-  private sunShadow(light: DirectionalLight, on: boolean) {
-    if (!on || EFFECTS.shadows === "off") {
-      if (this.sun?.light === light) {
-        this.sun.shadow.dispose();
-        this.sun = undefined;
-      }
-      return;
-    }
-    if (this.sun && this.sun.light !== light) return;
-    if (this.sun) return;
-    const s = shadowSettings();
+  private makeSunShadow(light: DirectionalLight, s: ReturnType<typeof shadowSettings>): ShadowGenerator {
     // (an engine that cannot draw cascades, WebGL 1, gets one map over the casters, as three had)
     if (!CascadedShadowGenerator.IsSupported) {
       const plain = new ShadowGenerator(s.size, light);
@@ -1412,9 +1590,9 @@ class Mirror {
       plain.bias = 0.002;
       plain.normalBias = 0.015;
       light.autoUpdateExtends = true;
-      for (const mesh of this.casters) plain.addShadowCaster(mesh, false);
-      this.sun = { light, shadow: plain };
-      return;
+      const all = plain.getShadowMap()!;
+      all.getCustomRenderList = (_layer, list) => (this.rig?.casting || !list ? null : NOTHING);
+      return plain;
     }
     const gen = new CascadedShadowGenerator(s.size, light);
     gen.numCascades = s.cascades;
@@ -1426,12 +1604,12 @@ class Mirror {
     gen.bias = 0.002;
     gen.normalBias = 0.015;
     gen.cascadeBlendPercentage = 0.08;
-    for (const mesh of this.casters) gen.addShadowCaster(mesh, false);
     // Each cascade draws only what lies across it (Babylon draws every caster into every one), and the far ones leave out what is too
-    // small to show in them (under a 150th of their width)
+    // small to show in them (under a 150th of their width); nothing while no sun casts
     const planes = Frustum.GetPlanes(Matrix.Identity());
     const lists: AbstractMesh[][] = [];
     gen.getShadowMap()!.getCustomRenderList = (layer, list, count) => {
+      if (!this.rig?.casting) return NOTHING;
       const m = gen.getCascadeTransformMatrix(layer), proj = gen.getCascadeProjectionMatrix(layer);
       if (!m || !proj || !list) return null;
       Frustum.GetPlanesToRef(m, planes);
@@ -1440,15 +1618,146 @@ class Mirror {
       out.length = 0;
       // (the planes beside the cascade only: what stands between it and the sun still casts into it)
       next: for (let i = 0; i < count; i++) {
-        const s = list[i].getBoundingInfo().boundingSphere;
-        if (s.radiusWorld < least) continue;
-        for (let p = 2; p < 6; p++) if (planes[p].dotCoordinate(s.centerWorld) <= -s.radiusWorld) continue next;
+        const b = list[i].getBoundingInfo().boundingSphere;
+        if (b.radiusWorld < least) continue;
+        for (let p = 2; p < 6; p++) if (planes[p].dotCoordinate(b.centerWorld) <= -b.radiusWorld) continue next;
         out.push(list[i]);
       }
       return out;
     };
-    this.sun = { light, shadow: gen };
+    return gen;
   }
+
+  // A three light, this frame: summed into the sky, kept for a sun or a lamp slot, or set on its clustered (or own) light
+  private syncLight(l: THREE.Light, visible: boolean) {
+    const point = l as THREE.PointLight, spot = l as THREE.SpotLight, hemi = l as THREE.HemisphereLight;
+    if (!visible || l.intensity <= 0) {
+      // (a light of its own or in the cluster stays made, dark, while three hides it)
+      const node = this.nodes.get(l);
+      if (node?.light) {
+        node.frame = this.frame;
+        if (node.clustered) node.light.intensity = 0;
+        else if (node.light.isEnabled(false)) node.light.setEnabled(false);
+      }
+      return;
+    }
+    if (hemi.isHemisphereLight || (l as THREE.AmbientLight).isAmbientLight) {
+      const k = l.intensity * AMBIENT;
+      const ground = hemi.isHemisphereLight ? hemi.groundColor : l.color;
+      this.skyNow.r += l.color.r * k;
+      this.skyNow.g += l.color.g * k;
+      this.skyNow.b += l.color.b * k;
+      this.groundNow.r += ground.r * k;
+      this.groundNow.g += ground.g * k;
+      this.groundNow.b += ground.b * k;
+      return;
+    }
+    if ((l as THREE.DirectionalLight).isDirectionalLight) {
+      this.sunsNow.push(l as THREE.DirectionalLight);
+      return;
+    }
+    if (!point.isPointLight && !spot.isSpotLight) return;
+    if (point.isPointLight && point.castShadow && this.rig?.lamps.length) this.shadowLampsNow.push(point);
+    const node = this.nodeOf(l, "light");
+    const clusterable = !!this.rig?.cluster && point.decay !== 0;
+    if (!node.light) {
+      // (a clustered light is taken from the rig's pool and given back when three's light goes: making one goes through every mesh in the
+      // scene twice, adding it and taking it out again for the cluster, 3 ms a lamp in a palace room)
+      const pool = this.rig?.pool[spot.isSpotLight ? "spot" : "point"];
+      node.light = (clusterable && pool?.pop()) || (spot.isSpotLight ? new SpotLight(`s${l.id}`, Vector3.Zero(), new Vector3(0, -1, 0), 1, 1, this.scene) : new PointLight(`p${l.id}`, Vector3.Zero(), this.scene));
+      if (clusterable) node.light.falloffType = Light.FALLOFF_DEFAULT;
+      if (clusterable && !(node.light as unknown as { _clusteredContainer?: unknown })._clusteredContainer) this.rig!.cluster!.addLight(node.light);
+      node.clustered = clusterable;
+    }
+    const light = node.light as PointLight | SpotLight;
+    if (!node.clustered && !light.isEnabled(false)) light.setEnabled(true);
+    light.intensity = l.intensity;
+    c3(l.color, light.diffuse);
+    const e = l.matrixWorld.elements;
+    light.position.set(e[12], e[13], e[14]);
+    light.range = point.distance > 0 ? point.distance : Number.MAX_VALUE;
+    if (!node.clustered) light.falloffType = point.decay === 0 ? Light.FALLOFF_STANDARD : Light.FALLOFF_PHYSICAL;
+    if (light instanceof SpotLight) {
+      spot.target.updateMatrixWorld();
+      const t = spot.target.matrixWorld.elements;
+      light.direction.set(t[12] - e[12], t[13] - e[13], t[14] - e[14]).normalize();
+      light.angle = spot.angle * 2;
+      light.exponent = 1 + (1 - spot.penumbra) * 4;
+    }
+  }
+
+  // The frame's lights into the rig, once three's scene has been walked
+  private lightUp() {
+    const rig = this.rig!;
+    rig.sky.diffuse.copyFrom(this.skyNow);
+    rig.sky.groundColor.copyFrom(this.groundNow);
+    // The suns: the one casting shadows first, then the brightest (more than SUNS: the faintest left out)
+    const suns = this.sunsNow.sort((a, b) => Number(b.castShadow) - Number(a.castShadow) || b.intensity - a.intensity);
+    for (let i = 0; i < SUNS; i++) {
+      const d = rig.suns[i], l = suns[i];
+      if (!l) {
+        d.intensity = 0;
+        continue;
+      }
+      d.intensity = l.intensity;
+      c3(l.color, d.diffuse);
+      this.daylight = Math.max(this.daylight, l.intensity);
+      const e = l.matrixWorld.elements;
+      l.target.updateMatrixWorld();
+      const t = l.target.matrixWorld.elements;
+      d.position.set(e[12], e[13], e[14]);
+      d.direction.set(t[12] - e[12], t[13] - e[13], t[14] - e[14]).normalize();
+    }
+    const casting = !!rig.sunShadow && !!suns[0]?.castShadow;
+    if (casting !== rig.casting) {
+      rig.casting = casting;
+      // (an idle map is drawn once more, empty, and then left)
+      rig.sunShadow!.getShadowMap()!.refreshRate = casting ? 1 : 0;
+    }
+    // The lamps that cast shadows: the nearest take the slots, and are dark in the cluster meanwhile
+    const at = this.camera.position;
+    const near = this.shadowLampsNow.sort((a, b) => dist2(a, at) - dist2(b, at));
+    rig.lamps.forEach((slot, i) => {
+      const l = near[i];
+      const was = slot.source;
+      slot.source = l;
+      if (!l) {
+        slot.light.intensity = 0;
+        if (was) slot.shadow.getShadowMap()!.refreshRate = 0;
+        return;
+      }
+      // (its six faces drawn every other frame: 540 calls a frame in a palace room, 2026-11-01)
+      if (!was) slot.shadow.getShadowMap()!.refreshRate = LAMP_REFRESH;
+      slot.light.intensity = l.intensity;
+      c3(l.color, slot.light.diffuse);
+      const e = l.matrixWorld.elements;
+      slot.light.position.set(e[12], e[13], e[14]);
+      slot.light.range = l.distance > 0 ? l.distance : Number.MAX_VALUE;
+      const own = this.nodes.get(l)?.light;
+      if (own) own.intensity = 0;
+    });
+  }
+}
+
+const SUNS = 3;
+const LAMP_REFRESH = 2;
+// (a shadow map's list when it is to draw nothing)
+const NOTHING: AbstractMesh[] = [];
+const dist2 = (l: THREE.Object3D, at: Vector3) => {
+  const e = l.matrixWorld.elements;
+  return (e[12] - at.x) ** 2 + (e[13] - at.y) ** 2 + (e[14] - at.z) ** 2;
+};
+interface Rig {
+  sky: HemisphericLight;
+  suns: DirectionalLight[];
+  sunShadow?: ShadowGenerator;
+  lamps: { light: PointLight; shadow: ShadowGenerator; source?: THREE.PointLight }[];
+  cluster: ClusteredLightContainer | null;
+  // the clustered lights three no longer uses, dark, for the next ones
+  pool: { point: PointLight[]; spot: SpotLight[] };
+  // made with shadows (the canvas's and the tier's), and whether a sun casts them now
+  shadows: boolean;
+  casting: boolean;
 }
 
 // The points' own shader: three draws points as sprites sized in the vertex shader, which Babylon's materials do not
@@ -1520,6 +1829,9 @@ export class BabylonRenderer {
   autoClear = true;
   // the full look (Mirror.look) where the tier allows; a small canvas turns it off
   look = true;
+  // While a district is got ready behind its loading screen (LocalMap, BuildingScene): everything in the scene is drawn, in view or not,
+  // so that each shader is compiled and each map is on the card before the party sees it (see `prepared`)
+  preparing = false;
   clearColor = new Color3(0, 0, 0);
   clearAlpha = 0;
   info = { autoReset: true, render: { frame: 0, calls: 0, triangles: 0, points: 0, lines: 0 }, memory: { geometries: 0, textures: 0 }, programs: null, reset() {} };
@@ -1536,6 +1848,18 @@ export class BabylonRenderer {
   constructor(canvas: HTMLCanvasElement, engine?: Engine) {
     this.domElement = canvas;
     this.engine = engine ?? new Engine(canvas, true, { stencil: true, preserveDrawingBuffer: false, powerPreference: "default", audioEngine: false, alpha: true } as never, false);
+    // A moving figure's shadow is drawn with its material's own shader (ShadowDepthWrapper), which Babylon names with a random token for
+    // each figure and each shadow it falls in, so its shader cache never finds the last one: walking into a palace room compiled 257 of
+    // them, 8 of them different (2026-11-01). Named by their source instead, the same shader is compiled once
+    const make = this.engine.createEffect.bind(this.engine);
+    this.engine.createEffect = ((base: unknown, ...rest: unknown[]) => {
+      const b = base as { vertexSource?: string; fragmentSource?: string; vertexToken?: string };
+      if (b && typeof b === "object" && b.vertexToken && b.vertexSource !== undefined) {
+        const token = sourceName(`${b.vertexSource}\u0000${b.fragmentSource ?? ""}`);
+        base = { ...b, vertexToken: token, fragmentToken: token };
+      }
+      return (make as (...a: unknown[]) => ReturnType<Engine["createEffect"]>)(base, ...rest);
+    }) as Engine["createEffect"];
     if (engine) this.look = false;
     else {
       const gpu = this.engine.getGlInfo().renderer;
@@ -1545,6 +1869,14 @@ export class BabylonRenderer {
     RENDERERS.add(this);
     // The last one made, for looking into from the console and the tests
     if (typeof window !== "undefined") (window as unknown as { __babylon?: BabylonRenderer }).__babylon = this;
+  }
+  // Whether everything drawn last frame was ready to draw (its shaders compiled); a renderer drawing in software is never got ready
+  prepared() {
+    for (const m of this.mirrors.values()) if (!m.ready()) return false;
+    return true;
+  }
+  get software() {
+    return SOFTWARE.on;
   }
   // The Babylon scene a three scene is drawn into (for the tests)
   mirrorOf(scene: THREE.Scene) {
