@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { useAudio } from "./useAudio";
 import type { TableDie } from "../sw5e/dice";
+import { passiveFace } from "@shared/logic/shooter";
 
 export type DieType = 'd4' | 'd6' | 'd8' | 'd10' | 'd12' | 'd20' | 'd100';
 
@@ -47,8 +48,11 @@ interface DiceState {
   rolling: boolean;
   currentRoll: RollResult | null;
   table: TableRoll | null;
+  // The shooter mode's Play (house rule): nothing is thrown on the table, each die shows its middle face at once
+  passive: boolean;
 
   // Actions
+  setPassive: (passive: boolean) => void;
   requestTable: (label: string, dice: TableDie[]) => Promise<number[]>;
   finishTable: (id: number, faces: number[]) => void;
   rollDie: (type: DieType) => number;
@@ -98,8 +102,12 @@ export const useDice = create<DiceState>()(
     rolling: false,
     currentRoll: null,
     table: null,
+    passive: false,
+
+    setPassive: (passive: boolean) => set({ passive }),
 
     requestTable: (label: string, dice: TableDie[]): Promise<number[]> => {
+      if (get().passive) return Promise.resolve(dice.map((d) => passiveFace(Number(d.slice(1)))));
       // An automated browser (the e2e play-through) gets its faces at once; players throw the dice
       if (typeof navigator !== "undefined" && navigator.webdriver) {
         return Promise.resolve(dice.map((d) => Math.floor(Math.random() * Number(d.slice(1))) + 1));

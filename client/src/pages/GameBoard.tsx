@@ -21,7 +21,7 @@ import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whe
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
 import { useShoot } from "@/components/Map/interiors/shoot";
-import { avgDice, blankUnit, bladeOf, grenadeOf, gunOf, modeOf, type PlayMode, type Unit } from "@shared/logic/shooter";
+import { avgDice, blankUnit, bladeOf, grenadeOf, gunOf, modeOf, passiveD20, passiveDamage, type PlayMode, type Unit } from "@shared/logic/shooter";
 import { SabaccTable, BUY_IN_CHIPS, type TableOpponent } from "@/components/Games/SabaccTable";
 import { PazaakGame } from "@/components/Games/PazaakGame";
 import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, rewardItem, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, needsGear, GEAR_WARNING, type Contract, type Offer } from "@shared/logic/contracts";
@@ -68,7 +68,7 @@ const hashString = (t: string) => Array.from(t).reduce((n, ch) => (Math.imul(n, 
 import PitArena, { type PitSummary } from "@/components/Map/PitArena";
 import monsterData from "@shared/data/sw5e/monsters.json";
 import type { Sw5eMonster } from "@shared/data";
-import { rollOnTable } from "@/lib/stores/useDice";
+import { rollOnTable, useDice } from "@/lib/stores/useDice";
 import type { TableDie } from "@/lib/sw5e/dice";
 import {
   exitsOf, trailOf, childrenOf, findPath, updateArea, advanceQuests, berthOf, hasPort, shipForTrip, passageFare, isLowFuel, fuelAfter, LIMP_FACTOR, tankerCall,
@@ -339,6 +339,11 @@ export default function GameBoard() {
   const modeChosen = !!campaign?.specialRules?.mode;
   const [askMode, setAskMode] = useState(false);
   useEffect(() => { useView.getState().setShooter(playMode === "shooter"); }, [playMode]);
+  // (no dice are thrown in the shooter mode, outside a fight either: shared/logic/shooter.ts passiveFace; off again when Play closes)
+  useEffect(() => {
+    useDice.getState().setPassive(playMode === "shooter");
+    return () => useDice.getState().setPassive(false);
+  }, [playMode]);
   useEffect(() => { if (campaign?.galaxyMap && !modeChosen) setAskMode(true); }, [!!campaign?.galaxyMap, modeChosen]);
   const chooseMode = (mode: PlayMode) => {
     setAskMode(false);
@@ -486,6 +491,8 @@ export default function GameBoard() {
   const gangFight = useRef<Encounter | null>(null);
   // The riders of an ambush on the road being fought (see roadFight)
   const roadFightRef = useRef<{ riders: Occupant[]; who: string } | null>(null);
+  // Riders who close in on the party at the end of the trip in the shooter mode: their fight begins once the party stands on the map there
+  const roadPending = useRef<{ from: string; riders: Occupant[]; who: string } | null>(null);
 
   // Load campaign data when available
   useEffect(() => {
@@ -640,7 +647,9 @@ export default function GameBoard() {
   };
   const askCheck = (plan: CheckPlan): Promise<CheckResult | null> => {
     const rollers: CheckRoller[] = [{ id: "me", name: character?.name ?? "You", options: optionsFor("me", plan) }];
-    if (!autoChecks()) {
+    // (the shooter mode asks nothing: the character's best is taken at once, as a passive check)
+    const unasked = autoChecks() || playMode === "shooter";
+    if (!unasked) {
       for (const c of (character?.companionData?.party ?? []) as Companion[]) {
         if (c.hp > 0 && monsterSheets.some((m) => m.id === c.statBlock)) rollers.push({ id: c.id, name: c.name, options: optionsFor(c.id, plan) });
       }
@@ -648,7 +657,7 @@ export default function GameBoard() {
     let best = { roller: "me", skill: null as string | null, bonus: -99 };
     for (const r of rollers) for (const o of r.options) if (o.bonus > best.bonus) best = { roller: r.id, skill: o.skill, bonus: o.bonus };
     const meBest = [...rollers[0].options].sort((a, b) => b.bonus - a.bonus)[0];
-    if (autoChecks()) return Promise.resolve(performCheck(plan, "me", meBest.skill));
+    if (unasked) return Promise.resolve(performCheck(plan, "me", meBest.skill));
     return new Promise((resolve) => setCheckAsk({ request: { what: plan.what, dc: plan.dc, rollers, best: { roller: best.roller, skill: best.skill } }, plan, resolve }));
   };
   // Roll it: d20 (two, the higher, with advantage) + the chosen bonus (+ the substance's d3 for the character)
@@ -665,16 +674,18 @@ export default function GameBoard() {
     // The d20s (two with advantage or disadvantage) and the substance's die are thrown on the table, and read from it
     const twice = (up && !burdened) || (burdened && !up);
     const subDie = mine && play.substance?.ability === option.ability ? play.substance.die ?? 3 : 0;
+    // (the shooter mode: no dice, a passive check, 10 + the bonus, +5 with advantage, -5 with disadvantage; house rule)
+    const passive = playMode === "shooter";
     const thrown = await rollOnTable(plan.what, [...(twice ? (["d20", "d20"] as TableDie[]) : (["d20"] as TableDie[])), ...(subDie ? [`d${subDie}` as TableDie] : [])]);
     const first = thrown[0];
-    const roll = up && !burdened ? Math.max(first, thrown[1]) : burdened && !up ? Math.min(first, thrown[1]) : first;
+    const roll = passive ? passiveD20(up && !burdened ? 1 : burdened && !up ? -1 : 0) : up && !burdened ? Math.max(first, thrown[1]) : burdened && !up ? Math.min(first, thrown[1]) : first;
     const s = mine ? (play.substance?.ability === option.ability ? (play.substance.phase === "high" ? 1 : -1) : 0) * (subDie ? thrown[twice ? 2 : 1] : 0) : 0;
     if (s > 0) setTimeout(() => endHigh("used on a check"), 0);
     const bonus = option.bonus + s + (plan.extra ?? 0);
     const total = roll + bonus;
     const success = total >= plan.dc;
     const who = mine ? "" : `${(character.companionData?.party ?? []).find((c: Companion) => c.id === rollerId)?.name}: `;
-    toast[success ? "success" : "error"](`${who}${plan.what}${option.skill ? ` (${option.label}${option.edge ? ", advantage" : ""})` : ""}: ${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against DC ${plan.dc}. ${success ? "Success." : "Failed."}`);
+    toast[success ? "success" : "error"](`${who}${plan.what}${option.skill ? ` (${option.label}${option.edge ? ", advantage" : ""})` : ""}: ${passive ? "passive " : ""}${roll} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)} = ${total} against DC ${plan.dc}. ${success ? "Success." : "Failed."}`);
     return { success, total, roll, bonus };
   };
   const finishCheck = async (rollerId: string | null, skill: string | null) => {
@@ -803,7 +814,7 @@ export default function GameBoard() {
     const traits = wornTraits();
     const mode = stealthMode({ stealthDisadvantage: traits.stealthDisadvantage, stealthAdvantage: traits.stealthAdvantage || field });
     const a = d20();
-    const roll = mode > 0 ? Math.max(a, d20()) : mode < 0 ? Math.min(a, d20()) : a;
+    const roll = playMode === "shooter" ? passiveD20(mode) : mode > 0 ? Math.max(a, d20()) : mode < 0 ? Math.min(a, d20()) : a;
     const bonus = modifier(character.abilityScores?.dexterity) + (skilled("stealth") ? proficiency : 0);
     return { roll, bonus, total: roll + bonus };
   };
@@ -2098,6 +2109,8 @@ export default function GameBoard() {
     const occupant = statBlockOccupant(monster, equipmentData as any, `sea-${Math.floor(useClock.getState().minutes)}`, 1, "creature", "hostile");
     fightArea.current = null;
     fightAreas.current = [];
+    // (the shooter mode: in the water where the party swims, in real time)
+    if (playMode === "shooter" && fightAroundParty([foe(occupant, `${occupant.id}-0`, occupant.name)])) return;
     lastSavedHp.current = character.currentHp;
     lastSavedPoints.current = character.currentForcePoints;
     lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
@@ -2110,6 +2123,11 @@ export default function GameBoard() {
     const atSea = !!world && !!here && !!waterwayOf(world, here.id, amb.exit.to) && isWaterCraft(vehicles.find((v) => v.id === amb.ride.vehicleId));
     travel(amb.exit, amb.ride, true);
     if (!riders.length || !character) return;
+    // (the shooter mode: they close in on the walkable map where the trip has set the party down, in real time, once it stands there)
+    if (playMode === "shooter") {
+      roadPending.current = { from: here?.id ?? "", riders, who: amb.a.who };
+      return void toast.error(`The ${amb.a.who} close in on you!`);
+    }
     toast.error(atSea ? `The ${amb.a.who} run you onto a sandbar among the rocks: you fight knee-deep in the shallows (house rule).` : `The ${amb.a.who} close in at the roadside.`);
     setTimeout(() => {
       const enemies = riders.map((o, i) => ({ ...foe(o, o.id, o.name), x: 10 + (i % 2) * 2, y: 3 + i * 2, z: 0, gang: "road", leader: i === 0 }));
@@ -2150,6 +2168,38 @@ export default function GameBoard() {
       start,
       party.filter((c) => c.hp > 0).map(allyOf),
     );
+  };
+
+  // In the shooter mode a fight that comes to the party (a sea beast, riders at the roadside) is fought in real time where it stands on the
+  // walkable map, never on the turn-based grid: the foes a few squares off round it (one set down in a wall is brought out to the nearest open
+  // square by the shooter, shared/logic/shooter.ts unstick). False when the party is not standing on this place's map yet.
+  const fightAroundParty = (enemies: any[]) => {
+    if (!character || !here || character.currentHp <= 0) return false;
+    const spot = usePartySpot.getState();
+    if (spot.areaId !== here.id) return false;
+    const inTheOpen = here.kind === "building" || openAir(here);
+    const field = world && inTheOpen && districtHere ? districtArena(world, districtHere.id) : undefined;
+    const ground = here.layout ?? skirmishGround(here);
+    const origin = !field && here.layout ? { x: here.layout.x, y: here.layout.y } : { x: 0, y: 0 };
+    const start = { x: spot.x - origin.x, y: spot.y - origin.y, z: field ? here.layout?.level ?? 0 : 0 };
+    const placed = enemies.map((e, i) => {
+      const turn = 0.6 + (i / enemies.length) * 2 * Math.PI;
+      return { ...e, x: Math.round(start.x + Math.cos(turn) * 6), y: Math.round(start.y + Math.sin(turn) * 6), z: start.z };
+    });
+    lastSavedHp.current = character.currentHp;
+    lastSavedPoints.current = character.currentForcePoints;
+    lastSavedUses.current = JSON.stringify(play.featureUses ?? {});
+    fightBegun.current = true;
+    startFight(
+      fighterNow(), placed, combatKit(), false,
+      field
+        ? { width: field.width, height: field.height, assets: field.assets, platforms: field.platforms, links: field.links, district: field.district, open: true, floor: world?.areas[here.parentId ?? ""]?.type }
+        : { width: ground.width, height: ground.height, assets: ground.assets.filter((a) => a.kind !== "npc"), floor: world?.areas[here.parentId ?? ""]?.type, open: !here.layout },
+      start,
+      party.filter((c) => c.hp > 0).map(allyOf),
+      origin,
+    );
+    return true;
   };
 
   const fight = () => {
@@ -2310,6 +2360,15 @@ export default function GameBoard() {
   // Once they attack, the fight begins by itself (once for each time the party walks into it)
   const autoFought = useRef<string | null>(null);
   const partyStoodAt = usePartySpot((s) => s.areaId);
+  useEffect(() => {
+    const p = roadPending.current;
+    if (!p || !here || here.id === p.from || partyStoodAt !== here.id || inCombat) return;
+    roadPending.current = null;
+    fightArea.current = null;
+    fightAreas.current = [];
+    roadFightRef.current = { riders: p.riders, who: p.who };
+    if (!fightAroundParty(p.riders.map((o, i) => ({ ...foe(o, o.id, o.name), gang: "road", leader: i === 0 })))) roadFightRef.current = null;
+  }, [partyStoodAt, here?.id, inCombat]);
   // In the shooter mode the party can open fire first: X (the fire key of a fight) with hostiles here and no fight on begins one, as the Fight button does
   // (an unnoticed party strikes with surprise)
   useEffect(() => {
@@ -3022,6 +3081,8 @@ export default function GameBoard() {
   // What an item does: a plain item's from its description; an enhanced consumable's as the plain item it is a grade of
   const gearOf = (name: string): GearUse | undefined => itemFacts?.[name.toLowerCase()]?.use ?? (factsOf(name) ? gearUse({ name, equipmentCategory: factsOf(name)?.equipmentCategory, description: factsOf(name)?.description }) : undefined);
   const die = (sides: number) => Math.floor(Math.random() * sides) + 1;
+  // The character's own save or check made without a prompt: rolled on the tabletop, passive (10) in the shooter mode (house rule)
+  const ownD20 = () => (playMode === "shooter" ? passiveD20(0) : die(20));
   const clockNow = () => useClock.getState().minutes;
   const speed = (what: string) => toast.info(what);
 
@@ -3150,7 +3211,7 @@ export default function GameBoard() {
     // Taking another while high or low: a saving throw against addiction first
     const busy = state.substance;
     if (busy) {
-      const roll = die(20) + modifier(character.abilityScores?.constitution);
+      const roll = ownD20() + modifier(character.abilityScores?.constitution);
       if (roll < use.constitutionDc) {
         addiction = Math.min(6, addiction + 1);
         note += `Addiction save failed (${roll} against ${use.constitutionDc}): level ${addiction}. `;
@@ -3183,7 +3244,7 @@ export default function GameBoard() {
       changes.currentForcePoints = Math.max(0, Math.min(changes.maxForcePoints, (character.currentForcePoints ?? 0) - s.boost));
       lastSavedPoints.current = changes.currentForcePoints;
     }
-    const roll = die(20) + modifier(character.abilityScores?.wisdom);
+    const roll = ownD20() + modifier(character.abilityScores?.wisdom);
     const saved = roll >= s.wisdomDc;
     if (saved) {
       saveCharacter({ ...changes, playState: { ...play, substance: undefined } });
@@ -3211,7 +3272,7 @@ export default function GameBoard() {
       changes.maxForcePoints = (character.maxForcePoints ?? 0) + s.boost;
     }
     if (s.reduce) changes.maxHp = character.maxHp + s.reduce;
-    const roll = die(20) + modifier(character.abilityScores?.constitution);
+    const roll = ownD20() + modifier(character.abilityScores?.constitution);
     const hooked = roll < s.constitutionDc;
     const addiction = Math.min(6, addictionLevel + (hooked ? 1 : 0));
     saveCharacter({ ...changes, playState: { ...play, substance: undefined, addiction } });
@@ -3236,7 +3297,7 @@ export default function GameBoard() {
     if (!addictionLevel || play.substance) return {};
     const last = play.lastSubstance ?? -Infinity;
     if (clockNow() - last < DAY) return {};
-    const roll = die(20) + modifier(character.abilityScores?.wisdom);
+    const roll = ownD20() + modifier(character.abilityScores?.wisdom);
     const dc = 10 + addictionLevel;
     if (roll >= dc) {
       toast.success(`A day without: Wisdom save ${roll} against ${dc}. Addiction falls to level ${addictionLevel - 1}.`);
@@ -4185,11 +4246,13 @@ export default function GameBoard() {
       heavy: !!body && /heavy/i.test(String(factsOf(body)?.armorClassification ?? "")),
       flying,
       descent: carried.find((n) => /repulsor pack/i.test(n) && running(n)),
-      burst: flying ? undefined : carried.find((n) => !running(n) && flies(n)),
+      // (the shooter mode has no check for the burst: the player fires the pack before the ground, Space or Left Shift, or hits it)
+      burst: flying || playMode === "shooter" ? undefined : carried.find((n) => !running(n) && flies(n)),
       jumped,
     };
   };
   const fallDamage = (dice: number, sides: number, half: boolean) => {
+    if (playMode === "shooter") return passiveDamage(dice, sides, half);
     const rolled = Array.from({ length: dice }, () => die(sides)).reduce((a, b) => a + b, 0);
     return half ? Math.floor(rolled / 2) : rolled;
   };
@@ -4215,7 +4278,7 @@ export default function GameBoard() {
       saveCharacter({ currentHp: hp });
     }
     const pull = gravityNow();
-    toast[damage ? "error" : "success"](`You ${out.text.replace(/\btheir\b/g, "your").replace(/\bthem\b/g, "you")}${damage ? ` and take ${damage} damage${plan.die === 8 ? " (heavy armour: d8s)" : ""}` : ""}.${pull.g !== 1 ? ` The pull here is ${pull.label} (house rule).` : ""}`);
+    toast[damage ? "error" : "success"](`You ${out.text.replace(/\b(falls|drops|fires|lands)\b/g, (v) => v.slice(0, -1)).replace(/\btheir\b/g, "your").replace(/\bthem\b/g, "you")}${damage ? ` and take ${damage} damage${plan.die === 8 ? " (heavy armour: d8s)" : ""}` : ""}.${pull.g !== 1 ? ` The pull here is ${pull.label} (house rule).` : ""}`);
     return damage;
   };
   const protections = (): Protections => ({
@@ -6313,13 +6376,22 @@ export default function GameBoard() {
     const a = accessoryOf({ name, description: factsOf(name)?.description });
     return a.perCell ? a.minutes ?? 1 : /underwater respirator/i.test(name) ? 60 : rating(name);
   };
-  const chargeOf = (name: string) => (running(name) ? Math.max(0, (play.running![name] ?? 0) - clockNow()) : play.charge?.[name] ?? rating(name));
+  // The shooter mode burns flight gear's charge in real time (house rule, 2026-11-02): the clock runs a minute each real second, so a jetpack's
+  // "1 minute per power cell" was a second of flight, and the party fell out of the air; there a minute of charge is a minute of flight
+  const burnRate = (name: string) => (playMode === "shooter" && accessoryOf({ name, description: factsOf(name)?.description }).fly ? 60 : 1);
+  const chargeOf = (name: string) => (running(name) ? Math.max(0, Math.round((((play.running![name] ?? 0) - clockNow()) / burnRate(name)) * 10) / 10) : play.charge?.[name] ?? rating(name));
   const atPowerSource = () => dayPlace().where !== "wild";
   const switchOn = (name: string) => {
-    const left = chargeOf(name);
+    let left = chargeOf(name);
+    // (the shooter mode fits a power cell from the pack by itself when the charge is out, as its guns reload from the pack: house rule)
+    const carried = (character?.equipment ?? []) as string[];
+    const cell = left <= 0 && playMode === "shooter" ? carried.indexOf("Power cell") : -1;
+    if (cell >= 0) left = Math.min(rating(name), perCell(name));
     if (left <= 0) return void toast.error(`${name} is out of charge: fit a power cell${atPowerSource() ? " or recharge it here" : ""}.`);
-    patchPlay({ running: { ...(play.running ?? {}), [name]: clockNow() + left }, charge: { ...(play.charge ?? {}), [name]: 0 } });
-    toast.success(`${name} on: ${left >= 60 ? `${Math.round(left / 6) / 10} hours` : `${left} minute${left === 1 ? "" : "s"}`} of charge.`);
+    const powered = { ...play, running: { ...(play.running ?? {}), [name]: clockNow() + left * burnRate(name) }, charge: { ...(play.charge ?? {}), [name]: 0 } };
+    if (cell >= 0) saveCharacter({ equipment: carried.filter((_, i) => i !== cell), playState: powered });
+    else patchPlay({ running: powered.running, charge: powered.charge });
+    toast.success(`${name} on${cell >= 0 ? " with a fresh power cell" : ""}: ${left >= 60 ? `${Math.round(left / 6) / 10} hours` : `${left} minute${left === 1 ? "" : "s"}`} of charge.`);
   };
   const switchOff = (name: string) => {
     patchPlay({ running: { ...(play.running ?? {}), [name]: 0 }, charge: { ...(play.charge ?? {}), [name]: chargeOf(name) } });
@@ -7007,7 +7079,7 @@ export default function GameBoard() {
   // modifier; the crystal is the color rolled, or any lower in the table
   const findCrystal = (item: string) => {
     if (inCombat || dead) return;
-    const roll = die(20);
+    const roll = ownD20();
     const bonus = Math.max(modifier(character.abilityScores?.wisdom), modifier(character.abilityScores?.charisma)) + proficiency;
     const mod = crystalModifier(roll + bonus);
     const d100 = die(100);
@@ -8015,8 +8087,9 @@ export default function GameBoard() {
     // Exhaustion: disadvantage on ability checks
     const exhausted = (character.exhaustionLevel ?? 0) >= 1;
     const first = d20();
-    const roll = exhausted ? Math.min(first, d20()) : first;
-    return { roll, bonus, total: roll + bonus, note: `${note}${exhausted ? "; exhausted: disadvantage" : ""}`.replace(/^; /, "") };
+    // (the shooter mode: no dice, a passive check; house rule)
+    const roll = playMode === "shooter" ? passiveD20(exhausted ? -1 : 0) : exhausted ? Math.min(first, d20()) : first;
+    return { roll, bonus, total: roll + bonus, note: `${note}${exhausted ? "; exhausted: disadvantage" : ""}${playMode === "shooter" ? "; passive" : ""}`.replace(/^; /, "") };
   };
   // `lived`: days whose living the activity itself paid for (Work: "you earn enough to support a ... lifestyle for the week"), which the
   // daily lifestyle and food (passDays) then skip; before 2026-10-26 a workweek's lifestyle was charged on top of what the work paid for it
@@ -9456,6 +9529,8 @@ interface DowntimeProps {
 interface DogfightShip { id: string; name: string; sheet: ShipSheet; owner?: string; where?: string; busy?: string }
 const CLASS_NAMES = { lower: "lower class", middle: "middle class", upper: "upper class" } as const;
 const roll = (sides: number) => Math.floor(Math.random() * sides) + 1;
+// The shooter mode shows no dice (useDice passive): a result is told without the roll that chose it
+const toldRoll = (rolled: string, text: string) => (useDice.getState().passive ? text : `${rolled}: ${text}`);
 const rollExpr = (expr: string) => {
   const m = expr.match(/^(\d+)d(\d+)$/);
   return m ? Array.from({ length: Number(m[1]) }, () => roll(Number(m[2]))).reduce((a, b) => a + b, 0) : Number(expr) || 0;
@@ -9772,7 +9847,7 @@ function WeekActivity(props: DowntimeProps & { activity: DowntimeActivityData; s
       const total = d100 + (spec.multi ? best : best);
       const row = resultRow(activity, total);
       outcome = outcomeOf(row.text);
-      text = `d100 ${d100} + ${best} = ${total}: ${row.text}`;
+      text = toldRoll(`d100 ${d100} + ${best} = ${total}`, row.text);
     }
     lines.push(text);
     let gained = outcome.credits;
@@ -9937,7 +10012,7 @@ function WeekActivity(props: DowntimeProps & { activity: DowntimeActivityData; s
             </p>
           ))}
           <Button size="sm" disabled={!ready} onClick={resolve} data-testid="downtime-resolve">
-            {attempts.length && !anyMet && spec.multi && attempts.length >= maxChecks ? "See what comes of it" : `Roll the d100 (+${best})`}
+            {attempts.length && !anyMet && spec.multi && attempts.length >= maxChecks ? "See what comes of it" : useDice.getState().passive ? `See what comes of it (+${best})` : `Roll the d100 (+${best})`}
           </Button>
           {attempts.length > 0 && !ready && <p className="text-xs text-amber-200">No DC met yet: make another check.</p>}
         </div>
@@ -10073,7 +10148,7 @@ function EnhancedTrade(props: DowntimeProps & { mode: "buy" | "sell" }) {
       const item = seek ?? pool[Math.floor(Math.random() * pool.length)];
       if (!item) return void setMessage([note, "Nothing of that rarity is for sale."]);
       const value = enhancedValue(item);
-      setMessage([note, `d100 ${d100} ${modifier >= 0 ? "+" : "-"} ${Math.abs(modifier)} = ${d100 + modifier}: ${row.text}`]);
+      setMessage([note, toldRoll(`d100 ${d100} ${modifier >= 0 ? "+" : "-"} ${Math.abs(modifier)} = ${d100 + modifier}`, row.text)]);
       props.commit({ character: { credits: credits - cost }, downtime: {}, days, log: [`Buying enhanced items: a ${rarity.toLowerCase()} seller (${note}).`] });
       setOffer({ item, value, plain: Math.round(value * factor.plain), shady: factor.shady === null ? null : Math.round(value * factor.shady), text: row.text, line: [], favor: factor.favor, days });
     } else {
@@ -10096,7 +10171,7 @@ function EnhancedTrade(props: DowntimeProps & { mode: "buy" | "sell" }) {
       const row = resultRow(activity, d100 + modifier);
       const factor = priceFactor(row.text);
       const value = enhancedValue(item);
-      setMessage([note, `A buyer is found after ${spent} days (${money(cost)}).`, `d100 ${d100} ${modifier >= 0 ? "+" : "-"} ${Math.abs(modifier)} = ${d100 + modifier}: ${row.text}`]);
+      setMessage([note, `A buyer is found after ${spent} days (${money(cost)}).`, toldRoll(`d100 ${d100} ${modifier >= 0 ? "+" : "-"} ${Math.abs(modifier)} = ${d100 + modifier}`, row.text)]);
       props.commit({ character: { credits: credits - cost }, downtime: {}, days: spent, log: [`Selling ${item.name}: a buyer after ${spent} days.`] });
       setOffer({ item, value, plain: Math.round(value * factor.plain), shady: factor.shady === null ? null : Math.round(value * factor.shady), text: row.text, line: [], favor: factor.favor, days: spent });
     }
@@ -10262,7 +10337,7 @@ function CraftingActivity(props: DowntimeProps) {
     const materials = Math.ceil(raw * factor);
     const lines = [
       `${tool.name} check ${r.roll} ${r.bonus >= 0 ? "+" : "-"} ${Math.abs(r.bonus)} = ${r.total}${m.met ? `, roll modifier +${m.bonus}` : ", no DC met"}`,
-      `d100 ${d100} + ${m.bonus} = ${d100 + m.bonus}: ${row.text}`,
+      toldRoll(`d100 ${d100} + ${m.bonus} = ${d100 + m.bonus}`, row.text),
       `${item.name} made in ${daysNeeded} day${daysNeeded > 1 ? "s" : ""}, raw materials ${money(materials)}.`,
     ];
     const paid = pay(materials, families);
@@ -10317,7 +10392,7 @@ function CraftingActivity(props: DowntimeProps) {
     const factor = [2, 1.5, 1, 0.5, 0.25][activity.results.indexOf(row)] ?? 1;
     const materials = Math.ceil(raw * factor);
     const lines = [
-      `Check ${r.total}${m.met ? `, roll modifier +${m.bonus}` : ", no DC met"}; d100 ${d100} + ${m.bonus} ${modifier >= 0 ? "+" : "-"} ${Math.abs(modifier)} = ${d100 + m.bonus + modifier}: ${row.text}`,
+      `Check ${r.total}${m.met ? `, roll modifier +${m.bonus}` : ", no DC met"}; ${toldRoll(`d100 ${d100} + ${m.bonus} ${modifier >= 0 ? "+" : "-"} ${Math.abs(modifier)} = ${d100 + m.bonus + modifier}`, row.text)}`,
       `${found.name} made in ${days} day${days > 1 ? "s" : ""}; raw materials ${money(materials)}.`,
     ];
     const rare = { ...state.rare };

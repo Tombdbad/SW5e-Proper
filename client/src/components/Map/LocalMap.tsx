@@ -3828,6 +3828,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (store.taps.jump !== A.seen.jump) {
       A.seen.jump = store.taps.jump;
       if (A.mode === "ground" || A.mode === "perch") beginJump();
+      // (in the shooter mode a fall is not rolled: Space pressed in the air lights the pack carried, and the fall is over)
+      else if (A.mode === "jump" && gear?.fly && useView.getState().shooter) ignite();
     }
     if (store.taps.hook !== A.seen.hook) {
       A.seen.hook = store.taps.hook;

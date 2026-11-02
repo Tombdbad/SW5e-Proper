@@ -51,6 +51,17 @@ export function avgDice(expr: string | undefined, bonus = 0): number {
   }
   return Math.max(0, total);
 }
+// Outside a fight the shooter has no dice either (house rule, 2026-11-02; the user: a prompt to roll on landing from a jetpack "is WRONG"):
+// a check is the Player's Handbook's passive check, 10 + the bonus, +5 with advantage and -5 with disadvantage (`passiveD20`), made at once
+// with no prompt; any other die the tabletop would throw shows its middle face (`passiveFace`: d20 10, d8 4, d6 3, d4 2)
+export const passiveFace = (sides: number) => Math.max(1, Math.floor((sides + 1) / 2));
+export const passiveD20 = (edge: number) => 10 + 5 * Math.sign(edge);
+// A fall in the shooter (house rule): no check is made in the air (the pack is lit, or fired in a burst, by the player before the ground:
+// Space or Left Shift), and what is not done in time hits the ground: the dice at their average, rounded down
+export const passiveDamage = (dice: number, sides: number, half = false) => {
+  const total = Math.floor((dice * (sides + 1)) / 2);
+  return half ? Math.floor(total / 2) : total;
+};
 
 // ---- Weapons ---------------------------------------------------------------------------------------------------------------------
 export interface Gun {
