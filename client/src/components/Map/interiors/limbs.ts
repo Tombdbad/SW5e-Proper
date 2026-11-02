@@ -550,6 +550,11 @@ export interface Motion {
   blocking: boolean;
   hitAt: number;
   style?: SaberStyle;
+  // What the hands are about besides the weapon (2026-11-02: a foe's throw, spray, call for help, medpac), begun at `actAt` and lasting
+  // `actFor` seconds (its wind-up: shared/logic/shooter.ts SHOOT.act); the follow-through comes after it
+  act?: "throw" | "spray" | "call" | "heal";
+  actAt?: number;
+  actFor?: number;
 }
 export const motion = (o: Partial<Motion> = {}): Motion => ({ posture: 0, ready: false, pitch: 0, air: false, firedAt: -99, kick: 0.4, swingAt: -99, swing: 0, blocking: false, hitAt: -99, ...o });
 export const nowSeconds = () => (typeof performance !== "undefined" ? performance.now() : Date.now()) / 1000;
@@ -662,6 +667,25 @@ export interface Root { drop: number; lift: number; spin: number; tip: number }
 export interface LegSize { hip: number; knee: number }
 const LIMB_OF: Record<Joint, number> = { legR: 1, legL: 2, shinR: 16, shinL: 17, armR: 3, armL: 4, foreR: 14, foreL: 15, chest: 13, weapon: 18, head: 19 };
 
+// The follow-through after a throw or a spray (seconds), and how a figure without joints (a beast, a plant) shows the same: it rears back over
+// the wind-up and snaps forward after (a breath, a spit), and lunges into a blow (`creatureLunge`: the pitch forward and the reach forward)
+export const ACT_OUT = 0.3;
+export function creatureLunge(now: number, swingAt: number, swingFor: number, actAt: number, actFor: number): { pitch: number; reach: number; rise: number } {
+  const s = now - swingAt;
+  if (s >= 0 && s < swingFor + 0.25) {
+    const k = Math.min(1, s / swingFor);
+    // (drawn back, then thrown forward at the instant it lands, then recovering)
+    const p = s < swingFor ? -0.12 * Math.sin(Math.PI * k) + 0.3 * k ** 4 : 0.3 * (1 - (s - swingFor) / 0.25);
+    return { pitch: p, reach: Math.max(0, p) * 1.2, rise: 0 };
+  }
+  const a = now - actAt;
+  if (a >= 0 && a < actFor + ACT_OUT) {
+    if (a < actFor) { const k = smooth(Math.min(1, a / actFor)); return { pitch: -0.32 * k, reach: -0.1 * k, rise: 0.12 * k }; }
+    const k = 1 - (a - actFor) / ACT_OUT;
+    return { pitch: 0.25 * k, reach: 0.2 * k, rise: 0 };
+  }
+  return { pitch: 0, reach: 0, rise: 0 };
+}
 // A person's pose this frame
 export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold, saber: SaberStyle, now: number, legs: LegSize, out: Pose = restPose()): Root {
   for (let i = 1; i < LIMBS; i++) out.set([0, 0, 0, 1], i * 4);
@@ -782,6 +806,51 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
     }
     put("chest", [-0.16 * r, 0.06 * r, 0]);
     put("head", [-0.08 * r, 0, 0]);
+  }
+  // A throw (the arm drawn back over the shoulder, the body turned away, then whipped through), a spray (both hands out level, swept across),
+  // a call (the comlink at the mouth, the head bent to it), a medpac (both hands at the wound, the head down): laid over the rest, eased in
+  // and out (ACT_OUT the follow-through)
+  const sinceAct = now - (m.actAt ?? -99);
+  const len = m.actFor ?? 0.5;
+  if (m.act && sinceAct >= 0 && sinceAct < len + ACT_OUT) {
+    const fade = sinceAct > len ? 1 - (sinceAct - len) / ACT_OUT : Math.min(1, sinceAct / 0.12);
+    const after = sinceAct > len;
+    const over = (j: Joint, v: J3) => { const a = J[j] ?? [0, 0, 0]; J[j] = [a[0] * (1 - fade) + v[0] * fade, a[1] * (1 - fade) + v[1] * fade, a[2] * (1 - fade) + v[2] * fade]; };
+    if (m.act === "throw") {
+      if (!after) {
+        over("armR", [-2.75, 0, 0.25]);
+        over("foreR", [-1.5, 0, 0]);
+        over("armL", [-1.2, 0, -0.2]);
+        over("chest", [-0.15, 0.55, 0]);
+        over("head", [0, -0.45, 0]);
+      } else {
+        over("armR", [-1.05, 0, 0]);
+        over("foreR", [-0.1, 0, 0]);
+        over("chest", [0.3, -0.45, 0]);
+        over("legL", [-0.5, 0, 0]);
+        over("shinL", [0.5, 0, 0]);
+      }
+    } else if (m.act === "spray") {
+      const sweep = Math.sin(sinceAct * 9) * 0.25;
+      over("armR", [-1.5 - m.pitch, 0.1, 0]);
+      over("foreR", [-0.15, 0, 0]);
+      over("armL", [-1.35 - m.pitch, -0.45, 0]);
+      over("foreL", [-0.5, 0, 0]);
+      over("chest", [after ? 0.1 : -0.12, sweep, 0]);
+      over("weapon", [1.45, 0, 0]);
+    } else if (m.act === "call") {
+      over("armL", [-1.25, 0, 0.35]);
+      over("foreL", [-2.1, 0, 0]);
+      over("head", [0.15, 0.2, 0.22]);
+      over("chest", [0.05, 0.15, 0]);
+    } else {
+      over("armR", [-0.75, 0, 0.1]);
+      over("foreR", [-1.05, 0, 0]);
+      over("armL", [-0.6, 0, -0.1]);
+      over("foreL", [-1.25, 0, 0]);
+      over("head", [0.5, 0, 0]);
+      over("chest", [0.35, 0, 0]);
+    }
   }
   // A flinch when hit
   const sinceHit = now - m.hitAt;

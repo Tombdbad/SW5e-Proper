@@ -8,11 +8,11 @@ import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Billboard, Text } from "@react-three/drei";
 import {
-  KEPT, SHOOT, applyGear, castPower, firePlayer, newSim, placeUnits, playerOf, reloadPlayer, resultOf, roundsOf, setBlock, step, swingPlayer, throwGrenade,
+  KEPT, SHOOT, applyGear, monstrous, castPower, firePlayer, newSim, placeUnits, playerOf, reloadPlayer, resultOf, roundsOf, setBlock, step, swingPlayer, throwGrenade,
   type Env, type Event, type FightGear, type Sim, type Unit,
 } from "@shared/logic/shooter";
 import { Figure, MotionContext, usePartyLook } from "../models";
-import { kickOf, motion, type Motion } from "./limbs";
+import { creatureLunge, kickOf, motion, nowSeconds, type Motion } from "./limbs";
 import { SIDE_COLORS, tokenOf } from "../sprites";
 import { AIM, partyMotion, recoil, rightOf, stance, useView } from "./aim";
 import { bindShootKeys, useShoot, type Session } from "./shoot";
@@ -47,6 +47,9 @@ const usedName = (g: FightGear) => (g.act.act === "rocket" ? g.name.split(": ").
 // What a power looks like where it takes hold
 const POWER_COLOR: Record<string, string> = { damage: "#9ad0ff", heal: "#4ade80", stun: "#fde047", fear: "#a78bfa", blind: "#ffffff", push: "#e5e7eb", pull: "#c4b5fd" };
 const BOLT_COLOR = { foe: "#ff3b30", ally: "#5ac8fa", player: "#7dd3fc", reflected: "#ffd60a" };
+// What a monster spits or flings looks like, by its damage (a glob of acid, a spine of bone, a gout of fire)
+const NATURAL_COLOR: Record<string, string> = { acid: "#9be22d", poison: "#6fcf3a", fire: "#ff7a1a", cold: "#bfe8ff", lightning: "#c7b8ff", necrotic: "#5b4a6b", psychic: "#d68cff", sonic: "#e8e1c7", kinetic: "#d9c9a3", energy: "#ffd27a" };
+const nameOf = (s: Sim, id: string) => s.units.find((u) => u.id === id)?.name ?? "A foe";
 const isLarge = (size?: string) => /large|huge|gargantuan/i.test(size ?? "");
 
 export function ShooterLayer({ session, ctx }: { session: Session; ctx: { current: ShooterCtx } }) {
@@ -73,6 +76,8 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     // when each fallen unit went down, and when each unit last swung (the figures fall and swing over a moment, not at once)
     died: {} as Record<string, number>,
     swung: {} as Record<string, number>,
+    // what each foe began with its hands, when, and for how long (a monster's rearing and lunging is drawn from these: limbs.ts creatureLunge)
+    acts: {} as Record<string, { at: number; for: number }>,
     weapon: (session.units.find((u) => u.side === "player")?.gun ? "gun" : "blade") as "gun" | "blade",
     placed: false,
     used: {} as Record<string, number>,
@@ -310,12 +315,41 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         for (let i = 1; i <= 6; i++) st.blasts.push({ x: e.x + (e.tx - e.x) * (i / 6), y: e.y + (e.ty - e.y) * (i / 6), h: e.h + (e.th - e.h) * (i / 6), t: -i * 0.03, r: 0.25 + i * 0.12, life: 0.45, c: c2 });
         sfx.boom();
         say(`${s.units.find((u) => u.id === e.id)?.name ?? "A foe"}: ${e.name}`);
-      } else if (e.type === "lob") say(`${s.units.find((u) => u.id === e.id)?.name ?? "A foe"} throws a grenade!`);
-      else if (e.type === "call") say(e.jammed ? `${s.units.find((u) => u.id === e.id)?.name ?? "A foe"} calls for help: jammed` : `${s.units.find((u) => u.id === e.id)?.name ?? "A foe"} calls for backup!`);
-      else if (e.type === "arrive") say("Their backup arrives");
+      } else if (e.type === "lob") say(e.natural ? `${nameOf(s, e.id)} spits!` : `${nameOf(s, e.id)} throws a grenade!`);
+      else if (e.type === "call") {
+        say(e.jammed ? `${nameOf(s, e.id)} calls for help: jammed` : `${nameOf(s, e.id)} calls for backup!`);
+        // (rings going out from the comlink: blue when the call gets through, grey when the jammer eats it)
+        const who = s.units.find((u) => u.id === e.id);
+        if (who) for (let i = 0; i < 3; i++) st.blasts.push({ x: who.x, y: who.y, h: who.h + 1.6, t: -i * 0.18, r: 0.35 + i * 0.25, life: 0.6, c: e.jammed ? "#9ca3af" : "#5ac8fa" });
+      } else if (e.type === "arrive") {
+        say("Their backup arrives");
+        const who = s.units.find((u) => u.id === e.id);
+        if (who) st.blasts.push({ x: who.x, y: who.y, h: who.h + 0.9, t: 0, r: 0.8, life: 0.5, c: "#f87171" });
+      }
+      // A foe begins a throw, a spray or breath, a call or a medpac: its figure plays the wind-up (a person: limbs.ts humanPose's act; a
+      // monster rears back: creatureLunge), and the party is told, so that it can strike first and stop it
+      else if (e.type === "act") {
+        const who = s.units.find((u) => u.id === e.id);
+        if (!who) continue;
+        st.acts[e.id] = { at: now / 1000, for: e.seconds };
+        Object.assign(motionOf(who).current, { act: e.act, actAt: nowSeconds(), actFor: e.seconds });
+        const beast = monstrous(session.meta[e.id] ?? {});
+        if (e.act === "throw") say(beast ? `${who.name} rears back to spit` : `${who.name} pulls a grenade`);
+        else if (e.act === "spray") say(beast ? `${who.name} draws breath` : `${who.name} levels a sprayer`);
+        else if (e.act === "call") say(`${who.name} reaches for a comlink`);
+        else say(`${who.name} kneels over a medpac`);
+      } else if (e.type === "broken") {
+        const who = s.units.find((u) => u.id === e.id);
+        if (who) { delete st.acts[e.id]; motionOf(who).current.act = undefined; }
+        say(`${nameOf(s, e.id)} is stopped short`);
+      } else if (e.type === "miss") {
+        // (a blow that comes to nothing: a puff of air where it passed)
+        const t = s.units.find((u) => u.id === e.target);
+        if (t) st.blasts.push({ x: t.x, y: t.y, h: t.h + 1, t: 0, r: 0.3, life: 0.18, c: "#cbd5e1" });
+      }
     }
     // A foe's grenade coming down near the party: the warning flashes
-    if (s.grenades.some((g) => g.side !== "player" && Math.hypot(g.x - me.x, g.y - me.y) < g.kind.radius + 1.5)) store.setHud({ dangerAt: now });
+    if (s.grenades.some((g) => g.side !== "player" && !g.natural && Math.hypot(g.x - me.x, g.y - me.y) < g.kind.radius + 1.5)) store.setHud({ dangerAt: now });
     // The party's stance: down behind cover, leaning into a swing (the camera, the muzzle and the figure follow it: interiors/aim.ts)
     stance.k += ((st.crouch && !p.dead ? 1 : 0) - stance.k) * Math.min(1, dt * 10);
     stance.lunge = p.swing > 0 ? Math.sin(Math.PI * (1 - p.swing / SHOOT.saber.swing)) * 0.32 : 0;
@@ -340,6 +374,14 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         const ease = k * k * (3 - 2 * k);
         g.rotation.set(-Math.PI / 2 * ease, u.facing * (1 - ease), 0.4 * ease, "YXZ");
         g.position.y = u.h + 0.14 * ease;
+      } else if (monstrous(meta)) {
+        // (a monster has no hands to show it: it rears back to spit or breathe and lunges into its blow)
+        const a = st.acts[u.id];
+        const l = creatureLunge(now / 1000, (st.swung[u.id] ?? -1e9) / 1000, SHOOT.melee.windup, a?.at ?? -99, a?.for ?? 0);
+        g.rotation.set(l.pitch, u.facing, 0, "YXZ");
+        g.position.x += Math.sin(u.facing) * l.reach;
+        g.position.z += Math.cos(u.facing) * l.reach;
+        g.position.y += l.rise;
       } else {
         g.rotation.set(0, u.facing, 0, "YXZ");
       }
@@ -364,7 +406,9 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       m.position.set(b.x - c.cx, b.h, b.y - c.cz);
       tempV.set(b.vx, b.vh, b.vy).normalize();
       m.quaternion.copy(tempQ.setFromUnitVectors(Z, tempV));
-      (m.material as THREE.MeshBasicMaterial).color.set(b.reflected ? BOLT_COLOR.reflected : BOLT_COLOR[b.side]);
+      (m.material as THREE.MeshBasicMaterial).color.set(b.reflected ? BOLT_COLOR.reflected : b.natural ? NATURAL_COLOR[b.type] ?? NATURAL_COLOR.kinetic : BOLT_COLOR[b.side]);
+      // (a spine or a glob is short and thick, a bolt a long streak)
+      m.scale.set(b.natural ? 2.2 : 1, b.natural ? 2.2 : 1, b.natural ? 0.35 : 1);
     });
     grenadeMeshes.current.forEach((m, i) => {
       if (!m) return;
@@ -372,8 +416,12 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       m.visible = !!g;
       if (!g) return;
       m.position.set(g.x - c.cx, g.h, g.y - c.cz);
-      // (a foe's is lit red)
-      (m.material as THREE.MeshStandardMaterial).emissive.set(g.side === "player" ? "#000000" : "#a01010");
+      // (a foe's is lit red; a monster's glob glows the colour of what it is)
+      const mat = m.material as THREE.MeshStandardMaterial;
+      const glob = g.natural ? NATURAL_COLOR[g.kind.type] ?? NATURAL_COLOR.kinetic : undefined;
+      mat.emissive.set(glob ?? (g.side === "player" ? "#000000" : "#a01010"));
+      mat.color.set(glob ?? "#3f4a36");
+      m.scale.setScalar(glob ? 1.3 : 1);
     });
     // Mines and charges on the ground: a light that blinks once armed; the ground that burns or holds gas
     mineMeshes.current.forEach((m, i) => {

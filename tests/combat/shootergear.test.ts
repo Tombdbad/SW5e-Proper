@@ -172,7 +172,9 @@ test("resistances halve, vulnerabilities double, immunities ignore; temporary hi
 test("a foe with a grenade lobs it at the party, one with a flamethrower's cone sets it burning, one hurt uses its medpac", () => {
   const thrower = foe("t", 7.5, 0.5, { kit: { blasts: [{ kind: frag, thrown: true, range: 8, left: 1, every: 8, cd: 0 }], medpacs: 0, heal: 0 } });
   const sim = newSim([player(), thrower], { seed: 4 });
-  const events = run(sim, 3);
+  // (the wind-up first: SHOOT.act)
+  const events = run(sim, 3 + SHOOT.act.throw);
+  assert.ok(events.some((e) => e.type === "act" && e.act === "throw"));
   assert.ok(events.some((e) => e.type === "lob"));
   assert.ok(events.some((e) => e.type === "explode"));
   assert.ok(playerOf(sim).hp < 30);
@@ -196,7 +198,7 @@ test("a foe with a comlink calls for backup, who come in from out of sight; the 
   const make = () => newSim([player(), foe("boss", 8.5, 0.5, { caller: true, brave: true }), foe("b0", 0, 0, { reserve: true })], { seed: 5 });
   const sim = make();
   assert.equal(sim.units[2].mode, "gone");
-  const events = run(sim, SHOOT.backup.after + SHOOT.backup.delay + 1);
+  const events = run(sim, SHOOT.backup.after + SHOOT.act.call + SHOOT.backup.delay + 1);
   assert.ok(events.some((e) => e.type === "call" && !e.jammed));
   assert.ok(events.some((e) => e.type === "arrive"));
   assert.notEqual(sim.units[2].mode, "gone");
@@ -204,7 +206,7 @@ test("a foe with a comlink calls for backup, who come in from out of sight; the 
 
   const jammed = make();
   assert.equal(applyGear(jammed, gear({ act: "jam" }), field, []), KEPT);
-  const e2 = run(jammed, SHOOT.backup.after + SHOOT.backup.delay + 1);
+  const e2 = run(jammed, SHOOT.backup.after + SHOOT.act.call + SHOOT.backup.delay + 1);
   assert.ok(e2.some((e) => e.type === "call" && e.jammed));
   assert.equal(jammed.units[2].mode, "gone");
 });

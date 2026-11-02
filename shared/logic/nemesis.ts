@@ -9,6 +9,7 @@
 //
 // Pure: a state goes in and a new one comes out. A record is plain JSON and lives in `World.nemeses` (so it is saved with the campaign).
 import { unitOf, type Gender, type Occupant } from "./index";
+import { monstrous } from "./shooter";
 
 export type Personality = "hothead" | "coward" | "proud" | "cold" | "greedy" | "loyal" | "drifter";
 export type HateTier = "none" | "resentful" | "vengeful" | "murderous";
@@ -71,6 +72,9 @@ export interface NemesisRecord {
   // What they carry when they come back, learned from how the party fought them (house rule, 2026-11-02: see `learnKit`): item names as the
   // equipment data has them, used by them in a fight (the shooter's FoeKit)
   kit?: string[];
+  // A monster carries nothing (2026-11-02, the user: monsters use no grenades, weapons or items): it comes back hardened instead, resisting
+  // the damage the party hurt it worst with (house rule; at most two types)
+  adapted?: string[];
 }
 export interface NewsItem {
   at: number;
@@ -477,7 +481,7 @@ export function settleFight(state: NemesisState, report: FightReport): { state: 
     }
     retitle(rec);
     const learned = learnKit(rec, foe, report, down);
-    if (learned.length) events.push({ kind: "learns", id: rec.id, text: `${nameOf(rec)} will come back carrying ${learned.map((n) => n.toLowerCase()).join(" and ")}.` });
+    if (learned.length) events.push({ kind: "learns", id: rec.id, text: monstrous(foe.body) ? `${nameOf(rec)} will come back hardened: ${learned.join(" and ")}.` : `${nameOf(rec)} will come back carrying ${learned.map((n) => n.toLowerCase()).join(" and ")}.` });
   }
   // The party has grown more feared for the fallen
   s.notoriety = clamp(s.notoriety + kills * BALANCE.notorietyPerKill, 0, 100);
@@ -506,6 +510,12 @@ export function learnKit(rec: NemesisRecord, foe: FightFoe, report: Pick<FightRe
   const add: string[] = [];
   const struck = foe.struck ?? {};
   const worst = dominantType(struck);
+  if (monstrous(foe.body)) {
+    const had = rec.adapted ?? [];
+    if (!worst || had.includes(worst) || had.length >= 2 || totalOf(struck) < foe.maxHp * 0.25) return [];
+    rec.adapted = [...had, worst];
+    return [`resistance to ${worst}`];
+  }
   const want = (name: string, many = 1) => {
     if (kit.filter((n) => n === name).length + add.filter((n) => n === name).length < many) add.push(name);
   };

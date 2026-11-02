@@ -21,7 +21,7 @@ import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whe
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
 import { useShoot } from "@/components/Map/interiors/shoot";
-import { avgDice, blankUnit, bladeOf, blastOf, gunOf, modeOf, passiveD20, passiveDamage, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Unit } from "@shared/logic/shooter";
+import { avgDice, blankUnit, bladeOf, blastOf, gunOf, modeOf, monstrous, passiveD20, passiveDamage, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Unit } from "@shared/logic/shooter";
 import { SabaccTable, BUY_IN_CHIPS, type TableOpponent } from "@/components/Games/SabaccTable";
 import { PazaakGame } from "@/components/Games/PazaakGame";
 import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, rewardItem, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, needsGear, GEAR_WARNING, type Contract, type Offer } from "@shared/logic/contracts";
@@ -370,6 +370,8 @@ export default function GameBoard() {
       const dmg = Math.max(1, avgDice(c.damageDice ?? "1d4") + avgDice(own?.extra?.dice) + avgDice(own?.save?.damage));
       const rider = own?.save?.conditions?.length ? blastOf(own.name, { radius: 0, damage: [], conditions: own.save.conditions, rounds: own.save.rounds }) : undefined;
       const organic = !/droid|construct/i.test(c.creature ?? "");
+      // (a monster fights with what it is: its shot is spat or flung, named for the stat block's attack, never a blaster; shooter.ts monstrous)
+      const beast = monstrous(c);
       const nem = String(c.id).startsWith("nem-") ? (latestWorld() ?? world)?.nemeses?.records[String(c.id)] : undefined;
       return blankUnit({
         id: String(c.id), name: c.name, side: c.ally ? "ally" : "foe", ...spot(c), hp: c.hp, maxHp: c.maxHp, ac: c.armorClass ?? 10,
@@ -377,12 +379,13 @@ export default function GameBoard() {
         leader: c.leader, gang: c.gang,
         // stands its ground: a leader, a nemesis, a soldier or hunter or the like; the rest run at a fifth of their hit points
         brave: !!c.leader || !!nem || /soldier|trooper|guard|officer|hunter|mercenary|assassin|jedi|sith|inquisitor|knight|captain|marauder|droid|beast|wildlife/i.test(text),
-        gun: ranged ? { name: "Blaster", damage: dmg, type: (own?.damageType ?? "energy").toLowerCase(), interval: 1, auto: false, range: (c.range?.[0] ?? 80) / 5, long: (c.range?.[1] ?? 320) / 5, mag: 99, left: 99, reserve: 0, spent: 0, reload: 1 } : undefined,
+        gun: ranged ? { name: beast ? own?.name ?? "Spit" : "Blaster", damage: dmg, type: (own?.damageType ?? "energy").toLowerCase(), interval: 1, auto: false, range: (c.range?.[0] ?? 80) / 5, long: (c.range?.[1] ?? 320) / 5, mag: 99, left: 99, reserve: 0, spent: 0, reload: 1 } : undefined,
         blade: ranged ? undefined : { name: c.name, damage: dmg, type: (own?.damageType ?? "kinetic").toLowerCase(), saber: /lightsaber|sith|jedi|inquisitor|dark side/i.test(text) },
         // What the rules add: resistances, vulnerabilities, immunities and condition immunities, regeneration, and what it carries
-        resist: c.resist ?? c.profile?.resistances, vulnerable: c.vulnerable ?? c.profile?.vulnerabilities, immune: c.immune ?? c.profile?.immunities,
+        // (a monster nemesis comes back hardened against what the party hurt it with: nemesis.ts learnKit)
+        resist: [...(c.resist ?? c.profile?.resistances ?? []), ...(nem?.adapted ?? [])], vulnerable: c.vulnerable ?? c.profile?.vulnerabilities, immune: c.immune ?? c.profile?.immunities,
         condImmune: c.conditionImmune ?? c.profile?.conditionImmunities, regen: c.profile?.traits?.find((t: any) => t.kind === "regeneration")?.amount,
-        droid: !organic, small: !/large|huge|gargantuan/i.test(c.size ?? ""), ...(rider ? { rider } : {}),
+        droid: !organic, small: !/large|huge|gargantuan/i.test(c.size ?? ""), ...(rider ? { rider } : {}), ...(beast ? { natural: true } : {}),
         kit: c.ally ? undefined : foeKit(c, nem), caller: !c.ally && callsForHelp(c),
       });
     };
@@ -5222,6 +5225,8 @@ export default function GameBoard() {
   // (drawn from who they are, so the same foe carries the same); a nemesis what it learned to carry against the party (nemesis.ts learnKit)
   const foeKit = (c: any, nem?: NemesisRecord): FoeKit | undefined => {
     const roll = (tag: string) => (hashString(`${c.id}|${c.name}|${tag}`) % 1000) / 1000;
+    // (a monster has only its stat block's own: a spit, a breath, a howl; no grenade, medpac or anything learned to carry)
+    const beast = monstrous(c);
     const blasts: FoeBlast[] = [];
     for (const s of (c.profile?.specials ?? []) as { name: string; shape?: string; size?: number; range?: number; recharge?: number; perFight?: number; damage?: string; damageType?: string; conditions?: string[]; rounds?: number }[]) {
       if (!s.shape || (!s.damage && !s.conditions?.length)) continue;
@@ -5232,7 +5237,7 @@ export default function GameBoard() {
       const radius = s.shape === "cube" ? size / 2 : size;
       const kind = blastOf(s.name, { radius: thrown ? radius : 5, damage: s.damage ? [{ dice: s.damage, type: s.damageType ?? "kinetic" }] : [], conditions: s.conditions, rounds: s.rounds });
       blasts.push({
-        kind, thrown, ...(s.shape === "line" ? { line: true } : {}), ...(sphere && !thrown ? { around: true } : {}),
+        kind, thrown, ...(s.shape === "line" ? { line: true } : {}), ...(sphere && !thrown ? { around: true } : {}), ...(beast ? { natural: true } : {}),
         range: thrown ? (s.range ?? 30) / 5 : (sphere ? radius : size) / 5,
         left: s.perFight ?? (s.recharge ? 99 : 1), every: s.recharge ? Math.min(30, 36 / Math.max(1, 7 - s.recharge)) : 12, cd: 2 + roll(s.name) * 4,
       });
@@ -5244,6 +5249,7 @@ export default function GameBoard() {
       if (same) return void same.left++;
       blasts.push({ kind: blastOf(name, { ...use, rounds: EXPLOSIVE_CONDITION_ROUNDS, fireDice: use.lingers ? use.damage[0]?.dice : undefined }), thrown: true, range: 8, left: 1, every: 8, cd: 3 + roll(name) * 4 });
     };
+    if (beast) return blasts.length ? { blasts, medpacs: 0, heal: 0 } : undefined;
     const who = `${c.name} ${c.role ?? ""}`;
     const person = !/droid|construct|beast|wildlife|horror/i.test(`${c.creature ?? ""} ${c.role ?? ""}`);
     const soldierly = person && /soldier|trooper|guard|officer|mercenary|hunter|captain|marauder|security|police|enforcer|bounty|thug|pirate|raider/i.test(who);
@@ -5264,7 +5270,7 @@ export default function GameBoard() {
   };
   // A foe with a comlink who calls for help when the fight goes on (house rule: shooter.ts SHOOT.backup): a leader, or one of the watch, a
   // soldier or officer, a guard; not a beast
-  const callsForHelp = (c: any) => !/beast|wildlife|horror/i.test(`${c.creature ?? ""} ${c.role ?? ""}`) && (!!c.leader || /guard|soldier|trooper|officer|police|security|enforcer|captain|patrol|sentry/i.test(`${c.name} ${c.role ?? ""}`));
+  const callsForHelp = (c: any) => !monstrous(c) && !/beast|wildlife|horror/i.test(`${c.creature ?? ""} ${c.role ?? ""}`) && (!!c.leader || /guard|soldier|trooper|officer|police|security|enforcer|captain|patrol|sentry/i.test(`${c.name} ${c.role ?? ""}`));
 
   // Toggle sidebar
   const toggleSidebar = () => {

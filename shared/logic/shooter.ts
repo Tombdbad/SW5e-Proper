@@ -50,7 +50,21 @@ export const SHOOT = {
   lob: { min: 6, max: 14, every: [7, 12] as [number, number] },
   // A foe's cry for help (house rule): after a while of fighting, or once its side is half down; the help comes this many seconds later
   backup: { after: 10, delay: 12 },
+  // What a foe does with its hands takes a moment the party can see and cut short (2026-11-02, the user: foes throwing, spraying, healing or
+  // calling "need relevant animations"): the wind-up of a throw, of a spray or a breath, the call on the comlink; a blow that staggers it this
+  // long or more breaks it off
+  act: { throw: 0.5, spray: 0.55, call: 1.4, breaks: 0.4 },
+  // A blow in close (2026-11-02, the user: "balance melee damage"; a beast struck five times in six seconds and never missed): the stat
+  // block's attacks a round come as one blow every `round` seconds shared between them (the tabletop's six-second round at the pace the
+  // party's own fire keeps), each landing as often as its attack roll would against the Armor Class (`hitChance`), after a wind-up the party
+  // can step out of
+  melee: { round: 4, fastest: 1.2, windup: 0.5 },
 };
+// How often an attack roll lands: a d20 + the bonus against the Armor Class (a 1 always misses, a 20 always hits), as a chance and not a die
+export const hitChance = (bonus: number, ac: number) => clamp((21 - ac + bonus) / 20, 0.05, 0.95);
+// A monster (2026-11-02, the user: "Monsters should not use grenades, weapons, or items"): a beast, a plant, an aberration, the undead, an
+// elemental, wildlife. It fights with what it is: its bite, claws, spit and breath, never a blaster, a grenade or a medpac.
+export const monstrous = (o: { creature?: string; role?: string }) => /beast|plant|tree|aberration|undead|elemental|monstrosity|ooze|swarm of (?:tiny |small )?beasts/i.test(o.creature ?? "") || /wildlife|horror|beast/i.test(o.role ?? "");
 
 // ---- Dice, read as their average ---------------------------------------------------------------------------------------------------------
 export function avgDice(expr: string | undefined, bonus = 0): number {
@@ -282,11 +296,20 @@ export interface Unit {
   droid?: boolean;
   // What its attack's hit brings besides damage (a stat block's "or be poisoned": its conditions, see GrenadeKind)
   rider?: GrenadeKind;
+  // A monster (see `monstrous`): its shots are spat or flung, not fired from a gun
+  natural?: boolean;
+  // What its hands (or jaws) are about: a throw, a spray or breath, a call for help, under way for `t` seconds more (SHOOT.act)
+  act?: { kind: "throw" | "spray" | "call"; t: number; blast?: FoeBlast; target?: string };
+  // (the party only) half damage from a burst, a cone or a breath, by the item that gives it (Reflex Enhancer: "no damage if you succeed on
+  // a saving throw, and only half damage if you fail", taken at its middle: house rule); once a fight, to drop to 1 hit point instead of 0
+  evade?: boolean;
+  endure?: boolean;
 }
 // What a foe has to use besides its attack (2026-11-02, house rule): the area actions of its stat block (a flamethrower's cone, a grenade's
 // sphere: thrown, `left` times or every so many seconds as its recharge goes), medpacs for itself, an antidote and an extinguisher for its own
 // poison and fire. A nemesis carries what it learned to carry against the party (nemesis.ts `kit`).
-export interface FoeBlast { kind: GrenadeKind; thrown: boolean; range: number; left: number; every: number; cd: number; line?: boolean; around?: boolean }
+// (`natural`: a monster's: spat, flung or breathed, a glob that bursts where it strikes and not a grenade with a fuse)
+export interface FoeBlast { kind: GrenadeKind; thrown: boolean; range: number; left: number; every: number; cd: number; line?: boolean; around?: boolean; natural?: boolean }
 export interface FoeKit { blasts: FoeBlast[]; medpacs: number; heal: number; antidote?: boolean; extinguisher?: boolean }
 // A power as the fight plays it (the game reads these from the power's text: client/src/lib/sw5e/realtimePowers.ts). The dice are taken at
 // their average, a condition lasts seconds, a push or a pull sends a creature a distance.
@@ -307,8 +330,9 @@ export interface RtPower {
   // the damage when what is pushed strikes a wall
   strike: number;
 }
-export interface Bolt { id: number; owner: string; side: Side; x: number; y: number; h: number; vx: number; vy: number; vh: number; damage: number; type: string; life: number; reflected?: boolean; cell: [number, number]; burst?: GrenadeKind }
-export interface Grenade { id: number; owner: string; side: Side; x: number; y: number; h: number; vx: number; vy: number; vh: number; fuse: number; kind: GrenadeKind; bounces: number; impact?: boolean }
+// (`natural`: spat or flung by a monster, drawn as what it is: a glob, a spine)
+export interface Bolt { id: number; owner: string; side: Side; x: number; y: number; h: number; vx: number; vy: number; vh: number; damage: number; type: string; life: number; reflected?: boolean; cell: [number, number]; burst?: GrenadeKind; natural?: boolean }
+export interface Grenade { id: number; owner: string; side: Side; x: number; y: number; h: number; vx: number; vy: number; vh: number; fuse: number; kind: GrenadeKind; bounces: number; impact?: boolean; natural?: boolean }
 // A mine or charge set on the ground: arming, then set off by a body of the other side that comes near (a mine), its timer (a charge), or the
 // remote detonator it is paired with (`paired`: only that)
 export interface Mine { id: number; owner: string; side: Side; x: number; y: number; h: number; facing: number; kind: GrenadeKind; arm: number; timer?: number; paired: boolean; name: string }
@@ -351,10 +375,14 @@ export type Event =
   // an item used (by the party or a foe: a medpac, an antidote, a jammer), with what it did; a foe's area action (a cone or line from x to tx)
   | { type: "use"; id: string; name: string; text: string }
   | { type: "spray"; id: string; name: string; dmgType: string; x: number; y: number; h: number; tx: number; ty: number; th: number }
-  | { type: "lob"; id: string }
+  | { type: "lob"; id: string; natural?: boolean }
   // a call for help: made, jammed, answered
   | { type: "call"; id: string; jammed: boolean }
-  | { type: "arrive"; id: string };
+  | { type: "arrive"; id: string }
+  // a foe begins something with its hands that takes a moment (the scene plays its wind-up), or is stopped in it; a blow that misses
+  | { type: "act"; id: string; act: "throw" | "spray" | "call" | "heal"; seconds: number }
+  | { type: "broken"; id: string }
+  | { type: "miss"; id: string; target: string };
 
 export interface Env {
   // Whether a bolt, or a thrown thing, is stopped at this point (a wall, or something higher than it flies)
@@ -514,6 +542,12 @@ function hurt(sim: Sim, target: Unit, amount: number, type: string, by: Unit | u
   const shown = dealt;
   dealt -= shield;
   target.hp = Math.max(0, target.hp - dealt);
+  // (armour that will not let its wearer fall: once, to 1 hit point instead)
+  if (target.hp <= 0 && target.endure) {
+    target.endure = false;
+    target.hp = 1;
+    events.push({ type: "use", id: target.id, name: "Enhanced Endurance", text: "held on at 1" });
+  }
   if (dealt <= 0) return void events.push({ type: "hit", target: target.id, by: by?.id ?? "", amount: shown, head, ...at });
   if (by && by.side !== "foe" && target.side === "foe") target.struck[type] = (target.struck[type] ?? 0) + dealt;
   if (target.side === "player" && by) sim.lastHitOnPlayer = by.id;
@@ -573,7 +607,7 @@ function launch(sim: Sim, owner: Unit, gun: { damage: number; type: string; long
   sim.bolts.push({
     id: sim.seq++, owner: owner.id, side: owner.side, x: from.x, y: from.y, h: from.h, cell: [Math.floor(from.x), Math.floor(from.y)],
     vx: Math.sin(yaw) * Math.cos(pitch) * speed, vy: Math.cos(yaw) * Math.cos(pitch) * speed, vh: Math.sin(pitch) * speed,
-    damage: gun.damage, type: gun.type, life: Math.min(SHOOT.boltLife, gun.long / speed), ...(gun.burst ? { burst: gun.burst } : {}),
+    damage: gun.damage, type: gun.type, life: Math.min(SHOOT.boltLife, gun.long / speed), ...(gun.burst ? { burst: gun.burst } : {}), ...(owner.natural ? { natural: true } : {}),
   });
   events.push({ type: "shot", from: owner.id, ...from });
   noise(sim, from.x, from.y, 18, events);
@@ -1068,7 +1102,14 @@ function steer(u: Unit, goal: { x: number; y: number }, speed: number, dt: numbe
   return false;
 }
 function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
-  if (u.stagger > 0) return;
+  if (u.stagger > 0) {
+    // (a hard enough blow breaks off a throw, a spray or a call)
+    if (u.act && u.stagger >= SHOOT.act.breaks) {
+      u.act = undefined;
+      events.push({ type: "broken", id: u.id });
+    }
+    return;
+  }
   const foes = opponents(sim, u);
   const target = nearest(sim, u, foes);
   if (!target) return;
@@ -1086,6 +1127,21 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
   }
   u.facing = Math.atan2(target.x - u.x, target.y - u.y);
   if (u.wait > 0) return;
+  // A throw, a spray or a call under way: it stands, and when the moment is up it is done (at the one it began on, if still there)
+  if (u.act) {
+    u.aiming = 0;
+    const a = u.act;
+    const at = sim.units.find((o) => o.id === a.target && alive(o)) ?? target;
+    u.facing = Math.atan2(at.x - u.x, at.y - u.y);
+    if ((a.t -= dt) > 0) return;
+    u.act = undefined;
+    if (a.kind === "call") {
+      events.push({ type: "call", id: u.id, jammed: !!sim.jammed });
+      if (!sim.jammed) sim.backupAt = sim.time + SHOOT.backup.delay;
+    } else if (a.blast && a.kind === "throw") lob(sim, u, a.blast.kind, at, events, a.blast.natural);
+    else if (a.blast) spray(sim, u, a.blast, at, events);
+    return;
+  }
   // An item in its hands: it stands and uses it
   if (u.using && u.using > 0) {
     u.aiming = 0;
@@ -1140,15 +1196,18 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
     }
     return;
   }
-  // In close: run at it, wind up, strike
+  // In close: run at it, wind up, strike (one blow every SHOOT.melee.round seconds shared between the stat block's attacks a round)
   const reach = u.reach + SHOOT.radius;
   if (d > reach * 0.9) chase(u, target, u.speed, dt, env, seen);
   if (u.swing > 0) {
-    if (u.swing - dt <= 0 && d <= reach + 0.4) meleeBlow(sim, u, target, events);
+    if (u.swing - dt <= 0) {
+      if (d <= reach + 0.4) meleeBlow(sim, u, target, events);
+      else events.push({ type: "miss", id: u.id, target: target.id });
+    }
   } else if (d <= reach + 0.2 && u.fire <= 0 && !blind) {
     // (poisoned, it is slower to swing)
-    u.swing = u.poisoned > 0 ? 0.75 : 0.5;
-    u.fire = 1.2;
+    u.swing = SHOOT.melee.windup * (u.poisoned > 0 ? 1.5 : 1);
+    u.fire = Math.max(SHOOT.melee.fastest, SHOOT.melee.round / Math.max(1, u.volley));
     events.push({ type: "swing", id: u.id });
   }
 }
@@ -1169,6 +1228,7 @@ function useKit(sim: Sim, u: Unit, target: Unit, d: number, seen: boolean, event
   }
   if (k.medpacs > 0 && u.hp < u.maxHp * 0.4 && u.using === undefined) {
     u.using = SHOOT.medpac;
+    events.push({ type: "act", id: u.id, act: "heal", seconds: SHOOT.medpac });
     return true;
   }
   if (!seen || u.blind > 0 || u.stagger > 0) return false;
@@ -1179,14 +1239,27 @@ function useKit(sim: Sim, u: Unit, target: Unit, d: number, seen: boolean, event
     if (b.thrown && sim.units.some((o) => o !== u && o.side === u.side && alive(o) && Math.hypot(o.x - target.x, o.y - target.y) < b.kind.radius)) continue;
     b.left--;
     b.cd = b.every;
-    if (b.thrown) lob(sim, u, b.kind, target, events);
-    else spray(sim, u, b, target, events);
+    // (the wind-up first: the arm drawn back, the chest filled for a breath; SHOOT.act)
+    const kind = b.thrown ? "throw" : "spray";
+    u.act = { kind, t: SHOOT.act[kind], blast: b, target: target.id };
+    events.push({ type: "act", id: u.id, act: kind, seconds: SHOOT.act[kind] });
     return true;
   }
   return false;
 }
-// A thing thrown in an arc to land at the target's feet (as near as the thrower's skill takes it), bursting a moment after
-function lob(sim: Sim, u: Unit, kind: GrenadeKind, target: Unit, events: Event[]) {
+// A thing thrown in an arc to land at the target's feet (as near as the thrower's skill takes it), bursting a moment after; a monster's spit
+// or flung glob (`natural`) flies flatter and bursts where it strikes
+function lob(sim: Sim, u: Unit, kind: GrenadeKind, target: Unit, events: Event[], natural = false) {
+  if (natural) {
+    const from = { x: u.x, y: u.y, h: u.h + 1.0 };
+    const [tx, ty, th] = [target.x, target.y, target.h + 0.6];
+    const flat = Math.hypot(tx - from.x, ty - from.y) || 1;
+    const speed = 14;
+    const t = flat / speed;
+    sim.grenades.push({ id: sim.seq++, owner: u.id, side: u.side, ...from, vx: ((tx - from.x) / flat) * speed, vy: ((ty - from.y) / flat) * speed, vh: (th - from.h + 0.5 * SHOOT.grenade.gravity * t * t) / t, fuse: t + 1.5, kind, bounces: 0, impact: true, natural: true });
+    events.push({ type: "lob", id: u.id, natural: true });
+    return;
+  }
   const G = SHOOT.grenade;
   const miss = Math.max(0.3, 1.6 - u.bonus * 0.12);
   const [tx, ty] = [target.x + (rand(sim) * 2 - 1) * miss, target.y + (rand(sim) * 2 - 1) * miss];
@@ -1207,7 +1280,7 @@ function spray(sim: Sim, u: Unit, b: FoeBlast, target: Unit, events: Event[]) {
     if (d > b.range + SHOOT.radius) continue;
     if (d > 0.4 && Math.acos(clamp(((o.x - u.x) * fx + (o.y - u.y) * fy) / d, -1, 1)) > half) continue;
     afflict(sim, o, b.kind, events);
-    if (b.kind.damage > 0) hurt(sim, o, b.kind.damage, b.kind.type, u, events, { x: o.x, y: o.y, h: o.h + 0.8 });
+    if (b.kind.damage > 0) hurt(sim, o, b.kind.damage * (o.evade ? 0.5 : 1), b.kind.type, u, events, { x: o.x, y: o.y, h: o.h + 0.8 });
     if (b.kind.type === "fire") { o.burning = Math.max(o.burning, 3); o.burnDps = Math.max(o.burnDps ?? 0, SHOOT.burnDps); }
   }
   events.push({ type: "spray", id: u.id, name: b.kind.name, dmgType: b.kind.type, x: u.x, y: u.y, h: u.h + 1.1, tx: u.x + fx * b.range, ty: u.y + fy * b.range, th: u.h + 0.9 });
@@ -1220,11 +1293,14 @@ function callForHelp(sim: Sim, u: Unit, events: Event[]) {
   const side = sim.units.filter((o) => o.side === "foe" && !o.reserve);
   const down = side.filter((o) => !alive(o)).length;
   if (sim.time < SHOOT.backup.after && down * 2 < side.length) return;
+  // (the comlink to the mouth for a moment: the call goes out when it is done, and a hard blow stops it; see think)
   sim.called = true;
-  events.push({ type: "call", id: u.id, jammed: !!sim.jammed });
-  if (!sim.jammed) sim.backupAt = sim.time + SHOOT.backup.delay;
+  u.act = { kind: "call", t: SHOOT.act.call };
+  events.push({ type: "act", id: u.id, act: "call", seconds: SHOOT.act.call });
 }
 function meleeBlow(sim: Sim, u: Unit, target: Unit, events: Event[]) {
+  // (the stat block's attack roll, as a chance: SHOOT.melee)
+  if (rand(sim) >= hitChance(u.bonus, target.ac)) return void events.push({ type: "miss", id: u.id, target: target.id });
   const damage = u.blade?.damage ?? u.gun?.damage ?? 4;
   // Held up in front of the blow, the party's saber takes it, for focus
   if (target.side === "player" && target.blocking && target.focus >= SHOOT.focus.perStrike) {
@@ -1353,7 +1429,7 @@ function blow(sim: Sim, at: { x: number; y: number; h: number }, kind: GrenadeKi
     const reach = d / (kind.radius + SHOOT.radius);
     const fall = reach <= SHOOT.grenade.near ? 1 : 1 - (1 - SHOOT.grenade.edge) * ((reach - SHOOT.grenade.near) / (1 - SHOOT.grenade.near));
     afflict(sim, u, kind, events);
-    if (kind.damage > 0) hurt(sim, u, kind.damage * fall, kind.type, owner, events, { x: u.x, y: u.y, h: u.h + 0.7 });
+    if (kind.damage > 0) hurt(sim, u, kind.damage * fall * (u.evade ? 0.5 : 1), kind.type, owner, events, { x: u.x, y: u.y, h: u.h + 0.7 });
   }
   if (kind.lingers) sim.fields.push({ id: sim.seq++, owner: ownerId, x: at.x, y: at.y, h: env.floorAt(at.x, at.y), radius: kind.lingerRadius ?? kind.radius, t: kind.lingers, dps: kind.dps ?? 1, type: kind.lingerRadius ? "fire" : kind.type, ...(kind.poison ? { poison: kind.poison } : {}) });
 }
