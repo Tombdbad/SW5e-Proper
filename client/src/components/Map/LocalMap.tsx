@@ -31,7 +31,8 @@ import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, 
 import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
 import { useShoot } from "./interiors/shoot";
-import { moonlight } from "@shared/logic";
+import { moonlight, isStand, standRow, STAND_STEP, STAND_ROWS } from "@shared/logic";
+import { smallTalk, talkPlace, type TalkLine } from "@shared/logic/relations";
 import { CROUCH_FACTOR, PRONE_FACTOR, stickWalk, useRun, WALK_FACTOR, type Walk } from "./interiors/stick";
 import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
@@ -1164,7 +1165,9 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
           <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} tint={wallLook && wallPack && hasWalls(wallPack) ? toneColour(wallLook) : wall} bend={bend} rock={rocky ? { biome: mood!.biome, tier: detail, seed: a.x * 7 + a.y * 13 + width } : undefined} />
         </group>
       ))}
-      {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
+      {/* An arena's stands: a square of tier for each, drawn together (siteAssets arena_tier_<row>) */}
+      {assets.some(isStand) && <Scatter placed={assets.filter(isStand).map((a): Placed => ({ key: `arena_tier_${standRow({ width, height }, a.x, a.y)}`, x: a.x + 0.5, y: a.y + 0.5, rot: 0, scale: 1, v: (a.x * 7 + a.y * 3) % 3 }))} biome={biome ?? mood?.biome ?? "temperate"} />}
+      {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone" && !isStand(a)).map((a) => (
         <Glide key={a.id} x={a.x} y={a.y} z={(a.z ?? 0) * LEVEL_H}>
           {a.kind === "ship" ? (bay ? <BayBerth room={bay.room} asset={a} based={bay.based} /> : ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} /> : <Berth w={a.w} h={a.h} name={a.name} note="away on a voyage" />)
             : a.kind === "stairs" ? <StairsAsset w={a.w} h={a.h} up={/up/i.test(a.name)} rock={rocky ? { biome: mood!.biome } : undefined} />
@@ -1213,6 +1216,8 @@ export function vaultOf(buildingType: string, roomName: string, w: number, h: nu
   if (buildingType === "palace") return /audience|throne/i.test(roomName) ? 3 : /hall/i.test(roomName) || w * h >= 70 ? 2 : 0;
   if (/^(estates|manor house)$/.test(buildingType)) return /hall/i.test(roomName) && w * h >= 36 ? 2 : 0;
   if (buildingType === "archive") return /reading hall/i.test(roomName) ? 2 : 0;
+  // (an arena's floor, 2026-11-02: the stands rise to the wall under a great dome)
+  if (buildingType === "arena") return /arena floor/i.test(roomName) ? 3 : 0;
   return 0;
 }
 
@@ -1518,7 +1523,7 @@ const aroundSquares = (x: number, y: number, w = 1, h = 1) => {
 // ---------------------------------------------------------------------------------------------
 
 type Sq = { x: number; y: number };
-type Brain = "patron" | "staff" | "musician" | "droid" | "post" | "round" | "still" | "dealer";
+type Brain = "patron" | "staff" | "musician" | "droid" | "post" | "round" | "still" | "dealer" | "spectator";
 
 // What a scene offers the people in it, in its own squares
 interface Setting {
@@ -1537,6 +1542,11 @@ interface Setting {
   watch: Sq;
   // Where people come in and go out
   doors: Sq[];
+  // An arena's stands: how high a square of them stands (the crowd is drawn on top), and the middle of its pit, which they watch
+  stands?: (s: Sq) => number | undefined;
+  pit?: Sq;
+  // What the people here talk about (relations.ts `talkPlace`)
+  talk?: string;
 }
 
 interface Agent {
@@ -1572,6 +1582,10 @@ interface Agent {
   sitK: number;
   gesture: number;
   shots: number;
+  // Talking with someone (2026-11-02): the lines, whose turn, and seconds to the next; the one who began it keeps the time
+  talk?: { with: Agent; lines: TalkLine[]; i: number; next: number; lead: boolean };
+  // A spectator cheering: seconds left
+  cheer?: number;
 }
 
 // The party at a card table (2026-10-27): where it is to sit (a Sabacc table's stool), whether it has sat, and the gesture its hands make. Play
@@ -1661,6 +1675,8 @@ function Instrument({ name = "" }: { name?: string }) {
 
 // Which way of life someone has, from who they are and what stands near them
 function brainOf(o: Occupant, home: Sq, setting: Setting, guards: number): { brain: Brain; counter?: string } {
+  // An arena's crowd stands on the stands and watches the pit
+  if (o.role === "spectator" && setting.stands?.(home) !== undefined) return { brain: "spectator" };
   // The croupier of a house with a Sabacc table sits at it and deals
   if (o.role === "croupier" && setting.seats.some((s) => s.stools?.length)) return { brain: "dealer" };
   if (o.role === "guard") return { brain: guards === 0 ? "post" : guards === 1 ? "round" : "still" };
@@ -1727,7 +1743,7 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
       const door = shown.current && setting.doors.length ? [...setting.doors].sort((a, b) => apart(a, spot) - apart(b, spot))[0] : undefined;
       if (p.occupant.role === "guard") guards++;
       const start = door ?? spot;
-      const a: Agent = { key: p.key, occupant: p.occupant, brain, counter, home: spot, x: start.x, y: start.y, path: [], wait: door ? 0 : between(1, 12), doing: brain === "patron" ? (door ? "arriving" : "seated") : brain === "musician" ? "playing" : brain === "dealer" ? (door ? "arriving" : "dealing") : brain, leg: 0, phase: Math.random() * 6, pose: { current: { ...seatState(), act: brain === "dealer" ? "deal" : "hold", cards: brain === "dealer" ? 0 : 2 } }, sitK: 0, gesture: between(1, 6), shots: 0 };
+      const a: Agent = { key: p.key, occupant: p.occupant, brain, counter, home: spot, x: start.x, y: start.y, path: [], wait: door ? 0 : between(1, 12), doing: brain === "patron" ? (door ? "arriving" : "seated") : brain === "spectator" ? "watching" : brain === "musician" ? "playing" : brain === "dealer" ? (door ? "arriving" : "dealing") : brain, leg: 0, phase: Math.random() * 6, pose: { current: { ...seatState(), act: brain === "dealer" ? "deal" : "hold", cards: brain === "dealer" ? 0 : 2 } }, sitK: 0, gesture: between(1, 6), shots: 0 };
       if (door) a.path = route(setting.open, door, [spot]) ?? [];
       list.push(a);
     }
@@ -1738,6 +1754,8 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
   }, []);
   const groups = useRef<Record<string, THREE.Group | null>>({});
   const band = useRef({ playing: true, timer: between(45, 80) });
+  // An arena's crowd roars together now and then
+  const roar = useRef(between(6, 14));
   const [playing, setPlaying] = useState(true);
   const [bubbles, setBubbles] = useState<Record<string, string>>({});
   const saying = useRef<Record<string, number>>({});
@@ -1750,6 +1768,31 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
     saying.current[a.key] = still.current.clock + seconds;
     setBubbles((b) => ({ ...b, [a.key]: text }));
   };
+  // Two people talk (2026-11-02; the user: "We need NPCs that talk to one another"): they face each other and take turns at a few lines of
+  // small talk (relations.ts `smallTalk`), the one speaking with a hand that gestures (limbs.ts "talk"); either walking off ends it
+  const talking = (a: Agent) => !!a.talk;
+  const converse = (a: Agent, b: Agent) => {
+    if (a === b || talking(a) || talking(b) || a.leaving || b.leaving || a.held || b.held || b.path.length || b.call || frozen(a.occupant) || frozen(b.occupant)) return false;
+    const lines = smallTalk(setting.talk ?? "any", hue(`${a.key}|${b.key}|${Math.floor(still.current.clock / 60)}`));
+    a.talk = { with: b, lines, i: 0, next: 0.3, lead: true };
+    b.talk = { with: a, lines, i: 0, next: 0, lead: false };
+    a.face = () => squareOf(b);
+    b.face = () => squareOf(a);
+    const span = lines.length * 2.7 + 1.5;
+    a.wait = Math.max(a.wait, span);
+    b.wait = Math.max(b.wait, span);
+    return true;
+  };
+  const endTalk = (a: Agent) => {
+    const b = a.talk?.with;
+    for (const x of [a, b]) if (x) {
+      x.talk = undefined;
+      if (x.pose.current.stand === "talk") x.pose.current.stand = undefined;
+    }
+  };
+  // Someone to talk to: another person here, close by and not busy
+  const nearby = (a: Agent, reach: number, ok: (o: Agent) => boolean) =>
+    agents.filter((o) => o !== a && !o.leaving && !o.talk && !o.path.length && o.brain === a.brain && apart(squareOf(o), squareOf(a)) <= reach && ok(o)).sort((p, q) => apart(squareOf(p), squareOf(a)) - apart(squareOf(q), squareOf(a)))[0];
   const mapSq = (s: Sq): Sq => ({ x: s.x + origin.x, y: s.y + origin.y });
   // (a square someone else here is going to or standing on, or that the party or a follower has claimed)
   const claimed = (s: Sq, self: Agent) => agents.some((o) => o !== self && ((o.goal && o.goal.x === s.x && o.goal.y === s.y) || (!o.path.length && squareOf(o).x === s.x && squareOf(o).y === s.y))) || !!claimedBy(mapSq(s), `life:${self.key}`);
@@ -1826,7 +1869,7 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
         } else if (r < 0.45 && others.length) {
           const other = anyOf(others)!;
           leaveSeat(a);
-          goTo(a, ring(squareOf(other)), "visiting", between(10, 20), () => squareOf(other));
+          goTo(a, ring(squareOf(other)), "visiting", between(10, 20), () => squareOf(other), () => void converse(a, other));
         } else if (r < 0.55) {
           const seat = pickSeat(a);
           if (seat) {
@@ -1834,6 +1877,10 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
             a.home = seat;
             goTo(a, [seat], "seated", stoolAt(seat) ? between(40, 100) : between(15, 40), facing(seatOf(seat)));
           } else a.wait = between(10, 25);
+        } else if (r < 0.75 && !stoolAt(squareOf(a))) {
+          // A word with whoever sits at the same table, or stands close by
+          const mate = nearby(a, 2, (o) => o.doing === "seated" && !stoolAt(squareOf(o)));
+          if (!mate || !converse(a, mate)) a.wait = between(10, 30);
         } else a.wait = between(10, 30);
       } else {
         // Back to a seat, sometimes another one
@@ -1876,7 +1923,22 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
         if (elsewhere.length) goTo(a, [anyOf(elsewhere)!], "pacing", between(5, 12), centreOf(counter.asset));
         else a.wait = between(4, 9);
       }
-      else a.wait = between(4, 9);
+      else if (r < 0.62) {
+        // Two of the staff behind one counter (a pair of bookmakers, two at a bar) pass the time
+        const mate = nearby(a, 3, (o) => o.counter === a.counter);
+        if (!mate || !converse(a, mate)) a.wait = between(4, 9);
+      } else a.wait = between(4, 9);
+    } else if (a.brain === "spectator") {
+      // On the stands: watching the pit, cheering now and then, a word with a neighbour
+      a.face = setting.pit ?? setting.watch;
+      if (r < 0.4) {
+        a.cheer = between(1.5, 4);
+        a.wait = a.cheer + between(1, 4);
+        if (Math.random() < 0.15) say(a, anyOf(["Get up!", "Finish it!", "Come on!", "Hit him!", "Again! Again!", "That's my credits!"])!, 2);
+      } else if (r < 0.55) {
+        const mate = nearby(a, 2, () => true);
+        if (!mate || !converse(a, mate)) a.wait = between(3, 8);
+      } else a.wait = between(3, 8);
     } else if (a.brain === "musician") {
       if (band.current.playing) {
         if (apart(squareOf(a), a.home) === 0 && !a.path.length) {
@@ -1890,7 +1952,7 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
         const patrons = agents.filter((o) => o.brain === "patron" && !o.path.length);
         if (r < 0.35 && patrons.length) {
           const other = anyOf(patrons)!;
-          goTo(a, ring(squareOf(other)), "mingling", between(10, 20), () => squareOf(other));
+          goTo(a, ring(squareOf(other)), "mingling", between(10, 20), () => squareOf(other), () => void converse(a, other));
         } else if (r < 0.7 && freeSeats(a).length) {
           const seat = anyOf(freeSeats(a))!;
           goTo(a, [seat], "sitting in", between(12, 22), facing(seatOf(seat)));
@@ -2043,6 +2105,13 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
         a.wait = between(0, 1.5);
       }
     }
+    if (setting.stands && (roar.current -= dt) <= 0) {
+      roar.current = between(10, 22);
+      const crowd = agents.filter((o) => o.brain === "spectator" && !o.talk);
+      for (const o of crowd) o.cheer = Math.max(o.cheer ?? 0, between(2, 4));
+      const voice = anyOf(crowd);
+      if (voice) say(voice, anyOf(["Blood! Blood!", "Ohhh!", "Did you see that?!", "Down he goes!", "Fight! Fight! Fight!"])!, 2.2);
+    }
     const expired = Object.entries(saying.current).filter(([, until]) => until < clock).map(([key]) => key);
     if (expired.length) {
       expired.forEach((key) => delete saying.current[key]);
@@ -2067,6 +2136,28 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
           p.shot = anyOf<Shot>(["draw", "draw", "bet", "think", "think", "call", "fold"]);
           p.shotKey = ++a.shots;
         }
+      }
+      // Talking: the one who began it keeps the time; each line in turn, the speaker's hand going (limbs.ts "talk")
+      if (a.talk) {
+        const t = a.talk;
+        const other = t.with;
+        if (a.path.length || other.path.length || a.leaving || other.leaving || other.talk?.with !== a || frozen(a.occupant) || frozen(other.occupant)) endTalk(a);
+        else if (t.lead && (t.next -= dt) <= 0) {
+          if (t.i >= t.lines.length) endTalk(a);
+          else {
+            const line = t.lines[t.i++];
+            const [speaker, listener] = line.who === 0 ? [a, other] : [other, a];
+            say(speaker, line.text, 2.4);
+            speaker.pose.current.stand = "talk";
+            if (listener.pose.current.stand === "talk") listener.pose.current.stand = undefined;
+            t.next = 2.7;
+          }
+        }
+      }
+      // A spectator cheers while their cheer lasts (not while talking)
+      if (a.brain === "spectator") {
+        a.cheer = Math.max(0, (a.cheer ?? 0) - dt);
+        if (!a.talk) a.pose.current.stand = a.cheer > 0 ? "cheer" : undefined;
       }
       if (frozen(a.occupant) && me) {
         // Noticed: they stop where they are and watch the party
@@ -2132,7 +2223,7 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
       // (on a stool, their square is the one beside it: they are carried onto it as they sit)
       const into = a.stool ? smooth(a.sitK) : 0;
       const [px, py] = a.stool ? [a.x + (a.stool.x - a.x) * into, a.y + (a.stool.y - a.y) * into] : [a.x, a.y];
-      group.position.set(px + 0.5, (onStage ? setting.stageHeight : 0) + (playingNow ? Math.abs(Math.sin(state.clock.elapsedTime * 5 + a.phase)) * 0.07 : 0), py + 0.5);
+      group.position.set(px + 0.5, (onStage ? setting.stageHeight : 0) + (setting.stands?.(squareOf(a)) ?? 0) + (playingNow ? Math.abs(Math.sin(state.clock.elapsedTime * 5 + a.phase)) * 0.07 : 0), py + 0.5);
       // A droid wiping a table turns on the spot
       if (a.brain === "droid" && a.doing === "cleaning" && !a.path.length) group.rotation.y += dt * 3;
       if (record) drawnAt.set(a.key, squareOf(a));
@@ -3824,6 +3915,13 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       round: [{ x: 1, y: 1 }, { x: l.width - 2, y: 1 }, { x: l.width - 2, y: l.height - 2 }, { x: 1, y: l.height - 2 }].map((c) => nearestOpen((x, y) => free(x, y) && !isWayAt({ x, y }), c)),
       watch: { x: Math.floor(l.width / 2), y: Math.floor(l.height / 2) },
       doors: l.assets.filter((a) => a.kind === "door" || a.kind === "exit").map((a) => ({ x: a.x, y: a.y })),
+      ...(() => {
+        // An arena's stands (each square as high as its row's tier) and the middle of its pit
+        const stands = new Map(l.assets.filter(isStand).map((a) => [`${a.x},${a.y}`, (standRow(l, a.x, a.y) + 1) * STAND_STEP]));
+        const pit = l.assets.find((a) => a.name === "Fighting pit");
+        return stands.size ? { stands: (q: Sq) => stands.get(`${q.x},${q.y}`), pit: pit ? { x: pit.x + (pit.w - 1) / 2, y: pit.y + (pit.h - 1) / 2 } : undefined } : {};
+      })(),
+      talk: talkPlace(world.areas[opened!.parentId ?? ""]?.type ?? "", opened!.name, opened!.occupants.map((o) => o.role)),
     };
   }, [opened?.id, world]);
   const streetSettings = useMemo(() => {
@@ -4850,7 +4948,33 @@ function BesidePanel() {
   return null;
 }
 
-export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; areaId?: string | null; origin?: { x: number; y: number } }) {
+// The crowd round a bout of the pit (2026-11-02; the user: pit fighting "should take place in a physical arena"): the arena's stands, three
+// rows of tiers round the fight's floor (siteAssets arena_tier_<row>), with spectators on them cheering (limbs.ts "cheer"); drawn round the
+// fight's own squares, outside its walls
+const CROWD_SPECIES = ["Human", "Twi'lek", "Rodian", "Zabrak", "Trandoshan", "Gran", "Weequay", "Duros", "Human", "Mon Calamari"];
+function PitCrowd({ width, height }: { width: number; height: number }) {
+  const ring = useMemo(() => {
+    const out: { x: number; y: number; row: number }[] = [];
+    for (let y = -STAND_ROWS - 1; y < height + STAND_ROWS + 1; y++) for (let x = -STAND_ROWS - 1; x < width + STAND_ROWS + 1; x++) {
+      const out_ = Math.max(-1 - x, x - width, -1 - y, y - height);
+      if (out_ >= 0 && out_ < STAND_ROWS) out.push({ x, y, row: out_ });
+    }
+    return out;
+  }, [width, height]);
+  const crowd = useMemo(() => ring.filter((_, i) => (i * 7919) % 11 < 1).slice(0, 22).map((q, i) => ({ ...q, species: CROWD_SPECIES[i % CROWD_SPECIES.length], seat: { current: { ...seatState(), stand: "cheer" as const } } })), [ring]);
+  return (
+    <>
+      <Scatter placed={ring.map((q): Placed => ({ key: `arena_tier_${q.row}`, x: q.x + 0.5, y: q.y + 0.5, rot: 0, scale: 1, v: (q.x * 7 + q.y * 3 + 30) % 3 }))} biome="desert" />
+      {crowd.map((q, i) => (
+        <group key={i} position={[q.x + 0.5, (q.row + 1) * STAND_STEP, q.y + 0.5]} rotation={[0, Math.atan2(width / 2 - (q.x + 0.5), height / 2 - (q.y + 0.5)), 0]}>
+          <Figure kind={tokenOf({ name: "Spectator", role: "spectator" })} ring="#6b7280" species={q.species} role="spectator" seat={q.seat} />
+        </group>
+      ))}
+    </>
+  );
+}
+
+export function FightScene({ wall = STEEL, areaId, origin, crowd }: { wall?: string; areaId?: string | null; origin?: { x: number; y: number }; crowd?: boolean }) {
   const { combatants, currentTurn, arena, targetId, moveTo, setTarget, objectId, setObject } = useCombat();
   const motionOf = useFightMotions(combatants);
   const pickable = usePickable();
@@ -4894,6 +5018,7 @@ export function FightScene({ wall = STEEL, areaId, origin }: { wall?: string; ar
     <>
       <color attach="background" args={["#05070c"]} />
       <group position={[-cx, 0, -cz]}>
+        {crowd && <PitCrowd width={arena.width} height={arena.height} />}
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, -0.22, cz]}>
           <planeGeometry args={[240, 240]} />
           <meshBasicMaterial color="#0b0f16" />

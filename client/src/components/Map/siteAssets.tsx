@@ -488,6 +488,29 @@ const LIBRARY: Record<string, Piece> = {
       k.sphere(0.05, "#ffd24a", { at: [0, 2.64, 0], seg: [6, 5], finish: "glow" });
     },
   },
+  // ---- The stands of an arena (shared/logic `standsOf`, 2026-11-02): one square of tier for each of its rows (`standRow`), a STAND_STEP
+  // higher each row out from the pit, with a bench along it; the crowd stands on top (LocalMap Life, "spectator")
+  arena_tier_0: {
+    tags: ["arena", "stand", "seating"], size: [1, 1], blocks: true,
+    build: (k, p, v) => {
+      k.box([1, 0.45, 1], shade(p.stone, 1.02 - (v % 3) * 0.03), { at: [0, 0.225, 0] });
+      k.box([1, 0.05, 0.36], "#6b4a33", { at: [0, 0.475, 0.2] });
+    },
+  },
+  arena_tier_1: {
+    tags: ["arena", "stand", "seating"], size: [1, 1], blocks: true,
+    build: (k, p, v) => {
+      k.box([1, 0.90, 1], shade(p.stone, 0.96 - (v % 3) * 0.03), { at: [0, 0.450, 0] });
+      k.box([1, 0.05, 0.36], "#6b4a33", { at: [0, 0.925, 0.2] });
+    },
+  },
+  arena_tier_2: {
+    tags: ["arena", "stand", "seating"], size: [1, 1], blocks: true,
+    build: (k, p, v) => {
+      k.box([1, 1.35, 1], shade(p.stone, 0.90 - (v % 3) * 0.03), { at: [0, 0.675, 0] });
+      k.box([1, 0.05, 0.36], "#6b4a33", { at: [0, 1.375, 0.2] });
+    },
+  },
   // ---- The pieces of a base (shared/logic bases.ts `look`), drawn where the party set them down by BasePieceModel; centred on their
   // footprint, the door or lid to +z
   base_tent: {

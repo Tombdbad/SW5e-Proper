@@ -129,3 +129,20 @@ test("nemeses are named as people of a family: the family name is one species, a
     assert.ok(out.events.some((e) => /will not forget/.test(e.text)));
   } else assert.equal(out.state.records[b.id].hate, before, "a nemesis who cheated death: nothing to avenge");
 });
+
+test("small talk (house rule): two to four lines turn about, of the place (the arena's crowd talks of the bouts), the same for the same seed", async () => {
+  const { smallTalk, talkPlace } = await import("../../shared/logic/relations");
+  assert.equal(talkPlace("arena", "Arena floor", ["spectator"]), "arena");
+  assert.equal(talkPlace("cantina", "Main bar", ["patron", "patron"]), "cantina");
+  assert.equal(talkPlace("garrison", "Barracks", ["guard", "guard"]), "guard");
+  assert.equal(talkPlace("general store", "Sales floor", ["shopper"]), "market");
+  assert.equal(talkPlace("residences", "Apartments", ["resident"]), "any");
+  for (let seed = 1; seed < 60; seed++) {
+    const lines = smallTalk("arena", seed);
+    assert.ok(lines.length >= 2 && lines.length <= 4);
+    lines.forEach((l, i) => assert.equal(l.who, i % 2));
+    assert.ok(lines.every((l) => l.text.length > 0));
+    assert.deepEqual(smallTalk("arena", seed), lines);
+  }
+  assert.notDeepEqual(smallTalk("cantina", 3), smallTalk("arena", 3));
+});

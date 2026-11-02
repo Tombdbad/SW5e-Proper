@@ -167,3 +167,61 @@ export function kinLine(world: World, o: Occupant, limit = 3): string {
 
 // A person by id, wherever they are (for the panels that hold only an id)
 export const personById = (world: World, id: string) => findOccupant(world, id)?.occupant;
+
+// ---- Small talk (2026-11-02; the user: "We need NPCs that talk to one another"). Two people of a place who meet exchange a few lines,
+// turn about (two to four), chosen by where they are and who they are: an arena's crowd talks of the bouts, a cantina's patrons of drink
+// and rumour, a market's of prices, guards of their watch, the rest of the day's news. Flavour only, a labelled HOUSE RULE (the books say
+// nothing on it). Pure: the same seed gives the same talk (the map seeds it from the two people and the minute).
+export interface TalkLine { who: 0 | 1; text: string }
+type Talk = { open: string[]; reply: string[]; more: string[]; close: string[] };
+const TALKS: Record<string, Talk> = {
+  arena: {
+    open: ["Who's your credits on?", "Did you see that last bout?", "They say the next one's a rancor.", "The pit boss is fixing fights again.", "I lost a week's pay on that Gamorrean."],
+    reply: ["The Trandoshan, every time.", "Never seen a throw like it.", "A rancor? They'll need a bigger pit.", "Prove it. Then bet on it.", "Should've backed the little one."],
+    more: ["The odds board says otherwise.", "Watch the left hand, that's the tell.", "Blood on the sand before sundown.", "I'm doubling my stake."],
+    close: ["Here they come!", "Shh, it's starting.", "Your funeral.", "Get me a drink before the bell."],
+  },
+  cantina: {
+    open: ["Another round?", "Heard about the Hutt's shipment?", "That pilot owes me forty credits.", "The band's sharp tonight.", "Keep your voice down."],
+    reply: ["On you, this time.", "Spice, they say. Lots of it.", "Get in line.", "They've played that one three times.", "Why, who's listening?"],
+    more: ["Customs has been sniffing round the docks.", "Don't look now, bounty hunter by the door.", "I'm out by the next cycle.", "Word is the Empire pays well for names."],
+    close: ["Drink up.", "Not here. Later.", "I'll take my chances.", "Watch your back."],
+  },
+  market: {
+    open: ["Prices are up again.", "Fresh in from the Outer Rim, he says.", "Have you tried the stall by the gate?", "My power cells died after a week.", "Looking for anything?"],
+    reply: ["Everything is, these days.", "And I'm a Jedi.", "Overpriced, but it works.", "You get what you pay for.", "Just looking."],
+    more: ["The haulers are late from the spaceport.", "He'll knock off ten if you smile.", "The tech shop has the good stuff.", "Mind your pockets in this crowd."],
+    close: ["Good luck with it.", "See you round.", "I'll think about it.", "Safe travels."],
+  },
+  guard: {
+    open: ["Quiet shift.", "Anything on the scanners?", "The captain wants a report.", "My feet are killing me.", "Did you hear that?"],
+    reply: ["Too quiet.", "Static. As usual.", "When doesn't he?", "Two more hours.", "Probably a womp rat."],
+    more: ["Keep your blaster handy.", "Somebody tripped the alarm last night.", "Double the watch after dark.", "Smugglers again, I'd wager."],
+    close: ["Stay sharp.", "Back to it.", "Eyes open.", "Carry on."],
+  },
+  any: {
+    open: ["Busy day.", "Any news from the spaceport?", "Hot one today.", "You look tired.", "Heard the rumours?"],
+    reply: ["Isn't it always?", "Ships in, ships out.", "Could be worse.", "Long week.", "Which ones?"],
+    more: ["My cousin's got work going, if you're looking.", "The governor's in a mood, they say.", "Saw a ship come down hard past the ridge.", "Prices, taxes, patrols. Same as ever."],
+    close: ["Take care.", "See you around.", "Back to work.", "Stay out of trouble."],
+  },
+};
+export function talkPlace(buildingType: string, roomName: string, roles: string[]): string {
+  if (/arena/.test(buildingType) || /arena|betting|sign-up/i.test(roomName)) return "arena";
+  if (roles.every((r) => /guard|officer|trooper|sentry/i.test(r))) return "guard";
+  if (/cantina|gambling hall|cookshop|rooming house/.test(buildingType) || /bar|booth|dance|gaming/i.test(roomName)) return "cantina";
+  if (/market|general store|armsmith|tech shop|apothecary|outfitter|curio shop|pawnshop/.test(buildingType) || /stall|market|sales floor/i.test(roomName)) return "market";
+  return "any";
+}
+export function smallTalk(place: string, seed: number): TalkLine[] {
+  const t = TALKS[place] ?? TALKS.any;
+  const pick = (list: string[], salt: number) => list[hash(`${seed}|${salt}`) % list.length];
+  const length = 2 + (hash(`${seed}|n`) % 3);
+  const out: TalkLine[] = [{ who: 0, text: pick(t.open, 1) }];
+  // (a reply goes with its opener where the lists line up, else any)
+  const at = t.open.indexOf(out[0].text);
+  out.push({ who: 1, text: at >= 0 && at < t.reply.length && hash(`${seed}|r`) % 3 ? t.reply[at] : pick(t.reply, 2) });
+  if (length >= 3) out.push({ who: 0, text: pick(t.more, 3) });
+  if (length >= 4) out.push({ who: 1, text: pick(t.close, 4) });
+  return out;
+}

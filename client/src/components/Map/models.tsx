@@ -12,7 +12,7 @@ import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
-import { advance, bob, LIMB, LIMBS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
+import { advance, bob, LIMB, LIMBS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
 import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
@@ -1108,6 +1108,39 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number, b
     const tilt = Math.atan2(0.28, D - 0.52);
     screen(k, [0, 0.82, 0.02], L - 0.5, 0.22, Math.PI / 2 - tilt, /guard/.test(n) ? C.amber : C.glow);
     for (let i = 0; i < Math.round(L * 3); i++) k.sphere(0.018, [C.red, C.green, C.amber][i % 3], { at: [-L / 2 + 0.3 + i * 0.3, 0.64, D / 2 - 0.24], finish: "glow", seg: [6, 4] });
+    return;
+  }
+  // The arena's pieces (2026-11-02): the fighting pit (a disc of sand with a painted ring and torch posts at its corners, walked on), the
+  // betting kiosk (a counter under a lit canopy with odds screens), the odds board and the fight roster on the wall
+  if (/fighting pit/.test(n)) {
+    slab(k, L - 0.3, D - 0.3, 0.03, "#a8643f", { r: (Math.min(L, D) - 0.3) / 2 });
+    k.torus((Math.min(L, D) - 0.9) / 2, 0.05, "#e8d3a8", { at: [0, 0.035, 0], rot: [Math.PI / 2, 0, 0], seg: [4, 48] });
+    k.torus(0.9, 0.04, "#e8d3a8", { at: [0, 0.035, 0], rot: [Math.PI / 2, 0, 0], seg: [4, 24] });
+    if (bare) return;
+    for (const [x, z] of corners(0.25)) {
+      k.cyl(0.06, 1.3, "#3a3f46", { at: [x, 0.65, z], seg: 8, finish: "sheen" });
+      k.cone(0.14, 0.18, "#3a3f46", { at: [x, 1.36, z], rot: [Math.PI, 0, 0], seg: 8 });
+      k.sphere(0.09, "#ffb347", { at: [x, 1.42, z], seg: [8, 6], finish: "glow" });
+    }
+    return;
+  }
+  if (/betting kiosk/.test(n)) {
+    k.box([L - 0.1, 0.95, D - 0.25], "#3b2f4a", { at: [0, 0.475, 0.05], round: 0.05, finish: "sheen" });
+    k.box([L - 0.05, 0.05, D - 0.15], "#c9a227", { at: [0, 0.97, 0.05], round: 0.02, finish: "sheen" });
+    for (const x of [-L / 2 + 0.12, L / 2 - 0.12]) k.cyl(0.04, 1.4, "#c9a227", { at: [x, 1.65, back + 0.15], seg: 8, finish: "sheen" });
+    k.box([L, 0.12, D * 0.7], "#5b2e6e", { at: [0, 2.38, back + 0.3], round: 0.04, finish: "cloth" });
+    for (let i = 0; i < Math.max(1, Math.round(L)); i++) screen(k, [-L / 2 + (i + 0.5) * (L / Math.max(1, Math.round(L))), 1.72, back + 0.14], 0.7, 0.42, 0, [C.glow, C.amber, C.green][i % 3]);
+    for (let i = 0; i < Math.max(1, Math.round(L)); i++) k.box([0.22, 0.02, 0.14], C.steelLight, { at: [-L / 2 + (i + 0.5) * (L / Math.max(1, Math.round(L))), 0.995, 0.25], finish: "sheen" });
+    return;
+  }
+  if (/odds board|fight roster/.test(n)) {
+    const odds = /odds/.test(n);
+    k.box([L - 0.1, 1.1, 0.08], "#1c1f24", { at: [0, 1.55, back + 0.06], round: 0.03, finish: "sheen" });
+    if (bare) return;
+    for (let i = 0; i < 5; i++) {
+      k.box([(L - 0.4) * (odds ? 0.55 : 0.8), 0.07, 0.01], odds ? C.amber : "#e8e2d0", { at: [-(L - 0.4) * (odds ? 0.2 : 0.08), 1.92 - i * 0.18, back + 0.105], finish: odds ? "glow" : "matte" });
+      if (odds) k.box([(L - 0.4) * 0.25, 0.07, 0.01], C.green, { at: [(L - 0.4) * 0.33, 1.92 - i * 0.18, back + 0.105], finish: "glow" });
+    }
     return;
   }
   if (/desk/.test(n)) {
@@ -4406,7 +4439,7 @@ function Mover({ id, build, gait, ball, wheel, fur, seat, ring, hold = "none", s
   }, [joints, mats, furMat]);
   const group = useRef<THREE.Group>(null);
   const body = useRef<THREE.Group>(null);
-  const work = useMemo(() => ({ pose: restPose(), seated: restPose(), shot: restPose(), sit: 0, shotKey: undefined as number | undefined, shotAt: -99, world: new THREE.Quaternion(), turn: new THREE.Quaternion(), out: new THREE.Quaternion(), scale: new THREE.Vector3(), forward: new THREE.Vector3(), angle: 0 }), []);
+  const work = useMemo(() => ({ pose: restPose(), seated: restPose(), shot: restPose(), act: restPose(), acting: 0, lastAct: "talk" as "cheer" | "talk", phase: Math.random() * 6.3, sit: 0, shotKey: undefined as number | undefined, shotAt: -99, world: new THREE.Quaternion(), turn: new THREE.Quaternion(), out: new THREE.Quaternion(), scale: new THREE.Vector3(), forward: new THREE.Vector3(), angle: 0 }), []);
   const cards = useRef<THREE.Group>(null);
   const all = useMemo(() => [...Object.values(mats), ...(furMat ? [furMat] : [])], [mats, furMat]);
   useStride(group, (stride, g, moved, t, dt) => {
@@ -4436,6 +4469,10 @@ function Mover({ id, build, gait, ball, wheel, fur, seat, ring, hold = "none", s
       if (e > 0.001) blendPose(w.seated, shotPose(s.shot!, w.shot), e, w.seated);
       blendPose(w.pose, w.seated, smooth(w.sit), w.pose);
     }
+    // Cheering or talking (a person on their feet, or talking in their seat): the arms and head laid over, eased in and out
+    w.acting = Math.max(0, Math.min(1, w.acting + (s?.stand ? dt : -dt) / STAND_ACT_SECONDS));
+    if (s?.stand) w.lastAct = s.stand;
+    if (s && w.acting > 0.001) overlayAct(w.pose, standActPose(w.lastAct, t, w.phase, w.act), smooth(w.acting) * (w.lastAct === "cheer" ? 1 - smooth(w.sit) : 1), w.pose);
     // (the ring that marks a standing figure is not drawn under one on a stool)
     if (ring?.current) ring.current.visible = w.sit < 0.3;
     if (cards.current) {
@@ -4456,7 +4493,7 @@ function Mover({ id, build, gait, ball, wheel, fur, seat, ring, hold = "none", s
     applyPose(all, w.pose);
     const b = bodyOf(gait, stride, t);
     if (body.current) {
-      body.current.position.y = b.y - smooth(w.sit) * (s?.drop ?? 0);
+      body.current.position.y = b.y - smooth(w.sit) * (s?.drop ?? 0) + (w.lastAct === "cheer" ? Math.abs(Math.sin((t + w.phase) * 7.5)) * 0.06 * smooth(w.acting) : 0);
       body.current.rotation.z = b.roll;
       body.current.rotation.x = b.pitch + smooth(w.sit) * 0.06;
       body.current.rotation.order = "YXZ";

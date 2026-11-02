@@ -8,8 +8,8 @@ import { pitItem, pitPrize, pitTargetCR } from "@shared/logic";
 import type { Sw5eMonster } from "@shared/data";
 import { FightScene } from "./LocalMap";
 
-// The pit arena, a dedicated page (house rules, shared/logic "Pit arena"): each bout is a fight of the
-// combat engine on the 3D arena, against a creature from the rules' stat blocks. A win pays the prize and an
+// The pit arena, a dedicated page (house rules, shared/logic "Pit arena"), opened by the pit boss at an arena's sign-up desk (2026-11-02): each bout is a fight of the
+// combat engine on the 3D arena's sand with the crowd cheering on the stands round it (LocalMap PitCrowd), against a creature from the rules' stat blocks. A win pays the prize and an
 // enhanced item and leaves the party to take the next bout or leave; a loss ends the run, carried out at
 // 1 hit point. Every bout opens with a five-second countdown.
 
@@ -122,7 +122,7 @@ export default function PitArena({ enhanced, opponentFor, launch, keepHp, bank, 
       </div>
       <div className="relative h-[46dvh] w-full bg-black" data-testid="pit-scene">
         <Canvas gl={babylonGl} camera={{ position: [0, 14, 13], fov: 50 }} onCreated={({ camera }) => camera.lookAt(0, 0, 0)}>
-          <FightScene wall="#c9a56e" />
+          <FightScene wall="#c9a56e" crowd />
         </Canvas>
       </div>
       {phase === "fight" && (

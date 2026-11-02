@@ -298,6 +298,46 @@ export interface SeatState {
   // How far the body drops on the seat (in the figure's own units, before its scale), and how many cards it holds up
   drop: number;
   cards: number;
+  // On their feet (or seated, for talk): cheering (the arms thrown up and pumping, a bounce: an arena's crowd) or talking (a hand that
+  // gestures as they speak, the head nodding), eased in and out (`STAND_ACT_SECONDS`); see `standActPose`
+  stand?: StandAct;
+}
+// (2026-11-02; the user: "NPCs that talk to one another" and an arena's "viewing platform (populate this with NPCs with cheering animations)")
+export type StandAct = "cheer" | "talk";
+export const STAND_ACT_SECONDS = 0.4;
+// The limbs a standing act moves: the arms, the forearms and the head (the legs keep walking or standing)
+const ACT_LIMBS = [LIMB.armR, LIMB.armL, LIMB.foreR, LIMB.foreL, LIMB.head];
+// What the arms do in a standing act at clock `t` (`phase` keeps a crowd from moving as one); `out` holds only the limbs of ACT_LIMBS
+export function standActPose(act: StandAct, t: number, phase = 0, out: Pose = restPose()): Pose {
+  for (let i = 1; i < LIMBS; i++) out.set([0, 0, 0, 1], i * 4);
+  const u = t + phase;
+  if (act === "cheer") {
+    // Both arms high and pumping, the fists shaken, the head thrown back now and then
+    const pump = Math.sin(u * 7.5);
+    setEuler(out, LIMB.armR, -2.75 + pump * 0.32, 0, -0.32);
+    setEuler(out, LIMB.armL, -2.75 - pump * 0.32 * Math.cos(u * 0.7), 0, 0.32);
+    setEuler(out, LIMB.foreR, -0.35 - Math.max(0, pump) * 0.4, 0, 0);
+    setEuler(out, LIMB.foreL, -0.35 - Math.max(0, -pump) * 0.4, 0, 0);
+    setEuler(out, LIMB.head, -0.22 + Math.sin(u * 1.3) * 0.08, 0, 0);
+  } else {
+    // One hand opens and turns as they speak, the other at rest; the head nods and turns a little
+    setEuler(out, LIMB.armR, -0.55 + Math.sin(u * 2.6) * 0.18, 0.15, -0.18 + Math.sin(u * 1.7) * 0.12);
+    setEuler(out, LIMB.foreR, -1.0 + Math.sin(u * 3.4) * 0.3, 0, 0);
+    setEuler(out, LIMB.armL, -0.12 + Math.sin(u * 1.1) * 0.05, 0, 0.08);
+    setEuler(out, LIMB.foreL, -0.25, 0, 0);
+    setEuler(out, LIMB.head, Math.sin(u * 3.1) * 0.08, Math.sin(u * 0.9) * 0.12, 0);
+  }
+  return out;
+}
+// The limbs of a standing act laid over a pose by `k` (0 to 1): only the arms, forearms and head move
+export function overlayAct(base: Pose, act: Pose, k: number, out: Pose = base): Pose {
+  for (const i of ACT_LIMBS) {
+    QA.set(base[i * 4], base[i * 4 + 1], base[i * 4 + 2], base[i * 4 + 3]);
+    QB.set(act[i * 4], act[i * 4 + 1], act[i * 4 + 2], act[i * 4 + 3]);
+    QA.slerp(QB, k);
+    out.set([QA.x, QA.y, QA.z, QA.w], i * 4);
+  }
+  return out;
 }
 export const seatState = (): SeatState => ({ sit: false, act: "rest", drop: 0.22, cards: 0 });
 export const SIT_SECONDS = 0.7;

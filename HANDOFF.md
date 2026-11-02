@@ -1,50 +1,35 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-11-01 (Windows PC). Branch **`main`**. origin has main up to e502652; f20b19e, 5df1f3e, f19d3c8 and the trees-and-rocks commit after them are local, not pushed.
+Written 2026-11-02 (Windows PC, a side session started by the main one). Branch **`main`**. origin has main up to e502652; everything after it is local, not pushed (f20b19e, 5df1f3e, f19d3c8, 35ffa4f from 2026-11-01, and this session's commits below).
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told, never commit it.
+Do not push, rebuild 5000 or merge without the user's go-ahead. 5000 still runs the older build e502652.
 
-## 2026-11-02 (in progress, a side session): talking NPCs, fewer quest-givers, the arena district, smaller stock, rarity
-The request: NPCs talk to one another; fewer quest-givers; pit fights and betting in an arena district (a huge round amphitheatre, a viewing platform of cheering NPCs, a betting room with a kiosk, a sign-up room); vendors stock less, fitting their star system; a rarity on every item, the rarest from mission rewards, rare upgraders few and unlocked by regard.
-The user decided (2026-11-02): rarity = the books' rarity for enhanced items + a house tier (Standard/Premium/Prototype) for plain gear by cost and category; quest-givers 2 a town, 4 a city, 1 an outpost or station; stock 2-4 lines a stall, 4-7 a shop; a master artificer in about one city in four, Advanced work at Friendly regard, Legendary at Devoted; ordinary technicians capped at Premium (Prototype in rich Core cities). My default (not asked): an arena in every city and some towns.
-Do not push, rebuild 5000 or merge without the user's go-ahead.
+## 2026-11-02: talking NPCs, fewer quest-givers, the arena district, smaller stock, rarity
+The user's request (via the main session): NPCs talk to one another; fewer quest-givers; pit fights and betting in an arena district (a huge round amphitheatre, a viewing platform of cheering NPCs, a betting room with a kiosk, a sign-up room); vendors stock less, fitting their star system; a rarity on every item, the rarest from mission rewards, rare upgraders few and unlocked by regard.
+The user decided (asked 2026-11-02): rarity = the books' rarity for enhanced items + a house tier (Standard/Premium/Prototype) for plain gear by cost; quest-givers 2 a town, 4 a city, 1 elsewhere; stock 2-4 lines a stall, 4-7 a shop; a master artificer in about one city in four, Advanced at Friendly regard, Legendary at Devoted; ordinary technicians capped at Premium (Prototype in a Core city). My default, not asked: an arena in every city and one town in two.
 
-## 2026-11-01 (newest): trees, rocks and plants missing inside the walkable ground (REVIVAL_NOTES "Trees, rocks and plants missing...")
-- Cause: Babylon keeps thin instances on the geometry, and instanced meshes of one piece (ground, cover, belt) shared one: the last set drew for all, the belt outside showed everything, the ground inside nothing. Fixed with a geometry copy for each instanced mesh (babylon.ts `own`). The bug is also in the build on 5000 (e502652): rebuild to see it fixed. Test added (babylon.test.ts, 12 pass; whole suite 533).
-- Checked on dev 5099, campaign 626 (a new one, Naboo, forest, test database). NOT run: `npm run e2e`. The 5099 server is stopped at the end of the turn.
+Commits (REVIVAL_NOTES has each in full):
+- 14ce06a Few give work (contracts.ts `giversIn`, `workFrom`). REVIVAL_NOTES "Few give work" under "Games at the table, jobs from people".
+- 6f34d75 Rarity, smaller stock of the system's goods, rare rewards for jobs (+25 regard with the giver), master artificers. REVIVAL_NOTES "Rarity, smaller stock, master artificers, rare rewards".
+- (next) The arena district and people talking. REVIVAL_NOTES "The arena district, and people who talk to one another".
 
-## 2026-11-01 (last): room changes, district loading screen, nearest first, looks (REVIVAL_NOTES "Room changes, the district's loading screen...")
-- babylon.ts: one fixed light rig, `Effect.PersistentMode`, shadow shaders named by source, GPU textures by image, label cards kept, lamp shadow every other frame, materials shared by look, nearest-first draw order. LocalMap BuildingScene: the district loading screen (`useWarmup`, GameBoard `DistrictLoading`). Room changes 1.5 s → under 0.2 s; 52 shaders a session. Tests: babylon.test.ts (11).
-- NOT run: `npm run e2e` (needs a build, which would change what 5000 serves). Not seen moving: the nearest-first order (any popping surface), the screen on a real window. 5000 still runs e502652.
-## 2026-11-01 (earlier): where the frames go (REVIVAL_NOTES "Where the frame goes", "Fixed", "Next")
-- Measured on dev 5099 (`/game/625`, the only campaign in `sw5e_test`) by driving frames from the console (the hidden pane makes none). The GPU is pixel-bound; the old desktop tier was too heavy for the HD 530; the mirror sync was 11 ms of garbage-making.
-- Fixed in babylon.ts: lights re-enabled every frame (Babylon walked all meshes per light), string/array signatures per mesh and material, and an `INTEGRATED` (Intel non-Arc) "auto" like a phone: 3x1024 shadows, no SSAO, no parallax occlusion. Sync 11 to 3 ms; GPU by day 26 to 17 ms at 704x720. Test added (babylon.test.ts, 10 pass). NOT rebuilt on 5000.
-- The 5099 dev server (background, `npx tsx server/index.ts` on `sw5e_test`) may still run: stop it when done. The pane localStorage has `sw5e.detail=full`, `sw5e.resolution=1` (dev origin only).
+Checked in the browser (dev server on 5099 against `sw5e_test`, campaign 626, Naboo): stock with rarities and premium-capped mods at Theed's armsmith; only the chosen bartender offers jobs in the cantina; inventory rarity; the arena (life-15 migration added Theed's and Kaadara's), its stands, crowd cheering, pit, conversation bubbles between spectators, the bookmaker's bets, the pit boss's pit, a bout on open sand with the crowd round it.
+NOT checked: a master artificer in the browser (campaign 626 has none: Theed's hash says no; unit-tested only); the reward item paid on reporting a regional job; conversations in a cantina (the pane was hidden, no frames); `npm run e2e`.
 
-## 2026-11-01 (later): walls with two textures, resolution, Options (REVIVAL_NOTES "Wall textures, resolution, Options")
-- Walls from one pack a building (`wallPackOf`) and the pattern in the building's frame (boxUV origin, WallAnchor). Options dialog (resolution, detail, effects, display) replaces four buttons of the map strip. `__babylon.timing` splits the frame. NOT rebuilt: 5000 runs e502652; the shortcut or a build and restart brings this.
-- Not looked at in a palace (the test campaign is a cave), nor measured on the real window (the browser pane was hidden; its frames throttle). Next: the notes' "Where the frame goes" list.
+Test database: campaign 626 was rolled back once to life 14 without arenas (a first migration had run with older code) and livened again; a copy of the earlier state is in my scratchpad only. The dev server on 5099 (background, `npx tsx server/index.ts`, PORT=5099, VITE_TEST_MENU=1, DATABASE_URL to sw5e_test) is stopped at the end of the session.
 
-## 2026-11-01: the user's list (REVIVAL_NOTES "Walking, balustrades, night, moons, mounts, warm-up" has all of it)
-- Stride slower (limbs.ts `CYCLES_PER_SQUARE`), no jump while prone (`beginJump`), keys stop the walk at once on release (`driven` walks, ViewRig `halt`, `stepToward` with a zero push). Checked in the browser on a dev server: no jump prone, a jump standing, the position at a key's release is the position later.
-- Balustrade: one `Balustrade` piece for the outside and the inside (gallery sides, a walkway's long sides). Ground parallax 0.065 → 0.045. Night ambient halved under a full moon and less under other phases; moon phases by the clock's days (shared/logic `moonlight` and co). Riders: a quarter of the district's strollers ride a beast with a dismount, shop, load, remount errand at each door. Warm-up of the district's room assets while in the street.
-- Tests: 525 pass, 3 skipped (before the last edit to ViewRig's key handler, which is covered by the browser check, not a test). New: stride rate, errand timeline, moon phases, driven walks.
-- NOT looked at in the browser: the balustrade (the test campaign is a cave hideout: no walkway), the riders (no district with strolls), the night and the moons. Look at an urban or station world at night. The warm-up cannot be measured by me (no feel for the hitch, and it does not compile shaders): ask the user whether room changes are better.
-- Both desktop shortcuts now always listen on the local network (`$Lan = $true` in windows-start.ps1), the user asked.
-- Rebuilt from e502652 and restarted by hand (not the shortcut: it stops at "Port 5002 is still in use", node pid 15424 with children, access denied, so it was started from an administrator window). 5000 listens on 0.0.0.0. No firewall rule "SW5e game port 5000" exists: it is made once by the shortcut from an administrator window. Wi-fi reachability from another device is untested.
-
-## Running
-- 5000: the user's server, `node dist/index.js` built from main at e502652, HOST=0.0.0.0, logs in %LOCALAPPDATA%\sw5e\logs. To restart after a build: `deploy/windows-start.ps1 -Mode prod` (also opens the browser; needs 5002 free).
-- The 5099 dev server is stopped. Not ours, left alone: tsx dev servers on 3000 and 5057.
-- The browser pane counts as automated (dice: set `useDice.setState({table})` directly). Night in the game: the HUD's "Until evening" then "Wait 1 h". `window.__street()` gives the party's position, `window.__air()` its jump mode.
+Learned:
+- The test menu's place list shows 300 at most: type in its search box (`test-find`) to reach the arena's rooms.
+- A shooter-mode campaign has no overhead view; for a look from above in the browser: `(await import('/src/components/Map/interiors/aim.ts')).useView.setState({ shooter: false, mode: 'overhead' })` (local only, a reload undoes it).
+- The dev server does not reload server code: the `/api/world/liven` migration runs on the server, so restart it after changing shared/logic before letting a page liven a world.
+- tests/world/security.test.ts's patrol test picked the first patrol in the world; the arena's areas moved the ids, so it now picks one where a garrison answers.
 
 ## TODO / next, in order
-1. The user looks at the above (balustrade, night and moons, riders, room changes) and says what is off.
-2. The user checks on their phone (lite and full) over Tailscale.
-3. Older e2e failures (also with three.js): cantina people not moving in 20 s, speeders "did not travel", road-trip guards not chasing.
-4. Fat lines (drei Line) with their width.
-5. The real database (`sw5e`) holds e2e leftovers (7 "Gear mvo…" fighters and "E2E gear …" campaigns): ask the user before deleting.
+1. The user looks at the arena, the talk, the stock and rarity and says what is off; then a build and restart of 5000 if they want it.
+2. `npm run e2e` against a build (not run).
+3. Older items still open: the user's look at balustrades, night and moons, riders, room changes (2026-11-01 list); phone check over Tailscale; e2e failures (cantina people not moving in 20 s, speeders "did not travel", road-trip guards not chasing); fat lines.
 
 ## Open questions for the user
-- Delete the e2e leftovers in the real database?
-- Moon periods are invented (8 to 24 days by drift): fine, or one lunar month for every world?
-- (Earlier, still open) every daytime theft to ring at once (security tags)? Piper voices sorted by low/high?
+- Arena in every city and one town in two: right, or fewer?
+- People in the district's streets do not stop to talk yet (only those in the room the party is in): wanted?
+- (Earlier, still open) delete the e2e leftovers in the real database? Moon periods? Every daytime theft to ring at once? Piper voices?

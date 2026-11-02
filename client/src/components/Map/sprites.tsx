@@ -23,7 +23,7 @@ export type FloorKind = "plating" | "hangar" | "sand" | "rock" | "stone" | "clay
 
 export function floorOf(buildingType = ""): FloorKind {
   if (/cave|trailhead/.test(buildingType)) return "rock";
-  if (/camp|landing field|landing pad|^sea$/.test(buildingType)) return "sand";
+  if (/camp|landing field|landing pad|^sea$|^arena$/.test(buildingType)) return "sand";
   if (/ruin|palace|archive/.test(buildingType)) return "stone";
   if (/cantina|market|residences|town gate|city gate/.test(buildingType)) return "clay";
   if (/spaceport|docking|cargo|warehouse|wreck/.test(buildingType)) return "hangar";

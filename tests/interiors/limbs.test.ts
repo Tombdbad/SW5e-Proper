@@ -409,3 +409,18 @@ test("a rider's errand: the ride, down, in, a while inside, out, the load on the
   assert.ok(!carrying("in", 0.5) && !carrying("shop", 0.5) && !carrying("out", 0.5), "it is not on while they are in the shop");
   assert.ok(!carrying("load", 0.2) && carrying("load", 0.8), "it goes on during the loading");
 });
+
+import { standActPose, overlayAct } from "../../client/src/components/Map/interiors/limbs";
+test("standing acts (2026-11-02): cheering throws both arms up and pumps them; talking moves one hand; only the arms and head are laid over", () => {
+  const up = (p: Pose, limb: number) => new THREE.Vector3(0, -1, 0).applyQuaternion(new THREE.Quaternion(p[limb * 4], p[limb * 4 + 1], p[limb * 4 + 2], p[limb * 4 + 3])).y;
+  const cheer = standActPose("cheer", 0.3);
+  // (an arm hangs down at rest: y -1; raised over the head it points up)
+  assert.ok(up(cheer, LIMB.armR) > 0.5 && up(cheer, LIMB.armL) > 0.5, "both arms up");
+  assert.notDeepEqual([...standActPose("cheer", 0.3)], [...standActPose("cheer", 0.5)], "pumping");
+  const talk = standActPose("talk", 1);
+  assert.ok(up(talk, LIMB.armR) > up(talk, LIMB.armL), "one hand up as they speak");
+  const walking = gaitPose("walk", { phase: 1, amp: 1, speed: 2 });
+  const laid = overlayAct(new Float32Array(walking), cheer, 1);
+  assert.deepEqual([...laid.slice(LIMB.legR * 4, LIMB.legR * 4 + 4)], [...walking.slice(LIMB.legR * 4, LIMB.legR * 4 + 4)], "the legs keep walking");
+  assert.deepEqual([...laid.slice(LIMB.armR * 4, LIMB.armR * 4 + 4)].map((v) => +v.toFixed(5)), [...cheer.slice(LIMB.armR * 4, LIMB.armR * 4 + 4)].map((v) => +v.toFixed(5)));
+});
