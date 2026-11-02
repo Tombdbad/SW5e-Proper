@@ -354,6 +354,10 @@ const SETTLEMENTS: Record<string, { buildings: string[]; street: string[] }> = {
   "crash site": { buildings: ["trailhead*", "wreck", "camp?"], street: ["Debris trail", "Gully"] },
   "raider camp": { buildings: ["trailhead*", "camp", "camp?", "cave?"], street: ["Trail", "Dry wash"] },
 };
+// The odds of an optional building where they are not even (the user, 2026-11-02: a palace in 60% of cities)
+const OPTIONAL_ODDS: Record<string, number> = {
+  palace: 0.6,
+};
 
 // ---------------------------------------------------------------------------------------------
 // Sites (the user's design, 2026-10-18). A settlement lists a building (the spaceport, the cantina, the
@@ -1597,7 +1601,7 @@ function detailSettlement(ctx: Context, settlement: Area) {
   const template = SETTLEMENTS[settlement.type];
   if (!template || childrenOf(world, settlement.id).length) return;
   const sited = SITED.includes(settlement.type);
-  let chosen = template.buildings.filter((b) => !b.endsWith("?") || r.chance(0.5)).map((b) => b.replace("?", ""));
+  let chosen = template.buildings.filter((b) => !b.endsWith("?") || r.chance(OPTIONAL_ODDS[b.slice(0, -1)] ?? 0.5)).map((b) => b.replace("?", ""));
   // Estates are the palace's neighbours: with no palace there are none
   if (!chosen.includes("palace")) chosen = chosen.filter((b) => b !== "estates");
   // On a city planet the districts of the city meet at speeder platforms on the roofs, not at gates in a wall: the way in is a platform, and
