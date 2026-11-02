@@ -153,3 +153,35 @@ test("the scene for the model that makes two people's talk (2026-11-02): where t
   assert.match(chatScene("street", ["Market District", "", "Theed"], 24 * 60 + 8 * 60), /^Market District, Theed, morning\. .*the day's news/);
   assert.match(chatScene("nowhere", ["X"], 22 * 60), /night\. Two locals talk of the day's news and their work\.$/);
 });
+
+test("people's own relationships (2026-11-02, house rule): a nature of the nemesis system's, a bond between two people (kin, friends, grudges by the nemesis tiers), and what they know of the party", async () => {
+  const { bondOf, natureOf, partyViewOf, talkNotes, townTalk } = await import("../../shared/logic/relations");
+  const { emptyNemeses, TEMPERS } = await import("../../shared/logic/nemesis");
+  const kira = person("o1", "Kira Vos");
+  const dax = person("o2", "Dax Vos");
+  // A nature for anyone, the same each time; a nemesis keeps their own
+  assert.ok(Object.keys(TEMPERS).includes(natureOf(world, kira)));
+  assert.equal(natureOf(world, kira), natureOf(world, kira));
+  const nemeses = { ...emptyNemeses(1), notoriety: 30, news: [{ at: 1, text: "Vex Vos fled from the party in Theed." }] };
+  nemeses.records = { o4: { id: "o4", name: "Jace Vos", personality: "proud", hate: 40, status: "alive" } as any };
+  const w = { ...world, nemeses } as World;
+  assert.equal(natureOf(w, person("o4", "Jace Vos")), "proud");
+  // Kin know each other as kin (a family at odds now and then), and the bond is read both ways
+  const kin = bondOf(world, kira, dax);
+  assert.equal(kin.kin, "child");
+  assert.match(kin.text, /^your son/);
+  // Strangers: across many pairs there are friends and grudges, the grudges by the nemesis tiers and with a reason
+  const texts = Array.from({ length: 80 }, (_, i) => bondOf(world, person(`x${i}`, `Ana Bel${i}`), person(`y${i}`, `Rho Tan${i}`)));
+  assert.ok(texts.some((b) => /friend/.test(b.text)) && texts.some((b) => /resent|grudge|hate/.test(b.text)));
+  assert.ok(texts.every((b) => b.score >= -100 && b.score <= 100 && (b.score >= -12 || / they /.test(b.text))));
+  assert.deepEqual(bondOf(world, person("x1", "A"), person("y1", "B")), bondOf(world, person("x1", "A"), person("y1", "B")));
+  // What they know of the party: their regard, a relative who is its nemesis, its name in the town and the news
+  const standing = { ...emptyStanding(), regard: { o1: 45 } };
+  const view = partyViewOf(w, standing, kira, "Gear");
+  assert.match(view, /You are friendly towards Gear\./);
+  assert.match(view, /Jace Vos is vengeful against Gear/);
+  assert.doesNotMatch(partyViewOf(w, standing, kira, "Gear", false), /friendly/, "the party's own talk says the regard elsewhere");
+  assert.match(talkNotes(w, standing, kira, "Gear"), /^By nature \w+: /);
+  assert.equal(townTalk(w, "Gear"), "Gear, an outsider with a party of their own, is known here as a menace. Vex Vos fled from the party in Theed.");
+  assert.equal(townTalk(world, "Gear"), "", "no nemeses, nothing said");
+});

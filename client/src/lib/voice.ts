@@ -190,7 +190,7 @@ let engine: Promise<{ engine: string; voices: string[]; speakers?: number }> | n
 export const speechEngine = () => (engine ??= fetch("/api/speech/status").then((r) => r.json()).catch(() => ({ engine: "none", voices: [] })));
 
 // The chain a voice is heard through: gravel, the three bands, then droid ring, metal, helmet, mask, comlink, and the loudness
-function chainOf(c: AudioContext, p: VoiceProfile, tone: Tone, comms: boolean, irs: Record<string, AudioBuffer | null>): { input: AudioNode; out: GainNode; stop: () => void } {
+function chainOf(c: AudioContext, p: VoiceProfile, tone: Tone, comms: boolean, irs: Record<string, AudioBuffer | null>, gain = 1): { input: AudioNode; out: GainNode; stop: () => void } {
   const nodes: AudioScheduledSourceNode[] = [];
   const input = c.createGain();
   let at: AudioNode = input;
@@ -261,7 +261,7 @@ function chainOf(c: AudioContext, p: VoiceProfile, tone: Tone, comms: boolean, i
     if (irs.comms) { const conv = c.createConvolver(); conv.buffer = irs.comms; link(conv); }
   }
   const out = c.createGain();
-  out.gain.value = 0.9 * tone.gain;
+  out.gain.value = 0.9 * tone.gain * gain;
   at.connect(out).connect(c.destination);
   return { input, out, stop: () => nodes.forEach((n) => { try { n.stop(); } catch { /* stopped */ } }) };
 }
@@ -396,26 +396,37 @@ function tongueOf(c: AudioContext, dest: AudioNode, p: VoiceProfile, text: strin
 const SPOKEN_CUES: Record<string, string> = { chuckle: "Heh heh.", laugh: "Ha ha ha!", hmm: "Hmm." };
 
 let playing: { stop: () => void } | null = null;
-export const stopSpeaking = () => { playing?.stop(); playing = null; if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel(); };
+// (people of the world talking among themselves, heard in the background: `ambient`)
+let ambient: { stop: () => void } | null = null;
+export const stopSpeaking = () => { playing?.stop(); playing = null; ambient?.stop(); ambient = null; if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel(); };
 
-// Speaks a reply in a speaker's voice (and `comms`: over a comlink). Resolves when it has been heard, or was stopped
-export async function speak(text: string, speaker: VoiceSpeaker, o: { comms?: boolean } = {}): Promise<void> {
-  stopSpeaking();
+// Speaks a reply in a speaker's voice (and `comms`: over a comlink). Resolves when it has been heard, or was stopped. `ambient`: two people of
+// the world talking to each other (2026-11-02), at `gain` (quieter the further off they are): never over a reply to the party (it is not
+// spoken while one is, and one stops it), and a new one stops the last
+export async function speak(text: string, speaker: VoiceSpeaker, o: { comms?: boolean; ambient?: boolean; gain?: number } = {}): Promise<void> {
+  if (o.ambient) {
+    if (playing) return;
+    ambient?.stop();
+    ambient = null;
+  } else stopSpeaking();
   const c = audio();
+  // (talk in the background is not heard before the page may play sound: a browser holds it back until the player has touched the page)
+  if (o.ambient && (!c || c.state !== "running")) return;
   const eng = await speechEngine();
   const p = voiceOf(speaker, eng.engine === "none" ? { voices: [] } : eng);
   const tone = toneOf(text, speaker.disposition);
   const parts = partsOf(text);
   let stopped = false;
   const stopNow = { stop: () => { stopped = true; } };
-  playing = stopNow;
+  if (o.ambient) ambient = stopNow;
+  else playing = stopNow;
   // No engine on the server and the person speaks Basic: the browser's own voice, its pitch and pace (nothing can be laid over it)
   if (eng.engine === "none" && p.tongue === "basic" && !c) return browserSpeak(parts, p, tone, () => stopped);
   if (!c) return;
   const m = await manifestNow();
   const irs: Record<string, AudioBuffer | null> = {};
   for (const [k, url] of Object.entries(m.ir ?? {})) irs[k] = await bufferOf(c, `/audio/voice/${url}`);
-  const chain = chainOf(c, p, tone, !!o.comms, irs);
+  const chain = chainOf(c, p, tone, !!o.comms, irs, o.gain ?? 1);
   const sources: AudioScheduledSourceNode[] = [];
   stopNow.stop = () => { stopped = true; sources.forEach((s) => { try { s.stop(); } catch { /* done */ } }); chain.out.gain.setTargetAtTime(0, c.currentTime, 0.02); setTimeout(chain.stop, 300); };
   const speechOf = (say: string) => {
@@ -466,6 +477,7 @@ export async function speak(text: string, speaker: VoiceSpeaker, o: { comms?: bo
   while (!stopped && c.currentTime < t) await new Promise((res) => setTimeout(res, 60));
   if (!stopped) setTimeout(chain.stop, 200);
   if (playing === stopNow) playing = null;
+  if (ambient === stopNow) ambient = null;
 }
 
 // The browser's own speech: a voice of those it has, picked by the speaker's seed, at its pitch and pace; cues are skipped
@@ -564,7 +576,8 @@ export async function recordSpeech(opts: { onQuiet?: () => void; maxMs?: number 
 // llm"): server/dialogue.ts /api/chatter makes the lines with the local model, one at a time, and they come in as they are made. One talk at
 // a time on the page (the model makes one line at a time for everyone): `chatter` returns null while one is going, and the two do not stop
 // to talk. Only when the model is not running are the place's stock lines (relations.ts smallTalk, `fallback`) said instead.
-export interface ChatPerson { name: string; species?: string; role?: string; gender?: string }
+// (`notes`: their nature and view of the party; `bond`: what the other one is to them; relations.ts talkNotes, bondOf)
+export interface ChatPerson { id?: string; name: string; species?: string; role?: string; gender?: string; notes?: string; bond?: string }
 export interface ChatLine { who: 0 | 1; text: string }
 let chatLane = false;
 let modelUp: { ok: boolean; at: number } | null = null;
@@ -578,7 +591,7 @@ async function modelOk(): Promise<boolean> {
   return modelUp.ok;
 }
 export const chatterFree = () => !chatLane;
-export function chatter(o: { a: ChatPerson; b: ChatPerson; scene: string; turns: number; fallback: () => ChatLine[]; onLine: (line: ChatLine) => void; onEnd: () => void }): (() => void) | null {
+export function chatter(o: { a: ChatPerson; b: ChatPerson; scene: string; news?: string; turns: number; fallback: () => ChatLine[]; onLine: (line: ChatLine) => void; onEnd: () => void }): (() => void) | null {
   if (chatLane) return null;
   chatLane = true;
   const control = new AbortController();
@@ -595,7 +608,7 @@ export function chatter(o: { a: ChatPerson; b: ChatPerson; scene: string; turns:
         if (!control.signal.aborted) o.fallback().forEach(o.onLine);
         return;
       }
-      const response = await fetch("/api/chatter", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a: o.a, b: o.b, scene: o.scene, turns: o.turns }), signal: control.signal });
+      const response = await fetch("/api/chatter", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a: o.a, b: o.b, scene: o.scene, news: o.news, turns: o.turns }), signal: control.signal });
       if (!response.ok || !response.body) return;
       const reader = response.body.getReader();
       const decoder = new TextDecoder();

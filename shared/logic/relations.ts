@@ -7,6 +7,7 @@
 // is), and the party's `regard` for each person in the campaign's Standing (`factionInfluence.regard`, by occupant id, -100 to 100).
 import { ATTITUDES, GIVEN_NAMES, KIN_TIE, type Family, type Gender, type Kin, type Occupant, type Standing, type World } from "./index";
 import { findOccupant } from "./contracts";
+import { NOTORIETY, TEMPERS, notorietyLevel, rumorsFor, tierOf, type Personality } from "./nemesis";
 
 const hash = (t: string) => Array.from(t).reduce((n, ch) => (Math.imul(n, 31) + ch.charCodeAt(0)) | 0, 7) >>> 0;
 
@@ -239,4 +240,79 @@ export function smallTalk(place: string, seed: number): TalkLine[] {
   if (length >= 3) out.push({ who: 0, text: pick(t.more, 3) });
   if (length >= 4) out.push({ who: 1, text: pick(t.close, 4) });
   return out;
+}
+
+// ---- Between the people of the world (2026-11-02; the user: "they should also have their own reputation/relationships (use our existing ...
+// nemesis system), which impact their dialogue content"). HOUSE RULE, flavour for the local model that voices them (server/dialogue.ts): nothing
+// rolls on it. Each person has a nature, one of the nemesis system's personalities (a nemesis their own, anyone else by their id), with its
+// temper; two people have a bond, -100 to 100, read the same way as the party's regard and a nemesis's hate: kin by their family tie (now and
+// then a family at odds), anyone else by a shared past drawn from the pair, pulled by both natures (two hotheads or two proud ones clash, the
+// loyal hold to people, a drifter cares little either way). Below zero it is a grudge of the nemesis tiers (resentful, vengeful, murderous),
+// with a reason. What they know of the party is their own regard for it, a relative who is a nemesis of the party, the party's notoriety and
+// the news of its nemeses in that settlement. All of it is worked out when asked, from the world, so older worlds have it too.
+const NATURES = Object.keys(TEMPERS) as Personality[];
+export function natureOf(world: World, o: Pick<Occupant, "id">): Personality {
+  return world.nemeses?.records[o.id]?.personality ?? NATURES[hash(`${o.id}|nature`) % NATURES.length];
+}
+// How each nature leans when it thinks of someone, and what a pair of the same does
+// (the same natures in everyday life, for someone who is not a fighter)
+const NATURE_WORDS: Record<Personality, string> = { hothead: "quick to anger and loud about it", coward: "timid; keeps out of trouble", proud: "touchy about their honour", cold: "reserved; says little and misses nothing", greedy: "always after a credit", loyal: "stands by friends and family", drifter: "easy-going; never stays anywhere long" };
+const LEAN: Record<Personality, number> = { hothead: -10, coward: 2, proud: -8, cold: -6, greedy: -4, loyal: 10, drifter: 0 };
+const GRUDGES = ["owes you credits and keeps putting it off", "cheated you at sabacc", "said something about your family you have not forgotten", "took a job that should have been yours", "talked to the law about your cousin", "sold you a power cell that died in a week"];
+const FRIENDSHIPS = ["an old friend from before the war", "drinks with you most nights", "helped you through a bad season", "works the same shift as you", "grew up on the same street", "lent you credits once and never asked twice"];
+const FEUDS = ["a quarrel over an inheritance", "a marriage the family never forgave", "an old debt between you"];
+export interface Bond { score: number; kin?: Kin; tie: number; text: string }
+export function bondOf(world: World, a: Pick<Occupant, "id" | "name">, b: Pick<Occupant, "id" | "name" | "gender" | "role" | "creature">): Bond {
+  const pair = [a.id, b.id].sort().join("|");
+  const unit = (salt: string) => (hash(`${pair}|${salt}`) % 10000) / 10000;
+  const tie = tieOf(world, a.id, b.id);
+  const kin = tie ? kinOf(world, a.id).find((k) => k.id === b.id)?.kin : undefined;
+  const na = natureOf(world, a);
+  const nb = natureOf(world, b);
+  const word = tie ? (kin ? `your ${kinWord(kin, genderOf(b))}` : "a relative of yours") : "";
+  if (tie) {
+    const feud = unit("feud") < 0.15;
+    const score = feud ? -20 - Math.round(unit("depth") * 40) : Math.round(40 + tie * 50 + LEAN[na] / 2);
+    return { score, kin, tie, text: feud ? `${word}, but you are at odds over ${FEUDS[hash(`${pair}|why`) % FEUDS.length]}` : `${word}${score >= 70 ? ", and you are close" : ""}` };
+  }
+  let score = (unit("past") - 0.5) * 110 + LEAN[na];
+  if (na === nb && (na === "hothead" || na === "proud")) score -= 15;
+  if (na === "loyal" && nb === "loyal") score += 10;
+  if (na === "drifter") score *= 0.6;
+  score = Math.round(Math.max(-100, Math.min(100, score)));
+  const tier = tierOf(-score);
+  const text = score >= 60 ? `a close friend: ${FRIENDSHIPS[hash(`${pair}|why`) % FRIENDSHIPS.length]}`
+    : score >= 30 ? `a friend: ${FRIENDSHIPS[hash(`${pair}|why`) % FRIENDSHIPS.length]}`
+    : score >= 10 ? "someone you get on with"
+    : tier === "none" ? "someone you know by sight"
+    : tier === "resentful" ? `someone you resent: they ${GRUDGES[hash(`${pair}|why`) % GRUDGES.length]}`
+    : tier === "vengeful" ? `someone you bear a deep grudge against: they ${GRUDGES[hash(`${pair}|why`) % GRUDGES.length]}`
+    : `someone you hate: they ${GRUDGES[hash(`${pair}|why`) % GRUDGES.length]}`;
+  return { score, tie: 0, text };
+}
+// The party as one person sees it: their regard, a relative of theirs the party made a nemesis of, and the party's name in the town
+export function partyViewOf(world: World, standing: Standing | null | undefined, o: Pick<Occupant, "id">, party: string, withRegard = true): string {
+  const level = regardLevel(regardOf(standing, o.id));
+  const records = world.nemeses?.records ?? {};
+  const grudge = kinOf(world, o.id).find((k) => records[k.id] && records[k.id].status !== "dead" && tierOf(records[k.id].hate) !== "none");
+  const dead = kinOf(world, o.id).find((k) => records[k.id]?.status === "dead");
+  return [
+    level && withRegard ? `You are ${levelName(level)} towards ${party}.` : "",
+    grudge ? `Your ${kinWord(grudge.kin, genderOf({ id: grudge.id, name: grudge.name ?? "", role: "" }))} ${grudge.name} is ${tierOf(records[grudge.id].hate)} against ${party}.` : "",
+    dead ? `${party} killed your ${kinWord(dead.kin, genderOf({ id: dead.id, name: dead.name ?? "", role: "" }))} ${dead.name}.` : "",
+  ].filter(Boolean).join(" ");
+}
+// What the town says of the party: how feared it is, and the latest news of its nemeses here
+export function townTalk(world: World, party: string, settlementId?: string): string {
+  const state = world.nemeses;
+  if (!state) return "";
+  const level = notorietyLevel(state.notoriety);
+  const news = rumorsFor(state, settlementId, 2).map((n) => n.text);
+  return [level ? `${party}, an outsider with a party of their own, is known here as a ${NOTORIETY.names[level].toLowerCase()}.` : "", ...news].filter(Boolean).join(" ");
+}
+// One person's card for talk: their nature and their view of the party (`notes`; `withRegard` false where the card says it already, as the
+// party's own talk with them does), and, talking to someone, who that person is to them (`bond`)
+export function talkNotes(world: World, standing: Standing | null | undefined, o: Pick<Occupant, "id">, party: string, withRegard = true): string {
+  const nature = natureOf(world, o);
+  return [`By nature ${nature}: ${world.nemeses?.records[o.id] ? TEMPERS[nature].blurb : NATURE_WORDS[nature]}.`, partyViewOf(world, standing, o, party, withRegard)].filter(Boolean).join(" ");
 }

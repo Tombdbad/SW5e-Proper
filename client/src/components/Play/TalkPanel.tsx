@@ -78,7 +78,8 @@ const subtitle = (text: string) => text.replace(/\[([a-z]+)\]/g, (_, c: string) 
 const lastSaid = new Map<string, string>();
 
 // (`comms`: the talk is over a comlink, and sounds like it)
-export function TalkPanel({ speaker, player, scene, disabled, comms, onSpoke }: { speaker: TalkSpeaker; player: TalkPlayer; scene: string; disabled?: boolean; comms?: boolean; onSpoke?: () => void }) {
+// (`news`: what the town says of the party and its nemeses, shared/logic/relations.ts townTalk)
+export function TalkPanel({ speaker, player, scene, news, disabled, comms, onSpoke }: { speaker: TalkSpeaker; player: TalkPlayer; scene: string; news?: string; disabled?: boolean; comms?: boolean; onSpoke?: () => void }) {
   const [line, setLine] = useState("");
   const [heard, setHeard] = useState<{ asked: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -125,7 +126,7 @@ export function TalkPanel({ speaker, player, scene, disabled, comms, onSpoke }: 
       const response = await fetch("/api/dialogue", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ speaker, player, scene, line: asked, recap: lastSaid.get(speaker.id) }),
+        body: JSON.stringify({ speaker, player, scene, news, line: asked, recap: lastSaid.get(speaker.id) }),
         signal: control.signal,
       });
       if (!response.ok || !response.body) throw new Error("The dialogue service did not answer.");

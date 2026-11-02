@@ -19,10 +19,19 @@ The user: "up the roll chance for a palace to 60%, also extend the NPC conversat
 Checked in the browser (dev 5099 on `sw5e_test`, campaign 626, Ollama with gemma4:e2b): a cantina pair and a street pair talking in model lines; hitches two squares out, none on a door square or shared. Unit tests added (relations, voice). Commit: see `git log` (this handoff is committed with it).
 NOT checked: the fallback with Ollama stopped; a phone; `npm run e2e`.
 
+## 2026-11-02 (3): NPCs speak aloud, with natures and bonds from the nemesis system
+The user: "Yes NPCs should speak aloud in their own voices, they should also have their own reputation/relationships (use our existing ENRage/nemesis system), which impact their dialogue content". "ENRage" is not in the code: taken to be the nemesis system (personalities, hate tiers, notoriety, news) with regard and families.
+- relations.ts `natureOf`, `bondOf`, `partyViewOf`, `townTalk`, `talkNotes`; server/dialogue.ts card lines (bond named, town gossip); TalkPanel `news`; LocalMap `useTalkWorld` (GameBoard sets standing and party name), `talkersOf`, `voiceLine` (ambient speech within 12 squares), gossip in one talk in three; voice.ts `speak` `ambient`/`gain`.
+- Fixed: street walkers changed identity when the world changed (now chosen once a district).
+- REVIVAL_NOTES "Their own voices, natures and bonds" and a "Play rules" entry.
+Checked: relations tests; the route against the live model (siblings vs a grudge); in the browser the arena's spectators' lines went to /api/speech in their voices and the talk carried natures and bonds. Not heard (no sound reaches me); no phone; no e2e.
+
 Running: the dev server on 5099 (background `npx tsx server/index.ts`, PORT=5099, VITE_TEST_MENU=1, DATABASE_URL to sw5e_test) is stopped at the end of the session.
 
 Learned:
-- The browser pane must be shown (`show_pane` preview) or the page draws no frames: nobody moves or talks.
+- The browser pane must be shown (`show_pane` preview) or the page draws no frames: nobody moves or talks. Background speech needs a first click on the page (the browser holds sound back until then).
+- A dev server stopped with TaskStop can live on (its tsx child kept port 5099): check `netstat -ano | grep :5099` and stop that pid before starting another.
+- Fastest place to see NPC talk: an arena floor (spectators talk every few seconds); a cantina can be quiet for minutes.
 - The map gets the world as the clock has it: at a given hour a district may hold only one or two locals (Theed Market at noon: 1), so walkers are topped up from the settlement.
 - `read_network_requests` urlPattern is a substring, not a regex.
 - The test menu's place list shows 300 at most: type in its search box (`test-find`).
@@ -35,5 +44,5 @@ Learned:
 3. Older items still open: balustrades, night and moons, riders, room changes (2026-11-01 list); phone check over Tailscale; e2e failures (cantina people not moving in 20 s, speeders "did not travel", road-trip guards not chasing); fat lines.
 
 ## Open questions for the user
-- Should NPC talk be spoken aloud in their voices (Piper), or stay as bubbles?
+- Should bonds between people change with play (now they are worked out from the world each time, nothing is kept), e.g. after the party helps or wrongs one of them?
 - (Earlier, still open) delete the e2e leftovers in the real database? Moon periods? Every daytime theft to ring at once?

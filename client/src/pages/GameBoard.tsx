@@ -17,7 +17,7 @@ import { type MapAction } from "@/components/Map/GalaxyMap";
 import { useQuality } from "@/components/Map/siteAssets";
 import { useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
 import { useRun } from "@/components/Map/interiors/stick";
-import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whereNow, useClock, useTransit, useTable, lifeLink, noEncounters, useWarmup, LEVEL_H } from "@/components/Map/LocalMap";
+import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whereNow, useClock, useTransit, useTable, lifeLink, noEncounters, useWarmup, useTalkWorld, LEVEL_H } from "@/components/Map/LocalMap";
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
 import { useShoot } from "@/components/Map/interiors/shoot";
@@ -60,7 +60,7 @@ import { planTrip, driveMinutes, legPar, crewmate, blockPursuit, metText, type L
 import { dogfightPayout } from "@shared/logic/dogfightSim";
 import { SCENARIOS, scenarioAdvice, scenarioOf, classOf, type ScenarioId } from "@shared/logic/dogfight";
 import type { ShipSheet } from "@shared/logic";
-import { CAPS, CHANGE, genderOf, kinLine, kinOf, levelName, personById, regardLevel, regardOf, reputation, sheetFor } from "@shared/logic/relations";
+import { CAPS, CHANGE, genderOf, kinLine, kinOf, levelName, personById, regardLevel, regardOf, reputation, sheetFor, talkNotes, townTalk } from "@shared/logic/relations";
 import { ancestor, createRandom, personIn } from "@shared/logic";
 import { findOccupant } from "@shared/logic/contracts";
 const hashString = (t: string) => Array.from(t).reduce((n, ch) => (Math.imul(n, 31) + ch.charCodeAt(0)) | 0, 7) >>> 0;
@@ -4589,6 +4589,8 @@ export default function GameBoard() {
   };
   // Who is talking and where, for the spoken replies (components/Play/TalkPanel.tsx; the local model sees only this card)
   const talkPlayer = { name: String(character?.name ?? "The player"), species: character?.species, class: klass?.name ?? character?.class, alignment: character?.alignment };
+  // What the people of the world know of the party, for their talk among themselves (LocalMap useTalkWorld)
+  useEffect(() => useTalkWorld.setState({ standing, party: talkPlayer.name }), [standing, talkPlayer.name]);
   const talkScene = (): string => {
     if (!world || !here) return "";
     const trail = trailOf(world, here.id);
@@ -7784,7 +7786,8 @@ export default function GameBoard() {
           ) : (
             <>
               <TalkPanel
-                speaker={{ id: o.id, name: o.name, species: o.species, role: o.role, disposition: o.disposition, creature: o.creature, gender: genderOf(o), attitude: levelName(regardLevel(regardOf(standing, o.id))), kin: world ? kinLine(world, o) : undefined }}
+                speaker={{ id: o.id, name: o.name, species: o.species, role: o.role, disposition: o.disposition, creature: o.creature, gender: genderOf(o), attitude: levelName(regardLevel(regardOf(standing, o.id))), kin: world ? kinLine(world, o) : undefined, notes: world ? talkNotes(world, standing, o, talkPlayer.name, false) : undefined }}
+                news={world ? townTalk(world, talkPlayer.name, here ? trailOf(world, here.id).find((a) => a.kind === "settlement")?.id : undefined) : undefined}
                 player={talkPlayer}
                 scene={talkScene()}
                 disabled={inCombat || dead}

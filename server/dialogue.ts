@@ -75,11 +75,13 @@ export function speechOnly(text: string): string {
 }
 
 interface Card {
-  speaker: { name: string; species?: string; role?: string; disposition?: string; kind?: string; notes?: string; gender?: string; attitude?: string; kin?: string };
+  speaker: { name: string; species?: string; role?: string; disposition?: string; kind?: string; notes?: string; gender?: string; attitude?: string; kin?: string; bond?: string };
   player: { name: string; species?: string; class?: string; alignment?: string };
   scene: string;
   line: string;
   recap?: string;
+  // What the town says (of the party, its nemeses): shared/logic/relations.ts townTalk
+  news?: string;
 }
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/[\u0000-\u0008\u000b-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
@@ -93,10 +95,12 @@ export function cardText(c: Card): string {
   const you = [clip(p.species, 40), clip(p.class, 40)].filter(Boolean).join(" ");
   return [
     `SCENE: ${clip(c.scene, 300)}`,
-    `WHO YOU ARE: ${clip(s.name, 60)}${s.gender === "male" ? " (he/him)" : s.gender === "female" ? " (she/her)" : ""}${who ? `, ${/^[aeiou]/i.test(who) ? "an" : "a"} ${who}` : ""}, ${feeling}.${s.notes ? ` ${clip(s.notes, 200)}` : ""}`,
+    c.news ? `TALK IN TOWN (gossip; bring it up only if it fits): ${clip(c.news, 220)}` : "",
+    `WHO YOU ARE: ${clip(s.name, 60)}${s.gender === "male" ? " (he/him)" : s.gender === "female" ? " (she/her)" : ""}${who ? `, ${/^[aeiou]/i.test(who) ? "an" : "a"} ${who}` : ""}, ${feeling}.${s.notes ? ` ${clip(s.notes, 280)}` : ""}`,
     s.attitude && s.kind !== "party" ? `HOW YOU FEEL ABOUT THEM: ${clip(s.attitude, 12)} (on a scale of hostile, cold, wary, cool, neutral, warm, friendly, generous, devoted); let it colour how you speak.` : "",
     s.kin ? `YOUR KIN: ${clip(s.kin, 120)}.` : "",
     `WHO IS TALKING TO YOU: ${clip(p.name, 60)}${you ? `, ${/^[aeiou]/i.test(you) ? "an" : "a"} ${you}` : ""}.`,
+    s.bond ? `WHAT ${clip(p.name, 60).toUpperCase()} IS TO YOU: ${clip(s.bond, 160)}. Let it show in how you speak to ${clip(p.name, 60)}.` : "",
     c.recap ? `YOU SAID LAST: "${clip(c.recap, 300)}"` : "",
     `PLAYER SAYS: "${clip(c.line, 400)}"`,
   ].filter(Boolean).join("\n");
@@ -218,7 +222,7 @@ export function registerDialogueRoutes(app: Express) {
   app.post("/api/dialogue", async (req: Request, res: Response) => {
     const b = req.body ?? {};
     if (!b.speaker?.name || !b.line || !b.player?.name) return void res.status(400).json({ message: "speaker, player and line are required" });
-    const card = cardText({ speaker: b.speaker, player: b.player, scene: b.scene ?? "", line: b.line, recap: b.recap });
+    const card = cardText({ speaker: b.speaker, player: b.player, scene: b.scene ?? "", line: b.line, recap: b.recap, news: b.news });
 
     const stop = new AbortController();
     res.on("close", () => stop.abort());
@@ -293,7 +297,7 @@ export function registerDialogueRoutes(app: Express) {
     if (chatting) return void res.status(429).json({ message: "another talk is going" });
     chatting = true;
     const turns = Math.max(2, Math.min(4, Number(b.turns) || 3));
-    const scene = `${clip(b.scene, 200)} Small talk in passing: reply with ONE short sentence, 15 words at most.`;
+    const scene = `${clip(b.scene, 200)} Small talk in passing: reply with ONE short sentence, 15 words at most, mostly of your own lives and what is between you two.`;
     const stop = new AbortController();
     res.on("close", () => stop.abort());
     res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
@@ -306,9 +310,10 @@ export function registerDialogueRoutes(app: Express) {
         const [me, other] = i % 2 ? [people[1], people[0]] : [people[0], people[1]];
         const card = cardText({
           speaker: { ...me, kind: "chatter" },
+          news: b.news,
           player: { name: other.name, species: other.species, class: other.role },
           scene,
-          line: said.length ? said[said.length - 1] : `(${clip(other.name, 60)} stops beside you)`,
+          line: said.length ? said[said.length - 1] : `(${clip(other.name, 60)}${me.bond ? `, ${clip(me.bond, 120)},` : ""} stops beside you)`,
           recap: said.length > 1 ? said[said.length - 2] : undefined,
         });
         const text = await alone(async () => {
