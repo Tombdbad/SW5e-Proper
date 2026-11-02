@@ -97,7 +97,9 @@ test("a patrol nearer than the garrison goes first and is gone from its beat; th
     for (const o of area.occupants) {
       if (!o.routine?.patrol) continue;
       const w = whereAt(o, area.id, noon);
-      if (w.at && w.at !== area.id) found = { who: o, at: w.at, settlement: settlementOf(world, w.at) };
+      // (where the garrison sends the rest: not an outpost's, which stands where its patrol walks, nor a town a cartel holds; 2026-11-02, the
+      // arena's rooms moved the ids and the first patrol found was such a one)
+      if (w.at && w.at !== area.id && reportCrime(world, w.at, "assault", noon, "law").pursuit?.from) found = { who: o, at: w.at, settlement: settlementOf(world, w.at) };
       if (found) break;
     }
     if (found) break;

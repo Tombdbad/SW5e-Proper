@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateWorld, artificerIn, childrenOf, trailOf, type Area, type Occupant, type World } from "../../shared/logic/index";
-import { accept, askAround, askDC, findOccupant, kindsOf, makeOffers, payout, progress, tierFor, whereabouts, type Contract, type ContractKind } from "../../shared/logic/contracts";
+import { accept, askAround, askDC, findOccupant, jobsOf, kindsOf, makeOffers, payout, progress, tierFor, whereabouts, type Contract, type ContractKind } from "../../shared/logic/contracts";
 import { getWorldCatalog } from "../../server/sw5eData";
 
 const catalog = await getWorldCatalog();
@@ -169,4 +169,11 @@ test("the rarest things are earned: a regional job pays a prototype item too, a 
     assert.equal(rewardItem(offer, rows), item);
   }
   assert.ok(offers.some((x) => x.rewardRarity === "Legendary"));
+});
+
+test("the pit is the arena's (2026-11-02): the pit boss takes fighters, a bookmaker takes bets; a bartender has neither any more", () => {
+  assert.deepEqual(jobsOf(giver("pit boss"), "arena"), ["pit-arena"]);
+  assert.ok(jobsOf(giver("bookmaker"), "arena").includes("pit-bets"));
+  assert.ok(!jobsOf(giver("bartender"), "cantina").some((j) => j === "pit-arena" || j === "pit-bets"));
+  assert.ok(!jobsOf(giver("croupier"), "gambling hall").some((j) => j === "pit-arena" || j === "pit-bets"));
 });

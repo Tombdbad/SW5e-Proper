@@ -2061,7 +2061,8 @@ export default function GameBoard() {
     if (!character) return;
     const occupant = statBlockOccupant(monster, equipmentData as any, `pit-${bout}`, 1, "creature", "hostile");
     const enemies = [{ ...foe(occupant, `pit-${bout}-0`, occupant.name), x: 8, y: 4, z: 0 }];
-    initiateCombat(character, enemies as any, combatKit(), false, { width: 12, height: 9, assets: [] } as any, { x: 3, y: 4 }, []);
+    // (the arena's sand, open to the stands round it: PitArena draws the crowd there)
+    initiateCombat(character, enemies as any, combatKit(), false, { width: 12, height: 9, assets: [], open: true, floor: "arena" } as any, { x: 3, y: 4 }, []);
   };
   const keepPitHp = (hp: number) => {
     lastSavedHp.current = hp;
@@ -3484,7 +3485,7 @@ export default function GameBoard() {
         <Button size="sm" variant="outline" className="h-6 px-2" onClick={() => setJobsFor(jobsFor === o.id ? null : o.id)} data-testid="odd-jobs-toggle">
           {jobsFor === o.id ? "Never mind" : `Ask ${o.name} about ${ids.slice(0, 4).map((id) => JOB_NAMES[id] ?? id).join(", ")}${ids.length > 4 ? " and more" : ""}`}
         </Button>
-        {jobsFor === o.id && ids.includes("pit-arena") && (
+        {jobsFor === o.id && ids.includes("pit-bets") && (
           <div className="mt-1">
             <PitBets
               monsters={monsterData as unknown as Sw5eMonster[]}
@@ -3504,7 +3505,7 @@ export default function GameBoard() {
             />
           </div>
         )}
-        {jobsFor === o.id && <div className="mt-1">{downtimeFor(ids)}</div>}
+        {jobsFor === o.id && ids.some((id) => id !== "pit-bets") && <div className="mt-1">{downtimeFor(ids)}</div>}
       </div>
     );
   };

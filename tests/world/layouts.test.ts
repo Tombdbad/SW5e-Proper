@@ -55,3 +55,41 @@ test("caves are organic: every cave room has a winding floor, and there are cave
   }
   assert.ok(rooms >= 8, `${rooms} cave rooms with a winding floor in the test worlds`);
 });
+
+test("the arena (2026-11-02): every city has one, a round floor with the pit in its middle and stands round it, the crowd on the stands, a betting hall with a kiosk and bookmakers, a sign-up with the pit boss; older worlds are given theirs", async () => {
+  const { childrenOf, isStand, standRow, standsAt, livenWorld, STAND_ROWS } = await import("@shared/logic");
+  const world = generateWorld({ seed: 34, partyLevel: 5 }, catalog);
+  const cities = Object.values(world.areas).filter((a) => a.kind === "settlement" && a.type === "city" && childrenOf(world, a.id).length);
+  assert.ok(cities.length);
+  for (const city of cities) {
+    const arena = childrenOf(world, city.id).find((b) => b.type === "arena");
+    assert.ok(arena, `${city.name} has an arena`);
+    const rooms = childrenOf(world, arena!.id);
+    const floor = rooms.find((r) => r.name === "Arena floor")!;
+    const l = floor.layout!;
+    assert.ok(l.shape === "round" || l.shape === "oval", "round");
+    assert.ok(floor.gateway, "the way in");
+    const stands = l.assets.filter(isStand);
+    assert.ok(stands.length > 100, `${stands.length} squares of stands`);
+    assert.ok(stands.every((s) => standsAt(l, s.x, s.y) && standRow(l, s.x, s.y) < STAND_ROWS));
+    const pit = l.assets.find((a) => a.name === "Fighting pit")!;
+    assert.ok(pit && Math.abs(pit.x + pit.w / 2 - l.width / 2) <= 1 && Math.abs(pit.y + pit.h / 2 - l.height / 2) <= 1, "the pit in the middle");
+    const crowd = floor.occupants.filter((o) => o.role === "spectator");
+    assert.ok(crowd.length >= 10, `${crowd.length} in the crowd`);
+    const npcs = l.assets.filter((a) => a.kind === "npc" && crowd.some((o) => o.id === a.ref));
+    assert.ok(npcs.every((n) => stands.some((s) => s.x === n.x && s.y === n.y)), "the crowd stands on the stands");
+    const betting = rooms.find((r) => r.name === "Betting hall")!;
+    assert.ok(betting.layout!.assets.some((a) => a.name === "Betting kiosk") && betting.occupants.some((o) => o.role === "bookmaker"));
+    const signUp = rooms.find((r) => r.name === "Fighters' sign-up")!;
+    assert.ok(signUp.layout!.assets.some((a) => a.name === "Sign-up desk") && signUp.occupants.some((o) => o.role === "pit boss"));
+  }
+  // A world made before the arenas (life 14) gets them when it is livened
+  const old = JSON.parse(JSON.stringify(world));
+  const gone = new Set(Object.values(old.areas as Record<string, Area>).filter((a) => a.type === "arena").map((a) => a.id));
+  for (const a of Object.values(old.areas as Record<string, Area>)) if (gone.has(a.parentId ?? "")) gone.add(a.id);
+  for (const id of gone) delete old.areas[id];
+  old.paths = old.paths.filter((p: { from: string; to: string }) => !gone.has(p.from) && !gone.has(p.to));
+  old.life = 14;
+  const livened = livenWorld(old, catalog);
+  for (const city of cities) assert.ok(childrenOf(livened, city.id).some((b) => b.type === "arena"), `${city.name} is given its arena`);
+});

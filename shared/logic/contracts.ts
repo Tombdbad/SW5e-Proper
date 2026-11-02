@@ -352,14 +352,17 @@ export const payout = (c: Contract, bonus = 0) => Math.round(c.reward * (1 + bon
 // Downtime tab itself is for test builds): the ids are those of the Downtime panel (`DOWNTIME_GROUPS` in Play). Bounty hunting, espionage,
 // mercenary contracting and crime are the jobs above.
 export const JOB_NAMES: Record<string, string> = {
-  "pit-arena": "the pit", gambling: "a game of chance", carousing: "a night out", racing: "a race", "speeder-race": "a speeder race", "taxi-run": "a taxi run", "delivery-run": "a delivery run",
+  "pit-arena": "fighting in the pit", "pit-bets": "bets on the pit", gambling: "a game of chance", carousing: "a night out", racing: "a race", "speeder-race": "a speeder race", "taxi-run": "a taxi run", "delivery-run": "a delivery run",
   dogfight: "a dogfight", work: "honest work", research: "research", training: "training", crafting: "crafting", "buying-enhanced-items": "buying enhanced items", "selling-enhanced-items": "selling enhanced items",
 };
 export function jobsOf(o: Pick<Occupant, "role" | "disposition" | "captive" | "disabled">, buildingType = ""): string[] {
   if (o.disposition === "hostile" || o.captive || o.disabled) return [];
   const role = o.role ?? "";
   const out: string[] = [];
-  if (BAR.test(role) || /croupier|promoter|gambler/i.test(role) || /gambling hall|cantina/.test(buildingType)) out.push("pit-arena", "gambling", "carousing");
+  // (the pit and its bets are the arena's, 2026-11-02: the pit boss at the sign-up desk takes fighters, a bookmaker at the kiosk takes bets)
+  if (/pit boss|promoter/i.test(role)) out.push("pit-arena");
+  if (/bookmaker/i.test(role)) out.push("pit-bets");
+  if (BAR.test(role) || /croupier|gambler/i.test(role) || /gambling hall|cantina/.test(buildingType)) out.push("gambling", "carousing");
   if (/dockmaster|pilot for hire|mechanic|engineer|pilot/i.test(role) || /spaceport|hangar|shipyard|transit|landing/.test(buildingType)) out.push("racing", "speeder-race", "taxi-run", "delivery-run", "dogfight");
   if (/merchant|dealer|clerk|overseer|cook|mechanic|farmer|dockmaster|laborer|steward/i.test(role) || BAR.test(role)) out.push("work");
   if (/scholar|archivist|clerk|medic|officer|noble|chamberlain/i.test(role) || /archive|medcenter/.test(buildingType)) out.push("research");
