@@ -3,7 +3,7 @@
 // and instruments and cybernetics in caches.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateWorld, surgeonStock, modStock, modFee, modFitProblem, shopTier, blueprintPool, itemFactsOf, LOOT, type World, type Occupant } from "../../shared/logic/index";
+import { generateWorld, surgeonStock, modStock, modFee, modFitProblem, shopTier, tradeTop, gearRarity, stockOf, systemCarries, blueprintPool, itemFactsOf, LOOT, type World, type Occupant } from "../../shared/logic/index";
 import { getWorldCatalog } from "../../server/sw5eData";
 import enhanced from "../../shared/data/sw5e/enhancedItems.json";
 import equipment from "../../shared/data/sw5e/equipment.json";
@@ -63,11 +63,11 @@ test("a richer place has better stock: the tiers by settlement and region", () =
 test("modifications are sold by trade: arms blasters, vibroweapons and armor; tech wristpads, focus generators and augments; outfitters clothes and armor", () => {
   const w = world(14);
   const s = settlementOfStart(w);
-  const tier = shopTier(w, s.id);
+  const tier = tradeTop(w, s.id);
   for (const [trade, kinds] of [["arms", ["blaster", "vibroweapon", "armor"]], ["tech", ["wristpad", "focus generator", "augment"]], ["outfit", ["clothing", "armor"]]] as const) {
     for (let day = 1; day < 6; day++) {
       const lines = modStock(w, person("merchant", trade), s.id, day, rows);
-      assert.ok(lines.length >= 5 && lines.length <= 8, `${trade}: ${lines.length}`);
+      assert.ok(lines.length >= 4 && lines.length <= 7, `${trade}: ${lines.length}`);
       assert.ok(lines.every((l) => kinds.includes(l.kind as any) && rank(l.rarity) <= tier), `${trade}: ${lines.map((l) => `${l.kind}/${l.rarity}`).join()}`);
     }
   }
@@ -77,7 +77,7 @@ test("modifications are sold by trade: arms blasters, vibroweapons and armor; te
   const used = modStock(w, person("merchant", "salvage"), s.id, 1, rows);
   assert.ok(used.every((l) => rank(l.rarity) <= 1));
   const black = modStock(w, person("fence", "black"), s.id, 2, rows);
-  assert.ok(black.length > 0 && black.every((l) => rank(l.rarity) <= Math.min(3, tier + 1)));
+  assert.ok(black.length > 0 && black.every((l) => rank(l.rarity) <= tradeTop(w, s.id, true)));
   const same = modStock(w, person("merchant", "arms"), s.id, 2, rows);
   const row = (n: string) => rows.find((r) => r.name === n);
   assert.ok(row(black[0].name) && same.length > 0);
@@ -131,4 +131,64 @@ test("caches: cybernetics in a medical cabinet as well as the vault, instruments
     return Object.values(w.areas).some((a) => a.kind === "room" && a.name === "Dance floor" && a.loot.some((c) => LOOT.stage.names.includes(c.name)));
   });
   assert.ok(found, "an instrument case on a dance floor");
+});
+
+test("rarity (house rule for plain gear): standard under 1,000 cr, premium from 1,000, prototype from 3,000, a lightweapon a step rarer; enhanced items keep the books'", () => {
+  assert.equal(gearRarity({ cost: 500 }), "Standard");
+  assert.equal(gearRarity({ cost: 1500 }), "Premium");
+  assert.equal(gearRarity({ cost: 15000 }), "Prototype");
+  assert.equal(gearRarity({ cost: 500, weaponClassification: "MartialLightweapon" }), "Premium");
+  assert.equal(gearRarity({ cost: 50, searchableRarity: "Legendary" }), "Legendary");
+  assert.ok(eq.every((e) => ["Standard", "Premium", "Prototype"].includes(gearRarity(e))));
+});
+
+test("a vendor's stock is small and of its star system: 2 to 4 lines a stall, 4 to 7 a shop, nothing rarer than the place deals in", () => {
+  const w = world(14);
+  const s = settlementOfStart(w);
+  const customer = { standing: { renown: {}, dealings: {} } } as any;
+  const top = tradeTop(w, s.id);
+  for (let day = 1; day < 8; day++) {
+    for (const trade of ["general", "arms", "tech", "outfit"]) {
+      const shop = stockOf(w, person("merchant", trade), s.id, eq, day, customer);
+      assert.ok(shop.length >= 1 && shop.length <= 7, `${trade}: ${shop.length}`);
+      assert.ok(shop.every((l) => rank(l.rarity!) <= top && systemCarries(w, s.id, eq.find((e) => e.name === l.name))), shop.map((l) => `${l.name}/${l.rarity}`).join());
+      const stall = stockOf(w, { ...person("merchant", trade), stall: "a" } as Occupant, s.id, eq, day, customer);
+      assert.ok(stall.length <= 4, `stall ${trade}: ${stall.length}`);
+    }
+  }
+  // Two systems carry different goods
+  const systems = Object.values(w.areas).filter((a) => a.kind === "system").slice(0, 2);
+  const carried = (id: string) => eq.filter((e) => systemCarries(w, id, e)).map((e) => e.name).join();
+  assert.notEqual(carried(systems[0].id), carried(systems[1].id));
+  assert.ok(eq.filter((e) => systemCarries(w, s.id, e)).length < eq.length * 0.85);
+});
+
+test("master artificers: about one city in four, the same person every visit; prototype work for anyone, advanced at friendly regard, legendary at devoted", async () => {
+  const { artificerIn, artificerStock, isArtificer } = await import("../../shared/logic/index");
+  const cities: string[] = [];
+  let found: { w: World; id: string; room: string } | undefined;
+  for (const seed of [3, 7, 11, 14, 21, 34, 40, 55, 61, 77]) {
+    const w = world(seed);
+    for (const s of Object.values(w.areas).filter((a) => a.kind === "settlement" && a.type === "city" && a.id.length)) {
+      cities.push(s.id);
+      const id = artificerIn(w, s.id);
+      if (id && !found) {
+        const room = Object.values(w.areas).find((a) => a.kind === "room" && a.occupants.some((o) => o.id === id))!;
+        found = { w, id, room: room.id };
+      }
+    }
+  }
+  assert.ok(found, `an artificer in one of ${cities.length} cities`);
+  const { w, id, room } = found!;
+  const o = w.areas[room].occupants.find((x) => x.id === id)!;
+  assert.ok(isArtificer(w, o, room));
+  const stranger = artificerStock(w, o, room, 3, rows, 0);
+  assert.ok(stranger.some((l) => l.rarity === "Prototype" && !l.needs));
+  assert.ok(stranger.filter((l) => l.rarity === "Advanced").every((l) => l.needs === 40));
+  assert.ok(stranger.filter((l) => l.rarity === "Legendary").every((l) => l.needs === 80));
+  assert.ok(artificerStock(w, o, room, 3, rows, 40).filter((l) => l.rarity === "Advanced").every((l) => !l.needs));
+  assert.ok(artificerStock(w, o, room, 3, rows, 80).every((l) => !l.needs));
+  assert.ok(stranger.every((l) => l.rarity !== "Artifact"));
+  // anyone else sells none of it
+  assert.deepEqual(artificerStock(w, { ...o, id: "someone-else" }, room, 3, rows, 100), []);
 });

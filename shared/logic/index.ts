@@ -5445,6 +5445,7 @@ export interface TradeLine {
   price: number;
   contraband: boolean;
   description?: string;
+  rarity?: string;
 }
 
 // What a trader has for sale today, at today's prices for this customer
@@ -5454,8 +5455,12 @@ export function stockOf(world: World, trader: Occupant, placeId: string, equipme
   const market = marketAt(world, placeId);
   const r = createRandom(hashOf(trader.id) + day * 7919);
   const categories = market.law === 0 && !wares.black && trader.role === "merchant" ? [...wares.categories, "Spice", "Explosive"] : wares.categories;
-  const pool = equipment.filter((e) => categories.includes(e.equipmentCategory) && e.cost > 0 && e.cost <= market.cap && (wares.black ? contrabandFrom(e) <= 3 : !isContraband(e, market.law)));
-  const picked = r.shuffle(pool).slice(0, r.int(wares.lines[0], wares.lines[1]));
+  // (2026-11-02, the user: vendors "offer too many items, these should be limited (as relevant to their solar system)": what the system
+  // carries at all, nothing rarer than the place deals in, and 2 to 4 lines a stall, 4 to 7 a shop or counter)
+  const top = tradeTop(world, placeId, !!wares.black);
+  const pool = equipment.filter((e) => categories.includes(e.equipmentCategory) && e.cost > 0 && e.cost <= market.cap && (wares.black ? contrabandFrom(e) <= 3 : !isContraband(e, market.law)) && rarityRank(gearRarity(e)) <= top && systemCarries(world, placeId, e));
+  const [few, many] = trader.stall ? [2, 4] : [4, 7];
+  const picked = r.shuffle(pool).slice(0, r.int(Math.min(wares.lines[0], few), Math.min(wares.lines[1], many)));
   const today = ledgerFor(ledger, day).traders[trader.id];
   // What the party sold here today is for sale again
   const resold = Object.entries(today?.sold ?? {}).map(([name]) => equipment.find((e) => e.name === name)).filter((e): e is Sw5eEquipment => !!e && !picked.includes(e));
@@ -5472,6 +5477,7 @@ export function stockOf(world: World, trader: Occupant, placeId: string, equipme
       quantity,
       price: priceOf(world, trader, placeId, item, day, customer, ledger, quantity),
       contraband: isContraband(item, market.law),
+      rarity: gearRarity(item),
       description: (item as any).description,
     }))
     .sort((a, b) => a.category.localeCompare(b.category) || a.price - b.price);
@@ -11589,13 +11595,10 @@ export function droidPartsStock(world: World, trader: Occupant, placeId: string,
   const salvage = trader.trade === "salvage";
   if (trader.trade !== "droids" && !salvage) return [];
   const market = marketAt(world, placeId);
-  const region = ancestor(world, placeId, "region");
-  const rich = ["Deep Core", "Core", "Colonies", "Inner Rim"].includes(region?.type ?? region?.name ?? "");
-  const settlement = market.settlement?.type ?? "outpost";
-  const top = salvage ? 1 : settlement === "city" ? (rich ? 3 : 2) : settlement === "station" ? 2 : 1;
+  const top = salvage ? 1 : tradeTop(world, placeId);
   const r = createRandom(hashOf(`${trader.id}|parts`) + day * 31337);
   const pool = rows.filter((x) => x.type === "DroidCustomization" && rarityRank(x.searchableRarity) <= top);
-  return r.shuffle(pool).slice(0, salvage ? r.int(2, 4) : r.int(6, 9))
+  return r.shuffle(pool).slice(0, salvage ? r.int(2, 4) : r.int(4, 7))
     .filter((x) => !(bought[x.name] > 0))
     .map((x) => ({ name: x.name, rarity: x.searchableRarity, price: Math.max(10, Math.round(enhancedValue(x) * market.regionFactor * market.settlementFactor * (salvage ? 0.6 : 1))), quantity: 1 }))
     .sort((a, b) => a.price - b.price);
@@ -11612,9 +11615,9 @@ export function droidDisplay(world: World, roomId: string, day: number, droids: 
 }
 // ---------------------------------------------------------------------------------------------
 // Surgeons' and technicians' shops (2026-10-21; house rules: Wretched Hives has cybernetic augmentations and modifications found, made or
-// installed, the user wants them on sale). How good the stock is follows the wealth of the place, as a droid dealer's does: standard in
-// a village or outpost, premium in a town, prototype in a city or a station, advanced too in a city of the Core worlds (never legendary or
-// artifact). Prices are the item's value (Wretched Hives' random value of its rarity, half for a modification) moved by the region and the
+// installed, the user wants them on sale). How good the stock is follows the wealth of the place (`tradeTop`, since 2026-11-02): standard in
+// a village or outpost, premium in a town, a station or a city, prototype in a city of the Core worlds (advanced and better only from a
+// master artificer or a mission). Prices are the item's value (Wretched Hives' random value of its rarity, half for a modification) moved by the region and the
 // settlement like any other price. A surgeon (a medic) lists every prosthesis the place can afford and three to five augmentations a day;
 // an armsmith, a tech shop, an outfitter or a mechanic sells the modifications of what they trade in (five to eight a day), a scrapyard
 // used ones at 60%, the black market any at 1.6 times and a rarity more.
@@ -11627,11 +11630,85 @@ export function shopTier(world: World, placeId: string): number {
   const settlement = market.settlement?.type ?? "outpost";
   return settlement === "city" ? (rich ? 3 : 2) : settlement === "station" ? 2 : settlement === "town" ? 1 : 0;
 }
+// ---- Rarity of the goods (2026-11-02; the user: "we also need a rarity applied to items, weapons, armour, etc. (the most rare items should
+// be available through mission rewards, and NPCs who can apply rare upgrades (etc.) should be few and far between, and unlocked through high
+// reputation with these characters"). Enhanced items carry the books' rarity (`searchableRarity`). HOUSE RULE for plain gear, which the books
+// give none (the user's choice): Standard under 1,000 credits, Premium from 1,000, Prototype from 3,000; a lightweapon one step rarer.
+export const RARITY_NAMES = ["Standard", "Premium", "Prototype", "Advanced", "Legendary", "Artifact"];
+export function gearRarity(item: { cost?: number; weaponClassification?: string; searchableRarity?: string }): string {
+  if (item.searchableRarity) return item.searchableRarity;
+  const cost = item.cost ?? 0;
+  const step = cost >= 3000 ? 2 : cost >= 1000 ? 1 : 0;
+  return RARITY_NAMES[Math.min(2, step + (/lightweapon/i.test(item.weaponClassification ?? "") ? 1 : 0))];
+}
+// The rarest an ordinary trader, technician or surgeon deals in (HOUSE RULE, the user's choice): Premium in a city, station or town,
+// Prototype in a city of the Core worlds, Standard elsewhere; the black market one step more (Prototype at most). Advanced and better come
+// from missions (see contracts.ts `rewardRarity`) and the few master artificers (`artificerIn`).
+export function tradeTop(world: World, placeId: string, black = false): number {
+  const tier = shopTier(world, placeId);
+  return Math.min(2, (tier >= 3 ? 2 : tier >= 1 ? 1 : 0) + (black ? 1 : 0));
+}
+// What a star system's traders can get at all (HOUSE RULE; the user: stock "limited (as relevant to their solar system)"): each system has its
+// own share of the plain goods, the same every visit (a hash of the system and the item): 55%, a quarter more of what its world needs
+// (DEMAND), more in the Core worlds and less out on the Rim, a tenth less for each step of rarity; goods named for its own world always.
+const RICH_REGIONS = ["Deep Core", "Core", "Colonies", "Inner Rim"];
+const FAR_REGIONS = ["Outer Rim", "Wild Space", "Unknown Regions"];
+export function systemCarries(world: World, placeId: string, item: Sw5eEquipment): boolean {
+  const system = ancestor(world, placeId, "system");
+  if (!system) return true;
+  const market = marketAt(world, placeId);
+  if (market.planet && String((item as any).description ?? "").includes(market.planet.name)) return true;
+  const region = ancestor(world, placeId, "region");
+  const where = region?.type ?? region?.name ?? "";
+  const share = 0.55 + ((market.demand[item.equipmentCategory] ?? 1) > 1 ? 0.25 : 0) + (RICH_REGIONS.includes(where) ? 0.15 : FAR_REGIONS.includes(where) ? -0.15 : 0) - 0.1 * rarityRank(gearRarity(item));
+  return hashOf(`${system.id}|${item.name}`) % 100 < share * 100;
+}
+// ---- Master artificers (2026-11-02; the user: "NPCs who can apply rare upgrades (etc.) should be few and far between, and unlocked through
+// high reputation with these characters"). HOUSE RULE (the user's choice): about one city in four has one, the first technician of its
+// workshop (else its tech shop, armsmith, droid dealer, shipyard, outfitter; nothing is stored: the same person every visit). They sell
+// and fit the modifications and chassis above what shops carry: the prototype ones to anyone, the advanced once they are friendly to the
+// party (regard 40), the legendary once devoted (80); never artifacts. Their work is dearer by a quarter.
+const ARTIFICER_SHOPS = ["workshop", "tech shop", "armsmith", "droid dealer", "shipyard", "outfitter"];
+const ARTISAN = /mechanic|merchant|engineer|technician|dealer|smith|outfitter/i;
+export const ARTIFICER_REGARD: Record<string, number> = { prototype: 0, advanced: 40, legendary: 80 };
+export function artificerIn(world: World, settlementId: string): string | undefined {
+  const settlement = world.areas[settlementId];
+  if (settlement?.kind !== "settlement" || settlement.type !== "city" || hashOf(`${settlementId}|artificer`) % 4) return undefined;
+  const buildings = childrenOf(world, settlementId).filter((b) => b.kind === "building");
+  for (const type of ARTIFICER_SHOPS) {
+    for (const building of buildings.filter((b) => b.type === type).sort((a, b) => a.id.localeCompare(b.id))) {
+      for (const room of childrenOf(world, building.id)) {
+        const o = room.occupants.filter((x) => x.disposition !== "hostile" && !x.captive && !x.contract && ARTISAN.test(x.role)).sort((a, b) => a.id.localeCompare(b.id))[0];
+        if (o) return o.id;
+      }
+    }
+  }
+  return undefined;
+}
+export const isArtificer = (world: World, o: Pick<Occupant, "id">, placeId: string) => artificerIn(world, settlementOf(world, placeId)) === o.id;
+export interface ArtificerLine extends ModLine { chassis?: boolean; needs?: number }
+export function artificerStock(world: World, trader: Occupant, placeId: string, day: number, rows: EnhancedRow[], regard: number, bought: Record<string, number> = {}): ArtificerLine[] {
+  if (!isArtificer(world, trader, placeId)) return [];
+  const market = marketAt(world, placeId);
+  const r = createRandom(hashOf(`${trader.id}|artifice`) + day * 7177);
+  const factor = market.regionFactor * market.settlementFactor * 1.25;
+  const of = (rarity: string, mods: number, chassis: number) => [
+    ...r.shuffle(rows.filter((x) => x.type === "ItemModification" && x.searchableRarity.toLowerCase() === rarity)).slice(0, mods),
+    ...r.shuffle(rows.filter((x) => / Chassis \(/.test(x.name) && x.searchableRarity.toLowerCase() === rarity)).slice(0, chassis),
+  ];
+  return [...of("prototype", 2, 1), ...of("advanced", 2, 1), ...of("legendary", 1, 1)]
+    .filter((x) => !(bought[x.name] > 0))
+    .map((x): ArtificerLine => {
+      const needs = ARTIFICER_REGARD[x.searchableRarity.toLowerCase()] ?? 100;
+      const chassis = / Chassis \(/.test(x.name);
+      return { name: x.name, rarity: x.searchableRarity, kind: chassis ? "chassis" : String(x.subtype ?? "").toLowerCase(), price: Math.max(10, Math.round(enhancedValue(x) * factor)), ...(chassis ? { chassis } : {}), ...(regard < needs ? { needs } : {}) };
+    });
+}
 export interface SurgeonLine { name: string; kind: "augment" | "prosthesis"; rarity: string; price: number; parts: string[] }
 export function surgeonStock(world: World, trader: Occupant, placeId: string, day: number, rows: EnhancedRow[], equipment: { name: string; equipmentCategory: string; cost: number }[], bought: Record<string, number> = {}): SurgeonLine[] {
   if (trader.role !== "medic" || trader.disposition === "hostile") return [];
   const market = marketAt(world, placeId);
-  const top = shopTier(world, placeId);
+  const top = tradeTop(world, placeId);
   const r = createRandom(hashOf(`${trader.id}|surgery`) + day * 15485863);
   const factor = market.regionFactor * market.settlementFactor;
   const augments = r.shuffle(rows.filter((x) => x.type === "CyberneticAugmentation" && rarityRank(x.searchableRarity) <= top)).slice(0, r.int(3, 5))
@@ -11656,11 +11733,11 @@ export function modStock(world: World, trader: Occupant, placeId: string, day: n
   const kinds = black ? undefined : MOD_TRADES[trade];
   if (!black && !kinds) return [];
   const market = marketAt(world, placeId);
-  const top = trade === "salvage" ? 1 : Math.min(3, shopTier(world, placeId) + (black ? 1 : 0));
+  const top = trade === "salvage" ? 1 : tradeTop(world, placeId, black);
   const r = createRandom(hashOf(`${trader.id}|mods`) + day * 49979687);
   const pool = rows.filter((x) => x.type === "ItemModification" && rarityRank(x.searchableRarity) <= top && (!kinds || kinds.includes(String(x.subtype ?? "").toLowerCase())));
   const factor = market.regionFactor * market.settlementFactor * (black ? 1.6 : trade === "salvage" ? 0.6 : 1);
-  return r.shuffle(pool).slice(0, r.int(5, 8))
+  return r.shuffle(pool).slice(0, trader.stall ? r.int(2, 4) : r.int(4, 7))
     .filter((x) => !(bought[x.name] > 0))
     .map((x) => ({ name: x.name, rarity: x.searchableRarity, kind: String(x.subtype ?? "").toLowerCase(), price: Math.max(10, Math.round(enhancedValue(x) * factor)) }))
     .sort((a, b) => a.price - b.price);

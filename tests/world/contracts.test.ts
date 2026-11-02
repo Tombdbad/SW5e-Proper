@@ -1,7 +1,7 @@
 // Contracts (2026-10-27): the jobs the people of a place offer, what accepting one puts in the world, and how the world says it is done
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateWorld, childrenOf, trailOf, type Area, type Occupant, type World } from "../../shared/logic/index";
+import { generateWorld, artificerIn, childrenOf, trailOf, type Area, type Occupant, type World } from "../../shared/logic/index";
 import { accept, askAround, askDC, findOccupant, kindsOf, makeOffers, payout, progress, tierFor, whereabouts, type Contract, type ContractKind } from "../../shared/logic/contracts";
 import { getWorldCatalog } from "../../server/sw5eData";
 
@@ -145,11 +145,28 @@ test("few give work (house rule, the user's numbers): 4 in a city, 2 in a town, 
   for (const s of settlements) {
     const givers = giversIn(world, s.id);
     let able = 0;
-    for (const b of childrenOf(world, s.id)) for (const r of childrenOf(world, b.id)) for (const o of r.occupants) if (kindsOf(o, b.type).length) {
+    const artificer = artificerIn(world, s.id);
+    for (const b of childrenOf(world, s.id)) for (const r of childrenOf(world, b.id)) for (const o of r.occupants) if (kindsOf(o, b.type).length || o.id === artificer) {
       able++;
       assert.equal(workFrom(world, o, r.id).length > 0, givers.has(o.id));
     }
     assert.equal(givers.size, Math.min(able, GIVERS_PER[s.type] ?? 1), `${s.name} (${s.type}): ${givers.size} of ${able}`);
     assert.deepEqual([...giversIn({ ...world }, s.id)].sort(), [...givers].sort());
   }
+});
+
+test("the rarest things are earned: a regional job pays a prototype item too, a far one an advanced, a notorious one a legendary", async () => {
+  const { rewardItem, REWARD_RARITY } = await import("../../shared/logic/contracts");
+  const rows = (await import("../../shared/data/sw5e/enhancedItems.json")).default as any[];
+  const { o, area } = bartender();
+  const offers = makeOffers(world, o, area.id, 6, 2);
+  assert.ok(offers.length);
+  for (const offer of offers) {
+    assert.equal(offer.rewardRarity, REWARD_RARITY[offer.tier]);
+    const item = rewardItem(offer, rows);
+    if (offer.tier === 0) assert.equal(item, undefined);
+    else assert.equal(rows.find((r) => r.name === item)?.searchableRarity, offer.rewardRarity);
+    assert.equal(rewardItem(offer, rows), item);
+  }
+  assert.ok(offers.some((x) => x.rewardRarity === "Legendary"));
 });

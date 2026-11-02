@@ -47,9 +47,9 @@ test("a dealer sells customizations up to a rarity set by the place; a scrapyard
   const rank = (r: string) => ["standard", "premium", "prototype", "advanced", "legendary", "artifact"].indexOf(r.toLowerCase());
   for (let day = 1; day < 8; day++) {
     const lines = droidPartsStock(w, dealer, room.id, day, parts);
-    assert.ok(lines.length >= 6 && lines.length <= 9, `${lines.length} lines`);
-    // An Outer Rim city: prototype at best
-    assert.ok(lines.every((l) => rank(l.rarity) <= 2), lines.map((l) => l.rarity).join());
+    assert.ok(lines.length >= 4 && lines.length <= 7, `${lines.length} lines`);
+    // An Outer Rim city: premium at best (tradeTop; prototype only in a Core city)
+    assert.ok(lines.every((l) => rank(l.rarity) <= 1), lines.map((l) => l.rarity).join());
     const scrap: Occupant = { ...dealer, id: `${dealer.id}-scrap`, trade: "salvage" };
     const salvaged = droidPartsStock(w, scrap, room.id, day, parts);
     assert.ok(salvaged.every((l) => rank(l.rarity) <= 1));

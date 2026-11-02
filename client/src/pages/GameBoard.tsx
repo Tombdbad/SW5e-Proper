@@ -24,7 +24,7 @@ import { useShoot } from "@/components/Map/interiors/shoot";
 import { avgDice, blankUnit, bladeOf, grenadeOf, gunOf, modeOf, type PlayMode, type Unit } from "@shared/logic/shooter";
 import { SabaccTable, BUY_IN_CHIPS, type TableOpponent } from "@/components/Games/SabaccTable";
 import { PazaakGame } from "@/components/Games/PazaakGame";
-import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, type Contract, type Offer } from "@shared/logic/contracts";
+import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, rewardItem, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, type Contract, type Offer } from "@shared/logic/contracts";
 import { DejarikGame } from "@/components/Games/DejarikGame";
 import { PitBets } from "@/components/Games/PitBets";
 import { usePartyLook } from "@/components/Map/models";
@@ -96,7 +96,7 @@ import {
   type DowntimeActivityData, type ActivitySpec, type DowntimeOutcome, type DowntimeState, type TrainingOption,
   type Occupant,
   attunementLimit, augmentationLimit, augmentPlan, partsFree, sideEffectsOf, describeEffects, PROSTHESES, ITEM_ABILITIES, type ItemFacts,
-  modKindOf, augmentSlots, MOD_BASE_SLOTS, rarityRank, INSTALL_DC, SIZE_TIME, crystalModifier, crystalFor, crystalsUpTo, DROID_MOTOR_COST, DROID_BASE_SLOTS, droidPlan,
+  modKindOf, augmentSlots, MOD_BASE_SLOTS, rarityRank, gearRarity, artificerStock, isArtificer, ARTIFICER_REGARD, type ArtificerLine, INSTALL_DC, SIZE_TIME, crystalModifier, crystalFor, crystalsUpTo, DROID_MOTOR_COST, DROID_BASE_SLOTS, droidPlan,
   readOutcome, blueprintRarity, readCredits, RARITY_ORDER, type Fitted,
   FAMILIES, MATERIALS, REFINE_UNITS, tierOfCr, makeRemains, haulOf, withCacheAsset, familiesForTool, familiesForEnhanced, ALL_FAMILIES, type MaterialFamily, crNumber, RARITY_TIERS, NODE_RESPAWN, HARVEST_MINUTES, harvestDc, harvestKit, kitAlias, notesAllowed, addNote, addRecording, languageBarrier, OWN_TONGUE_ONLY, translatorSlots, setLanguages, tracedCalls, callOverheard, RECORD_MINUTES, RECORD_LIMIT, type Note, type Recording, harvestYield, materialsOf, materialsWorth, spendMaterials, nodeAt, type ResourceNode,
   partsPlaceAt, partsStock, fitShipPart, wreckParts, droidPartsStock, droidDisplay, droidListed, surgeonStock, modStock, MOD_TRADES, WARES, baseNameOf, modFee, modFitProblem, MOD_FIT_HOURS, blueprintPool, type SurgeonLine, type ModLine,
@@ -3372,8 +3372,11 @@ export default function GameBoard() {
     const pay = contractPayout(c, c.captured ? 0.25 : 0);
     const xp = Math.round(c.reward / 5);
     const before = cState.done[c.giver] ?? 0;
-    writeContracts({ active: cState.active.filter((x) => x.id !== c.id), done: { ...cState.done, [c.giver]: before + 1 }, finished: [...cState.finished, c.id] }, { credits: (character.credits ?? 0) + pay, experience: (character.experience ?? 0) + xp });
-    toast.success(`${c.giverName} pays ${pay.toLocaleString()} credits${c.captured ? " (a quarter more: taken alive)" : ""} and ${xp} XP.${tierFor(before + 1) > tierFor(before) ? ` They trust you with ${TIER_NAME[tierFor(before + 1)].toLowerCase()} work now.` : ""}`);
+    // (2026-11-02) the higher tiers pay a rare item too, and a job done raises the giver's regard (a deed: CHANGE.helped)
+    const item = rewardItem(c, enhancedRows);
+    writeContracts({ active: cState.active.filter((x) => x.id !== c.id), done: { ...cState.done, [c.giver]: before + 1 }, finished: [...cState.finished, c.id] }, { credits: (character.credits ?? 0) + pay, experience: (character.experience ?? 0) + xp, ...(item ? { equipment: [...(character.equipment ?? []), item] } : {}) });
+    saveCampaign({ factionInfluence: reputation(world, standing, c.giver, CHANGE.helped).standing });
+    toast.success(`${c.giverName} pays ${pay.toLocaleString()} credits${item ? ` and ${item} (${c.rewardRarity?.toLowerCase()})` : ""}${c.captured ? " (a quarter more: taken alive)" : ""} and ${xp} XP.${tierFor(before + 1) > tierFor(before) ? ` They trust you with ${TIER_NAME[tierFor(before + 1)].toLowerCase()} work now.` : ""}`);
   };
   const dropContract = (c: Contract) => writeContracts({ active: cState.active.filter((x) => x.id !== c.id), finished: [...cState.finished, c.id] });
   // Asking round for the target of a bounty: a check against the tier's DC tells one more of where they are
@@ -3424,7 +3427,7 @@ export default function GameBoard() {
         })}
         {offers.map((offer) => (
           <div key={offer.id} className="mt-1 rounded border border-gray-600 p-1" data-testid="contract-offer">
-            <p><b>{KIND_LABEL[offer.kind]}</b>: {offer.title} <span className="text-amber-200">{offer.reward.toLocaleString()} cr</span></p>
+            <p><b>{KIND_LABEL[offer.kind]}</b>: {offer.title} <span className="text-amber-200">{offer.reward.toLocaleString()} cr</span>{offer.rewardRarity && <span className={`ml-1 ${RARITY_TONE[rarityRank(offer.rewardRarity)]}`} data-testid="contract-reward-item"> and a {offer.rewardRarity.toLowerCase()} item</span>}</p>
             <p className="text-gray-400">{offer.brief}</p>
             <Button size="sm" variant="outline" className="mt-1 h-6 px-2" disabled={inCombat || dead} onClick={() => takeContract(offer)} data-testid="contract-take">Take the job</Button>
           </div>
@@ -5944,6 +5947,7 @@ export default function GameBoard() {
                 <div className="flex items-center gap-1">
                   <button className="flex-1 text-left" onClick={() => setItemShown(itemShown === line.name ? null : line.name)}>
                     {line.name} <span className="text-gray-400">x{line.quantity}</span>
+                    {line.rarity && <span className={`ml-1 ${RARITY_TONE[rarityRank(line.rarity)]}`} data-testid="trade-rarity">{line.rarity.toLowerCase()}</span>}
                     {line.contraband && <span className="ml-1 text-red-300">contraband</span>}
                   </button>
                   <span className="text-amber-200">{line.price} cr</span>
@@ -7019,18 +7023,51 @@ export default function GameBoard() {
     saveCharacter({ credits: character.credits - line.price, equipment: [...(character.equipment ?? []), line.name] });
     toast.success(`${line.name} bought for ${money(line.price)}; fit it yourself with the right tools, or have a technician do it for a fee.`);
   };
+  // A master artificer fits a chassis the party carries (house rule, "Master artificers"): no check and no kit, eight hours, twice the fee of a
+  // modification of its rarity
+  const artificerChassis = (trader: Occupant, item: string, chassisName: string) => {
+    const c = factsOfItem(chassisName);
+    const fit = fitOf(item);
+    if (!c?.chassis || inCombat || dead) return;
+    const fee = 2 * modFee(c.rarity);
+    if ((character.credits ?? 0) < fee) return speed(`That comes to ${money(fee)}.`);
+    const spent = consume(chassisName);
+    recordDeal(trader.id, (e) => e);
+    writeFit(item, { ...fit, rarity: c.rarity }, { credits: (character.credits ?? 0) - fee, equipment: spent.equipment, playState: { ...play, charges: spent.charges } });
+    saveCampaign(pass(8 * 60));
+    toast.success(`${trader.name} works ${chassisName} into ${item} (${money(fee)}, eight hours): a ${c.rarity.toLowerCase()} chassis now, ${MOD_BASE_SLOTS} slots${augmentSlots(c.rarity) ? ` and ${augmentSlots(c.rarity)} augment` : ""}.`);
+  };
   const modsPanel = (trader: Occupant, placeId: string) => {
     if (!world) return null;
-    const lines = modStock(world, trader, placeId, today, enhancedRows, traderLedger(trader.id).bought);
+    const master = isArtificer(world, trader, placeId);
+    const regard = regardOf(standing, trader.id);
+    const lines: ArtificerLine[] = master ? artificerStock(world, trader, placeId, today, enhancedRows, regard, traderLedger(trader.id).bought) : modStock(world, trader, placeId, today, enhancedRows, traderLedger(trader.id).bought);
     const carriedMods = Array.from(new Set<string>((character.equipment ?? []) as string[])).filter((n) => !!factsOfItem(n)?.modKind);
+    // (what an artificer can work into the party's items: a chassis carried, one step above the item's rarity, of its kind)
+    const carried = Array.from(new Set<string>((character.equipment ?? []) as string[]));
+    const chassisWork = master ? carried.flatMap((n) => {
+      const c = factsOfItem(n);
+      if (!c?.chassis) return [];
+      return carried.filter((item) => {
+        const base = factsOf(item);
+        const kind = base ? modKindOf({ name: item, equipmentCategory: base.equipmentCategory, weaponClassification: (base as any).weaponClassification }) : undefined;
+        return kind === c.chassis && rarityRank(c.rarity) === rarityRank(fitOf(item).rarity) + 1;
+      }).slice(0, 2).map((item) => ({ chassis: n, item, fee: 2 * modFee(c.rarity), needs: (ARTIFICER_REGARD[c.rarity.toLowerCase()] ?? 0) > regard ? ARTIFICER_REGARD[c.rarity.toLowerCase()] : undefined }));
+    }) : [];
     if (!lines.length) return null;
     return (
       <div className="space-y-0.5" data-testid="mod-shop">
-        <p className="font-semibold text-gray-300">{trader.trade === "salvage" ? "Used modifications" : "Modifications for sale"}</p>
+        <p className="font-semibold text-gray-300">{master ? `Master artificer: ${trader.name}'s rare work` : trader.trade === "salvage" ? "Used modifications" : "Modifications for sale"}</p>
+        {master && <p className="text-gray-400" data-testid="artificer-note">House rule: one city in four has a master artificer. Prototype work for anyone; advanced once {genderOf(trader) === "female" ? "she thinks" : genderOf(trader) === "male" ? "he thinks" : "they think"} of you as friendly (regard 40), legendary once devoted (80). You stand at {levelName(regardLevel(regard))} ({regard}): trade and jobs done for {genderOf(trader) === "female" ? "her" : genderOf(trader) === "male" ? "him" : "them"} raise it.</p>}
         <ul className="max-h-40 space-y-0.5 overflow-y-auto">
-          {lines.map((l) => (
+          {lines.map((l) => l.needs ? (
+            <li key={l.name} className="flex flex-wrap items-center gap-1 text-gray-500" data-testid="mod-line-locked">
+              <span className="flex-1">{l.name} <span className={RARITY_TONE[rarityRank(l.rarity)]}>{l.kind}, {l.rarity.toLowerCase()}</span></span>
+              <span>when {levelName(regardLevel(l.needs))} to you</span>
+            </li>
+          ) : (
             <li key={l.name} className="flex flex-wrap items-center gap-1" data-testid="mod-line">
-              <span className="flex-1">{l.name} <span className="text-gray-400">{l.kind}, {l.rarity.toLowerCase()}</span></span>
+              <span className="flex-1">{l.name} <span className={master ? RARITY_TONE[rarityRank(l.rarity)] : "text-gray-400"}>{l.kind}, {l.rarity.toLowerCase()}</span></span>
               <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || l.price > (character.credits ?? 0)} onClick={() => buyMod(trader, l)} data-testid="mod-buy">Buy {l.price.toLocaleString("en-GB")} cr</Button>
               {itemsFor(l.name).map((item) => (
                 <Button key={item} size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || l.price + modFee(l.rarity) > (character.credits ?? 0)} onClick={() => buyMod(trader, l, item)} data-testid="mod-buy-fit">and fit in {item} (+{modFee(l.rarity)} cr)</Button>
@@ -7038,6 +7075,12 @@ export default function GameBoard() {
             </li>
           ))}
         </ul>
+        {chassisWork.map((w) => (
+          <div key={`${w.chassis}-${w.item}`} className="flex items-center gap-1 pl-2" data-testid="artificer-chassis">
+            <span className="flex-1 text-gray-300">{w.chassis} into {w.item}</span>
+            {w.needs ? <span className="text-gray-500">when {levelName(regardLevel(w.needs))} to you</span> : <Button size="sm" variant="outline" className="h-5 px-2" disabled={inCombat || dead || w.fee > (character.credits ?? 0)} onClick={() => artificerChassis(trader, w.item, w.chassis)} data-testid="artificer-chassis-fit">Work it in ({w.fee} cr, 8 hours)</Button>}
+          </div>
+        ))}
         {carriedMods.length > 0 && <p className="font-semibold text-gray-300">Have the technician fit what you carry</p>}
         {carriedMods.map((mod) => itemsFor(mod, 2).map((item) => (
           <div key={`${mod}-${item}`} className="flex items-center gap-1 pl-2" data-testid="mod-fit-line">
@@ -7327,7 +7370,7 @@ export default function GameBoard() {
       {o.trade === "salvage" && droidPartsPanel(o, holderId)}
       {scriptPanel(o, holderId)}
       {o.role === "medic" && augmentPanel(o, holderId)}
-      {(o.trade ? !!MOD_TRADES[o.trade] || !!WARES[o.trade]?.black : ["mechanic", "fence", "smuggler"].includes(o.role)) && modsPanel(o, holderId)}
+      {((o.trade ? !!MOD_TRADES[o.trade] || !!WARES[o.trade]?.black : ["mechanic", "fence", "smuggler"].includes(o.role)) || (!!world && isArtificer(world, o, holderId))) && modsPanel(o, holderId)}
       {(o.role === "ticket agent" || (o.role === "smuggler" && o.disposition !== "hostile")) && passagePanel(o)}
       {canHire(o) && hireSection(o, here?.id ?? holderId)}
       {!isDroid(o) && o.species && o.role !== "guard" && o.role !== "freed" && gamblePanel(o.id, o.name, o.role === "gambler" ? 4 : 2)}
@@ -9203,6 +9246,10 @@ export default function GameBoard() {
                                 <span>
                                   {name}
                                   {count > 1 ? ` ×${count}` : ""}
+                                  {(() => {
+                                    const rarity = fitted?.rarity ?? enhanced?.rarity ?? (plain ? gearRarity(plain as any) : undefined);
+                                    return rarity ? <span className={`ml-1 text-xs ${RARITY_TONE[rarityRank(rarity)]}`} data-testid="item-rarity">{String(rarity).toLowerCase()}</span> : null;
+                                  })()}
                                   {left !== undefined && <span className="ml-1 text-xs text-gray-400">{left} uses left</span>}
                                   {hiddenNow[name] ? <span className="ml-1 text-xs text-amber-300">{hiddenNow[name]} hidden</span> : null}
                                   {kind !== "gear" && <span className="ml-1 text-xs text-gray-400">{kind === "weapon" ? "weapon" : kind === "shield" ? "shield" : "armor"}{on ? ", " + (kind === "weapon" ? "in hand" : "worn") : ""}</span>}
@@ -9373,6 +9420,8 @@ const DOWNTIME_GROUPS: [string, string[]][] = [
   ["Flying games", ["taxi-run", "delivery-run", "dogfight"]],
   ["Everyday downtime", ["carousing", "buying-enhanced-items", "selling-enhanced-items", "crafting", "gambling", "research", "training", "work"]],
 ];
+// The colour a rarity is named in (standard to artifact)
+const RARITY_TONE = ["text-gray-400", "text-green-300", "text-sky-300", "text-violet-300", "text-amber-300", "text-rose-300"];
 // The pit arena (house rules): a gladiatorial run of bouts on the combat engine; the book's Pit Fighting roll is not used
 const ARENA = [{ id: "pit-arena", name: "Pit arena", intro: "Fight creatures of the rules in the pit, bout after bout: each win makes the next opponent harder and pays more, with an enhanced item of the bout's level. Quit after any bout." }];
 // The flying games (house rules, shared/logic "Flying"): flown on the 3D map for a day. A run takes rings,

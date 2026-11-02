@@ -14,7 +14,7 @@
 // the hideout has no one left of the job), and the giver pays on the report (`payout`). Pure: the monsters and equipment of the rules
 // data come in as parameters; nothing here reads a clock or a random of its own.
 // ---------------------------------------------------------------------------------------------
-import { childrenOf, crValue, formOf, statBlockOccupant, trailOf, createRandom, type Area, type LootCache, type Occupant, type World } from "./index";
+import { artificerIn, childrenOf, crValue, formOf, statBlockOccupant, trailOf, createRandom, type Area, type LootCache, type Occupant, type World } from "./index";
 import type { Sw5eMonster, Sw5eEquipment } from "../data";
 
 export type ContractKind = "bounty" | "burglary" | "espionage" | "assault";
@@ -23,6 +23,16 @@ export const TIERS: Tier[] = [0, 1, 2, 3];
 export const KIND_LABEL: Record<ContractKind, string> = { bounty: "Bounty", burglary: "Burglary", espionage: "Espionage", assault: "Mercenary work" };
 export const TIER_NAME = ["Local", "Regional", "Far", "Notorious"] as const;
 // What each tier pays (credits) by kind, and the share of the tier's reward that rides on what is brought back alive
+// The rarest things are earned (2026-11-02; the user: "the most rare items should be available through mission rewards"). HOUSE RULE: a
+// regional job pays a prototype item as well, a far one an advanced, a notorious one a legendary (shops sell premium, prototype at best)
+export const REWARD_RARITY: (string | undefined)[] = [undefined, "Prototype", "Advanced", "Legendary"];
+export const REWARD_TYPES = ["Weapon", "Armor", "Shield", "ItemModification", "CyberneticAugmentation", "Focus", "AdventuringGear"];
+// The item a finished job pays: one of the rarity's weapons, armour, shields, modifications, augmentations, foci and gear, by the job's id
+export function rewardItem(offer: Pick<Offer, "id" | "rewardRarity">, rows: { name: string; type: string; searchableRarity: string }[]): string | undefined {
+  if (!offer.rewardRarity) return undefined;
+  const pool = rows.filter((x) => x.searchableRarity === offer.rewardRarity && REWARD_TYPES.includes(x.type)).sort((a, b) => a.name.localeCompare(b.name));
+  return pool.length ? pool[hashOf(`${offer.id}|reward`) % pool.length].name : undefined;
+}
 export const REWARD: Record<ContractKind, [number, number, number, number]> = { bounty: [200, 600, 1800, 5000], burglary: [150, 400, 1000, 2400], espionage: [180, 500, 1300, 3000], assault: [300, 800, 2000, 4500] };
 
 // ---- The givers
@@ -66,7 +76,9 @@ export function giversIn(world: World, settlementId: string): Set<string> {
     }
   }
   able.sort((a, b) => a.key - b.key);
-  const picked: string[] = [];
+  // (a city's master artificer, where it has one, is always one of them: their jobs are how the party wins the regard their best work needs)
+  const artificer = artificerIn(world, settlementId);
+  const picked: string[] = artificer ? [artificer] : [];
   // a round over the sorts, the first of each by the hash, then the next round
   for (let round = 0; picked.length < cap && able.some((x) => !picked.includes(x.o.id)); round++) {
     for (let sort = 0; sort <= SORTS.length && picked.length < cap; sort++) {
@@ -80,10 +92,15 @@ export function giversIn(world: World, settlementId: string): Set<string> {
 }
 // Whether this person, where they are, gives work at all (one of the few of `giversIn`), and of what kinds
 export function workFrom(world: World, o: Occupant, areaId: string): ContractKind[] {
-  const building = trailOf(world, areaId).find((a) => a.kind === "building");
-  const kinds = kindsOf(o, building?.type ?? "");
+  const kinds = kindsHere(world, o, areaId);
   const settlement = settlementOf(world, areaId);
   return kinds.length && settlement && giversIn(world, settlement.id).has(o.id) ? kinds : [];
+}
+// What work a person could give where they are: a master artificer wants a rival's secrets (espionage), the rest by `kindsOf`
+function kindsHere(world: World, o: Occupant, areaId: string): ContractKind[] {
+  const settlement = settlementOf(world, areaId);
+  if (settlement && artificerIn(world, settlement.id) === o.id) return ["espionage"];
+  return kindsOf(o, trailOf(world, areaId).find((a) => a.kind === "building")?.type ?? "");
 }
 // The tier a giver's trust allows after `done` jobs done for them (an assault or a robbery goes no higher than the third)
 export const tierFor = (done: number): Tier => (done >= 6 ? 3 : done >= 3 ? 2 : done >= 1 ? 1 : 0);
@@ -100,6 +117,8 @@ export interface Offer {
   title: string;
   brief: string;
   reward: number;
+  // An enhanced item of this rarity paid on top (see `REWARD_RARITY`), from the second tier
+  rewardRarity?: string;
 }
 export interface Contract extends Offer {
   status: "active" | "ready" | "done" | "failed";
@@ -166,8 +185,7 @@ const KEPT = /^(garrison|guardhouse|command post|operations center|estates|manor
 const DENS = /^(hideout|warehouse|junkyard|tenements|scrap dealer|camp)$/;
 
 export function makeOffers(world: World, giver: Occupant, giverArea: string, done: number, day: number): Offer[] {
-  const building = trailOf(world, giverArea).find((a) => a.kind === "building");
-  const kinds = kindsOf(giver, building?.type ?? "");
+  const kinds = kindsHere(world, giver, giverArea);
   const unlocked = tierFor(done);
   const r = createRandom(hashOf(`${giver.id}|${day}`));
   const offers: Offer[] = [];
@@ -188,7 +206,7 @@ export function makeOffers(world: World, giver: Occupant, giverArea: string, don
           : kind === "espionage"
             ? [`${TIER_NAME[tier]} job: ${["a ledger copied", "a strongroom's data core", "the officers' files"][tier]}`, `There is a data core in ${["a clerk's office", "the garrison's strongroom", "the governor's vault"][tier]}: slice it or break it open and bring the core back.`]
             : [`${TIER_NAME[tier]} contract: clear a den`, `${["A few thugs", "A gang", "A gang and their boss"][tier]} are holed up in ${["a warehouse", "a hideout", "a fortified hideout"][tier]} in town. Clear it out, every last one.`];
-      offers.push({ id, kind, tier, giver: giver.id, giverName: giver.name, at: settlementOf(world, giverArea)?.id ?? giverArea, title: `${title} (${t})`.replace(/ \(local\)$| \(regional\)$| \(far\)$| \(notorious\)$/, ""), brief, reward });
+      offers.push({ id, kind, tier, giver: giver.id, giverName: giver.name, at: settlementOf(world, giverArea)?.id ?? giverArea, title: `${title} (${t})`.replace(/ \(local\)$| \(regional\)$| \(far\)$| \(notorious\)$/, ""), brief, reward, ...(REWARD_RARITY[tier] ? { rewardRarity: REWARD_RARITY[tier] } : {}) });
     }
   }
   return offers;
