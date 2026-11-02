@@ -3692,6 +3692,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     moving: () => !!walk.current,
     airborne: () => ["jump", "fly", "reel"].includes(air.current.mode),
     swimAt: () => (swimNow() && !afloatRef.current ? heightNow() : null),
+    // (a portable teleporter in a fight: the party steps out on that square)
+    place: (x, y) => {
+      if (!open(x, y)) return false;
+      walk.current = null;
+      feet.current = { x, y };
+      spot.stand(hereId, x, y);
+      return true;
+    },
     shot: (fresh = false) => {
       const c = shotCache.current;
       const t = performance.now();

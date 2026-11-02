@@ -68,6 +68,9 @@ export interface NemesisRecord {
   known?: boolean;
   // A spared enemy who owes the party: an informant
   informant?: boolean;
+  // What they carry when they come back, learned from how the party fought them (house rule, 2026-11-02: see `learnKit`): item names as the
+  // equipment data has them, used by them in a fight (the shooter's FoeKit)
+  kit?: string[];
 }
 export interface NewsItem {
   at: number;
@@ -96,7 +99,7 @@ export interface NemesisState {
   nextId: number;
 }
 export interface NemesisEvent {
-  kind: "rises" | "returns" | "rank" | "scarred" | "cheated-death" | "dead" | "mercy" | "seat" | "fled" | "hunts";
+  kind: "rises" | "returns" | "rank" | "learns" | "scarred" | "cheated-death" | "dead" | "mercy" | "seat" | "fled" | "hunts";
   id?: string;
   text: string;
 }
@@ -358,6 +361,8 @@ export interface FightReport {
   faction?: string;
   // Names a new nemesis as a person of this species with a family (GameBoard gives it the world's families; see personIn in shared/logic)
   person?: (species: string, id: string) => { name: string; gender: Gender; family: string };
+  // The items the party used in the fight (by name), for a survivor to learn from
+  partyUsed?: string[];
 }
 // A person (not a beast, a horror or a droid) can hold a grudge
 export const isPerson = (o: Pick<Occupant, "role" | "creature">) => !["wildlife", "horror"].includes(o.role) && (o.creature ?? "humanoid").toLowerCase() !== "droid" && (o.creature ?? "humanoid").toLowerCase() !== "beast";
@@ -471,6 +476,8 @@ export function settleFight(state: NemesisState, report: FightReport): { state: 
       }
     }
     retitle(rec);
+    const learned = learnKit(rec, foe, report, down);
+    if (learned.length) events.push({ kind: "learns", id: rec.id, text: `${nameOf(rec)} will come back carrying ${learned.map((n) => n.toLowerCase()).join(" and ")}.` });
   }
   // The party has grown more feared for the fallen
   s.notoriety = clamp(s.notoriety + kills * BALANCE.notorietyPerKill, 0, 100);
@@ -488,6 +495,28 @@ export function settleFight(state: NemesisState, report: FightReport): { state: 
   }
   prune(s);
   return { state: s, events };
+}
+
+// A survivor learns from how the party fought (house rule): burned, they bring a fire extinguisher; poisoned or burned with acid, an
+// antitoxkit; blown up, the same kind of explosive the party used on them; beaten down or made to run, a medpac. At most KIT_MAX things.
+// Returns what was newly learned.
+const KIT_MAX = 6;
+export function learnKit(rec: NemesisRecord, foe: FightFoe, report: Pick<FightReport, "partyUsed">, down: boolean): string[] {
+  const kit = [...(rec.kit ?? [])];
+  const add: string[] = [];
+  const struck = foe.struck ?? {};
+  const worst = dominantType(struck);
+  const want = (name: string, many = 1) => {
+    if (kit.filter((n) => n === name).length + add.filter((n) => n === name).length < many) add.push(name);
+  };
+  if ((struck.fire ?? 0) > 0 && worst === "fire") want("Fire extinguisher");
+  if (((struck.poison ?? 0) > 0 && worst === "poison") || (struck.acid ?? 0) > 0) want("Antitoxkit");
+  const boom = (report.partyUsed ?? []).find((n) => /^(grenade|mine|charge),|thermal detonator/i.test(n));
+  if (boom && totalOf(struck) > 0) want(/^mine|^charge/i.test(boom) ? boom.replace(/^(mine|charge)/i, "Grenade") : boom);
+  if (down || foe.fled) want("Medpac", 2);
+  const next = [...kit, ...add].slice(-KIT_MAX);
+  if (add.length) rec.kit = next;
+  return add.filter((n) => next.includes(n));
 }
 
 function prune(s: NemesisState) {

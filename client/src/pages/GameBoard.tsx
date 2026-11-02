@@ -10,7 +10,7 @@ import { PersonSheet, TalkPanel } from "@/components/Play/TalkPanel";
 import { CommsPanel, type CommsContact, type CommsMate } from "@/components/Play/CommsPanel";
 import { COMMS_ISSUE, canCall, commsOf, needsComms } from "@shared/logic/comms";
 import { NemesisPanel } from "@/components/Play/NemesisPanel";
-import { beginHunt, emptyNemeses, huntParty, pickHunter, resolveMercy, settleFight, tickNemeses, type FightFoe, type MercyChoice, type NemesisEvent } from "@shared/logic/nemesis";
+import { beginHunt, emptyNemeses, huntParty, pickHunter, resolveMercy, settleFight, tickNemeses, type FightFoe, type MercyChoice, type NemesisEvent, type NemesisRecord } from "@shared/logic/nemesis";
 import { Loader2 } from "lucide-react";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
@@ -21,7 +21,7 @@ import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whe
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
 import { useShoot } from "@/components/Map/interiors/shoot";
-import { avgDice, blankUnit, bladeOf, grenadeOf, gunOf, modeOf, passiveD20, passiveDamage, type PlayMode, type Unit } from "@shared/logic/shooter";
+import { avgDice, blankUnit, bladeOf, blastOf, gunOf, modeOf, passiveD20, passiveDamage, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Unit } from "@shared/logic/shooter";
 import { SabaccTable, BUY_IN_CHIPS, type TableOpponent } from "@/components/Games/SabaccTable";
 import { PazaakGame } from "@/components/Games/PazaakGame";
 import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, rewardItem, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, needsGear, GEAR_WARNING, type Contract, type Offer } from "@shared/logic/contracts";
@@ -364,36 +364,59 @@ export default function GameBoard() {
     const spot = (c: any) => ({ x: c.x === undefined ? NaN : c.x + origin.x + 0.5, y: c.y === undefined ? NaN : c.y + origin.y + 0.5 });
     const asUnit = (c: any): Unit => {
       const ranged = !!c.rangedAttacker;
-      const dmg = Math.max(1, avgDice(c.damageDice ?? "1d4"));
       const text = `${c.name} ${c.role ?? ""}`;
+      // The stat block's own attack of that kind: its damage type, what the hit adds (extra dice, a save's damage), and the conditions it brings
+      const own = (c.profile?.attacks ?? []).find((x: any) => !!x.ranged === ranged);
+      const dmg = Math.max(1, avgDice(c.damageDice ?? "1d4") + avgDice(own?.extra?.dice) + avgDice(own?.save?.damage));
+      const rider = own?.save?.conditions?.length ? blastOf(own.name, { radius: 0, damage: [], conditions: own.save.conditions, rounds: own.save.rounds }) : undefined;
+      const organic = !/droid|construct/i.test(c.creature ?? "");
+      const nem = String(c.id).startsWith("nem-") ? (latestWorld() ?? world)?.nemeses?.records[String(c.id)] : undefined;
       return blankUnit({
         id: String(c.id), name: c.name, side: c.ally ? "ally" : "foe", ...spot(c), hp: c.hp, maxHp: c.maxHp, ac: c.armorClass ?? 10,
         speed: clamp(((c.speed ?? 30) / 30) * 4, 1.5, 6.5), bonus: c.attackBonus ?? 2, volley: clamp(c.profile?.multiattack?.length ?? 1, 1, 3), reach: Math.max(1, (c.reach ?? 5) / 5),
         leader: c.leader, gang: c.gang,
         // stands its ground: a leader, a nemesis, a soldier or hunter or the like; the rest run at a fifth of their hit points
-        brave: !!c.leader || String(c.id).startsWith("nem-") || /soldier|trooper|guard|officer|hunter|mercenary|assassin|jedi|sith|inquisitor|knight|captain|marauder|droid|beast|wildlife/i.test(text),
-        gun: ranged ? { name: "Blaster", damage: dmg, type: "energy", interval: 1, auto: false, range: (c.range?.[0] ?? 80) / 5, long: (c.range?.[1] ?? 320) / 5, mag: 99, left: 99, reserve: 0, spent: 0, reload: 1 } : undefined,
-        blade: ranged ? undefined : { name: c.name, damage: dmg, type: "kinetic", saber: /lightsaber|sith|jedi|inquisitor|dark side/i.test(text) },
+        brave: !!c.leader || !!nem || /soldier|trooper|guard|officer|hunter|mercenary|assassin|jedi|sith|inquisitor|knight|captain|marauder|droid|beast|wildlife/i.test(text),
+        gun: ranged ? { name: "Blaster", damage: dmg, type: (own?.damageType ?? "energy").toLowerCase(), interval: 1, auto: false, range: (c.range?.[0] ?? 80) / 5, long: (c.range?.[1] ?? 320) / 5, mag: 99, left: 99, reserve: 0, spent: 0, reload: 1 } : undefined,
+        blade: ranged ? undefined : { name: c.name, damage: dmg, type: (own?.damageType ?? "kinetic").toLowerCase(), saber: /lightsaber|sith|jedi|inquisitor|dark side/i.test(text) },
+        // What the rules add: resistances, vulnerabilities, immunities and condition immunities, regeneration, and what it carries
+        resist: c.resist ?? c.profile?.resistances, vulnerable: c.vulnerable ?? c.profile?.vulnerabilities, immune: c.immune ?? c.profile?.immunities,
+        condImmune: c.conditionImmune ?? c.profile?.conditionImmunities, regen: c.profile?.traits?.find((t: any) => t.kind === "regeneration")?.amount,
+        droid: !organic, small: !/large|huge|gargantuan/i.test(c.size ?? ""), ...(rider ? { rider } : {}),
+        kit: c.ally ? undefined : foeKit(c, nem), caller: !c.ally && callsForHelp(c),
       });
     };
-    const unarmed = kit.unarmed ? { meleeWeapon: kit.unarmed.name, meleeDice: kit.unarmed.dice, meleeDamage: kit.unarmed.damage, meleeType: kit.unarmed.type } : {};
+    const unarmed = kit.unarmed ? { meleeWeapon: kit.unarmed.name, meleeDice: kit.unarmed.dice, meleeDamage: kit.unarmed.damage, meleeType: kit.unarmed.type, meleeExtra: kit.unarmed.extra } : {};
+    const belt = fightGear();
+    const gun = gunOf(kit);
+    if (gun) {
+      // A launcher fires the grenades carried; a round that bursts (a rocket, a missile) bursts where its bolt stops; a bipod or tripod steadies a two-handed gun
+      if (/grenade launcher/i.test(gun.name)) Object.assign(gun, { launcher: true, mag: 1, left: 1, reserve: 99, cells: false, reload: 1.6 });
+      const rider = kit.ammo?.riders?.[kit.ammo.round ?? ""];
+      if (rider?.burst) gun.burst = blastOf(kit.ammo!.round!, { radius: rider.burst.radius, damage: [{ dice: rider.burst.dice, type: rider.burst.type }], conditions: rider.condition ? [rider.condition] : [], rounds: rider.rounds });
+      else if (rider?.fire) gun.burst = blastOf(kit.ammo!.round!, { radius: rider.fire.radius, damage: [{ dice: rider.fire.dice, type: "fire" }], lingers: true, fireDice: rider.fire.dice });
+      gun.brace = !!kit.bipod || !!kit.braced;
+    }
     const party: Unit = blankUnit({
       id: "me", name: me.name, side: "player", ...spot(me), hp: me.hp, maxHp: me.maxHp, ac: me.armorClass ?? 10, mode: "engage",
-      gun: gunOf(kit), blade: bladeOf(kit) ?? bladeOf(unarmed),
+      gun, blade: bladeOf({ ...kit, meleeExtra: me.meleeExtra }) ?? bladeOf(unarmed),
+      // The sheet's own: armour that takes damage off, a sealed suit's resistances and immunities, a barrier's temporary hit points, a dose of
+      // poison already on the blade, a substance's high
+      absorb: me.armorProps?.absorb || kit.armorProps?.absorb || undefined, resist: me.resist ?? kit.resist, vulnerable: me.vulnerable ?? kit.vulnerable, condImmune: me.conditionImmune ?? kit.conditionImmune, temp: me.tempHp ?? kit.tempHp ?? 0,
+      ...(kit.boons?.poison ? { venom: avgDice(kit.boons.poison.dice) } : {}),
+      ...(kit.high && !kit.high.low ? { high: { t: 60, temp: avgDice(kit.high.temp), every: 0 } } : {}),
     });
     const others = useCombat.getState().combatants.filter((c) => !c.isPlayer && c.hp > 0);
-    const counts = new Map<string, number>();
-    for (const n of (character?.equipment ?? []) as string[]) if (/grenade/i.test(n)) counts.set(n, (counts.get(n) ?? 0) + 1);
-    const grenades = [...counts]
-      .map(([name, count]) => ({ kind: grenadeOf({ name, description: factsOf(name)?.description }), count }))
-      .filter((g): g is { kind: NonNullable<typeof g.kind>; count: number } => !!g.kind)
-      .sort((a, b) => Number(b.kind.damage > 0) - Number(a.kind.damage > 0));
+    // Help a foe with a comlink can call (house rule: SHOOT.backup): up to two more of the weakest of them, waiting off the map
+    const callers = others.filter((c) => !c.ally && callsForHelp(c));
+    const weakest = [...others].filter((c) => !c.ally && !c.leader && !String(c.id).startsWith("nem-")).sort((a, b) => a.maxHp - b.maxHp)[0];
+    const backup: Unit[] = callers.length && weakest && !pitBout.current ? Array.from({ length: Math.min(2, 1 + Math.floor(others.length / 3)) }, (_, i) => ({ ...asUnit({ ...weakest, hp: weakest.maxHp, leader: false }), id: `backup-${i}`, name: `${weakest.name} (backup)`, reserve: true, caller: false })) : [];
     shooterAt.current = hereId;
     useCombat.getState().beginRealtime();
     useShoot.getState().begin({
-      units: [party, ...others.map(asUnit)],
-      meta: Object.fromEntries(others.map((c) => [String(c.id), { role: c.role, species: c.species, creature: c.creature, size: c.size }])),
-      seed: Math.floor(Math.random() * 1e9), surprise, grenades,
+      units: [party, ...others.map(asUnit), ...backup],
+      meta: Object.fromEntries([...others.map((c) => [String(c.id), { role: c.role, species: c.species, creature: c.creature, size: c.size }]), ...backup.map((u) => [u.id, { role: weakest!.role, species: weakest!.species, creature: weakest!.creature, size: weakest!.size }])]),
+      seed: Math.floor(Math.random() * 1e9), surprise, gear: belt,
       // The powers the character knows that a real-time fight can play (keys 1 to 4), read from their texts, and the points to cast them with
       powers: realtimePowers([...(character?.forcePowers ?? []), ...(character?.techPowers ?? [])], Number(character?.level) || 1, character?.abilityScores),
       points: me.powerPoints ?? character?.currentForcePoints ?? 0,
@@ -2545,23 +2568,36 @@ export default function GameBoard() {
       const me = fighters.combatants.find((c) => c.isPlayer);
       settleAmmo(me?.ammo ? { weapon: me.ammo.weapon, left: me.ammo.left, round: me.ammo.round, spent: me.spentAmmo ?? {} } : fighters.ammoAfter);
     }
-    // Grenades thrown in a shooter fight are used up
+    // What the item belt used in a shooter fight is gone from the pack: one of an item, or one use of a kit (a traumakit's five, an
+    // extinguisher's); a substance taken runs its high and low as on the tabletop; an antidote guards for the hour
+    const shotUsed = useShoot.getState().last?.used ?? {};
     {
-      const used = useShoot.getState().last?.used;
       useShoot.setState({ last: null });
-      if (used && Object.keys(used).length) {
+      if (Object.keys(shotUsed).length) {
         setTimeout(() => {
           const current = queryClient.getQueryData<any>(["game-character", gameCharacterId]);
           if (!current) return;
           const equipment = [...((current.equipment ?? []) as string[])];
-          for (const [name, n] of Object.entries(used)) for (let i = 0; i < n; i++) {
+          const charges: Record<string, number> = { ...(current.playState?.charges ?? {}) };
+          let state: PlayState = { ...(current.playState ?? {}), charges };
+          let changes: Record<string, any> = {};
+          for (const [name, n] of Object.entries(shotUsed)) for (let i = 0; i < n; i++) {
+            const use = gearOf(name);
+            const uses = use && "uses" in use ? use.uses : undefined;
+            if (uses && uses > 1 && (charges[name] ?? 0) + 1 < uses) { charges[name] = (charges[name] ?? 0) + 1; continue; }
+            if (uses && uses > 1) charges[name] = 0;
             const at = equipment.indexOf(name);
             if (at >= 0) equipment.splice(at, 1);
             // (and from what the pit's winnings are added to, so the next bout's banking does not give them back)
             const was = pitBase.current.equipment.indexOf(name);
             if (was >= 0) pitBase.current.equipment.splice(was, 1);
+            if (use?.kind === "substance") {
+              const taken = takeSubstance(name, use, state);
+              state = taken.state;
+              changes = { ...changes, ...taken.changes };
+            } else if (use?.kind === "antidote") state = { ...state, protectedUntil: clockNow() + 60 };
           }
-          saveCharacter({ equipment });
+          saveCharacter({ ...changes, equipment, playState: state });
         }, 2600);
       }
     }
@@ -2702,6 +2738,8 @@ export default function GameBoard() {
             foes, now: clockNow(), settlementId: districtHere?.settlementId, areaId: areaId ?? undefined, downedBy: me?.lastHitBy,
             faction: factionAt(current, areaId ?? hereId ?? "") ?? current.antagonist,
             person: (species, rid) => personIn(families, createRandom(current.seed + hashString(rid + species)), species, rid),
+            // (what the party used on them, for a survivor to come back ready for: the shooter's belt, the tabletop's explosives)
+            partyUsed: [...Object.keys(shotUsed), ...fightNow.combatLog.flatMap((l) => (l.match(/(Grenade, \w+|Thermal detonator|Mine, \w+|Charge, \w+)/) ?? []).slice(1))],
           });
           if (settled.state !== current.nemeses) saveCampaign({ galaxyMap: { ...(latestWorld() ?? current), nemeses: settled.state, families } });
           sayNemesis(settled.events);
@@ -5071,6 +5109,111 @@ export default function GameBoard() {
     }
     return out;
   })();
+
+  // What the character can use in a real-time fight (the shooter's item belt, shared/logic/shooter.ts GearAct; 2026-11-02, the user: every item
+  // its use there too), read from each item's rules as `combatItems` reads them for the tabletop: dice at their average, a kit's uses left
+  const fightGear = (): FightGear[] => {
+    if (!character) return [];
+    const carried = (character.equipment ?? []) as string[];
+    const stock = (name: string, uses?: number) => {
+      const n = carried.filter((x) => x === name).length;
+      return uses && uses > 1 ? (n - 1) * uses + Math.max(0, uses - (play.charges?.[name] ?? 0)) : n;
+    };
+    const accessoryFor = (n: string) => accessoryOf({ name: n, description: factsOf(n)?.description });
+    const detonator = carried.map(accessoryFor).find((a) => a.detonator)?.detonator;
+    const con = modifier(character.abilityScores?.constitution);
+    const out: FightGear[] = [];
+    for (const name of Array.from(new Set(carried))) {
+      const use = gearOf(name);
+      const timed = itemFacts?.[name.toLowerCase()]?.timed;
+      const add = (act: FightGear["act"], count = stock(name, use && "uses" in use ? use.uses : undefined)) => { if (count > 0) out.push({ name, count, act }); };
+      if (timed) {
+        if (timed.kind === "collimator") add({ act: "edge", damage: timed.effects.damage ?? 1, saber: /light/i.test(timed.weapon ?? "") });
+        else add({ act: "boost", temp: timed.effects.tempHp ?? 0, ac: timed.effects.ac ?? 0, damage: timed.effects.damage ?? 0 });
+        continue;
+      }
+      const acc = accessoryFor(name);
+      if (acc.detonator) add({ act: "detonate", range: acc.detonator.range / 5, pairs: acc.detonator.mines }, 1);
+      if (acc.launcher) {
+        // A rocketpack's own launcher fires the rockets carried
+        for (const r of Array.from(new Set(carried)).filter((n) => /^rocket,/i.test(n))) {
+          const ru = gearOf(r);
+          const rider = ru?.kind === "ammo" ? ru.rider : undefined;
+          if (!rider?.burst && !rider?.fire) continue;
+          const blast = rider.burst ? blastOf(r, { radius: rider.burst.radius, damage: [{ dice: rider.burst.dice, type: rider.burst.type }], conditions: rider.condition ? [rider.condition] : [], rounds: rider.rounds }) : blastOf(r, { radius: rider.fire!.radius, damage: [{ dice: rider.fire!.dice, type: "fire" }], lingers: true, fireDice: rider.fire!.dice });
+          out.push({ name: `${name}: ${r}`, count: stock(r), act: { act: "rocket", blast, damage: avgDice(rider.base?.dice ?? "2d6") } });
+        }
+      }
+      if (!use) continue;
+      if (use.kind === "heal") add({ act: "heal", amount: Math.max(1, Math.round((use.dice ?? 1) * (hitDie + 1) / 2 + con)) });
+      else if (use.kind === "repair") add({ act: "heal", amount: Math.max(1, Math.round((use.dice ?? 1) * (hitDieOfSize("Medium") + 1) / 2)), droid: true });
+      else if (use.kind === "stabilize") add({ act: "revive", droid: use.target === "droid" });
+      else if (use.kind === "antidote") add({ act: "cure" });
+      else if (use.kind === "substance") add({ act: "stim", temp: Math.round(avgDice(use.temp)), seconds: 60 });
+      else if (use.kind === "poison") add({ act: "coat", damage: avgDice(use.dice) });
+      else if (use.kind === "explosive") {
+        const blast = blastOf(name, { ...use, rounds: EXPLOSIVE_CONDITION_ROUNDS, fireDice: use.lingers ? use.damage[0]?.dice : undefined });
+        if (use.form === "grenade" || use.form === "detonator") add({ act: "throw", blast });
+        else add({ act: "set", blast, mine: use.form === "mine", ...(detonator ? { pairs: detonator.mines } : {}) });
+      } else if (use.kind === "teleport") add({ act: "blink", range: use.feet / 5 });
+      else if (use.kind === "extinguisher") add({ act: "spray", range: use.cone / 5, blind: 6 });
+      else if (use.kind === "calibrator") add({ act: "edge", damage: use.damage + avgDice(use.dice), saber: use.weapon === "lightweapon" });
+      else if (use.kind === "binders") add({ act: "bind", droid: false });
+      else if (use.kind === "bolt") add({ act: "bind", droid: true });
+      else if (use.kind === "jammer") add({ act: "jam" }, 1);
+    }
+    // (what does most first: explosives, then healing)
+    const rank: Record<string, number> = { throw: 0, rocket: 1, heal: 2, set: 3, detonate: 4, revive: 5 };
+    return out.sort((a, b) => (rank[a.act.act] ?? 9) - (rank[b.act.act] ?? 9));
+  };
+  // What a foe carries into a real-time fight (house rule, 2026-11-02; shooter.ts FoeKit): the area actions of its stat block (a sphere or cube
+  // thrown, a cone or line sprayed, one round itself), and for people of a soldierly sort now and then a fragmentation grenade and a medpac
+  // (drawn from who they are, so the same foe carries the same); a nemesis what it learned to carry against the party (nemesis.ts learnKit)
+  const foeKit = (c: any, nem?: NemesisRecord): FoeKit | undefined => {
+    const roll = (tag: string) => (hashString(`${c.id}|${c.name}|${tag}`) % 1000) / 1000;
+    const blasts: FoeBlast[] = [];
+    for (const s of (c.profile?.specials ?? []) as { name: string; shape?: string; size?: number; range?: number; recharge?: number; perFight?: number; damage?: string; damageType?: string; conditions?: string[]; rounds?: number }[]) {
+      if (!s.shape || (!s.damage && !s.conditions?.length)) continue;
+      const size = s.size ?? 10;
+      const sphere = s.shape === "sphere" || s.shape === "cube" || s.shape === "cylinder";
+      // (a sphere it can aim is thrown; one with no range is round the creature itself)
+      const thrown = sphere && !!s.range;
+      const radius = s.shape === "cube" ? size / 2 : size;
+      const kind = blastOf(s.name, { radius: thrown ? radius : 5, damage: s.damage ? [{ dice: s.damage, type: s.damageType ?? "kinetic" }] : [], conditions: s.conditions, rounds: s.rounds });
+      blasts.push({
+        kind, thrown, ...(s.shape === "line" ? { line: true } : {}), ...(sphere && !thrown ? { around: true } : {}),
+        range: thrown ? (s.range ?? 30) / 5 : (sphere ? radius : size) / 5,
+        left: s.perFight ?? (s.recharge ? 99 : 1), every: s.recharge ? Math.min(30, 36 / Math.max(1, 7 - s.recharge)) : 12, cd: 2 + roll(s.name) * 4,
+      });
+    }
+    const throwable = (name: string) => {
+      const use = gearOf(name);
+      if (use?.kind !== "explosive" || (use.form !== "grenade" && use.form !== "detonator")) return;
+      const same = blasts.find((b) => b.kind.name === name);
+      if (same) return void same.left++;
+      blasts.push({ kind: blastOf(name, { ...use, rounds: EXPLOSIVE_CONDITION_ROUNDS, fireDice: use.lingers ? use.damage[0]?.dice : undefined }), thrown: true, range: 8, left: 1, every: 8, cd: 3 + roll(name) * 4 });
+    };
+    const who = `${c.name} ${c.role ?? ""}`;
+    const person = !/droid|construct|beast|wildlife|horror/i.test(`${c.creature ?? ""} ${c.role ?? ""}`);
+    const soldierly = person && /soldier|trooper|guard|officer|mercenary|hunter|captain|marauder|security|police|enforcer|bounty|thug|pirate|raider/i.test(who);
+    let medpacs = 0;
+    let antidote = false;
+    let extinguisher = false;
+    if (soldierly && c.rangedAttacker && roll("grenade") < 0.3) throwable("Grenade, fragmentation");
+    if (soldierly && (c.leader || roll("medpac") < 0.35)) medpacs++;
+    for (const n of nem?.kit ?? []) {
+      if (/medpac/i.test(n)) medpacs++;
+      else if (/antitox/i.test(n)) antidote = true;
+      else if (/extinguisher/i.test(n)) extinguisher = true;
+      else throwable(n);
+    }
+    if (nem && nem.rank >= 2) medpacs++;
+    if (!blasts.length && !medpacs && !antidote && !extinguisher) return undefined;
+    return { blasts, medpacs, heal: Math.round((hitDieOfSize(c.size) + 1) / 2 + 2), antidote, extinguisher };
+  };
+  // A foe with a comlink who calls for help when the fight goes on (house rule: shooter.ts SHOOT.backup): a leader, or one of the watch, a
+  // soldier or officer, a guard; not a beast
+  const callsForHelp = (c: any) => !/beast|wildlife|horror/i.test(`${c.creature ?? ""} ${c.role ?? ""}`) && (!!c.leader || /guard|soldier|trooper|officer|police|security|enforcer|captain|patrol|sentry/i.test(`${c.name} ${c.role ?? ""}`));
 
   // Toggle sidebar
   const toggleSidebar = () => {
@@ -8536,7 +8679,7 @@ export default function GameBoard() {
                   <div className="text-gray-300">First or third person, no dice and no turns. Aim and fire your blaster, throw grenades, take cover, swing and guard with a lightsaber, with the jumping, grappling hook and jetpack you already have. There is no top-down view.</div>
                 </button>
               </div>
-              <p className="text-xs text-gray-400">Shooter keys: mouse to look (click the view to capture it, Esc to release), left button fires, right button guards with a saber, G grenade, R reload, Q swap gun and blade, W A S D walk, Space jump, F hook, E use. On a phone: the buttons beside the stick. Road ambushes and the pit arena are still turn-based.</p>
+              <p className="text-xs text-gray-400">Shooter keys: mouse to look (click the view to capture it, Esc to release), left button fires, right button guards with a saber, G grenade, Z use the item shown on the belt (medpacs, kits, mines, charges, the detonator, a teleporter, an extinguisher, binders...), T show the next, R reload, Q swap gun and blade, C crouch (braced on a bipod or tripod), 1 to 4 powers, W A S D walk, Space jump, F hook, E use. On a phone: the buttons beside the stick. Foes use their gear too: grenades, a flamethrower's cone, medpacs, and a call for backup that a comm jammer stops (house rules).</p>
             </div>
           </div>
         )}

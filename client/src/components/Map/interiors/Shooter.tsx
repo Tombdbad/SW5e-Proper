@@ -8,8 +8,8 @@ import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Billboard, Text } from "@react-three/drei";
 import {
-  SHOOT, castPower, firePlayer, newSim, placeUnits, playerOf, reloadPlayer, resultOf, roundsOf, setBlock, step, swingPlayer, throwGrenade,
-  type Env, type Event, type Sim, type Unit,
+  KEPT, SHOOT, applyGear, castPower, firePlayer, newSim, placeUnits, playerOf, reloadPlayer, resultOf, roundsOf, setBlock, step, swingPlayer, throwGrenade,
+  type Env, type Event, type FightGear, type Sim, type Unit,
 } from "@shared/logic/shooter";
 import { Figure, MotionContext, usePartyLook } from "../models";
 import { kickOf, motion, type Motion } from "./limbs";
@@ -35,9 +35,15 @@ export interface ShooterCtx {
   airborne: () => boolean;
   // How high a swimmer floats where the party is swimming (a fight in the water, 2026-11-02: the party's people on foot swim with it), else null
   swimAt?: () => number | null;
+  // Puts the party on a square (a portable teleporter); false when it cannot stand there
+  place?: (x: number, y: number) => boolean;
 }
 
-const POOL = { bolts: 72, grenades: 6, blasts: 16 };
+const POOL = { bolts: 72, grenades: 6, blasts: 16, mines: 8, fields: 8 };
+// What the ground looks like where it burns, and where a gas or acid lingers
+const FIELD_COLOR: Record<string, string> = { fire: "#ff7a1a", poison: "#7bd34a", acid: "#b5e61d", cold: "#9ad8ff", lightning: "#c7b8ff" };
+// (an item on the belt: a rocket of a rocketpack is named "Rocketpack: Rocket, ..." and is the rocket that is used up)
+const usedName = (g: FightGear) => (g.act.act === "rocket" ? g.name.split(": ").pop()! : g.name);
 // What a power looks like where it takes hold
 const POWER_COLOR: Record<string, string> = { damage: "#9ad0ff", heal: "#4ade80", stun: "#fde047", fear: "#a78bfa", blind: "#ffffff", push: "#e5e7eb", pull: "#c4b5fd" };
 const BOLT_COLOR = { foe: "#ff3b30", ally: "#5ac8fa", player: "#7dd3fc", reflected: "#ffd60a" };
@@ -57,13 +63,17 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     if (typeof window !== "undefined") (window as any).__shooter = sim.current;
   }
   const state = useRef({
-    seen: { fire: 0, grenade: 0, reload: 0, block: 0, swap: 0, crouch: 0, power0: 0, power1: 0, power2: 0, power3: 0 },
+    seen: { fire: 0, grenade: 0, reload: 0, block: 0, swap: 0, crouch: 0, item: 0, next: 0, power0: 0, power1: 0, power2: 0, power3: 0 },
     crouch: false,
+    // the belt: what is carried to use, and the one shown (Z uses it)
+    gear: (session.gear ?? []).map((g) => ({ ...g })),
+    pick: 0,
+    pickName: "",
+    noteAt: 0,
     // when each fallen unit went down, and when each unit last swung (the figures fall and swing over a moment, not at once)
     died: {} as Record<string, number>,
     swung: {} as Record<string, number>,
     weapon: (session.units.find((u) => u.side === "player")?.gun ? "gun" : "blade") as "gun" | "blade",
-    grenades: session.grenades.map((g) => ({ ...g })),
     placed: false,
     used: {} as Record<string, number>,
     sync: 0,
@@ -81,6 +91,8 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
   const boltMeshes = useRef<(THREE.Mesh | null)[]>([]);
   const grenadeMeshes = useRef<(THREE.Mesh | null)[]>([]);
   const blastMeshes = useRef<(THREE.Mesh | null)[]>([]);
+  const mineMeshes = useRef<(THREE.Group | null)[]>([]);
+  const fieldMeshes = useRef<(THREE.Mesh | null)[]>([]);
   const flash = useRef<THREE.Mesh>(null);
   // What each figure is doing (interiors/limbs.ts Motion): ready to fight, the kick of each shot, each blade's strike, each blow taken
   const motions = useRef(new Map<string, { current: Motion }>());
@@ -124,16 +136,20 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     const patch: Record<string, Partial<import("@/lib/stores/useCombat").Combatant>> = {};
     for (const u of s.units) {
       if (u.side === "player") continue;
-      patch[u.id] = { hp: u.fled ? 0 : Math.max(0, Math.round(u.hp)), fled: u.fled || undefined, ...(u.side === "foe" ? { struck: u.struck } : {}) };
+      // (one taken alive is out of the fight as one beaten: at the party's mercy, a nemesis's grudge and all)
+      patch[u.id] = { hp: u.fled || u.bound ? 0 : Math.max(0, Math.round(u.hp)), fled: u.fled || undefined, ...(u.side === "foe" ? { struck: u.struck } : {}) };
     }
     if (mine) {
       const a = mine.ammo;
       patch[String(mine.id)] = {
         hp: Math.max(0, Math.round(p.hp)), lastHitBy: s.lastHitOnPlayer,
         ...(p.points !== undefined && mine.powerPoints !== undefined ? { powerPoints: Math.max(0, p.points) } : {}),
-        ...(a && p.gun ? { ammo: { ...a, left: p.gun.left }, spentAmmo: { ...(mine.spentAmmo ?? {}), [a.round ?? a.plain]: (mine.spentAmmo?.[a.round ?? a.plain] ?? 0) + p.gun.spent } } : {}),
+        // (a launcher's shots are the grenades used, counted on the belt)
+        ...(a && p.gun && !p.gun.launcher ? { ammo: { ...a, left: p.gun.left }, spentAmmo: { ...(mine.spentAmmo ?? {}), [a.round ?? a.plain]: (mine.spentAmmo?.[a.round ?? a.plain] ?? 0) + p.gun.spent } } : {}),
       };
     }
+    // Mines and charges left set on the ground are picked up again (house rule, as on the tabletop): not used up
+    for (const m of s.mines) if (m.side === "player" && st.used[m.name]) st.used[m.name]--;
     useShoot.getState().end(st.used);
     now.finishRealtime(abandoned ? "left" : result === "victory" ? "victory" : "stable", roundsOf(s), patch);
   };
@@ -150,22 +166,50 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     const me = { x: f.x + 0.5, y: f.y + 0.5, h: c.altitude(), facing: c.facing(), moving: c.moving(), airborne: c.airborne() };
     const dt = Math.min(delta, 0.1);
     const events: Event[] = [];
+    // (a line on the screen for three seconds)
+    const say = (text: string) => { st.note = text; st.noteAt = now; };
+    if (st.note && st.noteAt && now - st.noteAt > 3000) { st.note = ""; st.noteAt = 0; }
     // Everyone is put on ground a body can stand on before the first frame is played
     if (!st.placed) {
       st.placed = true;
       placeUnits(s, c.env, { x: me.x, y: me.y, facing: me.facing });
     }
     // What was pressed since the last frame
-    const edge = (k: "grenade" | "reload" | "swap" | "crouch" | "power0" | "power1" | "power2" | "power3") => {
+    const edge = (k: "grenade" | "reload" | "swap" | "crouch" | "item" | "next" | "power0" | "power1" | "power2" | "power3") => {
       const n = store.taps[k];
       const fresh = n !== st.seen[k];
       st.seen[k] = n;
       return fresh;
     };
     // (the crosshair is cast afresh for a shot or a throw, and otherwise a few times a second: it is a ray through every wall)
-    const shot = c.shot(store.held.fire || store.taps.grenade !== st.seen.grenade);
+    const shot = c.shot(store.held.fire || store.taps.grenade !== st.seen.grenade || store.taps.item !== st.seen.item);
     if (shot) s.aim = shot.to;
+    // The belt: what is left to use, the one shown, and the grenades (G throws the first; a launcher fires it)
+    const belt = st.gear.filter((g) => g.count > 0);
+    // (the one shown stays shown while there is any of it; when it runs out, the next one along)
+    const at = belt.findIndex((g) => g.name === st.pickName);
+    if (at >= 0) st.pick = at;
+    const shown = belt.length ? belt[st.pick % belt.length] : undefined;
+    st.pickName = shown?.name ?? "";
+    const throwable = st.gear.find((g) => g.act.act === "throw" && g.count > 0);
+    const spend = (g: FightGear) => {
+      g.count--;
+      st.used[usedName(g)] = (st.used[usedName(g)] ?? 0) + 1;
+    };
+    if (p.gun?.launcher) p.gun.shell = throwable?.act.act === "throw" ? throwable.act.blast : undefined;
     if (!p.dead && !st.ending) {
+      if (edge("next") && belt.length) {
+        st.pick = (st.pick + 1) % belt.length;
+        st.pickName = belt[st.pick].name;
+      }
+      if (edge("item")) {
+        if (!shown) say("Nothing to use");
+        else {
+          const why = applyGear(s, shown, c.env, events, shot?.to, c.place);
+          if (!why) spend(shown);
+          else if (why !== KEPT) say(why);
+        }
+      }
       if (edge("swap") && p.gun && p.blade) {
         st.weapon = st.weapon === "gun" ? "blade" : "gun";
         setBlock(s, false);
@@ -183,18 +227,19 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         else if (p.powers?.[i]) st.note = "";
       }
       if (edge("grenade")) {
-        const g = st.grenades.find((x) => x.count > 0);
-        if (g && shot) {
+        const g = throwable;
+        if (g && shot && g.act.act === "throw") {
           const d: [number, number, number] = [shot.to.x - shot.from.x, shot.to.y - shot.from.y, (shot.to.h - shot.from.h) / Math.max(1, Math.hypot(shot.to.x - shot.from.x, shot.to.y - shot.from.y))];
           const len = Math.hypot(d[0], d[1]) || 1;
-          throwGrenade(s, g.kind, shot.from, [d[0] / len, d[1] / len, d[2]]);
-          g.count--;
-          st.used[g.kind.name] = (st.used[g.kind.name] ?? 0) + 1;
+          throwGrenade(s, g.act.blast, shot.from, [d[0] / len, d[1] / len, d[2]]);
+          spend(g);
         } else if (!g) st.note = "You carry no grenades";
       }
       if (store.held.fire && shot) {
         if (st.weapon === "gun") {
+          if (p.gun?.launcher && !p.gun.shell && p.fire <= 0) st.note = "No grenades for the launcher";
           if (firePlayer(s, shot.from, shot.to, events, me.moving, me.airborne)) {
+            if (p.gun?.launcher && throwable) spend(throwable);
             st.firedAt = now;
             const kick = p.gun?.kick ?? 0.4;
             Object.assign(partyMotion.current, { firedAt: now / 1000, kick });
@@ -253,7 +298,24 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         if (e.kind === "damage") for (let i = 1; i <= 4; i++) st.blasts.push({ x: e.x + (e.tx - e.x) * (i / 5), y: e.y + (e.ty - e.y) * (i / 5), h: e.h + (e.th - e.h) * (i / 5), t: 0, r: 0.3, life: 0.3, c: POWER_COLOR.damage });
         store.setHud({ note: `${e.name}` });
       }
+      // Items, and what the foes do with theirs: said on the screen for a moment
+      else if (e.type === "use") {
+        const who = s.units.find((u) => u.id === e.id);
+        say(e.id === "me" ? `${e.name}${e.text ? `: ${e.text}` : ""}` : `${who?.name ?? "A foe"} uses a ${e.name.toLowerCase()}${e.text ? ` (${e.text})` : ""}`);
+        if (who) st.blasts.push({ x: who.x, y: who.y, h: who.h + 1, t: 0, r: 0.45, life: 0.35, c: /medpac|stim|kit|heal/i.test(e.name) ? "#4ade80" : "#e5e7eb" });
+        if (who && who.side !== "player") motionOf(who).current.posture = 1;
+      } else if (e.type === "spray") {
+        // a cone of fire (or acid, or lightning) from the foe's hands
+        const c2 = FIELD_COLOR[e.dmgType] ?? "#ffd27a";
+        for (let i = 1; i <= 6; i++) st.blasts.push({ x: e.x + (e.tx - e.x) * (i / 6), y: e.y + (e.ty - e.y) * (i / 6), h: e.h + (e.th - e.h) * (i / 6), t: -i * 0.03, r: 0.25 + i * 0.12, life: 0.45, c: c2 });
+        sfx.boom();
+        say(`${s.units.find((u) => u.id === e.id)?.name ?? "A foe"}: ${e.name}`);
+      } else if (e.type === "lob") say(`${s.units.find((u) => u.id === e.id)?.name ?? "A foe"} throws a grenade!`);
+      else if (e.type === "call") say(e.jammed ? `${s.units.find((u) => u.id === e.id)?.name ?? "A foe"} calls for help: jammed` : `${s.units.find((u) => u.id === e.id)?.name ?? "A foe"} calls for backup!`);
+      else if (e.type === "arrive") say("Their backup arrives");
     }
+    // A foe's grenade coming down near the party: the warning flashes
+    if (s.grenades.some((g) => g.side !== "player" && Math.hypot(g.x - me.x, g.y - me.y) < g.kind.radius + 1.5)) store.setHud({ dangerAt: now });
     // The party's stance: down behind cover, leaning into a swing (the camera, the muzzle and the figure follow it: interiors/aim.ts)
     stance.k += ((st.crouch && !p.dead ? 1 : 0) - stance.k) * Math.min(1, dt * 10);
     stance.lunge = p.swing > 0 ? Math.sin(Math.PI * (1 - p.swing / SHOOT.saber.swing)) * 0.32 : 0;
@@ -263,12 +325,13 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       if (u.side === "player") continue;
       const g = group.current[u.id];
       if (!g) continue;
-      g.visible = u.mode !== "gone";
       g.position.set(u.x - c.cx, u.h, u.y - c.cz);
       // (the party's people on foot swim as it does: low in the water, in the swimming pose; beasts and droids are as they are)
       const meta = session.meta[u.id] ?? {};
       const swimAt = u.side === "ally" && !u.dead && !/beast|droid|construct/i.test(meta.creature ?? "") && !/droid|wildlife|beast/i.test(meta.role ?? "") ? c.swimAt?.() ?? null : null;
-      motionOf(u).current.posture = swimAt !== null ? 3 : 0;
+      // (bound, it lies on its front; kneeling over a medpac, it crouches)
+      g.visible = u.mode !== "gone" || !!u.bound;
+      motionOf(u).current.posture = swimAt !== null ? 3 : u.bound ? 2 : u.using ? 1 : 0;
       if (swimAt !== null) g.position.y = swimAt;
       if (u.dead) {
         // (it falls over in about a third of a second, and does not snap flat)
@@ -285,7 +348,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         const k = Math.max(0.001, Math.min(1, u.hp / u.maxHp));
         bar.scale.x = k;
         bar.position.x = -0.45 * (1 - k);
-        bar.parent!.visible = !u.dead;
+        bar.parent!.visible = !u.dead && !u.bound;
       }
       const t = tele.current[u.id];
       if (t) {
@@ -307,14 +370,39 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       if (!m) return;
       const g = s.grenades[i];
       m.visible = !!g;
-      if (g) m.position.set(g.x - c.cx, g.h, g.y - c.cz);
+      if (!g) return;
+      m.position.set(g.x - c.cx, g.h, g.y - c.cz);
+      // (a foe's is lit red)
+      (m.material as THREE.MeshStandardMaterial).emissive.set(g.side === "player" ? "#000000" : "#a01010");
+    });
+    // Mines and charges on the ground: a light that blinks once armed; the ground that burns or holds gas
+    mineMeshes.current.forEach((m, i) => {
+      if (!m) return;
+      const x = s.mines[i];
+      m.visible = !!x;
+      if (!x) return;
+      m.position.set(x.x - c.cx, x.h + 0.03, x.y - c.cz);
+      m.rotation.y = x.facing;
+      const light = m.children[1] as THREE.Mesh | undefined;
+      if (light) light.visible = x.arm > 0 || Math.floor(now / (x.timer !== undefined ? 150 : 450)) % 2 === 0;
+    });
+    fieldMeshes.current.forEach((m, i) => {
+      if (!m) return;
+      const f = s.fields[i];
+      m.visible = !!f;
+      if (!f) return;
+      m.position.set(f.x - c.cx, f.h + 0.04, f.y - c.cz);
+      m.scale.set(f.radius, f.radius, 1);
+      const mat = m.material as THREE.MeshBasicMaterial;
+      mat.color.set(FIELD_COLOR[f.type] ?? "#ffb347");
+      mat.opacity = Math.min(0.5, f.t / 4) * (0.75 + 0.25 * Math.sin(now / 90 + i));
     });
     st.blasts = st.blasts.filter((b) => (b.t += dt) < b.life).slice(-POOL.blasts);
     blastMeshes.current.forEach((m, i) => {
       if (!m) return;
       const b = st.blasts[i];
-      m.visible = !!b;
-      if (!b) return;
+      m.visible = !!b && b.t >= 0;
+      if (!b || b.t < 0) return;
       m.position.set(b.x - c.cx, b.h, b.y - c.cz);
       m.scale.setScalar(Math.max(0.05, b.r * (0.3 + 1.6 * (b.t / b.life))));
       const mat = m.material as THREE.MeshBasicMaterial;
@@ -352,10 +440,12 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     if (st.sync >= 0.12) {
       st.sync = 0;
       const g = p.gun;
-      const gr = st.grenades.find((x) => x.count > 0);
+      const throws = st.gear.filter((x) => x.act.act === "throw" && x.count > 0);
       store.setHud({
         hp: Math.max(0, Math.round(p.hp)), maxHp: p.maxHp, weapon: st.weapon, hasGun: !!g, hasBlade: !!p.blade, saber: !!p.blade?.saber, gun: g?.name,
-        left: g?.left ?? 0, mag: g?.mag ?? 0, reserve: g?.reserve ?? 0, reloading: p.reloading > 0, grenade: gr?.kind.name, grenades: st.grenades.reduce((n, x) => n + x.count, 0),
+        left: g?.launcher ? throws.reduce((n, x) => n + x.count, 0) : g?.left ?? 0, mag: g?.mag ?? 0, reserve: g?.launcher ? 0 : g?.reserve ?? 0, reloading: p.reloading > 0, grenade: throws[0]?.name, grenades: throws.reduce((n, x) => n + x.count, 0),
+        item: shown?.name, items: shown?.count ?? 0, belt: belt.length,
+        poisoned: p.poisoned > 0, burning: p.burning > 0, blinded: p.blind > 0, temp: Math.round(p.temp),
         focus: Math.round(p.focus), focusMax: SHOOT.focus.max, blocking: p.blocking, foes: s.units.filter((u) => u.side === "foe" && !u.dead && u.mode !== "gone").length, note: st.note,
         points: p.points ?? 0, crouching: st.crouch,
         powers: (p.powers ?? []).map((w) => ({ name: w.name, cost: w.cost, ready: (p.points ?? 0) >= w.cost && (p.powerCd ?? 0) <= 0 })),
@@ -424,6 +514,18 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         <mesh key={`g${i}`} ref={(m) => { grenadeMeshes.current[i] = m; }} visible={false}>
           <sphereGeometry args={[0.11, 10, 10]} />
           <meshStandardMaterial color="#3f4a36" />
+        </mesh>
+      ))}
+      {Array.from({ length: POOL.mines }, (_, i) => (
+        <group key={`m${i}`} ref={(m) => { mineMeshes.current[i] = m; }} visible={false}>
+          <mesh><cylinderGeometry args={[0.16, 0.19, 0.07, 12]} /><meshStandardMaterial color="#3a3f36" metalness={0.5} roughness={0.5} /></mesh>
+          <mesh position={[0, 0.05, 0.08]}><sphereGeometry args={[0.035, 8, 8]} /><meshBasicMaterial color="#ff2a1a" toneMapped={false} /></mesh>
+        </group>
+      ))}
+      {Array.from({ length: POOL.fields }, (_, i) => (
+        <mesh key={`f${i}`} ref={(m) => { fieldMeshes.current[i] = m; }} visible={false} rotation={[-Math.PI / 2, 0, 0]} renderOrder={4}>
+          <circleGeometry args={[1, 28]} />
+          <meshBasicMaterial color="#ff7a1a" transparent opacity={0.4} depthWrite={false} toneMapped={false} />
         </mesh>
       ))}
       {Array.from({ length: POOL.blasts }, (_, i) => (

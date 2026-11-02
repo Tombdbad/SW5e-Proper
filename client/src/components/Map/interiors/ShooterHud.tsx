@@ -1,5 +1,6 @@
-// What the shooter mode shows over the view (2026-10-29): hit points, the gun's magazine and the pack, grenades, the saber's focus, hit markers
-// and a flash when the party is hurt; and the phone's buttons for the shots (fire, grenade, reload, swap, block). Drawn inside the eye views'
+// What the shooter mode shows over the view (2026-10-29): hit points, the gun's magazine and the pack, grenades, the item belt, the saber's
+// focus, hit markers, a flash when the party is hurt, what it suffers (poisoned, burning, blinded) and a foe's grenade coming down near; and the
+// phone's buttons for the shots (fire, grenade, the item and the next one, reload, swap, block). Drawn inside the eye views'
 // own overlay (ViewRig.tsx), where the stick and the Use button are. interiors/shoot.ts has the keys.
 import { useShoot, type ShootKey } from "./shoot";
 
@@ -16,6 +17,13 @@ export function ShooterHud() {
     <div style={{ position: "absolute", inset: 0, pointerEvents: "none", font: "600 13px sans-serif", color: "#fff", textShadow: "0 0 3px #000, 0 0 3px #000" }} data-testid="shooter-hud">
       {fresh(hud.hurtAt, 420) && <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 90px 18px rgba(220,38,38,0.65)" }} />}
       {fresh(hud.deflectAt, 220) && <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 60px 8px rgba(250,204,21,0.45)" }} />}
+      {/* blinded: the view goes white; burning: an orange edge; poisoned: a green one */}
+      {hud.blinded && <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.55)" }} />}
+      {hud.burning && <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 80px 14px rgba(255,122,26,0.55)" }} />}
+      {hud.poisoned && !hud.burning && <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 70px 10px rgba(123,211,74,0.4)" }} />}
+      {fresh(hud.dangerAt, 300) && (
+        <div style={{ position: "absolute", left: "50%", top: "34%", transform: "translateX(-50%)", font: "700 20px sans-serif", color: "#fca5a5" }} data-testid="grenade-warning">GRENADE!</div>
+      )}
       {marker && (
         <div style={{ position: "absolute", left: "50%", top: "50%", width: 0, height: 0 }}>
           {[45, -45].map((a) => <div key={a} style={{ position: "absolute", left: -11, top: -1, width: 22, height: 2, background: marker, transform: `rotate(${a}deg)`, boxShadow: "0 0 2px #000" }} />)}
@@ -25,7 +33,12 @@ export function ShooterHud() {
         <div style={{ height: 10, background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.4)", borderRadius: 5, overflow: "hidden" }}>
           <div style={{ width: `${hp * 100}%`, height: "100%", background: hp > 0.5 ? "#4ade80" : hp > 0.25 ? "#facc15" : "#ef4444" }} />
         </div>
-        <div>{hud.hp} / {hud.maxHp}</div>
+        <div>{hud.hp} / {hud.maxHp}{hud.temp > 0 ? <span style={{ color: "#93c5fd" }}> +{hud.temp}</span> : null}</div>
+        {(hud.poisoned || hud.burning || hud.blinded) && (
+          <div style={{ fontSize: 12 }} data-testid="shooter-conditions">
+            {[hud.poisoned && "Poisoned", hud.burning && "Burning", hud.blinded && "Blinded"].filter(Boolean).join(" · ")}
+          </div>
+        )}
         {hud.saber && (
           <div style={{ height: 6, marginTop: 2, background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 3, overflow: "hidden" }} title="Focus: held up, the saber turns bolts for it">
             <div style={{ width: `${(hud.focus / Math.max(1, hud.focusMax)) * 100}%`, height: "100%", background: hud.blocking ? "#7dd3fc" : "#38bdf8" }} />
@@ -50,7 +63,12 @@ export function ShooterHud() {
         ) : (
           <div>{hud.saber ? "Lightsaber" : "Blade"} {hud.blocking ? "· guarding" : ""}</div>
         )}
-        {hud.grenades > 0 && <div style={{ fontSize: 12 }}>{hud.grenade} ×{hud.grenades} <span style={{ opacity: 0.7 }}>[G]</span></div>}
+        {hud.grenades > 0 && <div style={{ fontSize: 12 }}>Grenades ×{hud.grenades}: {hud.grenade} next <span style={{ opacity: 0.7 }}>[G]</span></div>}
+        {hud.item && (
+          <div style={{ fontSize: 12 }} data-testid="shooter-item">
+            {hud.item} ×{hud.items} <span style={{ opacity: 0.7 }}>[Z]{hud.belt > 1 ? ` · ${hud.belt} on the belt [T]` : ""}</span>
+          </div>
+        )}
         {hud.note && <div style={{ fontSize: 12, color: "#fde68a" }}>{hud.note}</div>}
       </div>
     </div>
@@ -71,6 +89,12 @@ export function ShootButtons() {
     <div style={{ position: "absolute", right: 14, bottom: 176, display: "flex", flexDirection: "column-reverse", alignItems: "flex-end", gap: 6, pointerEvents: "none" }} data-testid="shoot-buttons">
       <button data-testid="fire-button" {...hold("fire")} style={{ ...base, width: 80, height: 80, background: "rgba(239,68,68,0.55)", font: "700 14px sans-serif" }}>{hud.weapon === "blade" ? "Swing" : "Fire"}</button>
       {hud.grenades > 0 && <button data-testid="grenade-button" {...hold("grenade")} style={{ ...base, width: 70, height: 40, background: "rgba(163,230,53,0.45)" }}>Grenade</button>}
+      {hud.item && (
+        <div style={{ display: "flex", gap: 4 }}>
+          {hud.belt > 1 && <button data-testid="next-item-button" {...hold("next")} style={{ ...base, width: 32, height: 40, background: "rgba(255,255,255,0.2)" }}>›</button>}
+          <button data-testid="item-button" {...hold("item")} style={{ ...base, width: 70, height: 40, background: "rgba(74,222,128,0.4)", font: "600 10px sans-serif" }}>{hud.item.length > 12 ? `${hud.item.slice(0, 11)}…` : hud.item}</button>
+        </div>
+      )}
       {hud.hasGun && <button data-testid="reload-button" {...hold("reload")} style={{ ...base, width: 70, height: 40, background: "rgba(255,255,255,0.2)" }}>Reload</button>}
       {hud.hasGun && hud.hasBlade && <button data-testid="swap-button" {...hold("swap")} style={{ ...base, width: 70, height: 40, background: "rgba(255,255,255,0.2)" }}>{hud.weapon === "gun" ? "Saber" : "Gun"}</button>}
       {hud.saber && <button data-testid="block-button" {...hold("block")} style={{ ...base, width: 70, height: 40, background: "rgba(56,189,248,0.45)" }}>Guard</button>}
