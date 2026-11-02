@@ -11194,7 +11194,37 @@ export interface ItemEffects {
   decoy?: boolean;
   weaponGuard?: boolean;
   water?: boolean;
+  // (2026-11-02, the item audit) A level of proficiency raised in a skill, a saving throw ("wisdom saving throws") or a tool, by steps or to a
+  // tier (Wretched Hives' six: 1 trained, 2 proficient, 3 expertise, 4 mastery, 5 high mastery, 6 grand mastery; see PROFICIENCY_TIERS)
+  proficiency?: Record<string, { by?: number; to?: number }>;
+  // Bonuses (negative: penalties) to force and tech powers: melee and ranged power attacks, and save DCs by the ability saved with
+  powers?: { force?: PowerBonus; tech?: PowerBonus };
+  // A bonus to damage rolls with force powers (a Sith robe's "with weapons and force powers")
+  forceDamage?: number;
+  // Damage types resisted while it is worn ("resistant to all unenhanced damage": every type)
+  resist?: string[];
+  // A weapon modification: properties it takes away ("loses the two-handed property"), and those whose number it lowers a step
+  // ("this weapon's dexterity number is reduced by one step": dexterity 15 to 13, and at 11 the property goes)
+  drops?: string[];
+  lowers?: string[];
 }
+export interface PowerBonus { melee?: number; ranged?: number; dc?: Record<string, number> }
+
+// Wretched Hives, "Proficiency Tiers": trained adds half the proficiency bonus, proficient the bonus, expertise and above twice it; mastery and
+// above always have advantage (high and grand mastery's rerolls of the dice are taken as advantage here: house simplification)
+export const PROFICIENCY_TIERS = ["untrained", "trained", "proficient", "expertise", "mastery", "high mastery", "grand mastery"] as const;
+export const tierBonus = (tier: number, proficiency: number) => (tier <= 0 ? 0 : tier === 1 ? Math.floor(proficiency / 2) : tier === 2 ? proficiency : 2 * proficiency);
+export const tierAdvantage = (tier: number) => tier >= 4;
+// A tier raised by what items give: "to" a tier, or "by" steps (from untrained the first step is to trained)
+export function raisedTier(base: number, raises: { by?: number; to?: number }[]): number {
+  let tier = base;
+  for (const r of raises) {
+    if (r.to !== undefined) tier = Math.max(tier, r.to);
+    if (r.by) tier += r.by;
+  }
+  return Math.max(0, Math.min(6, tier));
+}
+const ALL_DAMAGE = ["acid", "cold", "energy", "fire", "ion", "kinetic", "lightning", "necrotic", "poison", "psychic", "sonic"];
 
 // What a stimpac, an adrenal, a barrier or a collimator does for how long; `fight` ones last for
 // the minute of a fight (ten rounds) and wait for the next one when taken outside it (house
@@ -11256,8 +11286,41 @@ export function parseItemEffects(source: string): ItemEffects {
     if (/disadvantage on attack rolls against you/i.test(sentence)) effects.decoy = true;
     if (/damage that you take from (?:unenhanced )?weapons is reduced by an amount equal to your proficiency bonus/i.test(sentence)) effects.weaponGuard = true;
     if (/produce the chosen liquid/i.test(sentence) || /liquid from the table/i.test(sentence)) effects.water = true;
+    // Proficiency raised a tier or more, in a named skill, saving throw or tool ("these tools" names none: the tool is the GM's, not read)
+    const steps = sentence.match(/level of proficiency in ([A-Z][A-Za-z' ]+?) increases by (\w+) steps?/);
+    if (steps && !/these/i.test(steps[1])) effects.proficiency = { ...(effects.proficiency ?? {}), [steps[1].toLowerCase()]: { by: NUMBER_WORDS[steps[2].toLowerCase()] ?? (Number(steps[2]) || 1) } };
+    const tierTo = sentence.match(/You (?:have|gain) (expertise|mastery|high mastery|grand mastery) in ([A-Z][A-Za-z' ]+?)\./);
+    if (tierTo && !/these/i.test(tierTo[2])) effects.proficiency = { ...(effects.proficiency ?? {}), [tierTo[2].toLowerCase()]: { to: PROFICIENCY_TIERS.indexOf(tierTo[1].toLowerCase() as never) } };
+    // Force and tech powers: "+1 bonus to ranged force attacks and a -1 penalty to melee force attacks", "+2 bonus to the tech save DC of
+    // powers that require a Strength or Constitution saving throw", a focus's "+1 bonus to the force attack rolls for force powers you cast"
+    for (const m of sentence.matchAll(/([+-]\d+) (?:bonus|penalty) to (melee|ranged) (force|tech) attacks/gi)) {
+      const kind = m[3].toLowerCase() as "force" | "tech";
+      const p = { ...(effects.powers?.[kind] ?? {}) };
+      p[m[2].toLowerCase() as "melee" | "ranged"] = (p[m[2].toLowerCase() as "melee" | "ranged"] ?? 0) + Number(m[1]);
+      effects.powers = { ...(effects.powers ?? {}), [kind]: p };
+    }
+    for (const m of sentence.matchAll(/([+-]\d+) (?:bonus|penalty) to the (force|tech) save DC of powers that require an? (\w+) or (\w+) saving throw/gi)) {
+      const kind = m[2].toLowerCase() as "force" | "tech";
+      const p = { ...(effects.powers?.[kind] ?? {}), dc: { ...(effects.powers?.[kind]?.dc ?? {}) } };
+      for (const a of [m[3], m[4]].map((x) => abilityOf(x)).filter(Boolean) as string[]) p.dc[a] = (p.dc[a] ?? 0) + Number(m[1]);
+      effects.powers = { ...(effects.powers ?? {}), [kind]: p };
+    }
+    const focus = sentence.match(/\+(\d+) bonus to the (force|tech) attack rolls for (?:force|tech) powers you cast through this/i);
+    if (focus) {
+      const kind = focus[2].toLowerCase() as "force" | "tech";
+      effects.powers = { ...(effects.powers ?? {}), [kind]: { ...(effects.powers?.[kind] ?? {}), melee: Number(focus[1]), ranged: Number(focus[1]) } };
+    }
+    const robe = sentence.match(/\+(\d+) bonus to damage rolls with weapons and force powers/i);
+    if (robe) { effects.damage = Number(robe[1]); effects.forceDamage = Number(robe[1]); }
+    // Resistance while worn: a type named, or all ("unenhanced": a foe's attacks are)
+    if (/resistan(?:t|ce) to all unenhanced damage/i.test(sentence)) effects.resist = ALL_DAMAGE;
+    else for (const m of sentence.matchAll(/(?:have|has) resistance to (\w+) damage/gi)) if (ALL_DAMAGE.includes(m[1].toLowerCase())) effects.resist = Array.from(new Set([...(effects.resist ?? []), m[1].toLowerCase()]));
+    // A weapon modification's lost or lowered properties
+    for (const m of sentence.matchAll(/loses the ([a-z-]+) property/gi)) effects.drops = Array.from(new Set([...(effects.drops ?? []), m[1].toLowerCase()]));
+    const lower = sentence.match(/weapon's (\w+) number is reduced by one step/i);
+    if (lower) effects.lowers = Array.from(new Set([...(effects.lowers ?? []), lower[1].toLowerCase()]));
     const bonus = sentence.match(/\+(\d+) bonus to (attack and damage rolls|attack rolls and damage rolls|attack rolls|damage rolls)/i);
-    if (bonus && !/force attack|tech attack|force powers|grenade|save DC|wrist launcher|dart/i.test(sentence) && effects.attack === undefined && effects.damage === undefined) {
+    if (bonus && !robe && !/force attack|tech attack|force powers|grenade|save DC|wrist launcher|dart/i.test(sentence) && effects.attack === undefined && effects.damage === undefined) {
       const n = Number(bonus[1]);
       if (/attack/i.test(bonus[2])) effects.attack = n;
       if (/damage/i.test(bonus[2])) effects.damage = n;
@@ -11279,6 +11342,10 @@ export function parseItemEffects(source: string): ItemEffects {
     }
     const raise = sentence.match(/(?:your|the target's) (\w+) score increases by (\d+)(?:, to a maximum of (\d+)|, and (?:your|its) maximum for this score increases by (\d+))/i);
     if (raise && abilityOf(raise[1])) effects.raiseScores = { ...(effects.raiseScores ?? {}), [abilityOf(raise[1])!]: { by: Number(raise[2]), max: raise[3] ? Number(raise[3]) : 20 + Number(raise[4]) } };
+    // (an augment's plain "Your Charisma score increases by 1.": to the usual maximum of 20; its side effect is `falls`)
+    const plainRaise = !raise && sentence.match(/^Your (\w+) score increases by (\d+)\.$/i);
+    if (plainRaise && abilityOf(plainRaise[1])) effects.raiseScores = { ...(effects.raiseScores ?? {}), [abilityOf(plainRaise[1])!]: { by: Number(plainRaise[2]), max: 20 } };
+    if (/^One ability score other than \w+ \(chosen by the GM\) decreases by 1\./i.test(sentence)) effects.falls = true;
   }
   if (/Side Effect:\s*One ability score/i.test(text)) effects.falls = true;
   return effects;
@@ -11364,7 +11431,8 @@ export function itemFactsOf(row: { name: string; type: string; subtype?: string;
   const part = enhancedShipPart(row);
   if (part) return { ...base, effects: {}, shipPart: { slot: part.slot, bonus: part.bonus } };
   if (row.type === "ItemModification") {
-    const properties = Array.from(plainText(text).matchAll(/gains? the ([a-z\-]+(?: \d+)?) property/gi)).map((m) => m[1].toLowerCase());
+    // (a clothing pattern's "gains the insulated 1 armor property" too)
+    const properties = Array.from(plainText(text).matchAll(/gains? the ([a-z\-]+(?: \d+)?) (?:armor )?property/gi)).map((m) => m[1].toLowerCase());
     return { ...base, text: base.text.slice(0, 320), effects: parseItemEffects(text), modKind: String(row.subtype ?? "").toLowerCase(), properties };
   }
   if (/ Chassis \(/.test(row.name)) {
@@ -11495,6 +11563,22 @@ export function describeEffects(e: ItemEffects): string {
   if (e.tempHp) parts.push(`${e.tempHp} temporary hit points`);
   if (e.absorb) parts.push(`damage taken -${e.absorb} (at least 1)`);
   if (e.techDamage) parts.push(`tech powers +${e.techDamage} damage and healing${e.techAttack ? `, +${e.techAttack} attack` : ""}${e.techDc ? `, +${e.techDc} save DC` : ""}`);
+  for (const [what, r] of Object.entries(e.proficiency ?? {})) parts.push(r.to !== undefined ? `${PROFICIENCY_TIERS[r.to]} in ${what}` : `${what} +${r.by} step${r.by === 1 ? "" : "s"} of proficiency`);
+  const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+  for (const kind of ["force", "tech"] as const) {
+    const p = e.powers?.[kind];
+    if (!p) continue;
+    if (p.melee && p.melee === p.ranged) parts.push(`${signed(p.melee)} ${kind} power attacks`);
+    else {
+      if (p.melee) parts.push(`${signed(p.melee)} melee ${kind} attacks`);
+      if (p.ranged) parts.push(`${signed(p.ranged)} ranged ${kind} attacks`);
+    }
+    for (const [ab, n] of Object.entries(p.dc ?? {})) parts.push(`${signed(n)} ${kind} save DC (${ab.slice(0, 3)})`);
+  }
+  if (e.forceDamage) parts.push(`+${e.forceDamage} force power damage`);
+  if (e.resist?.length) parts.push(e.resist.length >= ALL_DAMAGE.length ? "resists all damage" : `resists ${e.resist.join(", ")}`);
+  if (e.drops?.length) parts.push(`weapon loses ${e.drops.join(", ")}`);
+  if (e.lowers?.length) parts.push(`weapon's ${e.lowers.join(", ")} a step lower`);
   if (e.falls) parts.push("side effect: another score -1");
   return parts.join(", ");
 }

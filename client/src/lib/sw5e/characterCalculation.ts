@@ -24,7 +24,7 @@ import { maneuvers as maneuverList, type Maneuver } from "./maneuvers";
 import { fightingStyles } from "./fightingStyles";
 import { conditions as conditionRows } from "./conditions";
 import lookups from "@shared/data/sw5e/lookups.json";
-import { scoresWith, sumEffects, type ItemFacts, type ItemEffects } from "@shared/logic";
+import { scoresWith, sumEffects, type ItemFacts, type ItemEffects, type PowerBonus } from "@shared/logic";
 
 export const ABILITIES = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"] as const;
 const isAbility = (name: string) => (ABILITIES as readonly string[]).includes(name);
@@ -901,11 +901,28 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
     return buff ? { attack: buff.effects?.attack ?? 0, damage: buff.effects?.damage ?? 0, props: (buff.effects?.properties ?? []) as string[] } : { attack: 0, damage: 0, props: [] as string[] };
   };
   // What modifications fitted in a plain weapon give (once attuned): bonuses and properties
-  const modded = (name: string): { attack: number; damage: number; props: string[] } => {
+  // (and the properties they take away or lower a step: "loses the two-handed property", "dexterity number is reduced by one step")
+  const modded = (name: string): { attack: number; damage: number; props: string[]; drops: string[]; lowers: string[] } => {
     const fit = character?.playState?.fitted?.[name];
-    if (!fit?.mods?.length || !isAttuned(character, name)) return { attack: 0, damage: 0, props: [] };
+    if (!fit?.mods?.length || !isAttuned(character, name)) return { attack: 0, damage: 0, props: [], drops: [], lowers: [] };
     const list = fit.mods.map((m: string) => factsFor(character, m)).filter(Boolean) as ItemFacts[];
-    return { attack: list.reduce((n, f) => n + (f.effects.attack ?? 0), 0), damage: list.reduce((n, f) => n + (f.effects.damage ?? 0), 0), props: list.flatMap((f) => f.properties ?? []) };
+    return { attack: list.reduce((n, f) => n + (f.effects.attack ?? 0), 0), damage: list.reduce((n, f) => n + (f.effects.damage ?? 0), 0), props: list.flatMap((f) => f.properties ?? []), drops: list.flatMap((f) => f.effects.drops ?? []), lowers: list.flatMap((f) => f.effects.lowers ?? []) };
+  };
+  // A weapon's own properties less what its modifications take away, a lowered one a step down (21, 19, 17, 15, 13, 11, then gone)
+  const reshaped = (name: string, props: string[]) => {
+    const m = modded(name);
+    if (!m.drops.length && !m.lowers.length) return props;
+    return props
+      .filter((p) => !m.drops.some((d) => p.toLowerCase().startsWith(d)))
+      .map((p) => {
+        const hit = m.lowers.find((l) => p.toLowerCase().startsWith(l));
+        const n = hit ? Number(p.match(/\d+/)?.[0]) : NaN;
+        if (!hit || !n) return p;
+        const steps = m.lowers.filter((l) => l === hit).length;
+        const next = n - 2 * steps;
+        return next < 11 ? "" : p.replace(/\d+/, String(next));
+      })
+      .filter(Boolean);
   };
   // A modal weapon (2026-10-26): the weapons named with the property ("modal (blaster rifle and techstaff)"), each carried as a mode of it
   // (switched by an object interaction: house reading, both are at hand; each mode by its own numbers and proficiency)
@@ -917,7 +934,7 @@ export function carriedWeapons(character: any): CarriedWeapon[] {
     .filter((x, i, all) => all.findIndex((y) => y.of.name === x.of.name && y.mode.name === x.mode.name) === i);
   const weapons: CarriedWeapon[] = [
     ...modes.map(({ of, mode }) => ({ e: mode, name: `${of.name} (${mode.name.toLowerCase()})`, bonus: { attack: 0, damage: 0 } })),
-    ...owned.map((e) => ({ e, name: e.name, bonus: { ...buffed(e), attack: buffed(e).attack + modded(e.name).attack, damage: buffed(e).damage + modded(e.name).damage, props: [...modded(e.name).props, ...buffed(e).props] } })),
+    ...owned.map((e) => ({ e: { ...e, properties: reshaped(e.name, e.properties ?? []) }, name: e.name, bonus: { ...buffed(e), attack: buffed(e).attack + modded(e.name).attack, damage: buffed(e).damage + modded(e.name).damage, props: [...modded(e.name).props, ...buffed(e).props] } })),
     ...enhanced.map((x) => ({ e: x.base as typeof owned[number], name: x.name, bonus: { attack: bonusOf(x.name).attack + buffed(x.base!).attack, damage: bonusOf(x.name).damage + buffed(x.base!).damage, props: buffed(x.base!).props } })),
   ].map(({ e, name, bonus }: { e: typeof owned[number]; name: string; bonus: { attack: number; damage: number; props?: string[] } }) => {
     const ranged = /blaster/i.test(e.weaponClassification ?? "");
@@ -1193,6 +1210,25 @@ export function withItemEffects(character: any, facts: Record<string, ItemFacts>
     itemAbsorb: sumEffects(active.map((a) => a.effects)).absorb ?? 0,
     // Handwraps and the like: a bonus to unarmed strikes
     itemUnarmed: { attack: unarmed.reduce((n, a) => n + (a.effects.attack ?? 0), 0), damage: unarmed.reduce((n, a) => n + (a.effects.damage ?? 0), 0) },
+    // (2026-11-02) Proficiency tiers raised (by skill, "wisdom saving throws" or tool name: each item's raise), bonuses to force and tech
+    // powers' attacks and save DCs, force power damage, damage types resisted
+    itemProficiency: active.reduce((acc, a) => {
+      for (const [k, v] of Object.entries(a.effects.proficiency ?? {})) (acc[k] ??= []).push(v);
+      return acc;
+    }, {} as Record<string, { by?: number; to?: number }[]>),
+    itemPowers: active.reduce((acc, a) => {
+      for (const kind of ["force", "tech"] as const) {
+        const p = a.effects.powers?.[kind];
+        if (!p) continue;
+        const t = (acc[kind] ??= { melee: 0, ranged: 0, dc: {} });
+        t.melee = (t.melee ?? 0) + (p.melee ?? 0);
+        t.ranged = (t.ranged ?? 0) + (p.ranged ?? 0);
+        for (const [ab, n] of Object.entries(p.dc ?? {})) t.dc![ab] = (t.dc![ab] ?? 0) + n;
+      }
+      return acc;
+    }, {} as { force?: PowerBonus; tech?: PowerBonus }),
+    itemForceDamage: active.reduce((n, a) => n + (a.effects.forceDamage ?? 0), 0),
+    itemResist: Array.from(new Set(active.flatMap((a) => a.effects.resist ?? []))),
     // Darkvision, stealth, a decoy shadow, a guard against weapons, water at will (parseItemEffects)
     itemSenses: {
       darkvision: Math.max(0, ...active.map((a) => a.effects.darkvision ?? 0)),

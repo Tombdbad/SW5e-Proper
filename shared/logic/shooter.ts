@@ -162,6 +162,8 @@ export interface GrenadeKind {
   // The ground it leaves burning (or full of gas) for so many seconds, and what that does each second to whoever stands in it
   lingers?: number;
   dps?: number;
+  // (an incendiary rocket: its burst, and the ground ablaze over a wider radius, squares)
+  lingerRadius?: number;
   // Bursts in a cone the way it faces (a breaching charge), not all round
   cone?: boolean;
 }
@@ -176,7 +178,9 @@ export function grenadeOf(item: { name: string; description?: string }): Grenade
 export const secondsOf = (rounds = 1) => Math.min(SHOOT.power.longest, Math.max(1, rounds) * 6);
 // A burst read from the rules (an explosive's `gearUse`, a stat block's area action, an exploding round): the dice at their average, the
 // conditions it brings as seconds of what the shooter has (see GrenadeKind), the ground left burning
-export function blastOf(name: string, b: { radius: number; cone?: boolean; damage: { dice: string; type: string }[]; conditions?: string[]; lingers?: boolean; rounds?: number; fireDice?: string }): GrenadeKind {
+// (`fire`: a burst that also leaves the ground ablaze, over its own radius in feet, at its dice a turn)
+export function blastOf(name: string, b: { radius: number; cone?: boolean; damage: { dice: string; type: string }[]; conditions?: string[]; lingers?: boolean; rounds?: number; fireDice?: string; fire?: { radius: number; dice: string } }): GrenadeKind {
+  if (b.fire) return { ...blastOf(name, { ...b, fire: undefined }), lingers: 60, dps: Math.max(0.5, avgDice(b.fire.dice) / 6), lingerRadius: Math.max(1, b.fire.radius / 5) };
   const has = (re: RegExp) => (b.conditions ?? []).some((c) => re.test(c));
   const secs = secondsOf(b.rounds ?? 1);
   const total = b.damage.reduce((n, d) => n + avgDice(d.dice), 0);
@@ -1351,7 +1355,7 @@ function blow(sim: Sim, at: { x: number; y: number; h: number }, kind: GrenadeKi
     afflict(sim, u, kind, events);
     if (kind.damage > 0) hurt(sim, u, kind.damage * fall, kind.type, owner, events, { x: u.x, y: u.y, h: u.h + 0.7 });
   }
-  if (kind.lingers) sim.fields.push({ id: sim.seq++, owner: ownerId, x: at.x, y: at.y, h: env.floorAt(at.x, at.y), radius: kind.radius, t: kind.lingers, dps: kind.dps ?? 1, type: kind.type, ...(kind.poison ? { poison: kind.poison } : {}) });
+  if (kind.lingers) sim.fields.push({ id: sim.seq++, owner: ownerId, x: at.x, y: at.y, h: env.floorAt(at.x, at.y), radius: kind.lingerRadius ?? kind.radius, t: kind.lingers, dps: kind.dps ?? 1, type: kind.lingerRadius ? "fire" : kind.type, ...(kind.poison ? { poison: kind.poison } : {}) });
 }
 
 // ---- How it ends -----------------------------------------------------------------------------------------------------------------

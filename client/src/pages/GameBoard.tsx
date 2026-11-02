@@ -96,7 +96,7 @@ import {
   trainingOptions, ingredientRarity, emptyDowntime, shipSheet, refitPlan,
   type DowntimeActivityData, type ActivitySpec, type DowntimeOutcome, type DowntimeState, type TrainingOption,
   type Occupant,
-  attunementLimit, augmentationLimit, augmentPlan, partsFree, sideEffectsOf, describeEffects, PROSTHESES, ITEM_ABILITIES, type ItemFacts,
+  attunementLimit, augmentationLimit, augmentPlan, partsFree, sideEffectsOf, describeEffects, PROSTHESES, ITEM_ABILITIES, type ItemFacts, PROFICIENCY_TIERS, raisedTier, tierAdvantage, tierBonus, type PowerBonus,
   modKindOf, augmentSlots, MOD_BASE_SLOTS, rarityRank, gearRarity, artificerStock, isArtificer, ARTIFICER_REGARD, type ArtificerLine, INSTALL_DC, SIZE_TIME, crystalModifier, crystalFor, crystalsUpTo, DROID_MOTOR_COST, DROID_BASE_SLOTS, droidPlan,
   readOutcome, blueprintRarity, readCredits, RARITY_ORDER, type Fitted,
   FAMILIES, MATERIALS, REFINE_UNITS, tierOfCr, makeRemains, haulOf, withCacheAsset, familiesForTool, familiesForEnhanced, ALL_FAMILIES, type MaterialFamily, crNumber, RARITY_TIERS, NODE_RESPAWN, HARVEST_MINUTES, harvestDc, harvestKit, kitAlias, notesAllowed, addNote, addRecording, languageBarrier, OWN_TONGUE_ONLY, translatorSlots, setLanguages, tracedCalls, callOverheard, RECORD_MINUTES, RECORD_LIMIT, type Note, type Recording, harvestYield, materialsOf, materialsWorth, spendMaterials, nodeAt, type ResourceNode,
@@ -393,7 +393,7 @@ export default function GameBoard() {
       // A launcher fires the grenades carried; a round that bursts (a rocket, a missile) bursts where its bolt stops; a bipod or tripod steadies a two-handed gun
       if (/grenade launcher/i.test(gun.name)) Object.assign(gun, { launcher: true, mag: 1, left: 1, reserve: 99, cells: false, reload: 1.6 });
       const rider = kit.ammo?.riders?.[kit.ammo.round ?? ""];
-      if (rider?.burst) gun.burst = blastOf(kit.ammo!.round!, { radius: rider.burst.radius, damage: [{ dice: rider.burst.dice, type: rider.burst.type }], conditions: rider.condition ? [rider.condition] : [], rounds: rider.rounds });
+      if (rider?.burst) gun.burst = blastOf(kit.ammo!.round!, { radius: rider.burst.radius, damage: [{ dice: rider.burst.dice, type: rider.burst.type }], conditions: rider.condition ? [rider.condition] : [], rounds: rider.rounds, ...(rider.fire ? { fire: rider.fire } : {}) });
       else if (rider?.fire) gun.burst = blastOf(kit.ammo!.round!, { radius: rider.fire.radius, damage: [{ dice: rider.fire.dice, type: "fire" }], lingers: true, fireDice: rider.fire.dice });
       gun.brace = !!kit.bipod || !!kit.braced;
     }
@@ -658,9 +658,12 @@ export default function GameBoard() {
         const ab = skillAbility(sk);
         const dt = dtState;
         const clothesEdge = (sk === "persuasion" && genteel && dressed(/clothes, fine|dress uniform/i)) || (sk === "deception" && dressed(/clothes, costume/i));
-        const prof = dt.expertise.includes(sk) ? 2 * proficiency : skilled(sk) ? proficiency : dt.trained.includes(sk) ? Math.floor(proficiency / 2) : 0;
-        const note = dt.expertise.includes(sk) ? "expertise" : skilled(sk) ? "trained" : dt.trained.includes(sk) ? "half proficiency" : "untrained";
-        rows.push({ skill: sk, label: cap(sk), ability: ab, bonus: mod(ab) + Math.max(prof, toolProf), note: `${toolProf && toolProf >= prof ? `${note}, ${plan.tool}` : note}${clothesEdge ? ", dressed for it" : ""}`, edge: (!!toolProf && skilled(sk)) || clothesEdge });
+        // (its tier: the sheet's and downtime's, raised by what is worn, a clothing pattern's "one step" or "grand mastery"; mastery and up
+        // always has advantage: Wretched Hives' proficiency tiers)
+        const tier = tierOf(sk, dt.expertise.includes(sk) ? 3 : skilled(sk) ? 2 : dt.trained.includes(sk) ? 1 : 0);
+        const prof = tierBonus(tier, proficiency);
+        const note = tier === 1 ? "half proficiency" : tier === 2 ? "trained" : PROFICIENCY_TIERS[tier];
+        rows.push({ skill: sk, label: cap(sk), ability: ab, bonus: mod(ab) + Math.max(prof, toolProf), note: `${toolProf && toolProf >= prof ? `${note}, ${plan.tool}` : note}${clothesEdge ? ", dressed for it" : ""}`, edge: (!!toolProf && skilled(sk)) || clothesEdge || tierAdvantage(tier) });
       }
       return rows;
     }
@@ -733,6 +736,9 @@ export default function GameBoard() {
   };
   const carries = (pattern: RegExp) => (character?.equipment ?? []).some((name: string) => pattern.test(name));
   const skilled = (skill: string) => (character?.skillProficiencies ?? []).some((s: string) => s.toLowerCase() === skill);
+  // A skill's, saving throw's ("wisdom saving throws") or tool's proficiency tier (shared/logic PROFICIENCY_TIERS, 0 untrained to 6 grand
+  // mastery) from its tier on the sheet, raised by the items in use (withItemEffects `itemProficiency`)
+  const tierOf = (name: string, base: number) => raisedTier(base, (character as any)?.itemProficiency?.[name.toLowerCase()] ?? []);
 
   // Hostile creatures here; in the open of a district also those on the roofs and catwalks in sight
   const hostiles = world && here ? watchersAt(world, here.id) : (here?.occupants ?? []).filter((o) => o.disposition === "hostile" && o.hitPoints);
@@ -830,6 +836,17 @@ export default function GameBoard() {
     });
     // An enhanced shield's or armor's "damage you take is reduced by N"; headgear's "by your proficiency bonus" (from weapons: the
     // books say unenhanced weapons, and the fight does not tell them apart, so all of them: house reading)
+    // Modifications fitted in the armour, shield and clothes worn (once attuned; 2026-11-02, they were not counted): the properties they give
+    // (a clothing pattern's "insulated 1", an armour mod's "absorbing 2") and those they take away (Balanced Shielding: no longer imbalanced)
+    for (const n of Array.from(new Set([worn.body, worn.shield, ...wearingNow].filter(Boolean) as string[]))) {
+      const fit = (character?.playState as any)?.fitted?.[n];
+      if (!fit?.mods?.length || !isAttuned(character, n)) continue;
+      const mods = (fit.mods as string[]).map((m) => itemFacts?.[m.toLowerCase()]).filter(Boolean) as ItemFacts[];
+      const drops = mods.flatMap((f) => f.effects.drops ?? []);
+      const own = rows.find((r) => r.name === n);
+      if (own && drops.length) own.properties = (own.properties ?? []).filter((p) => !drops.some((d) => p.toLowerCase().startsWith(d)));
+      rows.push({ name: `${n}, modified`, properties: mods.flatMap((f) => f.properties ?? []) });
+    }
     if ((character as any)?.itemAbsorb) rows.push({ name: "enhanced item", absorb: (character as any).itemAbsorb });
     if ((character as any)?.itemSenses?.weaponGuard) rows.push({ name: "enhanced item", absorb: proficiency });
     const traits = armorTraits(rows, Number(character?.abilityScores?.strength) || 10);
@@ -2059,8 +2076,10 @@ export default function GameBoard() {
       // Sealed suits worn: their resistances and condition immunities, and 15 feet less speed
       ...(() => {
         const suits = wearingNow.map((n) => suitFacts(n)).filter(Boolean);
-        if (!suits.length) return {};
-        return { resist: [...new Set(suits.flatMap((x) => x!.resist))], conditionImmune: [...new Set(suits.flatMap((x) => x!.immune))], speed: Math.max(5, (Number(character.speed) || 30) + Math.min(...suits.map((x) => x!.speed))) };
+        // (and what enhanced items in use resist: Orbalisk armour all unenhanced damage, a kinetic-resistant mod)
+        const itemResist: string[] = (character as any)?.itemResist ?? [];
+        if (!suits.length) return itemResist.length ? { resist: itemResist } : {};
+        return { resist: [...new Set([...suits.flatMap((x) => x!.resist), ...itemResist])], conditionImmune: [...new Set(suits.flatMap((x) => x!.immune))], speed: Math.max(5, (Number(character.speed) || 30) + Math.min(...suits.map((x) => x!.speed))) };
       })(),
       // In water (Player's Handbook, Swimming): each foot costs an extra foot unless the creature has a swimming speed (a propulsion
       // pack running gives its own: the item's text)
@@ -2072,7 +2091,8 @@ export default function GameBoard() {
       })(),
       vulnerable: (play.augments?.length ?? 0) >= 4 ? ["ion"] : undefined,
       // Saving throws: the ability modifier, and the proficiency bonus where the class is proficient
-      saves: Object.fromEntries(["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"].map((a) => [a, (a === "dexterity" && armorNow.rigid ? rigidDex(scoreMod(a)) : scoreMod(a)) + (savedAbilities.includes(a) ? proficiency : 0)])),
+      // (a tier raised by an item, "Your level of proficiency in Wisdom saving throws increases by two steps", counts: Wretched Hives' tiers)
+      saves: Object.fromEntries(["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"].map((a) => [a, (a === "dexterity" && armorNow.rigid ? rigidDex(scoreMod(a)) : scoreMod(a)) + tierBonus(tierOf(`${a} saving throws`, savedAbilities.includes(a) ? 2 : 0), proficiency)])),
       stealth: scoreMod("dexterity") + (skilled("stealth") ? proficiency : 0),
       // What the class, archetype and species features can do, their uses spent since the last rest, and the focus left
       features: combatFeatures(character),
@@ -2106,9 +2126,15 @@ export default function GameBoard() {
           // A machinist's catalyzer taken for the fight: tech powers gain its bonuses (a tech power is one with no Force alignment)
           const stats = castingStats(character.abilityScores, level, power);
           const cat = !("forceAlignment" in power) ? (play.buffs ?? []).find((b) => b.kind === "catalyzer")?.effects : undefined;
+          // A focus generator or wristpad and their modifications: a bonus to melee or ranged power attacks (a reach of 5 feet or less is
+          // melee) and to the save DC by the ability saved with; a Sith robe's to force powers' damage
+          const kind = "forceAlignment" in power ? "force" : "tech";
+          const gear = (character as any)?.itemPowers?.[kind] as PowerBonus | undefined;
+          const reach = rangeFeet(power.range ?? facts.range);
+          const plus = { attack: ((reach ?? 0) <= 5 ? gear?.melee : gear?.ranged) ?? 0, dc: effect.save ? gear?.dc?.[String(effect.save).toLowerCase()] ?? 0 : 0, damage: kind === "force" ? (character as any)?.itemForceDamage ?? 0 : 0 };
           return {
-            name: power.name as string, level: power.level as number, cost: powerCost(power), range: rangeFeet(power.range ?? facts.range), castTime, ...effect, motion, ...(motion && !motion.rider ? { summary: motionSummary(motion) } : {}),
-            ...stats, ...(cat ? { attack: stats.attack + (cat.techAttack ?? 0), dc: stats.dc + (cat.techDc ?? 0), bonus: cat.techDamage ?? 0 } : {}),
+            name: power.name as string, level: power.level as number, cost: powerCost(power), range: reach, castTime, ...effect, motion, ...(motion && !motion.rider ? { summary: motionSummary(motion) } : {}),
+            ...stats, attack: stats.attack + plus.attack + (cat?.techAttack ?? 0), dc: stats.dc + plus.dc + (cat?.techDc ?? 0), ...(cat || plus.damage ? { bonus: (cat?.techDamage ?? 0) + plus.damage } : {}),
           };
         })
         .sort((a, b) => order[a.kind] - order[b.kind] || a.level - b.level),
@@ -4441,7 +4467,8 @@ export default function GameBoard() {
       const f = factsOf(n);
       return { name: n, weight: f?.weight, containerLb: f?.equipmentCategory === "Storage" ? containerOf({ name: n, description: f?.description })?.lb : undefined };
     });
-    const vest = names.some((n) => /tracker utility vest/i.test(n)) ? { items: 10, each: 1 } : undefined;
+    // (a utility vest worn: its light items carried free, read from its text, "the wearer can carry up to 10 light items (up to 1.00 lb each)")
+    const vest = wearingNow.map((n) => accessoryOf({ name: n, description: factsOf(n)?.description }).carryFree).find(Boolean);
     return loadOf(items, { strength: Number(character?.abilityScores?.strength) || 10, size: (speciesFacts as any)?.size, variant: variantOn, others: otherCarriers(), freeItems: vest });
   };
   // (at the helm of a submersible the party breathes the craft's air: shared/logic "Over the water")
@@ -5059,6 +5086,30 @@ export default function GameBoard() {
             return true;
           },
         });
+      } else if (use.kind === "accessory" && use.facts.launcher) {
+        // A rocketpack's integrated launcher (2026-11-02, the item audit: its text only before): "whenever you would make a ranged weapon
+        // attack, you can instead fire this rocket launcher", a rocket carried each time; the rocket bursts round the target, hit or miss
+        // (its ammunition's rider), so the burst is what is played (house reading)
+        const launcher = use.facts.launcher;
+        for (const rocket of Array.from(new Set<string>(character.equipment ?? [])).filter((n) => /^rocket,/i.test(n))) {
+          const ru = gearOf(rocket);
+          const rider = ru?.kind === "ammo" ? ru.rider : undefined;
+          const blast = rider?.burst ? { radius: rider.burst.radius, dc: rider.burst.dc, save: rider.burst.save, damage: [{ dice: rider.burst.dice, type: rider.burst.type }] } : rider?.fire ? { radius: rider.fire.radius, dc: rider.fire.dc, save: "dexterity", damage: [{ dice: rider.fire.dice, type: "fire" }] } : undefined;
+          if (!blast) continue;
+          out.push({
+            key: `${name}:${rocket}`,
+            label: `${name}: fire a ${rocket.toLowerCase()} (${(character.equipment as string[]).filter((n) => n === rocket).length} left)`,
+            hint: `range ${launcher.normal}/${launcher.long} ft.; ${blast.radius} ft., DC ${blast.dc} ${blast.save}, ${blast.damage.map((d) => `${d.dice} ${d.type}`).join(" + ")}${rider?.condition ? `, ${rider.condition.toLowerCase()}` : ""}`,
+            target: "foe",
+            use: (id) => {
+              if (id === undefined) return !!speed("There is nobody to fire at.");
+              const ok = useCombat.getState().itemEffect({ kind: "explosive", label: rocket, targetId: id, radius: blast.radius, maxFeet: launcher.long, dc: blast.dc, save: blast.save, damage: blast.damage, conditions: rider?.condition ? [rider.condition] : [], conditionRounds: rider?.rounds ?? 1 });
+              if (!ok) return false;
+              saveCharacter({ equipment: consume(rocket).equipment });
+              return true;
+            },
+          });
+        }
       } else if (use.kind === "extinguisher") {
         out.push({
           key: name,
@@ -5140,7 +5191,7 @@ export default function GameBoard() {
           const ru = gearOf(r);
           const rider = ru?.kind === "ammo" ? ru.rider : undefined;
           if (!rider?.burst && !rider?.fire) continue;
-          const blast = rider.burst ? blastOf(r, { radius: rider.burst.radius, damage: [{ dice: rider.burst.dice, type: rider.burst.type }], conditions: rider.condition ? [rider.condition] : [], rounds: rider.rounds }) : blastOf(r, { radius: rider.fire!.radius, damage: [{ dice: rider.fire!.dice, type: "fire" }], lingers: true, fireDice: rider.fire!.dice });
+          const blast = rider.burst ? blastOf(r, { radius: rider.burst.radius, damage: [{ dice: rider.burst.dice, type: rider.burst.type }], conditions: rider.condition ? [rider.condition] : [], rounds: rider.rounds, ...(rider.fire ? { fire: rider.fire } : {}) }) : blastOf(r, { radius: rider.fire!.radius, damage: [{ dice: rider.fire!.dice, type: "fire" }], lingers: true, fireDice: rider.fire!.dice });
           out.push({ name: `${name}: ${r}`, count: stock(r), act: { act: "rocket", blast, damage: avgDice(rider.base?.dice ?? "2d6") } });
         }
       }
@@ -6796,6 +6847,16 @@ export default function GameBoard() {
       }
       case "access":
         return box(<p className="text-gray-300">Opens a lock of DC 15 or less at once, with no check (house rule: the book says only that it grants access to secure areas).</p>);
+      // (2026-11-02, the item audit: the plain focus generator did nothing) It is a forcecaster's focus: the chassis its modifications are fitted
+      // in (Wretched Hives, Modifiable Items: four slots), which give force powers their bonuses once it is attuned
+      case "focus": {
+        const fitted = ((play as any).fitted?.[name]?.mods ?? []) as string[];
+        const gives = fitted.map((m) => describeEffects(itemFacts?.[m.toLowerCase()]?.effects ?? {})).filter(Boolean);
+        return box(<>
+          <p className="text-gray-300">A forcecaster's focus: fit focus generator modifications in it (Modify, in the pack; four slots) and attune to it, and they add to your force powers' attacks, save DCs and damage in a fight.</p>
+          <p className="text-gray-400" data-testid="focus-gives">{gives.length ? `Fitted: ${gives.join("; ")}${isAttuned(character, name) ? "" : " (attune to it for them to work)"}.` : "Nothing fitted yet."}</p>
+        </>);
+      }
       case "trace": {
         const calls = world ? tracedCalls(world.pursuit?.reports, (id) => world.areas[id]?.name ?? id, clockNow()) : [];
         return box(<>
@@ -8305,6 +8366,7 @@ export default function GameBoard() {
     const skillRows = SKILLS.map((s) => s.name.toLowerCase());
     let bonus = modifier(character.abilityScores?.[c.ability]);
     let note = "";
+    let tier = 0;
     const proficientSkills: string[] = (character.skillProficiencies ?? []).map((s: string) => s.toLowerCase());
     const skillKnown = skillRows.includes(using);
     if (using === "attack roll") {
@@ -8312,24 +8374,27 @@ export default function GameBoard() {
       bonus = best?.attackBonus ?? bonus;
       note = best ? best.name : "unarmed";
     } else if (skillKnown) {
-      if (downtime.expertise.includes(using)) { bonus += 2 * prof; note = "expertise"; }
-      else if (proficientSkills.includes(using)) { bonus += prof; note = "trained"; }
-      else if (downtime.trained.includes(using)) { bonus += Math.floor(prof / 2); note = "half proficiency"; }
+      // (its tier, raised by items worn: Wretched Hives' tiers)
+      tier = tierOf(using, downtime.expertise.includes(using) ? 3 : proficientSkills.includes(using) ? 2 : downtime.trained.includes(using) ? 1 : 0);
+      bonus += tierBonus(tier, prof);
+      note = tier === 1 ? "half proficiency" : tier === 2 ? "trained" : tier ? PROFICIENCY_TIERS[tier] : "";
     } else {
       // A tool or kit, or a gaming set: the best the character is trained with that fits the name
       const names: string[] = [...(character.toolProficiencies ?? []), ...(character.equipment ?? [])];
       const hit = names.find((n) => n.toLowerCase().includes(using.replace(/ kit$| set$/, "")) || using.includes(n.toLowerCase()));
       const trained = (character.toolProficiencies ?? []).some((n: string) => n.toLowerCase().replace(/[^a-z]/g, "") === (hit ?? using).toLowerCase().replace(/[^a-z]/g, "")) || (using.includes("gaming") && (character.toolProficiencies ?? []).some((n: string) => /gaming|sabacc|dejarik|pazaak|chance/i.test(n)));
-      if (trained) { bonus += downtime.expertise.includes(using) ? 2 * prof : prof; note = "trained"; }
-      else if (downtime.trained.includes(using)) { bonus += Math.floor(prof / 2); note = "half proficiency"; }
-      else note = "untrained";
+      tier = tierOf(hit ?? using, trained ? (downtime.expertise.includes(using) ? 3 : 2) : downtime.trained.includes(using) ? 1 : 0);
+      bonus += tierBonus(tier, prof);
+      note = tier === 1 ? "half proficiency" : tier === 2 ? "trained" : tier ? PROFICIENCY_TIERS[tier] : "untrained";
     }
-    // Exhaustion: disadvantage on ability checks
+    // Exhaustion: disadvantage on ability checks; mastery and up: advantage
     const exhausted = (character.exhaustionLevel ?? 0) >= 1;
+    const edge = (tierAdvantage(tier) ? 1 : 0) - (exhausted ? 1 : 0);
     const first = d20();
+    const second = d20();
     // (the shooter mode: no dice, a passive check; house rule)
-    const roll = playMode === "shooter" ? passiveD20(exhausted ? -1 : 0) : exhausted ? Math.min(first, d20()) : first;
-    return { roll, bonus, total: roll + bonus, note: `${note}${exhausted ? "; exhausted: disadvantage" : ""}${playMode === "shooter" ? "; passive" : ""}`.replace(/^; /, "") };
+    const roll = playMode === "shooter" ? passiveD20(edge) : edge > 0 ? Math.max(first, second) : edge < 0 ? Math.min(first, second) : first;
+    return { roll, bonus, total: roll + bonus, note: `${note}${exhausted ? "; exhausted: disadvantage" : ""}${tierAdvantage(tier) ? "; advantage" : ""}${playMode === "shooter" ? "; passive" : ""}`.replace(/^; /, "") };
   };
   // `lived`: days whose living the activity itself paid for (Work: "you earn enough to support a ... lifestyle for the week"), which the
   // daily lifestyle and food (passDays) then skip; before 2026-10-26 a workweek's lifestyle was charged on top of what the work paid for it

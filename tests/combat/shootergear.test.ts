@@ -233,3 +233,15 @@ test("a nemesis comes back with what it learned: an extinguisher after fire, the
   assert.deepEqual(learnKit(rec, { id: "nem-1", name: "x", body: {} as never, hp: 0, maxHp: 20, struck: { fire: 12 } }, {}, true), ["Medpac"], "a second medpac, not a second extinguisher");
   assert.deepEqual(learnKit(rec, { id: "nem-1", name: "x", body: {} as never, hp: 0, maxHp: 20, struck: { fire: 12 } }, {}, true), [], "two medpacs at most");
 });
+
+test("an incendiary rocket bursts and leaves the ground ablaze over its own, wider radius", () => {
+  const rocket = blastOf("Rocket, incendiary", { radius: 5, damage: [{ dice: "2d8", type: "fire" }], conditions: [], fire: { radius: 15, dice: "2d8" } });
+  assert.equal(rocket.damage, 9);
+  assert.equal(rocket.lingerRadius, 3);
+  const sim = newSim([player()], { seed: 1 });
+  sim.bolts.push({ id: 1, owner: "me", side: "player", x: 9.5, y: 0.5, h: 0.6, vx: 24, vy: 0, vh: -30, damage: 2, type: "kinetic", life: 1, cell: [9, 0], burst: rocket });
+  run(sim, 0.2);
+  assert.equal(sim.fields.length, 1);
+  assert.equal(sim.fields[0].radius, 3);
+  assert.equal(sim.fields[0].type, "fire");
+});
