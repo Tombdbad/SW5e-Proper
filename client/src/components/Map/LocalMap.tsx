@@ -31,7 +31,7 @@ import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, 
 import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
 import { useShoot } from "./interiors/shoot";
-import { moonlight, isStand, standRow, STAND_STEP, STAND_ROWS } from "@shared/logic";
+import { moonlight, isArenaBowl } from "@shared/logic";
 import { bondOf, chatScene, genderOf, smallTalk, talkNotes, talkPlace, townTalk, type TalkLine } from "@shared/logic/relations";
 import { chatter, speak, voicePrefs, type ChatPerson } from "@/lib/voice";
 import { CROUCH_FACTOR, PRONE_FACTOR, stickWalk, useRun, WALK_FACTOR, type Walk } from "./interiors/stick";
@@ -565,8 +565,8 @@ const sameFootprint = (a: RoomLayout, b: RoomLayout) => a.x < b.x + b.width && b
 // The steps of a stairwell, or the rungs of a ladder, rising from one end of a room to the other;
 // they are looked at, not tapped (the floor under them takes the tap)
 // `rock` (a cave's stairs) draws the steps as the cave's rock instead of boxes
-function Ascent({ w, h, toward, up, form, switchback, onTap, rock }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; form: string; switchback?: RoomLayout["switchback"]; onTap?: (x: number, y: number) => void; rock?: { biome: string } }) {
-  if (switchback) return <Switchback w={w} h={h} toward={toward} up={up} low={switchback.low} onTap={onTap} rock={rock} />;
+function Ascent({ w, h, toward, up, form, switchback, ramp, onTap, rock }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; form: string; switchback?: RoomLayout["switchback"]; ramp?: boolean; onTap?: (x: number, y: number) => void; rock?: { biome: string } }) {
+  if (switchback) return <Switchback w={w} h={h} toward={toward} up={up} low={switchback.low} ramp={ramp} onTap={onTap} rock={rock} />;
   const along = toward === "e" || toward === "w" ? w : h;
   const across = toward === "e" || toward === "w" ? h : w;
   const count = Math.max(4, Math.round(along * (form === "ladder" ? 3 : 2.4)));
@@ -605,12 +605,13 @@ function Ascent({ w, h, toward, up, form, switchback, onTap, rock }: { w: number
 // The two flights of a switchback and its landing (a stair block's way up or down a floor, see shared/logic "Stair blocks"): treads
 // along each lane at the height the floor is there (climbAt), the landing flat across the far row, and a wall between the flights
 // with a rail along it, up to the landing
-function Switchback({ w, h, toward, up, low, onTap, rock }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; low: 0 | 1; onTap?: (x: number, y: number) => void; rock?: { biome: string } }) {
+// (`ramp`: a slope, the pit's ramps: thin slices that read as one surface, in packed earth)
+function Switchback({ w, h, toward, up, low, ramp, onTap, rock }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; low: 0 | 1; ramp?: boolean; onTap?: (x: number, y: number) => void; rock?: { biome: string } }) {
   const none = () => null;
   const plan = { width: w, height: h, climb: { toward, levels: 1 }, switchback: { low } };
   const ew = toward === "e" || toward === "w";
   const along = ew ? w : h;
-  const TREADS = 3;
+  const TREADS = ramp ? 10 : 3;
   // (a tap on a tread walks to its square: the floor under the flights is far below it)
   const treads: { at: V3; size: V3; top: number; sq: [number, number] }[] = [];
   for (let lane = 0; lane < 2; lane++) {
@@ -637,7 +638,7 @@ function Switchback({ w, h, toward, up, low, onTap, rock }: { w: number; h: numb
       ) : (
         <mesh key={i} position={t.at} raycast={onTap ? undefined : none} receiveShadow castShadow onClick={onTap ? (e) => { e.stopPropagation(); if (e.delta <= 8) onTap(t.sq[0], t.sq[1]); } : undefined}>
           <boxGeometry args={t.size} />
-          <meshLambertMaterial color={i % 2 ? "#8b8f96" : "#9aa0a8"} />
+          <meshLambertMaterial color={ramp ? "#7a6447" : i % 2 ? "#8b8f96" : "#9aa0a8"} />
         </mesh>
       )))}
       {wall.map((p, i) => (rock ? <CaveSlab key={`w${i}`} at={p.at} size={p.size} biome={rock.biome} variant={i + 1} /> : <Box key={`w${i}`} at={p.at} size={p.size} color="#c8ccd2" />))}
@@ -744,6 +745,55 @@ const WALL_HEIGHT = 0.8;
 const FULL_WALL_HEIGHT = 3.0;
 // The rock roof of a cave in the eye views: highest over the middle of a chamber, lower towards its walls (CaveRoom caveShellGeometry)
 const CAVE_ROOF = 3.5;
+// The colour of a wall seen while another room is looked into (dimmed) or not
+const dimWall = (wall: string, dim: boolean) => new THREE.Color(wall).multiplyScalar(dim ? 0.45 : 1).getStyle();
+// An arena's tier (2026-11-02; the user: "Tiers should be mezzanine levels (the arena fighting floor AND combatants MUST remain visible from
+// ALL tiers)"): a terrace round the open middle (`well`, the radius of the opening, in squares from the room's middle), a rail along its edge,
+// and the outside wall round it, a storey high; the first tier's wall goes on down to the ground (`base`). Drawn in the room's squares.
+function Terrace({ w, h, well, wall, base = 0, onTap }: { w: number; h: number; well: number; wall: string; base?: number; onTap?: (e: ThreeEvent<MouseEvent>) => void }) {
+  const out = Math.min(w, h) / 2;
+  return (
+    <group position={[w / 2, 0, h / 2]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]} receiveShadow onClick={onTap}>
+        <ringGeometry args={[well, out, 96, 1]} />
+        <meshLambertMaterial color="#6f6a61" />
+      </mesh>
+      {/* The slab's edge over the open middle, and its underside */}
+      <mesh position={[0, -0.12, 0]} raycast={() => null}>
+        <cylinderGeometry args={[well, well, 0.28, 96, 1, true]} />
+        <meshLambertMaterial color="#59544c" side={THREE.DoubleSide} />
+      </mesh>
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, -0.26, 0]} raycast={() => null}>
+        <ringGeometry args={[well, out, 96, 1]} />
+        <meshLambertMaterial color="#4a463f" />
+      </mesh>
+      <RingRail r={well + 0.12} h={BALUSTRADE_HEIGHT} />
+      {/* The outside wall, a storey high (the first tier's down to the ground) */}
+      <mesh position={[0, (LEVEL_H - base) / 2, 0]} raycast={() => null}>
+        <cylinderGeometry args={[out, out, LEVEL_H + base, 96, 1, true]} />
+        <meshLambertMaterial color={wall} side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  );
+}
+// A rail round a circle: posts every square or so, a top rail and a lower one (as the Balustrade's, bent round)
+function RingRail({ r, h }: { r: number; h: number }) {
+  const posts = Math.max(12, Math.round((Math.PI * 2 * r) / 1.1));
+  return (
+    <group>
+      {Array.from({ length: posts }, (_, i) => {
+        const a = (i / posts) * Math.PI * 2;
+        return <Cyl key={i} at={[Math.cos(a) * r, h / 2, Math.sin(a) * r]} r={0.035} h={h} color="#aeb4bb" />;
+      })}
+      {[h, h * 0.45].map((y) => (
+        <mesh key={y} rotation={[Math.PI / 2, 0, 0]} position={[0, y, 0]} raycast={() => null}>
+          <torusGeometry args={[r, y === h ? 0.045 : 0.025, 6, Math.max(48, posts * 2)]} />
+          <meshLambertMaterial color="#c8ccd2" />
+        </mesh>
+      ))}
+    </group>
+  );
+}
 // A gallery's balustrade: waist high to a figure, so that the floor below stays open to the ceiling
 const BALUSTRADE_HEIGHT = 1.0;
 const WALL_THICK = 0.16;
@@ -964,8 +1014,10 @@ function Stepper({ x, y, z = 0, pace = 4, face = 0, turn: turns = true, children
 }
 const isDroideka = (name = "") => /droideka|destroyer droid/i.test(name);
 
-export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = "", tallWalls = false, ceiling = false, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, biome, like, meets = [], children }: {
+export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = "", tallWalls = false, ceiling = false, wallHeight, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, biome, like, meets = [], children }: {
   width: number;
+  // The walls this high, whatever the view (an arena's floor: up to its first tier)
+  wallHeight?: number;
   // The world's biome, for the wall set of a room with no mood (a roof, a gallery, a room looked down into): the walls were plaster there,
   // whatever the building was of (2026-10-27, the user: texture clashes on walls)
   biome?: string;
@@ -981,7 +1033,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // What this room is, for its light, its air and what is in it (interiors/): the kind of building, the room's name, the world
   mood?: { buildingType: string; roomName: string; biome: string };
   // The room's level and what it is, for stairs, lifts and ladders (their floor rises)
-  plan?: Pick<RoomLayout, "level" | "form" | "climb" | "width" | "height" | "mask" | "switchback">;
+  plan?: Pick<RoomLayout, "level" | "form" | "climb" | "width" | "height" | "mask" | "switchback" | "well" | "ramp">;
   assets: RoomAsset[];
   floor: FloorKind;
   wall: string;
@@ -1039,7 +1091,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   const parapet = plan?.form === "roof" || plan?.form === "balcony";
   // A grand room is two or three storeys high under a vault, in the eye views (vaultOf)
   const vault = mood && fullWalls && ceiling && !mask && !plan?.form ? vaultOf(mood.buildingType, mood.roomName, width, height) : 0;
-  const wallH = (vault ? LEVEL_H * Math.max(vault, tallWalls ? 2 : 1) - 0.2 : tallWalls ? LEVEL_H * 2 - 0.2 : fullWalls && !parapet ? FULL_WALL_HEIGHT : WALL_HEIGHT) + (plan?.switchback && !fullWalls ? climbs / 2 : climbs);
+  const wallH = (wallHeight ?? (vault ? LEVEL_H * Math.max(vault, tallWalls ? 2 : 1) - 0.2 : tallWalls ? LEVEL_H * 2 - 0.2 : fullWalls && !parapet ? FULL_WALL_HEIGHT : WALL_HEIGHT)) + (plan?.switchback && !fullWalls ? climbs / 2 : climbs);
   // The ceiling stays at the room's height where the walls are a balustrade (a gallery)
   const ramp = (x: number, y: number) => (plan?.climb ? rampAt(plan as RoomLayout, x + 0.5, y + 0.5) : 0);
   // (a cave's way between floors is a slope of rock, not steps: the user, 2026-10-30)
@@ -1097,7 +1149,20 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   return (
     <>
       {/* The floor; a tap on it walks to the square (both floors are centred on the room's middle) */}
-      {mask && slope ? (
+      {plan?.well ? (
+        // An arena's tier: the terrace round the open middle, with its rail (a tap on it walks to the square)
+        <group position={[width / 2, 0, height / 2]} onClick={onFloor ? (e) => { e.stopPropagation(); if (e.delta > 8) return; const p = e.eventObject.worldToLocal(e.point.clone()); onFloor(Math.max(0, Math.min(width - 1, Math.floor(p.x + width / 2))), Math.max(0, Math.min(height - 1, Math.floor(p.z + height / 2)))); } : undefined}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} receiveShadow>
+            <ringGeometry args={[plan.well, Math.min(width, height) / 2, 96, 1]} />
+            <meshLambertMaterial color="#6f6a61" />
+          </mesh>
+          <mesh position={[0, -0.12, 0]} raycast={() => null}>
+            <cylinderGeometry args={[plan.well, plan.well, 0.28, 96, 1, true]} />
+            <meshLambertMaterial color="#59544c" side={THREE.DoubleSide} />
+          </mesh>
+          <RingRail r={plan.well + 0.12} h={BALUSTRADE_HEIGHT} />
+        </group>
+      ) : mask && slope ? (
         <RampFloor mask={mask} width={width} height={height} color={FLOORS[floor]} lift={slope} liftKey={slopeKey} onClick={floorTap} />
       ) : mask ? (
         <MaskFloor mask={mask} width={width} height={height} color={FLOORS[floor]} onClick={floorTap} />
@@ -1112,12 +1177,12 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         </mesh>
       )}
       {/* Over the slab, its texture (siteAssets floorLook); the slab shows until the maps are in */}
-      {!mask && floorTexture && (
+      {!mask && !plan?.well && floorTexture && (
         <Suspense fallback={null}>
           <FloorSurface look={floorTexture} w={width} h={height} radii={[nw, ne, se, sw]} onTap={floorTap} />
         </Suspense>
       )}
-      {plan?.climb && plan.form && !sloped && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} onTap={onFloor} rock={rocky ? { biome: mood!.biome } : undefined} />}
+      {plan?.climb && plan.form && !sloped && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} ramp={plan.ramp} onTap={onFloor} rock={rocky ? { biome: mood!.biome } : undefined} />}
       {walls && mask
         ? <Solids><CaveWalls mask={mask} ways={assets.filter((a) => a.side).map((a) => ({ x: a.x, y: a.y, side: a.side }))} w={width} h={height} biome={mood!.biome} tier={detail} seed={width * 31 + height} tall={fullWalls} ceiling={ceiling && fullWalls ? CAVE_ROOF : undefined} lift={slope} liftKey={slopeKey} /></Solids>
         : walls
@@ -1189,9 +1254,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
           <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} tint={wallLook && wallPack && hasWalls(wallPack) ? toneColour(wallLook) : wall} bend={bend} rock={rocky ? { biome: mood!.biome, tier: detail, seed: a.x * 7 + a.y * 13 + width } : undefined} />
         </group>
       ))}
-      {/* An arena's stands: a square of tier for each, drawn together (siteAssets arena_tier_<row>) */}
-      {assets.some(isStand) && <Scatter placed={assets.filter(isStand).map((a): Placed => ({ key: `arena_tier_${standRow({ width, height }, a.x, a.y)}`, x: a.x + 0.5, y: a.y + 0.5, rot: 0, scale: 1, v: (a.x * 7 + a.y * 3) % 3 }))} biome={biome ?? mood?.biome ?? "temperate"} />}
-      {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone" && !isStand(a)).map((a) => (
+      {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
         <Glide key={a.id} x={a.x} y={a.y} z={(a.z ?? 0) * LEVEL_H}>
           {a.kind === "ship" ? (bay ? <BayBerth room={bay.room} asset={a} based={bay.based} /> : ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} /> : <Berth w={a.w} h={a.h} name={a.name} note="away on a voyage" />)
             : a.kind === "stairs" ? <StairsAsset w={a.w} h={a.h} up={/up/i.test(a.name)} rock={rocky ? { biome: mood!.biome } : undefined} />
@@ -1199,6 +1262,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             : (
               <>
                 <Furniture name={a.cell?.open ? `${a.name} (open)` : a.name} w={a.w} h={a.h} seed={hue(a.id)} look={look} pack={pack} tone={pack ? packLook : undefined} face={facing(a, width, height)} bare={!!mood && !!holdsOf(a.name, mood.buildingType, mood.roomName)} />
+                {/* A fighting beast in its pen (an arena's pens: models.tsx draws the cage) */}
+                {a.name === "Beast pen" && <group position={[a.w / 2, 0.06, a.h / 2]} rotation={[0, hue(a.id) % 6, 0]}><Figure kind="beast" ring="#9ca3af" name={PEN_BEASTS[hue(a.id) % PEN_BEASTS.length]} /></group>}
                 {mood && holdsOf(a.name, mood.buildingType, mood.roomName) && <Stock name={a.name} w={a.w} h={a.h} seed={hue(a.id)} buildingType={mood.buildingType} roomName={mood.roomName} tone={packLook} wares={onShow.shelves[a.id]} face={facing(a, width, height)} />}
                 {/* A droid for sale on its plinth (the dealer's stock of the day) */}
                 {onShow.droids[a.id] && (
@@ -1240,8 +1305,6 @@ export function vaultOf(buildingType: string, roomName: string, w: number, h: nu
   if (buildingType === "palace") return /audience|throne/i.test(roomName) ? 3 : /hall/i.test(roomName) || w * h >= 70 ? 2 : 0;
   if (/^(estates|manor house)$/.test(buildingType)) return /hall/i.test(roomName) && w * h >= 36 ? 2 : 0;
   if (buildingType === "archive") return /reading hall/i.test(roomName) ? 2 : 0;
-  // (an arena's floor, 2026-11-02: the stands rise to the wall under a great dome)
-  if (buildingType === "arena") return /arena floor/i.test(roomName) ? 3 : 0;
   return 0;
 }
 
@@ -4053,11 +4116,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // What the people here have to go about their lives with: inside, the opened room's seats,
   // counters and stage; outside, a round about the building for the sentries of the way in
   const lifeApi = useRef<LifeApi | null>(null);
-  const roomSetting = useMemo((): Setting | null => {
+  // (a room's own: the one opened, and in an arena every part of its bowl, the floor and the tiers, which are all in sight of each other)
+  const settingOf = (room: Area | null | undefined): Setting | null => {
+    const opened = room;
     const l = opened?.layout;
     if (!l) return null;
     const isWayAt = (s: Sq) => l.assets.some((w) => w.side && w.x === s.x && w.y === s.y);
-    const free = (x: number, y: number) => x >= 0 && y >= 0 && x < l.width && y < l.height && !l.assets.some((a) => !a.side && a.blocks && a.x <= x && x < a.x + a.w && a.y <= y && y < a.y + a.h);
+    // (only the squares that are floor: not the curve cut off a round room's corners, nor the open middle of an arena's tier)
+    const free = (x: number, y: number) => x >= 0 && y >= 0 && x < l.width && y < l.height && standsAt(l, x, y) && !l.assets.some((a) => !a.side && a.blocks && a.x <= x && x < a.x + a.w && a.y <= y && y < a.y + a.h);
     const spots = (squares: Sq[]) => squares.filter((q) => free(q.x, q.y) && !isWayAt(q));
     const uses = opened!.tags.filter((t) => t.startsWith("use:")).map((t) => t.slice(4));
     return {
@@ -4081,18 +4147,18 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       round: [{ x: 1, y: 1 }, { x: l.width - 2, y: 1 }, { x: l.width - 2, y: l.height - 2 }, { x: 1, y: l.height - 2 }].map((c) => nearestOpen((x, y) => free(x, y) && !isWayAt({ x, y }), c)),
       watch: { x: Math.floor(l.width / 2), y: Math.floor(l.height / 2) },
       doors: l.assets.filter((a) => a.kind === "door" || a.kind === "exit").map((a) => ({ x: a.x, y: a.y })),
-      ...(() => {
-        // An arena's stands (each square as high as its row's tier) and the middle of its pit
-        const stands = new Map(l.assets.filter(isStand).map((a) => [`${a.x},${a.y}`, (standRow(l, a.x, a.y) + 1) * STAND_STEP]));
-        const pit = l.assets.find((a) => a.name === "Fighting pit");
-        return stands.size ? { stands: (q: Sq) => stands.get(`${q.x},${q.y}`), pit: pit ? { x: pit.x + (pit.w - 1) / 2, y: pit.y + (pit.h - 1) / 2 } : undefined } : {};
-      })(),
+      // An arena's tier: its crowd stands on its floor (a terrace, flat), watching the middle of the pit over the rail
+      ...(l.well ? { stands: (q: Sq) => (standsAt(l, q.x, q.y) ? 0 : undefined), pit: { x: l.width / 2 - 0.5, y: l.height / 2 - 0.5 } } : {}),
       talk: talkPlace(world.areas[opened!.parentId ?? ""]?.type ?? "", opened!.name, opened!.occupants.map((o) => o.role)),
       talkers: (a, b) => talkersOf(world, a, b),
       news: newsOf(world, opened!.id),
       scene: chatScene(talkPlace(world.areas[opened!.parentId ?? ""]?.type ?? "", opened!.name, opened!.occupants.map((o) => o.role)), [opened!.name, ...trailOf(world, opened!.id).filter((x) => x.kind === "building" || x.kind === "settlement" || x.kind === "planet").reverse().map((x) => x.name)], useClock.getState().minutes),
     };
-  }, [opened?.id, world]);
+  };
+  const roomSetting = useMemo(() => settingOf(opened), [opened?.id, world]);
+  // In an arena's bowl, the other parts of it: their people are alive too (they cheer, talk), each with its own setting
+  const bowl = !!opened && isArenaBowl(opened) && world.areas[opened.parentId ?? ""]?.type === "arena";
+  const bowlSettings = useMemo(() => (bowl ? Object.fromEntries(rooms.filter((a) => a !== opened && a.parentId === opened!.parentId && isArenaBowl(a)).map((a) => [a.id, settingOf(a)])) : {}), [opened?.id, world, bowl]);
   const streetSettings = useMemo(() => {
     if (!plan) return [] as { buildingId: string; setting: Setting; people: typeof street.sentries }[];
     return buildings.flatMap((b) => {
@@ -4550,7 +4616,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   railing={railingOf(room, rooms)}
                   meets={meetsOf(room, rooms)}
                   tallWalls={!!l.tall}
-                  ceiling={viewing && !openAir(room)}
+                  ceiling={viewing && !openAir(room) && !bowl}
+                  wallHeight={bowl && !l.well && viewing ? LEVEL_H : undefined}
                   looted={(a) => { const c = room.loot.find((c) => c.id === a.ref); return !!c && (c.node ? nodeAt(c.node, minutes).charges === 0 : !!c.looted); }}
                   nodeOf={(a) => room.loot.find((c) => c.id === a.ref)?.node}
                   wayColor={wayColor}
@@ -4581,7 +4648,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           }
           // What is over the room being looked into is taken away, so that it can be seen
           const galleryOfOpened = !!opened && formOf(room) === "gallery" && room.tags.includes(`host:${opened.id}`);
-          if (opened?.layout && levelY(l) > levelY(opened.layout) + 0.01 && sameFootprint(l, opened.layout) && !galleryOfOpened) return null;
+          // (in an arena the tiers over the floor or a lower tier stay: the floor and every tier are in sight of each other)
+          const bowlPart = isArenaBowl(room) && world.areas[room.parentId ?? ""]?.type === "arena";
+          if (opened?.layout && levelY(l) > levelY(opened.layout) + 0.01 && sameFootprint(l, opened.layout) && !galleryOfOpened && !(bowl && bowlPart)) return null;
           // A room seen from outside it: closed, with what is set in its outside walls
           const form = formOf(room);
           // (a cave: its rooms under the ground are not seen from outside; from inside it, those round the one stood in are its rock)
@@ -4593,6 +4662,23 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           // A room looked down into from its gallery is seen low, so that the gallery shows over it; so is the room behind a balcony
           // being stood on (its patio doors), which would stand in front of the balcony as a block
           const lookedFrom = opened && ((formOf(opened) === "gallery" && opened.tags.includes(`host:${room.id}`)) || (formOf(opened) === "balcony" && !!opened.layout?.assets.some((a) => a.kind === "door" && a.to === room.id)));
+          if (bowlPart) {
+            const people = l.assets.filter((a) => a.kind === "npc").map((a) => ({ key: a.id, occupant: room.occupants.find((o) => o.id === a.ref)!, at: { x: a.x, y: a.y } as Sq | null })).filter((p) => p.occupant);
+            const setting = bowl ? bowlSettings[room.id] : null;
+            return (
+              <group key={room.id} position={[l.x, levelY(l), l.y]} onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
+                {l.well ? (
+                  <Terrace w={l.width} h={l.height} well={l.well} wall={dimWall(wall, !!opened && !bowl)} base={l.level === 1 ? levelY(l) : 0} />
+                ) : (
+                  <RoomShell plan={l} corners={insideRadii(room)} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} fullWalls wallHeight={LEVEL_H} wayColor={wayColor} wayLabel={() => undefined} biome={biome} like={{ buildingType: building.type, roomName: room.name }} />
+                )}
+                {!duel && setting && people.length > 0 && (
+                  // (their squares are claimed apart from those of the room the party is in: another floor, the same squares on the map)
+                  <Life people={people} setting={setting} party={() => (inside ? { x: Math.round(feet.current.x) - l.x, y: Math.round(feet.current.y) - l.y } : null)} origin={{ x: l.x + 10000 * ((l.level ?? 0) + 2), y: l.y }} frozen={(o) => !!o.captive || !!o.disabled} onTap={inside ? tapPerson : undefined} />
+                )}
+              </group>
+            );
+          }
           // (a room with the opened one standing right on it keeps its full height, so that there is no gap under the floor)
           const storeys = l.tall ? 2 : 1;
           const carries = !!opened?.layout && sameFootprint(l, opened.layout) && levelY(opened.layout) >= levelY(l) + LEVEL_H * storeys - 0.01;
@@ -5151,6 +5237,10 @@ function BesidePanel() {
 // The crowd round a bout of the pit (2026-11-02; the user: pit fighting "should take place in a physical arena"): the arena's stands, three
 // rows of tiers round the fight's floor (siteAssets arena_tier_<row>), with spectators on them cheering (limbs.ts "cheer"); drawn round the
 // fight's own squares, outside its walls
+const STAND_ROWS = 3;
+const STAND_STEP = 0.45;
+// The beasts kept in an arena's pens (drawn in the cages: the pens are furniture, the beasts are not people of the room)
+const PEN_BEASTS = ["Nexu", "Reek", "Acklay", "Gundark", "Rancor", "Kath hound"];
 const CROWD_SPECIES = ["Human", "Twi'lek", "Rodian", "Zabrak", "Trandoshan", "Gran", "Weequay", "Duros", "Human", "Mon Calamari"];
 function PitCrowd({ width, height }: { width: number; height: number }) {
   const ring = useMemo(() => {

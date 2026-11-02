@@ -4,6 +4,13 @@ Written 2026-11-02 (Windows PC, a side session started by the main one). Branch 
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told, never commit it.
 Do not push, rebuild 5000 or merge without the user's go-ahead. 5000 still runs the older build e502652.
 
+## 2026-11-02 (4): the arena rebuilt to the user's second design (tiers over the floor, pens under it)
+Found uncommitted at the start of this session (an earlier session ended before recording it), now tested, checked in the browser, written up in REVIVAL_NOTES "The arena, second design" and committed.
+- What it is: `planArena` in shared/logic (3-4 spectator tiers in a city, 1-2 in a town, round floor with the pit, two ramps up from the pens under the floor, fighters' gate on the far side, `rebuildArena` for life < 16 worlds); "Beast pen" cage model; LocalMap `isArenaBowl` and `PEN_BEASTS`; the arena test in tests/world/layouts.test.ts.
+- Tests: the arena test passes (2 s: `node --import tsx --test --test-name-pattern="the arena" tests/world/layouts.test.ts`). The whole file is SLOW (minutes; the audit tests generate 23 worlds): run it in the background, never with a short timeout.
+- Browser (dev 5099, test DB, campaign 625, Test tab > Go to "arena"): Rakessos Arena floor and pens render; pens take several seconds to appear after the jump.
+- NOT checked: walking the ramps/stairs in play, a pit bout on the new floor, phone, e2e. (Sulolon, a 2-tier arena, was looked at from above: fine.)
+
 ## 2026-11-02 (1): talking NPCs, fewer quest-givers, the arena district, smaller stock, rarity
 The user decided: rarity = the books' rarity for enhanced items + a house tier (Standard/Premium/Prototype) for plain gear by cost; quest-givers 2 a town, 4 a city, 1 elsewhere; stock 2-4 lines a stall, 4-7 a shop; a master artificer in about one city in four, Advanced at Friendly regard, Legendary at Devoted; an arena in every city and one town in two.
 Commits: 14ce06a few give work; 6f34d75 rarity, stock, rewards, artificers; 7a01438 the arena district; 596501c people talking, stands, crowd; 433f580, 77d975d handoff and the palace check (REVIVAL_NOTES has each in full).

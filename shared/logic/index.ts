@@ -484,18 +484,22 @@ const BUILDINGS: Record<string, { hostile?: "faction" | "criminal" | "wild" | "h
   // A landing place for speeders on the roofs of a city planet, where its districts meet
   "speeder platform": { rooms: ["Landing platform|S s d berths:2", "Platform office|s L:coin @0"] },
   // The fighting arena (2026-11-02; the user: "Pit fighting and betting should take place in a physical arena (its own district), with a very
-  // large, round, amphitheatre style building, with a viewing platform (populate this with NPCs with cheering animations), and a room with
-  // betting kiosk (and relevant NPCs), and a room for signing up to the pit fights (and relevant NPCs)"): the great round floor with the
-  // fighting pit in its middle and the stands round it (code A: the crowd on the stands, see `standsOf`), the betting hall with its kiosk
-  // and bookmakers, and the fighters' sign-up with the pit boss. The floor is the way in (an aisle through the stands from the gate in its
-  // wall), and the two rooms open off it through corridors, so that nothing hems the great floor in before it is placed.
-  arena: { rooms: ["Arena floor|A g s", "Betting hall|s s p p @0", "Fighters' sign-up|s p p @0"] },
+  // large, round, amphitheatre style building ..."; rebuilt the same day to the user's design: "Tiers should be mezzanine levels (the arena
+  // fighting floor AND combatants MUST remain visible from ALL tiers) accessed via stairwells from the betting kiosk room ... a few stalls and
+  // stallholder NPCs selling refreshments in the arena entrance hall ... the pit boss's room should contain a variety of cages/pens to hold
+  // fighting beasts, and be entirely separate from the spectator entrance. The arena fighting floor should ONLY be accessed from the pit boss
+  // room ... 3-4 levels of spectator tiers [in big cities], 1-2 spectator tiers in smaller settlements ... [the pit boss's room] located BELOW
+  // (basement level) the fighting arena with 2 separate (switchback) ramps leading UP to opposite ends of the arena"). The betting hall is the
+  // spectators' way in (bookmakers at the kiosks, R: refreshment sellers at their stalls); the tiers (code A, the crowd) are made with the
+  // building, as many as the settlement has (see "The arena" by planArena, which lays it all out); the fighters' gate is the fighters' way in,
+  // down to the pens under the floor (the pit boss, pit fighters, the beasts' pens).
+  arena: { rooms: ["Betting hall|s s R R p p", "Arena floor|s @0", "Fighters' pens|s p p @0", "Fighters' gate|s @0"] },
 };
 
 // Who works in a room, from what the room is for; otherwise whoever runs that kind of building
 const ROOM_STAFF: [RegExp, string][] = [
   [/refuelling|pump house/i, "fuel attendant"], [/upgrade showroom/i, "starship outfitter"], [/ticket/i, "ticket agent"],
-  [/betting/i, "bookmaker"], [/sign-up/i, "pit boss"], [/arena floor/i, "announcer"],
+  [/betting/i, "bookmaker"], [/sign-up|fighters' pens/i, "pit boss"], [/fighters' gate/i, "gatekeeper"], [/arena floor/i, "announcer"],
   [/petitioners/i, "chamberlain"], [/guest rooms|palatial suite|salon/i, "steward"], [/gambling|gaming floor|cashier/i, "croupier"], [/kitchen|dining/i, "cook"],
   [/customs/i, "customs officer"], [/docking|hangar|fuel|workfloor|engineering|reactor|landing/i, "mechanic"],
   [/control|operations|command|security/i, "officer"], [/bar|cantina/i, "bartender"], [/stall|trader|shopfront|market/i, "merchant"],
@@ -519,7 +523,7 @@ const staffRole = (buildingType: string, roomName: string) =>
 // Why the people of a room are there, from what the room is for. Each is someone of their own,
 // with a name, not a crowd.
 const LOCAL_ROLES: [RegExp, string][] = [
-  [/arena floor/i, "spectator"], [/betting/i, "punter"], [/sign-up/i, "pit fighter"],
+  [/arena floor|spectator tier/i, "spectator"], [/betting/i, "punter"], [/sign-up|fighters'/i, "pit fighter"],
   [/bar|cantina|booth|back room|common room|commons/i, "patron"], [/stall|market|promenade|trade/i, "shopper"],
   [/apartment|quarters|lobby|guest rooms|bedchambers|salon/i, "resident"], [/ward|reception/i, "patient"], [/concourse|arrivals|airlock|gate/i, "traveller"],
   [/reading|stacks|antechamber/i, "reader"], [/audience|petitioner/i, "petitioner"],
@@ -1427,14 +1431,17 @@ function populateRoom(ctx: Context, room: Area) {
       room.occupants.push(...captivesOf(ctx, room, building, speciesNames));
     } else if (code === "X") {
       room.occupants.push(person(ctx, "fence", "neutral", speciesNames));
+    } else if (code === "R") {
+      // A stallholder selling food and drink (an arena's betting hall)
+      room.occupants.push({ ...person(ctx, "stallholder", r.chance(0.5) ? "friendly" : "neutral", speciesNames), trade: "refreshments" });
     } else if (code === "V") {
       // The great person of a house, who receives petitioners in the audience chamber
       room.occupants.push(person(ctx, "dignitary", "neutral", speciesNames));
     } else if (code === "p") {
       room.occupants.push(...locals(ctx, room, speciesNames, /bar|cantina|commons|promenade/i.test(room.name) ? r.int(2, 4) : r.int(1, 3)));
     } else if (code === "A") {
-      // The arena's crowd, on the stands round the pit
-      room.occupants.push(...locals(ctx, room, speciesNames, r.int(14, 20)));
+      // The arena's crowd, at the rail of a tier round the pit
+      room.occupants.push(...locals(ctx, room, speciesNames, r.int(10, 16)));
     } else if (code === "m") {
       room.occupants.push(...band(ctx, speciesNames));
     } else if (code === "D") {
@@ -1543,9 +1550,15 @@ function detailBuilding(ctx: Context, building: Area) {
       ...(codes.includes("H") ? { hidden: true } : {}),
     });
   });
+  // An arena's spectator tiers, as many as the settlement has (see planArena), each with its crowd
+  if (building.type === "arena") {
+    const tiers = arenaTiers(world, building);
+    building.tags = [...building.tags.filter((t) => !t.startsWith("tiers:")), `tiers:${tiers}`];
+    for (let t = 1; t <= tiers; t++) rooms.push(makeArea(ctx, "room", building.id, { name: `Spectator tier ${t}`, type: "spectator tier", tags: ["code:A"], position: { x: 4, y: 0, z: t * 3 }, danger: 0 }));
+  }
   // A second way round in larger buildings, never through a locked or hidden room
-  const open = rooms.filter((_, index) => !specs[index].codes.some((c) => c === "K" || c === "H"));
-  if (open.length >= 4 && r.chance(0.5)) addPath(world, open[1], open[open.length - 1], "Side passage", `${Math.max(10, Math.round(distance(open[1], open[open.length - 1]) * 5))} ft.`);
+  const open = rooms.filter((_, index) => !specs[index]?.codes.some((c) => c === "K" || c === "H"));
+  if (open.length >= 4 && building.type !== "arena" && r.chance(0.5)) addPath(world, open[1], open[open.length - 1], "Side passage", `${Math.max(10, Math.round(distance(open[1], open[open.length - 1]) * 5))} ft.`);
   rooms.forEach((room) => populateRoom(ctx, room));
   placeVehicles(ctx, building);
   planBuilding(world, building.id);
@@ -1927,6 +1940,11 @@ export interface RoomLayout {
   // whose flight starts at the near end at the room's floor and rises to the landing at half the climb; the other lane rises on
   // from the landing back to the near end, at the full climb. Nobody steps from one lane to the other but on the landing.
   switchback?: { low: 0 | 1 };
+  // A ring of floor round an open middle (an arena's spectator tier, 2026-11-02): the squares within `well` squares of the room's middle are not
+  // floor; they look down on what is below
+  well?: number;
+  // A switchback drawn as a slope rather than steps (the ramps the pit fighters and their beasts come up into an arena by)
+  ramp?: boolean;
 }
 
 // What furnishes a room: name, where it goes (wall, corner, center, far = the wall opposite the
@@ -1936,11 +1954,13 @@ type Furnishing = [name: string, place: "wall" | "corner" | "center" | "far" | "
 interface RoomPlan { match: RegExp; size: [number, number, number, number]; items: Furnishing[] }
 
 const ROOM_PLANS: RoomPlan[] = [
-  // The fighting arena (see BUILDINGS): the great round floor (the stands are laid round its edge by `standsOf`), the pit of sand in its middle
-  // that anyone may walk down into, a betting hall with its kiosk and odds board, and the fighters' sign-up desk
-  { match: /^arena floor$/i, size: [24, 24, 24, 24], items: [["Fighting pit", "center", "8x8", "1"]] },
-  { match: /^betting hall$/i, size: [8, 10, 7, 8], items: [["Betting kiosk", "far", "3x1", "1", "bcs"], ["Odds board", "wall", "3x1", "1"], ["Table", "center", "1x1", "2-3", "bct"], ["Bench", "wall", "2x1", "1-2", "t"], ["Security camera", "wall", "1x1", "1"]] },
-  { match: /sign-up/i, size: [7, 8, 6, 7], items: [["Sign-up desk", "far", "3x1", "1", "bcs"], ["Fight roster", "wall", "2x1", "1"], ["Weapon rack", "wall", "2x1", "1", "b"], ["Bench", "wall", "2x1", "1-2", "t"]] },
+  // The fighting arena (see BUILDINGS and planArena, which sizes its rooms and puts the pit in the middle of the floor): the betting hall with its
+  // kiosks, odds board and refreshment stalls; the pens under the floor with the sign-up desk and the cages of the fighting beasts; the
+  // fighters' gate; the tiers are bare terraces with a rail
+  { match: /^arena floor$|^spectator tier/i, size: [16, 16, 16, 16], items: [] },
+  { match: /^betting hall$/i, size: [14, 14, 6, 8], items: [["Betting kiosk", "far", "3x1", "2", "bcs"], ["Refreshment stall", "wall", "2x1", "2-3", "bcs"], ["Odds board", "wall", "3x1", "1"], ["Bench", "wall", "2x1", "1-2", "t"], ["Table", "center", "1x1", "1-2", "bct"], ["Security camera", "wall", "1x1", "1"]] },
+  { match: /sign-up|fighters' pens/i, size: [16, 16, 16, 24], items: [["Sign-up desk", "far", "3x1", "1", "bcs"], ["Beast pen", "wall", "3x3", "3-4", "b"], ["Fight roster", "wall", "2x1", "1"], ["Weapon rack", "wall", "2x1", "1", "b"], ["Feed trough", "wall", "2x1", "1", "b"], ["Bench", "center", "2x1", "1-2", "t"]] },
+  { match: /fighters' gate/i, size: [8, 8, 5, 6], items: [["Bench", "wall", "2x1", "1", "t"], ["Weapon rack", "wall", "2x1", "1", "b"], ["Notice board", "wall", "2x1", "1"]] },
   // The channels under a city planet's streets are long and narrow, their junctions and chambers larger (the sewers are built, with straight walls)
   { match: /channel|outfall|culvert|drain|duct/i, size: [10, 14, 3, 4], items: [["Pipe run", "wall", "3x1", "1-2", "b"], ["Rubble", "wall", "1x1", "0-2", "bc"], ["Crate", "wall", "1x1", "0-2", "bc"]] },
   { match: /junction|pump chamber|cistern|settling/i, size: [7, 9, 6, 8], items: [["Water tank", "corner", "2x2", "0-1", "bc"], ["Pipe run", "wall", "3x1", "1-2", "b"], ["Crate stack", "wall", "2x1", "0-2", "bc"], ["Rubble", "center", "1x1", "1-2", "bc"]] },
@@ -2048,6 +2068,7 @@ const curves = new Map<string, boolean[][]>();
 // Whether a square of a room is floor: all are, unless the room is round or oval and it lies outside the curve
 export function standsAt(layout: RoomLayout, x: number, y: number): boolean {
   if (layout.mask) return layout.mask[y]?.[x] === "#";
+  if (layout.well && Math.hypot(x + 0.5 - layout.width / 2, y + 0.5 - layout.height / 2) < layout.well) return false;
   if (!layout.shape) return true;
   const key = `${layout.shape}:${layout.width}x${layout.height}`;
   let grid = curves.get(key);
@@ -2589,58 +2610,9 @@ function findSpot(layout: RoomLayout, r: Random, place: Furnishing[1], w: number
 }
 
 // Fixed dressing for a room: furniture by what the room is for, kept only where it leaves the doors reachable
-// The stands of an arena (2026-11-02): rows of tiers round the inside of its round floor, the highest against the wall, broken by an aisle
-// at each way in. Every square of them is a "Viewing stand" (it blocks: nobody walks there but the crowd, placed on them by placeContents);
-// the row of a square (`standRow`, 0 the lowest, by the pit) says how high it stands, `STAND_STEP` a row.
-export const STAND_ROWS = 3;
-export const STAND_STEP = 0.45;
-export const isStand = (a: Pick<RoomAsset, "kind" | "name">) => a.kind === "furniture" && a.name === "Viewing stand";
-const standInner = (l: Pick<RoomLayout, "width" | "height">) => Math.min(l.width, l.height) / 2 - STAND_ROWS - 0.6;
-const fromMiddle = (l: Pick<RoomLayout, "width" | "height">, x: number, y: number) => Math.hypot(x + 0.5 - l.width / 2, y + 0.5 - l.height / 2);
-export const standRow = (l: Pick<RoomLayout, "width" | "height">, x: number, y: number) => Math.max(0, Math.min(STAND_ROWS - 1, Math.floor(fromMiddle(l, x, y) - standInner(l))));
-function standsOf(room: Area) {
-  const layout = room.layout!;
-  const { width: W, height: H } = layout;
-  const angle = (x: number, y: number) => Math.atan2(y + 0.5 - H / 2, x + 0.5 - W / 2);
-  const ways = layout.assets.filter((a) => a.kind === "door" || a.kind === "exit" || a.kind === "secret" || a.kind === "stairs").map((a) => angle(a.x + (a.w - 1) / 2, a.y + (a.h - 1) / 2));
-  // (an aisle: within a square and a half of the line from the middle out to a way)
-  const inAisle = (x: number, y: number) => ways.some((t) => Math.abs(Math.atan2(Math.sin(angle(x, y) - t), Math.cos(angle(x, y) - t))) * fromMiddle(layout, x, y) <= 1.5);
-  // (what is on a square, but a window in the wall over it; a doorway's square stays clear)
-  const over = (x: number, y: number) => layout.assets.some((a) => (!a.side || a.kind !== "window") && a.x <= x && x < a.x + a.w && a.y <= y && y < a.y + a.h);
-  let n = layout.assets.length;
-  const stand = (x: number, y: number) => layout.assets.push({ id: `${room.id}-${++n}`, kind: "furniture", name: "Viewing stand", x, y, w: 1, h: 1, blocks: true });
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (standsAt(layout, x, y) && fromMiddle(layout, x, y) >= standInner(layout) && !inAisle(x, y) && !over(x, y)) stand(x, y);
-  const open = (x: number, y: number) => x >= 0 && y >= 0 && x < W && y < H && standsAt(layout, x, y) && !layout.assets.some((a) => a.blocks && a.x <= x && x < a.x + a.w && a.y <= y && y < a.y + a.h);
-  // The floor is not pinched where the stands step round the curve (two squares of floor that meet only at a corner): the notch is filled,
-  // the square of the two with more stands round it
-  for (let pass = 0; pass < 400; pass++) {
-    let filled = false;
-    for (let y = 0; y + 1 < H && !filled; y++) for (let x = 0; x + 1 < W && !filled; x++) {
-      const [a, b, c, d] = [open(x, y), open(x + 1, y), open(x, y + 1), open(x + 1, y + 1)];
-      const pair = !a && !d && b && c ? [[x + 1, y], [x, y + 1]] : !b && !c && a && d ? [[x, y], [x + 1, y + 1]] : undefined;
-      if (!pair) continue;
-      const shut = ([px, py]: number[]) => [[px + 1, py], [px - 1, py], [px, py + 1], [px, py - 1]].filter(([qx, qy]) => !open(qx, qy)).length;
-      const fill = pair.filter(([px, py]) => !over(px, py)).sort((p, q) => shut(q) - shut(p))[0];
-      if (fill) { stand(fill[0], fill[1]); filled = true; }
-    }
-    if (!filled) break;
-  }
-  // No pocket of floor is left behind the stands: what the middle cannot reach is stands too
-  const seen = new Set<string>();
-  const queue = [{ x: Math.floor(W / 2), y: Math.floor(H / 2) }];
-  while (queue.length) {
-    const q = queue.pop()!;
-    const key = `${q.x},${q.y}`;
-    if (seen.has(key) || !open(q.x, q.y)) continue;
-    seen.add(key);
-    queue.push({ x: q.x + 1, y: q.y }, { x: q.x - 1, y: q.y }, { x: q.x, y: q.y + 1 }, { x: q.x, y: q.y - 1 });
-  }
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (open(x, y) && !seen.has(`${x},${y}`) && !over(x, y)) stand(x, y);
-}
 export function furnishRoom(room: Area, r: Random, buildingType: string) {
   const layout = room.layout!;
   const plan = planFor(room, buildingType);
-  if (buildingType === "arena" && /^arena floor$/i.test(room.name)) standsOf(room);
   const wayIn = layout.assets.find((a) => a.kind === "exit" || a.kind === "door")?.side;
   let n = layout.assets.length;
   for (const [name, place, size, count, flags = ""] of plan.items) {
@@ -2726,12 +2698,14 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
   const seats = layout.assets.filter((a) => a.kind === "furniture" && uses.includes(a.name));
   // Staff stand behind their counters, away from the customers
   const behind = layout.assets.filter(isCounter).flatMap((s) => counterSides(layout, s).behind).filter((s) => !used(s.x, s.y) && !onWay(s.x, s.y));
+  // (a stallholder keeps a stall and a bookmaker a kiosk, where a room has both)
+  const ownCounter = (o: Occupant) => (o.role === "stallholder" ? /stall/i : o.role === "bookmaker" ? /kiosk/i : undefined);
+  const behindOf = (o: Occupant) => { const re = ownCounter(o); return re ? layout.assets.filter((a) => isCounter(a) && re.test(a.name)).flatMap((c) => counterSides(layout, c).behind).filter((q) => !onWay(q.x, q.y)) : []; };
   const stage = layout.assets.filter((a) => a.name === "Bandstand").flatMap((a) => Array.from({ length: a.w * a.h }, (_, i) => ({ x: a.x + (i % a.w), y: a.y + Math.floor(i / a.w) })));
   const dispenser = layout.assets.filter((a) => /drink dispenser|bar counter/i.test(a.name));
   const exit = ways.find((a) => a.kind === "exit") ?? wayIn;
-  // (an arena's crowd stands on its stands, one to a square)
-  const stands = layout.assets.filter(isStand);
-  const onStands = () => stands.filter((s) => !layout.assets.some((a) => a.kind === "npc" && a.x === s.x && a.y === s.y)).map((s) => ({ x: s.x, y: s.y }));
+  // (an arena's crowd stands at the rail of its tier, the two rows nearest the open middle)
+  const atRail = () => (layout.well ? anywhere().filter((q) => Math.hypot(q.x + 0.5 - W / 2, q.y + 0.5 - H / 2) < layout.well! + 2) : []);
 
   // A ship stands mid-floor; a smaller berth if the furniture would leave the floor cut up
   // (a hangar keeps berths free for visitors too: empty ship places, which a ship that puts down takes)
@@ -2789,14 +2763,14 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
       if (post.length) posted = true;
       const free = (spots: { x: number; y: number }[]) => spots.filter((s) => !used(s.x, s.y));
       const preferred =
-        occupant.role === "spectator" && stands.length ? onStands()
+        layout.well && (isLocal(occupant) || NOTABLES.includes(occupant.role)) ? atRail()
         : occupant.role === "leader" ? furthest(anywhere())
         : guard ? (post.length ? post : beside(ways))
         : occupant.role === "wildlife" || occupant.role === "horror" ? anywhere().filter((s) => s.x > 0 && s.y > 0 && s.x < W - 1 && s.y < H - 1)
         : occupant.role === "musician" ? (free(stage).length ? free(stage) : beside(seats))
         : occupant.role === "service droid" ? beside(dispenser)
         : isLocal(occupant) || NOTABLES.includes(occupant.role) ? beside(seats)
-        : occupant.count === 1 ? (free(behind).length ? free(behind) : beside(stations))
+        : occupant.count === 1 ? (free(behindOf(occupant)).length ? free(behindOf(occupant)) : free(behind).length ? free(behind) : beside(stations))
         : beside(seats);
       // Those held in a cell are inside it (see cellOf)
       const cell = cellOf(room, occupant);
@@ -2957,7 +2931,7 @@ function migrateSites(ctx: Context) {
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 15;
+export const LIFE = 16;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -3144,6 +3118,8 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
   }
   // The arena (life 15, 2026-11-02): every built city, and a town in two, gets its fighting arena, a district of its own
   if ((next.life ?? 0) < 15) addArenas(ctx);
+  // The arena to the user's design (life 16, 2026-11-02): tiers over the floor, the pens under it (see planArena)
+  if ((next.life ?? 0) < 16) for (const b of Object.values(next.areas).filter((a) => a.kind === "building" && a.type === "arena")) rebuildArena(ctx, b);
   next.life = LIFE;
   return next;
 }
@@ -3159,6 +3135,56 @@ function addArenas(ctx: Context) {
     planDistricts(ctx, settlement.id);
     settleRoutines(world, settlement, r);
   }
+}
+
+// An arena of the first design (a floor with stands round it, the betting hall and the sign-up off it) rebuilt to the second: the betting hall,
+// the floor and the sign-up (now the fighters' pens) are kept with their people (the crowd of the old floor goes up to the first tier, its
+// guard to the fighters' gate), and the tiers, the gate, the stairs and the ramps are made; then the district is planned again
+function rebuildArena(ctx: Context, building: Area) {
+  const { world, random: r } = ctx;
+  const rooms = childrenOf(world, building.id).filter((a) => a.kind === "room");
+  const floor = rooms.find((a) => /^arena floor$/i.test(a.name));
+  const hall = rooms.find((a) => /^betting hall$/i.test(a.name));
+  const signUp = rooms.find((a) => /sign-up|fighters' pens/i.test(a.name));
+  if (!floor || !hall || !signUp || rooms.some((a) => /^spectator tier/i.test(a.name))) return;
+  const planet = ancestor(world, building.id, "planet");
+  const speciesNames = (planet?.tags ?? []).filter((t) => t.startsWith("species:")).map((t) => t.slice(8));
+  Object.assign(signUp, { name: "Fighters' pens", type: "fighters' pens", description: "" });
+  const crowd = floor.occupants.filter((o) => o.role === "spectator");
+  const guards = floor.occupants.filter((o) => o.role === "guard");
+  floor.occupants = floor.occupants.filter((o) => !crowd.includes(o) && !guards.includes(o));
+  for (let i = 0; i < 2; i++) hall.occupants.push({ ...person(ctx, "stallholder", r.chance(0.5) ? "friendly" : "neutral", speciesNames), trade: "refreshments" });
+  const gate = makeArea(ctx, "room", building.id, { name: "Fighters' gate", type: "fighters' gate", tags: ["code:s"], position: { x: 4, y: 0, z: -3 }, danger: 0 });
+  populateRoom(ctx, gate);
+  gate.occupants.push(...guards);
+  const tiers = arenaTiers(world, building);
+  building.tags = [...building.tags.filter((t) => !t.startsWith("tiers:") && t !== "levels"), `tiers:${tiers}`];
+  for (let t = 1; t <= tiers; t++) {
+    const tier = makeArea(ctx, "room", building.id, { name: `Spectator tier ${t}`, type: "spectator tier", tags: ["code:A"], position: { x: 4, y: 0, z: t * 3 }, danger: 0 });
+    if (t === 1 && crowd.length) tier.occupants = crowd;
+    else populateRoom(ctx, tier);
+  }
+  planBuilding(world, building.id);
+  // Whoever spent part of their day on the old floor (its crowd, and those who came to watch) spends it on a tier now: the floor is the fighters'
+  const watchers = childrenOf(world, building.id).filter((a) => /^spectator tier/i.test(a.name));
+  for (const area of Object.values(world.areas)) {
+    for (const o of area.occupants ?? []) {
+      const rt = o.routine;
+      if (!rt || ["announcer", "pit fighter", "pit boss"].includes(o.role)) continue;
+      const to = watchers[hashOf(o.id) % watchers.length]?.id;
+      if (!to) continue;
+      if (rt.home === floor.id) rt.home = to;
+      for (const s of rt.stops) if (s.at === floor.id) s.at = to;
+      for (const v of rt.visits ?? []) if (v.at === floor.id) v.at = to;
+    }
+  }
+  const settlement = world.areas[building.parentId ?? ""];
+  if (!settlement) return;
+  for (const d of districtsOf(world, settlement.id).filter((d) => d.buildingIds.includes(building.id))) {
+    if (world.districtPlans) delete world.districtPlans[d.id];
+    planDistrict(ctx, d);
+  }
+  settleRoutines(world, settlement, r);
 }
 
 // Where someone knocked senseless comes to: the nearest room, by the ways between rooms that are
@@ -3660,11 +3686,128 @@ export function galleryStairs(lh: RoomLayout, lg: RoomLayout, r: Random): { x: n
   return [...cols].sort((p, q) => Math.abs(p - middle) - Math.abs(q - middle)).filter(free).map((x) => ({ x }))[0];
 }
 
+// ---------------------------------------------------------------------------------------------
+// The arena (2026-11-02, the user's design; see BUILDINGS.arena). One round building, laid out here rather than by the planner below:
+//   the fighting floor   round, at the ground, with the pit in its middle; its only ways in are the two ramps up from the pens
+//   the spectator tiers  rings of floor round it, one a storey up, each set further back than the one under it (ARENA.ring squares), so
+//                        that the floor and whoever is on it is in sight from the rail of every tier (layout.well: the open middle)
+//   the betting hall     the spectators' way in, at the ground under the tiers' north edge: the kiosks, the stalls, and the stair tower
+//                        against it, a switchback a storey, its foot in the hall and its head on each tier in turn
+//   the fighters' pens   a storey under the floor and the tiers' south half: the pit boss, the fighters, the beasts' pens, with a
+//                        switchback ramp up to each end (west and east) of the floor, and a flight up to the fighters' gate
+//   the fighters' gate   the fighters' way in from the street on the far side from the hall, over the pens' south end, with nothing
+//                        between it and the spectators' side
+// Every way between floors is a switchback (as in a stair block): both its doors at its near end, in the walls of the room on its lower
+// floor and of the room on its upper floor, which stand one over the other on that wall's line. City arenas have three tiers, four in the
+// rich worlds; town arenas one or two (arenaTiers). The tiers, the floor and its ramps are big: a city's arena is 40 or 48 squares across.
+// ---------------------------------------------------------------------------------------------
+export const ARENA = { ring: 4, length: BLOCK_LENGTH, ramp: 6 } as const;
+export function arenaTiers(world: World, building: Area): number {
+  const known = tagNumber(building, "tiers");
+  if (known) return known;
+  const settlement = ancestor(world, building.id, "settlement");
+  const region = ancestor(world, building.id, "region");
+  const rich = ["Deep Core", "Core", "Colonies", "Inner Rim"].includes(region?.type ?? region?.name ?? "");
+  if (settlement?.type === "city") return rich ? 4 : 3;
+  return rich || hashOf(`${building.id}|tiers`) % 3 === 0 ? 2 : 1;
+}
+// The sizes of an arena of so many tiers: the floor's radius, each tier's depth, the outer radius
+export function arenaSize(tiers: number) {
+  const floor = tiers >= 3 ? 8 : 7;
+  const ring = tiers === 1 ? ARENA.ring + 1 : ARENA.ring;
+  return { floor, ring, out: floor + tiers * ring };
+}
+const isArenaRoom = (re: RegExp) => (a: Area) => re.test(a.name);
+export const isArenaBowl = (a: Pick<Area, "name">) => /^arena floor$|^spectator tier/i.test(a.name);
+function planArena(world: World, building: Area, seed: number) {
+  const r = createRandom(seed + Number(building.id.replace(/\D/g, "") || 1) * 7919);
+  const all = childrenOf(world, building.id).filter((a) => a.kind === "room");
+  const ids = new Set(all.map((a) => a.id));
+  // What was there is taken down: the ways between the rooms, and any way between floors of an older plan
+  world.paths = world.paths.filter((p) => !(ids.has(p.from) && ids.has(p.to)));
+  for (const a of all.filter((a) => formOf(a))) delete world.areas[a.id];
+  const rooms = all.filter((a) => !formOf(a));
+  const hall = rooms.find(isArenaRoom(/^betting hall$/i))!;
+  const floor = rooms.find(isArenaRoom(/^arena floor$/i))!;
+  const pens = rooms.find(isArenaRoom(/fighters' pens/i))!;
+  const gate = rooms.find(isArenaRoom(/fighters' gate/i))!;
+  const tiers = rooms.filter(isArenaRoom(/^spectator tier/i)).sort((p, q) => p.name.localeCompare(q.name, undefined, { numeric: true }));
+  if (!hall || !floor || !pens || !gate || !tiers.length) return;
+  const { floor: R0, ring: W, out: R } = arenaSize(tiers.length);
+  const S = 2 * R;
+  for (const a of rooms) {
+    a.gateway = a === hall || a === gate;
+    a.tags = a.tags.filter((t) => !t.startsWith("use:"));
+  }
+  // The rooms (the tiers' square at 0,0; its middle at R,R)
+  const hallW = tiers.length >= 3 ? 14 : 12;
+  const hallD = Math.min(R - R0, 8);
+  const gateW = 8;
+  const gateD = Math.min(6, R - R0);
+  tiers.forEach((t, i) => { t.layout = { x: 0, y: 0, width: S, height: S, assets: [], level: i + 1, shape: "round", well: R0 + i * W }; });
+  floor.layout = { x: R - R0, y: R - R0, width: 2 * R0, height: 2 * R0, assets: [], shape: "round" };
+  hall.layout = { x: R - hallW / 2, y: 0, width: hallW, height: hallD, assets: [] };
+  pens.layout = { x: R - R0, y: R - R0, width: 2 * R0, height: R + R0, assets: [], level: -1 };
+  gate.layout = { x: R - gateW / 2, y: S - gateD, width: gateW, height: gateD, assets: [] };
+  const make = (name: string, layout: RoomLayout, description: string): Area => {
+    const area: Area = {
+      id: nextId(world, "a"), kind: "room", parentId: building.id, name, type: name.toLowerCase(), description,
+      tags: [`form:${layout.form}`], position: { x: 0, y: 0, z: 0 }, danger: 0, occupants: [], ships: [], loot: [], faction: building.faction, layout,
+    };
+    world.areas[area.id] = area;
+    return area;
+  };
+  // A way between two rooms: a path, and a door in each, on the squares either side of the wall between them
+  const join = (a: Area, sa: { x: number; y: number; side: Side }, b: Area, sb: { x: number; y: number; side: Side }, label: string) => {
+    const path: Path = { id: nextId(world, "p"), from: a.id, to: b.id, kind: "door", label, travel: "10 ft." };
+    world.paths.push(path);
+    a.layout!.assets.push({ id: `${a.id}-${a.layout!.assets.length + 1}`, kind: "door", name: label, x: sa.x, y: sa.y, w: 1, h: 1, side: sa.side, ref: path.id, to: b.id });
+    b.layout!.assets.push({ id: `${b.id}-${b.layout!.assets.length + 1}`, kind: "door", name: label, x: sb.x, y: sb.y, w: 1, h: 1, side: sb.side, ref: path.id, to: a.id });
+  };
+  const local = (room: Area, x: number, y: number, side: Side) => ({ x: x - room.layout!.x, y: y - room.layout!.y, side });
+  // The stair tower: a switchback a storey north of the tiers' edge, in the lanes x R-1 (the low lane: the flight up from the floor it
+  // stands on) and R (the flight on up to the next tier), from the betting hall up to the top tier
+  const L = ARENA.length;
+  const flights = tiers.map((_, s) => make(`Stairs up to ${tiers[s].name.toLowerCase()}`, { x: R - 1, y: -L, width: 2, height: L, assets: [], level: s, form: "stairs", climb: { toward: "n", levels: 1 }, switchback: { low: 0 } }, "A flight of stairs up the arena's stair tower."));
+  flights.forEach((flight, s) => {
+    const below = s === 0 ? hall : tiers[s - 1];
+    join(below, local(below, R - 1, 0, "n"), flight, { x: 0, y: L - 1, side: "s" }, s === 0 ? "Stairs up to the tiers" : "Stairs up");
+    join(flight, { x: 1, y: L - 1, side: "s" }, tiers[s], local(tiers[s], R, 0, "n"), `Way onto ${tiers[s].name.toLowerCase()}`);
+  });
+  // The ramps: from the pens (their low lane, row R-1) up to the floor (the other lane, row R), at its west and its east end
+  const RL = ARENA.ramp;
+  for (const side of ["w", "e"] as Side[]) {
+    const west = side === "w";
+    const ramp = make(`${west ? "West" : "East"} ramp up to the arena floor`, { x: west ? R - R0 - RL : R + R0, y: R - 1, width: RL, height: 2, assets: [], level: -1, form: "stairs", climb: { toward: side, levels: 1 }, switchback: { low: 0 }, ramp: true }, "A ramp the fighters and their beasts come up into the arena by.");
+    const near = west ? RL - 1 : 0;
+    const wall = west ? 0 : 2 * R0 - 1;
+    join(pens, { x: wall, y: R - 1 - pens.layout.y, side }, ramp, { x: near, y: 0, side: OPPOSITE[side] }, "Ramp");
+    join(ramp, { x: near, y: 1, side: OPPOSITE[side] }, floor, { x: wall, y: R - floor.layout.y, side }, "Way onto the arena floor");
+  }
+  // The fighters' stairs: from the gate (south of the tiers' edge, the other lane) down to the pens (the low lane)
+  const down = make("Stairs down to the fighters' pens", { x: R - 1, y: S, width: 2, height: L, assets: [], level: -1, form: "stairs", climb: { toward: "s", levels: 1 }, switchback: { low: 0 } }, "A flight of stairs down to the pens under the arena floor.");
+  join(pens, local(pens, R - 1, S - 1, "s"), down, { x: 0, y: 0, side: "n" }, "Stairs up to the gate");
+  join(down, { x: 1, y: 0, side: "n" }, gate, local(gate, R, S - 1, "s"), "Stairs down to the pens");
+  // The ways in from the street: the hall's north wall and the gate's south wall, clear of the stairs
+  hall.layout.assets.push({ id: `${hall.id}-${hall.layout.assets.length + 1}`, kind: "exit", name: "Way out", x: 1, y: 0, w: 1, h: 1, side: "n", to: building.id });
+  gate.layout.assets.push({ id: `${gate.id}-${gate.layout.assets.length + 1}`, kind: "exit", name: "Fighters' entrance", x: 1, y: gateD - 1, w: 1, h: 1, side: "s", to: building.id });
+  // The pit in the very middle of the floor
+  const pit = R0 >= 8 ? 8 : 6;
+  floor.layout.assets.push({ id: `${floor.id}-${floor.layout.assets.length + 1}`, kind: "furniture", name: "Fighting pit", x: R0 - pit / 2, y: R0 - pit / 2, w: pit, h: pit });
+  // Furnished and filled (the tiers are bare: the crowd at their rail, see placeContents)
+  for (const room of [hall, floor, pens, gate, ...tiers]) {
+    furnishRoom(room, r, building.type);
+    placeContents(room, r);
+  }
+  fitBuilding(world, building);
+}
+
 // Lays out every room of a building on one grid, sets doors, windows and a secret way in, and
 // furnishes and fills the rooms. The same building and seed give the same plan.
 export function planBuilding(world: World, buildingId: string, seed = world.seed): void {
   const building = world.areas[buildingId];
   if (!building) return;
+  if (building.type === "arena") return planArena(world, building, seed);
   // Stairwells, lifts and the like between rooms on different floors (see Levels)
   linkFloors(world, building, seed);
   linkColumns(world, building, seed);
@@ -5357,6 +5500,8 @@ export const WARES: Record<string, Wares> = {
   // The fuel attendant sells no goods: the trade panel carries the refuelling (GameBoard shipServices)
   fuel: { label: "Fuel and ship service", categories: [], lines: [0, 0], each: [0, 0] },
   bar: { label: "Drinks", categories: ["AlcoholicBeverage"], lines: [5, 8], each: [4, 12] },
+  // An arena's refreshment stalls (2026-11-02): drink, from the stall
+  refreshments: { label: "Refreshments", categories: ["AlcoholicBeverage"], lines: [2, 4], each: [6, 20] },
   general: { label: "General goods", categories: ["Utility", "Storage", "Clothing", "Communications", "DataRecordingAndStorage", "LifeSupport"], lines: [9, 14], each: [1, 5] },
   arms: { label: "Arms and armor", categories: ["Weapon", "Armor", "Ammunition", "WeaponOrArmorAccessory"], lines: [8, 12], each: [1, 4] },
   tech: { label: "Tools and kits", categories: ["Tool", "Kit"], lines: [6, 10], each: [1, 3] },
@@ -10307,8 +10452,8 @@ export function planDistrict(ctx: Context, district: District): DistrictPlan | u
   // against (hangars have their own sky); the top of a column first, whose stair block then climbs on to the roof (roofStairs)
   const roofs: { roof: Area; building: Area }[] = [];
   for (const b of members) {
-    // (a palace has no roof to climb to by a ladder: its towers are manned from inside)
-    if (b.type === "palace") continue;
+    // (a palace has no roof to climb to by a ladder: its towers are manned from inside; an arena is open to the sky over its tiers)
+    if (b.type === "palace" || b.type === "arena") continue;
     const real = roomsOf(b).filter((a) => !formOf(a) && (a.layout!.level ?? 0) >= 0 && !a.layout!.roof);
     const columnTop = (a: Area) => !!tagId(a, "stack") && !real.some((u) => u.tags.includes(`stack:${a.id}`));
     const ranked = [...real].sort((p, q) => Number(columnTop(q)) - Number(columnTop(p)) || (q.layout!.level ?? 0) - (p.layout!.level ?? 0) || q.layout!.width * q.layout!.height - p.layout!.width * p.layout!.height);

@@ -1133,6 +1133,27 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number, b
     for (let i = 0; i < Math.max(1, Math.round(L)); i++) k.box([0.22, 0.02, 0.14], C.steelLight, { at: [-L / 2 + (i + 0.5) * (L / Math.max(1, Math.round(L))), 0.995, 0.25], finish: "sheen" });
     return;
   }
+  if (/beast pen/.test(n)) {
+    // A cage for a fighting beast (2026-11-02; the user: "the pit boss's room should contain a variety of cages/pens to hold fighting beasts"):
+    // straw on the floor, heavy posts at its corners, bars all round on a frame (the beast in it is drawn by the map, LocalMap PEN_BEASTS)
+    const h = 2.1;
+    slab(k, L - 0.1, D - 0.1, 0.06, "#8a7444", { r: 0.08 });
+    for (const [x, z] of corners(0.08)) k.cyl(0.07, h, C.steelDark, { at: [x, h / 2, z], seg: 8, finish: "sheen" });
+    const bars = (len: number, alongX: boolean, at: number) => {
+      const n = Math.max(2, Math.round(len / 0.34));
+      for (let i = 1; i < n; i++) {
+        const u = -len / 2 + (i * len) / n;
+        k.cyl(0.025, h, C.steel, { at: alongX ? [u, h / 2, at] : [at, h / 2, u], seg: 6, finish: "sheen" });
+      }
+    };
+    bars(L - 0.16, true, -D / 2 + 0.08);
+    bars(L - 0.16, true, D / 2 - 0.08);
+    bars(D - 0.16, false, -L / 2 + 0.08);
+    bars(D - 0.16, false, L / 2 - 0.08);
+    for (const z of [-D / 2 + 0.08, D / 2 - 0.08]) k.box([L - 0.1, 0.1, 0.1], C.steelDark, { at: [0, h, z] });
+    for (const x of [-L / 2 + 0.08, L / 2 - 0.08]) k.box([0.1, 0.1, D - 0.1], C.steelDark, { at: [x, h, 0] });
+    return;
+  }
   if (/odds board|fight roster/.test(n)) {
     const odds = /odds/.test(n);
     k.box([L - 0.1, 1.1, 0.08], "#1c1f24", { at: [0, 1.55, back + 0.06], round: 0.03, finish: "sheen" });
@@ -1279,8 +1300,8 @@ function buildFurniture(k: Kit, n: string, L: number, D: number, seed: number, b
     k.blob(0.07, "#fff1a8", { at: [0, 0.14, 0], smooth: true, rough: 0.2, squash: [1, 1.6, 1], seed: 9, finish: "glow" });
     return;
   }
-  if (/market stall/.test(n)) {
-    // A counter under a curved canvas awning on four poles
+  if (/market stall|refreshment stall/.test(n)) {
+    // A counter under a curved canvas awning on four poles (an arena's refreshment stall is the same)
     const canvas = ["#c8663a", "#e8dcc0", "#4f8a8b", "#a1495a"][(Math.round(L * 10) + Math.round(D * 3) + seed) % 4];
     k.box([L - 0.3, 0.52, D - 0.4], C.woodDark, { at: [0, 0.26, 0.05], round: 0.04 });
     k.box([L - 0.22, 0.05, D - 0.32], C.wood, { at: [0, 0.54, 0.05], round: 0.02, finish: "sheen" });

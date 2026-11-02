@@ -56,33 +56,94 @@ test("caves are organic: every cave room has a winding floor, and there are cave
   assert.ok(rooms >= 8, `${rooms} cave rooms with a winding floor in the test worlds`);
 });
 
-test("the arena (2026-11-02): every city has one, a round floor with the pit in its middle and stands round it, the crowd on the stands, a betting hall with a kiosk and bookmakers, a sign-up with the pit boss; older worlds are given theirs", async () => {
-  const { childrenOf, isStand, standRow, standsAt, livenWorld, STAND_ROWS } = await import("@shared/logic");
+test("the arena (2026-11-02, the user's design): tiers over a round floor (three or four in a city, one or two in a town), each a ring set back from the one under it so the floor is in sight from every rail, up the stair tower from the betting hall; the floor reached only by the two ramps up from the pens under it, the pens only from the fighters' gate; older worlds are given theirs, older arenas rebuilt", async () => {
+  const { childrenOf, livenWorld, walkBuilding, formOf } = await import("@shared/logic");
   const world = generateWorld({ seed: 34, partyLevel: 5 }, catalog);
   const cities = Object.values(world.areas).filter((a) => a.kind === "settlement" && a.type === "city" && childrenOf(world, a.id).length);
   assert.ok(cities.length);
-  for (const city of cities) {
-    const arena = childrenOf(world, city.id).find((b) => b.type === "arena");
-    assert.ok(arena, `${city.name} has an arena`);
-    const rooms = childrenOf(world, arena!.id);
-    const floor = rooms.find((r) => r.name === "Arena floor")!;
-    const l = floor.layout!;
-    assert.ok(l.shape === "round" || l.shape === "oval", "round");
-    assert.ok(floor.gateway, "the way in");
-    const stands = l.assets.filter(isStand);
-    assert.ok(stands.length > 100, `${stands.length} squares of stands`);
-    assert.ok(stands.every((s) => standsAt(l, s.x, s.y) && standRow(l, s.x, s.y) < STAND_ROWS));
-    const pit = l.assets.find((a) => a.name === "Fighting pit")!;
-    assert.ok(pit && Math.abs(pit.x + pit.w / 2 - l.width / 2) <= 1 && Math.abs(pit.y + pit.h / 2 - l.height / 2) <= 1, "the pit in the middle");
-    const crowd = floor.occupants.filter((o) => o.role === "spectator");
-    assert.ok(crowd.length >= 10, `${crowd.length} in the crowd`);
-    const npcs = l.assets.filter((a) => a.kind === "npc" && crowd.some((o) => o.id === a.ref));
-    assert.ok(npcs.every((n) => stands.some((s) => s.x === n.x && s.y === n.y)), "the crowd stands on the stands");
-    const betting = rooms.find((r) => r.name === "Betting hall")!;
-    assert.ok(betting.layout!.assets.some((a) => a.name === "Betting kiosk") && betting.occupants.some((o) => o.role === "bookmaker"));
-    const signUp = rooms.find((r) => r.name === "Fighters' sign-up")!;
-    assert.ok(signUp.layout!.assets.some((a) => a.name === "Sign-up desk") && signUp.occupants.some((o) => o.role === "pit boss"));
+  for (const city of cities) assert.ok(childrenOf(world, city.id).some((b) => b.type === "arena"), `${city.name} has an arena`);
+  const arenas = Object.values(world.areas).filter((a) => a.type === "arena");
+  for (const arena of arenas) {
+    const town = world.areas[arena.parentId!].type !== "city";
+    const rooms = childrenOf(world, arena.id);
+    const named = (re: RegExp) => rooms.find((r) => re.test(r.name))!;
+    const [hall, floor, pens, gate] = [named(/^betting hall$/i), named(/^arena floor$/i), named(/fighters' pens/i), named(/fighters' gate/i)];
+    const tiers = rooms.filter((r) => /^spectator tier/i.test(r.name)).sort((p, q) => p.layout!.level! - q.layout!.level!);
+    assert.ok(town ? tiers.length >= 1 && tiers.length <= 2 : tiers.length >= 3 && tiers.length <= 4, `${tiers.length} tiers in a ${town ? "town" : "city"}`);
+    // The tiers: rings round the floor's middle, a storey each, each set back; from the front of each, the middle of the floor is seen over
+    // the rail of the tier under it (heights in storeys: an eye 0.57 over the floor, a rail 0.36)
+    const fl = floor.layout!;
+    const middle = { x: fl.x + fl.width / 2, y: fl.y + fl.height / 2 };
+    tiers.forEach((t, i) => {
+      const l = t.layout!;
+      assert.equal(l.level, i + 1);
+      assert.deepEqual({ x: l.x + l.width / 2, y: l.y + l.height / 2 }, middle, "round the floor");
+      assert.ok(l.well! >= fl.width / 2 && (i === 0 || l.well! > tiers[i - 1].layout!.well!), "set back from the one under it");
+      if (i > 0) {
+        const lo = tiers[i - 1].layout!;
+        assert.ok(((l.level! + 0.57) * lo.well!) / l.well! > lo.level! + 0.36, `the floor in sight from ${t.name}`);
+      }
+      assert.ok(t.occupants.filter((o) => o.role === "spectator").length >= 8, "a crowd");
+      // (at the rail: within two squares of the open middle)
+      for (const n of l.assets.filter((a) => a.kind === "npc")) assert.ok(Math.hypot(n.x + 0.5 - l.width / 2, n.y + 0.5 - l.height / 2) < l.well! + 2.01, "at the rail");
+    });
+    // The floor: round, the pit in its middle, its only ways the two ramps, at opposite ends
+    assert.ok(fl.shape === "round");
+    const pit = fl.assets.find((a) => a.name === "Fighting pit")!;
+    assert.ok(pit && Math.abs(pit.x + pit.w / 2 - fl.width / 2) <= 1 && Math.abs(pit.y + pit.h / 2 - fl.height / 2) <= 1, "the pit in the middle");
+    const floorDoors = fl.assets.filter((a) => a.kind === "door" || a.kind === "exit");
+    assert.equal(floorDoors.length, 2);
+    assert.deepEqual(floorDoors.map((d) => d.side).sort(), ["e", "w"]);
+    for (const d of floorDoors) {
+      const ramp = world.areas[d.to!];
+      assert.ok(formOf(ramp) === "stairs" && ramp.layout!.ramp && ramp.layout!.switchback && ramp.layout!.level === -1, "a switchback ramp up from under the floor");
+      assert.ok(ramp.layout!.assets.some((a) => a.to === pens.id), "from the pens");
+    }
+    // The pens under the floor, with the pit boss, fighters and the beasts' pens; the betting hall with kiosks, bookmakers and refreshments
+    const pl = pens.layout!;
+    assert.equal(pl.level, -1);
+    assert.ok(pl.x <= fl.x && pl.y <= fl.y && pl.x + pl.width >= fl.x + fl.width && pl.y + pl.height >= fl.y + fl.height, "under the floor");
+    assert.ok(pl.assets.filter((a) => a.name === "Beast pen").length >= 2 && pens.occupants.some((o) => o.role === "pit boss"));
+    const hl = hall.layout!;
+    assert.ok(hl.assets.filter((a) => a.name === "Betting kiosk").length >= 1 && hall.occupants.some((o) => o.role === "bookmaker"));
+    assert.ok(hl.assets.some((a) => a.name === "Refreshment stall") && hall.occupants.some((o) => o.role === "stallholder" && o.trade === "refreshments"));
+    // Two ways in, each its own side: from the hall the tiers and never the floor or the pens; from the gate the pens and the floor, never a tier
+    assert.ok(hall.gateway && gate.gateway && !floor.gateway);
+    const from = (start: Area) => {
+      const w2 = JSON.parse(JSON.stringify(world));
+      for (const r of childrenOf(w2, arena.id)) if (r.id !== start.id) {
+        r.gateway = false;
+        r.layout!.assets = r.layout!.assets.filter((a) => a.kind !== "exit");
+      }
+      return walkBuilding(w2, arena.id).reached;
+    };
+    const spectators = from(hall);
+    assert.ok(tiers.every((t) => spectators.has(t.id)), "every tier up the stairs from the hall");
+    assert.ok(!spectators.has(floor.id) && !spectators.has(pens.id) && !spectators.has(gate.id), "nothing of the fighters' side from the hall");
+    const fighters = from(gate);
+    assert.ok(fighters.has(pens.id) && fighters.has(floor.id), "the pens, and the floor up the ramps, from the gate");
+    assert.ok(tiers.every((t) => !fighters.has(t.id)) && !fighters.has(hall.id), "no tier from the gate");
   }
+  // An arena of the first design (a floor with the crowd on it, the betting hall and the sign-up; life 15) is rebuilt, its rooms and people kept
+  const first = JSON.parse(JSON.stringify(world)) as typeof world;
+  const arena = Object.values(first.areas).find((a) => a.type === "arena")!;
+  const rooms = childrenOf(first, arena.id);
+  const keep = new Set(rooms.filter((r) => /^(arena floor|betting hall|fighters' pens)$/i.test(r.name)).map((r) => r.id));
+  const floor1 = rooms.find((r) => /^arena floor$/i.test(r.name))!;
+  const tier1 = rooms.find((r) => r.name === "Spectator tier 1")!;
+  floor1.occupants.push(...tier1.occupants);
+  const crowd = tier1.occupants.map((o) => o.id);
+  for (const r of rooms) if (!keep.has(r.id)) delete first.areas[r.id];
+  first.paths = first.paths.filter((p) => first.areas[p.from] && first.areas[p.to]);
+  rooms.find((r) => /fighters' pens/i.test(r.name))!.name = "Fighters' sign-up";
+  arena.tags = arena.tags.filter((t) => !t.startsWith("tiers:"));
+  first.life = 15;
+  const rebuilt = livenWorld(first, catalog);
+  const again = childrenOf(rebuilt, arena.id);
+  for (const id of keep) assert.ok(rebuilt.areas[id], "the hall, the floor and the pens are the rooms they were");
+  assert.ok(again.some((r) => r.name === "Fighters' pens") && again.some((r) => r.name === "Fighters' gate") && again.filter((r) => /^spectator tier/i.test(r.name)).length >= 1);
+  assert.deepEqual(again.find((r) => r.name === "Spectator tier 1")!.occupants.map((o) => o.id).sort(), crowd.sort(), "the old floor's crowd on the first tier");
+  assert.ok(!rebuilt.areas[floor1.id].occupants.some((o) => o.role === "spectator"));
   // A world made before the arenas (life 14) gets them when it is livened
   const old = JSON.parse(JSON.stringify(world));
   const gone = new Set(Object.values(old.areas as Record<string, Area>).filter((a) => a.type === "arena").map((a) => a.id));
