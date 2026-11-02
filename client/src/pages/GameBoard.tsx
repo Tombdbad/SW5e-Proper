@@ -59,7 +59,7 @@ import { tokenOf } from "@/components/Map/sprites";
 import type { CrewMember as SeatedCrew } from "@/components/Map/models";
 import { planTrip, driveMinutes, legPar, crewmate, blockPursuit, metText, type Leg, type LegTime } from "@shared/logic/roadtrip";
 import { dogfightPayout } from "@shared/logic/dogfightSim";
-import { SCENARIOS, scenarioAdvice, scenarioOf, classOf, type ScenarioId } from "@shared/logic/dogfight";
+import { SCENARIOS, scenarioAdvice, scenarioOf, classOf, type Dogfight, type ScenarioId } from "@shared/logic/dogfight";
 import type { ShipSheet } from "@shared/logic";
 import { CAPS, CHANGE, genderOf, kinLine, kinOf, levelName, personById, regardLevel, regardOf, reputation, sheetFor, talkNotes, townTalk } from "@shared/logic/relations";
 import { ancestor, breathesWater, createRandom, personIn } from "@shared/logic";
@@ -436,6 +436,8 @@ export default function GameBoard() {
   useEffect(() => {
     const p = combatants.find((c) => c.isPlayer);
     if (!p || !character || !fightBegun.current || p.id !== character.id) return;
+    // (a pit bout over: its hit points are the pit's, who carry the beaten party out at 1)
+    if (pitBout.current && !useCombat.getState().inCombat) return;
     if (lastSavedHp.current === null) lastSavedHp.current = character.currentHp;
     if (lastSavedPoints.current === null) lastSavedPoints.current = character.currentForcePoints;
     const changes: Record<string, any> = {};
@@ -515,13 +517,18 @@ export default function GameBoard() {
     setShowCombat(inCombat && !realtime);
   }, [inCombat, realtime]);
 
-  // Time passes on the map (not while a trip is being driven: the trip takes the time of its ride, when it ends)
-  const clockRunning = !!campaign?.galaxyMap && !inCombat && (character?.currentHp ?? 0) > 0;
+  // Time passes on the map (not while a trip is being driven: the trip takes the time of its ride, when it ends). While flight gear burns
+  // (`flightOn`, see chargeOf) it passes at real time, a minute a minute, also in a real-time fight, so that the gear's charge runs down there too
+  const [flightOn, setFlightOn] = useState(false);
+  const clockRunning = !!campaign?.galaxyMap && (!inCombat || (realtime && flightOn)) && (character?.currentHp ?? 0) > 0;
   const driving = useRef(false);
+  const slow = useRef({ on: false, n: 0 });
+  slow.current.on = flightOn;
   useEffect(() => {
     if (!clockRunning) return;
     const tick = setInterval(() => {
       if (document.visibilityState !== "visible" || driving.current) return;
+      if (slow.current.on && ++slow.current.n % 60 !== 0) return;
       const now = useClock.getState().minutes + 1;
       useClock.getState().set(now);
       if (now % 60 === 0) saveClock(now);
@@ -1335,6 +1342,18 @@ export default function GameBoard() {
     // The party members seated at the stations of the ship's deck are its crew (a ship never boarded: the companions in order)
     const seats = seatsOf(world.areas[deckIdOf(mine.id)]?.layout);
     const crewing = crewOf(seats.length ? seats : [{ id: "g1", name: "Gunnery seat", station: "guns" }, { id: "g2", name: "Gunnery seat", station: "guns" }, { id: "g3", name: "Gunnery seat", station: "guns" }, { id: "g4", name: "Gunnery seat", station: "guns" }], seats.length ? mine.crew : undefined, crewMembers());
+    // (the shooter mode: flown in real time, the dogfight against these very ships, never turn by turn)
+    if (playMode === "shooter") {
+      const sheets = foes.map((f) => ({ ref: f.id, sheet: shipSheet(f, shipRows, Math.max(2, (f.tier ?? 0) + 1)), owner: world.antagonist }));
+      return setSpaceFight({
+        mineId: mine.id, areaId: here.id, refs: foes.map((f) => f.id),
+        game: {
+          kind: "dogfight", title: `${mine.name} engages`, seed: Math.floor(Math.random() * 1e9) + 1, scenario: "skirmish", rows: shipRows,
+          ship: { sheet: shipSheet(mine, shipRows, prof), hull: mine.hull }, foes: sheets,
+          intro: `${sheets.map((f) => f.sheet.name).join(", ")} of ${world.antagonist}, in orbit over ${here.name}. Destroy them, or fly out of the fight to break off (a unit of fuel for the jump).`,
+        },
+      });
+    }
     useShipFight.getState().start(
       { id: mine.id, ref: mine.id, sheet: shipSheet(mine, shipRows, prof), crew: crewing.crew, gunners: crewing.gunners, hull: mine.hull },
       foes.map((f) => ({ id: f.id, ref: f.id, sheet: shipSheet(f, shipRows, Math.max(2, (f.tier ?? 0) + 1)) })),
@@ -1345,9 +1364,41 @@ export default function GameBoard() {
     const state = useShipFight.getState();
     const fight = state.fight;
     if (!fight || !world || !state.areaId) return state.leave();
+    settleShipFight(outcome, {
+      areaId: state.areaId, partyShipId: state.partyShipId!, round: fight.round,
+      mine: fight.ships.find((s) => s.id === state.partyShipId),
+      foes: fight.ships.filter((s) => s.side === "foe"),
+    });
+    state.leave();
+  };
+  // The shooter mode's ship fight, flown as a dogfight against the ships in orbit (see engage): what the flight left of each, as a ship fight's end
+  const [spaceFight, setSpaceFight] = useState<{ mineId: string; areaId: string; refs: string[]; game: Extract<Minigame, { kind: "dogfight" }> } | null>(null);
+  const finishSpaceFight = (end: Dogfight) => {
+    const f = spaceFight;
+    setSpaceFight(null);
+    if (!f || !world) return;
+    const me = end.vessels.find((v) => v.id === end.me);
+    const lost = end.outcome === "shot-down" || end.outcome === "lost-in-station";
+    const foes = f.refs.map((ref) => {
+      const v = end.vessels.find((x) => x.ref === ref);
+      const sheet = f.game.foes!.find((x) => x.ref === ref)!.sheet;
+      return { id: ref, sheet, destroyed: !v || v.c.hull <= 0 || v.dying > 0, disabled: false, fled: false };
+    });
+    settleShipFight(end.outcome === "clear" ? "victory" : lost ? "destroyed" : "fled", {
+      areaId: f.areaId, partyShipId: f.mineId, round: Math.max(1, Math.round(end.t / 6)),
+      mine: { hull: me?.c.hull ?? 1, destroyed: lost, sheet: f.game.ship.sheet },
+      foes,
+    });
+  };
+  const settleShipFight = (
+    outcome: string | null | undefined,
+    fight: { areaId: string; partyShipId: string; round: number; mine?: { hull: number; destroyed: boolean; sheet: ShipSheet }; foes: { id: string; sheet: ShipSheet; destroyed: boolean; disabled: boolean; fled?: boolean }[] },
+  ) => {
+    if (!world) return;
+    const state = { areaId: fight.areaId, partyShipId: fight.partyShipId };
     const area = world.areas[state.areaId];
-    const mineNow = fight.ships.find((s) => s.id === state.partyShipId);
-    const foesNow = fight.ships.filter((s) => s.side === "foe");
+    const mineNow = fight.mine;
+    const foesNow = fight.foes;
     // The party's ship keeps the damage it took; a lost ship is gone
     const starships = ships
       .map((s) => (s.id === state.partyShipId ? (mineNow?.destroyed ? null : { ...s, hull: Math.max(1, mineNow?.hull ?? s.hull ?? 1), fuel: outcome === "fled" ? Math.max(0, s.fuel - 1) : s.fuel }) : s))
@@ -1404,7 +1455,6 @@ export default function GameBoard() {
             ? mineNow?.sheet.escape ? "Your ship is lost; you get away in its escape pod, unhurt." : "Your ship is lost; you get away in an escape pod with 1 hit point (house rule)."
             : "Your ship is disabled and drifts; it will need repairs.",
     );
-    state.leave();
   };
 
   // Fill a ship's tanks at a port, as far as the credits go
@@ -2072,6 +2122,11 @@ export default function GameBoard() {
   const launchBout = (monster: Sw5eMonster, bout: number) => {
     if (!character) return;
     const occupant = statBlockOccupant(monster, equipmentData as any, `pit-${bout}`, 1, "creature", "hostile");
+    // (the shooter mode: in real time on the arena's own floor, where openPit has put the party; begun once the party stands there)
+    if (playMode === "shooter") {
+      pitPending.current = [foe(occupant, `pit-${bout}-0`, occupant.name)];
+      return void startPitBout();
+    }
     const enemies = [{ ...foe(occupant, `pit-${bout}-0`, occupant.name), x: 8, y: 4, z: 0 }];
     // (the arena's sand, open to the stands round it: PitArena draws the crowd there)
     initiateCombat(character, enemies as any, combatKit(), false, { width: 12, height: 9, assets: [], open: true, floor: "arena" } as any, { x: 3, y: 4 }, []);
@@ -2088,10 +2143,38 @@ export default function GameBoard() {
     const day = dayOf(clockNow());
     if (!isBoutDay(day)) return void toast.error(`The pit fights on Saturday and Sunday only (the sixth and seventh day of the week). Today is ${weekdayName(day)}, day ${day}; the next fights are on day ${nextBoutDay(day)}.`);
     pitBase.current = { credits: Number(character.credits) || 0, equipment: [...(character.equipment ?? [])] };
+    // The shooter mode fights the bouts on the arena floor of this building, so the party goes out onto it (and back when it leaves the pit)
+    if (playMode === "shooter" && world && here) {
+      const building = trailOf(world, here.id).find((a) => a.kind === "building");
+      const floor = Object.values(world.areas).find((a) => /^arena floor$/i.test(a.name) && trailOf(world, a.id).some((b) => b.id === building?.id));
+      if (!floor) return void toast.error("This place has no arena floor to fight on.");
+      pitFrom.current = here.id;
+      if (floor.id !== here.id) {
+        setCameFrom(here.id);
+        saveCampaign({ currentLocation: floor.id });
+      }
+    }
     setPitOpen(true);
   };
+  // A shooter bout waiting for the party to stand on the floor, and where the party signed up
+  const pitPending = useRef<any[] | null>(null);
+  const pitFrom = useRef<string | null>(null);
+  const startPitBout = () => {
+    const enemies = pitPending.current;
+    if (!enemies || !character || inCombat) return;
+    fightArea.current = null;
+    fightAreas.current = [];
+    pitBout.current = true;
+    if (fightAroundParty(enemies, false)) pitPending.current = null;
+    else pitBout.current = false;
+  };
+  // (a bout's end is PitArena's to settle: no experience, no "left for dead" and no move away from the floor)
+  const pitBout = useRef(false);
   const exitPit = (summary: PitSummary) => {
     setPitOpen(false);
+    pitPending.current = null;
+    if (pitFrom.current && world?.areas[pitFrom.current] && pitFrom.current !== hereId) saveCampaign({ currentLocation: pitFrom.current });
+    pitFrom.current = null;
     if (!summary.bouts) return;
     commitDowntime({
       character: {}, downtime: {}, days: 1,
@@ -2173,7 +2256,8 @@ export default function GameBoard() {
   // In the shooter mode a fight that comes to the party (a sea beast, riders at the roadside) is fought in real time where it stands on the
   // walkable map, never on the turn-based grid: the foes a few squares off round it (one set down in a wall is brought out to the nearest open
   // square by the shooter, shared/logic/shooter.ts unstick). False when the party is not standing on this place's map yet.
-  const fightAroundParty = (enemies: any[]) => {
+  // (`withParty` false: the character alone, as in the pit)
+  const fightAroundParty = (enemies: any[], withParty = true) => {
     if (!character || !here || character.currentHp <= 0) return false;
     const spot = usePartySpot.getState();
     if (spot.areaId !== here.id) return false;
@@ -2196,7 +2280,7 @@ export default function GameBoard() {
         ? { width: field.width, height: field.height, assets: field.assets, platforms: field.platforms, links: field.links, district: field.district, open: true, floor: world?.areas[here.parentId ?? ""]?.type }
         : { width: ground.width, height: ground.height, assets: ground.assets.filter((a) => a.kind !== "npc"), floor: world?.areas[here.parentId ?? ""]?.type, open: !here.layout },
       start,
-      party.filter((c) => c.hp > 0).map(allyOf),
+      withParty ? party.filter((c) => c.hp > 0).map(allyOf) : [],
       origin,
     );
     return true;
@@ -2369,6 +2453,10 @@ export default function GameBoard() {
     roadFightRef.current = { riders: p.riders, who: p.who };
     if (!fightAroundParty(p.riders.map((o, i) => ({ ...foe(o, o.id, o.name), gang: "road", leader: i === 0 })))) roadFightRef.current = null;
   }, [partyStoodAt, here?.id, inCombat]);
+  // A pit bout of the shooter mode begins once the party stands on the arena floor (openPit, launchBout)
+  useEffect(() => {
+    if (pitPending.current && here && partyStoodAt === here.id && !inCombat) startPitBout();
+  }, [partyStoodAt, here?.id, inCombat]);
   // In the shooter mode the party can open fire first: X (the fire key of a fight) with hostiles here and no fight on begins one, as the Fight button does
   // (an unnoticed party strikes with surprise)
   useEffect(() => {
@@ -2445,6 +2533,8 @@ export default function GameBoard() {
   useEffect(() => {
     if (inCombat || !outcome || !character || !fightBegun.current) return;
     fightBegun.current = false;
+    const pit = pitBout.current;
+    pitBout.current = false;
     // (a fight that is over may be begun again where the party stands: "They attack" must not stay spent for the room)
     autoFought.current = null;
     // The first attack's advantage from a rest aboard is spent with the fight
@@ -2467,6 +2557,9 @@ export default function GameBoard() {
           for (const [name, n] of Object.entries(used)) for (let i = 0; i < n; i++) {
             const at = equipment.indexOf(name);
             if (at >= 0) equipment.splice(at, 1);
+            // (and from what the pit's winnings are added to, so the next bout's banking does not give them back)
+            const was = pitBase.current.equipment.indexOf(name);
+            if (was >= 0) pitBase.current.equipment.splice(was, 1);
           }
           saveCharacter({ equipment });
         }, 2600);
@@ -2671,6 +2764,8 @@ export default function GameBoard() {
     saveCampaign(pass(Math.max(1, Math.ceil(fightNow.round / 10))));
     // A high used in the fight is over with it
     if (play.substance?.phase === "high") setTimeout(() => endHigh("the fight is over"), 50);
+    // (a pit bout's hit points, prize and knock-out are the pit's: PitArena)
+    if (pit) return;
     if (outcome === "dead") {
       saveCharacter({ currentHp: 0, conditions: ["Dead"] });
       toast.error(`${character.name} has died.`);
@@ -5437,7 +5532,7 @@ export default function GameBoard() {
         </Button>
       </>
     ) : ship.status === "orbiting" && ship.owner === world?.antagonist && !ship.disabled ? (
-      <Button size="sm" variant="destructive" className="ml-2 h-6 px-2" disabled={inCombat || dead || !!shipFight} onClick={engage} data-testid="ship-engage">
+      <Button size="sm" variant="destructive" className="ml-2 h-6 px-2" disabled={inCombat || dead || !!shipFight || !!spaceFight} onClick={engage} data-testid="ship-engage">
         Engage
       </Button>
     ) : (ship.status !== "wrecked" && ship.status !== "orbiting") || ship.disabled ? (
@@ -6376,10 +6471,12 @@ export default function GameBoard() {
     const a = accessoryOf({ name, description: factsOf(name)?.description });
     return a.perCell ? a.minutes ?? 1 : /underwater respirator/i.test(name) ? 60 : rating(name);
   };
-  // The shooter mode burns flight gear's charge in real time (house rule, 2026-11-02): the clock runs a minute each real second, so a jetpack's
-  // "1 minute per power cell" was a second of flight, and the party fell out of the air; there a minute of charge is a minute of flight
-  const burnRate = (name: string) => (playMode === "shooter" && accessoryOf({ name, description: factsOf(name)?.description }).fly ? 60 : 1);
-  const chargeOf = (name: string) => (running(name) ? Math.max(0, Math.round((((play.running![name] ?? 0) - clockNow()) / burnRate(name)) * 10) / 10) : play.charge?.[name] ?? rating(name));
+  const chargeOf = (name: string) => (running(name) ? Math.max(0, Math.round(((play.running![name] ?? 0) - clockNow()) * 10) / 10) : play.charge?.[name] ?? rating(name));
+  // Flight gear switched on slows the clock to real time (house rule, 2026-11-02, both modes): the clock runs a minute each real second, so a
+  // jetpack's "1 minute per power cell" was a second of flight and the party fell out of the air. While it burns a minute on the clock is a
+  // minute, so the charge is the book's and the clock agrees with it (see the clock's tick)
+  const flyingGear = Object.keys(play.running ?? {}).some((n) => running(n) && !!accessoryOf({ name: n, description: factsOf(n)?.description }).fly);
+  useEffect(() => setFlightOn(flyingGear), [flyingGear]);
   const atPowerSource = () => dayPlace().where !== "wild";
   const switchOn = (name: string) => {
     let left = chargeOf(name);
@@ -6388,7 +6485,7 @@ export default function GameBoard() {
     const cell = left <= 0 && playMode === "shooter" ? carried.indexOf("Power cell") : -1;
     if (cell >= 0) left = Math.min(rating(name), perCell(name));
     if (left <= 0) return void toast.error(`${name} is out of charge: fit a power cell${atPowerSource() ? " or recharge it here" : ""}.`);
-    const powered = { ...play, running: { ...(play.running ?? {}), [name]: clockNow() + left * burnRate(name) }, charge: { ...(play.charge ?? {}), [name]: 0 } };
+    const powered = { ...play, running: { ...(play.running ?? {}), [name]: clockNow() + left }, charge: { ...(play.charge ?? {}), [name]: 0 } };
     if (cell >= 0) saveCharacter({ equipment: carried.filter((_, i) => i !== cell), playState: powered });
     else patchPlay({ running: powered.running, charge: powered.charge });
     toast.success(`${name} on${cell >= 0 ? " with a fresh power cell" : ""}: ${left >= 60 ? `${Math.round(left / 6) / 10} hours` : `${left} minute${left === 1 ? "" : "s"}`} of charge.`);
@@ -8317,6 +8414,7 @@ export default function GameBoard() {
           }}
         />
       )}
+      {spaceFight && <MinigamePage key={spaceFight.game.seed} game={spaceFight.game} onExit={() => setSpaceFight(null)} onDone={(r) => r.kind === "dogfight" && finishSpaceFight(r.state)} />}
       {trip && trip.phase === "ask" && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" data-testid="road-ambush">
           <div className="max-w-md space-y-2 rounded border border-red-500/60 bg-gray-900 p-4 text-sm text-gray-100">
@@ -8542,9 +8640,12 @@ export default function GameBoard() {
                   <Button size="sm" className="h-6 px-2 text-xs" variant={activeMapTab === "local" ? "default" : "outline"} onClick={() => setActiveMapTab("local")}>
                     Local Map
                   </Button>
-                  <Button size="sm" className="h-6 px-2 text-xs" variant="destructive" onClick={startTestCombat} disabled={character.currentHp <= 0 || dead}>
-                    Test Combat
-                  </Button>
+                  {/* (a turn-based practice fight: never in the shooter mode, which has no walkable map without a world) */}
+                  {playMode !== "shooter" && (
+                    <Button size="sm" className="h-6 px-2 text-xs" variant="destructive" onClick={startTestCombat} disabled={character.currentHp <= 0 || dead}>
+                      Test Combat
+                    </Button>
+                  )}
                 </div>
               )}
               <Button size="sm" variant="outline" className="pointer-events-auto h-6 shrink-0 px-2 text-xs" data-testid="options-button" title="Graphics, play mode, full screen and the HUD" onClick={() => setOptionsOpen(true)}>
@@ -9466,7 +9567,7 @@ export default function GameBoard() {
         )}
 
         {/* Combat UI */}
-        {pitOpen && <PitArena enhanced={pitEnhanced} opponentFor={(bout) => pitOpponent(monsterData as unknown as Sw5eMonster[], bout, Math.random)} launch={launchBout} keepHp={keepPitHp} bank={bankPit} onExit={exitPit} />}
+        {pitOpen && <PitArena enhanced={pitEnhanced} opponentFor={(bout) => pitOpponent(monsterData as unknown as Sw5eMonster[], bout, Math.random)} launch={launchBout} keepHp={keepPitHp} bank={bankPit} onExit={exitPit} realtime={playMode === "shooter"} />}
         {showCombat && !pitOpen && <PlayCombat items={combatItems} />}
         {shipFight && <ShipCombatPanel onFinish={finishShipFight} />}
       </KeyboardControls>

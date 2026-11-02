@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { babylonGl } from "@/components/Map/babylon";
 import { Button } from "@/components/ui/button";
@@ -21,11 +21,13 @@ export interface PitArenaProps {
   keepHp: (hp: number) => void;
   bank: (total: { credits: number; items: string[] }) => void;
   onExit: (summary: PitSummary) => void;
+  // The shooter mode: the bout is fought in real time on the arena floor of the walkable map, under this page, which is then only a banner
+  realtime?: boolean;
 }
 
 type Phase = "ready" | "countdown" | "fight" | "result";
 
-export default function PitArena({ enhanced, opponentFor, launch, keepHp, bank, onExit }: PitArenaProps) {
+export default function PitArena({ enhanced, opponentFor, launch, keepHp, bank, onExit, realtime }: PitArenaProps) {
   const [bout, setBout] = useState(1);
   const [phase, setPhase] = useState<Phase>("ready");
   const [count, setCount] = useState(5);
@@ -36,8 +38,12 @@ export default function PitArena({ enhanced, opponentFor, launch, keepHp, bank, 
   const outcome = useCombat((s) => s.outcome);
   const inCombat = useCombat((s) => s.inCombat);
 
+  // The opponent of each bout, drawn once: the one named on the card is the one fought (opponentFor draws at random, and was drawn
+  // afresh at every render, so the card named one creature and the bout was against another)
+  const drawn = useRef<Record<number, Sw5eMonster | null>>({});
+  const opponentOf = (n: number) => (n in drawn.current ? drawn.current[n] : (drawn.current[n] = opponentFor(n)));
   const startBout = (n: number) => {
-    const next = opponentFor(n);
+    const next = opponentOf(n);
     if (!next) return;
     setBout(n);
     setEnemy(next);
@@ -81,8 +87,20 @@ export default function PitArena({ enhanced, opponentFor, launch, keepHp, bank, 
   }, [phase, inCombat, outcome, seen]);
 
   const exit = () => onExit({ bouts: total.bouts, credits: total.credits, items: total.items, knockedOut: !!last && !last.won });
-  const opponentNow = opponentFor(bout);
-  const shell = "fixed inset-0 z-[70] flex flex-col bg-black";
+  const opponentNow = opponentOf(bout);
+  const shell = realtime ? "fixed inset-x-2 top-14 z-[70] mx-auto flex max-w-md flex-col rounded border border-amber-500/40 bg-black/85" : "fixed inset-0 z-[70] flex flex-col bg-black";
+
+  // In real time the fight is on the map under the banner: the bout's name and the score, no table and no turns
+  if (realtime && phase === "fight") {
+    return (
+      <div className={`${shell} pointer-events-none`} data-testid="pit-arena">
+        <div className="flex items-center justify-between gap-2 px-3 py-1 text-sm text-amber-100">
+          <span className="font-semibold">Pit arena · bout {bout}{enemy ? ` · ${enemy.name}` : ""}</span>
+          <span className="text-xs text-gray-300">Won {total.bouts} · {total.credits.toLocaleString()} cr</span>
+        </div>
+      </div>
+    );
+  }
 
   if (phase === "ready" || phase === "countdown") {
     return (
@@ -120,11 +138,13 @@ export default function PitArena({ enhanced, opponentFor, launch, keepHp, bank, 
         <span className="font-semibold">Pit arena · bout {bout}{enemy ? ` · ${enemy.name}` : ""}</span>
         <span className="text-xs text-gray-300">Won {total.bouts} · {total.credits.toLocaleString()} cr</span>
       </div>
-      <div className="relative h-[46dvh] w-full bg-black" data-testid="pit-scene">
-        <Canvas gl={babylonGl} camera={{ position: [0, 14, 13], fov: 50 }} onCreated={({ camera }) => camera.lookAt(0, 0, 0)}>
-          <FightScene wall="#c9a56e" crowd />
-        </Canvas>
-      </div>
+      {!realtime && (
+        <div className="relative h-[46dvh] w-full bg-black" data-testid="pit-scene">
+          <Canvas gl={babylonGl} camera={{ position: [0, 14, 13], fov: 50 }} onCreated={({ camera }) => camera.lookAt(0, 0, 0)}>
+            <FightScene wall="#c9a56e" crowd />
+          </Canvas>
+        </div>
+      )}
       {phase === "fight" && (
         <div className="min-h-0 flex-1 overflow-auto">
           <PlayCombat items={[]} />
@@ -139,7 +159,7 @@ export default function PitArena({ enhanced, opponentFor, launch, keepHp, bank, 
             <p>Nothing for this bout. You come to at 1 hit point (house rule: the pit does not kill).</p>
           )}
           <div className="flex flex-wrap justify-center gap-2">
-            {last.won && <Button onClick={() => startBout(bout + 1)} disabled={!opponentFor(bout + 1)} data-testid="pit-next">Next bout (the next is harder)</Button>}
+            {last.won && <Button onClick={() => startBout(bout + 1)} disabled={!opponentOf(bout + 1)} data-testid="pit-next">Next bout (the next is harder)</Button>}
             <Button variant="outline" onClick={exit} data-testid="pit-quit">{last.won ? "Leave with the winnings" : "Leave the pit"}</Button>
           </div>
         </div>

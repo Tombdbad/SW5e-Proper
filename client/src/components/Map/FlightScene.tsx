@@ -1251,7 +1251,7 @@ const briefing = (g: Extract<Minigame, { kind: "dogfight" }>) => [
   "Mouse (V): it turns the nose, left click fires the active weapon, right click (E) switches weapon · A and D roll · W and S, or the wheel, set the throttle (it holds) · C: cockpit view",
   "Pad turns the nose · Fire guns · Missile and Bomb are limited · Target (T) locks the next foe, Part (Y) the next turret, generator or bay of it",
 ];
-const scenarioIntro = (g: Extract<Minigame, { kind: "dogfight" }>) => SCENARIOS.find((x) => x.id === g.scenario)?.intro ?? "";
+const scenarioIntro = (g: Extract<Minigame, { kind: "dogfight" }>) => g.intro ?? SCENARIOS.find((x) => x.id === g.scenario)?.intro ?? "";
 
 // The dedicated page of a minigame: a five-second countdown, then the game. Calls onDone with how it ended.
 export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; onDone: (result: MinigameResult) => void; onExit: () => void; coop?: { pilot: boolean; gunner: boolean } }) {
@@ -1533,7 +1533,7 @@ export function MinigamePage({ game, onDone, onExit, coop }: { game: Minigame; o
             {finished.kind === "chase" && <p className="max-w-md text-sm text-sky-100" data-testid="chase-result">{chaseResult(finished.race).note}</p>}
             {finished.kind === "convoy" && <p className="max-w-md text-sm text-sky-100" data-testid="convoy-result">{convoyResult(finished.race).note}: {convoyResult(finished.race).credits} cr</p>}
             {finished.kind === "road" && <p className="max-w-md text-sm text-sky-100" data-testid="road-result">{roadNote(finished, game.kind === "road" && !!game.water)}</p>}
-            {finished.kind === "dogfight" && <p className="max-w-md text-sm text-sky-100" data-testid="dogfight-result">{dogfightPayout(finished.state).note}: {dogfightPayout(finished.state).credits} cr</p>}
+            {finished.kind === "dogfight" && !(game.kind === "dogfight" && game.foes) && <p className="max-w-md text-sm text-sky-100" data-testid="dogfight-result">{dogfightPayout(finished.state).note}: {dogfightPayout(finished.state).credits} cr</p>}
             {finished.kind === "race" && (
               <div className="text-sm text-sky-100" data-testid="race-result">
                 <p className="mb-1">{raceResult(finished.race).note}{raceResult(finished.race).credits ? `: ${raceResult(finished.race).credits} cr` : ""}</p>

@@ -749,3 +749,20 @@ test("a ship of a size and role is fitted as the book's role table has it (the t
     }
   }
 });
+
+test("the shooter mode's Engage: a skirmish against the world's own ships, each known by its id, the party's hull as it was", () => {
+  const sheet = partyShip("Small", "Attack Fighter", 1);
+  const foes = [
+    { ref: "ship-a", sheet: foeSheet(rows, "gunship", 1, createRandom(2), "Brute"), owner: "the Empire" },
+    { ref: "ship-b", sheet: foeSheet(rows, "fighter", 1, createRandom(3), "Talon"), owner: "the Empire" },
+  ];
+  const s = dogfightStart({ seed: 4, scenario: "skirmish", rows, ship: { sheet, owner: "the party", hull: 5 }, foes });
+  const theirs = s.vessels.filter((v) => v.side === "foe");
+  assert.deepEqual(theirs.map((v) => v.ref), ["ship-a", "ship-b"], "those ships and no others");
+  assert.deepEqual(theirs.map((v) => v.name), ["Brute", "Talon"]);
+  assert.equal(s.foesTotal, 2);
+  assert.equal(partyOf(s).c.hull, 5, "a ship already hurt starts hurt");
+  // (a capital ship among them is given a capital fight's time)
+  const big = dogfightStart({ seed: 4, scenario: "skirmish", rows, ship: { sheet }, foes: [{ ref: "c", sheet: foeSheet(rows, "carrier", 1, createRandom(5)) }] });
+  assert.ok(big.limit > s.limit);
+});

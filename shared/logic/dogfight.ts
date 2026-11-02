@@ -274,6 +274,8 @@ export interface Vessel {
   bounty: number;
   // On the ground (in the air of a planet): what it is
   ground?: GroundRole;
+  // The world's ship it stands for (StartOptions.foes)
+  ref?: string;
 }
 
 // ---- Shots in the air: a turret's bolt, a missile or torpedo, a rocket, a bomb
@@ -870,10 +872,12 @@ export interface StartOptions {
   seed: number;
   scenario: ScenarioId;
   rows: StarshipRow[];
-  // The party's ship, as a sheet, and what it is called and who owns it (for the model)
-  ship: { sheet: ShipSheet; owner?: string };
+  // The party's ship, as a sheet, and what it is called and who owns it (for the model); `hull`, the hull it has now (a ship already hurt)
+  ship: { sheet: ShipSheet; owner?: string; hull?: number };
   // In the air of a planet: its land, its pull and who the foe is (see airStart)
   air?: AirOptions;
+  // A skirmish against these ships and no others (the shooter mode's Engage: the hostile ships in orbit, each with the world's id as `ref`)
+  foes?: { ref: string; sheet: ShipSheet; owner?: string }[];
 }
 // Distance ahead the capital target lies, and who defends it
 const SETUPS: Record<ScenarioId, { foe: FoeKind; at: number; escorts: (cls: ArenaClass) => FoeKind[] }> = {
@@ -949,8 +953,26 @@ export function dogfightStart(o: StartOptions): Dogfight {
   const party = makeVessel(mine, { name: mine.name, owner: o.ship.owner }, "party", { p: [0, 0, 0], yaw: 0 }, o.seed, s.nextId++);
   party.speed = party.top * ARENA.cruise;
   party.calm = 99;
+  if (o.ship.hull !== undefined && !tooBig) party.c.hull = clamp(Math.round(o.ship.hull), 1, party.c.hull);
   s.me = party.id;
   s.vessels.push(party);
+  // The ships given, ringed round the party as a skirmish's are
+  if (o.foes?.length) {
+    o.foes.forEach((f, i) => {
+      const angle = (i / o.foes!.length) * Math.PI * 2 + (rand.next() - 0.5) * 0.5;
+      const dist = 220 + rand.next() * 90 + Math.max(...CLASSES[classOf(f.sheet.size)].half);
+      const v = makeVessel(f.sheet, { name: f.sheet.name, owner: f.owner }, "foe", { p: [Math.cos(angle) * dist, (rand.next() - 0.5) * 80, Math.sin(angle) * dist], yaw: angle + Math.PI }, o.seed + s.nextId, s.nextId++);
+      v.speed = v.top * 0.7;
+      v.ref = f.ref;
+      s.vessels.push(v);
+    });
+    s.fighter = foeSheet(o.rows, "interceptor", tier, rand, "Interceptor");
+    s.foesTotal = o.foes.length;
+    // (a capital ship among them is given a capital fight's time)
+    if (o.foes.some((f) => isCapital(classOf(f.sheet.size)))) s.limit = scenarioOf("carrier").limit;
+    s.briefing.push(...sortieLines(o.ship.sheet.name, tooBig, loaned));
+    return s;
+  }
   const imperial = rand.chance(0.5);
   const owner = imperial ? "the Empire" : rand.pick(["pirates", "the Black Sun", "a warlord", "the Hutts"]);
   s.fighter = foeSheet(o.rows, "interceptor", tier, rand, "Interceptor");

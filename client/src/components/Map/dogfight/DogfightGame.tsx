@@ -6,7 +6,7 @@ import { Canvas, useThree } from "@react-three/fiber";
 import { babylonGl } from "@/components/Map/babylon";
 import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createRandom } from "@shared/logic";
-import { dogfightStart, type AirOptions, type Dogfight, type DogfightInput, type ScenarioId, type StarshipRow } from "@shared/logic/dogfight";
+import { dogfightStart, type AirOptions, type Dogfight, type DogfightInput, type ScenarioId, type StarshipRow, type StartOptions } from "@shared/logic/dogfight";
 import type { ShipSheet } from "@shared/logic";
 import { shaped, STICK } from "../interiors/stick";
 import { ArenaScene, type ArenaSim } from "./ArenaScene";
@@ -15,7 +15,8 @@ import { emptyOverlay, HudPanels, hudOf, MarkerLayer, Reticule, weaponLabel, typ
 
 // `air`: the land, the pull and the foe of a fight in the air of a planet (dogfight.ts airStart)
 // `planet`: the biome of the planet whose space or air it is (the world drawn below the fight in space; in the air `air.biome`)
-export interface DogfightSpec { title: string; seed: number; scenario: ScenarioId; rows: StarshipRow[]; ship: { sheet: ShipSheet; owner?: string }; view?: View; air?: AirOptions; planet?: string }
+// `foes` and `intro`: a fight against the world's own ships (the shooter mode's Engage), and what the countdown says of it
+export interface DogfightSpec { title: string; seed: number; scenario: ScenarioId; rows: StarshipRow[]; ship: { sheet: ShipSheet; owner?: string; hull?: number }; view?: View; air?: AirOptions; planet?: string; foes?: StartOptions["foes"]; intro?: string }
 
 // TEST BUILD ONLY: the button for unlimited hull and weapons. It exists only in a page built with VITE_TEST_MENU=1 (deploy/test-plain.sh, as the
 // game's test menu), never in the build the game is played on, so nothing here needs commenting out for production. To take it out by hand as
@@ -119,7 +120,7 @@ const REBUILDS = 4;
 export function DogfightGame({ spec, go, controls, shell, onFinish }: { spec: DogfightSpec; go: { current: boolean }; controls: boolean; shell?: { current: HTMLElement | null }; onFinish: (s: Dogfight) => void }) {
   const sim = useRef<ArenaSim>(null as unknown as ArenaSim);
   if (!sim.current) {
-    const state = dogfightStart({ seed: spec.seed, scenario: spec.scenario, rows: spec.rows, ship: spec.ship, air: spec.air });
+    const state = dogfightStart({ seed: spec.seed, scenario: spec.scenario, rows: spec.rows, ship: spec.ship, air: spec.air, foes: spec.foes });
     sim.current = { state, roll: createRandom((spec.seed | 0) + 1).next, shake: 0, lastHull: state.vessels[0].c.hull + state.vessels[0].c.shield };
   }
   const input = useRef<DogfightInput>({ steer: { x: 0, y: 0 }, throttle: 0, roll: 0, dial: 0, retarget: 0, subtarget: 0, pick: 0, cycle: 0 });
