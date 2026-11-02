@@ -137,3 +137,19 @@ test("a robbery's cache is locked and kept, with more guards the higher the tier
   assert.ok(cache.locked && cache.locked >= 13);
   assert.ok(pb.contract.guardIds.length >= pa.contract.guardIds.length);
 });
+
+test("few give work (house rule, the user's numbers): 4 in a city, 2 in a town, 1 elsewhere, the same people every time, of different sorts first", async () => {
+  const { giversIn, workFrom, GIVERS_PER } = await import("../../shared/logic/contracts");
+  const settlements = Object.values(world.areas).filter((a) => a.kind === "settlement" && childrenOf(world, a.id).some((b) => b.kind === "building"));
+  assert.ok(settlements.length);
+  for (const s of settlements) {
+    const givers = giversIn(world, s.id);
+    let able = 0;
+    for (const b of childrenOf(world, s.id)) for (const r of childrenOf(world, b.id)) for (const o of r.occupants) if (kindsOf(o, b.type).length) {
+      able++;
+      assert.equal(workFrom(world, o, r.id).length > 0, givers.has(o.id));
+    }
+    assert.equal(givers.size, Math.min(able, GIVERS_PER[s.type] ?? 1), `${s.name} (${s.type}): ${givers.size} of ${able}`);
+    assert.deepEqual([...giversIn({ ...world }, s.id)].sort(), [...givers].sort());
+  }
+});

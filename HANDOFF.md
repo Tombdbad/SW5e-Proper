@@ -3,6 +3,11 @@
 Written 2026-11-01 (Windows PC). Branch **`main`**. origin has main up to e502652; f20b19e, 5df1f3e, f19d3c8 and the trees-and-rocks commit after them are local, not pushed.
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told, never commit it.
 
+## 2026-11-02 (in progress, a side session): talking NPCs, fewer quest-givers, the arena district, smaller stock, rarity
+The request: NPCs talk to one another; fewer quest-givers; pit fights and betting in an arena district (a huge round amphitheatre, a viewing platform of cheering NPCs, a betting room with a kiosk, a sign-up room); vendors stock less, fitting their star system; a rarity on every item, the rarest from mission rewards, rare upgraders few and unlocked by regard.
+The user decided (2026-11-02): rarity = the books' rarity for enhanced items + a house tier (Standard/Premium/Prototype) for plain gear by cost and category; quest-givers 2 a town, 4 a city, 1 an outpost or station; stock 2-4 lines a stall, 4-7 a shop; a master artificer in about one city in four, Advanced work at Friendly regard, Legendary at Devoted; ordinary technicians capped at Premium (Prototype in rich Core cities). My default (not asked): an arena in every city and some towns.
+Do not push, rebuild 5000 or merge without the user's go-ahead.
+
 ## 2026-11-01 (newest): trees, rocks and plants missing inside the walkable ground (REVIVAL_NOTES "Trees, rocks and plants missing...")
 - Cause: Babylon keeps thin instances on the geometry, and instanced meshes of one piece (ground, cover, belt) shared one: the last set drew for all, the belt outside showed everything, the ground inside nothing. Fixed with a geometry copy for each instanced mesh (babylon.ts `own`). The bug is also in the build on 5000 (e502652): rebuild to see it fixed. Test added (babylon.test.ts, 12 pass; whole suite 533).
 - Checked on dev 5099, campaign 626 (a new one, Naboo, forest, test database). NOT run: `npm run e2e`. The 5099 server is stopped at the end of the turn.

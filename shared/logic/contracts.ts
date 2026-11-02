@@ -41,6 +41,50 @@ export function kindsOf(o: Pick<Occupant, "role" | "disposition" | "name" | "cap
   if (LAW.test(role) || /^(guard|officer)$/i.test(role) || /garrison|guardhouse|hideout/.test(buildingType)) out.push("assault");
   return [...new Set(out)];
 }
+// Who of them gives work (2026-11-02; the user: "too many NPCs offer side quests (espionage, theft, betting etc.) we need to reduce the
+// number of NPCs that offer quests"). HOUSE RULE: of everyone in a settlement who could (`kindsOf`), only a few do: 4 in a city, 2 in a town,
+// 1 anywhere else (the user's numbers). The same people every visit (a hash of the settlement and the person), one of each sort before a
+// second of any (the bar, the law, the shady, a hunter), so a town's two are not both smugglers.
+export const GIVERS_PER: Record<string, number> = { city: 4, town: 2 };
+const SORTS: ((role: string) => boolean)[] = [(r) => BAR.test(r), (r) => LAW.test(r) || /^(guard|officer|clerk)$/i.test(r), (r) => SHADY.test(r) || /^informant$/i.test(r), (r) => /bounty hunter/i.test(r)];
+const giverCache = new WeakMap<World, Map<string, Set<string>>>();
+export function giversIn(world: World, settlementId: string): Set<string> {
+  let bySettlement = giverCache.get(world);
+  if (!bySettlement) giverCache.set(world, (bySettlement = new Map()));
+  const known = bySettlement.get(settlementId);
+  if (known) return known;
+  const settlement = world.areas[settlementId];
+  const cap = GIVERS_PER[String(settlement?.type ?? "")] ?? 1;
+  const able: { o: Occupant; sort: number; key: number }[] = [];
+  for (const building of settlement ? buildingsOf(world, settlementId) : []) {
+    for (const room of childrenOf(world, building.id)) {
+      for (const o of room.occupants ?? []) {
+        if (o.contract || !kindsOf(o, building.type).length) continue;
+        const sort = SORTS.findIndex((s) => s(o.role ?? ""));
+        able.push({ o, sort: sort < 0 ? SORTS.length : sort, key: hashOf(`${settlementId}|${o.id}`) });
+      }
+    }
+  }
+  able.sort((a, b) => a.key - b.key);
+  const picked: string[] = [];
+  // a round over the sorts, the first of each by the hash, then the next round
+  for (let round = 0; picked.length < cap && able.some((x) => !picked.includes(x.o.id)); round++) {
+    for (let sort = 0; sort <= SORTS.length && picked.length < cap; sort++) {
+      const next = able.filter((x) => x.sort === sort && !picked.includes(x.o.id))[0];
+      if (next) picked.push(next.o.id);
+    }
+  }
+  const out = new Set(picked);
+  bySettlement.set(settlementId, out);
+  return out;
+}
+// Whether this person, where they are, gives work at all (one of the few of `giversIn`), and of what kinds
+export function workFrom(world: World, o: Occupant, areaId: string): ContractKind[] {
+  const building = trailOf(world, areaId).find((a) => a.kind === "building");
+  const kinds = kindsOf(o, building?.type ?? "");
+  const settlement = settlementOf(world, areaId);
+  return kinds.length && settlement && giversIn(world, settlement.id).has(o.id) ? kinds : [];
+}
 // The tier a giver's trust allows after `done` jobs done for them (an assault or a robbery goes no higher than the third)
 export const tierFor = (done: number): Tier => (done >= 6 ? 3 : done >= 3 ? 2 : done >= 1 ? 1 : 0);
 export const tierNeeds = (tier: Tier) => [0, 1, 3, 6][tier];

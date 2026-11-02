@@ -24,7 +24,7 @@ import { useShoot } from "@/components/Map/interiors/shoot";
 import { avgDice, blankUnit, bladeOf, grenadeOf, gunOf, modeOf, type PlayMode, type Unit } from "@shared/logic/shooter";
 import { SabaccTable, BUY_IN_CHIPS, type TableOpponent } from "@/components/Games/SabaccTable";
 import { PazaakGame } from "@/components/Games/PazaakGame";
-import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, kindsOf, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, type Contract, type Offer } from "@shared/logic/contracts";
+import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, type Contract, type Offer } from "@shared/logic/contracts";
 import { DejarikGame } from "@/components/Games/DejarikGame";
 import { PitBets } from "@/components/Games/PitBets";
 import { usePartyLook } from "@/components/Map/models";
@@ -3404,8 +3404,7 @@ export default function GameBoard() {
   };
   const contractPanel = (o: Occupant, areaId: string) => {
     if (!world || !character) return null;
-    const building = trailOf(world, areaId).find((a) => a.kind === "building");
-    if (!kindsOf(o, building?.type ?? "").length) return null;
+    if (!workFrom(world, o, areaId).length) return null;
     const done = cState.done[o.id] ?? 0;
     const mine = cState.active.filter((c) => c.giver === o.id);
     const offers = makeOffers(world, o, areaId, done, dayOf(clockNow())).filter((x) => !cState.active.some((c) => c.id === x.id) && !cState.finished.includes(x.id));
