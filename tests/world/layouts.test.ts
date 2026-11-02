@@ -92,4 +92,15 @@ test("the arena (2026-11-02): every city has one, a round floor with the pit in 
   old.life = 14;
   const livened = livenWorld(old, catalog);
   for (const city of cities) assert.ok(childrenOf(livened, city.id).some((b) => b.type === "arena"), `${city.name} is given its arena`);
+  // The arena comes on top of what was there: no building, no district and no plan of a district (a palace's grounds) goes or changes
+  const { districtsOf } = await import("@shared/logic");
+  for (const s of Object.values(old.areas as Record<string, Area>).filter((a) => a.kind === "settlement")) {
+    const before = childrenOf(old, s.id).map((b) => `${b.id}:${b.type}`);
+    const after = new Set(childrenOf(livened, s.id).map((b) => `${b.id}:${b.type}`));
+    assert.deepEqual(before.filter((b) => !after.has(b)), [], `${s.name} keeps its buildings`);
+    const names = new Set(districtsOf(livened, s.id).map((d) => d.name));
+    assert.deepEqual(districtsOf(old, s.id).map((d) => d.name).filter((n) => !names.has(n)), [], `${s.name} keeps its districts`);
+  }
+  for (const [id, plan] of Object.entries(old.districtPlans ?? {})) assert.deepEqual(livened.districtPlans?.[id], plan, `the plan of ${id} is kept`);
+  assert.ok(Object.values(world.areas).some((a) => a.type === "palace"), "the test world has a palace to keep");
 });

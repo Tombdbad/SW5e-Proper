@@ -24,6 +24,8 @@ Learned:
 - The dev server does not reload server code: the `/api/world/liven` migration runs on the server, so restart it after changing shared/logic before letting a page liven a world.
 - tests/world/security.test.ts's patrol test picked the first patrol in the world; the arena's areas moved the ids, so it now picks one where a garrison answers.
 
+Palaces (the user, 2026-11-02: "the arenas lost us the palace districts"): checked, they were not lost. A city's palace has always been a 50% roll (`"palace?"` in SETTLEMENTS); the arena is an extra entry at the end of the lists, and the life-15 migration only adds (planDistrict keeps existing plans). 60 seeds: 18 of 31 cities have a palace, all 31 an arena. `sw5e_test` campaign 627 just rolled none in its five cities (1 in 32); 626's Theed never had one, 625's Rakessos has. The arena test now checks that livening keeps every building, district and district plan.
+
 ## TODO / next, in order
 1. The user looks at the arena, the talk, the stock and rarity and says what is off; then a build and restart of 5000 if they want it.
 2. `npm run e2e` against a build (not run).
