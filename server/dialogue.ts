@@ -88,7 +88,7 @@ const clip = (s: unknown, n: number) => String(s ?? "").replace(/[\u0000-\u0008\
 export function cardText(c: Card): string {
   const s = c.speaker;
   const who = [clip(s.species, 40), clip(s.role, 60)].filter(Boolean).join(" ");
-  const feeling = s.kind === "party" ? "a member of the player's party, travelling with them" : s.disposition === "friendly" ? "friendly to the party" : s.disposition === "hostile" ? "hostile to the party" : "neutral to the party";
+  const feeling = s.kind === "party" ? "a member of the player's party, travelling with them" : s.kind === "chatter" ? "passing the time with someone you know, not with the party" : s.disposition === "friendly" ? "friendly to the party" : s.disposition === "hostile" ? "hostile to the party" : "neutral to the party";
   const p = c.player;
   const you = [clip(p.species, 40), clip(p.class, 40)].filter(Boolean).join(" ");
   return [
@@ -117,6 +117,25 @@ export function tidy(text: string, cut: boolean): string {
   }
   return t;
 }
+
+// Two people of the world talking to each other (2026-11-02; the user: "ensure that these conversations are driven by the Gemma4 (via
+// ollama) llm"): each line is one request with the same style guide (so the primed prefix holds), the speaker's card with the other as the
+// one talking to them and the other's last line as what they said; one short sentence a line. Chatter gives way to the party: one talk at
+// a time in all, and it stops between lines when a reply to a player is waiting.
+const CHATTER_TOKENS = 40;
+const CHATTER_WORDS = 18;
+export function chatterLine(text: string, name: string): string {
+  const own = clip(name, 60).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let t = tidy(text, true).replace(new RegExp(`^${own}\\s*[,:]\\s*`, "i"), "").replace(/\s*\n+\s*/g, " ").trim();
+  // The first sentence or two, no more than CHATTER_WORDS words
+  const sentences = t.match(/[^.!?]+[.!?]+/g) ?? [t];
+  t = sentences[0].trim();
+  if (sentences[1] && (t + sentences[1]).split(/\s+/).length <= CHATTER_WORDS) t += ` ${sentences[1].trim()}`;
+  const words = t.split(/\s+/);
+  return words.length > CHATTER_WORDS ? `${words.slice(0, CHATTER_WORDS).join(" ")}...` : t;
+}
+let chatting = false;
+let playerWaiting = 0;
 
 let primed = false;
 let primedAt = 0;
@@ -208,8 +227,12 @@ export function registerDialogueRoutes(app: Express) {
     res.setHeader("X-Accel-Buffering", "no");
     const send = (o: object) => { if (!res.writableEnded) res.write(`${JSON.stringify(o)}\n`); };
 
+    playerWaiting++;
+    let counted = true;
+    const started = () => { if (counted) { counted = false; playerWaiting--; } };
     try {
       await alone(async () => {
+        started();
         if (stop.signal.aborted) return;
         // Idle for a long time (the model may have been unloaded, or another program used it): start the prefix again
         if (!primed || Date.now() - primedAt > 90 * 60 * 1000) await prime();
@@ -257,6 +280,58 @@ export function registerDialogueRoutes(app: Express) {
     } catch (e: any) {
       if (!stop.signal.aborted) send({ error: e?.message === "fetch failed" ? "The dialogue model is not running (is Ollama started?)." : String(e?.message ?? e) });
     } finally {
+      started();
+      res.end();
+    }
+  });
+
+  // { a, b, scene, turns } -> NDJSON: {"line": {"who": 0|1, "text"}} as each is made, then {"done": true}; 429 while another talk is going
+  app.post("/api/chatter", async (req: Request, res: Response) => {
+    const b = req.body ?? {};
+    const people = [b.a, b.b];
+    if (!people.every((p) => p?.name)) return void res.status(400).json({ message: "a and b (each with a name) are required" });
+    if (chatting) return void res.status(429).json({ message: "another talk is going" });
+    chatting = true;
+    const turns = Math.max(2, Math.min(4, Number(b.turns) || 3));
+    const scene = `${clip(b.scene, 200)} Small talk in passing: reply with ONE short sentence, 15 words at most.`;
+    const stop = new AbortController();
+    res.on("close", () => stop.abort());
+    res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Accel-Buffering", "no");
+    const send = (o: object) => { if (!res.writableEnded) res.write(`${JSON.stringify(o)}\n`); };
+    try {
+      const said: string[] = [];
+      for (let i = 0; i < turns && !stop.signal.aborted && !playerWaiting; i++) {
+        const [me, other] = i % 2 ? [people[1], people[0]] : [people[0], people[1]];
+        const card = cardText({
+          speaker: { ...me, kind: "chatter" },
+          player: { name: other.name, species: other.species, class: other.role },
+          scene,
+          line: said.length ? said[said.length - 1] : `(${clip(other.name, 60)} stops beside you)`,
+          recap: said.length > 1 ? said[said.length - 2] : undefined,
+        });
+        const text = await alone(async () => {
+          if (stop.signal.aborted || playerWaiting) return "";
+          if (!primed || Date.now() - primedAt > 90 * 60 * 1000) await prime();
+          const r = await fetch(`${URL_BASE}/api/chat`, { method: "POST", body: body([{ role: "system", content: SYSTEM }, { role: "user", content: card }], false, CHATTER_TOKENS), signal: AbortSignal.any([stop.signal, AbortSignal.timeout(30000)]) });
+          if (!r.ok) throw new Error(`the model answered ${r.status}`);
+          const j = (await r.json()) as any;
+          if (j.prompt_eval_count && j.prompt_eval_duration / 1e6 / j.prompt_eval_count > SLOW_MS_PER_TOKEN) {
+            primed = false;
+            primeLater();
+          }
+          return chatterLine(String(j.message?.content ?? ""), me.name);
+        });
+        if (!text) break;
+        said.push(text);
+        send({ line: { who: i % 2, text } });
+      }
+      send({ done: true });
+    } catch (e: any) {
+      if (!stop.signal.aborted) send({ error: e?.message === "fetch failed" ? "The dialogue model is not running (is Ollama started?)." : String(e?.message ?? e) });
+    } finally {
+      chatting = false;
       res.end();
     }
   });

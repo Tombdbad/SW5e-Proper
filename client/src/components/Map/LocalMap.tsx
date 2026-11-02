@@ -32,7 +32,8 @@ import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
 import { useShoot } from "./interiors/shoot";
 import { moonlight, isStand, standRow, STAND_STEP, STAND_ROWS } from "@shared/logic";
-import { smallTalk, talkPlace, type TalkLine } from "@shared/logic/relations";
+import { chatScene, smallTalk, talkPlace, type TalkLine } from "@shared/logic/relations";
+import { chatter, type ChatPerson } from "@/lib/voice";
 import { CROUCH_FACTOR, PRONE_FACTOR, stickWalk, useRun, WALK_FACTOR, type Walk } from "./interiors/stick";
 import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
@@ -1545,8 +1546,9 @@ interface Setting {
   // An arena's stands: how high a square of them stands (the crowd is drawn on top), and the middle of its pit, which they watch
   stands?: (s: Sq) => number | undefined;
   pit?: Sq;
-  // What the people here talk about (relations.ts `talkPlace`)
+  // What the people here talk about (relations.ts `talkPlace`), and where they are, for the model that makes their lines (relations.ts `chatScene`)
   talk?: string;
+  scene?: string;
 }
 
 interface Agent {
@@ -1582,8 +1584,9 @@ interface Agent {
   sitK: number;
   gesture: number;
   shots: number;
-  // Talking with someone (2026-11-02): the lines, whose turn, and seconds to the next; the one who began it keeps the time
-  talk?: { with: Agent; lines: TalkLine[]; i: number; next: number; lead: boolean };
+  // Talking with someone (2026-11-02): the lines (they come in from the model as it makes them, voice.ts `chatter`; `done` once all are in),
+  // whose turn, seconds to the next, and the clock at the last line said; the one who began it keeps the time and can stop the model
+  talk?: { with: Agent; lines: TalkLine[]; i: number; next: number; lead: boolean; done?: boolean; last?: number; cancel?: () => void };
   // A spectator cheering: seconds left
   cheer?: number;
 }
@@ -1688,6 +1691,12 @@ function brainOf(o: Occupant, home: Sq, setting: Setting, guards: number): { bra
   return counter ? { brain: "staff", counter: counter.asset.id } : { brain: "still" };
 }
 
+// Who someone is, for the model that makes what they say (voice.ts `chatter`)
+const chatPerson = (o: Pick<Occupant, "name" | "species" | "role" | "gender">): ChatPerson => ({ name: o.name, species: o.species, role: o.role, gender: o.gender });
+// How long a line of talk stays up (a reading pace), and how long two people wait for the model's next line before they give up
+const talkSeconds = (text: string) => Math.min(6, Math.max(2.4, text.split(/\s+/).length * 0.33));
+const TALK_PATIENCE = 25;
+
 function Life({ people, setting, party, frozen, onTap, api, record, origin = { x: 0, y: 0 } }: {
   // Who is here; `at` is their place in the plan, or none for someone visiting (they take a free seat)
   people: { key: string; occupant: Occupant; at: Sq | null }[];
@@ -1768,26 +1777,35 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
     saying.current[a.key] = still.current.clock + seconds;
     setBubbles((b) => ({ ...b, [a.key]: text }));
   };
-  // Two people talk (2026-11-02; the user: "We need NPCs that talk to one another"): they face each other and take turns at a few lines of
-  // small talk (relations.ts `smallTalk`), the one speaking with a hand that gestures (limbs.ts "talk"); either walking off ends it
+  // Two people talk (2026-11-02; the user: "We need NPCs that talk to one another"): they face each other and take turns at a few lines,
+  // made by the local model (voice.ts `chatter`; the stock lines of relations.ts `smallTalk` only when it is not running), the one speaking
+  // with a hand that gestures (limbs.ts "talk"); either walking off ends it. The model makes one talk at a time on the page: while another is
+  // going, nobody stops to talk.
   const talking = (a: Agent) => !!a.talk;
   const converse = (a: Agent, b: Agent) => {
     if (a === b || talking(a) || talking(b) || a.leaving || b.leaving || a.held || b.held || b.path.length || b.call || frozen(a.occupant) || frozen(b.occupant)) return false;
-    const lines = smallTalk(setting.talk ?? "any", hue(`${a.key}|${b.key}|${Math.floor(still.current.clock / 60)}`));
-    a.talk = { with: b, lines, i: 0, next: 0.3, lead: true };
+    const seed = hue(`${a.key}|${b.key}|${Math.floor(still.current.clock / 60)}`);
+    const lines: TalkLine[] = [];
+    const lead: NonNullable<Agent["talk"]> = { with: b, lines, i: 0, next: 0.3, lead: true, last: still.current.clock };
+    const cancel = chatter({ a: chatPerson(a.occupant), b: chatPerson(b.occupant), scene: setting.scene ?? "", turns: 2 + (seed % 3), fallback: () => smallTalk(setting.talk ?? "any", seed), onLine: (line) => lines.push(line), onEnd: () => { lead.done = true; } });
+    if (!cancel) return false;
+    lead.cancel = cancel;
+    a.talk = lead;
     b.talk = { with: a, lines, i: 0, next: 0, lead: false };
     a.face = () => squareOf(b);
     b.face = () => squareOf(a);
-    const span = lines.length * 2.7 + 1.5;
-    a.wait = Math.max(a.wait, span);
-    b.wait = Math.max(b.wait, span);
+    // (kept from their own business until the talk ends, which lets them go again)
+    a.wait = Math.max(a.wait, 60);
+    b.wait = Math.max(b.wait, 60);
     return true;
   };
   const endTalk = (a: Agent) => {
     const b = a.talk?.with;
+    (a.talk?.lead ? a.talk : b?.talk)?.cancel?.();
     for (const x of [a, b]) if (x) {
       x.talk = undefined;
       if (x.pose.current.stand === "talk") x.pose.current.stand = undefined;
+      x.wait = Math.min(x.wait, between(2, 6));
     }
   };
   // Someone to talk to: another person here, close by and not busy
@@ -2143,15 +2161,18 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
         const other = t.with;
         if (a.path.length || other.path.length || a.leaving || other.leaving || other.talk?.with !== a || frozen(a.occupant) || frozen(other.occupant)) endTalk(a);
         else if (t.lead && (t.next -= dt) <= 0) {
-          if (t.i >= t.lines.length) endTalk(a);
-          else {
+          if (t.i < t.lines.length) {
             const line = t.lines[t.i++];
             const [speaker, listener] = line.who === 0 ? [a, other] : [other, a];
-            say(speaker, line.text, 2.4);
+            const seconds = talkSeconds(line.text);
+            say(speaker, line.text, seconds);
             speaker.pose.current.stand = "talk";
             if (listener.pose.current.stand === "talk") listener.pose.current.stand = undefined;
-            t.next = 2.7;
-          }
+            t.next = seconds + 0.3;
+            t.last = clock;
+          } else if (t.done || clock - (t.last ?? clock) > TALK_PATIENCE) endTalk(a);
+          // (the next line is still being made)
+          else t.next = 0.2;
         }
       }
       // A spectator cheers while their cheer lasts (not while talking)
@@ -2260,7 +2281,7 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
           {labelled(a.occupant) && <Label at={[0, isLarge(a.occupant.size) ? 2.2 : 1.6, 0]} size={0.26} color={SIDE_COLORS[a.occupant.disposition]}>{a.occupant.name}</Label>}
           {bubbles[a.key] && (
             <Html center position={[0, isLarge(a.occupant.size) ? 2.6 : 2.05, 0]} zIndexRange={[20, 0]} style={{ pointerEvents: "none" }}>
-              <div className="whitespace-nowrap rounded-lg bg-gray-900/90 px-2 py-0.5 text-xs text-amber-200 shadow">{bubbles[a.key]}</div>
+              <div className="w-max max-w-[13rem] rounded-lg bg-gray-900/90 px-2 py-0.5 text-center text-xs text-amber-200 shadow">{bubbles[a.key]}</div>
             </Html>
           )}
           {onTap && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={() => onTap({ key: a.key, occupant: a.occupant, at: squareOf(a), counter: a.brain === "staff" ? a.counter : undefined })} label={a.occupant.name} person />}
@@ -2501,10 +2522,25 @@ function AlleyBlock({ squares }: { squares: Sq[] }) {
 
 // (`hover`: kept that far over the ground the view gives, rather than on the straight line between the ends: over a globe's hills)
 type Walker = { key: string; from: V3; to: V3; progress: number; kind: "person" | "speeder" | "airspeeder" | "mount" | "hauler" | "ship"; name: string; arc?: number; scale?: number; note?: string; hover?: number };
-// People about the street of a district, going between the doors of its buildings by the open
-// ground and back again, at a walking pace (purely for life on the street: nobody to talk to)
-// (`mount`: one who rides, a beast of the transport data, between `doors`, the doors they stop at: the one at each end of the path)
-type Stroll = { key: string; path: { x: number; y: number }[]; length: number; offset: number; mount?: string; doors?: [{ x: number; y: number }, { x: number; y: number }] };
+// People about the street of a district, going between the doors of its buildings by the open ground and back again, at a walking pace.
+// Each is one of the district's people (`who`), and two who pass each other may stop and talk (`Strollers`).
+// (`mount`: one who rides, a beast of the transport data, between `doors`, the doors they stop at; the path then runs between the beast's
+// hitches, a square of its own by each door: see `hitchBy`)
+type Stroll = { key: string; path: { x: number; y: number }[]; length: number; offset: number; mount?: string; doors?: [{ x: number; y: number }, { x: number; y: number }]; who?: ChatPerson };
+// Where a rider's beast waits by a door (2026-11-02, the user: "NPC beasts stand on the exact square at the entrance of the buildings their
+// riders enter, beasts should not loiter on the same square, and should not stand on the square that shares the building entry"): out from
+// the door and to one side, two or three squares from it, never on the square before the door or the line straight out from it (the way
+// in stays clear), never where another beast waits (`taken`) or on any building's door square
+function hitchBy(door: Sq, outward: Sq, open: (x: number, y: number) => boolean, taken: Set<string>, salt: string): Sq | undefined {
+  const across = { x: Math.abs(outward.y), y: Math.abs(outward.x) };
+  const spots: { q: Sq; d: number }[] = [];
+  for (let k = 0; k <= 3; k++) for (let side = -3; side <= 3; side++) {
+    if (side === 0 || Math.max(k, Math.abs(side)) < 2) continue;
+    const q = { x: door.x + outward.x * k + across.x * side, y: door.y + outward.y * k + across.y * side };
+    spots.push({ q, d: Math.hypot(k, side) + unitOf(`${salt}|${q.x},${q.y}`) * 0.5 });
+  }
+  return spots.sort((p, q) => p.d - q.d).map((p) => p.q).find((q) => open(q.x, q.y) && !taken.has(`${q.x},${q.y}`));
+}
 // Where `rest` squares along a path is, and the way it runs there
 function along(path: { x: number; y: number }[], rest: number): { x: number; y: number; dx: number; dy: number } {
   let [px, py] = [path[0].x, path[0].y];
@@ -2546,7 +2582,7 @@ function MountedStroll({ w }: { w: Stroll }) {
     // The door at the end of the leg, and the way to it from where the beast stands (it walks no further than the door)
     const door = w.doors?.[back ? 0 : 1];
     const [tx, ty] = door ? [door.x - here.x, door.y - here.y] : [Math.sin(yaw.current) * 1.5, Math.cos(yaw.current) * 1.5];
-    const reach = Math.min(Math.hypot(tx, ty), 3);
+    const reach = Math.min(Math.hypot(tx, ty), 5);
     const [ux, uy] = reach ? [tx / Math.hypot(tx, ty), ty / Math.hypot(tx, ty)] : [0, 1];
     // Down off the saddle to the beast's side, then the walk to the door, out of sight inside, and back
     const side = [-uy * 0.5, ux * 0.5];
@@ -2583,25 +2619,108 @@ function MountedStroll({ w }: { w: Stroll }) {
     </>
   );
 }
-function Strollers({ strolls }: { strolls: Stroll[] }) {
+// Two on foot who pass each other in the street may stop, face each other and talk (2026-11-02, the user: "extend the NPC conversations to
+// people passing in the street"), with lines made by the local model as in a room (voice.ts `chatter`: one talk at a time on the page); each
+// walker's clock is held while they stand (`lag`), so they walk on from where they stopped, and they do not stop again for a while (`cool`)
+type StreetTalk = { with: string; lead: boolean; lines: TalkLine[]; i: number; next: number; done?: boolean; last: number; cancel?: () => void };
+function Strollers({ strolls, scene }: { strolls: Stroll[]; scene: string }) {
   const groups = useRef<Record<string, THREE.Group | null>>({});
-  useFrame(({ clock }) => {
-    for (const w of strolls) {
-      const g = groups.current[w.key];
-      if (!g || w.length < 1 || w.mount) continue;
+  const poses = useMemo(() => Object.fromEntries(strolls.map((w) => [w.key, { current: seatState() }])), [strolls]);
+  const state = useRef<Record<string, { lag: number; cool: number; at: { x: number; y: number }; talk?: StreetTalk }>>({});
+  const [bubbles, setBubbles] = useState<Record<string, string>>({});
+  const until = useRef<Record<string, number>>({});
+  const look = useRef(1);
+  const clockNow = useRef(0);
+  const endTalk = (key: string) => {
+    const t = state.current[key]?.talk;
+    if (!t) return;
+    for (const k of [key, t.with]) {
+      const s = state.current[k];
+      if (!s) continue;
+      if (s.talk?.lead) s.talk.cancel?.();
+      s.talk = undefined;
+      s.cool = between(30, 70);
+      if (poses[k]?.current.stand === "talk") poses[k].current.stand = undefined;
+    }
+  };
+  // (gone from the street: whatever they were saying stops)
+  useEffect(() => () => { for (const s of Object.values(state.current)) if (s.talk?.lead) s.talk.cancel?.(); }, []);
+  // (the walkers, where each path ends and who is talking: read by the play-through test)
+  useEffect(() => {
+    (window as unknown as { __strolls?: unknown }).__strolls = () => strolls.map((w) => ({ key: w.key, mount: w.mount, ends: [w.path[0], w.path[w.path.length - 1]], doors: w.doors, who: w.who?.name, talking: state.current[w.key]?.talk ? state.current[w.key]!.talk!.with : undefined, said: bubbles[w.key] }));
+  });
+  useFrame(({ clock }, delta) => {
+    const dt = Math.min(delta, 0.25);
+    const now = (clockNow.current += dt);
+    const walkers = strolls.filter((w) => w.length >= 1 && !w.mount);
+    for (const w of walkers) {
+      const s = (state.current[w.key] ??= { lag: 0, cool: between(4, 25), at: { ...w.path[0] } });
+      if (s.talk) s.lag += dt;
+      else s.cool -= dt;
       // There and back, at a square and a bit a second
-      const run = (((clock.elapsedTime + w.offset) * 1.3) % (w.length * 2));
+      const run = (((clock.elapsedTime - s.lag + w.offset) * 1.3) % (w.length * 2) + w.length * 2) % (w.length * 2);
       const back = run > w.length;
       const here = along(w.path, back ? w.length * 2 - run : run);
+      s.at = { x: here.x, y: here.y };
+      const g = groups.current[w.key];
+      if (!g) continue;
       g.position.set(here.x + 0.5, 0, here.y + 0.5);
-      g.rotation.y = Math.atan2(back ? -here.dx : here.dx, back ? -here.dy : here.dy);
+      const mate = s.talk && state.current[s.talk.with];
+      g.rotation.y = mate ? Math.atan2(mate.at.x - here.x, mate.at.y - here.y) : Math.atan2(back ? -here.dx : here.dx, back ? -here.dy : here.dy);
+    }
+    // The talks going: each line in turn, from the one who began it
+    for (const w of walkers) {
+      const t = state.current[w.key]?.talk;
+      if (!t?.lead || (t.next -= dt) > 0) continue;
+      if (t.i < t.lines.length) {
+        const line = t.lines[t.i++];
+        const [speaker, listener] = line.who === 0 ? [w.key, t.with] : [t.with, w.key];
+        const seconds = talkSeconds(line.text);
+        until.current[speaker] = now + seconds;
+        delete until.current[listener];
+        setBubbles((b) => { const next = { ...b, [speaker]: line.text }; delete next[listener]; return next; });
+        if (poses[speaker]) poses[speaker].current.stand = "talk";
+        if (poses[listener]?.current.stand === "talk") poses[listener].current.stand = undefined;
+        t.next = seconds + 0.3;
+        t.last = now;
+      } else if (t.done || now - t.last > TALK_PATIENCE) endTalk(w.key);
+      else t.next = 0.2;
+    }
+    const expired = Object.entries(until.current).filter(([, at]) => at < now).map(([key]) => key);
+    if (expired.length) {
+      expired.forEach((key) => delete until.current[key]);
+      setBubbles((old) => Object.fromEntries(Object.entries(old).filter(([key]) => !expired.includes(key))));
+    }
+    // Now and then, two who are passing each other stop to talk
+    if ((look.current -= dt) > 0) return;
+    look.current = 0.5;
+    const free = walkers.filter((w) => w.who && !state.current[w.key]?.talk && (state.current[w.key]?.cool ?? 1) <= 0);
+    for (const a of free) {
+      const sa = state.current[a.key];
+      const b = free.find((o) => o !== a && Math.hypot(state.current[o.key].at.x - sa.at.x, state.current[o.key].at.y - sa.at.y) <= 1.6);
+      if (!b || Math.random() > 0.5) continue;
+      const sb = state.current[b.key];
+      const seed = hue(`${a.key}|${b.key}|${Math.floor(now / 60)}`);
+      const lines: TalkLine[] = [];
+      const lead: StreetTalk = { with: b.key, lead: true, lines, i: 0, next: 0.3, last: now };
+      const cancel = chatter({ a: a.who!, b: b.who!, scene, turns: 2 + (seed % 3), fallback: () => smallTalk("street", seed), onLine: (line) => lines.push(line), onEnd: () => { lead.done = true; } });
+      if (!cancel) break;
+      lead.cancel = cancel;
+      sa.talk = lead;
+      sb.talk = { with: a.key, lead: false, lines, i: 0, next: 0, last: now };
+      break;
     }
   });
   return (
     <>
       {strolls.map((w) => w.mount ? <MountedStroll key={w.key} w={w} /> : (
         <group key={w.key} ref={(g) => { groups.current[w.key] = g; }} position={[w.path[0].x + 0.5, 0, w.path[0].y + 0.5]}>
-          <Figure kind="person" ring="#9ca3af" name={w.key} />
+          <Figure kind="person" ring="#9ca3af" name={w.who?.name ?? w.key} species={w.who?.species} role={w.who?.role} seat={poses[w.key]} />
+          {bubbles[w.key] && (
+            <Html center position={[0, 2.05, 0]} zIndexRange={[20, 0]} style={{ pointerEvents: "none" }}>
+              <div className="w-max max-w-[13rem] rounded-lg bg-gray-900/90 px-2 py-0.5 text-center text-xs text-amber-200 shadow">{bubbles[w.key]}</div>
+            </Html>
+          )}
         </group>
       ))}
     </>
@@ -3922,6 +4041,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         return stands.size ? { stands: (q: Sq) => stands.get(`${q.x},${q.y}`), pit: pit ? { x: pit.x + (pit.w - 1) / 2, y: pit.y + (pit.h - 1) / 2 } : undefined } : {};
       })(),
       talk: talkPlace(world.areas[opened!.parentId ?? ""]?.type ?? "", opened!.name, opened!.occupants.map((o) => o.role)),
+      scene: chatScene(talkPlace(world.areas[opened!.parentId ?? ""]?.type ?? "", opened!.name, opened!.occupants.map((o) => o.role)), [opened!.name, ...trailOf(world, opened!.id).filter((x) => x.kind === "building" || x.kind === "settlement" || x.kind === "planet").reverse().map((x) => x.name)], useClock.getState().minutes),
     };
   }, [opened?.id, world]);
   const streetSettings = useMemo(() => {
@@ -4006,7 +4126,19 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     if (!plan || !districtPlan || buildings.length < 2) return [];
     const doors = buildings.map((b) => street.doors[b.id]?.door).filter((d): d is { x: number; y: number } => !!d);
     if (doors.length < 2) return [];
+    const fronts = buildings.map((b) => street.doors[b.id]).filter((d): d is NonNullable<typeof d> => !!d);
     const count = Math.min(8, buildings.length * 2);
+    // (the district's own people: each walker is one of them, by name, species and trade, for when they stop to talk; with fewer of them
+    // about at this hour than there are walkers, people of the settlement's other districts passing through)
+    const peopleOf = (bs: Area[]) => bs.flatMap((b) => childrenOf(world, b.id)).flatMap((r) => r.occupants)
+      .filter((o) => isLocal(o) && o.disposition !== "hostile" && !o.captive && !o.disabled && tokenOf(o) === "person")
+      .sort((p, q) => unitOf(`${district!.id}|${p.id}`) - unitOf(`${district!.id}|${q.id}`));
+    const settlementId = trailOf(world, building.id).find((a) => a.kind === "settlement")?.id;
+    const folk = peopleOf(buildings);
+    if (folk.length < count && settlementId) folk.push(...peopleOf(childrenOf(world, settlementId).filter((a) => a.kind === "building" && !buildings.includes(a))));
+    // (every door square, and each beast's hitch once it is given: no beast waits on another's)
+    const hitched = new Set(doors.map((d) => `${d.x},${d.y}`));
+    const lengthOf = (path: Sq[]) => path.reduce((n, q, k) => n + (k ? Math.hypot(q.x - path[k - 1].x, q.y - path[k - 1].y) : 0), 0);
     const out: Stroll[] = [];
     for (let i = 0; i < count; i++) {
       const a = Math.floor(unitOf(`${district!.id}|stroll|${i}|a`) * doors.length);
@@ -4016,15 +4148,29 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       const to = nearestOpen(outdoors, doors[b]);
       const path = route(outdoors, from, [to]);
       if (!path || !path.length) continue;
-      const full = [from, ...path];
-      let length = 0;
-      for (let k = 1; k < full.length; k++) length += Math.hypot(full[k].x - full[k - 1].x, full[k].y - full[k - 1].y);
-      // (about one in four rides a beast, on a way long enough to be worth it: it has its errand at each door, interiors/limbs.ts errandAt)
-      const mount = length >= 5 && unitOf(`${district!.id}|stroll|${i}|mount`) < 0.25 ? pickMount(`${district!.id}|stroll|${i}`) : undefined;
-      out.push({ key: `stroll-${i}`, path: full, length, offset: unitOf(`${district!.id}|stroll|${i}|t`) * (mount ? errandLength(length) : length) * 2, mount, doors: [doors[a], doors[b]] });
+      let full = [from, ...path];
+      const salt = `${district!.id}|stroll|${i}`;
+      // (nobody walks twice: past the people there are, a walker is nobody in particular and does not stop to talk)
+      const who = folk[i] ? chatPerson(folk[i]) : undefined;
+      // (about one in four rides a beast, on a way long enough to be worth it: it has its errand at each door, interiors/limbs.ts errandAt;
+      // the beast goes between its hitches by the two doors)
+      let mount = lengthOf(full) >= 5 && unitOf(`${salt}|mount`) < 0.25 ? pickMount(salt) : undefined;
+      if (mount) {
+        const [ha, hb] = [fronts[a], fronts[b]].map((fr, k) => fr && hitchBy(fr.door, fr.outward, outdoors, hitched, `${salt}|${k}`));
+        const ridden = ha && hb ? route(outdoors, ha, [hb]) : null;
+        if (ha && hb && ridden?.length) {
+          full = [ha, ...ridden];
+          hitched.add(`${ha.x},${ha.y}`);
+          hitched.add(`${hb.x},${hb.y}`);
+        } else mount = undefined;
+      }
+      const run = lengthOf(full);
+      out.push({ key: `stroll-${i}`, path: full, length: run, offset: unitOf(`${salt}|t`) * (mount ? errandLength(run) : run) * 2, mount, doors: [doors[a], doors[b]], who });
     }
     return out;
   }, [world, district?.id ?? building.id, street]);
+  // Where the street's talk is, for the model that makes it (relations.ts `chatScene`)
+  const streetScene = useMemo(() => chatScene("street", [district?.name ?? "", ...trail.filter((x) => x.kind === "settlement" || x.kind === "planet").reverse().map((x) => x.name)], useClock.getState().minutes), [district?.id, world]);
   // Hostiles who have noticed the party stop and watch it
   const watching = (area: Area | undefined, o: Occupant) => !!area && o.disposition === "hostile" && !!o.hitPoints && !area.allowed && (area.alert ?? (area === inside ? ALERT.confronting : -1)) >= ALERT.questioning;
 
@@ -4687,7 +4833,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 </Wanderer>
               );
             })}
-            {!duel && <Strollers strolls={strolls} />}
+            {!duel && <Strollers strolls={strolls} scene={streetScene} />}
             {street.rigs.map(({ v, mine, outward, x, y }) => (
               <group key={v.id} position={[x + 0.5, 0, y + 0.5]} rotation={[0, Math.atan2(outward.x || 0.0001, outward.y || 0.0001), 0]}>
                 <SpeederModel model={v.model} wrecked={v.status === "wrecked"} look={v.look} name={v.name} seats={v.seats} />

@@ -100,3 +100,13 @@ test("the microphone: a recording at any rate becomes a 16 kHz mono WAV for the 
   assert.equal(cleanTranscript("Silence."), "");
   assert.equal(cleanTranscript("Hello there\n\nfriend"), "Hello there friend");
 });
+
+test("a line of two people's talk (2026-11-02, server/dialogue.ts chatterLine): one short spoken sentence or two, no name, no narration, at most 18 words", async () => {
+  const { chatterLine } = await import("../../server/dialogue");
+  assert.equal(chatterLine("Tessa Vond: The next bout's a big one. You betting?", "Tessa Vond"), "The next bout's a big one. You betting?");
+  assert.equal(chatterLine("*leans on the rail* The crowd's wild today. I lost twenty on the last one. Never again, I swear it on my mother.", "Gorran"), "The crowd's wild today. I lost twenty on the last one.");
+  assert.equal(chatterLine("Line one\n\nline two.", "A"), "Line one line two.");
+  const long = chatterLine("one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty.", "A");
+  assert.equal(long.split(/\s+/).length, 18);
+  assert.ok(long.endsWith("..."));
+});

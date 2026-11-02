@@ -560,6 +560,72 @@ export async function recordSpeech(opts: { onQuiet?: () => void; maxMs?: number 
   };
 }
 
+// People of the world talking to one another (2026-11-02; the user: "ensure that these conversations are driven by the Gemma4 (via ollama)
+// llm"): server/dialogue.ts /api/chatter makes the lines with the local model, one at a time, and they come in as they are made. One talk at
+// a time on the page (the model makes one line at a time for everyone): `chatter` returns null while one is going, and the two do not stop
+// to talk. Only when the model is not running are the place's stock lines (relations.ts smallTalk, `fallback`) said instead.
+export interface ChatPerson { name: string; species?: string; role?: string; gender?: string }
+export interface ChatLine { who: 0 | 1; text: string }
+let chatLane = false;
+let modelUp: { ok: boolean; at: number } | null = null;
+async function modelOk(): Promise<boolean> {
+  if (modelUp && Date.now() - modelUp.at < 60000) return modelUp.ok;
+  try {
+    modelUp = { ok: !!((await (await fetch("/api/dialogue/status")).json()) as { ok?: boolean }).ok, at: Date.now() };
+  } catch {
+    modelUp = { ok: false, at: Date.now() };
+  }
+  return modelUp.ok;
+}
+export const chatterFree = () => !chatLane;
+export function chatter(o: { a: ChatPerson; b: ChatPerson; scene: string; turns: number; fallback: () => ChatLine[]; onLine: (line: ChatLine) => void; onEnd: () => void }): (() => void) | null {
+  if (chatLane) return null;
+  chatLane = true;
+  const control = new AbortController();
+  let over = false;
+  const end = () => {
+    if (over) return;
+    over = true;
+    chatLane = false;
+    o.onEnd();
+  };
+  void (async () => {
+    try {
+      if (!(await modelOk())) {
+        if (!control.signal.aborted) o.fallback().forEach(o.onLine);
+        return;
+      }
+      const response = await fetch("/api/chatter", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ a: o.a, b: o.b, scene: o.scene, turns: o.turns }), signal: control.signal });
+      if (!response.ok || !response.body) return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pending = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        pending += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = pending.indexOf("\n")) >= 0) {
+          const row = pending.slice(0, nl).trim();
+          pending = pending.slice(nl + 1);
+          if (!row) continue;
+          const event = JSON.parse(row) as { line?: ChatLine; error?: string };
+          if (event.error) modelUp = { ok: false, at: Date.now() };
+          if (event.line?.text) o.onLine(event.line);
+        }
+      }
+    } catch {
+      // (aborted: the two walked off, or the place was left)
+    } finally {
+      end();
+    }
+  })();
+  return () => {
+    if (!over) control.abort();
+    end();
+  };
+}
+
 export async function transcribe(wav: string): Promise<string> {
   const r = await fetch("/api/stt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audio: wav }) });
   if (!r.ok) throw new Error("The local model could not read the recording (is Ollama running?)");

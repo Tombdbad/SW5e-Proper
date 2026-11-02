@@ -213,6 +213,21 @@ export function talkPlace(buildingType: string, roomName: string, roles: string[
   if (/market|general store|armsmith|tech shop|apothecary|outfitter|curio shop|pawnshop/.test(buildingType) || /stall|market|sales floor/i.test(roomName)) return "market";
   return "any";
 }
+// The scene the local model is given for two people talking (server/dialogue.ts /api/chatter, which makes the lines; the stock lines
+// above are said only when the model is not running): where they are, the hour, and what people there talk of
+const TALK_TOPICS: Record<string, string> = {
+  arena: "the bouts, the fighters and the bets",
+  cantina: "drink, rumours, deals and who is in tonight",
+  market: "prices, goods and the traders",
+  guard: "their watch, orders and trouble in the town",
+  street: "the day's news, work, family and the town",
+  any: "the day's news and their work",
+};
+export function chatScene(place: string, where: string[], minutes: number): string {
+  const hour = Math.floor(minutes / 60) % 24;
+  const time = hour < 5 ? "late at night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 21 ? "evening" : "night";
+  return `${where.filter(Boolean).join(", ")}, ${time}. Two locals talk of ${TALK_TOPICS[place] ?? TALK_TOPICS.any}.`;
+}
 export function smallTalk(place: string, seed: number): TalkLine[] {
   const t = TALKS[place] ?? TALKS.any;
   const pick = (list: string[], salt: number) => list[hash(`${seed}|${salt}`) % list.length];

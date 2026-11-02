@@ -4,33 +4,36 @@ Written 2026-11-02 (Windows PC, a side session started by the main one). Branch 
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told, never commit it.
 Do not push, rebuild 5000 or merge without the user's go-ahead. 5000 still runs the older build e502652.
 
-## 2026-11-02: talking NPCs, fewer quest-givers, the arena district, smaller stock, rarity
-The user's request (via the main session): NPCs talk to one another; fewer quest-givers; pit fights and betting in an arena district (a huge round amphitheatre, a viewing platform of cheering NPCs, a betting room with a kiosk, a sign-up room); vendors stock less, fitting their star system; a rarity on every item, the rarest from mission rewards, rare upgraders few and unlocked by regard.
-The user decided (asked 2026-11-02): rarity = the books' rarity for enhanced items + a house tier (Standard/Premium/Prototype) for plain gear by cost; quest-givers 2 a town, 4 a city, 1 elsewhere; stock 2-4 lines a stall, 4-7 a shop; a master artificer in about one city in four, Advanced at Friendly regard, Legendary at Devoted; ordinary technicians capped at Premium (Prototype in a Core city). An arena in every city and one town in two (my default; the user said keep it, 2026-11-02).
+## 2026-11-02 (1): talking NPCs, fewer quest-givers, the arena district, smaller stock, rarity
+The user decided: rarity = the books' rarity for enhanced items + a house tier (Standard/Premium/Prototype) for plain gear by cost; quest-givers 2 a town, 4 a city, 1 elsewhere; stock 2-4 lines a stall, 4-7 a shop; a master artificer in about one city in four, Advanced at Friendly regard, Legendary at Devoted; an arena in every city and one town in two.
+Commits: 14ce06a few give work; 6f34d75 rarity, stock, rewards, artificers; 7a01438 the arena district; 596501c people talking, stands, crowd; 433f580, 77d975d handoff and the palace check (REVIVAL_NOTES has each in full).
+NOT checked from that work: a master artificer in the browser (626 has none); the reward item paid on reporting a job; `npm run e2e`.
 
-Commits (REVIVAL_NOTES has each in full):
-- 14ce06a Few give work (contracts.ts `giversIn`, `workFrom`). REVIVAL_NOTES "Few give work" under "Games at the table, jobs from people".
-- 6f34d75 Rarity, smaller stock of the system's goods, rare rewards for jobs (+25 regard with the giver), master artificers. REVIVAL_NOTES "Rarity, smaller stock, master artificers, rare rewards".
-- 7a01438 The arena district (generator, jobs, life-15 migration); 596501c people talking, the stands and the cheering crowd on the map and round a pit bout. REVIVAL_NOTES "The arena district, and people who talk to one another". `npm test`: 539 pass, 3 skipped.
+## 2026-11-02 (2): palace 60%, the model makes NPC talk, street talk, beasts wait apart
+The user: "up the roll chance for a palace to 60%, also extend the NPC conversations to people passing in the street, and ensure that these conversations are driven by the Gemma4 (via ollama) llm. Also NPC beasts stand on the exact square at the entrance ..." (and earlier: palaces were not lost, see REVIVAL_NOTES).
+- `OPTIONAL_ODDS` (shared/logic, beside SETTLEMENTS): palace 0.6. New worlds only.
+- server/dialogue.ts `POST /api/chatter` (one line a request, same SYSTEM so the primed prefix holds, ~3.5 s a line; one talk at a time, 429 otherwise; yields to a waiting player reply); `chatterLine`.
+- client/src/lib/voice.ts `chatter` (one lane a page; stock `smallTalk` lines only when the model is not running); relations.ts `chatScene`.
+- LocalMap: Life `converse` uses it; `Strollers` walkers are named people of the district who stop and talk; `hitchBy` gives each rider's beast a hitch of its own by each door; `window.__strolls()` for tests.
+- REVIVAL_NOTES "The model makes their talk, people in the street talk, beasts wait apart, palaces in 60% of cities".
+Checked in the browser (dev 5099 on `sw5e_test`, campaign 626, Ollama with gemma4:e2b): a cantina pair and a street pair talking in model lines; hitches two squares out, none on a door square or shared. Unit tests added (relations, voice). Commit: see `git log` (this handoff is committed with it).
+NOT checked: the fallback with Ollama stopped; a phone; `npm run e2e`.
 
-Checked in the browser (dev server on 5099 against `sw5e_test`, campaign 626, Naboo): stock with rarities and premium-capped mods at Theed's armsmith; only the chosen bartender offers jobs in the cantina; inventory rarity; the arena (life-15 migration added Theed's and Kaadara's), its stands, crowd cheering, pit, conversation bubbles between spectators, the bookmaker's bets, the pit boss's pit, a bout on open sand with the crowd round it.
-NOT checked: a master artificer in the browser (campaign 626 has none: Theed's hash says no; unit-tested only); the reward item paid on reporting a regional job; conversations in a cantina (the pane was hidden, no frames); `npm run e2e`.
-
-Test database: campaign 626 was rolled back once to life 14 without arenas (a first migration had run with older code) and livened again; a copy of the earlier state is in my scratchpad only. The dev server on 5099 (background, `npx tsx server/index.ts`, PORT=5099, VITE_TEST_MENU=1, DATABASE_URL to sw5e_test) is stopped at the end of the session.
+Running: the dev server on 5099 (background `npx tsx server/index.ts`, PORT=5099, VITE_TEST_MENU=1, DATABASE_URL to sw5e_test) is stopped at the end of the session.
 
 Learned:
-- The test menu's place list shows 300 at most: type in its search box (`test-find`) to reach the arena's rooms.
-- A shooter-mode campaign has no overhead view; for a look from above in the browser: `(await import('/src/components/Map/interiors/aim.ts')).useView.setState({ shooter: false, mode: 'overhead' })` (local only, a reload undoes it).
-- The dev server does not reload server code: the `/api/world/liven` migration runs on the server, so restart it after changing shared/logic before letting a page liven a world.
-- tests/world/security.test.ts's patrol test picked the first patrol in the world; the arena's areas moved the ids, so it now picks one where a garrison answers.
-
-Palaces (the user, 2026-11-02: "the arenas lost us the palace districts"): checked, they were not lost. A city's palace has always been a 50% roll (`"palace?"` in SETTLEMENTS); the arena is an extra entry at the end of the lists, and the life-15 migration only adds (planDistrict keeps existing plans). 60 seeds: 18 of 31 cities have a palace, all 31 an arena. `sw5e_test` campaign 627 just rolled none in its five cities (1 in 32); 626's Theed never had one, 625's Rakessos has. The arena test now checks that livening keeps every building, district and district plan.
+- The browser pane must be shown (`show_pane` preview) or the page draws no frames: nobody moves or talks.
+- The map gets the world as the clock has it: at a given hour a district may hold only one or two locals (Theed Market at noon: 1), so walkers are topped up from the settlement.
+- `read_network_requests` urlPattern is a substring, not a regex.
+- The test menu's place list shows 300 at most: type in its search box (`test-find`).
+- For a look from above: `(await import('/src/components/Map/interiors/aim.ts')).useView.setState({ shooter: false, mode: 'overhead' })`.
+- The dev server does not reload server code (dialogue routes, `/api/world/liven`): restart it after changing server/ or shared/logic.
 
 ## TODO / next, in order
-1. The user looks at the arena, the talk, the stock and rarity and says what is off; then a build and restart of 5000 if they want it.
+1. The user looks at the talk (cantina, street), the beasts and the arena and says what is off; then a build and restart of 5000 if they want it.
 2. `npm run e2e` against a build (not run).
-3. Older items still open: the user's look at balustrades, night and moons, riders, room changes (2026-11-01 list); phone check over Tailscale; e2e failures (cantina people not moving in 20 s, speeders "did not travel", road-trip guards not chasing); fat lines.
+3. Older items still open: balustrades, night and moons, riders, room changes (2026-11-01 list); phone check over Tailscale; e2e failures (cantina people not moving in 20 s, speeders "did not travel", road-trip guards not chasing); fat lines.
 
 ## Open questions for the user
-- People in the district's streets do not stop to talk yet (only those in the room the party is in): wanted?
-- (Earlier, still open) delete the e2e leftovers in the real database? Moon periods? Every daytime theft to ring at once? Piper voices?
+- Should NPC talk be spoken aloud in their voices (Piper), or stay as bubbles?
+- (Earlier, still open) delete the e2e leftovers in the real database? Moon periods? Every daytime theft to ring at once?

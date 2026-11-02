@@ -146,3 +146,10 @@ test("small talk (house rule): two to four lines turn about, of the place (the a
   }
   assert.notDeepEqual(smallTalk("cantina", 3), smallTalk("arena", 3));
 });
+
+test("the scene for the model that makes two people's talk (2026-11-02): where they are, the hour, and what people there talk of", async () => {
+  const { chatScene } = await import("../../shared/logic/relations");
+  assert.equal(chatScene("arena", ["Arena floor", "Theed Arena", "Theed", "Naboo"], 14 * 60), "Arena floor, Theed Arena, Theed, Naboo, afternoon. Two locals talk of the bouts, the fighters and the bets.");
+  assert.match(chatScene("street", ["Market District", "", "Theed"], 24 * 60 + 8 * 60), /^Market District, Theed, morning\. .*the day's news/);
+  assert.match(chatScene("nowhere", ["X"], 22 * 60), /night\. Two locals talk of the day's news and their work\.$/);
+});
