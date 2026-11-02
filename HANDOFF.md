@@ -11,7 +11,7 @@ The user decided (asked 2026-11-02): rarity = the books' rarity for enhanced ite
 Commits (REVIVAL_NOTES has each in full):
 - 14ce06a Few give work (contracts.ts `giversIn`, `workFrom`). REVIVAL_NOTES "Few give work" under "Games at the table, jobs from people".
 - 6f34d75 Rarity, smaller stock of the system's goods, rare rewards for jobs (+25 regard with the giver), master artificers. REVIVAL_NOTES "Rarity, smaller stock, master artificers, rare rewards".
-- (next) The arena district and people talking. REVIVAL_NOTES "The arena district, and people who talk to one another".
+- 7a01438 The arena district (generator, jobs, life-15 migration); 596501c people talking, the stands and the cheering crowd on the map and round a pit bout. REVIVAL_NOTES "The arena district, and people who talk to one another". `npm test`: 539 pass, 3 skipped.
 
 Checked in the browser (dev server on 5099 against `sw5e_test`, campaign 626, Naboo): stock with rarities and premium-capped mods at Theed's armsmith; only the chosen bartender offers jobs in the cantina; inventory rarity; the arena (life-15 migration added Theed's and Kaadara's), its stands, crowd cheering, pit, conversation bubbles between spectators, the bookmaker's bets, the pit boss's pit, a bout on open sand with the crowd round it.
 NOT checked: a master artificer in the browser (campaign 626 has none: Theed's hash says no; unit-tested only); the reward item paid on reporting a regional job; conversations in a cantina (the pane was hidden, no frames); `npm run e2e`.
