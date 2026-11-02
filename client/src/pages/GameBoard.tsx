@@ -24,7 +24,7 @@ import { useShoot } from "@/components/Map/interiors/shoot";
 import { avgDice, blankUnit, bladeOf, grenadeOf, gunOf, modeOf, type PlayMode, type Unit } from "@shared/logic/shooter";
 import { SabaccTable, BUY_IN_CHIPS, type TableOpponent } from "@/components/Games/SabaccTable";
 import { PazaakGame } from "@/components/Games/PazaakGame";
-import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, rewardItem, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, type Contract, type Offer } from "@shared/logic/contracts";
+import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, rewardItem, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, needsGear, GEAR_WARNING, type Contract, type Offer } from "@shared/logic/contracts";
 import { DejarikGame } from "@/components/Games/DejarikGame";
 import { PitBets } from "@/components/Games/PitBets";
 import { pitArenaOf, pitArenasIn, cardFor, pitNews, isBoutDay, nextBoutDay, weekdayName, matchState, type Ticket } from "@shared/logic/pitbets";
@@ -3426,6 +3426,7 @@ export default function GameBoard() {
             <div key={c.id} className="mt-1 rounded border border-amber-700/60 p-1" data-testid="contract-mine">
               <p className="font-semibold">{c.title}</p>
               <p className={p.status === "ready" ? "text-green-300" : "text-gray-300"}>{p.text}</p>
+              {c.warning && <p className="text-red-300" data-testid="contract-warning">{c.warning}</p>}
               {p.status === "ready" && <Button size="sm" className="mt-1 h-6 px-2" onClick={() => reportContract(c)} data-testid="contract-report">Report and be paid ({contractPayout(c, c.captured ? 0.25 : 0).toLocaleString()} cr)</Button>}
             </div>
           );
@@ -3434,6 +3435,7 @@ export default function GameBoard() {
           <div key={offer.id} className="mt-1 rounded border border-gray-600 p-1" data-testid="contract-offer">
             <p><b>{KIND_LABEL[offer.kind]}</b>: {offer.title} <span className="text-amber-200">{offer.reward.toLocaleString()} cr</span>{offer.rewardRarity && <span className={`ml-1 ${RARITY_TONE[rarityRank(offer.rewardRarity)]}`} data-testid="contract-reward-item"> and a {offer.rewardRarity.toLowerCase()} item</span>}</p>
             <p className="text-gray-400">{offer.brief}</p>
+            {!breathesWater(speciesTraits) && needsGear(world, offer) && <p className="text-red-300" data-testid="contract-offer-warning">{GEAR_WARNING}</p>}
             <Button size="sm" variant="outline" className="mt-1 h-6 px-2" disabled={inCombat || dead} onClick={() => takeContract(offer)} data-testid="contract-take">Take the job</Button>
           </div>
         ))}
@@ -9140,6 +9142,7 @@ export default function GameBoard() {
                     <div key={quest.id} className="bg-gray-700 p-2 rounded">
                       <div className="font-semibold">{quest.title}</div>
                       <div className="text-sm mt-1">{quest.description}</div>
+                      {(quest as any).warning && <div className="text-sm mt-1 text-red-300" data-testid="quest-warning">{(quest as any).warning}</div>}
                       <ul className="text-sm mt-1 space-y-1">
                         {(quest.objectives ?? []).map((objective, index) => (
                           <li key={index} className={objective.completed ? "text-green-300" : ""}>

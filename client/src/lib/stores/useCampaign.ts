@@ -41,6 +41,7 @@ export interface Quest {
     items: string[];
     experience: number;
   };
+  warning?: string;
 }
 
 export interface Campaign {

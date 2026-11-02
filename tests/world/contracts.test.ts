@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateWorld, artificerIn, childrenOf, trailOf, type Area, type Occupant, type World } from "../../shared/logic/index";
-import { accept, askAround, askDC, findOccupant, jobsOf, kindsOf, makeOffers, payout, progress, tierFor, whereabouts, type Contract, type ContractKind } from "../../shared/logic/contracts";
+import { accept, askAround, askDC, findOccupant, jobsOf, kindsOf, makeOffers, needsGear, payout, progress, tierFor, whereabouts, type Contract, type ContractKind } from "../../shared/logic/contracts";
 import { getWorldCatalog } from "../../server/sw5eData";
 
 const catalog = await getWorldCatalog();
@@ -176,4 +176,32 @@ test("the pit is the arena's (2026-11-02): the pit boss takes fighters, a bookma
   assert.ok(jobsOf(giver("bookmaker"), "arena").includes("pit-bets"));
   assert.ok(!jobsOf(giver("bartender"), "cantina").some((j) => j === "pit-arena" || j === "pit-bets"));
   assert.ok(!jobsOf(giver("croupier"), "gambling hall").some((j) => j === "pit-arena" || j === "pit-bets"));
+});
+
+// A job under the sea is offered to every species, with a warning that sub-aquatic gear is required unless the species breathes water
+// (2026-11-02, the user: such work "SHOULD be available for non-aquatic species, BUT MUST contain a warning")
+test("a job whose place is on the sea floor carries a gear warning for those who cannot breathe water", () => {
+  const { o, area } = bartender();
+  const offer = makeOffers(world, o, area.id, 0, 1).find((x) => x.kind === "bounty")!;
+  const first = accept(world, offer, 3, catalog.monsters, catalog.equipment, 0);
+  assert.ok(!("error" in first));
+  if ("error" in first) return;
+  assert.equal(first.contract.warning, undefined, "a dry place has no warning");
+  assert.equal(needsGear(world, offer), false);
+  // sink the place: a wreck on a crash site of an ocean world
+  const sunk = JSON.parse(JSON.stringify(world)) as World;
+  const building = trailOf(sunk, first.contract.site).find((a) => a.kind === "building")!;
+  const settlement = sunk.areas[building.parentId!];
+  const planet = trailOf(sunk, settlement.id).find((a) => a.kind === "planet")!;
+  sunk.areas[building.id].type = "wreck";
+  sunk.areas[settlement.id].type = "crash site";
+  sunk.areas[planet.id].type = "ocean";
+  for (const room of childrenOf(sunk, building.id)) sunk.areas[room.id].name = "Cargo hold";
+  assert.equal(needsGear(sunk, offer), true);
+  const dry = accept(sunk, offer, 3, catalog.monsters, catalog.equipment, 0);
+  assert.ok(!("error" in dry), "still offered to a species that cannot breathe water");
+  if (!("error" in dry)) assert.match(dry.contract.warning ?? "", /sub-aquatic gear is required/i);
+  const wet = accept(sunk, offer, 3, catalog.monsters, catalog.equipment, 0, true);
+  assert.ok(!("error" in wet));
+  if (!("error" in wet)) assert.equal(wet.contract.warning, undefined, "no gear needed by a water-breather");
 });

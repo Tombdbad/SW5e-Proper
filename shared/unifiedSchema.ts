@@ -158,6 +158,7 @@ export const QuestSchema = z.object({
     items: z.array(z.string()),
     experience: z.number(),
   }).optional(),
+  warning: z.string().optional(),
 });
 
 // Setting schema

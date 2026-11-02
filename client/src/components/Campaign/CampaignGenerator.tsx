@@ -144,6 +144,7 @@ export default function CampaignGenerator({ character, onSave }: CampaignGenerat
                     ))}
                   </ul>
                 )}
+                {draft.quests[0]?.warning && <p className="text-sm text-red-300 mt-1" data-testid="quest-warning">{draft.quests[0].warning}</p>}
                 <p className="text-sm text-gray-400 mt-2">Era: {eraById(world.era).name} · Enemy: {world.antagonist}</p>
               </TranslucentPane>
             </div>
@@ -172,6 +173,7 @@ export default function CampaignGenerator({ character, onSave }: CampaignGenerat
                     <TranslucentPane key={quest.id} className="p-4">
                       <p>{quest.title}</p>
                       <p className="text-sm text-gray-400">{quest.description}</p>
+                      {quest.warning && <p className="text-sm text-red-300" data-testid="quest-warning">{quest.warning}</p>}
                     </TranslucentPane>
                   ))}
                 </div>

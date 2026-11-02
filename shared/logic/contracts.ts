@@ -135,6 +135,8 @@ export interface Contract extends Offer {
   // The Intimidation DC to make the target give up (a bounty), and whether they were taken alive
   surrender?: number;
   captured?: boolean;
+  // Set when the place is under the sea and the one who took the job cannot breathe water (see `GEAR_WARNING`)
+  warning?: string;
 }
 
 // ---- The world's places
@@ -228,27 +230,35 @@ const pickRoom = (rooms: Area[], r: { pick: <T>(l: readonly T[]) => T }) => {
   return r.pick(quiet.length ? quiet : rooms);
 };
 export interface Placed { world: World; contract: Contract }
-// (a job never sends anyone under the sea, to a wreck or ruin of the sea floor, unless their species is aquatic: `aquatic`, 2026-11-02)
-export function accept(world: World, offer: Offer, level: number, monsters: Sw5eMonster[], equipment: Sw5eEquipment[], now: number, aquatic = false): Placed | { error: string } {
-  const r = createRandom(hashOf(offer.id));
-  const dry = (b: Area) => aquatic || !childrenOf(world, b.id).some((room) => room.kind === "room" && submergedAt(world, room.id));
-  const next: World = { ...world, areas: { ...world.areas } };
-  const put = (room: Area, change: Partial<Area>) => { next.areas[room.id] = { ...next.areas[room.id], ...change } as Area; };
-  const crt = cr(offer.tier, level);
-  // where: a bounty as far as its tier says; the other jobs in the town they were taken in
-  let site: Area | undefined;
-  const mine = buildingsOf(world, offer.at).filter(dry);
+// Where a job is: a bounty as far as its tier says; the other jobs in the town they were taken in
+function siteFor(world: World, offer: Offer, r: ReturnType<typeof createRandom>): Area | undefined {
+  const mine = buildingsOf(world, offer.at);
   if (offer.kind === "bounty") {
     const wanted = offer.tier;
     const places = settlementsByDistance(world, offer.at).filter((p) => p.tier === wanted);
     const settlement = wanted === 0 ? offer.at : r.pick(places.length ? places : settlementsByDistance(world, offer.at).sort((a, b) => b.tier - a.tier).slice(0, 3).map((p) => p)).area?.id ?? offer.at;
-    const buildings = buildingsOf(world, settlement).filter((b) => dry(b) && roomsOf(world, b.id).length && !/cave|spaceport|city gate|town gate|landing/.test(b.type));
-    site = r.pick(buildings.length ? buildings : mine);
-  } else {
-    const want = offer.kind === "burglary" ? SHOPS : offer.kind === "espionage" ? KEPT : DENS;
-    const buildings = mine.filter((b) => want.test(b.type) && roomsOf(world, b.id).length);
-    site = r.pick(buildings.length ? buildings : mine.filter((b) => roomsOf(world, b.id).length));
+    const buildings = buildingsOf(world, settlement).filter((b) => roomsOf(world, b.id).length && !/cave|spaceport|city gate|town gate|landing/.test(b.type));
+    return r.pick(buildings.length ? buildings : mine);
   }
+  const want = offer.kind === "burglary" ? SHOPS : offer.kind === "espionage" ? KEPT : DENS;
+  const buildings = mine.filter((b) => want.test(b.type) && roomsOf(world, b.id).length);
+  return r.pick(buildings.length ? buildings : mine.filter((b) => roomsOf(world, b.id).length));
+}
+// A place of the sea floor (a wreck or ruin) is reached with sub-aquatic gear unless one breathes water (2026-11-02, the user: such work "SHOULD be
+// available for non-aquatic species, BUT MUST contain a warning that sub-aquatic gear is required")
+export const GEAR_WARNING = "Warning: this job is under the sea. Sub-aquatic gear is required to reach it and finish it.";
+const underSea = (world: World, building: Area) => childrenOf(world, building.id).some((room) => room.kind === "room" && submergedAt(world, room.id));
+// Whether a job (accepted or not: the place is fixed by the offer) sends the party under the sea
+export function needsGear(world: World, offer: Offer): boolean {
+  const site = siteFor(world, offer, createRandom(hashOf(offer.id)));
+  return !!site && underSea(world, site);
+}
+export function accept(world: World, offer: Offer, level: number, monsters: Sw5eMonster[], equipment: Sw5eEquipment[], now: number, aquatic = false): Placed | { error: string } {
+  const r = createRandom(hashOf(offer.id));
+  const next: World = { ...world, areas: { ...world.areas } };
+  const put = (room: Area, change: Partial<Area>) => { next.areas[room.id] = { ...next.areas[room.id], ...change } as Area; };
+  const crt = cr(offer.tier, level);
+  const site = siteFor(world, offer, r);
   if (!site) return { error: "There is nowhere in the world for this job." };
   const rooms = roomsOf(world, site.id);
   if (!rooms.length) return { error: "The place has no room for it." };
@@ -256,7 +266,7 @@ export function accept(world: World, offer: Offer, level: number, monsters: Sw5e
   const guards: string[] = [];
   const addPeople = (where: Area, list: Occupant[]) => { put(where, { occupants: [...next.areas[where.id].occupants, ...list] }); list.forEach((o) => guards.push(o.id)); };
   const hostile = (m: Sw5eMonster, id: string, role: string, name: string): Occupant => ({ ...statBlockOccupant(m, equipment, id, 1, role, "hostile"), name, species: undefined, contract: offer.id });
-  const contract: Contract = { ...offer, status: "active", accepted: now, site: site.id, room: room.id, guardIds: guards, reveal: (offer.kind === "bounty" ? [2, 2, 1, 0][offer.tier] : 3) as Contract["reveal"] };
+  const contract: Contract = { ...offer, status: "active", accepted: now, site: site.id, room: room.id, guardIds: guards, reveal: (offer.kind === "bounty" ? [2, 2, 1, 0][offer.tier] : 3) as Contract["reveal"], ...(!aquatic && underSea(world, site) ? { warning: GEAR_WARNING } : {}) };
 
   if (offer.kind === "bounty") {
     const star = r.pick(pool(monsters, crt));

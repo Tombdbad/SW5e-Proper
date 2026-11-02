@@ -135,13 +135,13 @@ test("a party come under the sea by anything but a submersible is set down in th
   assert.equal(swimPace("You have a swimming speed of 20 feet.", 30), 20 / 30);
 });
 
-// No quest begins under the sea unless the character's species is aquatic (2026-11-02, the user: "Players should not begin their quests in underwater
-// locations UNLESS their species is aquatic")
+// A quest under the sea is offered to every species, with a warning that sub-aquatic gear is required unless the species is aquatic (2026-11-02, the user:
+// such quests "SHOULD be available for non-aquatic species, BUT MUST contain a warning")
 import { submergedAt, worldQuests } from "@shared/logic";
-test("the quests read off a world leave out the sites of the sea floor, unless the species is aquatic", () => {
+test("a quest that sends the party to the sea floor is offered to all, with a gear warning unless the species is aquatic", () => {
   const world = generateWorld({ seed: 11, partyLevel: 5, startPlanet: "Kamino" }, catalog);
   const objectiveAreas = (aquatic: boolean) => worldQuests(world, 1000, aquatic).flatMap((q) => q.objectives.map((o) => o.target?.areaId)).filter((id): id is string => !!id && !!world.areas[id]);
-  for (const id of objectiveAreas(false)) assert.ok(!submergedAt(world, id), `${world.areas[id].name} is under the sea`);
+  for (const q of worldQuests(world, 1000, false)) assert.ok(!q.warning || q.objectives.some((o) => o.target && submergedAt(world, o.target.areaId)), "a warning only where the sea floor is");
   // sink the site the first quest sends the party to: a wreck on a crash site of an ocean world
   const target = world.areas[objectiveAreas(false).find((id) => world.areas[id].kind === "room")!];
   assert.ok(target, "a quest with a room to go to");
@@ -155,6 +155,10 @@ test("the quests read off a world leave out the sites of the sea floor, unless t
   for (const room of childrenOf(sunk, building.id)) sunk.areas[room.id].name = "Cargo hold";
   const reached = (w: World, aquatic: boolean) => worldQuests(w, 1000, aquatic).flatMap((q) => q.objectives.map((o) => o.target?.areaId)).filter((id): id is string => !!id && !!w.areas[id]);
   assert.ok(submergedAt(sunk, target.id), "the site is under the sea now");
-  assert.ok(!reached(sunk, false).some((id) => childrenOf(sunk, building.id).some((r) => r.id === id)), "not sent to the sea floor");
-  assert.ok(reached(sunk, true).some((id) => childrenOf(sunk, building.id).some((r) => r.id === id)) || reached(sunk, true).length > 0, "an aquatic character may be");
+  const sentDown = (aquatic: boolean) => worldQuests(sunk, 1000, aquatic).filter((q) => q.objectives.some((o) => o.target && childrenOf(sunk, building.id).some((r) => r.id === o.target!.areaId)));
+  assert.ok(sentDown(false).length > 0, "still offered to a species that cannot breathe water");
+  for (const q of sentDown(false)) assert.match(q.warning ?? "", /sub-aquatic gear is required/i);
+  assert.ok(sentDown(true).length > 0, "and to one that can");
+  for (const q of sentDown(true)) assert.equal(q.warning, undefined, "no gear needed by a water-breather");
+  assert.ok(reached(sunk, false).length > 0);
 });

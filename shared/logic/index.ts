@@ -6643,6 +6643,8 @@ export interface Quest {
   status: "inactive" | "active" | "completed";
   objectives: { description: string; completed: boolean; target?: QuestTarget }[];
   reward?: { credits: number; items: string[]; experience: number };
+  // Set when an objective is under the sea and the character cannot breathe water: sub-aquatic gear is required
+  warning?: string;
 }
 
 const isHeld = (area: Area) => area.occupants.some((o) => o.disposition === "hostile" && !!o.hitPoints);
@@ -6657,13 +6659,14 @@ export const breathesWater = (traits?: { description?: unknown }[]) => (traits ?
 // Three quests read off a freshly generated world: clear the most dangerous hostile site on the
 // starting planet, recover a locked or hidden cache, and reach the nearest other planet.
 // `earnings` is what the party should earn over a level (Wealth by Level); rewards are shares of it.
-// None begins under the sea (2026-11-02, the user: "Players should not begin their quests in underwater locations UNLESS their species is
-// aquatic"): unless `aquatic`, the sites of the sea floor are left out.
+// A quest that sends the party to the sea floor is still offered, but unless `aquatic` it carries a warning that sub-aquatic gear is required
+// (2026-11-02, the user: such quests "SHOULD be available for non-aquatic species, BUT MUST contain a warning")
+export const QUEST_GEAR_WARNING = "Warning: this quest is under the sea. Sub-aquatic gear is required to reach it and finish it.";
 export function worldQuests(world: World, earnings = 0, aquatic = false): Quest[] {
   const planetOf = (id: string) => trailOf(world, id).find((a) => a.kind === "planet");
   const home = planetOf(world.startId);
   if (!home) return [];
-  const local = Object.values(world.areas).filter((a) => a.id !== world.startId && planetOf(a.id)?.id === home.id && (aquatic || !submergedAt(world, a.id)));
+  const local = Object.values(world.areas).filter((a) => a.id !== world.startId && planetOf(a.id)?.id === home.id);
   const siteOf = (area: Area) => trailOf(world, area.id).find((a) => a.kind === "building") ?? area;
   const pay = (share: number) => ({ credits: Math.max(50, Math.round((earnings * share) / 10) * 10), items: [], experience: 0 });
   const quests: Quest[] = [];
@@ -6719,6 +6722,11 @@ export function worldQuests(world: World, earnings = 0, aquatic = false): Quest[
       objectives: [{ description: `Arrive in orbit of ${near.planet.name}`, completed: false, target: { kind: "reach", areaId: near.planet.id } }],
       reward: pay(0.1),
     });
+  }
+  if (!aquatic) {
+    for (const quest of quests) {
+      if (quest.objectives.some((o) => o.target && submergedAt(world, o.target.areaId))) quest.warning = QUEST_GEAR_WARNING;
+    }
   }
   return quests;
 }
