@@ -218,7 +218,7 @@ test("a thrown grenade arcs, bounces, bursts after its fuse, and hurts by closen
   assert.equal(sim.grenades.length, 1);
   const ev = run(sim, field(), 1);
   assert.equal(sim.grenades.length, 1, "the fuse is still running at one second");
-  assert.ok(ev.every((e) => e.type !== "explode"));
+  assert.equal(ev.filter((e) => e.type === "explode").length, 0);
   run(sim, field(), 1, ev);
   assert.equal(sim.grenades.length, 0);
   const boom = ev.find((e) => e.type === "explode");

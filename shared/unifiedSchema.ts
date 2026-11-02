@@ -21,6 +21,7 @@ export const ForcePowerSchema = z.object({
   duration: z.string().optional(),
   usesRemaining: z.number().optional(),
   maxUses: z.number().optional(),
+  prerequisite: z.string().optional(),
 });
 
 export const TechPowerSchema = z.object({
@@ -33,6 +34,7 @@ export const TechPowerSchema = z.object({
   duration: z.string().optional(),
   usesRemaining: z.number().optional(),
   maxUses: z.number().optional(),
+  prerequisite: z.string().optional(),
 });
 
 export const WeaponSchema = z.object({
@@ -85,6 +87,10 @@ export const CharacterSchema = z.object({
   armor: ArmorSchema.optional(),
   credits: z.number().min(0).default(1000),
   backstory: z.string().optional(),
+  personalityTraits: z.array(z.string()).optional(),
+  ideals: z.array(z.string()).optional(),
+  bonds: z.array(z.string()).optional(),
+  flaws: z.array(z.string()).optional(),
   notes: z.string().optional(),
   startingLocation: z.string().min(1),
   currentLocation: z.string().optional(),

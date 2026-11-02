@@ -5,9 +5,9 @@ import { v4 as uuidv4 } from 'uuid';
 import { CharacterSchema } from '@shared/unifiedSchema';
 import { z } from 'zod';
 import { withHistory, withValidation } from './middleware';
-import { createPersistOptions } from './persistence';
 import { createStoreWithSelectors } from './selectors';
 import { Character } from '@shared/unifiedSchema';
+export type { Character };
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { 
   createCharacter,
@@ -86,7 +86,7 @@ const calculateProficiencyBonus = (level: number): number => {
 export const useCharacter = create<CharacterState & CharacterActions>()(
   devtools(
     immer(
-      withHistory<CharacterState>({ limit: 50 })(
+      withHistory({ limit: 50 })(
         withValidation(
           // Validate the main state shape (excluding derived values which are calculated)
           z.object({
@@ -206,6 +206,7 @@ export const useCharacter = create<CharacterState & CharacterActions>()(
                 startingLocation: characterData.startingLocation || 'Unknown',
                 currentLocation: characterData.currentLocation || undefined,
                 experience: characterData.experience || 0,
+                multiclass: characterData.multiclass || [],
                 forcePowers: characterData.forcePowers || [],
                 techPowers: characterData.techPowers || [],
                 feats: characterData.feats || [],
@@ -216,6 +217,7 @@ export const useCharacter = create<CharacterState & CharacterActions>()(
                 proficiencyBonus: characterData.proficiencyBonus || 2,
                 initiative: characterData.initiative || 0,
                 version: 1,
+                syncStatus: 'local',
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
                 ...characterData,

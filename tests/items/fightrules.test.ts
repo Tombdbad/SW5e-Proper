@@ -10,7 +10,7 @@ import monsters from "../../shared/data/sw5e/monsters.json";
 const player = { id: 1, name: "Brawler", currentHp: 30, maxHp: 30, armorClass: 14, level: 5, abilityScores: { strength: 16, dexterity: 12, constitution: 12, intelligence: 10, wisdom: 10, charisma: 10 }, speed: 30, conditions: [] } as any;
 const foe = (id: number, x: number, extra: Partial<Combatant> = {}): any => ({ id, name: `Thug ${id}`, hp: 40, maxHp: 40, armorClass: 5, initiative: 0, x, y: 3, attackBonus: 1, damageDice: "1d4", rangedAttacker: false, abilities: { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 }, saves: { dexterity: 0, constitution: 0, wisdom: 0 }, size: "Medium", ...extra });
 const arena = { width: 12, height: 8, assets: [] } as any;
-const start = (kit: Partial<Combatant> = {}, foes = [foe(2, 2)]) => {
+const start = (kit: Partial<Combatant> & { athletics?: number } = {}, foes = [foe(2, 2)]) => {
   useCombat.getState().initiateCombat(player, foes, { meleeDice: "1d8", meleeWeapon: "Vibroblade", meleeAttack: 30, meleeDamage: 3, meleeProps: [], ...kit }, true, arena, { x: 1, y: 3 }, []);
   const s = useCombat.getState();
   const mi = s.combatants.findIndex((c) => c.isPlayer);

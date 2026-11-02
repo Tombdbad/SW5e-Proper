@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { TONES, TONE_NAMES, retone, toned, worldTone, saturation, accentShare, holdOf } from "../../client/src/components/Map/interiors/tones";
+// @ts-expect-error plain JS tool
 import { TONES as TOOL_TONES, toned as toolToned } from "../../tools/tones.mjs";
 
 const lightness = ([r, g, b]: number[]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;

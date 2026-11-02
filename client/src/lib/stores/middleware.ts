@@ -1,19 +1,22 @@
-import { create, StateCreator } from 'zustand';
-import { persist, createJSONStorage, PersistOptions } from 'zustand/middleware';
-import { immer } from 'zustand/middleware/immer';
-import { devtools } from 'zustand/middleware';
+import { StateCreator, StoreMutatorIdentifier } from 'zustand';
 import { z } from 'zod';
+
+// These two middlewares keep the store's type as it was (they add `history` and `actions` at run time, which no caller reads), so they
+// take and give back the same StateCreator
+type Passing = <T, Mps extends [StoreMutatorIdentifier, unknown][] = [], Mcs extends [StoreMutatorIdentifier, unknown][] = []>(
+  initializer: StateCreator<T, Mps, Mcs>
+) => StateCreator<T, Mps, Mcs>;
 
 /**
  * Creates a validation middleware that ensures state changes conform to a Zod schema
  */
-  export const withValidation = <T extends object, CustomState extends T = CustomState, CustomActions = {}>(
-  schema: z.ZodType<T>,
+  export const withValidation = (
+  schema: z.ZodTypeAny,
   config?: {
-    onError?: (error: z.ZodError, newState: T, prevState: T) => void;
+    onError?: (error: z.ZodError, newState: unknown, prevState: unknown) => void;
   }
-) => 
-  (initializer: StateCreator<CustomState & CustomActions>) => 
+): Passing =>
+  (initializer: any) =>
   (set: any, get: any, store: any) => {
     return initializer(
       (partial: any, replace?: boolean) => {
@@ -50,21 +53,13 @@ import { z } from 'zod';
 /**
  * Creates a history tracking middleware for undo/redo capability
  */
-export const withHistory = <T extends object>(
+export const withHistory = (
   config: {
     limit?: number;
-    ignoredKeys?: (keyof T)[];
+    ignoredKeys?: string[];
   } = {}
-) =>
-  (initializer: StateCreator<T & { 
-    history: { past: T[], future: T[] },
-    actions: { 
-      undo: () => void;
-      redo: () => void;
-      clearHistory: () => void;
-      addHistoryEntry: () => void;
-    }
-  }>) =>
+): Passing =>
+  (initializer: any) =>
   (set: any, get: any, store: any) => {
     const { limit = 100, ignoredKeys = [] } = config;
 
@@ -171,50 +166,3 @@ export const withHistory = <T extends object>(
       ...initialState
     };
   };
-
-
-
-/**
- * Helper to create a store with common middleware stack
- */
-export function createStore<T extends object, A, P extends string = 'persist'>(
-  initialState: T,
-  storeCreator: StateCreator<T & A, [['zustand/immer', never]], []>,
-  persistOptions?: PersistOptions<T & A, P>
-) {
-  if (persistOptions) {
-    return create<T & A>()(
-      devtools(
-        immer(
-          persist(storeCreator, persistOptions)
-        )
-      )
-    );
-  }
-
-  return create<T & A>()(
-    devtools(
-      immer(storeCreator)
-    )
-  );
-}
-
-// Default middlewares combined
-export const withDefaultMiddleware = <T extends object, P extends string = 'persist'>(
-  schema: z.ZodType<T>,
-  persistOptions?: PersistOptions<T, P>
-) => {
-  return (
-    initializer: StateCreator<T>
-  ) => {
-    let creator = immer(initializer);
-    creator = withValidation(schema)(creator);
-    creator = withHistory<T>()(creator) as any;
-
-    if (persistOptions) {
-      creator = persist(creator, persistOptions);
-    }
-
-    return devtools(creator);
-  };
-};

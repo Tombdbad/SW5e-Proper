@@ -19,7 +19,7 @@ const player = { id: 1, name: "Jumper", currentHp: 40, maxHp: 40, armorClass: 14
 const foe: any = { id: 2, name: "Thug", hp: 40, maxHp: 40, armorClass: 5, initiative: 0, x: 11, y: 4, z: 0, attackBonus: 1, damageDice: "1d4", abilities: { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 }, saves: {}, size: "Medium" };
 const me = (at: { x: number; y: number; z: number }, extra: Partial<Combatant> = {}): Combatant =>
   ({ id: 1, name: "Jumper", hp: 40, maxHp: 40, initiative: 10, armorClass: 14, abilities: player.abilityScores, speed: 30, moved: 0, actions: 1, size: "Medium", ...at, ...extra }) as Combatant;
-const start = (at: { x: number; y: number; z: number }, kit: Partial<Combatant> = {}, field: Arena = arena) => {
+const start = (at: { x: number; y: number; z: number }, kit: Partial<Combatant> & { acrobatics?: number } = {}, field: Arena = arena) => {
   useCombat.getState().initiateCombat(player, [foe], { speed: 30, ...kit }, true, field, at as any, []);
   const s = useCombat.getState();
   const mi = s.combatants.findIndex((c) => c.isPlayer);

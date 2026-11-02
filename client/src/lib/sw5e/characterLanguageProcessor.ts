@@ -41,7 +41,7 @@ export class CharacterLanguageProcessor {
   // Extract key themes and entities from character backstory and description
   processCharacterText(character: Character, options: LanguageProcessorOptions = {}): ThemeResult {
     // Collect all text sources based on options
-    const textSources = [];
+    const textSources: string[] = [];
 
     if (options.includeBackstory && character.backstory) {
       textSources.push(character.backstory);
@@ -154,7 +154,7 @@ export class CharacterLanguageProcessor {
   }
 
   private extractEntities(text: string): ThemeResult['entities'] {
-    const entities = {
+    const entities: ThemeResult['entities'] = {
       people: [],
       organizations: [],
       locations: []
@@ -222,7 +222,7 @@ export class CharacterLanguageProcessor {
       'wealth': [/wealth/gi, /money/gi, /rich/gi, /credits/gi, /fortune/gi, /treasure/gi]
     };
 
-    const detectedThemes = [];
+    const detectedThemes: string[] = [];
 
     // Check for each theme
     Object.entries(themePatterns).forEach(([theme, patterns]) => {
@@ -302,7 +302,7 @@ export class CharacterLanguageProcessor {
       'family': [/family/gi, /father/gi, /mother/gi, /brother/gi, /sister/gi]
     };
 
-    const detectedMotivations = [];
+    const detectedMotivations: string[] = [];
 
     // Check for each motivation
     Object.entries(motivationPatterns).forEach(([motivation, patterns]) => {
@@ -338,7 +338,7 @@ export class CharacterLanguageProcessor {
   }
 
   private extractPersonality(text: string): ThemeResult['personality'] {
-    const personality = {
+    const personality: ThemeResult['personality'] = {
       traits: [],
       values: [],
       fears: []
@@ -420,7 +420,7 @@ export class CharacterLanguageProcessor {
   }
 
   private extractRelationships(text: string): ThemeResult['relationshipHints'] {
-    const relationships = {
+    const relationships: ThemeResult['relationshipHints'] = {
       allies: [],
       enemies: [],
       mentors: []
@@ -478,7 +478,7 @@ export class CharacterLanguageProcessor {
   }
 
   private generatePlotHooks(text: string, character: Character, themes: string[], entities: any): string[] {
-    const plotHooks = [];
+    const plotHooks: string[] = [];
 
     // Generate hooks based on themes
     if (themes.includes('revenge')) {

@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { CLASSES, getClassById, getClassFeaturesByLevel } from "@/lib/sw5e/classes";
+import { CLASSES, getClassById, getClassFeaturesByLevel, type ClassFeature } from "@/lib/sw5e/classes";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -47,7 +47,7 @@ export default function ClassSelection({ form, allClasses }: ClassSelectionProps
     if (!classObject) return;
     
     // Get features for the character's level
-    const features = getClassFeaturesByLevel(selectedClass, characterLevel);
+    const features: (ClassFeature & { optional?: boolean; choices?: unknown })[] = getClassFeaturesByLevel(selectedClass, characterLevel);
     
     // Filter for optional features
     const optional = features.filter(feature => 

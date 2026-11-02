@@ -1,6 +1,6 @@
 // Backgrounds: a view over shared/data/sw5e/backgrounds.json (generated, see shared/data/index.ts)
 import backgroundData from "@shared/data/sw5e/backgrounds.json";
-import { summarize } from "@shared/data";
+import { summarize } from "@shared/data/text";
 
 export interface Background {
   id: string;

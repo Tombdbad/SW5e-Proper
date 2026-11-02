@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Tab } from "@headlessui/react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { useForm, FormProvider, FormField, FormItem, FormLabel } from "react-hook-form";
+import { useForm, FormProvider, type Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 // Import SW5E data and utilities
@@ -15,7 +15,6 @@ import {
   calculateProficiencyBonus,
   calculatePowerPoints,
   calculateStartingCredits,
-  MAX_POINT_BUY_POINTS,
 } from "../lib/sw5e/rules";
 import { derivedStats, featAbilityOptions } from "../lib/sw5e/characterCalculation";
 
@@ -28,8 +27,6 @@ import EquipmentSelection from "../components/CharacterCreation/EquipmentSelecti
 import SkillsSelection from "../components/CharacterCreation/SkillsSelection";
 import FeatsSelection from "../components/CharacterCreation/FeatsSelection";
 import PowersSelection from "../components/CharacterCreation/PowersSelection";
-import ForcePowersSelection from "../components/CharacterCreation/ForcePowersSelection";
-import TechPowersSelection from "../components/CharacterCreation/TechPowersSelection";
 import CharacterDetails from "../components/CharacterCreation/CharacterDetails";
 import { CharacterPreview } from "../components/CharacterManagement/CharacterSheet";
 import TranslucentPane from "../components/ui/TranslucentPane";
@@ -148,7 +145,7 @@ export default function CharacterCreation() {
 
   // Form setup with validation
   const methods = useForm<CharacterData>({
-    resolver: zodResolver(characterSchema),
+    resolver: zodResolver(characterSchema) as unknown as Resolver<CharacterData>,
     defaultValues: {
       name: "",
       alignment: "Neutral Balanced",
@@ -249,7 +246,7 @@ export default function CharacterCreation() {
       if (!validationResult.valid) {
         // Show validation errors
         const errorMessage = validationResult.errors
-          .map((err) => err.message)
+          .map((err: { message: string }) => err.message)
           .join(", ");
         throw new Error(errorMessage);
       }
@@ -300,8 +297,6 @@ export default function CharacterCreation() {
       component: (
         <AbilityScores
           form={methods}
-          maxPoints={MAX_POINT_BUY_POINTS}
-          calculateModifier={calculateModifier}
         />
       ),
     },
@@ -373,7 +368,7 @@ export default function CharacterCreation() {
             </div>
 
             {error && (
-              <Alert type="error" className="mb-4">
+              <Alert variant="destructive" className="mb-4">
                 {error}
               </Alert>
             )}

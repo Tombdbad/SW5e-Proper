@@ -1,8 +1,8 @@
 
-import { useForm, FormProvider, UseFormReturn, useWatch, Controller } from 'react-hook-form';
+import { useForm, FormProvider, UseFormReturn, useWatch, Controller, type Resolver } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useNavigate } from 'react-router-dom';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useCharacter } from '@/lib/stores/useCharacter';
 import { Character, CharacterSchema } from '@shared/unifiedSchema';
 import { useToast } from '@/components/ui/toast';
@@ -106,7 +106,7 @@ export default function useCharacterForm({
   
   // Create form with Zod validation
   const form = useForm<Character>({
-    resolver: zodResolver(CharacterSchema),
+    resolver: zodResolver(CharacterSchema) as Resolver<Character>,
     defaultValues: existingCharacter || defaultValues,
     mode: 'onChange',
   });

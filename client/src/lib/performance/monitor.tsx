@@ -5,7 +5,9 @@ export const PerformanceMonitor: React.FC<{ children: React.ReactNode }> = ({ ch
   return <>{children}</>;
 };
 
-export const usePerformance = () => ({
+export const usePerformance = (_name?: string) => ({
+  measureOperation: <T,>(_operation: string, run: () => T): T => run(),
+  measureAsyncOperation: async <T,>(_operation: string, run: () => Promise<T> | T): Promise<T> => run(),
   isDebugEnabled: false,
   setDebugEnabled: () => {},
   recordMetric: () => {},

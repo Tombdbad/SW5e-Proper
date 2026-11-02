@@ -1,6 +1,6 @@
 // Species: a view over shared/data/sw5e/species.json (generated, see shared/data/index.ts)
 import speciesData from "@shared/data/sw5e/species.json";
-import { summarize } from "@shared/data";
+import { summarize } from "@shared/data/text";
 
 // One ability increase as the books give it: a named ability, a choice between the named
 // abilities, or "Any one" / "Any two" / "Any four"

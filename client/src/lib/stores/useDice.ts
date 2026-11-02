@@ -128,8 +128,7 @@ export const useDice = create<DiceState>()(
     rollDice: (dice: DieType[], options: RollOptions = {}): RollResult => {
       set({ rolling: true });
       
-      const { playHit } = useAudio.getState();
-      playHit(); // Play sound effect for dice roll
+      useAudio.getState().playSound("hit"); // Play sound effect for dice roll
       
       // Generate results for each die
       let diceResults: DieResult[] = dice.map(dieType => {

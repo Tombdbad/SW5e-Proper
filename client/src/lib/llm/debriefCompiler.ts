@@ -233,141 +233,13 @@ export async function createDebrief(
         const parsedData =
           typeof rawResponse === "string" ? JSON.parse(rawResponse) : rawResponse;
 
-        // What the reply changes is applied by Play (see applyGameMasterResponse in reportHandler);
-        // the functions below, which wrote to the old in-memory stores, are no longer called
+        // What the reply changes is applied by Play (see applyGameMasterResponse in reportHandler)
         return parsedData;
       } catch (error) {
         console.error("Error parsing LLM response:", error);
         throw new Error("Failed to parse LLM response");
       }
     }
-
-    async function updateMapLocations(locations: any[]) {
-      const { addLocation, setCurrentLocation } = useMap.getState();
-      for (const location of locations) {
-        await addLocation(location);
-      }
-    }
-
-    async function updateCharacterState(characterData: any) {
-      const { updateCharacter } = useCharacter.getState();
-      await updateCharacter(characterData);
-    }
-
-    async function updateCampaignObjectives(objectives: any[]) {
-      const { addQuest, updateQuest } = useCampaign.getState();
-      for (const objective of objectives) {
-        if (objective.id) {
-          await updateQuest(objective.id, objective);
-        } else {
-          await addQuest(objective);
-        }
-      }
-    }
-
-    async function updateNPCRegistry(npcs: any[]) {
-      const { addNpc, updateNpc } = useCampaign.getState();
-      for (const npc of npcs) {
-        if (npc.id) {
-          const campaign = useCampaign.getState().campaign;
-          if (campaign) {
-            // Check for NPC classification upgrades
-            const existingNpc = campaign.npcs.find(n => n.id === npc.id);
-            if (existingNpc) {
-              // If classification changed, apply appropriate template based on new classification
-              if (npc.classification && npc.classification !== existingNpc.classification) {
-                console.log(`NPC ${npc.name} classification upgraded from ${existingNpc.classification} to ${npc.classification}`);
-
-                // Apply progressive enhancements based on classification
-                if (npc.classification === "keyMinor" && !npc.personality) {
-                  npc.personality = {
-                    traits: ["Generate based on previous interactions"],
-                    values: [],
-                    goals: []
-                  };
-                }
-
-                if (npc.classification === "key" && !npc.abilities) {
-                  // Get appropriate NPC template from SW5e library if available
-                  try {
-                    const { npcs: npcTemplates } = await import("@/lib/sw5e/npcs");
-                    // Find a suitable template based on NPC's role/type
-                    const template = npcTemplates.find(t => 
-                      t.name.toLowerCase().includes(npc.role?.toLowerCase() || "") || 
-                      t.category.toLowerCase().includes(npc.type?.toLowerCase() || "")
-                    );
-
-                    if (template) {
-                      npc.abilities = template.stats;
-                      npc.skills = template.skills;
-                      if (!npc.description && template.description) {
-                        npc.description = template.description;
-                      }
-                    } else {
-                      // Fallback defaults
-                      npc.abilities = {
-                        str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10
-                      };
-                      npc.skills = [];
-                    }
-                  } catch (error) {
-                    console.error("Error loading NPC templates:", error);
-                    // Fallback defaults
-                    npc.abilities = {
-                      str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10
-                    };
-                  }
-                }
-
-                if (npc.classification === "companion" && !npc.stats) {
-                  // Full character sheet for companions
-                  try {
-                    const { npcs: npcTemplates } = await import("@/lib/sw5e/npcs");
-                    // Find a template or generate default stats
-                    const template = npcTemplates.find(t => 
-                      t.name.toLowerCase().includes(npc.role?.toLowerCase() || "") || 
-                      t.category.toLowerCase().includes(npc.type?.toLowerCase() || "")
-                    );
-
-                    if (template) {
-                      npc.stats = {
-                        ...template.stats,
-                        hitPoints: template.hitPoints,
-                        armorClass: template.armorClass,
-                        actions: template.actions,
-                        equipment: template.equipment || []
-                      };
-                    } else {
-                      // Fallback companion stats
-                      npc.stats = {
-                        hitPoints: 20,
-                        maxHitPoints: 20,
-                        armorClass: 12,
-                        level: 1,
-                        class: "Scoundrel",
-                        equipment: []
-                      };
-                    }
-                  } catch (error) {
-                    console.error("Error loading companion templates:", error);
-                    // Fallback companion stats
-                    npc.stats = {
-                      hitPoints: 20,
-                      maxHitPoints: 20,
-                      armorClass: 12,
-                      level: 1
-                    };
-                  }
-                }
-              }
-            }
-          }
-          await updateNpc(npc.id, npc);
-        } else {
-          await addNpc(npc);
-    }
-  }
-}
 
 /**
  * Generates a location description from an LLM response
@@ -452,40 +324,6 @@ export async function generateCampaignFromLLM(
   }
 }
 
-/**
- * Process a GM scene description and extract entity data
- */
-export async function processGMScene(
-  response: any,
-  campaign: Campaign,
-): Promise<{ entities: any[]; description: string }> {
-  try {
-    // Parse the JSON response containing scene data
-    const sceneData =
-      typeof response === "string" ? JSON.parse(response) : response;
-
-    // Extract coordinates and entity data
-    const entities = sceneData.entities || [];
-    const description = sceneData.description;
-
-    // Update campaign state with new entities
-    for (const entity of entities) {
-      if (entity.type === "npc") {
-        await campaign.addNpc(entity);
-      } else if (entity.type === "location") {
-        await campaign.addLocation(entity);
-      }
-    }
-
-    return {
-      entities,
-      description,
-    };
-  } catch (error) {
-    console.error("Error processing GM scene:", error);
-    throw new Error("Failed to process GM scene data");
-  }
-}
 
 /**
  * Submit a player action to the GM

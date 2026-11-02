@@ -9,15 +9,9 @@ import type { AmmoRider } from "@shared/logic";
 import { jumpReach, fallPlan, fallOutcome } from "@shared/logic";
 import { shipCombatant, startShipFight, shipMove, shipTurn, shipFire, shipHelm, shipBoost, shipPatch, shipRegenerate, shipDirect, shipInterfere, shipSpecial, shipFlee, endShipTurn, shipAi, shoveAsset, bulkOf, type Bulk } from "@shared/logic";
 import { minimumRoll, type CombatFeature, type Amount } from "@/lib/sw5e/characterCalculation";
-import {
-  StarshipCombatManager,
-  VehicleCombatManager,
-} from "../sw5e/combatmanagers";
 
 const roll = (quantity: number, sides: number) => sumDiceResults(rollDice(quantity, sides));
 
-const shipManager = new StarshipCombatManager();
-const vehicleManager = new VehicleCombatManager();
 
 export type CombatType = 'personal' | 'starship' | 'vehicle';
 
@@ -2561,7 +2555,7 @@ export const useCombat = create<CombatState>((set, get) => ({
 
     // Create player combatant
     const playerCombatant: Combatant = {
-      id: player.id,
+      id: player.id ?? "player",
       name: player.name,
 
       hp: player.currentHp,

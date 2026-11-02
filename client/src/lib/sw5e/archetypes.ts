@@ -1,6 +1,6 @@
 // Archetypes: a view over shared/data/sw5e/archetypes.json (generated, see shared/data/index.ts)
 import archetypeData from "@shared/data/sw5e/archetypes.json";
-import { summarize } from "@shared/data";
+import { summarize } from "@shared/data/text";
 
 export interface ClassArchetype {
   id: string;

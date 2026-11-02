@@ -214,7 +214,7 @@ function deriveLookups(handbook: any[], loaded: Record<string, any[]>) {
     .flatMap((t) => t.rows.map((r) => number(r[1]) ?? 0));
   if (wealthByLevel.length !== 20) throw new Error("could not read the Wealth by Level table from the Player's Handbook");
   // "2 for d4, 2 for d6, 3 for d8, 4 for d10, 5 for d12, and 8 for d20": what a die can no longer roll below
-  const abilityScores = handbook.find((c) => c.chapterName === "Using Ability Scores")?.contentMarkdown ?? "";
+  const abilityScores: string = handbook.find((c) => c.chapterName === "Using Ability Scores")?.contentMarkdown ?? "";
   const minimumRollThreshold: Record<string, number> = Object.fromEntries(
     Array.from(abilityScores.slice(abilityScores.indexOf("Minimum Roll Threshold")).matchAll(/(\d+) for (d\d+)/g)).map((m) => [m[2], Number(m[1])]),
   );

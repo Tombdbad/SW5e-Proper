@@ -68,7 +68,7 @@ test("modifications are sold by trade: arms blasters, vibroweapons and armor; te
     for (let day = 1; day < 6; day++) {
       const lines = modStock(w, person("merchant", trade), s.id, day, rows);
       assert.ok(lines.length >= 4 && lines.length <= 7, `${trade}: ${lines.length}`);
-      assert.ok(lines.every((l) => kinds.includes(l.kind as any) && rank(l.rarity) <= tier), `${trade}: ${lines.map((l) => `${l.kind}/${l.rarity}`).join()}`);
+      assert.ok(lines.every((l) => (kinds as readonly string[]).includes(l.kind) && rank(l.rarity) <= tier), `${trade}: ${lines.map((l) => `${l.kind}/${l.rarity}`).join()}`);
     }
   }
   // A mechanic is a tech shop; a bartender sells none; a scrapyard sells used ones (premium at best) cheaper; the black market anything, dearer

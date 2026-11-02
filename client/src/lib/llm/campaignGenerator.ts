@@ -1,8 +1,9 @@
 
 import { Character } from "@/lib/stores/useCharacter";
-import { Campaign } from "@/lib/stores/useCampaign";
+import { Campaign, Quest } from "@/lib/stores/useCampaign";
 import { apiRequest } from "@/lib/queryClient";
 import { starSystems } from "@/lib/sw5e/starSystems";
+import { processCharacterNarrative } from "@/lib/sw5e/characterLanguageProcessor";
 
 /**
  * Generates a new campaign based on the player's character information.
@@ -34,7 +35,7 @@ export async function generateCampaignFromCharacter(character: Character): Promi
       id: `campaign-${Date.now()}`,
       name: `${character.name}'s Adventure`,
       description: generateCampaignDescription(character, startingSystem),
-      characterId: character.id,
+      characterId: character.id ?? "",
       npcs,
       locations,
       quests,
@@ -55,7 +56,6 @@ function generateCampaignDescription(character: Character, system: any): string 
   const era = ["Age of Republic", "Age of Rebellion", "New Republic Era"]
 
     // Process character narrative using our NLP system
-    const { processCharacterNarrative } = require("@/lib/sw5e/characterLanguageProcessor");
     const narrativeAnalysis = processCharacterNarrative(character);
 
     // Extract themes and motivations from the character's narrative
@@ -63,7 +63,7 @@ function generateCampaignDescription(character: Character, system: any): string 
     const motivations = narrativeAnalysis.motivations;
 
     // Use narrative themes if available, otherwise fall back to class-based themes
-  const themes = {
+  const themes: Record<string, string[]> = {
     berserker: ["survival", "revenge", "tribal conflict"],
     consular: ["diplomacy", "force mysteries", "ancient knowledge"],
     engineer: ["technology", "innovation", "corporate espionage"],
@@ -241,7 +241,7 @@ function generateLocations(system: any) {
 /**
  * Generates quests based on character, NPCs, and locations.
  */
-function generateQuests(character: Character, npcs: any[], locations: any[]) {
+function generateQuests(character: Character, npcs: any[], locations: any[]): Quest[] {
   // Find NPCs by role
   const mentor = npcs.find(npc => npc.role === "Mentor");
   const ally = npcs.find(npc => npc.role === "Ally");
@@ -261,7 +261,7 @@ function generateQuests(character: Character, npcs: any[], locations: any[]) {
     id: `quest-${Date.now()}-1`,
     title: "A New Beginning",
     description: `Meet with ${mentor?.name} at ${cantina?.name} to discuss an important opportunity.`,
-    status: "active",
+    status: "active" as const,
     objectives: [
       { description: `Find ${cantina?.name}`, completed: false },
       { description: `Speak with ${mentor?.name}`, completed: false },
@@ -279,7 +279,7 @@ function generateQuests(character: Character, npcs: any[], locations: any[]) {
     id: `quest-${Date.now()}-2`,
     title: "Uncovering the Threat",
     description: `Investigate rumors of suspicious activity at ${ruins?.name} that may be connected to ${villain?.name}.`,
-    status: "inactive",
+    status: "inactive" as const,
     objectives: [
       { description: `Travel to ${ruins?.name}`, completed: false },
       { description: "Search for evidence", completed: false },
@@ -298,7 +298,7 @@ function generateQuests(character: Character, npcs: any[], locations: any[]) {
     id: `quest-${Date.now()}-3`,
     title: "Supply Run",
     description: `${ally?.name} needs help acquiring supplies from ${station?.name}.`,
-    status: "inactive",
+    status: "inactive" as const,
     objectives: [
       { description: `Meet ${ally?.name} at ${spaceport?.name}`, completed: false },
       { description: `Travel to ${station?.name}`, completed: false },
@@ -317,7 +317,7 @@ function generateQuests(character: Character, npcs: any[], locations: any[]) {
     id: `quest-${Date.now()}-4`,
     title: "Competitive Edge",
     description: `${rival?.name} has challenged you to prove your skills in a series of tests.`,
-    status: "inactive",
+    status: "inactive" as const,
     objectives: [
       { description: "Complete the marksmanship challenge", completed: false },
       { description: "Complete the piloting challenge", completed: false },
@@ -336,7 +336,7 @@ function generateQuests(character: Character, npcs: any[], locations: any[]) {
     id: `quest-${Date.now()}-5`,
     title: "Underground Intelligence",
     description: `${contact?.name} has information about ${villain?.name}'s plans, but it comes at a price.`,
-    status: "inactive",
+    status: "inactive" as const,
     objectives: [
       { description: `Find ${contact?.name} in the lower levels of ${spaceport?.name}`, completed: false },
       { description: "Complete a task for them", completed: false },

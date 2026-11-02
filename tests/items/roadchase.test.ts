@@ -42,7 +42,7 @@ test("the riders as people to fight: troopers of a patrol, a gang's otherwise", 
   assert.ok(patrol.slice(1).every((o) => /^Scout trooper/.test(o.name)) && patrol.length >= 3);
   const gang = roadAmbushers(monsters as never, equipment as never, { by: "pirates", who: "swoop gang", why: "", model: "Swoop bike" }, 3, "y");
   assert.match(gang[0].name, /Leader of the swoop gang/);
-  assert.ok(gang.every((o) => o.hitPoints > 0 && o.disposition === "hostile"));
+  assert.ok(gang.every((o) => (o.hitPoints ?? 0) > 0 && o.disposition === "hostile"));
 });
 
 const run = (race: Race, track: ReturnType<typeof raceCourse>, input: Parameters<typeof stepRace>[2], seconds: number) => {

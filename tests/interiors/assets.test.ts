@@ -5,6 +5,7 @@ import path from "node:path";
 import { ASSETS, ROOT, loadGlb, trianglesOf } from "../helpers";
 import { BLASTER_FILES, KENNEY_BLASTER, LAUNCHER_FILE, MELEE_FILES } from "../../client/src/components/Map/interiors/weapons";
 import { KITBASH, KIT_MODELS } from "../../client/src/components/Map/interiors/kitbash";
+// @ts-expect-error plain JS tool
 import { MODELS, OUT } from "../../tools/kitbash-recipes.mjs";
 
 const dirs = fs.readdirSync(ASSETS).filter((d) => fs.statSync(path.join(ASSETS, d)).isDirectory());

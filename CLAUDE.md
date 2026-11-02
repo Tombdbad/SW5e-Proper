@@ -26,7 +26,7 @@ Star Wars 5e RPG simulator (Express server on 127.0.0.1:5000, Vite + React clien
 - Production runs as the systemd service `sw5e` (unit files in `deploy/`), which owns port 5000. After `npm run build`, run `sudo systemctl restart sw5e`; do not start `node dist/index.js` by hand. The package is ESM (`"type": "module"`).
 - A build replaces the files a running browser test is loading, so do not build while `npm run e2e` runs.
 - DB: Postgres 16 on this VM. Schema is `shared/schema.ts`; migrations in `migrations/` are generated with `npx drizzle-kit generate` and applied with `npx drizzle-kit migrate`.
-- `npx tsc --noEmit` reports hundreds of errors in legacy or unreachable files. Vite does not typecheck, so they do not block running. Only fix errors in code the app actually uses.
+- `npx tsc --noEmit` (also `npm run check`) reports nothing, tests and tools included, and `vite build` prints no warnings (2026-11-02, the user: no warnings or errors, even silent ones). Keep it so: Vite does not typecheck, so run `tsc` before committing and fix what it says. To look at build warnings, build to a scratch folder (`npx vite build --outDir <absolute path> --emptyOutDir`), not into `dist`, which the service serves.
 - A new database column needs its migration applied to the service's database (`npx drizzle-kit migrate` with the service's DATABASE_URL) before the new build is restarted, and to `sw5e_test` for the test copy (`deploy/test-copy.sh` does not do it).
 - Check changes in a real browser, not with curl: with the production server running, `npm run e2e` plays the acceptance test through the UI in headless Chromium (details in REVIVAL_NOTES.md, "Play-through test"). Module checks and API calls passed while the UI was broken in three places.
 

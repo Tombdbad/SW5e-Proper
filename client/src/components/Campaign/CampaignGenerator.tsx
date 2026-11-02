@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { CampaignElementGenerator } from '../../lib/sw5e/campaignGenerator';
 import { CharacterProfile } from '../../lib/sw5e/characterProfileParser';
 import TranslucentPane from '../ui/TranslucentPane';
-import { Character } from '../../shared/schema';
+import { Character } from '@shared/schema';
 import { trailOf, isLocal, ERAS, DEFAULT_ERA, eraById, START_TIME, type Quest, type World } from '@shared/logic';
 
 interface CampaignGeneratorProps {
@@ -30,7 +30,7 @@ export default function CampaignGenerator({ character, onSave }: CampaignGenerat
       level: character.level,
       background: character.background,
       alignment: character.alignment,
-      forceAlignment: character.forceAlignment,
+      forceAlignment: character.forceAlignment ?? undefined,
       abilities: character.abilityScores as any,
       skillProficiencies: Array.isArray(character.skillProficiencies)
         ? character.skillProficiencies

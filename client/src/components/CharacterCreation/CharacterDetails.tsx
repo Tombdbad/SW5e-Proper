@@ -51,7 +51,7 @@ const CharacterDetails: React.FC<CharacterDetailsProps> = ({ form }) => {
             className={errors.name ? "border-red-500" : ""}
           />
           {errors.name && (
-            <p className="text-red-500 text-sm mt-1">{errors.name.message}</p>
+            <p className="text-red-500 text-sm mt-1">{String(errors.name.message)}</p>
           )}
         </div>
 
@@ -74,7 +74,7 @@ const CharacterDetails: React.FC<CharacterDetailsProps> = ({ form }) => {
           </Select>
           {errors.alignment && (
             <p className="text-red-500 text-sm mt-1">
-              {errors.alignment.message}
+              {String(errors.alignment.message)}
             </p>
           )}
         </div>
@@ -105,7 +105,7 @@ const CharacterDetails: React.FC<CharacterDetailsProps> = ({ form }) => {
             defaultValue={1}
           />
           {errors.level && (
-            <p className="text-red-500 text-sm mt-1">{errors.level.message}</p>
+            <p className="text-red-500 text-sm mt-1">{String(errors.level.message)}</p>
           )}
         </div>
       </div>

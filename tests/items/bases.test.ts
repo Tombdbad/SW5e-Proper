@@ -13,7 +13,7 @@ const pounds = (name: string) => weightOf(facts(name)?.weight);
 function world(): World {
   const area = (id: string, kind: Area["kind"], parentId: string | null, type: string, occupants: Area["occupants"] = []): Area =>
     ({ id, kind, name: id, parentId, type, description: "", tags: [], position: { x: 0, y: 0, z: 0 }, danger: 0, occupants, ships: [], loot: [] }) as Area;
-  const thug = { id: "o1", name: "Thug", role: "thug", disposition: "hostile" as const, count: 2, hitPoints: 11 };
+  const thug = { id: "o1", name: "Thug", role: "thug", disposition: "hostile" as const, count: 2, hitPoints: 11, loadout: [] };
   const areas: Record<string, Area> = {
     g: area("g", "galaxy", null, ""),
     s: area("s", "settlement", "g", "town"),

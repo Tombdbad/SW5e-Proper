@@ -97,7 +97,7 @@ const Star: React.FC<{
 // GalaxyDust component
 const GalaxyDust: React.FC = () => {
   const { scene } = useThree();
-  const dustRef = useRef<THREE.Points>(null);
+  const dustRef = useRef<THREE.Group>(null);
 
   useEffect(() => {
     // Create galaxy dust

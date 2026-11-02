@@ -163,11 +163,6 @@ export const calculateCharacterLevel = getCharacterLevel;
     }
   });
 
-  // Apply any species-specific HP bonuses
-  if (species.hpBonus) {
-    totalHP += species.hpBonus;
-  }
-
   return totalHP;
 };
 
@@ -291,7 +286,7 @@ export const checkMulticlassPrerequisites = (
     return true;
   }
 
-  for (const [ability, minScore] of Object.entries(targetClass.multiclassPrerequisites)) {
+  for (const [ability, minScore] of Object.entries(targetClass.multiclassPrerequisites as Record<string, number>)) {
     if (abilityScores[ability as keyof AbilityScores] < minScore) {
       return false;
     }

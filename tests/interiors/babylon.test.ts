@@ -213,7 +213,7 @@ test("the sun's shadow: cascades where the engine draws them, else one map over 
   draw();
   const gen = mirror().lights.find((l) => l.getClassName() === "DirectionalLight")!.getShadowGenerator()!;
   // (the NullEngine cannot draw cascades)
-  assert.equal(gen.getClassName(), "ShadowGenerator");
+  assert.equal((gen as unknown as { getClassName(): string }).getClassName(), "ShadowGenerator");
   assert.deepEqual(gen.getShadowMap()!.renderList!.map((m) => m.name), [`o${box.id}`]);
   box.castShadow = false;
   draw();

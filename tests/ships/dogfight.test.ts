@@ -347,7 +347,7 @@ test("lost in the station: the reactor takes the craft that does not get out in 
   I.craft.speed = 0;
   for (let t = 0; t < 80 && !s.over; t += 1 / 30) stepDogfight(s, { steer: { x: 0, y: 0 }, throttle: -1 }, 1 / 30, r);
   assert.equal(s.outcome, "lost-in-station");
-  assert.ok(I.escape > 0 || I.phase === "lost");
+  assert.ok(I.escape > 0 || (I.phase as string) === "lost");
 });
 
 test("a ship too big for the port sends a strike craft down the tunnel", () => {
@@ -563,7 +563,7 @@ test("the guns follow the cursor: a foe far off the nose is picked out, shot and
   };
   place(0.7);
   step(s, 0.05, idle);
-  assert.equal(s.aim, null, "the reticule is nowhere near it");
+  assert.equal((s as { aim: unknown }).aim, null, "the reticule is nowhere near it");
   step(s, 0.05, { ...idle, aim: ray(other.p) });
   assert.equal(s.aim?.vessel, other.id, "the cursor is on it");
   assert.ok(Math.abs((s.aim?.dist ?? 0) - vdist(me.p, other.p)) < 3, `its distance is the craft's own: ${s.aim?.dist}`);

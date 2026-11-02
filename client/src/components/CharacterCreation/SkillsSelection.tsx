@@ -21,7 +21,7 @@ export default function SkillsSelection({
   const { watch, setValue } = form;
   const selectedClass = getSelectedClass();
   const selectedBackground = watch("background");
-  const selectedSkills = watch("skillProficiencies") || [];
+  const selectedSkills: string[] = watch("skillProficiencies") || [];
     const abilityScores = watch("abilityScores") || {
       strength: 10,
       dexterity: 10,
@@ -53,7 +53,7 @@ export default function SkillsSelection({
     };
 
     // Group skills by ability
-    const groupedSkills = allSkills.reduce((acc, skill) => {
+    const groupedSkills = allSkills.reduce<Record<string, any[]>>((acc, skill) => {
       // Ensure ability exists and is properly formatted
         if (!skill || !skill.ability) {
         console.warn("Skill missing ability attribute:", skill);
@@ -61,7 +61,7 @@ export default function SkillsSelection({
       }
 
       const abilityKey = skill.ability.toLowerCase();
-      const abilityName = ABILITY_NAMES[abilityKey] || skill.ability.charAt(0).toUpperCase() + skill.ability.slice(1);
+      const abilityName = (ABILITY_NAMES as Record<string, string>)[abilityKey] || skill.ability.charAt(0).toUpperCase() + skill.ability.slice(1);
 
       if (!acc[abilityName]) {
         acc[abilityName] = [];
