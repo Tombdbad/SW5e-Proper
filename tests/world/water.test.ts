@@ -134,3 +134,27 @@ test("a party come under the sea by anything but a submersible is set down in th
   assert.equal(swimPace("You have a swimming speed of 30 feet."), 1);
   assert.equal(swimPace("You have a swimming speed of 20 feet.", 30), 20 / 30);
 });
+
+// No quest begins under the sea unless the character's species is aquatic (2026-11-02, the user: "Players should not begin their quests in underwater
+// locations UNLESS their species is aquatic")
+import { submergedAt, worldQuests } from "@shared/logic";
+test("the quests read off a world leave out the sites of the sea floor, unless the species is aquatic", () => {
+  const world = generateWorld({ seed: 11, partyLevel: 5, startPlanet: "Kamino" }, catalog);
+  const objectiveAreas = (aquatic: boolean) => worldQuests(world, 1000, aquatic).flatMap((q) => q.objectives.map((o) => o.target?.areaId)).filter((id): id is string => !!id && !!world.areas[id]);
+  for (const id of objectiveAreas(false)) assert.ok(!submergedAt(world, id), `${world.areas[id].name} is under the sea`);
+  // sink the site the first quest sends the party to: a wreck on a crash site of an ocean world
+  const target = world.areas[objectiveAreas(false).find((id) => world.areas[id].kind === "room")!];
+  assert.ok(target, "a quest with a room to go to");
+  const building = (() => { let a: Area | undefined = target; while (a && a.kind !== "building") a = a.parentId ? world.areas[a.parentId] : undefined; return a!; })();
+  const settlement = world.areas[building.parentId!];
+  const planet = world.areas[settlement.parentId!];
+  const sunk = JSON.parse(JSON.stringify(world)) as World;
+  sunk.areas[building.id].type = "wreck";
+  sunk.areas[settlement.id].type = "crash site";
+  sunk.areas[planet.id].type = "ocean";
+  for (const room of childrenOf(sunk, building.id)) sunk.areas[room.id].name = "Cargo hold";
+  const reached = (w: World, aquatic: boolean) => worldQuests(w, 1000, aquatic).flatMap((q) => q.objectives.map((o) => o.target?.areaId)).filter((id): id is string => !!id && !!w.areas[id]);
+  assert.ok(submergedAt(sunk, target.id), "the site is under the sea now");
+  assert.ok(!reached(sunk, false).some((id) => childrenOf(sunk, building.id).some((r) => r.id === id)), "not sent to the sea floor");
+  assert.ok(reached(sunk, true).some((id) => childrenOf(sunk, building.id).some((r) => r.id === id)) || reached(sunk, true).length > 0, "an aquatic character may be");
+});

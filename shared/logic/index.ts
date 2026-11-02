@@ -2023,7 +2023,7 @@ const SHOP_WARES: Record<string, Furnishing[]> = {
 // can be given them (see addPanels).
 export type UseKind = "camera" | "alarm" | "kiosk" | "access";
 export const useKindOf = (name: string): UseKind | undefined =>
-  /security camera|camera pole/i.test(name) ? "camera" : /alarm panel/i.test(name) ? "alarm" : /info kiosk|notice board/i.test(name) ? "kiosk" : /access panel/i.test(name) ? "access" : undefined;
+  /security camera|camera pole/i.test(name) ? "camera" : /alarm panel/i.test(name) ? "alarm" : /info kiosk|notice board|odds board/i.test(name) ? "kiosk" : /access panel/i.test(name) ? "access" : undefined;
 
 // Whether a camera watches a room
 export const camerasIn = (room: Pick<Area, "layout">) => !!room.layout?.assets.some((a) => useKindOf(a.name) === "camera");
@@ -2699,8 +2699,19 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
   // Staff stand behind their counters, away from the customers
   const behind = layout.assets.filter(isCounter).flatMap((s) => counterSides(layout, s).behind).filter((s) => !used(s.x, s.y) && !onWay(s.x, s.y));
   // (a stallholder keeps a stall and a bookmaker a kiosk, where a room has both)
-  const ownCounter = (o: Occupant) => (o.role === "stallholder" ? /stall/i : o.role === "bookmaker" ? /kiosk/i : undefined);
-  const behindOf = (o: Occupant) => { const re = ownCounter(o); return re ? layout.assets.filter((a) => isCounter(a) && re.test(a.name)).flatMap((c) => counterSides(layout, c).behind).filter((q) => !onWay(q.x, q.y)) : []; };
+  // (and the pit boss the sign-up desk; a counter with no room behind it, against a wall, is served from its side: 2026-11-02, the arena's stallholders
+  // stood behind the bookmakers' kiosks)
+  const ownCounter = (o: Occupant) => (o.role === "stallholder" ? /stall/i : o.role === "bookmaker" ? /kiosk/i : o.role === "pit boss" ? /sign-up desk/i : undefined);
+  // (each of them takes a counter no one of their trade stands at yet)
+  const ownCounters = (o: Occupant) => {
+    const re = ownCounter(o);
+    const all = re ? layout.assets.filter((a) => isCounter(a) && re.test(a.name)) : [];
+    const kept = (c: RoomAsset) => layout.assets.some((a) => a.kind === "npc" && a.x >= c.x - 1 && a.x <= c.x + c.w && a.y >= c.y - 1 && a.y <= c.y + c.h && room.occupants.find((x) => x.id === a.ref)?.role === o.role);
+    const free = all.filter((c) => !kept(c));
+    return free.length ? free : all;
+  };
+  const behindOf = (o: Occupant) => ownCounters(o).flatMap((c) => counterSides(layout, c).behind).filter((q) => !onWay(q.x, q.y));
+  const besideOwn = (o: Occupant) => beside(ownCounters(o));
   const stage = layout.assets.filter((a) => a.name === "Bandstand").flatMap((a) => Array.from({ length: a.w * a.h }, (_, i) => ({ x: a.x + (i % a.w), y: a.y + Math.floor(i / a.w) })));
   const dispenser = layout.assets.filter((a) => /drink dispenser|bar counter/i.test(a.name));
   const exit = ways.find((a) => a.kind === "exit") ?? wayIn;
@@ -2770,7 +2781,7 @@ export function placeContents(room: Area, r: Random = createRandom(room.id.lengt
         : occupant.role === "musician" ? (free(stage).length ? free(stage) : beside(seats))
         : occupant.role === "service droid" ? beside(dispenser)
         : isLocal(occupant) || NOTABLES.includes(occupant.role) ? beside(seats)
-        : occupant.count === 1 ? (free(behindOf(occupant)).length ? free(behindOf(occupant)) : free(behind).length ? free(behind) : beside(stations))
+        : occupant.count === 1 ? (free(behindOf(occupant)).length ? free(behindOf(occupant)) : free(besideOwn(occupant)).length ? free(besideOwn(occupant)) : free(behind).length ? free(behind) : beside(stations))
         : beside(seats);
       // Those held in a cell are inside it (see cellOf)
       const cell = cellOf(room, occupant);
@@ -2931,7 +2942,7 @@ function migrateSites(ctx: Context) {
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 16;
+export const LIFE = 17;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -3120,6 +3131,13 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
   if ((next.life ?? 0) < 15) addArenas(ctx);
   // The arena to the user's design (life 16, 2026-11-02): tiers over the floor, the pens under it (see planArena)
   if ((next.life ?? 0) < 16) for (const b of Object.values(next.areas).filter((a) => a.kind === "building" && a.type === "arena")) rebuildArena(ctx, b);
+  // The arena's staff at their posts (life 17, 2026-11-02): the bookmakers at their kiosks, the stallholders each at a stall of their own, the pit boss
+  // at the sign-up desk (people already placed are put again)
+  if ((next.life ?? 0) < 17) {
+    for (const b of Object.values(next.areas).filter((a) => a.kind === "building" && a.type === "arena")) {
+      for (const room of childrenOf(next, b.id).filter((a) => a.kind === "room" && /^betting hall$|fighters' pens/i.test(a.name))) placeContents(room, createRandom(hashOf(`${room.id}|posts`)));
+    }
+  }
   next.life = LIFE;
   return next;
 }
@@ -6630,14 +6648,22 @@ export interface Quest {
 const isHeld = (area: Area) => area.occupants.some((o) => o.disposition === "hostile" && !!o.hitPoints);
 const listNames = (names: string[]) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0] ?? "");
 
+// Whether a place is under the sea itself (a wreck or ruin of the sea floor): the hazard of the water, which kills whoever cannot breathe it. A place
+// built under the sea is a bubble of air and is not (see hazardsAt)
+export const submergedAt = (world: World, areaId: string) => hazardsAt(world, areaId, 12 * 60).some((h) => h.hazard === "underwater");
+// Whether a species can breathe water, read from its traits' text ("can breathe air and water"): the aquatic ones, who may work under the sea
+export const breathesWater = (traits?: { description?: unknown }[]) => (traits ?? []).some((t) => /breathe air and water|can breathe water|breathe underwater/i.test(String(t.description ?? "")));
+
 // Three quests read off a freshly generated world: clear the most dangerous hostile site on the
 // starting planet, recover a locked or hidden cache, and reach the nearest other planet.
 // `earnings` is what the party should earn over a level (Wealth by Level); rewards are shares of it.
-export function worldQuests(world: World, earnings = 0): Quest[] {
+// None begins under the sea (2026-11-02, the user: "Players should not begin their quests in underwater locations UNLESS their species is
+// aquatic"): unless `aquatic`, the sites of the sea floor are left out.
+export function worldQuests(world: World, earnings = 0, aquatic = false): Quest[] {
   const planetOf = (id: string) => trailOf(world, id).find((a) => a.kind === "planet");
   const home = planetOf(world.startId);
   if (!home) return [];
-  const local = Object.values(world.areas).filter((a) => a.id !== world.startId && planetOf(a.id)?.id === home.id);
+  const local = Object.values(world.areas).filter((a) => a.id !== world.startId && planetOf(a.id)?.id === home.id && (aquatic || !submergedAt(world, a.id)));
   const siteOf = (area: Area) => trailOf(world, area.id).find((a) => a.kind === "building") ?? area;
   const pay = (share: number) => ({ credits: Math.max(50, Math.round((earnings * share) / 10) * 10), items: [], experience: 0 });
   const quests: Quest[] = [];
@@ -7398,8 +7424,9 @@ export function hazardsAt(world: World, areaId: string, minute: number): { hazar
   else if (outdoors && wild && night) out.push({ hazard: "dark", why: "the night in the wilds" });
   if (area.kind === "room" && /reactor/i.test(area.name)) out.push({ hazard: "radiation", why: `the ${area.name.toLowerCase()}` });
   if (area.kind === "room" && wild && land === "ocean" && building && /^(wreck|ruin)$/.test(building.type) && !/hull breach|broken gate/i.test(area.name)) out.push({ hazard: "underwater", why: `${building.name} lies under the sea` });
-  // (the streets of a place built under the sea are the sea: inside its domes there is air)
-  if (outdoors && settlement && waterOf(world, areaId) === "under") out.push({ hazard: "underwater", why: `the sea round ${settlement.name}` });
+  // (a place built under the sea is one bubble of air round its buildings, streets and all: nobody drowns within it, 2026-11-02, the user:
+  // "Underwater settlements/districts should NOT cause players to drown when WITHIN the bubble of buildings". Only the sea itself, the wrecks and
+  // ruins of the sea floor, has the hazard)
   return out;
 }
 
@@ -14432,7 +14459,8 @@ export function worldLook(world: World, areaId: string): WorldLook | null {
 //     three times in five (by its id, so a world made before this has its places the same each time), the rest stand on the sea;
 //   - on the sea, the buildings stand on piles out of the water, each ringed by a gantry two squares wide, and catwalks two wide join each
 //     building's gantry to the next and the ways out of the place (`deckSquares`); the rest of the ground is open water, to be swum;
-//   - under the sea the buildings stand on the sea floor under domes of air; the streets between them are the sea (the hazard underwater);
+//   - under the sea the buildings stand on the sea floor under domes of air, and the whole place is one bubble of air (2026-11-02; first the streets
+//     between the domes were the sea and the party drowned in them): its streets are walked, nobody swims or drowns inside it; the sea is out past it;
 //   - a creature swims at half its walking pace unless it has a swimming speed (the Handbook's rule for swimming without one); see
 //     `swimPace`. Nearly every building of an ocean world is round (linkRounds).
 // ---------------------------------------------------------------------------------------------

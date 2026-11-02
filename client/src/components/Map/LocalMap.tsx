@@ -34,6 +34,7 @@ import { useShoot } from "./interiors/shoot";
 import { moonlight, isArenaBowl } from "@shared/logic";
 import { bondOf, chatScene, genderOf, smallTalk, talkNotes, talkPlace, townTalk, type TalkLine } from "@shared/logic/relations";
 import { chatter, speak, voicePrefs, type ChatPerson } from "@/lib/voice";
+import { BOUT_LENGTH, matchState, pitGossip, pitLines, type Match, type PitItem } from "@shared/logic/pitbets";
 import { CROUCH_FACTOR, PRONE_FACTOR, stickWalk, useRun, WALK_FACTOR, type Walk } from "./interiors/stick";
 import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
@@ -141,7 +142,8 @@ export const usePlacing = create<{ piece: { item: string; name: string; w: numbe
 
 // What the people of the world know of the party, for their talk (2026-11-02): the party's standing (regard, kept in the campaign, not the
 // world) and what it is called. Play keeps it.
-export const useTalkWorld = create<{ standing: Standing | null; party: string }>(() => ({ standing: null, party: "the newcomers" }));
+// and what the pit is talked of (the news of its bouts) and has on today (its matches, for the bouts the map shows): Play keeps both
+export const useTalkWorld = create<{ standing: Standing | null; party: string; pit: PitItem[]; matches: Match[] }>(() => ({ standing: null, party: "the newcomers", pit: [], matches: [] }));
 // Two people about to talk, each as the model is told of them: their nature and view of the party, and what the other is to them
 // (shared/logic/relations.ts talkNotes, bondOf); and what the town says (townTalk)
 function talkersOf(world: World, a: Occupant, b: Occupant): [ChatPerson, ChatPerson] {
@@ -306,7 +308,7 @@ const BOAT_REACH = 14;
 function Posture({ to, act, children }: { to: number; act?: { current: Motion }; children: ReactNode }) {
   const own = useRef<Motion>(motion());
   const m = act ?? own;
-  m.current.posture = (to === 2 ? 2 : to === 1 ? 1 : 0);
+  m.current.posture = (to === 3 ? 3 : to === 2 ? 2 : to === 1 ? 1 : 0);
   return <MotionContext.Provider value={m}>{children}</MotionContext.Provider>;
 }
 // The motions of a turn-based fight's figures, by combatant: each is ready for the fight, and the log says who attacks (a shot's kick, a blade's
@@ -1787,6 +1789,12 @@ const talkSeconds = (text: string) => Math.min(6, Math.max(2.4, text.split(/\s+/
 const TALK_PATIENCE = 25;
 // The town's talk of the party is given to one talk in three (given to every one, the model talks of nothing else): the rest are of their own lives
 const gossip = (seed: number, news?: string) => (Math.floor(seed / 7) % 3 === 0 ? news : undefined);
+// A talk of the pit (HOUSE RULE, 2026-11-02): by each item's own chance (3 in 10 the day of the bout, 1 in 5 the day after, 1 in 10, 1 in 20; on the
+// Friday before, 1 in 8 for each day of the weekend), more in the arena itself; the model is given the news, the stock lines are said where it is not running
+function pitTalk(seed: number, boost: number): { news: string; lines: () => TalkLine[] } | undefined {
+  const item = pitGossip(useTalkWorld.getState().pit, seed, boost);
+  return item ? { news: `${item.kind === "result" ? "Everyone has heard of the pit" : "Everyone is talking of the pit"}: ${item.text}.`, lines: () => pitLines(item, seed) } : undefined;
+}
 
 function Life({ people, setting, party, frozen, onTap, api, record, origin = { x: 0, y: 0 } }: {
   // Who is here; `at` is their place in the plan, or none for someone visiting (they take a free seat)
@@ -1879,7 +1887,9 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
     const lines: TalkLine[] = [];
     const lead: NonNullable<Agent["talk"]> = { with: b, lines, i: 0, next: 0.3, lead: true, last: still.current.clock };
     const [ta, tb] = setting.talkers?.(a.occupant, b.occupant) ?? [chatPerson(a.occupant), chatPerson(b.occupant)];
-    const cancel = chatter({ a: ta, b: tb, scene: setting.scene ?? "", news: gossip(seed, setting.news), turns: 2 + (seed % 3), fallback: () => smallTalk(setting.talk ?? "any", seed), onLine: (line) => lines.push(line), onEnd: () => { lead.done = true; } });
+    // (a talk of the pit now and then: its bouts of the last days and the coming ones, shared/logic/pitbets.ts pitNews, more in the arena itself)
+    const pit = pitTalk(seed, setting.talk === "arena" ? 3 : 1);
+    const cancel = chatter({ a: ta, b: tb, scene: setting.scene ?? "", news: pit?.news ?? gossip(seed, setting.news), turns: 2 + (seed % 3), fallback: () => (pit ? pit.lines() : smallTalk(setting.talk ?? "any", seed)), onLine: (line) => lines.push(line), onEnd: () => { lead.done = true; } });
     if (!cancel) return false;
     lead.cancel = cancel;
     a.talk = lead;
@@ -2398,8 +2408,11 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
 // A companion or a beast follows the party (2026-10-26: spaced out): it trails the leader and, when the leader stops, stands on a square
 // of its own at least a square clear of the leader (one between them, where the room allows), never on anyone else's (`claims`). It turns
 // smoothly toward where it goes. A droideka shuffles on its legs over a short step and rolls up to go further (models.tsx Droideka).
-function Follower({ companion, index, feet, open, height, onTap, carts = [], biome = "", onCart }: { companion: Companion; index: number; feet: React.MutableRefObject<{ x: number; y: number }>; open: (x: number, y: number) => boolean; height: () => number; onTap?: () => void; carts?: Cart[]; biome?: string; onCart?: (id: string) => void }) {
+function Follower({ companion, index, feet, open, height, onTap, carts = [], biome = "", onCart, swimming }: { companion: Companion; index: number; feet: React.MutableRefObject<{ x: number; y: number }>; open: (x: number, y: number) => boolean; height: () => number; onTap?: () => void; carts?: Cart[]; biome?: string; onCart?: (id: string) => void; swimming?: () => boolean }) {
   const group = useRef<THREE.Group>(null);
+  // (in the water, a companion on foot swims as the party does: a crawl when it moves, treading water when it stands: 2026-11-02, "Party members
+  // should be drawn swimming if the environment requires it")
+  const motionRef = useRef<Motion>(motion());
   const at = useRef<{ x: number; y: number } | null>(null);
   const goal = useRef<Sq>({ x: 0, y: 0 });
   // The leader's square when the goal was chosen, and which way the leader was going (to stand behind them)
@@ -2451,6 +2464,7 @@ function Follower({ companion, index, feet, open, height, onTap, carts = [], bio
       }
     }
     if (group.current) group.current.position.set(at.current.x + 0.5, height(), at.current.y + 0.5);
+    motionRef.current.posture = swimming?.() && companion.kind !== "beast" && companion.kind !== "droid" && companion.hp > 0 ? 3 : 0;
     // (read by the play-through tests: where each follower is drawn)
     ((window as unknown as { __followers?: Record<string, Sq> }).__followers ??= {})[companion.id] = { x: at.current.x, y: at.current.y };
   });
@@ -2459,7 +2473,9 @@ function Follower({ companion, index, feet, open, height, onTap, carts = [], bio
   return (
     <group ref={group}>
       <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, 0, 0]} position={[0, down ? 0.14 : 0, 0]}>
-        <Figure kind={tokenOf({ name: companion.name, role: companion.kind === "droid" ? "utility droid" : beast ? "wildlife" : companion.role, creature: companion.creature })} ring={beast ? "#a3e635" : SIDE_COLORS.friendly} name={companion.name} large={isLarge(companion.size)} species={companion.species} role={companion.role} creature={companion.creature} size={companion.size} modules={companion.kind === "droid" ? companion.custom : undefined} />
+        <MotionContext.Provider value={motionRef}>
+          <Figure kind={tokenOf({ name: companion.name, role: companion.kind === "droid" ? "utility droid" : beast ? "wildlife" : companion.role, creature: companion.creature })} ring={beast ? "#a3e635" : SIDE_COLORS.friendly} name={companion.name} large={isLarge(companion.size)} species={companion.species} role={companion.role} creature={companion.creature} size={companion.size} modules={companion.kind === "droid" ? companion.custom : undefined} />
+        </MotionContext.Provider>
       </group>
       <Label at={[0, isLarge(companion.size) ? 2.2 : 1.6, 0]} size={0.26} color={beast ? "#a3e635" : SIDE_COLORS.friendly}>{companion.name}</Label>
       {onTap && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={onTap} label={companion.name} person />}
@@ -2813,7 +2829,8 @@ function Strollers({ strolls, scene, news, talkers, party }: { strolls: Stroll[]
       const lines: TalkLine[] = [];
       const lead: StreetTalk = { with: b.key, lead: true, lines, i: 0, next: 0.3, last: now };
       const [ta, tb] = talkers(a.who!, b.who!);
-      const cancel = chatter({ a: ta, b: tb, scene, news: gossip(seed, news), turns: 2 + (seed % 3), fallback: () => smallTalk("street", seed), onLine: (line) => lines.push(line), onEnd: () => { lead.done = true; } });
+      const pit = pitTalk(seed, 1);
+      const cancel = chatter({ a: ta, b: tb, scene, news: pit?.news ?? gossip(seed, news), turns: 2 + (seed % 3), fallback: () => (pit ? pit.lines() : smallTalk("street", seed)), onLine: (line) => lines.push(line), onEnd: () => { lead.done = true; } });
       if (!cancel) break;
       lead.cancel = cancel;
       sa.talk = lead;
@@ -3185,10 +3202,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // (a parked speeder is some two squares long and a square wide: all of it is solid, not the one square it is set on)
   const rigSquares = useMemo(() => new Set(street.rigs.flatMap((r) => [-1, 0, 1].map((k) => `${r.x + Math.round(r.outward.x) * k},${r.y + Math.round(r.outward.y) * k}`))), [street]);
   // A place on the sea or under it (shared/logic "Water worlds", 2026-10-30): the decking of its gantries and catwalks; off it, and
-  // everywhere out of doors under the sea, the party swims (lower in the water, flat, at half its pace)
+  // off it the party swims (lower in the water, flat, at half its pace). Under the sea the whole of the place's ground is one bubble of air round
+  // its buildings (2026-11-02, the user: "Underwater settlements/districts should NOT cause players to drown when WITHIN the bubble of
+  // buildings"): the party walks its streets, and swims only where the water is: out past the ground, at the helm of a craft
   const water: WaterLife | null = waterOf(world, building.id);
   const deck = useMemo(() => (water === "sea" && districtPlan ? deckSquares(districtPlan, street.signs.map((g) => ({ x: g.x, y: g.y }))) : null), [water, districtPlan, street.signs.length]);
-  const swimsAt = (x: number, y: number) => water === "under" || (!!deck && !deck.has(`${x},${y}`));
+  const swimsAt = (x: number, y: number) => !!deck && !deck.has(`${x},${y}`);
   // The party's water craft whose helm the party is at, if any (see `boats` below)
   const afloatRef = useRef<{ v: PartyVehicle; x: number; y: number; face: number } | null>(null);
   const outdoors = (x: number, y: number) =>
@@ -3672,6 +3691,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     facing: () => facing.current ?? token.current?.rotation.y ?? 0,
     moving: () => !!walk.current,
     airborne: () => ["jump", "fly", "reel"].includes(air.current.mode),
+    swimAt: () => (swimNow() && !afloatRef.current ? heightNow() : null),
     shot: (fresh = false) => {
       const c = shotCache.current;
       const t = performance.now();
@@ -4026,7 +4046,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       held.current = null;
     }
     airStep(Math.min(delta, 0.1));
-    partyHeight.y = air.current.y;
+    // (a swimmer's height in the water is shared with the co-op game, so the others see them in it)
+    partyHeight.y = air.current.y + (swimNow() ? (water === "under" ? UNDER_SWIM_Y : SWIM_Y) : 0);
     partyHeight.at = air.current.mode === "ground" ? null : { ...feet.current };
     // Down onto the stool they have walked to, and up off it when they leave the table; the hands gesture as the game does
     const tb = useTable.getState();
@@ -4063,7 +4084,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       token.current.rotation.x = 0;
       token.current.scale.y = 1;
       partyHeight.f = token.current.rotation.y;
-      partyHeight.s = stance.p > 0.5 ? 2 : stance.k > 0.5 ? 1 : 0;
+      partyHeight.s = swimNow() ? 3 : stance.p > 0.5 ? 2 : stance.k > 0.5 ? 1 : 0;
       // From the eyes the character is not drawn; over the shoulder they face where the camera looks
       token.current.visible = !(viewing && mode === "first");
       if (viewing && facing.current !== null) token.current.rotation.y = facing.current;
@@ -4555,7 +4576,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           <group visible={!underground}>
             <GroundSurface set="dense_sand" tint={new THREE.Color("#8fc0b4")} parallax={groundTex?.parallax ?? 0.03} w={sizeOfGround} h={sizeOfGround} at={[cx, -0.02, cz]} onTap={tappable ? walkHere : undefined} />
             <UnderSea boxes={districtPlan ? buildings.map((b) => districtPlan.boxes[b.id]).filter(Boolean) : []} ground={ground} lite={tier === "lite"} />
-            <FishSchools ground={ground} depth={2.6} count={7} lite={tier === "lite"} />
+            <FishSchools ground={ground} depth={2.6} count={7} lite={tier === "lite"} round />
             <SeaBeasts ground={ground} under feet={feet} exposed={() => swimNow() && !afloatRef.current} onCome={(name) => onAct?.({ type: "seaBeast", name, step: "coming" })} onReach={active ? (name) => onAct?.({ type: "seaBeast", name, step: "reached" }) : undefined} />
           </group>
         ) : groundTex ? (
@@ -4625,6 +4646,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   onFloor={inside ? (x, y) => (placing ? placeAt(l.x + x, l.y + y) : walkTo([{ x: l.x + x, y: l.y + y }])) : undefined}
                   onAsset={inside ? actOn : undefined}
                 >
+                  {!l.well && /^arena floor$/i.test(room.name) && world.areas[room.parentId ?? ""]?.type === "arena" && <PitBout arena={room.parentId!} width={l.width} height={l.height} />}
                   {roomSetting && !duel && (
                     <Life
                       people={[
@@ -4672,6 +4694,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                 ) : (
                   <RoomShell plan={l} corners={insideRadii(room)} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} fullWalls wallHeight={LEVEL_H} wayColor={wayColor} wayLabel={() => undefined} biome={biome} like={{ buildingType: building.type, roomName: room.name }} />
                 )}
+                {!l.well && /^arena floor$/i.test(room.name) && <PitBout arena={room.parentId!} width={l.width} height={l.height} />}
                 {!duel && setting && people.length > 0 && (
                   // (their squares are claimed apart from those of the room the party is in: another floor, the same squares on the map)
                   <Life people={people} setting={setting} party={() => (inside ? { x: Math.round(feet.current.x) - l.x, y: Math.round(feet.current.y) - l.y } : null)} origin={{ x: l.x + 10000 * ((l.level ?? 0) + 2), y: l.y }} frozen={(o) => !!o.captive || !!o.disabled} onTap={inside ? tapPerson : undefined} />
@@ -5037,7 +5060,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           </group>
         )}
         {present && !duel && followers.filter((c) => !aboard.includes(c)).map((c, i) => (
-          <Follower key={`${hereId}:${c.id}`} companion={c} index={i} feet={feet} open={open} height={heightNow} onTap={active ? () => onAct?.({ type: "companion", id: c.id }) : undefined} carts={cartsOf(c.id)} biome={biome} onCart={active ? (id) => onAct?.({ type: "cart", id }) : undefined} />
+          <Follower key={`${hereId}:${c.id}`} companion={c} index={i} feet={feet} open={open} height={heightNow} onTap={active ? () => onAct?.({ type: "companion", id: c.id }) : undefined} carts={cartsOf(c.id)} biome={biome} onCart={active ? (id) => onAct?.({ type: "cart", id }) : undefined} swimming={() => swimNow() && !afloatRef.current} />
         ))}
         {/* The party's carts left here */}
         {present && !duel && carts.filter((c) => c.parked && (inside ? c.parked.areaId === inside.id : buildingIds.has(c.parked.areaId))).map((c) => (
@@ -5188,8 +5211,8 @@ function DuelPieces() {
         const side = c.isPlayer ? SIDE_COLORS.player : c.ally ? SIDE_COLORS.friendly : SIDE_COLORS.hostile;
         return (
           <Stepper key={String(c.id)} x={(c.x ?? 0) + 0.5} y={(c.y ?? 0) + 0.5} z={high(c.z)} pace={isDroideka(c.name) ? 1.2 : 4} turn={false}>
-            <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : 0, 0]}>
-              <Posture to={!down && (c.braced || (c.conditions ?? []).some((x) => /^prone$/i.test(x.name))) ? 2 : 0} act={motionOf(c.id)}><Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} fighting /></Posture>
+            <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : swimmerIn(arena.floor, c) ? SWIM_FIGHT_Y : 0, 0]}>
+              <Posture to={swimmerIn(arena.floor, c) ? 3 : !down && (c.braced || (c.conditions ?? []).some((x) => /^prone$/i.test(x.name))) ? 2 : 0} act={motionOf(c.id)}><Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} fighting /></Posture>
             </group>
             {!down && current?.id === c.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}><ringGeometry args={[0.5, 0.58, 28]} /><meshBasicMaterial color="#fde047" /></mesh>}
             {!down && target?.id === c.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.07, 0]}><ringGeometry args={[0.62, 0.7, 4]} /><meshBasicMaterial color="#f87171" /></mesh>}
@@ -5258,6 +5281,77 @@ function PitCrowd({ width, height }: { width: number; height: number }) {
       {crowd.map((q, i) => (
         <group key={i} position={[q.x + 0.5, (q.row + 1) * STAND_STEP, q.y + 0.5]} rotation={[0, Math.atan2(width / 2 - (q.x + 0.5), height / 2 - (q.y + 0.5)), 0]}>
           <Figure kind={tokenOf({ name: "Spectator", role: "spectator" })} ring="#6b7280" species={q.species} role="spectator" seat={q.seat} />
+        </group>
+      ))}
+    </>
+  );
+}
+
+// In a fight on open water (2026-11-02, the user: "Party members should be drawn swimming if the environment requires it"): whoever is on foot swims, as on
+// the map (a crawl when they move, treading water when they stand), low in the water; beasts and droids are drawn as they are
+const SWIM_FIGHT_Y = 0.15;
+const swimmerIn = (floor: string | undefined, c: { hp: number; name: string; creature?: string; role?: string }) =>
+  floor === "sea" && c.hp > 0 && !/beast|droid|construct/i.test(c.creature ?? "") && !/droid|wildlife|beast/i.test(c.role ?? "") && !isDroideka(c.name);
+// A bout of the arena's weekend card, fought on its floor by the clock (shared/logic/pitbets.ts; 2026-11-02, the user: "we also need NPC fights in the
+// arena, these should be at regular intervals and accurately reflected in the betting options"). While the clock is within a bout's half hour its two
+// fighters are in the pit: they come in from the ramps, trade blows (the blows' timing is the drawing's; who wins is the card's, the same as the
+// bets are paid by), and the one who loses goes down at the end. Before and after, the floor is empty of them.
+function PitBout({ arena, width, height }: { arena: string; width: number; height: number }) {
+  const matches = useTalkWorld((s) => s.matches);
+  const minute = useClock((c) => Math.floor(c.minutes));
+  const live = matches.find((m) => m.arena === arena && matchState(m, minute) === "live");
+  return live ? <PitBoutFight key={live.id} match={live} width={width} height={height} /> : null;
+}
+function PitBoutFight({ match, width, height }: { match: Match; width: number; height: number }) {
+  const spots = [useRef<THREE.Group>(null), useRef<THREE.Group>(null)];
+  const bodies = [useRef<THREE.Group>(null), useRef<THREE.Group>(null)];
+  const motions = [useRef<Motion>(motion({ ready: true })), useRef<Motion>(motion({ ready: true }))];
+  const nextSwing = useRef([0, 0]);
+  const [cx, cz] = [width / 2, height / 2];
+  const fighters = [match.a, match.b];
+  useFrame((state) => {
+    const t = state.clock.elapsedTime;
+    const now = nowSeconds();
+    const p = Math.max(0, Math.min(1, (minuteNow() - match.start) / BOUT_LENGTH));
+    for (const i of [0, 1]) {
+      const side = i === 0 ? -1 : 1;
+      const g = spots[i].current;
+      const body = bodies[i].current;
+      if (!g || !body) continue;
+      const lost = i !== match.winner;
+      // In from the ramp at its end of the floor, then circling and lunging at the other
+      const entry = Math.min(1, p / 0.1);
+      const lunge = Math.max(0, Math.sin(t * 2.3 + i * 1.7)) * 0.35;
+      const reach = 1.3 + 0.3 * Math.sin(t * 1.3 + i * 2) - (lost && p > 0.6 ? (p - 0.6) * 0.8 : 0);
+      const x = cx + side * (width / 2 - 1 - entry * (width / 2 - 1 - reach)) - side * lunge * (p > 0.1 ? 1 : 0);
+      const z = cz + (p > 0.1 ? 0.55 * Math.sin(t * 0.8 + i * 3.1) : 0);
+      g.position.set(x, 0.1, z);
+      g.rotation.y = Math.atan2(-side, 0);
+      // The one who loses goes down at the end, the other stands over them
+      const down = lost ? Math.max(0, Math.min(1, (p - 0.86) / 0.06)) : 0;
+      body.rotation.x = -Math.PI / 2 * down;
+      body.position.y = 0.14 * down;
+      const m = motions[i].current;
+      m.ready = true;
+      if (p > 0.1 && p < 0.88 && t >= nextSwing.current[i]) {
+        // (the winner lands the more blows)
+        nextSwing.current[i] = t + 0.9 + ((Math.sin(t * 91.7 + i * 13.3) + 1) / 2) * (lost ? 1.3 : 0.8);
+        m.swingAt = now;
+        m.swing++;
+        motions[1 - i].current.hitAt = now + 0.2;
+      }
+    }
+  });
+  return (
+    <>
+      {fighters.map((f, i) => (
+        <group key={i} ref={spots[i]} position={[cx + (i === 0 ? -1 : 1) * (width / 2 - 1), 0.1, cz]}>
+          <group ref={bodies[i]}>
+            <MotionContext.Provider value={motions[i]}>
+              <Figure kind={tokenOf({ name: f.stock, role: f.kind === "beast" ? "wildlife" : "pit fighter", creature: f.kind === "beast" ? "beast" : "humanoid" })} ring={i === 0 ? "#60a5fa" : "#f87171"} name={f.stock} />
+            </MotionContext.Provider>
+          </group>
+          <Label at={[0, 2.1 + i * 0.32, 0]} size={0.28} color={i === 0 ? "#93c5fd" : "#fca5a5"}>{f.name}</Label>
         </group>
       ))}
     </>
@@ -5356,9 +5450,9 @@ export function FightScene({ wall = STEEL, areaId, origin, crowd }: { wall?: str
             return (
               <Stepper key={String(c.id)} x={(c.x ?? 0) + 0.5} y={(c.y ?? 0) + 0.5} z={(c.z ?? 0) * LEVEL_H + ((c.z ?? 0) ? 0.12 : 0)} pace={isDroideka(c.name) ? 1.2 : 4} turn={false}>
                 {/* The fallen lie where they fell */}
-                <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : 0, 0]}>
+                <group rotation={down ? [-Math.PI / 2, 0, 0.4] : [0, c.isPlayer ? Math.PI / 2 : -Math.PI / 2, 0]} position={[0, down ? 0.14 : swimmerIn(arena.floor, c) ? SWIM_FIGHT_Y : 0, 0]}>
                   <Turner facing={facing} on={viewing && !!c.isPlayer && !down} base={Math.PI / 2} hide={viewing && mode === "first" && !!c.isPlayer}>
-                  <Posture to={!down && (c.braced || (c.conditions ?? []).some((x) => /^prone$/i.test(x.name))) ? 2 : 0} act={motionOf(c.id)}><Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} fighting /></Posture>
+                  <Posture to={swimmerIn(arena.floor, c) ? 3 : !down && (c.braced || (c.conditions ?? []).some((x) => /^prone$/i.test(x.name))) ? 2 : 0} act={motionOf(c.id)}><Figure kind={tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" })} ring={side} name={c.name} large={large} marker={c.isPlayer && !down} species={c.species} role={c.role} creature={c.creature} size={c.size} player={!!c.isPlayer} fighting /></Posture>
                   </Turner>
                 </group>
                 {!down && current?.id === c.id && (

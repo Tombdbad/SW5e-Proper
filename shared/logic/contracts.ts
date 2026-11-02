@@ -14,7 +14,7 @@
 // the hideout has no one left of the job), and the giver pays on the report (`payout`). Pure: the monsters and equipment of the rules
 // data come in as parameters; nothing here reads a clock or a random of its own.
 // ---------------------------------------------------------------------------------------------
-import { artificerIn, childrenOf, crValue, formOf, statBlockOccupant, trailOf, createRandom, type Area, type LootCache, type Occupant, type World } from "./index";
+import { artificerIn, childrenOf, crValue, formOf, statBlockOccupant, submergedAt, trailOf, createRandom, type Area, type LootCache, type Occupant, type World } from "./index";
 import type { Sw5eMonster, Sw5eEquipment } from "../data";
 
 export type ContractKind = "bounty" | "burglary" | "espionage" | "assault";
@@ -228,19 +228,21 @@ const pickRoom = (rooms: Area[], r: { pick: <T>(l: readonly T[]) => T }) => {
   return r.pick(quiet.length ? quiet : rooms);
 };
 export interface Placed { world: World; contract: Contract }
-export function accept(world: World, offer: Offer, level: number, monsters: Sw5eMonster[], equipment: Sw5eEquipment[], now: number): Placed | { error: string } {
+// (a job never sends anyone under the sea, to a wreck or ruin of the sea floor, unless their species is aquatic: `aquatic`, 2026-11-02)
+export function accept(world: World, offer: Offer, level: number, monsters: Sw5eMonster[], equipment: Sw5eEquipment[], now: number, aquatic = false): Placed | { error: string } {
   const r = createRandom(hashOf(offer.id));
+  const dry = (b: Area) => aquatic || !childrenOf(world, b.id).some((room) => room.kind === "room" && submergedAt(world, room.id));
   const next: World = { ...world, areas: { ...world.areas } };
   const put = (room: Area, change: Partial<Area>) => { next.areas[room.id] = { ...next.areas[room.id], ...change } as Area; };
   const crt = cr(offer.tier, level);
   // where: a bounty as far as its tier says; the other jobs in the town they were taken in
   let site: Area | undefined;
-  const mine = buildingsOf(world, offer.at);
+  const mine = buildingsOf(world, offer.at).filter(dry);
   if (offer.kind === "bounty") {
     const wanted = offer.tier;
     const places = settlementsByDistance(world, offer.at).filter((p) => p.tier === wanted);
     const settlement = wanted === 0 ? offer.at : r.pick(places.length ? places : settlementsByDistance(world, offer.at).sort((a, b) => b.tier - a.tier).slice(0, 3).map((p) => p)).area?.id ?? offer.at;
-    const buildings = buildingsOf(world, settlement).filter((b) => roomsOf(world, b.id).length && !/cave|spaceport|city gate|town gate|landing/.test(b.type));
+    const buildings = buildingsOf(world, settlement).filter((b) => dry(b) && roomsOf(world, b.id).length && !/cave|spaceport|city gate|town gate|landing/.test(b.type));
     site = r.pick(buildings.length ? buildings : mine);
   } else {
     const want = offer.kind === "burglary" ? SHOPS : offer.kind === "espionage" ? KEPT : DENS;

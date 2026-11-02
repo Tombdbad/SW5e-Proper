@@ -47,7 +47,7 @@ export default function CampaignGenerator({ character, onSave }: CampaignGenerat
       const response = await fetch('/api/world/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ options: { antagonist, era: era.id, partyLevel: character.level } }),
+        body: JSON.stringify({ options: { antagonist, era: era.id, partyLevel: character.level, species: character.species } }),
       });
       if (!response.ok) throw new Error('The server could not generate a world');
       const generated = await response.json();

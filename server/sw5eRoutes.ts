@@ -8,7 +8,7 @@
 //   POST /api/world/validate           { world } -> what is wrong with it, checked against the rules data
 //   POST /api/world/occupant           { statBlock } -> that stat block as someone to place in an area
 import type { Express, Request, Response } from "express";
-import { generateWorld, expandArea, populateArea, livenWorld, statBlockOccupant, makeGang, validateWorld, worldQuests, itemFactsOf, type ItemFacts, type World } from "../shared/logic";
+import { generateWorld, expandArea, populateArea, livenWorld, statBlockOccupant, makeGang, validateWorld, worldQuests, breathesWater, itemFactsOf, type ItemFacts, type World } from "../shared/logic";
 import { showcaseOn, showcaseWorld } from "./showcase";
 import { datasetNames, getDataset, getWorldCatalog, isDataset, sw5eManifest } from "./sw5eData";
 
@@ -69,7 +69,10 @@ export function registerSw5eRoutes(app: Express) {
       const wealth = catalog.wealthByLevel;
       const level = Math.min(wealth.length - 1, Math.max(1, world.partyLevel));
       const earnings = ((wealth[level] ?? 0) - (wealth[level - 1] ?? 0)) * world.partySize;
-      res.json({ world, quests: worldQuests(world, earnings), problems: validateWorld(world, catalog) });
+      // (no quest begins under the sea unless the character's species can breathe water: `options.species`, a species name)
+      const speciesRows: any[] = typeof options.species === "string" ? ((await getDataset("species")) as any[]) : [];
+      const aquatic = breathesWater(speciesRows.find((s) => String(s.name).toLowerCase() === String(options.species).toLowerCase())?.traits);
+      res.json({ world, quests: worldQuests(world, earnings, aquatic), problems: validateWorld(world, catalog) });
     } catch (error) {
       console.error("Error generating world:", error);
       res.status(500).json({ message: "Failed to generate world" });

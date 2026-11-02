@@ -44,3 +44,30 @@ test("what answers each hazard", () => {
   assert.equal(exposure("dark", { ...none, darkvision: true }).by, "darkvision");
   assert.equal(exposure("gravity", none).safe, false);
 });
+
+// A place built under the sea is one bubble of air (2026-11-02, the user: "Underwater settlements/districts should NOT cause players to drown when WITHIN
+// the bubble of buildings"): its streets are walked; only the wrecks and ruins of the sea floor have the water
+import { waterOf, submergedAt, breathesWater } from "../../shared/logic/index";
+import species from "../../shared/data/sw5e/species.json";
+test("nobody drowns in the streets of a place under the sea; the wrecks and ruins of the sea floor still have the water", () => {
+  let under = 0;
+  for (let i = 0; i < 80; i++) {
+    const w = { areas: { p: area("p", "planet", "ocean"), [`s${i}`]: area(`s${i}`, "settlement", "city", "p"), b: area("b", "building", "cantina", `s${i}`), r: area("r", "room", "room", "b", { name: "Main bar" }) }, paths: [] } as unknown as World;
+    if (waterOf(w, "b") !== "under") continue;
+    under++;
+    assert.deepEqual(kinds(w, `s${i}`), [], "the streets");
+    assert.deepEqual(kinds(w, "b"), [], "outside a building");
+    assert.deepEqual(kinds(w, "r"), [], "inside it");
+  }
+  assert.ok(under > 10, `${under} places under the sea were looked at`);
+  assert.deepEqual(kinds(worldOf("ocean", "crash site", "wreck", "Cargo hold"), "r"), ["underwater"]);
+  assert.ok(submergedAt(worldOf("ocean", "crash site", "wreck", "Cargo hold"), "r"));
+  assert.ok(!submergedAt(worldOf("ocean", "city", "cantina"), "r"));
+  assert.ok(!submergedAt(worldOf("temperate", "crash site", "wreck", "Cargo hold"), "r"), "a wreck on dry land");
+});
+test("the aquatic species are those whose traits say they breathe water", () => {
+  const traitsOf = (name: string) => (species as any[]).find((s) => s.name === name)?.traits;
+  for (const n of ["Mon Calamari", "Gungan", "Quarren"]) assert.ok(breathesWater(traitsOf(n)), n);
+  for (const n of ["Human", "Kaminoan", "Wookiee"]) assert.ok(!breathesWater(traitsOf(n)), n);
+  assert.ok(!breathesWater(undefined));
+});

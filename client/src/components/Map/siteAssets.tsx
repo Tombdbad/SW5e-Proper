@@ -1431,15 +1431,21 @@ export function UnderSea({ boxes, ground, lite }: { boxes: { x: number; y: numbe
   const bubbles = useRef<THREE.InstancedMesh>(null);
   const spots = useMemo(() => {
     const r = createRandom(boxes.length * 977 + ground.w);
-    const inBox = (x: number, y: number) => boxes.some((b) => x > b.x - 1.5 && x < b.x + b.width + 1.5 && y > b.y - 1.5 && y < b.y + b.height + 1.5);
+    // (the kelp grows out past the bubble over the whole ground: inside it there is air and the sea floor is bare)
+    const inside = (x: number, y: number) => x > ground.x - 2 && x < ground.x + ground.w + 2 && y > ground.y - 2 && y < ground.y + ground.h + 2;
     const out: { x: number; y: number; h: number; phase: number }[] = [];
-    for (let i = 0; out.length < (lite ? 60 : 160) && i < 2000; i++) {
-      const [x, y] = [ground.x - 10 + r.next() * (ground.w + 20), ground.y - 10 + r.next() * (ground.h + 20)];
-      if (!inBox(x, y)) out.push({ x, y, h: 1.5 + r.next() * 4, phase: r.next() * 6.28 });
+    for (let i = 0; out.length < (lite ? 60 : 160) && i < 4000; i++) {
+      const [x, y] = [ground.x - 24 + r.next() * (ground.w + 48), ground.y - 24 + r.next() * (ground.h + 48)];
+      if (!inside(x, y)) out.push({ x, y, h: 1.5 + r.next() * 4, phase: r.next() * 6.28 });
     }
     return out;
   }, [boxes.length, ground.w, ground.h, lite]);
-  const rising = useMemo(() => Array.from({ length: lite ? 40 : 120 }, (_, i) => ({ x: ground.x + ((i * 7919) % 1000) / 1000 * ground.w, y: ground.y + ((i * 104729) % 1000) / 1000 * ground.h, speed: 0.6 + ((i * 31) % 10) / 10, at: (i * 37) % 30 })), [ground.w, ground.h, lite]);
+  // (the bubbles rise outside the dome, from the sea floor round it)
+  const rising = useMemo(() => Array.from({ length: lite ? 40 : 120 }, (_, i) => {
+    const a = i * 2.399963;
+    const reach = 6 + ((i * 7919) % 100) / 100 * 16;
+    return { x: ground.x + ground.w / 2 + Math.cos(a) * (ground.w / 2 + reach), y: ground.y + ground.h / 2 + Math.sin(a) * (ground.h / 2 + reach), speed: 0.6 + ((i * 31) % 10) / 10, at: (i * 37) % 30 };
+  }), [ground.x, ground.y, ground.w, ground.h, lite]);
   const blade = useMemo(() => { const g = new THREE.ConeGeometry(0.12, 1, 4, 3); g.translate(0, 0.5, 0); return g; }, []);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   useFrame((state) => {
@@ -1468,8 +1474,21 @@ export function UnderSea({ boxes, ground, lite }: { boxes: { x: number; y: numbe
     }
   });
   const [cx, cz] = [ground.x + ground.w / 2, ground.y + ground.h / 2];
+  const domeH = Math.max(16, Math.min(ground.w, ground.h) * 0.4);
   return (
     <>
+      {/* the bubble of air over the whole place (2026-11-02, the user: nobody drowns within the bubble of buildings): its streets are air, the
+          party walks them; the sea is outside it */}
+      <group position={[cx, 0, cz]}>
+        <mesh scale={[ground.w / 2 + 2, domeH, ground.h / 2 + 2]} raycast={() => null} renderOrder={1}>
+          <sphereGeometry args={[1, lite ? 24 : 48, lite ? 10 : 20, 0, Math.PI * 2, 0, Math.PI / 2]} />
+          <meshPhongMaterial color="#9fe3ff" emissive="#1e6d8a" emissiveIntensity={0.25} transparent opacity={0.07} shininess={140} specular="#ffffff" side={THREE.DoubleSide} depthWrite={false} />
+        </mesh>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]} scale={[ground.w / 2 + 2, ground.h / 2 + 2, 1]} raycast={() => null}>
+          <ringGeometry args={[0.985, 1, lite ? 48 : 96]} />
+          <meshBasicMaterial color="#bff0ff" transparent opacity={0.55} side={THREE.DoubleSide} />
+        </mesh>
+      </group>
       {boxes.map((b, i) => {
         const r = Math.hypot(b.width, b.height) / 2 + 1.2;
         return (
@@ -1509,15 +1528,18 @@ export function UnderSea({ boxes, ground, lite }: { boxes: { x: number; y: numbe
 }
 
 // The sea's colour all round a place under it (as fog: the far buildings fade into blue-green)
-export const UNDER_FOG: [string, number, number] = ["#0f4a5e", 8, 70];
+export const UNDER_FOG: [string, number, number] = ["#0f4a5e", 16, 110];
 
 // Fish in schools: each school turns on a ring round its own centre, each fish a little off the line, wagging. `depth` is where they swim.
-export function FishSchools({ ground, depth, count = 5, lite }: { ground: { x: number; y: number; w: number; h: number }; depth: number; count?: number; lite: boolean }) {
+export function FishSchools({ ground, depth, count = 5, lite, round }: { ground: { x: number; y: number; w: number; h: number }; depth: number; count?: number; lite: boolean; round?: boolean }) {
   const mesh = useRef<THREE.InstancedMesh>(null);
   const per = lite ? 10 : 24;
+  // (`round`: the schools swim in the sea round the ground, not over it: under the sea the ground is one bubble of air)
   const schools = useMemo(() => Array.from({ length: count }, (_, i) => ({
-    x: ground.x + ((i * 0.37 + 0.15) % 1) * ground.w, y: ground.y + ((i * 0.61 + 0.3) % 1) * ground.h, r: 3 + (i % 3) * 2, speed: 0.25 + (i % 4) * 0.08, dir: i % 2 ? 1 : -1, hue: i,
-  })), [count, ground.w, ground.h]);
+    x: round ? ground.x + ground.w / 2 + Math.cos(i * 2.4) * (ground.w / 2 + 14 + (i % 3) * 4) : ground.x + ((i * 0.37 + 0.15) % 1) * ground.w,
+    y: round ? ground.y + ground.h / 2 + Math.sin(i * 2.4) * (ground.h / 2 + 14 + (i % 3) * 4) : ground.y + ((i * 0.61 + 0.3) % 1) * ground.h,
+    r: 3 + (i % 3) * 2, speed: 0.25 + (i % 4) * 0.08, dir: i % 2 ? 1 : -1, hue: i,
+  })), [count, ground.w, ground.h, round]);
   const fish = useMemo(() => { const g = new THREE.ConeGeometry(0.06, 0.26, 4); g.rotateX(Math.PI / 2); return g; }, []);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   useFrame((state) => {

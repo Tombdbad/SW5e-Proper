@@ -27,6 +27,7 @@ import { PazaakGame } from "@/components/Games/PazaakGame";
 import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, rewardItem, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, type Contract, type Offer } from "@shared/logic/contracts";
 import { DejarikGame } from "@/components/Games/DejarikGame";
 import { PitBets } from "@/components/Games/PitBets";
+import { pitArenaOf, pitArenasIn, cardFor, pitNews, isBoutDay, nextBoutDay, weekdayName, matchState, type Ticket } from "@shared/logic/pitbets";
 import { usePartyLook } from "@/components/Map/models";
 import { FORM_STYLE } from "@/components/Map/interiors/limbs";
 import { NotesPanel, TranslatorPanel } from "@/components/Play/GearPanels";
@@ -61,7 +62,7 @@ import { dogfightPayout } from "@shared/logic/dogfightSim";
 import { SCENARIOS, scenarioAdvice, scenarioOf, classOf, type ScenarioId } from "@shared/logic/dogfight";
 import type { ShipSheet } from "@shared/logic";
 import { CAPS, CHANGE, genderOf, kinLine, kinOf, levelName, personById, regardLevel, regardOf, reputation, sheetFor, talkNotes, townTalk } from "@shared/logic/relations";
-import { ancestor, createRandom, personIn } from "@shared/logic";
+import { ancestor, breathesWater, createRandom, personIn } from "@shared/logic";
 import { findOccupant } from "@shared/logic/contracts";
 const hashString = (t: string) => Array.from(t).reduce((n, ch) => (Math.imul(n, 31) + ch.charCodeAt(0)) | 0, 7) >>> 0;
 import PitArena, { type PitSummary } from "@/components/Map/PitArena";
@@ -1417,7 +1418,7 @@ export default function GameBoard() {
       const response = await fetch("/api/world/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ options: { partyLevel: level, era: eraById(campaign?.setting?.era).id } }),
+        body: JSON.stringify({ options: { partyLevel: level, era: eraById(campaign?.setting?.era).id, species: character?.species } }),
       });
       if (!response.ok) throw new Error("The server could not generate a world");
       const generated = await response.json();
@@ -2072,6 +2073,9 @@ export default function GameBoard() {
   const bankPit = (total: { credits: number; items: string[] }) => saveCharacter({ credits: pitBase.current.credits + total.credits, equipment: [...pitBase.current.equipment, ...total.items] });
   const openPit = () => {
     if (!character || character.currentHp <= 0) return;
+    // (HOUSE RULE, 2026-11-02, the user: "Pit fights should only be fought on weekends": the sign-up is for the weekend's card too)
+    const day = dayOf(clockNow());
+    if (!isBoutDay(day)) return void toast.error(`The pit fights on Saturday and Sunday only (the sixth and seventh day of the week). Today is ${weekdayName(day)}, day ${day}; the next fights are on day ${nextBoutDay(day)}.`);
     pitBase.current = { credits: Number(character.credits) || 0, equipment: [...(character.equipment ?? [])] };
     setPitOpen(true);
   };
@@ -3362,7 +3366,7 @@ export default function GameBoard() {
   const takeContract = (offer: Offer) => {
     if (!world) return;
     if (cState.active.length >= 4) return void toast.error("Four jobs at a time is plenty: finish or drop one.");
-    const placed = acceptContract(world, offer, level, monsterData as unknown as Sw5eMonster[], equipmentData as any, clockNow());
+    const placed = acceptContract(world, offer, level, monsterData as unknown as Sw5eMonster[], equipmentData as any, clockNow(), breathesWater(speciesTraits));
     if ("error" in placed) return void toast.error(placed.error);
     saveCampaign({ galaxyMap: placed.world });
     writeContracts({ active: [...cState.active, placed.contract] });
@@ -3487,22 +3491,31 @@ export default function GameBoard() {
         </Button>
         {jobsFor === o.id && ids.includes("pit-bets") && (
           <div className="mt-1">
-            <PitBets
-              monsters={monsterData as unknown as Sw5eMonster[]}
-              level={level}
-              day={dayOf(clockNow())}
-              boss={o.id}
-              credits={character.credits ?? 0}
-              done={((play as any).pitBets?.day === dayOf(clockNow()) ? (play as any).pitBets.ids : []) as string[]}
-              onSettled={(bout, stake, back) => {
-                const today = dayOf(clockNow());
-                const had = (play as any).pitBets?.day === today ? ((play as any).pitBets.ids as string[]) : [];
-                const current = (queryClient.getQueryData<any>(["game-character", gameCharacterId])?.playState ?? {}) as Record<string, any>;
-                saveCharacter({ credits: Math.max(0, (character.credits ?? 0) - stake + back), playState: { ...current, pitBets: { day: today, ids: [...had, bout] } } });
-                saveCampaign(pass(30));
-                toast[back ? "success" : "info"](back ? `The bout goes your way: ${back.toLocaleString()} credits.` : `The bout goes the other way: ${stake} credits lost.`);
-              }}
-            />
+            {building && pitArenaOf(world, building.id) ? (
+              <PitBets
+                arena={pitArenaOf(world, building.id)!}
+                monsters={monsterData as unknown as Sw5eMonster[]}
+                minute={clockNow()}
+                credits={character.credits ?? 0}
+                tickets={(((play as any).pitTickets ?? []) as Ticket[])}
+                onBet={(ticket) => {
+                  const current = (queryClient.getQueryData<any>(["game-character", gameCharacterId])?.playState ?? {}) as Record<string, any>;
+                  const held = (current.pitTickets ?? []) as Ticket[];
+                  const today = dayOf(clockNow());
+                  // (tickets a week old are given up: the house does not pay them)
+                  saveCharacter({ credits: Math.max(0, (character.credits ?? 0) - ticket.stake), playState: { ...current, pitTickets: [...held.filter((t) => today - t.day <= 7), ticket] } });
+                  saveCampaign(pass(5));
+                  toast.info(`Ticket bought: ${ticket.stake} credits on ${ticket.name.split(" against ")[ticket.pick]} (${ticket.name}), at ${ticket.pays}:1. Come back after the bout to collect.`);
+                }}
+                onCollect={(ticket, owed) => {
+                  const current = (queryClient.getQueryData<any>(["game-character", gameCharacterId])?.playState ?? {}) as Record<string, any>;
+                  const held = (current.pitTickets ?? []) as Ticket[];
+                  saveCharacter({ credits: (character.credits ?? 0) + owed, playState: { ...current, pitTickets: held.filter((t) => t.id !== ticket.id) } });
+                  saveCampaign(pass(1));
+                  if (owed) toast.success(`The bookmaker pays ${owed.toLocaleString()} credits.`);
+                }}
+              />
+            ) : <p className="text-gray-400">There is no pit here to bet on.</p>}
           </div>
         )}
         {jobsFor === o.id && ids.some((id) => id !== "pit-bets") && <div className="mt-1">{downtimeFor(ids)}</div>}
@@ -4591,6 +4604,17 @@ export default function GameBoard() {
   const talkPlayer = { name: String(character?.name ?? "The player"), species: character?.species, class: klass?.name ?? character?.class, alignment: character?.alignment };
   // What the people of the world know of the party, for their talk among themselves (LocalMap useTalkWorld)
   useEffect(() => useTalkWorld.setState({ standing, party: talkPlayer.name }), [standing, talkPlayer.name]);
+  // What the pit has on today and what is said of it (shared/logic/pitbets.ts), for the bouts the map shows and the people's talk of them
+  // (worked out again every half hour of the clock: a bout is over half an hour after it begins)
+  const pitHalfHour = Math.floor(clockMinutes / 30);
+  useEffect(() => {
+    if (!world || !here || !monsterData) return void useTalkWorld.setState({ pit: [], matches: [] });
+    const settlement = trailOf(world, here.id).find((a) => a.kind === "settlement");
+    const arenas = settlement ? pitArenasIn(world, settlement.id) : [];
+    const monsters = monsterData as unknown as Sw5eMonster[];
+    const minute = pitHalfHour * 30;
+    useTalkWorld.setState({ pit: arenas.flatMap((a) => pitNews(a, minute, monsters)), matches: arenas.flatMap((a) => cardFor(a, dayOf(minute), monsters)) });
+  }, [world, here?.id, pitHalfHour, monsterData]);
   const talkScene = (): string => {
     if (!world || !here) return "";
     const trail = trailOf(world, here.id);
@@ -7715,6 +7739,26 @@ export default function GameBoard() {
           {kind === "kiosk" && (
             <>
               <p className="text-xs text-gray-300">Notices, wanted lists, and what the law is doing in the settlement.</p>
+              {/* The pit's card, advertised (2026-11-02, the user: "upcoming bouts should be advertised at info terminals") */}
+              {pitArenasIn(world, settlementOf(world, here.id)).map((arena) => {
+                const today = dayOf(clockNow());
+                const first = nextBoutDay(today);
+                const hhmm = (h: number) => `${String(h).padStart(2, "0")}:00`;
+                return (
+                  <div key={arena.id} className="mt-1 rounded border border-amber-700/60 p-1 text-xs" data-testid="kiosk-pit">
+                    <p className="font-semibold text-amber-200">{arena.name}: {first === today ? "bouts today" : `next bouts on ${weekdayName(first)}, day ${first}`}</p>
+                    {[first, nextBoutDay(first + 1)].map((d) => (
+                      <div key={d} className="mt-0.5">
+                        <p className="text-gray-300">{weekdayName(d)}, day {d}:</p>
+                        {cardFor(arena, d, monsterData as unknown as Sw5eMonster[]).map((m) => (
+                          <p key={m.id} className="text-gray-400">{hhmm(m.hour)} {m.a.name} ({m.a.stock}, CR {m.a.cr}) against {m.b.name} ({m.b.stock}, CR {m.b.cr}){matchState(m, clockNow()) === "done" ? `: ${m.winner === 0 ? m.a.name : m.b.name} won` : ""}</p>
+                        ))}
+                      </div>
+                    ))}
+                    <p className="mt-0.5 text-gray-500">Bets at the kiosks in the betting hall; the pit fights Saturday and Sunday only.</p>
+                  </div>
+                );
+              })}
               <Button size="sm" className="mt-1" disabled={inCombat || dead} onClick={() => { readNotices(); setPicked(null); }} data-testid="kiosk-read">Read the notices (5 min)</Button>
             </>
           )}

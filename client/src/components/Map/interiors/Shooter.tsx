@@ -33,6 +33,8 @@ export interface ShooterCtx {
   shot: (fresh?: boolean) => { from: Spot; to: Spot } | null;
   moving: () => boolean;
   airborne: () => boolean;
+  // How high a swimmer floats where the party is swimming (a fight in the water, 2026-11-02: the party's people on foot swim with it), else null
+  swimAt?: () => number | null;
 }
 
 const POOL = { bolts: 72, grenades: 6, blasts: 16 };
@@ -263,6 +265,11 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       if (!g) continue;
       g.visible = u.mode !== "gone";
       g.position.set(u.x - c.cx, u.h, u.y - c.cz);
+      // (the party's people on foot swim as it does: low in the water, in the swimming pose; beasts and droids are as they are)
+      const meta = session.meta[u.id] ?? {};
+      const swimAt = u.side === "ally" && !u.dead && !/beast|droid|construct/i.test(meta.creature ?? "") && !/droid|wildlife|beast/i.test(meta.role ?? "") ? c.swimAt?.() ?? null : null;
+      motionOf(u).current.posture = swimAt !== null ? 3 : 0;
+      if (swimAt !== null) g.position.y = swimAt;
       if (u.dead) {
         // (it falls over in about a third of a second, and does not snap flat)
         st.died[u.id] ??= now;

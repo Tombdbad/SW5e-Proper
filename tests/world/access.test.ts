@@ -140,8 +140,8 @@ test("every room over or under the ground is in a column with a five-lane block;
       deepest = Math.min(deepest, level);
       if (level === 0) continue;
       const building = world.areas[room.parentId!];
-      // (hangars on a top floor are reached by a lift; the wild has rising passages)
-      if (room.layout!.roof || ["cave", "ruin", "wreck", "camp", "trailhead", "sewer", "sewer access"].includes(building.type)) continue;
+      // (hangars on a top floor are reached by a lift; the wild has rising passages; an arena's tiers and pens are laid out by planArena, up its own stair tower and ramps)
+      if (room.layout!.roof || ["cave", "ruin", "wreck", "camp", "trailhead", "sewer", "sewer access", "arena"].includes(building.type)) continue;
       const lower = room.tags.find((t) => t.startsWith("stack:") || t.startsWith("under:"));
       assert.ok(lower, `${building.type} / ${room.name}: on floor ${level} but in no column`);
     }
