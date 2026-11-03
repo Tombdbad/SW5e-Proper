@@ -688,6 +688,8 @@ class Mirror {
     const e = o.matrixWorld.elements;
     if (sameMatrix(node.matrix, e)) return;
     node.matrix.set(e);
+    // (when it last moved, for the lamps' shadow maps: see lightUp)
+    (target as unknown as { _movedFrame: number })._movedFrame = this.frame;
     Matrix.FromArrayToRef(e, 0, node.world);
     target.freezeWorldMatrix(node.world);
     (target as unknown as { _worldMatrixDeterminantIsDirty: boolean })._worldMatrixDeterminantIsDirty = true;
@@ -1568,8 +1570,8 @@ class Mirror {
         shadow.usePoissonSampling = true;
         // (a lamp's depth is measured over the light's own shadowMinZ..MaxZ, the camera's 0.05..1000 by default: a bias of 0.004 was
         // then 4 m and every shadow began that far from what cast it, 2026-11-03; lightUp sets MaxZ to the lamp's reach)
-        shadow.bias = 0.0015;
-        shadow.normalBias = 0.01;
+        shadow.bias = 0.003;
+        shadow.normalBias = 0.02;
         light.shadowMinZ = 0.1;
         light.shadowMaxZ = 16;
         const slot: Rig["lamps"][number] = { light, shadow };
@@ -1583,10 +1585,13 @@ class Mirror {
             made = this.frame;
             near.length = 0;
             if (slot.source) {
-              const reach = slot.source.distance > 0 ? slot.source.distance : 12;
+              const reach = lampReach(slot.source);
               for (let k = 0; k < count; k++) {
                 const b = list[k].getBoundingInfo().boundingSphere;
-                if (b.radiusWorld > 0.08 && Vector3.Distance(b.centerWorld, light.position) - b.radiusWorld < reach) near.push(list[k]);
+                // (what is not small, or moves: a street's scatter of stones and tufts casts nothing the eye misses, and was most of the map's cost)
+                const moved = this.frame - ((list[k] as unknown as { _movedFrame?: number })._movedFrame ?? -99) <= 2;
+                // (nor an instanced scatter, whose bounds take in every instance of the district: its stones and trees were each drawn six times)
+                if ((b.radiusWorld > 0.3 || (moved && b.radiusWorld > 0.08)) && b.radiusWorld < 20 && Vector3.Distance(b.centerWorld, light.position) - b.radiusWorld < reach) near.push(list[k]);
               }
             }
           }
@@ -1767,16 +1772,33 @@ class Mirror {
       if (!l) {
         slot.light.intensity = 0;
         if (was) slot.shadow.getShadowMap()!.refreshRate = 0;
+        slot.mode = undefined;
         return;
       }
-      // (its six faces drawn every other frame: 540 calls a frame in a palace room, 2026-11-01)
-      if (!was) slot.shadow.getShadowMap()!.refreshRate = LAMP_REFRESH;
       slot.light.intensity = l.intensity;
       c3(l.color, slot.light.diffuse);
       const e = l.matrixWorld.elements;
       slot.light.position.set(e[12], e[13], e[14]);
       slot.light.range = l.distance > 0 ? l.distance : Number.MAX_VALUE;
       slot.light.shadowMaxZ = l.distance > 0 ? l.distance + 2 : 16;
+      // Its six faces are drawn every frame while anything that casts a shadow within its reach moves (a figure walking past: drawn every other
+      // frame the figure was shadowed by where it had been, and its textures flickered with the lag, 2026-11-03, the user), and once when
+      // nothing does, or when it is given another lamp (the map cost 30 ms a frame on an HD 530, and a street of still things needs none)
+      const reach = lampReach(l);
+      let moving = false;
+      for (const m of this.casters) {
+        if (this.frame - ((m as unknown as { _movedFrame?: number })._movedFrame ?? -99) > 2) continue;
+        const b = m.getBoundingInfo().boundingSphere;
+        if (Vector3.Distance(b.centerWorld, slot.light.position) - b.radiusWorld < reach) {
+          moving = true;
+          break;
+        }
+      }
+      const mode = moving ? 1 : 0;
+      if (!was || was !== l || slot.mode !== mode) {
+        slot.shadow.getShadowMap()!.refreshRate = mode;
+        slot.mode = mode;
+      }
       const own = this.nodes.get(l)?.light;
       if (own) own.intensity = 0;
     });
@@ -1784,7 +1806,9 @@ class Mirror {
 }
 
 const SUNS = 3;
-const LAMP_REFRESH = 2;
+// How far a lamp's shadows are drawn: what is lit by it, but not past 8 m (its light has little left there)
+const LAMP_SHADOW_REACH = 8;
+const lampReach = (l: THREE.PointLight) => (l.distance > 0 ? Math.min(l.distance, LAMP_SHADOW_REACH) : LAMP_SHADOW_REACH);
 // (a shadow map's list when it is to draw nothing)
 const NOTHING: AbstractMesh[] = [];
 const dist2 = (l: THREE.Object3D, at: Vector3) => {
@@ -1795,7 +1819,7 @@ interface Rig {
   sky: HemisphericLight;
   suns: DirectionalLight[];
   sunShadow?: ShadowGenerator;
-  lamps: { light: PointLight; shadow: ShadowGenerator; source?: THREE.PointLight }[];
+  lamps: { light: PointLight; shadow: ShadowGenerator; source?: THREE.PointLight; mode?: number }[];
   cluster: ClusteredLightContainer | null;
   // the clustered lights three no longer uses, dark, for the next ones
   pool: { point: PointLight[]; spot: SpotLight[] };
