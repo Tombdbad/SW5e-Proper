@@ -54,7 +54,7 @@ export const MATERIALS: Record<Finish, THREE.Material> = {
   cloth: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, emissive: new THREE.Color("#0a0a0a") }),
   stone: surfaceMaterial("stone", "rock_face_03", { vertexColors: true, lift: 1.25, parallax: 0.04 }),
   bark: surfaceMaterial("bark", "bark_brown_02", { vertexColors: true, lift: 1.9, parallax: 0.03 }),
-  leaf: surfaceMaterial("leaves", "forest_leaves_02", { vertexColors: true, lift: 1.9, parallax: 0.02, shininess: 4 }),
+  leaf: surfaceMaterial("leaves", "forest_leaves_02", { vertexColors: true, lift: 1.9, parallax: 0.02, shininess: 4, cutout: 0.45 }),
   // (the detail maps are pale, about 0.9 on average: `lift` brings the vertex colours back to what they were drawn in)
   skin: surfaceMaterial("figure", "skin", { vertexColors: true, lift: 1.1, parallax: 0, shininess: 12, specular: "#1e1b18", normalScale: 0.55 }),
   face: surfaceMaterial("figure", "face", { vertexColors: true, lift: 1.07, parallax: 0, shininess: 14, specular: "#1e1b18", normalScale: 0.45 }),
