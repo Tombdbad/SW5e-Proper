@@ -9146,13 +9146,8 @@ export default function GameBoard() {
             }}
           />
           
-          {/* Lighting */}
-          <ambientLight intensity={0.3} />
-          <directionalLight 
-            position={[10, 10, 5]} 
-            intensity={1} 
-          />
-          
+          {/* (no lights of the canvas's own: each scene brings its light, LocalMap's Sky by the hour. A white sun fixed here, with no
+              shadow, lit every place the same by day and by night and filled in every shadow: 2026-11-03, the user) */}
           {/* A fight is shown on the floor it is fought on; otherwise the place being looked at */}
           {shipFight ? (
             <SpaceScene />

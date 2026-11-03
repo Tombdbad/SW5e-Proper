@@ -217,7 +217,7 @@ function Sky({ shadow = 30, cast = true, indoors = 0, look, ground = 0, fog, flo
       {under && <fog attach="fog" args={[background, UNDER_FOG[1], UNDER_FOG[2]]} />}
       {look && !under && <WorldSky look={look} light={light} hour={(minutes / 60) % 24} now={() => hourOf(minuteNow())} clock={minuteNow} ground={ground} lite={lite} fog={fog} floor={floor} />}
       <ambientLight intensity={(0.42 * night + (0.75 - 0.42 * night) * light) * (1 - 0.5 * indoors)} color={under ? "#9fe0e6" : light < 0.3 ? "#a9b8ff" : "#ffffff"} />
-      <directionalLight ref={sunLight} position={sun} intensity={(0.24 * night + (0.9 - 0.24 * night) * light) * (1 - 0.6 * indoors)} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow={cast} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
+      <directionalLight ref={sunLight} position={sun} intensity={(0.24 * night + (0.9 - 0.24 * night) * light) * (1 - 0.6 * indoors)} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow={cast && light > 0} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
     </>
   );
 }
@@ -4605,14 +4605,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             <meshLambertMaterial color={new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(1.5)} />
           </mesh>
         )}
-        {districtPlan && buildings.map((b) => {
+        {/* (on a textured ground nothing is laid under a building: its dark patch was a fixed fake shadow, there by night and pointing
+            nowhere; the sun and the lamps cast the real ones) */}
+        {districtPlan && !groundTex && buildings.map((b) => {
           const box = districtPlan.boxes[b.id];
           return box ? (
             <mesh key={`lot-${b.id}`} rotation={[-Math.PI / 2, 0, 0]} position={[box.x + box.width / 2, -0.005, box.y + box.height / 2]} visible={!underground && water !== "sea"} raycast={() => null}>
               <planeGeometry args={[box.width + 1, box.height + 1]} />
-              {groundTex
-                ? <meshBasicMaterial color="#000000" transparent opacity={0.22} depthWrite={false} />
-                : <meshLambertMaterial color={new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(0.9)} />}
+              <meshLambertMaterial color={new THREE.Color(GROUND[biome] ?? "#1c222b").multiplyScalar(0.9)} />
             </mesh>
           ) : null;
         })}
@@ -5151,7 +5151,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       ) : (
         <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} />
       )}
-      <Sky cast={!districtPlan || !!opened} indoors={opened && !openAir(opened) && !formOf(opened) ? 1 : 0} look={look} ground={-0.05} fog={[150, 480]} floor={!groundTex && !water} under={water === "under" && !(opened && !openAir(opened))} />
+      <Sky indoors={opened && !openAir(opened) && !formOf(opened) ? 1 : 0} look={look} ground={-0.05} fog={[150, 480]} floor={!groundTex && !water} under={water === "under" && !(opened && !openAir(opened))} />
     </>
   );
 }

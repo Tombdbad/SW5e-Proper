@@ -1852,7 +1852,7 @@ export function Decor({ kind, seed = 0 }: { kind: string; seed?: number }) {
 export const useLamps = create<{ lit: boolean }>(() => ({ lit: false }));
 export function LampLight({ at }: { at: V3 }) {
   const lit = useLamps((s) => s.lit);
-  return lit ? <pointLight position={at} color="#ffd59a" intensity={14} distance={10} decay={2} userData={{ cluster: true }} /> : null;
+  return lit ? <pointLight position={at} color="#ffd59a" intensity={14} distance={10} decay={2} castShadow userData={{ cluster: true }} /> : null;
 }
 
 function buildDecor(k: Kit, kind: string, v: number) {
