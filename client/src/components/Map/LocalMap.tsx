@@ -4368,6 +4368,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       return;
     }
     pushAt.current = { t: performance.now(), dx, dz };
+    stance.movedAt = pushAt.current.t;
     if (A.mode === "jump" || A.mode === "reel") return;
     // Under a running pack the party flies over what stands low, at the pack's pace
     const gear = useAir.getState().gear;

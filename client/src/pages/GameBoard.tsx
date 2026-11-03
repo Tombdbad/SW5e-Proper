@@ -15,7 +15,7 @@ import { Loader2 } from "lucide-react";
 import GalaxyMap from "@/components/Map/GalaxyMap";
 import { type MapAction } from "@/components/Map/GalaxyMap";
 import { useQuality } from "@/components/Map/siteAssets";
-import { useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
+import { stance, useView, VIEW_LABEL } from "@/components/Map/interiors/aim";
 import { useRun } from "@/components/Map/interiors/stick";
 import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whereNow, useClock, useTransit, useTable, lifeLink, noEncounters, useWarmup, useTalkWorld, LEVEL_H } from "@/components/Map/LocalMap";
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
@@ -83,7 +83,7 @@ import {
   districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
   setPane, climbable, PANE_LATCH_DC, PANE_BREAK_DC, PANE_SENSOR_DC, PANE_SENSOR_SEEN, PATIO_SENSOR_DC, type Pane, climbWay, climbGearOf, outsideClimbs, verticalMove,
-  hidingPlaces, hidingRoom, lawSearch, searchedAt, fightFactsOf, type FightFacts,
+  hidingPlaces, hidingRoom, lawSearch, searchedAt, fightFactsOf, type FightFacts, SEARCH_BONUS, STOP, stopBegin, stopTick, stopSearchTotal, stopTrickWorks, stopBribeCost, stopBribeWorks, slavePrice, slaveMarket, type StopState,
   START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText, unitOf as hashUnit, nemesisAmbush,
   withPresence, withPartyShips, bulkOf, shoveAsset, moveRoomAssets,
   gearUse, toolFor, toolTrained, boonOf, gambleMode, gambleResult, GAMBLE_ROUNDS, GAMBLE_HOUSE_DC, GAMBLE_STAKE, GAMBLE_COMPLICATION, GAMBLE_COMPLICATIONS,
@@ -117,6 +117,8 @@ interface PlayState {
   afloat?: string;
   // Uses of the kit that is open, by item name
   charges?: Record<string, number>;
+  // What is stowed in each of the party's ships, in the open hold and in hidden storage (by ship id: item name to count)
+  hold?: Record<string, { open: Record<string, number>; hidden: Record<string, number> }>;
   // The tool's special use prepared at the last rest, for one thing before the next
   boon?: Boon;
   // A dose of poison on the weapon
@@ -4483,7 +4485,7 @@ export default function GameBoard() {
   // Hidden from the law's search (shared/logic lawSearch): a smugglepack's compartment carried, clandestine pockets worn; what is in
   // them (play.hidden, never more than is carried), and the room left
   const carriedNames = (character?.equipment ?? []) as string[];
-  const hiding = hidingPlaces(carriedNames.map((n) => ({ name: n, ...(factsOf(n) ?? {}) })), wearingNow);
+  const hiding = hidingPlaces(carriedNames.map((n) => ({ name: n, ...(factsOf(n) ?? {}) })), wearingNow, fightItems);
   const hiddenNow: Record<string, number> = Object.fromEntries(Object.entries(play.hidden ?? {}).map(([n, c]) => [n, Math.min(c, carriedNames.filter((x) => x === n).length)] as const).filter(([, c]) => c > 0));
   const pounds = (n: string) => weightOf(factsOf(n)?.weight);
   const hideRoom = hidingRoom(hiding, hiddenNow, pounds);
@@ -4493,7 +4495,104 @@ export default function GameBoard() {
   };
   // Searched by the law at a customs post or checkpoint, or landing at a port where it is policed (house rule): contraband carried
   // openly is seized, what is hidden only if the searcher's Investigation finds it
-  const searchParty = (areaId: string, why: string) => {
+  // ---- A stop and search in real time (2026-11-03; the shooter mode: shared/logic STOP). The scan runs while the party stands there: walking
+  // off makes the officer warier, running more, standing still and flying casual less. Before it ends the party may try a mind trick (one of
+  // its powers that works on a mind not yet hostile; the weak-minded fall for it), a disguise (a power that changes how it looks, or a
+  // disguise kit: once), a bribe, or run, or fight.
+  const [stop, setStop] = useState<(StopState & { areaId: string; why: string }) | null>(null);
+  const stopLive = !!stop && !stop.outcome;
+  useEffect(() => {
+    if (!stopLive) return;
+    const id = setInterval(() => {
+      const moving = performance.now() - stance.movedAt < 250;
+      setStop((s) => (s && !s.outcome ? { ...s, ...stopTick(s, 0.1, { moving, running: moving && useRun.getState().run }) } : s));
+    }, 100);
+    return () => clearInterval(id);
+  }, [stopLive]);
+  useEffect(() => {
+    if (!stop?.outcome) return;
+    const s = stop;
+    setStop(null);
+    if (s.outcome === "waved") toast.success(`${s.why}: the officer looks you over and waves you through (house rule: the stop and search).`);
+    else if (s.outcome === "searched") searchParty(s.areaId, s.why, Math.max(1, stopSearchTotal(s) - (SEARCH_BONUS[Math.min(3, s.law)] ?? 0)));
+    else if (s.outcome === "ran") { toast.error(`${s.why}: you bolt. The law is after you.`); void callTheLaw(s.areaId, "trespass"); }
+    else if (s.outcome === "fought") { toast.error(`${s.why}: you go for your weapon.`); void callTheLaw(s.areaId, "assault"); }
+  }, [stop?.outcome]);
+  const stopPowers = () => {
+    const known = [...(character?.forcePowers ?? []), ...(character?.techPowers ?? [])];
+    const read = realtimePowers(known, Number(character?.level) || 1, character?.abilityScores, 99);
+    const mind = read.find((p) => p.kind === "mind");
+    const disguise = known.find((p: any) => /disguise yourself|alter your form|change the appearance of any number of creatures|illusory copy/i.test(String(p.description ?? "")));
+    return { mind, mindRaw: mind && known.find((p: any) => p.name === mind.name), disguise };
+  };
+  const stopAct = (what: "trick" | "disguise" | "bribe" | "run" | "fight") => {
+    if (!stop || stop.outcome || !character) return;
+    const s = stop;
+    const tried = [...s.tried, what];
+    const points = Number(character.currentForcePoints) || 0;
+    if (what === "trick") {
+      const { mind, mindRaw } = stopPowers();
+      if (!mind || !mindRaw) return;
+      if (points < mind.cost) return void toast.error(`Not enough points for ${mind.name} (${mind.cost}).`);
+      if (mind.cost) saveCharacter({ currentForcePoints: points - mind.cost });
+      const dc = castingStats(character.abilityScores, Number(character.level) || 1, mindRaw).dc;
+      if (stopTrickWorks(dc, s.law)) {
+        toast.success(`${mind.name}: "You don't need to see my papers." The officer's eyes glaze. "We don't need to see your papers. Move along." (A save DC ${dc} over the officer's passive Wisdom save of ${10 + (SEARCH_BONUS[Math.min(3, s.law)] ?? 0)}: weak-minded.)`);
+        return void setStop(null);
+      }
+      toast.error(`${mind.name}: the officer is not weak-minded (DC ${dc} against a passive Wisdom save of ${10 + (SEARCH_BONUS[Math.min(3, s.law)] ?? 0)}) and knows what you tried. The search will be thorough.`);
+      return void setStop({ ...s, tried, suspicion: 100 });
+    }
+    if (what === "disguise") {
+      const { disguise } = stopPowers();
+      const kit = ((character.equipment ?? []) as string[]).some((n) => /^disguise kit/i.test(n));
+      const cost = disguise ? powerCost({ level: Number(disguise.level) || 0 }) : 0;
+      if (disguise && !kit && points < cost) return void toast.error(`Not enough points for ${disguise.name} (${cost}).`);
+      if (disguise && !kit && cost) saveCharacter({ currentForcePoints: points - cost });
+      toast.info(`${kit ? "A few touches from your disguise kit" : disguise?.name}: you are someone else now, and of less interest.`);
+      return void setStop({ ...s, tried, suspicion: Math.max(0, s.suspicion - 25) });
+    }
+    if (what === "bribe") {
+      const heatNow = world ? heatLevel(heatAt(world, settlementOf(world, s.areaId), clockNow())) : 0;
+      const cost = stopBribeCost(s.law, heatNow);
+      if ((character.credits ?? 0) < cost) return void toast.error(`A bribe here takes ${cost} credits.`);
+      const persuasion = modifier(character.abilityScores?.charisma) + (skilled("persuasion") ? Number(character.proficiencyBonus) || 2 : 0);
+      saveCharacter({ credits: (character.credits ?? 0) - cost });
+      if (stopBribeWorks(persuasion, s)) {
+        toast.success(`${cost} credits change hands. The officer finds nothing worth looking at. (Passive Persuasion ${10 + persuasion} against ${10 + 2 * s.law + (s.suspicion >= STOP.thorough ? 5 : 0)}.)`);
+        return void setStop(null);
+      }
+      toast.error(`The officer pockets the ${cost} credits and looks at you harder. (Passive Persuasion ${10 + persuasion} against ${10 + 2 * s.law + (s.suspicion >= STOP.thorough ? 5 : 0)}.)`);
+      return void setStop({ ...s, tried, suspicion: Math.min(100, s.suspicion + 30) });
+    }
+    setStop({ ...s, tried, outcome: what === "run" ? "ran" : "fought" });
+  };
+  const stopPanel = () => {
+    if (!stop || stop.outcome) return null;
+    const { mind, disguise } = stopPowers();
+    const kit = ((character?.equipment ?? []) as string[]).some((n) => /^disguise kit/i.test(n));
+    const wary = stop.suspicion >= STOP.thorough ? "wary" : stop.suspicion < STOP.waved ? "bored" : "watchful";
+    return (
+      <div className="fixed left-1/2 top-16 z-40 w-[min(92vw,420px)] -translate-x-1/2 rounded-lg border border-amber-500/60 bg-black/80 p-3 text-sm text-white shadow-xl" data-testid="stop-and-search">
+        <div className="font-semibold text-amber-300">{stop.why}: an officer flags you down</div>
+        <div className="mt-1 text-xs text-gray-300">The scanner sweeps you: {Math.ceil(stop.t)} s. Stand still and fly casual; walking off makes them warier, running worse.</div>
+        <div className="mt-2 h-2 w-full overflow-hidden rounded bg-gray-700" title="Suspicion">
+          <div className="h-full" style={{ width: `${stop.suspicion}%`, background: stop.suspicion >= STOP.thorough ? "#ef4444" : stop.suspicion < STOP.waved ? "#4ade80" : "#facc15" }} />
+        </div>
+        <div className="mt-1 text-xs">The officer looks {wary} ({Math.round(stop.suspicion)}): {stop.suspicion < STOP.waved ? "they will wave you through" : stop.suspicion >= STOP.thorough ? "a thorough search (+5)" : stop.suspicion < 40 ? "a quick search (-5)" : "a search"}.</div>
+        <div className="mt-2 flex flex-wrap gap-1">
+          {mind && !stop.tried.includes("trick") && <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => stopAct("trick")} data-testid="stop-trick">{mind.name}{mind.cost ? ` (${mind.cost})` : ""}</Button>}
+          {(disguise || kit) && !stop.tried.includes("disguise") && <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => stopAct("disguise")} data-testid="stop-disguise">{kit ? "Disguise kit" : disguise.name}</Button>}
+          {!stop.tried.includes("bribe") && <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => stopAct("bribe")} data-testid="stop-bribe">Bribe</Button>}
+          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => stopAct("run")} data-testid="stop-run">Run</Button>
+          <Button size="sm" variant="destructive" className="h-7 px-2" onClick={() => stopAct("fight")} data-testid="stop-fight">Fight</Button>
+        </div>
+      </div>
+    );
+  };
+  // (2026-11-03) In the shooter mode the search is not a roll but a stop in real time (shared/logic STOP): the officer scans the party while it
+  // stands there, and what it finds is by how that went (`d20`: the searcher's die, given when the stop is over)
+  const searchParty = (areaId: string, why: string, d20?: number) => {
     const latest = latestWorld() ?? world;
     // (the character as it is now, after the trip was saved)
     const now = queryClient.getQueryData<any>(["game-character", gameCharacterId]) ?? character;
@@ -4501,25 +4600,61 @@ export default function GameBoard() {
     const law = lawAt(latest, areaId);
     const names = (now.equipment ?? []) as string[];
     const state = (now.playState ?? {}) as PlayState;
-    const places = hidingPlaces(names.map((n) => ({ name: n, ...(factsOf(n) ?? {}) })), (state.wearing ?? []).filter((n) => names.includes(n)));
+    const wearing = (state.wearing ?? []).filter((n) => names.includes(n));
+    const places = hidingPlaces(names.map((n) => ({ name: n, ...(factsOf(n) ?? {}) })), wearing, fightItems);
     const tucked: Record<string, number> = Object.fromEntries(Object.entries(state.hidden ?? {}).map(([n, c]) => [n, Math.min(c, names.filter((x) => x === n).length)] as const).filter(([, c]) => c > 0));
+    // (armour folded into a case looks like a case: a collapsible suit is not seized for what it is)
+    const folded = fightItems.filter((x) => x.fight.disguised).map((x) => x.source.split(": ")[0]);
     const carried = names.map((n) => {
       const row = factsOf(n);
       // (a smugglepack or clandestine clothes look like any other: not seized for what they are)
-      return { name: n, contraband: !!row && isContraband(row, law) && !places.some((p) => p.item === n) };
+      return { name: n, contraband: !!row && isContraband(row, law) && !places.some((p) => p.item === n) && !folded.includes(n) };
     });
-    const result = lawSearch(carried, tucked, places, law, 1 + Math.floor(Math.random() * 20));
+    if (playMode === "shooter" && d20 === undefined) {
+      if (law <= 0) return void toast.info(`${why}: no one here searches anyone.`);
+      const open = carried.filter((c) => c.contraband).length - Object.entries(tucked).reduce((n, [name, c]) => n + (carried.some((x) => x.name === name && x.contraband) ? c : 0), 0);
+      const heatNow = heatLevel(heatAt(latest, settlementOf(latest, areaId), clockNow()));
+      const prof = Number(now.proficiencyBonus) || 2;
+      const outfit = wearing.some((n) => /clandestine|smuggler|spacer/i.test(n)) || places.some((p) => / stitching/i.test(p.item));
+      const heavy = wearing.some((n) => !folded.includes(n) && (factsOf(n) as any)?.armorClassification === "Heavy");
+      setStop({
+        ...stopBegin(law, { openContraband: Math.max(0, open), heat: heatNow, heavyArmour: heavy, outfit, disguised: false, droidPasses: fightItems.some((x) => x.fight.passes), insight: SEARCH_BONUS[Math.min(3, law)] ?? 0, deception: modifier(now.abilityScores?.charisma) + (skilled("deception") ? prof : 0) }),
+        areaId, why,
+      });
+      return;
+    }
+    const result = lawSearch(carried, tucked, places, law, d20 ?? 1 + Math.floor(Math.random() * 20));
     const kept = places.length > 0 && Object.values(tucked).reduce((n, c) => n + c, 0) > 0;
+    // (2026-11-03) The holds of the party's ships berthed in the settlement are searched too: contraband in the open seized, in hidden storage
+    // only if the searcher's Investigation, at disadvantage (-5), reaches its DC 20
+    const settlement = settlementOf(latest, areaId);
+    const holdSeized: string[] = [];
+    const holds = { ...(state.hold ?? {}) };
+    for (const ship of ships.filter((s) => s.areaId && settlementOf(latest, s.areaId) === settlement)) {
+      const h = holds[ship.id];
+      if (!h) continue;
+      const take = (place: "open" | "hidden") => {
+        const left = { ...h[place] };
+        for (const [name, n] of Object.entries(left)) {
+          const row = factsOf(name);
+          if (!(n > 0) || !row || !isContraband(row, law)) continue;
+          holdSeized.push(`${name}${n > 1 ? ` ×${n}` : ""} (${ship.name}'s ${place === "hidden" ? "hidden storage" : "hold"})`);
+          left[name] = 0;
+        }
+        return left;
+      };
+      holds[ship.id] = { open: take("open"), hidden: result.total - 5 >= 20 ? take("hidden") : h.hidden };
+    }
     const note = kept ? ` The searcher's Investigation ${result.total} against your hiding place's DC ${result.dc}: ${result.found ? "found" : "it holds"}.` : "";
-    if (!result.seized.length) return void toast.info(`${why}: the law searches you and finds nothing it seizes (house rule).${note}`);
+    if (!result.seized.length && !holdSeized.length) return void toast.info(`${why}: the law searches you and finds nothing it seizes (house rule).${note}`);
     const equipment = [...names];
     const hidden = { ...tucked };
     for (const name of result.seized) {
       equipment.splice(equipment.indexOf(name), 1);
       if (result.found && hidden[name]) hidden[name]--;
     }
-    saveCharacter({ equipment, playState: { ...state, hidden } });
-    toast.error(`${why}: the law searches you and seizes ${result.seized.join(", ")} as contraband here (house rule).${note}`);
+    saveCharacter({ equipment, playState: { ...state, hidden, ...(holdSeized.length ? { hold: holds } : {}) } });
+    toast.error(`${why}: the law searches you and seizes ${[...result.seized, ...holdSeized].join(", ")} as contraband here (house rule).${note}`);
   };
   // The world's pull here (shared/logic gravityOf, house rule): a gravity generator running makes it standard
   const gravityNow = () => (world && here ? gravityOf(world, here.id, protections().generators.includes("gravity")) : { g: 1, label: "standard" });
@@ -5740,6 +5875,54 @@ export default function GameBoard() {
   const aboardId = here?.type === "deck" ? here.tags.find((t) => t.startsWith("ship:"))?.slice(5) : undefined;
   const aboardShip = aboardId ? ships.find((s) => s.id === aboardId) : undefined;
   const [helmOpen, setHelmOpen] = useState(false);
+  // ---- The ship's hold (2026-11-03; the user: "mechanics to hide contraband on ships"). Aboard, what the party carries can be stowed in the
+  // hold, or hidden in the hidden storage of a Hidden Storage suite (its text: half the ship's base cargo capacity, found only with a DC 20
+  // Investigation check made with disadvantage: -5 to a passive one). Landing at a port where it is policed, the law searches the ship with the
+  // party: contraband in the open hold is seized, what is hidden only if found. (play.hold, by ship id; house rule for the open hold's search)
+  const [stowPick, setStowPick] = useState("");
+  const hiddenStorage = (ship: PartyShip) => ship.mods?.some((m) => /^hidden storage$/i.test(m.name));
+  const holdOf = (ship: PartyShip) => play.hold?.[ship.id] ?? { open: {}, hidden: {} };
+  const stow = (ship: PartyShip, name: string, hidden: boolean, back = false) => {
+    if (!character || !name) return;
+    const hold = holdOf(ship);
+    const place = hidden ? "hidden" : "open";
+    const equipment = [...((character.equipment ?? []) as string[])];
+    if (back) {
+      if (!(hold[place][name] > 0)) return;
+      equipment.push(name);
+    } else {
+      const at = equipment.indexOf(name);
+      if (at < 0) return;
+      equipment.splice(at, 1);
+    }
+    const next = { ...hold, [place]: { ...hold[place], [name]: Math.max(0, (hold[place][name] ?? 0) + (back ? -1 : 1)) } };
+    saveCharacter({ equipment, playState: { ...play, hold: { ...(play.hold ?? {}), [ship.id]: next } } });
+    toast.info(back ? `${name} taken from the ${hidden ? "hidden storage" : "hold"}.` : `${name} ${hidden ? "hidden in the hidden storage (DC 20, searched at disadvantage)" : "stowed in the hold"} of ${ship.name}.`);
+  };
+  const holdPanel = (ship: PartyShip) => {
+    const hold = holdOf(ship);
+    const rows = (["open", "hidden"] as const).flatMap((place) => Object.entries(hold[place]).filter(([, n]) => n > 0).map(([name, n]) => ({ place, name, n })));
+    const carried = Array.from(new Set((character?.equipment ?? []) as string[])).sort();
+    return (
+      <div className="rounded border border-gray-700 p-2 text-xs" data-testid="ship-hold">
+        <div className="font-semibold text-gray-200">The hold of {ship.name}{hiddenStorage(ship) ? " (with hidden storage)" : ""}</div>
+        {rows.length ? rows.map((r) => (
+          <div key={`${r.place}-${r.name}`} className="flex items-center gap-2">
+            <span>{r.name} ×{r.n}{r.place === "hidden" ? " (hidden)" : ""}</span>
+            <Button size="sm" variant="outline" className="h-5 px-1 text-[10px]" disabled={inCombat} onClick={() => stow(ship, r.name, r.place === "hidden", true)}>Take</Button>
+          </div>
+        )) : <div className="text-gray-400">Nothing stowed.</div>}
+        <div className="mt-1 flex items-center gap-1">
+          <select className="rounded bg-gray-800 px-1 text-xs" value={stowPick} onChange={(e) => setStowPick(e.target.value)} data-testid="stow-pick">
+            <option value="">Choose what to stow…</option>
+            {carried.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+          <Button size="sm" variant="outline" className="h-6 px-2" disabled={!stowPick || inCombat} onClick={() => stow(ship, stowPick, false)} data-testid="stow-open">Stow</Button>
+          {hiddenStorage(ship) && <Button size="sm" variant="outline" className="h-6 px-2" disabled={!stowPick || inCombat} onClick={() => stow(ship, stowPick, true)} data-testid="stow-hidden">Hide aboard</Button>}
+        </div>
+      </div>
+    );
+  };
   const boardNow = (ship: PartyShip) => {
     if (!world || !here) return;
     const out = boardShip(world, ship, ship.areaId, here.kind === "room" ? here.id : undefined);
@@ -7391,6 +7574,64 @@ export default function GameBoard() {
     if (childrenOf(world, offer.to).length === 0) explore(offer.to, changes);
     else saveCampaign(changes);
   };
+  // ---- The slave trade (2026-11-03; shared/logic slavePrice, slaveMarket; house rules): a black-market dealer where a syndicate rules deals in
+  // the people held in the settlement's pens and cells. A captive's freedom bought: they go free, and are glad of it. A captive bought as a
+  // servant: a companion who fights for no wage, still collared (free them later with a security kit or the dealer's word). One of the party's
+  // own companions sold into the pens. Buying or selling a person is a heinous crime where any law holds (it is reported).
+  const slavePanel = (dealer: Occupant) => {
+    if (!world || !here || !character) return null;
+    const settlement = settlementOf(world, here.id);
+    const ruler = ancestor(world, here.id, "planet")?.faction ?? ancestor(world, here.id, "system")?.faction;
+    if (!slaveMarket(ruler)) return null;
+    const held = Object.values(world.areas).filter((a) => a.kind === "room" && settlementOf(world, a.id) === settlement).flatMap((a) => a.occupants.filter((o) => o.captive).map((o) => ({ o, areaId: a.id })));
+    const sellable = party.filter((c) => c.kind !== "droid" && c.hp > 0);
+    const law = lawAt(world, here.id);
+    const crime = () => { if (law >= 1) void callTheLaw(here.id, "heinous"); };
+    const buy = (o: Occupant, areaId: string, servant: boolean) => {
+      const price = slavePrice(o.cr);
+      if ((character.credits ?? 0) < price) return void toast.error(`${dealer.name} wants ${price} credits for ${o.name}.`);
+      if (servant && partyFull) return void toast.error(`You can lead ${COMPANION_LIMIT} companions at most (house rule).`);
+      const current = latestWorld() ?? world;
+      const area = current.areas[areaId];
+      if (!area) return;
+      if (servant) {
+        const companion = companionFrom({ ...o, captive: undefined }, "hireling", clockNow(), newId("c"), { how: "bought in the pens" }, mountsTable);
+        saveCampaign({ galaxyMap: updateArea(current, areaId, { occupants: area.occupants.filter((x) => x.id !== o.id) }).world, factionInfluence: reputation(current, standing, o.id, CHANGE.robbed).standing });
+        saveParty([...party, companion], { credits: (character.credits ?? 0) - price });
+        toast.warning(`${o.name} is yours for ${price} credits, collar and all: a companion who fights for no wage (house rule). A heinous trade${law >= 1 ? ", and the law hears of it" : ""}.`);
+      } else {
+        saveCampaign({ galaxyMap: updateArea(current, areaId, { occupants: area.occupants.map((x) => (x.id === o.id ? { ...x, captive: undefined, role: "freed", disposition: "friendly" as const } : x)) }).world, factionInfluence: reputation(current, standing, o.id, CHANGE.freed).standing });
+        saveCharacter({ credits: (character.credits ?? 0) - price });
+        toast.success(`${price} credits buy ${o.name}'s freedom. The collar comes off.`);
+        return;
+      }
+      crime();
+    };
+    const sell = (c: Companion) => {
+      const price = Math.round(slavePrice(c.cr) / 2);
+      saveParty(party.filter((x) => x.id !== c.id), { credits: (character.credits ?? 0) + price });
+      toast.warning(`${dealer.name} pays ${price} credits and ${c.name} is led away to the pens. A heinous trade${law >= 1 ? ", and the law hears of it" : ""}.`);
+      crime();
+    };
+    return (
+      <div className="mt-2 space-y-1 text-xs" data-testid="slave-trade">
+        <div className="font-semibold text-red-300">The pens (house rule: a syndicate's trade in people)</div>
+        {held.length ? held.map(({ o, areaId }) => (
+          <div key={o.id} className="flex flex-wrap items-center gap-1">
+            <span>{o.name}{o.species ? `, ${o.species}` : ""} ({slavePrice(o.cr)} cr)</span>
+            <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => buy(o, areaId, false)} data-testid={`slave-free-${o.id}`}>Buy their freedom</Button>
+            <Button size="sm" variant="outline" className="h-6 px-2" disabled={inCombat || dead} onClick={() => buy(o, areaId, true)} data-testid={`slave-buy-${o.id}`}>Buy as a servant</Button>
+          </div>
+        )) : <div className="text-gray-400">No one in the pens today.</div>}
+        {sellable.map((c) => (
+          <div key={c.id} className="flex items-center gap-1">
+            <span>Sell {c.name} into the pens ({Math.round(slavePrice(c.cr) / 2)} cr)</span>
+            <Button size="sm" variant="destructive" className="h-6 px-2" disabled={inCombat || dead} onClick={() => sell(c)} data-testid={`slave-sell-${c.id}`}>Sell</Button>
+          </div>
+        ))}
+      </div>
+    );
+  };
   const passagePanel = (agent: Occupant) => {
     if (!world || !here) return null;
     const dealer = agent.role === "smuggler";
@@ -7974,6 +8215,7 @@ export default function GameBoard() {
       {o.role === "medic" && augmentPanel(o, holderId)}
       {((o.trade ? !!MOD_TRADES[o.trade] || !!WARES[o.trade]?.black : ["mechanic", "fence", "smuggler"].includes(o.role)) || (!!world && isArtificer(world, o, holderId))) && modsPanel(o, holderId)}
       {(o.role === "ticket agent" || (o.role === "smuggler" && o.disposition !== "hostile")) && passagePanel(o)}
+      {(o.trade ? !!WARES[o.trade]?.black : ["fence", "smuggler"].includes(o.role)) && o.disposition !== "hostile" && slavePanel(o)}
       {canHire(o) && hireSection(o, here?.id ?? holderId)}
       {!isDroid(o) && o.species && o.role !== "guard" && o.role !== "freed" && gamblePanel(o.id, o.name, o.role === "gambler" ? 4 : 2)}
     </>
@@ -8929,6 +9171,7 @@ export default function GameBoard() {
           <CoopDialog campaignId={Number(campaignId)} characterId={character.id} areaName={(id) => world.areas[id]?.name ?? id} onClose={() => setCoopOpen(false)} onGoTo={goToMember} />
         )}
         {coopHere && coopRoom && <TravelRoomPanel room={coopRoom} nameOf={(id) => coopMembers.find((m) => m.id === id)?.name ?? id} />}
+        {stopPanel()}
         {askMode && world && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" data-testid="mode-dialog" role="dialog" aria-label="How to play this campaign">
             <div className="max-h-full w-full max-w-2xl space-y-3 overflow-y-auto rounded border border-gray-600 bg-gray-900 p-4 text-sm">
@@ -9853,6 +10096,7 @@ export default function GameBoard() {
                   const rank = { weapon: 0, armor: 1, shield: 2, gear: 3 };
                   return (
                     <div className="space-y-1" data-testid="inventory-list">
+                      {aboardShip && holdPanel(aboardShip)}
                       {hiding.length > 0 && (
                         <p className="text-xs text-gray-400" data-testid="hiding-line">
                           Hiding places: {hiding.map((h) => `${h.item} (${h.lb} lb, DC ${h.dc})`).join(", ")}; {Math.max(0, Math.round(hideRoom * 10) / 10)} lb free. The law searches you at customs and checkpoints, and on landing where it is policed: what it finds of its contraband it seizes (house rule).

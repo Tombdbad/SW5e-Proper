@@ -590,7 +590,8 @@ export const dirOf = (yaw: number): [number, number] => [Math.sin(yaw), Math.cos
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
 const alive = (u: Unit) => !u.dead && u.mode !== "gone";
 export const playerOf = (sim: Sim) => sim.units.find((u) => u.side === "player")!;
-export const foesLeft = (sim: Sim) => sim.units.filter((u) => u.side === "foe" && alive(u) && !u.decoy);
+// (a droid turned for a while is still one of them: the fight is not won while it stands)
+export const foesLeft = (sim: Sim) => sim.units.filter((u) => (u.side === "foe" || (u.turned ?? 0) > 0) && alive(u) && !u.decoy);
 // ---- What buffs and states come to (2026-11-03) ------------------------------------------------------------------------------------------
 const sumOf = (u: Unit, k: "ac" | "speed" | "aim") => (u.buffs ?? []).reduce((n, b) => n + (b[k] ?? 0), 0);
 // The AC a blow or shot is aimed at: the sheet's, what buffs add, what a curse took off
@@ -1900,11 +1901,12 @@ function callForHelp(sim: Sim, u: Unit, events: Event[]) {
 function meleeBlow(sim: Sim, u: Unit, target: Unit, events: Event[]) {
   // (the stat block's attack roll, as a chance: SHOOT.melee; held fast, at disadvantage)
   const roll = rand(sim);
+  // (its lowest twentieth is the natural 20: it always hits, hitChance being never under a twentieth, and it is a critical)
   if (roll >= hitChance(u.bonus - ((u.held ?? 0) > 0 ? 4 : 0), acOf(target))) return void events.push({ type: "miss", id: u.id, target: target.id });
   if (target.decoy) return void hurt(sim, target, 1, "kinetic", u, events, { x: target.x, y: target.y, h: target.h + 0.7 });
   if (target.side !== "foe" && warded(sim, target, u.blade?.type ?? "kinetic", events)) return;
   // (a natural 20 is a critical, unless armour turns it to a normal hit)
-  const crit = roll >= 0.95 && !target.critImmune;
+  const crit = roll < 0.05 && !target.critImmune;
   const damage = (u.blade?.damage ?? u.gun?.damage ?? 4) * (crit ? SHOOT.critBy : 1);
   // Held up in front of the blow, the party's saber takes it, for focus
   if (target.side === "player" && target.blocking && target.focus >= SHOOT.focus.perStrike) {

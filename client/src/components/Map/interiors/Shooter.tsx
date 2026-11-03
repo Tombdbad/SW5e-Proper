@@ -163,9 +163,10 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     const mine = now.combatants.find((c) => c.isPlayer);
     const patch: Record<string, Partial<import("@/lib/stores/useCombat").Combatant>> = {};
     for (const u of s.units) {
-      if (u.side === "player") continue;
-      // (one taken alive is out of the fight as one beaten: at the party's mercy, a nemesis's grudge and all)
-      patch[u.id] = { hp: u.fled || u.bound ? 0 : Math.max(0, Math.round(u.hp)), fled: u.fled || undefined, ...(u.side === "foe" ? { struck: u.struck } : {}) };
+      // (a hologram is no one: nothing to settle)
+      if (u.side === "player" || u.decoy) continue;
+      // (one taken alive is out of the fight as one beaten: at the party's mercy, a nemesis's grudge and all; a droid turned is still a foe)
+      patch[u.id] = { hp: u.fled || u.bound ? 0 : Math.max(0, Math.round(u.hp)), fled: u.fled || undefined, ...(u.side === "foe" || u.turned ? { struck: u.struck } : {}) };
     }
     if (mine) {
       const a = mine.ammo;
@@ -649,7 +650,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         pings: (st.pings = st.pings.filter((x) => now - x.at < 1500)).slice(-6),
       });
       useCombat.getState().syncRealtime({
-        ...Object.fromEntries(s.units.filter((u) => u.side !== "player").map((u) => [u.id, { hp: u.fled ? 0 : Math.max(0, Math.round(u.hp)) }])),
+        ...Object.fromEntries(s.units.filter((u) => u.side !== "player" && !u.decoy).map((u) => [u.id, { hp: u.fled ? 0 : Math.max(0, Math.round(u.hp)) }])),
         ...(useCombat.getState().combatants.find((x) => x.isPlayer) ? { [String(useCombat.getState().combatants.find((x) => x.isPlayer)!.id)]: { hp: Math.max(0, Math.round(p.hp)), ...(p.points !== undefined && useCombat.getState().combatants.find((x) => x.isPlayer)!.powerPoints !== undefined ? { powerPoints: Math.max(0, p.points) } : {}) } } : {}),
       });
     }

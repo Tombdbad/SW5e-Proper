@@ -5563,12 +5563,18 @@ export const SEARCH_BONUS = [0, 1, 3, 5];
 export const searchedAt = (area: Pick<Area, "kind" | "name">) => area.kind === "room" && /^customs (office|lock)|checkpoint/i.test(area.name);
 export interface HidingPlace { item: string; lb: number; dc: number }
 // Where things can be hidden: a smugglepack's compartment carried, clandestine clothes' pockets worn (their texts: gear.ts containerOf)
-export function hidingPlaces(items: GearFacts[], worn: string[]): HidingPlace[] {
+// (2026-11-03: and the pockets of clandestine stitching sewn into clothes worn: `fitted`, each a modification's source "Clothes: Mod" and its
+// FightFacts.pocket)
+export function hidingPlaces(items: GearFacts[], worn: string[], fitted: { source: string; fight: FightFacts }[] = []): HidingPlace[] {
   const out: HidingPlace[] = [];
   for (const item of items) {
     const use = gearUse(item);
     if (use?.kind === "container" && use.hidden) out.push({ item: item.name, lb: use.hidden, dc: use.hiddenDc ?? 15 });
     if (use?.kind === "clothing" && use.pockets && worn.includes(item.name)) out.push({ item: item.name, lb: use.pockets.lb, dc: use.pockets.dc });
+  }
+  for (const f of fitted) {
+    const host = f.source.split(": ")[0];
+    if (f.fight.pocket && worn.includes(host)) out.push({ item: f.source, lb: f.fight.pocket.lb, dc: f.fight.pocket.dc });
   }
   return out;
 }
@@ -5592,6 +5598,50 @@ export function lawSearch(carried: { name: string; contraband: boolean }[], hidd
   const found = kept.length > 0 && total >= dc;
   return { seized: [...open, ...(found ? kept : [])], found, roll: d20, total, dc };
 }
+
+// ---- A stop and search in real time (2026-11-03; the user, for the shooter: "stop and search / fly casual / smuggler outfit / hidden pockets /
+// weak minded force powers"; house rules, the books give the law no procedure). In the shooter mode the law's search is not a roll: an officer
+// flags the party down and scans it for `STOP.length` seconds while the party stands there. What the officer makes of it is its suspicion (0 to
+// 100), which starts from what can be seen (contraband carried openly, heavy armour, the heat the party is under, the officer's Insight against
+// the party's Deception) and moves while the scan runs: walking off raises it, running more, standing still and flying casual lowers it; a
+// smuggler's outfit or a disguise starts it lower. When the scan ends: under `STOP.waved` the party is waved through, nothing seized; over
+// `STOP.thorough` the search is thorough; between, the usual (lawSearch, with the searcher's passive Investigation: 10 + the law's bonus, -5 or
+// +5 by how it went, in place of the die). Before it ends the party may try a mind trick (it works on the weak-minded: a save DC over the
+// officer's passive Wisdom save, 10 + the law's bonus), a bribe (the party's passive Persuasion against 10 + twice the law, worse when the
+// officer is wary), run (it is a crime: the search is on) or fight.
+export const STOP = { length: 8, waved: 25, thorough: 60, walk: 6, run: 30, still: 5, bribe: 25 };
+export interface StopFactors { openContraband: number; heat: number; heavyArmour: boolean; outfit: boolean; disguised: boolean; insight: number; deception: number; droidPasses?: boolean }
+export interface StopState { law: number; t: number; suspicion: number; outcome?: "waved" | "searched" | "tricked" | "bribed" | "ran" | "fought" | "caught"; tried: string[] }
+export function stopBegin(law: number, f: StopFactors): StopState {
+  const start = 20 + 12 * f.openContraband + 8 * f.heat + (f.heavyArmour ? 10 : 0) - (f.outfit ? 15 : 0) - (f.disguised ? 20 : 0) - (f.droidPasses ? 10 : 0) + 3 * (f.insight - f.deception) + 5 * law;
+  return { law, t: STOP.length, suspicion: Math.max(0, Math.min(100, start)), tried: [] };
+}
+// A moment of the scan: what the party does with its feet
+export function stopTick(s: StopState, dt: number, party: { moving: boolean; running: boolean }): StopState {
+  if (s.outcome) return s;
+  const change = party.running ? STOP.run : party.moving ? STOP.walk : -STOP.still;
+  const suspicion = Math.max(0, Math.min(100, s.suspicion + change * dt));
+  const t = Math.max(0, s.t - dt);
+  return { ...s, t, suspicion, ...(t === 0 ? { outcome: suspicion < STOP.waved ? "waved" : "searched" } : {}) };
+}
+// The searcher's passive Investigation once the scan is done
+export const stopSearchTotal = (s: StopState) => 10 + (SEARCH_BONUS[Math.max(0, Math.min(3, s.law))] ?? 0) + (s.suspicion >= STOP.thorough ? 5 : s.suspicion < 40 ? -5 : 0);
+// A mind trick on the officer: the weak-minded (a passive Wisdom save under the power's DC) let the party go; the rest turn hostile
+export const stopTrickWorks = (dc: number, law: number) => dc > 10 + (SEARCH_BONUS[Math.max(0, Math.min(3, law))] ?? 0);
+// A bribe: what it costs, and whether it takes
+export const stopBribeCost = (law: number, heat = 0) => STOP.bribe * (1 + law) * (1 + heat);
+export const stopBribeWorks = (persuasion: number, s: StopState) => 10 + persuasion >= 10 + 2 * s.law + (s.suspicion >= STOP.thorough ? 5 : 0);
+
+// ---- The slave trade (2026-11-03; the user: "purchase/sale of slaves"; house rules, the books price no people). Where a crime syndicate rules
+// (a Hutt cartel, Black Sun, pirates) a black-market dealer deals in people held in collars: a captive's freedom bought (they go free, and the
+// people of the place think better of the party), or a captive bought as a servant (a companion who fights for no wage; a heinous crime where
+// the law holds); a companion sold into the pens (heinous where there is law). The price is by how much the person can do.
+export const slavePrice = (cr: number | string = 0) => {
+  const frac = String(cr).match(/^(\d+)\/(\d+)$/);
+  const n = typeof cr === "number" ? cr : frac ? Number(frac[1]) / Number(frac[2]) : Number(cr) || 0;
+  return Math.round(300 + 200 * Math.max(0.25, n));
+};
+export const slaveMarket = (faction: string | undefined) => CRIME.test(faction ?? "");
 
 // The party's dealings, as kept in the campaign
 export interface Standing {
