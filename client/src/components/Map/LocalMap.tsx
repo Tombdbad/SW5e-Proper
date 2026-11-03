@@ -209,6 +209,7 @@ function Sky({ shadow = 30, cast = true, indoors = 0, look, ground = 0, fog, flo
   // The night's light (2026-11-01, the user: everything was too lit): half what it was under a full moon, less under the other phases down to
   // about a third of that under a new one (the moons' phases: shared/logic moonlight); indoors the moons do not count, only the half
   const lunar = look ? moonlight(minutes, look.moons) : 0;
+  // (indoors the sun is the whole sun by day: the roof's shadow keeps it to the windows; at night the unshadowed moon is dimmed as before)
   const night = THREE.MathUtils.lerp(0.5 * (0.35 + 0.65 * lunar), 0.5, indoors);
   return (
     <>
@@ -217,7 +218,7 @@ function Sky({ shadow = 30, cast = true, indoors = 0, look, ground = 0, fog, flo
       {under && <fog attach="fog" args={[background, UNDER_FOG[1], UNDER_FOG[2]]} />}
       {look && !under && <WorldSky look={look} light={light} hour={(minutes / 60) % 24} now={() => hourOf(minuteNow())} clock={minuteNow} ground={ground} lite={lite} fog={fog} floor={floor} />}
       <ambientLight intensity={(0.42 * night + (0.75 - 0.42 * night) * light) * (1 - 0.5 * indoors)} color={under ? "#9fe0e6" : light < 0.3 ? "#a9b8ff" : "#ffffff"} />
-      <directionalLight ref={sunLight} position={sun} intensity={(0.24 * night + (0.9 - 0.24 * night) * light) * (1 - 0.6 * indoors)} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow={cast && light > 0} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
+      <directionalLight ref={sunLight} position={sun} intensity={(0.24 * night + (0.9 - 0.24 * night) * light) * (1 - 0.6 * indoors * (1 - light))} color={twilight ? "#ffb27a" : light ? "#fff6e6" : "#8fa6ff"} castShadow={cast && light > 0} shadow-mapSize-width={1024} shadow-mapSize-height={1024} shadow-camera-left={-shadow} shadow-camera-right={shadow} shadow-camera-top={shadow} shadow-camera-bottom={-shadow} />
     </>
   );
 }
@@ -1068,6 +1069,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // A cave has walls of rock and a rim of formations; every room has the light, the air and the stock its kind of place would
   // (interiors/): its wealth turns the furniture's browns, steels and golds into its own woods, metal and trim
   const detail = useQuality((q) => q.tier);
+  // The daylight now (0 at night): the mood's shaft of light is only drawn by day, and where no window lets a real one in
+  const dayNow = daylight(useClock((c) => Math.round(c.minutes / 5) * 5));
   const rocky = !!mood && mood.buildingType === "cave";
   // A cave room whose floor winds (layout.mask): floor squares, rock round them, no straight walls; a cave's sloping passage (a stairs
   // room, 2026-10-30) has the whole of its rectangle for floor, and the same rock round it
@@ -1283,15 +1286,16 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         // The roof seen from inside: rock over a cave, a deck head in a ship, a plain ceiling elsewhere, on the room's own footprint
         mask ? null
         : vault ? <Vault w={width} h={height} y={wallH} round={nw > 0 && nw === ne && ne === se && se === sw} color={/palace|estates|manor/.test(mood!.buildingType) ? "#ddd3bf" : "#c9c4b8"} rib={/palace/.test(mood!.buildingType) ? "#b8964e" : "#9a9184"} />
-        : rounded ? <RoundedFloor w={width} d={height} radii={[nw, ne, se, sw]} color={ceilingColour} y={wallH} thick={0.1} />
+        : rounded ? <RoundedFloor w={width} d={height} radii={[nw, ne, se, sw]} color={ceilingColour} y={wallH} thick={0.1} shadow />
         : (
-          <mesh position={[width / 2, wallH + 0.05, height / 2]} raycast={() => null}>
+          // (the roof keeps the sun out but for what comes in at the windows: 2026-11-03, the user)
+          <mesh position={[width / 2, wallH + 0.05, height / 2]} raycast={() => null} castShadow>
             <boxGeometry args={[width, 0.1, height]} />
             <meshLambertMaterial color={ceilingColour} />
           </mesh>
         )
       )}
-      {atmosphere && look && walls && <Atmosphere mood={atmosphere} look={look} w={width} h={height} tier={detail} />}
+      {atmosphere && look && walls && <Atmosphere mood={atmosphere} look={look} w={width} h={height} tier={detail} day={dayNow} shaft={dayNow > 0 && !assets.some((a) => a.kind === "window") ? dayNow : 0} />}
       {/* (not in a sloping passage, which is walked from wall to wall) */}
       {rocky && !plan?.form && <CaveDressing w={width} h={height} seed={width * 31 + height} biome={mood!.biome} tier={detail} takenKey={takenKey} mask={mask} />}
       {children}
@@ -1346,7 +1350,7 @@ function Vault({ w, h, y, round, color, rib }: { w: number; h: number; y: number
   if (round) {
     return (
       <group position={[w / 2, y, h / 2]}>
-        <mesh scale={[w / 2, span * 0.5, h / 2]} raycast={() => null}>
+        <mesh scale={[w / 2, span * 0.5, h / 2]} raycast={() => null} castShadow>
           <sphereGeometry args={[1, 28, 10, 0, Math.PI * 2, 0, Math.PI / 2]} />
           <meshLambertMaterial color={color} side={THREE.DoubleSide} />
         </mesh>
@@ -1362,9 +1366,9 @@ function Vault({ w, h, y, round, color, rib }: { w: number; h: number; y: number
   const ribs = Math.max(1, Math.floor(length / 2.2));
   return (
     <group position={[w / 2, y, h / 2]}>
-      {barrel && <mesh geometry={barrel} raycast={() => null}><meshLambertMaterial color={color} side={THREE.DoubleSide} /></mesh>}
+      {barrel && <mesh geometry={barrel} raycast={() => null} castShadow><meshLambertMaterial color={color} side={THREE.DoubleSide} /></mesh>}
       {[-1, 1].map((end) => (
-        <mesh key={end} geometry={lunette} position={alongX ? [end * length / 2, 0, 0] : [0, 0, end * length / 2]} rotation={[0, alongX ? Math.PI / 2 : 0, 0]} raycast={() => null}>
+        <mesh key={end} geometry={lunette} position={alongX ? [end * length / 2, 0, 0] : [0, 0, end * length / 2]} rotation={[0, alongX ? Math.PI / 2 : 0, 0]} raycast={() => null} castShadow>
           <meshLambertMaterial color={color} side={THREE.DoubleSide} />
         </mesh>
       ))}

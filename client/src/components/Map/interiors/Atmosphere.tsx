@@ -147,17 +147,20 @@ function Mist({ w, h, color, density }: { w: number; h: number; color: string; d
   );
 }
 
-export function Atmosphere({ mood, look, w, h, tier }: { mood: Mood; look: RoomLook; w: number; h: number; tier: Tier }) {
+// `shaft`: how much of the mood's shaft of light is drawn (0 at night, and in a room whose windows let in the real sun)
+// `day`: the daylight outside (0 at night): the key light is the sky through the windows, so it is dark at night, and the room's own
+// ambient fill dims to under half, that its lamps' shadows show (2026-11-03, the user: interior shadows by the lights within the room)
+export function Atmosphere({ mood, look, w, h, tier, shaft = 1, day = 1 }: { mood: Mood; look: RoomLook; w: number; h: number; tier: Tier; shaft?: number; day?: number }) {
   const m = useMemo(() => budgetOf(mood, tier), [mood, tier]);
   const motes = moteCount(m, w, h, tier);
   // Each light gets its own colour from the mood; the lamps you see are of the wealth's style
   return (
     <group>
-      <ambientLight color={m.ambient.color} intensity={m.ambient.intensity * 0.55} />
-      {m.key.intensity > 0 && <directionalLight color={m.key.color} intensity={m.key.intensity} position={[w * 0.3, 14, h * 0.2]} />}
-      {m.spots.map((s, i) => <Spot key={i} spot={s} w={w} h={h} lamp={look.lamp} tier={tier} shadow={i === 0} />)}
+      <ambientLight color={m.ambient.color} intensity={m.ambient.intensity * 0.55 * (0.4 + 0.6 * day)} />
+      {m.key.intensity * day > 0 && <directionalLight color={m.key.color} intensity={m.key.intensity * day} position={[w * 0.3, 14, h * 0.2]} />}
+      {m.spots.map((s, i) => <Spot key={i} spot={s} w={w} h={h} lamp={look.lamp} tier={tier} shadow />)}
       <Motes count={motes} w={w} h={h} color={m.mote} />
-      {m.shaft && <Shaft w={w} h={h} color={m.shaft.color} strength={m.shaft.strength} />}
+      {m.shaft && shaft > 0 && <Shaft w={w} h={h} color={m.shaft.color} strength={m.shaft.strength * shaft} />}
       {m.fog && tier === "full" && <Mist w={w} h={h} color={m.fog.color === "#000000" ? "#888888" : shade(m.fog.color, 3)} density={m.fog.density * 20} />}
     </group>
   );

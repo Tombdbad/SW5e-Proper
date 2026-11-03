@@ -1535,9 +1535,9 @@ export function RoomBlock({ w, d, height, radii, wall, roof, parapet, band, dim,
 }
 
 // The floor of a room with rounded outside corners (the squares stay where they are)
-export function RoundedFloor({ w, d, radii, color, y = -0.2, thick = 0.2 }: { w: number; d: number; radii: [number, number, number, number]; color: string; y?: number; thick?: number }) {
+export function RoundedFloor({ w, d, radii, color, y = -0.2, thick = 0.2, shadow = false }: { w: number; d: number; radii: [number, number, number, number]; color: string; y?: number; thick?: number; shadow?: boolean }) {
   const r = radii.map(r2) as [number, number, number, number];
-  return <Model id={`floor:${w}x${d}:${r.join(",")}:${color}:${thick}`} position={[w / 2, y, d / 2]} shadow={false} build={(k) => upright(k, planRect(w, d, r), thick, color, { bevel: 0.01 })} />;
+  return <Model id={`floor:${w}x${d}:${r.join(",")}:${color}:${thick}`} position={[w / 2, y, d / 2]} shadow={shadow} build={(k) => upright(k, planRect(w, d, r), thick, color, { bevel: 0.01 })} />;
 }
 
 // A curved piece of wall at a rounded corner of an opened room: a quarter ring of radius `r`
