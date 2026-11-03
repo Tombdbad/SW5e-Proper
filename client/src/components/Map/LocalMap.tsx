@@ -959,17 +959,32 @@ function WindowGlow({ style, pane, bend }: { style?: Style; pane?: RoomAsset["pa
   useEffect(() => () => geo.dispose(), [geo]);
   return (
     <mesh geometry={geo} position={[0, 0, 0.01]} raycast={() => null}>
-      <meshBasicMaterial color="#ffe2ad" side={THREE.DoubleSide} />
+      <meshBasicMaterial color="#d9bf93" side={THREE.DoubleSide} />
     </mesh>
   );
 }
 function WindowSpill({ at, out, width }: { at: [number, number]; out: [number, number]; width: number }) {
   const tex = spillTexture();
   return (
-    <mesh position={[at[0] + out[0] * 1.7, 0.035, at[1] + out[1] * 1.7]} rotation={[-Math.PI / 2, 0, out[0] ? Math.PI / 2 : 0]} raycast={() => null} renderOrder={2}>
+    <mesh position={[at[0] + out[0] * 1.95, 0.035, at[1] + out[1] * 1.95]} rotation={[-Math.PI / 2, 0, out[0] ? Math.PI / 2 : 0]} raycast={() => null} renderOrder={2}>
       <planeGeometry args={[Math.max(1.6, width * 2.4), 3.6]} />
-      <meshBasicMaterial map={tex ?? undefined} color="#ffc878" transparent opacity={0.42} depthWrite={false} blending={THREE.AdditiveBlending} />
+      <meshBasicMaterial map={tex ?? undefined} color="#ffc878" transparent opacity={0.357} depthWrite={false} blending={THREE.AdditiveBlending} />
     </mesh>
+  );
+}
+// A spot at a window pointing out and a little down; its target stands beside it in the same group (a target of its own, outside the scene,
+// is in the scene's own frame, which the district's group is moved from)
+function WindowSpot({ at, to }: { at: V3; to: V3 }) {
+  const light = useRef<THREE.SpotLight>(null);
+  const target = useRef<THREE.Object3D>(null);
+  useLayoutEffect(() => {
+    if (light.current && target.current) light.current.target = target.current;
+  });
+  return (
+    <>
+      <spotLight ref={light} position={at} color="#ffcf8a" intensity={5.95} distance={9} decay={2} angle={0.95} penumbra={0.6} userData={{ cluster: true }} />
+      <object3D ref={target} position={to} />
+    </>
   );
 }
 // The few lit windows nearest the party light the street for real (a point light each, clustered with the lamps'); the rest only show
@@ -993,7 +1008,9 @@ function WindowLights({ windows, feet }: { windows: { id: string; x: number; y: 
   }, [key]);
   return (
     <>
-      {near.map((w) => <pointLight key={w.id} position={[w.x + w.out[0] * 0.9, w.lift + 1.3, w.y + w.out[1] * 0.9]} color="#ffcf8a" intensity={7} distance={9} decay={2} userData={{ cluster: true }} />)}
+      {/* (a spot, not a point light: a light standing out from the wall that shines every way lit the wall the window is in; a cone that points
+          outward, wider than the window's light needs to be, has the wall wholly behind it) */}
+      {near.map((w) => <WindowSpot key={w.id} at={[w.x + w.out[0] * 0.5, w.lift + 1.3, w.y + w.out[1] * 0.5]} to={[w.x + w.out[0] * 6, w.lift + 0.2, w.y + w.out[1] * 6]} />)}
     </>
   );
 }
