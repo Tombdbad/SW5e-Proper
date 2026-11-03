@@ -1229,6 +1229,9 @@ export function withItemEffects(character: any, facts: Record<string, ItemFacts>
     }, {} as { force?: PowerBonus; tech?: PowerBonus }),
     itemForceDamage: active.reduce((n, a) => n + (a.effects.forceDamage ?? 0), 0),
     itemResist: Array.from(new Set(active.flatMap((a) => a.effects.resist ?? []))),
+    // (2026-11-03) What each item in use does in a real-time fight (shared/logic FightFacts), by its source: an item's name, or "Weapon: Mod" for a
+    // modification fitted in a weapon, armour or clothing
+    itemFight: active.filter((a) => a.effects.fight).map((a) => ({ source: a.source, fight: a.effects.fight! })),
     // Darkvision, stealth, a decoy shadow, a guard against weapons, water at will (parseItemEffects)
     itemSenses: {
       darkvision: Math.max(0, ...active.map((a) => a.effects.darkvision ?? 0)),

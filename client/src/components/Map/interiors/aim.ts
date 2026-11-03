@@ -57,7 +57,8 @@ export const EYE = 1.15;
 // How the party stands in a shooter fight: `k` is how far down it has crouched (0 standing, 1 crouched; eased by the fight's frame) and `lunge` a lean
 // into a saber's swing; the camera, the muzzle and the figure follow them
 // (`p` is how far it has gone prone, 0 to 1: lying on the ground, the eyes a hand's breadth above it)
-export const stance = { k: 0, p: 0, lunge: 0 };
+// (`pace`: the share of its walking pace the party moves at in a fight: haste, a slowed level, anchored feet; `jump`: how far a jump carries: shooter.ts paceOf)
+export const stance = { k: 0, p: 0, lunge: 0, pace: 1, jump: 1 };
 // What the party is doing, for its figure (interiors/limbs.ts Motion): the map writes its posture and whether it is in the air, a shooter fight
 // its aim, shots, strikes, parries and the blows it takes
 export const partyMotion: { current: Motion } = { current: motion() };

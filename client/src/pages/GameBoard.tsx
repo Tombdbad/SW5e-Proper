@@ -21,7 +21,7 @@ import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whe
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
 import { useShoot } from "@/components/Map/interiors/shoot";
-import { avgDice, blankUnit, bladeOf, blastOf, gunOf, modeOf, monstrous, passiveD20, passiveDamage, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Unit } from "@shared/logic/shooter";
+import { avgDice, blankUnit, bladeOf, blastOf, gunOf, modeOf, monstrous, passiveD20, passiveDamage, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Rider, type RtPower, type Unit } from "@shared/logic/shooter";
 import { SabaccTable, BUY_IN_CHIPS, type TableOpponent } from "@/components/Games/SabaccTable";
 import { PazaakGame } from "@/components/Games/PazaakGame";
 import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, rewardItem, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, needsGear, GEAR_WARNING, type Contract, type Offer } from "@shared/logic/contracts";
@@ -39,6 +39,7 @@ import { useMap } from "@/lib/stores/useMap";
 import GMReportManager from "@/components/Campaign/GMReportManager";
 import { toast } from "sonner";
 import { realtimePowers } from "@/lib/sw5e/realtimePowers";
+import powerData from "@shared/data/sw5e/powers.json";
 import { useCoop, saveShared, sharePets, resumeCoop, proposeTravel, arrivedTravel, cancelTravel, coopOthers, sayToMates } from "@/lib/coop";
 import { CoopButton, CoopDialog, CoopLink, TravelRoomPanel } from "@/components/Play/CoopUI";
 import { isGroupExit, shipSeats, unitsOf, type Craft } from "@shared/logic/coop";
@@ -82,7 +83,7 @@ import {
   districtAt, rollEncounter, encounterResult, deliveredResult, ambushEncounter, ambushIn, gangPurse, gangSpots, ENCOUNTER_GAP, optionsOf, tollOf, pathToTeach, leaningOf, forceAlignOf, type Encounter, type Learner,
   watchersAt, exposedRooms, districtArena, districtFront, openAir, trapsIn, levelsArena, PIT_CLIMB_DC,
   setPane, climbable, PANE_LATCH_DC, PANE_BREAK_DC, PANE_SENSOR_DC, PANE_SENSOR_SEEN, PATIO_SENSOR_DC, type Pane, climbWay, climbGearOf, outsideClimbs, verticalMove,
-  hidingPlaces, hidingRoom, lawSearch, searchedAt,
+  hidingPlaces, hidingRoom, lawSearch, searchedAt, fightFactsOf, type FightFacts,
   START_TIME, DAY, hourOf, dayOf, clockText, partOfDay, tripMinutes, eraOf, eraById, lawAt, lawText, unitOf as hashUnit, nemesisAmbush,
   withPresence, withPartyShips, bulkOf, shoveAsset, moveRoomAssets,
   gearUse, toolFor, toolTrained, boonOf, gambleMode, gambleResult, GAMBLE_ROUNDS, GAMBLE_HOUSE_DC, GAMBLE_STAKE, GAMBLE_COMPLICATION, GAMBLE_COMPLICATIONS,
@@ -409,6 +410,8 @@ export default function GameBoard() {
       ...(kit.boons?.poison ? { venom: avgDice(kit.boons.poison.dice) } : {}),
       ...(kit.high && !kit.high.low ? { high: { t: 60, temp: avgDice(kit.high.temp), every: 0 } } : {}),
     });
+    fightWithItems(party, kit);
+    for (const g of belt) if (g.rest) restGear.current[g.name] = g.rest;
     const others = useCombat.getState().combatants.filter((c) => !c.isPlayer && c.hp > 0);
     // Help a foe with a comlink can call (house rule: SHOOT.backup): up to two more of the weakest of them, waiting off the map
     const callers = others.filter((c) => !c.ally && callsForHelp(c));
@@ -421,13 +424,120 @@ export default function GameBoard() {
       meta: Object.fromEntries([...others.map((c) => [String(c.id), { role: c.role, species: c.species, creature: c.creature, size: c.size }]), ...backup.map((u) => [u.id, { role: weakest!.role, species: weakest!.species, creature: weakest!.creature, size: weakest!.size }])]),
       seed: Math.floor(Math.random() * 1e9), surprise, gear: belt,
       // The powers the character knows that a real-time fight can play (keys 1 to 4), read from their texts, and the points to cast them with
-      powers: realtimePowers([...(character?.forcePowers ?? []), ...(character?.techPowers ?? [])], Number(character?.level) || 1, character?.abilityScores),
+      powers: realtimePowers([...(character?.forcePowers ?? []), ...(character?.techPowers ?? [])], Number(character?.level) || 1, character?.abilityScores).map((w) => ({ ...w, ...(w.tradition === "force" && (character as any)?.itemForceDamage && w.kind === "damage" ? { damage: w.damage + (character as any).itemForceDamage } : {}) })),
       points: me.powerPoints ?? character?.currentForcePoints ?? 0,
     });
   };
 
+  // What the items in use do in a real-time fight (2026-11-03; shared/logic FightFacts, read from their texts; house rules where the books' turns
+  // do not exist here): the modifications on the gun and the blade ride on its shots and blows (more dice, an opener, a resistance ignored, a
+  // slow, a quickening, a chain, a cone, a shove: the last three once a rest), more range, a quicker reload, a scope, an enhanced launcher's
+  // dice, less kick from a recoil dampener; a blade on a blaster or a blaster in a hilt when there is no other; unarmed strikes of an arm;
+  // the defences of armour and augments (half from bursts, once to 1 hit point, no criticals, kinetic and energy cut while temporary hit
+  // points last, the bioenhancement's hit points as temporary ones at the start: house rule, a hood's first moments, a respirator); points back
+  // on a kill; what a focus or wristpad adds to powers, and its subroutines; the senses (truesight, a far eye's zoom, hearing, a light)
+  const restGear = useRef<Record<string, "short" | "long">>({});
+  const fightWithItems = (party: Unit, kit: any) => {
+    const items: { source: string; fight: FightFacts }[] = (character as any)?.itemFight ?? [];
+    const uses = play.featureUses ?? {};
+    const level = Number(character?.level) || 1;
+    const prof = Number(character?.proficiencyBonus) || 2 + Math.floor((level - 1) / 4);
+    const unused = (item: string, rest: "short" | "long") => !(uses[`${rest === "short" ? "item~" : "item:"}${item}`] > 0);
+    const rests: Record<string, "short" | "long"> = {};
+    const on = (weapon?: string) => (weapon ? items.filter((x) => x.source === weapon || x.source.startsWith(`${weapon}: `)) : []);
+    const once: Record<string, boolean> = {};
+    const riderOf = (list: typeof items): Rider | undefined => {
+      const r: Rider = {};
+      for (const { source, fight: f } of list) {
+        const item = source.split(": ").pop()!;
+        if (f.extra) r.extra = { damage: (r.extra?.damage ?? 0) + avgDice(f.extra.dice), type: r.extra?.type ?? f.extra.type };
+        if (f.opener) r.opener = { damage: avgDice(f.opener.dice), type: f.opener.type };
+        if (f.pierce) r.pierce = [...(r.pierce ?? []), ...f.pierce];
+        if (f.maser) r.maser = true;
+        if (f.slowOnHit) r.slow = Math.max(r.slow ?? 0, f.slowOnHit / 30);
+        if (f.hasteOnHit) r.haste = f.hasteOnHit / 30;
+        if (f.critFollow) r.critFollow = true;
+        if (f.doubles) r.doubles = f.doubles;
+        const spare = (rest: "short" | "long") => { rests[item] = rest; if (unused(item, rest)) once[item] = true; return unused(item, rest); };
+        if (f.chain && spare(f.chain.rest)) r.chain = { squares: f.chain.feet / 5, item };
+        if (f.burstOnHit && spare(f.burstOnHit.rest)) r.burst = { damage: avgDice(f.burstOnHit.dice), type: f.burstOnHit.type, cone: f.burstOnHit.cone / 5, item };
+        if (f.shoveOnHit && spare(f.shoveOnHit.rest)) r.shove = { squares: f.shoveOnHit.feet / 5, prone: f.shoveOnHit.prone, item };
+      }
+      return Object.keys(r).length ? r : undefined;
+    };
+    const gunItems = on(kit.rangedWeapon);
+    const bladeItems = on(kit.meleeWeapon);
+    const g = party.gun;
+    if (g) {
+      g.rider = riderOf(gunItems);
+      for (const { fight: f } of gunItems) {
+        if (f.range) { g.range += f.range[0] / 5; g.long += f.range[1] / 5; }
+        if (f.quickReload) g.reload *= 0.4;
+        if (f.scope) g.scope = true;
+        if (f.recoil) g.kick = Math.max(0.1, (g.kick ?? 0.4) * (1 - 0.08 * f.recoil));
+        if (f.launcher) g.boost = { dice: f.launcher.dice, bonus: f.launcher.bonus };
+      }
+    }
+    const b = party.blade;
+    if (b) {
+      b.rider = riderOf(bladeItems);
+      for (const { fight: f } of bladeItems) if (f.levitate) party.channel = { ...(party.channel ?? {}), levitate: f.levitate };
+    }
+    // A second weapon in the one carried, when there is no other: a bayonet or axe on the gun, a blaster in a hilt
+    const bayonet = gunItems.find((x) => x.fight.melee)?.fight.melee;
+    if (!kit.meleeWeapon && bayonet) party.blade = { name: "Bayonet", damage: avgDice(bayonet.dice) + modifier(character?.abilityScores?.dexterity), type: bayonet.type, saber: false };
+    const hilt = bladeItems.find((x) => x.fight.ranged)?.fight.ranged;
+    if (!g && hilt) party.gun = { name: "Hilt blaster", damage: avgDice(hilt.dice), type: hilt.type, interval: 0.4, auto: false, range: hilt.range[0] / 5, long: hilt.range[1] / 5, mag: hilt.reload, left: hilt.reload, reserve: 99, cells: true, spent: 0, reload: 1.6, kick: 0.2, steady: 1.1 };
+    // Unarmed strikes of an arm (a shock arm, a grav-lev arm), a reach, a strong arm's damage
+    for (const { fight: f } of items) {
+      if (f.unarmed && !kit.meleeWeapon && party.blade) Object.assign(party.blade, { damage: Math.max(party.blade.damage, avgDice(f.unarmed.dice) + modifier(character?.abilityScores?.strength)), type: f.unarmed.type });
+      if (f.reach && party.blade && !kit.meleeWeapon) party.blade.reach = 1;
+      if (f.meleeDamage && party.blade && !party.blade.saber) party.blade.damage += f.meleeDamage;
+    }
+    // Defences
+    const all = (k: keyof FightFacts) => items.filter((x) => x.fight[k]);
+    if (all("evade").length) party.evade = true;
+    const endure = all("endure")[0];
+    if (endure) { const item = endure.source.split(": ").pop()!; rests[item] = "long"; if (unused(item, "long")) party.endure = item; }
+    if (all("critImmune").length) party.critImmune = true;
+    if (all("tempGuard").length) party.tempGuard = Math.ceil(prof / 2);
+    const bio = items.reduce((n, x) => n + (x.fight.hpPerLevel ?? 0), 0);
+    if (bio) party.temp = Math.max(party.temp, bio * level);
+    if (all("firstResist").length) party.buffs = [...(party.buffs ?? []), { name: "Hood drawn", t: 6, resist: ["acid", "cold", "energy", "fire", "force", "ion", "kinetic", "lightning", "necrotic", "poison", "psychic", "sonic"] }];
+    if (all("respirator").length) party.resist = Array.from(new Set([...(party.resist ?? []), "poison"]));
+    const kill = all("killPoints")[0];
+    if (kill) { const item = kill.source.split(": ").pop()!; rests[item] = "short"; if (unused(item, "short")) party.killPoints = { points: Math.max(1, modifier(character?.abilityScores?.intelligence)), item }; }
+    // Through a focus or wristpad
+    const ch: NonNullable<Unit["channel"]> = { ...(party.channel ?? {}) };
+    for (const { fight: f } of items) {
+      if (f.pointDamage && (!ch.perPoint || f.pointDamage.per > ch.perPoint.per)) ch.perPoint = f.pointDamage;
+      if (f.healTemp) ch.healTemp = Math.max(ch.healTemp ?? 0, f.healTemp);
+      if (f.powerRange) ch.range = Math.max(ch.range ?? 0, f.powerRange / 5);
+      if (f.powerRadius) ch.radius = Math.max(ch.radius ?? 0, f.powerRadius / 5);
+      if (f.powerPush) ch.push = Math.max(ch.push ?? 0, f.powerPush / 5);
+      if (f.coldSlows) ch.coldSlows = true;
+      if (f.powerDie) ch.die = true;
+      if (f.guardBonus) ch.guard = f.guardBonus;
+      if (f.jolt) ch.jolt = { damage: avgDice(f.jolt.dice), type: f.jolt.type };
+      if (f.subroutine) ch.subroutines = [...(ch.subroutines ?? []), f.subroutine];
+    }
+    if (ch.subroutines) { ch.subUses = Math.max(0, prof - (uses["item:Subroutines"] ?? 0)); rests["Subroutines"] = "long"; }
+    if (Object.keys(ch).length) party.channel = ch;
+    if (Object.keys(once).length) party.once = once;
+    // Senses: truesight, a far eye or macrobinoculars (the zoom), an ear's hearing, a light
+    const carried = (character?.equipment ?? []) as string[];
+    const parts: string[] = (play.augments ?? []).flatMap((a: any) => (itemFacts?.[String(a.name).toLowerCase()] as any)?.parts ?? []);
+    party.senses = {
+      truesight: Math.max(0, ...items.map((x) => (x.fight.truesight ?? 0) / 5)),
+      zoom: items.some((x) => x.fight.zoom) ? 4 : carried.some((n) => /binocular/i.test(n)) ? 3 : items.some((x) => x.fight.scope) ? 2 : 0,
+      hearing: parts.includes("ear") ? 14 : 0,
+      light: items.some((x) => x.fight.flashlight) || carried.some((n) => /^glowrod/i.test(n)) ? 12 : 0,
+    };
+    restGear.current = rests;
+  };
+
   // The character is the one the campaign belongs to
-  const gameCharacterId = (coopCharacter ?? (data as any)?.characterId) as number | undefined;
+  const gameCharacterId =(coopCharacter ?? (data as any)?.characterId) as number | undefined;
   const { data: rawCharacter, isLoading: characterLoading } = useQuery<any>({
     queryKey: ["game-character", gameCharacterId],
     queryFn: async () => {
@@ -2610,6 +2720,17 @@ export default function GameBoard() {
           const charges: Record<string, number> = { ...(current.playState?.charges ?? {}) };
           let state: PlayState = { ...(current.playState ?? {}), charges };
           let changes: Record<string, any> = {};
+          // (what an item does once a rest, or a number of times, is counted in the feature uses until a short or long rest, not taken from
+          // the pack: fightWithItems's restGear, the belt's `rest`)
+          const featureUses: Record<string, number> = { ...(current.playState?.featureUses ?? {}) };
+          for (const [name, n] of Object.entries(shotUsed)) {
+            const rest = restGear.current[name] ?? (/subroutine$/i.test(name) ? "long" : undefined);
+            if (!rest) continue;
+            const key = `${rest === "short" ? "item~" : "item:"}${/subroutine$/i.test(name) ? "Subroutines" : name}`;
+            featureUses[key] = (featureUses[key] ?? 0) + n;
+            delete shotUsed[name];
+          }
+          state = { ...state, featureUses };
           for (const [name, n] of Object.entries(shotUsed)) for (let i = 0; i < n; i++) {
             const use = gearOf(name);
             const uses = use && "uses" in use ? use.uses : undefined;
@@ -3066,6 +3187,8 @@ export default function GameBoard() {
     if (kind === "long") return {};
     for (const f of combatFeatures(character)) if (f.uses?.recharge === "short") delete used[f.pool];
     delete used.focus;
+    // (an item's uses that come back with a short rest: fightWithItems)
+    for (const k of Object.keys(used)) if (k.startsWith("item~")) delete used[k];
     return used;
   };
   // The hit point maximum as exhaustion leaves it (the rules data: level 4 and up halves it; 2026-10-26, it was not applied)
@@ -4332,7 +4455,9 @@ export default function GameBoard() {
   if (world && here) exits.push(...outsideClimbs(world, here.id, climbGear));
   // What the party has for the real-time moves of the map (interiors/air.ts: Space jumps, F fires the hook, Left Shift fires a pack's burst): the hook
   // that is fired and the pack that flies (the one running, else the best carried), and which ways up the building in front of them each would give
-  const airFlyer = ((character?.equipment ?? []) as string[]).map((n) => ({ n, f: accessoryOf({ name: n, description: factsOf(n)?.description }).fly })).filter((x) => x.f).sort((a, b) => (running(b.n) ? 1 : 0) - (running(a.n) ? 1 : 0) || (b.f ?? 0) - (a.f ?? 0))[0];
+  // (2026-11-03: and what flies built into what is worn, a modification or a droid's part: integrated jetboosters, repulsor lifts, a helisaber)
+  const fightItems: { source: string; fight: FightFacts }[] = (character as any)?.itemFight ?? [];
+  const airFlyer = [...((character?.equipment ?? []) as string[]).map((n) => ({ n, f: accessoryOf({ name: n, description: factsOf(n)?.description }).fly })), ...fightItems.filter((x) => x.fight.flight).map((x) => ({ n: x.source.split(": ").pop()!, f: x.fight.flight!.feet as number | undefined }))].filter((x) => x.f).sort((a, b) => (running(b.n) ? 1 : 0) - (running(a.n) ? 1 : 0) || (b.f ?? 0) - (a.f ?? 0))[0];
   const upWays = (gear: typeof climbGear) => (world && here ? outsideClimbs(world, here.id, gear).filter((e) => e.via === "enter") : []);
   const airGear: AirGear | null = world && here && character ? (() => {
     const fly = airFlyer ? upWays({ flying: airFlyer.n }) : [];
@@ -4341,7 +4466,9 @@ export default function GameBoard() {
       size: String((speciesFacts as any)?.size ?? "Medium"),
       swim: swimPace(speciesFacts?.speed?.swim ? `swim ${speciesFacts.speed.swim} ft.` : "", speciesFacts?.speed?.walk ?? 30),
       g: gravityOf(world, here.id, ((character.equipment ?? []) as string[]).some((n) => /gravity generator/i.test(n) && running(n))).g,
-      hook: climbGear.shot ? hookStats(climbGear.shot) : undefined,
+      // (a grappling harpoon in the armour, a harpoon reel on a weapon, a wrist-mounted hook fire and reel as a hook does)
+      hook: climbGear.shot ? hookStats(climbGear.shot) : (() => { const h = fightItems.find((x) => x.fight.harpoon); return h ? hookStats({ name: h.source.split(": ").pop()!, range: h.fight.harpoon!.range[0], long: h.fight.harpoon!.range[1], cable: h.fight.harpoon!.cable }) : undefined; })(),
+      leap: fightItems.some((x) => x.fight.jump) ? Math.max(...fightItems.map((x) => x.fight.jump ?? 1)) : undefined,
       fly: airFlyer ? { name: airFlyer.n, feet: airFlyer.f!, on: running(airFlyer.n) } : undefined,
       ways: {
         leap: upWays({ reach: climbGear.reach }).length > 0,
@@ -4413,7 +4540,10 @@ export default function GameBoard() {
       jumped,
     };
   };
-  const fallDamage = (dice: number, sides: number, half: boolean) => {
+  const fallDamage = (dice: number, sides: number, halved: boolean) => {
+    // (emergency landing braces in the armour take the fall at half: FightFacts.fallHalf, the reaction always taken)
+    const braces = ((character as any)?.itemFight ?? []).some((x: { fight: FightFacts }) => x.fight.fallHalf);
+    const half = halved || braces;
     if (playMode === "shooter") return passiveDamage(dice, sides, half);
     const rolled = Array.from({ length: dice }, () => die(sides)).reduce((a, b) => a + b, 0);
     return half ? Math.floor(rolled / 2) : rolled;
@@ -5166,6 +5296,28 @@ export default function GameBoard() {
 
   // What the character can use in a real-time fight (the shooter's item belt, shared/logic/shooter.ts GearAct; 2026-11-02, the user: every item
   // its use there too), read from each item's rules as `combatItems` reads them for the tabletop: dice at their average, a kit's uses left
+  // A power an item casts (named in its text: shared/logic FightFacts.casts), read as the character would play it (realtimePowers), free of points
+  const itemPower = (name: string): RtPower | undefined => {
+    const row = (powerData as any[]).find((p) => String(p.name).toLowerCase() === name.toLowerCase());
+    const read = row ? realtimePowers([row], Number(character?.level) || 1, character?.abilityScores)[0] : undefined;
+    return read ? { ...read, cost: 0, item: true } : undefined;
+  };
+  // What a ring of storing holds (its text: "When found, it contains 1d7 - 1 levels of stored force powers chosen by the GM"): the GM's choice
+  // taken by the ring's name (house rule): powers of its kind that a fight can play, up to its levels, refilled at a long rest
+  const storedPowers = (ring: string, s: NonNullable<FightFacts["stores"]>): RtPower[] => {
+    const pool = (powerData as any[]).filter((p) => /tech/i.test(String(p.powerType)) === (s.kind === "tech") && Number(p.level) >= 1 && Number(p.level) <= Math.min(s.top, s.levels));
+    const out: RtPower[] = [];
+    let left = s.levels;
+    for (let i = 0; i < pool.length && left > 0 && out.length < 4; i++) {
+      const p = pool[(hashString(`${ring}|${i}`) + i * 7) % pool.length];
+      if (Number(p.level) > left || out.some((x) => x.name === p.name)) continue;
+      const read = itemPower(p.name);
+      if (!read) continue;
+      out.push(read);
+      left -= Number(p.level);
+    }
+    return out;
+  };
   const fightGear = (): FightGear[] => {
     if (!character) return [];
     const carried = (character.equipment ?? []) as string[];
@@ -5215,6 +5367,48 @@ export default function GameBoard() {
       else if (use.kind === "binders") add({ act: "bind", droid: false });
       else if (use.kind === "bolt") add({ act: "bind", droid: true });
       else if (use.kind === "jammer") add({ act: "jam" }, 1);
+    }
+    // (2026-11-03) What the items in use give the belt (shared/logic FightFacts, read from their texts): a net or bolas thrown (picked up after:
+    // `keep`), a harpoon fired, a shield overloaded or projected, a stealth field or anchored feet switched, a hidden blaster revealed, a blade's
+    // own poison, a droid's kits, a jammer or an eye built in, a light, a leap of the boots, the powers an item casts and a ring has stored. What
+    // is spent for the rest (`rest`) is counted in the feature uses until a short or long rest, not taken from the pack.
+    const uses = play.featureUses ?? {};
+    const restKey = (name: string, rest: "short" | "long") => `${rest === "short" ? "item~" : "item:"}${name}`;
+    const addRest = (name: string, total: number, rest: "short" | "long", act: FightGear["act"]) => {
+      const n = Math.max(0, total - (uses[restKey(name, rest)] ?? 0));
+      if (n > 0) out.push({ name, count: n, act, rest });
+    };
+    const fighter = /fighter/i.test(String(character.class ?? "")) ? Number(character.level) || 1 : 0;
+    for (const { source, fight: f } of fightItems) {
+      const name = source.split(": ").pop()!;
+      if (f.overload) addRest(name, f.overload.uses, f.overload.rest, { act: "overload", reach: f.overload.feet / 5 });
+      if (f.amplify) addRest(name, f.amplify.uses, f.amplify.rest, { act: "amplify", ac: 2 });
+      if (f.harpoon) out.push({ name, count: 1, keep: true, act: { act: "harpoon", range: f.harpoon.range[1] / 5, damage: avgDice(f.harpoon.dice), cable: f.harpoon.cable / 5 } });
+      if (f.cloak) out.push({ name, count: 1, act: { act: "cloak" } });
+      if (f.anchor) out.push({ name, count: 1, act: { act: "anchor" } });
+      if (f.hiddenGun) addRest(name, 1, "short", { act: "hidden", damage: avgDice(f.hiddenGun.dice), type: f.hiddenGun.type, range: f.hiddenGun.range[1] / 5 });
+      if (f.venom) addRest(name, 1, f.venom.rest, { act: "coat", damage: avgDice(f.venom.dice) });
+      if (f.kit) {
+        addRest(`${name}: restore`, 1, f.kit.rest, { act: "heal", amount: Math.max(1, Math.round(avgDice(f.kit.dice))), ...(f.kit.droid ? { droid: true } : {}) });
+        addRest(`${name}: stabilize`, 1, f.kit.rest, { act: "revive", droid: f.kit.droid });
+        if (f.kit.cures) addRest(`${name}: cure`, 1, f.kit.rest, { act: "cure" });
+      }
+      if (f.jammer) out.push({ name, count: 1, act: { act: "jam" } });
+      if (f.remoteEye) out.push({ name, count: 1, act: { act: "eye", range: 6 } });
+      if (f.flashlight) out.push({ name, count: 1, act: { act: "light" } });
+      if (f.leap && fighter) addRest(name, Math.ceil(fighter / 2), "long", { act: "leap", range: f.leap.feet / 5 });
+      for (const c of f.casts ?? []) {
+        const power = itemPower(c.power);
+        if (!power) continue;
+        if (c.rest === "never") out.push({ name: `${name}: ${power.name}`, count: 1, act: { act: "cast", power } });
+        else addRest(`${name}: ${power.name}`, c.uses, c.rest, { act: "cast", power });
+      }
+      if (f.stores) for (const power of storedPowers(name, f.stores)) addRest(`${name}: ${power.name}`, 1, "long", { act: "cast", power });
+    }
+    // (a net or bolas carried: thrown, and picked up again after the fight)
+    for (const name of Array.from(new Set(carried))) {
+      const f = fightFactsOf(name, factsOf(name)?.description ?? "");
+      if (f?.snare) out.push({ name, count: carried.filter((x) => x === name).length, keep: true, act: { act: "snare", dc: f.snare.dc } });
     }
     // (what does most first: explosives, then healing)
     const rank: Record<string, number> = { throw: 0, rocket: 1, heal: 2, set: 3, detonate: 4, revive: 5 };

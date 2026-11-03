@@ -74,6 +74,9 @@ export interface AirGear {
   fly?: { name: string; feet: number; on: boolean };
   // Which ways up to the roof or balcony of the building the party stands before the gear gives (the lowest, in squares up)
   ways: { leap: boolean; hook: boolean; fly: boolean; up?: number };
+  // How much farther a jump carries (leg reinforcements: twice), and falls taken at half (emergency landing braces)
+  leap?: number;
+  fallHalf?: boolean;
   // The character's pace in the water, a share of their walking pace (shared/logic swimPace: their species' swimming speed, else half)
   swim?: number;
 }

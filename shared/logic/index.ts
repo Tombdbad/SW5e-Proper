@@ -11207,6 +11207,115 @@ export interface ItemEffects {
   // ("this weapon's dexterity number is reduced by one step": dexterity 15 to 13, and at 11 the property goes)
   drops?: string[];
   lowers?: string[];
+  // (2026-11-03) "reduced by five steps": how many steps each number falls (one step when `lowers` alone names it)
+  lowerSteps?: Record<string, number>;
+  // What the item does in a real-time fight (2026-11-03; the user: the rest of the items "need their own rules written, visual effects, character
+  // animations, and implementation", the shooter first): read from the text, see FightFacts
+  fight?: FightFacts;
+}
+// An item's part in the shooter (shared/logic/shooter.ts), read from its wording. Dice are kept as written; the fight takes them at their average.
+export interface FightFacts {
+  // More damage on each hit of the weapon it is in ("roll a d4 and add the result", "an additional 1d6 sonic damage": one type of the text's
+  // list, the GM's choice taken by the item's name: house rule), or only the first hit on each foe ("the first time you hit a creature ... each
+  // round", "a creature that has not yet acted")
+  extra?: { dice: string; type?: string };
+  opener?: { dice: string; type?: string };
+  // Range gained in feet (normal/long), damage types whose resistance its shots ignore, a foe's saber turning its bolts less often, no long-range
+  // penalty (a scope), a light in a cone of so many feet (bright: it shows the way and gives the bearer away)
+  range?: [number, number];
+  pierce?: string[];
+  maser?: boolean;
+  scope?: boolean;
+  flashlight?: number;
+  // A free reload ("reload this weapon once without using an action"): the shooter's reload is quicker
+  quickReload?: boolean;
+  // A weapon's strength number lowered so many steps (a recoil dampener): it kicks less
+  recoil?: number;
+  // A hit slows the foe hit by so many feet; dealing damage quickens the party by so many feet for a moment
+  slowOnHit?: number;
+  hasteOnHit?: number;
+  // Once a rest: a hit goes on to another foe within so many feet, a hit sets off a cone of damage, a hit shoves the foe so far and down
+  chain?: { feet: number; rest: "short" | "long" };
+  burstOnHit?: { dice: string; type: string; cone: number; rest: "short" | "long" };
+  shoveOnHit?: { feet: number; prone: boolean; rest: "short" | "long" };
+  // A coat of poison it can give the blade itself (Venomous Oscillator), a poison applied at once (Chem Integrator)
+  venom?: { dice: string; rest: "short" | "long" };
+  quickPoison?: boolean;
+  // A second weapon in it: a blade on a blaster (a bayonet, an axe), a blaster in a hilt; a hidden blaster to be revealed for one shot
+  melee?: { dice: string; type: string };
+  ranged?: { dice: string; type: string; range: [number, number]; reload: number };
+  hiddenGun?: { dice: string; type: string; range: [number, number] };
+  // Unarmed strikes: their dice and type, and a reach; a bonus to melee damage with Strength (an arm)
+  unarmed?: { dice: string; type: string };
+  reach?: boolean;
+  meleeDamage?: number;
+  // Defences: half damage from a burst, cone or breath (the save's "no damage ... half"), once to 1 hit point instead of 0, a critical hit
+  // made a normal one, kinetic and energy damage cut while temporary hit points last (by half the proficiency bonus), hit points a level
+  evade?: boolean;
+  endure?: boolean;
+  critImmune?: boolean;
+  tempGuard?: boolean;
+  hpPerLevel?: number;
+  // Acts of its own on the belt: a shield overloaded (foes within 5 ft. shoved and knocked down, uses a rest), a shield projected round
+  // companions (+AC), a harpoon or hook fired (range in feet, damage, cable), a stealth field (minutes of use), feet anchored (no push)
+  overload?: { uses: number; rest: "short" | "long"; feet: number };
+  amplify?: { uses: number; rest: "short" | "long" };
+  harpoon?: { range: [number, number]; dice: string; cable: number };
+  cloak?: { minutes: number };
+  anchor?: { speed: number };
+  // A power it casts (named in the text, read as the power is: client/src/lib/sw5e/realtimePowers.ts), how often, and how many stored levels
+  casts?: { power: string; uses: number; rest: "short" | "long" | "never" }[];
+  stores?: { kind: "force" | "tech"; levels: number; top: number };
+  // Movement: flight in feet while it runs (minutes it lasts; falls when hurt), a long jump doubled, leaps of 10 ft. a charge, falls halved
+  flight?: { feet: number; minutes: number; fragile?: boolean };
+  jump?: number;
+  leap?: { feet: number; perCharge: true };
+  fallHalf?: boolean;
+  // Senses: truesight in feet, a far eye (advantage on sight beyond 30 ft.: the zoom), an eye sent off on its legs, darkvision's harsh side
+  truesight?: number;
+  zoom?: boolean;
+  remoteEye?: boolean;
+  glare?: boolean;
+  // Hidden from what looks for it: a droid that passes for a living being, a Force presence hidden, armour that folds into a case
+  passes?: boolean;
+  forceHidden?: boolean;
+  disguised?: boolean;
+  // Force and tech powers through it: damage per point spent (by a factor), temporary hit points per point on a heal, range gained (feet),
+  // radius gained (feet), push or pull farther (feet), cold damage slows, a d12 kept for the next power after a save is failed
+  pointDamage?: { kind: "force" | "tech"; per: number };
+  healTemp?: number;
+  powerRange?: number;
+  powerRadius?: number;
+  powerPush?: number;
+  coldSlows?: boolean;
+  powerDie?: boolean;
+  // A tech subroutine (Wretched Hives): spend more points on a power for its effect, a number of times a rest equal to the proficiency bonus
+  subroutine?: "distant" | "twinned" | "quickened" | "improved" | "heightened" | "extended" | "seeking" | "careful" | "lingering" | "pinpoint" | "refocused";
+  // Points back on a kill or critical (the Intelligence modifier, once a rest)
+  killPoints?: boolean;
+  // Resistance to all damage for the first moments of a fight (a hood drawn), resistance to one type chosen by the GM (taken by the name)
+  firstResist?: boolean;
+  // A net or bolas: what it hits (Large or smaller) is held until it frees itself (the check's DC, the ability)
+  snare?: { dc: number; ability: string };
+  // An enhanced grenade launcher: damage dice more, and a bonus to each grenade's damage
+  launcher?: { dice: number; bonus: number };
+  // A hidden pocket sewn in (pounds, the Investigation DC to find it)
+  pocket?: { lb: number; dc: number };
+  // Faster on a dash (feet), a hood that lets its wearer hide in half cover, a lightweapon's critical that leaves the foe open, an edge's
+  // doubled die on advantage, weapon dice more when the Force throws it, a force-imbued strike made lightning for a point, a tech shield's
+  // bonus raised
+  dash?: number;
+  hood?: boolean;
+  critFollow?: boolean;
+  doubles?: number;
+  levitate?: number;
+  jolt?: { dice: string; type: string };
+  guardBonus?: number;
+  // A droid's built-in medical or repair kit (each use once a rest): hit points restored, and whether it stabilizes and cures
+  kit?: { dice: string; droid: boolean; cures: boolean; rest: "short" | "long" };
+  // A comm jammer built in (an implant's interceptor mode), a respirator mode's resistance to poison
+  jammer?: boolean;
+  respirator?: boolean;
 }
 export interface PowerBonus { melee?: number; ranged?: number; dc?: Record<string, number> }
 
@@ -11279,7 +11388,7 @@ export function parseItemEffects(source: string): ItemEffects {
     if (/\binstead of\b|\bwhen you do so\b|\blose the\b|\bfor each saving throw\b/i.test(sentence)) continue;
     // (a set's bonus, "while wearing and attuned to this cloak and Jensaarai Armor", needs the other piece: not read)
     if (/while wearing and attuned to this \w+ and /i.test(sentence)) continue;
-    const dark = sentence.match(/you have darkvision (?:to a range of|out to) (\d+) feet/i);
+    const dark = sentence.match(/you (?:have|gain) darkvision (?:to a range of|out to) (\d+) feet/i);
     if (dark) effects.darkvision = Math.max(effects.darkvision ?? 0, Number(dark[1]));
     const sneak = sentence.match(/(advantage|disadvantage) on Dexterity \(Stealth\) checks/i);
     if (sneak) effects.stealth = /^dis/i.test(sneak[1]) ? -1 : 1;
@@ -11313,12 +11422,15 @@ export function parseItemEffects(source: string): ItemEffects {
     const robe = sentence.match(/\+(\d+) bonus to damage rolls with weapons and force powers/i);
     if (robe) { effects.damage = Number(robe[1]); effects.forceDamage = Number(robe[1]); }
     // Resistance while worn: a type named, or all ("unenhanced": a foe's attacks are)
-    if (/resistan(?:t|ce) to all unenhanced damage/i.test(sentence)) effects.resist = ALL_DAMAGE;
+    if (/resist[ae]n(?:t|ce) to (?:all )?unenhanced damage/i.test(sentence)) effects.resist = ALL_DAMAGE;
     else for (const m of sentence.matchAll(/(?:have|has) resistance to (\w+) damage/gi)) if (ALL_DAMAGE.includes(m[1].toLowerCase())) effects.resist = Array.from(new Set([...(effects.resist ?? []), m[1].toLowerCase()]));
     // A weapon modification's lost or lowered properties
     for (const m of sentence.matchAll(/loses the ([a-z-]+) property/gi)) effects.drops = Array.from(new Set([...(effects.drops ?? []), m[1].toLowerCase()]));
-    const lower = sentence.match(/weapon's (\w+) number is reduced by one step/i);
-    if (lower) effects.lowers = Array.from(new Set([...(effects.lowers ?? []), lower[1].toLowerCase()]));
+    const lower = sentence.match(/(?:weapon|item|armor|armor or shield)'s (\w+) number is reduced by (\w+) steps?/i);
+    if (lower) {
+      effects.lowers = Array.from(new Set([...(effects.lowers ?? []), lower[1].toLowerCase()]));
+      effects.lowerSteps = { ...(effects.lowerSteps ?? {}), [lower[1].toLowerCase()]: NUMBER_WORDS[lower[2].toLowerCase()] ?? (Number(lower[2]) || 1) };
+    }
     const bonus = sentence.match(/\+(\d+) bonus to (attack and damage rolls|attack rolls and damage rolls|attack rolls|damage rolls)/i);
     if (bonus && !robe && !/force attack|tech attack|force powers|grenade|save DC|wrist launcher|dart/i.test(sentence) && effects.attack === undefined && effects.damage === undefined) {
       const n = Number(bonus[1]);
@@ -11332,10 +11444,10 @@ export function parseItemEffects(source: string): ItemEffects {
     if (absorb && effects.absorb === undefined) effects.absorb = Number(absorb[1]);
     const plating = sentence.match(/base AC becomes (\d+)/i);
     if (plating) effects.acSet = Number(plating[1]);
-    const quick = sentence.match(/(?:your|its) speed increases by (\d+) feet/i);
+    const quick = sentence.match(/(?:your|its) (?:movement )?speed increases by (\d+) feet/i);
     if (quick && effects.speed === undefined && !/\bwhile\b|\bwhen\b/i.test(sentence)) effects.speed = Number(quick[1]);
-    const base = sentence.match(/AC becomes (\d+) \+ your (\w+) modifier/i);
-    if (base && abilityOf(base[2]) && /aren't wearing armor|not wearing armor/i.test(sentence)) effects.acBase = { base: Number(base[1]), ability: abilityOf(base[2])! };
+    const base = sentence.match(/AC (?:becomes|is) (\d+) \+ your (\w+) modifier/i);
+    if (base && abilityOf(base[2]) && /aren't wearing armor|not wearing armor|don't have armor integrated/i.test(sentence)) effects.acBase = { base: Number(base[1]), ability: abilityOf(base[2])! };
     for (const m of sentence.matchAll(/(?:your|the target's) (\w+) score (?:becomes|is(?: treated as)?) (\d+)/gi)) {
       const a = abilityOf(m[1]);
       if (a) effects.setScores = { ...(effects.setScores ?? {}), [a]: Number(m[2]) };
@@ -11349,6 +11461,157 @@ export function parseItemEffects(source: string): ItemEffects {
   }
   if (/Side Effect:\s*One ability score/i.test(text)) effects.falls = true;
   return effects;
+}
+
+// What an item does in the shooter (FightFacts), read from its wording (2026-11-03). `name` picks the GM's choices the text leaves open (one damage
+// type of a list, a stored power): the same item always the same (house rule). Undefined when it has no part in a fight.
+const REST_OF = (text: string): "short" | "long" => (/short or long rest/i.test(text) ? "short" : "long");
+export function fightFactsOf(name: string, source: string): FightFacts | undefined {
+  const D = "(\\d*d\\d+(?:\\s*\\+\\s*\\d+)?)";
+  const text = plainText(source);
+  const f: FightFacts = {};
+  const pick = <T,>(list: T[]) => list[hashOf(name) % list.length];
+  const types = (list: string) => list.split(/,\s*|\s+or\s+/).map((t) => t.trim().toLowerCase()).filter((t) => ALL_DAMAGE.includes(t) || t === "force");
+  // Weapon damage: a die rolled and added, an additional die of one of several types, an extra die on the first hit
+  const roll = text.match(/When you deal damage with this weapon, you can roll an? (d\d+) and add the result/i);
+  if (roll) f.extra = { dice: `1${roll[1]}` };
+  const extra = text.match(new RegExp(`When you deal damage with this weapon, you deal an additional ${D} ([a-z, ]+?) damage`, "i"));
+  if (extra) {
+    const list = types(extra[2]);
+    f.extra = { dice: extra[1].replace(/\s+/g, ""), ...(list.length ? { type: list.length > 1 ? pick(list) : list[0] } : {}) };
+  }
+  const first = text.match(new RegExp(`(?:The first time you hit a creature|hit a creature that has not yet acted)[^.]*?(?:takes|deal) an additional ${D}(?: (\\w+))? damage`, "i"));
+  if (first) f.opener = { dice: first[1].replace(/\s+/g, ""), ...(first[2] && ALL_DAMAGE.includes(first[2].toLowerCase()) ? { type: first[2].toLowerCase() } : {}) };
+  const range = text.match(/(?:This weapon's|its) range increases by (\d+)\/(\d+)/i) ?? text.match(/If it already has the thrown property, the range increases by (\d+)\/(\d+)/i);
+  if (range && !/thrown/i.test(range[0])) f.range = [Number(range[1]), Number(range[2])];
+  const pierce = Array.from(text.matchAll(/ignores resistance to (\w+) damage/gi)).map((m) => m[1].toLowerCase());
+  if (pierce.length) f.pierce = pierce;
+  if (/reduce the damage of a shot from this weapon[^.]*disadvantage/i.test(text)) f.maser = true;
+  if (/does not suffer disadvantage due to being made at long range/i.test(text)) f.scope = true;
+  const light = text.match(/sheds bright light in a (\d+)-foot cone/i);
+  if (light) f.flashlight = Number(light[1]);
+  if (/reload this weapon once without using an action|if the powered weapon would be reloaded, it can be done without using an action/i.test(text)) f.quickReload = true;
+  const recoil = text.match(/This weapon's strength number is reduced by (\w+) steps?/i);
+  if (recoil) f.recoil = NUMBER_WORDS[recoil[1].toLowerCase()] ?? 1;
+  const slow = text.match(/when you hit a creature with a ranged attack using this weapon, its speed is reduced by (\d+) feet/i);
+  if (slow) f.slowOnHit = Number(slow[1]);
+  const haste = text.match(/when you deal damage with this weapon, your walking speed increases by (\d+) feet/i);
+  if (haste) f.hasteOnHit = Number(haste[1]);
+  const chain = text.match(/repeat the attack against another creature (?:up to |within )(\d+) feet/i);
+  if (chain) f.chain = { feet: Number(chain[1]), rest: REST_OF(text) };
+  const burst = text.match(new RegExp(`When you hit with the weapon, you can create [^.]*?burst\\. Each creature in a (\\d+)-foot cone[^.]*?taking ${D} (\\w+) damage`, "i"));
+  if (burst) f.burstOnHit = { cone: Number(burst[1]), dice: burst[2].replace(/\s+/g, ""), type: burst[3].toLowerCase(), rest: REST_OF(text) };
+  const shove = text.match(/When you hit with the weapon, you can force the target[^.]*\. On a failed save, the creature is pushed back (\d+) feet( and knocked prone)?/i);
+  if (shove) f.shoveOnHit = { feet: Number(shove[1]), prone: !!shove[2], rest: REST_OF(text) };
+  const venom = text.match(new RegExp(`coat this weapon in a thin layer of poison[^]*?takes ${D} poison damage`, "i"));
+  if (venom) f.venom = { dice: venom[1].replace(/\s+/g, ""), rest: REST_OF(text) };
+  if (/apply poisons to this weapon as a bonus action/i.test(text)) f.quickPoison = true;
+  // A second weapon: a blade (a bayonet, an axe) or a blaster in a hilt; a hidden blaster
+  const blade = text.match(new RegExp(`(?:allowing you to )?make a melee weapon attack with it\\.[^.]*?deals ${D} (\\w+) damage`, "i"));
+  if (blade) f.melee = { dice: blade[1].replace(/\s+/g, ""), type: blade[2].toLowerCase() };
+  const hilt = text.match(new RegExp(`The blaster is a ranged weapon with the range (\\d+)\\/(\\d+) and reload (\\d+)[^.]*?deals ${D} (\\w+) damage`, "i"));
+  if (hilt) f.ranged = { range: [Number(hilt[1]), Number(hilt[2])], reload: Number(hilt[3]), dice: hilt[4].replace(/\s+/g, ""), type: hilt[5].toLowerCase() };
+  const hidden = text.match(new RegExp(`hidden blaster[^]*?It deals ${D} (\\w+) damage on a hit, has a range of (\\d+)\\/(\\d+)`, "i"));
+  if (hidden) f.hiddenGun = { dice: hidden[1].replace(/\s+/g, ""), type: hidden[2].toLowerCase(), range: [Number(hidden[3]), Number(hidden[4])] };
+  const fist = text.match(new RegExp(`(?:Your unarmed strikes with this arm deal|which is a vibroweapon with the reach property and deals) ${D} (\\w+) damage`, "i"));
+  if (fist) f.unarmed = { dice: fist[1].replace(/\s+/g, ""), type: fist[2].toLowerCase() };
+  if (/(?:Unarmed strikes with this hand have|which is a vibroweapon with) the reach property/i.test(text)) f.reach = true;
+  const arm = text.match(/When you hit with a melee weapon attack using Strength with a weapon wielded by this arm, you gain a \+(\d+) bonus to the damage roll/i);
+  if (arm) f.meleeDamage = Number(arm[1]);
+  // Defences
+  if (/saving throw to take only half damage, you instead take no damage if you succeed/i.test(text)) f.evade = true;
+  if (/reduced to 0 hit points[^.]*?you can drop to 1 hit point instead/i.test(text)) f.endure = true;
+  if (/any critical hit against you becomes a normal hit/i.test(text)) f.critImmune = true;
+  if (/While you have temporary hit points, kinetic and energy damage you take is reduced/i.test(text)) f.tempGuard = true;
+  const hp = text.match(/Your hit point maximum increases by an amount equal to (twice |three times )?your level/i);
+  if (hp) f.hpPerLevel = hp[1] ? (/twice/i.test(hp[1]) ? 2 : 3) : 1;
+  if (/you have resistance to all damage until the end of your first turn/i.test(text)) f.firstResist = true;
+  // Acts of its own
+  const over = text.match(/overload this shield\. Each [^.]*?within (\d+) feet of you[^.]*\. On a failed save, they are pushed back[^.]*\. You can use this feature (\w+)/i);
+  if (over) f.overload = { feet: Number(over[1]), uses: NUMBER_WORDS[over[2].toLowerCase()] ?? (/twice/i.test(over[2]) ? 2 : 1), rest: REST_OF(text) };
+  const amp = text.match(/amplify this shield[^.]*\. Each creature within \d+ feet of you gains a bonus to AC[^.]*\. You can use this feature (\w+)/i);
+  if (amp) f.amplify = { uses: /twice/i.test(amp[1]) ? 2 : NUMBER_WORDS[amp[1].toLowerCase()] ?? 1, rest: REST_OF(text) };
+  const harp = text.match(new RegExp(`(?:harpoon|grappl\\w*)[^.]*?make a ranged weapon attack with a range of (\\d+)\\/(\\d+)\\. On a hit, it deals ${D} kinetic damage[^]*?connected to the target by a (\\d+) foot cable`, "i"));
+  if (harp) f.harpoon = { range: [Number(harp[1]), Number(harp[2])], dice: harp[3].replace(/\s+/g, ""), cable: Number(harp[4]) };
+  const field = text.match(/turn on its stealth field to cause yourself to become invisible[^]*?maximum duration of (\d+) hours?/i);
+  if (field) f.cloak = { minutes: Number(field[1]) * 60 };
+  const anchor = text.match(/anchor or deanchor your feet[^.]*\. While anchored, your speed is (\d+)/i) ?? (/activate or deactivate (?:t)?heir mag-locks[^.]*\. While the mag locks are engaged, you move at half speed/i.test(text) ? ["", "15"] : null);
+  if (anchor) f.anchor = { speed: Number(anchor[1]) };
+  // Powers it casts: "cast the infiltrate tech power", "You know the detect enhancement and toxin scan tech powers. You can cast each power once
+  // per day", "spend 1 or more charges to cast the voltaic shielding tech power", "gain the effect of the tactical advantage tech power"
+  const casts: NonNullable<FightFacts["casts"]> = [];
+  const uses = (/(\d+) charges/i.exec(text)?.[1]) ? Number(/(\d+) charges/i.exec(text)![1]) : /once per day|once per (?:long )?rest|must complete a (?:short or )?long rest before you can|regain the ability to do so when you finish a long rest|Once you've done so, you can't do so again until you complete a long rest/i.test(text) ? 1 : 0;
+  const rest: "short" | "long" | "never" = uses ? REST_OF(text) : "never";
+  for (const m of text.matchAll(/(?:cast|gain the effect of) the ([a-z' -]+?) (?:tech|force) power/gi)) casts.push({ power: m[1].trim().toLowerCase(), uses, rest });
+  const known = text.match(/You (?:know|learn) the ([a-z' -]+?)(?: and ([a-z' -]+?))? tech powers?\. You can cast (?:each power|it) once/i);
+  if (known) for (const p of [known[1], known[2]].filter(Boolean)) casts.push({ power: p.trim().toLowerCase(), uses: 1, rest: "long" });
+  const castRelease = text.match(/cast ([a-z' -]+?) at (\d)(?:st|nd|rd|th) level without expending tech points/i);
+  if (castRelease) casts.push({ power: castRelease[1].trim().toLowerCase(), uses: 1, rest: "long" });
+  if (casts.length) f.casts = Array.from(new Map(casts.map((c) => [c.power, c])).values());
+  const store = text.match(/This ring stores (force|tech) powers cast into it[^]*?can store up to (\d+) levels[^]*?When found, it contains (\d)d(\d+) - 1 levels/i);
+  if (store) f.stores = { kind: store[1].toLowerCase() as "force" | "tech", levels: Math.max(1, Math.round((Number(store[4]) + 1) / 2) - 1), top: Number(store[2]) };
+  // Movement
+  const fly = text.match(/you have a (\d+)-foot flying speed|you have a flying speed of (\d+) feet/i);
+  if (fly && !/pauldron|boots of bounding|action surge/i.test(text)) f.flight = { feet: Number(fly[1] ?? fly[2]), minutes: Number(text.match(/to a maximum of (\d+) minutes/i)?.[1] ?? text.match(/last(?:s)? for (\d+) minutes?/i)?.[1] ?? 10), ...(/whenever you take damage you must make a concentration check/i.test(text) ? { fragile: true } : {}) };
+  if (/long jump, you can cover a number of feet up to twice your Strength score/i.test(text)) f.jump = 2;
+  if (/expend 1 or more charges to engage the rocket boosters and leap/i.test(text)) f.leap = { feet: 10, perCharge: true };
+  if (/reduce any falling damage you would take by half/i.test(text)) f.fallHalf = true;
+  // Senses
+  const truesight = text.match(/you have truesight to a range of (\d+) feet/i);
+  if (truesight) f.truesight = Number(truesight[1]);
+  if (/advantage on Wisdom \(Perception\) checks that rely on sight beyond \d+ feet/i.test(text)) f.zoom = true;
+  if (/remove or replace this eye[^.]*\. While removed, the eye sprouts/i.test(text)) f.remoteEye = true;
+  if (/While active and in bright light, you have disadvantage on attack rolls/i.test(text)) f.glare = true;
+  // Hidden from those who look
+  if (/scanners of \w+ rarity or lower automatically fail to determine that you are a droid/i.test(text)) f.passes = true;
+  if (/you are hidden from detection through the Force/i.test(text)) f.forceHidden = true;
+  if (/collapse into a case[^]*?indistinguishable from a normal case/i.test(text)) f.disguised = true;
+  // Through a focus or wristpad
+  const per = text.match(/(?:you deal additional damage equal to|increase the damage by) (?:(two and a half times|one and a half times|twice|half) )?(?:\(rounded down\) )?the number of (force|tech) points spent/i);
+  if (per) f.pointDamage = { kind: per[2].toLowerCase() as "force" | "tech", per: ({ "two and a half times": 2.5, "one and a half times": 1.5, twice: 2, half: 0.5 } as Record<string, number>)[per[1]?.toLowerCase() ?? ""] ?? 1 };
+  const temp = text.match(/restores hit points to a creature, the creature gains a number of temporary hit points equal to (twice )?the number of tech points spent/i);
+  if (temp) f.healTemp = temp[1] ? 2 : 1;
+  const reach = text.match(/you can increase the range of that force power by (\d+) feet/i);
+  if (reach) f.powerRange = Number(reach[1]);
+  const radius = text.match(/affects an area in a radius or a cube, you can increase the radius or length of the cube by (\d+) feet/i);
+  if (radius) f.powerRadius = Number(radius[1]);
+  const push = text.match(/pushes or pulls a creature, you can increase the distance pushed or pulled by (\d+) feet/i);
+  if (push) f.powerPush = Number(push[1]);
+  if (/deal cold damage to a creature with a tech power[^.]*slowed/i.test(text)) f.coldSlows = true;
+  if (/fails its saving throw[^.]*you gain a d12 that you can roll and add to the damage or healing of a tech power/i.test(text)) f.powerDie = true;
+  const sub = name.match(/^(Distant|Twinned|Quickened|Improved|Heightened|Extended|Seeking|Careful|Lingering|Pinpoint|Refocused) Subroutine$/i);
+  if (sub && /Subroutine modification|tech points in this way/i.test(text)) f.subroutine = sub[1].toLowerCase() as FightFacts["subroutine"];
+  if (/(?:critical hit or reduce a creature to 0 hit points)[^.]*regain a number of tech points equal to your Intelligence modifier/i.test(text)) f.killPoints = true;
+  const snare = text.match(/creature hit by an? (?:net|bolas) is restrained until it is freed[^]*?make a DC (\d+) (\w+) check, freeing itself/i);
+  if (snare) f.snare = { dc: Number(snare[1]), ability: snare[2].toLowerCase() };
+  const launch = text.match(/(?:\+(\d+) bonus to the save DC and damage rolls of grenades fired|\+\d+ bonus to the save DC and deal (\w+) additional damage dic?e with grenades fired)/i);
+  if (launch) f.launcher = { dice: launch[2] ? NUMBER_WORDS[launch[2].toLowerCase()] ?? 1 : 0, bonus: launch[1] ? Number(launch[1]) : 0 };
+  const pocket = text.match(/(one|two|three|four|five|six|seven|eight) hidden pockets?, (?:which|each of which) can store up to (\d+) lbs?\. Finding (?:this hidden pocket|these hidden pockets) requires a DC (\d+) Investigation/i);
+  if (pocket) f.pocket = { lb: (NUMBER_WORDS[pocket[1].toLowerCase()] ?? 1) * Number(pocket[2]), dc: Number(pocket[3]) };
+  const dash = text.match(/Whenever you take the Dodge or Dash actions, your walking speed increases by (\d+) feet/i);
+  if (dash) f.dash = Number(dash[1]);
+  if (/with its hood up, you can try to hide when you are lightly obscured/i.test(text)) f.hood = true;
+  if (/When you score a critical hit with this weapon, you have advantage on the next attack roll/i.test(text)) f.critFollow = true;
+  const doubles = text.match(/When you have advantage on an attack roll[^.]*same result on both dice[^.]*?(one|two|three) additional weapon di/i);
+  if (doubles) f.doubles = NUMBER_WORDS[doubles[1].toLowerCase()];
+  const lev = text.match(/levitated by the Force to deal damage[^.]*additional damage equal to (one|two|three) of its weapon damage dice/i);
+  if (lev) f.levitate = NUMBER_WORDS[lev[1].toLowerCase()];
+  const jolt = text.match(new RegExp(`requires a melee weapon attack, you can spend 1 force point to change the weapon's damage type to (\\w+) and deal an additional ${D} \\w+ damage`, "i"));
+  if (jolt) f.jolt = { type: jolt[1].toLowerCase(), dice: jolt[2].replace(/\s+/g, "") };
+  if (/tech power with this wristpad that gives you a bonus to AC or saving throws, you can increase that bonus by \+1/i.test(text)) f.guardBonus = 1;
+  const kit = text.match(new RegExp(`activate the (medical kit|repair tools)[^]*?restore ${D} hit points to an? (creature|droid)`, "i"));
+  if (kit) f.kit = { dice: kit[2].replace(/\s+/g, ""), droid: /repair|droid/i.test(kit[1] + kit[3]), cures: /cure a target of one poison/i.test(text), rest: REST_OF(text) };
+  if (/Interceptor Mode:[^.]*comm jammer/i.test(text)) f.jammer = true;
+  if (/Respirator Mode:[^.]*resistance to poison damage/i.test(text)) f.respirator = true;
+  return Object.keys(f).length ? f : undefined;
+}
+// "Resistance to one type of damage ... the DM chooses the type or determines it randomly from the options below": one of the table's, by the
+// item's name (house rule: the same armour always resists the same)
+export function chosenResistance(name: string, source: string): string | undefined {
+  const text = plainText(source);
+  if (!/resistance to one type of damage while you wear this/i.test(text)) return undefined;
+  const list = ALL_DAMAGE.filter((t) => new RegExp(`\\| *\\d+ *\\| *${t}`, "i").test(text));
+  return list.length ? list[hashOf(name) % list.length] : undefined;
 }
 
 // A stimpac, adrenal, barrier or collimator's effect, for how long
@@ -11432,26 +11695,34 @@ export function itemFactsOf(row: { name: string; type: string; subtype?: string;
   if (part) return { ...base, effects: {}, shipPart: { slot: part.slot, bonus: part.bonus } };
   if (row.type === "ItemModification") {
     // (a clothing pattern's "gains the insulated 1 armor property" too)
-    const properties = Array.from(plainText(text).matchAll(/gains? the ([a-z\-]+(?: \d+)?) (?:armor )?property/gi)).map((m) => m[1].toLowerCase());
-    return { ...base, text: base.text.slice(0, 320), effects: parseItemEffects(text), modKind: String(row.subtype ?? "").toLowerCase(), properties };
+    // (and a numbered one: "gains the barbed (1d4) property", "the smart (15, +2) property", "thrown (10/30)")
+    const properties = Array.from(plainText(text).matchAll(/gains? (?:the )?([a-z\-]+(?: \d+| \([^)]*\))?) (?:armor )?property/gi)).map((m) => m[1].toLowerCase());
+    // (clandestine stitching: a hidden pocket in the clothes it is sewn into, see hidingPlaces)
+    return { ...base, text: base.text.slice(0, 320), effects: withFight(row.name, text, parseItemEffects(text)), modKind: String(row.subtype ?? "").toLowerCase(), properties };
   }
   if (/ Chassis \(/.test(row.name)) {
     const kind = chassisKind(row);
     return kind ? { ...base, text: base.text.slice(0, 200), effects: {}, chassis: kind } : undefined;
   }
   if (row.type === "DroidCustomization") {
-    return { ...base, effects: parseItemEffects(text), droid: /protocol/i.test((row as any).droidCustomizationType ?? "") ? "protocol" : "part" };
+    return { ...base, effects: withFight(row.name, text, parseItemEffects(text)), droid: /protocol/i.test((row as any).droidCustomizationType ?? "") ? "protocol" : "part" };
   }
   if (row.type === "CyberneticAugmentation") {
-    return { ...base, effects: parseItemEffects(text), augment: /replacement/i.test(row.cyberneticAugmentationType ?? row.subtype ?? "") ? "replacement" : "enhancement", parts: augmentationParts(text) };
+    return { ...base, effects: withFight(row.name, text, parseItemEffects(text)), augment: /replacement/i.test(row.cyberneticAugmentationType ?? row.subtype ?? "") ? "replacement" : "enhancement", parts: augmentationParts(text) };
   }
   if (["Weapon", "Armor", "Shield", "Focus", "AdventuringGear"].includes(row.type)) {
     // Graded plain gear (binders, a camtono, clandestine clothes, a jetpack, rocket boots, a restraining bolt, a smugglepack, a credit chip, a
     // datacron) is its plain item at the grade's numbers, and a blueprint can be learned
     const use = row.type === "AdventuringGear" && equipment ? enhancedConsumableUse(row, equipment) : undefined;
-    return { ...base, effects: parseItemEffects(text), ...(use ? { use } : {}) };
+    return { ...base, effects: withFight(row.name, text, parseItemEffects(text)), ...(use ? { use } : {}) };
   }
   return undefined;
+}
+// An item's effects with its part in a fight (fightFactsOf), and the resistance the GM chooses for it (chosenResistance)
+function withFight(name: string, text: string, effects: ItemEffects): ItemEffects {
+  const fight = fightFactsOf(name, text);
+  const chosen = chosenResistance(name, text);
+  return { ...effects, ...(fight ? { fight } : {}), ...(chosen ? { resist: Array.from(new Set([...(effects.resist ?? []), chosen])) } : {}) };
 }
 
 // ---- Modifiable items (Wretched Hives, "Modifiable Items"; and its "Common Modifications" variant,

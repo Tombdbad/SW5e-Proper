@@ -59,6 +59,19 @@ export const SHOOT = {
   // party's own fire keeps), each landing as often as its attack roll would against the Armor Class (`hitChance`), after a wind-up the party
   // can step out of
   melee: { round: 4, fastest: 1.2, windup: 0.5 },
+  // (2026-11-03) A foe's natural 20 (one hit in twenty) is a critical: its dice twice, taken here as 1.7 times the blow. The cloaked are seen
+  // only this near, and for a second after each shot (its flash); held fast, the aim is this much worse; a slowed level takes a third of the
+  // pace; a hologram lasts at most this long; a duplicate takes the blow at the book's chances (three left: 6 or more on a d20, two: 8, one: 11)
+  crit: 0.05, critBy: 1.7,
+  cloak: { near: 1.8, shown: 1.0 },
+  held: { aim: 1.6, longest: 18 },
+  slowLevel: 0.33,
+  decoy: 20,
+  images: [0, 0.5, 0.65, 0.75],
+  // A lowered AC is taken as more damage from the party's blows (it rolls no attack here): this share a point
+  acDown: 0.05,
+  // A thrown blade's speed (a saber throw, a thrown weapon), a dash's reach (squares: a saber strike's move)
+  thrown: 16, dash: 6,
 };
 // How often an attack roll lands: a d20 + the bonus against the Armor Class (a 1 always misses, a 20 always hits), as a chance and not a die
 export const hitChance = (bonus: number, ac: number) => clamp((21 - ac + bonus) / 20, 0.05, 0.95);
@@ -118,6 +131,29 @@ export interface Gun {
   burst?: GrenadeKind;
   // A bipod or tripod carried: crouched and still, the aim is steadier and the kick less (house rule for "increased stability")
   brace?: boolean;
+  // An enhanced grenade launcher: damage dice more on each grenade it fires (at the grenade's own die), and a bonus
+  boost?: { dice: number; bonus: number };
+  // A focusing scope: no worse aim past the normal range
+  scope?: boolean;
+  // What its modifications add (2026-11-03; see Rider): more damage on every hit or the first on each foe, types whose resistance it ignores,
+  // bolts a foe's saber turns less often, a hit that slows or quickens, chains on to the next foe, sets off a cone or shoves
+  rider?: Rider;
+}
+// A weapon's riders, read from the modifications fitted in it (shared/logic fightFactsOf): damage at its dice' average
+export interface Rider {
+  extra?: { damage: number; type?: string };
+  opener?: { damage: number; type?: string };
+  pierce?: string[];
+  maser?: boolean;
+  slow?: number;
+  haste?: number;
+  // Once a rest each (the name of the item that gives it is what is spent: Unit.once)
+  chain?: { squares: number; item: string };
+  burst?: { damage: number; type: string; cone: number; item: string };
+  shove?: { squares: number; prone: boolean; item: string };
+  // A lightweapon's critical (here the third blow of a chain) leaves the foe open: the next blow cannot be turned; an edge's doubled die
+  critFollow?: boolean;
+  doubles?: number;
 }
 export interface Blade {
   name: string;
@@ -125,6 +161,9 @@ export interface Blade {
   type: string;
   // A lightsaber (or any blade that lets the wielder hold off bolts)
   saber: boolean;
+  rider?: Rider;
+  // Reach in squares beyond the usual (a magnetic forearm, a shock arm's reach property)
+  reach?: number;
 }
 // How a gun kicks and how steady it is, by its kind (its name) and how heavy a shot it fires (house rule, 2026-10-30: the user asked for "recoil
 // animations and spread depending on the weapon's fire power and type"). Each shot of a hard-kicking gun throws the aim off further, so a heavy
@@ -303,7 +342,77 @@ export interface Unit {
   // (the party only) half damage from a burst, a cone or a breath, by the item that gives it (Reflex Enhancer: "no damage if you succeed on
   // a saving throw, and only half damage if you fail", taken at its middle: house rule); once a fight, to drop to 1 hit point instead of 0
   evade?: boolean;
+  // (the item that gives it, spent for the rest when it holds: an "once" event)
+  endure?: string;
+  // ---- (2026-11-03: the items and powers that were not yet played)
+  // What it is under for so many seconds: held fast (a net, bolas, a power: it cannot move and aims worse), slowed (a share of its pace lost),
+  // charmed or oblivious (a mind trick: it does not fight, or does not notice; a blow breaks it), turned (a droid's targeting scrambled: it
+  // fights for the party), its weapon pulled away (disarmed: it fights with its fists), its AC lowered
+  held?: number;
+  slowed?: number;
+  slowBy?: number;
+  charmed?: number;
+  oblivious?: number;
+  turned?: number;
+  disarmed?: boolean;
+  acDown?: number;
+  // Marked by the party (a hex, a target lock, a shatterpoint): each hit of the party's on it does this much more, or lands as with advantage
+  mark?: { t: number; damage: number; type?: string; edge?: boolean };
+  // The first hit on it of a weapon that strikes harder at first (an opener: Rider.opener) has landed
+  opened?: boolean;
+  // Buffs on it (a power's: Buff), the party's timed ones from items too
+  buffs?: Buff[];
+  // Large or bigger (a net or bolas holds only Large or smaller; Huge and up are not held)
+  huge?: boolean;
+  // A hologram or illusory double: draws fire, does nothing, gone when struck or its time is up (seconds)
+  decoy?: boolean;
+  life?: number;
+  // The party's own: once-a-rest features still unused this rest (by item name: Rider.chain, burst, shove, Enhanced Endurance, a kill's points),
+  // a critical hit taken as a normal one, kinetic and energy cut while temporary hit points last (by this much), feet anchored (no push),
+  // a stealth field running, seconds it was last seen (a shot gives the cloaked away), points back on a kill
+  once?: Record<string, boolean>;
+  critImmune?: boolean;
+  tempGuard?: number;
+  anchored?: boolean;
+  cloaked?: boolean;
+  shown?: number;
+  killPoints?: { points: number; item: string };
+  // What the party's powers gain through its focus or wristpad (FightFacts): damage a point, temporary hit points a point on a heal, range,
+  // radius and push in squares, cold that slows, a d12 kept for the next power, a tech shield's bonus, subroutines
+  channel?: { perPoint?: { kind: "force" | "tech"; per: number }; healTemp?: number; range?: number; radius?: number; push?: number; coldSlows?: boolean; die?: boolean; guard?: number; subroutines?: string[]; subUses?: number; levitate?: number; jolt?: { damage: number; type: string } };
+  powerDie?: number;
+  // The party's senses: how far it sees foes through walls (squares; a Force or tech sense, an eye sent out), sees what is hidden (truesight),
+  // hears where shots come from; a light carried; a far eye's zoom
+  senses?: { through?: number; truesight?: number; hearing?: number; light?: number; zoom?: number };
+  // A weapon imbued by a power for its next blow or shot (the "As part of the action used to cast this power" cantrips, a saber strike's extra)
+  imbue?: { damage: number; type: string; stagger?: number; slow?: boolean };
+}
+// What a power (or an item casting one) gives the party for so many seconds (2026-11-03, house rules after the powers' texts; a duration of an
+// hour or more lasts the fight): AC, temporary hit points, resistances or immunity, a faster pace (a share added), damage back at whoever strikes
+// in close, invisibility (that a hostile act ends, `breaks`), more damage on every weapon hit, illusory duplicates that take hits, a steadier
+// aim (a share off the spread), a reaction readied for the next blow taken, holding at 1 hit point, fearlessness, hit points a second
+export interface Buff {
+  name: string;
+  t: number;
+  ac?: number;
+  temp?: number;
+  resist?: string[];
+  immune?: boolean;
+  speed?: number;
+  retort?: { damage: number; type: string };
+  cloak?: boolean;
+  breaks?: boolean;
+  empower?: { damage: number; type: string };
+  images?: number;
+  aim?: number;
+  react?: "absorb" | "reflect" | "blink";
   endure?: boolean;
+  fearless?: boolean;
+  regen?: number;
+  // a weapon spun round the body (a saber dance): damage a second to each foe within so many squares
+  orbit?: { dps: number; radius: number; type: string };
+  // foes sensed through walls within so many squares, what is hidden seen within so many (a Force or tech sense)
+  sense?: { through?: number; truesight?: number };
 }
 // What a foe has to use besides its attack (2026-11-02, house rule): the area actions of its stat block (a flamethrower's cone, a grenade's
 // sphere: thrown, `left` times or every so many seconds as its recharge goes), medpacs for itself, an antidote and an extinguisher for its own
@@ -313,7 +422,13 @@ export interface FoeBlast { kind: GrenadeKind; thrown: boolean; range: number; l
 export interface FoeKit { blasts: FoeBlast[]; medpacs: number; heal: number; antidote?: boolean; extinguisher?: boolean }
 // A power as the fight plays it (the game reads these from the power's text: client/src/lib/sw5e/realtimePowers.ts). The dice are taken at
 // their average, a condition lasts seconds, a push or a pull sends a creature a distance.
-export type PowerKind = "damage" | "heal" | "stun" | "fear" | "blind" | "push" | "pull";
+// (2026-11-03, the powers that were left to the tabletop, each a house rule after its text: client/src/lib/sw5e/realtimePowers.ts reads them)
+// imbue: the next blow or shot carries more (a weapon cantrip); buff: on the party itself (Buff); blink: a step through space to the aim; sense:
+// foes seen through walls for a time; mark: more damage on one foe; slow, restrain (held fast); mind: a foe that has not noticed the party
+// stays unaware, or one that has stops fighting (charmed); zone: ground that hurts, slows or hides at the aim; decoy: a hologram that draws fire;
+// kill: one with few enough hit points dies; revive, cure: a fallen companion, the party's poison; disarm: a foe's gun pulled away; turn: a
+// droid fights for the party; throw: the blade thrown and back; dash: across the floor to a foe and a blow
+export type PowerKind = "damage" | "heal" | "stun" | "fear" | "blind" | "push" | "pull" | "imbue" | "buff" | "blink" | "sense" | "mark" | "slow" | "restrain" | "mind" | "zone" | "decoy" | "kill" | "revive" | "cure" | "disarm" | "turn" | "throw" | "dash";
 export interface RtPower {
   id: string;
   name: string;
@@ -329,15 +444,34 @@ export interface RtPower {
   distance: number;
   // the damage when what is pushed strikes a wall
   strike: number;
+  // (the newer kinds) the buff given, shots split over the nearest foes, a ceiling of hit points (kill, a stun dart), only droids, ground
+  // left at the aim, an AC lowered, how many foes it takes, what a blow or shot imbued also does, only people (a mind power), the force or
+  // tech it is (for a focus's or wristpad's bonuses), its level, and a power cast from an item (no points: its charges)
+  buff?: Buff;
+  hits?: number;
+  maxHp?: number;
+  droids?: boolean;
+  field?: { type: string; dps: number; obscure?: boolean; slow?: boolean; poison?: boolean };
+  ac?: number;
+  targets?: number;
+  rider?: { stagger?: number; slow?: boolean };
+  people?: boolean;
+  tradition?: "force" | "tech";
+  level?: number;
+  item?: boolean;
 }
 // (`natural`: spat or flung by a monster, drawn as what it is: a glob, a spine)
-export interface Bolt { id: number; owner: string; side: Side; x: number; y: number; h: number; vx: number; vy: number; vh: number; damage: number; type: string; life: number; reflected?: boolean; cell: [number, number]; burst?: GrenadeKind; natural?: boolean }
-export interface Grenade { id: number; owner: string; side: Side; x: number; y: number; h: number; vx: number; vy: number; vh: number; fuse: number; kind: GrenadeKind; bounces: number; impact?: boolean; natural?: boolean }
+// (`rider`: the weapon's riders, carried by the party's shots; `blade`: a thrown blade, drawn as one; `plain`: no riders at all, a harpoon's or
+// a hidden blaster's)
+export interface Bolt { id: number; owner: string; side: Side; x: number; y: number; h: number; vx: number; vy: number; vh: number; damage: number; type: string; life: number; reflected?: boolean; cell: [number, number]; burst?: GrenadeKind; natural?: boolean; rider?: Rider; blade?: boolean; plain?: boolean; harpoon?: boolean }
+// (`snare`: a net or bolas, the DC to free oneself from it)
+export interface Grenade { id: number; owner: string; side: Side; x: number; y: number; h: number; vx: number; vy: number; vh: number; fuse: number; kind: GrenadeKind; bounces: number; impact?: boolean; natural?: boolean; snare?: number }
 // A mine or charge set on the ground: arming, then set off by a body of the other side that comes near (a mine), its timer (a charge), or the
 // remote detonator it is paired with (`paired`: only that)
 export interface Mine { id: number; owner: string; side: Side; x: number; y: number; h: number; facing: number; kind: GrenadeKind; arm: number; timer?: number; paired: boolean; name: string }
 // Ground that hurts whoever stands in it (fire, gas) for so many seconds more
-export interface Field { id: number; owner: string; x: number; y: number; h: number; radius: number; t: number; dps: number; type: string; poison?: number }
+// (`obscure`: smoke, fog or darkness, those in it cannot see out or be seen well; `slow`: it slows those in it)
+export interface Field { id: number; owner: string; x: number; y: number; h: number; radius: number; t: number; dps: number; type: string; poison?: number; obscure?: boolean; slow?: boolean }
 // What the party carries into a fight and can use there (keys Z and T, the Item button): read by the game from each item's rules (`gearUse`)
 export type GearAct =
   | { act: "heal"; amount: number; droid?: boolean }
@@ -355,8 +489,25 @@ export type GearAct =
   | { act: "edge"; damage: number; saber: boolean }
   | { act: "bind"; droid: boolean }
   | { act: "jam" }
-  | { act: "rocket"; blast: GrenadeKind; damage: number };
-export interface FightGear { name: string; count: number; act: GearAct }
+  | { act: "rocket"; blast: GrenadeKind; damage: number }
+  // (2026-11-03) A net or bolas thrown (it holds a Large or smaller foe until it frees itself: the DC against its bonus); a harpoon or hook fired
+  // (a foe smaller than the party is reeled in, else the party to it; at a wall the hook's own reel: `hook`); a shield overloaded (foes within
+  // reach shoved and knocked down) or projected round companions; a stealth field or anchored feet switched on and off; a hidden blaster
+  // revealed for one shot; a power cast from the item (its charges); a leap of the boots; an eye sent out; a light switched on and off
+  | { act: "snare"; dc: number }
+  | { act: "harpoon"; range: number; damage: number; cable: number }
+  | { act: "overload"; reach: number }
+  | { act: "amplify"; ac: number }
+  | { act: "cloak" }
+  | { act: "anchor" }
+  | { act: "hidden"; damage: number; type: string; range: number }
+  | { act: "cast"; power: RtPower }
+  | { act: "leap"; range: number }
+  | { act: "eye"; range: number }
+  | { act: "light" };
+// (`rest`: used up for the rest, not from the pack: the game counts it in the character's feature uses until a short or long rest)
+// (`keep`: not used up: a net or bolas, a harpoon, picked up or reeled in again)
+export interface FightGear { name: string; count: number; act: GearAct; rest?: "short" | "long"; keep?: boolean }
 export type Event =
   | { type: "shot"; from: string; x: number; y: number; h: number }
   | { type: "hit"; target: string; by: string; amount: number; head?: boolean; x: number; y: number; h: number }
@@ -382,7 +533,17 @@ export type Event =
   // a foe begins something with its hands that takes a moment (the scene plays its wind-up), or is stopped in it; a blow that misses
   | { type: "act"; id: string; act: "throw" | "spray" | "call" | "heal"; seconds: number }
   | { type: "broken"; id: string }
-  | { type: "miss"; id: string; target: string };
+  | { type: "miss"; id: string; target: string }
+  // (2026-11-03) a once-a-rest feature spent (by item name), what befell a foe (held, slowed, charmed, turned...: the scene marks it), a line
+  // fired (a harpoon: from the party to where it bit), the party pulled to a point (the scene moves it), a hologram made, an image struck, the
+  // party's cloak broken
+  | { type: "once"; name: string }
+  | { type: "status"; id: string; text: string }
+  | { type: "line"; x: number; y: number; h: number; tx: number; ty: number; th: number }
+  | { type: "reel"; x: number; y: number }
+  | { type: "decoy"; id: string }
+  | { type: "image"; id: string }
+  | { type: "revealed"; id: string };
 
 export interface Env {
   // Whether a bolt, or a thrown thing, is stopped at this point (a wall, or something higher than it flies)
@@ -409,6 +570,11 @@ export interface Sim {
   jammed?: boolean;
   called?: boolean;
   backupAt?: number;
+  // (2026-11-03) Where the foes last saw the party (it went unseen: they make for it), an eye sent out (it sees round it for its time), the
+  // party's light switched on
+  lastSeen?: { x: number; y: number };
+  eye?: { x: number; y: number; h: number; t: number };
+  lit?: boolean;
 }
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
@@ -424,7 +590,35 @@ export const dirOf = (yaw: number): [number, number] => [Math.sin(yaw), Math.cos
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
 const alive = (u: Unit) => !u.dead && u.mode !== "gone";
 export const playerOf = (sim: Sim) => sim.units.find((u) => u.side === "player")!;
-export const foesLeft = (sim: Sim) => sim.units.filter((u) => u.side === "foe" && alive(u));
+export const foesLeft = (sim: Sim) => sim.units.filter((u) => u.side === "foe" && alive(u) && !u.decoy);
+// ---- What buffs and states come to (2026-11-03) ------------------------------------------------------------------------------------------
+const sumOf = (u: Unit, k: "ac" | "speed" | "aim") => (u.buffs ?? []).reduce((n, b) => n + (b[k] ?? 0), 0);
+// The AC a blow or shot is aimed at: the sheet's, what buffs add, what a curse took off
+export const acOf = (u: Unit) => u.ac + sumOf(u, "ac") - (u.acDown ?? 0);
+// A share of the walking pace: a buff's haste, a slowed level, held fast, anchored feet (the scene moves the party by it)
+export const paceOf = (u: Unit) => ((u.held ?? 0) > 0 ? 0 : (1 + sumOf(u, "speed")) * ((u.slowed ?? 0) > 0 ? Math.max(0.2, 1 - (u.slowBy ?? SHOOT.slowLevel)) : 1) * (u.anchored ? 0.5 : 1));
+// Unseen: a stealth field or invisibility, and not given away by a shot this last moment
+export const cloakedNow = (u: Unit) => (!!u.cloaked || !!u.buffs?.some((b) => b.cloak)) && !((u.shown ?? 0) > 0);
+// What the party senses (its items' and its powers'), squares
+export function sensesOf(u: Unit): { through: number; truesight: number; hearing: number; light: number; zoom: number } {
+  const s = u.senses ?? {};
+  const b = (u.buffs ?? []).map((x) => x.sense).filter(Boolean) as { through?: number; truesight?: number }[];
+  return { through: Math.max(s.through ?? 0, ...b.map((x) => x.through ?? 0)), truesight: Math.max(s.truesight ?? 0, ...b.map((x) => x.truesight ?? 0)), hearing: s.hearing ?? 0, light: s.light ?? 0, zoom: s.zoom ?? 0 };
+}
+// The party gives itself away: a shot, a blow, a power or a throw. Invisibility that a hostile act ends (Buff.breaks) ends; a field stays on.
+function reveal(sim: Sim, p: Unit, events: Event[]) {
+  const was = cloakedNow(p);
+  p.shown = SHOOT.cloak.shown;
+  if (p.buffs?.some((b) => b.cloak && b.breaks)) p.buffs = p.buffs.filter((b) => !(b.cloak && b.breaks));
+  if (was) {
+    sim.lastSeen = { x: p.x, y: p.y };
+    events.push({ type: "revealed", id: p.id });
+  }
+}
+function addBuff(u: Unit, b: Buff) {
+  u.buffs = [...(u.buffs ?? []).filter((x) => x.name !== b.name), b];
+  if (b.temp) u.temp = Math.max(u.temp, b.temp);
+}
 
 export function blankUnit(base: Pick<Unit, "id" | "name" | "side" | "x" | "y" | "hp" | "maxHp"> & Partial<Unit>): Unit {
   return {
@@ -527,26 +721,34 @@ export function walk(u: Unit, dx: number, dy: number, env: Env): boolean {
 }
 
 // ---- Hurting -----------------------------------------------------------------------------------------------------------------------
-function hurt(sim: Sim, target: Unit, amount: number, type: string, by: Unit | undefined, events: Event[], at: { x: number; y: number; h: number }, head = false) {
+function hurt(sim: Sim, target: Unit, amount: number, type: string, by: Unit | undefined, events: Event[], at: { x: number; y: number; h: number }, head = false, pierce?: string[]) {
   if (!alive(target) || amount <= 0) return;
-  // (the stat block's and the sheet's resistances, vulnerabilities and immunities, by damage type)
+  // (the stat block's and the sheet's resistances, vulnerabilities and immunities, by damage type; a buff's; a weapon that ignores a resistance)
   const t = type.toLowerCase();
   const has = (list?: string[]) => !!list?.some((x) => x.toLowerCase().includes(t));
-  if (has(target.immune)) return;
-  const typed = amount * (has(target.resist) ? 0.5 : 1) * (has(target.vulnerable) ? 2 : 1);
+  const buffs = target.buffs ?? [];
+  if (has(target.immune) || buffs.some((b) => b.immune)) return;
+  const resisted = (has(target.resist) || buffs.some((b) => has(b.resist))) && !pierce?.some((x) => x === t);
+  const typed = amount * (resisted ? 0.5 : 1) * (has(target.vulnerable) ? 2 : 1);
   const cut = target.side === "player" || target.side === "ally" ? clamp((target.ac - 10) * SHOOT.armor, 0, SHOOT.armorMax) : 0;
-  let dealt = Math.max(1, Math.round(typed * (1 - cut)) - (target.absorb ?? 0));
+  // (ballistic polymer: kinetic and energy cut while temporary hit points last)
+  const guard = target.tempGuard && target.temp > 0 && /kinetic|energy/.test(t) ? target.tempGuard : 0;
+  let dealt = Math.max(1, Math.round(typed * (1 - cut)) - (target.absorb ?? 0) - guard);
   // Temporary hit points go first
   const shield = Math.min(target.temp, dealt);
   target.temp -= shield;
   const shown = dealt;
   dealt -= shield;
   target.hp = Math.max(0, target.hp - dealt);
-  // (armour that will not let its wearer fall: once, to 1 hit point instead)
+  // A charmed or oblivious foe struck wakes; a hologram struck is gone
+  if (by && by.side !== target.side) { target.charmed = 0; target.oblivious = 0; }
+  // (a power that will not let its bearer fall while it lasts; armour that will not let its wearer fall: once a rest, to 1 hit point instead)
+  if (target.hp <= 0 && buffs.some((b) => b.endure)) target.hp = 1;
   if (target.hp <= 0 && target.endure) {
-    target.endure = false;
+    events.push({ type: "use", id: target.id, name: target.endure, text: "held on at 1" });
+    events.push({ type: "once", name: target.endure });
+    target.endure = undefined;
     target.hp = 1;
-    events.push({ type: "use", id: target.id, name: "Enhanced Endurance", text: "held on at 1" });
   }
   if (dealt <= 0) return void events.push({ type: "hit", target: target.id, by: by?.id ?? "", amount: shown, head, ...at });
   if (by && by.side !== "foe" && target.side === "foe") target.struck[type] = (target.struck[type] ?? 0) + dealt;
@@ -559,6 +761,82 @@ function hurt(sim: Sim, target: Unit, amount: number, type: string, by: Unit | u
     events.push({ type: "down", id: target.id, by: by?.id });
     if (target.leader) breakGang(sim, target, events);
   }
+}
+// The party's hit on a foe (2026-11-03): its damage, then what comes with it: the weapon's riders (more dice, an opener's first hit, a slow, a
+// quickening of the party, a cone set off, a shove, a chain to the next foe: the last three once a rest), a mark's damage, a buff's, the blow
+// imbued by a power, a lowered AC (more damage: SHOOT.acDown); points back when it falls (once a rest)
+function partyStrike(sim: Sim, p: Unit, u: Unit, base: number, type: string, rider: Rider | undefined, events: Event[], at: { x: number; y: number; h: number }, head = false) {
+  const once = (item: string) => {
+    if (!p.once?.[item]) return false;
+    delete p.once[item];
+    events.push({ type: "once", name: item });
+    return true;
+  };
+  const more = 1 + Math.max(0, u.acDown ?? 0) * SHOOT.acDown + (u.mark?.edge ? 0.2 : 0);
+  hurt(sim, u, base * more, type, p, events, at, head, rider?.pierce);
+  const add = (damage: number, t?: string) => damage > 0 && hurt(sim, u, damage, t ?? type, p, events, at, false, rider?.pierce);
+  if (rider?.extra) add(rider.extra.damage, rider.extra.type);
+  if (rider?.opener && !u.opened) add(rider.opener.damage, rider.opener.type);
+  u.opened = true;
+  if (u.mark && u.mark.t > 0 && u.mark.damage) add(u.mark.damage, u.mark.type);
+  for (const b of p.buffs ?? []) if (b.empower) add(b.empower.damage, b.empower.type);
+  if (p.imbue) {
+    const im = p.imbue;
+    p.imbue = undefined;
+    add(im.damage, im.type);
+    if (im.stagger) u.stagger = Math.max(u.stagger, im.stagger);
+    if (im.slow) { u.slowed = Math.max(u.slowed ?? 0, 6); u.slowBy = SHOOT.slowLevel; }
+  }
+  if (rider?.slow && alive(u)) { u.slowed = Math.max(u.slowed ?? 0, 6); u.slowBy = Math.max(u.slowBy ?? 0, rider.slow); events.push({ type: "status", id: u.id, text: "slowed" }); }
+  if (rider?.haste) addBuff(p, { name: "quickened", t: 3, speed: rider.haste });
+  if (rider?.burst && alive(u) && once(rider.burst.item)) {
+    const [fx, fy] = dirOf(Math.atan2(u.x - p.x, u.y - p.y));
+    for (const o of sim.units) {
+      if (o.side !== "foe" || !alive(o)) continue;
+      const d = dist(u, o);
+      if (d > rider.burst.cone || (d > 0.4 && Math.acos(clamp(((o.x - u.x) * fx + (o.y - u.y) * fy) / d, -1, 1)) > 0.46)) continue;
+      hurt(sim, o, rider.burst.damage, rider.burst.type, p, events, { x: o.x, y: o.y, h: o.h + 0.8 });
+    }
+    events.push({ type: "spray", id: p.id, name: rider.burst.item, dmgType: rider.burst.type, x: u.x, y: u.y, h: u.h + 1, tx: u.x + fx * rider.burst.cone, ty: u.y + fy * rider.burst.cone, th: u.h + 0.9 });
+  }
+  if (rider?.shove && alive(u) && !u.huge && once(rider.shove.item)) shove(u, p, rider.shove.squares, rider.shove.prone);
+  if (rider?.chain && once(rider.chain.item)) {
+    const next = sim.units.filter((o) => o !== u && o.side === "foe" && alive(o) && dist(o, u) <= rider.chain!.squares).sort((a, b) => dist(a, u) - dist(b, u))[0];
+    if (next) hurt(sim, next, base, type, p, events, { x: next.x, y: next.y, h: next.h + 0.8 }, false, rider.pierce), events.push({ type: "line", x: u.x, y: u.y, h: u.h + 1, tx: next.x, ty: next.y, th: next.h + 1 });
+  }
+  if (u.dead && p.killPoints && once(p.killPoints.item)) {
+    p.points = (p.points ?? 0) + p.killPoints.points;
+    events.push({ type: "use", id: p.id, name: p.killPoints.item, text: `${p.killPoints.points} tech points back` });
+  }
+}
+// A body shoved away from another so many squares (and down, a moment's stagger)
+function shove(u: Unit, from: { x: number; y: number }, squares: number, prone: boolean) {
+  if (u.anchored) return;
+  const d = dist(u, from) || 1;
+  const secs = Math.max(0.15, squares / SHOOT.power.knock);
+  u.knock = { vx: ((u.x - from.x) / d) * SHOOT.power.knock, vy: ((u.y - from.y) / d) * SHOOT.power.knock, t: secs, strike: 0, type: "kinetic" };
+  u.stagger = Math.max(u.stagger, secs + (prone ? 1 : 0.2));
+}
+// A foe's attack on the party (or one of its own) that would land: a duplicate may take it, a readied reaction turn it (absorbed: half, and
+// the next blow carries it; reflected: nothing; a blink: nothing, the party is elsewhere). True when it does not land.
+function warded(sim: Sim, target: Unit, type: string, events: Event[]): boolean {
+  const buffs = target.buffs ?? [];
+  const img = buffs.find((b) => (b.images ?? 0) > 0);
+  if (img && rand(sim) < SHOOT.images[Math.min(3, img.images!)]) {
+    img.images!--;
+    events.push({ type: "image", id: target.id });
+    return true;
+  }
+  const r = buffs.find((b) => b.react);
+  if (!r) return false;
+  target.buffs = buffs.filter((b) => b !== r);
+  events.push({ type: "use", id: target.id, name: r.name, text: r.react === "absorb" ? "absorbed" : r.react === "reflect" ? "turned aside" : "gone in a flicker" });
+  if (r.react === "absorb") {
+    target.imbue = { damage: 3.5, type };
+    target.temp = Math.max(target.temp, 4);
+    return false;
+  }
+  return true;
 }
 // What a burst, a cone or a power's rider does besides damage (GrenadeKind's conditions), unless the body cannot be given that condition
 function afflict(sim: Sim, u: Unit, k: Pick<GrenadeKind, "blinds" | "stun" | "prone" | "fear" | "poison">, events: Event[]) {
@@ -597,17 +875,17 @@ export function noise(sim: Sim, x: number, y: number, radius: number, events: Ev
 }
 
 // ---- Shooting ------------------------------------------------------------------------------------------------------------------------
-function launch(sim: Sim, owner: Unit, gun: { damage: number; type: string; long: number; burst?: GrenadeKind }, from: { x: number; y: number; h: number }, to: { x: number; y: number; h: number }, spread: number, events: Event[]) {
+function launch(sim: Sim, owner: Unit, gun: { damage: number; type: string; long: number; burst?: GrenadeKind; rider?: Rider; plain?: boolean; blade?: boolean; harpoon?: boolean }, from: { x: number; y: number; h: number }, to: { x: number; y: number; h: number }, spread: number, events: Event[], speed: number = SHOOT.boltSpeed) {
   const dx = to.x - from.x, dy = to.y - from.y, dh = to.h - from.h;
   const d = Math.hypot(dx, dy) || 1e-6;
   // The aim is off by an angle within the spread (a square-rooted draw puts most shots near the line)
   const yaw = Math.atan2(dx, dy) + (rand(sim) * 2 - 1) * spread * (0.4 + 0.6 * rand(sim));
   const pitch = Math.atan2(dh, d) + (rand(sim) * 2 - 1) * spread * 0.6;
-  const speed = SHOOT.boltSpeed;
   sim.bolts.push({
     id: sim.seq++, owner: owner.id, side: owner.side, x: from.x, y: from.y, h: from.h, cell: [Math.floor(from.x), Math.floor(from.y)],
     vx: Math.sin(yaw) * Math.cos(pitch) * speed, vy: Math.cos(yaw) * Math.cos(pitch) * speed, vh: Math.sin(pitch) * speed,
-    damage: gun.damage, type: gun.type, life: Math.min(SHOOT.boltLife, gun.long / speed), ...(gun.burst ? { burst: gun.burst } : {}), ...(owner.natural ? { natural: true } : {}),
+    damage: gun.damage, type: gun.type, life: Math.min(SHOOT.boltLife * (SHOOT.boltSpeed / speed), gun.long / speed), ...(gun.burst ? { burst: gun.burst } : {}), ...(owner.natural ? { natural: true } : {}),
+    ...(gun.rider ? { rider: gun.rider } : {}), ...(gun.plain ? { plain: true } : {}), ...(gun.blade ? { blade: true } : {}), ...(gun.harpoon ? { harpoon: true } : {}),
   });
   events.push({ type: "shot", from: owner.id, ...from });
   noise(sim, from.x, from.y, 18, events);
@@ -621,14 +899,17 @@ export function firePlayer(sim: Sim, from: { x: number; y: number; h: number }, 
   if (g.launcher && !g.shell) return false;
   g.left--;
   p.fire = g.interval;
-  const far = Math.hypot(to.x - from.x, to.y - from.y) > g.range ? 1.5 : 1;
+  reveal(sim, p, events);
+  // (past the normal range the aim is worse, unless a scope takes the long range's penalty away)
+  const far = Math.hypot(to.x - from.x, to.y - from.y) > g.range && !g.scope ? 1.5 : 1;
   // (braced on a bipod or tripod: crouched and not moving)
   const braced = !!g.brace && !!p.crouch && !moving;
   // (each shot opens the cone by how hard the gun kicks; the cone is narrower for a steadier gun)
   const kick = (g.kick ?? 0.4) * (braced ? 0.5 : 1);
   sim.spread = clamp(Math.max(sim.spread, SHOOT.spread.base) + SHOOT.spread.perShot * (g.auto ? 1.4 : 1) * (0.5 + kick * 1.25), 0, SHOOT.spread.max);
   // (poisoned or blinded the aim is worse; a substance's high steadies it)
-  const state = (p.poisoned > 0 ? SHOOT.poisoned : 1) * (p.blind > 0 ? SHOOT.blinded : 1) * (p.high && p.high.t > 0 ? 0.85 : 1) * (braced ? 0.5 : 1);
+  // (a power's d4 on attacks steadies it: Buff.aim; held fast it is worse)
+  const state = (p.poisoned > 0 ? SHOOT.poisoned : 1) * (p.blind > 0 ? SHOOT.blinded : 1) * (p.high && p.high.t > 0 ? 0.85 : 1) * (braced ? 0.5 : 1) * Math.max(0.4, 1 - sumOf(p, "aim")) * ((p.held ?? 0) > 0 ? SHOOT.held.aim : 1);
   const spread = clamp((sim.spread * (g.steady ?? 1) + (moving ? SHOOT.spread.moving : 0) + (airborne ? SHOOT.spread.air : 0)) * far * (p.crouch ? SHOOT.crouch.spread : 1) * state, 0, SHOOT.spread.max * 2);
   p.facing = Math.atan2(to.x - from.x, to.y - from.y);
   if (g.launcher && g.shell) {
@@ -636,7 +917,9 @@ export function firePlayer(sim: Sim, from: { x: number; y: number; h: number }, 
     const dx = to.x - from.x, dy = to.y - from.y, flat = Math.hypot(dx, dy) || 1;
     const yaw = Math.atan2(dx, dy) + (rand(sim) * 2 - 1) * spread;
     const speed = 22;
-    sim.grenades.push({ id: sim.seq++, owner: p.id, side: "player", x: from.x, y: from.y, h: from.h, vx: Math.sin(yaw) * speed, vy: Math.cos(yaw) * speed, vh: ((to.h - from.h) / flat) * speed + 2, fuse: 3, kind: g.shell, bounces: 0, impact: true });
+    // (an enhanced launcher's more dice: a grenade's die taken as half its damage, most having two: house rule)
+    const kind = g.boost && g.shell.damage > 0 ? { ...g.shell, damage: g.shell.damage + g.boost.dice * (g.shell.damage / 2) + g.boost.bonus } : g.shell;
+    sim.grenades.push({ id: sim.seq++, owner: p.id, side: "player", x: from.x, y: from.y, h: from.h, vx: Math.sin(yaw) * speed, vy: Math.cos(yaw) * speed, vh: ((to.h - from.h) / flat) * speed + 2, fuse: 3, kind, bounces: 0, impact: true });
     events.push({ type: "shot", from: p.id, ...from });
     noise(sim, from.x, from.y, 18, events);
     return true;
@@ -658,62 +941,237 @@ export function setBlock(sim: Sim, on: boolean) {
   const p = playerOf(sim);
   p.blocking = on && !!p.blade?.saber && p.focusLock <= 0 && p.swing <= 0 && !p.dead;
 }
-// The party casts the power in slot `index`. Returns "" when it was cast, else why not (the scene says it).
-export function castPower(sim: Sim, index: number, env: Env, events: Event[]): string {
+// The party casts the power in slot `index` (or one an item casts: `given`, no points). Returns "" when it was cast, else why not (the scene says
+// it). `aim` is the point under the crosshair (a blink, a zone, a hologram go there); `place` moves the party (a blink, a dash).
+// (2026-11-03) What a focus or wristpad adds (Unit.channel): damage by the points spent, temporary hit points on a heal, range, radius, push;
+// cold that slows, a d12 kept; subroutines spend more points for more (distant: double range; twinned: a second target; improved: the dice
+// rerolled, taken as a sixth more; heightened: a condition half as long again; extended: a buff twice as long; quickened: no pause after),
+// each a number of times a rest (Unit.channel.subUses)
+export function castPower(sim: Sim, index: number, env: Env, events: Event[], aim?: { x: number; y: number; h: number } | null, place?: (x: number, y: number) => boolean, given?: RtPower): string {
   const p = playerOf(sim);
-  const power = p.powers?.[index];
+  const power = given ?? p.powers?.[index];
   if (!power) return "";
   if (p.dead || p.stagger > 0) return "Cannot cast now";
   if ((p.powerCd ?? 0) > 0) return "";
-  if ((p.points ?? 0) < power.cost) return `Not enough points for ${power.name} (${power.cost})`;
+  const cost = given ? 0 : power.cost;
+  if ((p.points ?? 0) < cost) return `Not enough points for ${power.name} (${cost})`;
+  const ch = p.channel ?? {};
+  const mine = power.tradition && ch.perPoint?.kind === power.tradition;
+  let extra = 0;
+  // (a subroutine is spent only on a tech power, only while uses and points are left)
+  const sub = (name: string, points: number) => {
+    if (power.tradition !== "tech" || given || !ch.subroutines?.includes(name) || (ch.subUses ?? 0) <= 0 || (p.points ?? 0) < cost + extra + points) return false;
+    ch.subUses = (ch.subUses ?? 0) - 1;
+    extra += points;
+    events.push({ type: "once", name: `${name} subroutine` });
+    return true;
+  };
+  const range = power.range + (power.tradition === "force" ? ch.range ?? 0 : 0);
+  const radius = power.radius > 0 ? power.radius + (power.tradition === "force" ? ch.radius ?? 0 : 0) : 0;
   const from = { x: p.x, y: p.y, h: p.h + 1.0 };
   let at = { x: p.x, y: p.y, h: p.h + 1.0 };
+  const secs = (s: number) => Math.min(SHOOT.power.longest * 2, s);
+  const spend = () => {
+    p.points = (p.points ?? 0) - cost - extra;
+    p.powerCd = sub("quickened", 2) ? 0.2 : SHOOT.power.pause;
+    events.push({ type: "power", id: p.id, kind: power.kind, name: power.name, ...from, tx: at.x, ty: at.y, th: at.h });
+    // (a power is a hostile act unless it is on the party itself)
+    if (!["heal", "buff", "sense", "cure", "revive"].includes(power.kind)) reveal(sim, p, events);
+    return "";
+  };
+  // ---- On the party itself, or at the aim
   if (power.kind === "heal") {
     if (p.hp >= p.maxHp) return `${power.name}: already unhurt`;
-    p.hp = Math.min(p.maxHp, p.hp + power.damage);
-  } else {
-    // The foe nearest the line of the aim, within the power's reach and the cone, and in sight
-    const [fx, fy] = dirOf(p.facing);
-    let target: Unit | undefined;
-    let best = Infinity;
-    for (const u of sim.units) {
-      if (u.side !== "foe" || !alive(u) || u.mode === "gone") continue;
-      const d = dist(p, u);
-      // (reach is measured from the body: a power with a reach of one square takes whoever stands next to the party)
-      if (d > power.range + 0.8) continue;
-      const off = Math.acos(clamp(((u.x - p.x) * fx + (u.y - p.y) * fy) / (d || 1), -1, 1));
-      if (off > SHOOT.power.cone || !sees(env, { x: p.x, y: p.y, h: p.h }, { x: u.x, y: u.y, h: u.h })) continue;
-      const score = off * 6 + d * 0.1;
-      if (score < best) [target, best] = [u, score];
-    }
-    if (!target) return `${power.name}: nothing in its reach`;
-    at = { x: target.x, y: target.y, h: target.h + SHOOT.height * 0.6 };
-    for (const u of sim.units) {
-      if (u.side !== "foe" || !alive(u) || u.mode === "gone") continue;
-      if (u !== target && dist(u, target) > power.radius) continue;
-      if (u.mode === "idle") alertFoe(sim, u, events);
-      if (power.kind === "damage") {
-        hurt(sim, u, power.damage, power.type, p, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 });
-        u.stagger = Math.max(u.stagger, 0.3);
-      } else if (power.kind === "stun") u.stagger = Math.max(u.stagger, Math.min(SHOOT.power.longest, power.seconds));
-      else if (power.kind === "blind") u.blind = Math.max(u.blind, Math.min(SHOOT.power.longest, power.seconds));
-      else if (power.kind === "fear") {
-        // (the brave do not run: they are shaken for a moment)
-        if (u.brave || u.leader) u.stagger = Math.max(u.stagger, Math.min(2, power.seconds));
-        else { u.mode = "flee"; u.flee = Math.min(SHOOT.power.longest, power.seconds); }
-      } else {
-        const way = power.kind === "push" ? 1 : -1;
-        const d = dist(p, u) || 1;
-        const secs = Math.max(0.15, power.distance / SHOOT.power.knock);
-        u.knock = { vx: ((u.x - p.x) / d) * SHOOT.power.knock * way, vy: ((u.y - p.y) / d) * SHOOT.power.knock * way, t: secs, strike: power.strike, type: power.type };
-        u.stagger = Math.max(u.stagger, secs + 0.2);
-      }
-    }
+    const die = power.tradition === "tech" && ch.die && p.powerDie ? p.powerDie : 0;
+    p.powerDie = die ? 0 : p.powerDie;
+    p.hp = Math.min(p.maxHp, p.hp + power.damage + die);
+    if (ch.healTemp && power.tradition === "tech" && cost) p.temp = Math.max(p.temp, ch.healTemp * cost);
+    return spend();
   }
-  p.points = (p.points ?? 0) - power.cost;
-  p.powerCd = SHOOT.power.pause;
-  events.push({ type: "power", id: p.id, kind: power.kind, name: power.name, ...from, tx: at.x, ty: at.y, th: at.h });
-  return "";
+  if (power.kind === "buff" && power.buff) {
+    const b = { ...power.buff, t: secs(power.buff.t) * (power.buff.t < 60 && sub("extended", 1) ? 2 : 1) };
+    // (a wristpad that raises a tech shield's bonus)
+    if (b.ac && power.tradition === "tech" && ch.guard) b.ac += ch.guard;
+    addBuff(p, b);
+    if (b.cloak) sim.lastSeen = { x: p.x, y: p.y };
+    if (b.fearless) p.stagger = 0;
+    events.push({ type: "use", id: p.id, name: power.name, text: describeBuff(b) });
+    return spend();
+  }
+  if (power.kind === "imbue") {
+    const jolt = power.tradition === "force" && ch.jolt && (p.points ?? 0) >= cost + 1 ? ch.jolt : undefined;
+    if (jolt) extra += 1;
+    p.imbue = { damage: power.damage + (jolt?.damage ?? 0), type: jolt?.type ?? power.type, ...(power.rider?.stagger ? { stagger: power.rider.stagger } : {}), ...(power.rider?.slow ? { slow: true } : {}) };
+    events.push({ type: "use", id: p.id, name: power.name, text: `the next ${p.gun ? "shot or blow" : "blow"} +${Math.round(p.imbue.damage)} ${p.imbue.type}` });
+    return spend();
+  }
+  if (power.kind === "sense") {
+    addBuff(p, { name: power.name, t: secs(power.seconds || 60), sense: { through: power.radius || 12, ...(power.buff?.sense?.truesight ? { truesight: power.buff.sense.truesight } : {}) } });
+    events.push({ type: "use", id: p.id, name: power.name, text: "you sense what moves round you" });
+    return spend();
+  }
+  if (power.kind === "cure") {
+    p.poisoned = 0;
+    p.burning = 0;
+    if (power.buff) addBuff(p, { ...power.buff, t: secs(power.buff.t) });
+    return spend();
+  }
+  if (power.kind === "revive") {
+    const down = inReach(sim, p, (u) => u.side === "ally" && u.dead && !u.fled && !u.decoy && !u.droid, Math.max(SHOOT.hand, range));
+    if (!down) return `${power.name}: no fallen companion in reach`;
+    down.dead = false;
+    down.hp = Math.max(1, power.damage);
+    down.mode = "engage";
+    events.push({ type: "use", id: p.id, name: power.name, text: `${down.name} is back up` });
+    return spend();
+  }
+  if (power.kind === "blink") {
+    if (!aim || !place) return `${power.name}: look where to go`;
+    const dx = aim.x - p.x, dy = aim.y - p.y, d = Math.hypot(dx, dy) || 1;
+    for (let s = Math.min(d, power.distance || range); s >= 1; s -= 0.5) {
+      const [x, y] = [p.x + (dx / d) * s, p.y + (dy / d) * s];
+      if (!fitsAt(env, Math.floor(x) + 0.5, Math.floor(y) + 0.5) || !sees(env, p, { x, y, h: env.floorAt(x, y) })) continue;
+      if (!place(Math.floor(x), Math.floor(y))) continue;
+      at = { x, y, h: env.floorAt(x, y) + 1 };
+      return spend();
+    }
+    return `${power.name}: no free ground in sight there`;
+  }
+  if (power.kind === "zone" || power.kind === "decoy") {
+    if (!aim) return `${power.name}: look where to put it`;
+    const d = Math.hypot(aim.x - p.x, aim.y - p.y);
+    const k = d > range ? range / d : 1;
+    at = { x: p.x + (aim.x - p.x) * k, y: p.y + (aim.y - p.y) * k, h: env.floorAt(p.x + (aim.x - p.x) * k, p.y + (aim.y - p.y) * k) + 0.6 };
+    if (power.kind === "zone" && power.field) {
+      sim.fields.push({ id: sim.seq++, owner: p.id, x: at.x, y: at.y, h: at.h - 0.6, radius: Math.max(1, radius || 4), t: secs(power.seconds || 60), dps: power.field.dps, type: power.field.type, ...(power.field.poison ? { poison: 1 } : {}), ...(power.field.obscure ? { obscure: true } : {}), ...(power.field.slow ? { slow: true } : {}) });
+      noise(sim, at.x, at.y, 6, events);
+    } else {
+      const id = `decoy-${sim.seq++}`;
+      const fit = fitsAt(env, at.x, at.y) ? at : { x: p.x, y: p.y, h: p.h };
+      sim.units.push(blankUnit({ id, name: `${power.name}`, side: "ally", x: fit.x, y: fit.y, h: env.floorAt(fit.x, fit.y), hp: 1, maxHp: 1, decoy: true, life: Math.min(SHOOT.decoy, power.seconds || SHOOT.decoy), mode: "engage", facing: p.facing }));
+      events.push({ type: "decoy", id });
+    }
+    return spend();
+  }
+  // ---- On foes: the nearest the line of the aim, within reach and the cone, in sight (a distant subroutine doubles the reach)
+  const [fx, fy] = dirOf(p.facing);
+  const fits = (u: Unit) => u.side === "foe" && alive(u) && u.mode !== "gone" && !u.decoy && (!power.droids || !!u.droid) && (!power.people || (!u.droid && !u.natural)) && (power.maxHp === undefined || u.hp <= power.maxHp);
+  const candidates = (reach: number) => sim.units.filter((u) => {
+    if (!fits(u)) return false;
+    const d = dist(p, u);
+    if (d > reach + 0.8) return false;
+    const off = Math.acos(clamp(((u.x - p.x) * fx + (u.y - p.y) * fy) / (d || 1), -1, 1));
+    return off <= SHOOT.power.cone * (power.hits || (power.targets ?? 1) > 1 ? 1.8 : 1) && sees(env, { x: p.x, y: p.y, h: p.h }, { x: u.x, y: u.y, h: u.h });
+  }).sort((a, b) => {
+    const off = (u: Unit) => Math.acos(clamp(((u.x - p.x) * fx + (u.y - p.y) * fy) / (dist(p, u) || 1), -1, 1));
+    return off(a) * 6 + dist(p, a) * 0.1 - (off(b) * 6 + dist(p, b) * 0.1);
+  });
+  let list = candidates(range);
+  if (!list.length && candidates(range * 2).length && sub("distant", 1)) list = candidates(range * 2);
+  if (!list.length) return `${power.name}: nothing in its reach`;
+  const target = list[0];
+  at = { x: target.x, y: target.y, h: target.h + SHOOT.height * 0.6 };
+  const many = Math.max(power.targets ?? 1, power.hits ?? 1);
+  let chosen = many > 1 ? list.slice(0, many) : [target];
+  if (chosen.length === 1 && !radius && list[1] && sub("twinned", Math.max(1, power.level ?? 1))) chosen = list.slice(0, 2);
+  const improved = power.kind === "damage" && sub("improved", 1) ? 1.15 : 1;
+  const heighten = ["stun", "fear", "blind", "slow", "restrain", "mind"].includes(power.kind) && sub("heightened", 3) ? 1.5 : 1;
+  const bonus = (mine && cost ? cost * ch.perPoint!.per : 0) + (power.tradition === "tech" && ch.die && p.powerDie ? p.powerDie : 0);
+  if (power.tradition === "tech" && ch.die && p.powerDie && power.kind === "damage") p.powerDie = 0;
+  const hold = (s: number) => Math.min(SHOOT.power.longest * heighten, s * heighten);
+  // Each one taken: those chosen, and those round the first within the radius
+  const taken = new Set<Unit>(chosen);
+  if (radius) for (const u of sim.units) if (fits(u) && dist(u, target) <= radius) taken.add(u);
+  let landed = 0;
+  for (const u of taken) {
+    if (u.mode === "idle" && power.kind !== "mind") alertFoe(sim, u, events);
+    const hitAt = { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 };
+    const share = power.hits ? Math.max(1, Math.round(power.hits / chosen.length)) : 1;
+    if (power.kind === "damage") {
+      hurt(sim, u, (power.damage * (power.hits ? share : 1) + bonus) * improved, power.type, p, events, hitAt);
+      u.stagger = Math.max(u.stagger, 0.3);
+      if (ch.coldSlows && power.tradition === "tech" && power.type === "cold") { u.slowed = Math.max(u.slowed ?? 0, 6); u.slowBy = SHOOT.slowLevel; }
+    } else if (power.kind === "stun") u.stagger = Math.max(u.stagger, hold(power.seconds));
+    else if (power.kind === "blind") u.blind = Math.max(u.blind, hold(power.seconds));
+    else if (power.kind === "fear") {
+      // (the brave do not run: they are shaken for a moment)
+      if (u.brave || u.leader) u.stagger = Math.max(u.stagger, Math.min(2, power.seconds));
+      else { u.mode = "flee"; u.flee = hold(power.seconds); }
+    } else if (power.kind === "push" || power.kind === "pull") {
+      if (u.anchored) continue;
+      const way = power.kind === "push" ? 1 : -1;
+      const d = dist(p, u) || 1;
+      const s = Math.max(0.15, (power.distance + (power.tradition === "force" ? ch.push ?? 0 : 0)) / SHOOT.power.knock);
+      u.knock = { vx: ((u.x - p.x) / d) * SHOOT.power.knock * way, vy: ((u.y - p.y) / d) * SHOOT.power.knock * way, t: s, strike: power.strike + bonus, type: power.type };
+      u.stagger = Math.max(u.stagger, s + 0.2);
+    } else if (power.kind === "mark") {
+      u.mark = { t: secs(power.seconds || 60), damage: power.damage, type: power.type === "force" && !power.damage ? undefined : power.type, edge: !power.damage };
+      events.push({ type: "status", id: u.id, text: "marked" });
+    } else if (power.kind === "slow") {
+      u.slowed = Math.max(u.slowed ?? 0, hold(power.seconds || 6));
+      u.slowBy = Math.max(u.slowBy ?? 0, SHOOT.slowLevel);
+      if (power.ac) u.acDown = Math.max(u.acDown ?? 0, power.ac);
+      events.push({ type: "status", id: u.id, text: "slowed" });
+    } else if (power.kind === "restrain") {
+      if (u.huge) continue;
+      u.held = Math.max(u.held ?? 0, hold(power.seconds || 6));
+      events.push({ type: "status", id: u.id, text: "held" });
+    } else if (power.kind === "mind") {
+      // (unaware, it stays so; aware, it stops fighting a while, unless the power works only on those not hostile yet)
+      if (u.mode === "idle") { u.oblivious = Math.max(u.oblivious ?? 0, hold(power.seconds || 60)); events.push({ type: "status", id: u.id, text: "unaware" }); }
+      else if (!power.buff?.breaks) { u.charmed = Math.max(u.charmed ?? 0, hold(Math.min(power.seconds || 12, 12))); u.aiming = 0; events.push({ type: "status", id: u.id, text: "charmed" }); }
+      else continue;
+    } else if (power.kind === "kill") {
+      u.hp = 0;
+      u.dead = true;
+      events.push({ type: "down", id: u.id, by: p.id });
+      if (u.leader) breakGang(sim, u, events);
+    } else if (power.kind === "disarm") {
+      if (u.huge || !u.gun || u.natural) continue;
+      u.gun = undefined;
+      u.disarmed = true;
+      u.blade = { name: "Fists", damage: 2.5, type: "kinetic", saber: false };
+      u.aiming = 0;
+      events.push({ type: "status", id: u.id, text: "disarmed" });
+    } else if (power.kind === "turn") {
+      if (!u.droid) continue;
+      u.side = "ally";
+      u.turned = hold(power.seconds || 12);
+      u.aiming = 0;
+      u.mode = "engage";
+      events.push({ type: "status", id: u.id, text: "turned" });
+    } else if (power.kind === "throw") {
+      // The blade thrown at the foe and back to the hand (a moment without it): its own dice (a Force-thrown lightweapon's crystal adds its own)
+      const dmg = power.damage + (p.blade ? (ch.levitate ?? 0) * (p.blade.damage / 2) : 0) + bonus;
+      launch(sim, p, { damage: dmg, type: p.blade?.type ?? power.type, long: range * 1.5, blade: true, plain: true }, from, hitAt, 0.02, events, SHOOT.thrown);
+      p.swing = Math.max(p.swing, 0.5);
+    } else if (power.kind === "dash") {
+      // Across the floor to the foe and a blow, the power's extra dice in it, a shove down after (a saber strike)
+      if (place && dist(p, u) > 1.5) {
+        const d = dist(p, u);
+        const s = Math.min(d - 1, SHOOT.dash);
+        const [x, y] = [p.x + ((u.x - p.x) / d) * s, p.y + ((u.y - p.y) / d) * s];
+        if (fitsAt(env, Math.floor(x) + 0.5, Math.floor(y) + 0.5)) place(Math.floor(x), Math.floor(y));
+      }
+      p.facing = Math.atan2(u.x - p.x, u.y - p.y);
+      p.imbue = { damage: power.damage + bonus, type: p.blade?.type ?? power.type, stagger: power.rider?.stagger ?? 1 };
+      if (p.blade) {
+        p.swing = 0;
+        swingPlayer(sim, events);
+      }
+      landed++;
+      break;
+    }
+    landed++;
+  }
+  if (!landed) return `${power.name}: it takes no hold on that`;
+  // (a wristpad's d12: a tech power that took hold keeps one for the next)
+  if (ch.die && power.tradition === "tech" && power.kind !== "damage") p.powerDie = 6.5;
+  return spend();
+}
+// A buff's line on the screen
+function describeBuff(b: Buff): string {
+  return [b.temp && `${Math.round(b.temp)} temporary hit points`, b.ac && `+${b.ac} AC`, b.resist?.length && `resists ${b.resist.join(", ")}`, b.immune && "immune to damage", b.speed && `${Math.round(b.speed * 100)}% faster`, b.cloak && "unseen", b.empower && `+${Math.round(b.empower.damage)} ${b.empower.type} a hit`, b.images && `${b.images} duplicates`, b.aim && "a steadier aim", b.react && "ready", b.endure && "will not fall", b.regen && "healing", b.orbit && "a blade spinning round you", b.retort && `${Math.round(b.retort.damage)} ${b.retort.type} back at whoever strikes`].filter(Boolean).join(", ") || "on";
 }
 
 // A swing of the party's blade; chained within a second of the last it hits harder (the combo)
@@ -724,6 +1182,7 @@ export function swingPlayer(sim: Sim, events: Event[]): boolean {
   p.swing = SHOOT.saber.swing;
   p.chain = SHOOT.saber.chain + SHOOT.saber.swing;
   p.blocking = false;
+  reveal(sim, p, events);
   events.push({ type: "swing", id: p.id });
   return true;
 }
@@ -884,9 +1343,90 @@ export function applyGear(sim: Sim, gear: FightGear, env: Env, events: Event[], 
     const from = front();
     const g = { damage: a.damage, type: "kinetic", long: 80, burst: a.blast };
     launch(sim, p, g, from, aim, Math.max(SHOOT.spread.base, sim.spread), events);
+  } else if (a.act === "snare") {
+    // A net or bolas: thrown flat to the aim, it holds the first foe it comes to (2026-11-03)
+    if (!aim) return "Look where to throw it";
+    const from = front();
+    const flat = Math.hypot(aim.x - from.x, aim.y - from.y) || 1;
+    const speed = 13;
+    const t = flat / speed;
+    sim.grenades.push({ id: sim.seq++, owner: p.id, side: "player", ...from, vx: ((aim.x - from.x) / flat) * speed, vy: ((aim.y - from.y) / flat) * speed, vh: (aim.h - from.h + 0.5 * SHOOT.grenade.gravity * t * t) / t, fuse: t + 1, kind: { name: gear.name, radius: 0.9, damage: 0, type: "kinetic", blinds: false }, bounces: 0, impact: true, snare: a.dc });
+  } else if (a.act === "harpoon") {
+    if (!aim) return "Look where to fire it";
+    const from = front();
+    launch(sim, p, { damage: a.damage, type: "kinetic", long: Math.min(a.range, a.cable), plain: true, harpoon: true }, from, aim, SHOOT.spread.base, events, 20);
+    // (reeled back in: not used up)
+    reveal(sim, p, events);
+    busy();
+    return KEPT;
+  } else if (a.act === "overload") {
+    // The shield overloaded: those of Large size or smaller within reach shoved back and knocked down
+    let n = 0;
+    for (const u of sim.units) {
+      if (u.side !== "foe" || !alive(u) || u.huge || u.decoy || dist(u, p) > a.reach + SHOOT.radius * 2) continue;
+      shove(u, p, 1, true);
+      n++;
+    }
+    events.push({ type: "explode", x: p.x, y: p.y, h: p.h + 0.8, radius: a.reach });
+    said(n ? `${n} thrown back` : "nothing near enough");
+  } else if (a.act === "amplify") {
+    // The shield projected round those within 5 ft.: its bonus to their AC until the next turn (six seconds)
+    const near = sim.units.filter((u) => (u.side === "ally" || u === p) && alive(u) && !u.decoy && dist(u, p) <= 1.5);
+    for (const u of near) addBuff(u, { name: gear.name, t: 6, ac: a.ac });
+    said(`+${a.ac} AC to ${near.length > 1 ? `you and ${near.length - 1} more` : "you"}`);
+  } else if (a.act === "cloak") {
+    p.cloaked = !p.cloaked;
+    if (p.cloaked) sim.lastSeen = { x: p.x, y: p.y };
+    said(p.cloaked ? "the field is on: you are unseen" : "the field is off");
+    return KEPT;
+  } else if (a.act === "anchor") {
+    p.anchored = !p.anchored;
+    said(p.anchored ? "anchored: nothing moves you, and you move slowly" : "free to move");
+    return KEPT;
+  } else if (a.act === "hidden") {
+    if (!aim) return "Look where to fire it";
+    launch(sim, p, { damage: a.damage, type: a.type, long: a.range, plain: true }, front(), aim, SHOOT.spread.base, events);
+    said("revealed and fired");
+  } else if (a.act === "cast") {
+    // (an item that casts at will is not used up; one with charges or uses a rest is spent one)
+    const why = castPower(sim, -1, env, events, aim, place, a.power);
+    return why || (gear.rest ? "" : KEPT);
+  } else if (a.act === "leap") {
+    if (!aim || !place) return "Look where to leap to";
+    const dx = aim.x - p.x, dy = aim.y - p.y, d = Math.hypot(dx, dy) || 1;
+    for (let s = Math.min(d, a.range); s >= 1; s -= 0.5) {
+      const [x, y] = [p.x + (dx / d) * s, p.y + (dy / d) * s];
+      if (!fitsAt(env, Math.floor(x) + 0.5, Math.floor(y) + 0.5) || !sees(env, p, { x, y, h: env.floorAt(x, y) }) || !place(Math.floor(x), Math.floor(y))) continue;
+      said("a burst of the boosters");
+      return "";
+    }
+    return "No ground in sight to leap to";
+  } else if (a.act === "eye") {
+    if (!aim) return "Look where to send it";
+    const d = Math.hypot(aim.x - p.x, aim.y - p.y);
+    const k = d > a.range ? a.range / d : 1;
+    sim.eye = { x: p.x + (aim.x - p.x) * k, y: p.y + (aim.y - p.y) * k, h: env.floorAt(p.x + (aim.x - p.x) * k, p.y + (aim.y - p.y) * k), t: 60 };
+    said("the eye scuttles off: you see what it sees");
+    return KEPT;
+  } else if (a.act === "light") {
+    sim.lit = !sim.lit;
+    said(sim.lit ? "the light is on (it shows you the way, and you to them)" : "the light is off");
+    return KEPT;
   }
+  if (a.act === "throw" || a.act === "rocket" || a.act === "snare" || a.act === "hidden" || a.act === "overload") reveal(sim, p, events);
   busy();
   return "";
+}
+// A net or bolas comes down: the foe nearest where it lands, if Large or smaller, is held until it frees itself (each six seconds it tries: its
+// bonus against the DC; held for as long as that takes on average, at most SHOOT.held.longest: house rule)
+function snareAt(sim: Sim, g: Grenade, events: Event[]) {
+  const u = sim.units.filter((o) => o.side !== g.side && o.side !== "player" && o.side !== "ally" && alive(o) && !o.decoy && Math.hypot(o.x - g.x, o.y - g.y) <= 1).sort((a, b) => Math.hypot(a.x - g.x, a.y - g.y) - Math.hypot(b.x - g.x, b.y - g.y))[0];
+  if (!u) return void events.push({ type: "impact", x: g.x, y: g.y, h: g.h });
+  if (u.huge) return void events.push({ type: "status", id: u.id, text: "too big to hold" });
+  const p = clamp((21 - (g.snare ?? 15) + u.bonus) / 20, 0.05, 0.95);
+  u.held = Math.max(u.held ?? 0, Math.min(SHOOT.held.longest, 6 / p));
+  u.aiming = 0;
+  events.push({ type: "status", id: u.id, text: "netted" });
 }
 
 // ---- A frame -------------------------------------------------------------------------------------------------------------------------
@@ -990,7 +1530,29 @@ function stepStates(sim: Sim, dt: number, events: Event[]) {
       u.regenT = (u.regenT ?? 6) - dt;
       if (u.regenT <= 0) { u.regenT = 6; u.hp = Math.min(u.maxHp, u.hp + u.regen); }
     }
+    // (2026-11-03) What wears off: held, slowed, charmed, unaware, turned (a droid comes back to its own side), a mark, a buff, the moment a
+    // shot gave the cloaked away; a hologram's time
+    for (const k of ["held", "slowed", "charmed", "oblivious", "shown"] as const) if (u[k]) u[k] = Math.max(0, u[k]! - dt);
+    if (u.slowed === 0) u.slowBy = 0;
+    if (u.turned) {
+      u.turned = Math.max(0, u.turned - dt);
+      if (u.turned === 0) { u.side = "foe"; events.push({ type: "status", id: u.id, text: "comes back to itself" }); }
+    }
+    if (u.mark && (u.mark.t -= dt) <= 0) u.mark = undefined;
+    if (u.decoy && u.life !== undefined && (u.life -= dt) <= 0) { u.dead = true; u.mode = "gone"; }
+    if (u.buffs?.length) {
+      for (const b of u.buffs) {
+        b.t -= dt;
+        // a power's hit points a second; a weapon spun round the body cuts those near
+        if (b.regen && u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + b.regen * dt);
+        if (b.orbit) for (const o of sim.units) if (o.side !== u.side && o.side !== (u.side === "player" ? "ally" : u.side) && alive(o) && !o.decoy && dist(o, u) <= b.orbit.radius) seep(sim, o, b.orbit.dps * dt, b.orbit.type, u, events);
+      }
+      u.buffs = u.buffs.filter((b) => b.t > 0 && !(b.images !== undefined && b.images <= 0));
+    }
+    // (in a field that slows, slowed)
+    if (sim.fields.some((f) => f.slow && Math.hypot(u.x - f.x, u.y - f.y) <= f.radius)) { u.slowed = Math.max(u.slowed ?? 0, 0.3); u.slowBy = Math.max(u.slowBy ?? 0, SHOOT.slowLevel); }
   }
+  if (sim.eye && (sim.eye.t -= dt) <= 0) sim.eye = undefined;
 }
 // Mines and charges: arming, then a body of the other side comes near, or a charge's timer runs out
 function stepMines(sim: Sim, dt: number, env: Env, events: Event[]) {
@@ -1044,16 +1606,21 @@ function landSwing(sim: Sim, p: Unit, events: Event[]) {
   const b = p.blade!;
   const [fx, fy] = dirOf(p.facing);
   const damage = b.damage * (1 + SHOOT.saber.comboBonus * p.combo);
+  // (the third blow of a chain is the shooter's critical: a lightweapon's burning cell leaves the foe open to the next)
+  const crit = p.combo >= 2;
   for (const u of sim.units) {
-    if (u.side !== "foe" || !alive(u)) continue;
+    if (u.side !== "foe" || !alive(u) || u.decoy) continue;
     const d = dist(p, u);
-    if (d > SHOOT.saber.reach + SHOOT.radius || Math.abs(u.h - p.h) > 1) continue;
+    if (d > SHOOT.saber.reach + (b.reach ?? 0) + SHOOT.radius || Math.abs(u.h - p.h) > 1) continue;
     const off = Math.acos(clamp(((u.x - p.x) * fx + (u.y - p.y) * fy) / (d || 1), -1, 1));
     if (off > SHOOT.saber.arc) continue;
-    // A saber in an enemy's hands turns a blow aside now and then, when it faces the swing
-    if (u.blade?.saber && u.swing === 0 && rand(sim) < 0.3) { events.push({ type: "blocked", id: u.id }); continue; }
-    hurt(sim, u, damage, b.type, p, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 });
-    u.stagger = 0.25;
+    // A saber in an enemy's hands turns a blow aside now and then, when it faces the swing (not one left open by a critical)
+    if (u.blade?.saber && u.swing === 0 && !u.mark?.edge && rand(sim) < 0.3) { events.push({ type: "blocked", id: u.id }); continue; }
+    // (an edge's doubled die: with advantage, a foe unaware, staggered or blind, the two dice match one time in twenty)
+    const doubled = b.rider?.doubles && (u.mode === "idle" || u.stagger > 0 || u.blind > 0) && rand(sim) < 0.05 ? b.rider.doubles * (b.damage / 2) : 0;
+    partyStrike(sim, p, u, damage + doubled, b.type, b.rider, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 });
+    if (crit && b.rider?.critFollow) u.mark = { t: 3, damage: u.mark?.damage ?? 0, type: u.mark?.type, edge: true };
+    u.stagger = Math.max(u.stagger, 0.25);
     // The dose of poison on the blade goes in with the first blow that lands
     if (p.venom) {
       hurt(sim, u, p.venom, "poison", p, events, { x: u.x, y: u.y, h: u.h + SHOOT.height * 0.6 });
@@ -1101,7 +1668,22 @@ function steer(u: Unit, goal: { x: number; y: number }, speed: number, dt: numbe
   }
   return false;
 }
+// Whether a point is in smoke, fog or darkness (a field that obscures)
+const obscured = (sim: Sim, o: { x: number; y: number; h: number }) => sim.fields.some((f) => f.obscure && Math.hypot(o.x - f.x, o.y - f.y) <= f.radius && o.h <= f.h + 3);
+// The one a unit goes for: the nearest of the other side, a hologram sooner than the real thing, the cloaked party only when it is close
+function targetOf(u: Unit, list: Unit[]): Unit | undefined {
+  let best: Unit | undefined;
+  let bestD = Infinity;
+  for (const o of list) {
+    let d = dist(u, o);
+    if (o.decoy) d *= 0.6;
+    if (cloakedNow(o) && d > SHOOT.cloak.near) d += 12;
+    if (d < bestD) { best = o; bestD = d; }
+  }
+  return best;
+}
 function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
+  if (u.decoy) return;
   if (u.stagger > 0) {
     // (a hard enough blow breaks off a throw, a spray or a call)
     if (u.act && u.stagger >= SHOOT.act.breaks) {
@@ -1110,21 +1692,38 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
     }
     return;
   }
+  // (charmed by a mind power, it stands and does not fight until struck or its time is up)
+  if ((u.charmed ?? 0) > 0) { u.aiming = 0; u.act = undefined; return; }
   const foes = opponents(sim, u);
-  const target = nearest(sim, u, foes);
+  const target = targetOf(u, foes);
   if (!target) return;
   const d = dist(u, target);
-  const seen = sees(env, { x: u.x, y: u.y, h: u.h }, { x: target.x, y: target.y, h: target.h });
-  // Not yet aware: it notices the party in plain sight and near (the unaware see less far)
+  // (the party unseen: a stealth field or invisibility, and nothing given it away; smoke or darkness between)
+  const unseen = cloakedNow(target) && d > SHOOT.cloak.near;
+  const seen = !unseen && sees(env, { x: u.x, y: u.y, h: u.h }, { x: target.x, y: target.y, h: target.h });
+  const pace = u.speed * paceOf(u);
+  // Not yet aware: it notices the party in plain sight and near (the unaware see less far; a light carried is seen farther; a mind trick
+  // keeps it unaware)
   if (u.mode === "idle") {
-    if (seen && d <= SHOOT.sight * (sim.surprise ? 0.55 : 1)) alertFoe(sim, u, events);
+    if ((u.oblivious ?? 0) > 0) return;
+    if (seen && d <= SHOOT.sight * (sim.surprise ? 0.55 : 1) * (sim.lit && target.side === "player" ? 1.4 : 1) * (obscured(sim, target) ? 0.35 : 1)) alertFoe(sim, u, events);
     return;
   }
   if (u.mode === "flee") {
     const hunter = nearest(sim, u, foes) ?? target;
-    steer(u, hunter, u.speed * 1.15, dt, env, true);
+    steer(u, hunter, pace * 1.15, dt, env, true);
     return;
   }
+  // (it has lost the party: it goes to where it was last seen and looks about)
+  if (unseen) {
+    u.aiming = 0;
+    u.volleyLeft = 0;
+    const spot = sim.lastSeen;
+    if (spot && Math.hypot(spot.x - u.x, spot.y - u.y) > 1) chase(u, spot, pace * 0.8, dt, env, true);
+    else u.facing += dt * 1.2;
+    return;
+  }
+  if (target.side === "player") sim.lastSeen = { x: target.x, y: target.y };
   u.facing = Math.atan2(target.x - u.x, target.y - u.y);
   if (u.wait > 0) return;
   // A throw, a spray or a call under way: it stands, and when the moment is up it is done (at the one it began on, if still there)
@@ -1161,12 +1760,12 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
   const ranged = !!u.gun && u.gun.range > 1.6;
   if (ranged) {
     const want = clamp(u.gun!.range * 0.55, 4, 10);
-    if (!seen || d > want + 2.5) chase(u, target, u.speed, dt, env, seen);
-    else if (d < want - 2.5) steer(u, target, u.speed * 0.8, dt, env, true);
+    if (!seen || d > want + 2.5) chase(u, target, pace, dt, env, seen);
+    else if (d < want - 2.5) steer(u, target, pace * 0.8, dt, env, true);
     else {
       if (u.strafe <= 0) { u.strafe = between(sim, [0.9, 2.2]); u.strafeDir = rand(sim) < 0.5 ? -1 : 1; }
       const a = u.facing + (Math.PI / 2) * u.strafeDir;
-      if (!walk(u, Math.sin(a) * u.speed * 0.55 * dt, Math.cos(a) * u.speed * 0.55 * dt, env)) u.strafeDir *= -1;
+      if (!walk(u, Math.sin(a) * pace * 0.55 * dt, Math.cos(a) * pace * 0.55 * dt, env)) u.strafeDir *= -1;
     }
     // A volley: a pause to aim (the scene shows it), then the shots, aimed where the target is
     if (!seen || d > u.gun!.long) u.aiming = 0;
@@ -1185,7 +1784,7 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
       }
       if (u.volleyLeft > 0 && u.burst <= 0 && u.aiming <= 0) {
         // One shot of the volley: the aim is off by more for a high Armor Class, a low bonus, a long way, or a blinding flash
-        const err = (SHOOT.aimError - u.bonus * SHOOT.aimPerBonus + Math.max(0, target.ac - 12) * SHOOT.aimPerArmor * 0.1) * (d > u.gun!.range ? 1.5 : 1) * (blind ? 4 : 1) * (u.poisoned > 0 ? SHOOT.poisoned : 1);
+        const err = (SHOOT.aimError - u.bonus * SHOOT.aimPerBonus + Math.max(0, acOf(target) - 12) * SHOOT.aimPerArmor * 0.1) * (d > u.gun!.range ? 1.5 : 1) * (blind || obscured(sim, target) || obscured(sim, u) ? 4 : 1) * ((u.held ?? 0) > 0 ? SHOOT.held.aim : 1) * (u.poisoned > 0 ? SHOOT.poisoned : 1);
         const spread = clamp(err, 0.012, 0.3);
         const from = { x: u.x, y: u.y, h: u.h + SHOOT.eye * 0.85 };
         const to = { x: target.x, y: target.y, h: target.h + heightOf(target) * 0.55 };
@@ -1198,7 +1797,7 @@ function think(sim: Sim, u: Unit, dt: number, env: Env, events: Event[]) {
   }
   // In close: run at it, wind up, strike (one blow every SHOOT.melee.round seconds shared between the stat block's attacks a round)
   const reach = u.reach + SHOOT.radius;
-  if (d > reach * 0.9) chase(u, target, u.speed, dt, env, seen);
+  if (d > reach * 0.9) chase(u, target, pace, dt, env, seen);
   if (u.swing > 0) {
     if (u.swing - dt <= 0) {
       if (d <= reach + 0.4) meleeBlow(sim, u, target, events);
@@ -1299,9 +1898,14 @@ function callForHelp(sim: Sim, u: Unit, events: Event[]) {
   events.push({ type: "act", id: u.id, act: "call", seconds: SHOOT.act.call });
 }
 function meleeBlow(sim: Sim, u: Unit, target: Unit, events: Event[]) {
-  // (the stat block's attack roll, as a chance: SHOOT.melee)
-  if (rand(sim) >= hitChance(u.bonus, target.ac)) return void events.push({ type: "miss", id: u.id, target: target.id });
-  const damage = u.blade?.damage ?? u.gun?.damage ?? 4;
+  // (the stat block's attack roll, as a chance: SHOOT.melee; held fast, at disadvantage)
+  const roll = rand(sim);
+  if (roll >= hitChance(u.bonus - ((u.held ?? 0) > 0 ? 4 : 0), acOf(target))) return void events.push({ type: "miss", id: u.id, target: target.id });
+  if (target.decoy) return void hurt(sim, target, 1, "kinetic", u, events, { x: target.x, y: target.y, h: target.h + 0.7 });
+  if (target.side !== "foe" && warded(sim, target, u.blade?.type ?? "kinetic", events)) return;
+  // (a natural 20 is a critical, unless armour turns it to a normal hit)
+  const crit = roll >= 0.95 && !target.critImmune;
+  const damage = (u.blade?.damage ?? u.gun?.damage ?? 4) * (crit ? SHOOT.critBy : 1);
   // Held up in front of the blow, the party's saber takes it, for focus
   if (target.side === "player" && target.blocking && target.focus >= SHOOT.focus.perStrike) {
     const [fx, fy] = dirOf(target.facing);
@@ -1312,8 +1916,10 @@ function meleeBlow(sim: Sim, u: Unit, target: Unit, events: Event[]) {
       return;
     }
   }
-  hurt(sim, target, damage, u.blade?.type ?? "kinetic", u, events, { x: target.x, y: target.y, h: target.h + 0.7 });
+  hurt(sim, target, damage, u.blade?.type ?? "kinetic", u, events, { x: target.x, y: target.y, h: target.h + 0.7 }, crit);
   if (u.rider) afflict(sim, target, u.rider, events);
+  // (a shield of lightning or the Force about the one struck: the striker takes its damage)
+  for (const b of target.buffs ?? []) if (b.retort && (b.temp === undefined || target.temp > 0)) hurt(sim, u, b.retort.damage, b.retort.type, target, events, { x: u.x, y: u.y, h: u.h + 0.8 });
 }
 
 // ---- Bolts and grenades ------------------------------------------------------------------------------------------------------------
@@ -1342,6 +1948,11 @@ function stepBolts(sim: Sim, dt: number, env: Env, events: Event[]) {
       if ((!home && env.blocks(b.x, b.y, b.h)) || b.h < env.floorAt(b.x, b.y) - 0.05) {
         b.life = 0;
         events.push({ type: "impact", x: b.x, y: b.y, h: Math.max(b.h, env.floorAt(b.x, b.y)) });
+        // (a harpoon that bites a wall: the party is reeled to it)
+        if (b.harpoon) {
+          events.push({ type: "line", x: p.x, y: p.y, h: p.h + 1, tx: ox, ty: oy, th: oh });
+          events.push({ type: "reel", x: ox, y: oy });
+        }
         // (a rocket or missile bursts where it stops, a little back from the wall)
         if (b.burst) blow(sim, { x: ox, y: oy, h: Math.max(oh, env.floorAt(ox, oy)) }, b.burst, b.owner, env, events);
         break;
@@ -1365,15 +1976,36 @@ function stepBolts(sim: Sim, dt: number, env: Env, events: Event[]) {
       for (const u of sim.units) {
         if (!alive(u) || u.side === b.side || u.id === b.owner) continue;
         if (b.side === "ally" && u.side === "player") continue;
+        if (b.side !== "foe" && u.decoy) continue;
         if (dist(b, u) > SHOOT.radius || b.h < u.h || b.h > u.h + heightOf(u)) continue;
-        // A saber in an enemy's hands turns the odd bolt aside
-        if (u.side === "foe" && u.blade?.saber && b.side !== "foe" && rand(sim) < 0.35 && !b.reflected) { events.push({ type: "blocked", id: u.id }); b.life = 0; hit = true; break; }
+        // A saber in an enemy's hands turns the odd bolt aside (half as often a maser core's: Rider.maser; never one left open by a critical)
+        if (u.side === "foe" && u.blade?.saber && b.side !== "foe" && !u.mark?.edge && rand(sim) < (b.rider?.maser ? 0.175 : 0.35) && !b.reflected) { events.push({ type: "blocked", id: u.id }); b.life = 0; hit = true; break; }
         const head = b.h > u.h + SHOOT.head;
         const owner = sim.units.find((x) => x.id === b.owner);
-        hurt(sim, u, b.damage * (head && b.side !== "foe" ? SHOOT.headshot : 1), b.type, owner, events, { x: b.x, y: b.y, h: b.h }, head && b.side !== "foe");
-        if (owner?.rider && !b.reflected) afflict(sim, u, owner.rider, events);
+        const at = { x: b.x, y: b.y, h: b.h };
         b.life = 0;
         hit = true;
+        if (u.decoy) { hurt(sim, u, 1, b.type, owner, events, at); break; }
+        if (b.side === "foe" && warded(sim, u, b.type, events)) break;
+        if (b.harpoon && owner) {
+          // A harpoon: its damage, and a line to the one struck; one smaller than the party is reeled in, the party to a bigger one
+          hurt(sim, u, b.damage, b.type, owner, events, at);
+          events.push({ type: "line", x: owner.x, y: owner.y, h: owner.h + 1, tx: u.x, ty: u.y, th: u.h + 1 });
+          if (u.huge || u.small === false) events.push({ type: "reel", x: u.x, y: u.y });
+          else if (!u.anchored) {
+            const d = dist(u, owner) || 1;
+            const secs = Math.max(0.15, (d - 1.2) / SHOOT.power.knock);
+            u.knock = { vx: ((owner.x - u.x) / d) * SHOOT.power.knock, vy: ((owner.y - u.y) / d) * SHOOT.power.knock, t: secs, strike: 0, type: "kinetic" };
+            u.stagger = Math.max(u.stagger, secs + 0.4);
+          }
+          break;
+        }
+        // (a foe's natural 20 on the party: a critical, unless armour turns it to a normal hit)
+        const crit = b.side === "foe" && u.side !== "foe" && !u.critImmune && rand(sim) < SHOOT.crit;
+        const damage = b.damage * (head && b.side !== "foe" ? SHOOT.headshot : 1) * (crit ? SHOOT.critBy : 1);
+        if (b.side === "player" && owner && !b.plain && u.side === "foe") partyStrike(sim, owner, u, damage, b.type, b.reflected ? undefined : b.rider, events, at, head);
+        else hurt(sim, u, damage, b.type, owner, events, at, (head && b.side !== "foe") || crit);
+        if (owner?.rider && !b.reflected) afflict(sim, u, owner.rider, events);
         if (b.burst) blow(sim, { x: b.x, y: b.y, h: b.h }, b.burst, b.owner, env, events);
         break;
       }
@@ -1403,6 +2035,7 @@ function stepGrenades(sim: Sim, dt: number, env: Env, events: Event[]) {
     const struck = g.impact && (g.bounces > 0 || sim.units.some((u) => alive(u) && u.side !== g.side && u.id !== g.owner && Math.hypot(u.x - nx, u.y - ny) < SHOOT.radius + 0.15 && nh >= u.h && nh <= u.h + heightOf(u)));
     g.x = nx; g.y = ny; g.h = nh;
     if (g.fuse <= 0 || struck) {
+      if (g.snare !== undefined) { snareAt(sim, g, events); continue; }
       blow(sim, g, g.kind, g.owner, env, events);
       continue;
     }

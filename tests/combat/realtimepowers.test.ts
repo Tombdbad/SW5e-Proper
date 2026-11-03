@@ -29,8 +29,10 @@ test("the powers a character knows become the kinds a fight can play, with their
   assert.ok(costs > 20);
 });
 
-test("only the first four are taken, and a power with an effect left to the table is not offered", () => {
-  const some = force.slice(0, 40);
-  assert.ok(realtimePowers(some, 5, scores).length <= 4);
+// (2026-11-03: nine on the keys a page, two pages; it was four)
+test("only the first eighteen are taken, and a power with an effect left to the table is not offered", () => {
+  const some = force.slice(0, 80);
+  assert.ok(realtimePowers(some, 5, scores).length <= 18);
+  assert.ok(realtimePowers(some, 5, scores).length > 4);
   assert.deepEqual(realtimePowers([{ name: "Mood", level: 1, description: "You feel a calm mood." }], 5, scores), []);
 });

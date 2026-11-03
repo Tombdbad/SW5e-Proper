@@ -47,13 +47,33 @@ export function ShooterHud() {
         <div style={{ fontSize: 12, opacity: 0.85 }}>Hostiles: {hud.foes}{hud.crouching ? " · crouching" : ""}</div>
         {hud.powers.length > 0 && (
           <div style={{ marginTop: 4, fontSize: 12 }} data-testid="shooter-powers">
-            <div style={{ opacity: 0.8 }}>Points: {hud.points}</div>
+            <div style={{ opacity: 0.8 }}>Points: {hud.points}{hud.pages > 1 ? ` · page ${hud.page + 1}/${hud.pages} [0]` : ""}</div>
             {hud.powers.map((w, i) => (
               <div key={`${w.name}-${i}`} style={{ opacity: w.ready ? 1 : 0.45 }}>[{i + 1}] {w.name}{w.cost ? ` (${w.cost})` : ""}</div>
             ))}
           </div>
         )}
+        {/* (2026-11-03) what is on the party: its buffs (seconds left; none shown for the whole fight), unseen, anchored, held; foes sensed */}
+        {(hud.buffs.length > 0 || hud.states.length > 0 || hud.sensed > 0) && (
+          <div style={{ marginTop: 4, fontSize: 12 }} data-testid="shooter-buffs">
+            {hud.buffs.map((b) => <div key={b.name} style={{ color: "#7dd3fc" }}>{b.name}{b.t ? ` ${b.t}s` : ""}</div>)}
+            {hud.states.map((t) => <div key={t} style={{ color: /Unseen/.test(t) ? "#a5b4fc" : /Held|Slowed|Seen/.test(t) ? "#fca5a5" : "#fde68a" }}>{t}</div>)}
+            {hud.sensed > 0 && <div style={{ color: "#f472b6" }}>Sensed: {hud.sensed} beyond sight</div>}
+          </div>
+        )}
       </div>
+      {/* unseen: the view tinted and edged; the zoom: a reticle with the range; shots heard out of sight: an arc at the edge the way they came */}
+      {hud.states.includes("Unseen") && <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 120px 30px rgba(99,102,241,0.35)" }} data-testid="cloak-tint" />}
+      {hud.zoom > 0 && (
+        <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 0 9999px rgba(0,0,0,0)", background: "radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 34%, rgba(0,0,0,0.82) 36%)" }} data-testid="zoom-reticle">
+          <div style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, 40px)", fontSize: 12, color: "#a7f3d0" }}>×{hud.zoom.toFixed(1)} · {hud.range} ft</div>
+        </div>
+      )}
+      {hud.pings.map((p, i) => (
+        <div key={i} style={{ position: "absolute", left: "50%", top: "50%", width: 0, height: 0, transform: `rotate(${p.a}rad)`, opacity: Math.max(0, 1 - (performance.now() - p.at) / 1500) }}>
+          <div style={{ position: "absolute", left: -26, top: -170, width: 52, height: 8, borderRadius: 6, background: "rgba(251,191,36,0.85)", boxShadow: "0 0 6px #000" }} />
+        </div>
+      ))}
       <div style={{ position: "absolute", left: "50%", bottom: 150, transform: "translateX(-50%)", textAlign: "center", minWidth: 180 }} data-testid="shooter-ammo">
         {hud.weapon === "gun" && hud.hasGun ? (
           <>
@@ -100,8 +120,10 @@ export function ShootButtons() {
       {hud.saber && <button data-testid="block-button" {...hold("block")} style={{ ...base, width: 70, height: 40, background: "rgba(56,189,248,0.45)" }}>Guard</button>}
       <button data-testid="crouch-button" {...hold("crouch")} style={{ ...base, width: 70, height: 40, background: hud.crouching ? "rgba(250,204,21,0.55)" : "rgba(255,255,255,0.2)" }}>Crouch</button>
       {hud.powers.map((w, i) => (
-        <button key={`${w.name}-${i}`} data-testid={`power-button-${i}`} {...hold(`power${i}` as ShootKey)} style={{ ...base, width: 70, height: 40, opacity: w.ready ? 1 : 0.5, background: "rgba(167,139,250,0.5)", font: "600 10px sans-serif" }}>{w.name.length > 12 ? `${w.name.slice(0, 11)}…` : w.name}</button>
+        <button key={`${w.name}-${i}`} data-testid={`power-button-${i}`} {...hold(`power${i}` as ShootKey)} style={{ ...base, width: 70, height: 34, opacity: w.ready ? 1 : 0.5, background: "rgba(167,139,250,0.5)", font: "600 10px sans-serif" }}>{w.name.length > 12 ? `${w.name.slice(0, 11)}…` : w.name}</button>
       ))}
+      {hud.pages > 1 && <button data-testid="power-page-button" {...hold("page")} style={{ ...base, width: 70, height: 30, background: "rgba(167,139,250,0.3)", font: "600 10px sans-serif" }}>Powers {hud.page + 1}/{hud.pages}</button>}
+      <button data-testid="zoom-button" {...hold("zoom")} style={{ ...base, width: 70, height: 30, background: hud.zoom ? "rgba(16,185,129,0.55)" : "rgba(255,255,255,0.15)", font: "600 10px sans-serif" }}>Zoom</button>
     </div>
   );
 }

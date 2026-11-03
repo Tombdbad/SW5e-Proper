@@ -8,7 +8,7 @@ import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Billboard, Text } from "@react-three/drei";
 import {
-  KEPT, SHOOT, applyGear, monstrous, castPower, firePlayer, newSim, placeUnits, playerOf, reloadPlayer, resultOf, roundsOf, setBlock, step, swingPlayer, throwGrenade,
+  KEPT, SHOOT, applyGear, monstrous, castPower, cloakedNow, firePlayer, fitsAt, newSim, paceOf, placeUnits, playerOf, reloadPlayer, resultOf, roundsOf, sees, sensesOf, setBlock, step, swingPlayer, throwGrenade,
   type Env, type Event, type FightGear, type Sim, type Unit,
 } from "@shared/logic/shooter";
 import { Figure, MotionContext, usePartyLook } from "../models";
@@ -39,13 +39,16 @@ export interface ShooterCtx {
   place?: (x: number, y: number) => boolean;
 }
 
-const POOL = { bolts: 72, grenades: 6, blasts: 16, mines: 8, fields: 8 };
-// What the ground looks like where it burns, and where a gas or acid lingers
-const FIELD_COLOR: Record<string, string> = { fire: "#ff7a1a", poison: "#7bd34a", acid: "#b5e61d", cold: "#9ad8ff", lightning: "#c7b8ff" };
+const POOL = { bolts: 72, grenades: 6, blasts: 16, mines: 8, fields: 8, lines: 3, decoys: 3, images: 3 };
+// What the ground looks like where it burns, and where a gas or acid lingers (and smoke, darkness, caltrops: a power's ground)
+const FIELD_COLOR: Record<string, string> = { fire: "#ff7a1a", poison: "#7bd34a", acid: "#b5e61d", cold: "#9ad8ff", lightning: "#c7b8ff", smoke: "#9ca3af", dark: "#111827", kinetic: "#a8a29e", necrotic: "#4c1d95", sonic: "#e8e1c7" };
+// What befalls a foe, shown on it (2026-11-03): a ring at its feet by colour, and a net drawn round one held
+const STATUS_COLOR: Record<string, string> = { netted: "#d6c79a", held: "#fde047", slowed: "#60a5fa", charmed: "#c084fc", unaware: "#94a3b8", marked: "#f43f5e", turned: "#34d399", disarmed: "#f59e0b" };
+const PAGE = 9;
 // (an item on the belt: a rocket of a rocketpack is named "Rocketpack: Rocket, ..." and is the rocket that is used up)
 const usedName = (g: FightGear) => (g.act.act === "rocket" ? g.name.split(": ").pop()! : g.name);
 // What a power looks like where it takes hold
-const POWER_COLOR: Record<string, string> = { damage: "#9ad0ff", heal: "#4ade80", stun: "#fde047", fear: "#a78bfa", blind: "#ffffff", push: "#e5e7eb", pull: "#c4b5fd" };
+const POWER_COLOR: Record<string, string> = { damage: "#9ad0ff", heal: "#4ade80", stun: "#fde047", fear: "#a78bfa", blind: "#ffffff", push: "#e5e7eb", pull: "#c4b5fd", imbue: "#fb923c", buff: "#7dd3fc", blink: "#a5b4fc", sense: "#f472b6", mark: "#f43f5e", slow: "#60a5fa", restrain: "#fde047", mind: "#c084fc", zone: "#9ca3af", decoy: "#60a5fa", kill: "#111827", revive: "#4ade80", cure: "#86efac", disarm: "#f59e0b", turn: "#34d399", throw: "#93c5fd", dash: "#e0f2fe" };
 const BOLT_COLOR = { foe: "#ff3b30", ally: "#5ac8fa", player: "#7dd3fc", reflected: "#ffd60a" };
 // What a monster spits or flings looks like, by its damage (a glob of acid, a spine of bone, a gout of fire)
 const NATURAL_COLOR: Record<string, string> = { acid: "#9be22d", poison: "#6fcf3a", fire: "#ff7a1a", cold: "#bfe8ff", lightning: "#c7b8ff", necrotic: "#5b4a6b", psychic: "#d68cff", sonic: "#e8e1c7", kinetic: "#d9c9a3", energy: "#ffd27a" };
@@ -66,7 +69,13 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     if (typeof window !== "undefined") (window as any).__shooter = sim.current;
   }
   const state = useRef({
-    seen: { fire: 0, grenade: 0, reload: 0, block: 0, swap: 0, crouch: 0, item: 0, next: 0, power0: 0, power1: 0, power2: 0, power3: 0 },
+    seen: { fire: 0, grenade: 0, reload: 0, block: 0, swap: 0, crouch: 0, item: 0, next: 0, power0: 0, power1: 0, power2: 0, power3: 0, power4: 0, power5: 0, power6: 0, power7: 0, power8: 0, page: 0, zoom: 0 },
+    // (2026-11-03) the page of powers on the keys, what each foe is under (its ring and the word over it), lines drawn (a harpoon's), shots heard
+    page: 0,
+    status: {} as Record<string, { text: string; at: number }>,
+    lines: [] as { x: number; y: number; h: number; tx: number; ty: number; th: number; t: number }[],
+    pings: [] as { a: number; at: number }[],
+    zoom: 1,
     crouch: false,
     // the belt: what is carried to use, and the one shown (Z uses it)
     gear: (session.gear ?? []).map((g) => ({ ...g })),
@@ -99,6 +108,20 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
   const mineMeshes = useRef<(THREE.Group | null)[]>([]);
   const fieldMeshes = useRef<(THREE.Mesh | null)[]>([]);
   const flash = useRef<THREE.Mesh>(null);
+  // (2026-11-03) a foe's state: the ring at its feet, the net round one held, the word over it, the marker seen through walls by a sense; lines
+  // (a harpoon's cable, a chain's arc); holograms; the smoke or darkness of a power's ground; the party's own shield bubble and duplicates;
+  // its light
+  const rings = useRef<Record<string, THREE.Mesh | null>>({});
+  const nets = useRef<Record<string, THREE.Mesh | null>>({});
+  const words = useRef<Record<string, any>>({});
+  const sensed = useRef<Record<string, THREE.Mesh | null>>({});
+  const lineMeshes = useRef<(THREE.Mesh | null)[]>([]);
+  const decoyMeshes = useRef<(THREE.Group | null)[]>([]);
+  const fogMeshes = useRef<(THREE.Mesh | null)[]>([]);
+  const bubble = useRef<THREE.Mesh>(null);
+  const imageMeshes = useRef<(THREE.Mesh | null)[]>([]);
+  const lamp = useRef<THREE.SpotLight>(null);
+  const lampTarget = useMemo(() => new THREE.Object3D(), []);
   // What each figure is doing (interiors/limbs.ts Motion): ready to fight, the kick of each shot, each blade's strike, each blow taken
   const motions = useRef(new Map<string, { current: Motion }>());
   const motionOf = (u: Unit) => {
@@ -180,7 +203,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       placeUnits(s, c.env, { x: me.x, y: me.y, facing: me.facing });
     }
     // What was pressed since the last frame
-    const edge = (k: "grenade" | "reload" | "swap" | "crouch" | "item" | "next" | "power0" | "power1" | "power2" | "power3") => {
+    const edge = (k: "grenade" | "reload" | "swap" | "crouch" | "item" | "next" | "power0" | "power1" | "power2" | "power3" | "power4" | "power5" | "power6" | "power7" | "power8" | "page") => {
       const n = store.taps[k];
       const fresh = n !== st.seen[k];
       st.seen[k] = n;
@@ -197,9 +220,10 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     const shown = belt.length ? belt[st.pick % belt.length] : undefined;
     st.pickName = shown?.name ?? "";
     const throwable = st.gear.find((g) => g.act.act === "throw" && g.count > 0);
+    // (a net or bolas is picked up again after the fight: `keep`; what is spent for the rest is counted the same, and the game routes it)
     const spend = (g: FightGear) => {
       g.count--;
-      st.used[usedName(g)] = (st.used[usedName(g)] ?? 0) + 1;
+      if (!g.keep) st.used[usedName(g)] = (st.used[usedName(g)] ?? 0) + 1;
     };
     if (p.gun?.launcher) p.gun.shell = throwable?.act.act === "throw" ? throwable.act.blast : undefined;
     if (!p.dead && !st.ending) {
@@ -225,11 +249,15 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         st.crouch = !st.crouch;
         p.crouch = st.crouch;
       }
-      for (const [i, key] of (["power0", "power1", "power2", "power3"] as const).entries()) {
+      // (1 to 9 cast the page shown; 0 turns the page)
+      const pages = Math.max(1, Math.ceil((p.powers?.length ?? 0) / PAGE));
+      if (edge("page")) { st.page = (st.page + 1) % pages; st.note = pages > 1 ? `Powers ${st.page * PAGE + 1}–${Math.min(p.powers?.length ?? 0, (st.page + 1) * PAGE)}` : ""; }
+      for (const [i, key] of (["power0", "power1", "power2", "power3", "power4", "power5", "power6", "power7", "power8"] as const).entries()) {
         if (!edge(key)) continue;
-        const why = castPower(s, i, c.env, events);
+        const at = st.page * PAGE + i;
+        const why = castPower(s, at, c.env, events, shot?.to, c.place);
         if (why) st.note = why;
-        else if (p.powers?.[i]) st.note = "";
+        else if (p.powers?.[at]) st.note = "";
       }
       if (edge("grenade")) {
         const g = throwable;
@@ -275,7 +303,34 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       events.push(...step(s, h, c.env, me));
       left -= h;
     }
+    // (the party's pace in the fight, for the map that walks it: interiors/aim.ts stance)
+    stance.pace = p.dead ? 1 : paceOf(p);
+    const senses = sensesOf(p);
+    const ear = senses.hearing;
     for (const e of events) {
+      // (2026-11-03) A once-a-rest feature spent (counted by the game), what befell a foe, a line, a reel, a hologram, a duplicate struck, the
+      // party seen; a shot heard from out of sight
+      if (e.type === "once") { st.used[e.name] = (st.used[e.name] ?? 0) + 1; continue; }
+      if (e.type === "status") {
+        st.status[e.id] = { text: e.text, at: now };
+        if (e.id !== "me") say(`${nameOf(s, e.id)} is ${e.text}`);
+        sfx.power("stun");
+        continue;
+      }
+      if (e.type === "line") { st.lines.push({ ...e, t: 0 }); continue; }
+      if (e.type === "reel") {
+        // (reeled along the cable to the last free square before where it bit)
+        const d = Math.hypot(e.x - me.x, e.y - me.y);
+        for (let k = d - 0.7; k >= 1; k -= 0.5) {
+          const [x, y] = [me.x + ((e.x - me.x) / d) * k, me.y + ((e.y - me.y) / d) * k];
+          if (fitsAt(c.env, Math.floor(x) + 0.5, Math.floor(y) + 0.5) && c.place?.(Math.floor(x), Math.floor(y))) { say("Reeled in"); break; }
+        }
+        continue;
+      }
+      if (e.type === "decoy") { say("A hologram flickers into being"); sfx.power("blind"); continue; }
+      if (e.type === "image") { say("A duplicate takes the blow and vanishes"); st.blasts.push({ x: me.x, y: me.y, h: me.h + 1, t: 0, r: 0.5, life: 0.3, c: "#a5b4fc" }); continue; }
+      if (e.type === "revealed") { say("You are seen!"); continue; }
+      if (e.type === "shot" && e.from !== "me" && ear > 0 && Math.hypot(e.x - me.x, e.y - me.y) <= ear && !sees(c.env, { x: me.x, y: me.y, h: me.h }, e)) st.pings.push({ a: Math.atan2(e.x - me.x, e.y - me.y) - me.facing, at: now });
       if (e.type === "hit") {
         const struck = s.units.find((u) => u.id === e.target);
         if (struck) (struck.side === "player" ? partyMotion : motionOf(struck)).current.hitAt = now / 1000;
@@ -397,7 +452,95 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         t.visible = u.aiming > 0 && !u.dead;
         if (t.visible) t.scale.setScalar(0.8 + 0.5 * Math.sin(now / 40));
       }
+      // (2026-11-03) What it is under: a ring at its feet by colour (held, slowed, charmed, unaware, marked, turned, disarmed), a net round one
+      // netted or held, the word over its head; a sensed foe's marker drawn through the walls
+      const state = u.dead ? "" : (u.held ?? 0) > 0 ? (st.status[u.id]?.text === "netted" ? "netted" : "held") : (u.charmed ?? 0) > 0 ? "charmed" : (u.turned ?? 0) > 0 ? "turned" : (u.oblivious ?? 0) > 0 ? "unaware" : (u.slowed ?? 0) > 0 ? "slowed" : u.mark ? "marked" : u.disarmed ? "disarmed" : "";
+      const ring = rings.current[u.id];
+      if (ring) {
+        ring.visible = !!state;
+        if (state) {
+          (ring.material as THREE.MeshBasicMaterial).color.set(STATUS_COLOR[state] ?? "#ffffff");
+          ring.rotation.z = now / 600;
+          ring.scale.setScalar(1 + 0.08 * Math.sin(now / 160));
+        }
+      }
+      const net = nets.current[u.id];
+      if (net) net.visible = state === "netted" || state === "held";
+      const word = words.current[u.id];
+      if (word && word.text !== state) word.text = state;
+      const mark = sensed.current[u.id];
+      if (mark) {
+        const near = (sp: { x: number; y: number }, r: number) => Math.hypot(u.x - sp.x, u.y - sp.y) <= r;
+        const felt = !u.dead && u.mode !== "gone" && u.side === "foe" && ((senses.through > 0 && near(me, senses.through)) || (!!s.eye && near(s.eye, 6)));
+        mark.visible = felt;
+        if (felt) mark.scale.setScalar(0.9 + 0.15 * Math.sin(now / 120));
+      }
     }
+    // Holograms (a decoy power's): ghostly figures where they stand, flickering
+    const decoys = s.units.filter((u) => u.decoy && !u.dead);
+    decoyMeshes.current.forEach((m, i) => {
+      if (!m) return;
+      const d = decoys[i];
+      m.visible = !!d;
+      if (!d) return;
+      m.position.set(d.x - c.cx, d.h, d.y - c.cz);
+      m.rotation.y = d.facing;
+      m.scale.y = 1 + 0.03 * Math.sin(now / 37);
+    });
+    // The smoke, fog or darkness of a power's ground: a dome over it
+    const fogs = s.fields.filter((f) => f.obscure);
+    fogMeshes.current.forEach((m, i) => {
+      if (!m) return;
+      const f = fogs[i];
+      m.visible = !!f;
+      if (!f) return;
+      m.position.set(f.x - c.cx, f.h, f.y - c.cz);
+      m.scale.set(f.radius, f.radius * 0.6, f.radius);
+      const mat = m.material as THREE.MeshBasicMaterial;
+      mat.color.set(FIELD_COLOR[f.type] ?? "#9ca3af");
+      mat.opacity = Math.min(0.75, f.t / 3) * (f.type === "dark" ? 0.95 : 0.6);
+    });
+    // Lines: a harpoon's cable, a chained shot's arc, for a moment
+    st.lines = st.lines.filter((l) => (l.t += dt) < 0.45).slice(-POOL.lines);
+    lineMeshes.current.forEach((m, i) => {
+      if (!m) return;
+      const l = st.lines[i];
+      m.visible = !!l;
+      if (!l) return;
+      const a = new THREE.Vector3(l.x - c.cx, l.h, l.y - c.cz);
+      const b = new THREE.Vector3(l.tx - c.cx, l.th, l.ty - c.cz);
+      m.position.copy(a).add(b).multiplyScalar(0.5);
+      m.scale.set(1, 1, Math.max(0.01, a.distanceTo(b)));
+      m.lookAt(b);
+      (m.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - l.t / 0.45);
+    });
+    // The party's own: a shield's bubble (temporary hit points from a power, a ward, AC), its duplicates, seen from behind; its light
+    const shielded = !p.dead && (p.buffs ?? []).some((b) => b.temp || b.ac || b.resist || b.immune || b.retort || b.orbit);
+    if (bubble.current) {
+      bubble.current.visible = shielded && view !== "first";
+      bubble.current.position.set(me.x - c.cx, me.h + 0.9, me.y - c.cz);
+      const bb = (p.buffs ?? []).find((b) => b.orbit || b.retort || b.immune || b.resist || b.temp || b.ac);
+      (bubble.current.material as THREE.MeshBasicMaterial).color.set(bb?.orbit ? "#38bdf8" : bb?.retort ? "#c7b8ff" : bb?.immune ? "#facc15" : "#7dd3fc");
+      (bubble.current.material as THREE.MeshBasicMaterial).opacity = 0.12 + 0.05 * Math.sin(now / 200);
+    }
+    const images = (p.buffs ?? []).find((b) => (b.images ?? 0) > 0)?.images ?? 0;
+    imageMeshes.current.forEach((m, i) => {
+      if (!m) return;
+      m.visible = i < images && !p.dead && view !== "first";
+      const a = now / 700 + (i * Math.PI * 2) / 3;
+      m.position.set(me.x - c.cx + Math.sin(a) * 0.7, me.h + 0.8, me.y - c.cz + Math.cos(a) * 0.7);
+    });
+    if (lamp.current) {
+      lamp.current.visible = !!s.lit && !p.dead;
+      lamp.current.position.copy(camera.position);
+      lampTarget.position.copy(camera.position).add(new THREE.Vector3(0, 0, -6).applyQuaternion(camera.quaternion));
+      lampTarget.updateMatrixWorld();
+    }
+    // The zoom held (macrobinoculars, a scope, a far eye: sensesOf zoom), eased in and out
+    const want = store.held.zoom && senses.zoom > 0 ? senses.zoom : 1;
+    st.zoom += (want - st.zoom) * Math.min(1, dt * 8);
+    const cam = camera as THREE.PerspectiveCamera;
+    if (Math.abs(cam.zoom - st.zoom) > 0.001) { cam.zoom = st.zoom; cam.updateProjectionMatrix(); }
     boltMeshes.current.forEach((m, i) => {
       if (!m) return;
       const b = s.bolts[i];
@@ -406,9 +549,10 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       m.position.set(b.x - c.cx, b.h, b.y - c.cz);
       tempV.set(b.vx, b.vh, b.vy).normalize();
       m.quaternion.copy(tempQ.setFromUnitVectors(Z, tempV));
-      (m.material as THREE.MeshBasicMaterial).color.set(b.reflected ? BOLT_COLOR.reflected : b.natural ? NATURAL_COLOR[b.type] ?? NATURAL_COLOR.kinetic : BOLT_COLOR[b.side]);
-      // (a spine or a glob is short and thick, a bolt a long streak)
-      m.scale.set(b.natural ? 2.2 : 1, b.natural ? 2.2 : 1, b.natural ? 0.35 : 1);
+      (m.material as THREE.MeshBasicMaterial).color.set(b.reflected ? BOLT_COLOR.reflected : b.blade ? bladeColor : b.harpoon ? "#cbd5e1" : b.natural ? NATURAL_COLOR[b.type] ?? NATURAL_COLOR.kinetic : BOLT_COLOR[b.side]);
+      // (a spine or a glob is short and thick, a bolt a long streak; a thrown blade spins end over end, a harpoon is a dart)
+      if (b.blade) { m.scale.set(1.6, 1.6, 1.4); m.rotateX(now / 40); }
+      else m.scale.set(b.natural ? 2.2 : b.harpoon ? 1.4 : 1, b.natural ? 2.2 : b.harpoon ? 1.4 : 1, b.natural ? 0.35 : b.harpoon ? 0.6 : 1);
     });
     grenadeMeshes.current.forEach((m, i) => {
       if (!m) return;
@@ -496,7 +640,13 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         poisoned: p.poisoned > 0, burning: p.burning > 0, blinded: p.blind > 0, temp: Math.round(p.temp),
         focus: Math.round(p.focus), focusMax: SHOOT.focus.max, blocking: p.blocking, foes: s.units.filter((u) => u.side === "foe" && !u.dead && u.mode !== "gone").length, note: st.note,
         points: p.points ?? 0, crouching: st.crouch,
-        powers: (p.powers ?? []).map((w) => ({ name: w.name, cost: w.cost, ready: (p.points ?? 0) >= w.cost && (p.powerCd ?? 0) <= 0 })),
+        powers: (p.powers ?? []).slice(st.page * PAGE, st.page * PAGE + PAGE).map((w) => ({ name: w.name, cost: w.cost, ready: (p.points ?? 0) >= w.cost && (p.powerCd ?? 0) <= 0 })),
+        page: st.page, pages: Math.max(1, Math.ceil((p.powers?.length ?? 0) / PAGE)),
+        buffs: (p.buffs ?? []).filter((b) => b.t < 590).map((b) => ({ name: b.name, t: Math.ceil(b.t) })).concat((p.buffs ?? []).filter((b) => b.t >= 590).map((b) => ({ name: b.name, t: 0 }))),
+        states: [cloakedNow(p) && "Unseen", p.cloaked && !cloakedNow(p) && "Seen (a shot gave you away)", p.anchored && "Anchored", (p.held ?? 0) > 0 && "Held", (p.slowed ?? 0) > 0 && "Slowed", p.imbue && `Next hit +${Math.round(p.imbue.damage)} ${p.imbue.type}`, s.lit && "Light on", s.eye && "Eye out"].filter(Boolean) as string[],
+        sensed: s.units.filter((u) => u.side === "foe" && !u.dead && u.mode !== "gone" && ((senses.through > 0 && Math.hypot(u.x - me.x, u.y - me.y) <= senses.through) || (!!s.eye && Math.hypot(u.x - s.eye.x, u.y - s.eye.y) <= 6))).length,
+        zoom: st.zoom > 1.05 ? st.zoom : 0, range: shot ? Math.round(Math.hypot(shot.to.x - me.x, shot.to.y - me.y) * 5) : 0,
+        pings: (st.pings = st.pings.filter((x) => now - x.at < 1500)).slice(-6),
       });
       useCombat.getState().syncRealtime({
         ...Object.fromEntries(s.units.filter((u) => u.side !== "player").map((u) => [u.id, { hp: u.fled ? 0 : Math.max(0, Math.round(u.hp)) }])),
@@ -519,6 +669,9 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       mounted.current = false;
       stance.k = 0;
       stance.lunge = 0;
+      stance.pace = 1;
+      const cam = camera as THREE.PerspectiveCamera;
+      if (cam.zoom !== 1) { cam.zoom = 1; cam.updateProjectionMatrix(); }
       setTimeout(() => { if (!mounted.current && !state.current.done && useCombat.getState().realtime) finish(sim.current, true); }, 60);
     };
   }, []);
@@ -548,6 +701,22 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
             <mesh ref={(m) => { tele.current[u.id] = m; }} position={[0.2, 0.95, 0.4]} visible={false}>
               <sphereGeometry args={[0.07, 8, 8]} />
               <meshBasicMaterial color="#ff2a1a" />
+            </mesh>
+            {/* what it is under: a ring at its feet, a net round it, the word over its head, and a marker a sense shows through the walls */}
+            <mesh ref={(m) => { rings.current[u.id] = m; }} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]} visible={false} renderOrder={4}>
+              <ringGeometry args={[large ? 0.75 : 0.42, large ? 0.9 : 0.52, 24, 1, 0, Math.PI * 1.7]} />
+              <meshBasicMaterial color="#ffffff" transparent opacity={0.85} depthWrite={false} toneMapped={false} side={THREE.DoubleSide} />
+            </mesh>
+            <mesh ref={(m) => { nets.current[u.id] = m; }} position={[0, large ? 1.1 : 0.75, 0]} visible={false}>
+              <icosahedronGeometry args={[large ? 1.2 : 0.7, 1]} />
+              <meshBasicMaterial color="#d6c79a" wireframe transparent opacity={0.8} />
+            </mesh>
+            <Billboard position={[0, large ? 2.85 : 2.2, 0]}>
+              <Text ref={(t: any) => { words.current[u.id] = t; }} fontSize={0.16} color="#fde68a" anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#000000">{""}</Text>
+            </Billboard>
+            <mesh ref={(m) => { sensed.current[u.id] = m; }} position={[0, large ? 1.6 : 1.1, 0]} visible={false} renderOrder={12}>
+              <octahedronGeometry args={[0.16, 0]} />
+              <meshBasicMaterial color="#f472b6" transparent opacity={0.85} depthTest={false} depthWrite={false} toneMapped={false} />
             </mesh>
           </group>
         );
@@ -586,6 +755,38 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         <sphereGeometry args={[0.1, 8, 8]} />
         <meshBasicMaterial color="#fff2b0" toneMapped={false} />
       </mesh>
+      {/* (2026-11-03) lines (a harpoon's cable), holograms, smoke and darkness, the party's shield bubble and duplicates, its light */}
+      {Array.from({ length: POOL.lines }, (_, i) => (
+        <mesh key={`l${i}`} ref={(m) => { lineMeshes.current[i] = m; }} visible={false} renderOrder={6}>
+          <boxGeometry args={[0.025, 0.025, 1]} />
+          <meshBasicMaterial color="#e2e8f0" transparent opacity={0.9} toneMapped={false} />
+        </mesh>
+      ))}
+      {Array.from({ length: POOL.decoys }, (_, i) => (
+        <group key={`d${i}`} ref={(g) => { decoyMeshes.current[i] = g; }} visible={false}>
+          <mesh position={[0, 0.55, 0]}><capsuleGeometry args={[0.24, 0.6, 4, 10]} /><meshBasicMaterial color="#60a5fa" transparent opacity={0.45} depthWrite={false} toneMapped={false} /></mesh>
+          <mesh position={[0, 1.25, 0]}><sphereGeometry args={[0.16, 10, 10]} /><meshBasicMaterial color="#93c5fd" transparent opacity={0.5} depthWrite={false} toneMapped={false} /></mesh>
+        </group>
+      ))}
+      {Array.from({ length: 4 }, (_, i) => (
+        <mesh key={`o${i}`} ref={(m) => { fogMeshes.current[i] = m; }} visible={false} renderOrder={5}>
+          <sphereGeometry args={[1, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2]} />
+          <meshBasicMaterial color="#9ca3af" transparent opacity={0.5} depthWrite={false} side={THREE.DoubleSide} />
+        </mesh>
+      ))}
+      <mesh ref={bubble} visible={false} renderOrder={6}>
+        <sphereGeometry args={[0.85, 20, 14]} />
+        <meshBasicMaterial color="#7dd3fc" transparent opacity={0.15} depthWrite={false} toneMapped={false} />
+      </mesh>
+      {Array.from({ length: POOL.images }, (_, i) => (
+        <mesh key={`i${i}`} ref={(m) => { imageMeshes.current[i] = m; }} visible={false}>
+          <capsuleGeometry args={[0.22, 0.7, 4, 10]} />
+          <meshBasicMaterial color="#a5b4fc" transparent opacity={0.35} depthWrite={false} toneMapped={false} />
+        </mesh>
+      ))}
+      <primitive object={lampTarget} />
+      <spotLight ref={lamp} visible={false} intensity={40} distance={30} angle={0.45} penumbra={0.5} color="#fff7e0" target={lampTarget} />
+      {/* the field meshes are reused for a power's ground (smoke, caltrops) too */}
       {/* the blaster in the hand, seen from the eyes */}
       <group ref={blaster} visible={false} renderOrder={8}>
         <mesh position={[0, 0, -0.1]}><boxGeometry args={[0.07, 0.1, 0.4]} /><meshStandardMaterial color="#2b2f36" metalness={0.6} roughness={0.4} /></mesh>

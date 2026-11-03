@@ -3767,6 +3767,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     const ahead = dir ?? [Math.sin(yaw), Math.cos(yaw)];
     if (!inside && A.mode !== "perch" && box && gear?.ways.leap && nearBox({ x: feet.current.x + 0.5 + ahead[0] * 1.3, y: feet.current.y + 0.5 + ahead[1] * 1.3 }, box, 0.3)) return void onAct?.({ type: "climb", how: "leap" });
     const jump = jumpOf(gear?.strength ?? 10, gear?.g ?? 1, gear?.size ?? "Medium", !!dir);
+    // (leg reinforcements double the long jump, a jump power triples it: AirGear.leap, stance.jump)
+    jump.carry *= (gear?.leap ?? 1) * stance.jump;
     A.y = (A.mode === "perch" ? A.y : 0) + 0.01;
     A.mode = "jump";
     A.jump = jump;
@@ -4370,7 +4372,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     // Under a running pack the party flies over what stands low, at the pack's pace
     const gear = useAir.getState().gear;
     const flying = A.mode === "fly";
-    walk.current = stickWalk(walk.current, feet.current, dx, dz, speed * (flying && gear?.fly ? flightOf(gear.fly.feet).pace : 1), A.mode === "perch" ? perchPass : flying ? airPassable : open, stepRule());
+    // (in a fight the party's pace is what its buffs and states make it: interiors/aim.ts stance.pace)
+    walk.current = stickWalk(walk.current, feet.current, dx, dz, speed * (flying && gear?.fly ? flightOf(gear.fly.feet).pace : 1) * Math.max(0.05, stance.pace), A.mode === "perch" ? perchPass : flying ? airPassable : open, stepRule());
   };
   // Sitting down at a card table: walk to the square beside the chosen stool, sit on it, ask the table's patrons to fill the other stools, and
   // hand Play the people who sit there (it opens the game); standing up is Play's `useTable.stand()`
