@@ -2942,7 +2942,7 @@ function migrateSites(ctx: Context) {
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 17;
+export const LIFE = 18;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -3138,8 +3138,49 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
       for (const room of childrenOf(next, b.id).filter((a) => a.kind === "room" && /^betting hall$|fighters' pens/i.test(a.name))) placeContents(room, createRandom(hashOf(`${room.id}|posts`)));
     }
   }
+  // More windows (life 18, 2026-11-03, the user: rooms by day were too dark, "more windows"): see moreWindows
+  if ((next.life ?? 0) < 18) for (const building of Object.values(next.areas).filter((a) => a.kind === "building")) moreWindows(next, building);
   next.life = LIFE;
   return next;
+}
+
+// Windows a room gets besides the one or two that detailBuilding gives it (house rule, dice of their own, so the world is made as it was):
+// every outside wall of a room that would have windows gets a window, and a long one two, kept a square clear of doors and of each other.
+// The window of each is the kind of its building's (paneFor). Not for caves, fortified rooms (slits stay slits: paneFor says so, and they let
+// in little), the places that have none (WINDOWLESS), the floors under the ground, or a world not built (wild). Done again, nothing is added twice
+// (a wall that already has its windows is left).
+function moreWindows(world: World, building: Area) {
+  if (building.type === "cave" || doorsOf(building.type, "") === DOORS.wild) return;
+  const station = trailOf(world, building.id).some((a) => a.type === "station");
+  const rooms = childrenOf(world, building.id).filter((a) => a.kind === "room" && a.layout);
+  for (const room of rooms) {
+    const l = room.layout!;
+    if (formOf(room) || l.shape || WINDOWLESS.test(room.name) || (l.level ?? 0) < 0 || room.tags.includes("code:K") || room.tags.includes("code:H")) continue;
+    const r = createRandom(hashOf(`${room.id}|windows`));
+    for (const side of ["n", "s", "e", "w"] as Side[]) {
+      const length = side === "n" || side === "s" ? l.width : l.height;
+      const faces = (i: number) => {
+        const s = wallSquare(l, side, i);
+        const beyond: RoomLayout = { x: l.x + s.x + (side === "e" ? 1 : side === "w" ? -1 : 0), y: l.y + s.y + (side === "s" ? 1 : side === "n" ? -1 : 0), width: 1, height: 1, assets: [], level: l.level, climb: l.climb, tall: l.tall };
+        return standsAt(l, s.x, s.y) && !rooms.some((other) => other !== room && overlap(beyond, other.layout!) && floorsOf(beyond)[0] <= floorsOf(other.layout!)[1] && floorsOf(other.layout!)[0] <= floorsOf(beyond)[1]);
+      };
+      // (the squares of this wall that face the open, a square clear of every door, window and thing standing against it)
+      const clear = (i: number) => {
+        if (i < 1 || i > length - 2 || !faces(i)) return false;
+        return !l.assets.some((a) => (a.side ? a.side === side && Math.abs((side === "n" || side === "s" ? a.x : a.y) - i) <= 1 : a.x <= wallSquare(l, side, i).x + 1 && wallSquare(l, side, i).x - 1 < a.x + a.w && a.y <= wallSquare(l, side, i).y + 1 && wallSquare(l, side, i).y - 1 < a.y + a.h && a.blocks));
+      };
+      const have = l.assets.filter((a) => a.kind === "window" && a.side === side).length;
+      const want = Math.min(length >= 8 ? 2 : 1, 2) - have;
+      for (let k = 0; k < want; k++) {
+        const free = Array.from({ length }, (_, i) => i).filter(clear);
+        if (!free.length) break;
+        const at = free.length > 1 && k === 0 && have === 0 && length >= 8 ? free[Math.floor(free.length / 4)] : r.pick(free);
+        const pane = paneFor(building.type, room.name, station, r);
+        const s = wallSquare(l, side, at);
+        l.assets.push({ id: `${room.id}-${l.assets.length + 1}`, kind: "window", name: paneName(pane, station), ...s, w: 1, h: 1, side, pane, to: building.id });
+      }
+    }
+  }
 }
 function addArenas(ctx: Context) {
   const { world, random: r } = ctx;
@@ -4382,6 +4423,8 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
       }
     }
   }
+
+  moreWindows(world, building);
 
   // Nothing is put in a stairwell, a lift, a ladder or a corridor
   for (const room of rooms) {

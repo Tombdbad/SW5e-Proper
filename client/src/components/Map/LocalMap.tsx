@@ -823,7 +823,8 @@ const onWall = (layout: { width: number; height: number }, a: RoomAsset): { x: n
 // A door, way out, secret way or window, drawn along x about the origin, its frame in the
 // building's style (arched, rounded or square; round windows in hulls)
 // (a window by its size: a slit, a small pane, a window one climbs through, a great window; shared/logic "Windows")
-const PANE_SCALE: Record<string, V3> = { slit: [0.3, 1.35, 1], small: [0.6, 0.75, 1], large: [1, 1.5, 1], wide: [1.15, 1.8, 1] };
+// (2026-11-03, the user: the windows were too small to light a room: a large one is now 1.1 m wide and 1.1 m high, a great one 1.6 by 1.5)
+const PANE_SCALE: Record<string, V3> = { slit: [0.3, 1.9, 1], small: [0.85, 1.4, 1], large: [1.3, 2.3, 1], wide: [1.9, 3.1, 1] };
 // Where a door, way out or window of a room's wall stands (2026-10-26): on the wall line (`outline`) across from its square, so on the
 // curve of a round room; turned along the line there (the turn `onWall` gives on a straight side), and bent onto it where it curves
 interface WayPlace {
@@ -1295,7 +1296,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
           </mesh>
         )
       )}
-      {atmosphere && look && walls && <Atmosphere mood={atmosphere} look={look} w={width} h={height} tier={detail} day={dayNow} shaft={dayNow > 0 && !assets.some((a) => a.kind === "window") ? dayNow : 0} />}
+      {atmosphere && look && walls && <Atmosphere mood={atmosphere} look={look} w={width} h={height} tier={detail} day={dayNow} windows={assets.filter((a) => a.kind === "window").length} shaft={dayNow > 0 && !assets.some((a) => a.kind === "window") ? dayNow : 0} />}
       {/* (not in a sloping passage, which is walked from wall to wall) */}
       {rocky && !plan?.form && <CaveDressing w={width} h={height} seed={width * 31 + height} biome={mood!.biome} tier={detail} takenKey={takenKey} mask={mask} />}
       {children}

@@ -219,6 +219,27 @@ export function budgetOf(mood: Mood, tier: Tier): Mood {
   return { ...mood, spots: mood.spots.slice(0, 2), dust: mood.dust * 0.5, shaft: mood.shaft ? { ...mood.shaft, strength: mood.shaft.strength * 0.7 } : null };
 }
 
+// The fixtures of a room (2026-11-03, the user: at night the lights did not light the rooms enough, "a few more lighting fixtures AND a bit more
+// luminescence"): each lamp of the mood is brighter (LAMP_GAIN) and carries further, and a room of more than a lamp's worth of floor (one to
+// 24 squares) has as many fixtures as it needs (up to five on full detail, three on lite), each another of the first's kind set where the
+// others are not
+export const LAMP_GAIN = 2.5;
+export const LAMP_REACH = 1.3;
+const FIXTURE_PLACES: [number, number][] = [[0.22, 0.25], [0.78, 0.25], [0.22, 0.75], [0.78, 0.75], [0.5, 0.2], [0.5, 0.8], [0.15, 0.5], [0.85, 0.5]];
+export function fixturesFor(spots: LightSpot[], w: number, h: number, tier: Tier): LightSpot[] {
+  if (!spots.length) return spots;
+  const lit = spots.map((s) => ({ ...s, intensity: s.intensity * LAMP_GAIN, distance: s.distance * LAMP_REACH }));
+  const wanted = Math.min(tier === "full" ? 5 : 3, Math.max(1, Math.ceil((w * h) / 24)));
+  const first = lit[0];
+  while (lit.length < wanted) {
+    // (the place farthest from every fixture so far)
+    const far = (p: [number, number]) => Math.min(...lit.map((s) => Math.hypot((s.x - p[0]) * w, (s.y - p[1]) * h)));
+    const at = FIXTURE_PLACES.reduce((best, p) => (far(p) > far(best) ? p : best));
+    lit.push({ ...first, x: at[0], y: at[1], intensity: first.intensity * 0.8, flicker: first.flicker });
+  }
+  return lit;
+}
+
 // Motes to draw for a room of this size
 export const moteCount = (mood: Mood, w: number, h: number, tier: Tier): number => Math.round(Math.min(200, Math.max(0, mood.dust * w * h * 0.75)) * (tier === "lite" ? 0.5 : 1));
 
