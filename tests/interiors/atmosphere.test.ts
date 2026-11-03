@@ -1,6 +1,6 @@
-import test from "node:test";
+﻿import test from "node:test";
 import assert from "node:assert/strict";
-import { moodOf, budgetOf, moteCount, flickerAt } from "../../client/src/components/Map/interiors/atmosphere";
+import { moodOf, budgetOf, moteCount, flickerAt, fixturesFor, LAMP_GAIN } from "../../client/src/components/Map/interiors/atmosphere";
 import { WEALTH } from "../../client/src/components/Map/interiors/wealth";
 
 const ROOMS: [string, string][] = [
@@ -56,4 +56,16 @@ test("flicker stays between dim and full, and steady lights never move", () => {
 });
 test("moods are deterministic", () => {
   assert.deepEqual(moodOf("cantina", "Main bar", "modest", "desert"), moodOf("cantina", "Main bar", "modest", "desert"));
+});
+
+test("a room's lamps are brighter and a larger room has more fixtures, set apart (2026-11-03)", () => {
+  const spots = moodOf("tenements", "Apartments", "modest", "temperate").spots;
+  const small = fixturesFor(spots, 4, 4, "full");
+  assert.equal(small.length, spots.length, "a small room keeps its lamps");
+  assert.ok(Math.abs(small[0].intensity - spots[0].intensity * LAMP_GAIN) < 1e-9, "brighter by the gain");
+  const hall = fixturesFor(spots.slice(0, 1), 12, 8, "full");
+  assert.equal(hall.length, 4, "one fixture to 24 squares of floor");
+  assert.equal(fixturesFor(spots.slice(0, 1), 30, 30, "full").length, 5, "up to five");
+  assert.equal(fixturesFor(spots.slice(0, 1), 30, 30, "lite").length, 3, "up to three on lite");
+  for (let i = 0; i < hall.length; i++) for (let j = i + 1; j < hall.length; j++) assert.ok(Math.hypot((hall[i].x - hall[j].x) * 12, (hall[i].y - hall[j].y) * 8) > 2.5, "fixtures are set apart");
 });

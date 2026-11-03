@@ -1850,6 +1850,22 @@ export function Decor({ kind, seed = 0 }: { kind: string; seed?: number }) {
 // Lamps light up after dark (2026-10-31, with the Babylon renderer): the sky (LocalMap Sky) says when, and a street lamp or a garden's is
 // then a warm light under its bulb. The renderer gathers these into one clustered light (babylon.ts), so a street of lamps costs about one.
 export const useLamps = create<{ lit: boolean }>(() => ({ lit: false }));
+// The rooms whose lights have been switched off (2026-11-03, the user: light switches): by the world's seed and the room's id, kept in the
+// browser. A room is lit unless it is here; a closed building's windows glow at night only for the rooms that are lit.
+const LIGHTS_KEY = "sw5e.lightsOff";
+const savedOff = (): Record<string, true> => {
+  try { return JSON.parse(localStorage.getItem(LIGHTS_KEY) ?? "{}") as Record<string, true>; } catch { return {}; }
+};
+export const useRoomLights = create<{ off: Record<string, true>; toggle: (key: string) => void }>((set, get) => ({
+  off: typeof localStorage === "undefined" ? {} : savedOff(),
+  toggle: (key) => {
+    const off = { ...get().off };
+    if (off[key]) delete off[key];
+    else off[key] = true;
+    try { localStorage.setItem(LIGHTS_KEY, JSON.stringify(off)); } catch { /* (kept for this visit only) */ }
+    set({ off });
+  },
+}));
 export function LampLight({ at }: { at: V3 }) {
   const lit = useLamps((s) => s.lit);
   return lit ? <pointLight position={at} color="#ffd59a" intensity={14} distance={10} decay={2} castShadow userData={{ cluster: true }} /> : null;

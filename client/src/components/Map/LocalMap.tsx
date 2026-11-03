@@ -44,7 +44,7 @@ import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderS
 import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
-import { useLamps, Figure, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { useLamps, useRoomLights, Figure, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -930,6 +930,74 @@ function PiercedWall({ kind, pane, style, wallH, lift = 0, bend, color, wall }: 
   if (!geometry) return null;
   return <Solids><mesh geometry={geometry} material={wallMaterial(wall, { tint: color })} castShadow receiveShadow /></Solids>;
 }
+// A lit window seen from the street at night (2026-11-03, the user: the light of a room shines out of its windows, but not of a building locked for
+// the night): the pane glows warm, and the light falls on the ground outside in a soft patch (a window on the ground floor; one above lights the
+// street less, and only its pane shows). `out` is the way outward, as a step along x and z of the room's own frame.
+let SPILL: THREE.CanvasTexture | null = null;
+function spillTexture() {
+  if (SPILL || typeof document === "undefined") return SPILL;
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d")!;
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.45, "rgba(255,255,255,0.45)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return (SPILL = new THREE.CanvasTexture(c));
+}
+function WindowGlow({ style, pane, bend }: { style?: Style; pane?: RoomAsset["pane"]; bend?: Bend }) {
+  const scale = PANE_SCALE[pane?.size ?? "small"] ?? [1, 1, 1];
+  const geo = useMemo(() => {
+    const g = new THREE.ShapeGeometry(new THREE.Shape(openingOutline("window", style, scale).map(([x, y]) => new THREE.Vector2(x, y))), 8);
+    if (!bend) return g;
+    const bent = bend.apply(g);
+    g.dispose();
+    return bent;
+  }, [style?.arch, style?.porthole, scale.join(","), bend?.key]);
+  useEffect(() => () => geo.dispose(), [geo]);
+  return (
+    <mesh geometry={geo} position={[0, 0, 0.01]} raycast={() => null}>
+      <meshBasicMaterial color="#ffe2ad" side={THREE.DoubleSide} />
+    </mesh>
+  );
+}
+function WindowSpill({ at, out, width }: { at: [number, number]; out: [number, number]; width: number }) {
+  const tex = spillTexture();
+  return (
+    <mesh position={[at[0] + out[0] * 1.7, 0.035, at[1] + out[1] * 1.7]} rotation={[-Math.PI / 2, 0, out[0] ? Math.PI / 2 : 0]} raycast={() => null} renderOrder={2}>
+      <planeGeometry args={[Math.max(1.6, width * 2.4), 3.6]} />
+      <meshBasicMaterial map={tex ?? undefined} color="#ffc878" transparent opacity={0.42} depthWrite={false} blending={THREE.AdditiveBlending} />
+    </mesh>
+  );
+}
+// The few lit windows nearest the party light the street for real (a point light each, clustered with the lamps'); the rest only show
+// their pane and patch. Chosen twice a second.
+function WindowLights({ windows, feet }: { windows: { id: string; x: number; y: number; lift: number; out: [number, number] }[]; feet: { current: { x: number; y: number } } }) {
+  const [near, setNear] = useState<typeof windows>([]);
+  const all = useRef(windows);
+  all.current = windows;
+  const key = windows.map((w) => w.id).join(",");
+  useEffect(() => {
+    const pick = () => {
+      const f = feet.current;
+      setNear((was) => {
+        const next = [...all.current].sort((a, b) => (a.x - f.x) ** 2 + (a.y - f.y) ** 2 - ((b.x - f.x) ** 2 + (b.y - f.y) ** 2)).slice(0, 6);
+        return next.length === was.length && next.every((w, i) => w.id === was[i].id) ? was : next;
+      });
+    };
+    pick();
+    const t = window.setInterval(pick, 500);
+    return () => window.clearInterval(t);
+  }, [key]);
+  return (
+    <>
+      {near.map((w) => <pointLight key={w.id} position={[w.x + w.out[0] * 0.9, w.lift + 1.3, w.y + w.out[1] * 0.9]} color="#ffcf8a" intensity={7} distance={9} decay={2} userData={{ cluster: true }} />)}
+    </>
+  );
+}
+
 // A doorway's leaf swings (or rolls up, for a hangar) when it is tapped, and shuts again when it is tapped once more. Its leaf is of what
 // the room's walls are (`wall`, the room's wall set); `bend` lays it and its frame on a curved wall
 function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint, bend, rock }: { kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string; wall?: WallSet; tint?: string; bend?: Bend; rock?: { biome: string; tier: Tier; seed: number; outside?: boolean } }) {
@@ -1018,8 +1086,10 @@ function Stepper({ x, y, z = 0, pace = 4, face = 0, turn: turns = true, children
 }
 const isDroideka = (name = "") => /droideka|destroyer droid/i.test(name);
 
-export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = "", tallWalls = false, ceiling = false, wallHeight, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, biome, like, meets = [], children }: {
+export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = "", tallWalls = false, ceiling = false, wallHeight, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, biome, like, meets = [], lightKey, children }: {
   width: number;
+  // Which switch this room's lights are on (useRoomLights): a room with light fittings has a switch by its first door
+  lightKey?: string;
   // The walls this high, whatever the view (an arena's floor: up to its first tier)
   wallHeight?: number;
   // The world's biome, for the wall set of a room with no mood (a roof, a gallery, a room looked down into): the walls were plaster there,
@@ -1070,6 +1140,9 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // A cave has walls of rock and a rim of formations; every room has the light, the air and the stock its kind of place would
   // (interiors/): its wealth turns the furniture's browns, steels and golds into its own woods, metal and trim
   const detail = useQuality((q) => q.tier);
+  // Whether the room's lights are on (they are, unless switched off), and the switch
+  const lightsOn = useRoomLights((s) => !(lightKey && s.off[lightKey]));
+  const toggleLights = useRoomLights((s) => s.toggle);
   // The daylight now (0 at night): the mood's shaft of light is only drawn by day, and where no window lets a real one in
   const dayNow = daylight(useClock((c) => Math.round(c.minutes / 5) * 5));
   const rocky = !!mood && mood.buildingType === "cave";
@@ -1296,7 +1369,32 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
           </mesh>
         )
       )}
-      {atmosphere && look && walls && <Atmosphere mood={atmosphere} look={look} w={width} h={height} tier={detail} day={dayNow} windows={assets.filter((a) => a.kind === "window").length} shaft={dayNow > 0 && !assets.some((a) => a.kind === "window") ? dayNow : 0} />}
+      {/* The light switch: a plate on the wall inside, a hand's breadth from the first way in, tapped (or used) to put the room's lights out or on */}
+      {atmosphere && look && walls && lightKey && !mask && (() => {
+        const p = setIn.find((q) => (q.a.kind === "door" || q.a.kind === "exit") && q.a.side && !q.bend && !met(q));
+        if (!p) return null;
+        const side = p.a.side!;
+        const x = side === "n" || side === "s" ? 1 : 0;
+        const ins = side === "n" ? [0, 1] : side === "s" ? [0, -1] : side === "w" ? [1, 0] : [-1, 0];
+        // (beside the frame, on the side of the way's square with more room)
+        const along = (side === "n" || side === "s" ? p.at[0] : p.at[1]) < (side === "n" || side === "s" ? width : height) / 2 ? 0.85 : -0.85;
+        const at: V3 = [p.at[0] + (x ? along : 0) + ins[0] * 0.06, 1.25, p.at[1] + (x ? 0 : along) + ins[1] * 0.06];
+        const plate: V3 = x ? [0.12, 0.18, 0.03] : [0.03, 0.18, 0.12];
+        return (
+          <group>
+            <mesh position={at} raycast={() => null}>
+              <boxGeometry args={plate} />
+              <meshLambertMaterial color="#d6d1c4" />
+            </mesh>
+            <mesh position={[at[0] + ins[0] * 0.02, at[1] + (lightsOn ? 0.035 : -0.035), at[2] + ins[1] * 0.02]} raycast={() => null}>
+              <boxGeometry args={x ? [0.04, 0.06, 0.03] : [0.03, 0.06, 0.04]} />
+              <meshBasicMaterial color={lightsOn ? "#ffd27a" : "#59606a"} />
+            </mesh>
+            <Hit at={at} size={[0.5, 0.5, 0.5]} onTap={() => toggleLights(lightKey)} label={lightsOn ? "Light switch (on)" : "Light switch (off)"} />
+          </group>
+        );
+      })()}
+      {atmosphere && look && walls && <Atmosphere mood={atmosphere} look={look} w={width} h={height} on={lightsOn} tier={detail} day={dayNow} windows={assets.filter((a) => a.kind === "window").length} shaft={dayNow > 0 && !assets.some((a) => a.kind === "window") ? dayNow : 0} />}
       {/* (not in a sloping passage, which is walked from wall to wall) */}
       {rocky && !plan?.form && <CaveDressing w={width} h={height} seed={width * 31 + height} biome={mood!.biome} tier={detail} takenKey={takenKey} mask={mask} />}
       {children}
@@ -3164,8 +3262,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const minutes = useClock((c) => c.minutes);
   // The shops that are shut for the night (shared logic afterHoursLock): their ways in are drawn locked
   const shut = useMemo(() => new Set(buildings.filter((b) => afterHoursLock(world, b.id, minutes) !== undefined).map((b) => b.id)), [world, buildings, Math.floor(minutes / 5)]);
+  // The windows that are lit: at night, in a room whose lights are on, of a building that is not locked for the night (a locked shop is dark)
+  const night = useLamps((s) => s.lit);
+  const lightsOff = useRoomLights((s) => s.off);
+  const lit = (room: Area) => night && !shut.has(room.parentId ?? "") && !lightsOff[`${world.seed}:${room.id}`];
   const settlementId = trail.find((a) => a.kind === "settlement")?.id;
-  const blockade = !!settlementId && blockadeAt(world, settlementId, minutes);
+  const blockade =!!settlementId && blockadeAt(world, settlementId, minutes);
   const barricades = useMemo(() => {
     if (!blockade) return [] as { sign: { x: number; y: number }; squares: { x: number; y: number }[]; guards: { x: number; y: number }[] }[];
     return street.signs.map(({ x, y }) => {
@@ -4629,6 +4731,20 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           </group>
         )}
 
+        {/* The lit windows' light on the street (the nearest few: real lights) */}
+        {planned && !opened && night && (
+          <WindowLights
+            feet={feet}
+            windows={rooms.flatMap((room) => {
+              const l = room.layout;
+              if (!l || formOf(room) || (l.level ?? 0) < 0 || !lit(room)) return [];
+              return l.assets.filter((a) => a.kind === "window" && a.side).map((a) => {
+                const p = wayPlace(outline(l.width, l.height, radiiOf(room)), l.width, l.height, a);
+                return { id: `${room.id}/${a.id}`, x: l.x + p.at[0], y: l.y + p.at[1], lift: levelY(l), out: (a.side === "n" ? [0, -1] : a.side === "s" ? [0, 1] : a.side === "w" ? [-1, 0] : [1, 0]) as [number, number] };
+              });
+            })}
+          />
+        )}
         {planned && rooms.map((room) => {
           const l = room.layout!;
           // Inside a building the others of its district are not drawn: nobody looks at them from
@@ -4657,6 +4773,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   meets={meetsOf(room, rooms)}
                   tallWalls={!!l.tall}
                   ceiling={viewing && !openAir(room) && !bowl}
+                  lightKey={`${world.seed}:${room.id}`}
                   wallHeight={bowl && !l.well && viewing ? LEVEL_H : undefined}
                   looted={(a) => { const c = room.loot.find((c) => c.id === a.ref); return !!c && (c.node ? nodeAt(c.node, minutes).charges === 0 : !!c.looted); }}
                   nodeOf={(a) => room.loot.find((c) => c.id === a.ref)?.node}
@@ -4899,7 +5016,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   )}
                   <group position={[at.x, 0, at.z]} rotation={[0, at.turn, 0]}>
                     <Doorway rock={building.type === "cave" && !!l.mask ? { biome, tier: tierNow, seed: a.x * 7 + a.y * 13 + l.width, outside: true } : undefined} name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={wallSet(wallPackOf(building.type), biome)} tint={wallColor} bend={place.bend} />
+                    {a.kind === "window" && !form && lit(room) && <WindowGlow style={style} pane={a.pane} bend={place.bend} />}
                   </group>
+                  {a.kind === "window" && !form && lit(room) && lift < 0.5 && !place.bend && <WindowSpill at={[at.x, at.z]} out={a.side === "n" ? [0, -1] : a.side === "s" ? [0, 1] : a.side === "w" ? [-1, 0] : [1, 0]} width={0.84 * (PANE_SCALE[a.pane?.size ?? "small"]?.[0] ?? 1)} />}
                   </group>
                 );
               })}
