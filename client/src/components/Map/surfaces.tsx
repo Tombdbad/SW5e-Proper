@@ -103,13 +103,15 @@ export interface SurfaceOptions {
   // The set's `diffuse-cutout.webp` in place of its diffuse.jpg: a photograph with an alpha channel, drawn with the clear parts cut out
   // (leaves with gaps between them; seen from both sides, shadows cut the same). The material is alpha-tested at this level.
   cutout?: number;
+  // A picture of its own (in the folder, set "" for the folder itself) in place of the set's diffuse map, and no normal or height map
+  picture?: string;
 }
 const SURFACES = new Map<string, THREE.MeshPhongMaterial>();
 // A surface's material, with the copies of it that wait for its maps
 export type SurfaceMaterial = THREE.MeshPhongMaterial & { followers?: Set<THREE.Material> };
 // The material of a texture set (public/textures/<folder>/<set>): shared by everyone asking for the same one
 export function surfaceMaterial(folder: string, set: string, o: SurfaceOptions): THREE.MeshPhongMaterial {
-  const key = [folder, set, o.vertexColors ? "v" : "", o.tint ?? "", o.lift ?? 1, o.parallax, o.shininess ?? 8, o.specular ?? "", o.side ?? 0, o.normalScale ?? "", o.cutout ?? ""].join("|");
+  const key = [folder, set, o.vertexColors ? "v" : "", o.tint ?? "", o.lift ?? 1, o.parallax, o.shininess ?? 8, o.specular ?? "", o.side ?? 0, o.normalScale ?? "", o.cutout ?? "", o.picture ?? ""].join("|");
   const have = SURFACES.get(key);
   if (have) return have;
   const height = { value: flat([128, 128, 128]) as THREE.Texture | null };
@@ -133,7 +135,8 @@ export function surfaceMaterial(folder: string, set: string, o: SurfaceOptions):
   // The maps come in a browser only: the tests import this module without a document, and there the surfaces stay flat
   if (typeof document !== "undefined") {
     const base = `/textures/${folder}/${set}`;
-    Promise.all([loadMap(o.cutout ? `${base}/diffuse-cutout.webp` : `${base}/diffuse.jpg`, true), loadMap(`${base}/normal.jpg`, false), loadMap(`${base}/height.jpg`, false)]).then(([d, n, h]) => {
+    const none = Promise.resolve(null);
+    Promise.all([loadMap(o.picture ? `/textures/${folder}/${o.picture}` : o.cutout ? `${base}/diffuse-cutout.webp` : `${base}/diffuse.jpg`, true), o.picture ? none : loadMap(`${base}/normal.jpg`, false), o.picture ? none : loadMap(`${base}/height.jpg`, false)]).then(([d, n, h]) => {
       for (const target of [m, ...((m as SurfaceMaterial).followers as Set<THREE.MeshPhongMaterial>)]) {
         if (d) target.map = d;
         if (n) target.normalMap = n;

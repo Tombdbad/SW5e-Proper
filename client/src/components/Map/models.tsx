@@ -40,8 +40,8 @@ export type V3 = [number, number, number];
 // a figure's builder names as those (Kit.dress)
 // (2026-10-30: a droid's panelled plating, a prosthesis's or implant's circuitry, the coarse weave of a robe, cloak or rags, and the ribbed,
 // quilted stuff of an armour's undersuit or a flight suit)
-export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth" | "stone" | "bark" | "leaf" | "skin" | "face" | "fabric" | "leather" | "plate" | "scales" | "hair" | "fur" | "droid" | "cyber" | "weave" | "mesh";
-export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth", "stone", "bark", "leaf", "skin", "face", "fabric", "leather", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh"];
+export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth" | "stone" | "bark" | "leaf" | "needle" | "skin" | "face" | "fabric" | "leather" | "plate" | "scales" | "hair" | "fur" | "droid" | "cyber" | "weave" | "mesh";
+export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth", "stone", "bark", "leaf", "needle", "skin", "face", "fabric", "leather", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh"];
 // The finishes a figure's colours may be dressed in, over the plain ones they were drawn in
 export const FIGURE_FINISHES: Finish[] = ["skin", "face", "fabric", "leather", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh"];
 
@@ -55,6 +55,8 @@ export const MATERIALS: Record<Finish, THREE.Material> = {
   stone: surfaceMaterial("stone", "rock_face_03", { vertexColors: true, lift: 1.25, parallax: 0.04 }),
   bark: surfaceMaterial("bark", "bark_brown_02", { vertexColors: true, lift: 1.9, parallax: 0.03 }),
   leaf: surfaceMaterial("leaves", "forest_leaves_02", { vertexColors: true, lift: 1.9, parallax: 0.02, shininess: 4, cutout: 0.45 }),
+  // a conifer's branches: cards drawn with the spray of needles (textures/needles/spray.webp; Kit.spray gives them their own texture coordinates)
+  needle: surfaceMaterial("needles", "", { vertexColors: true, lift: 1.7, parallax: 0, shininess: 4, cutout: 0.35, picture: "spray.webp" }),
   // (the detail maps are pale, about 0.9 on average: `lift` brings the vertex colours back to what they were drawn in)
   skin: surfaceMaterial("figure", "skin", { vertexColors: true, lift: 1.1, parallax: 0, shininess: 12, specular: "#1e1b18", normalScale: 0.55 }),
   face: surfaceMaterial("figure", "face", { vertexColors: true, lift: 1.07, parallax: 0, shininess: 14, specular: "#1e1b18", normalScale: 0.45 }),
@@ -240,7 +242,8 @@ export class Kit {
     const plain = asked ?? surfaceOf(this.surfaces, color) ?? "matte";
     const finish = plain === "matte" || plain === "sheen" || plain === "cloth" ? surfaceOf(this.dress, color) ?? this.restyle?.[plain] ?? plain : plain;
     let geo = source;
-    for (const name of Object.keys(geo.attributes)) if (name !== "position" && name !== "normal") geo.deleteAttribute(name);
+    // (a spray card keeps the coordinates it was made with; the other textured finishes are projected when baked)
+    for (const name of Object.keys(geo.attributes)) if (name !== "position" && name !== "normal" && !(name === "uv" && finish === "needle")) geo.deleteAttribute(name);
     if (!geo.index) {
       const count = geo.attributes.position.count;
       geo.setIndex(Array.from({ length: count }, (_, i) => i));
@@ -337,6 +340,19 @@ export class Kit {
 
   capsule(r: number, length: number, color: string, o: PartOptions & { seg?: number } = {}) {
     return this.add(new THREE.CapsuleGeometry(r, length, 3, o.seg ?? 8), color, o);
+  }
+
+  // A conifer's branch: a card `length` long and `width` wide, drawn with the spray of needles, its stem leaving `at` (the trunk) along
+  // the horizontal direction `azimuth`, drooping by `droop` and rolled about its own length by `roll` (two cards rolled either way make a V)
+  spray(length: number, width: number, color: string, at: V3, azimuth: number, droop: number, roll = 0) {
+    const geo = new THREE.PlaneGeometry(width, length);
+    geo.translate(0, length / 2, 0);
+    const q = new THREE.Quaternion()
+      .setFromAxisAngle(new THREE.Vector3(0, 1, 0), azimuth)
+      .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -(Math.PI / 2 + droop)))
+      .multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), roll + Math.PI / 2)); // (0 lies it flat, face up)
+    geo.applyQuaternion(q);
+    return this.add(geo, color, { at, finish: "needle" });
   }
 
   cone(r: number, h: number, color: string, o: PartOptions & { seg?: number } = {}) {

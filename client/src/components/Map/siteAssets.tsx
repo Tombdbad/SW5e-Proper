@@ -127,6 +127,27 @@ export interface Piece {
   gltf?: string;
 }
 
+// A conifer (2026-11-03): a solid trunk to the top and whorls of branches radiating from it, each a pair of cards drawn with a spray of
+// needles (the finish "needle"), longest at the foot and drooping, shorter and more upright toward the top, a tuft on the leader
+function conifer(k: Kit, p: Palette, v: number, height: number, reach: number, tiers: number, trunk: number) {
+  k.cyl(trunk, height, p.bark, { at: [0, height / 2, 0], top: trunk * 0.18, seg: 7 });
+  for (let t = 0; t < tiers; t++) {
+    const f = t / (tiers - 1);
+    const y = height * (0.12 + f * 0.8);
+    const length = reach * (1 - f * 0.85) + 0.18;
+    const count = Math.max(5, Math.round(9 - f * 4));
+    const colour = t % 2 ? p.leaf2 : shade(p.leaf, 0.92);
+    for (let j = 0; j < count; j++) {
+      const az = (j / count) * Math.PI * 2 + t * 0.9 + v * 0.7 + Math.sin(t * 7 + j * 3) * 0.2;
+      const droop = 0.75 - f * 0.45 + Math.sin(j * 5 + t) * 0.1;
+      k.spray(length, length * 0.85, colour, [0, y, 0], az, droop, 0.4);
+      k.spray(length, length * 0.85, colour, [0, y, 0], az, droop, -0.4);
+    }
+  }
+  k.spray(0.55, 0.4, p.leaf, [0, height - 0.12, 0], 0, -Math.PI / 2, 0);
+  k.spray(0.55, 0.4, p.leaf, [0, height - 0.12, 0], 0, -Math.PI / 2, Math.PI / 2);
+}
+
 // A frond, leaf or branch: a flattened lump laid out from a point
 const leafAt = (k: Kit, color: string, at: V3, rot: V3, long: number, seed: number) => k.blob(long * 0.5, color, { at, rot, seed, rough: 0.12, smooth: true, squash: [1, 0.12, 0.34] });
 
@@ -142,10 +163,7 @@ const LIBRARY: Record<string, Piece> = {
   },
   tree_conifer: {
     tags: ["tree", "garden", "evergreen"], size: [1, 1], blocks: true, hit: { r: 0.22, h: 3, soft: 0.7 },
-    build: (k, p, v) => {
-      k.cyl(0.09, 0.8, p.bark, { at: [0, 0.4, 0], seg: 6 });
-      [[0.85, 1.0, 0.7], [0.68, 1.0, 1.4], [0.5, 0.9, 2.05], [0.3, 0.8, 2.65]].forEach(([r, h, y], i) => k.cone(r, h, i % 2 ? p.leaf2 : p.leaf, { at: [0, y, 0], seg: 8 + (v % 2) * 2 }));
-    },
+    build: (k, p, v) => conifer(k, p, v, 3.1, 1.0, 10, 0.11),
   },
   tree_palm: {
     tags: ["tree", "garden", "arid"], size: [1, 1], blocks: true, hit: { r: 0.16, h: 2.8 },
@@ -286,10 +304,7 @@ const LIBRARY: Record<string, Piece> = {
   },
   tree_pine: {
     tags: ["tree", "wild", "evergreen"], size: [1, 1], blocks: true, hit: { r: 0.18, h: 4, soft: 0.6 },
-    build: (k, p, v) => {
-      k.cyl(0.13, 1.2, p.bark, { at: [0, 0.6, 0], top: 0.09, seg: 7 });
-      [[0.75, 1.1, 1.0], [0.64, 1.0, 1.65], [0.52, 0.95, 2.25], [0.4, 0.85, 2.8], [0.27, 0.75, 3.3], [0.14, 0.55, 3.75]].forEach(([r, h, y], i) => k.cone(r, h, i % 2 ? p.leaf2 : shade(p.leaf, 0.9), { at: [0, y, 0], seg: 9 + (v % 3) }));
-    },
+    build: (k, p, v) => conifer(k, p, v, 4.1, 1.15, 14, 0.14),
   },
   tree_birch: {
     tags: ["tree", "wild", "garden"], size: [1, 1], blocks: true, hit: { r: 0.12, h: 3 },
