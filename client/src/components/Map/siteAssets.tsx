@@ -5,7 +5,7 @@ import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { create } from "zustand";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, LampLight, type V3, type Finish } from "./models";
+import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, LampLight, type V3, type Finish, type Baked } from "./models";
 import { groundShader, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
 import type { PackId } from "./interiors/packs";
 import { setRenderTier, shaderPatch } from "./babylon";
@@ -123,6 +123,8 @@ export interface Piece {
   // The shape a speeder strikes, or drags through (at a scale of 1)
   hit?: PropHit;
   build: Build;
+  // A plainer model for the instances far from the camera (trees: see `Instanced`)
+  far?: Build;
   // A model made elsewhere, under client/public (see above)
   gltf?: string;
 }
@@ -130,24 +132,32 @@ export interface Piece {
 // A conifer (2026-11-03): a solid trunk to the top and whorls of branches radiating from it, each a pair of cards drawn with a spray of
 // needles (the finish "needle"), longest at the foot and drooping, shorter and more upright toward the top, a tuft on the leader
 // (`fuller` puts more branches in a whorl, for the bigger sizes)
-function conifer(k: Kit, p: Palette, v: number, height: number, reach: number, tiers: number, trunk: number, fuller = 1) {
-  k.cyl(trunk, height, p.bark, { at: [0, height / 2, 0], top: trunk * 0.18, seg: 7 });
+// (a tree's far model, for the instances far from the camera, is the same tree in about a fifth of the geometry: half the whorls, three in
+// five of the branches, one card to a branch, a third of the leaf clumps, coarser; `farModel` is set while it is built)
+let farModel = false;
+function conifer(k: Kit, p: Palette, v: number, height: number, reach: number, fullTiers: number, trunk: number, fuller = 1) {
+  const tiers = farModel ? Math.max(5, Math.round(fullTiers / 2)) : fullTiers;
+  k.cyl(trunk, height, p.bark, { at: [0, height / 2, 0], top: trunk * 0.18, seg: farModel ? 5 : 7 });
   for (let t = 0; t < tiers; t++) {
     const f = t / (tiers - 1);
     const y = height * (0.12 + f * 0.8);
     const length = reach * (1 - f * 0.85) + 0.18;
-    const count = Math.max(5, Math.round((9 - f * 4) * fuller));
+    const count = Math.max(farModel ? 4 : 5, Math.round((9 - f * 4) * fuller * (farModel ? 0.6 : 1)));
     const colour = t % 2 ? p.leaf2 : shade(p.leaf, 0.92);
     for (let j = 0; j < count; j++) {
       const az = (j / count) * Math.PI * 2 + t * 0.9 + v * 0.7 + Math.sin(t * 7 + j * 3) * 0.2;
       const droop = 0.75 - f * 0.45 + Math.sin(j * 5 + t) * 0.1;
+      if (farModel) {
+        k.spray(length, length * 1.1, colour, [0, y, 0], az, droop, 0);
+        continue;
+      }
       k.spray(length, length * 0.85, colour, [0, y, 0], az, droop, 0.4);
       k.spray(length, length * 0.85, colour, [0, y, 0], az, droop, -0.4);
     }
   }
   const tuft = Math.sqrt(height / 3);
   k.spray(0.55 * tuft, 0.4 * tuft, p.leaf, [0, height - 0.12, 0], 0, -Math.PI / 2, 0);
-  k.spray(0.55 * tuft, 0.4 * tuft, p.leaf, [0, height - 0.12, 0], 0, -Math.PI / 2, Math.PI / 2);
+  if (!farModel) k.spray(0.55 * tuft, 0.4 * tuft, p.leaf, [0, height - 0.12, 0], 0, -Math.PI / 2, Math.PI / 2);
 }
 
 // A crown of leaves (2026-11-03, the user: smaller leaf meshes and more of them): many small clumps spread through a flattened ball,
@@ -158,13 +168,14 @@ function crown(k: Kit, p: Palette, v: number, at: V3, radius: number, clumps: nu
     const ring = Math.sqrt(1 - y * y);
     const a = i * 2.39996 + v;
     const d = radius * (0.55 + 0.45 * ((i * 0.618 + v * 0.13) % 1));
-    k.blob(clump * (0.85 + 0.3 * ((i * 0.37) % 1)), i % 3 ? p.leaf : p.leaf2, { at: [at[0] + Math.cos(a) * ring * d, at[1] + y * d * 0.75, at[2] + Math.sin(a) * ring * d], seed: v + i, rough: 0.3, smooth: true, squash: [1, 0.8, 1] });
+    k.blob(clump * (0.85 + 0.3 * ((i * 0.37) % 1)) * (farModel ? 1.6 : 1), i % 3 ? p.leaf : p.leaf2, { at: [at[0] + Math.cos(a) * ring * d, at[1] + y * d * 0.75, at[2] + Math.sin(a) * ring * d], seed: v + i, rough: 0.3, smooth: true, squash: [1, 0.8, 1], detail: farModel ? 0 : undefined });
   }
 }
 // A deciduous tree: a trunk, branches radiating from its upper part (more on a bigger tree), a cluster of leaves at the end of each and
 // the rest round the top. `s` is the size against the smallest (1); the base says what the smallest is like.
 interface Broad { trunk: number; crownY: number; radius: number; girth: number }
-function broadleaf(k: Kit, p: Palette, v: number, s: number, base: Broad, branches: number, clumps: number) {
+function broadleaf(k: Kit, p: Palette, v: number, s: number, base: Broad, branches: number, allClumps: number) {
+  const clumps = farModel ? Math.round(allClumps / 3) : allClumps;
   const top = base.trunk * s, g = base.girth * s ** 0.8, rad = base.radius * s, cy = base.crownY * s;
   k.lathe([[g, 0], [g * 0.75, top * 0.21], [g * 0.5, top * 0.74], [g * 0.3, top]], p.bark, { seg: 8 });
   const clump = 0.2;
@@ -174,7 +185,7 @@ function broadleaf(k: Kit, p: Palette, v: number, s: number, base: Broad, branch
     const reach = rad * (0.6 + 0.25 * ((j * 0.61) % 1));
     const from: V3 = [0, top * (0.5 + 0.4 * ((j * 0.37) % 1)), 0];
     const tip: V3 = [Math.cos(az) * reach, cy + rad * 0.2 * Math.sin(j * 2.1), Math.sin(az) * reach];
-    k.rod(from, tip, 0.045 * s ** 0.7, p.bark, { seg: 6 });
+    k.rod(from, tip, 0.045 * s ** 0.7, p.bark, { seg: farModel ? 4 : 6 });
     crown(k, p, v + j * 3, tip, rad * 0.5, Math.round(inTips / branches), clump);
   }
   crown(k, p, v, [0, cy, 0], rad * 0.85, clumps - inTips, clump);
@@ -759,6 +770,15 @@ export function raceScenery(biome: string, water = false): RaceScenery & { cover
   return { ...wild, hits, crossings: biomeSky(biome).crossings };
 }
 
+// The trees of every size have a far model (the same build with `farModel` set)
+for (const [key, piece] of Object.entries(LIBRARY)) {
+  if (!/^tree_(broad|tall|conifer|pine)/.test(key)) continue;
+  piece.far = (k, p, v) => {
+    farModel = true;
+    try { piece.build(k, p, v); } finally { farModel = false; }
+  };
+}
+
 // Which trees a world grows
 const TREES: Record<string, string[]> = {
   temperate: ["tree_broad", "tree_broad", "tree_conifer"], forest: ["tree_conifer", "tree_broad", "tree_conifer"], jungle: ["tree_broad", "tree_palm", "tree_palm"],
@@ -946,18 +966,21 @@ export function ambientBackdrop(rect: Rect, belt: number, seed: string, biome: s
 // Drawing many copies of a piece in a call or two
 // ---------------------------------------------------------------------------------------------
 
-function Instanced({ id, build, items, file }: { id: string; build: (k: Kit) => void; items: Placed[]; file?: THREE.BufferGeometry | null }) {
+const NO_MODEL = () => {};
+// (`far`: a plainer model of the same piece, for the instances far from the camera: the renderer draws each instance in the full model
+// inside `near` and in this one beyond it, babylon.ts `thin`)
+function Instanced({ id, build, far, items, file }: { id: string; build: (k: Kit) => void; far?: (k: Kit) => void; items: Placed[]; file?: THREE.BufferGeometry | null }) {
   const made = useModel(id, build);
+  const distant = useModel(far ? `${id}:far` : `${id}:none`, far ?? NO_MODEL);
   const baked = useMemo(() => (file ? { matte: file } : made), [file, made]);
-  const refs = useRef<Partial<Record<Finish, THREE.InstancedMesh | null>>>({});
+  const refs = useRef<Record<string, THREE.InstancedMesh | null>>({});
   useLayoutEffect(() => {
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const e = new THREE.Euler();
     const pos = new THREE.Vector3();
     const sc = new THREE.Vector3();
-    for (const f of FINISHES) {
-      const mesh = refs.current[f];
+    for (const [name, mesh] of Object.entries(refs.current)) {
       if (!mesh) continue;
       items.forEach((it, i) => {
         m.compose(pos.set(it.x, it.h ?? 0, it.y), q.setFromEuler(e.set(0, it.rot, 0)), sc.setScalar(it.scale));
@@ -965,14 +988,17 @@ function Instanced({ id, build, items, file }: { id: string; build: (k: Kit) => 
       });
       mesh.instanceMatrix.needsUpdate = true;
     }
-  }, [items, baked]);
+  }, [items, baked, distant]);
+  const meshes = (models: Baked, band: "near" | "far" | undefined) =>
+    FINISHES.map((f) =>
+      models[f] ? (
+        <instancedMesh key={`${band}-${f}-${items.length}`} ref={(mesh) => { refs.current[`${band}-${f}`] = mesh; }} args={[models[f]!, MATERIALS[f], items.length]} userData={{ lod: band }} castShadow={SOLID_FINISHES.has(f)} receiveShadow={SOLID_FINISHES.has(f)} frustumCulled={false} raycast={() => null} />
+      ) : null,
+    );
   return (
     <>
-      {FINISHES.map((f) =>
-        baked[f] ? (
-          <instancedMesh key={`${f}-${items.length}`} ref={(mesh) => { refs.current[f] = mesh; }} args={[baked[f]!, MATERIALS[f], items.length]} castShadow={SOLID_FINISHES.has(f)} receiveShadow={SOLID_FINISHES.has(f)} frustumCulled={false} raycast={() => null} />
-        ) : null,
-      )}
+      {meshes(baked, far ? "near" : undefined)}
+      {far && meshes(distant, "far")}
     </>
   );
 }
@@ -1028,7 +1054,7 @@ function Group({ name, v, items, biome, palette }: { name: string; v: number; it
   const colours = pieceColours(name, v, palette);
   return (
     <>
-      <Instanced id={`site:${name}:${v}:${biome}`} build={(k) => { k.surfaces = plantSurfaces(colours); piece.build(k, colours, v); }} items={items} file={file} />
+      <Instanced id={`site:${name}:${v}:${biome}`} build={(k) => { k.surfaces = plantSurfaces(colours); piece.build(k, colours, v); }} far={piece.far && ((k) => { k.surfaces = plantSurfaces(colours); piece.far!(k, colours, v); })} items={items} file={file} />
       {piece.tags.includes("light") && <LampLights items={items} />}
     </>
   );

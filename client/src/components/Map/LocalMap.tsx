@@ -3089,6 +3089,16 @@ function Barricade({ squares, guards, onTap }: { squares: { x: number; y: number
 // ---------------------------------------------------------------------------------------------
 
 const MARGIN = 6;
+// Asks the renderer for distance detail in the scene a street or a room is drawn in (babylon.ts `Detail`: what is far is not drawn, casts no
+// shadow, and is drawn plainer). A space fight or a map, where the far is what is looked at, does not.
+function DistanceDetail() {
+  const scene = useThree((s) => s.scene);
+  useEffect(() => {
+    scene.userData.detail = true;
+    return () => { scene.userData.detail = false; };
+  }, [scene]);
+  return null;
+}
 // (the trees and rocks of the open ground are the asset library's, see `ambientBlockers`: what is here stands about the streets)
 const DECOR: Record<string, string[]> = { desert: ["mast"], ice: ["ice"], forest: ["lamp", "crate"], jungle: ["lamp", "crate"], swamp: ["crate", "lamp"], temperate: ["lamp", "crate"], urban: ["lamp", "crate", "kiosk", "camera"], "gas giant": ["lamp", "crate"], ocean: ["lamp", "crate"], volcanic: ["crate", "mast"], barren: ["crate", "mast"] };
 
@@ -5320,6 +5330,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       ) : (
         <Rig target={focus} offset={opened ? [0, reach * 0.95, reach * 0.75] : [-reach * 0.75, reach * 0.75, reach * 0.6]} min={4} max={120} fov={45} follow={eye} />
       )}
+      <DistanceDetail />
       <Sky indoors={opened && !openAir(opened) && !formOf(opened) ? 1 : 0} look={look} ground={-0.05} fog={[150, 480]} floor={!groundTex && !water} under={water === "under" && !(opened && !openAir(opened))} />
     </>
   );

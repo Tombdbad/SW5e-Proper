@@ -328,3 +328,38 @@ test("two instanced meshes of one shape keep their own instances (the open groun
   assert.equal(instancesOf(c), 4, "a copy taken again carries only its new instances");
   assert.equal(instancesOf(a), 3);
 });
+
+test("distance detail (a scene that asks for it): a far mesh is not drawn, a scatter is thinned instance by instance, and a far model takes the far instances", () => {
+  const { scene, draw, mirror } = make();
+  scene.userData.detail = true;
+  const geo = new THREE.BoxGeometry(1, 1, 1);
+  const material = new THREE.MeshLambertMaterial();
+  const at = (x: number) => new THREE.Matrix4().makeTranslation(x, 0, 0);
+  const near = new THREE.Mesh(geo, material);
+  const far = new THREE.Mesh(geo, material);
+  far.position.x = 400;
+  const scatter = (x: number[], lod?: string) => {
+    const mesh = new THREE.InstancedMesh(geo, material, x.length);
+    x.forEach((v, i) => mesh.setMatrixAt(i, at(v)));
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.frustumCulled = false;
+    if (lod) mesh.userData.lod = lod;
+    return mesh;
+  };
+  const all = scatter([1, 2, 400]);
+  const closer = scatter([1, 2, 50, 400], "near");
+  const farther = scatter([1, 2, 50, 400], "far");
+  scene.add(near, far, all, closer, farther);
+  draw();
+  const m = (o: THREE.Object3D) => meshNamed(mirror(), o)!;
+  assert.equal(m(near).isEnabled(), true);
+  assert.equal(m(far).isEnabled(), false, "a small thing 400 away is not drawn");
+  assert.equal(m(all).thinInstanceCount, 2, "the instance 400 away is left out");
+  assert.equal(m(closer).thinInstanceCount, 2, "the near model keeps those inside the near distance");
+  assert.equal(m(farther).thinInstanceCount, 1, "the far model keeps those between it and the draw distance");
+  // Everything is drawn while a district is got ready, and when the scene does not ask
+  scene.userData.detail = false;
+  draw();
+  assert.equal(m(far).isEnabled(), true);
+  assert.equal(m(all).thinInstanceCount, 3);
+});

@@ -389,7 +389,8 @@ export class Kit {
   // it is faceted (stone)
   blob(r: number, color: string, o: PartOptions & { seed?: number; rough?: number; detail?: number; smooth?: boolean; squash?: V3 } = {}) {
     const big = r * Math.max(...(o.squash ?? [1, 1, 1])) > 0.25;
-    const geo = o.smooth ? new THREE.SphereGeometry(r, big ? 18 : 12, big ? 13 : 9) : new THREE.IcosahedronGeometry(r, o.detail ?? 1);
+    // (`detail: 0` on a smooth blob is the coarsest, for a model's far version)
+    const geo = o.smooth ? (o.detail === 0 ? new THREE.SphereGeometry(r, 7, 5) : new THREE.SphereGeometry(r, big ? 18 : 12, big ? 13 : 9)) : new THREE.IcosahedronGeometry(r, o.detail ?? 1);
     const p = geo.attributes.position as THREE.BufferAttribute;
     const seed = o.seed ?? 1;
     const rough = o.rough ?? 0.25;
@@ -548,6 +549,8 @@ function FurShells({ geometry, material, shells }: { geometry: THREE.BufferGeome
     for (let i = 0; i < shells; i++) m.setMatrixAt(i, new THREE.Matrix4());
     m.frustumCulled = false;
     m.raycast = () => null;
+    // (the renderer draws fewer shells, or none, of a body that is far: babylon.ts `shells`)
+    m.userData.furShells = true;
     return m;
   }, [geometry, material, shells]);
   useEffect(() => () => { mesh.dispose(); }, [mesh]);

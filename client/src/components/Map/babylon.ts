@@ -369,8 +369,29 @@ function sameGeometry(sig: unknown[], g: THREE.BufferGeometry) {
   return i + 3 === sig.length && sig[i] === x && sig[i + 1] === (x?.version ?? -1) && sig[i + 2] === (x?.count ?? 0);
 }
 // A three material: its own Babylon material, or the look it shares (see `material`)
-interface MatEntry { mat?: PBRMaterial; look?: Look; shared: boolean; changes: number; seen: Float32Array; version: number; frame: number; users: number; gone: boolean; maps: unknown[] }
-interface Look { key: string; mat: PBRMaterial; users: number; idle: number }
+interface MatEntry { mat?: PBRMaterial; look?: Look; shared: boolean; changes: number; seen: Float32Array; version: number; frame: number; users: number; gone: boolean; maps: unknown[]; far?: Far }
+interface Look { key: string; mat: PBRMaterial; users: number; idle: number; far?: Far }
+// A material's plainer copy for what is far away (no normal map or parallax, no specular anti-aliasing), made when first wanted
+interface Far { mat: PBRMaterial; key: string; frame: number }
+
+// ---- Distance detail (2026-11-03, the user: reduced LOD and draw distance) ---------------------------------------------------------------
+// A thing is drawn out to a distance that grows with its size (a few pixels are not worth a draw call and a sync), casts a shadow out to a
+// shorter one, and is drawn in plainer materials (and, for the trees, plainer models) past `near`. An instanced scatter is thinned instance
+// by instance. Three settings: lite (a phone, or frames dropping), the middle (a desktop on its processor's graphics), and a desktop's full.
+interface Detail {
+  k: number; floor: number; ceil: number; // draw distance: size times k, within floor and ceil
+  shadowK: number; shadowFloor: number; shadowCeil: number; // the same for the shadows it casts
+  near: number; // the plainer material, and the plainer model of a tree, from this far
+  fur: [number, number]; // a furry figure keeps all its shells inside the first distance, half of them to the second, none beyond it
+}
+const DETAIL_LITE: Detail = { k: 45, floor: 26, ceil: 120, shadowK: 10, shadowFloor: 14, shadowCeil: 45, near: 26, fur: [10, 20] };
+const DETAIL_MID: Detail = { k: 70, floor: 40, ceil: 200, shadowK: 14, shadowFloor: 20, shadowCeil: 70, near: 40, fur: [14, 28] };
+const DETAIL_FULL: Detail = { k: 110, floor: 60, ceil: 340, shadowK: 20, shadowFloor: 28, shadowCeil: 100, near: 60, fur: [18, 36] };
+const detail = (): Detail => (lite() ? DETAIL_LITE : BIG_GPU() ? DETAIL_FULL : DETAIL_MID);
+// What is bigger than this (the ground, a building's shell, the sky) is always drawn
+const HUGE = 30;
+const reachOf = (r: number, d: Detail) => Math.min(d.ceil, Math.max(d.floor, r * d.k));
+const shadowReachOf = (r: number, d: Detail) => Math.min(d.shadowCeil, Math.max(d.shadowFloor, r * d.shadowK));
 type Painted = THREE.MeshPhongMaterial & THREE.MeshStandardMaterial & THREE.MeshBasicMaterial & THREE.PointsMaterial;
 // The colour, emission and opacity a look was found with
 const paintOf = (seen: Float32Array, m: Painted) => {
@@ -414,6 +435,16 @@ interface Node {
   casts?: boolean;
   instances?: number;
   colors?: number;
+  // distance detail: out of range (not drawn), in the plainer materials, and for a thinned scatter its packed buffers, where the camera
+  // stood when it was last thinned, when the mesh last moved, and whether none of it is in range
+  culled?: boolean;
+  far?: boolean;
+  pack?: Float32Array;
+  rgba?: Float32Array;
+  rgbaPack?: Float32Array;
+  packAt?: Float32Array;
+  packMoved?: number;
+  empty?: boolean;
   label?: string;
   lineSig?: string;
   clustered?: boolean;
@@ -570,7 +601,33 @@ class Mirror {
 
   // ---- Each frame ----
 
+  // Whether the scene being drawn asks for distance detail (a street or a room: LocalMap `DistanceDetail`; a space fight, a galaxy map or a
+  // race, where things far away are what is looked at, does not), and what `measure` found of the mesh in hand
+  private detailOn = false;
+  private lodD = 0;
+  private lodR = 0;
+  // The distance from the camera to the surface of a mesh's bounding sphere, and its radius in the world, left in `lodD` and `lodR`; false
+  // for what is always drawn (the sky and the ground, what is drawn over everything, what is not culled by its bounds)
+  private measure(o: THREE.Mesh, g: THREE.BufferGeometry): boolean {
+    if (!this.detailOn || (!o.frustumCulled && !o.userData.furShells) || o.renderOrder < 0) return false;
+    const m = o.material;
+    if (!Array.isArray(m) && !m.depthTest) return false;
+    const bs = g.boundingSphere ?? (g.computeBoundingSphere(), g.boundingSphere);
+    if (!bs) return false;
+    const e = o.matrixWorld.elements;
+    const s = Math.max(Math.hypot(e[0], e[1], e[2]), Math.hypot(e[4], e[5], e[6]), Math.hypot(e[8], e[9], e[10]));
+    const r = bs.radius * s;
+    if (r > HUGE) return false;
+    const c = bs.center;
+    const cam = this.camera.position;
+    this.lodR = r;
+    this.lodD = Math.max(0, Math.hypot(e[0] * c.x + e[4] * c.y + e[8] * c.z + e[12] - cam.x, e[1] * c.x + e[5] * c.y + e[9] * c.z + e[13] - cam.y, e[2] * c.x + e[6] * c.y + e[10] * c.z + e[14] - cam.z) - r);
+    return true;
+  }
+
   sync(scene: THREE.Scene, camera: THREE.Camera) {
+    // (`__noDetail = true` in the console draws everything, to see what the distance detail saves)
+    this.detailOn = !!scene.userData.detail && !(typeof window !== "undefined" && (window as unknown as { __noDetail?: boolean }).__noDetail);
     this.frame++;
     this.daylight = 0;
     this.syncScene(scene);
@@ -607,12 +664,13 @@ class Mirror {
     for (const [m, entry] of this.mats) {
       if (entry.users > 0 || !entry.gone) continue;
       entry.mat?.dispose();
+      entry.far?.mat.dispose();
       if (entry.look) this.releaseLook(entry.look);
       this.mats.delete(m);
     }
     // (a look nothing has used for a while goes too, as a shape does)
     if (this.frame % 60 === 0) {
-      for (const [key, look] of this.looks) if (look.users <= 0 && this.frame - look.idle > IDLE_GEOMETRY) { look.mat.dispose(); this.looks.delete(key); }
+      for (const [key, look] of this.looks) if (look.users <= 0 && this.frame - look.idle > IDLE_GEOMETRY) { look.mat.dispose(); look.far?.mat.dispose(); this.looks.delete(key); }
       for (const [key, card] of this.cards) if (card.users <= 0 && this.frame - card.idle > IDLE_GEOMETRY) { card.mat.dispose(true, true); this.cards.delete(key); }
     }
     this.look(this.daylight);
@@ -1192,7 +1250,32 @@ class Mirror {
     }
     return mat;
   }
-  private bind(node: Node, mesh: Mesh, material: THREE.Material | THREE.Material[], g: THREE.BufferGeometry, colors: number) {
+  // The plainer copy of a material for what is far away (see Detail): the same colours and albedo map, with no normal map, parallax or
+  // specular anti-aliasing. One for each look, or each material of its own; a material that moves limbs, grows fur or waves keeps its own.
+  private plainer(m: THREE.Material): PBRMaterial {
+    const near = this.material(m);
+    const entry = this.mats.get(m);
+    const patch = PATCHES.get(m);
+    if (!entry || !near.bumpTexture || m.userData.limbParents || (patch && patch.kind !== "parallax")) return near;
+    const holder: { far?: Far } = entry.look ?? entry;
+    const key = `${m.version}|${near.albedoTexture?.uniqueId ?? 0}`;
+    let far = holder.far;
+    if (!far) far = holder.far = { mat: this.newMaterial(`far${m.id}`), key: "", frame: -1 };
+    if (far.frame === this.frame) return far.mat;
+    far.frame = this.frame;
+    this.paint(far.mat, m as Painted);
+    if (far.key !== key) {
+      far.key = key;
+      this.dress(far.mat, m, null);
+      far.mat.bumpTexture = null;
+      far.mat.useParallax = false;
+      far.mat.useParallaxOcclusion = false;
+      far.mat.enableSpecularAntiAliasing = false;
+    }
+    return far.mat;
+  }
+
+  private bind(node: Node, mesh: Mesh, material: THREE.Material | THREE.Material[], g: THREE.BufferGeometry, colors: number, far = false) {
     if (node.material !== material) {
       const list = [material].flat();
       for (const m of [node.material ?? []].flat()) this.releaseMaterial(m);
@@ -1221,7 +1304,7 @@ class Mirror {
         mesh.resetDrawCache();
         (mesh as unknown as { _unBindEffect(): void })._unBindEffect();
       }
-    } else mesh.material = this.material(material);
+    } else mesh.material = far ? this.plainer(material) : this.material(material);
     const first = Array.isArray(material) ? material[0] : material;
     mesh.useVertexColors = !!(first as THREE.MeshBasicMaterial).vertexColors && colors > 0;
     mesh.hasVertexAlpha = mesh.useVertexColors && colors === 4 && first.transparent;
@@ -1260,31 +1343,61 @@ class Mirror {
     const { node, mesh, entry } = this.meshNode(o, "mesh", g);
     // (an instanced mesh with no instances draws nothing in three; Babylon would draw its one mesh)
     const shown = Array.isArray(o.material) ? o.material.some((m) => m.visible) : o.material.visible;
-    mesh.setEnabled(visible && shown && !((o as THREE.InstancedMesh).isInstancedMesh && (o as THREE.InstancedMesh).count === 0));
+    const inst = o as THREE.InstancedMesh;
+    const set = visible && shown && !(inst.isInstancedMesh && inst.count === 0);
+    // Distance detail: how far this is, and so whether it is drawn at all (an instanced scatter is thinned instance by instance, below)
+    const D = detail();
+    const away = set && !this.owner.preparing && this.measure(o, g) ? this.lodD : -1;
+    const fur = !!inst.isInstancedMesh && !!inst.userData.furShells;
+    if (away >= 0 && !inst.isInstancedMesh) {
+      const out = away > reachOf(this.lodR, D) * (node.culled ? 0.92 : 1);
+      node.culled = out;
+      if (out) {
+        mesh.setEnabled(false);
+        this.cast(node, mesh, false);
+        return;
+      }
+    } else node.culled = false;
+    // (a scatter's thinned buffers hold none of it, or a furry body is too far for its shells)
+    mesh.setEnabled(set && !node.empty);
     if (!visible) return;
     this.place(node, o, mesh);
     const shader = !Array.isArray(o.material) && (o.material as THREE.ShaderMaterial).isShaderMaterial ? (o.material as THREE.ShaderMaterial) : null;
+    // (the plainer materials from `near` on, for a scatter's farther model, and for what is far in a street: inside, a room is all near)
+    const farBand = inst.isInstancedMesh && inst.userData.lod === "far";
+    const plain = farBand || (away >= 0 && away > D.near * (node.far ? 0.9 : 1) && !inst.isInstancedMesh);
+    node.far = plain;
     if (shader) mesh.material = this.shaderOf(shader, false);
-    else this.bind(node, mesh, o.material, g, entry.colors);
+    else this.bind(node, mesh, o.material, g, entry.colors, plain);
     mesh.renderingGroupId = o.renderOrder < 0 ? 0 : 1;
     mesh.alphaIndex = o.renderOrder;
     mesh.receiveShadows = o.receiveShadow;
     mesh.alwaysSelectAsActiveMesh = !o.frustumCulled;
-    // Instancing: three's instance matrices are already in the mesh's own frame, as Babylon's thin instances are
-    const inst = o as THREE.InstancedMesh;
+    // Instancing: three's instance matrices are already in the mesh's own frame, as Babylon's thin instances are. A scatter in a street or a
+    // room (a scene asking for distance detail) is thinned to what is in range: its buffers are packed copies, refilled as the camera moves
     if (inst.isInstancedMesh) {
-      const v = inst.instanceMatrix.version + inst.count * 7;
+      const thin = this.detailOn && !this.owner.preparing && !fur && inst.count > 1;
+      const v = inst.instanceMatrix.version + inst.count * 7 + (thin ? 0.5 : 0);
       if (node.instances !== v) {
         node.instances = v;
-        mesh.thinInstanceSetBuffer("matrix", inst.instanceMatrix.array as Float32Array, 16, false);
+        node.packAt = undefined;
+        const full = inst.instanceMatrix.array as Float32Array;
+        let buffer = full;
+        if (thin) {
+          if (node.pack?.length !== full.length) node.pack = new Float32Array(full.length);
+          node.pack.set(full);
+          buffer = node.pack;
+        }
+        mesh.thinInstanceSetBuffer("matrix", buffer, 16, false);
         mesh.thinInstanceCount = inst.count;
         // (its bounds take in every instance, for the camera's culling and the shadows')
         mesh.thinInstanceRefreshBoundingInfo(false);
       }
       if (inst.instanceColor) {
-        const cv = inst.instanceColor.version;
+        const cv = inst.instanceColor.version + (thin ? 0.5 : 0);
         if (node.colors !== cv) {
           node.colors = cv;
+          node.packAt = undefined;
           const src = inst.instanceColor.array as Float32Array;
           const rgba = new Float32Array((src.length / 3) * 4);
           for (let i = 0, j = 0; i < src.length; i += 3, j += 4) {
@@ -1293,8 +1406,17 @@ class Mirror {
             rgba[j + 2] = src[i + 2];
             rgba[j + 3] = 1;
           }
-          mesh.thinInstanceSetBuffer("color", rgba, 4, false);
+          node.rgba = rgba;
+          if (thin) {
+            node.rgbaPack = new Float32Array(rgba);
+            mesh.thinInstanceSetBuffer("color", node.rgbaPack, 4, false);
+          } else mesh.thinInstanceSetBuffer("color", rgba, 4, false);
         }
+      }
+      if (thin) this.thin(node, inst, mesh, g, D);
+      else {
+        node.empty = false;
+        if (fur) this.shells(node, inst, mesh, away, D);
       }
     }
     if (g.drawRange.count !== Infinity && mesh.subMeshes?.length === 1 && !Array.isArray(o.material)) {
@@ -1307,7 +1429,55 @@ class Mirror {
         sm.verticesCount = Math.min(g.drawRange.count, g.attributes.position.count - g.drawRange.start);
       }
     }
-    this.cast(node, mesh, o.castShadow);
+    // (a shadow is cast from nearer than a thing is drawn)
+    this.cast(node, mesh, o.castShadow && (away < 0 || inst.isInstancedMesh || away < shadowReachOf(this.lodR, D) * (node.casts ? 1.15 : 1)));
+  }
+
+  // A furry body's shells (the instances of its fur mesh) by distance: all of them near, half of them farther, none beyond
+  private shells(node: Node, inst: THREE.InstancedMesh, mesh: Mesh, away: number, D: Detail) {
+    const n = away < 0 || away < D.fur[0] ? inst.count : away < D.fur[1] ? Math.ceil(inst.count / 2) : 0;
+    mesh.thinInstanceCount = n;
+    node.empty = n === 0;
+    if (node.empty) mesh.setEnabled(false);
+  }
+
+  // A scatter thinned to what is in range: each instance is drawn from the camera to where its size says it is too small to be worth it
+  // (`reachOf`), and a scatter with a farther model (`userData.lod`: "near" or "far", siteAssets Instanced) shares its instances with it
+  // at `near`. The packed buffers are refilled when the camera has moved a metre and a half, or the scatter has moved.
+  private thin(node: Node, inst: THREE.InstancedMesh, mesh: Mesh, g: THREE.BufferGeometry, D: Detail) {
+    const cam = this.camera.position;
+    const at = (node.packAt ??= new Float32Array([NaN, 0, 0]));
+    const moved = (mesh as unknown as { _movedFrame?: number })._movedFrame;
+    if (Math.abs(at[0] - cam.x) + Math.abs(at[1] - cam.y) + Math.abs(at[2] - cam.z) < 1.5 && node.packMoved === moved) return;
+    at[0] = cam.x;
+    at[1] = cam.y;
+    at[2] = cam.z;
+    node.packMoved = moved;
+    const full = inst.instanceMatrix.array as Float32Array;
+    const pack = node.pack!;
+    const bs = g.boundingSphere ?? (g.computeBoundingSphere(), g.boundingSphere);
+    const e = inst.matrixWorld.elements;
+    const ws = Math.max(Math.hypot(e[0], e[1], e[2]), Math.hypot(e[4], e[5], e[6]), Math.hypot(e[8], e[9], e[10]));
+    const band = inst.userData.lod as "near" | "far" | undefined;
+    const from = band === "far" ? D.near : 0;
+    const to = band === "near" ? D.near : Infinity;
+    const rgba = node.rgba, rgbaPack = node.rgbaPack;
+    let n = 0;
+    for (let i = 0, o = 0; i < inst.count; i++, o += 16) {
+      const x = full[o + 12], y = full[o + 13], z = full[o + 14];
+      const r = (bs?.radius ?? 1) * Math.hypot(full[o], full[o + 1], full[o + 2]) * ws;
+      const d = Math.hypot(e[0] * x + e[4] * y + e[8] * z + e[12] - cam.x, e[1] * x + e[5] * y + e[9] * z + e[13] - cam.y, e[2] * x + e[6] * y + e[10] * z + e[14] - cam.z) - r;
+      if (r > HUGE || (d >= from && d < Math.min(to, reachOf(r, D)))) {
+        for (let k = 0; k < 16; k++) pack[n * 16 + k] = full[o + k];
+        if (rgba && rgbaPack) for (let k = 0; k < 4; k++) rgbaPack[n * 4 + k] = rgba[i * 4 + k];
+        n++;
+      }
+    }
+    mesh.thinInstanceCount = n;
+    mesh.thinInstanceBufferUpdated("matrix");
+    if (rgba && rgbaPack) mesh.thinInstanceBufferUpdated("color");
+    node.empty = n === 0;
+    if (node.empty) mesh.setEnabled(false);
   }
 
   private cast(node: Node, mesh: Mesh, casts: boolean) {
