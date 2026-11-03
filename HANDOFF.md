@@ -30,6 +30,11 @@ Then (second commit): contraband in the shooter. shared/logic `STOP`/`stopBegin`
 suite) searched on landing; `slavePanel` at black-market dealers where a syndicate rules (`slavePrice`, `slaveMarket`). Foe natural 20 =
 lowest twentieth of the roll (keeps old seeds). tests/combat/shooteritems.test.ts (10). REVIVAL_NOTES: three new sections.
 
+## 2026-11-03 (12): the dice table's frame rate (the user: "extremely low FPS")
+Measured with GPU timer queries (dev server on PORT 5001 via `.claude/launch.json`, untracked; 5000 not touched): table 19 ms GPU -> 6.4
+(`ren.look = false`, pixel ratio <= 1.5); the map under it no longer draws while it shows (`COVER` in Map/babylon.ts; checked: 41 map
+frames in 1.5 s before, 0 during, 41 after); no physics or drawing between rolls; 8 catch-up steps so the dice keep speed down to 15 fps.
+
 ## TODO / next, in order
 1. Done: npm test 583 pass, 3 skipped, 0 fail; vite build to scratch clean; tsc 0. Committed.
 2. Ask the user: build, restart 5000, push. Browser-check: a fight with powers 1-9/0, a net, a harpoon, Y zoom; a customs stop (shooter

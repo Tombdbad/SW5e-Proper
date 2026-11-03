@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { babylonGl, BabylonRenderer } from "@/components/Map/babylon";
+import { babylonGl, BabylonRenderer, COVER } from "@/components/Map/babylon";
 import * as CANNON from "cannon-es";
 import * as THREE from "three";
 import { Text } from "@react-three/drei";
@@ -283,7 +283,11 @@ export interface DiceTable {
 // The table on a canvas: `onText` says what is shown over it (the total, each die), `onResult` the faces once they settle (in DIE_ORDER)
 export function diceTable(canvas: HTMLCanvasElement, onText: (total: string, chips: string) => void, onResult: (id: number, values: number[]) => void): DiceTable {
   const ren = new BabylonRenderer(canvas);
-  ren.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // A plain lit table: none of the map's full look (bloom, a reflection cube, antialiasing in a pass of its own; the canvas's own
+  // antialiasing is enough), and at most 1.5 pixels to the point. Measured 2026-11-03 on an HD 530 at 615×615 points: 19 ms on the GPU
+  // with them, 6 without
+  ren.look = false;
+  ren.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   ren.shadowMap.enabled = true;
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x14181c);
@@ -494,8 +498,14 @@ export function diceTable(canvas: HTMLCanvasElement, onText: (total: string, chi
   let last = performance.now(), loop = 0;
   const frame = (now: number) => {
     loop = requestAnimationFrame(frame);
-    const dt = Math.min(0.05, (now - last) / 1000);
+    // Nothing is thrown or drawn while the table is hidden between rolls; while it is shown, the canvases under it are not drawn
+    const shown = canvas.clientWidth > 0;
+    if (shown) COVER.by = ren;
+    else if (COVER.by === ren) COVER.by = null;
+    // (a slow frame is caught up in up to 8 steps, so the dice fly at their own speed down to 15 frames a second)
+    const dt = Math.min(1 / 15, (now - last) / 1000);
     last = now;
+    if (!shown) return;
     if (held) {
       const c = Math.ceil(Math.sqrt(dice.length)), hx = Math.max(0, ((c - 1) / 2) * 3.1) + 1.5;
       dice.forEach((d, i) => {
@@ -507,7 +517,7 @@ export function diceTable(canvas: HTMLCanvasElement, onText: (total: string, chi
         b.angularVelocity.set(3, 4, 2);
       });
     }
-    world.step(1 / 120, dt, 4);
+    world.step(1 / 120, dt, 8);
     if (!held) {
       let all = dice.length > 0;
       for (const d of dice) {
@@ -529,8 +539,7 @@ export function diceTable(canvas: HTMLCanvasElement, onText: (total: string, chi
       d.g.position.set(b.position.x, b.position.y, b.position.z);
       d.g.quaternion.set(b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w);
     }
-    // (not while the table is hidden between rolls)
-    if (canvas.clientWidth) ren.render(scene, cam);
+    ren.render(scene, cam);
   };
   loop = requestAnimationFrame(frame);
 

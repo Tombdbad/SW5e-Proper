@@ -1856,6 +1856,10 @@ const SPRITE_QUAD = (() => {
 
 // ---- The renderer R3F is given -------------------------------------------------------------------------------------------------------
 
+// While the dice table (ui/dice.tsx) covers the whole screen, every other canvas keeps its last picture instead of drawing again under it:
+// on an HD 530 the map behind took more of the frame than the dice (2026-11-03). Its frame hooks still run.
+export const COVER = { by: null as BabylonRenderer | null };
+
 export class BabylonRenderer {
   readonly domElement: HTMLCanvasElement;
   readonly engine: Engine;
@@ -1968,7 +1972,7 @@ export class BabylonRenderer {
   }
 
   render(scene: THREE.Scene, camera: THREE.Camera) {
-    if (this.engine.isDisposed) return;
+    if (this.engine.isDisposed || (COVER.by && COVER.by !== this)) return;
     const t0 = performance.now();
     if (scene.matrixWorldAutoUpdate) scene.updateMatrixWorld();
     if (camera.parent === null && camera.matrixWorldAutoUpdate) camera.updateMatrixWorld();
@@ -2000,6 +2004,7 @@ export class BabylonRenderer {
     this.dispose();
   }
   dispose() {
+    if (COVER.by === this) COVER.by = null;
     RENDERERS.delete(this);
     for (const m of this.mirrors.values()) m.dispose();
     this.mirrors.clear();
