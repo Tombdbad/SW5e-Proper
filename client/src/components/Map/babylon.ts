@@ -1566,7 +1566,12 @@ class Mirror {
         light.intensity = 0;
         const shadow = new ShadowGenerator(512, light);
         shadow.usePoissonSampling = true;
-        shadow.bias = 0.004;
+        // (a lamp's depth is measured over the light's own shadowMinZ..MaxZ, the camera's 0.05..1000 by default: a bias of 0.004 was
+        // then 4 m and every shadow began that far from what cast it, 2026-11-03; lightUp sets MaxZ to the lamp's reach)
+        shadow.bias = 0.0015;
+        shadow.normalBias = 0.01;
+        light.shadowMinZ = 0.1;
+        light.shadowMaxZ = 16;
         const slot: Rig["lamps"][number] = { light, shadow };
         // (only what is within its reach and not too small to show, a hand-span: all six faces share the list, made once a frame; nothing
         // while the slot is unused)
@@ -1771,6 +1776,7 @@ class Mirror {
       const e = l.matrixWorld.elements;
       slot.light.position.set(e[12], e[13], e[14]);
       slot.light.range = l.distance > 0 ? l.distance : Number.MAX_VALUE;
+      slot.light.shadowMaxZ = l.distance > 0 ? l.distance + 2 : 16;
       const own = this.nodes.get(l)?.light;
       if (own) own.intensity = 0;
     });
