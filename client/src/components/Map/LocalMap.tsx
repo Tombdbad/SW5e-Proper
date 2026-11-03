@@ -957,10 +957,16 @@ function WindowGlow({ style, pane, bend }: { style?: Style; pane?: RoomAsset["pa
     return bent;
   }, [style?.arch, style?.porthole, scale.join(","), bend?.key]);
   useEffect(() => () => geo.dispose(), [geo]);
+  // (one pane on each side of the wall's line, inside the glass: which way is out depends on the wall the window is in, and the one on the
+  // inner side is hidden by the wall: with one, the windows of two walls in four were dark, 2026-11-03)
   return (
-    <mesh geometry={geo} position={[0, 0, 0.01]} raycast={() => null}>
-      <meshBasicMaterial color="#d9bf93" side={THREE.DoubleSide} />
-    </mesh>
+    <>
+      {[0.03, -0.03].map((z) => (
+        <mesh key={z} geometry={geo} position={[0, 0, z]} raycast={() => null}>
+          <meshBasicMaterial color="#d9bf93" side={THREE.DoubleSide} />
+        </mesh>
+      ))}
+    </>
   );
 }
 function WindowSpill({ at, out, width }: { at: [number, number]; out: [number, number]; width: number }) {
