@@ -129,13 +129,14 @@ export interface Piece {
 
 // A conifer (2026-11-03): a solid trunk to the top and whorls of branches radiating from it, each a pair of cards drawn with a spray of
 // needles (the finish "needle"), longest at the foot and drooping, shorter and more upright toward the top, a tuft on the leader
-function conifer(k: Kit, p: Palette, v: number, height: number, reach: number, tiers: number, trunk: number) {
+// (`fuller` puts more branches in a whorl, for the bigger sizes)
+function conifer(k: Kit, p: Palette, v: number, height: number, reach: number, tiers: number, trunk: number, fuller = 1) {
   k.cyl(trunk, height, p.bark, { at: [0, height / 2, 0], top: trunk * 0.18, seg: 7 });
   for (let t = 0; t < tiers; t++) {
     const f = t / (tiers - 1);
     const y = height * (0.12 + f * 0.8);
     const length = reach * (1 - f * 0.85) + 0.18;
-    const count = Math.max(5, Math.round(9 - f * 4));
+    const count = Math.max(5, Math.round((9 - f * 4) * fuller));
     const colour = t % 2 ? p.leaf2 : shade(p.leaf, 0.92);
     for (let j = 0; j < count; j++) {
       const az = (j / count) * Math.PI * 2 + t * 0.9 + v * 0.7 + Math.sin(t * 7 + j * 3) * 0.2;
@@ -144,9 +145,42 @@ function conifer(k: Kit, p: Palette, v: number, height: number, reach: number, t
       k.spray(length, length * 0.85, colour, [0, y, 0], az, droop, -0.4);
     }
   }
-  k.spray(0.55, 0.4, p.leaf, [0, height - 0.12, 0], 0, -Math.PI / 2, 0);
-  k.spray(0.55, 0.4, p.leaf, [0, height - 0.12, 0], 0, -Math.PI / 2, Math.PI / 2);
+  const tuft = Math.sqrt(height / 3);
+  k.spray(0.55 * tuft, 0.4 * tuft, p.leaf, [0, height - 0.12, 0], 0, -Math.PI / 2, 0);
+  k.spray(0.55 * tuft, 0.4 * tuft, p.leaf, [0, height - 0.12, 0], 0, -Math.PI / 2, Math.PI / 2);
 }
+
+// A crown of leaves (2026-11-03, the user: smaller leaf meshes and more of them): many small clumps spread through a flattened ball,
+// thinner toward its surface, so that light and sky show between them (the leaf finish is cut out as well)
+function crown(k: Kit, p: Palette, v: number, at: V3, radius: number, clumps: number, clump: number) {
+  for (let i = 0; i < clumps; i++) {
+    const y = 1 - 2 * ((i + 0.5) / clumps);
+    const ring = Math.sqrt(1 - y * y);
+    const a = i * 2.39996 + v;
+    const d = radius * (0.55 + 0.45 * ((i * 0.618 + v * 0.13) % 1));
+    k.blob(clump * (0.85 + 0.3 * ((i * 0.37) % 1)), i % 3 ? p.leaf : p.leaf2, { at: [at[0] + Math.cos(a) * ring * d, at[1] + y * d * 0.75, at[2] + Math.sin(a) * ring * d], seed: v + i, rough: 0.3, smooth: true, squash: [1, 0.8, 1] });
+  }
+}
+// A deciduous tree: a trunk, branches radiating from its upper part (more on a bigger tree), a cluster of leaves at the end of each and
+// the rest round the top. `s` is the size against the smallest (1); the base says what the smallest is like.
+interface Broad { trunk: number; crownY: number; radius: number; girth: number }
+function broadleaf(k: Kit, p: Palette, v: number, s: number, base: Broad, branches: number, clumps: number) {
+  const top = base.trunk * s, g = base.girth * s ** 0.8, rad = base.radius * s, cy = base.crownY * s;
+  k.lathe([[g, 0], [g * 0.75, top * 0.21], [g * 0.5, top * 0.74], [g * 0.3, top]], p.bark, { seg: 8 });
+  const clump = 0.2;
+  const inTips = branches ? Math.round(clumps * 0.6) : 0;
+  for (let j = 0; j < branches; j++) {
+    const az = j * 2.4 + v;
+    const reach = rad * (0.6 + 0.25 * ((j * 0.61) % 1));
+    const from: V3 = [0, top * (0.5 + 0.4 * ((j * 0.37) % 1)), 0];
+    const tip: V3 = [Math.cos(az) * reach, cy + rad * 0.2 * Math.sin(j * 2.1), Math.sin(az) * reach];
+    k.rod(from, tip, 0.045 * s ** 0.7, p.bark, { seg: 6 });
+    crown(k, p, v + j * 3, tip, rad * 0.5, Math.round(inTips / branches), clump);
+  }
+  crown(k, p, v, [0, cy, 0], rad * 0.85, clumps - inTips, clump);
+}
+const BROAD: Broad = { trunk: 1.9, crownY: 2.25, radius: 0.95, girth: 0.2 };
+const TALL: Broad = { trunk: 3.3, crownY: 3.9, radius: 1.25, girth: 0.34 };
 
 // A frond, leaf or branch: a flattened lump laid out from a point
 const leafAt = (k: Kit, color: string, at: V3, rot: V3, long: number, seed: number) => k.blob(long * 0.5, color, { at, rot, seed, rough: 0.12, smooth: true, squash: [1, 0.12, 0.34] });
@@ -154,16 +188,41 @@ const leafAt = (k: Kit, color: string, at: V3, rot: V3, long: number, seed: numb
 const LIBRARY: Record<string, Piece> = {
   tree_broad: {
     tags: ["tree", "garden", "shade"], size: [1, 1], blocks: true, hit: { r: 0.2, h: 2 },
-    build: (k, p, v) => {
-      k.lathe([[0.2, 0], [0.15, 0.4], [0.1, 1.4], [0.06, 1.9]], p.bark, { seg: 8 });
-      k.blob(0.95, p.leaf, { at: [0, 2.25, 0], seed: v + 1, rough: 0.22, smooth: true, squash: [1, 0.85, 1] });
-      k.blob(0.62, p.leaf2, { at: [0.5, 2.55, 0.2], seed: v + 5, rough: 0.2, smooth: true });
-      k.blob(0.55, p.leaf2, { at: [-0.42, 2.5, -0.25], seed: v + 9, rough: 0.2, smooth: true });
-    },
+    build: (k, p, v) => broadleaf(k, p, v, 1, BROAD, 3, 48),
+  },
+  // The sizes of trees (2026-11-03): the ones above are small; medium, large and (conifers only) extra large stand 1.5, 2.1 and 3.2 times
+  // as tall. `grownTree` says which of a kind a place grows.
+  tree_broad_m: {
+    tags: ["tree", "wild", "shade"], size: [1, 1], blocks: true, hit: { r: 0.3, h: 3 },
+    build: (k, p, v) => broadleaf(k, p, v, 1.5, BROAD, 5, 100),
+  },
+  tree_broad_l: {
+    tags: ["tree", "wild", "shade"], size: [2, 2], blocks: true, hit: { r: 0.45, h: 4.2 },
+    build: (k, p, v) => broadleaf(k, p, v, 2.1, BROAD, 8, 190),
+  },
+  tree_tall_m: {
+    tags: ["tree", "wild", "shade"], size: [2, 2], blocks: true, hit: { r: 0.42, h: 4.6 },
+    build: (k, p, v) => broadleaf(k, p, v, 1.4, TALL, 6, 150),
+  },
+  tree_tall_l: {
+    tags: ["tree", "wild", "shade"], size: [3, 3], blocks: true, hit: { r: 0.6, h: 6.4 },
+    build: (k, p, v) => broadleaf(k, p, v, 1.9, TALL, 9, 260),
   },
   tree_conifer: {
     tags: ["tree", "garden", "evergreen"], size: [1, 1], blocks: true, hit: { r: 0.22, h: 3, soft: 0.7 },
     build: (k, p, v) => conifer(k, p, v, 3.1, 1.0, 10, 0.11),
+  },
+  tree_conifer_m: {
+    tags: ["tree", "wild", "evergreen"], size: [1, 1], blocks: true, hit: { r: 0.3, h: 4.6, soft: 0.7 },
+    build: (k, p, v) => conifer(k, p, v, 4.65, 1.5, 14, 0.16, 1.2),
+  },
+  tree_conifer_l: {
+    tags: ["tree", "wild", "evergreen"], size: [2, 2], blocks: true, hit: { r: 0.42, h: 6.5, soft: 0.7 },
+    build: (k, p, v) => conifer(k, p, v, 6.5, 2.1, 18, 0.22, 1.4),
+  },
+  tree_conifer_xl: {
+    tags: ["tree", "wild", "evergreen"], size: [3, 3], blocks: true, hit: { r: 0.6, h: 9.8, soft: 0.7 },
+    build: (k, p, v) => conifer(k, p, v, 9.8, 3.1, 24, 0.3, 1.6),
   },
   tree_palm: {
     tags: ["tree", "garden", "arid"], size: [1, 1], blocks: true, hit: { r: 0.16, h: 2.8 },
@@ -292,19 +351,23 @@ const LIBRARY: Record<string, Piece> = {
   // ferns, reeds and pebbles. The palette turns them to the world (moss or frost on a boulder's crown).
   tree_tall: {
     tags: ["tree", "wild", "shade"], size: [2, 2], blocks: true, hit: { r: 0.3, h: 3.2 },
-    build: (k, p, v) => {
-      k.lathe([[0.34, 0], [0.26, 0.25], [0.2, 1.2], [0.15, 2.6], [0.1, 3.3]], p.bark, { seg: 9 });
-      k.rod([0, 2.1, 0], [0.9, 2.9, 0.2], 0.07, p.bark, { seg: 6 });
-      k.rod([0, 2.4, 0], [-0.7, 3.2, -0.4], 0.06, p.bark, { seg: 6 });
-      k.blob(1.25, p.leaf, { at: [0, 3.7, 0], seed: v + 2, rough: 0.25, smooth: true, squash: [1, 0.75, 1] });
-      k.blob(0.85, p.leaf2, { at: [1.0, 3.3, 0.3], seed: v + 6, rough: 0.22, smooth: true });
-      k.blob(0.8, p.leaf2, { at: [-0.8, 3.5, -0.5], seed: v + 11, rough: 0.22, smooth: true });
-      k.blob(0.7, shade(p.leaf, 1.1), { at: [0.2, 4.4, -0.2], seed: v + 15, rough: 0.2, smooth: true });
-    },
+    build: (k, p, v) => broadleaf(k, p, v, 1, TALL, 4, 90),
   },
   tree_pine: {
     tags: ["tree", "wild", "evergreen"], size: [1, 1], blocks: true, hit: { r: 0.18, h: 4, soft: 0.6 },
     build: (k, p, v) => conifer(k, p, v, 4.1, 1.15, 14, 0.14),
+  },
+  tree_pine_m: {
+    tags: ["tree", "wild", "evergreen"], size: [1, 1], blocks: true, hit: { r: 0.26, h: 6.2, soft: 0.6 },
+    build: (k, p, v) => conifer(k, p, v, 6.2, 1.7, 19, 0.2, 1.2),
+  },
+  tree_pine_l: {
+    tags: ["tree", "wild", "evergreen"], size: [2, 2], blocks: true, hit: { r: 0.38, h: 8.6, soft: 0.6 },
+    build: (k, p, v) => conifer(k, p, v, 8.6, 2.3, 24, 0.26, 1.4),
+  },
+  tree_pine_xl: {
+    tags: ["tree", "wild", "evergreen"], size: [3, 3], blocks: true, hit: { r: 0.55, h: 12.5, soft: 0.6 },
+    build: (k, p, v) => conifer(k, p, v, 12.5, 3.2, 30, 0.36, 1.6),
   },
   tree_birch: {
     tags: ["tree", "wild", "garden"], size: [1, 1], blocks: true, hit: { r: 0.12, h: 3 },
@@ -312,9 +375,7 @@ const LIBRARY: Record<string, Piece> = {
       const bend = ((v % 3) - 1) * 0.15;
       k.tube([[0, 0, 0], [bend * 0.5, 1.2, 0], [bend, 2.4, 0.05], [bend * 1.2, 3.1, 0.05]], (t) => 0.11 - t * 0.06, "#e8e4da", { around: 7 });
       for (let i = 0; i < 6; i++) k.box([0.1, 0.03, 0.03], "#2b2722", { at: [bend * (i / 6) * 0.9, 0.4 + i * 0.42, 0.09 - i * 0.004], rot: [0, i * 0.4, 0] });
-      k.blob(0.55, p.leaf2, { at: [bend * 1.1, 3.0, 0], seed: v + 3, rough: 0.25, smooth: true, squash: [0.8, 1.2, 0.8] });
-      k.blob(0.42, p.leaf, { at: [bend + 0.3, 2.5, 0.15], seed: v + 7, rough: 0.25, smooth: true });
-      k.blob(0.38, p.leaf, { at: [bend - 0.3, 2.7, -0.15], seed: v + 9, rough: 0.25, smooth: true });
+      crown(k, p, v, [bend * 1.1, 2.85, 0], 0.62, 30, 0.17);
     },
   },
   cactus: {
@@ -799,6 +860,14 @@ const GROWTH: Record<string, { tree: number; rock: number }> = {
   urban: { tree: 300, rock: 650 }, ocean: { tree: 120, rock: 320 }, "gas giant": { tree: 300, rock: 650 },
 };
 const BLOCKING_CAP = 130;
+// A tree of one of the sizes its kind has (see the library): half small, three in ten medium, one in seven large, the rest extra large
+// where the kind has one; a kind without sizes stays as it is
+function grownTree(r: ReturnType<typeof createRandom>, key: string): string {
+  const u = r.next();
+  const sizes = u < 0.5 ? [""] : u < 0.8 ? ["_m", ""] : u < 0.95 ? ["_l", "_m", ""] : ["_xl", "_l", "_m", ""];
+  for (const size of sizes) if (LIBRARY[key + size]) return key + size;
+  return key;
+}
 const wildOf = (biome: string) => WILD[biome === "gas giant" ? "urban" : biome] ?? WILD.temperate;
 const sizeFor = (r: ReturnType<typeof createRandom>, key: string) => (LIBRARY[key].size[0] > 1 || LIBRARY[key].size[1] > 1 ? 0.9 + r.next() * 0.15 : 0.85 + r.next() * 0.35);
 
@@ -821,7 +890,7 @@ export function ambientBlockers(rect: Rect, seed: string, biome: string, free: (
     if (!keys.length) continue;
     let placed = 0;
     for (let tries = 0; tries < want * 10 && placed < want; tries++) {
-      const key = r.pick(keys);
+      const key = grownTree(r, r.pick(keys));
       const [w, h] = LIBRARY[key].size;
       const x = rect.x + r.int(0, Math.max(0, rect.width - w));
       const y = rect.y + r.int(0, Math.max(0, rect.height - h));
@@ -868,7 +937,7 @@ export function ambientBackdrop(rect: Rect, belt: number, seed: string, biome: s
     const x = rect.x - belt + r.next() * (rect.width + belt * 2);
     const y = rect.y - belt + r.next() * (rect.height + belt * 2);
     if (x > rect.x - 1 && x < rect.x + rect.width + 1 && y > rect.y - 1 && y < rect.y + rect.height + 1) continue;
-    out.push({ key: r.pick(keys), x, y, rot: r.next() * Math.PI * 2, scale: 1 + r.next() * 0.6, v: Math.floor(r.next() * 6) });
+    out.push({ key: grownTree(r, r.pick(keys)), x, y, rot: r.next() * Math.PI * 2, scale: 1 + r.next() * 0.6, v: Math.floor(r.next() * 6) });
   }
   return out;
 }
@@ -947,12 +1016,12 @@ const KIND_TINT: Record<string, { leaf?: [string, number]; leaf2?: [string, numb
   cactus: { leaf: ["#5e8a4a", 0.35] },
 };
 export function pieceColours(name: string, v: number, p: Palette): Palette {
-  const kind = KIND_TINT[name] ?? {};
+  const kind = KIND_TINT[name] ?? KIND_TINT[name.replace(/_(m|l|xl)$/, "")] ?? {};
   const vary = [0.88, 1, 1.12][v % 3];
   const tone = (c: string, t?: [string, number]) => shade(t ? mix(c, t[0], t[1]) : c, vary);
   return { ...p, leaf: tone(p.leaf, kind.leaf), leaf2: tone(p.leaf2, kind.leaf2 ?? kind.leaf), bark: tone(p.bark, kind.bark) };
 }
-const SOLID_FINISHES = new Set<Finish>(["matte", "sheen", "stone", "bark", "leaf"]);
+const SOLID_FINISHES = new Set<Finish>(["matte", "sheen", "stone", "bark", "leaf", "needle"]);
 function Group({ name, v, items, biome, palette }: { name: string; v: number; items: Placed[]; biome: string; palette: Palette }) {
   const piece = LIBRARY[name];
   const file = useFile(piece.gltf);

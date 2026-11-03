@@ -410,7 +410,7 @@ function Packs() {
 // `sites` shows the asset library of the sites: a garden planted for each kind of world, the stalls of a
 // market open, being packed and packed, a curtain wall, the pieces a shop shows, and the wild ground and
 // racing pieces (trees, rocks, ground cover, barriers, a grandstand) in a temperate and a desert world.
-const WILD_PIECES = ["tree_tall", "tree_pine", "tree_birch", "cactus", "boulder", "rock", "rock_small", "log", "stump", "grass_tuft", "wildflowers", "fern", "reeds", "barrier", "crate_stack", "pylon", "banner", "grandstand"];
+const WILD_PIECES = ["tree_broad", "tree_broad_m", "tree_broad_l", "tree_tall", "tree_tall_m", "tree_tall_l", "tree_conifer", "tree_conifer_m", "tree_conifer_l", "tree_conifer_xl", "tree_pine", "tree_pine_m", "tree_pine_l", "tree_pine_xl", "tree_birch", "cactus", "boulder", "rock", "rock_small", "log", "stump", "grass_tuft", "wildflowers", "fern", "reeds", "barrier", "crate_stack", "pylon", "banner", "grandstand"];
 const SHOP_PIECES: [string, number, number][] = [["Sales counter", 4, 1], ["Display shelf", 3, 1], ["Goods shelf", 3, 1], ["Curio shelf", 2, 1], ["Droid parts shelf", 3, 1], ["Herb rack", 2, 1], ["Instrument rack", 2, 1], ["Wares rack", 1, 1], ["Produce bin", 1, 1], ["Cloth bolts", 2, 1], ["Display case", 2, 1], ["Clothing rack", 2, 1], ["Armor stand", 1, 1], ["Holo display", 1, 1], ["Statuette plinth", 1, 1], ["Starship part", 2, 1], ["Weapon rack", 2, 1], ["Medical cabinet", 2, 1]];
 const BIOMES = ["temperate", "forest", "jungle", "desert", "ice", "volcanic", "swamp", "urban"];
 

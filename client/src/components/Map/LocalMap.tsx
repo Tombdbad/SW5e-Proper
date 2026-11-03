@@ -3182,7 +3182,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   // Outside: where the streets lead (a signpost for each way out of the district), a few things
   // standing about, and whoever and whatever is in front of each building
   const street = useMemo(() => {
-    const none = { signs: [] as { exit: Exit; x: number; y: number }[], decor: [] as { kind: string; x: number; y: number }[], folk: [] as { occupant: Occupant; x: number; y: number }[], caches: [] as { cache: Area["loot"][number]; x: number; y: number }[], sentries: [] as { buildingId: string; key: string; occupant: Occupant; at: { x: number; y: number } }[], rigs: [] as { v: Vehicle; mine: boolean; outward: { x: number; y: number }; x: number; y: number }[], doors: {} as Record<string, { door: { x: number; y: number }; outward: { x: number; y: number } }>, ambient: [] as Placed[], ambientBlocked: new Set<string>(), clear: new Set<string>() };
+    const none = { signs: [] as { exit: Exit; x: number; y: number }[], decor: [] as { kind: string; x: number; y: number; rot: number }[], folk: [] as { occupant: Occupant; x: number; y: number }[], caches: [] as { cache: Area["loot"][number]; x: number; y: number }[], sentries: [] as { buildingId: string; key: string; occupant: Occupant; at: { x: number; y: number } }[], rigs: [] as { v: Vehicle; mine: boolean; outward: { x: number; y: number }; x: number; y: number }[], doors: {} as Record<string, { door: { x: number; y: number }; outward: { x: number; y: number } }>, ambient: [] as Placed[], ambientBlocked: new Set<string>(), clear: new Set<string>() };
     if (!plan) return none;
     const r = createRandom(Number(buildings[0].id.replace(/\D/g, "") || 1) * 613 + 7);
     const taken = new Set<string>();
@@ -3226,9 +3226,29 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     const folk = fronts.flatMap(({ b, door }) => b.occupants.filter((o) => !o.stall).flatMap((o, i) => Array.from({ length: Math.min(o.count, 3) }, (_, j) => ({ occupant: o, ...claim({ x: door.x - 2 - j, y: door.y + (i % 2 ? 2 + i : -2 - i) }) }))));
     const caches = fronts.flatMap(({ b, door }) => b.loot.filter((c) => !c.hidden).map((cache, i) => ({ cache, ...claim({ x: door.x + 1, y: door.y + 3 + i }) })));
     const kinds = DECOR[biome] ?? DECOR.temperate;
+    // Street lamps (2026-11-03, the user: not scattered at random): along each avenue and alley at an even spacing, alternating sides
+    // with the arm leaning over the way, and one beside every door with its arm over the step. Other decor stands about as before.
+    const lamps: { kind: string; x: number; y: number; rot: number }[] = [];
+    const lampAt = (x: number, y: number, toX: number, toY: number) => {
+      if (!free(x, y)) return;
+      taken.add(`${x},${y}`);
+      lamps.push({ kind: "lamp", x, y, rot: Math.atan2(-toY, toX) });
+    };
+    if (kinds.includes("lamp")) {
+      for (const w of districtPlan?.ways ?? []) {
+        if (w.kind === "avenue") for (let i = 3, n = 0; i < w.width; i += 7, n++) lampAt(w.x + i, n % 2 ? w.y + w.height - 1 : w.y, 0, n % 2 ? -1 : 1);
+        else for (let i = 2, n = 0; i < w.height; i += 7, n++) lampAt(n % 2 ? w.x + w.width - 1 : w.x, w.y + i, n % 2 ? -1 : 1, 0);
+      }
+      fronts.forEach(({ door, outward }, n) => {
+        const side = n % 2 ? -1 : 1;
+        lampAt(door.x + Math.abs(outward.y) * 2 * side, door.y + Math.abs(outward.x) * 2 * side, outward.x, outward.y);
+      });
+    }
     const count = Math.min(46, Math.max(9, Math.round((ground.w * ground.h) / 260)));
-    const decor = Array.from({ length: count }, () => ({ kind: r.pick(kinds), x: ground.x + r.int(0, ground.w - 1), y: ground.y + r.int(0, ground.h - 1) }))
-      .filter((d) => free(d.x, d.y) && ![-1, 0, 1].some((dy) => [-1, 0, 1].some((dx) => inRoom(d.x + dx, d.y + dy) || taken.has(`${d.x + dx},${d.y + dy}`))));
+    const others = kinds.filter((kind) => kind !== "lamp");
+    const scattered = others.length ? Array.from({ length: count }, () => ({ kind: r.pick(others), x: ground.x + r.int(0, ground.w - 1), y: ground.y + r.int(0, ground.h - 1), rot: 0 }))
+      .filter((d) => free(d.x, d.y) && ![-1, 0, 1].some((dy) => [-1, 0, 1].some((dx) => inRoom(d.x + dx, d.y + dy) || taken.has(`${d.x + dx},${d.y + dy}`)))) : [];
+    const decor = [...lamps, ...scattered];
     // The sentries of a way in stand out in front of it: one by the door, the others close by
     // until they set off on their round
     const sentries = fronts.flatMap(({ b, root, wayOut, door }) =>
@@ -5090,9 +5110,11 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               );
             })}
             {street.decor.map((d, i) => (
-              <group key={i} position={[d.x, 0, d.y]}>
-                <Decor kind={d.kind} seed={d.x * 7 + d.y * 13} />
-                {tappable && (d.kind === "kiosk" || d.kind === "camera") && <Hit at={[0.5, 0.8, 0.5]} size={[1, 1.8, 1]} onTap={() => walkTo(around(d.x, d.y), () => onAct?.({ type: "use", areaId: me.id, id: `street:${d.kind}:${d.x},${d.y}`, name: d.kind === "kiosk" ? "Info kiosk" : "Security camera" }))} label={d.kind === "kiosk" ? "Info kiosk" : "Security camera"} />}
+              <group key={i} position={[d.x + 0.5, 0, d.y + 0.5]} rotation={[0, d.rot, 0]}>
+                <group position={[-0.5, 0, -0.5]}>
+                  <Decor kind={d.kind} seed={d.x * 7 + d.y * 13} />
+                  {tappable && (d.kind === "kiosk" || d.kind === "camera") && <Hit at={[0.5, 0.8, 0.5]} size={[1, 1.8, 1]} onTap={() => walkTo(around(d.x, d.y), () => onAct?.({ type: "use", areaId: me.id, id: `street:${d.kind}:${d.x},${d.y}`, name: d.kind === "kiosk" ? "Info kiosk" : "Security camera" }))} label={d.kind === "kiosk" ? "Info kiosk" : "Security camera"} />}
+                </group>
               </group>
             ))}
             {street.folk.map(({ occupant, x, y }, i) => (
