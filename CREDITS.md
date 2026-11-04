@@ -51,6 +51,7 @@ Poly Haven (https://polyhaven.com), CC0 1.0, 1K maps fetched with `tools/fetch-p
 | `wear/` | `rusty_painted_metal`, `rust_coarse_01`, `peeling_painted_wall`, `painted_metal_shutter`, `metal_plate_02` | not drawn: the sources of the hull wear masks |
 | `hull/` | made here by `tools/build-hull-textures.mjs` from `wear/` and drawn patterns (CC0) | the wear, scorch and panel plates of ships and speeders (`models.tsx` `hullMaterials`) |
 | `figure/` | `skin`, `face`, `fabric`, `leather`, `plate`, `scales`, `fur` (+ `fur/strands.png`): made here from noise by `tools/build-figure-textures.mjs` (CC0, nothing downloaded) | the skin, faces, clothes, leather, armour, droid plating, scales and fur of the figures, and the strands of the shell fur (`models.tsx` `MATERIALS`, `FurShells`) |
+| `figure/{fabric,weave,mesh,leather}` | Poly Haven scans (`rough_linen`, `hessian_230`, `ribbed_corduroy`, `brown_leather`), reduced to a pale detail map, a normal map and a height map by `tools/build-ref-textures.mjs` | CC0 1.0 (public domain) | `tools/refs/figure-sets.json` | the cloth, coarse weave, ribbed knit and leather of the figures (replacing the noise-made sets of the same names) |
 
 ## Libraries
 

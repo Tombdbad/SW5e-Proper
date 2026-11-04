@@ -1,0 +1,6 @@
+{
+  "fabric": { "scan": "rough_linen", "size": 512, "strength": 1.0, "contrast": 1.0, "mean": 0.9 },
+  "weave": { "scan": "hessian_230", "size": 512, "strength": 1.0, "contrast": 1.0, "mean": 0.9 },
+  "mesh": { "scan": "ribbed_corduroy", "size": 512, "strength": 1.0, "contrast": 1.0, "mean": 0.9 },
+  "leather": { "scan": "brown_leather", "size": 512, "strength": 1.0, "contrast": 1.0, "mean": 0.9 }
+}

@@ -5,3 +5,7 @@ dist
 .env
 e2e/out
 .cache
+
+# raw scans fetched by tools/build-ref-textures.mjs, and reference snips (not committed)
+tools/refs/cache/
+tools/refs/snips/
