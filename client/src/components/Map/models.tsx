@@ -3623,30 +3623,36 @@ function droidBody(k: Kit, kind: string, name: string) {
       const olive = "#8c8566";
       const silver = "#b4b6b0";
       const R = 0.5;
-      k.limb(LIMB.roll, [0, R, 0], () => {
-        k.pair((s) => {
-          const x = s * 0.45;
+      // (the hoops lean out at the top, a camber of 35 degrees as in the render, each turning about its own tilted axle: its own limb, wingL and wingR)
+      const phi = HAILFIRE_CAMBER;
+      const xb = 0.4;
+      const xc = xb + R * Math.sin(phi);
+      const yc = R * Math.cos(phi) + 0.06 * Math.sin(phi) + 0.005;
+      k.pair((s) => {
+        const th = -s * phi;
+        k.group([s * xc, yc, 0], [0, 0, th], undefined, () => k.limb(s > 0 ? LIMB.wingL : LIMB.wingR, [0, 0, 0], () => {
           const N = 84;
           for (let i = 0; i < N; i++) {
             const a = (i / N) * Math.PI * 2;
             const rr = R - 0.03;
-            k.box([0.17, 0.045, 0.034], tread, { at: [x, R + Math.sin(a) * rr, Math.cos(a) * rr], rot: [Math.PI / 2 - a, 0, 0], finish: "sheen" });
+            k.box([0.12, 0.045, 0.034], tread, { at: [0, Math.sin(a) * rr, Math.cos(a) * rr], rot: [Math.PI / 2 - a, 0, 0], finish: "sheen" });
           }
-          for (const dx of [-0.075, 0.075]) k.torus(R - 0.06, 0.016, olive, { at: [x + dx, R, 0], rot: [0, Math.PI / 2, 0], seg: [5, 40], finish: "sheen" });
+          for (const dx of [-0.055, 0.055]) k.torus(R - 0.06, 0.016, olive, { at: [dx, 0, 0], rot: [0, Math.PI / 2, 0], seg: [5, 40], finish: "sheen" });
           for (let i = 0; i < 10; i++) {
             const a = (i / 10) * Math.PI * 2 + 0.15;
             const rr = R - 0.07;
-            k.box([0.15, 0.02, 0.08], olive, { at: [x, R + Math.sin(a) * rr, Math.cos(a) * rr], rot: [Math.PI / 2 - a, 0, 0], finish: "sheen" });
+            k.box([0.11, 0.02, 0.08], olive, { at: [0, Math.sin(a) * rr, Math.cos(a) * rr], rot: [Math.PI / 2 - a, 0, 0], finish: "sheen" });
           }
+        }));
+        // the drive pod hangs at the low front of the hoop, leaning with it
+        const px = s * (xc - 0.3 * Math.sin(phi)), py = yc - 0.3 * Math.cos(phi);
+        k.group([px, py, 0.08], [0, 0, th], undefined, () => {
+          k.box([0.17, 0.25, 0.36], silver, { round: 0.04, finish: "sheen" });
+          k.cyl(0.055, 0.03, dark, { at: [-s * 0.09, 0.02, 0.04], rot: [0, 0, Math.PI / 2], seg: 12, finish: "sheen" });
+          k.box([0.12, 0.08, 0.2], shade(silver, 0.8), { at: [0, 0.16, -0.04], round: 0.03, finish: "sheen" });
         });
-      });
-      k.pair((s) => {
-        const x = s * 0.45;
-        k.box([0.17, 0.25, 0.36], silver, { at: [x, 0.25, 0.02], round: 0.04, finish: "sheen" });
-        k.cyl(0.055, 0.03, dark, { at: [x - s * 0.09, 0.27, 0.06], rot: [0, 0, Math.PI / 2], seg: 12, finish: "sheen" });
-        k.box([0.12, 0.08, 0.2], shade(silver, 0.8), { at: [x, 0.41, -0.02], round: 0.03, finish: "sheen" });
-        for (const z of [0.12, -0.1]) k.rod([x - s * 0.08, 0.32, z], [s * 0.1, 0.34, z * 0.5], 0.012, metal, { finish: "sheen" });
-        k.rod([x - s * 0.08, 0.24, 0.02], [s * 0.08, 0.28, 0.02], 0.01, metal, { finish: "sheen" });
+        for (const z of [0.18, -0.06]) k.rod([px - s * 0.07, py + 0.06, z], [s * 0.1, 0.34, z * 0.5], 0.012, metal, { finish: "sheen" });
+        k.rod([px - s * 0.07, py - 0.02, 0.06], [s * 0.08, 0.28, 0.02], 0.01, metal, { finish: "sheen" });
       });
       k.sphere(0.13, olive, { at: [0, 0.38, 0.04], scale: [1, 0.8, 1.1], seg: [14, 10], finish: "sheen" });
       k.box([0.2, 0.09, 0.22], dark, { at: [0, 0.26, 0.02], round: 0.03, finish: "sheen" });
@@ -3803,6 +3809,8 @@ function droidBody(k: Kit, kind: string, name: string) {
   }
 }
 
+// How far the hailfire's hoops lean out at the top (radians), as in its reference render
+export const HAILFIRE_CAMBER = 0.62;
 // How big a droid is (2026-11-04; the user: "there seem to be a number of SIGNIFICANT mis-matches" in the scales of droids). A figure of scale 1 is
 // 67 inches (1.702 m) tall and 1.21 units high (lookOf), so 1 m is UNITS_PER_M units. Each series is built at a size of its own (a probe's ball
 // floated at 1.5, a B1 stood shorter than a person), so a droid is scaled after it is built to the stature it has in the books or the films:
@@ -5013,7 +5021,7 @@ const HUMAN = lookOf({ name: "Human", skinColorOptions: "Light to dark tones", h
 // the way it faces), `fur` how long its hair is where it is furry (FurShells), `form` a droideka's (it rolls up to run: Droideka), `seat`
 // how high a rider sits on it (a beast that can be ridden)
 // `hold` and `saber`: what a person's hands hold and the lightsaber style they fight in (interiors/limbs.ts humanPose)
-export interface FigureSpec { key: string; build: (k: Kit) => void; height: number; scale?: number; foot?: number; wants?: Want[]; blade?: string; gait: Gait; wave?: Wave; ball?: number; wheel?: boolean; fur?: number; form?: "droideka"; seat?: number; hold?: Hold; saber?: SaberStyle }
+export interface FigureSpec { key: string; build: (k: Kit) => void; height: number; scale?: number; foot?: number; wants?: Want[]; blade?: string; gait: Gait; wave?: Wave; ball?: number; wheel?: boolean; camber?: number; fur?: number; form?: "droideka"; seat?: number; hold?: Hold; saber?: SaberStyle }
 
 // How each series of droid moves: battle and protocol droids, assassins and power droids walk; a BB unit rolls; an astromech glides on its
 // treads (a little waddle), as do mouse, service, medical and junk droids; a probe floats; spider and sensor droids go on four legs
@@ -5088,7 +5096,7 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
       key: `droid:${series}:${pickOf(["a", "b", "c", "d", "e", "f"], name)}${modules.length ? `:m${modules.map((m) => m.name).join("+")}` : ""}`,
       build, height, scale: height / droidBuilt(series), foot: FOOT[size.toLowerCase()] ?? 1,
       gait: DROID_GAIT[series] ?? "glide",
-      ...(series === "bb" ? { ball: 0.2 } : series === "hailfire" ? { ball: 0.5, wheel: true } : {}),
+      ...(series === "bb" ? { ball: 0.2 } : series === "hailfire" ? { ball: 0.5, wheel: true, camber: HAILFIRE_CAMBER } : {}),
       ...(series === "destroyer" ? { form: "droideka" as const } : {}),
     };
   }
@@ -5186,6 +5194,13 @@ function useStride(group: React.RefObject<THREE.Group>, apply: (stride: Stride, 
   });
 }
 
+// How a figure's stride goes with its size (2026-11-04, the user: the AT-AT's, AT-ST's and AT-TE's legs were "FAR too fast for their movement speed"): the legs
+// go round for the ground covered, and a figure scaled up by `fit` takes longer strides, so goes round 1 / fit^0.6 as fast (a figure x17 at a tile or
+// two a second steps about every seven seconds; the full 1 / fit would be one step in twenty and the legs would hardly move in a short walk). It was
+// multiplied by fit, which made them the faster the bigger they were
+const STRIDE_WITH_SIZE = 0.6;
+export const strideCycle = (gait: Gait, fit = 1, persona = 1) => (GAITS[gait].cycle * persona) / Math.pow(fit, STRIDE_WITH_SIZE);
+
 // How many shells a furry figure is drawn with: fewer on a phone
 const FUR_DETAIL = typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches ? FUR_SHELLS.lite : FUR_SHELLS.full;
 
@@ -5195,7 +5210,7 @@ const FUR_DETAIL = typeof matchMedia !== "undefined" && matchMedia("(pointer: co
 // rolls or glides does not bob. `ball` is the radius of a ball it rolls on (`wheel`: one that only rolls the way it faces); `fur` the
 // length of its hair, drawn in shells that move with it
 // `crew`: aboard a craft (Crew): posed in its seat, the hips at the group's origin
-function Mover({ id, build, fit = 1, gait, wave, fold, ball, wheel, fur, seat, ring, hold = "none", saber = "niman", fighting, crew, persona }: { id: string; build: (k: Kit) => void; fit?: number; gait: Gait; wave?: Wave; fold?: { current: number }; ball?: number; wheel?: boolean; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh>; hold?: Hold; saber?: SaberStyle; fighting?: boolean; crew?: CrewSeat; persona?: Persona }) {
+function Mover({ id, build, fit = 1, gait, wave, fold, ball, wheel, camber, fur, seat, ring, hold = "none", saber = "niman", fighting, crew, persona }: { id: string; build: (k: Kit) => void; fit?: number; gait: Gait; wave?: Wave; fold?: { current: number }; ball?: number; wheel?: boolean; camber?: number; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh>; hold?: Hold; saber?: SaberStyle; fighting?: boolean; crew?: CrewSeat; persona?: Persona }) {
   const m = useModel(`${id}:anim`, (k) => { k.animated = true; build(k); });
   const mats = useMemo(() => Object.fromEntries(FINISHES.map((f) => [f, limbMaterial(MATERIALS[f])])) as Record<Finish, THREE.Material>, []);
   const furMat = useMemo(() => (fur ? limbMaterial(furShellMaterial(fur, FUR_DETAIL)) : null), [fur]);
@@ -5269,7 +5284,10 @@ function Mover({ id, build, fit = 1, gait, wave, fold, ball, wheel, fur, seat, r
         const f = fold ? fold.current : 1;
         if (f > 0.5) w.angle += (moved.x * w.forward.x + moved.z * w.forward.z) / r;
         w.angle = ((w.angle + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
-        setLimbQuaternion(w.pose, LIMB.roll, w.out.setFromAxisAngle(AXIS_X, fold ? w.angle * f : w.angle));
+        if (camber) {
+          // (two cambered hoops: each turns about its own axle, tilted out at the top: its own limb)
+          for (const side of [1, -1]) setLimbQuaternion(w.pose, side > 0 ? LIMB.wingL : LIMB.wingR, w.out.setFromAxisAngle(AXIS_TILT.set(Math.cos(camber), -side * Math.sin(camber), 0), w.angle));
+        } else setLimbQuaternion(w.pose, LIMB.roll, w.out.setFromAxisAngle(AXIS_X, fold ? w.angle * f : w.angle));
       } else setLimbQuaternion(w.pose, LIMB.roll, rollBall(w.world, moved, r, w.turn, w.out));
     }
     applyPose(all, w.pose);
@@ -5295,7 +5313,7 @@ function Mover({ id, build, fit = 1, gait, wave, fold, ball, wheel, fur, seat, r
         body.current.rotation.x += root.pitch;
       } else body.current.position.x = 0;
     }
-  }, GAITS[gait].cycle * (gait === "walk" && persona ? persona.stride : 1) * fit);
+  }, strideCycle(gait, fit, gait === "walk" && persona ? persona.stride : 1));
   return (
     <group ref={group}>
       <group ref={body}>
@@ -5316,6 +5334,7 @@ function Mover({ id, build, fit = 1, gait, wave, fold, ball, wheel, fur, seat, r
   );
 }
 const AXIS_X = new THREE.Vector3(1, 0, 0);
+const AXIS_TILT = new THREE.Vector3();
 
 // A droideka (destroyer droid, 2026-10-26; the book's Ball Form: "15 ft. (attack form) or 60 ft. (ball form)"): it rolls up into a wheel to run
 // and unfolds onto its three legs once it stops, to stand guard, deal with someone or fight; standing, it steps about slowly on its legs.
@@ -5432,7 +5451,7 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
           <meshBasicMaterial color={ring} />
         </mesh>
       )}
-      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} deployed={fighting} fit={spec.scale} /> : <Mover id={spec.key} build={spec.build} fit={spec.scale} gait={riding ? "ride" : spec.gait} wave={riding ? undefined : spec.wave} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} hold={crew ? "none" : base.hold} saber={base.saber} fighting={fighting} crew={crew} persona={persona} />}
+      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} deployed={fighting} fit={spec.scale} /> : <Mover id={spec.key} build={spec.build} fit={spec.scale} camber={spec.camber} gait={riding ? "ride" : spec.gait} wave={riding ? undefined : spec.wave} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} hold={crew ? "none" : base.hold} saber={base.saber} fighting={fighting} crew={crew} persona={persona} />}
       {marker && (
         <mesh position={[0, Math.max(1.55, spec.height + 0.3), 0]}>
           <octahedronGeometry args={[0.12]} />

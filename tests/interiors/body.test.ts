@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { bodyParts, creatureParts, fitBlock, fitLimb, NOMINAL, partsOf, piecesOf, REGIONS, setBodyParts, setCreatureParts, type BodyParts, type CreatureParts, type PartName } from "../../client/src/components/Map/interiors/body";
 import { advance, DEKA, eased, easeMotion, gaitPose, humanPose, LIMB, LIMBS, motion, NEUTRAL, PARENT, personaOf, restPose, standing, type Pose } from "../../client/src/components/Map/interiors/limbs";
-import { Kit, figureSpec, lookOf, creaturePlan, buildCreature, buildDroid, waveOf, UNITS_PER_M, constructKind, droidKind, figureTop } from "../../client/src/components/Map/models";
+import { Kit, figureSpec, lookOf, creaturePlan, buildCreature, buildDroid, waveOf, UNITS_PER_M, constructKind, droidKind, figureTop, HAILFIRE_CAMBER, strideCycle } from "../../client/src/components/Map/models";
 import { tokenOf } from "../../client/src/components/Map/sprites";
 
 // The sculpted body (tools/blender/build-body.py), read as the browser reads it
@@ -649,19 +649,43 @@ test("the walkers walk on jointed legs: an AT-ST on two, an AT-AT on four, an AT
   for (const n of ["AAT", "TX-225", "Auto-Turret", "74-Z"]) assert.equal(machineSize(n).spec.gait, "glide", n);
 });
 
-test("a hailfire is two open hoops (no spokes) that turn, with a drive pod low in each, a small body between and its missile tubes above", () => {
+test("a hailfire is two open hoops (no spokes) with an extreme camber, each turning about its own tilted axle, a drive pod low in each, a small body between and its missile tubes above", () => {
   const k = new Kit();
   k.animated = true;
   buildDroid(k, "hailfire", "IG-227 Hailfire-Class Droid");
-  assert.ok(k.jointMask & (1 << LIMB.roll), "the hoops turn");
-  const wheel = new THREE.Box3(), fixed = new THREE.Box3();
+  assert.ok(k.jointMask & (1 << LIMB.wingL) && k.jointMask & (1 << LIMB.wingR), "each hoop turns on a limb of its own");
+  const wheels: Record<number, THREE.Vector3[]> = { [LIMB.wingL]: [], [LIMB.wingR]: [] };
+  const fixed = new THREE.Box3();
   for (const p of k.parts) {
     const pos = p.geo.attributes.position, limb = p.geo.attributes.limb as THREE.BufferAttribute;
-    for (let i = 0; i < pos.count; i++) (Math.round(limb.getX(i)) === LIMB.roll ? wheel : fixed).expandByPoint(new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)));
+    for (let i = 0; i < pos.count; i++) {
+      const v = new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)), l = Math.round(limb.getX(i));
+      if (wheels[l]) wheels[l].push(v); else fixed.expandByPoint(v);
+    }
   }
-  assert.ok(wheel.max.y > 0.95 && wheel.min.y < 0.02, "a hoop is as tall as the machine and stands on the ground");
-  assert.ok(wheel.max.x > 0.5 && wheel.min.x < -0.5, "the hoops stand either side");
-  assert.ok(fixed.max.x < wheel.max.x && fixed.max.y < wheel.max.y, "the body between them is smaller than the hoops");
+  for (const [limb, side] of [[LIMB.wingL, 1], [LIMB.wingR, -1]] as const) {
+    const vs = wheels[limb];
+    const top = Math.max(...vs.map((v) => v.y)), bottom = Math.min(...vs.map((v) => v.y));
+    assert.ok(bottom > -0.01 && bottom < 0.03, "a hoop stands on the ground");
+    assert.ok(top > 0.85, "and is as tall as the machine");
+    // the hoop leans out at the top: the middle of its top is further out than the middle of its bottom, by the camber
+    const at = (y: number) => { const near = vs.filter((v) => Math.abs(v.y - y) < 0.012); return near.reduce((n, v) => n + v.x * side, 0) / near.length; };
+    const lean = Math.atan2(at(top) - at(bottom), top - bottom);
+    assert.ok(lean > 0.4 && lean < 0.85 && Math.abs(lean - HAILFIRE_CAMBER) < 0.25, `the hoop leans out at the top by ${lean.toFixed(2)} radians (extreme: more than 23 degrees)`);
+    // (measured at the highest and lowest points of the tread, which is a little less than the hoop's own lean)
+  }
+  assert.ok(fixed.max.x < 0.8 && fixed.max.y < 0.8, "the body, pods and racks between are smaller than the hoops");
   const spec = figureSpec("droid", "IG-227 Hailfire-Class Droid", { creature: "droid", size: "Huge", looks: {} });
-  assert.ok(spec.wheel && spec.ball && spec.ball > 0.45, "it rolls the way it faces on a wheel of the hoop's size");
+  assert.ok(spec.wheel && spec.ball && spec.ball > 0.45 && spec.camber === HAILFIRE_CAMBER, "it rolls the way it faces on a wheel of the hoop's size, with its camber");
+});
+
+test("the bigger a figure, the slower its legs go round for the ground it covers: a giant walker's step is slow, a tiny droid's quick", () => {
+  const person = strideCycle("walk", 1);
+  for (const [name, gait] of [["AT-AT", "quad"], ["AT-ST", "walk"], ["AT-TE", "hexa"]] as const) {
+    const fit = machineSize(name).spec.scale!;
+    const rate = strideCycle(gait, fit);
+    assert.ok(rate < strideCycle(gait, 1) / 3, `${name} (x${fit.toFixed(1)}) goes round at ${rate.toFixed(2)}, a person at ${person}: far slower than its model at its own size`);
+    assert.ok(rate > 0.05, "but not so slow that its legs do not move in a short walk");
+  }
+  assert.ok(strideCycle("walk", 0.3) > person && strideCycle("walk", 1.18) < person, "a small droid steps quicker than a person, a B1 a little slower");
 });
