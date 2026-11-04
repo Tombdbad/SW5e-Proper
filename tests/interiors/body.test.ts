@@ -6,7 +6,8 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { bodyParts, creatureParts, fitBlock, fitLimb, NOMINAL, partsOf, piecesOf, REGIONS, setBodyParts, setCreatureParts, type BodyParts, type CreatureParts, type PartName } from "../../client/src/components/Map/interiors/body";
 import { advance, DEKA, eased, easeMotion, gaitPose, humanPose, LIMB, LIMBS, motion, NEUTRAL, PARENT, personaOf, restPose, standing, type Pose } from "../../client/src/components/Map/interiors/limbs";
-import { Kit, figureSpec, lookOf, creaturePlan, buildCreature, buildDroid, waveOf } from "../../client/src/components/Map/models";
+import { Kit, figureSpec, lookOf, creaturePlan, buildCreature, buildDroid, waveOf, UNITS_PER_M, constructKind, droidKind, figureTop } from "../../client/src/components/Map/models";
+import { tokenOf } from "../../client/src/components/Map/sprites";
 
 // The sculpted body (tools/blender/build-body.py), read as the browser reads it
 const file = path.resolve(import.meta.dirname, "../../client/public/figures/body.glb");
@@ -521,4 +522,72 @@ test("beasts and droids with legs have knees: a shin on its own joint under each
   // (an acklay walks as a quadruped does; a spider keeps its eight)
   assert.equal(figureSpec("beast", "Acklay, Adult", { looks: {}, creature: "beast" }).gait, "quad");
   assert.equal(figureSpec("beast", "Knobby White Spider", { looks: {}, creature: "beast" }).gait, "hexa");
+});
+
+// The droids of the stat blocks, each built as the map builds it and scaled as Figure scales it
+type DroidBlock = { name: string; size: string; flavorText?: string; types?: string[] };
+const droidBlocks = (JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../../shared/data/sw5e/monsters.json"), "utf8")) as DroidBlock[]).filter((m) => (m.types ?? []).includes("droid"));
+function droidTop(b: DroidBlock) {
+  const spec = figureSpec(tokenOf({ name: b.name, creature: "droid" }), b.name, { creature: "droid", size: b.size, looks: {} });
+  const k = new Kit();
+  k.animated = true;
+  spec.build(k);
+  const box = new THREE.Box3();
+  for (const p of k.parts) { p.geo.computeBoundingBox(); box.union(p.geo.boundingBox!); }
+  return { spec, top: box.max.y * (spec.scale ?? 1), width: (box.max.x - box.min.x) * (spec.scale ?? 1), depth: (box.max.z - box.min.z) * (spec.scale ?? 1) };
+}
+
+test("droids are drawn to scale: each stands at its stature, a person is the yardstick, and a rule's size is a band the droid sits in", async () => {
+  assert.ok(droidBlocks.length >= 40, "the droid stat blocks are there");
+  setBodyParts(null);
+  const human = (() => { const spec = figureSpec("humanoid", "Citizen", { role: "civilian", species: "Human", looks: {} }); const k = new Kit(); k.animated = true; spec.build(k); const b = new THREE.Box3(); for (const p of k.parts) { p.geo.computeBoundingBox(); b.union(p.geo.boundingBox!); } return b.max.y; })();
+  assert.ok(Math.abs(human / UNITS_PER_M - 1.702) < 0.06, `a person of scale 1 is 1.70 m: ${human / UNITS_PER_M}`);
+  const metres = (b: DroidBlock) => droidTop(b).top / UNITS_PER_M;
+  const bands: Record<string, [number, number]> = { Tiny: [0.15, 1.0], Small: [0.6, 1.45], Medium: [1.0, 2.4], Large: [1.1, 3.5], Huge: [2.2, 5.2] };
+  for (const b of droidBlocks) {
+    const { spec, top } = droidTop(b);
+    assert.ok(Math.abs(top - spec.height) < spec.height * 0.04, `${b.name}: it stands where it is meant to (${top} against ${spec.height})`);
+    const m = top / UNITS_PER_M, [lo, hi] = bands[b.size];
+    assert.ok(m >= lo && m <= hi, `${b.name} (${b.size}) is ${m.toFixed(2)} m: outside the ${lo} to ${hi} m a ${b.size} droid is`);
+    assert.ok(spec.foot !== undefined && spec.scale !== undefined, `${b.name} has a scale and a footprint`);
+  }
+  // The sizes keep their order: the smallest of a bigger size is not smaller than the biggest of a smaller one, except where the book's own
+  // stature (a Viper probe, 1.6 m, Large; a JK-13, "chest-high", Large) is smaller than a Medium droid's
+  const by = (size: string) => droidBlocks.filter((b) => b.size === size).map(metres);
+  assert.ok(Math.max(...by("Tiny")) < Math.min(...by("Medium")), "a Tiny droid is smaller than a Medium one");
+  assert.ok(Math.max(...by("Small")) < Math.min(...by("Huge")) && Math.min(...by("Huge")) > Math.max(...by("Medium")), "and a Huge one is bigger than a Medium one");
+  // Against each other, as the films have them
+  const named = (n: string) => droidBlocks.find((b) => b.name.startsWith(n))!;
+  const h = (n: string) => droidTop(named(n)).top;
+  assert.ok(h("B1 Series") > human * 1.05, "a B1 is taller than a person");
+  assert.ok(h("B2 Series") >= h("B1 Series"), "a B2 is not shorter than a B1");
+  assert.ok(Math.abs(h("000 Series") / human - 1) < 0.08, "a protocol droid is a person's height");
+  assert.ok(h("R2 Series") / h("3P0 Series") > 0.55 && h("R2 Series") / h("3P0 Series") < 0.75, "R2 is two thirds of 3PO");
+  assert.ok(h("BB Series") < h("R2 Series") && h("Pistoeka") < h("BB Series"), "a BB unit is smaller than an R2, a mouse droid smaller than both");
+  assert.ok(h("DRK-1") < h("R2 Series"), "a Tiny probe is smaller than a Small astromech");
+  assert.ok(h("KX-Series") > h("HK Series") * 0.95 && h("HK Series") > human, "a KX stands over an HK, an HK over a person");
+  assert.ok(h("IG-227") > h("Destroyer") * 2, "a hailfire is a machine, much taller than a droideka");
+  // What the books state is what is drawn: "stand 1.19 meters tall", "measures 1.6 meters in height"
+  let stated = 0;
+  for (const b of droidBlocks) {
+    const m = (b.flavorText ?? "").match(/(\d+(?:\.\d+)?)\s*meters?\s*(?:tall|in height)/i);
+    if (!m) continue;
+    stated++;
+    assert.ok(Math.abs(metres(b) - Number(m[1])) < Number(m[1]) * 0.05, `${b.name}: the book says ${m[1]} m, it is drawn ${metres(b).toFixed(2)} m`);
+  }
+  assert.ok(stated >= 2, "the pit droid and the Viper state their heights");
+  // The war machines are the walkers and tanks: the droids that were among them (hailfire, vulture, hyena) are droids, with joints that move
+  for (const n of ["IG-227 Hailfire-Class Droid", "Vulture-Class Droid", "Hyena-Class Bomber"]) assert.equal(constructKind(n), undefined, n);
+  assert.equal(droidKind("SD-K4 Assassin Droid"), "probe", "it floats");
+  assert.equal(droidKind("JK-13 Security Droid"), "spider", "it is chest-high and insect-like");
+});
+
+test("a protocol droid is a person's height with the sculpted body in, and a droid's label goes over its head", async () => {
+  setBodyParts(await parse("body.glb"));
+  const { top } = droidTop(droidBlocks.find((b) => b.name.startsWith("000 Series"))!);
+  setBodyParts(null);
+  assert.ok(Math.abs(top / UNITS_PER_M - 1.67) < 0.12, `a protocol droid with the sculpted body is ${top / UNITS_PER_M} m`);
+  assert.ok(figureTop("droid", "Hailfire", "Huge", true) > 3, "above a hailfire");
+  assert.ok(figureTop("droid", "DRK-1 Tracker Droid", "Tiny") < 0.6, "and close over a probe");
+  assert.equal(figureTop("humanoid", "Citizen"), 1.2);
 });

@@ -44,7 +44,7 @@ import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderS
 import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
-import { useLamps, useRoomLights, Figure, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { useLamps, useRoomLights, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -2513,9 +2513,9 @@ function Life({ people, setting, party, frozen, onTap, api, record, origin = { x
           {a.occupant.captive && <><Box at={[-0.2, 0.15, 0]} size={[0.14, 0.1, 0.14]} color="#59636d" /><Box at={[0.2, 0.15, 0]} size={[0.14, 0.1, 0.14]} color="#59636d" /></>}
           {a.brain === "musician" && <Instrument name={a.occupant.loadout[0]} />}
           {a.brain === "droid" && <><Cyl at={[0, 0.82, 0.08]} r={0.2} h={0.03} color="#9aa3ad" /><Cyl at={[0.08, 0.9, 0.1]} r={0.04} h={0.14} color={AMBER} glow={0.8} /></>}
-          {labelled(a.occupant) && <Label at={[0, isLarge(a.occupant.size) ? 2.2 : 1.6, 0]} size={0.26} color={SIDE_COLORS[a.occupant.disposition]}>{a.occupant.name}</Label>}
+          {labelled(a.occupant) && <Label at={[0, figureTop(tokenOf(a.occupant), a.occupant.name, a.occupant.size, isLarge(a.occupant.size)) + 0.4, 0]} size={0.26} color={SIDE_COLORS[a.occupant.disposition]}>{a.occupant.name}</Label>}
           {bubbles[a.key] && (
-            <Html center position={[0, isLarge(a.occupant.size) ? 2.6 : 2.05, 0]} zIndexRange={[20, 0]} style={{ pointerEvents: "none" }}>
+            <Html center position={[0, figureTop(tokenOf(a.occupant), a.occupant.name, a.occupant.size, isLarge(a.occupant.size)) + 0.85, 0]} zIndexRange={[20, 0]} style={{ pointerEvents: "none" }}>
               <div className="w-max max-w-[13rem] rounded-lg bg-gray-900/90 px-2 py-0.5 text-center text-xs text-amber-200 shadow">{bubbles[a.key]}</div>
             </Html>
           )}
@@ -2603,7 +2603,7 @@ function Follower({ companion, index, feet, open, height, onTap, carts = [], bio
           <Figure kind={tokenOf({ name: companion.name, role: companion.kind === "droid" ? "utility droid" : beast ? "wildlife" : companion.role, creature: companion.creature })} ring={beast ? "#a3e635" : SIDE_COLORS.friendly} name={companion.name} large={isLarge(companion.size)} species={companion.species} role={companion.role} creature={companion.creature} size={companion.size} modules={companion.kind === "droid" ? companion.custom : undefined} />
         </MotionContext.Provider>
       </group>
-      <Label at={[0, isLarge(companion.size) ? 2.2 : 1.6, 0]} size={0.26} color={beast ? "#a3e635" : SIDE_COLORS.friendly}>{companion.name}</Label>
+      <Label at={[0, figureTop(tokenOf({ name: companion.name, role: companion.kind === "droid" ? "utility droid" : beast ? "wildlife" : companion.role, creature: companion.creature }), companion.name, companion.size, isLarge(companion.size)) + 0.4, 0]} size={0.26} color={beast ? "#a3e635" : SIDE_COLORS.friendly}>{companion.name}</Label>
       {onTap && <Hit at={[0, 0.7, 0]} size={[0.9, 1.4, 0.9]} onTap={onTap} label={companion.name} person />}
       <HandledCarts carts={carts} biome={biome} reach={isLarge(companion.size) ? 1.7 : 1.05} onTap={onCart} />
     </group>
@@ -5411,7 +5411,7 @@ function DuelPieces() {
             {!down && current?.id === c.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}><ringGeometry args={[0.5, 0.58, 28]} /><meshBasicMaterial color="#fde047" /></mesh>}
             {!down && target?.id === c.id && <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.07, 0]}><ringGeometry args={[0.62, 0.7, 4]} /><meshBasicMaterial color="#f87171" /></mesh>}
             {!down && (
-              <Billboard position={[0, large ? 2.5 : 1.85, 0]}>
+              <Billboard position={[0, figureTop(tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" }), c.name, c.size, large) + 0.65, 0]}>
                 <mesh><planeGeometry args={[0.9, 0.1]} /><meshBasicMaterial color="#111111" /></mesh>
                 <mesh position={[-0.45 * (1 - Math.max(0, Math.min(1, c.hp / c.maxHp))), 0, 0.001]}><planeGeometry args={[0.9 * Math.max(0.001, Math.min(1, c.hp / c.maxHp)), 0.1]} /><meshBasicMaterial color={onPartySide(c) ? "#4ade80" : "#f87171"} /></mesh>
                 <Text position={[0, 0.24, 0]} fontSize={0.24} color={side} anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#000000">{c.name}</Text>
@@ -5656,7 +5656,7 @@ export function FightScene({ wall = STEEL, areaId, origin, crowd }: { wall?: str
                   <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}><ringGeometry args={[0.62, 0.7, 4]} /><meshBasicMaterial color="#f87171" /></mesh>
                 )}
                 {!down && (
-                  <Billboard position={[0, large ? 2.5 : 1.85, 0]}>
+                  <Billboard position={[0, figureTop(tokenOf({ name: c.name, role: c.role, creature: c.creature, isPlayer: c.isPlayer, forceUser: c.role === "force" }), c.name, c.size, large) + 0.65, 0]}>
                     <mesh><planeGeometry args={[0.9, 0.1]} /><meshBasicMaterial color="#111111" /></mesh>
                     <mesh position={[-0.45 * (1 - Math.max(0, Math.min(1, c.hp / c.maxHp))), 0, 0.001]}><planeGeometry args={[0.9 * Math.max(0.001, Math.min(1, c.hp / c.maxHp)), 0.1]} /><meshBasicMaterial color={onPartySide(c) ? "#4ade80" : "#f87171"} /></mesh>
                     <Text position={[0, 0.24, 0]} fontSize={0.24} color={side} anchorX="center" anchorY="middle" outlineWidth={0.02} outlineColor="#000000">{c.name}</Text>

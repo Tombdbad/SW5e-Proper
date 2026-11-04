@@ -355,6 +355,26 @@ function Droidekas() {
   );
 }
 
+// The droids of the stat blocks side by side with a person at each end of a row (2026-11-04, the user: "a deep analysis of the scales of droids"), by the
+// size the book gives them: the smallest in front, the Huge machines behind. `?section=scale&cam=0,6,26&look=0,1,6`
+const SCALE_ROWS: { gap: number; z: number; droids: [string, string][] }[] = [
+  { gap: 1.3, z: 0, droids: [["DRK-1 Tracker Droid", "Tiny"], ["Pistoeka sabotage droid", "Tiny"], ["BB Series Astromech Droid", "Small"], ["R2 Series Astromech Droid", "Small"], ["C1 Series Astromech Droid", "Small"], ["Gonk Droid", "Small"], ["DUM-Series PIT Droid", "Small"], ["GH-7 Medical Analysis Unit", "Small"]] },
+  { gap: 1.3, z: 2.4, droids: [["3P0 Series", "Medium"], ["B1 Series, B1-A", "Medium"], ["BX Series, BX-A", "Medium"], ["T-Series Tactical Droid", "Medium"], ["B2 Series, B2-A", "Medium"], ["IG Series, Model 88", "Medium"], ["HK Series, HK-47", "Medium"], ["KX-Series Security Droid", "Medium"], ["Junk Droid", "Medium"]] },
+  { gap: 2.2, z: 5.6, droids: [["Destroyer Droid", "Large"], ["DSD1 Dwarf Spider Droid", "Large"], ["JK-13 Security Droid", "Large"], ["Viper Probe Droid", "Large"]] },
+  { gap: 4.2, z: 11, droids: [["Hyena-Class Bomber", "Huge"], ["Vulture-Class Droid", "Huge"], ["NR-N99 Persuader-Class Enforcer", "Huge"], ["IG-227 Hailfire-Class Droid", "Huge"], ["Junk Behemoth", "Huge"]] },
+];
+function Scale() {
+  return (
+    <>
+      {SCALE_ROWS.map((row) => (
+        <Rows key={row.z} z={row.z} items={[["Citizen", ""], ...row.droids]} per={row.droids.length + 1} gap={row.gap} name={([n]) => n.replace(/ Series| Droid|,.*$/g, "")} draw={([n, size]) => size
+          ? <Figure kind="droid" ring={SIDE_COLORS.hostile} name={n} creature="droid" size={size} large={/large|huge/i.test(size)} />
+          : <Figure kind="humanoid" ring={SIDE_COLORS.neutral} name={n} role="civilian" species="Human" />} />
+      ))}
+    </>
+  );
+}
+
 function Walk() {
   const people: [string, string, string][] = [["Navy Trooper", "trooper", "Human"], ["Zara", "merchant", "Twi'lek"], ["Kel", "scout", "Wookiee"], ["Mira", "player", "Human"]];
   return (
@@ -371,6 +391,13 @@ function Walk() {
       {([["droid", "BB Series Astromech Droid"], ["droid", "Destroyer Droid"], ["battledroid", "B1 Series Battle Droid"], ["droid", "Probe Droid"], ["beast", "Bantha"], ["beast", "Tauntaun"], ["beast", "Acklay"], ["beast", "Mynock"]] as const).map(([kind, name], i) => (
         <Pacer key={name} z={7.4 + i * 1.7} speed={0.8 + (i % 3) * 0.1}>
           <Figure kind={kind} ring={SIDE_COLORS.hostile} name={name} creature={kind === "beast" ? "beast" : "droid"} large={/bantha|acklay/i.test(name)} />
+        </Pacer>
+      ))}
+      {/* The droid machines at their size (2026-11-04): a hailfire rolls on its two wheels, a vulture steps on its wings, a persuader glides on its
+          treads, a probe floats (`?section=walk&cam=0,6,-24&look=0,1,-6`) */}
+      {([["IG-227 Hailfire-Class Droid", "Huge"], ["Vulture-Class Droid", "Huge"], ["NR-N99 Persuader-Class Enforcer", "Huge"], ["Viper Probe Droid", "Large"]] as const).map(([name, size], i) => (
+        <Pacer key={name} z={-5 - i * 4.5} speed={1.2 - i * 0.1}>
+          <Figure kind="droid" ring={SIDE_COLORS.hostile} name={name} creature="droid" size={size} large />
         </Pacer>
       ))}
       {/* The undulating bodies (2026-11-04): serpents slither, a krayt dragon's six legs step, a lizard and a monkey-lizard crawl, a kaadu's tail
@@ -577,6 +604,7 @@ export default function ModelGallery() {
         {section === "packs" && <Packs />}
         {section === "walk" && <Walk />}
         {section === "droideka" && <Droidekas />}
+        {section === "scale" && <Scale />}
         {section === "moves" && <Moves only={query.get("act") ?? undefined} />}
         {section === "table" && <Table cycle={query.get("hold") !== "1"} />}
         {section === "gear" && <Gear loadout={query.get("loadout") ?? "heavy"} />}

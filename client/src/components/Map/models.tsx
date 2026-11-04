@@ -3456,13 +3456,19 @@ export function droidKind(name: string): string {
   if (/tactical|t-series/.test(n)) return "tactical";
   if (/b1|bx|commando|battle droid/.test(n)) return /bx|commando/.test(n) ? "bx" : "b1";
   if (/destroyer|droideka/.test(n)) return "destroyer";
-  if (/probe|seeker|id9|it-o|interrog|drk-1|tracker|marksman|z-58|remote/.test(n)) return "probe";
+  // (the hailfire's name has "ig-" in it, so before the IG droids)
+  if (/hailfire|ig-227/.test(n)) return "hailfire";
+  if (/hyena|bomber/.test(n)) return "hyena";
+  if (/vulture|droid starfighter|droid fighter/.test(n)) return "vulture";
+  if (/persuader|nr-n99|enforcer/.test(n)) return "persuader";
+  if (/probe|seeker|id9|it-o|interrog|drk-1|tracker|marksman|z-58|remote|sd-k4/.test(n)) return "probe";
   if (/gonk|power droid|eg-6/.test(n)) return "gonk";
   if (/mouse|msE|pistoeka|sabotage/.test(n)) return "mouse";
   if (/pit droid|dum-series/.test(n)) return "pit";
   if (/medical|gh-7|2-1b|fx-/.test(n)) return "medical";
-  if (/\big\b|ig series|ig-|assassin|sd-k4|hk/.test(n)) return /hk/.test(n) ? "hk" : "ig";
-  if (/kx|k-2|security droid|jk-13|enforcer|persuader/.test(n)) return "kx";
+  if (/\big\b|ig series|ig-|assassin|hk/.test(n)) return /hk/.test(n) ? "hk" : "ig";
+  if (/jk-13|jk-series/.test(n)) return "spider";
+  if (/kx|k-2|security droid/.test(n)) return "kx";
   if (/spider|dsd/.test(n)) return "spider";
   if (/junk/.test(n)) return "junk";
   if (/service|server|waiter|bartender|labor|lifter|loader|binary/.test(n)) return "service";
@@ -3609,6 +3615,69 @@ function droidBody(k: Kit, kind: string, name: string) {
       });
       return;
     }
+    case "hailfire": {
+      // An IG-227 hailfire: two great hoop wheels on one axle, a pod slung between them with a sensor head in front and its missile racks
+      // on top. The wheels turn (LIMB.roll, a wheel that rolls the way it faces); the pod does not
+      const steel = "#6b7075";
+      const R = 0.5;
+      k.limb(LIMB.roll, [0, R, 0], () => {
+        k.cyl(0.035, 0.8, metal, { at: [0, R, 0], rot: [0, 0, Math.PI / 2], seg: 8, finish: "sheen" });
+        k.pair((s) => {
+          const x = s * 0.37;
+          k.torus(R - 0.045, 0.045, dark, { at: [x, R, 0], rot: [0, Math.PI / 2, 0], seg: [8, 32], finish: "sheen" });
+          k.torus(R - 0.12, 0.012, metal, { at: [x, R, 0], rot: [0, Math.PI / 2, 0], seg: [5, 28], finish: "sheen" });
+          for (let i = 0; i < 6; i++) {
+            const a = (i * Math.PI) / 3;
+            k.rod([x, R, 0], [x, R + Math.sin(a) * (R - 0.12), Math.cos(a) * (R - 0.12)], 0.012, metal, { finish: "sheen" });
+          }
+          k.cyl(0.08, 0.05, steel, { at: [x, R, 0], rot: [0, 0, Math.PI / 2], seg: 12, finish: "sheen" });
+        });
+      });
+      k.box([0.48, 0.26, 0.56], steel, { at: [0, R + 0.02, 0], round: 0.07, finish: "sheen" });
+      k.sphere(0.1, dark, { at: [0, R + 0.1, 0.3], scale: [1, 0.85, 1], seg: [12, 8], finish: "sheen" });
+      k.sphere(0.03, C.red, { at: [0, R + 0.11, 0.39], finish: "glow", seg: [8, 6] });
+      k.pair((s) => {
+        k.box([0.12, 0.12, 0.42], shade(steel, 0.8), { at: [s * 0.14, R + 0.21, -0.06], round: 0.03, finish: "sheen" });
+        for (let i = 0; i < 3; i++) k.cyl(0.026, 0.07, "#b8473e", { at: [s * 0.14 + (i - 1) * 0.035, R + 0.21, 0.17], rot: [Math.PI / 2, 0, 0], seg: 8 });
+      });
+      k.cyl(0.015, 0.2, metal, { at: [0.05, R + 0.35, -0.2], seg: 4 });
+      return;
+    }
+    case "vulture":
+    case "hyena": {
+      // A droid starfighter on the folded struts of its wings (the book's walking Vulture and Hyena): a long hull with its sensor eye and
+      // twin cannons ahead, fins behind, and four jointed legs; the bomber is fatter, with its bomb bay slung underneath
+      const bomber = kind === "hyena";
+      const hull = bomber ? "#6a6f66" : "#8a8f86";
+      const y = 0.38;
+      k.capsule(bomber ? 0.14 : 0.1, bomber ? 0.5 : 0.42, hull, { at: [0, y, 0], rot: [Math.PI / 2, 0, 0], seg: 12, finish: "sheen" });
+      k.sphere(0.04, C.red, { at: [0, y + 0.02, bomber ? 0.34 : 0.3], finish: "glow", seg: [8, 6] });
+      k.pair((s) => k.cyl(0.015, 0.28, "#15171b", { at: [s * 0.09, y - 0.03, 0.38], rot: [Math.PI / 2, 0, 0], seg: 6 }));
+      k.pair((s) => k.box([0.02, 0.2, 0.22], hull, { at: [s * 0.09, y + 0.1, -0.27], rot: [0, 0, s * 0.35], round: 0.006, finish: "sheen" }));
+      if (bomber) k.capsule(0.075, 0.3, "#4a4f46", { at: [0, y - 0.17, 0], rot: [Math.PI / 2, 0, 0], seg: 10, finish: "sheen" });
+      k.pair((s) => {
+        kneed(k, s > 0 ? LIMB.legL : LIMB.legR, [s * 0.1, y - 0.04, 0.17], [s * 0.3, y + 0.02, 0.2], [s * 0.38, 0.02, 0.24], 0.022, "#4a4f46", { along: 4, around: 6, finish: "sheen" });
+        kneed(k, s > 0 ? LIMB.hindL : LIMB.hindR, [s * 0.1, y - 0.04, -0.17], [s * 0.3, y + 0.02, -0.2], [s * 0.38, 0.02, -0.24], 0.022, "#4a4f46", { along: 4, around: 6, finish: "sheen" });
+      });
+      return;
+    }
+    case "persuader": {
+      // An NR-N99 persuader: a droid's torso, head and twin cannons on a tracked tank chassis
+      const hull = "#5b6168";
+      k.pair((s) => {
+        k.box([0.16, 0.2, 0.92], dark, { at: [s * 0.3, 0.12, 0], round: 0.06, finish: "sheen" });
+        for (let i = 0; i < 5; i++) k.cyl(0.075, 0.18, metal, { at: [s * 0.3, 0.1, -0.36 + i * 0.18], rot: [0, 0, Math.PI / 2], seg: 10, finish: "sheen" });
+      });
+      k.box([0.6, 0.18, 0.8], hull, { at: [0, 0.3, 0], round: 0.06, finish: "sheen" });
+      k.box([0.42, 0.34, 0.3], hull, { at: [0, 0.55, 0.05], round: 0.08, finish: "sheen" });
+      k.sphere(0.1, dark, { at: [0, 0.8, 0.08], scale: [1, 0.85, 1.1], seg: [12, 8], finish: "sheen" });
+      k.pair((s) => k.sphere(0.02, C.red, { at: [s * 0.04, 0.81, 0.17], finish: "glow", seg: [6, 4] }));
+      k.pair((s) => k.limb(s > 0 ? LIMB.armL : LIMB.armR, [s * 0.26, 0.64, 0.05], () => {
+        k.box([0.1, 0.14, 0.14], shade(hull, 0.8), { at: [s * 0.27, 0.62, 0.05], round: 0.03, finish: "sheen" });
+        k.cyl(0.04, 0.5, "#15171b", { at: [s * 0.3, 0.6, 0.34], rot: [Math.PI / 2, 0, 0], seg: 8 });
+      }));
+      return;
+    }
     case "probe": {
       // A floating ball with an eye and antennae, and limbs hanging below it
       k.sphere(0.2, dark, { at: [0, 1.0, 0], seg: [16, 12], finish: "sheen" });
@@ -3712,6 +3781,60 @@ function droidBody(k: Kit, kind: string, name: string) {
       k.cyl(0.008, 0.3, metal, { at: [0.06, 1.15, 0], seg: 4 });
     }
   }
+}
+
+// How big a droid is (2026-11-04; the user: "there seem to be a number of SIGNIFICANT mis-matches" in the scales of droids). A figure of scale 1 is
+// 67 inches (1.702 m) tall and 1.21 units high (lookOf), so 1 m is UNITS_PER_M units. Each series is built at a size of its own (a probe's ball
+// floated at 1.5, a B1 stood shorter than a person), so a droid is scaled after it is built to the stature it has in the books or the films:
+// DROID_METRES (the stat block's text where it gives one: the pit droid "1.19 meters tall", the Viper "1.6 meters in height", the JK-13
+// "chest-high"; otherwise the canon height, from the films and the encyclopaedias as I remember them: the one place to adjust them)
+export const UNITS_PER_M = 1.21 / 1.702;
+export const DROID_METRES: Record<string, number> = {
+  astromech: 1.09, r5: 1.12, bb: 0.67, protocol: 1.67, b1: 1.91, bx: 1.91, tactical: 1.9, b2: 1.95, destroyer: 1.83, probe: 1.6, gonk: 1.2,
+  mouse: 0.25, pit: 1.19, medical: 1.2, ig: 1.96, hk: 1.96, kx: 2.16, spider: 1.9, junk: 1.5, service: 1.2, hailfire: 4.6, vulture: 2.4,
+  hyena: 2.6, persuader: 3.0,
+};
+// (a rule's size is the space it takes, not how tall it stands: what the stat block's size changes is the footprint ring and, for a series
+// that serves several sizes, how big this one is)
+const SIZE_METRES: Record<string, number> = { tiny: 0.5, small: 1.0, medium: 1.75, large: 2.8, huge: 4.6, gargantuan: 7 };
+export function droidStature(series: string, name: string, size = ""): number {
+  const sz = size.toLowerCase();
+  if (series === "probe") return sz === "tiny" ? 0.6 : sz === "small" ? 0.9 : DROID_METRES.probe;
+  if (series === "junk") return sz === "huge" ? 4.5 : sz === "large" ? 3 : DROID_METRES.junk;
+  if (series === "spider" && /jk-13|jk-series/i.test(name)) return 1.2;
+  return DROID_METRES[series] ?? SIZE_METRES[sz] ?? SIZE_METRES.medium;
+}
+// The series a droid is drawn as: what its name says, else what the token says it is
+export function droidSeries(kind: string, name: string): string {
+  const series = droidKind(name || kind);
+  return series === "generic" && kind === "astromech" ? "astromech" : series === "generic" && kind === "battledroid" ? "b1" : series;
+}
+// How high a figure stands (units), for what is put over its head (its name, its hit points, what it says): a droid's own height, a war machine's,
+// else a person's or a beast's by whether it is large
+export function figureTop(kind: string, name: string, size = "", large = false): number {
+  if (kind === "astromech" || kind === "battledroid" || kind === "droid") {
+    if (constructKind(name)) return large ? 1.95 : 1.3;
+    return droidStature(droidSeries(kind, name), name, size) * UNITS_PER_M;
+  }
+  return large ? 1.85 : 1.2;
+}
+// How wide the ring under a figure is, against a medium one's: the footprint its size takes
+export const FOOT: Record<string, number> = { tiny: 0.6, small: 0.9, medium: 1, large: 1.5, huge: 2.2, gargantuan: 3 };
+// How high a series stands as it is built (its top, in units): measured from the model itself, once. (A protocol droid is a person: it is
+// built at 1.02 of a person's height and whatever sculpted body is in, so it is not measured.)
+const BUILT = new Map<string, number>([["protocol", 1.21 * 1.02]]);
+export function droidBuilt(series: string): number {
+  let h = BUILT.get(series);
+  if (h === undefined) {
+    const k = new Kit();
+    k.animated = true;
+    buildDroid(k, series, series);
+    const b = new THREE.Box3();
+    for (const p of k.parts) { p.geo.computeBoundingBox(); b.union(p.geo.boundingBox!); }
+    h = b.max.y;
+    BUILT.set(series, h);
+  }
+  return h;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -4626,8 +4749,7 @@ export function constructKind(name: string): string | undefined {
   if (/turret|sentry gun|sonic cannon|p-tower|df\.9/.test(n)) return "turret";
   if (/speeder bike|74-z/.test(n)) return "bike";
   if (/brain walker/.test(n)) return "brain";
-  if (/hailfire/.test(n)) return "hailfire";
-  if (/vulture|hyena/.test(n)) return "vulture";
+  // (the hailfire, vulture and hyena droids are droids: buildDroid)
   return undefined;
 }
 
@@ -4699,16 +4821,6 @@ function buildConstruct(k: Kit, kind: string) {
       k.cyl(0.16, 0.3, "#9fd4ea", { at: [0, 0.68, 0], seg: 16, finish: "glass" });
       k.blob(0.1, "#d98a9a", { at: [0, 0.68, 0], smooth: true, rough: 0.3, seed: 2 });
       return;
-    case "hailfire":
-      k.pair((s) => k.torus(0.42, 0.05, "#3a3f46", { at: [s * 0.3, 0.46, 0], rot: [0, Math.PI / 2, 0], seg: [8, 28], finish: "sheen" }));
-      k.box([0.4, 0.24, 0.3], grey, { at: [0, 0.5, 0], round: 0.06, finish: "sheen" });
-      k.pair((s) => k.cyl(0.08, 0.3, dark, { at: [s * 0.12, 0.72, 0.06], rot: [Math.PI / 2 - 0.3, 0, 0], seg: 10 }));
-      return;
-    case "vulture":
-      for (const z of [0.3, -0.3]) k.pair((s) => k.tube([[s * 0.1, 0.55, z * 0.5], [s * 0.38, 0.5, z], [s * 0.4, 0.04, z]], 0.035, "#7a6a4a", { along: 6, around: 6, finish: "sheen" }));
-      k.box([0.26, 0.16, 0.6], "#8a7a5a", { at: [0, 0.6, 0], round: 0.06, finish: "sheen" });
-      k.sphere(0.03, C.red, { at: [0, 0.62, 0.31], finish: "glow", seg: [6, 4] });
-      return;
   }
 }
 
@@ -4736,11 +4848,11 @@ const HUMAN = lookOf({ name: "Human", skinColorOptions: "Light to dark tones", h
 // the way it faces), `fur` how long its hair is where it is furry (FurShells), `form` a droideka's (it rolls up to run: Droideka), `seat`
 // how high a rider sits on it (a beast that can be ridden)
 // `hold` and `saber`: what a person's hands hold and the lightsaber style they fight in (interiors/limbs.ts humanPose)
-export interface FigureSpec { key: string; build: (k: Kit) => void; height: number; wants?: Want[]; blade?: string; gait: Gait; wave?: Wave; ball?: number; wheel?: boolean; fur?: number; form?: "droideka"; seat?: number; hold?: Hold; saber?: SaberStyle }
+export interface FigureSpec { key: string; build: (k: Kit) => void; height: number; scale?: number; foot?: number; wants?: Want[]; blade?: string; gait: Gait; wave?: Wave; ball?: number; wheel?: boolean; fur?: number; form?: "droideka"; seat?: number; hold?: Hold; saber?: SaberStyle }
 
 // How each series of droid moves: battle and protocol droids, assassins and power droids walk; a BB unit rolls; an astromech glides on its
 // treads (a little waddle), as do mouse, service, medical and junk droids; a probe floats; spider and sensor droids go on four legs
-const DROID_GAIT: Record<string, Gait> = { bb: "roll", astromech: "glide", r5: "glide", protocol: "walk", b1: "walk", bx: "walk", tactical: "walk", b2: "walk", ig: "walk", hk: "walk", kx: "walk", pit: "walk", gonk: "walk", destroyer: "droideka", probe: "hover", mouse: "glide", service: "glide", junk: "glide", medical: "glide", spider: "quad", generic: "quad" };
+const DROID_GAIT: Record<string, Gait> = { bb: "roll", astromech: "glide", r5: "glide", protocol: "walk", b1: "walk", bx: "walk", tactical: "walk", b2: "walk", ig: "walk", hk: "walk", kx: "walk", pit: "walk", gonk: "walk", destroyer: "droideka", hailfire: "roll", vulture: "quad", hyena: "quad", persuader: "glide", probe: "hover", mouse: "glide", service: "glide", junk: "glide", medical: "glide", spider: "quad", generic: "quad" };
 // How each body plan of a creature moves
 function creatureGait(p: Plan): Gait {
   switch (p.plan) {
@@ -4791,7 +4903,7 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
   const machine = constructKind(name);
   if (machine) return { key: `con:${machine}`, build: (k) => buildConstruct(k, machine), height: 1.3, gait: "glide" };
   if (kind === "astromech" || kind === "battledroid" || kind === "droid") {
-    const series = droidKind(name || kind) === "generic" && kind === "astromech" ? "astromech" : droidKind(name || kind) === "generic" && kind === "battledroid" ? "b1" : droidKind(name || kind);
+    const series = droidSeries(kind, name);
     // The customizations it carries are fixed to its body where each belongs (interiors/anchors.ts moduleAnchor)
     const modules = opts.modules ?? [];
     const build = (k: Kit) => {
@@ -4801,7 +4913,15 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
         k.addModel(m.geometry, { at: a.at, rot: a.rot, scale: a.scale });
       });
     };
-    return { key: `droid:${series}:${pickOf(["a", "b", "c", "d", "e", "f"], name)}${modules.length ? `:m${modules.map((m) => m.name).join("+")}` : ""}`, build, height: series === "astromech" || series === "r5" || series === "bb" || series === "mouse" || series === "gonk" || series === "pit" ? 0.8 : 1.25, gait: DROID_GAIT[series] ?? "glide", ...(series === "bb" ? { ball: 0.2 } : {}), ...(series === "destroyer" ? { form: "droideka" as const } : {}) };
+    // (scaled to the stature it has, whatever its size's 1.5: a Large droideka is 1.83 m, a Tiny probe 0.6 m)
+    const height = droidStature(series, name, size) * UNITS_PER_M;
+    return {
+      key: `droid:${series}:${pickOf(["a", "b", "c", "d", "e", "f"], name)}${modules.length ? `:m${modules.map((m) => m.name).join("+")}` : ""}`,
+      build, height, scale: height / droidBuilt(series), foot: FOOT[size.toLowerCase()] ?? 1,
+      gait: DROID_GAIT[series] ?? "glide",
+      ...(series === "bb" ? { ball: 0.2 } : series === "hailfire" ? { ball: 0.45, wheel: true } : {}),
+      ...(series === "destroyer" ? { form: "droideka" as const } : {}),
+    };
   }
   if (kind === "beast" || kind === "horror") {
     const plan = creaturePlan(name, creature, size);
@@ -4906,7 +5026,7 @@ const FUR_DETAIL = typeof matchMedia !== "undefined" && matchMedia("(pointer: co
 // rolls or glides does not bob. `ball` is the radius of a ball it rolls on (`wheel`: one that only rolls the way it faces); `fur` the
 // length of its hair, drawn in shells that move with it
 // `crew`: aboard a craft (Crew): posed in its seat, the hips at the group's origin
-function Mover({ id, build, gait, wave, fold, ball, wheel, fur, seat, ring, hold = "none", saber = "niman", fighting, crew, persona }: { id: string; build: (k: Kit) => void; gait: Gait; wave?: Wave; fold?: { current: number }; ball?: number; wheel?: boolean; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh>; hold?: Hold; saber?: SaberStyle; fighting?: boolean; crew?: CrewSeat; persona?: Persona }) {
+function Mover({ id, build, fit = 1, gait, wave, fold, ball, wheel, fur, seat, ring, hold = "none", saber = "niman", fighting, crew, persona }: { id: string; build: (k: Kit) => void; fit?: number; gait: Gait; wave?: Wave; fold?: { current: number }; ball?: number; wheel?: boolean; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh>; hold?: Hold; saber?: SaberStyle; fighting?: boolean; crew?: CrewSeat; persona?: Persona }) {
   const m = useModel(`${id}:anim`, (k) => { k.animated = true; build(k); });
   const mats = useMemo(() => Object.fromEntries(FINISHES.map((f) => [f, limbMaterial(MATERIALS[f])])) as Record<Finish, THREE.Material>, []);
   const furMat = useMemo(() => (fur ? limbMaterial(furShellMaterial(fur, FUR_DETAIL)) : null), [fur]);
@@ -5006,7 +5126,7 @@ function Mover({ id, build, gait, wave, fold, ball, wheel, fur, seat, ring, hold
         body.current.rotation.x += root.pitch;
       } else body.current.position.x = 0;
     }
-  }, GAITS[gait].cycle * (gait === "walk" && persona ? persona.stride : 1));
+  }, GAITS[gait].cycle * (gait === "walk" && persona ? persona.stride : 1) * fit);
   return (
     <group ref={group}>
       <group ref={body}>
@@ -5035,7 +5155,7 @@ const AXIS_X = new THREE.Vector3(1, 0, 0);
 // `fold`), the wheel turns by the ground it covers (shown only as far as it is folded: it settles upright as it unfolds), the whole body sinks
 // onto its rim, and the shield's shimmer round the standing one fades as it folds. (Its shadow stays that of the standing form.)
 const FOLD_SECONDS = 0.45;
-function Droideka({ id, build, deployed }: { id: string; build: (k: Kit) => void; deployed?: boolean }) {
+function Droideka({ id, build, deployed, fit }: { id: string; build: (k: Kit) => void; deployed?: boolean; fit?: number }) {
   const outer = useRef<THREE.Group>(null);
   const lowered = useRef<THREE.Group>(null);
   const shield = useRef<THREE.Mesh>(null);
@@ -5057,7 +5177,7 @@ function Droideka({ id, build, deployed }: { id: string; build: (k: Kit) => void
   });
   return (
     <group ref={outer}>
-      <group ref={lowered}><Mover id={id} build={build} gait="droideka" fold={fold} ball={DEKA.outer} wheel /></group>
+      <group ref={lowered}><Mover id={id} build={build} fit={fit} gait="droideka" fold={fold} ball={DEKA.outer} wheel /></group>
       <mesh ref={shield} position={[0, 0.55, 0.05]} material={MATERIALS.haze}><sphereGeometry args={[0.6, 16, 10]} /></mesh>
     </group>
   );
@@ -5135,15 +5255,15 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
       ? figureSpec(kind, name, { role, creature, species, size, looks, modules: moduleFiles.map((m) => ({ name: m.name, geometry: moduleGeo[m.url]! })) })
       : base;
   return (
-    <group scale={large ? 1.5 : 1}>
-      {/* a rider's ring is the mount's */}
+    <group scale={spec.scale ?? (large ? 1.5 : 1)}>
+      {/* a rider's ring is the mount's (a droid's is its size's footprint, whatever it is scaled to) */}
       {!riding && !crew && (
-        <mesh ref={ringMesh} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]}>
+        <mesh ref={ringMesh} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.03, 0]} scale={spec.scale ? (spec.foot ?? 1) / spec.scale : 1}>
           <ringGeometry args={[0.34, 0.44, 24]} />
           <meshBasicMaterial color={ring} />
         </mesh>
       )}
-      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} deployed={fighting} /> : <Mover id={spec.key} build={spec.build} gait={riding ? "ride" : spec.gait} wave={riding ? undefined : spec.wave} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} hold={crew ? "none" : base.hold} saber={base.saber} fighting={fighting} crew={crew} persona={persona} />}
+      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} deployed={fighting} fit={spec.scale} /> : <Mover id={spec.key} build={spec.build} fit={spec.scale} gait={riding ? "ride" : spec.gait} wave={riding ? undefined : spec.wave} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} hold={crew ? "none" : base.hold} saber={base.saber} fighting={fighting} crew={crew} persona={persona} />}
       {marker && (
         <mesh position={[0, Math.max(1.55, spec.height + 0.3), 0]}>
           <octahedronGeometry args={[0.12]} />
