@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { advance, angles, applyPose, bob, bodyOf, carrying, ERRAND, errandAt, errandLength, gaitPose, LIMB, LIMBS, limbMaterial, pose, restPose, rollBall, standing, type Pose } from "../../client/src/components/Map/interiors/limbs";
+import { DEKA, DEKA_LEGS, PARENT, SHIN_OF, advance, angles, applyPose, bob, bodyOf, carrying, ERRAND, errandAt, errandLength, gaitPose, LIMB, LIMBS, limbMaterial, pose, restPose, rollBall, standing, type Pose } from "../../client/src/components/Map/interiors/limbs";
 import { Kit, buildDroid, figureSpec, FINISHES, lookOf } from "../../client/src/components/Map/models";
 
 // The angle a limb's quaternion turns about an axis (signed by that axis)
@@ -63,10 +63,11 @@ test("each gait moves its own limbs: a beast trots in diagonal pairs, a bug in t
   // Wings beat even at rest, the two sides mirrored
   const rest = gaitPose("wings", standing(), 0.3);
   assert.ok(Math.abs(angleOf(rest, LIMB.wingR, "z")) > 0.1 && Math.abs(angleOf(rest, LIMB.wingR, "z") + angleOf(rest, LIMB.wingL, "z")) < 1e-6);
-  // A droideka's three legs lift one after another: never all three at once
+  // A standing droideka's three legs lift one after another: never all three at once
+  const turned = (p: Pose, l: number) => 2 * Math.acos(Math.min(1, Math.abs(p[l * 4 + 3])));
   for (let i = 0; i < 24; i++) {
-    const t = gaitPose("tripod", { ...s, phase: (i / 24) * Math.PI * 2 });
-    const lifted = [LIMB.legR, LIMB.legL, LIMB.hindR].filter((l) => Math.abs(angleOf(t, l, "x")) > 0.05).length;
+    const t = gaitPose("droideka", { ...s, phase: (i / 24) * Math.PI * 2 });
+    const lifted = DEKA_LEGS.filter((leg) => turned(t, leg.thigh) > 0.05).length;
     assert.ok(lifted <= 2, `at most two legs off the ground (${lifted})`);
   }
   // A rider sits astride: the feet out to either side and forward of the hips
@@ -152,7 +153,7 @@ const limbsOf = (build: (k: Kit) => void) => {
   return out;
 };
 
-test("droids and beasts are built for their gaits: a BB's ball rolls, battle droids and beasts have legs that move, a droideka has two forms", () => {
+test("droids and beasts are built for their gaits: a BB's ball rolls, battle droids and beasts have legs that move, a droideka is one model that folds", () => {
   const spec = (kind: string, name: string, extra: Record<string, string> = {}) => figureSpec(kind, name, { looks: {}, ...extra });
   const bb = spec("droid", "BB-8");
   assert.equal(bb.gait, "roll");
@@ -165,14 +166,16 @@ test("droids and beasts are built for their gaits: a BB's ball rolls, battle dro
   assert.equal(spec("droid", "Probe droid").gait, "hover");
   const deka = spec("droid", "Destroyer Droid");
   assert.equal(deka.form, "droideka");
-  assert.ok([LIMB.legR, LIMB.legL, LIMB.hindR].every((l) => limbsOf(deka.build).has(l)), "its three legs");
-  assert.ok(limbsOf((k) => buildDroid(k, "destroyer-ball", "Destroyer Droid")).has(LIMB.roll), "and its wheel");
+  assert.equal(deka.gait, "droideka");
+  assert.ok([LIMB.legR, LIMB.legL, LIMB.hindR, LIMB.shinR, LIMB.shinL, LIMB.shinHR].every((l) => limbsOf(deka.build).has(l)), "its three legs, each with a knee");
+  assert.ok([LIMB.roll, LIMB.armR, LIMB.armL, LIMB.head].every((l) => limbsOf(deka.build).has(l)), "and the wheel, the arms and the head that fold into it, in the same model");
   const bantha = spec("beast", "Bantha", { size: "Huge" });
   assert.equal(bantha.gait, "quad");
   assert.ok([LIMB.legR, LIMB.legL, LIMB.hindR, LIMB.hindL, LIMB.tail].every((l) => limbsOf(bantha.build).has(l)), "four legs and a tail");
   assert.ok(bantha.fur && bantha.fur > 0, "a bantha is furry");
   assert.ok((bantha.seat ?? 0) > 0.6, "and can be sat on");
-  assert.equal(spec("beast", "Acklay").gait, "hexa");
+  assert.equal(spec("beast", "Acklay").gait, "quad", "an acklay walks on its four legs as a quadruped does");
+  assert.equal(spec("beast", "Knobby White Spider").gait, "hexa");
   assert.equal(spec("beast", "Mynock").gait, "wings");
   assert.ok(limbsOf(spec("beast", "Mynock").build).has(LIMB.wingR));
   assert.equal(spec("beast", "Rancor").gait, "walk");
@@ -426,4 +429,80 @@ test("standing acts (2026-11-02): cheering throws both arms up and pumps them; t
   const laid = overlayAct(new Float32Array(walking), cheer, 1);
   assert.deepEqual([...laid.slice(LIMB.legR * 4, LIMB.legR * 4 + 4)], [...walking.slice(LIMB.legR * 4, LIMB.legR * 4 + 4)], "the legs keep walking");
   assert.deepEqual([...laid.slice(LIMB.armR * 4, LIMB.armR * 4 + 4)].map((v) => +v.toFixed(5)), [...cheer.slice(LIMB.armR * 4, LIMB.armR * 4 + 4)].map((v) => +v.toFixed(5)));
+});
+
+// What the shader does to a point: turned about its limb's pivot, then about each joint it hangs from (interiors/limbs.ts limbMaterial)
+function posed(p: THREE.Vector3, limb: number, pose: Pose, pivots: ArrayLike<number>, own: THREE.Vector3): THREE.Vector3 {
+  const turn = (v: THREE.Vector3, l: number, about: THREE.Vector3) => v.sub(about).applyQuaternion(new THREE.Quaternion(pose[l * 4], pose[l * 4 + 1], pose[l * 4 + 2], pose[l * 4 + 3])).add(about);
+  const v = p.clone();
+  if (limb > 0) {
+    turn(v, limb, own);
+    let pa = PARENT[limb];
+    for (let i = 0; i < 3 && pa >= 0; i++) { turn(v, pa, new THREE.Vector3(pivots[pa * 3], pivots[pa * 3 + 1], pivots[pa * 3 + 2])); pa = PARENT[pa]; }
+  }
+  return v;
+}
+
+test("a droideka's legs fold onto a wheel: each thigh along a radius, each plate an arc of the rim, the three plates making the whole circle; standing, they reach the ground", () => {
+  const hub = new THREE.Vector3(...DEKA.hub);
+  const pivots = new Float32Array(LIMBS * 3);
+  for (const leg of DEKA_LEGS) {
+    pivots.set(DEKA.hub, leg.thigh * 3);
+    pivots.set(leg.knee, leg.shin * 3);
+  }
+  const folded = restPose();
+  gaitPose("droideka", standing(), 0, folded, undefined, undefined, 1);
+  const ends: THREE.Vector3[] = [];
+  const starts: THREE.Vector3[] = [];
+  for (const leg of DEKA_LEGS) {
+    const knee = new THREE.Vector3(...leg.knee);
+    const at = (pt: number[]) => posed(new THREE.Vector3(...pt), leg.shin, folded, pivots, knee);
+    const arc = leg.arc.map(at);
+    for (const p of arc) {
+      assert.ok(Math.abs(p.distanceTo(hub) - DEKA.rim) < 1e-4, `on the rim: ${p.distanceTo(hub)}`);
+      assert.ok(Math.abs(p.x - hub.x) < 1e-4, "in the wheel's plane");
+    }
+    // (the knee is where the thigh reaches: on the rim too)
+    const kneeAt = posed(knee.clone(), leg.thigh, folded, pivots, hub);
+    assert.ok(Math.abs(kneeAt.distanceTo(hub) - DEKA.rim) < 1e-4 && arc[0].distanceTo(kneeAt) < 1e-4, "the plate begins where the spoke ends");
+    starts.push(arc[0]);
+    ends.push(arc[arc.length - 1]);
+  }
+  // each plate ends where another begins: a closed ring
+  for (const e of ends) assert.ok(starts.some((p) => p.distanceTo(e) < 1e-4), "no gap in the rim");
+  // the thirds of the circle are different ones
+  const angles = starts.map((p) => Math.round(((Math.atan2(p.y - hub.y, p.z - hub.z) * 180) / Math.PI + 360) % 360));
+  assert.equal(new Set(angles).size, 3);
+  // standing: the plates' ends are on the ground, the knees above them, and nothing is turned
+  const stand = restPose();
+  gaitPose("droideka", standing(), 0, stand);
+  for (const leg of DEKA_LEGS) {
+    const end = leg.arc[leg.arc.length - 1];
+    assert.ok(end[1] > DEKA.tube * 0.9 && end[1] < 0.14, `a foot on the ground: ${end[1]}`);
+    assert.ok(leg.knee[1] > end[1] + 0.3);
+    assert.ok(turned(stand, leg.thigh) < 1e-9 && turned(stand, leg.shin) < 1e-9);
+  }
+  // halfway the parts are between: neither standing nor on the rim
+  const half = restPose();
+  gaitPose("droideka", standing(), 0, half, undefined, undefined, 0.5);
+  assert.ok(turned(half, DEKA_LEGS[0].thigh) > 0.1 && turned(half, DEKA_LEGS[0].thigh) < turned(folded, DEKA_LEGS[0].thigh));
+});
+
+function turned(p: Pose, l: number) { return 2 * Math.acos(Math.min(1, Math.abs(p[l * 4 + 3]))); }
+
+test("a knee hangs from its thigh, and bends as the leg swings through: a biped's, a quadruped's fore and hind legs, in the right pairs", () => {
+  for (const [thigh, shin] of Object.entries(SHIN_OF)) assert.equal(PARENT[shin], Number(thigh), `the shin ${shin} hangs from the thigh ${thigh}`);
+  const s = { phase: 0, amp: 1, speed: 3 };
+  // a walker: the knee of the leg coming forward bends, the other hardly
+  const w = gaitPose("walk", { ...s, phase: Math.PI });
+  assert.ok(angleOf(w, LIMB.shinR, "x") > 0.4 && angleOf(w, LIMB.shinL, "x") < 0.2 && angleOf(w, LIMB.shinL, "x") > 0);
+  const w2 = gaitPose("walk", { ...s, phase: 0 });
+  assert.ok(angleOf(w2, LIMB.shinL, "x") > 0.4 && angleOf(w2, LIMB.shinR, "x") < 0.2);
+  // a quadruped: the diagonal pairs bend together
+  const q = gaitPose("quad", { ...s, phase: Math.PI });
+  assert.ok(angleOf(q, LIMB.shinR, "x") > 0.4 && Math.abs(angleOf(q, LIMB.shinR, "x") - angleOf(q, LIMB.shinHL, "x")) < 1e-6);
+  assert.ok(angleOf(q, LIMB.shinL, "x") < 0.2 && Math.abs(angleOf(q, LIMB.shinL, "x") - angleOf(q, LIMB.shinHR, "x")) < 1e-6);
+  // standing still: no bend at all
+  const still = gaitPose("quad", standing());
+  for (const l of [LIMB.shinR, LIMB.shinL, LIMB.shinHR, LIMB.shinHL]) assert.equal(angleOf(still, l, "x"), 0);
 });

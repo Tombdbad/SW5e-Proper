@@ -5,8 +5,8 @@ import path from "node:path";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { bodyParts, creatureParts, fitBlock, fitLimb, NOMINAL, partsOf, piecesOf, REGIONS, setBodyParts, setCreatureParts, type BodyParts, type CreatureParts, type PartName } from "../../client/src/components/Map/interiors/body";
-import { advance, eased, easeMotion, gaitPose, humanPose, LIMB, LIMBS, motion, NEUTRAL, PARENT, personaOf, restPose, standing, type Pose } from "../../client/src/components/Map/interiors/limbs";
-import { Kit, figureSpec, lookOf, creaturePlan, buildCreature, waveOf } from "../../client/src/components/Map/models";
+import { advance, DEKA, eased, easeMotion, gaitPose, humanPose, LIMB, LIMBS, motion, NEUTRAL, PARENT, personaOf, restPose, standing, type Pose } from "../../client/src/components/Map/interiors/limbs";
+import { Kit, figureSpec, lookOf, creaturePlan, buildCreature, buildDroid, waveOf } from "../../client/src/components/Map/models";
 
 // The sculpted body (tools/blender/build-body.py), read as the browser reads it
 const file = path.resolve(import.meta.dirname, "../../client/public/figures/body.glb");
@@ -440,7 +440,7 @@ test("a krayt dragon stands on feet, a hutt has hands, and a serpent that moves 
   };
   const krayt = bake("krayt dragon", true);
   for (const l of [LIMB.legR, LIMB.legL, LIMB.midR, LIMB.midL, LIMB.hindR, LIMB.hindL]) assert.ok(krayt.jointMask & (1 << l), `krayt limb ${l}`);
-  const sole = lowest(krayt, [LIMB.legR, LIMB.legL, LIMB.midR, LIMB.midL, LIMB.hindR, LIMB.hindL]);
+  const sole = lowest(krayt, [LIMB.shinR, LIMB.shinL, LIMB.shinMR, LIMB.shinML, LIMB.shinHR, LIMB.shinHL]);
   assert.ok(sole < 0.02 && sole > -0.03, `a krayt dragon's feet are on the ground: ${sole}`);
   const hutt = bake("hutt", true);
   for (const l of [LIMB.armR, LIMB.armL, LIMB.foreR, LIMB.foreL]) assert.ok(hutt.jointMask & (1 << l), `hutt limb ${l}`);
@@ -449,4 +449,76 @@ test("a krayt dragon stands on feet, a hutt has hands, and a serpent that moves 
   const spread = (k: Kit) => { let a = Infinity, b = -Infinity; for (const part of k.parts) { const p = part.geo.attributes.position; for (let i = 0; i < p.count; i++) { a = Math.min(a, p.getX(i)); b = Math.max(b, p.getX(i)); } } return b - a; };
   assert.ok(spread(bake("snake", false)) > spread(bake("snake", true)) + 0.1);
   setCreatureParts(null);
+});
+
+// Every vertex of a baked animated model, put where the shader puts it in a pose (turned about its limb's pivot, then about each joint it hangs from)
+function posedVertices(k: Kit, pose: Pose): THREE.Vector3[] {
+  const out: THREE.Vector3[] = [];
+  const q = (l: number) => new THREE.Quaternion(pose[l * 4], pose[l * 4 + 1], pose[l * 4 + 2], pose[l * 4 + 3]);
+  const pivot = (l: number) => new THREE.Vector3(k.pivots[l * 3], k.pivots[l * 3 + 1], k.pivots[l * 3 + 2]);
+  for (const part of k.parts) {
+    const p = part.geo.attributes.position, limb = part.geo.attributes.limb as THREE.BufferAttribute;
+    for (let i = 0; i < p.count; i++) {
+      const v = new THREE.Vector3(p.getX(i), p.getY(i), p.getZ(i));
+      const l = Math.round(limb.getX(i));
+      if (l > 0) {
+        v.sub(pivot(l)).applyQuaternion(q(l)).add(pivot(l));
+        let pa = PARENT[l];
+        for (let n = 0; n < 3 && pa >= 0; n++) { v.sub(pivot(pa)).applyQuaternion(q(pa)).add(pivot(pa)); pa = PARENT[pa]; }
+      }
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+test("a droideka is one model: folded, every part of it lies within its wheel, standing it is upright on its feet, and halfway it is between", () => {
+  const k = new Kit();
+  k.animated = true;
+  buildDroid(k, "destroyer", "Destroyer Droid");
+  const hub = new THREE.Vector3(...DEKA.hub);
+  const folded = restPose();
+  gaitPose("droideka", standing(), 0, folded, NEUTRAL, undefined, 1);
+  const rim = posedVertices(k, folded);
+  const farthest = Math.max(...rim.map((v) => v.distanceTo(hub)));
+  assert.ok(farthest < DEKA.outer + 0.03, `folded, nothing is outside the wheel: ${farthest} against ${DEKA.outer}`);
+  assert.ok(Math.max(...rim.map((v) => Math.abs(v.x))) < 0.2, "and it is a narrow wheel");
+  // the rim is all there: the points of the rim round the wheel are each near some vertex (no gap where a plate should be)
+  for (let a = 0; a < 360; a += 20) {
+    const at = hub.clone().add(new THREE.Vector3(0, Math.sin((a * Math.PI) / 180), Math.cos((a * Math.PI) / 180)).multiplyScalar(DEKA.rim));
+    assert.ok(rim.some((v) => v.distanceTo(at) < 0.09), `a plate of the rim at ${a} degrees`);
+  }
+  const stand = posedVertices(k, restPose());
+  assert.ok(Math.min(...stand.map((v) => v.y)) > -0.03 && Math.min(...stand.map((v) => v.y)) < 0.06, "standing, its feet are on the ground");
+  assert.ok(Math.max(...stand.map((v) => v.y)) > 0.8, "and it is taller than the wheel");
+  // folded it is much lower and smaller than standing; halfway it is in between
+  const half = restPose();
+  gaitPose("droideka", standing(), 0, half, NEUTRAL, undefined, 0.5);
+  const reach = (vs: THREE.Vector3[]) => Math.max(...vs.map((v) => v.distanceTo(hub)));
+  const [rs, rr] = [reach(stand), reach(rim)];
+  assert.ok(rr < rs, `standing reaches further from the hub (${rs}) than folded (${rr})`);
+});
+
+test("beasts and droids with legs have knees: a shin on its own joint under each thigh, with and without the sculpted parts", async () => {
+  const bake = (build: (k: Kit) => void) => { const k = new Kit(); k.animated = true; build(k); return k; };
+  const has = (k: Kit, ...l: number[]) => l.forEach((x) => assert.ok(k.jointMask & (1 << x), `limb ${x}`));
+  const beast = (name: string) => bake((k) => buildCreature(k, creaturePlan(name), 0));
+  const droid = (kind: string) => bake((k) => buildDroid(k, kind, kind));
+  const check = () => {
+    for (const n of ["bantha", "dewback", "nexu"]) has(beast(n), LIMB.shinR, LIMB.shinL, LIMB.shinHR, LIMB.shinHL);
+    has(beast("wampa"), LIMB.shinR, LIMB.shinL);
+    has(beast("kaadu"), LIMB.shinR, LIMB.shinL);
+    has(beast("acklay"), LIMB.shinR, LIMB.shinL, LIMB.shinHR, LIMB.shinHL);
+    has(beast("krayt dragon"), LIMB.shinR, LIMB.shinL, LIMB.shinMR, LIMB.shinML, LIMB.shinHR, LIMB.shinHL);
+    for (const kind of ["b1", "bx", "tactical", "b2", "ig", "hk", "kx", "pit"]) has(droid(kind), LIMB.shinR, LIMB.shinL);
+    for (const kind of ["spider", "generic"]) has(droid(kind), LIMB.shinR, LIMB.shinL, LIMB.shinHR, LIMB.shinHL);
+  };
+  setCreatureParts(null);
+  check();
+  setCreatureParts(await piecesFrom("creature.glb"));
+  check();
+  setCreatureParts(null);
+  // (an acklay walks as a quadruped does; a spider keeps its eight)
+  assert.equal(figureSpec("beast", "Acklay, Adult", { looks: {}, creature: "beast" }).gait, "quad");
+  assert.equal(figureSpec("beast", "Knobby White Spider", { looks: {}, creature: "beast" }).gait, "hexa");
 });

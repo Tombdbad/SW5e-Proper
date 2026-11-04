@@ -19,6 +19,11 @@ Full write-ups in REVIVAL_NOTES.md: "A sculpted body and a person's own way of m
 - New last pose slot `LIMB.wave` (24, `LIMBS` 25): a body's undulation done in both vertex shaders (`WAVE_GLSL` in babylon.ts, used by `limbMaterial` and `LimbPlugin`); `Wave` + `setWave` + `waveOf(plan)`; gaits `slither` and `crawl`; `FigureSpec.wave`. Krayt dragon: legs with thigh and reptile foot, lifted; hutt: `hutt_upper`/`hutt_fore` (hands with fingers) in creature.glb (rebuilt, both sizes); monkey-lizard regex now matches before the lizard's; tests in tests/interiors/body.test.ts (19 pass), tsc and vite build clean.
 - Checked in the browser gallery (`?section=walk&cam=0,16,27&look=0,0,28.5`): the exogorth and snake undulate, the Krayt stands on feet, the hutt has hands, the lizard sprawls. Not seen: the Krayt's legs stepping while it walks, a kaadu's tail wave, in a real campaign. Tune `waveOf` numbers by eye.
 
+## Latest 2 (the user: "quadrupeds and bi-peds, incl. humanoid droids, need knees; the acklay's 4 legs animated as a quadruped; the droideka must be ONE model that folds onto the wheel")
+- Knees: limbs `shinHR/HL/MR/ML` (LIMBS 29, `SHIN_OF`, PARENT); quad, brute, runner, krayt, acklay, bug and the humanoid and four-legged droids are built with a shin on a joint (`kneed`); gaits bend them (walk, quad, crawl, slither). Acklay is on `quad` gait.
+- Droideka: ONE model (`DEKA`, `DEKA_LEGS`, `dekaPose` in limbs.ts; `Droideka` in models.tsx), gait `droideka` (was `tripod`), `destroyer-ball` removed. Gallery `?section=droideka&cam=0,3.2,5.5&look=0,0.4,0.3`. See REVIVAL_NOTES.md "Knees, and a droideka that folds". tests 207 pass, tsc and vite build clean.
+- Not seen: a droideka in a real campaign (its pace and the fold in `Stepper`/follower code in LocalMap.tsx are unchanged); the shadow stays the standing form's while it rolls.
+
 ## Next, in order
 1. Look at it in the browser (gallery `?section=beasts|people|walk`) and in a real campaign, in motion: the brutes and quads walking, the hutt's face, the wings
    (thin; the bat's and manta's are rough), a Wookiee and a Gamorrean close up; tune the bumps and marks in the Blender scripts if a part reads wrong.

@@ -18,16 +18,21 @@ import { gunKick } from "@shared/logic/shooter";
 // A beast (2026-11-04) is jointed a little too: its `chest` carries the neck and, with it, the head (which nods and looks about on its own), the
 // head carries the ears (`earR`, `earL`: they flick and lay back) and the lower jaw (`jaw`: it pants and opens), and the tail has a tip (`tail2`)
 // that follows the rest of it.
+// Knees (2026-11-04, the user: "quadrupeds and bi-peds need knees"): the shin of each leg hangs from its thigh (`shinR`, `shinL` the fore legs'
+// and a biped's, `shinHR`, `shinHL` the hind legs', `shinMR`, `shinML` the middle ones': SHIN_OF) and flexes as the leg swings through. A droideka's
+// whole body hangs from `roll` (its legs, its chest with the arms and the head), which turns it as a wheel once it has folded onto it.
 // The last, `wave`, is no turn at all but a body's undulation (babylon.ts WAVE_GLSL): a serpent's whole length, a lizard's spine and tail, a runner's tail
 // are carried sideways by a wave that travels back along them (`setWave`).
 // A person (2026-10-30, the user: "the lightsabre just waves with no character arm or body movement at all") is jointed further: the trunk
 // above the waist (`chest`, which carries the arms, the head and all worn above it), the forearms below the elbows, the shins below the
 // knees, and what the right hand holds (`weapon`, turned at the wrist). These hang one from another (PARENT): a forearm turns about its
 // elbow and is then carried by its upper arm, which the chest carries; a shin turns about its knee and then with its thigh.
-export const LIMB = { body: 0, legR: 1, legL: 2, armR: 3, armL: 4, hindR: 5, hindL: 6, midR: 7, midL: 8, tail: 9, roll: 10, wingR: 11, wingL: 12, chest: 13, foreR: 14, foreL: 15, shinR: 16, shinL: 17, weapon: 18, head: 19, earR: 20, earL: 21, tail2: 22, jaw: 23, wave: 24 } as const;
-export const LIMBS = 25;
+export const LIMB = { body: 0, legR: 1, legL: 2, armR: 3, armL: 4, hindR: 5, hindL: 6, midR: 7, midL: 8, tail: 9, roll: 10, wingR: 11, wingL: 12, chest: 13, foreR: 14, foreL: 15, shinR: 16, shinL: 17, weapon: 18, head: 19, earR: 20, earL: 21, tail2: 22, jaw: 23, wave: 24, shinHR: 25, shinHL: 26, shinMR: 27, shinML: 28 } as const;
+export const LIMBS = 29;
 // The limb each one hangs from (-1: from the body itself)
-export const PARENT: number[] = [-1, -1, -1, 13, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, 3, 4, 1, 2, 14, 13, 19, 19, 9, 19, -1];
+export const PARENT: number[] = [-1, 10, 10, 13, 13, 10, -1, -1, -1, -1, -1, -1, -1, 10, 3, 4, 1, 2, 14, 13, 19, 19, 9, 19, -1, 5, 6, 7, 8];
+// The shin of each leg
+export const SHIN_OF: Record<number, number> = { [LIMB.legR]: LIMB.shinR, [LIMB.legL]: LIMB.shinL, [LIMB.hindR]: LIMB.shinHR, [LIMB.hindL]: LIMB.shinHL, [LIMB.midR]: LIMB.shinMR, [LIMB.midL]: LIMB.shinML };
 
 // How a stride looks: a leg swings this far forward and back at a walk, an arm a little less, against its leg
 const LEG = 0.62;
@@ -95,12 +100,12 @@ export const bob = (s: Stride) => Math.abs(Math.sin(s.phase)) * 0.035 * s.amp;
 
 // How each kind of body moves. `walk`: two legs and two arms (people, battle and protocol droids, brutes, runners); `quad`: four legs in
 // diagonal pairs, the tail swaying (beasts); `hexa`: six or eight legs in alternating threes (bugs, spider droids); `wings`: wings that
-// beat, faster when it flies on (fliers); `roll`: a ball under a level head (BB units); `tripod`: three legs that step one after another
-// (a deployed droideka); `glide`: no bob, a lean into a turn (astromechs on their treads, mouse and service droids, slugs, serpents);
+// beat, faster when it flies on (fliers); `roll`: a ball under a level head (BB units); `droideka`: three legs that step one after another and fold onto a wheel
+// (a droideka, which is one model); `glide`: no bob, a lean into a turn (astromechs on their treads, mouse and service droids, slugs, serpents);
 // `hover`: floating with a slow rise and fall, tilted into the way it goes (probe droids, spirits)
 // `slither` (2026-11-04): a long body carried by a wave, with legs, if it has any, stepping in threes (serpents, a krayt dragon); `crawl`: four
 // legs that lift and splay outward as they come forward, the spine and the tail waving (lizards)
-export type Gait = "walk" | "quad" | "hexa" | "wings" | "roll" | "tripod" | "glide" | "hover" | "ride" | "slither" | "crawl";
+export type Gait = "walk" | "quad" | "hexa" | "wings" | "roll" | "glide" | "hover" | "ride" | "slither" | "crawl" | "droideka";
 export interface GaitStyle {
   // How fast the legs go round for the same speed
   cycle: number;
@@ -117,7 +122,7 @@ export const GAITS: Record<Gait, GaitStyle> = {
   hexa: { cycle: 1.6, bob: 0.15, rock: 0 },
   wings: { cycle: 1, bob: 0, rock: 0, float: 0.05 },
   roll: { cycle: 1, bob: 0, rock: 0 },
-  tripod: { cycle: 1.8, bob: 0.4, rock: 0.02 },
+  droideka: { cycle: 1.8, bob: 0.3, rock: 0.02 },
   glide: { cycle: 1, bob: 0, rock: 0.025 },
   slither: { cycle: 1.4, bob: 0, rock: 0 },
   crawl: { cycle: 0.9, bob: 0.3, rock: 0.02 },
@@ -146,7 +151,7 @@ export function setLimbQuaternion(p: Pose, limb: number, q: THREE.Quaternion) {
 
 // The pose of a gait at a point of its stride; `t` is the seconds the figure has been about (for wings that beat at rest and a float).
 // A ball's roll is not here: it follows the ground covered (`rollBall`)
-export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose(), persona: Persona = NEUTRAL, wave?: Wave): Pose {
+export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose(), persona: Persona = NEUTRAL, wave?: Wave, fold = 0): Pose {
   const swing = Math.sin(s.phase) * s.amp;
   const counter = Math.sin(s.phase + Math.PI) * s.amp;
   const reset = (limb: number) => out.set([0, 0, 0, 1], limb * 4);
@@ -156,6 +161,9 @@ export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose(), p
       const a = angles(s);
       for (const limb of [LIMB.legR, LIMB.legL, LIMB.armR, LIMB.armL]) setLimb(out, limb, AXIS.x, a[limb]);
       setLimb(out, LIMB.tail, AXIS.y, Math.sin(s.phase) * 0.25 * s.amp);
+      // (the knees bend as each leg swings through)
+      setLimb(out, LIMB.shinR, AXIS.x, s.amp * (0.12 + 0.6 * Math.max(0, -Math.cos(s.phase))));
+      setLimb(out, LIMB.shinL, AXIS.x, s.amp * (0.12 + 0.6 * Math.max(0, Math.cos(s.phase))));
       creatureLife(out, s, t, persona, 0.6);
       break;
     }
@@ -165,6 +173,15 @@ export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose(), p
       setLimb(out, LIMB.hindL, AXIS.x, swing * 0.5);
       setLimb(out, LIMB.legL, AXIS.x, counter * 0.5);
       setLimb(out, LIMB.hindR, AXIS.x, counter * 0.5);
+      // (each knee bends as its leg comes forward: the diagonal pairs together)
+      const bend = (flip: number) => s.amp * (0.1 + 0.85 * Math.max(0, -Math.cos(s.phase + flip)));
+      setLimb(out, LIMB.shinR, AXIS.x, bend(0));
+      setLimb(out, LIMB.shinHL, AXIS.x, bend(0));
+      setLimb(out, LIMB.shinL, AXIS.x, bend(Math.PI));
+      setLimb(out, LIMB.shinHR, AXIS.x, bend(Math.PI));
+      // (a mantis's forelimbs, folded, sway a little)
+      setLimb(out, LIMB.armR, AXIS.x, Math.sin(t * 1.1 + persona.phase) * 0.08);
+      setLimb(out, LIMB.armL, AXIS.x, Math.sin(t * 1.1 + persona.phase + 1.6) * 0.08);
       setLimb(out, LIMB.tail, AXIS.y, Math.sin(s.phase * 0.5 + t * 0.6) * (0.12 + 0.25 * s.amp));
       creatureLife(out, s, t, persona, 1);
       break;
@@ -198,16 +215,9 @@ export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose(), p
       setLimb(out, LIMB.tail, AXIS.x, Math.sin(t * 3) * 0.08);
       break;
     }
-    case "tripod": {
-      // Three legs (the right, the left and the one behind, marked legR, legL and hindR), lifted and set down in turn: a slow, careful step
-      const step = (offset: number) => Math.max(0, Math.sin(s.phase + offset)) * s.amp;
-      setLimb(out, LIMB.legR, AXIS.x, -step(0) * 0.45);
-      setLimb(out, LIMB.legL, AXIS.x, -step((2 * Math.PI) / 3) * 0.45);
-      setLimb(out, LIMB.hindR, AXIS.x, step((4 * Math.PI) / 3) * 0.45);
-      setLimb(out, LIMB.armR, AXIS.x, Math.sin(t * 0.8) * 0.04);
-      setLimb(out, LIMB.armL, AXIS.x, Math.sin(t * 0.8 + 1) * 0.04);
+    case "droideka":
+      dekaPose(out, fold, s, t, persona);
       break;
-    }
     case "ride":
       for (const [limb, side] of [[LIMB.legR, -1], [LIMB.legL, 1]] as const) {
         Q.setFromEuler(RIDE_E.set(-0.75, 0, side * 0.55));
@@ -261,8 +271,78 @@ function crawlLegs(out: Pose, s: Stride, sets: number[][], reach: number, splay:
     for (const limb of set) {
       Q.setFromEuler(CRAWL_E.set(swing * reach, 0, (LEFT_LIMBS.has(limb) ? 1 : -1) * lift * splay));
       setLimbQuaternion(out, limb, Q);
+      // (and the knee bends as it comes forward)
+      if (SHIN_OF[limb] !== undefined) setLimb(out, SHIN_OF[limb], AXIS.x, s.amp * 0.1 + lift * 0.9);
     }
   });
+}
+
+// ---- A droideka (destroyer droid) --------------------------------------------------------------------------------------------------------
+// One model that folds onto its wheel (2026-11-04, the user: "the droidekaa switching from wheel to standing spawns a different model, this is WRONG:
+// the component parts actuate and fold onto the wheel shape"). Standing, three legs go out and down from the hub, each a spoke (the thigh) to a
+// knee and a curved plate (the shin: an arc of the wheel's own radius, a third of its circle) hanging from it; folded, each thigh swings round
+// to lie along a radius and each shin about its knee onto the rim, the three plates making the whole ring, the thighs its spokes; the arms
+// (which point forward on the legs' side) fold down into the wheel and the head and the body stay in the hub. The whole of it hangs from `roll`,
+// which turns the wheel. The rotations are worked out here from the two shapes (the thigh turns the spoke onto its radius, the shin the plate
+// onto its arc), so the parts the model draws and the pose that folds them cannot disagree.
+export const DEKA = { hub: [0, 0.74, 0] as [number, number, number], rim: 0.3, tube: 0.06, outer: 0.36, lift: 0.38 };
+export interface DekaLeg { thigh: number; shin: number; phi: number; knee: [number, number, number]; arc: [number, number, number][]; qThigh: THREE.Quaternion; qShin: THREE.Quaternion; axis: THREE.Vector3 }
+const v3 = (v: THREE.Vector3): [number, number, number] => [v.x, v.y, v.z];
+export const DEKA_LEGS: DekaLeg[] = (() => {
+  const hub = new THREE.Vector3(...DEKA.hub);
+  const R = DEKA.rim;
+  const e = (28 * Math.PI) / 180;
+  const up = new THREE.Vector3(0, 1, 0);
+  // (the leg behind, the right fore and the left fore; where on the rim each one's plate begins when folded, in degrees from the front over the top)
+  const legs = [[LIMB.hindR, LIMB.shinHR, Math.PI, 120], [LIMB.legR, LIMB.shinR, (Math.PI * 5) / 3, 240], [LIMB.legL, LIMB.shinL, Math.PI / 3, 0]] as const;
+  return legs.map(([thigh, shin, phi, deg]) => {
+    const u = new THREE.Vector3(Math.sin(phi), 0, Math.cos(phi));
+    const spoke = u.clone().multiplyScalar(Math.cos(e)).addScaledVector(up, -Math.sin(e));
+    const knee = hub.clone().addScaledVector(spoke, R);
+    // (the plate hangs straight down from the knee, bowed outward: an arc of 120 degrees about a centre inside and below the knee)
+    const centre = knee.clone().addScaledVector(up, -R * Math.sin(Math.PI / 3)).addScaledVector(u, -R * 0.5);
+    const arc: [number, number, number][] = [];
+    for (let i = 0; i <= 12; i++) {
+      const th = Math.PI / 3 - ((Math.PI * 2) / 3) * (i / 12);
+      arc.push(v3(centre.clone().addScaledVector(u, R * Math.cos(th)).addScaledVector(up, R * Math.sin(th))));
+    }
+    const aS = u.clone().multiplyScalar(0.5).addScaledVector(up, Math.sin(Math.PI / 3));
+    const tS = u.clone().multiplyScalar(Math.sin(Math.PI / 3)).addScaledVector(up, -0.5);
+    const psi = (deg * Math.PI) / 180;
+    const aF = new THREE.Vector3(0, Math.sin(psi), Math.cos(psi));
+    const tF = new THREE.Vector3(0, Math.cos(psi), -Math.sin(psi));
+    const qThigh = new THREE.Quaternion().setFromUnitVectors(spoke, aF);
+    // (the plate's frame at the knee, as it hangs and as it lies on the rim: the rotation between them, less the thigh's, is the knee's)
+    const mS = new THREE.Matrix4().makeBasis(aS, tS, aS.clone().cross(tS));
+    const mF = new THREE.Matrix4().makeBasis(aF, tF, aF.clone().cross(tF));
+    const qAll = new THREE.Quaternion().setFromRotationMatrix(mF.multiply(mS.clone().transpose()));
+    const qShin = qThigh.clone().invert().multiply(qAll);
+    return { thigh, shin, phi, knee: v3(knee), arc, qThigh, qShin, axis: new THREE.Vector3(Math.cos(phi), 0, -Math.sin(phi)) };
+  });
+})();
+const DEKA_Q = new THREE.Quaternion();
+const DEKA_S = new THREE.Quaternion();
+const DEKA_ID = new THREE.Quaternion();
+const DEKA_E = new THREE.Euler();
+// `fold`: 0 standing, 1 a wheel. Standing, the legs lift one after another (a slow, careful step: each thigh lifts, its knee tucking the plate up).
+export function dekaPose(out: Pose, fold: number, s: Stride, t: number, persona: Persona = NEUTRAL) {
+  const stand = 1 - fold;
+  DEKA_LEGS.forEach((leg, i) => {
+    const lift = Math.max(0, Math.sin(s.phase + i * 2.094)) * s.amp * stand;
+    DEKA_Q.slerpQuaternions(DEKA_ID, leg.qThigh, fold);
+    DEKA_Q.premultiply(DEKA_S.setFromAxisAngle(leg.axis, -lift * 0.4));
+    setLimbQuaternion(out, leg.thigh, DEKA_Q);
+    DEKA_Q.slerpQuaternions(DEKA_ID, leg.qShin, fold);
+    DEKA_Q.premultiply(DEKA_S.setFromAxisAngle(leg.axis, -lift * 0.9));
+    setLimbQuaternion(out, leg.shin, DEKA_Q);
+  });
+  // The arms point forward on the legs' side, swaying a little; folded they hang down inside the wheel, the head bowed
+  for (const [limb, own] of [[LIMB.armR, 0], [LIMB.armL, 1.4]] as const) {
+    Q.setFromEuler(DEKA_E.set(fold * 1.5 + stand * Math.sin(t * 0.8 + own + persona.phase) * 0.04, 0, 0));
+    setLimbQuaternion(out, limb, Q);
+  }
+  Q.setFromEuler(DEKA_E.set(fold * 0.35, 0, 0));
+  setLimbQuaternion(out, LIMB.head, Q);
 }
 
 // The life of a beast over its gait (2026-11-04: it stood and walked like a toy): the breath lifting its neck, the head dipping with each fore

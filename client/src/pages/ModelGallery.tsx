@@ -333,6 +333,28 @@ function Moves({ only }: { only?: string }) {
   );
 }
 
+// A droideka (one model that folds onto its wheel: models.tsx Droideka) circling at a run, so it is rolled up, with another standing in a fight
+// beside it, and one that walks to and fro in the middle, stopping at each end to unfold (`?section=droideka&cam=0,3,6&look=0,0.4,0`)
+function Circler({ radius, speed, children }: { radius: number; speed: number; children: ReactNode }) {
+  const g = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (!g.current) return;
+    const a = (clock.getElapsedTime() * speed) / radius;
+    g.current.position.set(Math.sin(a) * radius, 0, Math.cos(a) * radius);
+    g.current.rotation.y = a + Math.PI / 2;
+  });
+  return <group ref={g}>{children}</group>;
+}
+function Droidekas() {
+  return (
+    <>
+      <Circler radius={2.6} speed={3}><Figure kind="droid" ring={SIDE_COLORS.hostile} name="Destroyer Droid" creature="droid" /></Circler>
+      <group position={[-0.9, 0, 0]}><Figure kind="droid" ring={SIDE_COLORS.hostile} name="Destroyer Droid" creature="droid" fighting /></group>
+      <Pacer z={1.4} speed={0.5}><Figure kind="droid" ring={SIDE_COLORS.hostile} name="Destroyer Droid" creature="droid" /></Pacer>
+    </>
+  );
+}
+
 function Walk() {
   const people: [string, string, string][] = [["Navy Trooper", "trooper", "Human"], ["Zara", "merchant", "Twi'lek"], ["Kel", "scout", "Wookiee"], ["Mira", "player", "Human"]];
   return (
@@ -554,6 +576,7 @@ export default function ModelGallery() {
         {section === "water" && <Water />}
         {section === "packs" && <Packs />}
         {section === "walk" && <Walk />}
+        {section === "droideka" && <Droidekas />}
         {section === "moves" && <Moves only={query.get("act") ?? undefined} />}
         {section === "table" && <Table cycle={query.get("hold") !== "1"} />}
         {section === "gear" && <Gear loadout={query.get("loadout") ?? "heavy"} />}

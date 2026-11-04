@@ -12,7 +12,7 @@ import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
-import { advance, personaOf, type Persona, type Wave, bob, LIMB, LIMBS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
+import { advance, personaOf, type Persona, type Wave, bob, LIMB, LIMBS, SHIN_OF, DEKA, DEKA_LEGS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
 import { bodyParts, useBodyParts, creatureParts, useCreatureParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
@@ -3469,6 +3469,21 @@ export function droidKind(name: string): string {
   return "generic";
 }
 
+// A leg in two pieces on two joints (2026-11-04, the user: "quadrupeds and bi-peds need knees"): the thigh hangs from the hip on `limb`, the shin from
+// the knee on its shin limb (interiors/limbs.ts SHIN_OF), which bends as the leg swings through. `radius` over the whole leg; `shoe` draws what is on the
+// foot (in the shin's limb)
+function kneed(k: Kit, limb: number, hip: V3, knee: V3, foot: V3, radius: number | ((t: number) => number), color: string, o: { along?: number; around?: number; finish?: Finish } = {}, shoe?: () => void) {
+  const part = (a: number, b: number) => (typeof radius === "number" ? radius : (t: number) => radius(a + (b - a) * t));
+  k.limb(limb, hip, () => {
+    k.tube([hip, knee], part(0, 0.5), color, { ...o, along: o.along ?? 4 });
+    k.sphere((typeof radius === "number" ? radius : radius(0.5)) * 1.08, color, { at: knee, finish: o.finish, seg: [6, 5] });
+    k.limb(SHIN_OF[limb], knee, () => {
+      k.tube([knee, foot], part(0.5, 1), color, { ...o, along: o.along ?? 4 });
+      shoe?.();
+    });
+  });
+}
+
 // The limb of a leg that stands out from a body at an angle round it (x = sin, z = cos): fore or hind, left or right
 const quarterLeg = (a: number) => (Math.cos(a) > 0 ? (Math.sin(a) > 0 ? LIMB.legL : LIMB.legR) : Math.sin(a) > 0 ? LIMB.hindL : LIMB.hindR);
 
@@ -3534,10 +3549,7 @@ function droidBody(k: Kit, kind: string, name: string) {
       const tan = kind === "bx" ? "#4a4a42" : kind === "tactical" ? "#5a6f9a" : "#c9b48a";
       const thick = kind === "bx" ? 1.5 : 1;
       k.pair((s) => {
-        k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.07, 0.56, 0], () => {
-          k.tube([[s * 0.07, 0.56, 0], [s * 0.08, 0.3, 0.03], [s * 0.07, 0.06, -0.01]], 0.022 * thick, tan, { along: 6, around: 6, finish: "sheen" });
-          k.box([0.06, 0.04, 0.16], tan, { at: [s * 0.07, 0.03, 0.03], round: 0.015, finish: "sheen" });
-        });
+        kneed(k, s > 0 ? LIMB.legL : LIMB.legR, [s * 0.07, 0.56, 0], [s * 0.08, 0.3, 0.03], [s * 0.07, 0.06, -0.01], 0.022 * thick, tan, { along: 4, around: 6, finish: "sheen" }, () => k.box([0.06, 0.04, 0.16], tan, { at: [s * 0.07, 0.03, 0.03], round: 0.015, finish: "sheen" }));
         k.tube([[s * 0.15, 0.86, 0], [s * 0.18, 0.66, 0.05], [s * 0.12, 0.55, 0.2]], 0.02 * thick, tan, { along: 6, around: 6, finish: "sheen" });
       });
       k.box([0.14, 0.12, 0.1], tan, { at: [0, 0.6, 0], round: 0.03, finish: "sheen" });
@@ -3554,10 +3566,7 @@ function droidBody(k: Kit, kind: string, name: string) {
     case "b2": {
       const blue = "#5a6a7f";
       k.pair((s) => {
-        k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.1, 0.56, 0], () => {
-          k.tube([[s * 0.1, 0.56, 0], [s * 0.12, 0.3, 0.04], [s * 0.1, 0.06, 0]], 0.045, blue, { along: 6, around: 7, finish: "sheen" });
-          k.box([0.1, 0.06, 0.2], blue, { at: [s * 0.1, 0.03, 0.04], round: 0.02, finish: "sheen" });
-        });
+        kneed(k, s > 0 ? LIMB.legL : LIMB.legR, [s * 0.1, 0.56, 0], [s * 0.12, 0.3, 0.04], [s * 0.1, 0.06, 0], 0.045, blue, { along: 4, around: 7, finish: "sheen" }, () => k.box([0.1, 0.06, 0.2], blue, { at: [s * 0.1, 0.03, 0.04], round: 0.02, finish: "sheen" }));
         k.tube([[s * 0.24, 0.92, 0], [s * 0.28, 0.72, 0.05], [s * 0.24, 0.58, 0.16]], 0.05, blue, { along: 6, around: 7, finish: "sheen" });
         k.box([0.1, 0.12, 0.22], shade(blue, 0.8), { at: [s * 0.24, 0.56, 0.2], round: 0.03, finish: "sheen" });
       });
@@ -3568,37 +3577,35 @@ function droidBody(k: Kit, kind: string, name: string) {
       return;
     }
     case "destroyer": {
-      // Three legs under a curved body, the head between its arms, a shield's shimmer round it
+      // ONE model that folds onto its wheel (2026-11-04; interiors/limbs.ts DEKA): standing, three legs go out and down from the hub, each a spoke (the
+      // thigh) to a knee and a curved plate (the shin) hanging from it; folded, the thighs lie along radii as the wheel's spokes and the plates, each
+      // a third of the circle, make its rim, the arms fold down inside it and the head and body stay in the hub. All of it hangs from `roll`, which
+      // turns the wheel. (The shield's shimmer is not in the model: Droideka draws it round the standing one.)
       const bronze = "#7a6a4a";
-      // The legs: the one behind, the right and the left (they step in turn: the tripod gait)
-      for (let i = 0; i < 3; i++) {
-        const a = i * 2.094 + Math.PI;
-        k.limb([LIMB.hindR, LIMB.legR, LIMB.legL][i], [Math.sin(a) * 0.05, 0.62, Math.cos(a) * 0.05], () => {
-          k.tube([[Math.sin(a) * 0.05, 0.62, Math.cos(a) * 0.05], [Math.sin(a) * 0.25, 0.42, Math.cos(a) * 0.25], [Math.sin(a) * 0.32, 0.02, Math.cos(a) * 0.32]], 0.03, bronze, { along: 8, around: 6, finish: "sheen" });
-          k.cone(0.045, 0.06, shade(bronze, 0.7), { at: [Math.sin(a) * 0.32, 0.03, Math.cos(a) * 0.32], seg: 8, finish: "sheen" });
+      const hub: V3 = [...DEKA.hub];
+      const hy = hub[1];
+      k.limb(LIMB.roll, hub, () => {
+        for (const leg of DEKA_LEGS) {
+          k.limb(leg.thigh, hub, () => {
+            k.tube([hub, leg.knee], 0.035, bronze, { along: 4, around: 6, finish: "sheen" });
+            k.sphere(0.055, shade(bronze, 0.7), { at: leg.knee, finish: "sheen", seg: [8, 6] });
+            k.limb(leg.shin, leg.knee, () => {
+              k.tube(leg.arc, DEKA.tube, bronze, { along: 16, around: 8, finish: "sheen" });
+              k.sphere(0.065, shade(bronze, 0.6), { at: leg.arc[leg.arc.length - 1], finish: "sheen", seg: [8, 6] });
+            });
+          });
+        }
+        k.sphere(0.13, shade(bronze, 0.8), { at: hub, finish: "sheen", seg: [12, 8] });
+        k.torus(0.16, 0.07, bronze, { at: [0, hy + 0.04, -0.02], rot: [0, Math.PI / 2, 0], arc: Math.PI * 1.3, finish: "sheen", seg: [10, 18] });
+        k.limb(LIMB.head, [0, hy + 0.04, 0.06], () => {
+          k.capsule(0.09, 0.14, bronze, { at: [0, hy + 0.06, 0.12], rot: [Math.PI / 2, 0, 0], finish: "sheen" });
+          k.pair((s) => k.sphere(0.018, "#ff5a3a", { at: [s * 0.04, hy + 0.1, 0.2], finish: "glow", seg: [6, 4] }));
         });
-      }
-      k.torus(0.18, 0.08, bronze, { at: [0, 0.8, -0.02], rot: [0, Math.PI / 2, 0], arc: Math.PI * 1.3, finish: "sheen", seg: [10, 18] });
-      k.capsule(0.09, 0.14, bronze, { at: [0, 0.82, 0.12], rot: [Math.PI / 2, 0, 0], finish: "sheen" });
-      k.pair((s) => k.limb(s > 0 ? LIMB.armL : LIMB.armR, [s * 0.12, 0.85, 0], () => {
-        k.tube([[s * 0.12, 0.85, 0], [s * 0.2, 0.75, 0.12], [s * 0.16, 0.7, 0.3]], 0.03, bronze, { along: 6, around: 6, finish: "sheen" });
-        k.cyl(0.025, 0.14, "#15171b", { at: [s * 0.16, 0.7, 0.38], rot: [Math.PI / 2, 0, 0], seg: 8 });
-      }));
-      k.sphere(0.6, "#7fd0ff", { at: [0, 0.55, 0.05], finish: "haze", seg: [16, 10] });
-      return;
-    }
-    case "destroyer-ball": {
-      // Rolled up (the book's ball form): a bronze wheel on its edge, the curved back plate outside, the head and arms folded in; it
-      // rolls on (LIMB.roll, about its axle)
-      const bronze = "#7a6a4a";
-      k.limb(LIMB.roll, [0, 0.34, 0], () => {
-        k.torus(0.27, 0.075, bronze, { at: [0, 0.34, 0], rot: [0, Math.PI / 2, 0], seg: [10, 28], finish: "sheen" });
-        k.pair((s) => {
-          k.cyl(0.25, 0.04, shade(bronze, 0.82), { at: [s * 0.06, 0.34, 0], rot: [0, 0, Math.PI / 2], seg: 22, finish: "sheen" });
-          k.cyl(0.08, 0.05, shade(bronze, 0.6), { at: [s * 0.08, 0.34, 0], rot: [0, 0, Math.PI / 2], seg: 12, finish: "sheen" });
-          for (let i = 0; i < 6; i++) k.box([0.02, 0.05, 0.16], shade(bronze, 0.7), { at: [s * 0.085, 0.34 + Math.sin(i * 1.047) * 0.16, Math.cos(i * 1.047) * 0.16], rot: [i * 1.047, 0, 0], finish: "sheen" });
-        });
-        for (let i = 0; i < 8; i++) k.box([0.13, 0.02, 0.05], shade(bronze, 0.9), { at: [0, 0.34 + Math.sin(i * 0.785) * 0.34, Math.cos(i * 0.785) * 0.34], rot: [-i * 0.785, 0, 0], finish: "sheen" });
+        // The arms point forward from the shoulders, each with its twin blasters, and fold straight down inside the wheel
+        k.pair((s) => k.limb(s > 0 ? LIMB.armL : LIMB.armR, [s * 0.12, hy + 0.08, 0.02], () => {
+          k.tube([[s * 0.12, hy + 0.08, 0.02], [s * 0.16, hy + 0.04, 0.12], [s * 0.15, hy + 0.02, 0.2]], 0.03, bronze, { along: 6, around: 6, finish: "sheen" });
+          k.cyl(0.022, 0.1, "#15171b", { at: [s * 0.15, hy + 0.02, 0.25], rot: [Math.PI / 2, 0, 0], seg: 8 });
+        }));
       });
       return;
     }
@@ -3631,7 +3638,7 @@ function droidBody(k: Kit, kind: string, name: string) {
       k.sphere(0.02, C.red, { at: [0, 0.13, 0.19], finish: "glow", seg: [6, 4] });
       return;
     case "pit":
-      k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.06, 0.36, 0], () => k.tube([[s * 0.06, 0.36, 0], [s * 0.1, 0.18, 0.05], [s * 0.08, 0.02, 0]], 0.02, "#a8763a", { along: 6, around: 5, finish: "sheen" })));
+      k.pair((s) => kneed(k, s > 0 ? LIMB.legL : LIMB.legR, [s * 0.06, 0.36, 0], [s * 0.1, 0.18, 0.05], [s * 0.08, 0.02, 0], 0.02, "#a8763a", { along: 4, around: 5, finish: "sheen" }));
       k.box([0.12, 0.18, 0.1], "#a8763a", { at: [0, 0.44, 0], round: 0.03, finish: "sheen" });
       k.cyl(0.16, 0.04, "#a8763a", { at: [0, 0.6, 0.02], rot: [0.3, 0, 0], seg: 18, finish: "sheen" });
       k.sphere(0.03, C.red, { at: [0, 0.6, 0.12], finish: "glow", seg: [6, 4] });
@@ -3653,10 +3660,7 @@ function droidBody(k: Kit, kind: string, name: string) {
       const frame = kind === "ig" ? "#5a5f66" : kind === "hk" ? "#8a4a3a" : "#24272b";
       k.group(undefined, undefined, kind === "kx" ? 1.2 : 1.1, () => {
         k.pair((s) => {
-          k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.07, 0.56, 0], () => {
-            k.tube([[s * 0.07, 0.56, 0], [s * 0.09, 0.3, 0.04], [s * 0.07, 0.06, 0]], 0.025, frame, { along: 6, around: 6, finish: "sheen" });
-            k.box([0.06, 0.04, 0.16], frame, { at: [s * 0.07, 0.02, 0.03], round: 0.015, finish: "sheen" });
-          });
+          kneed(k, s > 0 ? LIMB.legL : LIMB.legR, [s * 0.07, 0.56, 0], [s * 0.09, 0.3, 0.04], [s * 0.07, 0.06, 0], 0.025, frame, { along: 4, around: 6, finish: "sheen" }, () => k.box([0.06, 0.04, 0.16], frame, { at: [s * 0.07, 0.02, 0.03], round: 0.015, finish: "sheen" }));
           k.limb(s > 0 ? LIMB.armL : LIMB.armR, [s * 0.17, 0.9, 0], () => k.tube([[s * 0.17, 0.9, 0], [s * 0.21, 0.66, 0.0], [s * 0.2, 0.46, 0.06]], 0.022, frame, { along: 6, around: 6, finish: "sheen" }));
         });
         k.lathe([[0.1, 0.52], [0.12, 0.6], [0.16, 0.78], [0.19, 0.9], [0.06, 0.96]], frame, { seg: 12, finish: "sheen", scale: [1, 1, 0.65] });
@@ -3676,7 +3680,7 @@ function droidBody(k: Kit, kind: string, name: string) {
       k.sphere(0.24, "#5a5f58", { at: [0, 0.7, 0], seg: [16, 12], finish: "sheen" });
       for (let i = 0; i < 4; i++) {
         const a = i * 1.571 + 0.785;
-        k.limb(quarterLeg(a), [Math.sin(a) * 0.15, 0.65, Math.cos(a) * 0.15], () => k.tube([[Math.sin(a) * 0.15, 0.65, Math.cos(a) * 0.15], [Math.sin(a) * 0.4, 0.75, Math.cos(a) * 0.4], [Math.sin(a) * 0.5, 0.02, Math.cos(a) * 0.5]], 0.03, "#3a3f38", { along: 8, around: 6, finish: "sheen" }));
+        kneed(k, quarterLeg(a), [Math.sin(a) * 0.15, 0.65, Math.cos(a) * 0.15], [Math.sin(a) * 0.4, 0.75, Math.cos(a) * 0.4], [Math.sin(a) * 0.5, 0.02, Math.cos(a) * 0.5], 0.03, "#3a3f38", { along: 5, around: 6, finish: "sheen" });
       }
       k.cyl(0.03, 0.5, "#15171b", { at: [0, 0.7, 0.35], rot: [Math.PI / 2, 0, 0], seg: 8 });
       k.sphere(0.04, C.red, { at: [0, 0.78, 0.2], finish: "glow", seg: [6, 4] });
@@ -3703,7 +3707,7 @@ function droidBody(k: Kit, kind: string, name: string) {
       k.sphere(0.028, C.amber, { at: [0.09, 0.84, 0.2], finish: "glow", seg: [8, 6] });
       for (let i = 0; i < 4; i++) {
         const a = i * 1.571 + 0.785;
-        k.limb(quarterLeg(a), [Math.sin(a) * 0.1, 0.7, Math.cos(a) * 0.1], () => k.tube([[Math.sin(a) * 0.1, 0.7, Math.cos(a) * 0.1], [Math.sin(a) * 0.24, 0.4, Math.cos(a) * 0.24], [Math.sin(a) * 0.26, 0.02, Math.cos(a) * 0.26]], 0.022, metal, { along: 6, around: 5, finish: "sheen" }));
+        kneed(k, quarterLeg(a), [Math.sin(a) * 0.1, 0.7, Math.cos(a) * 0.1], [Math.sin(a) * 0.24, 0.4, Math.cos(a) * 0.24], [Math.sin(a) * 0.26, 0.02, Math.cos(a) * 0.26], 0.022, metal, { along: 4, around: 5, finish: "sheen" });
       }
       k.cyl(0.008, 0.3, metal, { at: [0.06, 1.15, 0], seg: 4 });
     }
@@ -3863,18 +3867,23 @@ function quadruped(k: Kit, p: Extract<Plan, { plan: "quad" }>, seed: number) {
     k.pair((s) => {
       const x = s * girth * 0.72;
       const knee: V3 = [x * 1.05, h * 0.5, z + (r === 0 ? 0.03 : -0.05)];
-      k.limb(s > 0 ? left : right, [x, y - girth * 0.2, z], () => {
+      const limb = s > 0 ? left : right;
+      const hip: V3 = [x, y - girth * 0.2, z];
+      // (the thigh from the hip, the shin and foot from the knee: it bends there as the leg swings through)
+      k.limb(limb, hip, () => {
         if (thigh && shin) {
           const hide = r === 0 ? color : shade(color, 0.95);
           const bulk = (girth / 0.3) * (r === 0 ? 1 : 1.1);
-          const hip: V3 = [x, y - girth * 0.2, z];
           const ankle: V3 = [x, 0.08, z];
           sculpt(k, thigh.part, { 0: { color: hide } }, (g) => fitLimb(g, { from: hip, to: knee, nominal: 0.25, bulk }));
-          sculpt(k, shin.part, { 0: { color: hide }, 1: { color: kind === "hoof" ? "#2a2420" : shade(color, 0.5) } }, (g) => fitLimb(g, { from: knee, to: ankle, nominal: 0.23, bulk }));
+          k.limb(SHIN_OF[limb], knee, () => sculpt(k, shin.part, { 0: { color: hide }, 1: { color: kind === "hoof" ? "#2a2420" : shade(color, 0.5) } }, (g) => fitLimb(g, { from: knee, to: ankle, nominal: 0.23, bulk })));
           return;
         }
-        k.tube([[x, y - girth * 0.2, z], knee, [x, 0.05, z]], (t) => girth * (0.36 - t * 0.18), r === 0 ? color : shade(color, 0.95), { along: 8, around: 7 });
-        k.cyl(girth * 0.2, 0.06, "#2a2420", { at: [x, 0.03, z + 0.01], seg: 8 });
+        k.tube([hip, knee], (t) => girth * (0.36 - t * 0.09), r === 0 ? color : shade(color, 0.95), { along: 5, around: 7 });
+        k.limb(SHIN_OF[limb], knee, () => {
+          k.tube([knee, [x, 0.05, z]], (t) => girth * (0.27 - t * 0.09), r === 0 ? color : shade(color, 0.95), { along: 5, around: 7 });
+          k.cyl(girth * 0.2, 0.06, "#2a2420", { at: [x, 0.03, z + 0.01], seg: 8 });
+        });
       });
     });
   }
@@ -4006,19 +4015,26 @@ function brute(k: Kit, p: Extract<Plan, { plan: "brute" }>, seed: number) {
   const beasts = creatureParts();
   const parts = beasts?.brute_torso && beasts.brute_upper && beasts.brute_fore && beasts.quad_thigh && beasts.brute_leg ? beasts : undefined;
   const bone = "#e8dcc0";
-  k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.16 * b, 0.42, -0.05], () => {
-    if (parts) {
-      const hip: V3 = [s * 0.16 * b, 0.42, -0.05];
-      const knee: V3 = [s * 0.19 * b, 0.24, 0.07];
-      const ankle: V3 = [s * 0.17 * b, 0.055, -0.02];
-      sculpt(k, parts.quad_thigh.part, { 0: { color: c } }, (g) => fitLimb(g, { from: hip, to: knee, nominal: 0.25, bulk: b }));
-      sculpt(k, parts.brute_leg.part, { 0: { color: c }, 1: { color: bone, finish: "matte" } }, (g) => fitLimb(g, { from: knee, to: ankle, nominal: 0.23, bulk: b }));
-      return;
-    }
-    k.tube([[s * 0.16 * b, 0.42, -0.05], [s * 0.19 * b, 0.24, 0.07], [s * 0.17 * b, 0.05, -0.02]], (t) => (0.1 - t * 0.04) * b, c, { along: 8, around: 8 });
-    k.box([0.14 * b, 0.07, 0.22 * b], skin, { at: [s * 0.17 * b, 0.035, 0.04], round: 0.03 });
-    for (let i = -1; i <= 1; i++) k.cone(0.018, 0.06, "#e8dcc0", { at: [s * 0.17 * b + i * 0.04, 0.03, 0.16 * b], rot: [Math.PI / 2, 0, 0], seg: 4 });
-  }));
+  // (the thigh from the hip, the leg and its clawed foot from the knee, which bends as the leg swings through)
+  k.pair((s) => {
+    const limb = s > 0 ? LIMB.legL : LIMB.legR;
+    const hip: V3 = [s * 0.16 * b, 0.42, -0.05];
+    const knee: V3 = [s * 0.19 * b, 0.24, 0.07];
+    const ankle: V3 = [s * 0.17 * b, 0.055, -0.02];
+    k.limb(limb, hip, () => {
+      if (parts) {
+        sculpt(k, parts.quad_thigh.part, { 0: { color: c } }, (g) => fitLimb(g, { from: hip, to: knee, nominal: 0.25, bulk: b }));
+        k.limb(SHIN_OF[limb], knee, () => sculpt(k, parts.brute_leg.part, { 0: { color: c }, 1: { color: bone, finish: "matte" } }, (g) => fitLimb(g, { from: knee, to: ankle, nominal: 0.23, bulk: b })));
+        return;
+      }
+      k.tube([hip, knee], (t) => (0.1 - t * 0.02) * b, c, { along: 5, around: 8 });
+      k.limb(SHIN_OF[limb], knee, () => {
+        k.tube([knee, [s * 0.17 * b, 0.05, -0.02]], (t) => (0.09 - t * 0.03) * b, c, { along: 5, around: 8 });
+        k.box([0.14 * b, 0.07, 0.22 * b], skin, { at: [s * 0.17 * b, 0.035, 0.04], round: 0.03 });
+        for (let i = -1; i <= 1; i++) k.cone(0.018, 0.06, "#e8dcc0", { at: [s * 0.17 * b + i * 0.04, 0.03, 0.16 * b], rot: [Math.PI / 2, 0, 0], seg: 4 });
+      });
+    });
+  });
   // (the trunk, the arms it carries and the head breathe together about the hips: interiors/limbs.ts creatureLife)
   k.limb(LIMB.chest, [0, 0.42, 0], () => k.group([0, 0.42, 0], [hunch, 0, 0], undefined, () => {
     if (parts) mould(k, parts.brute_torso, c, bone, { scale: [b, 1, b] });
@@ -4100,20 +4116,26 @@ function runner(k: Kit, p: Extract<Plan, { plan: "runner" }>, seed: number) {
   else if (p.fur) k.blob(0.22, c, { at: [0, y, -0.02], smooth: true, rough: 0.14, seed, squash: [0.85, 0.9, 1.35] });
   else k.capsule(0.18, 0.32, c, { at: [0, y, -0.02], rot: [Math.PI / 2 - 0.2, 0, 0], seg: 12 });
   k.pair((s) => {
-    k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.11, y - 0.05, 0], () => {
+    const limb = s > 0 ? LIMB.legL : LIMB.legR;
+    const hip: V3 = [s * 0.11, y - 0.05, 0];
+    const knee: V3 = [s * 0.13, 0.36, 0.12];
+    const hock: V3 = [s * 0.12, 0.16, -0.06];
+    k.limb(limb, hip, () => {
       if (sculpted) {
-        // the thigh to the knee, the long bone to the hock, then the foot with its three toes
-        const hip: V3 = [s * 0.11, y - 0.05, 0];
-        const knee: V3 = [s * 0.13, 0.36, 0.12];
-        const hock: V3 = [s * 0.12, 0.16, -0.06];
+        // the thigh to the knee; from the knee (which bends) the long bone to the hock, then the foot with its three toes
         const hide = shade(c, 0.95);
         sculpt(k, sculpted.quad_thigh.part, { 0: { color: hide } }, (g) => fitLimb(g, { from: hip, to: knee, nominal: 0.25, bulk: 0.6 }));
-        sculpt(k, sculpted.bird_bone.part, { 0: { color: hide } }, (g) => fitLimb(g, { from: knee, to: hock, nominal: 0.2, bulk: 1 }));
-        sculpt(k, sculpted.bird_foot.part, { 0: { color: hide }, 1: { color: "#2a2420", finish: "matte" } }, (g) => fitLimb(g, { from: hock, to: [s * 0.11, 0.03, 0.0], nominal: 0.12, bulk: 1 }));
+        k.limb(SHIN_OF[limb], knee, () => {
+          sculpt(k, sculpted.bird_bone.part, { 0: { color: hide } }, (g) => fitLimb(g, { from: knee, to: hock, nominal: 0.2, bulk: 1 }));
+          sculpt(k, sculpted.bird_foot.part, { 0: { color: hide }, 1: { color: "#2a2420", finish: "matte" } }, (g) => fitLimb(g, { from: hock, to: [s * 0.11, 0.03, 0.0], nominal: 0.12, bulk: 1 }));
+        });
         return;
       }
-      k.tube([[s * 0.11, y - 0.05, 0], [s * 0.13, 0.36, 0.12], [s * 0.12, 0.16, -0.06], [s * 0.11, 0.04, 0.02]], (t) => 0.07 * (1 - t * 0.55), shade(c, 0.95), { along: 10, around: 7 });
-      k.box([0.06, 0.03, 0.16], "#2a2420", { at: [s * 0.11, 0.015, 0.06], round: 0.01 });
+      k.tube([hip, knee], 0.07, shade(c, 0.95), { along: 4, around: 7 });
+      k.limb(SHIN_OF[limb], knee, () => {
+        k.tube([knee, hock, [s * 0.11, 0.04, 0.02]], (t) => 0.07 * (1 - t * 0.5), shade(c, 0.95), { along: 7, around: 7 });
+        k.box([0.06, 0.03, 0.16], "#2a2420", { at: [s * 0.11, 0.015, 0.06], round: 0.01 });
+      });
     });
     k.tube([[s * 0.1, y + 0.02, 0.16], [s * 0.12, y - 0.1, 0.24], [s * 0.1, y - 0.16, 0.3]], 0.025, c, { along: 6, around: 5 });
   });
@@ -4175,15 +4197,19 @@ function serpentLegs(k: Kit, p: Extract<Plan, { plan: "serpent" }>, base: number
       const hip: V3 = [s * r * 0.8, base - r * 0.2, z];
       const knee: V3 = [s * r * 2.4, base * 0.72, z + 0.03];
       const ankle: V3 = [s * r * 2.5, 0.08, z + 0.07];
-      k.limb(s > 0 ? left : right, hip, () => {
+      const limb = s > 0 ? left : right;
+      k.limb(limb, hip, () => {
         if (thigh && foot) {
           sculpt(k, thigh.part, { 0: { color: hide } }, (g) => fitLimb(g, { from: hip, to: knee, nominal: 0.25, bulk: 0.75 }));
-          sculpt(k, foot.part, { 0: { color: hide }, 1: { color: shade(color, 0.55), finish: "matte" } }, (g) => fitLimb(g, { from: knee, to: ankle, nominal: 0.23, bulk: 0.75 }));
+          k.limb(SHIN_OF[limb], knee, () => sculpt(k, foot.part, { 0: { color: hide }, 1: { color: shade(color, 0.55), finish: "matte" } }, (g) => fitLimb(g, { from: knee, to: ankle, nominal: 0.23, bulk: 0.75 })));
           return;
         }
-        k.tube([hip, knee, ankle], (t) => r * (0.42 - t * 0.2), hide, { along: 8, around: 7 });
-        k.box([r * 0.7, 0.04, r * 1.3], shade(color, 0.75), { at: [ankle[0], 0.02, ankle[2] + 0.04], round: 0.015 });
-        for (let c = -1; c <= 1; c++) k.cone(0.014, 0.07, "#e8dcc0", { at: [ankle[0] + c * r * 0.25, 0.025, ankle[2] + r * 0.8], rot: [Math.PI / 2, 0, 0], seg: 4 });
+        k.tube([hip, knee], (t) => r * (0.42 - t * 0.1), hide, { along: 4, around: 7 });
+        k.limb(SHIN_OF[limb], knee, () => {
+          k.tube([knee, ankle], (t) => r * (0.32 - t * 0.1), hide, { along: 4, around: 7 });
+          k.box([r * 0.7, 0.04, r * 1.3], shade(color, 0.75), { at: [ankle[0], 0.02, ankle[2] + 0.04], round: 0.015 });
+          for (let c = -1; c <= 1; c++) k.cone(0.014, 0.07, "#e8dcc0", { at: [ankle[0] + c * r * 0.25, 0.025, ankle[2] + r * 0.8], rot: [Math.PI / 2, 0, 0], seg: 4 });
+        });
       });
     });
   }
@@ -4313,9 +4339,10 @@ function bug(k: Kit, p: Extract<Plan, { plan: "bug" }>) {
   // (a ringed thorax and abdomen, a head, and legs in two jointed pieces, from creature.glb; the blobs and tubes until it is in)
   const beasts = creatureParts();
   const sc = beasts?.bug_thorax && beasts.bug_abdomen && beasts.bug_head && beasts.bug_leg_a && beasts.bug_leg_b ? beasts : undefined;
-  const leg = (from: V3, knee: V3, foot: V3, hide: string, bulk = 1) => {
+  // (a leg in two jointed pieces: the upper in the limb being drawn, the lower from the knee on `lower`)
+  const leg = (lower: number, from: V3, knee: V3, foot: V3, hide: string, bulk = 1) => {
     sculpt(k, sc!.bug_leg_a.part, { 0: { color: hide } }, (g) => fitLimb(g, { from, to: knee, nominal: 0.25, bulk }));
-    sculpt(k, sc!.bug_leg_b.part, { 0: { color: hide } }, (g) => fitLimb(g, { from: knee, to: foot, nominal: 0.35, bulk }));
+    k.limb(lower, knee, () => sculpt(k, sc!.bug_leg_b.part, { 0: { color: hide } }, (g) => fitLimb(g, { from: knee, to: foot, nominal: 0.35, bulk })));
   };
   if (sc) {
     mould(k, sc.bug_thorax, c, "#e8dcc0", { at: [0, y, -0.05] });
@@ -4325,20 +4352,28 @@ function bug(k: Kit, p: Extract<Plan, { plan: "bug" }>) {
     k.blob(0.2, shade(c, 0.85), { at: [0, y + 0.02, -0.3], smooth: true, rough: 0.1, seed: 2, squash: [1, 0.9, 1.3], finish: "sheen" });
   }
   const legs = p.legs - (p.mantis ? 2 : 0);
-  // The legs in threes (the hexa gait): the first pair, the last, and those between
+  // The legs in threes (the hexa gait): the first pair, the last, and those between. The acklay's four are a quadruped's (the quad gait: the
+  // fore pair and the hind pair, spread along the body, each knee bending as the leg swings through)
   for (let i = 0; i < legs / 2; i++) {
-    const z = 0.05 - i * 0.12;
+    const z = p.mantis ? (i === 0 ? 0.14 : -0.3) : 0.05 - i * 0.12;
     const [right, left] = i === 0 ? [LIMB.legR, LIMB.legL] : i === legs / 2 - 1 ? [LIMB.hindR, LIMB.hindL] : [LIMB.midR, LIMB.midL];
-    k.pair((s) => k.limb(s > 0 ? left : right, [s * 0.1, y, z], () => {
-      if (sc) return leg([s * 0.1, y, z], [s * (0.3 + y * 0.3), y + 0.12, z + 0.04], [s * (0.42 + y * 0.2), 0.02, z + 0.08], shade(c, 0.8));
-      k.tube([[s * 0.1, y, z], [s * (0.3 + y * 0.3), y + 0.12, z + 0.04], [s * (0.42 + y * 0.2), 0.02, z + 0.08]], 0.02, shade(c, 0.8), { along: 6, around: 5, finish: "sheen" });
-    }));
+    k.pair((s) => {
+      const limb = s > 0 ? left : right;
+      const from: V3 = [s * 0.1, y, z];
+      const knee: V3 = [s * (0.3 + y * 0.3), y + 0.12, z + 0.04];
+      const foot: V3 = [s * (0.42 + y * 0.2), 0.02, z + 0.08];
+      k.limb(limb, from, () => {
+        if (sc) return leg(SHIN_OF[limb], from, knee, foot, shade(c, 0.8));
+        k.tube([from, knee], 0.02, shade(c, 0.8), { along: 4, around: 5, finish: "sheen" });
+        k.limb(SHIN_OF[limb], knee, () => k.tube([knee, foot], 0.02, shade(c, 0.8), { along: 4, around: 5, finish: "sheen" }));
+      });
+    });
   }
   const headAt: V3 = p.mantis ? [0, y + 0.4, 0.2] : [0, y, 0.15];
   if (p.mantis) {
     k.tube([[0, y + 0.05, 0.05], [0, y + 0.25, 0.12], headAt], 0.07, c, { along: 6, around: 7, finish: "sheen" });
     k.pair((s) => k.limb(s > 0 ? LIMB.armL : LIMB.armR, [s * 0.08, y + 0.3, 0.15], () => {
-      if (sc) leg([s * 0.08, y + 0.3, 0.15], [s * 0.18, y + 0.55, 0.25], [s * 0.2, y + 0.2, 0.45], c, 1.6);
+      if (sc) leg(s > 0 ? LIMB.foreL : LIMB.foreR, [s * 0.08, y + 0.3, 0.15], [s * 0.18, y + 0.55, 0.25], [s * 0.2, y + 0.2, 0.45], c, 1.6);
       else k.tube([[s * 0.08, y + 0.3, 0.15], [s * 0.18, y + 0.55, 0.25], [s * 0.2, y + 0.2, 0.45]], 0.03, c, { along: 8, around: 6, finish: "sheen" });
       k.cone(0.03, 0.3, "#e8dcc0", { at: [s * 0.2, y + 0.08, 0.5], rot: [Math.PI - 0.4, 0, 0], seg: 5 });
     }));
@@ -4705,7 +4740,7 @@ export interface FigureSpec { key: string; build: (k: Kit) => void; height: numb
 
 // How each series of droid moves: battle and protocol droids, assassins and power droids walk; a BB unit rolls; an astromech glides on its
 // treads (a little waddle), as do mouse, service, medical and junk droids; a probe floats; spider and sensor droids go on four legs
-const DROID_GAIT: Record<string, Gait> = { bb: "roll", astromech: "glide", r5: "glide", protocol: "walk", b1: "walk", bx: "walk", tactical: "walk", b2: "walk", ig: "walk", hk: "walk", kx: "walk", pit: "walk", gonk: "walk", destroyer: "tripod", probe: "hover", mouse: "glide", service: "glide", junk: "glide", medical: "glide", spider: "quad", generic: "quad" };
+const DROID_GAIT: Record<string, Gait> = { bb: "roll", astromech: "glide", r5: "glide", protocol: "walk", b1: "walk", bx: "walk", tactical: "walk", b2: "walk", ig: "walk", hk: "walk", kx: "walk", pit: "walk", gonk: "walk", destroyer: "droideka", probe: "hover", mouse: "glide", service: "glide", junk: "glide", medical: "glide", spider: "quad", generic: "quad" };
 // How each body plan of a creature moves
 function creatureGait(p: Plan): Gait {
   switch (p.plan) {
@@ -4714,7 +4749,7 @@ function creatureGait(p: Plan): Gait {
     case "brute":
     case "runner": return "walk";
     case "flyer": return p.perch ? "walk" : "wings";
-    case "bug": return "hexa";
+    case "bug": return p.mantis ? "quad" : "hexa";
     case "critter": return p.kind === "lizard" ? "crawl" : p.kind === "hippo" || p.kind === "rat" ? "quad" : p.kind === "bug" ? "hexa" : p.kind === "frog" ? "glide" : "walk";
     case "spirit": return "hover";
     default: return "glide";
@@ -4871,7 +4906,7 @@ const FUR_DETAIL = typeof matchMedia !== "undefined" && matchMedia("(pointer: co
 // rolls or glides does not bob. `ball` is the radius of a ball it rolls on (`wheel`: one that only rolls the way it faces); `fur` the
 // length of its hair, drawn in shells that move with it
 // `crew`: aboard a craft (Crew): posed in its seat, the hips at the group's origin
-function Mover({ id, build, gait, wave, ball, wheel, fur, seat, ring, hold = "none", saber = "niman", fighting, crew, persona }: { id: string; build: (k: Kit) => void; gait: Gait; wave?: Wave; ball?: number; wheel?: boolean; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh>; hold?: Hold; saber?: SaberStyle; fighting?: boolean; crew?: CrewSeat; persona?: Persona }) {
+function Mover({ id, build, gait, wave, fold, ball, wheel, fur, seat, ring, hold = "none", saber = "niman", fighting, crew, persona }: { id: string; build: (k: Kit) => void; gait: Gait; wave?: Wave; fold?: { current: number }; ball?: number; wheel?: boolean; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh>; hold?: Hold; saber?: SaberStyle; fighting?: boolean; crew?: CrewSeat; persona?: Persona }) {
   const m = useModel(`${id}:anim`, (k) => { k.animated = true; build(k); });
   const mats = useMemo(() => Object.fromEntries(FINISHES.map((f) => [f, limbMaterial(MATERIALS[f])])) as Record<Finish, THREE.Material>, []);
   const furMat = useMemo(() => (fur ? limbMaterial(furShellMaterial(fur, FUR_DETAIL)) : null), [fur]);
@@ -4913,7 +4948,7 @@ function Mover({ id, build, gait, wave, ball, wheel, fur, seat, ring, hold = "no
       return;
     }
     const mo = told?.current ?? own;
-    const root = joints.jointed ? humanPose(stride, t, mo, easeMotion(ease, mo, dt), hold, mo.style ?? saber, nowSeconds(), joints.legs, w.pose, persona) : (gaitPose(gait, stride, t, w.pose, persona, wave), null);
+    const root = joints.jointed ? humanPose(stride, t, mo, easeMotion(ease, mo, dt), hold, mo.style ?? saber, nowSeconds(), joints.legs, w.pose, persona) : (gaitPose(gait, stride, t, w.pose, persona, wave, fold?.current ?? 0), null);
     // At a table (people only): the body eases down onto the seat and the seated pose is laid over the walking one; a gesture swells over the arms
     const s = gait === "walk" ? seat?.current : undefined;
     w.sit = s ? easeSit(w.sit, s.sit, dt) : 0;
@@ -4941,8 +4976,11 @@ function Mover({ id, build, gait, wave, ball, wheel, fur, seat, ring, hold = "no
       if (wheel) {
         // A wheel turns about its axle by the ground covered the way it faces
         w.forward.set(0, 0, 1).applyQuaternion(w.turn);
-        w.angle += (moved.x * w.forward.x + moved.z * w.forward.z) / r;
-        setLimbQuaternion(w.pose, LIMB.roll, w.out.setFromAxisAngle(AXIS_X, w.angle));
+        // (a wheel that folds and unfolds: it turns only once folded, and what it has turned is undone as it unfolds, by the short way)
+        const f = fold ? fold.current : 1;
+        if (f > 0.5) w.angle += (moved.x * w.forward.x + moved.z * w.forward.z) / r;
+        w.angle = ((w.angle + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+        setLimbQuaternion(w.pose, LIMB.roll, w.out.setFromAxisAngle(AXIS_X, fold ? w.angle * f : w.angle));
       } else setLimbQuaternion(w.pose, LIMB.roll, rollBall(w.world, moved, r, w.turn, w.out));
     }
     applyPose(all, w.pose);
@@ -4990,15 +5028,18 @@ function Mover({ id, build, gait, wave, ball, wheel, fur, seat, ring, hold = "no
 }
 const AXIS_X = new THREE.Vector3(1, 0, 0);
 
-// A droideka (destroyer droid, 2026-10-26; the book's Ball Form: "15 ft. (attack form) or 60 ft. (ball form)"): it rolls up into a wheel
-// to run and unfolds onto its three legs once it stops, to stand guard, deal with someone or fight; standing, it steps about slowly on
-// its legs. `deployed` keeps it unfolded (in a fight, where it can only attack standing). The change takes under half a second: the
-// legs fold up as the wheel closes round it.
+// A droideka (destroyer droid, 2026-10-26; the book's Ball Form: "15 ft. (attack form) or 60 ft. (ball form)"): it rolls up into a wheel to run
+// and unfolds onto its three legs once it stops, to stand guard, deal with someone or fight; standing, it steps about slowly on its legs.
+// `deployed` keeps it unfolded (in a fight, where it can only attack standing). It is ONE model (2026-11-04, the user: the other form "spawns a
+// different model: this is WRONG"): its legs, arms and head are limbs that fold onto the wheel in under half a second (interiors/limbs.ts DEKA,
+// `fold`), the wheel turns by the ground it covers (shown only as far as it is folded: it settles upright as it unfolds), the whole body sinks
+// onto its rim, and the shield's shimmer round the standing one fades as it folds. (Its shadow stays that of the standing form.)
 const FOLD_SECONDS = 0.45;
-function Droideka({ id, build, name, deployed }: { id: string; build: (k: Kit) => void; name: string; deployed?: boolean }) {
+function Droideka({ id, build, deployed }: { id: string; build: (k: Kit) => void; deployed?: boolean }) {
   const outer = useRef<THREE.Group>(null);
-  const upright = useRef<THREE.Group>(null);
-  const rolled = useRef<THREE.Group>(null);
+  const lowered = useRef<THREE.Group>(null);
+  const shield = useRef<THREE.Mesh>(null);
+  const fold = useRef(0);
   const state = useRef({ form: 0, still: 0 });
   useStride(outer, (stride, _g, _moved, _t, dt) => {
     const s = state.current;
@@ -5007,19 +5048,17 @@ function Droideka({ id, build, name, deployed }: { id: string; build: (k: Kit) =
     const target = deployed ? 0 : stride.speed > 1.1 ? 1 : s.still > 0.25 ? 0 : Math.round(s.form);
     s.form += Math.max(-dt / FOLD_SECONDS, Math.min(dt / FOLD_SECONDS, target - s.form));
     const f = s.form * s.form * (3 - 2 * s.form);
-    if (upright.current) {
-      upright.current.visible = f < 0.98;
-      upright.current.scale.set(1 - f * 0.45, Math.max(0.05, 1 - f * 0.7), 1 - f * 0.45);
-    }
-    if (rolled.current) {
-      rolled.current.visible = f > 0.02;
-      rolled.current.scale.setScalar(Math.max(0.05, f));
+    fold.current = f;
+    if (lowered.current) lowered.current.position.y = -DEKA.lift * f;
+    if (shield.current) {
+      shield.current.visible = f < 0.98;
+      shield.current.scale.setScalar(Math.max(0.05, 1 - f));
     }
   });
   return (
     <group ref={outer}>
-      <group ref={upright}><Mover id={id} build={build} gait="tripod" /></group>
-      <group ref={rolled} visible={false}><Mover id={`${id}:rolled`} build={(k) => buildDroid(k, "destroyer-ball", name)} gait="roll" ball={0.34} wheel /></group>
+      <group ref={lowered}><Mover id={id} build={build} gait="droideka" fold={fold} ball={DEKA.outer} wheel /></group>
+      <mesh ref={shield} position={[0, 0.55, 0.05]} material={MATERIALS.haze}><sphereGeometry args={[0.6, 16, 10]} /></mesh>
     </group>
   );
 }
@@ -5104,7 +5143,7 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
           <meshBasicMaterial color={ring} />
         </mesh>
       )}
-      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} name={name} deployed={fighting} /> : <Mover id={spec.key} build={spec.build} gait={riding ? "ride" : spec.gait} wave={riding ? undefined : spec.wave} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} hold={crew ? "none" : base.hold} saber={base.saber} fighting={fighting} crew={crew} persona={persona} />}
+      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} deployed={fighting} /> : <Mover id={spec.key} build={spec.build} gait={riding ? "ride" : spec.gait} wave={riding ? undefined : spec.wave} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} hold={crew ? "none" : base.hold} saber={base.saber} fighting={fighting} crew={crew} persona={persona} />}
       {marker && (
         <mesh position={[0, Math.max(1.55, spec.height + 0.3), 0]}>
           <octahedronGeometry args={[0.12]} />
