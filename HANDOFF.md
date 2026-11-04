@@ -10,17 +10,15 @@ Full write-ups in REVIVAL_NOTES.md: "A sculpted body and a person's own way of m
 - Blender 5.2 (C:\Program Files\Blender Foundation\Blender 5.2\blender.exe), headless: `blender --background --python tools/blender/build-body.py -- client/public/figures [--lo]`
   and `.../build-creature.py` (the shared helpers are in `tools/blender/shape.py`). Rebuild both files (with and without `--lo`) after changing a script.
 - People: `body.glb` (trunk, limbs, hand, boot, head) plus now the heads of the species with a muzzle (`head_muzzle/long/short/pig/flat`) and a `beak`.
-- Beasts: `creature.glb` has the heads of every quad, brute and runner plan, ears, the rancor's jaw, a beak, and the quadrupeds' barrel (`quad_body`), thigh and foot
-  (`quad_hoof/paw/foot`). `interiors/body.ts` loads them (`shelf`: `creatureParts`/`useCreatureParts`); `quadruped`, `brute`, `runner` in models.tsx draw them
-  (`moldedQuadHead`, `moldedBruteHead`, `runnerHead`), the old primitives until the file is in. `Kit.add` multiplies a `mark` attribute (paler/darker) into the colour.
+- Beasts: `creature.glb` (1.3 MB) has the heads of every quad, brute, runner and serpent plan, ears, the rancor's jaw, a beak, the quadrupeds' barrel and legs, the brutes' trunk, arms, hands and legs, a runner's legs, a hutt, three wings, a bug's body and legs. `interiors/body.ts` loads them (`shelf`: `creatureParts`/`useCreatureParts`); `quadruped`, `brute`, `runner`, `serpent`, `flyer`, `bug`, `critter`, `slug` in models.tsx draw them, the old primitives until the file is in. `Kit.add` multiplies a `mark` attribute (paler/darker) into the colour.
 - limbs.ts: four new limbs (`earR`, `earL`, `tail2`, `jaw`; `LIMBS` 24) and `creatureLife` (breathing, head dip and look-about, ear flicks, the tail's tip, panting)
   called by `gaitPose(..., persona)` for the quad and walk gaits; a beast's neck is `chest`, a brute's whole trunk is `chest`.
 - tests/interiors/body.test.ts has 13 tests (the people and the beasts). `npx tsc --noEmit` clean. See the last run of `npm test` below.
 
 ## Next, in order
-1. Look at it in the browser (gallery `?section=beasts|people|walk`): a quad's barrel and legs (new, only the unit tests and a first look have seen them), the heads
-   of a rancor, a wampa, a gundark, a kaadu, a Wookiee and a Gamorrean close up; tune the bumps and marks in the Blender scripts if a face reads wrong.
-2. Still primitives: the brutes' bodies and hands, the runners' legs, serpents, fliers, bugs, critters, slugs, tentacles; a cone or hammer head and a trunk or
+1. Look at it in the browser (gallery `?section=beasts|people|walk`) and in a real campaign, in motion: the brutes and quads walking, the hutt's face, the wings
+   (thin; the bat's and manta's are rough), a Wookiee and a Gamorrean close up; tune the bumps and marks in the Blender scripts if a part reads wrong.
+2. Still primitives: tentacles (dianoga, rathtar, sarlacc), frog, monkey, plants, the spirit; a cone or hammer head and a trunk or
    pig's disc on a person; blinking; cloth that follows the body. Lekku and head-tails could swing on `earR`/`earL`.
 3. A skin finish with a soft rim/subsurface look in `MATERIALS.skin`/`face` (babylon.ts plugin) if the faces still look flat under the sun.
 4. Ask: build, restart 5000, push (new campaign worlds are life 18: no migrations).

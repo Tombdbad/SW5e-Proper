@@ -10,7 +10,7 @@
 # `ear` (where an ear's base stands, x y z) and `jaw` (the joint a lower jaw opens about).
 # Original shapes: CC0. Lofted sections (shape.py), smoothed and pushed in with small displacements along the normal, then thinned.
 import bpy, bmesh, math, sys, os
-from mathutils import Vector, Matrix
+from mathutils import Vector, Matrix, bvhtree
 sys.dont_write_bytecode = True  # (no __pycache__ beside the script)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shape import *  # noqa: F401,F403
@@ -388,16 +388,288 @@ def quad_shin(kind):
     ob = hanging("quad_" + kind, rows, regions=reg)
     return ob
 
+# ---- Brutes: trunk, arms with hands and claws, legs with feet (made at a bulk of 1; the code scales the width and depth by the bulk) ---------
+
+def claw(base, tip, r, sides=5):
+    """a claw or a tooth from `base` to `tip` (three's coordinates): a base ring, a body that has narrowed, the point; region 1"""
+    b, t = Vector(base), Vector(tip)
+    L = (t - b).length
+    a = (t - b).normalized()
+    up = Vector((0, 1, 0)) if abs(a.y) < 0.9 else Vector((1, 0, 0))
+    u = a.cross(up).normalized()
+    v = a.cross(u).normalized()
+    p = Part("claw")
+    sec = [(P(*(b + a * (L * k))), P(*u), P(*v), r * f, r * f, 2.0) for k, f in ((0.0, 1.0), (0.5, 0.6), (0.98, 0.08))]
+    p.loft(sec, sides, [1] * 3)
+    ob = p.object()
+    ob.data.attributes.new("_MARK", "FLOAT", "POINT")
+    return ob
+
+def column(name, rows, regions=None, tip=0.0, sub=2):
+    """a part standing up from its origin along +y: rows (y, half width, half depth, centre z, squareness)"""
+    p = Part(name)
+    sec = [(P(0, r[0], r[3]), X, Z, r[1], r[2], r[4] if len(r) > 4 else 2.2) for r in rows]
+    reg = list(regions) if regions else [0] * len(sec)
+    sec, reg = dense(sec, reg, 3)
+    if tip:
+        sec, reg = rounded(sec, reg, tip, 3)
+    p.loft(sec, ARND, reg)
+    ob = p.object()
+    subdivide(ob, sub if HI else 1)
+    ob.data.attributes.new("_MARK", "FLOAT", "POINT")
+    return ob
+
+def join_all(ob, extra, name):
+    for o in bpy.context.selected_objects:
+        o.select_set(False)
+    objs = [ob] + extra
+    for o in objs:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = ob
+    bpy.ops.object.join()
+    ob.name = name
+    ob.data.name = name
+    ob.select_set(False)
+    return ob
+
+def brute_torso():
+    """hips at the origin, up to the base of the neck at 0.62: a barrel chest, wide shoulders, a gut (the code scales the width and depth by the bulk)"""
+    ob = column("brute_torso", [(-0.02, .14, .11, 0), (0.0, .19, .15, 0), (0.1, .23, .18, 0), (0.22, .28, .22, .01), (0.34, .33, .25, .02), (0.44, .36, .24, 0),
+                                (0.52, .28, .2, -.02), (0.58, .15, .13, -.01), (0.64, .08, .08, 0)])
+    displace(ob, [
+        (0.12, 0.42, 0.22, 0.1, 0.07, 0.07, 0.016),     # the pectorals
+        (0.30, 0.46, 0.0, 0.1, 0.1, 0.12, 0.02),        # the shoulders
+        (0.0, 0.12, 0.2, 0.12, 0.1, 0.08, 0.016),       # the gut
+        (0.0, 0.5, -0.12, 0.05, 0.14, 0.03, 0.014),     # the hump of the neck and the back
+        (0.11, 0.1, -0.15, 0.08, 0.08, 0.06, 0.012),
+    ], marks=[(0.0, 0.1, 0.25, 0.2, 0.2, 0.1, -0.25), (0.0, 0.3, -0.2, 0.3, 0.2, 0.1, 0.1)])
+    return ob
+
+def brute_upper():
+    """shoulder to elbow (0.26 long), the shoulder's mass above and the elbow's ball past it"""
+    ob = hanging("brute_upper", [(-0.03, .08, .085, 0), (0.0, .095, .1, 0), (0.06, .1, .105, 0), (0.14, .085, .09, 0), (0.21, .07, .072, 0), (0.26, .06, .062, 0)], tip=0.05, sub=2)
+    displace(ob, [(0.0, -0.06, 0.05, 0.07, 0.07, 0.06, 0.012)])
+    return ob
+
+def brute_fore():
+    """elbow to wrist (0.26 long) and the hand past it: a broad palm, thick fingers and claws"""
+    ob = hanging("brute_fore", [(0.0, .062, .064, 0), (0.06, .072, .075, 0), (0.15, .06, .06, 0), (0.24, .048, .05, 0), (0.28, .052, .05, 0.01), (0.33, .075, .045, 0.03, 2.5), (0.39, .078, .04, 0.045, 2.6),
+                                  (0.43, .07, .036, 0.055, 2.6)], sub=2)
+    displace(ob, [(0.0, -0.1, -0.03, 0.06, 0.1, 0.06, 0.008)])
+    claws = []
+    for i, x in enumerate((-0.05, -0.017, 0.017, 0.05)):
+        claws.append(claw((x, -0.4, 0.055), (x * 1.1, -0.5, 0.1), 0.014))
+    return join_all(ob, claws, "brute_fore")
+
+def brute_leg():
+    """knee to ankle (0.23 long), then a broad foot pointing forward with three claws: the thigh is quad_thigh"""
+    ob = hanging("brute_leg", [(0.0, .06, .065, 0), (0.08, .052, .056, -0.004), (0.18, .046, .05, 0), (0.23, .056, .06, 0.006)], sub=2)
+    f = Part("foot")
+    fy = -0.255
+    fs = [(-0.05, .04, .04, 0), (0.0, .06, .035, 0), (0.08, .072, .03, 0.0), (0.15, .07, .026, -0.002), (0.19, .06, .02, -0.004)]
+    sec = [(P(0, fy + cy, z), X, Y, hw, hh, 2.4) for (z, hw, hh, cy) in fs]
+    sec, reg = dense(sec, [0] * len(sec), 3)
+    sec, reg = rounded(sec, reg, 0.02, 3)
+    f.loft(sec, ARND, reg)
+    fo = f.object()
+    subdivide(fo, 1)
+    fo.data.attributes.new("_MARK", "FLOAT", "POINT")
+    claws = [claw((x, -0.28, 0.2), (x * 1.2, -0.285, 0.26), 0.014) for x in (-0.04, 0.0, 0.04)]
+    return join_all(ob, [fo] + claws, "brute_leg")
+
+# ---- Runners: a bird's leg in three bones ----------------------------------------------------------------------------------------------------
+
+def bird_bone():
+    ob = hanging("bird_bone", [(0.0, .04, .042, 0), (0.04, .046, .048, 0), (0.1, .032, .034, 0), (0.2, .027, .028, 0)], tip=0.03, sub=1)
+    return ob
+
+def bird_foot():
+    """the hock down to the ankle (0.12 long), then three toes forward and one back, each ending in a claw"""
+    ob = hanging("bird_foot", [(0.0, .03, .03, 0), (0.06, .024, .026, 0), (0.12, .03, .032, 0.004)], sub=1)
+    toes = []
+    for ang in (-0.35, 0.0, 0.35):
+        t = Part("toe")
+        dx, dz = math.sin(ang), math.cos(ang)
+        sec = [(P(dx * d, -0.14 + (0.0 if d < 0.05 else -0.012 * (d - 0.05) / 0.1), 0.01 + dz * d), X, Y, 0.012 * (1 - 0.4 * d / 0.12), 0.011, 2.0) for d in (0.0, 0.04, 0.08, 0.12)]
+        sec, reg = rounded(sec, [0] * len(sec), 0.012, 2)
+        t.loft(sec, 6, reg)
+        o = t.object()
+        o.data.attributes.new("_MARK", "FLOAT", "POINT")
+        toes.append(o)
+        toes.append(claw((dx * 0.14, -0.152, 0.01 + dz * 0.14), (dx * 0.17, -0.158, 0.01 + dz * 0.17), 0.008, 4))
+    toes.append(claw((0.0, -0.14, 0.0), (0.0, -0.15, -0.05), 0.01, 4))
+    return join_all(ob, toes, "bird_foot")
+
+# ---- Serpents' heads (made for a body 0.16 thick: the code scales them by its thickness over 0.16) ---------------------------------------------
+
+def serpent_dragon():
+    ob = head_loft("serpent_dragon", [(-0.12, .06, .05, 0.02, 2), (-0.08, .13, .1, 0.02), (0.0, .16, .115, 0.02), (0.1, .14, .1, 0.0), (0.2, .11, .075, -0.02, 2.4),
+                                      (0.3, .09, .06, -0.03, 2.5), (0.38, .08, .05, -0.035, 2.6)], tip=0.02)
+    displace(ob, [
+        (0.1, 0.1, 0.1, 0.05, 0.03, 0.04, 0.02),               # the heavy brow
+        (0.0, 0.07, 0.3, 0.03, 0.02, 0.1, 0.01),               # the ridge down the snout
+        (0.04, 0.0, 0.37, 0.01, 0.01, 0.014, -0.005),
+        (0.0, -0.06, 0.2, 0.12, 0.004, 0.16, -0.005),          # the line of the jaw
+    ], marks=[eyelids(0.09, 0.08, 0.14, 0.04, 0.7), (0.04, 0.0, 0.37, 0.015, 0.012, 0.014, 0.95), mouth(-0.058, 0.0, 0.36, 0.12, 0.9), (0.0, -0.1, 0.2, 0.12, 0.05, 0.2, -0.4)])
+    tag(ob, eyes=[0.09, 0.08, 0.16, 0.024])
+    return ob
+
+def serpent_maw():
+    """a round mouth: a thick lip and a pit going in"""
+    p = Part("serpent_maw")
+    rows = [(-0.12, .1, 0.0), (-0.06, .19, 0.0), (0.03, .22, 0.0), (0.09, .19, 0.0), (0.09, .15, 0.0), (0.03, .12, 0.0), (-0.03, .07, 0.0), (-0.05, .02, 0.0)]
+    sec = [(P(0, 0, z), X, Y, r, r, 2.0) for (z, r, _) in rows]
+    sec, reg = dense(sec, [0] * len(sec), 3)
+    p.loft(sec, ARND + 4, reg)
+    ob = p.object()
+    subdivide(ob, 2 if HI else 1)
+    ob.data.attributes.new("_MARK", "FLOAT", "POINT")
+    displace(ob, [(0.0, 0.0, 0.09, 0.2, 0.2, 0.01, 0.006)], marks=[(0.0, 0.0, 0.0, 0.1, 0.1, 0.06, 0.8), (0.0, 0.0, 0.1, 0.17, 0.17, 0.01, -0.25)])
+    return ob
+
+def serpent_fish():
+    ob = head_loft("serpent_fish", [(-0.2, .04, .05, 0, 2), (-0.16, .12, .14, 0), (-0.05, .17, .18, 0), (0.06, .16, .17, -0.01), (0.15, .12, .12, -0.03), (0.23, .08, .08, -0.04), (0.27, .06, .06, -0.045)], tip=0.02)
+    displace(ob, [(0.1, 0.07, 0.14, 0.04, 0.03, 0.04, 0.012), (0.0, -0.07, 0.2, 0.09, 0.004, 0.1, -0.005), (0.0, -0.12, 0.12, 0.08, 0.03, 0.08, 0.008)],
+             marks=[eyelids(0.1, 0.06, 0.13, 0.036, 0.6), mouth(-0.07, 0.05, 0.26, 0.1, 0.9), (0.0, -0.12, 0.1, 0.14, 0.06, 0.2, -0.4)])
+    tag(ob, eyes=[0.1, 0.06, 0.14, 0.03])
+    return ob
+
+def serpent_snake():
+    ob = head_loft("serpent_snake", [(-0.06, .03, .03, 0, 2), (-0.03, .07, .05, 0), (0.03, .085, .055, 0), (0.09, .06, .045, -0.005), (0.15, .04, .033, -0.01), (0.19, .03, .026, -0.012)], tip=0.012)
+    displace(ob, [(0.06, 0.03, 0.08, 0.025, 0.02, 0.03, 0.007), (0.0, -0.024, 0.1, 0.07, 0.003, 0.1, -0.003)],
+             marks=[eyelids(0.055, 0.032, 0.1, 0.02, 0.6), mouth(-0.024, 0.0, 0.19, 0.07, 0.9), (0.0, -0.04, 0.1, 0.1, 0.03, 0.2, -0.4)])
+    tag(ob, eyes=[0.052, 0.034, 0.105, 0.017])
+    return ob
+
+# ---- A hutt ----------------------------------------------------------------------------------------------------------------------------------
+
+def path_loft(name, pts, around=None):
+    """a body along a path: pts (x, y, z, half width, half height), the height axis turned with the path"""
+    p = Part(name)
+    secs = []
+    n = len(pts)
+    for i, (x, y, z, hw, hh) in enumerate(pts):
+        a = Vector(pts[min(i + 1, n - 1)][:3]) - Vector(pts[max(i - 1, 0)][:3])
+        a.normalize()
+        v = Vector((1, 0, 0)).cross(a).normalized()
+        secs.append((P(x, y, z), X, P(*v), hw, hh, 2.2))
+    sec, reg = dense(secs, [0] * n, 3)
+    p.loft(sec, around or ARND + 4, reg)
+    ob = p.object()
+    subdivide(ob, 2 if HI else 1)
+    ob.data.attributes.new("_MARK", "FLOAT", "POINT")
+    return ob
+
+def hutt():
+    ob = path_loft("hutt", [(0.42, 0.04, -1.08, .025, .025), (0.30, 0.05, -0.98, .07, .06), (0.16, 0.07, -0.84, .14, .11), (0.05, 0.12, -0.6, .28, .2), (0.0, 0.22, -0.35, .45, .32),
+                            (0.0, 0.3, -0.08, .5, .36), (0.0, 0.5, 0.0, .44, .4), (0.0, 0.72, 0.04, .32, .3), (0.0, 0.84, 0.07, .37, .31), (0.0, 0.94, 0.1, .36, .25), (0.0, 1.01, 0.1, .26, .15), (0.0, 1.06, 0.1, .1, .06)])
+    folds = [(0.0, y, 0.0, 10.0, 0.02, 10.0, 0.012) for y in (0.3, 0.42, 0.54, 0.66)]
+    displace(ob, folds + [
+        (0.1, 0.99, 0.3, 0.06, 0.03, 0.05, 0.03),             # the brow
+        (0.0, 0.9, 0.34, 0.16, 0.05, 0.06, 0.016),             # the upper lip
+        (0.0, 0.8, 0.34, 0.14, 0.05, 0.08, 0.014),               # the jowls
+        (0.1, 0.9, 0.35, 0.07, 0.04, 0.05, 0.012),
+        (0.03, 0.935, 0.36, 0.012, 0.012, 0.012, -0.008),       # the nostrils
+        (0.0, 0.84, 0.37, 0.2, 0.01, 0.06, -0.02),           # the mouth
+        (0.33, 0.55, 0.12, 0.1, 0.14, 0.1, 0.02),              # the shoulders the arms hang from
+    ], marks=[mouth(0.84, 0.25, 0.42, 0.2, 1.0), eyelids(0.1, 0.98, 0.3, 0.04, 0.8), (0.03, 0.935, 0.36, 0.02, 0.02, 0.02, 0.9),
+              (0.0, 0.4, 0.3, 0.3, 0.3, 0.2, -0.4), (0.0, 0.06, 0.0, 0.3, 0.05, 1.0, -0.3)])
+    tag(ob, eyes=[0.1, 0.98, 0.3, 0.028])
+    return ob
+
+# ---- Wings (from the shoulder out along +x, made for a span of 0.9: the code scales them) ---------------------------------------------------------
+
+def wing(name, L, le, te, thick, droop, notches, depth, ribs, rib_amp, wave=0.0):
+    """sections along x, each a thin flat ellipse running front to back; the back edge notched (feathers, the membrane between fingers) and ridged"""
+    p = Part(name)
+    sec = []
+    for i in range(9):
+        t = i / 8
+        zl, zt = le(t), te(t)
+        sec.append((P(L * t, -droop * t * t, (zl + zt) / 2), Z, Y, max((zl - zt) / 2, 0.004), thick(t), 2.6))
+    sec, reg = dense(sec, [0] * len(sec), 4)
+    p.loft(sec, ARND + 6, reg)
+    ob = p.object()
+    subdivide(ob, 2 if HI else 1)
+    ob.data.attributes.new("_MARK", "FLOAT", "POINT")
+    me = ob.data
+    mark = me.attributes["_MARK"].data
+    out = []
+    for v in me.vertices:
+        x, y, z = v.co.x, v.co.z, -v.co.y
+        t = max(0.0, min(1.0, x / L))
+        zl, zt = le(t), te(t)
+        half = max((zl - zt) / 2, 0.004)
+        s = ((zl + zt) / 2 - z) / half          # -1 the front edge, 1 the back edge
+        w = smooth(0.0, 1.0, s)
+        notch = depth * (0.5 - 0.5 * math.cos(2 * math.pi * notches * t)) * w ** 1.5
+        z += notch
+        y += rib_amp * math.cos(2 * math.pi * ribs * t) * (0.4 + 0.6 * w) + wave * math.sin(2 * math.pi * 1.3 * t) * smooth(0.0, 0.5, t)
+        mark[v.index].value = max(-1.0, min(1.0, 0.5 * (0.5 + 0.5 * math.cos(2 * math.pi * ribs * t)) * (0.3 + w) - 0.1 + 0.6 * (1 - smooth(0.0, 0.12, t))))
+        out.append(P(x, y, z))
+    for v, co in zip(me.vertices, out):
+        v.co = co
+    return ob
+
+# ---- Bugs and spiders: a ringed thorax and abdomen, a head, and legs in two jointed pieces -------------------------------------------------------
+
+def bug_thorax():
+    ob = head_loft("bug_thorax", [(-0.22, .04, .03, 0, 2), (-0.18, .12, .10, 0), (-0.08, .16, .13, .01), (0.05, .15, .12, .01), (0.15, .11, .09, 0), (0.21, .05, .04, 0)], tip=0.01)
+    bands = [(0.0, 0.0, z, 10.0, 10.0, 0.012, -0.005) for z in (-0.1, 0.0, 0.1)]
+    displace(ob, bands + [(0.0, 0.12, 0.0, 0.03, 0.03, 0.3, 0.012)], marks=[(0.0, 0.0, z, 10.0, 10.0, 0.012, 0.35) for z in (-0.1, 0.0, 0.1)] + [(0.0, -0.1, 0.0, 0.2, 0.06, 0.3, -0.3)])
+    return ob
+
+def bug_abdomen():
+    ob = head_loft("bug_abdomen", [(-0.28, .05, .05, 0, 2), (-0.22, .16, .15, 0), (-0.1, .2, .18, .01), (0.05, .19, .17, .005), (0.17, .12, .11, 0), (0.26, .05, .05, 0)], tip=0.01)
+    zs = [-0.2 + i * 0.06 for i in range(8)]
+    displace(ob, [(0.0, 0.0, z, 10.0, 10.0, 0.012, -0.007) for z in zs], marks=[(0.0, 0.0, z, 10.0, 10.0, 0.012, 0.4) for z in zs] + [(0.0, -0.15, 0.0, 0.25, 0.08, 0.35, -0.3)])
+    return ob
+
+def bug_head():
+    ob = head_loft("bug_head", [(-0.06, .03, .03, 0, 2), (-0.03, .075, .065, 0), (0.03, .08, .07, 0), (0.07, .05, .045, -.005), (0.09, .025, .02, -.01)], tip=0.012)
+    displace(ob, [(0.04, 0.03, 0.04, 0.025, 0.02, 0.03, 0.01)], marks=[(0.0, -0.02, 0.09, 0.03, 0.02, 0.02, 0.6)])
+    return ob
+
+def bug_leg_a():
+    """the upper joint of an insect's leg, hip to knee (0.25 long), the knee a ball"""
+    ob = hanging("bug_leg_a", [(0.0, .022, .022, 0), (0.1, .024, .024, 0), (0.2, .019, .019, 0), (0.25, .022, .022, 0)], tip=0.02, sub=1)
+    displace(ob, [(0.0, -0.12, 0.0, 0.03, 0.02, 0.03, 0.004)])
+    return ob
+
+def bug_leg_b():
+    """the lower joint, knee to foot (0.35 long), fine, with a few spines and a hooked tip"""
+    ob = hanging("bug_leg_b", [(0.0, .019, .019, 0), (0.1, .016, .016, 0), (0.25, .011, .011, 0), (0.33, .006, .006, 0.003), (0.35, .002, .002, 0.01)], sub=1)
+    displace(ob, [(0.0, -z, 0.0, 0.03, 0.015, 0.03, 0.004) for z in (0.1, 0.18, 0.26)], marks=[(0.0, -0.3, 0.0, 0.05, 0.05, 0.05, 0.4)])
+    return ob
+
+# What share of a dense part is kept (the rest by name: heads 0.15, ears and the barrel 0.12, limbs 0.45)
+RATIO = {"hutt": 0.1, "brute_torso": 0.15, "wing_bird": 0.07, "wing_bat": 0.07, "wing_manta": 0.07, "serpent_maw": 0.12, "serpent_dragon": 0.15, "serpent_fish": 0.15, "serpent_snake": 0.15,
+         "brute_upper": 0.1, "brute_fore": 0.12, "brute_leg": 0.12, "quad_thigh": 0.3, "bug_thorax": 0.15, "bug_abdomen": 0.15, "bug_head": 0.15, "bug_leg_a": 0.3, "bug_leg_b": 0.3, "bird_bone": 0.3, "bird_foot": 0.3}
+
 def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     heads = [cat(), dog(), long_head(), blunt(), reptile(), rhino(), boar(), rancor(), wampa(), ape(), horned(), bird(), tauntaun(), lizard()]
-    extras = [rancor_jaw(), beak(), quad_body(), quad_thigh(), quad_shin("hoof"), quad_shin("paw"), quad_shin("foot")]
+    extras = [rancor_jaw(), beak(), quad_body(), quad_thigh(), quad_shin("hoof"), quad_shin("paw"), quad_shin("foot"), brute_torso(), brute_upper(), brute_fore(), brute_leg(), bird_bone(), bird_foot(),
+              serpent_dragon(), serpent_maw(), serpent_fish(), serpent_snake(), hutt(),
+              wing("wing_bird", .5, lambda t: .09 - .07 * t * t, lambda t: -.12 + .06 * t, lambda t: .012 - .006 * t, .06, 7, .04, 14, .004),
+              wing("wing_bat", .5, lambda t: .08 - .05 * t ** 1.5, lambda t: -.16 + .14 * t, lambda t: .008 - .003 * t, .04, 3, .09, 3, .012),
+              bug_thorax(), bug_abdomen(), bug_head(), bug_leg_a(), bug_leg_b(),
+              wing("wing_manta", .5, lambda t: .12 - .1 * t, lambda t: -.25 + .2 * t, lambda t: .035 - .028 * t, 0.0, 0, 0.0, 0, 0.0, .03)]
     ears = [ear("ear_cat", 0.10, 0.042, 0.016, hollow=0.007), ear("ear_dog", 0.12, 0.044, 0.018, lean=0.02, hollow=0.006), ear("ear_long", 0.17, 0.032, 0.014, hollow=0.005),
             ear("ear_round", 0.10, 0.05, 0.012, round_tip=True, hollow=0.006)]
     big = {o.name for o in heads}
     parts = heads + extras + ears
     for ob in parts:
-        budget(ob, 0.15 if ob.name in big or ob.name in ("rancor_jaw", "beak") else 0.12 if ob.name.startswith("ear") or ob.name == "quad_body" else 0.45)
+        budget(ob, RATIO.get(ob.name, 0.15 if ob.name in big or ob.name in ("rancor_jaw", "beak") else 0.12 if ob.name.startswith("ear") or ob.name == "quad_body" else 0.45))
+    # the eyes sit on the skull: each is moved along z to where the surface is (a ray from in front), set in a little (0.3 of its radius)
+    for ob in parts:
+        if "eyes" not in ob.keys():
+            continue
+        tree = bvhtree.BVHTree.FromPolygons([v.co.copy() for v in ob.data.vertices], [tuple(p.vertices) for p in ob.data.polygons])
+        x, y, z, r = list(ob["eyes"])
+        loc, nor, idx, dist = tree.ray_cast(P(abs(x), y, 2.0), P(0, 0, -1))
+        if loc is not None:
+            ob["eyes"] = [x, y, -loc.y - 0.3 * r, r]
     for ob in parts:
         ao = occlusion([(ob, Matrix.Identity(4))], 40 if HI else 20)
         a = ob.data.attributes.new("_AO", "FLOAT", "POINT")

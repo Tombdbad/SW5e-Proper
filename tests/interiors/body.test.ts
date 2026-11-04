@@ -316,3 +316,50 @@ test("a beast at rest breathes, looks about, flicks an ear now and then and lets
   assert.ok(laid < -0.2, `the ears lay back ${laid}`);
   assert.ok(tip > base, `the tip of the tail swings further than its root: ${tip} against ${base}`);
 });
+
+test("creature.glb also holds the brutes' and runners' bodies, the serpents' heads, a hutt and wings, in the sizes the code draws them at", async () => {
+  const all = await piecesFrom("creature.glb");
+  const size = (n: string) => boundsOf(Object.values(all[n].part));
+  for (const n of ["brute_torso", "brute_upper", "brute_fore", "brute_leg", "bird_bone", "bird_foot", "quad_body", "quad_thigh", "hutt", "wing_bird", "wing_bat", "wing_manta", "bug_thorax", "bug_abdomen", "bug_head", "bug_leg_a", "bug_leg_b"]) assert.ok(all[n], n);
+  const torso = size("brute_torso");
+  assert.ok(torso.min.y > -0.06 && torso.max.y > 0.6 && torso.max.y < 0.7 && torso.max.x > 0.3 && torso.max.x < 0.42, `a brute's trunk ${torso.min.toArray()} ${torso.max.toArray()}`);
+  const fore = size("brute_fore");
+  assert.ok(fore.min.y < -0.4 && fore.min.y > -0.62, `the hand reaches past the wrist: ${fore.min.y}`);
+  const leg = size("brute_leg");
+  assert.ok(leg.min.y < -0.27 && leg.max.z > 0.2, `the foot lies forward and its sole is below the ankle: ${leg.min.toArray()} ${leg.max.toArray()}`);
+  const foot = size("bird_foot");
+  assert.ok(foot.min.y < -0.12 && foot.max.z > 0.12, "a bird's toes spread forward");
+  const hutt = size("hutt");
+  assert.ok(hutt.max.y > 0.95 && hutt.max.y < 1.2 && hutt.min.z < -1.0 && hutt.max.x > 0.45, `a hutt ${hutt.min.toArray()} ${hutt.max.toArray()}`);
+  for (const n of ["wing_bird", "wing_bat", "wing_manta"]) {
+    const w = size(n);
+    assert.ok(w.min.x > -0.05 && w.max.x > 0.45 && w.max.x < 0.6 && w.max.y - w.min.y < 0.25, `${n} runs out from the shoulder: ${w.min.toArray()} ${w.max.toArray()}`);
+  }
+  // the heads that say where their eyes are have them on the skull
+  for (const n of ["serpent_dragon", "serpent_fish", "serpent_snake", "hutt"]) {
+    const [x, y, z, r] = all[n].eyes!;
+    assert.ok(nearest(Object.values(all[n].part), new THREE.Vector3(x, y, z)) < r * 2.5, `${n}'s eye is on its surface`);
+  }
+  const lo = await piecesFrom("creature.lo.glb");
+  for (const n of ["hutt", "brute_torso", "serpent_dragon"]) assert.ok(trianglesOf(lo[n].part) < trianglesOf(all[n].part) / 3, `${n} on a phone`);
+});
+
+test("every kind of beast is drawn from the sculpted parts when they are in: a brute, a runner, a serpent, a hutt and the fliers, each with more triangles than its primitives and its joints", async () => {
+  setCreatureParts(null);
+  const build = (name: string) => { const plan = creaturePlan(name); const k = new Kit(); k.animated = true; buildCreature(k, plan, 0); return k; };
+  const tris = (k: Kit) => k.parts.reduce((n, p) => n + p.geo.index!.count / 3, 0);
+  const names = ["wampa", "kaadu", "krayt dragon", "exogorth", "opee sea killer", "snake", "hutt", "condor dragon", "hawk-bat", "mynock", "acklay", "kinrath", "womp rat", "mucous salamander", "jakrab", "nuna", "mott"];
+  const before = names.map(build);
+  setCreatureParts(await piecesFrom("creature.glb"));
+  const after = names.map(build);
+  names.forEach((n, i) => {
+    assert.ok(tris(after[i]) > tris(before[i]), `${n}: ${tris(before[i])} -> ${tris(after[i])} triangles`);
+    assert.ok(tris(after[i]) < 30000, `${n}: ${tris(after[i])} triangles`);
+  });
+  const joints = (k: Kit, ...l: number[]) => l.forEach((x) => assert.ok(k.jointMask & (1 << x), `limb ${x}`));
+  joints(after[0], LIMB.chest, LIMB.head, LIMB.armL, LIMB.armR, LIMB.legL, LIMB.legR);
+  joints(after[1], LIMB.legL, LIMB.legR, LIMB.tail2);
+  joints(after[7], LIMB.wingL, LIMB.wingR);
+  joints(after[10], LIMB.armL, LIMB.armR, LIMB.legL, LIMB.hindR);
+  setCreatureParts(null);
+});

@@ -3899,7 +3899,7 @@ function quadruped(k: Kit, p: Extract<Plan, { plan: "quad" }>, seed: number) {
 
 // A sculpted part of a beast (interiors/body.ts, creature.glb) in the colours of its hide, what is bone in it (a horn, a tooth, a beak) in another
 function mould(k: Kit, piece: Piece, hide: string, bone = "#e8dcc0", o: PartOptions = {}, more: Record<number, { color: string }> = {}) {
-  sculpt(k, piece.part, { 0: { color: hide }, 1: { color: bone, finish: "matte" }, ...more }, (g) => g.clone(), o);
+  sculpt(k, piece.part, { 0: { color: hide, finish: o.finish }, 1: { color: bone, finish: o.finish ?? "matte" }, ...more }, (g) => g.clone(), o);
 }
 // A pair of ears on their own joints (they flick and lay back): the part, where its base stands on the right, and how it is turned (the left
 // is the mirror)
@@ -4001,18 +4001,41 @@ function brute(k: Kit, p: Extract<Plan, { plan: "brute" }>, seed: number) {
   const c = p.color;
   const skin = shade(c, 0.9);
   const hunch = p.head === "rancor" ? 0.55 : 0.25;
+  // (a sculpted trunk, arm, forearm with a hand and claws, thigh and leg with a clawed foot, from creature.glb; the tubes and boxes until it is in)
+  const beasts = creatureParts();
+  const parts = beasts?.brute_torso && beasts.brute_upper && beasts.brute_fore && beasts.quad_thigh && beasts.brute_leg ? beasts : undefined;
+  const bone = "#e8dcc0";
   k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.16 * b, 0.42, -0.05], () => {
+    if (parts) {
+      const hip: V3 = [s * 0.16 * b, 0.42, -0.05];
+      const knee: V3 = [s * 0.19 * b, 0.24, 0.07];
+      const ankle: V3 = [s * 0.17 * b, 0.055, -0.02];
+      sculpt(k, parts.quad_thigh.part, { 0: { color: c } }, (g) => fitLimb(g, { from: hip, to: knee, nominal: 0.25, bulk: b }));
+      sculpt(k, parts.brute_leg.part, { 0: { color: c }, 1: { color: bone, finish: "matte" } }, (g) => fitLimb(g, { from: knee, to: ankle, nominal: 0.23, bulk: b }));
+      return;
+    }
     k.tube([[s * 0.16 * b, 0.42, -0.05], [s * 0.19 * b, 0.24, 0.07], [s * 0.17 * b, 0.05, -0.02]], (t) => (0.1 - t * 0.04) * b, c, { along: 8, around: 8 });
     k.box([0.14 * b, 0.07, 0.22 * b], skin, { at: [s * 0.17 * b, 0.035, 0.04], round: 0.03 });
     for (let i = -1; i <= 1; i++) k.cone(0.018, 0.06, "#e8dcc0", { at: [s * 0.17 * b + i * 0.04, 0.03, 0.16 * b], rot: [Math.PI / 2, 0, 0], seg: 4 });
   }));
   // (the trunk, the arms it carries and the head breathe together about the hips: interiors/limbs.ts creatureLife)
   k.limb(LIMB.chest, [0, 0.42, 0], () => k.group([0, 0.42, 0], [hunch, 0, 0], undefined, () => {
-    if (p.fur) k.blob(0.3 * b, c, { at: [0, 0.3, 0], smooth: true, rough: 0.2, seed, squash: [1, 1.15, 0.85] });
+    if (parts) mould(k, parts.brute_torso, c, bone, { scale: [b, 1, b] });
+    else if (p.fur) k.blob(0.3 * b, c, { at: [0, 0.3, 0], smooth: true, rough: 0.2, seed, squash: [1, 1.15, 0.85] });
     else k.lathe([[0.2 * b, 0], [0.24 * b, 0.12], [0.3 * b, 0.3], [0.32 * b, 0.42], [0.24 * b, 0.56], [0, 0.6]], c, { scale: [1, 1, 0.75], seg: 16 });
     const arms = p.arms === 4 ? [0.42, 0.24] : [0.42];
     for (const ay of arms) k.pair((s) => k.limb(s > 0 ? LIMB.armL : LIMB.armR, [s * 0.28 * b, ay, 0], () => {
       const hand: V3 = [s * 0.36 * b, ay - (p.head === "rancor" ? 0.72 : 0.5), 0.2];
+      if (parts) {
+        const shoulder: V3 = [s * 0.28 * b, ay, 0];
+        const elbow: V3 = [s * 0.4 * b, ay - 0.25, 0.04];
+        // (the wrist is a hand's length short of the hand's centre, along the forearm)
+        const dir = new THREE.Vector3(hand[0] - elbow[0], hand[1] - elbow[1], hand[2] - elbow[2]).normalize();
+        const wrist: V3 = [hand[0] - dir.x * 0.1, hand[1] - dir.y * 0.1, hand[2] - dir.z * 0.1];
+        sculpt(k, parts.brute_upper.part, { 0: { color: c } }, (g) => fitLimb(g, { from: shoulder, to: elbow, nominal: 0.26, bulk: b }));
+        sculpt(k, parts.brute_fore.part, { 0: { color: c }, 1: { color: bone, finish: "matte" } }, (g) => fitLimb(g, { from: elbow, to: wrist, nominal: 0.26, bulk: b }));
+        return;
+      }
       k.tube([[s * 0.28 * b, ay, 0], [s * 0.4 * b, ay - 0.25, 0.04], hand], (t) => (0.085 - t * 0.03) * b, c, { along: 8, around: 8 });
       k.sphere(0.07 * b, skin, { at: hand, seg: [10, 8] });
       for (let i = -1; i <= 1; i++) k.cone(0.016, 0.1, "#e8dcc0", { at: [hand[0] + i * 0.035, hand[1] - 0.06, hand[2] + 0.04], rot: [Math.PI - 0.4, 0, 0], seg: 4 });
@@ -4070,10 +4093,24 @@ function moldedBruteHead(k: Kit, p: Extract<Plan, { plan: "brute" }>, c: string,
 function runner(k: Kit, p: Extract<Plan, { plan: "runner" }>, seed: number) {
   const c = p.color;
   const y = 0.62;
-  if (p.fur) k.blob(0.22, c, { at: [0, y, -0.02], smooth: true, rough: 0.14, seed, squash: [0.85, 0.9, 1.35] });
+  const legsFrom = creatureParts();
+  const sculpted = legsFrom?.quad_body && legsFrom.quad_thigh && legsFrom.bird_bone && legsFrom.bird_foot ? legsFrom : undefined;
+  if (sculpted) mould(k, sculpted.quad_body, c, "#e8dcc0", { at: [0, y, -0.02], rot: [-0.2, 0, 0], scale: [0.6, 0.6, 0.57] }, { 2: { color: c } });
+  else if (p.fur) k.blob(0.22, c, { at: [0, y, -0.02], smooth: true, rough: 0.14, seed, squash: [0.85, 0.9, 1.35] });
   else k.capsule(0.18, 0.32, c, { at: [0, y, -0.02], rot: [Math.PI / 2 - 0.2, 0, 0], seg: 12 });
   k.pair((s) => {
     k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.11, y - 0.05, 0], () => {
+      if (sculpted) {
+        // the thigh to the knee, the long bone to the hock, then the foot with its three toes
+        const hip: V3 = [s * 0.11, y - 0.05, 0];
+        const knee: V3 = [s * 0.13, 0.36, 0.12];
+        const hock: V3 = [s * 0.12, 0.16, -0.06];
+        const hide = shade(c, 0.95);
+        sculpt(k, sculpted.quad_thigh.part, { 0: { color: hide } }, (g) => fitLimb(g, { from: hip, to: knee, nominal: 0.25, bulk: 0.6 }));
+        sculpt(k, sculpted.bird_bone.part, { 0: { color: hide } }, (g) => fitLimb(g, { from: knee, to: hock, nominal: 0.2, bulk: 1 }));
+        sculpt(k, sculpted.bird_foot.part, { 0: { color: hide }, 1: { color: "#2a2420", finish: "matte" } }, (g) => fitLimb(g, { from: hock, to: [s * 0.11, 0.03, 0.0], nominal: 0.12, bulk: 1 }));
+        return;
+      }
       k.tube([[s * 0.11, y - 0.05, 0], [s * 0.13, 0.36, 0.12], [s * 0.12, 0.16, -0.06], [s * 0.11, 0.04, 0.02]], (t) => 0.07 * (1 - t * 0.55), shade(c, 0.95), { along: 10, around: 7 });
       k.box([0.06, 0.03, 0.16], "#2a2420", { at: [s * 0.11, 0.015, 0.06], round: 0.01 });
     });
@@ -4133,8 +4170,19 @@ function serpent(k: Kit, p: Extract<Plan, { plan: "serpent" }>) {
     k.pair((s) => k.tube([[x + s * r * 0.8, r, z], [x + s * r * 1.8, r * 0.9, z + 0.04], [x + s * r * 2.0, 0.03, z + 0.08]], (t) => r * 0.4 * (1 - t * 0.5), shade(color, 0.9), { along: 6, around: 6 }));
   }
   const [hx, hy, hz] = pts[0];
+  const heads = creatureParts();
+  const headPiece = heads?.[`serpent_${p.head}`];
   k.group([hx, hy, hz + r * 0.6], undefined, r / 0.16, () => {
-    if (p.head === "dragon") {
+    if (headPiece) {
+      mould(k, headPiece, color);
+      if (headPiece.eyes) {
+        const [ex, ey, ez, er] = headPiece.eyes;
+        k.pair((s) => k.sphere(er, "#e8d24a", { at: [s * ex, ey, ez], finish: "glow", seg: [6, 4] }));
+      }
+      if (p.head === "dragon") for (let i = 0; i < 3; i++) k.pair((s) => k.cone(0.03, 0.18, "#e8dcc0", { at: [s * (0.08 + i * 0.03), 0.12, -0.02 - i * 0.07], rot: [-1.0, 0, s * -0.4], seg: 6 }));
+      else if (p.head === "maw") for (let i = 0; i < 10; i++) k.cone(0.02, 0.08, "#f0ece0", { at: [Math.cos(i * 0.628) * 0.13, Math.sin(i * 0.628) * 0.13, 0.08], rot: [Math.PI / 2, 0, i * 0.628 + Math.PI / 2], seg: 4 });
+      else if (p.head === "fish") k.pair((s) => k.cone(0.06, 0.2, shade(color, 0.8), { at: [s * 0.18, -0.02, -0.05], rot: [0, 0, s * -1.2], seg: 5 }));
+    } else if (p.head === "dragon") {
       k.capsule(0.15, 0.3, color, { at: [0, 0.02, 0.15], rot: [Math.PI / 2, 0, 0], scale: [1, 0.75, 1], seg: 10 });
       k.box([0.24, 0.05, 0.34], shade(color, 0.7), { at: [0, -0.08, 0.2], round: 0.02 });
       for (let i = 0; i < 3; i++) k.pair((s) => k.cone(0.03, 0.18, "#e8dcc0", { at: [s * (0.08 + i * 0.03), 0.12, -0.02 - i * 0.07], rot: [-1.0, 0, s * -0.4], seg: 6 }));
@@ -4181,10 +4229,33 @@ function flyer(k: Kit, p: Extract<Plan, { plan: "flyer" }>) {
     wing.quadraticCurveTo(0.06, -0.08, 0, -0.12);
   }
   // The wings beat from the shoulders (the wings gait), the tail trails
-  k.pair((s) => k.limb(s > 0 ? LIMB.wingL : LIMB.wingR, [s * 0.05, y, 0], () => k.extrude(wing, 0.01, shade(c, p.head === "bird" ? 1.15 : 0.85), { at: [s * 0.05, y, 0], rot: [-Math.PI / 2, 0, 0], scale: [s, 1, 1], finish: "cloth" })));
-  k.capsule(0.07 * (span / 0.9) ** 0.5, 0.2, c, { at: [0, y, 0], rot: [Math.PI / 2, 0, 0], seg: 10 });
+  const sculpted = creatureParts();
+  const wingPart = sculpted?.[p.head === "manta" ? "wing_manta" : p.head === "bird" ? "wing_bird" : "wing_bat"];
+  const wingColor = shade(c, p.head === "bird" ? 1.15 : 0.85);
+  const scaleBy = (span / 0.9) ** 0.5;
+  if (wingPart && sculpted?.quad_body) {
+    // (a feathered, ribbed or membraned wing, made for a span of 0.9; the body is the beast's barrel, small)
+    k.pair((s) => k.limb(s > 0 ? LIMB.wingL : LIMB.wingR, [s * 0.05, y, 0], () => mould(k, wingPart, wingColor, wingColor, { at: [s * 0.05, y, 0], scale: [s * span / 0.9, 1, scaleBy], finish: "cloth" })));
+    const g = 0.07 * scaleBy;
+    mould(k, sculpted.quad_body, c, "#e8dcc0", { at: [0, y, 0], scale: [g / 0.3, g / 0.3, (0.2 + 2 * g) / 1.2] }, { 2: { color: c } });
+  } else {
+    k.pair((s) => k.limb(s > 0 ? LIMB.wingL : LIMB.wingR, [s * 0.05, y, 0], () => k.extrude(wing, 0.01, wingColor, { at: [s * 0.05, y, 0], rot: [-Math.PI / 2, 0, 0], scale: [s, 1, 1], finish: "cloth" })));
+    k.capsule(0.07 * (span / 0.9) ** 0.5, 0.2, c, { at: [0, y, 0], rot: [Math.PI / 2, 0, 0], seg: 10 });
+  }
   k.limb(LIMB.tail, [0, y, -0.15], () => k.tube([[0, y, -0.15], [0, y - 0.02, -0.32], [0.03, y - 0.05, -0.5]], (t) => 0.025 * (1 - t * 0.7), c, { along: 6, around: 5 }));
   k.group([0, y + 0.02, 0.18], undefined, (span / 0.9) ** 0.5, () => {
+    // (a bird has the bird's head and beak, a dragon a lizard's, a bat a cat's with its ears, small; a manta its own)
+    const small = p.head === "bird" ? 0.67 : p.head === "dragon" ? 0.85 : p.head === "bat" ? 0.4 : 0;
+    const piece = small ? sculpted?.[p.head === "bird" ? "bird" : p.head === "dragon" ? "lizard" : "cat"] : undefined;
+    if (piece?.eyes) {
+      mould(k, piece, c, "#e8dcc0", { scale: small });
+      if (p.head === "bird" && sculpted?.beak) mould(k, sculpted.beak, "#e8a03a", "#e8a03a", { scale: small });
+      if (p.head === "bat" && piece.ear && sculpted?.ear_cat) k.pair((s) => mould(k, sculpted.ear_cat, c, c, { at: [s * piece.ear![0] * small, piece.ear![1] * small, piece.ear![2] * small], rot: [-0.2, 0, s * -0.2], scale: small * 1.3 }));
+      if (p.head === "dragon") k.pair((s) => k.cone(0.015, 0.08, "#e8dcc0", { at: [s * 0.04, 0.05, -0.02], rot: [-1, 0, 0], seg: 4 }));
+      const [ex, ey, ez, er] = piece.eyes;
+      k.pair((s) => k.sphere(er * small, "#15171b", { at: [s * ex * small, ey * small, ez * small], finish: "sheen", seg: [6, 4] }));
+      return;
+    }
     if (p.head === "bird") {
       k.sphere(0.06, c, { seg: [10, 8] });
       k.cone(0.025, 0.08, "#e8a03a", { at: [0, -0.01, 0.07], rot: [Math.PI / 2, 0, 0], seg: 5 });
@@ -4206,25 +4277,42 @@ function flyer(k: Kit, p: Extract<Plan, { plan: "flyer" }>) {
 function bug(k: Kit, p: Extract<Plan, { plan: "bug" }>) {
   const c = p.color;
   const y = p.h;
-  k.blob(0.16, c, { at: [0, y, -0.05], smooth: true, rough: 0.08, seed: 1, squash: [1, 0.8, 1.3], finish: "sheen" });
-  k.blob(0.2, shade(c, 0.85), { at: [0, y + 0.02, -0.3], smooth: true, rough: 0.1, seed: 2, squash: [1, 0.9, 1.3], finish: "sheen" });
+  // (a ringed thorax and abdomen, a head, and legs in two jointed pieces, from creature.glb; the blobs and tubes until it is in)
+  const beasts = creatureParts();
+  const sc = beasts?.bug_thorax && beasts.bug_abdomen && beasts.bug_head && beasts.bug_leg_a && beasts.bug_leg_b ? beasts : undefined;
+  const leg = (from: V3, knee: V3, foot: V3, hide: string, bulk = 1) => {
+    sculpt(k, sc!.bug_leg_a.part, { 0: { color: hide } }, (g) => fitLimb(g, { from, to: knee, nominal: 0.25, bulk }));
+    sculpt(k, sc!.bug_leg_b.part, { 0: { color: hide } }, (g) => fitLimb(g, { from: knee, to: foot, nominal: 0.35, bulk }));
+  };
+  if (sc) {
+    mould(k, sc.bug_thorax, c, "#e8dcc0", { at: [0, y, -0.05] });
+    mould(k, sc.bug_abdomen, shade(c, 0.85), "#e8dcc0", { at: [0, y + 0.02, -0.3] });
+  } else {
+    k.blob(0.16, c, { at: [0, y, -0.05], smooth: true, rough: 0.08, seed: 1, squash: [1, 0.8, 1.3], finish: "sheen" });
+    k.blob(0.2, shade(c, 0.85), { at: [0, y + 0.02, -0.3], smooth: true, rough: 0.1, seed: 2, squash: [1, 0.9, 1.3], finish: "sheen" });
+  }
   const legs = p.legs - (p.mantis ? 2 : 0);
   // The legs in threes (the hexa gait): the first pair, the last, and those between
   for (let i = 0; i < legs / 2; i++) {
     const z = 0.05 - i * 0.12;
     const [right, left] = i === 0 ? [LIMB.legR, LIMB.legL] : i === legs / 2 - 1 ? [LIMB.hindR, LIMB.hindL] : [LIMB.midR, LIMB.midL];
-    k.pair((s) => k.limb(s > 0 ? left : right, [s * 0.1, y, z], () => k.tube([[s * 0.1, y, z], [s * (0.3 + y * 0.3), y + 0.12, z + 0.04], [s * (0.42 + y * 0.2), 0.02, z + 0.08]], 0.02, shade(c, 0.8), { along: 6, around: 5, finish: "sheen" })));
+    k.pair((s) => k.limb(s > 0 ? left : right, [s * 0.1, y, z], () => {
+      if (sc) return leg([s * 0.1, y, z], [s * (0.3 + y * 0.3), y + 0.12, z + 0.04], [s * (0.42 + y * 0.2), 0.02, z + 0.08], shade(c, 0.8));
+      k.tube([[s * 0.1, y, z], [s * (0.3 + y * 0.3), y + 0.12, z + 0.04], [s * (0.42 + y * 0.2), 0.02, z + 0.08]], 0.02, shade(c, 0.8), { along: 6, around: 5, finish: "sheen" });
+    }));
   }
   const headAt: V3 = p.mantis ? [0, y + 0.4, 0.2] : [0, y, 0.15];
   if (p.mantis) {
     k.tube([[0, y + 0.05, 0.05], [0, y + 0.25, 0.12], headAt], 0.07, c, { along: 6, around: 7, finish: "sheen" });
     k.pair((s) => k.limb(s > 0 ? LIMB.armL : LIMB.armR, [s * 0.08, y + 0.3, 0.15], () => {
-      k.tube([[s * 0.08, y + 0.3, 0.15], [s * 0.18, y + 0.55, 0.25], [s * 0.2, y + 0.2, 0.45]], 0.03, c, { along: 8, around: 6, finish: "sheen" });
+      if (sc) leg([s * 0.08, y + 0.3, 0.15], [s * 0.18, y + 0.55, 0.25], [s * 0.2, y + 0.2, 0.45], c, 1.6);
+      else k.tube([[s * 0.08, y + 0.3, 0.15], [s * 0.18, y + 0.55, 0.25], [s * 0.2, y + 0.2, 0.45]], 0.03, c, { along: 8, around: 6, finish: "sheen" });
       k.cone(0.03, 0.3, "#e8dcc0", { at: [s * 0.2, y + 0.08, 0.5], rot: [Math.PI - 0.4, 0, 0], seg: 5 });
     }));
   }
   k.group(headAt, undefined, undefined, () => {
-    k.sphere(0.08, c, { scale: [1.1, 0.9, 1.1], seg: [10, 8], finish: "sheen" });
+    if (sc) mould(k, sc.bug_head, c, "#e8dcc0");
+    else k.sphere(0.08, c, { scale: [1.1, 0.9, 1.1], seg: [10, 8], finish: "sheen" });
     for (let i = 0; i < (p.legs === 8 ? 6 : 2); i++) k.sphere(0.014, C.red, { at: [(i % 2 ? 1 : -1) * (0.025 + Math.floor(i / 2) * 0.02), 0.03 + Math.floor(i / 2) * 0.015, 0.07], finish: "glow", seg: [6, 4] });
     k.pair((s) => k.cone(0.012, 0.06, "#2a2a2e", { at: [s * 0.03, -0.04, 0.08], rot: [Math.PI / 2 + 0.6, 0, 0], seg: 4 }));
   });
@@ -4259,13 +4347,31 @@ function tentacles(k: Kit, p: Extract<Plan, { plan: "tentacles" }>) {
 function critter(k: Kit, p: Extract<Plan, { plan: "critter" }>, seed: number) {
   const c = p.color;
   const eye = (at: V3, r = 0.02) => k.sphere(r, "#15171b", { at, finish: "sheen", seg: [6, 4] });
+  const beasts = creatureParts();
+  // A small beast from sculpted parts: the barrel (its girth and length), the head (its size, its place and tilt) with its eyes, and its ears
+  const small = (girth: number, len: number, at: V3, head: string, size: number, headAt: V3, ear?: { name: string; scale: number; rot: V3 }, beak?: string) => {
+    const piece = beasts?.[head];
+    if (!beasts?.quad_body || !piece?.eyes) return false;
+    mould(k, beasts.quad_body, c, "#e8dcc0", { at, scale: [girth / 0.3, girth / 0.3, (len + 2 * girth) / 1.2] }, { 2: { color: c } });
+    k.group(headAt, undefined, size, () => {
+      mould(k, piece, c);
+      if (beak && beasts[beak]) mould(k, beasts[beak], "#e8a03a", "#e8a03a");
+      if (ear && piece.ear && beasts[ear.name]) k.pair((s) => mould(k, beasts[ear.name], c, c, { at: [s * piece.ear![0], piece.ear![1], piece.ear![2]], rot: [ear.rot[0], 0, s * ear.rot[2]], scale: ear.scale }));
+      const [ex, ey, ez, er] = piece.eyes!;
+      k.pair((s) => k.sphere(er, "#15171b", { at: [s * ex, ey, ez], finish: "sheen", seg: [6, 4] }));
+    });
+    return true;
+  };
   switch (p.kind) {
     case "rat":
-      k.blob(0.13, c, { at: [0, 0.14, 0], smooth: true, rough: 0.1, seed, squash: [0.9, 0.85, 1.5] });
-      k.cone(0.07, 0.16, c, { at: [0, 0.14, 0.24], rot: [Math.PI / 2, 0, 0], seg: 8 });
-      k.pair((s) => k.sphere(0.04, shade(c, 1.2), { at: [s * 0.06, 0.22, 0.14], scale: [0.4, 1, 0.8], seg: [8, 6] }));
-      k.tube([[0, 0.12, -0.18], [0.05, 0.08, -0.35], [0.12, 0.03, -0.5]], 0.012, "#c9a0a0", { along: 6, around: 4 });
-      k.pair((s) => eye([s * 0.04, 0.17, 0.2]));
+      if (small(0.11, 0.12, [0, 0.14, 0], "dog", 0.4, [0, 0.16, 0.2], { name: "ear_round", scale: 0.45, rot: [-0.1, 0, -0.5] })) k.tube([[0, 0.12, -0.18], [0.05, 0.08, -0.35], [0.12, 0.03, -0.5]], 0.012, "#c9a0a0", { along: 6, around: 4 });
+      else {
+        k.blob(0.13, c, { at: [0, 0.14, 0], smooth: true, rough: 0.1, seed, squash: [0.9, 0.85, 1.5] });
+        k.cone(0.07, 0.16, c, { at: [0, 0.14, 0.24], rot: [Math.PI / 2, 0, 0], seg: 8 });
+        k.pair((s) => k.sphere(0.04, shade(c, 1.2), { at: [s * 0.06, 0.22, 0.14], scale: [0.4, 1, 0.8], seg: [8, 6] }));
+        k.tube([[0, 0.12, -0.18], [0.05, 0.08, -0.35], [0.12, 0.03, -0.5]], 0.012, "#c9a0a0", { along: 6, around: 4 });
+        k.pair((s) => eye([s * 0.04, 0.17, 0.2]));
+      }
       k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.06, 0.08, 0.08], () => k.tube([[s * 0.06, 0.08, 0.08], [s * 0.07, 0.02, 0.1]], 0.014, c, { along: 2, around: 4 })));
       k.pair((s) => k.limb(s > 0 ? LIMB.hindL : LIMB.hindR, [s * 0.06, 0.08, -0.1], () => k.tube([[s * 0.06, 0.08, -0.1], [s * 0.07, 0.02, -0.08]], 0.016, c, { along: 2, around: 4 })));
       return;
@@ -4275,6 +4381,11 @@ function critter(k: Kit, p: Extract<Plan, { plan: "critter" }>, seed: number) {
       k.pair((s) => k.tube([[s * 0.12, 0.1, -0.06], [s * 0.22, 0.1, -0.02], [s * 0.2, 0.02, 0.06]], 0.035, c, { along: 6, around: 5 }));
       return;
     case "lizard":
+      if (small(0.06, 0.2, [0, 0.08, 0], "lizard", 0.5, [0, 0.09, 0.2])) {
+        k.tube([[0, 0.07, -0.15], [0.06, 0.05, -0.3], [0.02, 0.03, -0.45]], (t) => 0.04 * (1 - t * 0.8), c, { along: 6, around: 5 });
+        for (const z of [0.08, -0.08]) k.pair((s) => k.limb(z > 0 ? (s > 0 ? LIMB.legL : LIMB.legR) : s > 0 ? LIMB.hindL : LIMB.hindR, [s * 0.05, 0.07, z], () => k.tube([[s * 0.05, 0.07, z], [s * 0.1, 0.05, z + 0.02], [s * 0.11, 0.01, z + 0.04]], 0.015, c, { along: 3, around: 4 })));
+        return;
+      }
       k.capsule(0.06, 0.24, c, { at: [0, 0.08, 0], rot: [Math.PI / 2, 0, 0], seg: 8 });
       k.tube([[0, 0.07, -0.15], [0.06, 0.05, -0.3], [0.02, 0.03, -0.45]], (t) => 0.04 * (1 - t * 0.8), c, { along: 6, around: 5 });
       k.capsule(0.045, 0.06, c, { at: [0, 0.09, 0.2], rot: [Math.PI / 2, 0, 0], seg: 8 });
@@ -4282,6 +4393,7 @@ function critter(k: Kit, p: Extract<Plan, { plan: "critter" }>, seed: number) {
       k.pair((s) => eye([s * 0.03, 0.12, 0.23], 0.012));
       return;
     case "rabbit":
+      if (small(0.1, 0.1, [0, 0.14, 0], "cat", 0.42, [0, 0.24, 0.12], { name: "ear_long", scale: 0.8, rot: [-0.1, 0, -0.2] })) return;
       k.blob(0.12, c, { at: [0, 0.14, 0], smooth: true, rough: 0.08, seed, squash: [0.9, 1, 1.3] });
       k.sphere(0.07, c, { at: [0, 0.24, 0.12], seg: [10, 8] });
       k.pair((s) => k.capsule(0.022, 0.14, c, { at: [s * 0.03, 0.38, 0.1], rot: [-0.2, 0, s * -0.2], seg: 6 }));
@@ -4296,12 +4408,20 @@ function critter(k: Kit, p: Extract<Plan, { plan: "critter" }>, seed: number) {
       k.pair((s) => eye([s * 0.03, 0.48, 0.08], 0.014));
       return;
     case "bird":
+      if (small(0.12, 0.1, [0, 0.2, 0], "bird", 0.6, [0, 0.3, 0.12], undefined, "beak")) {
+        k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.04, 0.12, 0], () => k.cyl(0.01, 0.12, "#e8a03a", { at: [s * 0.04, 0.06, 0], seg: 4 })));
+        return;
+      }
       k.blob(0.13, c, { at: [0, 0.2, 0], smooth: true, rough: 0.06, seed, squash: [1, 0.9, 1.2] });
       k.sphere(0.06, c, { at: [0, 0.3, 0.12], seg: [10, 8] });
       k.cone(0.02, 0.06, "#e8a03a", { at: [0, 0.29, 0.19], rot: [Math.PI / 2, 0, 0], seg: 5 });
       k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.04, 0.12, 0], () => k.cyl(0.01, 0.12, "#e8a03a", { at: [s * 0.04, 0.06, 0], seg: 4 })));
       return;
     case "hippo":
+      if (small(0.24, 0.3, [0, 0.24, 0], "blunt", 0.55, [0, 0.26, 0.4])) {
+        for (const z of [0.18, -0.18]) k.pair((s) => k.limb(z > 0 ? (s > 0 ? LIMB.legL : LIMB.legR) : s > 0 ? LIMB.hindL : LIMB.hindR, [s * 0.14, 0.12, z], () => k.cyl(0.05, 0.12, shade(c, 0.9), { at: [s * 0.14, 0.06, z], seg: 8 })));
+        return;
+      }
       k.blob(0.24, c, { at: [0, 0.24, 0], smooth: true, rough: 0.08, seed, squash: [1, 0.85, 1.35] });
       k.box([0.24, 0.16, 0.18], shade(c, 1.1), { at: [0, 0.22, 0.32], round: 0.07 });
       for (const z of [0.18, -0.18]) k.pair((s) => k.limb(z > 0 ? (s > 0 ? LIMB.legL : LIMB.legR) : s > 0 ? LIMB.hindL : LIMB.hindR, [s * 0.14, 0.12, z], () => k.cyl(0.05, 0.12, shade(c, 0.9), { at: [s * 0.14, 0.06, z], seg: 8 })));
@@ -4318,6 +4438,15 @@ function critter(k: Kit, p: Extract<Plan, { plan: "critter" }>, seed: number) {
 // A slug: a hutt sits up with its arms folded on its belly; others crawl
 function slug(k: Kit, p: Extract<Plan, { plan: "slug" }>) {
   const c = p.color;
+  const hutt = p.hutt ? creatureParts()?.hutt : undefined;
+  if (hutt) {
+    // (a sculpted body from the tail's tip to the brow, with the folds, the jowls and the wide mouth: creature.glb)
+    mould(k, hutt, c);
+    const [ex, ey, ez, er] = hutt.eyes ?? [0.1, 0.98, 0.28, 0.035];
+    k.pair((s) => k.sphere(er, "#f0a03c", { at: [s * ex, ey, ez], finish: "glow", seg: [8, 6] }));
+    k.pair((s) => k.tube([[s * 0.32, 0.6, 0.1], [s * 0.36, 0.45, 0.3], [s * 0.1, 0.42, 0.42]], 0.05, c, { along: 6, around: 6 }));
+    return;
+  }
   if (p.hutt) {
     k.lathe([[0.42, 0], [0.48, 0.1], [0.46, 0.32], [0.38, 0.55], [0.26, 0.72], [0.18, 0.8], [0, 0.82]], c, { at: [0, 0, -0.08], seg: 18, scale: [1, 1, 1.15] });
     k.tube([[0, 0.12, -0.5], [0.12, 0.06, -0.85], [0.3, 0.04, -1.05], [0.42, 0.04, -1.08]], (t) => 0.3 * (1 - t * 0.85), c, { along: 12, around: 9 });
@@ -4545,7 +4674,7 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
     const plan = creaturePlan(name.replace(/swarm of /i, ""), creature, "tiny");
     const tiny: Plan = plan.plan === "flyer" ? { ...plan, span: 0.35 } : plan.plan === "critter" ? plan : { plan: "critter", kind: "bug", color: pickOf(NATURAL, name) };
     return {
-      key: `swarm:${JSON.stringify(tiny)}`,
+      key: `swarm:${JSON.stringify(tiny)}${creatureParts() ? ":sc" : ""}`,
       build: (k) => {
         for (let i = 0; i < 6; i++) k.group([Math.sin(i * 2.3) * 0.28, tiny.plan === "flyer" ? -0.6 + (i % 3) * 0.15 : 0, Math.cos(i * 1.7) * 0.28], [0, i * 1.1, 0], 0.45, () => buildCreature(k, tiny, i));
       },
@@ -4553,7 +4682,7 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
       gait: tiny.plan === "flyer" ? "wings" : "hexa",
     };
   }
-  if (kind === "hutt" || /hutt/i.test(name)) return { key: "beast:hutt", build: (k) => slug(k, { plan: "slug", color: "#7c8a4a", hutt: true }), height: 1.2, gait: "glide" };
+  if (kind === "hutt" || /hutt/i.test(name)) return { key: `beast:hutt${creatureParts() ? ":sc" : ""}`, build: (k) => slug(k, { plan: "slug", color: "#7c8a4a", hutt: true }), height: 1.2, gait: "glide" };
   if (kind === "crowd") {
     return {
       key: `crowd:${seed % 6}${bodyParts() ? ":sc" : ""}`,
