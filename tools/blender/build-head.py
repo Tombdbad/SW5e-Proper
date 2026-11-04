@@ -1,6 +1,8 @@
 # The head of a person (2026-11-04; the user: "lets start with humanoid heads and realistic looking hair styles").
 #
 # Run headless:  blender --background --python tools/blender/build-head.py -- <out-dir> [--lo] [--maps <dir>] [--preview <dir>]
+# (2026-11-04, second pass: the heads of the species with a snout, each baked the same way into a smaller cell of the atlas (SNOUTS, CELLS), and the machine's
+# head and four masks from build-gear.py, put in the same file.)
 # It builds, for a masculine and a feminine face, a LOW head (about 2.3k triangles, 1k with --lo) and a HIGH one (about 55k) from the same
 # description, bakes the high one's tangent-space normal map and ambient occlusion onto the low one's texture coordinates (Cycles), and writes
 #   <out-dir>/head.glb (head.lo.glb)   the two low heads, `head_m` and `head_f`, and a pair of ears each (`_REGION` 0 the face, 3 the ears;
@@ -12,7 +14,7 @@
 # has not the triangles for. The code's eyes (spheres), brows and hair sit on it where the old head's did: the features stand at the same
 # landmarks (eyes at x +-0.040, y 0.015; the mouth at y -0.0515; the chin at y -0.088 ...), in the units and axes of the code (y up, +z the way
 # the face looks). Original shapes: CC0.
-import bpy, bmesh, math, sys, os
+import bpy, bmesh, math, sys, os, importlib.util
 from mathutils import Vector
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -23,6 +25,9 @@ def arg(name):
 MAPS = arg("--maps")
 PREVIEW = arg("--preview")
 SIZE = 1024
+# The atlas of the faces, 2048 x 2048 (u, v from the bottom left; each cell u0, v0, du, dv): the masculine and the feminine head on the top half (1024 each), and under them
+# in 512 cells the heads with a snout
+CELLS = {"m": (0.0, 0.5, 0.5, 0.5), "f": (0.5, 0.5, 0.5, 0.5), "muzzle": (0.0, 0.25, 0.25, 0.25), "long": (0.25, 0.25, 0.25, 0.25), "short": (0.5, 0.25, 0.25, 0.25), "pig": (0.75, 0.25, 0.25, 0.25), "flat": (0.0, 0.0, 0.25, 0.25)}
 
 # ---- Landmarks and features ---------------------------------------------------------------------------------------------------------
 def gauss(x, y, cx, cy, rx, ry):
@@ -110,9 +115,37 @@ def fine(x, y, fem):
     d += -0.0014 * line(x, y, [(0.0, 0.026), (0.0, 0.036)], 0.0020)                                      # between the brows
     return d
 
+# What a species with a muzzle has in place of a nose and lips: how far the front of the face is pushed out, and its width, height and centre (as build-body.py's)
+SNOUTS = {"muzzle": (0.045, 0.036, 0.034, -0.040), "long": (0.075, 0.030, 0.030, -0.040), "short": (0.022, 0.030, 0.028, -0.030), "pig": (0.034, 0.050, 0.032, -0.036), "flat": None}
+
+def coarse_snout(x, y, v):
+    """the face of a species with a snout: sockets, brow, cheeks, chin as a person's, then the pad of the nose and its nostrils, the whisker pads, the mouth's line"""
+    sn = SNOUTS.get(v)
+    d = -0.0135 * g2(x, y, 0.040, 0.016, 0.026, 0.018)
+    d += 0.0095 * l2(x, y, [(0.014, 0.036), (0.030, 0.043), (0.048, 0.046), (0.068, 0.040), (0.082, 0.034)], 0.0075)
+    d += 0.003 * gauss(x, y, 0.0, 0.034, 0.014, 0.012)
+    d += 0.0060 * g2(x, y, 0.066, -0.012, 0.026, 0.022)
+    d += -0.0042 * g2(x, y, 0.062, -0.052, 0.022, 0.022)
+    d += 0.0040 * gauss(x, y, 0.0, -0.088, 0.020, 0.016)
+    if sn:
+        push, srx, sry, scy = sn
+        ty = scy + 0.014
+        d += 0.0045 * gauss(x, y, 0.0, ty, srx * 0.6, 0.012)
+        d += -0.0045 * g2(x, y, 0.011, ty - 0.003, 0.0045, 0.0038)
+        d += 0.0040 * g2(x, y, srx * 0.55, scy - 0.004, 0.012, 0.010)
+        d += -0.0035 * line(x, y, [(-0.03, scy - 0.020), (-0.014, scy - 0.024), (0.0, scy - 0.022), (0.014, scy - 0.024), (0.03, scy - 0.020)], 0.0017)
+        d += -0.0025 * line(x, y, [(0.0, ty - 0.012), (0.0, scy - 0.020)], 0.0015)
+        for k in range(3):    # (the dots the whiskers grow from)
+            for r in range(2):
+                d += 0.0014 * g2(x, y, srx * 0.5 + 0.007 * k, scy - 0.002 - 0.007 * r, 0.0019, 0.0019)
+    else:
+        d += -0.0035 * g2(x, y, 0.008, -0.02, 0.0035, 0.0035)
+        d += -0.0030 * line(x, y, [(-0.03, -0.052), (0.0, -0.054), (0.03, -0.052)], 0.0016)
+    return d
+
 BX, BY, BZ = 0.100, 0.118, 0.112
 
-def surface(dx, dy, dz, fem, level):
+def surface(dx, dy, dz, fem, level, variant=None):
     """the head at a unit direction: the skull ellipsoid, the tapering jaw, then the features along the normal"""
     x, y, z = dx * BX, dy * BY, dz * BZ
     front = smooth(0.0, 0.8, dz)
@@ -121,13 +154,20 @@ def surface(dx, dy, dz, fem, level):
     z += (0.012 - 0.003 * fem) * low * smooth(0.2, 0.9, dz)
     y -= 0.012 * low
     z -= 0.006 * smooth(0.0, 0.9, dy) * (1 - front)
+    sn = SNOUTS.get(variant) if variant else None
+    if sn:
+        push, srx, sry, scy = sn
+        z += push * math.exp(-0.5 * ((x / srx) ** 2 + ((y - scy) / sry) ** 2)) * smooth(0.25, 0.9, dz)
     if dz > 0.05:
         nx, ny, nz = dx / BX, dy / BY, dz / BZ
         nl = math.sqrt(nx * nx + ny * ny + nz * nz) or 1.0
         nx, ny, nz = nx / nl, ny / nl, nz / nl
-        d = coarse(x, y, fem)
-        if level:
-            d += fine(x, y, fem)
+        if variant:
+            d = coarse_snout(x, y, variant)
+        else:
+            d = coarse(x, y, fem)
+            if level:
+                d += fine(x, y, fem)
         d *= smooth(0.05, 0.35, dz)
         x += d * nx
         y += d * ny
@@ -146,14 +186,14 @@ def warp_theta(t, dense=False):
     """the rows crowd to the middle latitudes, where the eyes, nose and mouth are"""
     return t + (0.2 if dense else 0.12) * math.sin(2 * t)
 
-def head_mesh(name, fem, rows, segs, level, dense=False):
+def head_mesh(name, fem, rows, segs, level, dense=False, variant=None):
     verts, uvs, faces = [], [], []
     index = {}
     def add(i, j, pole=None):
         th = warp_theta(math.pi * i / rows, dense)
         ph = warp_phi(-math.pi + 2 * math.pi * (j if pole is None else j + 0.5) / segs, dense)
         dx, dy, dz = math.sin(th) * math.sin(ph), math.cos(th), math.sin(th) * math.cos(ph)
-        x, y, z = surface(dx, dy, dz, fem, level)
+        x, y, z = surface(dx, dy, dz, fem, level, variant)
         verts.append(P(x, y, z))
         uvs.append(((j if pole is None else j + 0.5) / segs, 1.0 - i / rows))
         return len(verts) - 1
@@ -233,7 +273,7 @@ def ears(fem):
     return out
 
 # ---- Baking -------------------------------------------------------------------------------------------------------------------------
-def bake(low, high, kind, path):
+def bake(low, high, kind, path, SIZE=SIZE):
     scn = bpy.context.scene
     scn.render.engine = "CYCLES"
     scn.cycles.device = "CPU"
@@ -267,7 +307,7 @@ def bake(low, high, kind, path):
     bpy.data.images.remove(img)
 
 # ---- Colour: what is painted, not modelled (the lips, the lids, the mouth's line, the nostrils), laid out the way the maps are ---------------
-def paint(fem, path):
+def paint(fem, path, variant=None, SIZE=SIZE):
     """a pale colour map for the low head's texture coordinates: the vertex colour (the skin) multiplies it, so what it holds is the
     difference from the skin: redder, darker lips, shaded lids and nostrils, a little warmth in the cheeks"""
     import numpy as np
@@ -291,7 +331,14 @@ def paint(fem, path):
         return np.exp(-0.5 * (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2))
     def G2(cx, cy, rx, ry):
         return G(cx, cy, rx, ry) + G(-cx, cy, rx, ry)
+    sn = SNOUTS.get(variant) if variant else None
     lips = np.clip((np.maximum(G(0, -0.0465, 0.021, 0.0062), G(0, -0.0585, 0.0195, 0.0075)) - 0.3) / 0.35, 0, 1) * front
+    if variant:
+        lips = lips * 0.0
+        ty = (sn[3] + 0.014) if sn else -0.02
+        pad = np.clip(G(0, ty, (sn[1] * 0.6) if sn else 0.012, 0.012), 0, 1) * front
+        nost = np.clip(G2(0.011, ty - 0.003, 0.0042, 0.0036), 0, 1) * front
+        mline = np.exp(-0.5 * ((y - ((sn[3] - 0.022) if sn else -0.054)) / 0.0014) ** 2) * (np.abs(x) < 0.032) * front
     lid = np.clip(G2(0.041, 0.022, 0.018, 0.008), 0, 1) * front
     bag = np.clip(G2(0.040, -0.006, 0.016, 0.006), 0, 1) * front
     nostril = np.clip(G2(0.0085, -0.0290, 0.0030, 0.0022), 0, 1) * front
@@ -301,12 +348,18 @@ def paint(fem, path):
     def tint(mask, col, k):
         for c in range(3):
             rgb[:, :, c] *= 1.0 + mask * k * (col[c] - 1.0)
-    tint(lips, (1.0, 0.66, 0.64), 0.85 + 0.1 * fem)
+    tint(lips, (1.0, 0.66, 0.64), 0.85 + 0.1 * fem)  # (a snout has none: its lips are zero)
     tint(lid, (0.95, 0.84, 0.88), 0.7)
     tint(bag, (0.96, 0.88, 0.9), 0.6)
     tint(cheek, (1.0, 0.92, 0.91), 0.55 + 0.2 * fem)
-    tint(nostril, (0.55, 0.45, 0.45), 0.5)
-    tint(mouth, (0.6, 0.48, 0.48), 0.6)
+    if variant:
+        pig = variant == "pig"
+        tint(pad, (1.0, 0.8, 0.78) if pig else (0.42, 0.34, 0.34), 0.8)
+        tint(nost, (0.35, 0.28, 0.28), 0.9)
+        tint(mline, (0.5, 0.4, 0.4), 0.7)
+    else:
+        tint(nostril, (0.55, 0.45, 0.45), 0.5)
+        tint(mouth, (0.6, 0.48, 0.48), 0.6)
     px = np.ones((n, n, 4), dtype=np.float32)
     px[:, :, :3] = rgb
     img = bpy.data.images.new("color", n, n, alpha=False)
@@ -342,14 +395,27 @@ def preview(obs, path, yaw):
     scn.render.filepath = path
     bpy.ops.render.render(write_still=True)
 
+def mark_of(x, y, variant):
+    """a snout's darkening (the nose pad, the nostrils, the line of the mouth, an eyelid) and lightening (the muzzle, the chin), -1 to 1: the code's `mark`"""
+    sn = SNOUTS.get(variant)
+    ty = (sn[3] + 0.014) if sn else -0.02
+    m = 0.9 * gauss(x, y, 0.0, ty, (sn[1] * 0.6) if sn else 0.012, 0.012) if True else 0.0
+    m += 0.9 * (gauss(x, y, 0.011, ty - 0.003, 0.0042, 0.0036) + gauss(x, y, -0.011, ty - 0.003, 0.0042, 0.0036))
+    m += 0.6 * math.exp(-0.5 * ((y - ((sn[3] - 0.022) if sn else -0.054)) / 0.0016) ** 2) * (1 if abs(x) < 0.032 else 0)
+    m = min(1.0, m)
+    pale = 0.5 * smooth(-0.03, -0.075, y) * smooth(0.0, 0.05, 0.075 - abs(x))     # the muzzle and the chin a little paler
+    return m if m > 0.05 else -pale
+
 def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     rows, segs = (30, 40) if HI else (18, 26)
     exported = []
-    for variant, fem in (("m", 0.0), ("f", 1.0)):
-        low = head_mesh(f"head_{variant}", fem, rows, segs, 0)
+    plan = [("m", 0.0, None, 1024), ("f", 1.0, None, 1024)] + [(k, 0.0, k, 512) for k in ("muzzle", "long", "short", "pig", "flat")]
+    atlas = {}
+    for variant, fem, snout, size in plan:
+        low = head_mesh(f"head_{variant}", fem, rows, segs, 0, False, snout)
         weld_normals(low)
-        high = head_mesh(f"high_{variant}", fem, 240, 320, 1, True)
+        high = head_mesh(f"high_{variant}", fem, 240, 320, 1, True, snout)
         if PREVIEW:
             os.makedirs(PREVIEW, exist_ok=True)
             for yaw, tag in ((0.0, "front"), (math.radians(60), "three")):
@@ -357,31 +423,37 @@ def main():
                 preview([low], os.path.join(PREVIEW, f"low_{variant}_{tag}.png"), yaw)
         if MAPS and HI:
             os.makedirs(MAPS, exist_ok=True)
-            # (the other head, if it is made, would be a wall the occlusion rays hit)
+            # (the other heads, if they are made, would be walls the occlusion rays hit)
             for o in exported:
                 o.hide_render = True
-            bake(low, high, "NORMAL", os.path.join(MAPS, f"head_{variant}_normal.png"))
-            bake(low, high, "AO", os.path.join(MAPS, f"head_{variant}_ao.png"))
-            paint(fem, os.path.join(MAPS, f"head_{variant}_color.png"))
+            bake(low, high, "NORMAL", os.path.join(MAPS, f"head_{variant}_normal.png"), size)
+            bake(low, high, "AO", os.path.join(MAPS, f"head_{variant}_ao.png"), size)
+            paint(fem, os.path.join(MAPS, f"head_{variant}_color.png"), snout, size)
             for o in exported:
                 o.hide_render = False
+            atlas[variant] = {"cell": CELLS[variant], "size": size}
         bpy.data.objects.remove(high)
-        # the atlas: the masculine map on the left half, the feminine on the right
+        # the atlas: this head's cell
+        u0, v0, du, dv = CELLS[variant]
         layer = low.data.uv_layers.active
         for d in layer.data:
-            d.uv = ((d.uv[0] + (0 if variant == "m" else 1)) * 0.5, d.uv[1])
+            d.uv = (u0 + d.uv[0] * du, v0 + d.uv[1] * dv)
         # the regions: the face 0, and the ears 3 (the ears are given a corner of no texture)
         low.data.attributes.new("_REGION", "FLOAT", "POINT")
+        if snout:
+            mk = low.data.attributes.new("_MARK", "FLOAT", "POINT")
+            for v in low.data.vertices:
+                mk.data[v.index].value = mark_of(v.co.x, v.co.z, snout)
         pair = ears(fem)
         for e in pair:
             e.data.attributes.new("_REGION", "FLOAT", "POINT")
+            if snout:
+                e.data.attributes.new("_MARK", "FLOAT", "POINT")
             for v in e.data.vertices:
                 e.data.attributes["_REGION"].data[v.index].value = 3.0
             e.data.uv_layers.new(name="UVMap")
         low.data.materials.clear()
         joined = join([low] + pair, f"head_{variant}")
-        for o in pair:
-            pass
         # (a gentle ambient occlusion by vertex: the underside of the jaw and the ears darker)
         ao = joined.data.attributes.new("_AO", "FLOAT", "POINT")
         for v in joined.data.vertices:
@@ -389,6 +461,20 @@ def main():
             y = w.z
             ao.data[v.index].value = 1.0 - 0.35 * smooth(-0.05, -0.12, y) - (0.25 if abs(w.x) > 0.103 else 0.0)
         exported.append(joined)
+    # the machine's head and the masks
+    spec = importlib.util.spec_from_file_location("build_gear", os.path.join(os.path.dirname(os.path.abspath(__file__)), "build-gear.py"))
+    gear = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gear)
+    made = gear.all_gear(sys.modules[__name__])
+    if PREVIEW:
+        for ob in made:
+            for yaw, tag in ((0.0, "front"), (math.radians(60), "three")):
+                preview([ob, exported[0]], os.path.join(PREVIEW, f"{ob.name}_{tag}.png"), yaw)
+    exported += made
+    if MAPS and HI:
+        import json
+        with open(os.path.join(MAPS, "atlas.json"), "w") as fh:
+            json.dump(atlas, fh)
     for o in bpy.context.selected_objects:
         o.select_set(False)
     for o in exported:

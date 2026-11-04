@@ -29,10 +29,11 @@ export { beginSwing, saberKitOf, SABER_KITS, type SaberKit } from "./saberplay";
 // above the waist (`chest`, which carries the arms, the head and all worn above it), the forearms below the elbows, the shins below the
 // knees, and what the right hand holds (`weapon`, turned at the wrist; 2026-11-04: `weaponL`, what the left hand holds in a fight with two blades, and `whip1`, `whip2`, the two bends of a lightwhip's lash, one hanging from the last). These hang one from another (PARENT): a forearm turns about its
 // elbow and is then carried by its upper arm, which the chest carries; a shin turns about its knee and then with its thigh.
-export const LIMB = { body: 0, legR: 1, legL: 2, armR: 3, armL: 4, hindR: 5, hindL: 6, midR: 7, midL: 8, tail: 9, roll: 10, wingR: 11, wingL: 12, chest: 13, foreR: 14, foreL: 15, shinR: 16, shinL: 17, weapon: 18, head: 19, earR: 20, earL: 21, tail2: 22, jaw: 23, wave: 24, shinHR: 25, shinHL: 26, shinMR: 27, shinML: 28, weaponL: 29, whip1: 30, whip2: 31 } as const;
-export const LIMBS = 32;
+export const LIMB = { body: 0, legR: 1, legL: 2, armR: 3, armL: 4, hindR: 5, hindL: 6, midR: 7, midL: 8, tail: 9, roll: 10, wingR: 11, wingL: 12, chest: 13, foreR: 14, foreL: 15, shinR: 16, shinL: 17, weapon: 18, head: 19, earR: 20, earL: 21, tail2: 22, jaw: 23, wave: 24, shinHR: 25, shinHL: 26, shinMR: 27, shinML: 28, weaponL: 29, whip1: 30, whip2: 31, hairA: 32, hairB: 33, lids: 34 } as const;
+// (2026-11-04: `hairA` and `hairB`, hair that hangs from the nape, one under the other, swinging with the stride; `lids`, the lids of the eyes, which blink)
+export const LIMBS = 35;
 // The limb each one hangs from (-1: from the body itself)
-export const PARENT: number[] = [-1, 10, 10, 13, 13, 10, -1, -1, -1, -1, -1, -1, -1, 10, 3, 4, 1, 2, 14, 13, 19, 19, 9, 19, -1, 5, 6, 7, 8, 15, 18, 30];
+export const PARENT: number[] = [-1, 10, 10, 13, 13, 10, -1, -1, -1, -1, -1, -1, -1, 10, 3, 4, 1, 2, 14, 13, 19, 19, 9, 19, -1, 5, 6, 7, 8, 15, 18, 30, 19, 32, 19];
 // The shin of each leg
 export const SHIN_OF: Record<number, number> = { [LIMB.legR]: LIMB.shinR, [LIMB.legL]: LIMB.shinL, [LIMB.hindR]: LIMB.shinHR, [LIMB.hindL]: LIMB.shinHL, [LIMB.midR]: LIMB.shinMR, [LIMB.midL]: LIMB.shinML };
 
@@ -1242,6 +1243,21 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
     put("shinL", [(0.7 - 0.4 * Math.cos(t * 2.6)) * tread, 0, 0]);
   }
   for (const j of JOINTS) if (J[j]) setEuler(out, LIMB_OF[j], J[j]![0], J[j]![1], J[j]![2]);
+  // Hair that hangs (models.tsx `head()`: long, wavy, bob, tail, braid): two limbs one under the other from the nape. They swing with the stride (a lift and
+  // fall twice a step, more at a run), are flung back by a start and forward by a stop, swing out of a turn, lag a turn of the head, and drift a little at
+  // rest; the lower one lags the upper one. And the lids blink every few seconds (a person's own times).
+  {
+    const drift = Math.sin(t * 0.8 + persona.phase) * 0.025 * (0.5 + calm);
+    const headPitch = J.head?.[0] ?? 0;
+    const headYaw = J.head?.[1] ?? 0;
+    const ax = Math.max(-0.3, Math.min(0.3, (s.accel ?? 0) * 0.025)) * (0.4 + amp) + (0.08 + 0.15 * run) * amp + Math.sin(2 * s.phase + 0.7) * 0.1 * amp - headPitch * 0.35 + drift;
+    const az = Math.max(-0.15, Math.min(0.15, (s.turn ?? 0) * 0.04)) + Math.sin(t * 0.6 + persona.phase * 2) * 0.02 * (0.5 + calm) + swing * 0.08;
+    const ay = -headYaw * 0.5;
+    setEuler(out, LIMB.hairA, ax, ay, az);
+    setEuler(out, LIMB.hairB, ax * 0.6 + Math.sin(2 * s.phase - 0.4) * 0.12 * amp + Math.sin(t * 1.1 + persona.phase * 3) * 0.03 * (0.5 + calm), ay * 0.6, az * 0.8);
+    const u = (t * 0.23 + persona.phase / (Math.PI * 2)) % 1;
+    setEuler(out, LIMB.lids, u < 0.035 ? 1.1 * Math.sin((Math.PI * u) / 0.035) : 0, 0, 0);
+  }
   // How far the bent knees lower the body: the standing leg (the longer of the two) holds it up
   const height = (thigh: number, shin: number) => (legs.hip - legs.knee) * Math.cos(thigh) + legs.knee * Math.cos(thigh + shin);
   const stand = Math.max(height(J.legR?.[0] ?? 0, J.shinR?.[0] ?? 0), height(J.legL?.[0] ?? 0, J.shinL?.[0] ?? 0));

@@ -749,7 +749,7 @@ export default function ModelGallery() {
           <planeGeometry args={[80, 80]} />
           <meshLambertMaterial color="#39424e" />
         </mesh>
-        {section === "people" && <Rows items={SPECIES} per={8} gap={1.4} name={(s) => s} draw={(s) => person(`Kel ${s}`, "patron", s)} />}
+        {section === "people" && <Rows items={query.get("only") ? query.get("only")!.split(",").map((s) => SPECIES.find((x) => x.toLowerCase().startsWith(s.toLowerCase())) ?? s) : SPECIES} per={query.get("only") ? 6 : 8} gap={query.get("only") ? 0.6 : 1.4} name={(s) => s} draw={(s) => person(`Kel ${s}`, "patron", s)} />}
         {section === "roles" && <Rows items={roleList} per={8} gap={1.4} name={(r) => r.role || r.name} draw={(r) => person(r.name, r.role)} />}
         {section === "player" && (
           <Rows items={["Human", "Zabrak", "Twi'lek", "Togruta", "Wookiee", "Chiss"].flatMap((s) => [`force:${s}`, `blaster:${s}`])} per={6} gap={1.4} name={(s) => s} draw={(s) => <PlayerFigure force={s.startsWith("force")} species={s.split(":")[1]} />} />

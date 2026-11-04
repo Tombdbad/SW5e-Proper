@@ -43,7 +43,8 @@ function strip(x0, count, width, seed, ragged) {
         if (a <= 0) continue;
         const edge = 1 - 0.3 * smooth(0.4, 1.0, d / Math.max(0.5, half));
         const shine = 0.88 + 0.12 * Math.sin(t * 9 + shinePhase);
-        const v = tone * edge * shine * (0.8 + 0.2 * smooth(0, 0.25, t));      // (a little darker at the root)
+        const band = 0.82 + 0.42 * Math.exp(-(((t - 0.42) / 0.16) ** 2));           // (a broad highlight across the lock, where the light catches it)
+        const v = tone * edge * shine * band * (0.8 + 0.2 * smooth(0, 0.25, t));      // (a little darker at the root)
         const k = y * N + x;
         if (a > alpha[k]) { alpha[k] = a; grey[k] = v; }
       }
@@ -76,7 +77,9 @@ strip(STRIP * 2, 38, 2.4, 33, true);
     const c = cols[i];
     const across = Math.abs(f - i - 0.5) * 2;
     const along = 0.9 + 0.1 * Math.sin((y / N) * Math.PI * 2 * (c.k + 2) + c.phase);
-    grey[y * N + x0 + x] = c.tone * along * (1 - 0.35 * across ** 2);
+    const tv = (N - 1 - y) / (N - 1);
+    const ring = 0.86 + 0.34 * Math.exp(-(((tv - 0.72) / 0.1) ** 2));      // (a ring of light round the crown)
+    grey[y * N + x0 + x] = c.tone * along * ring * (1 - 0.35 * across ** 2);
     alpha[y * N + x0 + x] = 1;
   }
 }

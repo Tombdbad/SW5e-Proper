@@ -82,9 +82,12 @@ def walk(p0, d0, length, steps, m, gravity=0.5, stiff=0.5, lift=0.0, curl=0.0, c
     p = p0.copy()
     d = d0.normalized()
     seg = length / steps
+    free = False       # (the last step touched nothing: a lock in the air falls)
     for i in range(steps):
         s = (i + 1) / steps
         g = gravity * smooth(0.0, 1.0, s)
+        if free:
+            g = max(g, 0.85)
         target = (d * (1 - g) + DOWN * g)
         if pull is not None:
             target = target + (pull - p).normalized() * 0.9 * (1 - s)
@@ -101,7 +104,9 @@ def walk(p0, d0, length, steps, m, gravity=0.5, stiff=0.5, lift=0.0, curl=0.0, c
             up = side.cross(d).normalized()
             a = curl_freq * 2 * math.pi * s + phase
             q = q + side * (wave * math.sin(a) + curl * math.cos(a)) * 0.35 + up * curl * math.sin(a) * 0.35
-        q = push_out(q, m)
+        pushed = push_out(q, m)
+        free = (pushed - q).length < 1e-7
+        q = pushed
         step = q - p
         if step.length > 1e-6:
             d = step.normalized()
@@ -262,7 +267,7 @@ class Style:
         self.cap = None     # the opaque skin under them: keywords of cap()
     def add(self, pts, width, u0=None, **kw):
         self.cards.append((pts, width, self.rng.choice([0.0, 0.25, 0.5]) if u0 is None else u0, kw))
-    def steps(self, length, per=0.034, lo=2, hi=7):
+    def steps(self, length, per=0.034, lo=2, hi=9):
         k = max(lo, min(hi, round(length / per)))
         return k if HI else max(2, (k + 1) // 2)
 
@@ -362,7 +367,7 @@ def style_curls(name, seed, n=120, volume=0.012):
             guide(st, phi, theta, m, d0, 0.04 + 0.015 * layer, 0.024, gravity=0.4, stiff=0.45, lift=0.5, curl=0.012, curl_freq=2.2, phase=st.rng.uniform(0, 6))
     return st
 
-def style_long(name, seed, length=0.30, n=120, wave=0.0, bangs=True, curl_freq=1.6):
+def style_long(name, seed, length=0.46, n=120, wave=0.0, bangs=True, curl_freq=1.6):
     """parted in the middle, falling past the shoulders: over the ears or behind them, the back hanging down the spine"""
     st = Style(name, seed)
     st.cap = dict(table=[(0, 0.062), (35, 0.056), (65, 0.034), (90, 0.002), (115, -0.04), (140, -0.075), (180, -0.095)], top=-0.095, m=0.0035)
@@ -380,7 +385,7 @@ def style_long(name, seed, length=0.30, n=120, wave=0.0, bangs=True, curl_freq=1
             guide(st, phi, theta, m, d0, L, 0.030, gravity=0.8, stiff=0.5, lift=0.1, wave=wave, curl_freq=curl_freq, phase=st.rng.uniform(0, 6))
     return st
 
-def style_bob(name, seed, length=0.12, n=108):
+def style_bob(name, seed, length=0.22, n=108):
     st = Style(name, seed)
     st.cap = dict(table=[(0, 0.062), (35, 0.056), (65, 0.034), (90, 0.002), (115, -0.04), (140, -0.065), (180, -0.075)], top=-0.075, m=0.0035)
     for layer, m in enumerate((0.003, 0.009, 0.014)):
@@ -574,7 +579,7 @@ STYLES = {
     "hair_messy": lambda: style_messy("hair_messy", 16),
     "hair_curls": lambda: style_curls("hair_curls", 17),
     "hair_long": lambda: style_long("hair_long", 18),
-    "hair_wavy": lambda: style_long("hair_wavy", 19, length=0.27, wave=0.018, curl_freq=2.6),
+    "hair_wavy": lambda: style_long("hair_wavy", 19, length=0.42, wave=0.018, curl_freq=2.6),
     "hair_bob": lambda: style_bob("hair_bob", 20),
     "hair_tail": lambda: style_tail("hair_tail", 21),
     "hair_knot": lambda: style_knot("hair_knot", 22),
