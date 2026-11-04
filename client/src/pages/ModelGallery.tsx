@@ -375,6 +375,36 @@ function Scale() {
   );
 }
 
+// The war machines at the size of their stat blocks (2026-11-04; the user: "you missed the AAT, AT-AT, AT-ST and others"), a person beside the small ones,
+// the walkers and the hailfire pacing on their own tracks: `?section=machines&cam=0,10,40&look=0,4,-8`
+function Strider({ z, speed, span, children }: { z: number; speed: number; span: number; children: ReactNode }) {
+  const g = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (!g.current) return;
+    // (span 0: standing where it is, facing +x)
+    const p = span ? (clock.getElapsedTime() * speed) % (4 * span) : 0;
+    g.current.position.set(!span ? 0 : p < 2 * span ? -span + p : span - (p - 2 * span), 0, z);
+    g.current.rotation.y = p < 2 * span ? Math.PI / 2 : -Math.PI / 2;
+  });
+  return <group ref={g}>{children}</group>;
+}
+const MACHINES: [string, string][] = [["Hidden Turret", "Medium"], ["Auto-Turret", "Medium"], ["Ax-108 Sentry Gun", "Medium"], ["B'omarr Brain Walker", "Medium"], ["1.4 FD P-Tower Turret", "Large"], ["LR1K Sonic Cannon", "Large"], ["DF.9 Anti-Infantry Turret", "Large"], ["74-Z Speeder Bike", "Large"]];
+function Machines({ hold }: { hold?: boolean }) {
+  const fig = (name: string, size: string) => <Figure kind="droid" ring={SIDE_COLORS.hostile} name={name} creature="construct" size={size} />;
+  return (
+    <>
+      <Rows z={0} items={[["Citizen", ""], ...MACHINES]} per={9} gap={4} name={([n]) => n} draw={([n, size]) => size ? fig(n, size) : <Figure kind="humanoid" ring={SIDE_COLORS.neutral} name={n} role="civilian" species="Human" />} />
+      <Strider z={6} speed={4} span={hold ? 0 : 9}><Figure kind="droid" ring={SIDE_COLORS.hostile} name="IG-227 Hailfire-Class Droid" creature="droid" size="Huge" /></Strider>
+      <Strider z={-6} speed={2} span={hold ? 0 : 9}>{fig("AT-RT", "Large")}</Strider>
+      <Strider z={-14} speed={3} span={hold ? 0 : 10}>{fig("AT-ST", "Huge")}</Strider>
+      <Strider z={-30} speed={5} span={hold ? 0 : 16}>{fig("AAT", "Huge")}</Strider>
+      <Strider z={-44} speed={4} span={hold ? 0 : 16}>{fig("TX-225 Occupier Tank", "Huge")}</Strider>
+      <Strider z={-64} speed={5} span={hold ? 0 : 22}>{fig("AT-TE", "Gargantuan")}</Strider>
+      <Strider z={-100} speed={5} span={hold ? 0 : 30}>{fig("AT-AT", "Gargantuan")}</Strider>
+    </>
+  );
+}
+
 function Walk() {
   const people: [string, string, string][] = [["Navy Trooper", "trooper", "Human"], ["Zara", "merchant", "Twi'lek"], ["Kel", "scout", "Wookiee"], ["Mira", "player", "Human"]];
   return (
@@ -605,6 +635,7 @@ export default function ModelGallery() {
         {section === "walk" && <Walk />}
         {section === "droideka" && <Droidekas />}
         {section === "scale" && <Scale />}
+        {section === "machines" && <Machines hold={query.get("hold") === "1"} />}
         {section === "moves" && <Moves only={query.get("act") ?? undefined} />}
         {section === "table" && <Table cycle={query.get("hold") !== "1"} />}
         {section === "gear" && <Gear loadout={query.get("loadout") ?? "heavy"} />}

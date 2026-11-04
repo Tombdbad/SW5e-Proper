@@ -3616,31 +3616,51 @@ function droidBody(k: Kit, kind: string, name: string) {
       return;
     }
     case "hailfire": {
-      // An IG-227 hailfire: two great hoop wheels on one axle, a pod slung between them with a sensor head in front and its missile racks
-      // on top. The wheels turn (LIMB.roll, a wheel that rolls the way it faces); the pod does not
-      const steel = "#6b7075";
+      // An IG-227 hailfire, from its reference render: two huge open hoops, no spokes and no hubs, each a ribbed tread round a pair of olive rims; a
+      // boxy silver drive pod low inside each; thin struts across to a small domed body with its red eye, and above it a fan of missile tubes on either
+      // side. The hoops turn (LIMB.roll: a wheel that rolls the way it faces); the pods, struts and body do not
+      const tread = "#3f4044";
+      const olive = "#8c8566";
+      const silver = "#b4b6b0";
       const R = 0.5;
       k.limb(LIMB.roll, [0, R, 0], () => {
-        k.cyl(0.035, 0.8, metal, { at: [0, R, 0], rot: [0, 0, Math.PI / 2], seg: 8, finish: "sheen" });
         k.pair((s) => {
-          const x = s * 0.37;
-          k.torus(R - 0.045, 0.045, dark, { at: [x, R, 0], rot: [0, Math.PI / 2, 0], seg: [8, 32], finish: "sheen" });
-          k.torus(R - 0.12, 0.012, metal, { at: [x, R, 0], rot: [0, Math.PI / 2, 0], seg: [5, 28], finish: "sheen" });
-          for (let i = 0; i < 6; i++) {
-            const a = (i * Math.PI) / 3;
-            k.rod([x, R, 0], [x, R + Math.sin(a) * (R - 0.12), Math.cos(a) * (R - 0.12)], 0.012, metal, { finish: "sheen" });
+          const x = s * 0.45;
+          const N = 84;
+          for (let i = 0; i < N; i++) {
+            const a = (i / N) * Math.PI * 2;
+            const rr = R - 0.03;
+            k.box([0.17, 0.045, 0.034], tread, { at: [x, R + Math.sin(a) * rr, Math.cos(a) * rr], rot: [Math.PI / 2 - a, 0, 0], finish: "sheen" });
           }
-          k.cyl(0.08, 0.05, steel, { at: [x, R, 0], rot: [0, 0, Math.PI / 2], seg: 12, finish: "sheen" });
+          for (const dx of [-0.075, 0.075]) k.torus(R - 0.06, 0.016, olive, { at: [x + dx, R, 0], rot: [0, Math.PI / 2, 0], seg: [5, 40], finish: "sheen" });
+          for (let i = 0; i < 10; i++) {
+            const a = (i / 10) * Math.PI * 2 + 0.15;
+            const rr = R - 0.07;
+            k.box([0.15, 0.02, 0.08], olive, { at: [x, R + Math.sin(a) * rr, Math.cos(a) * rr], rot: [Math.PI / 2 - a, 0, 0], finish: "sheen" });
+          }
         });
       });
-      k.box([0.48, 0.26, 0.56], steel, { at: [0, R + 0.02, 0], round: 0.07, finish: "sheen" });
-      k.sphere(0.1, dark, { at: [0, R + 0.1, 0.3], scale: [1, 0.85, 1], seg: [12, 8], finish: "sheen" });
-      k.sphere(0.03, C.red, { at: [0, R + 0.11, 0.39], finish: "glow", seg: [8, 6] });
       k.pair((s) => {
-        k.box([0.12, 0.12, 0.42], shade(steel, 0.8), { at: [s * 0.14, R + 0.21, -0.06], round: 0.03, finish: "sheen" });
-        for (let i = 0; i < 3; i++) k.cyl(0.026, 0.07, "#b8473e", { at: [s * 0.14 + (i - 1) * 0.035, R + 0.21, 0.17], rot: [Math.PI / 2, 0, 0], seg: 8 });
+        const x = s * 0.45;
+        k.box([0.17, 0.25, 0.36], silver, { at: [x, 0.25, 0.02], round: 0.04, finish: "sheen" });
+        k.cyl(0.055, 0.03, dark, { at: [x - s * 0.09, 0.27, 0.06], rot: [0, 0, Math.PI / 2], seg: 12, finish: "sheen" });
+        k.box([0.12, 0.08, 0.2], shade(silver, 0.8), { at: [x, 0.41, -0.02], round: 0.03, finish: "sheen" });
+        for (const z of [0.12, -0.1]) k.rod([x - s * 0.08, 0.32, z], [s * 0.1, 0.34, z * 0.5], 0.012, metal, { finish: "sheen" });
+        k.rod([x - s * 0.08, 0.24, 0.02], [s * 0.08, 0.28, 0.02], 0.01, metal, { finish: "sheen" });
       });
-      k.cyl(0.015, 0.2, metal, { at: [0.05, R + 0.35, -0.2], seg: 4 });
+      k.sphere(0.13, olive, { at: [0, 0.38, 0.04], scale: [1, 0.8, 1.1], seg: [14, 10], finish: "sheen" });
+      k.box([0.2, 0.09, 0.22], dark, { at: [0, 0.26, 0.02], round: 0.03, finish: "sheen" });
+      k.box([0.1, 0.08, 0.12], shade(olive, 0.8), { at: [0, 0.31, -0.12], round: 0.02, finish: "sheen" });
+      k.pair((s) => k.sphere(0.022, C.red, { at: [s * 0.04, 0.4, 0.15], finish: "glow", seg: [6, 4] }));
+      k.pair((s) => {
+        for (let r = 0; r < 3; r++) {
+          for (let c = 0; c < 4; c++) {
+            k.cyl(0.016, 0.17, "#6a6d68", { at: [s * (0.2 + c * 0.04), 0.5 + r * 0.04 + c * 0.012, 0.0], rot: [Math.PI / 2 - 0.5, 0, -s * 0.35], seg: 6, finish: "sheen" });
+          }
+        }
+        k.box([0.2, 0.03, 0.1], shade(olive, 0.9), { at: [s * 0.27, 0.46, -0.07], rot: [0, 0, -s * 0.2], round: 0.01, finish: "sheen" });
+      });
+      k.rod([0.04, 0.5, -0.1], [0.04, 0.72, -0.1], 0.008, metal, { finish: "sheen" });
       return;
     }
     case "vulture":
@@ -3791,7 +3811,7 @@ function droidBody(k: Kit, kind: string, name: string) {
 export const UNITS_PER_M = 1.21 / 1.702;
 export const DROID_METRES: Record<string, number> = {
   astromech: 1.09, r5: 1.12, bb: 0.67, protocol: 1.67, b1: 1.91, bx: 1.91, tactical: 1.9, b2: 1.95, destroyer: 1.83, probe: 1.6, gonk: 1.2,
-  mouse: 0.25, pit: 1.19, medical: 1.2, ig: 1.96, hk: 1.96, kx: 2.16, spider: 1.9, junk: 1.5, service: 1.2, hailfire: 4.6, vulture: 2.4,
+  mouse: 0.25, pit: 1.19, medical: 1.2, ig: 1.96, hk: 1.96, kx: 2.16, spider: 1.9, junk: 1.5, service: 1.2, hailfire: 5.5, vulture: 2.4,
   hyena: 2.6, persuader: 3.0,
 };
 // (a rule's size is the space it takes, not how tall it stands: what the stat block's size changes is the footprint ring and, for a series
@@ -3813,7 +3833,8 @@ export function droidSeries(kind: string, name: string): string {
 // else a person's or a beast's by whether it is large
 export function figureTop(kind: string, name: string, size = "", large = false): number {
   if (kind === "astromech" || kind === "battledroid" || kind === "droid") {
-    if (constructKind(name)) return large ? 1.95 : 1.3;
+    const machine = constructKind(name);
+    if (machine) return machineFit(machine, name).h;
     return droidStature(droidSeries(kind, name), name, size) * UNITS_PER_M;
   }
   return large ? 1.85 : 1.2;
@@ -4745,82 +4766,226 @@ export function constructKind(name: string): string | undefined {
   if (/at-rt/.test(n)) return "atrt";
   if (/at-at/.test(n)) return "atat";
   if (/at-te/.test(n)) return "atte";
-  if (/aat|tx-225|tank|occupier/.test(n)) return "tank";
-  if (/turret|sentry gun|sonic cannon|p-tower|df\.9/.test(n)) return "turret";
+  if (/\baat\b|armored assault tank/.test(n)) return "aat";
+  if (/tx-225|occupier|tank/.test(n)) return "tank";
+  if (/p-tower/.test(n)) return "ptower";
+  if (/df\.9/.test(n)) return "df9";
+  if (/sonic cannon/.test(n)) return "sonic";
+  if (/sentry gun/.test(n)) return "sentry";
+  if (/turret/.test(n)) return "turret";
   if (/speeder bike|74-z/.test(n)) return "bike";
   if (/brain walker/.test(n)) return "brain";
   // (the hailfire, vulture and hyena droids are droids: buildDroid)
   return undefined;
 }
 
+// How big each war machine is, in metres (2026-11-04; the user: "you missed the AAT, AT-AT, AT-ST and others"): the stat block's own text where it states
+// a size (the AT-AT "stands 22.5 meters tall", the AT-RT "3.2 meters tall", the Occupier "7.30 meters long and 1.82 meters tall", the P-Tower's dish
+// "2.8 meter high"), else the Star Wars databank (the AT-ST 9.04 m, the AT-TE 22.02 m long, the AAT 9.19 m long, the 74-Z 3.2 m). `len`: what is measured
+// is its length (a tank is long and low), else its height
+export const MACHINE_METRES: Record<string, { h?: number; len?: number }> = {
+  atst: { h: 9.04 }, atrt: { h: 3.2 }, atat: { h: 22.5 }, atte: { len: 22.02 }, aat: { len: 9.19 }, tank: { len: 7.3 }, ptower: { h: 3.4 }, df9: { h: 5 }, sonic: { h: 2.6 },
+  sentry: { h: 1.3 }, turret: { h: 1 }, bike: { len: 3.2 }, brain: { h: 1.1 },
+};
+const MACHINE_GAIT: Record<string, Gait> = { atst: "walk", atrt: "walk", atat: "quad", atte: "hexa", brain: "quad" };
+// How big a built model is: its height and its length (the box round it), measured once
+const BOX = new Map<string, { h: number; len: number }>();
+function builtOf(key: string, build: (k: Kit) => void): { h: number; len: number } {
+  let m = BOX.get(key);
+  if (!m) {
+    const k = new Kit();
+    k.animated = true;
+    build(k);
+    const b = new THREE.Box3();
+    for (const p of k.parts) { p.geo.computeBoundingBox(); b.union(p.geo.boundingBox!); }
+    m = { h: b.max.y, len: b.max.z - b.min.z };
+    BOX.set(key, m);
+  }
+  return m;
+}
+// The scale a war machine is drawn at, and how high it stands then (units)
+export function machineFit(machine: string, name: string): { scale: number; h: number } {
+  const built = builtOf(`con:${machine}`, (k) => buildConstruct(k, machine));
+  const dims = machine === "turret" && /hidden/i.test(name) ? { h: 0.7 } : MACHINE_METRES[machine] ?? { h: 1.5 };
+  const scale = dims.len ? (dims.len * UNITS_PER_M) / built.len : (dims.h! * UNITS_PER_M) / built.h;
+  return { scale, h: built.h * scale };
+}
+
 function buildConstruct(k: Kit, kind: string) {
   const grey = "#8a8f96";
   const dark = "#4a4f56";
-  const walkerLeg = (s: number, z: number, top: number) => {
-    const knee: V3 = [s * 0.2, top * 0.58, z - 0.2];
-    k.rod([s * 0.16, top, z], knee, 0.045, dark, { finish: "sheen" });
-    k.rod(knee, [s * 0.18, 0.06, z + 0.03], 0.035, dark, { finish: "sheen" });
-    k.sphere(0.06, grey, { at: knee, finish: "sheen", seg: [10, 8] });
-    k.box([0.18, 0.04, 0.24], dark, { at: [s * 0.18, 0.02, z + 0.03], round: 0.02, finish: "sheen" });
-  };
+  const steel = "#2b2f36";
+  const glass = "#1b2a38";
+  const gun = (at: V3, len: number, r = 0.02) => k.cyl(r, len, "#15171b", { at, rot: [Math.PI / 2, 0, 0], seg: 8, finish: "sheen" });
   switch (kind) {
-    case "atst":
-      k.pair((s) => walkerLeg(s, 0, 1.0));
-      k.box([0.42, 0.3, 0.46], grey, { at: [0, 1.12, 0.02], round: 0.08, finish: "sheen" });
-      k.box([0.36, 0.08, 0.1], "#1b2a38", { at: [0, 1.15, 0.25], round: 0.03, finish: "glass" });
-      k.pair((s) => k.cyl(0.03, 0.26, "#15171b", { at: [s * 0.24, 1.02, 0.2], rot: [Math.PI / 2, 0, 0], seg: 8, finish: "sheen" }));
-      k.cyl(0.04, 0.2, "#15171b", { at: [0, 0.94, 0.28], rot: [Math.PI / 2, 0, 0], seg: 8, finish: "sheen" });
-      return;
-    case "atrt":
-      k.pair((s) => walkerLeg(s, 0, 0.62));
-      k.box([0.26, 0.12, 0.3], grey, { at: [0, 0.66, 0], round: 0.04, finish: "sheen" });
-      k.cyl(0.03, 0.34, "#15171b", { at: [0, 0.64, 0.3], rot: [Math.PI / 2, 0, 0], seg: 8 });
-      k.group([0, 0.42, -0.04], undefined, 0.8, () => buildHumanoid(k, lookOf(), outfitOf("trooper"), HUMAN_TONES[1], "", ""));
-      return;
-    case "atat":
-      for (const z of [0.3, -0.3]) k.pair((s) => k.tube([[s * 0.24, 0.92, z], [s * 0.26, 0.5, z + 0.03], [s * 0.24, 0.05, z]], 0.06, dark, { along: 6, around: 8, finish: "sheen" }));
-      k.box([0.6, 0.38, 0.9], grey, { at: [0, 1.08, 0], round: 0.1, finish: "sheen" });
-      k.tube([[0, 1.05, 0.45], [0, 1.02, 0.55], [0, 0.98, 0.62]], 0.1, dark, { along: 4, around: 8, finish: "sheen" });
-      k.box([0.28, 0.24, 0.36], grey, { at: [0, 0.96, 0.78], round: 0.06, finish: "sheen" });
-      k.pair((s) => k.cyl(0.025, 0.2, "#15171b", { at: [s * 0.1, 0.86, 1.0], rot: [Math.PI / 2, 0, 0], seg: 6 }));
-      return;
-    case "atte":
-      for (const z of [0.36, 0, -0.36]) k.pair((s) => k.tube([[s * 0.2, 0.6, z], [s * 0.38, 0.5, z], [s * 0.4, 0.04, z]], 0.04, dark, { along: 6, around: 6, finish: "sheen" }));
-      k.box([0.42, 0.22, 0.52], grey, { at: [0, 0.66, 0.26], round: 0.07, finish: "sheen" });
-      k.box([0.42, 0.22, 0.5], grey, { at: [0, 0.66, -0.28], round: 0.07, finish: "sheen" });
-      k.cyl(0.05, 0.5, dark, { at: [0, 0.86, -0.1], rot: [Math.PI / 2 - 0.4, 0, 0], seg: 10, finish: "sheen" });
-      return;
-    case "tank": {
-      const side = new THREE.Shape();
-      side.moveTo(-0.5, 0);
-      side.lineTo(0.45, 0);
-      side.quadraticCurveTo(0.6, 0.08, 0.5, 0.2);
-      side.lineTo(-0.45, 0.24);
-      side.lineTo(-0.5, 0);
-      k.extrude(side, 0.6, "#7a6a5a", { at: [0, 0.16, -0.3], rot: [0, -Math.PI / 2, 0], bevel: 0.06, finish: "sheen" });
-      k.lathe([[0.22, 0], [0.22, 0.08], [0.14, 0.16], [0, 0.17]], "#6a5a4a", { at: [0, 0.48, -0.05], seg: 16, finish: "sheen" });
-      k.cyl(0.035, 0.6, "#2b2f36", { at: [0, 0.56, 0.3], rot: [Math.PI / 2, 0, 0], seg: 8, finish: "sheen" });
-      k.pair((s) => k.capsule(0.06, 0.3, "#5a4a3a", { at: [s * 0.32, 0.28, 0.1], rot: [Math.PI / 2, 0, 0], finish: "sheen", seg: 8 }));
+    case "atst": {
+      // The chicken walker: a boxy cab with a sloped, windowed face on two long bird legs, the knee behind, a three-toed foot, twin chin guns
+      // and a cheek cannon on each side
+      k.pair((s) => kneed(k, s > 0 ? LIMB.legL : LIMB.legR, [s * 0.16, 0.66, 0.02], [s * 0.19, 0.38, -0.2], [s * 0.2, 0.04, 0.04], 0.032, dark, { along: 5, around: 7, finish: "sheen" }, () => {
+        k.box([0.14, 0.035, 0.2], dark, { at: [s * 0.2, 0.02, 0.08], round: 0.012, finish: "sheen" });
+        k.box([0.05, 0.03, 0.1], dark, { at: [s * 0.2, 0.03, -0.06], round: 0.01, finish: "sheen" });
+      }));
+      k.box([0.42, 0.07, 0.2], steel, { at: [0, 0.68, 0], round: 0.02, finish: "sheen" });
+      k.box([0.4, 0.26, 0.44], grey, { at: [0, 0.84, 0], round: 0.06, finish: "sheen" });
+      k.box([0.34, 0.2, 0.1], grey, { at: [0, 0.82, 0.25], rot: [-0.5, 0, 0], round: 0.04, finish: "sheen" });
+      k.box([0.26, 0.07, 0.02], glass, { at: [0, 0.86, 0.3], rot: [-0.5, 0, 0], finish: "glass" });
+      k.box([0.22, 0.04, 0.24], dark, { at: [0, 0.98, -0.04], round: 0.015, finish: "sheen" });
+      k.pair((s) => {
+        gun([s * 0.08, 0.7, 0.34], 0.28);
+        k.box([0.07, 0.09, 0.2], dark, { at: [s * 0.25, 0.8, 0.18], round: 0.02, finish: "sheen" });
+        gun([s * 0.25, 0.8, 0.38], 0.24, 0.014);
+      });
       return;
     }
-    case "turret":
-      k.lathe([[0.3, 0], [0.3, 0.06], [0.16, 0.14], [0.12, 0.5], [0, 0.5]], dark, { seg: 16, finish: "sheen" });
-      k.sphere(0.2, grey, { at: [0, 0.6, 0], seg: [14, 10], finish: "sheen" });
-      k.pair((s) => k.cyl(0.03, 0.5, "#15171b", { at: [s * 0.07, 0.62, 0.32], rot: [Math.PI / 2, 0, 0], seg: 8, finish: "sheen" }));
-      k.sphere(0.03, C.red, { at: [0, 0.68, 0.18], finish: "glow", seg: [6, 4] });
+    case "atrt": {
+      // A one-man walker: two thin legs bent behind, a small open cab with its trooper standing in it, a repeating cannon and a mortar tube
+      k.pair((s) => kneed(k, s > 0 ? LIMB.legL : LIMB.legR, [s * 0.1, 0.6, 0], [s * 0.12, 0.32, -0.15], [s * 0.1, 0.04, 0.05], 0.026, grey, { along: 5, around: 6, finish: "sheen" }, () => k.box([0.08, 0.03, 0.16], dark, { at: [s * 0.1, 0.02, 0.07], round: 0.01, finish: "sheen" })));
+      k.box([0.26, 0.1, 0.24], dark, { at: [0, 0.62, 0], round: 0.03, finish: "sheen" });
+      k.box([0.22, 0.2, 0.26], grey, { at: [0, 0.72, -0.02], round: 0.04, finish: "sheen" });
+      k.group([0, 0.55, 0.02], undefined, 0.42, () => buildHumanoid(k, lookOf(), outfitOf("trooper"), HUMAN_TONES[1], "", ""));
+      gun([0.08, 0.7, 0.24], 0.3, 0.016);
+      k.cyl(0.02, 0.16, dark, { at: [-0.08, 0.76, 0.12], rot: [Math.PI / 2 - 0.5, 0, 0], seg: 8 });
+      k.rod([-0.08, 0.82, -0.1], [-0.08, 1.06, -0.12], 0.006, dark, { finish: "sheen" });
       return;
+    }
+    case "atat": {
+      // The imperial walker: a long boxed body on four elephantine legs (the knee ahead, a round foot), the neck reaching forward from the front
+      // and a wedge head with its twin chin cannons. The head nods
+      for (const z of [0.2, -0.2]) {
+        k.pair((s) => {
+          const limb = z > 0 ? (s > 0 ? LIMB.legL : LIMB.legR) : s > 0 ? LIMB.hindL : LIMB.hindR;
+          kneed(k, limb, [s * 0.18, 0.66, z], [s * 0.2, 0.36, z + 0.06], [s * 0.2, 0.05, z], (t) => 0.058 - t * 0.012, grey, { along: 6, around: 8, finish: "sheen" }, () => {
+            k.cyl(0.085, 0.05, dark, { at: [s * 0.2, 0.025, z], seg: 10, finish: "sheen" });
+            k.box([0.07, 0.03, 0.06], steel, { at: [s * 0.2, 0.05, z + 0.07], round: 0.01 });
+          });
+        });
+      }
+      k.box([0.42, 0.24, 0.62], grey, { at: [0, 0.8, 0], round: 0.04, finish: "sheen" });
+      k.box([0.36, 0.05, 0.54], dark, { at: [0, 0.65, 0], round: 0.02, finish: "sheen" });
+      for (let i = 0; i < 3; i++) k.box([0.3, 0.03, 0.1], dark, { at: [0, 0.93, -0.18 + i * 0.18], round: 0.01, finish: "sheen" });
+      k.box([0.46, 0.08, 0.2], steel, { at: [0, 0.72, 0.2], round: 0.02, finish: "sheen" });
+      k.limb(LIMB.head, [0, 0.82, 0.3], () => {
+        k.tube([[0, 0.82, 0.3], [0, 0.85, 0.42], [0, 0.8, 0.52]], 0.055, dark, { along: 5, around: 8, finish: "sheen" });
+        k.box([0.2, 0.16, 0.26], grey, { at: [0, 0.78, 0.6], round: 0.05, finish: "sheen" });
+        k.box([0.16, 0.09, 0.08], grey, { at: [0, 0.76, 0.74], rot: [-0.4, 0, 0], round: 0.03, finish: "sheen" });
+        k.pair((s) => { k.box([0.05, 0.025, 0.02], glass, { at: [s * 0.06, 0.8, 0.73], finish: "glass" }); gun([s * 0.07, 0.69, 0.72], 0.2, 0.016); });
+      });
+      return;
+    }
+    case "atte": {
+      // A low six-legged troop carrier: a long flat hull with its cab at the front, the mass-driver cannon on top, and three legs on a side that
+      // bow out and up from the hull before they come down
+      for (const [z, [r, l]] of [[0.3, [LIMB.legR, LIMB.legL]], [0, [LIMB.midR, LIMB.midL]], [-0.3, [LIMB.hindR, LIMB.hindL]]] as [number, [number, number]][]) {
+        k.pair((s) => kneed(k, s > 0 ? l : r, [s * 0.15, 0.2, z], [s * 0.24, 0.27, z], [s * 0.28, 0.02, z + 0.02], 0.026, dark, { along: 5, around: 6, finish: "sheen" }, () => k.cyl(0.05, 0.03, steel, { at: [s * 0.28, 0.015, z + 0.02], seg: 8, finish: "sheen" })));
+      }
+      k.box([0.34, 0.13, 0.66], grey, { at: [0, 0.26, -0.1], round: 0.04, finish: "sheen" });
+      k.box([0.28, 0.1, 0.26], grey, { at: [0, 0.24, 0.36], round: 0.04, finish: "sheen" });
+      k.box([0.22, 0.08, 0.12], grey, { at: [0, 0.22, 0.52], rot: [0.5, 0, 0], round: 0.03, finish: "sheen" });
+      k.box([0.3, 0.06, 0.18], dark, { at: [0, 0.34, -0.38], round: 0.02, finish: "sheen" });
+      k.sphere(0.05, steel, { at: [0, 0.35, 0.02], seg: [10, 8], finish: "sheen" });
+      gun([0, 0.36, 0.26], 0.46, 0.028);
+      k.pair((s) => k.box([0.04, 0.09, 0.4], dark, { at: [s * 0.18, 0.27, -0.1], round: 0.01, finish: "sheen" }));
+      return;
+    }
+    case "aat": {
+      // The Trade Federation's hover tank: a long wedge of hull on a wide skirt of repulsors, a command tower on the rear half, a long main cannon
+      // out ahead of it, a smaller gun on each side and the engines behind
+      const tan = "#a9824a";
+      k.sphere(0.5, shade(tan, 0.8), { at: [0, 0.07, -0.02], scale: [0.55, 0.14, 0.95], seg: [16, 10], finish: "sheen" });
+      for (const z of [0.28, 0, -0.28]) k.pair((s) => k.cyl(0.06, 0.04, steel, { at: [s * 0.24, 0.02, z], seg: 10, finish: "sheen" }));
+      k.box([0.34, 0.09, 0.62], tan, { at: [0, 0.16, -0.04], round: 0.04, finish: "sheen" });
+      k.box([0.26, 0.08, 0.3], tan, { at: [0, 0.14, 0.38], rot: [0.35, 0, 0], round: 0.03, finish: "sheen" });
+      k.box([0.18, 0.18, 0.24], shade(tan, 1.1), { at: [0, 0.3, -0.12], round: 0.04, finish: "sheen" });
+      k.box([0.14, 0.04, 0.02], glass, { at: [0, 0.32, 0.01], finish: "glass" });
+      gun([0, 0.3, 0.38], 0.78, 0.018);
+      k.pair((s) => { k.box([0.06, 0.06, 0.2], dark, { at: [s * 0.2, 0.2, 0.2], round: 0.015 }); gun([s * 0.2, 0.2, 0.4], 0.32, 0.012); });
+      k.pair((s) => k.box([0.1, 0.1, 0.16], steel, { at: [s * 0.16, 0.17, -0.42], round: 0.03, finish: "sheen" }));
+      return;
+    }
+    case "tank": {
+      // The imperial occupier: a long, low slab of a hull with ribbed armoured sponsons down each side, a sloped nose, cargo pods on the deck, a
+      // trooper's hatch with a small turret and its cannon
+      k.box([0.44, 0.1, 0.98], grey, { at: [0, 0.09, 0], round: 0.03, finish: "sheen" });
+      k.box([0.34, 0.07, 0.3], grey, { at: [0, 0.1, 0.52], rot: [0.3, 0, 0], round: 0.02, finish: "sheen" });
+      k.box([0.34, 0.08, 0.7], dark, { at: [0, 0.18, -0.06], round: 0.02, finish: "sheen" });
+      k.pair((s) => {
+        k.box([0.1, 0.11, 0.84], steel, { at: [s * 0.26, 0.1, 0], round: 0.02, finish: "sheen" });
+        for (let i = 0; i < 7; i++) k.box([0.04, 0.12, 0.03], dark, { at: [s * 0.32, 0.1, -0.36 + i * 0.12], finish: "sheen" });
+      });
+      for (let i = 0; i < 3; i++) k.box([0.1, 0.07, 0.14], "#c9752b", { at: [(i - 1) * 0.11, 0.26, -0.3], round: 0.01, finish: "sheen" });
+      k.box([0.14, 0.06, 0.16], grey, { at: [0, 0.26, 0.12], round: 0.02, finish: "sheen" });
+      gun([0, 0.27, 0.34], 0.34, 0.016);
+      return;
+    }
+    case "ptower": {
+      // A light laser cannon: a squat pylon under a big dish, with its power routers round the dish's edge and cells in it
+      k.lathe([[0.2, 0], [0.2, 0.05], [0.07, 0.14], [0.06, 0.5], [0, 0.5]], steel, { seg: 12, finish: "sheen" });
+      k.limb(LIMB.head, [0, 0.55, 0], () => {
+        k.cyl(0.44, 0.04, dark, { at: [0, 0.78, 0.04], rot: [0.9, 0, 0], seg: 20, finish: "sheen" });
+        for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2; k.box([0.04, 0.05, 0.04], grey, { at: [Math.cos(a) * 0.43, 0.78 - Math.sin(a) * 0.43 * Math.sin(0.9), 0.04 + Math.sin(a) * 0.43 * Math.cos(0.9)], finish: "sheen" }); }
+        k.sphere(0.06, C.red, { at: [0, 0.86, 0.14], finish: "glow", seg: [8, 6] });
+        k.rod([0, 0.82, 0.08], [0, 0.95, 0.3], 0.02, "#15171b", { finish: "sheen" });
+      });
+      return;
+    }
+    case "df9": {
+      // An anti-infantry battery: a tall cylindrical housing with a rotating turret and its laser cannon on top
+      k.lathe([[0.17, 0], [0.17, 0.06], [0.13, 0.12], [0.12, 0.76], [0.14, 0.8], [0, 0.8]], dark, { seg: 16, finish: "sheen" });
+      k.limb(LIMB.head, [0, 0.86, 0], () => {
+        k.sphere(0.13, grey, { at: [0, 0.9, 0], seg: [14, 10], finish: "sheen" });
+        gun([0, 0.92, 0.3], 0.4, 0.024);
+        k.sphere(0.025, C.red, { at: [0, 0.96, 0.12], finish: "glow", seg: [6, 4] });
+      });
+      return;
+    }
+    case "sonic": {
+      // A Geonosian sonic cannon: a bulbous ribbed pod on a squat pedestal with a horned barrel tilted up
+      k.cyl(0.32, 0.08, "#7a6a4a", { at: [0, 0.04, 0], seg: 14, finish: "sheen" });
+      k.sphere(0.26, "#9a8a64", { at: [0, 0.28, -0.04], scale: [1, 0.8, 1.2], seg: [14, 10], finish: "sheen" });
+      k.limb(LIMB.head, [0, 0.34, 0], () => {
+        k.cyl(0.09, 0.6, "#6a5a3a", { at: [0, 0.6, 0.28], rot: [Math.PI / 2 - 0.7, 0, 0], seg: 10, finish: "sheen" });
+        for (let i = 0; i < 4; i++) k.torus(0.1, 0.018, "#7a6a4a", { at: [0, 0.45 + i * 0.07, 0.15 + i * 0.07], rot: [Math.PI / 2 - 0.7, 0, 0], seg: [5, 12], finish: "sheen" });
+        k.cone(0.12, 0.2, "#6a5a3a", { at: [0, 0.82, 0.5], rot: [Math.PI / 2 - 0.7, 0, 0], seg: 10 });
+      });
+      return;
+    }
+    case "sentry": {
+      // A sentry gun: a gun on a squat tripod, with a box of ammunition at its side
+      for (let i = 0; i < 3; i++) { const a = i * 2.094 + 0.4; k.rod([0, 0.36, 0], [Math.sin(a) * 0.3, 0.01, Math.cos(a) * 0.3], 0.018, dark, { finish: "sheen" }); }
+      k.sphere(0.07, steel, { at: [0, 0.38, 0], seg: [10, 8], finish: "sheen" });
+      k.limb(LIMB.head, [0, 0.4, 0], () => {
+        k.box([0.1, 0.1, 0.3], grey, { at: [0, 0.44, 0.04], round: 0.025, finish: "sheen" });
+        gun([0, 0.45, 0.28], 0.3, 0.014);
+        k.box([0.08, 0.1, 0.1], "#59636d", { at: [0.1, 0.4, -0.02], round: 0.01 });
+      });
+      return;
+    }
+    case "turret": {
+      // An automatic turret: a pedestal under a ball with twin barrels, and an eye
+      k.lathe([[0.3, 0], [0.3, 0.06], [0.16, 0.14], [0.12, 0.5], [0, 0.5]], dark, { seg: 16, finish: "sheen" });
+      k.limb(LIMB.head, [0, 0.55, 0], () => {
+        k.sphere(0.2, grey, { at: [0, 0.6, 0], seg: [14, 10], finish: "sheen" });
+        k.pair((s) => k.cyl(0.03, 0.5, "#15171b", { at: [s * 0.07, 0.62, 0.32], rot: [Math.PI / 2, 0, 0], seg: 8, finish: "sheen" }));
+        k.sphere(0.03, C.red, { at: [0, 0.68, 0.18], finish: "glow", seg: [6, 4] });
+      });
+      return;
+    }
     case "bike":
       buildSpeeder(k, "bike", false, "74-Z");
       k.group([0, 0.12, -0.25], undefined, 0.9, () => buildHumanoid(k, lookOf(), outfitOf("scout trooper"), HUMAN_TONES[1], "", ""));
       return;
-    case "brain":
-      for (let i = 0; i < 6; i++) {
-        const a = i * 1.047;
-        k.tube([[Math.sin(a) * 0.1, 0.5, Math.cos(a) * 0.1], [Math.sin(a) * 0.32, 0.55, Math.cos(a) * 0.32], [Math.sin(a) * 0.42, 0.02, Math.cos(a) * 0.42]], 0.02, "#7b8794", { along: 6, around: 5, finish: "sheen" });
+    case "brain": {
+      // A B'omarr brain walker: a jar with a brain in it on eight long legs, bowed up above the jar and down to the ground
+      for (let i = 0; i < 8; i++) {
+        const a = i * (Math.PI / 4) + Math.PI / 8;
+        kneed(k, quarterLeg(a), [Math.sin(a) * 0.09, 0.5, Math.cos(a) * 0.09], [Math.sin(a) * 0.32, 0.8, Math.cos(a) * 0.32], [Math.sin(a) * 0.6, 0.01, Math.cos(a) * 0.6], 0.011, "#7b8794", { along: 5, around: 5, finish: "sheen" });
       }
-      k.cyl(0.16, 0.3, "#9fd4ea", { at: [0, 0.68, 0], seg: 16, finish: "glass" });
-      k.blob(0.1, "#d98a9a", { at: [0, 0.68, 0], smooth: true, rough: 0.3, seed: 2 });
+      k.box([0.2, 0.08, 0.2], dark, { at: [0, 0.4, 0], round: 0.03, finish: "sheen" });
+      k.cyl(0.14, 0.26, "#9fd4ea", { at: [0, 0.56, 0], seg: 16, finish: "glass" });
+      k.blob(0.09, "#d98a9a", { at: [0, 0.56, 0], smooth: true, rough: 0.3, seed: 2 });
+      k.cyl(0.15, 0.03, steel, { at: [0, 0.71, 0], seg: 16, finish: "sheen" });
       return;
+    }
   }
 }
 
@@ -4901,7 +5066,11 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
   const { role = "", creature = "", size = "", looks, party } = opts;
   const seed = hue(name || kind);
   const machine = constructKind(name);
-  if (machine) return { key: `con:${machine}`, build: (k) => buildConstruct(k, machine), height: 1.3, gait: "glide" };
+  if (machine) {
+    // (to its own size, whatever the stat block's x1.5: MACHINE_METRES)
+    const fit = machineFit(machine, name);
+    return { key: `con:${machine}`, build: (k) => buildConstruct(k, machine), height: fit.h, scale: fit.scale, foot: FOOT[size.toLowerCase()] ?? 1, gait: MACHINE_GAIT[machine] ?? "glide" };
+  }
   if (kind === "astromech" || kind === "battledroid" || kind === "droid") {
     const series = droidSeries(kind, name);
     // The customizations it carries are fixed to its body where each belongs (interiors/anchors.ts moduleAnchor)
@@ -4919,7 +5088,7 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
       key: `droid:${series}:${pickOf(["a", "b", "c", "d", "e", "f"], name)}${modules.length ? `:m${modules.map((m) => m.name).join("+")}` : ""}`,
       build, height, scale: height / droidBuilt(series), foot: FOOT[size.toLowerCase()] ?? 1,
       gait: DROID_GAIT[series] ?? "glide",
-      ...(series === "bb" ? { ball: 0.2 } : series === "hailfire" ? { ball: 0.45, wheel: true } : {}),
+      ...(series === "bb" ? { ball: 0.2 } : series === "hailfire" ? { ball: 0.5, wheel: true } : {}),
       ...(series === "destroyer" ? { form: "droideka" as const } : {}),
     };
   }

@@ -543,7 +543,7 @@ test("droids are drawn to scale: each stands at its stature, a person is the yar
   const human = (() => { const spec = figureSpec("humanoid", "Citizen", { role: "civilian", species: "Human", looks: {} }); const k = new Kit(); k.animated = true; spec.build(k); const b = new THREE.Box3(); for (const p of k.parts) { p.geo.computeBoundingBox(); b.union(p.geo.boundingBox!); } return b.max.y; })();
   assert.ok(Math.abs(human / UNITS_PER_M - 1.702) < 0.06, `a person of scale 1 is 1.70 m: ${human / UNITS_PER_M}`);
   const metres = (b: DroidBlock) => droidTop(b).top / UNITS_PER_M;
-  const bands: Record<string, [number, number]> = { Tiny: [0.15, 1.0], Small: [0.6, 1.45], Medium: [1.0, 2.4], Large: [1.1, 3.5], Huge: [2.2, 5.2] };
+  const bands: Record<string, [number, number]> = { Tiny: [0.15, 1.0], Small: [0.6, 1.45], Medium: [1.0, 2.4], Large: [1.1, 3.5], Huge: [2.2, 6] };
   for (const b of droidBlocks) {
     const { spec, top } = droidTop(b);
     assert.ok(Math.abs(top - spec.height) < spec.height * 0.04, `${b.name}: it stands where it is meant to (${top} against ${spec.height})`);
@@ -590,4 +590,78 @@ test("a protocol droid is a person's height with the sculpted body in, and a dro
   assert.ok(figureTop("droid", "Hailfire", "Huge", true) > 3, "above a hailfire");
   assert.ok(figureTop("droid", "DRK-1 Tracker Droid", "Tiny") < 0.6, "and close over a probe");
   assert.equal(figureTop("humanoid", "Citizen"), 1.2);
+});
+
+// The war machines (the constructs of the stat blocks), built as the map builds them and scaled as Figure scales them
+const constructBlocks = (JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../../shared/data/sw5e/monsters.json"), "utf8")) as DroidBlock[]).filter((m) => (m.types ?? []).includes("construct"));
+function machineSize(name: string) {
+  const b = constructBlocks.find((c) => c.name.startsWith(name));
+  assert.ok(b, name);
+  const spec = figureSpec(tokenOf({ name: b.name, creature: "construct" }), b.name, { creature: "construct", size: b.size, looks: {} });
+  const k = new Kit();
+  k.animated = true;
+  spec.build(k);
+  const box = new THREE.Box3();
+  for (const p of k.parts) { p.geo.computeBoundingBox(); box.union(p.geo.boundingBox!); }
+  const s = spec.scale ?? 1;
+  return { spec, k, h: (box.max.y * s) / UNITS_PER_M, len: ((box.max.z - box.min.z) * s) / UNITS_PER_M, width: ((box.max.x - box.min.x) * s) / UNITS_PER_M };
+}
+
+test("war machines are drawn at the size the books give them, in the proportions of the films: a walker tall, a tank long and low", () => {
+  assert.equal(constructBlocks.length, 14);
+  const near = (v: number, want: number, tol: number, what: string) => assert.ok(Math.abs(v - want) <= want * tol, `${what}: ${v.toFixed(2)} m against ${want}`);
+  // what the stat blocks state
+  near(machineSize("AT-AT").h, 22.5, 0.04, "an AT-AT \"stands 22.5 meters tall\"");
+  near(machineSize("AT-RT").h, 3.2, 0.04, "an AT-RT is \"3.2 meters tall\"");
+  near(machineSize("TX-225").len, 7.3, 0.04, "an Occupier is \"7.30 meters long\"");
+  near(machineSize("TX-225").h, 1.82, 0.12, "and \"1.82 meters tall\"");
+  assert.ok(machineSize("1.4 FD").h >= 2.8, "a P-Tower's dish is 2.8 m high");
+  // what the databank gives
+  near(machineSize("AT-ST").h, 9.04, 0.04, "an AT-ST is 9.04 m");
+  near(machineSize("AT-TE").len, 22.02, 0.04, "an AT-TE is 22.02 m long");
+  near(machineSize("AT-TE").h, 9.57, 0.15, "and 9.57 m tall");
+  near(machineSize("AAT").len, 9.19, 0.04, "an AAT is 9.19 m long");
+  near(machineSize("74-Z").len, 3.2, 0.04, "a 74-Z is 3.2 m long");
+  // the proportions: a tank is long and low, a walker as tall as it is long
+  const tank = machineSize("TX-225"), aat = machineSize("AAT"), te = machineSize("AT-TE"), at = machineSize("AT-AT"), st = machineSize("AT-ST");
+  assert.ok(tank.h / tank.len < 0.3 && aat.h / aat.len < 0.4 && aat.h / aat.len > 0.25, "the tanks are low");
+  assert.ok(te.h / te.len > 0.33 && te.h / te.len < 0.5, "an AT-TE is low and long");
+  assert.ok(at.h / at.len > 0.7 && at.h / at.len < 1.3, "an AT-AT is about as tall as it is long");
+  assert.ok(st.h / st.len > 1.1 && st.h / st.len < 1.7, "an AT-ST stands taller than it is long");
+  assert.notEqual(aat.spec.key, tank.spec.key, "an AAT is not an Occupier");
+  // the order
+  assert.ok(at.h > te.h && te.h > machineSize("AT-RT").h && machineSize("AT-RT").h > 1.7, "AT-AT over AT-TE over AT-RT over a person");
+  for (const b of constructBlocks) assert.ok(machineSize(b.name).spec.scale !== undefined && machineSize(b.name).spec.foot !== undefined, `${b.name} has its own scale and a footprint`);
+});
+
+test("the walkers walk on jointed legs: an AT-ST on two, an AT-AT on four, an AT-TE on six, a brain walker on eight (four limbs), each with knees", () => {
+  const joints = (name: string, gait: string, ...limbs: number[]) => {
+    const m = machineSize(name);
+    assert.equal(m.spec.gait, gait, name);
+    for (const l of limbs) assert.ok(m.k.jointMask & (1 << l), `${name} limb ${l}`);
+  };
+  joints("AT-ST", "walk", LIMB.legR, LIMB.legL, LIMB.shinR, LIMB.shinL);
+  joints("AT-RT", "walk", LIMB.legR, LIMB.legL, LIMB.shinR, LIMB.shinL);
+  joints("AT-AT", "quad", LIMB.legR, LIMB.legL, LIMB.hindR, LIMB.hindL, LIMB.shinR, LIMB.shinL, LIMB.shinHR, LIMB.shinHL, LIMB.head);
+  joints("AT-TE", "hexa", LIMB.legR, LIMB.legL, LIMB.midR, LIMB.midL, LIMB.hindR, LIMB.hindL, LIMB.shinR, LIMB.shinMR, LIMB.shinHR);
+  joints("B'omarr", "quad", LIMB.legR, LIMB.legL, LIMB.hindR, LIMB.hindL, LIMB.shinR, LIMB.shinHL);
+  // a tank, a turret and a bike do not walk
+  for (const n of ["AAT", "TX-225", "Auto-Turret", "74-Z"]) assert.equal(machineSize(n).spec.gait, "glide", n);
+});
+
+test("a hailfire is two open hoops (no spokes) that turn, with a drive pod low in each, a small body between and its missile tubes above", () => {
+  const k = new Kit();
+  k.animated = true;
+  buildDroid(k, "hailfire", "IG-227 Hailfire-Class Droid");
+  assert.ok(k.jointMask & (1 << LIMB.roll), "the hoops turn");
+  const wheel = new THREE.Box3(), fixed = new THREE.Box3();
+  for (const p of k.parts) {
+    const pos = p.geo.attributes.position, limb = p.geo.attributes.limb as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) (Math.round(limb.getX(i)) === LIMB.roll ? wheel : fixed).expandByPoint(new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i)));
+  }
+  assert.ok(wheel.max.y > 0.95 && wheel.min.y < 0.02, "a hoop is as tall as the machine and stands on the ground");
+  assert.ok(wheel.max.x > 0.5 && wheel.min.x < -0.5, "the hoops stand either side");
+  assert.ok(fixed.max.x < wheel.max.x && fixed.max.y < wheel.max.y, "the body between them is smaller than the hoops");
+  const spec = figureSpec("droid", "IG-227 Hailfire-Class Droid", { creature: "droid", size: "Huge", looks: {} });
+  assert.ok(spec.wheel && spec.ball && spec.ball > 0.45, "it rolls the way it faces on a wheel of the hoop's size");
 });
