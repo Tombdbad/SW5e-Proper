@@ -1,2 +1,3 @@
-The sculpted body of a person (body.glb, body.lo.glb) was built for this project in Blender by tools/blender/build-body.py from
-original lofted sections and a displaced sphere. No third-party pieces. Creative Commons Zero (CC0 1.0): public domain.
+The sculpted bodies of people (body.glb, body.lo.glb) and the heads of beasts (creature.glb, creature.lo.glb) were built for this project in
+Blender by tools/blender/build-body.py and tools/blender/build-creature.py from original lofted sections and displaced spheres. No
+third-party pieces. Creative Commons Zero (CC0 1.0): public domain.

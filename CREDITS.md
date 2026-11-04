@@ -28,6 +28,7 @@ missing from this list.
 | `sw5e-mods` | Built for this project in Blender (original shapes, with pieces of the CC0 packs named in its licence file) | CC0 1.0 (public domain) | `tools/build-item-assets.mjs` from the `blender-sw5e` work | the component families for item modifications and augments |
 | `sw5e-gear` | Built for this project in Blender (original shapes, with pieces of the CC0 packs named in its licence file) | CC0 1.0 (public domain) | `tools/build-item-assets.mjs` from the `blender-sw5e` work | injectors, grenades, cartridges, cells, robes, helmets, rings, belts, boots, bracers and a few weapons |
 | `figures/body` | Built for this project in Blender (original shapes: lofted sections and a displaced sphere, no third-party pieces) | CC0 1.0 (public domain) | `tools/blender/build-body.py` | the sculpted body of a person: trunk, arm, forearm and hand, thigh, shin and boot, and the head (a lower-detail file for a phone) |
+| `figures/creature` | Built for this project in Blender (original shapes: lofted sections, smoothed and pushed in with small displacements, no third-party pieces) | CC0 1.0 (public domain) | `tools/blender/build-creature.py` | the heads, ears, a jaw and a beak of beasts (quadrupeds, brutes, runners), with a lower-detail file for a phone |
 
 The models are not used as downloaded. `tools/convert-assets.mjs` bakes each model's texture colours into vertex colours
 (so there is no texture to fetch), quantises the meshes and writes a second, low-detail file beside each (what a figure holds in

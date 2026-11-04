@@ -17,15 +17,43 @@ export const REGIONS: Record<PartName, number[]> = { torso: [0, 1, 2], arm: [0],
 // The length of the segment each limb part was made for (from its joint to the next), in model units; what lies beyond (a hand, a boot) keeps its size
 export const NOMINAL: Partial<Record<PartName, number>> = { arm: 0.225, fore: 0.19, thigh: 0.25, shin: 0.23 };
 
-// One part: a geometry (position, normal, ao, index) for each region it has
+// One part: a geometry (position, normal, ao, index, and a mark for a beast's) for each region it has
 export type Part = Record<number, THREE.BufferGeometry>;
-export type BodyParts = Record<PartName, Part>;
+// A part of a beast and what its file says of it (creature.glb, tools/blender/build-creature.py): where the code puts the eyes (x, y, z, radius,
+// on the right side; the left is the mirror), where an ear's base stands, the joint a lower jaw opens about
+export interface Piece { part: Part; eyes?: number[]; ear?: number[]; jaw?: number[] }
+export type CreatureParts = Record<string, Piece>;
+// The parts of a person, and `more`: what else body.glb has (the heads of the species with a muzzle, a snout or a beak, and the beak)
+export type BodyParts = Record<PartName, Part> & { more?: CreatureParts };
 
-let loaded: BodyParts | null = null;
-let pending: Promise<BodyParts | null> | null = null;
-const listeners = new Set<() => void>();
+// A file of parts, fetched once, shared by whatever draws with it: `get` is null before it is in (and for good if it could not be had: the
+// figures then draw their primitives), `use` is for a React component that draws figures (it renders again when the parts arrive)
+function shelf<T>(file: string, read: (scene: THREE.Object3D) => T) {
+  let loaded: T | null = null;
+  let pending: Promise<T | null> | null = null;
+  const listeners = new Set<() => void>();
+  const get = () => loaded;
+  const load = (): Promise<T | null> => {
+    if (!pending) {
+      pending = new GLTFLoader().loadAsync(file).then((gltf) => {
+        loaded = read(gltf.scene);
+        listeners.forEach((l) => l());
+        return loaded;
+      }).catch(() => null);
+    }
+    return pending;
+  };
+  const use = (): T | null => {
+    if (!pending && typeof window !== "undefined") load();
+    return useSyncExternalStore((cb) => { listeners.add(cb); return () => { listeners.delete(cb); }; }, get, () => null);
+  };
+  // In tests (no fetch): hand the parts in
+  const set = (p: T | null) => { loaded = p; pending = p ? Promise.resolve(p) : null; listeners.forEach((l) => l()); };
+  return { get, load, use, set };
+}
 const TOUCH = typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches;
 export const BODY_FILE = TOUCH ? "/figures/body.lo.glb" : "/figures/body.glb";
+export const CREATURE_FILE = TOUCH ? "/figures/creature.lo.glb" : "/figures/creature.glb";
 
 const floatsOf = (a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, size = a.itemSize) => {
   const out = new Float32Array(a.count * size);
@@ -35,7 +63,7 @@ const floatsOf = (a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, s
 };
 
 // A mesh's triangles split by region (a triangle takes its first vertex's), each region compacted to the vertices it uses
-export function splitRegions(position: Float32Array, normal: Float32Array, ao: Float32Array, region: Float32Array, index: ArrayLike<number>): Part {
+export function splitRegions(position: Float32Array, normal: Float32Array, ao: Float32Array, region: Float32Array, index: ArrayLike<number>, mark?: Float32Array): Part {
   const part: Part = {};
   const maps = new Map<number, { remap: Map<number, number>; verts: number[]; tris: number[] }>();
   for (let t = 0; t + 2 < index.length; t += 3) {
@@ -54,57 +82,63 @@ export function splitRegions(position: Float32Array, normal: Float32Array, ao: F
     const p = new Float32Array(n * 3);
     const nr = new Float32Array(n * 3);
     const a = new Float32Array(n);
-    m.verts.forEach((v, i) => { p.set(position.subarray(v * 3, v * 3 + 3), i * 3); nr.set(normal.subarray(v * 3, v * 3 + 3), i * 3); a[i] = ao[v]; });
+    const k = mark ? new Float32Array(n) : undefined;
+    m.verts.forEach((v, i) => { p.set(position.subarray(v * 3, v * 3 + 3), i * 3); nr.set(normal.subarray(v * 3, v * 3 + 3), i * 3); a[i] = ao[v]; if (k) k[i] = mark![v]; });
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(p, 3));
     g.setAttribute("normal", new THREE.BufferAttribute(nr, 3));
     g.setAttribute("ao", new THREE.BufferAttribute(a, 1));
+    if (k) g.setAttribute("mark", new THREE.BufferAttribute(k, 1));
     g.setIndex(m.tris);
     part[r] = g;
   }
   return part;
 }
 
-// The parts of a loaded body.glb (one mesh each, named for the part)
-export function partsOf(scene: THREE.Object3D): BodyParts {
-  const parts: Partial<BodyParts> = {};
+// Every mesh of a loaded file as a piece, named for its mesh
+export function piecesOf(scene: THREE.Object3D): CreatureParts {
+  const pieces: CreatureParts = {};
   scene.updateMatrixWorld(true);
   scene.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh) return;
-    const name = mesh.name.replace(/[._]\d+$/, "") as PartName;
+    const name = mesh.name.replace(/[._]d+$/, "");
     const g = mesh.geometry;
     const count = g.attributes.position.count;
     const position = floatsOf(g.attributes.position, 3);
     const normal = g.attributes.normal ? floatsOf(g.attributes.normal, 3) : new Float32Array(count * 3);
     const ao = g.attributes._ao ? floatsOf(g.attributes._ao, 1) : new Float32Array(count).fill(1);
     const region = g.attributes._region ? floatsOf(g.attributes._region, 1) : new Float32Array(count);
+    const mark = g.attributes._mark ? floatsOf(g.attributes._mark, 1) : undefined;
     const index = g.index ? g.index.array : Array.from({ length: count }, (_, i) => i);
-    parts[name] = splitRegions(position, normal, ao, region, index);
+    const u = mesh.userData as { eyes?: number[]; ear?: number[]; jaw?: number[] };
+    pieces[name] = { part: splitRegions(position, normal, ao, region, index, mark), eyes: u.eyes, ear: u.ear, jaw: u.jaw };
   });
-  if (!(["torso", "arm", "fore", "thigh", "shin", "head"] as PartName[]).every((n) => parts[n])) throw new Error("body.glb lacks a part");
-  return parts as BodyParts;
+  return pieces;
 }
 
-export function loadBody(): Promise<BodyParts | null> {
-  if (!pending) {
-    pending = new GLTFLoader().loadAsync(BODY_FILE).then((gltf) => {
-      loaded = partsOf(gltf.scene);
-      listeners.forEach((l) => l());
-      return loaded;
-    }).catch(() => null);
-  }
-  return pending;
+// The parts of a loaded body.glb (one mesh each, named for the part)
+export function partsOf(scene: THREE.Object3D): BodyParts {
+  const pieces = piecesOf(scene);
+  if (!(["torso", "arm", "fore", "thigh", "shin", "head"] as PartName[]).every((n) => pieces[n])) throw new Error("body.glb lacks a part");
+  const body = Object.fromEntries((["torso", "arm", "fore", "thigh", "shin", "head"] as PartName[]).map((n) => [n, pieces[n].part])) as unknown as BodyParts;
+  body.more = Object.fromEntries(Object.entries(pieces).filter(([n]) => !(n in body)));
+  return body;
 }
+
+const people = shelf(BODY_FILE, partsOf);
+const beasts = shelf(CREATURE_FILE, piecesOf);
+export const loadBody = people.load;
 // The parts, once they are in (null before, and for good if they could not be had: the figures then draw their primitives)
-export const bodyParts = (): BodyParts | null => loaded;
+export const bodyParts = people.get;
 // For a React component that draws people: it renders again when the parts arrive
-export function useBodyParts(): BodyParts | null {
-  if (!pending && typeof window !== "undefined") loadBody();
-  return useSyncExternalStore((cb) => { listeners.add(cb); return () => { listeners.delete(cb); }; }, bodyParts, () => null);
-}
-// In tests (no fetch): hand the parts in
-export function setBodyParts(p: BodyParts | null) { loaded = p; pending = p ? Promise.resolve(p) : null; listeners.forEach((l) => l()); }
+export const useBodyParts = people.use;
+export const setBodyParts = people.set;
+// The same for the heads of beasts (and what the species with a muzzle or a beak are drawn with)
+export const loadCreature = beasts.load;
+export const creatureParts = beasts.get;
+export const useCreatureParts = beasts.use;
+export const setCreatureParts = beasts.set;
 
 // ---- Fitting ---------------------------------------------------------------------------------------------------------------------
 

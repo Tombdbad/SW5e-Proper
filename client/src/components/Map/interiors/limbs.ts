@@ -15,14 +15,17 @@ import { gunKick } from "@shared/logic/shooter";
 
 // Limbs: 0 the body (still); the legs (front ones on a beast), the arms, a beast's hind and middle legs, a tail, a rolling ball or
 // wheel, and wings (right and left by the figure's own sides). A builder marks the parts with Kit.limb.
+// A beast (2026-11-04) is jointed a little too: its `chest` carries the neck and, with it, the head (which nods and looks about on its own), the
+// head carries the ears (`earR`, `earL`: they flick and lay back) and the lower jaw (`jaw`: it pants and opens), and the tail has a tip (`tail2`)
+// that follows the rest of it.
 // A person (2026-10-30, the user: "the lightsabre just waves with no character arm or body movement at all") is jointed further: the trunk
 // above the waist (`chest`, which carries the arms, the head and all worn above it), the forearms below the elbows, the shins below the
 // knees, and what the right hand holds (`weapon`, turned at the wrist). These hang one from another (PARENT): a forearm turns about its
 // elbow and is then carried by its upper arm, which the chest carries; a shin turns about its knee and then with its thigh.
-export const LIMB = { body: 0, legR: 1, legL: 2, armR: 3, armL: 4, hindR: 5, hindL: 6, midR: 7, midL: 8, tail: 9, roll: 10, wingR: 11, wingL: 12, chest: 13, foreR: 14, foreL: 15, shinR: 16, shinL: 17, weapon: 18, head: 19 } as const;
-export const LIMBS = 20;
+export const LIMB = { body: 0, legR: 1, legL: 2, armR: 3, armL: 4, hindR: 5, hindL: 6, midR: 7, midL: 8, tail: 9, roll: 10, wingR: 11, wingL: 12, chest: 13, foreR: 14, foreL: 15, shinR: 16, shinL: 17, weapon: 18, head: 19, earR: 20, earL: 21, tail2: 22, jaw: 23 } as const;
+export const LIMBS = 24;
 // The limb each one hangs from (-1: from the body itself)
-export const PARENT: number[] = [-1, -1, -1, 13, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, 3, 4, 1, 2, 14, 13];
+export const PARENT: number[] = [-1, -1, -1, 13, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, 3, 4, 1, 2, 14, 13, 19, 19, 9, 19];
 
 // How a stride looks: a leg swings this far forward and back at a walk, an arm a little less, against its leg
 const LEG = 0.62;
@@ -137,7 +140,7 @@ export function setLimbQuaternion(p: Pose, limb: number, q: THREE.Quaternion) {
 
 // The pose of a gait at a point of its stride; `t` is the seconds the figure has been about (for wings that beat at rest and a float).
 // A ball's roll is not here: it follows the ground covered (`rollBall`)
-export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose()): Pose {
+export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose(), persona: Persona = NEUTRAL): Pose {
   const swing = Math.sin(s.phase) * s.amp;
   const counter = Math.sin(s.phase + Math.PI) * s.amp;
   const reset = (limb: number) => out.set([0, 0, 0, 1], limb * 4);
@@ -147,6 +150,7 @@ export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose()): 
       const a = angles(s);
       for (const limb of [LIMB.legR, LIMB.legL, LIMB.armR, LIMB.armL]) setLimb(out, limb, AXIS.x, a[limb]);
       setLimb(out, LIMB.tail, AXIS.y, Math.sin(s.phase) * 0.25 * s.amp);
+      creatureLife(out, s, t, persona, 0.6);
       break;
     }
     case "quad": {
@@ -156,6 +160,7 @@ export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose()): 
       setLimb(out, LIMB.legL, AXIS.x, counter * 0.5);
       setLimb(out, LIMB.hindR, AXIS.x, counter * 0.5);
       setLimb(out, LIMB.tail, AXIS.y, Math.sin(s.phase * 0.5 + t * 0.6) * (0.12 + 0.25 * s.amp));
+      creatureLife(out, s, t, persona, 1);
       break;
     }
     case "hexa": {
@@ -204,6 +209,28 @@ export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose()): 
       break;
   }
   return out;
+}
+
+// The life of a beast over its gait (2026-11-04: it stood and walked like a toy): the breath lifting its neck, the head dipping with each fore
+// step and, at rest, turning to look about and now and then lowered; ears that flick (each its own, now and then) and sweep back at a run; the
+// tip of the tail following the rest of it a beat late; a jaw that pants at a run and parts a little now and then. `scale` is how much of
+// it a body wears (a brute's head moves less than a beast's). Each beast keeps its own time (the persona's phase), so a herd is not in step.
+function creatureLife(out: Pose, s: Stride, t: number, persona: Persona, scale: number) {
+  const ph = persona.phase;
+  const calm = 1 - s.amp;
+  const breath = Math.sin(t * 1.7 + ph);
+  // (the glance: a slow turn of the head to one side, then the other, with a pause between)
+  const look = Math.sin(t * 0.31 + ph) * Math.max(0, Math.sin(t * 0.13 + ph * 2.1) * 2.2 - 0.9);
+  const graze = Math.max(0, Math.sin(t * 0.17 + ph * 3.3)) ** 3;
+  const nod = Math.sin(s.phase * 2 + 0.6) * 0.085 * s.amp;
+  setEuler(out, LIMB.chest, (breath * 0.012 * (0.5 + calm) - nod * 0.4) * scale, 0, 0);
+  setEuler(out, LIMB.head, (nod + graze * 0.22 * calm) * scale, look * 0.5 * calm * scale * Math.min(1.4, persona.fidget), look * 0.04 * calm * scale);
+  for (const [limb, side, own] of [[LIMB.earR, -1, 1], [LIMB.earL, 1, 2.3]] as const) {
+    const flick = Math.max(0, Math.sin(t * 0.93 + ph * own)) ** 40;
+    setEuler(out, limb, (-0.3 * s.amp + Math.sin(t * 0.7 + ph * own) * 0.03) * scale, 0, side * (flick * 0.45 + Math.sin(t * 0.5 + ph + own) * 0.03) * scale);
+  }
+  setLimb(out, LIMB.tail2, AXIS.y, Math.sin(s.phase * 0.5 + t * 0.6 - 1.2) * (0.2 + 0.4 * s.amp) * scale);
+  setEuler(out, LIMB.jaw, (s.amp * 0.1 * (0.5 + 0.5 * Math.sin(t * 13)) + Math.max(0, Math.sin(t * 0.4 + ph)) ** 6 * 0.08 * calm) * scale, 0, 0);
 }
 
 // How far the body of a gait rises (from the ground it stands on) and how far it is rocked about its length (z) and pitched about its

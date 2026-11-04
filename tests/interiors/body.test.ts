@@ -4,9 +4,9 @@ import fs from "node:fs";
 import path from "node:path";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { bodyParts, fitBlock, fitLimb, NOMINAL, partsOf, REGIONS, setBodyParts, type BodyParts, type PartName } from "../../client/src/components/Map/interiors/body";
-import { advance, eased, easeMotion, humanPose, motion, NEUTRAL, personaOf, restPose, standing, type Pose } from "../../client/src/components/Map/interiors/limbs";
-import { Kit, figureSpec, lookOf } from "../../client/src/components/Map/models";
+import { bodyParts, creatureParts, fitBlock, fitLimb, NOMINAL, partsOf, piecesOf, REGIONS, setBodyParts, setCreatureParts, type BodyParts, type CreatureParts, type PartName } from "../../client/src/components/Map/interiors/body";
+import { advance, eased, easeMotion, gaitPose, humanPose, LIMB, LIMBS, motion, NEUTRAL, PARENT, personaOf, restPose, standing, type Pose } from "../../client/src/components/Map/interiors/limbs";
+import { Kit, figureSpec, lookOf, creaturePlan, buildCreature } from "../../client/src/components/Map/models";
 
 // The sculpted body (tools/blender/build-body.py), read as the browser reads it
 const file = path.resolve(import.meta.dirname, "../../client/public/figures/body.glb");
@@ -186,4 +186,133 @@ test("a start leans the body forward, a stop back; a turn banks it into the turn
   // a jump of the figure is neither a turn nor a start
   const jumped = advance({ ...standing(), heading: 0 }, 50, 1 / 30, 1, 2);
   assert.ok(Math.abs(jumped.turn ?? 0) < 0.01);
+});
+
+// ---- Beasts and the species with a muzzle (tools/blender/build-creature.py, and the heads in build-body.py) -----------------------------------------
+
+const readFile = (name: string) => {
+  const buf = fs.readFileSync(path.resolve(path.dirname(file), name));
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+};
+const piecesFrom = (name: string): Promise<CreatureParts> => new Promise((resolve, reject) => new GLTFLoader().parse(readFile(name), "", (g) => resolve(piecesOf(g.scene)), reject));
+const HEADS = ["cat", "dog", "long", "blunt", "reptile", "rhino", "boar", "rancor", "wampa", "ape", "horned", "bird", "tauntaun", "lizard"];
+const nearest = (gs: THREE.BufferGeometry[], at: THREE.Vector3) => {
+  let best = Infinity;
+  const v = new THREE.Vector3();
+  for (const g of gs) for (let i = 0; i < g.attributes.position.count; i++) best = Math.min(best, v.fromBufferAttribute(g.attributes.position as THREE.BufferAttribute, i).distanceTo(at));
+  return best;
+};
+
+test("creature.glb holds a head for every kind of beast, ears, a jaw and a beak; each with its eyes on the skull, occlusion and marks in range", async () => {
+  const all = await piecesFrom("creature.glb");
+  for (const n of [...HEADS, "ear_cat", "ear_dog", "ear_long", "ear_round", "rancor_jaw", "beak"]) assert.ok(all[n], `${n} is in the file`);
+  for (const n of HEADS) {
+    const piece = all[n];
+    assert.equal(piece.eyes?.length, 4, `${n} says where its eyes are`);
+    const [x, y, z, r] = piece.eyes!;
+    assert.ok(x > 0 && r > 0.01 && r < 0.04, `${n}'s eye ${piece.eyes}`);
+    const geos = Object.values(piece.part);
+    assert.ok(nearest(geos, new THREE.Vector3(x, y, z)) < r * 2.2, `${n}'s eye is on its skull (${nearest(geos, new THREE.Vector3(x, y, z)).toFixed(3)})`);
+    for (const g of geos) {
+      assert.ok((g.attributes.ao.array as Float32Array).every((v) => v > 0 && v <= 1.0001), `${n} occlusion`);
+      assert.ok((g.attributes.mark.array as Float32Array).every((v) => v >= -1.0001 && v <= 1.0001), `${n} marks`);
+    }
+    assert.ok(trianglesOf(piece.part) < 2600, `${n}: ${trianglesOf(piece.part)} triangles`);
+  }
+  // the heads are the sizes the code draws them at (a quadruped's head for a body 0.3 thick: a hand's breadth to a forearm long)
+  for (const n of ["cat", "dog", "long", "blunt", "reptile", "rhino", "boar"]) {
+    const b = boundsOf(Object.values(all[n].part));
+    assert.ok(b.max.z > 0.17 && b.max.z < 0.45 && b.max.x > 0.07 && b.max.x < 0.25 && b.min.z > -0.25, `${n} ${b.min.toArray()} ${b.max.toArray()}`);
+  }
+  const lo = await piecesFrom("creature.lo.glb");
+  for (const n of HEADS) assert.ok(trianglesOf(lo[n].part) < trianglesOf(all[n].part) / 3, `${n} on a phone`);
+});
+
+test("body.glb carries a head for each kind of muzzle and a beak, made the size of a person's head with the nose and lips left out", async () => {
+  const body = await parse("body.glb");
+  const more = body.more ?? {};
+  for (const n of ["head_muzzle", "head_long", "head_short", "head_pig", "head_flat", "beak"]) assert.ok(more[n], n);
+  const human = boundsOf(Object.values(body.head));
+  const reach = (n: string) => boundsOf(Object.values(more[n].part)).max.z;
+  assert.ok(reach("head_long") > reach("head_muzzle") && reach("head_muzzle") > reach("head_short") && reach("head_short") > human.max.z - 0.01, "a longer snout reaches further");
+  assert.ok(reach("head_flat") < human.max.z, "the flat face has no nose");
+  assert.ok(Object.values(more.head_muzzle.part).some((g) => g.attributes.mark && (g.attributes.mark.array as Float32Array).some((v) => v > 0.5)), "the nose pad and the nostrils are marked dark");
+});
+
+test("a beast is drawn from its sculpted head, its neck, head, ears, jaw and tail on joints of their own, and as primitives before", async () => {
+  setCreatureParts(null);
+  const build = (name: string) => { const plan = creaturePlan(name); const k = new Kit(); k.animated = true; buildCreature(k, plan, 0); return k; };
+  const tris = (k: Kit) => k.parts.reduce((n, p) => n + p.geo.index!.count / 3, 0);
+  const before = [build("nexu"), build("rancor"), build("kaadu")];
+  setCreatureParts(await piecesFrom("creature.glb"));
+  assert.ok(creatureParts());
+  const after = [build("nexu"), build("rancor"), build("kaadu")];
+  before.forEach((b, i) => assert.ok(tris(after[i]) > tris(b), `${tris(b)} -> ${tris(after[i])} triangles`));
+  after.forEach((k) => { assert.ok(tris(k) < 20000); assert.ok(k.parts.every((p) => p.geo.attributes.limb && p.geo.attributes.pivot)); });
+  const [nexu, rancor, kaadu] = after;
+  for (const l of [LIMB.chest, LIMB.head, LIMB.earR, LIMB.earL, LIMB.tail, LIMB.tail2]) assert.ok(nexu.jointMask & (1 << l), `a cat has limb ${l}`);
+  for (const l of [LIMB.chest, LIMB.head, LIMB.jaw]) assert.ok(rancor.jointMask & (1 << l), `a rancor has limb ${l}`);
+  for (const l of [LIMB.chest, LIMB.head, LIMB.tail, LIMB.tail2]) assert.ok(kaadu.jointMask & (1 << l), `a runner has limb ${l}`);
+  // the beast's colours are shaded by the occlusion and the marks: some vertex of its hide is darker than the hide's colour
+  const colours = nexu.parts.flatMap((p) => Array.from(p.geo.attributes.color.array as Float32Array));
+  assert.ok(Math.max(...colours) > Math.min(...colours) * 1.5);
+  setCreatureParts(null);
+});
+
+test("the joints of a beast hang one from another: an ear from the head, the head from the neck, the tail's tip from the tail", () => {
+  assert.equal(LIMBS, PARENT.length);
+  assert.equal(PARENT[LIMB.head], LIMB.chest);
+  assert.equal(PARENT[LIMB.earR], LIMB.head);
+  assert.equal(PARENT[LIMB.earL], LIMB.head);
+  assert.equal(PARENT[LIMB.jaw], LIMB.head);
+  assert.equal(PARENT[LIMB.tail2], LIMB.tail);
+  // (the shader follows three parents: an ear turns, then with the head, then with the neck)
+  let depth = 0;
+  for (let l: number = LIMB.earR; PARENT[l] >= 0; l = PARENT[l]) depth++;
+  assert.ok(depth <= 3);
+});
+
+const euler = (p: Pose, limb: number) => new THREE.Euler().setFromQuaternion(new THREE.Quaternion(p[limb * 4], p[limb * 4 + 1], p[limb * 4 + 2], p[limb * 4 + 3]), "YXZ");
+
+test("a beast at rest breathes, looks about, flicks an ear now and then and lets its tail follow; at a run its head dips with each step, the ears lay back and the jaw pants", () => {
+  const rest = restPose();
+  const calm = standing();
+  const mine = { ...NEUTRAL, phase: 1.3 };
+  let breathMin = 1, breathMax = -1, yaw = 0, flick = 0, jaw = 0;
+  for (let t = 0; t < 60; t += 0.1) {
+    gaitPose("quad", calm, t, rest, mine);
+    breathMin = Math.min(breathMin, euler(rest, LIMB.chest).x);
+    breathMax = Math.max(breathMax, euler(rest, LIMB.chest).x);
+    yaw = Math.max(yaw, Math.abs(euler(rest, LIMB.head).y));
+    flick = Math.max(flick, Math.abs(euler(rest, LIMB.earR).z), Math.abs(euler(rest, LIMB.earL).z));
+    jaw = Math.max(jaw, euler(rest, LIMB.jaw).x);
+  }
+  assert.ok(breathMax - breathMin > 0.015, `it breathes: ${breathMax - breathMin}`);
+  assert.ok(yaw > 0.12, `it looks about: ${yaw}`);
+  assert.ok(flick > 0.2, `an ear flicks: ${flick}`);
+  assert.ok(jaw > 0.02, `its mouth parts a little: ${jaw}`);
+  // each beast keeps its own time: the same moment finds two of them in different places
+  let apart = 0;
+  for (let t = 0; t < 60; t += 0.5) {
+    const one = gaitPose("quad", calm, t, restPose(), { ...NEUTRAL, phase: 0.4 });
+    const two = gaitPose("quad", calm, t, restPose(), { ...NEUTRAL, phase: 3.9 });
+    apart = Math.max(apart, Math.abs(euler(one, LIMB.chest).x - euler(two, LIMB.chest).x), Math.abs(euler(one, LIMB.head).y - euler(two, LIMB.head).y));
+  }
+  assert.ok(apart > 0.01, `two beasts are not in step: ${apart}`);
+  // at a run
+  let s = standing();
+  for (let i = 0; i < 60; i++) s = advance(s, 0.1, 1 / 30);
+  let dip = 0, pant = 0, laid = 0, tip = 0, base = 0;
+  for (let ph = 0; ph < Math.PI * 2; ph += 0.2) {
+    const run = gaitPose("quad", { ...s, phase: ph }, 5, restPose(), mine);
+    dip = Math.max(dip, Math.abs(euler(run, LIMB.head).x));
+    pant = Math.max(pant, euler(run, LIMB.jaw).x);
+    laid = Math.min(laid, euler(run, LIMB.earR).x);
+    tip = Math.max(tip, Math.abs(euler(run, LIMB.tail2).y));
+    base = Math.max(base, Math.abs(euler(run, LIMB.tail).y));
+  }
+  assert.ok(dip > 0.06, `the head dips ${dip}`);
+  assert.ok(pant > 0.05, `it pants ${pant}`);
+  assert.ok(laid < -0.2, `the ears lay back ${laid}`);
+  assert.ok(tip > base, `the tip of the tail swings further than its root: ${tip} against ${base}`);
 });

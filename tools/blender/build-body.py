@@ -11,114 +11,10 @@
 # `_REGION` (which dressed colour: see REGIONS in body.ts). Original shapes, built from lofted sections and displaced spheres: CC0.
 import bpy, bmesh, math, sys, os, random
 from mathutils import Vector, Matrix, bvhtree
-
-OUT = sys.argv[sys.argv.index("--") + 1] if "--" in sys.argv else "."
-HI = "--lo" not in sys.argv
-
-# three's axes (x, y up, z front) -> Blender's (x, -z, y), so the glTF exporter (y up) gives the same numbers back
-def P(x, y, z):
-    return Vector((x, -z, y))
-
-def smooth(a, b, v):
-    t = max(0.0, min(1.0, (v - a) / (b - a)))
-    return t * t * (3 - 2 * t)
-
-def spow(v, n):
-    return math.copysign(abs(v) ** n, v)
-
-def dense(sections, regions, k):
-    """Catmull-Rom through the sections (centre, u, v, ru, rv, n): k rings for each gap, so the silhouette is a curve, not facets"""
-    if not HI:
-        k = max(1, k // 2)
-    out, reg = [], []
-    n = len(sections)
-    def pick(i):
-        return sections[max(0, min(n - 1, i))]
-    for i in range(n - 1):
-        a, b, c, d = pick(i - 1), pick(i), pick(i + 1), pick(i + 2)
-        for j in range(k):
-            t = j / k
-            def cr(f):
-                p0, p1, p2, p3 = f(a), f(b), f(c), f(d)
-                return 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t * t + (-p0 + 3 * p1 - 3 * p2 + p3) * t ** 3)
-            centre = Vector((cr(lambda s_: s_[0].x), cr(lambda s_: s_[0].y), cr(lambda s_: s_[0].z)))
-            out.append((centre, b[1], b[2], max(1e-4, cr(lambda s_: s_[3])), max(1e-4, cr(lambda s_: s_[4])), cr(lambda s_: s_[5])))
-            reg.append(regions[i] if t < 0.5 else regions[i + 1])
-    out.append(sections[-1])
-    reg.append(regions[-1])
-    return out, reg
-
-X, Y, Z = P(1, 0, 0), P(0, 1, 0), P(0, 0, 1)  # three's axes in Blender's
-AROUND = 10 if HI else 7
-
-# ---- Lofts: a part is rings (superellipses) along a line, with a region number on each ring ---------------------------------------------
-
-class Part:
-    def __init__(self, name):
-        self.name = name
-        self.bm = bmesh.new()
-        self.region = self.bm.verts.layers.float.new("_REGION")
-
-    def loft(self, sections, around, regions, cap_start=True, cap_end=True):
-        """sections: (centre, u axis, v axis, ru, rv, n) each; regions: one number per section"""
-        rings = []
-        for (c, u, v, ru, rv, n), g in zip(sections, regions):
-            ring = []
-            for i in range(around):
-                a = 2 * math.pi * i / around
-                e = 2.0 / n
-                vert = self.bm.verts.new(c + u * (ru * spow(math.cos(a), e)) + v * (rv * spow(math.sin(a), e)))
-                vert[self.region] = float(g)
-                ring.append(vert)
-            rings.append(ring)
-        for a, b in zip(rings, rings[1:]):
-            for i in range(around):
-                j = (i + 1) % around
-                self.bm.faces.new((a[i], a[j], b[j], b[i]))
-        for end, ring, sec, g in ((cap_start, rings[0], sections[0], regions[0]), (cap_end, rings[-1], sections[-1], regions[-1])):
-            if not end:
-                continue
-            c = self.bm.verts.new(sec[0])
-            c[self.region] = float(g)
-            for i in range(around):
-                j = (i + 1) % around
-                self.bm.faces.new((ring[i], ring[j], c) if ring is rings[0] else (ring[j], ring[i], c))
-        return rings
-
-    def object(self):
-        bm = self.bm
-        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
-        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-        me = bpy.data.meshes.new(self.name)
-        bm.to_mesh(me)
-        bm.free()
-        ob = bpy.data.objects.new(self.name, me)
-        bpy.context.collection.objects.link(ob)
-        for poly in me.polygons:
-            poly.use_smooth = True
-        return ob
-
-def rounded(sections, regions, depth, steps=3):
-    """a quarter-round cap beyond the last section (a joint's ball, a fingertip)"""
-    c, u, v, ru, rv, n = sections[-1]
-    axis = (c - sections[-2][0]).normalized()
-    out, reg = list(sections), list(regions)
-    for i in range(1, steps + 1):
-        a = (i / steps) * math.pi / 2
-        out.append((c + axis * (depth * math.sin(a)), u, v, ru * math.cos(a) + 1e-4, rv * math.cos(a) + 1e-4, n))
-        reg.append(regions[-1])
-    return out, reg
-
-def join(obs, name):
-    for o in bpy.context.selected_objects:
-        o.select_set(False)
-    for ob in obs:
-        ob.select_set(True)
-    bpy.context.view_layer.objects.active = obs[0]
-    bpy.ops.object.join()
-    obs[0].name = name
-    obs[0].data.name = name
-    return obs[0]
+sys.dont_write_bytecode = True  # (no __pycache__ beside the script)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shape import *  # noqa: F401,F403 (the helpers shared with build-creature.py)
+from shape import OUT, HI
 
 # ---- The pieces -----------------------------------------------------------------------------------------------------------------------
 
@@ -229,16 +125,23 @@ def shin():
 
 # ---- The head -------------------------------------------------------------------------------------------------------------------------
 
-def head():
-    # a dense sphere pushed into a skull: the ellipsoid, the jaw, then the features each as a small bump or hollow along the surface
+# What a species with a muzzle has in place of a nose and lips: how far the front of the face is pushed out, and its width, height and centre
+SNOUTS = {"muzzle": (0.045, 0.036, 0.034, -0.040), "long": (0.075, 0.030, 0.030, -0.040), "short": (0.022, 0.030, 0.028, -0.030), "pig": (0.034, 0.050, 0.032, -0.036), "flat": None}
+
+def head(variant="human", name="head"):
+    # a dense sphere pushed into a skull: the ellipsoid, the jaw, then the features each as a small bump or hollow along the surface. The
+    # variants are for species that are not shaped like a human's face: a snout, a muzzle, a pig's disc (the code draws the nose of the human
+    # one, a trunk or a beak onto the flat one)
     segs, rings = (72, 56) if HI else (32, 24)
     bm = bmesh.new()
     bmesh.ops.create_uvsphere(bm, u_segments=segs, v_segments=rings, radius=1.0)
     layer = bm.verts.layers.float.new("_REGION")
-    me = bpy.data.meshes.new("head")
+    me = bpy.data.meshes.new(name)
     bm.to_mesh(me)
     bm.free()
-    ob = bpy.data.objects.new("head", me)
+    mark = me.attributes.new("_MARK", "FLOAT", "POINT")
+    snout = SNOUTS.get(variant)
+    ob = bpy.data.objects.new(name, me)
     bpy.context.collection.objects.link(ob)
     FEATURE = 1.45
     BX, BY, BZ = 0.100, 0.118, 0.112
@@ -251,6 +154,9 @@ def head():
         z += 0.012 * low * smooth(0.2, 0.9, dz)
         y -= 0.012 * low
         z -= 0.006 * smooth(0.0, 0.9, dy) * (1 - front)
+        if snout:
+            push, srx, sry, scy = snout
+            z += push * math.exp(-0.5 * ((x / srx) ** 2 + ((y - scy) / sry) ** 2)) * smooth(0.25, 0.9, dz)
         nx, ny, nz = dx / BX, dy / BY, dz / BZ
         nl = math.sqrt(nx * nx + ny * ny + nz * nz) or 1
         nx, ny, nz = nx / nl, ny / nl, nz / nl
@@ -265,16 +171,28 @@ def head():
             bump(0.040, 0.016, 0.098, 0.024, 0.016, 0.03, -0.009)   # the eye sockets
             bump(0.042, 0.040, 0.100, 0.034, 0.011, 0.03, 0.0065)   # the brow ridge
             bump(0.0, 0.032, 0.106, 0.018, 0.014, 0.03, 0.002)      # between the brows
-            bump(0.0, 0.0, 0.108, 0.010, 0.026, 0.03, 0.009)        # the bridge of the nose
-            bump(0.0, -0.018, 0.112, 0.014, 0.013, 0.03, 0.0125)    # its tip
-            bump(0.016, -0.023, 0.106, 0.009, 0.008, 0.03, 0.004)   # the wings
+            if variant == "human":
+                bump(0.0, 0.0, 0.108, 0.010, 0.026, 0.03, 0.009)        # the bridge of the nose
+                bump(0.0, -0.018, 0.112, 0.014, 0.013, 0.03, 0.0125)    # its tip
+                bump(0.016, -0.023, 0.106, 0.009, 0.008, 0.03, 0.004)   # the wings
             bump(0.070, -0.012, 0.075, 0.024, 0.024, 0.04, 0.005)   # the cheekbones
             bump(0.062, -0.052, 0.07, 0.022, 0.022, 0.04, -0.004)   # the hollow below
-            bump(0.0, -0.046, 0.108, 0.022, 0.0055, 0.03, 0.005)    # the upper lip
-            bump(0.0, -0.058, 0.106, 0.021, 0.0065, 0.03, 0.0055)   # the lower lip
-            bump(0.0, -0.0515, 0.11, 0.026, 0.004, 0.03, -0.0022)  # the line of the mouth
-            bump(0.0, -0.088, 0.100, 0.020, 0.016, 0.04, 0.007)     # the chin
-            bump(0.0, -0.072, 0.104, 0.011, 0.007, 0.03, -0.0035)   # under the lip
+            if variant == "human":
+                bump(0.0, -0.046, 0.108, 0.022, 0.0055, 0.03, 0.005)    # the upper lip
+                bump(0.0, -0.058, 0.106, 0.021, 0.0065, 0.03, 0.0055)   # the lower lip
+                bump(0.0, -0.0515, 0.11, 0.026, 0.004, 0.03, -0.0022)  # the line of the mouth
+                bump(0.0, -0.072, 0.104, 0.011, 0.007, 0.03, -0.0035)   # under the lip
+            bump(0.0, -0.088, 0.100, 0.020, 0.016, 0.04, 0.007 if variant == "human" else 0.004)     # the chin
+        if snout:
+            # darkness painted where a muzzle has a nose and a mouth: the pad at the tip, the nostrils in it, the line of the lips
+            tipz = 0.112 + snout[0]
+            ty = snout[3]
+            m = 0.0
+            m += 0.9 * math.exp(-0.5 * ((x / 0.022) ** 2 + ((y - ty) / 0.016) ** 2 + ((z - tipz + 0.002) / 0.014) ** 2))
+            m += 0.9 * math.exp(-0.5 * (((abs(x) - 0.011) / 0.005) ** 2 + ((y - ty + 0.006) / 0.005) ** 2 + ((z - tipz) / 0.008) ** 2))
+            if variant != "flat":
+                m += 0.7 * math.exp(-0.5 * ((x / 0.06) ** 2 + ((y + 0.052) / 0.0035) ** 2 + ((z - 0.07 - snout[0] * 0.5) / 0.05) ** 2))
+            mark.data[v.index].value = min(1.0, m)
         v.co = Vector((x, -z, y))
     # the ears: a flattened oval on each side, a hollow in its outer face
     ears = []
@@ -293,13 +211,14 @@ def head():
         e_ob = bpy.data.objects.new("ear", e_me)
         bpy.context.collection.objects.link(e_ob)
         e_ob.data.attributes.new("_REGION", "FLOAT", "POINT")
+        e_ob.data.attributes.new("_MARK", "FLOAT", "POINT")
         for v in e_ob.data.vertices:
             e_ob.data.attributes["_REGION"].data[v.index].value = 3.0
         ears.append(e_ob)
     for o in [ob] + ears:
         for poly in o.data.polygons:
             poly.use_smooth = True
-    joined = join([ob] + ears, "head")
+    joined = join([ob] + ears, name)
     # (the dense sphere carries the features; collapse it to a budget, the vertex colours and their regions kept)
     bpy.context.view_layer.objects.active = joined
     joined.select_set(True)
@@ -311,47 +230,23 @@ def head():
         poly.use_smooth = True
     return joined
 
-# ---- Ambient occlusion from the whole figure standing ------------------------------------------------------------------------------------
+def beak():
+    """a bird-like species' beak, from the middle of the face forward: one region, coloured by the code"""
+    p = Part("beak")
+    sec = [(P(0, -0.010, 0.085), X, Y, 0.030, 0.022, 2.4), (P(0, -0.014, 0.130), X, Y, 0.024, 0.020, 2.4), (P(0, -0.022, 0.170), X, Y, 0.012, 0.014, 2.3), (P(0, -0.034, 0.195), X, Y, 0.004, 0.008, 2.2)]
+    sec, reg = dense(sec, [0] * 4, 3)
+    p.loft(sec, AROUND, reg)
+    ob = p.object()
+    ob.data.attributes.new("_MARK", "FLOAT", "POINT")
+    return ob
 
-def occlusion(placed, rays):
-    """vertex AO from rays cast against every part in its standing place (one BVH over them all)"""
-    verts, polys = [], []
-    for ob, mat in placed:
-        base = len(verts)
-        verts += [mat @ v.co for v in ob.data.vertices]
-        polys += [tuple(base + i for i in poly.vertices) for poly in ob.data.polygons]
-    tree = bvhtree.BVHTree.FromPolygons(verts, polys)
-    rnd = random.Random(7)
-    dirs = []
-    while len(dirs) < rays:
-        d = Vector((rnd.uniform(-1, 1), rnd.uniform(-1, 1), rnd.uniform(-1, 1)))
-        if 0.01 < d.length_squared <= 1:
-            dirs.append(d.normalized())
-    reach = 0.07
-    out = {}
-    for ob, mat in placed:
-        nm = mat.to_3x3()
-        ao = []
-        for v in ob.data.vertices:
-            w = mat @ v.co
-            n = (nm @ v.normal).normalized()
-            hits, tot = 0.0, 0
-            for d in dirs:
-                if d.dot(n) < 0:
-                    d = -d
-                if d.dot(n) < 0.08:
-                    continue
-                tot += 1
-                loc, nor, idx, dist = tree.ray_cast(w + n * 0.002, d, reach)
-                if loc is not None and dist > 0.01:
-                    hits += 1.0 - dist / reach
-            ao.append(1.0 - 0.7 * (hits / max(1, tot)))
-        out[(ob.name, id(mat))] = ao
-    return out
+# ---- Ambient occlusion from the whole figure standing ------------------------------------------------------------------------------------
 
 def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     parts = {"torso": torso(), "arm": arm_up(), "fore": fore(), "thigh": thigh(), "shin": shin(), "head": head()}
+    variants = {"head_" + v: head(v, "head_" + v) for v in ("muzzle", "long", "short", "pig", "flat")}
+    variants["beak"] = beak()
     # a figure standing in the code's frame (hips at y 0.56), the arms by the sides and the legs straight: for the occlusion only. Both
     # sides are placed so each shades the trunk and the other
     def at(x, y, z):
@@ -371,6 +266,15 @@ def main():
         key = [k for k in ao if k[0] == ob.name][0]
         for i, val in enumerate(ao[key]):
             a.data[i].value = val
+    # (the species' heads, with the neck under them; the beak on its own)
+    for name, ob in variants.items():
+        placed_v = [(parts["torso"], at(0, 0.56, 0)), (ob, at(0, 0.56 + 0.525, 0.005))] if name != "beak" else [(ob, Matrix.Identity(4))]
+        ao_v = occlusion(placed_v, 40 if HI else 20)
+        a = ob.data.attributes.new("_AO", "FLOAT", "POINT")
+        key = [k for k in ao_v if k[0] == ob.name][0]
+        for i, val in enumerate(ao_v[key]):
+            a.data[i].value = val
+    parts.update(variants)
     for o in bpy.context.selected_objects:
         o.select_set(False)
     for ob in parts.values():
