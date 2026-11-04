@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { babylonGl } from "@/components/Map/babylon";
@@ -22,7 +22,7 @@ import { floorOf } from "@/components/Map/sprites";
 import { gearOf } from "@/lib/sw5e/characterCalculation";
 import { furnishRoom, createRandom, VEHICLE_MAKES, caveMask, deckSquares, type Area, type RoomAsset } from "@shared/logic";
 import { seatState, motion, nowSeconds, beginSwing, personaOf, SABER_STYLES, SABER_KITS, type Motion, type SaberKit, type SaberStyle, type SeatState, type Shot } from "@/components/Map/interiors/limbs";
-import { styleFor, comboOf, moveOf, moveSeconds, FLAVOUR } from "@/components/Map/interiors/saberplay";
+import { styleFor, comboOf, moveOf, moveSeconds, planDuel, DUEL_MODES, FLAVOUR, type DuelMode, type Fighter } from "@/components/Map/interiors/saberplay";
 import { MotionContext } from "@/components/Map/models";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
 
@@ -337,7 +337,7 @@ function Moves({ only }: { only?: string }) {
 // blade, a broadsaber, a crossguard, a double blade, two blades, a whip) and a column for each form, each figure fighting its combos one after another
 // (the next move beginning as the last runs out; a pause, then the form's next combo). `?section=sabers&kit=staff` shows one row, larger;
 // `&style=ataru` one figure; `&combo=1&move=2&u=0.6` holds it at 60% of the third move of its second combo (to look at one pose)
-function Duelist({ kit, style, combo, move, u, index }: { kit: SaberKit; style: SaberStyle; combo?: number; move?: number; u?: number; index: number }) {
+function Duelist({ kit, style, combo, move, u, index, named }: { kit: SaberKit; style: SaberStyle; combo?: number; move?: number; u?: number; index: number; named?: string }) {
   const m = useRef<Motion>(motion({ style, kit, ready: true }));
   const next = useRef(0);
   // (where a figure's combos begin is set by who it is: limbs.ts humanPose, from its persona)
@@ -350,6 +350,11 @@ function Duelist({ kit, style, combo, move, u, index }: { kit: SaberKit; style: 
       // (held: every frame the swing began `u` of the move ago)
       mo.combo = combo ?? 0;
       mo.chain = move;
+      // (`&name=pirouette`: the first move of that name in the form's combos, wherever it is)
+      if (named) {
+        const at = set.combos.findIndex((cb) => cb.some((mm) => mm.name === named));
+        if (at >= 0) { mo.combo = (((at - seed) % set.combos.length) + set.combos.length) % set.combos.length; mo.chain = set.combos[at].findIndex((mm) => mm.name === named); }
+      }
       mo.swingAt = now - (u ?? 0.5) * moveSeconds(set, moveOf(set, mo, 0, seed));
       mo.prevAt = undefined;
       return;
@@ -365,12 +370,12 @@ function Duelist({ kit, style, combo, move, u, index }: { kit: SaberKit; style: 
   });
   return <MotionContext.Provider value={m}><Figure kind="force" ring={SIDE_COLORS.neutral} name="Duelist" role="jedi" species="Human" wield="saber" kit={kit} /></MotionContext.Provider>;
 }
-function Sabers({ only, one, combo, move, u, strip }: { only?: string; one?: string; combo?: number; move?: number; u?: number; strip?: number[] }) {
+function Sabers({ only, one, combo, move, u, strip, named }: { only?: string; one?: string; combo?: number; move?: number; u?: number; strip?: number[]; named?: string }) {
   const kits = SABER_KITS.filter((k) => !only || k === only);
   const styles = SABER_STYLES.filter((st) => !one || st === one);
   const gap = only ? 2.2 : 1.7;
   // (`&us=0.1,0.3,0.5,...`: one move of one figure at each of those points of it, side by side: a film strip)
-  if (strip) return <>{strip.map((x, i) => <group key={i} position={[(i - (strip.length - 1) / 2) * 1.6, 0, -4]}><Duelist kit={(only as SaberKit) ?? "single"} style={(one as SaberStyle) ?? "niman"} combo={combo ?? 0} move={move ?? 0} u={x} index={0} /><Label at={[0, 0.05, 1.2]} text={String(x)} />{i === 0 && <Label at={[0, 2.4, 0]} text={(() => { const st = styleFor((only as SaberKit) ?? "single", (one as SaberStyle) ?? "niman"); const mm = { combo: combo ?? 0, chain: move ?? 0 }; return `${comboOf(st, mm, Math.floor(personaOf(hue("Duelist")).phase * 3)).map((v) => v.name).join(" > ")}  [${move ?? 0}]`; })()} />}</group>)}</>;
+  if (strip) return <>{strip.map((x, i) => <group key={i} position={[(i - (strip.length - 1) / 2) * 1.6, 0, -4]}><Duelist kit={(only as SaberKit) ?? "single"} style={(one as SaberStyle) ?? "niman"} combo={combo ?? 0} move={move ?? 0} u={x} index={0} named={named} /><Label at={[0, 0.05, 1.2]} text={String(x)} />{i === 0 && <Label at={[0, 2.4, 0]} text={named ? named : (() => { const st = styleFor((only as SaberKit) ?? "single", (one as SaberStyle) ?? "niman"); const mm = { combo: combo ?? 0, chain: move ?? 0 }; return `${comboOf(st, mm, Math.floor(personaOf(hue("Duelist")).phase * 3)).map((v) => v.name).join(" > ")}  [${move ?? 0}]`; })()} />}</group>)}</>;
   return (
     <>
       {kits.map((kit, i) => styles.map((st, j) => (
@@ -381,6 +386,99 @@ function Sabers({ only, one, combo, move, u, strip }: { only?: string; one?: str
         </group>
       )))}
     </>
+  );
+}
+
+// `saberCombo` (2026-11-04, the user: "a page with a dropdown for the attacker (weapon and form) and one for the defender, to display the aesthetic of each
+// attack and defensive style"): two figures face to face. The attacker plays its combos, one blow after another; the defender answers as asked: parrying
+// each blow with the guard moves of its own weapon and form, standing in its block, taking every blow, or trading combos with the attacker. The plan of
+// who plays what, and when, is saberplay.ts `planDuel`; here it is looped, each figure told the move to play (`Motion.play`).
+const KIT_LABELS: Record<SaberKit, string> = { single: "Lightsaber", broad: "Broadsaber", crossguard: "Crossguard saber (Kylo Ren)", staff: "Double-bladed staff (Darth Maul)", dual: "Two sabers (Ahsoka)", whip: "Lightwhip (Lumiya)" };
+const FORM_LABELS: Record<SaberStyle, string> = { shiicho: "Shii-Cho (I)", makashi: "Makashi (II)", soresu: "Soresu (III)", ataru: "Ataru (IV)", shien: "Shien (Va)", djemso: "Djem So (Vb)", niman: "Niman (VI)", juyo: "Juyo / Vaapad (VII)", jarkai: "Jar'Kai", trakata: "Trakata", sokan: "Sokan" };
+const MODE_LABELS: Record<DuelMode, string> = { parry: "Parries each blow with its own guard moves", guard: "Stands in its block", hit: "Takes every blow", trade: "Trades combos: each defends while the other attacks" };
+interface DuelConfig { a: Fighter; d: Fighter; mode: DuelMode; pick: number | "all" }
+const asKit = (v: string | null, fallback: SaberKit): SaberKit => (SABER_KITS.includes(v as SaberKit) ? (v as SaberKit) : fallback);
+const asForm = (v: string | null, fallback: SaberStyle): SaberStyle => (SABER_STYLES.includes(v as SaberStyle) ? (v as SaberStyle) : fallback);
+const duelFromQuery = (q: URLSearchParams): DuelConfig => ({
+  a: { kit: asKit(q.get("a"), "single"), style: asForm(q.get("af"), "ataru") },
+  d: { kit: asKit(q.get("d"), "single"), style: asForm(q.get("df"), "soresu") },
+  mode: DUEL_MODES.includes(q.get("mode") as DuelMode) ? (q.get("mode") as DuelMode) : "parry",
+  pick: q.get("combo") && q.get("combo") !== "all" ? Number(q.get("combo")) : "all",
+});
+function SaberDuel({ duel, caption }: { duel: DuelConfig; caption: { current: HTMLDivElement | null } }) {
+  const plan = useMemo(() => planDuel(duel.a, duel.d, duel.mode, duel.pick === "all" ? undefined : duel.pick), [duel.a.kit, duel.a.style, duel.d.kit, duel.d.style, duel.mode, duel.pick]);
+  const ma = useRef<Motion>(motion({ style: duel.a.style, kit: duel.a.kit, ready: true }));
+  const md = useRef<Motion>(motion({ style: duel.d.style, kit: duel.d.kit, ready: true }));
+  const began = useRef(nowSeconds());
+  useEffect(() => { began.current = nowSeconds(); }, [plan]);
+  useFrame(() => {
+    const now = nowSeconds();
+    const t = (now - began.current) % plan.length;
+    const base = now - t;
+    const lines: string[] = [];
+    for (const who of ["a", "d"] as const) {
+      const mo = (who === "a" ? ma : md).current;
+      const side = who === "a" ? duel.a : duel.d;
+      mo.style = side.style;
+      mo.kit = side.kit;
+      mo.ready = true;
+      let cur: (typeof plan.events)[number] | undefined;
+      for (const e of plan.events) if (e.who === who && e.at <= t) cur = e;
+      mo.play = cur ? { move: cur.move, at: base + cur.at, prev: cur.prev && { move: cur.prev.move, at: base + cur.prev.at } } : undefined;
+      mo.blocking = plan.holds.some((h) => h.who === who && t >= h.from && t < h.to);
+      for (const f of plan.flinches) if (f.who === who && t >= f.at && t < f.at + 0.4) mo.hitAt = base + f.at;
+      const doing = cur && t - cur.at < moveSeconds(styleFor(side.kit, side.style), cur.move) ? `${cur.move.name} (${cur.move.kind})` : mo.blocking ? "in its block" : "in its guard";
+      lines.push(`${who === "a" ? "Attacker" : "Defender"}: ${doing}`);
+    }
+    if (caption.current) caption.current.textContent = lines.join("\n");
+  });
+  return (
+    <>
+      <group position={[0, 0, -1.0]}>
+        <MotionContext.Provider value={ma}><Figure key={`a-${duel.a.kit}`} kind="force" ring={SIDE_COLORS.hostile} name="Dark Attacker" role="jedi" species="Human" wield="saber" kit={duel.a.kit} /></MotionContext.Provider>
+        <Label at={[0, 2.4, 0]} text={`${KIT_LABELS[duel.a.kit].replace(/ \(.*/, "")}\n${FORM_LABELS[duel.a.style]}`} />
+      </group>
+      <group position={[0, 0, 1.0]} rotation={[0, Math.PI, 0]}>
+        <MotionContext.Provider value={md}><Figure key={`d-${duel.d.kit}`} kind="force" ring={SIDE_COLORS.friendly} name="Jedi Defender" role="jedi" species="Human" wield="saber" kit={duel.d.kit} /></MotionContext.Provider>
+        <group rotation={[0, Math.PI, 0]}><Label at={[0, 2.4, 0]} text={`${KIT_LABELS[duel.d.kit].replace(/ \(.*/, "")}\n${FORM_LABELS[duel.d.style]}`} /></group>
+      </group>
+    </>
+  );
+}
+// The dropdowns: a weapon and a form for the attacker, the same for the defender, which combo the attacker plays and how the defender answers
+function SaberComboPanel({ duel, set, caption }: { duel: DuelConfig; set: (d: DuelConfig) => void; caption: { current: HTMLDivElement | null } }) {
+  const combos = styleFor(duel.a.kit, duel.a.style).combos;
+  const field = { background: "#101826", color: "#e6edf6", border: "1px solid #3a4a63", borderRadius: 4, padding: "3px 6px", fontSize: 13, maxWidth: 360 } as const;
+  const side = (title: string, f: Fighter, put: (f: Fighter) => void) => (
+    <div style={{ display: "grid", gridTemplateColumns: "76px auto auto", gap: 6, alignItems: "center", marginBottom: 6 }}>
+      <b>{title}</b>
+      <select aria-label={`${title} weapon`} style={field} value={f.kit} onChange={(e) => put({ ...f, kit: e.target.value as SaberKit })}>{SABER_KITS.map((k) => <option key={k} value={k}>{KIT_LABELS[k]}</option>)}</select>
+      <select aria-label={`${title} form`} style={field} value={f.style} onChange={(e) => put({ ...f, style: e.target.value as SaberStyle })}>{SABER_STYLES.map((s) => <option key={s} value={s}>{FORM_LABELS[s]}</option>)}</select>
+    </div>
+  );
+  // (the address is kept to the choices, so that a view can be sent)
+  const change = (d: DuelConfig) => {
+    set(d);
+    const q = new URLSearchParams(window.location.search);
+    q.set("section", "saberCombo");
+    q.set("a", d.a.kit); q.set("af", d.a.style); q.set("d", d.d.kit); q.set("df", d.d.style); q.set("mode", d.mode); q.set("combo", String(d.pick));
+    window.history.replaceState(null, "", `${window.location.pathname}?${q.toString()}`);
+  };
+  return (
+    <div style={{ position: "absolute", top: 8, left: 8, zIndex: 10, background: "rgba(10,14,22,0.88)", color: "#e6edf6", font: "13px system-ui, sans-serif", padding: 10, borderRadius: 8, maxWidth: "calc(100% - 16px)" }}>
+      {side("Attacker", duel.a, (a) => change({ ...duel, a, pick: "all" }))}
+      {side("Defender", duel.d, (d) => change({ ...duel, d }))}
+      <div style={{ display: "grid", gridTemplateColumns: "76px auto", gap: 6, alignItems: "center", marginBottom: 6 }}>
+        <b>Combo</b>
+        <select aria-label="Attacker's combo" style={field} value={String(duel.pick)} onChange={(e) => change({ ...duel, pick: e.target.value === "all" ? "all" : Number(e.target.value) })}>
+          <option value="all">All of its combos, in turn</option>
+          {combos.map((c, i) => <option key={i} value={i}>{`${i + 1}: ${c.length} strikes: ${c.map((m) => m.name).join(" > ")}`}</option>)}
+        </select>
+        <b>Defender</b>
+        <select aria-label="How the defender answers" style={field} value={duel.mode} onChange={(e) => change({ ...duel, mode: e.target.value as DuelMode })}>{DUEL_MODES.map((m) => <option key={m} value={m}>{MODE_LABELS[m]}</option>)}</select>
+      </div>
+      <div ref={caption} style={{ whiteSpace: "pre", color: "#facc15", minHeight: 36 }} />
+    </div>
   );
 }
 
@@ -609,8 +707,10 @@ export default function ModelGallery() {
   const section = query.get("section") ?? "people";
   // ?cam=x,y,z&look=x,y,z frame a close look
   const triple = (text: string | null, fallback: [number, number, number]) => (text ? (text.split(",").map(Number) as [number, number, number]) : fallback);
-  const cam = triple(query.get("cam"), [0, 9, 12]);
-  const look = triple(query.get("look"), [0, 0, section === "places" ? 14 : 3]);
+  const cam = triple(query.get("cam"), section === "saberCombo" ? [5.0, 1.8, 2.8] : [0, 9, 12]);
+  const look = triple(query.get("look"), section === "saberCombo" ? [0, 0.95, 0] : [0, 0, section === "places" ? 14 : 3]);
+  const [duel, setDuel] = useState<DuelConfig>(() => duelFromQuery(query));
+  const caption = useRef<HTMLDivElement>(null);
   const roleList = [...ROLES.map((r) => ({ name: `Dax ${r}`, role: r })), ...BLOCKS.map((b) => ({ name: b, role: "" }))];
   const person = (name: string, role = "", species?: string) => <Figure kind={tokenOf({ name, role })} ring={SIDE_COLORS.neutral} name={name} role={role} species={species} />;
   return (
@@ -688,7 +788,8 @@ export default function ModelGallery() {
         {section === "scale" && <Scale />}
         {section === "machines" && <Machines hold={query.get("hold") === "1"} />}
         {section === "moves" && <Moves only={query.get("act") ?? undefined} />}
-        {section === "sabers" && <Sabers only={query.get("kit") ?? undefined} one={query.get("style") ?? undefined} combo={query.get("combo") ? Number(query.get("combo")) : undefined} move={query.get("move") ? Number(query.get("move")) : undefined} u={query.get("u") ? Number(query.get("u")) : undefined} strip={query.get("us") ? query.get("us")!.split(",").map(Number) : undefined} />}
+        {section === "sabers" && <Sabers only={query.get("kit") ?? undefined} one={query.get("style") ?? undefined} combo={query.get("combo") ? Number(query.get("combo")) : undefined} move={query.get("move") ? Number(query.get("move")) : undefined} u={query.get("u") ? Number(query.get("u")) : undefined} strip={query.get("us") ? query.get("us")!.split(",").map(Number) : undefined} named={query.get("name") ?? undefined} />}
+        {section === "saberCombo" && <SaberDuel duel={duel} caption={caption} />}
         {section === "table" && <Table cycle={query.get("hold") !== "1"} />}
         {section === "gear" && <Gear loadout={query.get("loadout") ?? "heavy"} />}
         {section === "worn" && <Worn loadout={query.get("loadout") ?? "worn"} />}
@@ -783,6 +884,7 @@ export default function ModelGallery() {
         )}
         <OrbitControls target={look} />
       </Canvas>
+      {section === "saberCombo" && <SaberComboPanel duel={duel} set={setDuel} caption={caption} />}
     </div>
   );
 }

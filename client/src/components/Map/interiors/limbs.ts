@@ -12,7 +12,7 @@
 import * as THREE from "three";
 import { patchOf, shaderPatch, WAVE_GLSL, WAVE_LIMB } from "../babylon";
 import { gunKick } from "@shared/logic/shooter";
-import { JOINTS, type Joint, type Joints, type J3, type SaberKit, type Style, beginSwing, comboOf, guardJoints, moveOf, moveSeconds, sampleMove, styleFor, MELEE, POLE, COMBO_GAP, BLOCK } from "./saberplay";
+import { JOINTS, type Move, type Joint, type Joints, type J3, type SaberKit, type Style, beginSwing, comboOf, guardJoints, moveOf, moveSeconds, sampleMove, styleFor, wrapTurn, STAFF_ARMS, MELEE, POLE, COMBO_GAP, BLOCK } from "./saberplay";
 export { beginSwing, saberKitOf, SABER_KITS, type SaberKit } from "./saberplay";
 
 // Limbs: 0 the body (still); the legs (front ones on a beast), the arms, a beast's hind and middle legs, a tail, a rolling ball or
@@ -784,6 +784,8 @@ export interface Motion {
   chain?: number;
   combo?: number;
   prevAt?: number;
+  // A move to play, when it began and the one before it (a duel laid out by saberplay.ts `planDuel`, which is told the moves rather than leaving the chain to find them)
+  play?: { move: Move; at: number; prev?: { move: Move; at: number } };
   // What the hands are about besides the weapon (2026-11-02: a foe's throw, spray, call for help, medpac), begun at `actAt` and lasting
   // `actFor` seconds (its wind-up: shared/logic/shooter.ts SHOOT.act); the follow-through comes after it
   act?: "throw" | "spray" | "call" | "heal";
@@ -818,7 +820,8 @@ const blendJ = (a: Joints, b: Joints, k: number): Joints => {
     if (!a[j] && !b[j]) continue;
     const x = a[j] ?? [0, 0, 0];
     const y = b[j] ?? [0, 0, 0];
-    out[j] = [x[0] + (y[0] - x[0]) * k, x[1] + (y[1] - x[1]) * k, x[2] + (y[2] - x[2]) * k];
+    // (a turn the blade has made is not turned back: the short way round)
+    out[j] = [x[0] + wrapTurn(y[0] - x[0]) * k, x[1] + wrapTurn(y[1] - x[1]) * k, x[2] + wrapTurn(y[2] - x[2]) * k];
   }
   return out;
 };
@@ -878,9 +881,16 @@ export function creatureLunge(now: number, swingAt: number, swingFor: number, ac
 // Where a blade points as the joints give it (the trunk, arm, forearm and wrist about x, and the turn of the trunk and arm about y)
 const aimOf = (j: Joints) => ({ pitch: (j.chest?.[0] ?? 0) + (j.armR?.[0] ?? 0) + (j.foreR?.[0] ?? 0) + (j.weapon?.[0] ?? 0), yaw: (j.chest?.[1] ?? 0) + (j.armR?.[1] ?? 0) + (j.weapon?.[1] ?? 0) });
 const LASH = { first: 0.05, second: 0.11, gain: 0.7 };
+// Where the lash hangs from a hand, the way the model is drawn (models.tsx `whipAt`: the first length along the weapon's own line, which is 47.5 degrees
+// above level when the hand's turns about x add up to nothing; a turn of `p` about x lowers it by `p`): the second length falls steeply, the third a
+// little less (the tip is curled in the model), so that a whip let go of hangs and does not stand up (2026-11-04, the user: "it should naturally
+// droop with a textile looking quality")
+const LASH_LINE = (47.5 * Math.PI) / 180;
+const HANG = { first: (-62 * Math.PI) / 180, second: (-98 * Math.PI) / 180 };
 // The two bends of a whip's lash: the lash follows the hand, so each bend is the turn the hand has made since a moment before (the further along the
-// lash, the longer ago), whatever way it was going; at rest the lash hangs, and at the end of a blow its tip cracks over and settles
-function lashBend(style: Style, move: ReturnType<typeof moveOf>, since: number, dur: number, guard: Joints, oneHand: boolean, now: Joints, impactAt: number, t: number): Joints {
+// lash, the longer ago), whatever way it was going; at rest the lash hangs under its own weight, swaying and rippling as cloth does, and at the end of a
+// blow its tip cracks over and settles
+function lashBend(style: Style, move: ReturnType<typeof moveOf>, since: number, dur: number, guard: Joints, oneHand: boolean, now: Joints, impactAt: number, t: number, chained = false): Joints {
   const at = (back: number) => {
     const x = since - back;
     return x >= 0 && x < dur ? aimOf(sampleMove(move, x / dur, guard, oneHand).joints) : aimOf(guard);
@@ -889,18 +899,70 @@ function lashBend(style: Style, move: ReturnType<typeof moveOf>, since: number, 
   const one = at(LASH.first);
   const two = at(LASH.second);
   const active = since >= 0 && since < dur;
-  // (hanging: a droop when not in use, easing in over half a second after a blow)
-  const hang = active ? 0.12 : since < 0 ? 1 : Math.min(1, Math.max(0.12, (since - dur) / 0.6));
+  // (hanging: fully when not in use, let go of over the first moments of a blow (a chained blow starts with it let go already), and taken up again over
+  // most of a second after it)
+  const hang = active ? 0.05 + (chained ? 0 : 0.95 * Math.exp(-since / 0.14)) : since < 0 ? 1 : 0.05 + 0.95 * smoothK((since - dur) / 0.9);
   let crack = 0;
   if (active && impactAt >= 0 && since > impactAt) crack = 0.9 * Math.exp(-(since - impactAt) / 0.09) * Math.sin((since - impactAt) * 48);
-  // (and the lash is a little serpent: a slow wave runs down it hanging, a quick one in the lash, the tip a beat behind the rest)
-  const ph = active ? since * 16 : t * 2.3;
-  const sway = hang * 0.14 + (active ? 0.1 : 0);
   const g = LASH.gain;
-  return {
-    whip1: [Math.max(-0.8, Math.min(0.8, (one.pitch - here.pitch) * g)) + 0.28 * hang, Math.max(-0.8, Math.min(0.8, (one.yaw - here.yaw) * g)) + Math.sin(ph) * sway, 0],
-    whip2: [Math.max(-1.0, Math.min(1.0, (two.pitch - one.pitch) * g * 1.2)) + 0.45 * hang + crack * 0.6, Math.max(-1.0, Math.min(1.0, (two.yaw - one.yaw) * g * 1.2)) + Math.sin(ph - 1.1) * sway * 1.6, 0],
-  };
+  // (what the lash does as the hand moves it: each length lags the one before)
+  const lag1: J3 = [Math.max(-0.8, Math.min(0.8, (one.pitch - here.pitch) * g)), Math.max(-0.8, Math.min(0.8, (one.yaw - here.yaw) * g)), 0];
+  const lag2: J3 = [Math.max(-1.0, Math.min(1.0, (two.pitch - one.pitch) * g * 1.2)) + crack * 0.6, Math.max(-1.0, Math.min(1.0, (two.yaw - one.yaw) * g * 1.2)), 0];
+  // (what it does hanging: each length falls from the one before whatever the hand does, whole turns not turned back; the hand's line is 47.5
+  // degrees up less its own turns about x, so the length that points at `target` is turned by LASH_LINE - target - pitch)
+  const b1 = wrapTurn(LASH_LINE - HANG.first - here.pitch);
+  const b2 = wrapTurn(HANG.first - HANG.second);
+  // (a slow pendulum and a ripple running down it, the tip a beat behind the rest, more as it is used)
+  const slow = active ? since * 16 : t * 2.3;
+  const sway = hang * 0.3 + (active ? 0.08 : 0);
+  const rip = hang * 0.14;
+  const hung1: J3 = [b1 + Math.sin(t * 1.7 + 0.4) * 0.07 * hang + Math.sin(slow * 1.3) * rip, Math.sin(slow) * sway, 0];
+  const hung2: J3 = [b2 + Math.sin(t * 2.1 + 1.6) * 0.14 * hang + Math.sin(slow * 1.3 - 1.2) * rip * 1.5, Math.sin(slow - 1.1) * sway * 1.6, Math.sin(t * 1.4 + 0.5) * 0.08 * hang];
+  const mix = (x: J3, y: J3): J3 => [x[0] + wrapTurn(y[0] - x[0]) * hang, x[1] + wrapTurn(y[1] - x[1]) * hang, x[2] + wrapTurn(y[2] - x[2]) * hang];
+  return { whip1: mix(lag1, hung1), whip2: mix(lag2, hung2) };
+}
+
+// Both hands on a double blade (2026-11-04, the user: "the staff is not positioned in the hands correctly, the character is holding the blade"): the
+// right hand and the staff are where the arm and the wrist put them; the left hand is reached to the hilt, `STAFF_ARMS.gap` along the shaft from the
+// right, whichever way the staff is turned. Two-bone: the arm's own lengths (from how it is drawn), the elbow let fall and out
+const [Qa, Qf, Qw, Qg, Qh] = [new THREE.Quaternion(), new THREE.Quaternion(), new THREE.Quaternion(), new THREE.Quaternion(), new THREE.Quaternion()];
+const Eu = new THREE.Euler();
+const turnOf = (q: THREE.Quaternion, j: J3 | undefined) => q.setFromEuler(Eu.set(j?.[0] ?? 0, j?.[1] ?? 0, j?.[2] ?? 0));
+const vec = (p: J3) => new THREE.Vector3(p[0], p[1], p[2]);
+export function gripStaff(j: Joints): { armL: J3; foreL: J3; miss: number } {
+  const A = STAFF_ARMS;
+  turnOf(Qa, j.armR);
+  turnOf(Qf, j.foreR);
+  turnOf(Qw, j.weapon);
+  const sr = vec(A.shoulder).setX(-A.shoulder[0]);
+  const er = vec(A.right.elbow);
+  const hr = vec(A.right.hand);
+  const hand = sr.clone().add(er.clone().sub(sr).applyQuaternion(Qa)).add(hr.clone().sub(er).applyQuaternion(Qg.copy(Qa).multiply(Qf)));
+  const axis = vec(A.dir).normalize().applyQuaternion(Qh.copy(Qg).multiply(Qw));
+  const target = hand.addScaledVector(axis, -A.gap);
+  const wanted = target.clone();
+  const sl = vec(A.shoulder);
+  const el = vec(A.left.elbow);
+  const hl = vec(A.left.hand);
+  const u0 = el.clone().sub(sl);
+  const f0 = hl.clone().sub(el);
+  const [l1, l2] = [u0.length(), f0.length()];
+  const to = target.sub(sl);
+  const d = Math.min(l1 + l2 - 0.005, Math.max(Math.abs(l1 - l2) + 0.02, to.length()));
+  const dir = to.normalize();
+  const a = (l1 * l1 - l2 * l2 + d * d) / (2 * d);
+  const h = Math.sqrt(Math.max(0, l1 * l1 - a * a));
+  const pole = new THREE.Vector3(0.3, -1, -0.2);
+  const perp = pole.sub(dir.clone().multiplyScalar(pole.dot(dir))).normalize();
+  const elbow = sl.clone().addScaledVector(dir, a).addScaledVector(perp, h);
+  const q1 = new THREE.Quaternion().setFromUnitVectors(u0.normalize(), elbow.clone().sub(sl).normalize());
+  const reach = sl.clone().addScaledVector(dir, d);
+  const local = reach.sub(elbow).normalize().applyQuaternion(q1.clone().invert());
+  const q2 = new THREE.Quaternion().setFromUnitVectors(f0.normalize(), local);
+  const [e1, e2] = [new THREE.Euler().setFromQuaternion(q1, "XYZ"), new THREE.Euler().setFromQuaternion(q2, "XYZ")];
+  // (how far the left hand ends from where it was to go: nothing, unless the arm cannot reach)
+  const placed = sl.clone().add(u0.clone().multiplyScalar(l1).applyQuaternion(q1)).add(f0.clone().multiplyScalar(l2).applyQuaternion(q1.clone().multiply(q2)));
+  return { armL: [e1.x, e1.y, e1.z], foreL: [e2.x, e2.y, e2.z], miss: placed.distanceTo(wanted) };
 }
 // A person's pose this frame
 export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold, saber: SaberStyle, now: number, legs: LegSize, out: Pose = restPose(), persona: Persona = NEUTRAL, kitOf: SaberKit = "single"): Root {
@@ -1005,25 +1067,32 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
       let joints = blendJ(carried, guard, ready);
       const oneHand = !!style.oneHand;
       const seed = Math.floor(persona.phase * 3);
-      const since = now - m.swingAt;
-      const move = moveOf(style, m, 0, seed);
+      // (a figure told which move to play, and when it began (`play`: the gallery's duels), plays that; else the move of its combo it is on)
+      const play = m.play;
+      const began = play ? play.at : m.swingAt;
+      const since = now - began;
+      const move = play ? play.move : moveOf(style, m, 0, seed);
+      const chained = play ? !!play.prev && play.at - play.prev.at < COMBO_GAP : (m.chain ?? 0) > 0 && m.prevAt !== undefined && m.swingAt - m.prevAt < COMBO_GAP;
       const dur = moveSeconds(style, move);
       let impactAt = -1;
+      let loose = 0;
       if (since >= 0 && since < dur) {
         const sample = sampleMove(move, since / dur, guard, oneHand);
         joints = sample.joints;
+        loose = sample.free;
         lift = sample.lift;
         spin = sample.spin;
         step = sample.step;
         // (a move that follows one begins from where the last was, not from the guard: they run into each other)
         const LEAD = 0.16;
-        if (since < LEAD && (m.chain ?? 0) > 0 && m.prevAt !== undefined && m.swingAt - m.prevAt < COMBO_GAP) {
-          const before = moveOf(style, m, 1, seed);
-          const u = (m.swingAt - m.prevAt) / moveSeconds(style, before);
+        if (since < LEAD && chained) {
+          const before = play ? play.prev!.move : moveOf(style, m, 1, seed);
+          const u = (began - (play ? play.prev!.at : m.prevAt!)) / moveSeconds(style, before);
           if (u < 1) {
             const from = sampleMove(before, u, guard, oneHand);
             const k = smoothK(since / LEAD);
             joints = blendJ(from.joints, joints, k);
+            loose = from.free + (loose - from.free) * k;
             lift = from.lift + (lift - from.lift) * k;
             spin = from.spin + (spin - from.spin) * k;
             step = from.step + (step - from.step) * k;
@@ -1037,9 +1106,17 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
         held.weapon = add3(held.weapon, [Math.sin(t * 7) * 0.12, 0, Math.sin(t * 4.3) * 0.15]);
         joints = blendJ(joints, held, e.block);
       }
+      // A double blade is held in both hands, the second reached to the hilt wherever the staff is turned (unless the move lets that hand go)
+      if (kit === "staff" && !oneHand) {
+        const hold = ready * (1 - loose) * (1 - e.block * 0.5);
+        if (hold > 0.001) {
+          const g = gripStaff(joints);
+          joints = blendJ(joints, { ...joints, armL: g.armL, foreL: g.foreL }, hold);
+        }
+      }
       // A lash trails its hand: each bend is where the hand was a moment ago against where it is (and the whip hangs when it is not used, and
       // cracks at the end of a blow)
-      if (kit === "whip") joints = { ...joints, ...lashBend(style, move, since, dur, guard, oneHand, joints, impactAt, t + persona.phase) };
+      if (kit === "whip") joints = { ...joints, ...lashBend(style, move, since, dur, guard, oneHand, joints, impactAt, t + persona.phase, chained) };
       // (the legs of a stance or a strike are laid over the stride, less the further it walks)
       for (const j of JOINTS) {
         const v = joints[j];

@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { eased, easeMotion, humanPose, LIMB, LIMBS, motion, PARENT, restPose, SABER_STYLES, standing, beginSwing, type Pose } from "../../client/src/components/Map/interiors/limbs";
-import { COMBO_GAP, comboOf, guardJoints, moveOf, moveSeconds, SABER_KITS, sampleMove, saberKitOf, styleFor, TEMPO, type Move, type SaberKit } from "../../client/src/components/Map/interiors/saberplay";
+import { eased, easeMotion, gripStaff, humanPose, LIMB, LIMBS, motion, PARENT, restPose, SABER_STYLES, standing, beginSwing, type Pose } from "../../client/src/components/Map/interiors/limbs";
+import { COMBO_GAP, DUEL_MODES, PACE, STAFF_ARMS, comboOf, planDuel, guardJoints, moveOf, moveSeconds, SABER_KITS, sampleMove, saberKitOf, styleFor, TEMPO, type Move, type SaberKit } from "../../client/src/components/Map/interiors/saberplay";
 import { Kit, buildHumanoid, figureSpec, lookOf, npcSaberKit, outfitOf } from "../../client/src/components/Map/models";
 
 // The saber fights (2026-11-04; the user: "AAA style combos ... slow powerful strikes and light fast strikes, jumping strikes, crouching strikes,
@@ -49,7 +49,7 @@ test("every weapon and form has combos, and every move is well made: its keys in
       assert.ok(set.combos.length >= 1 && set.combos.every((c) => c.length >= 3), `${kit} ${st} has combos of three moves or more`);
       const guard = guardJoints(set);
       for (const move of set.combos.flat()) {
-        assert.ok(move.dur > 0.25 && move.dur < 1.3, `${move.name} takes ${move.dur}`);
+        assert.ok(move.dur > 0.25 && move.dur < 1.5, `${move.name} takes ${move.dur}`);
         assert.ok(move.keys.every(([t], i) => t > 0 && t < 1 && (i === 0 || t >= move.keys[i - 1][0])), `${move.name}'s keys run forward in time`);
         assert.ok(move.hit >= 0 && move.hit < move.keys.length && move.keys[move.hit][2] === "snap" || move.keys.every(([, , e]) => e !== "snap"), `${move.name}'s blow is a snap`);
         const start = sampleMove(move, 0, guard, !!set.oneHand);
@@ -223,7 +223,11 @@ test("a whip's lash trails the hand: it hangs at rest, bends as the hand swings,
   const m = motion({ ready: true });
   humanPose(standing(), 0, m, settle(m), "saber", "niman", 10, LEGS, rest, undefined, "whip");
   const hang = [angleOf(rest, LIMB.whip1, "x"), angleOf(rest, LIMB.whip2, "x")];
-  assert.ok(hang[0] > 0.1 && hang[1] > hang[0], `hung from the hand, each bend further down (${hang.map((v) => v.toFixed(2))})`);
+  // (the line of the lash is 47.5 degrees up when the hand's turns about x come to nothing, and each turn lowers it by as much: hung, the lash must point
+  // well below level and the rest of it lower still, whatever the hand does, not stand up (the user: "it should naturally droop"))
+  const pitch = [LIMB.chest, LIMB.armR, LIMB.foreR, LIMB.weapon].reduce((n, l) => n + angleOf(rest, l, "x"), 0);
+  const elevation = [(47.5 * Math.PI) / 180 - (pitch + hang[0]), (47.5 * Math.PI) / 180 - (pitch + hang[0] + hang[1])];
+  assert.ok(elevation[0] < -0.5 && elevation[1] < elevation[0], `hung from the hand, falling steeper (${elevation.map((v) => v.toFixed(2))} radians from level)`);
   const set = styleFor("whip", "niman");
   const lash = set.combos.flat().find((mv) => mv.name === "lash")!;
   const c = set.combos.findIndex((x) => x.includes(lash));
@@ -308,4 +312,133 @@ test("no move asks a joint to go where a body cannot: elbows and knees bend the 
       }
     }
   }
+});
+
+test("every kind of weapon has a spin: the body turned about with the blade out at arm's length, or the weapon whirled round the head", () => {
+  for (const kit of SABER_KITS) {
+    const spins = everyMove(kit).filter((m) => m.kind === "spin");
+    assert.ok(spins.length >= 1, `${kit} has a spinning move`);
+    // (a turn is a whole one: the body's, or the weapon's about its own hand)
+    assert.ok(spins.every((m) => m.keys.some(([, k]) => Math.abs(k.spin ?? 0) >= Math.PI * 2 - 1e-6 || [k.weapon, k.weaponL].some((w) => w && Math.max(Math.abs(w[1]), Math.abs(w[2])) >= Math.PI * 2 - 0.4))), `${kit}'s spins turn a whole turn`);
+    // (and each form has the spin in a combo of its own kind of weapon: Ataru's is the acrobat's)
+    assert.ok(allMoves(kit, "ataru").some((m) => m.kind === "spin" || m.kind === "leap"), `${kit} Ataru spins or leaps`);
+  }
+});
+
+test("the longest combos are ten strikes, and every weapon has long ones as well as short", () => {
+  let longest = 0;
+  for (const kit of SABER_KITS) {
+    const lengths = SABER_STYLES.flatMap((st) => styleFor(kit, st).combos.map((c) => c.length));
+    assert.ok(Math.max(...lengths) >= 8, `${kit} has a combo of eight or more (${Math.max(...lengths)})`);
+    assert.ok(Math.min(...lengths) <= 5, `${kit} has short exchanges too`);
+    assert.ok(Math.max(...lengths) <= 10, `${kit}'s combos are no longer than ten`);
+    longest = Math.max(longest, ...lengths);
+  }
+  assert.equal(longest, 10);
+  // (a long combo is not one blow repeated: it has at least six different moves)
+  for (const kit of SABER_KITS) {
+    const long = SABER_STYLES.flatMap((st) => styleFor(kit, st).combos).filter((c) => c.length >= 9);
+    assert.ok(long.length >= 1 && long.every((c) => new Set(c.map((m) => m.name)).size >= 5), `${kit}'s long combos are varied`);
+  }
+});
+
+test("a fight's moves take 15% longer than they were first made (the user: slow the sabre animations down by 15%)", () => {
+  assert.equal(PACE, 1.15);
+  assert.ok(Math.abs(styleFor("single", "niman").tempo - TEMPO.niman * PACE) < 1e-9);
+  assert.ok(Math.abs(styleFor("staff", "juyo").tempo - TEMPO.juyo * PACE) < 1e-9);
+  assert.ok(Math.abs(moveSeconds(styleFor("single", "niman"), moveOf(styleFor("single", "niman"), { combo: 0, chain: 0 }, 0, 0)) - 0.46 * PACE) < 1e-9, "a light cut is 0.46 seconds and a bit over");
+});
+
+test("both hands are on the staff: the left is reached to the hilt, a hand's width below the right, wherever the staff is turned", () => {
+  let checked = 0;
+  for (const st of SABER_STYLES) {
+    const set = styleFor("staff", st);
+    set.combos.forEach((combo, c) => combo.forEach((move, n) => {
+      // (a move that gives the left arm its own pose lets that hand go: no part of this)
+      if (move.keys.some(([, k]) => k.armL)) return;
+      for (const u of [0, 0.2, 0.4, 0.55, 0.7, 0.9]) {
+        const { out } = posed("staff", st, c, n, u);
+        const joints = Object.fromEntries((["armR", "foreR", "weapon"] as const).map((j) => [j, [angleOf(out, LIMB[j], "x"), angleOf(out, LIMB[j], "y"), angleOf(out, LIMB[j], "z")]]));
+        const g = gripStaff(joints as never);
+        assert.ok(g.miss < 0.15, `${st} ${move.name} at ${u}: the left hand is within reach of the hilt (misses by ${g.miss.toFixed(3)})`);
+        checked++;
+      }
+    }));
+  }
+  assert.ok(checked > 100, `${checked} poses checked`);
+  // the hands' places in the figure are the arms the model is drawn with, and the left is on the right's line
+  const d = STAFF_ARMS.dir;
+  const along = Math.hypot(...d);
+  const between = STAFF_ARMS.right.hand.map((v, i) => v - STAFF_ARMS.left.hand[i]);
+  const gap = Math.hypot(...between);
+  assert.ok(Math.abs(gap - STAFF_ARMS.gap) < 0.01, `the hands are a hilt's width apart (${gap.toFixed(3)})`);
+  assert.ok(Math.abs(between.reduce((n, v, i) => n + v * d[i], 0) / (gap * along) - 1) < 0.01, "and the left hand is on the shaft, below the right");
+});
+
+test("a duel is laid out: the defender parries each blow with a guard move of its own, the blades meeting as the blow lands", () => {
+  const a = { kit: "single", style: "ataru" } as const;
+  const d = { kit: "single", style: "soresu" } as const;
+  const plan = planDuel(a, d, "parry");
+  const blows = plan.exchanges.filter((x) => x.who === "a");
+  assert.equal(blows.length, styleFor("single", "ataru").combos.flat().length, "every move of every combo is played");
+  const answered = blows.filter((x) => x.answer);
+  assert.ok(answered.length >= blows.length * 0.6, `most blows are parried (${answered.length} of ${blows.length})`);
+  for (const x of answered) {
+    assert.equal(x.answer!.move.kind, "guard", "with a guard move");
+    assert.ok(Math.abs(x.answer!.at - x.hit) < 0.12, `the blades meet as the blow lands (${x.answer!.at.toFixed(2)} against ${x.hit.toFixed(2)})`);
+  }
+  // (the Force is not parried: it throws the defender back)
+  const forceBlows = blows.filter((x) => x.move.kind === "force");
+  assert.ok(forceBlows.every((x) => !x.answer) && plan.flinches.length >= forceBlows.length);
+  assert.ok(plan.events.every((e, i) => i === 0 || e.at >= plan.events[i - 1].at) && plan.length > Math.max(...plan.events.map((e) => e.at)), "in order, and the loop outlasts the last");
+});
+
+test("the defender's other answers: it stands in its block, takes every blow, or trades combos with the attacker", () => {
+  const a = { kit: "staff", style: "djemso" } as const;
+  const d = { kit: "dual", style: "jarkai" } as const;
+  const guard = planDuel(a, d, "guard");
+  assert.ok(guard.events.every((e) => e.who === "a") && guard.holds.length >= 1 && guard.holds.every((h) => h.who === "d"), "the defender plays no moves and holds its block");
+  const hit = planDuel(a, d, "hit");
+  assert.equal(hit.flinches.length, hit.exchanges.length, "every blow lands");
+  assert.ok(hit.events.every((e) => e.who === "a"));
+  const trade = planDuel(a, d, "trade");
+  const mine = trade.events.filter((e) => e.who === "a" && e.move.kind !== "guard");
+  const theirs = trade.events.filter((e) => e.who === "d" && e.move.kind !== "guard");
+  assert.ok(mine.length > 0 && theirs.length > 0, "both attack");
+  assert.ok(Math.max(...mine.map((e) => e.at)) < Math.min(...theirs.map((e) => e.at)) + 30, "in turns");
+  assert.ok(trade.events.some((e) => e.who === "a" && e.move.kind === "guard") && trade.events.some((e) => e.who === "d" && e.move.kind === "guard"), "each parries while the other attacks");
+  // one combo asked for: only its moves, in order
+  const one = planDuel(a, d, "parry", 1);
+  const combo = styleFor("staff", "djemso").combos[1];
+  assert.deepEqual(one.events.filter((e) => e.who === "a").map((e) => e.move), combo, "the attacker plays the combo asked for");
+});
+
+test("a duel can be laid out for every weapon against every weapon, and a figure told to play a move plays it from where the last left off", () => {
+  for (const ak of SABER_KITS) {
+    for (const dk of SABER_KITS) {
+      for (const mode of DUEL_MODES) {
+        const plan = planDuel({ kit: ak, style: "niman" }, { kit: dk, style: "makashi" }, mode);
+        assert.ok(plan.events.length >= 3 && Number.isFinite(plan.length) && plan.length < 120, `${ak} against ${dk}, ${mode}: ${plan.events.length} moves in ${plan.length.toFixed(1)} seconds`);
+        assert.ok(plan.events.every((e) => Number.isFinite(e.at) && e.at >= 0), "no move before the loop");
+      }
+    }
+  }
+  // (a move told to a figure with `play`: at its start it is at the guard, partway through it is in the move, and the same figure's chain is left alone)
+  const set = styleFor("single", "niman");
+  const move = set.combos[0][0];
+  const m = motion({ ready: true, play: { move, at: 10 - 0.3 * moveSeconds(set, move) } });
+  const out = restPose();
+  humanPose(standing(), 0, m, settle(m), "saber", "niman", 10, LEGS, out, undefined, "single");
+  const guardPose = restPose();
+  humanPose(standing(), 0, motion({ ready: true }), settle(m), "saber", "niman", 10, LEGS, guardPose, undefined, "single");
+  assert.ok(Math.abs(angleOf(out, LIMB.armR, "x") - angleOf(guardPose, LIMB.armR, "x")) > 0.3, "the arm is in the move it was told to play");
+  // (and it blends from the move before it: at the start, the pose of the one before at its end)
+  const next = set.combos[0][1];
+  const chained = motion({ ready: true, play: { move: next, at: 10 - 0.02, prev: { move, at: 10 - 0.02 - 0.8 * moveSeconds(set, move) } } });
+  const blended = restPose();
+  humanPose(standing(), 0, chained, settle(chained), "saber", "niman", 10, LEGS, blended, undefined, "single");
+  const fromGuard = motion({ ready: true, play: { move: next, at: 10 - 0.02 } });
+  const cold = restPose();
+  humanPose(standing(), 0, fromGuard, settle(fromGuard), "saber", "niman", 10, LEGS, cold, undefined, "single");
+  assert.ok(Math.abs(angleOf(blended, LIMB.armR, "x") - angleOf(cold, LIMB.armR, "x")) > 0.05, "a move that follows another begins from where it was");
 });

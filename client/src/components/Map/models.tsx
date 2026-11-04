@@ -15,6 +15,7 @@ import type { Tone } from "./interiors/tones";
 import { advance, personaOf, type Persona, type Wave, bob, LIMB, LIMBS, SHIN_OF, WALKER, DEKA, DEKA_LEGS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
 import { bodyParts, useBodyParts, creatureParts, useCreatureParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
 import { saberKitOf, type SaberKit } from "./interiors/limbs";
+import { STAFF_ARMS } from "./interiors/saberplay";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
 import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
@@ -50,7 +51,9 @@ export const FIGURE_FINISHES: Finish[] = ["skin", "face", "fabric", "leather", "
 export const MATERIALS: Record<Finish, THREE.Material> = {
   matte: new THREE.MeshLambertMaterial({ vertexColors: true, emissive: new THREE.Color("#0a0a0a") }),
   sheen: new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 55, specular: new THREE.Color("#5a5a5a"), emissive: new THREE.Color("#0a0a0a") }),
-  glow: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
+  // (both faces: the blade models of the saber pack have triangles wound both ways in a blade, so that a lit blade drawn one-sided was dim or gone from some
+  // sides: the lower half of a double blade, a second saber, 2026-11-04)
+  glow: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false, side: THREE.DoubleSide }),
   glass: new THREE.MeshPhongMaterial({ vertexColors: true, transparent: true, opacity: 0.5, shininess: 110, specular: new THREE.Color("#ffffff"), depthWrite: false }),
   haze: new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide }),
   cloth: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, emissive: new THREE.Color("#0a0a0a") }),
@@ -3068,7 +3071,8 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
     bowcaster: { r: [[-0.2 * b, sh, 0], [-0.26 * b, 0.16, 0.06], [-0.11 * b, 0.27, 0.2]], l: [[0.2 * b, sh, 0], [0.14 * b, 0.19, 0.16], [-0.02 * b, 0.26, 0.36]] },
     saber: { r: [[-0.2 * b, sh, 0], [-0.24 * b, 0.13, 0.06], [-0.12, 0.05, 0.2]], l: [[0.2 * b, sh, 0], [0.19 * b, 0.13, 0.08], [-0.06, 0.06, 0.21]] },
     // A double blade is held in both hands, one behind the other along it (the staff's long way: the left hand on the staff behind the right)
-    saber2: { r: [[-0.2 * b, sh, 0], [-0.24 * b, 0.13, 0.06], [-0.06, 0.14, 0.25]], l: [[0.2 * b, sh, 0], [0.19 * b, 0.1, 0.08], [-0.06, -0.06, 0.07]] },
+    // (the hands are `STAFF_ARMS` of interiors/saberplay.ts, from which limbs.ts reaches the left hand to the hilt wherever the staff is turned)
+    saber2: { r: [[-0.2 * b, sh, 0], STAFF_ARMS.right.elbow, STAFF_ARMS.right.hand], l: [[0.2 * b, sh, 0], STAFF_ARMS.left.elbow, STAFF_ARMS.left.hand] },
     // Two blades, one in each hand, the left a mirror of the right
     dual: { r: [[-0.2 * b, sh, 0], [-0.24 * b, 0.13, 0.06], [-0.12, 0.05, 0.2]], l: [[0.2 * b, sh, 0], [0.24 * b, 0.13, 0.06], [0.12, 0.05, 0.2]] },
     tray: { r: [[-0.2 * b, sh, 0], [-0.24 * b, 0.12, -0.01], [-0.22 * b, 0.12, 0.2]], l: [[0.2 * b, sh, 0], [0.25 * b, 0.12, -0.02], [0.25 * b, -0.06, 0.06]] },
@@ -3124,7 +3128,12 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
       else inHand(k, wielded, right, [0, 0.6, 0.55], 0.15);
     });
     // The other blade of a fight with two (the left hand's own limb: interiors/limbs.ts weaponL)
-    if (i && o.kit === "dual") k.limb(LIMB.weaponL, arm[2], () => saberAt(k, arm[2], o.blade ?? "#7fe3ff", 0.78));
+    // (drawn the same as the right hand's: the same model, not a thinner one of rods)
+    if (i && o.kit === "dual") k.limb(LIMB.weaponL, arm[2], () => {
+      const same = p.attach.find((a) => a.slot === "weapon");
+      if (same) inHand(k, same, arm[2], [0, 0.6, 0.55], 0.15);
+      else saberAt(k, arm[2], o.blade ?? "#7fe3ff");
+    });
     for (const a of p.attach) {
       if (!i && a.slot === "wrist") {
         // A band round the forearm just above the hand, its axis along the forearm, as wide as the arm is
@@ -3163,7 +3172,7 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
 }
 
 // A hilt and its blade drawn by the code (a fight's second saber, and the first until its model is in): `reach` how long the blade is against the usual
-function saberAt(k: Kit, [x, y, z]: V3, blade: string, reach = 1) {
+function saberAt(k: Kit, [x, y, z]: V3, blade: string, reach = 1.1) {
   k.cyl(0.018, 0.12, "#9aa3ad", { at: [x, y, z + 0.02], rot: [0.9, 0, 0], seg: 8, finish: "sheen" });
   const tip: V3 = [x + 0.02 * reach, y + 0.04 + 0.44 * reach, z + 0.06 + 0.36 * reach];
   k.rod([x, y + 0.04, z + 0.06], tip, 0.016, blade, { finish: "glow", seg: 8 });
@@ -3180,14 +3189,32 @@ function whipAt(k: Kit, hand: V3, blade: string) {
     k.rod(a, b, r, blade, { finish: "glow", seg: 6 });
     k.rod(a, b, r * 2.3, blade, { finish: "haze", seg: 6 });
   };
-  const [p0, p1, p2, p3] = [at(0.09), at(0.45), at(0.81), at(1.17)];
-  lash(p0, p1, 0.011);
+  // (a short length with the hilt, then two long ones that hang from it and from each other, each of two or three pieces bent a little further down than
+  // the last, so that the lash is curved and, hung, droops in a curve (limbs.ts `lashBend` hangs the two long ones under their own weight when the whip
+  // is not being used))
+  const line = (from: V3, a0: number, pieces: [number, number][]): { pts: V3[]; a: number } => {
+    const pts: V3[] = [from];
+    let a = a0;
+    let [x, y, z] = from;
+    for (const [length, bend] of pieces) {
+      a += bend;
+      const [dy, dz] = [d.y * Math.cos(a) - d.z * Math.sin(a), d.y * Math.sin(a) + d.z * Math.cos(a)];
+      [x, y, z] = [x + d.x * length, y + dy * length, z + dz * length];
+      pts.push([x, y, z]);
+    }
+    return { pts, a };
+  };
+  const first = line(at(0.09), 0, [[0.18, 0]]);
+  const p1 = first.pts[1];
+  const second = line(p1, 0, [[0.24, 0], [0.24, 0.2]]);
+  const p2 = second.pts[2];
+  const third = line(p2, second.a, [[0.24, 0.12], [0.24, 0.2], [0.22, 0.28]]);
+  lash(first.pts[0], p1, 0.011);
   k.limb(LIMB.whip1, p1, () => {
     k.sphere(0.012, blade, { at: p1, finish: "glow", seg: [6, 4] });
-    lash(p1, p2, 0.0095);
+    second.pts.slice(0, -1).forEach((p, i) => { lash(p, second.pts[i + 1], 0.0095 - i * 0.0005); k.sphere(0.0095, blade, { at: second.pts[i + 1], finish: "glow", seg: [6, 4] }); });
     k.limb(LIMB.whip2, p2, () => {
-      k.sphere(0.011, blade, { at: p2, finish: "glow", seg: [6, 4] });
-      lash(p2, p3, 0.0075);
+      third.pts.slice(0, -1).forEach((p, i) => { lash(p, third.pts[i + 1], 0.0085 - i * 0.0008); k.sphere(0.0085 - i * 0.0008, blade, { at: third.pts[i + 1], finish: "glow", seg: [6, 4] }); });
     });
   });
 }
@@ -3215,7 +3242,11 @@ function held(k: Kit, o: Outfit, right: V3, left: V3) {
       k.cyl(0.018, 0.12, "#9aa3ad", { at: [rx, ry, rz + 0.02], rot: [0.9, 0, 0], seg: 8, finish: "sheen" });
       k.rod([rx, ry + 0.04, rz + 0.06], [rx + 0.02, ry + 0.48, rz + 0.42], 0.016, blade, { finish: "glow", seg: 8 });
       k.rod([rx, ry + 0.04, rz + 0.06], [rx + 0.02, ry + 0.48, rz + 0.42], 0.03, blade, { finish: "haze", seg: 8 });
-      if (o.hand === "saber2") k.rod([rx, ry - 0.04, rz - 0.02], [rx - 0.02, ry - 0.42, rz - 0.36], 0.016, blade, { finish: "glow", seg: 8 });
+      if (o.hand === "saber2") {
+        // (the other end of a double: a blade of the same kind as the first, glow and halo, the shaft between)
+        k.rod([rx, ry - 0.04, rz - 0.02], [rx - 0.02, ry - 0.52, rz - 0.44], 0.016, blade, { finish: "glow", seg: 8 });
+        k.rod([rx, ry - 0.04, rz - 0.02], [rx - 0.02, ry - 0.52, rz - 0.44], 0.03, blade, { finish: "haze", seg: 8 });
+      }
       // (a crossguard's two short blades at the side of the hilt)
       if (o.kit === "crossguard") for (const side of [-1, 1]) k.rod([rx + side * 0.012, ry + 0.07, rz + 0.08], [rx + side * 0.1, ry + 0.1, rz + 0.13], 0.012, blade, { finish: "glow", seg: 6 });
       break;

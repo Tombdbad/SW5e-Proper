@@ -23,7 +23,9 @@ export type Joint = (typeof JOINTS)[number];
 export type Joints = Partial<Record<Joint, J3>>;
 // A key of a guard or a move: joints as they are, `arms` and `fores` the x of both upper arms and both forearms (a two-handed grip; one hand in a
 // one-handed style), `lift` the body off the ground (a leap), `spin` it turned about (a spinning cut), `step` it carried forward (a lunge, metres)
-export interface Key extends Joints { arms?: number; fores?: number; lift?: number; spin?: number; step?: number }
+// (`free`: how far the free hand is let go of what both hands hold, 0 to 1: a double blade's second hand follows the shaft unless the move gives
+// the left arm a pose of its own)
+export interface Key extends Joints { arms?: number; fores?: number; lift?: number; spin?: number; step?: number; free?: number }
 export type Ease = "smooth" | "snap" | "out" | "lin";
 export type MKey = [number, Key, Ease?];
 export type MoveKind = "light" | "heavy" | "leap" | "low" | "guard" | "force" | "spin";
@@ -44,6 +46,20 @@ export function saberKitOf(weapon = "", hand = "", offHand = ""): SaberKit {
   if (/broadsaber|claymore|great-?saber|warsaber|bustersaber|dual-phase|sith saber|retrosaber/.test(n)) return "broad";
   return "single";
 }
+
+// Every move takes this much longer than it was first made to (2026-11-04, the user: "slow down the sabre animations by 15%")
+export const PACE = 1.15;
+
+// The hands of a double blade, in the frame of the trunk for a body of bulk 1: the arms are drawn to these (models.tsx `poses.saber2`) and the left
+// hand is reached to `gap` along the shaft below the right (limbs.ts `gripStaff`), so that both hold the hilt, at the middle of the staff, whichever
+// way it is turned. `dir` is the way the shaft points from the right hand (the model's blade end), as the weapon is drawn
+export const STAFF_ARMS = {
+  shoulder: [0.19, 0.34, 0] as [number, number, number],
+  right: { elbow: [-0.273, 0.118, 0.076] as [number, number, number], hand: [-0.16, 0.2, 0.34] as [number, number, number] },
+  left: { elbow: [0.085, 0.122, 0.08] as [number, number, number], hand: [-0.16, 0.112, 0.259] as [number, number, number] },
+  dir: [0, 0.6, 0.55] as [number, number, number],
+  gap: 0.12,
+};
 
 // ---- Joint helpers ----------------------------------------------------------------------------------------------------------------------
 
@@ -189,52 +205,75 @@ export const pull = (dur = 0.7): Move => mv("pull", "force", dur, [
   [0.86, K({ armL: j(-0.5, 0.2, 0.2), foreL: j(-1.9), chest: j(-0.1, 0.2, 0), step: -0.1 }, rear()), "out"],
 ]);
 
+// ---- The spins of a blade held in two hands (a single blade, a broadsaber, a crossguard) -----------------------------------------------------
+// Every weapon has one (2026-11-04, the user: "ALL light weapon types should have at least 1 spinning attack: whirling weapons above the head, the
+// character spinning with the blade at arm's length")
+
+// The body turned about on the spot, once or twice, the blade held out level at arm's length and cutting all the way round; `h` how much weight
+// is behind it (a heavy blade is wound further and held at the end)
+export const pirouette = (d = 1, turns = 1, h = 0, dur = 0.78 + 0.22 * h + 0.3 * (turns - 1)): Move => mv("pirouette", "spin", dur, [
+  [0.24, K({ arms: -1.5, fores: -0.1, chest: j(0.05, -0.9 * d, 0), weapon: j(2.3), head: j(0, 0.6 * d, 0), spin: 0 }, wide())],
+  [0.64, K({ arms: -1.5, fores: -0.05, chest: j(0.05, 0.4 * d, 0), weapon: j(2.3), spin: Math.PI * 2 * turns * d, step: 0.1 + 0.08 * h }, wide()), "snap"],
+  [0.9, K({ arms: -1.1, fores: 0, chest: j(0.2, 0.3 * d, 0), weapon: j(1.2), spin: Math.PI * 2 * turns * d, step: 0.12 + 0.08 * h }, lunge(0.6)), "out"],
+], { hit: 1, stop: 0.04 + 0.05 * h });
+// The blade whirled round above the head in one hand (the other flung out for balance), then brought down on the foe
+export const whirlHead = (d = 1, turns = 2, dur = 0.5 + 0.22 * turns): Move => mv("overhead whirl", "spin", dur, [
+  [0.2, K({ arms: -2.8, fores: -0.3, armL: j(-0.5, 0, -0.9), foreL: j(-0.3), chest: j(-0.15, 0, 0), weapon: j(0.1, 0, 0), head: j(-0.1, 0, 0) }, wide())],
+  [0.64, K({ arms: -2.8, fores: -0.3, armL: j(-0.4, 0, -1.0), foreL: j(-0.2), chest: j(-0.1, 0.3 * d, 0), weapon: j(0.1, -Math.PI * 2 * turns * d, 0) }, wide()), "snap"],
+  [0.9, K({ arms: -0.4, fores: 0, armL: j(-0.9, 0, -0.1), foreL: j(-0.5), chest: j(0.45, 0.4 * d, 0), weapon: j(0.9, -Math.PI * 2 * turns * d, 0), step: 0.2 }, lunge(0.9)), "out"],
+], { hit: 1, stop: 0.03 });
+
 // ---- The moves of a double blade (a staff: Darth Maul's) -----------------------------------------------------------------------------------
 // The blade is held across the body at the middle; its spin is about the hand that has it (`weapon` z), the other hand let go
 
+// (the staff is held turned out of line by `STAFF_TURN`: its rear blade goes out to the figure's right and clears the body, which a shaft held square to the
+// hands goes through)
+const STAFF_TURN = { yaw: 0.3, roll: -0.3 };
+const sj = (x = 0, y = 0, z = 0): J3 => [x, y + STAFF_TURN.yaw, z + STAFF_TURN.roll];
+
 // The staff turned over and over before the body, the free arm out for balance, then a cut from it
 export const windmill = (d: number, turns = 1, dur = 0.74): Move => mv("windmill", "spin", dur, [
-  [0.18, { armL: j(-0.3, 0, -0.6), foreL: j(-0.3), chest: j(0, -0.3 * d, 0), weapon: j(-0.75, 0, 0), ...wide() }],
-  [0.6, K({ armL: j(-0.2, 0, -0.9), foreL: j(-0.2), chest: j(0.1, 0.5 * d, 0), weapon: j(-0.5, 0, -Math.PI * 2 * turns * d), step: 0.1 }, wide()), "snap"],
-  [0.88, { armL: j(-0.9, 0, -0.1), foreL: j(-0.7), chest: j(0.1, 0.3 * d, 0), weapon: j(-0.2, 0, -Math.PI * 2 * turns * d) }, "out"],
+  [0.18, { armL: j(-0.3, 0, -0.6), foreL: j(-0.3), chest: j(0, -0.3 * d, 0), weapon: sj(-0.75, 0, 0), ...wide() }],
+  [0.6, K({ armL: j(-0.2, 0, -0.9), foreL: j(-0.2), chest: j(0.1, 0.5 * d, 0), weapon: sj(-0.5, 0, -Math.PI * 2 * turns * d), step: 0.1 }, wide()), "snap"],
+  [0.88, { armL: j(-0.9, 0, -0.1), foreL: j(-0.7), chest: j(0.1, 0.3 * d, 0), weapon: sj(-0.2, 0, -Math.PI * 2 * turns * d) }, "out"],
 ], { hit: 1, stop: 0.03 });
 // A long cut with both blades going round (the front one down, the rear one up behind), the body wound
 export const staffCut = (d: number, h = 0, dur = 0.58 + 0.3 * h): Move => mv("staff cut", h > 0.5 ? "heavy" : "light", dur, [
-  [0.3, K({ arms: -1.2, fores: -0.3, chest: j(0.0, -1.2 * d, 0.1 * d), weapon: j(-0.3, 0, -0.5 * d), head: j(0, 0.8 * d, 0) }, wide())],
-  [0.58, K({ arms: -1.1, fores: -0.1, chest: j(0.1, 1.2 * d, -0.1 * d), weapon: j(0.2, 0, 0.5 * d), head: j(0, -0.7 * d, 0), step: 0.15 }, lunge(0.8)), "snap"],
-  [0.84, K({ arms: -1.0, chest: j(0.1, 0.9 * d, 0), weapon: j(0.3, 0, 0.3 * d), step: 0.15 }, lunge(0.7)), "out"],
+  [0.3, K({ arms: -1.2, fores: -0.3, chest: j(0.0, -1.2 * d, 0.1 * d), weapon: sj(-0.3, 0, -0.5 * d), head: j(0, 0.8 * d, 0) }, wide())],
+  [0.58, K({ arms: -1.1, fores: -0.1, chest: j(0.1, 1.2 * d, -0.1 * d), weapon: sj(0.2, 0, 0.5 * d), head: j(0, -0.7 * d, 0), step: 0.15 }, lunge(0.8)), "snap"],
+  [0.84, K({ arms: -1.0, chest: j(0.1, 0.9 * d, 0), weapon: sj(0.3, 0, 0.3 * d), step: 0.15 }, lunge(0.7)), "out"],
 ], { stop: 0.04 + 0.05 * h });
 // A two-handed lunge with the blade's whole length behind it
 export const staffThrust = (dur = 0.46): Move => mv("staff thrust", "light", dur, [
-  [0.34, K({ arms: -0.9, fores: -1.0, weapon: j(1.2), chest: j(-0.05, 0.45, 0) }, rear())],
-  [0.55, K({ arms: -1.4, fores: 0.05, weapon: j(1.4), chest: j(0.3, 0.25, 0), step: 0.34 }, lunge(1.4)), "snap"],
-  [0.84, K({ arms: -1.35, fores: 0.05, weapon: j(1.4), chest: j(0.26, 0.25, 0), step: 0.34 }, lunge(1.3)), "out"],
+  [0.34, K({ arms: -0.9, fores: -1.0, weapon: sj(1.2), chest: j(-0.05, 0.45, 0) }, rear())],
+  [0.55, K({ arms: -1.4, fores: 0.05, weapon: sj(1.4), chest: j(0.3, 0.25, 0), step: 0.34 }, lunge(1.4)), "snap"],
+  [0.84, K({ arms: -1.35, fores: 0.05, weapon: sj(1.4), chest: j(0.26, 0.25, 0), step: 0.34 }, lunge(1.3)), "out"],
 ]);
 // The staff swung over the head and brought down with the rear blade swinging up behind
 export const staffSlam = (dur = 0.84): Move => mv("staff slam", "heavy", dur, [
-  [0.3, K({ arms: -2.6, fores: -0.3, chest: j(-0.35, 0, 0), weapon: j(-0.6, 0, 0.3), head: j(-0.15, 0, 0) }, rear())],
-  [0.42, K({ arms: -2.6, fores: -0.3, chest: j(-0.4, 0, 0), weapon: j(-0.6, 0, 0.3), head: j(-0.15, 0, 0) }, rear())],
-  [0.6, K({ arms: -0.1, chest: j(0.55, 0, 0), weapon: j(0.9), step: 0.3 }, lunge(1.1)), "snap"],
-  [0.88, K({ arms: -0.2, chest: j(0.45, 0, 0), weapon: j(0.9), step: 0.3 }, lunge()), "out"],
+  [0.3, K({ arms: -2.6, fores: -0.3, chest: j(-0.35, 0, 0), weapon: sj(-0.6, 0, 0.3), head: j(-0.15, 0, 0) }, rear())],
+  [0.42, K({ arms: -2.6, fores: -0.3, chest: j(-0.4, 0, 0), weapon: sj(-0.6, 0, 0.3), head: j(-0.15, 0, 0) }, rear())],
+  [0.6, K({ arms: -0.1, chest: j(0.55, 0, 0), weapon: sj(0.9), step: 0.3 }, lunge(1.1)), "snap"],
+  [0.88, K({ arms: -0.2, chest: j(0.45, 0, 0), weapon: sj(0.9), step: 0.3 }, lunge()), "out"],
 ], { stop: 0.09 });
 // A leap with the staff spinning round the body, a blow from each end as it turns
 export const staffVault = (d: number, dur = 0.9): Move => mv("staff vault", "leap", dur, [
-  [0.18, K({ armL: j(-0.3, 0, -0.6), arms: -0.6, chest: j(0.4, -0.5 * d, 0), weapon: j(0.2) , spin: 0 }, deep())],
-  [0.44, K({ armL: j(-0.2, 0, -1.0), foreL: j(-0.3), arms: -1.8, chest: j(0, 0.5 * d, 0), weapon: j(-0.4, 0, -Math.PI * d), lift: 0.58, spin: Math.PI * d, step: 0.25 }, tuck()), "out"],
-  [0.68, K({ armL: j(-0.8, 0, -0.3), arms: -1.2, chest: j(0.3, 0.8 * d, 0), weapon: j(0.4, 0, -Math.PI * 2 * d), lift: 0, spin: Math.PI * 2 * d, step: 0.5 }, lunge(1.0)), "snap"],
-  [0.92, K({ arms: -1.0, chest: j(0.2), weapon: j(0.4, 0, -Math.PI * 2 * d), spin: Math.PI * 2 * d, step: 0.5 }, lunge(0.8)), "out"],
+  [0.18, K({ armL: j(-0.3, 0, -0.6), arms: -0.6, chest: j(0.4, -0.5 * d, 0), weapon: sj(0.2) , spin: 0 }, deep())],
+  [0.44, K({ armL: j(-0.2, 0, -1.0), foreL: j(-0.3), arms: -1.8, chest: j(0, 0.5 * d, 0), weapon: sj(-0.4, 0, -Math.PI * d), lift: 0.58, spin: Math.PI * d, step: 0.25 }, tuck()), "out"],
+  [0.68, K({ armL: j(-0.8, 0, -0.3), arms: -1.2, chest: j(0.3, 0.8 * d, 0), weapon: sj(0.4, 0, -Math.PI * 2 * d), lift: 0, spin: Math.PI * 2 * d, step: 0.5 }, lunge(1.0)), "snap"],
+  [0.92, K({ arms: -1.0, chest: j(0.2), weapon: sj(0.4, 0, -Math.PI * 2 * d), spin: Math.PI * 2 * d, step: 0.5 }, lunge(0.8)), "out"],
 ]);
 // Crouched, the staff turned low round the legs
 export const staffLow = (d: number, dur = 0.72): Move => mv("staff low", "low", dur, [
-  [0.3, K({ arms: -0.4, fores: -0.3, chest: j(0.6, -1.0 * d, 0), weapon: j(0.5), head: j(-0.3, 0.7 * d, 0) }, deep())],
-  [0.58, K({ arms: -0.4, fores: -0.2, chest: j(0.6, 1.2 * d, 0), weapon: j(0.5, 0, 0.6 * d), head: j(-0.3, -0.7 * d, 0), step: 0.12 }, deep()), "snap"],
-  [0.86, K({ arms: -0.4, chest: j(0.5, 1.0 * d, 0), weapon: j(0.5), step: 0.12 }, deep()), "out"],
+  [0.3, K({ arms: -0.4, fores: -0.3, chest: j(0.6, -1.0 * d, 0), weapon: sj(0.5), head: j(-0.3, 0.7 * d, 0) }, deep())],
+  [0.58, K({ arms: -0.4, fores: -0.2, chest: j(0.6, 1.2 * d, 0), weapon: sj(0.5, 0, 0.6 * d), head: j(-0.3, -0.7 * d, 0), step: 0.12 }, deep()), "snap"],
+  [0.86, K({ arms: -0.4, chest: j(0.5, 1.0 * d, 0), weapon: sj(0.5), step: 0.12 }, deep()), "out"],
 ]);
 // The staff turned fast across the front to take what comes (a block that is a spin)
 export const staffGuard = (dur = 0.66): Move => mv("staff guard", "guard", dur, [
-  [0.2, { armL: j(-0.5, 0, -0.5), foreL: j(-0.4), arms: -1.0, weapon: j(-0.7, 0, 0.0), chest: j(0, 0.2, 0), ...wide() }],
-  [0.6, { armL: j(-0.5, 0, -0.6), foreL: j(-0.4), arms: -1.0, weapon: j(-0.7, 0, -Math.PI * 2), chest: j(0, -0.2, 0), ...wide() }, "snap"],
-  [0.8, { armL: j(-0.6, 0, -0.3), foreL: j(-0.5), arms: -1.0, weapon: j(-0.7, 0, -Math.PI * 2), ...wide() }, "out"],
+  [0.2, { armL: j(-0.5, 0, -0.5), foreL: j(-0.4), arms: -1.0, weapon: sj(-0.7, 0, 0.0), chest: j(0, 0.2, 0), ...wide() }],
+  [0.6, { armL: j(-0.5, 0, -0.6), foreL: j(-0.4), arms: -1.0, weapon: sj(-0.7, 0, -Math.PI * 2), chest: j(0, -0.2, 0), ...wide() }, "snap"],
+  [0.8, { armL: j(-0.6, 0, -0.3), foreL: j(-0.5), arms: -1.0, weapon: sj(-0.7, 0, -Math.PI * 2), ...wide() }, "out"],
 ], { stop: 0.02 });
 
 // ---- The moves of two blades (Ahsoka's) ---------------------------------------------------------------------------------------------------
@@ -288,6 +327,13 @@ export const reverseStab = (dur = 0.7): Move => mv("reverse stab", "light", dur,
   [0.9, K({ armR: j(-1.1), foreR: j(-0.5), weapon: j(0.8), armL: j(-0.3), weaponL: j(Math.PI + 0.9), chest: j(0.25, -0.4, 0), step: 0.3 }, lunge(1.2)), "out"],
 ]);
 
+// Spinning on the spot with a blade out to each side at arm's length, the body off the ground at the top of it
+export const whirlwind = (d = 1, turns = 2, dur = 0.62 + 0.3 * turns): Move => mv("whirlwind", "spin", dur, [
+  [0.2, K({ armR: j(-0.6, 0, -1.2), foreR: j(-0.1), weapon: j(0.9), armL: j(-0.6, 0, 1.2), foreL: j(-0.1), weaponL: j(0.9), chest: j(0.1, -0.5 * d, 0), spin: 0 }, wide())],
+  [0.7, K({ armR: j(-0.6, 0, -1.2), foreR: j(-0.1), weapon: j(0.9), armL: j(-0.6, 0, 1.2), foreL: j(-0.1), weaponL: j(0.9), chest: j(0.1, 0.5 * d, 0), spin: Math.PI * 2 * turns * d, lift: 0.1, step: 0.15 }, wide()), "snap"],
+  [0.92, K({ armR: j(-1.2, 0.1, -0.2), foreR: j(-0.2), weapon: j(0.9), armL: j(-1.2, -0.1, 0.2), foreL: j(-0.2), weaponL: j(0.9), chest: j(0.25), spin: Math.PI * 2 * turns * d, step: 0.2 }, lunge(0.7)), "out"],
+], { hit: 1, stop: 0.03 });
+
 // ---- The moves of a whip (a lightwhip: the lash follows the hand; humanPose bends it by where the hand has been) ---------------------------------
 
 // The arm hauled back over the shoulder and the lash laid down in front: a crack at the end of it
@@ -328,6 +374,13 @@ export const lashPull = (dur = 0.8): Move => mv("lash and pull", "force", dur, [
   [0.62, K({ armR: j(-0.6), foreR: j(-1.4), weapon: j(0.7), armL: j(-0.5, 0.2, 0.2), foreL: j(-2.0), chest: j(-0.2, 0.25, 0), step: -0.12 }, rear()), "snap"],
   [0.88, K({ armR: j(-0.7), foreR: j(-1.2), weapon: j(0.7), armL: j(-0.55), foreL: j(-1.9), chest: j(-0.1, 0.2, 0), step: -0.12 }, rear()), "out"],
 ]);
+
+// Turning on the spot with the arm out and the lash flying level behind the hand all the way round, the crack at the end of it
+export const lashSpin = (d = 1, turns = 1, dur = 0.74 + 0.3 * (turns - 1)): Move => mv("whirling lash", "spin", dur, [
+  [0.22, K({ armR: j(-1.35, 0, -0.5), foreR: j(-0.1), weapon: j(1.7), chest: j(0.05, -0.8 * d, 0), head: j(0, 0.5 * d, 0), spin: 0 }, wide())],
+  [0.66, K({ armR: j(-1.35, 0, -0.5), foreR: j(-0.05), weapon: j(1.7), chest: j(0.05, 0.4 * d, 0), spin: Math.PI * 2 * turns * d, step: 0.1 }, wide()), "snap"],
+  [0.9, K({ armR: j(-1.0), foreR: j(-0.1), weapon: j(1.0), chest: j(0.2, 0.3 * d, 0), spin: Math.PI * 2 * turns * d, step: 0.12 }, lunge(0.6)), "out"],
+], { hit: 1, stop: 0.02 });
 
 // ---- A crossguard's own (Kylo Ren's): the Ox guard, wild hacks, a shoulder charge -----------------------------------------------------------
 
@@ -373,82 +426,89 @@ export const FLAVOUR: Record<SaberStyle, Flavour> = { shiicho: "basic", niman: "
 export const TEMPO: Record<SaberStyle, number> = { shiicho: 1, niman: 1, makashi: 0.88, jarkai: 0.85, soresu: 1.05, ataru: 0.85, trakata: 0.82, sokan: 0.92, shien: 1.08, djemso: 1.18, juyo: 0.8 };
 const ONE_HAND: ReadonlySet<SaberStyle> = new Set(["makashi"]);
 
-// A combo: its moves in turn, for the families that would reach for it
+// A combo: its moves in turn, for the families that would reach for it. They run from three moves to ten (2026-11-04, the user: "longer combos of up
+// to 10 different strikes in succession"): the short ones are an exchange, the long ones a flurry that wears a defender down
 interface Combo { tags: Flavour[]; moves: Move[] }
 const heavier = (m: Move, k = 1.35): Move => ({ ...m, dur: m.dur * k, stop: m.stop * 2, kind: m.kind === "light" ? "heavy" : m.kind });
 
 // The combos of a single blade, one or two hands, by what the forms favour. Each starts where the last ended (a chain)
 const SINGLE: Combo[] = [
-  { tags: ["basic"], moves: [cut(1), cut(-1), thrust()] },
-  { tags: ["basic"], moves: [sweepH(1), sweepH(-1), overhead(0.4)] },
+  // plain (Shii-Cho, Niman): honest cuts, a thrust, a sweep, and a turn of the whole body to finish
+  { tags: ["basic"], moves: [cut(1), cut(-1), thrust(), parry(1), rising(1), sweepH(-1), flick(), cut(1, 0.5), pirouette(1), overhead(0.6)] },
+  { tags: ["basic"], moves: [sweepH(1), sweepH(-1), overhead(0.4), parry(-1), thrust(), cut(1), cut(-1), whirlHead(1, 1), cut(1, 0.6)] },
   { tags: ["basic", "guard"], moves: [cut(-1), parry(1), cut(1), thrust()] },
-  { tags: ["duel"], moves: [thrust(), flick(), cut(1)] },
+  // the dueller's (Makashi, Jar'Kai): the point, small quick cuts, the blade taken aside and the thrust that follows
+  { tags: ["duel"], moves: [thrust(), flick(), cut(1), parry(-1), thrust(), flick(), parry(1, "high"), thrust(), pirouette(-1), flick()] },
   { tags: ["duel"], moves: [flick(), parry(1, "high"), thrust(), parry(-1), flick()] },
-  { tags: ["duel", "guard"], moves: [parry(-1), thrust(), parry(1, "mid"), cut(1)] },
-  { tags: ["guard"], moves: [parry(1), cut(1), parry(-1), thrust()] },
+  { tags: ["duel", "guard"], moves: [parry(-1), thrust(), parry(1, "mid"), cut(1), flick(), lowThrust(), rising(-1), pull()] },
+  // the guard's (Soresu): everything met first, then answered, and the Force for the foe who will not give way
+  { tags: ["guard"], moves: [parry(1), cut(1), parry(-1), thrust(), parry(1, "high"), rising(1), push(), parry(1, "low"), cut(-1), pirouette(1)] },
   { tags: ["guard"], moves: [parry(1, "low"), rising(1), parry(-1, "high"), cut(-1), push()] },
-  { tags: ["acro"], moves: [leapSlam(), flipCut(1), cut(-1)] },
-  { tags: ["acro"], moves: [vaultCut(1), flipCut(-1), rising(1), pull()] },
-  { tags: ["acro", "fury"], moves: [springCut(1), flipCut(1), lowSweep(-1)] },
-  { tags: ["power"], moves: [overhead(0.8), cleave(1), smash()] },
+  // the acrobat's (Ataru, Trakata, Sokan): leaps and flips, a low sweep between them, the body turned over the foe
+  { tags: ["acro"], moves: [leapSlam(), flipCut(1), cut(-1), vaultCut(1), springCut(-1), pirouette(1), flipCut(-1), lowSweep(1), rising(1), whirlHead(-1)] },
+  { tags: ["acro"], moves: [vaultCut(1), flipCut(-1), rising(1), pull(), springCut(1), cut(-1)] },
+  { tags: ["acro", "fury"], moves: [springCut(1), flipCut(1), lowSweep(-1), cut(1), pirouette(-1, 2)] },
+  // the powerful (Djem So, Shien): each blow felt, the blade brought down from above, the ground driven into at the end
+  { tags: ["power"], moves: [overhead(0.8), cleave(1), smash(), parry(1), cut(1, 0.7), cut(-1, 0.7), push(), overhead(1), cleave(-1)] },
   { tags: ["power"], moves: [cut(1, 0.7), cut(-1, 0.7), push(), overhead(1)] },
-  { tags: ["power", "guard"], moves: [parry(1), rising(1, 0.7), cleave(-1)] },
-  { tags: ["fury"], moves: [rising(1), cut(-1), lowSweep(1), flipCut(1)] },
+  { tags: ["power", "guard"], moves: [parry(1), rising(1, 0.7), cleave(-1), pirouette(1, 1, 1), smash()] },
+  // the furious (Juyo, Vaapad): one blow on the heels of another, low and high, a turn or two, the Force hauling the foe in
+  { tags: ["fury"], moves: [rising(1), cut(-1), lowSweep(1), flipCut(1), cut(1), pull(), cut(-1), pirouette(1, 2), overhead(1), smash()] },
   { tags: ["fury"], moves: [lowSweep(-1), springCut(1), cut(1), sweepH(-1, 0, Math.PI * 2)] },
   { tags: ["fury"], moves: [cut(1), cut(-1), cut(1), pull(), smash()] },
 ];
 // A heavy blade's (a broadsaber, a claymore, a great-saber): every blow is felt, and nothing is quick
 const BROAD: Combo[] = [
-  { tags: ["basic", "duel"], moves: [cut(1), heavier(cut(-1, 0.6)), overhead(1)] },
+  { tags: ["basic", "duel"], moves: [cut(1), heavier(cut(-1, 0.6)), overhead(1), parry(1, "mid", 0.6), thrust(), heavier(rising(1)), heavier(pirouette(1, 1, 1), 1.1), cleave(-1)] },
   { tags: ["basic", "guard"], moves: [parry(1, "mid", 0.6), heavier(cut(1, 0.6)), cleave(-1)] },
-  { tags: ["guard", "duel"], moves: [parry(1, "high", 0.6), thrust(), parry(-1, "mid", 0.6), overhead(0.8)] },
-  { tags: ["power"], moves: [overhead(1), cleave(1), smash()] },
+  { tags: ["guard", "duel"], moves: [parry(1, "high", 0.6), thrust(), parry(-1, "mid", 0.6), overhead(0.8), push(), heavier(cut(1, 0.6)), parry(1, "low", 0.6), rising(-1)] },
+  { tags: ["power"], moves: [overhead(1), cleave(1), smash(), parry(1, "mid", 0.6), heavier(pirouette(1, 1, 1), 1.1), cleave(-1), overhead(1), push(), heavier(cut(1, 0.8)), smash()] },
   { tags: ["power", "basic"], moves: [cleave(1), cleave(-1), push(), overhead(1)] },
-  { tags: ["acro"], moves: [leapSlam(), heavier(flipCut(1, 1.0), 1.15), smash()] },
-  { tags: ["acro", "fury"], moves: [heavier(vaultCut(1)), cleave(-1), leapSlam()] },
-  { tags: ["fury"], moves: [heavier(lowSweep(1)), rising(1), cleave(-1), smash()] },
+  { tags: ["acro"], moves: [leapSlam(), heavier(flipCut(1, 1.0), 1.15), smash(), heavier(vaultCut(-1)), cleave(1), heavier(pirouette(-1, 1, 1), 1.1), leapSlam()] },
+  { tags: ["acro", "fury"], moves: [heavier(vaultCut(1)), cleave(-1), leapSlam(), pull(), heavier(rising(1)), overhead(1), heavier(pirouette(1, 2, 1), 1.05), smash()] },
+  { tags: ["fury"], moves: [heavier(lowSweep(1)), rising(1), cleave(-1), smash(), heavier(cut(1, 0.8)), pull(), heavier(whirlHead(1, 2), 1.15), overhead(1)] },
   { tags: ["fury", "power"], moves: [overhead(1), heavier(cut(1, 0.8)), heavier(cut(-1, 0.8)), pull(), smash()] },
 ];
 // A crossguard's (the Ox guard: the blade up at the shoulder; hacks, a shoulder charge, the Force flung out between blows)
 const CROSSGUARD: Combo[] = [
-  { tags: ["basic", "power"], moves: [hack(1), hack(-1), overhead(0.9)] },
-  { tags: ["basic", "duel"], moves: [flick(), hack(-1), charge(), hack(1)] },
+  { tags: ["basic", "power"], moves: [hack(1), hack(-1), overhead(0.9), charge(), hack(1), push(), hack(-1), pirouette(1, 1, 1), hack(1), smash()] },
+  { tags: ["basic", "duel"], moves: [flick(), hack(-1), charge(), hack(1), thrust(), parry(1, "high", 0.6), hack(-1), whirlHead(1, 1)] },
   { tags: ["power", "duel"], moves: [overhead(1), push(), hack(1), smash()] },
-  { tags: ["power"], moves: [hack(1), cleave(-1), overhead(1)] },
-  { tags: ["guard", "duel"], moves: [parry(1, "high", 0.6), thrust(), charge(), hack(1)] },
-  { tags: ["guard"], moves: [parry(-1, "mid", 0.6), hack(1), parry(1, "high", 0.6), overhead(0.9)] },
-  { tags: ["acro", "duel"], moves: [leapSlam(), hack(-1), push(), hack(1)] },
-  { tags: ["acro", "fury"], moves: [vaultCut(-1), hack(1), pull(), hack(-1)] },
-  { tags: ["fury"], moves: [hack(1), thrust(), lowSweep(1), hack(-1), smash()] },
+  { tags: ["power"], moves: [hack(1), cleave(-1), overhead(1), pirouette(-1, 1, 1), hack(1), hack(-1)] },
+  { tags: ["guard", "duel"], moves: [parry(1, "high", 0.6), thrust(), charge(), hack(1), parry(-1, "mid", 0.6), hack(-1), push(), overhead(0.9)] },
+  { tags: ["guard"], moves: [parry(-1, "mid", 0.6), hack(1), parry(1, "high", 0.6), overhead(0.9), pirouette(1, 1, 1), hack(-1)] },
+  { tags: ["acro", "duel"], moves: [leapSlam(), hack(-1), push(), hack(1), vaultCut(1), hack(-1), pirouette(1, 2, 1), overhead(1)] },
+  { tags: ["acro", "fury"], moves: [vaultCut(-1), hack(1), pull(), hack(-1), leapSlam(), hack(1)] },
+  { tags: ["fury"], moves: [hack(1), thrust(), lowSweep(1), hack(-1), smash(), pull(), hack(1), whirlHead(-1, 2), hack(-1), overhead(1)] },
   { tags: ["fury"], moves: [charge(), hack(1), pull(), overhead(1)] },
 ];
 // A double blade's (a staff: Darth Maul's): spins and long cuts, the free hand letting go, a leap with the whole staff round the body
 const STAFF: Combo[] = [
-  { tags: ["basic"], moves: [staffCut(1), staffCut(-1), windmill(1)] },
-  { tags: ["basic", "duel"], moves: [staffCut(-1), staffThrust(), staffCut(1)] },
-  { tags: ["duel"], moves: [staffThrust(), staffThrust(), windmill(-1), staffCut(1)] },
+  { tags: ["basic"], moves: [staffCut(1), staffCut(-1), windmill(1), staffThrust(), staffGuard(), staffCut(1, 1), staffLow(-1), push(), staffCut(-1), staffSlam()] },
+  { tags: ["basic", "duel"], moves: [staffCut(-1), staffThrust(), staffCut(1), windmill(-1), staffThrust(), staffThrust(), staffCut(1)] },
+  { tags: ["duel"], moves: [staffThrust(), staffThrust(), windmill(-1), staffCut(1), staffGuard(), staffThrust(), staffCut(-1), windmill(1, 2)] },
   { tags: ["duel", "guard"], moves: [staffGuard(), staffThrust(), staffGuard(), staffCut(-1)] },
-  { tags: ["guard"], moves: [staffGuard(), staffCut(1), staffGuard(), staffThrust(), push()] },
+  { tags: ["guard"], moves: [staffGuard(), staffCut(1), staffGuard(), staffThrust(), push(), staffGuard(), staffCut(-1), windmill(1), staffLow(1), staffSlam()] },
   { tags: ["guard", "power"], moves: [staffGuard(), staffCut(1, 0.8), staffSlam()] },
-  { tags: ["acro"], moves: [windmill(1, 1), staffVault(1), staffLow(-1)] },
+  { tags: ["acro"], moves: [windmill(1, 1), staffVault(1), staffLow(-1), staffCut(1), staffThrust(), windmill(-1, 2), staffVault(-1), staffCut(-1), pull(), staffSlam()] },
   { tags: ["acro"], moves: [staffVault(-1), staffCut(1), windmill(-1, 2), staffVault(1)] },
-  { tags: ["power"], moves: [staffSlam(), staffCut(1, 1), staffCut(-1, 1)] },
+  { tags: ["power"], moves: [staffSlam(), staffCut(1, 1), staffCut(-1, 1), windmill(1, 2, 1.0), staffGuard(), staffCut(1, 1), push(), staffSlam()] },
   { tags: ["power", "fury"], moves: [staffCut(1, 0.8), push(), staffSlam()] },
-  { tags: ["fury"], moves: [windmill(1, 2, 0.9), staffLow(1), staffVault(-1)] },
+  { tags: ["fury"], moves: [windmill(1, 2, 0.9), staffLow(1), staffVault(-1), staffCut(1), staffCut(-1), pull(), windmill(-1, 2, 0.9), staffThrust(), staffVault(1), staffSlam()] },
   { tags: ["fury"], moves: [staffCut(1), staffCut(-1), staffLow(1), staffVault(1), pull()] },
 ];
-// Two blades' (Ahsoka's): crossed cuts and flurries, one blade guarding as the other cuts, a grip turned over
+// Two blades' (Ahsoka's): crossed cuts and flurries, one blade guarding as the other cuts, a grip turned over, a spin with both out
 const DUAL: Combo[] = [
-  { tags: ["basic"], moves: [flurry(1), flurry(-1), crossCut()] },
-  { tags: ["basic", "duel"], moves: [crossCut(), flurry(-1), doubleThrust()] },
-  { tags: ["duel"], moves: [doubleThrust(), reverseStab(), flurry(1)] },
+  { tags: ["basic"], moves: [flurry(1), flurry(-1), crossCut(), doubleThrust(), guardCut(1), reverseStab(), flurry(1), whirlwind(1, 1), crossCut(1), smashBoth()] },
+  { tags: ["basic", "duel"], moves: [crossCut(), flurry(-1), doubleThrust(), guardCut(-1), flurry(1), reverseStab()] },
+  { tags: ["duel"], moves: [doubleThrust(), reverseStab(), flurry(1), guardCut(1), flurry(-1), crossCut(), doubleThrust(), whirlwind(-1, 1)] },
   { tags: ["duel", "guard"], moves: [guardCut(1), guardCut(-1), reverseStab()] },
-  { tags: ["guard"], moves: [guardCut(1), crossCut(), guardCut(-1), doubleThrust()] },
-  { tags: ["guard", "power"], moves: [guardCut(1), crossCut(1), push()] },
-  { tags: ["acro"], moves: [spinCut(1), flurry(-1), spinCut(-1)] },
-  { tags: ["acro", "fury"], moves: [flurry(1), spinCut(1), lowSpin(-1)] },
-  { tags: ["power"], moves: [crossCut(1), crossCut(1), smashBoth()] },
-  { tags: ["fury"], moves: [flurry(1), lowSpin(1), flurry(-1), spinCut(-1)] },
+  { tags: ["guard"], moves: [guardCut(1), crossCut(), guardCut(-1), doubleThrust(), push(), guardCut(1), flurry(-1), reverseStab(), whirlwind(1, 1), crossCut(1)] },
+  { tags: ["guard", "power"], moves: [guardCut(1), crossCut(1), push(), guardCut(-1), smashBoth()] },
+  { tags: ["acro"], moves: [spinCut(1), flurry(-1), spinCut(-1), whirlwind(1, 2), lowSpin(1), flurry(1), crossCut(), spinCut(1), doubleThrust(), smashBoth()] },
+  { tags: ["acro", "fury"], moves: [flurry(1), spinCut(1), lowSpin(-1), whirlwind(-1, 1), flurry(-1), crossCut()] },
+  { tags: ["power"], moves: [crossCut(1), crossCut(1), smashBoth(), guardCut(1), whirlwind(1, 1), crossCut(1), push(), smashBoth()] },
+  { tags: ["fury"], moves: [flurry(1), lowSpin(1), flurry(-1), spinCut(-1), whirlwind(1, 2), flurry(1), flurry(-1), pull(), crossCut(1), smashBoth()] },
   { tags: ["fury"], moves: [reverseStab(), flurry(1), flurry(-1), pull(), crossCut(1)] },
 ];
 // both blades down together into the ground (a dual's smash)
@@ -460,18 +520,18 @@ function smashBoth(): Move {
     [0.88, K({ armR: j(0.15), weapon: j(1.05), armL: j(0.15), weaponL: j(1.05), chest: j(0.75), step: 0.25 }, deep()), "out"],
   ], { stop: 0.1 });
 }
-// A whip's: lashes laid down at range, a spring, and the free hand pulling what the lash has caught
+// A whip's: lashes laid down at range, a spring, the lash whirled round, and the free hand pulling what the lash has caught
 const WHIP: Combo[] = [
-  { tags: ["basic"], moves: [lashOver(1), lashOver(-1), lashSide(1)] },
-  { tags: ["basic", "duel"], moves: [lashSide(1), lashSide(-1), lashOver(1)] },
-  { tags: ["duel"], moves: [lashOver(1), lashPull(), lashSide(-1)] },
+  { tags: ["basic"], moves: [lashOver(1), lashOver(-1), lashSide(1), lashSide(-1), parry(1, "mid", 0.5), lashOver(1), lashSpin(1), lashLow(-1), lashPull(), lashCircle()] },
+  { tags: ["basic", "duel"], moves: [lashSide(1), lashSide(-1), lashOver(1), lashOver(-1), lashSpin(-1), lashSide(1)] },
+  { tags: ["duel"], moves: [lashOver(1), lashPull(), lashSide(-1), lashOver(1), lashOver(-1), lashLow(1), lashSpin(1), lashSide(-1)] },
   { tags: ["duel", "guard"], moves: [lashSide(-1), parry(1, "mid", 0.5), lashOver(1)] },
-  { tags: ["guard"], moves: [parry(1), lashOver(1), parry(-1, "high"), lashSide(1), lashPull()] },
-  { tags: ["guard", "power"], moves: [parry(1), lashPull(), lashCircle()] },
-  { tags: ["acro"], moves: [lashLeap(1), lashSide(-1), lashLeap(-1)] },
-  { tags: ["acro", "fury"], moves: [lashSide(1), lashLeap(1), lashLow(-1)] },
-  { tags: ["power"], moves: [lashCircle(1), lashPull(), lashCircle(-1)] },
-  { tags: ["fury"], moves: [lashOver(1), lashOver(-1), lashLow(1), lashLeap(-1)] },
+  { tags: ["guard"], moves: [parry(1), lashOver(1), parry(-1, "high"), lashSide(1), lashPull(), parry(1, "low"), lashLow(-1), lashOver(1), lashSpin(-1), lashCircle(-1)] },
+  { tags: ["guard", "power"], moves: [parry(1), lashPull(), lashCircle(), parry(-1), lashSpin(1)] },
+  { tags: ["acro"], moves: [lashLeap(1), lashSide(-1), lashLeap(-1), lashSpin(1, 2), lashLow(1), lashSide(1), lashLeap(1), lashOver(-1), lashPull(), lashCircle()] },
+  { tags: ["acro", "fury"], moves: [lashSide(1), lashLeap(1), lashLow(-1), lashSpin(-1), lashOver(1)] },
+  { tags: ["power"], moves: [lashCircle(1), lashPull(), lashCircle(-1), lashSpin(1, 2), lashOver(1), lashPull(), lashCircle(1)] },
+  { tags: ["fury"], moves: [lashOver(1), lashOver(-1), lashLow(1), lashLeap(-1), lashSide(1), lashSide(-1), lashSpin(1, 2), lashPull(), lashOver(1), lashCircle(-1)] },
   { tags: ["fury"], moves: [lashLow(-1), lashSide(1), lashSide(-1), lashCircle(1)] },
 ];
 
@@ -484,16 +544,16 @@ const KIT_GUARD: Record<Exclude<SaberKit, "single">, Key> = {
   // the Ox: hands at the shoulder, the blade standing up beside the head, a wide base
   crossguard: { ...wide(), arms: -1.5, fores: -1.0, weapon: j(-0.15, 0, 0.1), chest: j(0, 0.5), head: j(0, -0.35) },
   // the staff across the body, the front hand light on it, the feet wide and low
-  staff: { ...wide(), arms: -0.95, fores: -0.5, weapon: j(-0.2, 0, 0.1), chest: j(0, 0.4), head: j(0, -0.3), shinL: j(0.65), shinR: j(0.7) },
+  staff: { ...wide(), arms: -0.95, fores: -0.5, weapon: sj(-0.2, 0, 0.1), chest: j(0, 0.4), head: j(0, -0.3), shinL: j(0.65), shinR: j(0.7) },
   // each blade angled out from its hand, the body low between them
   dual: { ...wide(), shinL: j(0.6), shinR: j(0.65), armR: j(-1.05, 0.25, 0.1), foreR: j(-0.6), weapon: j(0.65, 0, 0.25), armL: j(-0.9, -0.2, -0.1), foreL: j(-0.7), weaponL: j(0.65, 0, -0.25), chest: j(0.04, 0.1) },
   // side on, the lash hand forward and the other held back for balance
-  whip: { legR: j(-0.28), legL: j(0.18), shinR: j(0.3), shinL: j(0.3), armR: j(-0.8, 0.2, 0), foreR: j(-0.6), weapon: j(0.5), armL: j(0.35, 0, 0.5), foreL: j(-0.7), chest: j(0, -0.6), head: j(0, 0.5) },
+  whip: { legR: j(-0.28), legL: j(0.18), shinR: j(0.3), shinL: j(0.3), armR: j(0.0, 0.3, -0.3), foreR: j(-0.55), weapon: j(1.5), armL: j(0.35, 0, 0.5), foreL: j(-0.7), chest: j(0, -0.6), head: j(0, 0.5) },
 };
 const KIT_BLOCK: Partial<Record<SaberKit, Key>> = {
   broad: { arms: -1.3, fores: -0.45, weapon: j(-0.2, 0, 1.0), chest: j(0, 0.3) },
   crossguard: { arms: -1.7, fores: -0.8, weapon: j(-0.5, 0, 0.7), chest: j(0, 0.35), head: j(0, -0.3) },
-  staff: { arms: -1.1, fores: -0.5, weapon: j(-0.6, 0, 0.2), chest: j(0, 0.3) },
+  staff: { arms: -1.1, fores: -0.5, weapon: sj(-0.6, 0, 0.2), chest: j(0, 0.3) },
   dual: { armR: j(-1.4, 0.3, 0.4), foreR: j(-0.4), weapon: j(0.1, 0, 0.8), armL: j(-1.4, -0.3, -0.4), foreL: j(-0.4), weaponL: j(0.1, 0, -0.8), chest: j(0, 0.1) },
   whip: { armR: j(-1.6, 0.2, 0), foreR: j(-0.5), weapon: j(-0.2, 0, 0.7), chest: j(0, -0.3) },
 };
@@ -510,8 +570,8 @@ export function styleFor(kit: SaberKit, style: SaberStyle): Style {
   const picked = all.filter((c) => c.tags.includes(flavour));
   const combos = (picked.length ? picked : all).map((c) => c.moves);
   const built: Style = kit === "single"
-    ? { guard: GUARD[style], combos, oneHand: ONE_HAND.has(style), block: style === "soresu" ? { arms: -1.2, fores: -0.3, weapon: j(-0.2, 0, 0.95), chest: j(0, 0.2) } : undefined, tempo: TEMPO[style] }
-    : { guard: kitGuard(kit, style), combos, oneHand: kit === "dual" || kit === "whip" ? true : false, block: KIT_BLOCK[kit], tempo: TEMPO[style] * (kit === "broad" ? 1.1 : kit === "crossguard" ? 1.12 : 1), offHand: kit === "dual" };
+    ? { guard: GUARD[style], combos, oneHand: ONE_HAND.has(style), block: style === "soresu" ? { arms: -1.2, fores: -0.3, weapon: j(-0.2, 0, 0.95), chest: j(0, 0.2) } : undefined, tempo: TEMPO[style] * PACE }
+    : { guard: kitGuard(kit, style), combos, oneHand: kit === "dual" || kit === "whip" ? true : false, block: KIT_BLOCK[kit], tempo: TEMPO[style] * PACE * (kit === "broad" ? 1.1 : kit === "crossguard" ? 1.12 : 1), offHand: kit === "dual" };
   SETS.set(key, built);
   return built;
 }
@@ -524,8 +584,8 @@ function kitGuard(kit: Exclude<SaberKit, "single">, style: SaberStyle): Key {
 }
 
 // The melee weapons that are no saber: a vibroblade or axe, and a pole
-export const MELEE: Style = { oneHand: true, tempo: 1, guard: { ...STANCE, armR: j(-0.85, 0.15), foreR: j(-0.8), weapon: j(0.2), armL: j(-0.45, 0, -0.2), foreL: j(-0.9), chest: j(0, 0.25) }, combos: [[overhead(0.5), sweepH(1), thrust()]] };
-export const POLE: Style = { oneHand: true, tempo: 1, guard: { ...STANCE, armR: j(-0.6, 0.1), foreR: j(-0.7), weapon: j(0.95), armL: j(-0.95, -0.3), foreL: j(-0.6), chest: j(0, 0.3) }, combos: [[thrust(0.4), sweepH(1), overhead(0.5)]] };
+export const MELEE: Style = { oneHand: true, tempo: PACE, guard: { ...STANCE, armR: j(-0.85, 0.15), foreR: j(-0.8), weapon: j(0.2), armL: j(-0.45, 0, -0.2), foreL: j(-0.9), chest: j(0, 0.25) }, combos: [[overhead(0.5), sweepH(1), thrust()]] };
+export const POLE: Style = { oneHand: true, tempo: PACE, guard: { ...STANCE, armR: j(-0.6, 0.1), foreR: j(-0.7), weapon: j(0.95), armL: j(-0.95, -0.3), foreL: j(-0.6), chest: j(0, 0.3) }, combos: [[thrust(0.4), sweepH(1), overhead(0.5)]] };
 
 // ---- The chain: which move a figure is at ---------------------------------------------------------------------------------------------------
 
@@ -558,6 +618,8 @@ export const moveSeconds = (set: Style, move: Move): number => move.dur * set.te
 
 // ---- Sampling ---------------------------------------------------------------------------------------------------------------------------
 
+// An angle's difference taken the short way round when it is more than a half turn and a bit (the end of a spin: whole turns are not turned back)
+export const wrapTurn = (x: number): number => (Math.abs(x) > Math.PI + 0.3 ? x - Math.PI * 2 * Math.round(x / (Math.PI * 2)) : x);
 const smoothK = (v: number) => { const x = Math.max(0, Math.min(1, v)); return x * x * (3 - 2 * x); };
 const EASE: Record<Ease, (x: number) => number> = { smooth: smoothK, snap: (x) => Math.max(0, Math.min(1, x)) ** 2.3, out: (x) => 1 - (1 - Math.max(0, Math.min(1, x))) ** 2.2, lin: (x) => Math.max(0, Math.min(1, x)) };
 // A key as joints: `arms` and `fores` spread over the arms (both in a two-handed grip), keeping the turn the guard gives them about y and z; joints
@@ -574,8 +636,8 @@ export const guardJoints = (set: Style): Joints => {
   const g = jointsOf(set.guard, {}, !!set.oneHand);
   return g;
 };
-export interface Sample { joints: Joints; lift: number; spin: number; step: number }
-interface Frame { t: number; joints: Joints; lift: number; spin: number; step: number; ease: Ease }
+export interface Sample { joints: Joints; lift: number; spin: number; step: number; free: number }
+interface Frame { t: number; joints: Joints; lift: number; spin: number; step: number; free: number; ease: Ease }
 // Where a move is `u` of the way through (0 to 1): from the guard through its keys and back to the guard, each segment eased as its key says, the
 // hold at the blow (`stop`) taken out of the middle. Before it begins, the guard.
 export function sampleMove(move: Move, u: number, guard: Joints, oneHand: boolean, stopScale = 1): Sample {
@@ -583,14 +645,14 @@ export function sampleMove(move: Move, u: number, guard: Joints, oneHand: boolea
   const stop = Math.min(0.2, (move.stop * stopScale) / Math.max(0.05, move.dur));
   let v = u;
   if (hit && stop > 0) { const th = hit[0]; v = u <= th ? u : u <= th + stop ? th : th + ((u - th - stop) * (1 - th)) / Math.max(1e-3, 1 - th - stop); }
-  const frames: Frame[] = [{ t: 0, joints: guard, lift: 0, spin: 0, step: 0, ease: "smooth" }];
+  const frames: Frame[] = [{ t: 0, joints: guard, lift: 0, spin: 0, step: 0, free: 0, ease: "smooth" }];
   let spin = 0;
   for (const [t, k, e] of move.keys) {
     if (k.spin !== undefined) spin = k.spin;
-    frames.push({ t, joints: { ...guard, ...jointsOf(k, guard, oneHand) }, lift: k.lift ?? 0, spin, step: k.step ?? 0, ease: e ?? "smooth" });
+    frames.push({ t, joints: { ...guard, ...jointsOf(k, guard, oneHand) }, lift: k.lift ?? 0, spin, step: k.step ?? 0, free: k.armL ? 1 : k.free ?? 0, ease: e ?? "smooth" });
   }
-  frames.push({ t: 1, joints: guard, lift: 0, spin, step: 0, ease: "out" });
-  if (v <= 0) return { joints: guard, lift: 0, spin: 0, step: 0 };
+  frames.push({ t: 1, joints: guard, lift: 0, spin, step: 0, free: 0, ease: "out" });
+  if (v <= 0) return { joints: guard, lift: 0, spin: 0, step: 0, free: 0 };
   let i = 0;
   while (i < frames.length - 2 && v > frames[i + 1].t) i++;
   const a = frames[i];
@@ -603,7 +665,95 @@ export function sampleMove(move: Move, u: number, guard: Joints, oneHand: boolea
     if (!x && !y) continue;
     const p = x ?? ([0, 0, 0] as J3);
     const q = y ?? ([0, 0, 0] as J3);
-    joints[jn] = [p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f, p[2] + (q[2] - p[2]) * f];
+    const last = i + 1 === frames.length - 1;
+    const to = (c: number) => (last ? p[c] + wrapTurn(q[c] - p[c]) : q[c]);
+    joints[jn] = [p[0] + (to(0) - p[0]) * f, p[1] + (to(1) - p[1]) * f, p[2] + (to(2) - p[2]) * f];
   }
-  return { joints, lift: a.lift + (b.lift - a.lift) * f, spin: v >= 1 ? 0 : a.spin + (b.spin - a.spin) * f, step: a.step + (b.step - a.step) * f };
+  return { joints, lift: a.lift + (b.lift - a.lift) * f, spin: v >= 1 ? 0 : a.spin + (b.spin - a.spin) * f, step: a.step + (b.step - a.step) * f, free: a.free + (b.free - a.free) * f };
+}
+
+// ---- A duel laid out (the gallery's `saberCombo`: an attacker and a defender, to see each attack and each defence) ---------------------------------
+
+export interface Fighter { kit: SaberKit; style: SaberStyle }
+// How the defender answers: parries each blow with a guard move of its own form and weapon (`parry`), stands in its guard (`guard`), takes every blow and
+// reels (`hit`), or trades combos with the attacker, each defending while the other attacks (`trade`)
+export type DuelMode = "parry" | "guard" | "hit" | "trade";
+export const DUEL_MODES: DuelMode[] = ["parry", "guard", "hit", "trade"];
+export interface DuelEvent { who: "a" | "d"; move: Move; at: number; prev?: { move: Move; at: number } }
+export interface DuelPlan {
+  events: DuelEvent[];
+  // when a blow lands on someone who does not parry it (or is thrown back by the Force)
+  flinches: { who: "a" | "d"; at: number }[];
+  // when someone stands in their block
+  holds: { who: "a" | "d"; from: number; to: number }[];
+  // the blows that land and who answers each: the attacker, the move, when it lands, and the defender's guard move (if there is one) and when it meets it
+  exchanges: { who: "a" | "d"; move: Move; hit: number; answer?: { move: Move; at: number } }[];
+  length: number;
+}
+
+// The guard moves of a style, each once, in the order its combos have them
+const guardsOf = (set: Style): Move[] => [...new Set(set.combos.flat().filter((m) => m.kind === "guard"))];
+// The combos a duel plays for a fighter: the one asked for, or each in turn
+const combosFor = (set: Style, pick?: number): Move[][] => (pick !== undefined && set.combos.length ? [set.combos[((pick % set.combos.length) + set.combos.length) % set.combos.length]] : set.combos);
+
+export function planDuel(a: Fighter, d: Fighter, mode: DuelMode, pick?: number): DuelPlan {
+  const sets = { a: styleFor(a.kit, a.style), d: styleFor(d.kit, d.style) };
+  const events: DuelEvent[] = [];
+  const flinches: DuelPlan["flinches"] = [];
+  const holds: DuelPlan["holds"] = [];
+  const exchanges: DuelPlan["exchanges"] = [];
+  const last: Partial<Record<"a" | "d", DuelEvent>> = {};
+  const used = { a: 0, d: 0 };
+  const play = (who: "a" | "d", move: Move, at: number) => {
+    const p = last[who];
+    const ev: DuelEvent = { who, move, at, ...(p && at - p.at < COMBO_GAP ? { prev: { move: p.move, at: p.at } } : {}) };
+    events.push(ev);
+    last[who] = ev;
+    return ev;
+  };
+  const hitOf = (who: "a" | "d", ev: { move: Move; at: number }) => ev.at + ev.move.keys[ev.move.hit][0] * moveSeconds(sets[who], ev.move);
+  // One fighter attacks with a combo from `from`; the other answers each blow as the mode says. Returns when the combo is over
+  const attack = (att: "a" | "d", combo: Move[], from: number): number => {
+    const def = att === "a" ? "d" : "a";
+    let at = from;
+    let end = from;
+    for (const move of combo) {
+      const ev = play(att, move, at);
+      const dur = moveSeconds(sets[att], move);
+      const hit = hitOf(att, ev);
+      end = Math.max(end, at + dur);
+      const guards = guardsOf(sets[def]);
+      if (mode === "hit" || (mode !== "guard" && (move.kind === "force" || !guards.length))) {
+        flinches.push({ who: def, at: hit });
+        exchanges.push({ who: att, move, hit });
+      } else if (mode !== "guard") {
+        // (the answer begins so that its own blow, the meeting of the blades, falls as the attacker's does)
+        const g = guards[used[def]++ % guards.length];
+        const start = hit - g.keys[g.hit][0] * moveSeconds(sets[def], g);
+        const busy = last[def];
+        if (!busy || start > busy.at + 0.05) {
+          const answer = play(def, g, Math.max(0.05, start));
+          exchanges.push({ who: att, move, hit, answer: { move: g, at: hitOf(def, answer) } });
+          end = Math.max(end, answer.at + moveSeconds(sets[def], g));
+        } else exchanges.push({ who: att, move, hit });
+      } else exchanges.push({ who: att, move, hit });
+      at += dur * 0.82;
+    }
+    if (mode === "guard") holds.push({ who: def, from: Math.max(0, from - 0.3), to: end + 0.2 });
+    return end;
+  };
+  let t = 0.6;
+  if (mode === "trade") {
+    const mine = combosFor(sets.a, pick);
+    const theirs = combosFor(sets.d, undefined);
+    const rounds = pick !== undefined ? 1 : Math.max(mine.length, theirs.length);
+    for (let r = 0; r < rounds; r++) {
+      t = attack("a", mine[r % mine.length], t) + 0.25;
+      t = attack("d", theirs[r % theirs.length], t) + 0.25;
+    }
+  } else {
+    for (const combo of combosFor(sets.a, pick)) t = attack("a", combo, t) + 1.0;
+  }
+  events.sort((x, y) => x.at - y.at);
+  return { events, flinches, holds, exchanges, length: t + 0.8 };
 }
