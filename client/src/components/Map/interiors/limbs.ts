@@ -10,7 +10,7 @@
 // and an astromech, a mouse droid or a slug glides without bobbing. Shadows stay in the pose the figure was built in.
 // Pure but for the materials: tests/interiors/limbs.test.ts.
 import * as THREE from "three";
-import { patchOf, shaderPatch } from "../babylon";
+import { patchOf, shaderPatch, WAVE_GLSL, WAVE_LIMB } from "../babylon";
 import { gunKick } from "@shared/logic/shooter";
 
 // Limbs: 0 the body (still); the legs (front ones on a beast), the arms, a beast's hind and middle legs, a tail, a rolling ball or
@@ -18,14 +18,16 @@ import { gunKick } from "@shared/logic/shooter";
 // A beast (2026-11-04) is jointed a little too: its `chest` carries the neck and, with it, the head (which nods and looks about on its own), the
 // head carries the ears (`earR`, `earL`: they flick and lay back) and the lower jaw (`jaw`: it pants and opens), and the tail has a tip (`tail2`)
 // that follows the rest of it.
+// The last, `wave`, is no turn at all but a body's undulation (babylon.ts WAVE_GLSL): a serpent's whole length, a lizard's spine and tail, a runner's tail
+// are carried sideways by a wave that travels back along them (`setWave`).
 // A person (2026-10-30, the user: "the lightsabre just waves with no character arm or body movement at all") is jointed further: the trunk
 // above the waist (`chest`, which carries the arms, the head and all worn above it), the forearms below the elbows, the shins below the
 // knees, and what the right hand holds (`weapon`, turned at the wrist). These hang one from another (PARENT): a forearm turns about its
 // elbow and is then carried by its upper arm, which the chest carries; a shin turns about its knee and then with its thigh.
-export const LIMB = { body: 0, legR: 1, legL: 2, armR: 3, armL: 4, hindR: 5, hindL: 6, midR: 7, midL: 8, tail: 9, roll: 10, wingR: 11, wingL: 12, chest: 13, foreR: 14, foreL: 15, shinR: 16, shinL: 17, weapon: 18, head: 19, earR: 20, earL: 21, tail2: 22, jaw: 23 } as const;
-export const LIMBS = 24;
+export const LIMB = { body: 0, legR: 1, legL: 2, armR: 3, armL: 4, hindR: 5, hindL: 6, midR: 7, midL: 8, tail: 9, roll: 10, wingR: 11, wingL: 12, chest: 13, foreR: 14, foreL: 15, shinR: 16, shinL: 17, weapon: 18, head: 19, earR: 20, earL: 21, tail2: 22, jaw: 23, wave: 24 } as const;
+export const LIMBS = 25;
 // The limb each one hangs from (-1: from the body itself)
-export const PARENT: number[] = [-1, -1, -1, 13, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, 3, 4, 1, 2, 14, 13, 19, 19, 9, 19];
+export const PARENT: number[] = [-1, -1, -1, 13, 13, -1, -1, -1, -1, -1, -1, -1, -1, -1, 3, 4, 1, 2, 14, 13, 19, 19, 9, 19, -1];
 
 // How a stride looks: a leg swings this far forward and back at a walk, an arm a little less, against its leg
 const LEG = 0.62;
@@ -96,7 +98,9 @@ export const bob = (s: Stride) => Math.abs(Math.sin(s.phase)) * 0.035 * s.amp;
 // beat, faster when it flies on (fliers); `roll`: a ball under a level head (BB units); `tripod`: three legs that step one after another
 // (a deployed droideka); `glide`: no bob, a lean into a turn (astromechs on their treads, mouse and service droids, slugs, serpents);
 // `hover`: floating with a slow rise and fall, tilted into the way it goes (probe droids, spirits)
-export type Gait = "walk" | "quad" | "hexa" | "wings" | "roll" | "tripod" | "glide" | "hover" | "ride";
+// `slither` (2026-11-04): a long body carried by a wave, with legs, if it has any, stepping in threes (serpents, a krayt dragon); `crawl`: four
+// legs that lift and splay outward as they come forward, the spine and the tail waving (lizards)
+export type Gait = "walk" | "quad" | "hexa" | "wings" | "roll" | "tripod" | "glide" | "hover" | "ride" | "slither" | "crawl";
 export interface GaitStyle {
   // How fast the legs go round for the same speed
   cycle: number;
@@ -115,6 +119,8 @@ export const GAITS: Record<Gait, GaitStyle> = {
   roll: { cycle: 1, bob: 0, rock: 0 },
   tripod: { cycle: 1.8, bob: 0.4, rock: 0.02 },
   glide: { cycle: 1, bob: 0, rock: 0.025 },
+  slither: { cycle: 1.4, bob: 0, rock: 0 },
+  crawl: { cycle: 0.9, bob: 0.3, rock: 0.02 },
   hover: { cycle: 1, bob: 0, rock: 0, hover: 0, float: 0.06 },
   // A rider in the saddle: astride, the knees forward, the hands out on the reins, swaying with the beast's stride
   ride: { cycle: 1, bob: 0.6, rock: 0.03 },
@@ -140,7 +146,7 @@ export function setLimbQuaternion(p: Pose, limb: number, q: THREE.Quaternion) {
 
 // The pose of a gait at a point of its stride; `t` is the seconds the figure has been about (for wings that beat at rest and a float).
 // A ball's roll is not here: it follows the ground covered (`rollBall`)
-export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose(), persona: Persona = NEUTRAL): Pose {
+export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose(), persona: Persona = NEUTRAL, wave?: Wave): Pose {
   const swing = Math.sin(s.phase) * s.amp;
   const counter = Math.sin(s.phase + Math.PI) * s.amp;
   const reset = (limb: number) => out.set([0, 0, 0, 1], limb * 4);
@@ -161,6 +167,18 @@ export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose(), p
       setLimb(out, LIMB.hindR, AXIS.x, counter * 0.5);
       setLimb(out, LIMB.tail, AXIS.y, Math.sin(s.phase * 0.5 + t * 0.6) * (0.12 + 0.25 * s.amp));
       creatureLife(out, s, t, persona, 1);
+      break;
+    }
+    case "crawl": {
+      // Diagonal pairs step, each leg lifting and splaying outward as it comes forward; the head and ears live, the spine and tail wave
+      crawlLegs(out, s, [[LIMB.legR, LIMB.hindL, LIMB.midL], [LIMB.legL, LIMB.hindR, LIMB.midR]], 0.7, 0.55);
+      setLimb(out, LIMB.tail, AXIS.y, Math.sin(s.phase * 0.5 + t * 0.6) * (0.12 + 0.25 * s.amp));
+      creatureLife(out, s, t, persona, 1);
+      break;
+    }
+    case "slither": {
+      // (a krayt dragon's six legs, in threes, short steps; a serpent has none and is carried by its wave)
+      crawlLegs(out, s, [[LIMB.legR, LIMB.midL, LIMB.hindR], [LIMB.legL, LIMB.midR, LIMB.hindL]], 0.45, 0.35);
       break;
     }
     case "hexa": {
@@ -206,9 +224,45 @@ export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose(), p
       setLimb(out, LIMB.armL, AXIS.x, Math.sin(t * 1.3 + 1.7) * 0.06 + s.amp * 0.25);
       setLimb(out, LIMB.legR, AXIS.x, Math.sin(t * 1.1 + 0.6) * 0.05 + s.amp * 0.2);
       setLimb(out, LIMB.legL, AXIS.x, Math.sin(t * 1.1 + 2.2) * 0.05 + s.amp * 0.2);
+      // (a hutt's forearms, lifting and settling as it talks)
+      setLimb(out, LIMB.foreR, AXIS.x, Math.sin(t * 0.9 + persona.phase) * 0.1 - 0.05);
+      setLimb(out, LIMB.foreL, AXIS.x, Math.sin(t * 0.8 + persona.phase + 2) * 0.1 - 0.05);
       break;
   }
+  // The wave: the tail's own swing gives way to it
+  if (wave) {
+    reset(LIMB.tail);
+    reset(LIMB.tail2);
+    setWave(out, wave, s, t, persona.phase);
+  }
   return out;
+}
+
+// A body's undulation: it starts at `origin` (a z in the figure's own frame) and runs back to the tail, `amp` metres to a side at full (reached
+// a wavelength behind the origin), `length` the wavelength in metres. `idle` is the share of the swing it keeps standing (the rest comes with the
+// stride), `drive` how far the wave runs for each radian of the stride, `rate` how fast it runs by the clock (radians a second).
+export interface Wave { origin: number; amp: number; length: number; idle?: number; drive?: number; rate?: number }
+const TAU = Math.PI * 2;
+export function setWave(out: Pose, w: Wave, s: Stride, t: number, offset = 0): Pose {
+  const idle = w.idle ?? 0.3;
+  const amp = w.amp * (idle + (1 - idle) * s.amp);
+  const phase = (s.phase * (w.drive ?? 1) + t * (w.rate ?? 1) + offset) % TAU;
+  out.set([amp, TAU / w.length, phase, w.origin], LIMB.wave * 4);
+  return out;
+}
+// Legs that step in two alternating sets: each swings fore and aft by `reach` and, coming forward, lifts and splays outward by `splay`
+const CRAWL_E = new THREE.Euler();
+const LEFT_LIMBS: ReadonlySet<number> = new Set([LIMB.legL, LIMB.midL, LIMB.hindL]);
+function crawlLegs(out: Pose, s: Stride, sets: number[][], reach: number, splay: number) {
+  sets.forEach((set, i) => {
+    const ph = s.phase + i * Math.PI;
+    const swing = Math.sin(ph) * s.amp;
+    const lift = Math.max(0, -Math.cos(ph)) * s.amp;
+    for (const limb of set) {
+      Q.setFromEuler(CRAWL_E.set(swing * reach, 0, (LEFT_LIMBS.has(limb) ? 1 : -1) * lift * splay));
+      setLimbQuaternion(out, limb, Q);
+    }
+  });
 }
 
 // The life of a beast over its gait (2026-11-04: it stood and walked like a toy): the breath lifting its neck, the head dipping with each fore
@@ -288,7 +342,8 @@ export function limbMaterial<T extends THREE.Material>(base: T): T {
     // A quaternion a limb (body: none); the vertex is turned about its pivot, then about each joint it hangs from, the normal with it
     const head = `#include <common>\nattribute float limb;\nattribute vec3 pivot;\nuniform vec4 uQ[${LIMBS}];\nuniform vec3 uP[${LIMBS}];
 vec3 lqTurn(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }
-int lqParent(int i) { ${parents} return -1; }`;
+int lqParent(int i) { ${parents} return -1; }
+${WAVE_GLSL}`;
     const chain = (point: boolean, v: string) => `{ int li = int(limb + 0.5); if (li > 0) {
   ${point ? `${v} = pivot + lqTurn(uQ[li], ${v} - pivot);` : `${v} = lqTurn(uQ[li], ${v});`}
   int pa = lqParent(li);
@@ -296,10 +351,10 @@ int lqParent(int i) { ${parents} return -1; }`;
 } }`;
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", head)
-      .replace("#include <begin_vertex>", `#include <begin_vertex>\n${chain(true, "transformed")}`);
-    if (lit) shader.vertexShader = shader.vertexShader.replace("#include <beginnormal_vertex>", `#include <beginnormal_vertex>\n${chain(false, "objectNormal")}`);
+      .replace("#include <begin_vertex>", `#include <begin_vertex>\n${chain(true, "transformed")}\ntransformed = lqWavePoint(uQ[${WAVE_LIMB}], transformed);`);
+    if (lit) shader.vertexShader = shader.vertexShader.replace("#include <beginnormal_vertex>", `#include <beginnormal_vertex>\n${chain(false, "objectNormal")}\nobjectNormal = lqWaveNormal(uQ[${WAVE_LIMB}], objectNormal, position.z);`);
   };
-  m.customProgramCacheKey = () => `limbs2:${lit ? "lit" : "flat"}:${beforeKey ?? ""}`;
+  m.customProgramCacheKey = () => `limbs3:${lit ? "lit" : "flat"}:${beforeKey ?? ""}`;
   // A surface whose maps load later hands them to its copies too (surfaces.tsx surfaceMaterial), until the copy is let go
   const followers = (base as THREE.Material & { followers?: Set<THREE.Material> }).followers;
   if (followers) {

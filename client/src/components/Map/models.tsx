@@ -12,7 +12,7 @@ import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
-import { advance, personaOf, type Persona, bob, LIMB, LIMBS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
+import { advance, personaOf, type Persona, type Wave, bob, LIMB, LIMBS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
 import { bodyParts, useBodyParts, creatureParts, useCreatureParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
@@ -3717,7 +3717,7 @@ function droidBody(k: Kit, kind: string, name: string) {
 
 type QuadHead = "long" | "blunt" | "cat" | "dog" | "rhino" | "reptile" | "boar";
 type Plan =
-  | { plan: "quad"; len: number; h: number; girth: number; head: QuadHead; horns?: "curl" | "forward" | "back" | "tusks"; tail: number; fur?: boolean; legs?: number; color: string; belly?: string; spikes?: boolean; neck?: number; stripes?: string }
+  | { plan: "quad"; len: number; h: number; girth: number; head: QuadHead; horns?: "curl" | "forward" | "back" | "tusks"; tail: number; fur?: boolean; legs?: number; color: string; belly?: string; spikes?: boolean; neck?: number; stripes?: string; sprawl?: boolean }
   | { plan: "brute"; bulk: number; arms: number; head: "rancor" | "ape" | "wampa" | "horned"; color: string; fur?: boolean }
   | { plan: "runner"; head: "bird" | "lizard" | "tauntaun"; color: string; crest?: string; fur?: boolean }
   | { plan: "serpent"; len: number; r: number; head: "dragon" | "maw" | "fish" | "snake"; legs?: number; color: string; belly?: string }
@@ -3731,7 +3731,7 @@ type Plan =
 
 const BEASTS: [RegExp, Plan][] = [
   [/bantha/, { plan: "quad", len: 0.8, h: 0.45, girth: 0.34, head: "blunt", horns: "curl", tail: 0.25, fur: true, color: "#7a5c40" }],
-  [/dewback/, { plan: "quad", len: 0.9, h: 0.22, girth: 0.24, head: "reptile", tail: 0.8, color: "#6f7a5a", belly: "#a9a07a" }],
+  [/dewback/, { plan: "quad", len: 0.9, h: 0.22, girth: 0.24, head: "reptile", tail: 0.8, color: "#6f7a5a", belly: "#a9a07a", sprawl: true }],
   [/reek/, { plan: "quad", len: 0.85, h: 0.42, girth: 0.32, head: "rhino", horns: "forward", tail: 0.3, color: "#8a6a5a", belly: "#b09a7a" }],
   [/ronto|fambaa|ghest|scrange/, { plan: "quad", len: 0.9, h: 0.5, girth: 0.36, head: "reptile", tail: 0.6, color: "#8a7a6a", belly: "#b5a890", neck: 1.4 }],
   [/eopie|fathier|aryx|katarn/, { plan: "quad", len: 0.75, h: 0.55, girth: 0.22, head: "long", tail: 0.35, color: "#c9b8a0", neck: 1.3 }],
@@ -3763,9 +3763,10 @@ const BEASTS: [RegExp, Plan][] = [
   [/sarlacc/, { plan: "tentacles", count: 8, color: "#c9a07a", maw: true, ground: true }],
   [/womp rat|hive rat|scurrier|greysor|rat/, { plan: "critter", kind: "rat", color: "#6a5a4a" }],
   [/worrt|clodhopper/, { plan: "critter", kind: "frog", color: "#7a6a3a" }],
+  // (the monkey-lizard first: its name ends in "lizard")
+  [/monkey-lizard|kowakian/, { plan: "critter", kind: "monkey", color: "#c9a06a" }],
   [/ysalamir|gizka|lizard(?!-)|mucous salamander/, { plan: "critter", kind: "lizard", color: "#7a8a5a" }],
   [/jakrab|vulptex/, { plan: "critter", kind: "rabbit", color: "#b8a080" }],
-  [/monkey-lizard|kowakian/, { plan: "critter", kind: "monkey", color: "#c9a06a" }],
   [/nuna/, { plan: "critter", kind: "bird", color: "#9a7a5a" }],
   [/mott|steep|swamp slug|spotlight sloth/, { plan: "critter", kind: "hippo", color: "#7a6a6a" }],
   [/hutt/, { plan: "slug", color: "#7c8a4a", hutt: true }],
@@ -3802,7 +3803,7 @@ export function hideOf(p: Plan): Finish {
     case "runner": return p.head === "lizard" ? "scales" : "skin";
     case "serpent": return p.head === "fish" ? "skin" : "scales";
     case "bug": return "plate";
-    case "critter": return p.kind === "rat" || p.kind === "rabbit" || p.kind === "monkey" || p.kind === "bird" ? "fur" : p.kind === "lizard" ? "scales" : p.kind === "bug" ? "plate" : "skin";
+    case "critter": return p.kind === "rat" || p.kind === "rabbit" || p.kind === "bird" ? "fur" : p.kind === "lizard" || p.kind === "monkey" ? "scales" : p.kind === "bug" ? "plate" : "skin";
     case "flyer": return p.head === "bird" ? "fur" : "leather";
     case "slug":
     case "tentacles": return "skin";
@@ -4125,8 +4126,8 @@ function runner(k: Kit, p: Extract<Plan, { plan: "runner" }>, seed: number) {
     k.limb(LIMB.head, [0, headAt[1] - 0.06, headAt[2] - 0.08], () => k.group(headAt, undefined, undefined, () => runnerHead(k, p, c, molded, beasts)));
   });
   k.limb(LIMB.tail, [0, y, -0.2], () => {
-    k.tube([[0, y, -0.2], [0, y - 0.05, -0.4]], (t) => 0.1 * (1 - t * 0.3), c, { along: 5, around: 7 });
-    k.limb(LIMB.tail2, [0, y - 0.05, -0.4], () => k.tube([[0, y - 0.05, -0.4], [0, y - 0.15, -0.62]], (t) => 0.07 * (1 - t * 0.75), c, { along: 5, around: 7 }));
+    k.tube([[0, y, -0.2], [0, y - 0.05, -0.4]], (t) => 0.1 * (1 - t * 0.3), c, { along: 8, around: 7 });
+    k.limb(LIMB.tail2, [0, y - 0.05, -0.4], () => k.tube([[0, y - 0.05, -0.4], [0, y - 0.15, -0.62]], (t) => 0.07 * (1 - t * 0.75), c, { along: 8, around: 7 }));
   });
   if (p.crest) for (let i = 0; i < 5; i++) k.cone(0.025, 0.12, p.crest, { at: [0, y + 0.2 - i * 0.02, 0.1 - i * 0.1], rot: [-0.6, 0, 0], seg: 5 });
 }
@@ -4156,19 +4157,51 @@ function runnerHead(k: Kit, p: Extract<Plan, { plan: "runner" }>, c: string, mol
 }
 
 // A long body winding over the ground: a dragon with its legs, a worm's round maw, a fish
+const SERPENT_NECK = 0.45;
+// A dragon's legs in pairs down its length (the front, the middle, the hind: a krayt dragon's six), each from the flank out to the knee and down to a
+// splayed foot with its claws (the thigh and the reptile's foot of creature.glb, fitted; a tube, a pad and three claws until it is in), stepping in
+// threes (interiors/limbs.ts crawlLegs)
+function serpentLegs(k: Kit, p: Extract<Plan, { plan: "serpent" }>, base: number) {
+  const { len, r, color } = p;
+  const beasts = creatureParts();
+  const thigh = beasts?.quad_thigh;
+  const foot = beasts?.quad_foot;
+  const rows = (p.legs ?? 0) / 2;
+  const hide = shade(color, 0.92);
+  for (let i = 0; i < rows; i++) {
+    const z = SERPENT_NECK - len * (0.15 + (rows === 1 ? 0 : (0.5 * i) / (rows - 1)));
+    const [right, left] = i === 0 ? [LIMB.legR, LIMB.legL] : i === rows - 1 ? [LIMB.hindR, LIMB.hindL] : [LIMB.midR, LIMB.midL];
+    k.pair((s) => {
+      const hip: V3 = [s * r * 0.8, base - r * 0.2, z];
+      const knee: V3 = [s * r * 2.4, base * 0.72, z + 0.03];
+      const ankle: V3 = [s * r * 2.5, 0.08, z + 0.07];
+      k.limb(s > 0 ? left : right, hip, () => {
+        if (thigh && foot) {
+          sculpt(k, thigh.part, { 0: { color: hide } }, (g) => fitLimb(g, { from: hip, to: knee, nominal: 0.25, bulk: 0.75 }));
+          sculpt(k, foot.part, { 0: { color: hide }, 1: { color: shade(color, 0.55), finish: "matte" } }, (g) => fitLimb(g, { from: knee, to: ankle, nominal: 0.23, bulk: 0.75 }));
+          return;
+        }
+        k.tube([hip, knee, ankle], (t) => r * (0.42 - t * 0.2), hide, { along: 8, around: 7 });
+        k.box([r * 0.7, 0.04, r * 1.3], shade(color, 0.75), { at: [ankle[0], 0.02, ankle[2] + 0.04], round: 0.015 });
+        for (let c = -1; c <= 1; c++) k.cone(0.014, 0.07, "#e8dcc0", { at: [ankle[0] + c * r * 0.25, 0.025, ankle[2] + r * 0.8], rot: [Math.PI / 2, 0, 0], seg: 4 });
+      });
+    });
+  }
+}
 function serpent(k: Kit, p: Extract<Plan, { plan: "serpent" }>) {
   const { len, r, color } = p;
+  // A moving serpent is built straight and bent by the wave in its shader (interiors/limbs.ts Wave: it starts at the neck, SERPENT_NECK); one
+  // that is only looked at keeps a curve of its own. A dragon with legs (a krayt dragon) is lifted on them.
+  const base = r + (p.head === "fish" ? 0.3 : 0) + (p.legs ? 0.2 : 0);
+  const curve = k.animated ? 0 : 0.18;
   const pts: V3[] = [];
   for (let i = 0; i <= 8; i++) {
     const t = i / 8;
-    pts.push([Math.sin(t * Math.PI * 2) * 0.18, r + (p.head === "fish" ? 0.3 : 0) + (i === 0 ? r * 0.6 : 0), 0.45 - t * len]);
+    pts.push([Math.sin(t * Math.PI * 2) * curve, base + (i === 0 ? r * 0.6 : 0), SERPENT_NECK - t * len]);
   }
-  k.tube(pts, (t) => r * (t < 0.15 ? 0.9 + t : 1.05 - t * 0.85), color, { along: 28, around: 10 });
-  if (p.belly) k.tube(pts.map(([x, y, z]) => [x, y - r * 0.35, z] as V3), (t) => r * 0.7 * (1.0 - t * 0.85), p.belly, { along: 24, around: 8 });
-  if (p.legs) for (let i = 0; i < p.legs / 2; i++) {
-    const [x, , z] = pts[1 + i * 2];
-    k.pair((s) => k.tube([[x + s * r * 0.8, r, z], [x + s * r * 1.8, r * 0.9, z + 0.04], [x + s * r * 2.0, 0.03, z + 0.08]], (t) => r * 0.4 * (1 - t * 0.5), shade(color, 0.9), { along: 6, around: 6 }));
-  }
+  k.tube(pts, (t) => r * (t < 0.15 ? 0.9 + t : 1.05 - t * 0.85), color, { along: 32, around: 10 });
+  if (p.belly) k.tube(pts.map(([x, y, z]) => [x, y - r * 0.35, z] as V3), (t) => r * 0.7 * (1.0 - t * 0.85), p.belly, { along: 28, around: 8 });
+  if (p.legs) serpentLegs(k, p, base);
   const [hx, hy, hz] = pts[0];
   const heads = creatureParts();
   const headPiece = heads?.[`serpent_${p.head}`];
@@ -4380,18 +4413,28 @@ function critter(k: Kit, p: Extract<Plan, { plan: "critter" }>, seed: number) {
       k.pair((s) => k.sphere(0.05, "#d9c04a", { at: [s * 0.08, 0.27, 0.1], finish: "sheen", seg: [8, 6] }));
       k.pair((s) => k.tube([[s * 0.12, 0.1, -0.06], [s * 0.22, 0.1, -0.02], [s * 0.2, 0.02, 0.06]], 0.035, c, { along: 6, around: 5 }));
       return;
-    case "lizard":
+    case "lizard": {
+      // (the legs sprawl out from the flank, each ending in a fan of toes; they step in diagonal pairs, the spine bends and the tail lashes: gait "crawl")
+      const lizardTail = () => k.tube([[0, 0.07, -0.12], [k.animated ? 0 : 0.06, 0.05, -0.3], [0, 0.03, -0.48]], (t) => 0.04 * (1 - t * 0.85), c, { along: 12, around: 5 });
+      const lizardLegs = () => {
+        for (const z of [0.08, -0.08]) k.pair((s) => k.limb(z > 0 ? (s > 0 ? LIMB.legL : LIMB.legR) : s > 0 ? LIMB.hindL : LIMB.hindR, [s * 0.05, 0.07, z], () => {
+          const foot: V3 = [s * 0.12, 0.012, z + 0.04];
+          k.tube([[s * 0.05, 0.07, z], [s * 0.11, 0.05, z + 0.01], foot], 0.015, c, { along: 4, around: 4 });
+          for (const a of [-0.55, 0, 0.55]) k.cone(0.007, 0.045, shade(c, 0.7), { at: [foot[0] + (Math.sin(a) + s * 0.4) * 0.02, 0.012, foot[2] + Math.cos(a) * 0.02], rot: [Math.PI / 2, 0, -a - s * 0.4], seg: 4 });
+        }));
+      };
       if (small(0.06, 0.2, [0, 0.08, 0], "lizard", 0.5, [0, 0.09, 0.2])) {
-        k.tube([[0, 0.07, -0.15], [0.06, 0.05, -0.3], [0.02, 0.03, -0.45]], (t) => 0.04 * (1 - t * 0.8), c, { along: 6, around: 5 });
-        for (const z of [0.08, -0.08]) k.pair((s) => k.limb(z > 0 ? (s > 0 ? LIMB.legL : LIMB.legR) : s > 0 ? LIMB.hindL : LIMB.hindR, [s * 0.05, 0.07, z], () => k.tube([[s * 0.05, 0.07, z], [s * 0.1, 0.05, z + 0.02], [s * 0.11, 0.01, z + 0.04]], 0.015, c, { along: 3, around: 4 })));
+        lizardTail();
+        lizardLegs();
         return;
       }
       k.capsule(0.06, 0.24, c, { at: [0, 0.08, 0], rot: [Math.PI / 2, 0, 0], seg: 8 });
-      k.tube([[0, 0.07, -0.15], [0.06, 0.05, -0.3], [0.02, 0.03, -0.45]], (t) => 0.04 * (1 - t * 0.8), c, { along: 6, around: 5 });
+      lizardTail();
       k.capsule(0.045, 0.06, c, { at: [0, 0.09, 0.2], rot: [Math.PI / 2, 0, 0], seg: 8 });
-      for (const z of [0.08, -0.08]) k.pair((s) => k.limb(z > 0 ? (s > 0 ? LIMB.legL : LIMB.legR) : s > 0 ? LIMB.hindL : LIMB.hindR, [s * 0.05, 0.07, z], () => k.tube([[s * 0.05, 0.07, z], [s * 0.1, 0.05, z + 0.02], [s * 0.11, 0.01, z + 0.04]], 0.015, c, { along: 3, around: 4 })));
+      lizardLegs();
       k.pair((s) => eye([s * 0.03, 0.12, 0.23], 0.012));
       return;
+    }
     case "rabbit":
       if (small(0.1, 0.1, [0, 0.14, 0], "cat", 0.42, [0, 0.24, 0.12], { name: "ear_long", scale: 0.8, rot: [-0.1, 0, -0.2] })) return;
       k.blob(0.12, c, { at: [0, 0.14, 0], smooth: true, rough: 0.08, seed, squash: [0.9, 1, 1.3] });
@@ -4400,11 +4443,16 @@ function critter(k: Kit, p: Extract<Plan, { plan: "critter" }>, seed: number) {
       k.pair((s) => eye([s * 0.035, 0.26, 0.17], 0.014));
       return;
     case "monkey":
+      // (a monkey-lizard: arms that swing, a spine and a long tail that lash with each step; the tail trails and its tip lifts)
       k.blob(0.1, c, { at: [0, 0.3, 0], smooth: true, rough: 0.1, seed, squash: [1, 1.3, 0.9] });
       k.sphere(0.08, c, { at: [0, 0.46, 0.02], seg: [10, 8] });
       k.pair((s) => k.capsule(0.02, 0.14, c, { at: [s * 0.1, 0.52, 0], rot: [0, 0, s * -0.9], seg: 6 }));
       k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * 0.06, 0.24, 0], () => k.tube([[s * 0.06, 0.24, 0], [s * 0.08, 0.12, 0.04], [s * 0.06, 0.02, 0]], 0.02, c, { along: 4, around: 4 })));
-      k.tube([[0, 0.24, -0.08], [0.08, 0.32, -0.2], [0.1, 0.46, -0.18]], 0.016, c, { along: 6, around: 4 });
+      k.pair((s) => k.limb(s > 0 ? LIMB.armL : LIMB.armR, [s * 0.09, 0.38, 0.02], () => {
+        k.tube([[s * 0.09, 0.38, 0.02], [s * 0.13, 0.28, 0.05], [s * 0.11, 0.2, 0.1]], 0.016, c, { along: 4, around: 4 });
+        k.sphere(0.02, shade(c, 0.8), { at: [s * 0.11, 0.19, 0.11], seg: [6, 4] });
+      }));
+      k.tube([[0, 0.25, -0.08], [0, 0.2, -0.3], [0, 0.15, -0.5], [0, k.animated ? 0.2 : 0.3, -0.68]], (t) => 0.024 * (1 - t * 0.7), c, { along: 14, around: 5 });
       k.pair((s) => eye([s * 0.03, 0.48, 0.08], 0.014));
       return;
     case "bird":
@@ -4435,6 +4483,33 @@ function critter(k: Kit, p: Extract<Plan, { plan: "critter" }>, seed: number) {
   }
 }
 
+// A hutt's arms (2026-11-04, the user: "the Hutt [has no] hands"): short and thick from the shoulders, the forearms bent forward to rest on the belly
+// in hands with a broad palm, four stubby fingers and a thumb (hutt_upper and hutt_fore of creature.glb, fitted shoulder to elbow to wrist; a tube, a
+// fist and three fingers until it is in). The arms hang from their own joints, the forearms from the arms (interiors/limbs.ts glide).
+function hutt_arms(k: Kit, c: string) {
+  const parts = creatureParts();
+  const upper = parts?.hutt_upper;
+  const fore = parts?.hutt_fore;
+  k.pair((s) => {
+    const shoulder: V3 = [s * 0.4, 0.58, 0.12];
+    const elbow: V3 = [s * 0.5, 0.42, 0.2];
+    const wrist: V3 = [s * 0.34, 0.47, 0.4];
+    k.limb(s > 0 ? LIMB.armL : LIMB.armR, shoulder, () => {
+      if (upper && fore) sculpt(k, upper.part, { 0: { color: c } }, (g) => fitLimb(g, { from: shoulder, to: elbow, nominal: 0.2, bulk: 1, side: s > 0 ? -1 : 1 }));
+      else k.tube([shoulder, elbow], 0.06, c, { along: 4, around: 6 });
+      k.limb(s > 0 ? LIMB.foreL : LIMB.foreR, elbow, () => {
+        if (upper && fore) {
+          sculpt(k, fore.part, { 0: { color: c } }, (g) => fitLimb(g, { from: elbow, to: wrist, nominal: 0.2, bulk: 1, side: s > 0 ? -1 : 1 }));
+          return;
+        }
+        k.tube([elbow, wrist], (t) => 0.055 - t * 0.012, c, { along: 4, around: 6 });
+        k.sphere(0.06, shade(c, 1.05), { at: [wrist[0] - s * 0.04, wrist[1] + 0.02, wrist[2] + 0.07], scale: [1.2, 0.7, 1], seg: [8, 6] });
+        for (let i = -1; i <= 1; i++) k.cone(0.016, 0.07, shade(c, 1.05), { at: [wrist[0] - s * 0.04 + i * 0.035, wrist[1] - 0.02, wrist[2] + 0.14], rot: [Math.PI / 2 + 0.3, 0, 0], seg: 5 });
+      });
+    });
+  });
+}
+
 // A slug: a hutt sits up with its arms folded on its belly; others crawl
 function slug(k: Kit, p: Extract<Plan, { plan: "slug" }>) {
   const c = p.color;
@@ -4444,7 +4519,7 @@ function slug(k: Kit, p: Extract<Plan, { plan: "slug" }>) {
     mould(k, hutt, c);
     const [ex, ey, ez, er] = hutt.eyes ?? [0.1, 0.98, 0.28, 0.035];
     k.pair((s) => k.sphere(er, "#f0a03c", { at: [s * ex, ey, ez], finish: "glow", seg: [8, 6] }));
-    k.pair((s) => k.tube([[s * 0.32, 0.6, 0.1], [s * 0.36, 0.45, 0.3], [s * 0.1, 0.42, 0.42]], 0.05, c, { along: 6, around: 6 }));
+    hutt_arms(k, c);
     return;
   }
   if (p.hutt) {
@@ -4453,7 +4528,7 @@ function slug(k: Kit, p: Extract<Plan, { plan: "slug" }>) {
     k.blob(0.26, shade(c, 1.12), { at: [0, 0.9, 0.06], smooth: true, rough: 0.05, seed: 2, squash: [1.25, 0.9, 1.05] });
     k.box([0.32, 0.03, 0.04], "#3a2a1a", { at: [0, 0.82, 0.3], round: 0.012 });
     k.pair((s) => k.sphere(0.035, "#f0a03c", { at: [s * 0.1, 0.98, 0.28], finish: "glow", seg: [8, 6] }));
-    k.pair((s) => k.tube([[s * 0.32, 0.6, 0.1], [s * 0.36, 0.45, 0.3], [s * 0.1, 0.42, 0.42]], 0.05, c, { along: 6, around: 6 }));
+    hutt_arms(k, c);
     k.lathe([[0.36, 0.3], [0.4, 0.42], [0.3, 0.56]], shade(c, 1.2), { at: [0, 0, 0.05], seg: 16, start: -Math.PI / 2 + 0.5, arc: Math.PI - 1.0 });
     return;
   }
@@ -4626,7 +4701,7 @@ const HUMAN = lookOf({ name: "Human", skinColorOptions: "Light to dark tones", h
 // the way it faces), `fur` how long its hair is where it is furry (FurShells), `form` a droideka's (it rolls up to run: Droideka), `seat`
 // how high a rider sits on it (a beast that can be ridden)
 // `hold` and `saber`: what a person's hands hold and the lightsaber style they fight in (interiors/limbs.ts humanPose)
-export interface FigureSpec { key: string; build: (k: Kit) => void; height: number; wants?: Want[]; blade?: string; gait: Gait; ball?: number; wheel?: boolean; fur?: number; form?: "droideka"; seat?: number; hold?: Hold; saber?: SaberStyle }
+export interface FigureSpec { key: string; build: (k: Kit) => void; height: number; wants?: Want[]; blade?: string; gait: Gait; wave?: Wave; ball?: number; wheel?: boolean; fur?: number; form?: "droideka"; seat?: number; hold?: Hold; saber?: SaberStyle }
 
 // How each series of droid moves: battle and protocol droids, assassins and power droids walk; a BB unit rolls; an astromech glides on its
 // treads (a little waddle), as do mouse, service, medical and junk droids; a probe floats; spider and sensor droids go on four legs
@@ -4634,14 +4709,41 @@ const DROID_GAIT: Record<string, Gait> = { bb: "roll", astromech: "glide", r5: "
 // How each body plan of a creature moves
 function creatureGait(p: Plan): Gait {
   switch (p.plan) {
-    case "quad": return "quad";
+    case "quad": return p.sprawl ? "crawl" : "quad";
+    case "serpent": return "slither";
     case "brute":
     case "runner": return "walk";
     case "flyer": return p.perch ? "walk" : "wings";
     case "bug": return "hexa";
-    case "critter": return p.kind === "lizard" || p.kind === "hippo" || p.kind === "rat" ? "quad" : p.kind === "bug" ? "hexa" : p.kind === "frog" ? "glide" : "walk";
+    case "critter": return p.kind === "lizard" ? "crawl" : p.kind === "hippo" || p.kind === "rat" ? "quad" : p.kind === "bug" ? "hexa" : p.kind === "frog" ? "glide" : "walk";
     case "spirit": return "hover";
     default: return "glide";
+  }
+}
+// How a creature's body undulates over its gait (interiors/limbs.ts Wave; 2026-11-04, the user: "a serpent like slithering animation ... a basic
+// version of this to bi-ped beast tails and lizards"): a serpent from its neck back to the tail's tip, a lizard from the shoulders (the spine bends
+// with each step and the tail lashes), a runner's or a long-tailed beast's tail from its root, a hutt's tail, a monkey-lizard's tail. The wave
+// starts at the z the plan's tail or neck does, so what is ahead of it (the head, the legs) keeps its shape.
+export function waveOf(p: Plan): Wave | undefined {
+  switch (p.plan) {
+    case "serpent":
+      if (p.legs) return { origin: SERPENT_NECK, amp: 0.05, length: 1.0, idle: 0.15, drive: 1 };
+      if (p.head === "maw") return { origin: SERPENT_NECK, amp: 0.1, length: 1.1, idle: 0.2, drive: 0.9, rate: 0.7 };
+      if (p.head === "fish") return { origin: SERPENT_NECK, amp: 0.13, length: 0.8, idle: 0.3, drive: 1.2, rate: 1.1 };
+      return { origin: SERPENT_NECK, amp: 0.14, length: 0.7, idle: 0.3, drive: 1.3, rate: 1.4 };
+    case "quad":
+      if (p.sprawl) return { origin: p.len * 0.25, amp: 0.05, length: p.len * 1.4, idle: 0.2, drive: 1, rate: 0.8 };
+      return p.tail >= 0.5 ? { origin: -p.len / 2 - p.girth * 0.5, amp: 0.05 + 0.04 * p.tail, length: 0.7, idle: 0.4, drive: 0.8, rate: 1.2 } : undefined;
+    case "runner":
+      return { origin: -0.15, amp: 0.07, length: 0.8, idle: 0.35, drive: 1, rate: 1.1 };
+    case "critter":
+      if (p.kind === "lizard") return { origin: 0.08, amp: 0.035, length: 0.4, idle: 0.2, drive: 1.6, rate: 1.4 };
+      if (p.kind === "monkey") return { origin: -0.05, amp: 0.05, length: 0.45, idle: 0.5, drive: 1, rate: 1.2 };
+      return undefined;
+    case "slug":
+      return p.hutt ? { origin: -0.45, amp: 0.08, length: 0.8, idle: 0.6, drive: 0.5, rate: 0.7 } : undefined;
+    default:
+      return undefined;
   }
 }
 // How long a creature's fur is, and how high a rider sits on its back
@@ -4668,7 +4770,7 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
   }
   if (kind === "beast" || kind === "horror") {
     const plan = creaturePlan(name, creature, size);
-    return { key: `beast:${plan.plan}:${JSON.stringify(plan)}:${seed % 4}${creatureParts() ? ":sc" : ""}`, build: (k) => buildCreature(k, plan, seed % 4), height: plan.plan === "brute" ? 1.4 : plan.plan === "flyer" && !plan.perch ? 1.3 : 1.0, gait: creatureGait(plan), fur: furOf(plan), seat: seatOf(plan) };
+    return { key: `beast:${plan.plan}:${JSON.stringify(plan)}:${seed % 4}${creatureParts() ? ":sc" : ""}`, build: (k) => buildCreature(k, plan, seed % 4), height: plan.plan === "brute" ? 1.4 : plan.plan === "flyer" && !plan.perch ? 1.3 : 1.0, gait: creatureGait(plan), wave: waveOf(plan), fur: furOf(plan), seat: seatOf(plan) };
   }
   if (kind === "swarm") {
     const plan = creaturePlan(name.replace(/swarm of /i, ""), creature, "tiny");
@@ -4682,7 +4784,7 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
       gait: tiny.plan === "flyer" ? "wings" : "hexa",
     };
   }
-  if (kind === "hutt" || /hutt/i.test(name)) return { key: `beast:hutt${creatureParts() ? ":sc" : ""}`, build: (k) => slug(k, { plan: "slug", color: "#7c8a4a", hutt: true }), height: 1.2, gait: "glide" };
+  if (kind === "hutt" || /hutt/i.test(name)) return { key: `beast:hutt${creatureParts() ? ":sc" : ""}`, build: (k) => slug(k, { plan: "slug", color: "#7c8a4a", hutt: true }), height: 1.2, gait: "glide", wave: waveOf({ plan: "slug", color: "", hutt: true }) };
   if (kind === "crowd") {
     return {
       key: `crowd:${seed % 6}${bodyParts() ? ":sc" : ""}`,
@@ -4769,7 +4871,7 @@ const FUR_DETAIL = typeof matchMedia !== "undefined" && matchMedia("(pointer: co
 // rolls or glides does not bob. `ball` is the radius of a ball it rolls on (`wheel`: one that only rolls the way it faces); `fur` the
 // length of its hair, drawn in shells that move with it
 // `crew`: aboard a craft (Crew): posed in its seat, the hips at the group's origin
-function Mover({ id, build, gait, ball, wheel, fur, seat, ring, hold = "none", saber = "niman", fighting, crew, persona }: { id: string; build: (k: Kit) => void; gait: Gait; ball?: number; wheel?: boolean; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh>; hold?: Hold; saber?: SaberStyle; fighting?: boolean; crew?: CrewSeat; persona?: Persona }) {
+function Mover({ id, build, gait, wave, ball, wheel, fur, seat, ring, hold = "none", saber = "niman", fighting, crew, persona }: { id: string; build: (k: Kit) => void; gait: Gait; wave?: Wave; ball?: number; wheel?: boolean; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh>; hold?: Hold; saber?: SaberStyle; fighting?: boolean; crew?: CrewSeat; persona?: Persona }) {
   const m = useModel(`${id}:anim`, (k) => { k.animated = true; build(k); });
   const mats = useMemo(() => Object.fromEntries(FINISHES.map((f) => [f, limbMaterial(MATERIALS[f])])) as Record<Finish, THREE.Material>, []);
   const furMat = useMemo(() => (fur ? limbMaterial(furShellMaterial(fur, FUR_DETAIL)) : null), [fur]);
@@ -4811,7 +4913,7 @@ function Mover({ id, build, gait, ball, wheel, fur, seat, ring, hold = "none", s
       return;
     }
     const mo = told?.current ?? own;
-    const root = joints.jointed ? humanPose(stride, t, mo, easeMotion(ease, mo, dt), hold, mo.style ?? saber, nowSeconds(), joints.legs, w.pose, persona) : (gaitPose(gait, stride, t, w.pose, persona), null);
+    const root = joints.jointed ? humanPose(stride, t, mo, easeMotion(ease, mo, dt), hold, mo.style ?? saber, nowSeconds(), joints.legs, w.pose, persona) : (gaitPose(gait, stride, t, w.pose, persona, wave), null);
     // At a table (people only): the body eases down onto the seat and the seated pose is laid over the walking one; a gesture swells over the arms
     const s = gait === "walk" ? seat?.current : undefined;
     w.sit = s ? easeSit(w.sit, s.sit, dt) : 0;
@@ -5002,7 +5104,7 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
           <meshBasicMaterial color={ring} />
         </mesh>
       )}
-      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} name={name} deployed={fighting} /> : <Mover id={spec.key} build={spec.build} gait={riding ? "ride" : spec.gait} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} hold={crew ? "none" : base.hold} saber={base.saber} fighting={fighting} crew={crew} persona={persona} />}
+      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} name={name} deployed={fighting} /> : <Mover id={spec.key} build={spec.build} gait={riding ? "ride" : spec.gait} wave={riding ? undefined : spec.wave} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} hold={crew ? "none" : base.hold} saber={base.saber} fighting={fighting} crew={crew} persona={persona} />}
       {marker && (
         <mesh position={[0, Math.max(1.55, spec.height + 0.3), 0]}>
           <octahedronGeometry args={[0.12]} />

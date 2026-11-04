@@ -223,6 +223,9 @@ test("a limb material carries its own pose, the program is shared by the copies,
   // (a limb is turned about its own joint and then about each joint it hangs from: a forearm with its upper arm and the chest)
   assert.match(shader.vertexShader, /lqParent/);
   assert.match(shader.vertexShader, /objectNormal = lqTurn/);
+  // (and then the body's wave, which starts at the pose's last slot)
+  assert.match(shader.vertexShader, /transformed = lqWavePoint\(uQ\[24\], transformed\)/);
+  assert.match(shader.vertexShader, /objectNormal = lqWaveNormal\(uQ\[24\], objectNormal, position\.z\)/);
   const flat = limbMaterial(new THREE.MeshBasicMaterial());
   const s2 = { uniforms: {} as Record<string, { value: unknown }>, vertexShader: "#include <common>\n#include <begin_vertex>" };
   flat.onBeforeCompile(s2 as never, {} as never);

@@ -351,6 +351,13 @@ function Walk() {
           <Figure kind={kind} ring={SIDE_COLORS.hostile} name={name} creature={kind === "beast" ? "beast" : "droid"} large={/bantha|acklay/i.test(name)} />
         </Pacer>
       ))}
+      {/* The undulating bodies (2026-11-04): serpents slither, a krayt dragon's six legs step, a lizard and a monkey-lizard crawl, a kaadu's tail
+          lashes, a hutt talks with its hands (`?section=walk&cam=0,3,24&look=0,0,20`) */}
+      {([["beast", "Opee Sea Killer"], ["beast", "Exogorth"], ["beast", "Krayt Dragon"], ["beast", "Snake"], ["beast", "Ysalamir"], ["beast", "Monkey-lizard"], ["beast", "Kaadu"], ["beast", "Dewback"], ["hutt", "Hutt"]] as const).map(([kind, name], i) => (
+        <Pacer key={name} z={21 + i * 1.9} speed={0.7 + (i % 3) * 0.1}>
+          <Figure kind={kind} ring={SIDE_COLORS.hostile} name={name} creature="beast" large={/krayt|exogorth|opee|hutt/i.test(name)} />
+        </Pacer>
+      ))}
     </>
   );
 }

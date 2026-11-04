@@ -188,6 +188,36 @@ class MirrorCamera extends Camera {
 
 // ---- Limbs (interiors/limbs.ts `limbMaterial`): every vertex turned about its limb's pivot, then about each joint it hangs from ---------
 
+// A body's undulation (2026-11-04, the user: "a serpent like slithering animation"): the last "limb" of a pose holds a wave, not a turn: x the
+// amplitude (metres; 0 for no wave), y the wave number (radians a metre), z the phase, w the z where it starts. Every vertex behind that z is
+// carried to one side by a wave that grows to its full size over a wavelength and turned to follow it (a tube stays a tube as it bends); what is
+// ahead of it (a serpent's head) keeps its shape and is carried and turned with the neck. A pose without the wave (the rest pose) is not touched.
+export const WAVE_LIMB = 24;
+export const WAVE_GLSL = `void lqWaveFrame(vec4 w, float z0, out float c, out vec3 t, out vec3 n) {
+  float zc = min(z0, w.w);
+  float u = w.w - zc;
+  float a = w.x * (0.3 + 0.7 * clamp(u * w.y * 0.1591549, 0.0, 1.0));
+  float ph = w.y * u - w.z;
+  c = a * sin(ph);
+  float s = -a * w.y * cos(ph);
+  float il = inversesqrt(1.0 + s * s);
+  t = vec3(s, 0.0, 1.0) * il;
+  n = vec3(1.0, 0.0, -s) * il;
+}
+vec3 lqWavePoint(vec4 w, vec3 v) {
+  if (w.x == 0.0) return v;
+  float c; vec3 t; vec3 n;
+  lqWaveFrame(w, v.z, c, t, n);
+  float zc = min(v.z, w.w);
+  return vec3(c, v.y, zc) + n * v.x + t * (v.z - zc);
+}
+vec3 lqWaveNormal(vec4 w, vec3 nr, float z0) {
+  if (w.x == 0.0) return nr;
+  float c; vec3 t; vec3 n;
+  lqWaveFrame(w, z0, c, t, n);
+  return n * nr.x + vec3(0.0, nr.y, 0.0) + t * nr.z;
+}`;
+
 // (Babylon asks a plugin for its code while the plugin is being made, before its own fields are set: the joints are passed beside it)
 let JOINTS: number[] = [];
 class LimbPlugin extends MaterialPluginBase {
@@ -236,9 +266,9 @@ class LimbPlugin extends MaterialPluginBase {
   for (int s = 0; s < 3; s++) { if (pa < 0) break; ${point ? `${v} = uP[pa].xyz + lqTurn(uQ[pa], ${v} - uP[pa].xyz);` : `${v} = lqTurn(uQ[pa], ${v});`} pa = lqParent(pa); }
 } }`;
     return {
-      CUSTOM_VERTEX_DEFINITIONS: `attribute float limb;\nattribute vec3 pivot;\nvec3 lqTurn(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }\nint lqParent(int i) { ${parents} return -1; }`,
-      CUSTOM_VERTEX_UPDATE_POSITION: chain(true, "positionUpdated"),
-      CUSTOM_VERTEX_UPDATE_NORMAL: chain(false, "normalUpdated"),
+      CUSTOM_VERTEX_DEFINITIONS: `attribute float limb;\nattribute vec3 pivot;\nvec3 lqTurn(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }\nint lqParent(int i) { ${parents} return -1; }\n${WAVE_GLSL}`,
+      CUSTOM_VERTEX_UPDATE_POSITION: `${chain(true, "positionUpdated")}\npositionUpdated = lqWavePoint(uQ[${WAVE_LIMB}], positionUpdated);`,
+      CUSTOM_VERTEX_UPDATE_NORMAL: `${chain(false, "normalUpdated")}\nnormalUpdated = lqWaveNormal(uQ[${WAVE_LIMB}], normalUpdated, position.z);`,
     };
   }
 }

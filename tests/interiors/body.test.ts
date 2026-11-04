@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { bodyParts, creatureParts, fitBlock, fitLimb, NOMINAL, partsOf, piecesOf, REGIONS, setBodyParts, setCreatureParts, type BodyParts, type CreatureParts, type PartName } from "../../client/src/components/Map/interiors/body";
 import { advance, eased, easeMotion, gaitPose, humanPose, LIMB, LIMBS, motion, NEUTRAL, PARENT, personaOf, restPose, standing, type Pose } from "../../client/src/components/Map/interiors/limbs";
-import { Kit, figureSpec, lookOf, creaturePlan, buildCreature } from "../../client/src/components/Map/models";
+import { Kit, figureSpec, lookOf, creaturePlan, buildCreature, waveOf } from "../../client/src/components/Map/models";
 
 // The sculpted body (tools/blender/build-body.py), read as the browser reads it
 const file = path.resolve(import.meta.dirname, "../../client/public/figures/body.glb");
@@ -361,5 +361,92 @@ test("every kind of beast is drawn from the sculpted parts when they are in: a b
   joints(after[1], LIMB.legL, LIMB.legR, LIMB.tail2);
   joints(after[7], LIMB.wingL, LIMB.wingR);
   joints(after[10], LIMB.armL, LIMB.armR, LIMB.legL, LIMB.hindR);
+  setCreatureParts(null);
+});
+
+test("serpents slither, lizards crawl, and the tails of runners and long-tailed beasts wave: each plan names its gait and its wave", () => {
+  const spec = (name: string) => figureSpec("beast", name, { looks: {}, creature: "beast" });
+  for (const n of ["Opee Sea Killer", "Exogorth", "Krayt Dragon", "Snake"]) {
+    assert.equal(spec(n).gait, "slither", n);
+    const w = spec(n).wave!;
+    assert.ok(w && w.amp > 0.03 && w.length > 0.5 && w.origin > 0.3, `${n} has a wave that starts at the neck`);
+  }
+  assert.equal(spec("Ysalamir").gait, "crawl");
+  assert.equal(spec("Dewback").gait, "crawl");
+  for (const n of ["Ysalamir", "Monkey-lizard", "Kaadu", "Dewback"]) assert.ok(spec(n).wave, `${n} has a wave`);
+  assert.ok(figureSpec("hutt", "Hutt Crime Lord", { looks: {}, creature: "beast" }).wave, "a hutt's tail waves");
+  assert.ok(spec("Kaadu").wave!.origin < 0 && spec("Monkey-lizard").wave!.origin < 0.1, "a tail's wave starts behind the hips");
+  assert.equal(waveOf(creaturePlan("bantha")), undefined, "a short tail does not wave");
+  assert.ok(waveOf(creaturePlan("nexu"))!.origin < -0.3, "a cat's long tail does");
+});
+
+test("a wave is written into the last slot of a pose, grows with the stride, keeps its own time for each beast, and gives the tail's own swing way", () => {
+  const w = { origin: 0.45, amp: 0.1, length: 0.8, idle: 0.3 };
+  const slot = (p: Pose) => Array.from(p.slice(LIMB.wave * 4, LIMB.wave * 4 + 4));
+  assert.deepEqual(slot(restPose()), [0, 0, 0, 1], "the rest pose has no wave");
+  assert.equal(slot(gaitPose("walk", standing(), 1, restPose(), NEUTRAL))[0], 0, "no wave unless asked");
+  const still = slot(gaitPose("slither", standing(), 1, restPose(), NEUTRAL, w));
+  const going = slot(gaitPose("slither", { phase: 1, amp: 1, speed: 3 }, 1, restPose(), NEUTRAL, w));
+  assert.ok(Math.abs(still[0] - 0.03) < 1e-6 && Math.abs(going[0] - 0.1) < 1e-6, `${still[0]} resting, ${going[0]} going`);
+  assert.ok(Math.abs(still[1] - (Math.PI * 2) / 0.8) < 1e-5 && Math.abs(still[3] - 0.45) < 1e-6);
+  const a = slot(gaitPose("slither", standing(), 1, restPose(), personaOf(1), w))[2];
+  const b = slot(gaitPose("slither", standing(), 1, restPose(), personaOf(2), w))[2];
+  assert.notEqual(a, b, "two serpents are not in step");
+  // by the clock a resting serpent still moves
+  const later = slot(gaitPose("slither", standing(), 2, restPose(), NEUTRAL, w))[2];
+  assert.notEqual(later, still[2]);
+  // the walk's own tail swing gives way to the wave
+  const swing = gaitPose("walk", { phase: 1, amp: 1, speed: 3 }, 1, restPose(), NEUTRAL);
+  const waved = gaitPose("walk", { phase: 1, amp: 1, speed: 3 }, 1, restPose(), NEUTRAL, w);
+  assert.ok(Math.abs(swing[LIMB.tail * 4 + 1]) > 0.01 && waved[LIMB.tail * 4 + 1] === 0 && waved[LIMB.tail2 * 4 + 1] === 0);
+  assert.equal(LIMBS, PARENT.length);
+});
+
+test("a krayt dragon's six legs step in threes and a lizard's four in pairs, each lifting outward as it comes forward; a serpent has none", () => {
+  const at = (gait: "slither" | "crawl", phase: number) => gaitPose(gait, { phase, amp: 1, speed: 3 }, 0, restPose(), NEUTRAL);
+  const angleX = (p: Pose, l: number) => 2 * Math.atan2(p[l * 4], p[l * 4 + 3]);
+  const angleZ = (p: Pose, l: number) => 2 * Math.atan2(p[l * 4 + 2], p[l * 4 + 3]);
+  const p = at("slither", Math.PI / 2);
+  // the right fore, left middle and right hind are together, against the others
+  assert.ok(Math.abs(angleX(p, LIMB.legR) - angleX(p, LIMB.midL)) < 1e-6 && Math.abs(angleX(p, LIMB.legR) - angleX(p, LIMB.hindR)) < 1e-6);
+  assert.ok(Math.abs(angleX(p, LIMB.legR) + angleX(p, LIMB.legL)) < 1e-6 && Math.abs(angleX(p, LIMB.legR)) > 0.2);
+  // a leg coming forward (its angle falling) is lifted out to its side, one going back is not
+  const forward = at("crawl", (3 * Math.PI) / 4);
+  const back = at("crawl", Math.PI / 4);
+  // (the right fore and the left hind step together: here they come forward, lifting outward, the left legs to +z and the right to -z)
+  assert.ok(angleZ(forward, LIMB.legR) < -0.1 && angleZ(forward, LIMB.hindL) > 0.1 && Math.abs(angleZ(forward, LIMB.legL)) < 1e-6 && Math.abs(angleZ(forward, LIMB.hindR)) < 1e-6);
+  assert.ok(angleZ(back, LIMB.legL) > 0.1 && angleZ(back, LIMB.hindR) < -0.1 && Math.abs(angleZ(back, LIMB.legR)) < 1e-6);
+  const rest = at("slither", 0);
+  assert.ok(Math.abs(angleX(rest, LIMB.legR)) < 1e-6);
+});
+
+test("a krayt dragon stands on feet, a hutt has hands, and a serpent that moves is built straight for its wave to bend", async () => {
+  setCreatureParts(await piecesFrom("creature.glb"));
+  const all = await piecesFrom("creature.glb");
+  const size = (n: string) => boundsOf(Object.values(all[n].part));
+  const fore = size("hutt_fore");
+  assert.ok(fore.min.y < -0.3 && fore.max.x > 0.07, `the hand is past the wrist and has a thumb: ${fore.min.toArray()} ${fore.max.toArray()}`);
+  assert.ok(trianglesOf(all.hutt_fore.part) > 400 && trianglesOf(all.hutt_upper.part) > 200);
+  const bake = (name: string, animated: boolean) => { const k = new Kit(); k.animated = animated; buildCreature(k, creaturePlan(name), 0); return k; };
+  const kinds = (k: Kit) => k.parts.reduce((n, p) => n + p.geo.index!.count / 3, 0);
+  const lowest = (k: Kit, limbs: number[]) => {
+    let y = Infinity;
+    for (const part of k.parts) {
+      const g = part.geo, limb = g.attributes.limb as THREE.BufferAttribute | undefined;
+      if (!limb) continue;
+      for (let i = 0; i < g.attributes.position.count; i++) if (limbs.includes(Math.round(limb.getX(i)))) y = Math.min(y, g.attributes.position.getY(i));
+    }
+    return y;
+  };
+  const krayt = bake("krayt dragon", true);
+  for (const l of [LIMB.legR, LIMB.legL, LIMB.midR, LIMB.midL, LIMB.hindR, LIMB.hindL]) assert.ok(krayt.jointMask & (1 << l), `krayt limb ${l}`);
+  const sole = lowest(krayt, [LIMB.legR, LIMB.legL, LIMB.midR, LIMB.midL, LIMB.hindR, LIMB.hindL]);
+  assert.ok(sole < 0.02 && sole > -0.03, `a krayt dragon's feet are on the ground: ${sole}`);
+  const hutt = bake("hutt", true);
+  for (const l of [LIMB.armR, LIMB.armL, LIMB.foreR, LIMB.foreL]) assert.ok(hutt.jointMask & (1 << l), `hutt limb ${l}`);
+  assert.ok(kinds(hutt) > kinds(bake("snake", true)));
+  // a moving serpent is straight (its wave bends it); one that is only looked at keeps its curve
+  const spread = (k: Kit) => { let a = Infinity, b = -Infinity; for (const part of k.parts) { const p = part.geo.attributes.position; for (let i = 0; i < p.count; i++) { a = Math.min(a, p.getX(i)); b = Math.max(b, p.getX(i)); } } return b - a; };
+  assert.ok(spread(bake("snake", false)) > spread(bake("snake", true)) + 0.1);
   setCreatureParts(null);
 });

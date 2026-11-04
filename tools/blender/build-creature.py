@@ -577,6 +577,33 @@ def hutt():
     tag(ob, eyes=[0.1, 0.98, 0.3, 0.028])
     return ob
 
+def finger(x, y0, length, r, curl=0.5, lean=0.0):
+    """a stubby finger hanging from the palm at (x, -y0), curling forward (+z) over three joints"""
+    p = Part("finger")
+    sec = []
+    for k in (0.0, 0.3, 0.65, 1.0):
+        d = length * k
+        sec.append((P(x + lean * d, -(y0 + d), 0.004 + curl * d * d / length), X, Z, r * (1.0 - 0.3 * k), r * (1.0 - 0.3 * k), 2.0))
+    sec, reg = rounded(sec, [0] * len(sec), r * 0.9, 2)
+    p.loft(sec, 6, reg)
+    ob = p.object()
+    ob.data.attributes.new("_MARK", "FLOAT", "POINT")
+    return ob
+
+def hutt_upper():
+    """a hutt's arm from the shoulder to the elbow (0.2 long): short and thick, the shoulder's mass above and the elbow's ball past it"""
+    ob = hanging("hutt_upper", [(-0.04, .075, .08, 0), (0.0, .092, .095, 0), (0.06, .092, .095, 0), (0.14, .075, .078, 0), (0.2, .062, .064, 0)], tip=0.05, sub=2)
+    displace(ob, [(0.0, -0.17, 0.02, 0.06, 0.05, 0.06, 0.008)])
+    return ob
+
+def hutt_fore():
+    """elbow to wrist (0.2 long) and the hand past it: a broad palm, four stubby fingers curled forward and a thumb"""
+    ob = hanging("hutt_fore", [(0.0, .06, .062, 0), (0.07, .066, .068, 0), (0.15, .052, .054, 0), (0.2, .046, .048, 0), (0.24, .07, .036, 0.004, 2.4), (0.29, .078, .032, 0.01, 2.5),
+                               (0.33, .072, .03, 0.014, 2.5)], sub=2)
+    fingers = [finger(x, 0.33, 0.1, 0.017, 0.5) for x in (-0.05, -0.017, 0.017, 0.05)]
+    thumb = finger(0.075, 0.27, 0.07, 0.02, 0.4, lean=0.5)
+    return join_all(ob, fingers + [thumb], "hutt_fore")
+
 # ---- Wings (from the shoulder out along +x, made for a span of 0.9: the code scales them) ---------------------------------------------------------
 
 def wing(name, L, le, te, thick, droop, notches, depth, ribs, rib_amp, wave=0.0):
@@ -643,14 +670,14 @@ def bug_leg_b():
     return ob
 
 # What share of a dense part is kept (the rest by name: heads 0.15, ears and the barrel 0.12, limbs 0.45)
-RATIO = {"hutt": 0.1, "brute_torso": 0.15, "wing_bird": 0.07, "wing_bat": 0.07, "wing_manta": 0.07, "serpent_maw": 0.12, "serpent_dragon": 0.15, "serpent_fish": 0.15, "serpent_snake": 0.15,
+RATIO = {"hutt": 0.1, "hutt_upper": 0.12, "hutt_fore": 0.2,"brute_torso": 0.15, "wing_bird": 0.07, "wing_bat": 0.07, "wing_manta": 0.07, "serpent_maw": 0.12, "serpent_dragon": 0.15, "serpent_fish": 0.15, "serpent_snake": 0.15,
          "brute_upper": 0.1, "brute_fore": 0.12, "brute_leg": 0.12, "quad_thigh": 0.3, "bug_thorax": 0.15, "bug_abdomen": 0.15, "bug_head": 0.15, "bug_leg_a": 0.3, "bug_leg_b": 0.3, "bird_bone": 0.3, "bird_foot": 0.3}
 
 def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     heads = [cat(), dog(), long_head(), blunt(), reptile(), rhino(), boar(), rancor(), wampa(), ape(), horned(), bird(), tauntaun(), lizard()]
     extras = [rancor_jaw(), beak(), quad_body(), quad_thigh(), quad_shin("hoof"), quad_shin("paw"), quad_shin("foot"), brute_torso(), brute_upper(), brute_fore(), brute_leg(), bird_bone(), bird_foot(),
-              serpent_dragon(), serpent_maw(), serpent_fish(), serpent_snake(), hutt(),
+              serpent_dragon(), serpent_maw(), serpent_fish(), serpent_snake(), hutt(), hutt_upper(), hutt_fore(),
               wing("wing_bird", .5, lambda t: .09 - .07 * t * t, lambda t: -.12 + .06 * t, lambda t: .012 - .006 * t, .06, 7, .04, 14, .004),
               wing("wing_bat", .5, lambda t: .08 - .05 * t ** 1.5, lambda t: -.16 + .14 * t, lambda t: .008 - .003 * t, .04, 3, .09, 3, .012),
               bug_thorax(), bug_abdomen(), bug_head(), bug_leg_a(), bug_leg_b(),

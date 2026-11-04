@@ -1,6 +1,6 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-11-04 (Windows PC). Branch **`main`**. origin/main is at 1277668; everything after it is local, NOT pushed.
+Written 2026-11-04 (Windows PC). Branch **`main`**. origin/main is at 1277668; everything after it is local, NOT pushed (the last commit is the slither one: `git log -1`).
 The user's own `client/src/components/ui/Alert.tsx` is still modified: leave it unless told, never commit it.
 `.claude/launch.json` (untracked) starts a dev server on PORT 5001 for browser checks (port 5000 is not running; nothing built or deployed).
 Do not push, rebuild 5000 or merge without the user's go-ahead.
@@ -14,6 +14,10 @@ Full write-ups in REVIVAL_NOTES.md: "A sculpted body and a person's own way of m
 - limbs.ts: four new limbs (`earR`, `earL`, `tail2`, `jaw`; `LIMBS` 24) and `creatureLife` (breathing, head dip and look-about, ear flicks, the tail's tip, panting)
   called by `gaitPose(..., persona)` for the quad and walk gaits; a beast's neck is `chest`, a brute's whole trunk is `chest`.
 - tests/interiors/body.test.ts has 13 tests (the people and the beasts). `npx tsc --noEmit` clean. See the last run of `npm test` below.
+
+## Latest (the user: "serpent-like slithering for the opee sea killer and exogorth, a basic version for bi-ped beast tails and lizards, Krayt dragon, monkey lizard, Ysalamir; the Krayt has no feet, the Hutt no hands")
+- New last pose slot `LIMB.wave` (24, `LIMBS` 25): a body's undulation done in both vertex shaders (`WAVE_GLSL` in babylon.ts, used by `limbMaterial` and `LimbPlugin`); `Wave` + `setWave` + `waveOf(plan)`; gaits `slither` and `crawl`; `FigureSpec.wave`. Krayt dragon: legs with thigh and reptile foot, lifted; hutt: `hutt_upper`/`hutt_fore` (hands with fingers) in creature.glb (rebuilt, both sizes); monkey-lizard regex now matches before the lizard's; tests in tests/interiors/body.test.ts (19 pass), tsc and vite build clean.
+- Checked in the browser gallery (`?section=walk&cam=0,16,27&look=0,0,28.5`): the exogorth and snake undulate, the Krayt stands on feet, the hutt has hands, the lizard sprawls. Not seen: the Krayt's legs stepping while it walks, a kaadu's tail wave, in a real campaign. Tune `waveOf` numbers by eye.
 
 ## Next, in order
 1. Look at it in the browser (gallery `?section=beasts|people|walk`) and in a real campaign, in motion: the brutes and quads walking, the hutt's face, the wings
