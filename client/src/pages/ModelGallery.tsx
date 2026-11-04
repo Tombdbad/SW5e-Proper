@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { babylonGl } from "@/components/Map/babylon";
 import { OrbitControls, Text, Billboard } from "@react-three/drei";
-import { usePartyLook, Figure, Furniture, stoolsOf, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount, type GunAim } from "@/components/Map/models";
+import { usePartyLook, Figure, Furniture, stoolsOf, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount, hue, type GunAim } from "@/components/Map/models";
 import { tokenOf, SIDE_COLORS } from "@/components/Map/sprites";
 import { Atmosphere } from "@/components/Map/interiors/Atmosphere.tsx";
 import { Stock } from "@/components/Map/interiors/Stock.tsx";
@@ -21,7 +21,8 @@ import { KIT_MODELS, kitUrl } from "@/components/Map/interiors/kitbash";
 import { floorOf } from "@/components/Map/sprites";
 import { gearOf } from "@/lib/sw5e/characterCalculation";
 import { furnishRoom, createRandom, VEHICLE_MAKES, caveMask, deckSquares, type Area, type RoomAsset } from "@shared/logic";
-import { seatState, motion, nowSeconds, SABER_STYLES, type Motion, type SaberStyle, type SeatState, type Shot } from "@/components/Map/interiors/limbs";
+import { seatState, motion, nowSeconds, beginSwing, personaOf, SABER_STYLES, SABER_KITS, type Motion, type SaberKit, type SaberStyle, type SeatState, type Shot } from "@/components/Map/interiors/limbs";
+import { styleFor, comboOf, moveOf, moveSeconds, FLAVOUR } from "@/components/Map/interiors/saberplay";
 import { MotionContext } from "@/components/Map/models";
 import { radiiOf as shapeRadii } from "@shared/logic/footprint";
 
@@ -294,8 +295,7 @@ function Acting({ act, speed = 0, style, index, children }: { act: MoveColumn | 
     mo.air = act === "jump" && t % 1.6 < 0.7;
     if ((act === "attack" || act === "forms") && now - Math.max(mo.firedAt, mo.swingAt) > (act === "forms" ? 1.1 : 0.9)) {
       mo.firedAt = now;
-      mo.swingAt = now;
-      mo.swing++;
+      beginSwing(mo, now);
       mo.kick = 0.5;
     }
     if (!g.current) return;
@@ -329,6 +329,57 @@ function Moves({ only }: { only?: string }) {
           <Label at={[0, 0.05, 1.3]} text={st} />
         </group>
       ))}
+    </>
+  );
+}
+
+// `sabers` (2026-11-04, the user: "AAA style combos ... based on the lightsabre forms and the type of weapon"): a row for each kind of weapon (a single
+// blade, a broadsaber, a crossguard, a double blade, two blades, a whip) and a column for each form, each figure fighting its combos one after another
+// (the next move beginning as the last runs out; a pause, then the form's next combo). `?section=sabers&kit=staff` shows one row, larger;
+// `&style=ataru` one figure; `&combo=1&move=2&u=0.6` holds it at 60% of the third move of its second combo (to look at one pose)
+function Duelist({ kit, style, combo, move, u, index }: { kit: SaberKit; style: SaberStyle; combo?: number; move?: number; u?: number; index: number }) {
+  const m = useRef<Motion>(motion({ style, kit, ready: true }));
+  const next = useRef(0);
+  // (where a figure's combos begin is set by who it is: limbs.ts humanPose, from its persona)
+  const seed = useMemo(() => Math.floor(personaOf(hue("Duelist")).phase * 3), []);
+  useFrame(() => {
+    const mo = m.current;
+    const now = nowSeconds();
+    const set = styleFor(kit, style);
+    if (move !== undefined) {
+      // (held: every frame the swing began `u` of the move ago)
+      mo.combo = combo ?? 0;
+      mo.chain = move;
+      mo.swingAt = now - (u ?? 0.5) * moveSeconds(set, moveOf(set, mo, 0, seed));
+      mo.prevAt = undefined;
+      return;
+    }
+    if (now < next.current) return;
+    beginSwing(mo, now);
+    const c = comboOf(set, mo, seed);
+    const dur = moveSeconds(set, moveOf(set, mo, 0, seed));
+    const last = (mo.chain ?? 0) >= c.length - 1;
+    // (the next move begins as this one runs out; after the combo's last, a pause longer than the gap that makes a combo)
+    next.current = now + (last ? Math.max(dur + 0.8, 1.7) : dur * 0.8) + index * 0.0;
+    mo.hitAt = now + 0.4;
+  });
+  return <MotionContext.Provider value={m}><Figure kind="force" ring={SIDE_COLORS.neutral} name="Duelist" role="jedi" species="Human" wield="saber" kit={kit} /></MotionContext.Provider>;
+}
+function Sabers({ only, one, combo, move, u, strip }: { only?: string; one?: string; combo?: number; move?: number; u?: number; strip?: number[] }) {
+  const kits = SABER_KITS.filter((k) => !only || k === only);
+  const styles = SABER_STYLES.filter((st) => !one || st === one);
+  const gap = only ? 2.2 : 1.7;
+  // (`&us=0.1,0.3,0.5,...`: one move of one figure at each of those points of it, side by side: a film strip)
+  if (strip) return <>{strip.map((x, i) => <group key={i} position={[(i - (strip.length - 1) / 2) * 1.6, 0, -4]}><Duelist kit={(only as SaberKit) ?? "single"} style={(one as SaberStyle) ?? "niman"} combo={combo ?? 0} move={move ?? 0} u={x} index={0} /><Label at={[0, 0.05, 1.2]} text={String(x)} />{i === 0 && <Label at={[0, 2.4, 0]} text={(() => { const st = styleFor((only as SaberKit) ?? "single", (one as SaberStyle) ?? "niman"); const mm = { combo: combo ?? 0, chain: move ?? 0 }; return `${comboOf(st, mm, Math.floor(personaOf(hue("Duelist")).phase * 3)).map((v) => v.name).join(" > ")}  [${move ?? 0}]`; })()} />}</group>)}</>;
+  return (
+    <>
+      {kits.map((kit, i) => styles.map((st, j) => (
+        <group key={`${kit}-${st}`} position={[(j - (styles.length - 1) / 2) * gap, 0, i * (only ? 0 : 3.2) - 4]}>
+          <Duelist kit={kit} style={st} combo={combo} move={move} u={u} index={i * 11 + j} />
+          {i === 0 && <Label at={[0, 0.05, 1.2]} text={`${st} (${FLAVOUR[st]})`} />}
+          {j === 0 && <Label at={[-1.1, 0.05, 0]} text={kit} />}
+        </group>
+      )))}
     </>
   );
 }
@@ -637,6 +688,7 @@ export default function ModelGallery() {
         {section === "scale" && <Scale />}
         {section === "machines" && <Machines hold={query.get("hold") === "1"} />}
         {section === "moves" && <Moves only={query.get("act") ?? undefined} />}
+        {section === "sabers" && <Sabers only={query.get("kit") ?? undefined} one={query.get("style") ?? undefined} combo={query.get("combo") ? Number(query.get("combo")) : undefined} move={query.get("move") ? Number(query.get("move")) : undefined} u={query.get("u") ? Number(query.get("u")) : undefined} strip={query.get("us") ? query.get("us")!.split(",").map(Number) : undefined} />}
         {section === "table" && <Table cycle={query.get("hold") !== "1"} />}
         {section === "gear" && <Gear loadout={query.get("loadout") ?? "heavy"} />}
         {section === "worn" && <Worn loadout={query.get("loadout") ?? "worn"} />}

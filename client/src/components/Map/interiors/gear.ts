@@ -7,6 +7,7 @@ import { KENNEY_BLASTER } from "./weapons";
 import { assetPath, itemRef, modelInfo, needsBlade, socketCentred } from "./items";
 import { POOLS } from "./stock";
 import { HEAD_PLACE, TORSO_PLACE } from "./anchors";
+import type { SaberKit } from "./saberplay";
 
 export interface Item {
   name: string;
@@ -174,6 +175,8 @@ export function handOf(item: GearItem | undefined): Hand | undefined {
 
 // What an NPC holds, by the pose their outfit gives (the name stands for a design of that kind; the data has them all)
 export const HAND_WEAPON: Partial<Record<Hand, string>> = { pistol: "Blaster pistol", rifle: "Blaster rifle", vibro: "Vibroblade", axe: "Vibroaxe", pike: "Vibropike", staff: "Electrostaff", saber: "Lightsaber", saber2: "Doublesaber" };
+// ... and, for one who fights with a saber of a kind (saberplay.ts SaberKit), the weapon of the books that is that kind (2026-11-04)
+export const KIT_WEAPON: Record<SaberKit, string> = { single: "Lightsaber", broad: "Broadsaber", crossguard: "Crossguard saber", staff: "Doublesaber", dual: "Lightsaber", whip: "Saberwhip" };
 
 // The base weapon an enhanced weapon is built on ("sniper rifle", "any blaster"): its name in the rules data, so that it takes that design
 const BASE_WEAPON: [RegExp, string][] = [[/vibroweapon|vibro/, "Vibroblade"], [/lightweapon|saber/, "Lightsaber"], [/blaster|^any$|pistol/, "Blaster pistol"], [/rifle|nightstinger/, "Blaster rifle"], [/shotgun/, "Shotgun"], [/launcher/, "Grenade launcher"]];
@@ -209,7 +212,7 @@ const BY_ROLE: [RegExp, Want][] = [
 // A stable number from a name, to pick the same instrument for the same musician each time
 const hashName = (text: string) => Array.from(text).reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 7);
 
-export function wantsOf(hand: Hand, gear?: Gear, role = "", name = ""): Want[] {
+export function wantsOf(hand: Hand, gear?: Gear, role = "", name = "", saberKit?: SaberKit): Want[] {
   const out: Want[] = [];
   // A musician plays an instrument, one of the catalogue's by their name
   if (hand === "play" && !gear) {
@@ -219,7 +222,7 @@ export function wantsOf(hand: Hand, gear?: Gear, role = "", name = ""): Want[] {
   }
   const main = gear ? gear.weapons[0] : undefined;
   // A person with no weapon of their own wielded holds what their pose says (an NPC's blaster, a Force user's saber)
-  const w = main ? weaponWant(main.name, main.weaponClassification) : (!gear || hand === "saber" || hand === "saber2") && HAND_WEAPON[hand] ? weaponWant(HAND_WEAPON[hand]!) : undefined;
+  const w = main ? weaponWant(main.name, main.weaponClassification) : (!gear || hand === "saber" || hand === "saber2") && HAND_WEAPON[hand] ? weaponWant(saberKit && (hand === "saber" || hand === "saber2") ? KIT_WEAPON[saberKit] : HAND_WEAPON[hand]!) : undefined;
   if (w) out.push(w);
   if (!gear) {
     const r = BY_ROLE.find(([m]) => m.test(role));

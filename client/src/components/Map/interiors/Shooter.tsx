@@ -12,7 +12,7 @@ import {
   type Env, type Event, type FightGear, type Sim, type Unit,
 } from "@shared/logic/shooter";
 import { Figure, MotionContext, usePartyLook } from "../models";
-import { creatureLunge, kickOf, motion, nowSeconds, type Motion } from "./limbs";
+import { beginSwing, creatureLunge, kickOf, motion, nowSeconds, type Motion } from "./limbs";
 import { SIDE_COLORS, tokenOf } from "../sprites";
 import { AIM, partyMotion, recoil, rightOf, stance, useView } from "./aim";
 import { bindShootKeys, useShoot, type Session } from "./shoot";
@@ -287,8 +287,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         } else if (swingPlayer(s, events)) {
           st.swungAt = now;
           st.swingCombo = p.combo;
-          partyMotion.current.swingAt = now / 1000;
-          partyMotion.current.swing++;
+          beginSwing(partyMotion.current, now / 1000);
         }
       }
       setBlock(s, store.held.block && st.weapon === "blade");
@@ -349,7 +348,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         st.swung[e.id] = now;
         sfx.swing();
         const u = s.units.find((x) => x.id === e.id);
-        if (u && u.side !== "player") { const m = motionOf(u).current; m.swingAt = now / 1000; m.swing++; }
+        if (u && u.side !== "player") { const m = motionOf(u).current; beginSwing(m, now / 1000); }
       }
       else if (e.type === "blocked") sfx.deflect();
       else if (e.type === "reload") sfx.reload();

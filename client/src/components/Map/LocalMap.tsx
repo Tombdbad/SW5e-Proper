@@ -26,7 +26,7 @@ import { PACKS, WALL_FILES, facing, hasWalls, packOf, pieceOf, wallPackOf } from
 import { loadModel } from "./interiors/assets";
 import { PackWalls, cornerCentre, bendOf, holeOf, piercedWall, type Bend, type WallRun } from "./interiors/Walls";
 import { AIM, aimAt, aimFrom, partyMotion, roof as viewRoof, stance, useView, type Aimed, type AimPlan } from "./interiors/aim";
-import { kickOf, motion, nowSeconds, type Motion } from "./interiors/limbs";
+import { beginSwing, kickOf, motion, nowSeconds, type Motion } from "./interiors/limbs";
 import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, type JumpStats } from "./interiors/air";
 import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
@@ -336,8 +336,7 @@ function useFightMotions(combatants: Combatant[]) {
         if (!who || !/^\S.*? (attacks|hits|fires|sprays|unloads on|swings|strikes|slashes|shoots) /.test(line.slice(0, who.name.length + 16))) continue;
         const m = of(who.id).current;
         m.firedAt = now;
-        m.swingAt = now;
-        m.swing++;
+        beginSwing(m, now);
         m.kick = kickOf(who.rangedWeapon ?? "", 0);
         const rest = line.slice(who.name.length);
         const struck = / hits /.test(rest.slice(0, 7)) ? byLength.find((c) => c.id !== who.id && rest.includes(` ${c.name}`)) : undefined;
@@ -5530,8 +5529,7 @@ function PitBoutFight({ match, width, height }: { match: Match; width: number; h
       if (p > 0.1 && p < 0.88 && t >= nextSwing.current[i]) {
         // (the winner lands the more blows)
         nextSwing.current[i] = t + 0.9 + ((Math.sin(t * 91.7 + i * 13.3) + 1) / 2) * (lost ? 1.3 : 0.8);
-        m.swingAt = now;
-        m.swing++;
+        beginSwing(m, now);
         motions[1 - i].current.hitAt = now + 0.2;
       }
     }

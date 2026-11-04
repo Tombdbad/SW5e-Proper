@@ -263,7 +263,7 @@ class LimbPlugin extends MaterialPluginBase {
     const chain = (point: boolean, v: string) => `{ int li = int(limb + 0.5); if (li > 0) {
   ${point ? `${v} = pivot + lqTurn(uQ[li], ${v} - pivot);` : `${v} = lqTurn(uQ[li], ${v});`}
   int pa = lqParent(li);
-  for (int s = 0; s < 3; s++) { if (pa < 0) break; ${point ? `${v} = uP[pa].xyz + lqTurn(uQ[pa], ${v} - uP[pa].xyz);` : `${v} = lqTurn(uQ[pa], ${v});`} pa = lqParent(pa); }
+  for (int s = 0; s < 5; s++) { if (pa < 0) break; ${point ? `${v} = uP[pa].xyz + lqTurn(uQ[pa], ${v} - uP[pa].xyz);` : `${v} = lqTurn(uQ[pa], ${v});`} pa = lqParent(pa); }
 } }`;
     return {
       CUSTOM_VERTEX_DEFINITIONS: `attribute float limb;\nattribute vec3 pivot;\nvec3 lqTurn(vec4 q, vec3 v) { return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v); }\nint lqParent(int i) { ${parents} return -1; }\n${WAVE_GLSL}`,

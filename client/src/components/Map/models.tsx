@@ -14,6 +14,7 @@ import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from
 import type { Tone } from "./interiors/tones";
 import { advance, personaOf, type Persona, type Wave, bob, LIMB, LIMBS, SHIN_OF, WALKER, DEKA, DEKA_LEGS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
 import { bodyParts, useBodyParts, creatureParts, useCreatureParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
+import { saberKitOf, type SaberKit } from "./interiors/limbs";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
 import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
@@ -2777,6 +2778,8 @@ export interface Outfit {
   suit?: SuitStyle;
   gloves?: "plain" | "shock";
   boots?: "plain" | "rocket";
+  // How a saber in the hand is fought with (interiors/saberplay.ts): what is drawn in the hands besides the wielded model (a second blade, a lash)
+  kit?: SaberKit;
 }
 
 const TOPS = ["#7a4b2a", "#5b6b8a", "#8a7a62", "#4f6b4a", "#7d3b4a", "#3d4856", "#a0826a", "#6a5a7a", "#9a6a3a", "#4a6a7a"];
@@ -3064,14 +3067,17 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
     rifle: { r: [[-0.2 * b, sh, 0], [-0.26 * b, 0.16, 0.06], [-0.11 * b, 0.27, 0.2]], l: [[0.2 * b, sh, 0], [0.14 * b, 0.19, 0.16], [-0.02 * b, 0.26, 0.36]] },
     bowcaster: { r: [[-0.2 * b, sh, 0], [-0.26 * b, 0.16, 0.06], [-0.11 * b, 0.27, 0.2]], l: [[0.2 * b, sh, 0], [0.14 * b, 0.19, 0.16], [-0.02 * b, 0.26, 0.36]] },
     saber: { r: [[-0.2 * b, sh, 0], [-0.24 * b, 0.13, 0.06], [-0.12, 0.05, 0.2]], l: [[0.2 * b, sh, 0], [0.19 * b, 0.13, 0.08], [-0.06, 0.06, 0.21]] },
-    saber2: { r: [[-0.2 * b, sh, 0], [-0.24 * b, 0.13, 0.06], [-0.12, 0.05, 0.2]], l: [[0.2 * b, sh, 0], [0.24 * b, 0.12, 0.02], [0.25 * b, -0.06, 0.06]] },
+    // A double blade is held in both hands, one behind the other along it (the staff's long way: the left hand on the staff behind the right)
+    saber2: { r: [[-0.2 * b, sh, 0], [-0.24 * b, 0.13, 0.06], [-0.06, 0.14, 0.25]], l: [[0.2 * b, sh, 0], [0.19 * b, 0.1, 0.08], [-0.06, -0.06, 0.07]] },
+    // Two blades, one in each hand, the left a mirror of the right
+    dual: { r: [[-0.2 * b, sh, 0], [-0.24 * b, 0.13, 0.06], [-0.12, 0.05, 0.2]], l: [[0.2 * b, sh, 0], [0.24 * b, 0.13, 0.06], [0.12, 0.05, 0.2]] },
     tray: { r: [[-0.2 * b, sh, 0], [-0.24 * b, 0.12, -0.01], [-0.22 * b, 0.12, 0.2]], l: [[0.2 * b, sh, 0], [0.25 * b, 0.12, -0.02], [0.25 * b, -0.06, 0.06]] },
     datapad: { r: [[-0.2 * b, sh, 0], [-0.24 * b, 0.12, 0], [-0.1, 0.12, 0.17]], l: [[0.2 * b, sh, 0], [0.24 * b, 0.12, 0], [0.06, 0.13, 0.17]] },
     // Playing an instrument held out in front of the chest in both hands (what a band plays: interiors/gear.ts, `Hand` "play")
     play: { r: [[-0.2 * b, sh, 0], [-0.21 * b, 0.17, 0.07], [-0.07, 0.2, 0.2]], l: [[0.2 * b, sh, 0], [0.2 * b, 0.2, 0.11], [0.09, 0.22, 0.25]] },
   };
   const hang = { r: [[-0.2 * b, sh, 0], [-0.25 * b, 0.12, -0.02], [-0.25 * b, -0.06, 0.06]] as V3[], l: [[0.2 * b, sh, 0], [0.25 * b, 0.12, -0.02], [0.25 * b, -0.06, 0.06]] as V3[] };
-  let pose = poses[o.hand] ?? hang;
+  let pose = poses[o.kit === "dual" ? "dual" : o.hand] ?? hang;
   // The second hand of a two-handed weapon closes on the weapon's own `off_hand` socket, where an arm can reach it
   const wielded = p.attach.find((a) => a.slot === "weapon");
   if (wielded?.offHand && (o.hand === "rifle" || o.hand === "bowcaster" || o.hand === "play")) {
@@ -3110,12 +3116,15 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
     if (!i) k.limb(LIMB.weapon, arm[2], () => {
       const wielded = p.attach.find((a) => a.slot === "weapon");
       const [right, left] = [pose.r[2], pose.l[2]];
-      if (!wielded) held(k, o, right, left);
+      if (o.kit === "whip") whipAt(k, right, o.blade ?? "#7fe3ff");
+      else if (!wielded) held(k, o, right, left);
       else if (o.hand === "rifle" || o.hand === "bowcaster" || o.hand === "play") inHand(k, wielded, right, [left[0] - right[0], left[1] - right[1], left[2] - right[2]], 0.3);
       else if (o.hand === "pike" || o.hand === "staff" || o.hand === "gaffi") inHand(k, wielded, right, [0, 1, 0.05], 0.35);
       else if (o.hand === "pistol") inHand(k, wielded, right, [0, 0.08, 1], 0.2);
       else inHand(k, wielded, right, [0, 0.6, 0.55], 0.15);
     });
+    // The other blade of a fight with two (the left hand's own limb: interiors/limbs.ts weaponL)
+    if (i && o.kit === "dual") k.limb(LIMB.weaponL, arm[2], () => saberAt(k, arm[2], o.blade ?? "#7fe3ff", 0.78));
     for (const a of p.attach) {
       if (!i && a.slot === "wrist") {
         // A band round the forearm just above the hand, its axis along the forearm, as wide as the arm is
@@ -3153,6 +3162,35 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
   k.dress = body;
 }
 
+// A hilt and its blade drawn by the code (a fight's second saber, and the first until its model is in): `reach` how long the blade is against the usual
+function saberAt(k: Kit, [x, y, z]: V3, blade: string, reach = 1) {
+  k.cyl(0.018, 0.12, "#9aa3ad", { at: [x, y, z + 0.02], rot: [0.9, 0, 0], seg: 8, finish: "sheen" });
+  const tip: V3 = [x + 0.02 * reach, y + 0.04 + 0.44 * reach, z + 0.06 + 0.36 * reach];
+  k.rod([x, y + 0.04, z + 0.06], tip, 0.016, blade, { finish: "glow", seg: 8 });
+  k.rod([x, y + 0.04, z + 0.06], tip, 0.03, blade, { finish: "haze", seg: 8 });
+}
+// A lightwhip (2026-11-04): a hilt and a lash of three lengths, each hung from the last (limbs `weapon`, `whip1`, `whip2`) so that the lash can bend and
+// follow the hand (interiors/limbs.ts lashBend)
+function whipAt(k: Kit, hand: V3, blade: string) {
+  const d = new THREE.Vector3(0, 0.6, 0.55).normalize();
+  const at = (t: number): V3 => [hand[0] + d.x * t, hand[1] + d.y * t, hand[2] + d.z * t];
+  k.rod(at(-0.04), at(0.08), 0.02, "#3a3a40", { finish: "sheen", seg: 8 });
+  k.cyl(0.026, 0.02, "#9aa3ad", { at: at(0.085), rot: [0.9, 0, 0], seg: 8, finish: "sheen" });
+  const lash = (a: V3, b: V3, r: number) => {
+    k.rod(a, b, r, blade, { finish: "glow", seg: 6 });
+    k.rod(a, b, r * 2.3, blade, { finish: "haze", seg: 6 });
+  };
+  const [p0, p1, p2, p3] = [at(0.09), at(0.45), at(0.81), at(1.17)];
+  lash(p0, p1, 0.011);
+  k.limb(LIMB.whip1, p1, () => {
+    k.sphere(0.012, blade, { at: p1, finish: "glow", seg: [6, 4] });
+    lash(p1, p2, 0.0095);
+    k.limb(LIMB.whip2, p2, () => {
+      k.sphere(0.011, blade, { at: p2, finish: "glow", seg: [6, 4] });
+      lash(p2, p3, 0.0075);
+    });
+  });
+}
 // What someone holds: a blaster, a rifle across the body, a lit blade, a staff
 function held(k: Kit, o: Outfit, right: V3, left: V3) {
   const [rx, ry, rz] = right;
@@ -3178,6 +3216,8 @@ function held(k: Kit, o: Outfit, right: V3, left: V3) {
       k.rod([rx, ry + 0.04, rz + 0.06], [rx + 0.02, ry + 0.48, rz + 0.42], 0.016, blade, { finish: "glow", seg: 8 });
       k.rod([rx, ry + 0.04, rz + 0.06], [rx + 0.02, ry + 0.48, rz + 0.42], 0.03, blade, { finish: "haze", seg: 8 });
       if (o.hand === "saber2") k.rod([rx, ry - 0.04, rz - 0.02], [rx - 0.02, ry - 0.42, rz - 0.36], 0.016, blade, { finish: "glow", seg: 8 });
+      // (a crossguard's two short blades at the side of the hilt)
+      if (o.kit === "crossguard") for (const side of [-1, 1]) k.rod([rx + side * 0.012, ry + 0.07, rz + 0.08], [rx + side * 0.1, ry + 0.1, rz + 0.13], 0.012, blade, { finish: "glow", seg: 6 });
       break;
     }
     case "pike":
@@ -5025,7 +5065,7 @@ const HUMAN = lookOf({ name: "Human", skinColorOptions: "Light to dark tones", h
 // the way it faces), `fur` how long its hair is where it is furry (FurShells), `form` a droideka's (it rolls up to run: Droideka), `seat`
 // how high a rider sits on it (a beast that can be ridden)
 // `hold` and `saber`: what a person's hands hold and the lightsaber style they fight in (interiors/limbs.ts humanPose)
-export interface FigureSpec { key: string; build: (k: Kit) => void; height: number; scale?: number; foot?: number; wants?: Want[]; blade?: string; gait: Gait; wave?: Wave; ball?: number; wheel?: boolean; camber?: number; fur?: number; form?: "droideka"; seat?: number; hold?: Hold; saber?: SaberStyle }
+export interface FigureSpec { kit?: SaberKit; key: string; build: (k: Kit) => void; height: number; scale?: number; foot?: number; wants?: Want[]; blade?: string; gait: Gait; wave?: Wave; ball?: number; wheel?: boolean; camber?: number; fur?: number; form?: "droideka"; seat?: number; hold?: Hold; saber?: SaberStyle }
 
 // How each series of droid moves: battle and protocol droids, assassins and power droids walk; a BB unit rolls; an astromech glides on its
 // treads (a little waddle), as do mouse, service, medical and junk droids; a probe floats; spider and sensor droids go on four legs
@@ -5074,7 +5114,21 @@ export function waveOf(p: Plan): Wave | undefined {
 const furOf = (p: Plan): number | undefined => (hideOf(p) !== "fur" ? undefined : p.plan === "quad" ? p.girth * 0.16 : p.plan === "brute" ? 0.035 * p.bulk : p.plan === "critter" ? 0.012 : 0.022);
 const seatOf = (p: Plan): number => (p.plan === "quad" ? p.h + p.girth * 1.5 : p.plan === "runner" ? 0.8 : p.plan === "brute" ? 0.42 + 0.55 * p.bulk : p.plan === "serpent" ? p.r * 2 + 0.1 : 0.5);
 
-export function figureSpec(kind: string, name: string, opts: { role?: string; creature?: string; species?: string; size?: string; looks: Record<string, Look>; party?: { species?: string; name?: string; force?: boolean; blade?: string; gear?: Gear; forms?: string[] }; player?: boolean; attach?: Attach[]; gear?: Gear; modules?: { name: string; geometry: THREE.BufferGeometry }[]; unarmed?: boolean; wield?: Outfit["hand"] }): FigureSpec {
+// What a saber-wielding stat block fights with: by its name where the name says (the stories' own), else by who it is, picked by its name so that it
+// stays the same: the dark side's brutes, duellists and double blades, the Jedi's now and then a second blade
+export function npcSaberKit(name: string, role = "", hand = ""): SaberKit {
+  const n = `${name} ${role}`.toLowerCase();
+  if (/kylo|knights? of ren|\bren\b/.test(n)) return "crossguard";
+  if (/maul|savage|inquisitor/.test(n) || hand === "saber2") return "staff";
+  if (/ahsoka|ventress|asajj|jar'?kai|dual/.test(n)) return "dual";
+  if (/lumiya|vernestra|whip/.test(n)) return "whip";
+  if (/marauder|juggernaut|champion|executioner|brute/.test(n)) return "broad";
+  let h = 7;
+  for (const c of n) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const pool: SaberKit[] = /sith|dark|inquisitor|vader|acolyte|fallen/.test(n) ? ["single", "crossguard", "staff", "dual", "broad", "single"] : ["single", "single", "single", "single", "dual", "single"];
+  return pool[h % pool.length];
+}
+export function figureSpec(kind: string, name: string, opts: { role?: string; creature?: string; species?: string; size?: string; looks: Record<string, Look>; party?: { species?: string; name?: string; force?: boolean; blade?: string; gear?: Gear; forms?: string[] }; player?: boolean; attach?: Attach[]; gear?: Gear; modules?: { name: string; geometry: THREE.BufferGeometry }[]; unarmed?: boolean; wield?: Outfit["hand"]; kit?: SaberKit }): FigureSpec {
   const { role = "", creature = "", size = "", looks, party } = opts;
   const seed = hue(name || kind);
   const machine = constructKind(name);
@@ -5170,10 +5224,21 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
   if (opts.unarmed) outfit = { ...outfit, hand: "" };
   // (what a fight has put in the hand: a saber for one who fights with one)
   else if (opts.wield) outfit = { ...outfit, hand: opts.wield, ...(opts.wield.startsWith("saber") && !outfit.blade ? { blade: /sith|inquisitor|dark/i.test(`${name} ${role}`) ? "#ff4040" : "#7fe3ff" } : {}) };
-  const wants = wantsOf(outfit.hand, gear, role || name, name).filter((w) => !opts.unarmed || w.slot !== "weapon");
+  // How the saber in the hand is fought with: a character's by what they carry (two sabers, a crossguard, a double blade, a whip), a stat block's by
+  // its name and who it is
+  let kit: SaberKit | undefined;
+  if (!opts.unarmed && (outfit.hand === "saber" || outfit.hand === "saber2")) {
+    const main = gear?.weapons[0];
+    const off = gear?.weapons.slice(1).find((x) => handOf(x) === "saber")?.name;
+    kit = opts.kit ?? (gear && main ? saberKitOf(main.name, outfit.hand, off) : player ? "single" : npcSaberKit(name, role ?? "", outfit.hand));
+    // (a double blade is held the way a staff is)
+    if (kit === "staff" && outfit.hand === "saber") outfit = { ...outfit, hand: "saber2" };
+    outfit = { ...outfit, kit };
+  }
+  const wants = wantsOf(outfit.hand, gear, role || name, name, kit).filter((w) => !opts.unarmed || w.slot !== "weapon");
   const attach = opts.attach ?? [];
-  const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.weight ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}${outfit.suit ?? ""}${outfit.gloves ?? ""}${outfit.boots ?? ""}:${seed & 28}${attach.length ? `:g${attach.map((a) => `${a.slot}=${a.id}@${a.scale}`).join("+")}` : ""}${bodyParts() ? ":sc" : ""}${creatureParts() ? "c" : ""}`;
-  return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, seed, attach), height: 1.25 * look.scale, wants, blade: outfit.blade, gait: "walk", hold: holdOf(outfit.hand), saber: saberStyleOf(player ? who : name || role, player ? party?.forms : []), ...(look.fur && hair ? { fur: 0.02 * look.scale } : {}) };
+  const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}${kit ? `~${kit}` : ""}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.weight ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}${outfit.suit ?? ""}${outfit.gloves ?? ""}${outfit.boots ?? ""}:${seed & 28}${attach.length ? `:g${attach.map((a) => `${a.slot}=${a.id}@${a.scale}`).join("+")}` : ""}${bodyParts() ? ":sc" : ""}${creatureParts() ? "c" : ""}`;
+  return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, seed, attach), height: 1.25 * look.scale, wants, blade: outfit.blade, gait: "walk", hold: holdOf(outfit.hand), kit, saber: saberStyleOf(player ? who : name || role, player ? party?.forms : []), ...(look.fur && hair ? { fur: 0.02 * look.scale } : {}) };
 }
 
 // How far this figure moves: the stride follows how far the group itself moves along the ground between frames, so whoever moves it
@@ -5214,7 +5279,7 @@ const FUR_DETAIL = typeof matchMedia !== "undefined" && matchMedia("(pointer: co
 // rolls or glides does not bob. `ball` is the radius of a ball it rolls on (`wheel`: one that only rolls the way it faces); `fur` the
 // length of its hair, drawn in shells that move with it
 // `crew`: aboard a craft (Crew): posed in its seat, the hips at the group's origin
-function Mover({ id, build, fit = 1, gait, wave, fold, ball, wheel, camber, fur, seat, ring, hold = "none", saber = "niman", fighting, crew, persona }: { id: string; build: (k: Kit) => void; fit?: number; gait: Gait; wave?: Wave; fold?: { current: number }; ball?: number; wheel?: boolean; camber?: number; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh>; hold?: Hold; saber?: SaberStyle; fighting?: boolean; crew?: CrewSeat; persona?: Persona }) {
+function Mover({ id, build, fit = 1, gait, wave, fold, ball, wheel, camber, fur, seat, ring, hold = "none", saber = "niman", kit, fighting, crew, persona }: { id: string; build: (k: Kit) => void; fit?: number; gait: Gait; wave?: Wave; fold?: { current: number }; ball?: number; wheel?: boolean; camber?: number; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh>; hold?: Hold; saber?: SaberStyle; kit?: SaberKit; fighting?: boolean; crew?: CrewSeat; persona?: Persona }) {
   const m = useModel(`${id}:anim`, (k) => { k.animated = true; build(k); });
   const mats = useMemo(() => Object.fromEntries(FINISHES.map((f) => [f, limbMaterial(MATERIALS[f])])) as Record<Finish, THREE.Material>, []);
   const furMat = useMemo(() => (fur ? limbMaterial(furShellMaterial(fur, FUR_DETAIL)) : null), [fur]);
@@ -5256,7 +5321,7 @@ function Mover({ id, build, fit = 1, gait, wave, fold, ball, wheel, camber, fur,
       return;
     }
     const mo = told?.current ?? own;
-    const root = joints.jointed ? humanPose(stride, t, mo, easeMotion(ease, mo, dt), hold, mo.style ?? saber, nowSeconds(), joints.legs, w.pose, persona) : (gaitPose(gait, stride, t, w.pose, persona, wave, fold?.current ?? 0), null);
+    const root = joints.jointed ? humanPose(stride, t, mo, easeMotion(ease, mo, dt), hold, mo.style ?? saber, nowSeconds(), joints.legs, w.pose, persona, kit) : (gaitPose(gait, stride, t, w.pose, persona, wave, fold?.current ?? 0), null);
     // At a table (people only): the body eases down onto the seat and the seated pose is laid over the walking one; a gesture swells over the arms
     const s = gait === "walk" ? seat?.current : undefined;
     w.sit = s ? easeSit(w.sit, s.sit, dt) : 0;
@@ -5310,7 +5375,7 @@ function Mover({ id, build, fit = 1, gait, wave, fold, ball, wheel, camber, fur,
         body.current.position.y += -root.drop + root.lift + bob(stride) * Math.min(1, stride.speed / 4) + root.tip * 0.16 * (h / 0.56);
         body.current.rotation.y = root.spin;
         body.current.rotation.x += root.tip * (Math.PI / 2);
-        body.current.position.z = -root.tip * 0.62 * (h / 0.56);
+        body.current.position.z = -root.tip * 0.62 * (h / 0.56) + root.step;
         // (shifting over the foot it stands on, the hips dropping, a bank into a turn, a lean into a start: interiors/limbs.ts humanPose)
         body.current.position.x = root.sway;
         body.current.rotation.z += root.roll;
@@ -5389,7 +5454,7 @@ export const MotionContext = createContext<{ current: Motion } | null>(null);
 // `wield`: what to put in the hand whatever the outfit has (a fight's saber). How the figure moves (crouched, aiming, firing, swinging) is
 // what the nearest MotionContext above it says
 // `crew`: in a seat of a craft (CraftCrew): seated there, its hands on the controls or a gun, nothing in them
-export function Figure({ kind, ring, name = "", large, marker, species, role, creature, size, player, gear, modules, fighting, riding, seat, unarmed: bare, wield, crew }: { kind: string; ring: string; name?: string; large?: boolean; marker?: boolean; species?: string; role?: string; creature?: string; size?: string; player?: boolean; gear?: Gear; modules?: string[]; fighting?: boolean; riding?: boolean; seat?: { current: SeatState }; unarmed?: boolean; wield?: Outfit["hand"]; crew?: CrewSeat }) {
+export function Figure({ kind, ring, name = "", large, marker, species, role, creature, size, player, gear, modules, fighting, riding, seat, unarmed: bare, wield, kit: kitAsked, crew }: { kind: string; ring: string; name?: string; large?: boolean; marker?: boolean; species?: string; role?: string; creature?: string; size?: string; player?: boolean; gear?: Gear; modules?: string[]; fighting?: boolean; riding?: boolean; seat?: { current: SeatState }; unarmed?: boolean; wield?: Outfit["hand"]; kit?: SaberKit; crew?: CrewSeat }) {
   const unarmed = bare || !!crew;
   const ringMesh = useRef<THREE.Mesh>(null);
   const looks = useSpecies();
@@ -5398,7 +5463,7 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
   useBodyParts();
   useCreatureParts();
   const me = player ?? kind === "player";
-  const base = figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, unarmed, wield });
+  const base = figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, unarmed, wield, kit: kitAsked });
   // (how this person carries themselves: their stride, sway, slump and fidgets come from who they are: interiors/limbs.ts personaOf)
   const persona = useMemo(() => personaOf(hue((me ? party?.name : name) || name || kind)), [me, party?.name, name, kind]);
   // What a person holds, wears and carries is loaded (one set of hooks per kind of model, in its own palette) and baked into the body
@@ -5442,7 +5507,7 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
   const modulesReady = moduleFiles.length > 0 && moduleFiles.every((m) => moduleGeo[m.url]);
   const ready = wants.length > 0 && wants.every((w) => geometryOfWant(w));
   const spec = ready
-    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, unarmed, wield, attach: wants.map((w) => ({ id: (w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model) + (base.blade && w.name?.startsWith("saber-") ? `~${base.blade}` : ""), slot: w.slot, scale: w.scale, grip: w.grip, offHand: w.offHand, name: w.name, geometry: geometryOfWant(w)! })) })
+    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, unarmed, wield, kit: kitAsked, attach: wants.map((w) => ({ id: (w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model) + (base.blade && w.name?.startsWith("saber-") ? `~${base.blade}` : ""), slot: w.slot, scale: w.scale, grip: w.grip, offHand: w.offHand, name: w.name, geometry: geometryOfWant(w)! })) })
     : modulesReady
       ? figureSpec(kind, name, { role, creature, species, size, looks, modules: moduleFiles.map((m) => ({ name: m.name, geometry: moduleGeo[m.url]! })) })
       : base;
@@ -5455,7 +5520,7 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
           <meshBasicMaterial color={ring} />
         </mesh>
       )}
-      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} deployed={fighting} fit={spec.scale} /> : <Mover id={spec.key} build={spec.build} fit={spec.scale} camber={spec.camber} gait={riding ? "ride" : spec.gait} wave={riding ? undefined : spec.wave} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} hold={crew ? "none" : base.hold} saber={base.saber} fighting={fighting} crew={crew} persona={persona} />}
+      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} deployed={fighting} fit={spec.scale} /> : <Mover id={spec.key} build={spec.build} fit={spec.scale} camber={spec.camber} gait={riding ? "ride" : spec.gait} wave={riding ? undefined : spec.wave} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} hold={crew ? "none" : base.hold} saber={base.saber} kit={base.kit} fighting={fighting} crew={crew} persona={persona} />}
       {marker && (
         <mesh position={[0, Math.max(1.55, spec.height + 0.3), 0]}>
           <octahedronGeometry args={[0.12]} />

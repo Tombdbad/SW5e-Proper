@@ -12,6 +12,8 @@
 import * as THREE from "three";
 import { patchOf, shaderPatch, WAVE_GLSL, WAVE_LIMB } from "../babylon";
 import { gunKick } from "@shared/logic/shooter";
+import { JOINTS, type Joint, type Joints, type J3, type SaberKit, type Style, beginSwing, comboOf, guardJoints, moveOf, moveSeconds, sampleMove, styleFor, MELEE, POLE, COMBO_GAP, BLOCK } from "./saberplay";
+export { beginSwing, saberKitOf, SABER_KITS, type SaberKit } from "./saberplay";
 
 // Limbs: 0 the body (still); the legs (front ones on a beast), the arms, a beast's hind and middle legs, a tail, a rolling ball or
 // wheel, and wings (right and left by the figure's own sides). A builder marks the parts with Kit.limb.
@@ -25,12 +27,12 @@ import { gunKick } from "@shared/logic/shooter";
 // are carried sideways by a wave that travels back along them (`setWave`).
 // A person (2026-10-30, the user: "the lightsabre just waves with no character arm or body movement at all") is jointed further: the trunk
 // above the waist (`chest`, which carries the arms, the head and all worn above it), the forearms below the elbows, the shins below the
-// knees, and what the right hand holds (`weapon`, turned at the wrist). These hang one from another (PARENT): a forearm turns about its
+// knees, and what the right hand holds (`weapon`, turned at the wrist; 2026-11-04: `weaponL`, what the left hand holds in a fight with two blades, and `whip1`, `whip2`, the two bends of a lightwhip's lash, one hanging from the last). These hang one from another (PARENT): a forearm turns about its
 // elbow and is then carried by its upper arm, which the chest carries; a shin turns about its knee and then with its thigh.
-export const LIMB = { body: 0, legR: 1, legL: 2, armR: 3, armL: 4, hindR: 5, hindL: 6, midR: 7, midL: 8, tail: 9, roll: 10, wingR: 11, wingL: 12, chest: 13, foreR: 14, foreL: 15, shinR: 16, shinL: 17, weapon: 18, head: 19, earR: 20, earL: 21, tail2: 22, jaw: 23, wave: 24, shinHR: 25, shinHL: 26, shinMR: 27, shinML: 28 } as const;
-export const LIMBS = 29;
+export const LIMB = { body: 0, legR: 1, legL: 2, armR: 3, armL: 4, hindR: 5, hindL: 6, midR: 7, midL: 8, tail: 9, roll: 10, wingR: 11, wingL: 12, chest: 13, foreR: 14, foreL: 15, shinR: 16, shinL: 17, weapon: 18, head: 19, earR: 20, earL: 21, tail2: 22, jaw: 23, wave: 24, shinHR: 25, shinHL: 26, shinMR: 27, shinML: 28, weaponL: 29, whip1: 30, whip2: 31 } as const;
+export const LIMBS = 32;
 // The limb each one hangs from (-1: from the body itself)
-export const PARENT: number[] = [-1, 10, 10, 13, 13, 10, -1, -1, -1, -1, -1, -1, -1, 10, 3, 4, 1, 2, 14, 13, 19, 19, 9, 19, -1, 5, 6, 7, 8];
+export const PARENT: number[] = [-1, 10, 10, 13, 13, 10, -1, -1, -1, -1, -1, -1, -1, 10, 3, 4, 1, 2, 14, 13, 19, 19, 9, 19, -1, 5, 6, 7, 8, 15, 18, 30];
 // The shin of each leg
 export const SHIN_OF: Record<number, number> = { [LIMB.legR]: LIMB.shinR, [LIMB.legL]: LIMB.shinL, [LIMB.hindR]: LIMB.shinHR, [LIMB.hindL]: LIMB.shinHL, [LIMB.midR]: LIMB.shinMR, [LIMB.midL]: LIMB.shinML };
 
@@ -473,14 +475,14 @@ ${WAVE_GLSL}`;
     const chain = (point: boolean, v: string) => `{ int li = int(limb + 0.5); if (li > 0) {
   ${point ? `${v} = pivot + lqTurn(uQ[li], ${v} - pivot);` : `${v} = lqTurn(uQ[li], ${v});`}
   int pa = lqParent(li);
-  for (int s = 0; s < 3; s++) { if (pa < 0) break; ${point ? `${v} = uP[pa] + lqTurn(uQ[pa], ${v} - uP[pa]);` : `${v} = lqTurn(uQ[pa], ${v});`} pa = lqParent(pa); }
+  for (int s = 0; s < 5; s++) { if (pa < 0) break; ${point ? `${v} = uP[pa] + lqTurn(uQ[pa], ${v} - uP[pa]);` : `${v} = lqTurn(uQ[pa], ${v});`} pa = lqParent(pa); }
 } }`;
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", head)
       .replace("#include <begin_vertex>", `#include <begin_vertex>\n${chain(true, "transformed")}\ntransformed = lqWavePoint(uQ[${WAVE_LIMB}], transformed);`);
     if (lit) shader.vertexShader = shader.vertexShader.replace("#include <beginnormal_vertex>", `#include <beginnormal_vertex>\n${chain(false, "objectNormal")}\nobjectNormal = lqWaveNormal(uQ[${WAVE_LIMB}], objectNormal, position.z);`);
   };
-  m.customProgramCacheKey = () => `limbs3:${lit ? "lit" : "flat"}:${beforeKey ?? ""}`;
+  m.customProgramCacheKey = () => `limbs4:${lit ? "lit" : "flat"}:${beforeKey ?? ""}`;
   // A surface whose maps load later hands them to its copies too (surfaces.tsx surfaceMaterial), until the copy is let go
   const followers = (base as THREE.Material & { followers?: Set<THREE.Material> }).followers;
   if (followers) {
@@ -776,6 +778,12 @@ export interface Motion {
   blocking: boolean;
   hitAt: number;
   style?: SaberStyle;
+  // (2026-11-04) what is in the hands, if the figure's own is not what is wanted (the gallery), and where the swings are in their combo
+  // (saberplay.ts `beginSwing`: `chain` the move of the combo, `combo` the combo, `prevAt` when the swing before began)
+  kit?: SaberKit;
+  chain?: number;
+  combo?: number;
+  prevAt?: number;
   // What the hands are about besides the weapon (2026-11-02: a foe's throw, spray, call for help, medpac), begun at `actAt` and lasting
   // `actFor` seconds (its wind-up: shared/logic/shooter.ts SHOOT.act); the follow-through comes after it
   act?: "throw" | "spray" | "call" | "heal";
@@ -801,77 +809,8 @@ export function easeMotion(e: Eased, m: Motion, dt: number): Eased {
   return e;
 }
 
-type J3 = [number, number, number];
-const JOINTS = ["legR", "legL", "shinR", "shinL", "armR", "armL", "foreR", "foreL", "chest", "weapon", "head"] as const;
-type Joint = (typeof JOINTS)[number];
-type Joints = Partial<Record<Joint, J3>>;
-// A key of a guard or a strike: joints as they are, `arms` and `fores` the x of both upper arms and both forearms (a two-handed grip; one
-// hand in a one-handed style), `lift` the body off the ground (a leap) and `spin` it turned about (a spinning cut)
-interface Key extends Joints { arms?: number; fores?: number; lift?: number; spin?: number }
-interface Strike { dur: number; keys: [number, Key][] }
-interface Style { guard: Key; strikes: Strike[]; oneHand?: boolean; block?: Key }
-
-// The strikes, from either side (`d` 1 cuts from the right to the left, -1 the other way)
-const overhead = (dur = 0.5, lift = 0): Strike => ({ dur, keys: [[0.38, { arms: -2.7, fores: -0.25, chest: [-0.28, 0, 0], weapon: [-0.35, 0, 0], head: [-0.15, 0, 0], lift }], [0.64, { arms: 0.05, fores: 0, chest: [0.55, 0, 0], weapon: [0.75, 0, 0], legL: [-0.65, 0, 0], shinL: [0.7, 0, 0], legR: [0.35, 0, 0], shinR: [0.35, 0, 0] }], [0.82, { arms: 0, chest: [0.42, 0, 0], weapon: [0.75, 0, 0] }]] });
-const sweep = (d: number, dur = 0.45, spin = 0): Strike => ({ dur, keys: [[0.3, { arms: -1.05, fores: -0.2, chest: [0.05, -1.05 * d, 0.12 * d], weapon: [1.05, 0, 0], head: [0, 0.8 * d, 0], spin: 0 }], [0.66, { arms: -1.0, fores: -0.1, chest: [0.18, 1.15 * d, -0.12 * d], weapon: [1.15, 0, 0], head: [0, -0.7 * d, 0], spin }], [0.8, { arms: -0.9, chest: [0.12, 0.9 * d, 0], weapon: [1.0, 0, 0], spin }]] });
-const diagonal = (d: number, dur = 0.45): Strike => ({ dur, keys: [[0.32, { arms: -2.2, fores: -0.2, chest: [-0.12, -0.75 * d, 0.28 * d], weapon: [0.1, 0, -0.35 * d], head: [0, 0.5 * d, 0] }], [0.66, { arms: -0.15, fores: 0, chest: [0.38, 0.85 * d, -0.22 * d], weapon: [0.9, 0, 0.35 * d], head: [0, -0.6 * d, 0], legL: [-0.45, 0, 0], shinL: [0.5, 0, 0] }]] });
-const rising = (d: number, dur = 0.45): Strike => ({ dur, keys: [[0.32, { arms: 0.25, fores: -0.1, chest: [0.25, -0.85 * d, -0.22 * d], weapon: [1.45, 0, 0] }], [0.66, { arms: -2.1, fores: -0.2, chest: [-0.18, 0.75 * d, 0.22 * d], weapon: [-0.05, 0, 0] }]] });
-const thrust = (dur = 0.42): Strike => ({ dur, keys: [[0.36, { arms: -0.75, fores: -1.15, weapon: [1.55, 0, 0], chest: [-0.06, 0.35, 0] }], [0.6, { arms: -1.45, fores: 0.05, weapon: [1.5, 0, 0], chest: [0.32, 0.2, 0], legL: [-0.95, 0, 0], shinL: [0.95, 0, 0], legR: [0.65, 0, 0], shinR: [0.35, 0, 0] }]] });
-const flick = (dur = 0.32): Strike => ({ dur, keys: [[0.4, { arms: -1.1, fores: -0.5, weapon: [0.3, 0, 0] }], [0.62, { arms: -1.35, fores: 0, weapon: [1.4, 0, 0], chest: [0.2, 0.3, 0] }]] });
-
-const STANCE = { legL: [-0.32, 0, 0] as J3, legR: [0.22, 0, 0] as J3, shinL: [0.3, 0, 0] as J3, shinR: [0.35, 0, 0] as J3 };
-const STYLES: Record<SaberStyle, Style> = {
-  shiicho: { guard: { ...STANCE, arms: -0.4, chest: [0.04, 0.12, 0] }, strikes: [sweep(1), sweep(-1), overhead()] },
-  makashi: { oneHand: true, guard: { legR: [-0.28, 0, 0], legL: [0.18, 0, 0], shinR: [0.2, 0, 0], shinL: [0.25, 0, 0], armR: [-0.95, 0.2, 0], foreR: [-0.15, 0, 0], weapon: [0.95, 0, 0], armL: [0.55, 0, 0.35], foreL: [-1.5, 0, 0], chest: [0, -0.7, 0], head: [0, 0.6, 0] }, strikes: [thrust(0.38), flick(), diagonal(1, 0.38)] },
-  soresu: { guard: { ...STANCE, shinL: [0.55, 0, 0], shinR: [0.6, 0, 0], arms: -0.6, fores: -0.45, weapon: [-0.3, 0, 0.25], chest: [0.08, 0.32, 0], head: [0, -0.25, 0] }, strikes: [diagonal(1, 0.34), diagonal(-1, 0.34), thrust(0.34)], block: { arms: -1.2, fores: -0.3, weapon: [-0.2, 0, 0.95], chest: [0, 0.2, 0] } },
-  ataru: { guard: { ...STANCE, arms: -1.65, weapon: [0.15, 0, -0.2], chest: [0, 0.45, 0], head: [0, -0.4, 0] }, strikes: [overhead(0.6, 0.55), sweep(1, 0.55, Math.PI * 2), diagonal(-1, 0.4)] },
-  shien: { guard: { ...STANCE, arms: -1.15, weapon: [-1.25, 0, 0], chest: [0, 0.6, 0], head: [0, -0.5, 0] }, strikes: [diagonal(1, 0.5), overhead(0.55), rising(-1, 0.5)] },
-  djemso: { guard: { ...STANCE, arms: -1.35, weapon: [-0.3, 0, 0], chest: [0.02, 0.48, 0], head: [0, -0.4, 0] }, strikes: [overhead(0.55), diagonal(1, 0.5), diagonal(-1, 0.5)] },
-  niman: { guard: { ...STANCE, arms: -0.25, weapon: [0.4, 0, 0], chest: [0, 0.15, 0] }, strikes: [diagonal(1), sweep(-1), thrust()] },
-  juyo: { guard: { ...STANCE, shinL: [0.7, 0, 0], shinR: [0.8, 0, 0], legL: [-0.5, 0, 0], arms: 0.15, weapon: [1.65, 0, 0], chest: [0.32, 0.25, 0], head: [-0.25, -0.2, 0] }, strikes: [rising(1, 0.3), diagonal(-1, 0.3), sweep(1, 0.34, -Math.PI * 2)] },
-  jarkai: { guard: { ...STANCE, arms: -0.75, weapon: [0.2, 0, 0.3], chest: [0, 0.05, 0] }, strikes: [diagonal(1, 0.36), diagonal(-1, 0.36), sweep(1, 0.4)] },
-  trakata: { guard: { ...STANCE, arms: -0.3, weapon: [0.3, 0, 0], chest: [0, 0.2, 0] }, strikes: [flick(0.3), sweep(-1, 0.5, Math.PI * 2), thrust(0.36)] },
-  sokan: { guard: { ...STANCE, arms: -0.6, weapon: [0.5, 0, 0], chest: [0.06, 0.3, 0] }, strikes: [thrust(0.4), sweep(1, 0.42), rising(1, 0.42)] },
-};
-// A blade held up against bolts and blows: across the front, angled, moving a little to meet them
-const BLOCK: Key = { arms: -1.25, fores: -0.35, weapon: [-0.15, 0, 0.9], chest: [0, 0.25, 0], head: [0, -0.2, 0] };
-// A one-handed blade (a vibroblade, an axe) and a staff
-const MELEE: Style = { oneHand: true, guard: { ...STANCE, armR: [-0.85, 0.15, 0], foreR: [-0.8, 0, 0], weapon: [0.2, 0, 0], armL: [-0.45, 0, -0.2], foreL: [-0.9, 0, 0], chest: [0, 0.25, 0] }, strikes: [overhead(0.5), sweep(1, 0.45), thrust(0.42)] };
-const POLE: Style = { oneHand: true, guard: { ...STANCE, armR: [-0.6, 0.1, 0], foreR: [-0.7, 0, 0], weapon: [0.95, 0, 0], armL: [-0.95, -0.3, 0], foreL: [-0.6, 0, 0], chest: [0, 0.3, 0] }, strikes: [thrust(0.45), sweep(1, 0.5), overhead(0.55)] };
-
 const smoothK = (v: number) => { const x = Math.max(0, Math.min(1, v)); return x * x * (3 - 2 * x); };
 const add3 = (a: J3 | undefined, b: J3, k = 1): J3 => [(a?.[0] ?? 0) + b[0] * k, (a?.[1] ?? 0) + b[1] * k, (a?.[2] ?? 0) + b[2] * k];
-// A key as joints: `arms` and `fores` spread over the arms (both in a two-handed grip), keeping the turn the guard gives them about y and z
-function jointsOf(key: Key, guard: Joints, oneHand: boolean): Joints {
-  const out: Joints = {};
-  for (const j of JOINTS) if (key[j]) out[j] = key[j];
-  const set = (j: Joint, x: number) => { out[j] = [x, guard[j]?.[1] ?? 0, guard[j]?.[2] ?? 0]; };
-  if (key.arms !== undefined) { set("armR", key.arms); if (!oneHand) set("armL", key.arms); }
-  if (key.fores !== undefined) { set("foreR", key.fores); if (!oneHand) set("foreL", key.fores); }
-  return out;
-}
-// Where a strike is `u` of the way through (0 to 1): from the guard through its keys and back to the guard, eased between keys
-function sampleStrike(strike: Strike, u: number, guard: Joints, oneHand: boolean): { joints: Joints; lift: number; spin: number } {
-  const keys: [number, Joints, number, number][] = [[0, guard, 0, 0]];
-  let spin = 0;
-  for (const [t, k] of strike.keys) {
-    if (k.spin !== undefined) spin = k.spin;
-    keys.push([t, { ...guard, ...jointsOf(k, guard, oneHand) }, k.lift ?? 0, spin]);
-  }
-  keys.push([1, guard, 0, spin]);
-  let i = 0;
-  while (i < keys.length - 2 && u > keys[i + 1][0]) i++;
-  const [t0, a, l0, s0] = keys[i];
-  const [t1, b, l1, s1] = keys[i + 1];
-  const f = smoothK((u - t0) / Math.max(1e-6, t1 - t0));
-  const joints: Joints = {};
-  for (const j of JOINTS) {
-    const x = a[j] ?? [0, 0, 0];
-    const y = b[j] ?? [0, 0, 0];
-    if (a[j] || b[j]) joints[j] = [x[0] + (y[0] - x[0]) * f, x[1] + (y[1] - x[1]) * f, x[2] + (y[2] - x[2]) * f];
-  }
-  return { joints, lift: l0 + (l1 - l0) * f, spin: u >= 1 ? 0 : s0 + (s1 - s0) * f };
-}
 const blendJ = (a: Joints, b: Joints, k: number): Joints => {
   if (k <= 0) return a;
   const out: Joints = { ...a };
@@ -883,14 +822,20 @@ const blendJ = (a: Joints, b: Joints, k: number): Joints => {
   }
   return out;
 };
-export const styleOf = (hold: Hold, saber: SaberStyle): Style | undefined => (hold === "saber" ? STYLES[saber] : hold === "melee" ? MELEE : hold === "pole" ? POLE : undefined);
-// How long a strike takes, for the scene to time its blow by
-export const strikeSeconds = (hold: Hold, saber: SaberStyle, n: number): number => { const st = styleOf(hold, saber); return st ? st.strikes[((n % st.strikes.length) + st.strikes.length) % st.strikes.length].dur : 0.45; };
+// How a person holds what is in their hands and fights with it: a saber by its form and its kind (saberplay.ts), a blade or a pole their own way
+export const styleOf = (hold: Hold, saber: SaberStyle, kit: SaberKit = "single"): Style | undefined => (hold === "saber" ? styleFor(kit, saber) : hold === "melee" ? MELEE : hold === "pole" ? POLE : undefined);
+// How long the move a figure is on takes (the first combo's `n`th, when there is no figure's own)
+export const strikeSeconds = (hold: Hold, saber: SaberStyle, n: number, kit: SaberKit = "single"): number => {
+  const st = styleOf(hold, saber, kit);
+  if (!st) return 0.45;
+  const c = comboOf(st, { combo: 0, chain: n });
+  return moveSeconds(st, c[((n % c.length) + c.length) % c.length]);
+};
 
 // What the pose asks of the body as a whole: how far it is lowered (bent knees), lifted (a leap), turned about (a spin) and tipped onto its front (prone)
 // (2026-11-04: `sway` the body's shift sideways over the foot it stands on, `roll` its tilt side to side (hips dropping with the stride, a bank into
 // a turn), `pitch` its lean forward and back (into a start, back at a stop))
-export interface Root { drop: number; lift: number; spin: number; tip: number; sway: number; roll: number; pitch: number }
+export interface Root { drop: number; lift: number; spin: number; tip: number; sway: number; roll: number; pitch: number; step: number }
 
 // How one person carries themselves (2026-11-04; the user: "a more AAA ... feel to the NPCs/characters ... and their animations"): the same walk is
 // not everyone's. A persona is worked out from who they are (a name's hash), so the same person always moves the same way, and a crowd does not
@@ -909,7 +854,7 @@ export function personaOf(seed: number): Persona {
 }
 // The lengths of a leg (from the pivots: the hip's height, the knee's), to work out how far bent knees lower the body
 export interface LegSize { hip: number; knee: number }
-const LIMB_OF: Record<Joint, number> = { legR: 1, legL: 2, shinR: 16, shinL: 17, armR: 3, armL: 4, foreR: 14, foreL: 15, chest: 13, weapon: 18, head: 19 };
+const LIMB_OF: Record<Joint, number> = { legR: 1, legL: 2, shinR: 16, shinL: 17, armR: 3, armL: 4, foreR: 14, foreL: 15, chest: 13, weapon: 18, head: 19, weaponL: 29, whip1: 30, whip2: 31 };
 
 // The follow-through after a throw or a spray (seconds), and how a figure without joints (a beast, a plant) shows the same: it rears back over
 // the wind-up and snaps forward after (a breath, a spit), and lunges into a blow (`creatureLunge`: the pitch forward and the reach forward)
@@ -930,8 +875,35 @@ export function creatureLunge(now: number, swingAt: number, swingFor: number, ac
   }
   return { pitch: 0, reach: 0, rise: 0 };
 }
+// Where a blade points as the joints give it (the trunk, arm, forearm and wrist about x, and the turn of the trunk and arm about y)
+const aimOf = (j: Joints) => ({ pitch: (j.chest?.[0] ?? 0) + (j.armR?.[0] ?? 0) + (j.foreR?.[0] ?? 0) + (j.weapon?.[0] ?? 0), yaw: (j.chest?.[1] ?? 0) + (j.armR?.[1] ?? 0) + (j.weapon?.[1] ?? 0) });
+const LASH = { first: 0.05, second: 0.11, gain: 0.7 };
+// The two bends of a whip's lash: the lash follows the hand, so each bend is the turn the hand has made since a moment before (the further along the
+// lash, the longer ago), whatever way it was going; at rest the lash hangs, and at the end of a blow its tip cracks over and settles
+function lashBend(style: Style, move: ReturnType<typeof moveOf>, since: number, dur: number, guard: Joints, oneHand: boolean, now: Joints, impactAt: number, t: number): Joints {
+  const at = (back: number) => {
+    const x = since - back;
+    return x >= 0 && x < dur ? aimOf(sampleMove(move, x / dur, guard, oneHand).joints) : aimOf(guard);
+  };
+  const here = aimOf(now);
+  const one = at(LASH.first);
+  const two = at(LASH.second);
+  const active = since >= 0 && since < dur;
+  // (hanging: a droop when not in use, easing in over half a second after a blow)
+  const hang = active ? 0.12 : since < 0 ? 1 : Math.min(1, Math.max(0.12, (since - dur) / 0.6));
+  let crack = 0;
+  if (active && impactAt >= 0 && since > impactAt) crack = 0.9 * Math.exp(-(since - impactAt) / 0.09) * Math.sin((since - impactAt) * 48);
+  // (and the lash is a little serpent: a slow wave runs down it hanging, a quick one in the lash, the tip a beat behind the rest)
+  const ph = active ? since * 16 : t * 2.3;
+  const sway = hang * 0.14 + (active ? 0.1 : 0);
+  const g = LASH.gain;
+  return {
+    whip1: [Math.max(-0.8, Math.min(0.8, (one.pitch - here.pitch) * g)) + 0.28 * hang, Math.max(-0.8, Math.min(0.8, (one.yaw - here.yaw) * g)) + Math.sin(ph) * sway, 0],
+    whip2: [Math.max(-1.0, Math.min(1.0, (two.pitch - one.pitch) * g * 1.2)) + 0.45 * hang + crack * 0.6, Math.max(-1.0, Math.min(1.0, (two.yaw - one.yaw) * g * 1.2)) + Math.sin(ph - 1.1) * sway * 1.6, 0],
+  };
+}
 // A person's pose this frame
-export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold, saber: SaberStyle, now: number, legs: LegSize, out: Pose = restPose(), persona: Persona = NEUTRAL): Root {
+export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold, saber: SaberStyle, now: number, legs: LegSize, out: Pose = restPose(), persona: Persona = NEUTRAL, kitOf: SaberKit = "single"): Root {
   for (let i = 1; i < LIMBS; i++) out.set([0, 0, 0, 1], i * 4);
   const amp = s.amp;
   const run = Math.max(0, Math.min(1, (s.speed - 2.6) / 3));
@@ -987,9 +959,11 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
     put(`arm${side}`, [armX * k - 0.35 * c - 0.6 * a + Math.sin(t * 0.8 + persona.phase + (sgn > 0 ? 1 : 0)) * 0.02 * calm * k, 0, -sgn * (0.08 + 0.35 * a + breath * 0.012 * calm)]);
     put(`fore${side}`, [-(0.1 + 0.15 * amp + 1.0 * run * amp) * k - 0.35 * c - 0.5 * Math.max(0, -armX) * k * (1 - 0.3 * run), 0, 0]);
   };
-  const style = styleOf(hold, saber);
+  const kit = m.kit ?? kitOf;
+  const style = styleOf(hold, saber, kit);
   let lift = 0;
   let spin = 0;
+  let step = 0;
   switch (hold) {
     case "none":
       free("R", 1);
@@ -1023,27 +997,49 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
     }
     default: {
       if (!style) break;
-      // A blade or staff: carried at the side (pointed down and forward) or held in its guard; a strike runs through its keys; a parry
-      // blends to the block
-      const guard = jointsOf(style.guard, {}, !!style.oneHand);
-      for (const j of JOINTS) if (style.guard[j]) guard[j] = style.guard[j];
-      const carried: Joints = { armR: [0.35, 0, 0], foreR: [-0.35, 0, 0], weapon: [0.75, 0, 0], ...(style.oneHand ? {} : { armL: [0.35, 0, 0], foreL: [-0.35, 0, 0] }) };
+      // A blade, staff or whip: carried at the side (pointed down and forward) or held in its guard; a move of its combo runs through its keys
+      // (the next of a chain starting from where the last one was); a parry blends to the block
+      const guard = guardJoints(style);
+      const two = kit === "dual";
+      const carried: Joints = { armR: [0.35, 0, 0], foreR: [-0.35, 0, 0], weapon: [0.75, 0, 0], ...(style.oneHand && !two ? {} : { armL: [0.35, 0, 0], foreL: [-0.35, 0, 0] }), ...(two ? { weaponL: [0.75, 0, 0] } : {}) };
       let joints = blendJ(carried, guard, ready);
+      const oneHand = !!style.oneHand;
+      const seed = Math.floor(persona.phase * 3);
       const since = now - m.swingAt;
-      const n = style.strikes.length;
-      const strike = style.strikes[((m.swing % n) + n) % n];
-      if (since >= 0 && since < strike.dur) {
-        const sample = sampleStrike(strike, since / strike.dur, guard, !!style.oneHand);
+      const move = moveOf(style, m, 0, seed);
+      const dur = moveSeconds(style, move);
+      let impactAt = -1;
+      if (since >= 0 && since < dur) {
+        const sample = sampleMove(move, since / dur, guard, oneHand);
         joints = sample.joints;
         lift = sample.lift;
         spin = sample.spin;
+        step = sample.step;
+        // (a move that follows one begins from where the last was, not from the guard: they run into each other)
+        const LEAD = 0.16;
+        if (since < LEAD && (m.chain ?? 0) > 0 && m.prevAt !== undefined && m.swingAt - m.prevAt < COMBO_GAP) {
+          const before = moveOf(style, m, 1, seed);
+          const u = (m.swingAt - m.prevAt) / moveSeconds(style, before);
+          if (u < 1) {
+            const from = sampleMove(before, u, guard, oneHand);
+            const k = smoothK(since / LEAD);
+            joints = blendJ(from.joints, joints, k);
+            lift = from.lift + (lift - from.lift) * k;
+            spin = from.spin + (spin - from.spin) * k;
+            step = from.step + (step - from.step) * k;
+          }
+        }
+        impactAt = move.keys[move.hit][0] * dur;
       } else if (e.block > 0.001) {
         const b = style.block ?? BLOCK;
-        const held = { ...guard, ...jointsOf(b, guard, !!style.oneHand) };
+        const held = { ...guard, ...guardJoints({ ...style, guard: b }) };
         // (it shifts to meet what comes)
         held.weapon = add3(held.weapon, [Math.sin(t * 7) * 0.12, 0, Math.sin(t * 4.3) * 0.15]);
         joints = blendJ(joints, held, e.block);
       }
+      // A lash trails its hand: each bend is where the hand was a moment ago against where it is (and the whip hangs when it is not used, and
+      // cracks at the end of a blow)
+      if (kit === "whip") joints = { ...joints, ...lashBend(style, move, since, dur, guard, oneHand, joints, impactAt, t + persona.phase) };
       // (the legs of a stance or a strike are laid over the stride, less the further it walks)
       for (const j of JOINTS) {
         const v = joints[j];
@@ -1182,7 +1178,7 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
   const roll = hipRoll + Math.sin(s.phase) * 0.028 * amp * persona.sway * grounded + bank;
   const pitch = lean * 0.5 * grounded;
   spin += swing * 0.07 * persona.sway * grounded;
-  return { drop, lift, spin, tip: Math.max(p, flat), sway, roll, pitch };
+  return { drop, lift, spin, tip: Math.max(p, flat), sway, roll, pitch, step: Math.max(-0.4, Math.min(0.7, step)) };
 }
 
 // ---- A rider's errand ---------------------------------------------------------------------------------------------------------------
