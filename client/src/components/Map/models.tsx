@@ -12,7 +12,7 @@ import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
-import { advance, personaOf, type Persona, type Wave, bob, LIMB, LIMBS, SHIN_OF, DEKA, DEKA_LEGS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
+import { advance, personaOf, type Persona, type Wave, bob, LIMB, LIMBS, SHIN_OF, WALKER, DEKA, DEKA_LEGS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
 import { bodyParts, useBodyParts, creatureParts, useCreatureParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
@@ -3616,18 +3616,19 @@ function droidBody(k: Kit, kind: string, name: string) {
       return;
     }
     case "hailfire": {
-      // An IG-227 hailfire, from its reference render: two huge open hoops, no spokes and no hubs, each a ribbed tread round a pair of olive rims; a
-      // boxy silver drive pod low inside each; thin struts across to a small domed body with its red eye, and above it a fan of missile tubes on either
-      // side. The hoops turn (LIMB.roll: a wheel that rolls the way it faces); the pods, struts and body do not
+      // An IG-227 hailfire, from its reference render: two huge open hoops, no spokes and no hubs, each a ribbed tread round a pair of olive rims, leaning
+      // out at the top; a boxy silver drive pod low inside each; short struts across to a small domed body with its red eye, and above it a fan of
+      // missile tubes on either side, each on its own mount. Every part is joined to the next (a test makes sure nothing floats). The hoops turn
+      // (their own limbs, about their tilted axles); the pods, struts and body do not
       const tread = "#3f4044";
       const olive = "#8c8566";
       const silver = "#b4b6b0";
       const R = 0.5;
-      // (the hoops lean out at the top, a camber of 35 degrees as in the render, each turning about its own tilted axle: its own limb, wingL and wingR)
       const phi = HAILFIRE_CAMBER;
-      const xb = 0.4;
+      const W = 0.078;
+      const xb = 0.28;
       const xc = xb + R * Math.sin(phi);
-      const yc = R * Math.cos(phi) + 0.06 * Math.sin(phi) + 0.005;
+      const yc = R * Math.cos(phi) + (W / 2) * Math.sin(phi) + 0.005;
       k.pair((s) => {
         const th = -s * phi;
         k.group([s * xc, yc, 0], [0, 0, th], undefined, () => k.limb(s > 0 ? LIMB.wingL : LIMB.wingR, [0, 0, 0], () => {
@@ -3635,38 +3636,40 @@ function droidBody(k: Kit, kind: string, name: string) {
           for (let i = 0; i < N; i++) {
             const a = (i / N) * Math.PI * 2;
             const rr = R - 0.03;
-            k.box([0.12, 0.045, 0.034], tread, { at: [0, Math.sin(a) * rr, Math.cos(a) * rr], rot: [Math.PI / 2 - a, 0, 0], finish: "sheen" });
+            k.box([W, 0.045, 0.034], tread, { at: [0, Math.sin(a) * rr, Math.cos(a) * rr], rot: [Math.PI / 2 - a, 0, 0], finish: "sheen" });
           }
-          for (const dx of [-0.055, 0.055]) k.torus(R - 0.06, 0.016, olive, { at: [dx, 0, 0], rot: [0, Math.PI / 2, 0], seg: [5, 40], finish: "sheen" });
+          for (const dx of [-W * 0.45, W * 0.45]) k.torus(R - 0.06, 0.016, olive, { at: [dx, 0, 0], rot: [0, Math.PI / 2, 0], seg: [5, 40], finish: "sheen" });
           for (let i = 0; i < 10; i++) {
             const a = (i / 10) * Math.PI * 2 + 0.15;
             const rr = R - 0.07;
-            k.box([0.11, 0.02, 0.08], olive, { at: [0, Math.sin(a) * rr, Math.cos(a) * rr], rot: [Math.PI / 2 - a, 0, 0], finish: "sheen" });
+            k.box([W * 0.72, 0.02, 0.08], olive, { at: [0, Math.sin(a) * rr, Math.cos(a) * rr], rot: [Math.PI / 2 - a, 0, 0], finish: "sheen" });
           }
         }));
-        // the drive pod hangs at the low front of the hoop, leaning with it
-        const px = s * (xc - 0.3 * Math.sin(phi)), py = yc - 0.3 * Math.cos(phi);
+        // the drive pod sits at the low front of the hoop, its bottom against the rim, leaning with it
+        const px = s * (xc - 0.31 * Math.sin(phi)), py = yc - 0.31 * Math.cos(phi);
         k.group([px, py, 0.08], [0, 0, th], undefined, () => {
           k.box([0.17, 0.25, 0.36], silver, { round: 0.04, finish: "sheen" });
           k.cyl(0.055, 0.03, dark, { at: [-s * 0.09, 0.02, 0.04], rot: [0, 0, Math.PI / 2], seg: 12, finish: "sheen" });
           k.box([0.12, 0.08, 0.2], shade(silver, 0.8), { at: [0, 0.16, -0.04], round: 0.03, finish: "sheen" });
         });
-        for (const z of [0.18, -0.06]) k.rod([px - s * 0.07, py + 0.06, z], [s * 0.1, 0.34, z * 0.5], 0.012, metal, { finish: "sheen" });
-        k.rod([px - s * 0.07, py - 0.02, 0.06], [s * 0.08, 0.28, 0.02], 0.01, metal, { finish: "sheen" });
+        // (short struts: from inside the pod to inside the body)
+        for (const z of [0.18, 0.06, -0.06]) k.rod([px - s * 0.07, py + 0.06, z], [s * 0.15, 0.34, z * 0.5], 0.012, metal, { finish: "sheen" });
       });
-      k.sphere(0.13, olive, { at: [0, 0.38, 0.04], scale: [1, 0.8, 1.1], seg: [14, 10], finish: "sheen" });
-      k.box([0.2, 0.09, 0.22], dark, { at: [0, 0.26, 0.02], round: 0.03, finish: "sheen" });
+      k.sphere(0.13, olive, { at: [0, 0.38, 0.04], scale: [1.4, 0.8, 1.1], seg: [14, 10], finish: "sheen" });
+      k.box([0.24, 0.09, 0.22], dark, { at: [0, 0.26, 0.02], round: 0.03, finish: "sheen" });
       k.box([0.1, 0.08, 0.12], shade(olive, 0.8), { at: [0, 0.31, -0.12], round: 0.02, finish: "sheen" });
       k.pair((s) => k.sphere(0.022, C.red, { at: [s * 0.04, 0.4, 0.15], finish: "glow", seg: [6, 4] }));
       k.pair((s) => {
+        // each fan of 12 tubes is held on a mount from the shoulder of the body, against a plate behind it
+        k.box([0.24, 0.04, 0.12], shade(olive, 0.9), { at: [s * 0.2, 0.465, 0], round: 0.01, finish: "sheen" });
+        k.box([0.18, 0.12, 0.06], shade(olive, 0.85), { at: [s * 0.26, 0.52, -0.07], round: 0.01, finish: "sheen" });
         for (let r = 0; r < 3; r++) {
           for (let c = 0; c < 4; c++) {
             k.cyl(0.016, 0.17, "#6a6d68", { at: [s * (0.2 + c * 0.04), 0.5 + r * 0.04 + c * 0.012, 0.0], rot: [Math.PI / 2 - 0.5, 0, -s * 0.35], seg: 6, finish: "sheen" });
           }
         }
-        k.box([0.2, 0.03, 0.1], shade(olive, 0.9), { at: [s * 0.27, 0.46, -0.07], rot: [0, 0, -s * 0.2], round: 0.01, finish: "sheen" });
       });
-      k.rod([0.04, 0.5, -0.1], [0.04, 0.72, -0.1], 0.008, metal, { finish: "sheen" });
+      k.rod([0.04, 0.47, 0.0], [0.04, 0.72, -0.1], 0.008, metal, { finish: "sheen" });
       return;
     }
     case "vulture":
@@ -3809,8 +3812,8 @@ function droidBody(k: Kit, kind: string, name: string) {
   }
 }
 
-// How far the hailfire's hoops lean out at the top (radians), as in its reference render
-export const HAILFIRE_CAMBER = 0.62;
+// How far the hailfire's hoops lean out at the top (radians; the user: 25 degrees)
+export const HAILFIRE_CAMBER = (25 * Math.PI) / 180;
 // How big a droid is (2026-11-04; the user: "there seem to be a number of SIGNIFICANT mis-matches" in the scales of droids). A figure of scale 1 is
 // 67 inches (1.702 m) tall and 1.21 units high (lookOf), so 1 m is UNITS_PER_M units. Each series is built at a size of its own (a probe's ball
 // floated at 1.5, a B1 stood shorter than a person), so a droid is scaled after it is built to the stature it has in the books or the films:
@@ -4795,7 +4798,8 @@ export const MACHINE_METRES: Record<string, { h?: number; len?: number }> = {
   atst: { h: 9.04 }, atrt: { h: 3.2 }, atat: { h: 22.5 }, atte: { len: 22.02 }, aat: { len: 9.19 }, tank: { len: 7.3 }, ptower: { h: 3.4 }, df9: { h: 5 }, sonic: { h: 2.6 },
   sentry: { h: 1.3 }, turret: { h: 1 }, bike: { len: 3.2 }, brain: { h: 1.1 },
 };
-const MACHINE_GAIT: Record<string, Gait> = { atst: "walk", atrt: "walk", atat: "quad", atte: "hexa", brain: "quad" };
+// (the AT-ST's and AT-RT's knees are behind: birdwalk; the AT-AT puts one foot down at a time: walker)
+const MACHINE_GAIT: Record<string, Gait> = { atst: "birdwalk", atrt: "birdwalk", atat: "walker", atte: "hexa", brain: "quad" };
 // How big a built model is: its height and its length (the box round it), measured once
 const BOX = new Map<string, { h: number; len: number }>();
 function builtOf(key: string, build: (k: Kit) => void): { h: number; len: number } {
@@ -4862,9 +4866,9 @@ function buildConstruct(k: Kit, kind: string) {
       for (const z of [0.2, -0.2]) {
         k.pair((s) => {
           const limb = z > 0 ? (s > 0 ? LIMB.legL : LIMB.legR) : s > 0 ? LIMB.hindL : LIMB.hindR;
-          kneed(k, limb, [s * 0.18, 0.66, z], [s * 0.2, 0.36, z + 0.06], [s * 0.2, 0.05, z], (t) => 0.058 - t * 0.012, grey, { along: 6, around: 8, finish: "sheen" }, () => {
-            k.cyl(0.085, 0.05, dark, { at: [s * 0.2, 0.025, z], seg: 10, finish: "sheen" });
-            k.box([0.07, 0.03, 0.06], steel, { at: [s * 0.2, 0.05, z + 0.07], round: 0.01 });
+          kneed(k, limb, [s * 0.18, WALKER.hip, z], [s * 0.2, WALKER.knee, z + WALKER.kneeForward], [s * 0.2, WALKER.foot, z], (t) => 0.058 - t * 0.012, grey, { along: 6, around: 8, finish: "sheen" }, () => {
+            // (a rounded pad: it does not dig its edge in as the leg tilts)
+            k.sphere(0.085, dark, { at: [s * 0.2, 0.04, z + 0.01], scale: [1, 0.47, 1.15], seg: [10, 6], finish: "sheen" });
           });
         });
       }

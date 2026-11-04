@@ -105,7 +105,7 @@ export const bob = (s: Stride) => Math.abs(Math.sin(s.phase)) * 0.035 * s.amp;
 // `hover`: floating with a slow rise and fall, tilted into the way it goes (probe droids, spirits)
 // `slither` (2026-11-04): a long body carried by a wave, with legs, if it has any, stepping in threes (serpents, a krayt dragon); `crawl`: four
 // legs that lift and splay outward as they come forward, the spine and the tail waving (lizards)
-export type Gait = "walk" | "quad" | "hexa" | "wings" | "roll" | "glide" | "hover" | "ride" | "slither" | "crawl" | "droideka";
+export type Gait = "walk" | "birdwalk" | "walker" | "quad" | "hexa" | "wings" | "roll" | "glide" | "hover" | "ride" | "slither" | "crawl" | "droideka";
 export interface GaitStyle {
   // How fast the legs go round for the same speed
   cycle: number;
@@ -118,6 +118,11 @@ export interface GaitStyle {
 }
 export const GAITS: Record<Gait, GaitStyle> = {
   walk: { cycle: 1, bob: 1, rock: 0 },
+  // (2026-11-04) `birdwalk`: a walk on legs whose knee is behind (an AT-ST's, an AT-RT's): the knee bends the other way; `walker`: a heavy four-legged
+  // walk, one foot lifted at a time in the order hind left, fore left, hind right, fore right, each foot placed on the ground by the leg's own
+  // geometry (WALKER): it never trots and never has all four feet off the ground
+  birdwalk: { cycle: 1, bob: 1, rock: 0 },
+  walker: { cycle: 0.8, bob: 0, rock: 0.008 },
   quad: { cycle: 0.8, bob: 0.5, rock: 0.015 },
   hexa: { cycle: 1.6, bob: 0.15, rock: 0 },
   wings: { cycle: 1, bob: 0, rock: 0, float: 0.05 },
@@ -157,14 +162,26 @@ export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose(), p
   const reset = (limb: number) => out.set([0, 0, 0, 1], limb * 4);
   for (let i = 1; i < LIMBS; i++) if (i !== LIMB.roll) reset(i);
   switch (gait) {
-    case "walk": {
+    case "walk":
+    case "birdwalk": {
       const a = angles(s);
+      // (a bird's knee is behind the hip and the foot ahead of it: bending the leg turns the shin the other way about the knee)
+      const flex = gait === "birdwalk" ? -1 : 1;
       for (const limb of [LIMB.legR, LIMB.legL, LIMB.armR, LIMB.armL]) setLimb(out, limb, AXIS.x, a[limb]);
       setLimb(out, LIMB.tail, AXIS.y, Math.sin(s.phase) * 0.25 * s.amp);
       // (the knees bend as each leg swings through)
-      setLimb(out, LIMB.shinR, AXIS.x, s.amp * (0.12 + 0.6 * Math.max(0, -Math.cos(s.phase))));
-      setLimb(out, LIMB.shinL, AXIS.x, s.amp * (0.12 + 0.6 * Math.max(0, Math.cos(s.phase))));
+      setLimb(out, LIMB.shinR, AXIS.x, flex * s.amp * (0.12 + 0.6 * Math.max(0, -Math.cos(s.phase))));
+      setLimb(out, LIMB.shinL, AXIS.x, flex * s.amp * (0.12 + 0.6 * Math.max(0, Math.cos(s.phase))));
       creatureLife(out, s, t, persona, 0.6);
+      break;
+    }
+    case "walker": {
+      // Each foot at its own point of the cycle, a quarter of it after the last
+      for (const [thigh, shin, at] of [[LIMB.hindL, LIMB.shinHL, 0], [LIMB.legL, LIMB.shinL, 0.25], [LIMB.hindR, LIMB.shinHR, 0.5], [LIMB.legR, LIMB.shinR, 0.75]] as const) {
+        walkerLeg(out, thigh, shin, (((s.phase / TAU + at) % 1) + 1) % 1, s.amp);
+      }
+      setLimb(out, LIMB.tail, AXIS.y, 0);
+      creatureLife(out, s, t, persona, 0.3);
       break;
     }
     case "quad": {
@@ -246,6 +263,35 @@ export function gaitPose(gait: Gait, s: Stride, t = 0, out: Pose = restPose(), p
     setWave(out, wave, s, t, persona.phase);
   }
   return out;
+}
+
+// The legs of a walker such as an AT-AT (models.tsx buildConstruct draws them from these numbers): the hip, knee and foot heights, how far ahead of
+// the foot the knee is, and how far the foot is put in front of and behind the hip at a full stride and lifted in its swing (all in the model's own units)
+export const WALKER = { hip: 0.66, knee: 0.36, foot: 0.05, kneeForward: 0.06, reach: 0.09, lift: 0.07 };
+// One leg of the walker at `u` of its cycle (0 to 1): on the ground for three quarters of it, the foot drawn back at an even pace under the body, then
+// swung forward and set down. The foot's place is worked out and the two joints solved for it (a two-bone leg, the knee forward), so a foot on the ground
+// stays on it, not lifted by the swing of the hip
+function walkerLeg(out: Pose, thigh: number, shin: number, u: number, amp: number) {
+  const W = WALKER;
+  const a = Math.hypot(W.kneeForward, W.hip - W.knee), b = Math.hypot(W.kneeForward, W.knee - W.foot);
+  const t0 = Math.atan2(W.knee - W.hip, W.kneeForward), s0 = Math.atan2(W.foot - W.knee, -W.kneeForward);
+  const H = W.hip - W.foot;
+  const STANCE = 0.75;
+  let fz: number, fy = H;
+  if (u < STANCE) fz = W.reach * amp * (1 - (2 * u) / STANCE);
+  else {
+    const x = (u - STANCE) / (1 - STANCE);
+    fz = -W.reach * amp + 2 * W.reach * amp * (0.5 - 0.5 * Math.cos(Math.PI * x));
+    fy = H - W.lift * amp * Math.sin(Math.PI * x);
+  }
+  const d = Math.min(Math.hypot(fz, fy), a + b - 1e-4);
+  const gamma = Math.acos(Math.max(-1, Math.min(1, (a * a + d * d - b * b) / (2 * a * d))));
+  const t = Math.atan2(-fy, fz) + gamma;
+  const kz = a * Math.cos(t), ky = a * Math.sin(t);
+  const sh = Math.atan2(-fy - ky, fz - kz);
+  // (turns about x are clockwise seen from the side with the nose to the right: the opposite of the angle's way)
+  setLimb(out, thigh, AXIS.x, -(t - t0));
+  setLimb(out, shin, AXIS.x, -(sh - t - (s0 - t0)));
 }
 
 // A body's undulation: it starts at `origin` (a z in the figure's own frame) and runs back to the tail, `amp` metres to a side at full (reached

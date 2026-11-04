@@ -453,7 +453,7 @@ test("a krayt dragon stands on feet, a hutt has hands, and a serpent that moves 
 });
 
 // Every vertex of a baked animated model, put where the shader puts it in a pose (turned about its limb's pivot, then about each joint it hangs from)
-function posedVertices(k: Kit, pose: Pose): THREE.Vector3[] {
+function posedVertices(k: Kit, pose: Pose, only?: Set<number>): THREE.Vector3[] {
   const out: THREE.Vector3[] = [];
   const q = (l: number) => new THREE.Quaternion(pose[l * 4], pose[l * 4 + 1], pose[l * 4 + 2], pose[l * 4 + 3]);
   const pivot = (l: number) => new THREE.Vector3(k.pivots[l * 3], k.pivots[l * 3 + 1], k.pivots[l * 3 + 2]);
@@ -462,6 +462,7 @@ function posedVertices(k: Kit, pose: Pose): THREE.Vector3[] {
     for (let i = 0; i < p.count; i++) {
       const v = new THREE.Vector3(p.getX(i), p.getY(i), p.getZ(i));
       const l = Math.round(limb.getX(i));
+      if (only && !only.has(l)) continue;
       if (l > 0) {
         v.sub(pivot(l)).applyQuaternion(q(l)).add(pivot(l));
         let pa = PARENT[l];
@@ -640,20 +641,21 @@ test("the walkers walk on jointed legs: an AT-ST on two, an AT-AT on four, an AT
     assert.equal(m.spec.gait, gait, name);
     for (const l of limbs) assert.ok(m.k.jointMask & (1 << l), `${name} limb ${l}`);
   };
-  joints("AT-ST", "walk", LIMB.legR, LIMB.legL, LIMB.shinR, LIMB.shinL);
-  joints("AT-RT", "walk", LIMB.legR, LIMB.legL, LIMB.shinR, LIMB.shinL);
-  joints("AT-AT", "quad", LIMB.legR, LIMB.legL, LIMB.hindR, LIMB.hindL, LIMB.shinR, LIMB.shinL, LIMB.shinHR, LIMB.shinHL, LIMB.head);
+  joints("AT-ST", "birdwalk", LIMB.legR, LIMB.legL, LIMB.shinR, LIMB.shinL);
+  joints("AT-RT", "birdwalk", LIMB.legR, LIMB.legL, LIMB.shinR, LIMB.shinL);
+  joints("AT-AT", "walker", LIMB.legR, LIMB.legL, LIMB.hindR, LIMB.hindL, LIMB.shinR, LIMB.shinL, LIMB.shinHR, LIMB.shinHL, LIMB.head);
   joints("AT-TE", "hexa", LIMB.legR, LIMB.legL, LIMB.midR, LIMB.midL, LIMB.hindR, LIMB.hindL, LIMB.shinR, LIMB.shinMR, LIMB.shinHR);
   joints("B'omarr", "quad", LIMB.legR, LIMB.legL, LIMB.hindR, LIMB.hindL, LIMB.shinR, LIMB.shinHL);
   // a tank, a turret and a bike do not walk
   for (const n of ["AAT", "TX-225", "Auto-Turret", "74-Z"]) assert.equal(machineSize(n).spec.gait, "glide", n);
 });
 
-test("a hailfire is two open hoops (no spokes) with an extreme camber, each turning about its own tilted axle, a drive pod low in each, a small body between and its missile tubes above", () => {
+test("a hailfire is two open hoops (no spokes) leaning out 25 degrees, each turning about its own tilted axle, with slim rims, a drive pod low in each, a small body between and its missile tubes above", () => {
   const k = new Kit();
   k.animated = true;
   buildDroid(k, "hailfire", "IG-227 Hailfire-Class Droid");
   assert.ok(k.jointMask & (1 << LIMB.wingL) && k.jointMask & (1 << LIMB.wingR), "each hoop turns on a limb of its own");
+  assert.ok(Math.abs(HAILFIRE_CAMBER - (25 * Math.PI) / 180) < 1e-9, "the camber is 25 degrees");
   const wheels: Record<number, THREE.Vector3[]> = { [LIMB.wingL]: [], [LIMB.wingR]: [] };
   const fixed = new THREE.Box3();
   for (const p of k.parts) {
@@ -668,24 +670,113 @@ test("a hailfire is two open hoops (no spokes) with an extreme camber, each turn
     const top = Math.max(...vs.map((v) => v.y)), bottom = Math.min(...vs.map((v) => v.y));
     assert.ok(bottom > -0.01 && bottom < 0.03, "a hoop stands on the ground");
     assert.ok(top > 0.85, "and is as tall as the machine");
-    // the hoop leans out at the top: the middle of its top is further out than the middle of its bottom, by the camber
+    // the hoop leans out at the top (measured at the highest and lowest points of the tread: a little less than the hoop's own lean)
     const at = (y: number) => { const near = vs.filter((v) => Math.abs(v.y - y) < 0.012); return near.reduce((n, v) => n + v.x * side, 0) / near.length; };
     const lean = Math.atan2(at(top) - at(bottom), top - bottom);
-    assert.ok(lean > 0.4 && lean < 0.85 && Math.abs(lean - HAILFIRE_CAMBER) < 0.25, `the hoop leans out at the top by ${lean.toFixed(2)} radians (extreme: more than 23 degrees)`);
-    // (measured at the highest and lowest points of the tread, which is a little less than the hoop's own lean)
+    assert.ok(lean > 0.25 && Math.abs(lean - HAILFIRE_CAMBER) < 0.2, `the hoop leans out at the top: ${lean.toFixed(2)} radians against ${HAILFIRE_CAMBER.toFixed(2)}`);
+    // the rim is slim: its depth along the axle (the hoop's own plane normal) is 35% less than the 0.12 it was
+    const axis = new THREE.Vector3(Math.cos(HAILFIRE_CAMBER), -side * Math.sin(HAILFIRE_CAMBER), 0).multiplyScalar(side);
+    const along = vs.map((v) => v.dot(axis));
+    assert.ok(Math.max(...along) - Math.min(...along) < 0.12 * 0.65 + 0.045, `the hoop is ${(Math.max(...along) - Math.min(...along)).toFixed(3)} deep`);
   }
   assert.ok(fixed.max.x < 0.8 && fixed.max.y < 0.8, "the body, pods and racks between are smaller than the hoops");
   const spec = figureSpec("droid", "IG-227 Hailfire-Class Droid", { creature: "droid", size: "Huge", looks: {} });
   assert.ok(spec.wheel && spec.ball && spec.ball > 0.45 && spec.camber === HAILFIRE_CAMBER, "it rolls the way it faces on a wheel of the hoop's size, with its camber");
 });
 
+test("nothing on a hailfire floats: every part touches another, all of it one piece", () => {
+  const k = new Kit();
+  k.animated = true;
+  buildDroid(k, "hailfire", "IG-227 Hailfire-Class Droid");
+  // the pieces: each mesh island (a box, a tube, a sphere) is a piece with its box; two pieces that come within a hair of each other are joined
+  const boxes: THREE.Box3[] = [];
+  for (const p of k.parts) {
+    const pos = p.geo.attributes.position, idx = p.geo.index!;
+    const up = Array.from({ length: pos.count }, (_, i) => i);
+    const find = (i: number): number => (up[i] === i ? i : (up[i] = find(up[i])));
+    for (let i = 0; i < idx.count; i += 3) { up[find(idx.getX(i + 1))] = find(idx.getX(i)); up[find(idx.getX(i + 2))] = find(idx.getX(i)); }
+    const by = new Map<number, THREE.Box3>();
+    for (let i = 0; i < pos.count; i++) { const r = find(i); if (!by.has(r)) by.set(r, new THREE.Box3()); by.get(r)!.expandByPoint(new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i))); }
+    boxes.push(...by.values());
+  }
+  const group = boxes.map((_, i) => i);
+  const root = (i: number): number => (group[i] === i ? i : (group[i] = root(group[i])));
+  const grown = boxes.map((b) => b.clone().expandByScalar(0.004));
+  for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) if (grown[i].intersectsBox(grown[j])) group[root(j)] = root(i);
+  const pieces = new Map<number, number>();
+  boxes.forEach((_, i) => pieces.set(root(i), (pieces.get(root(i)) ?? 0) + 1));
+  const lone = [...pieces.entries()].filter(([, n]) => n < 8).map(([r]) => boxes[r].min.toArray().map((v) => v.toFixed(2)).join(","));
+  assert.equal(pieces.size, 1, `the hailfire is ${pieces.size} pieces: loose ones near ${lone.join(" | ")}`);
+});
+
 test("the bigger a figure, the slower its legs go round for the ground it covers: a giant walker's step is slow, a tiny droid's quick", () => {
   const person = strideCycle("walk", 1);
-  for (const [name, gait] of [["AT-AT", "quad"], ["AT-ST", "walk"], ["AT-TE", "hexa"]] as const) {
+  for (const [name, gait] of [["AT-AT", "walker"], ["AT-ST", "birdwalk"], ["AT-TE", "hexa"]] as const) {
     const fit = machineSize(name).spec.scale!;
     const rate = strideCycle(gait, fit);
     assert.ok(rate < strideCycle(gait, 1) / 3, `${name} (x${fit.toFixed(1)}) goes round at ${rate.toFixed(2)}, a person at ${person}: far slower than its model at its own size`);
     assert.ok(rate > 0.05, "but not so slow that its legs do not move in a short walk");
   }
   assert.ok(strideCycle("walk", 0.3) > person && strideCycle("walk", 1.18) < person, "a small droid steps quicker than a person, a B1 a little slower");
+});
+
+test("an AT-AT walks: one foot lifted at a time, the others on the ground, never all four off it, none sunk into it", () => {
+  const m = machineSize("AT-AT");
+  assert.equal(m.spec.gait, "walker");
+  const legs: [number, number][] = [[LIMB.legR, LIMB.shinR], [LIMB.legL, LIMB.shinL], [LIMB.hindR, LIMB.shinHR], [LIMB.hindL, LIMB.shinHL]];
+  const lowest = (pose: Pose) => legs.map((l) => Math.min(...posedVertices(m.k, pose, new Set(l)).map((v) => v.y)));
+  const rest = lowest(restPose());
+  const ground = Math.min(...rest);
+  assert.ok(Math.abs(ground) < 0.01 && rest.every((y) => Math.abs(y - ground) < 0.01), "standing, the four feet are on the ground");
+  let most = 0;
+  const lifted = new Set<number>();
+  for (let i = 0; i < 160; i++) {
+    const pose = restPose();
+    gaitPose("walker", { phase: (i / 160) * Math.PI * 2, amp: 1, speed: 3 }, 0, pose);
+    const ys = lowest(pose).map((y) => y - ground);
+    const off = ys.filter((y) => y > 0.012);
+    assert.ok(off.length <= 1, `phase ${i}: ${off.length} feet are off the ground (it is running)`);
+    assert.ok(ys.every((y) => y > -0.015), `phase ${i}: a foot is sunk into the ground (${Math.min(...ys)})`);
+    ys.forEach((y, n) => y > 0.012 && lifted.add(n));
+    most = Math.max(most, ...ys);
+  }
+  assert.ok(lifted.size === 4, "every foot is lifted in its turn");
+  assert.ok(most > 0.04, `a foot that steps is lifted clear (${most})`);
+  // the legs bend as they come through, and the feet go to and fro under the body
+  const a = restPose(), b = restPose();
+  gaitPose("walker", { phase: 0.3, amp: 1, speed: 3 }, 0, a);
+  gaitPose("walker", { phase: 2.4, amp: 1, speed: 3 }, 0, b);
+  assert.ok(a.some((v, i) => Math.abs(v - b[i]) > 0.02), "the legs move");
+});
+
+test("an AT-ST's stepping leg BENDS at the knee (its knee is behind): the angle at the knee gets smaller, the leg that stands stays as it was", () => {
+  const m = machineSize("AT-ST");
+  assert.equal(m.spec.gait, "birdwalk");
+  const pivot = (l: number) => new THREE.Vector3(m.k.pivots[l * 3], m.k.pivots[l * 3 + 1], m.k.pivots[l * 3 + 2]);
+  // the foot: the lowest point of the shin at rest
+  let foot = new THREE.Vector3(0, 9, 0);
+  for (const p of m.k.parts) {
+    const pos = p.geo.attributes.position, limb = p.geo.attributes.limb as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) if (Math.round(limb.getX(i)) === LIMB.shinL && pos.getY(i) < foot.y && pos.getX(i) > 0) foot = new THREE.Vector3(pos.getX(i), pos.getY(i), pos.getZ(i));
+  }
+  const q = (pose: Pose, l: number) => new THREE.Quaternion(pose[l * 4], pose[l * 4 + 1], pose[l * 4 + 2], pose[l * 4 + 3]);
+  const turn = (v: THREE.Vector3, pose: Pose, l: number, about: THREE.Vector3) => v.clone().sub(about).applyQuaternion(q(pose, l)).add(about);
+  const kneeAngle = (pose: Pose) => {
+    const hip = pivot(LIMB.legL);
+    const knee = turn(pivot(LIMB.shinL), pose, LIMB.legL, hip);
+    const f = turn(turn(foot, pose, LIMB.shinL, pivot(LIMB.shinL)), pose, LIMB.legL, hip);
+    return knee.clone().sub(hip).angleTo(knee.clone().sub(f));
+  };
+  const still = restPose();
+  const rest = kneeAngle(still);
+  // the left leg's knee flexes most at phase 0 (as a walker's does: gaitPose "walk")
+  const stepping = restPose(), standing = restPose();
+  gaitPose("birdwalk", { phase: 0, amp: 1, speed: 3 }, 0, stepping);
+  gaitPose("birdwalk", { phase: Math.PI, amp: 1, speed: 3 }, 0, standing);
+  assert.ok(kneeAngle(stepping) < rest - 0.3, `the stepping leg is bent at the knee: ${kneeAngle(stepping).toFixed(2)} against ${rest.toFixed(2)} at rest`);
+  assert.ok(kneeAngle(standing) < rest + 0.05 && kneeAngle(standing) > rest - 0.25, "the leg that stands keeps its knee as it was, or bends a little");
+  // a person's walk bends it the other way round (the same model walked as a person would straighten the leg)
+  const wrong = restPose();
+  gaitPose("walk", { phase: 0, amp: 1, speed: 3 }, 0, wrong);
+  assert.ok(kneeAngle(wrong) > rest, "the walk of a forward knee straightens a knee that is behind: that was the fault");
 });

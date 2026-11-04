@@ -19,6 +19,10 @@ Full write-ups in REVIVAL_NOTES.md: "A sculpted body and a person's own way of m
 - New last pose slot `LIMB.wave` (24, `LIMBS` 25): a body's undulation done in both vertex shaders (`WAVE_GLSL` in babylon.ts, used by `limbMaterial` and `LimbPlugin`); `Wave` + `setWave` + `waveOf(plan)`; gaits `slither` and `crawl`; `FigureSpec.wave`. Krayt dragon: legs with thigh and reptile foot, lifted; hutt: `hutt_upper`/`hutt_fore` (hands with fingers) in creature.glb (rebuilt, both sizes); monkey-lizard regex now matches before the lizard's; tests in tests/interiors/body.test.ts (19 pass), tsc and vite build clean.
 - Checked in the browser gallery (`?section=walk&cam=0,16,27&look=0,0,28.5`): the exogorth and snake undulate, the Krayt stands on feet, the hutt has hands, the lizard sprawls. Not seen: the Krayt's legs stepping while it walks, a kaadu's tail wave, in a real campaign. Tune `waveOf` numbers by eye.
 
+## Latest 6 (the user: "hailfire camber 25, rims -35%, struts -50%, nothing floating; AT-AT is running, AT-ST knee bends the wrong way")
+- Hailfire revised (25 degrees, slim rims, struts half as long, racks and antenna attached; a test joins every piece). New gaits in limbs.ts: `birdwalk` (AT-ST, AT-RT: shin flex reversed) and `walker` (AT-AT: four-beat walk, feet placed by `walkerLeg` IK from `WALKER`, never more than one foot up). tests 216 pass.
+- Not seen: the walkers moving in a real fight (the old trot had all four feet off the ground in 128 of 160 phases; the new walk at most one).
+
 ## Latest 5 (the user: "the Hailfire has EXTREME camber; the AT-AT, AT-ST and hexapod animations are FAR too fast")
 - Hailfire hoops lean out 35 degrees (`HAILFIRE_CAMBER`), each its own limb (`wingL`/`wingR`) turning about its tilted axle (`Mover` `camber`). Stride cycle was multiplied by scale (my bug: bigger = faster); now `strideCycle` = cycle / scale^0.6. tests 213 pass, tsc and vite build clean.
 - Not seen in a real fight; the pace of the walkers is by the formula, not looked at moving.
