@@ -12,7 +12,8 @@ import { skinOf, type RoomLook } from "./interiors/wealth";
 import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
-import { advance, bob, LIMB, LIMBS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
+import { advance, personaOf, type Persona, bob, LIMB, LIMBS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
+import { bodyParts, useBodyParts, fitLimb, fitBlock, NOMINAL, type Part } from "./interiors/body";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
 import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
@@ -242,6 +243,8 @@ export class Kit {
     const plain = asked ?? surfaceOf(this.surfaces, color) ?? "matte";
     const finish = plain === "matte" || plain === "sheen" || plain === "cloth" ? surfaceOf(this.dress, color) ?? this.restyle?.[plain] ?? plain : plain;
     let geo = source;
+    // (a sculpted body part brings its ambient occlusion per vertex, multiplied into the colour: interiors/body.ts)
+    const occlusion = geo.attributes.ao ? Float32Array.from(geo.attributes.ao.array) : undefined;
     // (a spray card keeps the coordinates it was made with; the other textured finishes are projected when baked)
     for (const name of Object.keys(geo.attributes)) if (name !== "position" && name !== "normal" && !(name === "uv" && finish === "needle")) geo.deleteAttribute(name);
     if (!geo.index) {
@@ -262,9 +265,10 @@ export class Kit {
     const n = geo.attributes.position.count;
     const colors = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) {
-      colors[i * 3] = c.r;
-      colors[i * 3 + 1] = c.g;
-      colors[i * 3 + 2] = c.b;
+      const shade = occlusion ? 0.45 + 0.55 * occlusion[i] : 1;
+      colors[i * 3] = c.r * shade;
+      colors[i * 3 + 1] = c.g * shade;
+      colors[i * 3 + 2] = c.b * shade;
     }
     geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     // Every part of an animated build carries the attributes (merged parts must have the same set)
@@ -2834,6 +2838,14 @@ export function outfitOf(name: string, role = "", look?: Look, force?: { blade: 
 
 // A person, built standing on the origin facing +z, a little over a square tall for a human.
 // Heights and widths follow the look; `skin`, `hair` and `eye` are this one's colours.
+// A sculpted part drawn in the colours the person is dressed in, one geometry a region of it (interiors/body.ts REGIONS); `make` fits a copy
+function sculpt(k: Kit, part: Part, dressed: Record<number, { color: string; finish?: Finish }>, make: (g: THREE.BufferGeometry) => THREE.BufferGeometry, o: PartOptions = {}) {
+  for (const [region, g] of Object.entries(part)) {
+    const d = dressed[Number(region)];
+    if (d) k.add(make(g), d.color, { ...o, finish: d.finish });
+  }
+}
+
 export function buildHumanoid(k: Kit, look: Look, o: Outfit, skin: string, hair: string, eye: string, seed = 0, attach: Attach[] = []) {
   const b = look.bulk;
   const fur = look.fur;
@@ -2873,10 +2885,14 @@ export function buildHumanoid(k: Kit, look: Look, o: Outfit, skin: string, hair:
     // Legs and feet
     // (jointed at the knee, 2026-10-30: the thigh swings from the hip and the shin, with the foot, bends at the knee)
     const knee = (s: number): V3 => [s * hipW * 1.05, 0.31, 0.025];
+    // (the sculpted parts of interiors/body.ts where they are loaded and this body needs nothing special of its leg)
+    const sculpted = bodyParts();
     k.pair((s) => k.limb(s > 0 ? LIMB.legL : LIMB.legR, [s * hipW, 0.56, 0], () => {
       const metalLeg = !!prosLeg && s > 0;
-      k.tube([[s * hipW, 0.56, 0], [s * hipW * 1.03, 0.44, 0.012], knee(s)], (t) => (0.064 - t * 0.01) * b, metalLeg ? "#8a949e" : legs, { along: 5, around: 7, finish: armored || metalLeg ? "sheen" : "matte" });
-      k.sphere(0.054 * b, metalLeg ? "#59636d" : legs, { at: knee(s), seg: [8, 6], finish: armored || metalLeg ? "sheen" : "matte" });
+      const molded = !!sculpted && !metalLeg;
+      if (molded) sculpt(k, sculpted!.thigh, { 0: { color: legs, finish: armored ? "sheen" : "matte" } }, (g) => fitLimb(g, { from: [s * hipW, 0.56, 0], to: knee(s), nominal: NOMINAL.thigh!, bulk: b, side: s > 0 ? 1 : -1 }));
+      else k.tube([[s * hipW, 0.56, 0], [s * hipW * 1.03, 0.44, 0.012], knee(s)], (t) => (0.064 - t * 0.01) * b, metalLeg ? "#8a949e" : legs, { along: 5, around: 7, finish: armored || metalLeg ? "sheen" : "matte" });
+      if (!molded) k.sphere(0.054 * b, metalLeg ? "#59636d" : legs, { at: knee(s), seg: [8, 6], finish: armored || metalLeg ? "sheen" : "matte" });
       if (armored) {
         k.capsule(0.056 * b, 0.1, plate, { at: [s * hipW, 0.43, 0.014], finish: "sheen", seg: 8 });
         k.sphere(0.046 * b, under, { at: [s * hipW * 1.05, 0.31, 0.03], seg: [8, 6] });
@@ -2884,9 +2900,13 @@ export function buildHumanoid(k: Kit, look: Look, o: Outfit, skin: string, hair:
       k.limb(s > 0 ? LIMB.shinL : LIMB.shinR, knee(s), () => {
       // A leg of metal where there is a prosthesis, drawn over with the model
       if (metalLeg) alongLimb(k, prosLeg!, knee(s), [s * hipW, 0.05, 0.01], "x");
-      k.tube([knee(s), [s * hipW * 1.02, 0.19, 0.01], [s * hipW, 0.08, -0.01]], (t) => (0.054 - t * 0.01) * b, metalLeg ? "#8a949e" : legs, { along: 5, around: 7, finish: armored || metalLeg ? "sheen" : "matte" });
       const boot = o.boots ? "#2b2f36" : bare ? flesh : armored ? plate : o.garment === "uniform" ? "#15171b" : "#2a2420";
-      k.box([0.1 * b, 0.09, 0.2], boot, { at: [s * hipW, 0.045, 0.03], round: 0.035, finish: armored || o.garment === "uniform" || o.boots ? "sheen" : "matte" });
+      const bootFinish: Finish = armored || o.garment === "uniform" || o.boots ? "sheen" : "matte";
+      if (molded) sculpt(k, sculpted!.shin, { 0: { color: legs, finish: armored ? "sheen" : "matte" }, 1: { color: boot, finish: bootFinish } }, (g) => fitLimb(g, { from: knee(s), to: [s * hipW, 0.08, -0.01], nominal: NOMINAL.shin!, bulk: b, side: s > 0 ? 1 : -1 }));
+      else {
+        k.tube([knee(s), [s * hipW * 1.02, 0.19, 0.01], [s * hipW, 0.08, -0.01]], (t) => (0.054 - t * 0.01) * b, metalLeg ? "#8a949e" : legs, { along: 5, around: 7, finish: armored || metalLeg ? "sheen" : "matte" });
+        k.box([0.1 * b, 0.09, 0.2], boot, { at: [s * hipW, 0.045, 0.03], round: 0.035, finish: bootFinish });
+      }
       if (o.garment === "uniform" || o.boots) k.cyl(0.05 * b, 0.2, boot, { at: [s * hipW, 0.16, 0], seg: 10, finish: "sheen" });
       // Rocket boots: a thruster at each heel, glowing
       if (o.boots === "rocket") {
@@ -2951,9 +2971,15 @@ interface Body { b: number; flesh: string; torsoColor: string; sleeve: string; p
 
 function upper(k: Kit, look: Look, o: Outfit, p: Body) {
   const { b, flesh, torsoColor, sleeve, plate, armored } = p;
-  // Hips and the trunk: a turned body, flattened front to back
-  k.box([0.3 * b, 0.14, 0.19], armored ? plate : o.garment === "flightsuit" || o.garment === "overalls" ? o.top : p.bare ? flesh : o.bottom, { round: 0.05, finish: armored ? "sheen" : "matte" });
-  k.lathe([[0.13 * b, 0], [0.14 * b, 0.06], [0.16 * b, 0.16], [0.185 * b, 0.26], [0.19 * b, 0.32], [0.15 * b, 0.39], [0.06, 0.43], [0, 0.43]], torsoColor, { scale: [1, 1, 0.62], seg: 12, finish: armored ? "sheen" : "matte" });
+  // Hips and the trunk: a turned body, flattened front to back (the sculpted trunk, hips and neck where they are loaded)
+  const hipColor = armored ? plate : o.garment === "flightsuit" || o.garment === "overalls" ? o.top : p.bare ? flesh : o.bottom;
+  const parts = bodyParts();
+  if (parts) {
+    sculpt(k, parts.torso, { 0: { color: torsoColor, finish: armored ? "sheen" : "matte" }, 1: { color: hipColor, finish: armored ? "sheen" : "matte" }, 2: { color: armored && o.head ? p.under : flesh } }, (g) => fitBlock(g, [b, 1, b]));
+  } else {
+    k.box([0.3 * b, 0.14, 0.19], hipColor, { round: 0.05, finish: armored ? "sheen" : "matte" });
+    k.lathe([[0.13 * b, 0], [0.14 * b, 0.06], [0.16 * b, 0.16], [0.185 * b, 0.26], [0.19 * b, 0.32], [0.15 * b, 0.39], [0.06, 0.43], [0, 0.43]], torsoColor, { scale: [1, 1, 0.62], seg: 12, finish: armored ? "sheen" : "matte" });
+  }
   // A garment worn over the trunk, following its curve, open at the front by `gap` either side
   const wrap = (color: string, gap: number, from = 0.03, to = 0.39, front = 0) => {
     const r = (y: number) => (y < 0.06 ? 0.15 : y < 0.16 ? 0.15 + (y - 0.06) * 0.2 : y < 0.26 ? 0.17 + (y - 0.16) * 0.25 : y < 0.32 ? 0.197 : 0.197 - (y - 0.32) * 0.5) * b * 1.04;
@@ -3063,13 +3089,19 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
     const metal = !i && !!p.attach.find((a) => a.slot === "armR");
     const prosthesis = !i ? p.attach.find((a) => a.slot === "armR") : undefined;
     const elbow = arm[1];
-    k.sphere(0.062 * b, armored ? plate : sleeve, { at: shoulder, seg: [8, 6], finish: armored ? "sheen" : "matte" });
-    k.tube([arm[0], [(arm[0][0] + elbow[0]) / 2, (arm[0][1] + elbow[1]) / 2, (arm[0][2] + elbow[2]) / 2], elbow], (t) => (0.05 - t * 0.006) * b, metal ? "#8a949e" : sleeve, { along: 4, around: 6, finish: armored || metal ? "sheen" : "matte" });
-    k.sphere(0.044 * b, armored ? p.under : metal ? "#59636d" : sleeve, { at: elbow, seg: [8, 6], finish: metal ? "sheen" : undefined });
+    const molded = !!parts && !metal;
+    const armFit = (g: THREE.BufferGeometry, from: V3, to: V3, nominal: number) => fitLimb(g, { from, to, nominal, bulk: b, side: s > 0 ? 1 : -1 });
+    k.sphere((molded ? 0.054 : 0.062) * b, armored ? plate : sleeve, { at: shoulder, seg: [8, 6], finish: armored ? "sheen" : "matte" });
+    if (molded) sculpt(k, parts!.arm, { 0: { color: sleeve, finish: armored ? "sheen" : "matte" } }, (g) => armFit(g, arm[0], elbow, NOMINAL.arm!));
+    else k.tube([arm[0], [(arm[0][0] + elbow[0]) / 2, (arm[0][1] + elbow[1]) / 2, (arm[0][2] + elbow[2]) / 2], elbow], (t) => (0.05 - t * 0.006) * b, metal ? "#8a949e" : sleeve, { along: 4, around: 6, finish: armored || metal ? "sheen" : "matte" });
+    if (!molded) k.sphere(0.044 * b, armored ? p.under : metal ? "#59636d" : sleeve, { at: elbow, seg: [8, 6], finish: metal ? "sheen" : undefined });
     k.limb(i ? LIMB.foreL : LIMB.foreR, elbow, () => {
     if (prosthesis) alongLimb(k, prosthesis, elbow, arm[2], "x");
-    k.tube([elbow, [(elbow[0] + arm[2][0]) / 2, (elbow[1] + arm[2][1]) / 2, (elbow[2] + arm[2][2]) / 2], arm[2]], (t) => (0.044 - t * 0.008) * b, metal ? "#8a949e" : sleeve, { along: 4, around: 6, finish: armored || metal ? "sheen" : "matte" });
-    k.sphere((o.gloves ? 0.05 : 0.044) * b, metal ? "#59636d" : glove, { at: arm[2], scale: [0.85, 1.1, 0.95], seg: [7, 5], finish: o.gloves ? "sheen" : undefined });
+    if (molded) sculpt(k, parts!.fore, { 0: { color: sleeve, finish: armored ? "sheen" : "matte" }, 1: { color: glove, finish: o.gloves ? "sheen" : undefined } }, (g) => armFit(g, elbow, arm[2], NOMINAL.fore!));
+    else {
+      k.tube([elbow, [(elbow[0] + arm[2][0]) / 2, (elbow[1] + arm[2][1]) / 2, (elbow[2] + arm[2][2]) / 2], arm[2]], (t) => (0.044 - t * 0.008) * b, metal ? "#8a949e" : sleeve, { along: 4, around: 6, finish: armored || metal ? "sheen" : "matte" });
+      k.sphere((o.gloves ? 0.05 : 0.044) * b, metal ? "#59636d" : glove, { at: arm[2], scale: [0.85, 1.1, 0.95], seg: [7, 5], finish: o.gloves ? "sheen" : undefined });
+    }
     // Shock gloves crackle at the knuckles
     if (o.gloves === "shock") k.sphere(0.02 * b, "#7fe3ff", { at: [arm[2][0], arm[2][1], arm[2][2] + 0.04], finish: "glow", seg: [6, 4] });
     // What the hands hold: the weapon in the right (turned at the wrist), a shield on the left forearm
@@ -3266,8 +3298,18 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
     k.cyl(0.022, 0.06, "#6b5a3a", { at: [0, -0.05, 0.11], rot: [Math.PI / 2, 0, 0], seg: 8, finish: "sheen" });
     return;
   }
+  // (the sculpted head: skull, brow, nose, lips, chin and, where this species has no ears of its own, ears; interiors/body.ts)
+  const plainEars = !look.ears && !look.fur && !look.headTentacles && !look.lekku && !look.montrals && helmet !== "hood" && look.head !== "hammer";
+  const headParts = bodyParts()?.head;
+  const molded = headParts && !look.snout && !look.mask && !look.machine && look.head !== "cone" && look.head !== "hammer" ? headParts : undefined;
   if (look.head === "cone") k.lathe([[0, -0.11], [0.095, -0.085], [0.115, 0], [0.095, 0.1], [0.06, 0.2], [0, 0.25]], face, { seg: 16 });
-  else k.sphere(0.115, face, { scale: sk.scale, at: sk.at, rot: sk.rot, seg: [12, 9] });
+  else if (molded) {
+    // (made for a skull of 0.100 by 0.118 by 0.112: the sphere's scale, as it was)
+    const scale: V3 = [sk.scale[0] * 1.15, sk.scale[1] * 0.975, sk.scale[2] * 1.027];
+    const dressed: Record<number, { color: string }> = { 0: { color: face } };
+    if (plainEars) dressed[3] = { color: face };
+    sculpt(k, molded, dressed, (g) => g.clone(), { at: sk.at, rot: sk.rot, scale });
+  } else k.sphere(0.115, face, { scale: sk.scale, at: sk.at, rot: sk.rot, seg: [12, 9] });
   // Eyes
   const eyeColor = look.glowEyes ? p.eye || "#ff3b30" : look.eyeSize === "small" ? "#15171b" : p.eye && p.eye !== "#2a2a2e" ? shade(p.eye, 0.6) : "#101318";
   const eyeFinish: Finish = look.glowEyes ? "glow" : "sheen";
@@ -3285,12 +3327,12 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
   else if (look.glowEyes) eyes([[-0.04, 0.015, 0.1], [0.04, 0.015, 0.1]], 0.016);
   else k.pair((s) => {
     // An eye: its white, the iris in the eye's colour and the pupil, under a brow in the hair's colour (or a darker skin), set in a lid
-    const at: V3 = [s * 0.04, 0.015, 0.098];
+    const at: V3 = [s * 0.04, 0.015, molded ? 0.09 : 0.098];
     k.sphere(0.019, "#ece6dc", { at, scale: [1.2, 0.85, 0.6], finish: "sheen", seg: [8, 6] });
     k.sphere(0.0105, p.eye && p.eye !== "#2a2a2e" ? p.eye : "#4e3420", { at: [at[0], at[1], at[2] + 0.009], scale: [1, 1, 0.5], finish: "sheen", seg: [8, 6] });
     k.sphere(0.005, "#0b0b0d", { at: [at[0], at[1], at[2] + 0.0125], scale: [1, 1, 0.5], finish: "sheen", seg: [6, 4] });
     k.sphere(0.021, face, { at: [at[0], at[1] + 0.006, at[2] - 0.002], scale: [1.2, 0.5, 0.62], theta: [0, 1.2], seg: [8, 4] });
-    if (!look.fur) k.box([0.034, 0.007, 0.012], p.hair || shade(face, 0.6), { at: [s * 0.042, 0.04, 0.104], rot: [0.1, 0, s * -0.12], round: 0.003 });
+    if (!look.fur) k.box([0.034, 0.007, 0.012], p.hair || shade(face, 0.6), { at: [s * 0.042, 0.04, molded ? 0.102 : 0.104], rot: [0.1, 0, s * -0.12], round: 0.003 });
   });
   // The middle of the face: a snout, a trunk, a beak, a muzzle, or a nose and a mouth
   const fore = shade(face, 1.1);
@@ -3302,7 +3344,7 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
   else if (look.snout === "muzzle") k.box([0.08, 0.06, 0.07], fore, { at: [0, -0.04, 0.1], round: 0.03 });
   else if (look.snout === "long") k.capsule(0.035, 0.07, fore, { at: [0, -0.04, 0.12], rot: [Math.PI / 2 + 0.3, 0, 0], seg: 8 });
   else if (look.snout === "short") k.capsule(0.032, 0.03, fore, { at: [0, -0.035, 0.11], rot: [Math.PI / 2, 0, 0], seg: 8 });
-  else if (!look.mask) {
+  else if (!look.mask && !molded) {
     // A nose with a bridge and nostrils, lips, and the line of the cheekbones
     k.box([0.016, 0.04, 0.02], face, { at: [0, 0.0, 0.108], rot: [-0.25, 0, 0], round: 0.007 });
     k.sphere(0.017, fore, { at: [0, -0.016, 0.114], scale: [1.05, 0.9, 0.95], seg: [8, 6] });
@@ -3336,7 +3378,7 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
     k.sphere(0.014, face, { at: [s * 0.075, 0.245, 0.065], seg: [6, 4] });
   });
   // Plain ears where the species has none of its own and nothing covers them
-  if (!look.ears && !look.fur && !look.headTentacles && !look.lekku && !look.montrals && helmet !== "hood" && look.head !== "hammer") k.pair((s) => {
+  if (plainEars && !molded) k.pair((s) => {
     k.sphere(0.026, face, { at: [s * 0.108, 0.005, -0.01], scale: [0.35, 1, 0.7], seg: [8, 6] });
     k.sphere(0.01, shade(face, 0.75), { at: [s * 0.114, 0.0, -0.006], scale: [0.4, 1, 0.8], seg: [5, 4] });
   });
@@ -4388,7 +4430,7 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
   if (kind === "hutt" || /hutt/i.test(name)) return { key: "beast:hutt", build: (k) => slug(k, { plan: "slug", color: "#7c8a4a", hutt: true }), height: 1.2, gait: "glide" };
   if (kind === "crowd") {
     return {
-      key: `crowd:${seed % 6}`,
+      key: `crowd:${seed % 6}${bodyParts() ? ":sc" : ""}`,
       build: (k) => [[-0.2, -0.12], [0.2, -0.06], [0, 0.2]].forEach(([x, z], i) => k.group([x, 0, z], [0, i * 0.8, 0], 0.72, () => buildHumanoid(k, HUMAN, outfitOf(`${name}${i}`), pickOf(HUMAN_TONES, `${name}${i}`), pickOf(HUMAN.hair, `${name}${i}`), ""))),
       height: 1.0,
       gait: "walk",
@@ -4437,7 +4479,7 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
   else if (opts.wield) outfit = { ...outfit, hand: opts.wield, ...(opts.wield.startsWith("saber") && !outfit.blade ? { blade: /sith|inquisitor|dark/i.test(`${name} ${role}`) ? "#ff4040" : "#7fe3ff" } : {}) };
   const wants = wantsOf(outfit.hand, gear, role || name, name).filter((w) => !opts.unarmed || w.slot !== "weapon");
   const attach = opts.attach ?? [];
-  const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.weight ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}${outfit.suit ?? ""}${outfit.gloves ?? ""}${outfit.boots ?? ""}:${seed & 28}${attach.length ? `:g${attach.map((a) => `${a.slot}=${a.id}@${a.scale}`).join("+")}` : ""}`;
+  const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.weight ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}${outfit.suit ?? ""}${outfit.gloves ?? ""}${outfit.boots ?? ""}:${seed & 28}${attach.length ? `:g${attach.map((a) => `${a.slot}=${a.id}@${a.scale}`).join("+")}` : ""}${bodyParts() ? ":sc" : ""}`;
   return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, seed, attach), height: 1.25 * look.scale, wants, blade: outfit.blade, gait: "walk", hold: holdOf(outfit.hand), saber: saberStyleOf(player ? who : name || role, player ? party?.forms : []), ...(look.fur && hair ? { fur: 0.02 * look.scale } : {}) };
 }
 
@@ -4458,7 +4500,7 @@ function useStride(group: React.RefObject<THREE.Group>, apply: (stride: Stride, 
     // Only along the ground: a figure that rises onto a stair or a stage is not striding
     const moved = last.current ? { x: here.x - last.current.x, z: here.z - last.current.z } : { x: 0, z: 0 };
     (last.current ??= new THREE.Vector3()).copy(here);
-    stride.current = advance(stride.current, Math.hypot(moved.x, moved.z), dt, cycle);
+    stride.current = advance(stride.current, Math.hypot(moved.x, moved.z), dt, cycle, Math.atan2(moved.x, moved.z));
     apply(stride.current, g, moved, clock.current, dt);
   });
 }
@@ -4472,7 +4514,7 @@ const FUR_DETAIL = typeof matchMedia !== "undefined" && matchMedia("(pointer: co
 // rolls or glides does not bob. `ball` is the radius of a ball it rolls on (`wheel`: one that only rolls the way it faces); `fur` the
 // length of its hair, drawn in shells that move with it
 // `crew`: aboard a craft (Crew): posed in its seat, the hips at the group's origin
-function Mover({ id, build, gait, ball, wheel, fur, seat, ring, hold = "none", saber = "niman", fighting, crew }: { id: string; build: (k: Kit) => void; gait: Gait; ball?: number; wheel?: boolean; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh>; hold?: Hold; saber?: SaberStyle; fighting?: boolean; crew?: CrewSeat }) {
+function Mover({ id, build, gait, ball, wheel, fur, seat, ring, hold = "none", saber = "niman", fighting, crew, persona }: { id: string; build: (k: Kit) => void; gait: Gait; ball?: number; wheel?: boolean; fur?: number; seat?: { current: SeatState }; ring?: React.RefObject<THREE.Mesh>; hold?: Hold; saber?: SaberStyle; fighting?: boolean; crew?: CrewSeat; persona?: Persona }) {
   const m = useModel(`${id}:anim`, (k) => { k.animated = true; build(k); });
   const mats = useMemo(() => Object.fromEntries(FINISHES.map((f) => [f, limbMaterial(MATERIALS[f])])) as Record<Finish, THREE.Material>, []);
   const furMat = useMemo(() => (fur ? limbMaterial(furShellMaterial(fur, FUR_DETAIL)) : null), [fur]);
@@ -4514,7 +4556,7 @@ function Mover({ id, build, gait, ball, wheel, fur, seat, ring, hold = "none", s
       return;
     }
     const mo = told?.current ?? own;
-    const root = joints.jointed ? humanPose(stride, t, mo, easeMotion(ease, mo, dt), hold, mo.style ?? saber, nowSeconds(), joints.legs, w.pose) : (gaitPose(gait, stride, t, w.pose), null);
+    const root = joints.jointed ? humanPose(stride, t, mo, easeMotion(ease, mo, dt), hold, mo.style ?? saber, nowSeconds(), joints.legs, w.pose, persona) : (gaitPose(gait, stride, t, w.pose), null);
     // At a table (people only): the body eases down onto the seat and the seated pose is laid over the walking one; a gesture swells over the arms
     const s = gait === "walk" ? seat?.current : undefined;
     w.sit = s ? easeSit(w.sit, s.sit, dt) : 0;
@@ -4563,9 +4605,13 @@ function Mover({ id, build, gait, ball, wheel, fur, seat, ring, hold = "none", s
         body.current.rotation.y = root.spin;
         body.current.rotation.x += root.tip * (Math.PI / 2);
         body.current.position.z = -root.tip * 0.62 * (h / 0.56);
-      }
+        // (shifting over the foot it stands on, the hips dropping, a bank into a turn, a lean into a start: interiors/limbs.ts humanPose)
+        body.current.position.x = root.sway;
+        body.current.rotation.z += root.roll;
+        body.current.rotation.x += root.pitch;
+      } else body.current.position.x = 0;
     }
-  }, GAITS[gait].cycle);
+  }, GAITS[gait].cycle * (gait === "walk" && persona ? persona.stride : 1));
   return (
     <group ref={group}>
       <group ref={body}>
@@ -4640,8 +4686,12 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
   const ringMesh = useRef<THREE.Mesh>(null);
   const looks = useSpecies();
   const party = usePartyLook();
+  // (people are drawn from the sculpted body once it is loaded: interiors/body.ts; this renders again then)
+  useBodyParts();
   const me = player ?? kind === "player";
   const base = figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, unarmed, wield });
+  // (how this person carries themselves: their stride, sway, slump and fidgets come from who they are: interiors/limbs.ts personaOf)
+  const persona = useMemo(() => personaOf(hue((me ? party?.name : name) || name || kind)), [me, party?.name, name, kind]);
   // What a person holds, wears and carries is loaded (one set of hooks per kind of model, in its own palette) and baked into the body
   // once it is all in; until then the code's own weapon is in the hand
   const wants = base.wants ?? [];
@@ -4696,7 +4746,7 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
           <meshBasicMaterial color={ring} />
         </mesh>
       )}
-      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} name={name} deployed={fighting} /> : <Mover id={spec.key} build={spec.build} gait={riding ? "ride" : spec.gait} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} hold={crew ? "none" : base.hold} saber={base.saber} fighting={fighting} crew={crew} />}
+      {spec.form === "droideka" ? <Droideka id={spec.key} build={spec.build} name={name} deployed={fighting} /> : <Mover id={spec.key} build={spec.build} gait={riding ? "ride" : spec.gait} ball={spec.ball} wheel={spec.wheel} fur={spec.fur} seat={seat} ring={ringMesh} hold={crew ? "none" : base.hold} saber={base.saber} fighting={fighting} crew={crew} persona={persona} />}
       {marker && (
         <mesh position={[0, Math.max(1.55, spec.height + 0.3), 0]}>
           <octahedronGeometry args={[0.12]} />

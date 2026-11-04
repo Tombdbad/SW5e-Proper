@@ -39,20 +39,38 @@ export interface Stride {
   phase: number;
   amp: number;
   speed: number;
+  // (2026-11-04) how fast the speed is changing (squares a second each second, smoothed: a lean into a start and back at a stop) and how fast
+  // the figure is turning (radians a second, smoothed: a bank into the turn), with the heading it had last frame
+  accel?: number;
+  turn?: number;
+  heading?: number;
 }
 export const standing = (): Stride => ({ phase: 0, amp: 0, speed: 0 });
 
 // One frame of a stride for a figure that moved `distance` squares in `dt` seconds. A jump (a figure put somewhere else) is not a walk.
 // `cycle` scales how fast the legs go round for the same speed (a beast's long legs go slower, a droideka's three quicker)
-export function advance(s: Stride, distance: number, dt: number, cycle = 1): Stride {
+export function advance(s: Stride, distance: number, dt: number, cycle = 1, heading?: number): Stride {
   if (dt <= 0) return s;
   const raw = distance / dt;
   const speed = raw > 20 ? 0 : s.speed + (raw - s.speed) * (1 - Math.exp(-dt * 12));
+  const accel = (s.accel ?? 0) + ((raw > 20 ? 0 : (speed - s.speed) / dt) - (s.accel ?? 0)) * (1 - Math.exp(-dt * 5));
+  // (the heading is where the figure is going; while it stands the last one is kept, and a turn eases away)
+  let turn = s.turn ?? 0;
+  let kept = s.heading;
+  if (heading !== undefined && raw > 0.4 && raw < 20) {
+    if (kept !== undefined) {
+      let d = heading - kept;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      turn += (d / dt - turn) * (1 - Math.exp(-dt * 6));
+    }
+    kept = heading;
+  } else turn *= Math.exp(-dt * 6);
   const target = Math.min(1, speed / FULL);
   const amp = s.amp + (target - s.amp) * (1 - Math.exp(-dt * 10));
   // Standing still, the legs come back to rest rather than freezing mid-stride
   const phase = s.phase + Math.min(speed * CYCLES_PER_SQUARE, MAX_CYCLES) * cycle * dt * Math.PI * 2;
-  return { phase, amp, speed };
+  return { phase, amp, speed, accel, turn, heading: kept };
 }
 
 // The angle of each limb of a walker, about the x axis, positive swinging the foot or hand back
@@ -662,7 +680,25 @@ export const styleOf = (hold: Hold, saber: SaberStyle): Style | undefined => (ho
 export const strikeSeconds = (hold: Hold, saber: SaberStyle, n: number): number => { const st = styleOf(hold, saber); return st ? st.strikes[((n % st.strikes.length) + st.strikes.length) % st.strikes.length].dur : 0.45; };
 
 // What the pose asks of the body as a whole: how far it is lowered (bent knees), lifted (a leap), turned about (a spin) and tipped onto its front (prone)
-export interface Root { drop: number; lift: number; spin: number; tip: number }
+// (2026-11-04: `sway` the body's shift sideways over the foot it stands on, `roll` its tilt side to side (hips dropping with the stride, a bank into
+// a turn), `pitch` its lean forward and back (into a start, back at a stop))
+export interface Root { drop: number; lift: number; spin: number; tip: number; sway: number; roll: number; pitch: number }
+
+// How one person carries themselves (2026-11-04; the user: "a more AAA ... feel to the NPCs/characters ... and their animations"): the same walk is
+// not everyone's. A persona is worked out from who they are (a name's hash), so the same person always moves the same way, and a crowd does not
+// move as one: how long the stride, how much the hips and shoulders sway, how much the body bobs, how far the shoulders slump forward and the
+// head drops (a weary one, a proud one stands tall: negative), how far the arms swing, how much they fidget at rest, and where each is in its own
+// slow cycles (so two people standing together do not shift their weight at the same moment)
+export interface Persona { stride: number; sway: number; bounce: number; slump: number; swing: number; fidget: number; phase: number }
+export const NEUTRAL: Persona = { stride: 1, sway: 1, bounce: 1, slump: 0, swing: 1, fidget: 1, phase: 0 };
+export function personaOf(seed: number): Persona {
+  // (a small generator from the seed: the same numbers every time)
+  let x = (Math.floor(Math.abs(seed)) % 2147483647) + 1;
+  const next = () => { x = (x * 48271) % 2147483647; return x / 2147483647; };
+  next();
+  const range = (a: number, b: number) => a + (b - a) * next();
+  return { stride: range(0.9, 1.12), sway: range(0.6, 1.6), bounce: range(0.7, 1.4), slump: range(-0.05, 0.14), swing: range(0.75, 1.3), fidget: range(0.6, 1.5), phase: range(0, Math.PI * 2) };
+}
 // The lengths of a leg (from the pivots: the hip's height, the knee's), to work out how far bent knees lower the body
 export interface LegSize { hip: number; knee: number }
 const LIMB_OF: Record<Joint, number> = { legR: 1, legL: 2, shinR: 16, shinL: 17, armR: 3, armL: 4, foreR: 14, foreL: 15, chest: 13, weapon: 18, head: 19 };
@@ -687,7 +723,7 @@ export function creatureLunge(now: number, swingAt: number, swingFor: number, ac
   return { pitch: 0, reach: 0, rise: 0 };
 }
 // A person's pose this frame
-export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold, saber: SaberStyle, now: number, legs: LegSize, out: Pose = restPose()): Root {
+export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold, saber: SaberStyle, now: number, legs: LegSize, out: Pose = restPose(), persona: Persona = NEUTRAL): Root {
   for (let i = 1; i < LIMBS; i++) out.set([0, 0, 0, 1], i * 4);
   const amp = s.amp;
   const run = Math.max(0, Math.min(1, (s.speed - 2.6) / 3));
@@ -696,6 +732,18 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
   const upright = 1 - p;
   const J: Joints = {};
   const put = (j: Joint, v: J3, k = 1) => { J[j] = add3(J[j], v, k); };
+  // At rest the body is alive: it breathes (the ribs lift, the shoulders rise a little, the head settles), shifts its weight from one foot
+  // to the other over several seconds (the loaded leg straight, the other eased, the hips dropping to the unloaded side, the shoulders
+  // leveling against them), and the head steadies against the trunk. Fades out as the figure walks, aims, crouches, lies down or leaps.
+  const calm = (1 - smoothK(amp / 0.3)) * upright * (1 - 0.75 * e.ready) * (1 - 0.6 * c) * (1 - a) * (1 - e.swim);
+  const breath = Math.sin(t * 1.9 + persona.phase);
+  const shift = Math.sin(t * 0.43 + persona.phase * 1.7);
+  const loadL = Math.max(0, shift) * calm * persona.fidget;
+  const loadR = Math.max(0, -shift) * calm * persona.fidget;
+  put("legR", [-0.07 * loadL, 0, -0.03 * loadL]);
+  put("shinR", [0.16 * loadL, 0, 0]);
+  put("legL", [-0.07 * loadR, 0, 0.03 * loadR]);
+  put("shinL", [0.16 * loadR, 0, 0]);
   // The legs: a stride (longer at a run, shorter crouched), the knee bending as the leg swings through; crouched, the knees deep and the
   // weight forward; in the air, tucked; prone, straight
   const reach = LEG * (1 + 0.4 * run) * (1 - 0.45 * c);
@@ -712,15 +760,24 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
   put("legL", [-1.05 * a, 0, 0.1 * a]);
   put("shinR", [1.25 * a, 0, 0]);
   put("shinL", [1.1 * a, 0, 0]);
-  // The trunk: leaning into a run and over a crouch, breathing, twisting a little against the stride
-  put("chest", [0.04 * amp + 0.2 * run * amp + 0.32 * c + Math.sin(t * 1.7) * 0.012, -swing * 0.1, 0]);
-  put("head", [-0.1 * run * amp - 0.2 * c, Math.sin(t * 0.31) * Math.sin(t * 0.17) * 0.3 * (1 - e.ready), 0]);
+  // The trunk: leaning into a run and over a crouch, breathing, twisting a little against the stride (and against the hips, which twist the other
+  // way: `spin` below), a slump or a proud chest by who they are, the shoulders leveling against the hips' drop; into a start the trunk leans
+  // forward and back at a stop (`accel`)
+  const lean = Math.max(-0.1, Math.min(0.14, (s.accel ?? 0) * 0.016)) * Math.min(1, 0.4 + amp);
+  // (standing on the left foot (shift > 0) the body tips toward it: a negative roll, about z positive tips the top to the figure's right)
+  const hipRoll = -shift * 0.022 * calm * persona.sway;
+  put("chest", [0.04 * amp + 0.2 * run * amp + 0.32 * c + breath * 0.014 * (1 - 0.5 * e.ready) + persona.slump * (0.6 * calm + 0.5 * amp) + lean * 0.6, -swing * 0.1 * persona.sway, -hipRoll * 0.8]);
+  // (the head steadies against the trunk's lean, the chin drops with a slump, and a breath lifts it a touch)
+  put("head", [-0.1 * run * amp - 0.2 * c - 0.5 * (0.04 * amp + 0.2 * run * amp + lean * 0.6) + persona.slump * 0.7 - breath * 0.006, Math.sin(t * 0.31) * Math.sin(t * 0.17) * 0.3 * (1 - e.ready) * persona.fidget, hipRoll * 0.5]);
   // The arms by what the hands hold
   const ready = e.ready;
   const free = (side: "R" | "L", k: number) => {
     const sgn = side === "R" ? -1 : 1;
-    put(`arm${side}`, [sgn * swing * ARM * (1 + 0.7 * run) * k - 0.35 * c - 0.6 * a, 0, -sgn * (0.08 + 0.35 * a)]);
-    put(`fore${side}`, [-(0.1 + 0.15 * amp + 1.0 * run * amp) * k - 0.35 * c, 0, 0]);
+    const armX = sgn * swing * ARM * (1 + 0.7 * run) * persona.swing;
+    // (the ribs lift the arms a touch with a breath, the arms hang a little forward and sway at rest; the elbow flexes as the hand comes forward,
+    // relaxing on the back swing)
+    put(`arm${side}`, [armX * k - 0.35 * c - 0.6 * a + Math.sin(t * 0.8 + persona.phase + (sgn > 0 ? 1 : 0)) * 0.02 * calm * k, 0, -sgn * (0.08 + 0.35 * a + breath * 0.012 * calm)]);
+    put(`fore${side}`, [-(0.1 + 0.15 * amp + 1.0 * run * amp) * k - 0.35 * c - 0.5 * Math.max(0, -armX) * k * (1 - 0.3 * run), 0, 0]);
   };
   const style = styleOf(hold, saber);
   let lift = 0;
@@ -908,7 +965,16 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
   const height = (thigh: number, shin: number) => (legs.hip - legs.knee) * Math.cos(thigh) + legs.knee * Math.cos(thigh + shin);
   const stand = Math.max(height(J.legR?.[0] ?? 0, J.shinR?.[0] ?? 0), height(J.legL?.[0] ?? 0, J.shinL?.[0] ?? 0));
   const drop = legs.hip > 0 ? Math.max(0, legs.hip - stand) * upright * (1 - a) * (1 - e.swim) : 0;
-  return { drop, lift, spin, tip: Math.max(p, flat) };
+  // The body as a whole: it shifts over the foot it stands on (at rest, by the weight shift; walking, once a stride), the hips drop to the
+  // unloaded side and twist against the shoulders, it banks into a turn and leans into a start and back at a stop
+  const grounded = upright * (1 - a) * (1 - e.swim) * (1 - 0.8 * c);
+  const bank = Math.max(-0.12, Math.min(0.12, -(s.turn ?? 0) * 0.03)) * Math.min(1, s.speed / 2) * grounded;
+  // (walking, the stance foot is the one swinging back: the right when sin > 0, the figure's right being -x)
+  const sway = (shift * 0.012 * calm * persona.sway - Math.sin(s.phase) * 0.011 * amp * persona.sway) * grounded;
+  const roll = hipRoll + Math.sin(s.phase) * 0.028 * amp * persona.sway * grounded + bank;
+  const pitch = lean * 0.5 * grounded;
+  spin += swing * 0.07 * persona.sway * grounded;
+  return { drop, lift, spin, tip: Math.max(p, flat), sway, roll, pitch };
 }
 
 // ---- A rider's errand ---------------------------------------------------------------------------------------------------------------

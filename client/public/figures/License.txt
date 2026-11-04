@@ -1,0 +1,2 @@
+The sculpted body of a person (body.glb, body.lo.glb) was built for this project in Blender by tools/blender/build-body.py from
+original lofted sections and a displaced sphere. No third-party pieces. Creative Commons Zero (CC0 1.0): public domain.
