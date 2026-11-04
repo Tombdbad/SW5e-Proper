@@ -3,7 +3,7 @@ import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { babylonGl } from "@/components/Map/babylon";
 import { OrbitControls, Text, Billboard } from "@react-three/drei";
-import { usePartyLook, Figure, Furniture, stoolsOf, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount, hue, type GunAim } from "@/components/Map/models";
+import { usePartyLook, HAIR_MALE, HAIR_FEMALE, BEARDS, hairStyleOf, beardOf, Figure, Furniture, stoolsOf, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount, hue, type GunAim } from "@/components/Map/models";
 import { tokenOf, SIDE_COLORS } from "@/components/Map/sprites";
 import { Atmosphere } from "@/components/Map/interiors/Atmosphere.tsx";
 import { Stock } from "@/components/Map/interiors/Stock.tsx";
@@ -20,7 +20,7 @@ import { TONES, TONE_NAMES, type Tone } from "@/components/Map/interiors/tones";
 import { KIT_MODELS, kitUrl } from "@/components/Map/interiors/kitbash";
 import { floorOf } from "@/components/Map/sprites";
 import { gearOf } from "@/lib/sw5e/characterCalculation";
-import { furnishRoom, createRandom, VEHICLE_MAKES, caveMask, deckSquares, type Area, type RoomAsset } from "@shared/logic";
+import { GIVEN_NAMES, furnishRoom, createRandom, VEHICLE_MAKES, caveMask, deckSquares, type Area, type RoomAsset } from "@shared/logic";
 import { seatState, motion, nowSeconds, beginSwing, personaOf, SABER_STYLES, SABER_KITS, type Motion, type SaberKit, type SaberStyle, type SeatState, type Shot } from "@/components/Map/interiors/limbs";
 import { styleFor, comboOf, moveOf, moveSeconds, planDuel, DUEL_MODES, FLAVOUR, type DuelMode, type Fighter } from "@/components/Map/interiors/saberplay";
 import { MotionContext } from "@/components/Map/models";
@@ -665,6 +665,30 @@ function Label({ at, text }: { at: [number, number, number]; text: string }) {
 }
 
 // Lays things out in rows of `per`, `gap` apart, each with its name under it
+// The hair (?section=hair, 2026-11-04): each style of the men's list, each beard, and each style of the women's list, on a person whose name draws it (the style
+// comes from the name's hash: models.tsx hairStyleOf), their faces to the front. Hair, brows and beards are cards (tools/blender/build-hair.py).
+const SURNAMES = ["Vos", "Kel", "Dray", "Rook", "Tarn", "Orrin", "Venn", "Sael", "Mott", "Quill", "Brask", "Illis", "Corr", "Hale", "Nyx", "Pell", "Rane", "Soth", "Tavi", "Ulen", "Wren", "Yarl", "Zane", "Arvo", "Bex", "Cade", "Dorn", "Esk", "Fenn", "Garr"];
+function Hairdos({ row }: { row?: number }) {
+  const rows = useMemo(() => {
+    const find = (gender: "male" | "female", ok: (seed: number) => boolean) => {
+      for (const g of GIVEN_NAMES[gender]) for (const s of SURNAMES) if (ok(hue(`${g} ${s}`))) return `${g} ${s}`;
+      return "";
+    };
+    const out: { name: string; label: string }[][] = [[], [], []];
+    for (const style of new Set(HAIR_MALE)) out[0].push({ name: find("male", (s) => hairStyleOf(s, false) === style && !beardOf(s)), label: style || "bald" });
+    for (const beard of new Set(BEARDS.filter(Boolean))) out[1].push({ name: find("male", (s) => beardOf(s) === beard), label: beard });
+    for (const style of new Set(HAIR_FEMALE)) out[2].push({ name: find("female", (s) => hairStyleOf(s, true) === style), label: style });
+    return out.map((r) => r.filter((x) => x.name));
+  }, []);
+  return (
+    <>
+      {rows.map((items, r) => (row === undefined || row === r) && (
+        <Rows key={r} items={items} per={row === undefined ? 8 : 6} gap={row === undefined ? 0.95 : 0.5} z={row === undefined ? r * 3.2 : 0} name={(t) => t.label.replace("hair_", "").replace("beard_", "+ ")} draw={(t) => <Figure kind={tokenOf({ name: t.name, role: "patron" })} ring={SIDE_COLORS.neutral} name={t.name} role="patron" species="Human" />} />
+      ))}
+    </>
+  );
+}
+
 function Rows<T>({ items, per, gap, name, draw, z = 0 }: { items: T[]; per: number; gap: number; name: (t: T) => string; draw: (t: T) => JSX.Element; z?: number }) {
   return (
     <group position={[-(Math.min(per, items.length) - 1) * gap * 0.5, 0, z]}>
@@ -707,8 +731,8 @@ export default function ModelGallery() {
   const section = query.get("section") ?? "people";
   // ?cam=x,y,z&look=x,y,z frame a close look
   const triple = (text: string | null, fallback: [number, number, number]) => (text ? (text.split(",").map(Number) as [number, number, number]) : fallback);
-  const cam = triple(query.get("cam"), section === "saberCombo" ? [5.0, 1.8, 2.8] : [0, 9, 12]);
-  const look = triple(query.get("look"), section === "saberCombo" ? [0, 0.95, 0] : [0, 0, section === "places" ? 14 : 3]);
+  const cam = triple(query.get("cam"), section === "saberCombo" ? [5.0, 1.8, 2.8] : section === "hair" ? [0, 2.0, 8.2] : [0, 9, 12]);
+  const look = triple(query.get("look"), section === "saberCombo" ? [0, 0.95, 0] : section === "hair" ? [0, 0.8, 1.8] : [0, 0, section === "places" ? 14 : 3]);
   const [duel, setDuel] = useState<DuelConfig>(() => duelFromQuery(query));
   const caption = useRef<HTMLDivElement>(null);
   const roleList = [...ROLES.map((r) => ({ name: `Dax ${r}`, role: r })), ...BLOCKS.map((b) => ({ name: b, role: "" }))];
@@ -790,6 +814,7 @@ export default function ModelGallery() {
         {section === "moves" && <Moves only={query.get("act") ?? undefined} />}
         {section === "sabers" && <Sabers only={query.get("kit") ?? undefined} one={query.get("style") ?? undefined} combo={query.get("combo") ? Number(query.get("combo")) : undefined} move={query.get("move") ? Number(query.get("move")) : undefined} u={query.get("u") ? Number(query.get("u")) : undefined} strip={query.get("us") ? query.get("us")!.split(",").map(Number) : undefined} named={query.get("name") ?? undefined} />}
         {section === "saberCombo" && <SaberDuel duel={duel} caption={caption} />}
+        {section === "hair" && <Hairdos row={query.get("row") ? Number(query.get("row")) : undefined} />}
         {section === "table" && <Table cycle={query.get("hold") !== "1"} />}
         {section === "gear" && <Gear loadout={query.get("loadout") ?? "heavy"} />}
         {section === "worn" && <Worn loadout={query.get("loadout") ?? "worn"} />}

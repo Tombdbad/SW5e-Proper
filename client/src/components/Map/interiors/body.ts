@@ -54,6 +54,10 @@ function shelf<T>(file: string, read: (scene: THREE.Object3D) => T) {
 const TOUCH = typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches;
 export const BODY_FILE = TOUCH ? "/figures/body.lo.glb" : "/figures/body.glb";
 export const CREATURE_FILE = TOUCH ? "/figures/creature.lo.glb" : "/figures/creature.glb";
+// The heads of people (2026-11-04, tools/blender/build-head.py): `head_m` and `head_f`, each with texture coordinates into one atlas (textures/figure/head),
+// and the hair, brows and beards (tools/blender/build-hair.py)
+export const HEAD_FILE = TOUCH ? "/figures/head.lo.glb" : "/figures/head.glb";
+export const HAIR_FILE = TOUCH ? "/figures/hair.lo.glb" : "/figures/hair.glb";
 
 const floatsOf = (a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, size = a.itemSize) => {
   const out = new Float32Array(a.count * size);
@@ -63,7 +67,7 @@ const floatsOf = (a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, s
 };
 
 // A mesh's triangles split by region (a triangle takes its first vertex's), each region compacted to the vertices it uses
-export function splitRegions(position: Float32Array, normal: Float32Array, ao: Float32Array, region: Float32Array, index: ArrayLike<number>, mark?: Float32Array): Part {
+export function splitRegions(position: Float32Array, normal: Float32Array, ao: Float32Array, region: Float32Array, index: ArrayLike<number>, mark?: Float32Array, uv?: Float32Array): Part {
   const part: Part = {};
   const maps = new Map<number, { remap: Map<number, number>; verts: number[]; tris: number[] }>();
   for (let t = 0; t + 2 < index.length; t += 3) {
@@ -83,12 +87,15 @@ export function splitRegions(position: Float32Array, normal: Float32Array, ao: F
     const nr = new Float32Array(n * 3);
     const a = new Float32Array(n);
     const k = mark ? new Float32Array(n) : undefined;
-    m.verts.forEach((v, i) => { p.set(position.subarray(v * 3, v * 3 + 3), i * 3); nr.set(normal.subarray(v * 3, v * 3 + 3), i * 3); a[i] = ao[v]; if (k) k[i] = mark![v]; });
+    const t = uv ? new Float32Array(n * 2) : undefined;
+    m.verts.forEach((v, i) => { p.set(position.subarray(v * 3, v * 3 + 3), i * 3); nr.set(normal.subarray(v * 3, v * 3 + 3), i * 3); a[i] = ao[v]; if (k) k[i] = mark![v]; if (t) t.set(uv!.subarray(v * 2, v * 2 + 2), i * 2); });
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(p, 3));
     g.setAttribute("normal", new THREE.BufferAttribute(nr, 3));
     g.setAttribute("ao", new THREE.BufferAttribute(a, 1));
     if (k) g.setAttribute("mark", new THREE.BufferAttribute(k, 1));
+    // (a part with texture coordinates keeps them: a head, whose normal map is baked for them, and a hair card, drawn with a strand map)
+    if (t) g.setAttribute("uv", new THREE.BufferAttribute(t, 2));
     g.setIndex(m.tris);
     part[r] = g;
   }
@@ -110,9 +117,11 @@ export function piecesOf(scene: THREE.Object3D): CreatureParts {
     const ao = g.attributes._ao ? floatsOf(g.attributes._ao, 1) : new Float32Array(count).fill(1);
     const region = g.attributes._region ? floatsOf(g.attributes._region, 1) : new Float32Array(count);
     const mark = g.attributes._mark ? floatsOf(g.attributes._mark, 1) : undefined;
+    // (glTF counts v down from the top of a picture; the loader here turns pictures over, as three's own textures are, so v counts up)
+    const uv = g.attributes.uv ? floatsOf(g.attributes.uv, 2).map((x, i) => (i % 2 ? 1 - x : x)) : undefined;
     const index = g.index ? g.index.array : Array.from({ length: count }, (_, i) => i);
     const u = mesh.userData as { eyes?: number[]; ear?: number[]; jaw?: number[] };
-    pieces[name] = { part: splitRegions(position, normal, ao, region, index, mark), eyes: u.eyes, ear: u.ear, jaw: u.jaw };
+    pieces[name] = { part: splitRegions(position, normal, ao, region, index, mark, uv), eyes: u.eyes, ear: u.ear, jaw: u.jaw };
   });
   return pieces;
 }
@@ -128,6 +137,8 @@ export function partsOf(scene: THREE.Object3D): BodyParts {
 
 const people = shelf(BODY_FILE, partsOf);
 const beasts = shelf(CREATURE_FILE, piecesOf);
+const faces = shelf(HEAD_FILE, piecesOf);
+const hairs = shelf(HAIR_FILE, piecesOf);
 export const loadBody = people.load;
 // The parts, once they are in (null before, and for good if they could not be had: the figures then draw their primitives)
 export const bodyParts = people.get;
@@ -139,6 +150,13 @@ export const loadCreature = beasts.load;
 export const creatureParts = beasts.get;
 export const useCreatureParts = beasts.use;
 export const setCreatureParts = beasts.set;
+// The heads of people (`head_m`, `head_f`) and the hair (`hair_*`, `beard_*`, `brows`), once they are in
+export const faceParts = faces.get;
+export const useFaceParts = faces.use;
+export const setFaceParts = faces.set;
+export const hairParts = hairs.get;
+export const useHairParts = hairs.use;
+export const setHairParts = hairs.set;
 
 // ---- Fitting ---------------------------------------------------------------------------------------------------------------------
 
