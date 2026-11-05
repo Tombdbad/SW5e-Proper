@@ -8,7 +8,7 @@
 //   node tools/build-figure-textures.mjs skin fur   (some)
 //
 // The sets: skin (pores, fine creases, a mottle), face (finer pores, for heads), fabric (a twill weave), leather (pebbled grain and
-// creases), plate (armour: hammered dents, scratches, a brushed grain), scales (overlapping scales of a reptile's hide), fur (strands
+// creases), shell (white armour plates), plate (armour: hammered dents, scratches, a brushed grain), scales (overlapping scales of a reptile's hide), fur (strands
 // along the hair, for the base of a furry body under its shells).
 import fs from "node:fs";
 import path from "node:path";
@@ -228,6 +228,48 @@ const SETS = {
       return { h: 0.55 + (dent - 0.5) * 0.45 - s * 0.35 + (grain - 0.5) * 0.05, d: 0.9 + (grain - 0.5) * 0.12 + s * 0.15 - (dent - 0.5) * 0.08 };
     };
   },
+  // Armour of moulded plastoid, white (2026-11-05, the user: "storm trooper armour needs updated normals and textures"): a plate to a tile with a
+  // rounded border and a recessed seam between them (the seam a little wavy, grimed), a screw head at each corner, the fine orange peel of moulded plastic, long
+  // scuffs and short scratches that show the dark under the white, a few soft blasts of scorch, and a darkening in the seams
+  shell: () => {
+    const wob = periodicNoise(101), peel = periodicNoise(102), grime = periodicNoise(103), r = rng(104);
+    const PLATES = 1;
+    // Scratches: short, mostly along one way (a plate is scuffed by what rubs it), a few long ones
+    const scratches = Array.from({ length: 70 }, () => { const a = (r() < 0.7 ? 0.5 : r()) * Math.PI + (r() - 0.5) * 0.3; return { x: r(), y: r(), dx: Math.cos(a), dy: Math.sin(a), len: 0.015 + r() * (r() < 0.2 ? 0.2 : 0.07), w: 0.0007 + r() * 0.0009 }; });
+    const scorches = Array.from({ length: 5 }, () => ({ x: r(), y: r(), r: 0.025 + r() * 0.045 }));
+    return (u, v) => {
+      // the seams, a little wavy
+      const uu = u + (fbm(wob, u, v, 6, 2) - 0.5) * 0.012;
+      const vv = v + (fbm(wob, v, u, 6, 2) - 0.5) * 0.012;
+      const fu = (uu * PLATES) % 1, fv = (vv * PLATES) % 1;
+      const edge = Math.min(fu, 1 - fu, fv, 1 - fv);              // 0 at a seam, 0.5 in the middle of a plate (in plates)
+      const seam = 1 - smooth(0.0, 0.022, edge);
+      const bevel = smooth(0.022, 0.10, edge);
+      // a screw at each corner of a plate
+      const corner = Math.min(Math.hypot(Math.min(fu, 1 - fu) - 0.07, Math.min(fv, 1 - fv) - 0.07), 1);
+      const screw = 1 - smooth(0.012, 0.024, corner);
+      const orange = fbm(peel, u, v, 90, 2) - 0.5;
+      const dirt = fbm(grime, u, v, 5, 4);
+      let s = 0;
+      for (const k of scratches) {
+        for (const ox of [-1, 0, 1]) for (const oy of [-1, 0, 1]) {
+          const px = u + ox - k.x, py = v + oy - k.y;
+          const along = px * k.dx + py * k.dy;
+          if (along < 0 || along > k.len) continue;
+          const off = Math.abs(px * -k.dy + py * k.dx);
+          if (off < k.w) s = Math.max(s, (1 - off / k.w) * (1 - along / k.len * 0.5));
+        }
+      }
+      let burn = 0;
+      for (const b of scorches) for (const ox of [-1, 0, 1]) for (const oy of [-1, 0, 1]) {
+        const d = Math.hypot(u + ox - b.x, v + oy - b.y) / b.r;
+        if (d < 1) burn = Math.max(burn, (1 - d) ** 1.6 * (0.7 + 0.6 * fbm(grime, u * 3, v * 3, 12, 2)));
+      }
+      const h = 0.62 + bevel * 0.2 - seam * 0.34 + screw * 0.08 + orange * 0.035 - s * 0.16 - burn * 0.05;
+      const d = 0.945 + (dirt - 0.5) * 0.07 - seam * (0.2 + 0.12 * dirt) - screw * 0.05 - s * 0.14 - burn * 0.28 + orange * 0.012;
+      return { h, d };
+    };
+  },
   scales: () => {
     const n = periodicNoise(61);
     const rows = 24;
@@ -271,7 +313,7 @@ function normals(height, size, steep) {
   }
   return out;
 }
-const STEEP = { skin: 3, face: 2.5, fabric: 5, leather: 4, plate: 4, scales: 4.5, fur: 4, droid: 4, cyber: 3.5, weave: 5, mesh: 4 };
+const STEEP = { skin: 3, face: 2.5, fabric: 5, leather: 4, shell: 5, plate: 4, scales: 4.5, fur: 4, droid: 4, cyber: 3.5, weave: 5, mesh: 4 };
 
 async function build(name) {
   const texel = SETS[name]();

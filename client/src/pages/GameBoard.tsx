@@ -21,7 +21,7 @@ import LocalMap, { FightScene, SpaceScene, viewOf, usePartySpot, usePlacing, whe
 import { useAir, hookStats, type AirGear } from "@/components/Map/interiors/air";
 import { AirButtons } from "@/components/Map/interiors/AirButtons";
 import { useShoot } from "@/components/Map/interiors/shoot";
-import { avgDice, blankUnit, bladeOf, blastOf, gunOf, modeOf, monstrous, passiveD20, passiveDamage, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Rider, type RtPower, type Unit } from "@shared/logic/shooter";
+import { avgDice, blankUnit, bladeOf, blastOf, gunOf, modeOf, opticOf, monstrous, passiveD20, passiveDamage, type FightGear, type FoeBlast, type FoeKit, type PlayMode, type Rider, type RtPower, type Unit } from "@shared/logic/shooter";
 import { SabaccTable, BUY_IN_CHIPS, type TableOpponent } from "@/components/Games/SabaccTable";
 import { PazaakGame } from "@/components/Games/PazaakGame";
 import { makeOffers, accept as acceptContract, progress as contractProgress, whereabouts, askAround, askDC, payout as contractPayout, rewardItem, workFrom, jobsOf, JOB_NAMES, tierFor, KIND_LABEL, TIER_NAME, needsGear, GEAR_WARNING, type Contract, type Offer } from "@shared/logic/contracts";
@@ -472,6 +472,10 @@ export default function GameBoard() {
     const g = party.gun;
     if (g) {
       g.rider = riderOf(gunItems);
+      // (a scope fitted in it is the one looked through, a magnification by its grade; else the one the weapon has of its own: shared/logic/shooter.ts opticOf)
+      const sources: string[] = (character as any)?.itemSources ?? [];
+      const optic = opticOf(sources.filter((x) => kit.rangedWeapon && x.startsWith(`${kit.rangedWeapon}: `)).map((x) => x.split(": ").pop()!), g);
+      if (optic) g.optic = optic;
       for (const { fight: f } of gunItems) {
         if (f.range) { g.range += f.range[0] / 5; g.long += f.range[1] / 5; }
         if (f.quickReload) g.reload *= 0.4;

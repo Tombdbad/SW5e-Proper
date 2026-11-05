@@ -1,5 +1,5 @@
 // The shooter mode's keys, buttons and the session the map plays (2026-10-29; shared/logic/shooter.ts has the rules, Shooter.tsx the scene). Fire is
-// the left mouse button (held, for an automatic weapon; X on a keyboard), block the right (B), G throws a grenade, R reloads, Q swaps the gun
+// the left mouse button (held, for an automatic weapon; X on a keyboard), block the right (B; with a gun drawn the right button aims instead, and H toggles the sights), G throws a grenade, R reloads, Q swaps the gun
 // for the blade, Z uses the item shown on the belt and T shows the next; W A S D walk, Space jumps, F fires the hook, Left Shift the pack's burst (interiors/air.ts) and E or Enter use what the
 // crosshair is on, all as before. On a phone the same are buttons beside the stick.
 import { create } from "zustand";
@@ -7,7 +7,9 @@ import type { FightGear, RtPower, Unit } from "@shared/logic/shooter";
 
 // (the digits 1 to 4 cast the party's powers, C crouches behind cover)
 // (2026-11-03: 1 to 9 cast the powers on the page shown, 0 shows the next page; Y holds the zoom of macrobinoculars, a scope or a far eye)
-export type ShootKey = "fire" | "grenade" | "reload" | "block" | "swap" | "crouch" | "item" | "next" | "power0" | "power1" | "power2" | "power3" | "power4" | "power5" | "power6" | "power7" | "power8" | "page" | "zoom";
+// (2026-11-05: H, or the Aim button, puts the gun to the shoulder and takes it down again (V already turns the view); the right mouse button holds it there while it is held
+// (`sights`): the sights, and a scope if the gun has one)
+export type ShootKey = "aim" | "sights" | "fire" | "grenade" | "reload" | "block" | "swap" | "crouch" | "item" | "next" | "power0" | "power1" | "power2" | "power3" | "power4" | "power5" | "power6" | "power7" | "power8" | "page" | "zoom";
 export interface UnitMeta { role?: string; species?: string; creature?: string; size?: string; ring?: string }
 // Everything a fight needs to begin: who is in it (the party's unit is the one of side "player"), what they look like, and what the party
 // carries to use (its item belt: grenades, medpacs, mines, kits...; G throws the first grenade on it)
@@ -45,13 +47,18 @@ export interface Hud {
   states: string[];
   sensed: number;
   zoom: number; range: number;
+  // (2026-11-05) the gun at the shoulder (0 to 1), the scope looked through (its zoom, 0 for the iron sights, and its name)
+  ads: number; scope: number; optic?: string;
   pings: { a: number; at: number }[];
   crouching: boolean;
   // when (performance.now) the last hit landed, the party was last hurt, a foe fell, a bolt was turned: the overlay flashes for a moment after each
   hitAt: number; headAt: number; hurtAt: number; killAt: number; deflectAt: number;
   note?: string;
 }
-export const blankHud = (): Hud => ({ hp: 0, maxHp: 1, weapon: "gun", hasGun: false, hasBlade: false, saber: false, left: 0, mag: 0, reserve: 0, reloading: false, grenades: 0, items: 0, belt: 0, poisoned: false, burning: false, blinded: false, temp: 0, dangerAt: 0, focus: 0, focusMax: 1, blocking: false, foes: 0, points: 0, powers: [], crouching: false, hitAt: 0, headAt: 0, hurtAt: 0, killAt: 0, deflectAt: 0, page: 0, pages: 1, buffs: [], states: [], sensed: 0, zoom: 0, range: 0, pings: [] });
+export const blankHud = (): Hud => ({ hp: 0, maxHp: 1, weapon: "gun", hasGun: false, hasBlade: false, saber: false, left: 0, mag: 0, reserve: 0, reloading: false, grenades: 0, items: 0, belt: 0, poisoned: false, burning: false, blinded: false, temp: 0, dangerAt: 0, focus: 0, focusMax: 1, blocking: false, foes: 0, points: 0, powers: [], crouching: false, hitAt: 0, headAt: 0, hurtAt: 0, killAt: 0, deflectAt: 0, page: 0, pages: 1, buffs: [], states: [], sensed: 0, zoom: 0, range: 0, ads: 0, scope: 0, pings: [] });
+
+// How far the party's gun is at the shoulder, 0 to 1, each frame (the walk reads it: aiming slows the party)
+export const ADS = { k: 0 };
 
 interface ShootStore {
   session: Session | null;
@@ -67,7 +74,7 @@ interface ShootStore {
   setHud: (hud: Partial<Hud>) => void;
 }
 let counter = 0;
-const KEY_LIST: ShootKey[] = ["fire", "grenade", "reload", "block", "swap", "crouch", "item", "next", "power0", "power1", "power2", "power3", "power4", "power5", "power6", "power7", "power8", "page", "zoom"];
+const KEY_LIST: ShootKey[] = ["aim", "sights", "fire", "grenade", "reload", "block", "swap", "crouch", "item", "next", "power0", "power1", "power2", "power3", "power4", "power5", "power6", "power7", "power8", "page", "zoom"];
 const noKeys = () => Object.fromEntries(KEY_LIST.map((k) => [k, false])) as Record<ShootKey, boolean>;
 const noTaps = () => Object.fromEntries(KEY_LIST.map((k) => [k, 0])) as Record<ShootKey, number>;
 export const useShoot = create<ShootStore>((set, get) => ({
@@ -83,7 +90,7 @@ export const useShoot = create<ShootStore>((set, get) => ({
   setHud: (hud) => set({ hud: { ...get().hud, ...hud } }),
 }));
 
-const KEYS: Record<string, ShootKey> = { KeyX: "fire", KeyG: "grenade", KeyR: "reload", KeyB: "block", KeyQ: "swap", KeyC: "crouch", KeyZ: "item", KeyT: "next", Digit1: "power0", Digit2: "power1", Digit3: "power2", Digit4: "power3", Digit5: "power4", Digit6: "power5", Digit7: "power6", Digit8: "power7", Digit9: "power8", Digit0: "page", KeyY: "zoom" };
+const KEYS: Record<string, ShootKey> = { KeyX: "fire", KeyG: "grenade", KeyR: "reload", KeyB: "block", KeyQ: "swap", KeyC: "crouch", KeyZ: "item", KeyT: "next", Digit1: "power0", Digit2: "power1", Digit3: "power2", Digit4: "power3", Digit5: "power4", Digit6: "power5", Digit7: "power6", Digit8: "power7", Digit9: "power8", Digit0: "page", KeyY: "zoom", KeyH: "aim" };
 // Bound while a fight is on. Not while typing or in a dialog, nor with a modifier
 export function bindShootKeys(): () => void {
   const typing = (e: KeyboardEvent) => {

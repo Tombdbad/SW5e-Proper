@@ -45,7 +45,8 @@ test("a character's weapon sets their pose and their model; a saber has its own"
   const gear: Gear = { weapons: [named("Blaster rifle")], carried: [] };
   const w = wantsOf("rifle", gear)[0];
   assert.equal(w.slot, "weapon");
-  assert.match(w.model, /^kenney-blaster\/blaster-/);
+  assert.match(w.model, /^kit:gun_rifle_/);   // (a blaster is one of the whole guns of the weapon kit since 2026-11-05)
+  assert.ok(w.grip && w.offHand, "the hand closes on the grip, the other under the handguard");
   assert.ok(w.scale > 0.3 && w.scale < 1.2);
   const saber = wantsOf("saber", { weapons: [named("Lightsaber")], carried: [] });
   assert.deepEqual(saber.map((x) => [x.slot, x.model, x.look, x.blade]), [["weapon", "sw5e-sabers/saber-straight", "weapon", undefined]]);
@@ -84,7 +85,7 @@ test("worn gear with a model goes where the model says, on a free place, and the
   for (const w of wants) assert.ok(fs.existsSync(`client/public/assets/${w.model}.glb`), w.model);
 });
 test("an NPC holds what their outfit's pose says and carries what their work suggests", () => {
-  assert.equal(wantsOf("pistol", undefined)[0].model.startsWith("kenney-blaster/"), true);
+  assert.equal(wantsOf("pistol", undefined)[0].model.startsWith("kit:gun_pistol"), true);
   assert.equal(wantsOf("vibro", undefined)[0].model, "kenney-kitbash/vibro-blade");
   assert.deepEqual(wantsOf("", undefined, "medic").map((w) => w.model), ["kenney-kitbash/medpac"]);
   assert.deepEqual(wantsOf("tool", undefined, "mechanic").map((w) => w.slot), ["hipR"]);
@@ -123,7 +124,7 @@ test("a weapon with a model says where the hand closes on it, and an enhanced we
   // The index sends "Charric Rifle" to a sniper rifle, "Flashy" to a heavy pistol: the Blaster Kit's designs
   for (const [name, kind] of [["Charric Rifle", "rifle"], ["Flashy", "pistol"], ["Sparkles", "pistol"], ["Hewey", "sword"]] as const) {
     const w = wantsOf("rifle", { weapons: [{ name, equipmentCategory: "Enhanced" }], carried: [] })[0];
-    assert.ok(w && /^kenney-/.test(w.model), `${name}: ${w?.model}`);
+    assert.ok(w && /^(kenney-|kit:gun_)/.test(w.model), `${name}: ${w?.model}`);
     void kind;
   }
   // A bo-rifle has its own model

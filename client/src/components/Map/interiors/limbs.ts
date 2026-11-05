@@ -29,13 +29,14 @@ export { beginSwing, saberKitOf, SABER_KITS, type SaberKit } from "./saberplay";
 // above the waist (`chest`, which carries the arms, the head and all worn above it), the forearms below the elbows, the shins below the
 // knees, and what the right hand holds (`weapon`, turned at the wrist; 2026-11-04: `weaponL`, what the left hand holds in a fight with two blades, and `whip1`, `whip2`, the two bends of a lightwhip's lash, one hanging from the last). These hang one from another (PARENT): a forearm turns about its
 // elbow and is then carried by its upper arm, which the chest carries; a shin turns about its knee and then with its thigh.
-export const LIMB = { body: 0, legR: 1, legL: 2, armR: 3, armL: 4, hindR: 5, hindL: 6, midR: 7, midL: 8, tail: 9, roll: 10, wingR: 11, wingL: 12, chest: 13, foreR: 14, foreL: 15, shinR: 16, shinL: 17, weapon: 18, head: 19, earR: 20, earL: 21, tail2: 22, jaw: 23, wave: 24, shinHR: 25, shinHL: 26, shinMR: 27, shinML: 28, weaponL: 29, whip1: 30, whip2: 31, hairA: 32, hairB: 33, lids: 34, armR2: 35, armL2: 36, foreR2: 37, foreL2: 38 } as const;
+export const LIMB = { body: 0, legR: 1, legL: 2, armR: 3, armL: 4, hindR: 5, hindL: 6, midR: 7, midL: 8, tail: 9, roll: 10, wingR: 11, wingL: 12, chest: 13, foreR: 14, foreL: 15, shinR: 16, shinL: 17, weapon: 18, head: 19, earR: 20, earL: 21, tail2: 22, jaw: 23, wave: 24, shinHR: 25, shinHL: 26, shinMR: 27, shinML: 28, weaponL: 29, whip1: 30, whip2: 31, hairA: 32, hairB: 33, lids: 34, armR2: 35, armL2: 36, foreR2: 37, foreL2: 38, gazeR: 39, gazeL: 40 } as const;
 // (2026-11-04: `hairA` and `hairB`, hair that hangs from the nape, one under the other, swinging with the stride; `lids`, the lids of the eyes, which blink)
 // (2026-11-05, the user: "besalisk 4 arm animation variations": `armR2`, `armL2` and their forearms `foreR2`, `foreL2`, the second pair of a four-armed person, from the chest
 // under the first pair: they move in their own time, `lowerArms`)
-export const LIMBS = 39;
+// (2026-11-05: `gazeR` and `gazeL`, an eye's iris and its glint, which turn about the eyeball and look about)
+export const LIMBS = 41;
 // The limb each one hangs from (-1: from the body itself)
-export const PARENT: number[] = [-1, 10, 10, 13, 13, 10, -1, -1, -1, -1, -1, -1, -1, 10, 3, 4, 1, 2, 14, 13, 19, 19, 9, 19, -1, 5, 6, 7, 8, 15, 18, 30, 19, 32, 19, 13, 13, 35, 36];
+export const PARENT: number[] = [-1, 10, 10, 13, 13, 10, -1, -1, -1, -1, -1, -1, -1, 10, 3, 4, 1, 2, 14, 13, 19, 19, 9, 19, -1, 5, 6, 7, 8, 15, 18, 30, 19, 32, 19, 13, 13, 35, 36, 19, 19];
 // The shin of each leg
 export const SHIN_OF: Record<number, number> = { [LIMB.legR]: LIMB.shinR, [LIMB.legL]: LIMB.shinL, [LIMB.hindR]: LIMB.shinHR, [LIMB.hindL]: LIMB.shinHL, [LIMB.midR]: LIMB.shinMR, [LIMB.midL]: LIMB.shinML };
 
@@ -1314,6 +1315,18 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
     setEuler(out, LIMB.hairB, ax * 0.6 + Math.sin(2 * s.phase - 0.4) * 0.12 * amp + Math.sin(t * 1.1 + persona.phase * 3) * 0.03 * (0.5 + calm), ay * 0.6, az * 0.8);
     const u = (t * 0.23 + persona.phase / (Math.PI * 2)) % 1;
     setEuler(out, LIMB.lids, u < 0.035 ? 1.1 * Math.sin((Math.PI * u) / 0.035) : 0, 0, 0);
+    // The eyes look about (2026-11-05, "the eyes do not look about"): every second or two they flick to a new place (a tenth of a second), less when the person is on the move or
+    // fighting, and they trail a turn of the head
+    const phase = t * 0.55 + persona.phase;
+    const flick = clamp01((phase % 1) * 9);
+    const spot = (n: number) => [Math.sin(n * 12.9898 + persona.phase * 3.1) * 0.32, Math.sin(n * 78.233 + persona.phase) * 0.14];
+    const [from, to] = [spot(Math.floor(phase) - 1), spot(Math.floor(phase))];
+    const ease = flick * flick * (3 - 2 * flick);
+    const looking = 0.35 + 0.65 * calm;
+    const gy = (from[0] + (to[0] - from[0]) * ease) * looking - headYaw * 0.4;
+    const gp = (from[1] + (to[1] - from[1]) * ease) * looking - headPitch * 0.3;
+    setEuler(out, LIMB.gazeR, gp, gy, 0);
+    setEuler(out, LIMB.gazeL, gp, gy, 0);
   }
   // How far the bent knees lower the body: the standing leg (the longer of the two) holds it up
   const height = (thigh: number, shin: number) => (legs.hip - legs.knee) * Math.cos(thigh) + legs.knee * Math.cos(thigh + shin);

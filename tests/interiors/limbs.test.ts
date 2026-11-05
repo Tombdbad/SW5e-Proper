@@ -190,7 +190,7 @@ test("figures are dressed in the textured finishes: skin, a face, cloth, leather
   const person = finishesOf(figureSpec("person", "Merchant", { looks: {} }).build);
   for (const f of ["skin", "face", "fabric"]) assert.ok(person.has(f), `a merchant has ${f} (${[...person]})`);
   const trooper = finishesOf(figureSpec("trooper", "Stormtrooper", { looks: {} }).build);
-  assert.ok(trooper.has("plate"), "a trooper's armour is plate");
+  assert.ok(trooper.has("shell"), "a trooper's white armour is moulded plastoid in plates (2026-11-05)");
   const droid = finishesOf(figureSpec("battledroid", "B1 battle droid", { looks: {} }).build);
   // (panelled plating since 2026-10-30: seams, rivets and vents)
   assert.ok(droid.has("droid") && !droid.has("sheen"), "a droid's metal is plating");

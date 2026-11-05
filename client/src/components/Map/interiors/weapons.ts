@@ -3,8 +3,12 @@
 // model from the Kenney Blaster Kit, under client/public/assets/kenney-blaster, for blasters; built in
 // code for the rest) and in a few dozen triangles where someone holds it. Pure: nothing here draws
 // (tests/interiors/weapons.test.ts); `StockDraw.tsx` does.
+import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import type { Kit } from "../models";
+import kitJson from "@shared/art/weaponKit.json";
 import { KITBASH } from "./kitbash";
+import type { CreatureParts } from "./body";
 
 export type Kind =
   | "pistol" | "carbine" | "rifle" | "heavy" | "launcher" | "bow"
@@ -65,6 +69,81 @@ export const MELEE_FILES: Partial<Record<Kind, { file: string; length: number }>
   staff: { file: "electrostaff", length: 0.99 },
 };
 export const LAUNCHER_FILE = { file: "launcher", length: 0.74 };
+
+// ---- The blasters built as whole guns (2026-11-05, tools/blender/build-weapons.py) ---------------------------------------------------------------
+// Each design is one connected model with the sockets a hand and a scope need, in the frame of its own box (the origin its middle, z the way it points):
+//   grip      where the right hand closes, the middle of the pistol grip
+//   off_hand  where the left hand closes on a two-handed gun, under the handguard
+//   muzzle    the front of the barrel;   rail   the top of the receiver, where a scope's mount sits;   eye   where the eye looks along it
+// A scope is a model of its own that sits on the rail (its `mount` socket on the gun's `rail`).
+export interface KitModel {
+  sockets: Record<string, V3>;
+  box: number[];
+  tris: number;
+  zoom?: number;
+}
+type V3 = [number, number, number];
+export const KIT = kitJson as unknown as Record<string, KitModel>;
+export const GUN_DESIGNS: Partial<Record<Kind, string[]>> = {
+  pistol: ["gun_pistol_a", "gun_pistol_b"],
+  carbine: ["gun_carbine_a", "gun_carbine_b"],
+  rifle: ["gun_rifle_a", "gun_rifle_b"],
+  heavy: ["gun_heavy"],
+};
+// How long each kit design is when it is held, in squares (a sniper rifle a little longer than a rifle)
+export const KIT_LENGTH = (design: string, kind: Kind): number => (design === "gun_sniper" ? 0.7 : LENGTH[kind]);
+// The design of a blaster, picked by its name (the same weapon is the same design each time): a sniper has its own, a launcher keeps the kit's
+export function kitGunOf(name: string, classification = ""): { design: string; kind: Kind; scale: number } | undefined {
+  const kind = kindOfWeapon(name, classification);
+  if (kind === "heavy" && /launcher|mortar/i.test(name)) return undefined;
+  const designs = /sniper/i.test(name) && kind !== "pistol" ? ["gun_sniper"] : GUN_DESIGNS[kind];
+  if (!designs?.length) return undefined;
+  const design = designs[hashOf(name) % designs.length];
+  const box = KIT[design]?.box;
+  if (!box) return undefined;
+  return { design, kind, scale: KIT_LENGTH(design, kind) / (box[5] - box[2]) };
+}
+// The colours of a gun's regions and how each is drawn (items.ts FINISH_OF_MARK: 0 sheen, 1 matte, 2 glow)
+const GUN_PAINT: Record<number, [string, number]> = { 0: ["#5b636d", 0], 1: ["#26292e", 1], 2: ["#a2adb8", 0], 3: ["#ff6a3d", 2], 4: ["#0b1218", 0] };
+const SCOPE_PAINT: Record<number, [string, number]> = { 0: ["#2b2f36", 1], 1: ["#4a525c", 0], 2: ["#8a949e", 0], 3: ["#ff3030", 2], 4: ["#16384f", 0] };
+// The geometry of a gun, with the scope of that zoom on its rail (colours from the regions and the occlusion; `mark` says how each vertex is drawn). Null until the file is in
+export function gunGeometry(parts: CreatureParts | null, design: string, zoom?: number): THREE.BufferGeometry | null {
+  const gun = parts?.[design];
+  if (!gun) return null;
+  const out: THREE.BufferGeometry[] = [];
+  const add = (piece: CreatureParts[string], paint: Record<number, [string, number]>, at: V3) => {
+    for (const [region, g] of Object.entries(piece.part)) {
+      const [hex, finish] = paint[Number(region)] ?? paint[0];
+      const flat = g.index ? g.toNonIndexed() : g.clone();
+      const n = flat.attributes.position.count;
+      const colour = new THREE.Color(hex);
+      const color = new Float32Array(n * 3);
+      const mark = new Float32Array(n * 2);
+      const ao = flat.attributes.ao as THREE.BufferAttribute | undefined;
+      for (let i = 0; i < n; i++) {
+        const k = 0.55 + 0.45 * (ao ? ao.getX(i) : 1);
+        color.set([colour.r * k, colour.g * k, colour.b * k], i * 3);
+        mark.set([finish, 0], i * 2);
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", flat.attributes.position.clone());
+      geo.setAttribute("normal", flat.attributes.normal.clone());
+      geo.setAttribute("color", new THREE.BufferAttribute(color, 3));
+      geo.setAttribute("mark", new THREE.BufferAttribute(mark, 2));
+      geo.translate(at[0], at[1], at[2]);
+      out.push(geo);
+    }
+  };
+  add(gun, GUN_PAINT, [0, 0, 0]);
+  const size = zoom ? ([2, 3, 4, 6] as const).reduce((a, b) => (Math.abs(b - zoom) < Math.abs(a - zoom) ? b : a)) : 0;
+  const scope = size ? parts?.[`scope_${size}x`] : undefined;
+  const mount = size ? KIT[`scope_${size}x`]?.sockets.mount : undefined;
+  const rail = KIT[design]?.sockets.rail;
+  if (scope && mount && rail) add(scope, SCOPE_PAINT, [rail[0] - mount[0], rail[1] - mount[1], rail[2] - mount[2]]);
+  const merged = out.length === 1 ? out[0] : mergeGeometries(out, false);
+  merged?.computeBoundingBox();
+  return merged;
+}
 
 // A small hash of the name (the same weapon is the same design each time)
 const hashOf = (text: string) => Array.from(text).reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 7);

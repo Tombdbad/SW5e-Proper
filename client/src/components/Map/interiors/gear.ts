@@ -1,7 +1,7 @@
 // Which model stands for a piece of equipment (2026-10-19). One mapping serves the shelves (stock.ts), the people who carry things
 // (figures hold, wear and carry them) and the list of what has no model yet (tools/model-coverage.ts). Pure: tests/interiors/gear.test.ts.
 // An item's equipment category, name and class are the rules data's (shared/data/sw5e/equipment.json); nothing here is a rule.
-import { hungWeapon, type Kind } from "./weapons";
+import { hungWeapon, kitGunOf, KIT, type Kind } from "./weapons";
 import { KITBASH, type KitLook } from "./kitbash";
 import { KENNEY_BLASTER } from "./weapons";
 import { assetPath, itemRef, modelInfo, needsBlade, socketCentred } from "./items";
@@ -100,6 +100,8 @@ export interface Gear {
   carried: GearItem[];
   // The names of what is put on (the character's `wearing`): a suit, a mask, goggles
   worn?: string[];
+  // The zoom of the scope fitted in the main weapon (the figure's gun carries it on its rail)
+  optic?: number;
 }
 export type Hand = "" | "pistol" | "rifle" | "saber" | "saber2" | "pike" | "gaffi" | "vibro" | "axe" | "bowcaster" | "tool" | "tray" | "datapad" | "staff" | "play";
 // Where on the body a model goes: the main hand, the other arm (a shield), either hip, the back, the right arm or the left leg (prostheses),
@@ -120,6 +122,8 @@ export interface Want {
   // weapon closes: its `off_hand` socket
   grip?: [number, number, number];
   offHand?: [number, number, number];
+  // A blaster built as a whole gun (`model` "kit:<design>": weapons.ts KIT): the zoom of the scope on its rail, if it has one
+  optic?: number;
 }
 
 // How a catalogue model is looked at: left in its own colours when they mean something (a blade, a grenade's type, a suit's use), else in
@@ -196,6 +200,9 @@ const weaponWant = (name: string, classification?: string): Want | undefined => 
     const base = baseWeaponOf(ref.model.slice(7));
     if (base !== name) return weaponWant(base);
   }
+  // A blaster is one of the whole guns of the weapon kit, with its sockets (weapons.ts)
+  const built = kitGunOf(name, classification);
+  if (built) return { slot: "weapon", model: `kit:${built.design}`, look: "weapon", scale: built.scale * 0.85, name: built.design, grip: KIT[built.design].sockets.grip, offHand: KIT[built.design].sockets.off_hand, ...(/sniper/i.test(name) ? { optic: 4 } : {}) };
   const hung = hungWeapon(name, classification);
   return hung.file ? { slot: "weapon", model: `${(hung.dir ?? KENNEY_BLASTER).replace("/assets/", "")}/${hung.file}`, look: "weapon", scale: hung.scale * 0.85 } : undefined;
 };
@@ -223,7 +230,7 @@ export function wantsOf(hand: Hand, gear?: Gear, role = "", name = "", saberKit?
   const main = gear ? gear.weapons[0] : undefined;
   // A person with no weapon of their own wielded holds what their pose says (an NPC's blaster, a Force user's saber)
   const w = main ? weaponWant(main.name, main.weaponClassification) : (!gear || hand === "saber" || hand === "saber2") && HAND_WEAPON[hand] ? weaponWant(saberKit && (hand === "saber" || hand === "saber2") ? KIT_WEAPON[saberKit] : HAND_WEAPON[hand]!) : undefined;
-  if (w) out.push(w);
+  if (w) out.push(gear?.optic && w.model.startsWith("kit:") ? { ...w, optic: Math.max(w.optic ?? 0, gear.optic) } : w);
   if (!gear) {
     const r = BY_ROLE.find(([m]) => m.test(role));
     if (r) out.push(r[1]);

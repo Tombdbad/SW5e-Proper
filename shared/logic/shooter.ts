@@ -34,6 +34,10 @@ export const SHOOT = {
   maxShooters: 3,
   // Crouching behind cover (house rule): a smaller body, a steadier aim, and a lower mark for those who shoot at it
   crouch: { height: 0.8, spread: 0.6 },
+  // Aiming down the sights (2026-11-05, the user: "an aim button and scopes of various zoom levels"; house rule, the books have no such turn): how long the gun takes to come
+  // up, how much narrower the cone of the shots is aimed (a share of the cone), how much narrower again through a scope, how much of its pace the party keeps while aiming,
+  // the zoom the iron sights give, and the shot at long range that an aimed scope makes less bad (the share of the long-range penalty left)
+  ads: { time: 0.22, spread: 0.55, scoped: 0.8, pace: 0.55, iron: 1.25, farScoped: 0.5, kick: 0.65 },
   // How often a foe looks for its way round a wall (seconds), and how many squares it will search
   path: { every: 0.6, limit: 1500 },
   // Powers (house rule: the books' turns do not exist here): how wide the cone is that a power finds its target in (half angle), the pause after
@@ -133,8 +137,9 @@ export interface Gun {
   brace?: boolean;
   // An enhanced grenade launcher: damage dice more on each grenade it fires (at the grenade's own die), and a bonus
   boost?: { dice: number; bonus: number };
-  // A focusing scope: no worse aim past the normal range
+  // A focusing scope: no worse aim past the normal range (aimed: it is the "take aim" of the books); the scope looked through when aiming (`opticOf`)
   scope?: boolean;
+  optic?: Optic;
   // What its modifications add (2026-11-03; see Rider): more damage on every hit or the first on each foe, types whose resistance it ignores,
   // bolts a foe's saber turns less often, a hit that slows or quickens, chains on to the next foe, sets off a cone or shoves
   rider?: Rider;
@@ -165,6 +170,35 @@ export interface Blade {
   // Reach in squares beyond the usual (a magnetic forearm, a shock arm's reach property)
   reach?: number;
 }
+// ---- Scopes (house rule) -----------------------------------------------------------------------------------------------------------------
+// The books give a Focusing Scope ("take aim ... the next attack does not suffer disadvantage due to being made at long range") and name five more (Brutal and Dire scopes, which
+// give a property), but no magnification. Here a scope magnifies by its grade (standard 2x, premium 3x, advanced 4x, artifact 6x); a sniper-class weapon (its normal range from 120
+// feet: a sniper rifle, a disruptor or incinerator sniper) carries a 4x scope of its own; the best of what is fitted and what is built in is the one looked through.
+export interface Optic {
+  name: string;
+  zoom: number;
+}
+export const SCOPES: { match: RegExp; zoom: number }[] = [
+  { match: /multispectral optics|devastating|ascendancy/i, zoom: 6 },
+  { match: /deadly|mastery/i, zoom: 4 },
+  { match: /brutal scope|dire fighting scope/i, zoom: 3 },
+  { match: /focusing scope/i, zoom: 2 },
+];
+export const SNIPER_RANGE = 24;   // squares (120 feet)
+export const SCOPE_SIZES = [2, 3, 4, 6] as const;
+// The scope a gun is looked through: from the names of what is fitted in it, else the one built in
+export function opticOf(fitted: string[], gun?: { name?: string; range?: number }): Optic | undefined {
+  let best: Optic | undefined;
+  for (const name of fitted) {
+    const found = SCOPES.find((x) => x.match.test(name));
+    if (found && /scope|optics/i.test(name) && (!best || found.zoom > best.zoom)) best = { name, zoom: found.zoom };
+  }
+  if (gun && (gun.range ?? 0) >= SNIPER_RANGE && !/launcher|bow|thrower|pistol|hold-?out/i.test(gun.name ?? "") && (!best || best.zoom < 4)) best = { name: "Sniper scope", zoom: 4 };
+  return best;
+}
+// The size of scope model that shows a zoom (the nearest of the four that are made: tools/blender/build-weapons.py)
+export const scopeSizeOf = (zoom: number): (typeof SCOPE_SIZES)[number] => SCOPE_SIZES.reduce((a, b) => (Math.abs(b - zoom) < Math.abs(a - zoom) ? b : a));
+
 // How a gun kicks and how steady it is, by its kind (its name) and how heavy a shot it fires (house rule, 2026-10-30: the user asked for "recoil
 // animations and spread depending on the weapon's fire power and type"). Each shot of a hard-kicking gun throws the aim off further, so a heavy
 // gun fired fast sprays; a rifle or a sniper rifle aimed with care groups its shots tighter than a pistol.
@@ -191,7 +225,7 @@ export function gunOf(kit: { rangedWeapon?: string; rangedDice?: string; rangedD
   const loaded = a ? a.reserves[a.round ?? a.plain ?? ""] : undefined;
   const reserve = a ? Math.max(0, loaded ?? Object.values(a.reserves).reduce((x, y) => x + Math.max(0, y), 0)) : 0;
   const cells = a ? a.family === "cell" || a.family === "generator" : false;
-  return { name: kit.rangedWeapon, damage, type: (kit.rangedType ?? "energy").toLowerCase(), interval, auto, range, long, mag, left: a ? a.left : mag, reserve, cells, spent: 0, reload: a && a.max <= 0 ? 0.7 : 1.6, ...gunKick(kit.rangedWeapon, each) };
+  return { name: kit.rangedWeapon, damage, type: (kit.rangedType ?? "energy").toLowerCase(), interval, auto, range, long, mag, left: a ? a.left : mag, reserve, cells, spent: 0, reload: a && a.max <= 0 ? 0.7 : 1.6, ...gunKick(kit.rangedWeapon, each), ...(opticOf([], { name: kit.rangedWeapon, range }) ? { optic: opticOf([], { name: kit.rangedWeapon, range }) } : {}) };
 }
 // (`meleeExtra`: more dice on each blow, a top-grade calibrator's or shock gloves' on an unarmed strike)
 export function bladeOf(kit: { meleeWeapon?: string; meleeDice?: string; meleeDamage?: number; meleeType?: string; meleeExtra?: { dice: string } }): Blade | undefined {
@@ -292,6 +326,9 @@ export interface Unit {
   wasReloading: boolean;
   // Crouching behind cover (the party's)
   crouch?: boolean;
+  // Aiming down the sights (the party's): the scene says it is held; `ads` is how far the gun has come up, 0 to 1 (SHOOT.ads.time)
+  aimHeld?: boolean;
+  ads?: number;
   // The party's force or tech points and the powers it can use in real time (keys 1 to 4), and the pause before the next
   points?: number;
   powers?: RtPower[];
@@ -901,17 +938,23 @@ export function firePlayer(sim: Sim, from: { x: number; y: number; h: number }, 
   g.left--;
   p.fire = g.interval;
   reveal(sim, p, events);
-  // (past the normal range the aim is worse, unless a scope takes the long range's penalty away)
-  const far = Math.hypot(to.x - from.x, to.y - from.y) > g.range && !g.scope ? 1.5 : 1;
+  // (past the normal range the aim is worse, unless a scope takes the long range's penalty away: a Focusing Scope does it for the shot that is aimed, as the books say, and
+  // a scope looked through takes some of it away)
+  const ads = p.ads ?? 0;
+  const aimed = ads >= 0.9;
+  const beyond = Math.hypot(to.x - from.x, to.y - from.y) > g.range;
+  const far = !beyond ? 1 : g.scope && aimed ? 1 : g.optic && aimed ? 1 + 0.5 * SHOOT.ads.farScoped : 1.5;
   // (braced on a bipod or tripod: crouched and not moving)
   const braced = !!g.brace && !!p.crouch && !moving;
   // (each shot opens the cone by how hard the gun kicks; the cone is narrower for a steadier gun)
-  const kick = (g.kick ?? 0.4) * (braced ? 0.5 : 1);
+  const kick = (g.kick ?? 0.4) * (braced ? 0.5 : 1) * (1 - (1 - SHOOT.ads.kick) * ads);
   sim.spread = clamp(Math.max(sim.spread, SHOOT.spread.base) + SHOOT.spread.perShot * (g.auto ? 1.4 : 1) * (0.5 + kick * 1.25), 0, SHOOT.spread.max);
   // (poisoned or blinded the aim is worse; a substance's high steadies it)
   // (a power's d4 on attacks steadies it: Buff.aim; held fast it is worse)
   const state = (p.poisoned > 0 ? SHOOT.poisoned : 1) * (p.blind > 0 ? SHOOT.blinded : 1) * (p.high && p.high.t > 0 ? 0.85 : 1) * (braced ? 0.5 : 1) * Math.max(0.4, 1 - sumOf(p, "aim")) * ((p.held ?? 0) > 0 ? SHOOT.held.aim : 1);
-  const spread = clamp((sim.spread * (g.steady ?? 1) + (moving ? SHOOT.spread.moving : 0) + (airborne ? SHOOT.spread.air : 0)) * far * (p.crouch ? SHOOT.crouch.spread : 1) * state, 0, SHOOT.spread.max * 2);
+  // (the gun at the shoulder: a narrower cone, narrower again through a scope)
+  const sights = 1 - (1 - SHOOT.ads.spread * (g.optic ? SHOOT.ads.scoped : 1)) * ads;
+  const spread = clamp((sim.spread * (g.steady ?? 1) + (moving ? SHOOT.spread.moving : 0) + (airborne ? SHOOT.spread.air : 0)) * far * (p.crouch ? SHOOT.crouch.spread : 1) * sights * state, 0, SHOOT.spread.max * 2);
   p.facing = Math.atan2(to.x - from.x, to.y - from.y);
   if (g.launcher && g.shell) {
     // A grenade fired from the launcher: flatter and faster than a throw, and it bursts where it strikes
@@ -1440,6 +1483,9 @@ export function step(sim: Sim, dt: number, env: Env, player: { x: number; y: num
     p.x = player.x; p.y = player.y; p.h = player.h; p.facing = player.facing;
   }
   sim.spread = Math.max(SHOOT.spread.base, sim.spread - SHOOT.spread.settle * dt * 2);
+  // the gun comes up to the shoulder (and goes down when the party reloads, is hurt or put down: it cannot be aimed then)
+  const up = !!p.aimHeld && !!p.gun && !p.dead && p.reloading <= 0 && p.stagger <= 0 && !p.blocking;
+  p.ads = clamp((p.ads ?? 0) + ((up ? 1 : -2) * dt) / SHOOT.ads.time, 0, 1);
   // timers
   for (const u of sim.units) {
     for (const k of ["fire", "strafe", "blind", "stagger", "swing", "reloading", "focusLock", "wait", "burst"] as const) u[k] = Math.max(0, u[k] - dt);

@@ -10,7 +10,8 @@ import { DEAD, groundPush, paceOf, STICK, stickOf, useRun } from "./stick";
 import { AIM, aimAt, FEET_PER_SQUARE, PITCH, poseOf, recoil, useReticle, useView, type Aimed, type ViewMode } from "./aim";
 import { AirButtons } from "./AirButtons";
 import { ShootButtons, ShooterHud } from "./ShooterHud";
-import { useShoot } from "./shoot";
+import { ADS, useShoot } from "./shoot";
+import { SHOOT } from "@shared/logic/shooter";
 
 type V3 = [number, number, number];
 
@@ -178,13 +179,13 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
       e.stopPropagation();
       if (document.pointerLockElement !== el) return void el.requestPointerLock?.();
       if (e.button === 0) useShoot.getState().down("fire");
-      else if (e.button === 2) useShoot.getState().down("block");
+      else if (e.button === 2) { const h = useShoot.getState().hud; useShoot.getState().down(h.hasGun && h.weapon === "gun" ? "sights" : "block"); }
     };
     const shooterUp = (e: PointerEvent) => {
       if (!fighting() || !mouse(e)) return;
       e.stopPropagation();
       if (e.button === 0) useShoot.getState().up("fire");
-      else if (e.button === 2) useShoot.getState().up("block");
+      else if (e.button === 2) { useShoot.getState().up("sights"); useShoot.getState().up("block"); }
     };
     const shooterLook = (e: PointerEvent) => {
       if (!fighting() || document.pointerLockElement !== el) return;
@@ -193,7 +194,7 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
       pitch.current = Math.max(lo, Math.min(hi, pitch.current - e.movementY * 0.002));
     };
     const swallow = (e: Event) => { if (fighting() && (e as PointerEvent).pointerType !== "touch") e.stopPropagation(); };
-    const unlocked = () => { if (document.pointerLockElement !== el) { useShoot.getState().up("fire"); useShoot.getState().up("block"); } };
+    const unlocked = () => { if (document.pointerLockElement !== el) { useShoot.getState().up("fire"); useShoot.getState().up("block"); useShoot.getState().up("sights"); } };
     const stopped = ["click", "dblclick", "contextmenu"];
     el.addEventListener("pointerdown", shooterDown, true);
     el.addEventListener("pointerup", shooterUp, true);
@@ -287,7 +288,8 @@ export function ViewRig({ mode, feet, facing, step, start = 0, fov }: {
     const strafe = (k.has("KeyD") ? 1 : 0) - (k.has("KeyA") ? 1 : 0) + stick.current[0];
     facing.current = yaw.current;
     const deflection = Math.min(1, Math.hypot(forward, strafe));
-    const pace = paceOf(deflection, useRun.getState().run);
+    // (aiming slows the party: shared/logic/shooter.ts SHOOT.ads.pace)
+    const pace = paceOf(deflection, useRun.getState().run) * (1 - (1 - SHOOT.ads.pace) * ADS.k);
     if (pace > 0) {
       const [px, pz] = groundPush(forward, strafe, yaw.current);
       step(px, pz, pace);

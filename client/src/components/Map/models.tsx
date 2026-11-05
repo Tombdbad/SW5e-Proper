@@ -14,10 +14,11 @@ import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
 import { advance, personaOf, type Persona, type Wave, bob, LIMB, LIMBS, SHIN_OF, WALKER, DEKA, DEKA_LEGS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
-import { bodyParts, useBodyParts, creatureParts, useCreatureParts, faceParts, useFaceParts, hairParts, useHairParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
+import { bodyParts, useBodyParts, creatureParts, useCreatureParts, faceParts, useFaceParts, hairParts, useHairParts, gunParts, useGunParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
 import { saberKitOf, type SaberKit } from "./interiors/limbs";
 import { STAFF_ARMS } from "./interiors/saberplay";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
+import { gunGeometry } from "./interiors/weapons";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
 import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
 import { toneNameOf, type KitLook } from "./interiors/kitbash";
@@ -44,10 +45,10 @@ export type V3 = [number, number, number];
 // a figure's builder names as those (Kit.dress)
 // (2026-10-30: a droid's panelled plating, a prosthesis's or implant's circuitry, the coarse weave of a robe, cloak or rags, and the ribbed,
 // quilted stuff of an armour's undersuit or a flight suit)
-export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth" | "stone" | "bark" | "leaf" | "needle" | "skin" | "face" | "fabric" | "leather" | "plate" | "scales" | "hair" | "fur" | "droid" | "cyber" | "weave" | "mesh" | "head" | "strand" | "eye";
-export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth", "stone", "bark", "leaf", "needle", "skin", "face", "fabric", "leather", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh", "head", "strand", "eye"];
+export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth" | "stone" | "bark" | "leaf" | "needle" | "skin" | "face" | "fabric" | "leather" | "plate" | "scales" | "hair" | "fur" | "droid" | "cyber" | "weave" | "mesh" | "head" | "strand" | "eye" | "shell";
+export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth", "stone", "bark", "leaf", "needle", "skin", "face", "fabric", "leather", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh", "head", "strand", "eye", "shell"];
 // The finishes a figure's colours may be dressed in, over the plain ones they were drawn in
-export const FIGURE_FINISHES: Finish[] = ["skin", "face", "fabric", "leather", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh"];
+export const FIGURE_FINISHES: Finish[] = ["skin", "face", "fabric", "leather", "shell", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh"];
 
 export const MATERIALS: Record<Finish, THREE.Material> = {
   matte: new THREE.MeshLambertMaterial({ vertexColors: true, emissive: new THREE.Color("#0a0a0a") }),
@@ -68,6 +69,8 @@ export const MATERIALS: Record<Finish, THREE.Material> = {
   face: surfaceMaterial("figure", "face", { vertexColors: true, lift: 1.07, parallax: 0, shininess: 14, specular: "#1e1b18", normalScale: 0.45 }),
   fabric: surfaceMaterial("figure", "fabric", { vertexColors: true, lift: 1.18, parallax: 0, shininess: 3, specular: "#0c0c0c", side: THREE.DoubleSide, normalScale: 0.9 }),
   leather: surfaceMaterial("figure", "leather", { vertexColors: true, lift: 1.18, parallax: 0, shininess: 26, specular: "#2e2a26", normalScale: 0.8 }),
+  // White armour of moulded plastoid (a trooper's: textures/figure/shell, tools/build-figure-textures.mjs): plates with rounded borders and seams, screw heads, orange peel, scuffs and scorch
+  shell: surfaceMaterial("figure", "shell", { vertexColors: true, lift: 1.07, parallax: 0, shininess: 46, specular: "#6a6a6a", normalScale: 0.85 }),
   plate: surfaceMaterial("figure", "plate", { vertexColors: true, lift: 1.1, parallax: 0, shininess: 60, specular: "#5a5a5a", normalScale: 0.7 }),
   scales: surfaceMaterial("figure", "scales", { vertexColors: true, lift: 1.22, parallax: 0, shininess: 30, specular: "#303028", normalScale: 1 }),
   hair: surfaceMaterial("figure", "fur", { vertexColors: true, lift: 1.25, parallax: 0, shininess: 10, specular: "#202020", normalScale: 0.8 }),
@@ -2926,7 +2929,8 @@ export function buildHumanoid(k: Kit, look: Look, o: Outfit, skin: string, hair:
     ...(o.cape ? { [o.cape]: "weave" as Finish } : {}),
     ...(armored ? { [under]: "mesh" as Finish } : {}),
     ...(suited ? { [o.top]: "mesh" as Finish } : {}),
-    ...(armored ? { [plate]: "plate" as Finish } : {}),
+    // (pale armour is moulded plastoid in plates, a darker one is plated metal)
+    ...(armored ? { [plate]: (luminance(plate) > 0.5 ? "shell" : "plate") as Finish } : {}),
     ...(hair ? { [hair]: (fur ? "fur" : "hair") as Finish } : {}),
     // (a prosthetic limb is plated like a droid, its joints show their works)
     ...(prosLeg || attach.some((a) => a.slot === "armR") ? { "#8a949e": "droid" as Finish, "#59636d": "cyber" as Finish } : {}),
@@ -3542,8 +3546,11 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
     if (fine) {
       // (the white a little off white, an iris disc drawn with its own picture (fibres, a dark ring, a black pupil), a catchlight, and the lid on the limb that blinks)
       k.sphere(0.0165, "#e8e2d8", { at, scale: [1.2, 0.85, 0.6], finish: "sheen", seg: [10, 7] });
-      k.add(irisCap(), iris, { at: [at[0], at[1], at[2] + 0.0012], finish: "eye" });
-      k.sphere(0.0019, "#ffffff", { at: [at[0] - 0.0028, at[1] + 0.0034, at[2] + 0.0112], finish: "glow", seg: [5, 4] });
+      // (the iris and its glint turn about the eyeball, so that the eye looks about: limbs gazeR and gazeL)
+      k.limb(s > 0 ? LIMB.gazeL : LIMB.gazeR, at, () => {
+        k.add(irisCap(), iris, { at: [at[0], at[1], at[2] + 0.0012], finish: "eye" });
+        k.sphere(0.0019, "#ffffff", { at: [at[0] - 0.0028, at[1] + 0.0034, at[2] + 0.0112], finish: "glow", seg: [5, 4] });
+      });
       k.limb(LIMB.lids, [0, 0.015, molded ? 0.088 : 0.096], () => k.sphere(0.0185, face, { at: [at[0], at[1] + 0.006, at[2] - 0.002], scale: [1.2, 0.5, 0.62], theta: [0, 1.2], seg: [8, 4] }));
     } else {
       k.sphere(0.019, "#ece6dc", { at, scale: [1.2, 0.85, 0.6], finish: "sheen", seg: [8, 6] });
@@ -3599,6 +3606,7 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
   // (a Twi'lek's head-tails and a Togruta's montrals: modelled, ridged, tapering, in head.glb where they are in; else tubes)
   const tail = (name: string, color: string) => gear?.[name] ? (s: number) => sculpt(k, gear[name].part, { 0: { color } }, (g) => g.clone(), { scale: [s, 1, 1] }) : undefined;
   const lekkuOf = tail("lekku", face);
+  const tailsFrom = k.parts.length;
   if (look.lekku) {
     if (lekkuOf) k.pair(lekkuOf);
     else k.pair((s) => k.tube([[s * 0.05, 0.01, -0.07], [s * 0.07, -0.12, -0.14], [s * 0.06, -0.3, -0.16], [s * 0.05, -0.44, -0.13]], (t) => 0.045 * (1 - t * 0.6), face, { along: 12, around: 8 }));
@@ -3613,6 +3621,14 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
     k.pair((s) => k.tube([[s * 0.06, 0.07, 0], [s * 0.1, 0.17, -0.02], [s * 0.085, 0.27, -0.08]], (t) => 0.04 * (1 - t * 0.7), stripe, { along: 8, around: 7 }));
     k.pair((s) => k.tube([[s * 0.08, -0.02, 0.02], [s * 0.11, -0.16, 0.06], [s * 0.1, -0.3, 0.07]], (t) => 0.036 * (1 - t * 0.6), stripe, { along: 8, around: 7 }));
     k.tube([[0, 0.0, -0.08], [0, -0.14, -0.15], [0, -0.3, -0.16]], (t) => 0.036 * (1 - t * 0.6), stripe, { along: 8, around: 7 });
+  }
+  // (2026-11-05: head-tails sway as hair does: what hangs below the nape swings with the stride on `hairA`, what hangs below the shoulders' line on `hairB`; a montral that
+  // stands up from the head does not move; interiors/limbs.ts humanPose)
+  if (look.lekku || look.montrals) {
+    k.limb(LIMB.hairA, [0, -0.01, -0.09], () => {});
+    k.limb(LIMB.hairB, [0, -0.14, -0.12], () => {});
+    const [yA, yB] = [k.pointOf([0, -0.02, 0])[1], k.pointOf([0, -0.15, 0])[1]];
+    k.reassign(tailsFrom, (p) => (p.y < yB ? LIMB.hairB : p.y < yA ? LIMB.hairA : -1));
   }
   if (look.horns === 1) k.cone(0.02, 0.07, "#e8dcc0", { at: [0, 0.12, 0.05], rot: [0.4, 0, 0], seg: 6 });
   else if (look.horns === 2 && !look.hornsDown) k.pair((s) => k.cone(0.018, 0.06, "#d8ccb0", { at: [s * 0.045, 0.11, 0.04], rot: [0.3, 0, s * -0.3], seg: 6 }));
@@ -5693,6 +5709,7 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
   useCreatureParts();
   useFaceParts();
   useHairParts();
+  useGunParts();
   const me = player ?? kind === "player";
   const base = figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, unarmed, wield, kit: kitAsked });
   // (how this person carries themselves: their stride, sway, slump and fidgets come from who they are: interiors/limbs.ts personaOf)
@@ -5702,9 +5719,18 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
   const wants = base.wants ?? [];
   const toneOf = (look: KitLook) => { const n = toneNameOf(look); return n ? TONES[n] : undefined; };
   // A saber with a blade shape of its own is two files: the hilt and the blade
-  const urlsOf = (w: Want) => [`/assets/${w.model}.glb`, ...(w.blade ? [`/assets/${w.blade.model}.glb`] : [])];
+  // (a gun of the weapon kit is no file of its own: it is made from the guns' shelf, interiors/weapons.ts)
+  const urlsOf = (w: Want) => (w.model.startsWith("kit:") ? [] : [`/assets/${w.model}.glb`, ...(w.blade ? [`/assets/${w.blade.model}.glb`] : [])]);
   const loaded = Object.fromEntries((["armour", "kit", "medical", "prosthetic", "weapon", "worn", "plain"] as KitLook[]).map((look) => [look, useModels(wants.filter((w) => w.look === look).flatMap(urlsOf), "centre", toneOf(look))]));
   const geometryOfWant = (w: Want): THREE.BufferGeometry | null => {
+    if (w.model.startsWith("kit:")) {
+      const parts = gunParts();
+      if (!parts) return null;
+      const key = `gun:${w.model}:${w.optic ?? 0}`;
+      let gun = COMPOSED.get(key);
+      if (!gun) { gun = gunGeometry(parts, w.model.slice(4), w.optic) ?? undefined; if (gun) COMPOSED.set(key, gun); }
+      return gun ?? null;
+    }
     const files = loaded[w.look];
     const hilt = files[`/assets/${w.model}.glb`];
     if (!hilt) return null;
@@ -5738,7 +5764,7 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
   const modulesReady = moduleFiles.length > 0 && moduleFiles.every((m) => moduleGeo[m.url]);
   const ready = wants.length > 0 && wants.every((w) => geometryOfWant(w));
   const spec = ready
-    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, unarmed, wield, kit: kitAsked, attach: wants.map((w) => ({ id: (w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model) + (base.blade && w.name?.startsWith("saber-") ? `~${base.blade}` : ""), slot: w.slot, scale: w.scale, grip: w.grip, offHand: w.offHand, name: w.name, geometry: geometryOfWant(w)! })) })
+    ? figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, unarmed, wield, kit: kitAsked, attach: wants.map((w) => ({ id: (w.optic ? `${w.model}+scope${w.optic}` : "") + (w.blade ? `${w.model}+${w.blade.name}x${w.blade.scale}` : w.model) + (base.blade && w.name?.startsWith("saber-") ? `~${base.blade}` : ""), slot: w.slot, scale: w.scale, grip: w.grip, offHand: w.offHand, name: w.name, geometry: geometryOfWant(w)! })) })
     : modulesReady
       ? figureSpec(kind, name, { role, creature, species, size, looks, modules: moduleFiles.map((m) => ({ name: m.name, geometry: moduleGeo[m.url]! })) })
       : base;

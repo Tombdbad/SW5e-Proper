@@ -66,9 +66,15 @@ export function ShooterHud() {
       {hud.states.includes("Unseen") && <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 120px 30px rgba(99,102,241,0.35)" }} data-testid="cloak-tint" />}
       {hud.zoom > 0 && (
         <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 0 9999px rgba(0,0,0,0)", background: "radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 34%, rgba(0,0,0,0.82) 36%)" }} data-testid="zoom-reticle">
+          {/* a scope's picture: a fine cross, the mils along it, and the range */}
+          <div style={{ position: "absolute", left: "34%", right: "34%", top: "50%", height: 1, background: "rgba(0,0,0,0.75)" }} />
+          <div style={{ position: "absolute", top: "20%", bottom: "20%", left: "50%", width: 1, background: "rgba(0,0,0,0.75)" }} />
+          {[-3, -2, -1, 1, 2, 3].map((i) => <div key={i} style={{ position: "absolute", left: `calc(50% + ${i * 22}px)`, top: "calc(50% - 4px)", width: 1, height: 9, background: "rgba(0,0,0,0.75)" }} />)}
           <div style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, 40px)", fontSize: 12, color: "#a7f3d0" }}>×{hud.zoom.toFixed(1)} · {hud.range} ft</div>
         </div>
       )}
+      {/* aiming: the cone of the shots drawn closing round the crosshair; the sights named */}
+      {hud.ads > 0.05 && hud.zoom === 0 && <div style={{ position: "absolute", left: "50%", top: "50%", width: 18, height: 18, marginLeft: -9, marginTop: -9, borderRadius: 9, border: "1px solid rgba(255,255,255,0.7)", opacity: hud.ads, boxShadow: "0 0 2px #000" }} data-testid="sights" />}
       {hud.pings.map((p, i) => (
         <div key={i} style={{ position: "absolute", left: "50%", top: "50%", width: 0, height: 0, transform: `rotate(${p.a}rad)`, opacity: Math.max(0, 1 - (performance.now() - p.at) / 1500) }}>
           <div style={{ position: "absolute", left: -26, top: -170, width: 52, height: 8, borderRadius: 6, background: "rgba(251,191,36,0.85)", boxShadow: "0 0 6px #000" }} />
@@ -77,7 +83,7 @@ export function ShooterHud() {
       <div style={{ position: "absolute", left: "50%", bottom: 150, transform: "translateX(-50%)", textAlign: "center", minWidth: 180 }} data-testid="shooter-ammo">
         {hud.weapon === "gun" && hud.hasGun ? (
           <>
-            <div>{hud.gun}</div>
+            <div>{hud.gun}{hud.optic ? <span style={{ fontSize: 11, opacity: 0.8 }}> · {hud.optic} ×{hud.scope}</span> : null}{hud.ads > 0.9 ? <span style={{ fontSize: 11, color: "#a7f3d0" }}> · aimed</span> : null}</div>
             <div style={{ fontSize: 18 }}>{hud.reloading ? "Reloading…" : `${hud.left} / ${hud.mag}`} <span style={{ fontSize: 12, opacity: 0.8 }}>· {hud.reserve} in the pack</span></div>
           </>
         ) : (
@@ -115,6 +121,7 @@ export function ShootButtons() {
           <button data-testid="item-button" {...hold("item")} style={{ ...base, width: 70, height: 40, background: "rgba(74,222,128,0.4)", font: "600 10px sans-serif" }}>{hud.item.length > 12 ? `${hud.item.slice(0, 11)}…` : hud.item}</button>
         </div>
       )}
+      {hud.hasGun && hud.weapon === "gun" && <button data-testid="aim-button" {...hold("aim")} style={{ ...base, width: 70, height: 40, background: hud.ads > 0.5 ? "rgba(16,185,129,0.55)" : "rgba(255,255,255,0.2)" }}>{hud.scope ? `Aim ×${hud.scope}` : "Aim"}</button>}
       {hud.hasGun && <button data-testid="reload-button" {...hold("reload")} style={{ ...base, width: 70, height: 40, background: "rgba(255,255,255,0.2)" }}>Reload</button>}
       {hud.hasGun && hud.hasBlade && <button data-testid="swap-button" {...hold("swap")} style={{ ...base, width: 70, height: 40, background: "rgba(255,255,255,0.2)" }}>{hud.weapon === "gun" ? "Saber" : "Gun"}</button>}
       {hud.saber && <button data-testid="block-button" {...hold("block")} style={{ ...base, width: 70, height: 40, background: "rgba(56,189,248,0.45)" }}>Guard</button>}

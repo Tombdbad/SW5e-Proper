@@ -25,6 +25,7 @@ import { fightingStyles } from "./fightingStyles";
 import { conditions as conditionRows } from "./conditions";
 import lookups from "@shared/data/sw5e/lookups.json";
 import { scoresWith, sumEffects, type ItemFacts, type ItemEffects, type PowerBonus } from "@shared/logic";
+import { opticOf } from "@shared/logic/shooter";
 
 export const ABILITIES = ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"] as const;
 const isAbility = (name: string) => (ABILITIES as readonly string[]).includes(name);
@@ -797,7 +798,11 @@ export function gearOf(character: any): Gear {
   const used = new Set([...worn.weapons, worn.body, worn.shield].map((n) => String(n ?? "").toLowerCase()));
   const carried = ((character?.equipment ?? []) as any[]).map((e) => String(e?.name ?? e)).filter((n) => !used.has(n.toLowerCase())).map(item).filter((i): i is GearItem => !!i);
   const installed = ((character?.playState?.augments ?? []) as { name: string }[]).filter((a) => a?.name);
+  // The scope fitted in the main weapon (shared/logic/shooter.ts opticOf: the zoom each grade gives), drawn on the gun's rail
+  const main = worn.weapons[0];
+  const optic = main ? opticOf(activeEffects(character).map((a) => a.source).filter((x) => x.startsWith(`${main}: `)).map((x) => x.split(": ").pop()!))?.zoom : undefined;
   return {
+    ...(optic ? { optic } : {}),
     weapons: worn.weapons.map(item).filter((i): i is GearItem => !!i).slice(0, 2),
     bodyClass: body?.armorClassification === "Light" || body?.armorClassification === "Medium" || body?.armorClassification === "Heavy" ? (body.armorClassification.toLowerCase() as "light" | "medium" | "heavy") : undefined,
     shield: item(worn.shield),
@@ -1232,6 +1237,8 @@ export function withItemEffects(character: any, facts: Record<string, ItemFacts>
     // (2026-11-03) What each item in use does in a real-time fight (shared/logic FightFacts), by its source: an item's name, or "Weapon: Mod" for a
     // modification fitted in a weapon, armour or clothing
     itemFight: active.filter((a) => a.effects.fight).map((a) => ({ source: a.source, fight: a.effects.fight! })),
+    // (2026-11-05) every item in use and every modification fitted ("Weapon: Mod"), whether it has an effect in a fight or not: a scope shows on the gun
+    itemSources: active.map((a) => a.source),
     // Darkvision, stealth, a decoy shadow, a guard against weapons, water at will (parseItemEffects)
     itemSenses: {
       darkvision: Math.max(0, ...active.map((a) => a.effects.darkvision ?? 0)),

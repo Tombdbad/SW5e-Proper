@@ -102,6 +102,28 @@ test("hair that hangs and the lids of the eyes are limbs of their own: the chain
     }
   }
   assert.ok(handed.a > 100 && handed.b > 30, `long hair: ${handed.a} vertices on the upper limb, ${handed.b} on the lower`);
+  // (a Twi'lek's head-tails and a Togruta's montrals hang from the same limbs: they sway as hair does, 2026-11-05)
+  const hairless = { ...human, hair: [] as string[] };
+  for (const [name, o] of [["lekku", { lekku: true }], ["montrals", { montrals: true }]] as const) {
+    const spec = figureSpec("person", "Kel Dax", { role: "patron", looks: { human: { ...hairless, ...o } } });
+    const k = new Kit(); k.animated = true; spec.build(k);
+    assert.ok(k.jointMaskHi & (1 << (LIMB.hairA - 32)) && k.jointMaskHi & (1 << (LIMB.hairB - 32)), `${name} sway on the hair's limbs`);
+  }
+  // (the eyes look about: the iris and its glint are limbs that turn about the eye, flicking to a new place every second or two)
+  assert.equal(PARENT[LIMB.gazeR], LIMB.head);
+  assert.equal(PARENT[LIMB.gazeL], LIMB.head);
+  assert.ok(longK.jointMaskHi & (1 << (LIMB.gazeR - 32)) && longK.jointMaskHi & (1 << (LIMB.gazeL - 32)), "the eyes' limbs are in the model");
+  const gazes = new Set<string>();
+  let widest = 0;
+  for (let i = 0; i < 400; i++) {
+    const out = restPose();
+    humanPose(standing(), i * 0.1, motion({}), eased(), "none", "niman", i * 0.1, { hip: 0.56, knee: 0.31 }, out, personaOf(5));
+    const q = [out[LIMB.gazeR * 4], out[LIMB.gazeR * 4 + 1]];
+    gazes.add(q.map((x) => x.toFixed(2)).join(","));
+    widest = Math.max(widest, Math.abs(out[LIMB.gazeR * 4 + 1]));
+  }
+  assert.ok(gazes.size > 12, `the eyes look at many places: ${gazes.size}`);
+  assert.ok(widest > 0.05 && widest < 0.3, `not past the corner of the eye: ${widest}`);
   const crop = draw(named(false, "hair_crop"));
   assert.ok(!(crop.jointMaskHi & (1 << (LIMB.hairA - 32))), "a crop does not swing");
   const at = (stride: Stride, t: number) => { const out = restPose(); humanPose(stride, t, motion({}), eased(), "none", "niman", t, { hip: 0.56, knee: 0.31 }, out, personaOf(5)); return out; };

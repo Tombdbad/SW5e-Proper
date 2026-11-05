@@ -241,6 +241,23 @@ const HANDS: [string, string, string, string][] = [
   ["force", "Jedi Knight Aro", "jedi", "Human"], ["force", "Jedi Padawan Vee", "jedi", "Twi'lek"], ["force", "Sith Lord Karn", "sith", "Zabrak"], ["force", "Inquisitor Seven", "inquisitor", "Human"],
   ["humanoid", "Navy Trooper", "trooper", "Human"], ["humanoid", "Mechanic Pell", "mechanic", "Human"], ["humanoid", "Medic Senn", "medic", "Twi'lek"], ["humanoid", "Gamorrean Guard", "guard", "Gamorrean"],
 ];
+// `guns` (2026-11-05): the blasters of the weapon kit (tools/blender/build-weapons.py) held by people, the scopes on the rail
+const GUNS: [string, number][] = [["Blaster pistol", 0], ["Hold-out blaster", 0], ["Blaster carbine", 0], ["Blaster rifle", 0], ["Heavy blaster rifle", 0], ["Sniper rifle", 0], ["Heavy repeater", 0], ["Blaster rifle", 2], ["Blaster rifle", 3], ["Blaster rifle", 4], ["Blaster rifle", 6]];
+function Guns() {
+  return (
+    <Rows
+      items={GUNS}
+      per={6}
+      gap={0.6}
+      name={([n, z]) => (z ? `${n} ${z}x` : n)}
+      draw={([n, z]) => {
+        const gear = { ...gearOf({ equipment: [n], armor: { weapons: [n], body: null, shield: null }, abilityScores: {} }), ...(z ? { optic: z } : {}) };
+        return <Figure kind="humanoid" ring={SIDE_COLORS.neutral} name={`Kel ${n} ${z}`} role="patron" species="Human" gear={gear} />;
+      }}
+    />
+  );
+}
+
 function Hands() {
   return <Rows items={HANDS} per={8} gap={1.5} name={([, n]) => n} draw={([kind, name, role, species]) => <Figure kind={kind} ring={SIDE_COLORS.neutral} name={name} role={role} species={species} />} />;
 }
@@ -731,8 +748,8 @@ export default function ModelGallery() {
   const section = query.get("section") ?? "people";
   // ?cam=x,y,z&look=x,y,z frame a close look
   const triple = (text: string | null, fallback: [number, number, number]) => (text ? (text.split(",").map(Number) as [number, number, number]) : fallback);
-  const cam = triple(query.get("cam"), section === "saberCombo" ? [5.0, 1.8, 2.8] : section === "hair" ? [0, 2.0, 8.2] : section === "faces" ? [0, 0.95, 2.4] : [0, 9, 12]);
-  const look = triple(query.get("look"), section === "saberCombo" ? [0, 0.95, 0] : section === "hair" ? [0, 0.8, 1.8] : section === "faces" ? [0, 0.85, 0] : [0, 0, section === "places" ? 14 : 3]);
+  const cam = triple(query.get("cam"), section === "saberCombo" ? [5.0, 1.8, 2.8] : section === "hair" ? [0, 2.0, 8.2] : section === "faces" ? [0, 0.95, 2.4] : section === "guns" ? [0, 0.85, 3.6] : [0, 9, 12]);
+  const look = triple(query.get("look"), section === "saberCombo" ? [0, 0.95, 0] : section === "hair" ? [0, 0.8, 1.8] : section === "faces" || section === "guns" ? [0, 0.7, 0] : [0, 0, section === "places" ? 14 : 3]);
   const [duel, setDuel] = useState<DuelConfig>(() => duelFromQuery(query));
   const caption = useRef<HTMLDivElement>(null);
   const roleList = [...ROLES.map((r) => ({ name: `Dax ${r}`, role: r })), ...BLOCKS.map((b) => ({ name: b, role: "" }))];
@@ -752,6 +769,8 @@ export default function ModelGallery() {
         {section === "people" && <Rows items={query.get("only") ? query.get("only")!.split(",").map((s) => SPECIES.find((x) => x.toLowerCase().startsWith(s.toLowerCase())) ?? s) : SPECIES} per={query.get("only") ? 6 : 8} gap={query.get("only") ? 0.6 : 1.4} name={(s) => s} draw={(s) => person(`Kel ${s}`, "patron", s)} />}
         {/* ?section=faces[&names=A B,C D][&species=Zabrak]: the same species under different names, to see the faces, brows and tattoos told apart (cam and look as for a close look) */}
         {section === "faces" && <Rows items={(query.get("names") ?? "Dax Vos,Mara Vos,Kel Orn,Tessa Rho,Brek Tal,Ila Venn").split(",")} per={6} gap={0.42} name={(s) => s} draw={(s) => <Figure kind={tokenOf({ name: s, role: "patron" })} ring={SIDE_COLORS.neutral} name={s} role="patron" species={query.get("species") ?? "Human"} />} />}
+        {/* ?section=guns: each blaster of the weapon kit in a person's hands, and a rifle with each size of scope (what a gun looks like in use: hands on the grip and under the handguard) */}
+        {section === "guns" && <Guns />}
         {section === "roles" && <Rows items={roleList} per={8} gap={1.4} name={(r) => r.role || r.name} draw={(r) => person(r.name, r.role)} />}
         {section === "player" && (
           <Rows items={["Human", "Zabrak", "Twi'lek", "Togruta", "Wookiee", "Chiss"].flatMap((s) => [`force:${s}`, `blaster:${s}`])} per={6} gap={1.4} name={(s) => s} draw={(s) => <PlayerFigure force={s.startsWith("force")} species={s.split(":")[1]} />} />

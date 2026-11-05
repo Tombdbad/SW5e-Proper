@@ -15,7 +15,7 @@ import { Figure, MotionContext, usePartyLook } from "../models";
 import { beginSwing, creatureLunge, kickOf, motion, nowSeconds, type Motion } from "./limbs";
 import { SIDE_COLORS, tokenOf } from "../sprites";
 import { AIM, partyMotion, recoil, rightOf, stance, useView } from "./aim";
-import { bindShootKeys, useShoot, type Session } from "./shoot";
+import { ADS, bindShootKeys, useShoot, type Session } from "./shoot";
 import { sfx } from "./fx";
 import { useCombat } from "@/lib/stores/useCombat";
 
@@ -69,7 +69,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     if (typeof window !== "undefined") (window as any).__shooter = sim.current;
   }
   const state = useRef({
-    seen: { fire: 0, grenade: 0, reload: 0, block: 0, swap: 0, crouch: 0, item: 0, next: 0, power0: 0, power1: 0, power2: 0, power3: 0, power4: 0, power5: 0, power6: 0, power7: 0, power8: 0, page: 0, zoom: 0 },
+    seen: { aim: 0, fire: 0, grenade: 0, reload: 0, block: 0, swap: 0, crouch: 0, item: 0, next: 0, power0: 0, power1: 0, power2: 0, power3: 0, power4: 0, power5: 0, power6: 0, power7: 0, power8: 0, page: 0, zoom: 0 },
     // (2026-11-03) the page of powers on the keys, what each foe is under (its ring and the word over it), lines drawn (a harpoon's), shots heard
     page: 0,
     status: {} as Record<string, { text: string; at: number }>,
@@ -77,6 +77,8 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
     pings: [] as { a: number; at: number }[],
     zoom: 1,
     crouch: false,
+    // the gun at the shoulder (V or the Aim button turns it)
+    aim: false,
     // the belt: what is carried to use, and the one shown (Z uses it)
     gear: (session.gear ?? []).map((g) => ({ ...g })),
     pick: 0,
@@ -204,7 +206,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       placeUnits(s, c.env, { x: me.x, y: me.y, facing: me.facing });
     }
     // What was pressed since the last frame
-    const edge = (k: "grenade" | "reload" | "swap" | "crouch" | "item" | "next" | "power0" | "power1" | "power2" | "power3" | "power4" | "power5" | "power6" | "power7" | "power8" | "page") => {
+    const edge = (k: "aim" | "grenade" | "reload" | "swap" | "crouch" | "item" | "next" | "power0" | "power1" | "power2" | "power3" | "power4" | "power5" | "power6" | "power7" | "power8" | "page") => {
       const n = store.taps[k];
       const fresh = n !== st.seen[k];
       st.seen[k] = n;
@@ -250,6 +252,12 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         st.crouch = !st.crouch;
         p.crouch = st.crouch;
       }
+      // (aiming: the gun to the shoulder or down again; only a gun can be aimed, and the swap, a reload that begins or a fight's end lowers it)
+      if (edge("aim")) {
+        if (st.weapon === "gun" && p.gun) st.aim = !st.aim;
+        else st.note = "Nothing to aim";
+      }
+      if (st.weapon !== "gun" || !p.gun) st.aim = false;
       // (1 to 9 cast the page shown; 0 turns the page)
       const pages = Math.max(1, Math.ceil((p.powers?.length ?? 0) / PAGE));
       if (edge("page")) { st.page = (st.page + 1) % pages; st.note = pages > 1 ? `Powers ${st.page * PAGE + 1}–${Math.min(p.powers?.length ?? 0, (st.page + 1) * PAGE)}` : ""; }
@@ -278,7 +286,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
             const kick = p.gun?.kick ?? 0.4;
             Object.assign(partyMotion.current, { firedAt: now / 1000, kick });
             // (the view climbs with the kick, less crouched)
-            recoil.up += (0.008 + kick * 0.035) * (st.crouch ? 0.6 : 1);
+            recoil.up += (0.008 + kick * 0.035) * (st.crouch ? 0.6 : 1) * (1 - (1 - SHOOT.ads.kick) * (p.ads ?? 0));
           }
           else if (p.gun && p.gun.left <= 0 && p.reloading === 0 && p.fire <= 0) {
             if (p.gun.reserve > 0) reloadPlayer(s, events);
@@ -291,7 +299,9 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         }
       }
       setBlock(s, store.held.block && st.weapon === "blade");
-    } else setBlock(s, false);
+    } else { setBlock(s, false); st.aim = false; }
+    p.aimHeld = (st.aim || store.held.sights) && st.weapon === "gun";
+    ADS.k = p.ads ?? 0;
     partyMotion.current.blocking = p.blocking && !p.dead;
     // (the gun is held up to where the crosshair is: its rise over the ground ahead)
     if (shot) partyMotion.current.pitch = Math.max(-0.6, Math.min(0.6, Math.atan2(shot.to.h - shot.from.h, Math.hypot(shot.to.x - shot.from.x, shot.to.y - shot.from.y))));
@@ -537,7 +547,9 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
       lampTarget.updateMatrixWorld();
     }
     // The zoom held (macrobinoculars, a scope, a far eye: sensesOf zoom), eased in and out
-    const want = store.held.zoom && senses.zoom > 0 ? senses.zoom : 1;
+    // (aiming brings the view in by the iron sights' zoom, or by the scope's, as far as the gun is up)
+    const aimZoom = 1 + (((p.gun?.optic?.zoom ?? SHOOT.ads.iron) - 1) * (p.ads ?? 0));
+    const want = Math.max(aimZoom, store.held.zoom && senses.zoom > 0 ? senses.zoom : 1);
     st.zoom += (want - st.zoom) * Math.min(1, dt * 8);
     const cam = camera as THREE.PerspectiveCamera;
     if (Math.abs(cam.zoom - st.zoom) > 0.001) { cam.zoom = st.zoom; cam.updateProjectionMatrix(); }
@@ -645,7 +657,7 @@ export function ShooterLayer({ session, ctx }: { session: Session; ctx: { curren
         buffs: (p.buffs ?? []).filter((b) => b.t < 590).map((b) => ({ name: b.name, t: Math.ceil(b.t) })).concat((p.buffs ?? []).filter((b) => b.t >= 590).map((b) => ({ name: b.name, t: 0 }))),
         states: [cloakedNow(p) && "Unseen", p.cloaked && !cloakedNow(p) && "Seen (a shot gave you away)", p.anchored && "Anchored", (p.held ?? 0) > 0 && "Held", (p.slowed ?? 0) > 0 && "Slowed", p.imbue && `Next hit +${Math.round(p.imbue.damage)} ${p.imbue.type}`, s.lit && "Light on", s.eye && "Eye out"].filter(Boolean) as string[],
         sensed: s.units.filter((u) => u.side === "foe" && !u.dead && u.mode !== "gone" && ((senses.through > 0 && Math.hypot(u.x - me.x, u.y - me.y) <= senses.through) || (!!s.eye && Math.hypot(u.x - s.eye.x, u.y - s.eye.y) <= 6))).length,
-        zoom: st.zoom > 1.05 ? st.zoom : 0, range: shot ? Math.round(Math.hypot(shot.to.x - me.x, shot.to.y - me.y) * 5) : 0,
+        zoom: st.zoom >= 1.9 ? st.zoom : 0, ads: p.ads ?? 0, scope: p.gun?.optic?.zoom ?? 0, optic: p.gun?.optic?.name, range: shot ? Math.round(Math.hypot(shot.to.x - me.x, shot.to.y - me.y) * 5) : 0,
         pings: (st.pings = st.pings.filter((x) => now - x.at < 1500)).slice(-6),
       });
       useCombat.getState().syncRealtime({
