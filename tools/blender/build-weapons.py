@@ -77,6 +77,8 @@ class Gun(gear.Build):
     def finish(self):
         bm = self.bm
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
+        # (every piece a closed solid, every face turned outward: a face wound the wrong way is a hole when the model is drawn one-sided)
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
         me = bpy.data.meshes.new(self.name)
         bm.to_mesh(me)
         bm.free()

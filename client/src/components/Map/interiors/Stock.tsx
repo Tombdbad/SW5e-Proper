@@ -38,7 +38,7 @@ export function stockGeometry(items: Item[], files: Record<string, THREE.BufferG
       // The files lie along z with the barrel to +z; turned about the upright axis, then tipped
       m.compose(new THREE.Vector3(it.x, it.y, it.z), q.setFromEuler(e.set(it.tilt ?? 0, it.turn, 0, "YXZ")), new THREE.Vector3().setScalar(it.scale));
       g.applyMatrix4(m);
-      if (it.item) for (const part of splitByFinish(g)) by[part.finish === "haze" ? "glow" : part.finish].push(part.geo);
+      if (it.item) for (const part of splitByFinish(g)) by[part.finish === "haze" ? "glow" : part.finish === "gunmetal" ? "sheen" : part.finish === "gunpoly" ? "matte" : part.finish].push(part.geo);
       else (it.model && DULL.has(KIT_MODELS[it.model]) ? by.matte : by.sheen).push(g);
     } else if (hung) {
       // Built in code (blades, pikes, and blasters while their model is on its way)

@@ -103,9 +103,9 @@ export function kitGunOf(name: string, classification = ""): { design: string; k
   if (!box) return undefined;
   return { design, kind, scale: KIT_LENGTH(design, kind) / (box[5] - box[2]) };
 }
-// The colours of a gun's regions and how each is drawn (items.ts FINISH_OF_MARK: 0 sheen, 1 matte, 2 glow)
-const GUN_PAINT: Record<number, [string, number]> = { 0: ["#5b636d", 0], 1: ["#26292e", 1], 2: ["#a2adb8", 0], 3: ["#ff6a3d", 2], 4: ["#0b1218", 0] };
-const SCOPE_PAINT: Record<number, [string, number]> = { 0: ["#2b2f36", 1], 1: ["#4a525c", 0], 2: ["#8a949e", 0], 3: ["#ff3030", 2], 4: ["#16384f", 0] };
+// The colours of a gun's regions and how each is drawn (assets.ts FINISH_OF_MARK: 2 glow, 5 gunmetal, 6 gunpoly: metal and polymer, both sides: the user, 2026-11-05)
+const GUN_PAINT: Record<number, [string, number]> = { 0: ["#5b636d", 5], 1: ["#26292e", 6], 2: ["#a2adb8", 5], 3: ["#ff6a3d", 2], 4: ["#0b1218", 5] };
+const SCOPE_PAINT: Record<number, [string, number]> = { 0: ["#2b2f36", 6], 1: ["#4a525c", 5], 2: ["#8a949e", 5], 3: ["#ff3030", 2], 4: ["#16384f", 5] };
 // The geometry of a gun, with the scope of that zoom on its rail (colours from the regions and the occlusion; `mark` says how each vertex is drawn). Null until the file is in
 export function gunGeometry(parts: CreatureParts | null, design: string, zoom?: number): THREE.BufferGeometry | null {
   const gun = parts?.[design];

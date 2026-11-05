@@ -45,8 +45,8 @@ export type V3 = [number, number, number];
 // a figure's builder names as those (Kit.dress)
 // (2026-10-30: a droid's panelled plating, a prosthesis's or implant's circuitry, the coarse weave of a robe, cloak or rags, and the ribbed,
 // quilted stuff of an armour's undersuit or a flight suit)
-export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth" | "stone" | "bark" | "leaf" | "needle" | "skin" | "face" | "fabric" | "leather" | "plate" | "scales" | "hair" | "fur" | "droid" | "cyber" | "weave" | "mesh" | "head" | "strand" | "eye" | "shell";
-export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth", "stone", "bark", "leaf", "needle", "skin", "face", "fabric", "leather", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh", "head", "strand", "eye", "shell"];
+export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth" | "stone" | "bark" | "leaf" | "needle" | "skin" | "face" | "fabric" | "leather" | "plate" | "scales" | "hair" | "fur" | "droid" | "cyber" | "weave" | "mesh" | "head" | "strand" | "eye" | "shell" | "gunmetal" | "gunpoly";
+export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth", "stone", "bark", "leaf", "needle", "skin", "face", "fabric", "leather", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh", "head", "strand", "eye", "shell", "gunmetal", "gunpoly"];
 // The finishes a figure's colours may be dressed in, over the plain ones they were drawn in
 export const FIGURE_FINISHES: Finish[] = ["skin", "face", "fabric", "leather", "shell", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh"];
 
@@ -56,6 +56,10 @@ export const MATERIALS: Record<Finish, THREE.Material> = {
   // (both faces: the blade models of the saber pack have triangles wound both ways in a blade, so that a lit blade drawn one-sided was dim or gone from some
   // sides: the lower half of a double blade, a second saber, 2026-11-04)
   glow: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false, side: THREE.DoubleSide }),
+  // The blasters' metal and polymer (tools/blender/build-weapons.py, 2026-11-05, the user: "they are transparent on one side, we MUST use double sided textures"): the same as sheen and matte,
+  // drawn on both sides, so that no face wound the wrong way, no thin rail and no scope's ring is a hole from the other side
+  gunmetal: new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 55, specular: new THREE.Color("#5a5a5a"), emissive: new THREE.Color("#0a0a0a"), side: THREE.DoubleSide }),
+  gunpoly: new THREE.MeshLambertMaterial({ vertexColors: true, emissive: new THREE.Color("#0a0a0a"), side: THREE.DoubleSide }),
   glass: new THREE.MeshPhongMaterial({ vertexColors: true, transparent: true, opacity: 0.5, shininess: 110, specular: new THREE.Color("#ffffff"), depthWrite: false }),
   haze: new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide }),
   cloth: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, emissive: new THREE.Color("#0a0a0a") }),

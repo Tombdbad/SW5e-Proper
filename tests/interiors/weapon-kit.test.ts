@@ -77,6 +77,53 @@ test("every gun is one assembled thing: no piece floats clear of the rest (they 
   for (const file of [hi, lo]) for (const n of [...GUNS, ...SCOPES]) assert.deepEqual(floating(file[n].part), [], `${n} has a piece in the air`);
 });
 
+// The signed volume of each piece (the triangles joined by shared vertices): a closed solid wound outward has a positive one. A piece wound inward, or with faces turned the wrong
+// way, is a hole when it is drawn one-sided (the user, 2026-11-05: "they are transparent on one side")
+function volumes(part: Record<number, THREE.BufferGeometry>): number[] {
+  const key = (v: number[]) => v.map((x) => Math.round(x * 1e4)).join(",");
+  const ids = new Map<string, number>();
+  const parent: number[] = [];
+  const id = (v: number[]) => { const k = key(v); if (!ids.has(k)) { ids.set(k, parent.length); parent.push(parent.length); } return ids.get(k)!; };
+  const find = (a: number): number => { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; };
+  const tris: { p: THREE.Vector3[]; root: number }[] = [];
+  for (const g of Object.values(part)) {
+    const pos = g.attributes.position as THREE.BufferAttribute;
+    const index = g.index!;
+    const of = Array.from({ length: pos.count }, (_, i) => id([pos.getX(i), pos.getY(i), pos.getZ(i)]));
+    for (let i = 0; i < index.count; i += 3) {
+      const [a, b, c] = [0, 1, 2].map((k) => of[index.getX(i + k)]);
+      parent[find(b)] = find(a);
+      parent[find(c)] = find(a);
+      tris.push({ p: [0, 1, 2].map((k) => new THREE.Vector3(pos.getX(index.getX(i + k)), pos.getY(index.getX(i + k)), pos.getZ(index.getX(i + k)))), root: a });
+    }
+  }
+  const sums = new Map<number, { v: number; n: number }>();
+  for (const t of tris) {
+    const r = find(t.root);
+    const e = sums.get(r) ?? sums.set(r, { v: 0, n: 0 }).get(r)!;
+    e.v += t.p[0].dot(new THREE.Vector3().crossVectors(t.p[1], t.p[2])) / 6;
+    e.n++;
+  }
+  return [...sums.values()].filter((e) => e.n >= 12).map((e) => e.v);
+}
+
+test("every piece of every gun and scope is a closed solid wound outward, so that nothing is transparent from outside; the finishes of the guns are drawn on both sides", async () => {
+  const hi = await piecesFrom("weapons.glb");
+  const lo = await piecesFrom("weapons.lo.glb");
+  for (const file of [hi, lo]) for (const n of [...GUNS, ...SCOPES]) {
+    const v = volumes(file[n].part);
+    assert.ok(v.length > 0 && v.every((x) => x > 0), `${n}: a piece is wound inward (volumes ${v.filter((x) => x <= 0).map((x) => x.toExponential(2))})`);
+  }
+  const { MATERIALS } = await import("../../client/src/components/Map/models");
+  const { FINISH_OF_MARK } = await import("../../client/src/components/Map/interiors/assets");
+  setGunParts(hi);
+  const geo = gunGeometry(hi, "gun_rifle_a", 4)!;
+  const marks = new Set(Array.from({ length: geo.attributes.mark.count }, (_, i) => (geo.attributes.mark as THREE.BufferAttribute).getX(i)));
+  for (const m of marks) assert.equal((MATERIALS[FINISH_OF_MARK[m] as keyof typeof MATERIALS] as THREE.Material).side, THREE.DoubleSide, `mark ${m} (${FINISH_OF_MARK[m]}) is drawn on both sides`);
+  assert.ok(marks.has(5) && marks.has(6), "the gun's metal and polymer are the two-sided finishes");
+  setGunParts(null);
+});
+
 test("the sockets of each gun lie where a hand and a scope need them: the grip under the receiver, the muzzle at the front, the rail on top, the foregrip ahead of the grip", () => {
   for (const n of GUNS) {
     const k = KIT[n];
@@ -149,7 +196,7 @@ test("a gun's geometry has colours, how each vertex is drawn, and its scope sitt
   const bare = gunGeometry(parts, "gun_rifle_a")!;
   assert.ok(bare.attributes.color && bare.attributes.mark && bare.attributes.normal, "colour, mark and normal");
   const marks = new Set(Array.from({ length: bare.attributes.mark.count }, (_, i) => (bare.attributes.mark as THREE.BufferAttribute).getX(i)));
-  assert.ok(marks.has(0) && marks.has(1), "metal and polymer");
+  assert.ok(marks.has(5) && marks.has(6), "metal and polymer");
   assert.equal(gunGeometry(parts, "gun_nothing"), null);
   const rail = KIT.gun_rifle_a.sockets.rail;
   for (const zoom of [2, 3, 4, 6]) {
