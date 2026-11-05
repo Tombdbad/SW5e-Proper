@@ -21,7 +21,8 @@ Mixar (Mixar-AI/mixar-app, Adeveda Enterprises) is a fork of Blender 5.2. Sculpt
 3. **The pipeline stays ours**: the formats the game reads (`figures/*.glb`, `shared/art/*.json`, atlas cells, `P(x,y,z)=(x,-z,y)`) come from `tools/blender/*.py`. Mixar is for building, checking and improving, not for changing those formats.
 4. **AI-generated meshes are not used** in the game unless the user says so and the licence is recorded in `CREDITS.md`.
 5. **MCP connector** (`mixar-mcp`: runs scripts with the user's privileges, sends scene context to third parties): not used without the user's go-ahead.
-6. Compare every result with the Blender 5.2 output of the same script (sizes, bounds, a rendered preview) before committing it.
+6. **Never leave models overlapping in the user's scene** (the user, 2026-11-05: one gun sat on a head). After importing anything, lay objects out in a grid by bounding box with a gap, and have the script check pairwise AABB overlap and print `overlaps []` before rendering. Importing puts everything at the origin. One import per call (a call with no visible output still ran: check `scene_overview` before repeating it, or you get `.001` duplicates). Delete only objects you made, never the user's unless asked.
+7. Compare every result with the Blender 5.2 output of the same script (sizes, bounds, a rendered preview) before committing it.
 
 ## Useful commands
 - **Our scripts run unchanged.** `build-weapons.py -- <ABS OUT DIR>` (the arg is a directory; the file goes inside): Mixar 6 s against Blender 5.2's 14.5 s; the glb is the same size and byte-identical except 2 bytes (the exporter's version string). Heads (`build-head.py`, ~10 min) not yet compared: do it before relying on it.
