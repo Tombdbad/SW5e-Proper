@@ -28,6 +28,11 @@ Mixar (Mixar-AI/mixar-app, Adeveda Enterprises) is a fork of Blender 5.2. Sculpt
 - Present: glTF/FBX/BVH/UV-layout add-ons, Cycles.
 - Probing: `bpy.app.version`; `import mixar; pkgutil.iter_modules(mixar.__path__)`; list `bpy.ops` to find operators.
 
+## Driving the running GUI (the user signs in and turns on "Connect MCP")
+- `node tools/mixar-mcp.mjs <tool> '<json>'` talks to `~.mixarconnectormixar-mcp.cmd` (stdio JSON-RPC; 65 tools, `--list`, `--schema <tool>`). Images from renders are saved to `$MIXAR_OUT` (default `%TEMP%mixar-out`); Read them. Free tools: `mixar_status`, `scene_overview`, `execute_bpy_script` ({"code": ...}), `render_viewport`, `inspect_uv_map`, `inspect_mesh_seams`, `get_paint_layer_stack`. Credit-spending: `enqueue_generation`, `create_layered_material` (ask `mixar_tool_quote` first and the user before any call; the account had 0 credits on 2026-11-05).
+- Pattern that works: `execute_bpy_script` imports (`bpy.ops.import_scene.gltf(filepath=...)`; put new objects in a `claude_*` collection so they can be deleted), then `render_viewport {view:"hero", focus_objects:[...], include_touching:false}`. ~9-13 s a render.
+- The script sandbox blocks os/sys/pathlib/subprocess and exec/eval; only the listed modules import. File paths given to bpy operators work.
+
 ## Tips (from the docs, not yet confirmed here)
 - Work in small steps and render to check; do not trust a script's success message alone.
 - Layered painting (Layers editor) suits close-up texture/normal maps for guns and armour; bake to images and export them to `textures/`.
@@ -45,6 +50,8 @@ Mixar (Mixar-AI/mixar-app, Adeveda Enterprises) is a fork of Blender 5.2. Sculpt
 | 2026-11-05 | `mixar.exe --version` says "Blender 4.4.0" | It prints Mixar's version | Ask `bpy.app.version` (5, 2, 0) |
 | 2026-11-05 | `mixar.headless.headless_main` looks like a script runner | It is the cloud agent's sandbox worker; needs backend tokens | Do not use; run scripts with `--python` |
 | 2026-11-05 | Passing a file path as the weapons script's `-- <out>` made a folder named like the file | The arg is an output directory | Pass a directory; the glb is written inside it |
+| 2026-11-05 | `render_viewport` view `front` showed a gun end-on and the default cube hid everything | Our guns lie along Y; the default scene's Cube is in the frame | Use `view:"hero"` with `focus_objects` and `include_touching:false` |
+| 2026-11-05 | glb vertex colours not in the imported meshes (`color_attributes` empty) and no materials | The kit's colours are applied at run time by region (`gunGeometry`), not stored in the file | Judge shapes in grey; do not expect finishes from Mixar renders |
 
 ## Learned here
 - 2026-11-05: Nothing in Mixar's non-AI side beats Blender 5.2 for our scripted pipeline yet, except speed (about 2x on the weapon kit). Of 2620 operators, ~130 are Mixar interface plumbing (agent chat bubble, moodboards, director camera), not modelling tools. The value is in the GUI (Layers editor, Mixie, auto-UV, generation), which needs the user's session and, for AI, their account and credits.
