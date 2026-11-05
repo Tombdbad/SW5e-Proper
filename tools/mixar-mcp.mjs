@@ -1,9 +1,9 @@
-// usage: node tools/mixar-mcp.mjs <tool> '<json args>'   (talks to Mixar's stdio MCP connector; prints text results, saves images to ./out)
+// usage: node tools/mixar-mcp.mjs <tool> '<json args>'   (talks to Mixar's stdio MCP connector; prints text results, saves images to $MIXAR_OUT or %TEMP%\mixar-out)
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 const [tool, argText = "{}"] = process.argv.slice(2);
-const out = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "out");
+const out = process.env.MIXAR_OUT || path.join(process.env.TEMP || ".", "mixar-out");
 fs.mkdirSync(out, { recursive: true });
 const p = spawn("C:\\Users\\Admin\\.mixar\\connector\\mixar-mcp.cmd", [], { shell: true, stdio: ["pipe", "pipe", "pipe"] });
 let buf = "", id = 0; const waiting = new Map();
