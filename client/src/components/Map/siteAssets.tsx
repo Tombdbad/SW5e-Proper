@@ -5,7 +5,8 @@ import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import { create } from "zustand";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, LampLight, type V3, type Finish, type Baked } from "./models";
+import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, LampLight, ArchPiece, type V3, type Finish, type Baked } from "./models";
+import { treeVillageSpots, villagePieces, VILLAGE_DEPTH } from "./interiors/architecture";
 import { groundShader, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
 import type { PackId } from "./interiors/packs";
 import { setRenderTier, shaderPatch } from "./babylon";
@@ -960,6 +961,25 @@ export function ambientBackdrop(rect: Rect, belt: number, seed: string, biome: s
     out.push({ key: grownTree(r, r.pick(keys)), x, y, rot: r.next() * Math.PI * 2, scale: 1 + r.next() * 0.6, v: Math.floor(r.next() * 6) });
   }
   return out;
+}
+
+// Villages in the great trees beyond the ground of a forest, jungle or swamp settlement (2026-11-05; the user: "for Endor and Kashyyyk ... utilise slightly
+// modified versions of the catwalks and gantries, the thatched hut architecture amalgamated with the trees but more rustic", and "utilise some of the
+// coniferous trees for the tree villages too"): the architecture kit's forest pieces (tools/blender/build-architecture.py FOREST_BUILDERS and the great
+// conifer), laid out as the Mixar review laid them: a first great tree (a broadleaf on a jungle world, a conifer elsewhere) and two great conifers, ring
+// platforms at one level joined by rope bridges, stairs round the trunks, wide platforms with rustic huts. Only to be seen, in the belt of the backdrop.
+export function TreeVillages({ ground, seed, biome }: { ground: Rect; seed: string; biome: string }) {
+  const spots = useMemo(() => treeVillageSpots(ground, seed, biome), [ground.x, ground.y, ground.width, ground.height, seed, biome]);
+  const bark = paletteOf(biome).bark;
+  return (
+    <>
+      {spots.map((v, i) => (
+        <group key={i} position={[v.x, 0, v.y]} rotation={[0, v.turn, 0]}>
+          {villagePieces(v.broadleaf).map(([name, x, y, z, turn], j) => <ArchPiece key={j} name={name} wall={bark} thatch position={[x - 6, y, z + VILLAGE_DEPTH / 2]} rotation={[0, turn, 0]} />)}
+        </group>
+      ))}
+    </>
+  );
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -14,12 +14,13 @@ import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
 import { advance, personaOf, type Persona, type Wave, bob, LIMB, LIMBS, SHIN_OF, WALKER, DEKA, DEKA_LEGS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
-import { bodyParts, useBodyParts, creatureParts, useCreatureParts, faceParts, useFaceParts, hairParts, useHairParts, gunParts, useGunParts, archParts, useArchParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
+import { bodyParts, useBodyParts, creatureParts, useCreatureParts, faceParts, useFaceParts, hairParts, useHairParts, gunParts, useGunParts, archParts, useArchParts, speciesParts, useSpeciesParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
 import { saberKitOf, type SaberKit } from "./interiors/limbs";
 import { STAFF_ARMS } from "./interiors/saberplay";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { gunGeometry } from "./interiors/weapons";
-import { archColour, ARCH_FINISH } from "./interiors/architecture";
+import { archColour, ARCH_FINISH, storeyPlan, bayAt, turnFor, ARCH_STOREY, type Placed } from "./interiors/architecture";
+import speciesHeadsJson from "@shared/art/speciesHeads.json";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
 import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
 import { toneNameOf, type KitLook } from "./interiors/kitbash";
@@ -46,8 +47,8 @@ export type V3 = [number, number, number];
 // a figure's builder names as those (Kit.dress)
 // (2026-10-30: a droid's panelled plating, a prosthesis's or implant's circuitry, the coarse weave of a robe, cloak or rags, and the ribbed,
 // quilted stuff of an armour's undersuit or a flight suit)
-export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth" | "stone" | "bark" | "leaf" | "needle" | "skin" | "face" | "fabric" | "leather" | "plate" | "scales" | "hair" | "fur" | "droid" | "cyber" | "weave" | "mesh" | "head" | "strand" | "eye" | "shell" | "gunmetal" | "gunpoly";
-export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth", "stone", "bark", "leaf", "needle", "skin", "face", "fabric", "leather", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh", "head", "strand", "eye", "shell", "gunmetal", "gunpoly"];
+export type Finish = "matte" | "sheen" | "glow" | "glass" | "haze" | "cloth" | "stone" | "bark" | "leaf" | "needle" | "skin" | "face" | "fabric" | "leather" | "plate" | "scales" | "hair" | "fur" | "droid" | "cyber" | "weave" | "mesh" | "head" | "strand" | "eye" | "shell" | "gunmetal" | "gunpoly" | "species";
+export const FINISHES: Finish[] = ["matte", "sheen", "glow", "glass", "haze", "cloth", "stone", "bark", "leaf", "needle", "skin", "face", "fabric", "leather", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh", "head", "strand", "eye", "shell", "gunmetal", "gunpoly", "species"];
 // The finishes a figure's colours may be dressed in, over the plain ones they were drawn in
 export const FIGURE_FINISHES: Finish[] = ["skin", "face", "fabric", "leather", "shell", "plate", "scales", "hair", "fur", "droid", "cyber", "weave", "mesh"];
 
@@ -92,6 +93,9 @@ export const MATERIALS: Record<Finish, THREE.Material> = {
   // that is cut out), the colour from the vertices (the hair's, darker at the root)
   // The iris and pupil of an eye (textures/figure/eye: a ring of fibres, a dark limbal ring and a black pupil, made for a disc with its own coordinates;
   // the eye's colour multiplies it, the pupil stays black), glossy
+  // The species' own heads (2026-11-05, tools/blender/build-species.py): the head finish's way of drawing, with their atlas (textures/figure/species: a pale
+  // map the skin multiplies, holding the mottling, the scales' grooves and the occlusion baked from the sculpt, and its normal map)
+  species: surfaceMaterial("figure", "species", { vertexColors: true, lift: 1.12, parallax: 0, shininess: 18, specular: "#26211e", normalScale: 1 }),
   eye: surfaceMaterial("figure", "eye", { vertexColors: true, lift: 1.25, parallax: 0, shininess: 120, specular: "#ffffff", normalScale: 0.5 }),
   strand: surfaceMaterial("figure", "", { vertexColors: true, lift: 1.5, parallax: 0, shininess: 30, specular: "#34302b", cutout: 0.42, picture: "hair/strands.webp" }),
 };
@@ -296,7 +300,7 @@ export class Kit {
     // (and, for a beast, a mark -1 .. 1 painted on it: paler for a muzzle, a chin, a belly; darker for a nostril, a lip line, an eyelid)
     const mark = geo.attributes.mark ? Float32Array.from(geo.attributes.mark.array) : undefined;
     // (a spray card keeps the coordinates it was made with; the other textured finishes are projected when baked)
-    for (const name of Object.keys(geo.attributes)) if (name !== "position" && name !== "normal" && !(name === "uv" && (finish === "needle" || finish === "head" || finish === "strand" || finish === "eye"))) geo.deleteAttribute(name);
+    for (const name of Object.keys(geo.attributes)) if (name !== "position" && name !== "normal" && !(name === "uv" && (finish === "needle" || finish === "head" || finish === "strand" || finish === "eye" || finish === "species"))) geo.deleteAttribute(name);
     if (!geo.index) {
       const count = geo.attributes.position.count;
       geo.setIndex(Array.from({ length: count }, (_, i) => i));
@@ -1579,7 +1583,8 @@ function TexturedBody({ id, set, tint, build, position }: { id: string; set: Wal
   return geo ? <mesh geometry={geo} position={position} material={wallMaterial(set, { tint })} castShadow receiveShadow /> : null;
 }
 
-export function RoomBlock({ w, d, height, radii, wall, roof, parapet, band, dim, set }: { w: number; d: number; height: number; radii: [number, number, number, number]; wall: string; roof?: string; parapet?: boolean; band?: boolean; dim?: boolean; set?: WallSet }) {
+// `bare` leaves the walls out (the roof, its parapet and the band stay): a round room built of the kit's wall bays (LocalMap `DrumWalls`)
+export function RoomBlock({ w, d, height, radii, wall, roof, parapet, band, dim, set, bare = false }: { w: number; d: number; height: number; radii: [number, number, number, number]; wall: string; roof?: string; parapet?: boolean; band?: boolean; dim?: boolean; set?: WallSet; bare?: boolean }) {
   const r = radii.map(r2) as [number, number, number, number];
   const body = dim ? shade(wall, 0.45) : wall;
   const shell = (k: Kit) => upright(k, planRect(w, d, r), height, body, { bevel: 0.04 });
@@ -1592,13 +1597,13 @@ export function RoomBlock({ w, d, height, radii, wall, roof, parapet, band, dim,
   };
   return (
     <>
-      {set && <TexturedBody id={shape} set={set} tint={body} build={shell} position={[w / 2, 0, d / 2]} />}
+      {set && !bare && <TexturedBody id={shape} set={set} tint={body} build={shell} position={[w / 2, 0, d / 2]} />}
       {set && parapet && <TexturedBody id={`rim:${shape}:${wall}`} set={set} tint={wall} build={rim} position={[w / 2, 0, d / 2]} />}
       <Model
-        id={`${shape}:${roof}:${parapet ? 1 : 0}${band ? 1 : 0}:${set ?? ""}`}
+        id={`${shape}:${roof}:${parapet ? 1 : 0}${band ? 1 : 0}:${set ?? ""}${bare ? ":bare" : ""}`}
         position={[w / 2, 0, d / 2]}
         build={(k) => {
-          if (!set) shell(k);
+          if (!set && !bare) shell(k);
           if (band) upright(k, planRect(w + 0.06, d + 0.06, r.map((x) => (x ? x + 0.03 : 0)) as typeof r), 0.12, shade(body, 0.72), { y: height - 0.3, bevel: 0.02 });
           if (roof) upright(k, planRect(w + 0.2, d + 0.2, r.map((x) => (x ? x + 0.1 : 0)) as typeof r), 0.1, roof, { y: height, bevel: 0.02 });
           if (parapet && !set) rim(k);
@@ -1811,6 +1816,40 @@ export function ArchPiece({ name, wall, thatch = false, position, rotation, scal
         for (const [region, g] of Object.entries(piece.part)) k.add(g, archColour(Number(region), wall, shade, thatch), { finish: ARCH_FINISH[Number(region)] ?? "matte" });
       }}
     />
+  );
+}
+
+// A round room built of the kit's wall bays (2026-11-05; the user: "much of Star Wars architecture is circular", and "ALL doorways and windows MUST
+// remove the wall mesh/texture within the door/window frame"): sixteen bays of 22.5 degrees round the room's circle, a door bay (its opening cut
+// through the wall) with its curved frame wherever a way in is, a bay with a window where the plan has one and windows between; a storey of bays
+// for each storey the room has. The kit is made for a circle of radius 4 and a storey of 3.4 and is fitted to the room's, so only a circle about
+// that size takes it (a smaller one could not fit a door in a bay). Until the kit is in, and for any other room, the room's block as before.
+export const DRUM_MIN_R = 3.75;
+export const DRUM_MAX_R = 6;
+export interface Drum { doors: number[]; windows: number[]; adobe: boolean; storeys: number }
+export function drumPlan(drum: Drum): Placed[] {
+  const out: Placed[] = [];
+  const win = new Set(drum.windows.map(bayAt));
+  for (let n = 0; n < drum.storeys; n++) {
+    for (const p of storeyPlan(n === 0 ? drum.doors : [], n * ARCH_STOREY, drum.adobe ? "adobe" : "drum")) {
+      out.push(win.has(bayAt(p.angle)) && /_bay(_blank)?_r4$/.test(p.piece) ? { ...p, piece: drum.adobe ? "adobe_bay_window_r4" : "drum_bay_r4" } : p);
+    }
+  }
+  return out;
+}
+export function KitRoomBlock(props: Parameters<typeof RoomBlock>[0] & { drum?: Drum; tint: string }) {
+  useArchParts();
+  const { drum, tint, ...block } = props;
+  const r = block.w / 2;
+  if (!drum || !archParts() || block.w !== block.d || r < DRUM_MIN_R || r > DRUM_MAX_R) return <RoomBlock {...block} />;
+  const s = r / 4;
+  return (
+    <>
+      <RoomBlock {...block} bare />
+      <group position={[block.w / 2, 0, block.d / 2]} scale={[s, block.height / (ARCH_STOREY * drum.storeys), s]}>
+        {drumPlan(drum).map((p, i) => <ArchPiece key={i} name={p.piece} wall={tint} position={[0, p.y, 0]} rotation={[0, turnFor(p.angle), 0]} />)}
+      </group>
+    </>
   );
 }
 
@@ -2698,7 +2737,15 @@ export interface Look {
   tattoos: boolean;
   // A droid built like a person: a metal head with lit eyes
   machine?: boolean;
+  // (2026-11-05, tools/blender/build-species.py) the species' own sculpted head in figures/species.glb (SPECIES_HEADS), and the sculpted horns it wears
+  speciesHead?: string;
+  hornStyle?: "crown" | "curl" | "sweep";
 }
+
+// The species with a head of their own (species.glb `sphead_<key>`): where its eyes are (x, y, z, radius; the left is the mirror) and what of the
+// code's own additions it already has (shared/art/speciesHeads.json, written by the script)
+export const SPECIES_HEADS: Record<string, { cell: number[]; eyes: number[]; drops: string[] }> = speciesHeadsJson;
+const SPECIES_HEAD_OF: Record<string, string> = { "mon calamari": "moncal", rodian: "rodian", trandoshan: "trandoshan", besalisk: "besalisk", sullustan: "sullustan", toydarian: "toydarian" };
 
 const HUMAN_TONES = ["#f1d3b8", "#e0b897", "#c99a6e", "#a8754b", "#7a4f32", "#53351f"];
 const COLOR_WORDS: [RegExp, string][] = [
@@ -2781,6 +2828,8 @@ export function lookOf(record?: SpeciesRecord): Look {
     crest: /crest|ridged skull|bony and ridged/.test(d),
     spines: /spine|bone spurs|spurs|frills/.test(d),
     tattoos: /tattoo/.test(d),
+    speciesHead: SPECIES_HEAD_OF[name],
+    hornStyle: /iktotchi/.test(name) ? "sweep" : /devaronian/.test(name) ? "curl" : /single horn|small horns|chin horns|two transparent horns|horns or horn spots/.test(d) ? undefined : /horns/.test(d) ? "crown" : undefined,
   };
 }
 
@@ -3522,20 +3571,26 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
   const plainEars = !look.ears && !look.fur && !look.headTentacles && !look.lekku && !look.montrals && helmet !== "hood" && look.head !== "hammer";
   // (a species with a muzzle, a snout or a beak has a head of its own in body.glb; a trunk or a beak goes on the flat-faced one)
   const body = bodyParts();
-  const variant = look.snout === "muzzle" ? "head_muzzle" : look.snout === "long" ? "head_long" : look.snout === "short" ? "head_short" : look.snout === "pig" ? "head_pig" : look.snout ? "head_flat" : "";
+  // (a species with a head of its own, sculpted from the reference stills: species.glb, once it is in; it takes the place of the snouted heads and the person's)
+  const kinds = speciesParts();
+  const own = look.speciesHead ? kinds?.[`sphead_${look.speciesHead}`]?.part : undefined;
+  const ownSpec = own && look.speciesHead ? SPECIES_HEADS[look.speciesHead] : undefined;
+  const variant = own ? "" : look.snout === "muzzle" ? "head_muzzle" : look.snout === "long" ? "head_long" : look.snout === "short" ? "head_short" : look.snout === "pig" ? "head_pig" : look.snout ? "head_flat" : "";
   // (a person's head with its own texture coordinates and baked normal map, where the face is skin: build-head.py; else the one before it)
   const kind = faceKindOf(p.seed, !!p.fem);
   const fresh = !variant && k.dress?.[face] === "face" ? (faceParts()?.[`head_${kind}`] ?? faceParts()?.[p.fem ? "head_f" : "head_m"])?.part : undefined;
   // (a head with a snout: the new one if it is in (its heads are in the file as head_muzzle, head_long ...), else body.glb's)
   const snouted = variant ? gear?.[variant]?.part : undefined;
-  const headParts = variant ? snouted ?? body?.more?.[variant]?.part : fresh ?? body?.head;
-  const molded = headParts && !look.mask && !look.machine && look.head !== "cone" && look.head !== "hammer" ? headParts : undefined;
+  const headParts = own ?? (variant ? snouted ?? body?.more?.[variant]?.part : fresh ?? body?.head);
+  const molded = headParts && !look.mask && !look.machine && (own || (look.head !== "cone" && look.head !== "hammer")) ? headParts : undefined;
   // (made for a skull of 0.100 by 0.118 by 0.112: the sphere's scale, as it was; the hair and brows, made for the same skull, take it too)
   const fit = headFitOf(p.seed);
   const skullScale: V3 = [sk.scale[0] * 0.98 * fit[0], sk.scale[1] * 0.975 * fit[1], sk.scale[2] * 1.027 * fit[2]];
   // Hair, brows and beards drawn as cards (tools/blender/build-hair.py), where this head is the one they were made for
   const hairs = molded && fresh && headParts === fresh ? hairParts() : null;
-  if (look.head === "cone") k.lathe([[0, -0.11], [0.095, -0.085], [0.115, 0], [0.095, 0.1], [0.06, 0.2], [0, 0.25]], face, { seg: 16 });
+  if (look.head === "cone" && !own) k.lathe([[0, -0.11], [0.095, -0.085], [0.115, 0], [0.095, 0.1], [0.06, 0.2], [0, 0.25]], face, { seg: 16 });
+  // (its own head is made at its own size and shape, its sockets where SPECIES_HEADS puts the eyes: only a person's small differences of build are laid on it)
+  else if (molded && own) sculpt(k, own, { 0: { color: face, finish: "species" } }, (g) => g.clone(), { scale: [fit[0], fit[1], fit[2]] });
   else if (molded) {
     const scale = skullScale;
     // (where the face is skin the new heads are drawn in the head finish, their own coordinates and baked maps; fur and scales keep the dress their colour has, the
@@ -3549,7 +3604,12 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
   const eyeColor = look.glowEyes ? p.eye || "#ff3b30" : look.eyeSize === "small" ? "#15171b" : p.eye && p.eye !== "#2a2a2e" ? shade(p.eye, 0.6) : "#101318";
   const eyeFinish: Finish = look.glowEyes ? "glow" : "sheen";
   const eyes = (positions: V3[], r: number) => positions.forEach((at) => k.sphere(r, eyeColor, { at, finish: eyeFinish, seg: r > 0.03 ? [8, 6] : [5, 4] }));
-  if (look.eyeStalks) {
+  if (own && ownSpec) {
+    // (in the sockets of the species' own head: big and dark, or in the eye's colour)
+    const [ex, ey, ez, er] = ownSpec.eyes;
+    const own_eye = look.glowEyes ? eyeColor : p.eye && p.eye !== "#2a2a2e" ? shade(p.eye, 0.75) : "#101318";
+    k.pair((s) => k.sphere(er, own_eye, { at: [s * ex * fit[0], ey * fit[1], ez * fit[2]], finish: eyeFinish, seg: er > 0.03 ? [12, 9] : [8, 6] }));
+  } else if (look.eyeStalks) {
     k.pair((s) => {
       k.tube([[s * 0.03, 0.08, 0.02], [s * 0.05, 0.16, 0.04], [s * 0.06, 0.22, 0.06]], 0.012, face, { along: 6, around: 5 });
       eyes([[s * 0.06, 0.23, 0.07]], 0.028);
@@ -3656,7 +3716,12 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
     const [yA, yB] = [k.pointOf([0, -0.02, 0])[1], k.pointOf([0, -0.15, 0])[1]];
     k.reassign(tailsFrom, (p) => (p.y < yB ? LIMB.hairB : p.y < yA ? LIMB.hairA : -1));
   }
-  if (look.horns === 1) k.cone(0.02, 0.07, "#e8dcc0", { at: [0, 0.12, 0.05], rot: [0.4, 0, 0], seg: 6 });
+  // (sculpted horns where species.glb has them: a Zabrak's crown, a Devaronian's curled pair, an Iktotchi's pair sweeping down past the face; made on the person's skull, so laid on as the hair is)
+  const hornPart = look.hornStyle ? kinds?.[look.hornStyle === "crown" ? "horns_crown" : look.hornStyle === "curl" ? "horns_curl" : "horns_sweep"] : undefined;
+  const hornColor = look.hornStyle === "curl" ? "#3a3029" : look.hornStyle === "sweep" ? shade(face, 0.82) : mix(face, "#d8ccb0", 0.45);
+  if (hornPart && look.hornStyle === "crown") sculpt(k, hornPart.part, { 0: { color: hornColor, finish: "sheen" }, 1: { color: hornColor, finish: "sheen" } }, (g) => g.clone(), overlay);
+  else if (hornPart) k.pair((s) => sculpt(k, hornPart.part, { 0: { color: hornColor, finish: "sheen" }, 1: { color: hornColor, finish: "sheen" } }, (g) => g.clone(), { ...overlay, scale: [overlay.scale[0] * s, overlay.scale[1], overlay.scale[2]] }));
+  else if (look.horns === 1) k.cone(0.02, 0.07, "#e8dcc0", { at: [0, 0.12, 0.05], rot: [0.4, 0, 0], seg: 6 });
   else if (look.horns === 2 && !look.hornsDown) k.pair((s) => k.cone(0.018, 0.06, "#d8ccb0", { at: [s * 0.045, 0.11, 0.04], rot: [0.3, 0, s * -0.3], seg: 6 }));
   else if (look.hornsDown) k.pair((s) => k.tube([[s * 0.07, 0.08, 0.02], [s * 0.12, 0.04, 0.03], [s * 0.13, -0.06, 0.05], [s * 0.1, -0.12, 0.07]], (t) => 0.025 * (1 - t * 0.75), "#d8ccb0", { along: 8, around: 6 }));
   else if (look.horns >= 3) for (let i = 0; i < 5; i++) k.cone(0.012, 0.04, "#d8ccb0", { at: [Math.cos(i * 1.256 + 0.3) * 0.06, 0.105, Math.sin(i * 1.256 + 0.3) * 0.06], seg: 5 });
@@ -3673,7 +3738,8 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
   else if (look.ears === "large") k.pair((s) => k.sphere(0.06, face, { at: [s * 0.12, 0.03, -0.01], scale: [0.25, 1, 0.75], seg: [10, 8] }));
   else if (look.ears === "long") k.pair((s) => k.tube([[s * 0.08, 0.08, -0.02], [s * 0.14, 0.0, -0.04], [s * 0.15, -0.2, -0.04], [s * 0.13, -0.36, -0.02]], (t) => 0.04 * (1 - t * 0.5), face, { along: 10, around: 6, scale: [0.6, 1, 1] }));
   else if (look.ears === "floppy") k.pair((s) => k.sphere(0.06, face, { at: [s * 0.12, -0.04, -0.01], scale: [0.25, 1.3, 0.7], rot: [0, 0, s * 0.3], seg: [10, 8] }));
-  if (look.headTentacles) for (let i = 0; i < 6; i++) {
+  if (look.headTentacles && kinds?.head_tentacles) sculpt(k, kinds.head_tentacles.part, { 0: { color: face } }, (g) => g.clone(), overlay);
+  else if (look.headTentacles) for (let i = 0; i < 6; i++) {
     const a = -1.2 + i * 0.48;
     k.tube([[Math.sin(a) * 0.08, 0.04, -0.06], [Math.sin(a) * 0.12, -0.1, -0.13], [Math.sin(a) * 0.13, -0.3, -0.14], [Math.sin(a) * 0.12, -0.42, -0.12]], (t) => 0.03 * (1 - t * 0.6), face, { along: 10, around: 6 });
   }
@@ -3681,7 +3747,7 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
     const x = -0.045 + i * 0.03;
     k.tube([[x, -0.07, 0.08], [x * 1.2, -0.13, 0.1], [x * 1.3, -0.2, 0.08]], (t) => 0.014 * (1 - t * 0.6), face, { along: 6, around: 5 });
   }
-  if (look.crest) k.cyl(0.11, 0.02, shade(face, 0.85), { at: [0, 0.07, -0.01], rot: [0, Math.PI / 2, Math.PI / 2], arc: Math.PI, start: -Math.PI / 2, scale: [1, 1, 0.8], seg: 10 });
+  if (look.crest && !ownSpec?.drops.includes("crest")) k.cyl(0.11, 0.02, shade(face, 0.85), { at: [0, 0.07, -0.01], rot: [0, Math.PI / 2, Math.PI / 2], arc: Math.PI, start: -Math.PI / 2, scale: [1, 1, 0.8], seg: 10 });
   if (look.spines) for (let i = 0; i < 4; i++) k.cone(0.012, 0.05, shade(face, 0.8), { at: [0, 0.08 - i * 0.05, -0.1 - (i < 2 ? 0 : 0.01)], rot: [-1.2, 0, 0], seg: 5 });
   // (a face with tattoos has ink lines laid on it in one of three patterns (build-hair.py TATTOOS), dark on any skin; five dark boxes where the head is the old one)
   const ink = hairs ? hairs[`tattoo_${kind}_${browKindOf(p.seed)}`] : undefined;
@@ -3707,7 +3773,7 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
   } else if (helmet === "cap") {
     k.cyl(0.12, 0.06, o.top, { at: [0, 0.1, 0], seg: 18 });
     k.box([0.14, 0.012, 0.07], shade(o.top, 0.7), { at: [0, 0.075, 0.11], round: 0.005 });
-  } else if (hairColor && !look.fur && !look.headTentacles && !look.lekku && !look.montrals && look.head === "round") {
+  } else if (hairColor && !own && !look.fur && !look.headTentacles && !look.lekku && !look.montrals && look.head === "round") {
     if (hairs) {
       // (a style by who they are, and a beard for some men: HAIR_MALE, HAIR_FEMALE, BEARDS)
       const named = hairStyleOf(p.seed, !!p.fem);
@@ -5508,7 +5574,7 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
   }
   const wants = wantsOf(outfit.hand, gear, role || name, name, kit).filter((w) => !opts.unarmed || w.slot !== "weapon");
   const attach = opts.attach ?? [];
-  const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}${kit ? `~${kit}` : ""}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.weight ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}${outfit.suit ?? ""}${outfit.gloves ?? ""}${outfit.boots ?? ""}:${faces & 262140}${fem ? "f" : "m"}${attach.length ? `:g${attach.map((a) => `${a.slot}=${a.id}@${a.scale}`).join("+")}` : ""}${bodyParts() ? ":sc" : ""}${creatureParts() ? "c" : ""}${faceParts() ? "h" : ""}${hairParts() ? "r" : ""}`;
+  const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}${kit ? `~${kit}` : ""}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.weight ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}${outfit.suit ?? ""}${outfit.gloves ?? ""}${outfit.boots ?? ""}:${faces & 262140}${fem ? "f" : "m"}${attach.length ? `:g${attach.map((a) => `${a.slot}=${a.id}@${a.scale}`).join("+")}` : ""}${bodyParts() ? ":sc" : ""}${creatureParts() ? "c" : ""}${faceParts() ? "h" : ""}${hairParts() ? "r" : ""}${speciesParts() ? "s" : ""}`;
   return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, faces, attach, fem), height: 1.25 * look.scale, wants, blade: outfit.blade, gait: "walk", hold: holdOf(outfit.hand), kit, saber: saberStyleOf(player ? who : name || role, player ? party?.forms : []), ...(look.fur && hair ? { fur: 0.02 * look.scale } : {}) };
 }
 
@@ -5736,6 +5802,7 @@ export function Figure({ kind, ring, name = "", large, marker, species, role, cr
   useFaceParts();
   useHairParts();
   useGunParts();
+  useSpeciesParts();
   const me = player ?? kind === "player";
   const base = figureSpec(kind, name, { role, creature, species, size, looks, party: me ? party : undefined, player: me, gear, unarmed, wield, kit: kitAsked });
   // (how this person carries themselves: their stride, sway, slump and fidgets come from who they are: interiors/limbs.ts personaOf)

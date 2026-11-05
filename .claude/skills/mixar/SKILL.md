@@ -56,6 +56,13 @@ Mixar (Mixar-AI/mixar-app, Adeveda Enterprises) is a fork of Blender 5.2. Sculpt
 | 2026-11-05 | Passing a file path as the weapons script's `-- <out>` made a folder named like the file | The arg is an output directory | Pass a directory; the glb is written inside it |
 | 2026-11-05 | `render_viewport` view `front` showed a gun end-on and the default cube hid everything | Our guns lie along Y; the default scene's Cube is in the frame | Use `view:"hero"` with `focus_objects` and `include_touching:false` |
 | 2026-11-05 | glb vertex colours not in the imported meshes (`color_attributes` empty) and no materials | The kit's colours are applied at run time by region (`gunGeometry`), not stored in the file | Judge shapes in grey; do not expect finishes from Mixar renders |
+| 2026-11-05 | Computer use refused "Mixar" | The app resolves by its file name | Resolve and request access with `Mixar.exe` |
+| 2026-11-05 | Text typed into Mixar's Python console did not arrive (or `key "plus"` was refused) | The console takes pasted text more reliably than typed keystrokes | Put the line on the clipboard, click the console, Ctrl+V, Return. Up recalls the last line |
+| 2026-11-05 | A paste ran an older version of the script | The file on the PC was not the one just written | After writing a script to the PC, check its size or mtime before running it |
+| 2026-11-05 | `NameError: math` in the console | The console's namespace has `radians`, `Euler`, `Vector`, not `math` | Import what you use in the pasted line |
+| 2026-11-05 | A picture viewer window covered the console and the paste went nowhere ("no app is frontmost") | Another app on top took the click | Click an uncovered part of the console, then paste |
+| 2026-11-05 | Exported meshes named `sphead_x.001` | The open scene already had objects of those names (an earlier live review) | The scripts' in-session export (`builtins.ARCH_EXPORT`, `builtins.SPECIES_EXPORT`) renames the old ones `_review` first and refuses to export a wrong name |
+| 2026-11-05 | A background "command runner" thread in Mixar was refused | Using Mixar as a general shell is not allowed from a helper session | Run only the project's own build scripts in Mixar; git, npm and the deploy go through the user's own terminal or `deploy/finish-2026-11-05.ps1` |
 
 ## Learned here
 - 2026-11-05: the live GUI loop works for design review: build pieces with a Blender script, `import_scene.gltf` into a `claude_*` collection, lay out and check overlaps, `render_viewport` with `focus_objects`. Region-coloured preview: a material with an Attribute node on `_REGION` into a constant ColorRamp. The architecture kit and the heads were reviewed this way.

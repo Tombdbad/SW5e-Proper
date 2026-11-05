@@ -42,10 +42,10 @@ import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
 import { familyOf, crownOf, portalOf, type Family } from "./interiors/architecture";
 import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderSea } from "./siteAssets";
-import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
+import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, TreeVillages, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
-import { useLamps, useRoomLights, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { useLamps, useRoomLights, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, KitRoomBlock, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -5038,7 +5038,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     {building.type === "cave" && l.mask && !form ? (
                       <CaveMound mask={l.mask} exits={l.assets.filter((a) => a.kind === "exit").map((a) => ({ x: a.x, y: a.y, side: a.side }))} w={l.width} h={l.height} biome={biome} tier={tierNow} seed={l.width * 31 + l.height} />
                     ) : (
-                    <RoomBlock w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} set={wallSet(wallPackOf(building.type), biome)} />
+                    <KitRoomBlock w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} set={wallSet(wallPackOf(building.type), biome)}
+                      tint={wallColor} drum={!opened && !form && l.shape === "round" ? {
+                        // (the ways in and the windows by their angle about the room's centre, 0 east and a quarter turn south, as interiors/architecture.ts reads them)
+                        doors: l.assets.filter((a) => a.side && (a.kind === "door" || a.kind === "exit")).map((a) => Math.atan2(a.y + 0.5 - l.height / 2, a.x + 0.5 - l.width / 2)),
+                        windows: l.assets.filter((a) => a.side && a.kind === "window").map((a) => Math.atan2(a.y + 0.5 - l.height / 2, a.x + 0.5 - l.width / 2)),
+                        adobe: family === "adobe",
+                        storeys,
+                      } : undefined} />
                     )}
                     {!opened && !form && !(building.type === "cave" && l.mask) && <AimBox at={[l.width / 2, body / 2, l.height / 2]} size={[l.width, body, l.height]} />}
                     {/* out to the curve of a round room it stands against */}
@@ -5105,6 +5112,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             <Scatter placed={street.ambient} biome={biome} />
             <Scatter placed={cover} biome={biome} />
             <Scatter placed={backdrop} biome={biome} />
+            {/* (villages in the great trees of a forest, a jungle or a swamp, beyond the ground: siteAssets.tsx TreeVillages) */}
+            {backdrop.length > 0 && <TreeVillages ground={{ x: ground.x, y: ground.y, width: ground.w, height: ground.h }} seed={buildings[0].id} biome={biome} />}
             {fixtures.stalls.map((st) => {
               const keeper = buildings.flatMap((b) => b.occupants).find((o) => o.stall === st.id);
               const spot = keeperSpot(st);

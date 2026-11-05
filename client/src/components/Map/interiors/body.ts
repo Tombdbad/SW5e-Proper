@@ -62,6 +62,11 @@ export const HAIR_FILE = TOUCH ? "/figures/hair.lo.glb" : "/figures/hair.glb";
 // The architecture kit (2026-11-05, tools/blender/build-architecture.py): `crown_<family>`, `portal_<family>` and `relief_<name>`, each with its regions
 export const ARCH_FILE = "/figures/architecture.glb";
 export const WEAPON_FILE = TOUCH ? "/figures/weapons.lo.glb" : "/figures/weapons.glb";
+// The heads of the species that are not a person's face with something added (2026-11-05, tools/blender/build-species.py): `sphead_<key>` (Mon Calamari,
+// Rodian, Trandoshan, Besalisk, Sullustan, Toydarian; texture coordinates into textures/figure/species, the finish `species`), and what grows out of a head:
+// `horns_crown` (a Zabrak's), `horns_curl` (a Devaronian's, the left one), `horns_sweep` (an Iktotchi's, the left one), `head_tentacles` (a Nautolan's).
+// Where each head's eyes are, and what the code no longer adds to it, is in shared/art/speciesHeads.json
+export const SPECIES_FILE = "/figures/species.glb";
 
 const floatsOf = (a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, size = a.itemSize) => {
   const out = new Float32Array(a.count * size);
@@ -145,6 +150,7 @@ const faces = shelf(HEAD_FILE, piecesOf);
 const hairs = shelf(HAIR_FILE, piecesOf);
 const guns = shelf(WEAPON_FILE, piecesOf);
 const arch = shelf(ARCH_FILE, piecesOf);
+const kinds = shelf(SPECIES_FILE, piecesOf);
 export const loadBody = people.load;
 // The parts, once they are in (null before, and for good if they could not be had: the figures then draw their primitives)
 export const bodyParts = people.get;
@@ -170,6 +176,10 @@ export const setGunParts = guns.set;
 export const archParts = arch.get;
 export const useArchParts = arch.use;
 export const setArchParts = arch.set;
+// The species' own heads and the horns and head-tails, once they are in
+export const speciesParts = kinds.get;
+export const useSpeciesParts = kinds.use;
+export const setSpeciesParts = kinds.set;
 
 // ---- Fitting ---------------------------------------------------------------------------------------------------------------------
 

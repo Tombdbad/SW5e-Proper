@@ -10,3 +10,7 @@ e2e/out
 tools/refs/cache/
 tools/refs/snips/
 tools/blender/__pycache__/
+
+# reference stills (Lucasfilm and their photographers): fetched again by tools/refs/moodboard.py and tools/refs/species.py
+tools/refs/moodboard/
+tools/refs/species/
