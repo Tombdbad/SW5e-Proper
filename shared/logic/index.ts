@@ -2080,6 +2080,18 @@ export function standsAt(layout: RoomLayout, x: number, y: number): boolean {
 }
 // Whether a corridor's squares that touch a round room's squares only touch floor of the room (so it meets the curve on
 // a standing stretch of a side, and not at a cut corner). `shape` is the curve it would have.
+// How many of the room's squares beside a corridor stand (are floor) once the room takes the curve
+function standingBeside(room: RoomLayout, corridor: RoomLayout, shape: Shape): number {
+  const curved = { ...room, shape };
+  let n = 0;
+  for (let y = corridor.y; y < corridor.y + corridor.height; y++) for (let x = corridor.x; x < corridor.x + corridor.width; x++) {
+    for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+      const inRoom = nx >= room.x && nx < room.x + room.width && ny >= room.y && ny < room.y + room.height;
+      if (inRoom && standsAt(curved, nx - room.x, ny - room.y)) n++;
+    }
+  }
+  return n;
+}
 function meetsStanding(room: RoomLayout, corridor: RoomLayout, shape: Shape): boolean {
   const curved = { ...room, shape };
   for (let y = corridor.y; y < corridor.y + corridor.height; y++) for (let x = corridor.x; x < corridor.x + corridor.width; x++) {
@@ -4208,10 +4220,45 @@ export function planBuilding(world: World, buildingId: string, seed = world.seed
     const near = rooms.filter((other) => other !== room && clash(ring, other.layout!));
     // Only corridors may be against it, and each must meet its standing squares (an arena's floor is always round: it tries the other
     // curve too, and a room against it with no way through, which only stands by the curve, does not stop it)
+    // (2026-11-05, the architecture audit: 637 of the 1,131 tagged rooms that stayed square had a corridor beside them that also touched a corner
+    // square the curve cuts away. Now a corridor a door joins the room by must only have floor of the room beside it somewhere along it, two squares
+    // of it, for the door to be put on (the doors are put on squares that stand on both sides, doorFree), and one that only passes by needs nothing:
+    // the gap between it and the curve is filled by the wall drawn out to the curve (LocalMap MeetFill). Both curves are tried, as the arena's floor did.)
     const bowl = /^arena floor$/i.test(room.name);
-    const tries: Shape[] = bowl ? [pick, pick === "round" ? "oval" : "round"] : [pick];
-    const against = bowl ? near.filter((other) => formOf(other) === "corridor" || world.paths.some((p) => (p.from === room.id && p.to === other.id) || (p.to === room.id && p.from === other.id))) : near;
-    const fits = tries.find((shape) => !against.some((other) => formOf(other) !== "corridor" || !meetsStanding(l, other.layout!, shape)) && waysStand(l.width, l.height, shapeRadii(shape, l.width, l.height)));
+    const tries: Shape[] = [pick, pick === "round" ? "oval" : "round"];
+    const joined = (other: Area) => world.paths.some((p) => (p.from === room.id && p.to === other.id) || (p.to === room.id && p.from === other.id));
+    const against = bowl ? near.filter((other) => formOf(other) === "corridor" || joined(other)) : near;
+    // A corridor joined to the room that meets it only where the curve cuts the corner away is slid along the room's side, a square at a time
+    // (up to three each way), to where its end meets floor: only to a place where it still touches every room it is joined to and runs into no other
+    // room. (They are laid against a room flush with its corner, so most came to the corner.)
+    const touching = (a: RoomLayout, b: RoomLayout) =>
+      ((a.x + a.width === b.x || b.x + b.width === a.x) && Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y) >= 1) ||
+      ((a.y + a.height === b.y || b.y + b.height === a.y) && Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x) >= 1);
+    const slide = (corridor: Area, shape: Shape): { x: number; y: number } | undefined => {
+      const c = corridor.layout!;
+      const along = c.x + c.width === l.x || l.x + l.width === c.x ? "y" : "x";
+      const partners = rooms.filter((o) => o !== corridor && o !== room && o.layout && world.paths.some((p) => (p.from === corridor.id && p.to === o.id) || (p.to === corridor.id && p.from === o.id)));
+      for (let d = 1; d <= 3; d++) for (const sgn of [1, -1]) {
+        const moved = { ...c, x: along === "x" ? c.x + sgn * d : c.x, y: along === "y" ? c.y + sgn * d : c.y };
+        if (!touching(moved, l) || standingBeside(l, moved, shape) < 2) continue;
+        // (and its other rooms still beside it, with floor for a door: a round one made before this one has its curve there too)
+        if (partners.some((o) => !touching(moved, o.layout!) || (o.layout!.shape && standingBeside(o.layout!, moved, o.layout!.shape) < 2))) continue;
+        if (rooms.some((o) => o !== corridor && o.layout && clash(moved, o.layout))) continue;
+        return { x: moved.x, y: moved.y };
+      }
+      return undefined;
+    };
+    const fits = tries.find((shape) => {
+      if (!waysStand(l.width, l.height, shapeRadii(shape, l.width, l.height))) return false;
+      // (a room that only stands beside the curve, no door between them, is no bar: the wall is drawn out to the curve; one a door joins it by
+      // must have floor of the round room beside it for the door, as a corridor must; only corridors are slid)
+      if (against.some((other) => formOf(other) !== "corridor" && joined(other) && standingBeside(l, other.layout!, shape) < 2)) return false;
+      const short = against.filter((other) => joined(other) && standingBeside(l, other.layout!, shape) < 2);
+      const moves = short.map((other) => slide(other, shape));
+      if (moves.some((m) => !m)) return false;
+      short.forEach((other, i) => { other.layout!.x = moves[i]!.x; other.layout!.y = moves[i]!.y; });
+      return true;
+    });
     if (fits) l.shape = fits;
   }
 

@@ -28,7 +28,7 @@ Nothing of this was looked at in a browser. After the deploy, check: the gallery
 
 ## Since (night, same branch): chin, hair, round rooms, square walls cut (REVIVAL_NOTES "Chin, hair, round rooms kept round, square rooms cut through")
 - head/hair .glb re-exported from Mixar (`builtins.HEAD_EXPORT=True`), head diffuse and strand map rebuilt (tools/build-head-textures.mjs, build-hair-textures.mjs).
-- Planner: corridors slide to keep round rooms round (1111 of 1476 round). tests/world/layouts.test.ts: see the commit message of the planner commit for its result.
+- Planner: corridors slide to keep round rooms round (1111 of 1476 round). tests/world/layouts.test.ts passes (4 of 4).
 - Square rooms' openings cut through their walls (models.tsx cutShell, LocalMap `holes`). Never type-checked here: the finish script's tsc will tell.
 
 ## Next, in order
