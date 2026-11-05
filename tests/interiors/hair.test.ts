@@ -19,15 +19,15 @@ const boundsOf = (p: Record<number, THREE.BufferGeometry>) => { const b = new TH
 const STYLES = [...new Set([...HAIR_MALE, ...HAIR_FEMALE].filter(Boolean))];
 const BEARD_STYLES = [...new Set(BEARDS.filter(Boolean))];
 
-test("head.glb holds a masculine and a feminine head, each a face with texture coordinates in its half of the atlas and a pair of ears", async () => {
+test("head.glb holds a masculine and a feminine head, each a face with texture coordinates in its cell of the atlas and a pair of ears", async () => {
   const hi = await piecesFrom("head.glb");
-  for (const [name, half] of [["head_m", 0], ["head_f", 1]] as const) {
+  for (const [name, [u0, v0]] of [["head_m", [0, 0.625]], ["head_f", [0, 0.25]]] as const) {
     const part = hi[name].part;
     assert.deepEqual(Object.keys(part).map(Number).sort(), [0, 3], `${name}'s regions: the face and the ears`);
     const uv = part[0].attributes.uv as THREE.BufferAttribute;
     assert.ok(uv, `${name} has texture coordinates`);
     for (let i = 0; i < uv.count; i++) {
-      assert.ok(uv.getX(i) >= half * 0.5 - 1e-4 && uv.getX(i) <= half * 0.5 + 0.5 + 1e-4 && uv.getY(i) >= -1e-4 && uv.getY(i) <= 1 + 1e-4, `${name}'s coordinates are in its half of the atlas`);
+      assert.ok(uv.getX(i) >= u0 - 1e-4 && uv.getX(i) <= u0 + 0.375 + 1e-4 && uv.getY(i) >= v0 - 1e-4 && uv.getY(i) <= v0 + 0.375 + 1e-4, `${name}'s coordinates are in its cell of the atlas`);
     }
     const ao = part[0].attributes.ao.array as Float32Array;
     assert.ok(ao.every((v) => v > 0 && v <= 1.0001), `${name} occlusion`);
@@ -52,7 +52,7 @@ test("the atlas of the face has its maps, and the strands of hair theirs", () =>
 test("hair.glb holds every style of the lists, the beards and the brows, as cards with texture coordinates, a root-to-tip occlusion, and a budget", async () => {
   const hi = await piecesFrom("hair.glb");
   const lo = await piecesFrom("hair.lo.glb");
-  for (const name of [...STYLES, ...BEARD_STYLES, "brows"]) {
+  for (const name of [...STYLES, ...BEARD_STYLES, "brows_m_0", "brows_f2_2"]) {
     assert.ok(hi[name] && lo[name], `${name} is in both files`);
     const g = hi[name].part[0];
     assert.ok(g.attributes.uv, `${name} has texture coordinates`);
@@ -110,10 +110,10 @@ test("a person is drawn with the new head, brows and hair once their files are i
   assert.ok(after.k.parts.filter((p) => p.finish === "head").every((p) => p.geo.attributes.uv), "with its texture coordinates");
   const strands = after.k.parts.filter((p) => p.finish === "strand");
   assert.ok(strands.every((p) => p.geo.attributes.uv && p.geo.attributes.limb), "hair has its coordinates and rides the head's limb");
-  // (a woman has the feminine head: its texture coordinates are in the right half of the atlas)
+  // (a woman has the feminine head: its texture coordinates are in the cells under the masculine heads')
   const woman = draw("Mara Vos");
-  const uvx = (k: Kit) => { const g = k.parts.find((p) => p.finish === "head")!.geo.attributes.uv as THREE.BufferAttribute; return g.getX(0); };
-  assert.ok(uvx(woman.k) >= 0.5 && uvx(draw("Dax Vos").k) <= 0.5, "the feminine head is on the right of the atlas, the masculine on the left");
+  const uvx = (k: Kit) => { const g = k.parts.find((p) => p.finish === "head")!.geo.attributes.uv as THREE.BufferAttribute; return g.getY(0); };
+  assert.ok(uvx(woman.k) <= 0.625 && uvx(draw("Dax Vos").k) >= 0.625, "the feminine head is in the lower cells of the atlas, the masculine in the upper");
   // the triangles of a whole head with hair stay in the budget (a head about 1.5k, hair up to 2.7k)
   const tris = (k: Kit, finishes: string[]) => k.parts.filter((p) => finishes.includes(p.finish)).reduce((n, p) => n + p.geo.index!.count / 3, 0);
   assert.ok(tris(after.k, ["head", "strand"]) < 5200, `${tris(after.k, ["head", "strand"])} triangles of head and hair`);

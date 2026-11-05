@@ -248,7 +248,7 @@ test("a whip's lash trails the hand: it hangs at rest, bends as the hand swings,
 
 test("the limbs of a lash hang one from another, five deep to the trunk", () => {
   assert.equal(LIMBS, PARENT.length);
-  assert.equal(LIMBS, 35);   // (32 with the lash; hair and lids since: LIMB.hairA, hairB, lids)
+  assert.equal(LIMBS, 39);   // (32 with the lash; hair and lids since: LIMB.hairA, hairB, lids; the second pair of arms: armR2, armL2, foreR2, foreL2)
   assert.equal(PARENT[LIMB.weaponL], LIMB.foreL);
   assert.equal(PARENT[LIMB.whip1], LIMB.weapon);
   assert.equal(PARENT[LIMB.whip2], LIMB.whip1);

@@ -699,6 +699,7 @@ export const bakedCount = () => CACHE.size;
 export const hue = (text: string) => Array.from(text).reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) % 360, 7);
 export const pickOf = <T,>(list: T[], text: string, salt = 0): T => list[(hue(text) + salt * 7) % list.length];
 const shade = (color: string, k: number) => `#${new THREE.Color(color).multiplyScalar(k).getHexString()}`;
+const luminance = (color: string) => { const c = new THREE.Color(color); return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; };
 const mix = (a: string, b: string, t: number) => `#${new THREE.Color(a).lerp(new THREE.Color(b), t).getHexString()}`;
 
 export const C = {
@@ -2685,13 +2686,19 @@ const COLOR_WORDS: [RegExp, string][] = [
 ];
 
 // The colours named in a list such as "Blue, brown, dark grey, green, or striped"
-function colorsIn(text = ""): string[] {
+// (skin of these colours is not the flat colour of a paint: a red skin is a deep warm red, an orange one terracotta, a yellow one ochre)
+const SKIN_WORDS: [RegExp, string][] = [[/orange/, "#c9733f"], [/yellow/, "#d4b455"], [/crimson|scarlet/, "#8f2a2c"], [/red/, "#a6382e"]];
+function colorsIn(text = "", skin = false): string[] {
   const t = text.toLowerCase();
   if (!t || /^none|varies|variable/.test(t)) return [];
   if (/light to dark|tones/.test(t)) return /pale|light tones/.test(t) && !/dark/.test(t) ? HUMAN_TONES.slice(0, 3) : HUMAN_TONES;
+  // (2026-11-05, Zabrak: "Pale to dark brown, red, orange and yellow": a range of skin tones is the tones between its ends, and what follows are colours of their own)
+  const span = skin ? t.match(/^\s*(?:pale|light|fair)\s+to\s+(dark brown|deep brown|brown)\b/) : null;
+  if (span) return [...HUMAN_TONES.slice(0, /dark|deep/.test(span[1]) ? 5 : 4), ...colorsIn(t.slice(span[0].length), true)];
   const out: string[] = [];
+  const words = skin ? [...SKIN_WORDS, ...COLOR_WORDS] : COLOR_WORDS;
   for (const part of t.split(/,|\bor\b|\band\b|\bto\b|;|\(/)) {
-    const found = COLOR_WORDS.find(([re]) => re.test(part));
+    const found = words.find(([re]) => re.test(part));
     if (found && !out.includes(found[1])) out.push(found[1]);
   }
   return out;
@@ -2709,7 +2716,7 @@ export function lookOf(record?: SpeciesRecord): Look {
   const tall = inches(record?.heightAverage) + (roll ? (Number(roll[1]) * (Number(roll[2]) + 1)) / 2 : 0);
   const fallback = /small/i.test(record?.size ?? "") ? 42 : /tiny/i.test(record?.size ?? "") ? 14 : 67;
   const fur = /\bfur|furry|hair covered|furred|covered in fur|lagomorph|lupine|lion-like/.test(d);
-  const skin = colorsIn(record?.skinColorOptions);
+  const skin = colorsIn(record?.skinColorOptions, true);
   const hair = colorsIn(record?.hairColorOptions);
   return {
     skin: skin.length ? skin : HUMAN_TONES,
@@ -3188,13 +3195,32 @@ function upper(k: Kit, look: Look, o: Outfit, p: Body) {
         else k.addModel(a.geometry, { at: [arm[2][0] + 0.08, arm[2][1] + 0.05, arm[2][2] + 0.1], rot: [0, 0.35, 0], scale: a.scale });
       }
     }
+    });
+    });
+    // The second pair of a four-armed person (a Besalisk; the user, 2026-11-05: "four arm animation variations"): limbs of their own (interiors/limbs.ts `lowerArms`: an upper
+    // arm from the chest under the first pair and a forearm), resting bent with the hands at the belt, in their own time (they were one tube hung on the first pair's forearm)
     if (look.arms === 4) {
-      const low = arm.map(([x, y, z]) => [x * 0.95, y - 0.13, z + 0.02] as V3);
-      k.tube(low, (t) => (0.044 - t * 0.012) * b, sleeve, { along: 8, around: 6 });
-      k.sphere(0.04 * b, glove, { at: low[2], seg: [8, 6] });
+      const lowShoulder: V3 = [s * 0.17 * b, 0.2, 0.02];
+      const lowElbow: V3 = [s * 0.2 * b, 0.0, -0.015];
+      const lowHand: V3 = [s * 0.13 * b, 0.04, 0.19];
+      const mid = (a: V3, c: V3): V3 => [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2, (a[2] + c[2]) / 2];
+      const lowFit = (g: THREE.BufferGeometry, from: V3, to: V3, nominal: number) => fitLimb(g, { from, to, nominal, bulk: b, side: s > 0 ? 1 : -1 });
+      k.limb(i ? LIMB.armL2 : LIMB.armR2, lowShoulder, () => {
+        k.sphere((parts ? 0.05 : 0.056) * b, armored ? plate : sleeve, { at: lowShoulder, seg: [8, 6], finish: armored ? "sheen" : "matte" });
+        if (parts) sculpt(k, parts.arm, { 0: { color: sleeve, finish: armored ? "sheen" : "matte" } }, (g) => lowFit(g, lowShoulder, lowElbow, NOMINAL.arm!));
+        else {
+          k.tube([lowShoulder, mid(lowShoulder, lowElbow), lowElbow], (t) => (0.046 - t * 0.006) * b, sleeve, { along: 4, around: 6, finish: armored ? "sheen" : "matte" });
+          k.sphere(0.04 * b, armored ? p.under : sleeve, { at: lowElbow, seg: [8, 6] });
+        }
+        k.limb(i ? LIMB.foreL2 : LIMB.foreR2, lowElbow, () => {
+          if (parts) sculpt(k, parts.fore, { 0: { color: sleeve, finish: armored ? "sheen" : "matte" }, 1: { color: glove, finish: o.gloves ? "sheen" : undefined } }, (g) => lowFit(g, lowElbow, lowHand, NOMINAL.fore!));
+          else {
+            k.tube([lowElbow, mid(lowElbow, lowHand), lowHand], (t) => (0.042 - t * 0.008) * b, sleeve, { along: 4, around: 6, finish: armored ? "sheen" : "matte" });
+            k.sphere((o.gloves ? 0.05 : 0.044) * b, glove, { at: lowHand, scale: [0.85, 1.1, 0.95], seg: [7, 5], finish: o.gloves ? "sheen" : undefined });
+          }
+        });
+      });
     }
-    });
-    });
   }
   // The neck and the head
   const neckH = look.longNeck ? 0.18 : 0.08;
@@ -3344,6 +3370,22 @@ export const BEARDS = ["", "", "", "", "beard_stubble", "beard_moustache", "bear
 export const HANGING = new Set(["hair_long", "hair_wavy", "hair_bob", "hair_tail", "hair_braid"]);
 export const hairStyleOf = (seed: number, fem: boolean) => (fem ? HAIR_FEMALE : HAIR_MALE)[(seed >> 2) & 15];
 export const beardOf = (seed: number) => BEARDS[(seed >> 5) & 15];
+// A person's face (2026-11-05, the user: "a few variations to retain originality between characters"): one of two kinds for each sex (the heads `head_m`, `head_m2`,
+// `head_f`, `head_f2` of tools/blender/build-head.py TYPES: the nose, the lips, the brow ridge, the chin), the brows one of three (`brows_<kind>_<0..2>`: soft and arched,
+// straight and thick, thin with a high arch), and the head a little wider or narrower and taller or shorter. All from the name's hash, in the bits the hair does not use.
+// (nine more bits of a name's hash, above the hue's own: the kind of face, the brows, the fit of the head)
+export const faceBits = (text: string) => {
+  let h = 2166136261;
+  for (const ch of text) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+  return ((h >>> 7) & 0x1ff) << 9;
+};
+export const faceKindOf = (seed: number, fem: boolean) => `${fem ? "f" : "m"}${(seed >> 9) & 1 ? "2" : ""}`;
+export const browKindOf = (seed: number) => ((seed >> 10) & 3) % 3;
+export const headFitOf = (seed: number): V3 => {
+  const w = ((seed >> 12) & 7) - 3.5;
+  const h = ((seed >> 15) & 7) - 3.5;
+  return [1 + w * 0.0065, 1 + h * 0.007, 1 - w * 0.003];
+};
 
 function head(k: Kit, look: Look, o: Outfit, p: Body) {
   const face = p.flesh;
@@ -3455,13 +3497,15 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
   const body = bodyParts();
   const variant = look.snout === "muzzle" ? "head_muzzle" : look.snout === "long" ? "head_long" : look.snout === "short" ? "head_short" : look.snout === "pig" ? "head_pig" : look.snout ? "head_flat" : "";
   // (a person's head with its own texture coordinates and baked normal map, where the face is skin: build-head.py; else the one before it)
-  const fresh = !variant && k.dress?.[face] === "face" ? faceParts()?.[p.fem ? "head_f" : "head_m"]?.part : undefined;
+  const kind = faceKindOf(p.seed, !!p.fem);
+  const fresh = !variant && k.dress?.[face] === "face" ? (faceParts()?.[`head_${kind}`] ?? faceParts()?.[p.fem ? "head_f" : "head_m"])?.part : undefined;
   // (a head with a snout: the new one if it is in (its heads are in the file as head_muzzle, head_long ...), else body.glb's)
   const snouted = variant ? gear?.[variant]?.part : undefined;
   const headParts = variant ? snouted ?? body?.more?.[variant]?.part : fresh ?? body?.head;
   const molded = headParts && !look.mask && !look.machine && look.head !== "cone" && look.head !== "hammer" ? headParts : undefined;
   // (made for a skull of 0.100 by 0.118 by 0.112: the sphere's scale, as it was; the hair and brows, made for the same skull, take it too)
-  const skullScale: V3 = [sk.scale[0] * 1.15, sk.scale[1] * 0.975, sk.scale[2] * 1.027];
+  const fit = headFitOf(p.seed);
+  const skullScale: V3 = [sk.scale[0] * 1.15 * fit[0], sk.scale[1] * 0.975 * fit[1], sk.scale[2] * 1.027 * fit[2]];
   // Hair, brows and beards drawn as cards (tools/blender/build-hair.py), where this head is the one they were made for
   const hairs = molded && fresh && headParts === fresh ? hairParts() : null;
   if (look.head === "cone") k.lathe([[0, -0.11], [0.095, -0.085], [0.115, 0], [0.095, 0.1], [0.06, 0.2], [0, 0.25]], face, { seg: 16 });
@@ -3510,7 +3554,8 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
     if (!look.fur && !hairs) k.box([0.034, 0.007, 0.012], p.hair || shade(face, 0.6), { at: [s * 0.042, 0.04, molded ? 0.102 : 0.104], rot: [0.1, 0, s * -0.12], round: 0.003 });
   });
   // (the brows: cards of the hair's colour on the brow ridge, where this head has hair of the cards')
-  if (hairs && !look.fur && hairs.brows) sculpt(k, hairs.brows.part, { 0: { color: p.hair ? shade(p.hair, 0.85) : shade(face, 0.55), finish: "strand" } }, (g) => g.clone(), { at: sk.at, rot: sk.rot, scale: skullScale });
+  const brows = hairs ? hairs[`brows_${kind}_${browKindOf(p.seed)}`] ?? hairs.brows : undefined;
+  if (hairs && !look.fur && brows) sculpt(k, brows.part, { 0: { color: p.hair ? shade(p.hair, 0.85) : shade(face, 0.55), finish: "strand" } }, (g) => g.clone(), { at: sk.at, rot: sk.rot, scale: skullScale });
   // The middle of the face: a snout, a trunk, a beak, a muzzle, or a nose and a mouth
   const fore = shade(face, 1.1);
   if (look.snout === "pig") {
@@ -3596,7 +3641,16 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
   }
   if (look.crest) k.cyl(0.11, 0.02, shade(face, 0.85), { at: [0, 0.07, -0.01], rot: [0, Math.PI / 2, Math.PI / 2], arc: Math.PI, start: -Math.PI / 2, scale: [1, 1, 0.8], seg: 10 });
   if (look.spines) for (let i = 0; i < 4; i++) k.cone(0.012, 0.05, shade(face, 0.8), { at: [0, 0.08 - i * 0.05, -0.1 - (i < 2 ? 0 : 0.01)], rot: [-1.2, 0, 0], seg: 5 });
-  if (look.tattoos) for (const [x, y] of [[-0.05, 0.05], [0.05, 0.05], [0, -0.08], [-0.07, -0.02], [0.07, -0.02]]) k.box([0.022, 0.008, 0.01], "#1b1d21", { at: [x, y, 0.105 - Math.abs(x) * 0.25], rot: [0, x * 3, 0] });
+  // (a face with tattoos has ink lines laid on it in one of three patterns (build-hair.py TATTOOS), dark on any skin; five dark boxes where the head is the old one)
+  const ink = hairs ? hairs[`tattoo_${kind}_${browKindOf(p.seed)}`] : undefined;
+  if (look.tattoos && ink) {
+    // (not in the dress of the dark colours: ink is drawn plain)
+    const dressed = k.dress;
+    k.dress = undefined;
+    sculpt(k, ink.part, { 0: { color: luminance(face) < 0.2 ? "#d8d0c4" : "#16181c", finish: "matte" } }, (g) => g.clone(), { at: sk.at, rot: sk.rot, scale: skullScale });
+    k.dress = dressed;
+  }
+  else if (look.tattoos) for (const [x, y] of [[-0.05, 0.05], [0.05, 0.05], [0, -0.08], [-0.07, -0.02], [0.07, -0.02]]) k.box([0.022, 0.008, 0.01], "#1b1d21", { at: [x, y, 0.105 - Math.abs(x) * 0.25], rot: [0, x * 3, 0] });
   if (look.mane) k.blob(0.15, p.hair || shade(face, 0.7), { at: [0, -0.01, -0.04], smooth: true, rough: 0.25, seed: p.seed + 3, squash: [1.1, 1.05, 0.9] });
   // Hair, a hood or a cap
   const hairColor = p.hair;
@@ -5301,6 +5355,8 @@ export function npcSaberKit(name: string, role = "", hand = ""): SaberKit {
 export function figureSpec(kind: string, name: string, opts: { role?: string; creature?: string; species?: string; size?: string; looks: Record<string, Look>; party?: { species?: string; name?: string; force?: boolean; blade?: string; gear?: Gear; forms?: string[] }; player?: boolean; attach?: Attach[]; gear?: Gear; modules?: { name: string; geometry: THREE.BufferGeometry }[]; unarmed?: boolean; wield?: Outfit["hand"]; kit?: SaberKit }): FigureSpec {
   const { role = "", creature = "", size = "", looks, party } = opts;
   const seed = hue(name || kind);
+  // (a person's own face: the hue is a number below 360, the hair and beard take its bits; the face's kind, brows and fit are other bits of the name: `faceBits`)
+  const faces = seed | faceBits(name || kind);
   // (which of the two heads: by the given name, as the world gives a person their gender; a name that is neither, by its hash)
   const gender = genderOf({ id: name || kind, name: name || kind, role, creature });
   const fem = gender === "female" || (gender === "other" && (seed & 2) !== 0);
@@ -5410,8 +5466,8 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
   }
   const wants = wantsOf(outfit.hand, gear, role || name, name, kit).filter((w) => !opts.unarmed || w.slot !== "weapon");
   const attach = opts.attach ?? [];
-  const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}${kit ? `~${kit}` : ""}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.weight ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}${outfit.suit ?? ""}${outfit.gloves ?? ""}${outfit.boots ?? ""}:${seed & 508}${fem ? "f" : "m"}${attach.length ? `:g${attach.map((a) => `${a.slot}=${a.id}@${a.scale}`).join("+")}` : ""}${bodyParts() ? ":sc" : ""}${creatureParts() ? "c" : ""}${faceParts() ? "h" : ""}${hairParts() ? "r" : ""}`;
-  return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, seed, attach, fem), height: 1.25 * look.scale, wants, blade: outfit.blade, gait: "walk", hold: holdOf(outfit.hand), kit, saber: saberStyleOf(player ? who : name || role, player ? party?.forms : []), ...(look.fur && hair ? { fur: 0.02 * look.scale } : {}) };
+  const key = `hum:${speciesName}:${skin}:${hair}:${eye}:${outfit.garment}:${outfit.top}:${outfit.bottom}:${outfit.accent}:${outfit.head}:${outfit.hand}${kit ? `~${kit}` : ""}:${outfit.blade ?? ""}:${outfit.armor ?? ""}:${outfit.cape ?? ""}:${outfit.weight ?? ""}:${outfit.pack ? 1 : 0}${outfit.bandolier ? 1 : 0}${outfit.belt ? 1 : 0}${outfit.suit ?? ""}${outfit.gloves ?? ""}${outfit.boots ?? ""}:${faces & 262140}${fem ? "f" : "m"}${attach.length ? `:g${attach.map((a) => `${a.slot}=${a.id}@${a.scale}`).join("+")}` : ""}${bodyParts() ? ":sc" : ""}${creatureParts() ? "c" : ""}${faceParts() ? "h" : ""}${hairParts() ? "r" : ""}`;
+  return { key, build: (k) => buildHumanoid(k, look, outfit, skin, hair, eye, faces, attach, fem), height: 1.25 * look.scale, wants, blade: outfit.blade, gait: "walk", hold: holdOf(outfit.hand), kit, saber: saberStyleOf(player ? who : name || role, player ? party?.forms : []), ...(look.fur && hair ? { fur: 0.02 * look.scale } : {}) };
 }
 
 // How far this figure moves: the stride follows how far the group itself moves along the ground between frames, so whoever moves it

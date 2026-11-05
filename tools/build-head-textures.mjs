@@ -35,7 +35,7 @@ for (const [name, { cell, size }] of Object.entries(atlas)) {
   const normal = await raw(path.join(MAPS, `head_${name}_normal.png`), size);
   const ao = await raw(path.join(MAPS, `head_${name}_ao.png`), size);
   const color = await raw(path.join(MAPS, `head_${name}_color.png`), size);
-  const tiles = size >= 1024 ? 1.7 : 1.0;
+  const tiles = size >= 768 ? (1.7 * size) / 1024 : 1.0;
   // the cell's place in the picture: u to the right, v up from the bottom
   const px0 = Math.round(u0 * A), py0 = Math.round((1 - v0 - dv) * A);
   for (let y = 0; y < size; y++) {

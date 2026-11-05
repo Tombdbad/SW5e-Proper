@@ -27,7 +27,7 @@ test("head.glb also holds the heads with a snout, the machine's head, four masks
     assert.deepEqual(regions(n), [0, 3], `${n}: the face and the ears`);
     assert.ok(hi[n].part[0].attributes.uv && hi[n].part[0].attributes.mark, `${n} has coordinates in the atlas and a mark for the nose and the mouth`);
     const uv = hi[n].part[0].attributes.uv as THREE.BufferAttribute;
-    for (let i = 0; i < uv.count; i += 7) assert.ok(uv.getY(i) <= 0.5 + 1e-4, `${n}'s cell is under the people's`);
+    for (let i = 0; i < uv.count; i += 7) assert.ok(!(uv.getX(i) < 0.75 - 1e-4 && uv.getY(i) > 0.25 + 1e-4), `${n}'s cell is not in the people's block`);
     const b = boundsOf(hi[n].part);
     assert.ok(b.max.z > 0.11 && b.max.z < 0.2, `${n}: its snout stands out ${b.max.z}`);
   }

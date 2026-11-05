@@ -503,13 +503,13 @@ def style_buzz(name, seed):
     return st
 
 # ---- Beards, a moustache and the brows, on the face --------------------------------------------------------------------------------------
-def face_point(x, y, m, fem=0.0):
+def face_point(x, y, m, ft=None):
     """the face's surface at (x, y): a point on the head of build-head.py and its outward direction (the guide starts a little above it)"""
     dx = x / BX
     dy = y / BY
     dz = math.sqrt(max(0.02, 1 - dx * dx - dy * dy))
     n = math.sqrt(dx * dx + dy * dy + dz * dz)
-    p = V(head.surface(dx / n, dy / n, dz / n, fem, 0))
+    p = V(head.surface(dx / n, dy / n, dz / n, ft["fem"] if ft else 0.0, 0, None, ft))
     out = skull_normal(p)
     return p + out * m, out
 
@@ -557,17 +557,57 @@ def style_beard(name, seed, kind):
                 grow(x, y, V(0, -1, 0.3), 0.010, 0.014, gravity=0.3)
     return st
 
-def style_brows(name, seed):
+# Brows (2026-11-05, the user: "the eyebrows look weird: a few variations to retain originality"): they were one band of broad cards (7.5 mm each) laid on the masculine head's
+# surface (on the feminine head, whose brow ridge is lower, they stood off it). Now each head type has its own, in three kinds of finer hairs in two rows: the hairs near the nose
+# grow up and out, the middle ones out, the last ones out and down, shorter and finer toward the tail
+#   y the line's height, arch how far it rises, tail how far it falls at the end, gap where it begins (from the middle), reach how far it runs, thick the band's height,
+#   len the hair's length, lift how steeply the first hairs rise, w a card's width, count hairs a row
+BROWS = [
+    dict(y=0.0395, arch=0.0070, tail=-0.0040, gap=0.019, reach=0.046, thick=0.0070, len=0.013, lift=0.9, w=0.0048, count=11, rows=2),     # soft, arched
+    dict(y=0.0385, arch=0.0030, tail=-0.0020, gap=0.015, reach=0.052, thick=0.0100, len=0.014, lift=0.5, w=0.0056, count=12, rows=2),     # straight and thick
+    dict(y=0.0420, arch=0.0105, tail=-0.0090, gap=0.025, reach=0.042, thick=0.0036, len=0.010, lift=1.1, w=0.0036, count=11, rows=1),     # thin, high arch
+]
+
+def style_brows(name, seed, ft, spec):
     st = Style(name, seed)
+    rng = st.rng
+    n = max(5, int(spec["count"] * DENSITY))
+    rows = spec["rows"]
     for sgn in (1, -1):
-        for i in range(int(8 * DENSITY) + 2):
-            s = i / max(1, int(8 * DENSITY) + 1)
-            x = sgn * (0.020 + 0.046 * s)
-            y = 0.0375 + 0.0095 * math.sin(math.pi * min(1.0, s * 1.15))
-            p0, out = face_point(x, y, 0.0015)
-            d0 = V(sgn * 1.0, 0.25 * (1 - s) - 0.2 * s, 0.0)
-            pts = walk(p0, tangent(d0, out), 0.016, 2, 0.0015, gravity=0.0, stiff=0.6)
-            st.add(pts, 0.0075, 0.0)
+        for row in range(rows):
+            for i in range(n):
+                s = min(1.0, (i + 0.5 * row + 0.25) / n)
+                x = sgn * (spec["gap"] + spec["reach"] * s)
+                band = spec["thick"] * (1.0 - 0.65 * s) * ((row / (rows - 1) - 0.5) if rows > 1 else 0.0)
+                y = spec["y"] + spec["arch"] * math.sin(math.pi * min(1.0, s * 1.1) ** 0.9) + spec["tail"] * s ** 3 + band
+                p0, out = face_point(x, y, 0.0022, ft)
+                d0 = V(sgn * 1.0, spec["lift"] * (1.0 - 2.3 * s) + rng.uniform(-0.15, 0.15), 0.0)
+                length = spec["len"] * (1.15 - 0.5 * s) * rng.uniform(0.85, 1.1)
+                pts = walk(p0, tangent(d0, out), length, 2, 0.0022, gravity=0.0, stiff=0.6)
+                st.add(pts, spec["w"] * (1.0 - 0.35 * s), 0.0)
+    return st
+
+# Tattoos (2026-11-05, the user: Zabrak skin colourations; the species has "facial tattoos"): ink lines laid on the face, thin strips along the surface a hair's width above it, in
+# three patterns (mirrored about the middle, the first points the left side's): each is (points in the face's x, y, width, mirrored). The code draws them in a dark ink.
+TATTOOS = [
+    # bands from the brow down the cheeks, a pair on the chin
+    [([(0.008, 0.088), (0.010, 0.066)], 0.0055, 1), ([(0.022, 0.085), (0.027, 0.060)], 0.0055, 1), ([(0.036, 0.079), (0.045, 0.056)], 0.0055, 1), ([(0.050, 0.073), (0.062, 0.056)], 0.005, 1),
+     ([(0.030, -0.004), (0.046, -0.032)], 0.0055, 1), ([(0.047, 0.006), (0.068, -0.020)], 0.005, 1), ([(0.012, -0.068), (0.013, -0.096)], 0.0055, 1), ([(0.026, -0.066), (0.031, -0.090)], 0.005, 1)],
+    # chevrons across the forehead and a line under each eye to the temple
+    [([(-0.045, 0.071), (0.0, 0.061), (0.045, 0.071)], 0.0045, 0), ([(-0.038, 0.082), (0.0, 0.073), (0.038, 0.082)], 0.0045, 0), ([(-0.030, 0.092), (0.0, 0.085), (0.030, 0.092)], 0.004, 0),
+     ([(0.030, -0.010), (0.052, -0.006), (0.078, 0.004)], 0.0045, 1), ([(0.0, -0.066), (0.0, -0.098)], 0.006, 0)],
+    # a stripe down the middle, bars along the cheekbones and from the temples to the jaw
+    [([(0.0, 0.098), (0.0, 0.056)], 0.0065, 0), ([(0.062, 0.015), (0.080, -0.012)], 0.006, 1), ([(0.052, 0.004), (0.070, -0.026), (0.062, -0.052)], 0.0045, 1), ([(0.024, 0.080), (0.050, 0.070), (0.074, 0.050)], 0.0045, 1),
+     ([(0.018, -0.066), (0.018, -0.094)], 0.0055, 1)],
+]
+
+def style_tattoo(name, seed, ft, pattern):
+    st = Style(name, seed)
+    for pts, width, mirrored in pattern:
+        for sgn in ((1, -1) if mirrored else (1,)):
+            dense = head._curve(tuple((p[0] * sgn, p[1]) for p in pts))
+            line = [face_point(x, y, 0.0007, ft)[0] for x, y in dense]
+            st.add(line, width, 0.0, bow=0.0, taper=(0.55, 1.0, 0.45), radial=1.0)
     return st
 
 STYLES = {
@@ -590,8 +630,12 @@ STYLES = {
     "beard_goatee": lambda: style_beard("beard_goatee", 33, "goatee"),
     "beard_short": lambda: style_beard("beard_short", 34, "short"),
     "beard_full": lambda: style_beard("beard_full", 35, "full"),
-    "brows": lambda: style_brows("brows", 41),
 }
+for _t, _ft in head.TYPES.items():
+    for _k, _pattern in enumerate(TATTOOS):
+        STYLES[f"tattoo_{_t}_{_k}"] = (lambda t=_t, ft=_ft, k=_k, pattern=_pattern: style_tattoo(f"tattoo_{t}_{k}", 51 + k, ft, pattern))
+    for _k, _spec in enumerate(BROWS):
+        STYLES[f"brows_{_t}_{_k}"] = (lambda t=_t, ft=_ft, k=_k, spec=_spec: style_brows(f"brows_{t}_{k}", 41 + k, ft, spec))
 
 def build(style):
     me = bpy.data.meshes.new(style.name)

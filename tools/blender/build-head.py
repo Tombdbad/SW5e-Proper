@@ -24,10 +24,23 @@ def arg(name):
     return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
 MAPS = arg("--maps")
 PREVIEW = arg("--preview")
+ONLY = arg("--only")                   # (a few heads, for a look: --only m,f2)
+FAST = "--fast" in sys.argv             # (the high head with a quarter of the points: a look at the shapes, not a bake)
 SIZE = 1024
-# The atlas of the faces, 2048 x 2048 (u, v from the bottom left; each cell u0, v0, du, dv): the masculine and the feminine head on the top half (1024 each), and under them
-# in 512 cells the heads with a snout
-CELLS = {"m": (0.0, 0.5, 0.5, 0.5), "f": (0.5, 0.5, 0.5, 0.5), "muzzle": (0.0, 0.25, 0.25, 0.25), "long": (0.25, 0.25, 0.25, 0.25), "short": (0.5, 0.25, 0.25, 0.25), "pig": (0.75, 0.25, 0.25, 0.25), "flat": (0.0, 0.0, 0.25, 0.25)}
+# The atlas of the faces, 2048 x 2048 (u, v from the bottom left; each cell u0, v0, du, dv): four people's heads in 768 cells on the top left (a masculine and a
+# feminine face of two kinds each: TYPES), the heads with a snout in 512 cells under them and to their right
+CELLS = {"m": (0.0, 0.625, 0.375, 0.375), "m2": (0.375, 0.625, 0.375, 0.375), "f": (0.0, 0.25, 0.375, 0.375), "f2": (0.375, 0.25, 0.375, 0.375),
+         "muzzle": (0.0, 0.0, 0.25, 0.25), "long": (0.25, 0.0, 0.25, 0.25), "short": (0.5, 0.0, 0.25, 0.25), "pig": (0.75, 0.75, 0.25, 0.25), "flat": (0.75, 0.5, 0.25, 0.25)}
+
+# Face types (2026-11-05, the user: "the lips and eyebrows look weird: we may need a few variations to retain originality between characters"): what tells one face from another.
+# fem 0 or 1 (a softer brow, a smaller jaw and nose, fuller lips); nose_w the nose's width, nose_h how far it stands out, nose_y where its tip is (metres, + up); lip_u and
+# lip_l the fullness of the upper and the lower lip, mouth_w the width of the mouth; brow the ridge over the eyes, chin, cheek; tint how red the lips are painted
+TYPES = {
+    "m": dict(fem=0.0, nose_w=1.0, nose_h=1.0, nose_y=0.0, lip_u=1.0, lip_l=1.0, mouth_w=1.0, brow=1.0, chin=1.0, cheek=1.0, tint=0.5),
+    "m2": dict(fem=0.0, nose_w=1.22, nose_h=1.12, nose_y=-0.002, lip_u=0.74, lip_l=0.86, mouth_w=1.08, brow=1.3, chin=1.14, cheek=0.85, tint=0.4),
+    "f": dict(fem=1.0, nose_w=1.0, nose_h=1.0, nose_y=0.0, lip_u=1.0, lip_l=1.0, mouth_w=1.0, brow=1.0, chin=1.0, cheek=1.0, tint=0.75),
+    "f2": dict(fem=1.0, nose_w=0.86, nose_h=0.94, nose_y=0.002, lip_u=1.3, lip_l=1.2, mouth_w=0.94, brow=0.75, chin=0.9, cheek=1.22, tint=0.85),
+}
 
 # ---- Landmarks and features ---------------------------------------------------------------------------------------------------------
 def gauss(x, y, cx, cy, rx, ry):
@@ -67,50 +80,56 @@ def g2(x, y, cx, cy, rx, ry):
 def l2(x, y, pts, w):
     return line(x, y, pts, w) + line(x, y, [(-a, b) for a, b in pts], w)
 
-# fem: 0 masculine, 1 feminine (a softer brow, a smaller jaw and nose, fuller lips)
-def coarse(x, y, fem):
+def coarse(x, y, fem, ft=None):
     """the shapes the low head can carry: eye sockets, brow, nose, cheeks, lips, chin (metres, outward)"""
+    T = ft or TYPES["m"]
+    nw, nh, ny, mw = T["nose_w"], T["nose_h"], T["nose_y"], T["mouth_w"]
     d = -0.0135 * g2(x, y, 0.040, 0.016, 0.026, 0.018)
-    d += (0.0095 - 0.0045 * fem) * l2(x, y, [(0.014, 0.036), (0.030, 0.043), (0.048, 0.046), (0.068, 0.040), (0.082, 0.034)], 0.0075)
+    d += (0.0095 - 0.0045 * fem) * T["brow"] * l2(x, y, [(0.014, 0.036), (0.030, 0.043), (0.048, 0.046), (0.068, 0.040), (0.082, 0.034)], 0.0075)
     d += (0.003 - 0.001 * fem) * gauss(x, y, 0.0, 0.034, 0.014, 0.012)
-    # the nose: a bridge widening to the tip, the tip's bulb, the wings, the nostrils
-    ns = 1.0 - 0.1 * fem
-    t = max(0.0, min(1.0, (0.030 - y) / 0.048))
-    ridge = (0.004 + 0.0095 * t ** 1.1) * math.exp(-0.5 * (x / (0.0085 + 0.007 * t)) ** 2)
-    if y < -0.020:
-        ridge *= math.exp(-(((y + 0.020) / 0.008) ** 2))
+    # the nose: a bridge widening to the tip, the tip's bulb, the wings, and the nostrils just above the base of the nose, where the lip begins (2026-11-05: they were
+    # at -0.029, under the nose, on the lip)
+    ns = (1.0 - 0.1 * fem) * nh
+    base = -0.019 + ny
+    t = max(0.0, min(1.0, (0.030 - y) / (0.030 - base)))
+    ridge = (0.004 + 0.0105 * t ** 1.1) * math.exp(-0.5 * (x / ((0.0085 + 0.007 * t) * nw)) ** 2)
+    if y < base:
+        ridge *= math.exp(-(((y - base) / 0.0085) ** 2))
     elif y > 0.030:
         ridge *= math.exp(-(((y - 0.030) / 0.007) ** 2))   # (the bridge begins at the brow: it does not run up the forehead)
     d += ridge * ns
-    d += 0.0045 * ns * gauss(x, y, 0.0, -0.0185, 0.010, 0.0075)
-    d += 0.0050 * ns * g2(x, y, 0.0155, -0.0235, 0.0075, 0.0065)
-    d += -0.0050 * g2(x, y, 0.0075, -0.0290, 0.0045, 0.0036)
-    d += (0.0060 + 0.0010 * fem) * g2(x, y, 0.066, -0.012, 0.026, 0.022)
+    d += 0.0045 * ns * gauss(x, y, 0.0, -0.0180 + ny, 0.010 * nw, 0.0075)
+    d += 0.0050 * ns * g2(x, y, 0.0150 * nw, -0.0225 + ny, 0.0075, 0.0065)
+    d += -0.0055 * g2(x, y, 0.0078 * nw, -0.0245 + ny, 0.0045, 0.0034)
+    d += (0.0060 + 0.0010 * fem) * T["cheek"] * g2(x, y, 0.066, -0.012, 0.026, 0.022)
     d += -0.0042 * g2(x, y, 0.062, -0.052, 0.022, 0.022)
     d += -0.0030 * g2(x, y, 0.088, 0.040, 0.020, 0.028)
     # the lips and the chin
-    d += (0.0085 + 0.0020 * fem) * gauss(x, y, 0.0, -0.046, 0.020, 0.0055)
-    d += (0.0095 + 0.0030 * fem) * gauss(x, y, 0.0, -0.0585, 0.019, 0.0068)
-    d += -0.0035 * line(x, y, [(-0.026, -0.0500), (-0.012, -0.0518), (0.0, -0.0512), (0.012, -0.0518), (0.026, -0.0500)], 0.0016)
+    lu, ll = T["lip_u"], T["lip_l"]
+    d += (0.0085 + 0.0020 * fem) * lu * gauss(x, y, 0.0, -0.046 - 0.0006 * (lu - 1), 0.020 * mw, 0.0055 * (0.75 + 0.25 * lu))
+    d += (0.0095 + 0.0030 * fem) * ll * gauss(x, y, 0.0, -0.0585 + 0.0006 * (ll - 1), 0.019 * mw, 0.0068 * (0.75 + 0.25 * ll))
+    d += -0.0035 * line(x, y, [(-0.026 * mw, -0.0500), (-0.012 * mw, -0.0518), (0.0, -0.0512), (0.012 * mw, -0.0518), (0.026 * mw, -0.0500)], 0.0016)
     d += -0.0030 * gauss(x, y, 0.0, -0.071, 0.018, 0.0035)
-    d += (0.0070 - 0.0015 * fem) * gauss(x, y, 0.0, -0.088, 0.020, 0.016)
+    d += (0.0070 - 0.0015 * fem) * T["chin"] * gauss(x, y, 0.0, -0.088, 0.020 * (0.9 + 0.1 * T["chin"]), 0.016)
     return d
 
-def fine(x, y, fem):
+def fine(x, y, fem, ft=None):
     """what only the high head has: lids and their creases, the folds beside the nose and mouth, the groove above the lip, the cupid's bow"""
+    T = ft or TYPES["m"]
+    nw, ny, mw = T["nose_w"], T["nose_y"], T["mouth_w"]
     d = -0.0016 * l2(x, y, [(0.025, 0.022), (0.034, 0.0295), (0.046, 0.030), (0.057, 0.0245)], 0.0022)   # the fold of the upper lid
     d += 0.0025 * g2(x, y, 0.041, 0.022, 0.017, 0.006)                                                  # the lid itself
     d += -0.0011 * l2(x, y, [(0.027, 0.006), (0.040, 0.0035), (0.054, 0.008)], 0.0020)                   # the lower lid's line
     d += 0.0015 * g2(x, y, 0.040, -0.004, 0.016, 0.004)                                                 # a slight bag under it
     d += -0.0010 * l2(x, y, [(0.030, 0.0), (0.045, -0.008), (0.060, -0.012)], 0.0030)                    # the tear trough
     d += 0.0020 * g2(x, y, 0.0255, 0.011, 0.003, 0.003)                                                 # the inner corner of the eye
-    d += -(0.0019 - 0.0004 * fem) * l2(x, y, [(0.0215, -0.0185), (0.0265, -0.032), (0.030, -0.044), (0.031, -0.0515)], 0.0032)  # nose to mouth
-    d += -0.0013 * l2(x, y, [(0.0115, -0.0125), (0.0185, -0.0185), (0.0215, -0.0265)], 0.0018)           # the crease of the wing of the nose
+    d += -(0.0019 - 0.0004 * fem) * l2(x, y, [(0.0225 * nw, -0.0215 + ny), (0.0265, -0.032), (0.030, -0.044), (0.031 * mw, -0.0515)], 0.0032)  # nose to mouth
+    d += -0.0013 * l2(x, y, [(0.0115 * nw, -0.0125 + ny), (0.0190 * nw, -0.0185 + ny), (0.0225 * nw, -0.0250 + ny)], 0.0018)  # the crease of the wing of the nose
     d += 0.0010 * l2(x, y, [(0.0045, -0.032), (0.0055, -0.0425)], 0.0016)                                # the ridges of the philtrum
     d += -0.0010 * gauss(x, y, 0.0, -0.037, 0.0025, 0.005)                                              # and its groove
     d += 0.0020 * g2(x, y, 0.006, -0.0435, 0.004, 0.0022)                                               # the cupid's bow
-    d += -0.0020 * g2(x, y, 0.0275, -0.0505, 0.004, 0.0035)                                             # the corners of the mouth
-    d += -0.0008 * line(x, y, [(-0.018, -0.0445), (0.0, -0.0425), (0.018, -0.0445)], 0.0012)            # the edge of the upper lip's red
+    d += -0.0020 * g2(x, y, 0.0275 * mw, -0.0505, 0.004, 0.0035)                                         # the corners of the mouth
+    d += -0.0008 * line(x, y, [(-0.018 * mw, -0.0445), (-0.006, -0.0408), (0.0, -0.0432), (0.006, -0.0408), (0.018 * mw, -0.0445)], 0.0012)   # the edge of the upper lip's red
     d += -0.0004 * line(x, y, [(-0.052, 0.062), (0.0, 0.066), (0.052, 0.062)], 0.0026)                   # one line across the forehead
     d += -0.0014 * line(x, y, [(0.0, 0.026), (0.0, 0.036)], 0.0020)                                      # between the brows
     return d
@@ -145,7 +164,7 @@ def coarse_snout(x, y, v):
 
 BX, BY, BZ = 0.100, 0.118, 0.112
 
-def surface(dx, dy, dz, fem, level, variant=None):
+def surface(dx, dy, dz, fem, level, variant=None, ft=None):
     """the head at a unit direction: the skull ellipsoid, the tapering jaw, then the features along the normal"""
     x, y, z = dx * BX, dy * BY, dz * BZ
     front = smooth(0.0, 0.8, dz)
@@ -165,9 +184,9 @@ def surface(dx, dy, dz, fem, level, variant=None):
         if variant:
             d = coarse_snout(x, y, variant)
         else:
-            d = coarse(x, y, fem)
+            d = coarse(x, y, fem, ft)
             if level:
-                d += fine(x, y, fem)
+                d += fine(x, y, fem, ft)
         d *= smooth(0.05, 0.35, dz)
         x += d * nx
         y += d * ny
@@ -186,14 +205,14 @@ def warp_theta(t, dense=False):
     """the rows crowd to the middle latitudes, where the eyes, nose and mouth are"""
     return t + (0.2 if dense else 0.12) * math.sin(2 * t)
 
-def head_mesh(name, fem, rows, segs, level, dense=False, variant=None):
+def head_mesh(name, fem, rows, segs, level, dense=False, variant=None, ft=None):
     verts, uvs, faces = [], [], []
     index = {}
     def add(i, j, pole=None):
         th = warp_theta(math.pi * i / rows, dense)
         ph = warp_phi(-math.pi + 2 * math.pi * (j if pole is None else j + 0.5) / segs, dense)
         dx, dy, dz = math.sin(th) * math.sin(ph), math.cos(th), math.sin(th) * math.cos(ph)
-        x, y, z = surface(dx, dy, dz, fem, level, variant)
+        x, y, z = surface(dx, dy, dz, fem, level, variant, ft)
         verts.append(P(x, y, z))
         uvs.append(((j if pole is None else j + 0.5) / segs, 1.0 - i / rows))
         return len(verts) - 1
@@ -307,10 +326,12 @@ def bake(low, high, kind, path, SIZE=SIZE):
     bpy.data.images.remove(img)
 
 # ---- Colour: what is painted, not modelled (the lips, the lids, the mouth's line, the nostrils), laid out the way the maps are ---------------
-def paint(fem, path, variant=None, SIZE=SIZE):
+def paint(fem, path, variant=None, SIZE=SIZE, ft=None):
     """a pale colour map for the low head's texture coordinates: the vertex colour (the skin) multiplies it, so what it holds is the
     difference from the skin: redder, darker lips, shaded lids and nostrils, a little warmth in the cheeks"""
     import numpy as np
+    T = ft or TYPES["m"]
+    nw, ny, mw = T["nose_w"], T["nose_y"], T["mouth_w"]
     n = SIZE
     u = (np.arange(n) + 0.5) / n
     v = (np.arange(n) + 0.5) / n
@@ -331,35 +352,49 @@ def paint(fem, path, variant=None, SIZE=SIZE):
         return np.exp(-0.5 * (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2))
     def G2(cx, cy, rx, ry):
         return G(cx, cy, rx, ry) + G(-cx, cy, rx, ry)
+    def edge(w):
+        """0 to 1 across a soft edge, w the distance from it in metres (positive inside)"""
+        k = np.clip(w / 0.0009 + 0.5, 0, 1)
+        return k * k * (3 - 2 * k)
     sn = SNOUTS.get(variant) if variant else None
-    lips = np.clip((np.maximum(G(0, -0.0465, 0.021, 0.0062), G(0, -0.0585, 0.0195, 0.0075)) - 0.3) / 0.35, 0, 1) * front
+    # the lips (2026-11-05: they were one oval of red over the nose-to-mouth gap, 3 cm tall): the red between the line of the mouth and an upper edge with a cupid's bow, and
+    # a lower edge, narrowing to the corners; the line itself a thin dark stroke
+    wm = 0.0275 * mw
+    e = np.clip(1.0 - (x / wm) ** 2, 0, 1) ** 0.7
+    mline = -0.0512 + 0.0008 * np.clip((x / wm) ** 2, 0, 1)
+    hu = 0.0098 * (0.7 + 0.3 * T["lip_u"]) * e
+    hl = 0.0128 * (0.7 + 0.3 * T["lip_l"]) * e
+    bow = 1.0 - 0.22 * np.exp(-((x / 0.0032) ** 2)) + 0.10 * np.exp(-(((np.abs(x) - 0.0058) / 0.0028) ** 2))
+    upper = edge(y - mline) * edge(mline + hu * bow - y) * edge(wm - np.abs(x)) * front
+    lower = edge(mline - y) * edge(y - (mline - hl)) * edge(wm - np.abs(x)) * front
+    mouth = np.exp(-0.5 * ((y - mline) / 0.0009) ** 2) * (np.abs(x) < wm * 0.96) * front
     if variant:
-        lips = lips * 0.0
         ty = (sn[3] + 0.014) if sn else -0.02
         pad = np.clip(G(0, ty, (sn[1] * 0.6) if sn else 0.012, 0.012), 0, 1) * front
         nost = np.clip(G2(0.011, ty - 0.003, 0.0042, 0.0036), 0, 1) * front
-        mline = np.exp(-0.5 * ((y - ((sn[3] - 0.022) if sn else -0.054)) / 0.0014) ** 2) * (np.abs(x) < 0.032) * front
+        mline_s = np.exp(-0.5 * ((y - ((sn[3] - 0.022) if sn else -0.054)) / 0.0014) ** 2) * (np.abs(x) < 0.032) * front
     lid = np.clip(G2(0.041, 0.022, 0.018, 0.008), 0, 1) * front
     bag = np.clip(G2(0.040, -0.006, 0.016, 0.006), 0, 1) * front
-    nostril = np.clip(G2(0.0085, -0.0290, 0.0030, 0.0022), 0, 1) * front
-    mouth = np.exp(-0.5 * ((y + 0.0512) / 0.0012) ** 2) * (np.abs(x) < 0.027) * front
-    cheek = np.clip(G2(0.062, -0.020, 0.026, 0.020), 0, 1) * front
+    nostril = np.clip(G2(0.0078 * nw, -0.0245 + ny, 0.0030, 0.0019), 0, 1) * front
+    cheek = np.clip(G2(0.062, -0.020, 0.026, 0.020) * T["cheek"], 0, 1) * front
     rgb = np.ones((n, n, 3), dtype=np.float32) * 0.93
     def tint(mask, col, k):
         for c in range(3):
             rgb[:, :, c] *= 1.0 + mask * k * (col[c] - 1.0)
-    tint(lips, (1.0, 0.66, 0.64), 0.85 + 0.1 * fem)  # (a snout has none: its lips are zero)
+    if not variant:
+        tint(upper, (1.0, 0.66, 0.64), T["tint"] * 1.08 + 0.08 * fem)
+        tint(lower, (1.0, 0.70, 0.67), T["tint"] + 0.08 * fem)
     tint(lid, (0.95, 0.84, 0.88), 0.7)
     tint(bag, (0.96, 0.88, 0.9), 0.6)
-    tint(cheek, (1.0, 0.92, 0.91), 0.55 + 0.2 * fem)
+    tint(cheek, (1.0, 0.92, 0.91), 0.45 + 0.2 * fem)
     if variant:
         pig = variant == "pig"
         tint(pad, (1.0, 0.8, 0.78) if pig else (0.42, 0.34, 0.34), 0.8)
         tint(nost, (0.35, 0.28, 0.28), 0.9)
-        tint(mline, (0.5, 0.4, 0.4), 0.7)
+        tint(mline_s, (0.5, 0.4, 0.4), 0.7)
     else:
-        tint(nostril, (0.55, 0.45, 0.45), 0.5)
-        tint(mouth, (0.6, 0.48, 0.48), 0.6)
+        tint(nostril, (0.55, 0.45, 0.45), 0.42)
+        tint(mouth, (0.62, 0.5, 0.5), 0.5)
     px = np.ones((n, n, 4), dtype=np.float32)
     px[:, :, :3] = rgb
     img = bpy.data.images.new("color", n, n, alpha=False)
@@ -410,12 +445,15 @@ def main():
     bpy.ops.wm.read_factory_settings(use_empty=True)
     rows, segs = (30, 40) if HI else (18, 26)
     exported = []
-    plan = [("m", 0.0, None, 1024), ("f", 1.0, None, 1024)] + [(k, 0.0, k, 512) for k in ("muzzle", "long", "short", "pig", "flat")]
+    plan = [(k, T["fem"], None, 768, T) for k, T in TYPES.items()] + [(k, 0.0, k, 512, None) for k in ("muzzle", "long", "short", "pig", "flat")]
     atlas = {}
-    for variant, fem, snout, size in plan:
-        low = head_mesh(f"head_{variant}", fem, rows, segs, 0, False, snout)
+    if ONLY:
+        plan = [p for p in plan if p[0] in ONLY.split(",")]
+    for variant, fem, snout, size, ft in plan:
+        low = head_mesh(f"head_{variant}", fem, rows, segs, 0, False, snout, ft)
         weld_normals(low)
-        high = head_mesh(f"high_{variant}", fem, 240, 320, 1, True, snout)
+        # (the high head only where there is something to bake or to look at)
+        high = head_mesh(f"high_{variant}", fem, 120 if FAST else 240, 160 if FAST else 320, 1, True, snout, ft) if (PREVIEW or (MAPS and HI)) else None
         if PREVIEW:
             os.makedirs(PREVIEW, exist_ok=True)
             for yaw, tag in ((0.0, "front"), (math.radians(60), "three")):
@@ -428,11 +466,12 @@ def main():
                 o.hide_render = True
             bake(low, high, "NORMAL", os.path.join(MAPS, f"head_{variant}_normal.png"), size)
             bake(low, high, "AO", os.path.join(MAPS, f"head_{variant}_ao.png"), size)
-            paint(fem, os.path.join(MAPS, f"head_{variant}_color.png"), snout, size)
+            paint(fem, os.path.join(MAPS, f"head_{variant}_color.png"), snout, size, ft)
             for o in exported:
                 o.hide_render = False
             atlas[variant] = {"cell": CELLS[variant], "size": size}
-        bpy.data.objects.remove(high)
+        if high:
+            bpy.data.objects.remove(high)
         # the atlas: this head's cell
         u0, v0, du, dv = CELLS[variant]
         layer = low.data.uv_layers.active

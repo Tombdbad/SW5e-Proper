@@ -731,8 +731,8 @@ export default function ModelGallery() {
   const section = query.get("section") ?? "people";
   // ?cam=x,y,z&look=x,y,z frame a close look
   const triple = (text: string | null, fallback: [number, number, number]) => (text ? (text.split(",").map(Number) as [number, number, number]) : fallback);
-  const cam = triple(query.get("cam"), section === "saberCombo" ? [5.0, 1.8, 2.8] : section === "hair" ? [0, 2.0, 8.2] : [0, 9, 12]);
-  const look = triple(query.get("look"), section === "saberCombo" ? [0, 0.95, 0] : section === "hair" ? [0, 0.8, 1.8] : [0, 0, section === "places" ? 14 : 3]);
+  const cam = triple(query.get("cam"), section === "saberCombo" ? [5.0, 1.8, 2.8] : section === "hair" ? [0, 2.0, 8.2] : section === "faces" ? [0, 0.95, 2.4] : [0, 9, 12]);
+  const look = triple(query.get("look"), section === "saberCombo" ? [0, 0.95, 0] : section === "hair" ? [0, 0.8, 1.8] : section === "faces" ? [0, 0.85, 0] : [0, 0, section === "places" ? 14 : 3]);
   const [duel, setDuel] = useState<DuelConfig>(() => duelFromQuery(query));
   const caption = useRef<HTMLDivElement>(null);
   const roleList = [...ROLES.map((r) => ({ name: `Dax ${r}`, role: r })), ...BLOCKS.map((b) => ({ name: b, role: "" }))];
@@ -750,6 +750,8 @@ export default function ModelGallery() {
           <meshLambertMaterial color="#39424e" />
         </mesh>
         {section === "people" && <Rows items={query.get("only") ? query.get("only")!.split(",").map((s) => SPECIES.find((x) => x.toLowerCase().startsWith(s.toLowerCase())) ?? s) : SPECIES} per={query.get("only") ? 6 : 8} gap={query.get("only") ? 0.6 : 1.4} name={(s) => s} draw={(s) => person(`Kel ${s}`, "patron", s)} />}
+        {/* ?section=faces[&names=A B,C D][&species=Zabrak]: the same species under different names, to see the faces, brows and tattoos told apart (cam and look as for a close look) */}
+        {section === "faces" && <Rows items={(query.get("names") ?? "Dax Vos,Mara Vos,Kel Orn,Tessa Rho,Brek Tal,Ila Venn").split(",")} per={6} gap={0.42} name={(s) => s} draw={(s) => <Figure kind={tokenOf({ name: s, role: "patron" })} ring={SIDE_COLORS.neutral} name={s} role="patron" species={query.get("species") ?? "Human"} />} />}
         {section === "roles" && <Rows items={roleList} per={8} gap={1.4} name={(r) => r.role || r.name} draw={(r) => person(r.name, r.role)} />}
         {section === "player" && (
           <Rows items={["Human", "Zabrak", "Twi'lek", "Togruta", "Wookiee", "Chiss"].flatMap((s) => [`force:${s}`, `blaster:${s}`])} per={6} gap={1.4} name={(s) => s} draw={(s) => <PlayerFigure force={s.startsWith("force")} species={s.split(":")[1]} />} />

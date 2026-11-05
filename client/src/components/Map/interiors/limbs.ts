@@ -29,11 +29,13 @@ export { beginSwing, saberKitOf, SABER_KITS, type SaberKit } from "./saberplay";
 // above the waist (`chest`, which carries the arms, the head and all worn above it), the forearms below the elbows, the shins below the
 // knees, and what the right hand holds (`weapon`, turned at the wrist; 2026-11-04: `weaponL`, what the left hand holds in a fight with two blades, and `whip1`, `whip2`, the two bends of a lightwhip's lash, one hanging from the last). These hang one from another (PARENT): a forearm turns about its
 // elbow and is then carried by its upper arm, which the chest carries; a shin turns about its knee and then with its thigh.
-export const LIMB = { body: 0, legR: 1, legL: 2, armR: 3, armL: 4, hindR: 5, hindL: 6, midR: 7, midL: 8, tail: 9, roll: 10, wingR: 11, wingL: 12, chest: 13, foreR: 14, foreL: 15, shinR: 16, shinL: 17, weapon: 18, head: 19, earR: 20, earL: 21, tail2: 22, jaw: 23, wave: 24, shinHR: 25, shinHL: 26, shinMR: 27, shinML: 28, weaponL: 29, whip1: 30, whip2: 31, hairA: 32, hairB: 33, lids: 34 } as const;
+export const LIMB = { body: 0, legR: 1, legL: 2, armR: 3, armL: 4, hindR: 5, hindL: 6, midR: 7, midL: 8, tail: 9, roll: 10, wingR: 11, wingL: 12, chest: 13, foreR: 14, foreL: 15, shinR: 16, shinL: 17, weapon: 18, head: 19, earR: 20, earL: 21, tail2: 22, jaw: 23, wave: 24, shinHR: 25, shinHL: 26, shinMR: 27, shinML: 28, weaponL: 29, whip1: 30, whip2: 31, hairA: 32, hairB: 33, lids: 34, armR2: 35, armL2: 36, foreR2: 37, foreL2: 38 } as const;
 // (2026-11-04: `hairA` and `hairB`, hair that hangs from the nape, one under the other, swinging with the stride; `lids`, the lids of the eyes, which blink)
-export const LIMBS = 35;
+// (2026-11-05, the user: "besalisk 4 arm animation variations": `armR2`, `armL2` and their forearms `foreR2`, `foreL2`, the second pair of a four-armed person, from the chest
+// under the first pair: they move in their own time, `lowerArms`)
+export const LIMBS = 39;
 // The limb each one hangs from (-1: from the body itself)
-export const PARENT: number[] = [-1, 10, 10, 13, 13, 10, -1, -1, -1, -1, -1, -1, -1, 10, 3, 4, 1, 2, 14, 13, 19, 19, 9, 19, -1, 5, 6, 7, 8, 15, 18, 30, 19, 32, 19];
+export const PARENT: number[] = [-1, 10, 10, 13, 13, 10, -1, -1, -1, -1, -1, -1, -1, 10, 3, 4, 1, 2, 14, 13, 19, 19, 9, 19, -1, 5, 6, 7, 8, 15, 18, 30, 19, 32, 19, 13, 13, 35, 36];
 // The shin of each leg
 export const SHIN_OF: Record<number, number> = { [LIMB.legR]: LIMB.shinR, [LIMB.legL]: LIMB.shinL, [LIMB.hindR]: LIMB.shinHR, [LIMB.hindL]: LIMB.shinHL, [LIMB.midR]: LIMB.shinMR, [LIMB.midL]: LIMB.shinML };
 
@@ -535,7 +537,7 @@ export interface SeatState {
 export type StandAct = "cheer" | "talk";
 export const STAND_ACT_SECONDS = 0.4;
 // The limbs a standing act moves: the arms, the forearms and the head (the legs keep walking or standing)
-const ACT_LIMBS = [LIMB.armR, LIMB.armL, LIMB.foreR, LIMB.foreL, LIMB.head];
+const ACT_LIMBS = [LIMB.armR, LIMB.armL, LIMB.foreR, LIMB.foreL, LIMB.head, LIMB.armR2, LIMB.armL2, LIMB.foreR2, LIMB.foreL2];
 // What the arms do in a standing act at clock `t` (`phase` keeps a crowd from moving as one); `out` holds only the limbs of ACT_LIMBS
 export function standActPose(act: StandAct, t: number, phase = 0, out: Pose = restPose()): Pose {
   for (let i = 1; i < LIMBS; i++) out.set([0, 0, 0, 1], i * 4);
@@ -548,7 +550,17 @@ export function standActPose(act: StandAct, t: number, phase = 0, out: Pose = re
     setEuler(out, LIMB.foreR, -0.35 - Math.max(0, pump) * 0.4, 0, 0);
     setEuler(out, LIMB.foreL, -0.35 - Math.max(0, -pump) * 0.4, 0, 0);
     setEuler(out, LIMB.head, -0.22 + Math.sin(u * 1.3) * 0.08, 0, 0);
+    // (a second pair of arms pumps against the first: a half beat behind, lower, out to the sides)
+    setEuler(out, LIMB.armR2, -1.9 - pump * 0.3, 0, -0.55);
+    setEuler(out, LIMB.armL2, -1.9 + pump * 0.3, 0, 0.55);
+    setEuler(out, LIMB.foreR2, -0.5 - Math.max(0, -pump) * 0.4, 0, 0);
+    setEuler(out, LIMB.foreL2, -0.5 - Math.max(0, pump) * 0.4, 0, 0);
   } else {
+    // (a second pair of arms, if there is one, gestures on its own: the left lower hand opens a beat after the right upper one, the right at rest)
+    setEuler(out, LIMB.armL2, -0.45 + Math.sin(u * 2.1 + 1.3) * 0.16, -0.1, 0.12 + Math.sin(u * 1.4 + 2.0) * 0.1);
+    setEuler(out, LIMB.foreL2, -0.6 + Math.sin(u * 3.0 + 0.8) * 0.25, 0, 0);
+    setEuler(out, LIMB.armR2, -0.08 + Math.sin(u * 0.9) * 0.04, 0, -0.05);
+    setEuler(out, LIMB.foreR2, -0.15, 0, 0);
     // One hand opens and turns as they speak, the other at rest; the head nods and turns a little
     setEuler(out, LIMB.armR, -0.55 + Math.sin(u * 2.6) * 0.18, 0.15, -0.18 + Math.sin(u * 1.7) * 0.12);
     setEuler(out, LIMB.foreR, -1.0 + Math.sin(u * 3.4) * 0.3, 0, 0);
@@ -965,6 +977,50 @@ export function gripStaff(j: Joints): { armL: J3; foreL: J3; miss: number } {
   const placed = sl.clone().add(u0.clone().multiplyScalar(l1).applyQuaternion(q1)).add(f0.clone().multiplyScalar(l2).applyQuaternion(q1.clone().multiply(q2)));
   return { armL: [e1.x, e1.y, e1.z], foreL: [e2.x, e2.y, e2.z], miss: placed.distanceTo(wanted) };
 }
+// A second pair of arms (2026-11-05, the user: "besalisk 4 arm animation variations"). The model rests them bent, the forearms forward and the hands at the belt (models.tsx
+// `buildHumanoid`), under the first pair, which hangs or holds the gun. They keep their own time and rhythm: against the first pair at a walk (the right lower with the left upper, a little
+// less, so the four swing like a crawling beast's legs), a gesture now and then at rest (a hand lifts and opens, one at a time, each side its own rhythm by the person), drawn in at the
+// belt while the first pair aims or fights (and braced against the trunk's twist, so the hands keep their place as the shoulders turn), tucked in a crouch, thrown up in the air,
+// sculling in water, hanging when prone.
+export interface LowerCtx { t: number; amp: number; swing: number; run: number; calm: number; ready: number; hold: Hold; crouch: number; prone: number; swim: number; air: number; persona: Persona }
+export function lowerArms(out: Pose, J: Joints, c: LowerCtx): void {
+  const { t, amp, swing, run, calm, ready, persona } = c;
+  const twist = J.chest?.[1] ?? 0;
+  const pitch = J.chest?.[0] ?? 0;
+  const upright = 1 - c.prone;
+  for (const side of ["R", "L"] as const) {
+    const sgn = side === "R" ? -1 : 1;
+    // (each side has its own phase: the lower arms never gesture together)
+    const phase = persona.phase * 1.3 + (side === "R" ? 0 : 2.4);
+    const rate = 0.42 + 0.1 * persona.fidget + (side === "R" ? 0 : 0.07);
+    // a gesture swells now and then (a cube of the sine, so that most of the time it is nothing)
+    const g = Math.max(0, Math.sin(t * rate + phase)) ** 3 * calm * persona.fidget;
+    let arm = -sgn * swing * ARM * 0.7 * (1 + 0.5 * run) * persona.swing;
+    let fore = -0.05 * amp;
+    let ay = 0;
+    let az = -sgn * 0.04;
+    arm += -0.32 * g - 0.12 * ready - 0.4 * c.crouch;
+    fore += -0.75 * g - 0.18 * ready - 0.3 * c.crouch;
+    az += -sgn * 0.22 * g;
+    ay = -twist * 0.55 * ready + sgn * 0.1 * g;
+    arm += -pitch * 0.25;
+    // (a breath lifts the hands a touch)
+    arm += Math.sin(t * 1.9 + persona.phase + (side === "R" ? 0 : 1)) * 0.012 * calm;
+    // in the air: thrown up and out; in the water: sculling, tucked when swimming on
+    arm += -1.4 * c.air;
+    az += -sgn * 0.6 * c.air;
+    if (c.swim > 0.001) {
+      arm += (-0.35 + 0.3 * Math.sin(t * 3 + phase)) * c.swim;
+      fore += -0.5 * c.swim;
+      az += -sgn * 0.5 * c.swim;
+    }
+    // prone: let go and hang
+    arm = arm * upright + 0.35 * c.prone;
+    fore = fore * upright - 0.3 * c.prone;
+    setEuler(out, side === "R" ? LIMB.armR2 : LIMB.armL2, arm, ay, az);
+    setEuler(out, side === "R" ? LIMB.foreR2 : LIMB.foreL2, fore, 0, 0);
+  }
+}
 // A person's pose this frame
 export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold, saber: SaberStyle, now: number, legs: LegSize, out: Pose = restPose(), persona: Persona = NEUTRAL, kitOf: SaberKit = "single"): Root {
   for (let i = 1; i < LIMBS; i++) out.set([0, 0, 0, 1], i * 4);
@@ -1243,6 +1299,7 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
     put("shinL", [(0.7 - 0.4 * Math.cos(t * 2.6)) * tread, 0, 0]);
   }
   for (const j of JOINTS) if (J[j]) setEuler(out, LIMB_OF[j], J[j]![0], J[j]![1], J[j]![2]);
+  lowerArms(out, J, { t, amp, swing, run, calm, ready, hold, crouch: c, prone: p, swim: e.swim, air: a, persona });
   // Hair that hangs (models.tsx `head()`: long, wavy, bob, tail, braid): two limbs one under the other from the nape. They swing with the stride (a lift and
   // fall twice a step, more at a run), are flung back by a start and forward by a stop, swing out of a turn, lag a turn of the head, and drift a little at
   // rest; the lower one lags the upper one. And the lids blink every few seconds (a person's own times).
