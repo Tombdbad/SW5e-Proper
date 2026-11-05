@@ -45,7 +45,7 @@ import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderS
 import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, TreeVillages, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
-import { useLamps, useRoomLights, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, KitRoomBlock, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { useLamps, useRoomLights, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, KitRoomBlock, BLOCK_WALL, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -1023,7 +1023,7 @@ function WindowLights({ windows, feet }: { windows: { id: string; x: number; y: 
 
 // A doorway's leaf swings (or rolls up, for a hangar) when it is tapped, and shuts again when it is tapped once more. Its leaf is of what
 // the room's walls are (`wall`, the room's wall set); `bend` lays it and its frame on a curved wall
-function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint, bend, rock, portal }: { portal?: { family: Family; wall: string }; kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string; wall?: WallSet; tint?: string; bend?: Bend; rock?: { biome: string; tier: Tier; seed: number; outside?: boolean } }) {
+function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint, bend, rock, portal, deep }: { deep?: number; portal?: { family: Family; wall: string }; kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string; wall?: WallSet; tint?: string; bend?: Bend; rock?: { biome: string; tier: Tier; seed: number; outside?: boolean } }) {
   const [open, setOpen] = useState(false);
   const isDoor = kind === "door" || kind === "exit";
   // A cave's ways (2026-10-30, the user: "The entry to caves (a standard door) looks all wrong"): no frame and no leaf; the way out is an
@@ -1044,7 +1044,7 @@ function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint
     <>
       <Opening kind={kind} color={color} style={style} scale={kind === "window" && pane ? PANE_SCALE[pane.size] : undefined} bend={bend} />
       {portal && isDoor && !bend && <ArchPiece name={portalOf(portal.family)} wall={portal.wall} thatch={portal.family === "timber"} position={[0, 0, 0.13]} />}
-      {isDoor && <DoorVoid style={style} bend={bend} />}
+      {isDoor && <DoorVoid style={style} bend={bend} deep={deep} />}
       {isDoor && <DoorLeaf open={open} mode={mode} metal={metal} style={style} wall={wall} tint={tint} bend={bend} />}
       {label && <Label at={[0, kind === "window" || kind === "secret" ? 1.2 : 1.9, 0]} size={0.3} color={color}>{label}</Label>}
       {tap && <Hit at={[0, 0.75, 0]} size={[1, 1.5, 0.9]} onTap={tap} label={label ?? kind} />}
@@ -5039,6 +5039,12 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                       <CaveMound mask={l.mask} exits={l.assets.filter((a) => a.kind === "exit").map((a) => ({ x: a.x, y: a.y, side: a.side }))} w={l.width} h={l.height} biome={biome} tier={tierNow} seed={l.width * 31 + l.height} />
                     ) : (
                     <KitRoomBlock w={l.width} d={l.height} height={body} radii={form ? [0, 0, 0, 0] : radiiOf(room)} wall={wallColor} roof={roofed.has(room.id) ? undefined : opened ? "#1a2028" : "#4a525c"} parapet={!opened && !form && !roofed.has(room.id)} band={style.band && !opened && !form} set={wallSet(wallPackOf(building.type), biome)}
+                      holes={!opened && !form && !l.shape && !l.mask ? l.assets.filter((a) => a.side && (a.kind === "exit" || a.kind === "window" || (a.kind === "secret" && room.secretEntry?.found) || (a.kind === "door" && !inRoom(beyond(l, a).x, beyond(l, a).y)))).map((a) => ({
+                        // (cut through the wall where the frame stands: the same openings drawn below, the same outline the frame is made for)
+                        side: a.side as "n" | "e" | "s" | "w",
+                        at: a.side === "n" || a.side === "s" ? a.x + 0.5 : a.y + 0.5,
+                        outline: openingOutline(a.kind, style, a.kind === "window" ? PANE_SCALE[a.pane?.size ?? "small"] ?? [1, 1, 1] : undefined),
+                      })) : undefined}
                       tint={wallColor} drum={!opened && !form && l.shape === "round" ? {
                         // (the ways in and the windows by their angle about the room's centre, 0 east and a quarter turn south, as interiors/architecture.ts reads them)
                         doors: l.assets.filter((a) => a.side && (a.kind === "door" || a.kind === "exit")).map((a) => Math.atan2(a.y + 0.5 - l.height / 2, a.x + 0.5 - l.width / 2)),
@@ -5080,7 +5086,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     </mesh>
                   )}
                   <group position={[at.x, 0, at.z]} rotation={[0, at.turn, 0]}>
-                    <Doorway portal={a.kind === "exit" || a.kind === "door" ? { family, wall } : undefined} rock={building.type === "cave" && !!l.mask ? { biome, tier: tierNow, seed: a.x * 7 + a.y * 13 + l.width, outside: true } : undefined} name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={wallSet(wallPackOf(building.type), biome)} tint={wallColor} bend={place.bend} />
+                    <Doorway portal={a.kind === "exit" || a.kind === "door" ? { family, wall } : undefined} rock={building.type === "cave" && !!l.mask ? { biome, tier: tierNow, seed: a.x * 7 + a.y * 13 + l.width, outside: true } : undefined} name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={wallSet(wallPackOf(building.type), biome)} tint={wallColor} bend={place.bend} deep={!form && !l.shape && !l.mask && Math.min(l.width, l.height) > 2 * BLOCK_WALL + 0.2 ? BLOCK_WALL - 0.01 : 0} />
                     {a.kind === "window" && !form && lit(room) && <WindowGlow style={style} pane={a.pane} bend={place.bend} />}
                   </group>
                   {a.kind === "window" && !form && lit(room) && lift < 0.5 && !place.bend && <WindowSpill at={[at.x, at.z]} out={a.side === "n" ? [0, -1] : a.side === "s" ? [0, 1] : a.side === "w" ? [-1, 0] : [1, 0]} width={0.84 * (PANE_SCALE[a.pane?.size ?? "small"]?.[0] ?? 1)} />}

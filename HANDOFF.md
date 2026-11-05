@@ -1,6 +1,6 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-11-05 evening by a cloud session (it reached the PC only through a file bridge and the open Mixar window: no shell, no npm registry).
+Written 2026-11-05 night by a cloud session (it reached the PC only through a file bridge and the open Mixar window: no shell, no npm registry).
 Branch **`nov5-wiring`** on origin, one commit on top of main 60d3b34. main on origin was fast-forwarded from 97a6034 to 60d3b34 (the PC's nine unpushed
 commits: heads, hair, faces, weapons, the Mixar skill, the architecture kit) by copying the PC's git objects; nothing was rewritten.
 The user's own `client/src/components/ui/Alert.tsx` is still modified on the PC: leave it, never commit it.
@@ -26,7 +26,12 @@ If it stops: read the log, fix on the branch (this code was never type-checked a
 Nothing of this was looked at in a browser. After the deploy, check: the gallery `?section=architecture`; a desert or temperate town with a round room
 (cantina, medcenter); a forest settlement's backdrop; a Mon Calamari, Rodian, Zabrak and Nautolan NPC close up (eyes in the sockets, horns on the skull).
 
+## Since (night, same branch): chin, hair, round rooms, square walls cut (REVIVAL_NOTES "Chin, hair, round rooms kept round, square rooms cut through")
+- head/hair .glb re-exported from Mixar (`builtins.HEAD_EXPORT=True`), head diffuse and strand map rebuilt (tools/build-head-textures.mjs, build-hair-textures.mjs).
+- Planner: corridors slide to keep round rooms round (1111 of 1476 round). tests/world/layouts.test.ts: see the commit message of the planner commit for its result.
+- Square rooms' openings cut through their walls (models.tsx cutShell, LocalMap `holes`). Never type-checked here: the finish script's tsc will tell.
+
 ## Next, in order
-1. Planner step 1 (round rooms lost: 363 of 1,494 tagged come out round), then the gantry form (step 4) so gantries, ramps and bridges can be placed.
-2. Cut openings through the walls of square rooms (RoomBlock is one extrusion).
-3. Heads for Ithorian (a sphere), Duros, Bith, Gran, Kel Dor, Quarren, Weequay, Cerean; droids and troopers belong with the gear.
+1. The gantry form in the planner (round rooms now exist to hang it on): gantryPlan/rampPlan in interiors/architecture.ts, kit pieces in architecture.glb.
+2. Heads for Ithorian (a sphere), Duros, Bith, Gran, Kel Dor, Quarren, Weequay, Cerean (tools/blender/build-species.py, SPECIES_EXPORT).
+3. Look in a browser after the deploy: a square cantina's doorway (cut wall), a round medcenter, a close-up of a human face side-on, curly and messy hair.

@@ -109,8 +109,13 @@ def coarse(x, y, fem, ft=None):
     d += (0.0085 + 0.0020 * fem) * lu * gauss(x, y, 0.0, -0.046 - 0.0006 * (lu - 1), 0.020 * mw, 0.0055 * (0.75 + 0.25 * lu))
     d += (0.0095 + 0.0030 * fem) * ll * gauss(x, y, 0.0, -0.0585 + 0.0006 * (ll - 1), 0.019 * mw, 0.0068 * (0.75 + 0.25 * ll))
     d += -0.0035 * line(x, y, [(-0.026 * mw, -0.0507), (-0.012 * mw, -0.0516), (0.0, -0.0512), (0.012 * mw, -0.0516), (0.026 * mw, -0.0507)], 0.0016)   # (level: a mouth that turns up is a smile, one that turns down a frown)
-    d += -0.0030 * gauss(x, y, 0.0, -0.071, 0.018, 0.0035)
-    d += (0.0070 - 0.0015 * fem) * T["chin"] * gauss(x, y, 0.0, -0.088, 0.020 * (0.9 + 0.1 * T["chin"]), 0.016)
+    # (2026-11-05, the user: "the chin needs to protrude a bit more, with more refined separation between the mouth and the chin, and more definition
+    # between the chin and the neck"): the fold under the lower lip (the mentolabial sulcus) deeper and crisper, the chin's pad fuller and lower, and
+    # the jaw's lower edge a soft ridge from the chin back to the angle of the jaw, so that the underside turns away to the neck at a line
+    d += -0.0068 * gauss(x, y, 0.0, -0.0715, 0.020, 0.0068)
+    d += (0.0130 - 0.0022 * fem) * T["chin"] * gauss(x, y, 0.0, -0.0915, 0.019 * (0.9 + 0.1 * T["chin"]), 0.0145)
+    d += 0.0016 * g2(x, y, 0.010, -0.093, 0.009, 0.008)                                                       # the chin's two soft corners
+    d += (0.0030 - 0.0008 * fem) * l2(x, y, [(0.012, -0.102), (0.035, -0.096), (0.058, -0.080), (0.074, -0.058)], 0.0055)   # the jaw's edge
     return d
 
 def fine(x, y, fem, ft=None):
@@ -172,6 +177,12 @@ def surface(dx, dy, dz, fem, level, variant=None, ft=None):
     x *= 1.0 - (0.24 + 0.06 * fem) * low
     z += (0.012 - 0.003 * fem) * low * smooth(0.2, 0.9, dz)
     y -= 0.012 * low
+    # (the chin brought forward, and the underside of the jaw tucked back toward the neck, so the chin stands off the throat at a clear angle)
+    # (2026-11-05, second pass, the user: "the chin needs to protrude a bit more ... more definition between the chin and the neck": the chin's point brought to about
+    # 4 mm behind the lower lip, and the underside of the jaw lifted into a flatter shelf from the chin back to the throat, the angle under the chin sharper)
+    z += (0.0150 - 0.0030 * fem) * math.exp(-0.5 * ((dx / 0.24) ** 2 + ((dy + 0.69) / 0.085) ** 2)) * smooth(0.3, 0.9, dz)
+    y += (0.0055 - 0.0010 * fem) * smooth(-0.74, -0.84, dy) * (1.0 - smooth(-0.92, -0.99, dy)) * smooth(0.15, 0.5, dz)
+    z -= 0.010 * smooth(-0.86, -0.97, dy) * smooth(-0.2, 0.6, dz)
     z -= 0.006 * smooth(0.0, 0.9, dy) * (1 - front)
     sn = SNOUTS.get(variant) if variant else None
     if sn:
@@ -441,8 +452,10 @@ def mark_of(x, y, variant):
     pale = 0.5 * smooth(-0.03, -0.075, y) * smooth(0.0, 0.05, 0.075 - abs(x))     # the muzzle and the chin a little paler
     return m if m > 0.05 else -pale
 
-def main():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
+def main(reset=True):
+    """`reset` False: built in the open Mixar session (export_live), in the collection made active for it, not on an empty scene"""
+    if reset:
+        bpy.ops.wm.read_factory_settings(use_empty=True)
     rows, segs = (30, 40) if HI else (18, 26)
     exported = []
     plan = [(k, T["fem"], None, 768, T) for k, T in TYPES.items()] + [(k, 0.0, k, 512, None) for k in ("muzzle", "long", "short", "pig", "flat")]
@@ -523,5 +536,166 @@ def main():
     bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", use_selection=True, export_attributes=True, export_normals=True, export_texcoords=True, export_materials="NONE", export_yup=True, export_apply=False)
     print("HEAD", path, {o.name: len(o.data.polygons) for o in exported})
 
+# ---- From the open Mixar session (2026-11-05) ----------------------------------------------------------------------------------------------------
+# `import builtins; builtins.HEAD_EXPORT=True; p=r"...\tools\blender\build-head.py"; exec(compile(open(p).read(),p,"exec"),{"__file__":p,"__name__":"__main__"})`
+# builds head.glb and head.lo.glb (the low heads, the snouted heads, the machine head, masks and head-tails; NOT a bake: the maps stay as they are,
+# which is right while a change is to the coarse shapes both heads share) and hair.glb and hair.lo.glb, into client/public/figures, in a collection of
+# their own that is removed afterwards. `builtins.HEAD_REVIEW=True` instead renders the two people's heads with their atlas and a few hair styles
+# to tools/refs/cache/head-review-*.png.
+def _fresh(name, file):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(os.path.dirname(os.path.abspath(__file__)), file))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod       # (main() hands gear its own module by name)
+    spec.loader.exec_module(mod)
+    return mod
+
+def _scoped(fn, coll_name):
+    coll = bpy.data.collections.new(coll_name)
+    bpy.context.scene.collection.children.link(coll)
+    bpy.context.view_layer.active_layer_collection = bpy.context.view_layer.layer_collection.children[coll.name]
+    try:
+        return fn()
+    finally:
+        for o in list(coll.objects):
+            bpy.data.objects.remove(o, do_unlink=True)
+        bpy.data.collections.remove(coll)
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+FIGURES = os.path.join(REPO, "client", "public", "figures")
+
+def export_live():
+    import shape as _shape
+    keep = list(sys.argv)
+    names = set()
+    try:
+        for lo in (False, True):
+            sys.argv = ["mixar", "--", FIGURES] + (["--lo"] if lo else [])
+            importlib.reload(_shape)
+            hd = _fresh("build_head_export", "build-head.py")
+            hr = _fresh("build_hair_export", "build-hair.py")
+            # (objects of the scene with the names the files use step aside, so that the exported meshes are named exactly what the game looks for)
+            for ob in list(bpy.data.objects):
+                if ob.name.startswith(("head_", "hair_", "beard_", "brows", "tattoo_", "machine_head", "mask_", "lekku", "montral_")) and not ob.name.endswith("_review"):
+                    ob.name = ob.name + "_review"
+            _scoped(lambda: hd.main(reset=False), "claude_head_export")
+            _scoped(lambda: hr.main(reset=False), "claude_hair_export")
+    finally:
+        sys.argv = keep
+        importlib.reload(_shape)
+    print("HEAD EXPORT done")
+
+def review_live():
+    """the people's heads with the atlas (textures/figure/head) and hair styles, rendered close beside each other"""
+    scn = bpy.context.scene
+    keep = (scn.render.engine, scn.camera, scn.render.resolution_x, scn.render.resolution_y, scn.render.filepath)
+    coll = bpy.data.collections.get("claude_head_review")
+    if coll:
+        for o in list(coll.objects):
+            bpy.data.objects.remove(o, do_unlink=True)
+    else:
+        coll = bpy.data.collections.new("claude_head_review")
+        scn.collection.children.link(coll)
+    bpy.context.view_layer.active_layer_collection = bpy.context.view_layer.layer_collection.children[coll.name]
+    hr = _fresh("build_hair_review", "build-hair.py")
+    tex = os.path.join(REPO, "client", "public", "textures", "figure")
+    def img(path, colour=False):
+        im = bpy.data.images.load(path, check_existing=True)
+        im.reload()
+        im.colorspace_settings.name = "sRGB" if colour else "Non-Color"
+        return im
+    def head_material(skin):
+        m = bpy.data.materials.new("review_head")
+        m.use_nodes = True
+        nt = m.node_tree
+        b = nt.nodes.get("Principled BSDF")
+        d = nt.nodes.new("ShaderNodeTexImage"); d.image = img(os.path.join(tex, "head", "diffuse.jpg"), True)
+        n = nt.nodes.new("ShaderNodeTexImage"); n.image = img(os.path.join(tex, "head", "normal.jpg"))
+        mix = nt.nodes.new("ShaderNodeMix"); mix.data_type = "RGBA"; mix.blend_type = "MULTIPLY"; mix.inputs[0].default_value = 1.0
+        mix.inputs[6].default_value = (*skin, 1)
+        nt.links.new(d.outputs[0], mix.inputs[7])
+        nt.links.new(mix.outputs[2], b.inputs["Base Color"])
+        nm = nt.nodes.new("ShaderNodeNormalMap")
+        nt.links.new(n.outputs[0], nm.inputs["Color"])
+        nt.links.new(nm.outputs[0], b.inputs["Normal"])
+        b.inputs["Roughness"].default_value = 0.5
+        return m
+    def hair_material(colour):
+        m = bpy.data.materials.new("review_hair")
+        m.use_nodes = True
+        nt = m.node_tree
+        b = nt.nodes.get("Principled BSDF")
+        t = nt.nodes.new("ShaderNodeTexImage"); t.image = img(os.path.join(tex, "hair", "strands.webp"), True)
+        mix = nt.nodes.new("ShaderNodeMix"); mix.data_type = "RGBA"; mix.blend_type = "MULTIPLY"; mix.inputs[0].default_value = 1.0
+        mix.inputs[6].default_value = (*colour, 1)
+        nt.links.new(t.outputs[0], mix.inputs[7])
+        nt.links.new(mix.outputs[2], b.inputs["Base Color"])
+        nt.links.new(t.outputs[1], b.inputs["Alpha"])
+        b.inputs["Roughness"].default_value = 0.45
+        try:
+            m.surface_render_method = "DITHERED"
+        except Exception:
+            pass
+        return m
+    base = Vector((0, -30, 0))
+    sets = [("m", "hair_short", (0.55, 0.36, 0.25), (0.12, 0.08, 0.05)), ("f", "hair_long", (0.75, 0.55, 0.42), (0.35, 0.2, 0.1)),
+            ("m2", "hair_messy", (0.35, 0.22, 0.14), (0.05, 0.04, 0.03)), ("f2", "hair_bob", (0.62, 0.45, 0.33), (0.6, 0.45, 0.2)),
+            ("m", "hair_quiff", (0.55, 0.36, 0.25), (0.25, 0.15, 0.08)), ("f", "hair_curls", (0.45, 0.3, 0.2), (0.08, 0.06, 0.05))]
+    shots = []
+    for i, (kind, style, skin, hair) in enumerate(sets):
+        at = base + Vector((i * 1.5, 0, 0))
+        T = TYPES[kind]
+        low = head_mesh(f"review_head_{i}", T["fem"], 30, 40, 0, False, None, T)
+        weld_normals(low)
+        u0, v0, du, dv = CELLS[kind]
+        for d in low.data.uv_layers.active.data:
+            d.uv = (u0 + d.uv[0] * du, v0 + d.uv[1] * dv)
+        low.location = at
+        low.data.materials.append(head_material(skin))
+        if style in hr.STYLES:
+            hob = hr.build(hr.STYLES[style]())
+            hob.name = f"review_{style}_{i}"
+            hob.location = at
+            hob.data.materials.append(hair_material(hair))
+        for tag, yaw in (("34", 0.6), ("side", 1.5708), ("back", 2.6)):
+            shots.append((f"head-review-{i}-{kind}-{style}-{tag}", at, at + Vector((0.72 * math.sin(yaw), -0.72 * math.cos(yaw), 0.0))))
+    for nm, loc, en in (("rv_key", (4.0, -32.0, 1.5), 140), ("rv_fill", (-1.5, -31.5, 0.3), 40), ("rv_rim", (4.0, -27.5, 1.2), 70)):
+        l = bpy.data.objects.new(nm, bpy.data.lights.new(nm, "AREA"))
+        coll.objects.link(l)
+        l.location = loc
+        l.data.energy = en
+        l.data.size = 3.0
+        l.rotation_euler = (Vector((3.75, -30, 0)) - Vector(loc)).to_track_quat("-Z", "Y").to_euler()
+    cam = bpy.data.objects.new("rv_cam", bpy.data.cameras.new("rv_cam"))
+    coll.objects.link(cam)
+    cam.data.lens = 85
+    scn.camera = cam
+    engines = [e.identifier for e in bpy.types.RenderSettings.bl_rna.properties["engine"].enum_items]
+    scn.render.engine = "BLENDER_EEVEE_NEXT" if "BLENDER_EEVEE_NEXT" in engines else "BLENDER_EEVEE"
+    scn.render.resolution_x = scn.render.resolution_y = 560
+    hidden = [o for o in scn.objects if o.name not in coll.objects and not o.hide_render]
+    for o in hidden:
+        o.hide_render = True
+    try:
+        for name, look, frm in shots:
+            cam.location = frm
+            cam.rotation_euler = (look + Vector((0, 0, -0.02)) - frm).to_track_quat("-Z", "Y").to_euler()
+            scn.render.filepath = os.path.join(REPO, "tools", "refs", "cache", name + ".png")
+            bpy.ops.render.render(write_still=True)
+    finally:
+        for o in hidden:
+            o.hide_render = False
+        scn.render.engine, scn.camera, scn.render.resolution_x, scn.render.resolution_y, scn.render.filepath = keep
+    print("HEAD REVIEW", len(shots), "shots")
+
 if __name__ == "__main__":
-    main()
+    import builtins as _b
+    if bpy.app.background:
+        main()
+    elif getattr(_b, "HEAD_EXPORT", False):
+        _b.HEAD_EXPORT = False
+        export_live()
+    elif getattr(_b, "HEAD_REVIEW", False):
+        _b.HEAD_REVIEW = False
+        review_live()
+    else:
+        print("build-head.py: set builtins.HEAD_EXPORT or builtins.HEAD_REVIEW first (a plain run here would reset the scene)")

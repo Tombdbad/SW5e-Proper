@@ -44,17 +44,30 @@ def inflated(p, m):
 def skull_normal(p):
     return V((p.x / BX ** 2, p.y / BY ** 2, p.z / BZ ** 2)).normalized()
 
+# (2026-11-05, the user: "some hair tufts seem to be floating above the scalp"): the roots and the collisions were on the skull's ELLIPSOID, but the
+# head is not one: build-head.py `surface` pulls the back of the crown in by 6 mm, narrows the head below the temples toward the jaw and moves the
+# forehead and the brow; a lock rooted on the ellipsoid there stood up to 6 mm off the scalp. Both now use the head's own surface, sampled in the
+# direction of the point (the ellipsoid's coordinates, as `surface` takes them), with the ellipsoid kept only for the soft normals.
+def surface_at(p, fem=0.0):
+    """the head's own surface in the direction of p"""
+    d = V((p.x / BX, p.y / BY, p.z / BZ))
+    l = d.length or 1.0
+    return V(head.surface(d.x / l, d.y / l, d.z / l, fem, 0))
+
 def on_skull(phi, theta, m):
     d = V((math.sin(theta) * math.sin(phi), math.cos(theta), math.sin(theta) * math.cos(phi)))
-    p = V((d.x * (BX + m), d.y * (BY + m), d.z * (BZ + m)))
-    return p
+    s = V(head.surface(d.x, d.y, d.z, 0.0, 0))
+    return s + skull_normal(s) * m
 
 SHOULDERS = (V((0, -0.33, -0.012)), (0.205, 0.235, 0.125))   # the upper chest and the shoulders: an ellipsoid whose top is at y -0.095
 def push_out(p, m, steps=1):
     q = p.copy()
-    f = inflated(q, m)
-    if f < 1.0:
-        q = q / math.sqrt(max(f, 1e-6))
+    # (out of the head itself: no nearer the middle than its surface, plus the layer's margin)
+    if q.y > -0.14:
+        s = surface_at(q)
+        reach = s.length + m
+        if q.length < reach:
+            q = q * (reach / max(q.length, 1e-6))
     # the neck: a cylinder
     if -0.30 < q.y < -0.075:
         r = math.hypot(q.x, q.z)
@@ -133,7 +146,8 @@ def card(bm, uvl, aol, pts, width, u0, rng, bow=0.2, taper=(1.0, 0.85, 0.4), sha
         cols = []
         for c in range(across + 1):
             f = c / across - 0.5
-            q = p + W * (f * w) + nrm * (bow * w * (1 - (2 * f) ** 2))
+            # (bowed out along its length, but not at the root, where a bowed card stood off the scalp: 2026-11-05)
+            q = p + W * (f * w) + nrm * (bow * w * (1 - (2 * f) ** 2) * smooth(0.0, 0.4, t))
             # the normal: the card's, softened toward the head's own so that the whole mass shades as one
             nm = (nrm * (1 - radial) + out * radial).normalized()
             cols.append((q, nm, u0 + 0.25 * (c / across), t))
@@ -240,7 +254,9 @@ def cap(bm, uvl, aol, table, top=-0.1, m=0.0025, mask=None, fem=0.0, rows=18, se
             for c in corners:
                 if all(c[0] is not u[0] for u in uniq):
                     uniq.append(c)
-            if len(uniq) < 3 or sum(1 for c in uniq if not c[3]) < 2:
+            # (a quad with one corner above the hairline is kept too: its other corners are on the line, so it fills the notch that dropping it left, and
+            # the cap's edge runs along the hairline instead of in steps of the grid, 2026-11-05)
+            if len(uniq) < 3 or sum(1 for c in uniq if not c[3]) < 1:
                 continue
             centre = sum((c[1] for c in uniq), V(0, 0, 0)) / len(uniq)
             if mask and not mask(centre):
@@ -255,7 +271,14 @@ def cap(bm, uvl, aol, table, top=-0.1, m=0.0025, mask=None, fem=0.0, rows=18, se
                 continue
             for loop, o in zip(f.loops, order):
                 q = o[1]
-                loop[uvl].uv = (CAP_U + 0.25 * (0.5 + 0.5 * max(-1.0, min(1.0, q.x / (BX + 0.01)))), 0.2 + 0.8 * max(0.0, min(1.0, (q.y + 0.12) * 3.4)))
+                # (the strands of the cap run from the crown down, as the hair falls: u round the head (eight strips of the map's opaque quarter,
+                # mirrored so that there is no seam), v from the crown to the hairline. 2026-11-05: they were laid by x and y, which drew rings
+                # like the grain of wood on the crown)
+                ang = math.atan2(q.x / BX, q.z / BZ)
+                band = (ang / math.pi + 1.0) * 4.0
+                frac = band % 2.0
+                tilt = math.acos(max(-1.0, min(1.0, q.y / (BY + 0.004))))
+                loop[uvl].uv = (CAP_U + 0.25 * (frac if frac <= 1.0 else 2.0 - frac), 0.15 + 0.85 * max(0.0, min(1.0, tilt / 2.0)))
                 loop[aol] = ao
 
 # ---- The styles ---------------------------------------------------------------------------------------------------------------------------
@@ -273,7 +296,9 @@ class Style:
 
 def guide(st, phi, theta, m, d0, length, width, **kw):
     rng = st.rng
-    p0 = on_skull(phi, theta, m)
+    # (rooted just under the cap's skin, 1.5 mm off the scalp, so that a lock grows out of the hair under it and is not a plate over it; its layer's
+    # margin `m` keeps the rest of it out from the head as before)
+    p0 = on_skull(phi, theta, min(m, 0.0015))
     n = skull_normal(p0)
     d = tangent(d0, n)
     length = length * (1 + rng.uniform(-0.12, 0.12))
@@ -286,7 +311,7 @@ SHORT_LINE = [(0, 0.060), (40, 0.052), (70, 0.030), (95, 0.008), (125, -0.010), 
 def lerpv(a, b, t):
     return a + (b - a) * t
 
-def style_crop(name, seed, length=0.042, n=84, lift=0.5, table=None, top=-0.03):
+def style_crop(name, seed, length=0.042, n=84, lift=0.3, table=None, top=-0.03):
     st = Style(name, seed)
     table = table or [(0, 0.060), (40, 0.052), (70, 0.032), (95, 0.012), (130, -0.005), (180, -0.020)]
     st.cap = dict(table=table, top=top, m=0.0028)
@@ -353,7 +378,7 @@ def style_messy(name, seed, length=0.095, n=110, wave=0.016):
             if p0.z > 0.05 and p0.y > 0.035:
                 d0 = V(st.rng.uniform(-0.5, 0.5), -0.2, 0.7)       # the fringe falls forward
                 L *= 0.7
-            guide(st, phi, theta, m, d0, L, 0.028, gravity=0.75, stiff=0.42, lift=0.35, wave=wave, curl_freq=1.5, phase=st.rng.uniform(0, 6))
+            guide(st, phi, theta, m, d0, L, 0.028, gravity=0.75, stiff=0.42, lift=0.2, wave=wave, curl_freq=1.5, phase=st.rng.uniform(0, 6))
     return st
 
 def style_curls(name, seed, n=120, volume=0.012):
@@ -363,8 +388,11 @@ def style_curls(name, seed, n=120, volume=0.012):
     for layer, m in enumerate((0.004, 0.012 + volume, 0.020 + volume * 2)):
         for phi, theta in roots(int(n * DENSITY / 3), st.rng, [(0, 0.064), (35, 0.058), (65, 0.038), (90, 0.014), (120, -0.015), (180, -0.045)], top=-0.06):
             p0 = on_skull(phi, theta, m)
-            d0 = skull_normal(p0) + V(st.rng.uniform(-0.3, 0.3), st.rng.uniform(-0.1, 0.3), st.rng.uniform(-0.3, 0.3))
-            guide(st, phi, theta, m, d0, 0.04 + 0.015 * layer, 0.024, gravity=0.4, stiff=0.45, lift=0.5, curl=0.012, curl_freq=2.2, phase=st.rng.uniform(0, 6))
+            # (laid down the head's slope as much as off it: straight out along the normal, the cards stood off the head as flat tufts, 2026-11-05)
+            nrm = skull_normal(p0)
+            down = V(0, -1, 0) - nrm * (-nrm.y)
+            d0 = nrm * 0.55 + (down.normalized() if down.length > 1e-6 else V(0, 0, -1)) + V(st.rng.uniform(-0.25, 0.25), st.rng.uniform(-0.1, 0.15), st.rng.uniform(-0.25, 0.25))
+            guide(st, phi, theta, m, d0, 0.034 + 0.012 * layer, 0.024, gravity=0.5, stiff=0.45, lift=0.12, curl=0.010, curl_freq=2.2, phase=st.rng.uniform(0, 6))
     return st
 
 def style_long(name, seed, length=0.46, n=120, wave=0.0, bangs=True, curl_freq=1.6):
@@ -695,8 +723,10 @@ def preview(obs, path, yaw, pitch=0.0, scale=0.7, centre=(0, 0, 0)):
     scn.render.filepath = path
     bpy.ops.render.render(write_still=True)
 
-def main():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
+def main(reset=True):
+    """`reset` False: built in the open Mixar session (build-head.py export_live), in the collection made active for it"""
+    if reset:
+        bpy.ops.wm.read_factory_settings(use_empty=True)
     only = arg("--only")
     names = [n for n in STYLES if not only or n in only.split(",")]
     made = []
@@ -721,4 +751,7 @@ def main():
     print("HAIR", path, {o.name: len(o.data.polygons) * 2 for o in made})
 
 if __name__ == "__main__":
-    main()
+    if bpy.app.background:
+        main()
+    else:
+        print("build-hair.py: run it headless, or through build-head.py's in-session export (builtins.HEAD_EXPORT), which builds the hair too")

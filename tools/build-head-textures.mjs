@@ -40,7 +40,8 @@ function planeOf(u, v, fem) {
   const dy = Math.cos(th), dx = Math.sin(th) * Math.sin(ph);
   const l0 = Math.max(0, Math.min(1, (dy + 0.05) / -0.9));
   const low = l0 * l0 * (3 - 2 * l0);
-  return { x: dx * BX * (1 - (0.24 + 0.06 * fem) * low), y: dy * BY - 0.012 * low };
+  // (`front`: how far the texel faces forward; the plane is the same for the back of the head, which took the face's lips and nostrils too, 2026-11-05)
+  return { x: dx * BX * (1 - (0.24 + 0.06 * fem) * low), y: dy * BY - 0.012 * low, front: smoothstep(-0.05, 0.3, Math.cos(ph)) };
 }
 // A soft brow bed under where the hair cards lie (build-hair.py BROWS): a slight darkening along the arch, 1 at the middle of it
 function bed(x, y) {
@@ -85,8 +86,8 @@ for (const [name, { cell, size }] of Object.entries(atlas)) {
       let shade = 0.82 + 0.18 * occ, grain = 0.55 + 0.45 * mottle;
       if (photo) {
         const p = planeOf((x + 0.5) / size, 1 - (y + 0.5) / size, fem);
-        ratio = photo.at(p.x, p.y) ?? [1, 1, 1];
-        const b = 1 - 0.16 * bed(p.x, p.y);
+        ratio = (photo.at(p.x, p.y) ?? [1, 1, 1]).map((r) => 1 + (r - 1) * p.front);
+        const b = 1 - 0.16 * bed(p.x, p.y) * p.front;
         ratio = ratio.map((r) => r * b * 0.93);
         shade = 0.95 + 0.05 * occ;
         grain = 0.82 + 0.18 * mottle;

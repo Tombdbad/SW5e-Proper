@@ -56,7 +56,8 @@ function strip(x0, count, width, seed, ragged) {
     if (t > 0.1) continue;
     for (let x = x0; x < x0 + STRIP; x++) {
       const k = y * N + x;
-      if (alpha[k] < 1) { alpha[k] = 1; grey[k] = Math.max(grey[k], 0.5 + 0.3 * rng(x * 977 + y)()); }
+      // (filled by column, a strand's tone along the whole band: a tone for each texel was a speckle of static at every card's root, 2026-11-05)
+      if (alpha[k] < 1) { grey[k] = Math.max(grey[k] * alpha[k], (0.5 + 0.3 * rng(x * 977 + 13)()) * (0.8 + 0.2 * smooth(0, 0.25, t))); alpha[k] = 1; }
     }
   }
 }
@@ -78,7 +79,9 @@ strip(STRIP * 2, 38, 2.4, 33, true);
     const across = Math.abs(f - i - 0.5) * 2;
     const along = 0.9 + 0.1 * Math.sin((y / N) * Math.PI * 2 * (c.k + 2) + c.phase);
     const tv = (N - 1 - y) / (N - 1);
-    const ring = 0.86 + 0.34 * Math.exp(-(((tv - 0.72) / 0.1) ** 2));      // (a ring of light round the crown)
+    // (a ring of light round the crown: build-hair.py lays the cap's v from 0.15 at the crown to 1 under the ears, so the ring is about 40 degrees down
+    // from the crown, where the light catches it; at 0.72 it was a pale band at the ears, 2026-11-05)
+    const ring = 0.86 + 0.3 * Math.exp(-(((tv - 0.42) / 0.12) ** 2));
     grey[y * N + x0 + x] = c.tone * along * ring * (1 - 0.35 * across ** 2);
     alpha[y * N + x0 + x] = 1;
   }

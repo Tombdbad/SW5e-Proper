@@ -26,7 +26,7 @@ import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from 
 import { toneNameOf, type KitLook } from "./interiors/kitbash";
 import { TONES } from "./interiors/tones";
 import { hullWear, speederWear, type Wear } from "./interiors/wear";
-import type { Bend } from "./interiors/Walls";
+import { piercedWall, holeOf, type Bend } from "./interiors/Walls";
 
 // ---------------------------------------------------------------------------------------------
 // The 3D models of the map: people, droids, creatures, furniture, ships, vehicles and buildings.
@@ -1583,12 +1583,49 @@ function TexturedBody({ id, set, tint, build, position }: { id: string; set: Wal
   return geo ? <mesh geometry={geo} position={position} material={wallMaterial(set, { tint })} castShadow receiveShadow /> : null;
 }
 
-// `bare` leaves the walls out (the roof, its parapet and the band stay): a round room built of the kit's wall bays (LocalMap `DrumWalls`)
-export function RoomBlock({ w, d, height, radii, wall, roof, parapet, band, dim, set, bare = false }: { w: number; d: number; height: number; radii: [number, number, number, number]; wall: string; roof?: string; parapet?: boolean; band?: boolean; dim?: boolean; set?: WallSet; bare?: boolean }) {
+// `bare` leaves the walls out (the roof, its parapet and the band stay): a round room built of the kit's wall bays (KitRoomBlock)
+// `holes`: the ways in and the windows in its outer walls (2026-11-05, the user: "ALL doorways and windows MUST remove the wall mesh/texture within the
+// door/window frame"): the walls are then built as slabs with those openings cut through them (interiors/Walls.tsx `piercedWall`, the outline the frame
+// is made for, `openingOutline`), the rounded corners as before, a thin cap on top, and a dark core inside, so that a doorway shows the dark of the room
+// and not a wall behind its frame. `side` the wall it is in, `at` the middle of its square along that wall from the room's corner (squares), `outline` its hole.
+export interface BlockHole { side: "n" | "e" | "s" | "w"; at: number; outline: [number, number][] }
+export const BLOCK_WALL = 0.16;
+function cutShell(k: Kit, w: number, d: number, r: [number, number, number, number], height: number, color: string, holes: BlockHole[]) {
+  const t = BLOCK_WALL;
+  // (a run of wall along one side, from a0 to a1 along it, at `across` across, with its holes; `alongX` for the north and south walls)
+  const run = (a0: number, a1: number, across: number, alongX: boolean, side: BlockHole["side"]) => {
+    if (a1 - a0 < 1e-3) return;
+    const mine = holes.filter((h) => h.side === side).map((h) => ({ c: h.at - (alongX ? w : d) / 2, hole: holeOf(h.outline) })).filter((h) => h.c - 0.5 >= a0 - 1e-3 && h.c + 0.5 <= a1 + 1e-3).sort((a, b) => a.c - b.c);
+    const place = (geo: THREE.BufferGeometry, c: number) => k.add(geo, color, { at: alongX ? [c, 0, across] : [across, 0, c], rot: alongX ? undefined : [0, Math.PI / 2, 0] });
+    let from = a0;
+    for (const h of mine) {
+      if (h.c - 0.5 - from > 1e-3) place(new THREE.BoxGeometry(h.c - 0.5 - from, height, t).translate(0, height / 2, 0), (from + h.c - 0.5) / 2);
+      const g = piercedWall(h.hole, height, t);
+      if (g) place(g, h.c);
+      from = h.c + 0.5;
+    }
+    if (a1 - from > 1e-3) place(new THREE.BoxGeometry(a1 - from, height, t).translate(0, height / 2, 0), (from + a1) / 2);
+  };
+  const [nw, ne, se, sw] = r;
+  run(-w / 2 + nw, w / 2 - ne, -d / 2 + t / 2, true, "n");
+  run(-w / 2 + sw, w / 2 - se, d / 2 - t / 2, true, "s");
+  run(-d / 2 + Math.max(nw, t), d / 2 - Math.max(sw, t), -w / 2 + t / 2, false, "w");
+  run(-d / 2 + Math.max(ne, t), d / 2 - Math.max(se, t), w / 2 - t / 2, false, "e");
+  // (the rounded corners: a quarter of a ring each, its outside on the room's outline, turned as CornerWall turns them)
+  const centres: [number, number][] = [[-w / 2 + nw, -d / 2 + nw], [w / 2 - ne, -d / 2 + ne], [w / 2 - se, d / 2 - se], [-w / 2 + sw, d / 2 - sw]];
+  r.forEach((rad, i) => {
+    if (rad < t + 1e-3) return;
+    k.group([centres[i][0], 0, centres[i][1]], undefined, undefined, () => shell(k, rad - t, t, height, color, { start: [Math.PI, Math.PI / 2, 0, -Math.PI / 2][i], arc: Math.PI / 2 }));
+  });
+  upright(k, planRect(w, d, r), 0.04, color, { y: height - 0.04 });
+}
+
+export function RoomBlock({ w, d, height, radii, wall, roof, parapet, band, dim, set, bare = false, holes }: { w: number; d: number; height: number; radii: [number, number, number, number]; wall: string; roof?: string; parapet?: boolean; band?: boolean; dim?: boolean; set?: WallSet; bare?: boolean; holes?: BlockHole[] }) {
   const r = radii.map(r2) as [number, number, number, number];
   const body = dim ? shade(wall, 0.45) : wall;
-  const shell = (k: Kit) => upright(k, planRect(w, d, r), height, body, { bevel: 0.04 });
-  const shape = `block:${w}x${d}:${r2(height)}:${r.join(",")}:${body}`;
+  const cut = !!holes?.length && Math.min(w, d) > 2 * BLOCK_WALL + 0.2;
+  const shell = (k: Kit) => (cut ? cutShell(k, w, d, r, height, body, holes!) : upright(k, planRect(w, d, r), height, body, { bevel: 0.04 }));
+  const shape = `block:${w}x${d}:${r2(height)}:${r.join(",")}:${body}${cut ? `:h${holes!.map((h) => `${h.side}${h.at}/${h.outline.length}`).join(",")}` : ""}`;
   // The parapet round the roof is of the wall too (2026-10-27: it was a plain colour over the textured walls)
   const rim = (k: Kit) => {
     const ring = planRect(w + 0.2, d + 0.2, r.map((x) => (x ? x + 0.1 : 0)) as typeof r);
@@ -1604,6 +1641,8 @@ export function RoomBlock({ w, d, height, radii, wall, roof, parapet, band, dim,
         position={[w / 2, 0, d / 2]}
         build={(k) => {
           if (!set && !bare) shell(k);
+          // (the dark inside a block whose walls have openings: what a doorway or a window shows)
+          if (cut && !bare) upright(k, planRect(w - 2 * BLOCK_WALL - 0.02, d - 2 * BLOCK_WALL - 0.02, r.map((x) => Math.max(0, x - BLOCK_WALL)) as typeof r), height - 0.06, "#0b0c0e");
           if (band) upright(k, planRect(w + 0.06, d + 0.06, r.map((x) => (x ? x + 0.03 : 0)) as typeof r), 0.12, shade(body, 0.72), { y: height - 0.3, bevel: 0.02 });
           if (roof) upright(k, planRect(w + 0.2, d + 0.2, r.map((x) => (x ? x + 0.1 : 0)) as typeof r), 0.1, roof, { y: height, bevel: 0.02 });
           if (parapet && !set) rim(k);
@@ -1700,7 +1739,8 @@ function doorShape(style: Pick<Style, "arch" | "porthole"> | undefined, inset = 
 // beyond is not drawn (its block stands right behind the wall, so its own wall face was seen in the frame), so the frame's opening is filled with
 // the dark of the way beyond, on the plane of the wall (the neighbour's face is on it too: the fill is drawn in front by a polygon offset).
 // The leaf shuts it while it is closed.
-export function DoorVoid({ style, bend }: { style?: Pick<Style, "arch" | "porthole">; bend?: Bend }) {
+// `deep`: the wall is cut through (RoomBlock `holes`), so the dark stands at its inside face and the cut's sides show in the frame
+export function DoorVoid({ style, bend, deep = 0 }: { style?: Pick<Style, "arch" | "porthole">; bend?: Bend; deep?: number }) {
   const geo = useMemo(() => {
     const g = new THREE.ShapeGeometry(doorShape(style, 0), 10);
     if (!bend) return g;
@@ -1710,7 +1750,7 @@ export function DoorVoid({ style, bend }: { style?: Pick<Style, "arch" | "portho
   }, [style?.arch, style?.porthole, bend?.key]);
   useEffect(() => () => geo.dispose(), [geo]);
   return (
-    <mesh geometry={geo} raycast={() => null}>
+    <mesh geometry={geo} raycast={() => null} position={[0, 0, deep]}>
       <meshBasicMaterial color="#06080c" side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={-4} polygonOffsetUnits={-4} />
     </mesh>
   );
