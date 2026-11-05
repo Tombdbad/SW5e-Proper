@@ -1,0 +1,10 @@
+{
+  "_note": "The second masculine face is the first turned about (the other two men on the sheet are mugshots: a frown, a pout, stubble and a moustache are in their colour).", "_": "Landmarks of the reference faces in tools/refs/snips/face-scans-sheet.png (the user's screenshot of four unwrapped photo-scan face textures, 2026-11-05: 'borrow HEAVILY from this image'). Each face is a crop of the sheet [left, top, width, height] and the places, in the crop's own pixels, of the two eyes' centres, the line of the mouth and the bottom of the chin; `top` is how high up the face (in metres in the head's own frame) the photograph is used before the hair begins. tools/face-scans.mjs makes a colour map of each in the head's face plane (the skin's own colour divided out, so that it serves every skin tone), tools/build-head-textures.mjs lays it on the atlas.",
+  "mesh": { "eyeX": 0.040, "eyeY": 0.0165, "mouthY": -0.0512 },
+  "faces": {
+    "m": { "crop": [8, 725, 428, 290], "eyes": [[181, 126], [236, 126]], "mouth": 186, "chin": 227, "top": 0.072 },
+    "m2": { "crop": [8, 725, 428, 290], "eyes": [[181, 126], [236, 126]], "mouth": 186, "chin": 227, "top": 0.072, "mirror": true },
+    "f": { "crop": [445, 748, 428, 285], "eyes": [[183, 113], [240, 113]], "mouth": 175, "chin": 211, "top": 0.080 },
+    "f2": { "crop": [445, 10, 428, 290], "eyes": [[184, 125], [245, 125]], "mouth": 189, "chin": 230, "top": 0.040 }
+  }
+}

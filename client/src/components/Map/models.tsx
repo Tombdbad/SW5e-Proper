@@ -3513,7 +3513,7 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
   const molded = headParts && !look.mask && !look.machine && look.head !== "cone" && look.head !== "hammer" ? headParts : undefined;
   // (made for a skull of 0.100 by 0.118 by 0.112: the sphere's scale, as it was; the hair and brows, made for the same skull, take it too)
   const fit = headFitOf(p.seed);
-  const skullScale: V3 = [sk.scale[0] * 1.15 * fit[0], sk.scale[1] * 0.975 * fit[1], sk.scale[2] * 1.027 * fit[2]];
+  const skullScale: V3 = [sk.scale[0] * 0.98 * fit[0], sk.scale[1] * 0.975 * fit[1], sk.scale[2] * 1.027 * fit[2]];
   // Hair, brows and beards drawn as cards (tools/blender/build-hair.py), where this head is the one they were made for
   const hairs = molded && fresh && headParts === fresh ? hairParts() : null;
   if (look.head === "cone") k.lathe([[0, -0.11], [0.095, -0.085], [0.115, 0], [0.095, 0.1], [0.06, 0.2], [0, 0.25]], face, { seg: 16 });
@@ -3543,19 +3543,22 @@ function head(k: Kit, look: Look, o: Outfit, p: Body) {
   else if (look.glowEyes) eyes([[-0.04, 0.015, 0.1], [0.04, 0.015, 0.1]], 0.016);
   else k.pair((s) => {
     // An eye: its white, the iris in the eye's colour and the pupil, under a brow in the hair's colour (or a darker skin), set in a lid
-    const at: V3 = [s * 0.04, 0.015, molded ? 0.09 : 0.098];
+    const at: V3 = [s * 0.04 * (molded ? skullScale[0] : 1), 0.015, molded ? 0.09 : 0.098];
     // (on the sculpted head the eye is a size smaller and the iris smaller still, a ring of white round it: the lids are in the head)
     const fine = !!hairs || !!snouted;
     const iris = p.eye && p.eye !== "#2a2a2e" ? p.eye : "#4e3420";
     if (fine) {
       // (the white a little off white, an iris disc drawn with its own picture (fibres, a dark ring, a black pupil), a catchlight, and the lid on the limb that blinks)
-      k.sphere(0.0165, "#e8e2d8", { at, scale: [1.2, 0.85, 0.6], finish: "sheen", seg: [10, 7] });
+      // (2026-11-05, "weird expressions": the eye was a size too large and the lid too high, a stare; now a smaller eye, the iris covered a little by the lid at rest)
+      k.sphere(0.0148, "#e8e2d8", { at, scale: [1.1, 0.74, 0.6], finish: "sheen", seg: [10, 7] });
       // (the iris and its glint turn about the eyeball, so that the eye looks about: limbs gazeR and gazeL)
       k.limb(s > 0 ? LIMB.gazeL : LIMB.gazeR, at, () => {
-        k.add(irisCap(), iris, { at: [at[0], at[1], at[2] + 0.0012], finish: "eye" });
-        k.sphere(0.0019, "#ffffff", { at: [at[0] - 0.0028, at[1] + 0.0034, at[2] + 0.0112], finish: "glow", seg: [5, 4] });
+        k.add(irisCap(), iris, { at: [at[0], at[1], at[2] + 0.0008], scale: 0.9, finish: "eye" });
+        k.sphere(0.0017, "#ffffff", { at: [at[0] - 0.0026, at[1] + 0.0030, at[2] + 0.0100], finish: "glow", seg: [5, 4] });
       });
-      k.limb(LIMB.lids, [0, 0.015, molded ? 0.088 : 0.096], () => k.sphere(0.0185, face, { at: [at[0], at[1] + 0.006, at[2] - 0.002], scale: [1.2, 0.5, 0.62], theta: [0, 1.2], seg: [8, 4] }));
+      k.limb(LIMB.lids, [0, 0.015, molded ? 0.088 : 0.096], () => k.sphere(0.0166, face, { at: [at[0], at[1] + 0.0028, at[2] - 0.0015], scale: [1.12, 0.52, 0.64], theta: [0, 1.34], seg: [8, 4] }));
+      // (the lower lid: a low cap that rises under the iris, so that no white shows under it: a stare shows white all round the iris)
+      k.sphere(0.0166, face, { at: [at[0], at[1] - 0.0036, at[2] - 0.0008], scale: [1.14, 0.45, 0.7], theta: [1.8, Math.PI], seg: [8, 4] });
     } else {
       k.sphere(0.019, "#ece6dc", { at, scale: [1.2, 0.85, 0.6], finish: "sheen", seg: [8, 6] });
       k.sphere(0.0105, iris, { at: [at[0], at[1], at[2] + 0.009], scale: [1, 1, 0.5], finish: "sheen", seg: [8, 6] });

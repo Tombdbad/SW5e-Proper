@@ -1319,7 +1319,7 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
     // fighting, and they trail a turn of the head
     const phase = t * 0.55 + persona.phase;
     const flick = clamp01((phase % 1) * 9);
-    const spot = (n: number) => [Math.sin(n * 12.9898 + persona.phase * 3.1) * 0.32, Math.sin(n * 78.233 + persona.phase) * 0.14];
+    const spot = (n: number) => [Math.sin(n * 12.9898 + persona.phase * 3.1) * 0.2, Math.sin(n * 78.233 + persona.phase) * 0.09];
     const [from, to] = [spot(Math.floor(phase) - 1), spot(Math.floor(phase))];
     const ease = flick * flick * (3 - 2 * flick);
     const looking = 0.35 + 0.65 * calm;

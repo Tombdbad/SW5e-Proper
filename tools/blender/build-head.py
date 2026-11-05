@@ -36,10 +36,10 @@ CELLS = {"m": (0.0, 0.625, 0.375, 0.375), "m2": (0.375, 0.625, 0.375, 0.375), "f
 # fem 0 or 1 (a softer brow, a smaller jaw and nose, fuller lips); nose_w the nose's width, nose_h how far it stands out, nose_y where its tip is (metres, + up); lip_u and
 # lip_l the fullness of the upper and the lower lip, mouth_w the width of the mouth; brow the ridge over the eyes, chin, cheek; tint how red the lips are painted
 TYPES = {
-    "m": dict(fem=0.0, nose_w=1.0, nose_h=1.0, nose_y=0.0, lip_u=1.0, lip_l=1.0, mouth_w=1.0, brow=1.0, chin=1.0, cheek=1.0, tint=0.5),
-    "m2": dict(fem=0.0, nose_w=1.22, nose_h=1.12, nose_y=-0.002, lip_u=0.74, lip_l=0.86, mouth_w=1.08, brow=1.3, chin=1.14, cheek=0.85, tint=0.4),
-    "f": dict(fem=1.0, nose_w=1.0, nose_h=1.0, nose_y=0.0, lip_u=1.0, lip_l=1.0, mouth_w=1.0, brow=1.0, chin=1.0, cheek=1.0, tint=0.75),
-    "f2": dict(fem=1.0, nose_w=0.86, nose_h=0.94, nose_y=0.002, lip_u=1.3, lip_l=1.2, mouth_w=0.94, brow=0.75, chin=0.9, cheek=1.22, tint=0.85),
+    "m": dict(fem=0.0, nose_w=1.0, nose_h=1.22, nose_y=0.0, lip_u=1.0, lip_l=1.0, mouth_w=1.0, brow=1.0, chin=1.0, cheek=1.0, tint=0.5),
+    "m2": dict(fem=0.0, nose_w=1.18, nose_h=1.34, nose_y=-0.002, lip_u=0.74, lip_l=0.86, mouth_w=1.08, brow=1.3, chin=1.14, cheek=0.85, tint=0.4),
+    "f": dict(fem=1.0, nose_w=0.96, nose_h=1.18, nose_y=0.0, lip_u=1.0, lip_l=1.0, mouth_w=1.0, brow=1.0, chin=1.0, cheek=1.0, tint=0.75),
+    "f2": dict(fem=1.0, nose_w=0.86, nose_h=1.10, nose_y=0.002, lip_u=1.3, lip_l=1.2, mouth_w=0.94, brow=0.75, chin=0.9, cheek=1.22, tint=0.85),
 }
 
 # ---- Landmarks and features ---------------------------------------------------------------------------------------------------------
@@ -84,8 +84,8 @@ def coarse(x, y, fem, ft=None):
     """the shapes the low head can carry: eye sockets, brow, nose, cheeks, lips, chin (metres, outward)"""
     T = ft or TYPES["m"]
     nw, nh, ny, mw = T["nose_w"], T["nose_h"], T["nose_y"], T["mouth_w"]
-    d = -0.0135 * g2(x, y, 0.040, 0.016, 0.026, 0.018)
-    d += (0.0095 - 0.0045 * fem) * T["brow"] * l2(x, y, [(0.014, 0.036), (0.030, 0.043), (0.048, 0.046), (0.068, 0.040), (0.082, 0.034)], 0.0075)
+    d = -0.0115 * g2(x, y, 0.040, 0.016, 0.026, 0.018)
+    d += (0.0082 - 0.0040 * fem) * T["brow"] * l2(x, y, [(0.014, 0.036), (0.030, 0.043), (0.048, 0.046), (0.068, 0.040), (0.082, 0.034)], 0.0075)
     d += (0.003 - 0.001 * fem) * gauss(x, y, 0.0, 0.034, 0.014, 0.012)
     # the nose: a bridge widening to the tip, the tip's bulb, the wings, and the nostrils just above the base of the nose, where the lip begins (2026-11-05: they were
     # at -0.029, under the nose, on the lip)
@@ -102,13 +102,13 @@ def coarse(x, y, fem, ft=None):
     d += 0.0050 * ns * g2(x, y, 0.0150 * nw, -0.0225 + ny, 0.0075, 0.0065)
     d += -0.0055 * g2(x, y, 0.0078 * nw, -0.0245 + ny, 0.0045, 0.0034)
     d += (0.0060 + 0.0010 * fem) * T["cheek"] * g2(x, y, 0.066, -0.012, 0.026, 0.022)
-    d += -0.0042 * g2(x, y, 0.062, -0.052, 0.022, 0.022)
+    d += -0.0026 * g2(x, y, 0.062, -0.052, 0.022, 0.022)
     d += -0.0030 * g2(x, y, 0.088, 0.040, 0.020, 0.028)
     # the lips and the chin
     lu, ll = T["lip_u"], T["lip_l"]
     d += (0.0085 + 0.0020 * fem) * lu * gauss(x, y, 0.0, -0.046 - 0.0006 * (lu - 1), 0.020 * mw, 0.0055 * (0.75 + 0.25 * lu))
     d += (0.0095 + 0.0030 * fem) * ll * gauss(x, y, 0.0, -0.0585 + 0.0006 * (ll - 1), 0.019 * mw, 0.0068 * (0.75 + 0.25 * ll))
-    d += -0.0035 * line(x, y, [(-0.026 * mw, -0.0500), (-0.012 * mw, -0.0518), (0.0, -0.0512), (0.012 * mw, -0.0518), (0.026 * mw, -0.0500)], 0.0016)
+    d += -0.0035 * line(x, y, [(-0.026 * mw, -0.0507), (-0.012 * mw, -0.0516), (0.0, -0.0512), (0.012 * mw, -0.0516), (0.026 * mw, -0.0507)], 0.0016)   # (level: a mouth that turns up is a smile, one that turns down a frown)
     d += -0.0030 * gauss(x, y, 0.0, -0.071, 0.018, 0.0035)
     d += (0.0070 - 0.0015 * fem) * T["chin"] * gauss(x, y, 0.0, -0.088, 0.020 * (0.9 + 0.1 * T["chin"]), 0.016)
     return d
@@ -117,21 +117,21 @@ def fine(x, y, fem, ft=None):
     """what only the high head has: lids and their creases, the folds beside the nose and mouth, the groove above the lip, the cupid's bow"""
     T = ft or TYPES["m"]
     nw, ny, mw = T["nose_w"], T["nose_y"], T["mouth_w"]
-    d = -0.0016 * l2(x, y, [(0.025, 0.022), (0.034, 0.0295), (0.046, 0.030), (0.057, 0.0245)], 0.0022)   # the fold of the upper lid
+    d = -0.0011 * l2(x, y, [(0.025, 0.022), (0.034, 0.0295), (0.046, 0.030), (0.057, 0.0245)], 0.0022)   # the fold of the upper lid
     d += 0.0025 * g2(x, y, 0.041, 0.022, 0.017, 0.006)                                                  # the lid itself
     d += -0.0011 * l2(x, y, [(0.027, 0.006), (0.040, 0.0035), (0.054, 0.008)], 0.0020)                   # the lower lid's line
     d += 0.0015 * g2(x, y, 0.040, -0.004, 0.016, 0.004)                                                 # a slight bag under it
-    d += -0.0010 * l2(x, y, [(0.030, 0.0), (0.045, -0.008), (0.060, -0.012)], 0.0030)                    # the tear trough
+    d += -0.0005 * l2(x, y, [(0.030, 0.0), (0.045, -0.008), (0.060, -0.012)], 0.0030)                    # the tear trough
     d += 0.0020 * g2(x, y, 0.0255, 0.011, 0.003, 0.003)                                                 # the inner corner of the eye
-    d += -(0.0019 - 0.0004 * fem) * l2(x, y, [(0.0225 * nw, -0.0215 + ny), (0.0265, -0.032), (0.030, -0.044), (0.031 * mw, -0.0515)], 0.0032)  # nose to mouth
+    d += -(0.0012 - 0.0003 * fem) * l2(x, y, [(0.0225 * nw, -0.0215 + ny), (0.0265, -0.032), (0.030, -0.044), (0.031 * mw, -0.0515)], 0.0032)  # nose to mouth
     d += -0.0013 * l2(x, y, [(0.0115 * nw, -0.0125 + ny), (0.0190 * nw, -0.0185 + ny), (0.0225 * nw, -0.0250 + ny)], 0.0018)  # the crease of the wing of the nose
     d += 0.0010 * l2(x, y, [(0.0045, -0.032), (0.0055, -0.0425)], 0.0016)                                # the ridges of the philtrum
-    d += -0.0010 * gauss(x, y, 0.0, -0.037, 0.0025, 0.005)                                              # and its groove
+    d += -0.0006 * gauss(x, y, 0.0, -0.037, 0.0025, 0.005)                                              # and its groove
     d += 0.0020 * g2(x, y, 0.006, -0.0435, 0.004, 0.0022)                                               # the cupid's bow
-    d += -0.0020 * g2(x, y, 0.0275 * mw, -0.0505, 0.004, 0.0035)                                         # the corners of the mouth
+    d += -0.0006 * g2(x, y, 0.0275 * mw, -0.0505, 0.004, 0.0035)                                         # the corners of the mouth (a dimple there is a smirk)
     d += -0.0008 * line(x, y, [(-0.018 * mw, -0.0445), (-0.006, -0.0408), (0.0, -0.0432), (0.006, -0.0408), (0.018 * mw, -0.0445)], 0.0012)   # the edge of the upper lip's red
     d += -0.0004 * line(x, y, [(-0.052, 0.062), (0.0, 0.066), (0.052, 0.062)], 0.0026)                   # one line across the forehead
-    d += -0.0014 * line(x, y, [(0.0, 0.026), (0.0, 0.036)], 0.0020)                                      # between the brows
+    d += -0.0004 * line(x, y, [(0.0, 0.026), (0.0, 0.036)], 0.0020)                                      # between the brows (a groove there is a frown)
     return d
 
 # What a species with a muzzle has in place of a nose and lips: how far the front of the face is pushed out, and its width, height and centre (as build-body.py's)

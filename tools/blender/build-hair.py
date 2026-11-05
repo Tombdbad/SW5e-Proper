@@ -563,9 +563,9 @@ def style_beard(name, seed, kind):
 #   y the line's height, arch how far it rises, tail how far it falls at the end, gap where it begins (from the middle), reach how far it runs, thick the band's height,
 #   len the hair's length, lift how steeply the first hairs rise, w a card's width, count hairs a row
 BROWS = [
-    dict(y=0.0395, arch=0.0070, tail=-0.0040, gap=0.019, reach=0.046, thick=0.0070, len=0.013, lift=0.9, w=0.0048, count=11, rows=2),     # soft, arched
-    dict(y=0.0385, arch=0.0030, tail=-0.0020, gap=0.015, reach=0.052, thick=0.0100, len=0.014, lift=0.5, w=0.0056, count=12, rows=2),     # straight and thick
-    dict(y=0.0420, arch=0.0105, tail=-0.0090, gap=0.025, reach=0.042, thick=0.0036, len=0.010, lift=1.1, w=0.0036, count=11, rows=1),     # thin, high arch
+    dict(y=0.0395, arch=0.0055, tail=-0.0040, gap=0.019, reach=0.046, thick=0.0, len=0.013, lift=0.9, w=0.0050, count=15, rows=1),      # soft, arched
+    dict(y=0.0385, arch=0.0025, tail=-0.0020, gap=0.015, reach=0.052, thick=0.0, len=0.014, lift=0.5, w=0.0062, count=15, rows=1),      # straight and thick
+    dict(y=0.0415, arch=0.0090, tail=-0.0080, gap=0.025, reach=0.042, thick=0.0, len=0.010, lift=1.1, w=0.0038, count=12, rows=1),      # thin, high arch
 ]
 
 def style_brows(name, seed, ft, spec):
