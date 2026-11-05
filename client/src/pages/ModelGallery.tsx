@@ -3,7 +3,8 @@ import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { babylonGl } from "@/components/Map/babylon";
 import { OrbitControls, Text, Billboard } from "@react-three/drei";
-import { usePartyLook, HAIR_MALE, HAIR_FEMALE, BEARDS, hairStyleOf, beardOf, Figure, Furniture, stoolsOf, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, Opening, DomeRoof, styleOf, bakedCount, hue, type GunAim } from "@/components/Map/models";
+import { crownOf, portalOf, type Family } from "../components/Map/interiors/architecture";
+import { usePartyLook, HAIR_MALE, HAIR_FEMALE, BEARDS, hairStyleOf, beardOf, Figure, Furniture, stoolsOf, ShipModel, SpeederModel, BuildingModel, SettlementModel, Decor, Chest, NodeModel, RoomBlock, ArchPiece, Opening, DomeRoof, styleOf, bakedCount, hue, type GunAim } from "@/components/Map/models";
 import { tokenOf, SIDE_COLORS } from "@/components/Map/sprites";
 import { Atmosphere } from "@/components/Map/interiors/Atmosphere.tsx";
 import { Stock } from "@/components/Map/interiors/Stock.tsx";
@@ -787,6 +788,27 @@ export default function ModelGallery() {
           </>
         )}
         {section === "crews" && <Rows items={VEHICLE_MAKES.filter((m) => m.name !== m.model || m.name === "Landspeeder")} per={5} gap={4.5} name={(m) => `${m.name} (${m.seats})`} draw={(m) => <CrewedMake m={m} />} />}
+        {/* ?section=architecture (2026-11-05): the seven families of building, each a block with the crown that stands on its roof and the frame round its way in (interiors/architecture.ts) */}
+        {section === "architecture" && (
+          <>
+            {([["adobe", "#c9a56e"], ["domed", "#e4dccb"], ["deco", "#8a94a3"], ["polar", "#dfe7ee"], ["timber", "#8a6a47"], ["hull", "#b8c4cf"], ["bunker", "#6b5a55"]] as [Family, string][]).map(([family, wall], i) => {
+              const st = styleOf(family === "adobe" ? "desert" : family === "deco" ? "urban" : family === "polar" ? "ice" : family === "hull" ? "station" : family === "bunker" ? "volcanic" : family === "timber" ? "forest" : "temperate");
+              const c = st.corner;
+              return (
+                <group key={family} position={[(i % 4) * 9 - 14, 0, Math.floor(i / 4) * 9 - 2]}>
+                  <RoomBlock w={5} d={4} height={2.6} radii={[c, c, c, c]} wall={wall} roof="#4a525c" parapet band={st.band} />
+                  {[0, 1, 2].map((n) => { const k = crownOf(family, n, 4); return k ? <ArchPiece key={n} name={k.piece} wall={wall} thatch={family === "timber"} position={k.corner ? [n === 1 ? 1.2 : 3.8, 2.65, n === 1 ? 1.0 : 3.0] : [2.5, 2.65, 2]} scale={4 * k.fit} /> : null; })}
+                  <group position={[2.5, 0, 4.0]}>
+                    <Opening kind="door" color="#f59e0b" style={st} />
+                    <ArchPiece name={portalOf(family)} wall={wall} thatch={family === "timber"} position={[0, 0, 0.13]} />
+                  </group>
+                  <group position={[1.0, 0, 4.0]}><Opening kind="window" color="#7dd3fc" style={st} /></group>
+                  <Label at={[2.5, 0.1, 5.4]} text={family} />
+                </group>
+              );
+            })}
+          </>
+        )}
         {section === "places" && (
           <>
             <Rows items={["cantina", "spaceport", "docking bay", "market", "garrison", "gate", "medcenter", "workshop", "residences", "palace", "warehouse", "archive", "hideout", "camp", "cave", "ruin", "wreck", "trailhead"]} per={6} gap={6} name={(s) => s} draw={(s) => <BuildingModel type={s} wall="#c9a56e" />} />

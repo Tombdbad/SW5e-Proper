@@ -40,11 +40,12 @@ import { packTone, toneColour } from "./interiors/tones";
 import { lookOf, wealthOf } from "./interiors/wealth";
 import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
+import { familyOf, crownOf, portalOf, type Family } from "./interiors/architecture";
 import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderSea } from "./siteAssets";
 import { BasePieceModel, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
-import { useLamps, useRoomLights, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { useLamps, useRoomLights, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -1022,7 +1023,7 @@ function WindowLights({ windows, feet }: { windows: { id: string; x: number; y: 
 
 // A doorway's leaf swings (or rolls up, for a hangar) when it is tapped, and shuts again when it is tapped once more. Its leaf is of what
 // the room's walls are (`wall`, the room's wall set); `bend` lays it and its frame on a curved wall
-function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint, bend, rock }: { kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string; wall?: WallSet; tint?: string; bend?: Bend; rock?: { biome: string; tier: Tier; seed: number; outside?: boolean } }) {
+function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint, bend, rock, portal }: { portal?: { family: Family; wall: string }; kind: RoomAsset["kind"]; color: string; label?: string; onTap?: () => void; style?: Style; pane?: RoomAsset["pane"]; name?: string; wall?: WallSet; tint?: string; bend?: Bend; rock?: { biome: string; tier: Tier; seed: number; outside?: boolean } }) {
   const [open, setOpen] = useState(false);
   const isDoor = kind === "door" || kind === "exit";
   // A cave's ways (2026-10-30, the user: "The entry to caves (a standard door) looks all wrong"): no frame and no leaf; the way out is an
@@ -1042,6 +1043,7 @@ function Doorway({ kind, color, label, onTap, style, pane, name = "", wall, tint
   return (
     <>
       <Opening kind={kind} color={color} style={style} scale={kind === "window" && pane ? PANE_SCALE[pane.size] : undefined} bend={bend} />
+      {portal && isDoor && !bend && <ArchPiece name={portalOf(portal.family)} wall={portal.wall} thatch={portal.family === "timber"} position={[0, 0, 0.13]} />}
       {isDoor && <DoorVoid style={style} bend={bend} />}
       {isDoor && <DoorLeaf open={open} mode={mode} metal={metal} style={style} wall={wall} tint={tint} bend={bend} />}
       {label && <Label at={[0, kind === "window" || kind === "secret" ? 1.2 : 1.9, 0]} size={0.3} color={color}>{label}</Label>}
@@ -4691,6 +4693,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   };
   // The look of the building's walls by the world it stands on (models.tsx styleOf)
   const style = styleOf(wall === STEEL ? "station" : biome, building.type);
+  // (what stands on its roof and frames its ways in: interiors/architecture.ts)
+  const family = familyOf(wall === STEEL ? "station" : biome, building.type);
   // How far each outside corner of a room is rounded (north-west, north-east, south-east, south-
   // west): a corner another room touches at the same height stays square, and so does one with a
   // door or window in the wall beside it (it is cut back to the nearest one)
@@ -4903,6 +4907,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           const body = (carries && opened?.layout ? Math.min(tall + rise(l), levelY(opened.layout) - levelY(l)) : tall + rise(l)) - sunk;
           const lift = levelY(l);
           const roof = hue(room.id);
+          const crown = crownOf(family, roof, Math.min(l.width, l.height));
           const wallColor = new THREE.Color(wall).multiplyScalar(opened ? 0.45 : 1).getStyle();
           const slab = (color: string) => <Box at={[l.width / 2, 0.06, l.height / 2]} size={[l.width, 0.12, l.height]} color={color} />;
           const rail = (sides = "nesw") => (
@@ -5046,6 +5051,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                       {/tower/i.test(room.name) ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><Cyl at={[0, 1.4, 0]} r={Math.min(l.width, l.height) * 0.42} h={2.8} color={paletteOf(biome).canvas[0]} top={0.03} /><Cyl at={[0, 3.0, 0]} r={0.04} h={0.8} color="#d8b45a" /></group>
                         : /audience chamber/i.test(room.name) && building.type === "palace" ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.4} color={wall} set={wallSet(wallPackOf(building.type), biome)} /></group>
                         : room.gateway ? <group position={[l.width / 2, tall + 0.1, l.height / 2]}><DomeRoof r={Math.min(l.width, l.height) * 0.3} color={wall} set={wallSet(wallPackOf(building.type), biome)} /></group>
+                        : crown ? <ArchPiece name={crown.piece} wall={wall} thatch={family === "timber"} position={crown.corner ? [l.width * (roof % 2 ? 0.25 : 0.75), tall + 0.05, l.height * (roof % 4 < 2 ? 0.28 : 0.72)] : [l.width / 2, tall + 0.05, l.height / 2]} scale={Math.min(l.width, l.height) * crown.fit} />
                         : roof % 3 === 0 ? <><Box at={[l.width * 0.3, tall + 0.35, l.height * 0.35]} size={[1, 0.5, 0.8]} color="#59636d" /><Cyl at={[l.width * 0.3, tall + 0.65, l.height * 0.35]} r={0.25} h={0.1} color="#2b2f36" /></>
                         : roof % 3 === 1 ? <Mast at={[l.width * 0.7, tall + 0.1, l.height * 0.6]} h={1.8} />
                         : <Cyl at={[l.width * 0.6, tall + 0.4, l.height * 0.4]} r={0.5} h={0.6} color="#59636d" />}
@@ -5067,7 +5073,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     </mesh>
                   )}
                   <group position={[at.x, 0, at.z]} rotation={[0, at.turn, 0]}>
-                    <Doorway rock={building.type === "cave" && !!l.mask ? { biome, tier: tierNow, seed: a.x * 7 + a.y * 13 + l.width, outside: true } : undefined} name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={wallSet(wallPackOf(building.type), biome)} tint={wallColor} bend={place.bend} />
+                    <Doorway portal={a.kind === "exit" || a.kind === "door" ? { family, wall } : undefined} rock={building.type === "cave" && !!l.mask ? { biome, tier: tierNow, seed: a.x * 7 + a.y * 13 + l.width, outside: true } : undefined} name={a.name} pane={a.pane} kind={a.kind} color={a.kind === "exit" && shut.has(room.parentId ?? "") ? WAY_COLORS.locked : a.kind === "window" ? wayColor(a) : WAY_COLORS[a.kind as keyof typeof WAY_COLORS]} label={a.kind === "exit" ? (shut.has(room.parentId ?? "") ? "Locked for the night" : a.name === "Way out" ? "Way in" : "Back way in") : a.kind === "secret" ? a.name : undefined} onTap={tappable ? () => actOutside(room, a) : undefined} style={style} wall={wallSet(wallPackOf(building.type), biome)} tint={wallColor} bend={place.bend} />
                     {a.kind === "window" && !form && lit(room) && <WindowGlow style={style} pane={a.pane} bend={place.bend} />}
                   </group>
                   {a.kind === "window" && !form && lit(room) && lift < 0.5 && !place.bend && <WindowSpill at={[at.x, at.z]} out={a.side === "n" ? [0, -1] : a.side === "s" ? [0, 1] : a.side === "w" ? [-1, 0] : [1, 0]} width={0.84 * (PANE_SCALE[a.pane?.size ?? "small"]?.[0] ?? 1)} />}

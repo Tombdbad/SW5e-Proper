@@ -14,11 +14,12 @@ import { useModels, splitByFinish, type MarkFinish } from "./interiors/assets";
 import { codeTurn, fitPiece, maxHeightOf, pieceOf, stretches, type PackId } from "./interiors/packs";
 import type { Tone } from "./interiors/tones";
 import { advance, personaOf, type Persona, type Wave, bob, LIMB, LIMBS, SHIN_OF, WALKER, DEKA, DEKA_LEGS, limbMaterial, applyPivots, humanPose, easeMotion, eased, motion, nowSeconds, holdOf, saberStyleOf, type Motion, type Hold, type SaberStyle, standing, gaitPose, bodyOf, rollBall, restPose, applyPose, setLimbQuaternion, GAITS, easeSit, smooth, seatedPose, shotPose, blendPose, envelope, crewPose, standActPose, overlayAct, STAND_ACT_SECONDS, type Gait, type Stride, type SeatState, type SeatPose, type SeatRole } from "./interiors/limbs";
-import { bodyParts, useBodyParts, creatureParts, useCreatureParts, faceParts, useFaceParts, hairParts, useHairParts, gunParts, useGunParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
+import { bodyParts, useBodyParts, creatureParts, useCreatureParts, faceParts, useFaceParts, hairParts, useHairParts, gunParts, useGunParts, archParts, useArchParts, fitLimb, fitBlock, NOMINAL, type Part, type Piece, type CreatureParts } from "./interiors/body";
 import { saberKitOf, type SaberKit } from "./interiors/limbs";
 import { STAFF_ARMS } from "./interiors/saberplay";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { gunGeometry } from "./interiors/weapons";
+import { archColour, ARCH_FINISH } from "./interiors/architecture";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
 import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
 import { toneNameOf, type KitLook } from "./interiors/kitbash";
@@ -1795,6 +1796,24 @@ function BentModel({ id, build, bend, scale }: { id: string; build: (k: Kit) => 
 // A door, way out, secret way or window set in a wall, drawn along x about the origin. Doors
 // and windows take the shape of the building's style. `scale` sizes a window (it used to be a group round this, which a bend could not
 // see), `bend` lays it on a curved wall.
+// A piece of the architecture kit (interiors/architecture.ts, made by tools/blender/build-architecture.py), in the wall's colours: a crown on a roof, a frame round a way in
+export function ArchPiece({ name, wall, thatch = false, position, rotation, scale }: { name: string; wall: string; thatch?: boolean; position?: V3; rotation?: V3; scale?: number | V3 }) {
+  useArchParts();
+  const piece = archParts()?.[name];
+  if (!piece) return null;
+  return (
+    <Model
+      id={`arch:${name}:${wall}:${thatch ? 1 : 0}`}
+      position={position}
+      rotation={rotation}
+      scale={scale as number}
+      build={(k) => {
+        for (const [region, g] of Object.entries(piece.part)) k.add(g, archColour(Number(region), wall, shade, thatch), { finish: ARCH_FINISH[Number(region)] ?? "matte" });
+      }}
+    />
+  );
+}
+
 export function Opening({ kind, color, style, scale, bend }: { kind: string; color: string; style?: Pick<Style, "arch" | "porthole">; scale?: V3; bend?: Bend }) {
   const arch = !!style?.arch;
   const port = !!style?.porthole;

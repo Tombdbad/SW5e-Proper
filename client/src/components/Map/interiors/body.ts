@@ -59,6 +59,8 @@ export const CREATURE_FILE = TOUCH ? "/figures/creature.lo.glb" : "/figures/crea
 export const HEAD_FILE = TOUCH ? "/figures/head.lo.glb" : "/figures/head.glb";
 export const HAIR_FILE = TOUCH ? "/figures/hair.lo.glb" : "/figures/hair.glb";
 // The blasters and their scopes (2026-11-05, tools/blender/build-weapons.py): `gun_<design>` and `scope_<size>`, each with its regions; the sockets are in shared/art/weaponKit.json
+// The architecture kit (2026-11-05, tools/blender/build-architecture.py): `crown_<family>`, `portal_<family>` and `relief_<name>`, each with its regions
+export const ARCH_FILE = "/figures/architecture.glb";
 export const WEAPON_FILE = TOUCH ? "/figures/weapons.lo.glb" : "/figures/weapons.glb";
 
 const floatsOf = (a: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, size = a.itemSize) => {
@@ -142,6 +144,7 @@ const beasts = shelf(CREATURE_FILE, piecesOf);
 const faces = shelf(HEAD_FILE, piecesOf);
 const hairs = shelf(HAIR_FILE, piecesOf);
 const guns = shelf(WEAPON_FILE, piecesOf);
+const arch = shelf(ARCH_FILE, piecesOf);
 export const loadBody = people.load;
 // The parts, once they are in (null before, and for good if they could not be had: the figures then draw their primitives)
 export const bodyParts = people.get;
@@ -164,6 +167,9 @@ export const setHairParts = hairs.set;
 export const gunParts = guns.get;
 export const useGunParts = guns.use;
 export const setGunParts = guns.set;
+export const archParts = arch.get;
+export const useArchParts = arch.use;
+export const setArchParts = arch.set;
 
 // ---- Fitting ---------------------------------------------------------------------------------------------------------------------
 
