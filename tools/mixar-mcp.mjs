@@ -24,6 +24,6 @@ else {
     if (c.type === "text") console.log(c.text);
     else if (c.type === "image") { const f = path.join(out, `${tool}-${Date.now()}-${n++}.png`); fs.writeFileSync(f, Buffer.from(c.data, "base64")); console.log("IMAGE", f); }
   }
-  if (r.result?.isError) console.log("(isError)");
+  if (r.result?.isError) console.log("(isError)", JSON.stringify(r.result).slice(0, 1500));
 }
 clearTimeout(timer); p.kill(); process.exit(0);
