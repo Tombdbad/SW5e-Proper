@@ -42,7 +42,7 @@ import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
 import { familyOf, crownOf, portalOf, type Family } from "./interiors/architecture";
 import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderSea } from "./siteAssets";
-import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, TreeVillages, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
+import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
 import { useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, KitRoomBlock, BLOCK_WALL, Opening, openingOutline, styleOf, hue, type Style } from "./models";
@@ -291,6 +291,8 @@ const Mast = ({ at, h = 2.2 }: { at: V3; h?: number }) => (
 const WALLS: Record<string, string> = { desert: "#c9a56e", ice: "#cfd8dc", urban: "#8a94a3", volcanic: "#6b5a55", forest: "#a69f80", jungle: "#9aa080", swamp: "#8f9278", ocean: "#b8c4c8", barren: "#a59c8f", temperate: "#b9ad96", "gas giant": "#8f98a8" };
 const GROUND: Record<string, string> = { desert: "#4a3a22", ice: "#39505c", urban: "#1c222b", volcanic: "#2a1a18", forest: "#1f3324", jungle: "#1a3a22", swamp: "#252f22", ocean: "#12303d", barren: "#33302c", temperate: "#26361f", "gas giant": "#1d2233" };
 const STEEL = "#7b8794";
+// (the huts of a tree or stilt village are timber and thatch, not the pale plaster of the biome's towns: 2026-11-06, the user: "the colour applied to the trunk and cabins" was wrong)
+const TIMBER: Record<string, string> = { forest: "#6b4f33", jungle: "#6a5636", swamp: "#5c4e36" };
 
 const isLarge = (size?: string) => /large|huge|gargantuan/i.test(size ?? "");
 // How far a person's seat is over their feet (the legs turn at 0.56 in `buildHumanoid`; the seat is a little under the hip joint)
@@ -1132,7 +1134,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // What this room is, for its light, its air and what is in it (interiors/): the kind of building, the room's name, the world
   mood?: { buildingType: string; roomName: string; biome: string };
   // The room's level and what it is, for stairs, lifts and ladders (their floor rises)
-  plan?: Pick<RoomLayout, "level" | "form" | "climb" | "width" | "height" | "mask" | "switchback" | "well" | "ramp" | "shape">;
+  plan?: Pick<RoomLayout, "level" | "aloft" | "form" | "climb" | "width" | "height" | "mask" | "switchback" | "well" | "ramp" | "shape">;
   assets: RoomAsset[];
   floor: FloorKind;
   wall: string;
@@ -1303,7 +1305,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             // both), bent onto the curve where the wall curves
             const tint = wallLook && wallPack && hasWalls(wallPack) ? toneColour(wallLook) : wall;
             // (the sides that are a balustrade: a gallery's overlooking edge, and the long sides of a walkway, which has no walls)
-            const rails = plan?.form === "walkway" ? ["n", "e", "s", "w"].filter((s) => !assets.some((a) => isWay(a) && a.side === s)).join("") : railing;
+            const rails = plan?.form === "walkway" || (plan?.form === "corridor" && plan.aloft) ? ["n", "e", "s", "w"].filter((s) => !assets.some((a) => isWay(a) && a.side === s)).join("") : railing;
             const pierced = rocky ? [] : setIn.filter((p) => (isWay(p.a) || p.a.kind === "window") && !met(p)).map((p) => (
               <group key={`pierced${p.a.id}`} position={[p.at[0], 0, p.at[1]]} rotation={[0, p.turn, 0]}>
                 <PiercedWall kind={p.a.kind} pane={p.a.pane} style={style} wallH={rails.includes(p.a.side!) ? BALUSTRADE_HEIGHT : wallH} lift={ramp(p.a.x, p.a.y)} bend={p.bend} color={tint} wall={wallTexture} />
@@ -3145,7 +3147,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const planned = !!plan && rooms.every((a) => a.layout);
   const trail = trailOf(world, building.id);
   const biome = trail.find((a) => a.kind === "planet")?.type ?? "";
-  const wall = trail.some((a) => a.type === "station") || building.type === "starship" ? STEEL : WALLS[biome] ?? "#b9ad96";
+  const wall = trail.some((a) => a.type === "station") || building.type === "starship" ? STEEL : canopyOf(world, building.id) ? TIMBER[biome] ?? "#6b4f33" : WALLS[biome] ?? "#b9ad96";
   // The sky and the horizon over the street (none aboard a ship or on a station in space); kept by the building, not rebuilt with the world
   const look = useMemo(() => (building.type === "starship" || (trail.some((a) => a.type === "station") && biome !== "gas giant") ? null : worldLook(world, building.id)), [building.id]);
   const here = world.areas[hereId];
@@ -3842,8 +3844,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     for (const a of rooms) {
       const l = a.layout;
       if (!l || x < l.x || x >= l.x + l.width || y < l.y || y >= l.y + l.height) continue;
-      const form = formOf(a);
-      if (form === "roof" || form === "balcony" || form === "walkway" || form === "gallery") top = Math.max(top, levelY(l));
+      if (openAir(a) || formOf(a) === "gallery") top = Math.max(top, levelY(l));
     }
     return top;
   };
@@ -5153,8 +5154,6 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             <Scatter placed={street.ambient} biome={biome} />
             <Scatter placed={cover} biome={biome} />
             <Scatter placed={backdrop} biome={biome} />
-            {/* (villages in the great trees of a forest, a jungle or a swamp, beyond the ground: siteAssets.tsx TreeVillages) */}
-            {backdrop.length > 0 && <TreeVillages ground={{ x: ground.x, y: ground.y, width: ground.w, height: ground.h }} seed={buildings[0].id} biome={biome} />}
             {fixtures.stalls.map((st) => {
               const keeper = buildings.flatMap((b) => b.occupants).find((o) => o.stall === st.id);
               const spot = keeperSpot(st);

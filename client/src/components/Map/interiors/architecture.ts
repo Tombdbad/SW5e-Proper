@@ -2,7 +2,6 @@
 // Mixar"). A building the player walks round was one rounded footprint pushed up into a box with a slab roof, its look five values (models.tsx `styleOf`); what stands on its roof
 // and what frames its ways in now come from seven families of building, by the world it stands on (tools/refs/architecture.md): the pieces are made in Blender
 // (tools/blender/build-architecture.py -> figures/architecture.glb) and drawn by models.tsx `ArchPiece`. Pure: nothing here draws (tests/interiors/architecture.test.ts).
-import { createRandom, unitOf } from "@shared/logic";
 
 export type Family = "adobe" | "domed" | "deco" | "polar" | "timber" | "hull" | "bunker";
 
@@ -163,42 +162,3 @@ export function parapetPlan(ramps: Ramp[] = [], y = 0): Placed[] {
   for (let k = 0; k < BAYS; k++) if (!cut.has(k)) out.push({ piece: "adobe_lip_r4", angle: k * BAY, y });
   return out;
 }
-
-// ---- Villages in the great trees (2026-11-05) ----------------------------------------------------------------------------------------------
-// What the comment on siteAssets.tsx TreeVillages says: where a forest settlement's villages stand and the pieces of one, pure for the tests
-export interface TreeVillageSpot { x: number; y: number; turn: number; broadleaf: boolean }
-export const TREE_VILLAGE_BIOMES = new Set(["forest", "jungle", "swamp"]);
-export function treeVillageSpots(rect: { x: number; y: number; width: number; height: number }, seed: string, biome: string): TreeVillageSpot[] {
-  if (!TREE_VILLAGE_BIOMES.has(biome)) return [];
-  const r = createRandom(Math.floor(unitOf(`${seed}|treevillage`) * 1e9));
-  const out: TreeVillageSpot[] = [];
-  // (two villages, on two different sides, 18 to 26 squares out from the ground: the village is about 18 across, so it stands clear of it)
-  const sides = [0, 1, 2, 3].sort(() => r.next() - 0.5).slice(0, 2);
-  for (const side of sides) {
-    const out_ = 18 + r.next() * 8;
-    const along = r.next();
-    const x = side === 0 ? rect.x - out_ : side === 1 ? rect.x + rect.width + out_ : rect.x + along * rect.width;
-    const y = side === 2 ? rect.y - out_ : side === 3 ? rect.y + rect.height + out_ : rect.y + along * rect.height;
-    out.push({ x, y, turn: r.next() * Math.PI * 2, broadleaf: biome === "jungle" });
-  }
-  return out;
-}
-const TRUNK_R = 1.2;
-const VILLAGE_LEVEL = 4.2;
-const VILLAGE_STOREY = 3.4;
-const TCZ = -(TRUNK_R + 2.0 + 5.5 + TRUNK_R + 3.6);
-// (how deep the village is, from the first tree back to the third: it is drawn centred on its spot)
-export const VILLAGE_DEPTH = -TCZ;
-// (piece, x, y, z, turn): the Mixar vignette's layout, about the first tree's foot
-const VILLAGE: [string, number, number, number, number][] = [
-  ["tree_great_conifer", 12, 0, 0, 0], ["tree_great_conifer_needles", 12, 0, 0, 0], ["tree_great_conifer", 12, 0, TCZ, 0.7], ["tree_great_conifer_needles", 12, 0, TCZ, 0.7],
-  ["platform_ring", 0, VILLAGE_LEVEL, 0, 0], ["platform_ring", 12, VILLAGE_LEVEL, 0, 0],
-  ["trunk_stair", 0, VILLAGE_LEVEL - VILLAGE_STOREY, 0, 0.6], ["rope_bridge", TRUNK_R + 2.05, VILLAGE_LEVEL, 0, Math.PI / 2],
-  ["trunk_stair", 12, VILLAGE_LEVEL, 0, 2.4], ["platform_wide", 12, VILLAGE_LEVEL + VILLAGE_STOREY, 0, 0],
-  ["hut_rustic", 12, VILLAGE_LEVEL + VILLAGE_STOREY, TRUNK_R + 2.1, 0], ["hut_rustic", 9.4, VILLAGE_LEVEL + VILLAGE_STOREY, -2.2, 4.0],
-  ["rope_bridge", 12, VILLAGE_LEVEL, -(TRUNK_R + 2.05), Math.PI], ["platform_wide", 12, VILLAGE_LEVEL, TCZ, 0.3], ["hut_rustic", 15.3, VILLAGE_LEVEL, TCZ - 0.4, -0.1],
-];
-export const villagePieces = (broadleaf: boolean): [string, number, number, number, number][] => [
-  ...(broadleaf ? [["tree_great", 0, 0, 0, 0], ["tree_great_canopy", 0, 0, 0, 0]] as [string, number, number, number, number][] : [["tree_great_conifer", 0, 0, 0, 0], ["tree_great_conifer_needles", 0, 0, 0, 0]] as [string, number, number, number, number][]),
-  ...VILLAGE,
-];

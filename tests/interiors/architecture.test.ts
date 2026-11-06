@@ -112,17 +112,3 @@ test("a round room's bays: a door bay and frame at each way in on the ground sto
   assert.ok(adobe.some((p) => p.piece === "adobe_bay_door_r4") && adobe.some((p) => p.piece === "portal_adobe_curved_r4"));
   for (const p of [...plan, ...adobe]) assert.ok(parts[p.piece], `${p.piece} is in architecture.glb`);
 });
-
-// Villages in the great trees beyond a forest settlement's ground (2026-11-05, siteAssets.tsx TreeVillages)
-test("a forest, jungle or swamp settlement has two tree villages well clear of its ground, built of pieces the file has", async () => {
-  const { treeVillageSpots, villagePieces } = await import("../../client/src/components/Map/interiors/architecture");
-  const ground = { x: 0, y: 0, width: 40, height: 30 };
-  for (const biome of ["forest", "jungle", "swamp"]) {
-    const spots = treeVillageSpots(ground, "seed-a", biome);
-    assert.equal(spots.length, 2, biome);
-    for (const s of spots) assert.ok(s.x < -12 || s.x > 52 || s.y < -12 || s.y > 42, `${biome}: a village at ${s.x}, ${s.y} stands clear of the ground`);
-  }
-  assert.deepEqual(treeVillageSpots(ground, "seed-a", "desert"), []);
-  assert.ok(treeVillageSpots(ground, "seed-a", "jungle").every((s) => s.broadleaf), "Kashyyyk's first tree is a broadleaf");
-  for (const b of [true, false]) for (const [name] of villagePieces(b)) assert.ok(parts[name], `${name} is in architecture.glb`);
-});

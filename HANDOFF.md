@@ -1,65 +1,35 @@
 # Handoff (overwrite this file; see CLAUDE.md "Handoff")
 
-Written 2026-11-06 early by a cloud session (it reached the PC only through a file bridge and the open Mixar window: no shell, no npm registry).
-Branch **`nov5-wiring`** on origin, one commit on top of main 60d3b34. main on origin was fast-forwarded from 97a6034 to 60d3b34 (the PC's nine unpushed
-commits: heads, hair, faces, weapons, the Mixar skill, the architecture kit) by copying the PC's git objects; nothing was rewritten.
-The user's own `client/src/components/ui/Alert.tsx` is still modified on the PC: leave it, never commit it.
+Written 2026-11-06 afternoon by a cloud session (no shell on the PC, no npm registry: the client is only syntax-checked here; the PC's tsc/npm test is the check).
+Branch **`nov5-wiring`** on origin. main on the PC was fast-forwarded to the stage 1+2 build (c9745b3 + the two fixes 04dbeab, f3e8350); the user ran the finish
+script (tests 687 pass, 0 fail) and was restarting production from an Administrator PowerShell (`deploy\windows-start.ps1 -Mode prod`; taskkill /F /PID if "access denied").
+The user's own `client/src/components/ui/Alert.tsx` is modified on the PC: never commit it.
 
-## To finish (the user asked: "wired into the game, committed, pushed, merged to main, and rebuilt - ready to play")
-Run on the PC, in the repo: `powershell -ExecutionPolicy Bypass -File deploy\finish-2026-11-05.ps1`. It sets aside the files the session copied into the
-working tree by hand (saved under %TEMP%\sw5e-finish-*), checks out origin/nov5-wiring, runs `npx tsc --noEmit`, `npm test` and a scratch Vite build,
-and only if all pass fast-forwards main, pushes it and runs `deploy\windows-start.ps1 -Mode prod`. Log: tools\refs\cache\finish-2026-11-05.log.
-If it stops: read the log, fix on the branch (this code was never type-checked against the real packages), push, run it again.
+## Ship it
+`powershell -ExecutionPolicy Bypass -File deploy\finish-2026-11-05.ps1` from the repo on `main` (it puts set-aside files back if it stops). Then restart prod as Administrator.
 
-## What the branch has (REVIVAL_NOTES.md: "Round rooms of wall bays, ..., and the species' own heads")
-- Architecture kit, 47 pieces in figures/architecture.glb (exported from the open Mixar session, `builtins.ARCH_EXPORT=True`), architecture.ts layout rules
-  (storeyPlan, rampPlan, gantryPlan, parapetPlan) and village layout (treeVillageSpots, villagePieces), regions 5 leaf and 6 thatch.
-- In the game: round rooms of radius 3.75-6 built of bays with doors cut through (models.tsx KitRoomBlock/drumPlan, used in LocalMap BuildingScene);
-  tree villages in the backdrop of forest/jungle/swamp settlements (siteAssets.tsx TreeVillages).
-- Species heads: figures/species.glb, textures/figure/species, shared/art/speciesHeads.json, finish `species`; Mon Calamari, Rodian, Trandoshan, Besalisk,
-  Sullustan, Toydarian heads; Zabrak/Devaronian/Iktotchi horns and Nautolan head-tails as sculpted parts (Look.speciesHead, Look.hornStyle).
-- Tests: tests/interiors/species-sculpts.test.ts (new), three more in tests/interiors/architecture.test.ts.
-- Tools: tools/blender/build-species.py, tools/build-species-textures.py, tools/refs/species.py and moodboard.py (reference stills, gitignored folders).
-- Skills: .claude/skills/sw5e-architecture (new), mixar failure-modes rows (computer use: "Mixar.exe", paste into the console, export naming).
+## The user's feedback on the first look (2026-11-06 15:26, with four screenshots) and what this session did
+1. Bridges between rooms in a stilted settlement drew walls + ceiling from inside; gantries/catwalks/rooftops must stay open air. DONE: `openAir` true for an
+   aloft corridor (shared/logic), RoomShell rails for it, ground height for it (LocalMap). Needs a look.
+2. Stairwells: one large stairwell with a landing and ONE door on every floor, flights stacked, no entering a room to reach the next flight, fewer doors and no stair hall.
+   DONE in the logic (stairBlock/linkColumns/placeBlock/roofStairs/audit rewritten, LIFE 20 migrates saved worlds); tests/world/access.test.ts rewritten and passing here.
+   The client draws each flight/landing as before (rooms), so only a look is needed: landings are 2x2 corridor rooms, flights unchanged. See REVIVAL_NOTES "Stairwells, redone".
+3. Tree villages as aesthetic backdrop were WRONG, and the trunk/cabin colour. DONE: TreeVillages removed (siteAssets, LocalMap, architecture.ts village layout, its test);
+   canopy huts use a timber colour (LocalMap TIMBER). NOT DONE: the great-tree kit pieces as the real decks, gantries/catwalks round and between huts.
+4. Round multi-floor buildings: exterior ramps, internal spiral stairs, wall segments that scale to room size, covered (tube) walkways drawn the same inside as out.
+   NOT DONE (see below).
 
-## Not seen
-Nothing of this was looked at in a browser. After the deploy, check: the gallery `?section=architecture`; a desert or temperate town with a round room
-(cantina, medcenter); a forest settlement's backdrop; a Mon Calamari, Rodian, Zabrak and Nautolan NPC close up (eyes in the sockets, horns on the skull).
+## Next, in order
+1. Run the finish script, restart prod, LOOK: forest/jungle/swamp town (huts timber, bridge open from inside), any tower (stairwell landings), a roof with its door.
+2. Round towers: `hostable` still excludes round rooms, so a round room has no upper floors. Plan: allow round hosts, join their floors by a spiral stair asset inside
+   (a `stairs` asset like the mezzanine's, drawn as a helix) and by a ramp up the outside (kit ramps + gantry ring, needs gantryPlan in the planner: form "gantry", open air).
+3. Drum walls for any radius: KitRoomBlock scales the r4 bays uniformly for 3.75-6 (thickness and doors scale too). Make bay count/tangent scale follow the radius, keep
+   thickness and door size, drop the 3.75-6 limit.
+4. Tube walkways: kit tube piece in the game; their interior shell must match (glazed ribs), not a plain corridor.
+5. Ladders you can climb (character goes from the platform to the ground at once); tree decks from kit pieces; Mixar stage 3 (curved shelves, bar, tables, ring benches).
+6. Heads: Ithorian, Duros, Bith, Gran, Kel Dor, Quarren, Weequay, Cerean.
 
-## Since (night, same branch): chin, hair, round rooms, square walls cut (REVIVAL_NOTES "Chin, hair, round rooms kept round, square rooms cut through")
-- head/hair .glb re-exported from Mixar (`builtins.HEAD_EXPORT=True`), head diffuse and strand map rebuilt (tools/build-head-textures.mjs, build-hair-textures.mjs).
-- Planner: corridors slide to keep round rooms round (1111 of 1476 round). tests/world/layouts.test.ts passes (4 of 4).
-- Square rooms' openings cut through their walls (models.tsx cutShell, LocalMap `holes`). Never type-checked here: the finish script's tsc will tell.
-
-## First finish run (2026-11-06 03:21) stopped on two tests; fixed
-- tests/interiors/round.test.ts: a round room was joined straight to a plain room (the slide change let it); now a room joined to a plain room by a
-  door of its own stays square, and a round room still cut off after the doors are laid is made square and joined again (joinStranded).
-- tests/interiors/hair.test.ts: hair inside the test's ellipsoid (0.969 < 0.97); the hair is rooted on the real head now, which comes in to 0.94 of it,
-  so the bound is 0.93. tsc passed on the PC. The user must run the finish script again; production is still the old main until it passes.
-
-## The overhaul the user asked for (2026-11-06 04:34), and their answers (AskUserQuestion)
-"I want the tree villages to REPLACE the standard square rooms on relevant planets ... round buildings, rooms, and gantries to REPLACE the VAST majority
-of old square buildings (square buildings should be RARE) ... furniture ... to respect these new circular buildings (aisles of shelving in shops in the
-centre of the rooms, and curved shelving matching the room radius around the edge) ... a FULL OVERHAUL of the way districts and rooms are procedurally
-generated. Consider we may need a new suite of interior meshes/assets."
-- Saved campaigns: RE-PLAN EVERYTHING (buildings already entered are rebuilt too; people, loot and furniture re-placed).
-- Tree villages on forest AND jungle worlds, and on swamp worlds on stilts over the water; they replace the settlement's ordinary buildings.
-- Square stays allowed only for hangars and warehouses, and slums and shanties.
-- Delivered in playable stages: 1 generator (round buildings, tree/stilt villages, re-plan), 2 furniture that fits the curves, 3 curved interior models (Mixar).
-  Each stage deployed with a finish script.
-
-## Stage 1 of the overhaul (REVIVAL_NOTES "The overhaul, stage 1"): round by default, tree and stilt villages, life 19 re-plans saved worlds
-- shared/logic: SQUARE_BUILDINGS/ROUND_BUILDINGS, linkRounds rounds every room, corridors centred on round rooms, canopyOf/CANOPY_ALOFT/setAloft,
-  planDistrict wraps planDistrictGround, LIFE 19. Client: levelY adds `aloft`; siteAssets CanopyDeck/CanopyBridge/CanopyLadder; LocalMap draws them.
-- Tests: interiors/round.test.ts (3 new), worlds/layouts.test.ts pass here. The client was only syntax-checked (no three here): the finish script's tsc.
-- Stage 2 too (same branch): round-room furniture on the ring (findSpot), aisles in round shops (planFor), facing the middle (packs.ts facing),
-  shelves and counters on the ring drawn curved (models.tsx CurvedPiece, ringSpan). Life 19 takes down roofs/catwalks/side entrances before the
-  re-plan (as migrateSites), re-plans each building once (tag "overhauled"), then its districts. Tests updated: windows.test.ts (no doubled
-  windows, count may grow), layouts.test.ts (old district plans kept, re-planned). voice.test.ts's Piper test fails here only (no piper.exe).
-- Ship it: the same command, `powershell -ExecutionPolicy Bypass -File deploy\finish-2026-11-05.ps1` (it takes the branch nov5-wiring).
-
-## Next, in order (the overhaul)
-1. Look at it in a browser after the deploy (Kashyyyk/Endor-like forest town: decks, trunks, bridges, ladders; a round shop's aisles and curved shelves).
-2. Gantries round round rooms (gantryPlan/rampPlan, radius-4 kit pieces: scale or make r5/r6 variants in Mixar).
-3. Stage 3: curved interior models in Mixar (curved shelves, curved bar counter, round tables, ring benches).
-4. Heads for Ithorian, Duros, Bith, Gran, Kel Dor, Quarren, Weequay, Cerean.
+## Notes for the next agent
+- Logic tests run here with the global `tsx --test <file>` (not `node --import tsx`); tests/world/layouts.test.ts takes minutes. Client tests need `three` (not here).
+- Logic type-check: scratchpad tsconfig on shared/logic/index.ts: only the old structuredClone lib error shows.
+- Commits end with Co-Authored-By Claude Sonnet 5.5 and the Claude-Session line; identity Tombdbad / sjerps.nadine@gmail.com.

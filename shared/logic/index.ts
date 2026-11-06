@@ -2262,91 +2262,79 @@ export function canStep(l: Pick<RoomLayout, "width" | "height" | "climb" | "swit
 }
 
 // ---------------------------------------------------------------------------------------------
-// Stair blocks (2026-10-20, the user's design). Rooms over and under one another stand on one footprint: a ground room (the host),
-// the rooms stacked over it (a tower has several) and the basement under it. Beside the host's wall stands the stair block, five
-// squares wide and BLOCK_LENGTH squares long away from the wall, in lanes:
-//   upReturn   the second flight up: from the landing back to the near end, to a door into the room over the host
-//   upStart    the first flight up: from the near end at the ground floor away to the landing, half a floor up
-//   hall       a corridor at the ground floor: the host's door at its near end, the next room (or a dead end) at its far end
-//   downStart  the first flight down: from the near end at the ground floor away to the landing, half a floor down
-//   downReturn the second flight down: from the landing back to the near end, to a door into the basement
-// (the other way about in some buildings). The two flights up are one room, a switchback climbing a level (`layout.switchback`,
-// its far row the landing), and so are the two flights down. Every flight has a doorway at its foot and at its head, each in the
-// wall of the room on that floor beside its lane: the host's wall holds the doorways to the flight up, the hall and the flight
-// down side by side; the room over it the one at the head of the flight up (and, in a tower, the foot of the next flight up);
-// the basement the one at the foot of the flight down. A tower has a switchback over the first for each floor more.
+// Stair blocks, redone 2026-11-06 (the user: "stairwells should be larger to accommodate landings for each floor level of a building, and stairs
+// should STACK upon one another to allow access to ALL building levels from WITHIN a SINGLE stairwell asset with landings and doors at each floor
+// level (the player should NOT need to enter the room to access the next stair set), we have too many doors and unused corridors").
+// (First laid out 2026-10-20, the user's design: five lanes, a hall and a flight in the room's wall for each floor.) Rooms over and under one another
+// stand on one footprint: a ground room (the host), the rooms stacked over it (a tower has several) and the basement under it. Beside the host's
+// wall stands ONE stairwell, two squares wide, in two parts away from the wall:
+//   the landings   LANDING squares deep against the wall: one for each floor of the column, stacked on one another, each with ONE doorway into the
+//                  room on its floor (the host's wall holds a doorway for each floor in turn: the rooms over and under it hold theirs)
+//   the flights    BLOCK_LENGTH squares long beyond the landings: a switchback for each floor, stacked on one another in the same two lanes, its foot
+//                  at the landing of its floor (the lane `foot`) and its head at the landing of the floor above (the lane `head`)
+// Every flight opens at its foot onto the landing of the floor it rises from and at its head onto the landing of the floor it rises to, so that
+// the stairwell is climbed from the ground to the top (and down to the cellar) without going into a room in between. The two flights up
+// from a floor are one room, a switchback climbing a level (`layout.switchback`, its far row the turn).
 // ---------------------------------------------------------------------------------------------
 
 export const BLOCK_LENGTH = 4;
-export type Lane = "upReturn" | "upStart" | "hall" | "downStart" | "downReturn";
+export const LANDING = 2;
+export type Lane = "foot" | "head";
 
 export interface StairBlock {
   lanes: Lane[];
+  // The landing on the ground floor (against the host's wall), and one for each floor of the column, the cellars' and the upper floors'
   hall: RoomLayout;
-  // A switchback for each floor climbed (the first from the ground floor), and for each floor down (the first to the basement)
+  landings: { floor: number; layout: RoomLayout }[];
+  // A flight for each floor climbed (the first from the ground floor), and for each floor down (the first to the basement)
   ups: RoomLayout[];
   downs: RoomLayout[];
-  // The doors of the block, two to a door (one in each room, sharing `key`): `room` is "host" (the host's footprint: the host,
-  // a room over it or a basement), "hall", "up<n>" or "down<n>"; the square is the room's own, set in its wall `side`. The keys:
-  // host-hall; foot-up<n> (on floor n) and head-up<n> (on floor n + 1); head-down<n> (on floor -n) and foot-down<n> (on floor -n - 1)
+  // The doors of the block, two to a door (one in each room, sharing `key`): `room` is "host" (the footprint of the host: the host, a room over it or
+  // a basement), "land<floor>", "up<n>" or "down<n>"; the square is the room's own, set in its wall `side`. The keys: floor<f> (the room on floor f and
+  // the landing of that floor); foot-up<n> (landing n and the flight up n) and head-up<n> (the flight and landing n + 1); foot-down<n> (landing -n - 1
+  // and the flight down n) and head-down<n> (the flight and landing -n)
   doors: { key: string; room: string; x: number; y: number; side: Side }[];
 }
 
-// The block beside `host` on its `side`, its first lane `at` squares along that side from the host's corner (north or west), with
-// `ups` switchbacks up and `downs` down, each over (or under) the one before in the same lanes
+// The stairwell beside `host` on its `side`, its first lane `at` squares along that side from the host's corner (north or west), with `ups`
+// flights up and `downs` down, each over (or under) the one before in the same lanes
 export function stairBlock(host: Pick<RoomLayout, "x" | "y" | "width" | "height">, side: Side, at: number, mirror: boolean, ups: number, downs: number): StairBlock {
-  const order: Lane[] = [...(ups ? (["upReturn", "upStart"] as Lane[]) : []), "hall", ...(downs ? (["downStart", "downReturn"] as Lane[]) : [])];
-  const lanes = mirror ? [...order].reverse() : order;
-  const L = BLOCK_LENGTH;
-  // The rectangle of `n` lanes from lane `i0`
-  const rect = (i0: number, n: number) =>
-    side === "e" ? { x: host.x + host.width, y: host.y + at + i0, width: L, height: n }
-    : side === "w" ? { x: host.x - L, y: host.y + at + i0, width: L, height: n }
-    : side === "s" ? { x: host.x + at + i0, y: host.y + host.height, width: n, height: L }
-    : { x: host.x + at + i0, y: host.y - L, width: n, height: L };
-  // A lane's square at a row (0 the near end), in the squares of the room whose first lane is `i0`
-  const local = (i: number, row: number, i0: number) => {
-    const a = i - i0;
-    return side === "e" ? { x: row, y: a } : side === "w" ? { x: L - 1 - row, y: a } : side === "s" ? { x: a, y: row } : { x: a, y: L - 1 - row };
-  };
+  const lanes: Lane[] = mirror ? ["head", "foot"] : ["foot", "head"];
+  const F = BLOCK_LENGTH;
+  const D = LANDING;
+  // The rectangle of a part `n` squares long that starts `from` squares out from the host's wall
+  const rect = (from: number, n: number) =>
+    side === "e" ? { x: host.x + host.width + from, y: host.y + at, width: n, height: 2 }
+    : side === "w" ? { x: host.x - from - n, y: host.y + at, width: n, height: 2 }
+    : side === "s" ? { x: host.x + at, y: host.y + host.height + from, width: 2, height: n }
+    : { x: host.x + at, y: host.y - from - n, width: 2, height: n };
+  // A lane's square at a row (0 the near end) of a part `n` squares long
+  const local = (lane: number, row: number, n: number) =>
+    side === "e" ? { x: row, y: lane } : side === "w" ? { x: n - 1 - row, y: lane } : side === "s" ? { x: lane, y: row } : { x: lane, y: n - 1 - row };
   // The host's wall square beside a lane (the same in every room on its footprint)
-  const onHost = (i: number) => (side === "e" ? { x: host.width - 1, y: at + i } : side === "w" ? { x: 0, y: at + i } : side === "s" ? { x: at + i, y: host.height - 1 } : { x: at + i, y: 0 });
+  const onHost = (lane: number) => (side === "e" ? { x: host.width - 1, y: at + lane } : side === "w" ? { x: 0, y: at + lane } : side === "s" ? { x: at + lane, y: host.height - 1 } : { x: at + lane, y: 0 });
   const near = OPPOSITE[side];
-  const i = (lane: Lane) => lanes.indexOf(lane);
-  const hallAt = i("hall");
-  const hall: RoomLayout = { ...rect(hallAt, 1), assets: [], form: "corridor" };
-  const doors: StairBlock["doors"] = [
-    { key: "host-hall", room: "host", ...onHost(hallAt), side },
-    { key: "host-hall", room: "hall", ...local(hallAt, 0, hallAt), side: near },
-  ];
+  const foot = lanes.indexOf("foot");
+  const head = lanes.indexOf("head");
+  const floors = Array.from({ length: ups + downs + 1 }, (_, i) => i - downs);
+  const landings = floors.map((floor) => ({ floor, layout: { ...rect(0, D), assets: [], form: "corridor" as Form, ...(floor ? { level: floor } : {}) } as RoomLayout }));
+  const hall = landings.find((l) => l.floor === 0)!.layout;
+  const doors: StairBlock["doors"] = [];
+  for (const { floor } of landings) {
+    doors.push({ key: `floor${floor}`, room: "host", ...onHost(foot), side }, { key: `floor${floor}`, room: `land${floor}`, ...local(foot, 0, D), side: near });
+  }
+  const flight = (f: number): RoomLayout => ({ ...rect(D, F), assets: [], level: f, form: "stairs", climb: { toward: side, levels: 1 }, switchback: { low: foot as 0 | 1 } });
   const upRooms: RoomLayout[] = [];
-  if (ups > 0) {
-    const i0 = Math.min(i("upReturn"), i("upStart"));
-    const low = (i("upStart") - i0) as 0 | 1;
-    for (let s = 0; s < ups; s++) {
-      const key = `up${s}`;
-      upRooms.push({ ...rect(i0, 2), assets: [], level: s, form: "stairs", climb: { toward: side, levels: 1 }, switchback: { low } });
-      // Its foot: a doorway from the room on its floor (the host on the ground floor), in that room's wall beside its lane
-      doors.push({ key: `foot-${key}`, room: "host", ...onHost(i("upStart")), side }, { key: `foot-${key}`, room: key, ...local(i("upStart"), 0, i0), side: near });
-      // Its head: into the room over the host, a floor up
-      doors.push({ key: `head-${key}`, room: key, ...local(i("upReturn"), 0, i0), side: near }, { key: `head-${key}`, room: "host", ...onHost(i("upReturn")), side });
-    }
-  }
   const downRooms: RoomLayout[] = [];
-  if (downs > 0) {
-    const i0 = Math.min(i("downReturn"), i("downStart"));
-    // (each climbs from the floor under it: its low lane is the one at that floor's door)
-    const low = (i("downReturn") - i0) as 0 | 1;
-    for (let s = 0; s < downs; s++) {
-      const key = `down${s}`;
-      downRooms.push({ ...rect(i0, 2), assets: [], level: -1 - s, form: "stairs", climb: { toward: side, levels: 1 }, switchback: { low } });
-      // Its head: a doorway from the room on the floor it goes down from (the host first, then each basement in turn)
-      doors.push({ key: `head-${key}`, room: "host", ...onHost(i("downStart")), side }, { key: `head-${key}`, room: key, ...local(i("downStart"), 0, i0), side: near });
-      // Its foot: into the basement a floor down
-      doors.push({ key: `foot-${key}`, room: key, ...local(i("downReturn"), 0, i0), side: near }, { key: `foot-${key}`, room: "host", ...onHost(i("downReturn")), side });
-    }
+  for (let f = -downs; f < ups; f++) {
+    const tag = f >= 0 ? `up${f}` : `down${-1 - f}`;
+    if (f >= 0) upRooms[f] = flight(f);
+    else downRooms[-1 - f] = flight(f);
+    // Its foot: from the landing of the floor it rises from, in the landing's far wall; its head: onto the landing of the floor above
+    doors.push({ key: `foot-${tag}`, room: `land${f}`, ...local(foot, D - 1, D), side }, { key: `foot-${tag}`, room: tag, ...local(foot, 0, F), side: near });
+    doors.push({ key: `head-${tag}`, room: tag, ...local(head, 0, F), side: near }, { key: `head-${tag}`, room: `land${f + 1}`, ...local(head, D - 1, D), side });
   }
-  return { lanes, hall, ups: upRooms, downs: downRooms, doors };
+  return { lanes, hall, landings, ups: upRooms, downs: downRooms, doors };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2985,7 +2973,7 @@ function migrateSites(ctx: Context) {
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 19;
+export const LIFE = 20;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -3186,59 +3174,90 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
   // Round by default, tree and stilt villages (life 19, 2026-11-06, the user: round buildings "to REPLACE the VAST majority of old square buildings";
   // asked about saved games: "Re-plan everything"): every building already planned is planned again with the new rules (its rooms, their people and
   // what is in them kept, placed again; secret ways found stay found), then the districts they stand in, whose plots are the buildings' new sizes
-  if ((next.life ?? 0) < 19) {
-    const settlements = new Set<string>();
-    // (once for each building, tag "overhauled", should a world be livened from an older life again)
-    const due = Object.values(next.areas).filter((a) => a.kind === "building" && !a.tags.includes("overhauled") && childrenOf(next, a.id).some((room) => room.layout));
-    // What the districts made on and between them comes down first, as migrateSites does (the roofs, their stairs, the catwalks, the side entrances):
-    // the district plan puts them up again where the buildings now stand. Whoever stood on them goes to the building's way in.
-    const gone = new Set<string>();
-    const movedTo = new Map<string, string>();
-    for (const building of due) {
-      const rooms = childrenOf(next, building.id).filter((x) => x.kind === "room");
-      const hall = rooms.find((x) => x.gateway && !formOf(x)) ?? rooms.find((x) => !formOf(x));
-      for (const room of rooms) {
-        if ((formOf(room) === "roof" && room.name === "Roof") || room.name === "Stairs up to the roof" || (formOf(room) === "walkway" && /^Catwalk to /.test(room.name))) {
-          if (hall && room.occupants.length) hall.occupants.push(...room.occupants);
-          if (hall) movedTo.set(room.id, hall.id);
-          gone.add(room.id);
-          delete next.areas[room.id];
-          continue;
-        }
-        const side = room.layout?.assets.filter((x) => x.name === "Side entrance") ?? [];
-        if (side.length && room.layout) {
-          room.layout.assets = room.layout.assets.filter((x) => x.name !== "Side entrance");
-          if (!room.layout.assets.some((x) => x.kind === "exit")) room.gateway = false;
-        }
+  if ((next.life ?? 0) < 19) replanBuildings(ctx, Object.values(next.areas).filter((a) => a.kind === "building" && !a.tags.includes("overhauled") && childrenOf(next, a.id).some((room) => room.layout)));
+  // One stairwell to a column, a landing and a doorway on every floor (life 20, 2026-11-06, the user: "stairwells should be larger to accommodate landings for
+  // each floor level ... too many doors and unused corridors"): a building that still has the old stair halls and flights is planned again, its stairs made anew
+  if ((next.life ?? 0) < 20) replanBuildings(ctx, Object.values(next.areas).filter((a) => a.kind === "building" && hasOldStairs(next, a) && childrenOf(next, a.id).some((room) => room.layout)));
+  next.life = LIFE;
+  return next;
+}
+
+// A building with the stair hall and the five-lane stair block of before life 20 (a hall with no landing tags)
+function hasOldStairs(world: World, building: Area): boolean {
+  const rooms = childrenOf(world, building.id);
+  return rooms.some((a) => tagId(a, "lane") === "hall") && !rooms.some((a) => tagId(a, "landing") !== undefined);
+}
+// Takes the old stair rooms down so that linkColumns makes the stairwell again: a way on from the old hall to a room goes back to the host
+function dropOldStairs(world: World, building: Area) {
+  const parts = childrenOf(world, building.id).filter((a) => tagId(a, "block"));
+  const ids = new Set(parts.map((a) => a.id));
+  for (const path of world.paths) {
+    const [a, b] = [ids.has(path.from), ids.has(path.to)];
+    if (a === b) continue;
+    const part = world.areas[a ? path.from : path.to];
+    const host = world.areas[tagId(part, "block") ?? ""];
+    if (host && formOf(part) === "corridor" && !formOf(world.areas[a ? path.to : path.from])) {
+      if (a) path.from = host.id;
+      else path.to = host.id;
+    }
+  }
+  world.paths = world.paths.filter((p) => !ids.has(p.from) && !ids.has(p.to));
+  for (const a of parts) delete world.areas[a.id];
+  building.tags = building.tags.filter((t) => t !== "columned");
+}
+
+// Every building of `due` is planned again with the rules of now (its rooms, their people and what is in them kept, placed again; secret ways found stay
+// found), then the districts they stand in, whose plots are the buildings' new sizes
+function replanBuildings(ctx: Context, due: Area[]) {
+  const next = ctx.world;
+  const settlements = new Set<string>();
+  // What the districts made on and between them comes down first, as migrateSites does (the roofs, their stairs, the catwalks, the side entrances):
+  // the district plan puts them up again where the buildings now stand. Whoever stood on them goes to the building's way in.
+  const gone = new Set<string>();
+  const movedTo = new Map<string, string>();
+  for (const building of due) {
+    const rooms = childrenOf(next, building.id).filter((x) => x.kind === "room");
+    const hall = rooms.find((x) => x.gateway && !formOf(x)) ?? rooms.find((x) => !formOf(x));
+    for (const room of rooms) {
+      if ((formOf(room) === "roof" && room.name === "Roof") || room.name === "Stairs up to the roof" || room.name === "Roof landing" || (formOf(room) === "walkway" && /^Catwalk to /.test(room.name))) {
+        if (hall && room.occupants.length) hall.occupants.push(...room.occupants);
+        if (hall) movedTo.set(room.id, hall.id);
+        gone.add(room.id);
+        delete next.areas[room.id];
+        continue;
       }
-    }
-    next.paths = next.paths.filter((p) => !gone.has(p.from) && !gone.has(p.to));
-    // (a day that took someone up to a roof takes them to the way in instead)
-    if (movedTo.size) for (const area of Object.values(next.areas)) for (const o of area.occupants ?? []) {
-      const rt = o.routine;
-      if (!rt) continue;
-      if (movedTo.has(rt.home)) rt.home = movedTo.get(rt.home)!;
-      for (const st of rt.stops) if (movedTo.has(st.at)) st.at = movedTo.get(st.at)!;
-      for (const v of rt.visits ?? []) if (movedTo.has(v.at)) v.at = movedTo.get(v.at)!;
-    }
-    for (const building of due) {
-      const found = new Set(childrenOf(next, building.id).filter((room) => room.secretEntry?.found).map((room) => room.id));
-      building.tags = [...building.tags.filter((t) => t !== "rounded"), "overhauled"];
-      planBuilding(next, building.id);
-      for (const room of childrenOf(next, building.id)) if (room.secretEntry && found.has(room.id)) room.secretEntry.found = true;
-      const settlement = trailOf(next, building.id).find((a) => a.kind === "settlement");
-      if (settlement) settlements.add(settlement.id);
-    }
-    for (const id of settlements) {
-      for (const d of districtsOf(next, id)) {
-        if (!next.districtPlans?.[d.id]) continue;
-        delete next.districtPlans[d.id];
-        planDistrict(ctx, d);
+      const side = room.layout?.assets.filter((x) => x.name === "Side entrance") ?? [];
+      if (side.length && room.layout) {
+        room.layout.assets = room.layout.assets.filter((x) => x.name !== "Side entrance");
+        if (!room.layout.assets.some((x) => x.kind === "exit")) room.gateway = false;
       }
     }
   }
-  next.life = LIFE;
-  return next;
+  next.paths = next.paths.filter((p) => !gone.has(p.from) && !gone.has(p.to));
+  // (a day that took someone up to a roof takes them to the way in instead)
+  if (movedTo.size) for (const area of Object.values(next.areas)) for (const o of area.occupants ?? []) {
+    const rt = o.routine;
+    if (!rt) continue;
+    if (movedTo.has(rt.home)) rt.home = movedTo.get(rt.home)!;
+    for (const st of rt.stops) if (movedTo.has(st.at)) st.at = movedTo.get(st.at)!;
+    for (const v of rt.visits ?? []) if (movedTo.has(v.at)) v.at = movedTo.get(v.at)!;
+  }
+  for (const building of due) {
+    const found = new Set(childrenOf(next, building.id).filter((room) => room.secretEntry?.found).map((room) => room.id));
+    building.tags = [...building.tags.filter((t) => t !== "rounded"), "overhauled"];
+    if (hasOldStairs(next, building)) dropOldStairs(next, building);
+    planBuilding(next, building.id);
+    for (const room of childrenOf(next, building.id)) if (room.secretEntry && found.has(room.id)) room.secretEntry.found = true;
+    const settlement = trailOf(next, building.id).find((a) => a.kind === "settlement");
+    if (settlement) settlements.add(settlement.id);
+  }
+  for (const id of settlements) {
+    for (const d of districtsOf(next, id)) {
+      if (!next.districtPlans?.[d.id]) continue;
+      delete next.districtPlans[d.id];
+      planDistrict(ctx, d);
+    }
+  }
 }
 
 // Windows a room gets besides the one or two that detailBuilding gives it (house rule, dice of their own, so the world is made as it was):
@@ -3719,18 +3738,20 @@ function linkColumns(world: World, building: Area, seed: number) {
     for (let x = over(host); x; x = over(x)) chain.push(x);
     const deep: Area[] = [];
     for (let x = under(host); x; x = under(x)) deep.push(x);
-    const hall = make("Stair hall", "corridor", [`block:${host.id}`, "lane:hall", "low:0", "rise:0"]);
-    door(host, hall);
-    chain.forEach((upper, s) => {
-      const up = make(`Stairs up to ${upper.name}`, "stairs", [`block:${host.id}`, `storey:${s}`, `low:${s}`, "rise:1"]);
-      door(s === 0 ? host : chain[s - 1], up);
-      door(up, upper, into(upper));
-    });
-    deep.forEach((basement, s) => {
-      const down = make(`Stairs down to ${basement.name}`, "stairs", [`block:${host.id}`, `storey:${-1 - s}`, `low:${-1 - s}`, "rise:1"]);
-      door(s === 0 ? host : deep[s - 1], down);
-      door(down, basement, into(basement));
-    });
+    // One stairwell for the column (see "Stair blocks"): a landing on each floor with a doorway into the room there, and a flight from each landing to the
+    // next, so that every floor is reached from within it
+    const landings = new Map<number, Area>();
+    for (let f = -deep.length; f <= chain.length; f++) {
+      landings.set(f, make(f === 0 ? "Stair landing" : f > 0 ? `Stair landing, floor ${f}` : `Stair landing, cellar ${-f}`, "corridor", [`block:${host.id}`, ...(f === 0 ? ["lane:hall"] : []), `landing:${f}`, `low:${f}`, "rise:0"]));
+    }
+    const roomAt = (f: number): Area => (f === 0 ? host : f > 0 ? chain[f - 1] : deep[-f - 1]);
+    for (let f = -deep.length; f <= chain.length; f++) door(landings.get(f)!, roomAt(f), f === 0 ? {} : into(roomAt(f)));
+    for (let f = -deep.length; f < chain.length; f++) {
+      const to = roomAt(f >= 0 ? f + 1 : f);
+      const flight = make(f >= 0 ? `Stairs up to ${to.name}` : `Stairs down to ${to.name}`, "stairs", [`block:${host.id}`, `storey:${f}`, `low:${f}`, "rise:1"]);
+      door(landings.get(f)!, flight);
+      door(flight, landings.get(f + 1)!);
+    }
   }
 }
 
@@ -4028,7 +4049,7 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
     let height: number;
     if (form === "gallery") [width, height] = [5, 3];
     // (the rooms of a stair block are laid out with it, beside its host: see placeBlock)
-    else if (tagId(room, "block")) [width, height] = [formOf(room) === "corridor" ? 1 : 2, BLOCK_LENGTH];
+    else if (tagId(room, "block")) [width, height] = [2, formOf(room) === "corridor" ? LANDING : BLOCK_LENGTH];
     else if (form) {
       // (a cave's sloping passage is long, so that its slope is gentle: about one in four)
       const ramp = form === "stairs" && building.type === "cave";
@@ -4101,23 +4122,24 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
     const parts = blockOf(host);
     const hall = parts.find((a) => tagId(a, "lane") === "hall");
     if (!hall) return true;
-    const ups = parts.filter((a) => (tagNumber(a, "storey") ?? -1) >= 0).sort((p, q) => tagNumber(p, "storey")! - tagNumber(q, "storey")!);
-    // (the switchbacks down, from the ground floor first: storey -1, -2, ...)
-    const downs = parts.filter((a) => (tagNumber(a, "storey") ?? 0) < 0).sort((p, q) => tagNumber(q, "storey")! - tagNumber(p, "storey")!);
+    const landings = new Map<number, Area>(parts.filter((a) => formOf(a) === "corridor").map((a) => [tagNumber(a, "landing") ?? 0, a]));
+    const flights = parts.filter((a) => formOf(a) === "stairs");
+    const ups = flights.filter((a) => (tagNumber(a, "storey") ?? -1) >= 0).sort((p, q) => tagNumber(p, "storey")! - tagNumber(q, "storey")!);
+    // (the flights down, from the ground floor first: storey -1, -2, ...)
+    const downs = flights.filter((a) => (tagNumber(a, "storey") ?? 0) < 0).sort((p, q) => tagNumber(q, "storey")! - tagNumber(p, "storey")!);
     const uppers: Area[] = [];
     for (let x = overOf(host); x; x = overOf(x)) uppers.push(x);
     const unders: Area[] = [];
     for (let x = underOf(host); x; x = underOf(x)) unders.push(x);
     const h = host.layout!;
     const options: StairBlock[] = [];
-    const lanes = 1 + (ups.length ? 2 : 0) + (downs.length ? 2 : 0);
     // (the entrance's west wall is the way in)
     for (const side of (host === root ? ["e", "s", "n"] : ["e", "s", "n", "w"]) as Side[]) {
       const length = side === "e" || side === "w" ? h.height : h.width;
-      for (let at = 0; at + lanes <= length; at++) {
+      for (let at = 0; at + 2 <= length; at++) {
         for (const mirror of [false, true]) {
           const block = stairBlock(h, side, at, mirror, ups.length, downs.length);
-          const all = [block.hall, ...block.ups, ...block.downs];
+          const all = [...block.landings.map((l) => l.layout), ...block.ups, ...block.downs];
           if (all.some((l) => placed.some((o) => o.layout && clash(l, o.layout)))) continue;
           options.push(block);
         }
@@ -4126,31 +4148,25 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
     if (!options.length) return false;
     const block = r.pick(options);
     const set = (room: Area, l: RoomLayout) => Object.assign(room.layout!, { x: l.x, y: l.y, width: l.width, height: l.height, ...(l.climb ? { climb: { ...l.climb } } : {}), ...(l.switchback ? { switchback: { ...l.switchback } } : {}) });
-    set(hall, block.hall);
+    for (const { floor, layout } of block.landings) if (landings.get(floor)) set(landings.get(floor)!, layout);
     ups.forEach((up, s) => set(up, block.ups[s]));
     downs.forEach((down, s) => set(down, block.downs[s]));
-    placed.push(hall, ...ups, ...downs);
+    placed.push(...landings.values(), ...ups, ...downs);
     // (where the block stands, for what is added to it later: the stairs up to a roof, see planDistrict)
-    const all = [block.hall, ...block.ups, ...block.downs];
+    const all = [...block.landings.map((l) => l.layout), ...block.ups, ...block.downs];
     const side = block.ups[0]?.climb?.toward ?? block.downs[0]?.climb?.toward ?? (block.hall.x >= h.x + h.width ? "e" : block.hall.x + block.hall.width <= h.x ? "w" : block.hall.y >= h.y + h.height ? "s" : "n");
     const at = side === "e" || side === "w" ? Math.min(...all.map((l) => l.y)) - h.y : Math.min(...all.map((l) => l.x)) - h.x;
-    hall.tags = [...hall.tags.filter((t) => !t.startsWith("geo:")), `geo:${side}:${at}:${block.lanes[0] === "upReturn" || block.lanes[0] === "hall" ? 0 : 1}`];
+    hall.tags = [...hall.tags.filter((t) => !t.startsWith("geo:")), `geo:${side}:${at}:${block.lanes[0] === "foot" ? 0 : 1}`];
     queue.push(hall);
-    attached.set(hall.id, block.hall.width === BLOCK_LENGTH && block.hall.height === 1 ? (block.hall.x > h.x ? "e" : "w") : block.hall.y > h.y ? "s" : "n");
+    attached.set(hall.id, side);
     // Its doors, two to a passage, where the block puts them
     const roomOf = (key: string, door: string): Area | undefined => {
-      if (key === "hall") return hall;
+      if (key.startsWith("land")) return landings.get(Number(key.slice(4)));
       if (key.startsWith("down")) return downs[Number(key.slice(4))];
       if (key.startsWith("up")) return ups[Number(key.slice(2))];
-      // the host's footprint: the host, a room over it (the head of switchback up n is on floor n + 1, its foot on floor n) or a
-      // basement (the head of switchback down n on floor -n, its foot on floor -n - 1)
-      const n = Number(door.replace(/^\D+-(up|down)/, ""));
-      if (door === "host-hall") return host;
-      if (door.startsWith("head-up")) return uppers[n];
-      if (door.startsWith("foot-up")) return n === 0 ? host : uppers[n - 1];
-      if (door.startsWith("head-down")) return n === 0 ? host : unders[n - 1];
-      if (door.startsWith("foot-down")) return unders[n];
-      return undefined;
+      // the host's footprint: the host, a room over it or a basement, on the floor the doorway is on
+      const f = Number(door.replace(/^floor/, ""));
+      return f === 0 ? host : f > 0 ? uppers[f - 1] : unders[-f - 1];
     };
     for (const key of [...new Set(block.doors.map((d) => d.key))]) {
       const [d1, d2] = block.doors.filter((d) => d.key === key);
@@ -4163,7 +4179,7 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
         l.assets.push({ id: `${room.id}-${l.assets.length + 1}`, kind: "door", name: path.label, x: d.x, y: d.y, w: 1, h: 1, side: d.side, ref: path.id, to: other.id });
       }
     }
-    // The hall goes on to a room the host opened onto, which is set past its far end (or the hall is a dead end)
+    // The ground landing goes on to a room the host opened onto, which is set beside it (or the landing is a dead end)
     const next = doors.find((p) => !fixed.has(p.id) && (p.from === host.id || p.to === host.id) && (() => {
       const o = world.areas[p.from === host.id ? p.to : p.from];
       return !!o && !placed.includes(o) && !formOf(o) && !inColumn(o) && (levels.get(o.id) ?? 0) === 0 && !blockOf(o).length;
@@ -7234,24 +7250,36 @@ export function auditBuildings(world: World): string[] {
       const way = l.assets.some((a) => a.kind === "door" && a.to && (tagId(world.areas[a.to] ?? ({ tags: [] } as unknown as Area), "block") === host.id || formOf(world.areas[a.to] ?? ({ tags: [] } as unknown as Area)) === "lift"));
       if (!way) problems.push(`${at(room)}: no door to the stairs (or lift) of its column`);
     }
-    // A stair block: its hall and switchbacks against its host, each switchback a level of climb, two lanes and a landing
+    // A stairwell: a landing for each floor against its host's wall (each with its doorway into the room on its floor), a flight between each two landings
     for (const hall of rooms.filter((a) => tagId(a, "lane") === "hall")) {
       const host = world.areas[tagId(hall, "block") ?? ""];
       if (!host?.layout) {
-        problems.push(`${at(hall)}: a stair hall with no host`);
+        problems.push(`${at(hall)}: a stair landing with no host`);
         continue;
       }
       const parts = rooms.filter((a) => tagId(a, "block") === host.id);
       const h = host.layout;
       const touches = (l: RoomLayout) => l.x === h.x + h.width || l.x + l.width === h.x || l.y === h.y + h.height || l.y + l.height === h.y;
+      const landings = parts.filter((a) => formOf(a) === "corridor");
       for (const part of parts) {
         const l = part.layout!;
-        if (!touches(l)) problems.push(`${at(part)}: not against the wall of ${host.name}`);
+        if (formOf(part) === "corridor" && !touches(l)) problems.push(`${at(part)}: not against the wall of ${host.name}`);
         if (formOf(part) === "stairs" && (!l.switchback || l.climb?.levels !== 1 || Math.min(l.width, l.height) !== 2 || Math.max(l.width, l.height) !== BLOCK_LENGTH)) problems.push(`${at(part)}: not a switchback of two lanes, ${BLOCK_LENGTH} long, climbing a floor`);
       }
-      // (a tower's further switchbacks stand over the first, in its lanes, and a sub-basement's under the first down)
-      const lanes = parts.filter((a) => [0, -1].includes(tagNumber(a, "storey") ?? 0)).reduce((n, a) => n + Math.min(a.layout!.width, a.layout!.height), 0);
-      if (lanes !== 5) problems.push(`${at(hall)}: the stair block is ${lanes} lanes wide, not 5`);
+      // (a landing on each floor between the lowest and highest flight, one flight between each two, and a way from each landing into the room on its floor)
+      const floors = landings.map((a) => tagNumber(a, "landing") ?? 0).sort((p, q) => p - q);
+      floors.forEach((f, i) => {
+        if (i > 0 && f !== floors[i - 1] + 1) problems.push(`${at(hall)}: the stairwell has no landing on floor ${floors[i - 1] + 1}`);
+      });
+      for (const f of floors) {
+        const here = landings.find((a) => tagNumber(a, "landing") === f)!;
+        const rooms2 = (here.layout?.assets ?? []).filter((a) => a.kind === "door" && a.to && [undefined, "roof"].includes(formOf(world.areas[a.to] ?? ({ tags: [] } as unknown as Area))));
+        if (!rooms2.length) problems.push(`${at(here)}: no doorway into the room on its floor`);
+      }
+      for (const part of parts.filter((a) => formOf(a) === "stairs")) {
+        const f = tagNumber(part, "storey") ?? 0;
+        if (!floors.includes(f) || !floors.includes(f + 1)) problems.push(`${at(part)}: no landing at its foot or its head`);
+      }
     }
     // A gallery lies inside its host and its stairs meet it
     for (const gallery of rooms.filter((r) => formOf(r) === "gallery")) {
@@ -10465,7 +10493,8 @@ const CATWALK_SPAN = 12;
 const layoutsClash = (a: RoomLayout, b: RoomLayout) => overlap(a, b) && floorsOf(a)[0] <= floorsOf(b)[1] && floorsOf(b)[0] <= floorsOf(a)[1];
 
 // A room open to the air: a roof, or a walkway between two places
-export const openAir = (a: Pick<Area, "tags">) => formOf(a) === "roof" || formOf(a) === "walkway" || formOf(a) === "balcony";
+// (a bridge between the huts of a tree or stilt village is one too: its corridor stands aloft, with a rope rail and no walls or roof; 2026-11-06, the user)
+export const openAir = (a: Pick<Area, "tags"> & { layout?: Pick<RoomLayout, "aloft"> }) => formOf(a) === "roof" || formOf(a) === "walkway" || formOf(a) === "balcony" || (formOf(a) === "corridor" && !!a.layout?.aloft);
 
 // The squares of a room's wall that nothing is against (no other room at the same floors, no way in)
 function freeWallSquares(all: Area[], room: Area, side: Side): number[] {
@@ -10589,53 +10618,55 @@ function roofStairs(world: World, building: Area, top: Area, roof: Area, all: Ar
   const geo = hall?.tags.find((t) => t.startsWith("geo:"))?.slice(4).split(":");
   if (!hall || !geo || !host.layout || !top.layout || !roof.layout) return;
   const [side, at, mirror] = [geo[0] as Side, Number(geo[1]), geo[2] === "1"];
-  const ups = parts.filter((a) => (tagNumber(a, "storey") ?? -1) >= 0).length;
-  const downs = parts.filter((a) => (tagNumber(a, "storey") ?? 0) < 0).length;
-  // (the switchback from the top floor: the next one up the block's lanes, one floor over the top room)
+  const flights = parts.filter((a) => formOf(a) === "stairs");
+  const ups = flights.filter((a) => (tagNumber(a, "storey") ?? -1) >= 0).length;
+  const downs = flights.filter((a) => (tagNumber(a, "storey") ?? 0) < 0).length;
+  // (the flight from the top floor: the next one up the stairwell, one floor over the top room)
   if (ups !== (top.layout.level ?? 0)) return;
+  const topLanding = parts.find((a) => formOf(a) === "corridor" && tagNumber(a, "landing") === ups);
+  if (!topLanding?.layout) return;
   const block = stairBlock(host.layout, side, at, mirror, ups + 1, downs);
   const layout = block.ups[ups];
-  // (the block's own switchbacks stand under it, a floor apart)
-  if (all.some((o) => o.layout && tagId(o, "block") !== host.id && layoutsClash(layout, o.layout))) return;
+  const roofLayout = block.landings.find((l) => l.floor === ups + 1)!.layout;
+  // (the stairwell's own parts stand under it, a floor apart)
+  if (all.some((o) => o.layout && tagId(o, "block") !== host.id && (layoutsClash(layout, o.layout) || layoutsClash(roofLayout, o.layout)))) return;
+  // The doorways: the flight's foot in the top landing's far wall, its head onto the roof's landing, and the roof door from the landing onto the roof
   const foot = block.doors.filter((d) => d.key === `foot-up${ups}`);
-  const head = block.doors.filter((d) => d.key === `head-up${ups}`);
-  const onFootprint = (list: typeof foot) => list.find((d) => d.room === "host")!;
-  const [inTop, inRoof] = [onFootprint(foot), onFootprint(head)];
-  // The doorways' squares in the top room and on the roof: no way there, and any furniture against the wall is taken away
+  const roofDoor = block.doors.filter((d) => d.key === `floor${ups + 1}`);
+  const [inTop, inRoof] = [foot.find((d) => d.room === `land${ups}`)!, roofDoor.find((d) => d.room === "host")!];
+  // The doorway's square on the roof: no way there, and any furniture against the wall is taken away
   const clear = (l: RoomLayout, q: { x: number; y: number }) => !l.assets.some((a) => (a.side || a.kind === "stairs") && a.x <= q.x && q.x < a.x + a.w && a.y <= q.y && q.y < a.y + a.h);
-  if (!clear(top.layout, inTop) || !clear(roof.layout, inRoof)) return;
-  const covering = (l: RoomLayout, q: { x: number; y: number }) => l.assets.filter((a) => !a.side && a.kind !== "npc" && a.x <= q.x && q.x < a.x + a.w && a.y <= q.y && q.y < a.y + a.h);
-  const moved = covering(top.layout, inTop);
+  if (!clear(roof.layout, inRoof) || !clear(topLanding.layout, inTop)) return;
   const template = BUILDINGS[building.type];
   const hostile = !!template?.hostile;
   const r = createRandom(Math.floor(unitOf(`${building.id}|roof stairs`) * 1e9));
   const locked = hostile ? 10 + 5 * Math.min(3, Math.max(1, building.danger)) : r.chance(0.4) ? 12 : undefined;
-  const stairs: Area = {
-    id: nextId(world, "a"), kind: "room", parentId: building.id, name: "Stairs up to the roof", type: "stairs up to the roof", description: "",
-    tags: ["form:stairs", `block:${host.id}`, `storey:${ups}`, `low:${ups}`, "rise:1"], position: { x: 0, y: 0, z: 0 }, danger: 0, occupants: [], ships: [], loot: [], faction: building.faction,
-    layout: { ...layout, assets: [] },
+  const made = (name: string, tags: string[], l: RoomLayout): Area => {
+    const area: Area = {
+      id: nextId(world, "a"), kind: "room", parentId: building.id, name, type: name.toLowerCase(), description: "",
+      tags, position: { x: 0, y: 0, z: 0 }, danger: 0, occupants: [], ships: [], loot: [], faction: building.faction,
+      layout: { ...l, assets: [] },
+    };
+    world.areas[area.id] = area;
+    return area;
   };
-  world.areas[stairs.id] = stairs;
-  const up: Path = { id: nextId(world, "p"), from: top.id, to: stairs.id, kind: "door", label: "Doorway", travel: "10 ft." };
-  const out: Path = { id: nextId(world, "p"), from: stairs.id, to: roof.id, kind: "door", label: locked ? "Locked roof door" : "Roof door", travel: "10 ft.", ...(locked ? { locked } : {}) };
-  world.paths.push(up, out);
-  top.layout.assets = top.layout.assets.filter((a) => !moved.includes(a));
+  const stairs = made("Stairs up to the roof", ["form:stairs", `block:${host.id}`, `storey:${ups}`, `low:${ups}`, "rise:1"], layout);
+  const landing = made("Roof landing", ["form:corridor", `block:${host.id}`, `landing:${ups + 1}`, `low:${ups + 1}`, "rise:0"], roofLayout);
+  const up: Path = { id: nextId(world, "p"), from: topLanding.id, to: stairs.id, kind: "door", label: "Doorway", travel: "10 ft." };
+  const mid: Path = { id: nextId(world, "p"), from: stairs.id, to: landing.id, kind: "door", label: "Doorway", travel: "10 ft." };
+  const out: Path = { id: nextId(world, "p"), from: landing.id, to: roof.id, kind: "door", label: locked ? "Locked roof door" : "Roof door", travel: "10 ft.", ...(locked ? { locked } : {}) };
+  world.paths.push(up, mid, out);
   const set = (room: Area, d: { x: number; y: number; side: Side }, path: Path, to: Area) => {
     const l = room.layout!;
     l.assets.push({ id: `${room.id}-${l.assets.length + 1}-r`, kind: "door", name: path.label, x: d.x, y: d.y, w: 1, h: 1, side: d.side, ref: path.id, to: to.id });
   };
-  set(top, inTop, up, stairs);
-  set(stairs, foot.find((d) => d.room !== "host")!, up, top);
-  set(stairs, head.find((d) => d.room !== "host")!, out, roof);
-  set(roof, inRoof, out, stairs);
-  // (the top room's floor stays whole: if the doorway would cut it, the furniture goes back and there are no stairs to the roof)
-  if (floorFaults(top.layout)) {
-    top.layout.assets = [...top.layout.assets.filter((a) => a.ref !== up.id), ...moved];
-    roof.layout.assets = roof.layout.assets.filter((a) => a.ref !== out.id);
-    world.paths.splice(world.paths.indexOf(up), 1);
-    world.paths.splice(world.paths.indexOf(out), 1);
-    delete world.areas[stairs.id];
-  }
+  const at2 = (key: string, room: string) => block.doors.find((d) => d.key === key && d.room === room)!;
+  set(topLanding, inTop, up, stairs);
+  set(stairs, at2(`foot-up${ups}`, `up${ups}`), up, topLanding);
+  set(stairs, at2(`head-up${ups}`, `up${ups}`), mid, landing);
+  set(landing, at2(`head-up${ups}`, `land${ups + 1}`), mid, stairs);
+  set(landing, at2(`floor${ups + 1}`, `land${ups + 1}`), out, roof);
+  set(roof, inRoof, out, landing);
 }
 
 export function planDistrict(ctx: Context, district: District): DistrictPlan | undefined {
