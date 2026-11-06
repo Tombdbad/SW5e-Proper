@@ -4452,7 +4452,7 @@ export function beastMetres(name: string, size = ""): { m: number; long: boolean
   const cat = sizeCat(size);
   const lore = BEAST_METRES.find(([re]) => re.test(n))?.[1];
   if (lore) {
-    const k = cat ? Math.max(0.4, Math.min(2, SIZE_STEP[cat] / SIZE_STEP[lore.at])) : 1;
+    const k = cat ? Math.max(0.15, Math.min(2, SIZE_STEP[cat] / SIZE_STEP[lore.at])) : 1;
     return { m: lore.m * k, long: !!lore.long, cat: cat ?? lore.at };
   }
   const c = cat ?? "medium";
