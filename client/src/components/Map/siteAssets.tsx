@@ -1795,8 +1795,8 @@ export function CanopyBridge({ w, d, kind, biome }: { w: number; d: number; kind
       })}
       {[0.06, span - 0.06].map((v, side) => (
         <group key={side}>
-          {Array.from({ length: Math.max(2, Math.round(len / 1.2) + 1) }, (_, i, all) => {
-            const u = (i / (all.length - 1)) * len;
+          {Array.from({ length: Math.max(2, Math.round(len / 1.2) + 1) }, (_, i) => {
+            const u = (i / (Math.max(2, Math.round(len / 1.2) + 1) - 1)) * len;
             return <Beam key={i} from={at(u, v, yAt(u))} to={at(u, v, yAt(u) + 1.0)} thick={0.07} color={bark} />;
           })}
           {Array.from({ length: 8 }, (_, i) => {
