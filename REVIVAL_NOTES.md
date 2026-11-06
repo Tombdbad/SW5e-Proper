@@ -1187,3 +1187,19 @@ Done on 2026-10-13: the data files are generated from the API, expanded content 
   Wookieepedia through archivum.wiki, the Star Wars fiction reference's domesticated creatures list), times the stat block's size against the grown
   beast's by the squares they take (a Medium juvenile rancor a third of a Huge adult); else the height (or length, span) its size gives; never wider
   than its size's room on the map (MAX_SPAN: a greater krayt dragon is held to 11 squares). Test: interiors/body.test.ts (PC only).
+
+## Stairwells without doors, in wood (2026-11-06, night; the user, with a screenshot of a round tower on Kashyyyk: "the tree with the foliage drawn INSIDE (this is WRONG). The doors to the landings at the top and bottom of each flight of steps is WRONG - the landings should be WITHIN the bounds of the full stairwell - players should be able to walk, within the stairwell, from the lowest level to the top level uninterrupted, WITHOUT NEEDING TO GO THROUGH DOORS! The stairwells need to be re-modelled to match the aesthetic of the settlement (wooden and rustic)")
+- Seams (shared/logic `RoomAsset.seam`, `markSeams`, LIFE 22): the doorways between a landing and the flight that leaves it, and the flight and the landing it comes to,
+  are still paths and door assets (the areas are separate rooms, and the audit and NPC walking use them) but are seams: labelled "Stairwell", not drawn as doors
+  (RoomShell skips the frame and the pierced wall, and draws no wall or rail on a side that has only seams, so the stairwell runs on), and crossed by walking onto
+  them (LocalMap's walk loop sends `go` as the party steps on a seam square, at the first square of the next part). One tap on the head of a flight walks the
+  switchback and goes on to the next landing. Only each landing's doorway into its floor's room is a door. Tests: access.test.ts.
+- Wood (LocalMap `RUSTIC`, Switchback `rustic`, SlopedRail/Balustrade `color`/`thick`): in a tree or timber village (a canopy village, or family "timber") an open-air
+  stairwell is planks on log stringers (open under), log posts and rails (a post-and-rail between the two flights instead of the plaster wall), log posts down to the
+  ground; elsewhere it is the steel decking as before. Plain boxes, not a Mixar model: a carved kit piece is the next step if wanted.
+- Trees: a hut's great tree (siteAssets GreatTree) takes the corner of its square farthest from the other rooms of the building (the stairwell's landings and flights,
+  bridges, decks, neighbours: `treeCorner` in interiors/architecture.ts) and no more crown than the room it has (FOLIAGE_REACH 7 m at scale 1); the ambient trees of the
+  open ground keep 5 squares off a stairwell instead of 1 (LocalMap `clear`).
+- A bug the walk showed: a tap on a deck or rope bridge of a tree village always landed on the middle row of it, because its tap plane was a turned plane whose local z is
+  0 (floorTap reads the point in the mesh's own frame); it is a thin box now.
+- Not done: the HUD lists a seam as a button ("Stairwell to Ramp up to ..."), which is right but could be worded better; saved worlds' old path labels stay "Doorway".

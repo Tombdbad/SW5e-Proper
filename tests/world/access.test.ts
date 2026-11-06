@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateWorld, livenWorld, auditBuildings, walkBuilding, validateWorld, openAir, SPIRAL, stairBlock, climbAt, canStep, floorLevelAt, formOf, exitsOf, paneFor, climbable, setPane, arrivalSquares, createRandom, BLOCK_LENGTH, LANDING, type Area, type RoomLayout, type Side, type World } from "@shared/logic";
+import { generateWorld, livenWorld, auditBuildings, walkBuilding, validateWorld, openAir, SPIRAL, stairBlock, markSeams, tagId, climbAt, canStep, floorLevelAt, formOf, exitsOf, paneFor, climbable, setPane, arrivalSquares, createRandom, BLOCK_LENGTH, LANDING, type Area, type RoomLayout, type Side, type World } from "@shared/logic";
 import { getWorldCatalog } from "../../server/sw5eData";
 
 // Access to every floor of the buildings the generator makes (2026-10-20): the stair blocks (shared/logic "Stair blocks": rooms
@@ -334,4 +334,41 @@ test("balconies: on the upper floors of the great houses, over the street, reach
     }
   }
   assert.ok(balconies > 0, "no balcony in the worlds");
+});
+
+// Stairwells without doors (2026-11-06, the user: "players should be able to walk, within the stairwell, from the lowest level to the top level uninterrupted,
+// WITHOUT NEEDING TO GO THROUGH DOORS"): the joins of a landing and its flights are seams (no frame, no wall, crossed by walking onto them); only the
+// doorway of each floor into its room is a door.
+test("a stairwell's landings and flights are joined by seams, and only the way into each floor's room is a door", () => {
+  let seams = 0;
+  let doors = 0;
+  for (const seed of SEEDS) {
+    const world = worldOf(seed);
+    for (const room of Object.values(world.areas)) {
+      const block = tagId(room, "block");
+      if (!block || !room.layout) continue;
+      for (const a of room.layout.assets.filter((x) => x.kind === "door" && x.to)) {
+        const other = world.areas[a.to!];
+        const joined: boolean = tagId(other, "block") === block;
+        assert.equal(!!a.seam, joined, `${room.name} to ${other.name} (seed ${seed})`);
+        if (joined) seams++; else doors++;
+      }
+      // (a landing's doorway to its floor is the only door of its own, on the side of the host)
+      if (formOf(room) === "stairs") assert.ok(room.layout.assets.filter((x) => x.kind === "door").every((x) => x.seam), `${room.name}: a flight has no door of its own`);
+    }
+  }
+  assert.ok(seams > 0 && doors > 0, `${seams} seams, ${doors} doors`);
+});
+
+test("a saved world's stairwells lose their doors (life 22): the joins of the landings and flights become seams", () => {
+  const world = structuredClone(worldOf(5));
+  for (const room of Object.values(world.areas)) for (const a of room.layout?.assets ?? []) delete a.seam;
+  world.life = 21;
+  const next = livenWorld(world, catalog);
+  assert.ok((next.life ?? 0) >= 22, `life ${next.life}`);
+  assert.ok(Object.values(next.areas).some((r) => r.layout?.assets.some((a) => a.seam)), "some seams were marked");
+  // (marking again changes nothing)
+  const again = structuredClone(next);
+  markSeams(again);
+  assert.deepEqual(again, next);
 });

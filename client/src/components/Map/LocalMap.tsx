@@ -270,15 +270,18 @@ const Cyl = ({ at, r, h, color, glow, top = r }: { at: V3; r: number; h: number;
 const RAIL = "#c8ccd2";
 // The decking of a round tower's ramps and gantries (shared/logic "Round towers")
 const RAMP_DECK = "#6f7882";
-const Balustrade = ({ at, length, along, h = 1, base = 0 }: { at: [number, number]; length: number; along: "x" | "z"; h?: number; base?: number }) => {
+// (in a tree or timber village the same stairwell is of wood: 2026-11-06, the user: "the stairwells need to be re-modelled to match the aesthetic of the
+// settlement, wooden and rustic"; planks, a peeled-log rail, posts of the same)
+const RUSTIC = { deck: "#8a6a45", deck2: "#7a5c3b", rail: "#6b4f33", post: "#5a4128" };
+const Balustrade = ({ at, length, along, h = 1, base = 0, color = RAIL, thick = 1 }: { at: [number, number]; length: number; along: "x" | "z"; h?: number; base?: number; color?: string; thick?: number }) => {
   const x = along === "x";
   const posts = Math.max(2, Math.round(length / 0.9) + 1);
   const on = (u: number, y: number): V3 => (x ? [u, y, 0] : [0, y, u]);
   return (
     <group position={[at[0], base, at[1]]}>
-      <Box at={on(0, h)} size={x ? [length, 0.05, 0.06] : [0.06, 0.05, length]} color={RAIL} />
-      <Box at={on(0, h * 0.5)} size={x ? [length, 0.03, 0.03] : [0.03, 0.03, length]} color={RAIL} />
-      {Array.from({ length: posts }, (_, i) => <Box key={i} at={on(-length / 2 + (i * length) / (posts - 1), h / 2)} size={[0.05, h, 0.05]} color={RAIL} />)}
+      <Box at={on(0, h)} size={x ? [length, 0.05 * thick, 0.06 * thick] : [0.06 * thick, 0.05 * thick, length]} color={color} />
+      <Box at={on(0, h * 0.5)} size={x ? [length, 0.03 * thick, 0.03 * thick] : [0.03 * thick, 0.03 * thick, length]} color={color} />
+      {Array.from({ length: posts }, (_, i) => <Box key={i} at={on(-length / 2 + (i * length) / (posts - 1), h / 2)} size={[0.05 * thick, h, 0.05 * thick]} color={color} />)}
     </group>
   );
 };
@@ -578,8 +581,8 @@ const sameFootprint = (a: RoomLayout, b: RoomLayout) => a.x < b.x + b.width && b
 // The steps of a stairwell, or the rungs of a ladder, rising from one end of a room to the other;
 // they are looked at, not tapped (the floor under them takes the tap)
 // `rock` (a cave's stairs) draws the steps as the cave's rock instead of boxes
-function Ascent({ w, h, toward, up, form, switchback, ramp, onTap, rock, tone }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; form: string; switchback?: RoomLayout["switchback"]; ramp?: boolean; onTap?: (x: number, y: number) => void; rock?: { biome: string }; tone?: string }) {
-  if (switchback) return <Switchback w={w} h={h} toward={toward} up={up} low={switchback.low} ramp={ramp} onTap={onTap} rock={rock} tone={tone} />;
+function Ascent({ w, h, toward, up, form, switchback, ramp, onTap, rock, tone, rustic }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; form: string; switchback?: RoomLayout["switchback"]; ramp?: boolean; onTap?: (x: number, y: number) => void; rock?: { biome: string }; tone?: string; rustic?: boolean }) {
+  if (switchback) return <Switchback w={w} h={h} toward={toward} up={up} low={switchback.low} ramp={ramp} onTap={onTap} rock={rock} tone={tone} rustic={rustic} />;
   const along = toward === "e" || toward === "w" ? w : h;
   const across = toward === "e" || toward === "w" ? h : w;
   const count = Math.max(4, Math.round(along * (form === "ladder" ? 3 : 2.4)));
@@ -620,7 +623,8 @@ function Ascent({ w, h, toward, up, form, switchback, ramp, onTap, rock, tone }:
 // with a rail along it, up to the landing
 // (`ramp`: a slope, the pit's ramps: thin slices that read as one surface, in packed earth)
 // (`tone`: the slope's colour, packed earth unless given: a round tower's ramps are steel decking)
-function Switchback({ w, h, toward, up, low, ramp, onTap, rock, tone }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; low: 0 | 1; ramp?: boolean; onTap?: (x: number, y: number) => void; rock?: { biome: string }; tone?: string }) {
+// (`rustic`: of wood, in a tree or timber village: planks, and a rail and posts between the flights where a plastered wall stood)
+function Switchback({ w, h, toward, up, low, ramp, onTap, rock, tone, rustic }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; low: 0 | 1; ramp?: boolean; onTap?: (x: number, y: number) => void; rock?: { biome: string }; tone?: string; rustic?: boolean }) {
   const none = () => null;
   const plan = { width: w, height: h, climb: { toward, levels: 1 }, switchback: { low } };
   const ew = toward === "e" || toward === "w";
@@ -633,9 +637,19 @@ function Switchback({ w, h, toward, up, low, ramp, onTap, rock, tone }: { w: num
       const a = (k + 0.5) / TREADS;
       const [px, py] = ew ? [a, lane + 0.5] : [lane + 0.5, a];
       const top = Math.max(0.04, climbAt(plan, px, py) * up);
-      treads.push({ at: [px, top / 2, py], size: ew ? [1 / TREADS + 0.01, top, 0.92] : [0.92, top, 1 / TREADS + 0.01], top, sq: [Math.floor(px), Math.floor(py)] });
+      // (a wooden flight is planks on stringers, open under: not a wedge of solid)
+      const thick = rustic && top > 0.2 ? 0.14 : top;
+      treads.push({ at: [px, top - thick / 2, py], size: ew ? [1 / TREADS + 0.01, thick, 0.92] : [0.92, thick, 1 / TREADS + 0.01], top, sq: [Math.floor(px), Math.floor(py)] });
     }
   }
+  // The stringers under a wooden flight: a log along each lane's edges, from the foot to the turn, with the heights the lane has there
+  const beams = !rustic ? [] : [0, 1].flatMap((lane) => [0.08, 0.92].map((off) => {
+    const at = (a: number): [number, number] => (ew ? [a, lane + off] : [lane + off, a]);
+    const [a0, a1] = [0.05, along - 0.05];
+    const [h0, h1] = [Math.max(0.1, climbAt(plan, ...at(a0)) * up - 0.2), Math.max(0.1, climbAt(plan, ...at(a1)) * up - 0.2)];
+    const [p0, p1] = [at(a0), at(a1)];
+    return { mid: [(p0[0] + p1[0]) / 2, (h0 + h1) / 2, (p0[1] + p1[1]) / 2] as V3, len: Math.hypot(a1 - a0, h1 - h0), tilt: Math.atan2(h1 - h0, a1 - a0) };
+  }));
   // The wall between the flights runs from the near end to the landing, as high as the higher flight there and a rail more
   const run = along - 1;
   const near = toward === "e" || toward === "s" ? 0 : along;
@@ -645,6 +659,12 @@ function Switchback({ w, h, toward, up, low, ramp, onTap, rock, tone }: { w: num
     const tall = Math.max(climbAt(plan, ew ? mid : 0.5, ew ? 0.5 : mid), climbAt(plan, ew ? mid : 1.5, ew ? 1.5 : mid)) * up + 0.9;
     return { at: (ew ? [mid, tall / 2, 1] : [1, tall / 2, mid]) as V3, size: (ew ? [1.01, tall, 0.06] : [0.06, tall, 1.01]) as V3 };
   });
+  // (the rail between the flights, of a wooden stair: a post at each square's end and a rail along the slope, as high over the higher flight as a hand rail)
+  const divide = Array.from({ length: run + 1 }, (_, i) => {
+    const m = near + sign * i;
+    const top = Math.max(climbAt(plan, ew ? m : 0.5, ew ? 0.5 : m), climbAt(plan, ew ? m : 1.5, ew ? 1.5 : m)) * up;
+    return { m, top };
+  });
   return (
     <group>
       {treads.map((t, i) => (rock ? (
@@ -652,10 +672,32 @@ function Switchback({ w, h, toward, up, low, ramp, onTap, rock, tone }: { w: num
       ) : (
         <mesh key={i} position={t.at} raycast={onTap ? undefined : none} receiveShadow castShadow onClick={onTap ? (e) => { e.stopPropagation(); if (e.delta <= 8) onTap(t.sq[0], t.sq[1]); } : undefined}>
           <boxGeometry args={t.size} />
-          <meshLambertMaterial color={ramp ? tone ?? "#7a6447" : i % 2 ? "#8b8f96" : "#9aa0a8"} />
+          <meshLambertMaterial color={rustic ? (Math.floor(i / 2) % 2 ? RUSTIC.deck2 : RUSTIC.deck) : ramp ? tone ?? "#7a6447" : i % 2 ? "#8b8f96" : "#9aa0a8"} />
         </mesh>
       )))}
-      {wall.map((p, i) => (rock ? <CaveSlab key={`w${i}`} at={p.at} size={p.size} biome={rock.biome} variant={i + 1} /> : <Box key={`w${i}`} at={p.at} size={p.size} color="#c8ccd2" />))}
+      {beams.map((b, i) => (
+        <mesh key={`b${i}`} position={b.mid} rotation={ew ? [0, 0, b.tilt] : [-b.tilt, 0, 0]} raycast={none}>
+          <boxGeometry args={ew ? [b.len, 0.2, 0.14] : [0.14, 0.2, b.len]} />
+          <meshLambertMaterial color={RUSTIC.post} />
+        </mesh>
+      ))}
+      {rustic ? (
+        <>
+          {divide.map((d, i) => <Box key={`p${i}`} at={ew ? [d.m, (d.top + 1.05) / 2, 1] : [1, (d.top + 1.05) / 2, d.m]} size={[0.09, d.top + 1.05, 0.09]} color={RUSTIC.post} />)}
+          {divide.slice(1).map((d, i) => {
+            const e = divide[i];
+            const [a0, a1, h0, h1] = d.m > e.m ? [e.m, d.m, e.top, d.top] : [d.m, e.m, d.top, e.top];
+            const tilt = Math.atan2(h1 - h0, a1 - a0);
+            const len = Math.hypot(a1 - a0, h1 - h0) + 0.02;
+            return (
+              <group key={`r${i}`} position={ew ? [(a0 + a1) / 2, (h0 + h1) / 2 + 1, 1] : [1, (h0 + h1) / 2 + 1, (a0 + a1) / 2]} rotation={ew ? [0, 0, tilt] : [-tilt, 0, 0]}>
+                <mesh raycast={none}><boxGeometry args={ew ? [len, 0.08, 0.09] : [0.09, 0.08, len]} /><meshLambertMaterial color={RUSTIC.rail} /></mesh>
+                <mesh raycast={none} position={[0, -0.4, 0]}><boxGeometry args={ew ? [len, 0.05, 0.05] : [0.05, 0.05, len]} /><meshLambertMaterial color={RUSTIC.rail} /></mesh>
+              </group>
+            );
+          })}
+        </>
+      ) : wall.map((p, i) => (rock ? <CaveSlab key={`w${i}`} at={p.at} size={p.size} biome={rock.biome} variant={i + 1} /> : <Box key={`w${i}`} at={p.at} size={p.size} color="#c8ccd2" />))}
     </group>
   );
 }
@@ -859,7 +901,7 @@ function SpiralWell({ r = 0.95 }: { r?: number }) {
 }
 // A rail along a side of a way between floors that is open to the sky (a round tower's ramps, shared/logic "Round towers"), at the height the floor is
 // along that side: posts and a top rail that climb with it. `a` and `b` are the run along the side, in squares from its start.
-function SlopedRail({ plan, side, a, b, up }: { plan: Pick<RoomLayout, "width" | "height" | "climb" | "switchback">; side: "n" | "e" | "s" | "w"; a: number; b: number; up: number }) {
+function SlopedRail({ plan, side, a, b, up, color = RAIL }: { plan: Pick<RoomLayout, "width" | "height" | "climb" | "switchback">; side: "n" | "e" | "s" | "w"; a: number; b: number; up: number; color?: string }) {
   const none = () => null;
   const ew = side === "n" || side === "s";
   const inset = 0.06;
@@ -876,7 +918,7 @@ function SlopedRail({ plan, side, a, b, up }: { plan: Pick<RoomLayout, "width" |
     <group>
       {us.filter((_, i) => i % 2 === 0 || i === n).map((u) => {
         const [x, z] = at(u);
-        return <Box key={`p${u}`} at={[x, floor(u) + H / 2, z]} size={[0.05, H, 0.05]} color={RAIL} />;
+        return <Box key={`p${u}`} at={[x, floor(u) + H / 2, z]} size={[0.05, H, 0.05]} color={color} />;
       })}
       {us.slice(1).map((u, i) => {
         const u0 = us[i];
@@ -889,7 +931,7 @@ function SlopedRail({ plan, side, a, b, up }: { plan: Pick<RoomLayout, "width" |
           <group key={`r${u}`} position={[(x0 + x1) / 2, (h0 + h1) / 2 + H, (z0 + z1) / 2]} rotation={ew ? [0, 0, tilt] : [-tilt, 0, 0]}>
             <mesh raycast={none}>
               <boxGeometry args={ew ? [Math.hypot(run, h1 - h0) + 0.01, 0.05, 0.06] : [0.06, 0.05, Math.hypot(run, h1 - h0) + 0.01]} />
-              <meshLambertMaterial color={RAIL} />
+              <meshLambertMaterial color={color} />
             </mesh>
           </group>
         );
@@ -1360,7 +1402,9 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   };
   const meetGaps = meets.map((m) => [onLine(m.side, m.a), onLine(m.side, m.b)].sort((x, y) => x - y) as [number, number]);
   const met = (p: WayPlace) => meets.some((m) => m.place(p.a));
-  const cut = wallStretches(wallLine, width, height, [...setIn.filter((p) => (isWay(p.a) || p.a.kind === "window") && !met(p)).map((p) => [p.s - 0.5, p.s + 0.5] as [number, number]), ...meetGaps]);
+  // (a tree or timber village's stairwell is of wood, not steel: planks, logs and rope-tied rails)
+  const rustic = !!canopy;
+  const cut =wallStretches(wallLine, width, height, [...setIn.filter((p) => (isWay(p.a) || p.a.kind === "window") && !met(p)).map((p) => [p.s - 0.5, p.s + 0.5] as [number, number]), ...meetGaps]);
   // The rounded corners, each a quarter ring (or what is left of it beside a door or window)
   const cornerList = cut.arcs.map((c) => ({ corner: c.corner, r: c.r, from: c.from, to: c.to }));
   // Each wall runs between its corners, stopping short of a rounded one
@@ -1382,10 +1426,11 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
     <>
       {/* The floor; a tap on it walks to the square (both floors are centred on the room's middle) */}
       {canopyWay ? (
-        // (a deck or bridge in the trees: its planks are the floor; under them a pane the taps land on)
+        // (a deck or bridge in the trees: its planks are the floor; under them a pane the taps land on. A box, not a turned plane: floorTap reads the point in
+        // the mesh's own frame, where a turned plane's depth is always 0, so every tap landed on the middle row: 2026-11-06)
         <>
-          <mesh position={[width / 2, 0.02, height / 2]} rotation={[-Math.PI / 2, 0, 0]} onClick={floorTap}>
-            <planeGeometry args={[width, height]} />
+          <mesh position={[width / 2, 0.01, height / 2]} onClick={floorTap}>
+            <boxGeometry args={[width, 0.04, height]} />
             <meshBasicMaterial transparent opacity={0} depthWrite={false} />
           </mesh>
           {plan?.form === "balcony" ? <CanopyPlatform w={width} d={height} open={canopyRails({ assets })} aloft={plan.aloft ?? 0} kind={canopy!} biome={biome ?? ""} /> : <CanopyBridge w={width} d={height} kind={canopy!} biome={biome ?? ""} />}
@@ -1423,7 +1468,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
           <FloorSurface look={floorTexture} w={width} h={height} radii={[nw, ne, se, sw]} onTap={floorTap} />
         </Suspense>
       )}
-      {plan?.climb && plan.form && !sloped && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} ramp={plan.ramp} onTap={onFloor} rock={rocky ? { biome: mood!.biome } : undefined} tone={plan.open ? RAMP_DECK : undefined} />}
+      {plan?.climb && plan.form && !sloped && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} ramp={plan.ramp} onTap={onFloor} rock={rocky ? { biome: mood!.biome } : undefined} tone={plan.open ? (rustic ? RUSTIC.deck : RAMP_DECK) : undefined} rustic={rustic && !!plan.open} />}
       {/* A covered walkway is the kit's tube from within, as it is from without (its deck a hair over the floor's) */}
       {canopyWay
         ? null
@@ -1433,14 +1478,16 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         ? <Solids><CaveWalls mask={mask} ways={assets.filter((a) => a.side).map((a) => ({ x: a.x, y: a.y, side: a.side }))} w={width} h={height} biome={mood!.biome} tier={detail} seed={width * 31 + height} tall={fullWalls} ceiling={ceiling && fullWalls ? CAVE_ROOF : undefined} lift={slope} liftKey={slopeKey} /></Solids>
         : walls
         ? (() => {
-            const runs = cut.runs.filter((r) => r.b - r.a >= 0.01).map((r) => ({ ...r, at: sides.find((s) => s.side === r.side)!.at }));
+            // (a side that is only seams, where a landing meets its flight, is no wall at all: the stairwell goes on there, with no door and no rail)
+            const seamed = new Set((["n", "e", "s", "w"] as const).filter((s) => assets.some((a) => a.seam && a.side === s) && !assets.some((a) => !a.seam && isWay(a) && a.side === s)));
+            const runs = cut.runs.filter((r) => r.b - r.a >= 0.01 && !seamed.has(r.side as "n")).map((r) => ({ ...r, at: sides.find((s) => s.side === r.side)!.at }));
             // Round each doorway and window the wall stands whole but for the frame's own outline (beside it, under a window and over
             // both), bent onto the curve where the wall curves
             const tint = wallLook && wallPack && hasWalls(wallPack) ? toneColour(wallLook) : wall;
             // (the sides that are a balustrade: a gallery's overlooking edge, and the long sides of a walkway, which has no walls)
             // (and a round tower's gantry landings and ramps, open to the sky: shared/logic "Round towers")
             const rails = plan?.form === "walkway" || plan?.open || (plan?.form === "corridor" && plan.aloft) ? ["n", "e", "s", "w"].filter((s) => !assets.some((a) => isWay(a) && a.side === s)).join("") : railing;
-            const pierced = rocky ? [] : setIn.filter((p) => (isWay(p.a) || p.a.kind === "window") && !met(p)).map((p) => (
+            const pierced = rocky ? [] : setIn.filter((p) => (isWay(p.a) || p.a.kind === "window") && !met(p) && !p.a.seam).map((p) => (
               <group key={`pierced${p.a.id}`} position={[p.at[0], 0, p.at[1]]} rotation={[0, p.turn, 0]}>
                 <PiercedWall kind={p.a.kind} pane={p.a.pane} style={style} wallH={rails.includes(p.a.side!) ? BALUSTRADE_HEIGHT : wallH} lift={ramp(p.a.x, p.a.y)} bend={p.bend} color={tint} wall={wallTexture} />
               </group>
@@ -1449,8 +1496,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
               if (rocky) return <RockWall key={`${side}${a}`} side={side} a={a} b={b} w={width} h={height} height={1.1} seed={Math.round(a * 10) + side.charCodeAt(0) + width} biome={mood!.biome} tier={detail} />;
               const [position, size] = at(a, b);
               // (along a ramp the rail climbs with the floor)
-              if (rails.includes(side) && plan?.climb && plan.open) return <SlopedRail key={`${side}${a}`} plan={plan} side={side as "n" | "e" | "s" | "w"} a={a} b={b} up={climbs} />;
-              if (rails.includes(side)) return <Balustrade key={`${side}${a}`} at={[position[0], position[2]]} length={b - a} along={side === "n" || side === "s" ? "x" : "z"} h={BALUSTRADE_HEIGHT} />;
+              if (rails.includes(side) && plan?.climb && plan.open) return <SlopedRail key={`${side}${a}`} plan={plan} side={side as "n" | "e" | "s" | "w"} a={a} b={b} up={climbs} color={rustic && plan.open ? RUSTIC.rail : undefined} />;
+              if (rails.includes(side)) return <Balustrade key={`${side}${a}`} at={[position[0], position[2]]} length={b - a} along={side === "n" || side === "s" ? "x" : "z"} h={BALUSTRADE_HEIGHT} color={rustic && plan?.open ? RUSTIC.rail : undefined} thick={rustic && plan?.open ? 1.8 : 1} />;
               const high = wallH;
               return <Box key={`${side}${a}`} at={[position[0], high / 2, position[2]]} size={[size[0], high, size[2]]} color={wall} solid wall={wallTexture} />;
             });
@@ -1498,7 +1545,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             );
           })()
         : [[0, 0], [width, 0], [0, height], [width, height]].map(([x, z], i) => <Cyl key={i} at={[x, 0.3, z]} r={0.08} h={0.6} color={wall} />)}
-      {setIn.filter((p) => walls || p.a.kind !== "window").map(({ a, at, turn, bend }) => (
+      {setIn.filter((p) => (walls || p.a.kind !== "window") && !p.a.seam).map(({ a, at, turn, bend }) => (
         <group key={a.id} position={[at[0], ramp(a.x, a.y), at[1]]} rotation={[0, turn, 0]}>
           <Doorway kind={a.kind} color={wayColor?.(a) ?? WAY_COLORS[a.kind as keyof typeof WAY_COLORS] ?? WAY_COLORS.door} label={wayLabel?.(a)} onTap={onAsset ? () => onAsset(a) : undefined} style={style} pane={a.pane} name={a.name} wall={wallTexture} tint={wallLook && wallPack && hasWalls(wallPack) ? toneColour(wallLook) : wall} bend={bend} rock={rocky ? { biome: mood!.biome, tier: detail, seed: a.x * 7 + a.y * 13 + width } : undefined} />
         </group>
@@ -3451,7 +3498,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     const markRect = (r: { x: number; y: number; width: number; height: number }, n = 0) => { for (let y = r.y - n; y < r.y + r.height + n; y++) for (let x = r.x - n; x < r.x + r.width + n; x++) clear.add(`${x},${y}`); };
     for (const key of taken) { const [tx, ty] = key.split(",").map(Number); mark(tx, ty, 2); }
     for (const d of decor) mark(d.x, d.y, 1);
-    for (const a of rooms) if (a.layout) markRect(a.layout, 1);
+    // (a stairwell, open to the sky, keeps the trees' crowns off it as well as their trunks: 2026-11-06, the user: "the tree with the foliage drawn INSIDE")
+    for (const a of rooms) if (a.layout) markRect(a.layout, a.tags.some((t) => t.startsWith("block:")) ? 5 : 1);
     for (const w of districtPlan?.ways ?? []) markRect(w);
     const grounds = districtPlan?.grounds;
     if (grounds?.wall) markRect(grounds.wall, 1);
@@ -4483,6 +4531,14 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         feet.current = { ...next };
         going.path.shift();
         step -= far;
+        // The join of two parts of a stairwell is crossed by walking onto it: the party goes on into the next flight or landing, no door to open
+        const seam = inside?.layout?.assets.find((a) => a.seam && a.to && inside.layout!.x + a.x === next.x && inside.layout!.y + a.y === next.y);
+        if (seam && inside) {
+          walk.current = null;
+          spot.stand(hereId, feet.current.x, feet.current.y);
+          onAct?.({ type: "go", areaId: seam.to! });
+          return;
+        }
         // A loose flagstone gives way under the first foot to step on it
         const trap = inside ? trapsIn(inside, false).find((a) => inside.layout!.x + a.x === next.x && inside.layout!.y + a.y === next.y) : undefined;
         if (trap && inside) {
@@ -5019,7 +5075,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               {/* (a hut's deck and the rope bridges between huts, shared/logic planDistrict "Rope bridges", are drawn as they are from on them: RoomShell `canopy`) */}
               {formOf(room) === "corridor" || formOf(room) === "walkway" ? <CanopyBridge w={l.width} d={l.height} kind={kind} biome={biome} />
                 : formOf(room) === "balcony" ? <CanopyPlatform w={l.width} d={l.height} open={canopyRails(l)} aloft={l.aloft} kind={kind} biome={biome} />
-                : <CanopyDeck w={l.width} d={l.height} round={!!l.shape} aloft={l.aloft} kind={kind} biome={biome} seed={hue(room.id)} />}
+                : <CanopyDeck w={l.width} d={l.height} round={!!l.shape} aloft={l.aloft} kind={kind} biome={biome} seed={hue(room.id)}
+                    clear={rooms.filter((o) => o !== room && o.parentId === room.parentId && o.layout && !sameFootprint(o.layout, l)).map((o) => ({ x0: o.layout!.x - l.x, y0: o.layout!.y - l.y, x1: o.layout!.x + o.layout!.width - l.x, y1: o.layout!.y + o.layout!.height - l.y }))} />}
               {ways.map((a) => {
                 const out: [number, number] = a.side === "n" ? [0, -1] : a.side === "s" ? [0, 1] : a.side === "w" ? [-1, 0] : [1, 0];
                 const at: [number, number] = a.side === "n" ? [a.x + 0.5, 0] : a.side === "s" ? [a.x + 0.5, l.height] : a.side === "w" ? [0, a.y + 0.5] : [l.width, a.y + 0.5];
@@ -5206,20 +5263,23 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   const ways = (side: string) => l.assets.some((a) => (a.kind === "door" || a.kind === "exit") && a.side === side);
                   const sides = (["n", "e", "s", "w"] as const).filter((side) => !ways(side));
                   const drop = Math.min(LEVEL_H, lift - (l.aloft ?? 0));
+                  // (of wood in a tree or timber village: planks on log posts with log rails; of steel elsewhere)
+                  const wood = !!canopyAt.get(room.parentId ?? "") || family === "timber";
                   return (
                     <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                       {form === "stairs" && l.climb ? (
                         <>
-                          <Ascent w={l.width} h={l.height} toward={l.climb.toward} up={rise(l)} form="stairs" switchback={l.switchback} ramp tone={RAMP_DECK} />
-                          {sides.map((side) => <SlopedRail key={side} plan={l} side={side} a={0} b={side === "n" || side === "s" ? l.width : l.height} up={rise(l)} />)}
+                          <Ascent w={l.width} h={l.height} toward={l.climb.toward} up={rise(l)} form="stairs" switchback={l.switchback} ramp tone={wood ? RUSTIC.deck : RAMP_DECK} rustic={wood} />
+                          {sides.map((side) => <SlopedRail key={side} plan={l} side={side} a={0} b={side === "n" || side === "s" ? l.width : l.height} up={rise(l)} color={wood ? RUSTIC.rail : undefined} />)}
                         </>
                       ) : (
                         <>
-                          {slab(RAMP_DECK)}
-                          {rail(sides.join(""))}
+                          {slab(wood ? RUSTIC.deck : RAMP_DECK)}
+                          {wood ? (["n", "s"] as const).filter((s) => sides.includes(s)).map((s) => <Balustrade key={s} at={[l.width / 2, s === "n" ? 0.04 : l.height - 0.04]} length={l.width} along="x" h={BALUSTRADE_HEIGHT} base={0.12} color={RUSTIC.rail} thick={1.8} />) : null}
+                          {wood ? (["w", "e"] as const).filter((s) => sides.includes(s)).map((s) => <Balustrade key={s} at={[s === "w" ? 0.04 : l.width - 0.04, l.height / 2]} length={l.height} along="z" h={BALUSTRADE_HEIGHT} base={0.12} color={RUSTIC.rail} thick={1.8} />) : rail(sides.join(""))}
                         </>
                       )}
-                      {drop > 0.01 && [[0.1, 0.1], [l.width - 0.1, 0.1], [0.1, l.height - 0.1], [l.width - 0.1, l.height - 0.1]].map(([px, pz], i) => <Box key={i} at={[px, -drop / 2, pz]} size={[0.1, drop, 0.1]} color="#59636d" />)}
+                      {drop > 0.01 && [[0.1, 0.1], [l.width - 0.1, 0.1], [0.1, l.height - 0.1], [l.width - 0.1, l.height - 0.1]].map(([px, pz], i) => <Box key={i} at={[px, -drop / 2, pz]} size={wood ? [0.2, drop, 0.2] : [0.1, drop, 0.1]} color={wood ? RUSTIC.post : "#59636d"} />)}
                     </group>
                   );
                 })()

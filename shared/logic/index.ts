@@ -1911,6 +1911,9 @@ export interface RoomAsset {
   // The path a door is, the room it leads to, or the occupant, cache or ship the asset stands for
   ref?: string;
   to?: string;
+  // A door that is no door: the join of two parts of one stairwell (a landing and the flight that leaves it), drawn as an opening in no wall and
+  // crossed by walking onto it (see "Stair blocks")
+  seam?: boolean;
   // A holding cell or slave pen: the DC of its lock and whether it has been opened (see cellOf). Older ones have none: shut, DC 15.
   cell?: { dc: number; open?: boolean };
 }
@@ -2993,7 +2996,7 @@ function migrateSites(ctx: Context) {
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 21;
+export const LIFE = 22;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -3213,8 +3216,20 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
     // (and the tree and stilt villages are planned again, for the decks off their huts and the rope bridges between their buildings)
     replanBuildings(ctx, Object.values(next.areas).filter((a) => a.kind === "building" && canopyOf(next, a.id) && childrenOf(next, a.id).some((room) => room.layout)));
   }
+  // Stairwells without doors (life 22, 2026-11-06, the user: "players should be able to walk, within the stairwell, from the lowest level to the top level
+  // uninterrupted, WITHOUT NEEDING TO GO THROUGH DOORS"): the doorways between a landing and its flights, in buildings planned before, become seams
+  if ((next.life ?? 0) < 22) markSeams(next);
   next.life = LIFE;
   return next;
+}
+
+// The ways between two parts of one stairwell (rooms with the same `block:` tag) are seams, not doors
+export function markSeams(world: World) {
+  for (const room of Object.values(world.areas)) {
+    const block = tagId(room, "block");
+    if (!block || !room.layout) continue;
+    for (const a of room.layout.assets) if (a.kind === "door" && a.to && tagId(world.areas[a.to] ?? ({ tags: [] } as unknown as Area), "block") === block) a.seam = true;
+  }
 }
 
 // A building with the stair hall and the five-lane stair block of before life 20 (a hall with no landing tags)
@@ -3489,7 +3504,7 @@ const tagNumber = (a: Pick<Area, "tags">, name: string): number | undefined => {
   return tag === undefined ? undefined : Number(tag.slice(name.length + 1));
 };
 
-const tagId = (a: Pick<Area, "tags">, name: string): string | undefined => a.tags.find((t) => t.startsWith(`${name}:`))?.slice(name.length + 1);
+export const tagId = (a: Pick<Area, "tags">, name: string): string | undefined => a.tags.find((t) => t.startsWith(`${name}:`))?.slice(name.length + 1);
 const WILD_BUILDINGS = ["cave", "ruin", "wreck", "camp", "trailhead", "sewer", "sewer access"];
 const OPEN_GROUNDS = ["landing field", "landing pad", "speeder platform"];
 // Buildings that may be round or oval when they are one room (see planBuilding): the towns' guard posts, a cantina
@@ -3805,8 +3820,9 @@ function linkColumns(world: World, building: Area, seed: number) {
       const to = roomAt(f >= 0 ? f + 1 : f);
       const ramp = round && f >= 0;
       const flight = make(ramp ? `Ramp up to ${to.name}` : f >= 0 ? `Stairs up to ${to.name}` : `Stairs down to ${to.name}`, "stairs", [`block:${host.id}`, `storey:${f}`, `low:${f}`, "rise:1", ...(ramp ? open : [])]);
-      door(landings.get(f)!, flight);
-      door(flight, landings.get(f + 1)!);
+      // (the join of a landing and its flight is no door: the stairwell goes on there, see StairBlock and RoomAsset.seam)
+      door(landings.get(f)!, flight, { label: "Stairwell" });
+      door(flight, landings.get(f + 1)!, { label: "Stairwell" });
     }
   }
 }
@@ -4256,7 +4272,8 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
       fixed.add(path.id);
       for (const [room, d, other] of [[a, d1, b], [b, d2, a]] as const) {
         const l = room.layout!;
-        l.assets.push({ id: `${room.id}-${l.assets.length + 1}`, kind: "door", name: path.label, x: d.x, y: d.y, w: 1, h: 1, side: d.side, ref: path.id, to: other.id });
+        // (only the doorways into the rooms on each floor are doors: a landing and its flights are one stairwell, joined by seams)
+        l.assets.push({ id: `${room.id}-${l.assets.length + 1}`, kind: "door", name: path.label, x: d.x, y: d.y, w: 1, h: 1, side: d.side, ref: path.id, to: other.id, ...(key.startsWith("floor") ? {} : { seam: true }) });
       }
     }
     // The ground landing goes on to a room the host opened onto, which is set beside it (or the landing is a dead end)
@@ -10793,13 +10810,13 @@ function roofStairs(world: World, building: Area, top: Area, roof: Area, all: Ar
   const air = hall.tags.includes("open-air") ? ["open-air"] : [];
   const stairs = made("Stairs up to the roof", ["form:stairs", `block:${host.id}`, `storey:${ups}`, `low:${ups}`, "rise:1", ...air], air.length ? { ...layout, open: true, ramp: true } : layout);
   const landing = made("Roof landing", ["form:corridor", `block:${host.id}`, `landing:${ups + 1}`, `low:${ups + 1}`, "rise:0", ...air], air.length ? { ...roofLayout, open: true } : roofLayout);
-  const up: Path = { id: nextId(world, "p"), from: topLanding.id, to: stairs.id, kind: "door", label: "Doorway", travel: "10 ft." };
-  const mid: Path = { id: nextId(world, "p"), from: stairs.id, to: landing.id, kind: "door", label: "Doorway", travel: "10 ft." };
+  const up: Path = { id: nextId(world, "p"), from: topLanding.id, to: stairs.id, kind: "door", label: "Stairwell", travel: "10 ft." };
+  const mid: Path = { id: nextId(world, "p"), from: stairs.id, to: landing.id, kind: "door", label: "Stairwell", travel: "10 ft." };
   const out: Path = { id: nextId(world, "p"), from: landing.id, to: roof.id, kind: "door", label: locked ? "Locked roof door" : "Roof door", travel: "10 ft.", ...(locked ? { locked } : {}) };
   world.paths.push(up, mid, out);
   const set = (room: Area, d: { x: number; y: number; side: Side }, path: Path, to: Area) => {
     const l = room.layout!;
-    l.assets.push({ id: `${room.id}-${l.assets.length + 1}-r`, kind: "door", name: path.label, x: d.x, y: d.y, w: 1, h: 1, side: d.side, ref: path.id, to: to.id });
+    l.assets.push({ id: `${room.id}-${l.assets.length + 1}-r`, kind: "door", name: path.label, x: d.x, y: d.y, w: 1, h: 1, side: d.side, ref: path.id, to: to.id, ...(path === out ? {} : { seam: true }) });
   };
   const at2 = (key: string, room: string) => block.doors.find((d) => d.key === key && d.room === room)!;
   set(topLanding, inTop, up, stairs);

@@ -6,6 +6,7 @@ import { create } from "zustand";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { Kit, Model, useModel, C, shade, mix, FINISHES, MATERIALS, planRect, LampLight, ArchPiece, type V3, type Finish, type Baked } from "./models";
+import { treeCorner, type Clear } from "./interiors/architecture";
 import { groundShader, surfaceMaterial, wallMaterial, SURFACE_GRAIN, type WallSet } from "./surfaces";
 import type { PackId } from "./interiors/packs";
 import { setRenderTier, shaderPatch } from "./babylon";
@@ -1714,7 +1715,7 @@ function Beam({ from, to, thick, color }: { from: V3; to: V3; thick: number; col
   );
 }
 // (`seed`, from the room: which corner of its square the great tree stands at)
-export function CanopyDeck({ w, d, round, aloft, kind, biome, seed = 0 }: { w: number; d: number; round: boolean; aloft: number; kind: CanopyKind; biome: string; seed?: number }) {
+export function CanopyDeck({ w, d, round, aloft, kind, biome, seed = 0, clear }: { w: number; d: number; round: boolean; aloft: number; kind: CanopyKind; biome: string; seed?: number; clear?: Clear[] }) {
   const bark = paletteOf(biome).bark;
   const cx = w / 2;
   const cz = d / 2;
@@ -1734,7 +1735,7 @@ export function CanopyDeck({ w, d, round, aloft, kind, biome, seed = 0 }: { w: n
     return (
       <group>
         {deck}
-        <GreatTree w={w} d={d} aloft={aloft} biome={biome} seed={seed} />
+        <GreatTree w={w} d={d} aloft={aloft} biome={biome} seed={seed} clear={clear} />
         <Cyl at={[cx, -aloft / 2 - 0.2, cz]} r0={r * 1.12} r1={r * 0.92} h={aloft} color={bark} seg={12} />
         {/* the roots splaying into the ground */}
         <Cyl at={[cx, -aloft + 0.35, cz]} r0={r * 2.1} r1={r * 1.1} h={0.7} color={bark} seg={12} />
@@ -1763,12 +1764,15 @@ export function CanopyDeck({ w, d, round, aloft, kind, biome, seed = 0 }: { w: n
 // world; a broadleaf, Kashyyyk's, in the jungle), its trunk at a corner of the hut's square, where a round hut leaves the square empty and nothing of the
 // building stands (rooms are put beside the square's sides, the ways at their middles), sized to the hut; the deck runs out to it on a pair of beams.
 const GREAT_TRUNK = 1.2;
-export function GreatTree({ w, d, aloft, biome, seed }: { w: number; d: number; aloft: number; biome: string; seed: number }) {
+// (`clear`: what else stands round the hut, in its squares: the tree takes the corner farthest from it, and no more room than there is, so that its needles
+// and leaves are not drawn through a stairwell or a bridge: 2026-11-06, the user)
+const FOLIAGE_REACH = 7;
+export function GreatTree({ w, d, aloft, biome, seed, clear }: { w: number; d: number; aloft: number; biome: string; seed: number; clear?: Clear[] }) {
   const bark = paletteOf(biome).bark;
-  const corner = ((seed % 4) + 4) % 4;
+  const { corner, room } = treeCorner(w, d, seed, clear);
   const [cx, cz] = [corner % 2 ? w : 0, corner < 2 ? 0 : d];
   // (the trunk a little in from the corner toward the hut, as big as the room has room for at its corner)
-  const s = Math.max(0.45, Math.min(0.9, Math.min(w, d) / 10));
+  const s = Math.max(0.3, Math.min(0.9, Math.min(w, d) / 10, room / FOLIAGE_REACH));
   const [ix, iz] = [corner % 2 ? -1 : 1, corner < 2 ? 1 : -1];
   const [tx, tz] = [cx + ix * 0.1 * s, cz + iz * 0.1 * s];
   const conifer = biome !== "jungle";

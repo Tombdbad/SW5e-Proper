@@ -183,3 +183,23 @@ export function parapetPlan(ramps: Ramp[] = [], y = 0): Placed[] {
   for (let k = 0; k < BAYS; k++) if (!cut.has(k)) out.push({ piece: "adobe_lip_r4", angle: k * BAY, y });
   return out;
 }
+
+// ---- The great tree of a hut, kept out of the stairwell (2026-11-06, the user: "the placement of the tree with the foliage drawn INSIDE (this is WRONG)") ----
+// A hut of a tree village stands against a great tree at one corner of its square (0 north-west, 1 north-east, 2 south-west, 3 south-east: siteAssets GreatTree).
+// The corner is the seed's own unless something stands nearer it than at another: a stairwell, a rope bridge or a neighbouring room, given as rectangles in
+// the hut's own squares (`clear`); then it is the corner farthest from all of them, and the distance it leaves (`room`) says how big a tree it has room for.
+export interface Clear { x0: number; y0: number; x1: number; y1: number }
+const gap = (x: number, y: number, r: Clear) => Math.hypot(Math.max(r.x0 - x, 0, x - r.x1), Math.max(r.y0 - y, 0, y - r.y1));
+export function treeCorner(w: number, d: number, seed: number, clear: Clear[] = []): { corner: number; room: number } {
+  const base = ((Math.round(seed) % 4) + 4) % 4;
+  let best = { corner: base, room: Infinity };
+  let first = true;
+  for (let k = 0; k < 4; k++) {
+    const corner = (base + k) % 4;
+    const [x, y] = [corner % 2 ? w : 0, corner < 2 ? 0 : d];
+    const room = clear.length ? Math.min(...clear.map((r) => gap(x, y, r))) : Infinity;
+    if (first || room > best.room + 1e-6) best = { corner, room };
+    first = false;
+  }
+  return best;
+}

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { familyOf, crownOf, portalOf, MIN_CROWN_SIDE, rampPlan, gantryPlan, storeyPlan, parapetPlan, bayAt, baysFor, bayFit, BAY, ARC, RAMP_SEG, HEADROOM, ARCH_STOREY, type Family } from "../../client/src/components/Map/interiors/architecture";
+import { familyOf, crownOf, portalOf, MIN_CROWN_SIDE, rampPlan, treeCorner, gantryPlan, storeyPlan, parapetPlan, bayAt, baysFor, bayFit, BAY, ARC, RAMP_SEG, HEADROOM, ARCH_STOREY, type Family } from "../../client/src/components/Map/interiors/architecture";
 import { piecesOf } from "../../client/src/components/Map/interiors/body";
 import { ROOT } from "../helpers";
 
@@ -130,4 +130,20 @@ test("drums of any radius (2026-11-06): as many bays as keep each about the kit'
     assert.equal(s.filter((p) => p.piece === "drum_bay_door_r4").length, 4);
     assert.equal(s.filter((p) => /^drum_bay/.test(p.piece)).length, n);
   }
+});
+
+// The great tree of a hut keeps clear of the stairwell and the bridges beside it (2026-11-06, the user: "the tree with the foliage drawn INSIDE")
+test("a hut's great tree takes the corner farthest from what stands round the hut, the seed's own when nothing does", () => {
+  // nothing round it: the seed's corner, however many seeds
+  for (let seed = 0; seed < 8; seed++) assert.equal(treeCorner(10, 8, seed).corner, seed % 4);
+  // a stairwell against the north side at the east end: the tree is not at either north corner of that end
+  const clear = [{ x0: 7, y0: -6, x1: 9, y1: 0 }];
+  for (let seed = 0; seed < 8; seed++) {
+    const { corner, room } = treeCorner(10, 8, seed, clear);
+    assert.ok(corner >= 2, `seed ${seed}: corner ${corner}`);
+    assert.ok(room >= 6, `seed ${seed}: room ${room}`);
+  }
+  // neighbours on three sides leave the one corner free; it is taken whatever the seed, and its room is how far the nearest is
+  const walled = [{ x0: -9, y0: 4, x1: 0, y1: 8 }, { x0: 0, y0: -3, x1: 10, y1: 0 }, { x0: 10, y0: 1, x1: 12, y1: 5 }];
+  for (let seed = 0; seed < 4; seed++) assert.equal(treeCorner(10, 8, seed, walled).corner, 3);
 });
