@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateWorld, planBuilding, childrenOf, formOf, trailOf, canopyOf, CANOPY_ALOFT, livenWorld, LIFE, auditBuildings, type Area, type World } from "@shared/logic";
+import { generateWorld, planBuilding, childrenOf, formOf, trailOf, canopyOf, CANOPY_ALOFT, CANOPY_DECK, ROPE_BRIDGE, livenWorld, LIFE, auditBuildings, walkBuilding, openAir, validateWorld, standsAt, type Area, type World } from "@shared/logic";
 import { getWorldCatalog } from "../../server/sw5eData";
 import { standing, radiiOf } from "../../shared/logic/footprint";
 
@@ -33,6 +33,8 @@ test("a round room is joined to its neighbours only through corridors", () => {
     // (only a room that is drawn round: one tagged round but planned square may be joined directly)
     if (room.kind !== "room" || !room.tags.includes("round") || !room.layout?.shape) continue;
     for (const p of world.paths) {
+      // (nor is a round tower's spiral stair between two of its floors, one over the other: shared/logic "Round towers")
+      if (p.spiral) continue;
       const other = p.from === room.id ? world.areas[p.to] : p.to === room.id ? world.areas[p.from] : undefined;
       // (a stairway, lift, pit or the like may be joined directly: those are ways, not rooms set against the curve)
       if (!other || other.kind !== "room" || other.parentId !== room.parentId || other.tags.some((t) => t.startsWith("form:"))) continue;
@@ -78,6 +80,42 @@ test("a settlement on a forest or jungle world stands in the trees, one in a swa
   }
   assert.ok(trees > 0 && ground > 0, `${trees} in trees, ${stilts} on stilts, ${ground} on the ground`);
   assert.equal(canopyOf(worlds[0], buildingsOf(worlds[0]).find((b) => b.type === "warehouse")?.id ?? ""), undefined, "a warehouse is never up a tree");
+});
+
+test("a tree or stilt village's huts have decks out over the forest floor, and rope bridges join the huts of its buildings, aloft and open to the sky", () => {
+  let decks = 0, bridges = 0, villages = 0;
+  for (const w of worlds) {
+    const fresh = buildingsOf(w).filter((b) => canopyOf(w, b.id) && childrenOf(w, b.id).some((a) => a.layout));
+    if (!fresh.length) continue;
+    villages++;
+    for (const room of Object.values(w.areas)) {
+      if (room.kind !== "room" || !room.layout) continue;
+      const deck = formOf(room) === "balcony" && room.tags.includes("canopy");
+      const bridge = formOf(room) === "walkway" && room.tags.includes("canopy");
+      if (!deck && !bridge) continue;
+      assert.ok(canopyOf(w, room.parentId!), `${room.name}: in a village`);
+      assert.ok(room.layout.aloft && openAir(room), `${room.name}: aloft and open`);
+      const ends = room.layout.assets.filter((a) => a.kind === "door").map((a) => w.areas[a.to!]);
+      for (const hut of ends) {
+        assert.ok(hut?.layout && !formOf(hut) && (hut.layout.level ?? 0) === 0, `${room.name}: a way to a hut`);
+        const back = hut.layout!.assets.find((a) => a.kind === "door" && a.to === room.id)!;
+        assert.ok(back && standsAt(hut.layout!, back.x, back.y), `${room.name}: its doorway in ${hut.name} stands`);
+      }
+      if (deck) { decks++; assert.equal(room.name, CANOPY_DECK); assert.equal(ends.length, 1); }
+      if (bridge) {
+        bridges++;
+        assert.ok(room.name.startsWith(`${ROPE_BRIDGE} to `));
+        assert.equal(ends.length, 2);
+        assert.notEqual(ends[0].parentId, ends[1].parentId, `${room.name}: between two buildings`);
+      }
+    }
+    for (const b of fresh) {
+      assert.deepEqual(walkBuilding(w, b.id).problems, [], b.name);
+      assert.deepEqual(auditBuildings(w).filter((p) => p.includes(b.id)), []);
+    }
+    assert.deepEqual(validateWorld(w, catalog), []);
+  }
+  assert.ok(villages > 0 && decks > 4 && bridges > 0, `${villages} villages, ${decks} decks, ${bridges} rope bridges`);
 });
 
 test("a saved world is re-planned once: its planned buildings come out round, aloft where they should be, and their people stay", () => {

@@ -80,7 +80,7 @@ const norm = (a: number) => ((a % TAU) + TAU) % TAU;
 // the turn about y that puts a piece built at the front at this angle
 export const turnFor = (angle: number) => Math.PI / 2 - angle;
 // bay k is centred at k * BAY; arc i at pi/2 + i * ARC (its edges are half an arc either side)
-export const bayAt = (angle: number) => ((Math.round(norm(angle) / BAY) % BAYS) + BAYS) % BAYS;
+export const bayAt = (angle: number, n = BAYS) => ((Math.round(norm(angle) / (TAU / n)) % n) + n) % n;
 export const arcCentre = (i: number) => Math.PI / 2 + i * ARC;
 const arcAt = (angle: number) => ((Math.round((norm(angle) - Math.PI / 2) / ARC) % ARCS) + ARCS) % ARCS;
 // (an arc edge: a ramp's top or a gap's end lies on one)
@@ -141,16 +141,37 @@ export function gantryPlan(gates: number[], ramps: Ramp[] = [], level = ARCH_STO
   return out;
 }
 
-// A storey of a round room in bays: a door bay wherever a way in or out is (`doors`, angles), else windows in every other bay (`windows`: "alternate", "none")
-export function storeyPlan(doors: number[], y = 0, family: "drum" | "adobe" = "drum", windows: "alternate" | "none" = "alternate"): Placed[] {
-  const doorBays = new Set(doors.map(bayAt));
+// Drums of any radius (2026-11-06, the user: "Round buildings should have logic that allows the rounded wall segments to scale for larger and smaller
+// rooms"). The kit's bays are made for a circle of radius 4 in 16 bays; a drum of another radius has as many bays as keeps each about as wide as the
+// kit's (a multiple of four, so that bays stand at north, east, south and west, where the planner puts the doors; at least eight), and each bay is
+// stretched across to its share of the circle and moved out to the drum's radius: its depth (the wall's thickness), its height and its door stay the
+// kit's, a door within an eighth of its width from radius 3 up (at the smallest, 2.5, a quarter wider). Before, the whole kit was scaled by radius / 4, thickening the wall and the doors with it, and only
+// radii of 3.75 to 6 took it.
+export const KIT_RADIUS = 4;
+// (the narrowest bay a door fits in, squares)
+const MIN_BAY = 1.35;
+export function baysFor(r: number): number {
+  let n = Math.max(8, 4 * Math.round(r));
+  while (n > 8 && (TAU * r) / n < MIN_BAY) n -= 4;
+  return n;
+}
+// How a kit bay (or anything built for one, a curved portal) is fitted to a drum of radius r in n bays: stretched `across` (x), moved `out` (z) from the
+// kit's radius; the bay's outer face (a quarter square out from the circle) meets its neighbours'
+export function bayFit(r: number, n = baysFor(r)): { across: number; out: number } {
+  return { across: ((r + 0.25) * Math.sin(Math.PI / n)) / ((KIT_RADIUS + 0.25) * Math.sin(Math.PI / BAYS)), out: r - KIT_RADIUS };
+}
+
+// A storey of a round room in bays: a door bay wherever a way in or out is (`doors`, angles), else windows in every other bay (`windows`: "alternate", "none");
+// `n` bays round it (16, the kit's, by default: baysFor)
+export function storeyPlan(doors: number[], y = 0, family: "drum" | "adobe" = "drum", windows: "alternate" | "none" = "alternate", n = BAYS): Placed[] {
+  const doorBays = new Set(doors.map((a) => bayAt(a, n)));
   const name = (k: number) => family === "adobe"
     ? doorBays.has(k) ? "adobe_bay_door_r4" : windows === "alternate" && k % 4 === 2 ? "adobe_bay_window_r4" : "adobe_bay_r4"
     : doorBays.has(k) ? "drum_bay_door_r4" : windows === "alternate" && k % 2 ? "drum_bay_r4" : "drum_bay_blank_r4";
   const out: Placed[] = [];
-  for (let k = 0; k < BAYS; k++) {
-    out.push({ piece: name(k), angle: k * BAY, y });
-    if (doorBays.has(k)) out.push({ piece: family === "adobe" ? "portal_adobe_curved_r4" : "portal_curved_r4", angle: k * BAY, y });
+  for (let k = 0; k < n; k++) {
+    out.push({ piece: name(k), angle: (k * TAU) / n, y });
+    if (doorBays.has(k)) out.push({ piece: family === "adobe" ? "portal_adobe_curved_r4" : "portal_curved_r4", angle: (k * TAU) / n, y });
   }
   return out;
 }

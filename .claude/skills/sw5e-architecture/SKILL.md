@@ -30,9 +30,14 @@ Why it looks the same:
 
 ## What is in the game (2026-11-05, evening)
 - `architecture.glb` has every piece (47; tris in `shared/art/architectureKit.json`): crowns, portals, reliefs, round bays (drum and adobe, plain, window, door), curved portals, gantry arcs (plain, gate, end), metal and stone ramps, bridges, pylon, tube, tiers, the forest set (great broadleaf and conifer, platforms, rope bridge, trunk stair, rustic hut).
-- Round rooms that are a circle of radius 3.75 to 6 are built of bays (`models.tsx` `KitRoomBlock`, `drumPlan`, from `storeyPlan`): door bays cut through at each way in, curved frames, window bays where the plan has windows, a storey of bays per storey. Others keep `RoomBlock`.
-- Forest, jungle and swamp settlements have two tree villages in the backdrop belt (`siteAssets.tsx` `TreeVillages`, layout `treeVillageSpots`/`villagePieces` in `interiors/architecture.ts`).
-- Not yet in the game: gantries, ramps (metal and stone), bridges, tubes, pylons, tiers (they need step 4, the planner's gantry form); openings cut through the walls of square rooms (`RoomBlock` is one extrusion: a door's void covers its wall); steps 1 and 2.
+- Round rooms that are a circle of radius 2.5 up are built of bays (`models.tsx` `KitRoomBlock`, `drumPlan`, `storeyPlan`; `baysFor`/`bayFit` set the
+  bay count and stretch by radius, the wall and doors not scaled): door bays at each way in, curved frames, window bays, a storey of bays per storey.
+- Round towers (2026-11-06): round rooms host columns; open-air ramp stairwells outside (`open`, LocalMap SlopedRail) or a spiral inside on bad air/stations.
+- Covered walkways (`tube`): linkLevels' walkways and planDistrict skybridges on stations and bad-air worlds, drawn as the kit's `tube_walk` (TubeWalk).
+- Tree and stilt villages are real settlements (canopyOf): huts aloft against a kit great tree (siteAssets GreatTree), decks (CanopyPlatform) and rope
+  bridges between buildings (planDistrict), drawn the same from on them. The backdrop TreeVillages were removed (the user: aesthetic-only was wrong).
+- Not yet in the game: gantry rings round round rooms (`gantryPlan`, the kit's arcs: radius 4 only), the kit's ramps and bridges as pieces (the round
+  towers' ramps are drawn in code), pylons, tiers; openings cut through the walls of square rooms; steps 1 and 2.
 - Export from the open Mixar session without touching the user's scene: paste `import builtins; builtins.ARCH_EXPORT=True;` before the usual exec line (writes `client/public/figures/architecture.glb` and the kit json).
 
 ## The order of work

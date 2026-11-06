@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateWorld, auditBuildings, type Area } from "@shared/logic";
+import { generateWorld, auditBuildings, formOf, openAir, trailOf, type Area } from "@shared/logic";
 import { getWorldCatalog } from "../../server/sw5eData";
 
 // The audit of every building's rooms (shared/logic auditBuildings): floors that can be walked, ways that stand and are reachable,
@@ -10,12 +10,23 @@ const catalog = await getWorldCatalog();
 const FULL = [1, 2, 34];
 const START = Array.from({ length: 20 }, (_, i) => i + 3);
 
-test("every building of every world is sound inside (floors, ways, stairs, stacked rooms, galleries)", () => {
+test("every building of every world is sound inside (floors, ways, stairs, stacked rooms, galleries); covered walkways where the air is bad", () => {
   const found: string[] = [];
+  let tubes = 0;
   for (const seed of [...FULL, ...START]) {
     const world = generateWorld({ seed, partyLevel: 5, ...(FULL.includes(seed) ? { detail: "all" as const } : {}) }, catalog);
     for (const p of auditBuildings(world)) found.push(`seed ${seed}: ${p}`);
+    // (2026-11-06: an elevated walkway on a station or where the air is bad is a tube, enclosed; elsewhere it is open to the sky)
+    for (const room of Object.values(world.areas)) {
+      if (formOf(room) !== "walkway" || !/walkway to /.test(room.name)) continue;
+      const trail = trailOf(world, room.id);
+      const bad = trail.some((a) => a.type === "station") || ["volcanic", "ice", "barren", "gas giant", "ocean"].includes(trail.find((a) => a.kind === "planet")?.type ?? "");
+      assert.equal(!!room.layout?.tube, bad, `${room.name}: a tube ${!!room.layout?.tube}, the air bad ${bad}`);
+      assert.equal(openAir(room), !bad, `${room.name}: open air ${openAir(room)}`);
+      if (bad) tubes++;
+    }
   }
+  assert.ok(tubes > 0, "no covered walkway in the worlds");
   const kinds = new Map<string, number>();
   for (const f of found) {
     const k = f.replace(/^seed \d+: .*? \/ .*? \[[^\]]*\]: /, "").replace(/\d+/g, "N").slice(0, 70);
@@ -38,9 +49,14 @@ test("some buildings are towers of three floors, each reached by a switchback of
       deepest = Math.max(deepest, room.layout.level ?? 0);
       // three floors: the top above the middle above the ground, on one footprint
       assert.ok((room.layout.level ?? 0) > (lower.layout!.level ?? 0) && (lower.layout!.level ?? 0) > (below.layout!.level ?? 0), `${room.name}: floors ${below.layout!.level ?? 0}, ${lower.layout!.level ?? 0}, ${room.layout.level}`);
-      // the top floor's door opens off the head of a switchback whose foot opens off the floor below
-      const flights = (a: Area) => a.layout!.assets.filter((d) => d.kind === "door" && world.areas[d.to ?? ""]?.layout?.switchback).map((d) => d.to);
-      assert.ok(flights(room).some((id) => flights(lower).includes(id)), `${room.name}: no switchback between it and ${lower.name}`);
+      // the top floor's doorway opens onto its landing of the stairwell, and a switchback runs from the landing of the floor below up to it (since
+      // 2026-11-06, "Stair blocks"); or, in a round tower that climbs inside, the spiral stair goes down from it to the floor below ("Round towers")
+      const doorsTo = (a: Area, ok: (o: Area) => boolean) => a.layout!.assets.filter((d) => d.kind === "door" && world.areas[d.to ?? ""] && ok(world.areas[d.to!])).map((d) => d.to!);
+      const landings = (a: Area) => doorsTo(a, (o) => o.tags.some((t) => t.startsWith("landing:")));
+      const flights = (id: string) => doorsTo(world.areas[id], (o) => !!o.layout?.switchback);
+      const spiral = room.layout.assets.some((d) => d.kind === "stairs" && d.name === "Spiral stair down" && d.to === lower.id);
+      const stairwell = landings(room).some((top) => flights(top).some((f) => landings(lower).some((under) => flights(under).includes(f))));
+      assert.ok(spiral || stairwell, `${room.name}: no switchback between its landing and ${lower.name}'s, nor a spiral stair`);
     }
   }
   assert.ok(towers > 0, "no tower of three floors in any world");

@@ -5,8 +5,8 @@ import path from "node:path";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { bodyParts, creatureParts, fitBlock, fitLimb, NOMINAL, partsOf, piecesOf, REGIONS, setBodyParts, setCreatureParts, type BodyParts, type CreatureParts, type PartName } from "../../client/src/components/Map/interiors/body";
-import { advance, DEKA, eased, easeMotion, gaitPose, humanPose, LIMB, LIMBS, motion, NEUTRAL, PARENT, personaOf, restPose, standing, type Pose } from "../../client/src/components/Map/interiors/limbs";
-import { Kit, figureSpec, lookOf, creaturePlan, buildCreature, buildDroid, waveOf, UNITS_PER_M, constructKind, droidKind, figureTop, HAILFIRE_CAMBER, strideCycle } from "../../client/src/components/Map/models";
+import { advance, DEKA, eased, easeMotion, gaitPose, humanPose, LIMB, LIMBS, motion, NEUTRAL, PARENT, personaOf, restPose, standing, climbCycle, climbPhase, RUNG, mountPose, mountPlace, type Pose } from "../../client/src/components/Map/interiors/limbs";
+import { Kit, figureSpec, lookOf, creaturePlan, buildCreature, buildDroid, waveOf, UNITS_PER_M, beastMetres, beastScale, beastBuilt, seatFor, constructKind, droidKind, figureTop, HAILFIRE_CAMBER, strideCycle } from "../../client/src/components/Map/models";
 import { tokenOf } from "../../client/src/components/Map/sprites";
 
 // The sculpted body (tools/blender/build-body.py), read as the browser reads it
@@ -779,4 +779,62 @@ test("an AT-ST's stepping leg BENDS at the knee (its knee is behind): the angle 
   const wrong = restPose();
   gaitPose("walk", { phase: 0, amp: 1, speed: 3 }, 0, wrong);
   assert.ok(kneeAngle(wrong) > rest, "the walk of a forward knee straightens a knee that is behind: that was the fault");
+});
+
+test("on a ladder (2026-11-06) the arms reach up hand over hand and the knees come up in turn, the right hand with the left foot; off it, none of it", () => {
+  const turn = (p: Pose, limb: number) => 2 * Math.acos(Math.min(1, Math.abs(p[limb * 4 + 3])));
+  const e = eased();
+  for (let i = 0; i < 60; i++) easeMotion(e, motion({ climb: 0 }), 1 / 30);
+  assert.ok(e.climb > 0.95, `eased onto the ladder: ${e.climb}`);
+  const out = restPose();
+  humanPose(standing(), 1, motion({ climb: Math.PI / 2 }), e, "rifle", "niman", 10, LEGS, out);
+  // (a quarter of the way round, the right hand at its highest reach and the left at the shoulder; the left knee up with the right hand)
+  assert.ok(turn(out, LIMB.armR) > 2.6, `right arm up ${turn(out, LIMB.armR)}`);
+  assert.ok(turn(out, LIMB.armL) > 1.8 && turn(out, LIMB.armL) < turn(out, LIMB.armR), `left arm lower ${turn(out, LIMB.armL)}`);
+  assert.ok(turn(out, LIMB.legL) > turn(out, LIMB.legR), "the left knee is the one up");
+  const [r, l] = climbCycle(0.7);
+  assert.ok(Math.abs(r + l) < 1e-9, "the hands half a cycle apart");
+  assert.ok(Math.abs(climbPhase(2 * RUNG) - 2 * Math.PI) < 1e-9, "once round every two rungs");
+  // off the ladder the arms hang
+  const off = restPose();
+  humanPose(standing(), 1, motion(), calmed(), "none", "niman", 10, LEGS, off);
+  assert.ok(turn(off, LIMB.armR) < 0.6, `arms down off it: ${turn(off, LIMB.armR)}`);
+});
+
+test("getting on a mount (2026-11-06): from beside its left side, a foot in the stirrup, a leg over, down into the rider's seat; off it the same back", () => {
+  const start = mountPlace(0), top = mountPlace(0.7), end = mountPlace(1);
+  assert.deepEqual([start.side, start.up, start.face], [1, 0, 0], "standing at its side, on the ground, facing its flank");
+  assert.ok(top.up > 1, "over the saddle at the top of the swing");
+  assert.deepEqual([end.side, end.up, end.face], [0, 1, 1], "in the seat, facing ahead");
+  // the left foot up first, then the right leg swung out and over, then the rider's pose (gaitPose "ride")
+  assert.ok(mountPose(0.35).legL![0] < -1.2 && Math.abs(mountPose(0.35).legR![2]) < 0.2);
+  assert.ok(mountPose(0.7).legR![2] < -1.2, "the right leg out over the back");
+  assert.deepEqual(mountPose(1).legR, [-0.75, 0, -0.55]);
+  assert.deepEqual(mountPose(1).legL, [-0.75, 0, 0.55]);
+  // and smoothly: no jump between two moments a frame apart
+  for (let u = 0; u < 1; u += 0.02) {
+    const [a, b] = [mountPose(u), mountPose(u + 0.02)];
+    for (const j of Object.keys(b) as (keyof typeof b)[]) for (let i = 0; i < 3; i++) assert.ok(Math.abs((b[j]![i] ?? 0) - (a[j]?.[i] ?? 0)) < 0.2, `${String(j)} at ${u.toFixed(2)}`);
+  }
+});
+
+test("beasts at their size (2026-11-06): the setting's own heights, smaller or bigger by the stat block's size, a mount's seat where its back is", () => {
+  const tall = (name: string, size: string) => beastBuilt(creaturePlan(name, "", size)).h * beastScale(name, "", size) / UNITS_PER_M;
+  // (Wookieepedia: a bantha 2.5 m, a rancor over 5 m, a tauntaun 2.5 m, a dewback 1.8 m high; SW5e: bantha and rancor Huge, the others Large)
+  assert.ok(Math.abs(tall("Bantha, Adult", "Huge") - 2.5) < 0.05, `bantha ${tall("Bantha, Adult", "Huge")}`);
+  assert.ok(Math.abs(tall("Rancor, Adult", "Huge") - 5) < 0.1, `rancor ${tall("Rancor, Adult", "Huge")}`);
+  assert.ok(Math.abs(tall("Tauntaun", "Large") - 2.5) < 0.05);
+  assert.ok(Math.abs(tall("Dewback, Adult", "Large") - 1.8) < 0.05);
+  // a juvenile rancor (Medium) a third of an adult (Huge), by the squares their sizes take
+  assert.ok(Math.abs(beastMetres("Rancor, Juvenile", "Medium").m - 5 / 3) < 1e-9);
+  // a Huge beast with no figure of its own stands over a Large one, which stands over a Medium one
+  assert.ok(tall("Unknown grazer", "Huge") > tall("Unknown grazer", "Large") && tall("Unknown grazer", "Large") > tall("Unknown grazer", "Medium"));
+  // nothing spans more than its size's room on the map: a greater krayt dragon is held to it
+  const krayt = creaturePlan("Krayt Dragon, Greater", "", "Gargantuan");
+  assert.ok(beastBuilt(krayt).span * beastScale("Krayt Dragon, Greater", "", "Gargantuan") <= 11 + 1e-9);
+  // the rider sits on the beast's back at its scale
+  const plan = creaturePlan("Bantha, Adult", "", "Huge");
+  assert.ok(seatFor("Bantha, Adult", "", "Huge") > 0.8 * UNITS_PER_M && seatFor("Bantha, Adult", "", "Huge") < beastBuilt(plan).h * beastScale("Bantha, Adult", "", "Huge"));
+  // and the figure is drawn at that scale
+  assert.equal(figureSpec("beast", "Bantha, Adult", { size: "Huge", looks: {} }).scale, beastScale("Bantha, Adult", "", "Huge"));
 });

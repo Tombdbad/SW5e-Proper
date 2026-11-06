@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { familyOf, crownOf, portalOf, MIN_CROWN_SIDE, rampPlan, gantryPlan, storeyPlan, parapetPlan, bayAt, BAY, ARC, RAMP_SEG, HEADROOM, ARCH_STOREY, type Family } from "../../client/src/components/Map/interiors/architecture";
+import { familyOf, crownOf, portalOf, MIN_CROWN_SIDE, rampPlan, gantryPlan, storeyPlan, parapetPlan, bayAt, baysFor, bayFit, BAY, ARC, RAMP_SEG, HEADROOM, ARCH_STOREY, type Family } from "../../client/src/components/Map/interiors/architecture";
 import { piecesOf } from "../../client/src/components/Map/interiors/body";
 import { ROOT } from "../helpers";
 
@@ -111,4 +111,23 @@ test("a round room's bays: a door bay and frame at each way in on the ground sto
   const adobe = drumPlan({ doors: [0], windows: [], adobe: true, storeys: 1 });
   assert.ok(adobe.some((p) => p.piece === "adobe_bay_door_r4") && adobe.some((p) => p.piece === "portal_adobe_curved_r4"));
   for (const p of [...plan, ...adobe]) assert.ok(parts[p.piece], `${p.piece} is in architecture.glb`);
+});
+
+test("drums of any radius (2026-11-06): as many bays as keep each about the kit's width, a multiple of four, the wall and the doors not thickened", () => {
+  assert.equal(baysFor(4), 16, "the kit's own radius, its sixteen bays");
+  assert.equal(bayFit(4).across, 1);
+  assert.equal(bayFit(4).out, 0);
+  for (const r of [2.5, 3, 3.5, 4.5, 5, 6, 8, 12]) {
+    const n = baysFor(r);
+    assert.equal(n % 4, 0, `${r}: ${n} bays`);
+    const width = (2 * Math.PI * r) / n;
+    assert.ok(width >= 1.35 && width <= 2, `${r}: bays ${width.toFixed(2)} wide`);
+    const f = bayFit(r, n);
+    assert.equal(f.out, r - 4, "moved out to the radius, not scaled");
+    assert.ok(r < 3 ? f.across < 1.3 : Math.abs(f.across - 1) < 0.125, `${r}: a door ${f.across.toFixed(2)} of the kit's width`);
+    // a door at each of the four sides, in its own bay
+    const s = storeyPlan([0, Math.PI / 2, Math.PI, -Math.PI / 2], 0, "drum", "alternate", n);
+    assert.equal(s.filter((p) => p.piece === "drum_bay_door_r4").length, 4);
+    assert.equal(s.filter((p) => /^drum_bay/.test(p.piece)).length, n);
+  }
 });

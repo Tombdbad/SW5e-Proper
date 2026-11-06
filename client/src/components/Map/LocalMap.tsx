@@ -12,7 +12,7 @@ import { useCombat, useShipFight, attackPlan, cannotAct, pickTarget, reachable, 
 const stepColor = (step: Step) => (step.fall ? "#fb923c" : step.how && /^(jump|climb|hook|fly)$/.test(step.how) ? "#38bdf8" : "#4ade80");
 import { canopyOf, deckSquares, waterOf, isWaterCraft, isSubmersible, HELM_PACE, type WaterLife } from "@shared/logic";
 import { standsAt, stairsGoals, arrivalSquares, climbAt, canStep, floorsOf, piecesIn, squaresOf, type Companion, type Cart, type PartyVehicle, type Vehicle, shipReach, SHIP_FACINGS } from "@shared/logic";
-import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type Standing, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt, worldLook, type WorldLook, type PartyShip } from "@shared/logic";
+import { afterHoursLock, alleyAt, alleysOf, ambushIn, bayBerth, bayDoor, gangSpots, gangStarts, lawAt, isSatellite, childrenOf, trailOf, exitsOf, floorPlan, createRandom, counterSides, isCounter, isLocal, formOf, openAir, SPIRAL, districtAt, trapsIn, useKindOf, unitOf, ALERT, START_TIME, daylight, hourOf, blockadeAt, type Squad, type Mover, type DistrictPlan, type Rect, type Area, type Exit, type Occupant, type Standing, type RoomAsset, type RoomLayout, type Ship, type World, type ResourceNode, nodeAt, worldLook, type WorldLook, type PartyShip } from "@shared/logic";
 import type { VerticalMove } from "@shared/logic";
 import { transitMs, transitAt, geomOf, type TransitKind, type TransitGeom, type Edge as TransitEdge } from "./interiors/transit";
 import GalaxyMap, { Probe, Rig, useTaps, tapTime, type MapAction } from "./GalaxyMap";
@@ -26,7 +26,7 @@ import { PACKS, WALL_FILES, facing, hasWalls, packOf, pieceOf, wallPackOf } from
 import { loadModel } from "./interiors/assets";
 import { PackWalls, cornerCentre, bendOf, holeOf, piercedWall, type Bend, type WallRun } from "./interiors/Walls";
 import { AIM, aimAt, aimFrom, partyMotion, roof as viewRoof, stance, useView, type Aimed, type AimPlan } from "./interiors/aim";
-import { beginSwing, kickOf, motion, nowSeconds, type Motion } from "./interiors/limbs";
+import { beginSwing, kickOf, motion, nowSeconds, climbPhase, mountPlace, type Motion } from "./interiors/limbs";
 import { useAir, jumpOf, flightOf, reelTo, bindAirKeys, partyHeight, AIR, FEET, type JumpStats } from "./interiors/air";
 import { ViewRig } from "./interiors/ViewRig";
 import { ShooterLayer, type ShooterCtx } from "./interiors/Shooter";
@@ -42,10 +42,10 @@ import { holdsOf } from "./interiors/stock";
 import { useDisplay } from "./interiors/display";
 import { familyOf, crownOf, portalOf, type Family } from "./interiors/architecture";
 import { Decks, FishSchools, Sea, SEA_Y, SWIM_Y, UNDER_FOG, UNDER_SWIM_Y, UnderSea } from "./siteAssets";
-import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
+import { BasePieceModel, CanopyBridge, CanopyDeck, CanopyLadder, CanopyPlatform, type CanopyKind, CartModel, CurtainWall, FarGround, GardenGround, GroundSurface, Scatter, StallModel, ambientBackdrop, ambientBlockers, ambientCover, fixturesOf, groundTexture, floorLook, FloorSurface, keeperSpot, paletteOf, stallState, useQuality, type Placed } from "./siteAssets";
 import { WallAnchor, WallGeometry, WallMaterial, WALL_TILE, boxUV, wallMaterial, wallSet, type WallSet } from "./surfaces";
 import { seatState, easeSit, smooth, carrying, errandAt, errandLength, type SeatState, type Shot } from "./interiors/limbs";
-import { useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, KitRoomBlock, BLOCK_WALL, Opening, openingOutline, styleOf, hue, type Style } from "./models";
+import { useLamps, useRoomLights, CurvedPiece, curvedKind, ringSpan, Figure, figureTop, MotionContext, seatFor, type CrewMember, stoolsOf, Furniture, Chest, NodeModel, ShipModel, ShipBody, SpeederModel, BuildingModel, SettlementModel, Decor, RoomBlock, DoorLeaf, DoorVoid, RoundedFloor, CornerWall, DomeRoof, ArchPiece, KitRoomBlock, TubeWalk, BLOCK_WALL, Opening, openingOutline, styleOf, hue, type Style } from "./models";
 import { WorldSky, PlanetGlobe, globeOf, globeLift, hashText } from "./scenery";
 import { radiiOf as shapeRadii, insetAt, outline, outlineAt, outlineOf, wallStretches, type Outline, type Side as FootSide } from "@shared/logic/footprint";
 
@@ -268,6 +268,8 @@ const Cyl = ({ at, r, h, color, glow, top = r }: { at: V3; r: number; h: number;
 // A balustrade run: a top rail, a lower one and posts, in pale steel. The one a walkway, a balcony and a gallery have, seen from outside and from
 // within alike (from within it was a wall of the building's texture: 2026-11-01, the user). `at` is the middle of the run on the floor plan.
 const RAIL = "#c8ccd2";
+// The decking of a round tower's ramps and gantries (shared/logic "Round towers")
+const RAMP_DECK = "#6f7882";
 const Balustrade = ({ at, length, along, h = 1, base = 0 }: { at: [number, number]; length: number; along: "x" | "z"; h?: number; base?: number }) => {
   const x = along === "x";
   const posts = Math.max(2, Math.round(length / 0.9) + 1);
@@ -293,10 +295,15 @@ const GROUND: Record<string, string> = { desert: "#4a3a22", ice: "#39505c", urba
 const STEEL = "#7b8794";
 // (the huts of a tree or stilt village are timber and thatch, not the pale plaster of the biome's towns: 2026-11-06, the user: "the colour applied to the trunk and cabins" was wrong)
 const TIMBER: Record<string, string> = { forest: "#6b4f33", jungle: "#6a5636", swamp: "#5c4e36" };
+// The sides of a hut's deck with a rail: those it has no way on (the one onto the hut)
+const canopyRails = (l: Pick<RoomLayout, "assets">) => ["n", "e", "s", "w"].filter((s) => !l.assets.some((a) => a.side === s && (a.kind === "door" || a.kind === "exit"))).join("");
 
 const isLarge = (size?: string) => /large|huge|gargantuan/i.test(size ?? "");
 // How far a person's seat is over their feet (the legs turn at 0.56 in `buildHumanoid`; the seat is a little under the hip joint)
 const RIDER_HIPS = 0.5;
+// How long getting on or off a mount takes, and where the rider's feet are in the saddle (the seat is a figure's hips: RIDER_HIPS over its feet)
+const MOUNT_MS = 1100;
+const riderSeat = (b: Pick<Companion, "name" | "creature" | "size">) => seatFor(b.name, b.creature, b.size) - RIDER_HIPS;
 // A water craft on the water (shared/logic "Over the water"): how far its model sits under the face of the water (it is drawn standing
 // 0.28 up, on its repulsors), and the seat of whoever is at its helm
 const BOAT_FLOAT = -0.22;
@@ -571,8 +578,8 @@ const sameFootprint = (a: RoomLayout, b: RoomLayout) => a.x < b.x + b.width && b
 // The steps of a stairwell, or the rungs of a ladder, rising from one end of a room to the other;
 // they are looked at, not tapped (the floor under them takes the tap)
 // `rock` (a cave's stairs) draws the steps as the cave's rock instead of boxes
-function Ascent({ w, h, toward, up, form, switchback, ramp, onTap, rock }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; form: string; switchback?: RoomLayout["switchback"]; ramp?: boolean; onTap?: (x: number, y: number) => void; rock?: { biome: string } }) {
-  if (switchback) return <Switchback w={w} h={h} toward={toward} up={up} low={switchback.low} ramp={ramp} onTap={onTap} rock={rock} />;
+function Ascent({ w, h, toward, up, form, switchback, ramp, onTap, rock, tone }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; form: string; switchback?: RoomLayout["switchback"]; ramp?: boolean; onTap?: (x: number, y: number) => void; rock?: { biome: string }; tone?: string }) {
+  if (switchback) return <Switchback w={w} h={h} toward={toward} up={up} low={switchback.low} ramp={ramp} onTap={onTap} rock={rock} tone={tone} />;
   const along = toward === "e" || toward === "w" ? w : h;
   const across = toward === "e" || toward === "w" ? h : w;
   const count = Math.max(4, Math.round(along * (form === "ladder" ? 3 : 2.4)));
@@ -612,7 +619,8 @@ function Ascent({ w, h, toward, up, form, switchback, ramp, onTap, rock }: { w: 
 // along each lane at the height the floor is there (climbAt), the landing flat across the far row, and a wall between the flights
 // with a rail along it, up to the landing
 // (`ramp`: a slope, the pit's ramps: thin slices that read as one surface, in packed earth)
-function Switchback({ w, h, toward, up, low, ramp, onTap, rock }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; low: 0 | 1; ramp?: boolean; onTap?: (x: number, y: number) => void; rock?: { biome: string } }) {
+// (`tone`: the slope's colour, packed earth unless given: a round tower's ramps are steel decking)
+function Switchback({ w, h, toward, up, low, ramp, onTap, rock, tone }: { w: number; h: number; toward: "n" | "e" | "s" | "w"; up: number; low: 0 | 1; ramp?: boolean; onTap?: (x: number, y: number) => void; rock?: { biome: string }; tone?: string }) {
   const none = () => null;
   const plan = { width: w, height: h, climb: { toward, levels: 1 }, switchback: { low } };
   const ew = toward === "e" || toward === "w";
@@ -644,7 +652,7 @@ function Switchback({ w, h, toward, up, low, ramp, onTap, rock }: { w: number; h
       ) : (
         <mesh key={i} position={t.at} raycast={onTap ? undefined : none} receiveShadow castShadow onClick={onTap ? (e) => { e.stopPropagation(); if (e.delta <= 8) onTap(t.sq[0], t.sq[1]); } : undefined}>
           <boxGeometry args={t.size} />
-          <meshLambertMaterial color={ramp ? "#7a6447" : i % 2 ? "#8b8f96" : "#9aa0a8"} />
+          <meshLambertMaterial color={ramp ? tone ?? "#7a6447" : i % 2 ? "#8b8f96" : "#9aa0a8"} />
         </mesh>
       )))}
       {wall.map((p, i) => (rock ? <CaveSlab key={`w${i}`} at={p.at} size={p.size} biome={rock.biome} variant={i + 1} /> : <Box key={`w${i}`} at={p.at} size={p.size} color="#c8ccd2" />))}
@@ -783,6 +791,113 @@ function Terrace({ w, h, well, wall, base = 0, onTap }: { w: number; h: number; 
   );
 }
 // A rail round a circle: posts every square or so, a top rail and a lower one (as the Balustrade's, bent round)
+// A round tower's spiral stair (shared/logic "Round towers"): a turn and a quarter of treads round a steel post, rising a floor, with a rail along their
+// outer ends. It stands on the 2 by 2 squares in the middle of the drum (`spiralSpot`); drawn from the middle of them.
+function SpiralStair({ up = LEVEL_H, r = 0.95, tone = "#9aa0a8" }: { up?: number; r?: number; tone?: string }) {
+  const none = () => null;
+  const N = 18;
+  const turn = Math.PI * 2.5;
+  const treads = Array.from({ length: N }, (_, i) => {
+    const a = (i / N) * turn;
+    const y = ((i + 1) / N) * up;
+    return { a, y };
+  });
+  return (
+    <group>
+      <Cyl at={[0, up / 2, 0]} r={0.09} h={up} color="#7b8794" />
+      {treads.map(({ a, y }, i) => (
+        <group key={i} position={[0, y, 0]} rotation={[0, -a, 0]}>
+          <mesh position={[(r + 0.08) / 2, -0.03, 0]} raycast={none} castShadow receiveShadow>
+            <boxGeometry args={[r - 0.04, 0.06, 0.36]} />
+            <meshLambertMaterial color={i % 2 ? tone : "#8b8f96"} />
+          </mesh>
+          <mesh position={[r - 0.04, 0.45, 0]} raycast={none}>
+            <cylinderGeometry args={[0.025, 0.025, 0.9, 6]} />
+            <meshLambertMaterial color={RAIL} />
+          </mesh>
+        </group>
+      ))}
+      {treads.slice(1).map(({ a, y }, i) => {
+        // (the rail from the top of one tread's post to the next)
+        const [p, q] = [treads[i], { a, y }];
+        const [x0, z0, x1, z1] = [Math.cos(p.a) * (r - 0.04), Math.sin(p.a) * (r - 0.04), Math.cos(q.a) * (r - 0.04), Math.sin(q.a) * (r - 0.04)];
+        const run = Math.hypot(x1 - x0, z1 - z0);
+        const dy = q.y - p.y;
+        return (
+          <group key={`rail${i}`} position={[(x0 + x1) / 2, (p.y + q.y) / 2 + 0.9, (z0 + z1) / 2]} rotation={[0, -Math.atan2(z1 - z0, x1 - x0), Math.atan2(dy, run)]}>
+            <mesh raycast={none}>
+              <boxGeometry args={[Math.hypot(run, dy) + 0.02, 0.04, 0.05]} />
+              <meshLambertMaterial color={RAIL} />
+            </mesh>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+// The top of a spiral stair coming up through the floor (the floor of a round tower that has no floor over it): the dark of the well and a rail round
+// its far half, the near half (where the way down is stepped onto) left open
+function SpiralWell({ r = 0.95 }: { r?: number }) {
+  return (
+    <group>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.025, 0]} raycast={() => null}>
+        <ringGeometry args={[0.1, r, 32]} />
+        <meshBasicMaterial color="#15181c" />
+      </mesh>
+      <Cyl at={[0, 0.45, 0]} r={0.09} h={0.9} color="#7b8794" />
+      {/* (the far, north half of the rail: the arc from west round to east) */}
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, BALUSTRADE_HEIGHT, 0]} raycast={() => null}>
+        <torusGeometry args={[r + 0.04, 0.04, 6, 24, Math.PI]} />
+        <meshLambertMaterial color={RAIL} />
+      </mesh>
+      {[0, 1, 2, 3, 4].map((i) => {
+        const a = Math.PI + (i / 4) * Math.PI;
+        return <Cyl key={i} at={[Math.cos(a) * (r + 0.04), BALUSTRADE_HEIGHT / 2, Math.sin(a) * (r + 0.04)]} r={0.03} h={BALUSTRADE_HEIGHT} color={RAIL} />;
+      })}
+    </group>
+  );
+}
+// A rail along a side of a way between floors that is open to the sky (a round tower's ramps, shared/logic "Round towers"), at the height the floor is
+// along that side: posts and a top rail that climb with it. `a` and `b` are the run along the side, in squares from its start.
+function SlopedRail({ plan, side, a, b, up }: { plan: Pick<RoomLayout, "width" | "height" | "climb" | "switchback">; side: "n" | "e" | "s" | "w"; a: number; b: number; up: number }) {
+  const none = () => null;
+  const ew = side === "n" || side === "s";
+  const inset = 0.06;
+  // (a point on the side, `u` along it: on the plan, and the floor's height just inside it)
+  const at = (u: number): [number, number] => (side === "n" ? [u, inset] : side === "s" ? [u, plan.height - inset] : side === "w" ? [inset, u] : [plan.width - inset, u]);
+  const floor = (u: number) => {
+    const [x, z] = at(u);
+    return climbAt(plan as RoomLayout, Math.min(plan.width - 0.01, Math.max(0.01, x)), Math.min(plan.height - 0.01, Math.max(0.01, z))) * up;
+  };
+  const n = Math.max(1, Math.round((b - a) / 0.5));
+  const us = Array.from({ length: n + 1 }, (_, i) => a + ((b - a) * i) / n);
+  const H = BALUSTRADE_HEIGHT;
+  return (
+    <group>
+      {us.filter((_, i) => i % 2 === 0 || i === n).map((u) => {
+        const [x, z] = at(u);
+        return <Box key={`p${u}`} at={[x, floor(u) + H / 2, z]} size={[0.05, H, 0.05]} color={RAIL} />;
+      })}
+      {us.slice(1).map((u, i) => {
+        const u0 = us[i];
+        const [x0, z0] = at(u0);
+        const [x1, z1] = at(u);
+        const [h0, h1] = [floor(u0), floor(u)];
+        const run = Math.hypot(x1 - x0, z1 - z0);
+        const tilt = Math.atan2(h1 - h0, run);
+        return (
+          <group key={`r${u}`} position={[(x0 + x1) / 2, (h0 + h1) / 2 + H, (z0 + z1) / 2]} rotation={ew ? [0, 0, tilt] : [-tilt, 0, 0]}>
+            <mesh raycast={none}>
+              <boxGeometry args={ew ? [Math.hypot(run, h1 - h0) + 0.01, 0.05, 0.06] : [0.06, 0.05, Math.hypot(run, h1 - h0) + 0.01]} />
+              <meshLambertMaterial color={RAIL} />
+            </mesh>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
 function RingRail({ r, h }: { r: number; h: number }) {
   const posts = Math.max(12, Math.round((Math.PI * 2 * r) / 1.1));
   return (
@@ -1113,8 +1228,10 @@ function Stepper({ x, y, z = 0, pace = 4, face = 0, turn: turns = true, children
 }
 const isDroideka = (name = "") => /droideka|destroyer droid/i.test(name);
 
-export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = "", tallWalls = false, ceiling = false, wallHeight, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, biome, like, meets = [], lightKey, children }: {
+export function RoomShell({ width, height, assets, floor, wall, ships = [], bay, walls = true, fullWalls = false, railing = "", tallWalls = false, ceiling = false, wallHeight, looted, nodeOf, wayColor, wayLabel, onFloor, onAsset, plan, corners, style, mood, biome, like, meets = [], lightKey, canopy, children }: {
   width: number;
+  // The room is of a tree or stilt village (shared/logic canopyOf): a deck, a bridge or a rope bridge of it is drawn from on it as it is from outside
+  canopy?: CanopyKind;
   // Which switch this room's lights are on (useRoomLights): a room with light fittings has a switch by its first door
   lightKey?: string;
   // The walls this high, whatever the view (an arena's floor: up to its first tier)
@@ -1134,7 +1251,7 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   // What this room is, for its light, its air and what is in it (interiors/): the kind of building, the room's name, the world
   mood?: { buildingType: string; roomName: string; biome: string };
   // The room's level and what it is, for stairs, lifts and ladders (their floor rises)
-  plan?: Pick<RoomLayout, "level" | "aloft" | "form" | "climb" | "width" | "height" | "mask" | "switchback" | "well" | "ramp" | "shape">;
+  plan?: Pick<RoomLayout, "level" | "aloft" | "form" | "climb" | "width" | "height" | "mask" | "switchback" | "well" | "ramp" | "shape" | "open" | "tube">;
   assets: RoomAsset[];
   floor: FloorKind;
   wall: string;
@@ -1199,6 +1316,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   }, [assets]);
   // A shaft's walls run up with the floor
   const climbs = plan?.climb ? rise(plan as RoomLayout) : 0;
+  // (a tree or stilt village's deck, bridge or rope bridge: drawn as from outside, siteAssets CanopyPlatform, CanopyBridge)
+  const canopyWay = !!canopy && !!plan?.aloft && (plan.form === "corridor" || plan.form === "walkway" || plan.form === "balcony");
   // (seen from overhead, a switchback's walls stop at its landing, so that both flights can be looked into)
   // (a roof terrace or a balcony keeps its waist-high parapet in the eye views too: 2026-10-27, the user)
   const parapet = plan?.form === "roof" || plan?.form === "balcony";
@@ -1262,7 +1381,16 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
   return (
     <>
       {/* The floor; a tap on it walks to the square (both floors are centred on the room's middle) */}
-      {plan?.well ? (
+      {canopyWay ? (
+        // (a deck or bridge in the trees: its planks are the floor; under them a pane the taps land on)
+        <>
+          <mesh position={[width / 2, 0.02, height / 2]} rotation={[-Math.PI / 2, 0, 0]} onClick={floorTap}>
+            <planeGeometry args={[width, height]} />
+            <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+          </mesh>
+          {plan?.form === "balcony" ? <CanopyPlatform w={width} d={height} open={canopyRails({ assets })} aloft={plan.aloft ?? 0} kind={canopy!} biome={biome ?? ""} /> : <CanopyBridge w={width} d={height} kind={canopy!} biome={biome ?? ""} />}
+        </>
+      ) : plan?.well ? (
         // An arena's tier: the terrace round the open middle, with its rail (a tap on it walks to the square)
         <group position={[width / 2, 0, height / 2]} onClick={onFloor ? (e) => { e.stopPropagation(); if (e.delta > 8) return; const p = e.eventObject.worldToLocal(e.point.clone()); onFloor(Math.max(0, Math.min(width - 1, Math.floor(p.x + width / 2))), Math.max(0, Math.min(height - 1, Math.floor(p.z + height / 2)))); } : undefined}>
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} receiveShadow>
@@ -1290,13 +1418,18 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
         </mesh>
       )}
       {/* Over the slab, its texture (siteAssets floorLook); the slab shows until the maps are in */}
-      {!mask && !plan?.well && floorTexture && (
+      {!mask && !plan?.well && !canopyWay && floorTexture && (
         <Suspense fallback={null}>
           <FloorSurface look={floorTexture} w={width} h={height} radii={[nw, ne, se, sw]} onTap={floorTap} />
         </Suspense>
       )}
-      {plan?.climb && plan.form && !sloped && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} ramp={plan.ramp} onTap={onFloor} rock={rocky ? { biome: mood!.biome } : undefined} />}
-      {walls && mask
+      {plan?.climb && plan.form && !sloped && <Ascent w={width} h={height} toward={plan.climb.toward} up={climbs} form={plan.form} switchback={plan.switchback} ramp={plan.ramp} onTap={onFloor} rock={rocky ? { biome: mood!.biome } : undefined} tone={plan.open ? RAMP_DECK : undefined} />}
+      {/* A covered walkway is the kit's tube from within, as it is from without (its deck a hair over the floor's) */}
+      {canopyWay
+        ? null
+        : walls && plan?.tube
+        ? <group position={[0, 0.01, 0]}><TubeWalk w={width} d={height} tint={wall} /></group>
+        : walls && mask
         ? <Solids><CaveWalls mask={mask} ways={assets.filter((a) => a.side).map((a) => ({ x: a.x, y: a.y, side: a.side }))} w={width} h={height} biome={mood!.biome} tier={detail} seed={width * 31 + height} tall={fullWalls} ceiling={ceiling && fullWalls ? CAVE_ROOF : undefined} lift={slope} liftKey={slopeKey} /></Solids>
         : walls
         ? (() => {
@@ -1305,7 +1438,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             // both), bent onto the curve where the wall curves
             const tint = wallLook && wallPack && hasWalls(wallPack) ? toneColour(wallLook) : wall;
             // (the sides that are a balustrade: a gallery's overlooking edge, and the long sides of a walkway, which has no walls)
-            const rails = plan?.form === "walkway" || (plan?.form === "corridor" && plan.aloft) ? ["n", "e", "s", "w"].filter((s) => !assets.some((a) => isWay(a) && a.side === s)).join("") : railing;
+            // (and a round tower's gantry landings and ramps, open to the sky: shared/logic "Round towers")
+            const rails = plan?.form === "walkway" || plan?.open || (plan?.form === "corridor" && plan.aloft) ? ["n", "e", "s", "w"].filter((s) => !assets.some((a) => isWay(a) && a.side === s)).join("") : railing;
             const pierced = rocky ? [] : setIn.filter((p) => (isWay(p.a) || p.a.kind === "window") && !met(p)).map((p) => (
               <group key={`pierced${p.a.id}`} position={[p.at[0], 0, p.at[1]]} rotation={[0, p.turn, 0]}>
                 <PiercedWall kind={p.a.kind} pane={p.a.pane} style={style} wallH={rails.includes(p.a.side!) ? BALUSTRADE_HEIGHT : wallH} lift={ramp(p.a.x, p.a.y)} bend={p.bend} color={tint} wall={wallTexture} />
@@ -1314,6 +1448,8 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
             const solid = (list: typeof runs) => list.map(({ side, a, b, at }) => {
               if (rocky) return <RockWall key={`${side}${a}`} side={side} a={a} b={b} w={width} h={height} height={1.1} seed={Math.round(a * 10) + side.charCodeAt(0) + width} biome={mood!.biome} tier={detail} />;
               const [position, size] = at(a, b);
+              // (along a ramp the rail climbs with the floor)
+              if (rails.includes(side) && plan?.climb && plan.open) return <SlopedRail key={`${side}${a}`} plan={plan} side={side as "n" | "e" | "s" | "w"} a={a} b={b} up={climbs} />;
               if (rails.includes(side)) return <Balustrade key={`${side}${a}`} at={[position[0], position[2]]} length={b - a} along={side === "n" || side === "s" ? "x" : "z"} h={BALUSTRADE_HEIGHT} />;
               const high = wallH;
               return <Box key={`${side}${a}`} at={[position[0], high / 2, position[2]]} size={[size[0], high, size[2]]} color={wall} solid wall={wallTexture} />;
@@ -1370,6 +1506,9 @@ export function RoomShell({ width, height, assets, floor, wall, ships = [], bay,
       {assets.filter((a) => !a.side && a.kind !== "npc" && a.name !== "Loose flagstone").map((a) => (
         <Glide key={a.id} x={a.x} y={a.y} z={(a.z ?? 0) * LEVEL_H}>
           {a.kind === "ship" ? (bay ? <BayBerth room={bay.room} asset={a} based={bay.based} /> : ships.find((ship) => ship.id === a.ref) ? <ShipModel ship={ships.find((ship) => ship.id === a.ref)!} w={a.w} h={a.h} /> : <Berth w={a.w} h={a.h} name={a.name} note="away on a voyage" />)
+            // (a round tower's spiral: drawn from its way up, over both halves of its 2 by 2 squares; on the top floor, the well it comes up through)
+            : a.kind === "stairs" && a.name === `${SPIRAL} up` ? <group position={[1, 0, 1]}><SpiralStair up={LEVEL_H} /></group>
+            : a.kind === "stairs" && a.name === `${SPIRAL} down` ? (assets.some((o) => o.name === `${SPIRAL} up`) ? null : <group position={[1, 0, a.h === 2 ? 1 : 0]}><SpiralWell /></group>)
             : a.kind === "stairs" ? <StairsAsset w={a.w} h={a.h} up={/up/i.test(a.name)} rock={rocky ? { biome: mood!.biome } : undefined} />
             : a.kind === "loot" ? (nodeOf?.(a) ? <NodeModel node={nodeOf(a)!} empty={looted?.(a)} /> : <Chest looted={looted?.(a)} />)
             : (
@@ -2826,6 +2965,8 @@ function MountedStroll({ w }: { w: Stroll }) {
   const seat = seatFor(mount) - RIDER_HIPS;
   const leg = errandLength(w.length);
   const yaw = useRef(0);
+  // (getting down and up again: the figure on foot in the stages of interiors/limbs.ts mountPose, the person in the saddle hidden meanwhile)
+  const footMotion = useMemo(() => ({ current: motion() }), []);
   useFrame(({ clock }) => {
     if (!beast.current || !seated.current || !foot.current || !pack.current) return;
     const t = (clock.elapsedTime + w.offset) % (leg * 2);
@@ -2843,17 +2984,20 @@ function MountedStroll({ w }: { w: Stroll }) {
     const [ux, uy] = reach ? [tx / Math.hypot(tx, ty), ty / Math.hypot(tx, ty)] : [0, 1];
     // Down off the saddle to the beast's side, then the walk to the door, out of sight inside, and back
     const side = [-uy * 0.5, ux * 0.5];
-    // (half way through mounting, they are in the saddle again)
-    const onFoot = phase !== "ride" && !(phase === "up" && k > 0.5);
+    // (getting down and up again are seen: 2026-11-06, the user, "animations for characters climbing on/off mounts"; they changed at the half way)
+    const onFoot = phase !== "ride";
     seated.current.visible = !onFoot;
     foot.current.visible = onFoot && phase !== "shop";
+    const getting = phase === "down" || phase === "up";
+    footMotion.current.mount = getting ? (phase === "down" ? 1 - k : k) : undefined;
     if (onFoot) {
-      // How far they have gone along the way to the door (0 at the beast, 1 at the door), and how far out to its side (stepping down and up)
+      // How far they have gone along the way to the door (0 at the beast, 1 at the door), and how far out to its side (stepping down and up: mountPlace)
       const walk = phase === "in" ? k : phase === "out" ? 1 - k : 0;
-      const out = phase === "down" ? k : phase === "up" ? 1 - k : 1;
-      foot.current.position.set(here.x + 0.5 + side[0] * out + ux * reach * walk, 0, here.y + 0.5 + side[1] * out + uy * reach * walk);
-      // Facing the door going in, the beast (the other way) on coming out and while loading it
-      foot.current.rotation.y = phase === "in" || phase === "down" ? Math.atan2(ux, uy) : Math.atan2(-side[0], -side[1]);
+      const place = getting ? mountPlace(footMotion.current.mount!) : { side: 1, up: 0, face: 0 };
+      foot.current.position.set(here.x + 0.5 + side[0] * place.side + ux * reach * walk, (seat) * place.up, here.y + 0.5 + side[1] * place.side + uy * reach * walk);
+      // Facing the door going in, the beast (the other way) on coming out and while loading it; turning to face ahead as they get into the saddle
+      const faceBeast = Math.atan2(-side[0], -side[1]);
+      foot.current.rotation.y = getting ? faceBeast + Math.atan2(Math.sin(yaw.current - faceBeast), Math.cos(yaw.current - faceBeast)) * place.face : phase === "in" ? Math.atan2(ux, uy) : faceBeast;
     }
     pack.current.visible = carrying(phase, k);
   });
@@ -2871,7 +3015,9 @@ function MountedStroll({ w }: { w: Stroll }) {
         </group>
       </group>
       <group ref={foot} visible={false}>
-        <Figure kind="person" ring="#9ca3af" name={w.key} />
+        <MotionContext.Provider value={footMotion}>
+          <Figure kind="person" ring="#9ca3af" name={w.key} />
+        </MotionContext.Provider>
       </group>
     </>
   );
@@ -3194,7 +3340,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const fixtures = useMemo(() => fixturesOf(districtPlan, biome, tier), [districtPlan, biome, tier]);
   // (a cellar under the street leaves the street above it free to walk on, and so does a roof or
   // a catwalk, which stand over what is below)
-  const inRoom = (x: number, y: number) => rooms.some((a) => a.layout && floorsOf(a.layout)[1] >= 0 && formOf(a) !== "gallery" && !openAir(a) && x >= a.layout.x && x < a.layout.x + a.layout.width && y >= a.layout.y && y < a.layout.y + a.layout.height);
+  // (a covered walkway is no room here either: the wall it meets has its doorway framed and cut through, as for an open one)
+  const inRoom = (x: number, y: number) => rooms.some((a) => a.layout && floorsOf(a.layout)[1] >= 0 && formOf(a) !== "gallery" && !openAir(a) && !a.layout.tube && x >= a.layout.x && x < a.layout.x + a.layout.width && y >= a.layout.y && y < a.layout.y + a.layout.height);
 
   // What is to be seen in the opened room: hidden doors, caches and secret ways only once found
   const seen = (room: Area) =>
@@ -3446,7 +3593,23 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   const carts = scene.carts ?? [];
   const cartsOf = (handler: string) => carts.filter((c) => !c.parked && (c.handler ?? "me") === handler);
   const ridden = (scene.beasts ?? []).find((b) => b.id === scene.riding && b.hp > 0);
-  const followers = [...(scene.party ?? []), ...(scene.beasts ?? []).filter((b) => b.id !== ridden?.id)];
+  // Getting on or off a mount is seen (2026-11-06, the user: "animations for characters climbing on/off mounts"; it was at once): the rider steps up from
+  // its left side, swings a leg over and sits (interiors/limbs.ts mountPose, mountPlace), or gets down the same way back, over MOUNT_MS; the beast it got off
+  // stays under them until they are down
+  const [mounting, setMounting] = useState<{ on: boolean; beast: Companion; at: number } | null>(null);
+  const lastRidden = useRef<Companion | undefined>(ridden);
+  useEffect(() => {
+    const was = lastRidden.current;
+    lastRidden.current = ridden;
+    if ((was?.id ?? null) === (ridden?.id ?? null)) return;
+    const beast = ridden ?? was;
+    if (!beast) return;
+    setMounting({ on: !!ridden, beast, at: performance.now() });
+    const done = setTimeout(() => setMounting(null), MOUNT_MS + 60);
+    return () => clearTimeout(done);
+  }, [ridden?.id]);
+  const underRider = ridden ?? (mounting && !mounting.on ? mounting.beast : undefined);
+  const followers = [...(scene.party ?? []), ...(scene.beasts ?? []).filter((b) => b.id !== ridden?.id && b.id !== mounting?.beast.id)];
   // Co-op (2026-10-30; the user: a stranger who came to offer a job followed both players, each on their own screen only): a stranger of an
   // encounter belongs to the whole party, and walks behind ONE member of those standing here, the host if they are here, else the first by id.
   // Every screen picks the same one, so it is in the same place on all. (A player's own companions and beasts follow that player; the others see
@@ -3512,6 +3675,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
   }, [hereId, present]);
   const standing = spot.areaId === hereId ? spot : entry;
   const token = useRef<THREE.Group>(null);
+  // (the rider in the saddle, or getting on or off: moved by the frame while mounting)
+  const riderG = useRef<THREE.Group>(null);
   const duelRef = useRef(duel ? duelist : undefined);
   duelRef.current = duel ? duelist : undefined;
   const feet = useRef({ x: standing.x, y: standing.y });
@@ -3532,6 +3697,11 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
     const near: [number, number] = [feet.current.x + 0.5, feet.current.y + 0.5];
     const ladder = l.assets.find((a) => a.kind === "exit" && a.side);
     const top = floorAt(l, (ladder?.x ?? 0) + 0.5, (ladder?.y ?? 0) + 0.5) + 0.02;
+    // (a tree or stilt hut's ladder stands out past its deck's rim, siteAssets CanopyLadder: the climber clings on its far side, and steps off it beyond)
+    if (run.kind === "ladder" && ladder && l.aloft && !formOf(roof)) {
+      const g = geomOf(l, top, { side: ladder.side as TransitEdge, x: ladder.x, y: ladder.y }, near);
+      return { ...g, off: 1.0, pad: [g.wall[0] + g.out[0] * 1.6, g.wall[1] + g.out[1] * 1.6] };
+    }
     if (run.kind === "ladder" && ladder) return geomOf(l, top, { side: ladder.side as TransitEdge, x: ladder.x, y: ladder.y }, near);
     let best: { side: TransitEdge; x: number; y: number; far: number } | null = null;
     const consider = (side: TransitEdge, i: number) => {
@@ -4202,6 +4372,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       const pose = transitAt(run.kind, run.up, lift.g, lift.start, Math.min(1, (performance.now() - run.start) / run.ms));
       token.current.position.set(pose.x, pose.y, pose.z);
       token.current.rotation.y = pose.yaw;
+      // (on the ladder or the line the figure climbs: hand over hand by the height it has gone, interiors/limbs.ts humanPose)
+      partyMotion.current.climb = pose.climbing ? climbPhase(pose.y) : undefined;
+      partyMotion.current.air = false;
       token.current.visible = true;
       feet.current = { x: pose.x - 0.5, y: pose.z - 0.5 };
       held.current = { from: hereId, pose, until: performance.now() + 3000 };
@@ -4226,6 +4399,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       hook.current && (hook.current.visible = false);
       flame.current && (flame.current.visible = false);
     }
+    partyMotion.current.climb = undefined;
     if (held.current) {
       if (held.current.from === hereId && performance.now() < held.current.until && token.current) {
         const { pose } = held.current;
@@ -4270,6 +4444,21 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
       pm.posture = swimNow() ? 3 : shootSession ? (stance.k > 0.5 ? 1 : 0) : gr.prone ? 2 : gr.crouch ? 1 : 0;
       pm.air = air.current.mode !== "ground";
       pm.ready = !!shootSession;
+      // (going up or down a ladder of a building's own, a way between floors: hand over hand, as up a roof's)
+      pm.climb = inside && formOf(inside) === "ladder" ? climbPhase(token.current.position.y) : undefined;
+      // (getting on or off a mount: the rider's place against it and the stage of the pose, by the time since it began)
+      if (mounting && riderG.current) {
+        const k = Math.min(1, (performance.now() - mounting.at) / MOUNT_MS);
+        const u = mounting.on ? k : 1 - k;
+        const at = mountPlace(u);
+        const wide = isLarge(mounting.beast.size) ? 1.4 : 0.85;
+        riderG.current.position.set(wide * at.side, riderSeat(mounting.beast) * at.up, 0);
+        riderG.current.rotation.y = -Math.PI / 2 * (1 - at.face);
+        pm.mount = u;
+      } else {
+        pm.mount = undefined;
+        if (riderG.current && riderG.current.rotation.y !== 0) riderG.current.rotation.y = 0;
+      }
       token.current.rotation.x = 0;
       token.current.scale.y = 1;
       partyHeight.f = token.current.rotation.y;
@@ -4822,10 +5011,15 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
           const l = room.layout;
           const kind = canopyAt.get(room.parentId ?? "");
           if (!l || !kind || !l.aloft || (l.level ?? 0) !== 0) return null;
+          // (the deck or bridge the party is on is drawn by its RoomShell, the same way)
+          if (room === opened && formOf(room)) return null;
           const ways = l.assets.filter((a) => a.kind === "exit" && a.side);
           return (
-            <group key={`canopy-${room.id}`} position={[l.x, l.aloft, l.y]}>
-              {formOf(room) === "corridor" ? <CanopyBridge w={l.width} d={l.height} kind={kind} biome={biome} /> : <CanopyDeck w={l.width} d={l.height} round={!!l.shape} aloft={l.aloft} kind={kind} biome={biome} />}
+            <group key={`canopy-${room.id}`} position={[l.x, l.aloft, l.y]} onClick={reveal && formOf(room) ? (e) => tapPlace(e, room.id) : undefined}>
+              {/* (a hut's deck and the rope bridges between huts, shared/logic planDistrict "Rope bridges", are drawn as they are from on them: RoomShell `canopy`) */}
+              {formOf(room) === "corridor" || formOf(room) === "walkway" ? <CanopyBridge w={l.width} d={l.height} kind={kind} biome={biome} />
+                : formOf(room) === "balcony" ? <CanopyPlatform w={l.width} d={l.height} open={canopyRails(l)} aloft={l.aloft} kind={kind} biome={biome} />
+                : <CanopyDeck w={l.width} d={l.height} round={!!l.shape} aloft={l.aloft} kind={kind} biome={biome} seed={hue(room.id)} />}
               {ways.map((a) => {
                 const out: [number, number] = a.side === "n" ? [0, -1] : a.side === "s" ? [0, 1] : a.side === "w" ? [-1, 0] : [1, 0];
                 const at: [number, number] = a.side === "n" ? [a.x + 0.5, 0] : a.side === "s" ? [a.x + 0.5, l.height] : a.side === "w" ? [0, a.y + 0.5] : [l.width, a.y + 0.5];
@@ -4861,7 +5055,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   railing={railingOf(room, rooms)}
                   meets={meetsOf(room, rooms)}
                   tallWalls={!!l.tall}
-                  ceiling={viewing && !openAir(room) && !bowl}
+                  ceiling={viewing && !openAir(room) && !bowl && !room.layout?.tube}
+                  canopy={canopyAt.get(room.parentId ?? "")}
                   lightKey={`${world.seed}:${room.id}`}
                   wallHeight={bowl && !l.well && viewing ? LEVEL_H : undefined}
                   looted={(a) => { const c = room.loot.find((c) => c.id === a.ref); return !!c && (c.node ? nodeAt(c.node, minutes).charges === 0 : !!c.looted); }}
@@ -4966,7 +5161,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
             <WallAnchor key={room.id} at={[l.x, lift, l.y]}><group position={[l.x, lift, l.y]}>
               {/* What an upper floor stands on */}
               {/* What a raised room stands on, in the wall set of the room (it was a plain colour: the flat wall in the middle of the user's street) */}
-              {lift - (l.aloft ?? 0) > 0.01 && form !== "gallery" && form !== "walkway" && <Box at={[l.width / 2, -(lift - (l.aloft ?? 0)) / 2, l.height / 2]} size={[l.width - 0.1, lift - (l.aloft ?? 0), l.height - 0.1]} color={new THREE.Color(wall).multiplyScalar(0.7).getStyle()} wall={wallSet(wallPackOf(building.type), biome)} solid={!opened} />}
+              {lift - (l.aloft ?? 0) > 0.01 && form !== "gallery" && form !== "walkway" && !l.open && <Box at={[l.width / 2, -(lift - (l.aloft ?? 0)) / 2, l.height / 2]} size={[l.width - 0.1, lift - (l.aloft ?? 0), l.height - 0.1]} color={new THREE.Color(wall).multiplyScalar(0.7).getStyle()} wall={wallSet(wallPackOf(building.type), biome)} solid={!opened} />}
               {form === "roof" ? (
                 <group position={[0, 0.02, 0]} onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
                   <RoomShell plan={l} width={l.width} height={l.height} assets={seen(room).filter((a) => a.kind !== "npc")} floor={floor} wall={wall} wayColor={wayColor} wayLabel={() => undefined} style={style} biome={biome} like={likeOf(room)} corners={(() => { const under = roofUnder(l); return under ? radiiOf(under) : undefined; })()} />
@@ -5004,13 +5199,37 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                     );
                   })}
                 </group>
-              ) : form === "corridor" && canopyAt.get(room.parentId ?? "") && l.aloft ? (
+              ) : l.open ? (
+                // A round tower's stairwell, outside it and open to the sky (shared/logic "Round towers"): a gantry deck for each floor's landing, a steel
+                // ramp between each two, each with its rail, on posts down to the deck under it
+                (() => {
+                  const ways = (side: string) => l.assets.some((a) => (a.kind === "door" || a.kind === "exit") && a.side === side);
+                  const sides = (["n", "e", "s", "w"] as const).filter((side) => !ways(side));
+                  const drop = Math.min(LEVEL_H, lift - (l.aloft ?? 0));
+                  return (
+                    <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
+                      {form === "stairs" && l.climb ? (
+                        <>
+                          <Ascent w={l.width} h={l.height} toward={l.climb.toward} up={rise(l)} form="stairs" switchback={l.switchback} ramp tone={RAMP_DECK} />
+                          {sides.map((side) => <SlopedRail key={side} plan={l} side={side} a={0} b={side === "n" || side === "s" ? l.width : l.height} up={rise(l)} />)}
+                        </>
+                      ) : (
+                        <>
+                          {slab(RAMP_DECK)}
+                          {rail(sides.join(""))}
+                        </>
+                      )}
+                      {drop > 0.01 && [[0.1, 0.1], [l.width - 0.1, 0.1], [0.1, l.height - 0.1], [l.width - 0.1, l.height - 0.1]].map(([px, pz], i) => <Box key={i} at={[px, -drop / 2, pz]} size={[0.1, drop, 0.1]} color="#59636d" />)}
+                    </group>
+                  );
+                })()
+              ) : (form === "corridor" || form === "walkway" || form === "balcony") && canopyAt.get(room.parentId ?? "") && l.aloft ? (
                 // (a bridge between the huts of a tree or stilt village: drawn with the decks above, no walls; tapped like any room)
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined} />
               ) : form === "walkway" ? (
                 <group onClick={reveal ? (e) => tapPlace(e, room.id) : undefined}>
-                  {slab("#59636d")}
-                  {rail()}
+                  {/* (a covered walkway, where the air is bad or on a station: the kit's tube, the same seen from within) */}
+                  {l.tube ? <TubeWalk w={l.width} d={l.height} tint={wall} /> : <>{slab("#59636d")}{rail()}</>}
                   {/* Posts it stands on, down to the street */}
                   {lift > 0.01 && [[0.1, 0.1], [l.width - 0.1, 0.1], [0.1, l.height - 0.1], [l.width - 0.1, l.height - 0.1]].map(([px, pz], i) => <Box key={i} at={[px, -lift / 2, pz]} size={[0.1, lift, 0.1]} color="#59636d" />)}
                 </group>
@@ -5108,7 +5327,7 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
                   )}
                 </>
               )}
-              {!opened && form !== "roof" && form !== "balcony" && l.assets.filter((a) => a.side && (a.kind === "exit" || a.kind === "window" || (a.kind === "secret" && room.secretEntry?.found) || (a.kind === "door" && !inRoom(beyond(l, a).x, beyond(l, a).y)))).map((a) => {
+              {!opened && !l.open && form !== "roof" && form !== "balcony" && l.assets.filter((a) => a.side && (a.kind === "exit" || a.kind === "window" || (a.kind === "secret" && room.secretEntry?.found) || (a.kind === "door" && !inRoom(beyond(l, a).x, beyond(l, a).y)))).map((a) => {
                 // on the block's own wall line: the curve of a round room's block, not the square round it
                 const place = wayPlace(outline(l.width, l.height, form ? [0, 0, 0, 0] : radiiOf(room)), l.width, l.height, a);
                 const at = { x: place.at[0], z: place.at[1], turn: place.turn };
@@ -5275,8 +5494,8 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
         {duel && <DuelPieces />}
         {present && !duel && (
           <group ref={token} position={[standing.x + 0.5, 0, standing.y + 0.5]}>
-            {/* In the saddle: the beast under the character, who sits on its back */}
-            {ridden && <Figure kind="beast" ring={SIDE_COLORS.player} name={ridden.name} large={isLarge(ridden.size)} creature={ridden.creature} size={ridden.size} />}
+            {/* In the saddle: the beast under the character, who sits on its back (and while getting off it) */}
+            {underRider && <Figure kind="beast" ring={SIDE_COLORS.player} name={underRider.name} large={isLarge(underRider.size)} creature={underRider.creature} size={underRider.size} />}
             {/* At the helm of a water craft: the craft under the character, who sits in its pilot's seat, the followers who fit in the others */}
             {afloatBoat && !ridden && (
               <group position={[0, BOAT_FLOAT, 0]}>
@@ -5285,9 +5504,9 @@ function BuildingScene({ world, building, hereId, selectedId, onAct, locked, rev
               </group>
             )}
             {/* the rider's seat (not the feet) on the beast's back: a figure's hips are RIDER_HIPS over its feet */}
-            <group position={[0, ridden ? seatFor(ridden.name, ridden.creature, ridden.size) * (isLarge(ridden.size) ? 1.5 : 1) - RIDER_HIPS : 0, 0]} visible={!afloatBoat || !!ridden}>
+            <group ref={riderG} position={[0, underRider && !mounting ? riderSeat(underRider) : 0, 0]} visible={!afloatBoat || !!underRider}>
               <MotionContext.Provider value={partyMotion}>
-                <Figure kind="player" ring={SIDE_COLORS.player} marker riding={!!ridden} seat={partySeat} unarmed={!!table} wield={shootWield} />
+                <Figure kind="player" ring={SIDE_COLORS.player} marker riding={!!ridden && !mounting} seat={partySeat} unarmed={!!table} wield={shootWield} />
               </MotionContext.Provider>
             </group>
             <HandledCarts carts={cartsOf("me")} biome={biome} reach={ridden && isLarge(ridden.size) ? 1.7 : 1.05} onTap={active ? (id) => onAct?.({ type: "cart", id }) : undefined} />

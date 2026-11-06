@@ -188,6 +188,8 @@ export interface Path {
   climb?: number;
   // A way with a sensor on it (patio doors): going through trips the building's alarm unless it is slipped past (see "Balconies")
   alarmed?: boolean;
+  // A round tower's spiral stair between two of its floors (see "Round towers")
+  spiral?: boolean;
 }
 
 export interface World {
@@ -1947,6 +1949,12 @@ export interface RoomLayout {
   ramp?: boolean;
   // How far above the ground the building's floor stands, in metres (a tree village's huts on their platforms, a swamp's on stilts: canopyOf)
   aloft?: number;
+  // Open to the sky outside the building's walls (2026-11-06, the user: round buildings of several floors "should utilise the ramp assets on their
+  // exteriors"): the landings and ramps of a round tower's stairwell, decks and slopes with a rail, no walls or roof (tag "open-air", linkColumns)
+  open?: boolean;
+  // A covered walkway (2026-11-06, the user: "Any covered walkways ... should have their interiors drawn to CORRECTLY represent the exterior aesthetic"):
+  // an elevated walkway where the air outside is bad or on a station, a tube of glass on ribs over its deck (tag "tube", see linkLevels), not open air
+  tube?: boolean;
 }
 
 // What furnishes a room: name, where it goes (wall, corner, center, far = the wall opposite the
@@ -2473,9 +2481,21 @@ export interface VerticalMove {
   levels: number;
   kind: "ladder" | "grips" | "hook" | "fly" | "leap" | "jump" | "descent";
 }
+// (a storey's height in metres, as the map draws it: LocalMap LEVEL_H)
+const ARCH_LEVEL = 3.4;
 export function verticalMove(world: World, fromId: string, exit: Exit): VerticalMove | null {
   const from = world.areas[fromId];
   const to = world.areas[exit.to];
+  // A hut of a tree or stilt village (canopyOf), whose way in from the forest floor is a ladder (2026-11-06, the user: "climbable ladders"; the party
+  // went from the platform to the ground at once): up it going in, down it going out, as a roof's ladder is
+  const hut = (a?: Area) => !!a && a.kind === "room" && !!a.layout?.aloft && (a.layout.level ?? 0) === 0 && !formOf(a);
+  const intoHut = exit.via === "enter" && hut(to) && to.parentId === fromId;
+  const outOfHut = exit.via === "leave" && hut(from) && from.parentId === exit.to;
+  if (intoHut || outOfHut) {
+    const h = intoHut ? to : from;
+    if (exit.scale?.how === "none") return null;
+    return { area: h.id, up: intoHut, levels: Math.max(1, Math.round(h.layout!.aloft! / ARCH_LEVEL)), kind: exit.scale?.how ?? "ladder" };
+  }
   const high = (a?: Area) => !!a && a.kind === "room" && (formOf(a) === "roof" || formOf(a) === "balcony");
   const up = exit.via === "enter" && high(to) && to.parentId === fromId;
   const down = exit.via === "leave" && high(from) && from.parentId === exit.to;
@@ -2973,7 +2993,7 @@ function migrateSites(ctx: Context) {
 // Brings a world made before the people in it were given lives up to date: civilians that were
 // one crowd become people one by one, cantinas get their stage, band and service droid, and a
 // hostile building's way in has a second sentry. Worlds made since are left as they are.
-export const LIFE = 20;
+export const LIFE = 21;
 export function livenWorld(world: World, catalog: WorldCatalog): World {
   const next: World = JSON.parse(JSON.stringify(world));
   if ((next.life ?? 0) >= LIFE) return next;
@@ -3178,6 +3198,21 @@ export function livenWorld(world: World, catalog: WorldCatalog): World {
   // One stairwell to a column, a landing and a doorway on every floor (life 20, 2026-11-06, the user: "stairwells should be larger to accommodate landings for
   // each floor level ... too many doors and unused corridors"): a building that still has the old stair halls and flights is planned again, its stairs made anew
   if ((next.life ?? 0) < 20) replanBuildings(ctx, Object.values(next.areas).filter((a) => a.kind === "building" && hasOldStairs(next, a) && childrenOf(next, a.id).some((room) => room.layout)));
+  // Covered walkways (life 21, 2026-11-06): an elevated walkway already made on a station or where the air is bad becomes the tube it would be made as now
+  // (nothing else of its building changes; round towers come with buildings planned from now on)
+  if ((next.life ?? 0) < 21) {
+    for (const room of Object.values(next.areas)) {
+      if (room.kind !== "room" || formOf(room) !== "walkway" || !/^Elevated walkway to /.test(room.name) || room.tags.includes("tube")) continue;
+      const trail = trailOf(next, room.id);
+      if (!trail.some((a) => a.type === "station") && !HOSTILE_AIR.includes(trail.find((a) => a.kind === "planet")?.type ?? "")) continue;
+      room.tags.push("tube");
+      room.name = room.name.replace(/^Elevated/, "Covered");
+      room.type = room.name.toLowerCase();
+      if (room.layout) room.layout.tube = true;
+    }
+    // (and the tree and stilt villages are planned again, for the decks off their huts and the rope bridges between their buildings)
+    replanBuildings(ctx, Object.values(next.areas).filter((a) => a.kind === "building" && canopyOf(next, a.id) && childrenOf(next, a.id).some((room) => room.layout)));
+  }
   next.life = LIFE;
   return next;
 }
@@ -3219,7 +3254,7 @@ function replanBuildings(ctx: Context, due: Area[]) {
     const rooms = childrenOf(next, building.id).filter((x) => x.kind === "room");
     const hall = rooms.find((x) => x.gateway && !formOf(x)) ?? rooms.find((x) => !formOf(x));
     for (const room of rooms) {
-      if ((formOf(room) === "roof" && room.name === "Roof") || room.name === "Stairs up to the roof" || room.name === "Roof landing" || (formOf(room) === "walkway" && /^Catwalk to /.test(room.name))) {
+      if ((formOf(room) === "roof" && room.name === "Roof") || room.name === "Stairs up to the roof" || room.name === "Roof landing" || (formOf(room) === "walkway" && (/^(Catwalk|Rope bridge) to /.test(room.name) || room.tags.includes("skybridge"))) || (formOf(room) === "balcony" && room.tags.includes("canopy"))) {
         if (hall && room.occupants.length) hall.occupants.push(...room.occupants);
         if (hall) movedTo.set(room.id, hall.id);
         gone.add(room.id);
@@ -3505,7 +3540,8 @@ function linkRounds(world: World, building: Area, seed: number) {
   if (!ROUND_BUILDINGS.test(building.type) || WILD_BUILDINGS.includes(building.type) || building.tags.includes("rounded")) return;
   building.tags.push("rounded");
   const all = childrenOf(world, building.id).filter((a) => a.kind === "room" && !formOf(a));
-  const rooms = all.filter((a) => !a.tags.some((t) => t.startsWith("stack:") || t.startsWith("under:")) && !all.some((o) => o.tags.includes(`stack:${a.id}`) || o.tags.includes(`under:${a.id}`)));
+  // (the floors over and under a ground room are drums of its shape, a round tower: only the ground room is picked; see "Round towers")
+  const rooms = all.filter((a) => !a.tags.some((t) => t.startsWith("stack:") || t.startsWith("under:")));
   void seed;
   // (an arena's floor is always round: the amphitheatre)
   const bowl = building.type === "arena" ? rooms.find((a) => /^arena floor$/i.test(a.name)) : undefined;
@@ -3513,8 +3549,8 @@ function linkRounds(world: World, building: Area, seed: number) {
   // corridors. The stacks are left to linkFloors; an ocean world's buildings, round three rooms at a time before, are now as round as any)
   if (!rooms.length) return;
   const picked = bowl ? [bowl] : rooms.filter((a) => !holdsShips(a));
-  for (const room of picked) room.tags.push("round");
-  // (the floors of all its rooms: a room with another stacked over it is not made round, but the door to it from a round one is split all the same)
+  for (const room of picked) if (!room.tags.includes("round")) room.tags.push("round");
+  // (the floors of all its rooms: the door from a round room to one on its floor is split, whatever is stacked over either)
   const levels = levelsOf(building, all);
   const station = trailOf(world, building.id).some((a) => a.type === "station");
   for (const room of picked) for (const path of [...world.paths]) {
@@ -3554,7 +3590,7 @@ function linkFloors(world: World, building: Area, seed: number) {
   const partnerOf = (room: Area) => world.paths
     .filter((p) => p.kind === "door" && (p.from === room.id || p.to === room.id))
     .map((p) => world.areas[p.from === room.id ? p.to : p.from])
-    .find((o): o is Area => !!o && real.includes(o) && o !== room && (levels.get(o.id) ?? 0) === 0 && !holdsShips(o) && !o.gateway && !o.tags.includes("round") && !tall(o) && !o.tags.some((t) => t.startsWith("stack:")) && !real.some((u) => u.tags.includes(`stack:${o.id}`)));
+    .find((o): o is Area => !!o && real.includes(o) && o !== room && (levels.get(o.id) ?? 0) === 0 && !holdsShips(o) && !o.gateway && !tall(o) && !o.tags.some((t) => t.startsWith("stack:")) && !real.some((u) => u.tags.includes(`stack:${o.id}`)));
   // A room that is already on an upper floor by name is stacked on the ground room it opens off, as well
   for (const room of real) {
     if ((levels.get(room.id) ?? 0) < 1 || /roof|gallery/i.test(room.name) || tall(room) || holdsShips(room)) continue;
@@ -3629,8 +3665,10 @@ function linkColumns(world: World, building: Area, seed: number) {
     .filter((p) => p.kind === "door" && (p.from === room.id || p.to === room.id))
     .map((p) => world.areas[p.from === room.id ? p.to : p.from])
     .filter((o): o is Area => !!o && real.includes(o) && o !== room);
-  // A ground room a column can stand on: not double height, not a hangar, not round
-  const hostable = (a: Area) => level(a) === 0 && !member(a) && !tall(a) && !holdsShips(a) && !a.tags.includes("round");
+  // A ground room a column can stand on: not double height, not a hangar (since 2026-11-06 a round one too: a round tower, its floors drums on the
+  // drum, joined by ramps outside it or a spiral stair inside, see "Round towers")
+  const hostable = (a: Area) => level(a) === 0 && !member(a) && !tall(a) && !holdsShips(a);
+  const biome = trail.find((a) => a.kind === "planet")?.type ?? "";
   const setFloor = (room: Area, floor: number, tag: string) => {
     room.tags = room.tags.filter((t) => !/^code:F-?\d+$/.test(t));
     room.tags.push(`code:F${floor}`, tag);
@@ -3738,21 +3776,55 @@ function linkColumns(world: World, building: Area, seed: number) {
     for (let x = over(host); x; x = over(x)) chain.push(x);
     const deep: Area[] = [];
     for (let x = under(host); x; x = under(x)) deep.push(x);
+    const roomAt = (f: number): Area => (f === 0 ? host : f > 0 ? chain[f - 1] : deep[-f - 1]);
+    // (linkRounds, after this, makes every ground room of a round kind of building round but a ship's bay: so does this, for its stairs)
+    const round = host.tags.includes("round") || (ROUND_BUILDINGS.test(building.type) && building.type !== "arena" && !holdsShips(host));
+    if (round && !host.tags.includes("round")) host.tags.push("round");
+    // A round tower (see "Round towers") where the air outside is not fit to breathe, or on a station, climbs inside: a spiral stair up the middle of every
+    // floor, one way from each floor to the next (and no stairwell beside it)
+    if (round && (station || HOSTILE_AIR.includes(biome))) {
+      host.tags = [...host.tags.filter((t) => t !== "spiral"), "spiral"];
+      for (let f = -deep.length; f < chain.length; f++) {
+        const [lo, hi] = [roomAt(f), roomAt(f + 1)];
+        world.paths.push({ id: nextId(world, "p"), from: lo.id, to: hi.id, kind: "door", label: SPIRAL, travel: "10 ft.", ...into(f >= 0 ? hi : lo), spiral: true });
+      }
+      continue;
+    }
     // One stairwell for the column (see "Stair blocks"): a landing on each floor with a doorway into the room there, and a flight from each landing to the
-    // next, so that every floor is reached from within it
+    // next, so that every floor is reached from within it. A round tower's is outside it, open to the sky: gantry decks for landings and ramps between them.
+    const open = round ? ["open-air"] : [];
     const landings = new Map<number, Area>();
     for (let f = -deep.length; f <= chain.length; f++) {
-      landings.set(f, make(f === 0 ? "Stair landing" : f > 0 ? `Stair landing, floor ${f}` : `Stair landing, cellar ${-f}`, "corridor", [`block:${host.id}`, ...(f === 0 ? ["lane:hall"] : []), `landing:${f}`, `low:${f}`, "rise:0"]));
+      // (a cellar's landing is under the ground, so not open even outside a round tower)
+      const air = f >= 0 ? open : [];
+      const name = round && f >= 0 ? (f === 0 ? "Ramp landing" : `Gantry, floor ${f}`) : f === 0 ? "Stair landing" : f > 0 ? `Stair landing, floor ${f}` : `Stair landing, cellar ${-f}`;
+      landings.set(f, make(name, "corridor", [`block:${host.id}`, ...(f === 0 ? ["lane:hall"] : []), `landing:${f}`, `low:${f}`, "rise:0", ...air]));
     }
-    const roomAt = (f: number): Area => (f === 0 ? host : f > 0 ? chain[f - 1] : deep[-f - 1]);
     for (let f = -deep.length; f <= chain.length; f++) door(landings.get(f)!, roomAt(f), f === 0 ? {} : into(roomAt(f)));
     for (let f = -deep.length; f < chain.length; f++) {
       const to = roomAt(f >= 0 ? f + 1 : f);
-      const flight = make(f >= 0 ? `Stairs up to ${to.name}` : `Stairs down to ${to.name}`, "stairs", [`block:${host.id}`, `storey:${f}`, `low:${f}`, "rise:1"]);
+      const ramp = round && f >= 0;
+      const flight = make(ramp ? `Ramp up to ${to.name}` : f >= 0 ? `Stairs up to ${to.name}` : `Stairs down to ${to.name}`, "stairs", [`block:${host.id}`, `storey:${f}`, `low:${f}`, "rise:1", ...(ramp ? open : [])]);
       door(landings.get(f)!, flight);
       door(flight, landings.get(f + 1)!);
     }
   }
+}
+
+// Round towers (2026-11-06, the user: "round buildings with multiple floor layers should utilise the ramp assets on their exteriors, but maybe we could
+// create spiral staircases to use internally too? Round buildings should have logic that allows the rounded wall segments to scale"). A round room can
+// now be a column's host: the rooms over and under it are drums of the same shape on its footprint. Its floors are joined either
+//   outside   a stairwell against the middle of one side of the drum (where the curve meets the square it stands in), open to the sky: a gantry deck
+//             for each floor's landing, with its one doorway into the drum, and between each two a switchback ramp with a rail (tag "open-air",
+//             layout.open; openAir is true of them, so the map draws them with no walls or roof, from outside and from within); or
+//   inside    where the air is not fit to breathe or on a station: a spiral stair up the middle of the drum, two squares by two, the same in every floor
+//             of it: in each floor the stair's north half is the way up (stairs "Spiral stair up" to the floor above) and its south half the way down
+//             ("Spiral stair down"), the paths marked `spiral` (the host tagged "spiral"). The furniture keeps clear of it.
+// A cellar's landing stays enclosed: it is under the ground.
+export const SPIRAL = "Spiral stair";
+// Where a round tower's spiral stands in each of its floors: the 2 by 2 squares in the middle of the drum
+export function spiralSpot(l: Pick<RoomLayout, "width" | "height">): { x: number; y: number } {
+  return { x: Math.floor(l.width / 2) - 1, y: Math.floor(l.height / 2) - 1 };
 }
 
 // How high a column may rise over its ground room, and how deep under it
@@ -3790,6 +3862,8 @@ function linkLevels(world: World, building: Area, seed: number) {
   const door = (from: Area, to: Area, label: string, travel: string, extra: Partial<Path> = {}) =>
     world.paths.push({ id: nextId(world, "p"), from: from.id, to: to.id, kind: "door", label, travel, ...extra });
   const plain = wild ? "Passage" : station ? "Hatch" : "Doorway";
+  // (an elevated walkway where the air outside is bad, or on a station, is a covered one: a tube, enclosed and kept in air)
+  const tube = station || HOSTILE_AIR.includes(biome);
   let corridors = 0;
   for (const path of [...world.paths]) {
     if (path.kind !== "door") continue;
@@ -3798,6 +3872,8 @@ function linkLevels(world: World, building: Area, seed: number) {
     if (!a || !b || a.parentId !== building.id || b.parentId !== building.id || formOf(a) || formOf(b)) continue;
     // (a room stacked on its neighbour is joined by a stairwell inside that room, not by a stair room: see planBuilding)
     if (a.tags.includes(`stack:${b.id}`) || b.tags.includes(`stack:${a.id}`)) continue;
+    // (nor are a round tower's floors, joined by its spiral stair: linkColumns)
+    if (path.spiral) continue;
     const [la, lb] = [level(a), level(b)];
     let form: Form | undefined;
     // (the stairs of a built building are its columns' stair blocks, see linkColumns: what is left between floors, a hangar on the
@@ -3814,9 +3890,9 @@ function linkLevels(world: World, building: Area, seed: number) {
       form === "stairs" && building.type === "cave" ? `Sloping passage ${dir} to ${b.name}`
       : form === "stairs" ? `${wild ? "Rising passage" : station ? "Ladderway" : "Stairs"}${wild ? "" : ` ${dir}`} to ${b.name}`
       : form === "lift" ? `Lift ${dir} to ${b.name}`
-      : form === "walkway" ? `Elevated walkway to ${b.name}`
+      : form === "walkway" ? `${tube ? "Covered" : "Elevated"} walkway to ${b.name}`
       : `Corridor to ${b.name}`;
-    const link = make(name, form, [`low:${Math.min(la, lb)}`, `rise:${Math.abs(la - lb)}`]);
+    const link = make(name, form, [`low:${Math.min(la, lb)}`, `rise:${Math.abs(la - lb)}`, ...(form === "walkway" && tube ? ["tube"] : [])]);
     world.paths.splice(world.paths.indexOf(path), 1);
     door(a, link, path.hidden ? path.label : plain, "10 ft.", path.hidden ? { hidden: true } : {});
     door(link, b, path.locked ? path.label : plain, path.travel, path.locked ? { locked: path.locked } : {});
@@ -3829,7 +3905,7 @@ function linkLevels(world: World, building: Area, seed: number) {
     const pairs = uppers.flatMap((a, i) => uppers.slice(i + 1).filter((b) => level(b) === level(a) && !linked(world, a.id, b.id)).map((b) => [a, b] as const));
     if (pairs.length) {
       const [a, b] = r.pick(pairs);
-      const walk = make(`Elevated walkway to ${b.name}`, "walkway", [`low:${level(a)}`, "rise:0"]);
+      const walk = make(`${tube ? "Covered" : "Elevated"} walkway to ${b.name}`, "walkway", [`low:${level(a)}`, "rise:0", ...(tube ? ["tube"] : [])]);
       door(a, walk, "Doorway", "10 ft.");
       door(walk, b, "Doorway", `${r.int(30, 60)} ft.`);
     }
@@ -4071,6 +4147,8 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
       ...(form && ["stairs", "lift", "ladder"].includes(form) ? { climb: { toward: "e" as Side, levels: Math.max(1, rise) } } : {}),
       ...(room.tags.includes("tall") ? { tall: true } : {}),
       ...(!form && holdsShips(room) ? { roof: sky } : {}),
+      ...(room.tags.includes("open-air") ? { open: true, ...(form === "stairs" ? { ramp: true } : {}) } : {}),
+      ...(form === "walkway" && room.tags.includes("tube") ? { tube: true } : {}),
     };
     room.tags = room.tags.filter((t) => !t.startsWith("use:"));
   }
@@ -4111,7 +4189,7 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
   // Breadth first from the entrance: each room is set against a free stretch of wall of the room
   // it opens off, sharing at least two squares of wall for the door
   const placed: Area[] = [root];
-  const joined: { path: Path; adjacent: boolean; stairs?: boolean }[] = [];
+  const joined: { path: Path; adjacent: boolean; stairs?: boolean; spiral?: boolean }[] = [];
   const queue = [root];
   // The passages whose doors a stair block set (placeBlock): not laid out again
   const fixed = new Set<string>();
@@ -4136,7 +4214,9 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
     // (the entrance's west wall is the way in)
     for (const side of (host === root ? ["e", "s", "n"] : ["e", "s", "n", "w"]) as Side[]) {
       const length = side === "e" || side === "w" ? h.height : h.width;
-      for (let at = 0; at + 2 <= length; at++) {
+      // (a round tower's stands against the middle of the side, where the curve meets the square: its landings' doorways are on the drum's floor)
+      const spots = host.tags.includes("round") ? [Math.floor(length / 2) - 1] : Array.from({ length: Math.max(0, length - 1) }, (_, i) => i);
+      for (const at of spots) {
         for (const mirror of [false, true]) {
           const block = stairBlock(h, side, at, mirror, ups.length, downs.length);
           const all = [...block.landings.map((l) => l.layout), ...block.ups, ...block.downs];
@@ -4241,7 +4321,7 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
       // A room of a column is placed with its host, on the host's footprint (settle); the rooms of a stair block with the block
       if ((inColumn(room) || tagId(room, "block")) && !placed.includes(room)) continue;
       if (placed.includes(room)) {
-        if (!joined.some((j) => j.path.id === path.id)) joined.push({ path, adjacent: false });
+        if (!joined.some((j) => j.path.id === path.id)) joined.push({ path, adjacent: false, ...(path.spiral ? { spiral: true } : {}) });
         continue;
       }
       const a = from.layout!;
@@ -4354,9 +4434,12 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
   for (const room of rooms) {
     const l = room.layout!;
     const pick: Shape = r.next() < 0.5 ? "round" : "oval";
-    if (formOf(room) || !room.tags.includes("round") || Math.min(l.width, l.height) < 5) continue;
+    // (a room over or under another takes the shape of the room its column stands on, below: only the ground room is shaped)
+    if (formOf(room) || !room.tags.includes("round") || Math.min(l.width, l.height) < 5 || inColumn(room)) continue;
     const ring = { ...l, x: l.x - 1, y: l.y - 1, width: l.width + 2, height: l.height + 2 };
-    const near = rooms.filter((other) => other !== room && clash(ring, other.layout!));
+    // (the floors of its own column are on its footprint, not against it)
+    const mine = (other: Area) => inColumn(other) && hostOf(other) === room;
+    const near = rooms.filter((other) => other !== room && !mine(other) && clash(ring, other.layout!));
     // Only corridors may be against it, and each must meet its standing squares (an arena's floor is always round: it tries the other
     // curve too, and a room against it with no way through, which only stands by the curve, does not stop it)
     // (2026-11-05, the architecture audit: 637 of the 1,131 tagged rooms that stayed square had a corridor beside them that also touched a corner
@@ -4398,7 +4481,7 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
       // must have floor of the round room beside it for the door, as a corridor must; only corridors are slid)
       // (a room joined to it by a door of its own, not by a corridor or a stair, keeps it square, wherever that room is: round rooms are reached
       // through corridors, tests/interiors/round.test.ts; a room only standing beside the curve, no door between them, is no bar)
-      if (rooms.some((other) => other !== room && !formOf(other) && joined(other))) return false;
+      if (rooms.some((other) => other !== room && !formOf(other) && !mine(other) && joined(other))) return false;
       const short = against.filter((other) => joined(other) && standingBeside(l, other.layout!, shape) < 2);
       const moves = short.map((other) => slide(other, shape));
       if (moves.some((m) => !m)) return false;
@@ -4407,6 +4490,16 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
     });
     if (fits) l.shape = fits;
   }
+  // The floors over and under a round room are drums of its shape (a round tower), or square with it (again after joinStranded, which may square it)
+  const syncColumns = () => {
+    for (const room of rooms) {
+      if (!inColumn(room) || formOf(room) || !room.layout) continue;
+      const shape = hostOf(room).layout?.shape;
+      if (shape) room.layout.shape = shape;
+      else delete room.layout.shape;
+    }
+  };
+  syncColumns();
 
   // The ways out of the building first, then the doors between rooms
   for (const room of rooms.filter((a) => a.gateway)) {
@@ -4428,7 +4521,9 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
     return undefined;
   };
   // The stairs between floors are laid out after the doors, so that they keep clear of every door and leave each floor whole
-  const deferred: { path: Path; stairs?: boolean }[] = [];
+  const deferred: { path: Path; stairs?: boolean; spiral?: boolean }[] = [];
+  // (the floors of the round towers that climb inside, whose spiral stairs are laid out with the deferred ones)
+  const spirals = new Set<Area>();
   // Does a square of the wall, at the absolute position (x, y) on `side` of room `la` and the room `lb` across it, have nothing on it in either room
   const doorFree = (a: Area, b: Area, side: Side, at: number) => {
     const [la, lb] = [a.layout!, b.layout!];
@@ -4531,19 +4626,22 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
       // (a round or oval room still cut off is made square again and tried once more: its furniture stands inside the curve, so inside the square
       // too, and a square's corners give its neighbours wall for a door; 2026-11-06, tests/world/layouts.test.ts, a cantina's private booth)
       if (!joinedOne) {
+        // (and if none of them is curved, a round room that can be walked to and has a wall with one of them on its floor: a round tower's drum, whose
+        // stairwell took the place the lost room's corridor wanted, 2026-11-06)
+        const beside = real.filter((o) => seen.has(o.id) && o.layout!.shape && !formOf(o) && lost.some((a) => !formOf(a) && (a.layout!.level ?? 0) === (o.layout!.level ?? 0) && sharedWall(a.layout!, o.layout!)));
         const curved = lost.filter((a) => a.layout!.shape);
-        if (!curved.length) return;
-        for (const a of curved) delete a.layout!.shape;
+        if (!curved.length && !beside.length) return;
+        for (const a of curved.length ? curved : beside) delete a.layout!.shape;
       }
     }
   };
-  for (const { path, stairs } of joined) {
+  for (const { path, stairs, spiral } of joined) {
     const a = world.areas[path.from];
     const b = world.areas[path.to];
     const la = a.layout!;
     const lb = b.layout!;
-    if (stairs) {
-      deferred.push({ path, stairs });
+    if (stairs || spiral) {
+      deferred.push({ path, stairs, spiral });
       continue;
     }
     // Rooms that share a wall on a floor they both stand on are joined by a door in that wall; any other passage (a loop
@@ -4567,11 +4665,20 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
     inWall(b, "door", path.label, OPPOSITE[wall.side], at - (vertical ? lb.y : lb.x), { ref: path.id, to: a.id });
   }
   joinStranded();
-  for (const { path, stairs } of deferred) {
+  for (const { path, stairs, spiral } of deferred) {
     const a = world.areas[path.from];
     const b = world.areas[path.to];
     const la = a.layout!;
     const lb = b.layout!;
+    // A round tower's spiral stair (see "Round towers"): its north half in the lower floor is the way up, its south half in the upper floor the way down
+    if (spiral) {
+      const [lo, hi, ll, lh] = (la.level ?? 0) < (lb.level ?? 0) ? [a, b, la, lb] : [b, a, lb, la];
+      const spot = spiralSpot(ll);
+      ll.assets.push({ id: `${lo.id}-${ll.assets.length + 1}`, kind: "stairs", name: `${SPIRAL} up`, x: spot.x, y: spot.y, w: 2, h: 1, blocks: true, ref: path.id, to: hi.id });
+      lh.assets.push({ id: `${hi.id}-${lh.assets.length + 1}`, kind: "stairs", name: `${SPIRAL} down`, x: spot.x, y: spot.y + 1, w: 2, h: 1, blocks: true, ref: path.id, to: lo.id });
+      spirals.add(lo).add(hi);
+      continue;
+    }
     if (stairs) {
       // A flight of stairs in the room below, rising to the south edge of the gallery over it
       const [host, gallery, lh, lg] = lb.form === "gallery" ? [a, b, la, lb] : [b, a, lb, la];
@@ -4585,6 +4692,15 @@ function planBuildingRooms(world: World, buildingId: string, seed: number): void
     }
   }
   joinStranded();
+  syncColumns();
+  // The bottom of a spiral stair takes both halves of its squares (the stair rises from all of them), and so does its top, the well it comes up through
+  for (const room of spirals) {
+    const l = room.layout!;
+    const up = l.assets.find((a) => a.kind === "stairs" && a.name === `${SPIRAL} up`);
+    const down = l.assets.find((a) => a.kind === "stairs" && a.name === `${SPIRAL} down`);
+    if (up && !down) up.h = 2;
+    if (down && !up) Object.assign(down, { y: spiralSpot(l).y, h: 2 });
+  }
 
   // A quiet way in: hostile places always have one, others now and then. It opens into a back
   // room that is neither the entrance nor where the leader sits.
@@ -7109,7 +7225,7 @@ export function validateWorld(world: World, catalog?: WorldCatalog): string[] {
     const to = world.areas[path.to];
     if (!from || !to) problems.push(`A ${path.label} leads to an area that does not exist.`);
     else if (from.kind !== to.kind || PATH_KIND[from.kind] !== path.kind) problems.push(`The ${path.label} between ${from.name} and ${to.name} joins areas it cannot join.`);
-    else if (from.kind !== "system" && from.parentId !== to.parentId && !(path.label === "Catwalk" && from.kind === "room" && ancestor(world, from.id, "settlement")?.id === ancestor(world, to.id, "settlement")?.id) && !(path.label === "Transit line" && from.kind === "building" && ancestor(world, from.id, "planet")?.id === ancestor(world, to.id, "planet")?.id)) problems.push(`The ${path.label} between ${from.name} and ${to.name} crosses out of its ${world.areas[from.parentId!]?.kind}.`);
+    else if (from.kind !== "system" && from.parentId !== to.parentId && !((path.label === "Catwalk" || path.label === ROPE_BRIDGE || path.label === SKYBRIDGE) && from.kind === "room" && ancestor(world, from.id, "settlement")?.id === ancestor(world, to.id, "settlement")?.id) && !(path.label === "Transit line" && from.kind === "building" && ancestor(world, from.id, "planet")?.id === ancestor(world, to.id, "planet")?.id)) problems.push(`The ${path.label} between ${from.name} and ${to.name} crosses out of its ${world.areas[from.parentId!]?.kind}.`);
     const key = [path.from, path.to].sort().join("|");
     if (path.from === path.to || seenPaths.has(key)) problems.push(`Duplicate or looping ${path.label} at ${from?.name}.`);
     seenPaths.add(key);
@@ -7248,7 +7364,25 @@ export function auditBuildings(world: World): string[] {
       let host = room;
       for (let guard = 0; guard < 8 && (tagId(host, "stack") ?? tagId(host, "under")); guard++) host = world.areas[(tagId(host, "stack") ?? tagId(host, "under"))!] ?? host;
       const way = l.assets.some((a) => a.kind === "door" && a.to && (tagId(world.areas[a.to] ?? ({ tags: [] } as unknown as Area), "block") === host.id || formOf(world.areas[a.to] ?? ({ tags: [] } as unknown as Area)) === "lift"));
-      if (!way) problems.push(`${at(room)}: no door to the stairs (or lift) of its column`);
+      // (or, in a round tower that climbs inside, the spiral stair down to the floor under it or up to the one over it, in the middle of the drum)
+      const spiral = host.tags.includes("spiral") && l.assets.some((a) => a.kind === "stairs" && a.name.startsWith(SPIRAL) && a.to === lo.id);
+      if (!way && !spiral) problems.push(`${at(room)}: no door to the stairs (or lift) of its column`);
+      if (host.tags.includes("spiral")) {
+        const spot = spiralSpot(l);
+        const down = l.assets.find((a) => a.kind === "stairs" && a.name === `${SPIRAL} ${up ? "down" : "up"}` && a.to === lo.id);
+        const back = m.assets.find((a) => a.kind === "stairs" && a.name === `${SPIRAL} ${up ? "up" : "down"}` && a.to === room.id);
+        if (!down || !back) problems.push(`${at(room)}: the spiral stair to ${lo.name} does not go both ways`);
+        else {
+          // (a floor's way up is the north half of the 2 by 2 squares, its way down the south half; the bottom's way up and the top's way down take both)
+          const where = (a: RoomAsset, l: RoomLayout) => {
+            const both = !l.assets.some((o) => o !== a && o.kind === "stairs" && o.name.startsWith(SPIRAL));
+            const sp = spiralSpot(l);
+            return a.x === sp.x && a.w === 2 && (both ? a.y === sp.y && a.h === 2 : a.h === 1 && a.y === sp.y + (a.name.endsWith("down") ? 1 : 0));
+          };
+          if (!where(down, l) || !where(back, m)) problems.push(`${at(room)}: the spiral stair to ${lo.name} is not in the middle of the drum`);
+          void spot;
+        }
+      }
     }
     // A stairwell: a landing for each floor against its host's wall (each with its doorway into the room on its floor), a flight between each two landings
     for (const hall of rooms.filter((a) => tagId(a, "lane") === "hall")) {
@@ -7724,7 +7858,7 @@ export function hazardsAt(world: World, areaId: string, minute: number): { hazar
   if (!planet || building?.type === "starship") return [];
   const land = planet.type;
   const wild = !!settlement && WILD_PLACES.includes(settlement.type);
-  const outdoors = area.kind === "settlement" || area.kind === "planet" || area.kind === "building" || (area.kind === "room" && (openAir(area) || /^(roof|walkway|balcony)$/.test(formOf(area) ?? "")));
+  const outdoors = area.kind === "settlement" || area.kind === "planet" || area.kind === "building" || (area.kind === "room" && (openAir(area) || /^(roof|balcony)$/.test(formOf(area) ?? "")));
   const hour = hourOf(minute);
   const night = hour < 6 || hour >= 20;
   const out: { hazard: EnvHazard; why: string }[] = [];
@@ -10489,12 +10623,16 @@ const EDGE = 6;
 // (a palace stands in grounds: room for gardens inside its curtain wall)
 const PALACE_EDGE = 11;
 const CATWALK_SPAN = 12;
+// What a tree or stilt village's deck off a hut and its bridges between the huts of two buildings are called (planDistrict)
+export const CANOPY_DECK = "Deck";
+export const ROPE_BRIDGE = "Rope bridge";
+export const SKYBRIDGE = "Covered walkway";
 
 const layoutsClash = (a: RoomLayout, b: RoomLayout) => overlap(a, b) && floorsOf(a)[0] <= floorsOf(b)[1] && floorsOf(b)[0] <= floorsOf(a)[1];
 
 // A room open to the air: a roof, or a walkway between two places
 // (a bridge between the huts of a tree or stilt village is one too: its corridor stands aloft, with a rope rail and no walls or roof; 2026-11-06, the user)
-export const openAir = (a: Pick<Area, "tags"> & { layout?: Pick<RoomLayout, "aloft"> }) => formOf(a) === "roof" || formOf(a) === "walkway" || formOf(a) === "balcony" || (formOf(a) === "corridor" && !!a.layout?.aloft);
+export const openAir = (a: Pick<Area, "tags"> & { layout?: Pick<RoomLayout, "aloft" | "open" | "tube"> }) => formOf(a) === "roof" || (formOf(a) === "walkway" && !a.layout?.tube && !a.tags.includes("tube")) || formOf(a) === "balcony" || (formOf(a) === "corridor" && !!a.layout?.aloft) || !!a.layout?.open || a.tags.includes("open-air");
 
 // The squares of a room's wall that nothing is against (no other room at the same floors, no way in)
 function freeWallSquares(all: Area[], room: Area, side: Side): number[] {
@@ -10582,9 +10720,10 @@ function doorBetween(a: Area, b: Area, path: Path): boolean {
   }
   if (!side || high < low) return false;
   const vertical = side === "e" || side === "w";
+  // (a square already a way, or one cut away by a round room's curve, or under its furniture: a tree village's huts are joined this way, 2026-11-06)
   const taken = (l: RoomLayout, s: Side, at: number) => {
     const sq = wallSquare(l, s, at - (vertical ? l.y : l.x));
-    return l.assets.some((x) => x.side && x.x === sq.x && x.y === sq.y);
+    return !standsAt(l, sq.x, sq.y) || l.assets.some((x) => (x.side && x.x === sq.x && x.y === sq.y) || (!x.side && x.kind !== "npc" && x.x <= sq.x && sq.x < x.x + x.w && x.y <= sq.y && sq.y < x.y + x.h));
   };
   const middle = Math.floor((low + high) / 2);
   const options = Array.from({ length: high - low + 1 }, (_, i) => low + i).sort((p, q) => Math.abs(p - middle) - Math.abs(q - middle));
@@ -10650,8 +10789,10 @@ function roofStairs(world: World, building: Area, top: Area, roof: Area, all: Ar
     world.areas[area.id] = area;
     return area;
   };
-  const stairs = made("Stairs up to the roof", ["form:stairs", `block:${host.id}`, `storey:${ups}`, `low:${ups}`, "rise:1"], layout);
-  const landing = made("Roof landing", ["form:corridor", `block:${host.id}`, `landing:${ups + 1}`, `low:${ups + 1}`, "rise:0"], roofLayout);
+  // (a round tower's ramps go on up outside it to the roof, open to the sky as the rest of its stairwell)
+  const air = hall.tags.includes("open-air") ? ["open-air"] : [];
+  const stairs = made("Stairs up to the roof", ["form:stairs", `block:${host.id}`, `storey:${ups}`, `low:${ups}`, "rise:1", ...air], air.length ? { ...layout, open: true, ramp: true } : layout);
+  const landing = made("Roof landing", ["form:corridor", `block:${host.id}`, `landing:${ups + 1}`, `low:${ups + 1}`, "rise:0", ...air], air.length ? { ...roofLayout, open: true } : roofLayout);
   const up: Path = { id: nextId(world, "p"), from: topLanding.id, to: stairs.id, kind: "door", label: "Doorway", travel: "10 ft." };
   const mid: Path = { id: nextId(world, "p"), from: stairs.id, to: landing.id, kind: "door", label: "Doorway", travel: "10 ft." };
   const out: Path = { id: nextId(world, "p"), from: landing.id, to: roof.id, kind: "door", label: locked ? "Locked roof door" : "Roof door", travel: "10 ft.", ...(locked ? { locked } : {}) };
@@ -10834,12 +10975,14 @@ function planDistrictGround(ctx: Context, district: District): DistrictPlan | un
     }
   }
 
-  // Balconies (see "Balconies"): the upper rooms of the great houses that face the street
+  // Balconies (see "Balconies"): the upper rooms of the great houses that face the street; and the decks of a tree or stilt village (see "Tree villages"),
+  // a platform off the side of a hut out over the forest floor, through a plain doorway, two to a building
   for (const b of members) {
-    if (!BALCONIED.test(b.type)) continue;
+    const canopy = !!canopyOf(world, b.id);
+    if (!BALCONIED.test(b.type) && !canopy) continue;
     let made = 0;
     const most = b.type === "palace" ? 3 : 2;
-    for (const room of r.shuffle(roomsOf(b).filter((a) => !formOf(a) && (a.layout!.level ?? 0) >= 1 && !a.layout!.roof))) {
+    for (const room of r.shuffle(roomsOf(b).filter((a) => !formOf(a) && (canopy ? (a.layout!.level ?? 0) === 0 : (a.layout!.level ?? 0) >= 1) && !a.layout!.roof))) {
       if (made >= most) break;
       const l = room.layout!;
       for (const side of r.shuffle(["s", "n", "e", "w"] as Side[])) {
@@ -10858,20 +11001,22 @@ function planDistrictGround(ctx: Context, district: District): DistrictPlan | un
           let streetUnder = true;
           for (let x = layout.x; x < layout.x + layout.width; x++) for (let y = layout.y; y < layout.y + layout.height; y++) if (!under(x, y)) streetUnder = false;
           if (!streetUnder || everyRoom().some((o) => o.layout && layoutsClash(layout, o.layout))) continue;
-          const balcony = make(b, "Balcony", "balcony", layout, [`low:${l.level}`, "rise:0"]);
-          balcony.description = `A balcony off the ${room.name.toLowerCase()}, over the street.`;
-          // The patio doors: locked and alarmed in a palace, often in a great house
+          const balcony = make(b, canopy ? CANOPY_DECK : "Balcony", "balcony", layout, [`low:${l.level ?? 0}`, "rise:0", ...(canopy ? ["canopy"] : [])]);
+          balcony.description = canopy ? `A deck of planks off the ${room.name.toLowerCase()}, out over the forest floor.` : `A balcony off the ${room.name.toLowerCase()}, over the street.`;
+          // The patio doors: locked and alarmed in a palace, often in a great house (a hut's deck: an open doorway)
           const grand = b.type === "palace";
-          const locked = grand || r.chance(0.5) ? (grand ? 15 : 13) : undefined;
-          const alarmed = grand || r.chance(0.5);
-          const path: Path = { id: nextId(world, "p"), from: room.id, to: balcony.id, kind: "door", label: "Patio doors", travel: "5 ft.", ...(locked ? { locked } : {}), ...(alarmed ? { alarmed: true } : {}) };
+          const locked = !canopy && (grand || r.chance(0.5)) ? (grand ? 15 : 13) : undefined;
+          const alarmed = !canopy && (grand || r.chance(0.5));
+          const label = canopy ? "Doorway" : "Patio doors";
+          const path: Path = { id: nextId(world, "p"), from: room.id, to: balcony.id, kind: "door", label, travel: "5 ft.", ...(locked ? { locked } : {}), ...(alarmed ? { alarmed: true } : {}) };
           world.paths.push(path);
           const wallAt = start + 1;
-          l.assets.push({ id: `${room.id}-${l.assets.length + 1}-b`, kind: "door", name: "Patio doors", ...wallSquare(l, side, wallAt), w: 1, h: 1, side, ref: path.id, to: balcony.id });
-          layout.assets.push({ id: `${balcony.id}-1`, kind: "door", name: "Patio doors", ...wallSquare(layout, OPPOSITE[side], 1), w: 1, h: 1, side: OPPOSITE[side], ref: path.id, to: room.id });
+          l.assets.push({ id: `${room.id}-${l.assets.length + 1}-b`, kind: "door", name: label, ...wallSquare(l, side, wallAt), w: 1, h: 1, side, ref: path.id, to: balcony.id });
+          layout.assets.push({ id: `${balcony.id}-1`, kind: "door", name: label, ...wallSquare(layout, OPPOSITE[side], 1), w: 1, h: 1, side: OPPOSITE[side], ref: path.id, to: room.id });
           // (the room's floor stays whole, its door square clear: else no balcony)
           const doorSq = wallSquare(l, side, wallAt);
-          if (floorFaults(l) || l.assets.some((a) => a.ref !== path.id && !a.side && a.kind !== "npc" && a.x <= doorSq.x && doorSq.x < a.x + a.w && a.y <= doorSq.y && doorSq.y < a.y + a.h)) {
+          // (and on the floor of a round room: the middle of a side, where the curve meets the square it stands in, since round towers have upper floors)
+          if (!standsAt(l, doorSq.x, doorSq.y) || floorFaults(l) || l.assets.some((a) => a.ref !== path.id && !a.side && a.kind !== "npc" && a.x <= doorSq.x && doorSq.x < a.x + a.w && a.y <= doorSq.y && doorSq.y < a.y + a.h)) {
             l.assets = l.assets.filter((a) => a.ref !== path.id);
             world.paths.splice(world.paths.indexOf(path), 1);
             delete world.areas[balcony.id];
@@ -10937,6 +11082,67 @@ function planDistrictGround(ctx: Context, district: District): DistrictPlan | un
     }
     if (joins) group.set(ga, gb);
     made++;
+  }
+
+  // Rope bridges between the huts of a tree or stilt village (2026-11-06, the user: tree villages "with catwalks and gantries surrounding and connecting"):
+  // a bridge two planks wide from a hut of one building to a hut of the next, at the height of their floors in the trees, across up to CATWALK_SPAN
+  // squares of the forest floor, the shortest first so that the village's buildings are joined into one aloft, and now and then one more for a way round.
+  // Its doorways are where both huts have floor at their wall (the middle of a round hut's side) with nothing against it inside.
+  // And skybridges (the same day: covered walkways "in the game"): where the air is bad or on a station, a tube from a room on an upper floor of one
+  // building to one on the same floor of the next (floors 1 to 3), so that the buildings are joined over the ground as well as by their ways in.
+  const across = (ends: { roof: Area; building: Area }[], o: { level: number; name: string; label: string; tags: string[]; description: string; tube?: boolean }) => {
+    const spans: Span[] = [];
+    for (let i = 0; i < ends.length; i++) {
+      for (let j = i + 1; j < ends.length; j++) {
+        const [p, q] = [ends[i], ends[j]];
+        if (p.building === q.building) continue;
+        for (const [first, second] of [[p, q], [q, p]] as const) {
+          for (const axis of ["x", "y"] as const) {
+            const [fl, sl] = [first.roof.layout!, second.roof.layout!];
+            const gap = axis === "x" ? sl.x - (fl.x + fl.width) : sl.y - (fl.y + fl.height);
+            if (gap < 1 || gap > CATWALK_SPAN) continue;
+            const lo = axis === "x" ? Math.max(fl.y, sl.y) : Math.max(fl.x, sl.x);
+            const hi = (axis === "x" ? Math.min(fl.y + fl.height, sl.y + sl.height) : Math.min(fl.x + fl.width, sl.x + sl.width)) - 1;
+            if (hi - lo + 1 < 3) continue;
+            const at = Math.floor((lo + hi - 1) / 2);
+            const base = { assets: [], form: "walkway" as Form, ...(o.level ? { level: o.level } : {}), ...(o.tube ? { tube: true } : {}) };
+            const layout: RoomLayout = axis === "x" ? { x: fl.x + fl.width, y: at, width: gap, height: 2, ...base } : { x: at, y: fl.y + fl.height, width: 2, height: gap, ...base };
+            if (everyRoom().some((x) => x !== first.roof && x !== second.roof && x.layout && layoutsClash(layout, x.layout))) continue;
+            spans.push({ a: first.roof, b: second.roof, ba: first.building, bb: second.building, layout, gap });
+          }
+        }
+      }
+    }
+    spans.sort((p, q) => p.gap - q.gap);
+    const joined = new Map<string, string>(members.map((b) => [b.id, b.id]));
+    const top = (id: string): string => (joined.get(id) === id ? id : top(joined.get(id)!));
+    let spanned = 0;
+    for (const span of spans) {
+      const [ga, gb] = [top(span.ba.id), top(span.bb.id)];
+      const joins = ga !== gb;
+      if (!joins && (spanned >= ends.length / 3 || !r.chance(0.3))) continue;
+      if (everyRoom().some((x) => x.layout && layoutsClash(span.layout, x.layout))) continue;
+      const walk = make(span.ba, `${o.name} to ${span.bb.name}`, "walkway", span.layout, [`low:${o.level}`, "rise:0", ...o.tags]);
+      walk.description = o.description;
+      const one = addPath(world, span.a, walk, o.label, "5 ft.");
+      const two = addPath(world, walk, span.b, o.label, `${span.gap * 5} ft.`);
+      if (!one || !two || !doorBetween(span.a, walk, one) || !doorBetween(walk, span.b, two)) {
+        // (no door to be had at one end: taken back, and any door it did make)
+        for (const room of [span.a, span.b]) if (room.layout) room.layout.assets = room.layout.assets.filter((x) => x.to !== walk.id);
+        delete world.areas[walk.id];
+        world.paths = world.paths.filter((p) => p !== one && p !== two);
+        continue;
+      }
+      if (joins) joined.set(ga, gb);
+      spanned++;
+    }
+  };
+  const huts = members.filter((b) => canopyOf(world, b.id)).flatMap((b) => roomsOf(b).filter((a) => !formOf(a) && (a.layout!.level ?? 0) === 0).map((room) => ({ roof: room, building: b })));
+  across(huts, { level: 0, name: ROPE_BRIDGE, label: ROPE_BRIDGE, tags: ["canopy"], description: "A bridge of planks slung between the trees, with a rope rail." });
+  const sealed = (b: Area) => { const t = trailOf(world, b.id); return t.some((a) => a.type === "station") || HOSTILE_AIR.includes(t.find((a) => a.kind === "planet")?.type ?? ""); };
+  for (const level of [1, 2, 3]) {
+    const uppers = members.filter(sealed).flatMap((b) => roomsOf(b).filter((a) => !formOf(a) && (a.layout!.level ?? 0) === level && !a.layout!.roof && !holdsShips(a)).map((room) => ({ roof: room, building: b })));
+    across(uppers, { level, name: SKYBRIDGE, label: SKYBRIDGE, tags: ["tube", "skybridge"], description: "A covered walkway between the buildings, a tube of glass on ribs, kept in air.", tube: true });
   }
 
   // The roofs are furnished (vents, tanks, crates for cover) and given their sentries

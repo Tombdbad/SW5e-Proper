@@ -110,3 +110,18 @@ test("verticalMove: the ladder to a roof and back, a hook's line, a jump down; n
   const room = Object.values(world.areas).find((a) => a.kind === "room" && !formOf(a))!;
   assert.equal(verticalMove(world, room.parentId!, { to: room.id, via: "enter", label: "Enter", travel: "" }), null);
 });
+
+test("verticalMove (2026-11-06): into a tree village's hut up its ladder from the forest floor, and down it going out", () => {
+  const world: World = generateWorld({ seed: 3, partyLevel: 5 }, catalog);
+  const hut = Object.values(world.areas).find((a) => a.kind === "room" && a.gateway && !formOf(a) && !!a.layout?.aloft && (a.layout.level ?? 0) === 0)!;
+  assert.ok(hut, "a hut aloft in seed 3");
+  const building = hut.parentId!;
+  const up = exitsOf(world, building).find((e) => e.to === hut.id)!;
+  const move = verticalMove(world, building, up);
+  assert.equal(move?.kind, "ladder");
+  assert.equal(move?.up, true);
+  assert.equal(move?.area, hut.id);
+  assert.ok((move?.levels ?? 0) >= 1);
+  const down = exitsOf(world, hut.id).find((e) => e.to === building)!;
+  assert.deepEqual(verticalMove(world, hut.id, down), { ...move!, up: false });
+});

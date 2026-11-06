@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateWorld, livenWorld, auditBuildings, walkBuilding, validateWorld, stairBlock, climbAt, canStep, floorLevelAt, formOf, exitsOf, paneFor, climbable, setPane, arrivalSquares, createRandom, BLOCK_LENGTH, LANDING, type Area, type RoomLayout, type Side, type World } from "@shared/logic";
+import { generateWorld, livenWorld, auditBuildings, walkBuilding, validateWorld, openAir, SPIRAL, stairBlock, climbAt, canStep, floorLevelAt, formOf, exitsOf, paneFor, climbable, setPane, arrivalSquares, createRandom, BLOCK_LENGTH, LANDING, type Area, type RoomLayout, type Side, type World } from "@shared/logic";
 import { getWorldCatalog } from "../../server/sw5eData";
 
 // Access to every floor of the buildings the generator makes (2026-10-20): the stair blocks (shared/logic "Stair blocks": rooms
@@ -124,7 +124,7 @@ test("a saved world with the old stair halls is given the stairwells (life 20): 
   for (const a of Object.values(world.areas)) if (a.parentId === building.id) a.tags = a.tags.filter((t) => !t.startsWith("landing:"));
   world.life = 19;
   const next = livenWorld(world, catalog);
-  assert.equal(next.life, 20);
+  assert.ok((next.life ?? 0) >= 20, `life ${next.life}`);
   const rooms = Object.values(next.areas).filter((a) => a.parentId === building.id);
   assert.ok(rooms.some((a) => a.tags.some((t) => t.startsWith("landing:"))), "the stairwell is made again, with landings");
   assert.ok(rooms.every((a) => !/^Stair hall$/.test(a.name)), "no stair hall is left");
@@ -202,6 +202,66 @@ test("every room over or under the ground is in a column with a stairwell; tower
   assert.ok(roofWays > 0, "no roof with stairs down into its building");
 });
 
+test("round towers (2026-11-06): drums stacked on a round room, joined by open ramps outside it, or a spiral stair up the middle where the air is bad", () => {
+  let outside = 0, inside = 0, drums = 0;
+  for (const seed of SEEDS) {
+    const world = worldOf(seed);
+    const areas = Object.values(world.areas);
+    const hostOf = (a: Area): Area => {
+      let x = a;
+      for (let g = 0; g < 8; g++) {
+        const id = x.tags.find((t) => t.startsWith("stack:") || t.startsWith("under:"))?.split(":")[1];
+        if (!id || !world.areas[id]) break;
+        x = world.areas[id];
+      }
+      return x;
+    };
+    for (const room of areas.filter((a) => a.kind === "room" && a.layout && a.tags.some((t) => t.startsWith("stack:") || t.startsWith("under:")))) {
+      const host = hostOf(room);
+      // every floor of a column has the shape of the room it stands on
+      assert.equal(room.layout!.shape, host.layout!.shape, `${room.name}: shaped ${room.layout!.shape} on ${host.name}, ${host.layout!.shape}`);
+      if (host.layout!.shape === "round" && (room.layout!.level ?? 0) > 0) drums++;
+    }
+    // Outside: every part of the stairwell over the ground is open to the sky, the ramps slopes, the cellar's stairs enclosed
+    for (const host of areas.filter((a) => a.tags.includes("round") && areas.some((p) => p.tags.includes(`block:${a.id}`)))) {
+      outside++;
+      for (const part of areas.filter((p) => p.tags.includes(`block:${host.id}`))) {
+        const up = (part.layout!.level ?? 0) >= 0;
+        assert.equal(openAir(part), up, `${part.name}: open ${openAir(part)} on floor ${part.layout!.level ?? 0}`);
+        if (up && formOf(part) === "stairs") assert.ok(part.layout!.ramp && part.layout!.open, `${part.name}: not an open ramp`);
+      }
+      // the ground landing stands against the middle of the drum's side
+      const hall = areas.find((p) => p.tags.includes(`block:${host.id}`) && p.tags.includes("lane:hall"))!;
+      const [h, l] = [host.layout!, hall.layout!];
+      const middle = l.x === h.x + h.width || l.x + l.width === h.x ? l.y - h.y === Math.floor(h.height / 2) - 1 : l.x - h.x === Math.floor(h.width / 2) - 1;
+      assert.ok(middle, `${hall.name} of ${host.name}: not in the middle of its side`);
+    }
+    // Inside: no stairwell beside it, a spiral stair from each floor to the next, in the middle of each
+    for (const host of areas.filter((a) => a.tags.includes("spiral"))) {
+      inside++;
+      assert.ok(!areas.some((p) => p.tags.includes(`block:${host.id}`)), `${host.name}: a stairwell beside a tower that climbs inside`);
+      const floors = areas.filter((a) => a.layout && (a === host || hostOf(a) === host)).sort((p, q) => (p.layout!.level ?? 0) - (q.layout!.level ?? 0));
+      for (let i = 0; i + 1 < floors.length; i++) {
+        const [lo, hi] = [floors[i], floors[i + 1]];
+        const upway = lo.layout!.assets.find((a) => a.kind === "stairs" && a.name === `${SPIRAL} up` && a.to === hi.id);
+        const down = hi.layout!.assets.find((a) => a.kind === "stairs" && a.name === `${SPIRAL} down` && a.to === lo.id);
+        assert.ok(upway && down, `${lo.name} to ${hi.name}: no spiral both ways`);
+        const path = world.paths.find((p) => p.id === upway!.ref)!;
+        assert.ok(path?.spiral, `${lo.name} to ${hi.name}: the path is not the spiral's`);
+        // nothing stands on the spiral's squares but the stair
+        for (const l of [lo.layout!, hi.layout!]) {
+          const on = l.assets.filter((a) => !a.name.startsWith(SPIRAL) && a.kind !== "npc" && a.kind !== "loot" && !a.side && a.x < upway!.x + 2 && upway!.x < a.x + a.w && a.y < upway!.y + 2 && upway!.y < a.y + a.h);
+          assert.deepEqual(on.map((a) => a.name), [], `${lo.name}: furniture on the spiral`);
+        }
+      }
+      assert.deepEqual(walkBuilding(world, host.parentId!).problems, []);
+    }
+  }
+  assert.ok(outside >= 5, `${outside} round towers with ramps outside`);
+  assert.ok(inside >= 5, `${inside} round towers with a spiral inside`);
+  assert.ok(drums >= 5, `${drums} round floors over the ground`);
+});
+
 test("windows: slits in fortified places, portholes on stations, great windows locked and alarmed in palaces; only large ones are climbed through", () => {
   const r = createRandom(7);
   assert.equal(paneFor("garrison", "Barracks", false, r).size, "slit");
@@ -252,7 +312,8 @@ test("balconies: on the upper floors of the great houses, over the street, reach
   let balconies = 0;
   for (const seed of SEEDS) {
     const world = worldOf(seed);
-    for (const b of Object.values(world.areas).filter((a) => formOf(a) === "balcony")) {
+    // (a tree or stilt village's hut deck is a balcony of its own kind, on the ground floor aloft: tests/interiors/round.test.ts)
+    for (const b of Object.values(world.areas).filter((a) => formOf(a) === "balcony" && !a.tags.includes("canopy"))) {
       balconies++;
       const building = world.areas[b.parentId!];
       assert.ok(/^(palace|estates|manor house)$/.test(building.type), `${building.type}: a balcony`);

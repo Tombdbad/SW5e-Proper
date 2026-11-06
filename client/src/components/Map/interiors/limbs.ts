@@ -805,15 +805,57 @@ export interface Motion {
   act?: "throw" | "spray" | "call" | "heal";
   actAt?: number;
   actFor?: number;
+  // On a ladder (2026-11-06, the user: "climbable ladders - generate animations"): how far through its hand-over-hand cycle the climber is, in radians
+  // (the map sets it from the height climbed: interiors/transit.ts, LocalMap); unset off a ladder
+  climb?: number;
+  // Getting on or off a mount or a speeder: 0 standing beside it to 1 in the saddle (mountPose); unset otherwise
+  mount?: number;
 }
+// Getting on a mount (2026-11-06, the user: "animations for characters climbing on/off mounts"), from the left as riders do: standing at its side, the left
+// foot up into the stirrup and the hands on the saddle; the right leg swung up and over its back; down into the seat, in the pose a rider keeps (gaitPose
+// "ride"). Getting off is the same the other way. `u` is how far on (0 beside it, 1 in the seat); the joints at each stage, eased between.
+type Keyed = Partial<Record<Joint, J3>>;
+const MOUNT_KEYS: [number, Keyed][] = [
+  [0, {}],
+  [0.35, { armR: [-1.15, 0, 0.1], armL: [-1.15, 0, -0.1], foreR: [-0.55, 0, 0], foreL: [-0.55, 0, 0], legL: [-1.35, 0, 0.12], shinL: [1.65, 0, 0], legR: [0.08, 0, 0], shinR: [0.12, 0, 0], chest: [0.2, 0, 0] }],
+  [0.7, { armR: [-0.95, 0, 0.1], armL: [-0.95, 0, -0.1], foreR: [-0.35, 0, 0], foreL: [-0.35, 0, 0], legL: [-0.9, 0, 0.42], shinL: [0.95, 0, 0], legR: [-0.55, 0, -1.35], shinR: [0.65, 0, 0], chest: [0.3, 0, 0] }],
+  [1, { armR: [-0.7, 0, 0], armL: [-0.7, 0, 0], legR: [-0.75, 0, -0.55], legL: [-0.75, 0, 0.55] }],
+];
+export function mountPose(u: number): Keyed {
+  const x = Math.max(0, Math.min(1, u));
+  let i = 0;
+  while (i < MOUNT_KEYS.length - 2 && x > MOUNT_KEYS[i + 1][0]) i++;
+  const [[u0, a], [u1, b]] = [MOUNT_KEYS[i], MOUNT_KEYS[i + 1]];
+  const k = smoothK((x - u0) / (u1 - u0));
+  const out: Keyed = {};
+  for (const j of new Set([...Object.keys(a), ...Object.keys(b)] as Joint[])) {
+    const [p, q] = [a[j] ?? [0, 0, 0], b[j] ?? [0, 0, 0]];
+    out[j] = [p[0] + (q[0] - p[0]) * k, p[1] + (q[1] - p[1]) * k, p[2] + (q[2] - p[2]) * k];
+  }
+  return out;
+}
+// Where the rider is against the mount while getting on (`u` as above): across from its left side to over its middle (`side`, a fraction of the way out,
+// 1 at the side), up from the ground to the seat (`up`, a fraction of the seat's height, a little over at the top of the swing), and how far round from
+// facing its flank to facing ahead (`face`, 0 to 1)
+export function mountPlace(u: number): { side: number; up: number; face: number } {
+  const x = Math.max(0, Math.min(1, u));
+  const rise = smoothK((x - 0.2) / 0.55);
+  return { side: 1 - smoothK((x - 0.4) / 0.5), up: rise + 0.12 * Math.sin(Math.PI * smoothK((x - 0.35) / 0.55)), face: smoothK((x - 0.45) / 0.5) };
+}
+
+// Where each hand is in the climb (1 at its highest reach, -1 at the shoulder): the right and the left, half a cycle apart (pure: tests/interiors/limbs)
+export const climbCycle = (phase: number): [number, number] => [Math.sin(phase), Math.sin(phase + Math.PI)];
+// How far through the cycle a climber is who has gone `height` metres up or down a ladder: once round every two rungs (rungs 0.32 apart, the map's)
+export const RUNG = 0.32;
+export const climbPhase = (height: number) => (height / (2 * RUNG)) * Math.PI * 2;
 export const motion = (o: Partial<Motion> = {}): Motion => ({ posture: 0, ready: false, pitch: 0, air: false, firedAt: -99, kick: 0.4, swingAt: -99, swing: 0, blocking: false, hitAt: -99, ...o });
 export const nowSeconds = () => (typeof performance !== "undefined" ? performance.now() : Date.now()) / 1000;
 // How hard a ranged weapon kicks (shared/logic/shooter.ts gunKick: the same rule widens its spread)
 export const kickOf = (name: string, damage = 0): number => gunKick(name, damage).kick;
 
 // The motion's states eased over frames (0 to 1): a figure goes into a crouch, up into a guard, onto its belly, over a moment, not at once
-export interface Eased { ready: number; crouch: number; prone: number; air: number; block: number; swim: number }
-export const eased = (): Eased => ({ ready: 0, crouch: 0, prone: 0, air: 0, block: 0, swim: 0 });
+export interface Eased { ready: number; crouch: number; prone: number; air: number; block: number; swim: number; climb: number; mount: number }
+export const eased = (): Eased => ({ ready: 0, crouch: 0, prone: 0, air: 0, block: 0, swim: 0, climb: 0, mount: 0 });
 export function easeMotion(e: Eased, m: Motion, dt: number): Eased {
   const k = 1 - Math.exp(-dt * 9);
   e.ready += ((m.ready || m.blocking ? 1 : 0) - e.ready) * k;
@@ -822,6 +864,8 @@ export function easeMotion(e: Eased, m: Motion, dt: number): Eased {
   e.air += ((m.air ? 1 : 0) - e.air) * (1 - Math.exp(-dt * 14));
   e.block += ((m.blocking ? 1 : 0) - e.block) * (1 - Math.exp(-dt * 16));
   e.swim += ((m.posture === 3 ? 1 : 0) - e.swim) * (1 - Math.exp(-dt * 5));
+  e.climb += ((m.climb !== undefined ? 1 : 0) - e.climb) * (1 - Math.exp(-dt * 10));
+  e.mount += ((m.mount !== undefined ? 1 : 0) - e.mount) * (1 - Math.exp(-dt * 18));
   return e;
 }
 
@@ -1025,6 +1069,8 @@ export function lowerArms(out: Pose, J: Joints, c: LowerCtx): void {
 // A person's pose this frame
 export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold, saber: SaberStyle, now: number, legs: LegSize, out: Pose = restPose(), persona: Persona = NEUTRAL, kitOf: SaberKit = "single"): Root {
   for (let i = 1; i < LIMBS; i++) out.set([0, 0, 0, 1], i * 4);
+  // (on a ladder both hands are on the rungs, getting on a mount on its saddle: what they held is slung for it)
+  if (e.climb > 0.5 || e.mount > 0.5) hold = "none";
   const amp = s.amp;
   const run = Math.max(0, Math.min(1, (s.speed - 2.6) / 3));
   const swing = Math.sin(s.phase) * amp;
@@ -1299,6 +1345,31 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
     put("shinR", [(0.7 + 0.4 * Math.cos(t * 2.6)) * tread, 0, 0]);
     put("shinL", [(0.7 - 0.4 * Math.cos(t * 2.6)) * tread, 0, 0]);
   }
+  // Climbing a ladder: facing the rungs, hand over hand and foot over foot, each hand reaching up with the other side's foot (the cycle, Motion.climb,
+  // goes round once every two rungs); the elbow bends as its hand comes down to the shoulder, the knee as its foot comes up; the head tipped back to
+  // the next rung. Laid over whatever else the figure was doing, eased in as it takes hold
+  if (e.climb > 0.001) {
+    const k = e.climb;
+    for (const j of JOINTS) if (J[j]) J[j] = [J[j]![0] * (1 - k), J[j]![1] * (1 - k), J[j]![2] * (1 - k)];
+    const [r, l] = climbCycle(m.climb ?? 0);
+    put("armR", [(-2.5 - 0.45 * r) * k, 0, 0.12 * k]);
+    put("armL", [(-2.5 - 0.45 * l) * k, 0, -0.12 * k]);
+    put("foreR", [(-0.3 - 0.75 * (1 - r) / 2) * k, 0, 0]);
+    put("foreL", [(-0.3 - 0.75 * (1 - l) / 2) * k, 0, 0]);
+    put("legR", [(-0.55 - 0.55 * l) * k, 0, -0.05 * k]);
+    put("legL", [(-0.55 - 0.55 * r) * k, 0, 0.05 * k]);
+    put("shinR", [(0.75 + 0.6 * (1 + l) / 2) * k, 0, 0]);
+    put("shinL", [(0.75 + 0.6 * (1 + r) / 2) * k, 0, 0]);
+    put("chest", [0.06 * k, 0, 0]);
+    put("head", [-0.32 * k, 0, 0]);
+  }
+  // Getting on or off a mount (mountPose): the stages laid over all else as it begins
+  if (e.mount > 0.001) {
+    const k = e.mount;
+    for (const j of JOINTS) if (J[j]) J[j] = [J[j]![0] * (1 - k), J[j]![1] * (1 - k), J[j]![2] * (1 - k)];
+    const keyed = mountPose(m.mount ?? 1);
+    for (const j of Object.keys(keyed) as Joint[]) put(j, keyed[j]!, k);
+  }
   for (const j of JOINTS) if (J[j]) setEuler(out, LIMB_OF[j], J[j]![0], J[j]![1], J[j]![2]);
   lowerArms(out, J, { t, amp, swing, run, calm, ready, hold, crouch: c, prone: p, swim: e.swim, air: a, persona });
   // Hair that hangs (models.tsx `head()`: long, wavy, bob, tail, braid): two limbs one under the other from the nape. They swing with the stride (a lift and
@@ -1331,10 +1402,10 @@ export function humanPose(s: Stride, t: number, m: Motion, e: Eased, hold: Hold,
   // How far the bent knees lower the body: the standing leg (the longer of the two) holds it up
   const height = (thigh: number, shin: number) => (legs.hip - legs.knee) * Math.cos(thigh) + legs.knee * Math.cos(thigh + shin);
   const stand = Math.max(height(J.legR?.[0] ?? 0, J.shinR?.[0] ?? 0), height(J.legL?.[0] ?? 0, J.shinL?.[0] ?? 0));
-  const drop = legs.hip > 0 ? Math.max(0, legs.hip - stand) * upright * (1 - a) * (1 - e.swim) : 0;
+  const drop = legs.hip > 0 ? Math.max(0, legs.hip - stand) * upright * (1 - a) * (1 - e.swim) * (1 - e.climb) * (1 - e.mount) : 0;
   // The body as a whole: it shifts over the foot it stands on (at rest, by the weight shift; walking, once a stride), the hips drop to the
   // unloaded side and twist against the shoulders, it banks into a turn and leans into a start and back at a stop
-  const grounded = upright * (1 - a) * (1 - e.swim) * (1 - 0.8 * c);
+  const grounded = upright * (1 - a) * (1 - e.swim) * (1 - e.climb) * (1 - e.mount) * (1 - 0.8 * c);
   const bank = Math.max(-0.12, Math.min(0.12, -(s.turn ?? 0) * 0.03)) * Math.min(1, s.speed / 2) * grounded;
   // (walking, the stance foot is the one swinging back: the right when sin > 0, the figure's right being -x)
   const sway = (shift * 0.012 * calm * persona.sway - Math.sin(s.phase) * 0.011 * amp * persona.sway) * grounded;

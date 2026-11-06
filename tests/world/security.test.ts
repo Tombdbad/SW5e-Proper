@@ -28,7 +28,10 @@ function scenario(world: World, minHops = 3) {
     if (!base || lawAt(world, base.room.id) < 1) continue;
     for (const room of rooms(world, s.id)) {
       const way = townPath(world, s.id, base.room.id, room.id);
-      if (way && way.length - 1 >= minHops && way.length - 1 <= 12) return { settlement: s, base, scene: room, hops: way.length - 1 };
+      // (a scene no patrol in the street is nearer to than the garrison: then all the squads come from it; since the stairwells of 2026-11-06 a
+      // patrol was nearer the first scene found)
+      const patrolled = () => (reportCrime(world, room.id, "theft", noon, "alarm").pursuit?.squads ?? []).some((q) => q.id.endsWith("-patrol"));
+      if (way && way.length - 1 >= minHops && way.length - 1 <= 12 && !patrolled()) return { settlement: s, base, scene: room, hops: way.length - 1 };
     }
   }
   throw new Error("no settlement with a garrison and a far room");

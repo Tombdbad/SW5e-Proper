@@ -1145,3 +1145,45 @@ Done on 2026-10-13: the data files are generated from the API, expanded content 
   interiors/round.test.ts.
 - Not yet: gantries round round rooms (the kit's gantry_arc_r4 and ramp_arc_r4, gantryPlan, rampPlan: radius 4 pieces only), round tables, ring
   benches and other curved models made in Mixar (stage 3: CurvedPiece is drawn in code meanwhile).
+
+## Round towers, drums of any size, covered walkways, tree villages you walk, ladders and mounts climbed, beasts to scale (2026-11-06, evening; the user's "not done" list: round multi-floor buildings with ramps outside and spiral stairs inside, wall segments that scale, covered walkways drawn the same inside as out, great-tree decks with catwalks and gantries round and between the huts, climbable ladders with animation, animations for getting on and off mounts, beast and mount scales against SW5e and the lore)
+- Round towers (shared/logic linkColumns "Round towers", SPIRAL, spiralSpot): a round room can host a column (hostable; linkFloors partners and
+  linkRounds include it); the floors over and under it take its shape (syncColumns, after the shaping loop and after joinStranded). Its stairwell
+  stands against the middle of a side (placeBlock `spots`), where the curve meets the square. Outside, with good air: the landings are gantry decks
+  ("Ramp landing", "Gantry, floor N") and the flights ramps ("Ramp up to X"), tag "open-air", RoomLayout `open` (+ `ramp` on the flights), openAir true;
+  a cellar's landing and stairs stay enclosed; the roof stairs follow suit. The 3D map draws them as steel decking (RAMP_DECK) on posts with rails that
+  climb with the floor (LocalMap SlopedRail), no walls or roof, from outside and from on them. Inside, on a station or where the air is bad: no
+  stairwell; a path marked `spiral` (label SPIRAL) between each two floors, laid as stairs assets in the 2 by 2 squares in the middle of each floor
+  ("Spiral stair up" the north half, "down" the south half; the bottom's way up and the top's way down take both halves), drawn as a spiral of treads
+  round a post (LocalMap SpiralStair) and, on the top floor, the well it comes up through (SpiralWell). linkLevels leaves spiral paths alone. Patio
+  doors and other doors now need a standing square (balconies, doorBetween). joinStranded may square a round neighbour that blocks a lost room.
+  Audit (auditBuildings): a column floor may be joined by its spiral; the spiral goes both ways and stands in the middle. New buildings only: a saved
+  building keeps the columns it has. Test: tests/world/access.test.ts "round towers".
+- Drums of any radius (interiors/architecture.ts baysFor, bayFit; models.tsx KitRoomBlock): as many bays as keep each about the kit's width (a
+  multiple of four, at least eight, at least 1.35 wide), each stretched across to its share and moved out to the radius; the wall's thickness, the
+  storey and the door stay the kit's (within an eighth from radius 3; a quarter wider at 2.5). Any circle of radius 2.5 up; ovals keep RoomBlock.
+- Covered walkways (RoomLayout `tube`, tag "tube"): linkLevels' walkways on a station or where the air is bad are "Covered walkway to X", not open air;
+  and planDistrict joins rooms on the same upper floor (1 to 3) of neighbouring buildings there by skybridges (SKYBRIDGE, tag "skybridge", the same
+  `across` routine as the rope bridges). Drawn as the kit's tube_walk, tiled along the length (models.tsx TubeWalk), the same pieces from outside (on
+  posts) and from within (RoomShell: no walls, rails or flat ceiling; the glazing is a skin on both faces). The doorways onto a tube are framed and cut
+  through as onto an open walkway. Life 21 turns a saved elevated walkway on a station or bad-air world into a covered one.
+- Tree villages walked (planDistrict "Balconies" and "Rope bridges"): each hut on the ground floor of a village building may have a deck (CANOPY_DECK,
+  a balcony tagged "canopy", through a plain doorway, two to a building), and rope bridges (ROPE_BRIDGE, a walkway tagged "canopy") join huts of
+  neighbouring buildings across up to CATWALK_SPAN squares of the forest floor, shortest first so the village is joined aloft. Every hut stands
+  against a great tree from the kit (a conifer on a forest world, a broadleaf in the jungle) at a corner of its square, where a round hut leaves the
+  square empty (siteAssets GreatTree; the deck is braced to it). Decks are planks with rope rails (CanopyPlatform), bridges planks and rope
+  (CanopyBridge), drawn the same from on them (RoomShell `canopy`). Life 21 re-plans the tree and stilt villages for them. Test: interiors/round.test.ts.
+- Ladders climbed (shared/logic verticalMove; interiors/transit.ts `off`; interiors/limbs.ts Motion.climb, climbCycle, climbPhase, RUNG): going into a
+  tree or stilt hut from the forest floor, or out of it, is a ladder climb like a roof's (it was at once), the climber clinging past the deck's rim;
+  on any ladder (a roof's, a hut's, a building's ladderway) the figure climbs hand over hand and foot over foot, the right hand with the left foot,
+  by the height climbed, whatever it held slung. Tests: tests/items/climbing.test.ts, interiors/body.test.ts (the pose; PC only).
+- Getting on and off a mount (interiors/limbs.ts mountPose, mountPlace, Motion.mount; LocalMap MOUNT_MS, riderSeat): from the beast's left side, a foot
+  in the stirrup and the hands on the saddle, the right leg swung over, down into the rider's pose, over 1.1 s; getting off the same back, the beast
+  staying under the rider until they are down. Riders of the street's errands get down and up the same way (MountedStroll). Water craft: not yet.
+- Beasts to scale (models.tsx BEAST_METRES, beastMetres, beastBuilt, beastScale; seatFor and figureTop follow): every Large-or-bigger beast was drawn at
+  1.5 times its plan, so a Huge bantha or rancor was no taller than a Large tauntaun. Now: the setting's figure for the grown beast (bantha 2.5 m,
+  dewback 1.8, reek 2.24, ronto 4.25, fambaa 5, falumpaset 3, eopie 2.2, fathier 3, aryx 1.9, shaak 1.8, nerf 2, blurrg 2.6, nexu 1, massiff and kath
+  hound 0.95, anooba 1, loth-cat 0.45, rancor 5, wampa 3, tauntaun 2.5, kaadu 2.1, varactyl 4, acklay 3.05 tall; womp rat 2, mynock 1, aiwha 9 long:
+  Wookieepedia through archivum.wiki, the Star Wars fiction reference's domesticated creatures list), times the stat block's size against the grown
+  beast's by the squares they take (a Medium juvenile rancor a third of a Huge adult); else the height (or length, span) its size gives; never wider
+  than its size's room on the map (MAX_SPAN: a greater krayt dragon is held to 11 squares). Test: interiors/body.test.ts (PC only).

@@ -19,7 +19,7 @@ import { saberKitOf, type SaberKit } from "./interiors/limbs";
 import { STAFF_ARMS } from "./interiors/saberplay";
 import { handOf, wantsOf, suitWorn, glovesOf, bootsOf, hasBandolier, type Gear, type Want, type Slot, type SuitStyle } from "./interiors/gear";
 import { gunGeometry } from "./interiors/weapons";
-import { archColour, ARCH_FINISH, storeyPlan, bayAt, turnFor, ARCH_STOREY, type Placed } from "./interiors/architecture";
+import { archColour, ARCH_FINISH, storeyPlan, bayAt, baysFor, bayFit, turnFor, ARCH_STOREY, type Placed } from "./interiors/architecture";
 import speciesHeadsJson from "@shared/art/speciesHeads.json";
 import { bodyAnchor, holdAt, offHandAt, headFit, torsoFit, moduleAnchor, type HeadTraits } from "./interiors/anchors";
 import { composeSaber, tintGlow, withHalo, modelInfo, itemRef, assetPath } from "./interiors/items";
@@ -1862,17 +1862,17 @@ export function ArchPiece({ name, wall, thatch = false, position, rotation, scal
 // A round room built of the kit's wall bays (2026-11-05; the user: "much of Star Wars architecture is circular", and "ALL doorways and windows MUST
 // remove the wall mesh/texture within the door/window frame"): sixteen bays of 22.5 degrees round the room's circle, a door bay (its opening cut
 // through the wall) with its curved frame wherever a way in is, a bay with a window where the plan has one and windows between; a storey of bays
-// for each storey the room has. The kit is made for a circle of radius 4 and a storey of 3.4 and is fitted to the room's, so only a circle about
-// that size takes it (a smaller one could not fit a door in a bay). Until the kit is in, and for any other room, the room's block as before.
-export const DRUM_MIN_R = 3.75;
-export const DRUM_MAX_R = 6;
+// for each storey the room has. The kit is made for a circle of radius 4 and a storey of 3.4; since 2026-11-06 a drum of any radius from 2.5 takes it,
+// in as many bays as fit (interiors/architecture.ts baysFor, bayFit: the wall's thickness and the doors stay the kit's). Until the kit is in, and for
+// an oval or a smaller circle, the room's block as before.
+export const DRUM_MIN_R = 2.5;
 export interface Drum { doors: number[]; windows: number[]; adobe: boolean; storeys: number }
-export function drumPlan(drum: Drum): Placed[] {
+export function drumPlan(drum: Drum, bays = 16): Placed[] {
   const out: Placed[] = [];
-  const win = new Set(drum.windows.map(bayAt));
+  const win = new Set(drum.windows.map((a) => bayAt(a, bays)));
   for (let n = 0; n < drum.storeys; n++) {
-    for (const p of storeyPlan(n === 0 ? drum.doors : [], n * ARCH_STOREY, drum.adobe ? "adobe" : "drum")) {
-      out.push(win.has(bayAt(p.angle)) && /_bay(_blank)?_r4$/.test(p.piece) ? { ...p, piece: drum.adobe ? "adobe_bay_window_r4" : "drum_bay_r4" } : p);
+    for (const p of storeyPlan(n === 0 ? drum.doors : [], n * ARCH_STOREY, drum.adobe ? "adobe" : "drum", "alternate", bays)) {
+      out.push(win.has(bayAt(p.angle, bays)) && /_bay(_blank)?_r4$/.test(p.piece) ? { ...p, piece: drum.adobe ? "adobe_bay_window_r4" : "drum_bay_r4" } : p);
     }
   }
   return out;
@@ -1881,15 +1881,52 @@ export function KitRoomBlock(props: Parameters<typeof RoomBlock>[0] & { drum?: D
   useArchParts();
   const { drum, tint, ...block } = props;
   const r = block.w / 2;
-  if (!drum || !archParts() || block.w !== block.d || r < DRUM_MIN_R || r > DRUM_MAX_R) return <RoomBlock {...block} />;
-  const s = r / 4;
+  if (!drum || !archParts() || block.w !== block.d || r < DRUM_MIN_R) return <RoomBlock {...block} />;
+  const bays = baysFor(r);
+  const fit = bayFit(r, bays);
   return (
     <>
       <RoomBlock {...block} bare />
-      <group position={[block.w / 2, 0, block.d / 2]} scale={[s, block.height / (ARCH_STOREY * drum.storeys), s]}>
-        {drumPlan(drum).map((p, i) => <ArchPiece key={i} name={p.piece} wall={tint} position={[0, p.y, 0]} rotation={[0, turnFor(p.angle), 0]} />)}
+      <group position={[block.w / 2, 0, block.d / 2]} scale={[1, block.height / (ARCH_STOREY * drum.storeys), 1]}>
+        {drumPlan(drum, bays).map((p, i) => (
+          <group key={i} rotation={[0, turnFor(p.angle), 0]}>
+            <ArchPiece name={p.piece} wall={tint} position={[0, p.y, fit.out]} scale={[fit.across, 1, 1]} />
+          </group>
+        ))}
       </group>
     </>
+  );
+}
+
+// A covered walkway (shared/logic RoomLayout `tube`): the kit's tube, four squares a piece (a deck under ribs and dark glazing, a lit spine), as many as
+// make its length, each stretched a little to fill it. The same pieces are drawn from outside and from within (the glazing is a skin on both faces),
+// so its inside is what its outside is (2026-11-06, the user). `w` by `d` squares, along the longer; until the kit is in, a deck under a glass vault.
+export function TubeWalk({ w, d, tint = "#8a94a3" }: { w: number; d: number; tint?: string }) {
+  useArchParts();
+  const alongX = w > d;
+  const length = alongX ? w : d;
+  const pieces = Math.max(1, Math.round(length / 4));
+  const each = length / pieces;
+  if (!archParts()?.tube_walk) {
+    return (
+      <group position={[w / 2, 0, d / 2]} rotation={[0, alongX ? Math.PI / 2 : 0, 0]}>
+        <mesh position={[0, -0.09, 0]} receiveShadow>
+          <boxGeometry args={[2, 0.18, length]} />
+          <meshLambertMaterial color="#59636d" />
+        </mesh>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} scale={[1.08, 1, 2.15]} raycast={() => null}>
+          <cylinderGeometry args={[1, 1, length, 16, 1, true, -Math.PI / 2, Math.PI]} />
+          <meshLambertMaterial color="#2a3a48" transparent opacity={0.35} side={THREE.DoubleSide} depthWrite={false} />
+        </mesh>
+      </group>
+    );
+  }
+  return (
+    <group position={alongX ? [0, 0, d / 2] : [w / 2, 0, 0]} rotation={[0, alongX ? Math.PI / 2 : 0, 0]}>
+      {Array.from({ length: pieces }, (_, i) => (
+        <ArchPiece key={i} name="tube_walk" wall={tint} position={[0, 0, i * each]} scale={[1, 1, each / 4]} />
+      ))}
+    </group>
   );
 }
 
@@ -4260,6 +4297,8 @@ export function figureTop(kind: string, name: string, size = "", large = false):
     if (machine) return machineFit(machine, name).h;
     return droidStature(droidSeries(kind, name), name, size) * UNITS_PER_M;
   }
+  // (a beast at its own size: beastScale)
+  if (kind === "beast" || kind === "horror") return beastBuilt(creaturePlan(name, "", size)).h * beastScale(name, "", size);
   return large ? 1.85 : 1.2;
 }
 // How wide the ring under a figure is, against a medium one's: the footprint its size takes
@@ -4363,6 +4402,88 @@ export function creaturePlan(name: string, creature = "", size = ""): Plan {
   if (/tiny/i.test(size)) return { plan: "critter", kind: (["rat", "lizard", "frog", "rabbit"] as const)[hue(name) % 4], color };
   const heads: QuadHead[] = ["dog", "cat", "long", "reptile", "boar", "blunt"];
   return { plan: "quad", len: 0.7, h: 0.32, girth: 0.22, head: heads[hue(name) % heads.length], tail: 0.4, fur: hue(name) % 3 === 0, color };
+}
+
+// Beasts at their size (2026-11-06, the user: "Analyse beast & mounts scales against SW5e rules/lore & star wars images & web search results"). They were
+// all drawn at one size, half as big again for any size from Large up, so a Huge bantha or rancor stood no taller than a Large tauntaun. Now each is
+// scaled to how big it is: the setting's own figure for the grown beast where there is one (Wookieepedia's, through its archivum.wiki mirror, and the
+// Star Wars fiction reference's list of domesticated creatures, 2026-11-06), the height to the top of its back or head, or nose to tail for what is
+// long and low (a womp rat) and wingtip to wingtip for what flies; a stat block of another size (an adolescent, an ancient) is that much smaller or
+// bigger by the squares its size takes; else the height its size gives. A beast never spans more than its size's room allows on the map (MAX_SPAN:
+// a greater krayt dragon is far longer in the films than the map can hold). The SW5e sizes are those of shared/data/sw5e/monsters.json.
+type SizeCat = "tiny" | "small" | "medium" | "large" | "huge" | "gargantuan";
+const SIZE_STEP: Record<SizeCat, number> = { tiny: 0.5, small: 0.75, medium: 1, large: 2, huge: 3, gargantuan: 4 };
+const BEAST_METRES: [RegExp, { m: number; at: SizeCat; long?: boolean }][] = [
+  [/bantha/, { m: 2.5, at: "huge" }],
+  [/dewback/, { m: 1.8, at: "large" }],
+  [/reek/, { m: 2.24, at: "huge" }],
+  [/ronto/, { m: 4.25, at: "huge" }],
+  [/fambaa/, { m: 5, at: "huge" }],
+  [/falumpaset/, { m: 3, at: "large" }],
+  [/eopie/, { m: 2.2, at: "large" }],
+  [/fathier/, { m: 3, at: "large" }],
+  [/aryx/, { m: 1.9, at: "large" }],
+  [/shaak/, { m: 1.8, at: "large" }],
+  [/nerf/, { m: 2, at: "large" }],
+  [/blurrg/, { m: 2.6, at: "large" }],
+  [/nexu/, { m: 1, at: "medium" }],
+  [/massiff|kath hound/, { m: 0.95, at: "small" }],
+  [/anooba/, { m: 1, at: "medium" }],
+  [/loth|tooka/, { m: 0.45, at: "tiny" }],
+  [/rancor/, { m: 5, at: "huge" }],
+  [/wampa/, { m: 3, at: "large" }],
+  [/tauntaun/, { m: 2.5, at: "large" }],
+  [/kaadu/, { m: 2.1, at: "large" }],
+  [/varactyl/, { m: 4, at: "large" }],
+  [/acklay/, { m: 3.05, at: "huge" }],
+  [/womp rat/, { m: 2, at: "medium", long: true }],
+  [/mynock/, { m: 1, at: "small", long: true }],
+  [/aiwha/, { m: 9, at: "huge", long: true }],
+];
+// (with no figure of its own: the height its size gives, or the length for what is long and low and the span of what flies)
+const SIZE_TALL: Record<SizeCat, number> = { tiny: 0.35, small: 0.8, medium: 1.4, large: 2.4, huge: 4.5, gargantuan: 8 };
+const SIZE_LONG: Record<SizeCat, number> = { tiny: 0.6, small: 1.2, medium: 2.2, large: 4, huge: 8, gargantuan: 14 };
+// (the most a beast of a size spans on the map, in units: a little past the squares it takes)
+const MAX_SPAN: Record<SizeCat, number> = { tiny: 0.9, small: 1.4, medium: 2.4, large: 4.4, huge: 6.5, gargantuan: 11 };
+const sizeCat = (size: string): SizeCat | undefined => (["tiny", "small", "medium", "large", "huge", "gargantuan"] as SizeCat[]).find((c) => size.toLowerCase().includes(c));
+// How big a creature is meant to be: metres, and whether that is its length (or span) rather than its height
+export function beastMetres(name: string, size = ""): { m: number; long: boolean; cat: SizeCat } {
+  const n = name.toLowerCase();
+  const cat = sizeCat(size);
+  const lore = BEAST_METRES.find(([re]) => re.test(n))?.[1];
+  if (lore) {
+    const k = cat ? Math.max(0.4, Math.min(2, SIZE_STEP[cat] / SIZE_STEP[lore.at])) : 1;
+    return { m: lore.m * k, long: !!lore.long, cat: cat ?? lore.at };
+  }
+  const c = cat ?? "medium";
+  const plan = creaturePlan(name, "", size);
+  const long = plan.plan === "serpent" || (plan.plan === "flyer" && !plan.perch);
+  return { m: long ? SIZE_LONG[c] : SIZE_TALL[c], long, cat: c };
+}
+// How a body plan is built: its height (units, the top of it) and its longest span across (nose to tail, or wing to wing), measured once
+const BEAST_BUILT = new Map<string, { h: number; span: number }>();
+export function beastBuilt(p: Plan): { h: number; span: number } {
+  // (measured again once the sculpted creature parts are in: interiors/body.ts creatureParts)
+  const key = `${JSON.stringify(p)}:${creatureParts() ? 1 : 0}`;
+  let b = BEAST_BUILT.get(key);
+  if (!b) {
+    const k = new Kit();
+    k.animated = true;
+    buildCreature(k, p, 0);
+    const box = new THREE.Box3();
+    for (const part of k.parts) { part.geo.computeBoundingBox(); box.union(part.geo.boundingBox!); }
+    b = box.isEmpty() ? { h: 1, span: 1 } : { h: Math.max(0.05, box.max.y), span: Math.max(0.05, box.max.x - box.min.x, box.max.z - box.min.z) };
+    BEAST_BUILT.set(key, b);
+  }
+  return b;
+}
+// The scale a beast is drawn at (models.tsx Figure, its seat for a rider: seatFor)
+export function beastScale(name: string, creature = "", size = ""): number {
+  const plan = creaturePlan(name, creature, size);
+  const built = beastBuilt(plan);
+  const want = beastMetres(name, size);
+  const s = (want.m * UNITS_PER_M) / (want.long ? built.span : built.h);
+  return Math.max(0.15, Math.min(s, MAX_SPAN[want.cat] / built.span));
 }
 
 // What a creature's hide is drawn in (Kit.dress): fur with its shells, scales, a carapace's plate, a thick hide's leather, or skin
@@ -5537,7 +5658,9 @@ export function figureSpec(kind: string, name: string, opts: { role?: string; cr
   }
   if (kind === "beast" || kind === "horror") {
     const plan = creaturePlan(name, creature, size);
-    return { key: `beast:${plan.plan}:${JSON.stringify(plan)}:${seed % 4}${creatureParts() ? ":sc" : ""}`, build: (k) => buildCreature(k, plan, seed % 4), height: plan.plan === "brute" ? 1.4 : plan.plan === "flyer" && !plan.perch ? 1.3 : 1.0, gait: creatureGait(plan), wave: waveOf(plan), fur: furOf(plan), seat: seatOf(plan) };
+    // (to its own size: beastScale)
+    const scale = beastScale(name, creature, size);
+    return { key: `beast:${plan.plan}:${JSON.stringify(plan)}:${seed % 4}${creatureParts() ? ":sc" : ""}`, build: (k) => buildCreature(k, plan, seed % 4), height: plan.plan === "brute" ? 1.4 : plan.plan === "flyer" && !plan.perch ? 1.3 : 1.0, scale, foot: FOOT[sizeCat(size) ?? "medium"] ?? 1, gait: creatureGait(plan), wave: waveOf(plan), fur: furOf(plan), seat: seatOf(plan) };
   }
   if (kind === "swarm") {
     const plan = creaturePlan(name.replace(/swarm of /i, ""), creature, "tiny");
@@ -5818,7 +5941,8 @@ function Droideka({ id, build, deployed, fit }: { id: string; build: (k: Kit) =>
 }
 
 // How high a rider sits on a beast (its back), in model units at a scale of 1
-export const seatFor = (name: string, creature = "", size = "") => seatOf(creaturePlan(name, creature, size));
+// (where a rider sits on a beast, in units over the ground: the plan's seat at the beast's scale)
+export const seatFor = (name: string, creature = "", size = "") => seatOf(creaturePlan(name, creature, size)) * beastScale(name, creature, size);
 
 // Sabers made of a hilt and another blade (a model of the hilt and one of the blade, joined once)
 const COMPOSED = new Map<string, THREE.BufferGeometry>();

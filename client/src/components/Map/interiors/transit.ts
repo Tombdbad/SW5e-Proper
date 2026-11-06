@@ -13,6 +13,8 @@ export interface TransitGeom {
   pad: [number, number];
   roof: [number, number];
   top: number;
+  // How far out from the wall the climber clings (a roof's ladder is against the wall: 0.22; a tree hut's stands out past its deck's rim: siteAssets CanopyLadder)
+  off?: number;
 }
 export interface TransitPose {
   x: number;
@@ -50,8 +52,9 @@ export function transitAt(kind: TransitKind, up: boolean, g: TransitGeom, start:
   const [wx, wz] = g.wall;
   const [ox, oz] = g.out;
   // Where it clings to the wall (in front of the ladder or the line) and where it stands to jump or take off
-  const cling: [number, number] = [wx + ox * 0.22, wz + oz * 0.22];
-  const stand: [number, number] = [wx + ox * 0.7, wz + oz * 0.7];
+  const off = g.off ?? 0.22;
+  const cling: [number, number] = [wx + ox * off, wz + oz * off];
+  const stand: [number, number] = [wx + ox * (off + 0.48), wz + oz * (off + 0.48)];
   const faceWall = Math.atan2(-ox, -oz);
   const between = (a: [number, number], b: [number, number], v: number): [number, number] => [lerp(a[0], b[0], v), lerp(a[1], b[1], v)];
   const yawOf = (a: [number, number], b: [number, number], keep: number) => (Math.hypot(b[0] - a[0], b[1] - a[1]) > 1e-4 ? Math.atan2(b[0] - a[0], b[1] - a[1]) : keep);
