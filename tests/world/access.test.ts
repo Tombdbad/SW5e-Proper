@@ -250,8 +250,9 @@ test("round towers (2026-11-06): drums stacked on a round room, joined by open r
         assert.ok(path?.spiral, `${lo.name} to ${hi.name}: the path is not the spiral's`);
         // nothing stands on the spiral's squares but the stair
         for (const l of [lo.layout!, hi.layout!]) {
-          const on = l.assets.filter((a) => !a.name.startsWith(SPIRAL) && a.kind !== "npc" && a.kind !== "loot" && !a.side && a.x < upway!.x + 2 && upway!.x < a.x + a.w && a.y < upway!.y + 2 && upway!.y < a.y + a.h);
-          assert.deepEqual(on.map((a) => a.name), [], `${lo.name}: furniture on the spiral`);
+          const sx = upway.x, sy = upway.y;
+          const on: typeof l.assets = l.assets.filter((a: (typeof l.assets)[number]) => !a.name.startsWith(SPIRAL) && a.kind !== "npc" && a.kind !== "loot" && !a.side && a.x < sx + 2 && sx < a.x + a.w && a.y < sy + 2 && sy < a.y + a.h);
+          assert.deepEqual(on.map((a: (typeof l.assets)[number]) => a.name), [], `${lo.name}: furniture on the spiral`);
         }
       }
       assert.deepEqual(walkBuilding(world, host.parentId!).problems, []);
